@@ -71,7 +71,7 @@ export function convertLegacy10(raw: Record<string, any>, gameVersion: string, n
     },
     gear: {
       weapon: Math.max(0, Math.min(5, Math.floor(num(raw.weapon, 0)))), armor: Math.max(0, Math.min(4, Math.floor(num(raw.armor, 0)))),
-      potions: Math.max(0, Math.min(10, Math.floor(num(raw.potions, 3)))), shrine: 0,
+      potions: Math.max(0, Math.min(10, Math.floor(num(raw.potions, 3)))), shrine: 0, trinkets: [], trinket: null,
     },
     skills: skillsFromLegacy(raw, Math.max(1, Math.floor(num(raw.lvl, 1)))),
     ship: { ...defaultShip(raw.faction as Faction, Math.max(0, Math.min(6, Math.floor(num(raw.tier, 0))))), up: { can: up(raw.up?.can), hull: up(raw.up?.hull), sail: up(raw.up?.sail) } },

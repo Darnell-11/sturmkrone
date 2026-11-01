@@ -46,6 +46,8 @@ export const MIGRATIONS: Record<number, Migration> = {
     const ship = { ...(d.ship ?? {}), up: { can: n(L.up?.can), hull: n(L.up?.hull), sail: n(L.up?.sail) } };
     return { ...d, version: 7, ship, crew: { hired, party: defaultParty(hired), loyalty: {} }, legends };
   },
+  // 2.0: Talismane
+  7: (d) => ({ ...d, version: 8, gear: { ...(d.gear ?? {}), trinkets: [], trinket: null } }),
 };
 
 export type MigrationResult =

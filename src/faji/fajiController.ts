@@ -119,7 +119,7 @@ export class FajiController {
 
   update(dt: number, input: Input, style: StyleId, lockYaw: number | null) {
     // Energie, Abklingzeiten, Stärkungen
-    this.faji = Math.min(this.maxFaji, this.faji + dt * (6 + this.level * 0.25) * (1 + this.passives.fajiRegen));
+    this.faji = Math.min(this.maxFaji, this.faji + dt * (6 + this.level * 0.25) * (1 + this.passives.fajiRegen + this.extraRegen));
     for (const k of Object.keys(this.cds)) { this.cds[k] -= dt; if (this.cds[k] <= 0) delete this.cds[k]; }
     for (const b of this.buffs) b.t -= dt;
     const before = this.buffs.length;
@@ -159,6 +159,9 @@ export class FajiController {
   }
 
   /** Fähigkeit aus Platz i einsetzen */
+  /** Zusätzliche Regeneration (Crew, Talisman) – wird gesetzt, nicht addiert */
+  extraRegen = 0;
+
   use(i: number, lockYaw: number | null) {
     const id = this.skills.slots[i];
     const s = id ? SK[id] : null;

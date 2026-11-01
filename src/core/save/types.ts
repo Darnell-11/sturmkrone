@@ -2,7 +2,7 @@
 import { defaultLook, type CharacterLook } from '../../data/characterParts';
 import { DEFAULT_SHIP_LOOK, type AmmoId, type ShipLook } from '../../data/ships';
 
-export const SAVE_VERSION = 7;
+export const SAVE_VERSION = 8;
 
 export interface QuestProgress { id: string; step: number; count: number }
 
@@ -18,7 +18,12 @@ export interface ProgressState {
   stats: { kills: number; sunk: number; boarded: number; treasures: number; rescued: number };
 }
 
-export interface GearState { weapon: number; armor: number; potions: number; shrine: number }
+export interface GearState {
+  weapon: number; armor: number; potions: number; shrine: number;
+  /** Gefundene Talismane (IDs) und der angelegte */
+  trinkets: string[];
+  trinket: string | null;
+}
 
 export interface ShipState {
   /** Aktuelle Klasse (Index in SHIP_CLASSES) */
@@ -112,7 +117,7 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
     },
     world: { boat: null, time: 9, weather: 'klar' },
     progress: defaultProgress(),
-    gear: { weapon: 0, armor: 0, potions: 3, shrine: 0 },
+    gear: { weapon: 0, armor: 0, potions: 3, shrine: 0, trinkets: [], trinket: null },
     skills: { learned: {}, slots: [null, null, null], sp: 1, awakened: [] },
     ship: defaultShip(faction),
     crew: { hired: [], party: [], loyalty: {} },

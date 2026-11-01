@@ -13,6 +13,8 @@ export interface Settings {
   volume: { master: number; music: number; sfx: number; ambient: number; voice: number };
   textScale: number;
   showFps: boolean;
+  /** Farbenblind-freundliche Farben und Formen */
+  colorblind: boolean;
   touchControls: 'auto' | 'on' | 'off';
   invertLookY: boolean;
   /** Nur Abweichungen von der Standardbelegung */
@@ -27,6 +29,7 @@ export function defaultSettings(): Settings {
     volume: { master: 0.8, music: 0.7, sfx: 0.8, ambient: 0.6, voice: 0.8 },
     textScale: 1,
     showFps: false,
+    colorblind: false,
     touchControls: 'auto',
     invertLookY: false,
     keyBindings: {},
@@ -54,6 +57,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     },
     textScale: [1, 1.15, 1.3].includes(r.textScale) ? r.textScale : 1,
     showFps: typeof r.showFps === 'boolean' ? r.showFps : d.showFps,
+    colorblind: typeof r.colorblind === 'boolean' ? r.colorblind : false,
     touchControls: ['auto', 'on', 'off'].includes(r.touchControls) ? r.touchControls : 'auto',
     invertLookY: typeof r.invertLookY === 'boolean' ? r.invertLookY : false,
     keyBindings: r.keyBindings && typeof r.keyBindings === 'object' ? r.keyBindings : {},

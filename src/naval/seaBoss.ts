@@ -131,6 +131,11 @@ export class SeaBoss {
       const y = heightAt(x, z) + (this.sub * (arch + 1) - (1 - this.sub) * 10);
       this.segs[i].position.set(x, y, z);
     }
+    // Das Schiff wird vom Körper weggedrückt statt hindurchzufahren
+    if (ship && this.sub > 0.4) for (const sg of this.segs) {
+      const dx = ship.x - sg.position.x, dz = ship.z - sg.position.z, d = Math.hypot(dx, dz), min = 4 + ship.cls.W * 0.6;
+      if (d > 0.01 && d < min) { ship.x = sg.position.x + (dx / d) * min; ship.z = sg.position.z + (dz / d) * min; ship.speed *= 0.9; }
+    }
     const ha = this.ang + 0.22;
     const hx = this.cx + Math.cos(ha) * R, hz = this.cz + Math.sin(ha) * R;
     this.head.position.set(hx, heightAt(hx, hz) + this.sub * 6.5 - (1 - this.sub) * 12 + Math.sin(this.t * 1.7) * 0.6, hz);

@@ -33,8 +33,10 @@ import { EDGE_WALL } from '../data/world';
 import { QuestSystem, stepText } from '../story/questSystem';
 import type { QuestDef, TownNpcDef } from '../data/quests';
 import { ARMOR, BERNSTEINSEE, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, type IslandDef, type RegionDef } from '../data/regions';
-import { drawMap, type MapMarkers } from '../ui/minimap';
+import { drawMap, mapPalette, type MapMarkers } from '../ui/minimap';
 import { CREW_BY_ID } from '../data/crew';
+import { RARITY, rollTrinket, TRINKET_BY_ID, type Rarity } from '../data/trinkets';
+import { ACHIEVEMENTS } from '../data/achievements';
 import { ABYSS_LAIR } from '../naval/seaBoss';
 import { QUESTS, QUEST_BY_ID } from '../data/quests';
 import { hostileLegends, LEGEND_BY_ID, rankRows } from '../data/legends';
@@ -111,6 +113,7 @@ export class Game {
       const p = this.save.player;
       if (!e.companion) { this.save.progress.stats.sunk++; this.questEvent({ type: 'sink' }); }
       if (e.legendId) { this.defeatLegend(e.legendId, false); return; }
+      if (e.ghost && Math.random() < 0.4) this.dropTrinket('selten', 0.15);
       const mult = e.role === 'legende' ? 6 : e.role === 'haendler' ? 0.8 : e.ghost ? 2.5 : 1.4;
       this.grantXp(Math.round((25 + e.level * 10) * mult), e.role === 'legende' ? 250 : e.role === 'haendler' ? (p.faction === 'pirat' ? 4 : -6) : 8);
       if (e.role === 'legende') audio.play('win');
@@ -142,6 +145,7 @@ export class Game {
       setTimeout(() => this.overlay.showCutin('Der Tiefenschlund fällt!', '#9FE8FF'), 300);
       this.overlay.showBanner('Der Tiefenschlund ist besiegt!', `+${g.toLocaleString('de-DE')} Gold · Der Weg zur Schlundkrone ist frei`);
       this.grantXp(3000, 500);
+      this.dropTrinket('legendaer', 0, 'siegelsplitter');
       this.questEvent({ type: 'slay', target: 'tiefenschlund' });
     };
     this.world.onEnterIsland = (def) => this.enterIsland(def);
@@ -242,7 +246,7 @@ export class Game {
       if (this.input.pressed('map')) { this.state.set('pause'); this.menus.showMap('karte'); return; }
       if (this.input.pressed('potion')) this.usePotion();
       this.legendT -= dt;
-      if (this.legendT <= 0) { this.legendT = 1; this.updateLegends(); }
+      if (this.legendT <= 0) { this.legendT = 1; this.updateLegends(); this.checkAchievements(); }
       this.world.update(dt, this.input);
       if (this.save?.crew.hired.includes('cook') && this.world.mode === 'sail') { const sh = this.world.ship; if (sh.alive && sh.hull < sh.maxHull) sh.hull = Math.min(sh.maxHull, sh.hull + dt * 1.2); }
       if (this.save) this.save.meta.playTime += dt;
@@ -357,11 +361,12 @@ export class Game {
     if (wdef) this.world.setWeaponLook({ blade: wdef.col, glow: !!wdef.glow });
     const has = (id: string) => this.save!.crew.hired.includes(id);
     const up = this.save.ship.up;
-    // Crew-Boni wie in 1.0
-    const atkMult = (has('ram') ? 1.1 : 1) * (has('musik') ? 1.05 : 1);
+    const tb = (gear.trinket ? TRINKET_BY_ID[gear.trinket]?.bonus : null) ?? {};
+    // Crew-Boni wie in 1.0, dazu der Talisman
+    const atkMult = (has('ram') ? 1.1 : 1) * (has('musik') ? 1.05 : 1) * (1 + (tb.atk ?? 0));
     const weaponMult = has('schmied') ? 1.12 : 1;
-    this.world.setPlayerPower((PLAYER_BASE.hp(lvl) + armor) * hpBonus, (PLAYER_BASE.atk(lvl) + weapon * 0.5 * weaponMult) * atkMult);
-    this.world.shipSpeedMult = (has('nav') ? 1.15 : 1) * (has('esra') ? 1.1 : 1) * (1 + up.sail * 0.05);
+    this.world.setPlayerPower((PLAYER_BASE.hp(lvl) + armor) * hpBonus * (1 + (tb.hp ?? 0)), (PLAYER_BASE.atk(lvl) + weapon * 0.5 * weaponMult) * atkMult);
+    this.world.shipSpeedMult = (has('nav') ? 1.15 : 1) * (has('esra') ? 1.1 : 1) * (1 + up.sail * 0.05) * (1 + (tb.speed ?? 0));
     this.world.ship.turnMult = has('helm') ? 1.6 : 1;
     this.world.rangeMult = has('look') ? 1.25 : 1;
     const hullBonus = (has('carp') ? 40 : 0) + Math.round(SHIP_CLASSES[this.save.ship.tier].hp * up.hull * 0.15);
@@ -369,13 +374,14 @@ export class Game {
       this.world.hullBonus = hullBonus;
       this.world.setShip(this.save.ship.tier, this.save.ship.look, this.world.ship.ammo, this.world.ship.hull / Math.max(1, this.world.ship.maxHull), this.save.player.faction);
     }
-    if (this.world.faji && has('lehrer')) this.world.faji.passives.fajiRegen += 0.2;
+    if (this.world.faji) this.world.faji.extraRegen = (has('lehrer') ? 0.2 : 0) + (tb.faji ?? 0);
+    if (this.world.combat) this.world.combat.critChance = 0.1 + (this.world.faji?.passives.crit ?? 0) + (tb.crit ?? 0);
     const nav = this.world.naval;
     if (nav) {
       nav.playerLevel = lvl;
       nav.playerFaction = this.save.player.faction;
       nav.playerRank = rankIndex(this.save.player.fame);
-      nav.canDmg = (12 + lvl * 1.4) * (1 + this.save.ship.tier * 0.06) * (1 + up.can * 0.12) * (has('bruno') ? 1.2 : 1);
+      nav.canDmg = (12 + lvl * 1.4) * (1 + this.save.ship.tier * 0.06) * (1 + up.can * 0.12) * (has('bruno') ? 1.2 : 1) * (1 + (tb.cannon ?? 0));
       nav.reloadMult = has('gun') ? 0.7 : 1;
     }
     const c = this.save.crew;
@@ -385,7 +391,8 @@ export class Game {
   /** Gold-Bonus der Crew (Katze, Taucherin für Beute) */
   private goldMult(loot = false) {
     const h = this.save?.crew.hired ?? [];
-    return (h.includes('cat') ? 1.3 : 1) * (loot && h.includes('kiko') ? 1.5 : 1);
+    const t = this.save?.gear.trinket ? TRINKET_BY_ID[this.save.gear.trinket]?.bonus.gold ?? 0 : 0;
+    return (h.includes('cat') ? 1.3 : 1) * (loot && h.includes('kiko') ? 1.5 : 1) * (1 + t);
   }
 
   /** Angeln: Fang je nach Region, manchmal eine Flaschenpost */
@@ -393,6 +400,7 @@ export class Game {
     const s = this.save;
     if (!s) return;
     if (!caught) { this.hud.toast('Der Fisch ist weg …', 2); return; }
+    s.progress.flags.fish = Number(s.progress.flags.fish ?? 0) + 1;
     const lv = this.region.level ?? 1;
     const fishes = [['Sardine', 8], ['Makrele', 14], ['Bernsteinbarsch', 24], ['Nebelaal', 35], ['Glutforelle', 45], ['Sturmhai', 70], ['Tiefseeleuchter', 110]] as const;
     const roll = Math.random();
@@ -417,7 +425,7 @@ export class Game {
     const a = me[0] + me[1], b = him[0] + him[1];
     const face = (d: number[]) => d.map((x) => '⚀⚁⚂⚃⚄⚅'[x - 1]).join(' ');
     audio.play('dig');
-    if (a > b) { s.player.gold += bet; audio.play('coin'); this.persist(); return `Du: ${face(me)} (${a}) · Baldo: ${face(him)} (${b}) – Gewonnen! +${bet} Gold`; }
+    if (a > b) { s.player.gold += bet; s.progress.flags.dicewins = Number(s.progress.flags.dicewins ?? 0) + 1; audio.play('coin'); this.persist(); return `Du: ${face(me)} (${a}) · Baldo: ${face(him)} (${b}) – Gewonnen! +${bet} Gold`; }
     if (a < b) { s.player.gold -= bet; this.persist(); return `Du: ${face(me)} (${a}) · Baldo: ${face(him)} (${b}) – Verloren. −${bet} Gold`; }
     return `Du: ${face(me)} (${a}) · Baldo: ${face(him)} (${b}) – Unentschieden!`;
   }
@@ -438,8 +446,50 @@ export class Game {
       audio.play('treasure');
       setTimeout(() => this.overlay.showBanner(def.kind === 'boss' ? `${def.boss ?? 'Boss'} besiegt!` : 'Schatz der Ruine!', `+${gold.toLocaleString('de-DE')} Gold · +${sp} Faji-Punkt${sp > 1 ? 'e' : ''}`), 2600);
       if (def.kind === 'boss') this.grantXp(400 + lv * 60, 150 + lv * 25);
+      if (id === 'schlundkrone') this.dropTrinket('legendaer', 0, 'tiefenauge');
+      else this.dropTrinket(def.kind === 'boss' ? 'episch' : 'selten', lv * 0.01);
     }
     this.questEvent({ type: 'clear', island: id });
+  }
+
+  // ---------- Talismane und Erfolge ----------
+
+  /** Talisman als Beute; ein fester (id) oder zufällig ab einer Seltenheit */
+  private dropTrinket(min: Rarity, luck = 0, id?: string) {
+    const s = this.save;
+    if (!s) return;
+    const t = id ? TRINKET_BY_ID[id] : rollTrinket(min, luck, s.gear.trinkets);
+    if (!t || s.gear.trinkets.includes(t.id)) return;
+    s.gear.trinkets.push(t.id);
+    if (!s.gear.trinket) s.gear.trinket = t.id;
+    const r = RARITY[t.rarity];
+    audio.play('shard');
+    setTimeout(() => this.overlay.showBanner(`${r.mark} ${t.n}`, `Talisman gefunden (${r.n}) · ${t.d}`), 1200);
+    this.applyPower();
+    this.persist();
+  }
+
+  equipTrinket(id: string | null) {
+    const s = this.save;
+    if (!s || (id && !s.gear.trinkets.includes(id))) return;
+    s.gear.trinket = id;
+    this.applyPower();
+    this.persist();
+  }
+
+  private checkAchievements() {
+    const s = this.save;
+    if (!s) return;
+    for (const a of ACHIEVEMENTS) {
+      const k = `ach_${a.id}`;
+      if (s.progress.flags[k] || !a.check(s)) continue;
+      s.progress.flags[k] = true;
+      s.player.gold += a.gold;
+      if (a.fame) s.player.fame += a.fame;
+      audio.play('shard', 0.8);
+      this.hud.toast(`🏆 Erfolg: ${a.n}${a.gold ? ` · +${a.gold} Gold` : ''}`, 4);
+      return; // einer pro Prüfung, damit sie nicht übereinander erscheinen
+    }
   }
 
   // ---------- Legenden ----------
@@ -502,12 +552,14 @@ export class Game {
       s.player.gold += g;
       this.grantXp(200 + l.lvl * 30, Math.round(l.ruhm * 0.1));
       this.overlay.showBanner(`Revanche gewonnen!`, `${l.n} gibt sich geschlagen · +${g} Gold`);
+      this.dropTrinket('selten', 0.2);
     } else {
       s.legends.push(id);
       s.progress.flags[`beat_${id}`] = s.meta.playTime;
       const g = Math.round(l.ruhm * (boarded ? 0.9 : 0.6) * this.goldMult(true));
       s.player.gold += g;
       s.skills.sp++;
+      this.dropTrinket('episch', 0.1);
       setTimeout(() => this.overlay.showCutin('Legende besiegt!', '#FFD166'), 400);
       this.overlay.showBanner(`${l.n} ist besiegt!`, `+${g.toLocaleString('de-DE')} Gold und ein Faji-Punkt – du steigst in der Rangliste auf`);
       this.grantXp(300 + l.lvl * 40, Math.round(l.ruhm * 0.5));
@@ -763,6 +815,7 @@ export class Game {
       audio.play('treasure');
       this.overlay.showBanner('Schatz gefunden!', `${gold} Gold${shard ? ' und ein Faji-Splitter (+1 Faji-Punkt)' : ''}`);
       this.grantXp(40, 10);
+      if (Math.random() < 0.25) this.dropTrinket('gewoehnlich', 0.1);
     } else this.hud.toast('Gefunden!', 2);
     this.questEvent({ type: 'treasure', island });
     this.refreshDigs();
@@ -1248,6 +1301,8 @@ export class Game {
     this.input.setKeyBindings(s.keyBindings);
     this.input.invertY = s.invertLookY;
     audio.setVolumes(s.volume);
+    document.documentElement.classList.toggle('cb', s.colorblind);
+    mapPalette.colorblind = s.colorblind;
     this.updateTouchVisibility();
   }
 

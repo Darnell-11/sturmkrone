@@ -9,6 +9,9 @@ export interface MapMarkers {
   digs: { x: number; z: number }[];
 }
 
+/** Farbenblind-Modus (vom Spiel gesetzt) */
+export const mapPalette = { colorblind: false };
+
 const KIND_COLOR: Record<string, string> = { town: '#E3B04B', camp: '#C0503A', boss: '#8A2A3A', quiet: '#6DBB4C', treasure: '#6DBB4C', lighthouse: '#E8E2D4' };
 
 /** Zeichnet Seekarte (rund, um den Spieler) oder Weltkarte (ganz, mit Namen) in ein Canvas. */
@@ -57,9 +60,16 @@ export function drawMap(ctx: CanvasRenderingContext2D, size: number, islands: Is
     const x = X(d.x), y = Y(d.z);
     ctx.beginPath(); ctx.moveTo(x - 4, y - 4); ctx.lineTo(x + 4, y + 4); ctx.moveTo(x + 4, y - 4); ctx.lineTo(x - 4, y + 4); ctx.stroke();
   }
+  const cb = mapPalette.colorblind;
   for (const e of m.enemies) {
-    ctx.fillStyle = e.ally ? '#7CE07A' : e.legend ? '#FF4AFF' : '#FF5A4A';
-    ctx.beginPath(); ctx.arc(X(e.x), Y(e.z), e.legend ? 4 : 3, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = e.ally ? (cb ? '#3AA0FF' : '#7CE07A') : e.legend ? (cb ? '#FFFFFF' : '#FF4AFF') : (cb ? '#FF9A1A' : '#FF5A4A');
+    const x = X(e.x), y = Y(e.z), r = e.legend ? 4.5 : 3.2;
+    ctx.beginPath();
+    if (e.ally) ctx.arc(x, y, r, 0, Math.PI * 2);
+    else if (e.legend) { ctx.moveTo(x, y - r - 1); ctx.lineTo(x + r, y + r); ctx.lineTo(x - r, y + r); ctx.closePath(); }
+    else ctx.rect(x - r, y - r, r * 2, r * 2);
+    ctx.fill();
+    if (cb) { ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1; ctx.stroke(); }
   }
   if (m.target) {
     const tx = X(m.target.x), ty = Y(m.target.z);

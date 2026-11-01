@@ -11,6 +11,8 @@ import { downloadText, esc, formatDate, formatPlayTime, pickFile } from './dom';
 import { QUEST_BY_ID, TOWN_NPCS, type QuestDef, type ShopKind, type TownNpcDef } from '../data/quests';
 import { CREW, CREW_BY_ID, CREW_ROLE_LABEL } from '../data/crew';
 import { hostileLegends } from '../data/legends';
+import { RARITY, TRINKETS, TRINKET_BY_ID } from '../data/trinkets';
+import { ACHIEVEMENTS } from '../data/achievements';
 import { ARMOR, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, type IslandDef } from '../data/regions';
 import { stepText } from '../story/questSystem';
 import { drawMap } from './minimap';
@@ -113,7 +115,7 @@ export class Menus {
         ${g.persistent ? '' : '<p class="warn">Dein Browser erlaubt kein dauerhaftes Speichern (z. B. privater Modus). Spielstände gehen beim Schließen verloren – nutze „Exportieren“.</p>'}
         <button class="primary" data-a="play" data-focus>Spielen</button>
         <button class="secondary" data-a="settings">Einstellungen</button>
-        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Sturmkrone 2.0 – Vorabversion</p>
+        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Sturmkrone 2.0</p>
       </div>`,
       {
         play: () => this.showSlots(),
@@ -228,6 +230,7 @@ export class Menus {
       <button class="secondary" data-a="map">Karte &amp; Logbuch</button>
       <button class="secondary" data-a="crew">Crew</button>
       <button class="secondary" data-a="rank">Rangliste der Legenden</button>
+      <button class="secondary" data-a="loot">Talismane &amp; Erfolge</button>
       <button class="secondary" data-a="look">Aussehen ändern</button>
       <button class="secondary" data-a="settings">Einstellungen</button>
       <button class="secondary" data-a="workshop">Welt-Werkstatt (Test)</button>
@@ -239,6 +242,7 @@ export class Menus {
         map: () => this.showMap('logbuch', () => this.showPause()),
         crew: () => this.showCrew(() => this.showPause()),
         rank: () => this.showRanking(() => this.showPause()),
+        loot: () => this.showLoot(() => this.showPause()),
         settings: () => this.showSettings(() => this.showPause()),
         workshop: () => this.showWorkshop(),
         save: () => { g.hud.toast(g.persist() ? 'Gespeichert.' : 'Speichern fehlgeschlagen!'); },
@@ -422,6 +426,26 @@ export class Menus {
       <button class="primary" data-a="back" data-focus>Zurück</button>`,
       { accept: (qid) => { g.acceptQuest(qid); this.showCrewTalk(id, back, 'Versprochen! Das Ziel siehst du oben rechts.'); }, back },
       back,
+    );
+  }
+
+  showLoot(back: () => void) {
+    const g = this.game;
+    const s = g.saveData;
+    if (!s) return;
+    const re = () => { const y = this.screen.scrollTop; this.showLoot(back); this.screen.scrollTop = y; };
+    const got = ACHIEVEMENTS.filter((a) => s.progress.flags[`ach_${a.id}`]).length;
+    this.open(
+      `<h2 class="fell">Talismane &amp; Erfolge</h2>
+      <h3>Talismane (${s.gear.trinkets.length}/${TRINKETS.length})</h3>
+      <p class="soft small">Ein Talisman kann angelegt sein. Legenden, Bosse, Ruinen, Geisterschiffe und Schätze lassen welche fallen.</p>
+      ${s.gear.trinkets.length ? s.gear.trinkets.map((id) => { const t = TRINKET_BY_ID[id]; if (!t) return ''; const r = RARITY[t.rarity]; const on = s.gear.trinket === id; return `<div class="slot crew" style="--c:${r.col}"><div class="slot-head"><b>${r.mark} ${esc(t.n)}${on ? ' ✓' : ''}</b><span style="color:${r.col}">${r.n}</span></div><div class="meta">${esc(t.d)}</div>${on ? '' : `<button class="mini brass" data-a="eq" data-id="${id}">Anlegen</button>`}</div>`; }).join('') : '<p class="soft">Noch keine gefunden.</p>'}
+      <h3>Erfolge (${got}/${ACHIEVEMENTS.length})</h3>
+      <div class="ach">${ACHIEVEMENTS.map((a) => { const ok = !!s.progress.flags[`ach_${a.id}`]; const p = a.prog ? a.prog(s) : ok ? 1 : 0; return `<div class="ach-i${ok ? ' ok' : ''}"><b>${ok ? '🏆' : '🔒'} ${esc(a.n)}</b><span>${esc(a.d)}</span>${ok ? '' : `<div class="hud-bar"><i style="width:${Math.round(p * 100)}%;background:var(--brass)"></i></div>`}</div>`; }).join('')}</div>
+      <button class="primary" data-a="back" data-focus>Zurück</button>`,
+      { eq: (id) => { g.equipTrinket(id); re(); }, back },
+      back,
+      { wide: true },
     );
   }
 
@@ -726,9 +750,11 @@ export class Menus {
       body = `<div class="opt"><span class="label">Textgröße</span><div class="chips">
           ${[[1, 'Normal'], [1.15, 'Groß'], [1.3, 'Sehr groß']].map(([v, l]) => `<button data-a="text" data-id="${v}" aria-pressed="${s.textScale === v}">${l}</button>`).join('')}
         </div></div>
-        <div class="opt"><span class="label">Bildrate</span><div class="chips"><button data-a="fps" aria-pressed="${s.showFps}">FPS anzeigen</button></div></div>`;
+        <div class="opt"><span class="label">Bildrate</span><div class="chips"><button data-a="fps" aria-pressed="${s.showFps}">FPS anzeigen</button></div></div>
+        <div class="opt"><span class="label">Farben</span><div class="chips"><button data-a="cb" aria-pressed="${s.colorblind}">Farbenblind-freundlich</button></div><p class="soft small">Orange und Blau statt Rot und Grün, dazu eindeutige Formen auf der Karte.</p></div>`;
       handlers.text = (id) => { g.settings.update({ textScale: +id }); rerender(); };
       handlers.fps = () => { g.settings.update({ showFps: !s.showFps }); rerender(); };
+      handlers.cb = () => { g.settings.update({ colorblind: !s.colorblind }); rerender(); };
     }
 
     this.open(

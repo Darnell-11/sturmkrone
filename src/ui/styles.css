@@ -76,6 +76,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .icon-btn svg { width: 20px; height: 20px; fill: currentColor; }
 .hud-btns { display: flex; gap: 8px; }
 .hud { z-index: 4; }
+.screen { z-index: 6; }
 .hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .hud-mini { position: relative; width: 120px; height: 120px; border-radius: 50%; border: 0; padding: 0; background: none; }
 .hud-mini canvas { width: 100%; height: 100%; display: block; border-radius: 50%; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35); }
@@ -422,3 +423,13 @@ kbd {
 .story .dlg-line { font-size: 1.05rem; line-height: 1.6; text-align: left; }
 .cbt-banner { top: 30%; }
 .cbt-banner p { max-width: 640px; margin-left: auto; margin-right: auto; }
+.ach { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.ach-i { display: grid; gap: 3px; padding: 8px 10px; border-radius: 10px; background: rgba(0, 0, 0, 0.05); font-size: 0.82rem; }
+.ach-i span { color: var(--muted); font-size: 0.76rem; }
+.ach-i.ok { background: color-mix(in srgb, var(--brass) 22%, transparent); }
+.ach-i .hud-bar { height: 5px; }
+/* Farbenblind-freundlich: Rot wird Orange, Grün wird Blau */
+:root.cb { --seal: #E07A1F; }
+:root.cb .hud-bar.hp i { background: #E07A1F; }
+:root.cb .n-heal { color: #7FC8FF !important; }
+:root.cb .pip { background: #2B6CB0; }

@@ -1,6 +1,13 @@
 # Was ist neu
 
-## 2.0.0-rc1 – Das große 2.0-Update (01.11.2026)
+## 2.0.0 – Das große 2.0-Update (01.11.2026)
+
+**Neu seit der Vorabversion**
+- **Talismane** in vier Seltenheiten (Gewöhnlich, Selten, Episch, Legendär) als Beute von Legenden, Bossen, Ruinen, Geisterschiffen und Schätzen. Einer ist angelegt und gibt Angriff, Leben, Krit, Gold, Faji oder Kanonenkraft.
+- **32 Erfolge** mit Fortschrittsbalken und Belohnung
+- **Farbenblind-freundlicher Modus** (Einstellungen → Anzeige): Orange und Blau statt Rot und Grün, eindeutige Formen auf der Karte
+- Der Tiefenschlund schiebt dein Schiff zur Seite, statt hindurchzugleiten.
+- Banner liegen nicht mehr über offenen Menüs.
 
 **Spielgefühl wie in 1.0 – und besser**
 - **Segeln:** so schnell und direkt wie in 1.0 (doppelt so schnell wie vorher). Gas stufenlos per W/S oder Stick, schnellere Wenden.
