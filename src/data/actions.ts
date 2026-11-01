@@ -1,7 +1,7 @@
 // Alle Spielaktionen. Das Spiel fragt nur Aktionen ab, nie konkrete Tasten.
 export const ACTION_IDS = [
   'up', 'down', 'left', 'right',
-  'attack', 'heavy', 'dodge', 'interact',
+  'attack', 'heavy', 'dodge', 'interact', 'block', 'lockon',
   'fireLeft', 'fireRight',
   'skill1', 'skill2', 'skill3',
   'pause',
@@ -18,6 +18,8 @@ export const ACTION_LABELS: Record<ActionId, string> = {
   heavy: 'Schwerer Angriff',
   dodge: 'Ausweichen / Schub',
   interact: 'Aktion',
+  block: 'Blocken / Parade',
+  lockon: 'Ziel erfassen',
   fireLeft: 'Breitseite links',
   fireRight: 'Breitseite rechts',
   skill1: 'Fähigkeit 1',
@@ -36,6 +38,8 @@ export const DEFAULT_KEYS: Record<ActionId, string[]> = {
   heavy: ['KeyK'],
   dodge: ['Space', 'ShiftLeft'],
   interact: ['KeyR', 'Enter'],
+  block: ['KeyL', 'KeyC'],
+  lockon: ['KeyT', 'Tab'],
   fireLeft: ['KeyQ'],
   fireRight: ['KeyE'],
   skill1: ['Digit1'],
@@ -54,11 +58,13 @@ export const DEFAULT_PAD: Record<ActionId, number[]> = {
   heavy: [3],
   dodge: [1],
   interact: [2],
+  block: [4],
+  lockon: [11],
   fireLeft: [4],
   fireRight: [5],
   skill1: [6],
   skill2: [7],
-  skill3: [11],
+  skill3: [5],
   pause: [9],
 };
 

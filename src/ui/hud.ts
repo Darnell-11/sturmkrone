@@ -6,6 +6,9 @@ export class Hud {
   private subEl: HTMLElement;
   private fpsEl: HTMLElement;
   private envEl: HTMLElement;
+  private hpEl: HTMLElement;
+  private xpEl: HTMLElement;
+  private goldEl: HTMLElement;
   private ctxEl: HTMLButtonElement;
   private ctxText = '';
   onContext: (down: boolean) => void = () => {};
@@ -23,6 +26,8 @@ export class Hud {
       <div class="hud-panel">
         <div class="hud-name"></div>
         <div class="hud-sub"></div>
+        <div class="hud-bars"><div class="hud-bar hp" title="Leben"><i></i></div><div class="hud-bar xp" title="Erfahrung"><i></i></div></div>
+        <div class="hud-gold"></div>
         <div class="hud-env"></div>
         <div class="hud-fps" hidden></div>
       </div>
@@ -32,6 +37,9 @@ export class Hud {
     this.subEl = this.root.querySelector('.hud-sub')!;
     this.fpsEl = this.root.querySelector('.hud-fps')!;
     this.envEl = this.root.querySelector('.hud-env')!;
+    this.hpEl = this.root.querySelector('.hud-bar.hp i')!;
+    this.xpEl = this.root.querySelector('.hud-bar.xp i')!;
+    this.goldEl = this.root.querySelector('.hud-gold')!;
     this.root.querySelector('button')!.addEventListener('click', () => this.onPause());
 
     this.hintEl = document.createElement('div');
@@ -70,6 +78,15 @@ export class Hud {
     this.ctxText = text;
     this.ctxEl.hidden = !label || this.root.hidden;
     this.ctxEl.innerHTML = text;
+  }
+
+  setStats(hpFrac: number, xpFrac: number, gold: number) {
+    const hp = `${Math.max(0, Math.min(1, hpFrac)) * 100}%`;
+    const xp = `${Math.max(0, Math.min(1, xpFrac)) * 100}%`;
+    if (this.hpEl.style.width !== hp) this.hpEl.style.width = hp;
+    if (this.xpEl.style.width !== xp) this.xpEl.style.width = xp;
+    const g = `Gold ${Math.round(gold).toLocaleString('de-DE')}`;
+    if (this.goldEl.textContent !== g) this.goldEl.textContent = g;
   }
 
   setEnv(text: string) {

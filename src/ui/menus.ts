@@ -104,7 +104,7 @@ export class Menus {
         ${g.persistent ? '' : '<p class="warn">Dein Browser erlaubt kein dauerhaftes Speichern (z. B. privater Modus). Spielstände gehen beim Schließen verloren – nutze „Exportieren“.</p>'}
         <button class="primary" data-a="play" data-focus>Spielen</button>
         <button class="secondary" data-a="settings">Einstellungen</button>
-        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Meilenstein 2 „Charaktere“</p>
+        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Meilenstein 3 „Kampf 2.0“</p>
       </div>`,
       {
         play: () => this.showSlots(),

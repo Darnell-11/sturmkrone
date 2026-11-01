@@ -1,5 +1,35 @@
 # Was ist neu
 
+## 2.0.0-m3 – Meilenstein 3 „Kampf 2.0“ (01.11.2026)
+
+- **Echtes Kampfsystem zu Fuß:** Jeder Schlag hat eigene Trefferzeit, Reichweite und Winkel. Kombos mit Zeitfenster, Schritt nach vorn bei jedem Hieb.
+- **Kampfstile:**
+  - Faustkämpfer mit Luftkombos (Tritt schleudert Gegner hoch)
+  - Säbel, Langklinge, Zweihänder und Doppelklingen mit je eigener Kombo
+  - Faji-Wirker mit zielsuchenden Geschossen
+- **Schwer gedrückt halten = Aufladeangriff** mit Cut-in-Banner, kurz drücken = schwerer Angriff
+- **Ausweichrolle** mit Unverwundbarkeit, **Blocken** und **perfekte Parade** (im richtigen Moment blocken: Gegner taumelt, Zeitlupe)
+- **Zielerfassung** (T / Tab / R3 / Knopf „Ziel“): Die Kamera hält das Ziel im Blick, Angriffe richten sich darauf aus.
+- **Haltesystem:** Schwere Gegner taumeln erst nach genug Druck („Haltung gebrochen!“).
+- **7 Gegnertypen** mit Warnzeichen vor jedem Angriff:
+  - Matrose
+  - Schildträger, der Angriffe von vorn abwehrt
+  - Musketier mit Ziellaser
+  - Schläger mit Flächenschlag
+  - Faji-Wirker mit Geschossen und Warnkreisen
+  - Hauptmann
+  - Legende als Boss mit drei Phasen und Boss-Leiste
+- **Gegnerlager auf den Inseln.** Die Stärke steigt mit der Entfernung zur Mitte. Höchstens zwei Gegner greifen gleichzeitig an, die anderen umkreisen dich.
+- **Effekte:**
+  - Trefferpausen und Kamerawackeln
+  - Trefferfunken im Anime-Stil und Schmier-Bögen bei Schwerthieben
+  - Speedlines, Impact-Frames, Schockwellen und Bodenrisse
+  - Rote Vignette bei Treffern auf dich
+  - Schadenszahlen mit Krits und Kombo-Zähler
+- **Fortschritt:** Erfahrung, Stufenaufstieg mit Banner, Ruhm und Ränge, Gold-Münzen zum Einsammeln
+- **K.O.:** Die Crew rettet dich an Bord, dabei gehen 10 % Gold verloren.
+- **Übungspuppen** auf der Startinsel
+
 ## 2.0.0-m2 – Meilenstein 2 „Charaktere“ (01.11.2026)
 
 - **Echte animierte Figuren:** eigene Anime-Figuren auf dem KayKit-Skelett mit 132 Animationen (CC0), darunter Gehen, Rennen, Rolle, Kombos je Kampfstil, Treffer, Jubeln, Winken, Sitzen, Steuern, Arbeiten und Angeln

@@ -74,6 +74,41 @@ function orb(color: string): Group {
 
 export interface HeldWeapons { right: Object3D | null; left: Object3D | null }
 
+function musket(): Group {
+  const g = new Group();
+  const stock = new Mesh(new BoxGeometry(0.07, 0.5, 0.11), toon('#7A4A22'));
+  stock.position.y = -0.1;
+  const barrel = new Mesh(new CylinderGeometry(0.025, 0.03, 0.95, 8), toon({ color: '#3A3A44', spec: 1 }));
+  barrel.position.y = 0.5;
+  const band = new Mesh(new TorusGeometry(0.035, 0.012, 6, 10), toon({ color: GUARD, spec: 0.8 }));
+  band.rotation.x = Math.PI / 2;
+  band.position.y = 0.3;
+  g.add(stock, barrel, band);
+  addOutlines(g, 0.7);
+  return g;
+}
+
+function shield(color = '#7A1F1A'): Group {
+  const g = new Group();
+  const disc = new Mesh(new CylinderGeometry(0.42, 0.42, 0.06, 20), toon(color));
+  disc.rotation.z = Math.PI / 2;
+  const rim = new Mesh(new TorusGeometry(0.42, 0.03, 6, 24), toon({ color: '#9AA0AA', spec: 1 }));
+  rim.rotation.y = Math.PI / 2;
+  const boss = new Mesh(new SphereGeometry(0.1, 10, 8), toon({ color: GUARD, spec: 1 }));
+  boss.position.x = -0.05;
+  g.add(disc, rim, boss);
+  g.position.set(-0.08, 0.05, 0);
+  addOutlines(g, 0.7);
+  return g;
+}
+
+/** Waffen für Gegner (zusätzlich Muskete und Schild) */
+export function enemyWeapons(kind: StyleId | 'muskete' | 'schild'): HeldWeapons {
+  if (kind === 'muskete') return { right: inHand(musket()), left: null };
+  if (kind === 'schild') return { right: inHand(sword(0.7, 0.09, 0.1, { blade: '#B8C0C8' })), left: shield() };
+  return weaponsFor(kind, { blade: '#B8C0C8' });
+}
+
 /** In der Handhalterung zeigt +Y entlang der Finger – Klinge um 90° nach vorn kippen. */
 function inHand(o: Object3D): Object3D {
   const g = new Group();

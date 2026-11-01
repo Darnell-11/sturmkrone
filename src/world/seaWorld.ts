@@ -29,6 +29,21 @@ import { IslandGround, type WalkIsland } from './islandGround';
 import type { IslandShape } from './ocean';
 import { ParticleSystem } from './particles';
 import { seeded } from './waves';
+import { CombatFx } from '../combat/fx';
+import { CombatSystem } from '../combat/combat';
+import type { EnemyKind } from '../data/combat';
+import type { Faction } from '../core/save/types';
+import type { CombatOverlay } from '../ui/combatOverlay';
+import type { Enemy } from '../entities/enemy';
+
+/** Gegnerlager je Inselstufe */
+const CAMP_BY_LEVEL: EnemyKind[][] = [
+  ['matrose', 'matrose', 'musketier'],
+  ['matrose', 'matrose', 'schildtraeger', 'musketier'],
+  ['matrose', 'schildtraeger', 'musketier', 'fajiwirker', 'matrose'],
+  ['matrose', 'schildtraeger', 'musketier', 'fajiwirker', 'schlaeger'],
+  ['hauptmann', 'matrose', 'schildtraeger', 'musketier', 'fajiwirker', 'schlaeger'],
+];
 
 const MAX_SPEED = 16;
 const GRAVITY = 9.8;
@@ -62,6 +77,18 @@ export class SeaWorld {
 
   onMessage: (text: string) => void = () => {};
   onModeChange: (mode: SeaMode) => void = () => {};
+  onKill: (e: Enemy) => void = () => {};
+  onGold: (n: number) => void = () => {};
+  onPlayerDown: () => void = () => {};
+  /** Angeforderte Trefferpause (vom Spiel in Echtzeit abgearbeitet) */
+  hitstop = { t: 0, scale: 0.05 };
+  combat: CombatSystem | null = null;
+  playerFaction: Faction = 'pirat';
+  private fx: CombatFx | null = null;
+  private overlay: CombatOverlay | null = null;
+  private dust: ParticleSystem;
+  private cleared = new Map<number, number>();
+  private downT = 0;
 
   private boat: Group;
   private lantern: Mesh;
@@ -132,6 +159,7 @@ export class SeaWorld {
     }
     this.spray = new ParticleSystem(this.scene, false, 0.8);
     this.sparks = new ParticleSystem(this.scene, true, 0.5);
+    this.dust = new ParticleSystem(this.scene, false, 0.9);
   }
 
   // ---------- Aufbau ----------
@@ -148,7 +176,7 @@ export class SeaWorld {
       const dist = 200 + rnd() * 1450;
       const x = Math.cos(ang) * dist, z = Math.sin(ang) * dist;
       if (Math.hypot(x, z - 70) < 160) continue;
-      specs.push({ x, z, r: 14 + rnd() * 30, hill: 0.35 + rnd() * 0.35, palms: 2 + Math.floor(rnd() * 4), tower: specs.length === 1 });
+      specs.push({ x, z, r: 18 + rnd() * 26, hill: 0.14 + rnd() * 0.16, palms: 2 + Math.floor(rnd() * 4), tower: specs.length === 1 });
     }
 
     const sand = toon(0xf1d9a0);
@@ -247,11 +275,30 @@ export class SeaWorld {
   }
 
   /** Spielfigur und Bewohner erzeugen, sobald die Figuren-Daten geladen sind */
-  setCharacters(assets: CharacterAssets, look: CharacterLook, style: StyleId) {
+  setCharacters(assets: CharacterAssets, look: CharacterLook, style: StyleId, overlay?: CombatOverlay) {
     this.player?.dispose();
     this.player = new Character(assets, look, true);
     this.scene.add(this.player.holder);
-    this.foot = new PlayerFoot(this.player, style);
+    if (overlay) this.overlay = overlay;
+    if (!this.combat && this.overlay) {
+      this.fx = new CombatFx(this.scene, this.sparks, this.dust);
+      this.combat = new CombatSystem(this.scene, this.fx, this.overlay, assets, this.ground, {
+        hitstop: (t, scale = 0.05) => { this.hitstop.t = Math.max(this.hitstop.t, t); this.hitstop.scale = Math.min(this.hitstop.scale, scale); },
+        shake: (a) => { this.shake = Math.max(this.shake, a); },
+        kill: (e) => this.onKill(e),
+        gold: (n) => this.onGold(n),
+        message: (t) => this.onMessage(t),
+      });
+      const home = this.ground.islands[0];
+      this.combat.addDummy(home.x + 6, home.z - home.r * 0.55);
+      this.combat.addDummy(home.x - 6, home.z - home.r * 0.55);
+    }
+    this.combat?.leaveIsland();
+    this.foot = new PlayerFoot(this.player, style, {
+      combat: this.combat, fx: this.fx, overlay: this.overlay,
+      onDown: () => { this.downT = 3.2; this.onPlayerDown(); },
+    });
+    if (this.combat) this.combat.player = this.foot;
     this.equip(style);
     this.attachToHelm();
 
@@ -295,6 +342,8 @@ export class SeaWorld {
     this.env.applyQuality(c);
     this.spray.scale = c.particles;
     this.sparks.scale = c.particles;
+    this.dust.scale = c.particles;
+    if (this.fx) this.fx.scale = c.particles;
   }
 
   // ---------- Spielstand ----------
@@ -315,8 +364,28 @@ export class SeaWorld {
     this.camYaw = 0;
     this.wake = [];
     this.balls.forEach((b) => { b.alive = false; b.mesh.visible = false; });
-    if (this.mode === 'foot') this.setMode('sail');
+    if (this.mode === 'foot') {
+      this.combat?.leaveIsland();
+      if (this.foot) { this.foot.onFoot = false; this.foot.revive(); }
+      this.downT = 0;
+      this.setMode('sail');
+    }
   }
+
+  /** Lebenspunkte und Angriffskraft der Spielfigur (aus Stufe und Ausrüstung) */
+  setPlayerPower(maxHp: number, atk: number) {
+    if (this.foot) {
+      const frac = this.foot.maxHp > 0 ? this.foot.hp / this.foot.maxHp : 1;
+      this.foot.maxHp = maxHp;
+      this.foot.hp = Math.max(1, Math.round(maxHp * frac));
+    }
+    if (this.combat) this.combat.atk = atk;
+  }
+
+  /** Volle Heilung (Stufenaufstieg, Rast) */
+  healPlayer() { if (this.foot) this.foot.hp = this.foot.maxHp; }
+
+  get playerHp() { return this.foot ? { hp: this.foot.hp, max: this.foot.maxHp } : null; }
 
   /** Testwerkzeug: Schiff an eine Position setzen */
   teleport(x: number, z: number, heading: number) {
@@ -344,8 +413,20 @@ export class SeaWorld {
     this.updateBalls(dt);
     this.spray.update(dt);
     this.sparks.update(dt);
+    this.dust.update(dt);
     this.updateNpcs(dt);
+    this.combat?.update(dt, this.camera);
+    this.fx?.update(dt);
     this.player?.update(dt);
+    // Nach K.O. bringt die Crew dich an Bord
+    if (this.downT > 0) {
+      this.downT -= dt;
+      if (this.downT <= 0) {
+        this.foot?.revive();
+        this.embark();
+        this.onMessage('Deine Crew hat dich an Bord gezogen.');
+      }
+    }
     for (const f of this.flashes) {
       if (f.life <= 0) continue;
       f.life -= dt;
@@ -427,9 +508,16 @@ export class SeaWorld {
     this.footYaw -= ld.x * 0.006 + la.x * 2.4 * dt;
     this.footPitch = MathUtils.clamp(this.footPitch + ld.y * 0.004 + la.y * 1.5 * dt, 0.05, 1.2);
     this.footDist = MathUtils.clamp(this.footDist + input.zoomDelta() * 0.8, 3.5, 14);
-    f.update(dt, input, this.footYaw, this.ground);
-    // Kamera folgt beim Rennen sanft hinter die Figur
-    if (f.speed > 4 && !(ld.x || la.x)) {
+    const c = this.combat;
+    if (c && input.pressed('lockon')) c.toggleLock(f.x, f.z, this.footYaw);
+    const lock = c?.lock?.alive ? c.lock : null;
+    const lockYaw = lock ? Math.atan2(lock.x - f.x, lock.z - f.z) : null;
+    f.update(dt, input, this.footYaw, this.ground, lockYaw);
+    if (lockYaw !== null && !(ld.x || la.x)) {
+      // Erfasstes Ziel: Kamera hinter die Figur, Blick aufs Ziel
+      const diff = MathUtils.euclideanModulo(lockYaw - this.footYaw + Math.PI, Math.PI * 2) - Math.PI;
+      this.footYaw += diff * Math.min(1, dt * 4);
+    } else if (f.speed > 4 && !(ld.x || la.x)) {
       const diff = MathUtils.euclideanModulo(f.yaw - this.footYaw + Math.PI, Math.PI * 2) - Math.PI;
       if (Math.abs(diff) < 2.2) this.footYaw += diff * Math.min(1, dt * 0.8);
     }
@@ -463,12 +551,40 @@ export class SeaWorld {
     this.speed = 0;
     this.scene.add(this.player.holder);
     this.foot.place(p.x, p.z, Math.atan2(isl.x - p.x, isl.z - p.z), this.ground);
+    this.foot.onFoot = true;
     this.footYaw = this.foot.yaw;
     this.setMode('foot');
-    this.onMessage('Land unter den Füßen!');
+    this.spawnCamp(isl);
+  }
+
+  /** Gegnerlager der Insel (Startinsel ist friedlich, die fernste Insel gehört einer Legende) */
+  private spawnCamp(isl: WalkIsland) {
+    const c = this.combat;
+    const idx = this.ground.islands.indexOf(isl);
+    if (!c || idx <= 0) { this.onMessage(idx === 0 ? 'Willkommen auf der Startinsel! Probier deine Kombos an den Puppen.' : 'Land unter den Füßen!'); return; }
+    const until = this.cleared.get(idx) ?? 0;
+    if (until > this.env.clock) { this.onMessage('Diese Insel ist ruhig – fürs Erste.'); return; }
+    let far = 1;
+    this.ground.islands.forEach((i, k) => { if (Math.hypot(i.x, i.z) > Math.hypot(this.ground.islands[far].x, this.ground.islands[far].z)) far = k; });
+    const enemyFaction: Faction = this.playerFaction === 'pirat' ? 'marine' : 'pirat';
+    if (idx === far) {
+      c.enterIsland(isl, ['legende', 'matrose', 'musketier'], 6, enemyFaction, this.playerFaction === 'pirat' ? 'Kapitän Jorin Weiß' : 'Bram Eisenzahn');
+      this.onMessage('Eine Legende erwartet dich!');
+      return;
+    }
+    const level = Math.max(1, Math.min(8, 1 + Math.floor(Math.hypot(isl.x, isl.z) / 320)));
+    c.enterIsland(isl, CAMP_BY_LEVEL[Math.min(CAMP_BY_LEVEL.length - 1, level - 1)], level, enemyFaction);
+    this.onMessage(`Feindliches Lager! (Stufe ${level})`);
   }
 
   private embark() {
+    const c = this.combat;
+    if (c?.activeIsland) {
+      const idx = this.ground.islands.indexOf(c.activeIsland);
+      if (c.hostilesLeft === 0) this.cleared.set(idx, this.env.clock + 300);
+      c.leaveIsland();
+    }
+    if (this.foot) this.foot.onFoot = false;
     this.setMode('sail');
     this.onMessage('Leinen los!');
   }
@@ -487,6 +603,8 @@ export class SeaWorld {
     this.updateWake(dt);
     this.spray.update(dt);
     this.sparks.update(dt);
+    this.dust.update(dt);
+    this.fx?.update(dt);
     this.updateNpcs(dt);
     this.player?.update(dt);
   }
