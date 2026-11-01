@@ -111,7 +111,7 @@ export class Game {
       const p = this.save.player;
       if (!e.companion) { this.save.progress.stats.sunk++; this.questEvent({ type: 'sink' }); }
       if (e.legendId) { this.defeatLegend(e.legendId, false); return; }
-      const mult = e.role === 'legende' ? 6 : e.role === 'haendler' ? 0.8 : 1.4;
+      const mult = e.role === 'legende' ? 6 : e.role === 'haendler' ? 0.8 : e.ghost ? 2.5 : 1.4;
       this.grantXp(Math.round((25 + e.level * 10) * mult), e.role === 'legende' ? 250 : e.role === 'haendler' ? (p.faction === 'pirat' ? 4 : -6) : 8);
       if (e.role === 'legende') audio.play('win');
       this.overlay.showBanner(e.role === 'legende' ? `${e.name} besiegt!` : 'Schiff versenkt!', e.role === 'haendler' ? 'Ein Handelsschiff' : '');
@@ -132,6 +132,7 @@ export class Game {
     this.world.onTalk = (npc) => this.talkTo(npc);
     this.world.onHarbor = (def) => this.openHarbor(def);
     this.world.onEnterRegion = (r) => this.enterRegion(r);
+    this.world.onFish = (caught) => this.fishResult(caught);
     this.world.onSeaBossDown = () => {
       if (!this.save) return;
       audio.play('win');
@@ -352,6 +353,8 @@ export class Game {
     const gear = this.save.gear;
     const armor = ARMOR[gear.armor]?.hp ?? 0;
     const weapon = WEAPONS[gear.weapon]?.dmg ?? 0;
+    const wdef = WEAPONS[gear.weapon];
+    if (wdef) this.world.setWeaponLook({ blade: wdef.col, glow: !!wdef.glow });
     const has = (id: string) => this.save!.crew.hired.includes(id);
     const up = this.save.ship.up;
     // Crew-Boni wie in 1.0
@@ -385,6 +388,40 @@ export class Game {
     return (h.includes('cat') ? 1.3 : 1) * (loot && h.includes('kiko') ? 1.5 : 1);
   }
 
+  /** Angeln: Fang je nach Region, manchmal eine Flaschenpost */
+  private fishResult(caught: boolean) {
+    const s = this.save;
+    if (!s) return;
+    if (!caught) { this.hud.toast('Der Fisch ist weg …', 2); return; }
+    const lv = this.region.level ?? 1;
+    const fishes = [['Sardine', 8], ['Makrele', 14], ['Bernsteinbarsch', 24], ['Nebelaal', 35], ['Glutforelle', 45], ['Sturmhai', 70], ['Tiefseeleuchter', 110]] as const;
+    const roll = Math.random();
+    if (roll < 0.06) { this.findBottle(); return; }
+    const idx = Math.min(fishes.length - 1, Math.floor(Math.random() * 3) + Math.floor(lv / 3));
+    const [n, v] = fishes[idx];
+    const gold = Math.round(v * this.goldMult());
+    s.player.gold += gold;
+    if (s.gear.potions < POTION.max && Math.random() < 0.4) { s.gear.potions++; this.hud.toast(`Gefangen: ${n}! +${gold} Gold und +1 Proviant`, 3); }
+    else this.hud.toast(`Gefangen: ${n}! +${gold} Gold`, 3);
+    audio.play('coin');
+    this.grantXp(6 + idx * 4, 0);
+  }
+
+  /** Würfeln in der Taverne: zwei Würfel gegen Baldo */
+  dice(bet: number): string {
+    const s = this.save;
+    if (!s) return '';
+    if (s.player.gold < bet) return 'Dafür reicht dein Gold nicht.';
+    const r = () => 1 + Math.floor(Math.random() * 6);
+    const me = [r(), r()], him = [r(), r()];
+    const a = me[0] + me[1], b = him[0] + him[1];
+    const face = (d: number[]) => d.map((x) => '⚀⚁⚂⚃⚄⚅'[x - 1]).join(' ');
+    audio.play('dig');
+    if (a > b) { s.player.gold += bet; audio.play('coin'); this.persist(); return `Du: ${face(me)} (${a}) · Baldo: ${face(him)} (${b}) – Gewonnen! +${bet} Gold`; }
+    if (a < b) { s.player.gold -= bet; this.persist(); return `Du: ${face(me)} (${a}) · Baldo: ${face(him)} (${b}) – Verloren. −${bet} Gold`; }
+    return `Du: ${face(me)} (${a}) · Baldo: ${face(him)} (${b}) – Unentschieden!`;
+  }
+
   private islandCleared(id: string) {
     const s = this.save;
     if (!s) return;
@@ -411,6 +448,18 @@ export class Game {
   private updateLegends() {
     const s = this.save;
     const nav = this.world.naval;
+    // Geisterschiffe: nachts im Nebelarchipel
+    if (s && nav) {
+      const night = this.world.env.time < 5 || this.world.env.time > 21;
+      const ghosts = nav.enemies.filter((e) => e.ghost && e.ship.alive).length;
+      if (!night && ghosts) nav.clearGhosts();
+      else if (night && this.region.id === 'nebel' && this.world.mode === 'sail' && ghosts < 2 && Math.random() < 0.03) {
+        if (nav.spawnGhost(this.world.playerPos.x, this.world.playerPos.z, Math.max(5, s.player.level))) {
+          audio.play('roar', 0.5);
+          this.overlay.showBanner('Ein Geisterschiff!', 'Aus dem Nebel gleitet ein Schiff ohne Crew …');
+        }
+      }
+    }
     if (s) this.world.bossWanted = !s.progress.flags.tiefenschlund && s.progress.quests.some((p) => QUEST_BY_ID[p.id]?.steps[p.step]?.type === 'slay');
     if (!s || !nav || this.world.mode !== 'sail' || !s.progress.done.includes('k1')) return;
     const pos = this.world.playerPos;
@@ -1095,6 +1144,8 @@ export class Game {
     data.player.look = r.look;
     if (!this.saves.save(slot, data)) this.hud.toast('Speichern nicht möglich – Speicher voll?');
     this.enterPlay(slot, data);
+    this.quests?.accept('k0');
+    this.persist();
     this.hud.toast(r.faction === 'pirat' ? 'Leinen los, Schiffsjunge!' : 'Willkommen an Bord, Rekrut!', 3);
   }
 
@@ -1131,7 +1182,7 @@ export class Game {
     this.loop.resetClock();
     this.touch.setLayout(TOUCH_SEA);
     this.hud.hint(this.controlsHint(), 12);
-    if (!data.progress.quests.length && !data.progress.done.length) setTimeout(() => this.hud.toast('Leg in Ankerglück an und sprich mit Hafenmeisterin Ilse!', 5), 4000);
+
   }
 
   pause() {

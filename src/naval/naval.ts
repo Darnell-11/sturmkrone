@@ -38,6 +38,8 @@ export interface EnemyShip {
   companion?: boolean;
   /** Legende der Rangliste */
   legendId?: string;
+  /** Geisterschiff (nur nachts im Nebelarchipel) */
+  ghost?: boolean;
 }
 
 interface Ball { mesh: Mesh; vel: Vector3; owner: Ship; dmg: number; ammo: AmmoId; life: number }
@@ -176,6 +178,41 @@ export class NavalSystem {
     const e: EnemyShip = { ship, role: 'legende', level: l.lvl + levelBonus, state: 'engage', wander: { x, z }, aiT: 0, name: l.n, legendId: l.id };
     this.enemies.push(e);
     return e;
+  }
+
+  /** Geisterschiff: durchscheinend, leuchtend, jagt den Spieler */
+  spawnGhost(px: number, pz: number, level: number) {
+    for (let tries = 0; tries < 8; tries++) {
+      const a = Math.random() * Math.PI * 2, d = 220 + Math.random() * 80;
+      const x = px + Math.cos(a) * d, z = pz + Math.sin(a) * d;
+      if (this.ground.islandAt(x, z, 40)) continue;
+      const look = DEFAULT_SHIP_LOOK('pirat');
+      look.hull = '#2A3A3A'; look.sail = '#BFEFE4'; look.stripe = '#7FE0C8'; look.flagColor = '#1E1A20'; look.lanterns = true;
+      const ship = new Ship(this.scene, Math.min(4, 1 + Math.floor(level / 3)), look, 'pirat', 120);
+      ship.model.group.traverse((o) => {
+        const m = o as Mesh;
+        if (!m.isMesh || Array.isArray(m.material)) return;
+        const mat = m.material.clone() as MeshBasicMaterial;
+        mat.transparent = true; mat.opacity = 0.62; mat.depthWrite = false;
+        if ('emissive' in mat) (mat as unknown as { emissive: Color }).emissive.set('#1E5A50');
+        m.material = mat;
+      });
+      ship.x = x; ship.z = z; ship.heading = Math.atan2(px - x, pz - z);
+      ship.prev = { x, z, heading: ship.heading };
+      this.enemies.push({ ship, role: 'jaeger', level, state: 'engage', wander: { x, z }, aiT: 0, name: 'Geisterschiff', ghost: true });
+      this.spray.emit(60, x, 1, z, { speed: 3, up: 4, life: 2.5, color: new Color(0.6, 1, 0.9), gravity: -0.5, spread: 8 });
+      return true;
+    }
+    return false;
+  }
+
+  /** Bei Tagesanbruch lösen sich Geisterschiffe auf */
+  clearGhosts() {
+    for (const e of this.enemies) if (e.ghost && e.ship.alive) {
+      this.spray.emit(60, e.ship.x, 2, e.ship.z, { speed: 3, up: 5, life: 2.5, color: new Color(0.6, 1, 0.9), gravity: -0.5, spread: 8 });
+      e.ship.dispose();
+      e.ship.sinking = 99;
+    }
   }
 
   /** Begleitschiffe ab höheren Rängen */

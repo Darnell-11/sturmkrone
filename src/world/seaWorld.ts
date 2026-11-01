@@ -101,6 +101,9 @@ export class SeaWorld {
   onHarbor: (def: IslandDef) => void = () => {};
   onEnterRegion: (r: RegionDef) => void = () => {};
   onSeaBossDown: () => void = () => {};
+  /** Angeln: true = Fang, false = abgebrochen oder zu spät */
+  onFish: (caught: boolean) => void = () => {};
+  private fishing: { wait: number; bite: number } | null = null;
   /** Soll der Tiefenschlund erscheinen (Kapitel 7)? */
   bossWanted = false;
   seaBoss: SeaBoss | null = null;
@@ -427,9 +430,17 @@ export class SeaWorld {
     if (this.mode === 'sail') this.player.play('steer', { fade: 0.01 });
   }
 
+  /** Aussehen der gekauften Klinge */
+  weaponLook: { blade: string; glow?: boolean } = { blade: '#C9D2DA' };
+  setWeaponLook(look: { blade: string; glow?: boolean }) {
+    if (look.blade === this.weaponLook.blade && look.glow === this.weaponLook.glow) return;
+    this.weaponLook = look;
+    this.equip(this.style);
+  }
+
   private equip(style: StyleId) {
     if (!this.player) return;
-    const w = weaponsFor(style);
+    const w = weaponsFor(style, this.weaponLook);
     this.player.hold('r', w.right);
     this.player.hold('l', w.left);
   }
@@ -703,6 +714,13 @@ export class SeaWorld {
     this.updateNpcs(dt);
     this.combat?.update(dt, this.camera);
     this.updateCrew(dt);
+    // Angeln: Warten auf den Biss, dann kurzes Zeitfenster
+    if (this.fishing) {
+      const f = this.fishing;
+      if (this.mode !== 'sail' || Math.abs(this.ship.speed) > 2.5) { this.fishing = null; this.player?.play('steer'); }
+      else if (f.bite > 0) { f.bite -= dt; if (f.bite <= 0) { this.fishing = null; this.player?.play('steer'); this.onFish(false); } }
+      else { f.wait -= dt; if (f.wait <= 0) { f.bite = 1.3; this.player?.play('fishReel', { fade: 0.1 }); audio.play('splash', 0.7); this.onMessage('Biss! Schnell einholen!'); } }
+    }
     this.updateSeaBoss(dt);
     this.fx?.update(dt);
     this.player?.update(dt);
@@ -873,6 +891,21 @@ export class SeaWorld {
       if (prey) {
         this.contextLabel = 'Entern!';
         if (input.pressed('interact')) this.board(prey);
+      } else if (this.fishing) {
+        const f = this.fishing;
+        this.contextLabel = f.bite > 0 ? 'Einholen!' : 'Angel einholen';
+        if (input.pressed('interact')) {
+          if (f.bite > 0) { this.player.play('fishCatch', { restart: true, onDone: () => this.player?.play('steer') }); audio.play('splash'); this.onFish(true); }
+          else { this.player.play('steer', { fade: 0.2 }); this.onFish(false); }
+          this.fishing = null;
+        }
+      } else if (!isl && Math.abs(this.speed) < 1.5 && this.threat < 0.1) {
+        this.contextLabel = 'Angeln';
+        if (input.pressed('interact')) {
+          this.fishing = { wait: 2.5 + Math.random() * 5, bite: 0 };
+          this.player.play('fishCast', { restart: true, onDone: () => this.player?.play('fishIdle', { fade: 0.2 }) });
+          audio.play('whoosh', 0.6);
+        }
       } else if (isl && Math.abs(this.speed) < 9) {
         const def = this.islandDefs[this.ground.islands.indexOf(isl)];
         if (def?.kind === 'town' || def?.kind === 'harbor') {

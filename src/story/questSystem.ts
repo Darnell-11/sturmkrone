@@ -29,7 +29,7 @@ export class QuestSystem {
 
   /** Aufträge, die dieser Bewohner gerade anbietet */
   available(npc: string): QuestDef[] {
-    return QUESTS.filter((q) => q.giver === npc && !this.isActive(q.id) && !this.isDone(q.id)
+    return QUESTS.filter((q) => q.giver === npc && !q.noOffer && !q.auto && !this.isActive(q.id) && !this.isDone(q.id)
       && (!q.faction || q.faction === this.faction) && (!q.after || this.isDone(q.after)));
   }
 

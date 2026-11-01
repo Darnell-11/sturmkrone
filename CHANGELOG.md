@@ -1,5 +1,52 @@
 # Was ist neu
 
+## 2.0.0-rc1 – Das große 2.0-Update (01.11.2026)
+
+**Spielgefühl wie in 1.0 – und besser**
+- **Segeln:** so schnell und direkt wie in 1.0 (doppelt so schnell wie vorher). Gas stufenlos per W/S oder Stick, schnellere Wenden.
+- **Kampfkamera auf See:** Sie nimmt das nächste Feindschiff automatisch mit ins Bild.
+- **Beute treibt zum Schiff.**
+
+**Musik und Klang (neu)**
+- Eigene Seemannsmusik in Schichten: ruhig, Spannung, Kampf. Die Musik blendet je nach Lage über.
+- Eigene Stücke für Hafen, Nacht, Kampf, Boss, Sieg und jede Region.
+- Umgebung: Wellen, Wind, Regen, Donner, Möwen, Stadtlärm und das Grollen am Weltrand
+- Soundeffekte für jede Aktion: Hiebe, Treffer, Paraden, Kanonen, Breitseiten, Splitter, Sinken, Münzen, Faji je Element, Stufenaufstieg, Aufträge
+- Lautstärken im Menü „Ton“ wirken jetzt.
+
+**Crew (aus 1.0, stark ausgebaut)**
+- 16 Crewmitglieder zum Anheuern in der Taverne – mit Bonus, Kampfrolle und Fähigkeit
+- Sie stehen sichtbar an Deck und reden miteinander, Brömmel die Schiffskatze inklusive.
+- **Landtrupp:** Bis zu drei kämpfen an Land und beim Entern an deiner Seite.
+  - Beschützer ziehen Gegner auf sich, Heiler heilen dich, Angreifer räumen auf.
+  - Ausgeknockte Crew steht wieder auf.
+- **Treue:** Sie wächst mit jedem gemeinsamen Sieg. Volle Treue gibt +30 % Kampfkraft.
+- Jedes Crewmitglied hat einen **persönlichen Auftrag**.
+
+**Rangliste der Legenden (aus 1.0, ausgebaut)**
+- 20 Legenden mit Persönlichkeit, eigenem Schiff, Heimatgewässer und Sprüchen
+- Auftritte mit Cut-in und Rangliste mit deinem Platz
+- Revanchen besiegter Legenden
+
+**Welt: sechs handgemachte Meere**
+- Neu zur Bernsteinsee: Nebelarchipel, Nordwacht, Glutring, Sturmgürtel und Schlundriff am Weltrand
+  - je mit eigener Inselgestalt (tote Bäume, Kiefern, Vulkane mit Lava, Sturmklippen, Kristalle), eigenem Wetter und eigener Musik
+  - je mit Hafen-Außenposten, Lagern, Ruinen mit Schätzen und einem Regionsboss
+- Geisterschiffe nachts im Nebelarchipel
+- **Hafenmenü wie in 1.0:** Leg an einer Hafenstadt an, und alle Läden und Bewohner sind mit einem Knopf erreichbar. Durch die Stadt laufen kannst du weiterhin.
+
+**Hauptgeschichte bis zum Ende**
+- Prolog und sieben Kapitel um die fünf Siegel und die Sturmkrone, für Pirat und Marine. Jedes Kapitel startet von selbst mit einer Erzähltafel.
+- Faji-Erwachen als Story-Moment
+- Endkampf gegen den **Tiefenschlund**, eine riesige Seeschlange, dann gegen den Hüter der Tiefe
+- Abspann und offene Welt danach
+
+**Mehr zu tun**
+- **Schiffsausbauten:** Kanonen, Rumpf und Segel in je 5 Stufen
+- **Angeln** vom Schiff aus (mit Fangfenster) und **Würfeln** mit Baldo in der Taverne
+- Gekaufte Klingen sind jetzt an der Figur sichtbar (Farbe, Leuchten).
+- Banner warten aufeinander, statt sich zu überdecken.
+
 ## 2.0.0-m6 – Meilenstein 6 „Welt 2.0: Bernsteinsee“ (01.11.2026)
 
 - **Handgemachte Bernsteinsee** statt Zufallsinseln: 9 benannte Inseln mit eigener Rolle – die Hafenstadt Ankerglück, Muschelruh, Krähenfels, Möwennest, das Leuchtfeuer, Rabenriff, Bernsteinbucht, Sonnenstrand und Sturmzahn mit einer Legende. Wer zum ersten Mal eine Insel erreicht, sieht ein Banner mit ihrem Namen.

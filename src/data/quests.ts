@@ -26,6 +26,8 @@ export interface QuestDef {
   after?: string;
   /** Startet von selbst, sobald „after“ erledigt ist (Hauptgeschichte) */
   auto?: boolean;
+  /** Wird nie im Gespräch angeboten (Prolog startet mit dem neuen Spiel) */
+  noOffer?: boolean;
   intro: Record<Faction, string> | string;
   outro: string;
   steps: QuestStep[];
@@ -33,6 +35,16 @@ export interface QuestDef {
 }
 
 export const QUESTS: QuestDef[] = [
+  {
+    id: 'k0', title: 'Prolog: Leinen los', giver: 'ilse', main: true, noOffer: true,
+    intro: 'Dein erstes eigenes Schiff! Segle nach Ankerglück und melde dich bei der Hafenmeisterin.',
+    outro: 'Da bist du ja! Ich habe schon von dir gehört. Und ich habe Arbeit für dich.',
+    steps: [
+      { type: 'goto', island: 'ankerglueck', text: 'Segle nach Ankerglück (folge dem Pfeil)' },
+      { type: 'talk', npc: 'ilse', text: 'Leg im Hafen an und sprich mit Hafenmeisterin Ilse' },
+    ],
+    reward: { gold: 100, xp: 60, fame: 5 },
+  },
   {
     id: 'k1', title: 'Kapitel 1: Salz im Blut', giver: 'ilse', main: true,
     intro: {

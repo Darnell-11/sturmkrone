@@ -113,7 +113,7 @@ export class Menus {
         ${g.persistent ? '' : '<p class="warn">Dein Browser erlaubt kein dauerhaftes Speichern (z. B. privater Modus). Spielstände gehen beim Schließen verloren – nutze „Exportieren“.</p>'}
         <button class="primary" data-a="play" data-focus>Spielen</button>
         <button class="secondary" data-a="settings">Einstellungen</button>
-        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Meilenstein 6 „Welt 2.0“</p>
+        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Sturmkrone 2.0 – Vorabversion</p>
       </div>`,
       {
         play: () => this.showSlots(),
@@ -278,12 +278,14 @@ export class Menus {
         <button class="mini brass" data-a="accept" data-id="${q.id}">Annehmen</button></div>`).join('')}
       ${running.map((q) => { const st = qs.step(q!.id); return st ? `<p class="small soft">Laufend: <b>${esc(q!.title)}</b> – ${esc(st.text)}</p>` : ''; }).join('')}
       ${npc.shop ? `<button class="secondary" data-a="shop">${shopBtn[npc.shop]}</button>` : ''}
-      ${npc.shop === 'tavern' ? '<button class="secondary" data-a="hire">Crew anheuern</button>' : ''}
+      ${npc.shop === 'tavern' ? `<button class="secondary" data-a="hire">Crew anheuern</button>
+        <div class="opt"><span class="label">Würfeln mit Baldo</span><div class="row">${[20, 50, 200].map((b) => `<button class="mini" data-a="dice" data-id="${b}">${b} Gold setzen</button>`).join('')}</div></div>` : ''}
       <button class="primary" data-a="bye" data-focus>Auf Wiedersehen</button>`,
       {
         accept: (id) => { g.acceptQuest(id); this.showDialog(npc, [], 'Auftrag angenommen! Das Ziel siehst du oben rechts.'); },
         shop: () => this.openShop(npc),
         hire: () => this.showHire(() => this.showDialog(npc)),
+        dice: (id) => this.showDialog(npc, [], g.dice(+id)),
         bye: exit,
       },
       exit,
