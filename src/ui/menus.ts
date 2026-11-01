@@ -1,0 +1,397 @@
+import { ACTION_IDS, ACTION_LABELS, DEFAULT_KEYS, FIXED_CODES, type ActionId } from '../data/actions';
+import { QUALITY_IDS, QUALITY_TIERS, type QualityTier } from '../data/qualityTiers';
+import { FACTION_LABELS, rankName } from '../data/ranks';
+import type { Game } from '../core/game';
+import type { Faction, SaveData } from '../core/save/types';
+import type { Settings } from '../core/settings';
+import { downloadText, esc, formatDate, formatPlayTime, pickFile } from './dom';
+
+type Handler = (id: string, el: HTMLElement) => void;
+type SettingsTab = 'grafik' | 'steuerung' | 'ton' | 'anzeige';
+
+const LOGO = `${import.meta.env.BASE_URL}favicon.svg`;
+
+/** Alle Menübildschirme: Titel, Spielstände, Neues Spiel, Einstellungen, Pause. */
+export class Menus {
+  private screen: HTMLElement;
+  private card: HTMLElement;
+  private handlers: Record<string, Handler> = {};
+  private back: (() => void) | null = null;
+  private settingsTab: SettingsTab = 'grafik';
+  private newFaction: Faction = 'pirat';
+  private capturing = false;
+
+  constructor(parent: HTMLElement, private game: Game) {
+    this.screen = document.createElement('section');
+    this.screen.className = 'screen';
+    this.screen.hidden = true;
+    this.card = document.createElement('div');
+    this.card.className = 'card';
+    this.screen.appendChild(this.card);
+    parent.appendChild(this.screen);
+
+    this.card.addEventListener('click', (e) => {
+      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-a]');
+      if (!el || (el as HTMLButtonElement).disabled) return;
+      this.handlers[el.dataset.a!]?.(el.dataset.id ?? '', el);
+    });
+    this.card.addEventListener('input', (e) => {
+      const el = e.target as HTMLInputElement;
+      if (el.dataset.input) this.handlers[el.dataset.input]?.(el.value, el);
+    });
+
+    addEventListener('keydown', (e) => {
+      if (this.screen.hidden || this.capturing) return;
+      if (e.key === 'Escape') { e.preventDefault(); this.back?.(); }
+      else if (e.key === 'ArrowDown' && !(e.target instanceof HTMLInputElement)) { e.preventDefault(); this.moveFocus(1); }
+      else if (e.key === 'ArrowUp' && !(e.target instanceof HTMLInputElement)) { e.preventDefault(); this.moveFocus(-1); }
+    });
+    // Gamepad im Menü: Steuerkreuz/Stick = Auswahl, A = bestätigen, B = zurück
+    this.game.input.onPadButton((b) => {
+      if (this.screen.hidden) return;
+      if (b === 12 || b === 14) this.moveFocus(-1);
+      else if (b === 13 || b === 15) this.moveFocus(1);
+      else if (b === 0) (document.activeElement as HTMLElement | null)?.click();
+      else if (b === 1) this.back?.();
+      else if (b === 9 && this.game.state.is('pause')) this.game.resume();
+    });
+  }
+
+  get visible() { return !this.screen.hidden; }
+
+  hide() {
+    this.screen.hidden = true;
+    this.back = null;
+  }
+
+  private open(html: string, handlers: Record<string, Handler>, back: (() => void) | null, opts: { wide?: boolean; clear?: boolean } = {}) {
+    this.card.innerHTML = html;
+    this.card.classList.toggle('wide', !!opts.wide);
+    this.screen.classList.toggle('clear', !!opts.clear);
+    this.handlers = handlers;
+    this.back = back;
+    this.screen.hidden = false;
+    this.screen.scrollTop = 0;
+    // Mit Gamepad/Tastatur direkt das erste Element auswählen
+    if (this.game.input.lastDevice !== 'touch') {
+      requestAnimationFrame(() => this.card.querySelector<HTMLElement>('[data-focus], button, input')?.focus({ preventScroll: true }));
+    }
+  }
+
+  private focusables(): HTMLElement[] {
+    return Array.from(this.card.querySelectorAll<HTMLElement>('button:not([disabled]), input, select')).filter((el) => el.offsetParent !== null);
+  }
+
+  private moveFocus(dir: number) {
+    const list = this.focusables();
+    if (!list.length) return;
+    const i = list.indexOf(document.activeElement as HTMLElement);
+    const next = list[(i + dir + list.length) % list.length] ?? list[0];
+    next.focus();
+    next.scrollIntoView({ block: 'nearest' });
+  }
+
+  // ---------- Titel ----------
+
+  showMain() {
+    const g = this.game;
+    this.open(
+      `<div class="title-card">
+        <img class="logo" src="${LOGO}" alt="">
+        <h1 class="fell">Sturmkrone</h1>
+        <p class="soft">Ein Piratenabenteuer auf hoher See</p>
+        ${g.persistent ? '' : '<p class="warn">Dein Browser erlaubt kein dauerhaftes Speichern (z. B. privater Modus). Spielstände gehen beim Schließen verloren – nutze „Exportieren“.</p>'}
+        <button class="primary" data-a="play" data-focus>Spielen</button>
+        <button class="secondary" data-a="settings">Einstellungen</button>
+        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Meilenstein 0 „Fundament“</p>
+      </div>`,
+      {
+        play: () => this.showSlots(),
+        settings: () => this.showSettings(() => this.showMain()),
+      },
+      null,
+      { clear: true },
+    );
+  }
+
+  // ---------- Spielstände ----------
+
+  showSlots() {
+    const g = this.game;
+    const slots = g.saves.list();
+    const legacy = g.saves.findLegacy();
+    const hasEmpty = slots.some((s) => !s.data && !s.error);
+    const html = slots.map((s) => {
+      if (s.data) {
+        const p = s.data.player;
+        return `<div class="slot">
+          <div class="slot-head"><b>${esc(p.name)}</b><span>Platz ${s.slot}</span></div>
+          <div class="meta">${FACTION_LABELS[p.faction]} · ${esc(rankName(p.faction, p.fame))} · Stufe ${p.level}<br>
+          Spielzeit ${formatPlayTime(s.data.meta.playTime)} · gespeichert ${formatDate(s.data.meta.updated)}</div>
+          ${s.error ? `<p class="warn">${esc(s.error)}</p>` : ''}
+          <button class="primary" data-a="continue" data-id="${s.slot}">Weiterspielen</button>
+          <div class="row"><button class="mini" data-a="export" data-id="${s.slot}">Exportieren</button><button class="mini red" data-a="delete" data-id="${s.slot}">Löschen</button></div>
+        </div>`;
+      }
+      if (s.error) {
+        return `<div class="slot"><div class="slot-head"><b>Unlesbarer Spielstand</b><span>Platz ${s.slot}</span></div>
+          <p class="warn">${esc(s.error)}</p>
+          <div class="row"><button class="mini red" data-a="delete" data-id="${s.slot}">Platz leeren</button></div></div>`;
+      }
+      return `<div class="slot"><div class="slot-head"><b>Freier Platz</b><span>Platz ${s.slot}</span></div>
+        <button class="primary" data-a="new" data-id="${s.slot}">Neues Spiel</button></div>`;
+    }).join('');
+
+    this.open(
+      `<h2 class="fell">Spielstände</h2>
+      ${legacy && hasEmpty ? `<p class="note">Ein Spielstand aus Sturmkrone 1.0 wurde gefunden: <b>${esc(legacy.player.name)}</b>, Stufe ${legacy.player.level}.
+        <button class="mini brass" data-a="legacy">In freien Platz übernehmen</button></p>` : ''}
+      ${html}
+      <button class="secondary" data-a="import">Spielstand-Datei importieren</button>
+      <button class="secondary" data-a="back">Zurück</button>`,
+      {
+        continue: (id) => g.continueGame(+id),
+        new: (id) => { this.newFaction = 'pirat'; this.showNewGame(+id); },
+        export: (id) => {
+          const d = g.saves.load(+id).data;
+          if (!d) return;
+          const date = new Date().toISOString().slice(0, 10);
+          const safe = d.player.name.replace(/[^\wäöüÄÖÜß-]+/g, '_');
+          downloadText(`sturmkrone-${safe}-${date}.json`, g.saves.exportJson(d));
+          g.hud.toast('Spielstand exportiert.');
+        },
+        delete: (id) => this.confirm(
+          `Platz ${id} wirklich löschen? Das lässt sich nicht rückgängig machen. Tipp: Vorher exportieren.`,
+          'Löschen',
+          () => { g.saves.delete(+id); this.showSlots(); },
+          () => this.showSlots(),
+        ),
+        legacy: () => {
+          const free = g.saves.list().find((s) => !s.data && !s.error);
+          if (!legacy || !free) return;
+          g.saves.save(free.slot, legacy);
+          g.hud.toast(`1.0-Spielstand in Platz ${free.slot} übernommen.`);
+          this.showSlots();
+        },
+        import: async () => {
+          const text = await pickFile('.json,application/json');
+          if (text === null) return;
+          const r = g.saves.importJson(text);
+          if (!r.ok) { this.message('Import fehlgeschlagen', r.error, () => this.showSlots()); return; }
+          this.showImportTarget(r.data);
+        },
+        back: () => this.showMain(),
+      },
+      () => this.showMain(),
+    );
+  }
+
+  private showImportTarget(data: SaveData) {
+    const g = this.game;
+    const slots = g.saves.list();
+    this.open(
+      `<h2 class="fell">Import</h2>
+      <p><b>${esc(data.player.name)}</b> · ${FACTION_LABELS[data.player.faction]} · Stufe ${data.player.level}</p>
+      <p class="soft">In welchen Platz soll der Spielstand?</p>
+      ${slots.map((s) => `<button class="secondary" data-a="to" data-id="${s.slot}">Platz ${s.slot}: ${s.data ? `${esc(s.data.player.name)} <small>(wird überschrieben)</small>` : 'frei'}</button>`).join('')}
+      <button class="secondary" data-a="back">Abbrechen</button>`,
+      {
+        to: (id) => {
+          const slot = +id;
+          const doIt = () => { g.saves.save(slot, data); g.hud.toast(`Spielstand in Platz ${slot} importiert.`); this.showSlots(); };
+          if (slots[slot - 1].data) this.confirm(`Platz ${slot} überschreiben?`, 'Überschreiben', doIt, () => this.showImportTarget(data));
+          else doIt();
+        },
+        back: () => this.showSlots(),
+      },
+      () => this.showSlots(),
+    );
+  }
+
+  // ---------- Neues Spiel ----------
+
+  showNewGame(slot: number) {
+    const f = this.newFaction;
+    this.open(
+      `<h2 class="fell">Neues Spiel</h2>
+      <div class="opt"><label for="nm">Name</label><input id="nm" class="txt" maxlength="24" value="${f === 'pirat' ? 'Fynn' : 'Rekrut'}" autocomplete="off"></div>
+      <div class="opt"><span class="label">Fraktion</span>
+        <div class="chips">
+          <button data-a="faction" data-id="pirat" aria-pressed="${f === 'pirat'}">Pirat</button>
+          <button data-a="faction" data-id="marine" aria-pressed="${f === 'marine'}">Marine</button>
+        </div>
+        <p class="tier-desc">${f === 'pirat' ? 'Du beginnst als Schiffsjunge auf einer kleinen Schaluppe – frei, laut und ohne Gesetz.' : 'Du beginnst als Rekrut der Marine – mit Befehlen, Ehre und einer kleinen Schaluppe.'}</p>
+      </div>
+      <p class="note">Der große Charakter-Editor kommt in Meilenstein 2.</p>
+      <button class="primary" data-a="start">Ablegen!</button>
+      <button class="secondary" data-a="back">Zurück</button>`,
+      {
+        faction: (id) => {
+          const name = this.card.querySelector<HTMLInputElement>('#nm')!.value;
+          this.newFaction = id as Faction;
+          this.showNewGame(slot);
+          const nm = this.card.querySelector<HTMLInputElement>('#nm')!;
+          if (name !== 'Fynn' && name !== 'Rekrut') nm.value = name;
+          else nm.value = id === 'pirat' ? 'Fynn' : 'Rekrut';
+        },
+        start: () => this.game.newGame(slot, this.card.querySelector<HTMLInputElement>('#nm')!.value, this.newFaction),
+        back: () => this.showSlots(),
+      },
+      () => this.showSlots(),
+    );
+  }
+
+  // ---------- Pause ----------
+
+  showPause() {
+    const g = this.game;
+    this.open(
+      `<h2 class="fell">Pause</h2>
+      <button class="primary" data-a="resume" data-focus>Weiterspielen</button>
+      <button class="secondary" data-a="settings">Einstellungen</button>
+      <button class="secondary" data-a="save">Speichern</button>
+      <button class="secondary" data-a="quit">Speichern &amp; Hauptmenü</button>`,
+      {
+        resume: () => g.resume(),
+        settings: () => this.showSettings(() => this.showPause()),
+        save: () => { g.hud.toast(g.persist() ? 'Gespeichert.' : 'Speichern fehlgeschlagen!'); },
+        quit: () => g.quitToMenu(),
+      },
+      () => g.resume(),
+    );
+  }
+
+  // ---------- Einstellungen ----------
+
+  showSettings(back: () => void, tab: SettingsTab = this.settingsTab) {
+    this.settingsTab = tab;
+    const g = this.game;
+    const s = g.settings.data;
+    const tabs: [SettingsTab, string][] = [['grafik', 'Grafik'], ['steuerung', 'Steuerung'], ['ton', 'Ton'], ['anzeige', 'Anzeige']];
+    let body = '';
+    const handlers: Record<string, Handler> = {
+      tab: (id) => this.showSettings(back, id as SettingsTab),
+      back: () => back(),
+    };
+    const rerender = () => {
+      const y = this.screen.scrollTop;
+      this.showSettings(back, tab);
+      this.screen.scrollTop = y;
+    };
+
+    if (tab === 'grafik') {
+      const cur = g.renderer.tier;
+      const size = g.renderer.drawSize();
+      body = `<div class="opt"><span class="label">Grafikstufe</span>
+        <div class="chips">
+          <button data-a="q" data-id="auto" aria-pressed="${s.qualityAuto}">Automatisch</button>
+          ${QUALITY_IDS.map((q) => `<button data-a="q" data-id="${q}" aria-pressed="${!s.qualityAuto && cur === q}">${QUALITY_TIERS[q].label}</button>`).join('')}
+        </div>
+        <p class="tier-desc"><b>${QUALITY_TIERS[cur].label}:</b> ${esc(QUALITY_TIERS[cur].description)}</p></div>
+        <div class="facts">
+          <div>Aktuelle Stufe<b>${QUALITY_TIERS[cur].label}${s.qualityAuto ? ' (automatisch)' : ''}</b></div>
+          <div>Renderauflösung<b>${size.w} × ${size.h}</b></div>
+          <div>Erkanntes Gerät<b>${esc(g.detected.reason)}</b></div>
+          <div>Vorschlag<b>${QUALITY_TIERS[g.detected.tier].label}</b></div>
+        </div>
+        <p class="soft small">Bei „Automatisch“ senkt das Spiel die Stufe selbst, wenn es ruckelt. Konturen, Sonnenstrahlen, Tiefenunschärfe und Umgebungsverdeckung kommen in Meilenstein 1 dazu.</p>`;
+      handlers.q = (id) => { g.setQuality(id === 'auto' ? 'auto' : (id as QualityTier)); rerender(); };
+    }
+
+    if (tab === 'steuerung') {
+      const binds = g.input.getKeyBindings();
+      body = `<h3>Tastatur &amp; Maus</h3>
+        <ul class="binds">${ACTION_IDS.map((a) => `<li><span>${ACTION_LABELS[a]}</span>
+          <div class="keys">${binds[a].map((c) => `<kbd>${esc(g.input.keyLabel(c))}</kbd>`).join('') || '<span class="soft small">–</span>'}</div>
+          <button class="mini" data-a="rebind" data-id="${a}">Ändern</button></li>`).join('')}</ul>
+        <button class="secondary" data-a="resetkeys">Standardbelegung wiederherstellen</button>
+        <h3>Touch</h3>
+        <div class="chips">${(['auto', 'on', 'off'] as const).map((m) => `<button data-a="touch" data-id="${m}" aria-pressed="${s.touchControls === m}">${{ auto: 'Automatisch', on: 'Immer an', off: 'Aus' }[m]}</button>`).join('')}</div>
+        <h3>Gamepad</h3>
+        <p class="soft">${g.input.padConnected ? 'Gamepad verbunden.' : 'Kein Gamepad erkannt – drück eine Taste am Gamepad, damit der Browser es findet.'}<br>
+        Linker Stick: Steuern · Rechter Stick: Kamera · A: Angriff · B: Ausweichen · X: Aktion · Y: Schwerer Angriff · LB/RB: Breitseiten · LT/RT: Fähigkeiten · Start: Pause</p>
+        <h3>Kamera</h3>
+        <div class="chips"><button data-a="invert" aria-pressed="${s.invertLookY}">Vertikal umkehren</button></div>`;
+      handlers.rebind = (id) => this.captureKey(id as ActionId, rerender);
+      handlers.resetkeys = () => { g.settings.update({ keyBindings: {} }); rerender(); };
+      handlers.touch = (id) => { g.settings.update({ touchControls: id as Settings['touchControls'] }); rerender(); };
+      handlers.invert = () => { g.settings.update({ invertLookY: !s.invertLookY }); rerender(); };
+    }
+
+    if (tab === 'ton') {
+      const vols: [keyof Settings['volume'], string][] = [['master', 'Gesamt'], ['music', 'Musik'], ['sfx', 'Effekte'], ['ambient', 'Umgebung'], ['voice', 'Stimmen']];
+      body = vols.map(([k, label]) => `<label class="slider">${label}<input type="range" min="0" max="100" step="5" value="${Math.round(s.volume[k] * 100)}" data-input="vol" data-id="${k}"><output>${Math.round(s.volume[k] * 100)} %</output></label>`).join('')
+        + '<p class="note">Musik und Klänge kommen in Meilenstein 8. Deine Einstellungen werden schon jetzt gespeichert.</p>';
+      handlers.vol = (val, el) => {
+        const k = el.dataset.id as keyof Settings['volume'];
+        g.settings.update({ volume: { ...g.settings.data.volume, [k]: +val / 100 } });
+        el.parentElement!.querySelector('output')!.textContent = `${val} %`;
+      };
+    }
+
+    if (tab === 'anzeige') {
+      body = `<div class="opt"><span class="label">Textgröße</span><div class="chips">
+          ${[[1, 'Normal'], [1.15, 'Groß'], [1.3, 'Sehr groß']].map(([v, l]) => `<button data-a="text" data-id="${v}" aria-pressed="${s.textScale === v}">${l}</button>`).join('')}
+        </div></div>
+        <div class="opt"><span class="label">Bildrate</span><div class="chips"><button data-a="fps" aria-pressed="${s.showFps}">FPS anzeigen</button></div></div>`;
+      handlers.text = (id) => { g.settings.update({ textScale: +id }); rerender(); };
+      handlers.fps = () => { g.settings.update({ showFps: !s.showFps }); rerender(); };
+    }
+
+    this.open(
+      `<h2 class="fell">Einstellungen</h2>
+      <div class="tabs" role="tablist">${tabs.map(([id, l]) => `<button data-a="tab" data-id="${id}" aria-pressed="${id === tab}">${l}</button>`).join('')}</div>
+      ${body}
+      <button class="primary" data-a="back">Fertig</button>`,
+      handlers,
+      back,
+      { wide: true },
+    );
+  }
+
+  private captureKey(action: ActionId, done: () => void) {
+    const g = this.game;
+    const overlay = document.createElement('div');
+    overlay.className = 'capture';
+    overlay.innerHTML = `<div>${esc(ACTION_LABELS[action])}<br><span class="small">Drück eine Taste oder Maustaste … (Esc = abbrechen)</span></div>`;
+    document.body.appendChild(overlay);
+    this.capturing = true;
+    const finish = (code: string | null) => {
+      overlay.remove();
+      g.input.captureNext = null;
+      // Erst nach diesem Tastendruck wieder auf Esc im Menü reagieren
+      setTimeout(() => { this.capturing = false; }, 0);
+      if (code && !FIXED_CODES.includes(code)) {
+        const binds: Partial<Record<ActionId, string[]>> = {};
+        const cur = g.input.getKeyBindings();
+        for (const a of ACTION_IDS) {
+          // Neue Taste wird Haupttaste, die bisherige Haupttaste bleibt als zweite. Andere Aktionen verlieren die Taste.
+          const list = a === action ? [code, ...cur[a].filter((c) => c !== code)].slice(0, 2) : cur[a].filter((c) => c !== code);
+          if (JSON.stringify(list) !== JSON.stringify(DEFAULT_KEYS[a])) binds[a] = list;
+        }
+        g.settings.update({ keyBindings: binds });
+      }
+      done();
+    };
+    g.input.captureNext = (code) => finish(code);
+    overlay.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      finish(e.pointerType === 'mouse' ? 'Mouse' + e.button : null);
+    });
+    overlay.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  // ---------- Dialoge ----------
+
+  confirm(text: string, yes: string, onYes: () => void, onNo: () => void) {
+    this.open(
+      `<p>${esc(text)}</p><div class="row"><button class="secondary" data-a="no" data-focus>Abbrechen</button><button class="danger" data-a="yes">${esc(yes)}</button></div>`,
+      { yes: () => onYes(), no: () => onNo() },
+      onNo,
+    );
+  }
+
+  message(title: string, text: string, onOk: () => void) {
+    this.open(`<h2 class="fell">${esc(title)}</h2><p>${esc(text)}</p><button class="primary" data-a="ok">OK</button>`, { ok: () => onOk() }, onOk);
+  }
+}
