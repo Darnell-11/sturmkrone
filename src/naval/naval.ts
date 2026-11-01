@@ -59,6 +59,8 @@ export class NavalSystem {
   playerFaction: 'pirat' | 'marine' = 'pirat';
   playerLevel = 1;
   playerRank = 0;
+  /** Zusätzliches Ziel für Kanonenkugeln (Seeungeheuer) */
+  extraTarget: { hitTest(p: Vector3): boolean; damage(n: number): void } | null = null;
   /** Kanonenschaden des Spielers */
   canDmg = 14;
   reloadMult = 1;
@@ -306,6 +308,14 @@ export class NavalSystem {
         this.hitShip(s, b, local, sailHit);
         b.life = 0;
         break;
+      }
+      if (b.life > 0 && b.owner === this.player && this.extraTarget?.hitTest(p)) {
+        b.life = 0;
+        this.extraTarget.damage(b.dmg);
+        audio.play('heavy', 1, p);
+        this.fx.hit(p.clone(), 'heavy', '#9FE8FF');
+        this.overlay.number(p.clone().setY(p.y + 1.5), Math.round(b.dmg), 'hit');
+        this.hooks.hitstop(0.03);
       }
       if (b.life > 0 && p.y < this.env.heightAt(p.x, p.z)) {
         b.life = 0;

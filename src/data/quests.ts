@@ -10,6 +10,7 @@ export type QuestStep =
   | { type: 'kill'; kind?: EnemyKind; count: number; text: string }
   | { type: 'sink'; count: number; text: string }
   | { type: 'board'; count: number; text: string }
+  | { type: 'slay'; target: string; text: string }
   | { type: 'treasure'; island: string; text: string }
   | { type: 'rescue'; count: number; text: string };
 
@@ -23,6 +24,8 @@ export interface QuestDef {
   faction?: Faction;
   /** Erst nach diesem Auftrag verfügbar */
   after?: string;
+  /** Startet von selbst, sobald „after“ erledigt ist (Hauptgeschichte) */
+  auto?: boolean;
   intro: Record<Faction, string> | string;
   outro: string;
   steps: QuestStep[];
@@ -48,13 +51,72 @@ export const QUESTS: QuestDef[] = [
   {
     id: 'k2', title: 'Kapitel 2: Die Legende von Sturmzahn', giver: 'ilse', main: true, after: 'k1',
     intro: 'Auf Sturmzahn haust eine Legende, die jedes Schiff ausnimmt, das ihr zu nahe kommt. Solange sie dort herrscht, traut sich kein Händler in die Bernsteinsee. Bereite dich gut vor – und dann zeig ihr, wer jetzt das Sagen hat.',
-    outro: 'Die ganze Bernsteinsee spricht von dir! Mit dieser Tat steigst du in der Rangliste der Legenden auf. Der Weg nach Norden, ins Nebelarchipel, steht dir offen.',
+    outro: 'Die ganze Bernsteinsee spricht von dir! Mit dieser Tat steigst du in der Rangliste der Legenden auf. Grimmbart hatte etwas bei sich: ein Siegel aus Sturmglas, warm wie ein Herzschlag. Der Weg nach Norden, ins Nebelarchipel, steht dir offen.',
     steps: [
       { type: 'board', count: 1, text: 'Entere ein Schiff, um Kampferfahrung zu sammeln' },
       { type: 'clear', island: 'sturmzahn', text: 'Besiege die Legende auf Sturmzahn' },
       { type: 'talk', npc: 'ilse', text: 'Kehre nach Ankerglück zurück' },
     ],
     reward: { gold: 1200, xp: 800, fame: 250, sp: 2 },
+  },
+  {
+    id: 'k3', title: 'Kapitel 3: Stimmen im Nebel', giver: 'ilse', main: true, auto: true, after: 'k2',
+    intro: 'Das Siegel aus Sturmglas zieht nach Norden, als wolle es heim. Im Nebelarchipel, so erzählen die Fischer, ruft nachts ein Kapitän nach seinem verlorenen Schatz. Vielleicht weiß er, was es mit dem Siegel auf sich hat.',
+    outro: 'Moderherz zerfällt zu Nebel. Seine letzten Worte: „Fünf Siegel … fünf Meere … wer sie vereint, öffnet den Schlund – und findet die Krone, aus der das Faji kam.“ In seinem Wrack liegt ein zweites Siegel.',
+    steps: [
+      { type: 'goto', island: 'nebelhafen', text: 'Segle ins Nebelarchipel nach Nebelhafen' },
+      { type: 'clear', island: 'versunkenertempel', text: 'Durchsuche den Versunkenen Tempel' },
+      { type: 'clear', island: 'geisterriff', text: 'Stelle Kapitän Moderherz am Geisterriff' },
+    ],
+    reward: { gold: 1800, xp: 1400, fame: 400, sp: 2 },
+  },
+  {
+    id: 'k4', title: 'Kapitel 4: Die Festung im Norden', giver: 'ilse', main: true, auto: true, after: 'k3',
+    intro: {
+      pirat: 'Die Marine hat von den Siegeln erfahren. In der Festung Nordwacht sammelt Kommandant Eisenfaust Schiffe, um dir zuvorzukommen. Zeit, ihm die Flotte zu versenken – und sein Siegel zu holen.',
+      marine: 'Kommandant Eisenfaust hat sich mit der Festung Nordwacht von der Admiralität losgesagt. Er will die Siegel für sich. Holen Sie es zurück, bevor er die Meere in Brand steckt.',
+    },
+    outro: 'Eisenfaust liegt geschlagen auf den Zinnen. Er lacht: „Du glaubst, die Krone macht dich frei? Sie macht dich zum Ziel.“ Das dritte Siegel glüht in deiner Hand.',
+    steps: [
+      { type: 'goto', island: 'kiefernhafen', text: 'Segle nach Kiefernhafen in der Nordwacht' },
+      { type: 'sink', count: 4, text: 'Versenke 4 Schiffe der Nordflotte' },
+      { type: 'clear', island: 'festungnordwacht', text: 'Erstürme die Festung Nordwacht' },
+    ],
+    reward: { gold: 2600, xp: 2200, fame: 600, sp: 2 },
+  },
+  {
+    id: 'k5', title: 'Kapitel 5: Das Herz des Feuers', giver: 'ilse', main: true, auto: true, after: 'k4',
+    intro: 'In der Schmiedestadt Glutheim erzählt man von Ignara, die auf dem Gipfel des Glutbergs das Feuer-Faji bewacht. Wer ihr Siegel will, muss durch ihr Feuer gehen – und vielleicht erwacht dabei etwas in dir.',
+    outro: 'Als Ignara fällt, schießt eine Säule aus Licht in den Himmel. Das vierte Siegel brennt sich warm in deine Hand – und tief in dir regt sich ein Faji, das du nicht kanntest.',
+    steps: [
+      { type: 'goto', island: 'glutheim', text: 'Segle nach Glutheim im Glutring' },
+      { type: 'clear', island: 'ascheinsel', text: 'Räume das Lager auf der Ascheinsel' },
+      { type: 'clear', island: 'glutberg', text: 'Besiege Ignara auf dem Glutberg' },
+    ],
+    reward: { gold: 3400, xp: 3000, fame: 800, sp: 3 },
+  },
+  {
+    id: 'k6', title: 'Kapitel 6: Im Auge des Sturms', giver: 'ilse', main: true, auto: true, after: 'k5',
+    intro: 'Das letzte Siegel liegt im Sturmgürtel, bei Voltar, dem Blitzrufer. Er hält den Sturm am Leben, der den Weg zum Weltrand versperrt. Bring deine stärkste Crew mit.',
+    outro: 'Der Sturm verstummt zum ersten Mal seit hundert Jahren. Fünf Siegel summen in einem Ton. Im Westen, am Rand der Welt, öffnet sich das Meer.',
+    steps: [
+      { type: 'goto', island: 'donnerbucht', text: 'Kämpf dich durch den Sturm nach Donnerbucht' },
+      { type: 'clear', island: 'seemannsgrab', text: 'Durchquere das Seemannsgrab' },
+      { type: 'clear', island: 'blitzspitze', text: 'Bezwinge Voltar auf der Blitzspitze' },
+    ],
+    reward: { gold: 4200, xp: 4000, fame: 1100, sp: 3 },
+  },
+  {
+    id: 'k7', title: 'Kapitel 7: Die Sturmkrone', giver: 'ilse', main: true, auto: true, after: 'k6',
+    intro: 'Die Siegel weisen zum Schlundriff am Weltrand. Dort, wo das Meer in die Tiefe stürzt, ruht die Sturmkrone – bewacht vom Tiefenschlund, einem Ungeheuer, älter als jedes Schiff. Es gibt kein Zurück.',
+    outro: 'Die Sturmkrone liegt in deinen Händen. Sie ist leichter, als du dachtest – und schwerer. Das Faji der ganzen Welt atmet mit dir. Was du jetzt daraus machst, entscheidest du allein.',
+    steps: [
+      { type: 'goto', island: 'letzterhafen', text: 'Segle zum Letzten Hafen am Weltrand' },
+      { type: 'clear', island: 'tiefentor', text: 'Öffne das Tiefentor' },
+      { type: 'slay', target: 'tiefenschlund', text: 'Besiege den Tiefenschlund auf See' },
+      { type: 'clear', island: 'schlundkrone', text: 'Bezwinge den Hüter der Tiefe' },
+    ],
+    reward: { gold: 8000, xp: 8000, fame: 2500, sp: 5 },
   },
   {
     id: 'netze', title: 'Verlorene Netze', giver: 'ole',

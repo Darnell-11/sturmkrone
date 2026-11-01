@@ -359,11 +359,11 @@ class AudioEngine {
   // ---------- Musik ----------
 
   /** Stimmung und Kampfnähe (0 … 1) setzen; die Musik blendet passend über */
-  setMood(mood: Mood, intensity = 0) {
+  setMood(mood: Mood, intensity = 0, seaSong: SongId = 'sea') {
     this.mood = mood;
     this.intensity = intensity;
     const want: SongId = mood === 'menu' ? 'menu' : mood === 'harbor' ? 'harbor' : mood === 'night' ? 'night' : mood === 'boss' ? 'boss'
-      : mood === 'battle' || intensity > 0.65 ? 'battle' : mood === 'victory' ? 'victory' : 'sea';
+      : mood === 'battle' || intensity > 0.65 ? 'battle' : mood === 'victory' ? 'victory' : seaSong;
     if (want !== this.song && want !== this.nextSong) this.nextSong = want;
   }
 

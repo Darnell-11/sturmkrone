@@ -10,7 +10,8 @@ export type QuestEvent =
   | { type: 'sink' }
   | { type: 'board' }
   | { type: 'treasure'; island: string }
-  | { type: 'rescue' };
+  | { type: 'rescue' }
+  | { type: 'slay'; target: string };
 
 export interface QuestHooks {
   completed(q: QuestDef): void;
@@ -78,6 +79,7 @@ export class QuestSystem {
         case 'goto': hit = e.type === 'enter' && e.island === s.island; break;
         case 'clear': hit = e.type === 'clear' && e.island === s.island; break;
         case 'treasure': hit = e.type === 'treasure' && e.island === s.island; break;
+        case 'slay': hit = e.type === 'slay' && e.target === s.target; break;
         case 'kill': if (e.type === 'kill' && (!s.kind || s.kind === e.kind)) hit = ++prog.count >= s.count; break;
         case 'sink': if (e.type === 'sink') hit = ++prog.count >= s.count; break;
         case 'board': if (e.type === 'board') hit = ++prog.count >= s.count; break;

@@ -11,7 +11,7 @@ import { downloadText, esc, formatDate, formatPlayTime, pickFile } from './dom';
 import { QUEST_BY_ID, TOWN_NPCS, type QuestDef, type ShopKind, type TownNpcDef } from '../data/quests';
 import { CREW, CREW_BY_ID, CREW_ROLE_LABEL } from '../data/crew';
 import { hostileLegends } from '../data/legends';
-import { ARMOR, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS } from '../data/regions';
+import { ARMOR, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, type IslandDef } from '../data/regions';
 import { stepText } from '../story/questSystem';
 import { drawMap } from './minimap';
 import { audio } from '../audio/audio';
@@ -290,20 +290,33 @@ export class Menus {
     );
   }
 
+  /** Erzähltafel für Kapitelanfänge und das Ende */
+  showStory(title: string, text: string, done: () => void) {
+    this.open(
+      `<div class="story"><p class="kicker">Sturmkrone</p><h2 class="fell">${esc(title)}</h2><p class="dlg-line">${esc(text)}</p></div>
+      <button class="primary" data-a="go" data-focus>Weiter</button>`,
+      { go: done },
+      done,
+    );
+  }
+
   // ---------- Hafen (direkt vom Schiff aus, wie in 1.0) ----------
 
-  showHarbor(msg = '') {
+  private harborDef: IslandDef | null = null;
+  showHarbor(msg = '', def: IslandDef | null = this.harborDef) {
     const g = this.game;
     const s = g.saveData;
     const qs = g.questSys;
     if (!s || !qs) return;
+    this.harborDef = def;
+    const town = !def || def.kind === 'town';
     const back = () => this.showHarbor();
     const mark = (id: string) => qs.available(id).length ? ' <b class="pip">!</b>' : s.progress.quests.some((p) => { const st = qs.step(p.id); return st?.type === 'talk' && st.npc === id; }) ? ' <b class="pip ok">?</b>' : '';
     this.open(
-      `<h2 class="fell">Hafen von Ankerglück</h2>
+      `<h2 class="fell">Hafen von ${esc(def?.name ?? 'Ankerglück')}</h2>
       <p class="soft">Gold: <b>${g.playerGold.toLocaleString('de-DE')}</b>${msg ? ` · <b>${esc(msg)}</b>` : ''}</p>
-      <h3>Bewohner</h3>
-      <div class="grid2">${TOWN_NPCS.map((n) => `<button class="secondary" data-a="talk" data-id="${n.id}">${esc(n.name)}${mark(n.id)}<small>${esc(n.title)}</small></button>`).join('')}</div>
+      ${town ? `<h3>Bewohner</h3>
+      <div class="grid2">${TOWN_NPCS.map((n) => `<button class="secondary" data-a="talk" data-id="${n.id}">${esc(n.name)}${mark(n.id)}<small>${esc(n.title)}</small></button>`).join('')}</div>` : `<p class="dlg-line">${esc(def?.info ?? '')}</p>`}
       <h3>Läden</h3>
       <div class="grid2">
         <button class="secondary" data-a="yard">Werft</button>

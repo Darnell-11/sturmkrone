@@ -32,9 +32,11 @@ import { audio, type Mood } from '../audio/audio';
 import { EDGE_WALL } from '../data/world';
 import { QuestSystem, stepText } from '../story/questSystem';
 import type { QuestDef, TownNpcDef } from '../data/quests';
-import { ARMOR, BERNSTEINSEE, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, type IslandDef } from '../data/regions';
+import { ARMOR, BERNSTEINSEE, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, type IslandDef, type RegionDef } from '../data/regions';
 import { drawMap, type MapMarkers } from '../ui/minimap';
 import { CREW_BY_ID } from '../data/crew';
+import { ABYSS_LAIR } from '../naval/seaBoss';
+import { QUESTS, QUEST_BY_ID } from '../data/quests';
 import { hostileLegends, LEGEND_BY_ID, rankRows } from '../data/legends';
 
 export const GAME_VERSION = __APP_VERSION__;
@@ -128,9 +130,21 @@ export class Game {
       this.questEvent({ type: 'board' });
     };
     this.world.onTalk = (npc) => this.talkTo(npc);
-    this.world.onHarbor = () => this.openHarbor();
+    this.world.onHarbor = (def) => this.openHarbor(def);
+    this.world.onEnterRegion = (r) => this.enterRegion(r);
+    this.world.onSeaBossDown = () => {
+      if (!this.save) return;
+      audio.play('win');
+      this.save.progress.flags.tiefenschlund = true;
+      const g = Math.round(5000 * this.goldMult(true));
+      this.save.player.gold += g;
+      setTimeout(() => this.overlay.showCutin('Der Tiefenschlund fällt!', '#9FE8FF'), 300);
+      this.overlay.showBanner('Der Tiefenschlund ist besiegt!', `+${g.toLocaleString('de-DE')} Gold · Der Weg zur Schlundkrone ist frei`);
+      this.grantXp(3000, 500);
+      this.questEvent({ type: 'slay', target: 'tiefenschlund' });
+    };
     this.world.onEnterIsland = (def) => this.enterIsland(def);
-    this.world.onIslandCleared = (id) => { this.questEvent({ type: 'clear', island: id }); if (this.save) this.addLoyalty(this.save.crew.party, 4); };
+    this.world.onIslandCleared = (id) => this.islandCleared(id);
     this.world.onRescue = () => {
       if (!this.save) return;
       this.save.progress.stats.rescued++;
@@ -313,8 +327,8 @@ export class Game {
       const dTown = town ? Math.hypot(town.x - pos.x, town.z - pos.z) : 9999;
       const threat = w.threat;
       const night = env.time < 5.5 || env.time > 20.5;
-      const mood: Mood = w.bossNear ? 'boss' : threat > 0.65 ? 'battle' : dTown < 150 ? 'harbor' : night ? 'night' : 'sea';
-      audio.setMood(mood, threat);
+      const mood: Mood = w.bossNear ? 'boss' : threat > 0.65 ? 'battle' : dTown < 150 ? 'harbor' : night && this.region.id === 'bernsteinsee' ? 'night' : 'sea';
+      audio.setMood(mood, threat, this.region.song ?? 'sea');
       const wp = env.weather.p;
       const edge = Math.hypot(pos.x, pos.z);
       audio.setAmbience({
@@ -371,12 +385,33 @@ export class Game {
     return (h.includes('cat') ? 1.3 : 1) * (loot && h.includes('kiko') ? 1.5 : 1);
   }
 
+  private islandCleared(id: string) {
+    const s = this.save;
+    if (!s) return;
+    this.addLoyalty(s.crew.party, 4);
+    const def = this.world.islandDefs.find((i) => i.id === id);
+    // Ruinen und Bosse hüten Schätze
+    if (def && (def.kind === 'ruin' || def.kind === 'boss') && !s.progress.flags[`loot_${id}`]) {
+      s.progress.flags[`loot_${id}`] = true;
+      const lv = def.level ?? 5;
+      const gold = Math.round((def.kind === 'boss' ? 600 : 250) * (1 + lv * 0.25) * this.goldMult(true));
+      const sp = def.kind === 'boss' ? 2 : 1;
+      s.player.gold += gold;
+      s.skills.sp += sp;
+      audio.play('treasure');
+      setTimeout(() => this.overlay.showBanner(def.kind === 'boss' ? `${def.boss ?? 'Boss'} besiegt!` : 'Schatz der Ruine!', `+${gold.toLocaleString('de-DE')} Gold · +${sp} Faji-Punkt${sp > 1 ? 'e' : ''}`), 2600);
+      if (def.kind === 'boss') this.grantXp(400 + lv * 60, 150 + lv * 25);
+    }
+    this.questEvent({ type: 'clear', island: id });
+  }
+
   // ---------- Legenden ----------
 
   /** Legenden kreuzen in ihren Heimatgewässern (ab Kapitel 1 abgeschlossen) */
   private updateLegends() {
     const s = this.save;
     const nav = this.world.naval;
+    if (s) this.world.bossWanted = !s.progress.flags.tiefenschlund && s.progress.quests.some((p) => QUEST_BY_ID[p.id]?.steps[p.step]?.type === 'slay');
     if (!s || !nav || this.world.mode !== 'sail' || !s.progress.done.includes('k1')) return;
     const pos = this.world.playerPos;
     const t = s.meta.playTime;
@@ -519,9 +554,54 @@ export class Game {
     if (q.reward.sp) s.skills.sp += q.reward.sp;
     if (this.justDone) this.justDone.push(q);
     else this.hud.toast(`Auftrag erfüllt: ${q.title}`, 3.5);
+    // Hauptgeschichte: nächstes Kapitel startet von selbst
+    setTimeout(() => this.startAutoChapters(q), 3200);
+    if (q.id === 'k5') setTimeout(() => this.storyAwakening(), 2400);
+    if (q.id === 'k7') { s.progress.flags.krone = true; setTimeout(() => this.ending(), 3500); }
     audio.play('quest');
     this.overlay.showBanner(q.main ? 'Kapitel abgeschlossen!' : 'Auftrag erfüllt!', q.title);
     this.grantXp(q.reward.xp, q.reward.fame);
+  }
+
+  /** Kapitel, die nach einem Auftrag (oder beim Laden) von selbst beginnen */
+  private startAutoChapters(after?: QuestDef) {
+    const s = this.save;
+    const qs = this.quests;
+    if (!s || !qs) return;
+    for (const n of QUESTS) {
+      if (!n.auto || !n.after || (after && n.after !== after.id)) continue;
+      if (!s.progress.done.includes(n.after) || qs.isActive(n.id) || qs.isDone(n.id)) continue;
+      qs.accept(n.id);
+      this.refreshDigs();
+      this.persist();
+      if (this.state.is('play')) {
+        audio.play('horn');
+        this.state.set('pause');
+        this.menus.showStory(n.title, qs.introOf(n), () => this.resume());
+      }
+    }
+  }
+
+  /** Faji-Erwachen als Story-Moment (Kapitel 5) */
+  private storyAwakening() {
+    const s = this.save;
+    if (!s) return;
+    const branch = (Object.keys(BRANCHES) as Branch[]).filter((b) => !s.skills.awakened.includes(b)).sort((a, b) => branchPoints(s.skills.learned, b) - branchPoints(s.skills.learned, a))[0];
+    if (branch) this.checkAwakening(branch);
+  }
+
+  /** Abspann nach Kapitel 7 */
+  private ending() {
+    const s = this.save;
+    if (!s) return;
+    audio.play('win');
+    this.hud.setPlayer(s.player.name, `${FACTION_LABELS[s.player.faction]} · ${rankName(s.player.faction, s.player.fame)} · Stufe ${s.player.level} · 👑`);
+    const text = s.player.faction === 'pirat'
+      ? `Die Meere flüstern deinen Namen: ${s.player.name}, Trägerin oder Träger der Sturmkrone. Kein Admiral, keine Legende kann dir noch Befehle geben. Deine Crew feiert drei Tage lang in Ankerglück – Pippo hat schon zwölf Lieder über dich geschrieben. Doch am Horizont ziehen neue Stürme auf … und mit der Krone kannst du sie rufen. Die See gehört dir. Segle, wohin du willst.`
+      : `Die Admiralität verneigt sich vor dir, ${s.player.name}. Mit der Sturmkrone in sicheren Händen kehrt Frieden in die fünf Meere ein – zumindest fast. Die letzten Piratenlegenden haben geschworen, sie dir abzunehmen. Sollen sie kommen. Deine Crew steht hinter dir, die Flotte folgt deinem Signal. Die See ist frei. Segle, wohin du willst.`;
+    this.state.set('pause');
+    this.menus.showStory('Die Sturmkrone gehört dir', text, () => { this.resume(); this.overlay.showBanner('Ende der Hauptgeschichte', 'Die Welt bleibt offen: Legenden, Revanchen, Schätze und Crew-Aufträge warten.'); });
+    this.persist();
   }
 
   /** Grabstellen: Schatz-Aufträge und gefundene Schatzkarten */
@@ -551,11 +631,30 @@ export class Game {
     this.menus.showDialog(npc, done);
   }
 
-  private openHarbor() {
+  private openHarbor(def: IslandDef) {
     if (!this.state.is('play')) return;
     audio.play('bell');
     this.state.set('pause');
-    this.menus.showHarbor();
+    this.menus.showHarbor('', def);
+  }
+
+  /** Region betreten: Banner beim ersten Mal, vorherrschendes Wetter, Musik */
+  region: RegionDef = BERNSTEINSEE;
+  private enterRegion(r: RegionDef) {
+    const s = this.save;
+    this.region = r;
+    const env = this.world.env;
+    if (r.weather) { env.weather.auto = false; env.weather.setWeather(r.weather, false); }
+    else if (!env.weather.auto) { env.weather.auto = true; env.weather.setWeather('klar', false); }
+    if (!s || !this.state.is('play')) return;
+    const key = `region_${r.id}`;
+    if (!s.progress.flags[key]) {
+      s.progress.flags[key] = true;
+      if (r.id !== 'bernsteinsee') {
+        audio.play('horn');
+        this.overlay.showBanner(r.name, `${r.desc ?? ''}${r.level && r.level > s.player.level + 2 ? ` · Empfohlen ab Stufe ${r.level}` : ''}`);
+      }
+    } else this.hud.toast(r.name, 2.5);
   }
 
   acceptQuest(id: string) {
@@ -709,6 +808,7 @@ export class Game {
       case 'goto': case 'clear': case 'treasure': return isl(t.step.island);
       case 'sink': case 'board': return nearest(this.world.enemyShips.filter((e) => !e.ally));
       case 'rescue': return this.world.nearestFloater('raft');
+      case 'slay': return ABYSS_LAIR;
       case 'kill': return nearest(this.world.islandDefs.filter((i) => i.kind === 'camp' && Math.hypot(i.x - BERNSTEINSEE.x, i.z - BERNSTEINSEE.z) < BERNSTEINSEE.r));
     }
   }
@@ -1019,6 +1119,7 @@ export class Game {
       advanced: (_q, next) => this.hud.toast(`Neues Ziel: ${next.text}`, 3.5),
     });
     this.refreshDigs();
+    setTimeout(() => this.startAutoChapters(), 2500);
     this.applyPower();
     this.world.healPlayer();
     this.hud.setPlayer(p.name, `${FACTION_LABELS[p.faction]} · ${rankName(p.faction, p.fame)} · Stufe ${p.level}`);

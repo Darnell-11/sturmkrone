@@ -45,7 +45,9 @@ import { AMMO, AMMO_IDS, DEFAULT_SHIP_LOOK, type AmmoId, type ShipLook } from '.
 import { NavalSystem, type EnemyShip } from '../naval/naval';
 import { DeckGround, type Ground } from './islandGround';
 import { ELEMENT_COLORS } from '../data/skills';
-import { BERNSTEINSEE, OUTER_NAMES, type IslandDef } from '../data/regions';
+import { BERNSTEINSEE, REGIONS, regionAt, type IslandDef, type RegionDef } from '../data/regions';
+import { outpost, plant, styleKit, volcano } from './islandStyle';
+import { ABYSS_LAIR, SeaBoss } from '../naval/seaBoss';
 import { buildTown, mergeByMaterial, type TownBuild } from './town';
 import { SeaLife } from './life';
 import { TOWN_NPCS, type TownNpcDef } from '../data/quests';
@@ -96,7 +98,14 @@ export class SeaWorld {
   onEnterIsland: (def: IslandDef) => void = () => {};
   onIslandCleared: (id: string) => void = () => {};
   onRescue: () => void = () => {};
-  onHarbor: () => void = () => {};
+  onHarbor: (def: IslandDef) => void = () => {};
+  onEnterRegion: (r: RegionDef) => void = () => {};
+  onSeaBossDown: () => void = () => {};
+  /** Soll der Tiefenschlund erscheinen (Kapitel 7)? */
+  bossWanted = false;
+  seaBoss: SeaBoss | null = null;
+  private bossGone = 0;
+  private lastRegion = '';
   onBottle: () => void = () => {};
   private lastIsland: string | null = null;
   private hostilesBefore = 0;
@@ -147,6 +156,8 @@ export class SeaWorld {
   town: TownBuild | null = null;
   life: SeaLife | null = null;
   private buoys: { g: Group; x: number; z: number; lamp: Mesh }[] = [];
+  /** Rauchende Vulkankrater */
+  private smokeVents: { x: number; y: number; z: number }[] = [];
   private lamps: Mesh[] = [];
   private spray: ParticleSystem;
   private sparks: ParticleSystem;
@@ -198,31 +209,13 @@ export class SeaWorld {
   private buildIslands(): IslandShape[] {
     const rnd = seeded(2024);
     const shapes: IslandShape[] = [];
-    // Handgemachte Bernsteinsee, dahinter (noch) zufällige Inseln der übrigen Regionen
-    const specs: { x: number; z: number; r: number; hill: number; palms: number; tower: boolean; def: IslandDef }[] = BERNSTEINSEE.islands.map((d) => ({
-      x: d.x, z: d.z, r: d.r, hill: d.hill, palms: d.palms, tower: d.kind === 'lighthouse', def: d,
-    }));
-    let outer = 0;
-    for (let i = 0; i < 40 && outer < OUTER_NAMES.length; i++) {
-      const ang = rnd() * Math.PI * 2;
-      const dist = 1050 + rnd() * 780;
-      const x = Math.cos(ang) * dist, z = Math.sin(ang) * dist;
-      const r = 20 + rnd() * 28;
-      if (specs.some((s) => Math.hypot(s.x - x, s.z - z) < s.r + r + 120)) continue;
-      const lvl = Math.min(8, 3 + Math.floor(dist / 400));
-      const def: IslandDef = { id: `fern${outer}`, name: OUTER_NAMES[outer], x, z, r, hill: 0.15 + rnd() * 0.15, kind: rnd() < 0.7 ? 'camp' : 'quiet', palms: 2 + Math.floor(rnd() * 4), level: lvl, info: 'Unerforschtes Gewässer jenseits der Bernsteinsee.' };
-      specs.push({ x, z, r, hill: def.hill, palms: def.palms, tower: false, def });
-      outer++;
-    }
+    // Alle Regionen sind handgemacht: Bernsteinsee in der Mitte, fünf Meere im Ring
+    const specs = REGIONS.flatMap((reg) => reg.islands.map((d) => ({
+      x: d.x, z: d.z, r: d.r, hill: d.hill, palms: d.palms, tower: d.kind === 'lighthouse', def: d, kit: styleKit(reg.style ?? 'tropisch'),
+    })));
     this.islandDefs = specs.map((s) => s.def);
-
-    const sand = toon(0xf1d9a0);
-    const grass = toon({ color: 0x6dbb4c, flatShading: true });
-    const trunk = toon(0x8a5a2b);
-    const leaf = toon({ color: 0x3f9a3a, flatShading: true });
     const stone = toon(0xe8e2d4);
     const red = toon(0xa8322a);
-    const rock = toon({ color: 0x8a8378, flatShading: true });
 
     for (const s of specs) {
       const { r } = s;
@@ -230,9 +223,11 @@ export class SeaWorld {
       isl.position.set(s.x, 0, s.z);
       const walk: WalkIsland = { x: s.x, z: s.z, r, beachY: 1.3, hillR: r * 0.75, hillScale: s.hill, hillY: 1.2, blockers: [] };
       shapes.push({ x: s.x, z: s.z, r: r * 1.15 });
-      const beach = new Mesh(new CylinderGeometry(r, r * 1.25, 3, 36), sand);
+      const kit = s.kit;
+      const glow = new Set<Mesh>(this.lamps);
+      const beach = new Mesh(new CylinderGeometry(r, r * 1.25, 3, 36), kit.sand);
       beach.position.y = -0.2;
-      const hill = new Mesh(new SphereGeometry(r * 0.75, 18, 10), grass);
+      const hill = new Mesh(new SphereGeometry(r * 0.75, 18, 10), kit.grass);
       hill.scale.y = s.hill;
       hill.position.y = 1.2;
       isl.add(beach, hill);
@@ -241,7 +236,7 @@ export class SeaWorld {
       for (let k = 0; k < rocks; k++) {
         const a = rnd() * Math.PI * 2, rr = r * (0.35 + rnd() * 0.3);
         const size = r * (0.12 + rnd() * 0.1);
-        const rk = new Mesh(new ConeGeometry(size, size * 3, 6), rock);
+        const rk = new Mesh(new ConeGeometry(size, size * 3 * kit.rockScale, 6), kit.rock);
         rk.position.set(Math.cos(a) * rr, 1.2 + size, Math.sin(a) * rr);
         rk.rotation.set((rnd() - 0.5) * 0.3, rnd() * 3, (rnd() - 0.5) * 0.3);
         isl.add(rk);
@@ -250,22 +245,14 @@ export class SeaWorld {
       for (let k = 0; k < s.palms; k++) {
         const pa = town ? (k / s.palms) * Math.PI * 2 + rnd() * 0.2 : rnd() * Math.PI * 2;
         const pr = r * (town ? 0.84 + rnd() * 0.08 : 0.3 + rnd() * 0.55);
-        const palm = new Group();
+        const palm = plant(kit, rnd);
+        palm.traverse((o) => { if (o.userData.noOutline) glow.add(o as Mesh); });
         const px = Math.cos(pa) * pr, pz = Math.sin(pa) * pr;
         const d = Math.hypot(px, pz);
         const baseY = Math.max(1.3, d < r * 0.75 ? 1.2 + Math.sqrt((r * 0.75) ** 2 - d * d) * s.hill : 1.3);
         palm.position.set(px, baseY - 0.1, pz);
-        palm.rotation.z = (rnd() - 0.5) * 0.4;
-        const t = new Mesh(new CylinderGeometry(0.25, 0.4, 7, 6), trunk);
-        t.position.y = 3.5;
-        palm.add(t);
-        for (let l = 0; l < 6; l++) {
-          const f = new Mesh(new ConeGeometry(0.9, 4.2, 4), leaf);
-          f.position.y = 7;
-          f.rotation.set(Math.PI / 2.4, (l / 6) * Math.PI * 2, 0, 'YXZ');
-          f.scale.z = 0.25;
-          palm.add(f);
-        }
+        palm.rotation.z = (rnd() - 0.5) * (kit.flora === 'palme' ? 0.4 : 0.15);
+        palm.rotation.y = rnd() * Math.PI * 2;
         isl.add(palm);
         walk.blockers.push({ x: s.x + px, z: s.z + pz, r: 0.45 });
       }
@@ -281,8 +268,23 @@ export class SeaWorld {
         isl.add(tower, band, lamp);
         walk.blockers.push({ x: s.x, z: s.z, r: 2.5 });
       }
+      // Vulkan-Glut auf den Hügeln des Glutrings
+      if (s.def.region === 'glut' && s.def.kind !== 'harbor' && s.def.kind !== 'treasure') {
+        const v = volcano(kit, r, 1.2 + r * 0.75 * s.hill * 0.5, s.def.kind === 'boss');
+        isl.add(v.g);
+        v.g.traverse((o) => { if (o.userData.noOutline) glow.add(o as Mesh); });
+        walk.blockers.push({ x: s.x, z: s.z, r: v.radius * 0.95 });
+        this.smokeVents.push({ x: s.x, y: v.top + 1, z: s.z });
+      }
+      // Außenposten-Hafen in den Regionen
+      if (s.def.kind === 'harbor') {
+        const lanterns: Mesh[] = [];
+        const facing = Math.atan2(-s.x, -s.z);
+        isl.add(outpost(r, facing, lanterns));
+        for (const l of lanterns) glow.add(l);
+      }
       this.scene.add(isl);
-      mergeByMaterial(isl, new Set(this.lamps));
+      mergeByMaterial(isl, glow);
       isl.traverse((o) => {
         if ((o as Mesh).isMesh && !o.userData.noOutline) { o.castShadow = true; o.receiveShadow = true; }
       });
@@ -587,6 +589,36 @@ export class SeaWorld {
     };
   }
 
+  private updateSeaBoss(dt: number) {
+    const nearLair = Math.hypot(this.x - ABYSS_LAIR.x, this.z - ABYSS_LAIR.z) < 420;
+    if (!this.seaBoss && this.bossWanted && nearLair) {
+      this.seaBoss = new SeaBoss(this.scene, 15);
+      if (this.naval) this.naval.extraTarget = this.seaBoss;
+    }
+    const b = this.seaBoss;
+    if (!b) return;
+    b.update(dt, (x, z) => this.env.heightAt(x, z), this.mode === 'sail' ? this.ship : null, {
+      shake: (a) => { this.shake = Math.max(this.shake, a); },
+      splash: (x, z, big) => { this.spray.emit(big ? 80 : 30, x, 0.5, z, { speed: big ? 8 : 4, up: big ? 14 : 9, life: 1.6, color: new Color(0.95, 0.98, 1), spread: big ? 6 : 1.5 }); audio.play('splash', big ? 1.4 : 1, { x, z }); },
+      hitPlayer: (dmg) => { this.ship.damage(dmg, 'kugel', null); this.shake = Math.max(this.shake, 0.5); this.overlay?.hurt(); this.overlay?.number(new Vector3(this.ship.x, 4, this.ship.z), dmg, 'hurt'); },
+      roar: () => audio.play('roar'),
+    });
+    const show = b.alive && nearLair && this.mode === 'sail';
+    this.overlay?.setBoss(show ? 'Der Tiefenschlund' : null, b.frac);
+    if (b.dead && this.bossGone === 0) {
+      this.bossGone = 8;
+      this.overlay?.setBoss(null);
+      this.overlay?.impactFrame();
+      this.shake = Math.max(this.shake, 1);
+      this.onSeaBossDown();
+    }
+    if (this.bossGone > 0) {
+      this.bossGone -= dt;
+      if (this.bossGone <= 0) { b.dispose(); this.seaBoss = null; if (this.naval) this.naval.extraTarget = null; this.bossWanted = false; this.bossGone = -1; }
+    }
+    if (!nearLair && !this.bossWanted && b.alive) { b.dispose(); this.seaBoss = null; if (this.naval) this.naval.extraTarget = null; }
+  }
+
   /** Landtrupp kämpfen lassen, Crew an Deck beleben */
   private updateCrew(dt: number) {
     const crew = this.crew;
@@ -613,6 +645,7 @@ export class SeaWorld {
   /** Legende oder Boss in der Nähe? */
   get bossNear() {
     if (this.mode === 'foot') return !!this.combat?.enemies.some((e) => e.alive && e.kind === 'legende');
+    if (this.seaBoss?.alive && Math.hypot(this.x - ABYSS_LAIR.x, this.z - ABYSS_LAIR.z) < 300) return true;
     return !!this.naval?.enemies.some((e) => e.role === 'legende' && e.ship.alive && Math.hypot(e.ship.x - this.x, e.ship.z - this.z) < 200);
   }
 
@@ -659,6 +692,7 @@ export class SeaWorld {
     this.updateWorldEvents();
     this.life?.update(dt, (x, z) => this.env.heightAt(x, z), this.ship, this.mode === 'sail');
     if (this.town?.crystal) { this.town.crystal.rotation.y += dt; this.town.crystal.position.y += Math.sin(this.env.clock * 2) * dt * 0.3; }
+    if (Math.random() < dt * 4) for (const p of this.smokeVents) if (Math.hypot(p.x - this.x, p.z - this.z) < 500) this.spray.emit(2, p.x, p.y, p.z, { speed: 1.2, up: 5, life: 4, color: new Color(0.35, 0.3, 0.3), gravity: -0.3, spread: 2 });
     if (this.town && Math.random() < dt * 6) for (const p of this.town.smoke) this.spray.emit(1, p.x, p.y, p.z, { speed: 0.3, up: 1.5, life: 3, color: new Color(0.5, 0.48, 0.46), gravity: -0.2, spread: 0.4 });
     this.shake = Math.max(0, this.shake - dt * 1.8);
     this.updateWake(dt);
@@ -669,6 +703,7 @@ export class SeaWorld {
     this.updateNpcs(dt);
     this.combat?.update(dt, this.camera);
     this.updateCrew(dt);
+    this.updateSeaBoss(dt);
     this.fx?.update(dt);
     this.player?.update(dt);
     // Nach K.O. bringt die Crew dich an Bord
@@ -840,9 +875,9 @@ export class SeaWorld {
         if (input.pressed('interact')) this.board(prey);
       } else if (isl && Math.abs(this.speed) < 9) {
         const def = this.islandDefs[this.ground.islands.indexOf(isl)];
-        if (def?.kind === 'town') {
+        if (def?.kind === 'town' || def?.kind === 'harbor') {
           this.contextLabel = 'Hafen';
-          if (input.pressed('interact')) { this.ship.throttle = 0; this.onHarbor(); }
+          if (input.pressed('interact')) { this.ship.throttle = 0; this.onHarbor(def); }
         } else {
           this.contextLabel = 'An Land gehen';
           if (input.pressed('interact')) this.disembark(isl);
@@ -883,6 +918,8 @@ export class SeaWorld {
   private updateWorldEvents() {
     const near = this.islandDefs.findIndex((d) => Math.hypot(d.x - this.x, d.z - this.z) < d.r + 45);
     const id = near >= 0 ? this.islandDefs[near].id : null;
+    const reg = regionAt(this.x, this.z);
+    if (reg.id !== this.lastRegion) { this.lastRegion = reg.id; this.onEnterRegion(reg); }
     if (id && id !== this.lastIsland) this.onEnterIsland(this.islandDefs[near]);
     this.lastIsland = id;
     const c = this.combat;
@@ -931,13 +968,21 @@ export class SeaWorld {
     if (!c || !def) return;
     const where = `${def.name}`;
     if (def.kind === 'town') { this.onMessage(`Willkommen in ${where}! Sprich mit den Leuten – und probier deine Kombos an den Puppen.`); return; }
-    if (def.kind !== 'camp' && def.kind !== 'boss') { this.onMessage(`${where}: ${def.info}`); return; }
+    if (def.kind === 'harbor') { this.onMessage(`${where}: ${def.info}`); return; }
+    if (def.kind !== 'camp' && def.kind !== 'boss' && def.kind !== 'ruin') { this.onMessage(`${where}: ${def.info}`); return; }
     const until = this.cleared.get(idx) ?? 0;
     if (until > this.env.clock) { this.onMessage(`${where} ist ruhig – fürs Erste.`); return; }
     const enemyFaction: Faction = this.playerFaction === 'pirat' ? 'marine' : 'pirat';
     if (def.kind === 'boss') {
-      c.enterIsland(isl, ['legende', 'matrose', 'musketier', 'schildtraeger'], def.level ?? 6, enemyFaction, this.playerFaction === 'pirat' ? 'Kapitän Jorin Weiß' : 'Bram Eisenzahn');
-      this.onMessage(`${where}: Eine Legende erwartet dich!`);
+      const lv = def.level ?? 6;
+      c.enterIsland(isl, lv >= 9 ? ['legende', 'hauptmann', 'fajiwirker', 'musketier', 'schildtraeger', 'schlaeger'] : ['legende', 'matrose', 'musketier', 'schildtraeger'], lv, enemyFaction, def.boss ?? 'Die Legende');
+      this.onMessage(`${where}: ${def.boss ?? 'Eine Legende'} erwartet dich!`);
+      return;
+    }
+    if (def.kind === 'ruin') {
+      const lv = def.level ?? 5;
+      c.enterIsland(isl, ['fajiwirker', 'fajiwirker', 'schlaeger', 'musketier', 'schildtraeger', ...(lv >= 12 ? ['hauptmann' as const] : [])], lv, enemyFaction);
+      this.onMessage(`${where}: Faji-Wirker hüten die Ruine! (Stufe ${lv})`);
       return;
     }
     const level = def.level ?? 1;
