@@ -1,5 +1,28 @@
 # Was ist neu
 
+## 2.0.0-m6 – Meilenstein 6 „Welt 2.0: Bernsteinsee“ (01.11.2026)
+
+- **Handgemachte Bernsteinsee** statt Zufallsinseln: 9 benannte Inseln mit eigener Rolle – die Hafenstadt Ankerglück, Muschelruh, Krähenfels, Möwennest, das Leuchtfeuer, Rabenriff, Bernsteinbucht, Sonnenstrand und Sturmzahn mit einer Legende. Wer zum ersten Mal eine Insel erreicht, sieht ein Banner mit ihrem Namen.
+- **Ankerglück:** Hafen mit Steg, Taverne „Zum Rostigen Anker“, Schmiede, Markt, Werft und Faji-Schrein. Nachts leuchten Fenster und Laternen, aus Schornsteinen steigt Rauch.
+- **7 Bewohnerinnen und Bewohner mit Namen**, eigenen Sprüchen und Aufgaben (Ilse, Baldo, Grete, Mara, Meister Ilyas, Jasper, Ole). Dazu Stadtvolk, das umherschlendert, sitzt, arbeitet und dir zuwinkt.
+- **Gespräche:** Taste R bzw. goldener Knopf „Sprechen“.
+- **Aufträge:** 2 Kapitel der Hauptgeschichte („Salz im Blut“, „Die Legende von Sturmzahn“) und 5 Nebenaufträge. Die Ziele reichen von Orten erreichen und Lager räumen über Schiffe versenken, Entern und Schätze ausgraben bis zu Schiffbrüchige retten. Für jeden Auftrag gibt es Gold, Erfahrung, Ruhm und manchmal Faji-Punkte.
+- **Auftragsanzeige** oben rechts mit Richtungspfeil und Entfernung
+- **Minikarte** (antippen öffnet die große Karte)
+- **Seekarte und Logbuch** (Taste M): Bernsteinsee und ganze Welt, laufende und erledigte Aufträge mit allen Schritten, deine Taten
+- **Läden:**
+  - Schmiede: 6 Klingen und 5 Rüstungen; das alte Stück wird in Zahlung genommen.
+  - Markt: Proviant
+  - Faji-Schrein: Faji-Punkte gegen Gold
+  - Werft (jetzt bei Jasper in der Stadt)
+  - Taverne: übernachten, um voll zu heilen und bis zum Morgen zu schlafen
+- **Proviant** (Taste H bzw. grüner Knopf an Land) heilt 40 % deiner Lebenspunkte.
+- **Leben auf See:**
+  - Möwenschwärme, springende Delfine und ein Wal
+  - Fischerboote, die zwischen den Inseln kreuzen
+  - Schiffbrüchige auf Flößen zum Retten
+  - Flaschenpost mit Schatzkarten. Das X liegt auf einer Insel, dort kannst du graben.
+- **Pausemenü:** „Karte & Logbuch“ ersetzt den Knopf für die Werft.
 ## 2.0.0-m5 – Meilenstein 5 „Schiffe 2.0“ (01.11.2026)
 
 - **Behoben:** Gegner flogen im Kampf manchmal in dich hinein und zitterten. Sie schoben sich beim Ausweichen versehentlich selbst weg. Jetzt halten sie sauberen Abstand (gemessen über 3000 Bewegungsschritte ohne Sprung).

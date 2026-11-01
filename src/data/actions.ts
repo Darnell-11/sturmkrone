@@ -4,6 +4,7 @@ export const ACTION_IDS = [
   'attack', 'heavy', 'dodge', 'interact', 'block', 'lockon',
   'fireLeft', 'fireRight',
   'skill1', 'skill2', 'skill3',
+  'potion', 'map',
   'pause',
 ] as const;
 
@@ -25,6 +26,8 @@ export const ACTION_LABELS: Record<ActionId, string> = {
   skill1: 'Fähigkeit 1',
   skill2: 'Fähigkeit 2',
   skill3: 'Fähigkeit 3',
+  potion: 'Proviant essen',
+  map: 'Karte & Logbuch',
   pause: 'Pause',
 };
 
@@ -45,6 +48,8 @@ export const DEFAULT_KEYS: Record<ActionId, string[]> = {
   skill1: ['Digit1'],
   skill2: ['Digit2'],
   skill3: ['Digit3'],
+  potion: ['KeyH'],
+  map: ['KeyM'],
   pause: ['Escape', 'KeyP'],
 };
 
@@ -65,6 +70,8 @@ export const DEFAULT_PAD: Record<ActionId, number[]> = {
   skill1: [6],
   skill2: [7],
   skill3: [5],
+  potion: [10],
+  map: [8],
   pause: [9],
 };
 

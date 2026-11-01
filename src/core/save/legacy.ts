@@ -1,5 +1,5 @@
 import { defaultLook, type CharacterLook } from '../../data/characterParts';
-import { defaultShip, SAVE_VERSION, type Faction, type FightStyle, type SaveData, type SkillState } from './types';
+import { defaultProgress, defaultShip, SAVE_VERSION, type Faction, type FightStyle, type SaveData, type SkillState } from './types';
 
 /** localStorage-Schlüssel von Sturmkrone 1.0 */
 export const LEGACY_KEY = 'sturmkrone-saga-1';
@@ -58,8 +58,17 @@ export function convertLegacy10(raw: Record<string, any>, gameVersion: string, n
     // Die 1.0-Welt hatte andere Koordinaten – das Schiff startet neu am Hafen.
     world: { boat: null, time: 9, weather: 'klar' },
     progress: {
+      ...defaultProgress(),
       flags: raw.flags && typeof raw.flags === 'object' ? { ...raw.flags } : {},
       quest: Math.max(0, Math.floor(num(raw.quest, 0))),
+      stats: {
+        kills: Math.max(0, Math.floor(num(raw.stats?.beaten, 0))), sunk: Math.max(0, Math.floor(num(raw.stats?.sunk, 0))),
+        boarded: Math.max(0, Math.floor(num(raw.stats?.boarded, 0))), treasures: 0, rescued: 0,
+      },
+    },
+    gear: {
+      weapon: Math.max(0, Math.min(5, Math.floor(num(raw.weapon, 0)))), armor: Math.max(0, Math.min(4, Math.floor(num(raw.armor, 0)))),
+      potions: Math.max(0, Math.min(10, Math.floor(num(raw.potions, 3)))), shrine: 0,
     },
     skills: skillsFromLegacy(raw, Math.max(1, Math.floor(num(raw.lvl, 1)))),
     ship: defaultShip(raw.faction as Faction, Math.max(0, Math.min(6, Math.floor(num(raw.tier, 0))))),

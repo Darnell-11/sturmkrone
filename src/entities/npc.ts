@@ -29,7 +29,19 @@ export class Npc {
     this.pick();
   }
 
+  /** Daten der Stadtbewohnerin/des Stadtbewohners (Name, Laden, Sprüche) */
+  townDef: import('../data/quests').TownNpcDef | null = null;
+  /** Feste Person (Ladenbesitzer): bleibt an ihrem Platz */
+  station: { x: number; z: number; yaw: number } | null = null;
+  pin(x: number, z: number, yaw: number) {
+    this.station = { x, z, yaw };
+    this.x = x; this.z = z; this.yaw = yaw;
+    this.mood = 'idle';
+    this.char.play(this.role === 'schmied' ? 'hammer' : 'idle', { fade: 0.3 });
+  }
+
   private pick() {
+    if (this.station) { this.mood = 'idle'; this.timer = 6; this.char.play(this.role === 'schmied' ? 'hammer' : 'idle', { fade: 0.4 }); return; }
     const r = this.rng();
     const favour: Mood = this.role === 'schmied' ? 'work' : this.role === 'fischer' ? 'sit' : 'wander';
     this.mood = r < 0.35 ? favour : r < 0.6 ? 'wander' : r < 0.85 ? 'idle' : 'sit';

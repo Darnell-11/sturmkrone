@@ -22,6 +22,10 @@ export class Hud {
   private toastTimer = 0;
   private hintTimer = 0;
   onPause: () => void = () => {};
+  onMap: () => void = () => {};
+  private mini: HTMLCanvasElement;
+  private questEl: HTMLElement;
+  private questKey = '';
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
@@ -41,9 +45,13 @@ export class Hud {
         <div class="hud-env"></div>
         <div class="hud-fps" hidden></div>
       </div>
-      <div class="hud-btns">
-        <button class="icon-btn hud-faji" aria-label="Faji-Baum"><svg viewBox="0 0 24 24"><path d="M12 2l2.2 6.4L21 9l-5.2 4.3L17.6 20 12 16.3 6.4 20l1.8-6.7L3 9l6.8-.6z"/></svg><b class="badge" hidden>0</b></button>
-        <button class="icon-btn hud-pause" aria-label="Pause"><svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></button>
+      <div class="hud-right">
+        <div class="hud-btns">
+          <button class="icon-btn hud-faji" aria-label="Faji-Baum"><svg viewBox="0 0 24 24"><path d="M12 2l2.2 6.4L21 9l-5.2 4.3L17.6 20 12 16.3 6.4 20l1.8-6.7L3 9l6.8-.6z"/></svg><b class="badge" hidden>0</b></button>
+          <button class="icon-btn hud-pause" aria-label="Pause"><svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></button>
+        </div>
+        <button class="hud-mini" aria-label="Karte und Logbuch"><canvas></canvas><span class="hud-potions" title="Proviant"></span></button>
+        <div class="hud-quest" hidden><div class="q-arrow">➤</div><div class="q-body"><b class="q-title"></b><span class="q-step"></span></div></div>
       </div>`;
     parent.appendChild(this.root);
     this.nameEl = this.root.querySelector('.hud-name')!;
@@ -57,6 +65,9 @@ export class Hud {
     this.root.querySelector('.hud-faji')!.addEventListener('click', () => this.onFaji());
     this.fjEl = this.root.querySelector('.hud-bar.fj i')!;
     this.badge = this.root.querySelector('.badge')!;
+    this.mini = this.root.querySelector('.hud-mini canvas')!;
+    this.root.querySelector('.hud-mini')!.addEventListener('click', () => this.onMap());
+    this.questEl = this.root.querySelector('.hud-quest')!;
     this.skillbar = document.createElement('div');
     this.skillbar.className = 'skillbar';
     this.skillbar.hidden = true;
@@ -145,6 +156,39 @@ export class Hud {
     if (this.xpEl.style.width !== xp) this.xpEl.style.width = xp;
     const g = `Gold ${Math.round(gold).toLocaleString('de-DE')}`;
     if (this.goldEl.textContent !== g) this.goldEl.textContent = g;
+  }
+
+  /** Zeichenfläche der Minikarte (in passender Pixeldichte); null, wenn ausgeblendet */
+  miniCanvas(): { ctx: CanvasRenderingContext2D; size: number } | null {
+    if (this.root.hidden) return null;
+    const size = this.mini.clientWidth;
+    if (!size) return null;
+    const px = Math.round(size * Math.min(2, devicePixelRatio));
+    if (this.mini.width !== px) { this.mini.width = px; this.mini.height = px; }
+    const ctx = this.mini.getContext('2d');
+    return ctx ? { ctx, size } : null;
+  }
+
+  setPotions(n: number) {
+    const el = this.root.querySelector<HTMLElement>('.hud-potions')!;
+    const t = `🍖 ${n}`;
+    if (el.textContent !== t) el.textContent = t;
+  }
+
+  /** Verfolgter Auftrag mit Richtungspfeil (Winkel relativ zur Kamera, null = keiner) */
+  setQuest(q: { title: string; step: string; angle: number | null; dist: number | null } | null) {
+    this.questEl.hidden = !q;
+    if (!q) { this.questKey = ''; return; }
+    const step = q.dist !== null && q.dist > 25 ? `${q.step} · ${q.dist >= 1000 ? `${(q.dist / 1000).toFixed(1).replace('.', ',')} km` : `${Math.round(q.dist / 10) * 10} m`}` : q.step;
+    const key = q.title + step;
+    if (key !== this.questKey) {
+      this.questKey = key;
+      this.questEl.querySelector('.q-title')!.textContent = q.title;
+      this.questEl.querySelector('.q-step')!.textContent = step;
+    }
+    const arrow = this.questEl.querySelector<HTMLElement>('.q-arrow')!;
+    arrow.style.visibility = q.angle === null ? 'hidden' : 'visible';
+    if (q.angle !== null) arrow.style.transform = `rotate(${(q.angle - Math.PI / 2).toFixed(3)}rad)`;
   }
 
   setEnv(text: string) {

@@ -8,6 +8,10 @@ import { EDGE_WALL, WEATHER, WEATHER_IDS, type WeatherId } from '../data/world';
 import { formatClock } from '../world/timeOfDay';
 import { FIGUREHEADS, FLAGS, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, STRIPE_COLORS, type ShipLook } from '../data/ships';
 import { downloadText, esc, formatDate, formatPlayTime, pickFile } from './dom';
+import { QUEST_BY_ID, type QuestDef, type ShopKind, type TownNpcDef } from '../data/quests';
+import { ARMOR, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS } from '../data/regions';
+import { stepText } from '../story/questSystem';
+import { drawMap } from './minimap';
 
 type Handler = (id: string, el: HTMLElement) => void;
 type SettingsTab = 'grafik' | 'steuerung' | 'ton' | 'anzeige';
@@ -105,7 +109,7 @@ export class Menus {
         ${g.persistent ? '' : '<p class="warn">Dein Browser erlaubt kein dauerhaftes Speichern (z. B. privater Modus). Spielstände gehen beim Schließen verloren – nutze „Exportieren“.</p>'}
         <button class="primary" data-a="play" data-focus>Spielen</button>
         <button class="secondary" data-a="settings">Einstellungen</button>
-        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Meilenstein 5 „Schiffe 2.0“</p>
+        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Meilenstein 6 „Welt 2.0“</p>
       </div>`,
       {
         play: () => this.showSlots(),
@@ -217,8 +221,8 @@ export class Menus {
     this.open(
       `<h2 class="fell">Pause</h2>
       <button class="primary" data-a="resume" data-focus>Weiterspielen</button>
+      <button class="secondary" data-a="map">Karte &amp; Logbuch</button>
       <button class="secondary" data-a="look">Aussehen ändern</button>
-      <button class="secondary" data-a="yard">Werft &amp; Schiff</button>
       <button class="secondary" data-a="settings">Einstellungen</button>
       <button class="secondary" data-a="workshop">Welt-Werkstatt (Test)</button>
       <button class="secondary" data-a="save">Speichern</button>
@@ -226,7 +230,7 @@ export class Menus {
       {
         resume: () => g.resume(),
         look: () => g.openEditor(null),
-        yard: () => this.showShipyard(),
+        map: () => this.showMap('logbuch', () => this.showPause()),
         settings: () => this.showSettings(() => this.showPause()),
         workshop: () => this.showWorkshop(),
         save: () => { g.hud.toast(g.persist() ? 'Gespeichert.' : 'Speichern fehlgeschlagen!'); },
@@ -236,15 +240,163 @@ export class Menus {
     );
   }
 
+  // ---------- Gespräche und Läden ----------
+
+  /** Gespräch mit einer Stadtbewohnerin/einem Stadtbewohner. done = gerade abgeschlossene Aufträge */
+  showDialog(npc: TownNpcDef, done: QuestDef[] = [], msg = '') {
+    const g = this.game;
+    const qs = g.questSys;
+    const save = g.saveData;
+    if (!qs || !save) return;
+    const offers = qs.available(npc.id);
+    const running = save.progress.quests.map((p) => QUEST_BY_ID[p.id]).filter((q) => q && q.giver === npc.id);
+    const line = npc.greet[Math.floor(Math.random() * npc.greet.length)];
+    const reward = (q: QuestDef) => [`${q.reward.gold} Gold`, `${q.reward.xp} EP`, `${q.reward.fame} Ruhm`, q.reward.sp ? `${q.reward.sp} Faji-Punkt${q.reward.sp > 1 ? 'e' : ''}` : ''].filter(Boolean).join(' · ');
+    const shopBtn: Record<ShopKind, string> = {
+      smith: 'Waffen &amp; Rüstung ansehen', market: 'Proviant kaufen', shrine: 'Zum Faji-Schrein', shipyard: 'Zur Werft',
+      tavern: `Rasten bis zum Morgen (${REST_PRICE} Gold)`, harbor: 'Seekarte &amp; Logbuch',
+    };
+    this.open(
+      `<div class="dlg-head"><div class="dlg-face">${esc(npc.name[0])}</div><div><b>${esc(npc.name)}</b><span class="soft small">${esc(npc.title)}</span></div></div>
+      ${done.map((q) => `<div class="dlg-done"><b>Auftrag erfüllt: ${esc(q.title)}</b><p class="dlg-line">„${esc(q.outro)}“</p><p class="small"><b>Belohnung:</b> ${reward(q)}</p></div>`).join('')}
+      ${done.length ? '' : `<p class="dlg-line">„${esc(line)}“</p>`}
+      ${msg ? `<p class="note">${esc(msg)}</p>` : ''}
+      ${offers.map((q) => `<div class="slot${q.main ? ' main' : ''}"><div class="slot-head"><b>${esc(q.title)}</b><span>${q.main ? 'Hauptgeschichte' : 'Auftrag'}</span></div>
+        <p class="dlg-line small">„${esc(qs.introOf(q))}“</p><p class="small soft">Belohnung: ${reward(q)}</p>
+        <button class="mini brass" data-a="accept" data-id="${q.id}">Annehmen</button></div>`).join('')}
+      ${running.map((q) => { const st = qs.step(q!.id); return st ? `<p class="small soft">Laufend: <b>${esc(q!.title)}</b> – ${esc(st.text)}</p>` : ''; }).join('')}
+      ${npc.shop ? `<button class="secondary" data-a="shop">${shopBtn[npc.shop]}</button>` : ''}
+      <button class="primary" data-a="bye" data-focus>Auf Wiedersehen</button>`,
+      {
+        accept: (id) => { g.acceptQuest(id); this.showDialog(npc, [], 'Auftrag angenommen! Das Ziel siehst du oben rechts.'); },
+        shop: () => this.openShop(npc),
+        bye: () => g.resume(),
+      },
+      () => g.resume(),
+    );
+  }
+
+  private openShop(npc: TownNpcDef) {
+    const back = () => this.showDialog(npc);
+    switch (npc.shop) {
+      case 'smith': this.showSmith(back); break;
+      case 'market': this.showMarket(back); break;
+      case 'shrine': this.showShrine(back); break;
+      case 'shipyard': this.showShipyard('', back); break;
+      case 'tavern': this.showDialog(npc, [], this.game.rest()); break;
+      case 'harbor': this.showMap('karte', back); break;
+    }
+  }
+
+  private shopHead(title: string, msg: string) {
+    return `<h2 class="fell">${title}</h2><p class="soft">Gold: <b>${this.game.playerGold.toLocaleString('de-DE')}</b>${msg ? ` · <b>${esc(msg)}</b>` : ''}</p>`;
+  }
+
+  showSmith(back: () => void, msg = '') {
+    const g = this.game;
+    const s = g.saveData;
+    if (!s) return;
+    const rank = g.playerRank;
+    const re = (m: string) => { const y = this.screen.scrollTop; this.showSmith(back, m); this.screen.scrollTop = y; };
+    const row = (n: string, stat: string, price: number, needRank: number, owned: boolean, worn: boolean, a: string, i: number) => `<div class="slot"><div class="slot-head"><b>${esc(n)}${worn ? ' ✓' : ''}</b><span>${owned ? (worn ? 'Angelegt' : 'Überholt') : `${price.toLocaleString('de-DE')} Gold`}</span></div>
+      <div class="meta">${stat}${needRank > rank && !owned ? ` · ab Rang ${needRank + 1}` : ''}</div>
+      ${owned ? '' : `<button class="mini brass" data-a="${a}" data-id="${i}" ${needRank > rank ? 'disabled' : ''}>Kaufen</button>`}</div>`;
+    this.open(
+      `${this.shopHead('Schmiede', msg)}
+      <h3>Klingen</h3>${WEAPONS.map((w, i) => row(w.n, `+${w.dmg} Schaden${w.glow ? ' · leuchtet' : ''}`, w.price, w.rank, i <= s.gear.weapon, i === s.gear.weapon, 'wpn', i)).join('')}
+      <h3>Rüstung</h3>${ARMOR.map((a, i) => row(a.n, `+${a.hp} Leben`, a.price, a.rank, i <= s.gear.armor, i === s.gear.armor, 'arm', i)).join('')}
+      <p class="small soft">Dein altes Stück nimmt Grete für den halben Preis in Zahlung.</p>
+      <button class="primary" data-a="back">Zurück</button>`,
+      { wpn: (id) => re(g.buyGear('weapon', +id)), arm: (id) => re(g.buyGear('armor', +id)), back },
+      back,
+      { wide: true },
+    );
+  }
+
+  showMarket(back: () => void, msg = '') {
+    const g = this.game;
+    const s = g.saveData;
+    if (!s) return;
+    const re = (m: string) => this.showMarket(back, m);
+    this.open(
+      `${this.shopHead('Markt', msg)}
+      <div class="slot"><div class="slot-head"><b>${POTION.n}</b><span>${POTION.price} Gold</span></div>
+        <div class="meta">Heilt ${Math.round(POTION.heal * 100)} % deiner Lebenspunkte. Du trägst ${s.gear.potions} von ${POTION.max}.</div>
+        <div class="row"><button class="mini brass" data-a="buy" data-id="1" ${s.gear.potions >= POTION.max ? 'disabled' : ''}>1 kaufen</button><button class="mini brass" data-a="buy" data-id="${POTION.max}" ${s.gear.potions >= POTION.max ? 'disabled' : ''}>Auffüllen</button></div></div>
+      <p class="small soft">Essen: Taste <kbd>${esc(g.input.keyLabel(g.input.getKeyBindings().potion?.[0] ?? 'KeyH'))}</kbd> oder der grüne Knopf am Handy.</p>
+      <button class="primary" data-a="back">Zurück</button>`,
+      { buy: (id) => re(g.buyPotions(+id)), back },
+      back,
+    );
+  }
+
+  showShrine(back: () => void, msg = '') {
+    const g = this.game;
+    const s = g.saveData;
+    if (!s) return;
+    const price = SHRINE_PRICE(s.gear.shrine);
+    this.open(
+      `${this.shopHead('Faji-Schrein', msg)}
+      <p class="dlg-line">„Gib dem Schrein Gold, und er gibt dir einen Funken Faji zurück. Je öfter du kommst, desto mehr verlangt er.“</p>
+      <div class="slot"><div class="slot-head"><b>Faji-Punkt</b><span>${price.toLocaleString('de-DE')} Gold</span></div>
+        <div class="meta">Bisher gekauft: ${s.gear.shrine} · Freie Faji-Punkte: ${s.skills.sp}</div>
+        <button class="mini brass" data-a="buy">Opfern</button></div>
+      <button class="secondary" data-a="tree">Faji-Baum öffnen</button>
+      <button class="primary" data-a="back">Zurück</button>`,
+      { buy: () => this.showShrine(back, g.buyShrine()), tree: () => g.openSkills(), back },
+      back,
+    );
+  }
+
+  // ---------- Karte und Logbuch ----------
+
+  showMap(tab: 'karte' | 'welt' | 'logbuch' = 'karte', back: () => void = () => this.game.resume()) {
+    const g = this.game;
+    const s = g.saveData;
+    const qs = g.questSys;
+    if (!s || !qs) return;
+    const st = s.progress.stats;
+    const tracked = qs.tracked();
+    const active = s.progress.quests.map((p) => ({ q: QUEST_BY_ID[p.id], p })).filter((x) => x.q);
+    const done = s.progress.done.map((id) => QUEST_BY_ID[id]).filter(Boolean);
+    const body = tab !== 'logbuch'
+      ? `<canvas class="worldmap"></canvas>
+        <p class="small soft">★ Ziel · ✕ Schatz · rote Punkte: Feindschiffe · gestrichelt: Weltrand</p>`
+      : `<h3>Laufende Aufträge</h3>
+        ${active.length ? active.map(({ q, p }) => { const step = q.steps[p.step]; return `<div class="slot${q.main ? ' main' : ''}"><div class="slot-head"><b>${esc(q.title)}</b><span>${tracked?.q.id === q.id ? 'Verfolgt' : q.main ? 'Hauptgeschichte' : ''}</span></div>
+          <ol class="steps">${q.steps.map((x, i) => `<li class="${i < p.step ? 'ok' : i === p.step ? 'now' : ''}">${esc(i === p.step && step ? stepText(step, p.count) : x.text)}</li>`).join('')}</ol></div>`; }).join('') : '<p class="soft">Keine – sprich mit den Leuten in Ankerglück.</p>'}
+        ${s.progress.maps.length ? `<h3>Schatzkarten</h3><p>${s.progress.maps.map((id) => esc(g.world.islandDefs.find((i) => i.id === id)?.name ?? id)).join(', ')}</p>` : ''}
+        <h3>Erledigt</h3>${done.length ? `<p class="small">${done.map((q) => esc(q!.title)).join(' · ')}</p>` : '<p class="soft small">Noch nichts.</p>'}
+        <h3>Taten</h3><p class="small">Besiegte Gegner ${st.kills} · Versenkte Schiffe ${st.sunk} · Geenterte Schiffe ${st.boarded} · Gehobene Schätze ${st.treasures} · Gerettete ${st.rescued}</p>`;
+    this.open(
+      `<h2 class="fell">${tab === 'logbuch' ? 'Logbuch' : tab === 'welt' ? 'Weltkarte' : 'Bernsteinsee'}</h2>
+      <div class="tabs"><button data-a="tab" data-id="karte" aria-pressed="${tab === 'karte'}">Bernsteinsee</button><button data-a="tab" data-id="welt" aria-pressed="${tab === 'welt'}">Ganze Welt</button><button data-a="tab" data-id="logbuch" aria-pressed="${tab === 'logbuch'}">Logbuch</button></div>
+      ${body}
+      <button class="primary" data-a="back" data-focus>Zurück</button>`,
+      { tab: (id) => this.showMap(id as 'karte' | 'welt' | 'logbuch', back), back },
+      back,
+      { wide: true },
+    );
+    const cv = this.card.querySelector<HTMLCanvasElement>('.worldmap');
+    if (cv) {
+      const size = Math.max(200, Math.min((cv.parentElement?.clientWidth ?? 560) - 44, innerHeight - 250));
+      cv.style.height = `${size}px`;
+      cv.style.width = `${size}px`;
+      cv.width = cv.height = Math.round(size * Math.min(2, devicePixelRatio));
+      const ctx = cv.getContext('2d');
+      if (ctx) drawMap(ctx, size, g.world.islandDefs, g.mapMarkers(), tab === 'welt' ? 'world' : 'region');
+    }
+  }
+
   // ---------- Werft ----------
 
-  showShipyard(msg = '') {
+  showShipyard(msg = '', back: () => void = () => this.showPause()) {
     const g = this.game;
     const st = g.shipState;
     if (!st) return;
     const look = st.look;
     const rank = g.playerRank;
-    const rerender = (m = '') => { const y = this.screen.scrollTop; this.showShipyard(m); this.screen.scrollTop = y; };
+    const rerender = (m = '') => { const y = this.screen.scrollTop; this.showShipyard(m, back); this.screen.scrollTop = y; };
     const sw = (k: keyof ShipLook, colors: string[]) => `<div class="swatches">${colors.map((c) => `<button class="sw" style="background:${c}" data-a="lk" data-id="${k}|${c}" aria-pressed="${String(look[k]).toUpperCase() === c.toUpperCase()}"></button>`).join('')}</div>`;
     const chips = (k: keyof ShipLook, opts: Record<string, string>) => `<div class="chips">${Object.entries(opts).map(([id, l]) => `<button data-a="lk" data-id="${k}|${id}" aria-pressed="${look[k] === id}">${l}</button>`).join('')}</div>`;
     const classes = SHIP_CLASSES.map((c, i) => {
@@ -273,9 +425,9 @@ export class Menus {
         repair: () => rerender(g.shipyardRepair()),
         lk: (id) => { const [k, v] = id.split('|'); g.shipyardLook({ ...look, [k]: v }); rerender(); },
         lanterns: () => { g.shipyardLook({ ...look, lanterns: !look.lanterns }); rerender(); },
-        back: () => this.showPause(),
+        back,
       },
-      () => this.showPause(),
+      back,
       { wide: true },
     );
   }
@@ -305,7 +457,7 @@ export class Menus {
         <div class="chips" style="margin-top:6px"><button data-a="autow" aria-pressed="${env.weather.auto}">Wetter wechselt von selbst</button></div>
       </div>
       <div class="opt"><span class="label">Orte</span>
-        <div class="row"><button class="mini" data-a="edge">Zum Weltrand</button><button class="mini" data-a="home">Zurück zum Start</button></div>
+        <div class="row"><button class="mini" data-a="edge">Zum Weltrand</button><button class="mini" data-a="home">Zurück zum Start</button><button class="mini" data-a="yard">Werft öffnen</button></div>
       </div>
       <div class="opt"><span class="label">Faji (Test)</span>
         <div class="row"><button class="mini" data-a="sp">+5 Faji-Punkte</button><button class="mini" data-a="lvl">+5 Stufen</button><button class="mini" data-a="awaken">Erwachen zeigen</button></div>
@@ -318,7 +470,8 @@ export class Menus {
         weather: (id) => { env.weather.setWeather(id as WeatherId, true); rerender(); },
         autow: () => { env.weather.auto = !env.weather.auto; rerender(); },
         edge: () => { g.world.teleport(EDGE_WALL - 160, 0, Math.PI / 2); g.resume(); g.hud.toast('Vor dir liegt der Weltrand …', 3); },
-        home: () => { g.world.teleport(0, -60, 0); g.resume(); },
+        home: () => { g.world.teleport(0, 12, 0); g.resume(); },
+        yard: () => this.showShipyard('', () => this.showWorkshop()),
         sp: () => { g.testGrant(5, 0); g.hud.toast('+5 Faji-Punkte'); },
         lvl: () => { g.testGrant(5, 5); g.hud.toast('+5 Stufen'); },
         awaken: () => { g.resume(); g.checkAwakening('koerper'); },

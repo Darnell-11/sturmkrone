@@ -28,6 +28,10 @@ import { createSave, type SaveData } from './save/types';
 import { SettingsStore } from './settings';
 import { StateMachine } from './state';
 import { browserStore } from './storage';
+import { QuestSystem, stepText } from '../story/questSystem';
+import type { QuestDef, TownNpcDef } from '../data/quests';
+import { ARMOR, BERNSTEINSEE, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, type IslandDef } from '../data/regions';
+import { drawMap, type MapMarkers } from '../ui/minimap';
 
 export const GAME_VERSION = __APP_VERSION__;
 const AUTOSAVE_SECONDS = 30;
@@ -57,6 +61,10 @@ export class Game {
   private stage: EditorStage | null = null;
   private editor: CharacterEditor | null = null;
   private uiRoot: HTMLElement;
+  private quests: QuestSystem | null = null;
+  /** Im laufenden Gespräch abgeschlossene Aufträge (für die Abschlusstexte) */
+  private justDone: QuestDef[] | null = null;
+  private mapT = 0;
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.uiRoot = uiRoot;
@@ -91,6 +99,7 @@ export class Game {
     this.world.onShipSunk = (e) => {
       if (!this.save) return;
       const p = this.save.player;
+      if (!e.companion) { this.save.progress.stats.sunk++; this.questEvent({ type: 'sink' }); }
       const mult = e.role === 'legende' ? 6 : e.role === 'haendler' ? 0.8 : 1.4;
       this.grantXp(Math.round((25 + e.level * 10) * mult), e.role === 'legende' ? 250 : e.role === 'haendler' ? (p.faction === 'pirat' ? 4 : -6) : 8);
       this.overlay.showBanner(e.role === 'legende' ? `${e.name} besiegt!` : 'Schiff versenkt!', e.role === 'haendler' ? 'Ein Handelsschiff' : '');
@@ -100,7 +109,27 @@ export class Game {
       this.save.player.gold += gold;
       if (shard) { this.save.skills.sp++; this.hud.toast('Faji-Splitter: +1 Faji-Punkt!', 3); }
     };
-    this.world.onBoardWon = () => { if (this.save) this.grantXp(40, 20); };
+    this.world.onBoardWon = () => {
+      if (!this.save) return;
+      this.save.progress.stats.boarded++;
+      this.grantXp(40, 20);
+      this.questEvent({ type: 'board' });
+    };
+    this.world.onTalk = (npc) => this.talkTo(npc);
+    this.world.onEnterIsland = (def) => this.enterIsland(def);
+    this.world.onIslandCleared = (id) => this.questEvent({ type: 'clear', island: id });
+    this.world.onRescue = () => {
+      if (!this.save) return;
+      this.save.progress.stats.rescued++;
+      const gold = 40 + this.save.player.level * 6;
+      this.save.player.gold += gold;
+      this.overlay.showBanner('Schiffbrüchige gerettet!', `Zum Dank: ${gold} Gold`);
+      this.grantXp(30, 12);
+      this.questEvent({ type: 'rescue' });
+    };
+    this.world.onBottle = () => this.findBottle();
+    this.world.onDig = (id) => this.dig(id);
+    this.hud.onMap = () => { if (this.state.is('play')) { this.state.set('pause'); this.menus.showMap('karte'); } };
     this.world.onPlayerDown = () => {
       this.overlay.showBanner('K.O.', 'Die Crew eilt zu Hilfe …');
       if (this.save) {
@@ -178,6 +207,8 @@ export class Game {
     this.input.beginStep();
     if (this.state.is('play')) {
       if (this.input.pressed('pause')) { this.pause(); return; }
+      if (this.input.pressed('map')) { this.state.set('pause'); this.menus.showMap('karte'); return; }
+      if (this.input.pressed('potion')) this.usePotion();
       this.world.update(dt, this.input);
       if (this.save) this.save.meta.playTime += dt;
       this.autosaveTimer += dt;
@@ -231,6 +262,7 @@ export class Game {
       const key = this.input.lastDevice === 'keyboard' ? this.input.keyLabel(this.input.getKeyBindings().interact[0] ?? 'KeyR')
         : this.input.lastDevice === 'gamepad' ? 'X' : null;
       this.hud.setContext(this.world.contextLabel, key);
+      this.updateQuestHud(frameDt);
       if (s.qualityAuto && this.autoQuality.sample(frameDt)) this.autoLower();
     }
   }
@@ -254,7 +286,10 @@ export class Game {
     if (!this.save) return;
     const lvl = this.save.player.level;
     const hpBonus = 1 + (this.world.faji?.passives.hpMax ?? 0);
-    this.world.setPlayerPower(PLAYER_BASE.hp(lvl) * hpBonus, PLAYER_BASE.atk(lvl));
+    const gear = this.save.gear;
+    const armor = ARMOR[gear.armor]?.hp ?? 0;
+    const weapon = WEAPONS[gear.weapon]?.dmg ?? 0;
+    this.world.setPlayerPower((PLAYER_BASE.hp(lvl) + armor) * hpBonus, PLAYER_BASE.atk(lvl) + weapon * 0.5);
     const nav = this.world.naval;
     if (nav) {
       nav.playerLevel = lvl;
@@ -268,6 +303,231 @@ export class Game {
     const xp = Math.round(e.def.xp * (1 + 0.2 * (e.level - 1)));
     this.overlay.number(e.head.setY(e.y + 2.8), `+${xp} EP`, 'xp');
     this.grantXp(xp, e.def.boss ? 200 : e.def.elite ? 15 : 3);
+    if (this.save) this.save.progress.stats.kills++;
+    this.questEvent({ type: 'kill', kind: e.kind });
+  }
+
+  // ---------- Aufträge und Welt ----------
+
+  get questSys() { return this.quests; }
+  get saveData() { return this.save; }
+
+  private questEvent(e: Parameters<QuestSystem['event']>[0]) {
+    if (this.quests?.event(e)) { this.refreshDigs(); this.persist(); }
+  }
+
+  private onQuestDone(q: QuestDef) {
+    const s = this.save;
+    if (!s) return;
+    s.player.gold += q.reward.gold;
+    if (q.reward.sp) s.skills.sp += q.reward.sp;
+    if (this.justDone) this.justDone.push(q);
+    else this.hud.toast(`Auftrag erfüllt: ${q.title}`, 3.5);
+    this.overlay.showBanner(q.main ? 'Kapitel abgeschlossen!' : 'Auftrag erfüllt!', q.title);
+    this.grantXp(q.reward.xp, q.reward.fame);
+  }
+
+  /** Grabstellen: Schatz-Aufträge und gefundene Schatzkarten */
+  private refreshDigs() {
+    if (!this.save || !this.quests) return;
+    this.world.setDigs([...this.quests.treasureIslands(), ...this.save.progress.maps]);
+  }
+
+  private talkTo(npc: TownNpcDef) {
+    if (!this.quests || !this.state.is('play')) return;
+    this.justDone = [];
+    this.questEvent({ type: 'talk', npc: npc.id });
+    const done = this.justDone;
+    this.justDone = null;
+    this.state.set('pause');
+    this.menus.showDialog(npc, done);
+  }
+
+  acceptQuest(id: string) {
+    if (!this.quests) return;
+    this.quests.accept(id);
+    // Schon dort? Dann zählt der Ort sofort
+    const step = this.quests.step(id);
+    if (step?.type === 'goto') {
+      const def = this.world.islandDefs.find((i) => i.id === step.island);
+      const pos = this.world.playerPos;
+      if (def && Math.hypot(def.x - pos.x, def.z - pos.z) < def.r + 45) this.quests.event({ type: 'enter', island: def.id });
+    }
+    this.refreshDigs();
+    this.persist();
+  }
+
+  private enterIsland(def: IslandDef) {
+    const s = this.save;
+    if (!s) return;
+    const key = `seen_${def.id}`;
+    if (!s.progress.flags[key]) {
+      s.progress.flags[key] = true;
+      this.overlay.showBanner(def.name, def.info ?? '');
+    } else this.hud.toast(def.name, 2);
+    this.questEvent({ type: 'enter', island: def.id });
+  }
+
+  /** Flaschenpost: Schatzkarte zu einer ruhigen Insel */
+  private findBottle() {
+    const s = this.save;
+    if (!s) return;
+    const quest = this.quests?.treasureIslands() ?? [];
+    const pool = this.world.islandDefs.filter((i) => (i.kind === 'quiet' || i.kind === 'treasure') && !s.progress.maps.includes(i.id) && !quest.includes(i.id));
+    if (!pool.length) { s.player.gold += 50; this.hud.toast('Flaschenpost: ein paar Münzen (+50 Gold)', 3); return; }
+    const near = pool.filter((i) => Math.hypot(i.x - BERNSTEINSEE.x, i.z - BERNSTEINSEE.z) < BERNSTEINSEE.r);
+    const from = near.length && Math.random() < 0.75 ? near : pool;
+    const pick = from[Math.floor(Math.random() * from.length)];
+    s.progress.maps.push(pick.id);
+    this.overlay.showBanner('Flaschenpost!', `Eine Schatzkarte – ein X auf ${pick.name}`);
+    this.refreshDigs();
+    this.persist();
+  }
+
+  private dig(island: string) {
+    const s = this.save;
+    if (!s) return;
+    const i = s.progress.maps.indexOf(island);
+    if (i >= 0) {
+      s.progress.maps.splice(i, 1);
+      s.progress.stats.treasures++;
+      const gold = Math.round((120 + Math.random() * 180) * (1 + s.player.level * 0.08));
+      s.player.gold += gold;
+      const shard = Math.random() < 0.35;
+      if (shard) s.skills.sp++;
+      this.overlay.showBanner('Schatz gefunden!', `${gold} Gold${shard ? ' und ein Faji-Splitter (+1 Faji-Punkt)' : ''}`);
+      this.grantXp(40, 10);
+    } else this.hud.toast('Gefunden!', 2);
+    this.questEvent({ type: 'treasure', island });
+    this.refreshDigs();
+    this.persist();
+  }
+
+  private usePotion() {
+    const s = this.save;
+    const hp = this.world.playerHp;
+    if (!s || !hp) return;
+    if (this.world.mode !== 'foot') { this.hud.toast('Proviant isst man an Land.'); return; }
+    if (s.gear.potions <= 0) { this.hud.toast('Kein Proviant mehr – Mara verkauft welchen am Markt.', 3); return; }
+    if (hp.hp >= hp.max) { this.hud.toast('Du bist satt und gesund.'); return; }
+    s.gear.potions--;
+    this.world.healFrac(POTION.heal);
+    this.hud.toast(`Mmh! +${Math.round(POTION.heal * 100)} % Leben · noch ${s.gear.potions}`);
+  }
+
+  // ---------- Läden ----------
+
+  buyGear(kind: 'weapon' | 'armor', i: number): string {
+    const s = this.save;
+    if (!s) return '';
+    const list = kind === 'weapon' ? WEAPONS : ARMOR;
+    const item = list[i];
+    const cur = s.gear[kind];
+    if (!item || i <= cur) return '';
+    if (rankIndex(s.player.fame) < item.rank) return `Rang „${rankName(s.player.faction, FAME_THRESHOLDS[item.rank])}“ nötig.`;
+    const cost = Math.max(0, item.price - Math.floor(list[cur].price / 2));
+    if (s.player.gold < cost) return `Dafür fehlen ${cost - s.player.gold} Gold.`;
+    s.player.gold -= cost;
+    s.gear[kind] = i;
+    this.applyPower();
+    this.world.healPlayer();
+    this.persist();
+    return `${item.n} gekauft${cost < item.price ? ` (${cost} Gold nach Inzahlungnahme)` : ''}!`;
+  }
+
+  buyPotions(n: number): string {
+    const s = this.save;
+    if (!s) return '';
+    const want = Math.min(n, POTION.max - s.gear.potions);
+    const afford = Math.min(want, Math.floor(s.player.gold / POTION.price));
+    if (want <= 0) return 'Deine Taschen sind voll.';
+    if (afford <= 0) return 'Nicht genug Gold.';
+    s.gear.potions += afford;
+    s.player.gold -= afford * POTION.price;
+    this.persist();
+    return `${afford} × ${POTION.n} gekauft.`;
+  }
+
+  buyShrine(): string {
+    const s = this.save;
+    if (!s) return '';
+    const price = SHRINE_PRICE(s.gear.shrine);
+    if (s.player.gold < price) return `Der Schrein verlangt ${price} Gold.`;
+    s.player.gold -= price;
+    s.gear.shrine++;
+    s.skills.sp++;
+    this.world.awaken('#B98CFF');
+    this.persist();
+    return '+1 Faji-Punkt!';
+  }
+
+  /** Taverne: übernachten, bis zum Morgen */
+  rest(): string {
+    const s = this.save;
+    if (!s) return '';
+    if (s.player.gold < REST_PRICE) return `Ein Bett kostet ${REST_PRICE} Gold.`;
+    s.player.gold -= REST_PRICE;
+    this.world.healPlayer();
+    const env = this.world.env;
+    env.time = 7;
+    if (env.weather.target === 'sturm') env.weather.setWeather('klar', true);
+    this.persist();
+    return 'Du schläfst tief und fest. Ein neuer Morgen in Ankerglück – Leben voll aufgefüllt.';
+  }
+
+  // ---------- Auftragsanzeige und Karte ----------
+
+  /** Wohin führt der verfolgte Auftrag? */
+  private questTarget(): { x: number; z: number } | null {
+    const t = this.quests?.tracked();
+    if (!t) return null;
+    const pos = this.world.playerPos;
+    const isl = (id: string) => { const d = this.world.islandDefs.find((i) => i.id === id); return d ? { x: d.x, z: d.z } : null; };
+    const nearest = (list: { x: number; z: number }[]) => list.reduce<{ x: number; z: number } | null>((b, p) => (!b || Math.hypot(p.x - pos.x, p.z - pos.z) < Math.hypot(b.x - pos.x, b.z - pos.z) ? p : b), null);
+    switch (t.step.type) {
+      case 'talk': return this.world.npcPos(t.step.npc);
+      case 'goto': case 'clear': case 'treasure': return isl(t.step.island);
+      case 'sink': case 'board': return nearest(this.world.enemyShips.filter((e) => !e.ally));
+      case 'rescue': return this.world.nearestFloater('raft');
+      case 'kill': return nearest(this.world.islandDefs.filter((i) => i.kind === 'camp' && Math.hypot(i.x - BERNSTEINSEE.x, i.z - BERNSTEINSEE.z) < BERNSTEINSEE.r));
+    }
+  }
+
+  mapMarkers(): MapMarkers {
+    const pos = this.world.playerPos;
+    return {
+      player: pos,
+      enemies: this.world.enemyShips,
+      target: this.questTarget(),
+      digs: (this.world.life?.digs ?? []).map((d) => ({ x: d.x, z: d.z })),
+    };
+  }
+
+  private updateQuestHud(frameDt: number) {
+    const s = this.save;
+    if (!s) return;
+    this.hud.setPotions(s.gear.potions);
+    const t = this.quests?.tracked();
+    if (!t) this.hud.setQuest(null);
+    else {
+      const target = this.questTarget();
+      const pos = this.world.playerPos;
+      let angle: number | null = null, dist: number | null = null;
+      if (target) {
+        const dx = target.x - pos.x, dz = target.z - pos.z;
+        dist = Math.hypot(dx, dz);
+        const rel = this.world.cameraYaw - Math.atan2(dx, dz);
+        angle = Math.atan2(Math.sin(rel), Math.cos(rel));
+      }
+      this.hud.setQuest({ title: t.q.title, step: stepText(t.step, t.count), angle, dist });
+    }
+    // Minikarte etwa 10× pro Sekunde
+    this.mapT -= frameDt;
+    if (this.mapT <= 0) {
+      this.mapT = 0.1;
+      const c = this.hud.miniCanvas();
+      if (c) drawMap(c.ctx, c.size, this.world.islandDefs, this.mapMarkers(), 'mini');
+    }
   }
 
   /** Erfahrung und Ruhm vergeben, Stufen und Ränge prüfen */
@@ -514,6 +774,11 @@ export class Game {
     if (this.assets) this.world.setCharacters(this.assets, p.look, styleIdOf(p.style, p.blade), this.overlay);
     this.world.setSkills(data.skills, p.level);
     this.world.setShip(data.ship.tier, data.ship.look, data.ship.ammo, data.ship.hull, p.faction);
+    this.quests = new QuestSystem(data.progress, p.faction, {
+      completed: (q) => this.onQuestDone(q),
+      advanced: (_q, next) => this.hud.toast(`Neues Ziel: ${next.text}`, 3.5),
+    });
+    this.refreshDigs();
     this.applyPower();
     this.world.healPlayer();
     this.hud.setPlayer(p.name, `${FACTION_LABELS[p.faction]} · ${rankName(p.faction, p.fame)} · Stufe ${p.level}`);
@@ -525,6 +790,7 @@ export class Game {
     this.loop.resetClock();
     this.touch.setLayout(TOUCH_SEA);
     this.hud.hint(this.controlsHint(), 12);
+    if (!data.progress.quests.length && !data.progress.done.length) setTimeout(() => this.hud.toast('Leg in Ankerglück an und sprich mit Hafenmeisterin Ilse!', 5), 4000);
   }
 
   pause() {
@@ -547,6 +813,7 @@ export class Game {
     this.persist();
     this.save = null;
     this.slot = null;
+    this.quests = null;
     this.state.set('menu');
     this.menus.showMain();
   }

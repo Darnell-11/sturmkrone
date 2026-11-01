@@ -75,6 +75,23 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 }
 .icon-btn svg { width: 20px; height: 20px; fill: currentColor; }
 .hud-btns { display: flex; gap: 8px; }
+.hud { z-index: 4; }
+.hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.hud-mini { position: relative; width: 120px; height: 120px; border-radius: 50%; border: 0; padding: 0; background: none; }
+.hud-mini canvas { width: 100%; height: 100%; display: block; border-radius: 50%; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35); }
+.hud-potions { position: absolute; left: -6px; bottom: -2px; background: var(--hudbg); border: 1px solid var(--line); border-radius: 999px; font-size: 0.74rem; font-weight: 800; padding: 1px 7px; }
+.hud-quest {
+  display: flex; align-items: center; gap: 8px; max-width: min(46vw, 300px); pointer-events: none;
+  background: var(--hudbg); border: 1px solid var(--line); border-radius: 12px; padding: 6px 10px 6px 8px;
+}
+.hud-quest .q-arrow { flex: none; width: 26px; height: 26px; display: grid; place-items: center; color: var(--brass); font-size: 1.25rem; text-shadow: 0 1px 0 #1b1410; transition: transform 0.12s linear; }
+.hud-quest .q-body { display: grid; min-width: 0; }
+.hud-quest .q-title { font-size: 0.72rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hud-quest .q-step { font-size: 0.84rem; font-weight: 800; line-height: 1.2; }
+@media (max-width: 520px), (max-height: 480px) {
+  .hud-mini { width: 92px; height: 92px; }
+  .hud-quest { max-width: 44vw; }
+}
 .icon-btn { position: relative; }
 .badge { position: absolute; top: -4px; right: -4px; min-width: 20px; height: 20px; border-radius: 10px; background: var(--seal); color: #fff; font-size: 0.72rem; font-weight: 800; display: grid; place-items: center; padding: 0 4px; }
 .hint {
@@ -364,3 +381,19 @@ kbd {
   .cbt-speed.on, .cbt-impact.on { animation: none; }
   .toast, .hint { transition: none; }
 }
+
+/* ---------- Gespräche, Läden, Karte ---------- */
+.dlg-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.dlg-head > div:last-child { display: grid; }
+.dlg-head b { font-size: 1.15rem; }
+.dlg-face { width: 48px; height: 48px; flex: none; border-radius: 50%; background: var(--brass); color: var(--on-brass); display: grid; place-items: center; font-weight: 800; font-size: 1.4rem; border: 2px solid #1b1410; }
+.dlg-line { font-style: italic; line-height: 1.45; }
+.dlg-done { border: 2px solid var(--brass); border-radius: 12px; padding: 8px 12px; margin: 8px 0; background: color-mix(in srgb, var(--brass) 14%, transparent); }
+.slot.main { border-color: var(--brass); }
+.steps { margin: 6px 0 2px; padding-left: 20px; font-size: 0.88rem; line-height: 1.5; }
+.steps li { color: var(--muted); }
+.steps li.ok { text-decoration: line-through; }
+.steps li.now { color: inherit; font-weight: 800; }
+.worldmap { display: block; margin: 8px auto; max-width: 100%; border-radius: 50%; }
+.card button:disabled { opacity: 0.42; cursor: not-allowed; filter: grayscale(0.6); }
+@media (max-width: 520px) { .hud-quest .q-step { font-size: 0.78rem; } }

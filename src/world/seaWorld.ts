@@ -41,6 +41,10 @@ import { AMMO, AMMO_IDS, DEFAULT_SHIP_LOOK, SAIL_LEVELS, type AmmoId, type ShipL
 import { NavalSystem, type EnemyShip } from '../naval/naval';
 import { DeckGround, type Ground } from './islandGround';
 import { ELEMENT_COLORS } from '../data/skills';
+import { BERNSTEINSEE, OUTER_NAMES, type IslandDef } from '../data/regions';
+import { buildTown, mergeByMaterial, type TownBuild } from './town';
+import { SeaLife } from './life';
+import { TOWN_NPCS, type TownNpcDef } from '../data/quests';
 
 /** Gegnerlager je Inselstufe */
 const CAMP_BY_LEVEL: EnemyKind[][] = [
@@ -83,6 +87,14 @@ export class SeaWorld {
   onShipSunk: (e: EnemyShip) => void = () => {};
   onLoot: (gold: number, shard: boolean) => void = () => {};
   onBoardWon: (e: EnemyShip) => void = () => {};
+  onTalk: (npc: TownNpcDef) => void = () => {};
+  onDig: (island: string) => void = () => {};
+  onEnterIsland: (def: IslandDef) => void = () => {};
+  onIslandCleared: (id: string) => void = () => {};
+  onRescue: () => void = () => {};
+  onBottle: () => void = () => {};
+  private lastIsland: string | null = null;
+  private hostilesBefore = 0;
   /** Aktueller Boden: Inseln oder (beim Entern) das feindliche Deck */
   private readonly groundProxy: Ground = {
     height: (x, z) => (this.deckGround ?? this.ground).height(x, z),
@@ -113,6 +125,10 @@ export class SeaWorld {
   private aimT = 0;
   private boarding: EnemyShip | null = null;
   private deckGround: DeckGround | null = null;
+  /** Inseldaten (gleiche Reihenfolge wie ground.islands) */
+  islandDefs: IslandDef[] = [];
+  town: TownBuild | null = null;
+  life: SeaLife | null = null;
   private buoys: { g: Group; x: number; z: number; lamp: Mesh }[] = [];
   private lamps: Mesh[] = [];
   private spray: ParticleSystem;
@@ -163,17 +179,23 @@ export class SeaWorld {
   private buildIslands(): IslandShape[] {
     const rnd = seeded(2024);
     const shapes: IslandShape[] = [];
-    // Startinsel direkt vor dem Schiff, dann zufällige Inseln drumherum
-    const specs: { x: number; z: number; r: number; hill: number; palms: number; tower: boolean }[] = [
-      { x: 0, z: 70, r: 40, hill: 0.22, palms: 6, tower: false },
-    ];
-    for (let i = 0; i < 14; i++) {
-      const ang = (i / 14) * Math.PI * 2 + rnd() * 0.4;
-      const dist = 200 + rnd() * 1450;
+    // Handgemachte Bernsteinsee, dahinter (noch) zufällige Inseln der übrigen Regionen
+    const specs: { x: number; z: number; r: number; hill: number; palms: number; tower: boolean; def: IslandDef }[] = BERNSTEINSEE.islands.map((d) => ({
+      x: d.x, z: d.z, r: d.r, hill: d.hill, palms: d.palms, tower: d.kind === 'lighthouse', def: d,
+    }));
+    let outer = 0;
+    for (let i = 0; i < 40 && outer < OUTER_NAMES.length; i++) {
+      const ang = rnd() * Math.PI * 2;
+      const dist = 1050 + rnd() * 780;
       const x = Math.cos(ang) * dist, z = Math.sin(ang) * dist;
-      if (Math.hypot(x, z - 70) < 160) continue;
-      specs.push({ x, z, r: 18 + rnd() * 26, hill: 0.14 + rnd() * 0.16, palms: 2 + Math.floor(rnd() * 4), tower: specs.length === 1 });
+      const r = 20 + rnd() * 28;
+      if (specs.some((s) => Math.hypot(s.x - x, s.z - z) < s.r + r + 120)) continue;
+      const lvl = Math.min(8, 3 + Math.floor(dist / 400));
+      const def: IslandDef = { id: `fern${outer}`, name: OUTER_NAMES[outer], x, z, r, hill: 0.15 + rnd() * 0.15, kind: rnd() < 0.7 ? 'camp' : 'quiet', palms: 2 + Math.floor(rnd() * 4), level: lvl, info: 'Unerforschtes Gewässer jenseits der Bernsteinsee.' };
+      specs.push({ x, z, r, hill: def.hill, palms: def.palms, tower: false, def });
+      outer++;
     }
+    this.islandDefs = specs.map((s) => s.def);
 
     const sand = toon(0xf1d9a0);
     const grass = toon({ color: 0x6dbb4c, flatShading: true });
@@ -195,15 +217,20 @@ export class SeaWorld {
       hill.scale.y = s.hill;
       hill.position.y = 1.2;
       isl.add(beach, hill);
-      if (rnd() < 0.5 && !s.tower) {
-        const rk = new Mesh(new ConeGeometry(r * 0.22, r * 0.7, 6), rock);
-        rk.position.set(r * 0.45, 1.2 + r * 0.25, -r * 0.3);
+      const town = s.def.kind === 'town';
+      const rocks = s.def.rocks ?? (rnd() < 0.4 && !s.tower && !town ? 1 : 0);
+      for (let k = 0; k < rocks; k++) {
+        const a = rnd() * Math.PI * 2, rr = r * (0.35 + rnd() * 0.3);
+        const size = r * (0.12 + rnd() * 0.1);
+        const rk = new Mesh(new ConeGeometry(size, size * 3, 6), rock);
+        rk.position.set(Math.cos(a) * rr, 1.2 + size, Math.sin(a) * rr);
+        rk.rotation.set((rnd() - 0.5) * 0.3, rnd() * 3, (rnd() - 0.5) * 0.3);
         isl.add(rk);
-        walk.blockers.push({ x: s.x + r * 0.45, z: s.z - r * 0.3, r: r * 0.22 });
+        walk.blockers.push({ x: s.x + Math.cos(a) * rr, z: s.z + Math.sin(a) * rr, r: size });
       }
       for (let k = 0; k < s.palms; k++) {
-        const pa = rnd() * Math.PI * 2;
-        const pr = r * (0.3 + rnd() * 0.55);
+        const pa = town ? (k / s.palms) * Math.PI * 2 + rnd() * 0.2 : rnd() * Math.PI * 2;
+        const pr = r * (town ? 0.84 + rnd() * 0.08 : 0.3 + rnd() * 0.55);
         const palm = new Group();
         const px = Math.cos(pa) * pr, pz = Math.sin(pa) * pr;
         const d = Math.hypot(px, pz);
@@ -235,12 +262,17 @@ export class SeaWorld {
         isl.add(tower, band, lamp);
         walk.blockers.push({ x: s.x, z: s.z, r: 2.5 });
       }
+      this.scene.add(isl);
+      mergeByMaterial(isl, new Set(this.lamps));
       isl.traverse((o) => {
-        if ((o as Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; }
+        if ((o as Mesh).isMesh && !o.userData.noOutline) { o.castShadow = true; o.receiveShadow = true; }
       });
       addOutlines(isl);
-      this.scene.add(isl);
       this.ground.add(walk);
+      if (town) {
+        this.town = buildTown(s.def, walk, (x, z) => { const h = this.ground.height(x, z); return Number.isFinite(h) ? h : 1.3; });
+        this.scene.add(this.town.group);
+      }
     }
     return shapes;
   }
@@ -312,12 +344,45 @@ export class SeaWorld {
     if (!this.npcs.length) {
       const rng = seeded(4242);
       const home = this.ground.islands[0];
-      const roles: NpcRole[] = ['fischer', 'haendler', 'pirat', 'koch', 'schmied', 'wirt', 'buerger', 'pirat', 'buerger'];
+      // Ladenbesitzer und wichtige Bewohner an festen Plätzen
+      for (const d of TOWN_NPCS) {
+        const n = new Npc(assets, home, this.ground, d.role, rng, this.outlineNpcs);
+        n.pin(home.x + d.x, home.z + d.z, d.yaw);
+        n.townDef = d;
+        this.scene.add(n.char.holder);
+        this.npcs.push(n);
+      }
+      const roles: NpcRole[] = ['fischer', 'haendler', 'pirat', 'koch', 'buerger', 'pirat', 'buerger', 'buerger', 'fischer', 'haendler'];
       for (const role of roles) {
         const n = new Npc(assets, home, this.ground, role, rng, this.outlineNpcs);
         this.scene.add(n.char.holder);
         this.npcs.push(n);
       }
+    }
+    if (!this.life) {
+      this.life = new SeaLife(this.scene, this.islandDefs, this.spray);
+      for (let i = 0; i < 2; i++) this.spawnFloaterSomewhere('raft');
+      this.spawnFloaterSomewhere('bottle');
+    }
+  }
+
+  /** Floß oder Flasche irgendwo in der Bernsteinsee, nicht auf Inseln */
+  private spawnFloaterSomewhere(kind: 'raft' | 'bottle') {
+    for (let i = 0; i < 20; i++) {
+      const a = Math.random() * Math.PI * 2, d = 150 + Math.random() * 650;
+      const x = BERNSTEINSEE.x + Math.cos(a) * d, z = BERNSTEINSEE.z + Math.sin(a) * d;
+      if (!this.ground.islandAt(x, z, 40)) { this.life?.spawnFloater(kind, x, z); return; }
+    }
+  }
+
+  /** Grabstellen für Schatzkarten und Schatz-Aufträge setzen */
+  setDigs(islandIds: string[]) {
+    if (!this.life) return;
+    for (const d of [...this.life.digs]) if (!islandIds.includes(d.island)) this.life.removeDig(d);
+    for (const id of new Set(islandIds)) {
+      if (this.life.digs.some((d) => d.island === id)) continue;
+      const def = this.islandDefs.find((i) => i.id === id);
+      if (def) this.life.addDig(def, (x, z) => { const h = this.ground.height(x, z); return Number.isFinite(h) ? h : 1.3; });
     }
   }
 
@@ -375,7 +440,7 @@ export class SeaWorld {
     if (s.boat) {
       this.x = s.boat.x; this.z = s.boat.z; this.heading = s.boat.heading;
     } else {
-      this.x = 0; this.z = -60; this.heading = 0;
+      this.x = 0; this.z = 12; this.heading = 0;
     }
     if (s.env) this.env.setState(s.env);
     this.speed = 0;
@@ -438,6 +503,40 @@ export class SeaWorld {
 
   get playerHp() { return this.foot ? { hp: this.foot.hp, max: this.foot.maxHp } : null; }
 
+  /** Heilt um einen Anteil der Lebenspunkte (Proviant) */
+  healFrac(f: number) {
+    if (!this.foot) return;
+    this.foot.hp = Math.min(this.foot.maxHp, this.foot.hp + this.foot.maxHp * f);
+    const p = new Vector3(this.foot.x, this.foot.y + 1, this.foot.z);
+    if (this.mode === 'foot') this.sparks.emit(24, p.x, p.y, p.z, { speed: 1.5, up: 3, life: 1, color: new Color(0.6, 3, 0.8), gravity: -1, spread: 0.6 });
+  }
+
+  /** Position der Spielfigur (an Land) oder des Schiffs, dazu die Blickrichtung */
+  get playerPos() {
+    if (this.mode === 'foot' && this.foot) return { x: this.foot.x, z: this.foot.z, heading: this.foot.yaw };
+    return { x: this.x, z: this.z, heading: this.heading };
+  }
+
+  /** Blickrichtung der Kamera auf der Wasserebene (Bogenmaß wie heading) */
+  get cameraYaw() {
+    this.camera.getWorldDirection(this.tmp);
+    return Math.atan2(this.tmp.x, this.tmp.z);
+  }
+
+  /** Weltposition einer Stadtbewohnerin/eines Stadtbewohners */
+  npcPos(id: string) {
+    const n = this.npcs.find((m) => m.townDef?.id === id);
+    return n ? { x: n.x, z: n.z } : null;
+  }
+
+  /** Lebende Feindschiffe (für Karte und Auftragspfeil) */
+  get enemyShips() {
+    return (this.naval?.enemies ?? []).filter((e) => e.ship.alive && !e.ship.sinking).map((e) => ({ x: e.ship.x, z: e.ship.z, legend: e.role === 'legende', ally: !!e.companion }));
+  }
+
+  /** Nächstes Treibgut einer Art */
+  nearestFloater(kind: 'raft' | 'bottle') { return this.life?.nearest(kind, this.x, this.z) ?? null; }
+
   /** Testwerkzeug: Schiff an eine Position setzen */
   teleport(x: number, z: number, heading: number) {
     this.setState({ boat: { x, z, heading } });
@@ -459,6 +558,10 @@ export class SeaWorld {
     else this.updateFoot(dt, input);
 
     this.updateContext(input);
+    this.updateWorldEvents();
+    this.life?.update(dt, (x, z) => this.env.heightAt(x, z), this.ship, this.mode === 'sail');
+    if (this.town?.crystal) { this.town.crystal.rotation.y += dt; this.town.crystal.position.y += Math.sin(this.env.clock * 2) * dt * 0.3; }
+    if (this.town && Math.random() < dt * 6) for (const p of this.town.smoke) this.spray.emit(1, p.x, p.y, p.z, { speed: 0.3, up: 1.5, life: 3, color: new Color(0.5, 0.48, 0.46), gravity: -0.2, spread: 0.4 });
     this.shake = Math.max(0, this.shake - dt * 1.8);
     this.updateWake(dt);
     this.naval?.update(dt, this.mode === 'sail' && this.cinematic <= 0);
@@ -483,7 +586,7 @@ export class SeaWorld {
       this.ship.sinking = 0;
       this.ship.repair(0.5);
       this.naval?.clear();
-      this.teleport(0, -60, 0);
+      this.teleport(0, 12, 0);
       this.onMessage('Dein Schiff ist gesunken! Die Crew hat es zurück in den Hafen geschleppt.');
       this.onPlayerDown();
     }
@@ -642,10 +745,53 @@ export class SeaWorld {
       this.contextLabel = 'Zurück an Bord';
       if (input.pressed('interact')) this.embark();
     } else {
-      const d = Math.hypot(this.foot.x - this.anchor.x, this.foot.z - this.anchor.z);
-      if (d < 6) {
+      const f = this.foot;
+      const dig = this.life?.digs.find((dd) => Math.hypot(dd.x - f.x, dd.z - f.z) < 2.6);
+      const npc = this.npcs.find((n) => n.townDef && Math.hypot(n.x - f.x, n.z - f.z) < 3.2);
+      const d = Math.hypot(f.x - this.anchor.x, f.z - this.anchor.z);
+      if (dig) {
+        this.contextLabel = 'Graben';
+        if (input.pressed('interact')) {
+          this.player.play('pickup', { restart: true, onDone: () => this.player?.play('idle') });
+          this.fx?.shockwave(new Vector3(dig.x, f.y, dig.z), 3, '#E3B04B');
+          this.dust.emit(30, dig.x, f.y + 0.3, dig.z, { speed: 3, up: 5, life: 1, color: new Color(0.9, 0.8, 0.6) });
+          this.life?.removeDig(dig);
+          this.onDig(dig.island);
+        }
+      } else if (npc?.townDef) {
+        this.contextLabel = `Sprechen: ${npc.townDef.name}`;
+        if (input.pressed('interact')) {
+          npc.yaw = Math.atan2(f.x - npc.x, f.z - npc.z);
+          npc.char.play('talk', { restart: true, onDone: () => npc.char.play('idle') });
+          this.onTalk(npc.townDef);
+        }
+      } else if (d < 6) {
         this.contextLabel = 'An Bord gehen';
         if (input.pressed('interact')) this.embark();
+      }
+    }
+  }
+
+  /** Inseln in der Nähe und geräumte Lager melden (für Aufträge) */
+  private updateWorldEvents() {
+    const near = this.islandDefs.findIndex((d) => Math.hypot(d.x - this.x, d.z - this.z) < d.r + 45);
+    const id = near >= 0 ? this.islandDefs[near].id : null;
+    if (id && id !== this.lastIsland) this.onEnterIsland(this.islandDefs[near]);
+    this.lastIsland = id;
+    const c = this.combat;
+    if (c?.activeIsland && !this.boarding) {
+      const left = c.hostilesLeft;
+      if (left === 0 && this.hostilesBefore > 0) {
+        const def = this.islandDefs[this.ground.islands.indexOf(c.activeIsland)];
+        if (def) { this.onIslandCleared(def.id); this.overlay?.showBanner('Insel befreit!', def.name); }
+      }
+      this.hostilesBefore = left;
+    } else this.hostilesBefore = 0;
+    // Treibgut einsammeln
+    if (this.mode === 'sail' && this.life) {
+      for (const k of this.life.collect(this.x, this.z, this.ship.cls.W + 9)) {
+        if (k === 'raft') { this.onRescue(); setTimeout(() => this.spawnFloaterSomewhere('raft'), 60000); }
+        else { this.onBottle(); setTimeout(() => this.spawnFloaterSomewhere('bottle'), 90000); }
       }
     }
   }
@@ -663,24 +809,26 @@ export class SeaWorld {
     this.spawnCamp(isl);
   }
 
-  /** Gegnerlager der Insel (Startinsel ist friedlich, die fernste Insel gehört einer Legende) */
+  /** Was auf der Insel passiert: Stadt, Lager, Legende oder Ruhe */
   private spawnCamp(isl: WalkIsland) {
     const c = this.combat;
     const idx = this.ground.islands.indexOf(isl);
-    if (!c || idx <= 0) { this.onMessage(idx === 0 ? 'Willkommen auf der Startinsel! Probier deine Kombos an den Puppen.' : 'Land unter den Füßen!'); return; }
+    const def = this.islandDefs[idx];
+    if (!c || !def) return;
+    const where = `${def.name}`;
+    if (def.kind === 'town') { this.onMessage(`Willkommen in ${where}! Sprich mit den Leuten – und probier deine Kombos an den Puppen.`); return; }
+    if (def.kind !== 'camp' && def.kind !== 'boss') { this.onMessage(`${where}: ${def.info}`); return; }
     const until = this.cleared.get(idx) ?? 0;
-    if (until > this.env.clock) { this.onMessage('Diese Insel ist ruhig – fürs Erste.'); return; }
-    let far = 1;
-    this.ground.islands.forEach((i, k) => { if (Math.hypot(i.x, i.z) > Math.hypot(this.ground.islands[far].x, this.ground.islands[far].z)) far = k; });
+    if (until > this.env.clock) { this.onMessage(`${where} ist ruhig – fürs Erste.`); return; }
     const enemyFaction: Faction = this.playerFaction === 'pirat' ? 'marine' : 'pirat';
-    if (idx === far) {
-      c.enterIsland(isl, ['legende', 'matrose', 'musketier'], 6, enemyFaction, this.playerFaction === 'pirat' ? 'Kapitän Jorin Weiß' : 'Bram Eisenzahn');
-      this.onMessage('Eine Legende erwartet dich!');
+    if (def.kind === 'boss') {
+      c.enterIsland(isl, ['legende', 'matrose', 'musketier', 'schildtraeger'], def.level ?? 6, enemyFaction, this.playerFaction === 'pirat' ? 'Kapitän Jorin Weiß' : 'Bram Eisenzahn');
+      this.onMessage(`${where}: Eine Legende erwartet dich!`);
       return;
     }
-    const level = Math.max(1, Math.min(8, 1 + Math.floor(Math.hypot(isl.x, isl.z) / 320)));
+    const level = def.level ?? 1;
     c.enterIsland(isl, CAMP_BY_LEVEL[Math.min(CAMP_BY_LEVEL.length - 1, level - 1)], level, enemyFaction);
-    this.onMessage(`Feindliches Lager! (Stufe ${level})`);
+    this.onMessage(`${where}: Feindliches Lager! (Stufe ${level})`);
   }
 
   /** Entern: über einen Enterhaken aufs feindliche Deck */
@@ -796,6 +944,7 @@ export class SeaWorld {
       b.lamp.visible = night > 0.3 || Math.sin(env.clock * 3 + b.z) > 0;
     }
     for (const l of this.lamps) l.scale.setScalar(0.6 + night * 0.7);
+    if (this.town) for (const l of this.town.lights) l.visible = night > 0.2;
 
     const cam = this.camera;
     if (this.mode === 'foot' && this.foot && this.player && !inMenu) {

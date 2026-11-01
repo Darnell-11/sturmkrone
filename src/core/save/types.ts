@@ -2,7 +2,23 @@
 import { defaultLook, type CharacterLook } from '../../data/characterParts';
 import { DEFAULT_SHIP_LOOK, type AmmoId, type ShipLook } from '../../data/ships';
 
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
+
+export interface QuestProgress { id: string; step: number; count: number }
+
+export interface ProgressState {
+  flags: Record<string, unknown>;
+  quest: number;
+  /** Laufende Aufträge */
+  quests: QuestProgress[];
+  /** Abgeschlossene Aufträge */
+  done: string[];
+  /** Offene Schatzkarten (Insel-IDs) */
+  maps: string[];
+  stats: { kills: number; sunk: number; boarded: number; treasures: number; rescued: number };
+}
+
+export interface GearState { weapon: number; armor: number; potions: number; shrine: number }
 
 export interface ShipState {
   /** Aktuelle Klasse (Index in SHIP_CLASSES) */
@@ -57,10 +73,8 @@ export interface SaveData {
     /** Wetter-ID aus data/world.ts */
     weather: string;
   };
-  progress: {
-    flags: Record<string, unknown>;
-    quest: number;
-  };
+  progress: ProgressState;
+  gear: GearState;
   skills: SkillState;
   ship: ShipState;
   /** Vollständiger Spielstand aus Sturmkrone 1.0 – bleibt erhalten, damit spätere Meilensteine Crew, Fähigkeiten usw. übernehmen können. */
@@ -83,10 +97,15 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
       look: defaultLook(faction),
     },
     world: { boat: null, time: 9, weather: 'klar' },
-    progress: { flags: {}, quest: 0 },
+    progress: defaultProgress(),
+    gear: { weapon: 0, armor: 0, potions: 3, shrine: 0 },
     skills: { learned: {}, slots: [null, null, null], sp: 1, awakened: [] },
     ship: defaultShip(faction),
   };
+}
+
+export function defaultProgress(): ProgressState {
+  return { flags: {}, quest: 0, quests: [], done: [], maps: [], stats: { kills: 0, sunk: 0, boarded: 0, treasures: 0, rescued: 0 } };
 }
 
 export function defaultShip(faction: Faction, tier = 0): ShipState {

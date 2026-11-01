@@ -1,6 +1,6 @@
 import { sanitizeLook } from '../../data/characterParts';
 import { convertLegacy10, isLegacy10, lookFromLegacy, skillsFromLegacy } from './legacy';
-import { createSave, defaultShip, SAVE_VERSION, type SaveData } from './types';
+import { createSave, defaultProgress, defaultShip, SAVE_VERSION, type SaveData } from './types';
 
 type Migration = (data: Record<string, any>) => Record<string, any>;
 
@@ -27,6 +27,14 @@ export const MIGRATIONS: Record<number, Migration> = {
   4: (d) => {
     const tier = typeof d.legacy10?.tier === 'number' ? Math.max(0, Math.min(6, Math.floor(d.legacy10.tier))) : 0;
     return { ...d, version: 5, ship: defaultShip(d.player?.faction === 'marine' ? 'marine' : 'pirat', tier) };
+  },
+  // Meilenstein 6: Ausrüstung, Aufträge, Statistik (Werte aus 1.0 übernehmen)
+  5: (d) => {
+    const L = d.legacy10 ?? {};
+    const n = (v: unknown, def: number, max: number) => (typeof v === 'number' && isFinite(v) ? Math.max(0, Math.min(max, Math.floor(v))) : def);
+    const progress = { ...defaultProgress(), ...(d.progress ?? {}) };
+    if (L.stats) progress.stats = { ...progress.stats, kills: n(L.stats.beaten, 0, 1e6), sunk: n(L.stats.sunk, 0, 1e6), boarded: n(L.stats.boarded, 0, 1e6) };
+    return { ...d, version: 6, progress, gear: { weapon: n(L.weapon, 0, 5), armor: n(L.armor, 0, 4), potions: n(L.potions, 3, 10), shrine: 0 } };
   },
 };
 
