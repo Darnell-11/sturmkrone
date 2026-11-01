@@ -5,7 +5,7 @@ import { PLAYER_BASE, STYLE_ATTACKS, type AttackDef } from '../../data/combat';
 import type { CombatSystem, PlayerTarget } from '../../combat/combat';
 import type { CombatFx } from '../../combat/fx';
 import type { CombatOverlay } from '../../ui/combatOverlay';
-import type { IslandGround } from '../../world/islandGround';
+import type { Ground } from '../../world/islandGround';
 import type { Character } from '../character/character';
 import type { Enemy } from '../enemy';
 
@@ -73,7 +73,7 @@ export class PlayerFoot implements PlayerTarget {
 
   get active() { return this.onFoot && this.state !== 'down'; }
 
-  place(x: number, z: number, yaw: number, ground: IslandGround) {
+  place(x: number, z: number, yaw: number, ground: Ground) {
     this.x = x; this.z = z; this.yaw = yaw;
     const h = ground.height(x, z);
     this.y = Number.isFinite(h) ? h : 0;
@@ -145,7 +145,7 @@ export class PlayerFoot implements PlayerTarget {
     this.deps.onDown();
   }
 
-  update(dt: number, input: Input, camYaw: number, ground: IslandGround, lockYaw: number | null) {
+  update(dt: number, input: Input, camYaw: number, ground: Ground, lockYaw: number | null) {
     this.prev = { x: this.x, z: this.z, y: this.y, yaw: this.yaw };
     this.iframes -= dt;
     this.comboWindow -= dt;
@@ -262,7 +262,7 @@ export class PlayerFoot implements PlayerTarget {
     }
   }
 
-  private applyMove(dt: number, vx: number, vz: number, ground: IslandGround) {
+  private applyMove(dt: number, vx: number, vz: number, ground: Ground) {
     this.kx *= Math.pow(0.01, dt);
     this.kz *= Math.pow(0.01, dt);
     const c = ground.constrain(this.x + (vx + this.kx) * dt, this.z + (vz + this.kz) * dt);

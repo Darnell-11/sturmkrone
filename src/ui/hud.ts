@@ -33,6 +33,11 @@ export class Hud {
         <div class="hud-sub"></div>
         <div class="hud-bars"><div class="hud-bar hp" title="Leben"><i></i></div><div class="hud-bar fj" title="Faji"><i></i></div><div class="hud-bar xp" title="Erfahrung"><i></i></div></div>
         <div class="hud-gold"></div>
+        <div class="hud-sea" hidden>
+          <div class="hud-bar ship" title="Rumpf"><i></i></div>
+          <div class="hud-seainfo"><span class="wind" title="Wind">➤</span><span class="seatxt"></span></div>
+          <div class="hud-reload"><i class="l"></i><i class="r"></i></div>
+        </div>
         <div class="hud-env"></div>
         <div class="hud-fps" hidden></div>
       </div>
@@ -93,6 +98,20 @@ export class Hud {
     this.ctxText = text;
     this.ctxEl.hidden = !label || this.root.hidden;
     this.ctxEl.innerHTML = text;
+  }
+
+  /** Schiffsanzeige; null blendet sie aus */
+  setSea(info: { hull: number; sail: number; crew: number; level: string; ammo: string; reloadL: number; reloadR: number; windRel: number; fire: boolean } | null) {
+    const el = this.root.querySelector<HTMLElement>('.hud-sea')!;
+    el.hidden = !info;
+    if (!info) return;
+    (el.querySelector('.ship i') as HTMLElement).style.width = `${Math.max(0, info.hull) * 100}%`;
+    (el.querySelector('.wind') as HTMLElement).style.transform = `rotate(${-info.windRel - Math.PI / 2}rad)`;
+    const t = `${info.level} · ${info.ammo}${info.fire ? ' · 🔥' : ''} · Segel ${Math.round(info.sail * 100)} % · Crew ${Math.round(info.crew * 100)} %`;
+    const txt = el.querySelector('.seatxt')!;
+    if (txt.textContent !== t) txt.textContent = t;
+    (el.querySelector('.l') as HTMLElement).style.width = `${(1 - info.reloadL) * 50}%`;
+    (el.querySelector('.r') as HTMLElement).style.width = `${(1 - info.reloadR) * 50}%`;
   }
 
   setFaji(frac: number, sp: number) {

@@ -6,6 +6,7 @@ import type { SaveData } from '../core/save/types';
 import type { Settings } from '../core/settings';
 import { EDGE_WALL, WEATHER, WEATHER_IDS, type WeatherId } from '../data/world';
 import { formatClock } from '../world/timeOfDay';
+import { FIGUREHEADS, FLAGS, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, STRIPE_COLORS, type ShipLook } from '../data/ships';
 import { downloadText, esc, formatDate, formatPlayTime, pickFile } from './dom';
 
 type Handler = (id: string, el: HTMLElement) => void;
@@ -104,7 +105,7 @@ export class Menus {
         ${g.persistent ? '' : '<p class="warn">Dein Browser erlaubt kein dauerhaftes Speichern (z. B. privater Modus). Spielstände gehen beim Schließen verloren – nutze „Exportieren“.</p>'}
         <button class="primary" data-a="play" data-focus>Spielen</button>
         <button class="secondary" data-a="settings">Einstellungen</button>
-        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Meilenstein 4 „Faji 2.0“</p>
+        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Meilenstein 5 „Schiffe 2.0“</p>
       </div>`,
       {
         play: () => this.showSlots(),
@@ -217,6 +218,7 @@ export class Menus {
       `<h2 class="fell">Pause</h2>
       <button class="primary" data-a="resume" data-focus>Weiterspielen</button>
       <button class="secondary" data-a="look">Aussehen ändern</button>
+      <button class="secondary" data-a="yard">Werft &amp; Schiff</button>
       <button class="secondary" data-a="settings">Einstellungen</button>
       <button class="secondary" data-a="workshop">Welt-Werkstatt (Test)</button>
       <button class="secondary" data-a="save">Speichern</button>
@@ -224,6 +226,7 @@ export class Menus {
       {
         resume: () => g.resume(),
         look: () => g.openEditor(null),
+        yard: () => this.showShipyard(),
         settings: () => this.showSettings(() => this.showPause()),
         workshop: () => this.showWorkshop(),
         save: () => { g.hud.toast(g.persist() ? 'Gespeichert.' : 'Speichern fehlgeschlagen!'); },
@@ -232,6 +235,52 @@ export class Menus {
       () => g.resume(),
     );
   }
+
+  // ---------- Werft ----------
+
+  showShipyard(msg = '') {
+    const g = this.game;
+    const st = g.shipState;
+    if (!st) return;
+    const look = st.look;
+    const rank = g.playerRank;
+    const rerender = (m = '') => { const y = this.screen.scrollTop; this.showShipyard(m); this.screen.scrollTop = y; };
+    const sw = (k: keyof ShipLook, colors: string[]) => `<div class="swatches">${colors.map((c) => `<button class="sw" style="background:${c}" data-a="lk" data-id="${k}|${c}" aria-pressed="${String(look[k]).toUpperCase() === c.toUpperCase()}"></button>`).join('')}</div>`;
+    const chips = (k: keyof ShipLook, opts: Record<string, string>) => `<div class="chips">${Object.entries(opts).map(([id, l]) => `<button data-a="lk" data-id="${k}|${id}" aria-pressed="${look[k] === id}">${l}</button>`).join('')}</div>`;
+    const classes = SHIP_CLASSES.map((c, i) => {
+      const owned = st.owned.includes(i);
+      const locked = rank < c.rank;
+      return `<div class="slot"><div class="slot-head"><b>${c.n}${st.tier === i ? ' ✓' : ''}</b><span>${owned ? 'Im Besitz' : `${c.price.toLocaleString('de-DE')} Gold`}</span></div>
+        <div class="meta">Rumpf ${c.hp} · ${c.can} Kanonen je Seite · Tempo ${c.spd} · Crew ${c.crew}${locked && !owned ? ` · ab Rang ${c.rank + 1}` : ''}</div>
+        ${st.tier === i ? '' : `<button class="mini${owned ? '' : ' brass'}" data-a="cls" data-id="${i}" ${locked && !owned ? 'disabled' : ''}>${owned ? 'Wechseln' : 'Kaufen'}</button>`}</div>`;
+    }).join('');
+    const cost = g.repairCost();
+    this.open(
+      `<h2 class="fell">Werft</h2>
+      <p class="soft">Gold: <b>${g.playerGold.toLocaleString('de-DE')}</b>${msg ? ` · <b>${esc(msg)}</b>` : ''}</p>
+      <button class="secondary" data-a="repair" ${cost <= 0 ? 'disabled' : ''}>${cost > 0 ? `Reparieren (${cost} Gold)` : 'Schiff ist unbeschädigt'}</button>
+      <h3>Schiffsklassen</h3>${classes}
+      <h3>Aussehen</h3>
+      ${this.optHtml('Rumpf', sw('hull', HULL_COLORS))}
+      ${this.optHtml('Zierstreifen', sw('stripe', STRIPE_COLORS))}
+      ${this.optHtml('Segel', sw('sail', SAIL_COLORS))}
+      ${this.optHtml('Flagge', chips('flag', FLAGS) + sw('flagColor', ['#1E1A20', '#A8322A', '#1F4E79', '#2F6E4F', '#4A2E6E', '#E3B04B']))}
+      ${this.optHtml('Galionsfigur', chips('figurehead', FIGUREHEADS))}
+      <div class="chips"><button data-a="lanterns" aria-pressed="${look.lanterns}">Laternen</button></div>
+      <button class="primary" data-a="back">Fertig</button>`,
+      {
+        cls: (id) => rerender(g.shipyardSelect(+id)),
+        repair: () => rerender(g.shipyardRepair()),
+        lk: (id) => { const [k, v] = id.split('|'); g.shipyardLook({ ...look, [k]: v }); rerender(); },
+        lanterns: () => { g.shipyardLook({ ...look, lanterns: !look.lanterns }); rerender(); },
+        back: () => this.showPause(),
+      },
+      () => this.showPause(),
+      { wide: true },
+    );
+  }
+
+  private optHtml(label: string, html: string) { return `<div class="opt"><span class="label">${label}</span>${html}</div>`; }
 
   // ---------- Welt-Werkstatt (Testwerkzeug) ----------
 

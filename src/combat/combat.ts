@@ -17,7 +17,7 @@ import { Enemy, type EnemyWorld, type HitInfo } from '../entities/enemy';
 import { addOutlines } from '../render/outline';
 import { toon } from '../render/toon';
 import type { CombatOverlay } from '../ui/combatOverlay';
-import type { IslandGround, WalkIsland } from '../world/islandGround';
+import type { DeckGround, Ground, WalkIsland } from '../world/islandGround';
 import type { CombatFx } from './fx';
 import type { AbilityTarget } from '../faji/abilities';
 import type { Element, Status } from '../data/skills';
@@ -99,7 +99,7 @@ export class CombatSystem implements EnemyWorld {
     private fx: CombatFx,
     private overlay: CombatOverlay,
     private assets: CharacterAssets,
-    private groundRef: IslandGround,
+    private groundRef: Ground,
     private hooks: CombatHooks,
   ) {}
 
@@ -117,14 +117,25 @@ export class CombatSystem implements EnemyWorld {
   }
   releaseToken(e: Enemy) { this.tokens.delete(e); }
   ground(x: number, z: number) { const h = this.groundRef.height(x, z); return Number.isFinite(h) ? h : 0; }
-  constrain(x: number, z: number, r: number) {
-    // Gegner untereinander und vom Spieler wegschieben
+  constrain(x: number, z: number, r: number, self?: Enemy) {
+    // Gegner untereinander und vom Spieler fernhalten (sich selbst überspringen!)
     for (const o of this.enemies) {
-      if (!o.alive) continue;
+      if (!o.alive || o === self) continue;
       const dx = x - o.x, dz = z - o.z;
       const d = Math.hypot(dx, dz);
       const min = r + o.radius;
       if (d > 0.001 && d < min) { x = o.x + (dx / d) * min; z = o.z + (dz / d) * min; }
+    }
+    // Nicht in die Spielfigur hineinlaufen
+    const pl = this.player;
+    if (self && pl?.active) {
+      const dx = x - pl.x, dz = z - pl.z;
+      const d = Math.hypot(dx, dz);
+      const min = r + 0.45;
+      if (d < min) {
+        const nx = d > 0.001 ? dx / d : Math.sin(self.yaw + Math.PI), nz = d > 0.001 ? dz / d : Math.cos(self.yaw + Math.PI);
+        x = pl.x + nx * min; z = pl.z + nz * min;
+      }
     }
     return this.groundRef.constrain(x, z, r);
   }
@@ -310,7 +321,7 @@ export class CombatSystem implements EnemyWorld {
       list.push({
         x: e.x, y: e.y, z: e.z, radius: e.radius, alive: true,
         hit: (dmg, status, dur, dx, dz, el) => this.abilityHit(e, dmg * this.mods.skillMult, status, dur, dx, dz, el),
-        shove: (dx, dz) => { const c = this.constrain(e.x + dx, e.z + dz, e.radius); e.x = c.x; e.z = c.z; },
+        shove: (dx, dz) => { const c = this.constrain(e.x + dx, e.z + dz, e.radius, e); e.x = c.x; e.z = c.z; },
       });
     }
     for (const d of this.dummies) {
@@ -418,6 +429,22 @@ export class CombatSystem implements EnemyWorld {
     });
     const boss = this.enemies.find((e) => e.def.boss);
     if (boss) this.overlay.showCutin(boss.name ?? ENEMIES.legende.label, '#A8322A');
+  }
+
+  /** Boden wechseln (Insel ↔ Schiffsdeck beim Entern) */
+  setGround(g: Ground) { this.groundRef = g; }
+
+  /** Deckkampf beim Entern: Crew auf dem feindlichen Deck */
+  enterDeck(deck: DeckGround, kinds: EnemyKind[], level: number, faction: Faction, bossName?: string) {
+    this.leaveIsland();
+    kinds.forEach((k, i) => {
+      const p = deck.spot((Math.random() - 0.5) * 1.6, 0.2 + (i / Math.max(1, kinds.length - 1)) * 0.7 - 0.1);
+      const e = new Enemy(this.assets, k, level, faction, p.x, p.z, this.outline, k === 'legende' ? bossName : undefined);
+      e.y = deck.height();
+      e.alert();
+      this.scene.add(e.char.holder);
+      this.enemies.push(e);
+    });
   }
 
   addDummy(x: number, z: number) {

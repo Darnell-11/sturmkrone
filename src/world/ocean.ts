@@ -204,7 +204,7 @@ export class Ocean {
             float ring = smoothstep(r - 1.6, r - 0.6, d) * (1.0 - smoothstep(r - 0.6, r + 0.3, d));
             float core = 1.0 - smoothstep(0.0, r * 0.75, d);
             float life = w.w * (1.0 - clamp(w.z / 6.0, 0.0, 1.0));
-            skFoam = max(skFoam, (ring * 0.8 + core * 0.18) * life * step(0.35, nz));
+            skFoam = max(skFoam, (ring * 0.8 * step(0.3, nz) + core * 0.15) * life);
           }
           skFoam = clamp(skFoam, 0.0, 1.0);
           diffuseColor.rgb = mix(skBase, uFoam, skFoam * 0.92);`)

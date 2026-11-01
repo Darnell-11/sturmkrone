@@ -30,7 +30,7 @@ export interface EnemyWorld {
   enemyStrike(e: Enemy, atk: EnemyAttack): void;
   enemyTelegraph(e: Enemy, atk: EnemyAttack): void;
   ground(x: number, z: number): number;
-  constrain(x: number, z: number, r: number): { x: number; z: number };
+  constrain(x: number, z: number, r: number, self?: Enemy): { x: number; z: number };
 }
 
 export interface HitInfo {
@@ -364,7 +364,7 @@ export class Enemy {
     // Bewegung, Rückstoß, Boden
     this.vx *= Math.pow(0.02, dt);
     this.vz *= Math.pow(0.02, dt);
-    const c = w.constrain(this.x + (mvx + this.vx) * dt, this.z + (mvz + this.vz) * dt, this.radius);
+    const c = w.constrain(this.x + (mvx + this.vx) * dt, this.z + (mvz + this.vz) * dt, this.radius, this);
     this.x = c.x;
     this.z = c.z;
     if (this.state !== 'air' && this.state !== 'dead') {

@@ -1,5 +1,5 @@
 import { defaultLook, type CharacterLook } from '../../data/characterParts';
-import { SAVE_VERSION, type Faction, type FightStyle, type SaveData, type SkillState } from './types';
+import { defaultShip, SAVE_VERSION, type Faction, type FightStyle, type SaveData, type SkillState } from './types';
 
 /** localStorage-Schlüssel von Sturmkrone 1.0 */
 export const LEGACY_KEY = 'sturmkrone-saga-1';
@@ -62,6 +62,7 @@ export function convertLegacy10(raw: Record<string, any>, gameVersion: string, n
       quest: Math.max(0, Math.floor(num(raw.quest, 0))),
     },
     skills: skillsFromLegacy(raw, Math.max(1, Math.floor(num(raw.lvl, 1)))),
+    ship: defaultShip(raw.faction as Faction, Math.max(0, Math.min(6, Math.floor(num(raw.tier, 0))))),
     legacy10: JSON.parse(JSON.stringify(raw)),
   };
 }

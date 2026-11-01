@@ -12,7 +12,47 @@ export interface WalkIsland extends IslandShape {
   blockers: { x: number; z: number; r: number }[];
 }
 
-export class IslandGround {
+/** Etwas Begehbares: Insel oder Schiffsdeck */
+export interface Ground {
+  height(x: number, z: number): number;
+  constrain(x: number, z: number, radius?: number): { x: number; z: number };
+}
+
+/** Deck eines (beim Entern ruhig liegenden) Schiffs */
+export class DeckGround implements Ground {
+  constructor(private ship: { x: number; z: number; heading: number; cls: { L: number }; model: { deckY: number; group: { position: { y: number } }; halfWidth(z: number): number } }) {}
+
+  private toLocal(x: number, z: number) {
+    const dx = x - this.ship.x, dz = z - this.ship.z;
+    const c = Math.cos(-this.ship.heading), s = Math.sin(-this.ship.heading);
+    return { lx: dx * c + dz * s, lz: -dx * s + dz * c };
+  }
+
+  private toWorld(lx: number, lz: number) {
+    const c = Math.cos(this.ship.heading), s = Math.sin(this.ship.heading);
+    return { x: this.ship.x + lx * c + lz * s, z: this.ship.z - lx * s + lz * c };
+  }
+
+  height() { return this.ship.model.group.position.y + this.ship.model.deckY; }
+
+  constrain(x: number, z: number, radius = 0.35) {
+    const { lx, lz } = this.toLocal(x, z);
+    const L = this.ship.cls.L;
+    const cz = Math.max(-L / 2 + L * 0.28, Math.min(L / 2 - L * 0.12, lz));
+    const hw = this.ship.model.halfWidth(cz) * 0.85 - radius;
+    const cx = Math.max(-hw, Math.min(hw, lx));
+    return this.toWorld(cx, cz);
+  }
+
+  /** Lokale Deckposition (z: Anteil der Länge) in Weltkoordinaten */
+  spot(fx: number, fz: number) {
+    const L = this.ship.cls.L;
+    const lz = -L / 2 + L * 0.28 + (fz * 0.5 + 0.5) * (L * 0.6);
+    return this.toWorld(fx * this.ship.model.halfWidth(lz) * 0.7, lz);
+  }
+}
+
+export class IslandGround implements Ground {
   readonly islands: WalkIsland[] = [];
 
   add(i: WalkIsland) { this.islands.push(i); }

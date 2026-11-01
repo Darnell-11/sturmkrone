@@ -21,7 +21,6 @@ import { Character } from '../entities/character/character';
 import { weaponsFor } from '../entities/character/weapons';
 import { Npc } from '../entities/npc';
 import { PlayerFoot } from '../entities/player/playerFoot';
-import { buildTestBoat } from '../entities/testBoat';
 import { addOutlines } from '../render/outline';
 import { toon } from '../render/toon';
 import { Environment, type EnvState } from './environment';
@@ -37,6 +36,11 @@ import type { CombatOverlay } from '../ui/combatOverlay';
 import type { Enemy } from '../entities/enemy';
 import { FajiController } from '../faji/fajiController';
 import type { SkillState } from '../core/save/types';
+import { Ship, type SeaEnv } from '../entities/ship/ship';
+import { AMMO, AMMO_IDS, DEFAULT_SHIP_LOOK, SAIL_LEVELS, type AmmoId, type ShipLook } from '../data/ships';
+import { NavalSystem, type EnemyShip } from '../naval/naval';
+import { DeckGround, type Ground } from './islandGround';
+import { ELEMENT_COLORS } from '../data/skills';
 
 /** Gegnerlager je Inselstufe */
 const CAMP_BY_LEVEL: EnemyKind[][] = [
@@ -47,14 +51,8 @@ const CAMP_BY_LEVEL: EnemyKind[][] = [
   ['hauptmann', 'matrose', 'schildtraeger', 'musketier', 'fajiwirker', 'schlaeger'],
 ];
 
-const MAX_SPEED = 16;
-const GRAVITY = 9.8;
 const WAKE_INTERVAL = 0.22;
-/** Steuerposition am Heck des Testboots (lokal) */
-const HELM = new Vector3(0, 1.3, -3.0);
 
-interface Ball { mesh: Mesh; vel: Vector3; alive: boolean }
-interface Flash { mesh: Mesh; life: number }
 interface WakePoint { x: number; z: number; age: number; strength: number }
 
 export type SeaMode = 'sail' | 'foot';
@@ -82,6 +80,15 @@ export class SeaWorld {
   onKill: (e: Enemy) => void = () => {};
   onGold: (n: number) => void = () => {};
   onPlayerDown: () => void = () => {};
+  onShipSunk: (e: EnemyShip) => void = () => {};
+  onLoot: (gold: number, shard: boolean) => void = () => {};
+  onBoardWon: (e: EnemyShip) => void = () => {};
+  /** Aktueller Boden: Inseln oder (beim Entern) das feindliche Deck */
+  private readonly groundProxy: Ground = {
+    height: (x, z) => (this.deckGround ?? this.ground).height(x, z),
+    constrain: (x, z, r) => (this.deckGround ?? this.ground).constrain(x, z, r),
+  };
+  private boardDone = 0;
   /** Angeforderte Trefferpause (vom Spiel in Echtzeit abgearbeitet) */
   hitstop = { t: 0, scale: 0.05 };
   combat: CombatSystem | null = null;
@@ -96,11 +103,18 @@ export class SeaWorld {
   private cinematic = 0;
 
   private boat: Group;
-  private lantern: Mesh;
+  /** Das eigene Schiff */
+  ship: Ship;
+  naval: NavalSystem | null = null;
+  /** Tempo-Bonus (Crew, Ausbauten) */
+  shipSpeedMult = 1;
+  private sailCd = 0;
+  private aimSide = 0;
+  private aimT = 0;
+  private boarding: EnemyShip | null = null;
+  private deckGround: DeckGround | null = null;
   private buoys: { g: Group; x: number; z: number; lamp: Mesh }[] = [];
   private lamps: Mesh[] = [];
-  private balls: Ball[] = [];
-  private flashes: Flash[] = [];
   private spray: ParticleSystem;
   private sparks: ParticleSystem;
   private wake: WakePoint[] = [];
@@ -115,13 +129,9 @@ export class SeaWorld {
   private x = 0;
   private z = 0;
   private heading = 0;
-  private prev = { x: 0, z: 0, heading: 0 };
   private speed = 0;
-  private boost = 0;
   private boostCd = 0;
   private cdBow = 0;
-  private cdLeft = 0;
-  private cdRight = 0;
   private shake = 0;
   private edgeWarned = false;
 
@@ -137,31 +147,12 @@ export class SeaWorld {
 
   constructor() {
     this.env = new Environment(this.scene);
-    const b = buildTestBoat();
-    this.boat = b.group;
-    this.lantern = b.lantern;
-    this.scene.add(this.boat);
+    this.ship = new Ship(this.scene, 0, DEFAULT_SHIP_LOOK('pirat'), 'pirat');
+    this.boat = this.ship.model.group;
 
     this.islands = this.buildIslands();
     this.env.setIslands(this.islands);
     this.buildBuoys();
-
-    const ballGeo = new SphereGeometry(0.28, 10, 8);
-    const ballMat = toon({ color: 0x2a2a2e, spec: 1 });
-    for (let i = 0; i < 40; i++) {
-      const m = new Mesh(ballGeo, ballMat);
-      m.visible = false;
-      m.castShadow = true;
-      this.scene.add(m);
-      this.balls.push({ mesh: m, vel: new Vector3(), alive: false });
-    }
-    const flashGeo = new SphereGeometry(1, 12, 8);
-    for (let i = 0; i < 12; i++) {
-      const m = new Mesh(flashGeo, new MeshBasicMaterial({ color: new Color(6, 3.2, 1), transparent: true }));
-      m.visible = false;
-      this.scene.add(m);
-      this.flashes.push({ mesh: m, life: 0 });
-    }
     this.spray = new ParticleSystem(this.scene, false, 0.8);
     this.sparks = new ParticleSystem(this.scene, true, 0.5);
     this.dust = new ParticleSystem(this.scene, false, 0.9);
@@ -287,7 +278,15 @@ export class SeaWorld {
     if (overlay) this.overlay = overlay;
     if (!this.combat && this.overlay) {
       this.fx = new CombatFx(this.scene, this.sparks, this.dust);
-      this.combat = new CombatSystem(this.scene, this.fx, this.overlay, assets, this.ground, {
+      this.naval = new NavalSystem(this.scene, this.seaEnv, this.fx, this.overlay, this.spray, this.sparks, this.ground, {
+        shake: (a) => { this.shake = Math.max(this.shake, a); },
+        hitstop: (t) => { this.hitstop.t = Math.max(this.hitstop.t, t); this.hitstop.scale = 0.05; },
+        message: (t) => this.onMessage(t),
+        sunk: (e) => this.onShipSunk(e),
+        loot: (g, shard) => this.onLoot(g, shard),
+      });
+      this.naval.player = this.ship;
+      this.combat = new CombatSystem(this.scene, this.fx, this.overlay, assets, this.groundProxy, {
         heal: (n) => { if (this.foot) this.foot.hp = Math.min(this.foot.maxHp, this.foot.hp + n); },
         hitstop: (t, scale = 0.05) => { this.hitstop.t = Math.max(this.hitstop.t, t); this.hitstop.scale = Math.min(this.hitstop.scale, scale); },
         shake: (a) => { this.shake = Math.max(this.shake, a); },
@@ -325,7 +324,7 @@ export class SeaWorld {
   /** Fähigkeiten der Spielfigur einrichten (nach dem Laden eines Spielstands) */
   setSkills(skills: SkillState, level: number) {
     if (!this.player || !this.foot || !this.combat || !this.fx || !this.overlay) return;
-    this.faji = new FajiController(skills, this.foot, this.player, this.combat, this.fx, this.sparks, this.scene, this.ground, this.overlay,
+    this.faji = new FajiController(skills, this.foot, this.player, this.combat, this.fx, this.sparks, this.scene, this.groundProxy, this.overlay,
       (a) => { this.shake = Math.max(this.shake, a); },
       (t) => { this.hitstop.t = Math.max(this.hitstop.t, t); this.hitstop.scale = 0.05; });
     this.faji.refresh(level, this.style);
@@ -350,8 +349,10 @@ export class SeaWorld {
 
   private attachToHelm() {
     if (!this.player) return;
+    this.boat = this.ship.model.group;
     this.boat.add(this.player.holder);
-    this.player.holder.position.copy(HELM);
+    this.player.holder.position.copy(this.ship.model.helm);
+    this.player.holder.scale.setScalar(1);
     this.player.holder.rotation.set(0, 0, 0);
     this.player.play('steer', { fade: 0.2 });
   }
@@ -377,17 +378,34 @@ export class SeaWorld {
       this.x = 0; this.z = -60; this.heading = 0;
     }
     if (s.env) this.env.setState(s.env);
-    this.prev = { x: this.x, z: this.z, heading: this.heading };
     this.speed = 0;
     this.camYaw = 0;
     this.wake = [];
-    this.balls.forEach((b) => { b.alive = false; b.mesh.visible = false; });
+    const sh = this.ship;
+    sh.x = this.x; sh.z = this.z; sh.heading = this.heading; sh.speed = 0; sh.sailLevel = 1;
+    sh.prev = { x: sh.x, z: sh.z, heading: sh.heading };
+    this.naval?.clear();
     if (this.mode === 'foot') {
       this.combat?.leaveIsland();
       if (this.foot) { this.foot.onFoot = false; this.foot.revive(); }
       this.downT = 0;
       this.setMode('sail');
     }
+  }
+
+  /** Eigenes Schiff: Klasse, Aussehen, Munition, Zustand (aus Spielstand oder Werft) */
+  setShip(tier: number, look: ShipLook, ammo: AmmoId, hullFrac: number, faction: Faction) {
+    const onBoard = this.player && this.player.holder.parent === this.ship.model.group;
+    if (onBoard) this.scene.add(this.player!.holder);
+    this.ship.rebuild(tier, look);
+    (this.ship as any).faction = faction;
+    this.ship.ammo = ammo;
+    this.ship.hull = Math.max(1, this.ship.maxHull * Math.max(0.05, Math.min(1, hullFrac)));
+    this.ship.x = this.x; this.ship.z = this.z; this.ship.heading = this.heading;
+    this.ship.prev = { x: this.x, z: this.z, heading: this.heading };
+    this.boat = this.ship.model.group;
+    if (this.naval) this.naval.player = this.ship;
+    if (this.mode === 'sail') this.attachToHelm();
   }
 
   /** Lebenspunkte und Angriffskraft der Spielfigur (aus Stufe und Ausrüstung) */
@@ -434,7 +452,6 @@ export class SeaWorld {
   // ---------- Logik ----------
 
   update(dt: number, input: Input) {
-    this.prev = { x: this.x, z: this.z, heading: this.heading };
     this.env.update(dt, this.focus);
 
     if (this.cinematic > 0) this.cinematic -= dt;
@@ -444,7 +461,7 @@ export class SeaWorld {
     this.updateContext(input);
     this.shake = Math.max(0, this.shake - dt * 1.8);
     this.updateWake(dt);
-    this.updateBalls(dt);
+    this.naval?.update(dt, this.mode === 'sail' && this.cinematic <= 0);
     this.spray.update(dt);
     this.sparks.update(dt);
     this.dust.update(dt);
@@ -461,66 +478,105 @@ export class SeaWorld {
         this.onMessage('Deine Crew hat dich an Bord gezogen.');
       }
     }
-    for (const f of this.flashes) {
-      if (f.life <= 0) continue;
-      f.life -= dt;
-      const k = Math.max(0, f.life / 0.18);
-      f.mesh.scale.setScalar(0.4 + (1 - k) * 1.6);
-      (f.mesh.material as MeshBasicMaterial).opacity = k;
-      if (f.life <= 0) f.mesh.visible = false;
+    // Eigenes Schiff gesunken: Crew flickt es notdürftig am Start
+    if (this.ship.sinking > 4) {
+      this.ship.sinking = 0;
+      this.ship.repair(0.5);
+      this.naval?.clear();
+      this.teleport(0, -60, 0);
+      this.onMessage('Dein Schiff ist gesunken! Die Crew hat es zurück in den Hafen geschleppt.');
+      this.onPlayerDown();
     }
+    if (this.ship.hull <= 0 && this.ship.sinking === 0) this.ship.sinking = 0.01;
+  }
+
+  get seaEnv(): SeaEnv {
+    const env = this.env;
+    return { heightAt: (x, z) => env.heightAt(x, z), windDir: env.windDir, windStrength: env.weather.p.wind, time: env.clock };
   }
 
   private updateSail(dt: number, input: Input) {
+    const s = this.ship;
     const mv = input.move();
+    // Fahrstufen mit Vor/Zurück (Tippen), Steuern mit Links/Rechts
+    if (input.pressed('up') && s.sailLevel < 2) { s.sailLevel++; this.onMessage(SAIL_LEVELS[s.sailLevel].n); }
+    if (input.pressed('down') && s.sailLevel > 0) { s.sailLevel--; this.onMessage(SAIL_LEVELS[s.sailLevel].n); }
+    // Stick/Touch: kräftig nach vorn = volle Fahrt, zurück = Anker
+    if (input.lastDevice !== 'keyboard') {
+      if (mv.y > 0.75 && s.sailLevel < 2 && this.sailCd <= 0) { s.sailLevel = 2; this.sailCd = 0.6; }
+      else if (mv.y < -0.75 && s.sailLevel > 0 && this.sailCd <= 0) { s.sailLevel--; this.sailCd = 0.6; }
+    }
+    this.sailCd -= dt;
+    this.faji?.tick(dt);
+    s.steer(dt, mv.x, this.seaEnv, this.shipSpeedMult);
     const storm = this.env.weather.p.waves;
-    const target = mv.y >= 0 ? mv.y * MAX_SPEED : mv.y * 5;
-    const boostMul = this.boost > 0 ? 1.8 : 1;
-    this.speed += (target * boostMul - this.speed) * Math.min(1, dt * (mv.y < 0 ? 1.2 : 0.7));
-    const turn = 0.35 + 0.65 * Math.min(1, Math.abs(this.speed) / 8);
-    this.heading -= mv.x * 1.2 * turn * dt;
-    let nx = this.x + Math.sin(this.heading) * this.speed * dt;
-    let nz = this.z + Math.cos(this.heading) * this.speed * dt;
     if (storm > 1.5) {
-      nx += Math.sin(this.env.clock * 0.3) * (storm - 1.5) * 0.6 * dt;
-      nz += Math.cos(this.env.clock * 0.23) * (storm - 1.5) * 0.6 * dt;
+      s.x += Math.sin(this.env.clock * 0.3) * (storm - 1.5) * 0.6 * dt;
+      s.z += Math.cos(this.env.clock * 0.23) * (storm - 1.5) * 0.6 * dt;
     }
     // Nicht auf Inseln auffahren
-    const isl = this.ground.islandAt(nx, nz, 7);
+    const isl = this.ground.islandAt(s.x, s.z, s.cls.W + 3);
     if (isl) {
-      const a = Math.atan2(nz - isl.z, nx - isl.x);
-      nx = isl.x + Math.cos(a) * (isl.r + 7);
-      nz = isl.z + Math.sin(a) * (isl.r + 7);
-      if (Math.abs(this.speed) > 6) { this.shake = Math.max(this.shake, 0.5); this.onMessage('Auf Grund gelaufen!'); }
-      this.speed *= 0.5;
+      const a = Math.atan2(s.z - isl.z, s.x - isl.x);
+      s.x = isl.x + Math.cos(a) * (isl.r + s.cls.W + 3);
+      s.z = isl.z + Math.sin(a) * (isl.r + s.cls.W + 3);
+      if (s.speed > 6) { this.shake = Math.max(this.shake, 0.5); this.onMessage('Auf Grund gelaufen!'); s.damage(s.speed * 1.5, 'kugel', null); }
+      s.speed *= 0.4;
     }
-    this.x = nx;
-    this.z = nz;
-
-    const d = Math.hypot(this.x, this.z);
+    const d = Math.hypot(s.x, s.z);
     if (d > EDGE_WALL) {
-      this.x *= EDGE_WALL / d;
-      this.z *= EDGE_WALL / d;
-      this.speed *= 0.85;
+      s.x *= EDGE_WALL / d;
+      s.z *= EDGE_WALL / d;
+      s.speed *= 0.85;
       this.shake = Math.max(this.shake, 0.3);
       if (!this.edgeWarned) { this.edgeWarned = true; this.onMessage('Der Weltrand! Weiter trägt dich keine Strömung.'); }
     } else if (d < EDGE_WALL - 150) this.edgeWarned = false;
+    this.x = s.x; this.z = s.z; this.heading = s.heading; this.speed = s.speed;
 
-    this.boost = Math.max(0, this.boost - dt);
     this.boostCd = Math.max(0, this.boostCd - dt);
     this.cdBow = Math.max(0, this.cdBow - dt);
-    this.cdLeft = Math.max(0, this.cdLeft - dt);
-    this.cdRight = Math.max(0, this.cdRight - dt);
-
     if (input.pressed('dodge') && this.boostCd <= 0) {
-      this.boost = 2;
-      this.boostCd = 4;
+      s.boost = 2.5;
+      this.boostCd = 8;
       this.shake = Math.max(this.shake, 0.5);
-      this.onMessage('Volle Fahrt!');
+      this.overlay?.speedlines(0.6);
+      this.onMessage('Volle Kraft voraus!');
     }
-    if (input.pressed('attack') && this.cdBow <= 0) { this.cdBow = 0.5; this.fireBow(); }
-    if (input.pressed('fireLeft') && this.cdLeft <= 0) { this.cdLeft = 1.5; this.fireBroadside(1); }
-    if (input.pressed('fireRight') && this.cdRight <= 0) { this.cdRight = 1.5; this.fireBroadside(-1); }
+    if (input.pressed('heavy')) {
+      s.ammo = AMMO_IDS[(AMMO_IDS.indexOf(s.ammo) + 1) % AMMO_IDS.length];
+      this.onMessage(`Munition: ${AMMO[s.ammo].n} – ${AMMO[s.ammo].d}`);
+    }
+    const nav = this.naval;
+    if (nav && s.alive) {
+      if (input.pressed('attack') && this.cdBow <= 0) { this.cdBow = 1.2; nav.bowShot(s, nav.canDmg, s.ammo); }
+      // Breitseiten: halten zum Zielen (Reichweite wächst), loslassen zum Feuern
+      for (const [act, side] of [['fireLeft', 1], ['fireRight', -1]] as const) {
+        const ready = side > 0 ? s.reloadL <= 0 : s.reloadR <= 0;
+        if (input.down(act) && ready) {
+          this.aimSide = side;
+          this.aimT = Math.min(1.2, this.aimT + dt);
+          nav.showAim(side, 45 + this.aimT * 55);
+        } else if (this.aimSide === side) {
+          if (ready) {
+            nav.broadside(s, side, 45 + this.aimT * 55, nav.canDmg, s.ammo);
+            const r = 2.4 * nav.reloadMult;
+            if (side > 0) s.reloadL = r; else s.reloadR = r;
+          }
+          this.aimSide = 0; this.aimT = 0;
+          nav.hideAim();
+        }
+      }
+      // Faji auf See
+      const slot = (['skill1', 'skill2', 'skill3'] as const).findIndex((a) => input.pressed(a));
+      if (slot >= 0 && this.faji) {
+        const def = this.faji.useSea(slot);
+        if (def?.act?.sea) {
+          const ok = nav.castSea(def.act.sea, this.faji.levelOf(def.id), this.combat?.atk ?? 14, ELEMENT_COLORS[def.act.el]);
+          if (ok) { this.faji.commitSea(def); if (def.act.ult) this.overlay?.showCutin(`${def.n}!`, ELEMENT_COLORS[def.act.el]); }
+          else this.onMessage('Kein Ziel in Reichweite.');
+        } else if (def) this.onMessage(`${def.n} wirkt nur an Land.`);
+      }
+    }
 
     const ld = input.lookDelta();
     const la = input.lookAxis();
@@ -546,7 +602,15 @@ export class SeaWorld {
     if (c && input.pressed('lockon')) c.toggleLock(f.x, f.z, this.footYaw);
     const lock = c?.lock?.alive ? c.lock : null;
     const lockYaw = lock ? Math.atan2(lock.x - f.x, lock.z - f.z) : null;
-    f.update(dt, input, this.footYaw, this.ground, lockYaw);
+    f.update(dt, input, this.footYaw, this.groundProxy, lockYaw);
+    // Entern: Deck geräumt?
+    if (this.boarding && c && c.hostilesLeft === 0 && this.boardDone === 0) {
+      this.boardDone = 2.6;
+      this.overlay?.showBanner('Schiff erobert!', 'Die Beute gehört dir');
+      this.naval?.capture(this.boarding);
+      this.onBoardWon(this.boarding);
+    }
+    if (this.boardDone > 0) { this.boardDone -= dt; if (this.boardDone <= 0) this.embark(); }
     this.faji?.update(dt, input, this.style, lockYaw);
     if (lockYaw !== null && !(ld.x || la.x)) {
       // Erfasstes Ziel: Kamera hinter die Figur, Blick aufs Ziel
@@ -565,11 +629,18 @@ export class SeaWorld {
     this.contextLabel = null;
     if (!this.player || !this.foot) return;
     if (this.mode === 'sail') {
-      const isl = this.ground.islandAt(this.x, this.z, 30);
-      if (isl && Math.abs(this.speed) < 7) {
+      const prey = this.naval?.boardable();
+      const isl = this.ground.islandAt(this.x, this.z, 30 + this.ship.cls.W);
+      if (prey) {
+        this.contextLabel = 'Entern!';
+        if (input.pressed('interact')) this.board(prey);
+      } else if (isl && Math.abs(this.speed) < 7) {
         this.contextLabel = 'An Land gehen';
         if (input.pressed('interact')) this.disembark(isl);
       }
+    } else if (this.boarding) {
+      this.contextLabel = 'Zurück an Bord';
+      if (input.pressed('interact')) this.embark();
     } else {
       const d = Math.hypot(this.foot.x - this.anchor.x, this.foot.z - this.anchor.z);
       if (d < 6) {
@@ -612,7 +683,42 @@ export class SeaWorld {
     this.onMessage(`Feindliches Lager! (Stufe ${level})`);
   }
 
+  /** Entern: über einen Enterhaken aufs feindliche Deck */
+  private board(e: EnemyShip) {
+    if (!this.player || !this.foot || !this.combat) return;
+    this.boarding = e;
+    this.boardDone = 0;
+    this.ship.speed = 0; this.ship.sailLevel = 0;
+    e.ship.speed = 0; e.ship.sailLevel = 0; e.ship.frozen = 999;
+    this.deckGround = new DeckGround(e.ship);
+    const crewN = Math.max(2, Math.min(7, Math.round(e.ship.cls.crew * (0.4 + e.ship.crew * 0.6))));
+    const kinds: EnemyKind[] = [];
+    if (e.role === 'legende') kinds.push('legende');
+    else if (e.ship.cls.L > 25) kinds.push('hauptmann');
+    const pool: EnemyKind[] = e.level >= 4 ? ['matrose', 'schildtraeger', 'musketier', 'schlaeger', 'fajiwirker'] : ['matrose', 'matrose', 'musketier', 'schildtraeger'];
+    while (kinds.length < crewN) kinds.push(pool[Math.floor(Math.random() * pool.length)]);
+    const enemyFaction: Faction = e.ship.faction;
+    this.combat.enterDeck(this.deckGround, kinds, e.level, enemyFaction, e.name);
+    this.scene.add(this.player.holder);
+    const start = this.deckGround.spot(0, -0.35);
+    this.footDist = 5.5;
+    this.footPitch = 0.42;
+    this.foot.place(start.x, start.z, e.ship.heading, this.groundProxy);
+    this.foot.onFoot = true;
+    this.footYaw = e.ship.heading;
+    this.overlay?.showCutin('Entern!', '#A8322A');
+    this.overlay?.speedlines(1);
+    this.setMode('foot');
+  }
+
   private embark() {
+    if (this.boarding) {
+      this.boarding.ship.frozen = 0;
+      this.boarding = null;
+      this.boardDone = 0;
+      this.deckGround = null;
+      this.combat?.leaveIsland();
+    }
     const c = this.combat;
     if (c?.activeIsland) {
       const idx = this.ground.islands.indexOf(c.activeIsland);
@@ -632,7 +738,6 @@ export class SeaWorld {
 
   /** Im Menü: Schiff treibt, Zeit und Wetter laufen weiter */
   idle(dt: number) {
-    this.prev = { x: this.x, z: this.z, heading: this.heading };
     this.env.update(dt, this.focus);
     this.menuOrbit += dt * 0.08;
     this.updateWake(dt);
@@ -658,84 +763,38 @@ export class SeaWorld {
 
   private fwd(h = this.heading) { return new Vector3(Math.sin(h), 0, Math.cos(h)); }
 
-  private spawnBall(pos: Vector3, vel: Vector3) {
-    const b = this.balls.find((x) => !x.alive);
-    if (!b) return;
-    b.alive = true;
-    b.mesh.visible = true;
-    b.mesh.position.copy(pos);
-    b.vel.copy(vel);
-    const f = this.flashes.find((x) => x.life <= 0);
-    if (f) { f.life = 0.18; f.mesh.visible = true; f.mesh.position.copy(pos); }
-    const dir = vel.clone().normalize();
-    this.sparks.emit(10, pos.x + dir.x, pos.y, pos.z + dir.z, { speed: 3, up: 2, life: 0.35, color: new Color(3, 1.6, 0.5), gravity: 2 });
-    this.spray.emit(14, pos.x, pos.y, pos.z, { speed: 2, up: 1.5, life: 1.0, color: new Color(0.75, 0.75, 0.78), gravity: -0.6, spread: 1 });
-    this.shake = Math.max(this.shake, 0.25);
-  }
-
-  private fireBow() {
-    const f = this.fwd();
-    const pos = new Vector3(this.x, 2.2 + this.env.heightAt(this.x, this.z), this.z).addScaledVector(f, 5.6);
-    this.spawnBall(pos, f.clone().multiplyScalar(48 + Math.max(0, this.speed)).setY(7));
-  }
-
-  /** side: +1 = backbord (links), −1 = steuerbord (rechts) */
-  private fireBroadside(side: number) {
-    const f = this.fwd();
-    const left = new Vector3(Math.cos(this.heading), 0, -Math.sin(this.heading)).multiplyScalar(side);
-    const y = 1.8 + this.env.heightAt(this.x, this.z);
-    for (let i = -1; i <= 1; i++) {
-      const pos = new Vector3(this.x, y, this.z).addScaledVector(f, i * 2.4).addScaledVector(left, 1.9);
-      this.spawnBall(pos, left.clone().multiplyScalar(42).addScaledVector(f, this.speed).setY(6 + Math.random() * 1.5));
-    }
-  }
-
-  private updateBalls(dt: number) {
-    for (const b of this.balls) {
-      if (!b.alive) continue;
-      b.vel.y -= GRAVITY * dt;
-      b.mesh.position.addScaledVector(b.vel, dt);
-      const p = b.mesh.position;
-      if (p.y < this.env.heightAt(p.x, p.z)) {
-        b.alive = false;
-        b.mesh.visible = false;
-        this.spray.emit(36, p.x, p.y + 0.2, p.z, { speed: 3.5, up: 9, life: 1.4, color: new Color(0.95, 0.98, 1) });
-      }
-    }
-  }
-
   // ---------- Darstellung ----------
 
   render(alpha: number, frameDt: number, inMenu: boolean) {
-    const x = MathUtils.lerp(this.prev.x, this.x, alpha);
-    const z = MathUtils.lerp(this.prev.z, this.z, alpha);
-    const h = this.prev.heading + (this.heading - this.prev.heading) * alpha;
+    const s = this.ship;
+    const x = MathUtils.lerp(s.prev.x, s.x, alpha);
+    const z = MathUtils.lerp(s.prev.z, s.z, alpha);
+    const h = s.prev.heading + (s.heading - s.prev.heading) * alpha;
     const env = this.env;
+    const pal = env.palette;
+    const night = 1 - pal.sunVis;
+    const sea = this.seaEnv;
 
     const wy = env.heightAt(x, z);
     const f = this.fwd(h);
-    const ahead = env.heightAt(x + f.x * 4, z + f.z * 4);
-    const behind = env.heightAt(x - f.x * 4, z - f.z * 4);
-    const sideH = env.heightAt(x + f.z * 1.6, z - f.x * 1.6);
-    const sideH2 = env.heightAt(x - f.z * 1.6, z + f.x * 1.6);
-    this.boat.position.set(x, wy - 0.2, z);
-    this.boat.rotation.set(Math.atan2(behind - ahead, 8), h, Math.atan2(sideH - sideH2, 3.2) * 0.8, 'YXZ');
-
-    if (Math.abs(this.speed) > 3 && Math.random() < frameDt * 30) {
-      this.spray.emit(2, x - f.x * 5.2, wy + 0.1, z - f.z * 5.2, { speed: 1, up: 1.2, life: 1.2, color: new Color(0.95, 0.98, 1), gravity: 3 });
+    s.render(alpha, sea, night, frameDt);
+    for (const e of this.naval?.enemies ?? []) e.ship.render(alpha, sea, night, frameDt);
+    const L = s.cls.L;
+    if (s.speed > 3 && Math.random() < frameDt * 30) {
+      this.spray.emit(2, x - f.x * L * 0.5, wy + 0.1, z - f.z * L * 0.5, { speed: 1, up: 1.2, life: 1.2, color: new Color(0.95, 0.98, 1), gravity: 3, spread: s.cls.W * 0.4 });
     }
-    if (ahead - wy > 0.4 && Math.random() < frameDt * 20 && this.mode === 'sail') {
-      this.spray.emit(6, x + f.x * 5, wy + 0.6, z + f.z * 5, { speed: 2.5, up: 4, life: 1, color: new Color(0.95, 0.98, 1) });
+    if (s.speed > 6 && Math.random() < frameDt * 18 && this.mode === 'sail') {
+      this.spray.emit(5, x + f.x * L * 0.5, wy + 0.6, z + f.z * L * 0.5, { speed: 2.5, up: 4, life: 1, color: new Color(0.95, 0.98, 1) });
     }
-
-    const pal = env.palette;
-    const night = 1 - pal.sunVis;
+    if (s.fire > 0 && Math.random() < frameDt * 40) {
+      const k = (Math.random() - 0.5) * L * 0.6;
+      this.sparks.emit(2, x + f.x * k, wy + s.model.deckY + 0.5, z + f.z * k, { speed: 0.6, up: 4, life: 0.8, color: new Color(3, 1.2, 0.3), gravity: -2, spread: s.cls.W * 0.3 });
+    }
     for (const b of this.buoys) {
       b.g.position.set(b.x, env.heightAt(b.x, b.z) - 0.3, b.z);
       b.g.rotation.z = Math.sin(env.clock * 1.3 + b.x) * 0.15;
       b.lamp.visible = night > 0.3 || Math.sin(env.clock * 3 + b.z) > 0;
     }
-    this.lantern.scale.setScalar(0.8 + night * 0.8);
     for (const l of this.lamps) l.scale.setScalar(0.6 + night * 0.7);
 
     const cam = this.camera;
@@ -762,7 +821,7 @@ export class SeaWorld {
       this.focus.set(x, wy + 2, z);
     } else {
       const yaw = h + Math.PI + this.camYaw;
-      const dist = this.camDist + (this.boost > 0 ? 4 : 0);
+      const dist = (this.camDist + (s.boost > 0 ? 4 : 0)) * Math.max(1, L / 17);
       const cp = Math.cos(this.camPitch);
       this.tmp.set(x + Math.sin(yaw) * dist * cp, Math.max(wy + 2, 3 + Math.sin(this.camPitch) * dist), z + Math.cos(yaw) * dist * cp);
       cam.position.lerp(this.tmp, Math.min(1, frameDt * 8));

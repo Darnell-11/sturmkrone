@@ -1,6 +1,6 @@
 import { sanitizeLook } from '../../data/characterParts';
 import { convertLegacy10, isLegacy10, lookFromLegacy, skillsFromLegacy } from './legacy';
-import { createSave, SAVE_VERSION, type SaveData } from './types';
+import { createSave, defaultShip, SAVE_VERSION, type SaveData } from './types';
 
 type Migration = (data: Record<string, any>) => Record<string, any>;
 
@@ -23,6 +23,11 @@ export const MIGRATIONS: Record<number, Migration> = {
   },
   // Meilenstein 4: Faji-Skillbaum (1.0-Fähigkeiten werden übernommen)
   3: (d) => ({ ...d, version: 4, skills: skillsFromLegacy(d.legacy10, d.player?.level ?? 1) }),
+  // Meilenstein 5: eigenes Schiff (Schiffsstufe aus 1.0 übernehmen)
+  4: (d) => {
+    const tier = typeof d.legacy10?.tier === 'number' ? Math.max(0, Math.min(6, Math.floor(d.legacy10.tier))) : 0;
+    return { ...d, version: 5, ship: defaultShip(d.player?.faction === 'marine' ? 'marine' : 'pirat', tier) };
+  },
 };
 
 export type MigrationResult =

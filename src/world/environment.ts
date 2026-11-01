@@ -28,6 +28,8 @@ export class Environment {
   timeSpeed = 1;
   /** Gesamtlaufzeit für Wellen und Animationen */
   clock = 0;
+  /** Windrichtung (Bogenmaß, wohin der Wind weht) – dreht langsam */
+  windDir = 0.6;
 
   private viewDistance = 520;
   private shadowExtent = 40;
@@ -85,6 +87,7 @@ export class Environment {
     this.time = (this.time + (dt * this.timeSpeed * 24) / (DAY_MINUTES * 60)) % 24;
     this.focus.copy(focus);
     this.weather.update(dt, focus);
+    this.windDir += Math.sin(this.clock * 0.004) * dt * 0.01 * (1 + this.weather.p.wind * 3);
     // Wellenhöhe folgt dem Wetter (in der Logik, damit Schiffe und Darstellung übereinstimmen)
     this.ocean.uniforms.uWaveScale.value = this.weather.p.waves;
     this.ocean.uniforms.uTime.value = this.clock;

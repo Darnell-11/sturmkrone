@@ -350,6 +350,14 @@ kbd {
 .hud-bar.xp { height: 4px; }
 .hud-bar.xp i { background: var(--brass); }
 .hud-gold { font-size: 0.82rem; font-weight: 800; margin-top: 3px; }
+.hud-sea { margin-top: 5px; }
+.hud-bar.ship i { background: #8A5A2B; }
+.hud-seainfo { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; font-weight: 700; margin-top: 3px; color: var(--muted); }
+.hud-seainfo .wind { display: inline-block; color: var(--teal); font-size: 1rem; transition: transform 0.4s; }
+.hud-reload { position: relative; height: 4px; margin-top: 3px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.hud-reload i { position: absolute; top: 0; bottom: 0; background: var(--seal); }
+.hud-reload .l { left: 0; }
+.hud-reload .r { right: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   .ctx { animation: none; }

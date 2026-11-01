@@ -1,5 +1,5 @@
 import { lowerTier, QUALITY_TIERS, type QualityTier } from '../data/qualityTiers';
-import { FACTION_LABELS, rankName } from '../data/ranks';
+import { FACTION_LABELS, rankIndex, rankName } from '../data/ranks';
 import { TOUCH_FOOT, TOUCH_SEA } from '../data/touchLayout';
 import { randomLook } from '../data/characterParts';
 import { WEATHER, type WeatherId } from '../data/world';
@@ -9,6 +9,8 @@ import { PLAYER_BASE } from '../data/combat';
 import { CombatOverlay } from '../ui/combatOverlay';
 import { BRANCHES, branchPoints, learnBlock, SK, type Branch } from '../data/skills';
 import { SkillTree } from '../ui/skillTree';
+import { AMMO, SAIL_LEVELS, SHIP_CLASSES, type ShipLook } from '../data/ships';
+import { FAME_THRESHOLDS } from '../data/ranks';
 import { SkillStage } from '../world/skillStage';
 import { AutoQuality, detectTier, gatherDeviceInfo, type DeviceInfo } from '../render/quality';
 import { GameRenderer } from '../render/renderer';
@@ -86,6 +88,19 @@ export class Game {
     this.world.onModeChange = (m) => this.onModeChange(m);
     this.world.onKill = (e) => this.onKill(e);
     this.world.onGold = (n) => { if (this.save) this.save.player.gold += n; };
+    this.world.onShipSunk = (e) => {
+      if (!this.save) return;
+      const p = this.save.player;
+      const mult = e.role === 'legende' ? 6 : e.role === 'haendler' ? 0.8 : 1.4;
+      this.grantXp(Math.round((25 + e.level * 10) * mult), e.role === 'legende' ? 250 : e.role === 'haendler' ? (p.faction === 'pirat' ? 4 : -6) : 8);
+      this.overlay.showBanner(e.role === 'legende' ? `${e.name} besiegt!` : 'Schiff versenkt!', e.role === 'haendler' ? 'Ein Handelsschiff' : '');
+    };
+    this.world.onLoot = (gold, shard) => {
+      if (!this.save) return;
+      this.save.player.gold += gold;
+      if (shard) { this.save.skills.sp++; this.hud.toast('Faji-Splitter: +1 Faji-Punkt!', 3); }
+    };
+    this.world.onBoardWon = () => { if (this.save) this.grantXp(40, 20); };
     this.world.onPlayerDown = () => {
       this.overlay.showBanner('K.O.', 'Die Crew eilt zu Hilfe …');
       if (this.save) {
@@ -194,6 +209,11 @@ export class Game {
         const hp = this.world.playerHp;
         const p = this.save.player;
         this.hud.setStats(hp ? hp.hp / hp.max : 1, p.xp / PLAYER_BASE.xpNeed(p.level), p.gold);
+        const sh = this.world.ship;
+        this.hud.setSea(this.world.mode === 'sail' ? {
+          hull: sh.hull / sh.maxHull, sail: sh.sail, crew: sh.crew, level: SAIL_LEVELS[sh.sailLevel].n, ammo: AMMO[sh.ammo].n,
+          reloadL: sh.reloadL / 2.4, reloadR: sh.reloadR / 2.4, windRel: this.world.env.windDir - sh.heading, fire: sh.fire > 0,
+        } : null);
         const fj = this.world.faji;
         this.hud.setFaji(fj ? fj.faji / fj.maxFaji : 1, this.save.skills.sp);
         if (fj) {
@@ -233,18 +253,32 @@ export class Game {
   private applyPower() {
     if (!this.save) return;
     const lvl = this.save.player.level;
-    this.world.setPlayerPower(PLAYER_BASE.hp(lvl), PLAYER_BASE.atk(lvl));
+    const hpBonus = 1 + (this.world.faji?.passives.hpMax ?? 0);
+    this.world.setPlayerPower(PLAYER_BASE.hp(lvl) * hpBonus, PLAYER_BASE.atk(lvl));
+    const nav = this.world.naval;
+    if (nav) {
+      nav.playerLevel = lvl;
+      nav.playerFaction = this.save.player.faction;
+      nav.playerRank = rankIndex(this.save.player.fame);
+      nav.canDmg = (12 + lvl * 1.4) * (1 + this.save.ship.tier * 0.06);
+    }
   }
 
   private onKill(e: Enemy) {
+    const xp = Math.round(e.def.xp * (1 + 0.2 * (e.level - 1)));
+    this.overlay.number(e.head.setY(e.y + 2.8), `+${xp} EP`, 'xp');
+    this.grantXp(xp, e.def.boss ? 200 : e.def.elite ? 15 : 3);
+  }
+
+  /** Erfahrung und Ruhm vergeben, Stufen und Ränge prüfen */
+  private grantXp(xp: number, fame: number) {
     const s = this.save;
     if (!s) return;
     const p = s.player;
-    const xp = Math.round(e.def.xp * (1 + 0.2 * (e.level - 1)));
     p.xp += xp;
-    this.overlay.number(e.head.setY(e.y + 2.8), `+${xp} EP`, 'xp');
     const rankBefore = rankName(p.faction, p.fame);
-    p.fame += e.def.boss ? 200 : e.def.elite ? 15 : 3;
+    const famePassive = this.world.faji?.passives.fame ?? 0;
+    p.fame = Math.max(0, p.fame + Math.round(fame * (fame > 0 ? 1 + famePassive : 1)));
     let up = false;
     while (p.xp >= PLAYER_BASE.xpNeed(p.level)) {
       p.xp -= PLAYER_BASE.xpNeed(p.level);
@@ -287,6 +321,57 @@ export class Game {
     setTimeout(() => this.overlay.showCutin('Faji-Erwachen!', info.col), 600);
     setTimeout(() => this.overlay.showBanner(`${info.n} erwacht!`, '+2 Faji-Punkte · neue Meisterfähigkeit freigeschaltet'), 2200);
     this.persist();
+  }
+
+  // ---------- Werft ----------
+
+  get shipState() { return this.save?.ship ?? null; }
+  get playerGold() { return this.save?.player.gold ?? 0; }
+  get playerRank() { return this.save ? rankIndex(this.save.player.fame) : 0; }
+
+  /** Schiffsklasse kaufen oder wechseln. Liefert eine Meldung. */
+  shipyardSelect(tier: number): string {
+    const s = this.save;
+    if (!s) return '';
+    const cls = SHIP_CLASSES[tier];
+    if (!s.ship.owned.includes(tier)) {
+      if (rankIndex(s.player.fame) < cls.rank) return `Rang „${rankName(s.player.faction, FAME_THRESHOLDS[cls.rank])}“ nötig.`;
+      if (s.player.gold < cls.price) return `Dafür fehlen ${cls.price - s.player.gold} Gold.`;
+      s.player.gold -= cls.price;
+      s.ship.owned.push(tier);
+    }
+    s.ship.tier = tier;
+    s.ship.hull = 1;
+    this.world.setShip(tier, s.ship.look, s.ship.ammo, 1, s.player.faction);
+    this.applyPower();
+    this.persist();
+    return `${cls.n} bereit zum Auslaufen!`;
+  }
+
+  shipyardLook(look: ShipLook) {
+    const s = this.save;
+    if (!s) return;
+    s.ship.look = look;
+    this.world.setShip(s.ship.tier, look, s.ship.ammo, this.world.ship.hull / this.world.ship.maxHull, s.player.faction);
+    this.persist();
+  }
+
+  /** Reparatur kostet Gold je fehlendem Rumpfanteil */
+  repairCost() {
+    const sh = this.world.ship;
+    return Math.ceil((1 - sh.hull / sh.maxHull) * sh.maxHull * 0.6);
+  }
+
+  shipyardRepair(): string {
+    const s = this.save;
+    if (!s) return '';
+    const cost = this.repairCost();
+    if (cost <= 0) return 'Dein Schiff ist in bestem Zustand.';
+    if (s.player.gold < cost) return `Reparatur kostet ${cost} Gold.`;
+    s.player.gold -= cost;
+    this.world.ship.repair(1);
+    this.persist();
+    return 'Repariert!';
   }
 
   /** Testwerkzeug: Punkte und Stufen geben */
@@ -428,6 +513,7 @@ export class Game {
     this.world.playerFaction = p.faction;
     if (this.assets) this.world.setCharacters(this.assets, p.look, styleIdOf(p.style, p.blade), this.overlay);
     this.world.setSkills(data.skills, p.level);
+    this.world.setShip(data.ship.tier, data.ship.look, data.ship.ammo, data.ship.hull, p.faction);
     this.applyPower();
     this.world.healPlayer();
     this.hud.setPlayer(p.name, `${FACTION_LABELS[p.faction]} · ${rankName(p.faction, p.fame)} · Stufe ${p.level}`);
@@ -471,6 +557,9 @@ export class Game {
     if (!this.save || this.slot === null) return true;
     const ws = this.world.getState();
     this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather };
+    const sh = this.world.ship;
+    this.save.ship.hull = sh.maxHull > 0 ? Math.max(0.05, sh.hull / sh.maxHull) : 1;
+    this.save.ship.ammo = sh.ammo;
     const ok = this.saves.save(this.slot, this.save);
     if (!ok && !this.saveFailedShown) {
       this.saveFailedShown = true;

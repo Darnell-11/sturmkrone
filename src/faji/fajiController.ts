@@ -4,11 +4,11 @@ import type { CombatFx } from '../combat/fx';
 import type { Input } from '../core/input/input';
 import type { SkillState } from '../core/save/types';
 import type { StyleId } from '../data/animations';
-import { computePassives, SK, type ActiveDef, type Passives, type SynergyDef } from '../data/skills';
+import { computePassives, SK, type ActiveDef, type Passives, type SkillDef, type SynergyDef } from '../data/skills';
 import type { Character } from '../entities/character/character';
 import type { PlayerFoot } from '../entities/player/playerFoot';
 import type { CombatOverlay } from '../ui/combatOverlay';
-import type { IslandGround } from '../world/islandGround';
+import type { Ground } from '../world/islandGround';
 import type { ParticleSystem } from '../world/particles';
 import { AbilityRunner, castClip } from './abilities';
 
@@ -36,7 +36,7 @@ export class FajiController {
     fx: CombatFx,
     particles: ParticleSystem,
     scene: Scene,
-    ground: IslandGround,
+    ground: Ground,
     private overlay: CombatOverlay,
     private shake: (a: number) => void,
     private hitstop: (t: number) => void,
@@ -130,6 +130,30 @@ export class FajiController {
 
     const slotAction = (['skill1', 'skill2', 'skill3'] as const).findIndex((a) => input.pressed(a));
     if (slotAction >= 0) this.use(slotAction, lockYaw);
+  }
+
+  levelOf(id: string) { return this.skills.learned[id] ?? 1; }
+
+  /** Auf See: Fähigkeit aus Platz i prüfen (Abklingzeit, Energie), noch nicht bezahlen */
+  useSea(i: number): SkillDef | null {
+    const id = this.skills.slots[i];
+    const s = id ? SK[id] : null;
+    if (!s?.act) return null;
+    if ((this.cds[s.id] ?? 0) > 0 || this.faji < s.act.cost) return null;
+    return s;
+  }
+
+  /** Auf See: Fähigkeit wurde gewirkt – Energie und Abklingzeit verbuchen */
+  commitSea(s: SkillDef) {
+    if (!s.act) return;
+    this.faji -= s.act.cost;
+    this.cds[s.id] = s.act.cd * (1 - this.passives.cdr);
+  }
+
+  /** Energie und Abklingzeiten auch auf See weiterlaufen lassen */
+  tick(dt: number) {
+    this.faji = Math.min(this.maxFaji, this.faji + dt * (6 + this.level * 0.25) * (1 + this.passives.fajiRegen));
+    for (const k of Object.keys(this.cds)) { this.cds[k] -= dt; if (this.cds[k] <= 0) delete this.cds[k]; }
   }
 
   /** Fähigkeit aus Platz i einsetzen */
