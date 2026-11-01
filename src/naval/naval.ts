@@ -1,3 +1,4 @@
+import { audio } from '../audio/audio';
 import {
   AdditiveBlending,
   BoxGeometry,
@@ -102,6 +103,7 @@ export class NavalSystem {
   /** Breitseite: alle Kanonen einer Seite */
   broadside(ship: Ship, side: number, range: number, dmg: number, ammo: AmmoId) {
     const muzzles = side > 0 ? ship.model.muzzlesL : ship.model.muzzlesR;
+    audio.play('broadside', ship === this.player ? 1 : 0.8, { x: ship.x, z: ship.z });
     const left = new Vector3(Math.cos(ship.heading), 0, -Math.sin(ship.heading)).multiplyScalar(side);
     const r = range * AMMO[ammo].range;
     const t = r / (BALL_SPEED * AMMO[ammo].speed);
@@ -117,6 +119,7 @@ export class NavalSystem {
   /** Bugkanone nach vorn */
   bowShot(ship: Ship, dmg: number, ammo: AmmoId) {
     const f = new Vector3(Math.sin(ship.heading), 0, Math.cos(ship.heading));
+    audio.play('boom', 1, { x: ship.x, z: ship.z });
     const from = new Vector3(ship.x, ship.model.deckY + 0.6, ship.z).addScaledVector(f, ship.cls.L / 2);
     this.spawnBall(from, f.multiplyScalar(BALL_SPEED + ship.speed).setY(6), ship, dmg * 0.8, ammo);
   }
@@ -292,6 +295,7 @@ export class NavalSystem {
       }
       if (b.life > 0 && p.y < this.env.heightAt(p.x, p.z)) {
         b.life = 0;
+        audio.play('splash', 0.9, p);
         this.spray.emit(30, p.x, p.y + 0.2, p.z, { speed: 3, up: 9, life: 1.4, color: new Color(0.95, 0.98, 1) });
       }
       if (b.life <= 0) b.mesh.removeFromParent();
@@ -303,6 +307,7 @@ export class NavalSystem {
     const ammo: AmmoId = sailHit ? 'kette' : b.ammo;
     const dmg = s.damage(b.dmg, ammo, sailHit ? null : local);
     const p = b.mesh.position.clone();
+    audio.play('crack', 1, p);
     this.fx.hit(p, 'heavy', b.ammo === 'brand' ? '#FF7A2A' : '#FFD08A');
     this.sparks.emit(14, p.x, p.y, p.z, { speed: 6, up: 5, life: 0.9, color: new Color(0.55, 0.36, 0.2), gravity: 14, spread: 0.3 });
     if (dmg > 0) this.overlay.number(p.clone().setY(p.y + 1.5), dmg, s === this.player ? 'hurt' : 'hit');
@@ -314,6 +319,7 @@ export class NavalSystem {
   private sink(s: Ship) {
     if (s.sinking > 0) return;
     s.sinking = 0.01;
+    audio.play('sink', 1, s);
     const e = this.enemies.find((x) => x.ship === s);
     if (s === this.player) return;
     this.fx.shockwave(new Vector3(s.x, 0.5, s.z), s.cls.L * 0.6, '#FFB45A');
@@ -336,11 +342,14 @@ export class NavalSystem {
     const p = this.player;
     for (const c of this.crates) {
       c.t += dt;
+      // Beute treibt zum Schiff (wie in 1.0)
+      if (p) { const dx = p.x - c.x, dz = p.z - c.z, d = Math.hypot(dx, dz) || 1; if (d < p.cls.L * 2.2) { const k = Math.min(d, 26 * dt); c.x += (dx / d) * k; c.z += (dz / d) * k; } }
       c.mesh.position.set(c.x, this.env.heightAt(c.x, c.z) + 0.1, c.z);
       c.mesh.rotation.set(Math.sin(c.t * 1.3) * 0.2, c.t * 0.3, Math.cos(c.t) * 0.2);
       if (p && Math.hypot(p.x - c.x, p.z - c.z) < p.cls.W + 6) {
         c.t = -1;
         this.hooks.loot(c.gold, c.shard);
+        if (c.shard) audio.play('shard');
         this.overlay.number(new Vector3(c.x, 3, c.z), c.shard ? 'Faji-Splitter!' : `+${c.gold} Gold`, c.shard ? 'info' : 'gold');
       }
       if (c.t > 120) c.t = -1;

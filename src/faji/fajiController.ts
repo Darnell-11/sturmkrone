@@ -1,3 +1,4 @@
+import { audio } from '../audio/audio';
 import { Vector3, type Scene } from 'three';
 import type { CombatSystem } from '../combat/combat';
 import type { CombatFx } from '../combat/fx';
@@ -146,6 +147,7 @@ export class FajiController {
   /** Auf See: Fähigkeit wurde gewirkt – Energie und Abklingzeit verbuchen */
   commitSea(s: SkillDef) {
     if (!s.act) return;
+    audio.power(s.act.el);
     this.faji -= s.act.cost;
     this.cds[s.id] = s.act.cd * (1 - this.passives.cdr);
   }
@@ -170,6 +172,7 @@ export class FajiController {
     this.foot.cast(anim.clip, anim.speed, lockYaw);
     this.runner.ctx.power = this.combat.atk;
     this.runner.cast(s, this.skills.learned[s.id] ?? 1);
+    audio.power(s.act.el);
   }
 }
 

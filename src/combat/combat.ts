@@ -1,3 +1,4 @@
+import { audio } from '../audio/audio';
 import {
   AdditiveBlending,
   Color,
@@ -203,7 +204,7 @@ export class CombatSystem implements EnemyWorld {
   // ---------- Spieler greift an ----------
 
   /** Neuer Schlag: eigene Trefferliste, damit jeder Gegner nur einmal getroffen wird */
-  beginSwing(id: number) { this.swings.set(id, new Set()); if (this.swings.size > 8) this.swings.delete(this.swings.keys().next().value!); }
+  beginSwing(id: number) { audio.play('swing'); this.swings.set(id, new Set()); if (this.swings.size > 8) this.swings.delete(this.swings.keys().next().value!); }
 
   /** Während des Trefferfensters jeden Frame aufrufen */
   swing(id: number, def: AttackDef, x: number, _y: number, z: number, yaw: number, mult: number, color: string): number {
@@ -231,6 +232,7 @@ export class CombatSystem implements EnemyWorld {
   /** Fernangriff des Spielers (Faji-Geschosse) */
   shoot(def: AttackDef, x: number, y: number, z: number, yaw: number, mult: number) {
     const pr = def.projectile!;
+    audio.play('whoosh', 0.7);
     let dir = new Vector3(Math.sin(yaw), 0, Math.cos(yaw));
     const tgt = this.lock?.alive ? this.lock : this.nearestInCone(x, z, yaw, def.range, 0.6);
     if (tgt) dir = new Vector3(tgt.x - x, tgt.y + 1.1 - (y + 1.3), tgt.z - z).normalize();

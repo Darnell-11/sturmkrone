@@ -22,6 +22,10 @@ export class Ship {
   speed = 0;
   /** Fahrstufe 0 = Anker, 1 = halbe, 2 = volle Fahrt */
   sailLevel = 1;
+  /** Stufenloser Gashebel 0 … 1 (Spielerschiff); null = Fahrstufen der KI */
+  throttle: number | null = null;
+  /** Wendigkeit (Steuermann, Ausbauten) */
+  turnMult = 1;
   hull: number;
   maxHull: number;
   sail = 1;
@@ -73,15 +77,18 @@ export class Ship {
     this.reloadL = Math.max(0, this.reloadL - dt);
     this.reloadR = Math.max(0, this.reloadR - dt);
     if (this.frozen > 0) { this.speed *= Math.pow(0.05, dt); return; }
-    // Wind: Rückenwind schnell, Gegenwind langsam
+    // Wind: Rückenwind schneller, Gegenwind etwas langsamer (Tempo wie in 1.0)
     const rel = Math.cos(this.heading - env.windDir);
-    const windK = 0.55 + 0.45 * (rel * 0.5 + 0.5);
-    const sailK = [0, 0.55, 1][this.sailLevel] * (0.35 + 0.65 * this.sail);
-    const target = this.cls.spd * 0.68 * sailK * windK * (0.85 + env.windStrength * 0.3) * speedMult * (this.boost > 0 ? 1.6 : 1);
-    this.speed += (target - this.speed) * Math.min(1, dt * (target < this.speed ? 0.6 : 0.35));
-    // Wenden: große Schiffe drehen träger, ohne Fahrt kaum
-    this.turnInput += (turn - this.turnInput) * Math.min(1, dt * 4);
-    const rate = 0.9 * Math.sqrt(15 / this.cls.L) * (0.25 + 0.75 * Math.min(1, this.speed / 6));
+    const windK = 0.84 + 0.26 * (rel * 0.5 + 0.5) + env.windStrength * 0.06;
+    const level = this.throttle ?? [0, 0.55, 1][this.sailLevel];
+    if (this.throttle !== null) this.sailLevel = level < 0.05 ? 0 : level < 0.75 ? 1 : 2;
+    const sailK = level * (0.4 + 0.6 * this.sail);
+    const target = this.cls.spd * sailK * windK * speedMult * (this.boost > 0 ? 1.7 : 1);
+    this.speed += (target - this.speed) * Math.min(1, dt * (target < this.speed ? 0.8 : 0.9));
+    // Wenden: große Schiffe drehen träger, ohne Fahrt langsamer
+    this.turnInput += (turn - this.turnInput) * Math.min(1, dt * 6);
+    const size = 1.1 - Math.min(1, (this.cls.L - 15) / 39) * 0.45;
+    const rate = 1.3 * this.turnMult * size * (0.35 + 0.65 * Math.min(1, this.speed / 8));
     this.heading -= this.turnInput * rate * dt;
     this.x += Math.sin(this.heading) * this.speed * dt;
     this.z += Math.cos(this.heading) * this.speed * dt;

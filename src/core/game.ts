@@ -28,6 +28,8 @@ import { createSave, type SaveData } from './save/types';
 import { SettingsStore } from './settings';
 import { StateMachine } from './state';
 import { browserStore } from './storage';
+import { audio, type Mood } from '../audio/audio';
+import { EDGE_WALL } from '../data/world';
 import { QuestSystem, stepText } from '../story/questSystem';
 import type { QuestDef, TownNpcDef } from '../data/quests';
 import { ARMOR, BERNSTEINSEE, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, type IslandDef } from '../data/regions';
@@ -102,6 +104,7 @@ export class Game {
       if (!e.companion) { this.save.progress.stats.sunk++; this.questEvent({ type: 'sink' }); }
       const mult = e.role === 'legende' ? 6 : e.role === 'haendler' ? 0.8 : 1.4;
       this.grantXp(Math.round((25 + e.level * 10) * mult), e.role === 'legende' ? 250 : e.role === 'haendler' ? (p.faction === 'pirat' ? 4 : -6) : 8);
+      if (e.role === 'legende') audio.play('win');
       this.overlay.showBanner(e.role === 'legende' ? `${e.name} besiegt!` : 'Schiff versenkt!', e.role === 'haendler' ? 'Ein Handelsschiff' : '');
     };
     this.world.onLoot = (gold, shard) => {
@@ -123,6 +126,7 @@ export class Game {
       this.save.progress.stats.rescued++;
       const gold = 40 + this.save.player.level * 6;
       this.save.player.gold += gold;
+      audio.play('bell');
       this.overlay.showBanner('Schiffbrüchige gerettet!', `Zum Dank: ${gold} Gold`);
       this.grantXp(30, 12);
       this.questEvent({ type: 'rescue' });
@@ -131,6 +135,7 @@ export class Game {
     this.world.onDig = (id) => this.dig(id);
     this.hud.onMap = () => { if (this.state.is('play')) { this.state.set('pause'); this.menus.showMap('karte'); } };
     this.world.onPlayerDown = () => {
+      audio.play('ko');
       this.overlay.showBanner('K.O.', 'Die Crew eilt zu Hilfe …');
       if (this.save) {
         const lost = Math.floor(this.save.player.gold * 0.1);
@@ -138,6 +143,7 @@ export class Game {
         if (lost > 0) setTimeout(() => this.hud.toast(`${lost} Gold gingen verloren.`, 3), 3500);
       }
     };
+    audio.attachUnlock();
     this.hud.onPause = () => this.pause();
     this.hud.onFaji = () => this.openSkills();
     this.hud.onContext = (down) => this.input.setVirtual('interact', down);
@@ -157,6 +163,7 @@ export class Game {
     });
 
     document.addEventListener('visibilitychange', () => {
+      audio.suspend(document.hidden);
       if (document.hidden) {
         if (this.state.is('play')) this.pause();
         else this.persist();
@@ -219,6 +226,7 @@ export class Game {
   }
 
   private render(alpha: number, frameDt: number) {
+    this.updateAudio(frameDt);
     if (this.state.is('editor') && this.stage) {
       this.stage.update(frameDt);
       const portrait = innerHeight > innerWidth || innerWidth < 700;
@@ -280,6 +288,34 @@ export class Game {
     if (this.state.is('play')) this.hud.hint(this.controlsHint(), 8);
   }
 
+  // ---------- Klang ----------
+
+  private updateAudio(dt: number) {
+    const w = this.world;
+    const pos = w.playerPos;
+    audio.setListener(pos.x, pos.z, w.cameraYaw);
+    if (this.state.is('play', 'pause')) {
+      const env = w.env;
+      const town = w.islandDefs.find((i) => i.kind === 'town');
+      const dTown = town ? Math.hypot(town.x - pos.x, town.z - pos.z) : 9999;
+      const threat = w.threat;
+      const night = env.time < 5.5 || env.time > 20.5;
+      const mood: Mood = w.bossNear ? 'boss' : threat > 0.65 ? 'battle' : dTown < 150 ? 'harbor' : night ? 'night' : 'sea';
+      audio.setMood(mood, threat);
+      const wp = env.weather.p;
+      const edge = Math.hypot(pos.x, pos.z);
+      audio.setAmbience({
+        waves: w.mode === 'foot' ? 0.55 : 0.95, wind: 0.15 + wp.wind * 0.85, rain: wp.rain,
+        town: Math.max(0, 1 - dTown / 170), gulls: night || wp.rain > 0.3 ? 0.05 : 0.55,
+        deep: Math.max(0, Math.min(1, (edge - (EDGE_WALL - 450)) / 400)),
+      });
+    } else if (this.state.is('menu', 'boot')) {
+      audio.setMood('menu');
+      audio.setAmbience({ waves: 0.8, wind: 0.2, rain: 0, town: 0, gulls: 0.4, deep: 0 });
+    }
+    audio.update(dt);
+  }
+
   // ---------- Fortschritt ----------
 
   private applyPower() {
@@ -323,6 +359,7 @@ export class Game {
     if (q.reward.sp) s.skills.sp += q.reward.sp;
     if (this.justDone) this.justDone.push(q);
     else this.hud.toast(`Auftrag erfüllt: ${q.title}`, 3.5);
+    audio.play('quest');
     this.overlay.showBanner(q.main ? 'Kapitel abgeschlossen!' : 'Auftrag erfüllt!', q.title);
     this.grantXp(q.reward.xp, q.reward.fame);
   }
@@ -379,6 +416,7 @@ export class Game {
     const from = near.length && Math.random() < 0.75 ? near : pool;
     const pick = from[Math.floor(Math.random() * from.length)];
     s.progress.maps.push(pick.id);
+    audio.play('treasure');
     this.overlay.showBanner('Flaschenpost!', `Eine Schatzkarte – ein X auf ${pick.name}`);
     this.refreshDigs();
     this.persist();
@@ -387,6 +425,7 @@ export class Game {
   private dig(island: string) {
     const s = this.save;
     if (!s) return;
+    audio.play('dig');
     const i = s.progress.maps.indexOf(island);
     if (i >= 0) {
       s.progress.maps.splice(i, 1);
@@ -395,6 +434,7 @@ export class Game {
       s.player.gold += gold;
       const shard = Math.random() < 0.35;
       if (shard) s.skills.sp++;
+      audio.play('treasure');
       this.overlay.showBanner('Schatz gefunden!', `${gold} Gold${shard ? ' und ein Faji-Splitter (+1 Faji-Punkt)' : ''}`);
       this.grantXp(40, 10);
     } else this.hud.toast('Gefunden!', 2);
@@ -411,6 +451,7 @@ export class Game {
     if (s.gear.potions <= 0) { this.hud.toast('Kein Proviant mehr – Mara verkauft welchen am Markt.', 3); return; }
     if (hp.hp >= hp.max) { this.hud.toast('Du bist satt und gesund.'); return; }
     s.gear.potions--;
+    audio.play('eat');
     this.world.healFrac(POTION.heal);
     this.hud.toast(`Mmh! +${Math.round(POTION.heal * 100)} % Leben · noch ${s.gear.potions}`);
   }
@@ -551,6 +592,7 @@ export class Game {
       this.applyPower();
       this.world.healPlayer();
       this.world.faji?.refresh(p.level, styleIdOf(p.style, p.blade));
+      audio.play('level');
       this.overlay.showBanner(`Stufe ${p.level}!`, '+1 Faji-Punkt · mehr Leben und Angriffskraft');
       this.checkAwakening();
     } else if (rankAfter !== rankBefore) {
@@ -855,6 +897,7 @@ export class Game {
     document.documentElement.style.setProperty('--text-scale', String(s.textScale));
     this.input.setKeyBindings(s.keyBindings);
     this.input.invertY = s.invertLookY;
+    audio.setVolumes(s.volume);
     this.updateTouchVisibility();
   }
 

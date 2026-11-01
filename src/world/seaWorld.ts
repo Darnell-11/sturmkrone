@@ -1,3 +1,4 @@
+import { audio } from '../audio/audio';
 import {
   Color,
   ConeGeometry,
@@ -37,7 +38,7 @@ import type { Enemy } from '../entities/enemy';
 import { FajiController } from '../faji/fajiController';
 import type { SkillState } from '../core/save/types';
 import { Ship, type SeaEnv } from '../entities/ship/ship';
-import { AMMO, AMMO_IDS, DEFAULT_SHIP_LOOK, SAIL_LEVELS, type AmmoId, type ShipLook } from '../data/ships';
+import { AMMO, AMMO_IDS, DEFAULT_SHIP_LOOK, type AmmoId, type ShipLook } from '../data/ships';
 import { NavalSystem, type EnemyShip } from '../naval/naval';
 import { DeckGround, type Ground } from './islandGround';
 import { ELEMENT_COLORS } from '../data/skills';
@@ -154,6 +155,8 @@ export class SeaWorld {
   private camYaw = 0;
   private camPitch = 0.3;
   private camDist = 22;
+  /** Blickrichtung der Seekamera (folgt Schiff oder Gegner) */
+  private seaYaw = 0;
   private camIdle = 0;
   private footYaw = 0;
   private footPitch = 0.32;
@@ -447,7 +450,7 @@ export class SeaWorld {
     this.camYaw = 0;
     this.wake = [];
     const sh = this.ship;
-    sh.x = this.x; sh.z = this.z; sh.heading = this.heading; sh.speed = 0; sh.sailLevel = 1;
+    sh.x = this.x; sh.z = this.z; sh.heading = this.heading; sh.speed = 0; sh.sailLevel = 1; sh.throttle = 0.5; this.seaYaw = this.heading;
     sh.prev = { x: sh.x, z: sh.z, heading: sh.heading };
     this.naval?.clear();
     if (this.mode === 'foot') {
@@ -529,6 +532,30 @@ export class SeaWorld {
     return n ? { x: n.x, z: n.z } : null;
   }
 
+  /** Kampfnähe 0 … 1 (für die Musik) */
+  get threat() {
+    if (this.mode === 'foot') return this.combat && this.combat.hostilesLeft > 0 && this.combat.enemies.some((e) => e.alive && e.engaged) ? 1 : this.combat?.hostilesLeft ? 0.4 : 0;
+    const f = this.nearestFoe(this.x, this.z, 220);
+    return f ? Math.max(0, Math.min(1, 1.3 - Math.hypot(f.x - this.x, f.z - this.z) / 160)) : 0;
+  }
+
+  /** Legende oder Boss in der Nähe? */
+  get bossNear() {
+    if (this.mode === 'foot') return !!this.combat?.enemies.some((e) => e.alive && e.kind === 'legende');
+    return !!this.naval?.enemies.some((e) => e.role === 'legende' && e.ship.alive && Math.hypot(e.ship.x - this.x, e.ship.z - this.z) < 200);
+  }
+
+  /** Nächstes feindliches Schiff (für die Kampfkamera) */
+  private nearestFoe(x: number, z: number, range: number) {
+    let best: { x: number; z: number } | null = null, bd = range;
+    for (const e of this.naval?.enemies ?? []) {
+      if (e.companion || !e.ship.alive || e.ship.sinking || (e.role === 'haendler' && e.state !== 'engage')) continue;
+      const d = Math.hypot(e.ship.x - x, e.ship.z - z);
+      if (d < bd) { bd = d; best = e.ship; }
+    }
+    return best;
+  }
+
   /** Lebende Feindschiffe (für Karte und Auftragspfeil) */
   get enemyShips() {
     return (this.naval?.enemies ?? []).filter((e) => e.ship.alive && !e.ship.sinking).map((e) => ({ x: e.ship.x, z: e.ship.z, legend: e.role === 'legende', ally: !!e.companion }));
@@ -602,13 +629,15 @@ export class SeaWorld {
     const s = this.ship;
     const mv = input.move();
     // Fahrstufen mit Vor/Zurück (Tippen), Steuern mit Links/Rechts
-    if (input.pressed('up') && s.sailLevel < 2) { s.sailLevel++; this.onMessage(SAIL_LEVELS[s.sailLevel].n); }
-    if (input.pressed('down') && s.sailLevel > 0) { s.sailLevel--; this.onMessage(SAIL_LEVELS[s.sailLevel].n); }
-    // Stick/Touch: kräftig nach vorn = volle Fahrt, zurück = Anker
-    if (input.lastDevice !== 'keyboard') {
-      if (mv.y > 0.75 && s.sailLevel < 2 && this.sailCd <= 0) { s.sailLevel = 2; this.sailCd = 0.6; }
-      else if (mv.y < -0.75 && s.sailLevel > 0 && this.sailCd <= 0) { s.sailLevel--; this.sailCd = 0.6; }
-    }
+    // Gashebel wie in 1.0: Tasten halten = mehr/weniger Fahrt, Stick nach vorn/hinten = direkt
+    const before = s.throttle ?? 0.5;
+    let th = before;
+    if (input.lastDevice === 'keyboard') {
+      if (input.down('up')) th = Math.min(1, th + dt * 0.8);
+      if (input.down('down')) th = Math.max(0, th - dt * 0.8);
+    } else if (Math.hypot(mv.x, mv.y) > 0.2) th = MathUtils.clamp(0.5 + mv.y * 0.65, 0, 1);
+    s.throttle = th;
+    if ((before < 0.95 && th >= 0.95) || (before > 0.05 && th <= 0.05)) { this.onMessage(th > 0.5 ? 'Volle Fahrt!' : 'Anker geworfen'); audio.play('sail'); }
     this.sailCd -= dt;
     this.faji?.tick(dt);
     s.steer(dt, mv.x, this.seaEnv, this.shipSpeedMult);
@@ -969,14 +998,20 @@ export class SeaWorld {
       cam.lookAt(x, 4, z);
       this.focus.set(x, wy + 2, z);
     } else {
-      const yaw = h + Math.PI + this.camYaw;
-      const dist = (this.camDist + (s.boost > 0 ? 4 : 0)) * Math.max(1, L / 17);
+      // Kampfkamera wie in 1.0: das nächste Feindschiff kommt mit ins Bild
+      const foe = this.nearestFoe(x, z, 170);
+      const want = foe ? Math.atan2(foe.x - x, foe.z - z) : h;
+      this.seaYaw += (MathUtils.euclideanModulo(want - this.seaYaw + Math.PI, Math.PI * 2) - Math.PI) * Math.min(1, frameDt * (foe ? 1.4 : 1.8));
+      const sep = foe ? Math.hypot(foe.x - x, foe.z - z) : 0;
+      const yaw = this.seaYaw + Math.PI + this.camYaw;
+      const dist = (this.camDist + (s.boost > 0 ? 4 : 0)) * Math.max(1, L / 17) + sep * 0.28;
       const cp = Math.cos(this.camPitch);
-      this.tmp.set(x + Math.sin(yaw) * dist * cp, Math.max(wy + 2, 3 + Math.sin(this.camPitch) * dist), z + Math.cos(yaw) * dist * cp);
-      cam.position.lerp(this.tmp, Math.min(1, frameDt * 8));
+      this.tmp.set(x + Math.sin(yaw) * dist * cp, Math.max(wy + 2, 3 + Math.sin(this.camPitch) * dist + sep * 0.12), z + Math.cos(yaw) * dist * cp);
+      cam.position.lerp(this.tmp, Math.min(1, frameDt * (foe ? 3 : 6)));
       const camWater = env.heightAt(cam.position.x, cam.position.z) + 1.2;
       if (cam.position.y < camWater) cam.position.y = camWater;
-      cam.lookAt(x, 3.5 + wy * 0.3, z);
+      if (foe) cam.lookAt(x + (foe.x - x) * 0.42, 3, z + (foe.z - z) * 0.42);
+      else cam.lookAt(x + Math.sin(h) * L * 0.4, 3.5 + wy * 0.3, z + Math.cos(h) * L * 0.4);
       this.focus.set(x, wy + 2, z);
     }
     if (this.cinematic > 0 && !inMenu) {

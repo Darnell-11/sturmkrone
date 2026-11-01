@@ -1,3 +1,4 @@
+import { audio } from '../audio/audio';
 import {
   AdditiveBlending,
   BufferAttribute,
@@ -177,6 +178,7 @@ export class Weather {
     this.bolt.visible = true;
     this.boltLife = 0.32;
     this.flash = 1;
+    setTimeout(() => audio.play('thunder', 0.6 + Math.random() * 0.4), 300 + Math.random() * 1500);
     this.onLightning(base);
   }
 

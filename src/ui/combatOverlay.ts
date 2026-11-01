@@ -1,5 +1,6 @@
 import { Vector3, type Camera } from 'three';
 import { esc } from './dom';
+import { audio } from '../audio/audio';
 
 interface FloatText { el: HTMLElement; pos: Vector3; life: number; max: number; vy: number }
 interface Bar { el: HTMLElement; fill: HTMLElement; lag: HTMLElement; last: number }
@@ -58,6 +59,15 @@ export class CombatOverlay {
   /** Schwebende Zahl oder kurzer Text an einer Weltposition */
   number(pos: Vector3, value: number | string, style: NumberStyle = 'hit') {
     if (this.texts.length > 24) { this.texts[0].el.remove(); this.texts.shift(); }
+    // Klang passend zur Zahl
+    const at = { x: pos.x, z: pos.z };
+    if (style === 'hit') audio.play('hit', 0.9, at);
+    else if (style === 'crit') { audio.play('heavy', 1, at); audio.play('crit', 0.8); }
+    else if (style === 'hurt') audio.play('hurt');
+    else if (style === 'gold') audio.play('coin', 0.8, at);
+    else if (value === 'Parade!') audio.play('parry');
+    else if (value === 'Geblockt' || value === 'Abgewehrt') audio.play('clang', 1, at);
+    else if (value === 'Ausgewichen') audio.play('roll');
     const el = document.createElement('div');
     el.className = `cbt-num n-${style}`;
     el.textContent = typeof value === 'number' ? String(Math.round(value)) : value;
@@ -76,6 +86,7 @@ export class CombatOverlay {
 
   /** Impact-Frame: kurzes Negativbild bei sehr starken Treffern */
   impactFrame() {
+    audio.play('heavy', 1.2);
     this.impact.classList.remove('on');
     void this.impact.offsetWidth;
     this.impact.classList.add('on');
@@ -100,7 +111,12 @@ export class CombatOverlay {
   }
 
   /** Großes Banner (Stufenaufstieg, Sieg) */
+  private bannerUntil = 0;
+  private bannerQ: [string, string][] = [];
   showBanner(title: string, sub = '') {
+    const now = performance.now();
+    if (now < this.bannerUntil) { if (this.bannerQ.length < 4) this.bannerQ.push([title, sub]); return; }
+    this.bannerUntil = now + 2400;
     this.banner.querySelector('h2')!.textContent = title;
     this.banner.querySelector('p')!.textContent = sub;
     this.banner.classList.remove('show');
@@ -110,6 +126,7 @@ export class CombatOverlay {
 
   /** Cut-in-Banner für Ultimates und Boss-Auftritte */
   showCutin(text: string, color = '#E3B04B') {
+    audio.play('cutin');
     this.cutin.style.setProperty('--cc', color);
     this.cutin.querySelector('b')!.innerHTML = esc(text);
     this.cutin.classList.remove('show');
@@ -159,6 +176,7 @@ export class CombatOverlay {
   }
 
   update(dt: number, camera: Camera) {
+    if (this.bannerQ.length && performance.now() >= this.bannerUntil) { const [a, b] = this.bannerQ.shift()!; this.showBanner(a, b); }
     for (const t of this.texts) {
       t.life -= dt;
       t.pos.y += t.vy * dt;

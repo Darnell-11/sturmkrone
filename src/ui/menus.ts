@@ -12,6 +12,7 @@ import { QUEST_BY_ID, type QuestDef, type ShopKind, type TownNpcDef } from '../d
 import { ARMOR, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS } from '../data/regions';
 import { stepText } from '../story/questSystem';
 import { drawMap } from './minimap';
+import { audio } from '../audio/audio';
 
 type Handler = (id: string, el: HTMLElement) => void;
 type SettingsTab = 'grafik' | 'steuerung' | 'ton' | 'anzeige';
@@ -39,6 +40,7 @@ export class Menus {
     this.card.addEventListener('click', (e) => {
       const el = (e.target as HTMLElement).closest<HTMLElement>('[data-a]');
       if (!el || (el as HTMLButtonElement).disabled) return;
+      audio.play(el.dataset.a === 'back' || el.dataset.a === 'bye' ? 'uiBack' : 'ui');
       this.handlers[el.dataset.a!]?.(el.dataset.id ?? '', el);
     });
     this.card.addEventListener('input', (e) => {
