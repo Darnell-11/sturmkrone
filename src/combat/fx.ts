@@ -191,6 +191,11 @@ export class CombatFx {
     this.live.push({ obj: fill, life: time, max: time, kind: 'telefill' });
   }
 
+  /** Farbige Partikel (Brand, Gift) */
+  puffColor(pos: Vector3, color: string) {
+    this.sparks.emit(1, pos.x + (Math.random() - 0.5) * 0.6, pos.y + Math.random(), pos.z + (Math.random() - 0.5) * 0.6, { speed: 0.4, up: 2.5, life: 0.6, color: new Color(color).multiplyScalar(2.2), gravity: -1, spread: 0.1 });
+  }
+
   /** Staubwolke (Rolle, Landung) */
   puff(pos: Vector3, n = 8) {
     this.dust.emit(Math.round(n * this.scale), pos.x, pos.y + 0.15, pos.z, { speed: 2, up: 1, life: 0.6, color: new Color(0.92, 0.85, 0.7), gravity: 1, spread: 0.5 });

@@ -1,7 +1,18 @@
 // Aufbau eines Spielstands. Bei jeder Änderung: SAVE_VERSION erhöhen und in migrations.ts eine Migration ergänzen.
 import { defaultLook, type CharacterLook } from '../../data/characterParts';
 
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
+
+export interface SkillState {
+  /** Gelernte Fähigkeiten mit Stufe */
+  learned: Record<string, number>;
+  /** Drei Plätze für aktive Fähigkeiten */
+  slots: (string | null)[];
+  /** Freie Fähigkeitspunkte */
+  sp: number;
+  /** Zweige, deren Faji erwacht ist */
+  awakened: string[];
+}
 
 export type Faction = 'pirat' | 'marine';
 export type FightStyle = 'faust' | 'schwert' | 'effekt';
@@ -38,6 +49,7 @@ export interface SaveData {
     flags: Record<string, unknown>;
     quest: number;
   };
+  skills: SkillState;
   /** Vollständiger Spielstand aus Sturmkrone 1.0 – bleibt erhalten, damit spätere Meilensteine Crew, Fähigkeiten usw. übernehmen können. */
   legacy10?: Record<string, unknown>;
 }
@@ -59,5 +71,6 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
     },
     world: { boat: null, time: 9, weather: 'klar' },
     progress: { flags: {}, quest: 0 },
+    skills: { learned: {}, slots: [null, null, null], sp: 1, awakened: [] },
   };
 }

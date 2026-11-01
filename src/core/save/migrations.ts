@@ -1,5 +1,5 @@
 import { sanitizeLook } from '../../data/characterParts';
-import { convertLegacy10, isLegacy10, lookFromLegacy } from './legacy';
+import { convertLegacy10, isLegacy10, lookFromLegacy, skillsFromLegacy } from './legacy';
 import { createSave, SAVE_VERSION, type SaveData } from './types';
 
 type Migration = (data: Record<string, any>) => Record<string, any>;
@@ -21,6 +21,8 @@ export const MIGRATIONS: Record<number, Migration> = {
     p.look = lookFromLegacy(p.look, faction, p.style);
     return { ...d, version: 3, player: p };
   },
+  // Meilenstein 4: Faji-Skillbaum (1.0-Fähigkeiten werden übernommen)
+  3: (d) => ({ ...d, version: 4, skills: skillsFromLegacy(d.legacy10, d.player?.level ?? 1) }),
 };
 
 export type MigrationResult =

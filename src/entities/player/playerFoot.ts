@@ -42,6 +42,14 @@ export class PlayerFoot implements PlayerTarget {
   maxHp = 100;
   /** Schadensfaktor (Waffe, Fähigkeiten, Crew) */
   dmgMult = 1;
+  /** Schadensreduktion 0 … 0,85, Ausweichchance, Tempo, Unverwundbarkeit (Fähigkeiten) */
+  reduce = 0;
+  dodgeChance = 0;
+  speedMult = 1;
+  invuln = false;
+  parryBonus = 0;
+  secondWind = 0;
+  private secondWindUsed = false;
   onFoot = false;
   private rollT = 0;
   private iframes = 0;
@@ -76,16 +84,31 @@ export class PlayerFoot implements PlayerTarget {
   }
 
   /** Volle Heilung (nach K.O. oder Rast) */
-  revive() { this.hp = this.maxHp; this.state = 'move'; this.locomotion = ''; }
+  revive() { this.hp = this.maxHp; this.state = 'move'; this.locomotion = ''; this.secondWindUsed = false; }
+
+  /** Kann gerade eine Fähigkeit gewirkt werden? */
+  get canCast() { return this.active && (this.state === 'move' || this.state === 'block'); }
+
+  /** Zauber-/Technik-Animation abspielen (Wirkung kommt aus der Fähigkeit) */
+  cast(clip: string, speed: number, yaw: number | null) {
+    if (yaw !== null) this.yaw = yaw;
+    this.state = 'attack';
+    this.attack = null;
+    this.locomotion = '';
+    const a = this.char.playClip(clip, { loop: false, speed, fade: 0.06, restart: true, onDone: () => this.endAttack() });
+    if (!a) this.toMove();
+  }
 
   receiveHit(dmg: number, dirX: number, dirZ: number, knock: number, _from: Enemy | null): 'hit' | 'blocked' | 'parried' | 'dodged' {
     if (!this.active) return 'dodged';
-    if (this.iframes > 0) return 'dodged';
+    if (this.iframes > 0 || this.invuln) return 'dodged';
+    if (Math.random() < this.dodgeChance) return 'dodged';
+    dmg *= 1 - Math.min(0.85, this.reduce);
     if (this.state === 'block') {
       // Von vorn? Dann Block bzw. perfekte Parade
       const facing = Math.sin(this.yaw) * -dirX + Math.cos(this.yaw) * -dirZ;
       if (facing > 0.2) {
-        if (this.blockSince < PLAYER_BASE.parryWindow) {
+        if (this.blockSince < PLAYER_BASE.parryWindow * (1 + this.parryBonus)) {
           this.char.play('parry', { restart: true, fade: 0.04, onDone: () => this.toMove() });
           this.state = 'attack';
           this.attack = null;
@@ -101,6 +124,11 @@ export class PlayerFoot implements PlayerTarget {
     this.hp -= dmg;
     this.kx += dirX * knock;
     this.kz += dirZ * knock;
+    if (this.secondWind > 0 && !this.secondWindUsed && this.hp > 0 && this.hp < this.maxHp * 0.25) {
+      this.secondWindUsed = true;
+      this.hp += this.maxHp * this.secondWind;
+      this.deps.overlay?.number(new Vector3(this.x, this.y + 2.2, this.z), 'Zweiter Atem!', 'heal');
+    }
     if (this.hp <= 0) { this.goDown(); return 'hit'; }
     this.state = 'hurt';
     this.hurtT = knock > 6 ? 0.55 : 0.3;
@@ -214,7 +242,7 @@ export class PlayerFoot implements PlayerTarget {
         break;
       case 'move':
         if (mag > 0.05) {
-          const sp = mag > 0.7 ? RUN : WALK * (mag / 0.7) + 0.6;
+          const sp = (mag > 0.7 ? RUN : WALK * (mag / 0.7) + 0.6) * this.speedMult;
           vx = dx * sp;
           vz = dz * sp;
           this.turnTo(lockYaw !== null && mag < 0.7 ? lockYaw : Math.atan2(dx, dz), dt, 12);

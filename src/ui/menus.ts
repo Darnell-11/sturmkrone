@@ -104,7 +104,7 @@ export class Menus {
         ${g.persistent ? '' : '<p class="warn">Dein Browser erlaubt kein dauerhaftes Speichern (z. B. privater Modus). Spielstände gehen beim Schließen verloren – nutze „Exportieren“.</p>'}
         <button class="primary" data-a="play" data-focus>Spielen</button>
         <button class="secondary" data-a="settings">Einstellungen</button>
-        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Meilenstein 3 „Kampf 2.0“</p>
+        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Meilenstein 4 „Faji 2.0“</p>
       </div>`,
       {
         play: () => this.showSlots(),
@@ -258,6 +258,9 @@ export class Menus {
       <div class="opt"><span class="label">Orte</span>
         <div class="row"><button class="mini" data-a="edge">Zum Weltrand</button><button class="mini" data-a="home">Zurück zum Start</button></div>
       </div>
+      <div class="opt"><span class="label">Faji (Test)</span>
+        <div class="row"><button class="mini" data-a="sp">+5 Faji-Punkte</button><button class="mini" data-a="lvl">+5 Stufen</button><button class="mini" data-a="awaken">Erwachen zeigen</button></div>
+      </div>
       <button class="primary" data-a="back">Zurück</button>`,
       {
         time: (val, el) => { env.time = +val; el.parentElement!.querySelector('output')!.textContent = formatClock(+val); },
@@ -267,6 +270,9 @@ export class Menus {
         autow: () => { env.weather.auto = !env.weather.auto; rerender(); },
         edge: () => { g.world.teleport(EDGE_WALL - 160, 0, Math.PI / 2); g.resume(); g.hud.toast('Vor dir liegt der Weltrand …', 3); },
         home: () => { g.world.teleport(0, -60, 0); g.resume(); },
+        sp: () => { g.testGrant(5, 0); g.hud.toast('+5 Faji-Punkte'); },
+        lvl: () => { g.testGrant(5, 5); g.hud.toast('+5 Stufen'); },
+        awaken: () => { g.resume(); g.checkAwakening('koerper'); },
         back: () => this.showPause(),
       },
       () => this.showPause(),

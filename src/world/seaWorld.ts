@@ -35,6 +35,8 @@ import type { EnemyKind } from '../data/combat';
 import type { Faction } from '../core/save/types';
 import type { CombatOverlay } from '../ui/combatOverlay';
 import type { Enemy } from '../entities/enemy';
+import { FajiController } from '../faji/fajiController';
+import type { SkillState } from '../core/save/types';
 
 /** Gegnerlager je Inselstufe */
 const CAMP_BY_LEVEL: EnemyKind[][] = [
@@ -87,8 +89,11 @@ export class SeaWorld {
   private fx: CombatFx | null = null;
   private overlay: CombatOverlay | null = null;
   private dust: ParticleSystem;
+  faji: FajiController | null = null;
+  private style: StyleId = 'saebel';
   private cleared = new Map<number, number>();
   private downT = 0;
+  private cinematic = 0;
 
   private boat: Group;
   private lantern: Mesh;
@@ -283,6 +288,7 @@ export class SeaWorld {
     if (!this.combat && this.overlay) {
       this.fx = new CombatFx(this.scene, this.sparks, this.dust);
       this.combat = new CombatSystem(this.scene, this.fx, this.overlay, assets, this.ground, {
+        heal: (n) => { if (this.foot) this.foot.hp = Math.min(this.foot.maxHp, this.foot.hp + n); },
         hitstop: (t, scale = 0.05) => { this.hitstop.t = Math.max(this.hitstop.t, t); this.hitstop.scale = Math.min(this.hitstop.scale, scale); },
         shake: (a) => { this.shake = Math.max(this.shake, a); },
         kill: (e) => this.onKill(e),
@@ -299,6 +305,8 @@ export class SeaWorld {
       onDown: () => { this.downT = 3.2; this.onPlayerDown(); },
     });
     if (this.combat) this.combat.player = this.foot;
+    this.style = style;
+    this.faji = null;
     this.equip(style);
     this.attachToHelm();
 
@@ -314,11 +322,21 @@ export class SeaWorld {
     }
   }
 
+  /** Fähigkeiten der Spielfigur einrichten (nach dem Laden eines Spielstands) */
+  setSkills(skills: SkillState, level: number) {
+    if (!this.player || !this.foot || !this.combat || !this.fx || !this.overlay) return;
+    this.faji = new FajiController(skills, this.foot, this.player, this.combat, this.fx, this.sparks, this.scene, this.ground, this.overlay,
+      (a) => { this.shake = Math.max(this.shake, a); },
+      (t) => { this.hitstop.t = Math.max(this.hitstop.t, t); this.hitstop.scale = 0.05; });
+    this.faji.refresh(level, this.style);
+  }
+
   /** Aussehen und Kampfstil der Spielfigur ändern */
   updatePlayer(look: CharacterLook, style: StyleId) {
     if (!this.player || !this.foot) return;
     this.player.setLook(look);
     this.foot.style = style;
+    this.style = style;
     this.equip(style);
     if (this.mode === 'sail') this.player.play('steer', { fade: 0.01 });
   }
@@ -382,6 +400,21 @@ export class SeaWorld {
     if (this.combat) this.combat.atk = atk;
   }
 
+  /** Faji-Erwachen: kurze Zwischensequenz mit kreisender Kamera und Aura */
+  awaken(color: string) {
+    this.cinematic = 3.6;
+    const p = this.mode === 'foot' && this.foot ? new Vector3(this.foot.x, this.foot.y, this.foot.z) : new Vector3(this.x, 1.3, this.z);
+    this.player?.play('summon', { restart: true, fade: 0.1 });
+    for (let i = 0; i < 4; i++) {
+      setTimeout(() => {
+        this.fx?.shockwave(p, 6 + i * 4, color);
+        this.sparks.emit(60, p.x, p.y + 0.5, p.z, { speed: 3, up: 12, life: 1.6, color: new Color(color).multiplyScalar(3), gravity: -2, spread: 1.2 });
+        this.shake = Math.max(this.shake, 0.6);
+        if (i === 3) { this.overlay?.impactFrame(); this.overlay?.speedlines(1); }
+      }, 400 + i * 650);
+    }
+  }
+
   /** Volle Heilung (Stufenaufstieg, Rast) */
   healPlayer() { if (this.foot) this.foot.hp = this.foot.maxHp; }
 
@@ -404,7 +437,8 @@ export class SeaWorld {
     this.prev = { x: this.x, z: this.z, heading: this.heading };
     this.env.update(dt, this.focus);
 
-    if (this.mode === 'sail') this.updateSail(dt, input);
+    if (this.cinematic > 0) this.cinematic -= dt;
+    else if (this.mode === 'sail') this.updateSail(dt, input);
     else this.updateFoot(dt, input);
 
     this.updateContext(input);
@@ -513,6 +547,7 @@ export class SeaWorld {
     const lock = c?.lock?.alive ? c.lock : null;
     const lockYaw = lock ? Math.atan2(lock.x - f.x, lock.z - f.z) : null;
     f.update(dt, input, this.footYaw, this.ground, lockYaw);
+    this.faji?.update(dt, input, this.style, lockYaw);
     if (lockYaw !== null && !(ld.x || la.x)) {
       // Erfasstes Ziel: Kamera hinter die Figur, Blick aufs Ziel
       const diff = MathUtils.euclideanModulo(lockYaw - this.footYaw + Math.PI, Math.PI * 2) - Math.PI;
@@ -735,6 +770,14 @@ export class SeaWorld {
       if (cam.position.y < camWater) cam.position.y = camWater;
       cam.lookAt(x, 3.5 + wy * 0.3, z);
       this.focus.set(x, wy + 2, z);
+    }
+    if (this.cinematic > 0 && !inMenu) {
+      // Zwischensequenz: Kamera kreist nah um die Figur
+      const p = this.mode === 'foot' && this.foot ? new Vector3(this.foot.x, this.foot.y, this.foot.z) : new Vector3(x, wy + 1.3, z);
+      const a = (3.6 - this.cinematic) * 1.1;
+      const r = 4.5 + this.cinematic * 0.8;
+      cam.position.set(p.x + Math.sin(a) * r, p.y + 1.2 + (3.6 - this.cinematic) * 0.5, p.z + Math.cos(a) * r);
+      cam.lookAt(p.x, p.y + 1.3, p.z);
     }
     if (this.shake > 0) {
       const s = this.shake * this.shake * 0.6;

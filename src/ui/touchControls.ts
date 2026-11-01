@@ -80,6 +80,7 @@ export class TouchControls {
     for (const def of defs) {
       const b = document.createElement('button');
       b.className = `touch-btn c-${def.color}`;
+      b.dataset.action = def.action;
       b.style.width = b.style.height = def.size + 'px';
       b.style.right = `calc(${def.right}px + env(safe-area-inset-right, 0px))`;
       b.style.bottom = `calc(${def.bottom}px + env(safe-area-inset-bottom, 0px))`;
@@ -108,6 +109,18 @@ export class TouchControls {
       b.addEventListener('contextmenu', (e) => e.preventDefault());
       this.buttonsEl.appendChild(b);
     }
+  }
+
+  /** Beschriftung, Farbe und Abklingzeit eines Buttons aktualisieren (Fähigkeiten) */
+  setButton(action: string, label: string, frac: number, ready: boolean, color: string) {
+    const b = this.buttonsEl.querySelector<HTMLElement>(`[data-action="${action}"]`);
+    if (!b) return;
+    const span = b.querySelector('span')!;
+    if (span.textContent !== label) span.textContent = label;
+    b.style.setProperty('--p', frac.toFixed(3));
+    b.style.setProperty('--c', color);
+    b.classList.toggle('cd', frac < 1);
+    b.classList.toggle('rdy', ready);
   }
 
   setVisible(v: boolean) {

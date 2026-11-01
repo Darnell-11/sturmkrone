@@ -7,6 +7,9 @@ import { CharacterAssets } from '../entities/character/assets';
 import type { Enemy } from '../entities/enemy';
 import { PLAYER_BASE } from '../data/combat';
 import { CombatOverlay } from '../ui/combatOverlay';
+import { BRANCHES, branchPoints, learnBlock, SK, type Branch } from '../data/skills';
+import { SkillTree } from '../ui/skillTree';
+import { SkillStage } from '../world/skillStage';
 import { AutoQuality, detectTier, gatherDeviceInfo, type DeviceInfo } from '../render/quality';
 import { GameRenderer } from '../render/renderer';
 import { CharacterEditor, styleIdOf, type EditorResult } from '../ui/editor';
@@ -92,6 +95,7 @@ export class Game {
       }
     };
     this.hud.onPause = () => this.pause();
+    this.hud.onFaji = () => this.openSkills();
     this.hud.onContext = (down) => this.input.setVirtual('interact', down);
     this.applySettings();
     this.settings.onChange(() => this.applySettings());
@@ -172,7 +176,8 @@ export class Game {
     if (this.state.is('editor') && this.stage) {
       this.stage.update(frameDt);
       const portrait = innerHeight > innerWidth || innerWidth < 700;
-      this.stage.frame(innerWidth / innerHeight, portrait, portrait ? 0.48 : Math.min(420, innerWidth * 0.44) / innerWidth);
+      const sk = this.stage instanceof SkillStage;
+      this.stage.frame(innerWidth / innerHeight, portrait, portrait ? (sk ? 0.64 : 0.48) : Math.min(sk ? 520 : 420, innerWidth * (sk ? 0.52 : 0.44)) / innerWidth);
       this.renderer.render(frameDt);
       return;
     }
@@ -189,6 +194,16 @@ export class Game {
         const hp = this.world.playerHp;
         const p = this.save.player;
         this.hud.setStats(hp ? hp.hp / hp.max : 1, p.xp / PLAYER_BASE.xpNeed(p.level), p.gold);
+        const fj = this.world.faji;
+        this.hud.setFaji(fj ? fj.faji / fj.maxFaji : 1, this.save.skills.sp);
+        if (fj) {
+          const views = fj.slots();
+          const foot = this.world.mode === 'foot';
+          const b = this.input.getKeyBindings();
+          const keys = this.input.lastDevice === 'gamepad' ? ['LT', 'RT', 'RB'] : (['skill1', 'skill2', 'skill3'] as const).map((a) => this.input.keyLabel(b[a][0] ?? ''));
+          this.hud.setSkillBar(foot && this.input.lastDevice !== 'touch', views, keys);
+          views.forEach((v, i) => this.touch.setButton(`skill${i + 1}`, v.id ? v.name : 'Leer', v.cdFrac, v.ready, v.color));
+        }
       }
       this.hud.setFps(s.showFps, `${this.loop.fps} fps · ${QUALITY_TIERS[this.renderer.tier].label}`);
       const env = this.world.env;
@@ -234,17 +249,101 @@ export class Game {
     while (p.xp >= PLAYER_BASE.xpNeed(p.level)) {
       p.xp -= PLAYER_BASE.xpNeed(p.level);
       p.level++;
+      s.skills.sp++;
       up = true;
     }
     const rankAfter = rankName(p.faction, p.fame);
     if (up) {
       this.applyPower();
       this.world.healPlayer();
-      this.overlay.showBanner(`Stufe ${p.level}!`, 'Mehr Leben und Angriffskraft');
+      this.world.faji?.refresh(p.level, styleIdOf(p.style, p.blade));
+      this.overlay.showBanner(`Stufe ${p.level}!`, '+1 Faji-Punkt · mehr Leben und Angriffskraft');
+      this.checkAwakening();
     } else if (rankAfter !== rankBefore) {
       this.overlay.showBanner(rankAfter, 'Neuer Rang!');
     }
     this.hud.setPlayer(p.name, `${FACTION_LABELS[p.faction]} · ${rankAfter} · Stufe ${p.level}`);
+  }
+
+  // ---------- Faji ----------
+
+  /** Faji-Erwachen: ab Stufe 15 erwacht der Zweig mit den meisten Punkten (ab 9) */
+  checkAwakening(force?: Branch) {
+    const s = this.save;
+    if (!s) return;
+    const sk = s.skills;
+    let branch: Branch | null = force ?? null;
+    if (!branch) {
+      if (s.player.level < 15) return;
+      const best = (Object.keys(BRANCHES) as Branch[]).filter((b) => !sk.awakened.includes(b)).sort((a, b) => branchPoints(sk.learned, b) - branchPoints(sk.learned, a))[0];
+      if (!best || branchPoints(sk.learned, best) < 9) return;
+      branch = best;
+    }
+    if (sk.awakened.includes(branch)) return;
+    sk.awakened.push(branch);
+    sk.sp += 2;
+    const info = BRANCHES[branch];
+    this.world.awaken(info.col);
+    setTimeout(() => this.overlay.showCutin('Faji-Erwachen!', info.col), 600);
+    setTimeout(() => this.overlay.showBanner(`${info.n} erwacht!`, '+2 Faji-Punkte · neue Meisterfähigkeit freigeschaltet'), 2200);
+    this.persist();
+  }
+
+  /** Testwerkzeug: Punkte und Stufen geben */
+  testGrant(sp: number, levels: number) {
+    const s = this.save;
+    if (!s) return;
+    s.skills.sp += sp + levels;
+    s.player.level += levels;
+    this.applyPower();
+    this.world.faji?.refresh(s.player.level, styleIdOf(s.player.style, s.player.blade));
+    this.hud.setPlayer(s.player.name, `${FACTION_LABELS[s.player.faction]} · ${rankName(s.player.faction, s.player.fame)} · Stufe ${s.player.level}`);
+    this.persist();
+  }
+
+  openSkills() {
+    const s = this.save;
+    if (!s || !this.assets || !this.state.is('play', 'pause')) return;
+    this.menus.hide();
+    const stage = new SkillStage();
+    this.stage = stage;
+    stage.show(this.assets, s.player.look, styleIdOf(s.player.style, s.player.blade));
+    this.renderer.setView(stage.scene, stage.camera);
+    this.renderer.setEffectSources(null, stage.focus);
+    this.state.set('editor');
+    const tree: SkillTree = new SkillTree(this.uiRoot, {
+      state: s.skills,
+      level: s.player.level,
+      onLearn: (id) => {
+        const def = SK[id];
+        if (!def || learnBlock(def, s.skills.learned, s.skills.sp, s.player.level, s.skills.awakened as Branch[]) !== null) return;
+        s.skills.sp--;
+        s.skills.learned[id] = (s.skills.learned[id] ?? 0) + 1;
+        if (def.act && !s.skills.slots.includes(id)) {
+          const free = s.skills.slots.indexOf(null);
+          if (free >= 0) s.skills.slots[free] = id;
+        }
+        this.world.faji?.refresh(s.player.level, styleIdOf(s.player.style, s.player.blade));
+        this.applyPower();
+        this.persist();
+      },
+      onSlot: (id, i) => {
+        const j = s.skills.slots.indexOf(id);
+        if (j >= 0) s.skills.slots[j] = null;
+        s.skills.slots[i] = id;
+        this.persist();
+      },
+      onPreview: (def, lv) => stage.previewSkill(def, lv),
+      onClose: () => {
+        tree.dispose();
+        this.stage = null;
+        this.useWorldView();
+        this.renderer.resize();
+        this.state.set('play');
+        this.input.flush();
+        this.loop.resetClock();
+      },
+    });
   }
 
   // ---------- Charakter-Editor ----------
@@ -328,6 +427,7 @@ export class Game {
     const p = data.player;
     this.world.playerFaction = p.faction;
     if (this.assets) this.world.setCharacters(this.assets, p.look, styleIdOf(p.style, p.blade), this.overlay);
+    this.world.setSkills(data.skills, p.level);
     this.applyPower();
     this.world.healPlayer();
     this.hud.setPlayer(p.name, `${FACTION_LABELS[p.faction]} · ${rankName(p.faction, p.fame)} · Stufe ${p.level}`);

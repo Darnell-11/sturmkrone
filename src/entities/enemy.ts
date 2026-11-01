@@ -113,8 +113,42 @@ export class Enemy {
     this.char.play('idle');
   }
 
+  slowT = 0;
+  fearT = 0;
+  frozenT = 0;
+
   get alive() { return this.state !== 'dead'; }
   get engaged() { return this.alive && this.state !== 'idle'; }
+
+  /** Schaden ohne Reaktion (Brand, Gift) */
+  dot(dmg: number): 'hit' | 'kill' {
+    if (!this.alive) return 'hit';
+    this.hp -= dmg;
+    this.aggro = true;
+    if (this.hp <= 0) { this.hp = 0; this.die({ dmg, poise: 0, knock: 0, dirX: 0, dirZ: 0, heavy: false }); return 'kill'; }
+    return 'hit';
+  }
+
+  /** Betäuben bzw. einfrieren */
+  stun(dur: number, freeze = false) {
+    if (!this.alive || this.state === 'air') return;
+    this.cancelAttack();
+    if (this.hasToken) this.hasToken = false;
+    this.state = 'stagger';
+    this.timer = dur * (this.def.boss ? 0.5 : 1);
+    if (freeze) { this.frozenT = this.timer; this.char.mixer.timeScale = 0; }
+    else this.char.play('stun', { fade: 0.05, restart: true });
+  }
+
+  fear(dur: number) { if (this.alive && !this.def.boss) { this.fearT = dur; this.cancelAttack(); this.toChase(); } }
+
+  launch(v: number) {
+    if (!this.alive || this.def.boss || this.def.poise >= 100) return;
+    this.cancelAttack();
+    this.vy = v;
+    this.state = 'air';
+    this.char.play('hitHeavy', { restart: true, fade: 0.05 });
+  }
   /** Vom Lager alarmiert */
   alert() { if (this.state === 'idle') { this.aggro = true; } }
   get radius() { return this.def.radius * this.def.scale; }
@@ -201,6 +235,12 @@ export class Enemy {
   update(dt: number, w: EnemyWorld) {
     this.timer -= dt;
     this.flash -= dt;
+    this.slowT -= dt;
+    this.fearT -= dt;
+    if (this.frozenT > 0) {
+      this.frozenT -= dt;
+      if (this.frozenT <= 0) this.char.mixer.timeScale = 1;
+    }
     const p = w.playerPos;
     const dx = p ? p.x - this.x : 0, dz = p ? p.z - this.z : 0;
     const dist = Math.hypot(dx, dz);
@@ -212,7 +252,7 @@ export class Enemy {
       const ph = frac < 0.3 ? 3 : frac < 0.65 ? 2 : 1;
       if (ph !== this.phase) { this.phase = ph; this.dmg *= 1.15; }
     }
-    const speed = def.speed * (def.boss ? 1 + (this.phase - 1) * 0.15 : 1);
+    const speed = def.speed * (def.boss ? 1 + (this.phase - 1) * 0.15 : 1) * (this.slowT > 0 ? 0.45 : 1);
 
     let mvx = 0, mvz = 0;
     const face = (target: number, rate = 8) => {
@@ -232,6 +272,13 @@ export class Enemy {
         break;
       case 'chase':
       case 'strafe': {
+        if (this.fearT > 0) {
+          // Furcht: wegrennen
+          face(toPlayer + Math.PI);
+          mvx = -Math.sin(toPlayer) * speed; mvz = -Math.cos(toPlayer) * speed;
+          if (this.char.playing !== 'Running_A') this.char.play('run', { fade: 0.15 });
+          break;
+        }
         face(toPlayer);
         const want = def.keep;
         const ranged = want > 4;
@@ -364,8 +411,10 @@ export class Enemy {
   private updateFlash() {
     const mesh = (this.char as any).mesh;
     if (!mesh) return;
-    if (this.flash > 0) {
-      if (!this.normalMat) { this.normalMat = mesh.material; mesh.material = FLASH_MAT; }
+    const want = this.flash > 0 ? FLASH_MAT : this.frozenT > 0 ? FROST_MAT : null;
+    if (want) {
+      if (!this.normalMat) this.normalMat = mesh.material;
+      mesh.material = want;
     } else if (this.normalMat) {
       mesh.material = this.normalMat;
       this.normalMat = null;
@@ -379,3 +428,4 @@ export class Enemy {
 }
 
 const FLASH_MAT = toon({ color: 0xffffff, emissive: 0xffffff });
+const FROST_MAT = toon({ color: 0xbff0ff, emissive: 0x2a6a8a, spec: 1 });

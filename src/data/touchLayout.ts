@@ -26,4 +26,7 @@ export const TOUCH_FOOT: TouchButtonDef[] = [
   { action: 'dodge', label: 'Rolle', size: 64, right: 124, bottom: 22, color: 'teal' },
   { action: 'block', label: 'Block', size: 58, right: 118, bottom: 104, color: 'ok' },
   { action: 'lockon', label: 'Ziel', size: 48, right: 200, bottom: 34, color: 'brass' },
+  { action: 'skill1', label: 'F1', size: 56, right: 20, bottom: 206, color: 'brass' },
+  { action: 'skill2', label: 'F2', size: 56, right: 84, bottom: 186, color: 'brass' },
+  { action: 'skill3', label: 'F3', size: 56, right: 190, bottom: 104, color: 'brass' },
 ];

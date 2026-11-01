@@ -74,6 +74,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   display: grid; place-items: center; padding: 0;
 }
 .icon-btn svg { width: 20px; height: 20px; fill: currentColor; }
+.hud-btns { display: flex; gap: 8px; }
+.icon-btn { position: relative; }
+.badge { position: absolute; top: -4px; right: -4px; min-width: 20px; height: 20px; border-radius: 10px; background: var(--seal); color: #fff; font-size: 0.72rem; font-weight: 800; display: grid; place-items: center; padding: 0 4px; }
 .hint {
   position: fixed; left: 50%; transform: translateX(-50%); top: calc(160px + env(safe-area-inset-top, 0px));
   pointer-events: none !important; color: #fff; font-weight: 700; text-align: center;
@@ -109,8 +112,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 }
 .touch-btn span {
   width: 100%; height: 100%; border-radius: 50%; display: grid; place-items: center;
-  background: var(--hudbg); font-size: 0.82rem; white-space: pre-line;
+  background: var(--hudbg); font-size: 0.82rem; white-space: pre-line; overflow: hidden; line-height: 1.05; padding: 2px;
 }
+.touch-btn[data-action^='skill'] span { font-size: 0.6rem; }
 .touch-btn.on { transform: scale(0.93); }
 .touch-btn.on span { background: transparent; color: #fff; }
 .c-seal { background: var(--seal); }
@@ -287,6 +291,56 @@ kbd {
 .cbt-cutin b { font-style: italic; font-weight: 800; font-size: clamp(1.8rem, 9vw, 3.4rem); color: #fff; text-shadow: 3px 3px 0 #1b1410; }
 .cbt-cutin.show { animation: cut 1.1s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
 @keyframes cut { 0% { transform: skewY(-6deg) scaleX(0); } 18% { transform: skewY(-6deg) scaleX(1); } 80% { transform: skewY(-6deg) scaleX(1); opacity: 1; } 100% { transform: skewY(-6deg) scaleX(1.1); opacity: 0; } }
+/* ---------- Faji-Baum ---------- */
+.sk-panel { height: 64vh; }
+@media (orientation: landscape) and (min-width: 700px) { .sk-panel { width: min(520px, 52vw) !important; height: auto; } }
+.sk-hint { position: absolute; left: 12px; top: calc(10px + env(safe-area-inset-top, 0px)); color: #fff; text-shadow: 1px 1px 0 #1b1410; }
+.sk-sp { font-weight: 700; margin-left: auto; margin-right: 10px; }
+.sk-sp b { color: var(--brass); font-size: 1.2rem; }
+.tabs button[style*='--c'][aria-pressed='true'] { background: var(--c); border-color: var(--c); color: #1b1410; }
+.sk-tree { position: relative; height: 360px; margin: 6px 0 10px; border-radius: 14px; background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.sk-tree svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.sk-tree line { stroke: var(--line); stroke-width: 0.8; vector-effect: non-scaling-stroke; stroke-width: 3px; }
+.sk-tree line.on { stroke: var(--c); }
+.sk-node {
+  position: absolute; transform: translate(-50%, -50%); width: 56px; height: 56px; border-radius: 50%; padding: 0;
+  border: 3px solid var(--line); background: var(--panel); display: grid; place-items: center; transition: transform 0.1s;
+}
+.sk-node.pas { border-radius: 14px; }
+.sk-node.have { border-color: var(--c); background: color-mix(in srgb, var(--c) 30%, var(--panel)); }
+.sk-node.can { box-shadow: 0 0 0 3px color-mix(in srgb, var(--brass) 60%, transparent); animation: skcan 1.4s ease-in-out infinite; }
+.sk-node.sel { transform: translate(-50%, -50%) scale(1.14); box-shadow: 0 0 0 3px var(--ink); }
+.sk-node.ult { width: 64px; height: 64px; }
+.sk-node.awk { border-style: dashed; }
+@keyframes skcan { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--brass) 25%, transparent); } }
+.sk-ico { font-size: 1.4rem; color: var(--c); text-shadow: 1px 1px 0 #1b1410; line-height: 1; }
+.sk-pips { position: absolute; bottom: 3px; display: flex; gap: 2px; }
+.sk-pips i { width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
+.sk-pips i.on { background: var(--brass); }
+.sk-name { position: absolute; top: 100%; margin-top: 2px; font-size: 0.66rem; font-weight: 800; white-space: nowrap; color: var(--ink); text-shadow: 0 0 3px var(--panel), 0 0 3px var(--panel); }
+.sk-detail { border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; background: var(--panel-2); }
+.sk-dhead { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-bottom: 4px; }
+.sk-dhead b { font-size: 1.1rem; }
+.sk-dhead span { font-size: 0.8rem; color: var(--muted); font-weight: 700; }
+.sk-detail p { font-size: 0.95rem; margin: 0 0 6px; }
+.sk-slots { margin-top: 6px; }
+.sk-syn { list-style: none; padding: 0; margin: 0; }
+.sk-syn li { padding: 6px 0; border-top: 1px solid var(--line); opacity: 0.6; }
+.sk-syn li.on { opacity: 1; }
+.sk-syn li.on b { color: var(--ok); }
+/* Fähigkeitsleiste (Tastatur/Gamepad) */
+.skillbar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 8px; pointer-events: none !important; }
+.skillbar .sb {
+  width: 64px; height: 64px; border-radius: 14px; position: relative; display: grid; place-items: center; text-align: center;
+  background: conic-gradient(var(--c) calc(var(--p) * 360deg), rgba(27, 20, 16, 0.55) 0); border: 2px solid #1b1410; padding: 3px;
+}
+.skillbar .sb span { width: 100%; height: 100%; border-radius: 10px; background: var(--hudbg); display: grid; place-items: center; font-size: 0.62rem; font-weight: 800; line-height: 1.05; padding: 2px; overflow: hidden; }
+.skillbar .sb.ready span { background: color-mix(in srgb, var(--c) 45%, var(--hudbg)); }
+.skillbar .sb kbd { position: absolute; top: -8px; left: -6px; font-size: 0.7rem; padding: 0 5px; }
+.skillbar .sb.empty { opacity: 0.45; }
+.touch-btn.cd span { background: conic-gradient(rgba(27, 20, 16, 0.6) calc((1 - var(--p, 1)) * 360deg), var(--hudbg) 0); }
+.touch-btn.rdy span { background: color-mix(in srgb, var(--c, #B98CFF) 55%, var(--hudbg)); }
+
 /* Spielerbalken im HUD */
 .hud-bars { margin-top: 5px; display: grid; gap: 3px; }
 .hud-bar { position: relative; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }

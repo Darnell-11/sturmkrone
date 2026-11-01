@@ -10,6 +10,11 @@ export class Hud {
   private xpEl: HTMLElement;
   private goldEl: HTMLElement;
   private ctxEl: HTMLButtonElement;
+  private fjEl: HTMLElement;
+  private badge: HTMLElement;
+  private skillbar: HTMLElement;
+  private skillKey = '';
+  onFaji: () => void = () => {};
   private ctxText = '';
   onContext: (down: boolean) => void = () => {};
   private hintEl: HTMLElement;
@@ -26,12 +31,15 @@ export class Hud {
       <div class="hud-panel">
         <div class="hud-name"></div>
         <div class="hud-sub"></div>
-        <div class="hud-bars"><div class="hud-bar hp" title="Leben"><i></i></div><div class="hud-bar xp" title="Erfahrung"><i></i></div></div>
+        <div class="hud-bars"><div class="hud-bar hp" title="Leben"><i></i></div><div class="hud-bar fj" title="Faji"><i></i></div><div class="hud-bar xp" title="Erfahrung"><i></i></div></div>
         <div class="hud-gold"></div>
         <div class="hud-env"></div>
         <div class="hud-fps" hidden></div>
       </div>
-      <button class="icon-btn" aria-label="Pause"><svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></button>`;
+      <div class="hud-btns">
+        <button class="icon-btn hud-faji" aria-label="Faji-Baum"><svg viewBox="0 0 24 24"><path d="M12 2l2.2 6.4L21 9l-5.2 4.3L17.6 20 12 16.3 6.4 20l1.8-6.7L3 9l6.8-.6z"/></svg><b class="badge" hidden>0</b></button>
+        <button class="icon-btn hud-pause" aria-label="Pause"><svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></button>
+      </div>`;
     parent.appendChild(this.root);
     this.nameEl = this.root.querySelector('.hud-name')!;
     this.subEl = this.root.querySelector('.hud-sub')!;
@@ -40,7 +48,14 @@ export class Hud {
     this.hpEl = this.root.querySelector('.hud-bar.hp i')!;
     this.xpEl = this.root.querySelector('.hud-bar.xp i')!;
     this.goldEl = this.root.querySelector('.hud-gold')!;
-    this.root.querySelector('button')!.addEventListener('click', () => this.onPause());
+    this.root.querySelector('.hud-pause')!.addEventListener('click', () => this.onPause());
+    this.root.querySelector('.hud-faji')!.addEventListener('click', () => this.onFaji());
+    this.fjEl = this.root.querySelector('.hud-bar.fj i')!;
+    this.badge = this.root.querySelector('.badge')!;
+    this.skillbar = document.createElement('div');
+    this.skillbar.className = 'skillbar';
+    this.skillbar.hidden = true;
+    parent.appendChild(this.skillbar);
 
     this.hintEl = document.createElement('div');
     this.hintEl.className = 'hint';
@@ -63,7 +78,7 @@ export class Hud {
 
   setVisible(v: boolean) {
     this.root.hidden = !v;
-    if (!v) { this.hintEl.hidden = true; this.ctxEl.hidden = true; this.ctxText = ''; }
+    if (!v) { this.hintEl.hidden = true; this.ctxEl.hidden = true; this.ctxText = ''; this.skillbar.hidden = true; }
   }
 
   setPlayer(name: string, sub: string) {
@@ -78,6 +93,30 @@ export class Hud {
     this.ctxText = text;
     this.ctxEl.hidden = !label || this.root.hidden;
     this.ctxEl.innerHTML = text;
+  }
+
+  setFaji(frac: number, sp: number) {
+    const w = `${Math.max(0, Math.min(1, frac)) * 100}%`;
+    if (this.fjEl.style.width !== w) this.fjEl.style.width = w;
+    this.badge.hidden = sp <= 0;
+    if (sp > 0) this.badge.textContent = String(sp);
+  }
+
+  /** Fähigkeitsleiste unten (nur ohne Touch) */
+  setSkillBar(show: boolean, views: { name: string; color: string; cdFrac: number; ready: boolean; id: string | null }[], keys: string[]) {
+    this.skillbar.hidden = !show || this.root.hidden;
+    if (this.skillbar.hidden) return;
+    const key = views.map((v) => v.id + v.name).join('|') + keys.join();
+    if (key !== this.skillKey) {
+      this.skillKey = key;
+      this.skillbar.innerHTML = views.map((v, i) => `<div class="sb${v.id ? '' : ' empty'}" style="--c:${v.color}"><kbd>${esc(keys[i] ?? '')}</kbd><span>${esc(v.name)}</span></div>`).join('');
+    }
+    views.forEach((v, i) => {
+      const el = this.skillbar.children[i] as HTMLElement | undefined;
+      if (!el) return;
+      el.style.setProperty('--p', v.cdFrac.toFixed(3));
+      el.classList.toggle('ready', v.ready);
+    });
   }
 
   setStats(hpFrac: number, xpFrac: number, gold: number) {

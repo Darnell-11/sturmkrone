@@ -1,5 +1,5 @@
 import { defaultLook, type CharacterLook } from '../../data/characterParts';
-import { SAVE_VERSION, type Faction, type FightStyle, type SaveData } from './types';
+import { SAVE_VERSION, type Faction, type FightStyle, type SaveData, type SkillState } from './types';
 
 /** localStorage-Schlüssel von Sturmkrone 1.0 */
 export const LEGACY_KEY = 'sturmkrone-saga-1';
@@ -61,6 +61,17 @@ export function convertLegacy10(raw: Record<string, any>, gameVersion: string, n
       flags: raw.flags && typeof raw.flags === 'object' ? { ...raw.flags } : {},
       quest: Math.max(0, Math.floor(num(raw.quest, 0))),
     },
+    skills: skillsFromLegacy(raw, Math.max(1, Math.floor(num(raw.lvl, 1)))),
     legacy10: JSON.parse(JSON.stringify(raw)),
   };
+}
+
+/** Fähigkeiten aus 1.0 übernehmen (gleiche IDs); ohne Daten: Punkte für bisherige Stufen nachreichen */
+export function skillsFromLegacy(raw: Record<string, any> | undefined, level: number): SkillState {
+  const learned: Record<string, number> = {};
+  if (raw?.sk && typeof raw.sk === 'object') for (const [k, v] of Object.entries(raw.sk)) if (typeof v === 'number' && v > 0) learned[k] = Math.floor(v);
+  const slots = Array.isArray(raw?.slots) ? raw!.slots.slice(0, 3).map((s: unknown) => (typeof s === 'string' ? s : null)) : [null, null, null];
+  while (slots.length < 3) slots.push(null);
+  const sp = typeof raw?.sp === 'number' ? Math.max(0, Math.floor(raw.sp)) : Math.max(1, level);
+  return { learned, slots, sp, awakened: [] };
 }

@@ -19,6 +19,8 @@ import { toon } from '../render/toon';
 import type { CombatOverlay } from '../ui/combatOverlay';
 import type { IslandGround, WalkIsland } from '../world/islandGround';
 import type { CombatFx } from './fx';
+import type { AbilityTarget } from '../faji/abilities';
+import type { Element, Status } from '../data/skills';
 
 export interface PlayerTarget {
   readonly x: number;
@@ -31,6 +33,7 @@ export interface PlayerTarget {
 }
 
 export interface CombatHooks {
+  heal(n: number): void;
   hitstop(seconds: number, scale?: number): void;
   shake(amount: number): void;
   kill(e: Enemy): void;
@@ -78,6 +81,9 @@ export class CombatSystem implements EnemyWorld {
   /** Basis-Angriffswert des Spielers */
   atk = 12;
   critChance = 0.1;
+  /** Boni aus Fähigkeiten und Synergien */
+  mods = { critMult: 1.6, lifesteal: 0, burnOnHit: false, fearWeak: 0, playerLevel: 1, frostParry: false, skillMult: 1 };
+  private dots = new Map<Enemy, { burn: number; poison: number; dps: number; tick: number }>();
   private dummies: Dummy[] = [];
   private projectiles: Projectile[] = [];
   private aoes: Aoe[] = [];
@@ -156,10 +162,12 @@ export class CombatSystem implements EnemyWorld {
   private hitPlayer(dmg: number, dirX: number, dirZ: number, knock: number, from: Enemy | null, heavy: boolean) {
     const pl = this.player;
     if (!pl || !pl.active) return;
+    if (from && from.level < this.mods.playerLevel) dmg *= 1 - this.mods.fearWeak;
     const res = pl.receiveHit(dmg, dirX, dirZ, knock, from);
     const pos = new Vector3(pl.x, pl.y + 1.2, pl.z);
     if (res === 'parried') {
       from?.parried();
+      if (from && this.mods.frostParry) from.stun(2.5, true);
       this.overlay.number(pos.clone().setY(pos.y + 0.6), 'Parade!', 'info');
       this.fx.hit(pos.clone().addScaledVector(new Vector3(-dirX, 0, -dirZ), 0.6), 'heavy', '#FFFFFF', true);
       this.overlay.impactFrame();
@@ -222,7 +230,8 @@ export class CombatSystem implements EnemyWorld {
 
   private applyHit(obj: object, def: AttackDef, dirX: number, dirZ: number, mult: number, color: string) {
     const crit = Math.random() < this.critChance;
-    const dmg = Math.round(this.atk * def.dmg * mult * (crit ? 1.6 : 1) * (0.92 + Math.random() * 0.16));
+    const dmg = Math.round(this.atk * def.dmg * mult * (crit ? this.mods.critMult : 1) * (0.92 + Math.random() * 0.16));
+    if (this.mods.lifesteal > 0) this.hooks.heal(dmg * this.mods.lifesteal);
     const heavy = def.fx === 'heavy' || def.poise >= 30;
     if (obj instanceof Dummy) {
       obj.wobble = Math.min(1.5, obj.wobble + 0.6);
@@ -245,6 +254,7 @@ export class CombatSystem implements EnemyWorld {
     }
     this.fx.hit(pos, def.fx, color, crit || heavy || res === 'kill');
     this.overlay.number(pos, dmg, crit ? 'crit' : 'hit');
+    if (this.mods.burnOnHit && def.fx !== 'magic' && def.fx !== 'punch' && res !== 'kill') this.applyStatus(e, 'burn', 3, dmg * 0.6);
     this.overlay.addCombo();
     if (res === 'stagger') { this.overlay.number(pos.clone().setY(pos.y + 0.7), 'Haltung gebrochen!', 'info'); this.overlay.speedlines(0.6); }
     if (heavy) {
@@ -288,6 +298,80 @@ export class CombatSystem implements EnemyWorld {
     this.scene.add(m);
     const a = Math.random() * Math.PI * 2;
     this.coins.push({ mesh: m, x, y, z, vy: 5 + Math.random() * 3, vx: Math.cos(a) * 2.5, vz: Math.sin(a) * 2.5, value, t: 0 });
+  }
+
+  // ---------- Faji-Fähigkeiten ----------
+
+  /** Gegner und Puppen als Ziele für Fähigkeiten */
+  abilityTargets(): AbilityTarget[] {
+    const list: AbilityTarget[] = [];
+    for (const e of this.enemies) {
+      if (!e.alive) continue;
+      list.push({
+        x: e.x, y: e.y, z: e.z, radius: e.radius, alive: true,
+        hit: (dmg, status, dur, dx, dz, el) => this.abilityHit(e, dmg * this.mods.skillMult, status, dur, dx, dz, el),
+        shove: (dx, dz) => { const c = this.constrain(e.x + dx, e.z + dz, e.radius); e.x = c.x; e.z = c.z; },
+      });
+    }
+    for (const d of this.dummies) {
+      list.push({
+        x: d.x, y: d.group.position.y, z: d.z, radius: d.radius, alive: true,
+        hit: (dmg) => {
+          d.wobble = Math.min(1.5, d.wobble + 0.6);
+          this.overlay.number(new Vector3(d.x, d.group.position.y + 1.6, d.z), Math.round(dmg * this.mods.skillMult), 'hit');
+          this.overlay.addCombo();
+        },
+      });
+    }
+    return list;
+  }
+
+  private abilityHit(e: Enemy, dmg: number, status: Status | undefined, dur: number, dx: number, dz: number, el: Element) {
+    const crit = Math.random() < this.critChance;
+    const amount = Math.round(dmg * (crit ? this.mods.critMult : 1));
+    const res = e.takeHit({ dmg: amount, poise: 25, knock: status === 'launch' ? 2 : 4, dirX: dx, dirZ: dz, heavy: true } as HitInfo, this.now);
+    const pos = e.head.setY(e.y + 1.4 * e.def.scale);
+    this.overlay.number(pos, amount, crit ? 'crit' : 'hit');
+    this.overlay.addCombo();
+    if (this.mods.lifesteal > 0) this.hooks.heal(amount * this.mods.lifesteal);
+    if (res === 'kill') { this.onKill(e); return; }
+    if (status) this.applyStatus(e, status, dur, amount);
+    void el;
+  }
+
+  applyStatus(e: Enemy, status: Status, dur: number, dmg: number) {
+    switch (status) {
+      case 'burn':
+      case 'poison': {
+        const d = this.dots.get(e) ?? { burn: 0, poison: 0, dps: 0, tick: 0 };
+        d[status] = Math.max(d[status], dur);
+        d.dps = Math.max(d.dps, dmg * 0.25);
+        this.dots.set(e, d);
+        break;
+      }
+      case 'freeze': e.stun(dur, true); break;
+      case 'stun': e.stun(dur); break;
+      case 'fear': e.fear(dur); if (e.level < this.mods.playerLevel && !e.def.elite && Math.random() < 0.3) e.stun(dur); break;
+      case 'slow': e.slowT = Math.max(e.slowT, dur); break;
+      case 'launch': e.launch(8); break;
+    }
+  }
+
+  private updateDots(dt: number) {
+    for (const [e, d] of this.dots) {
+      if (!e.alive) { this.dots.delete(e); continue; }
+      d.burn -= dt; d.poison -= dt; d.tick -= dt;
+      const pos = new Vector3(e.x, e.y + 1, e.z);
+      if (d.burn > 0 && Math.random() < dt * 25) this.fx.puffColor(pos, '#FF7A2A');
+      if (d.poison > 0 && Math.random() < dt * 20) this.fx.puffColor(pos, '#8AD84A');
+      if (d.tick <= 0 && (d.burn > 0 || d.poison > 0)) {
+        d.tick = 0.6;
+        const amount = Math.max(1, Math.round(d.dps * 0.6));
+        this.overlay.number(e.head, amount, d.burn > 0 ? 'gold' : 'heal');
+        if (e.dot(amount) === 'kill') this.onKill(e);
+      }
+      if (d.burn <= 0 && d.poison <= 0) this.dots.delete(e);
+    }
   }
 
   // ---------- Zielerfassung ----------
@@ -370,6 +454,7 @@ export class CombatSystem implements EnemyWorld {
     if (engaged.length) for (const e of this.enemies) if (!e.engaged && engaged.some((o) => Math.hypot(o.x - e.x, o.z - e.z) < 32)) e.alert();
     for (const e of this.enemies) e.update(dt, this);
     for (const d of this.dummies) d.update(dt);
+    this.updateDots(dt);
 
     // Geschosse
     for (const p of this.projectiles) {
