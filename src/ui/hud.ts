@@ -5,6 +5,7 @@ export class Hud {
   private nameEl: HTMLElement;
   private subEl: HTMLElement;
   private fpsEl: HTMLElement;
+  private envEl: HTMLElement;
   private hintEl: HTMLElement;
   private toastEl: HTMLElement;
   private toastTimer = 0;
@@ -19,6 +20,7 @@ export class Hud {
       <div class="hud-panel">
         <div class="hud-name"></div>
         <div class="hud-sub"></div>
+        <div class="hud-env"></div>
         <div class="hud-fps" hidden></div>
       </div>
       <button class="icon-btn" aria-label="Pause"><svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></button>`;
@@ -26,6 +28,7 @@ export class Hud {
     this.nameEl = this.root.querySelector('.hud-name')!;
     this.subEl = this.root.querySelector('.hud-sub')!;
     this.fpsEl = this.root.querySelector('.hud-fps')!;
+    this.envEl = this.root.querySelector('.hud-env')!;
     this.root.querySelector('button')!.addEventListener('click', () => this.onPause());
 
     this.hintEl = document.createElement('div');
@@ -48,6 +51,10 @@ export class Hud {
   setPlayer(name: string, sub: string) {
     this.nameEl.innerHTML = esc(name);
     this.subEl.innerHTML = esc(sub);
+  }
+
+  setEnv(text: string) {
+    if (this.envEl.textContent !== text) this.envEl.textContent = text;
   }
 
   setFps(show: boolean, text: string) {

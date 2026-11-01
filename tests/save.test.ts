@@ -97,6 +97,16 @@ describe('Spielstände', () => {
     expect(new SaveManager(store, V).findLegacy()?.player.name).toBe('Kira');
   });
 
+  it('hebt Version-1-Stände (Tag/Nacht) auf Uhrzeit und Wetter', () => {
+    const v1 = { ...createSave('Nachteule', 'pirat', V), version: 1, world: { boat: { x: 5, z: 6, heading: 1 }, night: true } };
+    const r = migrateSave(v1, V);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.migratedFrom).toBe(1);
+      expect(r.data.world).toEqual({ boat: { x: 5, z: 6, heading: 1 }, time: 22, weather: 'klar' });
+    }
+  });
+
   it('führt Migrationen der Reihe nach aus', () => {
     // Simuliert eine künftige Version: alter Stand mit Version 0 → 1
     MIGRATIONS[0] = (d) => ({ ...d, version: 1, player: { ...d.player, name: d.player.name + '!' } });

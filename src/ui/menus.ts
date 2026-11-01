@@ -4,6 +4,8 @@ import { FACTION_LABELS, rankName } from '../data/ranks';
 import type { Game } from '../core/game';
 import type { Faction, SaveData } from '../core/save/types';
 import type { Settings } from '../core/settings';
+import { EDGE_WALL, WEATHER, WEATHER_IDS, type WeatherId } from '../data/world';
+import { formatClock } from '../world/timeOfDay';
 import { downloadText, esc, formatDate, formatPlayTime, pickFile } from './dom';
 
 type Handler = (id: string, el: HTMLElement) => void;
@@ -103,7 +105,7 @@ export class Menus {
         ${g.persistent ? '' : '<p class="warn">Dein Browser erlaubt kein dauerhaftes Speichern (z. B. privater Modus). Spielstände gehen beim Schließen verloren – nutze „Exportieren“.</p>'}
         <button class="primary" data-a="play" data-focus>Spielen</button>
         <button class="secondary" data-a="settings">Einstellungen</button>
-        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Meilenstein 0 „Fundament“</p>
+        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Meilenstein 1 „Grafik-Kern“</p>
       </div>`,
       {
         play: () => this.showSlots(),
@@ -249,15 +251,57 @@ export class Menus {
       `<h2 class="fell">Pause</h2>
       <button class="primary" data-a="resume" data-focus>Weiterspielen</button>
       <button class="secondary" data-a="settings">Einstellungen</button>
+      <button class="secondary" data-a="workshop">Welt-Werkstatt (Test)</button>
       <button class="secondary" data-a="save">Speichern</button>
       <button class="secondary" data-a="quit">Speichern &amp; Hauptmenü</button>`,
       {
         resume: () => g.resume(),
         settings: () => this.showSettings(() => this.showPause()),
+        workshop: () => this.showWorkshop(),
         save: () => { g.hud.toast(g.persist() ? 'Gespeichert.' : 'Speichern fehlgeschlagen!'); },
         quit: () => g.quitToMenu(),
       },
       () => g.resume(),
+    );
+  }
+
+  // ---------- Welt-Werkstatt (Testwerkzeug) ----------
+
+  showWorkshop() {
+    const g = this.game;
+    const env = g.world.env;
+    const speeds: [number, string][] = [[0, 'Angehalten'], [1, 'Normal'], [30, 'Zeitraffer']];
+    const presets: [number, string][] = [[6.6, 'Morgen'], [12, 'Mittag'], [18.5, 'Abendrot'], [23, 'Nacht']];
+    const rerender = () => { const y = this.screen.scrollTop; this.showWorkshop(); this.screen.scrollTop = y; };
+    this.open(
+      `<h2 class="fell">Welt-Werkstatt</h2>
+      <p class="soft small">Zum Ausprobieren von Tageszeit, Wetter und Weltrand. Im fertigen Spiel steuern das Geschichte und Regionen.</p>
+      <div class="opt"><span class="label">Uhrzeit</span>
+        <label class="slider">Zeit<input type="range" min="0" max="24" step="0.25" value="${env.time.toFixed(2)}" data-input="time"><output>${formatClock(env.time)}</output></label>
+        <div class="chips">${presets.map(([h, l]) => `<button data-a="preset" data-id="${h}">${l}</button>`).join('')}</div>
+      </div>
+      <div class="opt"><span class="label">Zeit läuft</span>
+        <div class="chips">${speeds.map(([v, l]) => `<button data-a="speed" data-id="${v}" aria-pressed="${env.timeSpeed === v}">${l}</button>`).join('')}</div>
+      </div>
+      <div class="opt"><span class="label">Wetter</span>
+        <div class="chips">${WEATHER_IDS.map((w) => `<button data-a="weather" data-id="${w}" aria-pressed="${env.weather.target === w}">${WEATHER[w].label}</button>`).join('')}</div>
+        <div class="chips" style="margin-top:6px"><button data-a="autow" aria-pressed="${env.weather.auto}">Wetter wechselt von selbst</button></div>
+      </div>
+      <div class="opt"><span class="label">Orte</span>
+        <div class="row"><button class="mini" data-a="edge">Zum Weltrand</button><button class="mini" data-a="home">Zurück zum Start</button></div>
+      </div>
+      <button class="primary" data-a="back">Zurück</button>`,
+      {
+        time: (val, el) => { env.time = +val; el.parentElement!.querySelector('output')!.textContent = formatClock(+val); },
+        preset: (id) => { env.time = +id; rerender(); },
+        speed: (id) => { env.timeSpeed = +id; rerender(); },
+        weather: (id) => { env.weather.setWeather(id as WeatherId, true); rerender(); },
+        autow: () => { env.weather.auto = !env.weather.auto; rerender(); },
+        edge: () => { g.world.teleport(EDGE_WALL - 160, 0, Math.PI / 2); g.resume(); g.hud.toast('Vor dir liegt der Weltrand …', 3); },
+        home: () => { g.world.teleport(0, -60, 0); g.resume(); },
+        back: () => this.showPause(),
+      },
+      () => this.showPause(),
     );
   }
 
@@ -294,7 +338,7 @@ export class Menus {
           <div>Erkanntes Gerät<b>${esc(g.detected.reason)}</b></div>
           <div>Vorschlag<b>${QUALITY_TIERS[g.detected.tier].label}</b></div>
         </div>
-        <p class="soft small">Bei „Automatisch“ senkt das Spiel die Stufe selbst, wenn es ruckelt. Konturen, Sonnenstrahlen, Tiefenunschärfe und Umgebungsverdeckung kommen in Meilenstein 1 dazu.</p>`;
+        <p class="soft small">Bei „Automatisch“ senkt das Spiel die Stufe selbst, wenn es ruckelt.</p>`;
       handlers.q = (id) => { g.setQuality(id === 'auto' ? 'auto' : (id as QualityTier)); rerender(); };
     }
 

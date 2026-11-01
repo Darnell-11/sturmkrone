@@ -6,7 +6,9 @@ import { GameRenderer } from '../render/renderer';
 import { Hud } from '../ui/hud';
 import { Menus } from '../ui/menus';
 import { TouchControls } from '../ui/touchControls';
-import { TestWorld } from '../world/testWorld';
+import { SeaWorld } from '../world/seaWorld';
+import { WEATHER, type WeatherId } from '../data/world';
+import { formatClock } from '../world/timeOfDay';
 import { Input } from './input/input';
 import { GameLoop } from './loop';
 import { SaveManager } from './save/saveManager';
@@ -24,7 +26,7 @@ export class Game {
   readonly saves: SaveManager;
   readonly persistent: boolean;
   readonly renderer: GameRenderer;
-  readonly world: TestWorld;
+  readonly world: SeaWorld;
   readonly input: Input;
   readonly hud: Hud;
   readonly touch: TouchControls;
@@ -46,9 +48,10 @@ export class Game {
     this.saves = new SaveManager(store, GAME_VERSION);
 
     this.renderer = new GameRenderer(canvas);
-    this.world = new TestWorld();
+    this.world = new SeaWorld();
     this.renderer.onQualityChange((c) => this.world.applyQuality(c));
     this.renderer.setView(this.world.scene, this.world.camera);
+    this.renderer.setEffectSources(this.world.env.sunMesh, this.world.focus);
 
     this.deviceInfo = gatherDeviceInfo(this.renderer.gl.getContext());
     this.detected = detectTier(this.deviceInfo);
@@ -98,7 +101,8 @@ export class Game {
   }
 
   start() {
-    this.world.setState({ boat: null, night: false });
+    // Titelbild: zufällige schöne Stimmung
+    this.world.setState({ boat: null, env: { time: [7, 10, 17.8, 18.6][Math.floor(Math.random() * 4)], weather: 'klar' } });
     this.state.set('menu');
     this.menus.showMain();
     this.loop.start();
@@ -126,6 +130,8 @@ export class Game {
     if (this.state.is('play')) {
       const s = this.settings.data;
       this.hud.setFps(s.showFps, `${this.loop.fps} fps · ${QUALITY_TIERS[this.renderer.tier].label}`);
+      const env = this.world.env;
+      this.hud.setEnv(`${formatClock(env.time)} · ${env.timeName} · ${WEATHER[env.weather.target].label}`);
       if (s.qualityAuto && this.autoQuality.sample(frameDt)) this.autoLower();
     }
   }
@@ -157,7 +163,7 @@ export class Game {
   private enterPlay(slot: number, data: SaveData) {
     this.slot = slot;
     this.save = data;
-    this.world.setState(data.world);
+    this.world.setState({ boat: data.world.boat, env: { time: data.world.time, weather: data.world.weather as WeatherId } });
     const p = data.player;
     this.hud.setPlayer(p.name, `${FACTION_LABELS[p.faction]} · ${rankName(p.faction, p.fame)} · Stufe ${p.level}`);
     this.menus.hide();
@@ -197,7 +203,8 @@ export class Game {
   persist(): boolean {
     this.autosaveTimer = 0;
     if (!this.save || this.slot === null) return true;
-    this.save.world = this.world.getState();
+    const ws = this.world.getState();
+    this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather };
     const ok = this.saves.save(this.slot, this.save);
     if (!ok && !this.saveFailedShown) {
       this.saveFailedShown = true;
@@ -235,10 +242,10 @@ export class Game {
 
   private controlsHint(): string {
     const dev = this.input.lastDevice;
-    if (dev === 'touch') return 'Links ziehen: Steuern · Rechts ziehen: Kamera · Buttons: Feuer, Breitseiten, Schub, Tag/Nacht';
-    if (dev === 'gamepad') return 'Linker Stick: Steuern · Rechter Stick: Kamera · A: Feuer · LB/RB: Breitseiten · B: Schub · X: Tag/Nacht · Start: Pause';
+    if (dev === 'touch') return 'Links ziehen: Steuern · Rechts ziehen: Kamera · Buttons: Feuer, Breitseiten, Schub, Wetter';
+    if (dev === 'gamepad') return 'Linker Stick: Steuern · Rechter Stick: Kamera · A: Feuer · LB/RB: Breitseiten · B: Schub · X: Wetter · Start: Pause';
     const b = this.input.getKeyBindings();
     const k = (a: keyof typeof b) => (b[a][0] ? this.input.keyLabel(b[a][0]) : '–');
-    return `${k('up')}/${k('down')}: Fahrt · ${k('left')}/${k('right')}: Steuern · ${k('attack')}: Feuer · ${k('fireLeft')}/${k('fireRight')}: Breitseiten · ${k('dodge')}: Schub · ${k('interact')}: Tag/Nacht · Rechte Maustaste ziehen: Kamera · Esc: Pause`;
+    return `${k('up')}/${k('down')}: Fahrt · ${k('left')}/${k('right')}: Steuern · ${k('attack')}: Feuer · ${k('fireLeft')}/${k('fireRight')}: Breitseiten · ${k('dodge')}: Schub · ${k('interact')}: Wetter · Rechte Maustaste ziehen: Kamera · Esc: Pause`;
   }
 }

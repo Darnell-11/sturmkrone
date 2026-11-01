@@ -4,13 +4,18 @@ import {
   PCFShadowMap,
   WebGLRenderer,
   type Camera,
+  type Mesh,
+  type PerspectiveCamera,
   type Scene,
+  type Vector3,
 } from 'three';
 import {
   BloomEffect,
   BrightnessContrastEffect,
+  DepthOfFieldEffect,
   EffectComposer,
   EffectPass,
+  GodRaysEffect,
   HueSaturationEffect,
   RenderPass,
   ToneMappingEffect,
@@ -19,6 +24,8 @@ import {
   type Effect,
 } from 'postprocessing';
 import { QUALITY_TIERS, type QualityConfig, type QualityTier } from '../data/qualityTiers';
+import { DepthAOEffect } from './ao';
+import { EdgeEffect, setHullsVisible } from './outline';
 
 export class WebGLUnavailableError extends Error {}
 
@@ -31,6 +38,9 @@ export class GameRenderer {
   private scene: Scene | null = null;
   private camera: Camera | null = null;
   private listeners: ((c: QualityConfig, tier: QualityTier) => void)[] = [];
+  private sun: Mesh | null = null;
+  private focus: Vector3 | null = null;
+  private ao: DepthAOEffect | null = null;
 
   constructor(private canvas: HTMLCanvasElement) {
     try {
@@ -74,28 +84,52 @@ export class GameRenderer {
     for (const l of this.listeners) l(c, tier);
   }
 
+  /** Lichtquelle für Sonnenstrahlen und Fokuspunkt für Tiefenunschärfe */
+  setEffectSources(sun: Mesh, focus: Vector3) {
+    this.sun = sun;
+    this.focus = focus;
+    this.rebuildComposer();
+  }
+
   private rebuildComposer() {
     this.composer?.dispose();
     this.composer = null;
+    this.ao = null;
     const c = this.config;
+    // Niedrig/Mittel: Konturen als Inverted Hull, Hoch/Maximal: Kantenerkennung als Post-Effekt
+    setHullsVisible(!c.post.outlines);
     if (!c.post.enabled || !this.scene || !this.camera) return;
+    const cam = this.camera as PerspectiveCamera;
 
     const samples = Math.min(c.multisampling, this.gl.capabilities.maxSamples ?? 0);
     const composer = new EffectComposer(this.gl, { frameBufferType: HalfFloatType, multisampling: samples });
-    composer.addPass(new RenderPass(this.scene, this.camera));
+    composer.addPass(new RenderPass(this.scene, cam));
+
+    if (c.post.depthOfField && this.focus) {
+      const dof = new DepthOfFieldEffect(cam, { focusDistance: 25, focusRange: 40, bokehScale: 2.2, resolutionScale: 0.5 });
+      dof.target = this.focus;
+      composer.addPass(new EffectPass(cam, dof));
+    }
 
     const effects: Effect[] = [];
+    if (c.post.ambientOcclusion) {
+      this.ao = new DepthAOEffect(cam);
+      effects.push(this.ao);
+    }
+    if (c.post.godRays && this.sun) {
+      effects.push(new GodRaysEffect(cam, this.sun, { density: 0.94, decay: 0.92, weight: 0.35, exposure: 0.5, samples: c.detail > 1 ? 80 : 48, clampMax: 1, resolutionScale: 0.5, blur: true }));
+    }
     if (c.post.bloom) {
-      effects.push(new BloomEffect({ intensity: 1.1, luminanceThreshold: 0.82, luminanceSmoothing: 0.18, mipmapBlur: true, radius: 0.7 }));
+      effects.push(new BloomEffect({ intensity: 1.0, luminanceThreshold: 0.85, luminanceSmoothing: 0.18, mipmapBlur: true, radius: 0.7 }));
     }
     effects.push(new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC }));
+    if (c.post.outlines) effects.push(new EdgeEffect({ thickness: Math.max(1, this.pixelRatio()), fadeFar: 320 }));
     if (c.post.colorGrading) {
-      effects.push(new HueSaturationEffect({ saturation: 0.12 }));
-      effects.push(new BrightnessContrastEffect({ contrast: 0.06 }));
-      effects.push(new VignetteEffect({ offset: 0.35, darkness: 0.45 }));
+      effects.push(new HueSaturationEffect({ saturation: 0.14 }));
+      effects.push(new BrightnessContrastEffect({ contrast: 0.07 }));
+      effects.push(new VignetteEffect({ offset: 0.35, darkness: 0.42 }));
     }
-    // Konturen, Sonnenstrahlen, Tiefenunschärfe und Umgebungsverdeckung folgen in Meilenstein 1.
-    composer.addPass(new EffectPass(this.camera, ...effects));
+    composer.addPass(new EffectPass(cam, ...effects));
     this.composer = composer;
   }
 
@@ -134,6 +168,7 @@ export class GameRenderer {
 
   render(dt: number) {
     if (!this.scene || !this.camera) return;
+    this.ao?.update();
     if (this.composer) this.composer.render(dt);
     else this.gl.render(this.scene, this.camera);
   }

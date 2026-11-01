@@ -3,12 +3,17 @@ import { createSave, SAVE_VERSION, type SaveData } from './types';
 
 type Migration = (data: Record<string, any>) => Record<string, any>;
 
-/**
- * MIGRATIONS[n] hebt einen Spielstand von Version n auf n + 1.
- * Beispiel für später:
- *   1: (d) => ({ ...d, version: 2, crew: [] }),
- */
-export const MIGRATIONS: Record<number, Migration> = {};
+/** MIGRATIONS[n] hebt einen Spielstand von Version n auf n + 1. */
+export const MIGRATIONS: Record<number, Migration> = {
+  // Meilenstein 1: Tag/Nacht-Schalter wird zu Uhrzeit und Wetter
+  1: (d) => {
+    const world = { ...(d.world ?? {}) };
+    world.time = world.night ? 22 : 9;
+    world.weather = 'klar';
+    delete world.night;
+    return { ...d, version: 2, world };
+  },
+};
 
 export type MigrationResult =
   | { ok: true; data: SaveData; migratedFrom: number | 'legacy10' | null }

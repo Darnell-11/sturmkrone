@@ -1,5 +1,5 @@
 // Aufbau eines Spielstands. Bei jeder Änderung: SAVE_VERSION erhöhen und in migrations.ts eine Migration ergänzen.
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 export type Faction = 'pirat' | 'marine';
 export type FightStyle = 'faust' | 'schwert' | 'effekt';
@@ -27,7 +27,10 @@ export interface SaveData {
   };
   world: {
     boat: { x: number; z: number; heading: number } | null;
-    night: boolean;
+    /** Uhrzeit 0 … 24 */
+    time: number;
+    /** Wetter-ID aus data/world.ts */
+    weather: string;
   };
   progress: {
     flags: Record<string, unknown>;
@@ -52,7 +55,7 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
       fame: 0,
       look: {},
     },
-    world: { boat: null, night: false },
+    world: { boat: null, time: 9, weather: 'klar' },
     progress: { flags: {}, quest: 0 },
   };
 }

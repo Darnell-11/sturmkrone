@@ -33,7 +33,7 @@ export function convertLegacy10(raw: Record<string, any>, gameVersion: string, n
       look,
     },
     // Die 1.0-Welt hatte andere Koordinaten – das Schiff startet neu am Hafen.
-    world: { boat: null, night: false },
+    world: { boat: null, time: 9, weather: 'klar' },
     progress: {
       flags: raw.flags && typeof raw.flags === 'object' ? { ...raw.flags } : {},
       quest: Math.max(0, Math.floor(num(raw.quest, 0))),

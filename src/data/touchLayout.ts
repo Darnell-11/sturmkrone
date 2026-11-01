@@ -17,5 +17,5 @@ export const TOUCH_SEA: TouchButtonDef[] = [
   { action: 'fireLeft', label: 'Links', size: 62, right: 118, bottom: 22, color: 'seal' },
   { action: 'fireRight', label: 'Rechts', size: 62, right: 26, bottom: 128, color: 'seal' },
   { action: 'dodge', label: 'Schub', size: 58, right: 112, bottom: 104, color: 'teal' },
-  { action: 'interact', label: 'Tag/\nNacht', size: 54, right: 188, bottom: 30, color: 'brass' },
+  { action: 'interact', label: 'Wetter', size: 54, right: 188, bottom: 30, color: 'brass' },
 ];
