@@ -397,3 +397,22 @@ kbd {
 .worldmap { display: block; margin: 8px auto; max-width: 100%; border-radius: 50%; }
 .card button:disabled { opacity: 0.42; cursor: not-allowed; filter: grayscale(0.6); }
 @media (max-width: 520px) { .hud-quest .q-step { font-size: 0.78rem; } }
+
+/* ---------- Hafen, Crew, Rangliste ---------- */
+.grid2 { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; margin-bottom: 8px; }
+.grid2 button { margin: 0; text-align: left; display: grid; gap: 1px; }
+.grid2 button small { font-weight: 500; color: var(--muted); font-size: 0.74rem; }
+.pip { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--seal); color: #fff; font-size: 0.72rem; margin-left: 4px; vertical-align: middle; }
+.pip.ok { background: var(--brass); color: var(--on-brass); }
+.slot.crew, .slot.legend { border-left: 6px solid var(--c); }
+.slot.legend.beaten { opacity: 0.6; }
+.loy { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; font-size: 0.8rem; margin: 6px 0; }
+.loy .hud-bar { height: 8px; }
+.pips { letter-spacing: 2px; color: var(--brass); }
+.rank { list-style: none; counter-reset: r; padding: 0; margin: 8px 0 14px; }
+.rank li { counter-increment: r; display: grid; grid-template-columns: 34px 1fr auto; grid-template-rows: auto auto; column-gap: 8px; padding: 6px 10px; border-radius: 10px; }
+.rank li::before { content: counter(r) '.'; grid-row: span 2; align-self: center; font-weight: 800; color: var(--muted); }
+.rank li span { grid-column: 2; font-size: 0.78rem; color: var(--muted); }
+.rank li em { grid-row: 1 / span 2; grid-column: 3; align-self: center; font-style: normal; font-weight: 700; font-size: 0.82rem; }
+.rank li:nth-child(odd) { background: rgba(0, 0, 0, 0.04); }
+.rank li.me { background: color-mix(in srgb, var(--brass) 30%, transparent); }

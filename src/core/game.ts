@@ -34,6 +34,8 @@ import { QuestSystem, stepText } from '../story/questSystem';
 import type { QuestDef, TownNpcDef } from '../data/quests';
 import { ARMOR, BERNSTEINSEE, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, type IslandDef } from '../data/regions';
 import { drawMap, type MapMarkers } from '../ui/minimap';
+import { CREW_BY_ID } from '../data/crew';
+import { hostileLegends, LEGEND_BY_ID, rankRows } from '../data/legends';
 
 export const GAME_VERSION = __APP_VERSION__;
 const AUTOSAVE_SECONDS = 30;
@@ -67,6 +69,9 @@ export class Game {
   /** Im laufenden Gespräch abgeschlossene Aufträge (für die Abschlusstexte) */
   private justDone: QuestDef[] | null = null;
   private mapT = 0;
+  private legendT = 2;
+  /** Wann eine geflohene Legende wieder auftauchen darf (Spielzeit) */
+  private legendCd = new Map<string, number>();
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.uiRoot = uiRoot;
@@ -97,11 +102,13 @@ export class Game {
     this.world.onMessage = (m) => this.hud.toast(m);
     this.world.onModeChange = (m) => this.onModeChange(m);
     this.world.onKill = (e) => this.onKill(e);
-    this.world.onGold = (n) => { if (this.save) this.save.player.gold += n; };
+    this.world.onGold = (n) => { if (this.save) this.save.player.gold += Math.round(n * this.goldMult()); };
+    this.world.onCrewLine = (who, text) => this.hud.toast(`${who.name}: „${text}“`, 4);
     this.world.onShipSunk = (e) => {
       if (!this.save) return;
       const p = this.save.player;
       if (!e.companion) { this.save.progress.stats.sunk++; this.questEvent({ type: 'sink' }); }
+      if (e.legendId) { this.defeatLegend(e.legendId, false); return; }
       const mult = e.role === 'legende' ? 6 : e.role === 'haendler' ? 0.8 : 1.4;
       this.grantXp(Math.round((25 + e.level * 10) * mult), e.role === 'legende' ? 250 : e.role === 'haendler' ? (p.faction === 'pirat' ? 4 : -6) : 8);
       if (e.role === 'legende') audio.play('win');
@@ -109,18 +116,21 @@ export class Game {
     };
     this.world.onLoot = (gold, shard) => {
       if (!this.save) return;
-      this.save.player.gold += gold;
+      this.save.player.gold += Math.round(gold * this.goldMult(true));
       if (shard) { this.save.skills.sp++; this.hud.toast('Faji-Splitter: +1 Faji-Punkt!', 3); }
     };
-    this.world.onBoardWon = () => {
+    this.world.onBoardWon = (e) => {
       if (!this.save) return;
+      if (e.legendId) this.defeatLegend(e.legendId, true);
       this.save.progress.stats.boarded++;
+      this.addLoyalty(this.save.crew.party, 4);
       this.grantXp(40, 20);
       this.questEvent({ type: 'board' });
     };
     this.world.onTalk = (npc) => this.talkTo(npc);
+    this.world.onHarbor = () => this.openHarbor();
     this.world.onEnterIsland = (def) => this.enterIsland(def);
-    this.world.onIslandCleared = (id) => this.questEvent({ type: 'clear', island: id });
+    this.world.onIslandCleared = (id) => { this.questEvent({ type: 'clear', island: id }); if (this.save) this.addLoyalty(this.save.crew.party, 4); };
     this.world.onRescue = () => {
       if (!this.save) return;
       this.save.progress.stats.rescued++;
@@ -216,7 +226,10 @@ export class Game {
       if (this.input.pressed('pause')) { this.pause(); return; }
       if (this.input.pressed('map')) { this.state.set('pause'); this.menus.showMap('karte'); return; }
       if (this.input.pressed('potion')) this.usePotion();
+      this.legendT -= dt;
+      if (this.legendT <= 0) { this.legendT = 1; this.updateLegends(); }
       this.world.update(dt, this.input);
+      if (this.save?.crew.hired.includes('cook') && this.world.mode === 'sail') { const sh = this.world.ship; if (sh.alive && sh.hull < sh.maxHull) sh.hull = Math.min(sh.maxHull, sh.hull + dt * 1.2); }
       if (this.save) this.save.meta.playTime += dt;
       this.autosaveTimer += dt;
       if (this.autosaveTimer >= AUTOSAVE_SECONDS) this.persist();
@@ -325,13 +338,159 @@ export class Game {
     const gear = this.save.gear;
     const armor = ARMOR[gear.armor]?.hp ?? 0;
     const weapon = WEAPONS[gear.weapon]?.dmg ?? 0;
-    this.world.setPlayerPower((PLAYER_BASE.hp(lvl) + armor) * hpBonus, PLAYER_BASE.atk(lvl) + weapon * 0.5);
+    const has = (id: string) => this.save!.crew.hired.includes(id);
+    const up = this.save.ship.up;
+    // Crew-Boni wie in 1.0
+    const atkMult = (has('ram') ? 1.1 : 1) * (has('musik') ? 1.05 : 1);
+    const weaponMult = has('schmied') ? 1.12 : 1;
+    this.world.setPlayerPower((PLAYER_BASE.hp(lvl) + armor) * hpBonus, (PLAYER_BASE.atk(lvl) + weapon * 0.5 * weaponMult) * atkMult);
+    this.world.shipSpeedMult = (has('nav') ? 1.15 : 1) * (has('esra') ? 1.1 : 1) * (1 + up.sail * 0.05);
+    this.world.ship.turnMult = has('helm') ? 1.6 : 1;
+    this.world.rangeMult = has('look') ? 1.25 : 1;
+    const hullBonus = (has('carp') ? 40 : 0) + Math.round(SHIP_CLASSES[this.save.ship.tier].hp * up.hull * 0.15);
+    if (hullBonus !== this.world.hullBonus) {
+      this.world.hullBonus = hullBonus;
+      this.world.setShip(this.save.ship.tier, this.save.ship.look, this.world.ship.ammo, this.world.ship.hull / Math.max(1, this.world.ship.maxHull), this.save.player.faction);
+    }
+    if (this.world.faji && has('lehrer')) this.world.faji.passives.fajiRegen += 0.2;
     const nav = this.world.naval;
     if (nav) {
       nav.playerLevel = lvl;
       nav.playerFaction = this.save.player.faction;
       nav.playerRank = rankIndex(this.save.player.fame);
-      nav.canDmg = (12 + lvl * 1.4) * (1 + this.save.ship.tier * 0.06);
+      nav.canDmg = (12 + lvl * 1.4) * (1 + this.save.ship.tier * 0.06) * (1 + up.can * 0.12) * (has('bruno') ? 1.2 : 1);
+      nav.reloadMult = has('gun') ? 0.7 : 1;
+    }
+    const c = this.save.crew;
+    this.world.setCrew(c.hired, c.party, c.loyalty, lvl, (has('musik') ? 1.15 : 1) * (has('ram') ? 1.15 : 1));
+  }
+
+  /** Gold-Bonus der Crew (Katze, Taucherin für Beute) */
+  private goldMult(loot = false) {
+    const h = this.save?.crew.hired ?? [];
+    return (h.includes('cat') ? 1.3 : 1) * (loot && h.includes('kiko') ? 1.5 : 1);
+  }
+
+  // ---------- Legenden ----------
+
+  /** Legenden kreuzen in ihren Heimatgewässern (ab Kapitel 1 abgeschlossen) */
+  private updateLegends() {
+    const s = this.save;
+    const nav = this.world.naval;
+    if (!s || !nav || this.world.mode !== 'sail' || !s.progress.done.includes('k1')) return;
+    const pos = this.world.playerPos;
+    const t = s.meta.playTime;
+    // Immer nur eine Legende zugleich, mit Pause dazwischen, nie direkt vor der Hafenstadt
+    if (nav.enemies.some((e) => e.legendId && e.ship.alive) || (this.legendCd.get('*') ?? 0) > t) return;
+    const town = this.world.islandDefs.find((i) => i.kind === 'town');
+    if (town && Math.hypot(town.x - pos.x, town.z - pos.z) < town.r + 160) return;
+    for (const l of hostileLegends(s.player.faction)) {
+      const beaten = s.legends.includes(l.id);
+      const revenge = beaten && !s.progress.flags[`rev_${l.id}`] && t - Number(s.progress.flags[`beat_${l.id}`] ?? 0) > 900;
+      if (beaten && !revenge) continue;
+      if ((this.legendCd.get(l.id) ?? 0) > t) continue;
+      if (nav.enemies.some((e) => e.legendId === l.id)) continue;
+      const home = this.world.islandDefs.find((i) => i.id === l.home);
+      if (!home || Math.hypot(home.x - pos.x, home.z - pos.z) > home.r + 260) continue;
+      const a = Math.atan2(pos.z - home.z, pos.x - home.x) + (Math.random() - 0.5);
+      const e = nav.spawnLegend(l, home.x + Math.cos(a) * (home.r + 70), home.z + Math.sin(a) * (home.r + 70), revenge ? 4 : 0);
+      if (!e) continue;
+      this.legendCd.set(l.id, t + 600);
+      this.legendCd.set('*', t + 180);
+      audio.play('horn');
+      setTimeout(() => audio.play('roar', 0.6), 900);
+      this.overlay.showCutin(revenge ? `Revanche: ${l.n}!` : `${l.n} taucht auf!`, l.col);
+      this.overlay.showBanner(revenge ? 'Die Legende will Rache!' : 'Legende gesichtet!', `${l.n}, ${l.t} (Stufe ${l.lvl + (revenge ? 4 : 0)})`);
+      setTimeout(() => this.hud.toast(`${l.n}: „${l.hello}“`, 5), 2500);
+      return;
+    }
+  }
+
+  private defeatLegend(id: string, boarded: boolean) {
+    const s = this.save;
+    const l = LEGEND_BY_ID[id];
+    if (!s || !l) return;
+    audio.play('win');
+    if (s.legends.includes(id)) {
+      // Revanche gewonnen
+      s.progress.flags[`rev_${id}`] = true;
+      const g = Math.round(l.ruhm * 0.3 * this.goldMult(true));
+      s.player.gold += g;
+      this.grantXp(200 + l.lvl * 30, Math.round(l.ruhm * 0.1));
+      this.overlay.showBanner(`Revanche gewonnen!`, `${l.n} gibt sich geschlagen · +${g} Gold`);
+    } else {
+      s.legends.push(id);
+      s.progress.flags[`beat_${id}`] = s.meta.playTime;
+      const g = Math.round(l.ruhm * (boarded ? 0.9 : 0.6) * this.goldMult(true));
+      s.player.gold += g;
+      s.skills.sp++;
+      setTimeout(() => this.overlay.showCutin('Legende besiegt!', '#FFD166'), 400);
+      this.overlay.showBanner(`${l.n} ist besiegt!`, `+${g.toLocaleString('de-DE')} Gold und ein Faji-Punkt – du steigst in der Rangliste auf`);
+      this.grantXp(300 + l.lvl * 40, Math.round(l.ruhm * 0.5));
+    }
+    setTimeout(() => this.hud.toast(`${l.n}: „${l.bye}“`, 5), 3000);
+    this.persist();
+  }
+
+  /** Rangliste für das Menü */
+  rankList() {
+    const s = this.save;
+    if (!s) return [];
+    return rankRows(s.player.faction, s.legends, { name: s.player.name, title: rankName(s.player.faction, s.player.fame), lvl: s.player.level, ruhm: s.player.fame }, s.meta.playTime);
+  }
+
+  // ---------- Crew ----------
+
+  hireCrew(id: string): string {
+    const s = this.save;
+    const def = CREW_BY_ID[id];
+    if (!s || !def || s.crew.hired.includes(id)) return '';
+    if (rankIndex(s.player.fame) < def.rank) return `Rang „${rankName(s.player.faction, FAME_THRESHOLDS[def.rank])}“ nötig.`;
+    if (s.player.gold < def.price) return `Dafür fehlen ${def.price - s.player.gold} Gold.`;
+    s.player.gold -= def.price;
+    s.crew.hired.push(id);
+    s.crew.loyalty[id] = 10;
+    if (!def.cat && s.crew.party.length < 3) s.crew.party.push(id);
+    if (id === 'lehrer') s.skills.sp++;
+    audio.play('bell');
+    this.overlay.showBanner(`${def.name} heuert an!`, def.perk);
+    this.applyPower();
+    this.persist();
+    return `„${def.quote}“`;
+  }
+
+  /** Landtrupp umstellen (höchstens 3) */
+  toggleParty(id: string): string {
+    const s = this.save;
+    if (!s || !s.crew.hired.includes(id) || CREW_BY_ID[id]?.cat) return '';
+    const p = s.crew.party;
+    const i = p.indexOf(id);
+    if (i >= 0) p.splice(i, 1);
+    else if (p.length >= 3) return 'Der Landtrupp ist voll (höchstens 3).';
+    else p.push(id);
+    this.applyPower();
+    this.persist();
+    return '';
+  }
+
+  /** Gespräch mit einem Crewmitglied (persönlicher Auftrag) */
+  talkCrew(id: string): QuestDef[] {
+    if (!this.quests) return [];
+    this.justDone = [];
+    this.questEvent({ type: 'talk', npc: id });
+    const done = this.justDone;
+    this.justDone = null;
+    return done;
+  }
+
+  private addLoyalty(ids: string[], n: number) {
+    const s = this.save;
+    if (!s) return;
+    for (const id of ids) {
+      const before = s.crew.loyalty[id] ?? 0;
+      const after = Math.min(100, before + n);
+      s.crew.loyalty[id] = after;
+      if (before < 100 && after >= 100) this.hud.toast(`${CREW_BY_ID[id]?.name ?? id} ist dir jetzt treu ergeben! (+30 % Kampfkraft)`, 4);
     }
   }
 
@@ -355,6 +514,7 @@ export class Game {
   private onQuestDone(q: QuestDef) {
     const s = this.save;
     if (!s) return;
+    if (CREW_BY_ID[q.giver]) this.addLoyalty([q.giver], 40);
     s.player.gold += q.reward.gold;
     if (q.reward.sp) s.skills.sp += q.reward.sp;
     if (this.justDone) this.justDone.push(q);
@@ -377,7 +537,25 @@ export class Game {
     const done = this.justDone;
     this.justDone = null;
     this.state.set('pause');
+    this.menus.dialogExit = () => this.resume();
     this.menus.showDialog(npc, done);
+  }
+
+  /** Gespräch aus dem Hafenmenü (Spiel ist schon pausiert) */
+  talkInHarbor(npc: TownNpcDef) {
+    if (!this.quests) return;
+    this.justDone = [];
+    this.questEvent({ type: 'talk', npc: npc.id });
+    const done = this.justDone;
+    this.justDone = null;
+    this.menus.showDialog(npc, done);
+  }
+
+  private openHarbor() {
+    if (!this.state.is('play')) return;
+    audio.play('bell');
+    this.state.set('pause');
+    this.menus.showHarbor();
   }
 
   acceptQuest(id: string) {
@@ -430,7 +608,7 @@ export class Game {
     if (i >= 0) {
       s.progress.maps.splice(i, 1);
       s.progress.stats.treasures++;
-      const gold = Math.round((120 + Math.random() * 180) * (1 + s.player.level * 0.08));
+      const gold = Math.round((120 + Math.random() * 180) * (1 + s.player.level * 0.08) * this.goldMult(true));
       s.player.gold += gold;
       const shard = Math.random() < 0.35;
       if (shard) s.skills.sp++;
@@ -452,8 +630,9 @@ export class Game {
     if (hp.hp >= hp.max) { this.hud.toast('Du bist satt und gesund.'); return; }
     s.gear.potions--;
     audio.play('eat');
-    this.world.healFrac(POTION.heal);
-    this.hud.toast(`Mmh! +${Math.round(POTION.heal * 100)} % Leben · noch ${s.gear.potions}`);
+    const heal = POTION.heal * (s.crew.hired.includes('cook') ? 2 : 1) * (s.crew.hired.includes('arzt') ? 1.4 : 1);
+    this.world.healFrac(heal);
+    this.hud.toast(`Mmh! +${Math.round(Math.min(1, heal) * 100)} % Leben · noch ${s.gear.potions}`);
   }
 
   // ---------- Läden ----------
@@ -526,7 +705,7 @@ export class Game {
     const isl = (id: string) => { const d = this.world.islandDefs.find((i) => i.id === id); return d ? { x: d.x, z: d.z } : null; };
     const nearest = (list: { x: number; z: number }[]) => list.reduce<{ x: number; z: number } | null>((b, p) => (!b || Math.hypot(p.x - pos.x, p.z - pos.z) < Math.hypot(b.x - pos.x, b.z - pos.z) ? p : b), null);
     switch (t.step.type) {
-      case 'talk': return this.world.npcPos(t.step.npc);
+      case 'talk': return this.world.npcPos(t.step.npc) ?? (CREW_BY_ID[t.step.npc] ? { x: this.world.ship.x, z: this.world.ship.z } : null);
       case 'goto': case 'clear': case 'treasure': return isl(t.step.island);
       case 'sink': case 'board': return nearest(this.world.enemyShips.filter((e) => !e.ally));
       case 'rescue': return this.world.nearestFloater('raft');
@@ -662,6 +841,25 @@ export class Game {
   repairCost() {
     const sh = this.world.ship;
     return Math.ceil((1 - sh.hull / sh.maxHull) * sh.maxHull * 0.6);
+  }
+
+  upgradeCost(k: 'can' | 'hull' | 'sail') {
+    const s = this.save;
+    if (!s) return 0;
+    return Math.round((s.ship.up[k] + 1) * 350 * (1 + s.ship.tier * 0.4));
+  }
+
+  shipUpgrade(k: 'can' | 'hull' | 'sail'): string {
+    const s = this.save;
+    if (!s || s.ship.up[k] >= 5) return '';
+    const cost = this.upgradeCost(k);
+    if (s.player.gold < cost) return `Dafür fehlen ${cost - s.player.gold} Gold.`;
+    s.player.gold -= cost;
+    s.ship.up[k]++;
+    audio.play('crack');
+    this.applyPower();
+    this.persist();
+    return 'Ausgebaut!';
   }
 
   shipyardRepair(): string {

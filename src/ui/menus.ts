@@ -8,7 +8,9 @@ import { EDGE_WALL, WEATHER, WEATHER_IDS, type WeatherId } from '../data/world';
 import { formatClock } from '../world/timeOfDay';
 import { FIGUREHEADS, FLAGS, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, STRIPE_COLORS, type ShipLook } from '../data/ships';
 import { downloadText, esc, formatDate, formatPlayTime, pickFile } from './dom';
-import { QUEST_BY_ID, type QuestDef, type ShopKind, type TownNpcDef } from '../data/quests';
+import { QUEST_BY_ID, TOWN_NPCS, type QuestDef, type ShopKind, type TownNpcDef } from '../data/quests';
+import { CREW, CREW_BY_ID, CREW_ROLE_LABEL } from '../data/crew';
+import { hostileLegends } from '../data/legends';
 import { ARMOR, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS } from '../data/regions';
 import { stepText } from '../story/questSystem';
 import { drawMap } from './minimap';
@@ -224,6 +226,8 @@ export class Menus {
       `<h2 class="fell">Pause</h2>
       <button class="primary" data-a="resume" data-focus>Weiterspielen</button>
       <button class="secondary" data-a="map">Karte &amp; Logbuch</button>
+      <button class="secondary" data-a="crew">Crew</button>
+      <button class="secondary" data-a="rank">Rangliste der Legenden</button>
       <button class="secondary" data-a="look">Aussehen ändern</button>
       <button class="secondary" data-a="settings">Einstellungen</button>
       <button class="secondary" data-a="workshop">Welt-Werkstatt (Test)</button>
@@ -233,6 +237,8 @@ export class Menus {
         resume: () => g.resume(),
         look: () => g.openEditor(null),
         map: () => this.showMap('logbuch', () => this.showPause()),
+        crew: () => this.showCrew(() => this.showPause()),
+        rank: () => this.showRanking(() => this.showPause()),
         settings: () => this.showSettings(() => this.showPause()),
         workshop: () => this.showWorkshop(),
         save: () => { g.hud.toast(g.persist() ? 'Gespeichert.' : 'Speichern fehlgeschlagen!'); },
@@ -245,8 +251,12 @@ export class Menus {
   // ---------- Gespräche und Läden ----------
 
   /** Gespräch mit einer Stadtbewohnerin/einem Stadtbewohner. done = gerade abgeschlossene Aufträge */
+  /** Wohin „Auf Wiedersehen“ führt (Spiel oder Hafenmenü) */
+  dialogExit: () => void = () => this.game.resume();
+
   showDialog(npc: TownNpcDef, done: QuestDef[] = [], msg = '') {
     const g = this.game;
+    const exit = this.dialogExit;
     const qs = g.questSys;
     const save = g.saveData;
     if (!qs || !save) return;
@@ -268,13 +278,156 @@ export class Menus {
         <button class="mini brass" data-a="accept" data-id="${q.id}">Annehmen</button></div>`).join('')}
       ${running.map((q) => { const st = qs.step(q!.id); return st ? `<p class="small soft">Laufend: <b>${esc(q!.title)}</b> – ${esc(st.text)}</p>` : ''; }).join('')}
       ${npc.shop ? `<button class="secondary" data-a="shop">${shopBtn[npc.shop]}</button>` : ''}
+      ${npc.shop === 'tavern' ? '<button class="secondary" data-a="hire">Crew anheuern</button>' : ''}
       <button class="primary" data-a="bye" data-focus>Auf Wiedersehen</button>`,
       {
         accept: (id) => { g.acceptQuest(id); this.showDialog(npc, [], 'Auftrag angenommen! Das Ziel siehst du oben rechts.'); },
         shop: () => this.openShop(npc),
-        bye: () => g.resume(),
+        hire: () => this.showHire(() => this.showDialog(npc)),
+        bye: exit,
+      },
+      exit,
+    );
+  }
+
+  // ---------- Hafen (direkt vom Schiff aus, wie in 1.0) ----------
+
+  showHarbor(msg = '') {
+    const g = this.game;
+    const s = g.saveData;
+    const qs = g.questSys;
+    if (!s || !qs) return;
+    const back = () => this.showHarbor();
+    const mark = (id: string) => qs.available(id).length ? ' <b class="pip">!</b>' : s.progress.quests.some((p) => { const st = qs.step(p.id); return st?.type === 'talk' && st.npc === id; }) ? ' <b class="pip ok">?</b>' : '';
+    this.open(
+      `<h2 class="fell">Hafen von Ankerglück</h2>
+      <p class="soft">Gold: <b>${g.playerGold.toLocaleString('de-DE')}</b>${msg ? ` · <b>${esc(msg)}</b>` : ''}</p>
+      <h3>Bewohner</h3>
+      <div class="grid2">${TOWN_NPCS.map((n) => `<button class="secondary" data-a="talk" data-id="${n.id}">${esc(n.name)}${mark(n.id)}<small>${esc(n.title)}</small></button>`).join('')}</div>
+      <h3>Läden</h3>
+      <div class="grid2">
+        <button class="secondary" data-a="yard">Werft</button>
+        <button class="secondary" data-a="smith">Schmiede</button>
+        <button class="secondary" data-a="market">Markt</button>
+        <button class="secondary" data-a="shrine">Faji-Schrein</button>
+        <button class="secondary" data-a="hire">Crew anheuern</button>
+        <button class="secondary" data-a="rest">Rasten (${REST_PRICE} Gold)</button>
+      </div>
+      <button class="secondary" data-a="ashore">An Land gehen und durch die Stadt laufen</button>
+      <button class="primary" data-a="leave" data-focus>Ablegen</button>`,
+      {
+        talk: (id) => { const n = TOWN_NPCS.find((x) => x.id === id); if (n) { this.dialogExit = back; g.talkInHarbor(n); } },
+        yard: () => this.showShipyard('', back),
+        smith: () => this.showSmith(back),
+        market: () => this.showMarket(back),
+        shrine: () => this.showShrine(back),
+        hire: () => this.showHire(back),
+        rest: () => this.showHarbor(g.rest()),
+        ashore: () => { g.resume(); g.world.goAshore(); },
+        leave: () => g.resume(),
       },
       () => g.resume(),
+      { wide: true },
+    );
+  }
+
+  // ---------- Crew ----------
+
+  showHire(back: () => void, msg = '') {
+    const g = this.game;
+    const s = g.saveData;
+    if (!s) return;
+    const rank = g.playerRank;
+    const free = CREW.filter((c) => !s.crew.hired.includes(c.id));
+    this.open(
+      `<h2 class="fell">Crew anheuern</h2>
+      <p class="soft">Gold: <b>${g.playerGold.toLocaleString('de-DE')}</b> · Crew an Bord: ${s.crew.hired.length}${msg ? ` · <b>${esc(msg)}</b>` : ''}</p>
+      ${free.length ? free.map((c) => `<div class="slot crew" style="--c:${c.col}"><div class="slot-head"><b>${esc(c.name)}</b><span>${c.price.toLocaleString('de-DE')} Gold</span></div>
+        <div class="meta"><b>${esc(c.job)}</b> · ${CREW_ROLE_LABEL[c.role]}${rank < c.rank ? ` · ab Rang ${c.rank + 1}` : ''}<br>${esc(c.perk)}${c.skill ? `<br><i>${esc(c.skill.n)}:</i> ${esc(c.skill.d)}` : ''}</div>
+        <p class="dlg-line small">„${esc(c.quote)}“</p>
+        <button class="mini brass" data-a="hire" data-id="${c.id}" ${rank < c.rank ? 'disabled' : ''}>Anheuern</button></div>`).join('') : '<p>Alle sechzehn sind schon an Bord. Was für eine Crew!</p>'}
+      <button class="primary" data-a="back">Zurück</button>`,
+      { hire: (id) => { const y = this.screen.scrollTop; this.showHire(back, g.hireCrew(id)); this.screen.scrollTop = y; }, back },
+      back,
+      { wide: true },
+    );
+  }
+
+  showCrew(back: () => void, msg = '') {
+    const g = this.game;
+    const s = g.saveData;
+    const qs = g.questSys;
+    if (!s || !qs) return;
+    const re = (m = '') => { const y = this.screen.scrollTop; this.showCrew(back, m); this.screen.scrollTop = y; };
+    this.open(
+      `<h2 class="fell">Crew</h2>
+      <p class="soft small">Bis zu drei Crewmitglieder bilden deinen <b>Landtrupp</b> und kämpfen an Land und beim Entern an deiner Seite. Treue wächst mit jedem gemeinsamen Sieg und mit persönlichen Aufträgen – bei voller Treue kämpfen sie 30 % stärker.</p>
+      ${msg ? `<p class="note">${esc(msg)}</p>` : ''}
+      ${s.crew.hired.length ? s.crew.hired.map((id) => {
+        const c = CREW_BY_ID[id];
+        if (!c) return '';
+        const loy = s.crew.loyalty[id] ?? 0;
+        const inParty = s.crew.party.includes(id);
+        const offer = qs.available(id)[0];
+        const turnIn = s.progress.quests.some((p) => { const st = qs.step(p.id); return st?.type === 'talk' && st.npc === id; });
+        return `<div class="slot crew" style="--c:${c.col}"><div class="slot-head"><b>${esc(c.name)}</b><span>${esc(c.job)}</span></div>
+          <div class="meta">${CREW_ROLE_LABEL[c.role]} · ${esc(c.perk)}${c.skill ? `<br><i>${esc(c.skill.n)}:</i> ${esc(c.skill.d)}` : ''}</div>
+          <div class="loy"><span>Treue</span><div class="hud-bar"><i style="width:${loy}%;background:${loy >= 100 ? '#FFD166' : c.col}"></i></div><b>${loy >= 100 ? 'Treu' : loy}</b></div>
+          <div class="row">${c.cat ? '' : `<button class="mini${inParty ? ' brass' : ''}" data-a="party" data-id="${id}" aria-pressed="${inParty}">${inParty ? 'Im Landtrupp ✓' : 'In den Landtrupp'}</button>`}
+          <button class="mini" data-a="talk" data-id="${id}">Sprechen${offer ? ' <b class="pip">!</b>' : turnIn ? ' <b class="pip ok">?</b>' : ''}</button></div></div>`;
+      }).join('') : '<p>Noch niemand an Bord. In der Taverne von Ankerglück suchen Seeleute Arbeit.</p>'}
+      <button class="primary" data-a="back">Zurück</button>`,
+      {
+        party: (id) => re(g.toggleParty(id)),
+        talk: (id) => this.showCrewTalk(id, () => re()),
+        back,
+      },
+      back,
+      { wide: true },
+    );
+  }
+
+  private showCrewTalk(id: string, back: () => void, msg = '') {
+    const g = this.game;
+    const qs = g.questSys;
+    const c = CREW_BY_ID[id];
+    if (!qs || !c) return;
+    const done = msg ? [] : g.talkCrew(id);
+    const offer = qs.available(id)[0];
+    const line = c.lines[Math.floor(Math.random() * c.lines.length)];
+    const reward = (q: QuestDef) => [`${q.reward.gold} Gold`, `${q.reward.xp} EP`, q.reward.sp ? `${q.reward.sp} Faji-Punkt${q.reward.sp > 1 ? 'e' : ''}` : '', '+40 Treue'].filter(Boolean).join(' · ');
+    const running = g.saveData!.progress.quests.find((p) => QUEST_BY_ID[p.id]?.giver === id);
+    this.open(
+      `<div class="dlg-head"><div class="dlg-face" style="background:${c.col}">${esc(c.name[0])}</div><div><b>${esc(c.name)}</b><span class="soft small">${esc(c.job)}</span></div></div>
+      ${done.map((q) => `<div class="dlg-done"><b>Erledigt: ${esc(q.title)}</b><p class="dlg-line">„${esc(q.outro)}“</p><p class="small"><b>Belohnung:</b> ${reward(q)}</p></div>`).join('')}
+      ${done.length ? '' : `<p class="dlg-line">„${esc(line)}“</p>`}
+      ${msg ? `<p class="note">${esc(msg)}</p>` : ''}
+      ${offer ? `<div class="slot main"><div class="slot-head"><b>${esc(offer.title)}</b><span>Persönlich</span></div><p class="dlg-line small">„${esc(qs.introOf(offer))}“</p><p class="small soft">Belohnung: ${reward(offer)}</p><button class="mini brass" data-a="accept" data-id="${offer.id}">Versprechen</button></div>` : ''}
+      ${running ? `<p class="small soft">Laufend: <b>${esc(QUEST_BY_ID[running.id].title)}</b> – ${esc(qs.step(running.id)?.text ?? '')}</p>` : ''}
+      <button class="primary" data-a="back" data-focus>Zurück</button>`,
+      { accept: (qid) => { g.acceptQuest(qid); this.showCrewTalk(id, back, 'Versprochen! Das Ziel siehst du oben rechts.'); }, back },
+      back,
+    );
+  }
+
+  showRanking(back: () => void) {
+    const g = this.game;
+    const s = g.saveData;
+    if (!s) return;
+    const rows = g.rankList();
+    const myPlace = rows.findIndex((r) => r.me) + 1;
+    const hostile = hostileLegends(s.player.faction);
+    this.open(
+      `<h2 class="fell">Rangliste der Legenden</h2>
+      <p class="soft">Du stehst auf <b>Platz ${myPlace}</b> von ${rows.length} der ${s.player.faction === 'pirat' ? 'Piraten' : 'Marine'}. Besiege Legenden, um aufzusteigen.</p>
+      <ol class="rank">${rows.map((r) => `<li class="${r.me ? 'me' : ''}"><b>${esc(r.n)}</b><span>${esc(r.t)} · Stufe ${r.lvl}</span><em>${r.ruhm.toLocaleString('de-DE')} Ruhm</em></li>`).join('')}</ol>
+      <h3>Gesuchte Legenden</h3>
+      ${hostile.map((l) => { const b = s.legends.includes(l.id); const home = g.world.islandDefs.find((i) => i.id === l.home); return `<div class="slot legend${b ? ' beaten' : ''}" style="--c:${l.col}"><div class="slot-head"><b>${esc(l.n)}</b><span>${b ? 'Besiegt ✓' : `Stufe ${l.lvl}`}</span></div><div class="meta"><i>${esc(l.t)}</i> · ${l.faction === 'pirat' ? 'Piratin/Pirat' : 'Marine'} · kreuzt bei ${esc(home?.name ?? '?')}<br>${esc(l.bio)}</div></div>`; }).join('')}
+      ${s.progress.done.includes('k1') ? '' : '<p class="note">Die Legenden nehmen dich erst ernst, wenn du Kapitel 1 abgeschlossen hast.</p>'}
+      <button class="primary" data-a="back" data-focus>Zurück</button>`,
+      { back },
+      back,
+      { wide: true },
     );
   }
 
@@ -413,6 +566,8 @@ export class Menus {
       `<h2 class="fell">Werft</h2>
       <p class="soft">Gold: <b>${g.playerGold.toLocaleString('de-DE')}</b>${msg ? ` · <b>${esc(msg)}</b>` : ''}</p>
       <button class="secondary" data-a="repair" ${cost <= 0 ? 'disabled' : ''}>${cost > 0 ? `Reparieren (${cost} Gold)` : 'Schiff ist unbeschädigt'}</button>
+      <h3>Ausbauten</h3>
+      ${(['can', 'hull', 'sail'] as const).map((k) => { const lv = st.up[k]; const price = g.upgradeCost(k); const n = { can: 'Schwere Kanonen', hull: 'Verstärkter Rumpf', sail: 'Leichte Segel' }[k]; const d = { can: '+12 % Kanonenschaden', hull: '+15 % Rumpfpunkte', sail: '+5 % Tempo' }[k]; return `<div class="slot"><div class="slot-head"><b>${n}</b><span>Stufe ${lv}/5</span></div><div class="meta">${d} je Stufe · <span class="pips">${'●'.repeat(lv)}${'○'.repeat(5 - lv)}</span></div>${lv < 5 ? `<button class="mini brass" data-a="up" data-id="${k}">Ausbauen (${price.toLocaleString('de-DE')} Gold)</button>` : ''}</div>`; }).join('')}
       <h3>Schiffsklassen</h3>${classes}
       <h3>Aussehen</h3>
       ${this.optHtml('Rumpf', sw('hull', HULL_COLORS))}
@@ -425,6 +580,7 @@ export class Menus {
       {
         cls: (id) => rerender(g.shipyardSelect(+id)),
         repair: () => rerender(g.shipyardRepair()),
+        up: (id) => rerender(g.shipUpgrade(id as 'can' | 'hull' | 'sail')),
         lk: (id) => { const [k, v] = id.split('|'); g.shipyardLook({ ...look, [k]: v }); rerender(); },
         lanterns: () => { g.shipyardLook({ ...look, lanterns: !look.lanterns }); rerender(); },
         back,

@@ -2,7 +2,7 @@
 import { defaultLook, type CharacterLook } from '../../data/characterParts';
 import { DEFAULT_SHIP_LOOK, type AmmoId, type ShipLook } from '../../data/ships';
 
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 7;
 
 export interface QuestProgress { id: string; step: number; count: number }
 
@@ -29,6 +29,17 @@ export interface ShipState {
   ammo: AmmoId;
   /** Rumpfzustand 0 … 1 */
   hull: number;
+  /** Ausbauten der Werft (je 0 … 5): Kanonen, Rumpf, Segel */
+  up: { can: number; hull: number; sail: number };
+}
+
+export interface CrewState {
+  /** Angeheuerte Crew (IDs aus data/crew.ts) */
+  hired: string[];
+  /** Landtrupp: bis zu 3 kämpfen an Land an deiner Seite */
+  party: string[];
+  /** Treue 0 … 100 */
+  loyalty: Record<string, number>;
 }
 
 export interface SkillState {
@@ -77,6 +88,9 @@ export interface SaveData {
   gear: GearState;
   skills: SkillState;
   ship: ShipState;
+  crew: CrewState;
+  /** Besiegte Legenden der Rangliste */
+  legends: string[];
   /** Vollständiger Spielstand aus Sturmkrone 1.0 – bleibt erhalten, damit spätere Meilensteine Crew, Fähigkeiten usw. übernehmen können. */
   legacy10?: Record<string, unknown>;
 }
@@ -101,6 +115,8 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
     gear: { weapon: 0, armor: 0, potions: 3, shrine: 0 },
     skills: { learned: {}, slots: [null, null, null], sp: 1, awakened: [] },
     ship: defaultShip(faction),
+    crew: { hired: [], party: [], loyalty: {} },
+    legends: [],
   };
 }
 
@@ -110,5 +126,5 @@ export function defaultProgress(): ProgressState {
 
 export function defaultShip(faction: Faction, tier = 0): ShipState {
   const owned = Array.from({ length: tier + 1 }, (_, i) => i);
-  return { tier, owned, look: DEFAULT_SHIP_LOOK(faction), ammo: 'kugel', hull: 1 };
+  return { tier, owned, look: DEFAULT_SHIP_LOOK(faction), ammo: 'kugel', hull: 1, up: { can: 0, hull: 0, sail: 0 } };
 }

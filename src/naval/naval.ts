@@ -36,6 +36,8 @@ export interface EnemyShip {
   aiT: number;
   name?: string;
   companion?: boolean;
+  /** Legende der Rangliste */
+  legendId?: string;
 }
 
 interface Ball { mesh: Mesh; vel: Vector3; owner: Ship; dmg: number; ammo: AmmoId; life: number }
@@ -49,7 +51,6 @@ export interface NavalHooks {
   loot(gold: number, shard: boolean): void;
 }
 
-const LEGEND_SHIPS = { pirat: ['Bram Eisenzahn', 'Yuna Glutauge', 'Orla Dorn', 'Rotbart Varga'], marine: ['Kapitän Jorin Weiß', 'Kommodore Ilsa Brandt', 'Vizeadmiralin Nadja Sturmfeld', 'Admiral Kasimir Eisgrau'] };
 
 /** Feindschiffe, Kanonenkugeln, Beute und Faji auf See. */
 export class NavalSystem {
@@ -142,24 +143,37 @@ export class NavalSystem {
   private spawnEnemy(px: number, pz: number) {
     const lvl = Math.max(this.zoneLevel(px, pz), Math.floor(this.playerLevel * 0.8));
     const roll = Math.random();
-    const role: NavalRole = roll < 0.42 ? 'patrouille' : roll < 0.67 ? 'jaeger' : roll < 0.95 || lvl < 4 ? 'haendler' : 'legende';
+    const role: NavalRole = roll < 0.42 ? 'patrouille' : roll < 0.67 ? 'jaeger' : 'haendler';
     for (let tries = 0; tries < 8; tries++) {
       const a = Math.random() * Math.PI * 2;
       const d = 380 + Math.random() * 220;
       const x = px + Math.cos(a) * d, z = pz + Math.sin(a) * d;
       if (Math.hypot(x, z) > WORLD_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
       const foe: 'pirat' | 'marine' = role === 'haendler' ? (Math.random() < 0.5 ? 'pirat' : 'marine') : this.playerFaction === 'pirat' ? 'marine' : 'pirat';
-      const tier = role === 'legende' ? Math.min(6, 3 + Math.floor(lvl / 3)) : Math.max(0, Math.min(5, Math.floor(lvl / 2) + Math.floor(Math.random() * 2) - (role === 'haendler' ? 0 : 1)));
+      const tier = Math.max(0, Math.min(5, Math.floor(lvl / 2) + Math.floor(Math.random() * 2) - (role === 'haendler' ? 0 : 1)));
       const look = DEFAULT_SHIP_LOOK(foe);
       if (role === 'haendler') { look.hull = HULL_COLORS[Math.floor(Math.random() * 3)]; look.sail = SAIL_COLORS[Math.floor(Math.random() * 3)]; look.flag = 'anker'; look.flagColor = '#2F6E4F'; look.figurehead = 'keine'; }
-      const ship = new Ship(this.scene, tier, look, foe, role === 'legende' ? 500 : 0);
+      const ship = new Ship(this.scene, tier, look, foe);
       ship.x = x; ship.z = z; ship.heading = Math.random() * Math.PI * 2;
       ship.prev = { x, z, heading: ship.heading };
-      const names = LEGEND_SHIPS[foe];
-      this.enemies.push({ ship, role, level: lvl, state: 'patrol', wander: { x, z }, aiT: 0, name: role === 'legende' ? names[Math.floor(Math.random() * names.length)] : undefined });
-      if (role === 'legende') this.overlay.showCutin(`${this.enemies[this.enemies.length - 1].name} taucht auf!`, '#A8322A');
+      this.enemies.push({ ship, role, level: lvl, state: 'patrol', wander: { x, z }, aiT: 0 });
       return;
     }
+  }
+
+  /** Legende der Rangliste in ihrem Heimatgewässer auftauchen lassen */
+  spawnLegend(l: { id: string; n: string; lvl: number; tier: number; col: string; faction: 'pirat' | 'marine' }, x: number, z: number, levelBonus = 0) {
+    if (this.enemies.some((e) => e.legendId === l.id && e.ship.alive)) return null;
+    const look = DEFAULT_SHIP_LOOK(l.faction);
+    look.sail = l.col; look.flagColor = l.col; look.lanterns = true;
+    const ship = new Ship(this.scene, Math.min(6, l.tier + 1), look, l.faction, 300 + l.lvl * 40);
+    ship.x = x; ship.z = z;
+    const p = this.player;
+    ship.heading = p ? Math.atan2(p.x - x, p.z - z) : 0;
+    ship.prev = { x, z, heading: ship.heading };
+    const e: EnemyShip = { ship, role: 'legende', level: l.lvl + levelBonus, state: 'engage', wander: { x, z }, aiT: 0, name: l.n, legendId: l.id };
+    this.enemies.push(e);
+    return e;
   }
 
   /** Begleitschiffe ab höheren Rängen */

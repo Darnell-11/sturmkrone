@@ -1,3 +1,4 @@
+import { CREW_BY_ID, defaultParty } from '../../data/crew';
 import { sanitizeLook } from '../../data/characterParts';
 import { convertLegacy10, isLegacy10, lookFromLegacy, skillsFromLegacy } from './legacy';
 import { createSave, defaultProgress, defaultShip, SAVE_VERSION, type SaveData } from './types';
@@ -35,6 +36,15 @@ export const MIGRATIONS: Record<number, Migration> = {
     const progress = { ...defaultProgress(), ...(d.progress ?? {}) };
     if (L.stats) progress.stats = { ...progress.stats, kills: n(L.stats.beaten, 0, 1e6), sunk: n(L.stats.sunk, 0, 1e6), boarded: n(L.stats.boarded, 0, 1e6) };
     return { ...d, version: 6, progress, gear: { weapon: n(L.weapon, 0, 5), armor: n(L.armor, 0, 4), potions: n(L.potions, 3, 10), shrine: 0 } };
+  },
+  // Meilenstein 7: Crew, Legenden, Schiffsausbauten (aus 1.0 übernehmen)
+  6: (d) => {
+    const L = d.legacy10 ?? {};
+    const n = (v: unknown) => (typeof v === 'number' && isFinite(v) ? Math.max(0, Math.min(5, Math.floor(v))) : 0);
+    const hired = Array.isArray(L.crew) ? L.crew.filter((c: unknown) => typeof c === 'string' && CREW_BY_ID[c as string]) : [];
+    const legends = isObj(L.legends) ? Object.keys(L.legends).filter((k) => L.legends[k]) : [];
+    const ship = { ...(d.ship ?? {}), up: { can: n(L.up?.can), hull: n(L.up?.hull), sail: n(L.up?.sail) } };
+    return { ...d, version: 7, ship, crew: { hired, party: defaultParty(hired), loyalty: {} }, legends };
   },
 };
 

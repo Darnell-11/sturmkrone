@@ -1,4 +1,5 @@
 import { audio } from '../audio/audio';
+import type { AllyTarget } from '../entities/ally';
 import {
   AdditiveBlending,
   Color,
@@ -75,6 +76,9 @@ class Dummy {
 /** Nahkampf, Fernkampf, Trefferlogik und Gegner – alles auf der aktuellen Insel. */
 export class CombatSystem implements EnemyWorld {
   enemies: Enemy[] = [];
+  /** Crew an deiner Seite (Gegner greifen auch sie an) */
+  allies: AllyTarget[] = [];
+  private targets = new Map<Enemy, { t: AllyTarget | null; until: number }>();
   lock: Enemy | null = null;
   player: PlayerTarget | null = null;
   playerPos: Vector3 | null = null;
@@ -127,6 +131,12 @@ export class CombatSystem implements EnemyWorld {
       const min = r + o.radius;
       if (d > 0.001 && d < min) { x = o.x + (dx / d) * min; z = o.z + (dz / d) * min; }
     }
+    // Nicht in Crew hineinlaufen
+    if (self) for (const a of this.allies) {
+      if (!a.alive) continue;
+      const dx = x - a.x, dz = z - a.z, d = Math.hypot(dx, dz), min = r + a.radius;
+      if (d > 0.001 && d < min) { x = a.x + (dx / d) * min; z = a.z + (dz / d) * min; }
+    }
     // Nicht in die Spielfigur hineinlaufen
     const pl = this.player;
     if (self && pl?.active) {
@@ -159,6 +169,15 @@ export class CombatSystem implements EnemyWorld {
       const dir = p ? new Vector3(p.x - from.x, p.y + 1 - from.y, p.z - from.z).normalize() : new Vector3(Math.sin(e.yaw), 0, Math.cos(e.yaw));
       this.spawnProjectile(from, dir.multiplyScalar(atk.projectile.speed), atk.projectile.radius, e.dmg * atk.dmg, atk.knock, 'enemy', e, false, atk.projectile.color, 0);
       this.fx.hit(from, 'punch', atk.projectile.color);
+      return;
+    }
+    const tg = this.targets.get(e)?.t;
+    if (tg) {
+      if (!tg.alive) return;
+      const ax = tg.x - e.x, az = tg.z - e.z, ad = Math.hypot(ax, az);
+      if (ad > atk.range * e.def.scale + 0.6) return;
+      tg.receive(e.dmg * atk.dmg, ax / (ad || 1), az / (ad || 1));
+      this.fx.hit(new Vector3(tg.x, tg.y + 1.1, tg.z), atk.fx === 'heavy' ? 'heavy' : 'slash', '#FF8A6A');
       return;
     }
     const pl = this.player;
@@ -467,6 +486,36 @@ export class CombatSystem implements EnemyWorld {
     this.overlay.setBoss(null);
   }
 
+  private pickTarget(e: Enemy): AllyTarget | null {
+    if (!e.alive) return null;
+    const cur = this.targets.get(e);
+    if (cur && cur.until > this.now && (!cur.t || cur.t.alive)) return cur.t;
+    let t: AllyTarget | null = null;
+    const alive = this.allies.filter((a) => a.alive);
+    if (alive.length) {
+      const tank = alive.find((a) => a.taunt && Math.hypot(a.x - e.x, a.z - e.z) < 7);
+      const idx = this.enemies.indexOf(e);
+      if (tank && Math.random() < 0.7) t = tank;
+      else if (idx % 3 === 1 || !this.playerActive) {
+        let bd = 14;
+        for (const a of alive) { const d = Math.hypot(a.x - e.x, a.z - e.z); if (d < bd) { bd = d; t = a; } }
+      }
+    }
+    this.targets.set(e, { t, until: this.now + 2 + Math.random() * 2 });
+    return t;
+  }
+
+  /** Treffer durch die Crew */
+  allyHit(e: Enemy, dmg: number, dirX: number, dirZ: number, color: string, heavy: boolean) {
+    if (!e.alive) return;
+    const res = e.takeHit({ dmg: Math.round(dmg), poise: heavy ? 22 : 10, knock: heavy ? 3 : 1.5, dirX, dirZ, heavy } as HitInfo, this.now);
+    const pos = e.head.setY(e.y + 1.4 * e.def.scale);
+    this.fx.hit(pos.clone(), heavy ? 'heavy' : 'slash', color);
+    if (res === 'blocked') this.overlay.number(pos, 'Abgewehrt', 'info');
+    else this.overlay.number(pos, Math.round(dmg), 'hit');
+    if (res === 'kill') this.onKill(e);
+  }
+
   get activeIsland() { return this.island; }
   get hostilesLeft() { return this.enemies.filter((e) => e.alive).length; }
 
@@ -481,7 +530,15 @@ export class CombatSystem implements EnemyWorld {
     // Ein kämpfender Gegner alarmiert das ganze Lager
     const engaged = this.enemies.filter((e) => e.engaged);
     if (engaged.length) for (const e of this.enemies) if (!e.engaged && engaged.some((o) => Math.hypot(o.x - e.x, o.z - e.z) < 32)) e.alert();
-    for (const e of this.enemies) e.update(dt, this);
+    // Jeder Gegner wählt ein Ziel: Spielfigur oder Crew (Tanks ziehen Gegner an)
+    const plPos = this.playerPos, plAct = this.playerActive;
+    for (const e of this.enemies) {
+      const tg = this.pickTarget(e);
+      if (tg) { this.playerPos = new Vector3(tg.x, tg.y, tg.z); this.playerActive = true; }
+      else { this.playerPos = plPos; this.playerActive = plAct; }
+      e.update(dt, this);
+    }
+    this.playerPos = plPos; this.playerActive = plAct;
     for (const d of this.dummies) d.update(dt);
     this.updateDots(dt);
 

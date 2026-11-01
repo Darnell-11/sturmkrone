@@ -1,3 +1,4 @@
+import { CREW_QUESTS } from './crew';
 // Aufträge: Hauptgeschichte und Nebenaufträge. Neue Aufträge = neuer Eintrag, keine Codeänderung nötig.
 import type { Faction } from '../core/save/types';
 import type { EnemyKind } from './combat';
@@ -92,6 +93,7 @@ export const QUESTS: QuestDef[] = [
   },
 ];
 
+QUESTS.push(...CREW_QUESTS);
 export const QUEST_BY_ID: Record<string, QuestDef> = Object.fromEntries(QUESTS.map((q) => [q.id, q]));
 
 // ---------- Bewohner von Ankerglück ----------

@@ -1,4 +1,7 @@
 import { audio } from '../audio/audio';
+import { CrewAboard } from './crewAboard';
+import type { CrewDef } from '../data/crew';
+import type { AllyWorld } from '../entities/ally';
 import {
   Color,
   ConeGeometry,
@@ -93,6 +96,7 @@ export class SeaWorld {
   onEnterIsland: (def: IslandDef) => void = () => {};
   onIslandCleared: (id: string) => void = () => {};
   onRescue: () => void = () => {};
+  onHarbor: () => void = () => {};
   onBottle: () => void = () => {};
   private lastIsland: string | null = null;
   private hostilesBefore = 0;
@@ -121,6 +125,18 @@ export class SeaWorld {
   naval: NavalSystem | null = null;
   /** Tempo-Bonus (Crew, Ausbauten) */
   shipSpeedMult = 1;
+  /** Rumpf-Bonus (Zimmermann, Ausbauten) */
+  hullBonus = 0;
+  /** Reichweite der Breitseiten (Ausguck) */
+  rangeMult = 1;
+  crew: CrewAboard | null = null;
+  private crewHired: string[] = [];
+  private crewParty: string[] = [];
+  private crewLoyalty: Record<string, number> = {};
+  private crewLevel = 1;
+  private allyBuff = 1;
+  private clearedNow = false;
+  onCrewLine: (who: CrewDef, text: string) => void = () => {};
   private sailCd = 0;
   private aimSide = 0;
   private aimT = 0;
@@ -362,6 +378,7 @@ export class SeaWorld {
         this.npcs.push(n);
       }
     }
+    if (!this.crew) this.crew = new CrewAboard(assets, true);
     if (!this.life) {
       this.life = new SeaLife(this.scene, this.islandDefs, this.spray);
       for (let i = 0; i < 2; i++) this.spawnFloaterSomewhere('raft');
@@ -465,7 +482,7 @@ export class SeaWorld {
   setShip(tier: number, look: ShipLook, ammo: AmmoId, hullFrac: number, faction: Faction) {
     const onBoard = this.player && this.player.holder.parent === this.ship.model.group;
     if (onBoard) this.scene.add(this.player!.holder);
-    this.ship.rebuild(tier, look);
+    this.ship.rebuild(tier, look, this.hullBonus);
     (this.ship as any).faction = faction;
     this.ship.ammo = ammo;
     this.ship.hull = Math.max(1, this.ship.maxHull * Math.max(0.05, Math.min(1, hullFrac)));
@@ -474,6 +491,24 @@ export class SeaWorld {
     this.boat = this.ship.model.group;
     if (this.naval) this.naval.player = this.ship;
     if (this.mode === 'sail') this.attachToHelm();
+    this.crew?.setDeck(this.ship, this.crewHired);
+  }
+
+  /** Crew an Bord und Landtrupp einstellen */
+  setCrew(hired: string[], party: string[], loyalty: Record<string, number>, level: number, allyBuff: number) {
+    this.crewHired = [...hired];
+    this.crewParty = [...party];
+    this.crewLoyalty = loyalty;
+    this.crewLevel = level;
+    this.allyBuff = allyBuff;
+    this.crew?.setDeck(this.ship, this.crewHired);
+  }
+
+  private spawnParty(yaw: number) {
+    if (!this.crew || !this.foot || !this.combat) return;
+    this.crew.spawnAllies(this.scene, this.crewParty, this.crewLevel, this.crewLoyalty, this.foot.x, this.foot.z, yaw, this.groundProxy, this.allyBuff);
+    this.combat.allies = this.crew.allies;
+    this.clearedNow = false;
   }
 
   /** Lebenspunkte und Angriffskraft der Spielfigur (aus Stufe und Ausrüstung) */
@@ -530,6 +565,42 @@ export class SeaWorld {
   npcPos(id: string) {
     const n = this.npcs.find((m) => m.townDef?.id === id);
     return n ? { x: n.x, z: n.z } : null;
+  }
+
+  private _allyWorld: AllyWorld | null = null;
+  private get allyWorld(): AllyWorld {
+    return this._allyWorld ??= {
+      enemies: () => this.combat?.enemies ?? [],
+      hit: (e, dmg, dx, dz, col, heavy) => this.combat?.allyHit(e, dmg, dx, dz, col, heavy),
+      status: (e, s, dur) => this.combat?.applyStatus(e, s, dur, 0),
+      healPlayer: (f) => {
+        if (!this.foot) return;
+        const n = Math.round(this.foot.maxHp * f);
+        this.foot.hp = Math.min(this.foot.maxHp, this.foot.hp + n);
+        this.overlay?.number(new Vector3(this.foot.x, this.foot.y + 2, this.foot.z), `+${n}`, 'heal');
+      },
+      reviveCrew: () => this.crew?.reviveAll(0.5),
+      shockwave: (p, r, c) => this.fx?.shockwave(p, r, c),
+      sparks: (p, c, n) => this.sparks.emit(n, p.x, p.y, p.z, { speed: 2, up: 4, life: 1, color: new Color(c).multiplyScalar(2.5), gravity: -1, spread: 0.8 }),
+      text: (p, t) => this.overlay?.number(p, t, 'info'),
+      ground: this.groundProxy,
+    };
+  }
+
+  /** Landtrupp kämpfen lassen, Crew an Deck beleben */
+  private updateCrew(dt: number) {
+    const crew = this.crew;
+    if (!crew) return;
+    if (this.mode === 'foot' && this.foot && crew.allies.length && this.combat) {
+      const cleared = this.combat.hostilesLeft === 0;
+      if (cleared && !this.clearedNow) { this.clearedNow = true; crew.reviveAll(1); }
+      for (const a of crew.allies) {
+        const say = a.update(dt, { x: this.foot.x, z: this.foot.z, yaw: this.foot.yaw }, this.allyWorld, cleared);
+        if (say) this.overlay?.number(new Vector3(a.x, a.y + 2.4 * (a.def.big ?? 1), a.z), say, 'info');
+      }
+    }
+    const line = crew.updateDeck(dt, this.mode === 'sail' && this.camDist < 30, this.mode === 'sail' && this.threat < 0.2, this.env.clock);
+    if (line) this.onCrewLine(line.who, line.text);
   }
 
   /** Kampfnähe 0 … 1 (für die Musik) */
@@ -597,6 +668,7 @@ export class SeaWorld {
     this.dust.update(dt);
     this.updateNpcs(dt);
     this.combat?.update(dt, this.camera);
+    this.updateCrew(dt);
     this.fx?.update(dt);
     this.player?.update(dt);
     // Nach K.O. bringt die Crew dich an Bord
@@ -766,9 +838,15 @@ export class SeaWorld {
       if (prey) {
         this.contextLabel = 'Entern!';
         if (input.pressed('interact')) this.board(prey);
-      } else if (isl && Math.abs(this.speed) < 7) {
-        this.contextLabel = 'An Land gehen';
-        if (input.pressed('interact')) this.disembark(isl);
+      } else if (isl && Math.abs(this.speed) < 9) {
+        const def = this.islandDefs[this.ground.islands.indexOf(isl)];
+        if (def?.kind === 'town') {
+          this.contextLabel = 'Hafen';
+          if (input.pressed('interact')) { this.ship.throttle = 0; this.onHarbor(); }
+        } else {
+          this.contextLabel = 'An Land gehen';
+          if (input.pressed('interact')) this.disembark(isl);
+        }
       }
     } else if (this.boarding) {
       this.contextLabel = 'Zurück an Bord';
@@ -825,6 +903,12 @@ export class SeaWorld {
     }
   }
 
+  /** An der nächsten Insel an Land gehen (Hafenmenü) */
+  goAshore() {
+    const isl = this.ground.islandAt(this.x, this.z, 40 + this.ship.cls.W);
+    if (isl && this.mode === 'sail') this.disembark(isl);
+  }
+
   private disembark(isl: WalkIsland) {
     if (!this.player || !this.foot) return;
     const p = this.ground.shorePoint(isl, this.x, this.z);
@@ -836,6 +920,7 @@ export class SeaWorld {
     this.footYaw = this.foot.yaw;
     this.setMode('foot');
     this.spawnCamp(isl);
+    this.spawnParty(this.foot.yaw);
   }
 
   /** Was auf der Insel passiert: Stadt, Lager, Legende oder Ruhe */
@@ -885,7 +970,9 @@ export class SeaWorld {
     this.footYaw = e.ship.heading;
     this.overlay?.showCutin('Entern!', '#A8322A');
     this.overlay?.speedlines(1);
+    audio.play('board');
     this.setMode('foot');
+    this.spawnParty(e.ship.heading);
   }
 
   private embark() {
@@ -903,6 +990,8 @@ export class SeaWorld {
       c.leaveIsland();
     }
     if (this.foot) this.foot.onFoot = false;
+    this.crew?.clearAllies();
+    if (this.combat) this.combat.allies = [];
     this.setMode('sail');
     this.onMessage('Leinen los!');
   }
