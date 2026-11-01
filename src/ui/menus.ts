@@ -2,7 +2,7 @@ import { ACTION_IDS, ACTION_LABELS, DEFAULT_KEYS, FIXED_CODES, type ActionId } f
 import { QUALITY_IDS, QUALITY_TIERS, type QualityTier } from '../data/qualityTiers';
 import { FACTION_LABELS, rankName } from '../data/ranks';
 import type { Game } from '../core/game';
-import type { Faction, SaveData } from '../core/save/types';
+import type { SaveData } from '../core/save/types';
 import type { Settings } from '../core/settings';
 import { EDGE_WALL, WEATHER, WEATHER_IDS, type WeatherId } from '../data/world';
 import { formatClock } from '../world/timeOfDay';
@@ -20,7 +20,6 @@ export class Menus {
   private handlers: Record<string, Handler> = {};
   private back: (() => void) | null = null;
   private settingsTab: SettingsTab = 'grafik';
-  private newFaction: Faction = 'pirat';
   private capturing = false;
 
   constructor(parent: HTMLElement, private game: Game) {
@@ -105,7 +104,7 @@ export class Menus {
         ${g.persistent ? '' : '<p class="warn">Dein Browser erlaubt kein dauerhaftes Speichern (z. B. privater Modus). Spielstände gehen beim Schließen verloren – nutze „Exportieren“.</p>'}
         <button class="primary" data-a="play" data-focus>Spielen</button>
         <button class="secondary" data-a="settings">Einstellungen</button>
-        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Meilenstein 1 „Grafik-Kern“</p>
+        <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Meilenstein 2 „Charaktere“</p>
       </div>`,
       {
         play: () => this.showSlots(),
@@ -153,7 +152,7 @@ export class Menus {
       <button class="secondary" data-a="back">Zurück</button>`,
       {
         continue: (id) => g.continueGame(+id),
-        new: (id) => { this.newFaction = 'pirat'; this.showNewGame(+id); },
+        new: (id) => g.openEditor(+id),
         export: (id) => {
           const d = g.saves.load(+id).data;
           if (!d) return;
@@ -210,39 +209,6 @@ export class Menus {
     );
   }
 
-  // ---------- Neues Spiel ----------
-
-  showNewGame(slot: number) {
-    const f = this.newFaction;
-    this.open(
-      `<h2 class="fell">Neues Spiel</h2>
-      <div class="opt"><label for="nm">Name</label><input id="nm" class="txt" maxlength="24" value="${f === 'pirat' ? 'Fynn' : 'Rekrut'}" autocomplete="off"></div>
-      <div class="opt"><span class="label">Fraktion</span>
-        <div class="chips">
-          <button data-a="faction" data-id="pirat" aria-pressed="${f === 'pirat'}">Pirat</button>
-          <button data-a="faction" data-id="marine" aria-pressed="${f === 'marine'}">Marine</button>
-        </div>
-        <p class="tier-desc">${f === 'pirat' ? 'Du beginnst als Schiffsjunge auf einer kleinen Schaluppe – frei, laut und ohne Gesetz.' : 'Du beginnst als Rekrut der Marine – mit Befehlen, Ehre und einer kleinen Schaluppe.'}</p>
-      </div>
-      <p class="note">Der große Charakter-Editor kommt in Meilenstein 2.</p>
-      <button class="primary" data-a="start">Ablegen!</button>
-      <button class="secondary" data-a="back">Zurück</button>`,
-      {
-        faction: (id) => {
-          const name = this.card.querySelector<HTMLInputElement>('#nm')!.value;
-          this.newFaction = id as Faction;
-          this.showNewGame(slot);
-          const nm = this.card.querySelector<HTMLInputElement>('#nm')!;
-          if (name !== 'Fynn' && name !== 'Rekrut') nm.value = name;
-          else nm.value = id === 'pirat' ? 'Fynn' : 'Rekrut';
-        },
-        start: () => this.game.newGame(slot, this.card.querySelector<HTMLInputElement>('#nm')!.value, this.newFaction),
-        back: () => this.showSlots(),
-      },
-      () => this.showSlots(),
-    );
-  }
-
   // ---------- Pause ----------
 
   showPause() {
@@ -250,12 +216,14 @@ export class Menus {
     this.open(
       `<h2 class="fell">Pause</h2>
       <button class="primary" data-a="resume" data-focus>Weiterspielen</button>
+      <button class="secondary" data-a="look">Aussehen ändern</button>
       <button class="secondary" data-a="settings">Einstellungen</button>
       <button class="secondary" data-a="workshop">Welt-Werkstatt (Test)</button>
       <button class="secondary" data-a="save">Speichern</button>
       <button class="secondary" data-a="quit">Speichern &amp; Hauptmenü</button>`,
       {
         resume: () => g.resume(),
+        look: () => g.openEditor(null),
         settings: () => this.showSettings(() => this.showPause()),
         workshop: () => this.showWorkshop(),
         save: () => { g.hud.toast(g.persist() ? 'Gespeichert.' : 'Speichern fehlgeschlagen!'); },

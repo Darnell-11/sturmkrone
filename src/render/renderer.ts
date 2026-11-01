@@ -85,7 +85,7 @@ export class GameRenderer {
   }
 
   /** Lichtquelle für Sonnenstrahlen und Fokuspunkt für Tiefenunschärfe */
-  setEffectSources(sun: Mesh, focus: Vector3) {
+  setEffectSources(sun: Mesh | null, focus: Vector3 | null) {
     this.sun = sun;
     this.focus = focus;
     this.rebuildComposer();

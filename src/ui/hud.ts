@@ -6,6 +6,9 @@ export class Hud {
   private subEl: HTMLElement;
   private fpsEl: HTMLElement;
   private envEl: HTMLElement;
+  private ctxEl: HTMLButtonElement;
+  private ctxText = '';
+  onContext: (down: boolean) => void = () => {};
   private hintEl: HTMLElement;
   private toastEl: HTMLElement;
   private toastTimer = 0;
@@ -36,6 +39,13 @@ export class Hud {
     this.hintEl.hidden = true;
     parent.appendChild(this.hintEl);
 
+    this.ctxEl = document.createElement('button');
+    this.ctxEl.className = 'ctx';
+    this.ctxEl.hidden = true;
+    this.ctxEl.addEventListener('pointerdown', (e) => { e.preventDefault(); this.onContext(true); });
+    for (const t of ['pointerup', 'pointercancel', 'pointerleave']) this.ctxEl.addEventListener(t, () => this.onContext(false));
+    parent.appendChild(this.ctxEl);
+
     this.toastEl = document.createElement('div');
     this.toastEl.className = 'toast';
     this.toastEl.setAttribute('role', 'status');
@@ -45,12 +55,21 @@ export class Hud {
 
   setVisible(v: boolean) {
     this.root.hidden = !v;
-    if (!v) this.hintEl.hidden = true;
+    if (!v) { this.hintEl.hidden = true; this.ctxEl.hidden = true; this.ctxText = ''; }
   }
 
   setPlayer(name: string, sub: string) {
     this.nameEl.innerHTML = esc(name);
     this.subEl.innerHTML = esc(sub);
+  }
+
+  /** Kontextknopf (z. B. „An Land gehen“). key = Tastenname für den Hinweis */
+  setContext(label: string | null, key: string | null) {
+    const text = label ? `${label}${key ? ` <kbd>${esc(key)}</kbd>` : ''}` : '';
+    if (this.ctxText === text) return;
+    this.ctxText = text;
+    this.ctxEl.hidden = !label || this.root.hidden;
+    this.ctxEl.innerHTML = text;
   }
 
   setEnv(text: string) {

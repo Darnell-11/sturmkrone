@@ -11,11 +11,17 @@ export interface TouchButtonDef {
   color: 'seal' | 'teal' | 'brass' | 'ok';
 }
 
-// Touch-Buttons auf See. Weitere Layouts (zu Fuß, Kampf) kommen in späteren Meilensteinen dazu.
+// Touch-Buttons auf See
 export const TOUCH_SEA: TouchButtonDef[] = [
   { action: 'attack', label: 'Feuer', size: 88, right: 18, bottom: 26, color: 'seal' },
   { action: 'fireLeft', label: 'Links', size: 62, right: 118, bottom: 22, color: 'seal' },
   { action: 'fireRight', label: 'Rechts', size: 62, right: 26, bottom: 128, color: 'seal' },
   { action: 'dodge', label: 'Schub', size: 58, right: 112, bottom: 104, color: 'teal' },
-  { action: 'interact', label: 'Wetter', size: 54, right: 188, bottom: 30, color: 'brass' },
+];
+
+// Touch-Buttons zu Fuß
+export const TOUCH_FOOT: TouchButtonDef[] = [
+  { action: 'attack', label: 'Angriff', size: 92, right: 18, bottom: 26, color: 'seal' },
+  { action: 'heavy', label: 'Schwer', size: 62, right: 28, bottom: 132, color: 'seal' },
+  { action: 'dodge', label: 'Rolle', size: 64, right: 124, bottom: 22, color: 'teal' },
 ];

@@ -1,4 +1,4 @@
-export type GameState = 'boot' | 'menu' | 'play' | 'pause';
+export type GameState = 'boot' | 'menu' | 'play' | 'pause' | 'editor';
 
 type Listener = (next: GameState, prev: GameState) => void;
 

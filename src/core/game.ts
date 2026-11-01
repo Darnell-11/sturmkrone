@@ -1,18 +1,22 @@
 import { lowerTier, QUALITY_TIERS, type QualityTier } from '../data/qualityTiers';
 import { FACTION_LABELS, rankName } from '../data/ranks';
-import { TOUCH_SEA } from '../data/touchLayout';
+import { TOUCH_FOOT, TOUCH_SEA } from '../data/touchLayout';
+import { randomLook } from '../data/characterParts';
+import { WEATHER, type WeatherId } from '../data/world';
+import { CharacterAssets } from '../entities/character/assets';
 import { AutoQuality, detectTier, gatherDeviceInfo, type DeviceInfo } from '../render/quality';
 import { GameRenderer } from '../render/renderer';
+import { CharacterEditor, styleIdOf, type EditorResult } from '../ui/editor';
 import { Hud } from '../ui/hud';
 import { Menus } from '../ui/menus';
 import { TouchControls } from '../ui/touchControls';
-import { SeaWorld } from '../world/seaWorld';
-import { WEATHER, type WeatherId } from '../data/world';
+import { EditorStage } from '../world/editorStage';
+import { SeaWorld, type SeaMode } from '../world/seaWorld';
 import { formatClock } from '../world/timeOfDay';
 import { Input } from './input/input';
 import { GameLoop } from './loop';
 import { SaveManager } from './save/saveManager';
-import { createSave, type Faction, type SaveData } from './save/types';
+import { createSave, type SaveData } from './save/types';
 import { SettingsStore } from './settings';
 import { StateMachine } from './state';
 import { browserStore } from './storage';
@@ -34,14 +38,19 @@ export class Game {
   readonly loop: GameLoop;
   readonly deviceInfo: DeviceInfo;
   readonly detected: { tier: QualityTier; reason: string };
+  assets: CharacterAssets | null = null;
 
   private slot: number | null = null;
   private save: SaveData | null = null;
   private autoQuality = new AutoQuality();
   private autosaveTimer = 0;
   private saveFailedShown = false;
+  private stage: EditorStage | null = null;
+  private editor: CharacterEditor | null = null;
+  private uiRoot: HTMLElement;
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
+    this.uiRoot = uiRoot;
     const { store, persistent } = browserStore();
     this.persistent = persistent;
     this.settings = new SettingsStore(store);
@@ -50,8 +59,7 @@ export class Game {
     this.renderer = new GameRenderer(canvas);
     this.world = new SeaWorld();
     this.renderer.onQualityChange((c) => this.world.applyQuality(c));
-    this.renderer.setView(this.world.scene, this.world.camera);
-    this.renderer.setEffectSources(this.world.env.sunMesh, this.world.focus);
+    this.useWorldView();
 
     this.deviceInfo = gatherDeviceInfo(this.renderer.gl.getContext());
     this.detected = detectTier(this.deviceInfo);
@@ -66,7 +74,9 @@ export class Game {
     this.menus = new Menus(uiRoot, this);
 
     this.world.onMessage = (m) => this.hud.toast(m);
+    this.world.onModeChange = (m) => this.onModeChange(m);
     this.hud.onPause = () => this.pause();
+    this.hud.onContext = (down) => this.input.setVirtual('interact', down);
     this.applySettings();
     this.settings.onChange(() => this.applySettings());
     this.input.onDeviceChange(() => {
@@ -100,12 +110,29 @@ export class Game {
     });
   }
 
-  start() {
+  async start() {
     // Titelbild: zufällige schöne Stimmung
     this.world.setState({ boat: null, env: { time: [7, 10, 17.8, 18.6][Math.floor(Math.random() * 4)], weather: 'klar' } });
+    this.loop.start();
+    const loading = document.createElement('div');
+    loading.className = 'loading';
+    loading.innerHTML = '<div><div class="fell" style="font-size:2rem">Sturmkrone</div><div>Die Crew macht sich bereit …</div><div class="bar"><i></i></div></div>';
+    document.body.appendChild(loading);
+    try {
+      this.assets = await CharacterAssets.load((d, t) => { (loading.querySelector('.bar i') as HTMLElement).style.width = `${(d / t) * 100}%`; });
+      this.world.setCharacters(this.assets, randomLook(Math.random, 'pirat'), 'saebel');
+    } catch (e) {
+      console.error(e);
+      this.hud.toast('Figuren konnten nicht geladen werden – prüfe die Verbindung.', 5);
+    }
+    loading.remove();
     this.state.set('menu');
     this.menus.showMain();
-    this.loop.start();
+  }
+
+  private useWorldView() {
+    this.renderer.setView(this.world.scene, this.world.camera);
+    this.renderer.setEffectSources(this.world.env.sunMesh, this.world.focus);
   }
 
   // ---------- Schleife ----------
@@ -125,6 +152,13 @@ export class Game {
   }
 
   private render(alpha: number, frameDt: number) {
+    if (this.state.is('editor') && this.stage) {
+      this.stage.update(frameDt);
+      const portrait = innerHeight > innerWidth || innerWidth < 700;
+      this.stage.frame(innerWidth / innerHeight, portrait, portrait ? 0.48 : Math.min(420, innerWidth * 0.44) / innerWidth);
+      this.renderer.render(frameDt);
+      return;
+    }
     this.world.render(this.state.is('play', 'pause') ? alpha : 1, frameDt, this.state.is('menu', 'boot'));
     this.renderer.render(frameDt);
     if (this.state.is('play')) {
@@ -132,6 +166,9 @@ export class Game {
       this.hud.setFps(s.showFps, `${this.loop.fps} fps · ${QUALITY_TIERS[this.renderer.tier].label}`);
       const env = this.world.env;
       this.hud.setEnv(`${formatClock(env.time)} · ${env.timeName} · ${WEATHER[env.weather.target].label}`);
+      const key = this.input.lastDevice === 'keyboard' ? this.input.keyLabel(this.input.getKeyBindings().interact[0] ?? 'KeyR')
+        : this.input.lastDevice === 'gamepad' ? 'X' : null;
+      this.hud.setContext(this.world.contextLabel, key);
       if (s.qualityAuto && this.autoQuality.sample(frameDt)) this.autoLower();
     }
   }
@@ -144,13 +181,76 @@ export class Game {
     this.hud.toast(`Grafikstufe auf „${QUALITY_TIERS[lower].label}“ gesenkt, damit es flüssig läuft.`, 3.5);
   }
 
+  private onModeChange(m: SeaMode) {
+    this.touch.setLayout(m === 'foot' ? TOUCH_FOOT : TOUCH_SEA);
+    if (this.state.is('play')) this.hud.hint(this.controlsHint(), 8);
+  }
+
+  // ---------- Charakter-Editor ----------
+
+  /** Editor öffnen: für ein neues Spiel (slot) oder um das Aussehen zu ändern */
+  openEditor(newSlot: number | null) {
+    if (!this.assets) { this.hud.toast('Figuren werden noch geladen …'); return; }
+    const isNew = newSlot !== null;
+    const p = this.save?.player;
+    const initial: EditorResult = isNew || !p
+      ? { name: 'Fynn', faction: 'pirat', style: 'schwert', blade: 'saebel', look: createSave('Fynn', 'pirat', GAME_VERSION).player.look }
+      : { name: p.name, faction: p.faction, style: p.style, blade: p.blade, look: structuredClone(p.look) };
+    this.menus.hide();
+    this.stage ??= new EditorStage();
+    this.stage.show(this.assets, initial.look, styleIdOf(initial.style, initial.blade));
+    this.renderer.setView(this.stage.scene, this.stage.camera);
+    this.renderer.setEffectSources(null, this.stage.focus);
+    this.state.set('editor');
+    const close = () => {
+      this.editor?.dispose();
+      this.editor = null;
+      this.useWorldView();
+      this.renderer.resize();
+    };
+    this.editor = new CharacterEditor(this.uiRoot, {
+      isNew,
+      initial,
+      onChange: (r, sid) => { this.stage?.show(this.assets!, r.look, sid); },
+      onPreview: (k) => this.stage?.preview(k),
+      onRotate: (dx) => this.stage?.rotate(dx),
+      onZoom: (d) => this.stage?.zoomBy(d),
+      onDone: (r) => {
+        close();
+        if (isNew) this.newGame(newSlot!, r);
+        else this.applyLook(r);
+      },
+      onCancel: () => {
+        close();
+        if (isNew) { this.state.set('menu'); this.menus.showSlots(); }
+        else { this.state.set('pause'); this.menus.showPause(); }
+      },
+    });
+  }
+
+  private applyLook(r: EditorResult) {
+    if (this.save) {
+      this.save.player.look = r.look;
+      this.save.player.style = r.style;
+      this.save.player.blade = r.blade;
+      this.world.updatePlayer(r.look, styleIdOf(r.style, r.blade));
+      this.persist();
+    }
+    this.state.set('pause');
+    this.menus.showPause();
+    this.hud.toast('Neuer Look gespeichert.');
+  }
+
   // ---------- Spielablauf ----------
 
-  newGame(slot: number, name: string, faction: Faction) {
-    const data = createSave(name, faction, GAME_VERSION);
+  newGame(slot: number, r: EditorResult) {
+    const data = createSave(r.name, r.faction, GAME_VERSION);
+    data.player.style = r.style;
+    data.player.blade = r.blade;
+    data.player.look = r.look;
     if (!this.saves.save(slot, data)) this.hud.toast('Speichern nicht möglich – Speicher voll?');
     this.enterPlay(slot, data);
-    this.hud.toast(faction === 'pirat' ? 'Leinen los, Schiffsjunge!' : 'Willkommen an Bord, Rekrut!', 3);
+    this.hud.toast(r.faction === 'pirat' ? 'Leinen los, Schiffsjunge!' : 'Willkommen an Bord, Rekrut!', 3);
   }
 
   continueGame(slot: number) {
@@ -165,6 +265,7 @@ export class Game {
     this.save = data;
     this.world.setState({ boat: data.world.boat, env: { time: data.world.time, weather: data.world.weather as WeatherId } });
     const p = data.player;
+    if (this.assets) this.world.setCharacters(this.assets, p.look, styleIdOf(p.style, p.blade));
     this.hud.setPlayer(p.name, `${FACTION_LABELS[p.faction]} · ${rankName(p.faction, p.fame)} · Stufe ${p.level}`);
     this.menus.hide();
     this.input.flush();
@@ -172,6 +273,7 @@ export class Game {
     this.autoQuality.reset();
     this.state.set('play');
     this.loop.resetClock();
+    this.touch.setLayout(TOUCH_SEA);
     this.hud.hint(this.controlsHint(), 12);
   }
 
@@ -213,6 +315,8 @@ export class Game {
     return ok;
   }
 
+  get hasSave() { return !!this.save; }
+
   // ---------- Einstellungen ----------
 
   setQuality(tier: QualityTier | 'auto') {
@@ -242,10 +346,17 @@ export class Game {
 
   private controlsHint(): string {
     const dev = this.input.lastDevice;
-    if (dev === 'touch') return 'Links ziehen: Steuern · Rechts ziehen: Kamera · Buttons: Feuer, Breitseiten, Schub, Wetter';
-    if (dev === 'gamepad') return 'Linker Stick: Steuern · Rechter Stick: Kamera · A: Feuer · LB/RB: Breitseiten · B: Schub · X: Wetter · Start: Pause';
+    const foot = this.world.mode === 'foot';
+    if (dev === 'touch') return foot
+      ? 'Links ziehen: Laufen · Rechts ziehen: Kamera · Angriff, Schwer, Rolle · Goldener Knopf: Aktion'
+      : 'Links ziehen: Steuern · Rechts ziehen: Kamera · Feuer, Breitseiten, Schub · Goldener Knopf: Aktion';
+    if (dev === 'gamepad') return foot
+      ? 'Linker Stick: Laufen · Rechter Stick: Kamera · A: Angriff · Y: Schwer · B: Rolle · X: Aktion · Start: Pause'
+      : 'Linker Stick: Steuern · Rechter Stick: Kamera · A: Feuer · LB/RB: Breitseiten · B: Schub · X: Aktion · Start: Pause';
     const b = this.input.getKeyBindings();
     const k = (a: keyof typeof b) => (b[a][0] ? this.input.keyLabel(b[a][0]) : '–');
-    return `${k('up')}/${k('down')}: Fahrt · ${k('left')}/${k('right')}: Steuern · ${k('attack')}: Feuer · ${k('fireLeft')}/${k('fireRight')}: Breitseiten · ${k('dodge')}: Schub · ${k('interact')}: Wetter · Rechte Maustaste ziehen: Kamera · Esc: Pause`;
+    return foot
+      ? `${k('up')}${k('left')}${k('down')}${k('right')}: Laufen · ${k('attack')}/Klick: Angriff · ${k('heavy')}: Schwer · ${k('dodge')}: Rolle · ${k('interact')}: Aktion · Rechte Maustaste: Kamera · Esc: Pause`
+      : `${k('up')}/${k('down')}: Fahrt · ${k('left')}/${k('right')}: Steuern · ${k('attack')}: Feuer · ${k('fireLeft')}/${k('fireRight')}: Breitseiten · ${k('dodge')}: Schub · ${k('interact')}: Aktion · Esc: Pause`;
   }
 }

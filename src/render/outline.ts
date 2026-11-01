@@ -4,6 +4,7 @@ import {
   Color,
   Mesh,
   ShaderMaterial,
+  SkinnedMesh,
   Uniform,
   UniformsLib,
   UniformsUtils,
@@ -23,10 +24,17 @@ const hullMaterial = new ShaderMaterial({
   vertexShader: /* glsl */ `
     attribute vec3 outlineNormal;
     uniform float uWidth;
+    #include <common>
+    #include <skinning_pars_vertex>
     #include <fog_pars_vertex>
     void main() {
-      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-      vec3 n = normalize(normalMatrix * outlineNormal);
+      vec3 objectNormal = outlineNormal;
+      #include <skinbase_vertex>
+      #include <skinnormal_vertex>
+      vec3 transformed = position;
+      #include <skinning_vertex>
+      vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
+      vec3 n = normalize(normalMatrix * objectNormal);
       // Konstante Linienbreite auf dem Bildschirm, nah begrenzt
       float w = uWidth * clamp(-mvPosition.z * 0.0032, 0.012, 0.6);
       mvPosition.xyz += n * w;
@@ -45,6 +53,7 @@ const hullMaterial = new ShaderMaterial({
 hullMaterial.userData.outline = true;
 
 const hulls = new Set<Mesh>();
+const hullByWidth = new Map<number, ShaderMaterial>([[1, hullMaterial]]);
 let hullsVisible = true;
 const smoothed = new WeakSet<BufferGeometry>();
 
@@ -81,10 +90,20 @@ export function addOutlines(root: Object3D, width = 1) {
   });
   for (const m of targets) {
     ensureOutlineNormals(m.geometry);
-    const mat = width === 1 ? hullMaterial : hullMaterial.clone();
-    if (width !== 1) mat.uniforms.uWidth.value = width;
-    mat.userData.outline = true;
-    const h = new Mesh(m.geometry, mat);
+    let mat = hullByWidth.get(width);
+    if (!mat) {
+      mat = hullMaterial.clone();
+      mat.uniforms.uWidth.value = width;
+      mat.userData.outline = true;
+      hullByWidth.set(width, mat);
+    }
+    let h: Mesh;
+    if ((m as SkinnedMesh).isSkinnedMesh) {
+      const sm = new SkinnedMesh(m.geometry, mat);
+      sm.bind((m as SkinnedMesh).skeleton, (m as SkinnedMesh).bindMatrix);
+      sm.frustumCulled = false;
+      h = sm;
+    } else h = new Mesh(m.geometry, mat);
     h.userData.noOutline = true;
     h.castShadow = false;
     h.receiveShadow = false;

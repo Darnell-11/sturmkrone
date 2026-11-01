@@ -89,6 +89,16 @@ describe('Spielstände', () => {
     expect(r.data.player).toMatchObject({ name: 'Kira', faction: 'marine', style: 'faust', level: 7, gold: 3400, fame: 950 });
     expect(r.data.progress.quest).toBe(5);
     expect(r.data.legacy10?.crew).toEqual(['cat', 'cook']);
+    // Look aus 1.0 im Charakter-Editor 2.0
+    expect(r.data.player.look).toMatchObject({ skin: '#E8BE96', hair: 'kurz', hairColor: '#5A3A22', outfitColor: '#1F4E79', hat: 'dreispitz', gloves: true });
+  });
+
+  it('hebt Version-2-Stände auf den neuen Look', () => {
+    const v2 = { ...createSave('Ole', 'pirat', V), version: 2 } as any;
+    v2.player.look = { skin: '#8D5A3B', hair: 'glatze', beard: 1, patch: 1, hat: 'keine' };
+    const r = migrateSave(v2, V);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.player.look).toMatchObject({ skin: '#8D5A3B', hair: 'glatze', beard: 'vollbart', eyepatch: true, hat: 'keiner' });
   });
 
   it('findet einen 1.0-Stand im Browser-Speicher', () => {

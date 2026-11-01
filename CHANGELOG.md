@@ -1,5 +1,22 @@
 # Was ist neu
 
+## 2.0.0-m2 – Meilenstein 2 „Charaktere“ (01.11.2026)
+
+- **Echte animierte Figuren:** eigene Anime-Figuren auf dem KayKit-Skelett mit 132 Animationen (CC0), darunter Gehen, Rennen, Rolle, Kombos je Kampfstil, Treffer, Jubeln, Winken, Sitzen, Steuern, Arbeiten und Angeln
+- **Charakter-Editor 2.0** (beim neuen Spiel und im Pausemenü unter „Aussehen ändern“):
+  - Auswahl: Fraktion, Kampfstil, Klingenform, Körperbau, Größe, Hautton
+  - Gesicht: Form, Augen, Augenfarbe, Brauen, Mund
+  - 11 Frisuren mit 12 Haarfarben, Bärte
+  - 6 Oberteile, Mantel, Schuhe und alle Farben
+  - 10 Kopfbedeckungen, dazu Augenklappe, Narbe, Ohrring, Halstuch und Handschuhe
+  - 3D-Vorschau zum Drehen und Zoomen, mit Probe-Animationen (Angriff, Schwer, Rolle, Jubeln, Winken) und Zufallsknopf
+- **Sichtbare Waffen:** Säbel, Langklinge, Zweihänder, Doppelklingen oder eine leuchtende Faji-Kugel
+- **Zu Fuß unterwegs:** Mit dem goldenen Aktionsknopf (oder R) gehst du an Land. Du läufst, rennst und rollst, schlägst Kombos und schwere Angriffe und gehst wieder an Bord. Die Kamera folgt beim Rennen.
+- **Am Ruder:** Deine Figur steht beim Segeln sichtbar am Steuer.
+- **NPC-Baukasten:** zufällige, zur Rolle passende Bewohner (Fischer, Händler, Koch, Schmied, Wirt, Piraten, Marine …). Auf der neuen Startinsel schlendern, sitzen, arbeiten und winken sie.
+- **Spielstände Version 3** mit dem neuen Aussehen. Looks aus 1.0 werden übernommen.
+- Schiffe laufen nicht mehr durch Inseln, weniger grelle Gischt
+
 ## 2.0.0-m1 – Meilenstein 1 „Grafik-Kern“ (01.11.2026)
 
 Sturmkrone sieht jetzt nach Anime aus. Schiff, Inseln und Figuren bleiben Platzhalter bis zu den Meilensteinen 2, 5 und 6.

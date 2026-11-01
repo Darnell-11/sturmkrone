@@ -189,7 +189,7 @@ export class Ocean {
           // Brandungsringe und Küstenlinie
           float bands = smoothstep(0.78, 1.0, sin(sd * 0.45 - uTime * 1.6)) * (1.0 - smoothstep(3.0, 24.0, sd));
           float coast = 1.0 - smoothstep(0.0, 3.2, sd + (nz - 0.5) * 3.0);
-          skFoam = max(skFoam, max(bands * 0.55 * step(nz, 0.75), coast * 0.9));
+          skFoam = max(skFoam, max(bands * 0.35 * step(nz, 0.7), coast * 0.85));
           // Strömung zum Weltrand
           float edgeK = smoothstep(uWorldR - 140.0, uWorldR, skRad);
           float ang = atan(vSkW.z, vSkW.x);
@@ -204,7 +204,7 @@ export class Ocean {
             float ring = smoothstep(r - 1.6, r - 0.6, d) * (1.0 - smoothstep(r - 0.6, r + 0.3, d));
             float core = 1.0 - smoothstep(0.0, r * 0.75, d);
             float life = w.w * (1.0 - clamp(w.z / 6.0, 0.0, 1.0));
-            skFoam = max(skFoam, (ring * 0.95 + core * 0.45) * life * step(0.25, nz));
+            skFoam = max(skFoam, (ring * 0.8 + core * 0.18) * life * step(0.35, nz));
           }
           skFoam = clamp(skFoam, 0.0, 1.0);
           diffuseColor.rgb = mix(skBase, uFoam, skFoam * 0.92);`)

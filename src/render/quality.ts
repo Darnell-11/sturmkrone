@@ -76,7 +76,8 @@ export class AutoQuality {
 
   /** true = Stufe senken */
   sample(frameDt: number): boolean {
-    if (frameDt <= 0 || frameDt > 0.5) return false;
+    // Sehr lange Frames kommen von gedrosselten Hintergrund-Tabs, nicht von zu hoher Grafiklast
+    if (frameDt <= 0 || frameDt > 0.2 || document.hidden) return false;
     this.warmup += frameDt;
     if (this.warmup < 4) return false; // Shader-Kompilierung und Laden abwarten
     this.total += frameDt;

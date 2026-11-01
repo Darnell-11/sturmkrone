@@ -1,3 +1,4 @@
+import { defaultLook, type CharacterLook } from '../../data/characterParts';
 import { SAVE_VERSION, type Faction, type FightStyle, type SaveData } from './types';
 
 /** localStorage-Schlüssel von Sturmkrone 1.0 */
@@ -10,14 +11,36 @@ export function isLegacy10(raw: unknown): raw is Record<string, any> {
 }
 
 const num = (v: unknown, d: number) => (typeof v === 'number' && isFinite(v) ? v : d);
+const hex = (v: unknown) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : undefined);
+
+/** Übersetzt den einfachen Look aus 1.0 (bzw. Spielstand-Version 1/2) in den Charakter-Editor 2.0. */
+export function lookFromLegacy(raw: unknown, faction: Faction, style: FightStyle = 'schwert'): CharacterLook {
+  const l = defaultLook(faction);
+  if (raw && typeof raw === 'object') {
+    const r = raw as Record<string, unknown>;
+    const hairMap: Record<string, CharacterLook['hair']> = { kurz: 'kurz', zopf: 'zopf', lang: 'lang', igel: 'igel', glatze: 'glatze' };
+    const hatMap: Record<string, CharacterLook['hat']> = {
+      dreispitz: 'dreispitz', bandana: 'bandana', kochmuetze: 'kochmuetze', muetze: 'muetze', brille: 'brille',
+      suedwester: 'suedwester', helm: 'helm', keine: 'keiner',
+    };
+    l.skin = hex(r.skin) ?? l.skin;
+    if (typeof r.hair === 'string' && hairMap[r.hair]) l.hair = hairMap[r.hair];
+    l.hairColor = hex(r.hairCol) ?? l.hairColor;
+    l.outfitColor = hex(r.outfit) ?? l.outfitColor;
+    if (typeof r.hat === 'string' && hatMap[r.hat]) l.hat = hatMap[r.hat];
+    l.hatColor = hex(r.hatCol) ?? l.hatColor;
+    if (r.beard) l.beard = 'vollbart';
+    if (r.patch) l.eyepatch = true;
+    if (hex(r.coat)) { l.coat = 'lang'; l.coatColor = hex(r.coat)!; }
+  }
+  l.gloves = style === 'faust';
+  return l;
+}
 
 /** Wandelt einen 1.0-Spielstand in das 2.0-Format (Version 1) um. Nichts geht verloren: Alles liegt zusätzlich in legacy10. */
 export function convertLegacy10(raw: Record<string, any>, gameVersion: string, now = Date.now()): SaveData {
   const style: FightStyle = ['faust', 'schwert', 'effekt'].includes(raw.style) ? raw.style : 'schwert';
-  const look: Record<string, string | number> = {};
-  if (raw.look && typeof raw.look === 'object') {
-    for (const [k, v] of Object.entries(raw.look)) if (typeof v === 'string' || typeof v === 'number') look[k] = v;
-  }
+  const look = lookFromLegacy(raw.look, raw.faction as Faction, style);
   return {
     version: SAVE_VERSION,
     meta: { created: now, updated: now, playTime: 0, gameVersion },

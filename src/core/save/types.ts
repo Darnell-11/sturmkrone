@@ -1,5 +1,7 @@
 // Aufbau eines Spielstands. Bei jeder Änderung: SAVE_VERSION erhöhen und in migrations.ts eine Migration ergänzen.
-export const SAVE_VERSION = 2;
+import { defaultLook, type CharacterLook } from '../../data/characterParts';
+
+export const SAVE_VERSION = 3;
 
 export type Faction = 'pirat' | 'marine';
 export type FightStyle = 'faust' | 'schwert' | 'effekt';
@@ -23,7 +25,7 @@ export interface SaveData {
     xp: number;
     gold: number;
     fame: number;
-    look: Record<string, string | number>;
+    look: CharacterLook;
   };
   world: {
     boat: { x: number; z: number; heading: number } | null;
@@ -53,7 +55,7 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
       xp: 0,
       gold: 200,
       fame: 0,
-      look: {},
+      look: defaultLook(faction),
     },
     world: { boat: null, time: 9, weather: 'klar' },
     progress: { flags: {}, quest: 0 },

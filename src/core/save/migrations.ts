@@ -1,4 +1,5 @@
-import { convertLegacy10, isLegacy10 } from './legacy';
+import { sanitizeLook } from '../../data/characterParts';
+import { convertLegacy10, isLegacy10, lookFromLegacy } from './legacy';
 import { createSave, SAVE_VERSION, type SaveData } from './types';
 
 type Migration = (data: Record<string, any>) => Record<string, any>;
@@ -12,6 +13,13 @@ export const MIGRATIONS: Record<number, Migration> = {
     world.weather = 'klar';
     delete world.night;
     return { ...d, version: 2, world };
+  },
+  // Meilenstein 2: Charakter-Editor 2.0
+  2: (d) => {
+    const p = { ...(d.player ?? {}) };
+    const faction = p.faction === 'marine' ? 'marine' : 'pirat';
+    p.look = lookFromLegacy(p.look, faction, p.style);
+    return { ...d, version: 3, player: p };
   },
 };
 
@@ -51,5 +59,6 @@ export function migrateSave(raw: unknown, gameVersion: string): MigrationResult 
   const defaults = createSave('', isObj(data.player) && data.player.faction === 'marine' ? 'marine' : 'pirat', gameVersion, 0);
   const filled = fillDefaults(data, defaults) as SaveData;
   if (filled.player.faction !== 'pirat' && filled.player.faction !== 'marine') filled.player.faction = 'pirat';
+  filled.player.look = sanitizeLook(filled.player.look, filled.player.faction);
   return { ok: true, data: filled, migratedFrom: from === SAVE_VERSION ? null : from };
 }
