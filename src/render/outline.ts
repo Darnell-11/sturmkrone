@@ -101,7 +101,7 @@ export function addOutlines(root: Object3D, width = 1) {
     if ((m as SkinnedMesh).isSkinnedMesh) {
       const sm = new SkinnedMesh(m.geometry, mat);
       sm.bind((m as SkinnedMesh).skeleton, (m as SkinnedMesh).bindMatrix);
-      sm.frustumCulled = false;
+      sm.frustumCulled = m.frustumCulled;
       h = sm;
     } else h = new Mesh(m.geometry, mat);
     h.userData.noOutline = true;

@@ -1,3 +1,4 @@
+import { plankTexture, sailTexture } from '../render/textures';
 import {
   BoxGeometry,
   BufferGeometry,
@@ -74,11 +75,11 @@ export class SeaLife {
 
   private makeBoat(cx: number, cz: number, r: number): Boat {
     const g = new Group();
-    const hull = new Mesh(new BoxGeometry(1.8, 0.8, 5), toon('#8A5A2B'));
+    const hull = new Mesh(new BoxGeometry(1.8, 0.8, 5), toon({ color: '#9A6A3B', map: plankTexture() }));
     hull.position.y = 0.3;
     const mast = new Mesh(new CylinderGeometry(0.06, 0.08, 4, 6), toon('#5A3A22'));
     mast.position.y = 2.4;
-    const sail = new Mesh(new PlaneGeometry(2.2, 2.6), toon({ color: '#F3E6C8', side: DoubleSide }));
+    const sail = new Mesh(new PlaneGeometry(2.2, 2.6), toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(['#E8DCC0', '#C9A27A', '#D9C8A8'][Math.floor(Math.random() * 3)], null, Math.floor(Math.random() * 999)) }));
     sail.position.set(0.05, 2.6, -0.4);
     sail.rotation.y = Math.PI / 2;
     sail.userData.noOutline = true;

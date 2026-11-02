@@ -5,6 +5,9 @@ import {
   LoopOnce,
   LoopRepeat,
   Matrix4,
+  Color,
+  DoubleSide,
+  FrontSide,
   SkinnedMesh,
   Vector3,
   type AnimationAction,
@@ -19,6 +22,11 @@ import { addOutlines } from '../../render/outline';
 import { toon } from '../../render/toon';
 import type { CharacterAssets } from './assets';
 import { buildCharacterGeometry, LIMB_EXT } from './builder';
+import { VROID_BONES, VroidBase } from './vroid';
+import { attachHeadgear } from './animeHats';
+
+/** Lange Frisuren nutzen die weibliche Grundfigur, kurze die männliche */
+function isFemale(l: CharacterLook) { return ['lang', 'pferdeschwanz', 'zoepfe', 'zopf', 'dutt'].includes(l.hair); }
 
 /** Weltmaßstab: Skelett ist 2,2 Einheiten hoch → Figur ca. 1,75 m */
 export const CHARACTER_SCALE = 0.8;
@@ -65,11 +73,16 @@ export interface PlayOptions {
 export class Character {
   /** In die Welt setzen und bewegen */
   readonly holder = new Group();
-  readonly rig: Object3D;
+  rig!: Object3D;
   readonly bones: Record<string, Bone> = {};
-  readonly mixer: AnimationMixer;
-  look: CharacterLook;
-  private skeleton: Skeleton;
+  mixer!: AnimationMixer;
+  look!: CharacterLook;
+  private skeleton!: Skeleton;
+  /** Anime-Grundfigur (VRoid) oder null für die Bausteinfigur */
+  private vroid: VroidBase | null = null;
+  private face: { mesh: SkinnedMesh; blink: number; joy: number; mouth: number } | null = null;
+  private blinkT = 2 + Math.random() * 3;
+  private headgear: Group | null = null;
   private mesh: SkinnedMesh | null = null;
   private detail: SkinnedMesh | null = null;
   private actions = new Map<string, AnimationAction>();
@@ -82,6 +95,8 @@ export class Character {
   static readonly PROPORTIONS: Record<string, number> = { head: 0.68, spine: 1.05 };
 
   constructor(private assets: CharacterAssets, look: CharacterLook, private outline = true) {
+    const vb = assets.vroid ? (isFemale(look) ? assets.vroid.female : assets.vroid.male) : null;
+    if (vb) { this.initVroid(vb, look); return; }
     this.rig = cloneSkinned(assets.rig);
     let tmpl: SkinnedMesh | null = null;
     const old: Object3D[] = [];
@@ -114,9 +129,99 @@ export class Character {
     this.applyLook(look);
   }
 
+  // ---------- Anime-Figur (VRoid) ----------
+
+  private initVroid(vb: VroidBase, look: CharacterLook) {
+    const old = this.rig;
+    const held = { l: this.bones.handslotl?.children[0] ?? null, r: this.bones.handslotr?.children[0] ?? null };
+    if (old) { this.mixer?.stopAllAction(); old.removeFromParent(); }
+    this.vroid = vb;
+    this.actions.clear();
+    this.current = null;
+    this.currentName = '';
+    this.rig = cloneSkinned(vb.template);
+    for (const k of Object.keys(this.bones)) delete this.bones[k];
+    for (const [ours, theirs] of Object.entries({ ...VROID_BONES, ...VroidBase.HAND_ALIAS })) {
+      const b = this.rig.getObjectByName(theirs);
+      if (b) this.bones[ours] = b as Bone;
+    }
+    for (const s of ['l', 'r'] as const) {
+      const slot = new Bone();
+      slot.name = `handslot${s}`;
+      slot.position.copy(vb.slot[s].pos);
+      slot.quaternion.copy(vb.slot[s].quat);
+      slot.scale.setScalar(vb.slot[s].scale);
+      this.bones[`hand${s}`]?.add(slot);
+      this.bones[slot.name] = slot;
+      if (held[s]) slot.add(held[s]!);
+    }
+    this.face = null;
+    this.rig.traverse((o) => {
+      const m = o as SkinnedMesh;
+      if (!m.isSkinnedMesh) return;
+      m.castShadow = true;
+      m.receiveShadow = true;
+      m.frustumCulled = true;
+      const dict = m.morphTargetDictionary;
+      if (dict) {
+        const find = (re: RegExp) => { const k = Object.keys(dict).find((n) => re.test(n)); return k !== undefined ? dict[k] : -1; };
+        const blink = find(/EYE_Close$/);
+        if (blink >= 0) this.face = { mesh: m, blink, joy: find(/ALL_Joy$/), mouth: find(/MTH_A$/) };
+      }
+    });
+    this.holder.add(this.rig);
+    this.mixer = new AnimationMixer(this.rig);
+    this.mixer.addEventListener('finished', (e) => {
+      if (e.action === this.current && this.doneCb) {
+        const cb = this.doneCb;
+        this.doneCb = null;
+        cb();
+      }
+    });
+    this.look = look;
+    this.applyVroidLook(look);
+    if (this.outline) this.rig.traverse((o) => { const m = o as SkinnedMesh; if (m.isSkinnedMesh && !(m.material as { transparent?: boolean }).transparent) addOutlines(m, 0.7); });
+  }
+
+  /** Farben der Anime-Figur aus dem Look (Haut, Haare, Kleidung, Augen) */
+  private applyVroidLook(look: CharacterLook) {
+    const vb = this.vroid!;
+    const skinBase = new Color('#F6DCC6');
+    const skin = new Color(look.skin);
+    const skinTint = new Color(Math.min(1.08, skin.r / skinBase.r), Math.min(1.08, skin.g / skinBase.g), Math.min(1.08, skin.b / skinBase.b));
+    const colorFor: Record<string, Color> = {
+      skin: skinTint, hair: new Color(look.hairColor), brow: new Color(look.hairColor).multiplyScalar(0.8), top: new Color(look.outfitColor),
+      bottom: new Color(look.pantsColor), shoes: new Color(look.shoesColor), iris: new Color(look.eyeColor), fixed: new Color(0xffffff),
+    };
+    this.rig.traverse((o) => {
+      const m = o as SkinnedMesh;
+      const i = m.userData.vroidPart as number | undefined;
+      if (!m.isSkinnedMesh || i === undefined) return;
+      const p = vb.parts[i];
+      const mat = toon({ color: colorFor[p.slot], map: p.gray ?? p.map, side: p.doubleSided ? DoubleSide : FrontSide, transparent: p.transparent, spec: p.slot === 'hair' ? 0.7 : 0, rim: p.slot === 'fixed' ? 0.4 : 1 });
+      mat.alphaTest = p.alphaTest || (p.transparent ? 0 : 0.5);
+      m.material = mat;
+    });
+    // Kopfschmuck neu aufsetzen
+    this.headgear?.removeFromParent();
+    this.headgear = null;
+    const head = this.rig.getObjectByName('J_Bip_C_Head');
+    if (head) this.headgear = attachHeadgear(head, this.rig.getObjectByName('J_Adj_L_FaceEye') ?? null, this.rig.getObjectByName('J_Adj_R_FaceEye') ?? null, look, this.outline);
+    const h = Math.min(1.1, Math.max(0.9, look.height));
+    const base = vb.template.scale.x;
+    const wide = look.body === 'kraeftig' ? 1.07 : look.body === 'schmal' ? 0.95 : 1;
+    this.rig.scale.set(base * h * wide, base * h, base * h * wide);
+  }
+
   /** Aussehen ändern (baut die Figur neu) */
   setLook(look: CharacterLook) {
     this.look = look;
+    if (this.assets.vroid) {
+      const vb = isFemale(look) ? this.assets.vroid.female : this.assets.vroid.male;
+      if (vb !== this.vroid) { this.initVroid(vb, look); this.play('idle', { fade: 0.01 }); }
+      else this.applyVroidLook(look);
+      return;
+    }
     this.applyLook(look);
   }
 
@@ -165,7 +270,7 @@ export class Character {
   private action(name: string): AnimationAction | null {
     let a = this.actions.get(name);
     if (!a) {
-      const clip = this.assets.clips.get(name);
+      const clip = this.vroid ? this.vroid.clip(name) : this.assets.clips.get(name);
       if (!clip) return null;
       a = this.mixer.clipAction(clip);
       this.actions.set(name, a);
@@ -213,7 +318,20 @@ export class Character {
     return a.time / a.getClip().duration;
   }
 
-  update(dt: number) { this.mixer.update(dt); }
+  update(dt: number) {
+    this.mixer.update(dt);
+    // Mimik: blinzeln, beim Jubeln strahlen, beim Reden den Mund bewegen
+    const f = this.face;
+    if (f && f.mesh.morphTargetInfluences) {
+      const inf = f.mesh.morphTargetInfluences;
+      this.blinkT -= dt;
+      if (this.blinkT < -0.14) this.blinkT = 2 + Math.random() * 4;
+      const joy = this.currentName === 'Cheering' ? 1 : 0;
+      if (f.joy >= 0) inf[f.joy] += (joy - inf[f.joy]) * Math.min(1, dt * 8);
+      inf[f.blink] = joy ? 0 : this.blinkT < 0 ? 1 : 0;
+      if (f.mouth >= 0) inf[f.mouth] = this.currentName === 'Interact' ? 0.35 + 0.35 * Math.sin(performance.now() * 0.02) : 0;
+    }
+  }
 
   /** Objekt in eine Hand legen ('r' oder 'l'). null entfernt. */
   hold(side: 'l' | 'r', obj: Object3D | null) {

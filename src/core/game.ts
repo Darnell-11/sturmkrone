@@ -1166,6 +1166,7 @@ export class Game {
     };
     this.editor = new CharacterEditor(this.uiRoot, {
       isNew,
+      anime: !!this.assets.vroid,
       initial,
       onChange: (r, sid) => { this.stage?.show(this.assets!, r.look, sid); },
       onPreview: (k) => this.stage?.preview(k),

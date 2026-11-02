@@ -460,7 +460,19 @@ export class SeaWorld {
     this.player.play('steer', { fade: 0.2 });
   }
 
+  /** Figuren weiter weg als das werden nicht gezeichnet (je Grafikstufe) */
+  private figureDist = 110;
+  private cullFigures() {
+    const cp = this.camera.position;
+    const lim = this.figureDist * this.figureDist;
+    const set = (h: { position: Vector3; visible: boolean } | undefined) => { if (h) h.visible = (h.position.x - cp.x) ** 2 + (h.position.z - cp.z) ** 2 < lim; };
+    for (const n of this.npcs) set(n.char.holder);
+    for (const e of this.combat?.enemies ?? []) set(e.char.holder);
+    for (const a of this.crew?.allies ?? []) set(a.char.holder);
+  }
+
   applyQuality(c: QualityConfig) {
+    this.figureDist = c.viewDistance * 0.14;
     this.env.applyQuality(c);
     this.spray.scale = c.particles;
     this.sparks.scale = c.particles;
@@ -1122,6 +1134,7 @@ export class SeaWorld {
   // ---------- Darstellung ----------
 
   render(alpha: number, frameDt: number, inMenu: boolean) {
+    this.cullFigures();
     const s = this.ship;
     const x = MathUtils.lerp(s.prev.x, s.x, alpha);
     const z = MathUtils.lerp(s.prev.z, s.z, alpha);

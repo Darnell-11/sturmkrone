@@ -214,6 +214,10 @@ export class GameRenderer {
     if (this.maskT <= 0) { this.maskT = 0.5; this.keepWaterMask(this.scene); }
     this.ao?.update();
     if (this.composer) this.composer.render(dt);
-    else this.gl.render(this.scene, this.camera);
+    else {
+      // Ohne Nachbearbeitung selbst löschen (der Composer schaltet autoClear ab – sonst bleiben alte Bilder stehen)
+      this.gl.autoClear = true;
+      this.gl.render(this.scene, this.camera);
+    }
   }
 }

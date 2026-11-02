@@ -1,11 +1,16 @@
 import type { AnimationClip, Object3D, SkinnedMesh } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { Vector3 } from 'three';
 import { ANIM_FILES } from '../../data/animations';
+import { loadVroid, type VroidBase } from './vroid';
 
 const BASE = `${import.meta.env.BASE_URL}assets/characters/kaykit/`;
 
 /** Skelett-Vorlage und alle Animationen, einmal geladen und von allen Figuren geteilt. */
 export class CharacterAssets {
+  /** Anime-Grundfiguren (VRoid, CC0); null = Ersatzfiguren aus Bausteinen */
+  vroid: { male: VroidBase; female: VroidBase } | null = null;
+
   private constructor(
     readonly rig: Object3D,
     readonly boneIndex: Record<string, number>,
@@ -35,6 +40,8 @@ export class CharacterAssets {
         if (!clips.has(c.name)) clips.set(c.name, c);
       }
     }
-    return new CharacterAssets(rig, boneIndex, clips);
+    const assets = new CharacterAssets(rig, boneIndex, clips);
+    assets.vroid = await loadVroid(rig, clips, new Vector3(0, 0.096, -0.058));
+    return assets;
   }
 }

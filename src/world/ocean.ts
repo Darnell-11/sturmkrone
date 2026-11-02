@@ -214,9 +214,11 @@ export class Ocean {
             float d = distance(vSkW.xz, w.xy);
             float r = 1.4 + w.z * 1.7;
             // Weiche, aufgerissene Schaumspur statt Ringen
-            float core = 1.0 - smoothstep(r * 0.25, r, d);
+            float core = 1.0 - smoothstep(r * 0.2, r, d);
             float life = w.w * (1.0 - clamp(w.z / 7.0, 0.0, 1.0));
-            skFoam = max(skFoam, core * smoothstep(0.3, 0.7, nz + core * 0.25) * 0.85 * life);
+            // feine Schaumspitze: nur dort Schaum, wo das feine Rauschen hoch ist – keine vollen Scheiben
+            float lace = skNoise(vSkW.xz * 1.9 + vec2(uTime * 0.4, 0.0)) * 0.6 + skNoise(vSkW.xz * 4.3 - uTime * 0.3) * 0.4;
+            skFoam = max(skFoam, smoothstep(0.62 - core * 0.18, 0.72 - core * 0.18, lace) * core * 0.8 * life);
           }
           skFoam = clamp(skFoam, 0.0, 1.0);
           diffuseColor.rgb = mix(skBase, uFoam, skFoam * 0.92);`)

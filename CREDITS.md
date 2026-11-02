@@ -23,8 +23,12 @@ Herkunft und Lizenz jedes fremden Assets und jeder Bibliothek.
 |---|---|---|---|
 | KayKit Character Animations 1.1: 132 Animationen und das Skelett „Rig_Medium“ (`public/assets/characters/kaykit/Rig_Medium_*.glb`) | Kay Lousberg (www.kaylousberg.com) | CC0 1.0 | Original: https://kaylousberg.itch.io/kaykit-character-animations · bezogen über die CC0-Kopie https://github.com/NoLimitNexus/game-models (`library/animations`) · Lizenztext: `public/assets/characters/kaykit/LICENSE-kaykit-character-animations.txt` |
 | KayKit Mannequin_Medium (Skelett-Vorlage mit Bindungsdaten, `Mannequin_Medium.glb`) | Kay Lousberg | CC0 1.0 | wie oben (`tools/reference/Mannequin_Medium.glb`) |
+| Anime-Grundfiguren „HairSample_Male“ und „HairSample_Female“ aus VRoid Studio (`public/assets/characters/vroid/male.glb`, `female.glb`; mit `scripts/build-vroid.mjs` verkleinert, Texturen als WebP) | VRoid Project (pixiv) | CC0 1.0 (laut offizieller VRoid-Hilfe und den Metadaten der Dateien) | Lizenz: https://vroid.pixiv.help/hc/en-us/articles/4402614652569 · Dateien: https://opengameart.org/content/vroid-studio-cc0-models (`hairsample_male.zip`, `hairsample_female.zip`) |
+| glTF-Transform (Werkzeug zum Verkleinern der Modelle) | Don McCurdy | MIT | https://gltf-transform.dev |
+| meshoptimizer | Arseny Kapoulkine | MIT | https://github.com/zeux/meshoptimizer |
+| sharp (Bildverarbeitung beim Verkleinern) | Lovell Fuller u. a. | Apache-2.0 | https://sharp.pixelplumbing.com |
 
-Die Figuren selbst (Körper, Gesichter, Frisuren, Kleidung, Hüte, Waffen) sind eigene Entwürfe für Sturmkrone, per Code erzeugt.
+Die Animationen werden beim Laden von KayKit auf die Anime-Figuren übertragen. Kopfbedeckungen, Augenklappe, Ohrring, Waffen, Schiffe, Inseln und die Ersatzfiguren aus Bausteinen sind eigene Entwürfe für Sturmkrone, per Code erzeugt.
 
 ## Eigene Werke
 

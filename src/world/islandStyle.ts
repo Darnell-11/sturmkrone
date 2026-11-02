@@ -55,8 +55,9 @@ export function islandTerrain(kit: StyleKit, r: number, hill: number, rnd: () =>
     const k = coast(Math.atan2(z, x));
     // sanfte Hügel und Mulden, zum Rand hin flach
     const top = y / R;
-    const bump = 1 + 0.22 * top * (Math.sin(x * 0.11 + seed) * Math.cos(z * 0.09 - seed) + 0.5 * Math.sin((x + z) * 0.23 + seed * 1.7));
-    hp.setXYZ(i, x * k, y * bump, z * k);
+    // keine Höhenbeulen: die Lauffläche folgt der glatten Kuppe, sonst versinken Figuren im Gras
+    void top;
+    hp.setXYZ(i, x * k, y, z * k);
   }
   hg.computeVertexNormals();
   const hillMesh = new Mesh(hg, kit.grass);

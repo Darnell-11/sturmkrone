@@ -17,6 +17,8 @@ export interface EditorResult {
 export interface EditorOptions {
   /** Neues Spiel: Name und Fraktion wählbar */
   isNew: boolean;
+  /** Anime-Figuren (VRoid): nur die Optionen, die dort wirken */
+  anime?: boolean;
   initial: EditorResult;
   onChange: (r: EditorResult, styleId: StyleId) => void;
   onPreview: (kind: 'cheer' | 'attack' | 'wave' | 'roll' | 'heavy') => void;
@@ -166,15 +168,27 @@ export class CharacterEditor {
           + this.opt('Hautton', this.swatches('skin', SKIN_TONES));
         break;
       case 'gesicht':
+        if (this.o.anime) { body = this.opt('Augenfarbe', this.swatches('eyeColor', EYE_COLORS)) + '<p class="tier-desc">Die Anime-Figuren haben ein fein gezeichnetes Gesicht mit Mimik: Sie blinzeln, strahlen beim Jubeln und bewegen beim Reden den Mund.</p>'; break; }
         body = this.opt('Gesichtsform', this.chips('face', FACE_SHAPES)) + this.opt('Augen', this.chips('eyes', EYE_STYLES))
           + this.opt('Augenfarbe', this.swatches('eyeColor', EYE_COLORS)) + this.opt('Brauen', this.chips('brows', BROW_STYLES))
           + this.opt('Mund', this.chips('mouth', MOUTH_STYLES));
         break;
       case 'haare':
+        if (this.o.anime) {
+          const long = ['lang', 'pferdeschwanz', 'zoepfe', 'zopf', 'dutt'].includes(r.look.hair);
+          body = this.opt('Figur', `<div class="chips"><button data-a="set" data-k="hair" data-v="kurz" aria-pressed="${!long}">Kurzhaar</button><button data-a="set" data-k="hair" data-v="lang" aria-pressed="${long}">Langhaar</button></div>`)
+            + this.opt('Haarfarbe', this.swatches('hairColor', HAIR_COLORS));
+          break;
+        }
         body = this.opt('Frisur', this.chips('hair', HAIR_STYLES)) + this.opt('Haarfarbe', this.swatches('hairColor', HAIR_COLORS))
           + this.opt('Bart', this.chips('beard', BEARD_STYLES));
         break;
       case 'kleidung':
+        if (this.o.anime) {
+          body = this.opt('Oberteil', this.swatches('outfitColor', CLOTH_COLORS)) + this.opt('Hose / Rock', this.swatches('pantsColor', CLOTH_COLORS))
+            + this.opt('Schuhe', this.swatches('shoesColor', ['#5A3A22', '#1E1A20', '#8A5A2B', '#7A1F1A', '#F3E6C8']));
+          break;
+        }
         body = this.opt('Oberteil', this.chips('outfit', OUTFITS)) + this.opt('Hauptfarbe', this.swatches('outfitColor', CLOTH_COLORS))
           + this.opt('Akzentfarbe', this.swatches('accentColor', CLOTH_COLORS)) + this.opt('Hose', this.swatches('pantsColor', CLOTH_COLORS))
           + this.opt('Schuhe', this.chips('shoes', SHOES) + this.swatches('shoesColor', ['#5A3A22', '#1E1A20', '#8A5A2B', '#7A1F1A', '#F3E6C8']))
@@ -182,7 +196,7 @@ export class CharacterEditor {
         break;
       case 'extras':
         body = this.opt('Kopfbedeckung', this.chips('hat', HATS) + (r.look.hat !== 'keiner' && r.look.hat !== 'helm' ? this.swatches('hatColor', CLOTH_COLORS) : ''))
-          + this.opt('Accessoires', `<div class="chips">${this.toggle('eyepatch', 'Augenklappe')}${this.toggle('scar', 'Narbe')}${this.toggle('earring', 'Ohrring')}${this.toggle('scarf', 'Halstuch')}${this.toggle('gloves', 'Handschuhe')}</div>`);
+          + this.opt('Accessoires', (this.o.anime ? `<div class="chips">${this.toggle('eyepatch', 'Augenklappe')}${this.toggle('earring', 'Ohrring')}</div>` : `<div class="chips">${this.toggle('eyepatch', 'Augenklappe')}${this.toggle('scar', 'Narbe')}${this.toggle('earring', 'Ohrring')}${this.toggle('scarf', 'Halstuch')}${this.toggle('gloves', 'Handschuhe')}</div>`));
         break;
     }
     this.panel.innerHTML = `
