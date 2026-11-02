@@ -1,5 +1,16 @@
 # Was ist neu
 
+## 2.2.0 – Anime-Proportionen und Demo-Funktionen (02.11.2026)
+
+- **Figuren in Anime-Proportionen statt Chibi:** Das gilt für alle Figuren: Spielfigur, Crew, Gegner, Bewohner und Legenden.
+  - kleinerer Kopf
+  - deutlich längere Beine und Arme, etwas längerer Oberkörper
+  - Die Knochen selbst sind verlängert, deshalb verzerrt beim Laufen und Kämpfen nichts.
+- **Inselschilder wie in der Demo:** Über entdeckten Inseln schweben Name, Art und Stufe, z. B. „Krähenfels – Lager · Stufe 1“.
+- **Entdecken wie in der Demo:** Wer nahe genug segelt, sieht „Insel entdeckt“. Karte und Minikarte zeigen nur entdeckte Inseln.
+- **Lebensbalken über beschädigten Feindschiffen** wie in der Demo
+- Mündungsfeuer an jeder Kanone
+
 ## 2.1.0 – Seekampf wie in der Demo, Grafik überarbeitet (02.11.2026)
 
 **Seekampf 1:1 aus der Demo übernommen**

@@ -578,7 +578,7 @@ export class Menus {
       cv.style.width = `${size}px`;
       cv.width = cv.height = Math.round(size * Math.min(2, devicePixelRatio));
       const ctx = cv.getContext('2d');
-      if (ctx) drawMap(ctx, size, g.world.islandDefs, g.mapMarkers(), tab === 'welt' ? 'world' : 'region');
+      if (ctx) drawMap(ctx, size, g.world.islandDefs.filter((i) => g.world.discovered.has(i.id)), g.mapMarkers(), tab === 'welt' ? 'world' : 'region');
     }
   }
 

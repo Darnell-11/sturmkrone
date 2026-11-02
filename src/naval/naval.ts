@@ -18,6 +18,7 @@ import {
   ShaderMaterial,
   SphereGeometry,
   Vector3,
+  type Camera,
   type Scene,
 } from 'three';
 import type { CombatFx } from '../combat/fx';
@@ -166,6 +167,18 @@ export class NavalSystem {
     });
   }
 
+  /** Lebensbalken über beschädigten Feindschiffen (wie in 1.0) */
+  private barPos = new Vector3();
+  updateBars(camera: Camera, show: boolean) {
+    const p = this.player;
+    for (const e of this.enemies) {
+      const s = e.ship;
+      const vis = show && !e.companion && s.alive && !s.sinking && s.hull < s.maxHull && !!p && Math.hypot(s.x - p.x, s.z - p.z) < 320;
+      this.barPos.set(s.x, s.model.deckY + s.cls.mh + 3, s.z);
+      this.overlay.setBar(e, vis ? this.barPos : null, vis ? s.hull / s.maxHull : -1, e.role === 'legende' || !!e.ghost, camera);
+    }
+  }
+
   /** Spieler-Breitseite: zielt automatisch auf den Gegner im Fächer (mit Vorhalt) */
   playerBroadside(ship: Ship, side: number, range: number, dmg: number, ammo: AmmoId) {
     this.broadside(ship, side, range, dmg, ammo, this.sideTarget(side, range));
@@ -217,6 +230,8 @@ export class NavalSystem {
     m.position.copy(pos);
     this.scene.add(m);
     this.balls.push({ mesh: m, vel, owner, dmg, ammo, life: 6 });
+    // Mündungsfeuer
+    this.sparks.emit(5, pos.x, pos.y, pos.z, { speed: 4, up: 1, life: 0.35, color: new Color(3.5, 1.6, 0.4), gravity: 0, spread: 0.3 });
     this.fx.hit(pos, 'punch', '#FFB45A');
     this.spray.emit(10, pos.x, pos.y, pos.z, { speed: 2, up: 1.5, life: 1.2, color: new Color(0.75, 0.75, 0.78), gravity: -0.5, spread: 1 });
     if (owner === this.player) this.hooks.shake(0.18);
@@ -327,7 +342,7 @@ export class NavalSystem {
     for (const e of this.enemies) this.ai(e, dt);
     // Weit entfernte entfernen, gesunkene aufräumen
     for (const e of this.enemies) {
-      if (e.ship.sinking > 7 || (p && !e.companion && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > 1200)) e.ship.dispose();
+      if (e.ship.sinking > 7 || (p && !e.companion && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > 1200)) { e.ship.dispose(); this.overlay.setBar(e, null, -1, false, null as unknown as Camera); }
     }
     this.enemies = this.enemies.filter((e) => e.ship.sinking <= 7 && !(p && !e.companion && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > 1200));
     this.updateBalls(dt);

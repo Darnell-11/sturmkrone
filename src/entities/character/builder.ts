@@ -80,6 +80,10 @@ class PartList {
 
 // ---------- Maße ----------
 const HEAD_C = new Vector3(0, 1.62, 0.02);
+/** Anime-Proportionen: Knochen werden verlängert (Skelett-Einheiten), die Glieder hier entsprechend länger gebaut */
+export const LIMB_EXT = { thigh: 0.2, shin: 0.2, upperArm: 0.08, foreArm: 0.08 };
+const ARM_T = 0.95;
+const LEG_T = 0.92;
 const HEAD_R = new Vector3(0.34, 0.37, 0.33);
 const ARM_Y = 1.107;
 
@@ -259,10 +263,10 @@ export function buildCharacterGeometry(look: CharacterLook, bones: Record<string
   for (const s of [-1, 1]) {
     const L = s > 0 ? 'l' : 'r';
     const upper = (look.outfit === 'tunika' && look.coat === 'keiner') ? skin : sleeve;
-    M.add(armPiece(0.2, 0.46, 0.085 * bw, 0.075 * bw, s), `upperarm${L}` as BoneName, upper);
-    M.add(new SphereGeometry(0.075 * bw, 10, 8), `upperarm${L}` as BoneName, upper, mat([s * 0.454, ARM_Y, 0]));
-    M.add(armPiece(0.454, 0.72, 0.072 * bw, 0.062 * bw, s), `lowerarm${L}` as BoneName, longSleeve ? sleeve : skin);
-    if (longSleeve) M.add(armPiece(0.66, 0.72, 0.078 * bw, 0.08 * bw, s), `lowerarm${L}` as BoneName, look.coat === 'kapitaen' ? gold : acc);
+    M.add(armPiece(0.2, 0.46 + LIMB_EXT.upperArm, 0.085 * bw * ARM_T, 0.075 * bw * ARM_T, s), `upperarm${L}` as BoneName, upper);
+    M.add(new SphereGeometry(0.075 * bw * ARM_T, 10, 8), `upperarm${L}` as BoneName, upper, mat([s * (0.454 + LIMB_EXT.upperArm), ARM_Y, 0]));
+    M.add(armPiece(0.454, 0.72 + LIMB_EXT.foreArm, 0.072 * bw * ARM_T, 0.062 * bw * ARM_T, s), `lowerarm${L}` as BoneName, longSleeve ? sleeve : skin);
+    if (longSleeve) M.add(armPiece(0.66 + LIMB_EXT.foreArm, 0.72 + LIMB_EXT.foreArm, 0.078 * bw * ARM_T, 0.08 * bw * ARM_T, s), `lowerarm${L}` as BoneName, look.coat === 'kapitaen' ? gold : acc);
     // Hand (Faust) und Daumen
     const handCol = look.gloves ? '#5A3A22' : skin;
     const hs = look.gloves ? 1.25 : 1;
@@ -274,11 +278,11 @@ export function buildCharacterGeometry(look: CharacterLook, bones: Record<string
   for (const s of [-1, 1]) {
     const L = s > 0 ? 'l' : 'r';
     const x = s * 0.171 * (0.94 + bw * 0.06);
-    M.add(legPiece(x, 0.56, 0.29, 0.1 * bw, 0.085 * bw), `upperleg${L}` as BoneName, pants);
-    M.add(new SphereGeometry(0.085 * bw, 10, 8), `upperleg${L}` as BoneName, pants, mat([x, 0.292, 0.005]));
+    M.add(legPiece(x, 0.56, 0.29 - LIMB_EXT.thigh, 0.1 * bw * LEG_T, 0.085 * bw * LEG_T), `upperleg${L}` as BoneName, pants);
+    M.add(new SphereGeometry(0.085 * bw * LEG_T, 10, 8), `upperleg${L}` as BoneName, pants, mat([x, 0.292 - LIMB_EXT.thigh, 0.005]));
     const bootUp = look.shoes === 'stiefel';
-    M.add(legPiece(x, 0.3, 0.1, 0.08 * bw, 0.07 * bw, 0.01), `lowerleg${L}` as BoneName, bootUp ? shoes : look.shoes === 'sandalen' ? skin : pants);
-    if (bootUp) M.add(new CylinderGeometry(0.098 * bw, 0.09 * bw, 0.07, 12), `lowerleg${L}` as BoneName, shade(shoes, 0.75), mat([x, 0.27, 0.01]));
+    M.add(legPiece(x, 0.3, 0.1 - LIMB_EXT.shin, 0.08 * bw * LEG_T, 0.07 * bw * LEG_T, 0.01), `lowerleg${L}` as BoneName, bootUp ? shoes : look.shoes === 'sandalen' ? skin : pants);
+    if (bootUp) M.add(new CylinderGeometry(0.098 * bw * LEG_T, 0.09 * bw * LEG_T, 0.07, 12), `lowerleg${L}` as BoneName, shade(shoes, 0.75), mat([x, 0.27, 0.01]));
     const footCol = look.shoes === 'sandalen' ? skin : shoes;
     M.add(new RoundedBoxGeometry(0.15, 0.1, 0.27, 2, 0.04), `foot${L}` as BoneName, footCol, mat([x, 0.05, 0.06]));
     if (look.shoes === 'sandalen') M.add(new BoxGeometry(0.16, 0.03, 0.06), `foot${L}` as BoneName, '#8A5A2B', mat([x, 0.07, 0.08]));

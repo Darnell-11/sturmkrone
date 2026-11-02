@@ -136,6 +136,15 @@ export class Game {
     this.world.onHarbor = (def) => this.openHarbor(def);
     this.world.onEnterRegion = (r) => this.enterRegion(r);
     this.world.onFish = (caught) => this.fishResult(caught);
+    this.world.onDiscover = (id) => {
+      const s = this.save;
+      if (!s) return;
+      const list = (s.progress.flags.disc as string[] | undefined) ?? [];
+      if (list.includes(id)) return;
+      s.progress.flags.disc = [...list, id];
+      const def = this.world.islandDefs.find((i) => i.id === id);
+      if (def && this.state.is('play')) this.hud.toast(`Insel entdeckt: ${def.name}`, 2.5);
+    };
     this.world.onSeaBossDown = () => {
       if (!this.save) return;
       audio.play('win');
@@ -948,7 +957,7 @@ export class Game {
     if (this.mapT <= 0) {
       this.mapT = 0.1;
       const c = this.hud.miniCanvas();
-      if (c) drawMap(c.ctx, c.size, this.world.islandDefs, this.mapMarkers(), 'mini');
+      if (c) drawMap(c.ctx, c.size, this.world.islandDefs.filter((i) => this.world.discovered.has(i.id)), this.mapMarkers(), 'mini');
     }
   }
 
@@ -1223,6 +1232,12 @@ export class Game {
       advanced: (_q, next) => this.hud.toast(`Neues Ziel: ${next.text}`, 3.5),
     });
     this.refreshDigs();
+    {
+      const disc = new Set<string>((data.progress.flags.disc as string[] | undefined) ?? []);
+      for (const k of Object.keys(data.progress.flags)) if (k.startsWith('seen_')) disc.add(k.slice(5));
+      disc.add('ankerglueck');
+      this.world.discovered = disc;
+    }
     setTimeout(() => this.startAutoChapters(), 2500);
     this.applyPower();
     this.world.healPlayer();

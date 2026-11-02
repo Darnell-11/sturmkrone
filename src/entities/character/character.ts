@@ -6,6 +6,7 @@ import {
   LoopRepeat,
   Matrix4,
   SkinnedMesh,
+  Vector3,
   type AnimationAction,
   type BufferGeometry,
   type Object3D,
@@ -17,7 +18,7 @@ import type { CharacterLook } from '../../data/characterParts';
 import { addOutlines } from '../../render/outline';
 import { toon } from '../../render/toon';
 import type { CharacterAssets } from './assets';
-import { buildCharacterGeometry } from './builder';
+import { buildCharacterGeometry, LIMB_EXT } from './builder';
 
 /** Weltmaßstab: Skelett ist 2,2 Einheiten hoch → Figur ca. 1,75 m */
 export const CHARACTER_SCALE = 0.8;
@@ -26,6 +27,29 @@ const IDENTITY = new Matrix4();
 const geoCache = new Map<string, { main: BufferGeometry; detail: BufferGeometry | null; users: number }>();
 
 function lookKey(l: CharacterLook) { return JSON.stringify(l); }
+
+const tmpA = new Vector3();
+const tmpB = new Vector3();
+
+/** Skelett auf Anime-Proportionen bringen; die Figur wird um die längeren Beine angehoben */
+function applyAnimeProportions(rig: Object3D, bones: Record<string, Bone>) {
+  // Knochen verlängern (Knie, Knöchel, Ellbogen, Handgelenk weiter nach außen) – keine Verzerrung bei Bewegung
+  const lengthen = (b: Bone | undefined, ext: number) => {
+    if (!b) return;
+    const len = b.position.length();
+    if (len > 1e-4) b.position.multiplyScalar((len + ext) / len);
+  };
+  for (const s of ['l', 'r']) {
+    lengthen(bones[`lowerleg${s}`], LIMB_EXT.thigh);
+    lengthen(bones[`foot${s}`], LIMB_EXT.shin);
+    lengthen(bones[`lowerarm${s}`], LIMB_EXT.upperArm);
+    lengthen(bones[`wrist${s}`], LIMB_EXT.foreArm);
+  }
+  for (const [n, s] of Object.entries(Character.PROPORTIONS)) bones[n]?.scale.setScalar(s);
+  // längere Beine: Figur anheben, damit die Füße auf dem Boden bleiben
+  rig.position.y += (LIMB_EXT.thigh + LIMB_EXT.shin) * rig.scale.y;
+  void tmpA; void tmpB;
+}
 
 export interface PlayOptions {
   fade?: number;
@@ -54,6 +78,9 @@ export class Character {
   private doneCb: (() => void) | null = null;
   private key = '';
 
+  /** Proportionen: kleinerer Kopf, längere Glieder (realistischer Anime-Stil statt Chibi) */
+  static readonly PROPORTIONS: Record<string, number> = { head: 0.68, spine: 1.05 };
+
   constructor(private assets: CharacterAssets, look: CharacterLook, private outline = true) {
     this.rig = cloneSkinned(assets.rig);
     let tmpl: SkinnedMesh | null = null;
@@ -74,6 +101,7 @@ export class Character {
     }
     this.rig.scale.setScalar(CHARACTER_SCALE);
     this.holder.add(this.rig);
+    applyAnimeProportions(this.rig, this.bones);
     this.mixer = new AnimationMixer(this.rig);
     this.mixer.addEventListener('finished', (e) => {
       if (e.action === this.current && this.doneCb) {

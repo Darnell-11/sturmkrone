@@ -1,3 +1,4 @@
+import { CanvasTexture, Sprite, SpriteMaterial, SRGBColorSpace } from 'three';
 import { BoxGeometry, Color, ConeGeometry, CylinderGeometry, Group, Mesh, MeshBasicMaterial, OctahedronGeometry, SphereGeometry, type Material } from 'three';
 import type { IslandStyle } from '../data/regions';
 import { toon } from '../render/toon';
@@ -62,6 +63,37 @@ export function islandTerrain(kit: StyleKit, r: number, hill: number, rnd: () =>
   hillMesh.scale.y = hill;
   hillMesh.position.y = 1.2;
   return { beach, hill: hillMesh };
+}
+
+const KIND_LABEL: Record<string, string> = { town: 'Hafenstadt', harbor: 'Hafen', camp: 'Lager', ruin: 'Ruine', quiet: '', treasure: 'Schatzinsel', lighthouse: 'Leuchtturm', boss: 'Boss' };
+
+/** Schwebendes Namensschild über einer Insel (wie in 1.0): Name, Art und Stufe */
+export function islandLabel(name: string, kind: string, level?: number): Sprite {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 128;
+  const g = c.getContext('2d')!;
+  const sub = [KIND_LABEL[kind] ?? '', level ? `Stufe ${level}` : ''].filter(Boolean).join(' · ');
+  g.textAlign = 'center';
+  g.lineJoin = 'round';
+  g.font = '800 54px "Alegreya Sans", sans-serif';
+  g.lineWidth = 10; g.strokeStyle = 'rgba(18,30,48,0.85)';
+  g.strokeText(name, 256, 62);
+  g.fillStyle = '#FFF3D0';
+  g.fillText(name, 256, 62);
+  if (sub) {
+    g.font = '700 32px "Alegreya Sans", sans-serif';
+    g.lineWidth = 7;
+    g.strokeText(sub, 256, 108);
+    g.fillStyle = kind === 'camp' || kind === 'boss' || kind === 'ruin' ? '#FFB49A' : '#CFEFFF';
+    g.fillText(sub, 256, 108);
+  }
+  const t = new CanvasTexture(c);
+  t.colorSpace = SRGBColorSpace;
+  const s = new Sprite(new SpriteMaterial({ map: t, depthWrite: false, transparent: true, fog: false, toneMapped: false }));
+  s.scale.set(32, 8, 1);
+  s.renderOrder = 5;
+  s.userData.noOutline = true;
+  return s;
 }
 
 /** Eine Pflanze (oder ein Kristall) passend zur Region */

@@ -46,7 +46,8 @@ import { NavalSystem, type EnemyShip } from '../naval/naval';
 import { DeckGround, type Ground } from './islandGround';
 import { ELEMENT_COLORS } from '../data/skills';
 import { BERNSTEINSEE, REGIONS, regionAt, type IslandDef, type RegionDef } from '../data/regions';
-import { islandTerrain, outpost, plant, styleKit, volcano } from './islandStyle';
+import { islandLabel, islandTerrain, outpost, plant, styleKit, volcano } from './islandStyle';
+import type { Sprite } from 'three';
 import { ABYSS_LAIR, SeaBoss } from '../naval/seaBoss';
 import { buildTown, mergeByMaterial, type TownBuild } from './town';
 import { SeaLife } from './life';
@@ -101,6 +102,7 @@ export class SeaWorld {
   onHarbor: (def: IslandDef) => void = () => {};
   onEnterRegion: (r: RegionDef) => void = () => {};
   onSeaBossDown: () => void = () => {};
+  onDiscover: (islandId: string) => void = () => {};
   /** Angeln: true = Fang, false = abgebrochen oder zu spät */
   onFish: (caught: boolean) => void = () => {};
   private fishing: { wait: number; bite: number } | null = null;
@@ -157,6 +159,9 @@ export class SeaWorld {
   town: TownBuild | null = null;
   life: SeaLife | null = null;
   private buoys: { g: Group; x: number; z: number; lamp: Mesh }[] = [];
+  /** Inselschilder; entdeckte Inseln (IDs) setzt das Spiel */
+  private labels: { sprite: Sprite; x: number; z: number; r: number; id: string }[] = [];
+  discovered = new Set<string>();
   /** Rauchende Vulkankrater */
   private smokeVents: { x: number; y: number; z: number }[] = [];
   private lamps: Mesh[] = [];
@@ -282,6 +287,12 @@ export class SeaWorld {
       }
       this.scene.add(isl);
       mergeByMaterial(isl, glow);
+      // Namensschild (wie in 1.0): erscheint, sobald die Insel entdeckt ist
+      const label = islandLabel(s.def.name, s.def.kind, s.def.level);
+      label.position.set(s.x, 1.2 + r * 0.75 * s.hill + 22, s.z);
+      label.visible = false;
+      this.scene.add(label);
+      this.labels.push({ sprite: label, x: s.x, z: s.z, r, id: s.def.id });
       isl.traverse((o) => {
         if ((o as Mesh).isMesh && !o.userData.noOutline) { o.castShadow = true; o.receiveShadow = true; }
       });
@@ -707,6 +718,7 @@ export class SeaWorld {
     this.shake = Math.max(0, this.shake - dt * 1.8);
     this.updateWake(dt);
     this.naval?.update(dt, this.mode === 'sail' && this.cinematic <= 0);
+    this.naval?.updateBars(this.camera, this.mode === 'sail');
     this.naval?.updateAim(dt, this.mode === 'sail' && this.cinematic <= 0 && this.ship.alive, this.seaRange, this.ship.reloadL <= 0, this.ship.reloadR <= 0);
     this.spray.update(dt);
     this.sparks.update(dt);
@@ -943,6 +955,14 @@ export class SeaWorld {
   private updateWorldEvents() {
     const near = this.islandDefs.findIndex((d) => Math.hypot(d.x - this.x, d.z - this.z) < d.r + 45);
     const id = near >= 0 ? this.islandDefs[near].id : null;
+    // Inseln entdecken (Sichtweite wie in 1.0, Ausguck weiter) und Schilder zeigen
+    const disc = 280 * this.rangeMult;
+    const px = this.mode === 'foot' && this.foot ? this.foot.x : this.x, pz = this.mode === 'foot' && this.foot ? this.foot.z : this.z;
+    for (const l of this.labels) {
+      const d = Math.hypot(l.x - px, l.z - pz);
+      if (!this.discovered.has(l.id) && d < disc + l.r) { this.discovered.add(l.id); this.onDiscover(l.id); }
+      l.sprite.visible = this.discovered.has(l.id) && d < 760 && d > l.r + 25;
+    }
     const reg = regionAt(this.x, this.z);
     if (reg.id !== this.lastRegion) { this.lastRegion = reg.id; this.onEnterRegion(reg); }
     if (id && id !== this.lastIsland) this.onEnterIsland(this.islandDefs[near]);

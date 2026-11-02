@@ -31,7 +31,7 @@ export class CharacterAssets {
     for (const r of results.slice(1)) {
       for (const c of r.animations) {
         // Positionsspuren außer der Hüfte entfernen (Figuren mit anderen Maßen sollen nicht verzerren)
-        c.tracks = c.tracks.filter((t) => !t.name.endsWith('.position') || t.name.startsWith('hips.'));
+        c.tracks = c.tracks.filter((t) => (!t.name.endsWith('.position') || t.name.startsWith('hips.')) && !t.name.endsWith('.scale'));
         if (!clips.has(c.name)) clips.set(c.name, c);
       }
     }
