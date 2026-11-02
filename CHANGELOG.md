@@ -1,5 +1,27 @@
 # Was ist neu
 
+## 2.3.0 – Echte Anime-Figuren (02.11.2026)
+
+- **Alle Figuren sind jetzt echte Anime-Figuren:** Spielfigur, Crew, Gegner, Legenden und Bewohner.
+  - Grundlage sind fein modellierte Figuren aus VRoid Studio (CC0, VRoid Project) mit Anime-Gesichtern statt Bausteinen.
+  - Kurzhaar- und Langhaar-Figur
+  - frei einfärbbar: Haare (auch Blond und Weiß), Haut, Augen, Oberteil, Hose oder Rock, Schuhe
+- **Mimik:** Figuren blinzeln, strahlen beim Jubeln und bewegen beim Reden den Mund.
+- **Alle 132 Animationen** werden auf die neuen Figuren übertragen, inklusive Ausrichtungsausgleich (A- und T-Pose), damit Arme und Beine natürlich aussehen. Waffen liegen richtig in der Hand.
+- **Piraten-Ausstattung:**
+  - Dreispitz, Zweispitz, Kopftuch, Marinemütze, Wollmütze, Südwester, Kochmütze, Helm, Fliegerbrille
+  - Augenklappe und Ohrring
+  - Schärpe (Piraten) oder Koppel (Marine), goldene Schulterstücke für Kapitäne
+- **Charakter-Editor** zeigt bei den Anime-Figuren nur Optionen, die wirklich wirken.
+- **Entern:**
+  - Du landest mittschiffs mit Blick übers freie Deck statt hinter dem Steuerrad.
+  - Die Segel des geenterten Schiffs werden durchsichtig (wie in der Demo).
+- **Leistung:** Figuren außerhalb des Bildes oder weit weg werden nicht gezeichnet, je nach Grafikstufe. Die Zeichenaufrufe auf „Niedrig“ sinken dadurch von über 900 auf rund 230.
+- **Behoben:**
+  - Auf „Niedrig“ blieben alte Bilder stehen (Geisterbilder, z. B. im Editor).
+  - Inselhügel waren höher als die Lauffläche, Figuren versanken im Gras.
+- Kielwasser als feine Schaumspitze statt runder Flecken; Fischerboote mit Holz- und Segeltextur
+
 ## 2.2.0 – Anime-Proportionen und Demo-Funktionen (02.11.2026)
 
 - **Figuren in Anime-Proportionen statt Chibi:** Das gilt für alle Figuren: Spielfigur, Crew, Gegner, Bewohner und Legenden.

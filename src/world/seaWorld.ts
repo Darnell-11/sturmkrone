@@ -997,6 +997,17 @@ export class SeaWorld {
     }
   }
 
+  /** Segel beim Entern durchsichtig (wie in 1.0), damit sie die Kamera nicht verdecken */
+  private setSailFade(ship: Ship, fade: boolean) {
+    for (const s of ship.model.sails) {
+      const m = s.material as { transparent: boolean; opacity: number; depthWrite: boolean; needsUpdate: boolean };
+      m.transparent = fade;
+      m.opacity = fade ? 0.22 : 1;
+      m.depthWrite = !fade;
+      m.needsUpdate = true;
+    }
+  }
+
   /** An der nächsten Insel an Land gehen (Hafenmenü) */
   goAshore() {
     const isl = this.ground.islandAt(this.x, this.z, 40 + this.ship.cls.W);
@@ -1064,12 +1075,14 @@ export class SeaWorld {
     const enemyFaction: Faction = e.ship.faction;
     this.combat.enterDeck(this.deckGround, kinds, e.level, enemyFaction, e.name);
     this.scene.add(this.player.holder);
-    const start = this.deckGround.spot(0, -0.35);
-    this.footDist = 5.5;
-    this.footPitch = 0.42;
-    this.foot.place(start.x, start.z, e.ship.heading, this.groundProxy);
+    // Mitte des Decks, Blick zum Heck: die Kamera steht dann über dem freien Vorschiff statt hinter dem Steuerrad
+    const start = this.deckGround.spot(0, 0.2);
+    this.footDist = 6;
+    this.footPitch = 0.5;
+    this.foot.place(start.x, start.z, e.ship.heading + Math.PI, this.groundProxy);
     this.foot.onFoot = true;
-    this.footYaw = e.ship.heading;
+    this.footYaw = e.ship.heading + Math.PI;
+    this.setSailFade(e.ship, true);
     this.overlay?.showCutin('Entern!', '#A8322A');
     this.overlay?.speedlines(1);
     audio.play('board');
@@ -1079,6 +1092,7 @@ export class SeaWorld {
 
   private embark() {
     if (this.boarding) {
+      this.setSailFade(this.boarding.ship, false);
       this.boarding.ship.frozen = 0;
       this.boarding = null;
       this.boardDone = 0;

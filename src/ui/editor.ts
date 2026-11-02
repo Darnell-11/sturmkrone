@@ -185,7 +185,10 @@ export class CharacterEditor {
         break;
       case 'kleidung':
         if (this.o.anime) {
-          body = this.opt('Oberteil', this.swatches('outfitColor', CLOTH_COLORS)) + this.opt('Hose / Rock', this.swatches('pantsColor', CLOTH_COLORS))
+          body = this.opt('Oberteil', `<div class="chips"><button data-a="set" data-k="outfit" data-v="hemd" aria-pressed="${r.look.outfit !== 'uniform'}">Mit Schärpe</button><button data-a="set" data-k="outfit" data-v="uniform" aria-pressed="${r.look.outfit === 'uniform'}">Mit Koppel</button></div>` + this.swatches('outfitColor', CLOTH_COLORS))
+            + this.opt('Schärpe', this.swatches('accentColor', CLOTH_COLORS))
+            + this.opt('Abzeichen', `<div class="chips"><button data-a="set" data-k="coat" data-v="${r.look.coat === 'kapitaen' ? 'keiner' : 'kapitaen'}" aria-pressed="${r.look.coat === 'kapitaen'}">Goldene Schulterstücke</button></div>`)
+            + this.opt('Hose / Rock', this.swatches('pantsColor', CLOTH_COLORS))
             + this.opt('Schuhe', this.swatches('shoesColor', ['#5A3A22', '#1E1A20', '#8A5A2B', '#7A1F1A', '#F3E6C8']));
           break;
         }

@@ -142,6 +142,64 @@ export function buildHeadgear(look: CharacterLook, r: number, outline: boolean):
   return g;
 }
 
+/**
+ * Piraten-Kleidung über der Grundfigur: Schärpe bzw. Koppel an der Hüfte, für Kapitäne goldene Schulterstücke.
+ * Maße kommen aus den Knochenabständen; Blick der Knochen nach −Z (Figur ist gedreht), daher rotation.y = π.
+ */
+export function attachOutfit(chest: Object3D, hips: Object3D, armL: Object3D | null, armR: Object3D | null, look: CharacterLook, faction: 'pirat' | 'marine', outline: boolean): Group[] {
+  const out: Group[] = [];
+  const sw = armL && armR ? Math.abs(armL.position.x - armR.position.x) * 0.5 : 0.09;
+  const w = Math.max(0.1, sw + 0.05);
+  const acc = toon(look.accentColor);
+  const gold = toon({ color: '#E3B04B', spec: 0.9 });
+  // Schärpe (Piraten) bzw. Koppel (Marine)
+  const belt = new Group();
+  // flaches Band statt Ring
+  const band = new Mesh(new CylinderGeometry(w * 1.3, w * 1.38, w * 0.34, 28, 1, true), faction === 'marine' ? toon('#2A2420') : acc);
+  band.scale.set(1, 1, 0.8);
+  belt.add(band);
+  if (faction === 'marine') {
+    const buckle = new Mesh(new BoxGeometry(w * 0.32, w * 0.22, w * 0.06), gold);
+    buckle.position.set(0, 0, w * 1.05);
+    belt.add(buckle);
+  } else {
+    const knot = new Mesh(new SphereGeometry(w * 0.16, 8, 6), acc);
+    knot.position.set(w * 1.0, 0, w * 0.55);
+    const tail = new Mesh(new BoxGeometry(w * 0.2, w * 0.8, w * 0.04), acc);
+    tail.position.set(w * 1.08, -w * 0.42, w * 0.5);
+    tail.rotation.z = 0.15;
+    belt.add(knot, tail);
+  }
+  belt.position.set(0, -w * 0.02, 0);
+  belt.rotation.y = Math.PI;
+  hips.add(belt);
+  out.push(belt);
+  // Kapitäns-Schulterstücke (starre Westen/Mäntel schneiden in die weite Grundkleidung – daher nur Abzeichen)
+  if (look.coat === 'kapitaen') {
+    const ep = new Group();
+    for (const s of [-1, 1]) {
+      const plate = new Mesh(new CylinderGeometry(w * 0.34, w * 0.34, w * 0.07, 16), gold);
+      plate.position.set(s * (w + 0.035), w * 0.9, 0);
+      plate.rotation.z = s * 0.25;
+      ep.add(plate);
+      for (let k = 0; k < 5; k++) {
+        const fr = new Mesh(new CylinderGeometry(w * 0.025, w * 0.025, w * 0.22, 4), gold);
+        const a = (k / 4 - 0.5) * 1.6;
+        fr.position.set(s * (w + 0.035) + Math.sin(a) * w * 0.32 * s, w * 0.8, Math.cos(a) * w * 0.15);
+        ep.add(fr);
+      }
+    }
+    ep.rotation.y = Math.PI;
+    chest.add(ep);
+    out.push(ep);
+  }
+  for (const g of out) {
+    g.traverse((o) => { (o as Mesh).castShadow = true; });
+    if (outline) addOutlines(g, 0.7);
+  }
+  return out;
+}
+
 /** Kopfschmuck an einen Kopfknochen hängen: Mitte, Blickrichtung und Größe aus den Augenknochen */
 export function attachHeadgear(head: Object3D, eyeL: Object3D | null, eyeR: Object3D | null, look: CharacterLook, outline: boolean): Group | null {
   if ((look.hat === 'keiner' || !look.hat) && !look.eyepatch && !look.earring) return null;

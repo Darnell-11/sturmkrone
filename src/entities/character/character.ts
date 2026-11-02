@@ -23,7 +23,7 @@ import { toon } from '../../render/toon';
 import type { CharacterAssets } from './assets';
 import { buildCharacterGeometry, LIMB_EXT } from './builder';
 import { VROID_BONES, VroidBase } from './vroid';
-import { attachHeadgear } from './animeHats';
+import { attachHeadgear, attachOutfit } from './animeHats';
 
 /** Lange Frisuren nutzen die weibliche Grundfigur, kurze die männliche */
 function isFemale(l: CharacterLook) { return ['lang', 'pferdeschwanz', 'zoepfe', 'zopf', 'dutt'].includes(l.hair); }
@@ -83,6 +83,7 @@ export class Character {
   private face: { mesh: SkinnedMesh; blink: number; joy: number; mouth: number } | null = null;
   private blinkT = 2 + Math.random() * 3;
   private headgear: Group | null = null;
+  private outfit: Group[] = [];
   private mesh: SkinnedMesh | null = null;
   private detail: SkinnedMesh | null = null;
   private actions = new Map<string, AnimationAction>();
@@ -202,9 +203,13 @@ export class Character {
       mat.alphaTest = p.alphaTest || (p.transparent ? 0 : 0.5);
       m.material = mat;
     });
-    // Kopfschmuck neu aufsetzen
+    // Kopfschmuck und Piraten-Kleidung neu aufsetzen
     this.headgear?.removeFromParent();
     this.headgear = null;
+    for (const o of this.outfit) o.removeFromParent();
+    const chest = this.rig.getObjectByName('J_Bip_C_Chest'), hips = this.rig.getObjectByName('J_Bip_C_Hips');
+    const marine = look.outfit === 'uniform' || look.hat === 'marine' || look.hat === 'zweispitz';
+    this.outfit = chest && hips ? attachOutfit(chest, hips, this.rig.getObjectByName('J_Bip_L_UpperArm') ?? null, this.rig.getObjectByName('J_Bip_R_UpperArm') ?? null, look, marine ? 'marine' : 'pirat', this.outline) : [];
     const head = this.rig.getObjectByName('J_Bip_C_Head');
     if (head) this.headgear = attachHeadgear(head, this.rig.getObjectByName('J_Adj_L_FaceEye') ?? null, this.rig.getObjectByName('J_Adj_R_FaceEye') ?? null, look, this.outline);
     const h = Math.min(1.1, Math.max(0.9, look.height));
