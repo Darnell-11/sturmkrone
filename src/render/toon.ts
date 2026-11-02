@@ -2,6 +2,7 @@ import {
   Color,
   DataTexture,
   FrontSide,
+  LinearFilter,
   MeshToonMaterial,
   NearestFilter,
   RGBAFormat,
@@ -17,6 +18,8 @@ import {
 export const toonShared = {
   rimColor: { value: new Color(1, 0.95, 0.85) },
   rimStrength: { value: 0.55 },
+  /** Farbe der Schattenseiten (Anime: kühl, abends violett) */
+  shadowTint: { value: new Color(0.74, 0.8, 1.12) },
 };
 
 function makeRamp(levels: number[]): DataTexture {
@@ -32,8 +35,23 @@ function makeRamp(levels: number[]): DataTexture {
   return t;
 }
 
-/** 3-stufige Licht-Rampe: Schatten, Halbton, Licht */
-export const TOON_RAMP = makeRamp([0.42, 0.72, 1.0]);
+/** 3-stufige Licht-Rampe mit sauberen, leicht weichen Kanten (Schatten, Halbton, Licht) */
+export const TOON_RAMP = (() => {
+  const n = 64;
+  const data = new Uint8Array(n * 4);
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    const s = (a: number, b: number) => Math.min(1, Math.max(0, (t - a) / (b - a)));
+    const v = 0.46 + 0.26 * s(0.3, 0.36) + 0.28 * s(0.6, 0.66);
+    const b = Math.round(v * 255);
+    data.set([b, b, b, 255], i * 4);
+  }
+  const t = new DataTexture(data, n, 1, RGBAFormat);
+  t.minFilter = t.magFilter = LinearFilter;
+  t.generateMipmaps = false;
+  t.needsUpdate = true;
+  return t;
+})();
 /** Weichere Rampe für Wasser */
 export const WATER_RAMP = makeRamp([0.62, 0.84, 1.0]);
 
@@ -56,6 +74,11 @@ const cache = new Map<string, MeshToonMaterial>();
 
 const RIM_SPEC_GLSL = /* glsl */ `
   {
+    // Anime-Schatten: Schattenseiten kühl einfärben statt nur abdunkeln
+    float skLum = dot(outgoingLight, vec3(0.299, 0.587, 0.114));
+    float skBase = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114)) + 0.001;
+    float skShade = 1.0 - smoothstep(0.5, 0.95, skLum / skBase);
+    outgoingLight = mix(outgoingLight, outgoingLight * uShadowTint, skShade * 0.75);
     vec3 viewDir = normalize(vViewPosition);
     float ndv = clamp(dot(normal, viewDir), 0.0, 1.0);
     float rim = smoothstep(0.58, 0.74, 1.0 - ndv) * uRimStrength * uRimAmount;
@@ -79,13 +102,14 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number) {
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uRimColor = toonShared.rimColor;
     shader.uniforms.uRimStrength = toonShared.rimStrength;
+    shader.uniforms.uShadowTint = toonShared.shadowTint;
     shader.uniforms.uSpec = uSpec;
     shader.uniforms.uRimAmount = uRimAmount;
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uSpec;\nuniform float uRimAmount;')
+      .replace('#include <common>', '#include <common>\nuniform vec3 uShadowTint;\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uSpec;\nuniform float uRimAmount;')
       .replace('#include <opaque_fragment>', RIM_SPEC_GLSL + '\n#include <opaque_fragment>');
   };
-  mat.customProgramCacheKey = () => 'sk-toon-1';
+  mat.customProgramCacheKey = () => 'sk-toon-2';
 }
 
 /** Toon-Material im Anime-Stil (gecacht – gleiche Optionen ergeben dasselbe Material). */

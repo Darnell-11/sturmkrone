@@ -283,7 +283,7 @@ export class Game {
         const sh = this.world.ship;
         this.hud.setSea(this.world.mode === 'sail' ? {
           hull: sh.hull / sh.maxHull, sail: sh.sail, crew: sh.crew, level: SAIL_LEVELS[sh.sailLevel].n, ammo: AMMO[sh.ammo].n,
-          reloadL: sh.reloadL / 2.4, reloadR: sh.reloadR / 2.4, windRel: this.world.env.windDir - sh.heading, fire: sh.fire > 0,
+          reloadL: sh.reloadL / this.world.reloadTime, reloadR: sh.reloadR / this.world.reloadTime, windRel: this.world.env.windDir - sh.heading, fire: sh.fire > 0,
         } : null);
         const fj = this.world.faji;
         this.hud.setFaji(fj ? fj.faji / fj.maxFaji : 1, this.save.skills.sp);

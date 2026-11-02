@@ -41,12 +41,12 @@ import type { Enemy } from '../entities/enemy';
 import { FajiController } from '../faji/fajiController';
 import type { SkillState } from '../core/save/types';
 import { Ship, type SeaEnv } from '../entities/ship/ship';
-import { AMMO, AMMO_IDS, DEFAULT_SHIP_LOOK, type AmmoId, type ShipLook } from '../data/ships';
+import { AMMO, AMMO_IDS, DEFAULT_SHIP_LOOK, SHIP_CLASSES, type AmmoId, type ShipLook } from '../data/ships';
 import { NavalSystem, type EnemyShip } from '../naval/naval';
 import { DeckGround, type Ground } from './islandGround';
 import { ELEMENT_COLORS } from '../data/skills';
 import { BERNSTEINSEE, REGIONS, regionAt, type IslandDef, type RegionDef } from '../data/regions';
-import { outpost, plant, styleKit, volcano } from './islandStyle';
+import { islandTerrain, outpost, plant, styleKit, volcano } from './islandStyle';
 import { ABYSS_LAIR, SeaBoss } from '../naval/seaBoss';
 import { buildTown, mergeByMaterial, type TownBuild } from './town';
 import { SeaLife } from './life';
@@ -150,8 +150,6 @@ export class SeaWorld {
   private clearedNow = false;
   onCrewLine: (who: CrewDef, text: string) => void = () => {};
   private sailCd = 0;
-  private aimSide = 0;
-  private aimT = 0;
   private boarding: EnemyShip | null = null;
   private deckGround: DeckGround | null = null;
   /** Inseldaten (gleiche Reihenfolge wie ground.islands) */
@@ -228,11 +226,7 @@ export class SeaWorld {
       shapes.push({ x: s.x, z: s.z, r: r * 1.15 });
       const kit = s.kit;
       const glow = new Set<Mesh>(this.lamps);
-      const beach = new Mesh(new CylinderGeometry(r, r * 1.25, 3, 36), kit.sand);
-      beach.position.y = -0.2;
-      const hill = new Mesh(new SphereGeometry(r * 0.75, 18, 10), kit.grass);
-      hill.scale.y = s.hill;
-      hill.position.y = 1.2;
+      const { beach, hill } = islandTerrain(kit, r, s.hill, rnd);
       isl.add(beach, hill);
       const town = s.def.kind === 'town';
       const rocks = s.def.rocks ?? (rnd() < 0.4 && !s.tower && !town ? 1 : 0);
@@ -646,6 +640,11 @@ export class SeaWorld {
     if (line) this.onCrewLine(line.who, line.text);
   }
 
+  /** Reichweite der Breitseiten wie in 1.0 (72 + 3 je Schiffsklasse, Ausguck mehr) */
+  get seaRange() { return (72 + Math.max(0, SHIP_CLASSES.indexOf(this.ship.cls)) * 3) * this.rangeMult; }
+  /** Nachladezeit wie in 1.0 */
+  get reloadTime() { return 1.9 * (this.naval?.reloadMult ?? 1); }
+
   /** Kampfnähe 0 … 1 (für die Musik) */
   get threat() {
     if (this.mode === 'foot') return this.combat && this.combat.hostilesLeft > 0 && this.combat.enemies.some((e) => e.alive && e.engaged) ? 1 : this.combat?.hostilesLeft ? 0.4 : 0;
@@ -708,6 +707,7 @@ export class SeaWorld {
     this.shake = Math.max(0, this.shake - dt * 1.8);
     this.updateWake(dt);
     this.naval?.update(dt, this.mode === 'sail' && this.cinematic <= 0);
+    this.naval?.updateAim(dt, this.mode === 'sail' && this.cinematic <= 0 && this.ship.alive, this.seaRange, this.ship.reloadL <= 0, this.ship.reloadR <= 0);
     this.spray.update(dt);
     this.sparks.update(dt);
     this.dust.update(dt);
@@ -806,21 +806,13 @@ export class SeaWorld {
     const nav = this.naval;
     if (nav && s.alive) {
       if (input.pressed('attack') && this.cdBow <= 0) { this.cdBow = 1.2; nav.bowShot(s, nav.canDmg, s.ammo); }
-      // Breitseiten: halten zum Zielen (Reichweite wächst), loslassen zum Feuern
+      // Breitseiten wie in 1.0: antippen (oder halten) = feuern, gezielt wird automatisch
       for (const [act, side] of [['fireLeft', 1], ['fireRight', -1]] as const) {
         const ready = side > 0 ? s.reloadL <= 0 : s.reloadR <= 0;
-        if (input.down(act) && ready) {
-          this.aimSide = side;
-          this.aimT = Math.min(1.2, this.aimT + dt);
-          nav.showAim(side, 45 + this.aimT * 55);
-        } else if (this.aimSide === side) {
-          if (ready) {
-            nav.broadside(s, side, 45 + this.aimT * 55, nav.canDmg, s.ammo);
-            const r = 2.4 * nav.reloadMult;
-            if (side > 0) s.reloadL = r; else s.reloadR = r;
-          }
-          this.aimSide = 0; this.aimT = 0;
-          nav.hideAim();
+        if ((input.pressed(act) || input.down(act)) && ready) {
+          nav.playerBroadside(s, side, this.seaRange, nav.canDmg, s.ammo);
+          const r = this.reloadTime;
+          if (side > 0) s.reloadL = r; else s.reloadR = r;
         }
       }
       // Faji auf See
@@ -1166,19 +1158,22 @@ export class SeaWorld {
       this.focus.set(x, wy + 2, z);
     } else {
       // Kampfkamera wie in 1.0: das nächste Feindschiff kommt mit ins Bild
-      const foe = this.nearestFoe(x, z, 170);
+      const portrait = innerHeight > innerWidth;
+      const foe = this.nearestFoe(x, z, this.seaRange * 1.7);
       const want = foe ? Math.atan2(foe.x - x, foe.z - z) : h;
       this.seaYaw += (MathUtils.euclideanModulo(want - this.seaYaw + Math.PI, Math.PI * 2) - Math.PI) * Math.min(1, frameDt * (foe ? 1.4 : 1.8));
       const sep = foe ? Math.hypot(foe.x - x, foe.z - z) : 0;
+      // Abstand und Höhe wie in 1.0 (Hochformat weiter weg), Zoom und Neigung vom Spieler
       const yaw = this.seaYaw + Math.PI + this.camYaw;
-      const dist = (this.camDist + (s.boost > 0 ? 4 : 0)) * Math.max(1, L / 17) + sep * 0.28;
-      const cp = Math.cos(this.camPitch);
-      this.tmp.set(x + Math.sin(yaw) * dist * cp, Math.max(wy + 2, 3 + Math.sin(this.camPitch) * dist + sep * 0.12), z + Math.cos(yaw) * dist * cp);
-      cam.position.lerp(this.tmp, Math.min(1, frameDt * (foe ? 3 : 6)));
+      const zoom = this.camDist / 22;
+      const back = ((portrait ? 22 : 16) + L * 1.45 + sep * 0.3 + (s.boost > 0 ? 4 : 0)) * zoom;
+      const up = ((portrait ? 12 : 8) + L * 0.6 + sep * (portrait ? 0.5 : 0.32)) * zoom * (0.6 + this.camPitch * 1.3);
+      this.tmp.set(x + Math.sin(yaw) * back, Math.max(wy + 2, up), z + Math.cos(yaw) * back);
+      cam.position.lerp(this.tmp, Math.min(1, frameDt * 3));
       const camWater = env.heightAt(cam.position.x, cam.position.z) + 1.2;
       if (cam.position.y < camWater) cam.position.y = camWater;
-      if (foe) cam.lookAt(x + (foe.x - x) * 0.42, 3, z + (foe.z - z) * 0.42);
-      else cam.lookAt(x + Math.sin(h) * L * 0.4, 3.5 + wy * 0.3, z + Math.cos(h) * L * 0.4);
+      if (foe) cam.lookAt(x + (foe.x - x) * 0.45, 2, z + (foe.z - z) * 0.45);
+      else cam.lookAt(x + Math.sin(this.seaYaw) * (12 + L), 2, z + Math.cos(this.seaYaw) * (12 + L));
       this.focus.set(x, wy + 2, z);
     }
     if (this.cinematic > 0 && !inMenu) {

@@ -23,6 +23,7 @@ import {
 import type { FigureheadId, FlagId, ShipClass, ShipLook } from '../../data/ships';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { addOutlines } from '../../render/outline';
+import { plankTexture, sailTexture } from '../../render/textures';
 import { toon } from '../../render/toon';
 
 export interface ShipModel {
@@ -54,6 +55,7 @@ function hullGeometry(c: ShipClass, D: number, look: ShipLook): BufferGeometry {
   const prof = [[-1, D], [-0.98, D * 0.55], [-0.88, D * 0.1], [-0.62, -0.55], [-0.25, -0.95], [0, -1.05], [0.25, -0.95], [0.62, -0.55], [0.88, D * 0.1], [0.98, D * 0.55], [1, D]];
   const pos: number[] = [];
   const col: number[] = [];
+  const uv: number[] = [];
   const hull = new Color(look.hull), stripe = new Color(look.stripe), bottom = new Color('#B8653A'), dark = new Color(look.hull).multiplyScalar(0.55);
   const ring = (i: number) => {
     const t = (i / sections) * 2 - 1;
@@ -73,6 +75,7 @@ function hullGeometry(c: ShipClass, D: number, look: ShipLook): BufferGeometry {
       const quad = [a[k], b[k], b[k + 1], a[k], b[k + 1], a[k + 1]];
       for (const p of quad) {
         pos.push(p.x, p.y, p.z);
+        uv.push(p.z / 3, p.y * 0.35);
         const cc = colorFor(p.y, i);
         col.push(cc.r, cc.g, cc.b);
       }
@@ -81,11 +84,13 @@ function hullGeometry(c: ShipClass, D: number, look: ShipLook): BufferGeometry {
   // Heckspiegel
   const st = ring(0);
   for (let k = 1; k < st.length - 2; k++) {
-    for (const p of [st[0], st[k + 1], st[k]]) { pos.push(p.x, p.y, p.z); col.push(dark.r, dark.g, dark.b); }
+    // beide Seiten, damit der Heckspiegel von hinten nie fehlt
+    for (const p of [st[0], st[k + 1], st[k], st[0], st[k], st[k + 1]]) { pos.push(p.x, p.y, p.z); col.push(dark.r, dark.g, dark.b); uv.push(p.x / 3, p.y * 0.35); }
   }
   const g = new BufferGeometry();
   g.setAttribute('position', new Float32BufferAttribute(pos, 3));
   g.setAttribute('color', new Float32BufferAttribute(col, 3));
+  g.setAttribute('uv', new Float32BufferAttribute(uv, 2));
   g.computeVertexNormals();
   return g;
 }
@@ -177,7 +182,8 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
   const sc = c.L / 15;
   const halfWidth = (z: number) => Math.max(0.05, widthAt(z / (c.L / 2))) * c.W / 2;
 
-  const hullMat = toon({ color: 0xffffff, vertexColors: true });
+  const planksTex = plankTexture();
+  const hullMat = toon({ color: 0xffffff, vertexColors: true, map: planksTex });
   const hull = new Mesh(hullGeometry(c, D, look), hullMat);
   group.add(hull);
 
@@ -187,17 +193,16 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
   for (let i = 0; i <= N; i++) { const z = ((i / N) * 2 - 1) * c.L / 2 * 0.98; const w = halfWidth(z) * 0.95; i === 0 ? deckShape.moveTo(w, z) : deckShape.lineTo(w, z); }
   for (let i = N; i >= 0; i--) { const z = ((i / N) * 2 - 1) * c.L / 2 * 0.98; deckShape.lineTo(-halfWidth(z) * 0.95, z); }
   const deckGeo = new ShapeGeometry(deckShape).rotateX(Math.PI / 2);
-  const deck = new Mesh(deckGeo, toon({ color: '#B88A5A', side: DoubleSide }));
+  const deckTex = planksTex.clone();
+  deckTex.center.set(0.5, 0.5);
+  deckTex.rotation = Math.PI / 2;
+  deckTex.repeat.set(0.35, 0.35);
+  deckTex.needsUpdate = true;
+  const deck = new Mesh(deckGeo, toon({ color: '#C79A68', side: DoubleSide, map: deckTex }));
   deck.position.y = D - 0.05;
   deck.userData.noOutline = true;
   group.add(deck);
-  // Planken als dunkle Linien
-  const plank: number[] = [];
-  for (let x = -c.W / 2; x <= c.W / 2; x += 0.55) plank.push(x, D + 0.01, -c.L / 2 * 0.9, x, D + 0.01, c.L / 2 * 0.55);
-  const planks = new LineSegments(new BufferGeometry().setAttribute('position', new Float32BufferAttribute(plank, 3)), new LineBasicMaterial({ color: '#7A5A3A' }));
-  group.add(planks);
-
-  const wood = toon('#6A4426');
+  const wood = toon({ color: '#7A5030', map: planksTex });
   const darkWood = toon('#4A2E1A');
   const gold = toon({ color: '#E3B04B', spec: 0.9 });
   // Reling
@@ -253,7 +258,9 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
 
   // Masten, Rahen, Segel
   const sails: Mesh[] = [];
-  const sailMat = toon({ color: look.sail, side: DoubleSide });
+  const emblem = flagTexture(look.flag, look.flagColor).image as HTMLCanvasElement;
+  const mainMast = c.masts.length > 1 ? 1 : 0;
+  let sailSeed = 1;
   const rig: number[] = [];
   c.masts.forEach((mz, mi) => {
     const z = mz * c.L;
@@ -272,15 +279,17 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
       yard.rotation.z = Math.PI / 2;
       yard.position.set(0, y + h * 0.2, z);
       group.add(yard);
-      const sh = h * 0.2;
+      const sh = h * 0.235;
       const sg = new PlaneGeometry(w * 0.95, sh, 6, 4);
       const sp = sg.attributes.position;
       for (let i = 0; i < sp.count; i++) {
         const x = sp.getX(i), yy = sp.getY(i);
-        sp.setZ(i, Math.cos((x / (w * 0.95)) * Math.PI) * 0.6 * sc * (1 - Math.abs(yy) / sh * 0.5));
+        // kräftig gebläht, unten etwas mehr Bauch
+        sp.setZ(i, Math.cos((x / (w * 0.95)) * Math.PI) * 1.05 * sc * (1 - Math.abs(yy) / sh * 0.35) * (1.1 - (yy / sh + 0.5) * 0.3));
       }
       sg.computeVertexNormals();
-      const sail = new Mesh(sg, sailMat.clone());
+      const withEmblem = mi === mainMast && k === (yards > 2 ? 1 : 0);
+      const sail = new Mesh(sg, toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, withEmblem ? emblem : null, sailSeed++) }).clone());
       sail.position.set(0, y + h * 0.1, z + 0.15);
       sail.userData.noOutline = true;
       sail.userData.base = sail.position.y;
@@ -296,7 +305,11 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
   const bowZ = c.L / 2;
   const jibShape = new Shape();
   jibShape.moveTo(0, 0); jibShape.lineTo(0, c.mh * 0.6); jibShape.lineTo(c.L * 0.22, 0); jibShape.closePath();
-  const jib = new Mesh(new ShapeGeometry(jibShape), sailMat.clone());
+  const jibGeo = new ShapeGeometry(jibShape);
+  // Tuch-Textur über die Dreiecksfläche legen
+  const juv = jibGeo.attributes.uv;
+  for (let i = 0; i < juv.count; i++) juv.setXY(i, juv.getX(i) / (c.L * 0.22), juv.getY(i) / (c.mh * 0.6));
+  const jib = new Mesh(jibGeo, toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, null, 99) }).clone());
   jib.rotation.y = -Math.PI / 2;
   jib.position.set(0, D + 1, c.masts[0] * c.L + 1);
   jib.userData.noOutline = true;

@@ -26,6 +26,8 @@ export class Ship {
   throttle: number | null = null;
   /** Wendigkeit (Steuermann, Ausbauten) */
   turnMult = 1;
+  /** Höchsttempo der KI-Schiffe (wie in 1.0 langsamer als der Spieler); null = frei */
+  speedCap: number | null = null;
   hull: number;
   maxHull: number;
   sail = 1;
@@ -79,11 +81,12 @@ export class Ship {
     if (this.frozen > 0) { this.speed *= Math.pow(0.05, dt); return; }
     // Wind: Rückenwind schneller, Gegenwind etwas langsamer (Tempo wie in 1.0)
     const rel = Math.cos(this.heading - env.windDir);
-    const windK = 0.84 + 0.26 * (rel * 0.5 + 0.5) + env.windStrength * 0.06;
+    const windK = 0.96 + 0.24 * (rel * 0.5 + 0.5) + env.windStrength * 0.05;
     const level = this.throttle ?? [0, 0.55, 1][this.sailLevel];
     if (this.throttle !== null) this.sailLevel = level < 0.05 ? 0 : level < 0.75 ? 1 : 2;
     const sailK = level * (0.4 + 0.6 * this.sail);
-    const target = this.cls.spd * sailK * windK * speedMult * (this.boost > 0 ? 1.7 : 1);
+    let target = this.cls.spd * sailK * windK * speedMult * (this.boost > 0 ? 1.7 : 1);
+    if (this.speedCap !== null) target = Math.min(target, this.speedCap);
     this.speed += (target - this.speed) * Math.min(1, dt * (target < this.speed ? 0.8 : 0.9));
     // Wenden: große Schiffe drehen träger, ohne Fahrt langsamer
     this.turnInput += (turn - this.turnInput) * Math.min(1, dt * 6);

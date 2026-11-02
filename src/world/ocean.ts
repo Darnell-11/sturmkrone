@@ -11,7 +11,16 @@ import {
   Vector4,
 } from 'three';
 import { WAVES, WORLD_RADIUS } from '../data/world';
-import { WATER_RAMP } from '../render/toon';
+/** Weiche Lichtrampe fürs Wasser: keine harten Hell-Dunkel-Bänder auf den Wellen */
+const SOFT_RAMP = (() => {
+  const n = 32;
+  const d = new Uint8Array(n);
+  for (let i = 0; i < n; i++) { const t = i / (n - 1); d[i] = Math.round(255 * (0.62 + 0.38 * Math.pow(t, 0.8))); }
+  const t = new DataTexture(d, n, 1, RedFormat);
+  t.magFilter = t.minFilter = LinearFilter;
+  t.needsUpdate = true;
+  return t;
+})();
 
 const G = 9.81;
 const SHORE_SIZE = WORLD_RADIUS * 2.1;
@@ -132,13 +141,14 @@ export class Ocean {
     this.material = this.makeMaterial();
     this.mesh = new Mesh(buildGrid(96), this.material);
     this.mesh.frustumCulled = false;
-    this.mesh.receiveShadow = true;
+    // Wasser bekommt keine Schatten: sonst wandern riesige dunkle Flecken über die Wellen
+    this.mesh.receiveShadow = false;
     this.mesh.renderOrder = 0;
     this.setIslands([]);
   }
 
   private makeMaterial(): MeshToonMaterial {
-    const mat = new MeshToonMaterial({ color: 0xffffff, gradientMap: WATER_RAMP });
+    const mat = new MeshToonMaterial({ color: 0xffffff, gradientMap: SOFT_RAMP });
     const u = this.uniforms;
     const wakeN = this.wakeCount;
     mat.onBeforeCompile = (shader) => {
@@ -161,8 +171,7 @@ export class Ocean {
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', `#include <common>
           #define WAKE_N ${wakeN}
-          uniform float uTime;
-          uniform float uWaveScale;
+          ${GERSTNER_GLSL}
           uniform sampler2D uShore;
           uniform float uShoreSize;
           uniform float uWorldR;
@@ -177,15 +186,18 @@ export class Ocean {
             return mix(mix(skHash(i), skHash(i + vec2(1, 0)), fr.x), mix(skHash(i + vec2(0, 1)), skHash(i + vec2(1, 1)), fr.x), fr.y);
           }`)
         .replace('#include <color_fragment>', `#include <color_fragment>
+          // Wellen-Normale und Kamm pro Pixel: keine Keile und Kanten vom groben Gitter
+          vec3 skNf; float skCrestF;
+          vec3 skD = skGerstner(vSkW.xz, skNf, skCrestF);
           float skRad = length(vSkW.xz);
           if (skRad > uWorldR) discard;
           float sd = texture2D(uShore, vSkW.xz / uShoreSize + 0.5).r * 255.0;
           float shallow = 1.0 - smoothstep(0.0, 48.0, sd);
-          vec3 skBase = mix(uDeep, uShallow, clamp(shallow * 0.9 + smoothstep(-0.8, 1.6, vSkW.y) * 0.22, 0.0, 1.0));
+          vec3 skBase = mix(uDeep, uShallow, clamp(shallow * 0.9 + smoothstep(-0.8, 1.6, skD.y) * 0.22, 0.0, 1.0));
           // Gischt auf Wellenkämmen, aufgebrochen durch Rauschen
           float nz = skNoise(vSkW.xz * 0.35 + uTime * 0.3) * 0.6 + skNoise(vSkW.xz * 1.3 - uTime * 0.5) * 0.4;
           float crestT = 0.42 - 0.06 * clamp(uWaveScale - 1.0, 0.0, 2.0);
-          float skFoam = smoothstep(crestT, crestT + 0.12, vCrest + (nz - 0.5) * 0.18);
+          float skFoam = smoothstep(crestT, crestT + 0.12, skCrestF + (nz - 0.5) * 0.18);
           // Brandungsringe und Küstenlinie
           float bands = smoothstep(0.78, 1.0, sin(sd * 0.45 - uTime * 1.6)) * (1.0 - smoothstep(3.0, 24.0, sd));
           float coast = 1.0 - smoothstep(0.0, 3.2, sd + (nz - 0.5) * 3.0);
@@ -201,13 +213,15 @@ export class Ocean {
             if (w.w <= 0.0) continue;
             float d = distance(vSkW.xz, w.xy);
             float r = 1.4 + w.z * 1.7;
-            float ring = smoothstep(r - 1.6, r - 0.6, d) * (1.0 - smoothstep(r - 0.6, r + 0.3, d));
-            float core = 1.0 - smoothstep(0.0, r * 0.75, d);
-            float life = w.w * (1.0 - clamp(w.z / 6.0, 0.0, 1.0));
-            skFoam = max(skFoam, (ring * 0.8 * step(0.3, nz) + core * 0.15) * life);
+            // Weiche, aufgerissene Schaumspur statt Ringen
+            float core = 1.0 - smoothstep(r * 0.25, r, d);
+            float life = w.w * (1.0 - clamp(w.z / 7.0, 0.0, 1.0));
+            skFoam = max(skFoam, core * smoothstep(0.3, 0.7, nz + core * 0.25) * 0.85 * life);
           }
           skFoam = clamp(skFoam, 0.0, 1.0);
           diffuseColor.rgb = mix(skBase, uFoam, skFoam * 0.92);`)
+        .replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
+          normal = normalize((viewMatrix * vec4(skNf, 0.0)).xyz);`)
         .replace('#include <opaque_fragment>', `
           {
             vec3 Nw = normalize(inverseTransformDirection(normal, viewMatrix));
@@ -218,12 +232,20 @@ export class Ocean {
             outgoingLight = mix(outgoingLight, skyC, fr * 0.6);
             float sp = pow(max(dot(R, uSunDir), 0.0), 260.0);
             outgoingLight += uSunCol * step(0.28, sp) * 1.8 * uSpecK * (1.0 - skFoam);
+            // Licht scheint durch die Wellenkämme (türkis), Funkeln im Sonnenglanz
+            float sss = pow(clamp(dot(Vw, -uSunDir) * 0.5 + 0.5, 0.0, 1.0), 3.0) * clamp(skCrestF * 1.6 + 0.2, 0.0, 1.0);
+            outgoingLight += uShallow * sss * 0.28 * uSpecK * (1.0 - skFoam);
+            float tw = step(0.93, skNoise(vSkW.xz * 1.7 + vec2(uTime * 1.3, -uTime))) * pow(max(dot(R, uSunDir), 0.0), 6.0);
+            outgoingLight += uSunCol * tw * 1.1 * uSpecK * (1.0 - skFoam);
+            // Ferne Wasserflächen gehen in die Horizontfarbe über
+            float far = smoothstep(180.0, 1600.0, distance(vSkW.xz, cameraPosition.xz));
+            outgoingLight = mix(outgoingLight, uHorizon * 0.82, far * 0.3);
           }
           #include <opaque_fragment>
           // Alpha 0 markiert Wasser: Kantenerkennung und Umgebungsverdeckung lassen es aus
           gl_FragColor.a = 0.0;`);
     };
-    mat.customProgramCacheKey = () => `sk-ocean-${wakeN}`;
+    mat.customProgramCacheKey = () => `sk-ocean2-${wakeN}`;
     return mat;
   }
 

@@ -1,22 +1,27 @@
 import { audio } from '../audio/audio';
 import {
-  AdditiveBlending,
   BoxGeometry,
   BufferGeometry,
   Color,
-  Float32BufferAttribute,
+  CustomBlending,
+  OneFactor,
+  OneMinusSrcAlphaFactor,
+  SrcAlphaFactor,
+  ZeroFactor,
   Line,
   LineBasicMaterial,
+  DoubleSide,
+  Group,
   Mesh,
   MeshBasicMaterial,
-  Points,
-  PointsMaterial,
+  RingGeometry,
+  ShaderMaterial,
   SphereGeometry,
   Vector3,
   type Scene,
 } from 'three';
 import type { CombatFx } from '../combat/fx';
-import { AMMO, DEFAULT_SHIP_LOOK, HULL_COLORS, SAIL_COLORS, type AmmoId, type NavalRole } from '../data/ships';
+import { AMMO, DEFAULT_SHIP_LOOK, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, type AmmoId, type NavalRole } from '../data/ships';
 import { WORLD_RADIUS } from '../data/world';
 import { Ship, type SeaEnv } from '../entities/ship/ship';
 import { toon } from '../render/toon';
@@ -40,6 +45,9 @@ export interface EnemyShip {
   legendId?: string;
   /** Geisterschiff (nur nachts im Nebelarchipel) */
   ghost?: boolean;
+  /** Umkreisungsrichtung und Nachladezeit (KI wie in 1.0) */
+  orbit?: number;
+  reload?: number;
 }
 
 interface Ball { mesh: Mesh; vel: Vector3; owner: Ship; dmg: number; ammo: AmmoId; life: number }
@@ -69,55 +77,129 @@ export class NavalSystem {
   private balls: Ball[] = [];
   private crates: Crate[] = [];
   private spawnT = 3;
-  private aim: Points;
   private ballGeo = new SphereGeometry(0.3, 8, 6);
+  // Zielfächer wie in 1.0: hell links und rechts, rot, sobald ein Gegner darin ist
+  private fanGroup = new Group();
+  private fans: Mesh[] = [];
+  private fanMats = [0, 1].map(() => new ShaderMaterial({
+    uniforms: { uColor: { value: new Color(0xffffff) }, uOpacity: { value: 0.06 }, uIn: { value: 8 }, uOut: { value: 72 } },
+    vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    // Weicher Verlauf nach außen, heller Rand – wie ein Lichtkegel auf dem Wasser
+    fragmentShader: 'uniform vec3 uColor; uniform float uOpacity, uIn, uOut; varying vec3 vP; void main(){ float t = clamp((length(vP.xz) - uIn) / (uOut - uIn), 0.0, 1.0); float a = smoothstep(0.0, 0.25, t) * (1.0 - smoothstep(0.82, 1.0, t)) * (0.4 + 0.6 * t) * uOpacity; gl_FragColor = vec4(uColor, a); }',
+    transparent: true, depthWrite: false, side: DoubleSide, toneMapped: false,
+    // Alpha-Kanal nicht verändern: er markiert Wasser für Konturen und Schattierung
+    blending: CustomBlending, blendSrc: SrcAlphaFactor, blendDst: OneMinusSrcAlphaFactor, blendSrcAlpha: ZeroFactor, blendDstAlpha: OneFactor,
+  }));
+  private fanRange = 0;
+  private rings = [0, 1].map(() => {
+    const m = new Mesh(new RingGeometry(0.86, 1, 48).rotateX(-Math.PI / 2), new MeshBasicMaterial({ color: 0xff4a3a, transparent: true, opacity: 0.9, depthWrite: false, side: DoubleSide, fog: false, blending: CustomBlending, blendSrc: SrcAlphaFactor, blendDst: OneMinusSrcAlphaFactor, blendSrcAlpha: ZeroFactor, blendDstAlpha: OneFactor }));
+    m.visible = false;
+    m.renderOrder = 4;
+    return m;
+  });
+  private aimT = 0;
 
   constructor(private scene: Scene, private env: SeaEnv, private fx: CombatFx, private overlay: CombatOverlay, private spray: ParticleSystem, private sparks: ParticleSystem, private ground: IslandGround, private hooks: NavalHooks) {
-    const pts = new Float32Array(40 * 3);
-    const g = new BufferGeometry();
-    g.setAttribute('position', new Float32BufferAttribute(pts, 3));
-    this.aim = new Points(g, new PointsMaterial({ color: new Color(3, 2.2, 0.6), size: 0.9, transparent: true, opacity: 0.85, depthWrite: false, blending: AdditiveBlending }));
-    this.aim.frustumCulled = false;
-    this.aim.visible = false;
-    scene.add(this.aim);
+    this.fanGroup.renderOrder = 3;
+    scene.add(this.fanGroup, ...this.rings);
   }
 
-  // ---------- Zielhilfe ----------
+  // ---------- Zielhilfe (wie in 1.0) ----------
 
-  /** Flugbahn einer Breitseite anzeigen (side +1 links, −1 rechts) */
-  showAim(side: number, range: number) {
+  /** Nächster Gegner im Feuerfächer einer Seite (side +1 links, −1 rechts) */
+  sideTarget(side: number, range: number): Ship | null {
     const p = this.player;
-    if (!p) { this.aim.visible = false; return; }
-    const pos = this.aim.geometry.attributes.position;
-    const left = new Vector3(Math.cos(p.heading), 0, -Math.sin(p.heading)).multiplyScalar(side);
-    const start = new Vector3(p.x, p.model.deckY, p.z).addScaledVector(left, p.cls.W / 2);
-    const t = range / BALL_SPEED;
-    const vy = 0.5 * G * t;
-    for (let i = 0; i < 40; i++) {
-      const tt = (i / 39) * t;
-      pos.setXYZ(i, start.x + left.x * BALL_SPEED * tt + Math.sin(p.heading) * p.speed * tt, start.y + vy * tt - 0.5 * G * tt * tt, start.z + left.z * BALL_SPEED * tt + Math.cos(p.heading) * p.speed * tt);
+    if (!p) return null;
+    const dir = p.heading + side * Math.PI / 2;
+    let best: Ship | null = null, bd = range * 1.08;
+    for (const e of this.enemies) {
+      const s = e.ship;
+      if (e.companion || !s.alive || s.sinking) continue;
+      const d = Math.hypot(s.x - p.x, s.z - p.z);
+      if (d < 6 || d > bd) continue;
+      const a = ((Math.atan2(s.x - p.x, s.z - p.z) - dir + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      if (Math.abs(a) > 0.62) continue;
+      bd = d; best = s;
     }
-    pos.needsUpdate = true;
-    this.aim.visible = true;
+    return best;
   }
 
-  hideAim() { this.aim.visible = false; }
+  /** Fächer und Zielringe jeden Frame nachführen */
+  updateAim(dt: number, show: boolean, range: number, readyL: boolean, readyR: boolean) {
+    const p = this.player;
+    this.aimT += dt;
+    this.fanGroup.visible = show && !!p;
+    for (const r of this.rings) r.visible = false;
+    if (!show || !p) return;
+    if (Math.abs(range - this.fanRange) > 0.5) {
+      this.fanRange = range;
+      for (const f of this.fans) { this.fanGroup.remove(f); f.geometry.dispose(); }
+      this.fans = [1, -1].map((s, i) => {
+        const start = s > 0 ? -0.62 : Math.PI - 0.62;
+        const inner = p.cls.W * 0.6 + 4;
+        this.fanMats[i].uniforms.uIn.value = inner;
+        this.fanMats[i].uniforms.uOut.value = range;
+        const m = new Mesh(new RingGeometry(inner, range, 40, 1, start, 1.24).rotateX(-Math.PI / 2), this.fanMats[i]);
+        m.renderOrder = 3;
+        this.fanGroup.add(m);
+        return m;
+      });
+    }
+    this.fanGroup.position.set(p.x, 1.15, p.z);
+    this.fanGroup.rotation.y = p.heading;
+    const near = this.enemies.some((e) => !e.companion && e.ship.alive && e.role !== 'haendler' && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) < range * 1.8);
+    [1, -1].forEach((side, i) => {
+      const t = this.sideTarget(side, range);
+      const m = this.fanMats[i];
+      const ready = side > 0 ? readyL : readyR;
+      if (t) {
+        m.uniforms.uColor.value.setHex(0xff6a4a);
+        m.uniforms.uOpacity.value = ready ? 0.15 + Math.sin(this.aimT * 8) * 0.04 : 0.07;
+        const ring = this.rings[i];
+        ring.visible = true;
+        ring.position.set(t.x, 1.5, t.z);
+        ring.scale.setScalar(t.cls.L * 0.7 + Math.sin(this.aimT * 6) * 0.4);
+      } else {
+        m.uniforms.uColor.value.setHex(0xffffff);
+        m.uniforms.uOpacity.value = near ? 0.06 : 0;
+      }
+    });
+  }
+
+  /** Spieler-Breitseite: zielt automatisch auf den Gegner im Fächer (mit Vorhalt) */
+  playerBroadside(ship: Ship, side: number, range: number, dmg: number, ammo: AmmoId) {
+    this.broadside(ship, side, range, dmg, ammo, this.sideTarget(side, range));
+    this.hooks.shake(0.3);
+  }
 
   // ---------- Feuern ----------
 
-  /** Breitseite: alle Kanonen einer Seite */
-  broadside(ship: Ship, side: number, range: number, dmg: number, ammo: AmmoId) {
+  /** Breitseite: alle Kanonen einer Seite; mit Ziel wird Vorhalt berechnet */
+  broadside(ship: Ship, side: number, range: number, dmg: number, ammo: AmmoId, target: Ship | null = null) {
     const muzzles = side > 0 ? ship.model.muzzlesL : ship.model.muzzlesR;
     audio.play('broadside', ship === this.player ? 1 : 0.8, { x: ship.x, z: ship.z });
     const left = new Vector3(Math.cos(ship.heading), 0, -Math.sin(ship.heading)).multiplyScalar(side);
-    const r = range * AMMO[ammo].range;
-    const t = r / (BALL_SPEED * AMMO[ammo].speed);
+    const speed = BALL_SPEED * AMMO[ammo].speed;
+    const n = muzzles.length;
     muzzles.forEach((m, i) => {
       const w = m.clone().applyMatrix4(ship.model.group.matrixWorld);
-      const spread = (Math.random() - 0.5) * 0.06;
-      const dir = left.clone().applyAxisAngle(new Vector3(0, 1, 0), spread);
-      const vel = dir.multiplyScalar(BALL_SPEED * AMMO[ammo].speed).add(new Vector3(Math.sin(ship.heading) * ship.speed, 0.5 * G * t + (Math.random() - 0.5), Math.cos(ship.heading) * ship.speed));
-      setTimeout(() => this.spawnBall(w, vel, ship, dmg, ammo), i * 70);
+      let dir: Vector3, r: number, carry = 1;
+      if (target) {
+        const T = Math.hypot(target.x - w.x, target.z - w.z) / speed;
+        const lo = n > 1 ? (i / (n - 1) - 0.5) * target.cls.L * 0.6 : 0;
+        const ex = target.x + Math.sin(target.heading) * (target.speed * T + lo);
+        const ez = target.z + Math.cos(target.heading) * (target.speed * T + lo);
+        dir = new Vector3(ex - w.x, 0, ez - w.z);
+        r = dir.length() * (0.97 + Math.random() * 0.06);
+        dir.normalize().applyAxisAngle(new Vector3(0, 1, 0), (Math.random() - 0.5) * 0.03);
+        carry = 0;
+      } else {
+        dir = left.clone().applyAxisAngle(new Vector3(0, 1, 0), (Math.random() - 0.5) * 0.08);
+        r = range * AMMO[ammo].range * (0.92 + Math.random() * 0.1);
+      }
+      const t = r / speed;
+      const vel = dir.multiplyScalar(speed).add(new Vector3(Math.sin(ship.heading) * ship.speed * 0.5 * carry, 0.5 * G * t - (w.y - 0.6) / t, Math.cos(ship.heading) * ship.speed * 0.5 * carry));
+      setTimeout(() => this.spawnBall(w, vel, ship, dmg, ammo), i * 40);
     });
   }
 
@@ -150,7 +232,7 @@ export class NavalSystem {
     const role: NavalRole = roll < 0.42 ? 'patrouille' : roll < 0.67 ? 'jaeger' : 'haendler';
     for (let tries = 0; tries < 8; tries++) {
       const a = Math.random() * Math.PI * 2;
-      const d = 380 + Math.random() * 220;
+      const d = 240 + Math.random() * 80;
       const x = px + Math.cos(a) * d, z = pz + Math.sin(a) * d;
       if (Math.hypot(x, z) > WORLD_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
       const foe: 'pirat' | 'marine' = role === 'haendler' ? (Math.random() < 0.5 ? 'pirat' : 'marine') : this.playerFaction === 'pirat' ? 'marine' : 'pirat';
@@ -239,7 +321,7 @@ export class NavalSystem {
       this.spawnT -= dt;
       const hostile = this.enemies.filter((e) => !e.companion && e.ship.alive).length;
       const cap = Math.min(4, 2 + Math.floor(this.zoneLevel(p.x, p.z) / 3));
-      if (this.spawnT <= 0 && hostile < cap) { this.spawnT = 8 + Math.random() * 8; this.spawnEnemy(p.x, p.z); }
+      if (this.spawnT <= 0 && hostile < cap) { this.spawnT = 10 + Math.random() * 6; this.spawnEnemy(p.x, p.z); }
       this.ensureCompanions();
     }
     for (const e of this.enemies) this.ai(e, dt);
@@ -278,9 +360,39 @@ export class NavalSystem {
       s.sailLevel = Math.hypot(fx - s.x, fz - s.z) > 30 ? 2 : 1;
     } else if (e.role === 'haendler') {
       const threatened = p && (Math.hypot(p.x - s.x, p.z - s.z) < 120 || s.hull < s.maxHull);
+      s.speedCap = 11 - Math.max(0, SHIP_CLASSES.indexOf(s.cls)) * 0.4;
       if (threatened && p) { turn = steerTo(s.x * 2 - p.x, s.z * 2 - p.z); s.sailLevel = 2; e.state = 'flee'; }
       else { if (e.aiT <= 0 || Math.hypot(e.wander.x - s.x, e.wander.z - s.z) < 30) { e.aiT = 20; e.wander = { x: s.x + (Math.random() - 0.5) * 600, z: s.z + (Math.random() - 0.5) * 600 }; } turn = steerTo(e.wander.x, e.wander.z); s.sailLevel = 1; }
-    } else if (target && dist < (e.role === 'jaeger' || e.companion ? 420 : 260)) {
+    } else if (target && !e.companion && dist < (e.role === 'legende' ? 480 : 320)) {
+      // Wie in 1.0: in Breitseitenabstand umkreisen, feuern, sobald eine Seite zeigt
+      e.state = 'engage';
+      const tier = Math.max(0, SHIP_CLASSES.indexOf(s.cls));
+      s.speedCap = 14.5 - tier * 0.4 + (e.role === 'legende' ? 2 : 0) + (e.ghost ? 1 : 0);
+      s.sailLevel = 2;
+      const toP = Math.atan2(target.x - s.x, target.z - s.z);
+      let des: number;
+      if (tier === 0 && dist > 80) des = toP;
+      else {
+        const od = 46 + s.cls.L * 0.5;
+        const orbit = e.orbit ?? (e.orbit = Math.random() < 0.5 ? 1 : -1);
+        const bias = Math.max(-1, Math.min(1, (dist - od) / 45));
+        des = toP + orbit * Math.PI / 2 - orbit * bias * Math.PI / 2 * 0.8;
+      }
+      turn = steerTo(s.x + Math.sin(des) * 50, s.z + Math.cos(des) * 50);
+      e.reload = (e.reload ?? Math.random() * 2) - dt;
+      const rng = 52 + tier * 6;
+      if (dist < rng && e.reload <= 0 && s.ceasefire <= 0 && s.frozen <= 0) {
+        for (const side of [-1, 1]) {
+          const d = ((s.heading + side * Math.PI / 2 - toP + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+          if (Math.abs(d) > 0.4) continue;
+          const lv = e.level;
+          const dmg = (6 + tier * 2) * (1 + 0.12 * (lv - 1) + 0.004 * (lv - 1) * (lv - 1)) * (e.role === 'legende' ? 1.4 : 1);
+          this.broadside(s, side, dist, dmg, e.role === 'legende' && Math.random() < 0.3 ? 'brand' : 'kugel', target);
+          e.reload = (2.4 + Math.random()) / Math.sqrt(lv * 0.5 + 0.5);
+          break;
+        }
+      }
+    } else if (target && dist < 420) {
       e.state = s.hull < s.maxHull * 0.2 && e.role !== 'legende' && !e.companion ? 'flee' : 'engage';
       if (e.state === 'flee') { turn = steerTo(s.x * 2 - target.x, s.z * 2 - target.z); s.sailLevel = 2; }
       else {
@@ -305,6 +417,7 @@ export class NavalSystem {
       }
     } else {
       e.state = 'patrol';
+      if (!e.companion) s.speedCap = 10;
       if (e.aiT <= 0 || Math.hypot(e.wander.x - s.x, e.wander.z - s.z) < 40) {
         e.aiT = 25;
         const a = Math.random() * Math.PI * 2;

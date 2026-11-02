@@ -153,6 +153,13 @@ export class Environment {
     this.sun.position.z = this.sun.target.position.z + pal.lightDir.z * 200;
 
     toonShared.rimColor.value.copy(pal.rim);
+    // Schattenfarbe: tags kühles Blau, im Abendrot Violett, nachts tiefes Blau
+    {
+      const h = this.time;
+      const dusk = Math.max(0, 1 - Math.min(Math.abs(h - 18.6), Math.abs(h - 6.4)) / 1.6);
+      const night = h < 5.5 || h > 20 ? 1 : 0;
+      toonShared.shadowTint.value.setRGB(0.74 + dusk * 0.14 - night * 0.06, 0.8 - dusk * 0.1, 1.12 + dusk * 0.04 + night * 0.08);
+    }
     toonShared.rimStrength.value = 0.55 * (1 - greyK * 0.6) * (0.35 + 0.65 * pal.sunVis);
 
     // Meer

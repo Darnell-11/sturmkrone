@@ -32,6 +32,38 @@ export function styleKit(style: IslandStyle): StyleKit {
   return k;
 }
 
+/** Unregelmäßige Küste und hügelige Kuppe statt Zylinder und Halbkugel */
+export function islandTerrain(kit: StyleKit, r: number, hill: number, rnd: () => number): { beach: Mesh; hill: Mesh } {
+  const seed = rnd() * 100;
+  const coast = (a: number) => 1 + 0.035 * Math.sin(a * 3 + seed) + 0.02 * Math.sin(a * 7 + seed * 2) + 0.01 * Math.sin(a * 13 + seed * 3);
+  const bg = new CylinderGeometry(r, r * 1.25, 3, 64, 2);
+  const bp = bg.attributes.position;
+  for (let i = 0; i < bp.count; i++) {
+    const x = bp.getX(i), z = bp.getZ(i);
+    const k = coast(Math.atan2(z, x));
+    bp.setX(i, x * k); bp.setZ(i, z * k);
+  }
+  bg.computeVertexNormals();
+  const beach = new Mesh(bg, kit.sand);
+  beach.position.y = -0.2;
+  const R = r * 0.75;
+  const hg = new SphereGeometry(R, 40, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+  const hp = hg.attributes.position;
+  for (let i = 0; i < hp.count; i++) {
+    const x = hp.getX(i), y = hp.getY(i), z = hp.getZ(i);
+    const k = coast(Math.atan2(z, x));
+    // sanfte Hügel und Mulden, zum Rand hin flach
+    const top = y / R;
+    const bump = 1 + 0.22 * top * (Math.sin(x * 0.11 + seed) * Math.cos(z * 0.09 - seed) + 0.5 * Math.sin((x + z) * 0.23 + seed * 1.7));
+    hp.setXYZ(i, x * k, y * bump, z * k);
+  }
+  hg.computeVertexNormals();
+  const hillMesh = new Mesh(hg, kit.grass);
+  hillMesh.scale.y = hill;
+  hillMesh.position.y = 1.2;
+  return { beach, hill: hillMesh };
+}
+
 /** Eine Pflanze (oder ein Kristall) passend zur Region */
 export function plant(kit: StyleKit, rnd: () => number): Group {
   const g = new Group();

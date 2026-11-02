@@ -1,9 +1,17 @@
 import {
   ACESFilmicToneMapping,
+  AdditiveBlending,
+  CustomBlending,
   HalfFloatType,
+  NormalBlending,
+  OneFactor,
+  OneMinusSrcAlphaFactor,
   PCFShadowMap,
+  SrcAlphaFactor,
   WebGLRenderer,
+  ZeroFactor,
   type Camera,
+  type Material,
   type Mesh,
   type PerspectiveCamera,
   type Scene,
@@ -41,6 +49,7 @@ export class GameRenderer {
   private sun: Mesh | null = null;
   private focus: Vector3 | null = null;
   private ao: DepthAOEffect | null = null;
+  private godRays: GodRaysEffect | null = null;
 
   constructor(private canvas: HTMLCanvasElement) {
     try {
@@ -95,6 +104,7 @@ export class GameRenderer {
     this.composer?.dispose();
     this.composer = null;
     this.ao = null;
+    this.godRays = null;
     const c = this.config;
     // Niedrig/Mittel: Konturen als Inverted Hull, Hoch/Maximal: Kantenerkennung als Post-Effekt
     setHullsVisible(!c.post.outlines);
@@ -117,7 +127,8 @@ export class GameRenderer {
       effects.push(this.ao);
     }
     if (c.post.godRays && this.sun) {
-      effects.push(new GodRaysEffect(cam, this.sun, { density: 0.94, decay: 0.92, weight: 0.35, exposure: 0.5, samples: c.detail > 1 ? 80 : 48, clampMax: 1, resolutionScale: 0.5, blur: true }));
+      this.godRays = new GodRaysEffect(cam, this.sun, { density: 0.94, decay: 0.92, weight: 0.22, exposure: 0.42, samples: c.detail > 1 ? 80 : 48, clampMax: 1, resolutionScale: 0.5, blur: true });
+      effects.push(this.godRays);
     }
     if (c.post.bloom) {
       effects.push(new BloomEffect({ intensity: 1.0, luminanceThreshold: 0.85, luminanceSmoothing: 0.18, mipmapBlur: true, radius: 0.7 }));
@@ -166,8 +177,41 @@ export class GameRenderer {
     return { w: this.canvas.width, h: this.canvas.height };
   }
 
+  private maskT = 0;
+  /**
+   * Transparente Effekte (Gischt, Funken, Ringe) dürfen den Alpha-Kanal nicht verändern:
+   * Alpha 0 markiert Wasser, sonst zeichnen Konturen und Umgebungsverdeckung dunkle Höfe um jeden Schaum.
+   */
+  private keepWaterMask(scene: Scene) {
+    scene.traverse((o) => {
+      const m = (o as Mesh).material as Material | Material[] | undefined;
+      if (!m) return;
+      for (const mat of Array.isArray(m) ? m : [m]) {
+        if (!mat.transparent || mat.userData.maskKept) continue;
+        mat.userData.maskKept = true;
+        const additive = mat.blending === AdditiveBlending;
+        if (mat.blending !== NormalBlending && !additive) continue;
+        mat.blending = CustomBlending;
+        mat.blendSrc = SrcAlphaFactor;
+        mat.blendDst = additive ? OneFactor : OneMinusSrcAlphaFactor;
+        mat.blendSrcAlpha = ZeroFactor;
+        mat.blendDstAlpha = OneFactor;
+        mat.needsUpdate = true;
+      }
+    });
+  }
+
   render(dt: number) {
     if (!this.scene || !this.camera) return;
+    // Sonnenstrahlen nur bei höherer Sonne: tief stehend werfen Schiffe sonst riesige Streifen übers Meer
+    if (this.godRays && this.sun) {
+      const cp = this.camera.position, sp = this.sun.position;
+      const elev = (sp.y - cp.y) / (Math.hypot(sp.x - cp.x, sp.y - cp.y, sp.z - cp.z) || 1);
+      const k = Math.min(1, Math.max(0, (elev - 0.18) / 0.3));
+      this.godRays.godRaysMaterial.uniforms.weight.value = 0.22 * k;
+    }
+    this.maskT -= dt;
+    if (this.maskT <= 0) { this.maskT = 0.5; this.keepWaterMask(this.scene); }
     this.ao?.update();
     if (this.composer) this.composer.render(dt);
     else this.gl.render(this.scene, this.camera);

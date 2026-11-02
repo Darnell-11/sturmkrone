@@ -1,5 +1,34 @@
 # Was ist neu
 
+## 2.1.0 – Seekampf wie in der Demo, Grafik überarbeitet (02.11.2026)
+
+**Seekampf 1:1 aus der Demo übernommen**
+- Feindschiffe sind wieder langsamer als du (14,5 statt bis zu 24). Sie umkreisen dich auf Breitseitenabstand und feuern nur, wenn eine Seite zu dir zeigt.
+- **Breitseite antippen = feuern.** Gezielt wird automatisch, mit Vorhalt auf fahrende Schiffe; halten feuert nach jedem Nachladen.
+- **Zielfächer links und rechts** werden rot, sobald ein Gegner drin ist, dazu ein Zielring um das Schiff.
+- Reichweite und Nachladezeit wie in der Demo (72 m, 1,9 s)
+- Feindschiffe tauchen näher auf, Kämpfe finden schneller statt.
+
+**Segeln und Kamera**
+- Etwas schneller, vor allem bei Gegenwind
+- Kamera deutlich weiter weg (Abstand und Höhe wie in der Demo, im Hochformat noch weiter)
+
+**Grafikfehler behoben**
+- Die **riesigen Schattenstreifen** über dem Meer sind weg:
+  - Das Wasser empfängt keine Schatten mehr.
+  - Sonnenstrahlen blenden bei tiefer Sonne aus.
+  - Gischt und Effekte erzeugen keine dunklen Höfe mehr.
+- Keine harten Hell-Dunkel-Keile mehr auf dem Wasser, Wellenlicht wird pro Bildpunkt berechnet.
+- Das **Heck war offen** (man sah ins Schiff hinein) – jetzt geschlossen.
+- Kielwasser als weiche Schaumspur statt Ringen
+
+**Grafik-Upgrade**
+- Schiffe mit Holzplanken an Rumpf, Deck und Kastell
+- Segel mit Tuchbahnen, Reffreihe, Liektau, Flicken und Wappen; deutlich voller gebläht
+- **Anime-Licht:** Schattenseiten kühl blau, im Abendrot violett, statt nur grau; saubere, weiche Lichtkanten
+- Wasser mit Licht durch die Wellenkämme, Funkeln im Sonnenglanz und Tiefe zum Horizont
+- Inseln mit unregelmäßigen Küsten und hügeligen Kuppen statt Zylinder und Halbkugel
+
 ## 2.0.0 – Das große 2.0-Update (01.11.2026)
 
 **Neu seit der Vorabversion**
