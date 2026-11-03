@@ -1,5 +1,28 @@
 # Was ist neu
 
+## 2.4.0 – Entern, eigenes Deck und runde Schiffe (04.11.2026)
+
+- **Schiffe vollständig sichtbar:** Die Rümpfe waren seit 2.0 von außen teilweise durchsichtig (eigene und feindliche Schiffe). Behoben.
+  - Rumpf, Deck und Achterdeck mit Holzplanken-Textur, Segel mit Stoffstruktur und Wappen
+- **Entern funktioniert wieder zuverlässig:**
+  - Schwer beschädigte Schiffe (Rumpf unter 35 % oder kaum noch Crew) werden langsamer, und es erscheint die Meldung, dass sie geentert werden können.
+  - Über ihrer Lebensleiste steht dann **ENTERN**.
+  - Der Knopf **„Entern!“** erscheint, sobald du in der Nähe bist, egal wie schnell du fährst.
+- **Auf dem eigenen Schiff herumlaufen:** Mit **„An Deck gehen“** verlässt du das Steuer.
+  - mit der Crew an Deck reden
+  - an der Reling angeln
+  - mit **„Ans Steuer“** zurück
+- **Segeln fühlt sich runder an:**
+  - Das Tempo hängt wie in der Demo nur vom Gashebel ab. Es schwankt nicht mehr in jeder Kurve mit dem Wind.
+  - Die Segel wachsen stufenlos mit dem Tempo.
+  - Das Ruder spricht schneller an, das Schiff schaukelt ruhiger auf den Wellen.
+- **Figuren ohne Kapuzenpulli:** Die Anime-Figuren tragen jetzt Hemd und Weste (Grundfiguren aus VRoid Studio, CC0), dazu die Anime-Frisuren.
+  - Krawatte und Katzenohren entfernt
+- **Hüte:**
+  - neuer Dreispitz mit Kuppel, hochgeschlagener Krempe und Goldborte
+  - Das Kopftuch liegt sichtbar über dem Haar.
+  - Hüte werfen keinen harten Schatten mehr aufs Gesicht.
+
 ## 2.3.0 – Echte Anime-Figuren (02.11.2026)
 
 - **Alle Figuren sind jetzt echte Anime-Figuren:** Spielfigur, Crew, Gegner, Legenden und Bewohner.

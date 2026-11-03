@@ -45,6 +45,12 @@ export class DeckGround implements Ground {
   }
 
   /** Lokale Deckposition (z: Anteil der Länge) in Weltkoordinaten */
+  /** Abstand zur Reling (für „Angeln“ an der Bordwand) */
+  railDistance(x: number, z: number) {
+    const { lx, lz } = this.toLocal(x, z);
+    return this.ship.model.halfWidth(lz) * 0.95 - Math.abs(lx);
+  }
+
   spot(fx: number, fz: number) {
     const L = this.ship.cls.L;
     const lz = -L / 2 + L * 0.28 + (fz * 0.5 + 0.5) * (L * 0.6);

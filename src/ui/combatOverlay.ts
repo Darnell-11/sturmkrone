@@ -143,7 +143,7 @@ export class CombatOverlay {
   }
 
   /** Lebensbalken über einem Gegner (key = Gegnerobjekt). frac < 0 entfernt ihn. */
-  setBar(key: object, pos: Vector3 | null, frac: number, elite: boolean, camera: Camera) {
+  setBar(key: object, pos: Vector3 | null, frac: number, elite: boolean, camera: Camera, label = '') {
     let b = this.bars.get(key);
     if (frac < 0 || !pos) {
       if (b) { b.el.remove(); this.bars.delete(key); }
@@ -158,6 +158,7 @@ export class CombatOverlay {
       this.bars.set(key, b);
     }
     b.fill.style.width = `${frac * 100}%`;
+    if (b.el.dataset.label !== label) { b.el.dataset.label = label; b.el.classList.toggle('board', !!label); }
     if (frac < b.last) setTimeout(() => { if (b) b.lag.style.width = `${frac * 100}%`; }, 300);
     b.last = frac;
     tmp.copy(pos).project(camera);

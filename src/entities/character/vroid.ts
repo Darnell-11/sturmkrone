@@ -9,6 +9,7 @@ import {
   Object3D,
   Quaternion,
   QuaternionKeyframeTrack,
+  Skeleton,
   SkinnedMesh,
   SRGBColorSpace,
   Texture,
@@ -301,13 +302,69 @@ export class VroidBase {
 
 function depth(o: Object3D) { let d = 0; let p = o.parent; while (p) { d++; p = p.parent; } return d; }
 
+/**
+ * Haare einer Figur auf eine andere übertragen: die Haar-Netze samt ihren Haarknochen (J_Sec_…)
+ * werden an den gleichnamigen Kopfknochen der Zielfigur gehängt. Beide Figuren nutzen dasselbe VRoid-Skelett.
+ */
+function graftHair(target: Object3D, donor: Object3D, skip?: RegExp) {
+  const hairs: SkinnedMesh[] = [];
+  donor.traverse((o) => {
+    const m = o as SkinnedMesh;
+    if (m.isSkinnedMesh && /HAIR/i.test((m.material as Material).name) && !(skip && skip.test(m.name))) hairs.push(m);
+  });
+  if (!hairs.length) return;
+  const byName = new Map<string, Object3D>();
+  target.traverse((o) => byName.set(o.name, o));
+  // fehlende Knochen (Haarknochen) mit gleicher Lage übernehmen
+  const ensure = (b: Object3D): Object3D => {
+    const have = byName.get(b.name);
+    if (have) return have;
+    const parent = b.parent ? ensure(b.parent) : target;
+    const c = new (b.constructor as new () => Object3D)();
+    c.name = b.name;
+    c.position.copy(b.position); c.quaternion.copy(b.quaternion); c.scale.copy(b.scale);
+    parent.add(c);
+    byName.set(c.name, c);
+    return c;
+  };
+  // ein gemeinsames Skelett je Quellskelett, damit die Haarteile später zusammengeführt werden können
+  const skels = new Map<string, Skeleton>();
+  for (const h of hairs) {
+    let skel = skels.get(h.skeleton.uuid);
+    if (!skel) {
+      const bones = h.skeleton.bones.map((b) => ensure(b) as unknown as import('three').Bone);
+      skel = new Skeleton(bones, h.skeleton.boneInverses.map((m) => m.clone()));
+      skels.set(h.skeleton.uuid, skel);
+    }
+    const m = new SkinnedMesh(h.geometry, h.material);
+    m.name = h.name;
+    const parent = h.parent ? byName.get(h.parent.name) ?? target : target;
+    parent.add(m);
+    m.position.copy(h.position); m.quaternion.copy(h.quaternion); m.scale.copy(h.scale);
+    m.bind(skel, h.bindMatrix.clone());
+  }
+}
+
+/** Krawatte der Schuluniform entfernen (passt nicht zu Piraten) */
+function removeParts(root: Object3D, re: RegExp) {
+  const drop: Object3D[] = [];
+  root.traverse((o) => { const m = o as SkinnedMesh; if (m.isSkinnedMesh && re.test((m.material as Material).name)) drop.push(m); });
+  for (const d of drop) d.removeFromParent();
+}
+
 /** Beide Grundfiguren laden */
 export async function loadVroid(srcRig: Object3D, srcClips: Map<string, AnimationClip>, srcSlot: Vector3): Promise<{ male: VroidBase; female: VroidBase } | null> {
   const base = `${import.meta.env.BASE_URL}assets/characters/vroid/`;
   const loader = new GLTFLoader();
   try {
-    const [m, f] = await Promise.all([loader.loadAsync(`${base}male.glb`), loader.loadAsync(`${base}female.glb`)]);
-    return { male: new VroidBase(m.scene, 1.74, srcRig, srcClips, srcSlot), female: new VroidBase(f.scene, 1.64, srcRig, srcClips, srcSlot) };
+    // Körper und Kleidung der Grundfiguren (Hemd, Weste), Haare der Frisur-Beispiele
+    const [bm, bf, hm, hf] = await Promise.all(['base_male', 'base_female', 'male', 'female'].map((n) => loader.loadAsync(`${base}${n}.glb`)));
+    removeParts(bm.scene, /Tie|HairBack/i);
+    removeParts(bf.scene, /Tie|HairBack/i);
+    graftHair(bm.scene, hm.scene);
+    // die Frisur der Haar-Vorlage trägt Katzenohren (die sechs obersten Teile) – die passen nicht zu Piraten
+    graftHair(bf.scene, hf.scene, /^Hair001baked(_[1-5])?$/);
+    return { male: new VroidBase(bm.scene, 1.74, srcRig, srcClips, srcSlot), female: new VroidBase(bf.scene, 1.64, srcRig, srcClips, srcSlot) };
   } catch (e) {
     console.warn('Anime-Figuren konnten nicht geladen werden – nutze Ersatzfiguren', e);
     return null;

@@ -81,7 +81,8 @@ export class Ship {
     if (this.frozen > 0) { this.speed *= Math.pow(0.05, dt); return; }
     // Wind: Rückenwind schneller, Gegenwind etwas langsamer (Tempo wie in 1.0)
     const rel = Math.cos(this.heading - env.windDir);
-    const windK = 0.96 + 0.24 * (rel * 0.5 + 0.5) + env.windStrength * 0.05;
+    // wie in 1.0: das Tempo hängt nur vom Gashebel ab (der Wind wechselte sonst in jeder Kurve das Tempo)
+    const windK = this.throttle !== null ? 1 : 0.96 + 0.24 * (rel * 0.5 + 0.5) + env.windStrength * 0.05;
     const level = this.throttle ?? [0, 0.55, 1][this.sailLevel];
     if (this.throttle !== null) this.sailLevel = level < 0.05 ? 0 : level < 0.75 ? 1 : 2;
     const sailK = level * (0.4 + 0.6 * this.sail);
@@ -89,7 +90,7 @@ export class Ship {
     if (this.speedCap !== null) target = Math.min(target, this.speedCap);
     this.speed += (target - this.speed) * Math.min(1, dt * (target < this.speed ? 0.8 : 0.9));
     // Wenden: große Schiffe drehen träger, ohne Fahrt langsamer
-    this.turnInput += (turn - this.turnInput) * Math.min(1, dt * 6);
+    this.turnInput += (turn - this.turnInput) * Math.min(1, dt * 10);
     const size = 1.1 - Math.min(1, (this.cls.L - 15) / 39) * 0.45;
     const rate = 1.3 * this.turnMult * size * (0.35 + 0.65 * Math.min(1, this.speed / 8));
     this.heading -= this.turnInput * rate * dt;
@@ -153,12 +154,13 @@ export class Ship {
     const g = this.model.group;
     if (this.sinking > 0) this.sinking += frameDt;
     const sink = this.sinking > 0 ? this.sinking : 0;
-    g.position.set(x, wy - 0.25 - sink * 1.4, z);
+    g.position.set(x, (ahead + behind) / 2 * 0.6 + wy * 0.4 - 0.25 - sink * 1.4, z);
     const pitch = Math.atan2(behind - ahead, L * 0.8) + sink * 0.08;
     const roll = Math.atan2(sideA - sideB, W * 0.9) * 0.8 - this.turnInput * Math.min(1, this.speed / 10) * 0.08 + sink * 0.12;
     g.rotation.set(pitch, h, roll, 'YXZ');
     // Segel: Fahrstufe und Wind
-    const k = [0.15, 0.6, 1][this.sailLevel] * this.sail;
+    // Segel wachsen stufenlos mit dem Gashebel (springen nicht mehr zwischen drei Größen)
+    const k = (this.throttle !== null ? 0.15 + this.throttle * 0.85 : [0.15, 0.6, 1][this.sailLevel]) * this.sail;
     for (const s of this.model.sails) s.scale.set(1, Math.max(0.15, k), 0.6 + k * 0.5 + Math.sin(env.time * 2 + s.position.y) * 0.05);
     // Flagge flattert
     const fp = this.model.flag.geometry.attributes.position as BufferAttribute;

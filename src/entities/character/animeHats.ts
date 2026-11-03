@@ -1,5 +1,5 @@
 // Kopfbedeckungen und Accessoires für die Anime-Figuren (am Kopfknochen befestigt).
-import { ConeGeometry, CylinderGeometry, Group, Mesh, SphereGeometry, TorusGeometry, BoxGeometry, type Object3D } from 'three';
+import { ConeGeometry, CylinderGeometry, DoubleSide, Group, Mesh, SphereGeometry, TorusGeometry, BoxGeometry, type Object3D } from 'three';
 import type { CharacterLook } from '../../data/characterParts';
 import { toon } from '../../render/toon';
 import { addOutlines } from '../../render/outline';
@@ -17,16 +17,32 @@ export function buildHeadgear(look: CharacterLook, r: number, outline: boolean):
   const top = r * 0.95;
   switch (look.hat) {
     case 'dreispitz': {
-      const brim = new Mesh(new CylinderGeometry(r * 1.85, r * 1.9, r * 0.12, 3), col);
-      brim.position.y = top * 0.82;
-      brim.rotation.y = Math.PI / 6;
-      const crown = new Mesh(new CylinderGeometry(r * 0.85, r * 1.05, r * 0.75, 16), col);
-      crown.position.y = top * 0.82 + r * 0.35;
-      const band = new Mesh(new TorusGeometry(r * 1.86, r * 0.04, 4, 3), gold);
-      band.rotation.x = Math.PI / 2;
-      band.rotation.z = Math.PI / 6;
-      band.position.y = top * 0.82 + r * 0.06;
-      g.add(brim, crown, band);
+      // Kuppel über dem Haar, drei hochgeschlagene Krempenwände, eine Spitze nach vorn (+Z)
+      const t = new Group();
+      t.rotation.x = 0.14; // leicht nach vorn geneigt, die Spitze zeigt über die Stirn
+      g.add(t);
+      const by = top * 0.3;
+      const crown = new Mesh(new SphereGeometry(r * 1.25, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), col);
+      crown.scale.set(1, 1.3, 1.05);
+      crown.position.y = by;
+      t.add(crown);
+      const R = r * 2.55; // Eckradius; die Wände liegen bei R/2 knapp außerhalb der Kuppel
+      const floor = new Mesh(new CylinderGeometry(R, R, r * 0.08, 3), col);
+      floor.position.y = by;
+      t.add(floor);
+      const wallMat = toon({ color: look.hatColor, side: DoubleSide });
+      const h = r * 0.58, len = R * Math.sqrt(3);
+      for (let i = 0; i < 3; i++) {
+        const phi = (i * 2 * Math.PI) / 3 + Math.PI / 3;
+        const wall = new Mesh(new BoxGeometry(len, h, r * 0.06), wallMat);
+        wall.rotation.order = 'YXZ';
+        wall.rotation.set(0.42, phi, 0);
+        wall.position.set(Math.sin(phi) * R * 0.5, by + h * 0.45, Math.cos(phi) * R * 0.5);
+        const trim = new Mesh(new BoxGeometry(len * 0.98, r * 0.07, r * 0.09), gold);
+        trim.position.y = h / 2;
+        wall.add(trim);
+        t.add(wall);
+      }
       break;
     }
     case 'zweispitz': {
@@ -39,9 +55,10 @@ export function buildHeadgear(look: CharacterLook, r: number, outline: boolean):
       break;
     }
     case 'bandana': {
-      const cap = new Mesh(new SphereGeometry(r * 1.09, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), col);
-      cap.position.y = top * 0.2;
-      cap.scale.set(1, 1.05, 1.08);
+      // liegt über dem Haar (die Anime-Frisuren haben viel Volumen)
+      const cap = new Mesh(new SphereGeometry(r * 1.2, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.52), col);
+      cap.position.y = top * 0.22;
+      cap.scale.set(1, 1.12, 1.1);
       const knot = new Mesh(new SphereGeometry(r * 0.22, 8, 6), col);
       knot.position.set(0, top * 0.45, -r * 1.1);
       const tail = new Mesh(new ConeGeometry(r * 0.18, r * 0.9, 4), col);
@@ -137,7 +154,8 @@ export function buildHeadgear(look: CharacterLook, r: number, outline: boolean):
     ring.rotation.y = Math.PI / 2;
     g.add(ring);
   }
-  g.traverse((o) => { (o as Mesh).castShadow = true; });
+  // kein Schattenwurf: ein harter Hutschatten färbt das ganze Anime-Gesicht grau
+  g.traverse((o) => { (o as Mesh).castShadow = false; });
   if (outline) addOutlines(g, 0.7);
   return g;
 }

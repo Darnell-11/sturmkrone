@@ -72,7 +72,8 @@ function hullGeometry(c: ShipClass, D: number, look: ShipLook): BufferGeometry {
   for (let i = 0; i < sections; i++) {
     const a = ring(i), b = ring(i + 1);
     for (let k = 0; k < prof.length - 1; k++) {
-      const quad = [a[k], b[k], b[k + 1], a[k], b[k + 1], a[k + 1]];
+      // Drehsinn so, dass die Außenseite sichtbar ist (vorher zeigte sie nach innen – der Rumpf war von außen unsichtbar)
+      const quad = [a[k], b[k + 1], b[k], a[k], a[k + 1], b[k + 1]];
       for (const p of quad) {
         pos.push(p.x, p.y, p.z);
         uv.push(p.z / 3, p.y * 0.35);
@@ -227,7 +228,7 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
   const castle = new Mesh(new BoxGeometry(c.W * 0.82, castleH, sternLen), wood);
   castle.position.set(0, D + castleH / 2, -c.L / 2 + sternLen / 2 + c.L * 0.03);
   group.add(castle);
-  const castleTop = new Mesh(new BoxGeometry(c.W * 0.86, 0.15, sternLen * 1.04), gold);
+  const castleTop = new Mesh(new BoxGeometry(c.W * 0.86, 0.15, sternLen * 1.04), toon({ color: '#C79A68', map: deckTex }));
   castleTop.position.set(0, D + castleH, castle.position.z);
   group.add(castleTop);
   const winMat = new MeshBasicMaterial({ color: new Color(2.4, 1.6, 0.6) });

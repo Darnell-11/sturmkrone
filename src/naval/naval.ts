@@ -49,6 +49,8 @@ export interface EnemyShip {
   /** Umkreisungsrichtung und Nachladezeit (KI wie in 1.0) */
   orbit?: number;
   reload?: number;
+  /** Hinweis „jetzt entern“ schon gezeigt */
+  weakNoted?: boolean;
 }
 
 interface Ball { mesh: Mesh; vel: Vector3; owner: Ship; dmg: number; ammo: AmmoId; life: number }
@@ -175,7 +177,7 @@ export class NavalSystem {
       const s = e.ship;
       const vis = show && !e.companion && s.alive && !s.sinking && s.hull < s.maxHull && !!p && Math.hypot(s.x - p.x, s.z - p.z) < 320;
       this.barPos.set(s.x, s.model.deckY + s.cls.mh + 3, s.z);
-      this.overlay.setBar(e, vis ? this.barPos : null, vis ? s.hull / s.maxHull : -1, e.role === 'legende' || !!e.ghost, camera);
+      this.overlay.setBar(e, vis ? this.barPos : null, vis ? s.hull / s.maxHull : -1, e.role === 'legende' || !!e.ghost, camera, vis && this.isWeak(e) ? 'ENTERN' : '');
     }
   }
 
@@ -382,7 +384,8 @@ export class NavalSystem {
       // Wie in 1.0: in Breitseitenabstand umkreisen, feuern, sobald eine Seite zeigt
       e.state = 'engage';
       const tier = Math.max(0, SHIP_CLASSES.indexOf(s.cls));
-      s.speedCap = 14.5 - tier * 0.4 + (e.role === 'legende' ? 2 : 0) + (e.ghost ? 1 : 0);
+      s.speedCap = (14.5 - tier * 0.4 + (e.role === 'legende' ? 2 : 0) + (e.ghost ? 1 : 0)) * (this.isWeak(e) ? 0.45 : 1);
+      if (this.isWeak(e) && !e.weakNoted) { e.weakNoted = true; this.hooks.message(`${e.name ?? 'Das Schiff'} ist schwer angeschlagen – fahr heran und entere es!`); }
       s.sailLevel = 2;
       const toP = Math.atan2(target.x - s.x, target.z - s.z);
       let des: number;
@@ -550,16 +553,25 @@ export class NavalSystem {
   // ---------- Entern ----------
 
   /** Gegner, das gerade geentert werden kann */
+  /** Angeschlagen genug zum Entern? */
+  isWeak(e: EnemyShip) {
+    const s = e.ship;
+    return s.hull < s.maxHull * 0.35 || s.crew < 0.3 || (e.role === 'haendler' && s.hull < s.maxHull * 0.6);
+  }
+
   boardable(): EnemyShip | null {
     const p = this.player;
-    if (!p || p.speed > 9) return null;
+    // wie in 1.0: kein Tempolimit, angeschlagene Schiffe (unter 35 %) in Reichweite
+    if (!p) return null;
+    let best: EnemyShip | null = null, bd = Infinity;
     for (const e of this.enemies) {
       const s = e.ship;
       if (e.companion || !s.alive || s.sinking > 0) continue;
-      const weak = s.hull < s.maxHull * 0.35 || s.crew < 0.3 || e.role === 'haendler' && s.hull < s.maxHull * 0.6;
-      if (weak && Math.hypot(s.x - p.x, s.z - p.z) < (s.cls.L + p.cls.L) / 2 + 14) return e;
+      if (!this.isWeak(e)) continue;
+      const d = Math.hypot(s.x - p.x, s.z - p.z);
+      if (d < (s.cls.L + p.cls.L) / 2 + 20 && d < bd) { bd = d; best = e; }
     }
-    return null;
+    return best;
   }
 
   /** Erobertes Schiff entfernen */

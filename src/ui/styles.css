@@ -433,3 +433,4 @@ kbd {
 :root.cb .hud-bar.hp i { background: #E07A1F; }
 :root.cb .n-heal { color: #7FC8FF !important; }
 :root.cb .pip { background: #2B6CB0; }
+.cbt-ebar.board::after { content: attr(data-label); position: absolute; left: 50%; bottom: 140%; transform: translateX(-50%); font-weight: 900; font-size: 0.85rem; letter-spacing: 0.08em; color: #FFD166; text-shadow: 1px 1px 0 #1b1410, -1px -1px 0 #1b1410, 1px -1px 0 #1b1410, -1px 1px 0 #1b1410; animation: ctxpulse 1s ease-in-out infinite; white-space: nowrap; }

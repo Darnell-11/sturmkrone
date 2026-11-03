@@ -504,6 +504,7 @@ export class SeaWorld {
       this.combat?.leaveIsland();
       if (this.foot) { this.foot.onFoot = false; this.foot.revive(); }
       this.downT = 0;
+      if (this.ownDeck) { this.ownDeck = false; this.deckGround = null; this.setSailFade(this.ship, false); }
       this.setMode('sail');
     }
   }
@@ -741,8 +742,8 @@ export class SeaWorld {
     // Angeln: Warten auf den Biss, dann kurzes Zeitfenster
     if (this.fishing) {
       const f = this.fishing;
-      if (this.mode !== 'sail' || Math.abs(this.ship.speed) > 2.5) { this.fishing = null; this.player?.play('steer'); }
-      else if (f.bite > 0) { f.bite -= dt; if (f.bite <= 0) { this.fishing = null; this.player?.play('steer'); this.onFish(false); } }
+      if (!this.ownDeck || Math.abs(this.ship.speed) > 2.5) { this.fishing = null; if (this.mode === 'foot') this.player?.play('idle'); }
+      else if (f.bite > 0) { f.bite -= dt; if (f.bite <= 0) { this.fishing = null; this.player?.play('idle'); this.onFish(false); } }
       else { f.wait -= dt; if (f.wait <= 0) { f.bite = 1.3; this.player?.play('fishReel', { fade: 0.1 }); audio.play('splash', 0.7); this.onMessage('Biss! Schnell einholen!'); } }
     }
     this.updateSeaBoss(dt);
@@ -907,22 +908,7 @@ export class SeaWorld {
       if (prey) {
         this.contextLabel = 'Entern!';
         if (input.pressed('interact')) this.board(prey);
-      } else if (this.fishing) {
-        const f = this.fishing;
-        this.contextLabel = f.bite > 0 ? 'Einholen!' : 'Angel einholen';
-        if (input.pressed('interact')) {
-          if (f.bite > 0) { this.player.play('fishCatch', { restart: true, onDone: () => this.player?.play('steer') }); audio.play('splash'); this.onFish(true); }
-          else { this.player.play('steer', { fade: 0.2 }); this.onFish(false); }
-          this.fishing = null;
-        }
-      } else if (!isl && Math.abs(this.speed) < 1.5 && this.threat < 0.1) {
-        this.contextLabel = 'Angeln';
-        if (input.pressed('interact')) {
-          this.fishing = { wait: 2.5 + Math.random() * 5, bite: 0 };
-          this.player.play('fishCast', { restart: true, onDone: () => this.player?.play('fishIdle', { fade: 0.2 }) });
-          audio.play('whoosh', 0.6);
-        }
-      } else if (isl && Math.abs(this.speed) < 9) {
+      } else if (isl) {
         const def = this.islandDefs[this.ground.islands.indexOf(isl)];
         if (def?.kind === 'town' || def?.kind === 'harbor') {
           this.contextLabel = 'Hafen';
@@ -931,6 +917,37 @@ export class SeaWorld {
           this.contextLabel = 'An Land gehen';
           if (input.pressed('interact')) this.disembark(isl);
         }
+      } else {
+        // wie in 1.0: aufs eigene Deck gehen
+        this.contextLabel = 'An Deck gehen';
+        if (input.pressed('interact')) this.goDeck();
+      }
+    } else if (this.ownDeck) {
+      const f = this.foot;
+      const hand = this.crew?.deckHandNear(f.x, f.z, 1.9) ?? null;
+      const dg = this.deckGround;
+      const atRail = dg ? dg.railDistance(f.x, f.z) < 0.9 : false;
+      if (this.fishing) {
+        const fi = this.fishing;
+        this.contextLabel = fi.bite > 0 ? 'Einholen!' : 'Angel einholen';
+        if (input.pressed('interact')) {
+          if (fi.bite > 0) { this.player.play('fishCatch', { restart: true, onDone: () => this.player?.play('idle') }); audio.play('splash'); this.onFish(true); }
+          else { this.player.play('idle', { fade: 0.2 }); this.onFish(false); }
+          this.fishing = null;
+        }
+      } else if (hand) {
+        this.contextLabel = `Mit ${hand.name.split(' ')[0]} reden`;
+        if (input.pressed('interact')) this.onCrewLine(hand, hand.lines[Math.floor(Math.random() * hand.lines.length)]);
+      } else if (atRail && this.threat < 0.1) {
+        this.contextLabel = 'Angeln';
+        if (input.pressed('interact')) {
+          this.fishing = { wait: 2.5 + Math.random() * 5, bite: 0 };
+          this.player.play('fishCast', { restart: true, onDone: () => this.player?.play('fishIdle', { fade: 0.2 }) });
+          audio.play('whoosh', 0.6);
+        }
+      } else {
+        this.contextLabel = 'Ans Steuer';
+        if (input.pressed('interact')) this.toHelm();
       }
     } else if (this.boarding) {
       this.contextLabel = 'Zurück an Bord';
@@ -995,6 +1012,35 @@ export class SeaWorld {
         else { this.onBottle(); setTimeout(() => this.spawnFloaterSomewhere('bottle'), 90000); }
       }
     }
+  }
+
+  /** Auf dem eigenen Deck unterwegs (wie in 1.0) */
+  private ownDeck = false;
+
+  private goDeck() {
+    if (!this.player || !this.foot) return;
+    this.ownDeck = true;
+    this.ship.throttle = 0;
+    this.deckGround = new DeckGround(this.ship);
+    this.scene.add(this.player.holder);
+    // mittschiffs, Blick zum Heck: die Kamera steht über dem freien Vorschiff
+    const start = this.deckGround.spot(0, 0.3);
+    this.footDist = 6.5;
+    this.footPitch = 0.55;
+    this.foot.place(start.x, start.z, this.ship.heading + Math.PI, this.groundProxy);
+    this.foot.onFoot = true;
+    this.footYaw = this.ship.heading + Math.PI;
+    this.setSailFade(this.ship, true);
+    this.setMode('foot');
+  }
+
+  private toHelm() {
+    this.ownDeck = false;
+    this.deckGround = null;
+    this.fishing = null;
+    if (this.foot) this.foot.onFoot = false;
+    this.setSailFade(this.ship, false);
+    this.setMode('sail');
   }
 
   /** Segel beim Entern durchsichtig (wie in 1.0), damit sie die Kamera nicht verdecken */

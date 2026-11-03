@@ -108,6 +108,18 @@ export class CrewAboard {
   }
 
   get deckCount() { return this.deck.length; }
+
+  /** Crewmitglied an Deck in der Nähe einer Weltposition */
+  deckHandNear(x: number, z: number, r: number): CrewDef | null {
+    const p = new Vector3();
+    for (const d of this.deck) {
+      const o = d.char?.holder ?? d.cat;
+      if (!o) continue;
+      o.getWorldPosition(p);
+      if (Math.hypot(p.x - x, p.z - z) < r) return d.def;
+    }
+    return null;
+  }
 }
 
 /** Brömmel, die Schiffskatze */
