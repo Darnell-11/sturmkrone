@@ -19,7 +19,11 @@ function dot(): CanvasTexture {
   return dotTexture;
 }
 
-/** Einfaches Partikelsystem (Gischt, Funken). Menge richtet sich nach der Grafikstufe. */
+/**
+ * Einfaches Partikelsystem (Gischt, Funken, Staub). Menge richtet sich nach der Grafikstufe.
+ * Jedes Teilchen altert sichtbar: Funken (additiv) schrumpfen und verglühen,
+ * Staub und Gischt quellen auf und werden durchsichtig – statt als feste Scheiben stehen zu bleiben.
+ */
 export class ParticleSystem {
   readonly points: Points;
   private pos: Float32Array;
@@ -27,6 +31,7 @@ export class ParticleSystem {
   private vel: Float32Array;
   private life: Float32Array;
   private maxLife: Float32Array;
+  private age: Float32Array;
   private gravity: Float32Array;
   private next = 0;
   private max: number;
@@ -39,11 +44,13 @@ export class ParticleSystem {
     this.vel = new Float32Array(this.max * 3);
     this.life = new Float32Array(this.max);
     this.maxLife = new Float32Array(this.max);
+    this.age = new Float32Array(this.max);
     this.gravity = new Float32Array(this.max);
     for (let i = 0; i < this.max; i++) this.pos[i * 3 + 1] = -9999;
     const geo = new BufferGeometry();
     geo.setAttribute('position', new BufferAttribute(this.pos, 3));
     geo.setAttribute('color', new BufferAttribute(this.col, 3));
+    geo.setAttribute('aLife', new BufferAttribute(this.age, 1));
     const mat = new PointsMaterial({
       size,
       map: dot(),
@@ -52,6 +59,18 @@ export class ParticleSystem {
       depthWrite: false,
       blending: additive ? AdditiveBlending : NormalBlending,
     });
+    // aLife: 1 = gerade entstanden, 0 = vergeht
+    const sizeCurve = additive ? 'mix(0.15, 1.0, aLife)' : 'mix(1.6, 0.7, aLife)';
+    const alphaCurve = additive ? 'vLife' : 'smoothstep(0.0, 0.6, vLife) * 0.75';
+    mat.onBeforeCompile = (sh) => {
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float aLife;\nvarying float vLife;')
+        .replace('gl_PointSize = size;', `gl_PointSize = size * ${sizeCurve};\n\tvLife = aLife;`);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying float vLife;')
+        .replace('#include <color_fragment>', `#include <color_fragment>\n\tdiffuseColor.a *= ${alphaCurve};`);
+    };
+    mat.customProgramCacheKey = () => (additive ? 'particles-spark' : 'particles-puff');
     this.points = new Points(geo, mat);
     this.points.frustumCulled = false;
     scene.add(this.points);
@@ -76,6 +95,7 @@ export class ParticleSystem {
       this.col[i * 3 + 1] = opts.color.g;
       this.col[i * 3 + 2] = opts.color.b;
       this.life[i] = this.maxLife[i] = opts.life * (0.6 + Math.random() * 0.6);
+      this.age[i] = 1;
       this.gravity[i] = opts.gravity ?? 14;
     }
   }
@@ -84,13 +104,20 @@ export class ParticleSystem {
     for (let i = 0; i < this.max; i++) {
       if (this.life[i] <= 0) continue;
       this.life[i] -= dt;
-      if (this.life[i] <= 0) { this.pos[i * 3 + 1] = -9999; continue; }
+      if (this.life[i] <= 0) { this.pos[i * 3 + 1] = -9999; this.age[i] = 0; continue; }
+      this.age[i] = this.life[i] / this.maxLife[i];
+      // Luftwiderstand: Teilchen werden langsamer statt gleichförmig wegzufliegen
+      const drag = Math.pow(0.25, dt);
+      this.vel[i * 3] *= drag;
+      this.vel[i * 3 + 2] *= drag;
       this.vel[i * 3 + 1] -= this.gravity[i] * dt;
       this.pos[i * 3] += this.vel[i * 3] * dt;
       this.pos[i * 3 + 1] += this.vel[i * 3 + 1] * dt;
       this.pos[i * 3 + 2] += this.vel[i * 3 + 2] * dt;
     }
-    this.points.geometry.attributes.position.needsUpdate = true;
-    this.points.geometry.attributes.color.needsUpdate = true;
+    const attrs = this.points.geometry.attributes;
+    attrs.position.needsUpdate = true;
+    attrs.color.needsUpdate = true;
+    attrs.aLife.needsUpdate = true;
   }
 }

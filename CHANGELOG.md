@@ -1,5 +1,29 @@
 # Was ist neu
 
+## 2.5.0 – Kampfgefühl, Waffenhaltung und geschlossene Schiffe (04.11.2026)
+
+- **Waffen richtig in der Hand:**
+  - Die Klinge ragte bisher wie eine Verlängerung des Unterarms aus den Fingern. Jetzt liegt der Griff quer in der Faust.
+  - Beim Zustechen zeigt die Klinge geradeaus, in der Grundhaltung nach oben und vorn.
+  - Die Finger schließen sich um den Griff, freie Hände hängen locker.
+- **Kampfanimationen überarbeitet:**
+  - Die Arme bleiben näher am Körper statt ständig abgespreizt (die Vorlagen stammen von breiten Figuren).
+  - Die Drehung der Faust aus den Animationen geht nicht mehr verloren.
+  - Angriffe springen nicht mehr bis 1,5 m vor und schnappen dann zurück. Der Sprunghieb ist ein kontrollierter Satz statt eines Riesensprungs.
+- **Kampf fühlt sich direkter an:**
+  - Zielhilfe: Ohne Zielerfassung dreht sich der Hieb zum nächsten Gegner in Laufrichtung (bis 5,5 m).
+  - Ausfallschritt bis zum Gegner, dann bleibst du davor stehen statt hindurchzulaufen.
+  - Nach dem Treffer bricht Laufen den Ausschwung ab, du bist nie lange festgenagelt.
+  - Takt wie im Anime: schnell ausholen, den Hieb sichtbar durchziehen, zügig zurück.
+- **Effekte:**
+  - Funken verglühen und schrumpfen, Staub und Gischt quellen auf und werden durchsichtig. Bisher blieben sie als große weiße Scheiben stehen.
+  - Schwerthiebe ziehen eine Sichel mit heller, scharfer Außenkante statt eines flachen Bretts.
+- **Schiffe von hinten geschlossen:** Am Heckspiegel fehlte ein Dreieck. Die Bordwand ist jetzt auch von innen (vom Deck aus) sichtbar.
+- **Stege:** Schiffe fahren nicht mehr durch Hafenstege, sondern legen daran an.
+- **Gesichter ohne Schatten:** Kein dunkler Haarschatten mehr über den Augen.
+- **Handy im Hochformat:** Der Steuerungshinweis liegt nicht mehr unter der Statustafel, sondern gut lesbar über den Knöpfen.
+- Das Kopftuch sitzt wieder enger am Kopf.
+
 ## 2.4.0 – Entern, eigenes Deck und runde Schiffe (04.11.2026)
 
 - **Schiffe vollständig sichtbar:** Die Rümpfe waren seit 2.0 von außen teilweise durchsichtig (eigene und feindliche Schiffe). Behoben.

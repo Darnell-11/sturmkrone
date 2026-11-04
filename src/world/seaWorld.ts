@@ -164,6 +164,8 @@ export class SeaWorld {
   discovered = new Set<string>();
   /** Rauchende Vulkankrater */
   private smokeVents: { x: number; y: number; z: number }[] = [];
+  /** Stege als Strecke a→b mit halber Breite (Schiffskollision) */
+  private piers: { ax: number; az: number; bx: number; bz: number; hw: number }[] = [];
   private lamps: Mesh[] = [];
   private spray: ParticleSystem;
   private sparks: ParticleSystem;
@@ -206,8 +208,8 @@ export class SeaWorld {
     this.env.setIslands(this.islands);
     this.buildBuoys();
     this.spray = new ParticleSystem(this.scene, false, 0.8);
-    this.sparks = new ParticleSystem(this.scene, true, 0.5);
-    this.dust = new ParticleSystem(this.scene, false, 0.9);
+    this.sparks = new ParticleSystem(this.scene, true, 0.32);
+    this.dust = new ParticleSystem(this.scene, false, 0.7);
   }
 
   // ---------- Aufbau ----------
@@ -283,6 +285,8 @@ export class SeaWorld {
         const lanterns: Mesh[] = [];
         const facing = Math.atan2(-s.x, -s.z);
         isl.add(outpost(r, facing, lanterns));
+        const fx = Math.sin(facing), fz = Math.cos(facing);
+        this.piers.push({ ax: s.x + fx * (r - 5), az: s.z + fz * (r - 5), bx: s.x + fx * (r + 17), bz: s.z + fz * (r + 17), hw: 1.5 });
         for (const l of lanterns) glow.add(l);
       }
       this.scene.add(isl);
@@ -299,6 +303,8 @@ export class SeaWorld {
       addOutlines(isl);
       this.ground.add(walk);
       if (town) {
+        // Steg nach Süden (siehe buildTown): ragt weit über den Inselrand hinaus
+        this.piers.push({ ax: s.x, az: s.z - r + 5, bx: s.x, bz: s.z - r - 41, hw: 2.5 });
         this.town = buildTown(s.def, walk, (x, z) => { const h = this.ground.height(x, z); return Number.isFinite(h) ? h : 1.3; });
         this.scene.add(this.town.group);
       }
@@ -805,6 +811,7 @@ export class SeaWorld {
       if (s.speed > 6) { this.shake = Math.max(this.shake, 0.5); this.onMessage('Auf Grund gelaufen!'); s.damage(s.speed * 1.5, 'kugel', null); }
       s.speed *= 0.4;
     }
+    this.collidePiers(s);
     const d = Math.hypot(s.x, s.z);
     if (d > EDGE_WALL) {
       s.x *= EDGE_WALL / d;
@@ -1016,6 +1023,27 @@ export class SeaWorld {
 
   /** Auf dem eigenen Deck unterwegs (wie in 1.0) */
   private ownDeck = false;
+
+  /** Stege sind schmale Hindernisse: das Schiff legt seitlich an, statt hindurchzufahren (Bug, Mitte, Heck prüfen) */
+  private collidePiers(s: Ship) {
+    for (const p of this.piers) {
+      const vx = p.bx - p.ax, vz = p.bz - p.az;
+      const len2 = vx * vx + vz * vz;
+      for (const k of [-0.42, 0, 0.42]) {
+        const px = s.x + Math.sin(s.heading) * s.cls.L * k, pz = s.z + Math.cos(s.heading) * s.cls.L * k;
+        const t = Math.max(0, Math.min(1, ((px - p.ax) * vx + (pz - p.az) * vz) / len2));
+        const cx = p.ax + vx * t, cz = p.az + vz * t;
+        let dx = px - cx, dz = pz - cz;
+        let d = Math.hypot(dx, dz);
+        const min = p.hw + s.cls.W * 0.5 + 0.6;
+        if (d >= min) continue;
+        if (d < 1e-3) { dx = -vz; dz = vx; d = Math.hypot(dx, dz); }
+        s.x += (dx / d) * (min - d);
+        s.z += (dz / d) * (min - d);
+        s.speed *= 0.8;
+      }
+    }
+  }
 
   private goDeck() {
     if (!this.player || !this.foot) return;

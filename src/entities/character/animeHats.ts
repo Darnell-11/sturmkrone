@@ -56,9 +56,9 @@ export function buildHeadgear(look: CharacterLook, r: number, outline: boolean):
     }
     case 'bandana': {
       // liegt über dem Haar (die Anime-Frisuren haben viel Volumen)
-      const cap = new Mesh(new SphereGeometry(r * 1.2, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.52), col);
-      cap.position.y = top * 0.22;
-      cap.scale.set(1, 1.12, 1.1);
+      const cap = new Mesh(new SphereGeometry(r * 1.13, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.52), col);
+      cap.position.y = top * 0.2;
+      cap.scale.set(1, 1.08, 1.08);
       const knot = new Mesh(new SphereGeometry(r * 0.22, 8, 6), col);
       knot.position.set(0, top * 0.45, -r * 1.1);
       const tail = new Mesh(new ConeGeometry(r * 0.18, r * 0.9, 4), col);

@@ -84,9 +84,9 @@ function hullGeometry(c: ShipClass, D: number, look: ShipLook): BufferGeometry {
   }
   // Heckspiegel
   const st = ring(0);
-  for (let k = 1; k < st.length - 2; k++) {
-    // beide Seiten, damit der Heckspiegel von hinten nie fehlt
-    for (const p of [st[0], st[k + 1], st[k], st[0], st[k], st[k + 1]]) { pos.push(p.x, p.y, p.z); col.push(dark.r, dark.g, dark.b); uv.push(p.x / 3, p.y * 0.35); }
+  // Fächer über alle Profilpunkte bis zur gegenüberliegenden Oberkante (vorher fehlte das letzte Dreieck)
+  for (let k = 1; k < st.length - 1; k++) {
+    for (const p of [st[0], st[k + 1], st[k]]) { pos.push(p.x, p.y, p.z); col.push(dark.r, dark.g, dark.b); uv.push(p.x / 3, p.y * 0.35); }
   }
   const g = new BufferGeometry();
   g.setAttribute('position', new Float32BufferAttribute(pos, 3));
@@ -184,7 +184,8 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
   const halfWidth = (z: number) => Math.max(0.05, widthAt(z / (c.L / 2))) * c.W / 2;
 
   const planksTex = plankTexture();
-  const hullMat = toon({ color: 0xffffff, vertexColors: true, map: planksTex });
+  // beidseitig: auch die Innenseite der Bordwand (vom Deck aus) und der Heckspiegel von hinten bleiben sichtbar
+  const hullMat = toon({ color: 0xffffff, vertexColors: true, map: planksTex, side: DoubleSide });
   const hull = new Mesh(hullGeometry(c, D, look), hullMat);
   group.add(hull);
 

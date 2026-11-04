@@ -105,14 +105,19 @@ function shield(color = '#7A1F1A'): Group {
 /** Waffen für Gegner (zusätzlich Muskete und Schild) */
 export function enemyWeapons(kind: StyleId | 'muskete' | 'schild'): HeldWeapons {
   if (kind === 'muskete') return { right: inHand(musket()), left: null };
-  if (kind === 'schild') return { right: inHand(sword(0.7, 0.09, 0.1, { blade: '#B8C0C8' })), left: shield() };
+  if (kind === 'schild') {
+    // der Schild ist auf die ungedrehte Hand ausgelegt: Drehung der linken Halterung (−90°) ausgleichen
+    const s = new Group();
+    s.rotation.z = Math.PI / 2;
+    s.add(shield());
+    return { right: inHand(sword(0.7, 0.09, 0.1, { blade: '#B8C0C8' })), left: s };
+  }
   return weaponsFor(kind, { blade: '#B8C0C8' });
 }
 
-/** In der Handhalterung zeigt +Y entlang der Finger – Klinge um 90° nach vorn kippen. */
+/** Die Handhalterung ist schon so gedreht, dass +Y quer aus der Faust zeigt (Klinge nach oben/vorn). */
 function inHand(o: Object3D): Object3D {
   const g = new Group();
-  o.rotation.x = -Math.PI / 2;
   g.add(o);
   return g;
 }

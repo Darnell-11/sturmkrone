@@ -30,6 +30,8 @@ export const VROID_BONES: Record<string, string> = {
   upperlegl: 'J_Bip_L_UpperLeg', lowerlegl: 'J_Bip_L_LowerLeg', footl: 'J_Bip_L_Foot', toesl: 'J_Bip_L_ToeBase',
   upperlegr: 'J_Bip_R_UpperLeg', lowerlegr: 'J_Bip_R_LowerLeg', footr: 'J_Bip_R_Foot', toesr: 'J_Bip_R_ToeBase',
 };
+/** Quelle der Handbewegung beim Übertragen (in Ruhe deckungsgleich mit dem Handgelenk) */
+const SRC_HAND: Record<string, string> = { wristl: 'handl', wristr: 'handr' };
 /** Für Waffen und andere Halterungen: unsere Hand liegt auf der VRoid-Hand */
 const HAND_ALIAS: Record<string, string> = { handl: 'J_Bip_L_Hand', handr: 'J_Bip_R_Hand' };
 
@@ -191,20 +193,17 @@ export class VroidBase {
   private slotFor(s: 'l' | 'r', srcSlot: Vector3) {
     this.srcRig.updateMatrixWorld(true);
     const srcHand = this.srcRig.getObjectByName(`hand${s}`)!;
-    const srcWrist = this.srcRig.getObjectByName(`wrist${s}`)!;
-    const slotWorld = new Matrix4().multiplyMatrices(srcHand.matrixWorld, new Matrix4().setPosition(srcSlot));
+    // Die Halterung der Animationsdateien ist gegen die Hand um 90° gedreht: die Klinge (+Y) ragt
+    // quer aus der Faust (Daumenseite) statt als Verlängerung des Unterarms aus den Fingern
+    const srcNode = this.srcRig.getObjectByName(`handslot${s}`);
+    const local = srcNode ? srcNode.matrix.clone() : new Matrix4().compose(srcSlot, slotTurn(s), new Vector3(1, 1, 1));
+    const slotWorld = new Matrix4().multiplyMatrices(srcHand.matrixWorld, local);
     const slotPos = new Vector3(), slotQuat = new Quaternion(), slotScale = new Vector3();
     slotWorld.decompose(slotPos, slotQuat, slotScale);
-    const wristPos = srcWrist.getWorldPosition(new Vector3());
-    const srcHip = this.srcRig.getObjectByName('hips')!.getWorldPosition(new Vector3()).y;
-    const ratio = this.hipH / Math.max(0.01, srcHip);
     const dstHand = this.find(this.template, s === 'l' ? 'J_Bip_L_Hand' : 'J_Bip_R_Hand')!;
-    const handPos = dstHand.getWorldPosition(new Vector3());
     const handQuat = this.restWorld(dstHand, new Quaternion());
     const handScale = dstHand.getWorldScale(new Vector3()).x;
-    const offset = slotPos.clone().sub(wristPos).multiplyScalar(ratio * 0.9);
     const inv = handQuat.clone().invert();
-    void handPos; void offset;
     // in die Handfläche: zwischen Hand und Mittelfinger-Grundgelenk
     const mid = this.find(dstHand, s === 'l' ? 'J_Bip_L_Middle1' : 'J_Bip_R_Middle1');
     const palm = mid ? mid.position.clone().multiplyScalar(0.75) : new Vector3();
@@ -249,7 +248,9 @@ export class VroidBase {
     dst.traverse((o) => { if (!o.userData.rest) o.userData.rest = { q: o.quaternion.clone(), p: o.position.clone() }; else { o.quaternion.copy(o.userData.rest.q); o.position.copy(o.userData.rest.p); } });
     dst.updateMatrixWorld(true);
     for (const [sn, dn] of Object.entries(VROID_BONES)) {
-      const s = rig.getObjectByName(sn), d = dst.getObjectByName(dn);
+      // die Hand folgt dem Handknochen (hinter dem Handgelenk), den die Kampfanimationen eigens drehen –
+      // sonst ginge die Drehung der Faust verloren und die Klinge zeigte beim Zustechen schräg zur Seite
+      const s = rig.getObjectByName(SRC_HAND[sn] ?? sn), d = dst.getObjectByName(dn);
       if (!s || !d) continue;
       pairs.push({ s, d, sr: s.getWorldQuaternion(new Quaternion()), dr: this.restWorld(d, new Quaternion()), dl: d.quaternion.clone() });
     }
@@ -266,24 +267,51 @@ export class VroidBase {
     const pv = new Float32Array(n * 3);
     const action = mixer.clipAction(src);
     action.play();
+    // Arme näher am Körper: die Vorlagen stammen von breiten Figuren, deren Arme stets abgespreizt sind
+    const side = (name: string) => (name.includes('_L_') ? 'l' : name.includes('_R_') ? 'r' : null);
+    const armDir = new Map<string, Vector3>();
+    for (const p of pairs) {
+      if (!/UpperArm$/.test(p.d.name)) continue;
+      const child = p.d.children.find((c) => /LowerArm$/.test(c.name));
+      if (child) armDir.set(p.d.name, child.position.clone().normalize());
+    }
+    const tuck = { l: new Quaternion(), r: new Quaternion() };
+    const inPlace = /Attack|Hit_|Block|Interact|Magic|Spell/.test(src.name);
     for (let i = 0; i < n; i++) {
       const t = Math.min(src.duration, i / fps);
       times[i] = t;
       action.time = t;
       mixer.update(0);
       rig.updateMatrixWorld(true);
+      tuck.l.identity(); tuck.r.identity();
       for (let k = 0; k < pairs.length; k++) {
         const p = pairs[k];
         p.s.getWorldQuaternion(q1);
         q2.copy(p.sr).invert();
         q1.multiply(q2).multiply(p.dr); // Zielweltlage
+        const sd = side(p.d.name);
+        const dir = armDir.get(p.d.name);
+        if (sd && dir) {
+          tuckArm(v1.copy(dir).applyQuaternion(q1), sd, tuck[sd]);
+          q1.premultiply(tuck[sd]);
+        } else if (sd && /LowerArm$|_Hand$/.test(p.d.name)) {
+          q1.premultiply(tuck[sd]);
+        }
         p.d.parent!.getWorldQuaternion(q3).invert();
         p.d.quaternion.copy(q3.multiply(q1));
         p.d.updateMatrixWorld(true);
         p.d.quaternion.toArray(qv[k], i * 4);
       }
       // Hüftbewegung maßstäblich übertragen
-      sHips.getWorldPosition(v1).sub(sHip0).multiplyScalar(ratio).add(dHip0);
+      sHips.getWorldPosition(v1).sub(sHip0).multiplyScalar(ratio);
+      if (inPlace) {
+        // Angriffe der Vorlagen springen bis 1,5 m vor und am Ende zurück – das Spiel schiebt die Figur
+        // selbst nach vorn (Ausfallschritt), sonst wirkt es wie Vorspringen und Zurückschnappen
+        const h = Math.hypot(v1.x, v1.z);
+        if (h > 1e-4) { const k = Math.min(h * 0.3, 0.3) / h; v1.x *= k; v1.z *= k; }
+        if (v1.y > 0) v1.y = 0.4 * Math.tanh(v1.y / 0.4);
+      }
+      v1.add(dHip0);
       dHips.parent!.worldToLocal(v1);
       v1.toArray(pv, i * 3);
       dHips.position.copy(v1);
@@ -299,6 +327,28 @@ export class VroidBase {
 
   static readonly HAND_ALIAS = HAND_ALIAS;
 }
+
+const TUCK = 0.42; // ≈ 24°
+const Z_AXIS = new Vector3(0, 0, 1);
+/**
+ * Seitliches Abspreizen des Oberarms (in der Körperebene, Figur schaut nach +Z) verringern.
+ * Nach vorn oder über den Kopf gerichtete Arme bleiben fast unverändert.
+ */
+function tuckArm(dir: Vector3, s: 'l' | 'r', out: Quaternion) {
+  out.identity();
+  // links liegt bei +X, rechts bei −X; Arme vor dem Körper über Kreuz nicht anfassen
+  const lateral = s === 'l' ? dir.x : -dir.x;
+  const inPlane = Math.hypot(dir.x, dir.y);
+  if (lateral <= 0 || inPlane < 0.15) return;
+  const phi = Math.atan2(lateral, -dir.y); // 0 = hängt gerade herab, π/2 = waagrecht zur Seite
+  const fade = phi < 1.75 ? 1 : Math.max(0, 1 - (phi - 1.75) / 0.9); // über Kopfhöhe ausblenden
+  const amount = Math.min(TUCK * fade * Math.min(1, inPlane / 0.6), Math.max(0, phi - 0.14));
+  if (amount <= 0) return;
+  out.setFromAxisAngle(Z_AXIS, s === 'l' ? -amount : amount);
+}
+
+/** Drehung der Waffenhalterung gegen die Hand (wie in den Animationsdateien): rechts +90°, links −90° um Z */
+export function slotTurn(s: 'l' | 'r') { return new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), s === 'r' ? Math.PI / 2 : -Math.PI / 2); }
 
 function depth(o: Object3D) { let d = 0; let p = o.parent; while (p) { d++; p = p.parent; } return d; }
 

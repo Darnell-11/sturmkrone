@@ -82,11 +82,12 @@ const SMEAR_FRAG = /* glsl */ `
     float head = uProg;
     float d = head - a;
     if (d < 0.0) discard;
-    float trail = 1.0 - smoothstep(0.0, 0.55, d);
-    float edge = smoothstep(0.0, 0.25, vUv.y) * (1.0 - smoothstep(0.75, 1.0, vUv.y));
-    float core = smoothstep(0.55, 0.95, vUv.y);
-    vec3 c = mix(uColor, vec3(1.0), core * 0.85);
-    gl_FragColor = vec4(c * 1.6, trail * edge * uAlpha);
+    float trail = 1.0 - smoothstep(0.0, 0.5, d);
+    // Sichel: außen (Klingenspitze) hell und scharf, nach innen weich auslaufend
+    float body = pow(vUv.y, 2.4) * (1.0 - smoothstep(0.93, 1.0, vUv.y));
+    float rim = smoothstep(0.82, 0.93, vUv.y) * (1.0 - smoothstep(0.93, 1.0, vUv.y));
+    vec3 c = mix(uColor, vec3(1.0), rim);
+    gl_FragColor = vec4(c * 1.25, (body * 0.8 + rim * 0.6) * trail * uAlpha);
   }`;
 
 /** Ring mit UV entlang des Bogens (x) und quer (y) */
@@ -131,13 +132,13 @@ export class CombatFx {
     (s2.material as SpriteMaterial).rotation = mat.rotation + Math.PI / 4;
     this.scene.add(s2);
     this.live.push({ obj: s2, life: 0.1, max: 0.1, kind: 'spark', data: size * 0.6 });
-    this.sparks.emit(big ? 22 : 12, pos.x, pos.y, pos.z, { speed: big ? 9 : 6, up: 4, life: 0.4, color: c.clone().multiplyScalar(2.5), gravity: 12, spread: 0.2 });
+    this.sparks.emit(big ? 22 : 12, pos.x, pos.y, pos.z, { speed: big ? 11 : 8, up: 4, life: 0.35, color: c.clone().multiplyScalar(1.6), gravity: 12, spread: 0.2 });
   }
 
   /** Schmier-Bogen eines Schwerthiebs */
   smear(origin: Vector3, yaw: number, tilt: number, range: number, arc: number, color: string, flip = false) {
     const a = Math.min(arc, Math.PI * 1.9);
-    const geo = arcGeometry(range * 0.35, range * 1.05, a);
+    const geo = arcGeometry(range * 0.45, range * 1.05, a, 32);
     const mat = new ShaderMaterial({
       uniforms: { uProg: { value: 0 }, uColor: { value: new Color(color) }, uAlpha: { value: 1 } },
       vertexShader: SMEAR_VERT,

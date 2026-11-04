@@ -1,4 +1,4 @@
-import { MathUtils, Vector3 } from 'three';
+import { MathUtils, Vector3, type AnimationAction } from 'three';
 import type { Input } from '../../core/input/input';
 import { STYLE_ANIMS, type StyleId } from '../../data/animations';
 import { PLAYER_BASE, STYLE_ATTACKS, type AttackDef } from '../../data/combat';
@@ -59,6 +59,9 @@ export class PlayerFoot implements PlayerTarget {
   private comboWindow = 0;
   private locomotion = '';
   private attack: AttackDef | null = null;
+  private attackAction: AnimationAction | null = null;
+  /** Ziel des laufenden Angriffs (Zielhilfe ohne Erfassung) */
+  private aim: Enemy | null = null;
   private swingId = 0;
   private fired = false;
   private smeared = false;
@@ -158,7 +161,10 @@ export class PlayerFoot implements PlayerTarget {
     let dz = fz * mv.y + rz * mv.x;
     const dl = Math.hypot(dx, dz);
     if (dl > 0.001) { dx /= dl; dz /= dl; }
-    const attackYaw = lockYaw ?? (dl > 0.001 ? Math.atan2(dx, dz) : this.yaw);
+    const wantYaw = lockYaw ?? (dl > 0.001 ? Math.atan2(dx, dz) : this.yaw);
+    // Zielhilfe: ohne Erfassung zum nächsten Gegner in Blickrichtung (ohne Stickrichtung: rundum) drehen
+    const aimAt = lockYaw === null ? this.deps.combat?.nearestInCone(this.x, this.z, wantYaw, 5.5, dl > 0.001 ? 1.2 : Math.PI) ?? null : null;
+    const attackYaw = aimAt ? Math.atan2(aimAt.x - this.x, aimAt.z - this.z) : wantYaw;
     const atks = STYLE_ATTACKS[this.style];
     const canAct = this.state === 'move' || this.state === 'block';
 
@@ -184,12 +190,17 @@ export class PlayerFoot implements PlayerTarget {
     }
     if (input.pressed('attack') && this.state !== 'roll' && this.state !== 'hurt' && this.state !== 'charge') {
       if (this.state === 'attack') this.comboQueued = true;
-      else this.startAttack(atks.combo[this.nextCombo(atks.combo.length)], attackYaw);
+      else { this.aim = aimAt; this.startAttack(atks.combo[this.nextCombo(atks.combo.length)], attackYaw); }
+    }
+    // Nach dem Treffer bricht Laufen den Ausschwung ab – man ist nie lange festgenagelt
+    if (this.state === 'attack' && this.attack && !this.comboQueued && mag > 0.35 && this.char.progress > this.attack.hitEnd + 0.15) {
+      this.toMove();
     }
     if (input.pressed('heavy') && canAct) {
       this.state = 'charge';
       this.chargeT = 0;
       this.yaw = attackYaw;
+      this.aim = aimAt;
       this.char.playClip(atks.charge.clip, { loop: false, speed: 0.15, fade: 0.1, restart: true });
       this.locomotion = '';
     }
@@ -226,7 +237,14 @@ export class PlayerFoot implements PlayerTarget {
         this.processAttack(dt);
         if (this.attack) {
           const p = this.char.progress;
-          const lunge = this.attack.lunge ?? 2;
+          let lunge = this.attack.lunge ?? 2;
+          const tgt = this.aim?.alive ? this.aim : null;
+          if (tgt) {
+            // auf das Ziel zugleiten, aber davor stehen bleiben statt hindurchzulaufen
+            const gap = Math.hypot(tgt.x - this.x, tgt.z - this.z) - tgt.radius - this.attack.range * 0.55;
+            lunge = gap <= 0 ? 0 : Math.min(9, Math.max(lunge, gap * 5));
+            this.turnTo(Math.atan2(tgt.x - this.x, tgt.z - this.z), dt, 14);
+          }
           if (p < this.attack.hitStart + 0.05) { vx = Math.sin(this.yaw) * lunge; vz = Math.cos(this.yaw) * lunge; }
         }
         break;
@@ -297,6 +315,7 @@ export class PlayerFoot implements PlayerTarget {
     this.swingId++;
     this.deps.combat?.beginSwing(this.swingId);
     const a = this.char.playClip(def.clip, { loop: false, speed: def.speed, fade: 0.06, restart: true, onDone: () => this.endAttack() });
+    this.attackAction = a;
     if (!a) this.endAttack();
   }
 
@@ -305,6 +324,8 @@ export class PlayerFoot implements PlayerTarget {
     if (!def) return;
     const p = this.char.progress;
     const color = STYLE_COLOR[this.style];
+    // Takt wie im Anime: schnell ausholen, den Hieb sichtbar durchziehen, zügig zurück
+    if (this.attackAction) this.attackAction.timeScale = def.speed * (p < def.hitStart - 0.08 ? 1.35 : p <= def.hitEnd ? 0.9 : 1.2);
     if (!this.smeared && p >= def.hitStart - 0.06 && !def.projectile && def.fx !== 'punch') {
       this.smeared = true;
       const tilt = def.smearTilt ?? (def.fx === 'heavy' ? 1.45 : 0.4);
@@ -330,6 +351,7 @@ export class PlayerFoot implements PlayerTarget {
   private endAttack() {
     if (this.state !== 'attack') return;
     this.attack = null;
+    this.attackAction = null;
     this.comboWindow = 0.55;
     this.state = 'move';
     this.locomotion = '';
@@ -339,5 +361,5 @@ export class PlayerFoot implements PlayerTarget {
     }
   }
 
-  private toMove() { this.state = 'move'; this.locomotion = ''; this.attack = null; }
+  private toMove() { this.state = 'move'; this.locomotion = ''; this.attack = null; this.attackAction = null; }
 }

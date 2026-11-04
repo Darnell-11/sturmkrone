@@ -21,8 +21,8 @@ export class SkillStage extends EditorStage {
 
   constructor() {
     super();
-    this.sparks = new ParticleSystem(this.scene, true, 0.5);
-    this.dust = new ParticleSystem(this.scene, false, 0.8);
+    this.sparks = new ParticleSystem(this.scene, true, 0.32);
+    this.dust = new ParticleSystem(this.scene, false, 0.7);
     this.fx = new CombatFx(this.scene, this.sparks, this.dust);
     for (const [x, z] of [[2.6, 0], [4.2, -1.7], [4.2, 1.7]]) {
       const g = new Group();

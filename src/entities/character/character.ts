@@ -22,8 +22,10 @@ import { addOutlines } from '../../render/outline';
 import { toon } from '../../render/toon';
 import type { CharacterAssets } from './assets';
 import { buildCharacterGeometry, LIMB_EXT } from './builder';
-import { VROID_BONES, VroidBase } from './vroid';
+import { slotTurn, VROID_BONES, VroidBase } from './vroid';
 import { attachHeadgear, attachOutfit } from './animeHats';
+
+const CURL_Z = new Vector3(0, 0, 1), CURL_X = new Vector3(1, 0, 0);
 
 /** Lange Frisuren nutzen die weibliche Grundfigur, kurze die männliche */
 function isFemale(l: CharacterLook) { return ['lang', 'pferdeschwanz', 'zoepfe', 'zopf', 'dutt'].includes(l.hair); }
@@ -112,6 +114,7 @@ export class Character {
       const slot = new Bone();
       slot.name = `handslot${s}`;
       slot.position.set(0, 0.096, -0.058);
+      slot.quaternion.copy(slotTurn(s as 'l' | 'r'));
       this.bones[`hand${s}`]?.add(slot);
       this.bones[slot.name] = slot;
     }
@@ -155,13 +158,15 @@ export class Character {
       this.bones[`hand${s}`]?.add(slot);
       this.bones[slot.name] = slot;
       if (held[s]) slot.add(held[s]!);
+      this.curl(s, held[s] ? 1 : 0.3);
     }
     this.face = null;
     this.rig.traverse((o) => {
       const m = o as SkinnedMesh;
       if (!m.isSkinnedMesh) return;
       m.castShadow = true;
-      m.receiveShadow = true;
+      // Anime-Gesichter bleiben schattenfrei (sonst legt sich ein dunkler Haarschatten über die Augen)
+      m.receiveShadow = !/Face/i.test(m.name);
       m.frustumCulled = true;
       const dict = m.morphTargetDictionary;
       if (dict) {
@@ -344,6 +349,32 @@ export class Character {
     if (!slot) return;
     for (const c of [...slot.children]) slot.remove(c);
     if (obj) slot.add(obj);
+    this.curl(side, obj ? 1 : 0.3);
+  }
+
+  /**
+   * Finger der Anime-Figur beugen: 1 = Faust um den Griff, 0.3 = locker. Die Animationen bewegen
+   * die Finger nicht, deshalb bleibt die Stellung einfach stehen.
+   * VRoid-Ruhelage: Finger links entlang −X, rechts entlang +X, Handfläche nach unten, Daumen nach vorn (−Z).
+   */
+  private curl(side: 'l' | 'r', amount: number) {
+    if (!this.vroid) return;
+    const S = side === 'l' ? 'L' : 'R';
+    const sign = side === 'l' ? 1 : -1;
+    const bend = [1.05, 1.3, 0.9];
+    for (const f of ['Index', 'Middle', 'Ring', 'Little']) {
+      for (let j = 0; j < 3; j++) {
+        const b = this.rig.getObjectByName(`J_Bip_${S}_${f}${j + 1}`);
+        // der kleine Finger etwas stärker, der Zeigefinger etwas lockerer – wirkt natürlicher
+        const k = f === 'Index' ? 0.85 : f === 'Little' ? 1.08 : 1;
+        if (b) b.quaternion.setFromAxisAngle(CURL_Z, sign * bend[j] * k * amount);
+      }
+    }
+    const thumb = [0.25, 0.55, 0.5];
+    for (let j = 0; j < 3; j++) {
+      const b = this.rig.getObjectByName(`J_Bip_${S}_Thumb${j + 1}`);
+      if (b) b.quaternion.setFromAxisAngle(CURL_X, -thumb[j] * amount);
+    }
   }
 
   dispose() {
