@@ -204,3 +204,18 @@ export function learnBlock(s: SkillDef, learned: Record<string, number>, sp: num
   if (sp <= 0) return 'points';
   return null;
 }
+
+/** Hintere Wortteile, an denen lange Namen für die runden Knöpfe getrennt werden („Ketten-\nblitz“) */
+const SECOND_WORDS = ['faust', 'haut', 'schritt', 'kraft', 'brecher', 'leib', 'schlag', 'form', 'panzer', 'schärfe', 'meister', 'wind', 'ziehen', 'klinge', 'rausch', 'schnitt', 'sichel', 'spalter', 'sturm', 'ring', 'dornen', 'blitz', 'dash', 'stacheln', 'sprung', 'welle', 'sog', 'wolke', 'säulen', 'splitter', 'keil', 'regen', 'flügel', 'schrei', 'geist', 'blick', 'stoß', 'druck', 'band', 'parade', 'stich', 'ahnung', 'gewalt', 'fluss', 'quelle', 'ruf', 'wille'];
+
+/** Kurzform eines Fähigkeitsnamens für kleine Knöpfe: höchstens zwei Zeilen */
+export function shortLabel(name: string): string {
+  if (name.includes(' ')) return name.replace(' ', '\n');
+  const dash = name.indexOf('-');
+  if (dash > 0) return `${name.slice(0, dash + 1)}\n${name.slice(dash + 1)}`;
+  if (name.length <= 8) return name;
+  const low = name.toLowerCase();
+  const hit = SECOND_WORDS.filter((w) => low.endsWith(w) && name.length - w.length >= 3).sort((a, b) => b.length - a.length)[0];
+  const cut = hit ? name.length - hit.length : Math.ceil(name.length / 2);
+  return `${name.slice(0, cut)}-\n${name.slice(cut)}`;
+}

@@ -5,7 +5,7 @@ import type { CombatFx } from '../combat/fx';
 import type { Input } from '../core/input/input';
 import type { SkillState } from '../core/save/types';
 import type { StyleId } from '../data/animations';
-import { computePassives, SK, type ActiveDef, type Passives, type SkillDef, type SynergyDef } from '../data/skills';
+import { computePassives, shortLabel, SK, type ActiveDef, type Passives, type SkillDef, type SynergyDef } from '../data/skills';
 import type { Character } from '../entities/character/character';
 import type { PlayerFoot } from '../entities/player/playerFoot';
 import type { CombatOverlay } from '../ui/combatOverlay';
@@ -15,7 +15,7 @@ import { AbilityRunner, castClip } from './abilities';
 
 interface Buff { b: NonNullable<ActiveDef['buff']>; t: number }
 
-export interface SlotView { id: string | null; name: string; color: string; cdFrac: number; ready: boolean; cost: number }
+export interface SlotView { id: string | null; name: string; short: string; color: string; cdFrac: number; ready: boolean; cost: number; sea: boolean }
 
 /** Faji-Energie, Fähigkeitsplätze, Abklingzeiten, Stärkungen und passive Boni der Spielfigur. */
 export class FajiController {
@@ -110,10 +110,10 @@ export class FajiController {
     return [0, 1, 2].map((i) => {
       const id = this.skills.slots[i] ?? null;
       const s = id ? SK[id] : null;
-      if (!s?.act || !(this.skills.learned[s.id] > 0)) return { id: null, name: 'Leer', color: '#888', cdFrac: 1, ready: false, cost: 0 };
+      if (!s?.act || !(this.skills.learned[s.id] > 0)) return { id: null, name: 'Leer', short: 'Leer', color: '#888', cdFrac: 1, ready: false, cost: 0, sea: false };
       const max = s.act.cd * (1 - this.passives.cdr);
       const cd = this.cds[s.id] ?? 0;
-      return { id: s.id, name: s.n, color: BRANCH_COLOR[s.b], cdFrac: 1 - cd / max, ready: cd <= 0 && this.faji >= s.act.cost, cost: s.act.cost };
+      return { id: s.id, name: s.n, short: shortLabel(s.n), color: BRANCH_COLOR[s.b], cdFrac: 1 - cd / max, ready: cd <= 0 && this.faji >= s.act.cost, cost: s.act.cost, sea: !!s.act.sea };
     });
   }
 
@@ -135,13 +135,18 @@ export class FajiController {
 
   levelOf(id: string) { return this.skills.learned[id] ?? 1; }
 
+  /** Leerer Platz angetippt: Faji-Baum öffnen (wie in 1.0) */
+  onEmpty: () => void = () => {};
+
   /** Auf See: Fähigkeit aus Platz i prüfen (Abklingzeit, Energie), noch nicht bezahlen */
-  useSea(i: number): SkillDef | null {
+  useSea(i: number): { def: SkillDef | null; why: 'leer' | 'land' | 'cd' | 'faji' | null } {
     const id = this.skills.slots[i];
     const s = id ? SK[id] : null;
-    if (!s?.act) return null;
-    if ((this.cds[s.id] ?? 0) > 0 || this.faji < s.act.cost) return null;
-    return s;
+    if (!s?.act || !(this.skills.learned[s.id] > 0)) return { def: null, why: 'leer' };
+    if (!s.act.sea) return { def: s, why: 'land' };
+    if ((this.cds[s.id] ?? 0) > 0) return { def: s, why: 'cd' };
+    if (this.faji < s.act.cost) return { def: s, why: 'faji' };
+    return { def: s, why: null };
   }
 
   /** Auf See: Fähigkeit wurde gewirkt – Energie und Abklingzeit verbuchen */
@@ -165,7 +170,7 @@ export class FajiController {
   use(i: number, lockYaw: number | null) {
     const id = this.skills.slots[i];
     const s = id ? SK[id] : null;
-    if (!s?.act) { this.overlay.number(new Vector3(this.foot.x, this.foot.y + 2, this.foot.z), 'Kein Faji im Platz – öffne den Faji-Baum', 'info'); return; }
+    if (!s?.act || !(this.skills.learned[s.id] > 0)) { this.onEmpty(); return; }
     if (!this.foot.canCast) return;
     if ((this.cds[s.id] ?? 0) > 0) return;
     if (this.faji < s.act.cost) { this.overlay.number(new Vector3(this.foot.x, this.foot.y + 2, this.foot.z), 'Zu wenig Faji', 'info'); return; }

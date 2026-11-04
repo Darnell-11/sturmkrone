@@ -48,6 +48,15 @@ export const MIGRATIONS: Record<number, Migration> = {
   },
   // 2.0: Talismane
   7: (d) => ({ ...d, version: 8, gear: { ...(d.gear ?? {}), trinkets: [], trinket: null } }),
+  // 2.6: Mantel und Stiefel gab es für die Anime-Figuren vorher nicht zur Auswahl – einmal Piratenkleidung anlegen
+  8: (d) => {
+    const p = d.player ?? {};
+    const look = { ...(p.look ?? {}) };
+    const marine = p.faction === 'marine';
+    if (!look.coat || look.coat === 'keiner') { look.coat = 'lang'; look.coatColor = marine ? '#14284A' : '#7A1F1A'; }
+    look.shoes = 'stiefel';
+    return { ...d, version: 9, player: { ...p, look } };
+  },
 };
 
 export type MigrationResult =

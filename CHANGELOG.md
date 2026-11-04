@@ -1,5 +1,31 @@
 # Was ist neu
 
+## 2.6.0 – Anime-Piraten, Faji auf See und alles aus der Demo (05.11.2026)
+
+- **Figuren sehen aus wie Anime-Piraten statt wie eine Schulklasse:**
+  - Hohe Lederstiefel, Hosen (statt Faltenrock und Kniestrümpfen) und Mäntel: kurz, lang mit geteilten Schößen oder als Kapitänsmantel. Die Kleidung entsteht aus dem Körper selbst und bewegt sich deshalb genau mit, auch beim Rennen, Rollen und Treten.
+  - Schärpe bzw. Koppel liegt jetzt eng um die Taille statt als steifes Brett.
+  - Gedeckte Seefahrer-Farben für Crew, Bewohner und Gegner. Piraten tragen öfter Mantel und Kopftuch, die Marine dunkelblaue Röcke.
+  - Im Charakter-Editor wählbar: Mantel und Farbe, hohe Stiefel oder Schuhe, Schärpe oder Koppel. Bestehende Figuren bekommen einmalig einen langen Mantel und Stiefel (änderbar im Editor).
+- **Hüte sitzen auf dem Haar:** Jeder Hut wird an die Frisur angepasst, nichts sticht mehr durch.
+  - Neuer Dreispitz mit durchgehender, hochgeschlagener Krempe und Goldborte
+  - Kopftuch mit umgeschlagenem Saum
+  - Die Augenklappe sitzt sichtbar auf dem Auge (vorher steckte sie im Kopf).
+- **Faji im Seekampf (wie in der Demo):**
+  - Die Fähigkeitenleiste ist auch auf See zu sehen. Fähigkeiten ohne Seewirkung sind abgeblendet.
+  - Leuchtende Wellen fliegen vom Schiff zum Ziel. Schwerthiebe treffen auf See das nächste Feindschiff, man muss nicht mehr mit dem Bug zielen.
+  - Klare Meldungen bei zu wenig Faji oder bei Fähigkeiten, die nur an Land wirken. Ein leerer Platz öffnet den Faji-Baum.
+  - Kurze, zweizeilige Namen auf den Knöpfen
+- **Breitseiten:** Die Knöpfe „Links“ und „Rechts“ glühen, sobald ein Gegner im Fächer liegt.
+- **Neu aus der Demo:**
+  - Übungsschiff in der Einführung: Bei „Versenke …“ und „Entere ein Schiff“ taucht ein angeschlagenes Ziel vor dem Bug auf.
+  - Lichtsäule mit Ring am Ziel der aktuellen Aufgabe
+  - Faji-Kristall in befreiten Ruinen: +2 Fähigkeitspunkte und eine neue Fähigkeit, die gleich auf einen freien Platz kommt
+  - Kleine Dörfer auf den ruhigen Inseln: Bewohner schlendern umher und schenken Gold und Proviant (alle 10 Minuten je Insel).
+  - In ruhigen Momenten heilen Schiff und Figur langsam.
+  - Warnung beim Einfahren in gefährliche Gewässer
+- Der Steuerungshinweis liegt im Hochformat (auch am PC) nicht mehr unter der Statustafel.
+
 ## 2.5.0 – Kampfgefühl, Waffenhaltung und geschlossene Schiffe (04.11.2026)
 
 - **Waffen richtig in der Hand:**

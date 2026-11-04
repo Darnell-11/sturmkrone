@@ -11,7 +11,8 @@ import {
   SkinnedMesh,
   Vector3,
   type AnimationAction,
-  type BufferGeometry,
+  BufferAttribute,
+  BufferGeometry,
   type Object3D,
   type Skeleton,
 } from 'three';
@@ -22,7 +23,7 @@ import { addOutlines } from '../../render/outline';
 import { toon } from '../../render/toon';
 import type { CharacterAssets } from './assets';
 import { buildCharacterGeometry, LIMB_EXT } from './builder';
-import { slotTurn, VROID_BONES, VroidBase } from './vroid';
+import { slotTurn, VROID_BONES, VroidBase, type GarmentKind } from './vroid';
 import { attachHeadgear, attachOutfit } from './animeHats';
 
 const CURL_Z = new Vector3(0, 0, 1), CURL_X = new Vector3(1, 0, 0);
@@ -86,6 +87,8 @@ export class Character {
   private blinkT = 2 + Math.random() * 3;
   private headgear: Group | null = null;
   private outfit: Group[] = [];
+  /** Aus dem Körper erzeugte Kleidung (Hose, Stiefel, Mantel) */
+  private garments: SkinnedMesh[] = [];
   private mesh: SkinnedMesh | null = null;
   private detail: SkinnedMesh | null = null;
   private actions = new Map<string, AnimationAction>();
@@ -215,12 +218,55 @@ export class Character {
     const chest = this.rig.getObjectByName('J_Bip_C_Chest'), hips = this.rig.getObjectByName('J_Bip_C_Hips');
     const marine = look.outfit === 'uniform' || look.hat === 'marine' || look.hat === 'zweispitz';
     this.outfit = chest && hips ? attachOutfit(chest, hips, this.rig.getObjectByName('J_Bip_L_UpperArm') ?? null, this.rig.getObjectByName('J_Bip_R_UpperArm') ?? null, look, marine ? 'marine' : 'pirat', this.outline) : [];
+    this.dressVroid(vb, look);
     const head = this.rig.getObjectByName('J_Bip_C_Head');
-    if (head) this.headgear = attachHeadgear(head, this.rig.getObjectByName('J_Adj_L_FaceEye') ?? null, this.rig.getObjectByName('J_Adj_R_FaceEye') ?? null, look, this.outline);
+    if (head) this.headgear = attachHeadgear(head, this.rig.getObjectByName('J_Adj_L_FaceEye') ?? null, this.rig.getObjectByName('J_Adj_R_FaceEye') ?? null, look, this.outline, vb.hairFit);
     const h = Math.min(1.1, Math.max(0.9, look.height));
     const base = vb.template.scale.x;
     const wide = look.body === 'kraeftig' ? 1.07 : look.body === 'schmal' ? 0.95 : 1;
     this.rig.scale.set(base * h * wide, base * h, base * h * wide);
+  }
+
+  /**
+   * Piratenkleidung: Hose statt Faltenrock (die Grundfigur trägt eine Schuluniform), hohe Stiefel und Mantel.
+   * Die Stücke entstehen aus dem Körper selbst und bewegen sich deshalb genau mit.
+   */
+  private dressVroid(vb: VroidBase, look: CharacterLook) {
+    for (const g of this.garments) g.removeFromParent();
+    this.garments = [];
+    const female = vb === this.assets.vroid?.female;
+    this.rig.traverse((o) => {
+      const m = o as SkinnedMesh;
+      const i = m.userData.vroidPart as number | undefined;
+      if (m.isSkinnedMesh && i !== undefined && vb.parts[i].slot === 'bottom') m.visible = !female;
+    });
+    const body = vb.bodySkin(this.rig);
+    if (!body?.parent) return;
+    const want: [GarmentKind, string][] = [];
+    if (female) want.push(['hose', look.pantsColor]);
+    want.push(['guertel', look.outfit === 'uniform' || look.hat === 'marine' || look.hat === 'zweispitz' ? '#2A2420' : look.accentColor]);
+    if (look.shoes === 'stiefel') want.push(['stiefel', look.shoesColor]);
+    if (look.coat === 'kurz') want.push(['mantelKurz', look.coatColor]);
+    else if (look.coat === 'lang' || look.coat === 'kapitaen') want.push(['mantelLang', look.coatColor]);
+    const set = vb.garmentSet(want.map((w) => w[0]));
+    if (!set) return;
+    // eigene Farben je Figur, Lage und Gewichte werden geteilt
+    const geo = new BufferGeometry();
+    for (const name of ['position', 'normal', 'skinIndex', 'skinWeight'] as const) geo.setAttribute(name, set.attributes[name]);
+    geo.setIndex(set.index);
+    geo.boundingSphere = set.boundingSphere;
+    const part = set.attributes.part;
+    const cols = want.map((w) => new Color(w[1]));
+    const col = new Float32Array(part.count * 3);
+    for (let i = 0; i < part.count; i++) cols[part.getX(i)].toArray(col, i * 3);
+    geo.setAttribute('color', new BufferAttribute(col, 3));
+    const m = new SkinnedMesh(geo, toon({ color: 0xffffff, vertexColors: true, side: DoubleSide, rim: 0.8 }));
+    m.bind(body.skeleton, body.bindMatrix);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    body.parent.add(m);
+    if (this.outline) addOutlines(m, 0.7);
+    this.garments.push(m);
   }
 
   /** Aussehen ändern (baut die Figur neu) */

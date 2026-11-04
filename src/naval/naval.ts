@@ -16,6 +16,8 @@ import {
   MeshBasicMaterial,
   RingGeometry,
   ShaderMaterial,
+  PlaneGeometry,
+  CanvasTexture,
   SphereGeometry,
   Vector3,
   type Camera,
@@ -51,7 +53,27 @@ export interface EnemyShip {
   reload?: number;
   /** Hinweis „jetzt entern“ schon gezeigt */
   weakNoted?: boolean;
+  /** Übungsschiff aus der Einführung (wie in 1.0): angeschlagen, schießt schwächer */
+  training?: boolean;
 }
+
+/** Verlauf für Faji-Wellen: hell in der Mitte, mit Schlieren in Laufrichtung */
+const WAVE_TEX = (() => {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 64;
+  const g = c.getContext('2d')!;
+  const v = g.createLinearGradient(0, 0, 0, 64);
+  v.addColorStop(0, 'rgba(255,255,255,0)'); v.addColorStop(0.5, 'rgba(255,255,255,1)'); v.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = v; g.fillRect(0, 0, 128, 64);
+  g.globalCompositeOperation = 'destination-in';
+  const h = g.createLinearGradient(0, 0, 128, 0);
+  h.addColorStop(0, 'rgba(255,255,255,0.15)'); h.addColorStop(0.85, 'rgba(255,255,255,1)'); h.addColorStop(1, 'rgba(255,255,255,0.6)');
+  g.fillStyle = h; g.fillRect(0, 0, 128, 64);
+  g.globalCompositeOperation = 'source-over';
+  g.strokeStyle = 'rgba(255,255,255,0.5)'; g.lineWidth = 2;
+  for (let i = 0; i < 6; i++) { const y = 18 + i * 5.5; g.beginPath(); g.moveTo(10 + i * 9, y); g.lineTo(120, y); g.stroke(); }
+  return new CanvasTexture(c);
+})();
 
 interface Ball { mesh: Mesh; vel: Vector3; owner: Ship; dmg: number; ammo: AmmoId; life: number }
 interface Crate { mesh: Mesh; x: number; z: number; gold: number; shard: boolean; t: number }
@@ -101,6 +123,9 @@ export class NavalSystem {
     return m;
   });
   private aimT = 0;
+  /** Sichtbare Faji-Wellen vom eigenen Schiff zum Ziel (wie seaWave in 1.0) */
+  private waves: { mesh: Mesh; t: number; max: number }[] = [];
+  private trainCd = 0;
 
   constructor(private scene: Scene, private env: SeaEnv, private fx: CombatFx, private overlay: CombatOverlay, private spray: ParticleSystem, private sparks: ParticleSystem, private ground: IslandGround, private hooks: NavalHooks) {
     this.fanGroup.renderOrder = 3;
@@ -125,6 +150,33 @@ export class NavalSystem {
       bd = d; best = s;
     }
     return best;
+  }
+
+  /** Liegt gerade ein Gegner im Feuerfächer dieser Seite? (für die Knöpfe „Links“/„Rechts“) */
+  inFan(side: number, range: number) { return !!this.sideTarget(side, range); }
+
+  /**
+   * Übungsschiff für die Einführung: taucht vor dem Bug auf, wenn die aktuelle Aufgabe Versenken
+   * oder Entern verlangt. Zum Entern ist es schon angeschlagen. Gibt das Schiff zurück, wenn es neu ist.
+   */
+  ensureTraining(board: boolean): EnemyShip | null {
+    const p = this.player;
+    if (!p || this.trainCd > 0 || this.enemies.some((e) => e.training && e.ship.alive)) return null;
+    this.trainCd = 4;
+    for (let tries = 0; tries < 10; tries++) {
+      const a = p.heading + (Math.random() - 0.5) * 1.2;
+      const x = p.x + Math.sin(a) * 150, z = p.z + Math.cos(a) * 150;
+      if (Math.hypot(x, z) > WORLD_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
+      const foe: 'pirat' | 'marine' = this.playerFaction === 'pirat' ? 'marine' : 'pirat';
+      const ship = new Ship(this.scene, 0, DEFAULT_SHIP_LOOK(foe), foe);
+      ship.x = x; ship.z = z; ship.heading = Math.atan2(p.x - x, p.z - z) + Math.PI / 2;
+      ship.prev = { x, z, heading: ship.heading };
+      ship.hull = ship.maxHull * (board ? 0.3 : 0.7);
+      const e: EnemyShip = { ship, role: 'patrouille', level: 1, state: 'patrol', wander: { x, z }, aiT: 0, name: 'Übungsschiff', training: true };
+      this.enemies.push(e);
+      return e;
+    }
+    return null;
   }
 
   /** Fächer und Zielringe jeden Frame nachführen */
@@ -334,6 +386,7 @@ export class NavalSystem {
 
   update(dt: number, active: boolean) {
     const p = this.player;
+    this.trainCd -= dt;
     if (p && active) {
       this.spawnT -= dt;
       const hostile = this.enemies.filter((e) => !e.companion && e.ship.alive).length;
@@ -349,6 +402,28 @@ export class NavalSystem {
     this.enemies = this.enemies.filter((e) => e.ship.sinking <= 7 && !(p && !e.companion && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > 1200));
     this.updateBalls(dt);
     this.updateCrates(dt);
+    for (const w of this.waves) {
+      w.t += dt;
+      const k = w.t / w.max;
+      (w.mesh.material as MeshBasicMaterial).opacity = Math.max(0, 1 - k) * 0.95;
+      w.mesh.scale.y = 1 + k * 0.6;
+      if (k >= 1) { w.mesh.removeFromParent(); w.mesh.geometry.dispose(); (w.mesh.material as MeshBasicMaterial).dispose(); }
+    }
+    this.waves = this.waves.filter((w) => w.t < w.max);
+  }
+
+  /** Leuchtende Welle vom eigenen Schiff zum Ziel, mit Gischt am Einschlag */
+  private seaWave(t: Ship, color: string, big = false) {
+    const p = this.player;
+    if (!p) return;
+    const dx = t.x - p.x, dz = t.z - p.z, d = Math.hypot(dx, dz);
+    const m = new Mesh(new PlaneGeometry(d, big ? 22 : 9).rotateX(-Math.PI / 2), new MeshBasicMaterial({ map: WAVE_TEX, color: new Color(color).multiplyScalar(1.6), transparent: true, opacity: 0.95, depthWrite: false, side: DoubleSide, fog: false, blending: CustomBlending, blendSrc: SrcAlphaFactor, blendDst: OneFactor, blendSrcAlpha: ZeroFactor, blendDstAlpha: OneFactor }));
+    m.position.set(p.x + dx / 2, 1.6, p.z + dz / 2);
+    m.rotation.y = Math.atan2(-dz, dx);
+    m.renderOrder = 6;
+    this.scene.add(m);
+    this.waves.push({ mesh: m, t: 0, max: 0.55 });
+    this.spray.emit(big ? 70 : 35, t.x, 1, t.z, { speed: big ? 9 : 6, up: big ? 12 : 8, life: 1.4, color: new Color(color).lerp(new Color(1, 1, 1), 0.5), spread: t.cls.W });
   }
 
   private ai(e: EnemyShip, dt: number) {
@@ -627,22 +702,27 @@ export class NavalSystem {
         }
         return true;
       }
-      case 'freeze': { const t = this.nearest(150); if (!t) return false; t.ship.frozen = 4 + level; this.strikeFx(t.ship, '#8FE8FF'); hit(t, dmg * 0.5); return true; }
-      case 'strike': { const t = this.nearest(160); if (!t) return false; this.strikeFx(t.ship, color); hit(t, dmg * 1.3); return true; }
+      case 'freeze': { const t = this.nearest(150); if (!t) return false; t.ship.frozen = 4 + level; this.seaWave(t.ship, '#8FE8FF'); this.strikeFx(t.ship, '#8FE8FF'); hit(t, dmg * 0.5); return true; }
+      case 'strike': { const t = this.nearest(160); if (!t) return false; this.strikeFx(t.ship, color); this.hooks.shake(0.35); hit(t, dmg * 1.3); return true; }
       case 'wind': p.boost = 5; this.fx.shockwave(new Vector3(p.x, 0.4, p.z), 30, color); for (const e of this.inRange(70)) { e.ship.x += (e.ship.x - p.x) * 0.3; e.ship.z += (e.ship.z - p.z) * 0.3; } return true;
-      case 'wave': { const list = this.inRange(130); this.fx.shockwave(new Vector3(p.x, 0.4, p.z), 60, color); for (const e of list) { hit(e, dmg * 0.8); e.ship.x += (e.ship.x - p.x) * 0.25; e.ship.z += (e.ship.z - p.z) * 0.25; } return true; }
+      case 'wave': { const list = this.inRange(130); if (!list.length) return false; this.fx.shockwave(new Vector3(p.x, 0.4, p.z), 60, color); for (const e of list) { this.seaWave(e.ship, color, true); hit(e, dmg * 0.8); e.ship.x += (e.ship.x - p.x) * 0.25; e.ship.z += (e.ship.z - p.z) * 0.25; } return true; }
       case 'repair': p.repair(0.3 + level * 0.05); this.fx.shockwave(new Vector3(p.x, 0.4, p.z), 20, '#7CE07A'); this.overlay.number(new Vector3(p.x, 6, p.z), 'Repariert!', 'heal'); return true;
       case 'ceasefire': for (const e of this.inRange(160)) e.ship.ceasefire = 6 + level; this.fx.shockwave(new Vector3(p.x, 0.4, p.z), 80, color); return true;
       case 'reload': p.reloadL = p.reloadR = 0; this.reloadMult = 0.5; setTimeout(() => { this.reloadMult = 1; }, 8000); return true;
       case 'cleave': {
-        const f = new Vector3(Math.sin(p.heading), 0, Math.cos(p.heading));
-        this.fx.smear(new Vector3(p.x, p.model.deckY + 2, p.z).addScaledVector(f, 10), p.heading, 0.1, 30, 0.6, color);
+        // wie in 1.0: der Hieb fliegt zum nächsten Feindschiff und trifft alles auf der Linie
+        const t = this.nearest(170);
+        if (!t) return false;
+        const yaw = Math.atan2(t.ship.x - p.x, t.ship.z - p.z);
+        const f = new Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+        this.fx.smear(new Vector3(p.x, p.model.deckY + 2, p.z).addScaledVector(f, 10), yaw, 0.1, 30, 0.6, color);
         for (const e of this.inRange(170)) {
           const rel = new Vector3(e.ship.x - p.x, 0, e.ship.z - p.z);
           const along = rel.dot(f);
           const off = rel.clone().addScaledVector(f, -along).length();
-          if (along > 0 && off < e.ship.cls.W + 6) { hit(e, dmg * 1.6); this.strikeFx(e.ship, color); }
+          if (along > 0 && off < e.ship.cls.W + 6) { this.seaWave(e.ship, color, level >= 3); hit(e, dmg * 1.6); }
         }
+        this.hooks.shake(0.3);
         return true;
       }
       case 'meteor': { const list = this.inRange(160); if (!list.length) return false; list.forEach((e, i) => setTimeout(() => { this.strikeFx(e.ship, '#FF9A3A'); hit(e, dmg); e.ship.fire = 8; }, 300 + i * 250)); return true; }

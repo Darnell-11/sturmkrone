@@ -133,19 +133,20 @@ export class Hud {
   }
 
   /** Fähigkeitsleiste unten (nur ohne Touch) */
-  setSkillBar(show: boolean, views: { name: string; color: string; cdFrac: number; ready: boolean; id: string | null }[], keys: string[]) {
+  setSkillBar(show: boolean, views: { name: string; short: string; color: string; cdFrac: number; ready: boolean; id: string | null; sea: boolean }[], keys: string[], atSea = false) {
     this.skillbar.hidden = !show || this.root.hidden;
     if (this.skillbar.hidden) return;
     const key = views.map((v) => v.id + v.name).join('|') + keys.join();
     if (key !== this.skillKey) {
       this.skillKey = key;
-      this.skillbar.innerHTML = views.map((v, i) => `<div class="sb${v.id ? '' : ' empty'}" style="--c:${v.color}"><kbd>${esc(keys[i] ?? '')}</kbd><span>${esc(v.name)}</span></div>`).join('');
+      this.skillbar.innerHTML = views.map((v, i) => `<div class="sb${v.id ? '' : ' empty'}" style="--c:${v.color}" title="${esc(v.name)}"><kbd>${esc(keys[i] ?? '')}</kbd><span>${esc(v.short)}</span></div>`).join('');
     }
     views.forEach((v, i) => {
       const el = this.skillbar.children[i] as HTMLElement | undefined;
       if (!el) return;
       el.style.setProperty('--p', v.cdFrac.toFixed(3));
-      el.classList.toggle('ready', v.ready);
+      el.classList.toggle('ready', v.ready && (!atSea || v.sea));
+      el.classList.toggle('dim', atSea && !!v.id && !v.sea);
     });
   }
 

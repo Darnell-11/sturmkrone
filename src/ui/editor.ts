@@ -185,11 +185,11 @@ export class CharacterEditor {
         break;
       case 'kleidung':
         if (this.o.anime) {
-          body = this.opt('Oberteil', `<div class="chips"><button data-a="set" data-k="outfit" data-v="hemd" aria-pressed="${r.look.outfit !== 'uniform'}">Mit Schärpe</button><button data-a="set" data-k="outfit" data-v="uniform" aria-pressed="${r.look.outfit === 'uniform'}">Mit Koppel</button></div>` + this.swatches('outfitColor', CLOTH_COLORS))
-            + this.opt('Schärpe', this.swatches('accentColor', CLOTH_COLORS))
-            + this.opt('Abzeichen', `<div class="chips"><button data-a="set" data-k="coat" data-v="${r.look.coat === 'kapitaen' ? 'keiner' : 'kapitaen'}" aria-pressed="${r.look.coat === 'kapitaen'}">Goldene Schulterstücke</button></div>`)
-            + this.opt('Hose / Rock', this.swatches('pantsColor', CLOTH_COLORS))
-            + this.opt('Schuhe', this.swatches('shoesColor', ['#5A3A22', '#1E1A20', '#8A5A2B', '#7A1F1A', '#F3E6C8']));
+          body = this.opt('Mantel', this.chips('coat', COATS) + (r.look.coat !== 'keiner' ? this.swatches('coatColor', CLOTH_COLORS) : ''))
+            + this.opt('Weste und Hemd', this.swatches('outfitColor', CLOTH_COLORS))
+            + this.opt('Gürtel', `<div class="chips"><button data-a="set" data-k="outfit" data-v="hemd" aria-pressed="${r.look.outfit !== 'uniform'}">Schärpe</button><button data-a="set" data-k="outfit" data-v="uniform" aria-pressed="${r.look.outfit === 'uniform'}">Koppel</button></div>` + (r.look.outfit !== 'uniform' ? this.swatches('accentColor', CLOTH_COLORS) : ''))
+            + this.opt('Hose', this.swatches('pantsColor', CLOTH_COLORS))
+            + this.opt('Schuhe', `<div class="chips"><button data-a="set" data-k="shoes" data-v="stiefel" aria-pressed="${r.look.shoes === 'stiefel'}">Hohe Stiefel</button><button data-a="set" data-k="shoes" data-v="schuhe" aria-pressed="${r.look.shoes !== 'stiefel'}">Schuhe</button></div>` + this.swatches('shoesColor', ['#5A3A22', '#1E1A20', '#8A5A2B', '#7A1F1A', '#F3E6C8']));
           break;
         }
         body = this.opt('Oberteil', this.chips('outfit', OUTFITS)) + this.opt('Hauptfarbe', this.swatches('outfitColor', CLOTH_COLORS))

@@ -2,7 +2,7 @@
 import { defaultLook, type CharacterLook } from '../../data/characterParts';
 import { DEFAULT_SHIP_LOOK, type AmmoId, type ShipLook } from '../../data/ships';
 
-export const SAVE_VERSION = 8;
+export const SAVE_VERSION = 9;
 
 export interface QuestProgress { id: string; step: number; count: number }
 

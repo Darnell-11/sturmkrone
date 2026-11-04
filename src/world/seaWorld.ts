@@ -10,6 +10,7 @@ import {
   MathUtils,
   Mesh,
   MeshBasicMaterial,
+  OctahedronGeometry,
   PerspectiveCamera,
   Scene,
   SphereGeometry,
@@ -98,6 +99,13 @@ export class SeaWorld {
   onDig: (island: string) => void = () => {};
   onEnterIsland: (def: IslandDef) => void = () => {};
   onIslandCleared: (id: string) => void = () => {};
+  /** Auf einer bewohnten Insel gelandet (Geschenk der Dorfbewohner) */
+  onVillage: (id: string) => void = () => {};
+  private assets: CharacterAssets | null = null;
+  /** Dorfbewohner der ruhigen Inseln, nur solange man dort an Land ist */
+  private visitors: Npc[] = [];
+  /** Faji-Kristall einer Ruine erweckt */
+  onCrystal: (id: string) => void = () => {};
   onRescue: () => void = () => {};
   onHarbor: (def: IslandDef) => void = () => {};
   onEnterRegion: (r: RegionDef) => void = () => {};
@@ -105,6 +113,8 @@ export class SeaWorld {
   onDiscover: (islandId: string) => void = () => {};
   /** Angeln: true = Fang, false = abgebrochen oder zu spät */
   onFish: (caught: boolean) => void = () => {};
+  /** Leerer Fähigkeitsplatz: Faji-Baum öffnen */
+  onOpenSkills: () => void = () => {};
   private fishing: { wait: number; bite: number } | null = null;
   /** Soll der Tiefenschlund erscheinen (Kapitel 7)? */
   bossWanted = false;
@@ -339,6 +349,7 @@ export class SeaWorld {
 
   /** Spielfigur und Bewohner erzeugen, sobald die Figuren-Daten geladen sind */
   setCharacters(assets: CharacterAssets, look: CharacterLook, style: StyleId, overlay?: CombatOverlay) {
+    this.assets = assets;
     this.player?.dispose();
     this.player = new Character(assets, look, true);
     this.scene.add(this.player.holder);
@@ -429,6 +440,7 @@ export class SeaWorld {
       (a) => { this.shake = Math.max(this.shake, a); },
       (t) => { this.hitstop.t = Math.max(this.hitstop.t, t); this.hitstop.scale = 0.05; });
     this.faji.refresh(level, this.style);
+    this.faji.onEmpty = () => this.onOpenSkills();
   }
 
   /** Aussehen und Kampfstil der Spielfigur ändern */
@@ -671,6 +683,89 @@ export class SeaWorld {
   }
 
   /** Reichweite der Breitseiten wie in 1.0 (72 + 3 je Schiffsklasse, Ausguck mehr) */
+  /** Faji-Kristall auf einer befreiten Ruine (wie in 1.0) */
+  private crystal: { mesh: Mesh; x: number; z: number; y: number; id: string } | null = null;
+  showCrystal(id: string) {
+    const def = this.islandDefs.find((i) => i.id === id);
+    if (!def || this.crystal?.id === id) return;
+    this.crystal?.mesh.removeFromParent();
+    const h = this.ground.height(def.x, def.z);
+    const y = (Number.isFinite(h) ? h : 1.3) + 2.6;
+    const m = new Mesh(new OctahedronGeometry(1.1, 0), new MeshBasicMaterial({ color: new Color(1.8, 1.0, 3.2) }));
+    const halo = new Mesh(new SphereGeometry(1.9, 16, 12), new MeshBasicMaterial({ color: new Color(0.8, 0.45, 1.6), transparent: true, opacity: 0.25, depthWrite: false }));
+    m.add(halo);
+    m.position.set(def.x, y, def.z);
+    this.scene.add(m);
+    this.crystal = { mesh: m, x: def.x, z: def.z, y, id };
+    this.onMessage('Ein Faji-Kristall leuchtet in der Mitte der Insel!');
+  }
+
+  private calmT = 0;
+  /** Wie in 1.0: in ruhigen Momenten heilen Schiff und Spielfigur langsam */
+  private regen(dt: number) {
+    const calm = this.threat < 0.05 && !this.bossNear && !(this.mode === 'foot' && this.combat?.hostilesLeft);
+    if (!calm) { this.calmT = 0; return; }
+    this.calmT += dt;
+    if (this.calmT < 4) return;
+    const s = this.ship;
+    if (s.alive && !s.sinking && s.hull < s.maxHull) s.hull = Math.min(s.maxHull, s.hull + s.maxHull * 0.02 * dt);
+    const f = this.foot;
+    if (f && f.hp > 0 && f.hp < f.maxHp) f.hp = Math.min(f.maxHp, f.hp + f.maxHp * 0.05 * dt);
+  }
+
+  private lastZone = 0;
+  /** Warnung beim Einfahren in Gewässer, die deutlich über der eigenen Stufe liegen (wie in 1.0) */
+  private checkZone() {
+    if (this.mode !== 'sail' || !this.naval) return;
+    const zone = Math.max(1, Math.min(10, 1 + Math.floor(Math.hypot(this.x, this.z) / 260)));
+    if (zone === this.lastZone) return;
+    if (this.lastZone && zone > this.lastZone && zone >= this.naval.playerLevel + 3) this.onMessage(`Gefährliche Gewässer (Stufe ${zone})!`);
+    this.lastZone = zone;
+  }
+
+  /** Übungsschiff für die Einführung (Aufgaben „Versenken“ und „Entern“) */
+  ensureTraining(board: boolean) {
+    if (this.mode !== 'sail' || this.cinematic > 0) return;
+    const e = this.naval?.ensureTraining(board);
+    if (!e) return;
+    this.onMessage(board
+      ? 'Ein angeschlagenes Übungsschiff! Fahr nah heran und drück „Entern!“ – dann kämpfst du an Deck.'
+      : 'Ein Übungsschiff! Bring es seitlich in einen der Fächer und feuere mit „Links“ oder „Rechts“.');
+  }
+
+  /** Lichtsäule und Ring am Ziel der aktuellen Aufgabe (wie in 1.0) */
+  private beacon: Group | null = null;
+  private beaconTarget: { x: number; z: number; r: number } | null = null;
+  setBeacon(t: { x: number; z: number; r: number } | null) { this.beaconTarget = t; }
+  private updateBeacon(dt: number) {
+    const t = this.beaconTarget;
+    const pos = this.playerPos;
+    const show = !!t && Math.hypot(t.x - pos.x, t.z - pos.z) > t.r + 40;
+    if (!show) { if (this.beacon) this.beacon.visible = false; return; }
+    if (!this.beacon) {
+      const g = new Group();
+      const mat = new MeshBasicMaterial({ color: new Color(1.6, 1.25, 0.5), transparent: true, opacity: 0.32, depthWrite: false, fog: false });
+      const column = new Mesh(new CylinderGeometry(2.2, 3.2, 140, 16, 1, true), mat);
+      column.position.y = 70;
+      const ring = new Mesh(new CylinderGeometry(1, 1, 0.6, 48, 1, true), new MeshBasicMaterial({ color: new Color(1.8, 1.4, 0.5), transparent: true, opacity: 0.7, depthWrite: false, fog: false }));
+      ring.position.y = 1.2;
+      g.add(column, ring);
+      g.userData.ring = ring;
+      g.renderOrder = 5;
+      this.scene.add(g);
+      this.beacon = g;
+    }
+    const b = this.beacon;
+    b.visible = true;
+    b.position.set(t!.x, 0, t!.z);
+    const ring = b.userData.ring as Mesh;
+    ring.scale.set(t!.r * 1.15, 1, t!.r * 1.15).multiplyScalar(1 + Math.sin(this.env.clock * 3) * 0.04);
+    b.rotation.y += dt * 0.3;
+  }
+
+  /** Liegt ein Gegner im Feuerfächer dieser Seite? (Knopf-Hervorhebung) */
+  fanHot(side: number) { return this.mode === 'sail' && !!this.naval?.inFan(side, this.seaRange); }
+
   get seaRange() { return (72 + Math.max(0, SHIP_CLASSES.indexOf(this.ship.cls)) * 3) * this.rangeMult; }
   /** Nachladezeit wie in 1.0 */
   get reloadTime() { return 1.9 * (this.naval?.reloadMult ?? 1); }
@@ -737,6 +832,15 @@ export class SeaWorld {
     this.shake = Math.max(0, this.shake - dt * 1.8);
     this.updateWake(dt);
     this.naval?.update(dt, this.mode === 'sail' && this.cinematic <= 0);
+    this.regen(dt);
+    this.checkZone();
+    if (this.crystal) {
+      const c = this.crystal;
+      c.mesh.rotation.y += dt * 1.5;
+      c.mesh.position.y = c.y + Math.sin(this.env.clock * 2) * 0.3;
+      if (Math.random() < dt * 8) this.sparks.emit(1, c.x + (Math.random() - 0.5) * 1.5, c.y - 1, c.z + (Math.random() - 0.5) * 1.5, { speed: 0.3, up: 2.5, life: 1, color: new Color(1.4, 0.8, 2.4), gravity: -1, spread: 0.2 });
+    }
+    this.updateBeacon(dt);
     this.naval?.updateBars(this.camera, this.mode === 'sail');
     this.naval?.updateAim(dt, this.mode === 'sail' && this.cinematic <= 0 && this.ship.alive, this.seaRange, this.ship.reloadL <= 0, this.ship.reloadR <= 0);
     this.spray.update(dt);
@@ -850,12 +954,18 @@ export class SeaWorld {
       // Faji auf See
       const slot = (['skill1', 'skill2', 'skill3'] as const).findIndex((a) => input.pressed(a));
       if (slot >= 0 && this.faji) {
-        const def = this.faji.useSea(slot);
-        if (def?.act?.sea) {
+        const { def, why } = this.faji.useSea(slot);
+        if (why === 'leer') this.onOpenSkills();
+        else if (why === 'land' && def) this.onMessage(`${def.n} wirkt nur an Land.`);
+        else if (why === 'faji') this.onMessage('Zu wenig Faji.');
+        else if (!why && def?.act?.sea) {
           const ok = nav.castSea(def.act.sea, this.faji.levelOf(def.id), this.combat?.atk ?? 14, ELEMENT_COLORS[def.act.el]);
-          if (ok) { this.faji.commitSea(def); if (def.act.ult) this.overlay?.showCutin(`${def.n}!`, ELEMENT_COLORS[def.act.el]); }
-          else this.onMessage('Kein Ziel in Reichweite.');
-        } else if (def) this.onMessage(`${def.n} wirkt nur an Land.`);
+          if (ok) {
+            this.faji.commitSea(def);
+            if (def.act.ult || def.act.cost >= 40) this.overlay?.showCutin(`${def.n}!`, ELEMENT_COLORS[def.act.el]);
+            else this.overlay?.number(new Vector3(this.x, 9, this.z), def.n, 'info');
+          } else this.onMessage('Kein Ziel in Reichweite.');
+        }
       }
     }
 
@@ -961,7 +1071,20 @@ export class SeaWorld {
       if (input.pressed('interact')) this.embark();
     } else {
       const f = this.foot;
+      const cr = this.crystal && Math.hypot(this.crystal.x - f.x, this.crystal.z - f.z) < 3.2 && !this.combat?.hostilesLeft ? this.crystal : null;
       const dig = this.life?.digs.find((dd) => Math.hypot(dd.x - f.x, dd.z - f.z) < 2.6);
+      if (cr) {
+        this.contextLabel = 'Faji-Kristall erwecken';
+        if (input.pressed('interact')) {
+          this.player.play('cheer', { restart: true, loop: false, onDone: () => this.player?.play('idle') });
+          this.fx?.shockwave(new Vector3(cr.x, f.y, cr.z), 8, '#C77DFF');
+          this.sparks.emit(60, cr.x, cr.y, cr.z, { speed: 7, up: 6, life: 1.2, color: new Color(1.4, 0.8, 2.4), spread: 0.5 });
+          cr.mesh.removeFromParent();
+          this.crystal = null;
+          this.onCrystal(cr.id);
+        }
+        return;
+      }
       const npc = this.npcs.find((n) => n.townDef && Math.hypot(n.x - f.x, n.z - f.z) < 3.2);
       const d = Math.hypot(f.x - this.anchor.x, f.z - this.anchor.z);
       if (dig) {
@@ -1111,6 +1234,17 @@ export class SeaWorld {
     const where = `${def.name}`;
     if (def.kind === 'town') { this.onMessage(`Willkommen in ${where}! Sprich mit den Leuten – und probier deine Kombos an den Puppen.`); return; }
     if (def.kind === 'harbor') { this.onMessage(`${where}: ${def.info}`); return; }
+    if (def.kind === 'quiet' && this.assets) {
+      // ein kleines Dorf wie in 1.0: Leute schlendern umher und begrüßen die Crew
+      (['fischer', 'buerger', 'buerger'] as NpcRole[]).forEach((role) => {
+        const n = new Npc(this.assets!, isl, this.ground, role, Math.random, this.outlineNpcs);
+        this.scene.add(n.char.holder);
+        this.visitors.push(n);
+      });
+      this.onMessage(`${where}: ${def.info}`);
+      this.onVillage(def.id);
+      return;
+    }
     if (def.kind !== 'camp' && def.kind !== 'boss' && def.kind !== 'ruin') { this.onMessage(`${where}: ${def.info}`); return; }
     const until = this.cleared.get(idx) ?? 0;
     if (until > this.env.clock) { this.onMessage(`${where} ist ruhig – fürs Erste.`); return; }
@@ -1180,6 +1314,8 @@ export class SeaWorld {
       c.leaveIsland();
     }
     if (this.foot) this.foot.onFoot = false;
+    for (const n of this.visitors) { n.char.holder.removeFromParent(); n.char.dispose(); }
+    this.visitors = [];
     this.crew?.clearAllies();
     if (this.combat) this.combat.allies = [];
     this.setMode('sail');
@@ -1190,6 +1326,7 @@ export class SeaWorld {
     const p = this.mode === 'foot' && this.foot ? new Vector3(this.foot.x, 0, this.foot.z) : null;
     const cam = this.camera.position;
     for (const n of this.npcs) n.update(dt, p, Math.hypot(cam.x - n.x, cam.z - n.z));
+    for (const n of this.visitors) n.update(dt, p, Math.hypot(cam.x - n.x, cam.z - n.z));
   }
 
   /** Im Menü: Schiff treibt, Zeit und Wetter laufen weiter */

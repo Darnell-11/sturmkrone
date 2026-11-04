@@ -16,6 +16,21 @@ const legacy10 = {
 };
 
 describe('Spielstände', () => {
+
+  it('legt alten Anime-Figuren einmal Mantel und Stiefel an (8 → 9)', () => {
+    const old = { ...createSave('Fynn', 'pirat', V), version: 8 } as Record<string, any>;
+    old.player = { ...old.player, look: { ...old.player.look, coat: 'keiner', shoes: 'schuhe' } };
+    const r = migrateSave(old, V);
+    if (!r.ok) throw new Error(r.error);
+    expect(r.data.player.look.coat).toBe('lang');
+    expect(r.data.player.look.shoes).toBe('stiefel');
+    const kept = { ...createSave('Ada', 'marine', V), version: 8 } as Record<string, any>;
+    kept.player = { ...kept.player, look: { ...kept.player.look, coat: 'kurz', coatColor: '#2F6E4F' } };
+    const k = migrateSave(kept, V);
+    if (!k.ok) throw new Error(k.error);
+    expect(k.data.player.look.coatColor).toBe('#2F6E4F');
+  });
+
   it('speichert und lädt einen Platz', () => {
     const m = new SaveManager(new MemoryStore(), V);
     const s = createSave('Fynn', 'pirat', V);

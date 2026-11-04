@@ -70,6 +70,11 @@ export const CLOTH_COLORS = [
   '#1F7A8C', '#2F8FD9', '#1F4E79', '#14284A', '#4A2E6E', '#8A5A2B', '#5A3A22', '#C8A27A',
 ];
 
+/** Farben für Zufallsfiguren: Hemden und Westen, Schärpen, Mäntel */
+const SEA_SHIRTS = ['#F3E6C8', '#FFFFFF', '#EDE6D6', '#C8A27A', '#8A5A2B', '#5A3A22', '#3A3A44', '#7A1F1A', '#2F6E4F', '#1F4E79'];
+const SEA_SASHES = ['#A8322A', '#7A1F1A', '#E8B33A', '#2F6E4F', '#1F4E79', '#4A2E6E', '#1E1A20'];
+const SEA_COATS = ['#7A1F1A', '#1E1A20', '#5A3A22', '#14284A', '#2F6E4F', '#4A2E6E', '#3A3A44'];
+
 export const LOOK_OPTIONS = {
   body: BODY_TYPES, face: FACE_SHAPES, eyes: EYE_STYLES, brows: BROW_STYLES, mouth: MOUTH_STYLES,
   hair: HAIR_STYLES, beard: BEARD_STYLES, outfit: OUTFITS, coat: COATS, shoes: SHOES, hat: HATS,
@@ -79,14 +84,14 @@ export function defaultLook(faction: Faction): CharacterLook {
   return faction === 'pirat'
     ? {
       body: 'normal', height: 1, skin: '#E8BE96', face: 'rund', eyes: 'gross', eyeColor: '#2F6FB5', brows: 'schraeg', mouth: 'grinsen',
-      hair: 'stachel', hairColor: '#3A2618', beard: 'keiner', outfit: 'weste', outfitColor: '#A8322A', accentColor: '#F3E6C8',
-      pantsColor: '#3A3A44', shoes: 'stiefel', shoesColor: '#5A3A22', coat: 'keiner', coatColor: '#1E1A20', hat: 'bandana', hatColor: '#A8322A',
+      hair: 'stachel', hairColor: '#3A2618', beard: 'keiner', outfit: 'weste', outfitColor: '#F3E6C8', accentColor: '#A8322A',
+      pantsColor: '#3A3A44', shoes: 'stiefel', shoesColor: '#5A3A22', coat: 'lang', coatColor: '#7A1F1A', hat: 'dreispitz', hatColor: '#1E1A20',
       scar: false, earring: true, eyepatch: false, scarf: false, gloves: false,
     }
     : {
       body: 'normal', height: 1, skin: '#F0C8A8', face: 'schmal', eyes: 'scharf', eyeColor: '#5A6A78', brows: 'normal', mouth: 'ernst',
       hair: 'seitenscheitel', hairColor: '#D9B25A', beard: 'keiner', outfit: 'uniform', outfitColor: '#FFFFFF', accentColor: '#1F4E79',
-      pantsColor: '#14284A', shoes: 'stiefel', shoesColor: '#1E1A20', coat: 'keiner', coatColor: '#14284A', hat: 'marine', hatColor: '#FFFFFF',
+      pantsColor: '#FFFFFF', shoes: 'stiefel', shoesColor: '#1E1A20', coat: 'lang', coatColor: '#14284A', hat: 'marine', hatColor: '#FFFFFF',
       scar: false, earring: false, eyepatch: false, scarf: false, gloves: false,
     };
 }
@@ -128,15 +133,16 @@ export function randomLook(rng: Rng, role: NpcRole = 'buerger'): CharacterLook {
   l.hairColor = pickOf(rng, HAIR_COLORS.slice(0, 8));
   l.beard = rng() < 0.35 ? keyOf(rng, BEARD_STYLES) : 'keiner';
   l.outfit = pickOf(rng, ['hemd', 'weste', 'jacke', 'matrose', 'tunika'] as Outfit[]);
-  l.outfitColor = pickOf(rng, CLOTH_COLORS);
-  l.accentColor = pickOf(rng, CLOTH_COLORS);
+  // gedeckte Seefahrer-Farben statt Bonbonfarben (die wirkten wie Schuluniformen)
+  l.outfitColor = pickOf(rng, SEA_SHIRTS);
+  l.accentColor = pickOf(rng, SEA_SASHES);
   l.pantsColor = pickOf(rng, ['#3A3A44', '#5A3A22', '#8A5A2B', '#1F4E79', '#C8A27A', '#1E1A20']);
-  l.shoes = keyOf(rng, SHOES);
-  l.shoesColor = pickOf(rng, ['#5A3A22', '#1E1A20', '#8A5A2B']);
-  l.coat = rng() < 0.15 ? 'kurz' : 'keiner';
-  l.coatColor = pickOf(rng, CLOTH_COLORS);
-  l.hat = rng() < 0.45 ? pickOf(rng, ['dreispitz', 'bandana', 'muetze', 'suedwester', 'keiner'] as Hat[]) : 'keiner';
-  l.hatColor = pickOf(rng, CLOTH_COLORS);
+  l.shoes = rng() < 0.7 ? 'stiefel' : 'schuhe';
+  l.shoesColor = pickOf(rng, ['#5A3A22', '#1E1A20', '#8A5A2B', '#3A2618']);
+  l.coat = rng() < 0.3 ? pickOf(rng, ['kurz', 'lang'] as Coat[]) : 'keiner';
+  l.coatColor = pickOf(rng, SEA_COATS);
+  l.hat = rng() < 0.45 ? pickOf(rng, ['dreispitz', 'bandana', 'bandana', 'muetze', 'keiner'] as Hat[]) : 'keiner';
+  l.hatColor = pickOf(rng, [...SEA_COATS, '#A8322A']);
   l.scar = rng() < 0.1;
   l.earring = rng() < 0.25;
   l.eyepatch = rng() < 0.05;
@@ -147,8 +153,8 @@ export function randomLook(rng: Rng, role: NpcRole = 'buerger'): CharacterLook {
     case 'koch': l.hat = 'kochmuetze'; l.hatColor = '#FFFFFF'; l.outfit = 'hemd'; l.outfitColor = '#FFFFFF'; break;
     case 'schmied': l.body = 'kraeftig'; l.outfit = 'hemd'; l.outfitColor = '#5A4A3A'; l.hat = 'brille'; l.gloves = true; break;
     case 'wirt': l.body = 'kraeftig'; l.outfit = 'weste'; l.beard = 'vollbart'; break;
-    case 'pirat': l.outfit = pickOf(rng, ['matrose', 'weste', 'hemd'] as Outfit[]); l.hat = pickOf(rng, ['bandana', 'dreispitz', 'keiner'] as Hat[]); l.hatColor = pickOf(rng, ['#A8322A', '#1E1A20', '#7A1F1A']); l.eyepatch = rng() < 0.12; l.earring = rng() < 0.5; break;
-    case 'marine': l.outfit = 'uniform'; l.outfitColor = '#FFFFFF'; l.accentColor = '#1F4E79'; l.pantsColor = '#14284A'; l.hat = 'marine'; l.hatColor = '#FFFFFF'; l.beard = rng() < 0.2 ? 'schnurrbart' : 'keiner'; l.eyepatch = false; l.scar = false; break;
+    case 'pirat': l.outfit = pickOf(rng, ['matrose', 'weste', 'hemd'] as Outfit[]); l.hat = pickOf(rng, ['bandana', 'bandana', 'dreispitz', 'keiner'] as Hat[]); l.hatColor = pickOf(rng, ['#A8322A', '#1E1A20', '#7A1F1A', '#2F6E4F']); l.eyepatch = rng() < 0.12; l.earring = rng() < 0.5; l.shoes = 'stiefel'; l.coat = rng() < 0.45 ? pickOf(rng, ['kurz', 'lang'] as Coat[]) : 'keiner'; break;
+    case 'marine': l.outfit = 'uniform'; l.outfitColor = '#FFFFFF'; l.accentColor = '#1F4E79'; l.pantsColor = pickOf(rng, ['#14284A', '#FFFFFF']); l.hat = 'marine'; l.hatColor = '#FFFFFF'; l.beard = rng() < 0.2 ? 'schnurrbart' : 'keiner'; l.eyepatch = false; l.scar = false; l.shoes = 'stiefel'; l.shoesColor = '#1E1A20'; l.coat = rng() < 0.6 ? 'kurz' : 'keiner'; l.coatColor = '#14284A'; break;
     case 'offizier': l.outfit = 'uniform'; l.outfitColor = '#FFFFFF'; l.accentColor = '#14284A'; l.coat = 'kapitaen'; l.coatColor = '#14284A'; l.pantsColor = '#FFFFFF'; l.hat = 'zweispitz'; l.hatColor = '#14284A'; break;
     default: break;
   }

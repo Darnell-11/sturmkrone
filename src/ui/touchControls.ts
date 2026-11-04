@@ -112,15 +112,22 @@ export class TouchControls {
   }
 
   /** Beschriftung, Farbe und Abklingzeit eines Buttons aktualisieren (Fähigkeiten) */
-  setButton(action: string, label: string, frac: number, ready: boolean, color: string) {
+  setButton(action: string, label: string, frac: number, ready: boolean, color: string, dim = false) {
     const b = this.buttonsEl.querySelector<HTMLElement>(`[data-action="${action}"]`);
     if (!b) return;
+    b.classList.toggle('dim', dim);
     const span = b.querySelector('span')!;
     if (span.textContent !== label) span.textContent = label;
     b.style.setProperty('--p', frac.toFixed(3));
     b.style.setProperty('--c', color);
     b.classList.toggle('cd', frac < 1);
     b.classList.toggle('rdy', ready);
+  }
+
+  /** Feuerknopf hervorheben, solange ein Gegner im Fächer liegt (wie in 1.0) */
+  setHot(action: string, on: boolean) {
+    const b = this.buttonsEl.querySelector<HTMLElement>(`[data-action="${action}"]`);
+    if (b && b.classList.contains('aim') !== on) b.classList.toggle('aim', on);
   }
 
   setVisible(v: boolean) {

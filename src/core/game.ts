@@ -136,6 +136,7 @@ export class Game {
     this.world.onHarbor = (def) => this.openHarbor(def);
     this.world.onEnterRegion = (r) => this.enterRegion(r);
     this.world.onFish = (caught) => this.fishResult(caught);
+    this.world.onOpenSkills = () => this.openSkills();
     this.world.onDiscover = (id) => {
       const s = this.save;
       if (!s) return;
@@ -159,6 +160,8 @@ export class Game {
     };
     this.world.onEnterIsland = (def) => this.enterIsland(def);
     this.world.onIslandCleared = (id) => this.islandCleared(id);
+    this.world.onCrystal = (id) => this.awakenCrystal(id);
+    this.world.onVillage = (id) => this.villageGift(id);
     this.world.onRescue = () => {
       if (!this.save) return;
       this.save.progress.stats.rescued++;
@@ -301,8 +304,10 @@ export class Game {
           const foot = this.world.mode === 'foot';
           const b = this.input.getKeyBindings();
           const keys = this.input.lastDevice === 'gamepad' ? ['LT', 'RT', 'RB'] : (['skill1', 'skill2', 'skill3'] as const).map((a) => this.input.keyLabel(b[a][0] ?? ''));
-          this.hud.setSkillBar(foot && this.input.lastDevice !== 'touch', views, keys);
-          views.forEach((v, i) => this.touch.setButton(`skill${i + 1}`, v.id ? v.name : 'Leer', v.cdFrac, v.ready, v.color));
+          // auch auf See sichtbar (wie in 1.0): Fähigkeiten ohne Seewirkung sind abgeblendet
+          this.hud.setSkillBar(this.input.lastDevice !== 'touch', views, keys, !foot);
+          views.forEach((v, i) => this.touch.setButton(`skill${i + 1}`, v.short, v.cdFrac, v.ready && (foot || v.sea), v.color, !foot && !!v.id && !v.sea));
+          if (!foot) for (const [act, side] of [['fireLeft', 1], ['fireRight', -1]] as const) this.touch.setHot(act, this.world.fanHot(side));
         }
       }
       this.hud.setFps(s.showFps, `${this.loop.fps} fps · ${QUALITY_TIERS[this.renderer.tier].label}`);
@@ -458,7 +463,48 @@ export class Game {
       if (id === 'schlundkrone') this.dropTrinket('legendaer', 0, 'tiefenauge');
       else this.dropTrinket(def.kind === 'boss' ? 'episch' : 'selten', lv * 0.01);
     }
+    // Ruinen: der Faji-Kristall wartet in der Inselmitte
+    if (def?.kind === 'ruin' && !s.progress.flags[`crystal_${id}`]) this.world.showCrystal(id);
     this.questEvent({ type: 'clear', island: id });
+  }
+
+  /** Geschenk der Dorfbewohner (wie in 1.0): höchstens alle 10 Minuten je Insel */
+  private villageGift(id: string) {
+    const s = this.save;
+    if (!s) return;
+    const key = `gift_${id}`;
+    const last = Number(s.progress.flags[key] ?? 0);
+    if (Date.now() - last < 10 * 60 * 1000) return;
+    s.progress.flags[key] = Date.now();
+    const def = this.world.islandDefs.find((i) => i.id === id);
+    const gold = Math.round(30 + (def?.level ?? Math.max(1, Math.floor(s.player.level / 2))) * 15);
+    s.player.gold += gold;
+    if (s.gear.potions < 5) s.gear.potions++;
+    audio.play('treasure');
+    setTimeout(() => this.overlay.showBanner('Die Dorfbewohner freuen sich', `Du bekommst ${gold} Gold und Proviant`), 700);
+    this.persist();
+  }
+
+  /** Faji-Kristall erweckt (wie in 1.0): +2 Punkte und eine neue Fähigkeit, die gleich auf einen freien Platz kommt */
+  private awakenCrystal(id: string) {
+    const s = this.save;
+    if (!s || s.progress.flags[`crystal_${id}`]) return;
+    s.progress.flags[`crystal_${id}`] = true;
+    s.skills.sp += 2;
+    const fresh = Object.values(SK).filter((d) => d.act && d.t === 1 && !d.lv && !d.needs?.length && !(s.skills.learned[d.id] > 0));
+    const pick = fresh.length ? fresh[Math.floor(Math.random() * fresh.length)] : null;
+    if (pick) {
+      s.skills.learned[pick.id] = 1;
+      const free = s.skills.slots.indexOf(null);
+      if (free >= 0) s.skills.slots[free] = pick.id;
+    }
+    audio.play('level');
+    this.overlay.showCutin('Faji-Kristall!', '#C77DFF');
+    setTimeout(() => this.overlay.showBanner('Dein Faji erwacht', `+2 Fähigkeitspunkte${pick ? ` und die Fähigkeit „${pick.n}“` : ''}`), 900);
+    this.grantXp(200, 150);
+    this.world.faji?.refresh(s.player.level, styleIdOf(s.player.style, s.player.blade));
+    this.applyPower();
+    this.persist();
   }
 
   // ---------- Talismane und Erfolge ----------
@@ -784,6 +830,8 @@ export class Game {
   private enterIsland(def: IslandDef) {
     const s = this.save;
     if (!s) return;
+    // nicht erweckter Kristall einer befreiten Ruine wartet weiter
+    if (def.kind === 'ruin' && s.progress.flags[`loot_${def.id}`] && !s.progress.flags[`crystal_${def.id}`]) this.world.showCrystal(def.id);
     const key = `seen_${def.id}`;
     if (!s.progress.flags[key]) {
       s.progress.flags[key] = true;
@@ -939,9 +987,14 @@ export class Game {
     if (!s) return;
     this.hud.setPotions(s.gear.potions);
     const t = this.quests?.tracked();
+    // Übungsschiff wie in 1.0, sobald eine frühe Aufgabe Versenken oder Entern verlangt
+    if (t && (t.q.id === 'k1' || t.q.id === 'k2') && (t.step.type === 'sink' || t.step.type === 'board')) this.world.ensureTraining(t.step.type === 'board');
+    const bt = t ? this.questTarget() : null;
+    const bdef = bt && t && 'island' in t.step ? this.world.islandDefs.find((i) => i.id === (t.step as { island: string }).island) : null;
+    this.world.setBeacon(bt ? { x: bt.x, z: bt.z, r: bdef?.r ?? 12 } : null);
     if (!t) this.hud.setQuest(null);
     else {
-      const target = this.questTarget();
+      const target = bt;
       const pos = this.world.playerPos;
       let angle: number | null = null, dist: number | null = null;
       if (target) {
