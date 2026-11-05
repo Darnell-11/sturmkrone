@@ -14,8 +14,14 @@ const mtof = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
 
 interface Ambience { waves: number; wind: number; rain: number; town: number; gulls: number; deep: number }
 
+/**
+ * Pegelausgleich je Stück (offline gemessen): ruhige Stücke etwas leiser als Kampf, aber alle gut hörbar.
+ * Ziel-Effektivpegel etwa: Nacht 0,035 · See/Hafen 0,05 · Kampf/Boss 0,075–0,08 · Menü 0,05
+ */
+const SONG_TRIM: Partial<Record<SongId, number>> = { sea: 1.55, north: 1.6, ember: 1.5, harbor: 1.24, night: 0.97, abyss: 1.35, battle: 1.04, storm: 1.03, boss: 1.12, menu: 1.3, victory: 1.0 };
+
 /** Eine laufende Musikspur (zum Überblenden laufen zeitweise zwei) */
-interface MusicPlayer { id: SongId; gain: GainNode; step: number; next: number; fading: boolean; endAt: number }
+interface MusicPlayer { id: SongId; gain: GainNode; wet: GainNode; step: number; next: number; fading: boolean; endAt: number }
 
 /** Lautstärken aus den Einstellungen (0 … 1) */
 export interface Volumes { master: number; music: number; sfx: number; ambient: number; voice: number }
@@ -42,6 +48,7 @@ class AudioEngine {
   private songSince = 0;
   private layerTension = 0;
   private verb!: GainNode;
+  private musicMix!: GainNode;
   /** Hörerposition (für Abstand und Stereo) */
   private lx = 0;
   private lz = 0;
@@ -82,9 +89,11 @@ class AudioEngine {
     // Großer Hall für die Musik (erzeugte Raumantwort: wie ein Orchester in einer weiten Halle)
     const conv = c.createConvolver();
     conv.buffer = this.impulse(3.2, 2.6);
+    // Pegel des Orchesters: die gefilterten Stimmen sind leise, hier werden sie auf Spielniveau angehoben
+    this.musicMix = c.createGain(); this.musicMix.gain.value = 1.4; this.musicMix.connect(this.musicBus);
     const wet = c.createGain(); wet.gain.value = 0.55;
     this.verb = c.createGain();
-    this.verb.connect(conv); conv.connect(wet); wet.connect(this.musicBus);
+    this.verb.connect(conv); conv.connect(wet); wet.connect(this.musicMix);
     this.buildAmbience();
     this.applyVolumes();
   }
@@ -382,9 +391,12 @@ class AudioEngine {
 
   // ---------- Orchester-Bausteine (alles live erzeugt) ----------
 
+  /** Hall-Send der Spur, die gerade geplant wird (blendet mit der Spur ein und aus) */
+  private curWet: AudioNode | null = null;
+
   /** Hall-Anteil einer Stimme */
   private toVerb(node: AudioNode, amount: number) {
-    const s = this.ctx!.createGain(); s.gain.value = amount; node.connect(s); s.connect(this.verb);
+    const s = this.ctx!.createGain(); s.gain.value = amount; node.connect(s); s.connect(this.curWet ?? this.verb);
   }
 
   /** Streicherfläche: verstimmte Sägezähne, weicher Einsatz, langes Ausklingen */
@@ -470,6 +482,8 @@ class AudioEngine {
   private choir(notes: number[], t: number, d: number, g: number, out: AudioNode) {
     const c = this.ctx!;
     const v = c.createGain();
+    // je Ton zwei Stimmen: auf die Stimmenzahl normieren, sonst übersteuert ein voller Akkord
+    g /= notes.length * 2;
     v.gain.setValueAtTime(0.0001, t);
     v.gain.exponentialRampToValueAtTime(g, t + Math.min(1.1, d * 0.45));
     v.gain.setValueAtTime(g, t + d * 0.8);
@@ -535,24 +549,33 @@ class AudioEngine {
     const fadeOut = urgent ? 1.6 : 3.8;
     for (const p of this.players) if (!p.fading) {
       p.fading = true;
-      p.gain.gain.cancelScheduledValues(t);
-      p.gain.gain.setValueAtTime(p.gain.gain.value, t);
-      p.gain.gain.linearRampToValueAtTime(0.0001, t + fadeOut);
+      for (const node of [p.gain, p.wet]) {
+        node.gain.cancelScheduledValues(t);
+        node.gain.setValueAtTime(node.gain.value, t);
+        node.gain.linearRampToValueAtTime(0.0001, t + fadeOut);
+      }
+      // Hall noch ausklingen lassen, bevor die Spur abgebaut wird
       p.endAt = t + fadeOut + 0.2;
     }
-    const gain = c.createGain();
-    gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.linearRampToValueAtTime(1, t + (urgent ? 0.8 : 3.2));
-    gain.connect(this.musicBus);
+    const trim = SONG_TRIM[id] ?? 1;
+    const gain = c.createGain(), wet = c.createGain();
+    for (const node of [gain, wet]) {
+      node.gain.setValueAtTime(0.0001, t);
+      node.gain.linearRampToValueAtTime(trim, t + (urgent ? 0.8 : 3.2));
+    }
+    gain.connect(this.musicMix);
+    wet.connect(this.verb);
     // am nächsten Schlag des alten Stücks einsetzen, damit es nicht holpert
     const start = cur ? Math.max(t + 0.05, cur.next) : t + 0.1;
-    this.players.push({ id, gain, step: 0, next: start, fading: false, endAt: Infinity });
+    this.players.push({ id, gain, wet, step: 0, next: start, fading: false, endAt: Infinity });
     this.songSince = t;
     // Kampfbeginn: großer Trommel- und Hornschlag
     if (urgent && cur && cur.id !== 'battle' && cur.id !== 'boss') {
+      this.curWet = wet;
       this.taiko(start, 0.5, gain, 0.8); this.taiko(start + 0.02, 0.4, gain, 1.15);
       const ch = SONGS[id].bars[0].chord;
       if (ch) for (const n of ch) this.horn(n - 12 + (SONGS[id].transpose ?? 0), start, 1.4, 0.05, gain);
+      this.curWet = null;
     }
   }
 
@@ -570,9 +593,11 @@ class AudioEngine {
     const battleNow = this.wantSong === 'battle' || this.wantSong === 'boss';
     const tens = battleNow ? 1 : Math.min(1, Math.max(0, this.intensity - 0.15) * 2);
     this.layerTension += (tens - this.layerTension) * 0.06;
-    for (const p of this.players) this.schedulePlayer(p);
+    for (const p of this.players) { this.curWet = p.wet; this.schedulePlayer(p); }
+    this.curWet = null;
     this.players = this.players.filter((p) => {
-      if (p.endAt < t) { p.gain.disconnect(); return false; }
+      // Spur erst abbauen, wenn auch der Hall verklungen ist
+      if (p.endAt + 3.5 < t) { p.gain.disconnect(); p.wet.disconnect(); return false; }
       return true;
     });
   }
@@ -602,29 +627,29 @@ class AudioEngine {
       // Streicherfläche über den ganzen Takt
       if (s === 0 && bar.chord) {
         const ch = bar.chord.map((n) => n + tr - 12);
-        this.pad(ch, t, barLen, fight ? 0.016 : mystic ? 0.013 : 0.018, out, fight ? 1600 : 1100);
-        if (boss || p.id === 'abyss' || (p.id === 'menu' && verse % 2 === 1)) this.choir(bar.chord.map((n) => n + tr), t, barLen, boss ? 0.05 : 0.035, out);
+        this.pad(ch, t, barLen, fight ? 0.018 : mystic ? 0.024 : 0.03, out, fight ? 1600 : 1200);
+        if (boss || p.id === 'abyss' || (p.id === 'menu' && verse % 2 === 1)) this.choir(bar.chord.map((n) => n + tr), t, barLen, boss ? 0.16 : 0.12, out);
       }
       // Tiefe Streicher auf den Schwerpunkten
-      if (s === 0 || s === half) this.cello(bar.bass[s ? 1 : 0] + tr, t, st * (half - 0.2), fight ? 0.07 : 0.055, out);
+      if (s === 0 || s === half) this.cello(bar.bass[s ? 1 : 0] + tr, t, st * (half - 0.2), fight ? 0.07 : 0.07, out);
       // Melodie: je nach Stimmung Fidel, Horn oder Flöte – im Kampf und Menü von Hörnern getragen
       const m = bar.mel[s];
       if (m) {
         const n = m + tr;
-        if (fight || p.id === 'menu' || p.id === 'victory') this.horn(n - (boss ? 12 : 0), t, st * 1.8, boss ? 0.05 : 0.04, out);
-        else if (mystic) this.flute(n, t, st * 2.6, 0.045, out);
-        else this.fiddle(n, t, st * 1.9, p.id === 'harbor' ? 0.035 : 0.03, out);
+        if (fight || p.id === 'menu' || p.id === 'victory') this.horn(n - (boss ? 12 : 0), t, st * 1.8, boss ? 0.06 : 0.055, out);
+        else if (mystic) this.flute(n, t, st * 2.6, 0.08, out);
+        else this.fiddle(n, t, st * 1.9, p.id === 'harbor' ? 0.075 : 0.07, out);
         // in der zweiten Strophe verdoppeln Hörner die Fidel (größer, epischer)
-        if (!fight && !mystic && verse % 2 === 1 && s % 2 === 0) this.horn(n - 12, t, st * 1.6, 0.018, out);
+        if (!fight && !mystic && verse % 2 === 1 && s % 2 === 0) this.horn(n - 12, t, st * 1.6, 0.03, out);
       }
       // Gegenstimme
-      if (bar.alt?.[s] && verse % 2 === 1) this.flute(bar.alt[s]! + tr, t, st * 2.2, 0.026, out);
+      if (bar.alt?.[s] && verse % 2 === 1) this.flute(bar.alt[s]! + tr, t, st * 2.2, 0.045, out);
       // Hafen: Laute zupft den Akkord
-      if (p.id === 'harbor' && bar.chord && s % 2 === 1) for (const nn of bar.chord) this.pluck(nn + tr, t, 0.02, out);
-      // Spannung: treibendes Celli-Ostinato und dumpfe Trommel
+      if (p.id === 'harbor' && bar.chord && s % 2 === 1) for (const nn of bar.chord) this.pluck(nn + tr, t, 0.035, out);
+      // Spannung: treibendes Celli-Ostinato und dumpfe Trommel (unter der Melodie, nicht darüber)
       if (k > 0.05) {
-        this.cello(bar.bass[0] + tr + (s % 2 ? 12 : 0), t, st * 0.8, 0.035 * k, out, true);
-        if (s === 0) this.taiko(t, 0.22 * k, out, 0.9);
+        this.cello(bar.bass[0] + tr + (s % 2 ? 12 : 0), t, st * 0.8, 0.026 * k, out, true);
+        if (s === 0) this.taiko(t, 0.16 * k, out, 0.9);
       }
       // Kampf: Kriegstrommeln, Rahmentrommel, Bläserstöße
       if (fight) {
