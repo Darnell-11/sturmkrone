@@ -1,8 +1,13 @@
 import {
   BoxGeometry,
   BufferGeometry,
+  CanvasTexture,
   Color,
   CylinderGeometry,
+  DoubleSide,
+  Float32BufferAttribute,
+  RepeatWrapping,
+  SRGBColorSpace,
   Group,
   Mesh,
   MeshBasicMaterial,
@@ -19,8 +24,9 @@ import { addOutlines } from '../render/outline';
 import { toon } from '../render/toon';
 import type { WalkIsland } from './islandGround';
 
-const WALLS = ['#F3E6C8', '#E8D2A8', '#D9E4E8', '#F0D8C8', '#E0E8D0'];
-const ROOFS = ['#A8322A', '#1F4E79', '#2F6E4F', '#8A5A2B', '#7A1F1A', '#3A6E8C'];
+// verwitterter Putz und satte, gedeckte Dachfarben (Hafenstadt, kein Ferienort)
+const WALLS = ['#E2D6BC', '#D4BF9A', '#C9CFD0', '#DCC4B0', '#CDD2BE'];
+const ROOFS = ['#8E2E26', '#2A4766', '#365C46', '#6E4A2A', '#5E2420', '#3E5E74'];
 
 export interface TownBuild {
   group: Group;
@@ -83,6 +89,223 @@ function lantern(lampMat: Material, lights: Mesh[]): Group {
   lights.push(lamp);
   g.add(post, arm, lamp);
   return g;
+}
+
+/** Handkarren mit zwei Rädern */
+function cart(): Group {
+  const g = new Group();
+  const wood = toon('#7A5232');
+  const bed = new Mesh(new BoxGeometry(1.4, 0.5, 2.2), wood);
+  bed.position.y = 0.85;
+  for (const s of [-1, 1]) {
+    const wheel = new Mesh(new CylinderGeometry(0.55, 0.55, 0.12, 12), toon('#4A3220'));
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(s * 0.8, 0.55, 0.2);
+    g.add(wheel);
+  }
+  const shaft = new Mesh(new BoxGeometry(0.1, 0.1, 1.8), wood);
+  shaft.position.set(0, 0.7, 1.8);
+  const load = new Mesh(new BoxGeometry(1, 0.6, 1), toon('#C9A66B'));
+  load.position.set(0, 1.4, -0.3);
+  load.rotation.y = 0.3;
+  g.add(bed, shaft, load);
+  return g;
+}
+
+/** Kisten und Fässer, gestapelt */
+function crateStack(seed: number): Group {
+  const g = new Group();
+  const crate = toon('#8A5A2B'), barrel = toon('#6E4626');
+  const n = 2 + (seed % 3);
+  for (let i = 0; i < n; i++) {
+    const c = new Mesh(new BoxGeometry(0.95, 0.95, 0.95), crate);
+    c.position.set((i % 2) * 1.0 - 0.5, 0.48 + Math.floor(i / 2) * 0.95, (i % 3) * 0.2);
+    c.rotation.y = (seed + i) * 0.4;
+    g.add(c);
+  }
+  const b = new Mesh(new CylinderGeometry(0.42, 0.38, 1, 10), barrel);
+  b.position.set(1.2, 0.5, -0.4);
+  g.add(b);
+  return g;
+}
+
+/** Niedriger Holzzaun */
+function fence(len: number): Group {
+  const g = new Group();
+  const wood = toon('#8A6A44');
+  const n = Math.round(len / 1.4);
+  for (let i = 0; i <= n; i++) {
+    const p = new Mesh(new BoxGeometry(0.14, 1.1, 0.14), wood);
+    p.position.set(-len / 2 + (i / n) * len, 0.55, 0);
+    g.add(p);
+  }
+  for (const y of [0.45, 0.85]) {
+    const rail = new Mesh(new BoxGeometry(len, 0.1, 0.08), wood);
+    rail.position.y = y;
+    g.add(rail);
+  }
+  return g;
+}
+
+/** Busch aus ein paar Kugeln */
+function bush(seed: number): Group {
+  const g = new Group();
+  const leaf = toon({ color: seed % 2 ? '#3F7A3A' : '#4E8A3E', flatShading: true });
+  for (let i = 0; i < 3; i++) {
+    const s = 0.6 + ((seed * 7 + i * 3) % 5) * 0.12;
+    const m = new Mesh(new SphereGeometry(s, 7, 5), leaf);
+    m.position.set((i - 1) * 0.55, s * 0.7, (i % 2) * 0.4);
+    g.add(m);
+  }
+  return g;
+}
+
+/** Wimpelleine zwischen zwei Punkten (bunte Dreiecke an einer durchhängenden Leine) */
+function bunting(a: Vector3, b: Vector3): Group {
+  const g = new Group();
+  const cols = ['#8E2E26', '#C99A3E', '#2A4766', '#DCD0B4'];
+  const n = Math.max(4, Math.round(a.distanceTo(b) / 0.9));
+  const at = (t: number) => a.clone().lerp(b, t).add(new Vector3(0, -Math.sin(t * Math.PI) * 0.9, 0));
+  const dir = b.clone().sub(a).setY(0).normalize();
+  const tris: number[][] = cols.map(() => []);
+  for (let i = 0; i < n; i++) {
+    const p = at((i + 0.5) / n);
+    const w = 0.32;
+    tris[i % cols.length].push(p.x - dir.x * w, p.y, p.z - dir.z * w, p.x + dir.x * w, p.y, p.z + dir.z * w, p.x, p.y - 0.55, p.z);
+  }
+  cols.forEach((c, k) => {
+    if (!tris[k].length) return;
+    const geo = new BufferGeometry();
+    geo.setAttribute('position', new Float32BufferAttribute(tris[k], 3));
+    geo.computeVertexNormals();
+    const m = new Mesh(geo, toon({ color: c, side: DoubleSide }));
+    m.userData.noOutline = true;
+    g.add(m);
+  });
+  // Leine aus kurzen Stücken
+  const rope = toon('#3A2A1E');
+  for (let i = 0; i < 8; i++) {
+    const p0 = at(i / 8), p1 = at((i + 1) / 8);
+    const seg = new Mesh(new CylinderGeometry(0.025, 0.025, p0.distanceTo(p1), 4), rope);
+    seg.position.copy(p0).lerp(p1, 0.5);
+    seg.lookAt(p1);
+    seg.rotateX(Math.PI / 2);
+    seg.userData.noOutline = true;
+    g.add(seg);
+  }
+  return g;
+}
+
+/** Fahnenmast mit Wimpel */
+function flagPole(col: string): Group {
+  const g = new Group();
+  const pole = new Mesh(new CylinderGeometry(0.08, 0.1, 7, 6), toon('#4A3220'));
+  pole.position.y = 3.5;
+  const cloth = new Mesh(new PlaneGeometry(1.8, 1.1), toon({ color: col, side: DoubleSide }));
+  cloth.position.set(0.95, 6.3, 0);
+  cloth.userData.noOutline = true;
+  const knob = new Mesh(new SphereGeometry(0.14, 8, 6), toon({ color: '#E3B04B', spec: 1 }));
+  knob.position.y = 7.05;
+  g.add(pole, cloth, knob);
+  return g;
+}
+
+let cobbleTex: CanvasTexture | null = null;
+/** Kopfsteinpflaster: unregelmäßige Steine mit dunklen Fugen (Graustufen, über die Farbe getönt) */
+function cobbleTexture(): CanvasTexture {
+  if (cobbleTex) return cobbleTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d')!;
+  // dunkle Fugen, dicht gesetzte, unregelmäßig eckige Steine mit wenig Kontrast
+  g.fillStyle = '#9a9288';
+  g.fillRect(0, 0, 256, 256);
+  let s = 11;
+  const r = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+  const rows = 10, cols = 8, cw = 256 / cols, rh = 256 / rows;
+  for (let y = 0; y < rows; y++) for (let x = -1; x < cols; x++) {
+    const ox = (y % 2) * cw * 0.5;
+    const v = Math.round(196 + r() * 40);
+    g.fillStyle = `rgb(${v},${v - 3},${v - 8})`;
+    const x0 = x * cw + ox + 1.5, y0 = y * rh + 1.5, w = cw - 3, h = rh - 3;
+    g.beginPath();
+    g.moveTo(x0 + r() * 3, y0 + r() * 2);
+    g.lineTo(x0 + w - r() * 3, y0 + r() * 2);
+    g.lineTo(x0 + w - r() * 2, y0 + h - r() * 3);
+    g.lineTo(x0 + r() * 2, y0 + h - r() * 3);
+    g.closePath();
+    g.fill();
+    // leichte Abnutzung oben hell, unten dunkler
+    g.fillStyle = 'rgba(255,255,255,0.08)';
+    g.fillRect(x0 + 2, y0 + 1, w - 4, 3);
+  }
+  cobbleTex = new CanvasTexture(c);
+  cobbleTex.wrapS = cobbleTex.wrapT = RepeatWrapping;
+  cobbleTex.colorSpace = SRGBColorSpace;
+  cobbleTex.anisotropy = 4;
+  return cobbleTex;
+}
+
+/** Straße als Band, das dem Boden folgt */
+function roadMesh(pts: [number, number][], width: number, cx: number, cz: number, groundAt: (x: number, z: number) => number, mat: Material): Mesh {
+  // Punkte alle 2 m
+  const path: { x: number; z: number }[] = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 2));
+    for (let k = 0; k < n; k++) path.push({ x: ax + (bx - ax) * (k / n), z: az + (bz - az) * (k / n) });
+  }
+  path.push({ x: pts[pts.length - 1][0], z: pts[pts.length - 1][1] });
+  const pos: number[] = [], uv: number[] = [], idx: number[] = [];
+  let along = 0;
+  path.forEach((p, i) => {
+    const q = path[Math.min(path.length - 1, i + 1)], o = path[Math.max(0, i - 1)];
+    const dx = q.x - o.x, dz = q.z - o.z, l = Math.hypot(dx, dz) || 1;
+    const nx = -dz / l, nz = dx / l;
+    if (i > 0) along += Math.hypot(p.x - path[i - 1].x, p.z - path[i - 1].z);
+    for (const s of [-1, 1]) {
+      // Ränder leicht unregelmäßig, damit es nicht wie ein Lineal aussieht
+      const w = width / 2 * (1 + Math.sin(along * 0.7 + s) * 0.08);
+      const x = cx + p.x + nx * w * s, z = cz + p.z + nz * w * s;
+      pos.push(x, groundAt(x, z) + 0.07, z);
+      uv.push((s + 1) / 2 * width / 3, along / 3);
+    }
+    if (i > 0) { const b = i * 2; idx.push(b - 2, b, b - 1, b - 1, b, b + 1); }
+  });
+  const geo = new BufferGeometry();
+  geo.setAttribute('position', new Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const m = new Mesh(geo, mat);
+  m.receiveShadow = true;
+  m.userData.noOutline = true;
+  return m;
+}
+
+/** Runder gepflasterter Platz */
+function plazaMesh(r: number, cx: number, cz: number, groundAt: (x: number, z: number) => number, mat: Material): Mesh {
+  const rings = 8, segs = 40;
+  const pos: number[] = [], uv: number[] = [], idx: number[] = [];
+  for (let i = 0; i <= rings; i++) for (let j = 0; j <= segs; j++) {
+    const rr = (i / rings) * r, a = (j / segs) * Math.PI * 2;
+    const x = cx + Math.cos(a) * rr, z = cz + Math.sin(a) * rr;
+    pos.push(x, groundAt(x, z) + 0.08, z);
+    uv.push((x - cx) / 3, (z - cz) / 3);
+  }
+  for (let i = 0; i < rings; i++) for (let j = 0; j < segs; j++) {
+    const a = i * (segs + 1) + j, b = a + segs + 1;
+    idx.push(a, b, a + 1, a + 1, b, b + 1);
+  }
+  const geo = new BufferGeometry();
+  geo.setAttribute('position', new Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const m = new Mesh(geo, mat);
+  m.receiveShadow = true;
+  m.userData.noOutline = true;
+  return m;
 }
 
 /** Baut Ankerglück auf der Stadtinsel. Liefert die Gruppe und trägt Hindernisse in die Insel ein. */
@@ -220,12 +443,81 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
     walk.blockers.push({ x: cx + x, z: cz + z, r: 0.5 });
   }
 
+  // ---------- Straßen, zweite Häuserreihe und Leben in den Gassen ----------
+  const roads: [number, number][][] = [
+    [[0, -def.r + 4], [0, -36], [-3, -14], [0, 0]],          // vom Steg zum Platz
+    [[0, 0], [2, 20], [0, 40], [0, 56]],                       // zum Schrein
+    [[0, 0], [-16, -1], [-33, -2]],                            // zur Taverne
+    [[0, 0], [16, 6], [30, 14]],                               // zur Schmiede
+    [[0, -36], [22, -30], [44, -26]],                          // zur Werft
+    [[0, -36], [-10, -48], [-14, -54]],                        // zur Hafenmeisterei
+  ];
+  const segDist = (x: number, z: number) => {
+    let best = Infinity;
+    for (const road of roads) for (let i = 0; i < road.length - 1; i++) {
+      const [ax, az] = road[i], [bx, bz] = road[i + 1];
+      const vx = bx - ax, vz = bz - az, L2 = vx * vx + vz * vz;
+      const t = Math.max(0, Math.min(1, ((x - ax) * vx + (z - az) * vz) / L2));
+      best = Math.min(best, Math.hypot(x - ax - vx * t, z - az - vz * t));
+    }
+    return best;
+  };
+  // Plätze, die frei bleiben müssen: Händler, Puppen, Schrein, Markt, Werft, bestehende Häuser
+  const taken: [number, number, number][] = [
+    [-26, -2, 6], [26, 14, 6], [4, 26, 6], [0, 52, 6], [40, -26, 6], [-10, -52, 6], [14, -60, 6],
+    [-40, -2, 9], [-16, -60, 7], [38, 14, 8], [52, -26, 11], [0, 62, 9], [0, 27, 15], [0, 0, 17], [0, -43, 11],
+    ...spots.map(([x, z]) => [x, z, 9] as [number, number, number]),
+  ];
+  const free = (x: number, z: number, r: number) => Math.hypot(x, z) < def.r * 0.78 && segDist(x, z) > r + 3.2 && taken.every(([tx, tz, tr]) => Math.hypot(x - tx, z - tz) > tr + r);
+  let hi = 0;
+  for (const rad of [22, 32, 44, 54]) {
+    for (let k = 0; k < 28; k++) {
+      const a = (k / 28) * Math.PI * 2 + rad * 0.13;
+      const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
+      const w = 6.5 + (hi % 3) * 1.4, d = 5.5 + (hi % 2) * 1.6;
+      const r = Math.max(w, d) * 0.62;
+      if (!free(x, z, r)) continue;
+      // Tür zur nächsten Straße statt stur zur Platzmitte
+      place(house(w, d, 4.4 + (hi % 3) * 0.9, WALLS[(hi + 2) % WALLS.length], ROOFS[(hi * 5 + 1) % ROOFS.length], windowMat, lights, hi % 4 === 0 ? ROOFS[hi % ROOFS.length] : undefined), x, z, face(x, z), r);
+      taken.push([x, z, r + 2]);
+      // vor der Tür: Kisten, Fässer oder ein Karren
+      const fx = x - Math.sin(face(x, z)) * -(d / 2 + 1.6), fz = z - Math.cos(face(x, z)) * -(d / 2 + 1.6);
+      const side = (hi % 2 ? 1 : -1) * (w / 2 - 0.6);
+      const px = fx + Math.cos(face(x, z)) * side, pz = fz - Math.sin(face(x, z)) * side;
+      if (hi % 3 === 0) place(cart(), px, pz, face(x, z) + 1.2, 1.2);
+      else place(crateStack(hi), px, pz, hi, 0.9);
+      hi++;
+    }
+  }
+  // Zäune und Büsche an manchen Häusern, Kistenstapel am Steg
+  for (let i = 0; i < spots.length; i += 2) {
+    const [x, z] = spots[i];
+    const a = face(x, z);
+    place(fence(7), x + Math.sin(a) * 5.5 + Math.cos(a) * 4, z + Math.cos(a) * 5.5 - Math.sin(a) * 4, a + Math.PI / 2, 0);
+  }
+  for (let i = 0; i < 18; i++) {
+    const a = i * 2.17, rad = 14 + (i * 7) % 46;
+    const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
+    if (free(x, z, 1)) { place(bush(i), x, z, a, 0); taken.push([x, z, 2]); }
+  }
+  place(crateStack(1), -3.4, -def.r + 8, 0.3, 1);
+  place(crateStack(4), 3.6, -def.r + 12, 1.1, 1);
+  // Wimpelleinen über der Hauptstraße, Fahnen am Platz
+  for (const [ax, az, bx, bz] of [[-4, -40, 4, -25], [-4, -40, 4, -55], [-10, -10, 10, -10], [-12, 14, 12, 14]] as const) {
+    group.add(bunting(new Vector3(cx + ax, groundAt(cx + ax, cz + az) + 2.85, cz + az), new Vector3(cx + bx, groundAt(cx + bx, cz + bz) + 2.85, cz + bz)));
+  }
+  for (const [x, z, col] of [[-15, 10, '#A8322A'], [15, -9, '#1F4E79'], [-9, -15, '#E3B04B']] as const) place(flagPole(col), x, z, 0.6, 0.3);
+
   mergeByMaterial(group, new Set([crystal, forge]));
   // Fenster und Laternen: je ein zusammengefasstes Mesh, ohne Kontur und Schatten
   const glow = group.children.filter((c) => (c as Mesh).isMesh && ((c as Mesh).material === windowMat || (c as Mesh).material === lampMat)) as Mesh[];
   for (const m of glow) { m.userData.noOutline = true; m.castShadow = false; m.receiveShadow = false; }
   for (const m of [crystal, forge]) m.userData.noOutline = true;
   addOutlines(group);
+  // Straßen und Platz erst nach dem Zusammenfassen (brauchen ihre Texturkoordinaten)
+  const cobble = toon({ color: '#A89C88', map: cobbleTexture(), side: DoubleSide });
+  for (const road of roads) group.add(roadMesh(road, 5.2, cx, cz, groundAt, cobble));
+  group.add(plazaMesh(16, cx, cz, groundAt, cobble));
   return { group, lights: glow, crystal, smoke };
 }
 

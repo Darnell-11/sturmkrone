@@ -19,12 +19,10 @@ import {
 } from 'three';
 import {
   BloomEffect,
-  BrightnessContrastEffect,
   DepthOfFieldEffect,
   EffectComposer,
   EffectPass,
   GodRaysEffect,
-  HueSaturationEffect,
   RenderPass,
   ToneMappingEffect,
   ToneMappingMode,
@@ -34,6 +32,7 @@ import {
 import { QUALITY_TIERS, type QualityConfig, type QualityTier } from '../data/qualityTiers';
 import { DepthAOEffect } from './ao';
 import { EdgeEffect, setHullsVisible } from './outline';
+import { GradeEffect } from './grade';
 
 export class WebGLUnavailableError extends Error {}
 
@@ -145,9 +144,9 @@ export class GameRenderer {
     effects.push(new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC }));
     if (c.post.outlines) effects.push(new EdgeEffect({ thickness: Math.max(1, this.pixelRatio()), fadeFar: 320 }));
     if (c.post.colorGrading) {
-      effects.push(new HueSaturationEffect({ saturation: 0.14 }));
-      effects.push(new BrightnessContrastEffect({ contrast: 0.07 }));
-      effects.push(new VignetteEffect({ offset: 0.35, darkness: 0.42 }));
+      // ernster, düsterer Anime-Look: kühle Schatten, warme Lichter, ruhigere Farben, deutliche Vignette
+      effects.push(new GradeEffect());
+      effects.push(new VignetteEffect({ offset: 0.3, darkness: 0.58 }));
     }
     composer.addPass(new EffectPass(cam, ...effects));
     this.composer = composer;

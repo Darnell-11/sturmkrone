@@ -42,7 +42,8 @@ export const TOON_RAMP = (() => {
   for (let i = 0; i < n; i++) {
     const t = i / (n - 1);
     const s = (a: number, b: number) => Math.min(1, Math.max(0, (t - a) / (b - a)));
-    const v = 0.46 + 0.26 * s(0.3, 0.36) + 0.28 * s(0.6, 0.66);
+    // tiefere Schattenstufe für mehr Dramatik (vorher 0,46)
+    const v = 0.4 + 0.3 * s(0.3, 0.36) + 0.3 * s(0.6, 0.66);
     const b = Math.round(v * 255);
     data.set([b, b, b, 255], i * 4);
   }

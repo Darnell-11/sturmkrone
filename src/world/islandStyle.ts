@@ -27,7 +27,8 @@ export function styleKit(style: IslandStyle): StyleKit {
     case 'glut': k = { sand: toon(0x4a3c38), grass: toon({ color: 0x6a5048, flatShading: true }), rock: toon({ color: 0x2e2626, flatShading: true }), trunk: toon(0x2a2020), leaf: toon({ color: 0x3a2e2a, flatShading: true }), extra: glow(new Color(5, 1.4, 0.25)), flora: 'tot', rockScale: 1.3 }; break;
     case 'sturm': k = { sand: toon(0xb8b4a8), grass: toon({ color: 0x5a7a6a, flatShading: true }), rock: toon({ color: 0x5a6070, flatShading: true }), trunk: toon(0x4a3a2a), leaf: toon({ color: 0x3e5e4e, flatShading: true }), extra: null, flora: 'kiefer', rockScale: 1.7 }; break;
     case 'schlund': k = { sand: toon(0x8a86a0), grass: toon({ color: 0x5a4a8a, flatShading: true }), rock: toon({ color: 0x3a3450, flatShading: true }), trunk: toon(0x3a3048), leaf: toon({ color: 0x4a3a6a, flatShading: true }), extra: glow(new Color(1.2, 2.6, 4.5)), flora: 'kristall', rockScale: 1.2 }; break;
-    default: k = { sand: toon(0xf1d9a0), grass: toon({ color: 0x6dbb4c, flatShading: true }), rock: toon({ color: 0x8a8378, flatShading: true }), trunk: toon(0x8a5a2b), leaf: toon({ color: 0x3f9a3a, flatShading: true }), extra: null, flora: 'palme', rockScale: 1 };
+    // gedämpftes, satteres Grün statt Knallgrün, sonnengebleichter Sand
+    default: k = { sand: toon(0xdcc392), grass: toon({ color: 0x55894a, flatShading: true }), rock: toon({ color: 0x7a746a, flatShading: true }), trunk: toon(0x6e4a28), leaf: toon({ color: 0x356e34, flatShading: true }), extra: null, flora: 'palme', rockScale: 1 };
   }
   cache.set(style, k);
   return k;

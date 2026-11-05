@@ -47,12 +47,13 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
   },
   mid: {
     label: 'Mittel',
-    description: 'Für normale Handys. Einfache Schatten und Leuchten.',
+    description: 'Für normale Handys. Einfache Schatten, Leuchten und Farbkorrektur.',
     pixelRatio: 1,
     maxPixelRatio: 1,
     maxPixels: 1920 * 1080,
     shadows: { enabled: true, mapSize: 1024, soft: false },
-    post: { enabled: true, bloom: true, outlines: false, colorGrading: false, godRays: false, depthOfField: false, ambientOcclusion: false },
+    // Farbkorrektur kostet kaum etwas (läuft im selben Durchgang) und gehört zum Look
+    post: { enabled: true, bloom: true, outlines: false, colorGrading: true, godRays: false, depthOfField: false, ambientOcclusion: false },
     multisampling: 2,
     viewDistance: 520,
     particles: 0.6,

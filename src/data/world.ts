@@ -50,14 +50,16 @@ export interface TimeKey {
 
 /** Farbstimmungen über den Tag. Dazwischen wird weich überblendet. */
 export const TIME_KEYS: TimeKey[] = [
-  { h: 0, name: 'Nacht', zenith: 0x040a1e, horizon: 0x16284a, light: 0x8fa8ff, lightI: 0.55, ambientSky: 0x5b70b0, ambientGround: 0x0a1424, ambientI: 0.6, seaDeep: 0x04182e, seaShallow: 0x0f4a5e, cloudLit: 0x4a5a84, cloudShade: 0x1c2440, rim: 0x9fb4ff, stars: 1 },
-  { h: 4.8, name: 'Nacht', zenith: 0x060e26, horizon: 0x1c2f55, light: 0x8fa8ff, lightI: 0.5, ambientSky: 0x5b70b0, ambientGround: 0x0a1424, ambientI: 0.55, seaDeep: 0x05192f, seaShallow: 0x104b60, cloudLit: 0x4a5a84, cloudShade: 0x1c2440, rim: 0x9fb4ff, stars: 1 },
-  { h: 6.2, name: 'Morgen', zenith: 0x3d6db5, horizon: 0xffb38a, light: 0xffc49a, lightI: 1.6, ambientSky: 0xb7c6ef, ambientGround: 0x3a4a5a, ambientI: 0.85, seaDeep: 0x0a4170, seaShallow: 0x2fa7b8, cloudLit: 0xffd3b8, cloudShade: 0x8a7fa8, rim: 0xffd2a8, stars: 0.15 },
-  { h: 8.5, name: 'Tag', zenith: 0x2a7fd6, horizon: 0xbfe8ff, light: 0xfff2dc, lightI: 2.6, ambientSky: 0xdff3ff, ambientGround: 0x2f5a6a, ambientI: 1.05, seaDeep: 0x07507e, seaShallow: 0x2cbcc8, cloudLit: 0xffffff, cloudShade: 0xa9bcd8, rim: 0xfff4e0, stars: 0 },
-  { h: 16, name: 'Tag', zenith: 0x2a7fd6, horizon: 0xc8ecff, light: 0xfff0d6, lightI: 2.5, ambientSky: 0xdff3ff, ambientGround: 0x2f5a6a, ambientI: 1.0, seaDeep: 0x07507e, seaShallow: 0x2cbcc8, cloudLit: 0xffffff, cloudShade: 0xa9bcd8, rim: 0xfff4e0, stars: 0 },
-  { h: 18.4, name: 'Abendrot', zenith: 0x3a4f9a, horizon: 0xff8a5c, light: 0xff9a5a, lightI: 1.9, ambientSky: 0xe0a8b8, ambientGround: 0x3a2a3a, ambientI: 0.85, seaDeep: 0x1a3f6e, seaShallow: 0x3f8fa8, cloudLit: 0xffb07a, cloudShade: 0x7a5a8a, rim: 0xffb080, stars: 0.05 },
-  { h: 19.8, name: 'Dämmerung', zenith: 0x141c4a, horizon: 0x6a4a7a, light: 0xc890b0, lightI: 0.8, ambientSky: 0x7a6aa0, ambientGround: 0x141424, ambientI: 0.65, seaDeep: 0x0a1e3e, seaShallow: 0x1f5a70, cloudLit: 0x8a6a9a, cloudShade: 0x2a2448, rim: 0xc0a0ff, stars: 0.5 },
-  { h: 21.2, name: 'Nacht', zenith: 0x040a1e, horizon: 0x16284a, light: 0x8fa8ff, lightI: 0.55, ambientSky: 0x5b70b0, ambientGround: 0x0a1424, ambientI: 0.6, seaDeep: 0x04182e, seaShallow: 0x0f4a5e, cloudLit: 0x4a5a84, cloudShade: 0x1c2440, rim: 0x9fb4ff, stars: 1 },
+  // Ernster, düsterer Anime-Look: dunstiges Himmelsblau statt Bonbonblau, weniger Umgebungslicht (mehr Kontrast),
+  // schwere graublaue Wolkenschatten, tiefes Abendrot und dunkle, aber lesbare Nächte
+  { h: 0, name: 'Nacht', zenith: 0x03081a, horizon: 0x121f3a, light: 0x7f98e8, lightI: 0.5, ambientSky: 0x4a5c94, ambientGround: 0x080f1c, ambientI: 0.52, seaDeep: 0x03132a, seaShallow: 0x0c3c4e, cloudLit: 0x3e4c70, cloudShade: 0x151b32, rim: 0x8fa4f0, stars: 1 },
+  { h: 4.8, name: 'Nacht', zenith: 0x050c22, horizon: 0x18294c, light: 0x7f98e8, lightI: 0.46, ambientSky: 0x4a5c94, ambientGround: 0x080f1c, ambientI: 0.5, seaDeep: 0x04142b, seaShallow: 0x0d3d50, cloudLit: 0x3e4c70, cloudShade: 0x151b32, rim: 0x8fa4f0, stars: 1 },
+  { h: 6.2, name: 'Morgen', zenith: 0x34588e, horizon: 0xe8a07a, light: 0xffbe90, lightI: 1.5, ambientSky: 0xa4b0d0, ambientGround: 0x323c4a, ambientI: 0.72, seaDeep: 0x0a3a62, seaShallow: 0x2a8f9e, cloudLit: 0xf2c4a6, cloudShade: 0x6e6888, rim: 0xffc898, stars: 0.15 },
+  { h: 8.5, name: 'Tag', zenith: 0x2f689e, horizon: 0xbcd4e0, light: 0xfff0d8, lightI: 2.45, ambientSky: 0xc8dcea, ambientGround: 0x2a4652, ambientI: 0.86, seaDeep: 0x07456e, seaShallow: 0x27a6b2, cloudLit: 0xf4f2ee, cloudShade: 0x8592a8, rim: 0xfff0dc, stars: 0 },
+  { h: 16, name: 'Tag', zenith: 0x2f689e, horizon: 0xc2d6e0, light: 0xffecd0, lightI: 2.35, ambientSky: 0xc8dcea, ambientGround: 0x2a4652, ambientI: 0.82, seaDeep: 0x07456e, seaShallow: 0x27a6b2, cloudLit: 0xf4efe6, cloudShade: 0x8592a8, rim: 0xfff0dc, stars: 0 },
+  { h: 18.4, name: 'Abendrot', zenith: 0x2e3c78, horizon: 0xe8703e, light: 0xff8a48, lightI: 1.85, ambientSky: 0xc08c98, ambientGround: 0x30222e, ambientI: 0.7, seaDeep: 0x14325a, seaShallow: 0x347888, cloudLit: 0xf09a62, cloudShade: 0x5e4270, rim: 0xffa070, stars: 0.05 },
+  { h: 19.8, name: 'Dämmerung', zenith: 0x10163c, horizon: 0x583a66, light: 0xb880a0, lightI: 0.75, ambientSky: 0x625688, ambientGround: 0x10101e, ambientI: 0.56, seaDeep: 0x081834, seaShallow: 0x1a4c60, cloudLit: 0x765a88, cloudShade: 0x221d3c, rim: 0xb090f0, stars: 0.5 },
+  { h: 21.2, name: 'Nacht', zenith: 0x03081a, horizon: 0x121f3a, light: 0x7f98e8, lightI: 0.5, ambientSky: 0x4a5c94, ambientGround: 0x080f1c, ambientI: 0.52, seaDeep: 0x03132a, seaShallow: 0x0c3c4e, cloudLit: 0x3e4c70, cloudShade: 0x151b32, rim: 0x8fa4f0, stars: 1 },
 ];
 
 export const WEATHER_IDS = ['klar', 'bewoelkt', 'nebel', 'regen', 'sturm'] as const;
@@ -87,9 +89,10 @@ export interface WeatherDef {
 }
 
 export const WEATHER: Record<WeatherId, WeatherDef> = {
-  klar: { label: 'Klar', clouds: 0.3, cloudDark: 0, visibility: 1, grey: 0, rain: 0, waves: 1, wind: 0.3, lightning: 0, light: 1, weight: 5 },
-  bewoelkt: { label: 'Bewölkt', clouds: 0.85, cloudDark: 0.25, visibility: 0.85, grey: 0.3, rain: 0, waves: 1.25, wind: 0.5, lightning: 0, light: 0.75, weight: 3 },
-  nebel: { label: 'Nebel', clouds: 0.6, cloudDark: 0.15, visibility: 0.22, grey: 0.75, rain: 0, waves: 0.7, wind: 0.1, lightning: 0, light: 0.7, weight: 1.5 },
-  regen: { label: 'Regen', clouds: 1, cloudDark: 0.55, visibility: 0.55, grey: 0.6, rain: 0.65, waves: 1.6, wind: 0.65, lightning: 0, light: 0.55, weight: 1.5 },
-  sturm: { label: 'Sturm', clouds: 1, cloudDark: 0.85, visibility: 0.4, grey: 0.8, rain: 1, waves: 2.6, wind: 1, lightning: 7, light: 0.38, weight: 0.8 },
+  // mehr Wolken und häufiger raues Wetter – die See ist kein Urlaubsort
+  klar: { label: 'Klar', clouds: 0.45, cloudDark: 0.05, visibility: 1, grey: 0, rain: 0, waves: 1.1, wind: 0.4, lightning: 0, light: 1, weight: 4 },
+  bewoelkt: { label: 'Bewölkt', clouds: 0.9, cloudDark: 0.35, visibility: 0.82, grey: 0.35, rain: 0, waves: 1.35, wind: 0.55, lightning: 0, light: 0.72, weight: 3.5 },
+  nebel: { label: 'Nebel', clouds: 0.6, cloudDark: 0.2, visibility: 0.22, grey: 0.75, rain: 0, waves: 0.7, wind: 0.1, lightning: 0, light: 0.66, weight: 1.5 },
+  regen: { label: 'Regen', clouds: 1, cloudDark: 0.6, visibility: 0.52, grey: 0.6, rain: 0.65, waves: 1.7, wind: 0.7, lightning: 0.6, light: 0.52, weight: 2 },
+  sturm: { label: 'Sturm', clouds: 1, cloudDark: 0.88, visibility: 0.4, grey: 0.8, rain: 1, waves: 2.7, wind: 1, lightning: 8, light: 0.36, weight: 1 },
 };

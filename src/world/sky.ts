@@ -57,30 +57,54 @@ function cloudAtlas(): CanvasTexture {
   c.width = c.height = S * 2;
   const ctx = c.getContext('2d')!;
   const rnd = seeded(91);
+  // Gemalte Kumuluswolken im ernsten Anime-Stil: viele weiche Ballen, aufgefranste Ränder,
+  // eine sanft auslaufende Basis und ein fließender Übergang von Licht zu Schatten (statt harter Kreise)
   for (let k = 0; k < 4; k++) {
     const ox = (k % 2) * S;
     const oy = Math.floor(k / 2) * S;
     const puffs: [number, number, number][] = [];
-    const n = 7 + Math.floor(rnd() * 5);
-    const base = oy + S * 0.68;
+    const n = 16 + Math.floor(rnd() * 10);
+    const base = oy + S * 0.7;
+    const tall = 0.8 + rnd() * 0.6;
     for (let i = 0; i < n; i++) {
-      const t = i / (n - 1);
-      const x = ox + S * (0.14 + t * 0.72) + (rnd() - 0.5) * 18;
-      const r = S * (0.09 + Math.sin(t * Math.PI) * 0.14 + rnd() * 0.05);
-      puffs.push([x, base - r * (0.45 + rnd() * 0.4), r]);
+      const t = rnd();
+      const x = ox + S * (0.12 + t * 0.76);
+      const hump = Math.sin(t * Math.PI);
+      const r = S * (0.05 + hump * 0.11 * tall + rnd() * 0.05);
+      puffs.push([x, base - r * 0.4 - hump * S * 0.18 * tall * rnd(), r]);
     }
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(ox, oy, S, S * 0.72);
-    ctx.clip();
-    // Schattenseite (Deckung)
-    ctx.fillStyle = 'rgba(0,0,0,1)';
-    for (const [x, y, r] of puffs) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
-    // Lichtseite: kleiner und nach oben versetzt, nur innerhalb der Deckung
-    ctx.globalCompositeOperation = 'source-atop';
-    ctx.fillStyle = 'rgba(255,0,0,1)';
-    for (const [x, y, r] of puffs) { ctx.beginPath(); ctx.arc(x - r * 0.12, y - r * 0.22, r * 0.86, 0, Math.PI * 2); ctx.fill(); }
-    ctx.restore();
+    // kleine Fetzen am Rand
+    for (let i = 0; i < 10; i++) puffs.push([ox + S * (0.08 + rnd() * 0.84), base - S * (0.02 + rnd() * 0.12), S * (0.025 + rnd() * 0.03)]);
+    const cov = document.createElement('canvas');
+    cov.width = cov.height = S;
+    const cc = cov.getContext('2d')!;
+    // Deckung: weiche Ballen
+    for (const [x, y, r] of puffs) {
+      const g = cc.createRadialGradient(x - ox, y - oy, r * 0.55, x - ox, y - oy, r);
+      g.addColorStop(0, 'rgba(0,0,0,1)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      cc.fillStyle = g;
+      cc.beginPath(); cc.arc(x - ox, y - oy, r, 0, Math.PI * 2); cc.fill();
+    }
+    // Licht von oben links: weiche, nach oben versetzte Flecken nur innerhalb der Deckung
+    cc.globalCompositeOperation = 'source-atop';
+    for (const [x, y, r] of puffs) {
+      const lx = x - ox - r * 0.2, ly = y - oy - r * 0.32;
+      const g = cc.createRadialGradient(lx, ly, 0, lx, ly, r * 0.95);
+      g.addColorStop(0, 'rgba(255,0,0,1)');
+      g.addColorStop(0.6, 'rgba(200,0,0,0.85)');
+      g.addColorStop(1, 'rgba(90,0,0,0)');
+      cc.fillStyle = g;
+      cc.beginPath(); cc.arc(lx, ly, r * 0.95, 0, Math.PI * 2); cc.fill();
+    }
+    // Basis sanft ausblenden statt hart abzuschneiden
+    cc.globalCompositeOperation = 'destination-in';
+    const fade = cc.createLinearGradient(0, S * 0.52, 0, S * 0.76);
+    fade.addColorStop(0, 'rgba(0,0,0,1)');
+    fade.addColorStop(1, 'rgba(0,0,0,0)');
+    cc.fillStyle = fade;
+    cc.fillRect(0, 0, S, S);
+    ctx.drawImage(cov, ox, oy);
   }
   const tex = new CanvasTexture(c);
   tex.premultiplyAlpha = false;
@@ -128,7 +152,8 @@ const CLOUD_FRAG = /* glsl */ `
     if (a < 0.01) discard;
     vec3 lit = mix(uLit, uShade * 0.55, uDark * 0.85);
     vec3 shade = mix(uShade, uShade * 0.25, uDark);
-    vec3 c = mix(shade, lit, smoothstep(0.35, 0.65, t.r));
+    // weicher, aber noch klar gezeichneter Übergang (Anime-Wolke statt Zweifarb-Aufkleber)
+    vec3 c = mix(shade, lit, smoothstep(0.22, 0.78, t.r));
     c = mix(c, uHorizon, vFar * 0.65);
     c += vec3(0.8, 0.85, 1.0) * uFlash * 0.8;
     gl_FragColor = vec4(c, a);
