@@ -78,16 +78,19 @@ const SMEAR_FRAG = /* glsl */ `
   uniform float uProg; uniform vec3 uColor; uniform float uAlpha;
   varying vec2 vUv;
   void main(){
-    float a = vUv.x;           // 0 = Anfang, 1 = Ende des Bogens
+    // UV begrenzen: am Innenrand entstehen durch Rundung winzige negative Werte, und pow(negativ, 2.4)
+    // ergibt NaN – das hat die Nachbearbeitung (Bloom) übers ganze Bild verschmiert (schwarzer Bildschirm)
+    vec2 uv = clamp(vUv, 0.0, 1.0);
+    float a = uv.x;           // 0 = Anfang, 1 = Ende des Bogens
     float head = uProg;
     float d = head - a;
     if (d < 0.0) discard;
     float trail = 1.0 - smoothstep(0.0, 0.5, d);
     // Sichel: außen (Klingenspitze) hell und scharf, nach innen weich auslaufend
-    float body = pow(vUv.y, 2.4) * (1.0 - smoothstep(0.93, 1.0, vUv.y));
-    float rim = smoothstep(0.82, 0.93, vUv.y) * (1.0 - smoothstep(0.93, 1.0, vUv.y));
+    float body = pow(uv.y, 2.4) * (1.0 - smoothstep(0.93, 1.0, uv.y));
+    float rim = smoothstep(0.82, 0.93, uv.y) * (1.0 - smoothstep(0.93, 1.0, uv.y));
     vec3 c = mix(uColor, vec3(1.0), rim);
-    gl_FragColor = vec4(c * 1.25, (body * 0.8 + rim * 0.6) * trail * uAlpha);
+    gl_FragColor = vec4(c * 1.25, clamp((body * 0.8 + rim * 0.6) * trail * uAlpha, 0.0, 1.0));
   }`;
 
 /** Ring mit UV entlang des Bogens (x) und quer (y) */

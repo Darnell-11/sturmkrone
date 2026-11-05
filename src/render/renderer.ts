@@ -50,6 +50,7 @@ export class GameRenderer {
   private focus: Vector3 | null = null;
   private ao: DepthAOEffect | null = null;
   private godRays: GodRaysEffect | null = null;
+  private dof: DepthOfFieldEffect | null = null;
 
   constructor(private canvas: HTMLCanvasElement) {
     try {
@@ -105,6 +106,7 @@ export class GameRenderer {
     this.composer = null;
     this.ao = null;
     this.godRays = null;
+    this.dof = null;
     const c = this.config;
     // Niedrig/Mittel: Konturen als Inverted Hull, Hoch/Maximal: Kantenerkennung als Post-Effekt
     setHullsVisible(!c.post.outlines);
@@ -116,8 +118,15 @@ export class GameRenderer {
     composer.addPass(new RenderPass(this.scene, cam));
 
     if (c.post.depthOfField && this.focus) {
-      const dof = new DepthOfFieldEffect(cam, { focusDistance: 25, focusRange: 40, bokehScale: 2.2, resolutionScale: 0.5 });
+      // Nur der ferne Hintergrund wird weich: Vordergrund und alles bis zur Figur bleiben scharf.
+      // (Vorher wurde in beide Richtungen unscharf gezeichnet, mit festem Bereich von 40 m – das traf Wellen,
+      // Schiffsteile und Rauch vor der Figur.)
+      const dof = new DepthOfFieldEffect(cam, { focusDistance: 25, focusRange: 120, bokehScale: 1.3, resolutionScale: 0.5 });
       dof.target = this.focus;
+      const coc = dof.cocMaterial;
+      coc.fragmentShader = coc.fragmentShader.replace('magnitude*vec2(step(signedDistance,0.0),step(0.0,signedDistance))', 'magnitude*vec2(0.0,step(0.0,signedDistance))');
+      coc.needsUpdate = true;
+      this.dof = dof;
       composer.addPass(new EffectPass(cam, dof));
     }
 
@@ -209,6 +218,11 @@ export class GameRenderer {
       const elev = (sp.y - cp.y) / (Math.hypot(sp.x - cp.x, sp.y - cp.y, sp.z - cp.z) || 1);
       const k = Math.min(1, Math.max(0, (elev - 0.18) / 0.3));
       this.godRays.godRaysMaterial.uniforms.weight.value = 0.22 * k;
+    }
+    // Schärfebereich wächst mit dem Kameraabstand: zu Fuß ist die Stadt dahinter leicht weich, auf See erst der Horizont
+    if (this.dof && this.focus) {
+      const d = this.camera.position.distanceTo(this.focus);
+      this.dof.cocMaterial.focusRange = Math.max(60, d * 6);
     }
     this.maskT -= dt;
     if (this.maskT <= 0) { this.maskT = 0.5; this.keepWaterMask(this.scene); }
