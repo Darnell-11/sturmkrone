@@ -12,7 +12,7 @@ export interface MapMarkers {
 /** Farbenblind-Modus (vom Spiel gesetzt) */
 export const mapPalette = { colorblind: false };
 
-const KIND_COLOR: Record<string, string> = { town: '#E3B04B', camp: '#C0503A', boss: '#8A2A3A', quiet: '#6DBB4C', treasure: '#6DBB4C', lighthouse: '#E8E2D4' };
+const KIND_COLOR: Record<string, string> = { town: '#E3B04B', camp: '#C0503A', boss: '#8A2A3A', quiet: '#5E9450', treasure: '#5E9450', lighthouse: '#E8E2D4' };
 
 /** Zeichnet Seekarte (rund, um den Spieler) oder Weltkarte (ganz, mit Namen) in ein Canvas. */
 export function drawMap(ctx: CanvasRenderingContext2D, size: number, islands: IslandDef[], m: MapMarkers, mode: 'mini' | 'region' | 'world') {
@@ -32,11 +32,12 @@ export function drawMap(ctx: CanvasRenderingContext2D, size: number, islands: Is
   ctx.arc(size / 2, size / 2, size / 2 - 1, 0, Math.PI * 2);
   ctx.clip();
   const sea = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  sea.addColorStop(0, '#2F8FB5'); sea.addColorStop(1, '#1A5E85');
+  // dunkle Seekarte statt Bonbon-Cyan (passt zum ernsten Look)
+  sea.addColorStop(0, '#1F4A66'); sea.addColorStop(1, '#0E2638');
   ctx.fillStyle = sea;
   ctx.fillRect(0, 0, size, size);
   // Weltrand
-  ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+  ctx.strokeStyle = 'rgba(232,214,170,0.55)';
   ctx.setLineDash([4, 4]);
   ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.arc(X(0), Y(0), WORLD_RADIUS * s, 0, Math.PI * 2); ctx.stroke();

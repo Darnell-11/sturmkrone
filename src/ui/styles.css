@@ -442,4 +442,57 @@ kbd {
 :root.cb .hud-bar.hp i { background: #E07A1F; }
 :root.cb .n-heal { color: #7FC8FF !important; }
 :root.cb .pip { background: #2B6CB0; }
+/* ---------- Düsterer Piraten-Look (gilt immer, unabhängig vom Hell/Dunkel-Modus des Geräts) ----------
+   Dunkle Rauchglas-Tafeln mit feiner Messingkante, kantigere Ecken, Antiqua für Namen und Titel. */
+:root {
+  --panel: #151b24;
+  --panel-2: #1c2430;
+  --ink: #ece3cf;
+  --muted: #a99f8c;
+  --brass: #c99f52;
+  --seal: #b9473a;
+  --teal: #5f9fa8;
+  --ok: #78a862;
+  --line: rgba(201, 159, 82, 0.3);
+  --hudbg: rgba(13, 17, 23, 0.8);
+  --on-brass: #17120b;
+  --overlay: rgba(4, 7, 11, 0.6);
+  --tafel: linear-gradient(180deg, rgba(27, 33, 43, 0.9), rgba(10, 13, 18, 0.88));
+  --kante: inset 0 1px 0 rgba(255, 232, 186, 0.07), 0 6px 18px rgba(0, 0, 0, 0.38);
+  color-scheme: dark;
+}
+body { background: #0b0f14; }
+.hud-panel, .hud-quest, .toast, .icon-btn, .hud-potions, .hint {
+  background: var(--tafel); border: 1px solid var(--line); box-shadow: var(--kante);
+}
+.hud-panel { border-radius: 6px; }
+.hud-quest { border-radius: 6px; border-left: 3px solid var(--brass); }
+.toast { border-radius: 4px; letter-spacing: 0.01em; }
+.hint { border-radius: 6px; color: var(--ink); }
+.hud-name { font-family: 'IM Fell English SC', Georgia, serif; font-weight: 400; font-size: 1.1rem; letter-spacing: 0.02em; color: #f3e3bf; }
+.hud-mini canvas { box-shadow: 0 0 0 2px rgba(201, 159, 82, 0.55), 0 4px 14px rgba(0, 0, 0, 0.5); }
+.hud-bar { height: 7px; border-radius: 2px; background: rgba(0, 0, 0, 0.45); box-shadow: inset 0 0 0 1px rgba(201, 159, 82, 0.18); }
+.card {
+  background: linear-gradient(180deg, #1b222d, #10151c); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgba(255, 232, 186, 0.06), 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+.card h1, .card h2 { color: #f1dfb6; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.5); }
+.primary { border-radius: 4px; background: linear-gradient(180deg, #d8b066, #b38a3e); box-shadow: inset 0 1px 0 rgba(255, 245, 220, 0.35), 0 2px 0 rgba(0, 0, 0, 0.4); letter-spacing: 0.02em; }
+.secondary, .danger, .mini, .txt, kbd { border-radius: 4px; }
+.tabs button, .chips button { border-radius: 4px; }
+.slot, .sk-detail { border-radius: 6px; background: rgba(255, 255, 255, 0.025); }
+.skillbar .sb { border-radius: 6px; border-color: rgba(201, 159, 82, 0.45); }
+.skillbar .sb span { border-radius: 4px; }
+.cbt-banner h2 { color: #f4e2b8; letter-spacing: 0.03em; text-shadow: 0 3px 0 #0b0f14, 0 0 24px rgba(0, 0, 0, 0.6); }
+.cbt-banner p { color: #e7dcc6; text-shadow: 0 2px 0 #0b0f14; }
+.cbt-cutin { background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--cc) 82%, #000) 18%, color-mix(in srgb, var(--cc) 82%, #000) 82%, transparent); box-shadow: none; height: 84px; }
+.cbt-cutin b { font-family: 'IM Fell English SC', Georgia, serif; font-style: normal; font-weight: 400; letter-spacing: 0.04em; text-shadow: 0 3px 0 #0b0f14; }
+.cbt-ebar { border-radius: 2px; border-color: #0b0f14; }
+.cbt-ebar .fill, .cbt-boss-bar .fill { background: #b9473a; }
+.cbt-ebar .lag, .cbt-boss-bar .lag { background: #d9b46a; }
+.cbt-boss-bar { border-radius: 2px; border-color: var(--brass); }
+.touch-btn span { background: var(--tafel); }
+.touch-btn.aim { box-shadow: 0 0 0 3px #d9b46a, 0 0 18px 4px rgba(217, 180, 106, 0.55); animation: aimbrass 0.8s ease-in-out infinite; }
+@keyframes aimbrass { 50% { box-shadow: 0 0 0 3px #d9b46a, 0 0 6px 1px rgba(217, 180, 106, 0.3); } }
+.ctx { border-radius: 4px; background: linear-gradient(180deg, #d8b066, #a8803a); color: #17120b; box-shadow: inset 0 1px 0 rgba(255, 245, 220, 0.35), 0 3px 10px rgba(0, 0, 0, 0.45); }
 .cbt-ebar.board::after { content: attr(data-label); position: absolute; left: 50%; bottom: 140%; transform: translateX(-50%); font-weight: 900; font-size: 0.85rem; letter-spacing: 0.08em; color: #FFD166; text-shadow: 1px 1px 0 #1b1410, -1px -1px 0 #1b1410, 1px -1px 0 #1b1410, -1px 1px 0 #1b1410; animation: ctxpulse 1s ease-in-out infinite; white-space: nowrap; }
