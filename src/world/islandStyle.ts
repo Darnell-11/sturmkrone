@@ -49,17 +49,9 @@ export function islandTerrain(kit: StyleKit, r: number, hill: number, rnd: () =>
   const beach = new Mesh(bg, kit.sand);
   beach.position.y = -0.2;
   const R = r * 0.75;
-  const hg = new SphereGeometry(R, 40, 16, 0, Math.PI * 2, 0, Math.PI / 2);
-  const hp = hg.attributes.position;
-  for (let i = 0; i < hp.count; i++) {
-    const x = hp.getX(i), y = hp.getY(i), z = hp.getZ(i);
-    const k = coast(Math.atan2(z, x));
-    // sanfte Hügel und Mulden, zum Rand hin flach
-    const top = y / R;
-    // keine Höhenbeulen: die Lauffläche folgt der glatten Kuppe, sonst versinken Figuren im Gras
-    void top;
-    hp.setXYZ(i, x * k, y, z * k);
-  }
+  // Die Kuppe bleibt exakt rund und fein unterteilt: genau so rechnet die Laufhöhe (islandGround).
+  // Vorher war sie wie die Küste verzerrt – am Hang schwebten Figuren dadurch bis zu einen halben Meter.
+  const hg = new SphereGeometry(R, 56, 24, 0, Math.PI * 2, 0, Math.PI / 2);
   hg.computeVertexNormals();
   const hillMesh = new Mesh(hg, kit.grass);
   hillMesh.scale.y = hill;
