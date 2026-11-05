@@ -7,6 +7,7 @@ import { Sky } from './sky';
 import { createPalette, samplePalette } from './timeOfDay';
 import { Weather } from './weather';
 import { WorldEdge } from './worldEdge';
+import { smokeShared } from './smoke';
 
 export interface EnvState { time: number; weather: WeatherId }
 
@@ -130,6 +131,9 @@ export class Environment {
     cu.uHorizon.value.copy(horizon);
     cu.uFlash.value = flash;
     cu.uWind.value.set(2 + 10 * w.wind, 1 + 3 * w.wind);
+    // Rauch wird wie die Wolken beleuchtet (Abendrot, Nacht, Sturm), Blitze hellen ihn auf
+    smokeShared.uLit.value.copy(pal.cloudLit).multiplyScalar(0.55 + 0.45 * gloom).lerp(horizon, 0.15).addScalar(flash * 0.5);
+    smokeShared.uShade.value.copy(pal.cloudShade).multiplyScalar(0.5 + 0.4 * gloom).addScalar(flash * 0.3);
 
     const fog = this.scene.fog as Fog;
     fog.color.copy(horizon);
@@ -173,6 +177,8 @@ export class Environment {
     ou.uSunDir.value.copy(pal.sunVis > 0.1 ? pal.sunDir : pal.moonDir);
     ou.uSunCol.value.copy(pal.light);
     ou.uSpecK.value = Math.max(pal.sunVis, pal.moonVis * 0.5) * (1 - greyK);
+    ou.uWindDir.value = this.windDir;
+    ou.uWindK.value = w.wind;
     this.ocean.follow(camera.position.x, camera.position.z, camera.position);
 
     this.sky.follow(camera.position, pal.sunDir, pal.sunVis * (1 - greyK * 0.95));

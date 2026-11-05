@@ -149,6 +149,20 @@ export function regionAt(x: number, z: number): RegionDef {
   return REGIONS.find((r) => r.arc && deg >= r.arc[0] && deg < r.arc[1]) ?? BERNSTEINSEE;
 }
 
+/**
+ * Stärke der Schiffe auf offener See an einem Punkt.
+ * Bernsteinsee: 1 vor Ankerglück bis 4 am Rand. Äußere Meere: Stufe der Region, nach außen bis +2.
+ */
+export function seaLevelAt(x: number, z: number): number {
+  const reg = regionAt(x, z);
+  if (reg === BERNSTEINSEE) {
+    const home = BERNSTEINSEE.islands[0];
+    return Math.max(1, Math.min(4, 1 + Math.floor(Math.hypot(x - home.x, z - home.z) / 260)));
+  }
+  const out = Math.max(0, Math.min(2, Math.floor((Math.hypot(x, z) - 1150) / 280)));
+  return (reg.level ?? 1) + out;
+}
+
 // ---------- Ausrüstung (aus 1.0) ----------
 
 export interface WeaponDef { n: string; dmg: number; price: number; rank: number; col: string; glow?: boolean }

@@ -44,6 +44,12 @@ export class Ship {
   prev = { x: 0, z: 0, heading: 0 };
   private holes = 0;
   private turnInput = 0;
+  /** Rückstoß der Breitseite: Stärke und Zeit seit dem Schuss */
+  private recoilA = 0;
+  private recoilT = 9;
+  /** Wie das Schiff untergeht: Bug oder Heck voran, zur Seite kippend */
+  private sinkPitch = 0;
+  private sinkRoll = 0;
 
   constructor(private scene: Scene, tier: number, public look: ShipLook, readonly faction: 'pirat' | 'marine', hullBonus = 0) {
     this.cls = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier))];
@@ -132,7 +138,15 @@ export class Ship {
     }
   }
 
+  /** Rückstoß einer Breitseite (Vorzeichen = feuernde Seite) */
+  kick(a: number) {
+    this.recoilA = a;
+    this.recoilT = 0;
+  }
+
   repair(frac: number) {
+    this.sinkPitch = 0;
+    this.sinkRoll = 0;
     this.hull = Math.min(this.maxHull, this.hull + this.maxHull * frac);
     this.sail = Math.min(1, this.sail + frac);
     this.fire = 0;
@@ -152,11 +166,23 @@ export class Ship {
     const sideA = env.heightAt(x + fz * W * 0.45, z - fx * W * 0.45);
     const sideB = env.heightAt(x - fz * W * 0.45, z + fx * W * 0.45);
     const g = this.model.group;
-    if (this.sinking > 0) this.sinking += frameDt;
+    if (this.sinking > 0) {
+      if (this.sinking <= 0.02 && this.sinkPitch === 0) {
+        // jedes Wrack geht anders unter: mal sticht der Bug in die Tiefe, mal ragt er in den Himmel
+        this.sinkPitch = (Math.random() < 0.5 ? -1 : 1) * (0.45 + Math.random() * 0.4);
+        this.sinkRoll = (Math.random() < 0.5 ? -1 : 1) * (0.2 + Math.random() * 0.35);
+      }
+      this.sinking += frameDt;
+    }
     const sink = this.sinking > 0 ? this.sinking : 0;
-    g.position.set(x, (ahead + behind) / 2 * 0.6 + wy * 0.4 - 0.25 - sink * 1.4, z);
-    const pitch = Math.atan2(behind - ahead, L * 0.8) + sink * 0.08;
-    const roll = Math.atan2(sideA - sideB, W * 0.9) * 0.8 - this.turnInput * Math.min(1, this.speed / 10) * 0.08 + sink * 0.12;
+    // erst langsam vollaufen, dann immer schneller wegsacken
+    const depth = sink * 0.35 + sink * sink * 0.16;
+    const tilt = Math.min(1, sink / 5.5);
+    g.position.set(x, (ahead + behind) / 2 * 0.6 + wy * 0.4 - 0.25 - depth, z);
+    this.recoilT += frameDt;
+    const recoil = this.recoilA * Math.exp(-2.4 * this.recoilT) * Math.cos(this.recoilT * 6.5);
+    const pitch = Math.atan2(behind - ahead, L * 0.8) + this.sinkPitch * tilt * tilt;
+    const roll = Math.atan2(sideA - sideB, W * 0.9) * 0.8 - this.turnInput * Math.min(1, this.speed / 10) * 0.08 + this.sinkRoll * tilt - recoil;
     g.rotation.set(pitch, h, roll, 'YXZ');
     // Segel: Fahrstufe und Wind
     // Segel wachsen stufenlos mit dem Gashebel (springen nicht mehr zwischen drei Größen)

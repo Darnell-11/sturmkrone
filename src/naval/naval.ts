@@ -31,6 +31,9 @@ import { toon } from '../render/toon';
 import type { CombatOverlay } from '../ui/combatOverlay';
 import type { IslandGround } from '../world/islandGround';
 import type { ParticleSystem } from '../world/particles';
+import type { SmokeSystem } from '../world/smoke';
+import type { DebrisSystem } from '../world/debris';
+import { seaLevelAt } from '../data/regions';
 
 const G = 9.8;
 const BALL_SPEED = 46;
@@ -55,6 +58,8 @@ export interface EnemyShip {
   weakNoted?: boolean;
   /** Übungsschiff aus der Einführung (wie in 1.0): angeschlagen, schießt schwächer */
   training?: boolean;
+  /** Durch Entern erobert (nicht versenkt) */
+  captured?: boolean;
 }
 
 /** Verlauf für Faji-Wellen: hell in der Mitte, mit Schlieren in Laufrichtung */
@@ -75,7 +80,7 @@ const WAVE_TEX = (() => {
   return new CanvasTexture(c);
 })();
 
-interface Ball { mesh: Mesh; vel: Vector3; owner: Ship; dmg: number; ammo: AmmoId; life: number }
+interface Ball { mesh: Mesh; vel: Vector3; owner: Ship; dmg: number; ammo: AmmoId; life: number; trail: number }
 interface Crate { mesh: Mesh; x: number; z: number; gold: number; shard: boolean; t: number }
 
 export interface NavalHooks {
@@ -99,6 +104,9 @@ export class NavalSystem {
   /** Kanonenschaden des Spielers */
   canDmg = 14;
   reloadMult = 1;
+  /** Pulverdampf, Rauchsäulen und Wrackteile (setzt die Welt) */
+  smoke: SmokeSystem | null = null;
+  debris: DebrisSystem | null = null;
   private balls: Ball[] = [];
   private crates: Crate[] = [];
   private spawnT = 3;
@@ -110,14 +118,16 @@ export class NavalSystem {
     uniforms: { uColor: { value: new Color(0xffffff) }, uOpacity: { value: 0.06 }, uIn: { value: 8 }, uOut: { value: 72 } },
     vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
     // Weicher Verlauf nach außen, heller Rand – wie ein Lichtkegel auf dem Wasser
-    fragmentShader: 'uniform vec3 uColor; uniform float uOpacity, uIn, uOut; varying vec3 vP; void main(){ float t = clamp((length(vP.xz) - uIn) / (uOut - uIn), 0.0, 1.0); float a = smoothstep(0.0, 0.25, t) * (1.0 - smoothstep(0.82, 1.0, t)) * (0.4 + 0.6 * t) * uOpacity; gl_FragColor = vec4(uColor, a); }',
+    // kaum sichtbare Fläche, dafür ein feiner heller Saum am Rand der Reichweite (wirkt nicht wie ein grauer Schleier)
+    fragmentShader: 'uniform vec3 uColor; uniform float uOpacity, uIn, uOut; varying vec3 vP; void main(){ float t = clamp((length(vP.xz) - uIn) / (uOut - uIn), 0.0, 1.0); float fill = smoothstep(0.0, 0.3, t) * (1.0 - smoothstep(0.85, 0.97, t)) * (0.2 + 0.5 * t) * 0.45; float rim = smoothstep(0.9, 0.965, t) * (1.0 - smoothstep(0.975, 1.0, t)) * 1.6; gl_FragColor = vec4(uColor, (fill + rim) * uOpacity); }',
     transparent: true, depthWrite: false, side: DoubleSide, toneMapped: false,
     // Alpha-Kanal nicht verändern: er markiert Wasser für Konturen und Schattierung
     blending: CustomBlending, blendSrc: SrcAlphaFactor, blendDst: OneMinusSrcAlphaFactor, blendSrcAlpha: ZeroFactor, blendDstAlpha: OneFactor,
   }));
   private fanRange = 0;
   private rings = [0, 1].map(() => {
-    const m = new Mesh(new RingGeometry(0.86, 1, 48).rotateX(-Math.PI / 2), new MeshBasicMaterial({ color: 0xff4a3a, transparent: true, opacity: 0.9, depthWrite: false, side: DoubleSide, fog: false, blending: CustomBlending, blendSrc: SrcAlphaFactor, blendDst: OneMinusSrcAlphaFactor, blendSrcAlpha: ZeroFactor, blendDstAlpha: OneFactor }));
+    // dezenter Messingring statt grellem Rot – wirkt wie eine Markierung auf der Seekarte
+    const m = new Mesh(new RingGeometry(0.93, 1, 64).rotateX(-Math.PI / 2), new MeshBasicMaterial({ color: new Color(1.5, 1.05, 0.45), transparent: true, opacity: 0.55, depthWrite: false, side: DoubleSide, fog: false, blending: CustomBlending, blendSrc: SrcAlphaFactor, blendDst: OneMinusSrcAlphaFactor, blendSrcAlpha: ZeroFactor, blendDstAlpha: OneFactor }));
     m.visible = false;
     m.renderOrder = 4;
     return m;
@@ -208,15 +218,16 @@ export class NavalSystem {
       const m = this.fanMats[i];
       const ready = side > 0 ? readyL : readyR;
       if (t) {
-        m.uniforms.uColor.value.setHex(0xff6a4a);
-        m.uniforms.uOpacity.value = ready ? 0.15 + Math.sin(this.aimT * 8) * 0.04 : 0.07;
+        m.uniforms.uColor.value.setHex(0xffc27a);
+        m.uniforms.uOpacity.value = ready ? 0.32 + Math.sin(this.aimT * 5) * 0.06 : 0.12;
         const ring = this.rings[i];
         ring.visible = true;
         ring.position.set(t.x, 1.5, t.z);
-        ring.scale.setScalar(t.cls.L * 0.7 + Math.sin(this.aimT * 6) * 0.4);
+        ring.scale.setScalar(t.cls.L * 0.7 + Math.sin(this.aimT * 4) * 0.3);
+        (ring.material as MeshBasicMaterial).opacity = ready ? 0.55 : 0.25;
       } else {
-        m.uniforms.uColor.value.setHex(0xffffff);
-        m.uniforms.uOpacity.value = near ? 0.06 : 0;
+        m.uniforms.uColor.value.setHex(0xfff2dc);
+        m.uniforms.uOpacity.value = near ? 0.05 : 0;
       }
     });
   }
@@ -248,6 +259,8 @@ export class NavalSystem {
     const left = new Vector3(Math.cos(ship.heading), 0, -Math.sin(ship.heading)).multiplyScalar(side);
     const speed = BALL_SPEED * AMMO[ammo].speed;
     const n = muzzles.length;
+    // Rückstoß: das Schiff krängt von der feuernden Seite weg und schaukelt zurück
+    ship.kick(side * (0.035 + Math.min(0.05, n * 0.006)));
     muzzles.forEach((m, i) => {
       const w = m.clone().applyMatrix4(ship.model.group.matrixWorld);
       let dir: Vector3, r: number, carry = 1;
@@ -283,20 +296,28 @@ export class NavalSystem {
     const m = new Mesh(this.ballGeo, mat);
     m.position.copy(pos);
     this.scene.add(m);
-    this.balls.push({ mesh: m, vel, owner, dmg, ammo, life: 6 });
+    this.balls.push({ mesh: m, vel, owner, dmg, ammo, life: 6, trail: 0 });
     // Mündungsfeuer
-    this.sparks.emit(5, pos.x, pos.y, pos.z, { speed: 4, up: 1, life: 0.35, color: new Color(3.5, 1.6, 0.4), gravity: 0, spread: 0.3 });
-    this.fx.hit(pos, 'punch', '#FFB45A');
-    this.spray.emit(10, pos.x, pos.y, pos.z, { speed: 2, up: 1.5, life: 1.2, color: new Color(0.75, 0.75, 0.78), gravity: -0.5, spread: 1 });
+    const h = Math.hypot(vel.x, vel.z) || 1;
+    const dx = vel.x / h, dz = vel.z / h;
+    this.sparks.emit(8, pos.x + dx * 0.6, pos.y, pos.z + dz * 0.6, { speed: 6, up: 1, life: 0.3, color: new Color(4, 1.9, 0.5), gravity: 0, spread: 0.3 });
+    this.fx.hit(pos.clone().addScaledVector(new Vector3(dx, 0, dz), 0.8), 'punch', '#FFB45A', true);
+    if (this.smoke) {
+      // dichter Pulverdampf, der aus der Stückpforte schießt und dann mit dem Wind abzieht
+      this.smoke.puff(pos.x + dx * 1.2, pos.y, pos.z + dz * 1.2, { n: 4, size: 1.6, grow: 8, life: 6, tone: 0.86, vx: dx * 12, vy: 0.5, vz: dz * 12, spread: 1.1, rise: 0.3, drag: 1.6, alpha: 0.62, glow: 0.25, wind: 0.9, jitter: 0.6 });
+      this.smoke.puff(pos.x + dx * 5, pos.y + 0.4, pos.z + dz * 5, { n: 2, size: 3, grow: 11, life: 8, tone: 0.82, vx: dx * 4, vy: 0.4, vz: dz * 4, spread: 0.8, rise: 0.2, drag: 1.1, alpha: 0.38, wind: 1, jitter: 1.5 });
+    } else this.spray.emit(10, pos.x, pos.y, pos.z, { speed: 2, up: 1.5, life: 1.2, color: new Color(0.75, 0.75, 0.78), gravity: -0.5, spread: 1 });
     if (owner === this.player) this.hooks.shake(0.18);
   }
 
   // ---------- Spawnen ----------
 
-  private zoneLevel(x: number, z: number) { return Math.max(1, Math.min(10, 1 + Math.floor(Math.hypot(x, z) / 260))); }
+  private zoneLevel(x: number, z: number) { return seaLevelAt(x, z); }
 
   private spawnEnemy(px: number, pz: number) {
-    const lvl = Math.max(this.zoneLevel(px, pz), Math.floor(this.playerLevel * 0.8));
+    // Stärke hängt am Meer, nicht an der eigenen Stufe: wer aufsteigt, wird in alten Gewässern
+    // spürbar überlegen – und muss sich in neue Meere erst hineinkämpfen.
+    const lvl = Math.max(1, this.zoneLevel(px, pz) + Math.floor(Math.random() * 3) - 1);
     const roll = Math.random();
     const role: NavalRole = roll < 0.42 ? 'patrouille' : roll < 0.67 ? 'jaeger' : 'haendler';
     for (let tries = 0; tries < 8; tries++) {
@@ -308,7 +329,8 @@ export class NavalSystem {
       const tier = Math.max(0, Math.min(5, Math.floor(lvl / 2) + Math.floor(Math.random() * 2) - (role === 'haendler' ? 0 : 1)));
       const look = DEFAULT_SHIP_LOOK(foe);
       if (role === 'haendler') { look.hull = HULL_COLORS[Math.floor(Math.random() * 3)]; look.sail = SAIL_COLORS[Math.floor(Math.random() * 3)]; look.flag = 'anker'; look.flagColor = '#2F6E4F'; look.figurehead = 'keine'; }
-      const ship = new Ship(this.scene, tier, look, foe);
+      // erfahrene Crews halten mehr aus (sonst wären Schiffe in hohen Meeren aus Papier)
+      const ship = new Ship(this.scene, tier, look, foe, Math.round(SHIP_CLASSES[tier].hp * 0.07 * (lvl - 1)));
       ship.x = x; ship.z = z; ship.heading = Math.random() * Math.PI * 2;
       ship.prev = { x, z, heading: ship.heading };
       this.enemies.push({ ship, role, level: lvl, state: 'patrol', wander: { x, z }, aiT: 0 });
@@ -395,11 +417,12 @@ export class NavalSystem {
       this.ensureCompanions();
     }
     for (const e of this.enemies) this.ai(e, dt);
+    for (const e of this.enemies) this.damageFx(e.ship, dt);
+    if (p) this.damageFx(p, dt);
     // Weit entfernte entfernen, gesunkene aufräumen
-    for (const e of this.enemies) {
-      if (e.ship.sinking > 7 || (p && !e.companion && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > 1200)) { e.ship.dispose(); this.overlay.setBar(e, null, -1, false, null as unknown as Camera); }
-    }
-    this.enemies = this.enemies.filter((e) => e.ship.sinking <= 7 && !(p && !e.companion && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > 1200));
+    const gone = (e: EnemyShip) => e.ship.sinking > 9 || (!!p && !e.companion && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > 1200);
+    for (const e of this.enemies) if (gone(e)) { e.ship.dispose(); this.overlay.setBar(e, null, -1, false, null as unknown as Camera); }
+    this.enemies = this.enemies.filter((e) => !gone(e));
     this.updateBalls(dt);
     this.updateCrates(dt);
     for (const w of this.waves) {
@@ -410,6 +433,32 @@ export class NavalSystem {
       if (k >= 1) { w.mesh.removeFromParent(); w.mesh.geometry.dispose(); (w.mesh.material as MeshBasicMaterial).dispose(); }
     }
     this.waves = this.waves.filter((w) => w.t < w.max);
+  }
+
+  /** Rauch und Glut über beschädigten, brennenden und sinkenden Schiffen – von weitem sichtbar */
+  private damageFx(s: Ship, dt: number) {
+    const sm = this.smoke;
+    if (!sm || (!s.alive && s.sinking <= 0) || s.sinking > 8) return;
+    const frac = s.maxHull > 0 ? s.hull / s.maxHull : 0;
+    const fx = Math.sin(s.heading), fz = Math.cos(s.heading);
+    const deck = s.model.group.position.y + s.model.deckY;
+    const at = () => { const k = (Math.random() - 0.5) * s.cls.L * 0.6; return { x: s.x + fx * k, z: s.z + fz * k }; };
+    if (s.fire > 0 || s.sinking > 0) {
+      if (Math.random() < dt * 9) {
+        const q = at();
+        sm.puff(q.x, deck + 0.8, q.z, { size: 1.8, grow: 13, life: 8, tone: 0.16, vy: 2.5, spread: 0.6, rise: 1.5, drag: 0.9, alpha: 0.75, glow: 0.9, wind: 1, jitter: s.cls.W * 0.25 });
+      }
+      if (Math.random() < dt * 18) {
+        const q = at();
+        this.sparks.emit(2, q.x, deck + 0.5, q.z, { speed: 0.8, up: 4.5, life: 0.9, color: new Color(3.2, 1.3, 0.3), gravity: -2.5, spread: s.cls.W * 0.3 });
+      }
+    } else if (frac < 0.55) {
+      // je schlimmer der Schaden, desto dichter der Qualm
+      if (Math.random() < dt * (1.5 + (0.55 - frac) * 10)) {
+        const q = at();
+        sm.puff(q.x, deck + 0.5, q.z, { size: 1, grow: 6, life: 5, tone: frac < 0.3 ? 0.3 : 0.5, vy: 1.5, spread: 0.4, rise: 1, alpha: 0.5, wind: 1, jitter: s.cls.W * 0.2 });
+      }
+    }
   }
 
   /** Leuchtende Welle vom eigenen Schiff zum Ziel, mit Gischt am Einschlag */
@@ -540,6 +589,12 @@ export class NavalSystem {
       b.mesh.position.addScaledVector(b.vel, dt);
       const p = b.mesh.position;
       if (b.ammo === 'brand' && Math.random() < dt * 30) this.sparks.emit(1, p.x, p.y, p.z, { speed: 0.3, up: 0.5, life: 0.4, color: new Color(3, 1.2, 0.3), gravity: -1, spread: 0.1 });
+      // feine Rauchspur hinter der Kugel
+      b.trail -= dt;
+      if (this.smoke && b.trail <= 0) {
+        b.trail = 0.07;
+        this.smoke.puff(p.x, p.y, p.z, { size: 0.35, grow: 1.6, life: 1.3, tone: b.ammo === 'brand' ? 0.4 : 0.9, spread: 0.15, rise: 0.2, alpha: 0.35, wind: 0.5 });
+      }
       for (const s of this.shipsForHit()) {
         if (s === b.owner || !s.alive) continue;
         if (Math.hypot(p.x - s.x, p.z - s.z) > s.cls.L * 0.6 + 2) continue;
@@ -563,7 +618,10 @@ export class NavalSystem {
       if (b.life > 0 && p.y < this.env.heightAt(p.x, p.z)) {
         b.life = 0;
         audio.play('splash', 0.9, p);
-        this.spray.emit(30, p.x, p.y + 0.2, p.z, { speed: 3, up: 9, life: 1.4, color: new Color(0.95, 0.98, 1) });
+        // Wassersäule: schmaler, hoher Strahl, breiter Kranz und feiner Sprühnebel
+        this.spray.emit(26, p.x, p.y + 0.2, p.z, { speed: 1.2, up: 14, life: 1.6, color: new Color(0.95, 0.98, 1), spread: 0.6 });
+        this.spray.emit(18, p.x, p.y + 0.2, p.z, { speed: 5, up: 5, life: 1.1, color: new Color(0.9, 0.96, 1), spread: 0.8 });
+        this.smoke?.puff(p.x, p.y + 1.5, p.z, { n: 2, size: 1.2, grow: 4.5, life: 1.8, tone: 1.05, vy: 3, spread: 0.6, rise: -1.2, drag: 2, alpha: 0.5, wind: 0.6 });
       }
       if (b.life <= 0) b.mesh.removeFromParent();
     }
@@ -576,7 +634,11 @@ export class NavalSystem {
     const p = b.mesh.position.clone();
     audio.play('crack', 1, p);
     this.fx.hit(p, 'heavy', b.ammo === 'brand' ? '#FF7A2A' : '#FFD08A');
-    this.sparks.emit(14, p.x, p.y, p.z, { speed: 6, up: 5, life: 0.9, color: new Color(0.55, 0.36, 0.2), gravity: 14, spread: 0.3 });
+    this.sparks.emit(10, p.x, p.y, p.z, { speed: 6, up: 5, life: 0.9, color: new Color(0.55, 0.36, 0.2), gravity: 14, spread: 0.3 });
+    // Holzsplitter fliegen in Schussrichtung weiter, dazu eine Staub- und Rauchwolke
+    const h = Math.hypot(b.vel.x, b.vel.z) || 1;
+    this.debris?.splinters(p.x, p.y, p.z, b.vel.x / h, b.vel.z / h, sailHit ? 2 : 9, sailHit ? s.look.sail : s.look.hull);
+    this.smoke?.puff(p.x, p.y, p.z, { n: 2, size: 0.9, grow: 4.5, life: 2.6, tone: b.ammo === 'brand' ? 0.25 : 0.55, vx: b.vel.x / h * 2, vz: b.vel.z / h * 2, spread: 0.8, rise: 0.8, alpha: 0.7, glow: b.ammo === 'brand' ? 0.8 : 0.3 });
     if (dmg > 0) this.overlay.number(p.clone().setY(p.y + 1.5), dmg, s === this.player ? 'hurt' : 'hit');
     if (s === this.player) { this.hooks.shake(0.45); this.overlay.hurt(); }
     else if (b.owner === this.player) this.hooks.hitstop(0.03);
@@ -588,9 +650,13 @@ export class NavalSystem {
     s.sinking = 0.01;
     audio.play('sink', 1, s);
     const e = this.enemies.find((x) => x.ship === s);
+    // Wrackteile, Fässer und eine Rauchwolke – auch beim eigenen Schiff
+    this.debris?.wreck(s.x, s.z, s.cls.L, s.cls.W, s.heading, s.look.hull);
+    this.smoke?.puff(s.x, s.model.deckY + 1, s.z, { n: 8, size: 3, grow: 14, life: 8, tone: 0.3, vy: 2, spread: 2.5, rise: 1.2, alpha: 0.75, glow: 0.7, jitter: s.cls.L * 0.3 });
     if (s === this.player) return;
     this.fx.shockwave(new Vector3(s.x, 0.5, s.z), s.cls.L * 0.6, '#FFB45A');
     this.spray.emit(60, s.x, 1, s.z, { speed: 6, up: 10, life: 2, color: new Color(0.95, 0.98, 1), spread: s.cls.W });
+    this.sparks.emit(50, s.x, s.model.deckY + 1, s.z, { speed: 9, up: 9, life: 1.2, color: new Color(3.5, 1.4, 0.35), gravity: 6, spread: s.cls.W });
     if (e && !e.companion) {
       this.hooks.sunk(e);
       const n = 2 + Math.floor(s.cls.L / 12);
@@ -649,12 +715,18 @@ export class NavalSystem {
     return best;
   }
 
-  /** Erobertes Schiff entfernen */
+  /**
+   * Erobertes Schiff: die Prise wird versenkt, die Beute treibt herüber.
+   * Belohnung und Legenden-Sieg vergibt das Spiel über onBoardWon – nicht zusätzlich als „versenkt“
+   * (sonst zählte eine geenterte Legende gleichzeitig als Sieg und als Revanche).
+   */
   capture(e: EnemyShip) {
+    e.captured = true;
     e.ship.hull = 0;
     e.ship.sinking = 0.01;
-    this.hooks.sunk(e);
-    this.spawnCrate(e.ship.x, e.ship.z, Math.round((60 + e.level * 25) * (e.role === 'legende' ? 4 : 1)), e.role === 'legende');
+    audio.play('sink', 0.8, e.ship);
+    this.debris?.wreck(e.ship.x, e.ship.z, e.ship.cls.L * 0.6, e.ship.cls.W, e.ship.heading, e.ship.look.hull);
+    this.spawnCrate(e.ship.x, e.ship.z, Math.round((60 + e.level * 25) * (e.role === 'legende' ? 4 : e.role === 'haendler' ? 2 : 1)), e.role === 'legende');
   }
 
   // ---------- Faji auf See ----------
@@ -732,9 +804,14 @@ export class NavalSystem {
   }
 
   clear() {
-    for (const e of this.enemies) e.ship.dispose();
+    // auch Lebensbalken, Beutekisten und Faji-Wellen entfernen (blieben sonst nach dem Untergang stehen)
+    for (const e of this.enemies) { e.ship.dispose(); this.overlay.setBar(e, null, -1, false, null as unknown as Camera); }
     this.enemies = [];
     for (const b of this.balls) b.mesh.removeFromParent();
     this.balls = [];
+    for (const c of this.crates) c.mesh.removeFromParent();
+    this.crates = [];
+    for (const w of this.waves) { w.mesh.removeFromParent(); w.mesh.geometry.dispose(); }
+    this.waves = [];
   }
 }

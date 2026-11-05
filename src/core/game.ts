@@ -109,7 +109,7 @@ export class Game {
     this.world.onGold = (n) => { if (this.save) this.save.player.gold += Math.round(n * this.goldMult()); };
     this.world.onCrewLine = (who, text) => this.hud.toast(`${who.name}: „${text}“`, 4);
     this.world.onShipSunk = (e) => {
-      if (!this.save) return;
+      if (!this.save || e.captured) return;
       const p = this.save.player;
       if (!e.companion) { this.save.progress.stats.sunk++; this.questEvent({ type: 'sink' }); }
       if (e.legendId) { this.defeatLegend(e.legendId, false); return; }
@@ -126,11 +126,16 @@ export class Game {
     };
     this.world.onBoardWon = (e) => {
       if (!this.save) return;
-      if (e.legendId) this.defeatLegend(e.legendId, true);
+      const p = this.save.player;
       this.save.progress.stats.boarded++;
       this.addLoyalty(this.save.crew.party, 4);
-      this.grantXp(40, 20);
       this.questEvent({ type: 'board' });
+      // Legenden: genau ein Sieg (früher zählte Entern zusätzlich als „versenkt“ – und damit als Revanche)
+      if (e.legendId) { this.defeatLegend(e.legendId, true); return; }
+      if (e.ghost && Math.random() < 0.5) this.dropTrinket('selten', 0.2);
+      // Entern ist riskanter als Versenken – und lohnt sich darum etwas mehr
+      const mult = e.role === 'haendler' ? 1 : e.ghost ? 2.8 : 1.7;
+      this.grantXp(Math.round((25 + e.level * 10) * mult) + 40, e.role === 'haendler' ? (p.faction === 'pirat' ? 6 : -6) : 20);
     };
     this.world.onTalk = (npc) => this.talkTo(npc);
     this.world.onHarbor = (def) => this.openHarbor(def);

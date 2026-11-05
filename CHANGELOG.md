@@ -1,5 +1,33 @@
 # Was ist neu
 
+## 2.7.0 – Seeschlachten wie im Kino, edles Meer und echter Aufstieg (05.11.2026)
+
+- **Das Meer sieht aus wie echte hohe See statt wie ein Planschbecken:**
+  - Offenes Wasser ist tief saphirblau, Türkis gibt es nur noch an Küsten und Riffen.
+  - Feines, wanderndes Kräuseln auf den Wellen, eine warme Sonnenbahn mit funkelnden Glitzerpunkten bis zum Horizont
+  - Bei Wind ziehen Schaumstreifen in Windrichtung übers Wasser.
+  - Der Himmel spiegelt sich sauberer, das Wasser wirkt dadurch tiefer und glänzender.
+- **Seeschlachten mit Pulverdampf, Splittern und brennenden Wracks:**
+  - Jede Kanone stößt eine dichte Pulverdampfwolke aus, die mit dem Wind abzieht. Nach einer Breitseite hängt der Qualm über dem Wasser.
+  - Kanonenkugeln ziehen eine feine Rauchspur.
+  - Treffer schlagen Holzsplitter aus dem Rumpf, die ins Wasser klatschen und treiben.
+  - Fehlschüsse reißen hohe Wassersäulen mit Sprühnebel auf.
+  - Angeschlagene Schiffe qualmen, je schlimmer der Schaden, desto dichter. Brennende Schiffe tragen eine schwarze Rauchsäule mit Glut, die man von Weitem sieht.
+  - Rauch wird wie die Wolken beleuchtet: golden im Abendrot, bläulich bei Nacht, Blitze erhellen ihn.
+- **Schiffe gehen dramatisch unter:** Bug oder Heck ragt in die Luft, das Wrack kippt zur Seite und sackt immer schneller weg. Planken, Balken und Fässer treiben danach noch eine Weile auf den Wellen.
+- **Rückstoß:** Bei jeder Breitseite krängt das Schiff von der feuernden Seite weg und schaukelt zurück. Die Kamera rollt leicht mit dem Schiff, so spürt man Dünung und Kanonendonner.
+- Auch Vulkane und Schornsteine rauchen jetzt mit echten Rauchschwaden.
+- **Ruhigere Zielhilfe:** Der Zielring ist ein feiner Messingring statt eines grellroten Kreises. Der Feuerfächer zeigt nur noch einen hellen Saum an der Reichweite statt eines grauen Schleiers.
+- **Echter Aufstieg von unten nach oben:**
+  - Feindschiffe richten sich nach dem Meer, nicht mehr nach deiner Stufe. Bisher wuchsen die Gegner überall mit, man wurde nie spürbar stärker.
+  - Bernsteinsee: Stufe 1 vor Ankerglück bis 4 am Rand. Äußere Meere: Stufe der Region, zum Weltrand hin bis zu 2 mehr.
+  - Erfahrene Crews in hohen Meeren halten mehr aus.
+  - Die Warnung „Gefährliche Gewässer“ nutzt dieselben Stufen.
+- **Behoben:**
+  - Eine geenterte Legende zählte zugleich als Sieg und als gewonnene Revanche (doppelte Belohnung, die Revanche war danach verbraucht).
+  - Nach dem Entern erschien zusätzlich „Schiff versenkt!“, und es zählte als versenkt. Jetzt gibt es eine eigene, etwas höhere Belohnung fürs Entern.
+  - Nach dem Untergang des eigenen Schiffs blieben Lebensbalken, Beutekisten und Faji-Wellen stehen.
+
 ## 2.6.0 – Anime-Piraten, Faji auf See und alles aus der Demo (05.11.2026)
 
 - **Figuren sehen aus wie Anime-Piraten statt wie eine Schulklasse:**

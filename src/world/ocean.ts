@@ -131,6 +131,11 @@ export class Ocean {
     uSunDir: { value: new Vector3(0, 1, 0) },
     uSunCol: { value: new Color(1, 1, 1) },
     uSpecK: { value: 1 },
+    /** Windrichtung (wie heading) und Stärke 0 … 1 für Schaumstreifen */
+    uWindDir: { value: 0 },
+    uWindK: { value: 0.3 },
+    /** Mikro-Wellen und Glitzern (nach Grafikstufe) */
+    uDetail: { value: 1 },
     uWake: { value: Array.from({ length: MAX_WAKE }, () => new Vector4()) },
   };
   private material: MeshToonMaterial;
@@ -176,7 +181,7 @@ export class Ocean {
           uniform float uShoreSize;
           uniform float uWorldR;
           uniform vec3 uDeep, uShallow, uFoam, uZenith, uHorizon, uSunDir, uSunCol;
-          uniform float uSpecK;
+          uniform float uSpecK, uWindDir, uWindK, uDetail;
           uniform vec4 uWake[${MAX_WAKE}];
           varying vec3 vSkW;
           varying float vCrest;
@@ -191,17 +196,39 @@ export class Ocean {
           vec3 skD = skGerstner(vSkW.xz, skNf, skCrestF);
           float skRad = length(vSkW.xz);
           if (skRad > uWorldR) discard;
+          float camD = distance(vSkW.xz, cameraPosition.xz);
+          // Mikro-Wellen: feines, wanderndes Kräuseln bricht die glatte Fläche auf (Licht, Spiegelung, Glitzern)
+          if (uDetail > 0.0) {
+            vec2 rp = vSkW.xz;
+            vec2 t1 = uTime * vec2(0.55, 0.21), t2 = uTime * vec2(-0.27, 0.62);
+            float e = 0.3;
+            float r0 = skNoise(rp * 0.85 + t1) + 0.5 * skNoise(rp * 2.4 + t2);
+            float rx = skNoise((rp + vec2(e, 0.0)) * 0.85 + t1) + 0.5 * skNoise((rp + vec2(e, 0.0)) * 2.4 + t2);
+            float rz = skNoise((rp + vec2(0.0, e)) * 0.85 + t1) + 0.5 * skNoise((rp + vec2(0.0, e)) * 2.4 + t2);
+            float nk = (1.0 - smoothstep(25.0, 240.0, camD)) * uDetail * (0.6 + 0.5 * uWindK);
+            skNf = normalize(skNf + vec3(r0 - rx, 0.0, r0 - rz) * 0.5 * nk);
+          }
           float sd = texture2D(uShore, vSkW.xz / uShoreSize + 0.5).r * 255.0;
           float shallow = 1.0 - smoothstep(0.0, 48.0, sd);
-          vec3 skBase = mix(uDeep, uShallow, clamp(shallow * 0.9 + smoothstep(-0.8, 1.6, skD.y) * 0.22, 0.0, 1.0));
+          // Tiefes Wasser bleibt satt und dunkel; nur Wellenberge und Küsten werden heller
+          vec3 skBase = mix(uDeep, uShallow, clamp(shallow * 0.92 + smoothstep(-0.6, 1.8, skD.y) * 0.13, 0.0, 1.0));
           // Gischt auf Wellenkämmen, aufgebrochen durch Rauschen
           float nz = skNoise(vSkW.xz * 0.35 + uTime * 0.3) * 0.6 + skNoise(vSkW.xz * 1.3 - uTime * 0.5) * 0.4;
-          float crestT = 0.42 - 0.06 * clamp(uWaveScale - 1.0, 0.0, 2.0);
+          float crestT = 0.46 - 0.08 * clamp(uWaveScale - 1.0, 0.0, 2.0);
           float skFoam = smoothstep(crestT, crestT + 0.12, skCrestF + (nz - 0.5) * 0.18);
           // Brandungsringe und Küstenlinie
           float bands = smoothstep(0.78, 1.0, sin(sd * 0.45 - uTime * 1.6)) * (1.0 - smoothstep(3.0, 24.0, sd));
           float coast = 1.0 - smoothstep(0.0, 3.2, sd + (nz - 0.5) * 3.0);
           skFoam = max(skFoam, max(bands * 0.35 * step(nz, 0.7), coast * 0.85));
+          // Schaumstreifen in Windrichtung (je stärker der Wind, desto mehr), wie auf echter offener See
+          {
+            vec2 wd = vec2(sin(uWindDir), cos(uWindDir));
+            vec2 wp = vec2(dot(vSkW.xz, vec2(wd.y, -wd.x)), dot(vSkW.xz, wd));
+            float lines = smoothstep(0.72, 0.94, skNoise(vec2(wp.x * 0.45, wp.y * 0.025 - uTime * 0.35)));
+            float skPatch = smoothstep(0.5, 0.85, skNoise(vSkW.xz * 0.012 + uTime * 0.02));
+            float sk = lines * skPatch * smoothstep(0.25, 0.9, uWindK) * (1.0 - smoothstep(120.0, 600.0, camD)) * (1.0 - shallow);
+            skFoam = max(skFoam, sk * 0.45);
+          }
           // Strömung zum Weltrand
           float edgeK = smoothstep(uWorldR - 140.0, uWorldR, skRad);
           float ang = atan(vSkW.z, vSkW.x);
@@ -226,33 +253,45 @@ export class Ocean {
           normal = normalize((viewMatrix * vec4(skNf, 0.0)).xyz);`)
         .replace('#include <opaque_fragment>', `
           {
+            // Wasser streut wenig Licht zurück: der diffuse Anteil bleibt gedämpft (Schaum ausgenommen),
+            // die Helligkeit kommt aus Himmelsspiegelung und Sonnenglanz – so bleibt tiefes Wasser satt blau
+            outgoingLight *= mix(0.6, 1.0, skFoam);
             vec3 Nw = normalize(inverseTransformDirection(normal, viewMatrix));
             vec3 Vw = normalize(cameraPosition - vSkW);
-            float fr = pow(1.0 - clamp(dot(Nw, Vw), 0.0, 1.0), 4.0) * (1.0 - skFoam);
+            float fr = 0.03 + 0.97 * pow(1.0 - clamp(dot(Nw, Vw), 0.0, 1.0), 4.0);
+            fr *= (1.0 - skFoam);
             vec3 R = reflect(-Vw, Nw);
+            R.y = abs(R.y);
             vec3 skyC = mix(uHorizon, uZenith, clamp(R.y * 1.8, 0.0, 1.0));
-            outgoingLight = mix(outgoingLight, skyC, fr * 0.6);
-            float sp = pow(max(dot(R, uSunDir), 0.0), 260.0);
+            outgoingLight = mix(outgoingLight, skyC, fr * 0.7);
+            float sdot = max(dot(R, uSunDir), 0.0);
+            float sp = pow(sdot, 260.0);
             outgoingLight += uSunCol * step(0.28, sp) * 1.8 * uSpecK * (1.0 - skFoam);
+            // Sonnenbahn: breiter, warmer Glanz mit funkelnden Glitzerpunkten bis zum Horizont
+            float sheen = pow(sdot, 18.0);
+            outgoingLight += uSunCol * sheen * 0.22 * uSpecK * (1.0 - skFoam);
+            float glint = smoothstep(0.9 - 0.04 * uWindK, 0.97, skNoise(vSkW.xz * 2.6 + vec2(uTime * 2.1, -uTime * 1.7))) * pow(sdot, 120.0);
+            outgoingLight += uSunCol * glint * 3.0 * uSpecK * uDetail * (1.0 - skFoam);
             // Licht scheint durch die Wellenkämme (türkis), Funkeln im Sonnenglanz
             float sss = pow(clamp(dot(Vw, -uSunDir) * 0.5 + 0.5, 0.0, 1.0), 3.0) * clamp(skCrestF * 1.6 + 0.2, 0.0, 1.0);
             outgoingLight += uShallow * sss * 0.28 * uSpecK * (1.0 - skFoam);
             float tw = step(0.93, skNoise(vSkW.xz * 1.7 + vec2(uTime * 1.3, -uTime))) * pow(max(dot(R, uSunDir), 0.0), 6.0);
             outgoingLight += uSunCol * tw * 1.1 * uSpecK * (1.0 - skFoam);
             // Ferne Wasserflächen gehen in die Horizontfarbe über
-            float far = smoothstep(180.0, 1600.0, distance(vSkW.xz, cameraPosition.xz));
+            float far = smoothstep(180.0, 1600.0, camD);
             outgoingLight = mix(outgoingLight, uHorizon * 0.82, far * 0.3);
           }
           #include <opaque_fragment>
           // Alpha 0 markiert Wasser: Kantenerkennung und Umgebungsverdeckung lassen es aus
           gl_FragColor.a = 0.0;`);
     };
-    mat.customProgramCacheKey = () => `sk-ocean2-${wakeN}`;
+    mat.customProgramCacheKey = () => `sk-ocean3-${wakeN}`;
     return mat;
   }
 
   /** Auflösung und Kielwasser-Punkte je Grafikstufe */
   setDetail(detail: number, wakeCount: number) {
+    this.uniforms.uDetail.value = detail <= 0.5 ? 0 : Math.min(1, detail);
     this.mesh.geometry.dispose();
     this.mesh.geometry = buildGrid(Math.max(48, Math.round(128 * detail)));
     if (wakeCount !== this.wakeCount) {

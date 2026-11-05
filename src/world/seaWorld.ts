@@ -46,7 +46,9 @@ import { AMMO, AMMO_IDS, DEFAULT_SHIP_LOOK, SHIP_CLASSES, type AmmoId, type Ship
 import { NavalSystem, type EnemyShip } from '../naval/naval';
 import { DeckGround, type Ground } from './islandGround';
 import { ELEMENT_COLORS } from '../data/skills';
-import { BERNSTEINSEE, REGIONS, regionAt, type IslandDef, type RegionDef } from '../data/regions';
+import { BERNSTEINSEE, REGIONS, regionAt, seaLevelAt, type IslandDef, type RegionDef } from '../data/regions';
+import { SmokeSystem } from './smoke';
+import { DebrisSystem } from './debris';
 import { islandLabel, islandTerrain, outpost, plant, styleKit, volcano } from './islandStyle';
 import type { Sprite } from 'three';
 import { ABYSS_LAIR, SeaBoss } from '../naval/seaBoss';
@@ -179,6 +181,10 @@ export class SeaWorld {
   private lamps: Mesh[] = [];
   private spray: ParticleSystem;
   private sparks: ParticleSystem;
+  /** Pulverdampf, Schornsteine, Vulkane, Rauchsäulen */
+  readonly smoke: SmokeSystem;
+  /** Splitter, Planken und Fässer */
+  readonly debris: DebrisSystem;
   private wake: WakePoint[] = [];
   private wakeTimer = 0;
 
@@ -220,6 +226,24 @@ export class SeaWorld {
     this.spray = new ParticleSystem(this.scene, false, 0.8);
     this.sparks = new ParticleSystem(this.scene, true, 0.32);
     this.dust = new ParticleSystem(this.scene, false, 0.7);
+    this.smoke = new SmokeSystem(this.scene);
+    this.debris = new DebrisSystem(this.scene);
+    this.debris.onSplash = (x, z, big) => {
+      this.spray.emit(big ? 14 : 5, x, this.env.heightAt(x, z) + 0.1, z, { speed: big ? 2.5 : 1.5, up: big ? 5 : 3, life: 0.8, color: new Color(0.95, 0.98, 1), spread: 0.3 });
+    };
+  }
+
+  /** Wind als Vektor (m/s) für Rauch und Treibgut */
+  private windVec() {
+    const k = 1.5 + this.env.weather.p.wind * 7;
+    return { x: Math.sin(this.env.windDir) * k, z: Math.cos(this.env.windDir) * k };
+  }
+
+  private updateAir(dt: number) {
+    const w = this.windVec();
+    this.smoke.wind = w;
+    this.smoke.update(dt);
+    this.debris.update(dt, (x, z) => this.env.heightAt(x, z), w);
   }
 
   // ---------- Aufbau ----------
@@ -364,6 +388,8 @@ export class SeaWorld {
         loot: (g, shard) => this.onLoot(g, shard),
       });
       this.naval.player = this.ship;
+      this.naval.smoke = this.smoke;
+      this.naval.debris = this.debris;
       this.combat = new CombatSystem(this.scene, this.fx, this.overlay, assets, this.groundProxy, {
         heal: (n) => { if (this.foot) this.foot.hp = Math.min(this.foot.maxHp, this.foot.hp + n); },
         hitstop: (t, scale = 0.05) => { this.hitstop.t = Math.max(this.hitstop.t, t); this.hitstop.scale = Math.min(this.hitstop.scale, scale); },
@@ -495,6 +521,8 @@ export class SeaWorld {
     this.spray.scale = c.particles;
     this.sparks.scale = c.particles;
     this.dust.scale = c.particles;
+    this.smoke.scale = c.particles;
+    this.debris.scale = c.particles;
     if (this.fx) this.fx.scale = c.particles;
   }
 
@@ -717,7 +745,7 @@ export class SeaWorld {
   /** Warnung beim Einfahren in Gewässer, die deutlich über der eigenen Stufe liegen (wie in 1.0) */
   private checkZone() {
     if (this.mode !== 'sail' || !this.naval) return;
-    const zone = Math.max(1, Math.min(10, 1 + Math.floor(Math.hypot(this.x, this.z) / 260)));
+    const zone = seaLevelAt(this.x, this.z);
     if (zone === this.lastZone) return;
     if (this.lastZone && zone > this.lastZone && zone >= this.naval.playerLevel + 3) this.onMessage(`Gefährliche Gewässer (Stufe ${zone})!`);
     this.lastZone = zone;
@@ -827,8 +855,10 @@ export class SeaWorld {
     this.updateWorldEvents();
     this.life?.update(dt, (x, z) => this.env.heightAt(x, z), this.ship, this.mode === 'sail');
     if (this.town?.crystal) { this.town.crystal.rotation.y += dt; this.town.crystal.position.y += Math.sin(this.env.clock * 2) * dt * 0.3; }
-    if (Math.random() < dt * 4) for (const p of this.smokeVents) if (Math.hypot(p.x - this.x, p.z - this.z) < 500) this.spray.emit(2, p.x, p.y, p.z, { speed: 1.2, up: 5, life: 4, color: new Color(0.35, 0.3, 0.3), gravity: -0.3, spread: 2 });
-    if (this.town && Math.random() < dt * 6) for (const p of this.town.smoke) this.spray.emit(1, p.x, p.y, p.z, { speed: 0.3, up: 1.5, life: 3, color: new Color(0.5, 0.48, 0.46), gravity: -0.2, spread: 0.4 });
+    // Vulkane: dicke Aschesäulen mit Glut am Krater, weithin sichtbar
+    if (Math.random() < dt * 3) for (const p of this.smokeVents) if (Math.hypot(p.x - this.x, p.z - this.z) < 900) this.smoke.puff(p.x, p.y, p.z, { size: 5, grow: 26, life: 14, tone: 0.28, vy: 5, spread: 1.5, rise: 0.5, drag: 0.5, alpha: 0.65, glow: 0.6, wind: 0.8, jitter: 3 });
+    // Schornsteine der Hafenstadt
+    if (this.town && Math.random() < dt * 5) for (const p of this.town.smoke) if (Math.hypot(p.x - this.x, p.z - this.z) < 400) this.smoke.puff(p.x, p.y, p.z, { size: 0.5, grow: 3.5, life: 6, tone: 0.62, vy: 1.2, spread: 0.15, rise: 0.3, alpha: 0.5, wind: 0.7 });
     this.shake = Math.max(0, this.shake - dt * 1.8);
     this.updateWake(dt);
     this.naval?.update(dt, this.mode === 'sail' && this.cinematic <= 0);
@@ -846,6 +876,7 @@ export class SeaWorld {
     this.spray.update(dt);
     this.sparks.update(dt);
     this.dust.update(dt);
+    this.updateAir(dt);
     this.updateNpcs(dt);
     this.combat?.update(dt, this.camera);
     this.updateCrew(dt);
@@ -1337,6 +1368,7 @@ export class SeaWorld {
     this.spray.update(dt);
     this.sparks.update(dt);
     this.dust.update(dt);
+    this.updateAir(dt);
     this.fx?.update(dt);
     this.updateNpcs(dt);
     this.player?.update(dt);
@@ -1379,10 +1411,6 @@ export class SeaWorld {
     }
     if (s.speed > 6 && Math.random() < frameDt * 18 && this.mode === 'sail') {
       this.spray.emit(5, x + f.x * L * 0.5, wy + 0.6, z + f.z * L * 0.5, { speed: 2.5, up: 4, life: 1, color: new Color(0.95, 0.98, 1) });
-    }
-    if (s.fire > 0 && Math.random() < frameDt * 40) {
-      const k = (Math.random() - 0.5) * L * 0.6;
-      this.sparks.emit(2, x + f.x * k, wy + s.model.deckY + 0.5, z + f.z * k, { speed: 0.6, up: 4, life: 0.8, color: new Color(3, 1.2, 0.3), gravity: -2, spread: s.cls.W * 0.3 });
     }
     for (const b of this.buoys) {
       b.g.position.set(b.x, env.heightAt(b.x, b.z) - 0.3, b.z);
@@ -1432,6 +1460,11 @@ export class SeaWorld {
       if (cam.position.y < camWater) cam.position.y = camWater;
       if (foe) cam.lookAt(x + (foe.x - x) * 0.45, 2, z + (foe.z - z) * 0.45);
       else cam.lookAt(x + Math.sin(this.seaYaw) * (12 + L), 2, z + Math.cos(this.seaYaw) * (12 + L));
+      // Die Kamera rollt leicht mit dem Schiff: Dünung und Rückstoß der Breitseiten werden spürbar
+      const g = s.model.group.rotation;
+      const rel = this.seaYaw + this.camYaw - h;
+      // (Kamera-Z zeigt nach hinten, Schiffs-Z nach vorn – daher das Minus)
+      cam.rotateZ(-(g.z * Math.cos(rel) - g.x * Math.sin(rel)) * 0.3);
       this.focus.set(x, wy + 2, z);
     }
     if (this.cinematic > 0 && !inMenu) {
