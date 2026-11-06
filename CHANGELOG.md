@@ -1,5 +1,50 @@
 # Was ist neu
 
+## 2.9.0 – Größere Inseln, echtes Meer, echte Schiffe und Kräfte mit Wucht (06.11.2026)
+
+- **Fehler behoben: Kein Einsinken mehr am Inselrand.** Wer Richtung Schiff lief, versank am Strand im Boden. Jetzt ist die Laufhöhe genau das sichtbare Gelände, auf jeder Insel.
+- **Inseln größer und alle verschieden:**
+  - eigene Küstenformen: lang gestreckt, gelappt, sichelförmig oder fast rund
+  - ein bis drei Hügel, die weich in die Wiese auslaufen
+  - Grasflächen und Felsgruppen je nach Region
+  - Größe nach Inselart: Städte und Boss-Inseln deutlich größer, kleine Riffe und Schatzinseln bleiben klein
+  - Brandung und Flachwasser folgen der echten Küste.
+- **Hochauflösende Oberflächen:**
+  - Sand mit Korn, Rippeln, nassem Saum und Muschelsplittern
+  - Gras mit Halmen, Büscheln, trockenen und satten Flecken und Erdstellen
+  - Fels mit Schichten
+  - In jeder Auflösung scharf, auch aus nächster Nähe ohne Pixel.
+  - Holzbohlen auf den Stegen, Frachtkisten mit Brettern und Strebe
+- **Das Meer wie echte See:**
+  - lange Dünung und Kreuzsee
+  - feine Windwellen, die mit echter Geschwindigkeit laufen und sich kreuzen
+  - Licht scheint grün-türkis durch die Wellenkämme, Wellentäler sind dunkler
+  - Lichtspiele am Grund im Flachwasser, blasiger Küstenschaum, schmale anrollende Brandungslinien
+  - Schaumkronen als zerfasernde Gischt, im Sturm viel mehr als bei Flaute
+  - keine weißen Flecken mehr auf dem Strand und keine schwarzen Linien auf fernen Wellen
+- **Schiffe wie echte Segelschiffe:**
+  - geschwungener Rumpf mit Spring und eingezogenen Bordwänden, Barghölzer und dunkles Unterwasserschiff
+  - Achter- und Vorderkastell mit Goldkante, Stückpforten-Reihen, Mars- und Bramstengen
+  - Das eigene Schiff ist größer. Spätere Klassen sind deutlich größer, bis zum 74 m langen Leviathan.
+- **Faji-Kräfte mit eigener Effektsprache und Wucht:**
+  - Feuer: Flammenzungen mit heißem Kern
+  - Eis: aufschießende Eisdornen
+  - Blitz: gezackte Einschläge vom Himmel
+  - Erde: Felsen und Risse
+  - Sturm: steigende Windringe
+  - Schatten und Schwerkraft: Sog-Kern mit nach innen stürzendem Ring
+  - Licht und Geist: Lichtsäulen
+  - Gift: Wolken und Blasen
+  - Flut: Wassersäule
+  - Meteor und Körper: Kuppel, Krater und Rauch
+  - Klinge: gekreuzte Hiebe
+  - Starke Kräfte und Ultimates bringen Kamerawackeln, Trefferpause und Speedlines.
+- **Skillbaum mit eigenen Symbolen:** Jede Fähigkeit hat ein eigenes Zeichen, je nach Element, Wirkung und Technik. Ein kleines Abzeichen zeigt die Form (Ring, Kegel, Sprung …). Lange Namen brechen sauber um.
+- **Kleinigkeiten:**
+  - Pflasterwege folgen den Hügeln ohne durchscheinendes Gras.
+  - Strand und Wiese leuchten im Sturm nicht mehr am Rand.
+  - Effekte räumen hinter sich vollständig auf.
+
 ## 2.8.0 – Lebendige Inseln, Ultra-Grafik und drei starke Kampfstile (06.11.2026)
 
 - **Jede Insel ist anders und lebt:**

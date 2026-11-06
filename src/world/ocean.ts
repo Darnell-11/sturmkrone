@@ -243,8 +243,11 @@ export class Ocean {
           }
           // Gischt auf Wellenkämmen, aufgebrochen durch Rauschen
           float nz = skNoise(vSkW.xz * 0.35 + uTime * 0.3) * 0.6 + skNoise(vSkW.xz * 1.3 - uTime * 0.5) * 0.4;
-          float crestT = 0.5 - 0.08 * clamp(uWaveScale - 1.0, 0.0, 2.0);
-          float skFoam = smoothstep(crestT, crestT + 0.12, skCrestF + (nz - 0.5) * 0.18);
+          float crestT = 0.57 - 0.09 * clamp(uWaveScale - 1.0, 0.0, 2.0);
+          float skFoam = smoothstep(crestT, crestT + 0.2, skCrestF + (nz - 0.5) * 0.18);
+          // Schaumkronen als zerfasernde Spitze mit Löchern statt flacher weißer Flecken
+          float lace2 = skNoise(vSkW.xz * 3.3 + vec2(uTime * 0.3, 0.0)) * 0.6 + skNoise(vSkW.xz * 8.0 - uTime * 0.2) * 0.4;
+          skFoam *= smoothstep(0.3, 0.62, lace2 + skFoam * 0.2) * 0.9;
           // Brandungsringe und Küstenlinie
           // anrollende Brandungswellen: schmale, aufgerissene Schaumlinien, die zur Küste hin dichter werden
           float bands = smoothstep(0.9, 0.995, sin(sd * 0.45 - uTime * 1.6 + nz * 1.2)) * (1.0 - smoothstep(3.0, 22.0, sd));
