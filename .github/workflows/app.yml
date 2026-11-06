@@ -71,6 +71,8 @@ jobs:
 
   release:
     needs: [windows, android]
+    # Die PC-App erscheint auch dann, wenn der Android-Build einmal scheitert
+    if: ${{ !cancelled() && needs.windows.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -82,6 +84,7 @@ jobs:
           tag_name: app
           name: Sturmkrone – App für PC und Android
           make_latest: true
+          fail_on_unmatched_files: false
           files: |
             out/Sturmkrone-Setup.exe
             out/Sturmkrone.apk
