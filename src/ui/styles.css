@@ -534,3 +534,7 @@ body { background: #0b0f14; }
 @media (max-width: 520px) and (orientation: portrait) {
   .hint { top: calc(200px + env(safe-area-inset-top, 0px)); bottom: auto; }
 }
+
+/* Installieren und Teilen im Hauptmenü */
+.share-row { gap: 8px; }
+.share-row .secondary { flex: 1; font-size: 0.86rem; padding-left: 8px; padding-right: 8px; }

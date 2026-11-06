@@ -16,6 +16,7 @@ import { ACHIEVEMENTS } from '../data/achievements';
 import { ARMOR, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, WEAPON_LINES, type IslandDef } from '../data/regions';
 import { stepText } from '../story/questSystem';
 import { drawMap } from './minimap';
+import { gameUrl, installHelp, installWay, promptInstall, shareGame } from '../core/install';
 import { audio } from '../audio/audio';
 
 type Handler = (id: string, el: HTMLElement) => void;
@@ -107,7 +108,7 @@ export class Menus {
 
   // ---------- Titel ----------
 
-  showMain() {
+  showMain(note = '') {
     const g = this.game;
     this.open(
       `<div class="title-card">
@@ -118,11 +119,26 @@ export class Menus {
         ${g.detected.software ? GPU_HINT : ''}
         <button class="primary" data-a="play" data-focus>Spielen</button>
         <button class="secondary" data-a="settings">Einstellungen</button>
+        <div class="row share-row">
+          ${installWay() === 'done' ? '' : '<button class="secondary" data-a="install">📲 Als App installieren</button>'}
+          <button class="secondary" data-a="share">🔗 Spiel teilen</button>
+        </div>
+        ${note ? `<p class="note">${esc(note)}</p>` : ''}
         <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Sturmkrone 2.0</p>
       </div>`,
       {
         play: () => this.showSlots(),
         settings: () => this.showSettings(() => this.showMain()),
+        install: async () => {
+          const way = installWay();
+          if (way === 'prompt') { const ok = await promptInstall(); this.showMain(ok ? 'Installiert! Sturmkrone liegt jetzt auf deinem Startbildschirm.' : ''); }
+          else this.showMain(installHelp(way));
+        },
+        share: async () => {
+          const r = await shareGame();
+          if (r === 'copied') this.showMain(`Link kopiert – einfach weiterschicken: ${gameUrl()}`);
+          else if (r === 'failed') this.showMain(`Zum Weiterschicken: ${gameUrl()}`);
+        },
       },
       null,
       { clear: true },
