@@ -112,9 +112,11 @@ export class TouchControls {
   }
 
   /** Beschriftung, Farbe und Abklingzeit eines Buttons aktualisieren (Fähigkeiten) */
-  setButton(action: string, label: string, frac: number, ready: boolean, color: string, dim = false) {
+  setButton(action: string, label: string, frac: number, ready: boolean, color: string, dim = false, empty = false) {
     const b = this.buttonsEl.querySelector<HTMLElement>(`[data-action="${action}"]`);
     if (!b) return;
+    // leere Plätze („Leer“) machten den Bildschirm am Handy voll, ohne etwas zu bringen
+    if (b.hidden !== empty) b.hidden = empty;
     b.classList.toggle('dim', dim);
     const span = b.querySelector('span')!;
     if (span.textContent !== label) span.textContent = label;

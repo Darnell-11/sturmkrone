@@ -236,7 +236,7 @@ export class Menus {
       <button class="secondary" data-a="loot">Talismane &amp; Erfolge</button>
       <button class="secondary" data-a="look">Aussehen ändern</button>
       <button class="secondary" data-a="settings">Einstellungen</button>
-      <button class="secondary" data-a="workshop">Welt-Werkstatt (Test)</button>
+      ${import.meta.env.DEV ? '<button class="secondary" data-a="workshop">Welt-Werkstatt (Test)</button>' : ''}
       <button class="secondary" data-a="save">Speichern</button>
       <button class="secondary" data-a="quit">Speichern &amp; Hauptmenü</button>`,
       {

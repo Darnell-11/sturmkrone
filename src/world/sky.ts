@@ -20,18 +20,18 @@ const SKY_FRAG = /* glsl */ `
   uniform vec3 uZenith, uHorizon, uSunDir, uSunCol, uMoonDir, uGlow;
   uniform float uStars, uTime, uFlash, uSunVis, uMoonVis, uGrey;
   varying vec3 vDir;
-  float h21(vec2 p) { return fract(sin(dot(p, vec2(41.3, 289.1))) * 45758.5453); }
+  float h21(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
   void main() {
     vec3 d = normalize(vDir);
     float h = clamp(d.y, 0.0, 1.0);
-    vec3 c = mix(uHorizon, uZenith, pow(h, 0.45));
+    vec3 c = mix(uHorizon, uZenith, pow(max(h, 1e-4), 0.45));
     // Leuchten um die Sonne / Abendrot am Horizont
     float s = max(dot(d, normalize(uSunDir)), 0.0);
-    c += uGlow * pow(s, 6.0) * (1.0 - h) * 0.9;
-    c += uSunCol * (pow(s, 64.0) * 0.5 + smoothstep(0.9993, 0.9996, s) * 8.0) * uSunVis;
+    c += uGlow * pow(max(s, 1e-4), 6.0) * (1.0 - h) * 0.9;
+    c += uSunCol * (pow(max(s, 1e-4), 64.0) * 0.5 + smoothstep(0.9993, 0.9996, s) * 8.0) * uSunVis;
     // Mond mit Hof
     float m = max(dot(d, normalize(uMoonDir)), 0.0);
-    c += vec3(0.85, 0.9, 1.0) * (smoothstep(0.99955, 0.9997, m) * 3.0 + pow(m, 200.0) * 0.25) * uMoonVis;
+    c += vec3(0.85, 0.9, 1.0) * (smoothstep(0.99955, 0.9997, m) * 3.0 + pow(max(m, 1e-4), 200.0) * 0.25) * uMoonVis;
     // Sterne
     if (uStars > 0.01) {
       vec2 g = vec2(atan(d.z, d.x) * 90.0, asin(clamp(d.y, -1.0, 1.0)) * 90.0);

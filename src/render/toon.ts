@@ -91,7 +91,7 @@ const RIM_SPEC_GLSL = /* glsl */ `
       rim *= 0.55 + 0.45 * clamp(dot(-viewDir, L) * 0.5 + 0.5, 0.0, 1.0);
       if (uSpec > 0.0) {
         vec3 H = normalize(L + viewDir);
-        float s = pow(max(dot(normal, H), 0.0), 48.0);
+        float s = pow(max(dot(normal, H), 1e-4), 48.0);
         outgoingLight += directionalLights[0].color * smoothstep(0.45, 0.55, s) * uSpec * 0.45;
       }
     #endif
@@ -102,7 +102,7 @@ const RIM_SPEC_GLSL = /* glsl */ `
 /** Rauschfunktionen und Oberflächen für Sand, Gras und Fels (Weltkoordinaten, mit Entfernung weich ausgeblendet) */
 const DETAIL_GLSL = /* glsl */ `
   varying vec3 vSkWorld;
-  float skdH(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float skdH(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
   float skdN(vec2 p) {
     vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
     return mix(mix(skdH(i), skdH(i + vec2(1.0, 0.0)), f.x), mix(skdH(i + vec2(0.0, 1.0)), skdH(i + vec2(1.0, 1.0)), f.x), f.y);

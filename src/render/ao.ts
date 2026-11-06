@@ -6,7 +6,7 @@ const AO_FRAG = /* glsl */ `
   uniform float radius;
   uniform float intensity;
   uniform float projScale;
-  float aoHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+  float aoHash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
   void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth, out vec4 outputColor) {
     if (depth >= 0.9999 || inputColor.a < 0.5) { outputColor = inputColor; return; }
     float d = -getViewZ(depth);

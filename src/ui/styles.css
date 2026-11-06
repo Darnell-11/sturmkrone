@@ -508,3 +508,29 @@ body { background: #0b0f14; }
 @media (max-width: 520px) and (orientation: portrait) {
   .ctx { bottom: calc(292px + env(safe-area-inset-bottom, 0px)); }
 }
+
+/* ---------- Handy: aufgeräumte Anzeige (2.9.7) ---------- */
+/* Nebensächliche Aktion („An Deck gehen“): klein, ruhig, halb durchsichtig – das Schiff bleibt sichtbar */
+.ctx.low { padding: 7px 14px; font-size: 0.82rem; opacity: 0.82; animation: none; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35); }
+@media (max-width: 520px) {
+  .hud-panel { padding: 6px 9px 7px; min-width: 0; max-width: 48vw; border-radius: 6px; }
+  .hud-name { font-size: 0.9rem; }
+  .hud-sub { font-size: 0.7rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hud-bars .hud-bar, .hud-sea .hud-bar { height: 5px; margin-top: 3px; }
+  .hud-gold { font-size: 0.78rem; margin-top: 2px; }
+  /* Uhrzeit/Wetter und die lange Schiffszeile weglassen – der Himmel zeigt das Wetter, der Rumpfbalken bleibt */
+  .hud-env, .hud-seainfo .seatxt { display: none; }
+  .hud-seainfo { margin-top: 2px; }
+  .hud-quest { max-width: 46vw; padding: 5px 8px 5px 6px; gap: 6px; }
+  .hud-quest .q-arrow { width: 20px; height: 20px; font-size: 1rem; }
+  .hud-quest .q-title { font-size: 0.64rem; }
+  .hud-quest .q-step { font-size: 0.74rem; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .icon-btn { width: 40px; height: 40px; }
+  .hud-mini { width: 84px; height: 84px; }
+  .hint { font-size: 0.78rem; padding: 5px 10px; }
+  .toast { font-size: 0.82rem; padding: 7px 14px; }
+}
+/* Hochformat am Handy: Bedienhinweis oben unter die Anzeigen, damit er den Aktionsknopf nicht verdeckt */
+@media (max-width: 520px) and (orientation: portrait) {
+  .hint { top: calc(200px + env(safe-area-inset-top, 0px)); bottom: auto; }
+}

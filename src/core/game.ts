@@ -327,7 +327,7 @@ export class Game {
           const keys = this.input.lastDevice === 'gamepad' ? ['LT', 'RT', 'RB'] : (['skill1', 'skill2', 'skill3'] as const).map((a) => this.input.keyLabel(b[a][0] ?? ''));
           // auch auf See sichtbar (wie in 1.0): Fähigkeiten ohne Seewirkung sind abgeblendet
           this.hud.setSkillBar(this.input.lastDevice !== 'touch', views, keys, !foot);
-          views.forEach((v, i) => this.touch.setButton(`skill${i + 1}`, v.short, v.cdFrac, v.ready && (foot || v.sea), v.color, !foot && !!v.id && !v.sea));
+          views.forEach((v, i) => this.touch.setButton(`skill${i + 1}`, v.short, v.cdFrac, v.ready && (foot || v.sea), v.color, !foot && !!v.id && !v.sea, !v.id));
           if (!foot) for (const [act, side] of [['fireLeft', 1], ['fireRight', -1]] as const) this.touch.setHot(act, this.world.fanHot(side));
         }
       }

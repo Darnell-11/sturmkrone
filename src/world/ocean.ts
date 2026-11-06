@@ -189,7 +189,7 @@ export class Ocean {
           uniform vec4 uWake[${MAX_WAKE}];
           varying vec3 vSkW;
           varying float vCrest;
-          float skHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+          float skHash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
           float skNoise(vec2 p) {
             vec2 i = floor(p); vec2 fr = fract(p); fr = fr * fr * (3.0 - 2.0 * fr);
             return mix(mix(skHash(i), skHash(i + vec2(1, 0)), fr.x), mix(skHash(i + vec2(0, 1)), skHash(i + vec2(1, 1)), fr.x), fr.y);
@@ -238,7 +238,7 @@ export class Ocean {
           {
             vec2 cp = vSkW.xz * 0.38;
             float c1 = abs(skNoise(cp + vec2(uTime * 0.21, uTime * 0.13)) - skNoise(cp * 1.7 - vec2(uTime * 0.17, -uTime * 0.11)));
-            float caust = pow(1.0 - clamp(c1 * 2.2, 0.0, 1.0), 5.0);
+            float caust = pow(max(1.0 - clamp(c1 * 2.2, 0.0, 1.0), 1e-4), 5.0);
             skBase += uShallow * caust * shallow * shallow * 0.45 * uSpecK * (1.0 - smoothstep(60.0, 220.0, camD));
           }
           // Gischt auf Wellenkämmen, aufgebrochen durch Rauschen
@@ -294,13 +294,13 @@ export class Ocean {
             outgoingLight *= mix(0.6, 1.0, skFoam);
             vec3 Nw = normalize(inverseTransformDirection(normal, viewMatrix));
             vec3 Vw = normalize(cameraPosition - vSkW);
-            float fr = 0.03 + 0.97 * pow(1.0 - clamp(dot(Nw, Vw), 0.0, 1.0), 4.0);
+            float fr = 0.03 + 0.97 * pow(max(1.0 - clamp(dot(Nw, Vw), 0.0, 1.0), 1e-4), 4.0);
             fr *= (1.0 - skFoam);
             vec3 R = reflect(-Vw, Nw);
             R.y = abs(R.y);
             vec3 skyC = mix(uHorizon, uZenith, clamp(R.y * 1.8, 0.0, 1.0));
             outgoingLight = mix(outgoingLight, skyC, fr * 0.7);
-            float sdot = max(dot(R, uSunDir), 0.0);
+            float sdot = max(dot(R, uSunDir), 1e-4);
             float sp = pow(sdot, 260.0);
             outgoingLight += uSunCol * step(0.28, sp) * 1.8 * uSpecK * (1.0 - skFoam);
             // Sonnenbahn: breiter, warmer Glanz mit funkelnden Glitzerpunkten bis zum Horizont
@@ -310,18 +310,22 @@ export class Ocean {
             outgoingLight += uSunCol * glint * 3.0 * uSpecK * uDetail * (1.0 - skFoam);
             // Licht scheint durch die Wellenkämme (türkis), Funkeln im Sonnenglanz
             // dünne Wellenkämme gegen die Sonne leuchten grün-türkis (Licht geht durchs Wasser)
-            float back = pow(clamp(dot(Vw, -uSunDir) * 0.5 + 0.5, 0.0, 1.0), 3.0);
+            float back = pow(clamp(dot(Vw, -uSunDir) * 0.5 + 0.5, 1e-4, 1.0), 3.0);
             float thin = clamp(skCrestF * 1.6 + 0.2, 0.0, 1.0) * smoothstep(-0.4, 1.6, skD.y);
             float face = clamp(1.0 - abs(Nw.y), 0.0, 1.0);
             vec3 sssCol = mix(uShallow, vec3(0.25, 0.85, 0.7), 0.35);
             outgoingLight += sssCol * back * (thin * 0.5 + face * 0.6) * 0.75 * uSpecK * (1.0 - skFoam);
             // Wellentäler etwas dunkler – mehr Tiefe zwischen den Wellen
             outgoingLight *= mix(0.86, 1.04, smoothstep(-1.4, 1.2, skD.y));
-            float tw = step(0.93, skNoise(vSkW.xz * 1.7 + vec2(uTime * 1.3, -uTime))) * pow(max(dot(R, uSunDir), 0.0), 6.0);
+            float tw = step(0.93, skNoise(vSkW.xz * 1.7 + vec2(uTime * 1.3, -uTime))) * pow(max(dot(R, uSunDir), 1e-4), 6.0);
             outgoingLight += uSunCol * tw * 1.1 * uSpecK * (1.0 - skFoam);
             // Ferne Wasserflächen gehen in die Horizontfarbe über
             float far = smoothstep(180.0, 1600.0, camD);
             outgoingLight = mix(outgoingLight, uHorizon * 0.82, far * 0.3);
+            // Sicherheitsnetz für Handy-Grafikchips: ungültige oder riesige Werte würden vom Leuchteffekt
+            // als große schwarze Flecken über das Bild verschmiert
+            if (any(isnan(outgoingLight)) || any(isinf(outgoingLight))) outgoingLight = skBase * 0.7;
+            outgoingLight = clamp(outgoingLight, 0.0, 24.0);
           }
           #include <opaque_fragment>
           // Alpha 0 markiert Wasser: Kantenerkennung und Umgebungsverdeckung lassen es aus

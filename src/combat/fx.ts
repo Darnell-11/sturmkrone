@@ -105,7 +105,7 @@ const SMEAR_FRAG = /* glsl */ `
     if (d < 0.0) discard;
     float trail = 1.0 - smoothstep(0.0, 0.5, d);
     // Sichel: außen (Klingenspitze) hell und scharf, nach innen weich auslaufend
-    float body = pow(uv.y, 2.4) * (1.0 - smoothstep(0.93, 1.0, uv.y));
+    float body = pow(max(uv.y, 1e-4), 2.4) * (1.0 - smoothstep(0.93, 1.0, uv.y));
     float rim = smoothstep(0.82, 0.93, uv.y) * (1.0 - smoothstep(0.93, 1.0, uv.y));
     vec3 c = mix(uColor, vec3(1.0), rim);
     gl_FragColor = vec4(c * 1.25, clamp((body * 0.8 + rim * 0.6) * trail * uAlpha, 0.0, 1.0));

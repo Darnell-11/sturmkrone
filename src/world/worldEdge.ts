@@ -62,7 +62,7 @@ export class WorldEdge {
         uniform float uTime; uniform vec3 uWater, uDeep, uFoam;
         varying vec2 vUv;
         #include <fog_pars_fragment>
-        float hh(float x) { return fract(sin(x * 127.1) * 43758.5453); }
+        float hh(float x) { x = fract(x * 0.1031); x *= x + 33.33; x *= x + x; return fract(x); }
         void main() {
           float col = floor(vUv.x * 2400.0);
           float sp = 0.7 + hh(col) * 0.8;

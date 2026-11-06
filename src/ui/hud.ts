@@ -109,6 +109,7 @@ export class Hud {
     this.ctxText = text;
     this.ctxEl.hidden = !label || this.root.hidden;
     this.ctxEl.innerHTML = text;
+    this.ctxEl.classList.toggle('low', label === 'An Deck gehen');
   }
 
   /** Schiffsanzeige; null blendet sie aus */
