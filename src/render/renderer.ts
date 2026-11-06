@@ -120,7 +120,7 @@ export class GameRenderer {
       // Nur der ferne Hintergrund wird weich: Vordergrund und alles bis zur Figur bleiben scharf.
       // (Vorher wurde in beide Richtungen unscharf gezeichnet, mit festem Bereich von 40 m – das traf Wellen,
       // Schiffsteile und Rauch vor der Figur.)
-      const dof = new DepthOfFieldEffect(cam, { focusDistance: 25, focusRange: 120, bokehScale: 1.3, resolutionScale: 0.5 });
+      const dof = new DepthOfFieldEffect(cam, { focusDistance: 25, focusRange: 120, bokehScale: 1.3, resolutionScale: c.detail > 1.4 ? 1 : 0.5 });
       dof.target = this.focus;
       const coc = dof.cocMaterial;
       coc.fragmentShader = coc.fragmentShader.replace('magnitude*vec2(step(signedDistance,0.0),step(0.0,signedDistance))', 'magnitude*vec2(0.0,step(0.0,signedDistance))');
@@ -135,7 +135,7 @@ export class GameRenderer {
       effects.push(this.ao);
     }
     if (c.post.godRays && this.sun) {
-      this.godRays = new GodRaysEffect(cam, this.sun, { density: 0.94, decay: 0.92, weight: 0.22, exposure: 0.42, samples: c.detail > 1 ? 80 : 48, clampMax: 1, resolutionScale: 0.5, blur: true });
+      this.godRays = new GodRaysEffect(cam, this.sun, { density: 0.94, decay: 0.92, weight: 0.22, exposure: 0.42, samples: c.detail > 1.4 ? 120 : c.detail > 1 ? 80 : 48, clampMax: 1, resolutionScale: 0.5, blur: true });
       effects.push(this.godRays);
     }
     if (c.post.bloom) {
@@ -158,6 +158,8 @@ export class GameRenderer {
     const dpr = window.devicePixelRatio || 1;
     let r = c.pixelRatio ?? dpr;
     if (c.pixelRatio === null || c.pixelRatio > 1) r = Math.min(r, dpr);
+    // Ultra: mehr Pixel als der Bildschirm (Supersampling) – gestochen scharfe Kanten und Details
+    r *= c.supersample;
     r = Math.min(r, c.maxPixelRatio);
     const w = Math.max(1, innerWidth);
     const h = Math.max(1, innerHeight);

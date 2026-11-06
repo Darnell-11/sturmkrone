@@ -1,5 +1,5 @@
-// Die vier Grafikstufen. Werte hier ändern, nicht im Render-Code.
-export const QUALITY_IDS = ['low', 'mid', 'high', 'max'] as const;
+// Die fünf Grafikstufen. Werte hier ändern, nicht im Render-Code.
+export const QUALITY_IDS = ['low', 'mid', 'high', 'max', 'ultra'] as const;
 export type QualityTier = (typeof QUALITY_IDS)[number];
 
 export interface QualityConfig {
@@ -29,21 +29,30 @@ export interface QualityConfig {
   particles: number;
   /** Detailstufe für Geometrie (Wellenauflösung, Vegetation …) */
   detail: number;
+  /** Auflösung der gemalten Texturen (1 = Standard, 4 = Ultra) und Texturfilterung */
+  textureScale: number;
+  anisotropy: number;
+  /** Supersampling: mehr Pixel rendern als der Bildschirm hat (Ultra, begrenzt durch maxPixels) */
+  supersample: number;
 }
 
 export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
   low: {
     label: 'Niedrig',
-    description: 'Für schwache Handys. Keine Schatten, keine Effekte, kurze Sichtweite.',
+    description: 'Für schwächere Handys. Keine Schatten, aber derselbe Farblook – flüssig auch auf älteren Geräten.',
     pixelRatio: 0.75,
     maxPixelRatio: 0.75,
     maxPixels: 1280 * 720,
     shadows: { enabled: false, mapSize: 0, soft: false },
-    post: { enabled: false, bloom: false, outlines: false, colorGrading: false, godRays: false, depthOfField: false, ambientOcclusion: false },
+    // nur ein günstiger Durchgang für Farbkorrektur, damit der Look derselbe bleibt
+    post: { enabled: true, bloom: false, outlines: false, colorGrading: true, godRays: false, depthOfField: false, ambientOcclusion: false },
     multisampling: 0,
-    viewDistance: 320,
+    viewDistance: 420,
     particles: 0.35,
     detail: 0.5,
+    textureScale: 1,
+    anisotropy: 2,
+    supersample: 1,
   },
   mid: {
     label: 'Mittel',
@@ -55,9 +64,12 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     // Farbkorrektur kostet kaum etwas (läuft im selben Durchgang) und gehört zum Look
     post: { enabled: true, bloom: true, outlines: false, colorGrading: true, godRays: false, depthOfField: false, ambientOcclusion: false },
     multisampling: 2,
-    viewDistance: 520,
+    viewDistance: 560,
     particles: 0.6,
     detail: 0.75,
+    textureScale: 1,
+    anisotropy: 4,
+    supersample: 1,
   },
   high: {
     label: 'Hoch',
@@ -71,6 +83,9 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     viewDistance: 800,
     particles: 1,
     detail: 1,
+    textureScale: 2,
+    anisotropy: 8,
+    supersample: 1,
   },
   max: {
     label: 'Maximal',
@@ -84,6 +99,25 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     viewDistance: 1200,
     particles: 1.5,
     detail: 1.25,
+    textureScale: 2,
+    anisotropy: 16,
+    supersample: 1,
+  },
+  ultra: {
+    label: 'Ultra',
+    description: 'Für sehr starke PCs. Bis 4K mit Supersampling, hochauflösende Texturen, Schatten in höchster Schärfe und Reichweite, weiteste Sicht.',
+    pixelRatio: null,
+    maxPixelRatio: 4,
+    maxPixels: 3840 * 2160,
+    shadows: { enabled: true, mapSize: 8192, soft: true },
+    post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: true },
+    multisampling: 8,
+    viewDistance: 1800,
+    particles: 2,
+    detail: 1.6,
+    textureScale: 4,
+    anisotropy: 16,
+    supersample: 1.5,
   },
 };
 

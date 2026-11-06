@@ -1,4 +1,5 @@
 import { CanvasTexture, RepeatWrapping, SRGBColorSpace } from 'three';
+import { detailCanvas, texDetail } from './texDetail';
 
 /** Kleiner, fester Zufall, damit Texturen bei jedem Start gleich aussehen */
 function rng(seed: number) {
@@ -11,9 +12,7 @@ let plankCache: CanvasTexture | null = null;
 /** Holzplanken in Graustufen (werden über Vertex- oder Materialfarbe eingefärbt) */
 export function plankTexture(): CanvasTexture {
   if (plankCache) return plankCache;
-  const c = document.createElement('canvas');
-  c.width = c.height = 256;
-  const g = c.getContext('2d')!;
+  const { c, g } = detailCanvas(256, 256);
   const r = rng(7);
   g.fillStyle = '#ffffff';
   g.fillRect(0, 0, 256, 256);
@@ -47,16 +46,14 @@ export function plankTexture(): CanvasTexture {
   const t = new CanvasTexture(c);
   t.wrapS = t.wrapT = RepeatWrapping;
   t.colorSpace = SRGBColorSpace;
-  t.anisotropy = 4;
+  t.anisotropy = texDetail.aniso;
   plankCache = t;
   return t;
 }
 
 /** Segeltuch: Bahnen, Reffreihe, Liektau, Flicken – optional mit Wappen (Leinwand der Flagge) */
 export function sailTexture(color: string, emblem: HTMLCanvasElement | null, seed: number): CanvasTexture {
-  const c = document.createElement('canvas');
-  c.width = 256; c.height = 192;
-  const g = c.getContext('2d')!;
+  const { c, g } = detailCanvas(256, 192);
   const r = rng(seed);
   g.fillStyle = color;
   g.fillRect(0, 0, 256, 192);
@@ -108,6 +105,6 @@ export function sailTexture(color: string, emblem: HTMLCanvasElement | null, see
   g.strokeRect(2, 2, 252, 188);
   const t = new CanvasTexture(c);
   t.colorSpace = SRGBColorSpace;
-  t.anisotropy = 4;
+  t.anisotropy = texDetail.aniso;
   return t;
 }

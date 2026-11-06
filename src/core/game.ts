@@ -14,6 +14,7 @@ import { FAME_THRESHOLDS } from '../data/ranks';
 import { SkillStage } from '../world/skillStage';
 import { AutoQuality, detectTier, gatherDeviceInfo, type DeviceInfo } from '../render/quality';
 import { GameRenderer } from '../render/renderer';
+import { setTexDetail } from '../render/texDetail';
 import { CharacterEditor, styleIdOf, type EditorResult } from '../ui/editor';
 import { Hud } from '../ui/hud';
 import { Menus } from '../ui/menus';
@@ -85,14 +86,19 @@ export class Game {
     this.saves = new SaveManager(store, GAME_VERSION);
 
     this.renderer = new GameRenderer(canvas);
-    this.world = new SeaWorld();
-    this.renderer.onQualityChange((c) => this.world.applyQuality(c));
-    this.useWorldView();
-
+    // Grafikstufe vor dem Bau der Welt festlegen: die Texturen werden in passender Auflösung gemalt
     this.deviceInfo = gatherDeviceInfo(this.renderer.gl.getContext());
     this.detected = detectTier(this.deviceInfo);
     const s = this.settings.data;
-    if (!s.quality) this.settings.update({ quality: this.detected.tier, qualityAuto: true });
+    // „Automatisch“: bei jedem Start neu erkennen (so bekommen starke PCs auch neue Stufen wie Ultra)
+    if (!s.quality || s.qualityAuto) this.settings.update({ quality: this.detected.tier, qualityAuto: true });
+    const startTier = QUALITY_TIERS[this.settings.data.quality ?? this.detected.tier];
+    const caps = this.renderer.gl.capabilities;
+    setTexDetail(startTier.textureScale, Math.min(startTier.anisotropy, caps.getMaxAnisotropy()));
+    this.world = new SeaWorld();
+    this.world.env.maxTex = caps.maxTextureSize;
+    this.renderer.onQualityChange((c) => this.world.applyQuality(c));
+    this.useWorldView();
     this.renderer.applyQuality(this.settings.data.quality ?? this.detected.tier);
 
     this.input = new Input(canvas);

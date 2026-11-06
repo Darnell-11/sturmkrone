@@ -33,6 +33,8 @@ const SOFTWARE = /swiftshader|llvmpipe|softpipe|software|basic render|microsoft 
 const WEAK_MOBILE = /mali-(4\d\d|t\d+)|adreno[^\d]*[2-5]\d\d|powervr|sgx|videocore|mali-g(31|51|52|57)\b/i;
 const STRONG_MOBILE = /adreno[^\d]*(7[4-9]\d|8\d\d)|immortalis|mali-g7[1-9]\d|xclipse/i;
 const WEAK_DESKTOP = /intel.*(hd graphics|uhd graphics( [56]\d\d)?\b)|gma|radeon\(tm\) r[2-5]/i;
+// sehr starke Grafikkarten: Ultra
+const ULTRA_DESKTOP = /rtx\s*(30[89]0|40[789]0|50[6789]0|[6-9]0[789]0)|rx\s*(79\d\d|9070)|apple m\d+ (max|ultra)/i;
 const STRONG_DESKTOP = /rtx\s*[2-9]0[6-9]0|rx\s*[6-9][7-9]\d\d|apple m\d+ (pro|max|ultra)|radeon pro w/i;
 
 /** Macht aus "ANGLE (Intel, Intel(R) Iris(R) Xe Graphics (0x9A49) Direct3D11 …)" ein lesbares "Intel Iris Xe Graphics". */
@@ -55,7 +57,8 @@ export function detectTier(info: DeviceInfo): { tier: QualityTier; reason: strin
     else if (STRONG_MOBILE.test(info.gpu) && (info.memoryGb ?? 8) >= 8) tier = 'high';
     else tier = 'mid';
   } else {
-    if (STRONG_DESKTOP.test(info.gpu)) tier = 'max';
+    if (ULTRA_DESKTOP.test(info.gpu)) tier = 'ultra';
+    else if (STRONG_DESKTOP.test(info.gpu)) tier = 'max';
     else if (WEAK_DESKTOP.test(info.gpu)) tier = 'mid';
     else tier = 'high';
   }

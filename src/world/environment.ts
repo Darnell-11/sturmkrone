@@ -33,6 +33,8 @@ export class Environment {
   windDir = 0.6;
 
   private viewDistance = 520;
+  /** Größte Texturgröße der Grafikkarte (setzt das Spiel) */
+  maxTex = 4096;
   private shadowExtent = 40;
   private tmpCol = new Color();
   private focus = new Vector3();
@@ -53,12 +55,14 @@ export class Environment {
     this.viewDistance = c.viewDistance;
     const sh = this.sun.shadow;
     this.sun.castShadow = c.shadows.enabled;
-    if (c.shadows.enabled && sh.mapSize.x !== c.shadows.mapSize) {
-      sh.mapSize.set(c.shadows.mapSize, c.shadows.mapSize);
+    // nicht größer als die Grafikkarte erlaubt (8192 bei Ultra)
+    const mapSize = Math.min(c.shadows.mapSize, this.maxTex);
+    if (c.shadows.enabled && sh.mapSize.x !== mapSize) {
+      sh.mapSize.set(mapSize, mapSize);
       sh.map?.dispose();
       (sh as any).map = null;
     }
-    this.shadowExtent = c.shadows.mapSize >= 4096 ? 80 : c.shadows.mapSize >= 2048 ? 55 : 38;
+    this.shadowExtent = mapSize >= 8192 ? 120 : mapSize >= 4096 ? 80 : mapSize >= 2048 ? 55 : 38;
     const cam = sh.camera;
     cam.left = -this.shadowExtent; cam.right = this.shadowExtent; cam.top = this.shadowExtent; cam.bottom = -this.shadowExtent;
     cam.near = 1; cam.far = 400;

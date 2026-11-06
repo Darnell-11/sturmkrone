@@ -1,3 +1,4 @@
+import { texDetail } from '../render/texDetail';
 import {
   BackSide,
   CanvasTexture,
@@ -52,7 +53,8 @@ const SKY_FRAG = /* glsl */ `
 
 /** Erzeugt 4 gemalte Wolkenformen (2 × 2 Atlas). Rot = beleuchtet, Alpha = Deckung. */
 function cloudAtlas(): CanvasTexture {
-  const S = 256;
+  // Kantenlänge folgt der Texturstufe (Ultra: hochauflösend gemalte Wolken)
+  const S = Math.round(256 * Math.min(2, texDetail.scale));
   const c = document.createElement('canvas');
   c.width = c.height = S * 2;
   const ctx = c.getContext('2d')!;

@@ -22,6 +22,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { IslandDef } from '../data/regions';
 import { addOutlines } from '../render/outline';
 import { toon } from '../render/toon';
+import { detailCanvas, texDetail } from '../render/texDetail';
 import type { WalkIsland } from './islandGround';
 
 // verwitterter Putz und satte, gedeckte Dachfarben (Hafenstadt, kein Ferienort)
@@ -214,9 +215,7 @@ let cobbleTex: CanvasTexture | null = null;
 /** Kopfsteinpflaster: unregelmäßige Steine mit dunklen Fugen (Graustufen, über die Farbe getönt) */
 function cobbleTexture(): CanvasTexture {
   if (cobbleTex) return cobbleTex;
-  const c = document.createElement('canvas');
-  c.width = c.height = 256;
-  const g = c.getContext('2d')!;
+  const { c, g } = detailCanvas(256, 256);
   // dunkle Fugen, dicht gesetzte, unregelmäßig eckige Steine mit wenig Kontrast
   g.fillStyle = '#9a9288';
   g.fillRect(0, 0, 256, 256);
@@ -242,7 +241,7 @@ function cobbleTexture(): CanvasTexture {
   cobbleTex = new CanvasTexture(c);
   cobbleTex.wrapS = cobbleTex.wrapT = RepeatWrapping;
   cobbleTex.colorSpace = SRGBColorSpace;
-  cobbleTex.anisotropy = 4;
+  cobbleTex.anisotropy = texDetail.aniso;
   return cobbleTex;
 }
 
