@@ -15,6 +15,8 @@ export function gatherDeviceInfo(gl: WebGLRenderingContext | WebGL2RenderingCont
     const ext = gl.getExtension('WEBGL_debug_renderer_info');
     gpu = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
   } catch { gpu = ''; }
+  // nur beim Entwickeln: ?gpu=… simuliert einen anderen (oder verborgenen) Grafikkartennamen
+  if (import.meta.env?.DEV) { const o = new URLSearchParams(location.search).get('gpu'); if (o !== null) gpu = o; }
   const nav = navigator as Navigator & { deviceMemory?: number; userAgentData?: { mobile?: boolean } };
   const ua = navigator.userAgent;
   const mobile = nav.userAgentData?.mobile
@@ -45,11 +47,47 @@ export function prettyGpu(raw: string): string {
   return s.replace(/\((R|TM)\)/gi, '').replace(/\s+/g, ' ').trim() || 'unbekannte Grafik';
 }
 
-/** Wählt beim ersten Start eine passende Grafikstufe. */
-export function detectTier(info: DeviceInfo): { tier: QualityTier; reason: string } {
+const KNOWN_VENDOR = /nvidia|geforce|rtx|gtx|quadro|radeon|amd|intel|iris|uhd|arc|apple|adreno|mali|powervr|xclipse|immortalis/i;
+
+/**
+ * Verbirgt der Browser den echten Namen der Grafikkarte? Firefox meldet z. B. „GeForce GTX 980, or similar“,
+ * Brave und Datenschutz-Einstellungen geben gar keinen oder einen erfundenen Namen heraus.
+ */
+export function gpuMasked(raw: string): boolean {
+  return !raw || /or similar|webkit webgl|^mozilla|generic|unknown|disabled/i.test(raw) || !KNOWN_VENDOR.test(raw);
+}
+
+/** Stufe aus dem Leistungstest (Millisekunden je Durchgang, siehe benchmarkGpu; RTX 5070 Ti ≈ 0,1 ms) */
+export function tierFromBench(ms: number, mobile: boolean): QualityTier {
+  const t: QualityTier = ms <= 0.14 ? 'ultra' : ms <= 0.45 ? 'max' : ms <= 1.6 ? 'high' : ms <= 12 ? 'mid' : 'low';
+  // Handys werden heiß und drosseln: höchstens „Hoch“
+  if (mobile && (t === 'ultra' || t === 'max')) return 'high';
+  return t;
+}
+
+const BENCH_WORD: Record<QualityTier, string> = { ultra: 'sehr stark', max: 'stark', high: 'gut', mid: 'mittel', low: 'schwach' };
+
+export interface Detected { tier: QualityTier; reason: string; software?: boolean; measured?: boolean }
+
+/**
+ * Wählt beim ersten Start eine passende Grafikstufe. Ist der Name der Grafikkarte verborgen oder unbekannt,
+ * entscheidet ein kurzer Leistungstest (bench = Millisekunden je Durchgang).
+ */
+export function detectTier(info: DeviceInfo, bench: number | null = null): Detected {
   const gpu = prettyGpu(info.gpu);
   if (!info.webgl2) return { tier: 'low', reason: 'Älteres WebGL – Stufe Niedrig' };
-  if (SOFTWARE.test(info.gpu)) return { tier: 'low', reason: `Software-Grafik (${gpu})` };
+  if (SOFTWARE.test(info.gpu)) return { tier: 'low', reason: `Keine Grafikkarte in Benutzung – im Browser ist die Hardwarebeschleunigung aus (${gpu})`, software: true };
+  // Erkennung über den Leistungstest, wenn der Name nichts taugt oder in keiner Liste steht
+  const listed = info.mobile
+    ? WEAK_MOBILE.test(info.gpu) || STRONG_MOBILE.test(info.gpu)
+    : ULTRA_DESKTOP.test(info.gpu) || STRONG_DESKTOP.test(info.gpu) || WEAK_DESKTOP.test(info.gpu);
+  if (bench !== null && (gpuMasked(info.gpu) || !listed)) {
+    // eine Messung über 60 ms je Durchgang heißt: Software-Grafik, auch wenn der Name etwas anderes sagt
+    if (bench > 60) return { tier: 'low', reason: 'Keine Grafikkarte in Benutzung – im Browser ist die Hardwarebeschleunigung aus', software: true };
+    const tier = tierFromBench(bench, info.mobile);
+    const name = gpuMasked(info.gpu) ? 'Grafikkarte (Name vom Browser verborgen)' : gpu;
+    return { tier, reason: `${info.mobile ? 'Handy/Tablet' : 'PC'} mit ${name} – gemessen: ${BENCH_WORD[tier]}`, measured: true };
+  }
 
   let tier: QualityTier;
   if (info.mobile) {
@@ -64,6 +102,15 @@ export function detectTier(info: DeviceInfo): { tier: QualityTier; reason: strin
   }
   if (info.cores !== null && info.cores <= 2) tier = lowerTier(tier) ?? tier;
   return { tier, reason: `${info.mobile ? 'Handy/Tablet' : 'PC'} mit ${gpu}` };
+}
+
+/** Braucht diese Erkennung den Leistungstest? (Name verborgen, unbekannt oder nicht in den Listen) */
+export function needsBench(info: DeviceInfo): boolean {
+  if (!info.webgl2 || SOFTWARE.test(info.gpu)) return false;
+  if (gpuMasked(info.gpu)) return true;
+  return info.mobile
+    ? !(WEAK_MOBILE.test(info.gpu) || STRONG_MOBILE.test(info.gpu))
+    : !(ULTRA_DESKTOP.test(info.gpu) || STRONG_DESKTOP.test(info.gpu) || WEAK_DESKTOP.test(info.gpu));
 }
 
 /**
@@ -91,5 +138,69 @@ export class AutoQuality {
     this.frames = 0;
     if (avg > 1 / 42) { this.warmup = 0; return true; }
     return false;
+  }
+}
+
+/**
+ * Kurzer Leistungstest der Grafikkarte (~0,1–0,3 s): rechnet einen aufwendigen Shader über eine 1024×1024-Fläche
+ * und misst die Zeit. Liefert Millisekunden je Durchgang (kleiner = schneller) oder null, wenn der Test nicht geht.
+ * Wird gebraucht, wenn der Browser den Namen der Grafikkarte verbirgt (Firefox, Brave, Datenschutz-Einstellungen).
+ */
+export function benchmarkGpu(gl: WebGL2RenderingContext): number | null {
+  try {
+    const vs = `#version 300 es
+      in vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`;
+    const fs = `#version 300 es
+      precision highp float; uniform float uT; out vec4 o;
+      void main(){
+        vec2 q = gl_FragCoord.xy * 0.013 + uT;
+        float a = 0.0;
+        for (int i = 0; i < 128; i++) { q = vec2(sin(q.y * 1.7 + a), cos(q.x * 1.3 - a)) * 1.1 + q.yx * 0.3; a += dot(q, q) * 0.01; }
+        o = vec4(fract(a), q, 1.0);
+      }`;
+    const sh = (type: number, src: string) => { const s = gl.createShader(type)!; gl.shaderSource(s, src); gl.compileShader(s); return s; };
+    const prog = gl.createProgram()!;
+    const v = sh(gl.VERTEX_SHADER, vs), f = sh(gl.FRAGMENT_SHADER, fs);
+    gl.attachShader(prog, v); gl.attachShader(prog, f); gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
+    const size = 1024;
+    const tex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    const fb = gl.createFramebuffer()!;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    const buf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    const vao = gl.createVertexArray()!;
+    gl.bindVertexArray(vao);
+    const loc = gl.getAttribLocation(prog, 'p');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    gl.useProgram(prog);
+    gl.viewport(0, 0, size, size);
+    gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
+    const uT = gl.getUniformLocation(prog, 'uT');
+    const px = new Uint8Array(4);
+    const run = (n: number) => { for (let i = 0; i < n; i++) { gl.uniform1f(uT, i * 0.37); gl.drawArrays(gl.TRIANGLES, 0, 3); } gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); };
+    run(1); // Aufwärmen (Shader fertig übersetzen)
+    let n = 1, ms = 0;
+    // so lange verdoppeln, bis die Messung lang genug für eine verlässliche Zeit ist; sehr langsame
+    // (Software-)Grafik bricht nach dem ersten Durchgang ab, damit der Start nicht hängt
+    for (;;) {
+      const t0 = performance.now();
+      run(n);
+      ms = performance.now() - t0;
+      if (ms > 30 || n >= 128) break;
+      n *= 2;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindVertexArray(null);
+    gl.deleteVertexArray(vao); gl.deleteBuffer(buf); gl.deleteFramebuffer(fb); gl.deleteTexture(tex);
+    gl.deleteProgram(prog); gl.deleteShader(v); gl.deleteShader(f);
+    return ms / n;
+  } catch {
+    return null;
   }
 }

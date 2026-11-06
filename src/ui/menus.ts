@@ -24,6 +24,8 @@ type SettingsTab = 'grafik' | 'steuerung' | 'ton' | 'anzeige';
 const LOGO = `${import.meta.env.BASE_URL}favicon.svg`;
 
 /** Alle Menübildschirme: Titel, Spielstände, Neues Spiel, Einstellungen, Pause. */
+const GPU_HINT = `<p class="warn">Dein Browser benutzt gerade <b>nicht deine Grafikkarte</b> – darum läuft das Spiel nur auf der niedrigsten Stufe. So schaltest du sie ein: <b>Chrome/Edge:</b> Einstellungen → System → „Grafikbeschleunigung verwenden, wenn verfügbar“ einschalten. <b>Firefox:</b> Einstellungen → Allgemein → Leistung → „Hardwarebeschleunigung verwenden, wenn verfügbar“. Danach den Browser ganz schließen und neu öffnen.</p>`;
+
 export class Menus {
   private screen: HTMLElement;
   private card: HTMLElement;
@@ -113,6 +115,7 @@ export class Menus {
         <h1 class="fell">Sturmkrone</h1>
         <p class="soft">Ein Piratenabenteuer auf hoher See</p>
         ${g.persistent ? '' : '<p class="warn">Dein Browser erlaubt kein dauerhaftes Speichern (z. B. privater Modus). Spielstände gehen beim Schließen verloren – nutze „Exportieren“.</p>'}
+        ${g.detected.software ? GPU_HINT : ''}
         <button class="primary" data-a="play" data-focus>Spielen</button>
         <button class="secondary" data-a="settings">Einstellungen</button>
         <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Sturmkrone 2.0</p>
@@ -711,6 +714,7 @@ export class Menus {
           <div>Erkanntes Gerät<b>${esc(g.detected.reason)}</b></div>
           <div>Vorschlag<b>${QUALITY_TIERS[g.detected.tier].label}</b></div>
         </div>
+        ${g.detected.software ? GPU_HINT : ''}
         <p class="soft small">Bei „Automatisch“ senkt das Spiel die Stufe selbst, wenn es ruckelt.</p>`;
       handlers.q = (id) => { g.setQuality(id === 'auto' ? 'auto' : (id as QualityTier)); rerender(); };
     }

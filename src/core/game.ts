@@ -12,7 +12,7 @@ import { SkillTree } from '../ui/skillTree';
 import { AMMO, SAIL_LEVELS, SHIP_CLASSES, type ShipLook } from '../data/ships';
 import { FAME_THRESHOLDS } from '../data/ranks';
 import { SkillStage } from '../world/skillStage';
-import { AutoQuality, detectTier, gatherDeviceInfo, type DeviceInfo } from '../render/quality';
+import { AutoQuality, benchmarkGpu, detectTier, gatherDeviceInfo, needsBench, type DeviceInfo, type Detected } from '../render/quality';
 import { GameRenderer } from '../render/renderer';
 import { setTexDetail } from '../render/texDetail';
 import { CharacterEditor, styleIdOf, type EditorResult } from '../ui/editor';
@@ -58,7 +58,7 @@ export class Game {
   readonly menus: Menus;
   readonly loop: GameLoop;
   readonly deviceInfo: DeviceInfo;
-  readonly detected: { tier: QualityTier; reason: string };
+  readonly detected: Detected;
   assets: CharacterAssets | null = null;
   readonly overlay: CombatOverlay;
 
@@ -88,7 +88,14 @@ export class Game {
     this.renderer = new GameRenderer(canvas);
     // Grafikstufe vor dem Bau der Welt festlegen: die Texturen werden in passender Auflösung gemalt
     this.deviceInfo = gatherDeviceInfo(this.renderer.gl.getContext());
-    this.detected = detectTier(this.deviceInfo);
+    // Verbirgt der Browser die Grafikkarte (Firefox, Brave …) oder ist sie unbekannt, misst ein kurzer Test die Leistung
+    let bench: number | null = null;
+    const ctx = this.renderer.gl.getContext();
+    if (needsBench(this.deviceInfo) && typeof WebGL2RenderingContext !== 'undefined' && ctx instanceof WebGL2RenderingContext) {
+      bench = benchmarkGpu(ctx);
+      this.renderer.gl.resetState();
+    }
+    this.detected = detectTier(this.deviceInfo, bench);
     const s = this.settings.data;
     // „Automatisch“: bei jedem Start neu erkennen (so bekommen starke PCs auch neue Stufen wie Ultra)
     if (!s.quality || s.qualityAuto) this.settings.update({ quality: this.detected.tier, qualityAuto: true });

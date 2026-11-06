@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { GameLoop } from '../src/core/loop';
 import { defaultSettings, sanitizeSettings, SettingsStore, SETTINGS_KEY } from '../src/core/settings';
 import { MemoryStore } from '../src/core/storage';
-import { detectTier, prettyGpu, type DeviceInfo } from '../src/render/quality';
+import { detectTier, gpuMasked, needsBench, prettyGpu, type DeviceInfo } from '../src/render/quality';
 
 describe('Spielschleife', () => {
   it('läuft mit festen Schritten unabhängig von der Bildrate', () => {
@@ -84,5 +84,26 @@ describe('Grafikstufen-Erkennung', () => {
     expect(tier({ mobile: true, gpu: 'Adreno (TM) 750', memoryGb: 8 })).toBe('high');
     expect(tier({ mobile: true, gpu: 'Apple GPU', memoryGb: null })).toBe('mid');
     expect(tier({ mobile: true, gpu: 'Adreno (TM) 660', memoryGb: 2 })).toBe('low');
+  });
+
+  it('misst die Leistung, wenn der Browser den Namen verbirgt', () => {
+    const ff = 'ANGLE (NVIDIA, NVIDIA GeForce GTX 980 Direct3D11 vs_5_0 ps_5_0), or similar';
+    expect(gpuMasked(ff)).toBe(true);
+    expect(gpuMasked('WebKit WebGL')).toBe(true);
+    expect(gpuMasked('')).toBe(true);
+    expect(gpuMasked('ANGLE (NVIDIA, NVIDIA GeForce RTX 5070 Ti Direct3D11)')).toBe(false);
+    expect(needsBench({ ...base, gpu: ff })).toBe(true);
+    expect(needsBench({ ...base, gpu: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4090 Direct3D11)' })).toBe(false);
+    expect(needsBench({ ...base, gpu: 'Google SwiftShader' })).toBe(false);
+    // RTX 5070 Ti misst ≈ 0,1 ms je Durchgang
+    expect(detectTier({ ...base, gpu: ff }, 0.1).tier).toBe('ultra');
+    expect(detectTier({ ...base, gpu: ff }, 0.3).tier).toBe('max');
+    expect(detectTier({ ...base, gpu: 'WebKit WebGL' }, 5).tier).toBe('mid');
+    expect(detectTier({ ...base, gpu: 'WebKit WebGL', mobile: true }, 0.1).tier).toBe('high');
+    // so langsam, dass nur Software-Grafik in Frage kommt
+    const sw = detectTier({ ...base, gpu: 'WebKit WebGL' }, 200);
+    expect(sw.tier).toBe('low');
+    expect(sw.software).toBe(true);
+    expect(detectTier({ ...base, gpu: 'Google SwiftShader' }).software).toBe(true);
   });
 });
