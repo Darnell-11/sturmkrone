@@ -18,7 +18,7 @@ interface Ambience { waves: number; wind: number; rain: number; town: number; gu
  * Pegelausgleich je Stück (offline gemessen): ruhige Stücke etwas leiser als Kampf, aber alle gut hörbar.
  * Ziel-Effektivpegel etwa: Nacht 0,035 · See/Hafen 0,05 · Kampf/Boss 0,075–0,08 · Menü 0,05
  */
-const SONG_TRIM: Partial<Record<SongId, number>> = { sea: 1.55, north: 1.6, ember: 1.5, harbor: 1.24, night: 0.97, abyss: 1.35, battle: 1.04, storm: 1.03, boss: 1.12, menu: 1.3, victory: 1.0 };
+const SONG_TRIM: Partial<Record<SongId, number>> = { sea: 1.3, north: 1.35, ember: 1.3, harbor: 1.08, night: 0.97, abyss: 1.35, battle: 1.04, storm: 1.03, boss: 1.12, menu: 1.3, victory: 1.0 };
 
 /** Eine laufende Musikspur (zum Überblenden laufen zeitweise zwei) */
 interface MusicPlayer { id: SongId; gain: GainNode; wet: GainNode; step: number; next: number; fading: boolean; endAt: number }
@@ -624,41 +624,51 @@ class AudioEngine {
       const t = p.next;
       const half = spb === 6 ? 3 : 4;
       const barLen = st * spb;
-      // Streicherfläche über den ganzen Takt
+      // Die Melodie atmet: in ruhigen Stücken pausiert sie jede dritte Strophe – dann tragen Streicher, Hörner und Chor
+      const rest = !fight && p.id !== 'menu' && verse % 3 === 2;
+      // Streicherfläche über den ganzen Takt (im Ruhe-Teil voller)
       if (s === 0 && bar.chord) {
         const ch = bar.chord.map((n) => n + tr - 12);
-        this.pad(ch, t, barLen, fight ? 0.018 : mystic ? 0.024 : 0.03, out, fight ? 1600 : 1200);
-        if (boss || p.id === 'abyss' || (p.id === 'menu' && verse % 2 === 1)) this.choir(bar.chord.map((n) => n + tr), t, barLen, boss ? 0.16 : 0.12, out);
+        this.pad(ch, t, barLen, fight ? 0.018 : mystic ? 0.024 : rest ? 0.036 : 0.028, out, fight ? 1600 : 1150);
+        const choirOn = boss || p.id === 'abyss' || (p.id === 'menu' && verse % 2 === 1) || (fight && barIdx % 2 === 0) || (!mystic && rest) || (p.id === 'sea' && verse % 2 === 1);
+        if (choirOn) this.choir(bar.chord.map((n) => n + tr), t, barLen, boss ? 0.16 : fight ? 0.07 : 0.1, out);
+        // weiche, tiefe Horn-Schwellung alle zwei Takte: Weite statt Lautstärke
+        if (!fight && barIdx % 2 === 0) for (const nn of bar.chord.slice(0, 2)) this.horn(nn + tr - 12, t + st * 0.5, barLen * 1.6, rest ? 0.026 : 0.016, out);
+        // leiser Paukenwirbel am Ende jeder Phrase
+        if (barIdx % 4 === 3) for (let r = 0; r < 6; r++) this.taiko(t + barLen * 0.6 + r * st * 0.25, (fight ? 0.12 : 0.05) * (0.4 + r * 0.12), out, 0.75);
       }
-      // Tiefe Streicher auf den Schwerpunkten
-      if (s === 0 || s === half) this.cello(bar.bass[s ? 1 : 0] + tr, t, st * (half - 0.2), fight ? 0.07 : 0.07, out);
+      // Tiefe Streicher auf den Schwerpunkten, darunter der Kontrabass eine Oktave tiefer
+      if (s === 0 || s === half) {
+        this.cello(bar.bass[s ? 1 : 0] + tr, t, st * (half - 0.2), 0.06, out);
+        if (s === 0) this.cello(bar.bass[0] + tr - 12, t, st * (spb - 0.3), fight ? 0.06 : 0.045, out);
+      }
       // Melodie: je nach Stimmung Fidel, Horn oder Flöte – im Kampf und Menü von Hörnern getragen
       const m = bar.mel[s];
-      if (m) {
+      if (m && !rest) {
         const n = m + tr;
-        if (fight || p.id === 'menu' || p.id === 'victory') this.horn(n - (boss ? 12 : 0), t, st * 1.8, boss ? 0.06 : 0.055, out);
-        else if (mystic) this.flute(n, t, st * 2.6, 0.08, out);
-        else this.fiddle(n, t, st * 1.9, p.id === 'harbor' ? 0.075 : 0.07, out);
+        if (fight || p.id === 'menu' || p.id === 'victory') this.horn(n - (boss ? 12 : 0), t, st * 2, boss ? 0.055 : 0.045, out);
+        else if (mystic) this.flute(n, t, st * 2.8, 0.065, out);
+        else this.fiddle(n, t, st * 2.2, p.id === 'harbor' ? 0.055 : 0.05, out);
         // in der zweiten Strophe verdoppeln Hörner die Fidel (größer, epischer)
-        if (!fight && !mystic && verse % 2 === 1 && s % 2 === 0) this.horn(n - 12, t, st * 1.6, 0.03, out);
+        if (!fight && !mystic && verse % 2 === 1 && s % 2 === 0) this.horn(n - 12, t, st * 1.8, 0.026, out);
       }
       // Gegenstimme
-      if (bar.alt?.[s] && verse % 2 === 1) this.flute(bar.alt[s]! + tr, t, st * 2.2, 0.045, out);
+      if (bar.alt?.[s] && verse % 2 === 1 && !rest) this.flute(bar.alt[s]! + tr, t, st * 2.4, 0.038, out);
       // Hafen: Laute zupft den Akkord
-      if (p.id === 'harbor' && bar.chord && s % 2 === 1) for (const nn of bar.chord) this.pluck(nn + tr, t, 0.035, out);
+      if (p.id === 'harbor' && bar.chord && s % 2 === 1) for (const nn of bar.chord) this.pluck(nn + tr, t, 0.028, out);
       // Spannung: treibendes Celli-Ostinato und dumpfe Trommel (unter der Melodie, nicht darüber)
       if (k > 0.05) {
-        this.cello(bar.bass[0] + tr + (s % 2 ? 12 : 0), t, st * 0.8, 0.026 * k, out, true);
-        if (s === 0) this.taiko(t, 0.16 * k, out, 0.9);
+        this.cello(bar.bass[0] + tr + (s % 2 ? 12 : 0), t, st * 0.8, 0.022 * k, out, true);
+        if (s === 0) this.taiko(t, 0.14 * k, out, 0.9);
       }
-      // Kampf: Kriegstrommeln, Rahmentrommel, Bläserstöße
+      // Kampf: Kriegstrommeln und Bläserstöße – wuchtig, aber nicht hektisch
       if (fight) {
         if (s === 0 || s === half) this.taiko(t, 0.42, out, s ? 1.1 : 0.85);
-        if (spb === 8 && (s === 3 || s === 6 || s === 7)) this.taiko(t, 0.2, out, 1.35);
-        if (spb === 6 && s === 5) this.taiko(t, 0.18, out, 1.3);
-        if (s % 2 === 1) this.frame(t, 0.05, out);
-        if (s === 0 && barIdx % 2 === 0 && bar.chord) for (const nn of bar.chord) this.horn(nn + tr - 12, t, st * 2.5, 0.022, out);
-        if (boss && s === 0) this.cello(bar.bass[0] + tr - 12, t, barLen, 0.08, out);
+        if (spb === 8 && s === 7) this.taiko(t, 0.18, out, 1.35);
+        if (spb === 6 && s === 5) this.taiko(t, 0.16, out, 1.3);
+        if (s === half - 1 || s === spb - 1) this.frame(t, 0.035, out);
+        if (s === 0 && barIdx % 2 === 0 && bar.chord) for (const nn of bar.chord) this.horn(nn + tr - 12, t, st * 3, 0.022, out);
+        if (boss && s === 0) this.cello(bar.bass[0] + tr - 24, t, barLen, 0.07, out);
       }
       p.next += st;
       p.step++;

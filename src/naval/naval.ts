@@ -109,7 +109,7 @@ export class NavalSystem {
   debris: DebrisSystem | null = null;
   private balls: Ball[] = [];
   private crates: Crate[] = [];
-  private spawnT = 3;
+  private spawnT = 20;
   private ballGeo = new SphereGeometry(0.3, 8, 6);
   // Zielfächer wie in 1.0: hell links und rechts, rot, sobald ein Gegner darin ist
   private fanGroup = new Group();
@@ -314,16 +314,25 @@ export class NavalSystem {
 
   private zoneLevel(x: number, z: number) { return seaLevelAt(x, z); }
 
-  private spawnEnemy(px: number, pz: number) {
+  /**
+   * Ein Schiff segelt am Horizont herein (nicht direkt vor der Nase) und folgt seiner eigenen Route.
+   * Heimatnahe Gewässer: vor allem Händler; weiter draußen mehr Patrouillen und Jäger.
+   * Ab und zu fährt ein Händler mit Begleitschutz.
+   */
+  private spawnEnemy(px: number, pz: number, forceRole?: NavalRole, near?: { x: number; z: number; heading: number }) {
     // Stärke hängt am Meer, nicht an der eigenen Stufe: wer aufsteigt, wird in alten Gewässern
     // spürbar überlegen – und muss sich in neue Meere erst hineinkämpfen.
-    const lvl = Math.max(1, this.zoneLevel(px, pz) + Math.floor(Math.random() * 3) - 1);
+    const zone = this.zoneLevel(px, pz);
+    const lvl = Math.max(1, zone + Math.floor(Math.random() * 3) - 1);
     const roll = Math.random();
-    const role: NavalRole = roll < 0.42 ? 'patrouille' : roll < 0.67 ? 'jaeger' : 'haendler';
-    for (let tries = 0; tries < 8; tries++) {
+    const merchantShare = zone <= 2 ? 0.45 : zone <= 6 ? 0.32 : 0.22;
+    const hunterShare = zone <= 2 ? 0.15 : zone <= 6 ? 0.3 : 0.42;
+    const role: NavalRole = forceRole ?? (roll < merchantShare ? 'haendler' : roll < merchantShare + hunterShare ? 'jaeger' : 'patrouille');
+    for (let tries = 0; tries < 10; tries++) {
       const a = Math.random() * Math.PI * 2;
-      const d = 240 + Math.random() * 80;
-      const x = px + Math.cos(a) * d, z = pz + Math.sin(a) * d;
+      const d = 420 + Math.random() * 140;
+      const x = near ? near.x - Math.sin(near.heading) * 28 + (Math.random() - 0.5) * 20 : px + Math.cos(a) * d;
+      const z = near ? near.z - Math.cos(near.heading) * 28 + (Math.random() - 0.5) * 20 : pz + Math.sin(a) * d;
       if (Math.hypot(x, z) > WORLD_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
       const foe: 'pirat' | 'marine' = role === 'haendler' ? (Math.random() < 0.5 ? 'pirat' : 'marine') : this.playerFaction === 'pirat' ? 'marine' : 'pirat';
       const tier = Math.max(0, Math.min(5, Math.floor(lvl / 2) + Math.floor(Math.random() * 2) - (role === 'haendler' ? 0 : 1)));
@@ -331,11 +340,26 @@ export class NavalSystem {
       if (role === 'haendler') { look.hull = HULL_COLORS[Math.floor(Math.random() * 3)]; look.sail = SAIL_COLORS[Math.floor(Math.random() * 3)]; look.flag = 'anker'; look.flagColor = '#2F6E4F'; look.figurehead = 'keine'; }
       // erfahrene Crews halten mehr aus (sonst wären Schiffe in hohen Meeren aus Papier)
       const ship = new Ship(this.scene, tier, look, foe, Math.round(SHIP_CLASSES[tier].hp * 0.07 * (lvl - 1)));
-      ship.x = x; ship.z = z; ship.heading = Math.random() * Math.PI * 2;
+      // Route: quer durch das Gebiet, am Spieler vorbei statt direkt auf ihn zu
+      const toP = Math.atan2(px - x, pz - z);
+      const heading = near ? near.heading : toP + (Math.random() < 0.5 ? 1 : -1) * (0.5 + Math.random() * 0.7);
+      ship.x = x; ship.z = z; ship.heading = heading;
       ship.prev = { x, z, heading: ship.heading };
-      this.enemies.push({ ship, role, level: lvl, state: 'patrol', wander: { x, z }, aiT: 0 });
-      return;
+      const far = 900;
+      const wander = { x: x + Math.sin(heading) * far, z: z + Math.cos(heading) * far };
+      const e: EnemyShip = { ship, role, level: lvl, state: 'patrol', wander, aiT: 60 };
+      this.enemies.push(e);
+      // Händler mit Begleitschutz
+      if (role === 'haendler' && !near && zone >= 2 && Math.random() < 0.35) this.spawnEnemy(px, pz, 'patrouille', { x, z, heading });
+      return e;
     }
+    return null;
+  }
+
+  /** Sichtweite, ab der ein Schiff angreift (vorher segelt es seine Route) – einmal im Gefecht, bleibt es länger dran */
+  private sight(e: EnemyShip) {
+    const base = e.role === 'legende' ? 480 : e.role === 'jaeger' ? 300 : e.ghost ? 320 : 220;
+    return e.state === 'engage' ? Math.max(base, 420) : base;
   }
 
   /** Legende der Rangliste in ihrem Heimatgewässer auftauchen lassen */
@@ -410,10 +434,17 @@ export class NavalSystem {
     const p = this.player;
     this.trainCd -= dt;
     if (p && active) {
-      this.spawnT -= dt;
-      const hostile = this.enemies.filter((e) => !e.companion && e.ship.alive).length;
-      const cap = Math.min(4, 2 + Math.floor(this.zoneLevel(p.x, p.z) / 3));
-      if (this.spawnT <= 0 && hostile < cap) { this.spawnT = 10 + Math.random() * 6; this.spawnEnemy(p.x, p.z); }
+      // Begegnungen statt Dauerbeschuss: nach einem Gefecht kehrt erst Ruhe ein, neue Schiffe kommen vom Horizont
+      const fighting = this.enemies.some((e) => !e.companion && e.ship.alive && !e.ship.sinking && e.state === 'engage' && e.role !== 'haendler');
+      if (!fighting) this.spawnT -= dt;
+      else this.spawnT = Math.max(this.spawnT, 25 + Math.random() * 15);
+      const zone = this.zoneLevel(p.x, p.z);
+      const present = this.enemies.filter((e) => !e.companion && e.ship.alive && !e.legendId).length;
+      const cap = zone <= 2 ? 2 : zone <= 6 ? 3 : 4;
+      if (this.spawnT <= 0 && present < cap) {
+        this.spawnT = (zone <= 2 ? 45 : 35) + Math.random() * 35;
+        this.spawnEnemy(p.x, p.z);
+      }
       this.ensureCompanions();
     }
     for (const e of this.enemies) this.ai(e, dt);
@@ -504,7 +535,7 @@ export class NavalSystem {
       s.speedCap = 11 - Math.max(0, SHIP_CLASSES.indexOf(s.cls)) * 0.4;
       if (threatened && p) { turn = steerTo(s.x * 2 - p.x, s.z * 2 - p.z); s.sailLevel = 2; e.state = 'flee'; }
       else { if (e.aiT <= 0 || Math.hypot(e.wander.x - s.x, e.wander.z - s.z) < 30) { e.aiT = 20; e.wander = { x: s.x + (Math.random() - 0.5) * 600, z: s.z + (Math.random() - 0.5) * 600 }; } turn = steerTo(e.wander.x, e.wander.z); s.sailLevel = 1; }
-    } else if (target && !e.companion && dist < (e.role === 'legende' ? 480 : 320)) {
+    } else if (target && !e.companion && dist < this.sight(e)) {
       // Wie in 1.0: in Breitseitenabstand umkreisen, feuern, sobald eine Seite zeigt
       e.state = 'engage';
       const tier = Math.max(0, SHIP_CLASSES.indexOf(s.cls));
@@ -534,7 +565,7 @@ export class NavalSystem {
           break;
         }
       }
-    } else if (target && dist < 420) {
+    } else if (target && e.companion && dist < 420) {
       e.state = s.hull < s.maxHull * 0.2 && e.role !== 'legende' && !e.companion ? 'flee' : 'engage';
       if (e.state === 'flee') { turn = steerTo(s.x * 2 - target.x, s.z * 2 - target.z); s.sailLevel = 2; }
       else {

@@ -36,10 +36,10 @@ const SEA: Bar[] = [
 ];
 
 export const SONGS: Record<SongId, Song> = {
-  menu: { id: 'menu', tempo: 0.24, steps: 6, lead: 'squeeze', bars: SEA },
-  sea: { id: 'sea', tempo: 0.19, steps: 6, lead: 'squeeze', bars: SEA },
+  menu: { id: 'menu', tempo: 0.27, steps: 6, lead: 'squeeze', bars: SEA },
+  sea: { id: 'sea', tempo: 0.215, steps: 6, lead: 'squeeze', bars: SEA },
   harbor: {
-    id: 'harbor', tempo: 0.16, steps: 6, lead: 'squeeze',
+    id: 'harbor', tempo: 0.18, steps: 6, lead: 'squeeze',
     bars: [
       { mel: [67, 71, 74, 72, 71, 69], bass: [43, 50], chord: G },
       { mel: [72, 76, 74, 72, 71, 69], bass: [48, 55], chord: C },
@@ -52,7 +52,7 @@ export const SONGS: Record<SongId, Song> = {
     ],
   },
   night: {
-    id: 'night', tempo: 0.27, steps: 6, lead: 'flute',
+    id: 'night', tempo: 0.3, steps: 6, lead: 'flute',
     bars: [
       { mel: [64, 0, 67, 71, 0, 69], bass: [40, 47], chord: Em },
       { mel: [67, 0, 66, 64, 0, 0], bass: [48, 55], chord: C },
@@ -92,7 +92,7 @@ export const SONGS: Record<SongId, Song> = {
   },
   // Nordwacht: getragener Seemannschor in d-Moll
   north: {
-    id: 'north', tempo: 0.23, steps: 6, lead: 'squeeze', transpose: -2,
+    id: 'north', tempo: 0.26, steps: 6, lead: 'squeeze', transpose: -2,
     bars: [
       { mel: [62, 0, 65, 69, 0, 67], alt: [74, 0, 0, 72, 0, 0], bass: [38, 45], chord: Dm },
       { mel: [65, 0, 64, 62, 0, 0], alt: [72, 0, 0, 69, 0, 0], bass: [46, 53], chord: [58, 62, 65] },
@@ -106,7 +106,7 @@ export const SONGS: Record<SongId, Song> = {
   },
   // Glutring: treibender Tanz in e-Phrygisch
   ember: {
-    id: 'ember', tempo: 0.15, steps: 6, lead: 'squeeze',
+    id: 'ember', tempo: 0.168, steps: 6, lead: 'squeeze',
     bars: [
       { mel: [64, 65, 64, 0, 67, 65], bass: [40, 47], chord: Em },
       { mel: [64, 0, 62, 60, 62, 64], bass: [41, 48], chord: F },
