@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Sturm" parent="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">@color/sea</item>
+        <item name="android:statusBarColor">@color/sea</item>
+        <item name="android:navigationBarColor">@color/sea</item>
+    </style>
+    <color name="sea">#0B1A2A</color>
+</resources>

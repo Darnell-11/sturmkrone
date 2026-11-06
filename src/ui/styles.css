@@ -536,5 +536,5 @@ body { background: #0b0f14; }
 }
 
 /* Installieren und Teilen im Hauptmenü */
-.share-row { gap: 8px; }
-.share-row .secondary { flex: 1; font-size: 0.86rem; padding-left: 8px; padding-right: 8px; }
+.share-row { gap: 8px; flex-wrap: wrap; }
+.share-row .secondary { flex: 1 1 40%; font-size: 0.86rem; padding-left: 8px; padding-right: 8px; }

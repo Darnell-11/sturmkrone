@@ -129,7 +129,8 @@ export class Input {
   private onKeyDown = (e: KeyboardEvent) => {
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
-    this.setDevice('keyboard');
+    // Nur eine echte Tastatur schaltet die Bedienung um – nicht die Zurück-Taste der Android-App, die Esc nachahmt
+    if (e.isTrusted) this.setDevice('keyboard');
     if (this.captureNext) {
       e.preventDefault();
       const cb = this.captureNext;

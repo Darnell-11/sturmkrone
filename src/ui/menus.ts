@@ -16,7 +16,7 @@ import { ACHIEVEMENTS } from '../data/achievements';
 import { ARMOR, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, WEAPON_LINES, type IslandDef } from '../data/regions';
 import { stepText } from '../story/questSystem';
 import { drawMap } from './minimap';
-import { gameUrl, installHelp, installWay, promptInstall, shareGame } from '../core/install';
+import { appDownload, gameUrl, installHelp, installWay, promptInstall, shareGame } from '../core/install';
 import { audio } from '../audio/audio';
 
 type Handler = (id: string, el: HTMLElement) => void;
@@ -110,6 +110,7 @@ export class Menus {
 
   showMain(note = '') {
     const g = this.game;
+    const dl = appDownload();
     this.open(
       `<div class="title-card">
         <img class="logo" src="${LOGO}" alt="">
@@ -122,6 +123,7 @@ export class Menus {
         <div class="row share-row">
           ${installWay() === 'done' ? '' : '<button class="secondary" data-a="install">📲 Als App installieren</button>'}
           <button class="secondary" data-a="share">🔗 Spiel teilen</button>
+          ${dl ? `<button class="secondary" data-a="download">${esc(dl.label)}</button>` : ''}
         </div>
         ${note ? `<p class="note">${esc(note)}</p>` : ''}
         <p class="ver">Version ${esc(__APP_VERSION__)} · ${esc(__BUILD_DATE__)} · Sturmkrone 2.0</p>
@@ -133,6 +135,11 @@ export class Menus {
           const way = installWay();
           if (way === 'prompt') { const ok = await promptInstall(); this.showMain(ok ? 'Installiert! Sturmkrone liegt jetzt auf deinem Startbildschirm.' : ''); }
           else this.showMain(installHelp(way));
+        },
+        download: () => {
+          if (!dl) return;
+          location.href = dl.url;
+          this.showMain(dl.help);
         },
         share: async () => {
           const r = await shareGame();

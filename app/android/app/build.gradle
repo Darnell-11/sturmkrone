@@ -1,0 +1,59 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'io.github.darnell11.sturmkrone'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'io.github.darnell11.sturmkrone'
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+        buildConfigField 'String', 'GAME_URL', '"https://darnell-11.github.io/sturmkrone/"'
+        manifestPlaceholders = [cleartext: 'false']
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    // Signatur: auf GitHub aus geheimen Werten, sonst (beim Testen) der Entwicklungsschlüssel
+    signingConfigs {
+        release {
+            def ks = System.getenv('STURMKRONE_KEYSTORE')
+            if (ks) {
+                storeFile file(ks)
+                storePassword System.getenv('STURMKRONE_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('STURMKRONE_KEY_ALIAS') ?: 'sturmkrone'
+                keyPassword System.getenv('STURMKRONE_KEY_PASSWORD') ?: System.getenv('STURMKRONE_KEYSTORE_PASSWORD')
+            } else {
+                def dbg = android.signingConfigs.debug
+                storeFile dbg.storeFile
+                storePassword dbg.storePassword
+                keyAlias dbg.keyAlias
+                keyPassword dbg.keyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        // Testvariante: lädt die lokale Testversion vom PC (adb reverse tcp:4173 tcp:4173)
+        debug {
+            applicationIdSuffix '.test'
+            buildConfigField 'String', 'GAME_URL', '"http://localhost:4173/"'
+            manifestPlaceholders = [cleartext: 'true']
+        }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

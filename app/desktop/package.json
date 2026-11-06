@@ -1,0 +1,34 @@
+{
+  "name": "sturmkrone-desktop",
+  "productName": "Sturmkrone",
+  "version": "1.0.0",
+  "description": "Sturmkrone – Anime-Piratenabenteuer als PC-App",
+  "author": "Darnell-11",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.9.3",
+    "electron-builder": "26.17.0"
+  },
+  "build": {
+    "appId": "io.github.darnell11.sturmkrone",
+    "productName": "Sturmkrone",
+    "artifactName": "Sturmkrone-Setup.${ext}",
+    "files": ["main.cjs", "offline.html", "build/icon.png"],
+    "directories": { "output": "dist", "buildResources": "build" },
+    "win": { "target": "nsis", "icon": "build/icon.png" },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Sturmkrone",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

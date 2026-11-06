@@ -19,9 +19,18 @@ addEventListener('beforeinstallprompt', (e) => {
 });
 addEventListener('appinstalled', () => { deferred = null; listeners.forEach((f) => f()); });
 
+/** Brücke der Android-App (nur dort vorhanden): Dateien speichern und Teilen über Android selbst */
+interface AppBridge { saveFile?(name: string, text: string): void; share?(text: string): void }
+export const appBridge = (): AppBridge | undefined => (window as Window & { SturmApp?: AppBridge }).SturmApp;
+
+/** Läuft das Spiel in der heruntergeladenen App (PC oder Android)? */
+export function isApp(): boolean {
+  return /SturmkroneApp/.test(navigator.userAgent);
+}
+
 /** Läuft das Spiel schon als installierte App? */
 export function isInstalled(): boolean {
-  return matchMedia('(display-mode: fullscreen)').matches || matchMedia('(display-mode: standalone)').matches
+  return isApp() || matchMedia('(display-mode: fullscreen)').matches || matchMedia('(display-mode: standalone)').matches
     || (navigator as Navigator & { standalone?: boolean }).standalone === true;
 }
 
@@ -56,14 +65,38 @@ export function installHelp(way: InstallWay): string {
   return 'Im Browser-Menü (⋮ oder …) auf „App installieren“ bzw. „Zum Startbildschirm hinzufügen“ tippen. Danach startet Sturmkrone wie eine App – im Vollbild und auch ohne Internet.';
 }
 
+const RELEASES = 'https://github.com/Darnell-11/sturmkrone/releases/latest/download/';
+
+export interface AppDownload { label: string; url: string; help: string }
+
+/** Passende App-Datei für dieses Gerät: Windows-PC → Setup.exe, Android → .apk, sonst keine */
+export function appDownload(): AppDownload | null {
+  if (isApp()) return null;
+  const ua = navigator.userAgent;
+  if (/Android/i.test(ua)) return {
+    label: '⬇️ Android-App laden',
+    url: RELEASES + 'Sturmkrone.apk',
+    help: 'Die Datei „Sturmkrone.apk“ wird geladen. Öffne sie danach (z. B. in den Downloads) und tippe auf „Installieren“. Fragt dein Handy nach, erlaube einmal „Apps aus dieser Quelle installieren“ – das ist bei Apps außerhalb des Play Stores normal.',
+  };
+  if (/Windows/i.test(ua) && !/Phone/i.test(ua)) return {
+    label: '⬇️ PC-App laden',
+    url: RELEASES + 'Sturmkrone-Setup.exe',
+    help: 'Die Datei „Sturmkrone-Setup.exe“ wird geladen. Doppelklicke sie danach – Sturmkrone installiert sich in Sekunden und legt ein Symbol auf den Desktop. Zeigt Windows „Der Computer wurde durch Windows geschützt“, klicke auf „Weitere Informationen“ → „Trotzdem ausführen“.',
+  };
+  return null;
+}
+
 /** Link zum Spiel (ohne Entwicklungs-Parameter) */
 export function gameUrl(): string {
+  if (isApp()) return 'https://darnell-11.github.io/sturmkrone/';
   return location.origin + location.pathname;
 }
 
 /** Spiel teilen: Teilen-Menü des Geräts (WhatsApp, Telegram …) oder Link in die Zwischenablage */
 export async function shareGame(): Promise<'shared' | 'copied' | 'failed'> {
-  const url = gameUrl();
+  const url = isApp() ? 'https://darnell-11.github.io/sturmkrone/' : gameUrl();
+  const bridge = appBridge();
+  if (bridge?.share) { bridge.share(`Spiel Sturmkrone – ein Anime-Piratenabenteuer, direkt im Browser oder als App auf Handy und PC: ${url}`); return 'shared'; }
   const data = { title: 'Sturmkrone', text: 'Spiel Sturmkrone – ein Anime-Piratenabenteuer, direkt im Browser oder als App auf Handy und PC:', url };
   try {
     if (navigator.share) { await navigator.share(data); return 'shared'; }

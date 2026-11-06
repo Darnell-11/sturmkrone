@@ -16,6 +16,9 @@ export function formatDate(ts: number): string {
 }
 
 export function downloadText(filename: string, text: string) {
+  // In der Android-App kann die Webansicht keine Dateien laden – dort speichert Android selbst
+  const bridge = (window as Window & { SturmApp?: { saveFile?(n: string, t: string): void } }).SturmApp;
+  if (bridge?.saveFile) { bridge.saveFile(filename, text); return; }
   const blob = new Blob([text], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
