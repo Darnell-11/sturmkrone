@@ -1,0 +1,495 @@
+import {
+  BoxGeometry,
+  Color,
+  ConeGeometry,
+  CylinderGeometry,
+  DodecahedronGeometry,
+  Group,
+  IcosahedronGeometry,
+  Mesh,
+  MeshBasicMaterial,
+  PlaneGeometry,
+  SphereGeometry,
+  TorusGeometry,
+  DoubleSide,
+  type Material,
+  type MeshToonMaterial,
+} from 'three';
+import type { IslandDef, IslandStyle } from '../data/regions';
+import { toon } from '../render/toon';
+import type { WalkIsland } from './islandGround';
+import { plant, type StyleKit } from './islandStyle';
+import { hashId, seeded } from './waves';
+
+/** Ein Punkt in Inselkoordinaten (y = Bodenhöhe) */
+export interface Spot { x: number; y: number; z: number }
+
+export interface DressOpts {
+  group: Group;
+  def: IslandDef;
+  kit: StyleKit;
+  walk: WalkIsland;
+  hAt: (x: number, z: number) => number;
+  glow: Set<Mesh>;
+  density: number;
+  style: IslandStyle;
+}
+
+const FLOWERS: Record<IslandStyle, string[]> = {
+  tropisch: ['#C8443C', '#E8B84A', '#EFE9DA', '#B663C2', '#E07A3A'],
+  nebel: ['#B8C2C4', '#8C9E94', '#D8D4C4'],
+  nord: ['#E4E0D2', '#7BA2C4', '#C8B256'],
+  glut: ['#D2602E', '#8C4432'],
+  sturm: ['#C2CCD2', '#8FA0AC'],
+  schlund: ['#78D8F2', '#A886F0'],
+};
+
+/**
+ * Stattet eine Insel aus: Pflanzen, Felsen, Strandgut und – je nach Art – Lager, Dorf, Wrack, Ruine oder Wehranlage.
+ * Alles wird aus dem Namen der Insel ausgewürfelt: jede Insel sieht anders aus, aber bei jedem Start gleich.
+ * Liefert Baum-, Busch- und Feuerplätze für Tiere und Effekte.
+ */
+export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fires: Spot[] } {
+  const { group, def, kit, walk, hAt, glow, style } = o;
+  const rnd = seeded(hashId(def.id) ^ 0x9e3779b9);
+  const r = def.r;
+  const dens = Math.max(0.4, Math.min(1.6, o.density));
+  const trees: Spot[] = [], bushes: Spot[] = [], fires: Spot[] = [];
+  // belegte Flächen (Inselkoordinaten): vorhandene Hindernisse plus alles, was hier entsteht
+  const taken: { x: number; z: number; r: number }[] = walk.blockers.map((b) => ({ x: b.x - walk.x, z: b.z - walk.z, r: b.r }));
+  if (def.kind === 'ruin' || def.kind === 'boss') taken.push({ x: 0, z: 0, r: 6 }); // Kristall / Bosskampf in der Mitte
+  // Grabstelle für Schatzkarten freihalten (gleiche Formel wie SeaLife.addDig)
+  { const da = (def.x * 13 + def.z * 7) % (Math.PI * 2); taken.push({ x: Math.cos(da) * r * 0.55, z: Math.sin(da) * r * 0.55, r: 3 }); }
+  const free = (x: number, z: number, rr: number) => taken.every((t) => Math.hypot(x - t.x, z - t.z) > t.r + rr);
+  const block = (x: number, z: number, rr: number) => { taken.push({ x, z, r: rr }); walk.blockers.push({ x: walk.x + x, z: walk.z + z, r: rr }); };
+  const spot = (minD: number, maxD: number, rr: number, tries = 12): { x: number; z: number } | null => {
+    for (let i = 0; i < tries; i++) {
+      const a = rnd() * Math.PI * 2, d = r * (minD + rnd() * (maxD - minD));
+      const x = Math.cos(a) * d, z = Math.sin(a) * d;
+      if (free(x, z, rr)) return { x, z };
+    }
+    return null;
+  };
+  const put = (m: Group | Mesh, x: number, z: number, yaw = rnd() * Math.PI * 2, sink = 0) => {
+    m.position.set(x, hAt(x, z) - sink, z);
+    m.rotation.y = yaw;
+    group.add(m);
+    return m;
+  };
+  const grassCol = new Color(((kit.grass as MeshToonMaterial).color ?? new Color('#55894a')).getHex());
+  const rockCol = new Color(((kit.rock as MeshToonMaterial).color ?? new Color('#7a746a')).getHex());
+  const tuftMats = [0.85, 1, 1.18].map((k) => toon({ color: grassCol.clone().multiplyScalar(k), flatShading: true }));
+  const rockMats = [0.85, 1, 1.15].map((k) => toon({ color: rockCol.clone().multiplyScalar(k), flatShading: true }));
+  const darkWood = toon('#4A3220'), canvas = toon({ color: '#C9B48E', side: DoubleSide });
+
+  // ---------- Bauten je Inselart (zuerst, damit sie Platz bekommen) ----------
+  switch (def.kind) {
+    case 'camp': {
+      const c = spot(0.18, 0.45, 5, 20) ?? { x: r * 0.3, z: 0 };
+      const fire = campfire(glow);
+      put(fire, c.x, c.z, 0);
+      fires.push({ x: c.x, y: hAt(c.x, c.z) + 0.4, z: c.z });
+      block(c.x, c.z, 1.1);
+      const n = 2 + Math.floor(rnd() * 3);
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + rnd() * 0.5, d = 4.5 + rnd() * 2;
+        const x = c.x + Math.cos(a) * d, z = c.z + Math.sin(a) * d;
+        if (!free(x, z, 1.8)) continue;
+        put(tent(canvas, darkWood, rnd), x, z, Math.atan2(c.x - x, c.z - z));
+        block(x, z, 1.7);
+      }
+      // Palisade auf der Seeseite
+      const pa = Math.atan2(c.z, c.x);
+      for (let k = -5; k <= 5; k++) {
+        const a = pa + k * 0.09, d = Math.hypot(c.x, c.z) + 9;
+        const x = Math.cos(a) * d, z = Math.sin(a) * d;
+        if (d > r * 0.9 || !free(x, z, 0.3)) continue;
+        const stake = new Mesh(new ConeGeometry(0.22, 2.6 + rnd() * 0.6, 5), darkWood);
+        put(stake, x, z, 0, 0.2).position.y += 1.2;
+      }
+      const rack = weaponRack(darkWood);
+      const rp = spot(0.2, 0.6, 1.2);
+      if (rp) { put(rack, rp.x, rp.z); block(rp.x, rp.z, 0.8); }
+      const banner = flag('#5A1E1A', darkWood);
+      const bp = spot(0.2, 0.55, 0.5);
+      if (bp) put(banner, bp.x, bp.z);
+      break;
+    }
+    case 'quiet': {
+      const c = spot(0.1, 0.35, 6, 20) ?? { x: 0, z: 0 };
+      const n = 3 + Math.floor(rnd() * 3);
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + rnd() * 0.4, d = 6 + rnd() * 3;
+        const x = c.x + Math.cos(a) * d, z = c.z + Math.sin(a) * d;
+        if (Math.hypot(x, z) > r * 0.82 || !free(x, z, 2.4)) continue;
+        put(hut(rnd), x, z, Math.atan2(c.x - x, c.z - z));
+        block(x, z, 2.2);
+      }
+      const pit = campfire(glow, true);
+      put(pit, c.x, c.z, 0);
+      fires.push({ x: c.x, y: hAt(c.x, c.z) + 0.3, z: c.z });
+      // Netze trocknen am Strand, Ruderboote liegen im Sand
+      for (let i = 0; i < 2; i++) {
+        const a = rnd() * Math.PI * 2, d = r * 0.84;
+        const x = Math.cos(a) * d, z = Math.sin(a) * d;
+        if (!free(x, z, 1.6)) continue;
+        put(i === 0 ? netRack(darkWood) : rowboat(), x, z, a + Math.PI / 2);
+        block(x, z, 1.2);
+      }
+      break;
+    }
+    case 'treasure': {
+      const a = rnd() * Math.PI * 2, d = r * 0.8;
+      const x = Math.cos(a) * d, z = Math.sin(a) * d;
+      put(wreck(rnd), x, z, a + Math.PI / 2 + (rnd() - 0.5) * 0.6, 0.6);
+      block(x, z, 3.2);
+      break;
+    }
+    case 'ruin': {
+      const stone = toon({ color: rockCol.clone().lerp(new Color('#D8D0C0'), 0.5), flatShading: true });
+      const n = 7 + Math.floor(rnd() * 5);
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2, d = r * (0.32 + rnd() * 0.12);
+        const x = Math.cos(a) * d, z = Math.sin(a) * d;
+        if (!free(x, z, 0.9)) continue;
+        const h = rnd() < 0.4 ? 1 + rnd() * 2 : 4 + rnd() * 3;
+        const p = new Group();
+        const shaft = new Mesh(new CylinderGeometry(0.55, 0.65, h, 8), stone);
+        shaft.position.y = h / 2;
+        const base = new Mesh(new BoxGeometry(1.6, 0.5, 1.6), stone);
+        base.position.y = 0.25;
+        p.add(shaft, base);
+        if (h > 4) { const cap = new Mesh(new BoxGeometry(1.5, 0.4, 1.5), stone); cap.position.y = h; p.add(cap); }
+        p.rotation.z = (rnd() - 0.5) * (h < 3 ? 0.4 : 0.12);
+        put(p, x, z);
+        block(x, z, 0.8);
+      }
+      const arch = new Group();
+      for (const s of [-1, 1]) { const leg = new Mesh(new BoxGeometry(1.2, 6, 1.2), stone); leg.position.set(s * 2.6, 3, 0); arch.add(leg); }
+      const top = new Mesh(new TorusGeometry(2.6, 0.6, 4, 10, Math.PI), stone);
+      top.position.y = 6;
+      arch.add(top);
+      const ap = spot(0.55, 0.72, 3);
+      if (ap) { put(arch, ap.x, ap.z); block(ap.x + 2.6, ap.z, 0.8); block(ap.x - 2.6, ap.z, 0.8); }
+      for (let i = 0; i < 8; i++) {
+        const p = spot(0.2, 0.8, 0.8, 4);
+        if (!p) continue;
+        const blk = new Mesh(new BoxGeometry(1 + rnd(), 0.6 + rnd() * 0.5, 1 + rnd()), stone);
+        blk.rotation.set((rnd() - 0.5) * 0.4, rnd() * 3, (rnd() - 0.5) * 0.4);
+        put(blk, p.x, p.z, blk.rotation.y, -0.2);
+      }
+      break;
+    }
+    case 'boss': {
+      if (style === 'glut') break; // dort steht der Vulkan
+      const stone = toon({ color: rockCol.clone().lerp(new Color('#8A8478'), 0.4), flatShading: true });
+      for (let i = 0; i < 2; i++) {
+        const p = spot(0.45, 0.7, 3.2, 20);
+        if (!p) continue;
+        put(watchtower(stone, darkWood, rnd), p.x, p.z);
+        block(p.x, p.z, 2.6);
+      }
+      const wa = rnd() * Math.PI * 2;
+      for (let k = -4; k <= 4; k++) {
+        const a = wa + k * 0.12, d = r * 0.62;
+        const x = Math.cos(a) * d, z = Math.sin(a) * d;
+        if (!free(x, z, 1.4)) continue;
+        const seg = new Mesh(new BoxGeometry(d * 0.13, 2.8, 1.2), stone);
+        put(seg, x, z, -a + Math.PI / 2, 0.3).position.y += 1.2;
+        block(x, z, 1.2);
+      }
+      break;
+    }
+    case 'lighthouse': {
+      const p = spot(0.35, 0.6, 2.5);
+      if (p) { put(hut(rnd), p.x, p.z); block(p.x, p.z, 2.2); }
+      break;
+    }
+  }
+
+  // ---------- Bäume ----------
+  const nTrees = Math.round((r * 0.16 + 1) * dens * (0.5 + rnd()));
+  for (let i = 0; i < nTrees; i++) {
+    const p = spot(0.1, 0.78, 1.4);
+    if (!p) continue;
+    let t: Group;
+    if (style === 'tropisch' && rnd() < 0.55) t = broadleaf(kit, rnd);
+    else t = plant(kit, rnd);
+    t.scale.setScalar(0.75 + rnd() * 0.6);
+    t.traverse((c) => { if (c.userData.noOutline) glow.add(c as Mesh); });
+    put(t, p.x, p.z, undefined, 0.1);
+    block(p.x, p.z, 0.6);
+    trees.push({ x: p.x, y: hAt(p.x, p.z), z: p.z });
+  }
+
+  // ---------- Strandpflanzen: ein paar schiefe Palmen bzw. Sträucher auf dem Sand ----------
+  if (style === 'tropisch' || style === 'nord') {
+    for (let i = 0; i < Math.round(r * 0.1 * dens); i++) {
+      const p = spot(0.72, 0.86, 1.2, 6);
+      if (!p) continue;
+      const t = plant(kit, rnd);
+      t.scale.setScalar(0.6 + rnd() * 0.35);
+      t.rotation.z = (rnd() - 0.5) * 0.5;
+      put(t, p.x, p.z, undefined, 0.1);
+      block(p.x, p.z, 0.5);
+      trees.push({ x: p.x, y: hAt(p.x, p.z), z: p.z });
+    }
+  }
+
+  // ---------- Büsche, Gras, Blumen ----------
+  const lush = style === 'tropisch' || style === 'nord' || style === 'nebel';
+  const nBush = Math.round(r * (lush ? 0.55 : 0.25) * dens * (0.5 + rnd()));
+  for (let i = 0; i < nBush; i++) {
+    const p = spot(0.08, 0.86, 0.9, 6);
+    if (!p) continue;
+    const b = new Group();
+    const mat = tuftMats[Math.floor(rnd() * 3)];
+    for (let k = 0; k < 2 + Math.floor(rnd() * 3); k++) {
+      const s = 0.45 + rnd() * 0.55;
+      const m = new Mesh(new IcosahedronGeometry(s, 0), mat);
+      m.position.set((rnd() - 0.5) * 1.2, s * 0.6, (rnd() - 0.5) * 1.2);
+      m.scale.y = 0.75;
+      b.add(m);
+    }
+    put(b, p.x, p.z);
+    taken.push({ x: p.x, z: p.z, r: 0.8 });
+    bushes.push({ x: p.x, y: hAt(p.x, p.z), z: p.z });
+  }
+  const nTuft = Math.round(r * (lush ? 1.6 : 0.6) * dens);
+  for (let i = 0; i < nTuft; i++) {
+    const a = rnd() * Math.PI * 2, d = r * Math.sqrt(rnd()) * 0.86;
+    const x = Math.cos(a) * d, z = Math.sin(a) * d;
+    if (!free(x, z, 0.2)) continue;
+    const tuft = new Group();
+    const mat = tuftMats[Math.floor(rnd() * 3)];
+    for (let k = 0; k < 3; k++) {
+      const h = 0.35 + rnd() * 0.45;
+      const blade = new Mesh(new ConeGeometry(0.07, h, 3), mat);
+      blade.position.set((rnd() - 0.5) * 0.3, h / 2, (rnd() - 0.5) * 0.3);
+      blade.rotation.set((rnd() - 0.5) * 0.5, 0, (rnd() - 0.5) * 0.5);
+      tuft.add(blade);
+    }
+    put(tuft, x, z);
+  }
+  const flowers = FLOWERS[style];
+  const nFlower = Math.round(r * (style === 'tropisch' || style === 'nord' ? 0.7 : 0.2) * dens);
+  for (let i = 0; i < nFlower; i++) {
+    const a = rnd() * Math.PI * 2, d = r * Math.sqrt(rnd()) * 0.8;
+    const x = Math.cos(a) * d, z = Math.sin(a) * d;
+    if (!free(x, z, 0.2)) continue;
+    const f = new Group();
+    const col = flowers[Math.floor(rnd() * flowers.length)];
+    const petal = style === 'schlund' ? glowPetal(col) : toon(col);
+    for (let k = 0; k < 2 + Math.floor(rnd() * 3); k++) {
+      const stem = new Mesh(new CylinderGeometry(0.015, 0.015, 0.35, 3), tuftMats[0]);
+      const ox = (rnd() - 0.5) * 0.5, oz = (rnd() - 0.5) * 0.5;
+      stem.position.set(ox, 0.17, oz);
+      const head = new Mesh(new SphereGeometry(0.07, 5, 4), petal);
+      head.position.set(ox, 0.36, oz);
+      f.add(stem, head);
+    }
+    put(f, x, z);
+  }
+
+  // ---------- Felsen und Strandgut ----------
+  const nRock = Math.round((2 + r * 0.12) * (0.6 + rnd() * 0.8));
+  for (let i = 0; i < nRock; i++) {
+    const inWater = rnd() < 0.35;
+    const a = rnd() * Math.PI * 2;
+    const d = r * (inWater ? 1.0 + rnd() * 0.12 : 0.55 + rnd() * 0.4);
+    const x = Math.cos(a) * d, z = Math.sin(a) * d;
+    const s = (inWater ? 1.2 : 0.6) + rnd() * (inWater ? 2.2 : 1.4);
+    if (!inWater && !free(x, z, s)) continue;
+    const rock = new Mesh(new DodecahedronGeometry(s, 0), rockMats[Math.floor(rnd() * 3)]);
+    rock.scale.set(1 + rnd() * 0.5, 0.6 + rnd() * (inWater ? 1.4 : 0.6), 1 + rnd() * 0.5);
+    rock.rotation.set(rnd(), rnd() * 6, rnd());
+    rock.position.set(x, (inWater ? 0 : hAt(x, z)) + s * 0.25, z);
+    group.add(rock);
+    if (!inWater) block(x, z, s * 0.9);
+  }
+  if (style !== 'glut') {
+    for (let i = 0; i < 1 + Math.floor(rnd() * 3); i++) {
+      const a = rnd() * Math.PI * 2, d = r * (0.88 + rnd() * 0.08);
+      const log = new Mesh(new CylinderGeometry(0.16, 0.2, 2.4 + rnd() * 2, 6), toon('#9C8A6E'));
+      log.rotation.set(Math.PI / 2, 0, rnd() * 3);
+      log.position.set(Math.cos(a) * d, hAt(Math.cos(a) * d, Math.sin(a) * d) + 0.12, Math.sin(a) * d);
+      group.add(log);
+    }
+    const shellMat = toon('#EFD9C2'), starMat = toon('#D2603A');
+    for (let i = 0; i < Math.round(6 * dens); i++) {
+      const a = rnd() * Math.PI * 2, d = r * (0.86 + rnd() * 0.1);
+      const star = rnd() < 0.3;
+      const m = new Mesh(star ? new ConeGeometry(0.18, 0.05, 5) : new SphereGeometry(0.1, 5, 3), star ? starMat : shellMat);
+      if (!star) m.scale.y = 0.5;
+      m.position.set(Math.cos(a) * d, hAt(Math.cos(a) * d, Math.sin(a) * d) + 0.03, Math.sin(a) * d);
+      m.userData.noOutline = true;
+      group.add(m);
+    }
+  }
+
+  return { trees, bushes, fires };
+}
+
+// ---------- Bausteine ----------
+
+const petalCache = new Map<string, MeshBasicMaterial>();
+/** Leuchtende Blüte (Schlundriff) – geteiltes Material, damit alle Blüten zusammengefasst werden */
+function glowPetal(col: string) {
+  let m = petalCache.get(col);
+  if (!m) { m = new MeshBasicMaterial({ color: new Color(col).multiplyScalar(2.2) }); petalCache.set(col, m); }
+  return m;
+}
+
+/** Laubbaum: knorriger Stamm und mehrere Kronenballen */
+function broadleaf(kit: StyleKit, rnd: () => number): Group {
+  const g = new Group();
+  const h = 4 + rnd() * 3;
+  const trunk = new Mesh(new CylinderGeometry(0.22, 0.38, h, 6), kit.trunk);
+  trunk.position.y = h / 2;
+  trunk.rotation.z = (rnd() - 0.5) * 0.15;
+  g.add(trunk);
+  for (let i = 0; i < 4; i++) {
+    const s = 1.4 + rnd() * 1.1;
+    const b = new Mesh(new IcosahedronGeometry(s, 0), kit.leaf);
+    b.position.set((rnd() - 0.5) * 2.2, h + (rnd() - 0.2) * 1.4, (rnd() - 0.5) * 2.2);
+    b.scale.y = 0.8;
+    g.add(b);
+  }
+  return g;
+}
+
+/** Lagerfeuer: Steinring, Holzscheite, Glut (Rauch und Funken macht die Welt) */
+function campfire(glow: Set<Mesh>, small = false): Group {
+  const g = new Group();
+  const stone = toon({ color: '#6E6A64', flatShading: true });
+  const n = small ? 7 : 9;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const s = new Mesh(new DodecahedronGeometry(0.22, 0), stone);
+    s.position.set(Math.cos(a) * 0.75, 0.12, Math.sin(a) * 0.75);
+    g.add(s);
+  }
+  for (let i = 0; i < 4; i++) {
+    const log = new Mesh(new CylinderGeometry(0.08, 0.1, 1.1, 5), toon('#3A2A1E'));
+    log.rotation.set(0.5, (i / 4) * Math.PI * 2, 0);
+    log.position.y = 0.3;
+    g.add(log);
+  }
+  const ember = new Mesh(new ConeGeometry(0.4, 0.8, 6), new MeshBasicMaterial({ color: new Color(4, 1.4, 0.3) }));
+  ember.position.y = 0.45;
+  ember.userData.noOutline = true;
+  glow.add(ember);
+  g.add(ember);
+  return g;
+}
+
+/** Zelt aus Segeltuch */
+function tent(cloth: Material, pole: Material, rnd: () => number): Group {
+  const g = new Group();
+  const w = 2.6 + rnd() * 0.8;
+  const body = new Mesh(new ConeGeometry(w, 2.4, 4, 1, true), cloth);
+  body.rotation.y = Math.PI / 4;
+  body.scale.set(1, 1, 1.4);
+  body.position.y = 1.2;
+  const p = new Mesh(new CylinderGeometry(0.05, 0.05, 2.8, 4), pole);
+  p.position.y = 1.4;
+  g.add(body, p);
+  return g;
+}
+
+function weaponRack(wood: Material): Group {
+  const g = new Group();
+  const bar = new Mesh(new BoxGeometry(1.8, 0.1, 0.1), wood);
+  bar.position.y = 1.1;
+  g.add(bar);
+  for (const s of [-1, 1]) { const leg = new Mesh(new BoxGeometry(0.1, 1.2, 0.1), wood); leg.position.set(s * 0.85, 0.6, 0); g.add(leg); }
+  const steel = toon({ color: '#B8C0C8', spec: 1 });
+  for (let i = 0; i < 4; i++) {
+    const blade = new Mesh(new BoxGeometry(0.06, 1.4, 0.02), steel);
+    blade.position.set(-0.6 + i * 0.4, 0.75, 0.08);
+    blade.rotation.z = 0.12;
+    g.add(blade);
+  }
+  return g;
+}
+
+function flag(col: string, wood: Material): Group {
+  const g = new Group();
+  const pole = new Mesh(new CylinderGeometry(0.06, 0.08, 5, 5), wood);
+  pole.position.y = 2.5;
+  const cloth = new Mesh(new PlaneGeometry(1.5, 1), toon({ color: col, side: DoubleSide }));
+  cloth.position.set(0.78, 4.4, 0);
+  cloth.userData.noOutline = true;
+  g.add(pole, cloth);
+  return g;
+}
+
+/** Hütte mit Lehmwand und Strohdach */
+function hut(rnd: () => number): Group {
+  const g = new Group();
+  const r = 1.8 + rnd() * 0.6;
+  const wall = new Mesh(new CylinderGeometry(r, r * 1.05, 2.2, 10), toon(['#C9B28E', '#BFA27A', '#D2C2A2'][Math.floor(rnd() * 3)]));
+  wall.position.y = 1.1;
+  const roof = new Mesh(new ConeGeometry(r * 1.45, 2.2, 10), toon({ color: ['#8C7442', '#9C824C', '#7C6A3E'][Math.floor(rnd() * 3)], flatShading: true }));
+  roof.position.y = 3.2;
+  const door = new Mesh(new BoxGeometry(0.9, 1.6, 0.1), toon('#4A3220'));
+  door.position.set(0, 0.8, r - 0.02);
+  g.add(wall, roof, door);
+  return g;
+}
+
+function netRack(wood: Material): Group {
+  const g = new Group();
+  for (const s of [-1, 1]) { const p = new Mesh(new CylinderGeometry(0.06, 0.07, 2, 4), wood); p.position.set(s * 1.4, 1, 0); g.add(p); }
+  const net = new Mesh(new PlaneGeometry(2.8, 1.4, 6, 3), toon({ color: '#6E7A6A', side: DoubleSide }));
+  net.position.y = 1.2;
+  net.userData.noOutline = true;
+  g.add(net);
+  return g;
+}
+
+function rowboat(): Group {
+  const g = new Group();
+  const hull = new Mesh(new SphereGeometry(1, 10, 6, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), toon({ color: '#7A5232', side: DoubleSide }));
+  hull.scale.set(0.8, 0.45, 2);
+  hull.position.y = 0.45;
+  hull.rotation.z = 0.15;
+  g.add(hull);
+  return g;
+}
+
+/** Gestrandetes Wrack: schiefer Rumpf mit gebrochenem Mast */
+function wreck(rnd: () => number): Group {
+  const g = new Group();
+  const hullMat = toon({ color: '#5A3E26', side: DoubleSide });
+  const hull = new Mesh(new CylinderGeometry(2.4, 2.4, 9, 10, 1, true, 0, Math.PI), hullMat);
+  hull.rotation.set(Math.PI / 2, 0, Math.PI);
+  hull.position.y = 1.2;
+  g.add(hull);
+  for (let i = 0; i < 5; i++) {
+    const rib = new Mesh(new TorusGeometry(2.4, 0.12, 4, 8, Math.PI), toon('#3E2A1A'));
+    rib.rotation.set(0, Math.PI / 2, Math.PI);
+    rib.position.set(0, 1.2, -3.6 + i * 1.8);
+    g.add(rib);
+  }
+  const mast = new Mesh(new CylinderGeometry(0.15, 0.2, 5, 6), toon('#4A3220'));
+  mast.position.set(0, 3, 1);
+  mast.rotation.z = 0.7 + rnd() * 0.3;
+  g.add(mast);
+  g.rotation.z = 0.25;
+  return g;
+}
+
+/** Wachturm aus Stein mit Holzdach */
+function watchtower(stone: Material, wood: Material, rnd: () => number): Group {
+  const g = new Group();
+  const h = 7 + rnd() * 3;
+  const body = new Mesh(new CylinderGeometry(1.8, 2.3, h, 8), stone);
+  body.position.y = h / 2;
+  const top = new Mesh(new CylinderGeometry(2.4, 2.2, 0.8, 8), stone);
+  top.position.y = h + 0.4;
+  const roof = new Mesh(new ConeGeometry(2.6, 2.4, 8), wood);
+  roof.position.y = h + 2;
+  g.add(body, top, roof);
+  return g;
+}

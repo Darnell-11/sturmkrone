@@ -6,6 +6,7 @@ import {
   Color,
   ConeGeometry,
   CylinderGeometry,
+  DodecahedronGeometry,
   Group,
   MathUtils,
   Mesh,
@@ -32,7 +33,11 @@ import { Environment, type EnvState } from './environment';
 import { IslandGround, type WalkIsland } from './islandGround';
 import type { IslandShape } from './ocean';
 import { ParticleSystem } from './particles';
-import { seeded } from './waves';
+import { hashId, seeded } from './waves';
+import { dressIsland } from './islandDress';
+import { IslandFauna } from './fauna';
+import { texDetail } from '../render/texDetail';
+import type { IslandStyle } from '../data/regions';
 import { CombatFx } from '../combat/fx';
 import { CombatSystem } from '../combat/combat';
 import type { EnemyKind } from '../data/combat';
@@ -66,6 +71,9 @@ const CAMP_BY_LEVEL: EnemyKind[][] = [
 ];
 
 const WAKE_INTERVAL = 0.22;
+
+/** Inselstil einer Region */
+const styleOf = (regionId?: string): IslandStyle => REGIONS.find((r) => r.id === regionId)?.style ?? 'tropisch';
 
 interface WakePoint { x: number; z: number; age: number; strength: number }
 
@@ -179,6 +187,13 @@ export class SeaWorld {
   /** Stege als Strecke a→b mit halber Breite (Schiffskollision) */
   private piers: { ax: number; az: number; bx: number; bz: number; hw: number }[] = [];
   private lamps: Mesh[] = [];
+  /** Inselgruppen (für das Ausblenden jenseits der Sichtweite) */
+  private islandGroups: { g: Group; x: number; z: number; r: number }[] = [];
+  private viewDist = 800;
+  /** Lagerfeuer auf den Inseln (Rauch und Glut) */
+  private campfires: { x: number; y: number; z: number }[] = [];
+  /** Krabben, Schildkröten, Vögel, Glühwürmchen und springende Fische */
+  readonly fauna: IslandFauna;
   private spray: ParticleSystem;
   private sparks: ParticleSystem;
   /** Pulverdampf, Schornsteine, Vulkane, Rauchsäulen */
@@ -220,12 +235,15 @@ export class SeaWorld {
     this.ship = new Ship(this.scene, 0, DEFAULT_SHIP_LOOK('pirat'), 'pirat');
     this.boat = this.ship.model.group;
 
+    this.fauna = new IslandFauna(this.scene);
     this.islands = this.buildIslands();
     this.env.setIslands(this.islands);
     this.buildBuoys();
     this.spray = new ParticleSystem(this.scene, false, 0.8);
     this.sparks = new ParticleSystem(this.scene, true, 0.32);
     this.dust = new ParticleSystem(this.scene, false, 0.7);
+    this.fauna.spray = this.spray;
+    this.fauna.sparks = this.sparks;
     this.smoke = new SmokeSystem(this.scene);
     this.debris = new DebrisSystem(this.scene);
     this.debris.onSplash = (x, z, big) => {
@@ -263,20 +281,52 @@ export class SeaWorld {
       const { r } = s;
       const isl = new Group();
       isl.position.set(s.x, 0, s.z);
-      const walk: WalkIsland = { x: s.x, z: s.z, r, beachY: 1.3, hillR: r * 0.75, hillScale: s.hill, hillY: 1.2, blockers: [] };
+      const town = s.def.kind === 'town';
+      // Jede Insel bekommt ihre eigene Form: Hügel versetzt, schmaler oder breiter, flacher oder höher.
+      // Stadt, Häfen, Leuchtturm und Vulkane bleiben mittig (ihre Bauten stehen um die Mitte).
+      const shape = seeded(hashId(s.def.id));
+      const centered = town || s.def.kind === 'harbor' || s.tower || s.def.region === 'glut';
+      const hillFrac = centered ? 0.75 : 0.55 + shape() * 0.22;
+      const offR = centered ? 0 : shape() * (0.86 - hillFrac) * r;
+      const offA = shape() * Math.PI * 2;
+      const hx = Math.cos(offA) * offR, hz = Math.sin(offA) * offR;
+      const hillScale = centered ? s.hill : s.hill * (0.75 + shape() * 0.7);
+      const walk: WalkIsland = { x: s.x, z: s.z, r, beachY: 1.3, hillR: r * hillFrac, hillScale, hillY: 1.2, blockers: [], hx, hz };
       shapes.push({ x: s.x, z: s.z, r: r * 1.15 });
       const kit = s.kit;
       const glow = new Set<Mesh>(this.lamps);
-      const { beach, hill } = islandTerrain(kit, r, s.hill, rnd);
+      const { beach, hill } = islandTerrain(kit, r, hillScale, rnd, hillFrac, hx, hz);
       isl.add(beach, hill);
-      const town = s.def.kind === 'town';
+      /** Bodenhöhe in Inselkoordinaten (wie islandGround) */
+      const hAt = (lx: number, lz: number) => {
+        const d = Math.hypot(lx, lz);
+        let y = 1.3 - Math.max(0, d - r * 0.92) * 4;
+        const dh = Math.hypot(lx - hx, lz - hz);
+        if (dh < walk.hillR) y = Math.max(y, 1.2 + Math.sqrt(walk.hillR ** 2 - dh * dh) * hillScale);
+        return y;
+      };
       const rocks = s.def.rocks ?? (rnd() < 0.4 && !s.tower && !town ? 1 : 0);
       for (let k = 0; k < rocks; k++) {
         const a = rnd() * Math.PI * 2, rr = r * (0.35 + rnd() * 0.3);
-        const size = r * (0.12 + rnd() * 0.1);
-        const rk = new Mesh(new ConeGeometry(size, size * 3 * kit.rockScale, 6), kit.rock);
-        rk.position.set(Math.cos(a) * rr, 1.2 + size, Math.sin(a) * rr);
-        rk.rotation.set((rnd() - 0.5) * 0.3, rnd() * 3, (rnd() - 0.5) * 0.3);
+        const size = r * (0.1 + rnd() * 0.08);
+        // Felsgruppe statt Pyramide: eine schiefe Felsnadel mit Brocken drumherum, jede anders
+        const rk = new Group();
+        const tall = size * (1.2 + rnd() * 1.2) * kit.rockScale;
+        const spire = new Mesh(new DodecahedronGeometry(size, 0), kit.rock);
+        spire.scale.set(0.8 + rnd() * 0.4, tall / size, 0.8 + rnd() * 0.4);
+        spire.position.y = tall * 0.45;
+        spire.rotation.set((rnd() - 0.5) * 0.25, rnd() * 3, (rnd() - 0.5) * 0.25);
+        rk.add(spire);
+        for (let b = 0; b < 2 + Math.floor(rnd() * 3); b++) {
+          const bs = size * (0.3 + rnd() * 0.4);
+          const boulder = new Mesh(new DodecahedronGeometry(bs, 0), kit.rock);
+          const ba = rnd() * Math.PI * 2;
+          boulder.position.set(Math.cos(ba) * size * 1.1, bs * 0.5, Math.sin(ba) * size * 1.1);
+          boulder.rotation.set(rnd(), rnd(), rnd());
+          boulder.scale.y = 0.7;
+          rk.add(boulder);
+        }
+        rk.position.set(Math.cos(a) * rr, hAt(Math.cos(a) * rr, Math.sin(a) * rr) - 0.3, Math.sin(a) * rr);
         isl.add(rk);
         walk.blockers.push({ x: s.x + Math.cos(a) * rr, z: s.z + Math.sin(a) * rr, r: size });
       }
@@ -286,9 +336,7 @@ export class SeaWorld {
         const palm = plant(kit, rnd);
         palm.traverse((o) => { if (o.userData.noOutline) glow.add(o as Mesh); });
         const px = Math.cos(pa) * pr, pz = Math.sin(pa) * pr;
-        const d = Math.hypot(px, pz);
-        const baseY = Math.max(1.3, d < r * 0.75 ? 1.2 + Math.sqrt((r * 0.75) ** 2 - d * d) * s.hill : 1.3);
-        palm.position.set(px, baseY - 0.1, pz);
+        palm.position.set(px, hAt(px, pz) - 0.1, pz);
         palm.rotation.z = (rnd() - 0.5) * (kit.flora === 'palme' ? 0.4 : 0.15);
         palm.rotation.y = rnd() * Math.PI * 2;
         isl.add(palm);
@@ -323,11 +371,18 @@ export class SeaWorld {
         this.piers.push({ ax: s.x + fx * (r - 5), az: s.z + fz * (r - 5), bx: s.x + fx * (r + 17), bz: s.z + fz * (r + 17), hw: 1.5 });
         for (const l of lanterns) glow.add(l);
       }
+      // Natur, Bauten und Treibgut passend zu Region und Inselart
+      if (!town) {
+        const dressed = dressIsland({ group: isl, def: s.def, kit, walk, hAt, glow, density: texDetail.density, style: styleOf(s.def.region) });
+        this.campfires.push(...dressed.fires.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
+        this.fauna.addIsland(s.def, s.x, s.z, r, dressed.trees.map((t) => ({ x: s.x + t.x, y: t.y, z: s.z + t.z })), dressed.bushes.map((b) => ({ x: s.x + b.x, y: b.y, z: s.z + b.z })), styleOf(s.def.region));
+      }
       this.scene.add(isl);
+      this.islandGroups.push({ g: isl, x: s.x, z: s.z, r });
       mergeByMaterial(isl, glow);
       // Namensschild (wie in 1.0): erscheint, sobald die Insel entdeckt ist
       const label = islandLabel(s.def.name, s.def.kind, s.def.level);
-      label.position.set(s.x, 1.2 + r * 0.75 * s.hill + 22, s.z);
+      label.position.set(s.x, 1.2 + walk.hillR * hillScale + 22, s.z);
       label.visible = false;
       this.scene.add(label);
       this.labels.push({ sprite: label, x: s.x, z: s.z, r, id: s.def.id });
@@ -513,10 +568,16 @@ export class SeaWorld {
     for (const n of this.npcs) set(n.char.holder);
     for (const e of this.combat?.enemies ?? []) set(e.char.holder);
     for (const a of this.crew?.allies ?? []) set(a.char.holder);
+    // Inseln im Nebel jenseits der Sichtweite gar nicht erst zeichnen (spart auf Handys viele Zeichenaufrufe)
+    const vd = this.viewDist * 1.05;
+    for (const i of this.islandGroups) i.g.visible = Math.hypot(i.x - cp.x, i.z - cp.z) < vd + i.r * 1.2;
+    const home = BERNSTEINSEE.islands[0];
+    if (this.town) this.town.group.visible = Math.hypot(home.x - cp.x, home.z - cp.z) < vd + home.r * 1.5;
   }
 
   applyQuality(c: QualityConfig) {
     this.figureDist = c.viewDistance * 0.14;
+    this.viewDist = c.viewDistance;
     this.env.applyQuality(c);
     this.spray.scale = c.particles;
     this.sparks.scale = c.particles;
@@ -857,6 +918,13 @@ export class SeaWorld {
     if (this.town?.crystal) { this.town.crystal.rotation.y += dt; this.town.crystal.position.y += Math.sin(this.env.clock * 2) * dt * 0.3; }
     // Vulkane: dicke Aschesäulen mit Glut am Krater, weithin sichtbar
     if (Math.random() < dt * 3) for (const p of this.smokeVents) if (Math.hypot(p.x - this.x, p.z - this.z) < 900) this.smoke.puff(p.x, p.y, p.z, { size: 5, grow: 26, life: 14, tone: 0.28, vy: 5, spread: 1.5, rise: 0.5, drag: 0.5, alpha: 0.65, glow: 0.6, wind: 0.8, jitter: 3 });
+    // Lagerfeuer auf den Inseln: dünne Rauchfahne und Funken
+    for (const f of this.campfires) {
+      const dd = Math.hypot(f.x - this.playerPos.x, f.z - this.playerPos.z);
+      if (dd > 450) continue;
+      if (Math.random() < dt * 3) this.smoke.puff(f.x, f.y + 0.6, f.z, { size: 0.5, grow: 4, life: 6, tone: 0.5, vy: 1.4, spread: 0.15, rise: 0.4, alpha: 0.5, glow: 0.4, wind: 0.8 });
+      if (dd < 120 && Math.random() < dt * 8) this.sparks.emit(1, f.x, f.y + 0.3, f.z, { speed: 0.4, up: 2.5, life: 0.9, color: new Color(3.2, 1.3, 0.3), gravity: -1.5, spread: 0.4 });
+    }
     // Schornsteine der Hafenstadt
     if (this.town && Math.random() < dt * 5) for (const p of this.town.smoke) if (Math.hypot(p.x - this.x, p.z - this.z) < 400) this.smoke.puff(p.x, p.y, p.z, { size: 0.5, grow: 3.5, life: 6, tone: 0.62, vy: 1.2, spread: 0.15, rise: 0.3, alpha: 0.5, wind: 0.7 });
     this.shake = Math.max(0, this.shake - dt * 1.8);
@@ -877,6 +945,10 @@ export class SeaWorld {
     this.sparks.update(dt);
     this.dust.update(dt);
     this.updateAir(dt);
+    {
+      const pp = this.playerPos;
+      this.fauna.update(dt, pp.x, pp.z, 1 - this.env.palette.sunVis, (x, z) => this.ground.height(x, z), (x, z) => this.env.heightAt(x, z));
+    }
     this.updateNpcs(dt);
     this.combat?.update(dt, this.camera);
     this.updateCrew(dt);

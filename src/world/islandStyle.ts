@@ -35,7 +35,7 @@ export function styleKit(style: IslandStyle): StyleKit {
 }
 
 /** Unregelmäßige Küste und hügelige Kuppe statt Zylinder und Halbkugel */
-export function islandTerrain(kit: StyleKit, r: number, hill: number, rnd: () => number): { beach: Mesh; hill: Mesh } {
+export function islandTerrain(kit: StyleKit, r: number, hill: number, rnd: () => number, hillFrac = 0.75, hx = 0, hz = 0): { beach: Mesh; hill: Mesh } {
   const seed = rnd() * 100;
   const coast = (a: number) => 1 + 0.035 * Math.sin(a * 3 + seed) + 0.02 * Math.sin(a * 7 + seed * 2) + 0.01 * Math.sin(a * 13 + seed * 3);
   const bg = new CylinderGeometry(r, r * 1.25, 3, 64, 2);
@@ -48,14 +48,14 @@ export function islandTerrain(kit: StyleKit, r: number, hill: number, rnd: () =>
   bg.computeVertexNormals();
   const beach = new Mesh(bg, kit.sand);
   beach.position.y = -0.2;
-  const R = r * 0.75;
+  const R = r * hillFrac;
   // Die Kuppe bleibt exakt rund und fein unterteilt: genau so rechnet die Laufhöhe (islandGround).
   // Vorher war sie wie die Küste verzerrt – am Hang schwebten Figuren dadurch bis zu einen halben Meter.
   const hg = new SphereGeometry(R, 56, 24, 0, Math.PI * 2, 0, Math.PI / 2);
   hg.computeVertexNormals();
   const hillMesh = new Mesh(hg, kit.grass);
   hillMesh.scale.y = hill;
-  hillMesh.position.y = 1.2;
+  hillMesh.position.set(hx, 1.2, hz);
   return { beach, hill: hillMesh };
 }
 

@@ -94,7 +94,7 @@ export class Game {
     if (!s.quality || s.qualityAuto) this.settings.update({ quality: this.detected.tier, qualityAuto: true });
     const startTier = QUALITY_TIERS[this.settings.data.quality ?? this.detected.tier];
     const caps = this.renderer.gl.capabilities;
-    setTexDetail(startTier.textureScale, Math.min(startTier.anisotropy, caps.getMaxAnisotropy()));
+    setTexDetail(startTier.textureScale, Math.min(startTier.anisotropy, caps.getMaxAnisotropy()), startTier.detail);
     this.world = new SeaWorld();
     this.world.env.maxTex = caps.maxTextureSize;
     this.renderer.onQualityChange((c) => this.world.applyQuality(c));

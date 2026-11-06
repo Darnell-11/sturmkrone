@@ -8,6 +8,9 @@ export interface WalkIsland extends IslandShape {
   hillR: number;
   hillScale: number;
   hillY: number;
+  /** Versatz der Hügelmitte gegenüber der Inselmitte (jede Insel hat ihre eigene Form) */
+  hx?: number;
+  hz?: number;
   /** Runde Hindernisse in Weltkoordinaten */
   blockers: { x: number; z: number; r: number }[];
 }
@@ -77,7 +80,8 @@ export class IslandGround implements Ground {
       if (d > i.r * 1.15) continue;
       // Strand fällt am Rand sanft ins Wasser ab
       let y = i.beachY - Math.max(0, d - i.r * 0.92) * 4;
-      if (d < i.hillR) y = Math.max(y, i.hillY + Math.sqrt(i.hillR * i.hillR - d * d) * i.hillScale);
+      const dh = Math.hypot(x - i.x - (i.hx ?? 0), z - i.z - (i.hz ?? 0));
+      if (dh < i.hillR) y = Math.max(y, i.hillY + Math.sqrt(i.hillR * i.hillR - dh * dh) * i.hillScale);
       best = Math.max(best, y);
     }
     return best;
