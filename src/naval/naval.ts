@@ -437,12 +437,13 @@ export class NavalSystem {
       // Begegnungen statt Dauerbeschuss: nach einem Gefecht kehrt erst Ruhe ein, neue Schiffe kommen vom Horizont
       const fighting = this.enemies.some((e) => !e.companion && e.ship.alive && !e.ship.sinking && e.state === 'engage' && e.role !== 'haendler');
       if (!fighting) this.spawnT -= dt;
-      else this.spawnT = Math.max(this.spawnT, 25 + Math.random() * 15);
+      else this.spawnT = Math.max(this.spawnT, 20 + Math.random() * 10);
       const zone = this.zoneLevel(p.x, p.z);
-      const present = this.enemies.filter((e) => !e.companion && e.ship.alive && !e.legendId).length;
+      // nur Schiffe in der Nähe zählen (vorbeigesegelte nicht), Händler halb
+      const present = this.enemies.reduce((n, e) => n + (!e.companion && e.ship.alive && !e.legendId && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) < 650 ? (e.role === 'haendler' ? 0.5 : 1) : 0), 0);
       const cap = zone <= 2 ? 2 : zone <= 6 ? 3 : 4;
       if (this.spawnT <= 0 && present < cap) {
-        this.spawnT = (zone <= 2 ? 45 : 35) + Math.random() * 35;
+        this.spawnT = (zone <= 2 ? 30 : 25) + Math.random() * 30;
         this.spawnEnemy(p.x, p.z);
       }
       this.ensureCompanions();
@@ -451,7 +452,7 @@ export class NavalSystem {
     for (const e of this.enemies) this.damageFx(e.ship, dt);
     if (p) this.damageFx(p, dt);
     // Weit entfernte entfernen, gesunkene aufräumen
-    const gone = (e: EnemyShip) => e.ship.sinking > 9 || (!!p && !e.companion && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > 1200);
+    const gone = (e: EnemyShip) => e.ship.sinking > 9 || (!!p && !e.companion && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > (e.state === 'engage' || e.legendId ? 1200 : 900));
     for (const e of this.enemies) if (gone(e)) { e.ship.dispose(); this.overlay.setBar(e, null, -1, false, null as unknown as Camera); }
     this.enemies = this.enemies.filter((e) => !gone(e));
     this.updateBalls(dt);
