@@ -785,6 +785,7 @@ export class Game {
   private talkTo(npc: TownNpcDef) {
     if (!this.quests || !this.state.is('play')) return;
     this.justDone = [];
+    this.questEvent({ type: 'enter', island: 'ankerglueck' });
     this.questEvent({ type: 'talk', npc: npc.id });
     const done = this.justDone;
     this.justDone = null;
@@ -797,6 +798,8 @@ export class Game {
   talkInHarbor(npc: TownNpcDef) {
     if (!this.quests) return;
     this.justDone = [];
+    // wer im Hafen mit den Leuten spricht, ist in Ankerglück angekommen
+    this.questEvent({ type: 'enter', island: 'ankerglueck' });
     this.questEvent({ type: 'talk', npc: npc.id });
     const done = this.justDone;
     this.justDone = null;

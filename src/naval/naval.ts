@@ -141,6 +141,9 @@ export class NavalSystem {
   private efx: ElementFx;
   /** Fallende Meteore und fliegende Druckschläge */
   private shots: { mesh: Mesh; from: Vector3; to: Vector3; t: number; dur: number; arc: number; trail: Element; done: () => void }[] = [];
+  /** Verzögerte Treffer in Spielzeit (stehen in der Pause still, anders als setTimeout) */
+  private timers: { t: number; fn: () => void }[] = [];
+  private later(sec: number, fn: () => void) { this.timers.push({ t: sec, fn }); }
 
   constructor(private scene: Scene, private env: SeaEnv, private fx: CombatFx, private overlay: CombatOverlay, private spray: ParticleSystem, private sparks: ParticleSystem, private ground: IslandGround, private hooks: NavalHooks) {
     this.efx = new ElementFx(scene, fx, sparks, { shake: (a) => hooks.shake(a), hitstop: (t) => hooks.hitstop(t), speedlines: (v) => overlay.speedlines(v) });
@@ -465,6 +468,11 @@ export class NavalSystem {
     this.updateCrates(dt);
     this.efx.update(dt);
     this.updateShots(dt);
+    if (this.timers.length) {
+      const due = this.timers.filter((x) => (x.t -= dt) <= 0);
+      this.timers = this.timers.filter((x) => x.t > 0);
+      for (const x of due) x.fn();
+    }
     for (const w of this.waves) {
       w.t += dt;
       const k = w.t / w.max;
@@ -612,8 +620,8 @@ export class NavalSystem {
     const ahead = { x: s.x + Math.sin(s.heading) * s.cls.L * 1.6, z: s.z + Math.cos(s.heading) * s.cls.L * 1.6 };
     if (this.ground.islandAt(ahead.x, ahead.z, 20) || Math.hypot(ahead.x, ahead.z) > WORLD_RADIUS - 120) turn = 1;
     s.steer(dt, turn, this.env);
-    const isl = this.ground.islandAt(s.x, s.z, s.cls.W);
-    if (isl) { const o = this.ground.pushOut(isl, s.x, s.z, s.cls.W); s.x = o.x; s.z = o.z; }
+    const o = this.ground.pushShip(s.x, s.z, s.heading, s.cls.L, s.cls.W);
+    if (o.hit) { s.x = o.x; s.z = o.z; }
   }
 
   private shipsForHit(): Ship[] {
@@ -857,7 +865,7 @@ export class NavalSystem {
           const dir = new Vector3(Math.sin(yaw + (i - (n - 1) / 2) * 0.05), 0, Math.cos(yaw + (i - (n - 1) / 2) * 0.05));
           const d = t ? Math.hypot(t.ship.x - p.x, t.ship.z - p.z) : 80;
           const vel = dir.multiplyScalar(BALL_SPEED).setY(0.5 * G * (d / BALL_SPEED));
-          setTimeout(() => this.spawnBall(new Vector3(p.x, p.model.deckY + 1, p.z), vel, p, dmg * 0.4, 'brand'), i * 60);
+          this.later((i * 60) / 1000, () => this.spawnBall(new Vector3(p.x, p.model.deckY + 1, p.z), vel, p, dmg * 0.4, 'brand'));
         }
         this.efx.impact(own, 'feuer', 1.2);
         return true;
@@ -874,12 +882,12 @@ export class NavalSystem {
       case 'strike': {
         const list = a.shape === 'rain' ? this.inRange(170) : [this.nearest(160)].filter((e): e is EnemyShip => !!e);
         if (!list.length) return false;
-        list.forEach((e, i) => setTimeout(() => {
+        list.forEach((e, i) => this.later((i * 180) / 1000, () => {
           this.efx.impact(this.deckPos(e.ship), 'blitz', 3.2 * big);
           this.hooks.shake(0.4);
           hit(e, dmg * (a.shape === 'rain' ? 1.1 : 1.3));
           e.ship.crew = Math.max(0, e.ship.crew - 0.08);
-        }, i * 180));
+        }));
         return true;
       }
       case 'wind': {
@@ -914,7 +922,7 @@ export class NavalSystem {
         return true;
       }
       case 'reload': {
-        p.reloadL = p.reloadR = 0; this.reloadMult = 0.5; setTimeout(() => { this.reloadMult = 1; }, 8000);
+        p.reloadL = p.reloadR = 0; this.reloadMult = 0.5; this.later((8000) / 1000, () => { this.reloadMult = 1; });
         this.efx.impact(own, el, 1.6);
         return true;
       }
@@ -932,7 +940,7 @@ export class NavalSystem {
         } else {
           // Faust oder Aura: sichtbarer Druckschlag, der übers Wasser fliegt
           this.shoot(own, this.deckPos(t.ship), el, 1.6 * big, 0.35, 2, () => {});
-          for (let i = 1; i <= 4; i++) setTimeout(() => this.fx.shockwave(new Vector3(p.x, 0.4, p.z).addScaledVector(f, i * 14), 6 + i * 2, color), i * 60);
+          for (let i = 1; i <= 4; i++) this.later((i * 60) / 1000, () => this.fx.shockwave(new Vector3(p.x, 0.4, p.z).addScaledVector(f, i * 14), 6 + i * 2, color));
         }
         const d0 = Math.hypot(t.ship.x - p.x, t.ship.z - p.z) || 1;
         for (const e of this.inRange(170)) {
@@ -940,11 +948,11 @@ export class NavalSystem {
           const along = rel.dot(f);
           const off = rel.clone().addScaledVector(f, -along).length();
           if (along > 0 && off < e.ship.cls.W + 6) {
-            setTimeout(() => {
+            this.later((blade ? Math.min(1.5, along / d0) * 200 : 350) / 1000, () => {
               this.seaWave(e.ship, color, level >= 3);
               this.efx.impact(this.deckPos(e.ship), el, 2.4 * big);
               hit(e, dmg * 1.6);
-            }, blade ? Math.min(1.5, along / d0) * 200 : 350);
+            });
           }
         }
         this.hooks.shake(0.3);
@@ -957,7 +965,7 @@ export class NavalSystem {
         let i = 0;
         for (const e of list) for (let k = 0; k < per; k++) {
           const delay = 200 + i++ * 260;
-          setTimeout(() => {
+          this.later((delay) / 1000, () => {
             if (!e.ship.alive) return;
             const to = this.deckPos(e.ship).add(new Vector3((Math.random() - 0.5) * e.ship.cls.W, 0, (Math.random() - 0.5) * e.ship.cls.L * 0.5));
             if (meteors) {
@@ -979,7 +987,7 @@ export class NavalSystem {
               hit(e, dmg * 0.9);
               if (el === 'feuer') e.ship.fire = Math.max(e.ship.fire, 6);
             }
-          }, delay);
+          });
         }
         return true;
       }
@@ -998,13 +1006,13 @@ export class NavalSystem {
         this.efx.impact(new Vector3(p.x, 0.4, p.z), el === 'klinge' ? 'sturm' : el, 2.6 * big);
         for (const e of list) {
           const d = Math.hypot(e.ship.x - p.x, e.ship.z - p.z) || 1;
-          setTimeout(() => {
+          this.later(((d / r) * 300) / 1000, () => {
             this.seaWave(e.ship, color, !!a.ult);
             this.efx.impact(this.deckPos(e.ship), el, 2 * big);
             hit(e, dmg * (a.count && a.count > 1 ? 1.2 : 1));
             e.ship.x += ((e.ship.x - p.x) / d) * 14; e.ship.z += ((e.ship.z - p.z) / d) * 14;
             if (a.status === 'stun') e.ship.frozen = Math.max(e.ship.frozen, 1.5);
-          }, (d / r) * 300);
+          });
         }
         this.hooks.shake(0.5);
         return true;
@@ -1022,7 +1030,7 @@ export class NavalSystem {
       case 'barrage': {
         const t = this.nearest(140); if (!t) return false;
         const n = 7;
-        for (let i = 0; i < n; i++) setTimeout(() => {
+        for (let i = 0; i < n; i++) this.later((i * 90) / 1000, () => {
           if (!t.ship.alive) return;
           const to = this.deckPos(t.ship).add(new Vector3((Math.random() - 0.5) * t.ship.cls.W, Math.random() * 3, (Math.random() - 0.5) * t.ship.cls.L * 0.6));
           this.shoot(own.clone().add(new Vector3((Math.random() - 0.5) * 3, Math.random() * 2, (Math.random() - 0.5) * 3)), to, el, 0.9, 0.25, 1, () => {
@@ -1031,7 +1039,7 @@ export class NavalSystem {
             if (Math.random() < 0.5) this.debris?.splinters(to.x, to.y, to.z, 0, 0, 4, '#6A4A2A');
             hit(t, (dmg * 1.5) / n);
           });
-        }, i * 90);
+        });
         this.hooks.shake(0.25);
         return true;
       }
@@ -1057,7 +1065,7 @@ export class NavalSystem {
         for (const e of list) {
           e.ship.x += (c.x - e.ship.x) * 0.45; e.ship.z += (c.z - e.ship.z) * 0.45;
           e.ship.frozen = Math.max(e.ship.frozen, a.ult ? 3 : 1.8);
-          for (let k = 0; k < 3; k++) setTimeout(() => hit(e, dmg * (a.ult ? 0.5 : 0.35)), 300 + k * 350);
+          for (let k = 0; k < 3; k++) this.later((300 + k * 350) / 1000, () => hit(e, dmg * (a.ult ? 0.5 : 0.35)));
         }
         this.hooks.shake(0.4);
         return true;
@@ -1067,7 +1075,7 @@ export class NavalSystem {
         this.efx.impact(this.deckPos(t.ship), 'gift', 3.2);
         t.ship.crew = Math.max(0, t.ship.crew - 0.3);
         t.ship.ceasefire = Math.max(t.ship.ceasefire, 3 + level);
-        for (let k = 0; k < 4; k++) setTimeout(() => hit(t, dmg * 0.3), 400 + k * 600);
+        for (let k = 0; k < 4; k++) this.later((400 + k * 600) / 1000, () => hit(t, dmg * 0.3));
         return true;
       }
     }

@@ -49,7 +49,14 @@ export interface AbilityContext {
 
 interface Running { t: number; done: boolean; update(dt: number): void }
 
-const col = (el: Element, k = 1) => new Color(ELEMENT_COLORS[el]).multiplyScalar(k);
+const HSL = { h: 0, s: 0, l: 0 };
+/** Elementfarbe, hell genug fürs Leuchten, aber mit vollem Farbton (sonst brennt Additives auf hellem Grund weiß aus) */
+const col = (el: Element, k = 1) => {
+  const c = new Color(ELEMENT_COLORS[el]);
+  c.getHSL(HSL);
+  if (HSL.s > 0.15) c.setHSL(HSL.h, Math.min(1, HSL.s * 1.2 + 0.15), Math.min(0.55, HSL.l));
+  return c.multiplyScalar(k * 0.8);
+};
 const dist2 = (ax: number, az: number, bx: number, bz: number) => Math.hypot(ax - bx, az - bz);
 const angleTo = (fx: number, fz: number, yaw: number, tx: number, tz: number) =>
   Math.abs(((Math.atan2(tx - fx, tz - fz) - yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
@@ -205,7 +212,7 @@ export class AbilityRunner {
     }
   }
 
-  /** Durchschlagende Welle (Sichelwind, Himmelsspalter) */
+  /** Durchschlagende Welle (Sichelwind, Mondsichel, Himmelsspalter): fliegende Sichel mit Nachbildern */
   private line(a: ActiveDef, dmg: number) {
     const c = this.ctx;
     const passes = a.count ?? 1;
@@ -213,33 +220,80 @@ export class AbilityRunner {
     const width = a.radius ?? 1.4;
     const start = this.feet();
     const f = this.fwd();
-    const yaw = c.caster.yaw;
-    const mesh = new Mesh(new RingGeometry(width * 0.6, width * 1.4, 24, 1, Math.PI * 0.15, Math.PI * 0.7), new MeshBasicMaterial({ color: col(a.el, 2.8), transparent: true, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }));
-    mesh.rotation.set(0, yaw, 0);
+    const ult = !!a.ult;
+    // Sichel: Bogen nach vorn gewölbt, waagrecht – beim Himmelsspalter steht sie senkrecht und ist riesig
+    const R = ult ? width * 2.2 : width * 1.5;
+    const geo = new RingGeometry(R * 0.72, R, 40, 1, Math.PI * 0.12, Math.PI * 0.76).rotateX(Math.PI / 2);
+    const mat = new MeshBasicMaterial({ color: col(a.el, 3.2), transparent: true, blending: AdditiveBlending, depthWrite: false, side: DoubleSide });
+    const mesh = new Mesh(geo, mat);
+    const core = new Mesh(new RingGeometry(R * 0.86, R * 0.94, 40, 1, Math.PI * 0.18, Math.PI * 0.64).rotateX(Math.PI / 2), new MeshBasicMaterial({ color: new Color(2.4, 2.4, 2.4), transparent: true, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }));
+    mesh.add(core);
     c.scene.add(mesh);
+    const roll = ult ? Math.PI / 2 : (Math.random() - 0.5) * 0.5;
+    const place = (m: Mesh, x: number, y: number, z: number, dir: number) => {
+      m.position.set(x, y, z);
+      m.lookAt(x + f.x * dir, y, z + f.z * dir);
+      m.rotateZ(roll);
+    };
+    if (ult) { c.hitstop(0.12); c.shake(0.7); this.efx.impact(start, a.el, 1.2); }
+    const ghosts: { m: Mesh; t: number }[] = [];
     const hit = new Set<AbilityTarget>();
-    let t = 0;
-    const speed = 30;
-    const total = (range / speed) * passes;
+    let t = 0, ghostT = 0, scarT = 0;
+    const speed = ult ? 36 : 30;
+    const leg = range / speed;
+    const total = leg * passes;
+    const y0 = start.y + (ult ? R * 0.15 + 0.6 : 1.1);
     const r: Running = { t: 0, done: false, update: (dt) => {
       t += dt;
       r.t = t;
-      const phase = t / (range / speed);
-      const along = passes > 1 && phase > 1 ? range * (2 - phase) : Math.min(range, t * speed);
+      const phase = t / leg;
+      const back = passes > 1 && phase > 1;
+      const along = back ? range * Math.max(0, 2 - phase) : Math.min(range, t * speed);
       const x = start.x + f.x * along, z = start.z + f.z * along;
-      mesh.position.set(x, start.y + 1.1, z);
-      mesh.lookAt(x + f.x, start.y + 1.1, z + f.z);
-      mesh.rotateY(Math.PI / 2);
-      if (Math.random() < dt * 40) this.burst(mesh.position.clone(), a.el, 2, 1, 1);
-      if (passes > 1 && phase > 1 && hit.size && Math.floor(phase) !== Math.floor(phase - dt * speed / range)) hit.clear();
+      place(mesh, x, y0, z, back ? -1 : 1);
+      mesh.scale.setScalar(0.6 + Math.min(1, t * 6) * 0.4);
+      // Nachbilder: kurz stehenbleibende, verblassende Kopien – der Hieb zieht eine Spur
+      ghostT -= dt;
+      if (ghostT <= 0) {
+        ghostT = 0.03;
+        const g = new Mesh(geo, new MeshBasicMaterial({ color: col(a.el, 1.8), transparent: true, opacity: 0.55, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }));
+        place(g, x, y0, z, back ? -1 : 1);
+        g.scale.copy(mesh.scale);
+        c.scene.add(g);
+        ghosts.push({ m: g, t: 0 });
+      }
+      for (const gh of ghosts) {
+        gh.t += dt;
+        (gh.m.material as MeshBasicMaterial).opacity = Math.max(0, 0.55 - gh.t * 2.6);
+        if (gh.t > 0.22) { gh.m.removeFromParent(); (gh.m.material as MeshBasicMaterial).dispose(); }
+      }
+      // Bodenspur: Staub, beim Ultimate ein Riss durch den Boden
+      scarT -= dt;
+      if (scarT <= 0) {
+        scarT = ult ? 0.05 : 0.08;
+        this.burst(new Vector3(x, start.y + 0.2, z), a.el, ult ? 6 : 3, 2, 2);
+        if (ult) c.fx.crack(new Vector3(x, start.y, z), 1.6);
+      }
+      if (passes > 1 && phase > 1 && hit.size && Math.floor(phase) !== Math.floor(phase - dt / leg)) hit.clear();
       for (const tg of c.targets()) {
         if (!tg.alive || hit.has(tg)) continue;
-        if (dist2(tg.x, tg.z, x, z) < width + tg.radius) { hit.add(tg); this.hitTarget(tg, dmg, a, x - f.x, z - f.z); }
+        if (dist2(tg.x, tg.z, x, z) < width * (ult ? 1.6 : 1.1) + tg.radius) {
+          hit.add(tg);
+          this.hitTarget(tg, dmg, a, x - f.x, z - f.z);
+          c.hitstop(ult ? 0.06 : 0.035);
+        }
       }
-      if (t >= total) { r.done = true; mesh.removeFromParent(); mesh.geometry.dispose(); }
+      if (t >= total) {
+        r.done = true;
+        mesh.removeFromParent(); mat.dispose(); (core.material as MeshBasicMaterial).dispose(); core.geometry.dispose();
+        for (const gh of ghosts) { gh.m.removeFromParent(); (gh.m.material as MeshBasicMaterial).dispose(); }
+        // Geometrie erst freigeben, wenn kein Nachbild sie mehr nutzt
+        this.later(0.3, () => geo.dispose());
+        if (ult) this.efx.impact(new Vector3(x, start.y, z), a.el, 1.8);
+      }
     } };
     this.running.push(r);
-    c.shake(0.3);
+    c.shake(ult ? 0.6 : 0.3);
   }
 
   private bolts(a: ActiveDef, dmg: number) {
@@ -330,6 +384,33 @@ export class AbilityRunner {
         c.fx.smear(this.feet().setY(c.caster.y + 1), c.caster.yaw + Math.PI, 0.2, 3, 2, ELEMENT_COLORS[a.el]);
         this.efx.impact(this.feet(), a.el, a.ult ? 1.8 : 0.9);
         c.hitstop(0.07);
+        // leuchtende Spur entlang des Weges, die langsam verglimmt
+        const end = this.feet();
+        const len = Math.hypot(end.x - start.x, end.z - start.z);
+        if (len > 1) {
+          const streak = new Mesh(new BufferGeometry(), new MeshBasicMaterial({ color: col(a.el, 2.6), transparent: true, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }));
+          const w = a.el === 'klinge' ? 0.12 : 0.35;
+          const nx = -f.z * w, nz = f.x * w, y = start.y + 1;
+          streak.geometry.setAttribute('position', new BufferAttribute(new Float32Array([
+            start.x - nx, y, start.z - nz, start.x + nx, y, start.z + nz, end.x + nx, y, end.z + nz,
+            start.x - nx, y, start.z - nz, end.x + nx, y, end.z + nz, end.x - nx, y, end.z - nz,
+          ]), 3));
+          c.scene.add(streak);
+          let st = 0;
+          const sr: Running = { t: 0, done: false, update: (dt2) => {
+            st += dt2; sr.t = st;
+            (streak.material as MeshBasicMaterial).opacity = Math.max(0, 1 - st / 0.45);
+            streak.scale.y = 1;
+            if (st > 0.45) { sr.done = true; streak.removeFromParent(); streak.geometry.dispose(); (streak.material as MeshBasicMaterial).dispose(); }
+          } };
+          this.running.push(sr);
+        }
+        // Klinge: der Schnitt „kommt erst an“, nachdem du vorbei bist – kurze Stille, dann reißen die Treffer auf
+        if (a.el === 'klinge' && hit.size) this.later(0.18, () => {
+          c.hitstop(0.09);
+          c.shake(0.35);
+          hit.forEach((tg) => { if (!tg.alive) return; c.fx.smear(new Vector3(tg.x, tg.y + 1.1, tg.z), c.caster.yaw + Math.PI * 0.25, 0.9, 2.2, 1.2, ELEMENT_COLORS[a.el]); this.efx.impact(new Vector3(tg.x, tg.y, tg.z), 'klinge', 0.8); });
+        });
       }
     } };
     this.running.push(r);

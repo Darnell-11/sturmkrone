@@ -48,24 +48,42 @@ const SPARK_TEX = canvasTex(128, (ctx, s) => {
 });
 
 /** Bodenriss: dunkle, gezackte Linien */
-const CRACK_TEX = canvasTex(256, (ctx, s) => {
+const CRACK_TEX = canvasTex(512, (ctx, s) => {
   ctx.translate(s / 2, s / 2);
-  ctx.strokeStyle = 'rgba(30,20,15,0.9)';
+  // Krater: dunkle, verbrannte Mitte mit weichem Rand – liest sich als Einschlag statt als Spinnennetz
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, s * 0.2);
+  g.addColorStop(0, 'rgba(25,16,10,0.85)');
+  g.addColorStop(0.55, 'rgba(45,30,18,0.55)');
+  g.addColorStop(1, 'rgba(60,40,25,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(0, 0, s * 0.2, 0, Math.PI * 2); ctx.fill();
   ctx.lineCap = 'round';
-  for (let i = 0; i < 9; i++) {
-    let a = (i / 9) * Math.PI * 2 + Math.random() * 0.4;
-    let x = 0, y = 0;
-    ctx.lineWidth = 7;
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    for (let k = 0; k < 5; k++) {
-      a += (Math.random() - 0.5) * 0.9;
-      const len = s * (0.06 + Math.random() * 0.06);
-      x += Math.cos(a) * len; y += Math.sin(a) * len;
-      ctx.lineTo(x, y);
-      ctx.lineWidth = Math.max(1.5, 7 - k * 1.3);
+  ctx.lineJoin = 'round';
+  // dicke, gezackte Risse mit Verästelungen, die nach außen dünn auslaufen
+  const crack = (x: number, y: number, a: number, w: number, steps: number, depth: number) => {
+    for (let k = 0; k < steps; k++) {
+      a += (Math.random() - 0.5) * 0.8;
+      const len = s * (0.035 + Math.random() * 0.035);
+      const nx = x + Math.cos(a) * len, ny = y + Math.sin(a) * len;
+      // heller Bruchrand, dann die dunkle Spalte darauf
+      ctx.strokeStyle = 'rgba(150,120,90,0.35)'; ctx.lineWidth = w + 5;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(nx, ny); ctx.stroke();
+      ctx.strokeStyle = 'rgba(22,14,9,0.92)'; ctx.lineWidth = w;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(nx, ny); ctx.stroke();
+      x = nx; y = ny; w = Math.max(1.5, w * 0.78);
+      if (depth > 0 && Math.random() < 0.35) crack(x, y, a + (Math.random() < 0.5 ? -1 : 1) * (0.5 + Math.random() * 0.5), w * 0.8, steps - k - 1, depth - 1);
     }
-    ctx.stroke();
+  };
+  const n = 7 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + Math.random() * 0.5;
+    crack(Math.cos(a) * s * 0.05, Math.sin(a) * s * 0.05, a, 14, 6, 2);
+  }
+  // Brocken und Steinchen am Kraterrand
+  for (let i = 0; i < 40; i++) {
+    const a = Math.random() * Math.PI * 2, d = s * (0.08 + Math.random() * 0.16), r = 2 + Math.random() * 6;
+    ctx.fillStyle = Math.random() < 0.5 ? 'rgba(30,20,12,0.8)' : 'rgba(170,140,105,0.5)';
+    ctx.beginPath(); ctx.arc(Math.cos(a) * d, Math.sin(a) * d, r, 0, Math.PI * 2); ctx.fill();
   }
 });
 
@@ -174,6 +192,8 @@ export class CombatFx {
 
   /** Bodenriss nach schweren Schlägen */
   crack(pos: Vector3, size: number) {
+    // riesige Risse wirkten wie Spinnweben: Größe deckeln, damit die Spalten kräftig bleiben
+    size = Math.min(size, 8);
     const m = new Mesh(new PlaneGeometry(size, size), new MeshBasicMaterial({ map: CRACK_TEX, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
     m.rotation.x = -Math.PI / 2;
     m.rotation.z = Math.random() * Math.PI * 2;

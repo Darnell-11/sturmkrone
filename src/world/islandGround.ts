@@ -142,6 +142,30 @@ export class IslandGround implements Ground {
     return null;
   }
 
+  /**
+   * Schiff aus allen Inseln heraushalten: Bug, Mitte und Heck werden geprüft (vorher nur die Mitte – lange Schiffe
+   * lagen mit dem Bug auf dem Strand). Der Strand reicht als Böschung noch gut 10 % über die Küstenlinie hinaus.
+   */
+  pushShip(x: number, z: number, heading: number, L: number, W: number): { x: number; z: number; hit: boolean } {
+    let hit = false;
+    const fx = Math.sin(heading), fz = Math.cos(heading);
+    for (const k of [0.44, 0, -0.44]) {
+      const px = x + fx * L * k, pz = z + fz * L * k;
+      for (const i of this.islands) {
+        const d = Math.hypot(px - i.x, pz - i.z);
+        if (d > i.r * 1.9 + W) continue;
+        const a = Math.atan2(pz - i.z, px - i.x);
+        const e = i.r * coastK(i.coast, a);
+        const lim = e * 1.11 + W * 0.5 + 1.2;
+        if (d >= lim) continue;
+        x += Math.cos(a) * (lim - d);
+        z += Math.sin(a) * (lim - d);
+        hit = true;
+      }
+    }
+    return { x, z, hit };
+  }
+
   /** Punkt aus einer Insel hinausschieben (Schiffe laufen nicht auf) */
   pushOut(i: WalkIsland, x: number, z: number, margin: number): { x: number; z: number } {
     const a = Math.atan2(z - i.z, x - i.x);

@@ -1012,9 +1012,8 @@ export class SeaWorld {
       s.z += Math.cos(this.env.clock * 0.23) * (storm - 1.5) * 0.6 * dt;
     }
     // Nicht auf Inseln auffahren
-    const isl = this.ground.islandAt(s.x, s.z, s.cls.W + 3);
-    if (isl) {
-      const o = this.ground.pushOut(isl, s.x, s.z, s.cls.W + 3);
+    const o = this.ground.pushShip(s.x, s.z, s.heading, s.cls.L, s.cls.W);
+    if (o.hit) {
       s.x = o.x; s.z = o.z;
       if (s.speed > 6) { this.shake = Math.max(this.shake, 0.5); this.onMessage('Auf Grund gelaufen!'); s.damage(s.speed * 1.5, 'kugel', null); }
       s.speed *= 0.4;
@@ -1217,7 +1216,11 @@ export class SeaWorld {
 
   /** Inseln in der Nähe und geräumte Lager melden (für Aufträge) */
   private updateWorldEvents() {
-    const near = this.islandDefs.findIndex((d) => Math.hypot(d.x - this.x, d.z - this.z) < d.r + 45);
+    // Ankunft an der echten Küstenlinie messen (wie das Hafenmenü), nicht an einem Kreis – sonst ließ sich bei
+    // langgestreckten Inseln der Hafen öffnen, bevor die Ankunft zählte
+    const isl = this.ground.islandAt(this.x, this.z, 45);
+    let near = isl ? this.ground.islands.indexOf(isl) : -1;
+    if (near < 0) near = this.islandDefs.findIndex((d) => Math.hypot(d.x - this.x, d.z - this.z) < d.r + 45);
     const id = near >= 0 ? this.islandDefs[near].id : null;
     // Inseln entdecken (Sichtweite wie in 1.0, Ausguck weiter) und Schilder zeigen
     const disc = 280 * this.rangeMult;
@@ -1282,7 +1285,7 @@ export class SeaWorld {
     // mittschiffs, Blick zum Heck: die Kamera steht über dem freien Vorschiff
     const start = this.deckGround.spot(0, 0.3);
     this.footDist = 6.5;
-    this.footPitch = 0.55;
+    this.footPitch = 0.75;
     this.foot.place(start.x, start.z, this.ship.heading + Math.PI, this.groundProxy);
     this.foot.onFoot = true;
     this.footYaw = this.ship.heading + Math.PI;
@@ -1304,7 +1307,7 @@ export class SeaWorld {
     for (const s of ship.model.sails) {
       const m = s.material as { transparent: boolean; opacity: number; depthWrite: boolean; needsUpdate: boolean };
       m.transparent = fade;
-      m.opacity = fade ? 0.22 : 1;
+      m.opacity = fade ? 0.12 : 1;
       m.depthWrite = !fade;
       m.needsUpdate = true;
     }
@@ -1390,8 +1393,9 @@ export class SeaWorld {
     this.scene.add(this.player.holder);
     // Mitte des Decks, Blick zum Heck: die Kamera steht dann über dem freien Vorschiff statt hinter dem Steuerrad
     const start = this.deckGround.spot(0, 0.2);
-    this.footDist = 6;
-    this.footPitch = 0.5;
+    this.footDist = 6.5;
+    // steiler von oben: bei den größeren Schiffen stand sonst ein Mast mitten im Bild
+    this.footPitch = 0.78;
     this.foot.place(start.x, start.z, e.ship.heading + Math.PI, this.groundProxy);
     this.foot.onFoot = true;
     this.footYaw = e.ship.heading + Math.PI;
