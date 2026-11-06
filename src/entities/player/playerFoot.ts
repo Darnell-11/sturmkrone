@@ -277,6 +277,7 @@ export class PlayerFoot implements PlayerTarget {
         if (want === 'idle') this.char.playClip(STYLE_ANIMS[this.style].idle.clip, { loop: true, fade: 0.25 });
         else this.char.play(want === 'run' ? 'run' : 'walk', { fade: 0.2 });
       }
+      if (want !== 'idle') this.char.setLocoSpeed(this.speed);
     }
   }
 

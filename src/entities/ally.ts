@@ -203,6 +203,7 @@ export class Ally implements AllyTarget {
         this.x = c.x; this.z = c.z;
       }
       this.play(speed > 5 ? 'run' : 'walk');
+      this.char.setLocoSpeed(speed / (this.def.big ?? 1));
     } else if (this.anim !== 'attack' && this.anim !== 'hit' && this.anim !== 'spawn' && this.hurtT <= 0) this.play(cleared && foes.length === 0 && pd < 6 && this.lineT > 12 ? 'cheer' : 'idle');
     const h = w.ground.height(this.x, this.z);
     if (Number.isFinite(h)) this.y += (h - this.y) * Math.min(1, dt * 12);

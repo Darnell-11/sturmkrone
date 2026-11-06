@@ -367,6 +367,17 @@ export class Character {
 
   get playing() { return this.currentName; }
 
+  /**
+   * Schrittgeschwindigkeit an die echte Bewegung anpassen, damit die Füße nicht über den Boden rutschen.
+   * Gemessen: Gehen ≈ 1,5 m/s, Rennen ≈ 3,7 m/s bei normaler Abspielgeschwindigkeit.
+   */
+  setLocoSpeed(mps: number) {
+    const a = this.current;
+    if (!a) return;
+    if (this.currentName === 'Walking_A') a.timeScale = Math.max(0.45, Math.min(1.6, mps / 1.5));
+    else if (this.currentName === 'Running_A') a.timeScale = Math.max(0.7, Math.min(1.75, mps / 3.7));
+  }
+
   /** Fortschritt der aktuellen Animation 0 … 1 */
   get progress() {
     const a = this.current;

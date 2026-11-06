@@ -304,6 +304,7 @@ export class Enemy {
         const moving = Math.hypot(mvx, mvz) > 0.3;
         const anim = moving ? (Math.hypot(mvx, mvz) > 2.6 ? 'run' : 'walk') : 'idle';
         if (this.char.playing !== (anim === 'run' ? 'Running_A' : anim === 'walk' ? 'Walking_A' : 'Idle_A')) this.char.play(anim, { fade: 0.2 });
+        if (moving) this.char.setLocoSpeed(Math.hypot(mvx, mvz) / Math.max(0.6, this.def.scale));
         break;
       }
       case 'windup':
