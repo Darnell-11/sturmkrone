@@ -35,8 +35,12 @@ describe('Spielschleife', () => {
 });
 
 describe('Einstellungen', () => {
+  it('kennt die Stufe Ultra', () => {
+    expect(sanitizeSettings({ quality: 'ultra' }).quality).toBe('ultra');
+  });
+
   it('ersetzt kaputte Werte durch Standardwerte', () => {
-    const s = sanitizeSettings({ quality: 'ultra', volume: { music: 7, sfx: 'laut' }, textScale: 99, touchControls: 'vielleicht' });
+    const s = sanitizeSettings({ quality: 'extrem', volume: { music: 7, sfx: 'laut' }, textScale: 99, touchControls: 'vielleicht' });
     expect(s.quality).toBeNull();
     expect(s.volume.music).toBe(1);
     expect(s.volume.sfx).toBe(defaultSettings().volume.sfx);
@@ -68,6 +72,9 @@ describe('Grafikstufen-Erkennung', () => {
 
   it('wählt passende Stufen', () => {
     expect(tier({ gpu: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Direct3D11)' })).toBe('max');
+    expect(tier({ gpu: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 5070 Ti Direct3D11)' })).toBe('ultra');
+    expect(tier({ gpu: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4090 Direct3D11)' })).toBe('ultra');
+    expect(tier({ gpu: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11)' })).toBe('max');
     expect(tier({ gpu: 'ANGLE (AMD, AMD Radeon RX 580 Direct3D11)' })).toBe('high');
     expect(tier({ gpu: 'ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11)' })).toBe('mid');
     expect(tier({ gpu: 'Google SwiftShader' })).toBe('low');
