@@ -149,7 +149,9 @@ const EDGE_FRAG = /* glsl */ `
     float edge = max(sil, crease * 0.8);
     edge *= 1.0 - smoothstep(fadeNear, fadeFar, d);
     // Wasser (Alpha 0, siehe ocean.ts) bekommt keine Linien – sonst zeichnen Wellenkämme Striche
-    if (depth >= 0.9999 || inputColor.a < 0.5) edge = 0.0;
+    // Alpha aus dem unbearbeiteten Szenenbild lesen: Bloom/Tonemapping im selben Durchgang verändern inputColor.a
+    float srcA = texture2D(inputBuffer, uv).a;
+    if (depth >= 0.9999 || srcA < 0.5 || inputColor.a < 0.5) edge = 0.0;
     outputColor = vec4(mix(inputColor.rgb, edgeColor, edge * strength), inputColor.a);
   }
 `;

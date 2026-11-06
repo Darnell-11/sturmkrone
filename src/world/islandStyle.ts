@@ -1,8 +1,9 @@
-import { CanvasTexture, Shape, ShapeGeometry, Sprite, SpriteMaterial, SRGBColorSpace } from 'three';
+import { CanvasTexture, LatheGeometry, Shape, ShapeGeometry, Sprite, SpriteMaterial, SRGBColorSpace, Vector2 } from 'three';
 import { BoxGeometry, Color, ConeGeometry, CylinderGeometry, Group, Mesh, MeshBasicMaterial, OctahedronGeometry, SphereGeometry, type Material } from 'three';
 import type { IslandStyle } from '../data/regions';
-import { coastK } from './islandGround';
+import { coastK, hillProfile } from './islandGround';
 import { toon } from '../render/toon';
+import { deckUV, plankTexture } from '../render/textures';
 
 /** Farben und Pflanzen je Region */
 export interface StyleKit {
@@ -71,10 +72,13 @@ export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: n
     meshes.push(cap);
   }
   meshes.push(...hills.map((h) => {
-    const hg = new SphereGeometry(h.r, 56, 24, 0, Math.PI * 2, 0, Math.PI / 2);
+    // gleiche Form wie die Laufhöhe (hillProfile), vom Fuß zur Kuppe
+    const pts: Vector2[] = [];
+    for (let i = 0; i <= 28; i++) { const t = 1 - i / 28; pts.push(new Vector2(Math.max(0.001, t * h.r), hillProfile(t) * h.r * h.h)); }
+    const hg = new LatheGeometry(pts, 56);
     const m = new Mesh(hg, kit.grass);
-    m.scale.y = h.h;
     m.position.set(h.x, 1.2, h.z);
+    m.receiveShadow = true;
     return m;
   }));
   return { beach, hills: meshes };
@@ -207,7 +211,9 @@ const roof = () => toon(0xa8322a);
 export function outpost(r: number, facing: number, lanterns: Mesh[]): Group {
   const g = new Group();
   const w = wood(), p = plaster(), rf = roof();
-  const pier = new Mesh(new BoxGeometry(3, 0.4, 22), w);
+  const deck = new BoxGeometry(3, 0.4, 22);
+  deckUV(deck, 3, 22);
+  const pier = new Mesh(deck, toon({ color: '#A8804E', map: plankTexture() }));
   pier.position.set(Math.sin(facing) * (r + 6), 1.25, Math.cos(facing) * (r + 6));
   pier.rotation.y = facing;
   g.add(pier);

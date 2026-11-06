@@ -114,7 +114,9 @@ const DETAIL_FRAG: Record<'sand' | 'grass' | 'rock', string> = {
     vec2 p = vSkWorld.xz;
     float camD = distance(vSkWorld, cameraPosition);
     float nearK = 1.0 - smoothstep(25.0, 90.0, camD);
-    float grain = (skdH(floor(p * 24.0)) - 0.5) * 0.16 * nearK + (skdN(p * 5.0) - 0.5) * 0.14 * (1.0 - smoothstep(60.0, 160.0, camD));
+    // feines Korn aus weichem Rauschen (keine Pixelquadrate aus der Nähe)
+    float fineK = 1.0 - smoothstep(8.0, 40.0, camD);
+    float grain = (skdN(p * 34.0) - 0.5) * 0.2 * fineK + (skdN(p * 11.0) - 0.5) * 0.12 * nearK + (skdN(p * 5.0) - 0.5) * 0.14 * (1.0 - smoothstep(60.0, 160.0, camD));
     float rip = sin((p.x * 0.8 + p.y * 0.35) * 3.2 + skdN(p * 0.6) * 4.0) * 0.5 + 0.5;
     float macro = skdF(p * 0.04) - 0.5;
     float ripK = smoothstep(0.25, 0.75, rip);
@@ -123,7 +125,8 @@ const DETAIL_FRAG: Record<'sand' | 'grass' | 'rock', string> = {
     diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.06, 0.94, 0.8), smoothstep(0.45, 0.8, skdF(p * 0.07 + 3.1)) * 0.6);
     float wet = 1.0 - smoothstep(0.35, 1.15, vSkWorld.y);
     diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.66, 0.66, 0.7), wet * 0.85);
-    diffuseColor.rgb += step(0.985, skdH(floor(p * 9.0))) * 0.12 * nearK;
+    // Muschelsplitter / helle Körner
+    diffuseColor.rgb += smoothstep(0.86, 0.93, skdN(p * 13.0 + 5.7)) * 0.1 * nearK;
   }`,
   grass: /* glsl */ `{
     vec2 p = vSkWorld.xz;
@@ -134,18 +137,22 @@ const DETAIL_FRAG: Record<'sand' | 'grass' | 'rock', string> = {
     vec3 lush = diffuseColor.rgb * vec3(0.72, 0.92, 0.72);
     diffuseColor.rgb = mix(lush, dry, smoothstep(0.35, 0.75, macro));
     float mid = skdN(p * 0.45) - 0.5;
-    float blades = (skdH(floor(p * 20.0)) - 0.5) * 0.26 * nearK + (skdN(p * 6.0) - 0.5) * 0.18 * (1.0 - smoothstep(40.0, 130.0, camD));
-    // Halmbüschel: kurze helle Striche in Windrichtung
-    float tuft = smoothstep(0.82, 0.95, skdN(vec2(p.x * 9.0, p.y * 2.2))) * nearK;
+    // Halme: gestreckte weiche Rauschmuster in zwei Richtungen (wirkt wie dichter Rasen statt Pixel)
+    float fineK = 1.0 - smoothstep(6.0, 34.0, camD);
+    vec2 r1 = vec2(p.x * 0.8 + p.y * 0.6, -p.x * 0.6 + p.y * 0.8);
+    float bl = skdN(vec2(r1.x * 46.0, r1.y * 9.0)) * 0.6 + skdN(vec2(p.x * 40.0, p.y * 11.0) + 3.3) * 0.4;
+    float blades = (bl - 0.5) * 0.34 * fineK + (skdN(p * 6.0) - 0.5) * 0.18 * (1.0 - smoothstep(40.0, 130.0, camD));
+    // Halmbüschel und dunkle Lücken dazwischen
+    float tuft = (smoothstep(0.7, 0.9, skdN(vec2(p.x * 9.0, p.y * 2.2))) - smoothstep(0.75, 0.95, skdN(p * 3.1 + 9.1)) * 0.6) * nearK;
     diffuseColor.rgb *= 1.0 + mid * 0.24 + blades + tuft * 0.18;
     float dirt = smoothstep(0.78, 0.86, skdN(p * 0.09 + 7.3));
-    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.33, 0.22) * (0.9 + skdH(floor(p * 18.0)) * 0.2), dirt * 0.7);
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.33, 0.22) * (0.88 + skdN(p * 16.0) * 0.24), dirt * 0.7);
   }`,
   rock: /* glsl */ `{
     vec3 w = vSkWorld;
     float camD = distance(w, cameraPosition);
     float strata = sin(w.y * 3.1 + skdN(w.xz * 0.3) * 3.0) * 0.5 + 0.5;
-    float speck = (skdH(floor((w.xz + w.y) * 16.0)) - 0.5) * 0.12 * (1.0 - smoothstep(20.0, 70.0, camD));
+    float speck = (skdN((w.xz + w.y) * 16.0) - 0.5) * 0.16 * (1.0 - smoothstep(20.0, 70.0, camD));
     diffuseColor.rgb *= 0.9 + strata * 0.16 + speck + (skdF(w.xz * 0.2 + w.y * 0.1) - 0.5) * 0.18;
   }`,
 };

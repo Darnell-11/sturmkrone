@@ -22,6 +22,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { IslandDef } from '../data/regions';
 import { addOutlines } from '../render/outline';
 import { toon } from '../render/toon';
+import { crateTexture, deckUV, plankTexture } from '../render/textures';
 import { detailCanvas, texDetail } from '../render/texDetail';
 import type { WalkIsland } from './islandGround';
 
@@ -116,7 +117,7 @@ function cart(): Group {
 /** Kisten und Fässer, gestapelt */
 function crateStack(seed: number): Group {
   const g = new Group();
-  const crate = toon('#8A5A2B'), barrel = toon('#6E4626');
+  const crate = toon({ color: '#9A6A3A', map: crateTexture() }), barrel = toon({ color: '#7A5030', map: plankTexture() });
   const n = 2 + (seed % 3);
   for (let i = 0; i < n; i++) {
     const c = new Mesh(new BoxGeometry(0.95, 0.95, 0.95), crate);
@@ -247,11 +248,11 @@ function cobbleTexture(): CanvasTexture {
 
 /** Straße als Band, das dem Boden folgt */
 function roadMesh(pts: [number, number][], width: number, cx: number, cz: number, groundAt: (x: number, z: number) => number, mat: Material): Mesh {
-  // Punkte alle 2 m
+  // Punkte alle 1,2 m, drei Stützreihen quer – so schaut kein Hügel durch die Mitte
   const path: { x: number; z: number }[] = [];
   for (let i = 0; i < pts.length - 1; i++) {
     const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
-    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 2));
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 1.2));
     for (let k = 0; k < n; k++) path.push({ x: ax + (bx - ax) * (k / n), z: az + (bz - az) * (k / n) });
   }
   path.push({ x: pts[pts.length - 1][0], z: pts[pts.length - 1][1] });
@@ -262,14 +263,17 @@ function roadMesh(pts: [number, number][], width: number, cx: number, cz: number
     const dx = q.x - o.x, dz = q.z - o.z, l = Math.hypot(dx, dz) || 1;
     const nx = -dz / l, nz = dx / l;
     if (i > 0) along += Math.hypot(p.x - path[i - 1].x, p.z - path[i - 1].z);
-    for (const s of [-1, 1]) {
+    for (const s of [-1, 0, 1]) {
       // Ränder leicht unregelmäßig, damit es nicht wie ein Lineal aussieht
       const w = width / 2 * (1 + Math.sin(along * 0.7 + s) * 0.08);
       const x = cx + p.x + nx * w * s, z = cz + p.z + nz * w * s;
-      pos.push(x, groundAt(x, z) + 0.07, z);
+      pos.push(x, groundAt(x, z) + 0.09, z);
       uv.push((s + 1) / 2 * width / 3, along / 3);
     }
-    if (i > 0) { const b = i * 2; idx.push(b - 2, b, b - 1, b - 1, b, b + 1); }
+    if (i > 0) {
+      const b = i * 3, a = b - 3;
+      idx.push(a, b, a + 1, a + 1, b, b + 1, a + 1, b + 1, a + 2, a + 2, b + 1, b + 2);
+    }
   });
   const geo = new BufferGeometry();
   geo.setAttribute('position', new Float32BufferAttribute(pos, 3));
@@ -326,7 +330,9 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
 
   // Steg nach Süden
   const pier = new Group();
-  const plank = new Mesh(new BoxGeometry(5, 0.3, 46), toon('#A8804E'));
+  const deck = new BoxGeometry(5, 0.3, 46);
+  deckUV(deck, 5, 46);
+  const plank = new Mesh(deck, toon({ color: '#B08A58', map: plankTexture() }));
   plank.position.set(0, 1.5, 0);
   pier.add(plank);
   for (let i = 0; i < 9; i++) for (const s of [-1, 1]) {
@@ -337,7 +343,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   pier.position.set(cx, 0, cz - def.r - 18);
   group.add(pier);
   for (let i = 0; i < 4; i++) {
-    const crate = new Mesh(new BoxGeometry(1.1, 1.1, 1.1), toon('#8A5A2B'));
+    const crate = new Mesh(new BoxGeometry(1.1, 1.1, 1.1), toon({ color: '#9A6A3A', map: crateTexture() }));
     crate.position.set(cx + (i % 2 ? 1.6 : -1.6), 2.2, cz - def.r - 4 - i * 6);
     crate.rotation.y = i;
     group.add(crate);
@@ -531,7 +537,9 @@ export function mergeByMaterial(group: Group, keep: Set<Mesh>) {
     if (!m.isMesh || keep.has(m) || Array.isArray(m.material)) return;
     const b = buckets.get(m.material as Material) ?? { geos: [], meshes: [] };
     let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
-    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+    // Texturkoordinaten nur behalten, wenn das Material eine Textur hat (Kisten, Fässer)
+    const keepUv = !!(m.material as Material & { map?: unknown }).map && !!g.attributes.uv;
+    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && !(keepUv && k === 'uv')) g.deleteAttribute(k);
     g = g.applyMatrix4(rel(m));
     b.geos.push(g);
     b.meshes.push(m);

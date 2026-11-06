@@ -3,6 +3,11 @@ import type { IslandShape } from './ocean';
 /** Ein Hügel: Mitte (Welt), Radius und Höhenfaktor (Kuppe = Halbkugel, in der Höhe gestaucht) */
 export interface Hill { x: number; z: number; r: number; h: number }
 
+/** Hügelform 0 … 1 (t = Abstand / Radius): weich auslaufend statt Halbkugel – keine Kante am Hügelfuß */
+export function hillProfile(t: number): number {
+  return t >= 1 ? 0 : Math.pow(1 - t * t, 1.6);
+}
+
 /**
  * Begehbare Insel. Sichtbares Gelände und Laufhöhe kommen aus genau diesen Werten (keine Abweichung mehr):
  * flaches Strandplateau bis zur Küstenlinie, danach fällt der Strand gleichmäßig bis 1,25 × Küstenradius ins Meer.
@@ -156,7 +161,7 @@ export class IslandGround implements Ground {
       let y = d <= e ? i.beachY : i.beachY - ((d - e) / (e * 0.25)) * 3;
       for (const h of i.hills) {
         const dh = Math.hypot(x - h.x, z - h.z);
-        if (dh < h.r) y = Math.max(y, i.hillY + Math.sqrt(h.r * h.r - dh * dh) * h.h);
+        if (dh < h.r) y = Math.max(y, i.hillY + hillProfile(dh / h.r) * h.r * h.h);
       }
       best = Math.max(best, y);
     }

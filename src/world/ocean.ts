@@ -32,7 +32,7 @@ interface WaveConst { k: number; c: number; dx: number; dz: number; amp: number;
 const WAVE_CONST: WaveConst[] = WAVES.map((w) => {
   const k = (Math.PI * 2) / w.length;
   const a = (w.dir * Math.PI) / 180;
-  return { k, c: Math.sqrt(G / k), dx: Math.cos(a), dz: Math.sin(a), amp: w.amp, h: w.steep / (k * WAVES.length), len: w.length };
+  return { k, c: Math.sqrt(G / k), dx: Math.cos(a), dz: Math.sin(a), amp: w.amp, h: w.steep / (k * 5), len: w.length };
 });
 
 const f = (n: number) => n.toFixed(6);
@@ -204,13 +204,31 @@ export class Ocean {
           // Mikro-Wellen: feines, wanderndes Kräuseln bricht die glatte Fläche auf (Licht, Spiegelung, Glitzern)
           if (uDetail > 0.0) {
             vec2 rp = vSkW.xz;
-            vec2 t1 = uTime * vec2(0.55, 0.21), t2 = uTime * vec2(-0.27, 0.62);
-            float e = 0.3;
-            float r0 = skNoise(rp * 0.85 + t1) + 0.5 * skNoise(rp * 2.4 + t2);
-            float rx = skNoise((rp + vec2(e, 0.0)) * 0.85 + t1) + 0.5 * skNoise((rp + vec2(e, 0.0)) * 2.4 + t2);
-            float rz = skNoise((rp + vec2(0.0, e)) * 0.85 + t1) + 0.5 * skNoise((rp + vec2(0.0, e)) * 2.4 + t2);
-            float nk = (1.0 - smoothstep(25.0, 240.0, camD)) * uDetail * (0.6 + 0.5 * uWindK);
-            skNf = normalize(skNf + vec3(r0 - rx, 0.0, r0 - rz) * 0.5 * nk);
+            // Spektrum kleiner Windwellen (10 Oktaven, 7 m … 0,5 m): spitze Kämme, laufen mit echter
+            // Tiefwasser-Geschwindigkeit in Windrichtung (± 70°) – kreuzen sich wie auf offener See
+            vec2 rn = vec2(0.0);
+            float wk = 0.75 + 0.6 * uWindK;
+            for (int i = 0; i < 10; i++) {
+              float fi = float(i);
+              // Handy-Stufe (Mid) rechnet nur die größeren Oktaven
+              if (fi > 1.0 + 16.0 * (uDetail - 0.5)) break;
+              float ang = uWindDir + sin(fi * 2.39996) * 1.35;
+              float len = 7.0 * pow(0.74, fi);
+              float k = 6.2831853 / len;
+              vec2 d = vec2(sin(ang), cos(ang));
+              float ph = k * dot(d, rp) - sqrt(9.81 * k) * uTime + fi * 1.7;
+              float sh = exp(sin(ph) - 1.0);
+              float fd = 1.0 - smoothstep(len * 10.0, len * 38.0, camD);
+              rn -= d * (sh * cos(ph) * 0.095 * fd);
+            }
+            // etwas Rauschen dazu, damit kein Muster sichtbar wird
+            vec2 t1 = uTime * vec2(0.55, 0.21);
+            float e = 0.35;
+            float r0 = skNoise(rp * 0.9 + t1);
+            float rx = skNoise((rp + vec2(e, 0.0)) * 0.9 + t1);
+            float rz = skNoise((rp + vec2(0.0, e)) * 0.9 + t1);
+            rn += vec2(r0 - rx, r0 - rz) * 0.25 * (1.0 - smoothstep(20.0, 120.0, camD));
+            skNf = normalize(skNf + vec3(rn.x, 0.0, rn.y) * uDetail * wk);
           }
           float sd = texture2D(uShore, vSkW.xz / uShoreSize + 0.5).r * 255.0;
           float shallow = 1.0 - smoothstep(0.0, 48.0, sd);
@@ -225,15 +243,16 @@ export class Ocean {
           }
           // Gischt auf Wellenkämmen, aufgebrochen durch Rauschen
           float nz = skNoise(vSkW.xz * 0.35 + uTime * 0.3) * 0.6 + skNoise(vSkW.xz * 1.3 - uTime * 0.5) * 0.4;
-          float crestT = 0.46 - 0.08 * clamp(uWaveScale - 1.0, 0.0, 2.0);
+          float crestT = 0.5 - 0.08 * clamp(uWaveScale - 1.0, 0.0, 2.0);
           float skFoam = smoothstep(crestT, crestT + 0.12, skCrestF + (nz - 0.5) * 0.18);
           // Brandungsringe und Küstenlinie
-          float bands = smoothstep(0.78, 1.0, sin(sd * 0.45 - uTime * 1.6)) * (1.0 - smoothstep(3.0, 24.0, sd));
+          // anrollende Brandungswellen: schmale, aufgerissene Schaumlinien, die zur Küste hin dichter werden
+          float bands = smoothstep(0.9, 0.995, sin(sd * 0.45 - uTime * 1.6 + nz * 1.2)) * (1.0 - smoothstep(3.0, 22.0, sd));
           float coast = 1.0 - smoothstep(0.0, 4.5, sd + (nz - 0.5) * 3.0);
           // blasiger Küstenschaum: dichte Kante, nach außen zerfasernde Spitze statt glatter Fläche
           float bub = skNoise(vSkW.xz * 2.2 + vec2(uTime * 0.25, -uTime * 0.18)) * 0.6 + skNoise(vSkW.xz * 5.5 - uTime * 0.3) * 0.4;
           float coastFoam = coast * smoothstep(0.62 - coast * 0.5, 0.75 - coast * 0.45, bub);
-          skFoam = max(skFoam, max(bands * 0.35 * step(nz, 0.7), coastFoam * 0.9));
+          skFoam = max(skFoam, max(bands * smoothstep(0.35, 0.6, bub) * 0.75, coastFoam * 0.9));
           // Schaumstreifen in Windrichtung (je stärker der Wind, desto mehr), wie auf echter offener See
           {
             vec2 wd = vec2(sin(uWindDir), cos(uWindDir));
@@ -287,8 +306,14 @@ export class Ocean {
             float glint = smoothstep(0.9 - 0.04 * uWindK, 0.97, skNoise(vSkW.xz * 2.6 + vec2(uTime * 2.1, -uTime * 1.7))) * pow(sdot, 120.0);
             outgoingLight += uSunCol * glint * 3.0 * uSpecK * uDetail * (1.0 - skFoam);
             // Licht scheint durch die Wellenkämme (türkis), Funkeln im Sonnenglanz
-            float sss = pow(clamp(dot(Vw, -uSunDir) * 0.5 + 0.5, 0.0, 1.0), 3.0) * clamp(skCrestF * 1.6 + 0.2, 0.0, 1.0);
-            outgoingLight += uShallow * sss * 0.28 * uSpecK * (1.0 - skFoam);
+            // dünne Wellenkämme gegen die Sonne leuchten grün-türkis (Licht geht durchs Wasser)
+            float back = pow(clamp(dot(Vw, -uSunDir) * 0.5 + 0.5, 0.0, 1.0), 3.0);
+            float thin = clamp(skCrestF * 1.6 + 0.2, 0.0, 1.0) * smoothstep(-0.4, 1.6, skD.y);
+            float face = clamp(1.0 - abs(Nw.y), 0.0, 1.0);
+            vec3 sssCol = mix(uShallow, vec3(0.25, 0.85, 0.7), 0.35);
+            outgoingLight += sssCol * back * (thin * 0.5 + face * 0.6) * 0.75 * uSpecK * (1.0 - skFoam);
+            // Wellentäler etwas dunkler – mehr Tiefe zwischen den Wellen
+            outgoingLight *= mix(0.86, 1.04, smoothstep(-1.4, 1.2, skD.y));
             float tw = step(0.93, skNoise(vSkW.xz * 1.7 + vec2(uTime * 1.3, -uTime))) * pow(max(dot(R, uSunDir), 0.0), 6.0);
             outgoingLight += uSunCol * tw * 1.1 * uSpecK * (1.0 - skFoam);
             // Ferne Wasserflächen gehen in die Horizontfarbe über
@@ -299,7 +324,7 @@ export class Ocean {
           // Alpha 0 markiert Wasser: Kantenerkennung und Umgebungsverdeckung lassen es aus
           gl_FragColor.a = 0.0;`);
     };
-    mat.customProgramCacheKey = () => `sk-ocean3-${wakeN}`;
+    mat.customProgramCacheKey = () => `sk-ocean4-${wakeN}`;
     return mat;
   }
 

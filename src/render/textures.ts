@@ -1,4 +1,4 @@
-import { CanvasTexture, RepeatWrapping, SRGBColorSpace } from 'three';
+import { CanvasTexture, RepeatWrapping, SRGBColorSpace, type BufferAttribute, type BufferGeometry } from 'three';
 import { detailCanvas, texDetail } from './texDetail';
 
 /** Kleiner, fester Zufall, damit Texturen bei jedem Start gleich aussehen */
@@ -107,4 +107,52 @@ export function sailTexture(color: string, emblem: HTMLCanvasElement | null, see
   t.colorSpace = SRGBColorSpace;
   t.anisotropy = texDetail.aniso;
   return t;
+}
+
+let crateCache: CanvasTexture | null = null;
+
+/** Frachtkiste: Bretter, Rahmen, Diagonalstrebe, Brandzeichen (Graustufen, über Materialfarbe getönt) */
+export function crateTexture(): CanvasTexture {
+  if (crateCache) return crateCache;
+  const { c, g } = detailCanvas(128, 128);
+  const r = rng(11);
+  for (let i = 0; i < 4; i++) {
+    const tone = 205 + Math.floor(r() * 40);
+    g.fillStyle = `rgb(${tone},${tone},${tone})`;
+    g.fillRect(0, i * 32, 128, 32);
+    g.strokeStyle = 'rgba(0,0,0,0.08)';
+    for (let k = 0; k < 3; k++) {
+      const y = i * 32 + 5 + r() * 22;
+      g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(40, y + 2, 80, y - 2, 128, y + 1); g.stroke();
+    }
+    g.fillStyle = 'rgba(0,0,0,0.4)';
+    g.fillRect(0, i * 32 + 30, 128, 2);
+  }
+  // Rahmen und Strebe (heller, erhaben)
+  g.fillStyle = 'rgba(255,255,255,0.5)';
+  g.fillRect(0, 0, 128, 12); g.fillRect(0, 116, 128, 12); g.fillRect(0, 0, 12, 128); g.fillRect(116, 0, 12, 128);
+  g.save(); g.translate(64, 64); g.rotate(-Math.PI / 4); g.fillRect(-84, -7, 168, 14); g.restore();
+  g.strokeStyle = 'rgba(0,0,0,0.45)'; g.lineWidth = 2;
+  g.strokeRect(1, 1, 126, 126); g.strokeRect(12, 12, 104, 104);
+  g.save(); g.translate(64, 64); g.rotate(-Math.PI / 4); g.strokeRect(-84, -7, 168, 14); g.restore();
+  // Nägel in den Ecken
+  g.fillStyle = 'rgba(0,0,0,0.5)';
+  for (const [x, y] of [[5, 5], [121, 5], [5, 121], [121, 121]]) g.fillRect(x, y, 3, 3);
+  const t = new CanvasTexture(c);
+  t.colorSpace = SRGBColorSpace;
+  t.anisotropy = texDetail.aniso;
+  crateCache = t;
+  return t;
+}
+
+/** Holzbohlen eines Stegs: Plankenrichtung quer zur Länge, eine Bohle ≈ 0,32 m */
+export function deckUV(geo: BufferGeometry, width: number, length: number) {
+  const uv = geo.getAttribute('uv') as BufferAttribute;
+  const n = geo.getAttribute('normal') as BufferAttribute;
+  for (let i = 0; i < uv.count; i++) {
+    // Ober- und Unterseite: v entlang der Länge (8 Bohlen je Kachel)
+    if (Math.abs(n.getY(i)) > 0.5) uv.setXY(i, uv.getX(i) * (width / 4), uv.getY(i) * (length / 2.56));
+    else uv.setXY(i, uv.getX(i) * 2, uv.getY(i) * 0.15);
+  }
+  uv.needsUpdate = true;
 }

@@ -18,10 +18,13 @@ export interface WaveDef {
 
 /** Gerstner-Wellen, von groß nach klein. Höhe wird mit dem Wetter skaliert. */
 export const WAVES: WaveDef[] = [
+  // lange Dünung aus einer anderen Richtung: das Meer hebt und senkt sich unregelmäßig wie echte See
+  { dir: -62, length: 170, amp: 0.38, steep: 0.3 },
   { dir: 20, length: 110, amp: 0.75, steep: 0.55 },
   { dir: -35, length: 64, amp: 0.42, steep: 0.6 },
   { dir: 75, length: 37, amp: 0.22, steep: 0.65 },
   { dir: 145, length: 21, amp: 0.11, steep: 0.6 },
+  { dir: 112, length: 15.5, amp: 0.07, steep: 0.6 },
   { dir: 5, length: 11, amp: 0.05, steep: 0.5 },
 ];
 
