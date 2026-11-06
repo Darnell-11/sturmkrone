@@ -23,13 +23,13 @@ export function styleKit(style: IslandStyle): StyleKit {
   if (k) return k;
   const glow = (c: Color) => new MeshBasicMaterial({ color: c });
   switch (style) {
-    case 'nebel': k = { sand: toon(0xc9c2a8), grass: toon({ color: 0x7d8f6a, flatShading: true }), rock: toon({ color: 0x7a7e80, flatShading: true }), trunk: toon(0x5a4a3a), leaf: toon({ color: 0x6a7a5a, flatShading: true }), extra: null, flora: 'tot', rockScale: 1.1 }; break;
-    case 'nord': k = { sand: toon(0xd8d2c0), grass: toon({ color: 0x4f8a52, flatShading: true }), rock: toon({ color: 0x8a8f96, flatShading: true }), trunk: toon(0x6a4a2b), leaf: toon({ color: 0x2f6a44, flatShading: true }), extra: null, flora: 'kiefer', rockScale: 1 }; break;
-    case 'glut': k = { sand: toon(0x4a3c38), grass: toon({ color: 0x6a5048, flatShading: true }), rock: toon({ color: 0x2e2626, flatShading: true }), trunk: toon(0x2a2020), leaf: toon({ color: 0x3a2e2a, flatShading: true }), extra: glow(new Color(5, 1.4, 0.25)), flora: 'tot', rockScale: 1.3 }; break;
-    case 'sturm': k = { sand: toon(0xb8b4a8), grass: toon({ color: 0x5a7a6a, flatShading: true }), rock: toon({ color: 0x5a6070, flatShading: true }), trunk: toon(0x4a3a2a), leaf: toon({ color: 0x3e5e4e, flatShading: true }), extra: null, flora: 'kiefer', rockScale: 1.7 }; break;
-    case 'schlund': k = { sand: toon(0x8a86a0), grass: toon({ color: 0x5a4a8a, flatShading: true }), rock: toon({ color: 0x3a3450, flatShading: true }), trunk: toon(0x3a3048), leaf: toon({ color: 0x4a3a6a, flatShading: true }), extra: glow(new Color(1.2, 2.6, 4.5)), flora: 'kristall', rockScale: 1.2 }; break;
+    case 'nebel': k = { sand: toon({ color: 0xc9c2a8, detail: 'sand' }), grass: toon({ color: 0x7d8f6a, detail: 'grass' }), rock: toon({ color: 0x7a7e80, flatShading: true, detail: 'rock' }), trunk: toon(0x5a4a3a), leaf: toon({ color: 0x6a7a5a, flatShading: true }), extra: null, flora: 'tot', rockScale: 1.1 }; break;
+    case 'nord': k = { sand: toon({ color: 0xd8d2c0, detail: 'sand' }), grass: toon({ color: 0x4f8a52, detail: 'grass' }), rock: toon({ color: 0x8a8f96, flatShading: true, detail: 'rock' }), trunk: toon(0x6a4a2b), leaf: toon({ color: 0x2f6a44, flatShading: true }), extra: null, flora: 'kiefer', rockScale: 1 }; break;
+    case 'glut': k = { sand: toon({ color: 0x4a3c38, detail: 'sand' }), grass: toon({ color: 0x6a5048, detail: 'grass' }), rock: toon({ color: 0x2e2626, flatShading: true, detail: 'rock' }), trunk: toon(0x2a2020), leaf: toon({ color: 0x3a2e2a, flatShading: true }), extra: glow(new Color(5, 1.4, 0.25)), flora: 'tot', rockScale: 1.3 }; break;
+    case 'sturm': k = { sand: toon({ color: 0xb8b4a8, detail: 'sand' }), grass: toon({ color: 0x5a7a6a, detail: 'grass' }), rock: toon({ color: 0x5a6070, flatShading: true, detail: 'rock' }), trunk: toon(0x4a3a2a), leaf: toon({ color: 0x3e5e4e, flatShading: true }), extra: null, flora: 'kiefer', rockScale: 1.7 }; break;
+    case 'schlund': k = { sand: toon({ color: 0x8a86a0, detail: 'sand' }), grass: toon({ color: 0x5a4a8a, detail: 'grass' }), rock: toon({ color: 0x3a3450, flatShading: true, detail: 'rock' }), trunk: toon(0x3a3048), leaf: toon({ color: 0x4a3a6a, flatShading: true }), extra: glow(new Color(1.2, 2.6, 4.5)), flora: 'kristall', rockScale: 1.2 }; break;
     // gedämpftes, satteres Grün statt Knallgrün, sonnengebleichter Sand
-    default: k = { sand: toon(0xdcc392), grass: toon({ color: 0x55894a, flatShading: true }), rock: toon({ color: 0x7a746a, flatShading: true }), trunk: toon(0x6e4a28), leaf: toon({ color: 0x356e34, flatShading: true }), extra: null, flora: 'palme', rockScale: 1 };
+    default: k = { sand: toon({ color: 0xdcc392, detail: 'sand' }), grass: toon({ color: 0x55894a, detail: 'grass' }), rock: toon({ color: 0x7a746a, flatShading: true, detail: 'rock' }), trunk: toon(0x6e4a28), leaf: toon({ color: 0x356e34, flatShading: true }), extra: null, flora: 'palme', rockScale: 1 };
   }
   cache.set(style, k);
   return k;

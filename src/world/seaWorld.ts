@@ -853,7 +853,7 @@ export class SeaWorld {
   /** Liegt ein Gegner im Feuerfächer dieser Seite? (Knopf-Hervorhebung) */
   fanHot(side: number) { return this.mode === 'sail' && !!this.naval?.inFan(side, this.seaRange); }
 
-  get seaRange() { return (72 + Math.max(0, SHIP_CLASSES.indexOf(this.ship.cls)) * 3) * this.rangeMult; }
+  get seaRange() { return (75 + Math.max(0, SHIP_CLASSES.indexOf(this.ship.cls)) * 6) * this.rangeMult; }
   /** Nachladezeit wie in 1.0 */
   get reloadTime() { return 1.9 * (this.naval?.reloadMult ?? 1); }
 
@@ -1450,7 +1450,8 @@ export class SeaWorld {
     if (this.wakeTimer <= 0 && Math.abs(this.speed) > 1.5) {
       this.wakeTimer = WAKE_INTERVAL;
       const f = this.fwd();
-      this.wake.unshift({ x: this.x - f.x * 4.6, z: this.z - f.z * 4.6, age: 0, strength: Math.min(1, Math.abs(this.speed) / 10) });
+      const back = this.ship.cls.L * 0.42;
+      this.wake.unshift({ x: this.x - f.x * back, z: this.z - f.z * back, age: 0, strength: Math.min(1, Math.abs(this.speed) / 10) });
     }
     this.env.ocean.setWake(this.wake);
   }

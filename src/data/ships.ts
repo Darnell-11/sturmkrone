@@ -21,14 +21,15 @@ export interface ShipClass {
   decks: number;
 }
 
+// Größer als in 1.0: schon die Schaluppe wirkt wie ein echtes Schiff, späte Klassen sind gewaltig
 export const SHIP_CLASSES: ShipClass[] = [
-  { id: 'schaluppe', n: 'Schaluppe', L: 15, W: 5, mh: 11, masts: [0.06], hp: 120, can: 2, spd: 22, crew: 2, price: 0, rank: 0, decks: 1 },
-  { id: 'brigg', n: 'Brigg', L: 19, W: 6.2, mh: 13, masts: [0.18, -0.14], hp: 200, can: 3, spd: 23, crew: 4, price: 1200, rank: 2, decks: 1 },
-  { id: 'korvette', n: 'Korvette', L: 23, W: 6.8, mh: 15, masts: [0.2, -0.15], hp: 290, can: 4, spd: 24, crew: 5, price: 2600, rank: 3, decks: 1 },
-  { id: 'fregatte', n: 'Fregatte', L: 28, W: 8, mh: 18, masts: [0.26, 0.03, -0.17], hp: 400, can: 5, spd: 23, crew: 6, price: 4800, rank: 4, decks: 2 },
-  { id: 'galeone', n: 'Galeone', L: 34, W: 10, mh: 21, masts: [0.27, 0.04, -0.16], hp: 560, can: 6, spd: 21.5, crew: 8, price: 8500, rank: 5, decks: 2 },
-  { id: 'linienschiff', n: 'Linienschiff', L: 42, W: 12, mh: 25, masts: [0.28, 0.06, -0.14], hp: 780, can: 8, spd: 21, crew: 10, price: 15000, rank: 7, decks: 3 },
-  { id: 'leviathan', n: 'Leviathan', L: 54, W: 15, mh: 30, masts: [0.31, 0.14, -0.02, -0.15], hp: 1100, can: 10, spd: 20, crew: 13, price: 30000, rank: 9, decks: 3 },
+  { id: 'schaluppe', n: 'Schaluppe', L: 18, W: 5.8, mh: 13, masts: [0.06], hp: 120, can: 2, spd: 22, crew: 2, price: 0, rank: 0, decks: 1 },
+  { id: 'brigg', n: 'Brigg', L: 24, W: 7.2, mh: 16, masts: [0.18, -0.14], hp: 200, can: 3, spd: 23, crew: 4, price: 1200, rank: 2, decks: 1 },
+  { id: 'korvette', n: 'Korvette', L: 30, W: 8.4, mh: 19, masts: [0.2, -0.15], hp: 290, can: 4, spd: 24, crew: 5, price: 2600, rank: 3, decks: 1 },
+  { id: 'fregatte', n: 'Fregatte', L: 38, W: 10, mh: 23, masts: [0.26, 0.03, -0.17], hp: 400, can: 5, spd: 23, crew: 6, price: 4800, rank: 4, decks: 2 },
+  { id: 'galeone', n: 'Galeone', L: 46, W: 12.5, mh: 27, masts: [0.27, 0.04, -0.16], hp: 560, can: 6, spd: 21.5, crew: 8, price: 8500, rank: 5, decks: 2 },
+  { id: 'linienschiff', n: 'Linienschiff', L: 58, W: 15, mh: 32, masts: [0.28, 0.06, -0.14], hp: 780, can: 8, spd: 21, crew: 10, price: 15000, rank: 7, decks: 3 },
+  { id: 'leviathan', n: 'Leviathan', L: 74, W: 19, mh: 38, masts: [0.31, 0.14, -0.02, -0.15], hp: 1100, can: 10, spd: 20, crew: 13, price: 30000, rank: 9, decks: 3 },
 ];
 
 export type AmmoId = 'kugel' | 'kette' | 'kartaetsche' | 'brand';

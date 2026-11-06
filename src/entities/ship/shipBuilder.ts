@@ -1,5 +1,6 @@
 import {
   BoxGeometry,
+  ExtrudeGeometry,
   BufferAttribute,
   BufferGeometry,
   CanvasTexture,
@@ -44,30 +45,41 @@ export interface ShipModel {
 
 /** Breite des Rumpfs entlang der Länge: vorn spitz, hinten breit */
 function widthAt(t: number): number {
-  // t: −1 Heck … +1 Bug
-  if (t > 0.35) return Math.cos(((t - 0.35) / 0.65) * Math.PI * 0.5) ** 0.8;
-  if (t < -0.8) return 0.82 + (t + 1) * 0.9;
-  return 1;
+  // t: −1 Heck … +1 Bug. Durchgehend geschwungen wie ein echter Rumpf (vorher über 2/3 der Länge kastenförmig):
+  // fein zulaufender Bug, größte Breite etwas hinter der Mitte, breiter Heckspiegel
+  if (t >= 0) return Math.pow(Math.max(0, 1 - Math.pow(t, 2.3)), 0.6);
+  const u = -t;
+  return 0.78 + 0.22 * Math.pow(Math.max(0, 1 - Math.pow(u, 3)), 0.5);
+}
+
+/** Deckssprung: Bug und Heck steigen an (bei großen Schiffen begrenzt) */
+export function sheerAt(t: number, L: number): number {
+  const k = Math.min(1.6, L / 15) * 0.55;
+  return (t > 0 ? t * t * 1.1 : t * t * 0.8) * k;
 }
 
 function hullGeometry(c: ShipClass, D: number, look: ShipLook): BufferGeometry {
   const sections = 22;
-  const prof = [[-1, D], [-0.98, D * 0.55], [-0.88, D * 0.1], [-0.62, -0.55], [-0.25, -0.95], [0, -1.05], [0.25, -0.95], [0.62, -0.55], [0.88, D * 0.1], [0.98, D * 0.55], [1, D]];
+  // Spantform: größte Breite auf halber Höhe, oben leicht eingezogen (Tumblehome), unten runder Bauch
+  const prof = [[-0.9, D], [-1, D * 0.55], [-0.95, D * 0.15], [-0.7, -0.5], [-0.32, -0.92], [0, -1.05], [0.32, -0.92], [0.7, -0.5], [0.95, D * 0.15], [1, D * 0.55], [0.9, D]];
   const pos: number[] = [];
   const col: number[] = [];
   const uv: number[] = [];
-  const hull = new Color(look.hull), stripe = new Color(look.stripe), bottom = new Color('#B8653A'), dark = new Color(look.hull).multiplyScalar(0.55);
+  const hull = new Color(look.hull), stripe = new Color(look.stripe), bottom = new Color('#6E3524'), dark = new Color(look.hull).multiplyScalar(0.5);
   const ring = (i: number) => {
     const t = (i / sections) * 2 - 1;
     const z = t * c.L / 2;
     const w = Math.max(0.04, widthAt(t)) * c.W / 2;
-    const rise = t > 0.6 ? (t - 0.6) * 1.6 : t < -0.85 ? (-0.85 - t) * 2 : 0;
-    return prof.map(([px, py]) => new Vector3(px * w, py * (1 - Math.max(0, t - 0.8) * 1.5) + (py > 0.5 ? rise : rise * 0.3), z));
+    const rise = sheerAt(t, c.L);
+    const draft = D / (1.4 + c.decks * 0.75); // Tiefgang wächst mit der Schiffsgröße
+    return prof.map(([px, py0]) => { const py = py0 < 0 ? py0 * draft : py0; return new Vector3(px * w, py * (1 - Math.max(0, t - 0.85) * 1.6) + (py > 0.5 ? rise : rise * Math.max(0, (py + 1.05) / (D + 1.05))), z); });
   };
-  const colorFor = (y: number, i: number) => {
+  // waagerechte Bergholz-Leisten statt senkrechter Streifen, dunkles Unterwasserschiff
+  const colorFor = (y: number, _i: number) => {
     if (y < 0.05) return bottom;
-    if (Math.abs(y - (D - 0.7)) < 0.32) return stripe;
-    return (i % 4 === 0) ? dark : hull;
+    if (Math.abs(y - (D - 0.7)) < 0.28) return stripe;
+    if (Math.abs(y - D * 0.32) < 0.14 || Math.abs(y - (D + 0.25)) < 0.1) return dark;
+    return hull;
   };
   for (let i = 0; i < sections; i++) {
     const a = ring(i), b = ring(i + 1);
@@ -179,7 +191,9 @@ function figurehead(id: FigureheadId, scale: number): Group {
 /** Baut ein Schiff einer Klasse im eigenen Look. Bug zeigt nach +Z. */
 export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
   const group = new Group();
-  const D = 1.4 + c.decks * 0.75;
+  // Bordwandhöhe wächst mit der Schiffsgröße (große Schiffe ragen hoch aus dem Wasser)
+  const hk = Math.pow(Math.max(1, c.L / 24), 0.6);
+  const D = (1.4 + c.decks * 0.75) * hk;
   const sc = c.L / 15;
   const halfWidth = (z: number) => Math.max(0.05, widthAt(z / (c.L / 2))) * c.W / 2;
 
@@ -213,42 +227,63 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
       const z0 = ((i / 16) * 1.9 - 0.95) * c.L / 2, z1 = (((i + 1) / 16) * 1.9 - 0.95) * c.L / 2;
       const x0 = s * halfWidth(z0) * 0.97, x1 = s * halfWidth(z1) * 0.97;
       const len = Math.hypot(x1 - x0, z1 - z0);
-      const rail = new Mesh(new BoxGeometry(0.12, 0.12, len), gold);
-      rail.position.set((x0 + x1) / 2, D + 0.85, (z0 + z1) / 2);
-      rail.rotation.y = Math.atan2(x1 - x0, z1 - z0);
+      const t0 = z0 / (c.L / 2), t1 = z1 / (c.L / 2);
+      const y0 = D + 0.85 + sheerAt(t0, c.L), y1 = D + 0.85 + sheerAt(t1, c.L);
+      const rail = new Mesh(new BoxGeometry(0.09, 0.08, Math.hypot(len, y1 - y0)), darkWood);
+      rail.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+      rail.rotation.order = 'YXZ';
+      rail.rotation.set(-Math.atan2(y1 - y0, len), Math.atan2(x1 - x0, z1 - z0), 0);
       group.add(rail);
-      const post = new Mesh(new BoxGeometry(0.1, 0.85, 0.1), wood);
-      post.position.set(x0, D + 0.42, z0);
+      const ph = 0.85 + sheerAt(t0, c.L);
+      const post = new Mesh(new BoxGeometry(0.07, ph, 0.07), wood);
+      post.position.set(x0, D + ph / 2, z0);
       group.add(post);
     }
   }
   // Achterkastell mit Fenstern
   const windows: Mesh[] = [];
   const sternLen = c.L * 0.22;
-  const castleH = 1.2 + c.decks * 0.5;
-  const castle = new Mesh(new BoxGeometry(c.W * 0.82, castleH, sternLen), wood);
-  castle.position.set(0, D + castleH / 2, -c.L / 2 + sternLen / 2 + c.L * 0.03);
+  const castleH = (1.2 + c.decks * 0.5) * hk;
+  // Achterkastell: folgt der Rumpfkurve statt eines Quaders, mit goldener Zierleiste
+  const castleZ0 = -c.L / 2 + c.L * 0.02, castleZ1 = castleZ0 + sternLen;
+  const cs = new Shape();
+  const CN = 8;
+  for (let i = 0; i <= CN; i++) { const z = castleZ0 + (i / CN) * sternLen; const x = halfWidth(z) * 0.9; if (i === 0) cs.moveTo(x, -z); else cs.lineTo(x, -z); }
+  for (let i = CN; i >= 0; i--) { const z = castleZ0 + (i / CN) * sternLen; cs.lineTo(-halfWidth(z) * 0.9, -z); }
+  const castle = new Mesh(new ExtrudeGeometry(cs, { depth: castleH, bevelEnabled: false }).rotateX(-Math.PI / 2), wood);
+  castle.position.y = D;
   group.add(castle);
-  const castleTop = new Mesh(new BoxGeometry(c.W * 0.86, 0.15, sternLen * 1.04), toon({ color: '#C79A68', map: deckTex }));
-  castleTop.position.set(0, D + castleH, castle.position.z);
+  const castleTop = new Mesh(new ExtrudeGeometry(cs, { depth: 0.14, bevelEnabled: false }).rotateX(-Math.PI / 2), toon({ color: '#C79A68', map: deckTex }));
+  castleTop.position.y = D + castleH;
+  castleTop.scale.set(1.04, 1, 1);
   group.add(castleTop);
+  const trim = new Mesh(new ExtrudeGeometry(cs, { depth: 0.12, bevelEnabled: false }).rotateX(-Math.PI / 2), gold);
+  trim.position.y = D + castleH * 0.86;
+  trim.scale.set(1.025, 1, 1);
+  group.add(trim);
+  const castleMid = (castleZ0 + castleZ1) / 2;
   const winMat = new MeshBasicMaterial({ color: new Color(2.4, 1.6, 0.6) });
   for (let i = 0; i < c.decks + 2; i++) {
     const w = new Mesh(new PlaneGeometry(0.5, 0.45), winMat);
-    w.position.set((i - (c.decks + 1) / 2) * (c.W * 0.7 / (c.decks + 2)), D + castleH * 0.55, castle.position.z - sternLen / 2 - 0.01);
+    w.position.set((i - (c.decks + 1) / 2) * (c.W * 0.62 / (c.decks + 2)), D + castleH * 0.55, castleZ0 - 0.02);
     w.rotation.y = Math.PI;
     w.userData.noOutline = true;
     group.add(w);
     windows.push(w);
   }
-  if (c.decks >= 2) {
-    const fore = new Mesh(new BoxGeometry(c.W * 0.6, 0.9, c.L * 0.14), wood);
-    fore.position.set(0, D + 0.45, c.L / 2 - c.L * 0.2);
+  // Vorderkastell (ab Brigg): erhöhtes Vordeck, das der Rumpfkurve folgt
+  if (c.L > 20) {
+    const f0 = c.L / 2 - c.L * 0.27, f1 = c.L / 2 - c.L * 0.1;
+    const fs = new Shape();
+    for (let i = 0; i <= 6; i++) { const z = f0 + (i / 6) * (f1 - f0); const x = halfWidth(z) * 0.88; if (i === 0) fs.moveTo(x, -z); else fs.lineTo(x, -z); }
+    for (let i = 6; i >= 0; i--) { const z = f0 + (i / 6) * (f1 - f0); fs.lineTo(-halfWidth(z) * 0.88, -z); }
+    const fore = new Mesh(new ExtrudeGeometry(fs, { depth: 0.9 + c.decks * 0.2, bevelEnabled: false }).rotateX(-Math.PI / 2), wood);
+    fore.position.y = D;
     group.add(fore);
   }
 
   // Steuerrad
-  const helm = new Vector3(0, D + castleH, castle.position.z + sternLen * 0.15);
+  const helm = new Vector3(0, D + castleH, castleMid + sternLen * 0.15);
   const wheel = new Group();
   const ring = new Mesh(new TorusGeometry(0.45, 0.05, 6, 16), wood);
   wheel.add(ring);
@@ -267,17 +302,21 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
   c.masts.forEach((mz, mi) => {
     const z = mz * c.L;
     const h = c.mh * (mi === 0 && c.masts.length > 1 ? 0.92 : mi === c.masts.length - 1 && c.masts.length > 2 ? 0.8 : 1);
-    const mast = new Mesh(new CylinderGeometry(0.12 * sc, 0.2 * sc, h, 8), darkWood);
-    mast.position.set(0, D + h / 2, z);
-    group.add(mast);
-    const nest = new Mesh(new CylinderGeometry(0.45 * sc, 0.35 * sc, 0.4, 10), wood);
+    // Untermast und schlankere Stenge darüber (statt eines dicken Pfahls)
+    const ms = Math.min(sc, 3.2);
+    const lower = new Mesh(new CylinderGeometry(0.13 * ms, 0.19 * ms, h * 0.64, 10), darkWood);
+    lower.position.set(0, D + h * 0.32, z);
+    const upper = new Mesh(new CylinderGeometry(0.06 * ms, 0.1 * ms, h * 0.42, 8), darkWood);
+    upper.position.set(0, D + h * 0.79, z);
+    group.add(lower, upper);
+    const nest = new Mesh(new CylinderGeometry(0.45 * Math.min(sc, 3), 0.35 * Math.min(sc, 3), 0.4, 10), wood);
     nest.position.set(0, D + h * 0.78, z);
     group.add(nest);
     const yards = c.L > 16 ? 3 : 2;
     for (let k = 0; k < yards; k++) {
       const y = D + h * (0.3 + k * 0.24);
       const w = c.W * (1.15 - k * 0.22);
-      const yard = new Mesh(new CylinderGeometry(0.06 * sc, 0.06 * sc, w, 6), darkWood);
+      const yard = new Mesh(new CylinderGeometry(0.06 * Math.min(sc, 3), 0.06 * Math.min(sc, 3), w, 6), darkWood);
       yard.rotation.z = Math.PI / 2;
       yard.position.set(0, y + h * 0.2, z);
       group.add(yard);
@@ -341,6 +380,25 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
       port.position.set(x + s * 0.02, D - 0.7, z);
       group.add(port);
       (s > 0 ? muzzlesL : muzzlesR).push(new Vector3(x + s * 0.8, D - 0.7, z));
+    }
+  }
+
+  // zweite (und dritte) Reihe Stückpforten bei mehrdeckigen Schiffen
+  if (c.decks >= 2) {
+    const portMat = toon('#1E1410'), lidMat = toon(look.stripe);
+    for (let row = 1; row < c.decks; row++) {
+      const y = D * (0.62 - row * 0.2);
+      for (let i = 0; i < c.can + 1; i++) {
+        const z = ((i / c.can) - 0.5) * c.L * 0.62;
+        for (const s of [-1, 1]) {
+          const x = s * halfWidth(z) * 1.0;
+          const port = new Mesh(new BoxGeometry(0.06, 0.55, 0.65), portMat);
+          port.position.set(x + s * 0.02, y, z);
+          const lid = new Mesh(new BoxGeometry(0.05, 0.12, 0.75), lidMat);
+          lid.position.set(x + s * 0.05, y + 0.36, z);
+          group.add(port, lid);
+        }
+      }
     }
   }
 

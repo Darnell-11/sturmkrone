@@ -69,6 +69,8 @@ export interface ToonOptions {
   opacity?: number;
   vertexColors?: boolean;
   flatShading?: boolean;
+  /** Prozedurale Oberfläche aus der Weltposition (scharf in jeder Auflösung): Sand, Gras oder Fels */
+  detail?: 'sand' | 'grass' | 'rock';
 }
 
 const cache = new Map<string, MeshToonMaterial>();
@@ -97,7 +99,58 @@ const RIM_SPEC_GLSL = /* glsl */ `
   }
 `;
 
-function patch(mat: MeshToonMaterial, spec: number, rim: number) {
+/** Rauschfunktionen und Oberflächen für Sand, Gras und Fels (Weltkoordinaten, mit Entfernung weich ausgeblendet) */
+const DETAIL_GLSL = /* glsl */ `
+  varying vec3 vSkWorld;
+  float skdH(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float skdN(vec2 p) {
+    vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(skdH(i), skdH(i + vec2(1.0, 0.0)), f.x), mix(skdH(i + vec2(0.0, 1.0)), skdH(i + vec2(1.0, 1.0)), f.x), f.y);
+  }
+  float skdF(vec2 p) { return skdN(p) * 0.5 + skdN(p * 2.03) * 0.3 + skdN(p * 4.1) * 0.2; }
+`;
+const DETAIL_FRAG: Record<'sand' | 'grass' | 'rock', string> = {
+  sand: /* glsl */ `{
+    vec2 p = vSkWorld.xz;
+    float camD = distance(vSkWorld, cameraPosition);
+    float nearK = 1.0 - smoothstep(25.0, 90.0, camD);
+    float grain = (skdH(floor(p * 24.0)) - 0.5) * 0.16 * nearK + (skdN(p * 5.0) - 0.5) * 0.14 * (1.0 - smoothstep(60.0, 160.0, camD));
+    float rip = sin((p.x * 0.8 + p.y * 0.35) * 3.2 + skdN(p * 0.6) * 4.0) * 0.5 + 0.5;
+    float macro = skdF(p * 0.04) - 0.5;
+    float ripK = smoothstep(0.25, 0.75, rip);
+    diffuseColor.rgb *= 1.0 + grain + (ripK - 0.5) * 0.16 * (1.0 - smoothstep(50.0, 140.0, camD)) + macro * 0.26;
+    // Farbspiel: helle, trockene Flächen gegen goldbraune Senken
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.06, 0.94, 0.8), smoothstep(0.45, 0.8, skdF(p * 0.07 + 3.1)) * 0.6);
+    float wet = 1.0 - smoothstep(0.35, 1.15, vSkWorld.y);
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.66, 0.66, 0.7), wet * 0.85);
+    diffuseColor.rgb += step(0.985, skdH(floor(p * 9.0))) * 0.12 * nearK;
+  }`,
+  grass: /* glsl */ `{
+    vec2 p = vSkWorld.xz;
+    float camD = distance(vSkWorld, cameraPosition);
+    float nearK = 1.0 - smoothstep(20.0, 70.0, camD);
+    float macro = skdF(p * 0.035);
+    vec3 dry = diffuseColor.rgb * vec3(1.45, 1.28, 0.7);
+    vec3 lush = diffuseColor.rgb * vec3(0.72, 0.92, 0.72);
+    diffuseColor.rgb = mix(lush, dry, smoothstep(0.35, 0.75, macro));
+    float mid = skdN(p * 0.45) - 0.5;
+    float blades = (skdH(floor(p * 20.0)) - 0.5) * 0.26 * nearK + (skdN(p * 6.0) - 0.5) * 0.18 * (1.0 - smoothstep(40.0, 130.0, camD));
+    // Halmbüschel: kurze helle Striche in Windrichtung
+    float tuft = smoothstep(0.82, 0.95, skdN(vec2(p.x * 9.0, p.y * 2.2))) * nearK;
+    diffuseColor.rgb *= 1.0 + mid * 0.24 + blades + tuft * 0.18;
+    float dirt = smoothstep(0.78, 0.86, skdN(p * 0.09 + 7.3));
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.33, 0.22) * (0.9 + skdH(floor(p * 18.0)) * 0.2), dirt * 0.7);
+  }`,
+  rock: /* glsl */ `{
+    vec3 w = vSkWorld;
+    float camD = distance(w, cameraPosition);
+    float strata = sin(w.y * 3.1 + skdN(w.xz * 0.3) * 3.0) * 0.5 + 0.5;
+    float speck = (skdH(floor((w.xz + w.y) * 16.0)) - 0.5) * 0.12 * (1.0 - smoothstep(20.0, 70.0, camD));
+    diffuseColor.rgb *= 0.9 + strata * 0.16 + speck + (skdF(w.xz * 0.2 + w.y * 0.1) - 0.5) * 0.18;
+  }`,
+};
+
+function patch(mat: MeshToonMaterial, spec: number, rim: number, detail?: 'sand' | 'grass' | 'rock') {
   const uSpec = { value: spec };
   const uRimAmount = { value: rim };
   mat.onBeforeCompile = (shader) => {
@@ -109,8 +162,16 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number) {
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform vec3 uShadowTint;\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uSpec;\nuniform float uRimAmount;')
       .replace('#include <opaque_fragment>', RIM_SPEC_GLSL + '\n#include <opaque_fragment>');
+    if (detail) {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vSkWorld;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSkWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\n' + DETAIL_GLSL)
+        .replace('#include <color_fragment>', '#include <color_fragment>\n' + DETAIL_FRAG[detail]);
+    }
   };
-  mat.customProgramCacheKey = () => 'sk-toon-2';
+  mat.customProgramCacheKey = () => `sk-toon-2${detail ? '-' + detail : ''}`;
 }
 
 /** Toon-Material im Anime-Stil (gecacht – gleiche Optionen ergeben dasselbe Material). */
@@ -130,7 +191,7 @@ export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial 
     vertexColors: o.vertexColors ?? false,
   });
   if (o.flatShading) (mat as any).flatShading = true;
-  patch(mat, o.spec ?? 0, o.rim ?? 1);
+  patch(mat, o.spec ?? 0, o.rim ?? 1, o.detail);
   mat.userData.toon = true;
   cache.set(key, mat);
   return mat;

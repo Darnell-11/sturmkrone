@@ -161,6 +161,8 @@ export class Ocean {
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', `#include <common>
           uniform vec3 uOrigin;
+          uniform sampler2D uShore;
+          uniform float uShoreSize;
           varying vec3 vSkW;
           varying float vCrest;
           ${GERSTNER_GLSL}`)
@@ -170,7 +172,9 @@ export class Ocean {
           vec3 skDisp = skGerstner(skP, skN, skCrest);
           vec3 objectNormal = skN;`)
         .replace('#include <begin_vertex>', `
-          vec3 transformed = position + skDisp;
+          // Im Flachwasser vor der Küste werden die Wellen flacher (sonst stechen Kämme durch den Strand)
+          float skShoreD = texture2D(uShore, skP / uShoreSize + 0.5).r * 255.0;
+          vec3 transformed = position + skDisp * (0.2 + 0.8 * smoothstep(2.0, 40.0, skShoreD));
           vCrest = skCrest;
           vSkW = transformed + uOrigin;`);
       shader.fragmentShader = shader.fragmentShader
@@ -212,14 +216,24 @@ export class Ocean {
           float shallow = 1.0 - smoothstep(0.0, 48.0, sd);
           // Tiefes Wasser bleibt satt und dunkel; nur Wellenberge und Küsten werden heller
           vec3 skBase = mix(uDeep, uShallow, clamp(shallow * 0.92 + smoothstep(-0.6, 1.8, skD.y) * 0.13, 0.0, 1.0));
+          // Lichtspiele am Grund im Flachwasser (Kaustiken)
+          {
+            vec2 cp = vSkW.xz * 0.38;
+            float c1 = abs(skNoise(cp + vec2(uTime * 0.21, uTime * 0.13)) - skNoise(cp * 1.7 - vec2(uTime * 0.17, -uTime * 0.11)));
+            float caust = pow(1.0 - clamp(c1 * 2.2, 0.0, 1.0), 5.0);
+            skBase += uShallow * caust * shallow * shallow * 0.45 * uSpecK * (1.0 - smoothstep(60.0, 220.0, camD));
+          }
           // Gischt auf Wellenkämmen, aufgebrochen durch Rauschen
           float nz = skNoise(vSkW.xz * 0.35 + uTime * 0.3) * 0.6 + skNoise(vSkW.xz * 1.3 - uTime * 0.5) * 0.4;
           float crestT = 0.46 - 0.08 * clamp(uWaveScale - 1.0, 0.0, 2.0);
           float skFoam = smoothstep(crestT, crestT + 0.12, skCrestF + (nz - 0.5) * 0.18);
           // Brandungsringe und Küstenlinie
           float bands = smoothstep(0.78, 1.0, sin(sd * 0.45 - uTime * 1.6)) * (1.0 - smoothstep(3.0, 24.0, sd));
-          float coast = 1.0 - smoothstep(0.0, 3.2, sd + (nz - 0.5) * 3.0);
-          skFoam = max(skFoam, max(bands * 0.35 * step(nz, 0.7), coast * 0.85));
+          float coast = 1.0 - smoothstep(0.0, 4.5, sd + (nz - 0.5) * 3.0);
+          // blasiger Küstenschaum: dichte Kante, nach außen zerfasernde Spitze statt glatter Fläche
+          float bub = skNoise(vSkW.xz * 2.2 + vec2(uTime * 0.25, -uTime * 0.18)) * 0.6 + skNoise(vSkW.xz * 5.5 - uTime * 0.3) * 0.4;
+          float coastFoam = coast * smoothstep(0.62 - coast * 0.5, 0.75 - coast * 0.45, bub);
+          skFoam = max(skFoam, max(bands * 0.35 * step(nz, 0.7), coastFoam * 0.9));
           // Schaumstreifen in Windrichtung (je stärker der Wind, desto mehr), wie auf echter offener See
           {
             vec2 wd = vec2(sin(uWindDir), cos(uWindDir));
