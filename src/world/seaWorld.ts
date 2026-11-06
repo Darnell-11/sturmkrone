@@ -30,7 +30,7 @@ import { PlayerFoot } from '../entities/player/playerFoot';
 import { addOutlines } from '../render/outline';
 import { toon } from '../render/toon';
 import { Environment, type EnvState } from './environment';
-import { IslandGround, type WalkIsland } from './islandGround';
+import { coastK, coastMax, IslandGround, makeIslandShape, type WalkIsland } from './islandGround';
 import type { IslandShape } from './ocean';
 import { ParticleSystem } from './particles';
 import { hashId, seeded } from './waves';
@@ -282,29 +282,26 @@ export class SeaWorld {
       const isl = new Group();
       isl.position.set(s.x, 0, s.z);
       const town = s.def.kind === 'town';
-      // Jede Insel bekommt ihre eigene Form: Hügel versetzt, schmaler oder breiter, flacher oder höher.
-      // Stadt, Häfen, Leuchtturm und Vulkane bleiben mittig (ihre Bauten stehen um die Mitte).
-      const shape = seeded(hashId(s.def.id));
-      const centered = town || s.def.kind === 'harbor' || s.tower || s.def.region === 'glut';
-      const hillFrac = centered ? 0.75 : 0.55 + shape() * 0.22;
-      const offR = centered ? 0 : shape() * (0.86 - hillFrac) * r;
-      const offA = shape() * Math.PI * 2;
-      const hx = Math.cos(offA) * offR, hz = Math.sin(offA) * offR;
-      const hillScale = centered ? s.hill : s.hill * (0.75 + shape() * 0.7);
-      const walk: WalkIsland = { x: s.x, z: s.z, r, beachY: 1.3, hillR: r * hillFrac, hillScale, hillY: 1.2, blockers: [], hx, hz };
-      shapes.push({ x: s.x, z: s.z, r: r * 1.15 });
+      // Jede Insel bekommt ihre eigene Form: langgezogen, gelappt, sichelförmig oder rund, mit 1–3 Hügeln.
+      // Stadt, Häfen, Leuchtturm und Vulkane bleiben schlicht (ihre Bauten stehen um die Mitte).
+      const shapeRnd = seeded(hashId(s.def.id));
+      const simple = town || s.def.kind === 'harbor' || s.tower || s.def.region === 'glut';
+      const form = makeIslandShape(r, s.hill, shapeRnd, simple);
+      const walk: WalkIsland = { x: s.x, z: s.z, r, beachY: 1.3, hillY: 1.2, coast: form.coast, hills: form.hills.map((h) => ({ ...h, x: s.x + h.x, z: s.z + h.z })), blockers: [] };
+      shapes.push({ x: s.x, z: s.z, r: r * coastMax(form.coast) * 1.1, coast: form.coast, base: r * 1.1 });
       const kit = s.kit;
       const glow = new Set<Mesh>(this.lamps);
-      const { beach, hill } = islandTerrain(kit, r, hillScale, rnd, hillFrac, hx, hz);
-      isl.add(beach, hill);
-      /** Bodenhöhe in Inselkoordinaten (wie islandGround) */
-      const hAt = (lx: number, lz: number) => {
-        const d = Math.hypot(lx, lz);
-        let y = 1.3 - Math.max(0, d - r * 0.92) * 4;
-        const dh = Math.hypot(lx - hx, lz - hz);
-        if (dh < walk.hillR) y = Math.max(y, 1.2 + Math.sqrt(walk.hillR ** 2 - dh * dh) * hillScale);
-        return y;
-      };
+      // Grasfläche: üppig bis fast an den Strand oder karg mit viel Sand – je nach Region und Inselart
+      const style = styleOf(s.def.region);
+      const lushK = style === 'tropisch' || style === 'nord' ? 1 : style === 'nebel' ? 0.8 : style === 'schlund' ? 0.6 : 0.35;
+      const grassFrac = town ? 0.8 : s.def.kind === 'treasure' ? 0.35 + shapeRnd() * 0.25 : (0.45 + shapeRnd() * 0.4) * lushK + (1 - lushK) * 0.2;
+      const terrain = islandTerrain(kit, r, form.coast, form.hills, grassFrac, shapeRnd);
+      isl.add(terrain.beach, ...terrain.hills);
+      /** Bodenhöhe in Inselkoordinaten – dieselbe Rechnung wie beim Laufen */
+      const solo = new IslandGround();
+      solo.add(walk);
+      const hAt = (lx: number, lz: number) => Math.max(-2, solo.height(s.x + lx, s.z + lz));
+      const hillTop = Math.max(...walk.hills.map((h) => h.r * h.h));
       const rocks = s.def.rocks ?? (rnd() < 0.4 && !s.tower && !town ? 1 : 0);
       for (let k = 0; k < rocks; k++) {
         const a = rnd() * Math.PI * 2, rr = r * (0.35 + rnd() * 0.3);
@@ -375,14 +372,14 @@ export class SeaWorld {
       if (!town) {
         const dressed = dressIsland({ group: isl, def: s.def, kit, walk, hAt, glow, density: texDetail.density, style: styleOf(s.def.region) });
         this.campfires.push(...dressed.fires.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
-        this.fauna.addIsland(s.def, s.x, s.z, r, dressed.trees.map((t) => ({ x: s.x + t.x, y: t.y, z: s.z + t.z })), dressed.bushes.map((b) => ({ x: s.x + b.x, y: b.y, z: s.z + b.z })), styleOf(s.def.region));
+        this.fauna.addIsland(s.def, s.x, s.z, r, dressed.trees.map((t) => ({ x: s.x + t.x, y: t.y, z: s.z + t.z })), dressed.bushes.map((b) => ({ x: s.x + b.x, y: b.y, z: s.z + b.z })), styleOf(s.def.region), (ang) => r * coastK(form.coast, ang));
       }
       this.scene.add(isl);
       this.islandGroups.push({ g: isl, x: s.x, z: s.z, r });
       mergeByMaterial(isl, glow);
       // Namensschild (wie in 1.0): erscheint, sobald die Insel entdeckt ist
       const label = islandLabel(s.def.name, s.def.kind, s.def.level);
-      label.position.set(s.x, 1.2 + walk.hillR * hillScale + 22, s.z);
+      label.position.set(s.x, 1.2 + hillTop + 22, s.z);
       label.visible = false;
       this.scene.add(label);
       this.labels.push({ sprite: label, x: s.x, z: s.z, r, id: s.def.id });
@@ -923,7 +920,7 @@ export class SeaWorld {
     for (const f of this.campfires) {
       const dd = Math.hypot(f.x - this.playerPos.x, f.z - this.playerPos.z);
       if (dd > 450) continue;
-      if (Math.random() < dt * 3) this.smoke.puff(f.x, f.y + 0.6, f.z, { size: 0.5, grow: 4, life: 6, tone: 0.5, vy: 1.4, spread: 0.15, rise: 0.4, alpha: 0.5, glow: 0.4, wind: 0.8 });
+      if (Math.random() < dt * 2.5) this.smoke.puff(f.x, f.y + 0.6, f.z, { size: 0.4, grow: 3, life: 5, tone: 0.34, vy: 1.8, spread: 0.12, rise: 0.7, alpha: 0.32, glow: 0.4, wind: 0.6 });
       if (dd < 120 && Math.random() < dt * 8) this.sparks.emit(1, f.x, f.y + 0.3, f.z, { speed: 0.4, up: 2.5, life: 0.9, color: new Color(3.2, 1.3, 0.3), gravity: -1.5, spread: 0.4 });
     }
     // Schornsteine der Hafenstadt
@@ -1013,9 +1010,8 @@ export class SeaWorld {
     // Nicht auf Inseln auffahren
     const isl = this.ground.islandAt(s.x, s.z, s.cls.W + 3);
     if (isl) {
-      const a = Math.atan2(s.z - isl.z, s.x - isl.x);
-      s.x = isl.x + Math.cos(a) * (isl.r + s.cls.W + 3);
-      s.z = isl.z + Math.sin(a) * (isl.r + s.cls.W + 3);
+      const o = this.ground.pushOut(isl, s.x, s.z, s.cls.W + 3);
+      s.x = o.x; s.z = o.z;
       if (s.speed > 6) { this.shake = Math.max(this.shake, 0.5); this.onMessage('Auf Grund gelaufen!'); s.damage(s.speed * 1.5, 'kugel', null); }
       s.speed *= 0.4;
     }

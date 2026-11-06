@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BERNSTEINSEE, REGIONS, seaLevelAt } from '../src/data/regions';
+import { BERNSTEINSEE, ISLAND_REACH, REGIONS, seaLevelAt } from '../src/data/regions';
+import { WORLD_RADIUS } from '../src/data/world';
 
 describe('Stärke der Meere', () => {
   it('ist vor Ankerglück am schwächsten und steigt bis zum Rand der Bernsteinsee', () => {
@@ -29,6 +30,18 @@ describe('Stärke der Meere', () => {
       const lv = seaLevelAt(Math.sin(a) * d, Math.cos(a) * d);
       expect(lv).toBeGreaterThanOrEqual(last);
       last = lv;
+    }
+  });
+
+  it('hat größere Inseln, die sich nirgends überschneiden und vor dem Weltrand bleiben', () => {
+    const all = REGIONS.flatMap((r) => r.islands);
+    expect(all.filter((i) => i.kind !== 'town').every((i) => i.r >= 30)).toBe(true);
+    for (let a = 0; a < all.length; a++) {
+      expect(Math.hypot(all[a].x, all[a].z) + all[a].r * ISLAND_REACH, all[a].id).toBeLessThan(WORLD_RADIUS - 60);
+      for (let b = a + 1; b < all.length; b++) {
+        const d = Math.hypot(all[a].x - all[b].x, all[a].z - all[b].z);
+        expect(d, `${all[a].id} / ${all[b].id}`).toBeGreaterThan((all[a].r + all[b].r) * 1.25);
+      }
     }
   });
 });

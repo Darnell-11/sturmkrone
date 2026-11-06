@@ -17,7 +17,7 @@ import type { ParticleSystem } from './particles';
 import { hashId, seeded } from './waves';
 
 interface Spot { x: number; y: number; z: number }
-interface FIsland { x: number; z: number; r: number; style: IslandStyle; trees: Spot[]; bushes: Spot[] }
+interface FIsland { x: number; z: number; r: number; style: IslandStyle; trees: Spot[]; bushes: Spot[]; edge: (a: number) => number }
 interface Crab { isl: FIsland; a: number; d: number; dir: number; moveT: number; waitT: number; bob: number }
 interface Turtle { isl: FIsland; a: number; t: number; speed: number }
 interface Bird { isl: FIsland; tree: Spot; ang: number; rad: number; h: number; speed: number; col: Color; glow: boolean }
@@ -85,12 +85,12 @@ export class IslandFauna {
     this.crabMesh.castShadow = this.turtleMesh.castShadow = true;
   }
 
-  addIsland(def: IslandDef, x: number, z: number, r: number, trees: Spot[], bushes: Spot[], style: IslandStyle) {
+  addIsland(def: IslandDef, x: number, z: number, r: number, trees: Spot[], bushes: Spot[], style: IslandStyle, edge: (a: number) => number = () => r) {
     const rnd = seeded(hashId(def.id) ^ 0x51ed27);
-    const isl: FIsland = { x, z, r, style, trees, bushes };
+    const isl: FIsland = { x, z, r, style, trees, bushes, edge };
     this.islands.push(isl);
     const crabs = style === 'glut' || style === 'schlund' ? 0 : style === 'nord' || style === 'sturm' ? 2 : 3 + Math.floor(rnd() * 4);
-    for (let i = 0; i < crabs && this.crabs.length < MAX_CRABS; i++) this.crabs.push({ isl, a: rnd() * Math.PI * 2, d: r * (0.87 + rnd() * 0.09), dir: rnd() < 0.5 ? 1 : -1, moveT: 0, waitT: rnd() * 3, bob: rnd() * 6 });
+    for (let i = 0; i < crabs && this.crabs.length < MAX_CRABS; i++) this.crabs.push({ isl, a: rnd() * Math.PI * 2, d: 0.9 + rnd() * 0.08, dir: rnd() < 0.5 ? 1 : -1, moveT: 0, waitT: rnd() * 3, bob: rnd() * 6 });
     const turtles = style === 'tropisch' && (def.kind === 'quiet' || def.kind === 'treasure') ? 2 + Math.floor(rnd() * 2) : 0;
     for (let i = 0; i < turtles && this.turtles.length < MAX_TURTLES; i++) this.turtles.push({ isl, a: rnd() * Math.PI * 2, t: rnd() * 40, speed: 0.15 + rnd() * 0.1 });
     const cols = BIRD_COLORS[style];
@@ -115,11 +115,12 @@ export class IslandFauna {
     let n = 0;
     for (const c of this.crabs) {
       if (!near(c.isl)) continue;
-      const wx = c.isl.x + Math.cos(c.a) * c.d, wz = c.isl.z + Math.sin(c.a) * c.d;
+      const cd = c.isl.edge(c.a) * c.d;
+      const wx = c.isl.x + Math.cos(c.a) * cd, wz = c.isl.z + Math.sin(c.a) * cd;
       const scared = Math.hypot(wx - px, wz - pz) < 3.5;
       if (c.moveT > 0) {
         c.moveT -= dt;
-        c.a += (c.dir * (scared ? 3.2 : 1.6) / c.d) * dt;
+        c.a += (c.dir * (scared ? 3.2 : 1.6) / cd) * dt;
         c.bob += dt * 30;
       } else if ((c.waitT -= dt) <= 0 || scared) {
         c.moveT = 0.4 + Math.random() * 0.9;
@@ -143,7 +144,7 @@ export class IslandFauna {
       if (!near(tt.isl)) continue;
       tt.t += dt * tt.speed;
       const k = (Math.sin(tt.t) + 1) / 2; // 0 = an Land, 1 = im Wasser
-      const dd = tt.isl.r * (0.88 + k * 0.16);
+      const dd = tt.isl.edge(tt.a) * (0.9 + k * 0.17);
       const wx = tt.isl.x + Math.cos(tt.a) * dd, wz = tt.isl.z + Math.sin(tt.a) * dd;
       const g = ground(wx, wz), w = water(wx, wz);
       const y = Math.max(Number.isFinite(g) ? g : -9, w - 0.25);
@@ -183,7 +184,7 @@ export class IslandFauna {
       const close = this.islands.filter((i) => Math.hypot(i.x - px, i.z - pz) < 220 + i.r);
       if (close.length && this.fish.length < MAX_FISH) {
         const i = close[Math.floor(Math.random() * close.length)];
-        const a = Math.random() * Math.PI * 2, dd = i.r * (1.15 + Math.random() * 0.5);
+        const a = Math.random() * Math.PI * 2, dd = i.edge(a) * (1.3 + Math.random() * 0.5);
         this.fish.push({ x: i.x + Math.cos(a) * dd, z: i.z + Math.sin(a) * dd, dir: Math.random() * Math.PI * 2, t: 0 });
       }
     }

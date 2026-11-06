@@ -1,18 +1,76 @@
 import type { IslandShape } from './ocean';
 
-/** Begehbare Insel: Strandplateau, Hügel und Hindernisse (Palmen, Türme). */
+/** Ein Hügel: Mitte (Welt), Radius und Höhenfaktor (Kuppe = Halbkugel, in der Höhe gestaucht) */
+export interface Hill { x: number; z: number; r: number; h: number }
+
+/**
+ * Begehbare Insel. Sichtbares Gelände und Laufhöhe kommen aus genau diesen Werten (keine Abweichung mehr):
+ * flaches Strandplateau bis zur Küstenlinie, danach fällt der Strand gleichmäßig bis 1,25 × Küstenradius ins Meer.
+ */
 export interface WalkIsland extends IslandShape {
-  /** Höhe des Strandplateaus */
+  /** Höhe des Strandplateaus und Fuß der Hügel */
   beachY: number;
-  /** Hügel: Radius und Höhenfaktor */
-  hillR: number;
-  hillScale: number;
   hillY: number;
-  /** Versatz der Hügelmitte gegenüber der Inselmitte (jede Insel hat ihre eigene Form) */
-  hx?: number;
-  hz?: number;
+  /** Küstenlinie: Radius × (1 + Σ a·sin(f·Winkel + p)) */
+  coast: { a: number; f: number; p: number }[];
+  hills: Hill[];
   /** Runde Hindernisse in Weltkoordinaten */
   blockers: { x: number; z: number; r: number }[];
+}
+
+/** Küstenfaktor in einer Richtung (Winkel wie atan2(z, x)) */
+export function coastK(c: WalkIsland['coast'], a: number): number {
+  let k = 1;
+  for (const w of c) k += w.a * Math.sin(w.f * a + w.p);
+  return k;
+}
+
+/** Größter Küstenfaktor (für grobe Abstandsprüfungen) */
+export function coastMax(c: WalkIsland['coast']): number {
+  let m = 0;
+  for (let i = 0; i < 64; i++) m = Math.max(m, coastK(c, (i / 64) * Math.PI * 2));
+  return m;
+}
+
+/**
+ * Würfelt die Form einer Insel aus: rund, langgezogen, gelappt oder sichelförmig, mit 1–3 Hügeln.
+ * rnd liefert Zufall aus dem Inselnamen; simple = Stadt, Häfen, Leuchttürme, Vulkane (Bauten um die Mitte).
+ */
+export function makeIslandShape(r: number, hill: number, rnd: () => number, simple: boolean): { coast: WalkIsland['coast']; hills: { x: number; z: number; r: number; h: number }[] } {
+  const p = () => rnd() * Math.PI * 2;
+  const coast: WalkIsland['coast'] = [
+    { a: 0.035, f: 3, p: p() }, { a: 0.02, f: 7, p: p() }, { a: 0.01, f: 13, p: p() },
+  ];
+  if (simple) return { coast, hills: [{ x: 0, z: 0, r: r * 0.75, h: hill }] };
+  const type = rnd();
+  if (type < 0.3) coast.push({ a: 0.16 + rnd() * 0.12, f: 2, p: p() });                       // langgezogen
+  else if (type < 0.55) coast.push({ a: 0.1 + rnd() * 0.06, f: 3, p: p() }, { a: 0.05, f: 5, p: p() }); // gelappt mit Buchten
+  else if (type < 0.75) coast.push({ a: 0.16 + rnd() * 0.08, f: 1, p: p() }, { a: 0.08, f: 2, p: p() }); // sichelförmig, eine Seite weit
+  else coast.push({ a: 0.05 + rnd() * 0.04, f: 4, p: p() });                                   // fast rund, viele kleine Buchten
+  // Hügel: dort, wo die Insel am weitesten reicht, damit sie die Form betonen
+  const n = 1 + Math.floor(rnd() * 3);
+  const hills: { x: number; z: number; r: number; h: number }[] = [];
+  const angles = Array.from({ length: 24 }, (_, i) => (i / 24) * Math.PI * 2).sort((a1, a2) => coastK(coast, a2) - coastK(coast, a1));
+  for (let i = 0; i < n; i++) {
+    const a = i === 0 ? angles[0] + (rnd() - 0.5) * 0.6 : angles[Math.floor(rnd() * 12)] + (rnd() - 0.5) * 0.8;
+    const edge = r * coastK(coast, a);
+    const d = edge * (i === 0 ? 0.15 + rnd() * 0.25 : 0.35 + rnd() * 0.25);
+    const cx = Math.cos(a) * d, cz = Math.sin(a) * d;
+    let hr = r * (i === 0 ? 0.42 + rnd() * 0.2 : 0.2 + rnd() * 0.16);
+    // so lange verkleinern, bis der Hügel ganz auf dem Strandplateau liegt
+    for (let t = 0; t < 12; t++) {
+      let ok = true;
+      for (let k = 0; k < 24 && ok; k++) {
+        const b = (k / 24) * Math.PI * 2;
+        const px = cx + Math.cos(b) * hr, pz = cz + Math.sin(b) * hr;
+        if (Math.hypot(px, pz) > r * coastK(coast, Math.atan2(pz, px)) * 0.9) ok = false;
+      }
+      if (ok) break;
+      hr *= 0.88;
+    }
+    hills.push({ x: cx, z: cz, r: hr, h: hill * (i === 0 ? 0.8 + rnd() * 0.7 : 0.6 + rnd() * 0.9) });
+  }
+  return { coast, hills };
 }
 
 /** Etwas Begehbares: Insel oder Schiffsdeck */
@@ -66,22 +124,40 @@ export class IslandGround implements Ground {
 
   add(i: WalkIsland) { this.islands.push(i); }
 
-  /** Insel, auf oder an der ein Punkt liegt */
+  /** Küstenradius einer Insel in Richtung eines Punktes */
+  edge(i: WalkIsland, x: number, z: number): number { return i.r * coastK(i.coast, Math.atan2(z - i.z, x - i.x)); }
+
+  /** Insel, auf oder an der ein Punkt liegt (folgt der echten Küstenlinie) */
   islandAt(x: number, z: number, margin = 0): WalkIsland | null {
-    for (const i of this.islands) if (Math.hypot(x - i.x, z - i.z) < i.r + margin) return i;
+    for (const i of this.islands) {
+      const d = Math.hypot(x - i.x, z - i.z);
+      if (d > i.r * 1.5 + margin) continue;
+      if (d < this.edge(i, x, z) + margin) return i;
+    }
     return null;
   }
 
-  /** Bodenhöhe an einem Punkt (−∞ wenn kein Land) */
+  /** Punkt aus einer Insel hinausschieben (Schiffe laufen nicht auf) */
+  pushOut(i: WalkIsland, x: number, z: number, margin: number): { x: number; z: number } {
+    const a = Math.atan2(z - i.z, x - i.x);
+    const e = i.r * coastK(i.coast, a) + margin;
+    return { x: i.x + Math.cos(a) * e, z: i.z + Math.sin(a) * e };
+  }
+
+  /** Bodenhöhe an einem Punkt (−∞ wenn kein Land) – identisch mit dem sichtbaren Gelände */
   height(x: number, z: number): number {
     let best = -Infinity;
     for (const i of this.islands) {
       const d = Math.hypot(x - i.x, z - i.z);
-      if (d > i.r * 1.15) continue;
-      // Strand fällt am Rand sanft ins Wasser ab
-      let y = i.beachY - Math.max(0, d - i.r * 0.92) * 4;
-      const dh = Math.hypot(x - i.x - (i.hx ?? 0), z - i.z - (i.hz ?? 0));
-      if (dh < i.hillR) y = Math.max(y, i.hillY + Math.sqrt(i.hillR * i.hillR - dh * dh) * i.hillScale);
+      if (d > i.r * 1.9) continue;
+      const e = this.edge(i, x, z);
+      if (d > e * 1.25) continue;
+      // Plateau bis zur Küste, dann gleichmäßig 3 m bis 1,25 × Küstenradius hinab (wie das Strand-Mesh)
+      let y = d <= e ? i.beachY : i.beachY - ((d - e) / (e * 0.25)) * 3;
+      for (const h of i.hills) {
+        const dh = Math.hypot(x - h.x, z - h.z);
+        if (dh < h.r) y = Math.max(y, i.hillY + Math.sqrt(h.r * h.r - dh * dh) * h.h);
+      }
       best = Math.max(best, y);
     }
     return best;
@@ -97,9 +173,10 @@ export class IslandGround implements Ground {
       const min = b.r + radius;
       if (d < min && d > 0.0001) { x = b.x + (dx / d) * min; z = b.z + (dz / d) * min; }
     }
+    // bis an die Wasserlinie, nicht weiter (vorher bis 102 % des Radius – dort lag der Boden schon tief unter dem Strand)
     const dx = x - isl.x, dz = z - isl.z;
     const d = Math.hypot(dx, dz);
-    const max = isl.r * 1.02;
+    const max = this.edge(isl, x, z) * 1.04;
     if (d > max) { x = isl.x + (dx / d) * max; z = isl.z + (dz / d) * max; }
     return { x, z };
   }
@@ -107,6 +184,7 @@ export class IslandGround implements Ground {
   /** Nächster Strandpunkt einer Insel zu einer Position (zum Anlanden) */
   shorePoint(isl: WalkIsland, fromX: number, fromZ: number) {
     const a = Math.atan2(fromZ - isl.z, fromX - isl.x);
-    return { x: isl.x + Math.cos(a) * isl.r * 0.88, z: isl.z + Math.sin(a) * isl.r * 0.88, angle: a };
+    const e = isl.r * coastK(isl.coast, a) * 0.9;
+    return { x: isl.x + Math.cos(a) * e, z: isl.z + Math.sin(a) * e, angle: a };
   }
 }

@@ -17,7 +17,7 @@ import {
 } from 'three';
 import type { IslandDef, IslandStyle } from '../data/regions';
 import { toon } from '../render/toon';
-import type { WalkIsland } from './islandGround';
+import { coastK, type WalkIsland } from './islandGround';
 import { plant, type StyleKit } from './islandStyle';
 import { hashId, seeded } from './waves';
 
@@ -54,6 +54,8 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   const rnd = seeded(hashId(def.id) ^ 0x9e3779b9);
   const r = def.r;
   const dens = Math.max(0.4, Math.min(1.6, o.density));
+  /** Küstenradius in einer Richtung (die Inseln sind nicht mehr rund) */
+  const E = (a: number) => r * coastK(walk.coast, a);
   const trees: Spot[] = [], bushes: Spot[] = [], fires: Spot[] = [];
   // belegte Flächen (Inselkoordinaten): vorhandene Hindernisse plus alles, was hier entsteht
   const taken: { x: number; z: number; r: number }[] = walk.blockers.map((b) => ({ x: b.x - walk.x, z: b.z - walk.z, r: b.r }));
@@ -64,7 +66,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   const block = (x: number, z: number, rr: number) => { taken.push({ x, z, r: rr }); walk.blockers.push({ x: walk.x + x, z: walk.z + z, r: rr }); };
   const spot = (minD: number, maxD: number, rr: number, tries = 12): { x: number; z: number } | null => {
     for (let i = 0; i < tries; i++) {
-      const a = rnd() * Math.PI * 2, d = r * (minD + rnd() * (maxD - minD));
+      const a = rnd() * Math.PI * 2, d = E(a) * (minD + rnd() * (maxD - minD));
       const x = Math.cos(a) * d, z = Math.sin(a) * d;
       if (free(x, z, rr)) return { x, z };
     }
@@ -103,7 +105,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       for (let k = -5; k <= 5; k++) {
         const a = pa + k * 0.09, d = Math.hypot(c.x, c.z) + 9;
         const x = Math.cos(a) * d, z = Math.sin(a) * d;
-        if (d > r * 0.9 || !free(x, z, 0.3)) continue;
+        if (d > E(a) * 0.9 || !free(x, z, 0.3)) continue;
         const stake = new Mesh(new ConeGeometry(0.22, 2.6 + rnd() * 0.6, 5), darkWood);
         put(stake, x, z, 0, 0.2).position.y += 1.2;
       }
@@ -121,7 +123,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       for (let i = 0; i < n; i++) {
         const a = (i / n) * Math.PI * 2 + rnd() * 0.4, d = 6 + rnd() * 3;
         const x = c.x + Math.cos(a) * d, z = c.z + Math.sin(a) * d;
-        if (Math.hypot(x, z) > r * 0.82 || !free(x, z, 2.4)) continue;
+        if (Math.hypot(x, z) > E(Math.atan2(z, x)) * 0.82 || !free(x, z, 2.4)) continue;
         put(hut(rnd), x, z, Math.atan2(c.x - x, c.z - z));
         block(x, z, 2.2);
       }
@@ -130,7 +132,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       fires.push({ x: c.x, y: hAt(c.x, c.z) + 0.3, z: c.z });
       // Netze trocknen am Strand, Ruderboote liegen im Sand
       for (let i = 0; i < 2; i++) {
-        const a = rnd() * Math.PI * 2, d = r * 0.84;
+        const a = rnd() * Math.PI * 2, d = E(a) * 0.84;
         const x = Math.cos(a) * d, z = Math.sin(a) * d;
         if (!free(x, z, 1.6)) continue;
         put(i === 0 ? netRack(darkWood) : rowboat(), x, z, a + Math.PI / 2);
@@ -139,7 +141,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       break;
     }
     case 'treasure': {
-      const a = rnd() * Math.PI * 2, d = r * 0.8;
+      const a = rnd() * Math.PI * 2, d = E(a) * 0.82;
       const x = Math.cos(a) * d, z = Math.sin(a) * d;
       put(wreck(rnd), x, z, a + Math.PI / 2 + (rnd() - 0.5) * 0.6, 0.6);
       block(x, z, 3.2);
@@ -191,7 +193,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       }
       const wa = rnd() * Math.PI * 2;
       for (let k = -4; k <= 4; k++) {
-        const a = wa + k * 0.12, d = r * 0.62;
+        const a = wa + k * 0.12, d = E(a) * 0.62;
         const x = Math.cos(a) * d, z = Math.sin(a) * d;
         if (!free(x, z, 1.4)) continue;
         const seg = new Mesh(new BoxGeometry(d * 0.13, 2.8, 1.2), stone);
@@ -257,7 +259,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   }
   const nTuft = Math.round(r * (lush ? 1.6 : 0.6) * dens);
   for (let i = 0; i < nTuft; i++) {
-    const a = rnd() * Math.PI * 2, d = r * Math.sqrt(rnd()) * 0.86;
+    const a = rnd() * Math.PI * 2, d = E(a) * Math.sqrt(rnd()) * 0.86;
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
     if (!free(x, z, 0.2)) continue;
     const tuft = new Group();
@@ -274,7 +276,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   const flowers = FLOWERS[style];
   const nFlower = Math.round(r * (style === 'tropisch' || style === 'nord' ? 0.7 : 0.2) * dens);
   for (let i = 0; i < nFlower; i++) {
-    const a = rnd() * Math.PI * 2, d = r * Math.sqrt(rnd()) * 0.8;
+    const a = rnd() * Math.PI * 2, d = E(a) * Math.sqrt(rnd()) * 0.8;
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
     if (!free(x, z, 0.2)) continue;
     const f = new Group();
@@ -296,7 +298,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   for (let i = 0; i < nRock; i++) {
     const inWater = rnd() < 0.35;
     const a = rnd() * Math.PI * 2;
-    const d = r * (inWater ? 1.0 + rnd() * 0.12 : 0.55 + rnd() * 0.4);
+    const d = E(a) * (inWater ? 1.04 + rnd() * 0.12 : 0.55 + rnd() * 0.4);
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
     const s = (inWater ? 1.2 : 0.6) + rnd() * (inWater ? 2.2 : 1.4);
     if (!inWater && !free(x, z, s)) continue;
@@ -309,7 +311,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   }
   if (style !== 'glut') {
     for (let i = 0; i < 1 + Math.floor(rnd() * 3); i++) {
-      const a = rnd() * Math.PI * 2, d = r * (0.88 + rnd() * 0.08);
+      const a = rnd() * Math.PI * 2, d = E(a) * (0.9 + rnd() * 0.08);
       const log = new Mesh(new CylinderGeometry(0.16, 0.2, 2.4 + rnd() * 2, 6), toon('#9C8A6E'));
       log.rotation.set(Math.PI / 2, 0, rnd() * 3);
       log.position.set(Math.cos(a) * d, hAt(Math.cos(a) * d, Math.sin(a) * d) + 0.12, Math.sin(a) * d);
@@ -317,7 +319,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     }
     const shellMat = toon('#EFD9C2'), starMat = toon('#D2603A');
     for (let i = 0; i < Math.round(6 * dens); i++) {
-      const a = rnd() * Math.PI * 2, d = r * (0.86 + rnd() * 0.1);
+      const a = rnd() * Math.PI * 2, d = E(a) * (0.86 + rnd() * 0.12);
       const star = rnd() < 0.3;
       const m = new Mesh(star ? new ConeGeometry(0.18, 0.05, 5) : new SphereGeometry(0.1, 5, 3), star ? starMat : shellMat);
       if (!star) m.scale.y = 0.5;

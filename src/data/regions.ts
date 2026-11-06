@@ -140,6 +140,40 @@ export const SCHLUNDRIFF: RegionDef = {
 export const REGIONS: RegionDef[] = [BERNSTEINSEE, NEBELARCHIPEL, NORDWACHT, GLUTRING, STURMGUERTEL, SCHLUNDRIFF];
 for (const r of REGIONS) for (const i of r.islands) i.region = r.id;
 
+/**
+ * Inseln deutlich größer und unterschiedlicher als in 1.0: der Faktor wird aus dem Namen gewürfelt
+ * (gleich bei jedem Start). Danach werden zu enge Nachbarn verkleinert, damit sich nichts überschneidet.
+ */
+const SIZE_BY_KIND: Record<IslandKind, [number, number]> = {
+  town: [1.15, 1.15], harbor: [1.35, 1.5], lighthouse: [1.4, 1.6], camp: [1.4, 2.1],
+  ruin: [1.5, 2.1], boss: [1.6, 2.2], quiet: [1.2, 2.3], treasure: [1.1, 1.9],
+};
+function nameHash(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0) / 4294967296;
+}
+/** Platzbedarf einer Insel inklusive Küstenausbuchtungen und Brandung */
+export const ISLAND_REACH = 1.45;
+{
+  const all = REGIONS.flatMap((r) => r.islands);
+  for (const i of all) {
+    const [lo, hi] = SIZE_BY_KIND[i.kind];
+    i.r = Math.round(i.r * (lo + nameHash(i.id) * (hi - lo)));
+  }
+  for (let pass = 0; pass < 6; pass++) {
+    for (let a = 0; a < all.length; a++) for (let b = a + 1; b < all.length; b++) {
+      const A = all[a], B = all[b];
+      const need = (A.r + B.r) * ISLAND_REACH + 50;
+      const d = Math.hypot(A.x - B.x, A.z - B.z);
+      if (d >= need) continue;
+      const k = Math.max(0.6, (d - 50) / ((A.r + B.r) * ISLAND_REACH));
+      if (A.kind !== 'town') A.r = Math.round(A.r * k);
+      if (B.kind !== 'town') B.r = Math.round(B.r * k);
+    }
+  }
+}
+
 /** In welcher Region liegt ein Punkt? */
 export function regionAt(x: number, z: number): RegionDef {
   if (Math.hypot(x - BERNSTEINSEE.x, z - BERNSTEINSEE.z) < BERNSTEINSEE.r) return BERNSTEINSEE;

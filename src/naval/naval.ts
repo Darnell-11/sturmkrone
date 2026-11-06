@@ -605,7 +605,7 @@ export class NavalSystem {
     if (this.ground.islandAt(ahead.x, ahead.z, 20) || Math.hypot(ahead.x, ahead.z) > WORLD_RADIUS - 120) turn = 1;
     s.steer(dt, turn, this.env);
     const isl = this.ground.islandAt(s.x, s.z, s.cls.W);
-    if (isl) { const a = Math.atan2(s.z - isl.z, s.x - isl.x); s.x = isl.x + Math.cos(a) * (isl.r + s.cls.W); s.z = isl.z + Math.sin(a) * (isl.r + s.cls.W); }
+    if (isl) { const o = this.ground.pushOut(isl, s.x, s.z, s.cls.W); s.x = o.x; s.z = o.z; }
   }
 
   private shipsForHit(): Ship[] {

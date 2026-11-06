@@ -1,6 +1,7 @@
-import { CanvasTexture, Sprite, SpriteMaterial, SRGBColorSpace } from 'three';
+import { CanvasTexture, Shape, ShapeGeometry, Sprite, SpriteMaterial, SRGBColorSpace } from 'three';
 import { BoxGeometry, Color, ConeGeometry, CylinderGeometry, Group, Mesh, MeshBasicMaterial, OctahedronGeometry, SphereGeometry, type Material } from 'three';
 import type { IslandStyle } from '../data/regions';
+import { coastK } from './islandGround';
 import { toon } from '../render/toon';
 
 /** Farben und Pflanzen je Region */
@@ -34,29 +35,49 @@ export function styleKit(style: IslandStyle): StyleKit {
   return k;
 }
 
-/** Unregelmäßige Küste und hügelige Kuppe statt Zylinder und Halbkugel */
-export function islandTerrain(kit: StyleKit, r: number, hill: number, rnd: () => number, hillFrac = 0.75, hx = 0, hz = 0): { beach: Mesh; hill: Mesh } {
-  const seed = rnd() * 100;
-  const coast = (a: number) => 1 + 0.035 * Math.sin(a * 3 + seed) + 0.02 * Math.sin(a * 7 + seed * 2) + 0.01 * Math.sin(a * 13 + seed * 3);
-  const bg = new CylinderGeometry(r, r * 1.25, 3, 64, 2);
+/**
+ * Strandplateau mit unregelmäßiger Küste und 1–3 Hügeln – aus denselben Werten wie die Laufhöhe (islandGround).
+ * hills: Inselkoordinaten.
+ */
+export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: number; p: number }[], hills: { x: number; z: number; r: number; h: number }[], grassFrac = 0, rnd: () => number = Math.random): { beach: Mesh; hills: Mesh[] } {
+  const k = (a: number) => coastK(coast, a);
+  const bg = new CylinderGeometry(r, r * 1.25, 3, 128, 2);
   const bp = bg.attributes.position;
   for (let i = 0; i < bp.count; i++) {
     const x = bp.getX(i), z = bp.getZ(i);
-    const k = coast(Math.atan2(z, x));
-    bp.setX(i, x * k); bp.setZ(i, z * k);
+    const f = k(Math.atan2(z, x));
+    bp.setX(i, x * f); bp.setZ(i, z * f);
   }
   bg.computeVertexNormals();
   const beach = new Mesh(bg, kit.sand);
   beach.position.y = -0.2;
-  const R = r * hillFrac;
-  // Die Kuppe bleibt exakt rund und fein unterteilt: genau so rechnet die Laufhöhe (islandGround).
-  // Vorher war sie wie die Küste verzerrt – am Hang schwebten Figuren dadurch bis zu einen halben Meter.
-  const hg = new SphereGeometry(R, 56, 24, 0, Math.PI * 2, 0, Math.PI / 2);
-  hg.computeVertexNormals();
-  const hillMesh = new Mesh(hg, kit.grass);
-  hillMesh.scale.y = hill;
-  hillMesh.position.set(hx, 1.2, hz);
-  return { beach, hill: hillMesh };
+  const meshes: Mesh[] = [];
+  // flache Grasfläche mit eigener, unregelmäßiger Kante auf dem Strandplateau
+  if (grassFrac > 0.2) {
+    const seed = rnd() * 100, n = 96;
+    const shape = new Shape();
+    for (let i = 0; i <= n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const wobble = 1 + 0.08 * Math.sin(a * 5 + seed) + 0.05 * Math.sin(a * 11 + seed * 2) + 0.03 * Math.sin(a * 23 + seed * 3);
+      const rr = r * k(a) * grassFrac * wobble;
+      const x = Math.cos(a) * rr, y = -Math.sin(a) * rr;
+      if (i === 0) shape.moveTo(x, y); else shape.lineTo(x, y);
+    }
+    const gg = new ShapeGeometry(shape, 1);
+    gg.rotateX(-Math.PI / 2);
+    const cap = new Mesh(gg, kit.grass);
+    cap.position.y = 1.32;
+    cap.receiveShadow = true;
+    meshes.push(cap);
+  }
+  meshes.push(...hills.map((h) => {
+    const hg = new SphereGeometry(h.r, 56, 24, 0, Math.PI * 2, 0, Math.PI / 2);
+    const m = new Mesh(hg, kit.grass);
+    m.scale.y = h.h;
+    m.position.set(h.x, 1.2, h.z);
+    return m;
+  }));
+  return { beach, hills: meshes };
 }
 
 const KIND_LABEL: Record<string, string> = { town: 'Hafenstadt', harbor: 'Hafen', camp: 'Lager', ruin: 'Ruine', quiet: '', treasure: 'Schatzinsel', lighthouse: 'Leuchtturm', boss: 'Boss' };

@@ -111,7 +111,7 @@ function buildGrid(segs: number): BufferGeometry {
   return g;
 }
 
-export interface IslandShape { x: number; z: number; r: number }
+export interface IslandShape { x: number; z: number; r: number; /** Küstenlinie wie in islandGround (sonst Kreis) */ coast?: { a: number; f: number; p: number }[]; base?: number }
 
 export class Ocean {
   readonly mesh: Mesh;
@@ -316,7 +316,10 @@ export class Ocean {
         const z = (j + 0.5 - SHORE_RES / 2) * cell;
         for (let i = i0; i <= i1; i++) {
           const x = (i + 0.5 - SHORE_RES / 2) * cell;
-          const d = Math.max(0, Math.hypot(x - s.x, z - s.z) - s.r);
+          // Abstand zur echten Küstenlinie (nicht zu einem Kreis) – sonst liegen breite Schaumringe auf dem Wasser
+          let edge = s.r;
+          if (s.coast && s.base) { let k = 1; const a = Math.atan2(z - s.z, x - s.x); for (const w of s.coast) k += w.a * Math.sin(w.f * a + w.p); edge = s.base * k; }
+          const d = Math.max(0, Math.hypot(x - s.x, z - s.z) - edge);
           const k = j * SHORE_RES + i;
           if (d < data[k]) data[k] = Math.min(255, Math.round(d));
         }
