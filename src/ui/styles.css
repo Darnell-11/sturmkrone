@@ -340,7 +340,7 @@ kbd {
 .sk-pips { position: absolute; bottom: 3px; display: flex; gap: 2px; }
 .sk-pips i { width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
 .sk-pips i.on { background: var(--brass); }
-.sk-name { position: absolute; top: 100%; margin-top: 2px; font-size: 0.66rem; font-weight: 800; white-space: nowrap; color: var(--ink); text-shadow: 0 0 3px var(--panel), 0 0 3px var(--panel); }
+.sk-name { position: absolute; top: 100%; margin-top: 2px; font-size: 0.62rem; font-weight: 800; width: 84px; left: 50%; transform: translateX(-50%); text-align: center; line-height: 1.05; white-space: normal; overflow-wrap: anywhere; hyphens: auto; color: var(--ink); text-shadow: 0 0 3px var(--panel), 0 0 3px var(--panel); }
 .sk-detail { border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; background: var(--panel-2); }
 .sk-dhead { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-bottom: 4px; }
 .sk-dhead b { font-size: 1.1rem; }
@@ -492,6 +492,12 @@ body { background: #0b0f14; }
 .cbt-ebar .lag, .cbt-boss-bar .lag { background: #d9b46a; }
 .cbt-boss-bar { border-radius: 2px; border-color: var(--brass); }
 .touch-btn span { background: var(--tafel); }
+/* Faji-Baum: eigene Symbole je Element bzw. Wirkung, kleines Formabzeichen */
+.sk-ico { display: grid; place-items: center; position: relative; width: 60%; height: 60%; text-shadow: none; }
+.sk-ico svg { width: 100%; height: 100%; fill: var(--c); filter: drop-shadow(0 1px 0 #0b0f14); }
+.sk-node.have .sk-ico svg { filter: drop-shadow(0 0 4px var(--c)) drop-shadow(0 1px 0 #0b0f14); }
+.sk-badge { position: absolute; right: -9px; top: -9px; font-style: normal; font-size: 0.62rem; font-weight: 800; line-height: 1; color: #0b0f14; background: var(--c); border-radius: 50%; width: 15px; height: 15px; display: grid; place-items: center; }
+.sk-node { background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--c) 18%, #1b222d), #10151c); }
 .touch-btn.aim { box-shadow: 0 0 0 3px #d9b46a, 0 0 18px 4px rgba(217, 180, 106, 0.55); animation: aimbrass 0.8s ease-in-out infinite; }
 @keyframes aimbrass { 50% { box-shadow: 0 0 0 3px #d9b46a, 0 0 6px 1px rgba(217, 180, 106, 0.3); } }
 .ctx { border-radius: 4px; background: linear-gradient(180deg, #d8b066, #a8803a); color: #17120b; box-shadow: inset 0 1px 0 rgba(255, 245, 220, 0.35), 0 3px 10px rgba(0, 0, 0, 0.45); }

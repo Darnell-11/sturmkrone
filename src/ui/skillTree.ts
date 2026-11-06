@@ -1,3 +1,4 @@
+import { skillIcon } from './skillIcons';
 import type { SkillState } from '../core/save/types';
 import { BRANCHES, branchPoints, ELEMENT_COLORS, learnBlock, SK, SKILLS, SYNERGIES, type Branch, type LearnBlock, type SkillDef } from '../data/skills';
 import { esc } from './dom';
@@ -18,10 +19,6 @@ const BLOCK_TEXT: Record<Exclude<LearnBlock, null>, string> = {
   level: 'Höhere Spielerstufe nötig',
   needs: 'Erst die verbundene Fähigkeit lernen',
   awaken: 'Erst nach dem Faji-Erwachen dieses Zweigs',
-};
-
-const ICON: Record<string, string> = {
-  nova: '◎', cone: '◭', line: '➶', bolt: '✦', chain: 'ϟ', dash: '»', blink: '◐', rain: '☄', pull: '◉', cloud: '☁', spikes: '▲', barrage: '✊', buff: '⬆', heal: '✚',
 };
 
 /** Grafischer Faji-Baum mit Knoten, Verbindungen und Vorschau. */
@@ -83,7 +80,7 @@ export class SkillTree {
       const cls = [lv > 0 ? 'have' : '', block === null ? 'can' : '', s.act ? 'act' : 'pas', s.id === this.sel ? 'sel' : '', s.act?.ult ? 'ult' : '', s.awaken ? 'awk' : ''].join(' ');
       const col = s.act ? ELEMENT_COLORS[s.act.el] : info.col;
       return `<button class="sk-node ${cls}" data-a="node" data-v="${s.id}" style="left:${(s.x + 0.5) * 20}%;top:${(s.t - 0.5) * rowH}%;--c:${col}" aria-label="${esc(s.n)}">
-        <span class="sk-ico">${s.act ? ICON[s.act.shape] ?? '✦' : '◆'}</span>
+        <span class="sk-ico">${skillIcon(s)}</span>
         <span class="sk-pips">${Array.from({ length: s.max }, (_, i) => `<i class="${i < lv ? 'on' : ''}"></i>`).join('')}</span>
         <span class="sk-name">${esc(s.n)}</span></button>`;
     }).join('');

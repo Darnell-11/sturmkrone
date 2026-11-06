@@ -53,6 +53,7 @@ import { DeckGround, type Ground } from './islandGround';
 import { ELEMENT_COLORS } from '../data/skills';
 import { BERNSTEINSEE, REGIONS, regionAt, seaLevelAt, type IslandDef, type RegionDef } from '../data/regions';
 import { SmokeSystem } from './smoke';
+import { setElementSmoke } from '../faji/elementFx';
 import { DebrisSystem } from './debris';
 import { islandLabel, islandTerrain, outpost, plant, styleKit, volcano } from './islandStyle';
 import type { Sprite } from 'three';
@@ -245,6 +246,7 @@ export class SeaWorld {
     this.fauna.spray = this.spray;
     this.fauna.sparks = this.sparks;
     this.smoke = new SmokeSystem(this.scene);
+    setElementSmoke(this.smoke);
     this.debris = new DebrisSystem(this.scene);
     this.debris.onSplash = (x, z, big) => {
       this.spray.emit(big ? 14 : 5, x, this.env.heightAt(x, z) + 0.1, z, { speed: big ? 2.5 : 1.5, up: big ? 5 : 3, life: 0.8, color: new Color(0.95, 0.98, 1), spread: 0.3 });

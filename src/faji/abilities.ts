@@ -15,6 +15,7 @@ import {
 import type { CombatFx } from '../combat/fx';
 import { ELEMENT_COLORS, type ActiveDef, type Element, type Passives, type SkillDef, type Status } from '../data/skills';
 import type { ParticleSystem } from '../world/particles';
+import { ElementFx } from './elementFx';
 
 /** Etwas, das von Fähigkeiten getroffen werden kann (Gegner, Übungspuppe) */
 export interface AbilityTarget {
@@ -81,8 +82,12 @@ function boltMesh(a: Vector3, b: Vector3, color: Color, width = 0.35): Mesh {
 /** Führt Fähigkeiten aus – im Spiel und in der Vorschau des Skillbaums. */
 export class AbilityRunner {
   private running: Running[] = [];
+  /** Eigene Effektsprache je Element (Flammen, Eissplitter, Blitze, Felsen …) */
+  private efx: ElementFx;
 
-  constructor(readonly ctx: AbilityContext) {}
+  constructor(readonly ctx: AbilityContext) {
+    this.efx = new ElementFx(ctx.scene, ctx.fx, ctx.particles, { shake: (a) => ctx.shake(a), hitstop: (t) => ctx.hitstop(t), speedlines: (v) => ctx.speedlines(v) });
+  }
 
   get busy() { return this.running.some((r) => !r.done && r.t < 0.6); }
 
@@ -111,12 +116,14 @@ export class AbilityRunner {
         if (a.heal) c.heal(a.heal);
         this.aura(a.el, a.dur ?? 5);
         c.fx.shockwave(this.feet(), 4, color);
+        this.efx.impact(this.feet(), a.el, a.ult ? 2.2 : 1);
         return;
       }
       case 'heal': {
         c.heal(a.heal ?? 0.3);
         this.aura('licht', 1.2);
         c.fx.shockwave(this.feet(), 6, color);
+        this.efx.impact(this.feet(), 'licht', a.ult ? 2 : 1);
         return;
       }
     }
@@ -129,6 +136,8 @@ export class AbilityRunner {
     const d = dist2(t.x, t.z, fromX, fromZ) || 1;
     t.hit(dmg, a.status, a.dur ?? 1.5, (t.x - fromX) / d, (t.z - fromZ) / d, a.el);
     this.ctx.fx.hit(new Vector3(t.x, t.y + 1.2, t.z), a.el === 'klinge' ? 'slash' : 'magic', ELEMENT_COLORS[a.el], dmg > this.ctx.power * 2);
+    // kleine Elementwirkung an jedem getroffenen Ziel
+    this.efx.impact(new Vector3(t.x, t.y, t.z), a.el, dmg > this.ctx.power * 2 ? 0.7 : 0.4);
   }
 
   /** Elementpartikel an einer Stelle */
@@ -160,6 +169,7 @@ export class AbilityRunner {
       this.later(0.12 + i * (pulses > 1 ? 0.25 : 0), () => {
         const p = this.feet();
         c.fx.shockwave(p, radius, ELEMENT_COLORS[a.el]);
+        this.efx.impact(p, a.el, Math.min(2.6, (a.ult ? 1.6 : 0.9) * Math.max(0.8, radius / 5)) * (pulses > 1 ? 0.7 : 1));
         if (a.el === 'koerper' || a.el === 'meteor' || a.el === 'erde') c.fx.crack(p, radius * 1.1);
         if (a.el === 'klinge') c.fx.smear(p.clone().setY(p.y + 1), c.caster.yaw + i * 2.1, 0.05, radius * 0.8, Math.PI * 1.9, ELEMENT_COLORS[a.el]);
         this.burst(p.clone().setY(p.y + 0.6), a.el, 30, radius * 1.6, 3);
@@ -179,6 +189,7 @@ export class AbilityRunner {
         const p = this.feet();
         const f = this.fwd();
         c.fx.smear(p.clone().setY(p.y + 1), c.caster.yaw, i % 2 ? 0.9 : -0.9 + (n === 1 ? 0.9 : 0), range * 0.8, 1.6, ELEMENT_COLORS[a.el], i % 2 === 1);
+        this.efx.impact(new Vector3(p.x + f.x * range * 0.6, p.y, p.z + f.z * range * 0.6), a.el, a.ult ? 1.8 : 1);
         for (let k = 0; k < 6; k++) {
           const d = 1.5 + (k / 6) * range;
           this.burst(new Vector3(p.x + f.x * d, p.y + 0.8, p.z + f.z * d), a.el, 6, 2 + d * 0.3, 2);
@@ -317,6 +328,7 @@ export class AbilityRunner {
         r.done = true;
         if ((a.count ?? 1) > 1) for (let i = 1; i < (a.count ?? 1); i++) this.later(i * 0.12, () => hit.forEach((tg) => tg.alive && this.hitTarget(tg, dmg * 0.6, a, start.x, start.z)));
         c.fx.smear(this.feet().setY(c.caster.y + 1), c.caster.yaw + Math.PI, 0.2, 3, 2, ELEMENT_COLORS[a.el]);
+        this.efx.impact(this.feet(), a.el, a.ult ? 1.8 : 0.9);
         c.hitstop(0.07);
       }
     } };
@@ -380,6 +392,7 @@ export class AbilityRunner {
       this.later(delay + 0.35, () => {
         if (a.el === 'blitz') this.flashBolt(p.clone().setY(y + 30), p.clone().setY(y + 0.2), a.el);
         c.fx.shockwave(p, 3, ELEMENT_COLORS[a.el]);
+        this.efx.impact(p, a.el, a.el === 'meteor' ? 1.7 : a.ult ? 1.4 : 1);
         if (a.el === 'meteor') c.fx.crack(p, 4);
         this.burst(p.clone().setY(y + 0.5), a.el, 18, 4, 6);
         for (const tgt of c.targets()) if (tgt.alive && dist2(tgt.x, tgt.z, x, z) < 2.6 + tgt.radius) this.hitTarget(tgt, dmg, a, x, z);
@@ -418,6 +431,7 @@ export class AbilityRunner {
         r.done = true;
         core.removeFromParent(); halo.removeFromParent();
         c.fx.shockwave(new Vector3(cx, cy, cz), radius * 0.6, ELEMENT_COLORS[a.el]);
+        this.efx.impact(new Vector3(cx, cy, cz), a.el, a.ult ? 2.2 : 1.6);
         for (const tg of c.targets()) if (tg.alive && dist2(tg.x, tg.z, cx, cz) < radius * 0.5) this.hitTarget(tg, dmg, a, cx, cz);
         c.shake(0.5); c.hitstop(0.1);
       }
@@ -475,6 +489,7 @@ export class AbilityRunner {
           if (t > 1.2) { this.done = true; spike.removeFromParent(); spike.geometry.dispose(); }
         } } as Running);
         this.burst(new Vector3(x, y + 0.3, z), a.el, 6, 2, 4);
+        if (i % 3 === 0) this.efx.impact(new Vector3(x, y, z), a.el, 0.6);
         for (const tg of c.targets()) if (tg.alive && !hit.has(tg) && dist2(tg.x, tg.z, x, z) < 1.4 + tg.radius) { hit.add(tg); this.hitTarget(tg, dmg, a, x - f.x, z - f.z); }
         if (i === 1) c.shake(0.4);
       });
@@ -495,11 +510,13 @@ export class AbilityRunner {
           if (dist2(tg.x, tg.z, c.caster.x, c.caster.z) < range + tg.radius && angleTo(c.caster.x, c.caster.z, c.caster.yaw, tg.x, tg.z) < 0.9) this.hitTarget(tg, dmg, a, c.caster.x, c.caster.z);
         }
         if (i % 3 === 0) c.shake(0.12);
+        if (i === n - 1) this.efx.impact(new Vector3(c.caster.x + this.fwd().x * 2, c.caster.y, c.caster.z + this.fwd().z * 2), a.el, 1.2);
       });
     }
   }
 
   update(dt: number) {
+    this.efx.update(dt);
     for (const r of this.running) if (!r.done) r.update(dt);
     this.running = this.running.filter((r) => !r.done);
   }
