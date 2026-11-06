@@ -1,4 +1,4 @@
-import { CanvasTexture, LatheGeometry, Shape, ShapeGeometry, Sprite, SpriteMaterial, SRGBColorSpace, Vector2 } from 'three';
+import { CanvasTexture, CatmullRomCurve3, CircleGeometry, LatheGeometry, Shape, ShapeGeometry, Sprite, SpriteMaterial, SRGBColorSpace, TorusGeometry, TubeGeometry, Vector2, Vector3 } from 'three';
 import { BoxGeometry, Color, ConeGeometry, CylinderGeometry, Group, Mesh, MeshBasicMaterial, OctahedronGeometry, SphereGeometry, type Material } from 'three';
 import type { IslandStyle } from '../data/regions';
 import { coastK, hillProfile } from './islandGround';
@@ -94,7 +94,10 @@ export function islandLabel(name: string, kind: string, level?: number): Sprite 
   const sub = [KIND_LABEL[kind] ?? '', level ? `Stufe ${level}` : ''].filter(Boolean).join(' · ');
   g.textAlign = 'center';
   g.lineJoin = 'round';
-  g.font = '800 54px "Alegreya Sans", sans-serif';
+  // lange Namen („Festung Nordwacht“) wurden am Rand abgeschnitten: Schrift so weit verkleinern, dass sie passt
+  let size = 54;
+  g.font = `800 ${size}px "Alegreya Sans", sans-serif`;
+  while (g.measureText(name).width > 480 && size > 28) { size -= 2; g.font = `800 ${size}px "Alegreya Sans", sans-serif`; }
   g.lineWidth = 10; g.strokeStyle = 'rgba(18,30,48,0.85)';
   g.strokeText(name, 256, 62);
   g.fillStyle = '#FFF3D0';
@@ -180,25 +183,63 @@ export function volcano(kit: StyleKit, r: number, baseY: number, tall: boolean):
   const g = new Group();
   const h = r * (tall ? 0.75 : 0.42);
   const br = r * (tall ? 0.58 : 0.4);
-  const cone = new Mesh(new CylinderGeometry(br * 0.24, br, h, 16, 1, true), kit.rock);
-  cone.position.y = baseY + h / 2 - 0.3;
+  // Flanke: nach oben steiler werdend (konkav), zerklüftet mit Rinnen – statt eines glatten Kegels
+  const radiusAt = (a: number, t: number) => {
+    const base = br * (0.22 + 0.78 * Math.pow(1 - t, 1.6));
+    const n = Math.sin(a * 7 + t * 5) * 0.05 + Math.sin(a * 13 - t * 9) * 0.03 + Math.sin(a * 3 + 1.3) * 0.04;
+    const gully = -Math.pow(Math.abs(Math.sin(a * 5 + t * 1.5)), 6) * 0.07;
+    return base * (1 + (n + gully) * (0.35 + 0.65 * (1 - t)));
+  };
+  const surf = (a: number, t: number, out = 0) => {
+    const rr = radiusAt(a, t) + out;
+    return new Vector3(Math.sin(a) * rr, baseY - 0.3 + t * h, Math.cos(a) * rr);
+  };
+  const rows = 18, segs = 56;
+  const pts: Vector2[] = [];
+  for (let k = 0; k <= rows; k++) { const t = k / rows; pts.push(new Vector2(br * (0.22 + 0.78 * Math.pow(1 - t, 1.6)), t * h)); }
+  const geo = new LatheGeometry(pts, segs);
+  const pos = geo.getAttribute('position');
+  for (let k = 0; k < pos.count; k++) {
+    const x = pos.getX(k), y = pos.getY(k), z = pos.getZ(k);
+    const a = Math.atan2(x, z), t = y / h;
+    const r0 = Math.hypot(x, z) || 1;
+    const rr = radiusAt(a, t);
+    pos.setX(k, (x / r0) * rr); pos.setZ(k, (z / r0) * rr);
+  }
+  geo.computeVertexNormals();
+  const rockMat = kit.extra ? toon({ color: '#4A3C36', flatShading: true, detail: 'rock' }) : kit.rock;
+  const cone = new Mesh(geo, rockMat);
+  cone.position.y = baseY - 0.3;
+  cone.castShadow = true;
+  cone.receiveShadow = true;
   g.add(cone);
-  // Lavaströme als leuchtende Rinnen
-  if (kit.extra) for (let i = 0; i < (tall ? 4 : 2); i++) {
-    const a = (i / 4) * Math.PI * 2 + 0.4;
-    const flow = new Mesh(new BoxGeometry(0.7, h * 0.95, 0.25), kit.extra);
-    flow.position.set(Math.sin(a) * br * 0.6, baseY + h * 0.45, Math.cos(a) * br * 0.6);
-    flow.lookAt(0, baseY + h * 1.6, 0);
-    flow.rotateX(Math.PI / 2);
+  // Lavaströme: glühende Rinnen, die sich vom Kraterrand die Flanke hinunterschlängeln
+  if (kit.extra) for (let i = 0; i < (tall ? 6 : 3); i++) {
+    const a0 = (i / (tall ? 6 : 3)) * Math.PI * 2 + 0.4 + Math.sin(i * 2.3) * 0.3;
+    const len = 0.55 + ((i * 37) % 10) / 22;
+    const path: Vector3[] = [];
+    for (let k = 0; k <= 24; k++) {
+      const t = 0.98 - (k / 24) * len;
+      path.push(surf(a0 + Math.sin(t * 6 + i) * 0.18, t, 0.12).sub(new Vector3(0, baseY - 0.3, 0)));
+    }
+    const flow = new Mesh(new TubeGeometry(new CatmullRomCurve3(path), 48, (tall ? 0.55 : 0.35) * (1 + i % 2 * 0.4), 6), kit.extra);
+    flow.position.y = baseY - 0.3;
     flow.userData.noOutline = true;
     g.add(flow);
   }
   let crater: Mesh | null = null;
   if (kit.extra) {
-    crater = new Mesh(new CylinderGeometry(br * 0.22, br * 0.22, 0.5, 16), kit.extra);
-    crater.position.y = baseY + h - 0.35;
+    // Kratersee aus Lava mit gezacktem Rand
+    const topR = br * 0.22;
+    crater = new Mesh(new CircleGeometry(topR * 0.92, 24), kit.extra);
+    crater.rotation.x = -Math.PI / 2;
+    crater.position.y = baseY - 0.3 + h - 0.5;
     crater.userData.noOutline = true;
     g.add(crater);
+    const rim = new Mesh(new TorusGeometry(topR, topR * 0.16, 6, 24), rockMat);
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = baseY - 0.3 + h - 0.1;
+    g.add(rim);
   }
   return { g, crater, top: baseY + h, radius: br };
 }

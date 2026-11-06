@@ -504,3 +504,7 @@ body { background: #0b0f14; }
 .cbt-ebar.board::after { content: attr(data-label); position: absolute; left: 50%; bottom: 140%; transform: translateX(-50%); font-weight: 900; font-size: 0.85rem; letter-spacing: 0.08em; color: #FFD166; text-shadow: 1px 1px 0 #1b1410, -1px -1px 0 #1b1410, 1px -1px 0 #1b1410, -1px 1px 0 #1b1410; animation: ctxpulse 1s ease-in-out infinite; white-space: nowrap; }
 
 .sk-sea { color: #9FD8FF; margin-top: -0.2rem; }
+/* Schmale Handys im Hochformat: Aktionsknopf über die Fähigkeitsknöpfe heben, damit sich nichts überlappt */
+@media (max-width: 520px) and (orientation: portrait) {
+  .ctx { bottom: calc(292px + env(safe-area-inset-bottom, 0px)); }
+}

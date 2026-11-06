@@ -1,5 +1,46 @@
 # Was ist neu
 
+## 2.9.5 – Große Prüfrunde: alles durchgespielt, Kräfte auf See, faire Kampfstile (06.11.2026)
+
+- **Jede Fähigkeit wirkt jetzt auch auf See**, passend zu ihrer Art und in Schiffsgröße:
+  - Faust: Bergbrecher schickt eine Druckwelle über das Wasser, die nahe Schiffe trifft und wegstößt. Hundert Fäuste hagelt glühende Druckschläge auf ein Schiff. Meteorfaust lässt einen Meteor einschlagen.
+  - Körper: Stahlleib und Titanform legen einen Faji-Panzer um dein Schiff.
+  - Schwert: Blitzziehen, Tausend Schnitte, Kreuzschnitt und Schattenschritt-Klinge fliegen als riesige Klingenwellen durch alle Schiffe in einer Linie. Wirbelklinge und Klingensturm werden zur Druckwelle.
+  - Erde: Erdstoß und Erdstacheln lassen Felsen aus dem Meer brechen und halten das Schiff fest.
+  - Schwerkraft: Schwerkraftsog und Schwarzes Loch ziehen Schiffe in einen Strudel.
+  - Gift: Die Giftwolke legt die feindliche Crew lahm.
+  - Feuer: Feuersäulen setzen alle nahen Schiffe in Brand.
+  - Weitere: Phönixflügel feuert eine große Brandsalve, Eissplitter friert ein, Kampfschrei lässt die Feinde das Feuer einstellen.
+  - **Meteore stürzen sichtbar vom Himmel**, mit Glut- und Rauchschweif, Krater, Feuer und Splittern. Blitze schlagen gezackt aus dem Himmel ein.
+  - Der Skillbaum zeigt bei jeder Fähigkeit, was sie auf See macht.
+- **Fähigkeiten mit mehr Wucht:**
+  - Sichelwind, Mondsichel und Himmelsspalter fliegen als echte Sichel mit Nachbildern. Der Himmelsspalter ist riesig, steht senkrecht und reißt den Boden auf.
+  - Blitzziehen hinterlässt eine leuchtende Schnittlinie, der Schnitt „kommt erst an“, wenn du vorbei bist.
+  - Einschläge hinterlassen Krater statt dünner Risse.
+  - Alle Effekte behalten ihre Elementfarbe, statt weiß auszubrennen.
+- **Stufen wirken wie beschrieben:** Mehr Blitzsprünge, Säulen, Meteore, längere Dauer und stärkere Heilung je Stufe. Vorher standen die Werte nur im Text.
+- **Kampfstile fair ausbalanciert:**
+  - Der Faji-Wirker machte aus sicherer Entfernung etwa doppelt so viel Schaden pro Sekunde wie Nahkämpfer. Jetzt liegt er gleichauf und hat dafür den Vorteil des Abstands.
+  - Faustkämpfer schlagen schneller und härter.
+  - Doppelklingen sind der schnellste Klingenstil.
+  - Der Zweihänder-Wirbel ist nicht mehr zu langsam.
+- **Fehler behoben:**
+  - Schiffe liegen nicht mehr mit dem Bug auf dem Strand: Bug, Mitte und Heck prüfen die Küste samt Strandböschung.
+  - Der Prolog ließ sich nicht abgeben, wenn man den Hafen öffnete, bevor die Ankunft gezählt hatte.
+  - Aufträge zum Befreien einer Insel blieben hängen, wenn die Insel kurz vorher schon befreit worden war.
+  - Wechsel zwischen eigenen Schiffen in der Werft reparierte den Rumpf umsonst.
+  - Ein neuer Kampfstil im Aussehen-Menü übernahm seine Boni erst nach einem Neustart.
+  - Ein leerer Name im Charakter-Editor ergibt jetzt den Standardnamen.
+  - Lange Inselnamen über der Insel wurden abgeschnitten.
+  - Faji-Treffer auf See laufen in Spielzeit und stehen in der Pause still.
+- **Schönere Orte:**
+  - Der Glutberg ist ein zerklüfteter Vulkan mit sich schlängelnden Lavaströmen und einem Kratersee.
+  - Die Festung Nordwacht hat Ringmauern mit Zinnen, drei Tore mit Rundtürmen und einen hohen Bergfried.
+- **Bedienung:**
+  - Läden und Werft nennen den nötigen Rang beim Namen statt mit einer Nummer.
+  - Beim Entern schaut die Kamera steiler von oben, damit kein Mast mitten im Bild steht.
+  - Auf schmalen Handys überdeckt der Aktionsknopf keine Fähigkeitsknöpfe mehr.
+
 ## 2.9.0 – Größere Inseln, echtes Meer, echte Schiffe und Kräfte mit Wucht (06.11.2026)
 
 - **Fehler behoben: Kein Einsinken mehr am Inselrand.** Wer Richtung Schiff lief, versank am Strand im Boden. Jetzt ist die Laufhöhe genau das sichtbare Gelände, auf jeder Insel.

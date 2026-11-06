@@ -84,6 +84,76 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   const rockMats = [0.85, 1, 1.15].map((k) => toon({ color: rockCol.clone().multiplyScalar(k), flatShading: true }));
   const darkWood = toon('#4A3220'), canvas = toon({ color: '#C9B48E', side: DoubleSide });
 
+  /**
+   * Festung Nordwacht: Ringmauer mit Zinnen und drei Toren, Rundtürme mit Schieferdächern und Wimpeln,
+   * ein hoher Bergfried – die mächtigste Seefestung der Welt soll auch so aussehen.
+   */
+  const fortress = () => {
+    const wallMat = toon({ color: '#8E8A80', flatShading: true, detail: 'rock' });
+    const capMat = toon({ color: '#A8A398', flatShading: true });
+    const slate = toon({ color: '#3C4654', flatShading: true });
+    const banner = toon({ color: '#1F4E79', side: DoubleSide });
+    const wa = rnd() * Math.PI * 2;
+    const gates = [wa, wa + 2.1, wa + 4.2];
+    const nearGate = (a: number) => gates.some((g) => Math.abs(Math.atan2(Math.sin(a - g), Math.cos(a - g))) < 0.28);
+    const ringAt = (a: number) => E(a) * 0.5;
+    const step = 0.13;
+    for (let a = 0; a < Math.PI * 2 - 0.01; a += step) {
+      if (nearGate(a + step / 2)) continue;
+      const d = ringAt(a + step / 2);
+      const x = Math.cos(a + step / 2) * d, z = Math.sin(a + step / 2) * d;
+      const len = d * step * 1.08;
+      const seg = new Group();
+      const body = new Mesh(new BoxGeometry(len, 4.4, 1.8), wallMat);
+      body.position.y = 2.2;
+      seg.add(body);
+      // Zinnen
+      for (let k = 0; k < Math.max(2, Math.floor(len / 1.5)); k++) {
+        const m = new Mesh(new BoxGeometry(0.7, 0.8, 1.9), capMat);
+        m.position.set(-len / 2 + 0.5 + k * 1.5, 4.8, 0);
+        seg.add(m);
+      }
+      put(seg, x, z, -(a + step / 2) + Math.PI / 2, 0.3);
+      for (const f of [-0.33, 0, 0.33]) block(x + Math.cos(a + step / 2 + Math.PI / 2) * len * f, z + Math.sin(a + step / 2 + Math.PI / 2) * len * f, 1.1);
+    }
+    const tower = (x: number, z: number, h: number, rr: number) => {
+      const t = new Group();
+      const body = new Mesh(new CylinderGeometry(rr, rr * 1.15, h, 12), wallMat);
+      body.position.y = h / 2;
+      const crown = new Mesh(new CylinderGeometry(rr * 1.25, rr * 1.1, 1.1, 12), capMat);
+      crown.position.y = h + 0.5;
+      const roofM = new Mesh(new ConeGeometry(rr * 1.35, rr * 1.9, 12), slate);
+      roofM.position.y = h + 1.05 + rr * 0.95;
+      const pole = new Mesh(new CylinderGeometry(0.06, 0.06, 2.4, 5), darkWood);
+      pole.position.y = h + 1.05 + rr * 1.9 + 1.1;
+      const flag = new Mesh(new PlaneGeometry(1.6, 0.8), banner);
+      flag.position.set(0.8, h + 1.05 + rr * 1.9 + 1.8, 0);
+      flag.userData.noOutline = true;
+      // schmale Schießscharten
+      for (let k = 0; k < 4; k++) {
+        const sl = new Mesh(new BoxGeometry(0.25, 1.1, 0.2), toon('#1C1A1A'));
+        const a = (k / 4) * Math.PI * 2;
+        sl.position.set(Math.sin(a) * rr * 1.02, h * 0.6, Math.cos(a) * rr * 1.02);
+        sl.rotation.y = a;
+        sl.userData.noOutline = true;
+        t.add(sl);
+      }
+      t.add(body, crown, roofM, pole, flag);
+      put(t, x, z, rnd() * Math.PI * 2, 0.2);
+      block(x, z, rr + 0.4);
+    };
+    // Tortürme beiderseits jedes Tores
+    for (const g of gates) for (const side of [-1, 1]) {
+      const a = g + side * 0.31;
+      const d = ringAt(a);
+      tower(Math.cos(a) * d, Math.sin(a) * d, 8.5, 2.1);
+    }
+    // Bergfried am Rand des Hofes, gegenüber dem ersten Tor (die Mitte bleibt frei für den Bosskampf)
+    const ka = wa + Math.PI;
+    const kd = ringAt(ka) * 0.62;
+    tower(Math.cos(ka) * kd, Math.sin(ka) * kd, 15, 3.4);
+  };
+
   // ---------- Bauten je Inselart (zuerst, damit sie Platz bekommen) ----------
   switch (def.kind) {
     case 'camp': {
@@ -184,6 +254,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     }
     case 'boss': {
       if (style === 'glut') break; // dort steht der Vulkan
+      if (def.id === 'festungnordwacht') { fortress(); break; }
       const stone = toon({ color: rockCol.clone().lerp(new Color('#8A8478'), 0.4), flatShading: true });
       for (let i = 0; i < 2; i++) {
         const p = spot(0.45, 0.7, 3.2, 20);
