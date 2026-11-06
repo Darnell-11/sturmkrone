@@ -60,8 +60,9 @@ function sword(length: number, width: number, curve: number, look: WeaponLook, t
 }
 
 /** Leuchtende Faji-Kugel über der Hand */
-function orb(color: string): Group {
+function orb(color: string, size = 1): Group {
   const g = new Group();
+  g.scale.setScalar(size);
   const core = new Mesh(new SphereGeometry(0.09, 16, 12), new MeshBasicMaterial({ color: new Color(color).multiplyScalar(3) }));
   const ring = new Mesh(new TorusGeometry(0.14, 0.012, 6, 24), new MeshBasicMaterial({ color: new Color(color).multiplyScalar(2) }));
   ring.rotation.x = Math.PI / 2;
@@ -73,6 +74,38 @@ function orb(color: string): Group {
 }
 
 export interface HeldWeapons { right: Object3D | null; left: Object3D | null }
+
+/** Kampfhandschuh: beschlagener Handrücken mit Knöchelleiste; ab höheren Stufen mit Dornen und Leuchten */
+function gauntlet(look: WeaponLook, tier: number): Group {
+  const g = new Group();
+  const metal = toon({ color: look.blade, spec: 1, emissive: look.glow ? new Color(look.blade).multiplyScalar(0.3) : 0x000000 });
+  const leather = toon('#4A3220');
+  const wrap = new Mesh(new BoxGeometry(0.1, 0.085, 0.11), tier === 0 ? leather : toon('#3A2A1E'));
+  g.add(wrap);
+  if (tier > 0) {
+    const knuckles = new Mesh(new BoxGeometry(0.115, 0.04, 0.05), metal);
+    knuckles.position.set(0, 0.035, 0.035);
+    const plate = new Mesh(new BoxGeometry(0.105, 0.02, 0.09), metal);
+    plate.position.set(0, 0.05, -0.01);
+    g.add(knuckles, plate);
+  }
+  if (tier >= 3) for (let i = 0; i < 3; i++) {
+    const spike = new Mesh(new BoxGeometry(0.018, 0.035, 0.018), metal);
+    spike.position.set(-0.035 + i * 0.035, 0.07, 0.04);
+    g.add(spike);
+  }
+  if (look.glow) {
+    const aura = new Mesh(new SphereGeometry(0.1, 10, 8), new MeshBasicMaterial({ color: new Color(look.blade).multiplyScalar(2), transparent: true, opacity: 0.25, depthWrite: false }));
+    aura.userData.noOutline = true;
+    g.add(aura);
+  }
+  addOutlines(g, 0.7);
+  return g;
+}
+
+/** Farbe des Faji-Fokus je Stufe (die unteren Stufen haben graue Klingenfarben) */
+const FOCUS_COLOR: Record<string, string> = { '#8C8C8C': '#B98CFF', '#C9D2DA': '#E8B33A', '#9FB4C8': '#7FE0C8' };
+const TIER_OF: Record<string, number> = { '#8C8C8C': 0, '#C9D2DA': 1, '#9FB4C8': 2, '#7FD6FF': 3, '#FFD166': 4, '#FF8AD8': 5 };
 
 function musket(): Group {
   const g = new Group();
@@ -129,7 +162,14 @@ export function weaponsFor(style: StyleId, look: WeaponLook = { blade: '#C9D2DA'
     case 'langklinge': return { right: inHand(sword(1.05, 0.07, 0.06, look, true)), left: null };
     case 'zweihaender': return { right: inHand(sword(1.3, 0.16, 0.0, look, true)), left: null };
     case 'doppel': return { right: inHand(sword(0.6, 0.08, 0.08, look)), left: inHand(sword(0.6, 0.08, 0.08, look)) };
-    case 'effekt': return { right: orb(look.glow ? look.blade : '#B98CFF'), left: null };
+    case 'effekt': {
+      const tier = TIER_OF[look.blade] ?? 0;
+      return { right: orb(FOCUS_COLOR[look.blade] ?? look.blade, 1 + tier * 0.1), left: null };
+    }
+    case 'faust': {
+      const tier = TIER_OF[look.blade] ?? 0;
+      return { right: inHand(gauntlet(look, tier)), left: inHand(gauntlet(look, tier)) };
+    }
     default: return { right: null, left: null };
   }
 }

@@ -453,6 +453,7 @@ export class SeaWorld {
         gold: (n) => this.onGold(n),
         message: (t) => this.onMessage(t),
       });
+      this.combat.smoke = this.smoke;
       const home = this.ground.islands[0];
       this.combat.addDummy(home.x + 6, home.z - home.r * 0.55);
       this.combat.addDummy(home.x - 6, home.z - home.r * 0.55);

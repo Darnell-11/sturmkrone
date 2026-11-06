@@ -13,7 +13,7 @@ import { CREW, CREW_BY_ID, CREW_ROLE_LABEL } from '../data/crew';
 import { hostileLegends } from '../data/legends';
 import { RARITY, TRINKETS, TRINKET_BY_ID } from '../data/trinkets';
 import { ACHIEVEMENTS } from '../data/achievements';
-import { ARMOR, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, type IslandDef } from '../data/regions';
+import { ARMOR, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, WEAPON_LINES, type IslandDef } from '../data/regions';
 import { stepText } from '../story/questSystem';
 import { drawMap } from './minimap';
 import { audio } from '../audio/audio';
@@ -497,7 +497,7 @@ export class Menus {
       ${owned ? '' : `<button class="mini brass" data-a="${a}" data-id="${i}" ${needRank > rank ? 'disabled' : ''}>Kaufen</button>`}</div>`;
     this.open(
       `${this.shopHead('Schmiede', msg)}
-      <h3>Klingen</h3>${WEAPONS.map((w, i) => row(w.n, `+${w.dmg} Schaden${w.glow ? ' · leuchtet' : ''}`, w.price, w.rank, i <= s.gear.weapon, i === s.gear.weapon, 'wpn', i)).join('')}
+      <h3>${WEAPON_LINES[s.player.style].title}</h3><p class="small soft">${WEAPON_LINES[s.player.style].flavor}</p>${WEAPONS.map((w, i) => row(WEAPON_LINES[s.player.style].names[i] ?? w.n, WEAPON_LINES[s.player.style].stat(w, i), w.price, w.rank, i <= s.gear.weapon, i === s.gear.weapon, 'wpn', i)).join('')}
       <h3>Rüstung</h3>${ARMOR.map((a, i) => row(a.n, `+${a.hp} Leben`, a.price, a.rank, i <= s.gear.armor, i === s.gear.armor, 'arm', i)).join('')}
       <p class="small soft">Dein altes Stück nimmt Grete für den halben Preis in Zahlung.</p>
       <button class="primary" data-a="back">Zurück</button>`,

@@ -690,8 +690,10 @@ export class NavalSystem {
     this.sparks.emit(50, s.x, s.model.deckY + 1, s.z, { speed: 9, up: 9, life: 1.2, color: new Color(3.5, 1.4, 0.35), gravity: 6, spread: s.cls.W });
     if (e && !e.companion) {
       this.hooks.sunk(e);
+      // Beute: deutlich mehr als früher (weniger, aber bedeutendere Gefechte); Händler sind am reichsten
       const n = 2 + Math.floor(s.cls.L / 12);
-      for (let i = 0; i < n; i++) this.spawnCrate(s.x + (Math.random() - 0.5) * s.cls.W * 2, s.z + (Math.random() - 0.5) * s.cls.L * 0.8, Math.round((20 + e.level * 12) * (e.role === 'haendler' ? 2 : e.role === 'legende' ? 4 : 1) / n * (0.7 + Math.random() * 0.6)), Math.random() < (e.role === 'legende' ? 0.8 : 0.08));
+      const total = (45 + e.level * 26) * (1 + Math.max(0, SHIP_CLASSES.indexOf(s.cls)) * 0.25) * (e.role === 'haendler' ? 2.6 : e.role === 'legende' ? 4 : 1);
+      for (let i = 0; i < n; i++) this.spawnCrate(s.x + (Math.random() - 0.5) * s.cls.W * 2, s.z + (Math.random() - 0.5) * s.cls.L * 0.8, Math.round(total / n * (0.7 + Math.random() * 0.6)), Math.random() < (e.role === 'legende' ? 0.8 : 0.14 / n));
     }
   }
 
@@ -757,7 +759,7 @@ export class NavalSystem {
     e.ship.sinking = 0.01;
     audio.play('sink', 0.8, e.ship);
     this.debris?.wreck(e.ship.x, e.ship.z, e.ship.cls.L * 0.6, e.ship.cls.W, e.ship.heading, e.ship.look.hull);
-    this.spawnCrate(e.ship.x, e.ship.z, Math.round((60 + e.level * 25) * (e.role === 'legende' ? 4 : e.role === 'haendler' ? 2 : 1)), e.role === 'legende');
+    this.spawnCrate(e.ship.x, e.ship.z, Math.round((90 + e.level * 34) * (1 + Math.max(0, SHIP_CLASSES.indexOf(e.ship.cls)) * 0.25) * (e.role === 'legende' ? 4 : e.role === 'haendler' ? 2.8 : 1.2)), e.role === 'legende' || Math.random() < 0.18);
   }
 
   // ---------- Faji auf See ----------

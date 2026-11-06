@@ -1,3 +1,4 @@
+import type { SmokeSystem } from '../world/smoke';
 import { audio } from '../audio/audio';
 import type { AllyTarget } from '../entities/ally';
 import {
@@ -43,7 +44,7 @@ export interface CombatHooks {
   message(t: string): void;
 }
 
-interface Projectile { mesh: Mesh; vel: Vector3; life: number; radius: number; dmg: number; knock: number; team: 'player' | 'enemy'; from: Enemy | null; pierce: boolean; hit: Set<object>; color: string; poise: number }
+interface Projectile { mesh: Mesh; vel: Vector3; life: number; radius: number; dmg: number; knock: number; team: 'player' | 'enemy'; from: Enemy | null; pierce: boolean; hit: Set<object>; color: string; poise: number; trail: number }
 interface Aoe { x: number; z: number; y: number; r: number; t: number; dmg: number; knock: number; from: Enemy }
 interface Coin { mesh: Mesh; x: number; y: number; z: number; vy: number; vx: number; vz: number; value: number; t: number }
 
@@ -91,6 +92,8 @@ export class CombatSystem implements EnemyWorld {
   private dots = new Map<Enemy, { burn: number; poison: number; dps: number; tick: number }>();
   private dummies: Dummy[] = [];
   private projectiles: Projectile[] = [];
+  /** Rauch für Einschläge und Geschossspuren (setzt die Welt) */
+  smoke: SmokeSystem | null = null;
   private aoes: Aoe[] = [];
   private coins: Coin[] = [];
   private tokens = new Set<Enemy>();
@@ -286,6 +289,15 @@ export class CombatSystem implements EnemyWorld {
     }
     this.fx.hit(pos, def.fx, color, crit || heavy || res === 'kill');
     this.overlay.number(pos, dmg, crit ? 'crit' : 'hit');
+    // Wucht je Stil: Faustschläge drücken eine kleine Welle über den Boden, schwere Hiebe schlagen Funken
+    if (def.fx === 'punch') {
+      const gy = this.ground(e.x, e.z);
+      this.fx.shockwave(new Vector3(e.x, gy, e.z), crit ? 2.6 : 1.6, crit ? '#FFD08A' : '#FFFFFF');
+      this.smoke?.puff(e.x - dirX * 0.4, gy + 0.3, e.z - dirZ * 0.4, { n: 2, size: 0.4, grow: 1.8, life: 0.8, tone: 0.85, vx: dirX * 2, vz: dirZ * 2, spread: 0.6, rise: 0.2, alpha: 0.45, wind: 0.2 });
+    } else if (heavy && def.fx !== 'magic') {
+      this.sparksBurst(pos, '#FFD08A', 16, dirX, dirZ);
+      if ((def.clip ?? '').includes('Unarmed') || (def.clip ?? '').includes('Kick')) this.overlay.speedlines(0.5);
+    }
     if (this.mods.burnOnHit && def.fx !== 'magic' && def.fx !== 'punch' && res !== 'kill') this.applyStatus(e, 'burn', 3, dmg * 0.6);
     this.overlay.addCombo();
     if (res === 'stagger') { this.overlay.number(pos.clone().setY(pos.y + 0.7), 'Haltung gebrochen!', 'info'); this.overlay.speedlines(0.6); }
@@ -298,6 +310,12 @@ export class CombatSystem implements EnemyWorld {
     this.hooks.hitstop(res === 'kill' ? def.hitstop * 1.8 : def.hitstop);
     this.hooks.shake(def.shake + (res === 'kill' ? 0.2 : 0));
     if (res === 'kill') this.onKill(e);
+  }
+
+  /** Funkenregen in eine Richtung (oder rundum) */
+  private sparksBurst(pos: Vector3, color: string, n: number, dx = 0, dz = 0) {
+    const k = Math.max(1, Math.round(n / 14));
+    for (let i = 0; i < k; i++) this.fx.hit(pos.clone().add(new Vector3(dx * (0.3 + i * 0.35), 0.1 * i, dz * (0.3 + i * 0.35))), 'punch', color, i === 0 && n > 30);
   }
 
   private onKill(e: Enemy) {
@@ -321,7 +339,7 @@ export class CombatSystem implements EnemyWorld {
     m.add(halo);
     m.position.copy(from);
     this.scene.add(m);
-    this.projectiles.push({ mesh: m, vel, life: 2.2, radius, dmg, knock, team, from: src, pierce, hit: new Set(), color, poise });
+    this.projectiles.push({ mesh: m, vel, life: 2.2, radius, dmg, knock, team, from: src, pierce, hit: new Set(), color, poise, trail: 0 });
   }
 
   private spawnCoin(x: number, y: number, z: number, value: number) {
@@ -547,6 +565,13 @@ export class CombatSystem implements EnemyWorld {
       p.life -= dt;
       p.mesh.position.addScaledVector(p.vel, dt);
       const pos = p.mesh.position;
+      // leuchtende Spur: Funken und ein Hauch farbiger Rauch in der Elementfarbe
+      p.trail -= dt;
+      if (p.trail <= 0) {
+        p.trail = p.team === 'player' ? 0.035 : 0.06;
+        this.fx.puffColor(pos, p.color);
+        if (p.team === 'player') this.smoke?.puff(pos.x, pos.y, pos.z, { size: p.radius * 0.6, grow: p.radius * 2.2, life: 0.7, tone: new Color(p.color).lerp(new Color(1, 1, 1), 0.4), spread: 0.2, rise: 0.3, alpha: 0.35, glow: 0.3, wind: 0.3 });
+      }
       if (pos.y < this.ground(pos.x, pos.z) + 0.1 && Number.isFinite(this.groundRef.height(pos.x, pos.z))) p.life = 0;
       if (p.team === 'enemy' && pl?.active) {
         if (Math.hypot(pos.x - pl.x, pos.z - pl.z) < p.radius + 0.4 && Math.abs(pos.y - (pl.y + 1)) < 1.2) {
@@ -574,7 +599,15 @@ export class CombatSystem implements EnemyWorld {
         }
       }
       if (p.life <= 0) {
-        this.fx.hit(pos.clone(), 'magic', p.color);
+        this.fx.hit(pos.clone(), 'magic', p.color, p.radius > 1);
+        if (p.team === 'player') {
+          // Einschlag: Druckwelle, farbige Wolke, Funkenregen – größer bei aufgeladenen Geschossen
+          const g = this.ground(pos.x, pos.z);
+          this.fx.shockwave(new Vector3(pos.x, Number.isFinite(g) ? g : pos.y - 1, pos.z), 1.5 + p.radius * 3, p.color);
+          this.smoke?.puff(pos.x, pos.y, pos.z, { n: p.radius > 1 ? 6 : 3, size: p.radius, grow: p.radius * 4.5, life: 1.6, tone: new Color(p.color).lerp(new Color(1, 1, 1), 0.3), spread: 1.4, rise: 0.6, alpha: 0.55, glow: 0.6, wind: 0.4 });
+          this.sparksBurst(pos, p.color, p.radius > 1 ? 40 : 18);
+          if (p.radius > 1) { this.hooks.shake(0.35); this.overlay.speedlines(0.5); }
+        }
         p.mesh.removeFromParent();
         p.mesh.geometry.dispose();
         (p.mesh.material as MeshBasicMaterial).dispose();

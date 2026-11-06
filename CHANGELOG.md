@@ -1,5 +1,36 @@
 # Was ist neu
 
+## 2.8.0 – Lebendige Inseln, Ultra-Grafik und drei starke Kampfstile (06.11.2026)
+
+- **Jede Insel ist anders und lebt:**
+  - Eigene Form pro Insel: Der Hügel liegt versetzt, ist schmaler oder breiter, flacher oder höher.
+  - Natur je Region: Laubbäume zwischen den Palmen, Büsche, Gras, Blumen, Farne, Felsnadeln und Felsbrocken, Klippen im Flachwasser, Treibholz, Muscheln und Seesterne
+  - Lager mit Zelten, Lagerfeuer (Rauch und Funken), Palisaden, Waffenständern und Banner
+  - Dörfer mit Strohhütten, Feuerstelle, trocknenden Netzen und Ruderbooten
+  - Gestrandete Wracks auf Schatzinseln, Säulen und Torbögen in Ruinen, Wachtürme und Mauern auf Boss-Inseln
+  - Tierleben: Krabben huschen über den Strand, Schildkröten kriechen ans Ufer, Papageien, Krähen oder leuchtende Falter kreisen um die Bäume, Fische springen vor der Küste, nachts tanzen Glühwürmchen.
+- **Neue Grafikstufe Ultra** für sehr starke PCs:
+  - bis 4K mit Supersampling, 8-fache Kantenglättung
+  - Schatten in 8192er-Auflösung mit größerer Reichweite
+  - Holz, Segel, Pflaster, Wolken und Rauch in vierfacher Auflösung, maximale Texturfilterung
+  - weiteste Sicht, feinere Wellen, mehr Partikel
+  - Starke Grafikkarten bekommen Ultra automatisch.
+- **Handys:** „Niedrig“ hat jetzt denselben Farblook wie die höheren Stufen und weitere Sicht. Inseln im Nebel jenseits der Sichtweite werden gar nicht erst gezeichnet; das spart auf schwachen Geräten rund ein Viertel der Arbeit.
+- **Gegner kommen natürlich statt im Sekundentakt:** Schiffe segeln am Horizont herein und folgen eigenen Routen. Sie greifen erst an, wenn sie dich sichten. Nach jedem Gefecht kehrt Ruhe ein, und manche Händler fahren mit Begleitschutz.
+- **Jedes Gefecht lohnt sich mehr:** etwa doppelte Erfahrung und mehr Ruhm fürs Versenken und Entern, deutlich mehr Gold in der Beute, häufiger Faji-Splitter, Talismane von Jägern und Patrouillen
+- **Musik epischer und weniger aufdringlich:**
+  - Die Melodie pausiert regelmäßig, dann tragen Streicher, tiefe Hörner und Chor.
+  - Kontrabass, Paukenwirbel am Phrasenende, breiteres Tempo
+  - Kampfmusik wuchtig statt hektisch
+- **Natürliche Laufanimationen:** Die Schrittfrequenz passt jetzt zur echten Geschwindigkeit; vorher rutschten Füße über den Boden. Das gilt für Bewohner, Spielfigur, Gegner und Crew. Bewohner laufen sanft an und bremsen ab, bleiben nicht mehr an Wänden hängen und machen öfter Pausen.
+- **Alle drei Kampfstile können aufrüsten:**
+  - Der Schmied verkauft passend zum Stil Klingen, Kampfhandschuhe (mit +Volltreffer) oder Faji-Foki (mit +Faji-Erholung).
+  - Handschuhe und Fokus sind an der Figur sichtbar und leuchten ab Stufe 4.
+- **Mehr Wucht im Kampf:**
+  - Faustschläge schicken Druckwellen und Staub über den Boden, Tritte und Finisher kommen mit Speedlines.
+  - Faji-Geschosse ziehen leuchtende Spuren und schlagen mit Druckwelle, farbiger Wolke und Funken ein.
+  - Schwere Schwerthiebe schlagen Funken.
+
 ## 2.7.0 – Seeschlachten wie im Kino, edles Meer und echter Aufstieg (05.11.2026)
 
 - **Das Meer sieht aus wie echte hohe See statt wie ein Planschbecken:**

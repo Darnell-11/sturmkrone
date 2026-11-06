@@ -175,6 +175,32 @@ export const WEAPONS: WeaponDef[] = [
   { n: 'Himmelsschneide', dmg: 60, price: 11000, rank: 8, col: '#FF8AD8', glow: true },
 ];
 
+/**
+ * Waffenlinien je Kampfstil: gleiche Stufen, Preise und Schadenswerte wie WEAPONS,
+ * aber eigene Namen, eigenes Aussehen und ein kleiner Stilbonus.
+ */
+export interface WeaponLine { title: string; names: string[]; stat: (w: WeaponDef, tier: number) => string; flavor: string }
+export const WEAPON_LINES: Record<'faust' | 'schwert' | 'effekt', WeaponLine> = {
+  schwert: {
+    title: 'Klingen',
+    names: WEAPONS.map((w) => w.n),
+    stat: (w) => `+${w.dmg} Schaden${w.glow ? ' · leuchtet' : ''}`,
+    flavor: 'Grete schmiedet dir jede Klingenform – Säbel, Langklinge, Zweihänder oder Doppelklingen.',
+  },
+  faust: {
+    title: 'Kampfhandschuhe',
+    names: ['Lederwickel', 'Eisenknöchel', 'Stahlfäuste', 'Sturmfäuste', 'Gezeitenfäuste', 'Himmelsfäuste'],
+    stat: (w, t) => `+${w.dmg} Schlagkraft · +${t * 2} % Volltreffer${w.glow ? ' · leuchtet' : ''}`,
+    flavor: 'Beschlagene Handschuhe: jeder Schlag sitzt härter, Volltreffer werden häufiger.',
+  },
+  effekt: {
+    title: 'Faji-Foki',
+    names: ['Holzamulett', 'Bernsteinfokus', 'Runenstein', 'Sturmkristall', 'Gezeitenperle', 'Himmelsauge'],
+    stat: (w, t) => `+${w.dmg} Faji-Kraft · +${t * 5} % Faji-Erholung${w.glow ? ' · leuchtet' : ''}`,
+    flavor: 'Ein Fokus bündelt dein Faji: stärkere Geschosse, schneller wieder bereit.',
+  },
+};
+
 export interface ArmorDef { n: string; hp: number; price: number; rank: number }
 export const ARMOR: ArmorDef[] = [
   { n: 'Leinenhemd', hp: 0, price: 0, rank: 0 },

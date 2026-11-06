@@ -33,7 +33,7 @@ import { audio, type Mood } from '../audio/audio';
 import { EDGE_WALL } from '../data/world';
 import { QuestSystem, stepText } from '../story/questSystem';
 import type { QuestDef, TownNpcDef } from '../data/quests';
-import { ARMOR, BERNSTEINSEE, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, type IslandDef, type RegionDef } from '../data/regions';
+import { ARMOR, BERNSTEINSEE, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, WEAPON_LINES, type IslandDef, type RegionDef } from '../data/regions';
 import { drawMap, mapPalette, type MapMarkers } from '../ui/minimap';
 import { CREW_BY_ID } from '../data/crew';
 import { RARITY, rollTrinket, TRINKET_BY_ID, type Rarity } from '../data/trinkets';
@@ -120,8 +120,10 @@ export class Game {
       if (!e.companion) { this.save.progress.stats.sunk++; this.questEvent({ type: 'sink' }); }
       if (e.legendId) { this.defeatLegend(e.legendId, false); return; }
       if (e.ghost && Math.random() < 0.4) this.dropTrinket('selten', 0.15);
-      const mult = e.role === 'legende' ? 6 : e.role === 'haendler' ? 0.8 : e.ghost ? 2.5 : 1.4;
-      this.grantXp(Math.round((25 + e.level * 10) * mult), e.role === 'legende' ? 250 : e.role === 'haendler' ? (p.faction === 'pirat' ? 4 : -6) : 8);
+      // Seegefechte sind seltener geworden – dafür zählt jedes einzelne mehr
+      else if ((e.role === 'jaeger' || e.role === 'patrouille') && Math.random() < 0.1 + e.level * 0.005) this.dropTrinket('gewoehnlich', e.level * 0.01);
+      const mult = e.role === 'legende' ? 6 : e.role === 'haendler' ? 1.6 : e.ghost ? 4 : e.role === 'jaeger' ? 3.2 : 2.8;
+      this.grantXp(Math.round((25 + e.level * 10) * mult), e.role === 'legende' ? 250 : e.role === 'haendler' ? (p.faction === 'pirat' ? 6 : -6) : 14 + e.level);
       if (e.role === 'legende') audio.play('win');
       this.overlay.showBanner(e.role === 'legende' ? `${e.name} besiegt!` : 'Schiff versenkt!', e.role === 'haendler' ? 'Ein Handelsschiff' : '');
     };
@@ -140,8 +142,8 @@ export class Game {
       if (e.legendId) { this.defeatLegend(e.legendId, true); return; }
       if (e.ghost && Math.random() < 0.5) this.dropTrinket('selten', 0.2);
       // Entern ist riskanter als Versenken – und lohnt sich darum etwas mehr
-      const mult = e.role === 'haendler' ? 1 : e.ghost ? 2.8 : 1.7;
-      this.grantXp(Math.round((25 + e.level * 10) * mult) + 40, e.role === 'haendler' ? (p.faction === 'pirat' ? 6 : -6) : 20);
+      const mult = e.role === 'haendler' ? 2 : e.ghost ? 4.5 : 3.4;
+      this.grantXp(Math.round((25 + e.level * 10) * mult) + 40, e.role === 'haendler' ? (p.faction === 'pirat' ? 8 : -6) : 24 + e.level);
     };
     this.world.onTalk = (npc) => this.talkTo(npc);
     this.world.onHarbor = (def) => this.openHarbor(def);
@@ -399,8 +401,10 @@ export class Game {
       this.world.hullBonus = hullBonus;
       this.world.setShip(this.save.ship.tier, this.save.ship.look, this.world.ship.ammo, this.world.ship.hull / Math.max(1, this.world.ship.maxHull), this.save.player.faction);
     }
-    if (this.world.faji) this.world.faji.extraRegen = (has('lehrer') ? 0.2 : 0) + (tb.faji ?? 0);
-    if (this.world.combat) this.world.combat.critChance = 0.1 + (this.world.faji?.passives.crit ?? 0) + (tb.crit ?? 0);
+    // Stilbonus der Waffenlinie: Foki laden Faji schneller nach, Kampfhandschuhe treffen öfter voll
+    const style = this.save.player.style;
+    if (this.world.faji) this.world.faji.extraRegen = (has('lehrer') ? 0.2 : 0) + (tb.faji ?? 0) + (style === 'effekt' ? gear.weapon * 0.05 : 0);
+    if (this.world.combat) this.world.combat.critChance = 0.1 + (this.world.faji?.passives.crit ?? 0) + (tb.crit ?? 0) + (style === 'faust' ? gear.weapon * 0.02 : 0);
     const nav = this.world.naval;
     if (nav) {
       nav.playerLevel = lvl;
@@ -921,7 +925,8 @@ export class Game {
     this.applyPower();
     this.world.healPlayer();
     this.persist();
-    return `${item.n} gekauft${cost < item.price ? ` (${cost} Gold nach Inzahlungnahme)` : ''}!`;
+    const name = kind === 'weapon' ? WEAPON_LINES[s.player.style].names[i] ?? item.n : item.n;
+    return `${name} gekauft${cost < item.price ? ` (${cost} Gold nach Inzahlungnahme)` : ''}!`;
   }
 
   buyPotions(n: number): string {
