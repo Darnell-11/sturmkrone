@@ -1,6 +1,6 @@
 import { skillIcon } from './skillIcons';
 import type { SkillState } from '../core/save/types';
-import { BRANCHES, branchPoints, ELEMENT_COLORS, learnBlock, SK, SKILLS, SYNERGIES, type Branch, type LearnBlock, type SkillDef } from '../data/skills';
+import { BRANCHES, branchPoints, ELEMENT_COLORS, learnBlock, SK, SKILLS, SYNERGIES, type Branch, type LearnBlock, type SkillDef, SEA_TEXT } from '../data/skills';
 import { esc } from './dom';
 
 export interface SkillTreeOptions {
@@ -95,7 +95,7 @@ export class SkillTree {
       detail = `<div class="sk-detail">
         <div class="sk-dhead"><b>${esc(s.n)}</b><span>${a ? (a.ult ? 'Ultimate' : 'Aktiv') : 'Passiv'} · Stufe ${lv}/${s.max}</span></div>
         <p>${esc(s.d(Math.max(1, lv)))}${lv > 0 && lv < s.max ? `<br><span class="soft small">Nächste Stufe: ${esc(s.d(lv + 1))}</span>` : ''}</p>
-        ${a ? `<p class="soft small">${a.cost} Faji · ${a.cd} s Abklingzeit${a.sea ? ' · wirkt auch auf See' : ''}</p>` : ''}
+        ${a ? `<p class="soft small">${a.cost} Faji · ${a.cd} s Abklingzeit</p>${a.sea ? `<p class="small sk-sea">⚓ Auf See: ${SEA_TEXT[a.sea]}</p>` : ''}` : ''}
         ${s.req ? `<p class="soft small">Ab ${s.req} Punkten in diesem Zweig${s.lv ? ` · ab Stufe ${s.lv}` : ''}</p>` : s.lv ? `<p class="soft small">Ab Stufe ${s.lv}</p>` : ''}
         <div class="row">
           ${block === null ? `<button class="mini brass" data-a="learn" data-v="${s.id}">${lv ? 'Verbessern' : 'Lernen'} (1 Punkt)</button>` : `<span class="soft small">${BLOCK_TEXT[block]}</span>`}

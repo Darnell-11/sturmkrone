@@ -173,6 +173,7 @@ export class Game {
     };
     this.world.onEnterIsland = (def) => this.enterIsland(def);
     this.world.onIslandCleared = (id) => this.islandCleared(id);
+    this.world.questWantsClear = (id) => !!this.save?.progress.quests.some((p) => { const st = QUEST_BY_ID[p.id]?.steps[p.step]; return st?.type === 'clear' && st.island === id; });
     this.world.onCrystal = (id) => this.awakenCrystal(id);
     this.world.onVillage = (id) => this.villageGift(id);
     this.world.onRescue = () => {
@@ -494,7 +495,7 @@ export class Game {
     const def = this.world.islandDefs.find((i) => i.id === id);
     const gold = Math.round(30 + (def?.level ?? Math.max(1, Math.floor(s.player.level / 2))) * 15);
     s.player.gold += gold;
-    if (s.gear.potions < 5) s.gear.potions++;
+    if (s.gear.potions < POTION.max) s.gear.potions++;
     audio.play('treasure');
     setTimeout(() => this.overlay.showBanner('Die Dorfbewohner freuen sich', `Du bekommst ${gold} Gold und Proviant`), 700);
     this.persist();
@@ -966,7 +967,7 @@ export class Game {
     env.time = 7;
     if (env.weather.target === 'sturm') env.weather.setWeather('klar', true);
     this.persist();
-    return 'Du schläfst tief und fest. Ein neuer Morgen in Ankerglück – Leben voll aufgefüllt.';
+    return 'Du schläfst tief und fest. Ein neuer Morgen bricht an – Leben voll aufgefüllt.';
   }
 
   // ---------- Auftragsanzeige und Karte ----------
@@ -1095,15 +1096,18 @@ export class Game {
     const s = this.save;
     if (!s) return '';
     const cls = SHIP_CLASSES[tier];
+    // Wechsel zwischen eigenen Schiffen repariert nicht umsonst: der Zustand bleibt, nur ein neu gekauftes Schiff ist heil
+    let hull = Math.max(0.05, this.world.ship.hull / Math.max(1, this.world.ship.maxHull));
     if (!s.ship.owned.includes(tier)) {
       if (rankIndex(s.player.fame) < cls.rank) return `Rang „${rankName(s.player.faction, FAME_THRESHOLDS[cls.rank])}“ nötig.`;
       if (s.player.gold < cls.price) return `Dafür fehlen ${cls.price - s.player.gold} Gold.`;
       s.player.gold -= cls.price;
       s.ship.owned.push(tier);
+      hull = 1;
     }
+    s.ship.hull = hull;
     s.ship.tier = tier;
-    s.ship.hull = 1;
-    this.world.setShip(tier, s.ship.look, s.ship.ammo, 1, s.player.faction);
+    this.world.setShip(tier, s.ship.look, s.ship.ammo, s.ship.hull, s.player.faction);
     this.applyPower();
     this.persist();
     return `${cls.n} bereit zum Auslaufen!`;
@@ -1260,6 +1264,9 @@ export class Game {
       this.save.player.style = r.style;
       this.save.player.blade = r.blade;
       this.world.updatePlayer(r.look, styleIdOf(r.style, r.blade));
+      // Kampfstil gewechselt: Kombos, Stilboni und Waffenname passen sich an
+      this.world.faji?.refresh(this.save.player.level, styleIdOf(r.style, r.blade));
+      this.applyPower();
       this.persist();
     }
     this.state.set('pause');

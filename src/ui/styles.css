@@ -502,3 +502,5 @@ body { background: #0b0f14; }
 @keyframes aimbrass { 50% { box-shadow: 0 0 0 3px #d9b46a, 0 0 6px 1px rgba(217, 180, 106, 0.3); } }
 .ctx { border-radius: 4px; background: linear-gradient(180deg, #d8b066, #a8803a); color: #17120b; box-shadow: inset 0 1px 0 rgba(255, 245, 220, 0.35), 0 3px 10px rgba(0, 0, 0, 0.45); }
 .cbt-ebar.board::after { content: attr(data-label); position: absolute; left: 50%; bottom: 140%; transform: translateX(-50%); font-weight: 900; font-size: 0.85rem; letter-spacing: 0.08em; color: #FFD166; text-shadow: 1px 1px 0 #1b1410, -1px -1px 0 #1b1410, 1px -1px 0 #1b1410, -1px 1px 0 #1b1410; animation: ctxpulse 1s ease-in-out infinite; white-space: nowrap; }
+
+.sk-sea { color: #9FD8FF; margin-top: -0.2rem; }

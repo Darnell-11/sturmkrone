@@ -41,6 +41,9 @@ export class Ship {
   frozen = 0;
   ceasefire = 0;
   boost = 0;
+  /** Faji-Schild (Stahlleib, Titanform, Unbeugsam auf See): Restdauer und Schadensminderung 0 … 1 */
+  shield = 0;
+  shieldK = 0;
   prev = { x: 0, z: 0, heading: 0 };
   private holes = 0;
   private turnInput = 0;
@@ -82,6 +85,7 @@ export class Ship {
     this.frozen -= dt;
     this.ceasefire -= dt;
     this.boost -= dt;
+    this.shield -= dt;
     this.reloadL = Math.max(0, this.reloadL - dt);
     this.reloadR = Math.max(0, this.reloadR - dt);
     if (this.frozen > 0) { this.speed *= Math.pow(0.05, dt); return; }
@@ -109,6 +113,7 @@ export class Ship {
   /** Schaden mit Munitionsart; liefert den Rumpfschaden */
   damage(base: number, ammo: AmmoId, hitLocal: Vector3 | null): number {
     if (!this.alive) return 0;
+    if (this.shield > 0) base *= 1 - this.shieldK;
     const a = AMMO[ammo];
     const hullDmg = base * a.hull;
     this.hull = Math.max(0, this.hull - hullDmg);

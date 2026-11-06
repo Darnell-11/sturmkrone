@@ -1,6 +1,6 @@
 import { ACTION_IDS, ACTION_LABELS, DEFAULT_KEYS, FIXED_CODES, type ActionId } from '../data/actions';
 import { QUALITY_IDS, QUALITY_TIERS, type QualityTier } from '../data/qualityTiers';
-import { FACTION_LABELS, rankName } from '../data/ranks';
+import { FACTION_LABELS, RANKS, rankName } from '../data/ranks';
 import type { Game } from '../core/game';
 import type { SaveData } from '../core/save/types';
 import type { Settings } from '../core/settings';
@@ -362,7 +362,7 @@ export class Menus {
       `<h2 class="fell">Crew anheuern</h2>
       <p class="soft">Gold: <b>${g.playerGold.toLocaleString('de-DE')}</b> · Crew an Bord: ${s.crew.hired.length}${msg ? ` · <b>${esc(msg)}</b>` : ''}</p>
       ${free.length ? free.map((c) => `<div class="slot crew" style="--c:${c.col}"><div class="slot-head"><b>${esc(c.name)}</b><span>${c.price.toLocaleString('de-DE')} Gold</span></div>
-        <div class="meta"><b>${esc(c.job)}</b> · ${CREW_ROLE_LABEL[c.role]}${rank < c.rank ? ` · ab Rang ${c.rank + 1}` : ''}<br>${esc(c.perk)}${c.skill ? `<br><i>${esc(c.skill.n)}:</i> ${esc(c.skill.d)}` : ''}</div>
+        <div class="meta"><b>${esc(c.job)}</b> · ${CREW_ROLE_LABEL[c.role]}${rank < c.rank ? ` · ab Rang „${RANKS[s.player.faction][c.rank]}“` : ''}<br>${esc(c.perk)}${c.skill ? `<br><i>${esc(c.skill.n)}:</i> ${esc(c.skill.d)}` : ''}</div>
         <p class="dlg-line small">„${esc(c.quote)}“</p>
         <button class="mini brass" data-a="hire" data-id="${c.id}" ${rank < c.rank ? 'disabled' : ''}>Anheuern</button></div>`).join('') : '<p>Alle sechzehn sind schon an Bord. Was für eine Crew!</p>'}
       <button class="primary" data-a="back">Zurück</button>`,
@@ -493,7 +493,7 @@ export class Menus {
     const rank = g.playerRank;
     const re = (m: string) => { const y = this.screen.scrollTop; this.showSmith(back, m); this.screen.scrollTop = y; };
     const row = (n: string, stat: string, price: number, needRank: number, owned: boolean, worn: boolean, a: string, i: number) => `<div class="slot"><div class="slot-head"><b>${esc(n)}${worn ? ' ✓' : ''}</b><span>${owned ? (worn ? 'Angelegt' : 'Überholt') : `${price.toLocaleString('de-DE')} Gold`}</span></div>
-      <div class="meta">${stat}${needRank > rank && !owned ? ` · ab Rang ${needRank + 1}` : ''}</div>
+      <div class="meta">${stat}${needRank > rank && !owned ? ` · ab Rang „${RANKS[s.player.faction][needRank]}“` : ''}</div>
       ${owned ? '' : `<button class="mini brass" data-a="${a}" data-id="${i}" ${needRank > rank ? 'disabled' : ''}>Kaufen</button>`}</div>`;
     this.open(
       `${this.shopHead('Schmiede', msg)}
@@ -597,7 +597,7 @@ export class Menus {
       const owned = st.owned.includes(i);
       const locked = rank < c.rank;
       return `<div class="slot"><div class="slot-head"><b>${c.n}${st.tier === i ? ' ✓' : ''}</b><span>${owned ? 'Im Besitz' : `${c.price.toLocaleString('de-DE')} Gold`}</span></div>
-        <div class="meta">Rumpf ${c.hp} · ${c.can} Kanonen je Seite · Tempo ${c.spd} · Crew ${c.crew}${locked && !owned ? ` · ab Rang ${c.rank + 1}` : ''}</div>
+        <div class="meta">Rumpf ${c.hp} · ${c.can} Kanonen je Seite · Tempo ${c.spd} · Crew ${c.crew}${locked && !owned ? ` · ab Rang „${RANKS[g.saveData?.player.faction ?? 'pirat'][c.rank]}“` : ''}</div>
         ${st.tier === i ? '' : `<button class="mini${owned ? '' : ' brass'}" data-a="cls" data-id="${i}" ${locked && !owned ? 'disabled' : ''}>${owned ? 'Wechseln' : 'Kaufen'}</button>`}</div>`;
     }).join('');
     const cost = g.repairCost();

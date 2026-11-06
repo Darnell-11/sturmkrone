@@ -13,7 +13,7 @@ import {
   type Scene,
 } from 'three';
 import type { CombatFx } from '../combat/fx';
-import { ELEMENT_COLORS, type ActiveDef, type Element, type Passives, type SkillDef, type Status } from '../data/skills';
+import { actAt, ELEMENT_COLORS, type ActiveDef, type Element, type Passives, type SkillDef, type Status } from '../data/skills';
 import type { ParticleSystem } from '../world/particles';
 import { ElementFx } from './elementFx';
 
@@ -92,7 +92,7 @@ export class AbilityRunner {
   get busy() { return this.running.some((r) => !r.done && r.t < 0.6); }
 
   cast(s: SkillDef, level: number) {
-    const a = s.act;
+    const a = actAt(s, level);
     if (!a) return;
     const c = this.ctx;
     const dmg = c.power * a.dmg(level);

@@ -41,10 +41,10 @@ export interface StyleAttacks { combo: AttackDef[]; heavy: AttackDef; charge: At
 export const STYLE_ATTACKS: Record<StyleId, StyleAttacks> = {
   faust: {
     combo: [
-      A({ clip: 'Melee_Unarmed_Attack_Punch_A', speed: 1.6, hitStart: 0.25, hitEnd: 0.45, range: 1.8, arc: 1.6, dmg: 0.7, poise: 8, knock: 1.5, fx: 'punch', hitstop: 0.045 }),
-      A({ clip: 'Melee_Unarmed_Attack_Punch_A', speed: 1.8, hitStart: 0.25, hitEnd: 0.45, range: 1.8, arc: 1.6, dmg: 0.75, poise: 9, knock: 1.5, fx: 'punch', hitstop: 0.045 }),
-      A({ clip: 'Melee_Unarmed_Attack_Kick', speed: 1.4, hitStart: 0.3, hitEnd: 0.5, range: 2.1, arc: 1.8, dmg: 1.0, poise: 14, knock: 2, launch: 7, fx: 'heavy', hitstop: 0.08, shake: 0.25 }),
-      A({ clip: 'Melee_2H_Attack_Spinning', speed: 1.1, hitStart: 0.15, hitEnd: 0.8, range: 2.3, arc: 6.3, dmg: 0.9, poise: 12, knock: 6, fx: 'spin', hitstop: 0.06, shake: 0.2, lunge: 1 }),
+      A({ clip: 'Melee_Unarmed_Attack_Punch_A', speed: 1.7, hitStart: 0.25, hitEnd: 0.45, range: 1.9, arc: 1.6, dmg: 0.8, poise: 8, knock: 1.5, fx: 'punch', hitstop: 0.045 }),
+      A({ clip: 'Melee_Unarmed_Attack_Punch_A', speed: 1.9, hitStart: 0.25, hitEnd: 0.45, range: 1.9, arc: 1.6, dmg: 0.85, poise: 9, knock: 1.5, fx: 'punch', hitstop: 0.045 }),
+      A({ clip: 'Melee_Unarmed_Attack_Kick', speed: 1.5, hitStart: 0.3, hitEnd: 0.5, range: 2.2, arc: 1.8, dmg: 1.15, poise: 14, knock: 2, launch: 7, fx: 'heavy', hitstop: 0.08, shake: 0.25 }),
+      A({ clip: 'Melee_2H_Attack_Spinning', speed: 1.3, hitStart: 0.15, hitEnd: 0.8, range: 2.4, arc: 6.3, dmg: 1.05, poise: 14, knock: 6, fx: 'spin', hitstop: 0.07, shake: 0.25, lunge: 1 }),
     ],
     heavy: A({ clip: 'Melee_1H_Attack_Jump_Chop', speed: 1.25, hitStart: 0.45, hitEnd: 0.62, range: 2.6, arc: 3.2, dmg: 2.0, poise: 35, knock: 8, fx: 'heavy', hitstop: 0.13, shake: 0.6, lunge: 4 }),
     charge: A({ clip: 'Ranged_Magic_Raise', speed: 1.3, hitStart: 0.5, hitEnd: 0.65, range: 4.5, arc: 6.3, dmg: 2.4, poise: 50, knock: 12, launch: 6, fx: 'heavy', hitstop: 0.15, shake: 0.8, lunge: 0 }),
@@ -70,28 +70,28 @@ export const STYLE_ATTACKS: Record<StyleId, StyleAttacks> = {
   },
   zweihaender: {
     combo: [
-      A({ clip: 'Melee_2H_Attack_Slice', speed: 1.15, hitStart: 0.32, hitEnd: 0.55, range: 3.2, arc: 3.0, dmg: 1.5, poise: 22, knock: 5, hitstop: 0.09, shake: 0.3, smearTilt: 0.2 }),
+      A({ clip: 'Melee_2H_Attack_Slice', speed: 1.2, hitStart: 0.32, hitEnd: 0.55, range: 3.3, arc: 3.0, dmg: 1.6, poise: 22, knock: 5, hitstop: 0.09, shake: 0.3, smearTilt: 0.2 }),
       A({ clip: 'Melee_2H_Attack_Chop', speed: 1.15, hitStart: 0.38, hitEnd: 0.55, range: 3.2, arc: 1.8, dmg: 1.7, poise: 28, knock: 6, fx: 'heavy', hitstop: 0.11, shake: 0.45, smearTilt: 1.5 }),
-      A({ clip: 'Melee_2H_Attack_Spin', speed: 1.3, hitStart: 0.2, hitEnd: 0.75, range: 3.4, arc: 6.3, dmg: 1.6, poise: 26, knock: 9, fx: 'spin', hitstop: 0.08, shake: 0.4, smearTilt: 0 }),
+      A({ clip: 'Melee_2H_Attack_Spin', speed: 1.55, hitStart: 0.2, hitEnd: 0.75, range: 3.5, arc: 6.3, dmg: 1.9, poise: 28, knock: 9, fx: 'spin', hitstop: 0.08, shake: 0.4, smearTilt: 0 }),
     ],
     heavy: A({ clip: 'Melee_2H_Attack_Chop', speed: 0.95, hitStart: 0.42, hitEnd: 0.58, range: 3.6, arc: 2.2, dmg: 3.0, poise: 60, knock: 10, fx: 'heavy', hitstop: 0.16, shake: 0.9, smearTilt: 1.5 }),
     charge: A({ clip: 'Melee_2H_Attack_Spinning', speed: 0.9, hitStart: 0.05, hitEnd: 0.95, range: 3.5, arc: 6.3, dmg: 1.1, poise: 18, knock: 5, fx: 'spin', hitstop: 0.04, shake: 0.2, smearTilt: 0 }),
   },
   doppel: {
     combo: [
-      A({ clip: 'Melee_Dualwield_Attack_Slice', speed: 1.6, hitStart: 0.25, hitEnd: 0.55, range: 2.3, arc: 2.8, dmg: 0.75, poise: 8, smearTilt: 0.2 }),
-      A({ clip: 'Melee_Dualwield_Attack_Chop', speed: 1.6, hitStart: 0.3, hitEnd: 0.55, range: 2.3, arc: 2.0, dmg: 0.8, poise: 9, smearTilt: 1.3 }),
-      A({ clip: 'Melee_Dualwield_Attack_Stab', speed: 1.8, hitStart: 0.3, hitEnd: 0.5, range: 2.7, arc: 1.0, dmg: 1.0, poise: 12, knock: 4, fx: 'stab', lunge: 4 }),
-      A({ clip: 'Melee_2H_Attack_Spinning', speed: 1.3, hitStart: 0.1, hitEnd: 0.85, range: 2.6, arc: 6.3, dmg: 0.9, poise: 10, knock: 6, fx: 'spin', smearTilt: 0 }),
+      A({ clip: 'Melee_Dualwield_Attack_Slice', speed: 1.75, hitStart: 0.25, hitEnd: 0.55, range: 2.4, arc: 2.8, dmg: 0.95, poise: 8, smearTilt: 0.2 }),
+      A({ clip: 'Melee_Dualwield_Attack_Chop', speed: 1.75, hitStart: 0.3, hitEnd: 0.55, range: 2.4, arc: 2.0, dmg: 1.0, poise: 9, smearTilt: 1.3 }),
+      A({ clip: 'Melee_Dualwield_Attack_Stab', speed: 1.9, hitStart: 0.3, hitEnd: 0.5, range: 2.8, arc: 1.0, dmg: 1.25, poise: 12, knock: 4, fx: 'stab', lunge: 4 }),
+      A({ clip: 'Melee_2H_Attack_Spinning', speed: 1.4, hitStart: 0.1, hitEnd: 0.85, range: 2.7, arc: 6.3, dmg: 1.15, poise: 12, knock: 6, fx: 'spin', smearTilt: 0 }),
     ],
-    heavy: A({ clip: 'Melee_2H_Attack_Spin', speed: 1.4, hitStart: 0.2, hitEnd: 0.75, range: 2.9, arc: 6.3, dmg: 1.9, poise: 26, knock: 8, fx: 'spin', hitstop: 0.09, shake: 0.4, smearTilt: 0 }),
+    heavy: A({ clip: 'Melee_2H_Attack_Spin', speed: 1.55, hitStart: 0.2, hitEnd: 0.75, range: 3.0, arc: 6.3, dmg: 2.5, poise: 28, knock: 8, fx: 'spin', hitstop: 0.09, shake: 0.4, smearTilt: 0 }),
     charge: A({ clip: 'Melee_2H_Attack_Spinning', speed: 1.0, hitStart: 0.05, hitEnd: 0.95, range: 2.8, arc: 6.3, dmg: 1.0, poise: 12, knock: 4, fx: 'spin', smearTilt: 0 }),
   },
   effekt: {
     combo: [
-      A({ clip: 'Ranged_Magic_Shoot', speed: 1.45, hitStart: 0.35, hitEnd: 0.36, range: 22, arc: 0.3, dmg: 0.9, poise: 8, knock: 2, fx: 'magic', lunge: 0, projectile: { speed: 28, radius: 0.6, color: '#C77DFF' } }),
-      A({ clip: 'Ranged_Magic_Spellcasting', speed: 1.25, hitStart: 0.4, hitEnd: 0.41, range: 22, arc: 0.3, dmg: 0.9, poise: 8, knock: 2, fx: 'magic', lunge: 0, projectile: { speed: 28, radius: 0.6, color: '#9F7DFF' } }),
-      A({ clip: 'Ranged_Magic_Shoot', speed: 1.6, hitStart: 0.35, hitEnd: 0.36, range: 24, arc: 0.3, dmg: 1.3, poise: 14, knock: 5, fx: 'magic', lunge: 0, projectile: { speed: 34, radius: 0.9, color: '#E0A0FF', pierce: true } }),
+      A({ clip: 'Ranged_Magic_Shoot', speed: 1.45, hitStart: 0.35, hitEnd: 0.62, range: 22, arc: 0.3, dmg: 0.8, poise: 8, knock: 2, fx: 'magic', lunge: 0, projectile: { speed: 28, radius: 0.6, color: '#C77DFF' } }),
+      A({ clip: 'Ranged_Magic_Spellcasting', speed: 1.25, hitStart: 0.4, hitEnd: 0.66, range: 22, arc: 0.3, dmg: 0.8, poise: 8, knock: 2, fx: 'magic', lunge: 0, projectile: { speed: 28, radius: 0.6, color: '#9F7DFF' } }),
+      A({ clip: 'Ranged_Magic_Shoot', speed: 1.6, hitStart: 0.35, hitEnd: 0.6, range: 24, arc: 0.3, dmg: 1.15, poise: 14, knock: 5, fx: 'magic', lunge: 0, projectile: { speed: 34, radius: 0.9, color: '#E0A0FF', pierce: true } }),
     ],
     heavy: A({ clip: 'Ranged_Magic_Raise', speed: 1.4, hitStart: 0.5, hitEnd: 0.62, range: 5, arc: 6.3, dmg: 2.0, poise: 40, knock: 10, launch: 5, fx: 'magic', hitstop: 0.12, shake: 0.6, lunge: 0 }),
     charge: A({ clip: 'Ranged_Magic_Shoot', speed: 1.0, hitStart: 0.35, hitEnd: 0.36, range: 30, arc: 0.3, dmg: 3.2, poise: 50, knock: 10, fx: 'magic', hitstop: 0.14, shake: 0.6, lunge: 0, projectile: { speed: 40, radius: 1.6, color: '#FF8AFF', pierce: true } }),

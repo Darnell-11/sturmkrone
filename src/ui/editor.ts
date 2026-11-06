@@ -128,7 +128,13 @@ export class CharacterEditor {
         this.r.look = { ...randomLook(Math.random, this.r.faction === 'marine' ? 'marine' : 'pirat'), ...keep };
         break;
       }
-      case 'done': this.o.onDone(this.r); return;
+      case 'done': {
+        // leerer oder nur aus Leerzeichen bestehender Name: Standardname statt eines namenlosen Helden
+        const name = this.r.name.replace(/\s+/g, ' ').trim().slice(0, 24);
+        this.r.name = name || (this.r.faction === 'pirat' ? 'Fynn' : 'Rekrut');
+        this.o.onDone(this.r);
+        return;
+      }
       case 'cancel': this.o.onCancel(); return;
       default: return;
     }

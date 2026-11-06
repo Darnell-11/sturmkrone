@@ -25,6 +25,21 @@ export interface Passives {
   reach: number; lifesteal: number; fearWeak: number; riposte: number; secondWind: number; rage: number; hpMax: number; poise: number;
 }
 
+/** Wirkung einer Fähigkeit im Seekampf */
+export type SeaKind = 'salvo' | 'freeze' | 'strike' | 'wind' | 'wave' | 'repair' | 'ceasefire' | 'reload' | 'cleave' | 'meteor' | 'still'
+  | 'shock' | 'brace' | 'barrage' | 'quake' | 'pull' | 'poison' | 'rain';
+
+/** Kurzbeschreibung der Seewirkung (Skillbaum) */
+export const SEA_TEXT: Record<SeaKind, string> = {
+  salvo: 'Salve aus Brandkugeln aufs nächste Schiff', freeze: 'friert das nächste Schiff ein', strike: 'Blitz schlägt ins nächste Schiff',
+  wind: 'Rückenwind, drückt Schiffe weg', wave: 'Flutwelle trifft alle Schiffe in der Nähe', repair: 'repariert dein Schiff',
+  ceasefire: 'Feindschiffe stellen das Feuer ein', reload: 'Kanonen laden doppelt so schnell', cleave: 'fliegender Hieb durch alle Schiffe in einer Linie',
+  meteor: 'Meteore stürzen auf alle Schiffe in der Nähe', still: 'alle Schiffe in der Nähe erstarren',
+  shock: 'Druckwelle trifft und stößt alle nahen Schiffe weg', brace: 'dein Schiff nimmt kaum Schaden', barrage: 'Hagel aus Druckschlägen aufs nächste Schiff',
+  quake: 'Felsen brechen unter dem Schiff aus dem Meer und halten es fest', pull: 'Strudel zieht Schiffe zusammen und zerrt an ihnen',
+  poison: 'Giftwolke legt die feindliche Crew lahm', rain: 'Einschläge auf allen Schiffen in der Nähe',
+};
+
 export interface ActiveDef {
   cost: number;
   cd: number;
@@ -41,7 +56,11 @@ export interface ActiveDef {
   buff?: Partial<Passives> & { invuln?: boolean; giant?: boolean };
   heal?: number;
   /** Wirkt auch auf See (Variante in Meilenstein 5) */
-  sea?: 'salvo' | 'freeze' | 'strike' | 'wind' | 'wave' | 'repair' | 'ceasefire' | 'reload' | 'cleave' | 'meteor' | 'still';
+  sea?: SeaKind;
+  /** Zuwachs je Stufe (die Beschreibung nennt dieselben Werte) */
+  countL?: number;
+  durL?: number;
+  healL?: number;
   /** Ultimate: Cut-in-Banner */
   ult?: boolean;
 }
@@ -88,52 +107,52 @@ export const SKILLS: SkillDef[] = [
   { id: 'eisenhaut', b: 'koerper', t: 1, x: 1, max: 3, req: 0, n: 'Eisenhaut', d: (l) => `Erlittener Schaden −${8 * l} %`, passive: (l) => ({ reduce: 0.08 * l }) },
   { id: 'sprint', b: 'koerper', t: 1, x: 2, max: 2, req: 0, n: 'Federschritt', d: (l) => `+${10 * l} % Lauftempo, Rolle lädt ${20 * l} % schneller`, passive: (l) => ({ speed: 0.1 * l, rollCd: 0.2 * l }) },
   { id: 'vitalitaet', b: 'koerper', t: 1, x: 3, max: 3, req: 0, n: 'Lebenskraft', d: (l) => `Max. Leben +${12 * l} %`, passive: (l) => ({ hpMax: 0.12 * l }) },
-  { id: 'bergbrecher', b: 'koerper', t: 1, x: 4, max: 3, req: 0, n: 'Bergbrecher', d: (l) => `Bodenschlag mit ${pct(1.4 + 0.25 * l)} Schaden im Umkreis, betäubt 1,2 s`, act: { cost: 25, cd: 6, shape: 'nova', el: 'koerper', dmg: (l) => 1.4 + 0.25 * l, radius: 5, status: 'stun', dur: 1.2 } },
-  { id: 'stahlleib', b: 'koerper', t: 2, x: 1, max: 3, req: 2, needs: ['eisenhaut'], n: 'Stahlleib', d: (l) => `${4 + l} s lang 65 % weniger Schaden und kein Rückstoß`, act: { cost: 35, cd: 16, shape: 'buff', el: 'koerper', dmg: () => 0, dur: 5, buff: { reduce: 0.65, poise: 1 } } },
-  { id: 'hundert', b: 'koerper', t: 2, x: 0, max: 3, req: 2, needs: ['eisenfaust'], n: 'Hundert Fäuste', d: (l) => `Schlaghagel nach vorn, 13 Treffer zu je ${pct(0.3 + 0.05 * l)}`, act: { cost: 30, cd: 8, shape: 'barrage', el: 'koerper', dmg: (l) => 0.3 + 0.05 * l, count: 13, range: 3.2 } },
+  { id: 'bergbrecher', b: 'koerper', t: 1, x: 4, max: 3, req: 0, n: 'Bergbrecher', d: (l) => `Bodenschlag mit ${pct(1.4 + 0.25 * l)} Schaden im Umkreis, betäubt 1,2 s`, act: { cost: 25, cd: 6, shape: 'nova', el: 'koerper', dmg: (l) => 1.4 + 0.25 * l, radius: 5, status: 'stun', dur: 1.2, sea: 'shock' } },
+  { id: 'stahlleib', b: 'koerper', t: 2, x: 1, max: 3, req: 2, needs: ['eisenhaut'], n: 'Stahlleib', d: (l) => `${4 + l} s lang 65 % weniger Schaden und kein Rückstoß`, act: { cost: 35, cd: 16, shape: 'buff', el: 'koerper', dmg: () => 0, dur: 4, durL: 1, buff: { reduce: 0.65, poise: 1 }, sea: 'brace' } },
+  { id: 'hundert', b: 'koerper', t: 2, x: 0, max: 3, req: 2, needs: ['eisenfaust'], n: 'Hundert Fäuste', d: (l) => `Schlaghagel nach vorn, 13 Treffer zu je ${pct(0.3 + 0.05 * l)}`, act: { cost: 30, cd: 8, shape: 'barrage', el: 'koerper', dmg: (l) => 0.3 + 0.05 * l, count: 13, range: 3.2, sea: 'barrage' } },
   { id: 'atem', b: 'koerper', t: 2, x: 3, max: 1, req: 3, needs: ['vitalitaet'], n: 'Zweiter Atem', d: () => 'Einmal pro Kampf: fällst du unter 25 % Leben, heilst du 35 %', passive: () => ({ secondWind: 0.35 }) },
-  { id: 'erdstoss', b: 'koerper', t: 2, x: 4, max: 3, req: 3, needs: ['bergbrecher'], n: 'Erdstoß', d: (l) => `Stampfer, der eine Schockwelle nach vorn schickt (${pct(1.6 + 0.3 * l)}) und Gegner hochschleudert`, act: { cost: 30, cd: 9, shape: 'spikes', el: 'erde', dmg: (l) => 1.6 + 0.3 * l, range: 10, status: 'launch' } },
+  { id: 'erdstoss', b: 'koerper', t: 2, x: 4, max: 3, req: 3, needs: ['bergbrecher'], n: 'Erdstoß', d: (l) => `Stampfer, der eine Schockwelle nach vorn schickt (${pct(1.6 + 0.3 * l)}) und Gegner hochschleudert`, act: { cost: 30, cd: 9, shape: 'spikes', el: 'erde', dmg: (l) => 1.6 + 0.3 * l, range: 10, status: 'launch', sea: 'quake' } },
   { id: 'konter', b: 'koerper', t: 2, x: 2, max: 2, req: 2, needs: ['sprint'], n: 'Gegenschlag', d: (l) => `Perfekte Paraden lösen eine Druckwelle aus (${pct(0.8 * l)})`, passive: (l) => ({ riposte: 0.8 * l }) },
-  { id: 'titan', b: 'koerper', t: 3, x: 1, max: 2, req: 5, lv: 10, needs: ['stahlleib'], n: 'Titanform', d: (l) => `${8 + l} s riesig: +60 % Nahkampfschaden, 33 % weniger Schaden, sofort 30 % Heilung`, act: { cost: 60, cd: 40, shape: 'buff', el: 'koerper', dmg: () => 0, dur: 9, heal: 0.3, buff: { dmgAll: 0.6, reduce: 0.33, giant: true }, ult: true } },
-  { id: 'meteorfaust', b: 'koerper', t: 3, x: 0, max: 2, req: 6, needs: ['hundert'], n: 'Meteorfaust', d: (l) => `Sprung und Einschlag aus der Luft (${pct(3 + 0.5 * l)}), riesiger Krater`, act: { cost: 45, cd: 18, shape: 'nova', el: 'meteor', dmg: (l) => 3 + 0.5 * l, radius: 7, status: 'launch', ult: true } },
+  { id: 'titan', b: 'koerper', t: 3, x: 1, max: 2, req: 5, lv: 10, needs: ['stahlleib'], n: 'Titanform', d: (l) => `${8 + l} s riesig: +60 % Nahkampfschaden, 33 % weniger Schaden, sofort 30 % Heilung`, act: { cost: 60, cd: 40, shape: 'buff', el: 'koerper', dmg: () => 0, dur: 8, durL: 1, heal: 0.3, buff: { dmgAll: 0.6, reduce: 0.33, giant: true }, ult: true, sea: 'brace' } },
+  { id: 'meteorfaust', b: 'koerper', t: 3, x: 0, max: 2, req: 6, needs: ['hundert'], n: 'Meteorfaust', d: (l) => `Sprung und Einschlag aus der Luft (${pct(3 + 0.5 * l)}), riesiger Krater`, act: { cost: 45, cd: 18, shape: 'nova', el: 'meteor', dmg: (l) => 3 + 0.5 * l, radius: 7, status: 'launch', ult: true, sea: 'meteor' } },
   { id: 'felsenhaut', b: 'koerper', t: 3, x: 3, max: 2, req: 6, needs: ['atem'], n: 'Felsenpanzer', d: (l) => `Haltung +${50 * l} %: du taumelst kaum noch`, passive: (l) => ({ poise: 0.5 * l, reduce: 0.05 * l }) },
-  { id: 'urgewalt', b: 'koerper', t: 4, x: 2, max: 1, req: 9, lv: 15, awaken: true, needs: ['titan'], n: 'Urgewalt', d: () => 'Erwacht: Ein einziger Schlag, der die Insel erbeben lässt (700 %)', act: { cost: 90, cd: 60, shape: 'nova', el: 'koerper', dmg: () => 7, radius: 12, status: 'stun', dur: 3, ult: true, sea: 'cleave' } },
+  { id: 'urgewalt', b: 'koerper', t: 4, x: 2, max: 1, req: 9, lv: 15, awaken: true, needs: ['titan'], n: 'Urgewalt', d: () => 'Erwacht: Ein einziger Schlag, der die Insel erbeben lässt (700 %)', act: { cost: 90, cd: 60, shape: 'nova', el: 'koerper', dmg: () => 7, radius: 12, status: 'stun', dur: 3, ult: true, sea: 'shock' } },
 
   // ---------- Schwertkunst ----------
   { id: 'schaerfe', b: 'klinge', t: 1, x: 0, max: 3, req: 0, n: 'Klingenschärfe', d: (l) => `Klingenschaden +${12 * l} %`, passive: (l) => ({ dmgBlade: 0.12 * l }) },
   { id: 'riposte', b: 'klinge', t: 1, x: 1, max: 2, req: 0, n: 'Riposte', d: (l) => `${18 * l} % Chance, Angriffe abzuwehren und sofort zu kontern`, passive: (l) => ({ dodge: 0.09 * l, riposte: 0.4 * l }) },
   { id: 'meister', b: 'klinge', t: 1, x: 2, max: 2, req: 0, n: 'Klingenmeister', d: (l) => `+${(0.3 * l).toFixed(1).replace('.', ',')} m Reichweite, +${6 * l} % Krit`, passive: (l) => ({ reach: 0.3 * l, crit: 0.06 * l }) },
   { id: 'sichelwind', b: 'klinge', t: 1, x: 3, max: 3, req: 0, n: 'Sichelwind', d: (l) => `Fliegender Klingenhieb in einer Linie (${pct(1.3 + 0.25 * l)}) – trifft auch Schiffe`, act: { cost: 20, cd: 4, shape: 'line', el: 'klinge', dmg: (l) => 1.3 + 0.25 * l, range: 18, sea: 'cleave' } },
-  { id: 'iai', b: 'klinge', t: 1, x: 4, max: 3, req: 0, n: 'Blitzziehen', d: (l) => `Blitzschneller Schnitt im Vorbeigehen (${pct(1.5 + 0.3 * l)})`, act: { cost: 18, cd: 5, shape: 'dash', el: 'klinge', dmg: (l) => 1.5 + 0.3 * l, range: 8 } },
-  { id: 'wirbel', b: 'klinge', t: 2, x: 0, max: 3, req: 2, needs: ['schaerfe'], n: 'Wirbelklinge', d: (l) => `2 s Wirbel, trifft alles um dich (8 × ${pct(0.45 + 0.08 * l)})`, act: { cost: 30, cd: 9, shape: 'nova', el: 'klinge', dmg: (l) => 0.45 + 0.08 * l, radius: 4, count: 8 } },
-  { id: 'tausend', b: 'klinge', t: 2, x: 4, max: 3, req: 2, needs: ['iai'], n: 'Tausend Schnitte', d: (l) => `Durch alle Gegner auf dem Weg hindurchschneiden (${pct(1.2 + 0.2 * l)})`, act: { cost: 35, cd: 10, shape: 'dash', el: 'klinge', dmg: (l) => 1.2 + 0.2 * l, range: 14, count: 3 } },
+  { id: 'iai', b: 'klinge', t: 1, x: 4, max: 3, req: 0, n: 'Blitzziehen', d: (l) => `Blitzschneller Schnitt im Vorbeigehen (${pct(1.5 + 0.3 * l)})`, act: { cost: 18, cd: 5, shape: 'dash', el: 'klinge', dmg: (l) => 1.5 + 0.3 * l, range: 8, sea: 'cleave' } },
+  { id: 'wirbel', b: 'klinge', t: 2, x: 0, max: 3, req: 2, needs: ['schaerfe'], n: 'Wirbelklinge', d: (l) => `2 s Wirbel, trifft alles um dich (8 × ${pct(0.45 + 0.08 * l)})`, act: { cost: 30, cd: 9, shape: 'nova', el: 'klinge', dmg: (l) => 0.45 + 0.08 * l, radius: 4, count: 8, sea: 'shock' } },
+  { id: 'tausend', b: 'klinge', t: 2, x: 4, max: 3, req: 2, needs: ['iai'], n: 'Tausend Schnitte', d: (l) => `Durch alle Gegner auf dem Weg hindurchschneiden (${pct(1.2 + 0.2 * l)})`, act: { cost: 35, cd: 10, shape: 'dash', el: 'klinge', dmg: (l) => 1.2 + 0.2 * l, range: 14, count: 3, sea: 'cleave' } },
   { id: 'blutrausch', b: 'klinge', t: 2, x: 1, max: 1, req: 3, needs: ['riposte'], n: 'Blutrausch', d: () => 'Jeder besiegte Gegner: +8 % Angriffstempo im Kampf (bis +40 %)', passive: () => ({ rage: 0.08 }) },
-  { id: 'kreuzschnitt', b: 'klinge', t: 2, x: 2, max: 3, req: 3, needs: ['meister'], n: 'Kreuzschnitt', d: (l) => `Zwei gekreuzte Klingenwellen (je ${pct(1.1 + 0.2 * l)})`, act: { cost: 28, cd: 7, shape: 'cone', el: 'klinge', dmg: (l) => 1.1 + 0.2 * l, range: 9, count: 2 } },
+  { id: 'kreuzschnitt', b: 'klinge', t: 2, x: 2, max: 3, req: 3, needs: ['meister'], n: 'Kreuzschnitt', d: (l) => `Zwei gekreuzte Klingenwellen (je ${pct(1.1 + 0.2 * l)})`, act: { cost: 28, cd: 7, shape: 'cone', el: 'klinge', dmg: (l) => 1.1 + 0.2 * l, range: 9, count: 2, sea: 'cleave' } },
   { id: 'mondsichel', b: 'klinge', t: 2, x: 3, max: 3, req: 3, needs: ['sichelwind'], n: 'Mondsichel', d: (l) => `Riesige Sichel, die zurückkehrt (${pct(1.4 + 0.25 * l)} hin und zurück)`, act: { cost: 32, cd: 9, shape: 'line', el: 'licht', dmg: (l) => 1.4 + 0.25 * l, range: 16, count: 2, sea: 'cleave' } },
   { id: 'himmel', b: 'klinge', t: 3, x: 3, max: 2, req: 5, lv: 10, needs: ['mondsichel'], n: 'Himmelsspalter', d: (l) => `Gewaltiger Hieb über 18 m (${pct(3.2 + 0.4 * l)}) – spaltet sogar Schiffe`, act: { cost: 60, cd: 30, shape: 'line', el: 'klinge', dmg: (l) => 3.2 + 0.4 * l, range: 22, radius: 2.5, ult: true, sea: 'cleave' } },
-  { id: 'schattenklinge', b: 'klinge', t: 3, x: 1, max: 2, req: 6, needs: ['blutrausch'], n: 'Schattenschritt-Klinge', d: (l) => `Teleport zu ${2 + l} Gegnern hintereinander, je ein Schnitt (${pct(1.8)})`, act: { cost: 45, cd: 16, shape: 'blink', el: 'schatten', dmg: () => 1.8, count: 3 } },
-  { id: 'klingensturm', b: 'klinge', t: 3, x: 0, max: 2, req: 6, needs: ['wirbel'], n: 'Klingensturm', d: (l) => `Ein Ring kreisender Klingen begleitet dich ${5 + l} s`, act: { cost: 40, cd: 20, shape: 'cloud', el: 'klinge', dmg: (l) => 0.5 + 0.1 * l, radius: 3.5, dur: 6 } },
+  { id: 'schattenklinge', b: 'klinge', t: 3, x: 1, max: 2, req: 6, needs: ['blutrausch'], n: 'Schattenschritt-Klinge', d: (l) => `Teleport zu ${2 + l} Gegnern hintereinander, je ein Schnitt (${pct(1.8)})`, act: { cost: 45, cd: 16, shape: 'blink', el: 'schatten', dmg: () => 1.8, count: 2, countL: 1, sea: 'cleave' } },
+  { id: 'klingensturm', b: 'klinge', t: 3, x: 0, max: 2, req: 6, needs: ['wirbel'], n: 'Klingensturm', d: (l) => `Ein Ring kreisender Klingen begleitet dich ${5 + l} s`, act: { cost: 40, cd: 20, shape: 'cloud', el: 'klinge', dmg: (l) => 0.5 + 0.1 * l, radius: 3.5, dur: 5, durL: 1, sea: 'shock' } },
   { id: 'letzterschnitt', b: 'klinge', t: 4, x: 2, max: 1, req: 9, lv: 15, awaken: true, needs: ['himmel'], n: 'Letzter Schnitt', d: () => 'Erwacht: Die Zeit steht still – ein Schnitt durch alles im Blick (900 %)', act: { cost: 90, cd: 60, shape: 'cone', el: 'klinge', dmg: () => 9, range: 20, ult: true, sea: 'cleave' } },
 
   // ---------- Effekt-Faji ----------
   { id: 'fluss', b: 'effekt', t: 1, x: 0, max: 3, req: 0, n: 'Faji-Fluss', d: (l) => `Fähigkeitsschaden +${12 * l} %`, passive: (l) => ({ dmgSkill: 0.12 * l }) },
   { id: 'formel', b: 'effekt', t: 1, x: 4, max: 3, req: 0, n: 'Schnelle Formeln', d: (l) => `Abklingzeiten −${8 * l} %`, passive: (l) => ({ cdr: 0.08 * l }) },
   { id: 'flamme', b: 'effekt', t: 1, x: 1, max: 3, req: 0, n: 'Feuerring', d: () => 'Flammenwelle um dich, setzt Gegner in Brand. Auf See: Feuerkugel-Salve', act: { cost: 25, cd: 7, shape: 'nova', el: 'feuer', dmg: (l) => 1.0 + 0.2 * l, radius: 5, status: 'burn', dur: 4, sea: 'salvo' } },
-  { id: 'frost', b: 'effekt', t: 1, x: 2, max: 3, req: 0, n: 'Eisdornen', d: (l) => `Gegner vor dir erstarren ${(2.6 + 0.3 * l).toFixed(1).replace('.', ',')} s. Auf See: friert Schiffe ein`, act: { cost: 25, cd: 8, shape: 'cone', el: 'eis', dmg: (l) => 0.8 + 0.15 * l, range: 8, status: 'freeze', dur: 2.8, sea: 'freeze' } },
-  { id: 'blitz', b: 'effekt', t: 1, x: 3, max: 3, req: 0, n: 'Kettenblitz', d: (l) => `Springt über bis zu ${4 + l} Gegner. Auf See: Blitzeinschlag`, act: { cost: 25, cd: 7, shape: 'chain', el: 'blitz', dmg: (l) => 1.2 + 0.2 * l, count: 5, range: 14, status: 'stun', dur: 0.6, sea: 'strike' } },
+  { id: 'frost', b: 'effekt', t: 1, x: 2, max: 3, req: 0, n: 'Eisdornen', d: (l) => `Gegner vor dir erstarren ${(2.6 + 0.3 * l).toFixed(1).replace('.', ',')} s. Auf See: friert Schiffe ein`, act: { cost: 25, cd: 8, shape: 'cone', el: 'eis', dmg: (l) => 0.8 + 0.15 * l, range: 8, status: 'freeze', dur: 2.6, durL: 0.3, sea: 'freeze' } },
+  { id: 'blitz', b: 'effekt', t: 1, x: 3, max: 3, req: 0, n: 'Kettenblitz', d: (l) => `Springt über bis zu ${4 + l} Gegner. Auf See: Blitzeinschlag`, act: { cost: 25, cd: 7, shape: 'chain', el: 'blitz', dmg: (l) => 1.2 + 0.2 * l, count: 4, countL: 1, range: 14, status: 'stun', dur: 0.6, sea: 'strike' } },
   { id: 'sturm', b: 'effekt', t: 2, x: 4, max: 3, req: 2, needs: ['formel'], n: 'Wirbeldash', d: () => 'Du rast nach vorn und schleuderst Gegner weg. Auf See: Rückenwind und Druckwelle', act: { cost: 20, cd: 6, shape: 'dash', el: 'sturm', dmg: (l) => 0.9 + 0.2 * l, range: 10, status: 'launch', sea: 'wind' } },
-  { id: 'erde', b: 'effekt', t: 2, x: 1, max: 3, req: 2, needs: ['flamme'], n: 'Erdstacheln', d: () => 'Stacheln brechen in einer Linie hervor und betäuben', act: { cost: 30, cd: 8, shape: 'spikes', el: 'erde', dmg: (l) => 1.4 + 0.25 * l, range: 12, status: 'stun', dur: 1.2 } },
-  { id: 'schatten', b: 'effekt', t: 2, x: 2, max: 3, req: 2, needs: ['frost'], n: 'Schattensprung', d: (l) => `Sprung hinter den nächsten Gegner, kritischer Treffer (${pct(2.2 + 0.3 * (l - 1))})`, act: { cost: 25, cd: 7, shape: 'blink', el: 'schatten', dmg: (l) => 2.2 + 0.3 * (l - 1), count: 1 } },
-  { id: 'licht', b: 'effekt', t: 2, x: 3, max: 3, req: 2, needs: ['blitz'], n: 'Heilwelle', d: (l) => `Heilt dich um ${30 + 5 * l} % und deine Crew. Auf See: repariert das Schiff`, act: { cost: 35, cd: 14, shape: 'heal', el: 'licht', dmg: () => 0, heal: 0.35, sea: 'repair' } },
-  { id: 'sog', b: 'effekt', t: 2, x: 0, max: 3, req: 3, needs: ['fluss'], n: 'Schwerkraftsog', d: () => 'Zieht Gegner zusammen und lähmt sie kurz', act: { cost: 35, cd: 12, shape: 'pull', el: 'schwerkraft', dmg: (l) => 0.8 + 0.2 * l, radius: 10, status: 'stun', dur: 1.5 } },
-  { id: 'gift', b: 'effekt', t: 3, x: 2, max: 3, req: 3, needs: ['schatten'], n: 'Giftwolke', d: () => 'Wolke vor dir, Schaden über Zeit', act: { cost: 30, cd: 10, shape: 'cloud', el: 'gift', dmg: (l) => 0.35 + 0.08 * l, radius: 4, dur: 6, status: 'poison' } },
-  { id: 'feuersaeule', b: 'effekt', t: 3, x: 1, max: 3, req: 4, needs: ['erde'], n: 'Feuersäulen', d: (l) => `${3 + l} Flammensäulen brechen um dich aus dem Boden`, act: { cost: 32, cd: 10, shape: 'rain', el: 'feuer', dmg: (l) => 1.1 + 0.2 * l, count: 5, radius: 9, status: 'burn', dur: 3 } },
-  { id: 'eissplitter', b: 'effekt', t: 3, x: 3, max: 3, req: 4, needs: ['licht'], n: 'Eissplitter', d: (l) => `Fächer aus ${5 + l} Eisspeeren, verlangsamt`, act: { cost: 22, cd: 6, shape: 'bolt', el: 'eis', dmg: (l) => 0.7 + 0.12 * l, count: 6, range: 20, status: 'slow', dur: 3 } },
+  { id: 'erde', b: 'effekt', t: 2, x: 1, max: 3, req: 2, needs: ['flamme'], n: 'Erdstacheln', d: () => 'Stacheln brechen in einer Linie hervor und betäuben', act: { cost: 30, cd: 8, shape: 'spikes', el: 'erde', dmg: (l) => 1.4 + 0.25 * l, range: 12, status: 'stun', dur: 1.2, sea: 'quake' } },
+  { id: 'schatten', b: 'effekt', t: 2, x: 2, max: 3, req: 2, needs: ['frost'], n: 'Schattensprung', d: (l) => `Sprung hinter den nächsten Gegner, kritischer Treffer (${pct(2.2 + 0.3 * (l - 1))})`, act: { cost: 25, cd: 7, shape: 'blink', el: 'schatten', dmg: (l) => 2.2 + 0.3 * (l - 1), count: 1, sea: 'cleave' } },
+  { id: 'licht', b: 'effekt', t: 2, x: 3, max: 3, req: 2, needs: ['blitz'], n: 'Heilwelle', d: (l) => `Heilt dich um ${30 + 5 * l} % und deine Crew. Auf See: repariert das Schiff`, act: { cost: 35, cd: 14, shape: 'heal', el: 'licht', dmg: () => 0, heal: 0.3, healL: 0.05, sea: 'repair' } },
+  { id: 'sog', b: 'effekt', t: 2, x: 0, max: 3, req: 3, needs: ['fluss'], n: 'Schwerkraftsog', d: () => 'Zieht Gegner zusammen und lähmt sie kurz', act: { cost: 35, cd: 12, shape: 'pull', el: 'schwerkraft', dmg: (l) => 0.8 + 0.2 * l, radius: 10, status: 'stun', dur: 1.5, sea: 'pull' } },
+  { id: 'gift', b: 'effekt', t: 3, x: 2, max: 3, req: 3, needs: ['schatten'], n: 'Giftwolke', d: () => 'Wolke vor dir, Schaden über Zeit', act: { cost: 30, cd: 10, shape: 'cloud', el: 'gift', dmg: (l) => 0.35 + 0.08 * l, radius: 4, dur: 6, status: 'poison', sea: 'poison' } },
+  { id: 'feuersaeule', b: 'effekt', t: 3, x: 1, max: 3, req: 4, needs: ['erde'], n: 'Feuersäulen', d: (l) => `${4 + l} Flammensäulen brechen um dich aus dem Boden`, act: { cost: 32, cd: 10, shape: 'rain', el: 'feuer', dmg: (l) => 1.1 + 0.2 * l, count: 4, countL: 1, radius: 9, status: 'burn', dur: 3, sea: 'rain' } },
+  { id: 'eissplitter', b: 'effekt', t: 3, x: 3, max: 3, req: 4, needs: ['licht'], n: 'Eissplitter', d: (l) => `Fächer aus ${5 + l} Eisspeeren, verlangsamt`, act: { cost: 22, cd: 6, shape: 'bolt', el: 'eis', dmg: (l) => 0.7 + 0.12 * l, count: 5, countL: 1, range: 20, status: 'slow', dur: 3, sea: 'freeze' } },
   { id: 'flut', b: 'effekt', t: 4, x: 4, max: 3, req: 5, needs: ['sturm'], n: 'Flutwelle', d: () => 'Gewaltiger Rückstoß nach vorn. Auf See: Welle trifft alle Schiffe in der Nähe', act: { cost: 45, cd: 14, shape: 'cone', el: 'flut', dmg: (l) => 1.8 + 0.3 * l, range: 12, status: 'launch', sea: 'wave' } },
-  { id: 'donner', b: 'effekt', t: 4, x: 3, max: 2, req: 6, needs: ['eissplitter'], n: 'Donnerkeil', d: (l) => `${4 + 2 * l} Blitze schlagen um dich ein`, act: { cost: 50, cd: 18, shape: 'rain', el: 'blitz', dmg: (l) => 1.6 + 0.3 * l, count: 8, radius: 12, status: 'stun', dur: 0.8, sea: 'strike' } },
-  { id: 'schwarzloch', b: 'effekt', t: 4, x: 0, max: 2, req: 6, needs: ['sog'], n: 'Schwarzes Loch', d: () => 'Ein Wirbel, der alles einsaugt und zerquetscht', act: { cost: 55, cd: 22, shape: 'pull', el: 'schwerkraft', dmg: (l) => 2.2 + 0.4 * l, radius: 14, status: 'stun', dur: 2.5, ult: true } },
-  { id: 'meteor', b: 'effekt', t: 4, x: 2, max: 2, req: 6, lv: 12, needs: ['gift'], n: 'Meteorregen', d: (l) => `${6 + l} Meteore – an Land wie auf See`, act: { cost: 70, cd: 35, shape: 'rain', el: 'meteor', dmg: (l) => 2.2 + 0.3 * l, count: 7, radius: 14, status: 'burn', dur: 3, ult: true, sea: 'meteor' } },
-  { id: 'phoenix', b: 'effekt', t: 4, x: 1, max: 2, req: 7, needs: ['feuersaeule'], n: 'Phönixflügel', d: () => 'Flammenflügel: Feuerdash, der eine brennende Spur hinterlässt', act: { cost: 40, cd: 14, shape: 'dash', el: 'feuer', dmg: (l) => 1.8 + 0.3 * l, range: 14, status: 'burn', dur: 4 } },
+  { id: 'donner', b: 'effekt', t: 4, x: 3, max: 2, req: 6, needs: ['eissplitter'], n: 'Donnerkeil', d: (l) => `${6 + 2 * l} Blitze schlagen um dich ein`, act: { cost: 50, cd: 18, shape: 'rain', el: 'blitz', dmg: (l) => 1.6 + 0.3 * l, count: 6, countL: 2, radius: 12, status: 'stun', dur: 0.8, sea: 'strike' } },
+  { id: 'schwarzloch', b: 'effekt', t: 4, x: 0, max: 2, req: 6, needs: ['sog'], n: 'Schwarzes Loch', d: () => 'Ein Wirbel, der alles einsaugt und zerquetscht', act: { cost: 55, cd: 22, shape: 'pull', el: 'schwerkraft', dmg: (l) => 2.2 + 0.4 * l, radius: 14, status: 'stun', dur: 2.5, ult: true, sea: 'pull' } },
+  { id: 'meteor', b: 'effekt', t: 4, x: 2, max: 2, req: 6, lv: 12, needs: ['gift'], n: 'Meteorregen', d: (l) => `${6 + l} Meteore – an Land wie auf See`, act: { cost: 70, cd: 35, shape: 'rain', el: 'meteor', dmg: (l) => 2.2 + 0.3 * l, count: 6, countL: 1, radius: 14, status: 'burn', dur: 3, ult: true, sea: 'meteor' } },
+  { id: 'phoenix', b: 'effekt', t: 4, x: 1, max: 2, req: 7, needs: ['feuersaeule'], n: 'Phönixflügel', d: () => 'Flammenflügel: Feuerdash, der eine brennende Spur hinterlässt', act: { cost: 40, cd: 14, shape: 'dash', el: 'feuer', dmg: (l) => 1.8 + 0.3 * l, range: 14, status: 'burn', dur: 4, sea: 'salvo' } },
   { id: 'elementar', b: 'effekt', t: 5, x: 2, max: 1, req: 9, lv: 15, awaken: true, needs: ['meteor'], n: 'Elementarsturm', d: () => 'Erwacht: Feuer, Eis und Blitz zugleich – Weltuntergang im Kleinen', act: { cost: 95, cd: 60, shape: 'rain', el: 'meteor', dmg: () => 3.5, count: 14, radius: 16, status: 'burn', dur: 5, ult: true, sea: 'meteor' } },
 
   // ---------- Geistiges Faji ----------
@@ -141,18 +160,31 @@ export const SKILLS: SkillDef[] = [
   { id: 'blick', b: 'geist', t: 1, x: 1, max: 3, req: 0, n: 'Scharfer Blick', d: (l) => `Krit-Chance +${6 * l} %`, passive: (l) => ({ crit: 0.06 * l }) },
   { id: 'vorahnung', b: 'geist', t: 1, x: 2, max: 2, req: 0, n: 'Vorahnung', d: (l) => `${12 * l} % Chance, Angriffen automatisch auszuweichen`, passive: (l) => ({ dodge: 0.12 * l }) },
   { id: 'quelle', b: 'geist', t: 1, x: 3, max: 3, req: 0, n: 'Faji-Quelle', d: (l) => `Max. Faji +${25 * l}, Faji-Regeneration +${20 * l} %`, passive: (l) => ({ fajiMax: 25 * l, fajiRegen: 0.2 * l }) },
-  { id: 'schrei', b: 'geist', t: 1, x: 4, max: 3, req: 0, n: 'Kampfschrei', d: (l) => `Gegner um dich taumeln, Schwache fliehen ${2 + l} s`, act: { cost: 20, cd: 10, shape: 'nova', el: 'geist', dmg: () => 0.3, radius: 7, status: 'fear', dur: 3 } },
+  { id: 'schrei', b: 'geist', t: 1, x: 4, max: 3, req: 0, n: 'Kampfschrei', d: (l) => `Gegner um dich taumeln, Schwache fliehen ${2 + l} s`, act: { cost: 20, cd: 10, shape: 'nova', el: 'geist', dmg: () => 0.3, radius: 7, status: 'fear', dur: 2, durL: 1, sea: 'ceasefire' } },
   { id: 'herrscher', b: 'geist', t: 2, x: 0, max: 3, req: 2, needs: ['furcht'], n: 'Herrscherwelle', d: () => 'Schwache Gegner fallen ohnmächtig um, alle anderen sind gelähmt. Auf See: Feindschiffe stellen das Feuer ein', act: { cost: 40, cd: 15, shape: 'nova', el: 'geist', dmg: () => 0.5, radius: 10, status: 'stun', dur: 2.5, sea: 'ceasefire' } },
-  { id: 'kampfgeist', b: 'geist', t: 2, x: 3, max: 3, req: 2, needs: ['quelle'], n: 'Kampfgeist', d: (l) => `Du und deine Crew: +30 % Schaden für ${7 + l} s. Auf See: schnelleres Nachladen`, act: { cost: 35, cd: 20, shape: 'buff', el: 'geist', dmg: () => 0, dur: 8, buff: { dmgAll: 0.3 }, sea: 'reload' } },
+  { id: 'kampfgeist', b: 'geist', t: 2, x: 3, max: 3, req: 2, needs: ['quelle'], n: 'Kampfgeist', d: (l) => `Du und deine Crew: +30 % Schaden für ${7 + l} s. Auf See: schnelleres Nachladen`, act: { cost: 35, cd: 20, shape: 'buff', el: 'geist', dmg: () => 0, dur: 7, durL: 1, buff: { dmgAll: 0.3 }, sea: 'reload' } },
   { id: 'ruf', b: 'geist', t: 2, x: 1, max: 2, req: 3, needs: ['blick'], n: 'Legendärer Ruf', d: (l) => `+${15 * l} % Ruhm aus allen Quellen`, passive: (l) => ({ fame: 0.15 * l }) },
   { id: 'gedankenblick', b: 'geist', t: 2, x: 2, max: 2, req: 3, needs: ['vorahnung'], n: 'Gedankenblick', d: (l) => `Perfekte Parade gelingt viel leichter (+${40 * l} % Zeitfenster)`, passive: (l) => ({ riposte: 0.2 * l }) },
-  { id: 'aurastoss', b: 'geist', t: 2, x: 4, max: 3, req: 3, needs: ['schrei'], n: 'Aurastoß', d: (l) => `Unsichtbare Faust aus Willenskraft (${pct(1.6 + 0.3 * l)}) auf ein Ziel`, act: { cost: 22, cd: 6, shape: 'bolt', el: 'geist', dmg: (l) => 1.6 + 0.3 * l, count: 1, range: 18, status: 'stun', dur: 0.8 } },
+  { id: 'aurastoss', b: 'geist', t: 2, x: 4, max: 3, req: 3, needs: ['schrei'], n: 'Aurastoß', d: (l) => `Unsichtbare Faust aus Willenskraft (${pct(1.6 + 0.3 * l)}) auf ein Ziel`, act: { cost: 22, cd: 6, shape: 'bolt', el: 'geist', dmg: (l) => 1.6 + 0.3 * l, count: 1, range: 18, status: 'stun', dur: 0.8, sea: 'cleave' } },
   { id: 'koenig', b: 'geist', t: 3, x: 0, max: 2, req: 5, lv: 12, needs: ['herrscher'], n: 'Königsdruck', d: () => 'Riesige Aura: Schwache sofort k.o., alle anderen 3,5 s gelähmt. Auf See: alle Schiffe in 160 m erstarren', act: { cost: 80, cd: 45, shape: 'nova', el: 'geist', dmg: () => 1.0, radius: 16, status: 'stun', dur: 3.5, ult: true, sea: 'still' } },
-  { id: 'unbeugsam', b: 'geist', t: 3, x: 3, max: 2, req: 6, needs: ['kampfgeist'], n: 'Unbeugsam', d: (l) => `${2 + l} s lang unverwundbar`, act: { cost: 50, cd: 35, shape: 'buff', el: 'licht', dmg: () => 0, dur: 3, buff: { invuln: true } } },
+  { id: 'unbeugsam', b: 'geist', t: 3, x: 3, max: 2, req: 6, needs: ['kampfgeist'], n: 'Unbeugsam', d: (l) => `${2 + l} s lang unverwundbar`, act: { cost: 50, cd: 35, shape: 'buff', el: 'licht', dmg: () => 0, dur: 2, durL: 1, buff: { invuln: true }, sea: 'brace' } },
   { id: 'seelenband', b: 'geist', t: 3, x: 1, max: 2, req: 6, needs: ['ruf'], n: 'Seelenband', d: (l) => `${5 * l} % des Schadens heilen dich`, passive: (l) => ({ lifesteal: 0.05 * l }) },
   { id: 'willenskraft', b: 'geist', t: 3, x: 2, max: 3, req: 6, needs: ['gedankenblick'], n: 'Eiserner Wille', d: (l) => `Max. Leben +${10 * l} %, Faji-Regeneration +${10 * l} %`, passive: (l) => ({ hpMax: 0.1 * l, fajiRegen: 0.1 * l }) },
   { id: 'erwachter', b: 'geist', t: 4, x: 2, max: 1, req: 9, lv: 15, awaken: true, needs: ['koenig'], n: 'Erwachter Wille', d: () => 'Erwacht: Deine Aura lässt die Meere schweigen – alle Feinde in 25 m knien nieder', act: { cost: 90, cd: 60, shape: 'nova', el: 'geist', dmg: () => 2.5, radius: 25, status: 'stun', dur: 5, ult: true, sea: 'still' } },
 ];
+
+/** Wirkung auf einer bestimmten Stufe: Anzahl, Dauer und Heilung wachsen wie in der Beschreibung */
+export function actAt(s: SkillDef, l: number): ActiveDef | undefined {
+  const a = s.act;
+  if (!a) return undefined;
+  if (!a.countL && !a.durL && !a.healL) return a;
+  return {
+    ...a,
+    count: a.count !== undefined ? a.count + Math.round((a.countL ?? 0) * l) : a.count,
+    dur: a.dur !== undefined ? +(a.dur + (a.durL ?? 0) * l).toFixed(2) : a.dur,
+    heal: a.heal !== undefined ? a.heal + (a.healL ?? 0) * l : a.heal,
+  };
+}
 
 export const SK: Record<string, SkillDef> = Object.fromEntries(SKILLS.map((s) => [s.id, s]));
 

@@ -50,7 +50,7 @@ import { Ship, type SeaEnv } from '../entities/ship/ship';
 import { AMMO, AMMO_IDS, DEFAULT_SHIP_LOOK, SHIP_CLASSES, type AmmoId, type ShipLook } from '../data/ships';
 import { NavalSystem, type EnemyShip } from '../naval/naval';
 import { DeckGround, type Ground } from './islandGround';
-import { ELEMENT_COLORS } from '../data/skills';
+import { actAt, ELEMENT_COLORS } from '../data/skills';
 import { BERNSTEINSEE, REGIONS, regionAt, seaLevelAt, type IslandDef, type RegionDef } from '../data/regions';
 import { SmokeSystem } from './smoke';
 import { setElementSmoke } from '../faji/elementFx';
@@ -110,6 +110,8 @@ export class SeaWorld {
   onDig: (island: string) => void = () => {};
   onEnterIsland: (def: IslandDef) => void = () => {};
   onIslandCleared: (id: string) => void = () => {};
+  /** Braucht ein laufender Auftrag diese Insel freigekämpft? Dann ignoriert sie die Ruhezeit */
+  questWantsClear: (id: string) => boolean = () => false;
   /** Auf einer bewohnten Insel gelandet (Geschenk der Dorfbewohner) */
   onVillage: (id: string) => void = () => {};
   private assets: CharacterAssets | null = null;
@@ -1061,7 +1063,8 @@ export class SeaWorld {
         else if (why === 'land' && def) this.onMessage(`${def.n} wirkt nur an Land.`);
         else if (why === 'faji') this.onMessage('Zu wenig Faji.');
         else if (!why && def?.act?.sea) {
-          const ok = nav.castSea(def.act.sea, this.faji.levelOf(def.id), this.combat?.atk ?? 14, ELEMENT_COLORS[def.act.el]);
+          const lvl = this.faji.levelOf(def.id);
+          const ok = nav.castSea(actAt(def, lvl) ?? def.act, lvl, this.combat?.atk ?? 14);
           if (ok) {
             this.faji.commitSea(def);
             if (def.act.ult || def.act.cost >= 40) this.overlay?.showCutin(`${def.n}!`, ELEMENT_COLORS[def.act.el]);
@@ -1349,7 +1352,7 @@ export class SeaWorld {
     }
     if (def.kind !== 'camp' && def.kind !== 'boss' && def.kind !== 'ruin') { this.onMessage(`${where}: ${def.info}`); return; }
     const until = this.cleared.get(idx) ?? 0;
-    if (until > this.env.clock) { this.onMessage(`${where} ist ruhig – fürs Erste.`); return; }
+    if (until > this.env.clock && !this.questWantsClear(def.id)) { this.onMessage(`${where} ist ruhig – fürs Erste.`); return; }
     const enemyFaction: Faction = this.playerFaction === 'pirat' ? 'marine' : 'pirat';
     if (def.kind === 'boss') {
       const lv = def.level ?? 6;

@@ -1,15 +1,13 @@
 import { audio } from '../audio/audio';
 import {
+  IcosahedronGeometry,
   BoxGeometry,
-  BufferGeometry,
   Color,
   CustomBlending,
   OneFactor,
   OneMinusSrcAlphaFactor,
   SrcAlphaFactor,
   ZeroFactor,
-  Line,
-  LineBasicMaterial,
   DoubleSide,
   Group,
   Mesh,
@@ -34,6 +32,8 @@ import type { ParticleSystem } from '../world/particles';
 import type { SmokeSystem } from '../world/smoke';
 import type { DebrisSystem } from '../world/debris';
 import { seaLevelAt } from '../data/regions';
+import { ElementFx } from '../faji/elementFx';
+import { ELEMENT_COLORS, type ActiveDef, type Element } from '../data/skills';
 
 const G = 9.8;
 const BALL_SPEED = 46;
@@ -137,7 +137,13 @@ export class NavalSystem {
   private waves: { mesh: Mesh; t: number; max: number }[] = [];
   private trainCd = 0;
 
+  /** Elementeffekte der Faji-Kräfte auf See (dieselbe Effektsprache wie an Land, nur in Schiffsgröße) */
+  private efx: ElementFx;
+  /** Fallende Meteore und fliegende Druckschläge */
+  private shots: { mesh: Mesh; from: Vector3; to: Vector3; t: number; dur: number; arc: number; trail: Element; done: () => void }[] = [];
+
   constructor(private scene: Scene, private env: SeaEnv, private fx: CombatFx, private overlay: CombatOverlay, private spray: ParticleSystem, private sparks: ParticleSystem, private ground: IslandGround, private hooks: NavalHooks) {
+    this.efx = new ElementFx(scene, fx, sparks, { shake: (a) => hooks.shake(a), hitstop: (t) => hooks.hitstop(t), speedlines: (v) => overlay.speedlines(v) });
     this.fanGroup.renderOrder = 3;
     scene.add(this.fanGroup, ...this.rings);
   }
@@ -457,6 +463,8 @@ export class NavalSystem {
     this.enemies = this.enemies.filter((e) => !gone(e));
     this.updateBalls(dt);
     this.updateCrates(dt);
+    this.efx.update(dt);
+    this.updateShots(dt);
     for (const w of this.waves) {
       w.t += dt;
       const k = w.t / w.max;
@@ -778,61 +786,290 @@ export class NavalSystem {
     return this.enemies.filter((e) => !e.companion && e.ship.alive && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) < range);
   }
 
-  private strikeFx(s: Ship, color: string) {
-    const top = new Vector3(s.x, 60, s.z), bot = new Vector3(s.x, s.model.deckY, s.z);
-    const line = new Line(new BufferGeometry().setFromPoints([top, bot]), new LineBasicMaterial({ color: new Color(color).multiplyScalar(4) }));
-    this.scene.add(line);
-    setTimeout(() => line.removeFromParent(), 180);
-    this.fx.shockwave(bot.setY(0.5), s.cls.L * 0.5, color);
+  /** Mitte eines Schiffs auf Deckhöhe (dort schlagen Faji-Kräfte ein) */
+  private deckPos(sh: Ship) { return new Vector3(sh.x, sh.model.deckY * 0.6, sh.z); }
+
+  /** Geschoss von a nach b (Meteor aus dem Himmel, Druckschlag übers Wasser), ruft am Ziel done() */
+  private shoot(from: Vector3, to: Vector3, el: Element, size: number, dur: number, arc: number, done: () => void) {
+    const c = new Color(ELEMENT_COLORS[el]);
+    const hot = el === 'meteor' || el === 'feuer';
+    const mesh = new Mesh(new SphereGeometry(size, 14, 10), new MeshBasicMaterial({ color: hot ? new Color(3, 1.4, 0.4) : c.clone().multiplyScalar(2.4), transparent: true, opacity: hot ? 1 : 0.75, depthWrite: false }));
+    if (hot) {
+      // glühender Gesteinskern in der Flamme
+      const core = new Mesh(new IcosahedronGeometry(size * 0.7, 0), toon({ color: '#3A2418', flatShading: true }));
+      mesh.add(core);
+    }
+    mesh.position.copy(from);
+    this.scene.add(mesh);
+    this.shots.push({ mesh, from: from.clone(), to: to.clone(), t: 0, dur, arc, trail: el, done });
   }
 
-  /** Wirkung einer Fähigkeit auf See. Liefert false, wenn kein Ziel da ist. */
-  castSea(kind: string, level: number, power: number, color: string): boolean {
+  private updateShots(dt: number) {
+    for (const s of this.shots) {
+      s.t += dt;
+      const k = Math.min(1, s.t / s.dur);
+      s.mesh.position.lerpVectors(s.from, s.to, k);
+      s.mesh.position.y += Math.sin(k * Math.PI) * s.arc;
+      s.mesh.rotation.x += dt * 6; s.mesh.rotation.y += dt * 4;
+      const hot = s.trail === 'meteor' || s.trail === 'feuer';
+      if (Math.random() < dt * 50) {
+        const q = s.mesh.position;
+        this.sparks.emit(3, q.x, q.y, q.z, { speed: 2, up: 1, life: 0.7, color: new Color(ELEMENT_COLORS[s.trail]).multiplyScalar(2.2), gravity: hot ? -2 : 0, spread: 0.8 });
+        if (hot) this.smoke?.puff(q.x, q.y, q.z, { n: 1, size: 2.5, grow: 6, life: 2.4, tone: 0.2, vy: 1, spread: 1, rise: 0.4, alpha: 0.7, glow: 0.8 });
+      }
+      if (k >= 1) {
+        s.mesh.removeFromParent();
+        s.mesh.traverse((o) => { const m = o as Mesh; m.geometry?.dispose(); if (m.material && !(m.material as { userData?: { toon?: boolean } }).userData?.toon) (m.material as MeshBasicMaterial).dispose(); });
+        s.done();
+      }
+    }
+    this.shots = this.shots.filter((s) => s.t < s.dur);
+  }
+
+  /**
+   * Wirkung einer Fähigkeit auf See. Liefert false, wenn kein Ziel da ist.
+   * Jede Kraft trifft mit ihrer eigenen Effektsprache in Schiffsgröße: Blitze aus dem Himmel, fallende Meteore,
+   * Felsen aus dem Meer, Strudel, Druckwellen, fliegende Klingenhiebe.
+   */
+  castSea(a: ActiveDef, level: number, power: number): boolean {
     const p = this.player;
-    if (!p) return false;
-    const dmg = power * (1.4 + level * 0.3);
+    const kind = a.sea;
+    if (!p || !kind) return false;
+    const el = a.el;
+    const color = ELEMENT_COLORS[el];
+    // stärkere Kräfte (Ultimates) treffen auf See auch härter
+    const mult = Math.min(3, Math.max(0.75, a.dmg(level) / 1.6));
+    const dmg = power * (1.4 + level * 0.3) * mult;
+    const big = a.ult ? 1.35 : 1;
     const hit = (e: EnemyShip, d: number) => {
+      if (!e.ship.alive) return;
       const real = e.ship.damage(d, 'kugel', null);
-      this.overlay.number(new Vector3(e.ship.x, 6, e.ship.z), real, 'crit');
+      this.overlay.number(new Vector3(e.ship.x, e.ship.model.deckY + 6, e.ship.z), real, 'crit');
       if (!e.ship.alive) this.sink(e.ship);
     };
+    const own = new Vector3(p.x, p.model.deckY + 1.5, p.z);
     switch (kind) {
       case 'salvo': {
         const t = this.nearest(160);
         const yaw = t ? Math.atan2(t.ship.x - p.x, t.ship.z - p.z) : p.heading;
-        for (let i = 0; i < 8; i++) {
-          const dir = new Vector3(Math.sin(yaw + (i - 3.5) * 0.06), 0, Math.cos(yaw + (i - 3.5) * 0.06));
+        const n = a.shape === 'dash' ? 12 : 8;
+        for (let i = 0; i < n; i++) {
+          const dir = new Vector3(Math.sin(yaw + (i - (n - 1) / 2) * 0.05), 0, Math.cos(yaw + (i - (n - 1) / 2) * 0.05));
           const d = t ? Math.hypot(t.ship.x - p.x, t.ship.z - p.z) : 80;
           const vel = dir.multiplyScalar(BALL_SPEED).setY(0.5 * G * (d / BALL_SPEED));
           setTimeout(() => this.spawnBall(new Vector3(p.x, p.model.deckY + 1, p.z), vel, p, dmg * 0.4, 'brand'), i * 60);
         }
+        this.efx.impact(own, 'feuer', 1.2);
         return true;
       }
-      case 'freeze': { const t = this.nearest(150); if (!t) return false; t.ship.frozen = 4 + level; this.seaWave(t.ship, '#8FE8FF'); this.strikeFx(t.ship, '#8FE8FF'); hit(t, dmg * 0.5); return true; }
-      case 'strike': { const t = this.nearest(160); if (!t) return false; this.strikeFx(t.ship, color); this.hooks.shake(0.35); hit(t, dmg * 1.3); return true; }
-      case 'wind': p.boost = 5; this.fx.shockwave(new Vector3(p.x, 0.4, p.z), 30, color); for (const e of this.inRange(70)) { e.ship.x += (e.ship.x - p.x) * 0.3; e.ship.z += (e.ship.z - p.z) * 0.3; } return true;
-      case 'wave': { const list = this.inRange(130); if (!list.length) return false; this.fx.shockwave(new Vector3(p.x, 0.4, p.z), 60, color); for (const e of list) { this.seaWave(e.ship, color, true); hit(e, dmg * 0.8); e.ship.x += (e.ship.x - p.x) * 0.25; e.ship.z += (e.ship.z - p.z) * 0.25; } return true; }
-      case 'repair': p.repair(0.3 + level * 0.05); this.fx.shockwave(new Vector3(p.x, 0.4, p.z), 20, '#7CE07A'); this.overlay.number(new Vector3(p.x, 6, p.z), 'Repariert!', 'heal'); return true;
-      case 'ceasefire': for (const e of this.inRange(160)) e.ship.ceasefire = 6 + level; this.fx.shockwave(new Vector3(p.x, 0.4, p.z), 80, color); return true;
-      case 'reload': p.reloadL = p.reloadR = 0; this.reloadMult = 0.5; setTimeout(() => { this.reloadMult = 1; }, 8000); return true;
+      case 'freeze': {
+        const t = this.nearest(150); if (!t) return false;
+        const light = a.shape === 'bolt';
+        t.ship.frozen = (light ? 2 : 4) + level;
+        this.seaWave(t.ship, '#8FE8FF');
+        this.efx.impact(this.deckPos(t.ship).setY(0.3), 'eis', (light ? 2.4 : 3.2) * big);
+        hit(t, dmg * (light ? 0.7 : 0.5));
+        return true;
+      }
+      case 'strike': {
+        const list = a.shape === 'rain' ? this.inRange(170) : [this.nearest(160)].filter((e): e is EnemyShip => !!e);
+        if (!list.length) return false;
+        list.forEach((e, i) => setTimeout(() => {
+          this.efx.impact(this.deckPos(e.ship), 'blitz', 3.2 * big);
+          this.hooks.shake(0.4);
+          hit(e, dmg * (a.shape === 'rain' ? 1.1 : 1.3));
+          e.ship.crew = Math.max(0, e.ship.crew - 0.08);
+        }, i * 180));
+        return true;
+      }
+      case 'wind': {
+        p.boost = 5;
+        this.fx.shockwave(new Vector3(p.x, 0.4, p.z), 30, color);
+        this.efx.impact(new Vector3(p.x, 0.5, p.z), 'sturm', 3);
+        for (const e of this.inRange(70)) { e.ship.x += (e.ship.x - p.x) * 0.3; e.ship.z += (e.ship.z - p.z) * 0.3; }
+        return true;
+      }
+      case 'wave': {
+        const list = this.inRange(130); if (!list.length) return false;
+        this.fx.shockwave(new Vector3(p.x, 0.4, p.z), 60, color);
+        for (const e of list) {
+          this.seaWave(e.ship, color, true);
+          this.efx.impact(this.deckPos(e.ship).setY(0.2), 'flut', 3.2 * big);
+          hit(e, dmg * 0.8);
+          e.ship.x += (e.ship.x - p.x) * 0.25; e.ship.z += (e.ship.z - p.z) * 0.25;
+        }
+        return true;
+      }
+      case 'repair': {
+        p.repair(0.3 + level * 0.05);
+        this.fx.shockwave(new Vector3(p.x, 0.4, p.z), 20, '#7CE07A');
+        this.efx.impact(own, 'licht', 2.2);
+        this.overlay.number(new Vector3(p.x, 6, p.z), 'Repariert!', 'heal');
+        return true;
+      }
+      case 'ceasefire': {
+        const list = this.inRange(160);
+        for (const e of list) { e.ship.ceasefire = (a.ult ? 6 : 4) + level; this.efx.impact(this.deckPos(e.ship), 'geist', 2); }
+        this.fx.shockwave(new Vector3(p.x, 0.4, p.z), 80, color);
+        return true;
+      }
+      case 'reload': {
+        p.reloadL = p.reloadR = 0; this.reloadMult = 0.5; setTimeout(() => { this.reloadMult = 1; }, 8000);
+        this.efx.impact(own, el, 1.6);
+        return true;
+      }
       case 'cleave': {
         // wie in 1.0: der Hieb fliegt zum nächsten Feindschiff und trifft alles auf der Linie
         const t = this.nearest(170);
         if (!t) return false;
         const yaw = Math.atan2(t.ship.x - p.x, t.ship.z - p.z);
         const f = new Vector3(Math.sin(yaw), 0, Math.cos(yaw));
-        this.fx.smear(new Vector3(p.x, p.model.deckY + 2, p.z).addScaledVector(f, 10), yaw, 0.1, 30, 0.6, color);
+        const blade = el === 'klinge' || el === 'licht' || el === 'schatten';
+        if (blade) {
+          // riesige Klingenwelle, bei Kreuzschnitt zwei gekreuzte
+          const n = Math.max(1, Math.min(2, a.count ?? 1));
+          for (let i = 0; i < n; i++) this.fx.smear(new Vector3(p.x, p.model.deckY + 2, p.z).addScaledVector(f, 10), yaw + (n > 1 ? (i - 0.5) * 0.5 : 0), 0.1, 30 * big, 0.6, color);
+        } else {
+          // Faust oder Aura: sichtbarer Druckschlag, der übers Wasser fliegt
+          this.shoot(own, this.deckPos(t.ship), el, 1.6 * big, 0.35, 2, () => {});
+          for (let i = 1; i <= 4; i++) setTimeout(() => this.fx.shockwave(new Vector3(p.x, 0.4, p.z).addScaledVector(f, i * 14), 6 + i * 2, color), i * 60);
+        }
+        const d0 = Math.hypot(t.ship.x - p.x, t.ship.z - p.z) || 1;
         for (const e of this.inRange(170)) {
           const rel = new Vector3(e.ship.x - p.x, 0, e.ship.z - p.z);
           const along = rel.dot(f);
           const off = rel.clone().addScaledVector(f, -along).length();
-          if (along > 0 && off < e.ship.cls.W + 6) { this.seaWave(e.ship, color, level >= 3); hit(e, dmg * 1.6); }
+          if (along > 0 && off < e.ship.cls.W + 6) {
+            setTimeout(() => {
+              this.seaWave(e.ship, color, level >= 3);
+              this.efx.impact(this.deckPos(e.ship), el, 2.4 * big);
+              hit(e, dmg * 1.6);
+            }, blade ? Math.min(1.5, along / d0) * 200 : 350);
+          }
         }
         this.hooks.shake(0.3);
         return true;
       }
-      case 'meteor': { const list = this.inRange(160); if (!list.length) return false; list.forEach((e, i) => setTimeout(() => { this.strikeFx(e.ship, '#FF9A3A'); hit(e, dmg); e.ship.fire = 8; }, 300 + i * 250)); return true; }
-      case 'still': for (const e of this.inRange(160)) { e.ship.frozen = 4; this.strikeFx(e.ship, color); } return true;
+      case 'meteor': case 'rain': {
+        const list = this.inRange(170); if (!list.length) return false;
+        const meteors = kind === 'meteor';
+        const per = meteors && a.ult ? 2 : 1;
+        let i = 0;
+        for (const e of list) for (let k = 0; k < per; k++) {
+          const delay = 200 + i++ * 260;
+          setTimeout(() => {
+            if (!e.ship.alive) return;
+            const to = this.deckPos(e.ship).add(new Vector3((Math.random() - 0.5) * e.ship.cls.W, 0, (Math.random() - 0.5) * e.ship.cls.L * 0.5));
+            if (meteors) {
+              // Meteor stürzt schräg aus dem Himmel, Glut- und Rauchschweif, dann Einschlag mit Krater, Feuer und Splittern
+              const away = new Vector3(to.x - p.x, 0, to.z - p.z).normalize();
+              const from = to.clone().addScaledVector(away, -90).setY(150);
+              this.shoot(from, to, 'meteor', 2.6 * big, 0.85, 0, () => {
+                if (!e.ship.alive) return;
+                this.efx.impact(to, 'meteor', 3.4 * big);
+                this.seaWave(e.ship, '#FF9A3A', true);
+                this.debris?.splinters(to.x, to.y, to.z, 0, 0, 14, '#6A4A2A');
+                this.hooks.shake(0.6);
+                hit(e, dmg / per);
+                e.ship.fire = Math.max(e.ship.fire, 8);
+              });
+            } else {
+              this.efx.impact(to, el, 3 * big);
+              this.hooks.shake(0.35);
+              hit(e, dmg * 0.9);
+              if (el === 'feuer') e.ship.fire = Math.max(e.ship.fire, 6);
+            }
+          }, delay);
+        }
+        return true;
+      }
+      case 'still': {
+        const list = this.inRange(160);
+        for (const e of list) { e.ship.frozen = a.ult ? 5 : 4; e.ship.ceasefire = 3; this.efx.impact(this.deckPos(e.ship), el, 2.6); }
+        this.fx.shockwave(new Vector3(p.x, 0.4, p.z), 120, color);
+        this.efx.impact(own, el, 2.5);
+        return true;
+      }
+      case 'shock': {
+        // Druckwelle ums eigene Schiff: trifft alle nahen Schiffe und stößt sie weg
+        const r = a.ult ? 140 : 95;
+        const list = this.inRange(r); if (!list.length) return false;
+        this.fx.shockwave(new Vector3(p.x, 0.4, p.z), r * 0.7, color);
+        this.efx.impact(new Vector3(p.x, 0.4, p.z), el === 'klinge' ? 'sturm' : el, 2.6 * big);
+        for (const e of list) {
+          const d = Math.hypot(e.ship.x - p.x, e.ship.z - p.z) || 1;
+          setTimeout(() => {
+            this.seaWave(e.ship, color, !!a.ult);
+            this.efx.impact(this.deckPos(e.ship), el, 2 * big);
+            hit(e, dmg * (a.count && a.count > 1 ? 1.2 : 1));
+            e.ship.x += ((e.ship.x - p.x) / d) * 14; e.ship.z += ((e.ship.z - p.z) / d) * 14;
+            if (a.status === 'stun') e.ship.frozen = Math.max(e.ship.frozen, 1.5);
+          }, (d / r) * 300);
+        }
+        this.hooks.shake(0.5);
+        return true;
+      }
+      case 'brace': {
+        // Faji-Panzer ums eigene Schiff
+        p.shield = Math.max(p.shield, (a.dur ?? 5) + 2);
+        p.shieldK = a.buff?.invuln ? 0.9 : Math.min(0.8, Math.max(0.45, a.buff?.reduce ?? 0.5));
+        if (a.heal) p.repair(a.heal * 0.5);
+        this.fx.shockwave(new Vector3(p.x, 0.4, p.z), p.cls.L, color);
+        this.efx.impact(own, el, 2);
+        this.overlay.number(new Vector3(p.x, p.model.deckY + 7, p.z), 'Faji-Panzer!', 'info');
+        return true;
+      }
+      case 'barrage': {
+        const t = this.nearest(140); if (!t) return false;
+        const n = 7;
+        for (let i = 0; i < n; i++) setTimeout(() => {
+          if (!t.ship.alive) return;
+          const to = this.deckPos(t.ship).add(new Vector3((Math.random() - 0.5) * t.ship.cls.W, Math.random() * 3, (Math.random() - 0.5) * t.ship.cls.L * 0.6));
+          this.shoot(own.clone().add(new Vector3((Math.random() - 0.5) * 3, Math.random() * 2, (Math.random() - 0.5) * 3)), to, el, 0.9, 0.25, 1, () => {
+            this.fx.shockwave(to.clone().setY(0.6), 5, color);
+            this.efx.impact(to, el, 1.2);
+            if (Math.random() < 0.5) this.debris?.splinters(to.x, to.y, to.z, 0, 0, 4, '#6A4A2A');
+            hit(t, (dmg * 1.5) / n);
+          });
+        }, i * 90);
+        this.hooks.shake(0.25);
+        return true;
+      }
+      case 'quake': {
+        // Felsen brechen unter dem Schiff aus dem Meer und halten es fest
+        const t = this.nearest(150); if (!t) return false;
+        const at = this.deckPos(t.ship).setY(0.2);
+        this.efx.impact(at, 'erde', 3.2 * big);
+        this.seaWave(t.ship, '#C9A26B', true);
+        t.ship.frozen = Math.max(t.ship.frozen, 2.5);
+        this.debris?.splinters(at.x, t.ship.model.deckY, at.z, 0, 0, 10, '#6A4A2A');
+        this.hooks.shake(0.45);
+        hit(t, dmg * 1.25);
+        return true;
+      }
+      case 'pull': {
+        // Strudel beim nächsten Schiff: zieht alle Schiffe in der Nähe zusammen und zerrt am Rumpf
+        const t = this.nearest(160); if (!t) return false;
+        const c = new Vector3(t.ship.x, 0.3, t.ship.z);
+        const list = this.enemies.filter((e) => !e.companion && e.ship.alive && Math.hypot(e.ship.x - c.x, e.ship.z - c.z) < (a.ult ? 90 : 60));
+        this.efx.impact(c, el, 3.4 * big);
+        this.fx.shockwave(c, a.ult ? 40 : 28, color);
+        for (const e of list) {
+          e.ship.x += (c.x - e.ship.x) * 0.45; e.ship.z += (c.z - e.ship.z) * 0.45;
+          e.ship.frozen = Math.max(e.ship.frozen, a.ult ? 3 : 1.8);
+          for (let k = 0; k < 3; k++) setTimeout(() => hit(e, dmg * (a.ult ? 0.5 : 0.35)), 300 + k * 350);
+        }
+        this.hooks.shake(0.4);
+        return true;
+      }
+      case 'poison': {
+        const t = this.nearest(150); if (!t) return false;
+        this.efx.impact(this.deckPos(t.ship), 'gift', 3.2);
+        t.ship.crew = Math.max(0, t.ship.crew - 0.3);
+        t.ship.ceasefire = Math.max(t.ship.ceasefire, 3 + level);
+        for (let k = 0; k < 4; k++) setTimeout(() => hit(t, dmg * 0.3), 400 + k * 600);
+        return true;
+      }
     }
     return false;
   }
