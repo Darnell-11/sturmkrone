@@ -43,7 +43,7 @@ export class Preloader {
   init(renderer: WebGLRenderer) {
     this.draco = new DRACOLoader(this.manager);
     this.draco.setDecoderPath(`${BASE}libs/draco/`);
-    this.draco.setDecoderConfig({ type: 'wasm' });
+    // WebAssembly-Decoder ist Standard (setDecoderConfig ist seit three r186 veraltet und warnt)
     this.ktx2 = new KTX2Loader(this.manager);
     this.ktx2.setTranscoderPath(`${BASE}libs/basis/`);
     this.ktx2.detectSupport(renderer);

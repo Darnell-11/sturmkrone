@@ -290,7 +290,8 @@ export class NavalSystem {
       }
       const t = r / speed;
       const vel = dir.multiplyScalar(speed).add(new Vector3(Math.sin(ship.heading) * ship.speed * 0.5 * carry, 0.5 * G * t - (w.y - 0.6) / t, Math.cos(ship.heading) * ship.speed * 0.5 * carry));
-      setTimeout(() => this.spawnBall(w, vel, ship, dmg, ammo), i * 40);
+      // gestaffelt in Spielzeit (setTimeout lief in der Pause weiter und feuerte auch nach dem Untergang)
+      this.later((i * 40) / 1000, () => { if (ship.alive) this.spawnBall(w, vel, ship, dmg, ammo); });
     });
   }
 

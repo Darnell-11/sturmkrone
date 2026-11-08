@@ -17,7 +17,7 @@ import {
 } from 'three';
 import type { IslandDef, IslandStyle } from '../data/regions';
 import { toon } from '../render/toon';
-import { coastK, type WalkIsland } from './islandGround';
+import { boxBlocker, coastK, type WalkIsland } from './islandGround';
 import { plant, type StyleKit } from './islandStyle';
 import { hashId, seeded } from './waves';
 import { markWind, windify } from '../render/wind';
@@ -65,6 +65,11 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   { const da = (def.x * 13 + def.z * 7) % (Math.PI * 2); taken.push({ x: Math.cos(da) * r * 0.55, z: Math.sin(da) * r * 0.55, r: 3 }); }
   const free = (x: number, z: number, rr: number) => taken.every((t) => Math.hypot(x - t.x, z - t.z) > t.r + rr);
   const block = (x: number, z: number, rr: number) => { taken.push({ x, z, r: rr }); walk.blockers.push({ x: walk.x + x, z: walk.z + z, r: rr }); };
+  /** Rechteck-Kollider (Mauern, Steinblöcke): gedreht wie das Objekt */
+  const blockBox = (x: number, z: number, w: number, d: number, yaw: number) => {
+    taken.push({ x, z, r: Math.hypot(w, d) / 2 });
+    walk.blockers.push(boxBlocker(walk.x + x, walk.z + z, w, d, yaw));
+  };
   const spot = (minD: number, maxD: number, rr: number, tries = 12): { x: number; z: number } | null => {
     for (let i = 0; i < tries; i++) {
       const a = rnd() * Math.PI * 2, d = E(a) * (minD + rnd() * (maxD - minD));
@@ -115,7 +120,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
         seg.add(m);
       }
       put(seg, x, z, -(a + step / 2) + Math.PI / 2, 0.3);
-      for (const f of [-0.33, 0, 0.33]) block(x + Math.cos(a + step / 2 + Math.PI / 2) * len * f, z + Math.sin(a + step / 2 + Math.PI / 2) * len * f, 1.1);
+      blockBox(x, z, len + 0.1, 1.9, -(a + step / 2) + Math.PI / 2);
     }
     const tower = (x: number, z: number, h: number, rr: number) => {
       const t = new Group();
@@ -179,6 +184,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
         if (d > E(a) * 0.9 || !free(x, z, 0.3)) continue;
         const stake = new Mesh(new ConeGeometry(0.22, 2.6 + rnd() * 0.6, 5), darkWood);
         put(stake, x, z, 0, 0.2).position.y += 1.2;
+        block(x, z, 0.3);
       }
       const rack = weaponRack(darkWood);
       const rp = spot(0.2, 0.6, 1.2);
@@ -243,13 +249,19 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       top.position.y = 6;
       arch.add(top);
       const ap = spot(0.55, 0.72, 3);
-      if (ap) { put(arch, ap.x, ap.z); block(ap.x + 2.6, ap.z, 0.8); block(ap.x - 2.6, ap.z, 0.8); }
+      if (ap) {
+        const ay = rnd() * Math.PI * 2;
+        put(arch, ap.x, ap.z, ay);
+        for (const s of [-1, 1]) block(ap.x + Math.cos(ay) * 2.6 * s, ap.z - Math.sin(ay) * 2.6 * s, 0.85);
+      }
       for (let i = 0; i < 8; i++) {
         const p = spot(0.2, 0.8, 0.8, 4);
         if (!p) continue;
-        const blk = new Mesh(new BoxGeometry(1 + rnd(), 0.6 + rnd() * 0.5, 1 + rnd()), stone);
+        const bw = 1 + rnd(), bh = 0.6 + rnd() * 0.5, bd = 1 + rnd();
+        const blk = new Mesh(new BoxGeometry(bw, bh, bd), stone);
         blk.rotation.set((rnd() - 0.5) * 0.4, rnd() * 3, (rnd() - 0.5) * 0.4);
         put(blk, p.x, p.z, blk.rotation.y, -0.2);
+        blockBox(p.x, p.z, bw + 0.1, bd + 0.1, blk.rotation.y);
       }
       break;
     }
@@ -270,7 +282,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
         if (!free(x, z, 1.4)) continue;
         const seg = new Mesh(new BoxGeometry(d * 0.13, 2.8, 1.2), stone);
         put(seg, x, z, -a + Math.PI / 2, 0.3).position.y += 1.2;
-        block(x, z, 1.2);
+        blockBox(x, z, d * 0.13 + 0.1, 1.3, -a + Math.PI / 2);
       }
       break;
     }
@@ -381,7 +393,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     rock.rotation.set(rnd(), rnd() * 6, rnd());
     rock.position.set(x, (inWater ? 0 : hAt(x, z)) + s * 0.25, z);
     group.add(rock);
-    if (!inWater) block(x, z, s * 0.9);
+    block(x, z, s * Math.max(rock.scale.x, rock.scale.z) * 0.82);
   }
   if (style !== 'glut') {
     for (let i = 0; i < 1 + Math.floor(rnd() * 3); i++) {

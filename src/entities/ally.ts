@@ -65,6 +65,11 @@ export class Ally implements AllyTarget {
   private lineT = 3 + Math.random() * 6;
   /** Pfadfindung um Häuser, Felsen und Bäume */
   private agent = new NavAgent();
+  /** Rundumschlag der Fähigkeit: Treffer folgt in Spielzeit (steht in der Pause still, fällt bei K.O. weg) */
+  private sweep: { t: number; foes: Enemy[]; w: AllyWorld } | null = null;
+  /** Wie lange die aktuelle Animation schon läuft (Wächter gegen hängende Angriffe) */
+  private animT = 0;
+  private animWas = '';
   /** Schadensbonus durch das Schlachtlied */
   buff = 0;
   buffMult = 1;
@@ -108,6 +113,7 @@ export class Ally implements AllyTarget {
       this.hp = 0;
       this.koT = 12;
       this.pending = null;
+      this.sweep = null;
       this.char.playClip('Death_A', { loop: false, fade: 0.15, restart: true });
       this.anim = 'ko';
     } else if (this.hurtT <= 0) {
@@ -137,6 +143,13 @@ export class Ally implements AllyTarget {
   update(dt: number, player: { x: number; z: number; yaw: number }, w: AllyWorld, cleared: boolean): string | null {
     this.hurtT -= dt;
     this.buff -= dt;
+    // Softlock-Wächter: endet ein Angriff nicht (Abschluss-Ereignis der Animation ging verloren), nach 3 s freigeben
+    if (this.anim !== this.animWas) { this.animWas = this.anim; this.animT = 0; } else this.animT += dt;
+    if ((this.anim === 'attack' || this.anim === 'spawn') && this.animT > 3) this.anim = '';
+    if (this.sweep) {
+      this.sweep.t -= dt;
+      if (this.sweep.t <= 0) { const s = this.sweep; this.sweep = null; if (this.alive) this.sweepHit(s.foes, s.w); }
+    }
     if (!this.alive) {
       this.koT -= dt;
       if (this.koT <= 0) this.revive(0.4);
@@ -244,18 +257,23 @@ export class Ally implements AllyTarget {
         if (!near.length) { this.skillT = 2; return null; }
         this.char.playClip(this.style === 'faust' ? 'Melee_2H_Attack_Spinning' : this.style === 'effekt' ? 'Ranged_Magic_Raise' : 'Melee_2H_Attack_Spin', { loop: false, fade: 0.08, restart: true, onDone: () => { this.anim = ''; } });
         this.anim = 'attack';
-        setTimeout(() => {
-          if (!this.alive) return;
-          w.shockwave(new Vector3(this.x, this.y + 0.2, this.z), this.def.id === 'tomo' ? 6 : 4, col);
-          for (const e of foes) {
-            const dx = e.x - this.x, dz = e.z - this.z, d = Math.hypot(dx, dz) || 1;
-            if (!e.alive || d > (this.def.id === 'tomo' ? 6 : 4.2)) continue;
-            w.hit(e, this.dmg * 2.2 * this.buffMult, dx / d, dz / d, col, true);
-            if (this.def.role === 'tank') w.status(e, 'stun', this.def.id === 'tomo' ? 2 : 1.2);
-            if (this.def.id === 'lehrer') w.status(e, 'burn', 3);
-          }
-        }, 380);
+        this.sweep = { t: 0.38, foes, w };
         return n;
+    }
+  }
+
+  /** Rundumschlag trifft (Gegner, die inzwischen besiegt oder entfernt sind, werden übersprungen) */
+  private sweepHit(foes: Enemy[], w: AllyWorld) {
+    const col = this.def.col;
+    w.shockwave(new Vector3(this.x, this.y + 0.2, this.z), this.def.id === 'tomo' ? 6 : 4, col);
+    const alive = new Set(w.enemies());
+    for (const e of foes) {
+      if (!e.alive || !alive.has(e)) continue;
+      const dx = e.x - this.x, dz = e.z - this.z, d = Math.hypot(dx, dz) || 1;
+      if (d > (this.def.id === 'tomo' ? 6 : 4.2)) continue;
+      w.hit(e, this.dmg * 2.2 * this.buffMult, dx / d, dz / d, col, true);
+      if (this.def.role === 'tank') w.status(e, 'stun', this.def.id === 'tomo' ? 2 : 1.2);
+      if (this.def.id === 'lehrer') w.status(e, 'burn', 3);
     }
   }
 
@@ -268,6 +286,6 @@ export class Ally implements AllyTarget {
     this.char.place(this.x, this.y, this.z, this.yaw);
   }
 
-  dispose() { this.char.dispose(); }
+  dispose() { this.sweep = null; this.pending = null; this.char.dispose(); }
 
 }

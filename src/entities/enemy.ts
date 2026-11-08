@@ -345,7 +345,16 @@ export class Enemy {
   /** Zeit nach dem Tod bis zum Entfernen */
   get removable() { return this.state === 'dead' && this.timer <= 0; }
 
+  /** Zeit im aktuellen Zustand (Wächter gegen hängende Angriffe und Flüge) */
+  private stateT = 0;
+  private stateWas: EnemyState = 'idle';
+
   update(dt: number, w: EnemyWorld) {
+    if (this.state !== this.stateWas) { this.stateWas = this.state; this.stateT = 0; } else this.stateT += dt;
+    // Softlock-Wächter: Angriff endet über das Animationsende, Flug über die Landung – beides abgesichert
+    if (this.state === 'attack' && this.stateT > 5) this.endAttack(w);
+    else if (this.state === 'windup' && this.stateT > 4) { this.cancelAttack(); if (this.hasToken) { w.releaseToken(this); this.hasToken = false; } this.toChase(); }
+    else if (this.state === 'air' && this.stateT > 6) { this.vy = 0; this.y = w.ground(this.x, this.z); this.state = 'down'; this.timer = 0.6; this.char.play('lie', { fade: 0.1 }); }
     this.timer -= dt;
     this.flash -= dt;
     this.slowT -= dt;
@@ -534,6 +543,7 @@ export class Enemy {
 
   dispose() {
     this.cancelAttack();
+    this.hasToken = false;
     this.char.dispose();
   }
 }

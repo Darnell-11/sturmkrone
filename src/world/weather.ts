@@ -39,6 +39,8 @@ export class Weather {
   private changeTimer = 240;
   private boltTimer = 5;
   private rain: Mesh;
+  /** Sekunden bis zum Donner nach einem Blitz (< 0: keiner geplant) */
+  private thunderT = -1;
   private rainGeo: InstancedBufferGeometry;
   private rainMat: ShaderMaterial;
   private maxDrops = 3000;
@@ -141,6 +143,7 @@ export class Weather {
 
   /** Logik (feste Schritte) */
   update(dt: number, focus: Vector3) {
+    if (this.thunderT >= 0 && (this.thunderT -= dt) < 0) audio.play('thunder', 0.6 + Math.random() * 0.4);
     const goal = this.paramsOf(this.target);
     const k = Math.min(1, dt / 12); // ca. 12 s bis zum größten Teil des Übergangs
     for (const key of PARAM_KEYS) this.p[key] += (goal[key] - this.p[key]) * k;
@@ -203,7 +206,8 @@ export class Weather {
     this.bolt.visible = true;
     this.boltLife = 0.32;
     this.flash = 1;
-    setTimeout(() => audio.play('thunder', 0.6 + Math.random() * 0.4), 300 + Math.random() * 1500);
+    // Donner kommt nach dem Blitz – in Spielzeit (in der Pause kein Donner)
+    this.thunderT = 0.3 + Math.random() * 1.5;
     this.onLightning(base);
   }
 

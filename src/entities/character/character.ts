@@ -283,6 +283,9 @@ export class Character {
       const p = vb.parts[i];
       const mat = toon({ color: colorFor[p.slot], map: p.gray ?? p.map, side: p.doubleSided ? DoubleSide : FrontSide, transparent: p.transparent, spec: p.slot === 'hair' ? 0.7 : 0, rim: p.slot === 'fixed' ? 0.4 : 1 });
       mat.alphaTest = p.alphaTest || (p.transparent ? 0 : 0.5);
+      // durchscheinende Gesichtsteile (Wimpern, Augenglanz) liegen übereinander: ohne Tiefenschreiben verdecken sie
+      // sich nicht gegenseitig je nach Zeichenreihenfolge (wie MToon „Transparent“ ohne ZWrite)
+      mat.depthWrite = !p.transparent;
       m.material = mat;
     });
     // Kopfschmuck und Piraten-Kleidung neu aufsetzen

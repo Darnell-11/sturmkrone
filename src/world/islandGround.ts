@@ -19,8 +19,27 @@ export interface WalkIsland extends IslandShape {
   /** Küstenlinie: Radius × (1 + Σ a·sin(f·Winkel + p)) */
   coast: { a: number; f: number; p: number }[];
   hills: Hill[];
-  /** Runde Hindernisse in Weltkoordinaten */
-  blockers: { x: number; z: number; r: number }[];
+  /** Hindernisse in Weltkoordinaten: rund (r) oder gedrehter Quader (hw, hd, yaw; r = umschließender Radius) */
+  blockers: Blocker[];
+}
+
+/** Kollider eines festen Objekts: Kreis oder gedrehtes Rechteck (Häuser, Mauern, Zäune, Stände, Karren) */
+export interface Blocker { x: number; z: number; r: number; hw?: number; hd?: number; yaw?: number }
+
+/**
+ * Rechteck-Kollider für ein Objekt bei (x, z) mit Drehung yaw (wie rotation.y). Breite w entlang der lokalen x-Achse,
+ * Tiefe d entlang z; ox/oz verschieben die Mitte im Objektraum (z. B. Kistenstapel mit Fass daneben).
+ */
+export function boxBlocker(x: number, z: number, w: number, d: number, yaw: number, ox = 0, oz = 0): Blocker {
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  return { x: x + ox * c + oz * s, z: z - ox * s + oz * c, r: Math.hypot(w, d) / 2, hw: w / 2, hd: d / 2, yaw };
+}
+
+/** Punkt im Rechteck-Kollider (mit Rand m)? */
+export function inBox(b: Blocker, x: number, z: number, m = 0) {
+  const c = Math.cos(b.yaw ?? 0), s = Math.sin(b.yaw ?? 0);
+  const dx = x - b.x, dz = z - b.z;
+  return Math.abs(dx * c - dz * s) <= (b.hw ?? 0) + m && Math.abs(dx * s + dz * c) <= (b.hd ?? 0) + m;
 }
 
 /** Küstenfaktor in einer Richtung (Winkel wie atan2(z, x)) */
@@ -196,11 +215,31 @@ export class IslandGround implements Ground {
   constrain(x: number, z: number, radius = 0.35): { x: number; z: number } {
     const isl = this.islandAt(x, z, 4);
     if (!isl) return { x, z };
+    // bis zu drei Durchgänge: wer aus einem Objekt geschoben wird, kann im Nachbarobjekt landen (Haus mit Kisten davor)
+    for (let pass = 0; pass < 3; pass++) {
+    const x0 = x, z0 = z;
     for (const b of isl.blockers) {
       const dx = x - b.x, dz = z - b.z;
+      if (b.hw !== undefined) {
+        // Rechteck: nächsten Randpunkt suchen und um den Figurenradius herausschieben
+        if (dx * dx + dz * dz > (b.r + radius) ** 2) continue;
+        const c = Math.cos(b.yaw ?? 0), s = Math.sin(b.yaw ?? 0);
+        let lx = dx * c - dz * s, lz = dx * s + dz * c;
+        const hw = b.hw, hd = b.hd ?? 0;
+        const qx = Math.max(-hw, Math.min(hw, lx)), qz = Math.max(-hd, Math.min(hd, lz));
+        const ex = lx - qx, ez = lz - qz, e = Math.hypot(ex, ez);
+        if (e >= radius) continue;
+        if (e > 1e-4) { lx = qx + (ex / e) * radius; lz = qz + (ez / e) * radius; }
+        else if (hw - Math.abs(lx) < hd - Math.abs(lz)) lx = (lx < 0 ? -1 : 1) * (hw + radius);
+        else lz = (lz < 0 ? -1 : 1) * (hd + radius);
+        x = b.x + lx * c + lz * s; z = b.z - lx * s + lz * c;
+        continue;
+      }
       const d = Math.hypot(dx, dz);
       const min = b.r + radius;
       if (d < min && d > 0.0001) { x = b.x + (dx / d) * min; z = b.z + (dz / d) * min; }
+    }
+    if (x === x0 && z === z0) break;
     }
     // bis an die Wasserlinie, nicht weiter (vorher bis 102 % des Radius – dort lag der Boden schon tief unter dem Strand)
     const dx = x - isl.x, dz = z - isl.z;

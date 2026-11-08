@@ -167,7 +167,15 @@ export class PlayerFoot implements PlayerTarget {
     this.deps.onDown();
   }
 
+  /** Zeit im aktuellen Zustand (Wächter gegen Zustände, die nie enden) */
+  private stateT = 0;
+  private stateWas: FootState = 'move';
+
   update(dt: number, input: Input, camYaw: number, ground: Ground, lockYaw: number | null) {
+    // Softlock-Wächter: Parade, Fähigkeiten und Schläge enden über das „Animation fertig“-Ereignis. Geht es verloren
+    // (andere Animation dazwischen, fehlender Clip), wäre die Figur sonst dauerhaft gesperrt.
+    if (this.state !== this.stateWas) { this.stateWas = this.state; this.stateT = 0; } else this.stateT += dt;
+    if ((this.state === 'attack' && this.stateT > 4) || ((this.state === 'roll' || this.state === 'hurt') && this.stateT > 2)) this.toMove();
     const pv = this.prev;
     pv.x = this.x; pv.z = this.z; pv.y = this.y; pv.yaw = this.yaw;
     this.iframes -= dt;

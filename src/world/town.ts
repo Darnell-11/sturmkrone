@@ -21,10 +21,10 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { IslandDef } from '../data/regions';
 import { addOutlines } from '../render/outline';
-import { toon } from '../render/toon';
+import { cloneToon, toon } from '../render/toon';
 import { crateTexture, deckUV, plankTexture } from '../render/textures';
 import { detailCanvas, texDetail } from '../render/texDetail';
-import type { WalkIsland } from './islandGround';
+import { boxBlocker, type WalkIsland } from './islandGround';
 import { markShared } from '../render/dispose';
 import { toonPbr } from '../render/pbrMaps';
 
@@ -318,15 +318,26 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   const group = new Group();
   const lights: Mesh[] = [];
   const smoke: Vector3[] = [];
-  const windowMat = new MeshBasicMaterial({ color: new Color(2.6, 1.8, 0.7) });
+  // Fenster liegen 2 cm vor der Wand: Tiefenverschiebung, damit sie in der Ferne nicht mit der Wand flackern
+  const windowMat = new MeshBasicMaterial({ color: new Color(2.6, 1.8, 0.7), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
   const lampMat = new MeshBasicMaterial({ color: new Color(4, 2.6, 1) });
   const cx = def.x, cz = def.z;
-  const place = (o: Group | Mesh, x: number, z: number, yaw: number, blockR: number) => {
+  /**
+   * Objekt aufstellen. Kollider: Zahl = Kreisradius, [Breite, Tiefe, Versatz x, Versatz z] = gedrehtes Rechteck
+   * (Häuser, Stände, Karren, Zäune: Kreise ließen Ecken frei und standen als unsichtbare Wand vor den Seiten).
+   */
+  const place = (o: Group | Mesh, x: number, z: number, yaw: number, block: number | [number, number, number?, number?]) => {
     const wx = cx + x, wz = cz + z;
     o.position.set(wx, groundAt(wx, wz), wz);
     o.rotation.y = yaw;
     group.add(o);
-    if (blockR > 0) walk.blockers.push({ x: wx, z: wz, r: blockR });
+    if (Array.isArray(block)) walk.blockers.push(boxBlocker(wx, wz, block[0], block[1], yaw, block[2] ?? 0, block[3] ?? 0));
+    else if (block > 0) walk.blockers.push({ x: wx, z: wz, r: block });
+  };
+  /** Zusätzlicher Kreis-Kollider an einem Punkt im Objektraum (Amboss, Kran) */
+  const extra = (x: number, z: number, yaw: number, lx: number, lz: number, r: number) => {
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    walk.blockers.push({ x: cx + x + lx * c + lz * s, z: cz + z - lx * s + lz * c, r });
   };
   const face = (x: number, z: number) => Math.atan2(-x, -z); // Tür zur Platzmitte
 
@@ -352,8 +363,8 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   }
 
   // Wichtige Gebäude
-  place(house(12, 10, 5.5, '#E8D2A8', '#7A1F1A', windowMat, lights, '#A8322A'), -40, -2, Math.PI / 2, 7.5); // Taverne
-  place(house(8, 7, 4.2, '#D9E4E8', '#1F4E79', windowMat, lights, '#1F4E79'), -16, -60, Math.PI, 5); // Hafenmeisterei
+  place(house(12, 10, 5.5, '#E8D2A8', '#7A1F1A', windowMat, lights, '#A8322A'), -40, -2, Math.PI / 2, [12.6, 10.6]); // Taverne
+  place(house(8, 7, 4.2, '#D9E4E8', '#1F4E79', windowMat, lights, '#1F4E79'), -16, -60, Math.PI, [8.6, 7.6]); // Hafenmeisterei
   const smithy = house(9, 8, 4.5, '#C8B8A0', '#3A3A44', windowMat, lights, '#5A4A3A');
   const chimney = new Mesh(new BoxGeometry(1.2, 4, 1.2), toon('#7A6A5A'));
   chimney.position.set(3, 6, -2);
@@ -363,7 +374,9 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   const anvil = new Mesh(new BoxGeometry(1.2, 0.8, 0.6), toon({ color: '#3A3A44', spec: 1 }));
   anvil.position.set(-1, 0.4, 6);
   smithy.add(chimney, forge, anvil);
-  place(smithy, 38, 14, -Math.PI / 2, 6);
+  place(smithy, 38, 14, -Math.PI / 2, [9.6, 8.6]);
+  extra(38, 14, -Math.PI / 2, -1, 6, 0.75);
+  extra(38, 14, -Math.PI / 2, -3, 5, 0.75);
   smoke.push(new Vector3(cx + 38 - 2, groundAt(cx + 38, cz + 14) + 8, cz + 14 + 3));
 
   // Werft: Schiffsgerippe und Kran
@@ -381,7 +394,9 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   const boom = new Mesh(new BoxGeometry(6, 0.4, 0.4), toon('#5A3A22'));
   boom.position.set(2.5, 9, 0);
   yard.add(keel, crane, boom);
-  place(yard, 52, -26, 0.3, 7);
+  // Rumpfgerippe (6 m breit, 14 m lang) und Kran daneben
+  place(yard, 52, -26, 0.3, [6.6, 14.4]);
+  extra(52, -26, 0.3, 5, 0, 0.5);
 
   // Markt mit Ständen
   for (let i = 0; i < 4; i++) {
@@ -395,7 +410,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
     for (let k = 0; k < 3; k++) { const goods = new Mesh(new SphereGeometry(0.25, 8, 6), toon(['#E8B33A', '#A8322A', '#6E8B3D'][k])); goods.position.set(-0.9 + k * 0.9, 1.15, 0); stall.add(goods); }
     stall.add(table, awning);
     const a = -0.6 + i * 0.4;
-    place(stall, Math.sin(a) * 26, 26 + Math.cos(a) * 2, Math.PI + a, 2);
+    place(stall, Math.sin(a) * 26, 26 + Math.cos(a) * 2, Math.PI + a, [3.5, 2.1, 0, -0.1]);
   }
 
   // Faji-Schrein mit schwebendem Kristall
@@ -422,7 +437,8 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   const basin = new Mesh(new CylinderGeometry(3, 3.3, 0.9, 20), toon('#C8C0B0'));
   basin.position.y = 0.45;
   const water = new Mesh(new CylinderGeometry(2.7, 2.7, 0.1, 20), toon('#33C4D2'));
-  water.position.y = 0.85;
+  // Wasseroberfläche knapp über dem Beckendeckel (vorher genau auf 0,9 m – beide Flächen flackerten)
+  water.position.y = 0.88;
   water.userData.noOutline = true;
   const column = new Mesh(new CylinderGeometry(0.35, 0.5, 2.6, 10), toon('#C8C0B0'));
   column.position.y = 1.6;
@@ -433,7 +449,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   const spots: [number, number][] = [[-30, 34], [-50, 22], [-56, -24], [-30, -34], [24, 44], [46, 40], [58, 2], [22, -40], [-12, 46], [12, 66], [-34, 56], [36, 60]];
   spots.forEach(([x, z], i) => {
     const w = 6 + (i % 3) * 1.5, d = 5 + (i % 2) * 1.5;
-    place(house(w, d, 3.6 + (i % 2), WALLS[i % WALLS.length], ROOFS[(i * 3) % ROOFS.length], windowMat, lights), x, z, face(x, z), Math.max(w, d) * 0.6);
+    place(house(w, d, 3.6 + (i % 2), WALLS[i % WALLS.length], ROOFS[(i * 3) % ROOFS.length], windowMat, lights), x, z, face(x, z), [w + 0.6, d + 0.6]);
   });
 
   // Laternen am Weg vom Steg zum Platz und um den Platz
@@ -485,14 +501,14 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
       const r = Math.max(w, d) * 0.62;
       if (!free(x, z, r)) continue;
       // Tür zur nächsten Straße statt stur zur Platzmitte
-      place(house(w, d, 4.4 + (hi % 3) * 0.9, WALLS[(hi + 2) % WALLS.length], ROOFS[(hi * 5 + 1) % ROOFS.length], windowMat, lights, hi % 4 === 0 ? ROOFS[hi % ROOFS.length] : undefined), x, z, face(x, z), r);
+      place(house(w, d, 4.4 + (hi % 3) * 0.9, WALLS[(hi + 2) % WALLS.length], ROOFS[(hi * 5 + 1) % ROOFS.length], windowMat, lights, hi % 4 === 0 ? ROOFS[hi % ROOFS.length] : undefined), x, z, face(x, z), [w + 0.6, d + 0.6]);
       taken.push([x, z, r + 2]);
       // vor der Tür: Kisten, Fässer oder ein Karren
       const fx = x - Math.sin(face(x, z)) * -(d / 2 + 1.6), fz = z - Math.cos(face(x, z)) * -(d / 2 + 1.6);
       const side = (hi % 2 ? 1 : -1) * (w / 2 - 0.6);
       const px = fx + Math.cos(face(x, z)) * side, pz = fz - Math.sin(face(x, z)) * side;
-      if (hi % 3 === 0) place(cart(), px, pz, face(x, z) + 1.2, 1.2);
-      else place(crateStack(hi), px, pz, hi, 0.9);
+      if (hi % 3 === 0) place(cart(), px, pz, face(x, z) + 1.2, [1.9, 3.9, 0, 0.8]);
+      else place(crateStack(hi), px, pz, hi, [2.7, 1.7, 0.55, 0]);
       hi++;
     }
   }
@@ -500,15 +516,15 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   for (let i = 0; i < spots.length; i += 2) {
     const [x, z] = spots[i];
     const a = face(x, z);
-    place(fence(7), x + Math.sin(a) * 5.5 + Math.cos(a) * 4, z + Math.cos(a) * 5.5 - Math.sin(a) * 4, a + Math.PI / 2, 0);
+    place(fence(7), x + Math.sin(a) * 5.5 + Math.cos(a) * 4, z + Math.cos(a) * 5.5 - Math.sin(a) * 4, a + Math.PI / 2, [7.2, 0.35]);
   }
   for (let i = 0; i < 18; i++) {
     const a = i * 2.17, rad = 14 + (i * 7) % 46;
     const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
     if (free(x, z, 1)) { place(bush(i), x, z, a, 0); taken.push([x, z, 2]); }
   }
-  place(crateStack(1), -3.4, -def.r + 8, 0.3, 1);
-  place(crateStack(4), 3.6, -def.r + 12, 1.1, 1);
+  place(crateStack(1), -3.4, -def.r + 8, 0.3, [2.7, 1.7, 0.55, 0]);
+  place(crateStack(4), 3.6, -def.r + 12, 1.1, [2.7, 1.7, 0.55, 0]);
   // Wimpelleinen über der Hauptstraße, Fahnen am Platz
   for (const [ax, az, bx, bz] of [[-4, -40, 4, -25], [-4, -40, 4, -55], [-10, -10, 10, -10], [-12, 14, 12, 14]] as const) {
     group.add(bunting(new Vector3(cx + ax, groundAt(cx + ax, cz + az) + 2.85, cz + az), new Vector3(cx + bx, groundAt(cx + bx, cz + bz) + 2.85, cz + bz)));
@@ -523,8 +539,15 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   addOutlines(group);
   // Straßen und Platz erst nach dem Zusammenfassen (brauchen ihre Texturkoordinaten)
   const cobble = toon({ color: '#A89C88', map: cobbleTexture(), side: DoubleSide, puddles: 1, ...toonPbr(cobbleTexture(), { strength: 1.6, rough: 0.7, roughVar: 0.3, ao: 0.9 }) });
-  for (const road of roads) group.add(roadMesh(road, 5.2, cx, cz, groundAt, cobble));
-  group.add(plazaMesh(16, cx, cz, groundAt, cobble));
+  // Straßen überlappen sich an Kreuzungen und mit dem Platz auf gleicher Höhe: jede Fläche bekommt eine eigene
+  // Tiefenverschiebung (polygonOffset), sonst flackern die Pflastersteine dort (Z-Fighting)
+  const layered = (k: number) => {
+    const m = cloneToon(cobble);
+    m.polygonOffset = true; m.polygonOffsetFactor = -1 - k; m.polygonOffsetUnits = -2 - k * 2;
+    return m;
+  };
+  roads.forEach((road, i) => group.add(roadMesh(road, 5.2, cx, cz, groundAt, layered(i + 1))));
+  group.add(plazaMesh(16, cx, cz, groundAt, layered(0)));
   return { group, lights: glow, crystal, smoke };
 }
 

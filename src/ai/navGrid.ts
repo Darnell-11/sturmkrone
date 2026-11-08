@@ -1,4 +1,4 @@
-import { coastK, type WalkIsland } from '../world/islandGround';
+import { coastK, inBox, type WalkIsland } from '../world/islandGround';
 
 /**
  * Begehbarkeits-Netz (NavMesh als Raster) einer Insel für Gegner und Crew.
@@ -69,7 +69,7 @@ export class NavGrid {
         const z = this.oz + (j + 0.5) * cell;
         for (let i = i0; i <= i1; i++) {
           const x = this.ox + (i + 0.5) * cell;
-          if ((x - b.x) ** 2 + (z - b.z) ** 2 < b.r * b.r) d[j * w + i] = 0;
+          if (b.hw !== undefined ? inBox(b, x, z) : (x - b.x) ** 2 + (z - b.z) ** 2 < b.r * b.r) d[j * w + i] = 0;
         }
       }
     }

@@ -1,5 +1,51 @@
 # Was ist neu
 
+## 2.9.22 – QA-Audit: Kollisionen, Flackern, hängende Zustände, saubere Konsole (08.11.2026)
+
+- **Kein Hineinlaufen mehr in Objekte:**
+  - Häuser, Marktstände, Karren, Kistenstapel, Zäune, Mauern und die Werft haben jetzt rechteckige Kollider. Bisher waren es Kreise: An den Hausecken lief man ein Stück hinein, und vor den Seitenwänden stand eine unsichtbare Wand.
+  - Zäune, Palisadenpfähle im Lager, die Steinblöcke der Ruinen, Uferfelsen und die Brocken rund um große Felsen hatten gar keine Kollision. Jetzt haben sie eine.
+  - Der Torbogen der Ruinen hatte seine Kollision neben den Säulen statt an ihnen (die Drehung fehlte). Das ist behoben.
+  - Die riesige unsichtbare Kreisfläche um die Werft ist durch ein Rechteck in Rumpfgröße ersetzt.
+- **Kein Flackern mehr:**
+  - Wo sich Straßen kreuzen und in den Stadtplatz münden, flimmerte das Pflaster. Behoben.
+  - Das Wasser im Stadtbrunnen lag genau auf der Höhe des Beckenrands. Behoben.
+  - Die Fenster flackerten aus der Ferne mit der Hauswand. Behoben.
+  - Wimpern und Augenglanz der Figuren verdecken sich nicht mehr gegenseitig.
+- **Nie mehr festhängen:**
+  - Spielfigur, Gegner und Crew können nicht mehr dauerhaft in einer Parade, einer Fähigkeit, einem Angriff, einem Ausholen oder einem Flug festhängen, falls eine Animation ihr Ende nicht meldet.
+  - Verzögerte Ereignisse laufen jetzt in Spielzeit, stehen in der Pause still und verfallen beim Verlassen. Das betrifft den Rundumschlag der Crew, gestaffelte Breitseiten, die Erwachen-Sequenz, neues Treibgut und Donner nach dem Blitz.
+  - Vorher konnte die Crew nach dem Verlassen der Insel noch Gegner treffen, und Kanonenkugeln wurden noch nach dem Untergang abgefeuert.
+  - Banner, Kapitelstart und Abspann erscheinen nicht mehr, wenn man inzwischen ins Menü zurückgekehrt ist oder einen anderen Spielstand geladen hat.
+- **Saubere Konsole:** Beim Start kamen je Spielstart 16 Animations-Warnungen und eine veraltete Lader-Einstellung. Beides ist weg.
+
+**Technik (für Entwickler):**
+- Physik und Kollision:
+  - `Blocker` mit gedrehtem Rechteck (`hw`, `hd`, `yaw`; `r` = umschließender Radius), `boxBlocker()` und `inBox()` in `world/islandGround.ts`.
+  - `IslandGround.constrain` schiebt aus Rechtecken heraus: über den nächsten Randpunkt, im Inneren entlang der kleinsten Eindringtiefe.
+  - Die Auflösung läuft bis zu drei Durchgänge, wenn ein Hinausschieben in einem Nachbarobjekt landet. `NavGrid` brennt die Rechtecke ein.
+  - `town.ts`: `place()` nimmt Kreis oder `[Breite, Tiefe, Versatz]`, `extra()` für Amboss, Esse und Kran.
+  - `islandDress.ts`: `blockBox()` für Festungs- und Bossmauern sowie Ruinenblöcke. Pfähle bekommen Kreise, der Bogen wird gedreht. Der Felsradius folgt der Streckung, auch im Wasser.
+  - `seaWorld.ts`: Kollider für jeden Felsbrocken.
+- Darstellung:
+  - Szenengraph-Prüfung (2746 Meshes): keine unsichtbaren Meshes, keine NaN-Geometrie, keine umgedrehten Normalen (Stichprobe je Geometrie), keine gespiegelten Matrizen, keine unnötig transparenten Materialien.
+  - Straßen und Platz bekommen je eine eigene Material-Kopie mit gestaffeltem `polygonOffset`. `windowMat` hat ebenfalls `polygonOffset`, das Brunnenwasser liegt 3 cm höher.
+  - VRoid-Teile mit `transparent` schreiben keine Tiefe mehr (`depthWrite = false`, wie MToon „Transparent“).
+- Spiellogik:
+  - Wächter je Zustand: Spieler (`attack` > 4 s, `roll`/`hurt` > 2 s → `toMove`), Gegner (`attack` > 5 s → `endAttack`, `windup` > 4 s → Abbruch mit Rückgabe des Angriffsplatzes, `air` > 6 s → Landung), Crew (`attack`/`spawn` > 3 s).
+  - `setTimeout` ersetzt durch Spielzeit-Timer: `Ally.sweep`, `NavalSystem.later` (mit Prüfung `ship.alive`), `SeaWorld.later`/`runTimers` und `Weather.thunderT`.
+  - In `game.ts` laufen 16 verzögerte Anzeigen über `after()` mit Sitzungszähler `session` (steigt in `enterPlay` und `quitToMenu`).
+  - `Ally.dispose` und `Enemy.dispose` räumen offene Treffer und den Angriffsplatz ab.
+- Konsole:
+  - `VroidBase.retarget` filtert Spuren ohne Zielknochen (`PropertyBinding.parseTrackName`) und gibt den Hilfs-Clip danach frei (`uncacheClip`).
+  - `DRACOLoader.setDecoderConfig` entfernt (WebAssembly ist Standard).
+  - Geprüft: kein `console.log` im Spiel. `console.warn` gibt es nur in Fehlerpfaden. Alle Promises haben `catch`/`try`. Event-Listener sind app-weit und einmalig.
+- Geänderte Dateien: `world/islandGround.ts`, `world/town.ts`, `world/islandDress.ts`, `world/seaWorld.ts`, `world/weather.ts`, `ai/navGrid.ts`, `entities/ally.ts`, `entities/enemy.ts`, `entities/player/playerFoot.ts`, `entities/character/character.ts`, `entities/character/vroid.ts`, `naval/naval.ts`, `core/game.ts`, `core/preload.ts`.
+- Messung:
+  - 1200 Läufe gegen alle Rechteck-Kollider von Ankerglück (192.000 Schritte zu 8 cm): Schritte mit mehr als 10 cm Eindringen 879 → 3. Das größte Eindringen sank von 44 auf 25 cm, nur in Nischen schmaler als die Figur.
+  - Alle 50 Rechtecke sind im NavMesh gesperrt. Kollisionsschritt 5 µs.
+  - Testlauf (Seefahrt im Sturm, Breitseite, Lagerkampf, Stadt im Regen, Stufenwechsel Ultra → Niedrig → Hoch): Konsole ohne Warnungen und Fehler.
+
 ## 2.9.21 – Dynamische Auflösung (08.11.2026)
 
 - **Dynamische Auflösung:**

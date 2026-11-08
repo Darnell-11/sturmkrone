@@ -1,5 +1,6 @@
 // Anime-Figuren aus VRoid Studio (CC0) – Laden, Aufbereiten und Übertragen der Animationen.
 import {
+  PropertyBinding,
   AnimationClip,
   AnimationMixer,
   BufferAttribute,
@@ -415,7 +416,11 @@ export class VroidBase {
     const times = new Float32Array(n);
     const qv = pairs.map(() => new Float32Array(n * 4));
     const pv = new Float32Array(n * 3);
-    const action = mixer.clipAction(src);
+    // Spuren ohne Ziel in der Quellfigur (Waffenhalterungen „handslot“, die erst die Spielfigur bekommt) weglassen –
+    // sonst meldet three.js für jeden übertragenen Clip „No target node found“
+    const bound = src.clone();
+    bound.tracks = bound.tracks.filter((tr) => !!rig.getObjectByName(PropertyBinding.parseTrackName(tr.name).nodeName));
+    const action = mixer.clipAction(bound);
     action.play();
     // Arme näher am Körper: die Vorlagen stammen von breiten Figuren, deren Arme stets abgespreizt sind
     const side = (name: string) => (name.includes('_L_') ? 'l' : name.includes('_R_') ? 'r' : null);
@@ -468,7 +473,8 @@ export class VroidBase {
       dHips.updateMatrixWorld(true);
     }
     action.stop();
-    mixer.uncacheAction(src);
+    // Hilfs-Clip wieder freigeben (der Quell-Mixer behielte sonst eine Aktion je übertragenem Clip)
+    mixer.uncacheClip(bound);
     resetSrc();
     const tracks = pairs.map((p, k) => new QuaternionKeyframeTrack(`${p.d.name}.quaternion`, times, qv[k]));
     tracks.push(new VectorKeyframeTrack(`${dHips.name}.position`, times, pv));

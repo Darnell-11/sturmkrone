@@ -279,7 +279,20 @@ export class SeaWorld {
     return { x: Math.sin(this.env.windDir) * k, z: Math.cos(this.env.windDir) * k };
   }
 
+  /** Verzögerte Ereignisse in Spielzeit (stehen in der Pause still, verschwinden mit der Welt) */
+  private timers: { t: number; fn: () => void }[] = [];
+  private later(sec: number, fn: () => void) { this.timers.push({ t: sec, fn }); }
+  private runTimers(dt: number) {
+    if (!this.timers.length) return;
+    const due: (() => void)[] = [];
+    let n = 0;
+    for (const t of this.timers) { t.t -= dt; if (t.t <= 0) due.push(t.fn); else this.timers[n++] = t; }
+    this.timers.length = n;
+    for (const fn of due) fn();
+  }
+
   private updateAir(dt: number) {
+    this.runTimers(dt);
     const w = this.windVec();
     this.smoke.wind = w;
     this.smoke.update(dt);
@@ -364,6 +377,8 @@ export class SeaWorld {
           boulder.rotation.set(rnd(), rnd(), rnd());
           boulder.scale.y = 0.7;
           rk.add(boulder);
+          // jeder Felsbrocken am Fuß bekommt einen eigenen Kollider (vorher nur der Hauptfelsen)
+          walk.blockers.push({ x: s.x + Math.cos(a) * rr + boulder.position.x, z: s.z + Math.sin(a) * rr + boulder.position.z, r: bs * 0.85 });
         }
         rk.position.set(Math.cos(a) * rr, hAt(Math.cos(a) * rr, Math.sin(a) * rr) - 0.3, Math.sin(a) * rr);
         isl.add(rk);
@@ -713,12 +728,12 @@ export class SeaWorld {
     const p = this.mode === 'foot' && this.foot ? new Vector3(this.foot.x, this.foot.y, this.foot.z) : new Vector3(this.x, 1.3, this.z);
     this.player?.play('summon', { restart: true, fade: 0.1 });
     for (let i = 0; i < 4; i++) {
-      setTimeout(() => {
+      this.later((400 + i * 650) / 1000, () => {
         this.fx?.shockwave(p, 6 + i * 4, color);
         this.sparks.emit(60, p.x, p.y + 0.5, p.z, { speed: 3, up: 12, life: 1.6, color: new Color(color).multiplyScalar(3), gravity: -2, spread: 1.2 });
         this.shake = Math.max(this.shake, 0.6);
         if (i === 3) { this.overlay?.impactFrame(); this.overlay?.speedlines(1); }
-      }, 400 + i * 650);
+      });
     }
   }
 
@@ -1309,8 +1324,8 @@ export class SeaWorld {
     // Treibgut einsammeln
     if (this.mode === 'sail' && this.life) {
       for (const k of this.life.collect(this.x, this.z, this.ship.cls.W + 9)) {
-        if (k === 'raft') { this.onRescue(); setTimeout(() => this.spawnFloaterSomewhere('raft'), 60000); }
-        else { this.onBottle(); setTimeout(() => this.spawnFloaterSomewhere('bottle'), 90000); }
+        if (k === 'raft') { this.onRescue(); this.later(60, () => this.spawnFloaterSomewhere('raft')); }
+        else { this.onBottle(); this.later(90, () => this.spawnFloaterSomewhere('bottle')); }
       }
     }
   }

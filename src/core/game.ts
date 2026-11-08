@@ -65,6 +65,13 @@ export class Game {
   readonly loop: GameLoop;
   readonly deviceInfo: DeviceInfo;
   readonly detected: Detected;
+  /** Spielsitzung: steigt bei neuem Spiel, Laden und Rückkehr ins Menü – verzögerte Anzeigen alter Sitzungen verfallen */
+  private session = 0;
+  /** Verzögert ausführen, aber nur, wenn inzwischen kein anderes Spiel geladen oder das Menü geöffnet wurde */
+  private after(fn: () => void, ms: number) {
+    const s = this.session;
+    setTimeout(() => { if (s === this.session && this.state.is('play', 'pause')) fn(); }, ms);
+  }
   /** WebGPU im Browser verfügbar? (nur Anzeige: das Spiel rendert bewusst mit WebGL 2, siehe detectWebGpu) */
   webgpu: 'pruefe' | 'ja' | 'nein' = 'pruefe';
   assets: CharacterAssets | null = null;
@@ -193,7 +200,7 @@ export class Game {
       this.save.progress.flags.tiefenschlund = true;
       const g = Math.round(5000 * this.goldMult(true));
       this.save.player.gold += g;
-      setTimeout(() => this.overlay.showCutin('Der Tiefenschlund fällt!', '#9FE8FF'), 300);
+      this.after(() => this.overlay.showCutin('Der Tiefenschlund fällt!', '#9FE8FF'), 300);
       this.overlay.showBanner('Der Tiefenschlund ist besiegt!', `+${g.toLocaleString('de-DE')} Gold · Der Weg zur Schlundkrone ist frei`);
       this.grantXp(3000, 500);
       this.dropTrinket('legendaer', 0, 'siegelsplitter');
@@ -223,7 +230,7 @@ export class Game {
       if (this.save) {
         const lost = Math.floor(this.save.player.gold * 0.1);
         this.save.player.gold -= lost;
-        if (lost > 0) setTimeout(() => this.hud.toast(`${lost} Gold gingen verloren.`, 3), 3500);
+        if (lost > 0) this.after(() => this.hud.toast(`${lost} Gold gingen verloren.`, 3), 3500);
       }
     };
     audio.attachUnlock();
@@ -536,7 +543,7 @@ export class Game {
       s.player.gold += gold;
       s.skills.sp += sp;
       audio.play('treasure');
-      setTimeout(() => this.overlay.showBanner(def.kind === 'boss' ? `${def.boss ?? 'Boss'} besiegt!` : 'Schatz der Ruine!', `+${gold.toLocaleString('de-DE')} Gold · +${sp} Faji-Punkt${sp > 1 ? 'e' : ''}`), 2600);
+      this.after(() => this.overlay.showBanner(def.kind === 'boss' ? `${def.boss ?? 'Boss'} besiegt!` : 'Schatz der Ruine!', `+${gold.toLocaleString('de-DE')} Gold · +${sp} Faji-Punkt${sp > 1 ? 'e' : ''}`), 2600);
       if (def.kind === 'boss') this.grantXp(400 + lv * 60, 150 + lv * 25);
       if (id === 'schlundkrone') this.dropTrinket('legendaer', 0, 'tiefenauge');
       else this.dropTrinket(def.kind === 'boss' ? 'episch' : 'selten', lv * 0.01);
@@ -559,7 +566,7 @@ export class Game {
     s.player.gold += gold;
     if (s.gear.potions < POTION.max) s.gear.potions++;
     audio.play('treasure');
-    setTimeout(() => this.overlay.showBanner('Die Dorfbewohner freuen sich', `Du bekommst ${gold} Gold und Proviant`), 700);
+    this.after(() => this.overlay.showBanner('Die Dorfbewohner freuen sich', `Du bekommst ${gold} Gold und Proviant`), 700);
     this.persist();
   }
 
@@ -578,7 +585,7 @@ export class Game {
     }
     audio.play('level');
     this.overlay.showCutin('Faji-Kristall!', '#C77DFF');
-    setTimeout(() => this.overlay.showBanner('Dein Faji erwacht', `+2 Fähigkeitspunkte${pick ? ` und die Fähigkeit „${pick.n}“` : ''}`), 900);
+    this.after(() => this.overlay.showBanner('Dein Faji erwacht', `+2 Fähigkeitspunkte${pick ? ` und die Fähigkeit „${pick.n}“` : ''}`), 900);
     this.grantXp(200, 150);
     this.world.faji?.refresh(s.player.level, styleIdOf(s.player.style, s.player.blade));
     this.applyPower();
@@ -597,7 +604,7 @@ export class Game {
     if (!s.gear.trinket) s.gear.trinket = t.id;
     const r = RARITY[t.rarity];
     audio.play('shard');
-    setTimeout(() => this.overlay.showBanner(`${r.mark} ${t.n}`, `Talisman gefunden (${r.n}) · ${t.d}`), 1200);
+    this.after(() => this.overlay.showBanner(`${r.mark} ${t.n}`, `Talisman gefunden (${r.n}) · ${t.d}`), 1200);
     this.applyPower();
     this.persist();
   }
@@ -665,10 +672,10 @@ export class Game {
       this.legendCd.set(l.id, t + 600);
       this.legendCd.set('*', t + 180);
       audio.play('horn');
-      setTimeout(() => audio.play('roar', 0.6), 900);
+      this.after(() => audio.play('roar', 0.6), 900);
       this.overlay.showCutin(revenge ? `Revanche: ${l.n}!` : `${l.n} taucht auf!`, l.col);
       this.overlay.showBanner(revenge ? 'Die Legende will Rache!' : 'Legende gesichtet!', `${l.n}, ${l.t} (Stufe ${l.lvl + (revenge ? 4 : 0)})`);
-      setTimeout(() => this.hud.toast(`${l.n}: „${l.hello}“`, 5), 2500);
+      this.after(() => this.hud.toast(`${l.n}: „${l.hello}“`, 5), 2500);
       return;
     }
   }
@@ -693,11 +700,11 @@ export class Game {
       s.player.gold += g;
       s.skills.sp++;
       this.dropTrinket('episch', 0.1);
-      setTimeout(() => this.overlay.showCutin('Legende besiegt!', '#FFD166'), 400);
+      this.after(() => this.overlay.showCutin('Legende besiegt!', '#FFD166'), 400);
       this.overlay.showBanner(`${l.n} ist besiegt!`, `+${g.toLocaleString('de-DE')} Gold und ein Faji-Punkt – du steigst in der Rangliste auf`);
       this.grantXp(300 + l.lvl * 40, Math.round(l.ruhm * 0.5));
     }
-    setTimeout(() => this.hud.toast(`${l.n}: „${l.bye}“`, 5), 3000);
+    this.after(() => this.hud.toast(`${l.n}: „${l.bye}“`, 5), 3000);
     this.persist();
   }
 
@@ -789,9 +796,9 @@ export class Game {
     if (this.justDone) this.justDone.push(q);
     else this.hud.toast(`Auftrag erfüllt: ${q.title}`, 3.5);
     // Hauptgeschichte: nächstes Kapitel startet von selbst
-    setTimeout(() => this.startAutoChapters(q), 3200);
-    if (q.id === 'k5') setTimeout(() => this.storyAwakening(), 2400);
-    if (q.id === 'k7') { s.progress.flags.krone = true; setTimeout(() => this.ending(), 3500); }
+    this.after(() => this.startAutoChapters(q), 3200);
+    if (q.id === 'k5') this.after(() => this.storyAwakening(), 2400);
+    if (q.id === 'k7') { s.progress.flags.krone = true; this.after(() => this.ending(), 3500); }
     audio.play('quest');
     this.overlay.showBanner(q.main ? 'Kapitel abgeschlossen!' : 'Auftrag erfüllt!', q.title);
     this.grantXp(q.reward.xp, q.reward.fame);
@@ -1145,8 +1152,8 @@ export class Game {
     sk.sp += 2;
     const info = BRANCHES[branch];
     this.world.awaken(info.col);
-    setTimeout(() => this.overlay.showCutin('Faji-Erwachen!', info.col), 600);
-    setTimeout(() => this.overlay.showBanner(`${info.n} erwacht!`, '+2 Faji-Punkte · neue Meisterfähigkeit freigeschaltet'), 2200);
+    this.after(() => this.overlay.showCutin('Faji-Erwachen!', info.col), 600);
+    this.after(() => this.overlay.showBanner(`${info.n} erwacht!`, '+2 Faji-Punkte · neue Meisterfähigkeit freigeschaltet'), 2200);
     this.persist();
   }
 
@@ -1361,6 +1368,7 @@ export class Game {
   }
 
   private enterPlay(slot: number, data: SaveData) {
+    this.session++;
     this.slot = slot;
     this.save = data;
     this.world.setState({ boat: data.world.boat, env: { time: data.world.time, weather: data.world.weather as WeatherId } });
@@ -1380,7 +1388,7 @@ export class Game {
       disc.add('ankerglueck');
       this.world.discovered = disc;
     }
-    setTimeout(() => this.startAutoChapters(), 2500);
+    this.after(() => this.startAutoChapters(), 2500);
     this.applyPower();
     this.world.healPlayer();
     this.hud.setPlayer(p.name, `${FACTION_LABELS[p.faction]} · ${rankName(p.faction, p.fame)} · Stufe ${p.level}`);
@@ -1414,6 +1422,7 @@ export class Game {
   }
 
   quitToMenu() {
+    this.session++;
     this.persist();
     this.save = null;
     this.slot = null;
