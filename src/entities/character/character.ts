@@ -314,20 +314,20 @@ export class Character {
   private dressVroid(vb: VroidBase, look: CharacterLook) {
     for (const g of this.garments) releaseGarment(g);
     this.garments = [];
-    const female = vb === this.assets.vroid?.female;
     // Ringelhemd, Tunika und Jacke ersetzen das Hemd der Grundfigur (darunter würde es an Falten durchstechen)
     const coversTop = look.outfit === 'matrose' || look.outfit === 'tunika' || look.outfit === 'jacke';
     this.rig.traverse((o) => {
       const m = o as SkinnedMesh;
       const i = m.userData.vroidPart as number | undefined;
       if (!m.isSkinnedMesh || i === undefined) return;
-      if (vb.parts[i].slot === 'bottom') m.visible = !female;
+      // Hose der Grundfigur ausblenden: an gebeugten Knien stach dort die Haut durch – die erzeugte Hose bewegt sich genau mit
+      if (vb.parts[i].slot === 'bottom') m.visible = false;
       if (vb.parts[i].slot === 'top') m.visible = !coversTop;
     });
     const body = vb.bodySkin(this.rig);
     if (!body?.parent) return;
     const want: [GarmentKind, string][] = [];
-    if (female) want.push(['hose', look.pantsColor]);
+    want.push(['hose', look.pantsColor]);
     // Oberteil-Art als eigenes Kleidungsstück über dem Hemd der Grundfigur (vorher nur eine andere Farbe)
     const dark = (hex: string, k: number) => '#' + new Color(hex).multiplyScalar(k).getHexString();
     if (look.outfit === 'matrose') want.push(['ringel', look.outfitColor]);

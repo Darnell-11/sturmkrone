@@ -421,7 +421,7 @@ export class VroidBase {
       P.fromBufferAttribute(bpos, i).applyMatrix4(body.matrixWorld);
       if (P.y < hipsY || P.y > hipsY + 0.06 || Math.abs(P.x) > 0.25) continue;
       hx = Math.max(hx, Math.abs(P.x)); hzF = Math.max(hzF, P.z);
-      under = Math.max(under, cl.top[i], this.female ? -1 : cl.bottom[i]);
+      under = Math.max(under, cl.top[i]);
     }
     const band2 = Math.max(0.024, under + 0.016) + 0.006;
     const ex = hx + band2, ez = hzF + band2;
@@ -642,7 +642,7 @@ export class VroidBase {
       let bi = 0, bw = -1;
       for (let k = 0; k < 4; k++) { const w = sw.getComponent(i, k); if (w > bw) { bw = w; bi = si.getComponent(i, k); } }
       const b = bones[bi]?.name ?? '';
-      off[i] = garmentOffset(kind, b, P, N, { hipsY, kneeY, ankleY, neckY, leg }, cl.top[i], this.female ? -1 : cl.bottom[i], cl.shoes[i]);
+      off[i] = garmentOffset(kind, b, P, N, { hipsY, kneeY, ankleY, neckY, leg }, cl.top[i], -1, cl.shoes[i]); // Hose der Grundfigur ist ausgeblendet (erzeugte Hose liegt eng an)
     }
     // nur Dreiecke, deren Ecken alle zum Stück gehören
     const src = geo.index;
@@ -657,79 +657,119 @@ export class VroidBase {
     if (!tris.length) return null;
     const used: number[] = [];
     for (const v of tris) if (remap[v] < 0) { remap[v] = used.length; used.push(v); }
-    const m = used.length;
-    const p2 = new Float32Array(m * 3), n2 = new Float32Array(m * 3), i2 = new Uint16Array(m * 4), w2 = new Float32Array(m * 4);
-    used.forEach((v, j) => {
-      P.fromBufferAttribute(pos, v);
-      N.fromBufferAttribute(nor, v);
-      P.addScaledVector(N, off[v] / scale);
-      P.toArray(p2, j * 3);
-      N.toArray(n2, j * 3);
-      for (let k = 0; k < 4; k++) { i2[j * 4 + k] = si.getComponent(v, k); w2[j * 4 + k] = sw.getComponent(v, k); }
-    });
-    // Stoff statt Körperbemalung: Oberteile und Mäntel glätten (Brust, Bauchmuskeln, Schulterblätter verschwinden),
-    // danach jeden Punkt wieder mindestens auf seinen Abstand zur Haut schieben – geglättet, aber nie im Körper
-    if (kind === 'weste' || kind === 'jacke' || kind === 'tunika' || kind === 'ringel' || kind === 'mantelKurz' || kind === 'mantelLang') {
-      // Nahtpunkte (gleiche Lage, getrennte Eckpunkte für Texturkanten) zusammenfassen – sonst reißt die Glättung
-      // die Nähte auf (Schlitz vorn und hinten in der Mitte)
-      const weld = new Int32Array(m);
+    // Arbeitsdaten je Kleidungspunkt: Hautlage, Normale, Abstand (Modelleinheiten), Gewichte
+    const BP: number[] = [], BN: number[] = [], OF: number[] = [], SI: number[] = [], SW: number[] = [];
+    for (const v of used) {
+      P.fromBufferAttribute(pos, v); N.fromBufferAttribute(nor, v).normalize();
+      BP.push(P.x, P.y, P.z); BN.push(N.x, N.y, N.z); OF.push(off[v] / scale);
+      for (let k = 0; k < 4; k++) { SI.push(si.getComponent(v, k)); SW.push(sw.getComponent(v, k)); }
+    }
+    let T = tris.map((v) => remap[v]);
+    const soft = kind === 'weste' || kind === 'jacke' || kind === 'tunika' || kind === 'ringel' || kind === 'mantelKurz' || kind === 'mantelLang' || kind === 'guertel' || kind === 'schal' || kind === 'hose' || kind === 'stiefel';
+    if (soft) {
+      // einmal feiner unterteilen (jedes Dreieck in vier): runde Formen und Ränder statt grober Treppen
+      const mid = new Map<string, number>();
+      const midOf = (a: number, b: number) => {
+        const key = a < b ? `${a},${b}` : `${b},${a}`;
+        const hit = mid.get(key);
+        if (hit !== undefined) return hit;
+        const i = BP.length / 3;
+        for (let k = 0; k < 3; k++) BP.push((BP[a * 3 + k] + BP[b * 3 + k]) / 2);
+        const nx = BN[a * 3] + BN[b * 3], ny = BN[a * 3 + 1] + BN[b * 3 + 1], nz = BN[a * 3 + 2] + BN[b * 3 + 2];
+        const nl = Math.hypot(nx, ny, nz) || 1;
+        BN.push(nx / nl, ny / nl, nz / nl);
+        OF.push((OF[a] + OF[b]) / 2);
+        // Gewichte beider Ecken mischen, die vier stärksten behalten
+        const wm = new Map<number, number>();
+        for (const e of [a, b]) for (let k = 0; k < 4; k++) { const w = SW[e * 4 + k]; if (w > 0) wm.set(SI[e * 4 + k], (wm.get(SI[e * 4 + k]) ?? 0) + w / 2); }
+        const top = [...wm.entries()].sort((x, y) => y[1] - x[1]).slice(0, 4);
+        const sum = top.reduce((t, e) => t + e[1], 0) || 1;
+        for (let k = 0; k < 4; k++) { SI.push(top[k]?.[0] ?? 0); SW.push(top[k] ? top[k][1] / sum : 0); }
+        mid.set(key, i);
+        return i;
+      };
+      const T2: number[] = [];
+      for (let t = 0; t < T.length; t += 3) {
+        const a = T[t], b = T[t + 1], c = T[t + 2];
+        const ab = midOf(a, b), bc = midOf(b, c), ca = midOf(c, a);
+        T2.push(a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca);
+      }
+      T = T2;
+    }
+    const m = BP.length / 3;
+    const p2 = new Float32Array(m * 3);
+    for (let j = 0; j < m; j++) for (let k = 0; k < 3; k++) p2[j * 3 + k] = BP[j * 3 + k] + BN[j * 3 + k] * OF[j];
+    // Nahtpunkte (gleiche Lage, getrennte Eckpunkte für Texturkanten) zusammenfassen – sonst reißt die Glättung auf
+    const weld = new Int32Array(m);
+    {
       const seen = new Map<string, number>();
-      used.forEach((v, j) => {
-        P.fromBufferAttribute(pos, v);
-        const key = `${Math.round(P.x * 1e4)},${Math.round(P.y * 1e4)},${Math.round(P.z * 1e4)}`;
+      for (let j = 0; j < m; j++) {
+        const key = `${Math.round(BP[j * 3] * 1e4)},${Math.round(BP[j * 3 + 1] * 1e4)},${Math.round(BP[j * 3 + 2] * 1e4)}`;
         const c = seen.get(key);
         if (c === undefined) { seen.set(key, j); weld[j] = j; } else weld[j] = c;
-      });
-      const nb: Set<number>[] = Array.from({ length: m }, () => new Set<number>());
-      const lt = tris.map((v) => weld[remap[v]]);
-      for (let t = 0; t < lt.length; t += 3) {
-        const q = [lt[t], lt[t + 1], lt[t + 2]];
-        for (let k = 0; k < 3; k++) { if (q[k] !== q[(k + 1) % 3]) nb[q[k]].add(q[(k + 1) % 3]); if (q[k] !== q[(k + 2) % 3]) nb[q[k]].add(q[(k + 2) % 3]); }
       }
-      // Randpunkte (offene Kanten: Saum, Mantelfront) bleiben fest, sonst schrumpfen Säume und Schöße
+    }
+    if (soft) {
+      // Stoff statt Körperbemalung: glätten (Brust, Bauchmuskeln, Schulterblätter, grobe Kanten verschwinden),
+      // Ränder nur entlang der Kante (keine Zacken und abstehenden Zipfel, Säume bleiben an ihrem Platz)
+      const lt = T.map((v) => weld[v]);
       const edgeCount = new Map<string, number>();
       for (let t = 0; t < lt.length; t += 3) for (let k = 0; k < 3; k++) {
         const x = lt[t + k], y = lt[t + (k + 1) % 3];
+        if (x === y) continue;
         const e = x < y ? `${x},${y}` : `${y},${x}`;
         edgeCount.set(e, (edgeCount.get(e) ?? 0) + 1);
       }
-      const rim = new Uint8Array(m);
-      for (const [e, c] of edgeCount) if (c === 1) { const [x, y] = e.split(',').map(Number); rim[x] = 1; rim[y] = 1; }
+      const nb: Set<number>[] = Array.from({ length: m }, () => new Set<number>());
+      const rimNb: Set<number>[] = Array.from({ length: m }, () => new Set<number>());
+      for (const [e, c] of edgeCount) {
+        const [x, y] = e.split(',').map(Number);
+        nb[x].add(y); nb[y].add(x);
+        if (c === 1) { rimNb[x].add(y); rimNb[y].add(x); }
+      }
       const tmp = new Float32Array(p2.length);
-      for (let it = 0; it < 5; it++) {
+      for (let it = 0; it < 8; it++) {
         tmp.set(p2);
         for (let j = 0; j < m; j++) {
-          if (weld[j] !== j || rim[j]) continue;
-          const list = nb[j];
-          if (!list.size) continue;
+          if (weld[j] !== j) continue;
+          const rimList = rimNb[j];
+          const list = rimList.size ? (rimList.size === 2 ? rimList : null) : nb[j];
+          if (!list || !list.size) continue;
           let x = 0, y = 0, z = 0;
           for (const q of list) { x += p2[q * 3]; y += p2[q * 3 + 1]; z += p2[q * 3 + 2]; }
           const k = 0.5 / list.size;
           tmp[j * 3] = p2[j * 3] * 0.5 + x * k; tmp[j * 3 + 1] = p2[j * 3 + 1] * 0.5 + y * k; tmp[j * 3 + 2] = p2[j * 3 + 2] * 0.5 + z * k;
         }
-        // Nahtpunkte folgen ihrem Hauptpunkt
         for (let j = 0; j < m; j++) if (weld[j] !== j) { const c = weld[j]; tmp[j * 3] = tmp[c * 3]; tmp[j * 3 + 1] = tmp[c * 3 + 1]; tmp[j * 3 + 2] = tmp[c * 3 + 2]; }
         p2.set(tmp);
         // nie näher an die Haut als vorgesehen
-        used.forEach((v, j) => {
-          P.fromBufferAttribute(pos, v);
-          N.fromBufferAttribute(nor, v).normalize();
-          const need = off[v] / scale;
-          const d = (p2[j * 3] - P.x) * N.x + (p2[j * 3 + 1] - P.y) * N.y + (p2[j * 3 + 2] - P.z) * N.z;
-          if (d < need) { p2[j * 3] += N.x * (need - d); p2[j * 3 + 1] += N.y * (need - d); p2[j * 3 + 2] += N.z * (need - d); }
-        });
+        for (let j = 0; j < m; j++) {
+          const d = (p2[j * 3] - BP[j * 3]) * BN[j * 3] + (p2[j * 3 + 1] - BP[j * 3 + 1]) * BN[j * 3 + 1] + (p2[j * 3 + 2] - BP[j * 3 + 2]) * BN[j * 3 + 2];
+          if (d < OF[j]) for (let k = 0; k < 3; k++) p2[j * 3 + k] += BN[j * 3 + k] * (OF[j] - d);
+        }
       }
     }
-    // Ringelhemd: waagrechte Streifen (3,5 cm) nach der Höhe in der Vorlage, alle anderen Stücke einfarbig
+    const i2 = new Uint16Array(SI), w2 = new Float32Array(SW);
+    // Ringelhemd: Maske für die Streifen (zeichnet der Shader), alle anderen Stücke einfarbig
     const stripe = new Float32Array(m);
     if (kind === 'ringel') stripe.fill(1);
     const out = new BufferGeometry();
     out.setAttribute('position', new BufferAttribute(p2, 3));
-    out.setAttribute('normal', new BufferAttribute(n2, 3));
     out.setAttribute('skinIndex', new BufferAttribute(i2, 4));
     out.setAttribute('skinWeight', new BufferAttribute(w2, 4));
     out.setAttribute('stripe', new BufferAttribute(stripe, 1));
-    out.setIndex(tris.map((v) => remap[v]));
+    out.setIndex(T);
+    // Normalen aus der geglätteten Form (die Hautnormalen ließen den Stoff kantig schattieren), über Nähte gemittelt
+    out.computeVertexNormals();
+    {
+      const nrm = out.attributes.normal as BufferAttribute;
+      const acc = new Float32Array(m * 3);
+      for (let j = 0; j < m; j++) { const c = weld[j]; acc[c * 3] += nrm.getX(j); acc[c * 3 + 1] += nrm.getY(j); acc[c * 3 + 2] += nrm.getZ(j); }
+      for (let j = 0; j < m; j++) {
+        const c = weld[j], l = Math.hypot(acc[c * 3], acc[c * 3 + 1], acc[c * 3 + 2]) || 1;
+        nrm.setXYZ(j, acc[c * 3] / l, acc[c * 3 + 1] / l, acc[c * 3 + 2] / l);
+      }
+    }
     out.computeBoundingSphere();
     if (out.boundingSphere) out.boundingSphere.radius *= 1.6;
     return out;
@@ -887,7 +927,8 @@ function garmentOffset(kind: GarmentKind, b: string, P: Vector3, N: Vector3, r: 
     case 'hose':
       // Bund knapp über der Hüfte, Saum steckt in den Stiefeln; nur nach Höhe (das Becken hat gemischte Gewichte),
       // Hände und Arme liegen in der T-Pose ohnehin weiter oben
-      if (hand || /Arm$/.test(b) || P.y > r.hipsY + 0.07 || P.y < r.ankleY + r.leg * 0.4) return -1;
+      // bis zum Knöchel (ohne Stiefel sonst eine zu kurze Hose), Fuß frei für die Schuhe
+      if (hand || /Arm$|Foot$|Toe/.test(b) || P.y > r.hipsY + 0.07 || P.y < r.ankleY + 0.012) return -1;
       return 0.011;
     case 'ringel':
       // Ringelhemd: liegt dicht auf dem Hemd der Grundfigur, überall wo es Hemd gibt
@@ -915,7 +956,7 @@ function garmentOffset(kind: GarmentKind, b: string, P: Vector3, N: Vector3, r: 
     case 'guertel':
       // Schärpe bzw. Koppel: breites Band um die Taille, über Hemd, Hose, Weste und Tunika, unter dem Mantel
       if (!isPelvis || P.y < r.hipsY - 0.005 || P.y > r.hipsY + 0.065) return -1;
-      return Math.max(0.024, under + 0.016);
+      return Math.max(0.026, under + 0.026);
     case 'handschuhe':
       // Fäustlinge: Hand und Finger, knapp über das Handgelenk
       if (!hand) return -1;
@@ -931,12 +972,12 @@ function garmentOffset(kind: GarmentKind, b: string, P: Vector3, N: Vector3, r: 
     case 'mantelKurz':
     case 'mantelLang': {
       // über allem anderen: mindestens 2,6 cm über Hemd, Weste und Schärpe
-      const over = under + 0.02;
+      const over = under + 0.034;
       if (arm) return Math.max(/UpperArm$/.test(b) ? 0.036 : 0.028, cTop + 0.022);
       if (torso && P.y >= r.hipsY - 0.03 && P.y < r.neckY - 0.015) {
         // offene Front: vorn in der Mitte bleibt Weste und Hemd sichtbar, oben weiter (Revers)
-        const open = 0.07 + smooth(r.hipsY + 0.2, r.neckY, P.y) * 0.05;
-        if (N.z > 0.35 && Math.abs(P.x) < open) return -1;
+        const open = 0.045 + smooth(r.hipsY + 0.22, r.neckY, P.y) * 0.045;
+        if (N.z > 0.4 && N.y < 0.45 && Math.abs(P.x) < open) return -1;
         return Math.max(0.034, over);
       }
       // Schöße nur beim langen Mantel: seitlich und hinten bis übers Knie, nach unten weiter

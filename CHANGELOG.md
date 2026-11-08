@@ -1,5 +1,27 @@
 # Was ist neu
 
+## 2.9.24 – Glatte Kleidung: Mantel mit Schultern, keine Zacken mehr (08.11.2026)
+
+- **Mantel mit Schultern:** Die Vorderöffnung des Mantels war oben 12 cm breit und schnitt die ganze Schulterpartie heraus. Dort sah man Hemd und Weste, darüber schwebten die Schulterstücke. Jetzt ist die Öffnung ein schmales V, Schultern und Kragenpartie sind bedeckt, und die Schulterstücke liegen auf dem Mantel.
+- **Keine Zacken und abstehenden Zipfel mehr:** Mäntel, Westen, Jacken, Tuniken, Ringelhemden, Schärpen, Schals, Hosen und Stiefel werden feiner unterteilt und geglättet. Ränder, Säume und Stiefelschäfte verlaufen glatt statt als Treppe.
+- **Weiche Schattierung:** Die Kleidung schattiert nach ihrer eigenen geglätteten Form statt nach dem Körper darunter und wirkt dadurch nicht mehr kantig.
+- **Hose bis zum Knöchel:** Alle Figuren tragen jetzt die mitbewegte Hose. Bei der Hose des Grundmodells stach an gebeugten Knien die Haut durch, und ohne Stiefel endete die Hose mitten an der Wade.
+- **Schärpe und Mantel:** Beide haben etwas mehr Abstand zur Kleidung darunter. Die Schärpe verschwindet nicht mehr stellenweise unter der Jacke, und der Mantel legt sich über die Schärpe.
+
+**Technik (für Entwickler):**
+- `VroidBase.buildGarment` (`entities/character/vroid.ts`):
+  - Arbeitsdaten je Punkt: Hautlage, Normale, Abstand, Gewichte.
+  - Eine Mittelpunkt-Unterteilung (jedes Dreieck in vier); die Gewichte beider Ecken werden gemischt, die vier stärksten bleiben.
+  - Nähte werden nach Lage verschweißt. Danach 8 Glättungsdurchgänge: im Inneren flächig, an offenen Rändern nur entlang der Kante, Ecken fest. Nach jedem Durchgang wird der Mindestabstand zur Haut wiederhergestellt.
+  - Normalen neu berechnet und über die Nähte gemittelt.
+- `garmentOffset`:
+  - Mantelöffnung 4,5–9 cm als V, nach oben zeigende Flächen (Schultern) bleiben.
+  - Schärpe = Unterkleidung + 2,6 cm, Mantel = Unterkleidung + 3,4 cm.
+  - Hose bis knapp über den Knöchel.
+- `Character.dressVroid`: Die Hose der Grundfigur ist für alle Figuren ausgeblendet, die erzeugte Hose kommt immer dazu. Der Freiraum zur Grundhose entfällt.
+- Geänderte Dateien: `entities/character/vroid.ts`, `entities/character/character.ts`.
+- Geprüft mit Bildreihen: Kapitänsmantel wie im Editor, Mann und Frau mit Jacke und Weste, Beine mit Stiefeln, Schuhen und Sandalen, stehend und rennend. Aufbau aller Kleidungsstücke einer Grundfigur einmalig etwa 40 ms.
+
 ## 2.9.23 – Figuren-Audit: Kleidung, Hüte und Schmuck sitzen (08.11.2026)
 
 - **Nichts schwebt mehr:**
