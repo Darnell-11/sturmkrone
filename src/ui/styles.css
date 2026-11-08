@@ -257,9 +257,20 @@ kbd {
 }
 .ctx kbd { margin-left: 8px; background: rgba(255, 255, 255, 0.25); border-color: rgba(0, 0, 0, 0.2); color: inherit; }
 @keyframes ctxpulse { 50% { transform: translateX(-50%) scale(1.05); } }
-.loading { position: fixed; inset: 0; display: grid; place-items: center; z-index: 60; background: #12243c; color: #f1e4c6; text-align: center; font-size: 1.1rem; }
-.loading .bar { width: min(260px, 70vw); height: 8px; border-radius: 4px; background: rgba(241, 228, 198, 0.2); overflow: hidden; margin: 14px auto 0; }
-.loading .bar i { display: block; height: 100%; width: 0; background: #e3b04b; transition: width 0.2s; }
+.loading {
+  position: fixed; inset: 0; display: grid; place-items: center; z-index: 60; color: #f1e4c6; text-align: center; font-size: 1.1rem;
+  background: radial-gradient(ellipse at 50% 38%, #1d3554 0%, #12243c 55%, #0b1626 100%);
+  transition: opacity 0.4s ease;
+}
+.loading.done { opacity: 0; pointer-events: none; }
+.loading .ld-card { width: min(380px, 84vw); padding: 0 16px; }
+.loading .ld-title { font-size: 2.4rem; letter-spacing: 0.02em; text-shadow: 0 2px 0 #0b1626, 0 0 24px rgba(227, 176, 75, 0.25); }
+.loading .ld-phase { margin-top: 6px; min-height: 1.4em; color: #d9c9a6; }
+.loading .bar { width: 100%; height: 10px; border-radius: 5px; background: rgba(241, 228, 198, 0.16); overflow: hidden; margin: 16px auto 0; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4); }
+/* Fortschritt über transform (weich, ohne Layout); die Breite bleibt fest */
+.loading .bar i { display: block; height: 100%; width: 100%; transform-origin: left center; transform: scaleX(0); background: linear-gradient(90deg, #c98f2c, #e3b04b 60%, #f6d58a); }
+.loading .ld-pct { margin-top: 8px; font-weight: 800; font-variant-numeric: tabular-nums; color: #e3b04b; }
+.loading .ld-tip { margin-top: 22px; font-size: 0.86rem; line-height: 1.35; color: #a9b6c8; min-height: 2.7em; }
 
 /* ---------- Kampf ---------- */
 .cbt { position: fixed; inset: 0; pointer-events: none !important; z-index: 2; overflow: hidden; }

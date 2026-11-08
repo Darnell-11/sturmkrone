@@ -60,6 +60,8 @@ import type { Sprite } from 'three';
 import { ABYSS_LAIR, SeaBoss } from '../naval/seaBoss';
 import { buildTown, mergeByMaterial, type TownBuild } from './town';
 import { SeaLife } from './life';
+import { warmupShaders } from '../core/warmup';
+import type { WebGLRenderer } from 'three';
 import { TOWN_NPCS, type TownNpcDef } from '../data/quests';
 
 // Feste Partikelfarben (die Partikel kopieren die Farbe – so entsteht pro Bild kein neues Objekt)
@@ -440,6 +442,12 @@ export class SeaWorld {
   }
 
   /** Spielfigur und Bewohner erzeugen, sobald die Figuren-Daten geladen sind */
+  /** Shader aller Figuren- und Effektarten vorkompilieren (beim Laden, hinter dem Ladebildschirm) */
+  async warmup(renderer: WebGLRenderer, renderFrame: () => void, progress: (k: number) => void) {
+    if (!this.assets || !this.fx) { progress(1); return; }
+    await warmupShaders({ renderer, scene: this.scene, camera: this.camera, assets: this.assets, fx: this.fx, particles: this.sparks, renderFrame }, progress);
+  }
+
   setCharacters(assets: CharacterAssets, look: CharacterLook, style: StyleId, overlay?: CombatOverlay) {
     this.assets = assets;
     this.player?.dispose();

@@ -20,11 +20,11 @@ import {
   type Material,
   type MeshStandardMaterial,
 } from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { HairFit } from './animeHats';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { markShared } from '../../render/dispose';
+import { preload } from '../../core/preload';
 
 /** Unsere Knochennamen (KayKit-Skelett) → VRoid-Knochen */
 export const VROID_BONES: Record<string, string> = {
@@ -602,10 +602,9 @@ function removeParts(root: Object3D, re: RegExp) {
 /** Beide Grundfiguren laden */
 export async function loadVroid(srcRig: Object3D, srcClips: Map<string, AnimationClip>, srcSlot: Vector3): Promise<{ male: VroidBase; female: VroidBase } | null> {
   const base = `${import.meta.env.BASE_URL}assets/characters/vroid/`;
-  const loader = new GLTFLoader();
   try {
-    // Körper und Kleidung der Grundfiguren (Hemd, Weste), Haare der Frisur-Beispiele
-    const [bm, bf, hm, hf] = await Promise.all(['base_male', 'base_female', 'male', 'female'].map((n) => loader.loadAsync(`${base}${n}.glb`)));
+    // Körper und Kleidung der Grundfiguren (Hemd, Weste), Haare der Frisur-Beispiele – über die zentrale Pipeline
+    const [bm, bf, hm, hf] = await Promise.all(['base_male', 'base_female', 'male', 'female'].map((n) => preload.loadGltf(`${base}${n}.glb`)));
     removeParts(bm.scene, /Tie|HairBack/i);
     removeParts(bf.scene, /Tie|HairBack/i);
     graftHair(bm.scene, hm.scene);

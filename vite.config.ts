@@ -39,7 +39,9 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,woff2,json,glb}'],
+        // Draco-Decoder (wasm) gehört zum Offline-Paket; der KTX2-Transcoder wird nur bei Bedarf geladen
+        globPatterns: ['**/*.{js,css,html,svg,png,woff2,json,glb,wasm}'],
+        globIgnores: ['**/libs/basis/**'],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
       },
     }),

@@ -1,7 +1,7 @@
 {
   "name": "sturmkrone",
   "private": true,
-  "version": "2.9.15",
+  "version": "2.9.16",
   "description": "Sturmkrone 2.0 – Anime-Piratenabenteuer für Browser auf Handy und PC",
   "type": "module",
   "scripts": {
@@ -24,6 +24,7 @@
     "@gltf-transform/functions": "^4.5.1",
     "@types/node": "26.6.6",
     "@vite-pwa/assets-generator": "2.0.0",
+    "draco3dgltf": "^1.5.7",
     "meshoptimizer": "^1.3.0",
     "sharp": "^0.35.5",
     "typescript": "7.0.2",

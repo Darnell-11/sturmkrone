@@ -28,8 +28,11 @@ Herkunft und Lizenz jedes fremden Assets und jeder Bibliothek.
 | glTF-Transform (Werkzeug zum Verkleinern der Modelle) | Don McCurdy | MIT | https://gltf-transform.dev |
 | meshoptimizer | Arseny Kapoulkine | MIT | https://github.com/zeux/meshoptimizer |
 | sharp (Bildverarbeitung beim Verkleinern) | Lovell Fuller u. a. | Apache-2.0 | https://sharp.pixelplumbing.com |
+| Draco-Decoder (`public/libs/draco/`, entpackt komprimierte Geometrie im Browser) und Draco-Encoder `draco3dgltf` (Werkzeug) | Google | Apache-2.0 | https://github.com/google/draco (Decoder aus three.js `examples/jsm/libs/draco/gltf`) |
+| Basis-Universal-Transcoder für KTX2-Texturen (`public/libs/basis/`) | Binomial LLC | Apache-2.0 | https://github.com/BinomialLLC/basis_universal (aus three.js `examples/jsm/libs/basis`) |
+| meshopt-Decoder (im Spielcode, entpackt Meshopt-komprimierte Animationen) | Arseny Kapoulkine | MIT | https://github.com/zeux/meshoptimizer (aus three.js `examples/jsm/libs/meshopt_decoder.module.js`) |
 
-Die Animationen werden beim Laden von KayKit auf die Anime-Figuren übertragen. Kopfbedeckungen, Augenklappe, Ohrring, Waffen, Schiffe, Inseln und die Ersatzfiguren aus Bausteinen sind eigene Entwürfe für Sturmkrone, per Code erzeugt.
+Die Modelle sind komprimiert: Anime-Figuren und Mannequin mit Draco, die KayKit-Animationen mit Meshopt (`gltf-transform draco` bzw. `meshopt`). Die Animationen werden beim Laden von KayKit auf die Anime-Figuren übertragen. Kopfbedeckungen, Augenklappe, Ohrring, Waffen, Schiffe, Inseln und die Ersatzfiguren aus Bausteinen sind eigene Entwürfe für Sturmkrone, per Code erzeugt.
 
 ## Eigene Werke
 

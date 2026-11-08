@@ -1,5 +1,5 @@
 import type { AnimationClip, Object3D, SkinnedMesh } from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { preload } from '../../core/preload';
 import { Vector3 } from 'three';
 import { ANIM_FILES } from '../../data/animations';
 import { loadVroid, type VroidBase } from './vroid';
@@ -18,11 +18,11 @@ export class CharacterAssets {
   ) {}
 
   static async load(onProgress?: (done: number, total: number) => void): Promise<CharacterAssets> {
-    const loader = new GLTFLoader();
     const files = ['Mannequin_Medium', ...ANIM_FILES];
     let done = 0;
+    // über die zentrale Pipeline (Draco/Meshopt/KTX2, Fortschritt nach Bytes)
     const results = await Promise.all(files.map(async (f) => {
-      const g = await loader.loadAsync(`${BASE}${f}.glb`);
+      const g = await preload.loadGltf(`${BASE}${f}.glb`);
       onProgress?.(++done, files.length);
       return g;
     }));

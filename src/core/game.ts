@@ -7,6 +7,8 @@ import { CharacterAssets } from '../entities/character/assets';
 import { Character } from '../entities/character/character';
 import { Vector3, type ShaderMaterial } from 'three';
 import { SkyProbe } from '../render/ibl';
+import { preload } from './preload';
+import { LoadingScreen } from '../ui/loadingScreen';
 import { toonShared } from '../render/toon';
 import type { Enemy } from '../entities/enemy';
 import { PLAYER_BASE } from '../data/combat';
@@ -103,6 +105,8 @@ export class Game {
     }
     this.detected = detectTier(this.deviceInfo, bench);
     this.renderer.mobile = this.deviceInfo.mobile;
+    // Lade-Pipeline kennt jetzt die Grafikkarte (KTX2-Formate)
+    preload.init(this.renderer.gl);
     const s = this.settings.data;
     // „Automatisch“: bei jedem Start neu erkennen (so bekommen starke PCs auch neue Stufen wie Ultra)
     if (!s.quality || s.qualityAuto) this.settings.update({ quality: this.detected.tier, qualityAuto: true });
@@ -262,18 +266,24 @@ export class Game {
     // Titelbild: zufällige schöne Stimmung
     this.world.setState({ boat: null, env: { time: [7, 10, 17.8, 18.6][Math.floor(Math.random() * 4)], weather: 'klar' } });
     this.loop.start();
-    const loading = document.createElement('div');
-    loading.className = 'loading';
-    loading.innerHTML = '<div><div class="fell" style="font-size:2rem">Sturmkrone</div><div>Die Crew macht sich bereit …</div><div class="bar"><i></i></div></div>';
-    document.body.appendChild(loading);
+    // Ladeplan: Dateien 72 %, Figuren aufbereiten 8 %, Shader vorbereiten 20 %
+    const loading = new LoadingScreen();
+    preload.plan(0.72, { prepare: 0.08, shaders: 0.2 });
+    preload.onProgress((p, phase) => loading.set(p, phase));
+    preload.setPhase('Figuren und Animationen werden geladen …');
     try {
-      this.assets = await CharacterAssets.load((d, t) => { (loading.querySelector('.bar i') as HTMLElement).style.width = `${(d / t) * 100}%`; });
+      this.assets = await CharacterAssets.load();
+      preload.step('prepare', 0.5, 'Figuren werden vorbereitet …');
       this.world.setCharacters(this.assets, randomLook(Math.random, 'pirat'), 'saebel', this.overlay);
+      preload.step('prepare', 1);
+      // Shader vorkompilieren, damit Gegner, Treffer und Fähigkeiten beim ersten Mal nicht ruckeln
+      preload.setPhase('Effekte werden vorbereitet …');
+      await this.world.warmup(this.renderer.gl, () => this.render(1, 1 / 60), (k) => preload.step('shaders', k));
     } catch (e) {
       console.error(e);
       this.hud.toast('Figuren konnten nicht geladen werden – prüfe die Verbindung.', 5);
     }
-    loading.remove();
+    await loading.finish();
     this.state.set('menu');
     this.menus.showMain();
   }
