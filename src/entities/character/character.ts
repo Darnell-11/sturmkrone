@@ -294,10 +294,13 @@ export class Character {
     for (const o of this.outfit) disposeObject(o);
     const chest = this.rig.getObjectByName('J_Bip_C_Chest'), hips = this.rig.getObjectByName('J_Bip_C_Hips');
     const marine = look.outfit === 'uniform' || look.hat === 'marine' || look.hat === 'zweispitz';
-    this.outfit = chest && hips ? attachOutfit(chest, hips, this.rig.getObjectByName('J_Bip_L_UpperArm') ?? null, this.rig.getObjectByName('J_Bip_R_UpperArm') ?? null, look, marine ? 'marine' : 'pirat', this.outline) : [];
+    // gemessene Anker (Ohrläppchen, Schultern, Schärpe) statt geschätzter Abstände
+    const an = vb.anchors();
+    this.outfit = chest && hips ? attachOutfit(chest, hips, this.rig.getObjectByName('J_Bip_L_UpperArm') ?? null, this.rig.getObjectByName('J_Bip_R_UpperArm') ?? null, look, marine ? 'marine' : 'pirat', this.outline, an) : [];
     this.dressVroid(vb, look);
     const head = this.rig.getObjectByName('J_Bip_C_Head');
-    if (head) this.headgear = attachHeadgear(head, this.rig.getObjectByName('J_Adj_L_FaceEye') ?? null, this.rig.getObjectByName('J_Adj_R_FaceEye') ?? null, look, this.outline, vb.hairFit);
+    const face = { beard: look.beard !== 'keiner' ? vb.beard(look.beard) : null, scar: look.scar ? vb.scarPlacement() : null, cap: (sink: number, margin: number) => vb.capShell(sink, margin) };
+    if (head) this.headgear = attachHeadgear(head, this.rig.getObjectByName('J_Adj_L_FaceEye') ?? null, this.rig.getObjectByName('J_Adj_R_FaceEye') ?? null, look, this.outline, vb.hairFit, an, face);
     const h = Math.min(1.1, Math.max(0.9, look.height));
     const base = vb.template.scale.x;
     const wide = look.body === 'kraeftig' ? 1.07 : look.body === 'schmal' ? 0.95 : 1;
@@ -312,16 +315,28 @@ export class Character {
     for (const g of this.garments) releaseGarment(g);
     this.garments = [];
     const female = vb === this.assets.vroid?.female;
+    // Ringelhemd, Tunika und Jacke ersetzen das Hemd der Grundfigur (darunter würde es an Falten durchstechen)
+    const coversTop = look.outfit === 'matrose' || look.outfit === 'tunika' || look.outfit === 'jacke';
     this.rig.traverse((o) => {
       const m = o as SkinnedMesh;
       const i = m.userData.vroidPart as number | undefined;
-      if (m.isSkinnedMesh && i !== undefined && vb.parts[i].slot === 'bottom') m.visible = !female;
+      if (!m.isSkinnedMesh || i === undefined) return;
+      if (vb.parts[i].slot === 'bottom') m.visible = !female;
+      if (vb.parts[i].slot === 'top') m.visible = !coversTop;
     });
     const body = vb.bodySkin(this.rig);
     if (!body?.parent) return;
     const want: [GarmentKind, string][] = [];
     if (female) want.push(['hose', look.pantsColor]);
+    // Oberteil-Art als eigenes Kleidungsstück über dem Hemd der Grundfigur (vorher nur eine andere Farbe)
+    const dark = (hex: string, k: number) => '#' + new Color(hex).multiplyScalar(k).getHexString();
+    if (look.outfit === 'matrose') want.push(['ringel', look.outfitColor]);
+    else if (look.outfit === 'tunika') want.push(['tunika', look.outfitColor]);
+    else if (look.outfit === 'jacke') want.push(['jacke', look.outfitColor]);
+    else if (look.outfit === 'weste') want.push(['weste', dark(look.accentColor, 0.55)]);
     want.push(['guertel', look.outfit === 'uniform' || look.hat === 'marine' || look.hat === 'zweispitz' ? '#2A2420' : look.accentColor]);
+    if (look.scarf) want.push(['schal', look.accentColor]);
+    if (look.gloves) want.push(['handschuhe', '#5A3A22']);
     if (look.shoes === 'stiefel') want.push(['stiefel', look.shoesColor]);
     if (look.coat === 'kurz') want.push(['mantelKurz', look.coatColor]);
     else if (look.coat === 'lang' || look.coat === 'kapitaen') want.push(['mantelLang', look.coatColor]);
@@ -332,12 +347,20 @@ export class Character {
     for (const name of ['position', 'normal', 'skinIndex', 'skinWeight'] as const) geo.setAttribute(name, set.attributes[name]);
     geo.setIndex(set.index);
     geo.boundingSphere = set.boundingSphere;
-    const part = set.attributes.part;
+    const part = set.attributes.part, stripe = set.attributes.stripe;
     const cols = want.map((w) => new Color(w[1]));
+    const white = new Color('#F2EEE4');
     const col = new Float32Array(part.count * 3);
+    void stripe; void white;
     for (let i = 0; i < part.count; i++) cols[part.getX(i)].toArray(col, i * 3);
     geo.setAttribute('color', new BufferAttribute(col, 3));
-    const m = new SkinnedMesh(geo, toon({ color: 0xffffff, vertexColors: true, side: DoubleSide, rim: 0.8 }));
+    // Streifen des Ringelhemds zeichnet der Shader (Höhe im Körpermodell; 3,5 cm in Weltmaß)
+    if (set.attributes.stripe) geo.setAttribute('stripe', set.attributes.stripe);
+    const ringel = look.outfit === 'matrose' ? 0.035 / Math.max(1e-4, body.getWorldScale(new V3()).y) : 0;
+    const mat = toon({ color: 0xffffff, vertexColors: true, side: DoubleSide, rim: 0.8, ringel });
+    // kleine Tiefenverschiebung: Kleidung liegt außen – letzte Millimeter der Grundkleidung stechen nicht mehr durch
+    mat.polygonOffset = true; mat.polygonOffsetFactor = -1; mat.polygonOffsetUnits = -2;
+    const m = new SkinnedMesh(geo, mat);
     m.bind(body.skeleton, body.bindMatrix);
     m.castShadow = true;
     m.receiveShadow = true;

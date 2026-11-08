@@ -103,6 +103,8 @@ export interface ToonOptions {
   reflect?: number;
   /** Pfützen bei Regen auf flachen Stellen (0 = keine … 1 = viele), nur für Böden: Sand, Gras, Pflaster, Planken */
   puddles?: number;
+  /** Ringelstreifen: Streifenhöhe in Modelleinheiten; gilt für Punkte mit Attribut stripe = 1 (Ringelhemd) */
+  ringel?: number;
 }
 
 /** Steuerwerte des Treffer-/Auflöse-Effekts eines Materials */
@@ -347,7 +349,7 @@ const DETAIL_FRAG: Record<'sand' | 'grass' | 'rock', string> = {
   }`,
 };
 
-interface PbrPatch { rough: number; metal: number; roughMap: Texture | null; metalMap: Texture | null; env: boolean; fx?: ToonFxUniforms; reflect: number; puddles: number }
+interface PbrPatch { rough: number; metal: number; roughMap: Texture | null; metalMap: Texture | null; env: boolean; fx?: ToonFxUniforms; reflect: number; puddles: number; ringel: number }
 
 function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: 'sand' | 'grass' | 'rock' | undefined, pbr: PbrPatch) {
   const uSpec = { value: spec };
@@ -414,13 +416,23 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: 'sand' 
         .replace('#include <begin_vertex>', '#include <begin_vertex>\n{ vec4 skWp = vec4(transformed, 1.0);\n#ifdef USE_INSTANCING\nskWp = instanceMatrix * skWp;\n#endif\nvSkWorld = (modelMatrix * skWp).xyz; }');
       shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vSkWorld;\n');
     }
+    if (pbr.ringel > 0) {
+      // Ringelhemd: scharfe waagrechte Streifen aus der Höhe im Modell (vor dem Skinning – kleben am Körper)
+      shader.uniforms.uRingel = { value: pbr.ringel };
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float stripe;\nvarying float vSkRingel;\nvarying float vSkRingY;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSkRingel = stripe;\nvSkRingY = position.y;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float uRingel;\nvarying float vSkRingel;\nvarying float vSkRingY;')
+        .replace('#include <color_fragment>', '#include <color_fragment>\nif (vSkRingel > 0.5) { float q = vSkRingY / uRingel; float aa = fwidth(q) * 0.7; float s = smoothstep(0.5 - aa, 0.5 + aa, fract(q)) - smoothstep(1.0 - aa, 1.0, fract(q)); diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.93, 0.91, 0.86), s); }');
+    }
     if (detail) {
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', '#include <common>\n' + DETAIL_GLSL)
         .replace('#include <color_fragment>', '#include <color_fragment>\n' + DETAIL_FRAG[detail]);
     }
   };
-  const progKey = `sk-toon-3${detail ? '-' + detail : ''}-${pbr.env ? 'e' : ''}${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}${pbr.fx ? 'f' : ''}${pbr.reflect > 0 ? 's' : ''}${pbr.puddles > 0 ? 'p' : ''}-wet`;
+  const progKey = `sk-toon-3${detail ? '-' + detail : ''}-${pbr.env ? 'e' : ''}${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}${pbr.fx ? 'f' : ''}${pbr.reflect > 0 ? 's' : ''}${pbr.puddles > 0 ? 'p' : ''}${pbr.ringel > 0 ? 'g' : ''}-wet`;
   mat.customProgramCacheKey = () => progKey + (isWind(mat) ? 'w' : '');
 }
 
@@ -464,6 +476,7 @@ export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial 
     fx,
     reflect: o.reflect ?? 0,
     puddles: o.puddles ?? 0,
+    ringel: o.ringel ?? 0,
   });
   optsOf.set(mat, o);
   if (fx) fxOf.set(mat, fx);

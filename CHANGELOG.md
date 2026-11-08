@@ -1,5 +1,48 @@
 # Was ist neu
 
+## 2.9.23 – Figuren-Audit: Kleidung, Hüte und Schmuck sitzen (08.11.2026)
+
+- **Nichts schwebt mehr:**
+  - Der Ohrring hängt am Ohrläppchen. Vorher schwebte er etwa 3 cm neben dem Kopf, weil er nach dem Augenabstand statt nach der Kopfbreite gesetzt wurde.
+  - Die Kapitäns-Schulterstücke sitzen auf den Schultern und nicht mehr in der Luft daneben.
+  - Knoten und Enden der Schärpe bzw. die Gürtelschnalle liegen auf dem Band.
+- **Nichts sticht mehr durch:**
+  - Mäntel, Stiefel, Schärpe und Gürtel messen, wie dick Hemd, Hose und Schuhe der Figur darunter sind, und legen sich darüber. Vorher stachen das Hemd am Rücken und das Oberteil durch die Schärpe.
+  - Ringelhemd, Tunika und Jacke ersetzen das Hemd der Figur, statt es zu überdecken.
+  - Oberteile und Mäntel sind geglättet und wirken wie Stoff statt wie aufgemalt. Die Nähte bleiben dabei geschlossen.
+- **Hüte passen sich der Frisur an:**
+  - Kopftuch, Wollmütze, Südwester, Helm, Kochmütze und Zweispitz legen sich als gemessene Kappe um die jeweilige Frisur.
+  - Vorher waren es starre Halbkugeln: entweder hohe Schüsseln über dem Kopf oder in der Frisur versunken, sodass nur ein schwebender Ring zu sehen war.
+  - Der Dreispitz wächst bei voluminösen Frisuren nicht mehr so stark mit.
+  - Die Fliegerbrille sitzt auf der Stirn statt im Haar, ihr Riemen ist kein Heiligenschein mehr.
+- **Keine unsichtbare Kleidung mehr:**
+  - Was man im Editor wählt, ist jetzt auch bei den Anime-Figuren zu sehen. Bisher änderte es nichts oder nur die Farbe.
+  - Bärte: Kinnbart, Schnurrbart, Vollbart und Koteletten, aus der Gesichtsform erzeugt.
+  - Außerdem Narbe, Schal und Handschuhe.
+  - Oberteil-Arten: Weste (vorn offen), Jacke mit langen Ärmeln, lange Tunika und gestreiftes Ringelhemd.
+
+**Technik (für Entwickler):**
+- Kleidung (`entities/character/vroid.ts`):
+  - `clearance()` misst je Hautpunkt den Abstand von Hemd, Hose und Schuhen der Grundfigur: nächster Hautpunkt im 2-cm-Raster, Abstand entlang der Normale, Ausreißer bei 4 cm gekappt, Lücken aus Nachbarn gefüllt.
+  - `garmentOffset` schichtet von innen nach außen: Hemd → Ringel/Tunika (+4–6 mm) → Weste/Jacke (+9 mm) → Schärpe (+16 mm) → Schal → Mantel (+20 mm).
+  - Neue Stücke: `weste`, `jacke`, `tunika`, `ringel`, `handschuhe`, `schal`. Die Fläche richtet sich nach dem Hemd statt nach Knochen, weil die Brust an eigenen Knochen hängt (sonst Löcher).
+  - Glättung der Oberteile und Mäntel (5 Laplace-Durchgänge): Nahtpunkte verschweißt, offene Ränder fest, danach jeder Punkt mindestens auf seinem Hautabstand.
+  - Kleidungsmaterial mit kleinem `polygonOffset`.
+  - Ringelstreifen zeichnet der Toon-Shader (Option `ringel`, Attribut `stripe`, Höhe vor dem Skinning, mit `fwidth` geglättet).
+- Anker und Kopfschmuck:
+  - `anchors()`: Ohrläppchen aus der Kopfhaut, Schultern aus der Rumpfhaut unter dem Hals plus Hemd und Mantel, Schärpen-Ellipse aus Taille und Kleidung. Alles in den lokalen Räumen von Kopf, Brust und Hüfte.
+  - `beard(kind)`: Hülle aus der Gesichtshaut mit Regionen nach Mund und Ohr. `scarPlacement()`: Lage auf der Wange.
+  - `capShell(sink, margin)`: Richtungsraster (32 × 10) um die Haarmitte, je Richtung die weiteste Haarspitze, Lücken gefüllt und nach außen geglättet.
+  - `animeHats.ts`: `capHat()` für die gemessenen Hüte, gemessener Ohrring, Bart- und Narbenteile, Fliegerbrille nach Haarform und Schädelbreite.
+  - `attachOutfit()` setzt Schärpe und Schulterstücke an die Anker. Die Halbkugel-Hüte mit `domeFit` sind durch die gemessenen Kappen ersetzt.
+- Geänderte Dateien: `entities/character/vroid.ts`, `entities/character/animeHats.ts`, `entities/character/character.ts`, `render/toon.ts`.
+- Geprüft mit Bildreihen (vorn, seitlich, hinten; stehend und rennend):
+  - alle 9 Hüte auf kurzen und langen Frisuren
+  - alle 6 Oberteile an Mann und Frau
+  - Mäntel in Bewegung
+  - 12 zufällige Stadtbewohner aller Rollen
+- Keine Konsolenfehler. Formen und Anker werden je Grundfigur einmal berechnet und dann geteilt.
+
 ## 2.9.22 – QA-Audit: Kollisionen, Flackern, hängende Zustände, saubere Konsole (08.11.2026)
 
 - **Kein Hineinlaufen mehr in Objekte:**
