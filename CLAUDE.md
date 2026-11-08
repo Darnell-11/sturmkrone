@@ -1,3 +1,23 @@
+# Sturmkrone - High-End Game Architecture Guidelines
+
+## Core Performance Rules
+- **Frame Budget:** Target 60 FPS (16.6ms) minimum.
+- **Memory Management:** Mandatory `.dispose()` calls for all geometries, materials, textures, and render targets upon object destruction. Zero memory leaks permitted.
+- **Garbage Collection:** Avoid instantiating new `Vector3`, `Matrix4`, or temporary objects inside the animation/render loop (`requestAnimationFrame`). Reuse pre-allocated module-scoped vectors.
+
+## Graphic & Visual Standards
+- **Post-Processing Stack:** ACESFilmicToneMapping, UnrealBloomPass, SSAO/GTAO, Depth of Field.
+- **Shadow System:** Cascaded Shadow Maps (CSM) with soft shadow filtering (PCF / PCSS).
+- **Asset Pipeline:** PBR Workflow (Albedo, Normal, Roughness, Metallic, AO).
+
+## Code Quality & Architecture
+- **Structure:** Decouple Physics, Input, Sound, and Render loops.
+- **Physics Loop:** Fixed timestep update (60 Hz) decoupled from visual rendering frames.
+
+> **Abstimmung mit dem Briefing unten:** Diese Richtlinien gelten zusätzlich zum Projekt-Briefing. Der Anime-Stil (Toon-Material, Konturen) bleibt die Art Direction: PBR-Kanäle (Normal, Roughness, Metallic, AO) fließen in das Toon-Material ein, statt es zu ersetzen. Post-Effekte laufen weiter über `postprocessing` (pmndrs) mit den gleichwertigen Effekten (Bloom, AO, Tiefenunschärfe). Schwere Effekte (AO, CSM, PCSS, Tiefenunschärfe) gelten für High/Max; Handys auf Low/Mid haben Vorrang bei den 60 FPS.
+
+---
+
 # Sturmkrone 2.0 – Projekt-Briefing für Claude Code
 
 Dieses Dokument ist die Grundlage für alle Arbeiten an Sturmkrone 2.0. Lies es zu Beginn jeder Sitzung. Die Datei `referenz/sturmkrone-1.0.html` enthält die bisherige Version als Einzeldatei (three.js r128). Sie dient als Referenz für Spielgefühl, Werte, Texte und Systeme – nicht als Code-Basis zum Weiterbauen.
