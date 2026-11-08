@@ -1,5 +1,6 @@
 import { CanvasTexture, RepeatWrapping, SRGBColorSpace, type BufferAttribute, type BufferGeometry } from 'three';
 import { detailCanvas, texDetail } from './texDetail';
+import { markShared } from './dispose';
 
 /** Kleiner, fester Zufall, damit Texturen bei jedem Start gleich aussehen */
 function rng(seed: number) {
@@ -47,7 +48,7 @@ export function plankTexture(): CanvasTexture {
   t.wrapS = t.wrapT = RepeatWrapping;
   t.colorSpace = SRGBColorSpace;
   t.anisotropy = texDetail.aniso;
-  plankCache = t;
+  plankCache = markShared(t);
   return t;
 }
 
@@ -141,7 +142,7 @@ export function crateTexture(): CanvasTexture {
   const t = new CanvasTexture(c);
   t.colorSpace = SRGBColorSpace;
   t.anisotropy = texDetail.aniso;
-  crateCache = t;
+  crateCache = markShared(t);
   return t;
 }
 

@@ -12,6 +12,7 @@ import {
   type Object3D,
 } from 'three';
 import { BlendFunction, Effect, EffectAttribute } from 'postprocessing';
+import { markShared, onForget } from './dispose';
 
 export const INK = new Color(0x1b1410);
 
@@ -71,10 +72,13 @@ const hullMaterial = new ShaderMaterial({
     }`,
 });
 hullMaterial.userData.outline = true;
+markShared(hullMaterial);
 
 const hulls = new Set<Mesh>();
 const hullByWidth = new Map<number, ShaderMaterial>([[1, hullMaterial]]);
 let hullsVisible = true;
+// Konturen entfernter Objekte nicht festhalten (sonst bleibt das ganze Objekt im Speicher)
+onForget((o) => hulls.delete(o as Mesh));
 const smoothed = new WeakSet<BufferGeometry>();
 
 /** Gemittelte Normalen pro Position, damit die Kontur an harten Kanten nicht aufreißt. */
@@ -115,6 +119,7 @@ export function addOutlines(root: Object3D, width = 1) {
       mat = hullMaterial.clone();
       mat.uniforms.uWidth.value = width;
       mat.userData.outline = true;
+      markShared(mat);
       hullByWidth.set(width, mat);
     }
     let h: Mesh;

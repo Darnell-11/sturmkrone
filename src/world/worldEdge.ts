@@ -15,6 +15,10 @@ import {
   type Scene,
   type Texture,
 } from 'three';
+
+// Wiederverwendete Rechenvektoren (keine neuen Objekte pro Bild)
+const OUT = new Vector3();
+const VIEW = new Vector3();
 import { WORLD_RADIUS } from '../data/world';
 
 const FALL_HEIGHT = 700;
@@ -172,8 +176,8 @@ export class WorldEdge {
     this.mistU.uShade.value.copy(mistShade).lerp(this.fallU.uWater.value, 0.3);
 
     // Regenbogen steht gegenüber der Sonne: sichtbar, wenn die Sonne hinter dem Betrachter steht
-    const out = new Vector3(Math.cos(ang), 0, Math.sin(ang));
-    const view = new Vector3(out.x * WORLD_RADIUS - camPos.x, 0, out.z * WORLD_RADIUS - camPos.z).normalize();
+    const out = OUT.set(Math.cos(ang), 0, Math.sin(ang));
+    const view = VIEW.set(out.x * WORLD_RADIUS - camPos.x, 0, out.z * WORLD_RADIUS - camPos.z).normalize();
     const behind = Math.max(0, -(view.x * sunDir.x + view.z * sunDir.z));
     const close = Math.max(0, Math.min(1, (near - 0.6) / 0.35));
     this.bowU.uAlpha.value = close * close * daylight * clearSky * (0.35 + 0.65 * behind);

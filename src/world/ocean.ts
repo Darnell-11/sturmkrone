@@ -12,6 +12,7 @@ import {
 } from 'three';
 import { WAVES, WORLD_RADIUS } from '../data/world';
 import { WATER_ALPHA } from '../render/outline';
+import { markShared } from '../render/dispose';
 /** Weiche Lichtrampe fürs Wasser: keine harten Hell-Dunkel-Bänder auf den Wellen */
 const SOFT_RAMP = (() => {
   const n = 32;
@@ -20,7 +21,7 @@ const SOFT_RAMP = (() => {
   const t = new DataTexture(d, n, 1, RedFormat);
   t.magFilter = t.minFilter = LinearFilter;
   t.needsUpdate = true;
-  return t;
+  return markShared(t);
 })();
 
 const G = 9.81;

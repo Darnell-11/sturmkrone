@@ -24,6 +24,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { HairFit } from './animeHats';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { markShared } from '../../render/dispose';
 
 /** Unsere Knochennamen (KayKit-Skelett) → VRoid-Knochen */
 export const VROID_BONES: Record<string, string> = {
@@ -108,6 +109,8 @@ export class VroidBase {
     const fy = foot ? foot.getWorldPosition(v2).y - 0.06 : 0;
     this.template.scale.setScalar(height / Math.max(0.5, hy - fy));
     this.template.updateMatrixWorld(true);
+    // Netze der Grundfigur teilen sich alle Figuren (Klone) – nie freigeben
+    this.template.traverse((o) => { const g = (o as SkinnedMesh).geometry; if (g) markShared(g); });
     this.hipH = this.find(this.template, 'J_Bip_C_Hips')!.getWorldPosition(v1).y;
     this.computeCorrections();
     // Waffenhalterung aus der alten Figur übernehmen (gleiche Ausrichtung in der Welt)
@@ -281,7 +284,7 @@ export class VroidBase {
       }).filter((g): g is BufferGeometry => !!g);
       const merged = geos.length ? mergeGeometries(geos, false) : null;
       if (merged) { merged.computeBoundingSphere(); if (merged.boundingSphere) merged.boundingSphere.radius *= 1.6; }
-      this.sets.set(key, merged);
+      this.sets.set(key, merged ? markShared(merged) : null);
     }
     return this.sets.get(key) ?? null;
   }

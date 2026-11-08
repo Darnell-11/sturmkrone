@@ -37,6 +37,8 @@ export class Environment {
   maxTex = 4096;
   private shadowExtent = 40;
   private tmpCol = new Color();
+  private tmpZenith = new Color();
+  private tmpGrey = new Color();
   private focus = new Vector3();
 
   constructor(private scene: Scene) {
@@ -109,8 +111,9 @@ export class Environment {
     const gloom = 0.35 + 0.65 * w.light; // Sturm: deutlich dunkler
     const g2 = gloom * gloom;
     const mixK = Math.min(1, greyK * 1.15);
-    const horizon = this.tmpCol.copy(pal.horizon).lerp(GREY.clone().multiplyScalar((0.4 + 0.6 * pal.ambientI) * g2), mixK);
-    const zenith = pal.zenith.clone().lerp(GREY.clone().multiplyScalar((0.25 + 0.55 * pal.ambientI) * g2 * 0.75), mixK);
+    const grey = this.tmpGrey;
+    const horizon = this.tmpCol.copy(pal.horizon).lerp(grey.copy(GREY).multiplyScalar((0.4 + 0.6 * pal.ambientI) * g2), mixK);
+    const zenith = this.tmpZenith.copy(pal.zenith).lerp(grey.copy(GREY).multiplyScalar((0.25 + 0.55 * pal.ambientI) * g2 * 0.75), mixK);
 
     const su = this.sky.skyU;
     su.uZenith.value.copy(zenith);
@@ -172,8 +175,8 @@ export class Environment {
 
     // Meer
     const ou = this.ocean.uniforms;
-    ou.uDeep.value.copy(pal.seaDeep).lerp(GREY.clone().multiplyScalar(0.3), greyK * 0.5);
-    ou.uShallow.value.copy(pal.seaShallow).lerp(GREY.clone().multiplyScalar(0.55), greyK * 0.4);
+    ou.uDeep.value.copy(pal.seaDeep).lerp(this.tmpGrey.copy(GREY).multiplyScalar(0.3), greyK * 0.5);
+    ou.uShallow.value.copy(pal.seaShallow).lerp(this.tmpGrey.copy(GREY).multiplyScalar(0.55), greyK * 0.4);
     ou.uDeep.value.multiplyScalar(0.55 + 0.45 * gloom);
     ou.uShallow.value.multiplyScalar(0.55 + 0.45 * gloom);
     ou.uZenith.value.copy(zenith);

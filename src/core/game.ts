@@ -4,6 +4,7 @@ import { TOUCH_FOOT, TOUCH_SEA } from '../data/touchLayout';
 import { randomLook } from '../data/characterParts';
 import { WEATHER, type WeatherId } from '../data/world';
 import { CharacterAssets } from '../entities/character/assets';
+import { Character } from '../entities/character/character';
 import type { Enemy } from '../entities/enemy';
 import { PLAYER_BASE } from '../data/combat';
 import { CombatOverlay } from '../ui/combatOverlay';
@@ -272,6 +273,8 @@ export class Game {
   // ---------- Schleife ----------
 
   private update(dt: number) {
+    // Figuren: letzter Logikstand wird Ausgangspunkt für das weiche Gleiten bis zum nächsten Schritt
+    Character.beginStep();
     this.input.poll();
     this.input.beginStep();
     if (this.state.is('play')) {
@@ -304,7 +307,10 @@ export class Game {
     const hs = this.world.hitstop;
     if (hs.t > 0) { this.loop.timeScale = hs.scale; hs.t -= frameDt; }
     else { this.loop.timeScale = 1; hs.scale = 1; }
-    this.world.render(this.state.is('play', 'pause') ? alpha : 1, frameDt, this.state.is('menu', 'boot'));
+    const a = this.state.is('play', 'pause') ? alpha : 1;
+    this.world.render(a, frameDt, this.state.is('menu', 'boot'));
+    // Gegner, Crew und Stadtleute zwischen den 60-Hz-Logikschritten weich darstellen
+    Character.present(a);
     this.renderer.render(frameDt);
     this.overlay.update(this.state.is('play') ? frameDt * this.loop.timeScale : 0, this.world.camera);
     if (this.state.is('play')) {

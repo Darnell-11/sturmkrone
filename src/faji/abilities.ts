@@ -15,7 +15,7 @@ import {
 import type { CombatFx } from '../combat/fx';
 import { actAt, ELEMENT_COLORS, type ActiveDef, type Element, type Passives, type SkillDef, type Status } from '../data/skills';
 import type { ParticleSystem } from '../world/particles';
-import { ElementFx } from './elementFx';
+import { ElementFx, zigzagGeometry } from './elementFx';
 
 /** Etwas, das von Fähigkeiten getroffen werden kann (Gegner, Übungspuppe) */
 export interface AbilityTarget {
@@ -51,8 +51,10 @@ interface Running { t: number; done: boolean; update(dt: number): void }
 
 const HSL = { h: 0, s: 0, l: 0 };
 /** Elementfarbe, hell genug fürs Leuchten, aber mit vollem Farbton (sonst brennt Additives auf hellem Grund weiß aus) */
+const COL = new Color();
+/** Achtung: liefert einen wiederverwendeten Farbwert – Empfänger kopieren ihn (Materialien, Partikel) */
 const col = (el: Element, k = 1) => {
-  const c = new Color(ELEMENT_COLORS[el]);
+  const c = COL.set(ELEMENT_COLORS[el]);
   c.getHSL(HSL);
   if (HSL.s > 0.15) c.setHSL(HSL.h, Math.min(1, HSL.s * 1.2 + 0.15), Math.min(0.55, HSL.l));
   return c.multiplyScalar(k * 0.8);
@@ -62,28 +64,14 @@ const angleTo = (fx: number, fz: number, yaw: number, tx: number, tz: number) =>
   Math.abs(((Math.atan2(tx - fx, tz - fz) - yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
 
 /** Blitz-Band zwischen zwei Punkten */
+const UP = new Vector3(0, 1, 0);
+/** Wiederverwendeter Punkt für Effekte, die die Position sofort kopieren (Partikel, Treffer, Spuren) */
+const PV = new Vector3();
+const pv = (x: number, y: number, z: number) => PV.set(x, y, z);
+const BOLT_COL = new Color();
 function boltMesh(a: Vector3, b: Vector3, color: Color, width = 0.35): Mesh {
-  const pts: Vector3[] = [a.clone()];
-  const n = 8;
-  for (let i = 1; i < n; i++) {
-    const p = a.clone().lerp(b, i / n);
-    p.x += (Math.random() - 0.5) * 1.2; p.y += (Math.random() - 0.5) * 1.2; p.z += (Math.random() - 0.5) * 1.2;
-    pts.push(p);
-  }
-  pts.push(b.clone());
-  const pos: number[] = [];
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[i], p1 = pts[i + 1];
-    const up = new Vector3(0, width, 0);
-    const side = new Vector3().subVectors(p1, p0).cross(new Vector3(0, 1, 0)).normalize().multiplyScalar(width);
-    for (const off of [up, side]) {
-      pos.push(...p0.clone().sub(off).toArray(), ...p0.clone().add(off).toArray(), ...p1.clone().sub(off).toArray());
-      pos.push(...p0.clone().add(off).toArray(), ...p1.clone().add(off).toArray(), ...p1.clone().sub(off).toArray());
-    }
-  }
-  const g = new BufferGeometry();
-  g.setAttribute('position', new BufferAttribute(new Float32Array(pos), 3));
-  return new Mesh(g, new MeshBasicMaterial({ color: color.clone().multiplyScalar(3), transparent: true, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }));
+  const g = zigzagGeometry(a, b, 8, 1.2, 1.2, 1.2, width, UP, null);
+  return new Mesh(g, new MeshBasicMaterial({ color: BOLT_COL.copy(color).multiplyScalar(3), transparent: true, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }));
 }
 
 /** Führt Fähigkeiten aus – im Spiel und in der Vorschau des Skillbaums. */
@@ -142,7 +130,7 @@ export class AbilityRunner {
   private hitTarget(t: AbilityTarget, dmg: number, a: ActiveDef, fromX: number, fromZ: number) {
     const d = dist2(t.x, t.z, fromX, fromZ) || 1;
     t.hit(dmg, a.status, a.dur ?? 1.5, (t.x - fromX) / d, (t.z - fromZ) / d, a.el);
-    this.ctx.fx.hit(new Vector3(t.x, t.y + 1.2, t.z), a.el === 'klinge' ? 'slash' : 'magic', ELEMENT_COLORS[a.el], dmg > this.ctx.power * 2);
+    this.ctx.fx.hit(pv(t.x, t.y + 1.2, t.z), a.el === 'klinge' ? 'slash' : 'magic', ELEMENT_COLORS[a.el], dmg > this.ctx.power * 2);
     // kleine Elementwirkung an jedem getroffenen Ziel
     this.efx.impact(new Vector3(t.x, t.y, t.z), a.el, dmg > this.ctx.power * 2 ? 0.7 : 0.4);
   }
@@ -178,8 +166,8 @@ export class AbilityRunner {
         c.fx.shockwave(p, radius, ELEMENT_COLORS[a.el]);
         this.efx.impact(p, a.el, Math.min(2.6, (a.ult ? 1.6 : 0.9) * Math.max(0.8, radius / 5)) * (pulses > 1 ? 0.7 : 1));
         if (a.el === 'koerper' || a.el === 'meteor' || a.el === 'erde') c.fx.crack(p, radius * 1.1);
-        if (a.el === 'klinge') c.fx.smear(p.clone().setY(p.y + 1), c.caster.yaw + i * 2.1, 0.05, radius * 0.8, Math.PI * 1.9, ELEMENT_COLORS[a.el]);
-        this.burst(p.clone().setY(p.y + 0.6), a.el, 30, radius * 1.6, 3);
+        if (a.el === 'klinge') c.fx.smear(pv(p.x, p.y + 1, p.z), c.caster.yaw + i * 2.1, 0.05, radius * 0.8, Math.PI * 1.9, ELEMENT_COLORS[a.el]);
+        this.burst(pv(p.x, p.y + 0.6, p.z), a.el, 30, radius * 1.6, 3);
         for (const t of c.targets()) if (t.alive && dist2(t.x, t.z, p.x, p.z) < radius + t.radius) this.hitTarget(t, dmg, a, p.x, p.z);
         c.shake(pulses > 1 ? 0.15 : 0.5);
         if (pulses === 1) c.hitstop(0.08);
@@ -195,11 +183,11 @@ export class AbilityRunner {
       this.later(0.15 + i * 0.18, () => {
         const p = this.feet();
         const f = this.fwd();
-        c.fx.smear(p.clone().setY(p.y + 1), c.caster.yaw, i % 2 ? 0.9 : -0.9 + (n === 1 ? 0.9 : 0), range * 0.8, 1.6, ELEMENT_COLORS[a.el], i % 2 === 1);
+        c.fx.smear(pv(p.x, p.y + 1, p.z), c.caster.yaw, i % 2 ? 0.9 : -0.9 + (n === 1 ? 0.9 : 0), range * 0.8, 1.6, ELEMENT_COLORS[a.el], i % 2 === 1);
         this.efx.impact(new Vector3(p.x + f.x * range * 0.6, p.y, p.z + f.z * range * 0.6), a.el, a.ult ? 1.8 : 1);
         for (let k = 0; k < 6; k++) {
           const d = 1.5 + (k / 6) * range;
-          this.burst(new Vector3(p.x + f.x * d, p.y + 0.8, p.z + f.z * d), a.el, 6, 2 + d * 0.3, 2);
+          this.burst(pv(p.x + f.x * d, p.y + 0.8, p.z + f.z * d), a.el, 6, 2 + d * 0.3, 2);
         }
         for (const t of c.targets()) {
           if (!t.alive) continue;
@@ -271,8 +259,8 @@ export class AbilityRunner {
       scarT -= dt;
       if (scarT <= 0) {
         scarT = ult ? 0.05 : 0.08;
-        this.burst(new Vector3(x, start.y + 0.2, z), a.el, ult ? 6 : 3, 2, 2);
-        if (ult) c.fx.crack(new Vector3(x, start.y, z), 1.6);
+        this.burst(pv(x, start.y + 0.2, z), a.el, ult ? 6 : 3, 2, 2);
+        if (ult) c.fx.crack(pv(x, start.y, z), 1.6);
       }
       if (passes > 1 && phase > 1 && hit.size && Math.floor(phase) !== Math.floor(phase - dt / leg)) hit.clear();
       for (const tg of c.targets()) {
@@ -315,7 +303,7 @@ export class AbilityRunner {
       const r: Running = { t: 0, done: false, update: (dt) => {
         t += dt; r.t = t;
         m.position.addScaledVector(dir, 26 * dt);
-        if (Math.random() < dt * 30) this.burst(m.position.clone(), a.el, 1, 0.5, 0.5);
+        if (Math.random() < dt * 30) this.burst(m.position, a.el, 1, 0.5, 0.5);
         for (const tg of c.targets()) {
           if (tg.alive && dist2(tg.x, tg.z, m.position.x, m.position.z) < tg.radius + 0.5) { this.hitTarget(tg, dmg, a, m.position.x - dir.x, m.position.z - dir.z); t = 99; break; }
         }
@@ -373,7 +361,7 @@ export class AbilityRunner {
       const k = Math.min(1, t / dur);
       const x = start.x + f.x * range * k, z = start.z + f.z * range * k;
       c.moveCaster(x, z);
-      this.burst(new Vector3(c.caster.x, c.caster.y + 0.9, c.caster.z), a.el, 4, 1, 1);
+      this.burst(pv(c.caster.x, c.caster.y + 0.9, c.caster.z), a.el, 4, 1, 1);
       for (const tg of c.targets()) {
         if (!tg.alive || hit.has(tg)) continue;
         if (dist2(tg.x, tg.z, c.caster.x, c.caster.z) < 2 + tg.radius) { hit.add(tg); this.hitTarget(tg, dmg, a, c.caster.x - f.x, c.caster.z - f.z); }
@@ -409,7 +397,7 @@ export class AbilityRunner {
         if (a.el === 'klinge' && hit.size) this.later(0.18, () => {
           c.hitstop(0.09);
           c.shake(0.35);
-          hit.forEach((tg) => { if (!tg.alive) return; c.fx.smear(new Vector3(tg.x, tg.y + 1.1, tg.z), c.caster.yaw + Math.PI * 0.25, 0.9, 2.2, 1.2, ELEMENT_COLORS[a.el]); this.efx.impact(new Vector3(tg.x, tg.y, tg.z), 'klinge', 0.8); });
+          hit.forEach((tg) => { if (!tg.alive) return; c.fx.smear(pv(tg.x, tg.y + 1.1, tg.z), c.caster.yaw + Math.PI * 0.25, 0.9, 2.2, 1.2, ELEMENT_COLORS[a.el]); this.efx.impact(new Vector3(tg.x, tg.y, tg.z), 'klinge', 0.8); });
         });
       }
     } };
@@ -426,11 +414,11 @@ export class AbilityRunner {
         const t = c.targets().filter((x) => x.alive && !used.has(x) && dist2(x.x, x.z, p.x, p.z) < 16).sort((x, y) => dist2(x.x, x.z, p.x, p.z) - dist2(y.x, y.z, p.x, p.z))[0];
         if (!t) return;
         used.add(t);
-        this.burst(p.clone().setY(p.y + 1), a.el, 20, 2, 2);
+        this.burst(pv(p.x, p.y + 1, p.z), a.el, 20, 2, 2);
         const dx = t.x - p.x, dz = t.z - p.z;
         const d = Math.hypot(dx, dz) || 1;
         c.moveCaster(t.x + (dx / d) * (t.radius + 1), t.z + (dz / d) * (t.radius + 1), Math.atan2(-dx, -dz));
-        this.burst(new Vector3(c.caster.x, c.caster.y + 1, c.caster.z), a.el, 20, 2, 2);
+        this.burst(pv(c.caster.x, c.caster.y + 1, c.caster.z), a.el, 20, 2, 2);
         this.hitTarget(t, dmg, a, c.caster.x, c.caster.z);
         c.fx.smear(this.feet().setY(c.caster.y + 1), c.caster.yaw, 0.5, 2.5, 2.2, ELEMENT_COLORS[a.el]);
         c.hitstop(0.1);
@@ -475,7 +463,7 @@ export class AbilityRunner {
         c.fx.shockwave(p, 3, ELEMENT_COLORS[a.el]);
         this.efx.impact(p, a.el, a.el === 'meteor' ? 1.7 : a.ult ? 1.4 : 1);
         if (a.el === 'meteor') c.fx.crack(p, 4);
-        this.burst(p.clone().setY(y + 0.5), a.el, 18, 4, 6);
+        this.burst(pv(p.x, y + 0.5, p.z), a.el, 18, 4, 6);
         for (const tgt of c.targets()) if (tgt.alive && dist2(tgt.x, tgt.z, x, z) < 2.6 + tgt.radius) this.hitTarget(tgt, dmg, a, x, z);
         c.shake(0.3);
       });
@@ -511,7 +499,7 @@ export class AbilityRunner {
       if (t >= dur) {
         r.done = true;
         core.removeFromParent(); halo.removeFromParent();
-        c.fx.shockwave(new Vector3(cx, cy, cz), radius * 0.6, ELEMENT_COLORS[a.el]);
+        c.fx.shockwave(pv(cx, cy, cz), radius * 0.6, ELEMENT_COLORS[a.el]);
         this.efx.impact(new Vector3(cx, cy, cz), a.el, a.ult ? 2.2 : 1.6);
         for (const tg of c.targets()) if (tg.alive && dist2(tg.x, tg.z, cx, cz) < radius * 0.5) this.hitTarget(tg, dmg, a, cx, cz);
         c.shake(0.5); c.hitstop(0.1);
@@ -538,7 +526,7 @@ export class AbilityRunner {
       }
       if (tick <= 0) {
         tick = 0.5;
-        if (follow) c.fx.smear(new Vector3(x, y + 1, z), t * 9, 0.05, radius, Math.PI * 1.9, ELEMENT_COLORS[a.el]);
+        if (follow) c.fx.smear(pv(x, y + 1, z), t * 9, 0.05, radius, Math.PI * 1.9, ELEMENT_COLORS[a.el]);
         for (const tg of c.targets()) if (tg.alive && dist2(tg.x, tg.z, x, z) < radius + tg.radius) this.hitTarget(tg, dmg, a, x, z);
       }
       if (t >= dur) r.done = true;
@@ -569,7 +557,7 @@ export class AbilityRunner {
           spike.position.y = y - 1.2 + Math.min(1, t * 12) * 1.5 - Math.max(0, t - 0.8) * 3;
           if (t > 1.2) { this.done = true; spike.removeFromParent(); spike.geometry.dispose(); }
         } } as Running);
-        this.burst(new Vector3(x, y + 0.3, z), a.el, 6, 2, 4);
+        this.burst(pv(x, y + 0.3, z), a.el, 6, 2, 4);
         if (i % 3 === 0) this.efx.impact(new Vector3(x, y, z), a.el, 0.6);
         for (const tg of c.targets()) if (tg.alive && !hit.has(tg) && dist2(tg.x, tg.z, x, z) < 1.4 + tg.radius) { hit.add(tg); this.hitTarget(tg, dmg, a, x - f.x, z - f.z); }
         if (i === 1) c.shake(0.4);

@@ -120,8 +120,7 @@ export class Npc {
     if (this.timer <= 0) this.pick();
 
     const y = this.ground.height(this.x, this.z);
-    this.char.holder.position.set(this.x, Number.isFinite(y) ? y : 0, this.z);
-    this.char.holder.rotation.y = this.yaw;
+    this.char.place(this.x, Number.isFinite(y) ? y : 0, this.z, this.yaw);
     // Weit entfernte Figuren seltener animieren (nah immer flüssig)
     this.acc += dt;
     if (camDist < 90 || (camDist < 200 && this.acc >= 0.05) || this.acc >= 0.12) {

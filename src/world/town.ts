@@ -25,6 +25,7 @@ import { toon } from '../render/toon';
 import { crateTexture, deckUV, plankTexture } from '../render/textures';
 import { detailCanvas, texDetail } from '../render/texDetail';
 import type { WalkIsland } from './islandGround';
+import { markShared } from '../render/dispose';
 
 // verwitterter Putz und satte, gedeckte Dachfarben (Hafenstadt, kein Ferienort)
 const WALLS = ['#E2D6BC', '#D4BF9A', '#C9CFD0', '#DCC4B0', '#CDD2BE'];
@@ -239,7 +240,7 @@ function cobbleTexture(): CanvasTexture {
     g.fillStyle = 'rgba(255,255,255,0.08)';
     g.fillRect(x0 + 2, y0 + 1, w - 4, 3);
   }
-  cobbleTex = new CanvasTexture(c);
+  cobbleTex = markShared(new CanvasTexture(c));
   cobbleTex.wrapS = cobbleTex.wrapT = RepeatWrapping;
   cobbleTex.colorSpace = SRGBColorSpace;
   cobbleTex.anisotropy = texDetail.aniso;

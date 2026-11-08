@@ -2,6 +2,7 @@ import { Color, ConeGeometry, Group, Mesh, MeshBasicMaterial, SphereGeometry, Ve
 import { addOutlines } from '../render/outline';
 import { toon } from '../render/toon';
 import type { Ship } from '../entities/ship/ship';
+import { disposeObject } from '../render/dispose';
 
 /** Lage des Tiefenschlunds im Schlundriff */
 export const ABYSS_LAIR = { x: -1607, z: 522 };
@@ -180,7 +181,7 @@ export class SeaBoss {
   }
 
   dispose() {
-    this.group.removeFromParent();
-    for (const l of this.lobs) l.mesh.removeFromParent();
+    disposeObject(this.group);
+    for (const l of this.lobs) disposeObject(l.mesh);
   }
 }

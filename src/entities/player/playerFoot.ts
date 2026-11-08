@@ -149,7 +149,8 @@ export class PlayerFoot implements PlayerTarget {
   }
 
   update(dt: number, input: Input, camYaw: number, ground: Ground, lockYaw: number | null) {
-    this.prev = { x: this.x, z: this.z, y: this.y, yaw: this.yaw };
+    const pv = this.prev;
+    pv.x = this.x; pv.z = this.z; pv.y = this.y; pv.yaw = this.yaw;
     this.iframes -= dt;
     this.comboWindow -= dt;
     this.blockSince += dt;

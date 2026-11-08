@@ -5,6 +5,7 @@ import {
   LoopOnce,
   LoopRepeat,
   Matrix4,
+  MathUtils,
   Color,
   DoubleSide,
   FrontSide,
@@ -21,6 +22,7 @@ import { ROLES, type AnimRole, type ClipRef } from '../../data/animations';
 import type { CharacterLook } from '../../data/characterParts';
 import { addOutlines } from '../../render/outline';
 import { toon } from '../../render/toon';
+import { disposeObject, markShared } from '../../render/dispose';
 import type { CharacterAssets } from './assets';
 import { buildCharacterGeometry, LIMB_EXT } from './builder';
 import { slotTurn, VROID_BONES, VroidBase, type GarmentKind } from './vroid';
@@ -76,6 +78,43 @@ export interface PlayOptions {
 export class Character {
   /** In die Welt setzen und bewegen */
   readonly holder = new Group();
+
+  // ---------- Weiche Darstellung zwischen den festen Logikschritten (60 Hz) ----------
+  // Die Logik setzt die Position 60-mal pro Sekunde (place); die Darstellung gleitet bei jedem Bild
+  // zwischen dem letzten und dem aktuellen Schritt (present). So ruckelt nichts auf 90/120/144-Hz-Bildschirmen.
+  private static moving = new Set<Character>();
+  private from = { x: 0, y: 0, z: 0, yaw: 0 };
+  private tgt = { x: 0, y: 0, z: 0, yaw: 0 };
+  private placed = false;
+
+  /** Logik-Position setzen (im festen Schritt) */
+  place(x: number, y: number, z: number, yaw: number) {
+    const t = this.tgt;
+    // erste Platzierung oder großer Sprung (Teleport): nicht durchs Bild gleiten
+    if (!this.placed || Math.abs(x - t.x) + Math.abs(z - t.z) > 6) {
+      this.from.x = x; this.from.y = y; this.from.z = z; this.from.yaw = yaw;
+      this.placed = true;
+      Character.moving.add(this);
+    }
+    t.x = x; t.y = y; t.z = z; t.yaw = yaw;
+    this.holder.position.set(x, y, z);
+    this.holder.rotation.y = yaw;
+  }
+
+  /** Zu Beginn jedes festen Schritts: letzter Stand wird Ausgangspunkt fürs Gleiten */
+  static beginStep() {
+    for (const c of Character.moving) { const f = c.from, t = c.tgt; f.x = t.x; f.y = t.y; f.z = t.z; f.yaw = t.yaw; }
+  }
+
+  /** Bei jedem Bild: alpha = Anteil zwischen letztem und nächstem Logikschritt */
+  static present(alpha: number) {
+    for (const c of Character.moving) {
+      const f = c.from, t = c.tgt;
+      c.holder.position.set(f.x + (t.x - f.x) * alpha, f.y + (t.y - f.y) * alpha, f.z + (t.z - f.z) * alpha);
+      const dy = MathUtils.euclideanModulo(t.yaw - f.yaw + Math.PI, Math.PI * 2) - Math.PI;
+      c.holder.rotation.y = f.yaw + dy * alpha;
+    }
+  }
   rig!: Object3D;
   readonly bones: Record<string, Bone> = {};
   mixer!: AnimationMixer;
@@ -141,7 +180,9 @@ export class Character {
   private initVroid(vb: VroidBase, look: CharacterLook) {
     const old = this.rig;
     const held = { l: this.bones.handslotl?.children[0] ?? null, r: this.bones.handslotr?.children[0] ?? null };
-    if (old) { this.mixer?.stopAllAction(); old.removeFromParent(); }
+    // gehaltene Waffen wandern zur neuen Figur – vorher abnehmen, damit sie nicht mit der alten freigegeben werden
+    held.l?.removeFromParent(); held.r?.removeFromParent();
+    if (old) { this.mixer?.stopAllAction(); this.mixer?.uncacheRoot(old); for (const g of this.garments) releaseGarment(g); this.garments = []; disposeRig(old); }
     this.vroid = vb;
     this.actions.clear();
     this.current = null;
@@ -212,9 +253,9 @@ export class Character {
       m.material = mat;
     });
     // Kopfschmuck und Piraten-Kleidung neu aufsetzen
-    this.headgear?.removeFromParent();
+    disposeObject(this.headgear);
     this.headgear = null;
-    for (const o of this.outfit) o.removeFromParent();
+    for (const o of this.outfit) disposeObject(o);
     const chest = this.rig.getObjectByName('J_Bip_C_Chest'), hips = this.rig.getObjectByName('J_Bip_C_Hips');
     const marine = look.outfit === 'uniform' || look.hat === 'marine' || look.hat === 'zweispitz';
     this.outfit = chest && hips ? attachOutfit(chest, hips, this.rig.getObjectByName('J_Bip_L_UpperArm') ?? null, this.rig.getObjectByName('J_Bip_R_UpperArm') ?? null, look, marine ? 'marine' : 'pirat', this.outline) : [];
@@ -232,7 +273,7 @@ export class Character {
    * Die Stücke entstehen aus dem Körper selbst und bewegen sich deshalb genau mit.
    */
   private dressVroid(vb: VroidBase, look: CharacterLook) {
-    for (const g of this.garments) g.removeFromParent();
+    for (const g of this.garments) releaseGarment(g);
     this.garments = [];
     const female = vb === this.assets.vroid?.female;
     this.rig.traverse((o) => {
@@ -287,7 +328,7 @@ export class Character {
     let entry = geoCache.get(key);
     if (!entry) {
       const g = buildCharacterGeometry(look, this.assets.boneIndex);
-      entry = { main: g.main, detail: g.detail, users: 0 };
+      entry = { main: markShared(g.main), detail: g.detail ? markShared(g.detail) : null, users: 0 };
       geoCache.set(key, entry);
     }
     entry.users++;
@@ -434,9 +475,32 @@ export class Character {
     }
   }
 
+  /** Figur entfernen und alles freigeben, was nur ihr gehört (Kleidung, Hut, Waffen, Skelett-Daten) */
   dispose() {
+    Character.moving.delete(this);
     this.releaseGeometry();
     this.mixer.stopAllAction();
-    this.holder.removeFromParent();
+    this.mixer.uncacheRoot(this.rig);
+    for (const g of this.garments) releaseGarment(g);
+    this.garments = [];
+    this.outfit = [];
+    this.headgear = null;
+    disposeRig(this.holder);
   }
+}
+
+/** Kleidung teilt Lage und Gewichte mit der Grundfigur: nur die eigenen Farben freigeben, nie die geteilten Puffer */
+function releaseGarment(m: SkinnedMesh) {
+  const g = m.geometry;
+  for (const name of ['position', 'normal', 'skinIndex', 'skinWeight']) g.deleteAttribute(name);
+  g.setIndex(null);
+  disposeObject(m);
+}
+
+/** Figur samt Skelett-Texturen (eine je Klon) freigeben; geteilte Netze der Grundfigur bleiben */
+function disposeRig(root: Object3D) {
+  const skeletons = new Set<Skeleton>();
+  root.traverse((o) => { const sm = o as SkinnedMesh; if (sm.isSkinnedMesh) skeletons.add(sm.skeleton); });
+  for (const s of skeletons) s.dispose();
+  disposeObject(root);
 }

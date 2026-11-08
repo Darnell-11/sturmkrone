@@ -34,6 +34,7 @@ import type { DebrisSystem } from '../world/debris';
 import { seaLevelAt } from '../data/regions';
 import { ElementFx } from '../faji/elementFx';
 import { ELEMENT_COLORS, type ActiveDef, type Element } from '../data/skills';
+import { markShared } from '../render/dispose';
 
 const G = 9.8;
 const BALL_SPEED = 46;
@@ -77,7 +78,7 @@ const WAVE_TEX = (() => {
   g.globalCompositeOperation = 'source-over';
   g.strokeStyle = 'rgba(255,255,255,0.5)'; g.lineWidth = 2;
   for (let i = 0; i < 6; i++) { const y = 18 + i * 5.5; g.beginPath(); g.moveTo(10 + i * 9, y); g.lineTo(120, y); g.stroke(); }
-  return new CanvasTexture(c);
+  return markShared(new CanvasTexture(c));
 })();
 
 interface Ball { mesh: Mesh; vel: Vector3; owner: Ship; dmg: number; ammo: AmmoId; life: number; trail: number }

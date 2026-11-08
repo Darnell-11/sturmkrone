@@ -2,6 +2,7 @@ import { BufferAttribute, CircleGeometry, Color, MathUtils, Mesh, MeshBasicMater
 import { AMMO, SHIP_CLASSES, type AmmoId, type ShipClass, type ShipLook } from '../../data/ships';
 import { toon } from '../../render/toon';
 import { buildShip, type ShipModel } from './shipBuilder';
+import { disposeObject, markShared } from '../../render/dispose';
 
 export interface SeaEnv {
   heightAt(x: number, z: number): number;
@@ -10,7 +11,7 @@ export interface SeaEnv {
   time: number;
 }
 
-const HOLE_MAT = new MeshBasicMaterial({ color: 0x1b1410, side: 2 });
+const HOLE_MAT = markShared(new MeshBasicMaterial({ color: 0x1b1410, side: 2 }));
 
 /** Ein Schiff mit Fahrphysik, Schadenszonen und sichtbaren Schäden. */
 export class Ship {
@@ -68,7 +69,7 @@ export class Ship {
   /** Klasse oder Aussehen ändern (Werft) */
   rebuild(tier: number, look: ShipLook, hullBonus = 0) {
     const frac = this.hull / this.maxHull;
-    this.model.group.removeFromParent();
+    disposeObject(this.model.group);
     this.cls = SHIP_CLASSES[tier];
     this.look = look;
     this.maxHull = this.cls.hp + hullBonus;
@@ -80,7 +81,8 @@ export class Ship {
 
   /** Steuerung: throttle −1 … 1 ändert Fahrstufe nicht, turn −1 … 1 */
   steer(dt: number, turn: number, env: SeaEnv, speedMult = 1) {
-    this.prev = { x: this.x, z: this.z, heading: this.heading };
+    const pv = this.prev;
+    pv.x = this.x; pv.z = this.z; pv.heading = this.heading;
     if (!this.alive) return;
     this.frozen -= dt;
     this.ceasefire -= dt;
@@ -206,7 +208,8 @@ export class Ship {
     for (const w of this.model.windows) w.visible = night > 0.25;
   }
 
-  dispose() { this.model.group.removeFromParent(); }
+  /** Schiff aus der Szene nehmen und seinen Grafikspeicher freigeben */
+  dispose() { disposeObject(this.model.group); }
 }
 
 export const SHIP_WOOD = toon('#6A4426');

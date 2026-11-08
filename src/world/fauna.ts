@@ -16,6 +16,11 @@ import { toon } from '../render/toon';
 import type { ParticleSystem } from './particles';
 import { hashId, seeded } from './waves';
 
+// Wiederverwendete Farben (kein neues Objekt pro Bild)
+const FOAM_COL = new Color(0.95, 0.98, 1);
+const FIREFLY_COL = new Color(1.3, 2.2, 0.5);
+const TMP_COL = new Color();
+
 interface Spot { x: number; y: number; z: number }
 interface FIsland { x: number; z: number; r: number; style: IslandStyle; trees: Spot[]; bushes: Spot[]; edge: (a: number) => number }
 interface Crab { isl: FIsland; a: number; d: number; dir: number; moveT: number; waitT: number; bob: number }
@@ -170,7 +175,7 @@ export class IslandFauna {
       d.updateMatrix();
       this.birdMesh.setMatrixAt(n, d.matrix);
       // Falter leuchten nachts heller
-      this.birdMesh.setColorAt(n, b.glow ? b.col.clone().multiplyScalar(0.6 + night * 0.8) : b.col);
+      this.birdMesh.setColorAt(n, b.glow ? TMP_COL.copy(b.col).multiplyScalar(0.6 + night * 0.8) : b.col);
       n++;
     }
     this.birdMesh.count = n;
@@ -193,7 +198,7 @@ export class IslandFauna {
       f.t += dt;
       const k = f.t / 0.9;
       const w = water(f.x, f.z);
-      if (f.t < dt * 1.5 || (k >= 1 && k - dt / 0.9 < 1)) this.spray?.emit(5, f.x, w + 0.1, f.z, { speed: 1, up: 2.2, life: 0.6, color: new Color(0.95, 0.98, 1), spread: 0.2 });
+      if (f.t < dt * 1.5 || (k >= 1 && k - dt / 0.9 < 1)) this.spray?.emit(5, f.x, w + 0.1, f.z, { speed: 1, up: 2.2, life: 0.6, color: FOAM_COL, spread: 0.2 });
       const fx = f.x + Math.sin(f.dir) * k * 1.8, fz = f.z + Math.cos(f.dir) * k * 1.8;
       d.position.set(fx, w - 0.3 + Math.sin(Math.min(1, k) * Math.PI) * 1.4, fz);
       d.rotation.set(-Math.cos(Math.min(1, k) * Math.PI) * 0.9, f.dir, 0, 'YXZ');
@@ -211,7 +216,7 @@ export class IslandFauna {
         if (!i.bushes.length || Math.hypot(i.x - px, i.z - pz) > 120 + i.r) continue;
         if (Math.random() < dt * Math.min(6, i.bushes.length) * night) {
           const b = i.bushes[Math.floor(Math.random() * i.bushes.length)];
-          this.sparks.emit(1, b.x + (Math.random() - 0.5) * 2, b.y + 0.6 + Math.random(), b.z + (Math.random() - 0.5) * 2, { speed: 0.25, up: 0.25, life: 3, color: new Color(1.3, 2.2, 0.5), gravity: -0.05, spread: 0.6 });
+          this.sparks.emit(1, b.x + (Math.random() - 0.5) * 2, b.y + 0.6 + Math.random(), b.z + (Math.random() - 0.5) * 2, { speed: 0.25, up: 0.25, life: 3, color: FIREFLY_COL, gravity: -0.05, spread: 0.6 });
         }
       }
     }

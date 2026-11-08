@@ -62,6 +62,12 @@ import { buildTown, mergeByMaterial, type TownBuild } from './town';
 import { SeaLife } from './life';
 import { TOWN_NPCS, type TownNpcDef } from '../data/quests';
 
+// Feste Partikelfarben (die Partikel kopieren die Farbe – so entsteht pro Bild kein neues Objekt)
+const FOAM_COL = new Color(0.95, 0.98, 1);
+const EMBER_COL = new Color(3.2, 1.3, 0.3);
+const CRYSTAL_COL = new Color(1.4, 0.8, 2.4);
+const DIG_COL = new Color(0.9, 0.8, 0.6);
+
 /** Gegnerlager je Inselstufe */
 const CAMP_BY_LEVEL: EnemyKind[][] = [
   ['matrose', 'matrose', 'musketier'],
@@ -232,6 +238,8 @@ export class SeaWorld {
   private footDist = 7;
   private menuOrbit = 0;
   private tmp = new Vector3();
+  private fwdTmp = new Vector3();
+  private npcTmp = new Vector3();
 
   constructor() {
     this.env = new Environment(this.scene);
@@ -251,7 +259,7 @@ export class SeaWorld {
     setElementSmoke(this.smoke);
     this.debris = new DebrisSystem(this.scene);
     this.debris.onSplash = (x, z, big) => {
-      this.spray.emit(big ? 14 : 5, x, this.env.heightAt(x, z) + 0.1, z, { speed: big ? 2.5 : 1.5, up: big ? 5 : 3, life: 0.8, color: new Color(0.95, 0.98, 1), spread: 0.3 });
+      this.spray.emit(big ? 14 : 5, x, this.env.heightAt(x, z) + 0.1, z, { speed: big ? 2.5 : 1.5, up: big ? 5 : 3, life: 0.8, color: FOAM_COL, spread: 0.3 });
     };
   }
 
@@ -737,7 +745,7 @@ export class SeaWorld {
     if (!b) return;
     b.update(dt, (x, z) => this.env.heightAt(x, z), this.mode === 'sail' ? this.ship : null, {
       shake: (a) => { this.shake = Math.max(this.shake, a); },
-      splash: (x, z, big) => { this.spray.emit(big ? 80 : 30, x, 0.5, z, { speed: big ? 8 : 4, up: big ? 14 : 9, life: 1.6, color: new Color(0.95, 0.98, 1), spread: big ? 6 : 1.5 }); audio.play('splash', big ? 1.4 : 1, { x, z }); },
+      splash: (x, z, big) => { this.spray.emit(big ? 80 : 30, x, 0.5, z, { speed: big ? 8 : 4, up: big ? 14 : 9, life: 1.6, color: FOAM_COL, spread: big ? 6 : 1.5 }); audio.play('splash', big ? 1.4 : 1, { x, z }); },
       hitPlayer: (dmg) => { this.ship.damage(dmg, 'kugel', null); this.shake = Math.max(this.shake, 0.5); this.overlay?.hurt(); this.overlay?.number(new Vector3(this.ship.x, 4, this.ship.z), dmg, 'hurt'); },
       roar: () => audio.play('roar'),
     });
@@ -925,7 +933,7 @@ export class SeaWorld {
       const dd = Math.hypot(f.x - this.playerPos.x, f.z - this.playerPos.z);
       if (dd > 450) continue;
       if (Math.random() < dt * 2.5) this.smoke.puff(f.x, f.y + 0.6, f.z, { size: 0.4, grow: 3, life: 5, tone: 0.34, vy: 1.8, spread: 0.12, rise: 0.7, alpha: 0.32, glow: 0.4, wind: 0.6 });
-      if (dd < 120 && Math.random() < dt * 8) this.sparks.emit(1, f.x, f.y + 0.3, f.z, { speed: 0.4, up: 2.5, life: 0.9, color: new Color(3.2, 1.3, 0.3), gravity: -1.5, spread: 0.4 });
+      if (dd < 120 && Math.random() < dt * 8) this.sparks.emit(1, f.x, f.y + 0.3, f.z, { speed: 0.4, up: 2.5, life: 0.9, color: EMBER_COL, gravity: -1.5, spread: 0.4 });
     }
     // Schornsteine der Hafenstadt
     if (this.town && Math.random() < dt * 5) for (const p of this.town.smoke) if (Math.hypot(p.x - this.x, p.z - this.z) < 400) this.smoke.puff(p.x, p.y, p.z, { size: 0.5, grow: 3.5, life: 6, tone: 0.62, vy: 1.2, spread: 0.15, rise: 0.3, alpha: 0.5, wind: 0.7 });
@@ -938,7 +946,7 @@ export class SeaWorld {
       const c = this.crystal;
       c.mesh.rotation.y += dt * 1.5;
       c.mesh.position.y = c.y + Math.sin(this.env.clock * 2) * 0.3;
-      if (Math.random() < dt * 8) this.sparks.emit(1, c.x + (Math.random() - 0.5) * 1.5, c.y - 1, c.z + (Math.random() - 0.5) * 1.5, { speed: 0.3, up: 2.5, life: 1, color: new Color(1.4, 0.8, 2.4), gravity: -1, spread: 0.2 });
+      if (Math.random() < dt * 8) this.sparks.emit(1, c.x + (Math.random() - 0.5) * 1.5, c.y - 1, c.z + (Math.random() - 0.5) * 1.5, { speed: 0.3, up: 2.5, life: 1, color: CRYSTAL_COL, gravity: -1, spread: 0.2 });
     }
     this.updateBeacon(dt);
     this.naval?.updateBars(this.camera, this.mode === 'sail');
@@ -1182,7 +1190,7 @@ export class SeaWorld {
         if (input.pressed('interact')) {
           this.player.play('cheer', { restart: true, loop: false, onDone: () => this.player?.play('idle') });
           this.fx?.shockwave(new Vector3(cr.x, f.y, cr.z), 8, '#C77DFF');
-          this.sparks.emit(60, cr.x, cr.y, cr.z, { speed: 7, up: 6, life: 1.2, color: new Color(1.4, 0.8, 2.4), spread: 0.5 });
+          this.sparks.emit(60, cr.x, cr.y, cr.z, { speed: 7, up: 6, life: 1.2, color: CRYSTAL_COL, spread: 0.5 });
           cr.mesh.removeFromParent();
           this.crystal = null;
           this.onCrystal(cr.id);
@@ -1196,7 +1204,7 @@ export class SeaWorld {
         if (input.pressed('interact')) {
           this.player.play('pickup', { restart: true, onDone: () => this.player?.play('idle') });
           this.fx?.shockwave(new Vector3(dig.x, f.y, dig.z), 3, '#E3B04B');
-          this.dust.emit(30, dig.x, f.y + 0.3, dig.z, { speed: 3, up: 5, life: 1, color: new Color(0.9, 0.8, 0.6) });
+          this.dust.emit(30, dig.x, f.y + 0.3, dig.z, { speed: 3, up: 5, life: 1, color: DIG_COL });
           this.life?.removeDig(dig);
           this.onDig(dig.island);
         }
@@ -1432,7 +1440,7 @@ export class SeaWorld {
   }
 
   private updateNpcs(dt: number) {
-    const p = this.mode === 'foot' && this.foot ? new Vector3(this.foot.x, 0, this.foot.z) : null;
+    const p = this.mode === 'foot' && this.foot ? this.npcTmp.set(this.foot.x, 0, this.foot.z) : null;
     const cam = this.camera.position;
     for (const n of this.npcs) n.update(dt, p, Math.hypot(cam.x - n.x, cam.z - n.z));
     for (const n of this.visitors) n.update(dt, p, Math.hypot(cam.x - n.x, cam.z - n.z));
@@ -1453,8 +1461,10 @@ export class SeaWorld {
   }
 
   private updateWake(dt: number) {
-    for (const w of this.wake) w.age += dt;
-    this.wake = this.wake.filter((w) => w.age < 6);
+    // Altes Kielwasser an Ort und Stelle entfernen (kein neues Array pro Bild)
+    let n = 0;
+    for (const w of this.wake) { w.age += dt; if (w.age < 6) this.wake[n++] = w; }
+    this.wake.length = n;
     this.wakeTimer -= dt;
     if (this.wakeTimer <= 0 && Math.abs(this.speed) > 1.5) {
       this.wakeTimer = WAKE_INTERVAL;
@@ -1465,7 +1475,8 @@ export class SeaWorld {
     this.env.ocean.setWake(this.wake);
   }
 
-  private fwd(h = this.heading) { return new Vector3(Math.sin(h), 0, Math.cos(h)); }
+  /** Fahrtrichtung (in einen wiederverwendeten Vektor – sofort benutzen, nicht aufheben) */
+  private fwd(h = this.heading) { return this.fwdTmp.set(Math.sin(h), 0, Math.cos(h)); }
 
   // ---------- Darstellung ----------
 
@@ -1486,10 +1497,10 @@ export class SeaWorld {
     for (const e of this.naval?.enemies ?? []) e.ship.render(alpha, sea, night, frameDt);
     const L = s.cls.L;
     if (s.speed > 3 && Math.random() < frameDt * 30) {
-      this.spray.emit(2, x - f.x * L * 0.5, wy + 0.1, z - f.z * L * 0.5, { speed: 1, up: 1.2, life: 1.2, color: new Color(0.95, 0.98, 1), gravity: 3, spread: s.cls.W * 0.4 });
+      this.spray.emit(2, x - f.x * L * 0.5, wy + 0.1, z - f.z * L * 0.5, { speed: 1, up: 1.2, life: 1.2, color: FOAM_COL, gravity: 3, spread: s.cls.W * 0.4 });
     }
     if (s.speed > 6 && Math.random() < frameDt * 18 && this.mode === 'sail') {
-      this.spray.emit(5, x + f.x * L * 0.5, wy + 0.6, z + f.z * L * 0.5, { speed: 2.5, up: 4, life: 1, color: new Color(0.95, 0.98, 1) });
+      this.spray.emit(5, x + f.x * L * 0.5, wy + 0.6, z + f.z * L * 0.5, { speed: 2.5, up: 4, life: 1, color: FOAM_COL });
     }
     for (const b of this.buoys) {
       b.g.position.set(b.x, env.heightAt(b.x, b.z) - 0.3, b.z);

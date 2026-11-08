@@ -214,7 +214,7 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
   deckTex.rotation = Math.PI / 2;
   deckTex.repeat.set(0.35, 0.35);
   deckTex.needsUpdate = true;
-  const deck = new Mesh(deckGeo, toon({ color: '#C79A68', side: DoubleSide, map: deckTex }));
+  const deck = new Mesh(deckGeo, toon({ color: '#C79A68', side: DoubleSide, map: deckTex, unique: true }));
   deck.position.y = D - 0.05;
   deck.userData.noOutline = true;
   group.add(deck);
@@ -253,7 +253,7 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
   const castle = new Mesh(new ExtrudeGeometry(cs, { depth: castleH, bevelEnabled: false }).rotateX(-Math.PI / 2), wood);
   castle.position.y = D;
   group.add(castle);
-  const castleTop = new Mesh(new ExtrudeGeometry(cs, { depth: 0.14, bevelEnabled: false }).rotateX(-Math.PI / 2), toon({ color: '#C79A68', map: deckTex }));
+  const castleTop = new Mesh(new ExtrudeGeometry(cs, { depth: 0.14, bevelEnabled: false }).rotateX(-Math.PI / 2), toon({ color: '#C79A68', map: deckTex, unique: true }));
   castleTop.position.y = D + castleH;
   castleTop.scale.set(1.04, 1, 1);
   group.add(castleTop);
@@ -330,7 +330,7 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
       }
       sg.computeVertexNormals();
       const withEmblem = mi === mainMast && k === (yards > 2 ? 1 : 0);
-      const sail = new Mesh(sg, toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, withEmblem ? emblem : null, sailSeed++) }).clone());
+      const sail = new Mesh(sg, toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, withEmblem ? emblem : null, sailSeed++), unique: true }));
       sail.position.set(0, y + h * 0.1, z + 0.15);
       sail.userData.noOutline = true;
       sail.userData.base = sail.position.y;
@@ -350,7 +350,7 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
   // Tuch-Textur über die Dreiecksfläche legen
   const juv = jibGeo.attributes.uv;
   for (let i = 0; i < juv.count; i++) juv.setXY(i, juv.getX(i) / (c.L * 0.22), juv.getY(i) / (c.mh * 0.6));
-  const jib = new Mesh(jibGeo, toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, null, 99) }).clone());
+  const jib = new Mesh(jibGeo, toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, null, 99), unique: true }));
   jib.rotation.y = -Math.PI / 2;
   jib.position.set(0, D + 1, c.masts[0] * c.L + 1);
   jib.userData.noOutline = true;

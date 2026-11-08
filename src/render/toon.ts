@@ -13,6 +13,7 @@ import {
   type Side,
   type Texture,
 } from 'three';
+import { markShared } from './dispose';
 
 /** Gemeinsame Werte für alle Toon-Materialien – die Umgebung passt sie an Tageszeit und Wetter an. */
 export const toonShared = {
@@ -34,7 +35,6 @@ function makeRamp(levels: number[]): DataTexture {
   t.needsUpdate = true;
   return t;
 }
-
 /** 3-stufige Licht-Rampe mit sauberen, leicht weichen Kanten (Schatten, Halbton, Licht) */
 export const TOON_RAMP = (() => {
   const n = 64;
@@ -51,7 +51,7 @@ export const TOON_RAMP = (() => {
   t.minFilter = t.magFilter = LinearFilter;
   t.generateMipmaps = false;
   t.needsUpdate = true;
-  return t;
+  return markShared(t);
 })();
 /** Weichere Rampe für Wasser */
 export const WATER_RAMP = makeRamp([0.62, 0.84, 1.0]);
@@ -71,6 +71,8 @@ export interface ToonOptions {
   flatShading?: boolean;
   /** Prozedurale Oberfläche aus der Weltposition (scharf in jeder Auflösung): Sand, Gras oder Fels */
   detail?: 'sand' | 'grass' | 'rock';
+  /** Eigenes Material statt Cache (für Texturen, die nur einem Objekt gehören – wird mit ihm freigegeben) */
+  unique?: boolean;
 }
 
 const cache = new Map<string, MeshToonMaterial>();
@@ -184,8 +186,9 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail?: 'sand'
 /** Toon-Material im Anime-Stil (gecacht – gleiche Optionen ergeben dasselbe Material). */
 export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial {
   const o: ToonOptions = typeof opts === 'object' && opts !== null && 'color' in (opts as object) ? (opts as ToonOptions) : { color: opts as ColorRepresentation };
-  const key = JSON.stringify({ ...o, color: new Color(o.color).getHex(), emissive: o.emissive !== undefined ? new Color(o.emissive).getHex() : 0, map: o.map?.uuid ?? null });
-  const hit = cache.get(key);
+  const unique = !!o.unique;
+  const key = unique ? '' : JSON.stringify({ ...o, color: new Color(o.color).getHex(), emissive: o.emissive !== undefined ? new Color(o.emissive).getHex() : 0, map: o.map?.uuid ?? null });
+  const hit = unique ? undefined : cache.get(key);
   if (hit) return hit;
   const mat = new MeshToonMaterial({
     color: o.color,
@@ -200,8 +203,9 @@ export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial 
   if (o.flatShading) (mat as any).flatShading = true;
   patch(mat, o.spec ?? 0, o.rim ?? 1, o.detail);
   mat.userData.toon = true;
+  if (unique) return mat;
   cache.set(key, mat);
-  return mat;
+  return markShared(mat);
 }
 
 /** Ersetzt die Materialien fremder Modelle durch unser Toon-Material (Farbe und Textur bleiben). */

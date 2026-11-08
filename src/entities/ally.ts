@@ -253,8 +253,7 @@ export class Ally implements AllyTarget {
   }
 
   private sync() {
-    this.char.holder.position.set(this.x, this.y, this.z);
-    this.char.holder.rotation.y = this.yaw;
+    this.char.place(this.x, this.y, this.z, this.yaw);
   }
 
   dispose() { this.char.dispose(); }

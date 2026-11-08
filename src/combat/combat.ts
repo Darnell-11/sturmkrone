@@ -24,6 +24,7 @@ import type { DeckGround, Ground, WalkIsland } from '../world/islandGround';
 import type { CombatFx } from './fx';
 import type { AbilityTarget } from '../faji/abilities';
 import type { Element, Status } from '../data/skills';
+import { markShared } from '../render/dispose';
 
 export interface PlayerTarget {
   readonly x: number;
@@ -83,6 +84,11 @@ export class CombatSystem implements EnemyWorld {
   lock: Enemy | null = null;
   player: PlayerTarget | null = null;
   playerPos: Vector3 | null = null;
+  // feste Vektoren für Ziel und Spielerposition (pro Bild nur neu gesetzt, nicht neu angelegt)
+  private plVec = new Vector3();
+  private tgVec = new Vector3();
+  private barVec = new Vector3();
+  private engagedTmp: Enemy[] = [];
   playerActive = false;
   /** Basis-Angriffswert des Spielers */
   atk = 12;
@@ -543,16 +549,18 @@ export class CombatSystem implements EnemyWorld {
     this.now += dt;
     const pl = this.player;
     this.playerActive = !!pl && pl.active;
-    this.playerPos = pl ? new Vector3(pl.x, pl.y, pl.z) : null;
+    this.playerPos = pl ? this.plVec.set(pl.x, pl.y, pl.z) : null;
 
     // Ein kämpfender Gegner alarmiert das ganze Lager
-    const engaged = this.enemies.filter((e) => e.engaged);
+    const engaged = this.engagedTmp;
+    engaged.length = 0;
+    for (const e of this.enemies) if (e.engaged) engaged.push(e);
     if (engaged.length) for (const e of this.enemies) if (!e.engaged && engaged.some((o) => Math.hypot(o.x - e.x, o.z - e.z) < 32)) e.alert();
     // Jeder Gegner wählt ein Ziel: Spielfigur oder Crew (Tanks ziehen Gegner an)
     const plPos = this.playerPos, plAct = this.playerActive;
     for (const e of this.enemies) {
       const tg = this.pickTarget(e);
-      if (tg) { this.playerPos = new Vector3(tg.x, tg.y, tg.z); this.playerActive = true; }
+      if (tg) { this.playerPos = this.tgVec.set(tg.x, tg.y, tg.z); this.playerActive = true; }
       else { this.playerPos = plPos; this.playerActive = plAct; }
       e.update(dt, this);
     }
@@ -661,11 +669,11 @@ export class CombatSystem implements EnemyWorld {
     this.overlay.setBoss(boss ? boss.name ?? boss.def.label : null, boss ? boss.hp / boss.maxHp : 0);
     for (const e of this.enemies) {
       const show = e.alive && !e.def.boss && (this.now - e.lastHit < 5 || e === this.lock || e.def.elite);
-      this.overlay.setBar(e, show ? e.head : null, show ? e.hp / e.maxHp : -1, !!e.def.elite, camera);
+      this.overlay.setBar(e, show ? e.headInto(this.barVec) : null, show ? e.hp / e.maxHp : -1, !!e.def.elite, camera);
     }
-    this.overlay.setReticle(this.lock?.alive ? this.lock.head.setY(this.lock.y + 1.2 * this.lock.def.scale) : null, camera);
+    this.overlay.setReticle(this.lock?.alive ? this.lock.headInto(this.barVec).setY(this.lock.y + 1.2 * this.lock.def.scale) : null, camera);
   }
 }
 
-const COIN_GEO = new CylinderGeometry(0.16, 0.16, 0.04, 14).rotateX(Math.PI / 2);
+const COIN_GEO = markShared(new CylinderGeometry(0.16, 0.16, 0.04, 14).rotateX(Math.PI / 2));
 const COIN_MAT = toon({ color: 0xffc83a, spec: 1, emissive: 0x4a3000 });

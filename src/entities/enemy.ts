@@ -17,6 +17,7 @@ import type { CharacterAssets } from './character/assets';
 import { Character } from './character/character';
 import { enemyWeapons } from './character/weapons';
 import { toon } from '../render/toon';
+import { markShared } from '../render/dispose';
 
 export type EnemyState = 'idle' | 'chase' | 'strafe' | 'windup' | 'attack' | 'recover' | 'hit' | 'stagger' | 'air' | 'down' | 'dead';
 
@@ -55,7 +56,7 @@ const EXCL_TEX = (() => {
   g.strokeText('!', 32, 34);
   g.fillStyle = '#ffffff';
   g.fillText('!', 32, 34);
-  return new CanvasTexture(c);
+  return markShared(new CanvasTexture(c));
 })();
 
 export class Enemy {
@@ -155,6 +156,8 @@ export class Enemy {
   get pos() { return new Vector3(this.x, this.y, this.z); }
   /** Kopfhöhe für Balken und Zahlen */
   get head() { return new Vector3(this.x, this.y + 2.2 * this.def.scale, this.z); }
+  /** Kopfposition in einen vorhandenen Vektor (für Anzeigen, die jedes Bild laufen) */
+  headInto(out: Vector3) { return out.set(this.x, this.y + 2.2 * this.def.scale, this.z); }
 
   /** Treffer durch den Spieler. Rückgabe: ob geblockt wurde */
   takeHit(h: HitInfo, now: number): 'hit' | 'blocked' | 'stagger' | 'kill' {
@@ -372,8 +375,7 @@ export class Enemy {
       const g = w.ground(this.x, this.z);
       this.y += ((Number.isFinite(g) ? g : this.y) - this.y) * Math.min(1, dt * 15);
     }
-    this.char.holder.position.set(this.x, this.y, this.z);
-    this.char.holder.rotation.y = this.yaw;
+    this.char.place(this.x, this.y, this.z, this.yaw);
     this.char.update(dt);
     this.updateFlash();
   }

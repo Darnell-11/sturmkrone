@@ -16,6 +16,13 @@ import {
 } from 'three';
 import type { FxKind } from '../data/combat';
 import type { ParticleSystem } from '../world/particles';
+import { disposeGeometry } from '../render/dispose';
+import { q, sharedGeo } from '../render/geoCache';
+
+// Wiederverwendete Farben (Partikel und Materialien kopieren den Wert)
+const TMP_COL = new Color();
+const DUST_COL = new Color(0.9, 0.82, 0.65);
+const PUFF_COL = new Color(0.92, 0.85, 0.7);
 
 function canvasTex(size: number, draw: (ctx: CanvasRenderingContext2D, s: number) => void) {
   const c = document.createElement('canvas');
@@ -135,9 +142,9 @@ export class CombatFx {
 
   /** Trefferfunke am Trefferpunkt */
   hit(pos: Vector3, kind: FxKind, color: string, big = false) {
-    const c = new Color(color);
+    const c = TMP_COL.set(color);
     const mat = this.sparkMat.clone();
-    mat.color = c.clone().multiplyScalar(kind === 'magic' ? 3 : 2.2);
+    mat.color.copy(c).multiplyScalar(kind === 'magic' ? 3 : 2.2);
     mat.rotation = Math.random() * Math.PI;
     const s = new Sprite(mat);
     s.position.copy(pos);
@@ -149,17 +156,19 @@ export class CombatFx {
     // Zweiter, weißer Stern um 45° gedreht für mehr Punch
     const s2 = s.clone();
     s2.material = mat.clone();
-    (s2.material as SpriteMaterial).color = new Color(3, 3, 3);
+    (s2.material as SpriteMaterial).color.setRGB(3, 3, 3);
     (s2.material as SpriteMaterial).rotation = mat.rotation + Math.PI / 4;
     this.scene.add(s2);
     this.live.push({ obj: s2, life: 0.1, max: 0.1, kind: 'spark', data: size * 0.6 });
-    this.sparks.emit(big ? 22 : 12, pos.x, pos.y, pos.z, { speed: big ? 11 : 8, up: 4, life: 0.35, color: c.clone().multiplyScalar(1.6), gravity: 12, spread: 0.2 });
+    this.sparks.emit(big ? 22 : 12, pos.x, pos.y, pos.z, { speed: big ? 11 : 8, up: 4, life: 0.35, color: c.multiplyScalar(1.6), gravity: 12, spread: 0.2 });
   }
 
   /** Schmier-Bogen eines Schwerthiebs */
   smear(origin: Vector3, yaw: number, tilt: number, range: number, arc: number, color: string, flip = false) {
     const a = Math.min(arc, Math.PI * 1.9);
-    const geo = arcGeometry(range * 0.45, range * 1.05, a, 32);
+    // gleiche Reichweite und Bogenweite → dasselbe Netz (Schwerthiebe wiederholen sich ständig)
+    const r = q(range), aq = q(a, 0.02);
+    const geo = sharedGeo(`arc:${r}:${aq}`, () => arcGeometry(r * 0.45, r * 1.05, aq, 32));
     const mat = new ShaderMaterial({
       uniforms: { uProg: { value: 0 }, uColor: { value: new Color(color) }, uAlpha: { value: 1 } },
       vertexShader: SMEAR_VERT,
@@ -182,21 +191,22 @@ export class CombatFx {
 
   /** Schockwelle am Boden */
   shockwave(pos: Vector3, radius: number, color = '#ffffff') {
-    const m = new Mesh(new RingGeometry(0.8, 1, 48), new MeshBasicMaterial({ color: new Color(color).multiplyScalar(2), transparent: true, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }));
+    const m = new Mesh(sharedGeo('wave', () => new RingGeometry(0.8, 1, 48)), new MeshBasicMaterial({ color: TMP_COL.set(color).multiplyScalar(2), transparent: true, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }));
     m.rotation.x = -Math.PI / 2;
     m.position.copy(pos).setY(pos.y + 0.08);
     this.scene.add(m);
     this.live.push({ obj: m, life: 0.45, max: 0.45, kind: 'wave', data: radius });
-    this.dust.emit(Math.round(26 * this.scale), pos.x, pos.y + 0.2, pos.z, { speed: radius * 2.2, up: 1.5, life: 0.8, color: new Color(0.9, 0.82, 0.65), gravity: 2, spread: 0.6 });
+    this.dust.emit(Math.round(26 * this.scale), pos.x, pos.y + 0.2, pos.z, { speed: radius * 2.2, up: 1.5, life: 0.8, color: DUST_COL, gravity: 2, spread: 0.6 });
   }
 
   /** Bodenriss nach schweren Schlägen */
   crack(pos: Vector3, size: number) {
     // riesige Risse wirkten wie Spinnweben: Größe deckeln, damit die Spalten kräftig bleiben
     size = Math.min(size, 8);
-    const m = new Mesh(new PlaneGeometry(size, size), new MeshBasicMaterial({ map: CRACK_TEX, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+    const m = new Mesh(sharedGeo('crack', () => new PlaneGeometry(1, 1)), new MeshBasicMaterial({ map: CRACK_TEX, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
     m.rotation.x = -Math.PI / 2;
     m.rotation.z = Math.random() * Math.PI * 2;
+    m.scale.set(size, size, 1);
     m.position.copy(pos).setY(pos.y + 0.05);
     this.scene.add(m);
     this.live.push({ obj: m, life: 2.5, max: 2.5, kind: 'crack' });
@@ -204,8 +214,9 @@ export class CombatFx {
 
   /** Warnkreis für Flächenangriffe; füllt sich bis zum Einschlag */
   telegraph(pos: Vector3, radius: number, time: number, color = '#FF3A2A') {
-    const ring = new Mesh(new RingGeometry(radius * 0.92, radius, 48), new MeshBasicMaterial({ color: new Color(color).multiplyScalar(1.5), transparent: true, opacity: 0.9, depthWrite: false, side: DoubleSide }));
-    const fill = new Mesh(new CircleGeometry(radius, 48), new MeshBasicMaterial({ color: new Color(color), transparent: true, opacity: 0.25, depthWrite: false, side: DoubleSide }));
+    const rq = q(radius);
+    const ring = new Mesh(sharedGeo(`tele:${rq}`, () => new RingGeometry(rq * 0.92, rq, 48)), new MeshBasicMaterial({ color: TMP_COL.set(color).multiplyScalar(1.5), transparent: true, opacity: 0.9, depthWrite: false, side: DoubleSide }));
+    const fill = new Mesh(sharedGeo(`teleFill:${rq}`, () => new CircleGeometry(rq, 48)), new MeshBasicMaterial({ color: TMP_COL.set(color), transparent: true, opacity: 0.25, depthWrite: false, side: DoubleSide }));
     ring.rotation.x = fill.rotation.x = -Math.PI / 2;
     ring.position.copy(pos).setY(pos.y + 0.06);
     fill.position.copy(pos).setY(pos.y + 0.05);
@@ -217,12 +228,12 @@ export class CombatFx {
 
   /** Farbige Partikel (Brand, Gift) */
   puffColor(pos: Vector3, color: string) {
-    this.sparks.emit(1, pos.x + (Math.random() - 0.5) * 0.6, pos.y + Math.random(), pos.z + (Math.random() - 0.5) * 0.6, { speed: 0.4, up: 2.5, life: 0.6, color: new Color(color).multiplyScalar(2.2), gravity: -1, spread: 0.1 });
+    this.sparks.emit(1, pos.x + (Math.random() - 0.5) * 0.6, pos.y + Math.random(), pos.z + (Math.random() - 0.5) * 0.6, { speed: 0.4, up: 2.5, life: 0.6, color: TMP_COL.set(color).multiplyScalar(2.2), gravity: -1, spread: 0.1 });
   }
 
   /** Staubwolke (Rolle, Landung) */
   puff(pos: Vector3, n = 8) {
-    this.dust.emit(Math.round(n * this.scale), pos.x, pos.y + 0.15, pos.z, { speed: 2, up: 1, life: 0.6, color: new Color(0.92, 0.85, 0.7), gravity: 1, spread: 0.5 });
+    this.dust.emit(Math.round(n * this.scale), pos.x, pos.y + 0.15, pos.z, { speed: 2, up: 1, life: 0.6, color: PUFF_COL, gravity: 1, spread: 0.5 });
   }
 
   update(dt: number) {
@@ -240,10 +251,14 @@ export class CombatFx {
       }
       if (l.life <= 0) {
         l.obj.removeFromParent();
-        if (l.kind !== 'spark') (l.obj as Mesh).geometry?.dispose?.();
+        // eigenes Material freigeben; geteilte Netze (Bögen, Ringe) bleiben für den nächsten Treffer
+        disposeGeometry((l.obj as Mesh).geometry);
         mat.dispose?.();
       }
     }
-    this.live = this.live.filter((l) => l.life > 0);
+    // abgelaufene Effekte an Ort und Stelle entfernen (kein neues Array pro Bild)
+    let n = 0;
+    for (const l of this.live) if (l.life > 0) this.live[n++] = l;
+    this.live.length = n;
   }
 }

@@ -14,6 +14,14 @@
 - **Structure:** Decouple Physics, Input, Sound, and Render loops.
 - **Physics Loop:** Fixed timestep update (60 Hz) decoupled from visual rendering frames.
 
+> **Umsetzung im Code:**
+> - Speicher: Objekte mit `disposeObject()` aus `src/render/dispose.ts` entfernen.
+> - Geteilte Ressourcen (Caches, Modul-Konstanten, Toon-Materialien) mit `markShared()` kennzeichnen, damit sie nie freigegeben werden.
+> - Kurzlebige Effekte holen ihre Netze über `sharedGeo()` aus `src/render/geoCache.ts`.
+> - Feste Logikschleife: `src/core/loop.ts`, 60 Hz mit Akkumulator.
+> - Figuren setzen ihre Position mit `Character.place()`; die Darstellung gleitet mit `Character.present(alpha)`.
+> - Schiffe und Spielerfigur interpolieren über `prev`.
+
 > **Abstimmung mit dem Briefing unten:** Diese Richtlinien gelten zusätzlich zum Projekt-Briefing. Der Anime-Stil (Toon-Material, Konturen) bleibt die Art Direction: PBR-Kanäle (Normal, Roughness, Metallic, AO) fließen in das Toon-Material ein, statt es zu ersetzen. Post-Effekte laufen weiter über `postprocessing` (pmndrs) mit den gleichwertigen Effekten (Bloom, AO, Tiefenunschärfe). Schwere Effekte (AO, CSM, PCSS, Tiefenunschärfe) gelten für High/Max; Handys auf Low/Mid haben Vorrang bei den 60 FPS.
 
 ---

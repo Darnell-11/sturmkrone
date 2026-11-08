@@ -21,6 +21,7 @@ import type { IslandDef } from '../data/regions';
 import { addOutlines } from '../render/outline';
 import { toon } from '../render/toon';
 import type { ParticleSystem } from './particles';
+import { markShared } from '../render/dispose';
 
 const GULLS = 28;
 
@@ -79,7 +80,7 @@ export class SeaLife {
     hull.position.y = 0.3;
     const mast = new Mesh(new CylinderGeometry(0.06, 0.08, 4, 6), toon('#5A3A22'));
     mast.position.y = 2.4;
-    const sail = new Mesh(new PlaneGeometry(2.2, 2.6), toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(['#E8DCC0', '#C9A27A', '#D9C8A8'][Math.floor(Math.random() * 3)], null, Math.floor(Math.random() * 999)) }));
+    const sail = new Mesh(new PlaneGeometry(2.2, 2.6), toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(['#E8DCC0', '#C9A27A', '#D9C8A8'][Math.floor(Math.random() * 3)], null, Math.floor(Math.random() * 999)), unique: true }));
     sail.position.set(0.05, 2.6, -0.4);
     sail.rotation.y = Math.PI / 2;
     sail.userData.noOutline = true;
@@ -254,6 +255,6 @@ function xTexture() {
   g.lineWidth = 12;
   g.lineCap = 'round';
   g.beginPath(); g.moveTo(12, 12); g.lineTo(52, 52); g.moveTo(52, 12); g.lineTo(12, 52); g.stroke();
-  X_TEX = new CanvasTexture(c);
+  X_TEX = markShared(new CanvasTexture(c));
   return X_TEX;
 }
