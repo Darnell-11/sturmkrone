@@ -11,7 +11,11 @@ export interface QualityConfig {
   maxPixelRatio: number;
   /** Höchstzahl gerenderter Pixel (Breite × Höhe), 4K = 3840 × 2160 */
   maxPixels: number;
-  shadows: { enabled: boolean; mapSize: number; soft: boolean };
+  /**
+   * Schatten. cascades ≥ 2: Kaskadierte Schattenkarten (CSM) – mehrere Karten hintereinander,
+   * nah gestochen scharf, in der Ferne weich auslaufend bis `far` Meter. 1 = eine Karte um die Figur.
+   */
+  shadows: { enabled: boolean; mapSize: number; soft: boolean; cascades: number; far: number };
   post: {
     enabled: boolean;
     bloom: boolean;
@@ -19,7 +23,8 @@ export interface QualityConfig {
     colorGrading: boolean;
     godRays: boolean;
     depthOfField: boolean;
-    ambientOcclusion: boolean;
+    /** Umgebungsverdeckung (Kontaktschatten in Ecken und an Übergängen); null = aus */
+    ambientOcclusion: AoConfig | null;
   };
   /** Kantenglättung im Post-Effekt-Puffer (0 = aus) */
   multisampling: number;
@@ -36,6 +41,31 @@ export interface QualityConfig {
   supersample: number;
 }
 
+/** Horizont-basierte Umgebungsverdeckung (GTAO-Art), in halber Auflösung berechnet */
+export interface AoConfig {
+  /** Suchrichtungen und Schritte je Richtung (Qualität gegen Kosten) */
+  dirs: number;
+  steps: number;
+  /** Auflösung der Berechnung relativ zum Bild */
+  scale: number;
+  /** Reichweite in Metern und Stärke */
+  radius: number;
+  intensity: number;
+}
+
+/** Handy-Grafikchips sind viel schwächer: dort rechnet die Umgebungsverdeckung mit weniger Proben */
+export const MOBILE_AO_LIMIT = { dirs: 3, steps: 3, scale: 0.5 };
+
+/** Gemeinsamer Bild-Look aller Stufen */
+export const RENDER_LOOK = {
+  /** Belichtung vor dem ACES-Filmic-Tonemapping: hellt um ~5 % auf, nichts brennt weiß aus (gemessen Mittag/Abend/Nacht/Sturm/Stadt) */
+  exposure: 1.1,
+  /** Leuchten nur über Helligkeit 1: Sonne, Laternen, Magie – normale Flächen bleiben im Mittag unter 0,8 */
+  bloom: { threshold: 1.0, smoothing: 0.12, intensity: 1.0, radius: 0.7 },
+  /** dezente Vignette an den Bildrändern */
+  vignette: { offset: 0.38, darkness: 0.42 },
+};
+
 export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
   low: {
     label: 'Niedrig',
@@ -43,9 +73,9 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     pixelRatio: 0.75,
     maxPixelRatio: 0.75,
     maxPixels: 1280 * 720,
-    shadows: { enabled: false, mapSize: 0, soft: false },
+    shadows: { enabled: false, mapSize: 0, soft: false, cascades: 0, far: 0 },
     // nur ein günstiger Durchgang für Farbkorrektur, damit der Look derselbe bleibt
-    post: { enabled: true, bloom: false, outlines: false, colorGrading: true, godRays: false, depthOfField: false, ambientOcclusion: false },
+    post: { enabled: true, bloom: false, outlines: false, colorGrading: true, godRays: false, depthOfField: false, ambientOcclusion: null },
     multisampling: 0,
     viewDistance: 420,
     particles: 0.35,
@@ -60,9 +90,9 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     pixelRatio: 1,
     maxPixelRatio: 1,
     maxPixels: 1920 * 1080,
-    shadows: { enabled: true, mapSize: 1024, soft: false },
+    shadows: { enabled: true, mapSize: 1024, soft: false, cascades: 1, far: 0 },
     // Farbkorrektur kostet kaum etwas (läuft im selben Durchgang) und gehört zum Look
-    post: { enabled: true, bloom: true, outlines: false, colorGrading: true, godRays: false, depthOfField: false, ambientOcclusion: false },
+    post: { enabled: true, bloom: true, outlines: false, colorGrading: true, godRays: false, depthOfField: false, ambientOcclusion: null },
     multisampling: 2,
     viewDistance: 560,
     particles: 0.6,
@@ -73,12 +103,12 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
   },
   high: {
     label: 'Hoch',
-    description: 'Für gute Handys und PCs. Weiche Schatten, Konturen, Farbkorrektur, Sonnenstrahlen.',
+    description: 'Für gute Handys und PCs. Gestaffelte weiche Schatten, Kontaktschatten, Konturen, Farbkorrektur, Sonnenstrahlen.',
     pixelRatio: 1.5,
     maxPixelRatio: 1.5,
     maxPixels: 2560 * 1440,
-    shadows: { enabled: true, mapSize: 2048, soft: true },
-    post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: false, ambientOcclusion: false },
+    shadows: { enabled: true, mapSize: 2048, soft: true, cascades: 2, far: 180 },
+    post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: false, ambientOcclusion: { dirs: 4, steps: 3, scale: 0.5, radius: 1.1, intensity: 0.85 } },
     multisampling: 4,
     viewDistance: 800,
     particles: 1,
@@ -93,8 +123,8 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     pixelRatio: null,
     maxPixelRatio: 3,
     maxPixels: 3840 * 2160,
-    shadows: { enabled: true, mapSize: 4096, soft: true },
-    post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: true },
+    shadows: { enabled: true, mapSize: 2048, soft: true, cascades: 3, far: 320 },
+    post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 6, steps: 4, scale: 0.5, radius: 1.3, intensity: 0.95 } },
     multisampling: 4,
     viewDistance: 1200,
     particles: 1.5,
@@ -109,8 +139,8 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     pixelRatio: null,
     maxPixelRatio: 4,
     maxPixels: 3840 * 2160,
-    shadows: { enabled: true, mapSize: 8192, soft: true },
-    post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: true },
+    shadows: { enabled: true, mapSize: 4096, soft: true, cascades: 4, far: 520 },
+    post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 8, steps: 5, scale: 0.75, radius: 1.4, intensity: 1 } },
     multisampling: 8,
     viewDistance: 1800,
     particles: 2,

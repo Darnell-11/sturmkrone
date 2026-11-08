@@ -25,7 +25,7 @@ import type { CombatFx } from '../combat/fx';
 import { AMMO, DEFAULT_SHIP_LOOK, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, type AmmoId, type NavalRole } from '../data/ships';
 import { WORLD_RADIUS } from '../data/world';
 import { Ship, type SeaEnv } from '../entities/ship/ship';
-import { toon } from '../render/toon';
+import { cloneToon, toon } from '../render/toon';
 import type { CombatOverlay } from '../ui/combatOverlay';
 import type { IslandGround } from '../world/islandGround';
 import type { ParticleSystem } from '../world/particles';
@@ -399,7 +399,8 @@ export class NavalSystem {
       ship.model.group.traverse((o) => {
         const m = o as Mesh;
         if (!m.isMesh || Array.isArray(m.material)) return;
-        const mat = m.material.clone() as MeshBasicMaterial;
+        // Kopie behält Anime-Shading und Schatten-Schalter (ein einfaches clone() verliert beides)
+        const mat = cloneToon(m.material) as MeshBasicMaterial;
         mat.transparent = true; mat.opacity = 0.62; mat.depthWrite = false;
         if ('emissive' in mat) (mat as unknown as { emissive: Color }).emissive.set('#1E5A50');
         m.material = mat;

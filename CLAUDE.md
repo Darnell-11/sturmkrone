@@ -21,6 +21,10 @@
 > - Feste Logikschleife: `src/core/loop.ts`, 60 Hz mit Akkumulator.
 > - Figuren setzen ihre Position mit `Character.place()`; die Darstellung gleitet mit `Character.present(alpha)`.
 > - Schiffe und Spielerfigur interpolieren über `prev`.
+> - Licht und Bild:
+>   - Kaskadierte Schatten: `src/render/csm.ts` mit dem three.js-CSM in `world/environment.ts`, aktiv ab `shadows.cascades ≥ 2`. Beleuchtete Materialien brauchen `ensureCsm()`; Kopien von Toon-Materialien entstehen mit `cloneToon()`.
+>   - Umgebungsverdeckung: `src/render/gtao.ts`, ein `AoPass` in halber Auflösung plus `AoEffect`.
+>   - Belichtung, Bloom-Schwelle und Vignette stehen in `RENDER_LOOK` in `data/qualityTiers.ts`.
 
 > **Abstimmung mit dem Briefing unten:** Diese Richtlinien gelten zusätzlich zum Projekt-Briefing. Der Anime-Stil (Toon-Material, Konturen) bleibt die Art Direction: PBR-Kanäle (Normal, Roughness, Metallic, AO) fließen in das Toon-Material ein, statt es zu ersetzen. Post-Effekte laufen weiter über `postprocessing` (pmndrs) mit den gleichwertigen Effekten (Bloom, AO, Tiefenunschärfe). Schwere Effekte (AO, CSM, PCSS, Tiefenunschärfe) gelten für High/Max; Handys auf Low/Mid haben Vorrang bei den 60 FPS.
 

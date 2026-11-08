@@ -29,8 +29,8 @@ import {
   VignetteEffect,
   type Effect,
 } from 'postprocessing';
-import { QUALITY_TIERS, type QualityConfig, type QualityTier } from '../data/qualityTiers';
-import { DepthAOEffect } from './ao';
+import { MOBILE_AO_LIMIT, QUALITY_TIERS, RENDER_LOOK, type QualityConfig, type QualityTier } from '../data/qualityTiers';
+import { AoEffect, AoPass } from './gtao';
 import { EdgeEffect, OpaqueEffect, WATER_ALPHA, setHullsVisible } from './outline';
 import { GradeEffect } from './grade';
 
@@ -39,6 +39,8 @@ export class WebGLUnavailableError extends Error {}
 export class GameRenderer {
   readonly gl: WebGLRenderer;
   tier: QualityTier = 'mid';
+  /** Handy/Tablet (setzt das Spiel nach der Geräteerkennung): teure Effekte sparsamer */
+  mobile = false;
   config: QualityConfig = QUALITY_TIERS.mid;
 
   private composer: EffectComposer | null = null;
@@ -47,7 +49,6 @@ export class GameRenderer {
   private listeners: ((c: QualityConfig, tier: QualityTier) => void)[] = [];
   private sun: Mesh | null = null;
   private focus: Vector3 | null = null;
-  private ao: DepthAOEffect | null = null;
   private godRays: GodRaysEffect | null = null;
   private dof: DepthOfFieldEffect | null = null;
 
@@ -57,8 +58,9 @@ export class GameRenderer {
     } catch {
       throw new WebGLUnavailableError();
     }
+    // ACES Filmic mit ausgewogener Belichtung (gilt auch für den Tonemapping-Effekt der Nachbearbeitung)
     this.gl.toneMapping = ACESFilmicToneMapping;
-    this.gl.toneMappingExposure = 1;
+    this.gl.toneMappingExposure = RENDER_LOOK.exposure;
     addEventListener('resize', () => this.resize());
     screen.orientation?.addEventListener?.('change', () => setTimeout(() => this.resize(), 120));
   }
@@ -103,7 +105,6 @@ export class GameRenderer {
   private rebuildComposer() {
     this.composer?.dispose();
     this.composer = null;
-    this.ao = null;
     this.godRays = null;
     this.dof = null;
     const c = this.config;
@@ -119,6 +120,14 @@ export class GameRenderer {
     const composer = new EffectComposer(this.gl, { frameBufferType: HalfFloatType, multisampling: samples });
     composer.addPass(new RenderPass(this.scene, cam));
 
+    // Umgebungsverdeckung: eigener Durchgang in halber Auflösung, direkt nach dem Bild (liest Tiefe und Wasser-Markierung)
+    const aoBase = c.post.ambientOcclusion;
+    const aoCfg = aoBase && this.mobile
+      ? { ...aoBase, dirs: Math.min(aoBase.dirs, MOBILE_AO_LIMIT.dirs), steps: Math.min(aoBase.steps, MOBILE_AO_LIMIT.steps), scale: Math.min(aoBase.scale, MOBILE_AO_LIMIT.scale) }
+      : aoBase;
+    const aoPass = aoCfg ? new AoPass(cam, aoCfg) : null;
+    if (aoPass) composer.addPass(aoPass);
+
     if (c.post.depthOfField && this.focus) {
       // Nur der ferne Hintergrund wird weich: Vordergrund und alles bis zur Figur bleiben scharf.
       // (Vorher wurde in beide Richtungen unscharf gezeichnet, mit festem Bereich von 40 m – das traf Wellen,
@@ -133,23 +142,22 @@ export class GameRenderer {
     }
 
     const effects: Effect[] = [];
-    if (c.post.ambientOcclusion) {
-      this.ao = new DepthAOEffect(cam);
-      effects.push(this.ao);
-    }
+    if (aoPass && aoCfg) effects.push(new AoEffect(aoPass, aoCfg.intensity));
     if (c.post.godRays && this.sun) {
       this.godRays = new GodRaysEffect(cam, this.sun, { density: 0.94, decay: 0.92, weight: 0.22, exposure: 0.42, samples: c.detail > 1.4 ? 120 : c.detail > 1 ? 80 : 48, clampMax: 1, resolutionScale: 0.5, blur: true });
       effects.push(this.godRays);
     }
     if (c.post.bloom) {
-      effects.push(new BloomEffect({ intensity: 1.0, luminanceThreshold: 0.85, luminanceSmoothing: 0.18, mipmapBlur: true, radius: 0.7 }));
+      // Bloom im Stil von Unreal (Mipmap-Weichzeichnen) mit hoher Schwelle: nur echte Lichtquellen und Magie leuchten
+      const b = RENDER_LOOK.bloom;
+      effects.push(new BloomEffect({ intensity: b.intensity, luminanceThreshold: b.threshold, luminanceSmoothing: b.smoothing, mipmapBlur: true, radius: b.radius }));
     }
     effects.push(new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC }));
     if (c.post.outlines) effects.push(new EdgeEffect({ thickness: Math.max(1, this.pixelRatio()), fadeFar: 320 }));
     if (c.post.colorGrading) {
-      // ernster, düsterer Anime-Look: kühle Schatten, warme Lichter, ruhigere Farben, deutliche Vignette
+      // ernster, düsterer Anime-Look: kühle Schatten, warme Lichter, ruhigere Farben, dezente Vignette
       effects.push(new GradeEffect());
-      effects.push(new VignetteEffect({ offset: 0.3, darkness: 0.58 }));
+      effects.push(new VignetteEffect(RENDER_LOOK.vignette));
     }
     // Immer zuletzt: fertiges Bild undurchsichtig (sonst schwarze Flächen auf Samsung-Handys)
     effects.push(new OpaqueEffect());
@@ -232,7 +240,6 @@ export class GameRenderer {
     }
     this.maskT -= dt;
     if (this.maskT <= 0) { this.maskT = 0.5; this.keepWaterMask(this.scene); }
-    this.ao?.update();
     if (this.composer) this.composer.render(dt);
     else {
       // Ohne Nachbearbeitung selbst löschen (der Composer schaltet autoClear ab – sonst bleiben alte Bilder stehen)

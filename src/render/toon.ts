@@ -14,6 +14,7 @@ import {
   type Texture,
 } from 'three';
 import { markShared } from './dispose';
+import { ensureCsm } from './csm';
 
 /** Gemeinsame Werte für alle Toon-Materialien – die Umgebung passt sie an Tageszeit und Wetter an. */
 export const toonShared = {
@@ -203,9 +204,25 @@ export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial 
   if (o.flatShading) (mat as any).flatShading = true;
   patch(mat, o.spec ?? 0, o.rim ?? 1, o.detail);
   mat.userData.toon = true;
+  ensureCsm(mat);
   if (unique) return mat;
   cache.set(key, mat);
   return markShared(mat);
+}
+
+/** Alle zwischengespeicherten Toon-Materialien (z. B. um Schatten-Schalter umzustellen) */
+export function forEachToon(fn: (m: MeshToonMaterial) => void) {
+  for (const m of cache.values()) fn(m);
+}
+
+/** Kopie eines Toon-Materials, die Anime-Shading und Schatten-Schalter behält (clone() verliert beides) */
+export function cloneToon<T extends Material>(src: T): T {
+  const c = src.clone() as T;
+  c.onBeforeCompile = src.onBeforeCompile;
+  c.customProgramCacheKey = src.customProgramCacheKey;
+  c.defines = { ...(src.defines ?? {}) };
+  ensureCsm(c);
+  return c;
 }
 
 /** Ersetzt die Materialien fremder Modelle durch unser Toon-Material (Farbe und Textur bleiben). */

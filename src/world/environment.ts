@@ -1,7 +1,10 @@
 import { Color, DirectionalLight, Fog, HemisphereLight, Vector3, type PerspectiveCamera, type Scene } from 'three';
 import { DAY_MINUTES, WEATHER_IDS, type WeatherId } from '../data/world';
 import type { QualityConfig } from '../data/qualityTiers';
-import { toonShared } from '../render/toon';
+import { forEachToon, toonShared } from '../render/toon';
+import { csmShared, ensureCsm } from '../render/csm';
+import { CSM } from 'three/examples/jsm/csm/CSM.js';
+import type { Material, Mesh } from 'three';
 import { Ocean, type IslandShape } from './ocean';
 import { Sky } from './sky';
 import { createPalette, samplePalette } from './timeOfDay';
@@ -40,6 +43,10 @@ export class Environment {
   private tmpZenith = new Color();
   private tmpGrey = new Color();
   private focus = new Vector3();
+  /** Kaskadierte Schatten (ab Stufe Hoch); null = eine Schattenkarte um die Figur */
+  private csm: CSM | null = null;
+  private csmWant: { cascades: number; mapSize: number; far: number; soft: boolean } | null = null;
+  private csmCam = { cam: null as PerspectiveCamera | null, fov: 0, aspect: 0, near: 0, far: 0 };
 
   constructor(private scene: Scene) {
     scene.fog = new Fog(0xbfe8ff, 100, 520);
@@ -55,8 +62,12 @@ export class Environment {
 
   applyQuality(c: QualityConfig) {
     this.viewDistance = c.viewDistance;
+    this.setupCsm(c);
     const sh = this.sun.shadow;
-    this.sun.castShadow = c.shadows.enabled;
+    // mit Kaskaden übernehmen deren Lichter Licht und Schatten der Sonne
+    this.sun.castShadow = c.shadows.enabled && !this.csmWant;
+    this.sun.visible = !this.csmWant;
+    if (this.csmWant && sh.map) { sh.map.dispose(); (sh as any).map = null; }
     // nicht größer als die Grafikkarte erlaubt (8192 bei Ultra)
     const mapSize = Math.min(c.shadows.mapSize, this.maxTex);
     if (c.shadows.enabled && sh.mapSize.x !== mapSize) {
@@ -75,6 +86,71 @@ export class Environment {
     this.sky.setCloudCount(Math.round(36 * c.detail + 12) + (c.detail >= 1 ? 30 : 0));
     this.weather.setMaxDrops(Math.round(2600 * c.particles));
     this.sky.cloudU.uRange.value = Math.max(900, c.viewDistance * 1.6);
+  }
+
+  /** Kaskaden je nach Stufe ein-, um- oder ausschalten und alle beleuchteten Materialien umstellen */
+  private setupCsm(c: QualityConfig) {
+    const n = c.shadows.enabled ? c.shadows.cascades : 0;
+    const want = n >= 2 ? { cascades: n, mapSize: Math.min(c.shadows.mapSize, this.maxTex), far: c.shadows.far, soft: c.shadows.soft } : null;
+    const same = JSON.stringify(want) === JSON.stringify(this.csmWant);
+    if (same) return;
+    this.disposeCsm();
+    this.csmWant = want;
+    csmShared.cascades = want ? want.cascades : 0;
+    const fix = (m: Material) => { if (ensureCsm(m)) m.needsUpdate = true; };
+    forEachToon(fix);
+    this.scene.traverse((o) => {
+      const m = (o as Mesh).material as Material | Material[] | undefined;
+      if (m) for (const x of Array.isArray(m) ? m : [m]) fix(x);
+    });
+  }
+
+  private createCsm(camera: PerspectiveCamera) {
+    const w = this.csmWant!;
+    const csm = new CSM({
+      camera, parent: this.scene, cascades: w.cascades, maxFar: w.far, mode: 'practical',
+      shadowMapSize: w.mapSize, shadowBias: -0.00012, lightDirection: new Vector3(0, -1, 0),
+      lightIntensity: 1, lightNear: 1, lightFar: 1000, lightMargin: 250,
+    });
+    csm.fade = true;
+    this.csm = csm;
+    this.csmCam.cam = null;
+  }
+
+  private disposeCsm() {
+    if (!this.csm) return;
+    this.csm.remove();
+    for (const l of this.csm.lights) l.dispose();
+    this.csm.dispose();
+    this.csm = null;
+  }
+
+  /** Jedes Bild: Kaskaden der Kamera folgen lassen, Sonnenlicht übernehmen */
+  private updateCsm(camera: PerspectiveCamera, lightDir: Vector3) {
+    if (this.csmWant && !this.csm) this.createCsm(camera);
+    const csm = this.csm;
+    if (!csm) return;
+    const k = this.csmCam;
+    if (k.cam !== camera || k.fov !== camera.fov || k.aspect !== camera.aspect || k.near !== camera.near || k.far !== camera.far) {
+      k.cam = camera; k.fov = camera.fov; k.aspect = camera.aspect; k.near = camera.near; k.far = camera.far;
+      csm.camera = camera;
+      csm.updateFrustums();
+      // Weichheit je Kaskade: nah knackig, in der Ferne weich auslaufend; Normalen-Versatz passend zur Texelgröße
+      csm.lights.forEach((l, i) => {
+        const cam = l.shadow.camera;
+        const texel = (cam.right - cam.left) / this.csmWant!.mapSize;
+        l.shadow.normalBias = texel * 1.6;
+        l.shadow.radius = this.csmWant!.soft ? 1.4 + i * 1.3 : 1;
+      });
+    }
+    csm.lightDirection.copy(lightDir).negate();
+    for (const l of csm.lights) { l.color.copy(this.sun.color); l.intensity = this.sun.intensity; }
+    camera.updateMatrixWorld();
+    csm.update();
+    const u = csmShared.uniforms;
+    (csm as unknown as { _getExtendedBreaks(t: unknown[]): void })._getExtendedBreaks(u.CSM_cascades.value);
+    u.cameraNear.value = camera.near;
+    u.shadowFar.value = Math.min(camera.far, csm.maxFar);
   }
 
   setIslands(list: IslandShape[]) { this.ocean.setIslands(list); }
@@ -162,6 +238,7 @@ export class Environment {
     this.sun.target.position.z = Math.round(this.sun.target.position.z / texel) * texel;
     this.sun.position.x = this.sun.target.position.x + pal.lightDir.x * 200;
     this.sun.position.z = this.sun.target.position.z + pal.lightDir.z * 200;
+    this.updateCsm(camera, pal.lightDir);
 
     toonShared.rimColor.value.copy(pal.rim);
     // Schattenfarbe: tags kühles Blau, im Abendrot Violett, nachts tiefes Blau

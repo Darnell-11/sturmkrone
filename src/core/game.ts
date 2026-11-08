@@ -97,6 +97,7 @@ export class Game {
       this.renderer.gl.resetState();
     }
     this.detected = detectTier(this.deviceInfo, bench);
+    this.renderer.mobile = this.deviceInfo.mobile;
     const s = this.settings.data;
     // „Automatisch“: bei jedem Start neu erkennen (so bekommen starke PCs auch neue Stufen wie Ultra)
     if (!s.quality || s.qualityAuto) this.settings.update({ quality: this.detected.tier, qualityAuto: true });
