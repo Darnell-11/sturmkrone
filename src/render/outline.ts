@@ -15,6 +15,26 @@ import { BlendFunction, Effect, EffectAttribute } from 'postprocessing';
 
 export const INK = new Color(0x1b1410);
 
+/**
+ * Alpha, das das Wasser schreibt. 0 markiert Wasser für Kantenerkennung und Umgebungsverdeckung – aber nur, solange
+ * Post-Effekte laufen, die das Bild danach wieder undurchsichtig machen (OpaqueEffect). Ohne Post-Effekte bleibt es 1:
+ * manche Handys (z. B. Samsung) zeigen sonst den Seitenhintergrund durch das Wasser (schwarze Flächen).
+ */
+export const WATER_ALPHA = { value: 1 };
+
+/**
+ * Letzter Schritt der Post-Effekte: macht das fertige Bild vollständig undurchsichtig. Samsung-Browser und manche
+ * Android-Grafiktreiber beachten sonst das Alpha im Bild und lassen den dunklen Seitenhintergrund durchscheinen.
+ */
+export class OpaqueEffect extends Effect {
+  constructor() {
+    super('OpaqueEffect', /* glsl */ `
+      void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+        outputColor = vec4(inputColor.rgb, 1.0);
+      }`, { blendFunction: BlendFunction.SET });
+  }
+}
+
 // ---------- Inverted Hull (Niedrig / Mittel) ----------
 
 const hullMaterial = new ShaderMaterial({

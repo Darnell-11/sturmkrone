@@ -1,5 +1,13 @@
 # Was ist neu
 
+## 2.9.9 – Samsung-Handys: kein schwarzes Wasser mehr (08.11.2026)
+
+- **Fehler behoben: schwarzes Wasser auf Samsung-Handys** (im Browser und in der Android-App).
+  - Das Wasser markiert sich im Bild unsichtbar, damit die Tusche-Konturen keine Striche über die Wellen ziehen.
+  - Samsung-Browser und manche Android-Grafiktreiber werteten diese Markierung als „durchsichtig“ und zeigten den dunklen Seitenhintergrund durch das Wasser. Nur Schaum und Sonnenglitzer waren zu sehen.
+  - Das fertige Bild ist jetzt immer vollständig undurchsichtig, auf jeder Grafikstufe.
+- Die Android-App muss dafür nicht neu installiert werden: Sie lädt die neue Version beim nächsten Start von selbst.
+
 ## 2.9.8 – Sturmkrone als App zum Herunterladen (06.11.2026)
 
 - **Echte App-Dateien für PC und Android:** Im Hauptmenü erkennt das Spiel dein Gerät und bietet die passende Datei an.

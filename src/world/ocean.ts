@@ -11,6 +11,7 @@ import {
   Vector4,
 } from 'three';
 import { WAVES, WORLD_RADIUS } from '../data/world';
+import { WATER_ALPHA } from '../render/outline';
 /** Weiche Lichtrampe fürs Wasser: keine harten Hell-Dunkel-Bänder auf den Wellen */
 const SOFT_RAMP = (() => {
   const n = 32;
@@ -136,6 +137,8 @@ export class Ocean {
     uWindK: { value: 0.3 },
     /** Mikro-Wellen und Glitzern (nach Grafikstufe) */
     uDetail: { value: 1 },
+    /** 0 = Wasser im Alpha markieren (nur mit Post-Effekten), 1 = undurchsichtig */
+    uWaterAlpha: WATER_ALPHA,
     uWake: { value: Array.from({ length: MAX_WAKE }, () => new Vector4()) },
   };
   private material: MeshToonMaterial;
@@ -185,7 +188,7 @@ export class Ocean {
           uniform float uShoreSize;
           uniform float uWorldR;
           uniform vec3 uDeep, uShallow, uFoam, uZenith, uHorizon, uSunDir, uSunCol;
-          uniform float uSpecK, uWindDir, uWindK, uDetail;
+          uniform float uSpecK, uWindDir, uWindK, uDetail, uWaterAlpha;
           uniform vec4 uWake[${MAX_WAKE}];
           varying vec3 vSkW;
           varying float vCrest;
@@ -328,10 +331,11 @@ export class Ocean {
             outgoingLight = clamp(outgoingLight, 0.0, 24.0);
           }
           #include <opaque_fragment>
-          // Alpha 0 markiert Wasser: Kantenerkennung und Umgebungsverdeckung lassen es aus
-          gl_FragColor.a = 0.0;`);
+          // Alpha 0 markiert Wasser: Kantenerkennung und Umgebungsverdeckung lassen es aus (nur mit Post-Effekten,
+          // die das Bild danach wieder undurchsichtig machen – sonst wäre das Wasser auf manchen Handys durchsichtig)
+          gl_FragColor.a = uWaterAlpha;`);
     };
-    mat.customProgramCacheKey = () => `sk-ocean4-${wakeN}`;
+    mat.customProgramCacheKey = () => `sk-ocean5-${wakeN}`;
     return mat;
   }
 

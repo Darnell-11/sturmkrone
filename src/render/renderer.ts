@@ -31,7 +31,7 @@ import {
 } from 'postprocessing';
 import { QUALITY_TIERS, type QualityConfig, type QualityTier } from '../data/qualityTiers';
 import { DepthAOEffect } from './ao';
-import { EdgeEffect, setHullsVisible } from './outline';
+import { EdgeEffect, OpaqueEffect, WATER_ALPHA, setHullsVisible } from './outline';
 import { GradeEffect } from './grade';
 
 export class WebGLUnavailableError extends Error {}
@@ -109,7 +109,10 @@ export class GameRenderer {
     const c = this.config;
     // Niedrig/Mittel: Konturen als Inverted Hull, Hoch/Maximal: Kantenerkennung als Post-Effekt
     setHullsVisible(!c.post.outlines);
+    // Wasser-Markierung im Alpha nur mit Post-Effekten, die das Bild am Ende wieder undurchsichtig machen
+    WATER_ALPHA.value = 1;
     if (!c.post.enabled || !this.scene || !this.camera) return;
+    WATER_ALPHA.value = 0;
     const cam = this.camera as PerspectiveCamera;
 
     const samples = Math.min(c.multisampling, this.gl.capabilities.maxSamples ?? 0);
@@ -148,6 +151,8 @@ export class GameRenderer {
       effects.push(new GradeEffect());
       effects.push(new VignetteEffect({ offset: 0.3, darkness: 0.58 }));
     }
+    // Immer zuletzt: fertiges Bild undurchsichtig (sonst schwarze Flächen auf Samsung-Handys)
+    effects.push(new OpaqueEffect());
     composer.addPass(new EffectPass(cam, ...effects));
     this.composer = composer;
   }
