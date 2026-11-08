@@ -181,6 +181,7 @@ export class Ally implements AllyTarget {
       }
     }
     // Treffer verzögert zur Animation
+    this.char.setTrail(!!this.pending && this.pending.t < 0.35, this.def.col);
     if (this.pending) {
       this.pending.t -= dt;
       if (this.pending.t <= 0) {

@@ -8,6 +8,7 @@ import type { CombatOverlay } from '../../ui/combatOverlay';
 import type { Ground } from '../../world/islandGround';
 import type { Character } from '../character/character';
 import type { Enemy } from '../enemy';
+import type { DecalHandle } from '../../render/decals';
 
 const WALK = 2.4;
 const RUN = 6.2;
@@ -249,17 +250,34 @@ export class PlayerFoot implements PlayerTarget {
         if (this.rollT <= 0) this.toMove();
         break;
       }
-      case 'charge':
+      case 'charge': {
         this.chargeT += dt;
         if (lockYaw !== null) this.yaw = lockYaw;
+        // Auflade-Aura: wachsendes Siegel am Boden, aufsteigende Funken, flirrende Luft
+        const fx = this.deps.fx;
+        if (fx) {
+          const k = Math.min(1, this.chargeT / CHARGE_TIME);
+          const col = STYLE_COLOR[this.style];
+          if (!this.aura) {
+            this.aura = fx.sigil(new Vector3(this.x, this.y, this.z), 1.6, col, 99);
+            fx.decals.hold(this.aura, true);
+            this.auraHeat = fx.heat(new Vector3(this.x, this.y + 1, this.z), 1.6, 0.3, 99);
+            this.auraHeat.held = true;
+          }
+          fx.decals.move(this.aura, this.x, this.y, this.z, 1.6 + k * 1.8);
+          this.auraHeat!.x = this.x; this.auraHeat!.y = this.y + 1; this.auraHeat!.z = this.z; this.auraHeat!.k = 0.3 + k * 0.5;
+          if (Math.random() < dt * (12 + k * 30)) fx.rise(new Vector3(this.x, this.y, this.z), col, 1, 0.9);
+        }
         if (Math.random() < dt * 30) this.deps.fx?.puff(new Vector3(this.x + (Math.random() - 0.5), this.y + Math.random() * 1.8, this.z + (Math.random() - 0.5)), 2);
         if (!input.down('heavy') || this.chargeT >= CHARGE_TIME) {
           const full = this.chargeT >= CHARGE_TIME * 0.8;
           this.state = 'move';
           this.startAttack(full ? atks.charge : atks.heavy, this.yaw);
           if (full) { this.deps.overlay?.speedlines(1); this.deps.overlay?.showCutin(`${STYLE_ANIMS[this.style].label}!`, STYLE_COLOR[this.style]); }
+          this.endAura();
         }
         break;
+      }
       case 'attack':
         this.processAttack(dt);
         if (this.attack) {
@@ -296,6 +314,14 @@ export class PlayerFoot implements PlayerTarget {
     }
     this.speed = Math.hypot(vx, vz);
     this.applyMove(dt, vx, vz, ground);
+    this.char.lean(this.yaw, this.speed, dt);
+    // Lichtschweif an der Waffe: während des Hiebs (vom Ausholen bis kurz nach dem Treffer) und beim Wirken
+    {
+      const a = this.attack;
+      const p = this.char.progress;
+      const swing = this.state === 'attack' && (a ? !a.projectile && p >= a.hitStart - 0.14 && p <= a.hitEnd + 0.1 : true);
+      this.char.setTrail(swing, STYLE_COLOR[this.style]);
+    }
     if (this.state === 'move' && this.onFoot) this.char.footsteps(this.x, this.y, this.z);
 
     if (this.state === 'move') {
@@ -394,5 +420,20 @@ export class PlayerFoot implements PlayerTarget {
     }
   }
 
-  private toMove() { this.state = 'move'; this.locomotion = ''; this.attack = null; this.attackAction = null; }
+  private toMove() { this.state = 'move'; this.locomotion = ''; this.attack = null; this.attackAction = null; this.endAura(); }
+
+  // Auflade-Aura (Siegel + Hitze), solange der schwere Angriff aufgeladen wird
+  private aura: DecalHandle | null = null;
+  private auraHeat: { x: number; y: number; z: number; k: number; held: boolean; life: number; t: number } | null = null;
+  /** Beim Verlassen der Insel/K.O.: laufende Effekte (Aura, Schweif) beenden */
+  stopEffects() {
+    this.endAura();
+    this.char.setTrail(false);
+    if (this.state === 'charge') this.toMove();
+  }
+
+  private endAura() {
+    if (this.aura) { this.deps.fx?.decals.hold(this.aura, false, 0.35); this.aura = null; }
+    if (this.auraHeat) { this.auraHeat.held = false; this.auraHeat.life = this.auraHeat.t + 0.3; this.auraHeat = null; }
+  }
 }

@@ -24,6 +24,8 @@ import { addOutlines } from '../../render/outline';
 import { toon, toonFx, type ToonFxUniforms } from '../../render/toon';
 import { disposeMaterial } from '../../render/dispose';
 import { audio } from '../../audio/audio';
+import { WeaponTrail } from '../../render/weaponTrail';
+import { Quaternion, Vector3 as V3, type Scene } from 'three';
 import type { ColorRepresentation, Material, Mesh } from 'three';
 import { disposeObject, markShared } from '../../render/dispose';
 import type { CharacterAssets } from './assets';
@@ -100,6 +102,9 @@ export class Character {
       Character.moving.add(this);
     }
     this.footsteps(x, y, z);
+    // Lauf-Animation an das echte Tempo koppeln (keine gleitenden Füße) und in Kurven neigen
+    const sp = Math.hypot(x - t.x, z - t.z) * 60;
+    if (this.placed) { this.setLocoSpeed(sp); this.lean(yaw, sp, 1 / 60); }
     t.x = x; t.y = y; t.z = z; t.yaw = yaw;
     this.holder.position.set(x, y, z);
     this.holder.rotation.y = yaw;
@@ -457,6 +462,83 @@ export class Character {
     return a.time / a.getClip().duration;
   }
 
+  // ---------- Waffenschweif ----------
+  private static trailed = new Set<Character>();
+  private trails: WeaponTrail[] = [];
+  private trailColor = '#ffffff';
+
+  /** Waffenschweif an/aus (z. B. während eines Hiebs); Farbe nach Kampfstil oder Element */
+  setTrail(on: boolean, color?: string) {
+    if (color) this.trailColor = color;
+    if (on && !this.trails.length) {
+      let root: Object3D = this.holder;
+      while (root.parent) root = root.parent;
+      if (!(root as Scene).isScene) return;
+      const tips: Object3D[] = [];
+      this.holder.traverse((o) => { if (o.name === 'trailTip') tips.push(o); });
+      for (const tip of tips) {
+        const base = tip.parent?.getObjectByName('trailBase');
+        if (base) this.trails.push(new WeaponTrail(root as Scene, base, tip, this.trailColor));
+      }
+      if (this.trails.length) Character.trailed.add(this);
+    }
+    for (const t of this.trails) { t.active = on; if (on && color) t.setColor(color); }
+  }
+
+  private dropTrails() {
+    for (const t of this.trails) t.dispose();
+    this.trails = [];
+    Character.trailed.delete(this);
+  }
+
+  /** Bei jedem Bild (nach dem Ausrichten aller Figuren): Schweife abtasten */
+  static renderTrails(dt: number) {
+    for (const c of Character.trailed) {
+      let fresh = false;
+      for (const t of c.trails) {
+        if (t.active && !fresh) { c.holder.updateWorldMatrix(true, true); fresh = true; }
+        t.update(dt);
+      }
+    }
+  }
+
+  // ---------- Gewicht: Neigung in Kurven und beim Beschleunigen ----------
+  private leanRoll = 0;
+  private leanPitch = 0;
+  private leanYaw = NaN;
+  private leanSpeed = 0;
+  private static readonly LQ = new Quaternion();
+  private static readonly AX = new V3(0, 0, 1);
+  private static readonly AXP = new V3(1, 0, 0);
+
+  /**
+   * Prozedurale Neigung (einmal je Logikschritt): Oberkörper legt sich in die Kurve (nach Drehtempo × Laufgeschwindigkeit)
+   * und beim Antreten leicht nach vorn. Wird nach der Animation auf Wirbelsäule und Brust addiert.
+   */
+  lean(yaw: number, speed: number, dt: number) {
+    if (Number.isNaN(this.leanYaw)) this.leanYaw = yaw;
+    const dy = MathUtils.euclideanModulo(yaw - this.leanYaw + Math.PI, Math.PI * 2) - Math.PI;
+    this.leanYaw = yaw;
+    const turn = dy / Math.max(dt, 1e-3);
+    const accel = (speed - this.leanSpeed) / Math.max(dt, 1e-3);
+    this.leanSpeed = speed;
+    const wantRoll = MathUtils.clamp(-turn * Math.min(speed, 7) * 0.012, -0.24, 0.24);
+    const wantPitch = MathUtils.clamp(speed * 0.012 + accel * 0.006, -0.06, 0.16);
+    const k = Math.min(1, dt * 8);
+    this.leanRoll += (wantRoll - this.leanRoll) * k;
+    this.leanPitch += (wantPitch - this.leanPitch) * k;
+  }
+
+  private applyLean() {
+    if (Math.abs(this.leanRoll) < 0.002 && Math.abs(this.leanPitch) < 0.002) return;
+    for (const [name, share] of [['spine', 0.55], ['chest', 0.45]] as const) {
+      const b = this.bones[name];
+      if (!b) continue;
+      b.quaternion.multiply(Character.LQ.setFromAxisAngle(Character.AX, this.leanRoll * share));
+      b.quaternion.multiply(Character.LQ.setFromAxisAngle(Character.AXP, this.leanPitch * share));
+    }
+  }
+
   // ---------- Treffer-Randlicht und Auflösen ----------
   private fxU: ToonFxUniforms[] = [];
   private fxMats: Material[] = [];
@@ -542,6 +624,7 @@ export class Character {
       for (const u of this.fxU) u.hit.value = v;
     }
     this.mixer.update(dt);
+    this.applyLean();
     // Mimik: blinzeln, beim Jubeln strahlen, beim Reden den Mund bewegen
     const f = this.face;
     if (f && f.mesh.morphTargetInfluences) {
@@ -559,6 +642,8 @@ export class Character {
   hold(side: 'l' | 'r', obj: Object3D | null) {
     const slot = this.bones[`handslot${side}`];
     if (!slot) return;
+    // neue Waffe: Schweife beim nächsten Einschalten neu anlegen
+    this.dropTrails();
     for (const c of [...slot.children]) slot.remove(c);
     if (obj) slot.add(obj);
     this.curl(side, obj ? 1 : 0.3);
@@ -592,6 +677,7 @@ export class Character {
   /** Figur entfernen und alles freigeben, was nur ihr gehört (Kleidung, Hut, Waffen, Skelett-Daten) */
   dispose() {
     Character.moving.delete(this);
+    this.dropTrails();
     // Effekt-Kopien gehören nur dieser Figur (hängen sie gerade nicht an einem Netz, hier freigeben)
     for (const m of this.fxMats) disposeMaterial(m);
     this.fxMats = [];

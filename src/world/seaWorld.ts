@@ -448,6 +448,7 @@ export class SeaWorld {
     if (overlay) this.overlay = overlay;
     if (!this.combat && this.overlay) {
       this.fx = new CombatFx(this.scene, this.sparks, this.dust);
+      this.fx.decals.ground = (x, z) => this.groundProxy.height(x, z);
       this.naval = new NavalSystem(this.scene, this.seaEnv, this.fx, this.overlay, this.spray, this.sparks, this.ground, {
         shake: (a) => { this.shake = Math.max(this.shake, a); },
         hitstop: (t) => { this.hitstop.t = Math.max(this.hitstop.t, t); this.hitstop.scale = 0.05; },
@@ -1438,7 +1439,7 @@ export class SeaWorld {
       if (c.hostilesLeft === 0) this.cleared.set(idx, this.env.clock + 300);
       c.leaveIsland();
     }
-    if (this.foot) this.foot.onFoot = false;
+    if (this.foot) { this.foot.stopEffects(); this.foot.onFoot = false; }
     for (const n of this.visitors) { n.char.holder.removeFromParent(); n.char.dispose(); }
     this.visitors = [];
     this.crew?.clearAllies();

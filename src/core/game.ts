@@ -327,6 +327,8 @@ export class Game {
     this.skyProbe.update(frameDt);
     // Gegner, Crew und Stadtleute zwischen den 60-Hz-Logikschritten weich darstellen
     Character.present(a);
+    // Waffenschweife nach dem Ausrichten aller Figuren abtasten (Echtzeit, bei jedem Bild glatt)
+    Character.renderTrails(frameDt);
     this.renderer.render(frameDt);
     this.overlay.update(this.state.is('play') ? frameDt * this.loop.timeScale : 0, this.world.camera);
     if (this.state.is('play')) {

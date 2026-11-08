@@ -31,6 +31,7 @@ import {
 } from 'postprocessing';
 import { MOBILE_AO_LIMIT, QUALITY_TIERS, RENDER_LOOK, type QualityConfig, type QualityTier } from '../data/qualityTiers';
 import { AoEffect, AoPass } from './gtao';
+import { HeatEffect, heatShared } from './heat';
 import { installAtmosphere } from './atmosphere';
 import { ensureCsm } from './csm';
 import { EdgeEffect, OpaqueEffect, WATER_ALPHA, setHullsVisible } from './outline';
@@ -53,6 +54,8 @@ export class GameRenderer {
   private focus: Vector3 | null = null;
   private godRays: GodRaysEffect | null = null;
   private dof: DepthOfFieldEffect | null = null;
+  private heat: HeatEffect | null = null;
+  private time = 0;
 
   constructor(private canvas: HTMLCanvasElement) {
     try {
@@ -109,6 +112,7 @@ export class GameRenderer {
   private rebuildComposer() {
     this.composer?.dispose();
     this.composer = null;
+    this.heat = null;
     this.godRays = null;
     this.dof = null;
     const c = this.config;
@@ -166,6 +170,11 @@ export class GameRenderer {
     // Immer zuletzt: fertiges Bild undurchsichtig (sonst schwarze Flächen auf Samsung-Handys)
     effects.push(new OpaqueEffect());
     composer.addPass(new EffectPass(cam, ...effects));
+    // Hitzeflimmern verschiebt die Leseposition des fertigen Bildes – eigener kurzer Durchgang am Ende
+    if (c.post.heat) {
+      this.heat = new HeatEffect();
+      composer.addPass(new EffectPass(cam, this.heat));
+    }
     this.composer = composer;
   }
 
@@ -271,6 +280,9 @@ export class GameRenderer {
       const d = this.camera.position.distanceTo(this.focus);
       this.dof.cocMaterial.focusRange = Math.max(60, d * 6);
     }
+    this.time += dt;
+    heatShared.update(dt);
+    this.heat?.updateSources(this.camera, this.time);
     this.maskT -= dt;
     if (this.maskT <= 0) { this.maskT = 0.25; this.keepWaterMask(this.scene); }
     if (this.composer) this.composer.render(dt);

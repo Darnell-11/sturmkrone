@@ -26,6 +26,8 @@ export interface QualityConfig {
     depthOfField: boolean;
     /** Umgebungsverdeckung (Kontaktschatten in Ecken und an Übergängen); null = aus */
     ambientOcclusion: AoConfig | null;
+    /** Hitzeflimmern um Feuer, Explosionen und aufladende Kämpfer */
+    heat?: boolean;
   };
   /** Kantenglättung im Post-Effekt-Puffer (0 = aus) */
   multisampling: number;
@@ -113,7 +115,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     maxPixelRatio: 1.5,
     maxPixels: 2560 * 1440,
     shadows: { enabled: true, mapSize: 2048, soft: true, cascades: 2, far: 180, smallRange: 45 },
-    post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: false, ambientOcclusion: { dirs: 4, steps: 3, scale: 0.5, radius: 1.1, intensity: 0.85 } },
+    post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: false, ambientOcclusion: { dirs: 4, steps: 3, scale: 0.5, radius: 1.1, intensity: 0.85 }, heat: true },
     multisampling: 4,
     viewDistance: 800,
     particles: 1,
@@ -130,7 +132,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     maxPixelRatio: 3,
     maxPixels: 3840 * 2160,
     shadows: { enabled: true, mapSize: 2048, soft: true, cascades: 3, far: 320, smallRange: 70 },
-    post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 6, steps: 4, scale: 0.5, radius: 1.3, intensity: 0.95 } },
+    post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 6, steps: 4, scale: 0.5, radius: 1.3, intensity: 0.95 }, heat: true },
     multisampling: 4,
     viewDistance: 1200,
     particles: 1.5,
@@ -147,7 +149,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     maxPixelRatio: 4,
     maxPixels: 3840 * 2160,
     shadows: { enabled: true, mapSize: 4096, soft: true, cascades: 4, far: 520, smallRange: 110 },
-    post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 8, steps: 5, scale: 0.75, radius: 1.4, intensity: 1 } },
+    post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 8, steps: 5, scale: 0.75, radius: 1.4, intensity: 1 }, heat: true },
     multisampling: 8,
     viewDistance: 1800,
     particles: 2,

@@ -227,6 +227,7 @@ export class Enemy {
   }
 
   private cancelAttack() {
+    this.char.setTrail(false);
     this.atk = null;
     this.marker.visible = false;
     if (this.aim) { this.aim.removeFromParent(); this.aim = null; }
@@ -329,6 +330,8 @@ export class Enemy {
         }
         break;
       case 'attack':
+        // roter Schweif beim Nahkampfhieb (Warnung und Wucht)
+        this.char.setTrail(!!this.atk && !this.atk.projectile && this.char.progress < this.atk.hitAt + 0.15, '#FF6A4A');
         if (this.atk && !this.struck && this.char.progress >= this.atk.hitAt) {
           this.struck = true;
           w.enemyStrike(this, this.atk);
@@ -408,6 +411,7 @@ export class Enemy {
 
   private endAttack(w: EnemyWorld) {
     if (this.state !== 'attack') return;
+    this.char.setTrail(false);
     this.atk = null;
     if (this.hasToken) { w.releaseToken(this); this.hasToken = false; }
     this.state = 'recover';

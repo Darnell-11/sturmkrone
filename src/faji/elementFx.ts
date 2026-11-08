@@ -119,14 +119,26 @@ export class ElementFx {
 
   impact(p: Vector3, el: Element, k: number) {
     // Wucht auf ein Raster: Effekte gleicher Stärke teilen sich ihre Netze
-    const s = q(Math.max(0.4, k));
+    const s = q(Math.max(0.4, k), 0.25);
     const ground = p.clone();
     const c = new Color(ELEMENT_COLORS[el]);
+    // Spuren am Boden und Hitzeflimmern je Element (zweite Stufe des Einschlags)
+    switch (el) {
+      case 'feuer': this.fx.burn(ground, 2.6 * s); this.fx.heat(ground, 3.5 * s, 0.9, 1.6); break;
+      case 'meteor': this.fx.burn(ground, 4 * s); this.fx.heat(ground, 5 * s, 1, 2.2); break;
+      case 'blitz': this.fx.burn(ground, 1.6 * s); this.fx.heat(ground, 2 * s, 0.5, 0.5); break;
+      case 'eis': this.fx.frost(ground, 3.4 * s); break;
+      case 'gift': this.fx.burn(ground, 2.4 * s, '#9cff7a'); break;
+      case 'licht': case 'geist': this.fx.sigil(ground, 3.2 * s, el === 'licht' ? '#FFE9A0' : '#FFD166', 1.4); break;
+      case 'schatten': case 'schwerkraft': this.fx.sigil(ground, 3 * s, '#B07CFF', 1.4); break;
+      case 'koerper': this.fx.heat(ground, 2.5 * s, 0.35, 0.5); break;
+      default: break;
+    }
     switch (el) {
       case 'feuer': {
         for (let i = 0; i < Math.round(4 + s * 3); i++) {
           const a = Math.random() * Math.PI * 2, d = Math.random() * 1.2 * s;
-          const h = q((1.2 + Math.random() * 1.6) * s, 0.1);
+          const h = q((1.2 + Math.random() * 1.6) * s, 0.3);
           // Flammenzunge: tieforange Hülle + heißer gelber Kern
           const flame = new Mesh(sharedGeo(`flame:${s}:${h}`, () => new ConeGeometry(0.38 * s, h, 7, 1, true)), bodyMat('feuer', 0.8));
           const core = new Mesh(sharedGeo(`flameCore:${s}:${h}`, () => new ConeGeometry(0.2 * s, h * 0.7, 6, 1, true)), new MeshBasicMaterial({ color: new Color(2.2, 1.5, 0.35), transparent: true, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }));
@@ -149,7 +161,8 @@ export class ElementFx {
       case 'eis': {
         for (let i = 0; i < Math.round(5 + s * 4); i++) {
           const a = (i / (5 + s * 4)) * Math.PI * 2 + Math.random() * 0.4, d = (0.6 + Math.random() * 1.6) * s;
-          const h = (1 + Math.random() * 1.8) * s;
+          // Höhe gerundet: wenige gemeinsame Netze statt eines neuen je Splitter (sonst wächst der Speicher bei jedem Eistreffer)
+          const h = q((1 + Math.random() * 1.8) * s, 0.3);
           const shard = new Mesh(sharedGeo(`shard:${s}:${h}`, () => new ConeGeometry(0.3 * s, h, 5)), new MeshBasicMaterial({ color: new Color(0.75, 1.4, 1.8) }));
           shard.position.set(p.x + Math.cos(a) * d, p.y, p.z + Math.sin(a) * d);
           shard.rotation.set(Math.cos(a) * 0.5, 0, -Math.sin(a) * 0.5);
@@ -178,7 +191,7 @@ export class ElementFx {
         const stone = toon({ color: '#7A6448', flatShading: true });
         for (let i = 0; i < Math.round(4 + s * 3); i++) {
           const a = Math.random() * Math.PI * 2, d = (0.8 + Math.random() * 1.8) * s;
-          const r = q((0.35 + Math.random() * 0.45) * s);
+          const r = q((0.35 + Math.random() * 0.45) * s, 0.1);
           const rock = new Mesh(sharedGeo(`rock:${r}`, () => new DodecahedronGeometry(r, 0)), stone);
           const y0 = p.y - r;
           rock.position.set(p.x + Math.cos(a) * d, y0, p.z + Math.sin(a) * d);

@@ -12,6 +12,7 @@ import type { CombatOverlay } from '../ui/combatOverlay';
 import type { Ground } from '../world/islandGround';
 import type { ParticleSystem } from '../world/particles';
 import { AbilityRunner, castClip } from './abilities';
+import { ELEMENT_COLORS } from '../data/skills';
 
 interface Buff { b: NonNullable<ActiveDef['buff']>; t: number }
 
@@ -34,7 +35,7 @@ export class FajiController {
     private foot: PlayerFoot,
     private char: Character,
     private combat: CombatSystem,
-    fx: CombatFx,
+    private fx: CombatFx,
     particles: ParticleSystem,
     scene: Scene,
     ground: Ground,
@@ -178,6 +179,14 @@ export class FajiController {
     this.cds[s.id] = s.act.cd * (1 - this.passives.cdr);
     const anim = castClip(s);
     this.foot.cast(anim.clip, anim.speed, lockYaw);
+    // erste Stufe: leuchtendes Siegel und aufsteigende Funken unter dem Wirker, Feuer flimmert schon beim Wirken
+    {
+      const col = ELEMENT_COLORS[s.act.el] ?? '#ffffff';
+      const at = new Vector3(this.foot.x, this.foot.y, this.foot.z);
+      this.fx.sigil(at, s.act.ult ? 4.2 : 2.8, col, 0.9);
+      this.fx.rise(at, col, s.act.ult ? 14 : 8, 1.2);
+      if (s.act.el === 'feuer' || s.act.el === 'meteor') this.fx.heat(at.setY(at.y + 1), 1.8, 0.6, 0.8);
+    }
     this.runner.ctx.power = this.combat.atk;
     this.runner.cast(s, this.skills.learned[s.id] ?? 1);
     audio.power(s.act.el, 1, { x: this.foot.x, y: this.foot.y + 1.2, z: this.foot.z });

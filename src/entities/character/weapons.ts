@@ -10,7 +10,7 @@ import {
   Shape,
   SphereGeometry,
   TorusGeometry,
-  type Object3D,
+  Object3D,
 } from 'three';
 import type { StyleId } from '../../data/animations';
 import { addOutlines } from '../../render/outline';
@@ -56,7 +56,16 @@ function sword(length: number, width: number, curve: number, look: WeaponLook, t
     g.add(aura);
   }
   addOutlines(g, 0.7);
+  // Marken für den Lichtschweif: Klingenansatz und -spitze
+  trailMarks(g, 0.12 + length * 0.22, curve, 0.12 + length);
   return g;
+}
+
+/** Unsichtbare Punkte, zwischen denen der Waffenschweif gespannt wird */
+function trailMarks(g: Group, baseY: number, tipX: number, tipY: number) {
+  const b = new Object3D(); b.name = 'trailBase'; b.position.set(tipX * 0.2, baseY, 0);
+  const t = new Object3D(); t.name = 'trailTip'; t.position.set(tipX, tipY, 0);
+  g.add(b, t);
 }
 
 /** Leuchtende Faji-Kugel über der Hand */
@@ -100,6 +109,8 @@ function gauntlet(look: WeaponLook, tier: number): Group {
     g.add(aura);
   }
   addOutlines(g, 0.7);
+  // kurzer Lichtschweif vor den Knöcheln
+  trailMarks(g, 0.0, 0.0, 0.16);
   return g;
 }
 

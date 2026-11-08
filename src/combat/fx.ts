@@ -6,7 +6,6 @@ import {
   DoubleSide,
   Mesh,
   MeshBasicMaterial,
-  PlaneGeometry,
   RingGeometry,
   ShaderMaterial,
   Sprite,
@@ -19,6 +18,8 @@ import type { ParticleSystem } from '../world/particles';
 import { disposeGeometry } from '../render/dispose';
 import { q, sharedGeo } from '../render/geoCache';
 import { markShared } from '../render/dispose';
+import { DecalSystem } from '../render/decals';
+import { heatShared } from '../render/heat';
 
 // Wiederverwendete Farben (Partikel und Materialien kopieren den Wert)
 const TMP_COL = new Color();
@@ -54,46 +55,6 @@ const SPARK_TEX = canvasTex(128, (ctx, s) => {
   g.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = g;
   ctx.beginPath(); ctx.arc(0, 0, s * 0.22, 0, Math.PI * 2); ctx.fill();
-});
-
-/** Bodenriss: dunkle, gezackte Linien */
-const CRACK_TEX = canvasTex(512, (ctx, s) => {
-  ctx.translate(s / 2, s / 2);
-  // Krater: dunkle, verbrannte Mitte mit weichem Rand – liest sich als Einschlag statt als Spinnennetz
-  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, s * 0.2);
-  g.addColorStop(0, 'rgba(25,16,10,0.85)');
-  g.addColorStop(0.55, 'rgba(45,30,18,0.55)');
-  g.addColorStop(1, 'rgba(60,40,25,0)');
-  ctx.fillStyle = g;
-  ctx.beginPath(); ctx.arc(0, 0, s * 0.2, 0, Math.PI * 2); ctx.fill();
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  // dicke, gezackte Risse mit Verästelungen, die nach außen dünn auslaufen
-  const crack = (x: number, y: number, a: number, w: number, steps: number, depth: number) => {
-    for (let k = 0; k < steps; k++) {
-      a += (Math.random() - 0.5) * 0.8;
-      const len = s * (0.035 + Math.random() * 0.035);
-      const nx = x + Math.cos(a) * len, ny = y + Math.sin(a) * len;
-      // heller Bruchrand, dann die dunkle Spalte darauf
-      ctx.strokeStyle = 'rgba(150,120,90,0.35)'; ctx.lineWidth = w + 5;
-      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(nx, ny); ctx.stroke();
-      ctx.strokeStyle = 'rgba(22,14,9,0.92)'; ctx.lineWidth = w;
-      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(nx, ny); ctx.stroke();
-      x = nx; y = ny; w = Math.max(1.5, w * 0.78);
-      if (depth > 0 && Math.random() < 0.35) crack(x, y, a + (Math.random() < 0.5 ? -1 : 1) * (0.5 + Math.random() * 0.5), w * 0.8, steps - k - 1, depth - 1);
-    }
-  };
-  const n = 7 + Math.floor(Math.random() * 3);
-  for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2 + Math.random() * 0.5;
-    crack(Math.cos(a) * s * 0.05, Math.sin(a) * s * 0.05, a, 14, 6, 2);
-  }
-  // Brocken und Steinchen am Kraterrand
-  for (let i = 0; i < 40; i++) {
-    const a = Math.random() * Math.PI * 2, d = s * (0.08 + Math.random() * 0.16), r = 2 + Math.random() * 6;
-    ctx.fillStyle = Math.random() < 0.5 ? 'rgba(30,20,12,0.8)' : 'rgba(170,140,105,0.5)';
-    ctx.beginPath(); ctx.arc(Math.cos(a) * d, Math.sin(a) * d, r, 0, Math.PI * 2); ctx.fill();
-  }
 });
 
 interface Live { obj: Mesh | Sprite; life: number; max: number; kind: string; data?: any }
@@ -140,7 +101,28 @@ export class CombatFx {
   private sparkMat = new SpriteMaterial({ map: SPARK_TEX, blending: AdditiveBlending, depthWrite: false, transparent: true });
   scale = 1;
 
-  constructor(private scene: Scene, private sparks: ParticleSystem, private dust: ParticleSystem) {}
+  /** Boden-Decals (Risse, Brandflecken, Frost, Siegel) – die Welt setzt die Bodenhöhe */
+  readonly decals: DecalSystem;
+
+  constructor(private scene: Scene, private sparks: ParticleSystem, private dust: ParticleSystem) {
+    this.decals = new DecalSystem(scene);
+  }
+
+  /** Brandfleck mit kurzer Glut (Feuer, Meteore, Blitzeinschläge) */
+  burn(pos: Vector3, size: number, tint = '#ffffff') { this.decals.spawn('burn', pos.x, pos.y, pos.z, size, tint, 7, 3); }
+  /** Reifschicht (Eis) */
+  frost(pos: Vector3, size: number) { this.decals.spawn('frost', pos.x, pos.y, pos.z, size, '#cfefff', 6, 2.5); }
+  /** Leuchtendes magisches Siegel am Boden */
+  sigil(pos: Vector3, size: number, color: string, life = 1.6) { return this.decals.spawn('sigil', pos.x, pos.y, pos.z, size, TMP_COL.set(color).multiplyScalar(1.6), life, Math.min(0.8, life * 0.5)); }
+  /** Hitzeflimmern um einen Punkt (Bildverzerrung, nur auf höheren Grafikstufen sichtbar) */
+  heat(pos: Vector3, radius: number, strength: number, life: number) { return heatShared.add(pos.x, pos.y, pos.z, radius, strength, life); }
+  /** Aufsteigende Leuchtpunkte (Auflade-Aura) */
+  rise(pos: Vector3, color: string, n = 2, radius = 0.8) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, r = Math.random() * radius;
+      this.sparks.emit(1, pos.x + Math.cos(a) * r, pos.y + 0.1, pos.z + Math.sin(a) * r, { speed: 0.2, up: 2.6, life: 0.9, color: TMP_COL.set(color).multiplyScalar(2.2), gravity: -1.5, spread: 0.1 });
+    }
+  }
 
   /** Trefferfunke am Trefferpunkt */
   hit(pos: Vector3, kind: FxKind, color: string, big = false) {
@@ -201,17 +183,10 @@ export class CombatFx {
     this.dust.emit(Math.round(26 * this.scale), pos.x, pos.y + 0.2, pos.z, { speed: radius * 2.2, up: 1.5, life: 0.8, color: DUST_COL, gravity: 2, spread: 0.6 });
   }
 
-  /** Bodenriss nach schweren Schlägen */
+  /** Bodenriss nach schweren Schlägen: Decal, das sich ans Gelände legt und nach einigen Sekunden verblasst */
   crack(pos: Vector3, size: number) {
     // riesige Risse wirkten wie Spinnweben: Größe deckeln, damit die Spalten kräftig bleiben
-    size = Math.min(size, 8);
-    const m = new Mesh(sharedGeo('crack', () => new PlaneGeometry(1, 1)), new MeshBasicMaterial({ map: CRACK_TEX, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
-    m.rotation.x = -Math.PI / 2;
-    m.rotation.z = Math.random() * Math.PI * 2;
-    m.scale.set(size, size, 1);
-    m.position.copy(pos).setY(pos.y + 0.05);
-    this.scene.add(m);
-    this.live.push({ obj: m, life: 2.5, max: 2.5, kind: 'crack' });
+    this.decals.spawn('crack', pos.x, pos.y, pos.z, Math.min(size, 8), '#ffffff', 4.5, 2);
   }
 
   /** Warnkreis für Flächenangriffe; füllt sich bis zum Einschlag */
@@ -239,6 +214,7 @@ export class CombatFx {
   }
 
   update(dt: number) {
+    this.decals.update(dt);
     for (const l of this.live) {
       l.life -= dt;
       const k = Math.max(0, l.life / l.max);
