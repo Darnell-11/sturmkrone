@@ -94,6 +94,29 @@ export interface ToonOptions {
   /** Rauheit (Kanal G) und Metall (Kanal B) aus einer Textur – glTF-Anordnung, darf dieselbe ORM-Textur sein */
   roughnessMap?: Texture | null;
   metalnessMap?: Texture | null;
+  /** Treffer-Randlicht und Auflösen (nur eigene Material-Kopien je Figur, siehe toonFx) */
+  fx?: boolean;
+}
+
+/** Steuerwerte des Treffer-/Auflöse-Effekts eines Materials */
+export interface ToonFxUniforms {
+  hit: { value: number };
+  hitCol: { value: Color };
+  dissolve: { value: number };
+  dissolveCol: { value: Color };
+}
+const optsOf = new WeakMap<Material, ToonOptions>();
+const fxOf = new WeakMap<Material, ToonFxUniforms>();
+
+/**
+ * Eigene Kopie eines Toon-Materials mit Treffer-Randlicht (Fresnel) und Auflösen – je Figur, damit nur der
+ * getroffene Gegner aufleuchtet. Gleiches Shader-Programm für alle Figuren; wird mit der Figur freigegeben.
+ */
+export function toonFx(src: Material): { mat: MeshToonMaterial; u: ToonFxUniforms } | null {
+  const o = optsOf.get(src);
+  if (!o) return null;
+  const mat = toon({ ...o, unique: true, fx: true });
+  return { mat, u: fxOf.get(mat)! };
 }
 
 const cache = new Map<string, MeshToonMaterial>();
@@ -124,6 +147,22 @@ const PBR_PARS_GLSL = /* glsl */ `
   #ifdef SK_ENV
     uniform sampler2D uSkEnv;
   #endif
+`;
+
+/** Auflösen: Rauschen im Objektraum (klebt am Körper), Pixel unter der Schwelle verschwinden */
+const FX_PARS_GLSL = /* glsl */ `
+  uniform float uHit;
+  uniform vec3 uHitCol;
+  uniform float uDissolve;
+  uniform vec3 uDissolveCol;
+  varying vec3 vSkFxPos;
+  float skFxH(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+  float skFxN(vec3 x) {
+    vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(skFxH(i), skFxH(i + vec3(1, 0, 0)), f.x), mix(skFxH(i + vec3(0, 1, 0)), skFxH(i + vec3(1, 1, 0)), f.x), f.y),
+               mix(mix(skFxH(i + vec3(0, 0, 1)), skFxH(i + vec3(1, 0, 1)), f.x), mix(skFxH(i + vec3(0, 1, 1)), skFxH(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+  }
+  float skFxNoise() { return skFxN(vSkFxPos * 9.0) * 0.65 + skFxN(vSkFxPos * 23.0) * 0.35; }
 `;
 
 const RIM_SPEC_GLSL = /* glsl */ `
@@ -168,6 +207,16 @@ const RIM_SPEC_GLSL = /* glsl */ `
       // Metall: die Farbe kommt aus der Spiegelung, die matte Grundfarbe tritt zurück
       outgoingLight = outgoingLight * (1.0 - skMetal * 0.55) + envC * F * uEnvI;
     }
+    #endif
+    #ifdef SK_FX
+      // Treffer: Fresnel-Randlicht leuchtet kurz auf (Kanten zur Kamera hin hell, Mitte bleibt lesbar)
+      float skFres = pow(1.0 - ndv, 3.0);
+      outgoingLight += uHitCol * (skFres * 2.4 + 0.1) * uHit;
+      // Auflösen: glühender Rand an der Schwelle
+      if (uDissolve > 0.0) {
+        float skEdge = 1.0 - smoothstep(0.0, 0.07, skFxNoise() - uDissolve);
+        outgoingLight = mix(outgoingLight, uDissolveCol * 3.0, skEdge);
+      }
     #endif
   }
 `;
@@ -230,7 +279,7 @@ const DETAIL_FRAG: Record<'sand' | 'grass' | 'rock', string> = {
   }`,
 };
 
-interface PbrPatch { rough: number; metal: number; roughMap: Texture | null; metalMap: Texture | null; env: boolean }
+interface PbrPatch { rough: number; metal: number; roughMap: Texture | null; metalMap: Texture | null; env: boolean; fx?: ToonFxUniforms }
 
 function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: 'sand' | 'grass' | 'rock' | undefined, pbr: PbrPatch) {
   const uSpec = { value: spec };
@@ -255,9 +304,20 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: 'sand' 
     shader.uniforms.uEnvLow = toonShared.envLow;
     shader.uniforms.uEnvHigh = toonShared.envHigh;
     fogUniforms(shader);
-    const defs = (pbr.roughMap ? '#define SK_ROUGHMAP\n' : '') + (pbr.metalMap ? '#define SK_METALMAP\n' : '') + (pbr.env ? '#define SK_ENV\n' + cubeUvDefines() : '');
+    if (pbr.fx) {
+      shader.uniforms.uHit = pbr.fx.hit;
+      shader.uniforms.uHitCol = pbr.fx.hitCol;
+      shader.uniforms.uDissolve = pbr.fx.dissolve;
+      shader.uniforms.uDissolveCol = pbr.fx.dissolveCol;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vSkFxPos;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSkFxPos = position;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (uDissolve > 0.0 && skFxNoise() < uDissolve) discard;');
+    }
+    const defs = (pbr.roughMap ? '#define SK_ROUGHMAP\n' : '') + (pbr.metalMap ? '#define SK_METALMAP\n' : '') + (pbr.env ? '#define SK_ENV\n' + cubeUvDefines() : '') + (pbr.fx ? '#define SK_FX\n' : '');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', defs + '#include <common>\nuniform vec3 uShadowTint;\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uSpec;\nuniform float uRimAmount;\n' + PBR_PARS_GLSL + (pbr.env ? '#include <cube_uv_reflection_fragment>\n' : ''))
+      .replace('#include <common>', defs + '#include <common>\nuniform vec3 uShadowTint;\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uSpec;\nuniform float uRimAmount;\n' + PBR_PARS_GLSL + (pbr.fx ? FX_PARS_GLSL : '') + (pbr.env ? '#include <cube_uv_reflection_fragment>\n' : ''))
       .replace('#include <opaque_fragment>', RIM_SPEC_GLSL + '\n#include <opaque_fragment>');
     if (detail) {
       shader.vertexShader = shader.vertexShader
@@ -268,7 +328,7 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: 'sand' 
         .replace('#include <color_fragment>', '#include <color_fragment>\n' + DETAIL_FRAG[detail]);
     }
   };
-  const progKey = `sk-toon-3${detail ? '-' + detail : ''}-${pbr.env ? 'e' : ''}${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}`;
+  const progKey = `sk-toon-3${detail ? '-' + detail : ''}-${pbr.env ? 'e' : ''}${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}${pbr.fx ? 'f' : ''}`;
   mat.customProgramCacheKey = () => progKey;
 }
 
@@ -302,11 +362,17 @@ export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial 
   const spec = o.spec ?? 0;
   const metal = o.metalness ?? (spec >= 0.8 ? 1 : 0);
   const rough = o.roughness ?? (metal > 0 ? (spec >= 1 ? 0.3 : 0.42) : 0.85);
+  const fx: ToonFxUniforms | undefined = o.fx
+    ? { hit: { value: 0 }, hitCol: { value: new Color(1, 1, 1) }, dissolve: { value: 0 }, dissolveCol: { value: new Color(1.0, 0.45, 0.12) } }
+    : undefined;
   patch(mat, spec, o.rim ?? 1, o.detail, {
     rough, metal, roughMap: o.roughnessMap ?? null, metalMap: o.metalnessMap ?? null,
     // Spiegelungen nur, wo sie sichtbar sind: Metall oder glatte Flächen (Eis, Lack)
     env: metal > 0 || rough < 0.35 || !!o.metalnessMap,
+    fx,
   });
+  optsOf.set(mat, o);
+  if (fx) fxOf.set(mat, fx);
   mat.userData.toon = true;
   ensureCsm(mat);
   if (unique) return mat;

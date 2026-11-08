@@ -60,7 +60,7 @@ export class CombatOverlay {
   number(pos: Vector3, value: number | string, style: NumberStyle = 'hit') {
     if (this.texts.length > 24) { this.texts[0].el.remove(); this.texts.shift(); }
     // Klang passend zur Zahl
-    const at = { x: pos.x, z: pos.z };
+    const at = { x: pos.x, y: pos.y, z: pos.z };
     if (style === 'hit') audio.play('hit', 0.9, at);
     else if (style === 'crit') { audio.play('heavy', 1, at); audio.play('crit', 0.8); }
     else if (style === 'hurt') audio.play('hurt');

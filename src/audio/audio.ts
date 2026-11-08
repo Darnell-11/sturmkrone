@@ -7,7 +7,10 @@ export type Mood = 'menu' | 'sea' | 'harbor' | 'night' | 'battle' | 'boss' | 'vi
 export type Sfx =
   | 'punch' | 'boom' | 'broadside' | 'splash' | 'hit' | 'heavy' | 'swing' | 'clang' | 'parry' | 'hurt' | 'roll'
   | 'coin' | 'treasure' | 'ui' | 'uiBack' | 'dig' | 'roar' | 'sink' | 'crack' | 'level' | 'win' | 'quest' | 'eat'
-  | 'bell' | 'horn' | 'thunder' | 'shard' | 'ko' | 'board' | 'sail' | 'whoosh' | 'crit' | 'cutin';
+  | 'bell' | 'horn' | 'thunder' | 'shard' | 'ko' | 'board' | 'sail' | 'whoosh' | 'crit' | 'cutin' | 'step';
+
+/** Weltposition eines Klangs (y optional: sonst etwa Bodenhöhe beim Hörer) */
+export interface SoundPos { x: number; y?: number; z: number }
 export type Element = string;
 
 const mtof = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
@@ -52,7 +55,13 @@ class AudioEngine {
   /** Hörerposition (für Abstand und Stereo) */
   private lx = 0;
   private lz = 0;
-  private lyaw = 0;
+  private ly = 0;
+  /** Räumlicher Ausgang des gerade gespielten Effekts (PannerNode) – tone()/noise() hängen sich daran */
+  private spatialOut: AudioNode | null = null;
+  /** HRTF (kopfbezogen, sehr räumlich) am PC; am Handy das sparsamere Equal-Power-Verfahren */
+  private panning: PanningModelType = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 'equalpower' : 'HRTF';
+  /** Entfernungsdämpfung: bis refDistance volle Lautstärke, danach umgekehrt proportional */
+  static readonly SPATIAL = { refDistance: 14, rolloff: 0.8, maxDistance: 400 };
 
   /** Beim ersten Tippen/Tastendruck starten (Browser verlangen eine Nutzeraktion) */
   attachUnlock() {
@@ -134,7 +143,49 @@ class AudioEngine {
     if (s) void this.ctx.suspend(); else void this.ctx.resume();
   }
 
-  setListener(x: number, z: number, yaw: number) { this.lx = x; this.lz = z; this.lyaw = yaw; }
+  /** 2D-Hörer (ohne Kamera): Position am Boden; die Blickrichtung kommt über setListener3D */
+  setListener(x: number, z: number, _yaw: number) { this.lx = x; this.lz = z; }
+
+  /**
+   * 3D-Hörer: Position (die Spielfigur – so klingt die eigene Figur nah) und Blickrichtung der Kamera,
+   * damit links/rechts und vorn/hinten zum Bild passen.
+   */
+  setListener3D(x: number, y: number, z: number, fx: number, fy: number, fz: number) {
+    this.lx = x; this.ly = y; this.lz = z;
+    const c = this.ctx;
+    if (!c) return;
+    const L = c.listener as AudioListener & { positionX?: AudioParam };
+    const t = c.currentTime;
+    if (L.positionX) {
+      L.positionX.setTargetAtTime(x, t, 0.02); L.positionY!.setTargetAtTime(y, t, 0.02); L.positionZ!.setTargetAtTime(z, t, 0.02);
+      L.forwardX.setTargetAtTime(fx, t, 0.02); L.forwardY.setTargetAtTime(fy, t, 0.02); L.forwardZ.setTargetAtTime(fz, t, 0.02);
+      L.upX.value = 0; L.upY.value = 1; L.upZ.value = 0;
+    } else {
+      // ältere Browser
+      (L as unknown as { setPosition(a: number, b: number, c: number): void }).setPosition(x, y, z);
+      (L as unknown as { setOrientation(a: number, b: number, c: number, d: number, e: number, f: number): void }).setOrientation(fx, fy, fz, 0, 1, 0);
+    }
+  }
+
+  /** Räumlichen Ausgang für einen Klang an Weltposition at anlegen; null = zu weit weg (gar nicht spielen) */
+  private spatial(at: SoundPos, vol: number): AudioNode | null {
+    const c = this.ctx!;
+    const y = at.y ?? this.ly - 1.2;
+    const d = Math.hypot(at.x - this.lx, y - this.ly, at.z - this.lz);
+    const S = AudioEngine.SPATIAL;
+    const att = S.refDistance / (S.refDistance + S.rolloff * (Math.max(d, S.refDistance) - S.refDistance));
+    if (vol * att < 0.015 || d > S.maxDistance) return null;
+    const p = c.createPanner();
+    p.panningModel = this.panning;
+    p.distanceModel = 'inverse';
+    p.refDistance = S.refDistance;
+    p.rolloffFactor = S.rolloff;
+    p.maxDistance = S.maxDistance;
+    if (p.positionX) { p.positionX.value = at.x; p.positionY.value = y; p.positionZ.value = at.z; }
+    else (p as unknown as { setPosition(a: number, b: number, c: number): void }).setPosition(at.x, y, at.z);
+    p.connect(this.sfxBus);
+    return p;
+  }
 
   // ---------- Umgebung ----------
 
@@ -232,8 +283,8 @@ class AudioEngine {
     v.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     o.connect(v);
     let out: AudioNode = v;
-    if (pan) { const p = c.createStereoPanner(); p.pan.value = pan; v.connect(p); out = p; }
-    out.connect(bus ?? this.sfxBus);
+    if (pan && !this.spatialOut) { const p = c.createStereoPanner(); p.pan.value = pan; v.connect(p); out = p; }
+    out.connect(bus ?? this.spatialOut ?? this.sfxBus);
     if (send) { const s = c.createGain(); s.gain.value = send; v.connect(s); s.connect(this.send); }
     o.start(t); o.stop(t + dur + 0.05);
   }
@@ -248,8 +299,8 @@ class AudioEngine {
     v.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     s.connect(f); f.connect(v);
     let out: AudioNode = v;
-    if (pan) { const p = c.createStereoPanner(); p.pan.value = pan; v.connect(p); out = p; }
-    out.connect(bus ?? this.sfxBus);
+    if (pan && !this.spatialOut) { const p = c.createStereoPanner(); p.pan.value = pan; v.connect(p); out = p; }
+    out.connect(bus ?? this.spatialOut ?? this.sfxBus);
     s.start(t, Math.random() * 0.5); s.stop(t + dur + 0.02);
   }
 
@@ -316,22 +367,30 @@ class AudioEngine {
   // ---------- Soundeffekte ----------
 
   /** Effekt abspielen; at = Weltposition für Lautstärke nach Entfernung und Stereo */
-  play(name: Sfx, vol = 1, at?: { x: number; z: number }) {
+  play(name: Sfx, vol = 1, at?: SoundPos) {
     if (!this.running) return;
-    let pan = 0;
+    const pan = 0;
+    // Räumlicher Klang: Richtung (HRTF/Equal-Power) und Entfernungsdämpfung übernimmt ein PannerNode
     if (at) {
-      const dx = at.x - this.lx, dz = at.z - this.lz;
-      const d = Math.hypot(dx, dz);
-      vol *= Math.max(0, 1 - d / 260) ** 1.4;
-      if (vol < 0.02) return;
-      // rechts vom Blick = positive Stereoseite
-      const rel = Math.atan2(dx, dz) - this.lyaw;
-      pan = Math.max(-0.8, Math.min(0.8, -Math.sin(rel) * Math.min(1, d / 12)));
+      this.spatialOut = this.spatial(at, vol);
+      if (!this.spatialOut) return;
     }
+    try { this.playVoice(name, vol, pan); } finally { this.spatialOut = null; }
+  }
+
+  private playVoice(name: Sfx, vol: number, pan: number) {
     const c = this.ctx!;
     const t = c.currentTime;
     const v = vol;
     switch (name) {
+      case 'step': {
+        // Schritt: dumpfer Aufsetzer plus etwas Sand/Holz – jedes Mal leicht anders
+        if (!this.ok('st' + Math.floor(Math.random() * 3), 0.05)) return;
+        const k = 0.85 + Math.random() * 0.3;
+        this.noise(t, 0.07, 0.16 * v * k, 260 * k, 'lowpass', undefined, pan);
+        this.noise(t + 0.01, 0.05, 0.05 * v, 2400 * k, 'bandpass', undefined, pan);
+        break;
+      }
       case 'punch': if (!this.ok('pu', 0.04)) return; this.noise(t, 0.12, 0.3 * v, 500, 'lowpass', undefined, pan); this.tone(160, t, 0.1, 'sine', 0.25 * v, 0, 70, 0.004, undefined, pan); break;
       case 'hit': if (!this.ok('hit', 0.04)) return; this.noise(t, 0.16, 0.28 * v, 1100, 'bandpass', undefined, pan); this.tone(240, t, 0.12, 'square', 0.05 * v, 0, 80, 0.004, undefined, pan); break;
       case 'heavy': if (!this.ok('hv', 0.06)) return; this.noise(t, 0.35, 0.42 * v, 600, 'lowpass', undefined, pan); this.tone(110, t, 0.3, 'sine', 0.4 * v, 0.1, 40, 0.004, undefined, pan); this.noise(t, 0.1, 0.2 * v, 3000, 'highpass', undefined, pan); break;
@@ -368,8 +427,13 @@ class AudioEngine {
   }
 
   /** Faji-Klang je Element */
-  power(el: Element, vol = 1) {
+  power(el: Element, vol = 1, at?: SoundPos) {
     if (!this.ok('pow', 0.08)) return;
+    if (at) { this.spatialOut = this.spatial(at, vol); if (!this.spatialOut) return; }
+    try { this.powerVoice(el, vol); } finally { this.spatialOut = null; }
+  }
+
+  private powerVoice(el: Element, vol: number) {
     const t = this.ctx!.currentTime;
     const v = vol;
     switch (el) {

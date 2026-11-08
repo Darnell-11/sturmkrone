@@ -16,7 +16,6 @@ import type { Faction } from '../core/save/types';
 import type { CharacterAssets } from './character/assets';
 import { Character } from './character/character';
 import { enemyWeapons } from './character/weapons';
-import { toon } from '../render/toon';
 import { markShared } from '../render/dispose';
 
 export type EnemyState = 'idle' | 'chase' | 'strafe' | 'windup' | 'attack' | 'recover' | 'hit' | 'stagger' | 'air' | 'down' | 'dead';
@@ -85,7 +84,6 @@ export class Enemy {
   private aim: Line | null = null;
   private strafeDir = Math.random() < 0.5 ? -1 : 1;
   private phase = 1;
-  private normalMat: any = null;
   private aggro = false;
 
   constructor(assets: CharacterAssets, readonly kind: EnemyKind, readonly level: number, faction: Faction, x: number, z: number, outline: boolean, readonly name?: string) {
@@ -112,6 +110,8 @@ export class Enemy {
     this.char.holder.add(this.marker);
     this.yaw = Math.random() * Math.PI * 2;
     this.char.play('idle');
+    // Treffer-Randlicht und Auflösen gleich beim Erscheinen vorbereiten (kein Ruckler beim ersten Treffer)
+    this.char.enableFx();
   }
 
   slowT = 0;
@@ -175,6 +175,8 @@ export class Enemy {
     }
     this.hp -= h.dmg;
     this.flash = 0.09;
+    // Fresnel-Randlicht: schwere Treffer heller und wärmer
+    this.char.hitFlash(h.heavy ? '#FFD9A0' : '#FFFFFF', h.heavy ? 1.3 : 1);
     this.cancelAttack();
     if (this.hp <= 0) {
       this.hp = 0;
@@ -362,6 +364,8 @@ export class Enemy {
       case 'dead':
         this.vy -= 18 * dt;
         this.y = Math.max(w.ground(this.x, this.z), this.y + this.vy * dt);
+        // nach dem Fallen in Glut auflösen (4 s nach dem Tod wird die Figur entfernt)
+        this.char.setDissolve(Math.min(1, Math.max(0, (2.7 - this.timer) / 1.8)));
         break;
     }
 
@@ -411,17 +415,9 @@ export class Enemy {
     this.char.play('idle', { fade: 0.2 });
   }
 
+  /** Eingefroren: eisblaue Färbung über das Randlicht (der Treffer-Blitz läuft im Effekt-Shader) */
   private updateFlash() {
-    const mesh = (this.char as any).mesh;
-    if (!mesh) return;
-    const want = this.flash > 0 ? FLASH_MAT : this.frozenT > 0 ? FROST_MAT : null;
-    if (want) {
-      if (!this.normalMat) this.normalMat = mesh.material;
-      mesh.material = want;
-    } else if (this.normalMat) {
-      mesh.material = this.normalMat;
-      this.normalMat = null;
-    }
+    this.char.setTint('#9FE6FF', this.frozenT > 0 ? 0.85 : 0);
   }
 
   dispose() {
@@ -430,5 +426,3 @@ export class Enemy {
   }
 }
 
-const FLASH_MAT = toon({ color: 0xffffff, emissive: 0xffffff });
-const FROST_MAT = toon({ color: 0xbff0ff, emissive: 0x2a6a8a, spec: 1, metalness: 0, roughness: 0.15 });

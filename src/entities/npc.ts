@@ -25,6 +25,8 @@ export class Npc {
 
   constructor(assets: CharacterAssets, private home: WalkIsland, private ground: IslandGround, readonly role: NpcRole, private rng: () => number, outline: boolean) {
     this.char = new Character(assets, randomLook(rng, role), outline);
+    // Stadtleute laufen leiser
+    this.char.stepVol = 0.3;
     const a = rng() * Math.PI * 2;
     const r = home.r * (0.2 + rng() * 0.55);
     this.x = home.x + Math.cos(a) * r;

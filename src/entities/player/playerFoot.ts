@@ -132,6 +132,8 @@ export class PlayerFoot implements PlayerTarget {
       this.hp += this.maxHp * this.secondWind;
       this.deps.overlay?.number(new Vector3(this.x, this.y + 2.2, this.z), 'Zweiter Atem!', 'heal');
     }
+    // Treffer: Ränder der Figur leuchten kurz rot auf
+    this.char.hitFlash('#FF5A3C', knock > 6 ? 1.3 : 1);
     if (this.hp <= 0) { this.goDown(); return 'hit'; }
     this.state = 'hurt';
     this.hurtT = knock > 6 ? 0.55 : 0.3;
@@ -270,6 +272,7 @@ export class PlayerFoot implements PlayerTarget {
     }
     this.speed = Math.hypot(vx, vz);
     this.applyMove(dt, vx, vz, ground);
+    if (this.state === 'move' && this.onFoot) this.char.footsteps(this.x, this.y, this.z);
 
     if (this.state === 'move') {
       const want = this.speed < 0.1 ? 'idle' : this.speed > 4 ? 'run' : 'walk';

@@ -40,6 +40,8 @@ export interface CombatHooks {
   heal(n: number): void;
   hitstop(seconds: number, scale?: number): void;
   shake(amount: number): void;
+  /** Wirksamer Treffer: kurzer Standbild-Moment (30–40 ms) und Kamerastoß in Trefferrichtung (0 … 1,5) */
+  impact(dirX: number, dirZ: number, strength: number): void;
   kill(e: Enemy): void;
   gold(n: number): void;
   message(t: string): void;
@@ -171,6 +173,8 @@ export class CombatSystem implements EnemyWorld {
   }
 
   enemyStrike(e: Enemy, atk: EnemyAttack) {
+    // Hieb des Gegners ist dort zu hören, wo er steht
+    if (!atk.projectile) audio.play('swing', 0.75, { x: e.x, y: e.y + 1.2, z: e.z });
     if (atk.aoe) return; // Schaden kommt über den Warnkreis
     if (atk.projectile) {
       const p = this.playerPos;
@@ -222,6 +226,8 @@ export class CombatSystem implements EnemyWorld {
       this.overlay.number(pos, dmg, 'hurt');
       this.overlay.hurt();
       this.fx.hit(pos, heavy ? 'heavy' : 'slash', '#FF6A4A');
+      // Kamera wird vom Treffer weggestoßen (gleiche Richtung wie der Spieler)
+      this.hooks.impact(dirX, dirZ, heavy ? 1.3 : 0.8);
       this.hooks.shake(heavy ? 0.6 : 0.3);
       this.hooks.hitstop(heavy ? 0.1 : 0.05);
     } else {
@@ -232,7 +238,7 @@ export class CombatSystem implements EnemyWorld {
   // ---------- Spieler greift an ----------
 
   /** Neuer Schlag: eigene Trefferliste, damit jeder Gegner nur einmal getroffen wird */
-  beginSwing(id: number) { audio.play('swing'); this.swings.set(id, new Set()); if (this.swings.size > 8) this.swings.delete(this.swings.keys().next().value!); }
+  beginSwing(id: number) { const pl = this.player; audio.play('swing', 1, pl ? { x: pl.x, y: pl.y + 1.2, z: pl.z } : undefined); this.swings.set(id, new Set()); if (this.swings.size > 8) this.swings.delete(this.swings.keys().next().value!); }
 
   /** Während des Trefferfensters jeden Frame aufrufen */
   swing(id: number, def: AttackDef, x: number, _y: number, z: number, yaw: number, mult: number, color: string): number {
@@ -280,6 +286,7 @@ export class CombatSystem implements EnemyWorld {
       this.fx.hit(pos, def.fx, color, crit || heavy);
       this.overlay.number(pos, dmg, crit ? 'crit' : 'hit');
       this.overlay.addCombo();
+      this.hooks.impact(dirX, dirZ, crit || heavy ? 1 : 0.6);
       this.hooks.hitstop(def.hitstop);
       this.hooks.shake(def.shake);
       return;
@@ -313,6 +320,7 @@ export class CombatSystem implements EnemyWorld {
       if (def.fx === 'heavy') this.fx.crack(g, 3.5);
     }
     if ((crit && heavy) || res === 'kill' && e.def.elite) this.overlay.impactFrame();
+    this.hooks.impact(dirX, dirZ, res === 'kill' || crit || heavy ? 1.2 : 0.7);
     this.hooks.hitstop(res === 'kill' ? def.hitstop * 1.8 : def.hitstop);
     this.hooks.shake(def.shake + (res === 'kill' ? 0.2 : 0));
     if (res === 'kill') this.onKill(e);
@@ -389,6 +397,7 @@ export class CombatSystem implements EnemyWorld {
     const pos = e.head.setY(e.y + 1.4 * e.def.scale);
     this.overlay.number(pos, amount, crit ? 'crit' : 'hit');
     this.overlay.addCombo();
+    if (res !== 'blocked') this.hooks.impact(dx, dz, res === 'kill' ? 1 : 0.6);
     if (this.mods.lifesteal > 0) this.hooks.heal(amount * this.mods.lifesteal);
     if (res === 'kill') { this.onKill(e); return; }
     if (status) this.applyStatus(e, status, dur, amount);

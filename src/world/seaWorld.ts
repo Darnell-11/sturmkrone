@@ -150,7 +150,11 @@ export class SeaWorld {
   };
   private boardDone = 0;
   /** Angeforderte Trefferpause (vom Spiel in Echtzeit abgearbeitet) */
-  hitstop = { t: 0, scale: 0.05 };
+  /** Trefferpause: t = Zeitlupe (Sekunden), freeze = echtes Standbild (Sekunden, läuft in Echtzeit ab) */
+  hitstop = { t: 0, scale: 0.05, freeze: 0 };
+  /** Kamerastoß: Feder-gedämpfter Versatz, angestoßen in Trefferrichtung */
+  private kick = new Vector3();
+  private kickV = new Vector3();
   combat: CombatSystem | null = null;
   playerFaction: Faction = 'pirat';
   private fx: CombatFx | null = null;
@@ -458,6 +462,7 @@ export class SeaWorld {
         heal: (n) => { if (this.foot) this.foot.hp = Math.min(this.foot.maxHp, this.foot.hp + n); },
         hitstop: (t, scale = 0.05) => { this.hitstop.t = Math.max(this.hitstop.t, t); this.hitstop.scale = Math.min(this.hitstop.scale, scale); },
         shake: (a) => { this.shake = Math.max(this.shake, a); },
+        impact: (dx, dz, k) => this.impact(dx, dz, k),
         kill: (e) => this.onKill(e),
         gold: (n) => this.onGold(n),
         message: (t) => this.onMessage(t),
@@ -698,6 +703,9 @@ export class SeaWorld {
   }
 
   /** Position der Spielfigur (an Land) oder des Schiffs, dazu die Blickrichtung */
+  /** Höhe der Spielfigur zu Fuß (für den 3D-Hörer) */
+  get playerFootY() { return this.foot?.y ?? 0; }
+
   get playerPos() {
     if (this.mode === 'foot' && this.foot) return { x: this.foot.x, z: this.foot.z, heading: this.foot.yaw };
     return { x: this.x, z: this.z, heading: this.heading };
@@ -1476,6 +1484,15 @@ export class SeaWorld {
   }
 
   /** Fahrtrichtung (in einen wiederverwendeten Vektor – sofort benutzen, nicht aufheben) */
+  /** Wirksamer Treffer: 30–40 ms Standbild und ein Kamerastoß in Trefferrichtung, der federnd zurückschwingt */
+  impact(dirX: number, dirZ: number, strength: number) {
+    this.hitstop.freeze = Math.max(this.hitstop.freeze, strength >= 1 ? 0.04 : 0.03);
+    const k = Math.min(1.5, strength);
+    this.kickV.x += dirX * k * 2.4;
+    this.kickV.z += dirZ * k * 2.4;
+    this.kickV.y -= k * 1.1;
+  }
+
   private fwd(h = this.heading) { return this.fwdTmp.set(Math.sin(h), 0, Math.cos(h)); }
 
   // ---------- Darstellung ----------
@@ -1564,6 +1581,17 @@ export class SeaWorld {
       const r = 4.5 + this.cinematic * 0.8;
       cam.position.set(p.x + Math.sin(a) * r, p.y + 1.2 + (3.6 - this.cinematic) * 0.5, p.z + Math.cos(a) * r);
       cam.lookAt(p.x, p.y + 1.3, p.z);
+    }
+    // Kamerastoß: gedämpfte Feder (läuft in Echtzeit, auch während des Standbilds)
+    {
+      const dt = Math.min(frameDt, 0.05);
+      const K = 240, C = 15;
+      this.kickV.x += (-K * this.kick.x - C * this.kickV.x) * dt;
+      this.kickV.y += (-K * this.kick.y - C * this.kickV.y) * dt;
+      this.kickV.z += (-K * this.kick.z - C * this.kickV.z) * dt;
+      this.kick.addScaledVector(this.kickV, dt);
+      if (inMenu) { this.kick.set(0, 0, 0); this.kickV.set(0, 0, 0); }
+      cam.position.add(this.kick);
     }
     if (this.shake > 0) {
       const s = this.shake * this.shake * 0.6;

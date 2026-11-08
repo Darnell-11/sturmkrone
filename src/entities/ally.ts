@@ -92,6 +92,7 @@ export class Ally implements AllyTarget {
 
   receive(dmg: number, dirX: number, dirZ: number) {
     if (!this.alive) return;
+    this.char.hitFlash('#FF7A5A');
     this.hp -= dmg * (this.def.role === 'tank' ? 0.75 : 1);
     this.x += dirX * 0.4; this.z += dirZ * 0.4;
     if (this.hp <= 0) {

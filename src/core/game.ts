@@ -5,7 +5,7 @@ import { randomLook } from '../data/characterParts';
 import { WEATHER, type WeatherId } from '../data/world';
 import { CharacterAssets } from '../entities/character/assets';
 import { Character } from '../entities/character/character';
-import type { ShaderMaterial } from 'three';
+import { Vector3, type ShaderMaterial } from 'three';
 import { SkyProbe } from '../render/ibl';
 import { toonShared } from '../render/toon';
 import type { Enemy } from '../entities/enemy';
@@ -73,6 +73,7 @@ export class Game {
   private saveFailedShown = false;
   private stage: EditorStage | null = null;
   private skyProbe: SkyProbe;
+  private listenDir = new Vector3();
   private editor: CharacterEditor | null = null;
   private uiRoot: HTMLElement;
   private quests: QuestSystem | null = null;
@@ -316,7 +317,9 @@ export class Game {
     }
     // Trefferpause: Spielzeit kurz fast anhalten (läuft in Echtzeit ab)
     const hs = this.world.hitstop;
-    if (hs.t > 0) { this.loop.timeScale = hs.scale; hs.t -= frameDt; }
+    // Standbild (30–40 ms) bei wirksamen Treffern, danach die etwas längere Zeitlupe schwerer Treffer
+    if (hs.freeze > 0) { this.loop.timeScale = 0; hs.freeze -= frameDt; }
+    else if (hs.t > 0) { this.loop.timeScale = hs.scale; hs.t -= frameDt; }
     else { this.loop.timeScale = 1; hs.scale = 1; }
     const a = this.state.is('play', 'pause') ? alpha : 1;
     this.world.render(a, frameDt, this.state.is('menu', 'boot'));
@@ -379,6 +382,10 @@ export class Game {
     const w = this.world;
     const pos = w.playerPos;
     audio.setListener(pos.x, pos.z, w.cameraYaw);
+    // 3D-Hörer: an der Spielfigur, ausgerichtet wie die Kamera (links/rechts passt zum Bild)
+    w.camera.getWorldDirection(this.listenDir);
+    const ly = this.world.mode === 'foot' ? (this.world.playerFootY ?? 0) + 1.5 : 3;
+    audio.setListener3D(pos.x, ly, pos.z, this.listenDir.x, this.listenDir.y, this.listenDir.z);
     if (this.state.is('play', 'pause')) {
       const env = w.env;
       const town = w.islandDefs.find((i) => i.kind === 'town');

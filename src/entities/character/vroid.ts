@@ -77,7 +77,7 @@ function grayTexture(t: Texture | null, contrast = 1.15): Texture | null {
     a[i] = a[i + 1] = a[i + 2] = v;
   }
   g.putImageData(d, 0, 0);
-  const out = new CanvasTexture(c);
+  const out = markShared(new CanvasTexture(c));
   out.colorSpace = SRGBColorSpace;
   out.flipY = t.flipY;
   out.wrapS = t.wrapS; out.wrapT = t.wrapT;
@@ -223,7 +223,8 @@ export class VroidBase {
       if (first.geometry.boundingSphere) first.geometry.boundingSphere.radius *= 1.6;
       const mat = first.material as MeshStandardMaterial;
       const slot = slotOf(mat.name);
-      const map = mat.map ?? null;
+      // Texturen der Grundfigur teilen sich alle Figuren (auch ihre Effekt-Kopien) – nie freigeben
+      const map = mat.map ? markShared(mat.map) : null;
       this.parts.push({
         name: first.name, slot, map,
         gray: slot === 'hair' || slot === 'top' || slot === 'bottom' || slot === 'shoes' || slot === 'iris' || slot === 'brow' ? grayTexture(map, slot === 'iris' ? 1.4 : 1.15) : null,

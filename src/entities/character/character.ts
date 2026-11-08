@@ -21,7 +21,10 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { ROLES, type AnimRole, type ClipRef } from '../../data/animations';
 import type { CharacterLook } from '../../data/characterParts';
 import { addOutlines } from '../../render/outline';
-import { toon } from '../../render/toon';
+import { toon, toonFx, type ToonFxUniforms } from '../../render/toon';
+import { disposeMaterial } from '../../render/dispose';
+import { audio } from '../../audio/audio';
+import type { ColorRepresentation, Material, Mesh } from 'three';
 import { disposeObject, markShared } from '../../render/dispose';
 import type { CharacterAssets } from './assets';
 import { buildCharacterGeometry, LIMB_EXT } from './builder';
@@ -96,9 +99,34 @@ export class Character {
       this.placed = true;
       Character.moving.add(this);
     }
+    this.footsteps(x, y, z);
     t.x = x; t.y = y; t.z = z; t.yaw = yaw;
     this.holder.position.set(x, y, z);
     this.holder.rotation.y = yaw;
+  }
+
+  /** Lautstärke der Schritte (Stadtleute leiser, 0 = stumm) */
+  stepVol = 0.55;
+  private stepAcc = 0;
+  private stepPrev = { x: NaN, z: NaN };
+
+  /**
+   * Schrittgeräusche aus der zurückgelegten Strecke (einmal je fester Logikschritt aufrufen).
+   * Schrittlänge wächst mit dem Tempo; der Klang kommt räumlich von der Figur.
+   */
+  footsteps(x: number, y: number, z: number) {
+    const p = this.stepPrev;
+    const moved = Number.isNaN(p.x) ? 0 : Math.hypot(x - p.x, z - p.z);
+    p.x = x; p.z = z;
+    if (this.stepVol <= 0 || moved > 1.5) { this.stepAcc = 0; return; }
+    const speed = moved * 60;
+    if (speed < 0.6) { this.stepAcc = 0; return; }
+    this.stepAcc += moved;
+    const stride = Math.min(1.4, Math.max(0.7, 0.5 + speed * 0.12));
+    if (this.stepAcc >= stride) {
+      this.stepAcc -= stride;
+      audio.play('step', this.stepVol * Math.min(1.2, 0.6 + speed * 0.1), { x, y: y + 0.1, z });
+    }
   }
 
   /** Zu Beginn jedes festen Schritts: letzter Stand wird Ausgangspunkt fürs Gleiten */
@@ -312,7 +340,10 @@ export class Character {
 
   /** Aussehen ändern (baut die Figur neu) */
   setLook(look: CharacterLook) {
+    const hadFx = this.fxReady;
+    if (hadFx) this.dropFx();
     this.look = look;
+    if (hadFx) queueMicrotask(() => this.enableFx());
     if (this.assets.vroid) {
       const vb = isFemale(look) ? this.assets.vroid.female : this.assets.vroid.male;
       if (vb !== this.vroid) { this.initVroid(vb, look); this.play('idle', { fade: 0.01 }); }
@@ -426,7 +457,88 @@ export class Character {
     return a.time / a.getClip().duration;
   }
 
+  // ---------- Treffer-Randlicht und Auflösen ----------
+  private fxU: ToonFxUniforms[] = [];
+  private fxMats: Material[] = [];
+  private fxReady = false;
+  private hitT = 0;
+  private hitAmp = 0;
+  private tintAmt = 0;
+  private dissolveK = 0;
+
+  /**
+   * Eigene Effekt-Materialien anlegen (eine Kopie je verwendetem Material dieser Figur, gleiches Shader-Programm).
+   * Gegner bekommen sie gleich beim Erscheinen, damit der erste Treffer nicht ruckelt.
+   */
+  enableFx() {
+    if (this.fxReady) return;
+    this.fxReady = true;
+    const made = new Map<Material, Material>();
+    this.holder.traverse((o) => {
+      const m = o as Mesh;
+      if (!m.isMesh || Array.isArray(m.material)) return;
+      const src = m.material as Material;
+      if ((src as Material & { userData: { outline?: boolean } }).userData?.outline) return;
+      let v = made.get(src);
+      if (!v) {
+        const fx = toonFx(src);
+        if (!fx) return;
+        v = fx.mat;
+        made.set(src, v);
+        this.fxU.push(fx.u);
+        this.fxMats.push(v);
+      }
+      m.material = v;
+    });
+  }
+
+  /** Effekt-Kopien verwerfen (z. B. nach Aussehen-Wechsel, der neue Materialien setzt) */
+  private dropFx() {
+    for (const m of this.fxMats) disposeMaterial(m);
+    this.fxMats = [];
+    this.fxU = [];
+    this.fxReady = false;
+  }
+
+  /** Treffer: Ränder leuchten kurz in der Trefferfarbe auf */
+  hitFlash(color: ColorRepresentation = 0xffffff, strength = 1) {
+    this.enableFx();
+    for (const u of this.fxU) u.hitCol.value.set(color);
+    this.hitT = 0.16;
+    this.hitAmp = strength;
+    // sofort sichtbar – auch während des Standbilds, in dem keine Logikschritte laufen
+    for (const u of this.fxU) u.hit.value = Math.max(this.tintAmt, strength);
+  }
+
+  /** Dauerhafte Färbung (z. B. eingefroren); 0 = aus */
+  setTint(color: ColorRepresentation, amount: number) {
+    if (amount > 0) this.enableFx();
+    if (amount > 0) for (const u of this.fxU) u.hitCol.value.set(color);
+    this.tintAmt = amount;
+  }
+
+  /** Auflösen beim Besiegen: 0 = ganz, 1 = verschwunden */
+  setDissolve(k: number) {
+    if (k > 0) this.enableFx();
+    if (k > 0 && this.dissolveK === 0) {
+      // Konturen und Schatten folgen den Löchern nicht – während des Auflösens aus
+      this.holder.traverse((o) => {
+        const m = o as Mesh;
+        if (!m.isMesh) return;
+        m.castShadow = false;
+        if ((m.material as Material & { userData: { outline?: boolean } }).userData?.outline) m.visible = false;
+      });
+    }
+    this.dissolveK = k;
+    for (const u of this.fxU) u.dissolve.value = k;
+  }
+
   update(dt: number) {
+    if (this.fxReady) {
+      this.hitT = Math.max(0, this.hitT - dt);
+      const v = Math.max(this.tintAmt, this.hitAmp * (this.hitT / 0.16));
+      for (const u of this.fxU) u.hit.value = v;
+    }
     this.mixer.update(dt);
     // Mimik: blinzeln, beim Jubeln strahlen, beim Reden den Mund bewegen
     const f = this.face;
@@ -478,6 +590,10 @@ export class Character {
   /** Figur entfernen und alles freigeben, was nur ihr gehört (Kleidung, Hut, Waffen, Skelett-Daten) */
   dispose() {
     Character.moving.delete(this);
+    // Effekt-Kopien gehören nur dieser Figur (hängen sie gerade nicht an einem Netz, hier freigeben)
+    for (const m of this.fxMats) disposeMaterial(m);
+    this.fxMats = [];
+    this.fxU = [];
     this.releaseGeometry();
     this.mixer.stopAllAction();
     this.mixer.uncacheRoot(this.rig);
