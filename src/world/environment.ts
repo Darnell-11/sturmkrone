@@ -3,6 +3,8 @@ import { DAY_MINUTES, WEATHER_IDS, type WeatherId } from '../data/world';
 import type { QualityConfig } from '../data/qualityTiers';
 import { forEachToon, toonShared } from '../render/toon';
 import { csmShared, ensureCsm } from '../render/csm';
+import { fogShared } from '../render/atmosphere';
+import { envShared } from '../render/ibl';
 import { CSM } from 'three/examples/jsm/csm/CSM.js';
 import type { Material, Mesh } from 'three';
 import { Ocean, type IslandShape } from './ocean';
@@ -239,6 +241,15 @@ export class Environment {
     this.sun.position.x = this.sun.target.position.x + pal.lightDir.x * 200;
     this.sun.position.z = this.sun.target.position.z + pal.lightDir.z * 200;
     this.updateCsm(camera, pal.lightDir);
+
+    // Atmosphäre: Dunst nimmt in Sonnenrichtung die Lichtfarbe auf (nachts und bei Sturm kaum)
+    fogShared.skFogSunDir.value.copy(pal.lightDir).normalize();
+    fogShared.skFogSunCol.value.copy(pal.light).multiplyScalar(0.9 + 0.3 * pal.sunVis);
+    fogShared.skFogHaze.value = pal.sunVis * (1 - greyK * 0.8) * 0.6;
+    // Spiegelungen: Ersatz-Himmelsverlauf (ohne Umgebungskarte) und Stärke nach Helligkeit
+    toonShared.envLow.value.copy(horizon).multiplyScalar(0.8);
+    toonShared.envHigh.value.copy(zenith);
+    envShared.intensity.value = 0.55 + 0.45 * light;
 
     toonShared.rimColor.value.copy(pal.rim);
     // Schattenfarbe: tags kühles Blau, im Abendrot Violett, nachts tiefes Blau

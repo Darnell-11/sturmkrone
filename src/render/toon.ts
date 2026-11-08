@@ -15,6 +15,8 @@ import {
 } from 'three';
 import { markShared } from './dispose';
 import { ensureCsm } from './csm';
+import { cubeUvDefines, envShared } from './ibl';
+import { fogUniforms } from './atmosphere';
 
 /** Gemeinsame Werte für alle Toon-Materialien – die Umgebung passt sie an Tageszeit und Wetter an. */
 export const toonShared = {
@@ -22,6 +24,10 @@ export const toonShared = {
   rimStrength: { value: 0.55 },
   /** Farbe der Schattenseiten (Anime: kühl, abends violett) */
   shadowTint: { value: new Color(0.74, 0.8, 1.12) },
+  /** 1 = Umgebungskarte (IBL) vorhanden; sonst spiegeln Metalle einen einfachen Himmelsverlauf */
+  envOn: { value: 0 },
+  envLow: { value: new Color(0.5, 0.55, 0.6) },
+  envHigh: { value: new Color(0.7, 0.8, 0.95) },
 };
 
 function makeRamp(levels: number[]): DataTexture {
@@ -34,7 +40,7 @@ function makeRamp(levels: number[]): DataTexture {
   t.minFilter = t.magFilter = NearestFilter;
   t.generateMipmaps = false;
   t.needsUpdate = true;
-  return t;
+  return markShared(t);
 }
 /** 3-stufige Licht-Rampe mit sauberen, leicht weichen Kanten (Schatten, Halbton, Licht) */
 export const TOON_RAMP = (() => {
@@ -74,12 +80,62 @@ export interface ToonOptions {
   detail?: 'sand' | 'grass' | 'rock';
   /** Eigenes Material statt Cache (für Texturen, die nur einem Objekt gehören – wird mit ihm freigegeben) */
   unique?: boolean;
+  // ---------- PBR (fließt ins Anime-Shading ein, ersetzt es nicht) ----------
+  /** Reliefkarte (Tangentenraum) und ihre Stärke */
+  normalMap?: Texture | null;
+  normalScale?: number;
+  /** Umgebungsverdeckung aus der Textur (Kanal R) */
+  aoMap?: Texture | null;
+  aoMapIntensity?: number;
+  /** Rauheit 0 (Spiegel) … 1 (matt); Standard: Metall 0,3–0,42, sonst 0,85 */
+  roughness?: number;
+  /** Metall 0 … 1; Standard: 1 bei spec ≥ 0,8 (Klingen, Rüstung, Gold), sonst 0 */
+  metalness?: number;
+  /** Rauheit (Kanal G) und Metall (Kanal B) aus einer Textur – glTF-Anordnung, darf dieselbe ORM-Textur sein */
+  roughnessMap?: Texture | null;
+  metalnessMap?: Texture | null;
 }
 
 const cache = new Map<string, MeshToonMaterial>();
 
+/** PBR- und Umgebungs-Uniforms; die Karten-UV folgt der vorhandenen Textur */
+const PBR_PARS_GLSL = /* glsl */ `
+  uniform float uRough;
+  uniform float uMetal;
+  uniform float uEnvOn;
+  uniform float uEnvI;
+  uniform vec3 uEnvLow;
+  uniform vec3 uEnvHigh;
+  #if defined(SK_ROUGHMAP) || defined(SK_METALMAP)
+    #if defined(USE_MAP)
+      #define SK_PBR_UV vMapUv
+    #elif defined(USE_AOMAP)
+      #define SK_PBR_UV vAoMapUv
+    #else
+      #define SK_PBR_UV vNormalMapUv
+    #endif
+  #endif
+  #ifdef SK_ROUGHMAP
+    uniform sampler2D uRoughMap;
+  #endif
+  #ifdef SK_METALMAP
+    uniform sampler2D uMetalMap;
+  #endif
+  #ifdef SK_ENV
+    uniform sampler2D uSkEnv;
+  #endif
+`;
+
 const RIM_SPEC_GLSL = /* glsl */ `
   {
+    float skRough = uRough;
+    float skMetal = uMetal;
+    #ifdef SK_ROUGHMAP
+      skRough *= texture2D(uRoughMap, SK_PBR_UV).g;
+    #endif
+    #ifdef SK_METALMAP
+      skMetal *= texture2D(uMetalMap, SK_PBR_UV).b;
+    #endif
     // Anime-Schatten: Schattenseiten kühl einfärben statt nur abdunkeln
     float skLum = dot(outgoingLight, vec3(0.299, 0.587, 0.114));
     float skBase = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114)) + 0.001;
@@ -93,12 +149,26 @@ const RIM_SPEC_GLSL = /* glsl */ `
       // Randlicht vor allem auf der Seite, die vom Licht abgewandt zur Kamera zeigt
       rim *= 0.55 + 0.45 * clamp(dot(-viewDir, L) * 0.5 + 0.5, 0.0, 1.0);
       if (uSpec > 0.0) {
+        // Glanzfleck: glatte Flächen klein und scharf, raue groß und weich (Anime-Kante bleibt)
         vec3 H = normalize(L + viewDir);
-        float s = pow(max(dot(normal, H), 1e-4), 48.0);
-        outgoingLight += directionalLights[0].color * smoothstep(0.45, 0.55, s) * uSpec * 0.45;
+        float s = pow(max(dot(normal, H), 1e-4), mix(128.0, 14.0, skRough));
+        vec3 specTint = mix(vec3(1.0), diffuseColor.rgb, skMetal * 0.6);
+        outgoingLight += directionalLights[0].color * specTint * smoothstep(0.45, 0.55, s) * uSpec * 0.45;
       }
     #endif
     outgoingLight += mix(diffuseColor.rgb, vec3(1.0), 0.35) * uRimColor * rim;
+    #ifdef SK_ENV
+    {
+      // Bildbasierte Spiegelung (IBL): Himmel, Sonne und Abendrot aus der vorgefilterten Umgebungskarte
+      vec3 rW = inverseTransformDirection(reflect(-viewDir, normal), viewMatrix);
+      vec3 envC = uEnvOn > 0.5 ? textureCubeUV(uSkEnv, rW, skRough).rgb : mix(uEnvLow, uEnvHigh, clamp(rW.y * 0.5 + 0.5, 0.0, 1.0));
+      float fres = pow(1.0 - ndv, 5.0);
+      vec3 F0 = mix(vec3(0.04), diffuseColor.rgb, skMetal);
+      vec3 F = F0 + (vec3(1.0) - F0) * fres * (1.0 - skRough * 0.8);
+      // Metall: die Farbe kommt aus der Spiegelung, die matte Grundfarbe tritt zurück
+      outgoingLight = outgoingLight * (1.0 - skMetal * 0.55) + envC * F * uEnvI;
+    }
+    #endif
   }
 `;
 
@@ -160,17 +230,34 @@ const DETAIL_FRAG: Record<'sand' | 'grass' | 'rock', string> = {
   }`,
 };
 
-function patch(mat: MeshToonMaterial, spec: number, rim: number, detail?: 'sand' | 'grass' | 'rock') {
+interface PbrPatch { rough: number; metal: number; roughMap: Texture | null; metalMap: Texture | null; env: boolean }
+
+function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: 'sand' | 'grass' | 'rock' | undefined, pbr: PbrPatch) {
   const uSpec = { value: spec };
   const uRimAmount = { value: rim };
+  const uRough = { value: pbr.rough };
+  const uMetal = { value: pbr.metal };
+  const uRoughMap = { value: pbr.roughMap };
+  const uMetalMap = { value: pbr.metalMap };
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uRimColor = toonShared.rimColor;
     shader.uniforms.uRimStrength = toonShared.rimStrength;
     shader.uniforms.uShadowTint = toonShared.shadowTint;
     shader.uniforms.uSpec = uSpec;
     shader.uniforms.uRimAmount = uRimAmount;
+    shader.uniforms.uRough = uRough;
+    shader.uniforms.uMetal = uMetal;
+    shader.uniforms.uRoughMap = uRoughMap;
+    shader.uniforms.uMetalMap = uMetalMap;
+    shader.uniforms.uSkEnv = envShared.map;
+    shader.uniforms.uEnvOn = toonShared.envOn;
+    shader.uniforms.uEnvI = envShared.intensity;
+    shader.uniforms.uEnvLow = toonShared.envLow;
+    shader.uniforms.uEnvHigh = toonShared.envHigh;
+    fogUniforms(shader);
+    const defs = (pbr.roughMap ? '#define SK_ROUGHMAP\n' : '') + (pbr.metalMap ? '#define SK_METALMAP\n' : '') + (pbr.env ? '#define SK_ENV\n' + cubeUvDefines() : '');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform vec3 uShadowTint;\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uSpec;\nuniform float uRimAmount;')
+      .replace('#include <common>', defs + '#include <common>\nuniform vec3 uShadowTint;\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uSpec;\nuniform float uRimAmount;\n' + PBR_PARS_GLSL + (pbr.env ? '#include <cube_uv_reflection_fragment>\n' : ''))
       .replace('#include <opaque_fragment>', RIM_SPEC_GLSL + '\n#include <opaque_fragment>');
     if (detail) {
       shader.vertexShader = shader.vertexShader
@@ -181,14 +268,19 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail?: 'sand'
         .replace('#include <color_fragment>', '#include <color_fragment>\n' + DETAIL_FRAG[detail]);
     }
   };
-  mat.customProgramCacheKey = () => `sk-toon-2${detail ? '-' + detail : ''}`;
+  const progKey = `sk-toon-3${detail ? '-' + detail : ''}-${pbr.env ? 'e' : ''}${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}`;
+  mat.customProgramCacheKey = () => progKey;
 }
 
 /** Toon-Material im Anime-Stil (gecacht – gleiche Optionen ergeben dasselbe Material). */
 export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial {
   const o: ToonOptions = typeof opts === 'object' && opts !== null && 'color' in (opts as object) ? (opts as ToonOptions) : { color: opts as ColorRepresentation };
   const unique = !!o.unique;
-  const key = unique ? '' : JSON.stringify({ ...o, color: new Color(o.color).getHex(), emissive: o.emissive !== undefined ? new Color(o.emissive).getHex() : 0, map: o.map?.uuid ?? null });
+  const tex = (t: Texture | null | undefined) => t?.uuid ?? null;
+  const key = unique ? '' : JSON.stringify({
+    ...o, color: new Color(o.color).getHex(), emissive: o.emissive !== undefined ? new Color(o.emissive).getHex() : 0,
+    map: tex(o.map), normalMap: tex(o.normalMap), aoMap: tex(o.aoMap), roughnessMap: tex(o.roughnessMap), metalnessMap: tex(o.metalnessMap),
+  });
   const hit = unique ? undefined : cache.get(key);
   if (hit) return hit;
   const mat = new MeshToonMaterial({
@@ -200,9 +292,21 @@ export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial 
     transparent: o.transparent ?? false,
     opacity: o.opacity ?? 1,
     vertexColors: o.vertexColors ?? false,
+    normalMap: o.normalMap ?? null,
+    aoMap: o.aoMap ?? null,
+    aoMapIntensity: o.aoMapIntensity ?? 1,
   });
+  if (o.normalMap) mat.normalScale.setScalar(o.normalScale ?? 1);
   if (o.flatShading) (mat as any).flatShading = true;
-  patch(mat, o.spec ?? 0, o.rim ?? 1, o.detail);
+  // Metall und Rauheit: bisherige Glanz-Materialien (spec ≥ 0,8: Klingen, Rüstung, Gold, Kanonen) werden zu Metall
+  const spec = o.spec ?? 0;
+  const metal = o.metalness ?? (spec >= 0.8 ? 1 : 0);
+  const rough = o.roughness ?? (metal > 0 ? (spec >= 1 ? 0.3 : 0.42) : 0.85);
+  patch(mat, spec, o.rim ?? 1, o.detail, {
+    rough, metal, roughMap: o.roughnessMap ?? null, metalMap: o.metalnessMap ?? null,
+    // Spiegelungen nur, wo sie sichtbar sind: Metall oder glatte Flächen (Eis, Lack)
+    env: metal > 0 || rough < 0.35 || !!o.metalnessMap,
+  });
   mat.userData.toon = true;
   ensureCsm(mat);
   if (unique) return mat;

@@ -11,6 +11,7 @@ import {
   type Scene,
 } from 'three';
 import { detailCanvas } from '../render/texDetail';
+import { markShared } from '../render/dispose';
 
 /**
  * Pulverdampf, Rauchsäulen und Nebelschwaden als weiche, sich drehende Wolken-Billboards.
@@ -53,7 +54,7 @@ function puffTexture(): CanvasTexture {
   m.addColorStop(1, 'rgba(0,0,0,0)');
   g.fillStyle = m;
   g.fillRect(0, 0, s, s);
-  puffTex = new CanvasTexture(c);
+  puffTex = markShared(new CanvasTexture(c));
   return puffTex;
 }
 

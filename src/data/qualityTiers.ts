@@ -39,6 +39,8 @@ export interface QualityConfig {
   anisotropy: number;
   /** Supersampling: mehr Pixel rendern als der Bildschirm hat (Ultra, begrenzt durch maxPixels) */
   supersample: number;
+  /** Spiegelungen (IBL): Sekunden zwischen zwei Aufnahmen des Himmels; 0 = aus (einfacher Himmelsverlauf) */
+  ibl: number;
 }
 
 /** Horizont-basierte Umgebungsverdeckung (GTAO-Art), in halber Auflösung berechnet */
@@ -83,6 +85,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     textureScale: 1,
     anisotropy: 2,
     supersample: 1,
+    ibl: 0,
   },
   mid: {
     label: 'Mittel',
@@ -100,6 +103,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     textureScale: 1,
     anisotropy: 4,
     supersample: 1,
+    ibl: 20,
   },
   high: {
     label: 'Hoch',
@@ -116,6 +120,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     textureScale: 2,
     anisotropy: 8,
     supersample: 1,
+    ibl: 8,
   },
   max: {
     label: 'Maximal',
@@ -132,6 +137,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     textureScale: 2,
     anisotropy: 16,
     supersample: 1,
+    ibl: 6,
   },
   ultra: {
     label: 'Ultra',
@@ -148,6 +154,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     textureScale: 4,
     anisotropy: 16,
     supersample: 1.5,
+    ibl: 4,
   },
 };
 

@@ -431,4 +431,4 @@ export class Enemy {
 }
 
 const FLASH_MAT = toon({ color: 0xffffff, emissive: 0xffffff });
-const FROST_MAT = toon({ color: 0xbff0ff, emissive: 0x2a6a8a, spec: 1 });
+const FROST_MAT = toon({ color: 0xbff0ff, emissive: 0x2a6a8a, spec: 1, metalness: 0, roughness: 0.15 });

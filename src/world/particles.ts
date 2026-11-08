@@ -1,4 +1,5 @@
 import { AdditiveBlending, BufferAttribute, BufferGeometry, CanvasTexture, Color, NormalBlending, Points, PointsMaterial, type Scene } from 'three';
+import { markShared } from '../render/dispose';
 
 const BASE_MAX = 900;
 
@@ -15,7 +16,7 @@ function dot(): CanvasTexture {
   g.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 64, 64);
-  dotTexture = new CanvasTexture(c);
+  dotTexture = markShared(new CanvasTexture(c));
   return dotTexture;
 }
 

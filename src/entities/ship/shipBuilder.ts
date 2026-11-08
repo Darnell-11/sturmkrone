@@ -26,6 +26,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { addOutlines } from '../../render/outline';
 import { plankTexture, sailTexture } from '../../render/textures';
 import { toon } from '../../render/toon';
+import { toonPbr } from '../../render/pbrMaps';
 
 export interface ShipModel {
   group: Group;
@@ -199,7 +200,7 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
 
   const planksTex = plankTexture();
   // beidseitig: auch die Innenseite der Bordwand (vom Deck aus) und der Heckspiegel von hinten bleiben sichtbar
-  const hullMat = toon({ color: 0xffffff, vertexColors: true, map: planksTex, side: DoubleSide });
+  const hullMat = toon({ color: 0xffffff, vertexColors: true, map: planksTex, side: DoubleSide, ...toonPbr(planksTex, { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) });
   const hull = new Mesh(hullGeometry(c, D, look), hullMat);
   group.add(hull);
 
@@ -214,7 +215,7 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
   deckTex.rotation = Math.PI / 2;
   deckTex.repeat.set(0.35, 0.35);
   deckTex.needsUpdate = true;
-  const deck = new Mesh(deckGeo, toon({ color: '#C79A68', side: DoubleSide, map: deckTex, unique: true }));
+  const deck = new Mesh(deckGeo, toon({ color: '#C79A68', side: DoubleSide, map: deckTex, unique: true, ...toonPbr(deckTex, { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }, planksTex) }));
   deck.position.y = D - 0.05;
   deck.userData.noOutline = true;
   group.add(deck);
@@ -253,7 +254,7 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
   const castle = new Mesh(new ExtrudeGeometry(cs, { depth: castleH, bevelEnabled: false }).rotateX(-Math.PI / 2), wood);
   castle.position.y = D;
   group.add(castle);
-  const castleTop = new Mesh(new ExtrudeGeometry(cs, { depth: 0.14, bevelEnabled: false }).rotateX(-Math.PI / 2), toon({ color: '#C79A68', map: deckTex, unique: true }));
+  const castleTop = new Mesh(new ExtrudeGeometry(cs, { depth: 0.14, bevelEnabled: false }).rotateX(-Math.PI / 2), toon({ color: '#C79A68', map: deckTex, unique: true, ...toonPbr(deckTex, { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }, planksTex) }));
   castleTop.position.y = D + castleH;
   castleTop.scale.set(1.04, 1, 1);
   group.add(castleTop);
@@ -295,7 +296,9 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
 
   // Masten, Rahen, Segel
   const sails: Mesh[] = [];
-  const emblem = flagTexture(look.flag, look.flagColor).image as HTMLCanvasElement;
+  // Flagge einmal malen: dieselbe Leinwand dient als Wappen auf dem Großsegel
+  const flagTex = flagTexture(look.flag, look.flagColor);
+  const emblem = flagTex.image as HTMLCanvasElement;
   const mainMast = c.masts.length > 1 ? 1 : 0;
   let sailSeed = 1;
   const rig: number[] = [];
@@ -417,7 +420,7 @@ export function buildShip(c: ShipClass, look: ShipLook): ShipModel {
 
   // Flagge am höchsten Mast
   const top = c.masts.reduce((a, b) => (Math.abs(b) < Math.abs(a) ? b : a), c.masts[0]) * c.L;
-  const flag = new Mesh(new PlaneGeometry(1.8 * Math.min(2, sc), 1.1 * Math.min(2, sc), 8, 1), new MeshBasicMaterial({ map: flagTexture(look.flag, look.flagColor), side: DoubleSide }));
+  const flag = new Mesh(new PlaneGeometry(1.8 * Math.min(2, sc), 1.1 * Math.min(2, sc), 8, 1), new MeshBasicMaterial({ map: flagTex, side: DoubleSide }));
   flag.position.set(0, D + c.mh + 0.7, top - 1);
   flag.rotation.y = Math.PI / 2;
   flag.userData.noOutline = true;

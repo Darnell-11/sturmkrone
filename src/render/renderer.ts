@@ -31,6 +31,8 @@ import {
 } from 'postprocessing';
 import { MOBILE_AO_LIMIT, QUALITY_TIERS, RENDER_LOOK, type QualityConfig, type QualityTier } from '../data/qualityTiers';
 import { AoEffect, AoPass } from './gtao';
+import { installAtmosphere } from './atmosphere';
+import { ensureCsm } from './csm';
 import { EdgeEffect, OpaqueEffect, WATER_ALPHA, setHullsVisible } from './outline';
 import { GradeEffect } from './grade';
 
@@ -58,6 +60,8 @@ export class GameRenderer {
     } catch {
       throw new WebGLUnavailableError();
     }
+    // Atmosphärischer Nebel ersetzt den linearen Nebel, bevor der erste Shader übersetzt wird
+    installAtmosphere();
     // ACES Filmic mit ausgewogener Belichtung (gilt auch für den Tonemapping-Effekt der Nachbearbeitung)
     this.gl.toneMapping = ACESFilmicToneMapping;
     this.gl.toneMappingExposure = RENDER_LOOK.exposure;
@@ -210,6 +214,8 @@ export class GameRenderer {
       const m = (o as Mesh).material as Material | Material[] | undefined;
       if (!m) return;
       for (const mat of Array.isArray(m) ? m : [m]) {
+        // Sicherheitsnetz: neu hinzugekommene beleuchtete Materialien zählen die Schatten-Kaskaden als ein Licht
+        if (ensureCsm(mat)) mat.needsUpdate = true;
         if (!mat.transparent || mat.userData.maskKept) continue;
         mat.userData.maskKept = true;
         const additive = mat.blending === AdditiveBlending;

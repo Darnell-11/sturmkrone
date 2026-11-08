@@ -26,6 +26,27 @@
 >   - Umgebungsverdeckung: `src/render/gtao.ts`, ein `AoPass` in halber Auflösung plus `AoEffect`.
 >   - Belichtung, Bloom-Schwelle und Vignette stehen in `RENDER_LOOK` in `data/qualityTiers.ts`.
 
+> **Änderungsprotokoll (Weg zu 3.0)**
+>
+> **2.9.12 – Material-System, Atmosphäre, IBL**
+> - Änderungen:
+>   - PBR im Toon-Material: neue Optionen `normalMap`, `aoMap`, `roughness`, `metalness`, `roughnessMap` und `metalnessMap` (ORM-Kanäle wie glTF).
+>   - Materialien mit `spec ≥ 0,8` werden automatisch Metall.
+>   - Prozedurale Relief- und ORM-Karten aus den gemalten Texturen (`toonPbr()`) für Holz, Kisten und Pflaster.
+>   - IBL: eine PMREM-Aufnahme des Himmels (`SkyProbe`) alle `ibl` Sekunden je Stufe, gelesen über `textureCubeUV`. Niedrig nutzt einen Ersatz-Himmelsverlauf.
+>   - Atmosphärischer Nebel: global ersetzte Fog-Chunks, exponentiell mit Höhenabnahme und Sonnenfarbe im Gegenlicht.
+>   - Himmel mit Mie-Hof und Horizont-Dunst.
+> - Neue Dateien: `src/render/pbrMaps.ts`, `src/render/ibl.ts`, `src/render/atmosphere.ts`.
+> - Geänderte Dateien: `render/toon.ts`, `render/renderer.ts`, `render/textures.ts`, `world/sky.ts`, `world/ocean.ts`, `world/environment.ts`, `world/town.ts`, `world/islandStyle.ts`, `world/life.ts`, `world/fauna.ts`, `world/particles.ts`, `world/smoke.ts`, `combat/fx.ts`, `entities/ship/shipBuilder.ts`, `entities/enemy.ts`, `core/game.ts`, `data/qualityTiers.ts`.
+> - Behobene Fehler:
+>   - Ein neu gebautes Wassermaterial erhielt keine CSM-Schalter, sodass die Kaskaden mehrfach als Licht zählten. Jetzt gibt es `ensureCsm` beim Bau und eine Prüfung alle 0,5 s.
+>   - Die Schiffsflagge wurde doppelt gemalt.
+>   - Geteilte Effekt-Texturen und Lichtrampen waren nicht als geteilt markiert.
+> - Bekannt, für später:
+>   - `mergeStatic` im Schiffsbau entfernt UVs; die Holztextur fehlt dadurch auf zusammengefassten Teilen (Reling, Aufbauten).
+>   - Animations-Warnung „handslotl/handslotr: no target node“.
+> - Messung (GPU, Stadt, Hoch): 2,5 ms, wie vorher. Maximal 3,6 ms (+0,3 ms). Eine Himmels-Aufnahme kostet 0,6 ms.
+
 > **Abstimmung mit dem Briefing unten:** Diese Richtlinien gelten zusätzlich zum Projekt-Briefing. Der Anime-Stil (Toon-Material, Konturen) bleibt die Art Direction: PBR-Kanäle (Normal, Roughness, Metallic, AO) fließen in das Toon-Material ein, statt es zu ersetzen. Post-Effekte laufen weiter über `postprocessing` (pmndrs) mit den gleichwertigen Effekten (Bloom, AO, Tiefenunschärfe). Schwere Effekte (AO, CSM, PCSS, Tiefenunschärfe) gelten für High/Max; Handys auf Low/Mid haben Vorrang bei den 60 FPS.
 
 ---

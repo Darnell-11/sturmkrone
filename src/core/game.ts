@@ -5,6 +5,9 @@ import { randomLook } from '../data/characterParts';
 import { WEATHER, type WeatherId } from '../data/world';
 import { CharacterAssets } from '../entities/character/assets';
 import { Character } from '../entities/character/character';
+import type { ShaderMaterial } from 'three';
+import { SkyProbe } from '../render/ibl';
+import { toonShared } from '../render/toon';
 import type { Enemy } from '../entities/enemy';
 import { PLAYER_BASE } from '../data/combat';
 import { CombatOverlay } from '../ui/combatOverlay';
@@ -69,6 +72,7 @@ export class Game {
   private autosaveTimer = 0;
   private saveFailedShown = false;
   private stage: EditorStage | null = null;
+  private skyProbe: SkyProbe;
   private editor: CharacterEditor | null = null;
   private uiRoot: HTMLElement;
   private quests: QuestSystem | null = null;
@@ -106,7 +110,13 @@ export class Game {
     setTexDetail(startTier.textureScale, Math.min(startTier.anisotropy, caps.getMaxAnisotropy()), startTier.detail);
     this.world = new SeaWorld();
     this.world.env.maxTex = caps.maxTextureSize;
+    // Spiegelungen (IBL): der Himmel wird regelmäßig als vorgefilterte Umgebungskarte aufgenommen
+    this.skyProbe = new SkyProbe(this.renderer.gl, this.world.env.sky.dome.material as ShaderMaterial);
     this.renderer.onQualityChange((c) => this.world.applyQuality(c));
+    this.renderer.onQualityChange((c) => {
+      this.skyProbe.setInterval(c.ibl);
+      toonShared.envOn.value = c.ibl > 0 ? 1 : 0;
+    });
     this.useWorldView();
     this.renderer.applyQuality(this.settings.data.quality ?? this.detected.tier);
 
@@ -310,6 +320,7 @@ export class Game {
     else { this.loop.timeScale = 1; hs.scale = 1; }
     const a = this.state.is('play', 'pause') ? alpha : 1;
     this.world.render(a, frameDt, this.state.is('menu', 'boot'));
+    this.skyProbe.update(frameDt);
     // Gegner, Crew und Stadtleute zwischen den 60-Hz-Logikschritten weich darstellen
     Character.present(a);
     this.renderer.render(frameDt);

@@ -4,6 +4,7 @@ import type { IslandStyle } from '../data/regions';
 import { coastK, hillProfile } from './islandGround';
 import { toon } from '../render/toon';
 import { deckUV, plankTexture } from '../render/textures';
+import { toonPbr } from '../render/pbrMaps';
 
 /** Farben und Pflanzen je Region */
 export interface StyleKit {
@@ -254,7 +255,7 @@ export function outpost(r: number, facing: number, lanterns: Mesh[]): Group {
   const w = wood(), p = plaster(), rf = roof();
   const deck = new BoxGeometry(3, 0.4, 22);
   deckUV(deck, 3, 22);
-  const pier = new Mesh(deck, toon({ color: '#A8804E', map: plankTexture() }));
+  const pier = new Mesh(deck, toon({ color: '#A8804E', map: plankTexture(), ...toonPbr(plankTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) }));
   pier.position.set(Math.sin(facing) * (r + 6), 1.25, Math.cos(facing) * (r + 6));
   pier.rotation.y = facing;
   g.add(pier);

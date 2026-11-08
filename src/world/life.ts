@@ -22,6 +22,7 @@ import { addOutlines } from '../render/outline';
 import { toon } from '../render/toon';
 import type { ParticleSystem } from './particles';
 import { markShared } from '../render/dispose';
+import { toonPbr } from '../render/pbrMaps';
 
 const GULLS = 28;
 
@@ -76,7 +77,7 @@ export class SeaLife {
 
   private makeBoat(cx: number, cz: number, r: number): Boat {
     const g = new Group();
-    const hull = new Mesh(new BoxGeometry(1.8, 0.8, 5), toon({ color: '#9A6A3B', map: plankTexture() }));
+    const hull = new Mesh(new BoxGeometry(1.8, 0.8, 5), toon({ color: '#9A6A3B', map: plankTexture(), ...toonPbr(plankTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) }));
     hull.position.y = 0.3;
     const mast = new Mesh(new CylinderGeometry(0.06, 0.08, 4, 6), toon('#5A3A22'));
     mast.position.y = 2.4;

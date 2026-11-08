@@ -29,6 +29,12 @@ const SKY_FRAG = /* glsl */ `
     float s = max(dot(d, normalize(uSunDir)), 0.0);
     c += uGlow * pow(max(s, 1e-4), 6.0) * (1.0 - h) * 0.9;
     c += uSunCol * (pow(max(s, 1e-4), 64.0) * 0.5 + smoothstep(0.9993, 0.9996, s) * 8.0) * uSunVis;
+    // Atmosphäre: Vorwärtsstreuung (Mie, Henyey-Greenstein) – heller Hof in der Lichtfarbe um die Sonne,
+    // bei Bewölkung schwächer; dazu ein Dunstband, das am Horizont nahtlos in den Nebel übergeht
+    float mieG = 0.76;
+    float mie = (1.0 - mieG * mieG) / pow(max(1.0 + mieG * mieG - 2.0 * mieG * s, 1e-3), 1.5);
+    c += uSunCol * mie * 0.012 * uSunVis * (1.0 - 0.7 * uGrey) * (0.4 + 0.6 * (1.0 - h));
+    c = mix(c, uHorizon, exp(-max(d.y, 0.0) * 14.0) * 0.45);
     // Mond mit Hof
     float m = max(dot(d, normalize(uMoonDir)), 0.0);
     c += vec3(0.85, 0.9, 1.0) * (smoothstep(0.99955, 0.9997, m) * 3.0 + pow(max(m, 1e-4), 200.0) * 0.25) * uMoonVis;

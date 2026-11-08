@@ -26,6 +26,7 @@ import { crateTexture, deckUV, plankTexture } from '../render/textures';
 import { detailCanvas, texDetail } from '../render/texDetail';
 import type { WalkIsland } from './islandGround';
 import { markShared } from '../render/dispose';
+import { toonPbr } from '../render/pbrMaps';
 
 // verwitterter Putz und satte, gedeckte Dachfarben (Hafenstadt, kein Ferienort)
 const WALLS = ['#E2D6BC', '#D4BF9A', '#C9CFD0', '#DCC4B0', '#CDD2BE'];
@@ -118,7 +119,7 @@ function cart(): Group {
 /** Kisten und Fässer, gestapelt */
 function crateStack(seed: number): Group {
   const g = new Group();
-  const crate = toon({ color: '#9A6A3A', map: crateTexture() }), barrel = toon({ color: '#7A5030', map: plankTexture() });
+  const crate = toon({ color: '#9A6A3A', map: crateTexture(), ...toonPbr(crateTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) }), barrel = toon({ color: '#7A5030', map: plankTexture(), ...toonPbr(plankTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) });
   const n = 2 + (seed % 3);
   for (let i = 0; i < n; i++) {
     const c = new Mesh(new BoxGeometry(0.95, 0.95, 0.95), crate);
@@ -333,7 +334,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   const pier = new Group();
   const deck = new BoxGeometry(5, 0.3, 46);
   deckUV(deck, 5, 46);
-  const plank = new Mesh(deck, toon({ color: '#B08A58', map: plankTexture() }));
+  const plank = new Mesh(deck, toon({ color: '#B08A58', map: plankTexture(), ...toonPbr(plankTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) }));
   plank.position.set(0, 1.5, 0);
   pier.add(plank);
   for (let i = 0; i < 9; i++) for (const s of [-1, 1]) {
@@ -344,7 +345,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   pier.position.set(cx, 0, cz - def.r - 18);
   group.add(pier);
   for (let i = 0; i < 4; i++) {
-    const crate = new Mesh(new BoxGeometry(1.1, 1.1, 1.1), toon({ color: '#9A6A3A', map: crateTexture() }));
+    const crate = new Mesh(new BoxGeometry(1.1, 1.1, 1.1), toon({ color: '#9A6A3A', map: crateTexture(), ...toonPbr(crateTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) }));
     crate.position.set(cx + (i % 2 ? 1.6 : -1.6), 2.2, cz - def.r - 4 - i * 6);
     crate.rotation.y = i;
     group.add(crate);
@@ -521,7 +522,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   for (const m of [crystal, forge]) m.userData.noOutline = true;
   addOutlines(group);
   // Straßen und Platz erst nach dem Zusammenfassen (brauchen ihre Texturkoordinaten)
-  const cobble = toon({ color: '#A89C88', map: cobbleTexture(), side: DoubleSide });
+  const cobble = toon({ color: '#A89C88', map: cobbleTexture(), side: DoubleSide, ...toonPbr(cobbleTexture(), { strength: 1.6, rough: 0.7, roughVar: 0.3, ao: 0.9 }) });
   for (const road of roads) group.add(roadMesh(road, 5.2, cx, cz, groundAt, cobble));
   group.add(plazaMesh(16, cx, cz, groundAt, cobble));
   return { group, lights: glow, crystal, smoke };

@@ -18,6 +18,7 @@ import type { FxKind } from '../data/combat';
 import type { ParticleSystem } from '../world/particles';
 import { disposeGeometry } from '../render/dispose';
 import { q, sharedGeo } from '../render/geoCache';
+import { markShared } from '../render/dispose';
 
 // Wiederverwendete Farben (Partikel und Materialien kopieren den Wert)
 const TMP_COL = new Color();
@@ -28,7 +29,8 @@ function canvasTex(size: number, draw: (ctx: CanvasRenderingContext2D, s: number
   const c = document.createElement('canvas');
   c.width = c.height = size;
   draw(c.getContext('2d')!, size);
-  return new CanvasTexture(c);
+  // einmal gemalt, von allen Treffern geteilt – nie freigeben
+  return markShared(new CanvasTexture(c));
 }
 
 /** Anime-Trefferstern: spitze Strahlen und heller Kern */

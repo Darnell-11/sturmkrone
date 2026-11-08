@@ -80,7 +80,7 @@ export class IslandFauna {
     this.birdMesh = new InstancedMesh(bg, new MeshBasicMaterial({ color: 0xffffff, side: DoubleSide }), MAX_BIRDS);
     // springender Fisch
     const fg = new SphereGeometry(0.25, 6, 4); fg.scale(0.5, 0.6, 1.6);
-    this.fishMesh = new InstancedMesh(fg, toon({ color: '#9FB4C4', spec: 1 }), MAX_FISH);
+    this.fishMesh = new InstancedMesh(fg, toon({ color: '#9FB4C4', spec: 1, metalness: 0.5, roughness: 0.4 }), MAX_FISH);
     for (const m of [this.crabMesh, this.turtleMesh, this.birdMesh, this.fishMesh]) {
       m.count = 0;
       m.frustumCulled = false;

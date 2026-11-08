@@ -12,6 +12,8 @@ import {
 } from 'three';
 import { WAVES, WORLD_RADIUS } from '../data/world';
 import { WATER_ALPHA } from '../render/outline';
+import { fogUniforms } from '../render/atmosphere';
+import { ensureCsm } from '../render/csm';
 import { markShared } from '../render/dispose';
 /** Weiche Lichtrampe fürs Wasser: keine harten Hell-Dunkel-Bänder auf den Wellen */
 const SOFT_RAMP = (() => {
@@ -161,6 +163,7 @@ export class Ocean {
     const u = this.uniforms;
     const wakeN = this.wakeCount;
     mat.onBeforeCompile = (shader) => {
+      fogUniforms(shader);
       Object.assign(shader.uniforms, u);
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', `#include <common>
@@ -337,6 +340,8 @@ export class Ocean {
           gl_FragColor.a = uWaterAlpha;`);
     };
     mat.customProgramCacheKey = () => `sk-ocean5-${wakeN}`;
+    // Kaskaden-Schatten: auch ein neu gebautes Wassermaterial zählt alle Kaskaden als ein Licht
+    ensureCsm(mat);
     return mat;
   }
 
