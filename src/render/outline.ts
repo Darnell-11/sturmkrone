@@ -13,6 +13,7 @@ import {
 } from 'three';
 import { BlendFunction, Effect, EffectAttribute } from 'postprocessing';
 import { markShared, onForget } from './dispose';
+import { WIND_PARS, windShared } from './wind';
 
 export const INK = new Color(0x1b1410);
 
@@ -45,6 +46,7 @@ const hullMaterial = new ShaderMaterial({
   vertexShader: /* glsl */ `
     attribute vec3 outlineNormal;
     uniform float uWidth;
+    ${WIND_PARS}
     #include <common>
     #include <skinning_pars_vertex>
     #include <fog_pars_vertex>
@@ -54,6 +56,7 @@ const hullMaterial = new ShaderMaterial({
       #include <skinnormal_vertex>
       vec3 transformed = position;
       #include <skinning_vertex>
+      { vec4 skWw = modelMatrix * vec4(transformed, 1.0); transformed += skWind(transformed, skWw.xyz, aWind); }
       vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
       vec3 n = normalize(normalMatrix * objectNormal);
       // Konstante Linienbreite auf dem Bildschirm, nah begrenzt
@@ -72,6 +75,7 @@ const hullMaterial = new ShaderMaterial({
     }`,
 });
 hullMaterial.userData.outline = true;
+Object.assign(hullMaterial.uniforms, windShared);
 markShared(hullMaterial);
 
 const hulls = new Set<Mesh>();
@@ -118,6 +122,7 @@ export function addOutlines(root: Object3D, width = 1) {
     if (!mat) {
       mat = hullMaterial.clone();
       mat.uniforms.uWidth.value = width;
+      Object.assign(mat.uniforms, windShared);
       mat.userData.outline = true;
       markShared(mat);
       hullByWidth.set(width, mat);

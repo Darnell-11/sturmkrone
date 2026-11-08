@@ -1,10 +1,11 @@
-import { CanvasTexture, CatmullRomCurve3, CircleGeometry, LatheGeometry, Shape, ShapeGeometry, Sprite, SpriteMaterial, SRGBColorSpace, TorusGeometry, TubeGeometry, Vector2, Vector3 } from 'three';
+import { CanvasTexture, CatmullRomCurve3, CircleGeometry, LatheGeometry, Shape, ShapeGeometry, Sprite, SpriteMaterial, SRGBColorSpace, TorusGeometry, TubeGeometry, Vector2, Vector3, Box3 } from 'three';
 import { BoxGeometry, Color, ConeGeometry, CylinderGeometry, Group, Mesh, MeshBasicMaterial, OctahedronGeometry, SphereGeometry, type Material } from 'three';
 import type { IslandStyle } from '../data/regions';
 import { coastK, hillProfile } from './islandGround';
 import { toon } from '../render/toon';
 import { deckUV, plankTexture } from '../render/textures';
 import { toonPbr } from '../render/pbrMaps';
+import { markWind, windify } from '../render/wind';
 
 /** Farben und Pflanzen je Region */
 export interface StyleKit {
@@ -33,6 +34,8 @@ export function styleKit(style: IslandStyle): StyleKit {
     // gedämpftes, satteres Grün statt Knallgrün, sonnengebleichter Sand
     default: k = { sand: toon({ color: 0xdcc392, detail: 'sand', rim: 0.1 }), grass: toon({ color: 0x55894a, detail: 'grass', rim: 0.35 }), rock: toon({ color: 0x7a746a, flatShading: true, detail: 'rock' }), trunk: toon(0x6e4a28), leaf: toon({ color: 0x356e34, flatShading: true }), extra: null, flora: 'palme', rockScale: 1 };
   }
+  markWind(k.leaf);
+  markWind(k.trunk);
   cache.set(style, k);
   return k;
 }
@@ -175,6 +178,12 @@ export function plant(kit: StyleKit, rnd: () => number): Group {
         g.add(f);
       }
     }
+  }
+  // im Wind wiegen: Krone und Wedel stärker, Stamm unten fest (Kristalle bewegen sich nicht)
+  if (kit.flora !== 'kristall') {
+    g.updateMatrixWorld(true);
+    const box = new Box3().setFromObject(g);
+    windify(g, kit.flora === 'tot' ? 0.12 : kit.flora === 'kiefer' ? 0.3 : 0.42, Math.max(1, box.max.y));
   }
   return g;
 }

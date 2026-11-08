@@ -1,5 +1,36 @@
 # Was ist neu
 
+## 2.9.17 – Spiegelungen im Wasser, Wind in den Pflanzen, Fokus auf Gegner (08.11.2026)
+
+- **Spiegelungen (Screen Space Reflections), ab Grafikstufe Hoch am PC:**
+  - Das Meer spiegelt Schiffe, Masten, Segel, Figuren, Inseln und Effekte, gebrochen von den Wellen.
+  - Flach über das Wasser geschaut stärker, von oben schwächer.
+  - Spiegelnde Böden und Pfützen können ab jetzt mitspiegeln (Toon-Option `reflect`). Pfützen bei Regen folgen mit dem Wetter-Update.
+- **Wind in den Pflanzen:**
+  - Gras, Büsche, Palmwedel, Baumkronen und Stämme wiegen sich im Wind.
+  - Böen wandern sichtbar übers Land, und Blätter und Halme flattern leicht quer zum Wind.
+  - Die Stärke folgt dem Wetter: ruhig bei Flaute, kräftig im Sturm.
+  - Wurzeln bleiben stehen, die Spitzen bewegen sich. Auch die Tusche-Konturen auf Niedrig und Mittel bewegen sich mit.
+- **Sonnenstrahlen:** Die Lichtstreuung durch Lücken in Baumkronen, Masten und Häusern ist kräftiger und feiner aufgelöst und erscheint jetzt schon ab etwa 6° Sonnenhöhe, also auch im Abendlicht.
+- **Dynamische Tiefenunschärfe (Bokeh), jetzt auch auf Hoch am PC:**
+  - Erfasst du einen Gegner (Lock-on), wandert der Fokus weich auf ihn, und der Hintergrund wird unscharf.
+  - In Nahaufnahmen zu Fuß verschwimmt der Hintergrund stärker, auf See nur der Horizont.
+
+**Technik (für Entwickler):**
+- Änderungen:
+  - `SsrPass`/`SsrEffect` (`src/render/ssr.ts`): Strahlverfolgung im Bildschirmraum in reduzierter Auflösung mit Binärverfeinerung, Treffer-Dicke passend zur Schrittweite, Ausblenden an Rändern und mit der Entfernung, 5-Proben-Weichzeichnen beim Mischen.
+  - Spiegelmaske im Alpha-Kanal: Wasser < 0,5, spiegelnde Toon-Flächen 0,6 … 0,96 (Option `reflect`, nur mit Nachbearbeitung).
+  - Stufen: Hoch 14, Maximal 20, Ultra 28 Schritte; am Handy aus.
+  - Wind (`src/render/wind.ts`): Gewicht je Eckpunkt `aWind`, gesetzt mit `windify()` vor dem Zusammenfassen. `mergeByMaterial` behält es und füllt fehlende Gewichte mit 0. Materialien mit `markWind()`, Shader-Baustein `WIND_PARS` (Rauschen, Böen, Flattern) im Toon- und im Kontur-Shader. Uniforms kommen aus der Umgebung (Zeit, `windDir`, Wetterwind).
+  - God Rays: Dichte 0,96, Zerfall 0,935, Gewicht 0,26, mehr Proben; Einblenden ab Sonnenhöhe ≈ 0,1.
+  - Tiefenunschärfe: weich nachgeführter `dofFocus`, Ziel `dofTarget` (erfasster Gegner aus `SeaWorld.lockFocus`), Schärfebereich und `bokehScale` nach Kameraabstand. Auf Hoch an, am Handy aus.
+- Neue Dateien: `src/render/ssr.ts`, `src/render/wind.ts`.
+- Geänderte Dateien: `render/renderer.ts`, `render/toon.ts`, `render/outline.ts`, `world/islandStyle.ts`, `world/islandDress.ts`, `world/town.ts`, `world/environment.ts`, `world/seaWorld.ts`, `core/game.ts`, `data/qualityTiers.ts`.
+- Behobene Fehler beim Entwickeln:
+  - Der Schiffsrumpf wurde wegen knapp unter 1 liegender Alpha-Werte (Vertexfarben) als spiegelnd erkannt.
+  - Lange Strahlschritte übersprangen Treffer, deshalb fehlte die Rumpfspiegelung direkt unter dem Schiff.
+- Messung (GPU): See Hoch 1,9 ms, See Maximal 2,2 ms, Stadt Hoch 2,6 ms. Spiegelungen und Tiefenunschärfe auf Hoch kosten zusammen etwa 1 ms.
+
 ## 2.9.16 – Schneller laden, kein Ruckeln beim ersten Kampf, neuer Ladebildschirm (08.11.2026)
 
 - **30 % weniger Download:** Die Figuren und Animationen sind komprimiert, 8,6 MB statt vorher 12,4 MB. Der erste Start geht spürbar schneller, besonders am Handy. Das Offline-Paket ist 1,5 MB kleiner.

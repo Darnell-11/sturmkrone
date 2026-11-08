@@ -541,7 +541,7 @@ export function mergeByMaterial(group: Group, keep: Set<Mesh>) {
     let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
     // Texturkoordinaten nur behalten, wenn das Material eine Textur hat (Kisten, Fässer)
     const keepUv = !!(m.material as Material & { map?: unknown }).map && !!g.attributes.uv;
-    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && !(keepUv && k === 'uv')) g.deleteAttribute(k);
+    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'aWind' && !(keepUv && k === 'uv')) g.deleteAttribute(k);
     g = g.applyMatrix4(rel(m));
     b.geos.push(g);
     b.meshes.push(m);
@@ -551,6 +551,10 @@ export function mergeByMaterial(group: Group, keep: Set<Mesh>) {
   group.traverse((o) => { if (keep.has(o as Mesh)) kept.push(o as Mesh); });
   for (const [mat, b] of buckets) {
     if (b.meshes.length < 2) continue;
+    // Windgewichte: Teile ohne Gewicht (z. B. Stamm-Material an Zäunen) bekommen 0, damit alle zusammenpassen
+    if (b.geos.some((g) => g.attributes.aWind)) {
+      for (const g of b.geos) if (!g.attributes.aWind) g.setAttribute('aWind', new Float32BufferAttribute(new Float32Array(g.attributes.position.count), 1));
+    }
     const merged = mergeGeometries(b.geos, false);
     if (!merged) continue;
     for (const m of b.meshes) m.removeFromParent();

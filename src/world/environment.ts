@@ -4,6 +4,7 @@ import type { QualityConfig } from '../data/qualityTiers';
 import { forEachToon, toonShared } from '../render/toon';
 import { csmShared, ensureCsm } from '../render/csm';
 import { fogShared } from '../render/atmosphere';
+import { windShared } from '../render/wind';
 import { envShared } from '../render/ibl';
 import { CSM } from 'three/examples/jsm/csm/CSM.js';
 import type { Material, Mesh } from 'three';
@@ -242,6 +243,10 @@ export class Environment {
     this.sun.position.z = this.sun.target.position.z + pal.lightDir.z * 200;
     this.updateCsm(camera, pal.lightDir);
 
+    // Wind für Pflanzen: Zeit, Richtung (wohin er weht) und Stärke nach Wetter
+    windShared.uSkTime.value = this.clock;
+    windShared.uSkWindDir.value.set(Math.sin(this.windDir), Math.cos(this.windDir));
+    windShared.uSkWindK.value = 0.3 + w.wind * 1.1;
     // Atmosphäre: Dunst nimmt in Sonnenrichtung die Lichtfarbe auf (nachts und bei Sturm kaum)
     fogShared.skFogSunDir.value.copy(pal.lightDir).normalize();
     fogShared.skFogSunCol.value.copy(pal.light).multiplyScalar(0.9 + 0.3 * pal.sunVis);

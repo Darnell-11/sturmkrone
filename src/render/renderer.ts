@@ -9,6 +9,7 @@ import {
   PCFShadowMap,
   SrcAlphaFactor,
   WebGLRenderer,
+  MathUtils,
   ZeroFactor,
   type Camera,
   type Material,
@@ -36,8 +37,12 @@ import { installAtmosphere } from './atmosphere';
 import { ensureCsm } from './csm';
 import { EdgeEffect, OpaqueEffect, WATER_ALPHA, setHullsVisible } from './outline';
 import { GradeEffect } from './grade';
+import { SsrEffect, SsrPass } from './ssr';
 
 export class WebGLUnavailableError extends Error {}
+
+/** Grundstärke der Sonnenstrahlen */
+const GOD_WEIGHT = 0.26;
 
 export class GameRenderer {
   readonly gl: WebGLRenderer;
@@ -55,6 +60,10 @@ export class GameRenderer {
   private godRays: GodRaysEffect | null = null;
   private dof: DepthOfFieldEffect | null = null;
   private heat: HeatEffect | null = null;
+  /** Tiefenunschärfe: weich nachgeführter Fokuspunkt und optionales Ziel (erfasster Gegner) */
+  private dofFocus = new Vector3();
+  private dofRange = 60;
+  dofTarget: Vector3 | null = null;
   private time = 0;
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -135,13 +144,18 @@ export class GameRenderer {
       : aoBase;
     const aoPass = aoCfg ? new AoPass(cam, aoCfg) : null;
     if (aoPass) composer.addPass(aoPass);
+    // Bildschirm-Spiegelungen: eigener Durchgang in reduzierter Auflösung (am Handy zu teuer)
+    const ssrPass = c.post.ssr && !this.mobile ? new SsrPass(cam, c.post.ssr) : null;
+    if (ssrPass) composer.addPass(ssrPass);
 
-    if (c.post.depthOfField && this.focus) {
+    if (c.post.depthOfField && this.focus && !(this.mobile && this.tier === 'high')) {
       // Nur der ferne Hintergrund wird weich: Vordergrund und alles bis zur Figur bleiben scharf.
       // (Vorher wurde in beide Richtungen unscharf gezeichnet, mit festem Bereich von 40 m – das traf Wellen,
       // Schiffsteile und Rauch vor der Figur.)
       const dof = new DepthOfFieldEffect(cam, { focusDistance: 25, focusRange: 120, bokehScale: 1.3, resolutionScale: c.detail > 1.4 ? 1 : 0.5 });
-      dof.target = this.focus;
+      // Fokus gleitet weich zum Ziel (Spielfigur oder erfasster Gegner)
+      this.dofFocus.copy(this.focus);
+      dof.target = this.dofFocus;
       const coc = dof.cocMaterial;
       coc.fragmentShader = coc.fragmentShader.replace('magnitude*vec2(step(signedDistance,0.0),step(0.0,signedDistance))', 'magnitude*vec2(0.0,step(0.0,signedDistance))');
       coc.needsUpdate = true;
@@ -151,8 +165,10 @@ export class GameRenderer {
 
     const effects: Effect[] = [];
     if (aoPass && aoCfg) effects.push(new AoEffect(aoPass, aoCfg.intensity));
+    if (ssrPass) effects.push(new SsrEffect(ssrPass));
     if (c.post.godRays && this.sun) {
-      this.godRays = new GodRaysEffect(cam, this.sun, { density: 0.94, decay: 0.92, weight: 0.22, exposure: 0.42, samples: c.detail > 1.4 ? 120 : c.detail > 1 ? 80 : 48, clampMax: 1, resolutionScale: 0.5, blur: true });
+      // Lichtstreuung (Crepuscular Rays): Strahlen entstehen nur, wo die Sonne zwischen Kronen, Masten und Häusern hindurchscheint
+      this.godRays = new GodRaysEffect(cam, this.sun, { density: 0.96, decay: 0.935, weight: GOD_WEIGHT, exposure: 0.5, samples: c.detail > 1.4 ? 120 : c.detail > 1 ? 90 : 60, clampMax: 1, resolutionScale: 0.5, blur: true });
       effects.push(this.godRays);
     }
     if (c.post.bloom) {
@@ -272,13 +288,24 @@ export class GameRenderer {
     if (this.godRays && this.sun) {
       const cp = this.camera.position, sp = this.sun.position;
       const elev = (sp.y - cp.y) / (Math.hypot(sp.x - cp.x, sp.y - cp.y, sp.z - cp.z) || 1);
-      const k = Math.min(1, Math.max(0, (elev - 0.18) / 0.3));
-      this.godRays.godRaysMaterial.uniforms.weight.value = 0.22 * k;
+      // ab etwa 6° Sonnenhöhe einblenden (auch Abendlicht), sehr tief wären es Streifen übers ganze Meer
+      const k = Math.min(1, Math.max(0, (elev - 0.1) / 0.25));
+      this.godRays.godRaysMaterial.uniforms.weight.value = GOD_WEIGHT * k;
     }
     // Schärfebereich wächst mit dem Kameraabstand: zu Fuß ist die Stadt dahinter leicht weich, auf See erst der Horizont
     if (this.dof && this.focus) {
-      const d = this.camera.position.distanceTo(this.focus);
-      this.dof.cocMaterial.focusRange = Math.max(60, d * 6);
+      // Ziel: erfasster Gegner (Lock-on) oder die Spielfigur; Fokus und Schärfebereich gleiten weich nach
+      const want = this.dofTarget ?? this.focus;
+      const k = Math.min(1, dt * 6);
+      this.dofFocus.lerp(want, k);
+      const d = this.camera.position.distanceTo(this.dofFocus);
+      // Nahaufnahme (Kamera nah an der Figur, z. B. zu Fuß oder beim Lock-on): Hintergrund deutlich weicher;
+      // weit weg (auf See): nur der Horizont wird weich
+      const close = Math.min(1, Math.max(0, (14 - d) / 10));
+      const range = MathUtils.lerp(Math.max(60, d * 6), Math.max(5, d * 1.6), Math.max(close, this.dofTarget ? 0.8 : 0));
+      this.dofRange += (range - this.dofRange) * k;
+      this.dof.cocMaterial.focusRange = this.dofRange;
+      this.dof.bokehScale = MathUtils.lerp(1.3, 2.2, close);
     }
     this.time += dt;
     heatShared.update(dt);

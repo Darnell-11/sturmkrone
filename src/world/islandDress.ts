@@ -20,6 +20,7 @@ import { toon } from '../render/toon';
 import { coastK, type WalkIsland } from './islandGround';
 import { plant, type StyleKit } from './islandStyle';
 import { hashId, seeded } from './waves';
+import { markWind, windify } from '../render/wind';
 
 /** Ein Punkt in Inselkoordinaten (y = Bodenhöhe) */
 export interface Spot { x: number; y: number; z: number }
@@ -80,7 +81,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   };
   const grassCol = new Color(((kit.grass as MeshToonMaterial).color ?? new Color('#55894a')).getHex());
   const rockCol = new Color(((kit.rock as MeshToonMaterial).color ?? new Color('#7a746a')).getHex());
-  const tuftMats = [0.85, 1, 1.18].map((k) => toon({ color: grassCol.clone().multiplyScalar(k), flatShading: true }));
+  const tuftMats = [0.85, 1, 1.18].map((k) => markWind(toon({ color: grassCol.clone().multiplyScalar(k), flatShading: true })));
   const rockMats = [0.85, 1, 1.15].map((k) => toon({ color: rockCol.clone().multiplyScalar(k), flatShading: true }));
   const darkWood = toon('#4A3220'), canvas = toon({ color: '#C9B48E', side: DoubleSide });
 
@@ -324,6 +325,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       m.scale.y = 0.75;
       b.add(m);
     }
+    windify(b, 0.07, 1.1);
     put(b, p.x, p.z);
     taken.push({ x: p.x, z: p.z, r: 0.8 });
     bushes.push({ x: p.x, y: hAt(p.x, p.z), z: p.z });
@@ -342,6 +344,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       blade.rotation.set((rnd() - 0.5) * 0.5, 0, (rnd() - 0.5) * 0.5);
       tuft.add(blade);
     }
+    windify(tuft, 0.16, 0.8);
     put(tuft, x, z);
   }
   const flowers = FLOWERS[style];
@@ -428,6 +431,7 @@ function broadleaf(kit: StyleKit, rnd: () => number): Group {
     b.scale.y = 0.8;
     g.add(b);
   }
+  windify(g, 0.38, h + 2);
   return g;
 }
 

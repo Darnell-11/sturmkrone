@@ -17,6 +17,8 @@ import { markShared } from './dispose';
 import { ensureCsm } from './csm';
 import { cubeUvDefines, envShared } from './ibl';
 import { fogUniforms } from './atmosphere';
+import { isWind, windShared, WIND_PARS } from './wind';
+import { WATER_ALPHA } from './outline';
 
 /** Gemeinsame Werte für alle Toon-Materialien – die Umgebung passt sie an Tageszeit und Wetter an. */
 export const toonShared = {
@@ -96,6 +98,8 @@ export interface ToonOptions {
   metalnessMap?: Texture | null;
   /** Treffer-Randlicht und Auflösen (nur eigene Material-Kopien je Figur, siehe toonFx) */
   fx?: boolean;
+  /** Spiegelnde Fläche für die Bildschirm-Spiegelungen (SSR): 0 = matt … 1 = Pfütze/Spiegel */
+  reflect?: number;
 }
 
 /** Steuerwerte des Treffer-/Auflöse-Effekts eines Materials */
@@ -279,7 +283,7 @@ const DETAIL_FRAG: Record<'sand' | 'grass' | 'rock', string> = {
   }`,
 };
 
-interface PbrPatch { rough: number; metal: number; roughMap: Texture | null; metalMap: Texture | null; env: boolean; fx?: ToonFxUniforms }
+interface PbrPatch { rough: number; metal: number; roughMap: Texture | null; metalMap: Texture | null; env: boolean; fx?: ToonFxUniforms; reflect: number }
 
 function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: 'sand' | 'grass' | 'rock' | undefined, pbr: PbrPatch) {
   const uSpec = { value: spec };
@@ -289,6 +293,18 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: 'sand' 
   const uRoughMap = { value: pbr.roughMap };
   const uMetalMap = { value: pbr.metalMap };
   mat.onBeforeCompile = (shader) => {
+    // Pflanzen wiegen sich im Wind (Gewicht je Eckpunkt in aWind, siehe render/wind.ts)
+    if (isWind(mat)) {
+      Object.assign(shader.uniforms, windShared);
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\n' + WIND_PARS)
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\n{ vec4 skWw = modelMatrix * vec4(transformed, 1.0); transformed += skWind(transformed, skWw.xyz, aWind); }');
+    }
+    // Spiegelungsmaske im Alpha-Kanal (nur mit Nachbearbeitung, die das Bild danach undurchsichtig macht)
+    if (pbr.reflect > 0) {
+      shader.uniforms.uReflect = { value: pbr.reflect };
+      shader.uniforms.uSkMaskOff = WATER_ALPHA;
+    }
     shader.uniforms.uRimColor = toonShared.rimColor;
     shader.uniforms.uRimStrength = toonShared.rimStrength;
     shader.uniforms.uShadowTint = toonShared.shadowTint;
@@ -318,7 +334,8 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: 'sand' 
     const defs = (pbr.roughMap ? '#define SK_ROUGHMAP\n' : '') + (pbr.metalMap ? '#define SK_METALMAP\n' : '') + (pbr.env ? '#define SK_ENV\n' + cubeUvDefines() : '') + (pbr.fx ? '#define SK_FX\n' : '');
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', defs + '#include <common>\nuniform vec3 uShadowTint;\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uSpec;\nuniform float uRimAmount;\n' + PBR_PARS_GLSL + (pbr.fx ? FX_PARS_GLSL : '') + (pbr.env ? '#include <cube_uv_reflection_fragment>\n' : ''))
-      .replace('#include <opaque_fragment>', RIM_SPEC_GLSL + '\n#include <opaque_fragment>');
+      .replace('#include <opaque_fragment>', RIM_SPEC_GLSL + '\n#include <opaque_fragment>' + (pbr.reflect > 0 ? '\ngl_FragColor.a = mix(1.0 - 0.4 * clamp(uReflect, 0.0, 1.0), 1.0, uSkMaskOff);' : ''))
+      .replace('#include <common>', '#include <common>\n' + (pbr.reflect > 0 ? 'uniform float uReflect;\nuniform float uSkMaskOff;' : ''));
     if (detail) {
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vSkWorld;')
@@ -328,8 +345,8 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: 'sand' 
         .replace('#include <color_fragment>', '#include <color_fragment>\n' + DETAIL_FRAG[detail]);
     }
   };
-  const progKey = `sk-toon-3${detail ? '-' + detail : ''}-${pbr.env ? 'e' : ''}${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}${pbr.fx ? 'f' : ''}`;
-  mat.customProgramCacheKey = () => progKey;
+  const progKey = `sk-toon-3${detail ? '-' + detail : ''}-${pbr.env ? 'e' : ''}${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}${pbr.fx ? 'f' : ''}${pbr.reflect > 0 ? 's' : ''}`;
+  mat.customProgramCacheKey = () => progKey + (isWind(mat) ? 'w' : '');
 }
 
 /** Toon-Material im Anime-Stil (gecacht – gleiche Optionen ergeben dasselbe Material). */
@@ -370,6 +387,7 @@ export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial 
     // Spiegelungen nur, wo sie sichtbar sind: Metall oder glatte Flächen (Eis, Lack)
     env: metal > 0 || rough < 0.35 || !!o.metalnessMap,
     fx,
+    reflect: o.reflect ?? 0,
   });
   optsOf.set(mat, o);
   if (fx) fxOf.set(mat, fx);

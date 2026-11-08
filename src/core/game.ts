@@ -337,6 +337,8 @@ export class Game {
     this.skyProbe.update(frameDt);
     // Gegner, Crew und Stadtleute zwischen den 60-Hz-Logikschritten weich darstellen
     Character.present(a);
+    // Tiefenunschärfe: beim Erfassen eines Gegners auf ihn scharfstellen
+    this.renderer.dofTarget = this.state.is('play') ? this.world.lockFocus : null;
     // Waffenschweife nach dem Ausrichten aller Figuren abtasten (Echtzeit, bei jedem Bild glatt)
     Character.renderTrails(frameDt);
     this.renderer.render(frameDt);

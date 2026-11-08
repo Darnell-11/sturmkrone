@@ -712,6 +712,14 @@ export class SeaWorld {
   }
 
   /** Position der Spielfigur (an Land) oder des Schiffs, dazu die Blickrichtung */
+  private lockVec = new Vector3();
+  /** Brustposition des erfassten Gegners (für die Tiefenunschärfe); null = kein Lock-on */
+  get lockFocus(): Vector3 | null {
+    const l = this.mode === 'foot' ? this.combat?.lock : null;
+    if (!l || !l.alive) return null;
+    return this.lockVec.copy(l.char.holder.position).setY(l.char.holder.position.y + 1.3);
+  }
+
   /** Höhe der Spielfigur zu Fuß (für den 3D-Hörer) */
   get playerFootY() { return this.foot?.y ?? 0; }
 
