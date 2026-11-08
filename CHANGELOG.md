@@ -1,5 +1,50 @@
 # Was ist neu
 
+## 2.9.20 – Musik, die mit der Gefahr wächst, und epische Seeschlachten (08.11.2026)
+
+- **Musik passt sich der Gefahr an:**
+  - Kommt ein Feind näher, blendet das laufende Stück nahtlos und taktgenau von der Erkundung in den Kampf über, ohne Wechsel des Stücks.
+  - Zuerst setzen treibende Celli und Pauken ein (Spannung), dann das volle Kampforchester. Beim Übergang in den Kampf gibt es einen großen Trommel-, Becken- und Blechschlag.
+  - Nach dem Kampf klingt die Musik in etwa 10 Sekunden wieder in die Erkundung aus. So flackert sie nicht hin und her.
+  - Hafen- und Nachtmusik weichen bei Gefahr dem Regionsthema mit seinem Kampfarrangement. Legenden behalten ihr eigenes Boss-Stück.
+- **Epische Seeschlachten:**
+  - Auf See wird das Meeresthema im Kampf zur Hymne: Hörner tragen die Melodie, Trompeten strahlen eine Oktave darüber, Posaunen und Tuba spielen ein schweres „DAM – da DAM“-Ostinato.
+  - Spiccato-Streicher treiben in Sechzehnteln, ein Taiko-Ensemble mit Vorschlägen gibt den Takt.
+  - Dazu kommen ein großer Chor („Oh“), Paukenwirbel und Becken, die in jede neue Phrase hineinschwellen.
+  - Die Instrumente sitzen wie im Orchester im Raum: Streicher links, Blech rechts, Chor und Trommeln in der Mitte.
+  - Zu Fuß klingt der Kampf leichter, mit Streichern, Trommeln und Hörnern.
+- **Räumlicher Klang:**
+  - Links und rechts kommen jetzt von der Kamera aus, passen also immer zum Bild. Die Lautstärke richtet sich nach dem Abstand zu deiner Figur.
+  - Entfernte Klänge werden natürlich leiser (logarithmisch) und dumpfer, weil die Luft die Höhen schluckt.
+  - Jede Klangart hat ihre eigene Reichweite: Schritte verklingen schnell, Hiebe sind mittelweit zu hören, Kanonendonner über Hunderte Meter.
+  - Bei vielen gleichzeitigen Klängen fallen die leisesten weg, damit nichts übersteuert.
+- **Abwechslung:**
+  - Schritte und Schwerthiebe klingen nie zweimal gleich: Tonhöhe ±5 %, Lautstärke ±15 % und mehrere Varianten, nie dieselbe zweimal hintereinander.
+  - Schritte klingen je nach Untergrund anders: Sand und Gras, Holz an Deck (mit gelegentlichem Knarren), Pflaster in der Stadt.
+  - Auch Treffer, Faustschläge und Paraden schwanken leicht.
+
+**Technik (für Entwickler):**
+- Änderungen:
+  - Schichten (Stems) je Stück: `base` (Fläche, Bass), `explore` (Fidel/Flöte/Laute), `tension` (Celli-Ostinato, Pauke), `combat` (Taiko-Ensemble, Spiccato, Blech, Chor, Becken).
+    - Jede Schicht hat eigene trockene und Hall-GainNodes und drei Stereoplätze (StereoPanner ±0,45, Ausgleich +2,6 dB). Im sparsamen Modus läuft alles mono.
+    - Überblenden mit gleichmäßiger Leistung (`cos`/`sin`) über die geglättete Bedrohung (≈ 0,9 s rein, 4 s Halten, ≈ 6 s raus). Pegelausgleich je Schicht `STEM_TRIM`.
+    - Geplant werden nur hörbare Schichten (`hot`: 1,5 s Ausklingzeit), das spart Rechenzeit.
+  - `setMood(mood, threat, song, naval)`: Kampf wechselt kein Stück mehr; `naval` schaltet Blech-Ostinato, Trompeten, zweite Taiko-Reihe und lauteren Chor zu. `musicThreat` liest die geglättete Bedrohung.
+  - Neue Stimmen: `spiccato`, `lowBrass`, `trumpet`, `timpani` (auf den Grundton gestimmt), `cymbal` (Schwellung oder Schlag). Kampfbeginn-Schlag `sting` am nächsten Taktanfang (höchstens alle 25 s).
+  - 3D-Klang: PannerNode mit `distanceModel: 'exponential'`, also −6 dB × rolloff je Abstandsverdopplung.
+    - Klangarten `SPATIAL_CAT`: Schritte (ref 2,5 m, rolloff 1,2, 45 m), Kampf (4 m, 1,0, 110 m), laut (22 m, 0,75, 900 m), mittel (8 m, 1,0, 260 m).
+    - Die Richtung kommt von der Kamera (`setListener3D`), die Entfernung von den Ohren der Figur (`setEars`). Der Panner sitzt auf dem Kamerastrahl im Ohrabstand.
+    - Luftdämpfung als Tiefpass ab 2 × ref. Stimmenbegrenzung je Klangart (Schritte 8, Kampf 10, laut 14).
+  - Varianz: `pitch`/`gainVar` gelten für alle Bausteine von `tone`/`noise` (höher heißt kürzer, wie ein schneller abgespieltes Sample). `pick()` wählt Varianten ohne direkte Wiederholung. `surface` (sand/holz/stein) setzt das Spiel je nach Ort.
+- Geänderte Dateien: `audio/audio.ts`, `core/game.ts`, `world/seaWorld.ts` (`onDeck`).
+- Behobene Fehler beim Entwickeln:
+  - Die Offline-Messung wurde vom laufenden Spiel gestört, weil es den Hörer jedes Bild neu setzte. Gemessen wird jetzt mit angehaltener Spielschleife.
+  - Seitlich aufgestellte Instrumente waren 3 dB leiser als die Mitte (Equal-Power-Panning); das ist ausgeglichen.
+- Messung (offline, OfflineAudioContext):
+  - Pegel (RMS): Erkundung 0,046 · Spannung 0,059 · Seeschlacht 0,081 (+4,9 dB) · Kampf zu Fuß 0,072. Spitzen höchstens 0,58.
+  - 3D-Dämpfung je Abstandsverdopplung: Hiebe −6,0 dB · Kanonen −4,5 dB · Schritte −7,2 dB. Luftdämpfung bei 64 m: −14 dB bei 6 kHz. Stereo bei 6 m seitlich: 5,9 dB Unterschied.
+  - Rechenaufwand: Seeschlacht etwa 72 Oszillatoren pro Sekunde, ungefähr so viel wie das bisherige Boss-Stück (68).
+
 ## 2.9.19 – Klügere Gegner, Wege um Hindernisse, präzise Treffer (08.11.2026)
 
 - **Gegner finden ihren Weg:**

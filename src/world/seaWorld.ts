@@ -191,6 +191,8 @@ export class SeaWorld {
   private sailCd = 0;
   private boarding: EnemyShip | null = null;
   private deckGround: DeckGround | null = null;
+  /** Steht die Spielfigur auf einem Schiffsdeck (Entern, an Bord)? */
+  get onDeck() { return !!this.deckGround || this.mode === 'sail'; }
   /** Inseldaten (gleiche Reihenfolge wie ground.islands) */
   islandDefs: IslandDef[] = [];
   town: TownBuild | null = null;

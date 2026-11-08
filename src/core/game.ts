@@ -397,10 +397,13 @@ export class Game {
     const w = this.world;
     const pos = w.playerPos;
     audio.setListener(pos.x, pos.z, w.cameraYaw);
-    // 3D-Hörer: an der Spielfigur, ausgerichtet wie die Kamera (links/rechts passt zum Bild)
+    // 3D-Hörer: Richtung von der Kamera aus (links/rechts passt zum Bild), Entfernung ab den „Ohren“ der Spielfigur
     w.camera.getWorldDirection(this.listenDir);
     const ly = this.world.mode === 'foot' ? (this.world.playerFootY ?? 0) + 1.5 : 3;
-    audio.setListener3D(pos.x, ly, pos.z, this.listenDir.x, this.listenDir.y, this.listenDir.z);
+    const cp = w.camera.position;
+    audio.setListener3D(cp.x, cp.y, cp.z, this.listenDir.x, this.listenDir.y, this.listenDir.z);
+    audio.setEars(pos.x, ly, pos.z);
+    audio.setLite(this.renderer.mobile || this.renderer.tier === 'low');
     if (this.state.is('play', 'pause')) {
       const env = w.env;
       const town = w.islandDefs.find((i) => i.kind === 'town');
@@ -408,7 +411,10 @@ export class Game {
       const threat = w.threat;
       const night = env.time < 5.5 || env.time > 20.5;
       const mood: Mood = w.bossNear ? 'boss' : threat > 0.65 ? 'battle' : dTown < 150 ? 'harbor' : night && this.region.id === 'bernsteinsee' ? 'night' : 'sea';
-      audio.setMood(mood, threat, this.region.song ?? 'sea');
+      // Seeschlacht: volles Blech, Taiko-Ensemble und Chor in der Kampfschicht
+      audio.setMood(mood, threat, this.region.song ?? 'sea', w.mode === 'sail');
+      // Untergrund der Schritte: Deck und Stege aus Holz, Stadt gepflastert, sonst Sand und Gras
+      audio.surface = w.onDeck ? 'holz' : dTown < 70 ? 'stein' : 'sand';
       const wp = env.weather.p;
       const edge = Math.hypot(pos.x, pos.z);
       audio.setAmbience({
