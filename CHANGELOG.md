@@ -1,5 +1,34 @@
 # Was ist neu
 
+## 2.9.21 – Dynamische Auflösung (08.11.2026)
+
+- **Dynamische Auflösung:**
+  - Fällt die Bildrate mehrere Sekunden unter 50 fps, rechnet das Spiel mit etwas weniger Pixeln. Die Schritte betragen etwa 12 %, und es wird nie unschärfer als auf der Stufe „Niedrig“ (0,75 Bildpunkte je Anzeigepunkt).
+  - Läuft es wieder lange flüssig, kehrt die volle Auflösung der Grafikstufe zurück, aber nie mehr als die Stufe vorsieht.
+  - **Schutz vor unnötiger Unschärfe:** Jede Absenkung ist ein Versuch. Bringt sie keine höhere Bildrate, nimmt das Spiel sie zurück und probiert es erst viel später wieder. Das betrifft zum Beispiel Handys im Stromsparmodus mit festen 30 fps oder Fälle, in denen der Prozessor statt der Grafikkarte bremst.
+  - Erst wenn die Auflösung nicht mehr weiter sinken kann, senkt „Automatisch“ die ganze Grafikstufe.
+  - Ein- und ausschaltbar unter Einstellungen → Grafik (standardmäßig an). Ist die FPS-Anzeige an, steht dort die aktuelle Auflösung in Prozent.
+- **Grafikstufen:** Die fünf Stufen (Niedrig, Mittel, Hoch, Maximal, Ultra) regelten schon bisher zentral Schattenauflösung und -reichweite, Umgebungsverdeckung, Partikelmenge, Post-Effekte, Sichtweite und Texturen. Daran hat sich nichts geändert.
+- **WebGPU:** Das Spiel erkennt jetzt, ob der Browser WebGPU kann, und zeigt es im Grafikmenü an. Es bleibt aber bewusst bei WebGL 2. Alle Effekte, Toon-Shader, Schatten, Spiegelungen, das Meer und die Nachbearbeitung sind für WebGL geschrieben. Ein Wechsel würde heute Effekte kosten und eher langsamer laufen.
+
+**Technik (für Entwickler):**
+- Änderungen:
+  - `DynamicResolution` (`src/render/dynamicResolution.ts`): Messfenster 1 s, 4 s Anlauf nach Laden, Stufenwechsel oder Pause (`rewarm`).
+    - Unter 50 fps in 2 Fenstern: Faktor × 0,87 (auf 0,05 gerundet). 6 Fenster ab 57 fps: +0,08 bis höchstens 1. Zwischen zwei Änderungen liegen mindestens 1,5 s.
+    - Jede Änderung wird nach 2 Fenstern geprüft. Eine Absenkung ohne +3 fps wird zurückgenommen und gesperrt (45 s, verdoppelt bis 10 min). Eine Anhebung, nach der die Bildrate unter 50 fällt, wird zurückgenommen und 60 s gesperrt.
+  - `GameRenderer.pixelRatio()` = Stufenwert (`basePixelRatio`) × Faktor, mindestens min(Stufenwert, 0,75). `applyQuality` setzt den Faktor zurück.
+  - `AutoQuality` senkt die Stufe nur noch, wenn die dynamische Auflösung keinen Spielraum mehr hat (`hasRoom`).
+  - Neue Einstellung `dynamicResolution` (Standard an; alte Einstellungen werden ergänzt). Schalter im Grafikmenü, Anzeige in FPS-Leiste und Fakten.
+  - `detectWebGpu()` in `render/quality.ts`: `navigator.gpu.requestAdapter()`, nur zur Anzeige.
+- Neue Dateien: `src/render/dynamicResolution.ts`.
+- Geänderte Dateien: `render/renderer.ts`, `render/quality.ts`, `core/game.ts`, `core/settings.ts`, `ui/menus.ts`.
+- Messung (Simulation des Watchdogs mit vorgegebener Bildrate):
+  - Grafikkarte überlastet (38 fps bei voller Auflösung): eine Absenkung auf 85 %, danach stabil über 50 fps.
+  - Last vorbei: in 14 s zurück auf 100 %.
+  - Feste 30 fps oder Prozessor-Last: Versuch nach 6 s, nach 2 s zurückgenommen, neue Versuche nach 45/90/180 s.
+  - Knapp über 50 fps oder Stufe Niedrig: keine Änderung.
+  - Größenwechsel im Spiel: 1,3 ms (1197 × 1102 → 1017 × 937).
+
 ## 2.9.20 – Musik, die mit der Gefahr wächst, und epische Seeschlachten (08.11.2026)
 
 - **Musik passt sich der Gefahr an:**

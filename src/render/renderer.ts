@@ -38,6 +38,7 @@ import { ensureCsm } from './csm';
 import { EdgeEffect, OpaqueEffect, WATER_ALPHA, setHullsVisible } from './outline';
 import { GradeEffect } from './grade';
 import { SsrEffect, SsrPass } from './ssr';
+import { DynamicResolution } from './dynamicResolution';
 
 export class WebGLUnavailableError extends Error {}
 
@@ -47,6 +48,8 @@ const GOD_WEIGHT = 0.26;
 export class GameRenderer {
   readonly gl: WebGLRenderer;
   tier: QualityTier = 'mid';
+  /** Dynamische Auflösung: senkt das Pixelverhältnis bei zu niedriger Bildrate (nie unter 0,75 ×) */
+  readonly dynRes = new DynamicResolution();
   /** Handy/Tablet (setzt das Spiel nach der Geräteerkennung): teure Effekte sparsamer */
   mobile = false;
   config: QualityConfig = QUALITY_TIERS.mid;
@@ -107,6 +110,7 @@ export class GameRenderer {
       });
     }
     this.rebuildComposer();
+    this.dynRes.reset(this.basePixelRatio());
     this.resize();
     for (const l of this.listeners) l(c, tier);
   }
@@ -194,8 +198,21 @@ export class GameRenderer {
     this.composer = composer;
   }
 
-  /** Pixelverhältnis nach Stufe, begrenzt auf die maximale Pixelzahl (4K bei Max). */
+  /** Pixelverhältnis inklusive dynamischer Auflösung (Untergrenze 0,75 bzw. das der Stufe, falls kleiner) */
   pixelRatio(): number {
+    const base = this.basePixelRatio();
+    return Math.max(Math.min(base, DynamicResolution.FLOOR), base * this.dynRes.scale);
+  }
+
+  /** Dynamische Auflösung zurück auf 100 % (Einstellung ausgeschaltet) */
+  resetDynamicResolution() {
+    if (this.dynRes.scale === 1) return;
+    this.dynRes.reset(this.basePixelRatio());
+    this.resize();
+  }
+
+  /** Pixelverhältnis nach Stufe, begrenzt auf die maximale Pixelzahl (4K bei Max). */
+  basePixelRatio(): number {
     const c = this.config;
     const dpr = window.devicePixelRatio || 1;
     let r = c.pixelRatio ?? dpr;

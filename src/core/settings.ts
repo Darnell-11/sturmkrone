@@ -10,6 +10,8 @@ export interface Settings {
   /** null = noch nicht ermittelt */
   quality: QualityTier | null;
   qualityAuto: boolean;
+  /** Dynamische Auflösung: bei Rucklern kurzzeitig mit weniger Pixeln rechnen */
+  dynamicResolution: boolean;
   volume: { master: number; music: number; sfx: number; ambient: number; voice: number };
   textScale: number;
   showFps: boolean;
@@ -26,6 +28,7 @@ export function defaultSettings(): Settings {
     version: 1,
     quality: null,
     qualityAuto: true,
+    dynamicResolution: true,
     volume: { master: 0.8, music: 0.7, sfx: 0.8, ambient: 0.6, voice: 0.8 },
     textScale: 1,
     showFps: false,
@@ -48,6 +51,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     version: 1,
     quality: QUALITY_IDS.includes(r.quality) ? r.quality : null,
     qualityAuto: typeof r.qualityAuto === 'boolean' ? r.qualityAuto : d.qualityAuto,
+    dynamicResolution: typeof r.dynamicResolution === 'boolean' ? r.dynamicResolution : d.dynamicResolution,
     volume: {
       master: clamp01(vol.master, d.volume.master),
       music: clamp01(vol.music, d.volume.music),

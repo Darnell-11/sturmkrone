@@ -204,3 +204,20 @@ export function benchmarkGpu(gl: WebGL2RenderingContext): number | null {
     return null;
   }
 }
+
+/**
+ * Prüft, ob der Browser WebGPU anbietet (ein Grafikadapter lässt sich anfordern).
+ * Das Spiel schaltet bewusst NICHT auf den three.js-WebGPURenderer um: Nachbearbeitung (postprocessing/pmndrs),
+ * die Toon-Shader-Erweiterungen (onBeforeCompile), Kaskadenschatten, Spiegelungen, Ozean und Partikel sind
+ * WebGL-Shader und müssten alle in TSL neu geschrieben werden – ein halber Wechsel sähe schlechter aus und liefe
+ * langsamer. Das Ergebnis wird nur im Grafikmenü angezeigt.
+ */
+export async function detectWebGpu(): Promise<boolean> {
+  try {
+    const gpu = (navigator as Navigator & { gpu?: { requestAdapter(): Promise<unknown | null> } }).gpu;
+    if (!gpu) return false;
+    return !!(await gpu.requestAdapter());
+  } catch {
+    return false;
+  }
+}

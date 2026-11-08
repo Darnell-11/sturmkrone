@@ -748,13 +748,17 @@ export class Menus {
         <p class="tier-desc"><b>${QUALITY_TIERS[cur].label}:</b> ${esc(QUALITY_TIERS[cur].description)}</p></div>
         <div class="facts">
           <div>Aktuelle Stufe<b>${QUALITY_TIERS[cur].label}${s.qualityAuto ? ' (automatisch)' : ''}</b></div>
-          <div>Renderauflösung<b>${size.w} × ${size.h}</b></div>
+          <div>Renderauflösung<b>${size.w} × ${size.h}${g.renderer.dynRes.scale < 0.999 ? ` (dynamisch ${Math.round(g.renderer.dynRes.scale * 100)} %)` : ''}</b></div>
           <div>Erkanntes Gerät<b>${esc(g.detected.reason)}</b></div>
           <div>Vorschlag<b>${QUALITY_TIERS[g.detected.tier].label}</b></div>
+          <div>Grafikschnittstelle<b>WebGL 2${g.webgpu === 'ja' ? ' (WebGPU wäre verfügbar)' : ''}</b></div>
         </div>
+        <div class="opt"><span class="label">Auflösung</span><div class="chips"><button data-a="dynres" aria-pressed="${s.dynamicResolution}">Dynamische Auflösung</button></div>
+        <p class="soft small">Fällt die Bildrate unter 50, rechnet das Spiel mit etwas weniger Pixeln (nie unschärfer als die Stufe „Niedrig“) und geht zurück, sobald es wieder flüssig läuft. Hilft das nicht, bleibt die volle Auflösung.</p></div>
         ${g.detected.software ? GPU_HINT : ''}
         <p class="soft small">Bei „Automatisch“ senkt das Spiel die Stufe selbst, wenn es ruckelt.</p>`;
       handlers.q = (id) => { g.setQuality(id === 'auto' ? 'auto' : (id as QualityTier)); rerender(); };
+      handlers.dynres = () => { g.settings.update({ dynamicResolution: !s.dynamicResolution }); rerender(); };
     }
 
     if (tab === 'steuerung') {

@@ -18,7 +18,7 @@ import { SkillTree } from '../ui/skillTree';
 import { AMMO, SAIL_LEVELS, SHIP_CLASSES, type ShipLook } from '../data/ships';
 import { FAME_THRESHOLDS } from '../data/ranks';
 import { SkillStage } from '../world/skillStage';
-import { AutoQuality, benchmarkGpu, detectTier, gatherDeviceInfo, needsBench, type DeviceInfo, type Detected } from '../render/quality';
+import { detectWebGpu, AutoQuality, benchmarkGpu, detectTier, gatherDeviceInfo, needsBench, type DeviceInfo, type Detected } from '../render/quality';
 import { GameRenderer } from '../render/renderer';
 import { setTexDetail } from '../render/texDetail';
 import { CharacterEditor, styleIdOf, type EditorResult } from '../ui/editor';
@@ -65,6 +65,8 @@ export class Game {
   readonly loop: GameLoop;
   readonly deviceInfo: DeviceInfo;
   readonly detected: Detected;
+  /** WebGPU im Browser verfügbar? (nur Anzeige: das Spiel rendert bewusst mit WebGL 2, siehe detectWebGpu) */
+  webgpu: 'pruefe' | 'ja' | 'nein' = 'pruefe';
   assets: CharacterAssets | null = null;
   readonly overlay: CombatOverlay;
 
@@ -104,6 +106,7 @@ export class Game {
       this.renderer.gl.resetState();
     }
     this.detected = detectTier(this.deviceInfo, bench);
+    detectWebGpu().then((ok) => { this.webgpu = ok ? 'ja' : 'nein'; });
     this.renderer.mobile = this.deviceInfo.mobile;
     // Lade-Pipeline kennt jetzt die Grafikkarte (KTX2-Formate)
     preload.init(this.renderer.gl);
@@ -367,14 +370,20 @@ export class Game {
           if (!foot) for (const [act, side] of [['fireLeft', 1], ['fireRight', -1]] as const) this.touch.setHot(act, this.world.fanHot(side));
         }
       }
-      this.hud.setFps(s.showFps, `${this.loop.fps} fps · ${QUALITY_TIERS[this.renderer.tier].label}`);
+      const dyn = this.renderer.dynRes.scale;
+      this.hud.setFps(s.showFps, `${this.loop.fps} fps · ${QUALITY_TIERS[this.renderer.tier].label}${dyn < 0.999 ? ` · ${Math.round(dyn * 100)} %` : ''}`);
       const env = this.world.env;
       this.hud.setEnv(`${formatClock(env.time)} · ${env.timeName} · ${WEATHER[env.weather.target].label}`);
       const key = this.input.lastDevice === 'keyboard' ? this.input.keyLabel(this.input.getKeyBindings().interact[0] ?? 'KeyR')
         : this.input.lastDevice === 'gamepad' ? 'X' : null;
       this.hud.setContext(this.world.contextLabel, key);
       this.updateQuestHud(frameDt);
-      if (s.qualityAuto && this.autoQuality.sample(frameDt)) this.autoLower();
+      // Erst die Auflösung anpassen (unsichtbarer), die ganze Grafikstufe erst senken, wenn das nicht reicht
+      if (s.dynamicResolution && this.renderer.dynRes.sample(frameDt)) this.renderer.resize();
+      if (s.qualityAuto) {
+        if (s.dynamicResolution && this.renderer.dynRes.hasRoom) this.autoQuality.reset();
+        else if (this.autoQuality.sample(frameDt)) this.autoLower();
+      }
     }
   }
 
@@ -1379,6 +1388,7 @@ export class Game {
     this.input.flush();
     this.autosaveTimer = 0;
     this.autoQuality.reset();
+    this.renderer.dynRes.rewarm();
     this.state.set('play');
     this.loop.resetClock();
     this.touch.setLayout(TOUCH_SEA);
@@ -1398,6 +1408,7 @@ export class Game {
     this.menus.hide();
     this.input.flush();
     this.autoQuality.reset();
+    this.renderer.dynRes.rewarm();
     this.state.set('play');
     this.loop.resetClock();
   }
@@ -1451,6 +1462,7 @@ export class Game {
     audio.setVolumes(s.volume);
     document.documentElement.classList.toggle('cb', s.colorblind);
     mapPalette.colorblind = s.colorblind;
+    if (!s.dynamicResolution) this.renderer?.resetDynamicResolution();
     this.updateTouchVisibility();
   }
 
