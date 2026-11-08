@@ -72,7 +72,7 @@ class AudioEngine {
   unlock() {
     const AC = window.AudioContext ?? (window as any).webkitAudioContext;
     if (!AC) return;
-    if (this.ctx) { if (this.ctx.state === 'suspended') void this.ctx.resume(); return; }
+    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {}); return; }
     const c: AudioContext = new AC();
     this.ctx = c;
     this.master = c.createGain();
@@ -140,7 +140,8 @@ class AudioEngine {
   /** Bei verstecktem Tab alles leise */
   suspend(s: boolean) {
     if (!this.ctx) return;
-    if (s) void this.ctx.suspend(); else void this.ctx.resume();
+    // Browser können das Fortsetzen ablehnen (z. B. ohne Nutzeraktion) – dann beim nächsten Tippen erneut
+    (s ? this.ctx.suspend() : this.ctx.resume()).catch(() => {});
   }
 
   /** 2D-Hörer (ohne Kamera): Position am Boden; die Blickrichtung kommt über setListener3D */

@@ -23,6 +23,7 @@ import { toon } from '../render/toon';
 import type { ParticleSystem } from './particles';
 import { markShared } from '../render/dispose';
 import { toonPbr } from '../render/pbrMaps';
+import { keepIf } from '../core/arrays';
 
 const GULLS = 28;
 
@@ -208,7 +209,7 @@ export class SeaLife {
       if (ph < 0.03 || (ph > 0.97 && ph < 1)) this.spray.emit(6, d.x, wy, d.z, { speed: 1.5, up: 3, life: 0.8, color: new Color(0.95, 0.98, 1) });
       if (d.t > 9) d.m.removeFromParent();
     }
-    this.dolphins = this.dolphins.filter((d) => d.t <= 9);
+    keepIf(this.dolphins, (d) => d.t <= 9);
 
     // Wal taucht in der Ferne auf und bläst eine Fontäne
     this.whaleT -= dt;

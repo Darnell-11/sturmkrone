@@ -511,9 +511,19 @@ export class CombatSystem implements EnemyWorld {
     for (const e of this.enemies) e.dispose();
     this.enemies = [];
     this.tokens.clear();
+    // Verweise auf entfernte Gegner lösen: sonst bleiben sie im Speicher, und Brand/Gift schadet unsichtbar weiter
+    this.targets.clear();
+    this.dots.clear();
+    this.swings.clear();
+    for (const p of this.projectiles) { p.mesh.removeFromParent(); p.mesh.geometry.dispose(); (p.mesh.material as MeshBasicMaterial).dispose(); }
+    this.projectiles = [];
+    // liegengebliebene Münzen sammelt die Crew beim Ablegen ein (nichts geht verloren)
+    let left = 0;
+    for (const c of this.coins) { c.mesh.removeFromParent(); if (c.t >= 0) left += c.value; }
+    if (left > 0) this.hooks.gold(left);
+    this.coins = [];
     this.lock = null;
     this.island = null;
-    for (const a of this.aoes) void a;
     this.aoes = [];
     this.overlay.clearBars();
     this.overlay.setBoss(null);
@@ -630,7 +640,7 @@ export class CombatSystem implements EnemyWorld {
         (p.mesh.material as MeshBasicMaterial).dispose();
       }
     }
-    this.projectiles = this.projectiles.filter((p) => p.life > 0);
+    { let n = 0; for (const p of this.projectiles) if (p.life > 0) this.projectiles[n++] = p; this.projectiles.length = n; }
 
     // Flächenangriffe
     for (const a of this.aoes) {
@@ -647,7 +657,7 @@ export class CombatSystem implements EnemyWorld {
         }
       }
     }
-    this.aoes = this.aoes.filter((a) => a.t > 0);
+    { let n = 0; for (const a of this.aoes) if (a.t > 0) this.aoes[n++] = a; this.aoes.length = n; }
 
     // Münzen
     for (const c of this.coins) {
@@ -666,11 +676,20 @@ export class CombatSystem implements EnemyWorld {
       if (c.t > 30) c.t = -1;
       if (c.t < 0) c.mesh.removeFromParent();
     }
-    this.coins = this.coins.filter((c) => c.t >= 0);
+    { let n = 0; for (const c of this.coins) if (c.t >= 0) this.coins[n++] = c; this.coins.length = n; }
 
     // Tote Gegner entfernen
-    for (const e of this.enemies) if (e.removable) { e.dispose(); this.overlay.setBar(e, null, -1, false, camera); }
-    this.enemies = this.enemies.filter((e) => !e.removable);
+    // Tote Gegner entfernen – samt aller Verweise (Ziele der Crew, Brand/Gift, Angriffsplätze)
+    let n = 0;
+    for (const e of this.enemies) {
+      if (e.removable) {
+        e.dispose();
+        this.overlay.setBar(e, null, -1, false, camera);
+        this.targets.delete(e); this.dots.delete(e); this.tokens.delete(e);
+        if (this.lock === e) this.lock = null;
+      } else this.enemies[n++] = e;
+    }
+    this.enemies.length = n;
     if (this.lock && (!this.lock.alive || !pl || Math.hypot(this.lock.x - pl.x, this.lock.z - pl.z) > 28)) this.lock = null;
 
     // Anzeigen
@@ -678,7 +697,7 @@ export class CombatSystem implements EnemyWorld {
     this.overlay.setBoss(boss ? boss.name ?? boss.def.label : null, boss ? boss.hp / boss.maxHp : 0);
     for (const e of this.enemies) {
       const show = e.alive && !e.def.boss && (this.now - e.lastHit < 5 || e === this.lock || e.def.elite);
-      this.overlay.setBar(e, show ? e.headInto(this.barVec) : null, show ? e.hp / e.maxHp : -1, !!e.def.elite, camera);
+      this.overlay.setBar(e, show ? e.headInto(this.barVec) : null, show ? e.hp / e.maxHp : -1, !!e.def.elite, camera, '', e.char.holder, 2.2 * e.def.scale);
     }
     this.overlay.setReticle(this.lock?.alive ? this.lock.headInto(this.barVec).setY(this.lock.y + 1.2 * this.lock.def.scale) : null, camera);
   }

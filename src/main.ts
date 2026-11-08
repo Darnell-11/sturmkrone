@@ -17,7 +17,8 @@ function fail(message: string) {
 
 try {
   const game = new Game(document.getElementById('game') as HTMLCanvasElement, document.getElementById('ui')!);
-  game.start();
+  // Startfehler (z. B. Netz weg beim Laden der Figuren) freundlich anzeigen statt unbehandelt in der Konsole
+  game.start().catch((e) => { console.error(e); fail('Beim Start ist ein Fehler aufgetreten. Bitte lade die Seite neu.'); });
   // Zum Ausprobieren in der Browser-Konsole
   (window as any).sturmkrone = game;
   // Nur in der Entwicklung: Bild an einen lokalen Empfänger schicken (für automatische Sichtprüfungen)

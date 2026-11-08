@@ -3,6 +3,7 @@ import { addOutlines } from '../render/outline';
 import { toon } from '../render/toon';
 import type { Ship } from '../entities/ship/ship';
 import { disposeObject } from '../render/dispose';
+import { keepIf } from '../core/arrays';
 
 /** Lage des Tiefenschlunds im Schlundriff */
 export const ABYSS_LAIR = { x: -1607, z: 522 };
@@ -174,7 +175,7 @@ export class SeaBoss {
       }
       if (l.life <= 0) l.mesh.removeFromParent();
     }
-    this.lobs = this.lobs.filter((l) => l.life > 0);
+    keepIf(this.lobs, (l) => l.life > 0);
     // Treffer-Aufblitzen
     const s = this.flash > 0 ? 1.06 : 1;
     this.head.scale.setScalar(s);

@@ -15,7 +15,8 @@ export interface QualityConfig {
    * Schatten. cascades ≥ 2: Kaskadierte Schattenkarten (CSM) – mehrere Karten hintereinander,
    * nah gestochen scharf, in der Ferne weich auslaufend bis `far` Meter. 1 = eine Karte um die Figur.
    */
-  shadows: { enabled: boolean; mapSize: number; soft: boolean; cascades: number; far: number };
+  /** smallRange: kleine Dinge (< 1,6 m: Figuren, Kisten, Pflanzen) werfen nur bis zu dieser Entfernung Schatten */
+  shadows: { enabled: boolean; mapSize: number; soft: boolean; cascades: number; far: number; smallRange: number };
   post: {
     enabled: boolean;
     bloom: boolean;
@@ -75,7 +76,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     pixelRatio: 0.75,
     maxPixelRatio: 0.75,
     maxPixels: 1280 * 720,
-    shadows: { enabled: false, mapSize: 0, soft: false, cascades: 0, far: 0 },
+    shadows: { enabled: false, mapSize: 0, soft: false, cascades: 0, far: 0, smallRange: 0 },
     // nur ein günstiger Durchgang für Farbkorrektur, damit der Look derselbe bleibt
     post: { enabled: true, bloom: false, outlines: false, colorGrading: true, godRays: false, depthOfField: false, ambientOcclusion: null },
     multisampling: 0,
@@ -93,7 +94,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     pixelRatio: 1,
     maxPixelRatio: 1,
     maxPixels: 1920 * 1080,
-    shadows: { enabled: true, mapSize: 1024, soft: false, cascades: 1, far: 0 },
+    shadows: { enabled: true, mapSize: 1024, soft: false, cascades: 1, far: 0, smallRange: 32 },
     // Farbkorrektur kostet kaum etwas (läuft im selben Durchgang) und gehört zum Look
     post: { enabled: true, bloom: true, outlines: false, colorGrading: true, godRays: false, depthOfField: false, ambientOcclusion: null },
     multisampling: 2,
@@ -111,7 +112,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     pixelRatio: 1.5,
     maxPixelRatio: 1.5,
     maxPixels: 2560 * 1440,
-    shadows: { enabled: true, mapSize: 2048, soft: true, cascades: 2, far: 180 },
+    shadows: { enabled: true, mapSize: 2048, soft: true, cascades: 2, far: 180, smallRange: 45 },
     post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: false, ambientOcclusion: { dirs: 4, steps: 3, scale: 0.5, radius: 1.1, intensity: 0.85 } },
     multisampling: 4,
     viewDistance: 800,
@@ -128,7 +129,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     pixelRatio: null,
     maxPixelRatio: 3,
     maxPixels: 3840 * 2160,
-    shadows: { enabled: true, mapSize: 2048, soft: true, cascades: 3, far: 320 },
+    shadows: { enabled: true, mapSize: 2048, soft: true, cascades: 3, far: 320, smallRange: 70 },
     post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 6, steps: 4, scale: 0.5, radius: 1.3, intensity: 0.95 } },
     multisampling: 4,
     viewDistance: 1200,
@@ -145,7 +146,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     pixelRatio: null,
     maxPixelRatio: 4,
     maxPixels: 3840 * 2160,
-    shadows: { enabled: true, mapSize: 4096, soft: true, cascades: 4, far: 520 },
+    shadows: { enabled: true, mapSize: 4096, soft: true, cascades: 4, far: 520, smallRange: 110 },
     post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 8, steps: 5, scale: 0.75, radius: 1.4, intensity: 1 } },
     multisampling: 8,
     viewDistance: 1800,

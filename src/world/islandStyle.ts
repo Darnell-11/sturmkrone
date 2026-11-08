@@ -186,7 +186,8 @@ export function volcano(kit: StyleKit, r: number, baseY: number, tall: boolean):
   const br = r * (tall ? 0.58 : 0.4);
   // Flanke: nach oben steiler werdend (konkav), zerklüftet mit Rinnen – statt eines glatten Kegels
   const radiusAt = (a: number, t: number) => {
-    const base = br * (0.22 + 0.78 * Math.pow(1 - t, 1.6));
+    // t kann durch Rundung minimal über 1 liegen (Spitze des Kegels): ohne Begrenzung ergäbe die Potenz NaN-Eckpunkte
+    const base = br * (0.22 + 0.78 * Math.pow(Math.max(0, 1 - t), 1.6));
     const n = Math.sin(a * 7 + t * 5) * 0.05 + Math.sin(a * 13 - t * 9) * 0.03 + Math.sin(a * 3 + 1.3) * 0.04;
     const gully = -Math.pow(Math.abs(Math.sin(a * 5 + t * 1.5)), 6) * 0.07;
     return base * (1 + (n + gully) * (0.35 + 0.65 * (1 - t)));

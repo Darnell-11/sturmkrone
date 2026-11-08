@@ -35,6 +35,7 @@ import { seaLevelAt } from '../data/regions';
 import { ElementFx } from '../faji/elementFx';
 import { ELEMENT_COLORS, type ActiveDef, type Element } from '../data/skills';
 import { markShared } from '../render/dispose';
+import { keepIf } from '../core/arrays';
 
 const G = 9.8;
 const BALL_SPEED = 46;
@@ -250,7 +251,7 @@ export class NavalSystem {
       const s = e.ship;
       const vis = show && !e.companion && s.alive && !s.sinking && s.hull < s.maxHull && !!p && Math.hypot(s.x - p.x, s.z - p.z) < 320;
       this.barPos.set(s.x, s.model.deckY + s.cls.mh + 3, s.z);
-      this.overlay.setBar(e, vis ? this.barPos : null, vis ? s.hull / s.maxHull : -1, e.role === 'legende' || !!e.ghost, camera, vis && this.isWeak(e) ? 'ENTERN' : '');
+      this.overlay.setBar(e, vis ? this.barPos : null, vis ? s.hull / s.maxHull : -1, e.role === 'legende' || !!e.ghost, camera, vis && this.isWeak(e) ? 'ENTERN' : '', s.model.group, s.model.deckY + s.cls.mh + 3);
     }
   }
 
@@ -464,16 +465,25 @@ export class NavalSystem {
     if (p) this.damageFx(p, dt);
     // Weit entfernte entfernen, gesunkene aufräumen
     const gone = (e: EnemyShip) => e.ship.sinking > 9 || (!!p && !e.companion && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > (e.state === 'engage' || e.legendId ? 1200 : 900));
-    for (const e of this.enemies) if (gone(e)) { e.ship.dispose(); this.overlay.setBar(e, null, -1, false, null as unknown as Camera); }
-    this.enemies = this.enemies.filter((e) => !gone(e));
+    keepIf(this.enemies, (e) => {
+      if (!gone(e)) return true;
+      e.ship.dispose();
+      this.overlay.setBar(e, null, -1, false, null);
+      return false;
+    });
     this.updateBalls(dt);
     this.updateCrates(dt);
     this.efx.update(dt);
     this.updateShots(dt);
     if (this.timers.length) {
-      const due = this.timers.filter((x) => (x.t -= dt) <= 0);
-      this.timers = this.timers.filter((x) => x.t > 0);
-      for (const x of due) x.fn();
+      // nur wenn wirklich etwas fällig ist, eine kleine Liste bilden (sonst kein neues Array pro Schritt)
+      let anyDue = false;
+      for (const x of this.timers) { x.t -= dt; if (x.t <= 0) anyDue = true; }
+      if (anyDue) {
+        const due = this.timers.filter((x) => x.t <= 0);
+        keepIf(this.timers, (x) => x.t > 0);
+        for (const x of due) x.fn();
+      }
     }
     for (const w of this.waves) {
       w.t += dt;
@@ -482,7 +492,7 @@ export class NavalSystem {
       w.mesh.scale.y = 1 + k * 0.6;
       if (k >= 1) { w.mesh.removeFromParent(); w.mesh.geometry.dispose(); (w.mesh.material as MeshBasicMaterial).dispose(); }
     }
-    this.waves = this.waves.filter((w) => w.t < w.max);
+    keepIf(this.waves, (w) => w.t < w.max);
   }
 
   /** Rauch und Glut über beschädigten, brennenden und sinkenden Schiffen – von weitem sichtbar */
@@ -675,7 +685,7 @@ export class NavalSystem {
       }
       if (b.life <= 0) b.mesh.removeFromParent();
     }
-    this.balls = this.balls.filter((b) => b.life > 0);
+    keepIf(this.balls, (b) => b.life > 0);
   }
 
   private hitShip(s: Ship, b: Ball, local: Vector3, sailHit: boolean) {
@@ -740,7 +750,7 @@ export class NavalSystem {
       if (c.t > 120) c.t = -1;
       if (c.t < 0) c.mesh.removeFromParent();
     }
-    this.crates = this.crates.filter((c) => c.t >= 0);
+    keepIf(this.crates, (c) => c.t >= 0);
   }
 
   // ---------- Entern ----------
@@ -833,7 +843,7 @@ export class NavalSystem {
         s.done();
       }
     }
-    this.shots = this.shots.filter((s) => s.t < s.dur);
+    keepIf(this.shots, (s) => s.t < s.dur);
   }
 
   /**

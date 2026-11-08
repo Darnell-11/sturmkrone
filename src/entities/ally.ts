@@ -173,7 +173,7 @@ export class Ally implements AllyTarget {
           if (this.atkT <= 0 && !this.pending && this.hurtT <= 0) {
             this.atkT = atk.cd * (0.85 + Math.random() * 0.3);
             const clip = atk.clips[Math.floor(Math.random() * atk.clips.length)];
-            this.char.playClip(clip, { loop: false, fade: 0.08, restart: true, speed: 1.1, onDone: () => { this.anim = ''; } });
+            this.char.playClip(clip, { loop: false, fade: 0.15, restart: true, speed: 1.1, onDone: () => { this.anim = ''; } });
             this.anim = 'attack';
             this.pending = { t: atk.hitAt, e: target, heavy: this.style === 'zweihaender' };
           }

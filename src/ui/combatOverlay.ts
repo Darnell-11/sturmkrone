@@ -1,9 +1,10 @@
-import { Vector3, type Camera } from 'three';
+import { Vector3, type Camera, type Object3D } from 'three';
 import { esc } from './dom';
 import { audio } from '../audio/audio';
 
 interface FloatText { el: HTMLElement; pos: Vector3; life: number; max: number; vy: number }
-interface Bar { el: HTMLElement; fill: HTMLElement; lag: HTMLElement; last: number }
+/** anchor: Objekt, dem der Balken bei jedem Bild folgt (weich dargestellte Figur/Schiff), sonst die feste Position pos */
+interface Bar { el: HTMLElement; fill: HTMLElement; lag: HTMLElement; last: number; pos: Vector3; anchor: Object3D | null; dy: number; tf: string }
 
 export type NumberStyle = 'hit' | 'crit' | 'hurt' | 'heal' | 'info' | 'gold' | 'xp';
 
@@ -138,12 +139,12 @@ export class CombatOverlay {
     this.boss.hidden = !name;
     if (!name) return;
     this.bossName.textContent = name;
-    this.bossFill.style.width = `${Math.max(0, frac) * 100}%`;
-    this.bossLag.style.width = `${Math.max(0, frac) * 100}%`;
+    const s = `scaleX(${Math.max(0, Math.min(1, frac)).toFixed(3)})`;
+    if (this.bossFill.style.transform !== s) { this.bossFill.style.transform = s; this.bossLag.style.transform = s; }
   }
 
   /** Lebensbalken über einem Gegner (key = Gegnerobjekt). frac < 0 entfernt ihn. */
-  setBar(key: object, pos: Vector3 | null, frac: number, elite: boolean, camera: Camera, label = '') {
+  setBar(key: object, pos: Vector3 | null, frac: number, elite: boolean, _camera: Camera | null, label = '', anchor: Object3D | null = null, dy = 0) {
     let b = this.bars.get(key);
     if (frac < 0 || !pos) {
       if (b) { b.el.remove(); this.bars.delete(key); }
@@ -154,17 +155,33 @@ export class CombatOverlay {
       el.className = `cbt-ebar${elite ? ' elite' : ''}`;
       el.innerHTML = '<i class="lag"></i><i class="fill"></i>';
       this.root.appendChild(el);
-      b = { el, fill: el.querySelector('.fill')!, lag: el.querySelector('.lag')!, last: frac };
+      b = { el, fill: el.querySelector('.fill')!, lag: el.querySelector('.lag')!, last: frac, pos: new Vector3(), anchor: null, dy: 0, tf: '' };
+      b.lag.style.transform = `scaleX(${frac.toFixed(3)})`;
       this.bars.set(key, b);
     }
-    b.fill.style.width = `${frac * 100}%`;
+    // Füllstand über transform (kein Layout); der gelbe Nachlauf folgt verzögert
+    if (frac !== b.last || !b.fill.style.transform) b.fill.style.transform = `scaleX(${Math.max(0, frac).toFixed(3)})`;
     if (b.el.dataset.label !== label) { b.el.dataset.label = label; b.el.classList.toggle('board', !!label); }
-    if (frac < b.last) setTimeout(() => { if (b) b.lag.style.width = `${frac * 100}%`; }, 300);
+    if (frac < b.last) { const bb = b; setTimeout(() => { if (bb.el.isConnected) bb.lag.style.transform = `scaleX(${Math.max(0, frac).toFixed(3)})`; }, 300); }
     b.last = frac;
-    tmp.copy(pos).project(camera);
-    const on = tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
-    b.el.style.display = on ? '' : 'none';
-    if (on) b.el.style.transform = `translate(${((tmp.x + 1) / 2) * innerWidth}px, ${((1 - tmp.y) / 2) * innerHeight}px) translate(-50%, -100%)`;
+    b.pos.copy(pos);
+    b.anchor = anchor;
+    b.dy = dy;
+  }
+
+  /** Balken bei jedem Bild an die (weich dargestellte) Figur heften – ruckelt nicht auf schnellen Bildschirmen */
+  private placeBars(camera: Camera) {
+    for (const b of this.bars.values()) {
+      if (b.anchor) tmp.copy(b.anchor.position).setY(b.anchor.position.y + b.dy);
+      else tmp.copy(b.pos);
+      tmp.project(camera);
+      const on = tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
+      const tf = on ? `translate(${(((tmp.x + 1) / 2) * innerWidth).toFixed(1)}px, ${(((1 - tmp.y) / 2) * innerHeight).toFixed(1)}px) translate(-50%, -100%)` : 'none';
+      if (tf === b.tf) continue;
+      b.tf = tf;
+      b.el.style.display = on ? '' : 'none';
+      if (on) b.el.style.transform = tf;
+    }
   }
 
   clearBars() { for (const b of this.bars.values()) b.el.remove(); this.bars.clear(); }
@@ -190,7 +207,11 @@ export class CombatOverlay {
       t.el.style.transform = `translate(${((tmp.x + 1) / 2) * innerWidth}px, ${((1 - tmp.y) / 2) * innerHeight}px) translate(-50%, -50%) scale(${pop})`;
       t.el.style.opacity = String(Math.min(1, k * 2.5));
     }
-    this.texts = this.texts.filter((t) => { if (t.life <= 0) { t.el.remove(); return false; } return true; });
+    // abgelaufene Zahlen an Ort und Stelle entfernen (kein neues Array pro Bild)
+    let n = 0;
+    for (const t of this.texts) { if (t.life <= 0) t.el.remove(); else this.texts[n++] = t; }
+    this.texts.length = n;
+    this.placeBars(camera);
     if (this.comboTimer > 0) {
       this.comboTimer -= dt;
       if (this.comboTimer <= 0) { this.comboCount = 0; this.combo.hidden = true; }

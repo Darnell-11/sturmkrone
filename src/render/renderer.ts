@@ -15,7 +15,7 @@ import {
   type Mesh,
   type PerspectiveCamera,
   type Scene,
-  type Vector3,
+  Vector3,
 } from 'three';
 import {
   BloomEffect,
@@ -209,8 +209,35 @@ export class GameRenderer {
    * Transparente Effekte (Gischt, Funken, Ringe) dürfen den Alpha-Kanal nicht verändern:
    * Alpha 0 markiert Wasser, sonst zeichnen Konturen und Umgebungsverdeckung dunkle Höfe um jeden Schaum.
    */
+  /**
+   * Schatten-Detailstufe: kleine Dinge (Figuren, Kisten, Blumen) werfen nur in der Nähe Schatten –
+   * weiter weg ist der Schatten ohnehin kaum sichtbar, kostet aber in jeder Kaskade einen Zeichenaufruf.
+   * Unbeleuchtete Leucht-Materialien (Laternen, Effekte) werfen nie Schatten.
+   */
+  private shadowLod(m: Mesh, cam: Vector3, range: number) {
+    const ud = m.userData as { skCast?: boolean; skR?: number };
+    if (ud.skCast === undefined) {
+      const mat = m.material as Material & { isMeshBasicMaterial?: boolean };
+      ud.skCast = m.castShadow && !(mat && !Array.isArray(mat) && mat.isMeshBasicMaterial);
+      if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
+      const e = m.matrixWorld.elements;
+      const sc = Math.sqrt(Math.max(e[0] * e[0] + e[1] * e[1] + e[2] * e[2], e[4] * e[4] + e[5] * e[5] + e[6] * e[6], e[8] * e[8] + e[9] * e[9] + e[10] * e[10]));
+      ud.skR = (m.geometry.boundingSphere?.radius ?? 0) * sc;
+    }
+    if (!ud.skCast) { if (m.castShadow) m.castShadow = false; return; }
+    const r = ud.skR ?? 0;
+    if (r >= 1.6 || range <= 0) { if (!m.castShadow) m.castShadow = true; return; }
+    const e = m.matrixWorld.elements;
+    const dx = e[12] - cam.x, dy = e[13] - cam.y, dz = e[14] - cam.z;
+    const near = dx * dx + dy * dy + dz * dz < (range + r) * (range + r);
+    if (m.castShadow !== near) m.castShadow = near;
+  }
+
   private keepWaterMask(scene: Scene) {
+    const cam = this.camera?.position;
+    const range = this.config.shadows.smallRange;
     scene.traverse((o) => {
+      if ((o as Mesh).isMesh && cam) this.shadowLod(o as Mesh, cam, range);
       const m = (o as Mesh).material as Material | Material[] | undefined;
       if (!m) return;
       for (const mat of Array.isArray(m) ? m : [m]) {
@@ -245,7 +272,7 @@ export class GameRenderer {
       this.dof.cocMaterial.focusRange = Math.max(60, d * 6);
     }
     this.maskT -= dt;
-    if (this.maskT <= 0) { this.maskT = 0.5; this.keepWaterMask(this.scene); }
+    if (this.maskT <= 0) { this.maskT = 0.25; this.keepWaterMask(this.scene); }
     if (this.composer) this.composer.render(dt);
     else {
       // Ohne Nachbearbeitung selbst löschen (der Composer schaltet autoClear ab – sonst bleiben alte Bilder stehen)

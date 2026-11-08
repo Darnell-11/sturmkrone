@@ -14,6 +14,13 @@ const RUN = 6.2;
 const ROLL_SPEED = 10;
 const ROLL_TIME = 0.42;
 const CHARGE_TIME = 0.85;
+/**
+ * Überblendzeiten der Animationen (Sekunden): weich, aber ohne Verzögerung der Trefferzeitpunkte –
+ * die Clips laufen beim Überblenden bereits, nur ihr Gewicht steigt.
+ */
+const FADE = { attack: 0.15, combo: 0.12, dodge: 0.15, cast: 0.15, locomotion: 0.2, idle: 0.2, block: 0.12, hurt: 0.08 };
+/** Eingabepuffer: so lange (Sekunden) bleibt ein zu früh gedrückter Angriff/eine Rolle gültig */
+const BUFFER = 0.25;
 
 type FootState = 'move' | 'roll' | 'attack' | 'block' | 'charge' | 'hurt' | 'down';
 
@@ -56,6 +63,10 @@ export class PlayerFoot implements PlayerTarget {
   private rollDir = { x: 0, z: 1 };
   private combo = 0;
   private comboQueued = false;
+  private chaining = false;
+  /** Zeitpunkt der letzten noch nicht ausgeführten Eingaben (Logikzeit), -1 = keine */
+  private buf = { attack: -1, dodge: -1, heavy: -1 };
+  private clock = 0;
   private comboWindow = 0;
   private locomotion = '';
   private attack: AttackDef | null = null;
@@ -98,7 +109,7 @@ export class PlayerFoot implements PlayerTarget {
     this.state = 'attack';
     this.attack = null;
     this.locomotion = '';
-    const a = this.char.playClip(clip, { loop: false, speed, fade: 0.06, restart: true, onDone: () => this.endAttack() });
+    const a = this.char.playClip(clip, { loop: false, speed, fade: FADE.cast, restart: true, onDone: () => this.endAttack() });
     if (!a) this.toMove();
   }
 
@@ -138,7 +149,7 @@ export class PlayerFoot implements PlayerTarget {
     this.state = 'hurt';
     this.hurtT = knock > 6 ? 0.55 : 0.3;
     this.attack = null;
-    this.char.play(knock > 6 ? 'hitHeavy' : 'hit', { restart: true, fade: 0.04 });
+    this.char.play(knock > 6 ? 'hitHeavy' : 'hit', { restart: true, fade: FADE.hurt });
     return 'hit';
   }
 
@@ -156,6 +167,14 @@ export class PlayerFoot implements PlayerTarget {
     this.iframes -= dt;
     this.comboWindow -= dt;
     this.blockSince += dt;
+    this.clock += dt;
+    // Eingaben puffern: was zu früh kommt (mitten in Rolle, Treffer oder Schlag), wird nachgeholt, sobald es geht
+    // Während einer Rolle oder Trefferreaktion zählt die Eingabe ab deren Ende (sonst verfiele sie bei langen Rollen)
+    const busy = this.state === 'roll' ? Math.max(0, this.rollT) : this.state === 'hurt' ? Math.max(0, this.hurtT) : 0;
+    if (input.pressed('attack')) this.buf.attack = this.clock + busy;
+    if (input.pressed('dodge')) this.buf.dodge = this.clock + busy;
+    if (input.pressed('heavy')) this.buf.heavy = this.clock + busy;
+    const wants = (k: 'attack' | 'dodge' | 'heavy') => this.buf[k] >= 0 && this.clock - Math.min(this.clock, this.buf[k]) <= BUFFER;
     const mv = input.move();
     const mag = Math.min(1, Math.hypot(mv.x, mv.y));
     const fx = Math.sin(camYaw), fz = Math.cos(camYaw);
@@ -178,20 +197,24 @@ export class PlayerFoot implements PlayerTarget {
     }
 
     // Eingaben
-    if (input.pressed('dodge') && (canAct || this.state === 'attack' && this.char.progress > 0.45 || this.state === 'hurt' && this.hurtT < 0.15)) {
+    // Rolle: auch aus dem Ausschwung eines Schlags, kurz vor Ende einer Trefferreaktion oder direkt nach der letzten Rolle
+    if (wants('dodge') && (canAct || this.state === 'attack' && this.char.progress > 0.45 || this.state === 'hurt' && this.hurtT < 0.15 || this.state === 'roll' && this.rollT < 0.06)) {
+      this.buf.dodge = -1;
+      this.buf.attack = this.buf.attack > this.clock - 0.05 ? this.buf.attack : -1;
       this.state = 'roll';
       this.rollT = ROLL_TIME;
       this.iframes = PLAYER_BASE.rollIframes;
       this.rollDir = dl > 0.001 ? { x: dx, z: dz } : { x: -Math.sin(this.yaw), z: -Math.cos(this.yaw) };
       this.yaw = Math.atan2(this.rollDir.x, this.rollDir.z);
-      this.char.play(dl > 0.001 ? 'roll' : 'dodgeBack', { fade: 0.06, restart: true });
+      this.char.play(dl > 0.001 ? 'roll' : 'dodgeBack', { fade: FADE.dodge, restart: true });
       if (dl <= 0.001) this.yaw += Math.PI;
       this.locomotion = '';
       this.attack = null;
       this.deps.fx?.puff(new Vector3(this.x, this.y, this.z), 10);
       this.deps.overlay?.speedlines(0.35);
     }
-    if (input.pressed('attack') && this.state !== 'roll' && this.state !== 'hurt' && this.state !== 'charge') {
+    if (wants('attack') && this.state !== 'roll' && this.state !== 'hurt' && this.state !== 'charge') {
+      this.buf.attack = -1;
       if (this.state === 'attack') this.comboQueued = true;
       else { this.aim = aimAt; this.startAttack(atks.combo[this.nextCombo(atks.combo.length)], attackYaw); }
     }
@@ -199,18 +222,19 @@ export class PlayerFoot implements PlayerTarget {
     if (this.state === 'attack' && this.attack && !this.comboQueued && mag > 0.35 && this.char.progress > this.attack.hitEnd + 0.15) {
       this.toMove();
     }
-    if (input.pressed('heavy') && canAct) {
+    if (wants('heavy') && canAct) {
+      this.buf.heavy = -1;
       this.state = 'charge';
       this.chargeT = 0;
       this.yaw = attackYaw;
       this.aim = aimAt;
-      this.char.playClip(atks.charge.clip, { loop: false, speed: 0.15, fade: 0.1, restart: true });
+      this.char.playClip(atks.charge.clip, { loop: false, speed: 0.15, fade: FADE.attack, restart: true });
       this.locomotion = '';
     }
     if (input.pressed('block')) this.blockSince = 0;
     if (canAct) {
       const blocking = input.down('block');
-      if (blocking && this.state !== 'block') { this.state = 'block'; this.char.play('block', { fade: 0.08 }); this.locomotion = ''; }
+      if (blocking && this.state !== 'block') { this.state = 'block'; this.char.play('block', { fade: FADE.block }); this.locomotion = ''; }
       else if (!blocking && this.state === 'block') this.toMove();
     }
 
@@ -278,8 +302,8 @@ export class PlayerFoot implements PlayerTarget {
       const want = this.speed < 0.1 ? 'idle' : this.speed > 4 ? 'run' : 'walk';
       if (want !== this.locomotion) {
         this.locomotion = want;
-        if (want === 'idle') this.char.playClip(STYLE_ANIMS[this.style].idle.clip, { loop: true, fade: 0.25 });
-        else this.char.play(want === 'run' ? 'run' : 'walk', { fade: 0.2 });
+        if (want === 'idle') this.char.playClip(STYLE_ANIMS[this.style].idle.clip, { loop: true, fade: FADE.idle });
+        else this.char.play(want === 'run' ? 'run' : 'walk', { fade: FADE.locomotion });
       }
       if (want !== 'idle') this.char.setLocoSpeed(this.speed);
     }
@@ -319,7 +343,10 @@ export class PlayerFoot implements PlayerTarget {
     this.flip = !this.flip;
     this.swingId++;
     this.deps.combat?.beginSwing(this.swingId);
-    const a = this.char.playClip(def.clip, { loop: false, speed: def.speed, fade: 0.06, restart: true, onDone: () => this.endAttack() });
+    // Kombo-Folgeschlag etwas knapper überblenden als der erste Schlag aus dem Stand/Lauf
+    const fade = this.chaining ? FADE.combo : FADE.attack;
+    this.chaining = false;
+    const a = this.char.playClip(def.clip, { loop: false, speed: def.speed, fade, restart: true, onDone: () => this.endAttack() });
     this.attackAction = a;
     if (!a) this.endAttack();
   }
@@ -362,6 +389,7 @@ export class PlayerFoot implements PlayerTarget {
     this.locomotion = '';
     if (this.comboQueued) {
       const atks = STYLE_ATTACKS[this.style];
+      this.chaining = true;
       this.startAttack(atks.combo[this.nextCombo(atks.combo.length)], this.yaw);
     }
   }

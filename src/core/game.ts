@@ -126,6 +126,7 @@ export class Game {
     this.touch = new TouchControls(uiRoot, this.input);
     this.touch.setLayout(TOUCH_SEA);
     this.menus = new Menus(uiRoot, this);
+    this.menus.onError = () => this.hud.toast('Das hat leider nicht geklappt – bitte noch einmal versuchen.', 3);
 
     this.overlay = new CombatOverlay(uiRoot);
     this.overlay.setVisible(false);

@@ -48,11 +48,11 @@ export class Menus {
       const el = (e.target as HTMLElement).closest<HTMLElement>('[data-a]');
       if (!el || (el as HTMLButtonElement).disabled) return;
       audio.play(el.dataset.a === 'back' || el.dataset.a === 'bye' ? 'uiBack' : 'ui');
-      this.handlers[el.dataset.a!]?.(el.dataset.id ?? '', el);
+      this.run(this.handlers[el.dataset.a!], el.dataset.id ?? '', el);
     });
     this.card.addEventListener('input', (e) => {
       const el = e.target as HTMLInputElement;
-      if (el.dataset.input) this.handlers[el.dataset.input]?.(el.value, el);
+      if (el.dataset.input) this.run(this.handlers[el.dataset.input], el.value, el);
     });
 
     addEventListener('keydown', (e) => {
@@ -78,6 +78,21 @@ export class Menus {
     this.screen.hidden = true;
     this.back = null;
   }
+
+  /** Knopf-Aktion ausführen; Fehler (auch aus asynchronen Aktionen wie Teilen oder Importieren) landen nicht unbehandelt in der Konsole */
+  private run(h: Handler | undefined, v: string, el: HTMLElement) {
+    if (!h) return;
+    try {
+      const r = (h as (v: string, el: HTMLElement) => unknown)(v, el);
+      if (r && typeof (r as Promise<unknown>).catch === 'function') (r as Promise<unknown>).catch((e) => { console.warn('Menü-Aktion fehlgeschlagen', e); this.onError(); });
+    } catch (e) {
+      console.warn('Menü-Aktion fehlgeschlagen', e);
+      this.onError();
+    }
+  }
+
+  /** Kurze Meldung, wenn eine Menü-Aktion schiefgeht (setzt das Spiel) */
+  onError: () => void = () => {};
 
   private open(html: string, handlers: Record<string, Handler>, back: (() => void) | null, opts: { wide?: boolean; clear?: boolean } = {}) {
     this.card.innerHTML = html;

@@ -26,6 +26,30 @@ export class Hud {
   private mini: HTMLCanvasElement;
   private questEl: HTMLElement;
   private questKey = '';
+  // Schiffsanzeige: Elemente einmal suchen statt in jedem Bild
+  private seaEl!: HTMLElement;
+  private shipEl!: HTMLElement;
+  private windEl!: HTMLElement;
+  private seaTxt!: HTMLElement;
+  private reloadL!: HTMLElement;
+  private reloadR!: HTMLElement;
+  private arrowEl!: HTMLElement;
+  private potionEl!: HTMLElement;
+  /** zuletzt geschriebene Werte – nur bei Änderung ins DOM schreiben (kein Layout-Zittern, keine unnötige Arbeit) */
+  private last = new Map<HTMLElement, string>();
+
+  /** Balken über die Grafikkarte skalieren (transform) statt die Breite zu ändern (Layout bei jedem Bild) */
+  private bar(el: HTMLElement, frac: number) {
+    const v = `scaleX(${Math.max(0, Math.min(1, frac)).toFixed(3)})`;
+    if (this.last.get(el) !== v) { this.last.set(el, v); el.style.transform = v; }
+  }
+
+  private put(el: HTMLElement, prop: string, v: string) {
+    const k = this.last.get(el);
+    if (k === prop + v) return;
+    this.last.set(el, prop + v);
+    el.style.setProperty(prop, v);
+  }
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
@@ -64,6 +88,14 @@ export class Hud {
     this.root.querySelector('.hud-pause')!.addEventListener('click', () => this.onPause());
     this.root.querySelector('.hud-faji')!.addEventListener('click', () => this.onFaji());
     this.fjEl = this.root.querySelector('.hud-bar.fj i')!;
+    this.seaEl = this.root.querySelector('.hud-sea')!;
+    this.shipEl = this.seaEl.querySelector('.ship i')!;
+    this.windEl = this.seaEl.querySelector('.wind')!;
+    this.seaTxt = this.seaEl.querySelector('.seatxt')!;
+    this.reloadL = this.seaEl.querySelector('.l')!;
+    this.reloadR = this.seaEl.querySelector('.r')!;
+    this.arrowEl = this.root.querySelector('.q-arrow')!;
+    this.potionEl = this.root.querySelector('.hud-potions')!;
     this.badge = this.root.querySelector('.badge')!;
     this.mini = this.root.querySelector('.hud-mini canvas')!;
     this.root.querySelector('.hud-mini')!.addEventListener('click', () => this.onMap());
@@ -114,23 +146,21 @@ export class Hud {
 
   /** Schiffsanzeige; null blendet sie aus */
   setSea(info: { hull: number; sail: number; crew: number; level: string; ammo: string; reloadL: number; reloadR: number; windRel: number; fire: boolean } | null) {
-    const el = this.root.querySelector<HTMLElement>('.hud-sea')!;
-    el.hidden = !info;
+    const el = this.seaEl;
+    if (el.hidden !== !info) el.hidden = !info;
     if (!info) return;
-    (el.querySelector('.ship i') as HTMLElement).style.width = `${Math.max(0, info.hull) * 100}%`;
-    (el.querySelector('.wind') as HTMLElement).style.transform = `rotate(${-info.windRel - Math.PI / 2}rad)`;
+    this.bar(this.shipEl, info.hull);
+    this.put(this.windEl, 'transform', `rotate(${(-info.windRel - Math.PI / 2).toFixed(2)}rad)`);
     const t = `${info.level} · ${info.ammo}${info.fire ? ' · 🔥' : ''} · Segel ${Math.round(info.sail * 100)} % · Crew ${Math.round(info.crew * 100)} %`;
-    const txt = el.querySelector('.seatxt')!;
-    if (txt.textContent !== t) txt.textContent = t;
-    (el.querySelector('.l') as HTMLElement).style.width = `${(1 - info.reloadL) * 50}%`;
-    (el.querySelector('.r') as HTMLElement).style.width = `${(1 - info.reloadR) * 50}%`;
+    if (this.seaTxt.textContent !== t) this.seaTxt.textContent = t;
+    this.bar(this.reloadL, 1 - info.reloadL);
+    this.bar(this.reloadR, 1 - info.reloadR);
   }
 
   setFaji(frac: number, sp: number) {
-    const w = `${Math.max(0, Math.min(1, frac)) * 100}%`;
-    if (this.fjEl.style.width !== w) this.fjEl.style.width = w;
-    this.badge.hidden = sp <= 0;
-    if (sp > 0) this.badge.textContent = String(sp);
+    this.bar(this.fjEl, frac);
+    if (this.badge.hidden !== sp <= 0) this.badge.hidden = sp <= 0;
+    if (sp > 0 && this.badge.textContent !== String(sp)) this.badge.textContent = String(sp);
   }
 
   /** Fähigkeitsleiste unten (nur ohne Touch) */
@@ -145,17 +175,15 @@ export class Hud {
     views.forEach((v, i) => {
       const el = this.skillbar.children[i] as HTMLElement | undefined;
       if (!el) return;
-      el.style.setProperty('--p', v.cdFrac.toFixed(3));
+      this.put(el, '--p', v.cdFrac.toFixed(3));
       el.classList.toggle('ready', v.ready && (!atSea || v.sea));
       el.classList.toggle('dim', atSea && !!v.id && !v.sea);
     });
   }
 
   setStats(hpFrac: number, xpFrac: number, gold: number) {
-    const hp = `${Math.max(0, Math.min(1, hpFrac)) * 100}%`;
-    const xp = `${Math.max(0, Math.min(1, xpFrac)) * 100}%`;
-    if (this.hpEl.style.width !== hp) this.hpEl.style.width = hp;
-    if (this.xpEl.style.width !== xp) this.xpEl.style.width = xp;
+    this.bar(this.hpEl, hpFrac);
+    this.bar(this.xpEl, xpFrac);
     const g = `Gold ${Math.round(gold).toLocaleString('de-DE')}`;
     if (this.goldEl.textContent !== g) this.goldEl.textContent = g;
   }
@@ -172,9 +200,8 @@ export class Hud {
   }
 
   setPotions(n: number) {
-    const el = this.root.querySelector<HTMLElement>('.hud-potions')!;
     const t = `🍖 ${n}`;
-    if (el.textContent !== t) el.textContent = t;
+    if (this.potionEl.textContent !== t) this.potionEl.textContent = t;
   }
 
   /** Verfolgter Auftrag mit Richtungspfeil (Winkel relativ zur Kamera, null = keiner) */
@@ -188,9 +215,8 @@ export class Hud {
       this.questEl.querySelector('.q-title')!.textContent = q.title;
       this.questEl.querySelector('.q-step')!.textContent = step;
     }
-    const arrow = this.questEl.querySelector<HTMLElement>('.q-arrow')!;
-    arrow.style.visibility = q.angle === null ? 'hidden' : 'visible';
-    if (q.angle !== null) arrow.style.transform = `rotate(${(q.angle - Math.PI / 2).toFixed(3)}rad)`;
+    this.put(this.arrowEl, 'visibility', q.angle === null ? 'hidden' : 'visible');
+    if (q.angle !== null) this.put(this.arrowEl, 'transform', `rotate(${(q.angle - Math.PI / 2).toFixed(2)}rad)`);
   }
 
   setEnv(text: string) {

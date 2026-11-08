@@ -526,6 +526,8 @@ export class Character {
         const m = o as Mesh;
         if (!m.isMesh) return;
         m.castShadow = false;
+        // auch die Schatten-Detailstufe des Renderers soll ihn nicht wieder einschalten
+        (m.userData as { skCast?: boolean }).skCast = false;
         if ((m.material as Material & { userData: { outline?: boolean } }).userData?.outline) m.visible = false;
       });
     }

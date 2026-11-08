@@ -16,6 +16,7 @@ import type { CombatFx } from '../combat/fx';
 import { actAt, ELEMENT_COLORS, type ActiveDef, type Element, type Passives, type SkillDef, type Status } from '../data/skills';
 import type { ParticleSystem } from '../world/particles';
 import { ElementFx, zigzagGeometry } from './elementFx';
+import { keepIf } from '../core/arrays';
 
 /** Etwas, das von Fähigkeiten getroffen werden kann (Gegner, Übungspuppe) */
 export interface AbilityTarget {
@@ -587,7 +588,7 @@ export class AbilityRunner {
   update(dt: number) {
     this.efx.update(dt);
     for (const r of this.running) if (!r.done) r.update(dt);
-    this.running = this.running.filter((r) => !r.done);
+    keepIf(this.running, (r) => !r.done);
   }
 }
 

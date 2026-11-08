@@ -396,7 +396,7 @@ export class Enemy {
     this.marker.visible = true;
     (this.marker.material as SpriteMaterial).color.set(this.atk.aoe || this.atk.windup > 0.7 ? new Color(5, 0.6, 0.3) : new Color(4, 3.2, 0.6));
     // Ausholen: Anfang der Angriffsanimation sehr langsam
-    this.char.playClip(this.atk.clip, { loop: false, speed: 0.12, fade: 0.1, restart: true });
+    this.char.playClip(this.atk.clip, { loop: false, speed: 0.12, fade: 0.15, restart: true });
     if (this.atk.projectile && this.def.weapon === 'muskete') {
       const g = new BufferGeometry().setFromPoints([this.pos, this.pos]);
       this.aim = new Line(g, new LineBasicMaterial({ color: new Color(4, 0.4, 0.3), transparent: true, opacity: 0.8 }));

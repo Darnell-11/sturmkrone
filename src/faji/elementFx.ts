@@ -24,6 +24,7 @@ import { disposeObject } from '../render/dispose';
 import { q, sharedGeo } from '../render/geoCache';
 import type { ParticleSystem } from '../world/particles';
 import type { SmokeSystem } from '../world/smoke';
+import { keepIf } from '../core/arrays';
 
 /** Rauch der Welt (setzt die Seewelt); in der Skillbaum-Vorschau gibt es keinen */
 let worldSmoke: SmokeSystem | null = null;
@@ -284,6 +285,6 @@ export class ElementFx {
         disposeObject(l.obj);
       }
     }
-    this.live = this.live.filter((l) => l.t < l.max);
+    keepIf(this.live, (l) => l.t < l.max);
   }
 }
