@@ -47,16 +47,21 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      # Ohne hinterlegten Schlüssel wird die Android-App nicht hier gebaut, sondern am PC gebaut und von Hand hochgeladen
       - name: Signaturschlüssel bereitstellen
+        id: key
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           if [ -z "$KEYSTORE_B64" ]; then
-            echo "::error::Das Secret ANDROID_KEYSTORE_BASE64 fehlt – ohne den Sturmkrone-Schlüssel wird keine Android-App gebaut."
-            exit 1
+            echo "::notice::Kein Android-Schlüssel hinterlegt – die Android-App wird von Hand hochgeladen."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/sturmkrone.keystore"
+          echo "ok=true" >> "$GITHUB_OUTPUT"
       - name: APK bauen
+        if: steps.key.outputs.ok == 'true'
         env:
           STURMKRONE_KEYSTORE: ${{ runner.temp }}/sturmkrone.keystore
           STURMKRONE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -65,6 +70,7 @@ jobs:
           ./gradlew assembleRelease --no-daemon
           cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/Sturmkrone.apk"
       - uses: actions/upload-artifact@v4
+        if: steps.key.outputs.ok == 'true'
         with:
           name: android
           path: ${{ runner.temp }}/Sturmkrone.apk
