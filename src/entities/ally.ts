@@ -8,6 +8,9 @@ import { weaponsFor } from './character/weapons';
 import type { Enemy } from './enemy';
 import type { Ground } from '../world/islandGround';
 import { seeded } from '../world/waves';
+import { NavAgent, type NavGrid } from '../ai/navGrid';
+
+const STEER = { x: 0, z: 0 };
 
 /** Ziel, das Gegner statt der Spielfigur angreifen können */
 export interface AllyTarget {
@@ -29,6 +32,10 @@ export interface AllyWorld {
   sparks(p: Vector3, color: string, n: number): void;
   text(p: Vector3, t: string): void;
   ground: Ground;
+  /** Begehbarkeits-Netz der Insel, auf der die Crew gerade steht (null an Deck) */
+  nav(): NavGrid | null;
+  /** Reicht der Hieb (Angriffsvolumen vor der Figur) bis in eine Trefferzone des Gegners? */
+  reach(x: number, y: number, z: number, yaw: number, range: number, e: Enemy): boolean;
 }
 
 const ATTACKS: Record<StyleId, { clips: string[]; range: number; cd: number; hitAt: number }> = {
@@ -56,6 +63,8 @@ export class Ally implements AllyTarget {
   private anim = '';
   private hurtT = 0;
   private lineT = 3 + Math.random() * 6;
+  /** Pfadfindung um Häuser, Felsen und Bäume */
+  private agent = new NavAgent();
   /** Schadensbonus durch das Schlachtlied */
   buff = 0;
   buffMult = 1;
@@ -190,17 +199,18 @@ export class Ally implements AllyTarget {
         if (e.alive) {
           const dx = e.x - this.x, dz = e.z - this.z, d = Math.hypot(dx, dz) || 1;
           const mult = (1 + (this.buff > 0 ? 0.3 : 0)) * this.buffMult;
-          if (d < ATTACKS[this.style].range + e.radius + 0.6) w.hit(e, this.dmg * mult * (0.85 + Math.random() * 0.3), dx / d, dz / d, this.def.col, this.style === 'zweihaender');
+          const range = ATTACKS[this.style].range;
+          if (range > 4 ? d < range + e.radius + 0.6 : w.reach(this.x, this.y, this.z, Math.atan2(dx, dz), range + 0.3, e)) w.hit(e, this.dmg * mult * (0.85 + Math.random() * 0.3), dx / d, dz / d, this.def.col, this.style === 'zweihaender');
         }
       }
     }
     // Bewegung
     if (moveTo && this.anim !== 'attack' && this.hurtT <= 0) {
-      const dx = moveTo.x - this.x, dz = moveTo.z - this.z, d = Math.hypot(dx, dz);
+      const d = this.agent.steer(w.nav(), this.x, this.z, moveTo.x, moveTo.z, this.radius, dt, STEER);
       if (d > 0.05) {
         const step = Math.min(d, speed * dt);
-        this.x += (dx / d) * step; this.z += (dz / d) * step;
-        this.face(Math.atan2(dx, dz), dt);
+        this.x += STEER.x * step; this.z += STEER.z * step;
+        this.face(Math.atan2(STEER.x, STEER.z), dt);
         const c = w.ground.constrain(this.x, this.z, this.radius);
         this.x = c.x; this.z = c.z;
       }

@@ -2,6 +2,7 @@ import { audio } from '../audio/audio';
 import { CrewAboard } from './crewAboard';
 import type { CrewDef } from '../data/crew';
 import type { AllyWorld } from '../entities/ally';
+import { navForIsland } from '../ai/navGrid';
 import {
   Color,
   ConeGeometry,
@@ -778,6 +779,12 @@ export class SeaWorld {
       sparks: (p, c, n) => this.sparks.emit(n, p.x, p.y, p.z, { speed: 2, up: 4, life: 1, color: new Color(c).multiplyScalar(2.5), gravity: -1, spread: 0.8 }),
       text: (p, t) => this.overlay?.number(p, t, 'info'),
       ground: this.groundProxy,
+      nav: () => {
+        if (this.deckGround || !this.foot) return null;
+        const isl = this.ground.islandAt(this.foot.x, this.foot.z, 4);
+        return isl ? navForIsland(isl) : null;
+      },
+      reach: (x, y, z, yaw, range, e) => this.combat?.allyReach(x, y, z, yaw, range, e) ?? false,
     };
   }
 

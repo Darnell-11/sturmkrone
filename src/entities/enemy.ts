@@ -17,8 +17,16 @@ import type { CharacterAssets } from './character/assets';
 import { Character } from './character/character';
 import { enemyWeapons } from './character/weapons';
 import { markShared } from '../render/dispose';
+import { NavAgent, type NavGrid } from '../ai/navGrid';
+import { ENEMY_TREE, perceive, type BrainCtx } from '../ai/enemyBrain';
+import { Hurtbox } from '../combat/hitbox';
 
-export type EnemyState = 'idle' | 'chase' | 'strafe' | 'windup' | 'attack' | 'recover' | 'hit' | 'stagger' | 'air' | 'down' | 'dead';
+export type EnemyState = 'idle' | 'patrol' | 'suspicious' | 'chase' | 'strafe' | 'flank' | 'retreat' | 'windup' | 'attack' | 'recover' | 'hit' | 'stagger' | 'air' | 'down' | 'dead';
+
+/** Zustände, in denen der Verhaltensbaum entscheidet (alle anderen gehören zu Angriffen und Treffer-Reaktionen) */
+const FREE: ReadonlySet<EnemyState> = new Set(['idle', 'patrol', 'suspicious', 'chase', 'strafe', 'flank', 'retreat']);
+/** Zustände ohne Kampf (zählen nicht als „im Gefecht“ für den Lager-Alarm) */
+const CALM: ReadonlySet<EnemyState> = new Set(['idle', 'patrol', 'suspicious']);
 
 /** Was das Kampfsystem einem Gegner zur Verfügung stellt */
 export interface EnemyWorld {
@@ -31,6 +39,12 @@ export interface EnemyWorld {
   enemyTelegraph(e: Enemy, atk: EnemyAttack): void;
   ground(x: number, z: number): number;
   constrain(x: number, z: number, r: number, self?: Enemy): { x: number; z: number };
+  /** Begehbarkeits-Netz der Insel (null an Deck: dort ist alles frei) */
+  readonly nav: NavGrid | null;
+  /** Blickrichtung des aktuellen Ziels (NaN, wenn unbekannt) */
+  readonly targetYaw: number;
+  /** Wie viele andere Gegner greifen das Ziel von e gerade an? */
+  attackersNear(e: Enemy): number;
 }
 
 export interface HitInfo {
@@ -57,6 +71,23 @@ const EXCL_TEX = (() => {
   g.fillText('!', 32, 34);
   return markShared(new CanvasTexture(c));
 })();
+/** Fragezeichen über dem Kopf: Gegner hat etwas bemerkt, sucht aber noch */
+const QUEST_TEX = (() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d')!;
+  g.font = '900 52px sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.lineWidth = 8;
+  g.strokeStyle = '#1b1410';
+  g.strokeText('?', 32, 34);
+  g.fillStyle = '#ffffff';
+  g.fillText('?', 32, 34);
+  return markShared(new CanvasTexture(c));
+})();
+const BRAIN: BrainCtx = { w: null as unknown as EnemyWorld, nav: null, dt: 0, tx: 0, tz: 0, tYaw: NaN, dist: 0, toT: 0, los: false };
+const STEER = { x: 0, z: 0 };
 
 export class Enemy {
   readonly char: Character;
@@ -76,7 +107,7 @@ export class Enemy {
   hasToken = false;
   /** Zuletzt getroffen (für Lebensbalken) */
   lastHit = -99;
-  private timer = 0;
+  timer = 0;
   private atk: EnemyAttack | null = null;
   private struck = false;
   private flash = 0;
@@ -84,7 +115,44 @@ export class Enemy {
   private aim: Line | null = null;
   private strafeDir = Math.random() < 0.5 ? -1 : 1;
   private phase = 1;
-  private aggro = false;
+  // ---------- Verhaltensbaum (Tafel) ----------
+  /** Hat das Ziel erkannt und kämpft */
+  aggro = false;
+  /** Verdacht 0 … 1 (bei 1: Alarm) */
+  suspicion = 0;
+  /** Letzte bekannte Position des Ziels und Zeit ohne Sicht */
+  lkX = 0;
+  lkZ = 0;
+  unseenT = 0;
+  /** Lagerplatz (Patrouille kreist darum) */
+  homeX: number;
+  homeZ: number;
+  patrolWait = Math.random() * 2;
+  /** Zielpunkt für Patrouille, Flanke und Rückzug */
+  readonly spot = { x: 0, z: 0 };
+  /** Seite beim Flankieren (−1 links, 1 rechts) */
+  flankSide = Math.random() < 0.5 ? -1 : 1;
+  /** Rückzug ab diesem Lebensanteil (Legenden nie, Elite später), einmal je Kampf */
+  readonly retreatAt: number;
+  retreatT = 0;
+  retreatDone = false;
+  /** Zuletzt ausgeführtes Blatt des Baums (Anzeige und Tests) */
+  btLeaf = '';
+  private markerT = 0;
+  private lookT = 0;
+  private lookYaw = 0;
+  readonly agent = new NavAgent();
+  /** Trefferzonen (Kopf, Rumpf, Beine), je Logikschritt höchstens einmal aus den Knochen berechnet */
+  readonly hurt = new Hurtbox();
+  // Bewegungsabsicht des aktuellen Schritts
+  private goal = false;
+  private gx = 0;
+  private gz = 0;
+  private gSpeed = 0;
+  private gStop = 0.2;
+  private faceTarget = false;
+  private faceYaw = 0;
+  private strafeK = 0;
 
   constructor(assets: CharacterAssets, readonly kind: EnemyKind, readonly level: number, faction: Faction, x: number, z: number, outline: boolean, readonly name?: string) {
     this.def = ENEMIES[kind];
@@ -94,6 +162,9 @@ export class Enemy {
     this.poise = this.def.poise;
     this.x = x;
     this.z = z;
+    this.homeX = this.spot.x = x;
+    this.homeZ = this.spot.z = z;
+    this.retreatAt = this.def.boss ? 0 : this.def.elite ? 0.15 : kind === 'schlaeger' ? 0.12 : 0.25;
     const role: NpcRole = faction === 'marine' ? (this.def.elite ? 'offizier' : 'marine') : this.def.role === 'offizier' ? 'pirat' : this.def.role;
     const look = randomLook(Math.random, role);
     if (kind === 'schlaeger') { look.body = 'kraeftig'; look.gloves = true; }
@@ -119,7 +190,7 @@ export class Enemy {
   frozenT = 0;
 
   get alive() { return this.state !== 'dead'; }
-  get engaged() { return this.alive && this.state !== 'idle'; }
+  get engaged() { return this.alive && !CALM.has(this.state); }
 
   /** Schaden ohne Reaktion (Brand, Gift) */
   dot(dmg: number): 'hit' | 'kill' {
@@ -151,7 +222,42 @@ export class Enemy {
     this.char.play('hitHeavy', { restart: true, fade: 0.05 });
   }
   /** Vom Lager alarmiert */
-  alert() { if (this.state === 'idle') { this.aggro = true; } }
+  alert() { if (!this.aggro && this.alive) this.becomeAlert(); }
+
+  /** Ziel erkannt: Ausrufezeichen und in den Kampf */
+  becomeAlert() {
+    if (this.aggro) return;
+    this.aggro = true;
+    this.suspicion = 1;
+    this.bark('alert');
+  }
+
+  /** Kurzes Zeichen über dem Kopf: ! (Alarm), ? (Verdacht), Rückzug */
+  bark(kind: 'alert' | 'suspect' | 'retreat') {
+    if (this.state === 'windup') return;
+    const m = this.marker.material as SpriteMaterial;
+    m.map = kind === 'suspect' ? QUEST_TEX : EXCL_TEX;
+    m.color.set(kind === 'alert' ? new Color(4, 1.2, 0.8) : kind === 'suspect' ? new Color(3.5, 3, 1.2) : new Color(1.4, 2.2, 4));
+    this.marker.visible = true;
+    this.markerT = kind === 'suspect' ? 0.3 : 0.9;
+  }
+
+  /** Verschnaufen nach dem Rückzug: etwas Leben zurück */
+  recover(frac: number) { this.hp = Math.min(this.maxHp, this.hp + this.maxHp * frac); }
+
+  // ---------- Absichten für einen Logikschritt (setzt der Verhaltensbaum) ----------
+  goTo(x: number, z: number, speedK: number, faceTarget: boolean, faceYaw: number, stop = 0.2) {
+    this.goal = true; this.gx = x; this.gz = z; this.gSpeed = speedK; this.gStop = stop;
+    this.faceTarget = faceTarget; this.faceYaw = faceYaw;
+  }
+  stand(faceYaw: number) { this.goal = false; this.faceTarget = true; this.faceYaw = faceYaw; }
+  strafe(faceYaw: number, k: number) { this.faceTarget = true; this.faceYaw = faceYaw; this.strafeK = k; }
+  lookAround(dt: number) {
+    this.goal = false;
+    this.lookT -= dt;
+    if (this.lookT <= 0) { this.lookT = 1.2 + Math.random() * 1.6; this.lookYaw = this.yaw + (Math.random() - 0.5) * 2.4; }
+    this.faceTarget = true; this.faceYaw = this.lookYaw;
+  }
   get radius() { return this.def.radius * this.def.scale; }
   get pos() { return new Vector3(this.x, this.y, this.z); }
   /** Kopfhöhe für Balken und Zahlen */
@@ -175,6 +281,7 @@ export class Enemy {
     }
     this.hp -= h.dmg;
     this.flash = 0.09;
+    if (!this.aggro) this.becomeAlert();
     // Fresnel-Randlicht: schwere Treffer heller und wärmer
     this.char.hitFlash(h.heavy ? '#FFD9A0' : '#FFFFFF', h.heavy ? 1.3 : 1);
     this.cancelAttack();
@@ -233,7 +340,7 @@ export class Enemy {
     if (this.aim) { this.aim.removeFromParent(); this.aim = null; }
   }
 
-  private toChase() { if (this.alive && this.state !== 'air' && this.state !== 'dead') { this.state = 'chase'; this.char.play('run', { fade: 0.2 }); } }
+  private toChase() { if (this.alive && this.state !== 'air' && this.state !== 'dead') { this.state = 'chase'; this.aggro = true; } }
 
   /** Zeit nach dem Tod bis zum Entfernen */
   get removable() { return this.state === 'dead' && this.timer <= 0; }
@@ -268,51 +375,49 @@ export class Enemy {
 
     if (!w.playerActive && this.state !== 'dead' && this.state !== 'air') {
       if (this.hasToken) { w.releaseToken(this); this.hasToken = false; }
-      if (this.state !== 'idle') { this.state = 'idle'; this.cancelAttack(); this.char.play('idle', { fade: 0.4 }); }
+      if (this.state === 'windup' || this.state === 'attack') { this.state = 'idle'; this.cancelAttack(); }
       this.aggro = false;
+    }
+    this.markerT -= dt;
+    if (this.markerT <= 0 && this.marker.visible && this.state !== 'windup') this.marker.visible = false;
+
+    if (FREE.has(this.state)) {
+      // ---------- Verhaltensbaum: Wahrnehmung, dann Entscheidung ----------
+      const c = BRAIN;
+      c.w = w; c.nav = w.nav; c.dt = dt;
+      c.tx = p ? p.x : this.x; c.tz = p ? p.z : this.z; c.tYaw = w.targetYaw;
+      c.dist = dist; c.toT = toPlayer;
+      // Sichtlinie nur prüfen, wenn sie etwas ändern kann (nah genug)
+      c.los = !!p && dist < 30 && (!w.nav || w.nav.lineClear(this.x, this.z, p.x, p.z, 0.05));
+      const wasSuspect = this.suspicion > 0.3;
+      perceive(this, c);
+      if (!this.aggro && !wasSuspect && this.suspicion > 0.3) this.bark('suspect');
+      this.goal = false; this.strafeK = 0; this.faceTarget = false;
+      ENEMY_TREE.tick(this, c);
+      if (FREE.has(this.state)) {
+        if (this.goal) {
+          const rest = this.agent.steer(w.nav, this.x, this.z, this.gx, this.gz, this.radius, dt, STEER);
+          if (rest > this.gStop) {
+            const k = speed * this.gSpeed * Math.min(1, 0.35 + (rest - this.gStop));
+            mvx = STEER.x * k; mvz = STEER.z * k;
+          }
+        }
+        if (this.strafeK > 0) {
+          if (Math.random() < dt * 0.25) this.strafeDir *= -1;
+          const side = this.faceYaw + (Math.PI / 2) * this.strafeDir;
+          mvx += Math.sin(side) * speed * this.strafeK;
+          mvz += Math.cos(side) * speed * this.strafeK;
+        }
+        const sp = Math.hypot(mvx, mvz);
+        if (this.faceTarget) face(this.faceYaw);
+        else if (sp > 0.3) face(Math.atan2(mvx, mvz), 6);
+        const anim = sp > 0.3 ? (sp > 2.6 ? 'run' : 'walk') : 'idle';
+        if (this.char.playing !== (anim === 'run' ? 'Running_A' : anim === 'walk' ? 'Walking_A' : 'Idle_A')) this.char.play(anim, { fade: 0.2 });
+        if (sp > 0.3) this.char.setLocoSpeed(sp / Math.max(0.6, this.def.scale));
+      }
     }
 
     switch (this.state) {
-      case 'idle':
-        if (w.playerActive && (dist < 20 || this.aggro)) this.toChase();
-        break;
-      case 'chase':
-      case 'strafe': {
-        if (this.fearT > 0) {
-          // Furcht: wegrennen
-          face(toPlayer + Math.PI);
-          mvx = -Math.sin(toPlayer) * speed; mvz = -Math.cos(toPlayer) * speed;
-          if (this.char.playing !== 'Running_A') this.char.play('run', { fade: 0.15 });
-          break;
-        }
-        face(toPlayer);
-        const want = def.keep;
-        const ranged = want > 4;
-        if (dist > want + 0.6) { mvx = Math.sin(toPlayer) * speed; mvz = Math.cos(toPlayer) * speed; }
-        else if (ranged && dist < want - 3) { mvx = -Math.sin(toPlayer) * speed * 0.8; mvz = -Math.cos(toPlayer) * speed * 0.8; }
-        const inRange = dist < (ranged ? 24 : want + 1.4);
-        if (inRange && this.timer <= 0) {
-          if (w.requestToken(this)) {
-            this.hasToken = true;
-            this.startWindup(w);
-            break;
-          }
-          // Kein Platz zum Angreifen: seitlich umkreisen
-          this.state = 'strafe';
-          this.timer = 0.8 + Math.random() * 1.2;
-          if (Math.random() < 0.3) this.strafeDir *= -1;
-        }
-        if (this.state === 'strafe' && dist < want + 3) {
-          const side = toPlayer + (Math.PI / 2) * this.strafeDir;
-          mvx += Math.sin(side) * speed * 0.45;
-          mvz += Math.cos(side) * speed * 0.45;
-        }
-        const moving = Math.hypot(mvx, mvz) > 0.3;
-        const anim = moving ? (Math.hypot(mvx, mvz) > 2.6 ? 'run' : 'walk') : 'idle';
-        if (this.char.playing !== (anim === 'run' ? 'Running_A' : anim === 'walk' ? 'Walking_A' : 'Idle_A')) this.char.play(anim, { fade: 0.2 });
-        if (moving) this.char.setLocoSpeed(Math.hypot(mvx, mvz) / Math.max(0.6, this.def.scale));
-        break;
-      }
       case 'windup':
         face(toPlayer, 5);
         if (this.timer <= 0 && this.atk) {
@@ -387,7 +492,10 @@ export class Enemy {
     this.updateFlash();
   }
 
-  private startWindup(w: EnemyWorld) {
+  /** Angriff beginnen (Ausholen mit Warnzeichen) – ruft der Verhaltensbaum */
+  startWindup(w: EnemyWorld) {
+    this.markerT = 0;
+    (this.marker.material as SpriteMaterial).map = EXCL_TEX;
     const opts = this.def.attacks;
     const p = w.playerPos;
     const dist = p ? Math.hypot(p.x - this.x, p.z - this.z) : 99;

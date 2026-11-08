@@ -25,6 +25,9 @@ import type { CombatFx } from './fx';
 import type { AbilityTarget } from '../faji/abilities';
 import type { Element, Status } from '../data/skills';
 import { markShared } from '../render/dispose';
+import { navForIsland, type NavGrid } from '../ai/navGrid';
+import { attackVolume, Hurtbox, LogicFrame, OBB, weaponSegments, ZONE_MULT, type Zone } from './hitbox';
+import type { Character } from '../entities/character/character';
 
 export interface PlayerTarget {
   readonly x: number;
@@ -35,6 +38,15 @@ export interface PlayerTarget {
   /** Treffer auf den Spieler; liefert, was passiert ist */
   receiveHit(dmg: number, dirX: number, dirZ: number, knock: number, from: Enemy | null): 'hit' | 'blocked' | 'parried' | 'dodged';
 }
+
+// feste Hilfsobjekte für Treffertests (keine Speicheranforderung im Kampf)
+const VOL = new OBB();
+const HB_TARGET = new Hurtbox();
+const HIT_P = new Vector3();
+const SEG_A = new Vector3(), SEG_B = new Vector3(), SEG_D = new Vector3();
+/** Teststrecken je Schlag: je Klinge/Glied die echte Strecke und ihr Schwertwind */
+const MAX_SEGS = 8;
+const PL_FRAME = new LogicFrame();
 
 export interface CombatHooks {
   heal(n: number): void;
@@ -56,6 +68,7 @@ class Dummy {
   readonly group = new Group();
   wobble = 0;
   readonly radius = 0.5;
+  readonly hurt = new Hurtbox();
   constructor(readonly x: number, readonly z: number, y: number) {
     const post = new Mesh(new CylinderGeometry(0.08, 0.1, 1.9, 8), toon(0x8a5a2b));
     post.position.y = 0.95;
@@ -70,6 +83,11 @@ class Dummy {
     addOutlines(this.group);
     this.group.position.set(x, y, z);
     this.group.traverse((o) => { o.castShadow = true; });
+    // Trefferzonen: Kopf (Kugel), Sack (Rumpf), Pfahl (Beine)
+    this.hurt.head.setUpright(x, y + 1.85, z, 0, 0.26, 0.25, 0.26);
+    this.hurt.torso.setUpright(x, y + 1.2, z, 0, 0.38, 0.47, 0.38);
+    this.hurt.legs.setUpright(x, y + 0.4, z, 0, 0.12, 0.4, 0.12);
+    this.hurt.center.copy(this.hurt.torso.c);
   }
   update(dt: number) {
     this.wobble *= Math.pow(0.02, dt);
@@ -109,6 +127,16 @@ export class CombatSystem implements EnemyWorld {
   private swings = new Map<number, Set<object>>();
   private island: WalkIsland | null = null;
   private outline = true;
+  /** Begehbarkeits-Netz der aktuellen Insel (null an Deck) */
+  nav: NavGrid | null = null;
+  /** Blickrichtung des Ziels, das der gerade aktualisierte Gegner verfolgt (NaN bei Crew-Zielen) */
+  targetYaw = NaN;
+  // Klingen-Sweep: Klingenlage im letzten Logikschritt (je Strecke Anfang und erweiterte Spitze)
+  private sweepId = -1;
+  private sweepN = 0;
+  private sweepPrev = Array.from({ length: MAX_SEGS * 2 }, () => new Vector3());
+  private sweepCur = Array.from({ length: MAX_SEGS * 2 }, () => new Vector3());
+  private sweepR = new Float32Array(MAX_SEGS);
 
   constructor(
     private scene: Scene,
@@ -132,6 +160,19 @@ export class CombatSystem implements EnemyWorld {
     return true;
   }
   releaseToken(e: Enemy) { this.tokens.delete(e); }
+  attackersNear(e: Enemy) {
+    const p = this.playerPos;
+    if (!p) return 0;
+    let n = 0;
+    for (const t of this.tokens) if (t !== e && t.alive && Math.hypot(t.x - p.x, t.z - p.z) < 6) n++;
+    return n;
+  }
+
+  /** Trefferzonen eines Gegners (je Logikschritt einmal aus den Knochen) */
+  private hurtOf(e: Enemy): Hurtbox {
+    if (e.hurt.stamp !== this.now) { e.hurt.fromCharacter(e.char, e.x, e.y, e.z, e.yaw, e.def.scale); e.hurt.stamp = this.now; }
+    return e.hurt;
+  }
   ground(x: number, z: number) { const h = this.groundRef.height(x, z); return Number.isFinite(h) ? h : 0; }
   constrain(x: number, z: number, r: number, self?: Enemy) {
     // Gegner untereinander und vom Spieler fernhalten (sich selbst überspringen!)
@@ -185,10 +226,12 @@ export class CombatSystem implements EnemyWorld {
       return;
     }
     const tg = this.targets.get(e)?.t;
+    // Hiebvolumen (OBB) vor dem Gegner; getroffen wird, was eine Trefferzone hineinragen lässt
+    attackVolume(VOL, e.x, e.y, e.z, e.yaw, atk.range * e.def.scale + 0.25, atk.arc + 0.25, e.def.scale);
     if (tg) {
       if (!tg.alive) return;
       const ax = tg.x - e.x, az = tg.z - e.z, ad = Math.hypot(ax, az);
-      if (ad > atk.range * e.def.scale + 0.6) return;
+      if (!HB_TARGET.fromUpright(tg.x, tg.y, tg.z, Math.atan2(-ax, -az), 1).overlap(VOL)) return;
       tg.receive(e.dmg * atk.dmg, ax / (ad || 1), az / (ad || 1));
       this.fx.hit(new Vector3(tg.x, tg.y + 1.1, tg.z), atk.fx === 'heavy' ? 'heavy' : 'slash', '#FF8A6A');
       return;
@@ -197,9 +240,7 @@ export class CombatSystem implements EnemyWorld {
     if (!pl || !pl.active) return;
     const dx = pl.x - e.x, dz = pl.z - e.z;
     const d = Math.hypot(dx, dz);
-    if (d > atk.range * e.def.scale + 0.4) return;
-    const ang = Math.abs(((Math.atan2(dx, dz) - e.yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
-    if (ang > atk.arc / 2 + 0.2) return;
+    if (!HB_TARGET.fromUpright(pl.x, pl.y, pl.z, pl.yaw, 1).overlap(VOL)) return;
     this.hitPlayer(e.dmg * atk.dmg, dx / (d || 1), dz / (d || 1), atk.knock, e, atk.fx === 'heavy');
   }
 
@@ -240,27 +281,95 @@ export class CombatSystem implements EnemyWorld {
   /** Neuer Schlag: eigene Trefferliste, damit jeder Gegner nur einmal getroffen wird */
   beginSwing(id: number) { const pl = this.player; audio.play('swing', 1, pl ? { x: pl.x, y: pl.y + 1.2, z: pl.z } : undefined); this.swings.set(id, new Set()); if (this.swings.size > 8) this.swings.delete(this.swings.keys().next().value!); }
 
-  /** Während des Trefferfensters jeden Frame aufrufen */
-  swing(id: number, def: AttackDef, x: number, _y: number, z: number, yaw: number, mult: number, color: string): number {
+  /**
+   * Während des Trefferfensters jeden Logikschritt aufrufen.
+   * Mit Figur: Sweep entlang der Klinge (bzw. Unterarm/Unterschenkel beim Faustkampf). Die Klinge wird zwischen
+   * letztem und aktuellem Schritt in Teilschritten abgetastet; jede Lage ist eine Strecke vom Griff bis zur Spitze,
+   * verlängert um die Schwertwind-Reichweite des Angriffs. Getroffen wird die erste Zone (Kopf, Rumpf, Beine),
+   * die die Strecke schneidet. Rundum-Wellen und Faji-Stöße ohne Klinge nutzen ein Angriffsvolumen (OBB).
+   */
+  swing(id: number, def: AttackDef, x: number, y: number, z: number, yaw: number, mult: number, color: string, ch?: Character, early = false): number {
     const done = this.swings.get(id) ?? new Set<object>();
     this.swings.set(id, done);
     let hits = 0;
-    const targets: { obj: object; x: number; z: number; r: number }[] = [
-      ...this.enemies.filter((e) => e.alive).map((e) => ({ obj: e as object, x: e.x, z: e.z, r: e.radius })),
-      ...this.dummies.map((d) => ({ obj: d as object, x: d.x, z: d.z, r: d.radius })),
-    ];
-    for (const t of targets) {
-      if (done.has(t.obj)) continue;
-      const dx = t.x - x, dz = t.z - z;
-      const d = Math.hypot(dx, dz);
-      if (d > def.range + t.r) continue;
-      const ang = Math.abs(((Math.atan2(dx, dz) - yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
-      if (ang > def.arc / 2 + 0.15 && d > t.r + 0.6) continue;
-      done.add(t.obj);
-      this.applyHit(t.obj, def, dx / (d || 1), dz / (d || 1), mult, color);
-      hits++;
+    const segs = ch ? weaponSegments(ch) : [];
+    const volume = !ch || !segs.length || def.fx === 'magic' || (def.arc > 6 && def.fx === 'heavy');
+    let n = 0;
+    if (!volume) {
+      PL_FRAME.set(ch!.holder, x, y, z, yaw);
+      for (const s of segs) {
+        if (n + 2 > MAX_SEGS) break;
+        const a = PL_FRAME.apply(s.a, SEG_A);
+        const b = PL_FRAME.apply(s.b, SEG_B);
+        const len = SEG_D.subVectors(b, a).length() || 1;
+        // 1. die Klinge selbst (bei Gliedmaßen etwas über die Hand bzw. den Fuß hinaus)
+        this.sweepCur[n * 2].copy(a);
+        this.sweepCur[n * 2 + 1].copy(a).addScaledVector(SEG_D, (len + s.ext) / len);
+        this.sweepR[n] = s.r;
+        n++;
+        // 2. Schwertwind: von der Spitze waagrecht nach außen bis zur Reichweite des Angriffs, auf Körperhöhe
+        const tip = this.sweepCur[n * 2 - 1];
+        let rx = tip.x - x, rz = tip.z - z;
+        let rl = Math.hypot(rx, rz);
+        if (rl < 0.15) { rx = SEG_D.x; rz = SEG_D.z; rl = Math.hypot(rx, rz) || 1; }
+        // (immer vorhanden, damit die Zahl der Strecken von Schritt zu Schritt gleich bleibt)
+        // Fäuste und Füße: nur ausgestreckt (Schlag, Tritt) reicht der Wind weiter – ein Standbein trifft nicht
+        const limbK = s.ext > 0 ? Math.min(1, Math.max(0, (rl - 0.4) / 0.3)) : 1;
+        const reach = Math.max(0.05, (def.range - rl) * limbK);
+        const wy = Math.min(y + 1.75, Math.max(y + 0.45, tip.y));
+        this.sweepCur[n * 2].copy(tip);
+        this.sweepCur[n * 2 + 1].set(tip.x + (rx / rl) * reach, wy, tip.z + (rz / rl) * reach);
+        this.sweepR[n] = s.r * 1.6;
+        n++;
+      }
+      if (this.sweepId !== id || this.sweepN !== n) {
+        for (let i = 0; i < n * 2; i++) this.sweepPrev[i].copy(this.sweepCur[i]);
+        this.sweepId = id; this.sweepN = n;
+      }
+    } else {
+      // Volumen-Angriffe treffen nur im eigentlichen Trefferfenster
+      if (early) return 0;
+      attackVolume(VOL, x, y, z, yaw, def.range, def.arc);
     }
+    const test = (obj: Enemy | Dummy, tx: number, tz: number, r: number) => {
+      if (done.has(obj)) return;
+      const dx = tx - x, dz = tz - z;
+      const d = Math.hypot(dx, dz);
+      if (d > def.range + r + 1.2) return;
+      // grobe Richtung: nur im Schlagbogen (die Verlängerung soll beim Ausholen nicht nach hinten treffen)
+      const ang = Math.abs(((Math.atan2(dx, dz) - yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+      if (ang > def.arc / 2 + 0.6 && d > r + 1) return;
+      const h = obj instanceof Dummy ? obj.hurt : this.hurtOf(obj);
+      let zone: Zone | null = null;
+      if (volume) { zone = h.overlap(VOL); if (zone) HIT_P.copy(zone === 'kopf' ? h.head.c : zone === 'beine' ? h.legs.c : h.torso.c); }
+      else {
+        for (let k = 0; k < n && !zone; k++) {
+          const pa = this.sweepPrev[k * 2], pb = this.sweepPrev[k * 2 + 1], ca = this.sweepCur[k * 2], cb = this.sweepCur[k * 2 + 1];
+          const steps = Math.min(8, Math.max(1, Math.ceil(pb.distanceTo(cb) / 0.2)));
+          for (let st = steps; st >= 0 && !zone; st--) {
+            const t = st / steps;
+            SEG_A.lerpVectors(pa, ca, t);
+            SEG_B.lerpVectors(pb, cb, t);
+            const res = h.sweep(SEG_A, SEG_B, this.sweepR[k], HIT_P);
+            if (res) zone = res.zone;
+          }
+        }
+      }
+      if (!zone) return;
+      done.add(obj);
+      this.applyHit(obj, def, dx / (d || 1), dz / (d || 1), mult * ZONE_MULT[zone], color, zone, HIT_P);
+      hits++;
+    };
+    for (const e of this.enemies) if (e.alive) test(e, e.x, e.z, e.radius);
+    for (const dm of this.dummies) test(dm, dm.x, dm.z, dm.radius);
+    for (let i = 0; i < n * 2; i++) this.sweepPrev[i].copy(this.sweepCur[i]);
     return hits;
+  }
+
+  /** Crew-Hieb: Angriffsvolumen vor dem Crewmitglied gegen die Trefferzonen des Gegners */
+  allyReach(x: number, y: number, z: number, yaw: number, range: number, e: Enemy) {
+    attackVolume(VOL, x, y, z, yaw, range, 2.2);
+    return this.hurtOf(e).overlap(VOL) !== null;
   }
 
   /** Fernangriff des Spielers (Faji-Geschosse) */
@@ -275,16 +384,17 @@ export class CombatSystem implements EnemyWorld {
     this.fx.hit(from, 'magic', pr.color);
   }
 
-  private applyHit(obj: object, def: AttackDef, dirX: number, dirZ: number, mult: number, color: string) {
+  private applyHit(obj: object, def: AttackDef, dirX: number, dirZ: number, mult: number, color: string, zone: Zone = 'rumpf', at?: Vector3) {
     const crit = Math.random() < this.critChance;
     const dmg = Math.round(this.atk * def.dmg * mult * (crit ? this.mods.critMult : 1) * (0.92 + Math.random() * 0.16));
     if (this.mods.lifesteal > 0) this.hooks.heal(dmg * this.mods.lifesteal);
     const heavy = def.fx === 'heavy' || def.poise >= 30;
+    const head = zone === 'kopf';
     if (obj instanceof Dummy) {
       obj.wobble = Math.min(1.5, obj.wobble + 0.6);
-      const pos = new Vector3(obj.x, obj.group.position.y + 1.4, obj.z);
+      const pos = at ? at.clone() : new Vector3(obj.x, obj.group.position.y + 1.4, obj.z);
       this.fx.hit(pos, def.fx, color, crit || heavy);
-      this.overlay.number(pos, dmg, crit ? 'crit' : 'hit');
+      this.overlay.number(pos.clone().setY(Math.max(pos.y, obj.group.position.y + 1.4)), dmg, crit || head ? 'crit' : 'hit');
       this.overlay.addCombo();
       this.hooks.impact(dirX, dirZ, crit || heavy ? 1 : 0.6);
       this.hooks.hitstop(def.hitstop);
@@ -294,14 +404,16 @@ export class CombatSystem implements EnemyWorld {
     const e = obj as Enemy;
     const res = e.takeHit({ dmg, poise: def.poise, knock: def.knock, launch: def.launch, dirX, dirZ, heavy } as HitInfo, this.now);
     const pos = e.head.setY(e.y + 1.3 * e.def.scale);
+    // Funken genau dort, wo die Klinge die Trefferzone schneidet
+    const contact = at ? at.clone() : pos;
     if (res === 'blocked') {
-      this.fx.hit(pos, 'punch', '#9FD8FF');
+      this.fx.hit(contact, 'punch', '#9FD8FF');
       this.overlay.number(pos, 'Abgewehrt', 'info');
       this.hooks.shake(0.1);
       return;
     }
-    this.fx.hit(pos, def.fx, color, crit || heavy || res === 'kill');
-    this.overlay.number(pos, dmg, crit ? 'crit' : 'hit');
+    this.fx.hit(contact, def.fx, color, crit || heavy || res === 'kill');
+    this.overlay.number(pos, dmg, crit || head ? 'crit' : 'hit');
     // Wucht je Stil: Faustschläge drücken eine kleine Welle über den Boden, schwere Hiebe schlagen Funken
     if (def.fx === 'punch') {
       const gy = this.ground(e.x, e.z);
@@ -473,10 +585,14 @@ export class CombatSystem implements EnemyWorld {
   enterIsland(isl: WalkIsland, kinds: EnemyKind[], level: number, faction: Faction, bossName?: string) {
     this.leaveIsland();
     this.island = isl;
+    this.nav = navForIsland(isl);
+    const spot = { x: 0, z: 0 };
     kinds.forEach((k, i) => {
       const a = (i / kinds.length) * Math.PI * 2 + Math.random() * 0.4;
       const r = isl.r * (k === 'legende' ? 0.15 : 0.35 + Math.random() * 0.3);
-      const e = new Enemy(this.assets, k, level, faction, isl.x + Math.cos(a) * r, isl.z + Math.sin(a) * r, this.outline, k === 'legende' ? bossName : undefined);
+      // nicht in einem Haus oder Felsen erscheinen
+      this.nav!.snap(isl.x + Math.cos(a) * r, isl.z + Math.sin(a) * r, ENEMIES[k].radius * ENEMIES[k].scale, spot);
+      const e = new Enemy(this.assets, k, level, faction, spot.x, spot.z, this.outline, k === 'legende' ? bossName : undefined);
       e.y = this.ground(e.x, e.z);
       this.scene.add(e.char.holder);
       this.enemies.push(e);
@@ -491,6 +607,7 @@ export class CombatSystem implements EnemyWorld {
   /** Deckkampf beim Entern: Crew auf dem feindlichen Deck */
   enterDeck(deck: DeckGround, kinds: EnemyKind[], level: number, faction: Faction, bossName?: string) {
     this.leaveIsland();
+    this.nav = null;
     kinds.forEach((k, i) => {
       const p = deck.spot((Math.random() - 0.5) * 1.6, 0.2 + (i / Math.max(1, kinds.length - 1)) * 0.7 - 0.1);
       const e = new Enemy(this.assets, k, level, faction, p.x, p.z, this.outline, k === 'legende' ? bossName : undefined);
@@ -524,6 +641,8 @@ export class CombatSystem implements EnemyWorld {
     this.coins = [];
     this.lock = null;
     this.island = null;
+    this.nav = null;
+    this.sweepId = -1;
     this.aoes = [];
     this.overlay.clearBars();
     this.overlay.setBoss(null);
@@ -579,8 +698,8 @@ export class CombatSystem implements EnemyWorld {
     const plPos = this.playerPos, plAct = this.playerActive;
     for (const e of this.enemies) {
       const tg = this.pickTarget(e);
-      if (tg) { this.playerPos = this.tgVec.set(tg.x, tg.y, tg.z); this.playerActive = true; }
-      else { this.playerPos = plPos; this.playerActive = plAct; }
+      if (tg) { this.playerPos = this.tgVec.set(tg.x, tg.y, tg.z); this.playerActive = true; this.targetYaw = NaN; }
+      else { this.playerPos = plPos; this.playerActive = plAct; this.targetYaw = pl ? pl.yaw : NaN; }
       e.update(dt, this);
     }
     this.playerPos = plPos; this.playerActive = plAct;
@@ -590,6 +709,7 @@ export class CombatSystem implements EnemyWorld {
     // Geschosse
     for (const p of this.projectiles) {
       p.life -= dt;
+      SEG_A.copy(p.mesh.position);
       p.mesh.position.addScaledVector(p.vel, dt);
       const pos = p.mesh.position;
       // leuchtende Spur: Funken und ein Hauch farbiger Rauch in der Elementfarbe
@@ -601,7 +721,7 @@ export class CombatSystem implements EnemyWorld {
       }
       if (pos.y < this.ground(pos.x, pos.z) + 0.1 && Number.isFinite(this.groundRef.height(pos.x, pos.z))) p.life = 0;
       if (p.team === 'enemy' && pl?.active) {
-        if (Math.hypot(pos.x - pl.x, pos.z - pl.z) < p.radius + 0.4 && Math.abs(pos.y - (pl.y + 1)) < 1.2) {
+        if (Math.hypot(pos.x - pl.x, pos.z - pl.z) < p.radius + 3 && HB_TARGET.fromUpright(pl.x, pl.y, pl.z, pl.yaw, 1).sweep(SEG_A, pos, p.radius * 0.8, HIT_P)) {
           const d = Math.hypot(p.vel.x, p.vel.z) || 1;
           this.hitPlayer(p.dmg, p.vel.x / d, p.vel.z / d, p.knock, p.from, false);
           p.life = 0;
@@ -609,16 +729,18 @@ export class CombatSystem implements EnemyWorld {
       } else if (p.team === 'player') {
         for (const e of this.enemies) {
           if (!e.alive || p.hit.has(e)) continue;
-          if (Math.hypot(pos.x - e.x, pos.z - e.z) < p.radius + e.radius && Math.abs(pos.y - (e.y + 1)) < 1.5) {
+          if (Math.hypot(pos.x - e.x, pos.z - e.z) > p.radius + e.radius + 3) continue;
+          const res = this.hurtOf(e).sweep(SEG_A, pos, p.radius, HIT_P);
+          if (res) {
             p.hit.add(e);
             const d = Math.hypot(p.vel.x, p.vel.z) || 1;
-            this.applyHit(e, { dmg: p.dmg / this.atk, poise: p.poise, knock: p.knock, fx: 'magic', hitstop: 0.05, shake: 0.15 } as AttackDef, p.vel.x / d, p.vel.z / d, 1, p.color);
+            this.applyHit(e, { dmg: p.dmg / this.atk, poise: p.poise, knock: p.knock, fx: 'magic', hitstop: 0.05, shake: 0.15 } as AttackDef, p.vel.x / d, p.vel.z / d, ZONE_MULT[res.zone], p.color, res.zone, HIT_P);
             if (!p.pierce) { p.life = 0; break; }
           }
         }
         for (const d of this.dummies) {
           if (p.hit.has(d)) continue;
-          if (Math.hypot(pos.x - d.x, pos.z - d.z) < p.radius + d.radius) {
+          if (Math.hypot(pos.x - d.x, pos.z - d.z) < p.radius + d.radius + 3 && d.hurt.sweep(SEG_A, pos, p.radius, HIT_P)) {
             p.hit.add(d);
             this.applyHit(d, { dmg: p.dmg / this.atk, poise: 0, knock: 0, fx: 'magic', hitstop: 0.04, shake: 0.1 } as AttackDef, 0, 0, 1, p.color);
             if (!p.pierce) { p.life = 0; break; }

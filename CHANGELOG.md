@@ -1,5 +1,63 @@
 # Was ist neu
 
+## 2.9.19 – Klügere Gegner, Wege um Hindernisse, präzise Treffer (08.11.2026)
+
+- **Gegner finden ihren Weg:**
+  - Gegner und deine Crew laufen flüssig um Häuser, Felsen, Bäume und Kisten herum, statt daran hängen zu bleiben.
+  - Große Gegner meiden enge Gassen, durch die sie nicht passen.
+  - Gegner erscheinen nicht mehr in Häusern oder Felsen.
+- **Gegner verhalten sich wie echte Wachen:**
+  - **Patrouille:** Im Lager gehen sie umher, bleiben stehen und sehen sich um.
+  - **Verdacht:** Sehen oder hören sie etwas, erscheint ein **?** über dem Kopf. Dann gehen sie zur Stelle, an der sie dich bemerkt haben.
+  - **Alarm:** Erkennen sie dich, erscheint ein **!**, und das Lager in der Nähe greift an. Gegner sehen nach vorn (etwa 130°, bis 26 m weit), hören dich im Umkreis von 6 m und sehen nicht durch Häuser oder Felsen.
+  - **Flankieren:** Greifen schon zwei Gegner an, suchen sich die anderen einen Platz an deiner Seite oder in deinem Rücken.
+  - **Rückzug:** Schwer verletzte Gegner fliehen einmal je Kampf zum Lager, verschnaufen kurz und kommen dann zurück. Wenn du sie in die Enge treibst, schlagen sie zurück. Legenden fliehen nie.
+  - Wer dich lange aus den Augen verliert, sucht erst nach dir und kehrt dann zur Patrouille zurück.
+- **Treffer sind präzise:**
+  - Deine Klinge trifft genau dort, wo sie sichtbar durchzieht. Funken sprühen an der Stelle, an der sie den Gegner schneidet.
+  - Jede Figur hat drei Trefferzonen. Kopftreffer machen 25 % mehr Schaden, Beintreffer 15 % weniger.
+  - Wer hinter dir oder neben dir steht, wird nicht mehr „mitgetroffen“.
+  - Liegende oder durch die Luft fliegende Gegner trifft nur ein Hieb, der sie wirklich erreicht.
+  - Beim Faustkampf zählen Fäuste und Füße, Tritte treffen also mit dem Bein.
+  - Schnelle Geschosse fliegen nicht mehr durch Gegner hindurch.
+
+**Technik (für Entwickler):**
+- Änderungen:
+  - NavMesh als Raster (`src/ai/navGrid.ts`): 0,6-m-Zellen je Insel, gesperrt sind Meer und runde Hindernisse.
+    - Freiraum je Zelle per Chamfer-Distanztransformation, damit jede Figur mit ihrem eigenen Radius plant.
+    - A* mit 8 Nachbarn ohne Eckenschneiden. Die Puffer (Heap, g/f, Elternzellen, Markierungen) sind vorab angelegt.
+    - Wege werden mit Sichtlinien geglättet (String Pulling).
+    - Cache für die zwei zuletzt benutzten Inseln; neu gebaut, wenn sich die Zahl der Hindernisse ändert.
+  - `NavAgent`: bei freier Sicht direkt zum Ziel, sonst über den Weg. Neu geplant wird alle 0,45–0,65 s, wenn sich das Ziel verschiebt oder die Figur feststeckt.
+  - Verhaltensbaum (`src/ai/behaviorTree.ts`): Selector, Sequence, Bedingung, Handlung. Der Baum ist geteilt, die Tafel liegt im Gegner.
+  - Gegnerbaum (`src/ai/enemyBrain.ts`): Furcht → Rückzug → Kampf (Angriff mit Angriffsplatz / Flankieren / Jagd) → Verdacht → Patrouille.
+    - Wahrnehmung mit Verdachtswert 0 … 1, letzter bekannter Position und Sichtlinie über das NavMesh.
+  - `Enemy`: Animationszustände (Ausholen, Angriff, Treffer, Taumeln, Luft, K.o.) bleiben erhalten. In den freien Zuständen entscheidet der Baum über `goTo`/`stand`/`strafe`/`lookAround`.
+    - Neue Zustände: `patrol`, `suspicious`, `flank`, `retreat`.
+    - Rückzugsschwelle `retreatAt`: 25 %, Elite 15 %, Schläger 12 %, Legenden nie.
+  - OBB-Hitboxen (`src/combat/hitbox.ts`):
+    - `OBB` mit Strecken-Test (Slab, mit Radius) und Quader-Test (Trennachsen-Satz, 15 Achsen).
+    - `Hurtbox` mit Kopf, Rumpf und Beinen aus Hüfte, Kopf und Füßen, je Logikschritt einmal berechnet.
+    - `LogicFrame` rechnet Knochen in den Figurenraum zurück und setzt sie mit Position und Drehung des Logikschritts neu ein (wichtig bei schlagartiger Zielhilfe-Drehung).
+  - Spielerhieb als Raycast-Sweep:
+    - Je Klinge (`trailBase` → `trailTip`) bzw. Unterarm/Unterschenkel ohne Klinge wird die Lage zwischen zwei Logikschritten in bis zu 8 Teilschritten abgetastet.
+    - Dazu kommt ein waagrechter „Schwertwind“ von der Spitze bis zur Reichweite des Angriffs, auf Körperhöhe. Bei Fäusten und Füßen gilt er nur ausgestreckt.
+    - Das Abtastfenster beginnt 0,2 vor und endet 0,22 nach dem Trefferfenster, weil viele Animationen die Klinge früher oder später durchziehen.
+    - Rundum-Wellen und Faji-Stöße nutzen ein Angriffsvolumen (OBB).
+  - Gegner- und Crew-Hiebe: Angriffsvolumen (OBB) gegen die Trefferzonen statt Abstand plus Winkel. Geschosse: Wisch-Test von der letzten zur aktuellen Position.
+  - Crew (`Ally`) läuft über `NavAgent`. `AllyWorld` hat dafür `nav()` und `reach()` bekommen.
+- Neue Dateien: `src/ai/navGrid.ts`, `src/ai/behaviorTree.ts`, `src/ai/enemyBrain.ts`, `src/combat/hitbox.ts`.
+- Geänderte Dateien: `entities/enemy.ts`, `entities/ally.ts`, `entities/player/playerFoot.ts`, `combat/combat.ts`, `world/seaWorld.ts`.
+- Behobene Fehler beim Entwickeln:
+  - Knochen hinkten bei schneller Drehung einen Schritt hinterher (falsche Klingenrichtung beim ersten Hiebschritt).
+  - Bei Faustkämpfern wurden nur die kurzen Handschuh-Markierungen gefunden, Tritte trafen nie.
+  - Eine entlang der schräg gehaltenen Klinge verlängerte Reichweite zielte über die Köpfe hinweg; jetzt wird der Wind waagrecht verlängert.
+- Messung:
+  - NavMesh-Aufbau Krähenfels (227 × 227 Zellen, 42 Hindernisse): 6,7 ms beim Betreten.
+  - Weg um einen 9-m-Felsen: volle Laufgeschwindigkeit, Abstand zum Felsen 0,5 bis 1 m.
+  - Trefferquote Klingen-Sweep (6 Abstände/Winkel × 5 Hiebe): Säbel 30/30, Langklinge 30/30, Zweihänder 30/30, Doppelklingen 29/30, Faust 29/30. Hinter und neben der Figur: 0 Treffer.
+  - Logikschritt Kampf mit 5 Gegnern: Median 0,10 ms, 99 % unter 0,3 ms.
+
 ## 2.9.18 – Tag und Nacht, echter Regen, nasse Straßen und Pfützen (08.11.2026)
 
 - **Tageszeit:**

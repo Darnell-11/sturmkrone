@@ -38,6 +38,11 @@ export interface FootDeps {
 }
 
 /** Steuerung und Kampf zu Fuß. */
+/** Vorlauf des Klingen-Sweeps vor dem Trefferfenster (Anteil der Animation) */
+const SWEEP_LEAD = 0.2;
+/** Nachlauf: manche Hiebe (Abwärts-Chops, Tritte) treffen erst kurz nach dem Fenster */
+const SWEEP_TAIL = 0.22;
+
 export class PlayerFoot implements PlayerTarget {
   x = 0;
   z = 0;
@@ -389,12 +394,12 @@ export class PlayerFoot implements PlayerTarget {
       const tilt = def.smearTilt ?? (def.fx === 'heavy' ? 1.45 : 0.4);
       this.deps.fx?.smear(new Vector3(this.x, this.y + 1.05, this.z), this.yaw, tilt, def.range, def.arc, color, this.flip);
     }
-    if (p >= def.hitStart && p <= def.hitEnd) {
-      if (def.projectile) {
-        if (!this.fired) { this.fired = true; this.deps.combat?.shoot(def, this.x, this.y, this.z, this.yaw, this.dmgMult); }
-      } else {
-        this.deps.combat?.swing(this.swingId, def, this.x, this.y, this.z, this.yaw, this.dmgMult, color);
-      }
+    if (p >= def.hitStart && p <= def.hitEnd && def.projectile) {
+      if (!this.fired) { this.fired = true; this.deps.combat?.shoot(def, this.x, this.y, this.z, this.yaw, this.dmgMult); }
+    } else if (!def.projectile && p >= def.hitStart - SWEEP_LEAD && p <= def.hitEnd + SWEEP_TAIL) {
+      // Klingen-Sweep beginnt etwas vor dem Trefferfenster: viele Animationen ziehen die Klinge früher durch,
+      // getroffen wird dort, wo sie sichtbar die Trefferzone schneidet
+      this.deps.combat?.swing(this.swingId, def, this.x, this.y, this.z, this.yaw, this.dmgMult, color, this.char, p < def.hitStart || p > def.hitEnd);
     }
     if (p >= def.hitStart && def.fx === 'heavy' && !this.fired && !def.projectile) {
       this.fired = true;
@@ -403,7 +408,7 @@ export class PlayerFoot implements PlayerTarget {
       this.deps.fx?.crack(front, def.range * 1.2);
     }
     // Kombo früh fortsetzen, sobald der Treffer raus ist
-    if (this.comboQueued && p > def.hitEnd + 0.12) this.endAttack();
+    if (this.comboQueued && p > def.hitEnd + SWEEP_TAIL + 0.02) this.endAttack();
   }
 
   private endAttack() {
