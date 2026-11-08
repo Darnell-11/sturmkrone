@@ -66,6 +66,7 @@ import { TOWN_NPCS, type TownNpcDef } from '../data/quests';
 
 // Feste Partikelfarben (die Partikel kopieren die Farbe – so entsteht pro Bild kein neues Objekt)
 const FOAM_COL = new Color(0.95, 0.98, 1);
+const SPLASH_COL = new Color(0.78, 0.84, 0.9);
 const EMBER_COL = new Color(3.2, 1.3, 0.3);
 const CRYSTAL_COL = new Color(1.4, 0.8, 2.4);
 const DIG_COL = new Color(0.9, 0.8, 0.6);
@@ -280,6 +281,26 @@ export class SeaWorld {
     this.smoke.wind = w;
     this.smoke.update(dt);
     this.debris.update(dt, (x, z) => this.env.heightAt(x, z), w);
+    this.rainSplashes(dt);
+  }
+
+  private splashAcc = 0;
+  /** Regentropfen spritzen rund um die Spielfigur auf Boden, Deck und Wasser auf */
+  private rainSplashes(dt: number) {
+    const rain = this.env.weather.p.rain;
+    if (rain < 0.2) { this.splashAcc = 0; return; }
+    this.splashAcc += dt * (rain - 0.1) * 70;
+    if (this.splashAcc < 1) return;
+    const pp = this.playerPos;
+    const g = this.deckGround ?? this.ground;
+    while (this.splashAcc >= 1) {
+      this.splashAcc -= 1;
+      const a = Math.random() * Math.PI * 2, r = 1.5 + Math.sqrt(Math.random()) * 13;
+      const x = pp.x + Math.sin(a) * r, z = pp.z + Math.cos(a) * r;
+      const gy = g.height(x, z), wy = this.env.heightAt(x, z);
+      const y = Number.isFinite(gy) ? Math.max(gy, wy) : wy;
+      this.spray.emit(2, x, y + 0.04, z, { speed: 0.9, up: 1.8, life: 0.28, color: SPLASH_COL, gravity: 14, spread: 0.04 });
+    }
   }
 
   // ---------- Aufbau ----------

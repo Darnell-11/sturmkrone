@@ -14,13 +14,15 @@ export interface Palette {
   sunVis: number; moonVis: number;
   /** Richtung des Hauptlichts (Sonne am Tag, Mond in der Nacht) */
   lightDir: Vector3;
+  /** Helligkeit des Hauptlichts beim Wechsel Sonne ↔ Mond: geht kurz auf 0, damit Schatten nicht springen */
+  lightK: number;
 }
 
 export function createPalette(): Palette {
   return {
     name: '', zenith: new Color(), horizon: new Color(), light: new Color(), ambientSky: new Color(), ambientGround: new Color(),
     seaDeep: new Color(), seaShallow: new Color(), cloudLit: new Color(), cloudShade: new Color(), rim: new Color(),
-    lightI: 1, ambientI: 1, stars: 0, sunDir: new Vector3(), moonDir: new Vector3(), sunVis: 1, moonVis: 0, lightDir: new Vector3(),
+    lightI: 1, ambientI: 1, stars: 0, sunDir: new Vector3(), moonDir: new Vector3(), sunVis: 1, moonVis: 0, lightDir: new Vector3(), lightK: 1,
   };
 }
 
@@ -61,6 +63,9 @@ export function samplePalette(hour: number, out: Palette): Palette {
   out.moonVis = MathUtils.smoothstep(out.moonDir.y, -0.04, 0.08) * (1 - out.sunVis);
   // Hauptlicht nie ganz flach, damit Schatten nicht endlos lang werden
   out.lightDir.copy(out.sunVis >= 0.5 || out.sunDir.y > out.moonDir.y ? out.sunDir : out.moonDir);
+  // Übergabe Sonne ↔ Mond: das Hauptlicht blendet um den Wechsel herum aus und wieder ein,
+  // so dreht sich die Schattenrichtung unsichtbar (vorher sprangen alle Schatten schlagartig)
+  out.lightK = MathUtils.smoothstep(Math.abs(out.sunDir.y - out.moonDir.y), 0.0, 0.14);
   if (out.lightDir.y < 0.25) { out.lightDir.y = 0.25; out.lightDir.normalize(); }
   return out;
 }

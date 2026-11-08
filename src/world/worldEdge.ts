@@ -147,7 +147,7 @@ export class WorldEdge {
         vec3 hue(float h) { return clamp(abs(mod(h * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0); }
         void main() {
           float t = (length(vP) - 330.0) / 60.0;
-          float edge = smoothstep(0.0, 0.15, t) * smoothstep(1.0, 0.85, t);
+          float edge = smoothstep(0.0, 0.15, t) * (1.0 - smoothstep(0.85, 1.0, t));
           vec3 c = hue(t * 0.8);
           float foot = smoothstep(-40.0, 120.0, vP.y);
           gl_FragColor = vec4(c * edge * uAlpha * 0.5 * foot, 1.0);

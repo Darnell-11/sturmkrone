@@ -5,7 +5,9 @@ import {
   BufferGeometry,
   Color,
   DoubleSide,
-  LineSegments,
+  InstancedBufferAttribute,
+  InstancedBufferGeometry,
+  PlaneGeometry,
   MathUtils,
   Mesh,
   MeshBasicMaterial,
@@ -36,7 +38,8 @@ export class Weather {
 
   private changeTimer = 240;
   private boltTimer = 5;
-  private rain: LineSegments;
+  private rain: Mesh;
+  private rainGeo: InstancedBufferGeometry;
   private rainMat: ShaderMaterial;
   private maxDrops = 3000;
   private bolt: Mesh;
@@ -45,20 +48,21 @@ export class Weather {
   constructor(scene: Scene) {
     this.p = { ...this.paramsOf('klar') };
 
-    const seeds = new Float32Array(MAX_DROPS * 2 * 3);
-    const ends = new Float32Array(MAX_DROPS * 2);
-    for (let i = 0; i < MAX_DROPS; i++) {
-      const x = Math.random(), y = Math.random(), z = Math.random();
-      for (let e = 0; e < 2; e++) {
-        seeds.set([x, y, z], (i * 2 + e) * 3);
-        ends[i * 2 + e] = e;
-      }
-    }
-    const geo = new BufferGeometry();
-    geo.setAttribute('position', new BufferAttribute(seeds, 3));
-    geo.setAttribute('aEnd', new BufferAttribute(ends, 1));
+    // Instanzierte Regentropfen: ein Quad je Tropfen (zur Kamera gedrehter Streifen), Bahn rechnet die Grafikkarte
+    const seeds = new Float32Array(MAX_DROPS * 3);
+    for (let i = 0; i < MAX_DROPS; i++) seeds.set([Math.random(), Math.random(), Math.random()], i * 3);
+    const quad = new PlaneGeometry(1, 1);
+    const geo = new InstancedBufferGeometry();
+    geo.index = quad.index;
+    geo.setAttribute('position', quad.getAttribute('position'));
+    geo.setAttribute('uv', quad.getAttribute('uv'));
+    geo.setAttribute('aSeed', new InstancedBufferAttribute(seeds, 3));
+    geo.instanceCount = 0;
+    this.rainGeo = geo;
     this.rainMat = new ShaderMaterial({
       transparent: true,
+      // der Streifen dreht sich zur Kamera, seine Wicklung hängt aber von der Fallrichtung ab: beide Seiten zeichnen
+      side: DoubleSide,
       depthWrite: false,
       uniforms: {
         uTime: { value: 0 },
@@ -67,28 +71,49 @@ export class Weather {
         uWind: { value: new Vector3(6, 0, 2) },
         uAlpha: { value: 0 },
         uColor: { value: new Color(0.75, 0.82, 0.95) },
+        uLen: { value: 0.9 },
+        uWidth: { value: 0.014 },
       },
       vertexShader: /* glsl */ `
-        attribute float aEnd;
-        uniform float uTime; uniform vec3 uCenter, uBox, uWind;
-        varying float vA;
+        attribute vec3 aSeed;
+        uniform float uTime, uLen, uWidth; uniform vec3 uCenter, uBox, uWind;
+        varying vec2 vUv;
+        varying float vNear;
         void main() {
           vec3 vel = vec3(uWind.x, -28.0, uWind.z);
-          vec3 p = position * uBox + vel * uTime * (0.85 + position.y * 0.3);
+          float sp = 0.85 + aSeed.y * 0.3;
+          vec3 p = aSeed * uBox + vel * uTime * sp;
           p = mod(p - uCenter + uBox * 0.5, uBox) - uBox * 0.5 + uCenter;
-          p -= vel * 0.045 * aEnd;
-          vA = 1.0 - aEnd * 0.7;
-          gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+          // Streifen entlang der Fallrichtung, quer dazu zur Kamera gedreht
+          vec3 dir = normalize(vel);
+          vec3 toCam = normalize(cameraPosition - p);
+          vec3 side = normalize(cross(dir, toCam));
+          // weiter weg etwas breiter, damit Tropfen nicht zu flimmernden Pixeln werden
+          float camD = distance(cameraPosition, p);
+          float w = uWidth * (1.0 + camD * 0.05);
+          // Tropfen direkt vor der Linse ausblenden (sonst dicke Streifen quer durchs Bild)
+          vNear = smoothstep(1.2, 4.0, camD);
+          vec3 q = p - dir * (position.y + 0.5) * uLen * (0.8 + aSeed.z * 0.4) + side * position.x * w;
+          vUv = uv;
+          gl_Position = projectionMatrix * viewMatrix * vec4(q, 1.0);
         }`,
       fragmentShader: /* glsl */ `
         uniform float uAlpha; uniform vec3 uColor;
-        varying float vA;
+        varying vec2 vUv;
+        varying float vNear;
         void main() {
-          gl_FragColor = vec4(uColor, uAlpha * vA);
+          // Kopf hell, Schweif läuft aus; Ränder weich
+          float along = vUv.y;
+          float across = clamp(1.0 - abs(vUv.x - 0.5) * 2.0, 0.0, 1.0);
+          float a = uAlpha * (1.0 - smoothstep(0.15, 1.0, along)) * smoothstep(0.0, 0.08, along) * sqrt(max(across, 0.0)) * vNear;
+          if (a < 0.01) discard;
+          gl_FragColor = vec4(uColor, a);
           #include <colorspace_fragment>
         }`,
     });
-    this.rain = new LineSegments(geo, this.rainMat);
+    this.rain = new Mesh(geo, this.rainMat);
+    this.rain.renderOrder = 6;
+    this.rain.userData.noOutline = true;
     this.rain.frustumCulled = false;
     this.rain.visible = false;
     scene.add(this.rain);
@@ -187,12 +212,12 @@ export class Weather {
     const drops = Math.round(this.maxDrops * MathUtils.clamp(this.p.rain, 0, 1));
     this.rain.visible = drops > 10;
     if (this.rain.visible) {
-      this.rain.geometry.setDrawRange(0, drops * 2);
+      this.rainGeo.instanceCount = drops;
       const u = this.rainMat.uniforms;
       u.uTime.value = time;
       u.uCenter.value.copy(camera.position);
       u.uWind.value.set(10 * this.p.wind, 0, 4 * this.p.wind);
-      u.uAlpha.value = 0.35 + 0.25 * this.p.rain;
+      u.uAlpha.value = 0.32 + 0.25 * this.p.rain;
     }
   }
 }

@@ -1,5 +1,48 @@
 # Was ist neu
 
+## 2.9.18 – Tag und Nacht, echter Regen, nasse Straßen und Pfützen (08.11.2026)
+
+- **Tageszeit:**
+  - Die Sonne wandert ohne Sprünge über den Himmel. Himmel, Nebel, Umgebungslicht und Meer passen ihre Farben laufend an.
+  - Die Stimmungen gehen fließend ineinander über: Morgenrot, eine neue klare Mittagssonne, Dämmerung und Nacht.
+  - Beim Wechsel von Sonne zu Mond wird das Licht kurz weich gedimmt. Schatten springen nicht mehr von einer Seite zur anderen.
+- **Regen:**
+  - Tausende Tropfen fallen als feine Streifen und werden vom Wind schräg getrieben.
+  - Die Zahl der Tropfen hängt von der Grafikstufe ab, die Bewegung berechnet die Grafikkarte.
+  - Rund um deine Figur spritzen Tropfen auf Boden, Deck und Wasser auf.
+- **Nässe:**
+  - Bei Regen werden alle Oberflächen nach und nach nass: dunkler, satter und glänzend.
+  - Böden, Dächer und Schultern werden schneller nass als Wände.
+  - Nach dem Regen trocknet alles in ein bis zwei Minuten wieder, in der Sonne schneller.
+- **Pfützen:**
+  - Auf Pflaster, Sand, Gras und Holzplanken bilden sich nach einer Weile Pfützen.
+  - Sie spiegeln den Himmel und ab Grafikstufe Hoch auch Figuren, Häuser und Schiffe.
+  - Regenringe kräuseln die Wasseroberfläche.
+
+**Technik (für Entwickler):**
+- Änderungen:
+  - Tageszeit: neuer Schlüssel „Mittag“ (12,5 Uhr) in `data/world.ts`, „Morgenrot“ umbenannt.
+  - `Palette.lightK` dimmt die Hauptlichtquelle beim Übergang Sonne ↔ Mond (`timeOfDay.ts`, `environment.ts`).
+  - Regen: instanzierte Quads statt Linien (`InstancedBufferGeometry`, Attribut `aSeed`, bis 6000 Tropfen, `instanceCount` = Stufe × Regenstärke).
+    - Die Bahn wird im Vertex-Shader berechnet (Wind, Box um die Kamera).
+    - Die Streifen sind zur Kamera gedreht, werden mit der Entfernung breiter und vor der Linse ausgeblendet.
+  - Regenspritzer: `SeaWorld.rainSplashes()` über das vorhandene Gischt-Partikelsystem.
+  - Nässe: `src/render/wetness.ts` mit gemeinsamen Uniforms `uWet` und `uPuddle` und `updateWetness()` im Logikschritt. `uWet` baut sich mit dem Regen auf, `uPuddle` folgt verzögert.
+    - Im Toon-Shader (alle Materialien) sinkt die Rauheit, der Spiegelanteil (Metallwert) steigt in Pfützen, die Grundfarbe wird dunkler.
+    - Für Materialien ohne Umgebungskarte kommen Glanzfleck und Himmelsspiegelung (Fresnel) hinzu, gewichtet nach oben zeigenden Flächen.
+  - Pfützen: Toon-Option `puddles` (Sand 0,75, Gras 0,45, Planken 0,6, Pflaster 1). Rauschmaske auf ebenen Flächen.
+    - Die Ebenheit kommt aus der echten Geometrie per `dFdx`/`dFdy`, nicht aus der Reliefkarte.
+    - Regenringe kippen die Normale. Die SSR-Maske im Alpha-Kanal liegt bei 0,62 … 0,98.
+    - Die Weltposition (`vSkWorld`) berücksichtigt jetzt auch instanzierte Netze.
+- Neue Dateien: `src/render/wetness.ts`.
+- Geänderte Dateien: `render/toon.ts`, `world/weather.ts`, `world/environment.ts`, `world/timeOfDay.ts`, `world/seaWorld.ts`, `world/islandStyle.ts`, `world/town.ts`, `world/worldEdge.ts`, `data/world.ts`.
+- Behobene Fehler:
+  - Die Regen-Quads wurden je nach Fallrichtung als Rückseite verworfen und waren unsichtbar, deshalb jetzt beidseitig.
+  - Eine Wurzel aus einem minimal negativen Wert im Regen-Shader ergab NaN und machte über Bloom das ganze Bild schwarz.
+  - `smoothstep` mit vertauschten Grenzen ist in GLSL undefiniert und lieferte auf manchen Grafiktreibern 0. Betroffen waren der Regen-Shader, die Regenringe und ein bestehender Fall am Weltrand-Wasserfall (`worldEdge.ts`).
+  - Die Pfützen-Normale ist gegen Nullvektoren abgesichert (Decken, entartete Ableitungen).
+- Messung (GPU, Hoch, Hafen von Ankerglück): trocken 1,54 ms, Regen mit voller Nässe und Pfützen 1,67 ms.
+
 ## 2.9.17 – Spiegelungen im Wasser, Wind in den Pflanzen, Fokus auf Gegner (08.11.2026)
 
 - **Spiegelungen (Screen Space Reflections), ab Grafikstufe Hoch am PC:**

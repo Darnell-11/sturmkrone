@@ -334,7 +334,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   const pier = new Group();
   const deck = new BoxGeometry(5, 0.3, 46);
   deckUV(deck, 5, 46);
-  const plank = new Mesh(deck, toon({ color: '#B08A58', map: plankTexture(), ...toonPbr(plankTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) }));
+  const plank = new Mesh(deck, toon({ color: '#B08A58', map: plankTexture(), puddles: 0.6, ...toonPbr(plankTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) }));
   plank.position.set(0, 1.5, 0);
   pier.add(plank);
   for (let i = 0; i < 9; i++) for (const s of [-1, 1]) {
@@ -522,7 +522,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   for (const m of [crystal, forge]) m.userData.noOutline = true;
   addOutlines(group);
   // Straßen und Platz erst nach dem Zusammenfassen (brauchen ihre Texturkoordinaten)
-  const cobble = toon({ color: '#A89C88', map: cobbleTexture(), side: DoubleSide, ...toonPbr(cobbleTexture(), { strength: 1.6, rough: 0.7, roughVar: 0.3, ao: 0.9 }) });
+  const cobble = toon({ color: '#A89C88', map: cobbleTexture(), side: DoubleSide, puddles: 1, ...toonPbr(cobbleTexture(), { strength: 1.6, rough: 0.7, roughVar: 0.3, ao: 0.9 }) });
   for (const road of roads) group.add(roadMesh(road, 5.2, cx, cz, groundAt, cobble));
   group.add(plazaMesh(16, cx, cz, groundAt, cobble));
   return { group, lights: glow, crystal, smoke };

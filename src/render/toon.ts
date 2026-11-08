@@ -19,6 +19,7 @@ import { cubeUvDefines, envShared } from './ibl';
 import { fogUniforms } from './atmosphere';
 import { isWind, windShared, WIND_PARS } from './wind';
 import { WATER_ALPHA } from './outline';
+import { WET_PARS, wetShared } from './wetness';
 
 /** Gemeinsame Werte für alle Toon-Materialien – die Umgebung passt sie an Tageszeit und Wetter an. */
 export const toonShared = {
@@ -100,6 +101,8 @@ export interface ToonOptions {
   fx?: boolean;
   /** Spiegelnde Fläche für die Bildschirm-Spiegelungen (SSR): 0 = matt … 1 = Pfütze/Spiegel */
   reflect?: number;
+  /** Pfützen bei Regen auf flachen Stellen (0 = keine … 1 = viele), nur für Böden: Sand, Gras, Pflaster, Planken */
+  puddles?: number;
 }
 
 /** Steuerwerte des Treffer-/Auflöse-Effekts eines Materials */
@@ -169,6 +172,62 @@ const FX_PARS_GLSL = /* glsl */ `
   float skFxNoise() { return skFxN(vSkFxPos * 9.0) * 0.65 + skFxN(vSkFxPos * 23.0) * 0.35; }
 `;
 
+/**
+ * Nässe (render/wetness.ts): nach oben zeigende Flächen werden zuerst nass. Auf Böden mit Pfützen-Option
+ * entstehen in Senken des Rauschens flache Wasserflächen mit Regenringen.
+ */
+const WET_PRE_GLSL = /* glsl */ `
+  float skPud = 0.0;
+  vec3 skUpV = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+  float skUp = clamp(dot(normal, skUpV), 0.0, 1.0);
+  float skWetK = uWet * (0.35 + 0.65 * skUp);
+  vec3 skWN = normal;
+  #ifdef SK_PUDDLE
+  if (uPuddle > 0.002) {
+    vec2 pp = vSkWorld.xz;
+    // Ebenheit aus der echten Fläche (nicht aus der Reliefkarte, sonst bekäme Pflaster nie Pfützen)
+    vec3 skCr = cross(dFdx(vSkWorld), dFdy(vSkWorld));
+    float flatK = smoothstep(0.9, 0.975, abs(skCr.y) * inversesqrt(max(dot(skCr, skCr), 1e-14))) * smoothstep(0.5, 0.8, skUp);
+    float n = skWetN(pp * 0.16) * 0.6 + skWetN(pp * 0.5 + 4.7) * 0.28 + skWetN(pp * 1.7 + 1.3) * 0.12;
+    float thr = 1.0 - uPuddle * uPuddleAmt * 0.6;
+    skPud = smoothstep(thr, thr + 0.05, n) * flatK;
+    if (skPud > 0.01 && uRain > 0.05) {
+      // Regenringe kippen die Normale der Wasserfläche
+      float camD = distance(vSkWorld, cameraPosition);
+      float e = 0.04;
+      float r0 = skRipple(pp), rx = skRipple(pp + vec2(e, 0.0)), rz = skRipple(pp + vec2(0.0, e));
+      vec2 g = vec2(rx - r0, rz - r0) * (0.35 * min(1.0, uRain * 1.5) * (1.0 - smoothstep(15.0, 45.0, camD)));
+      vec3 vX = (viewMatrix * vec4(1.0, 0.0, 0.0, 0.0)).xyz;
+      vec3 vZ = (viewMatrix * vec4(0.0, 0.0, 1.0, 0.0)).xyz;
+      skWN = normalize(mix(normal, skUpV, skPud) - (vX * g.x + vZ * g.y));
+    } else {
+      skWN = normalize(mix(normal, skUpV, skPud));
+    }
+  }
+  #endif
+`;
+
+/** Nasser Glanz und Himmelsspiegelung (für Materialien ohne eigene Umgebungskarte) und die Pfützen */
+const WET_POST_GLSL = /* glsl */ `
+  if (skWetK > 0.002 || skPud > 0.002) {
+    vec3 skV = normalize(vViewPosition);
+    float skNdv = clamp(dot(skWN, skV), 0.0, 1.0);
+    vec3 skRW = inverseTransformDirection(reflect(-skV, skWN), viewMatrix);
+    vec3 skSky = mix(uEnvLow, uEnvHigh, clamp(skRW.y * 0.5 + 0.5, 0.0, 1.0)) * uEnvI;
+    float skFres = pow(1.0 - skNdv, 5.0);
+    #ifndef SK_ENV
+      outgoingLight += skSky * (0.025 + 0.55 * skFres) * skWetK * (1.0 - skPud);
+    #endif
+    // Pfütze: dunkles Wasser, das den Himmel spiegelt (die Umgebung kommt über die Bildschirm-Spiegelungen dazu)
+    outgoingLight = mix(outgoingLight, outgoingLight * 0.32 + skSky * (0.26 + 0.7 * skFres), skPud * 0.92);
+    #if NUM_DIR_LIGHTS > 0
+      vec3 skL = directionalLights[0].direction;
+      float skS = pow(max(dot(skWN, normalize(skL + skV)), 1e-4), mix(90.0, 600.0, skPud));
+      outgoingLight += directionalLights[0].color * smoothstep(0.35, 0.65, skS) * (skWetK * 0.22 + skPud * 0.9);
+    #endif
+  }
+`;
+
 const RIM_SPEC_GLSL = /* glsl */ `
   {
     float skRough = uRough;
@@ -179,6 +238,11 @@ const RIM_SPEC_GLSL = /* glsl */ `
     #ifdef SK_METALMAP
       skMetal *= texture2D(uMetalMap, SK_PBR_UV).b;
     #endif
+    // Nässe: Wasserfilm macht die Fläche glatt (Rauheit sinkt), die Pfütze spiegelt wie ein Spiegel (Spiegelanteil steigt);
+    // nasse Stoffe, Holz und Erde werden dunkler und satter
+    skRough = mix(skRough, 0.06, max(skWetK * 0.8, skPud));
+    skMetal = mix(skMetal, max(skMetal, 0.3), skPud);
+    outgoingLight *= 1.0 - skWetK * 0.26 * (1.0 - skMetal);
     // Anime-Schatten: Schattenseiten kühl einfärben statt nur abdunkeln
     float skLum = dot(outgoingLight, vec3(0.299, 0.587, 0.114));
     float skBase = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114)) + 0.001;
@@ -191,12 +255,13 @@ const RIM_SPEC_GLSL = /* glsl */ `
       vec3 L = directionalLights[0].direction;
       // Randlicht vor allem auf der Seite, die vom Licht abgewandt zur Kamera zeigt
       rim *= 0.55 + 0.45 * clamp(dot(-viewDir, L) * 0.5 + 0.5, 0.0, 1.0);
-      if (uSpec > 0.0) {
+      float skSpec = max(uSpec, skWetK * 0.6);
+      if (skSpec > 0.0) {
         // Glanzfleck: glatte Flächen klein und scharf, raue groß und weich (Anime-Kante bleibt)
         vec3 H = normalize(L + viewDir);
         float s = pow(max(dot(normal, H), 1e-4), mix(128.0, 14.0, skRough));
         vec3 specTint = mix(vec3(1.0), diffuseColor.rgb, skMetal * 0.6);
-        outgoingLight += directionalLights[0].color * specTint * smoothstep(0.45, 0.55, s) * uSpec * 0.45;
+        outgoingLight += directionalLights[0].color * specTint * smoothstep(0.45, 0.55, s) * skSpec * 0.45;
       }
     #endif
     outgoingLight += mix(diffuseColor.rgb, vec3(1.0), 0.35) * uRimColor * rim;
@@ -227,7 +292,6 @@ const RIM_SPEC_GLSL = /* glsl */ `
 
 /** Rauschfunktionen und Oberflächen für Sand, Gras und Fels (Weltkoordinaten, mit Entfernung weich ausgeblendet) */
 const DETAIL_GLSL = /* glsl */ `
-  varying vec3 vSkWorld;
   float skdH(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
   float skdN(vec2 p) {
     vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
@@ -283,7 +347,7 @@ const DETAIL_FRAG: Record<'sand' | 'grass' | 'rock', string> = {
   }`,
 };
 
-interface PbrPatch { rough: number; metal: number; roughMap: Texture | null; metalMap: Texture | null; env: boolean; fx?: ToonFxUniforms; reflect: number }
+interface PbrPatch { rough: number; metal: number; roughMap: Texture | null; metalMap: Texture | null; env: boolean; fx?: ToonFxUniforms; reflect: number; puddles: number }
 
 function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: 'sand' | 'grass' | 'rock' | undefined, pbr: PbrPatch) {
   const uSpec = { value: spec };
@@ -301,10 +365,14 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: 'sand' 
         .replace('#include <begin_vertex>', '#include <begin_vertex>\n{ vec4 skWw = modelMatrix * vec4(transformed, 1.0); transformed += skWind(transformed, skWw.xyz, aWind); }');
     }
     // Spiegelungsmaske im Alpha-Kanal (nur mit Nachbearbeitung, die das Bild danach undurchsichtig macht)
-    if (pbr.reflect > 0) {
-      shader.uniforms.uReflect = { value: pbr.reflect };
-      shader.uniforms.uSkMaskOff = WATER_ALPHA;
-    }
+    if (pbr.reflect > 0) shader.uniforms.uReflect = { value: pbr.reflect };
+    if (pbr.reflect > 0 || pbr.puddles > 0) shader.uniforms.uSkMaskOff = WATER_ALPHA;
+    // Nässe bei Regen (alle Toon-Materialien), Pfützen nur auf Böden
+    shader.uniforms.uWet = wetShared.uWet;
+    shader.uniforms.uPuddle = wetShared.uPuddle;
+    shader.uniforms.uRain = wetShared.uRain;
+    shader.uniforms.uSkWetTime = windShared.uSkTime;
+    if (pbr.puddles > 0) shader.uniforms.uPuddleAmt = { value: pbr.puddles };
     shader.uniforms.uRimColor = toonShared.rimColor;
     shader.uniforms.uRimStrength = toonShared.rimStrength;
     shader.uniforms.uShadowTint = toonShared.shadowTint;
@@ -331,21 +399,28 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: 'sand' 
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (uDissolve > 0.0 && skFxNoise() < uDissolve) discard;');
     }
-    const defs = (pbr.roughMap ? '#define SK_ROUGHMAP\n' : '') + (pbr.metalMap ? '#define SK_METALMAP\n' : '') + (pbr.env ? '#define SK_ENV\n' + cubeUvDefines() : '') + (pbr.fx ? '#define SK_FX\n' : '');
+    const defs = (pbr.puddles > 0 ? '#define SK_PUDDLE\n' : '') + (pbr.roughMap ? '#define SK_ROUGHMAP\n' : '') + (pbr.metalMap ? '#define SK_METALMAP\n' : '') + (pbr.env ? '#define SK_ENV\n' + cubeUvDefines() : '') + (pbr.fx ? '#define SK_FX\n' : '');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', defs + '#include <common>\nuniform vec3 uShadowTint;\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uSpec;\nuniform float uRimAmount;\n' + PBR_PARS_GLSL + (pbr.fx ? FX_PARS_GLSL : '') + (pbr.env ? '#include <cube_uv_reflection_fragment>\n' : ''))
-      .replace('#include <opaque_fragment>', RIM_SPEC_GLSL + '\n#include <opaque_fragment>' + (pbr.reflect > 0 ? '\ngl_FragColor.a = mix(1.0 - 0.4 * clamp(uReflect, 0.0, 1.0), 1.0, uSkMaskOff);' : ''))
-      .replace('#include <common>', '#include <common>\n' + (pbr.reflect > 0 ? 'uniform float uReflect;\nuniform float uSkMaskOff;' : ''));
-    if (detail) {
+      .replace('#include <common>', defs + '#include <common>\nuniform vec3 uShadowTint;\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uSpec;\nuniform float uRimAmount;\n' + PBR_PARS_GLSL + WET_PARS + (pbr.puddles > 0 ? 'uniform float uPuddleAmt;\n' : '') + (pbr.fx ? FX_PARS_GLSL : '') + (pbr.env ? '#include <cube_uv_reflection_fragment>\n' : ''))
+      .replace('#include <opaque_fragment>', WET_PRE_GLSL + RIM_SPEC_GLSL + WET_POST_GLSL + '\n#include <opaque_fragment>'
+        + (pbr.reflect > 0 ? '\ngl_FragColor.a = mix(1.0 - 0.4 * clamp(uReflect, 0.0, 1.0), 1.0, uSkMaskOff);' : '')
+        // Pfützen in die Spiegelungsmaske (0,6 … 0,96 = spiegelnde Toon-Fläche)
+        + (pbr.puddles > 0 ? '\nif (skPud > 0.05) gl_FragColor.a = min(gl_FragColor.a, mix(1.0 - 0.38 * skPud, 1.0, uSkMaskOff));' : ''))
+      .replace('#include <common>', '#include <common>\n' + (pbr.reflect > 0 ? 'uniform float uReflect;\n' : '') + (pbr.reflect > 0 || pbr.puddles > 0 ? 'uniform float uSkMaskOff;' : ''));
+    if (detail || pbr.puddles > 0) {
+      // Weltposition je Pixel (auch für instanzierte Netze)
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vSkWorld;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSkWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\n{ vec4 skWp = vec4(transformed, 1.0);\n#ifdef USE_INSTANCING\nskWp = instanceMatrix * skWp;\n#endif\nvSkWorld = (modelMatrix * skWp).xyz; }');
+      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vSkWorld;\n');
+    }
+    if (detail) {
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', '#include <common>\n' + DETAIL_GLSL)
         .replace('#include <color_fragment>', '#include <color_fragment>\n' + DETAIL_FRAG[detail]);
     }
   };
-  const progKey = `sk-toon-3${detail ? '-' + detail : ''}-${pbr.env ? 'e' : ''}${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}${pbr.fx ? 'f' : ''}${pbr.reflect > 0 ? 's' : ''}`;
+  const progKey = `sk-toon-3${detail ? '-' + detail : ''}-${pbr.env ? 'e' : ''}${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}${pbr.fx ? 'f' : ''}${pbr.reflect > 0 ? 's' : ''}${pbr.puddles > 0 ? 'p' : ''}-wet`;
   mat.customProgramCacheKey = () => progKey + (isWind(mat) ? 'w' : '');
 }
 
@@ -388,6 +463,7 @@ export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial 
     env: metal > 0 || rough < 0.35 || !!o.metalnessMap,
     fx,
     reflect: o.reflect ?? 0,
+    puddles: o.puddles ?? 0,
   });
   optsOf.set(mat, o);
   if (fx) fxOf.set(mat, fx);

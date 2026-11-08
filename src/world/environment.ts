@@ -5,6 +5,7 @@ import { forEachToon, toonShared } from '../render/toon';
 import { csmShared, ensureCsm } from '../render/csm';
 import { fogShared } from '../render/atmosphere';
 import { windShared } from '../render/wind';
+import { updateWetness } from '../render/wetness';
 import { envShared } from '../render/ibl';
 import { CSM } from 'three/examples/jsm/csm/CSM.js';
 import type { Material, Mesh } from 'three';
@@ -173,6 +174,8 @@ export class Environment {
     this.time = (this.time + (dt * this.timeSpeed * 24) / (DAY_MINUTES * 60)) % 24;
     this.focus.copy(focus);
     this.weather.update(dt, focus);
+    // Nässe und Pfützen folgen dem Regen (trocknen in der Sonne schneller)
+    updateWetness(dt, this.weather.p.rain, this.palette.sunVis * (1 - this.weather.p.grey * 0.6));
     this.windDir += Math.sin(this.clock * 0.004) * dt * 0.01 * (1 + this.weather.p.wind * 3);
     // Wellenhöhe folgt dem Wetter (in der Logik, damit Schiffe und Darstellung übereinstimmen)
     this.ocean.uniforms.uWaveScale.value = this.weather.p.waves;
@@ -229,7 +232,7 @@ export class Environment {
     // Licht
     const light = w.light;
     this.sun.color.copy(pal.light);
-    this.sun.intensity = pal.lightI * light * light * Math.max(pal.sunVis, pal.moonVis * 0.9 + 0.1) + flash * 2;
+    this.sun.intensity = pal.lightI * light * light * Math.max(pal.sunVis, pal.moonVis * 0.9 + 0.1) * pal.lightK + flash * 2;
     this.hemi.color.copy(pal.ambientSky).lerp(GREY, greyK * 0.5);
     this.hemi.groundColor.copy(pal.ambientGround);
     this.hemi.intensity = pal.ambientI * (0.3 + 0.7 * light) + flash * 1.5;
