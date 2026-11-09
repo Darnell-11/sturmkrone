@@ -295,7 +295,10 @@ export class Character {
     const chest = this.rig.getObjectByName('J_Bip_C_Chest'), hips = this.rig.getObjectByName('J_Bip_C_Hips');
     const marine = look.outfit === 'uniform' || look.hat === 'marine' || look.hat === 'zweispitz';
     // gemessene Anker (Ohrläppchen, Schultern, Schärpe) statt geschätzter Abstände
-    const an = vb.anchors();
+    const an0 = vb.anchors();
+    // unter Mantel, Weste, Jacke, Tunika und Ringelhemd sitzt das enge Band – Knoten und Schnalle dorthin
+    const engBand = look.outfit === 'matrose' || look.outfit === 'tunika' || look.outfit === 'jacke' || look.coat !== 'keiner' || look.outfit === 'weste';
+    const an = engBand ? { ...an0, knot: an0.knotEng, buckle: an0.buckleEng } : an0;
     this.outfit = chest && hips ? attachOutfit(chest, hips, this.rig.getObjectByName('J_Bip_L_UpperArm') ?? null, this.rig.getObjectByName('J_Bip_R_UpperArm') ?? null, look, marine ? 'marine' : 'pirat', this.outline, an) : [];
     this.dressVroid(vb, look);
     const head = this.rig.getObjectByName('J_Bip_C_Head');
@@ -314,8 +317,11 @@ export class Character {
   private dressVroid(vb: VroidBase, look: CharacterLook) {
     for (const g of this.garments) releaseGarment(g);
     this.garments = [];
-    // Ringelhemd, Tunika und Jacke ersetzen das Hemd der Grundfigur (darunter würde es an Falten durchstechen)
-    const coversTop = look.outfit === 'matrose' || look.outfit === 'tunika' || look.outfit === 'jacke';
+    // Ringelhemd, Tunika und Jacke ersetzen das Hemd der Grundfigur (darunter würde es an Falten durchstechen);
+    // unter Mantel und Weste tritt ein eng anliegendes Hemd an seine Stelle (schlanke Mäntel ohne Durchstechen)
+    const ownTop = look.outfit === 'matrose' || look.outfit === 'tunika' || look.outfit === 'jacke';
+    const slimTop = !ownTop && (look.coat !== 'keiner' || look.outfit === 'weste');
+    const coversTop = ownTop || slimTop;
     this.rig.traverse((o) => {
       const m = o as SkinnedMesh;
       const i = m.userData.vroidPart as number | undefined;
@@ -329,12 +335,13 @@ export class Character {
     const want: [GarmentKind, string][] = [];
     want.push(['hose', look.pantsColor]);
     // Oberteil-Art als eigenes Kleidungsstück über dem Hemd der Grundfigur (vorher nur eine andere Farbe)
-    const dark = (hex: string, k: number) => '#' + new Color(hex).multiplyScalar(k).getHexString();
     if (look.outfit === 'matrose') want.push(['ringel', look.outfitColor]);
     else if (look.outfit === 'tunika') want.push(['tunika', look.outfitColor]);
     else if (look.outfit === 'jacke') want.push(['jacke', look.outfitColor]);
-    else if (look.outfit === 'weste') want.push(['weste', dark(look.accentColor, 0.55)]);
-    want.push(['guertel', look.outfit === 'uniform' || look.hat === 'marine' || look.hat === 'zweispitz' ? '#2A2420' : look.accentColor]);
+    // „Weste und Hemd“: die Weste trägt die gewählte Farbe, darunter ein helles Leinenhemd
+    if (slimTop) want.push(['hemd', look.outfit === 'weste' ? '#EDE6D6' : look.outfitColor]);
+    if (look.outfit === 'weste') want.push(['weste', look.outfitColor]);
+    want.push([coversTop ? 'guertelEng' : 'guertel', look.outfit === 'uniform' || look.hat === 'marine' || look.hat === 'zweispitz' ? '#2A2420' : look.accentColor]);
     if (look.scarf) want.push(['schal', look.accentColor]);
     if (look.gloves) want.push(['handschuhe', '#5A3A22']);
     if (look.shoes === 'stiefel') want.push(['stiefel', look.shoesColor]);

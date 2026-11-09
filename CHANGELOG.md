@@ -1,5 +1,19 @@
 # Was ist neu
 
+## 2.9.25 – Mantel oben geschlossen und schlank (10.11.2026)
+
+- **Mantel rundum geschlossen:** Oben fehlte vorn, hinten und an den Seiten ein Streifen, weil der Mantel 1,5 cm unter dem Halsansatz aufhörte. Die Schulterpartie des Körpers liegt aber genau auf dieser Höhe. Jetzt reicht der Mantel bis über die Schultern. Hals und Kopf bleiben frei.
+- **Schlanker Mantel:** Unter Mantel und Weste trägt die Figur jetzt ein eng anliegendes, mitbewegtes Hemd statt des weiten Hemds des Grundmodells mit Puffärmeln. Mantel, Weste und Schärpe liegen dadurch eng darüber, statt sich über die Puffärmel aufzublähen. Die Ärmel sind deutlich dünner. Nur über der Schärpe trägt der Mantel etwas weiter auf.
+- **Weste sichtbar:** „Weste und Hemd“ färbt jetzt die Weste. Darunter liegt ein helles Leinenhemd. Die Westenöffnung ist schmaler als der Mantelausschnitt, damit die Weste im Ausschnitt zu sehen ist.
+- **Schulterstücke** sitzen auf dem schlankeren Mantel.
+
+**Technik (für Entwickler):**
+- Neue Kleidungsart `hemd` (enges Hemd, höchstens `SHIRT_CAP` = 1,4 cm) und `guertelEng`. `Character.dressVroid` ersetzt das Grundhemd bei Mantel oder Weste (`slimTop`).
+- Mantel = Unterkleidung (gekappt) + 1,6 cm, über der Schärpe + 1,6 cm extra, Ärmel + 1,0/0,8 cm, Rumpf bis Halsansatz + 3 cm, Öffnung 4–6,5 cm.
+- Weste eigener Fall mit schmaler Öffnung. Schärpenknoten und Schnalle an den passenden Ankern (`knotEng`/`buckleEng`).
+- Geänderte Dateien: `entities/character/vroid.ts`, `entities/character/character.ts`.
+- Geprüft mit Bildreihen (5 Blickwinkel, stehend und rennend): Kapitänsmantel mit Weste, langer und kurzer Mantel, Mann und Frau, Weste ohne Mantel.
+
 ## 2.9.24 – Glatte Kleidung: Mantel mit Schultern, keine Zacken mehr (08.11.2026)
 
 - **Mantel mit Schultern:** Die Vorderöffnung des Mantels war oben 12 cm breit und schnitt die ganze Schulterpartie heraus. Dort sah man Hemd und Weste, darüber schwebten die Schulterstücke. Jetzt ist die Öffnung ein schmales V, Schultern und Kragenpartie sind bedeckt, und die Schulterstücke liegen auf dem Mantel.

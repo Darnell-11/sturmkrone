@@ -411,7 +411,7 @@ export class VroidBase {
         if (P.y > top) { top = P.y; c = Math.max(0, cl.top[i]); }
       }
       // etwas zur Körpermitte hin: Schulterstücke sitzen auf der Schulter, nicht über dem Oberarm
-      const w = new Vector3(j.x * 0.92, (Number.isFinite(top) ? top : j.y + 0.04) + c + 0.03, j.z);
+      const w = new Vector3(j.x * 0.92, (Number.isFinite(top) ? top : j.y + 0.04) + Math.min(c, SHIRT_CAP) + 0.026, j.z);
       return w.applyMatrix4(toChest);
     };
     // Schärpe: Ellipse der Taille (Haut + Kleidung + Bandstärke) knapp über der Hüfte
@@ -423,12 +423,13 @@ export class VroidBase {
       hx = Math.max(hx, Math.abs(P.x)); hzF = Math.max(hzF, P.z);
       under = Math.max(under, cl.top[i]);
     }
-    const band2 = Math.max(0.024, under + 0.016) + 0.006;
-    const ex = hx + band2, ez = hzF + band2;
     const a = 0.75; // Knoten seitlich vorn
-    const knot = new Vector3(Math.sin(a) * ex, hipsY + 0.032, Math.cos(a) * ez).applyMatrix4(toHips);
-    const buckle = new Vector3(0, hipsY + 0.032, ez).applyMatrix4(toHips);
-    this.anchorCache = { earLobe, eyeY, shoulders: [shoulder('L'), shoulder('R')], knot, buckle };
+    const onBand = (band: number) => {
+      const ex = hx + band + 0.006, ez = hzF + band + 0.006;
+      return { knot: new Vector3(Math.sin(a) * ex, hipsY + 0.032, Math.cos(a) * ez).applyMatrix4(toHips), buckle: new Vector3(0, hipsY + 0.032, ez).applyMatrix4(toHips) };
+    };
+    const wide = onBand(Math.max(0.026, under + 0.026)), eng = onBand(Math.max(0.026, Math.min(under, SHIRT_CAP) + 0.02));
+    this.anchorCache = { earLobe, eyeY, shoulders: [shoulder('L'), shoulder('R')], knot: wide.knot, buckle: wide.buckle, knotEng: eng.knot, buckleEng: eng.buckle };
     return this.anchorCache;
   }
 
@@ -665,7 +666,7 @@ export class VroidBase {
       for (let k = 0; k < 4; k++) { SI.push(si.getComponent(v, k)); SW.push(sw.getComponent(v, k)); }
     }
     let T = tris.map((v) => remap[v]);
-    const soft = kind === 'weste' || kind === 'jacke' || kind === 'tunika' || kind === 'ringel' || kind === 'mantelKurz' || kind === 'mantelLang' || kind === 'guertel' || kind === 'schal' || kind === 'hose' || kind === 'stiefel';
+    const soft = kind === 'weste' || kind === 'jacke' || kind === 'tunika' || kind === 'ringel' || kind === 'mantelKurz' || kind === 'mantelLang' || kind === 'guertel' || kind === 'guertelEng' || kind === 'schal' || kind === 'hose' || kind === 'stiefel' || kind === 'hemd';
     if (soft) {
       // einmal feiner unterteilen (jedes Dreieck in vier): runde Formen und Ränder statt grober Treppen
       const mid = new Map<string, number>();
@@ -894,8 +895,14 @@ export class VroidBase {
 }
 
 /** Kleidungsstücke, die aus dem Körper erzeugt werden */
-export type GarmentKind = 'hose' | 'stiefel' | 'mantelKurz' | 'mantelLang' | 'guertel'
-  | 'weste' | 'jacke' | 'tunika' | 'ringel' | 'handschuhe' | 'schal';
+export type GarmentKind = 'hose' | 'stiefel' | 'mantelKurz' | 'mantelLang' | 'guertel' | 'guertelEng'
+  | 'weste' | 'jacke' | 'tunika' | 'ringel' | 'hemd' | 'handschuhe' | 'schal';
+
+/**
+ * Unter Mantel und Weste wird das weite Hemd der Grundfigur (Puffärmel, abstehender Kragen) durch ein eng anliegendes,
+ * erzeugtes Hemd ersetzt. Alles darüber rechnet dann höchstens mit dieser Hemddicke – schlanke Mäntel ohne Durchstechen.
+ */
+export const SHIRT_CAP = 0.014;
 
 /**
  * Abstand der Grundkleidung zur Haut je Hautpunkt (−1 = dort liegt keine). Kleidung, die darüber getragen wird,
@@ -907,7 +914,7 @@ export interface Clearance { top: Float32Array; bottom: Float32Array; shoes: Flo
 /** Aus der Frisur gemessene Kappe (Kopfraum): Netz, Sitzhöhe, Mitte und mittlerer Randradius */
 export interface CapShell { geo: BufferGeometry; seatY: number; cx: number; cz: number; ringR: number }
 
-export interface Anchors { earLobe: Vector3; eyeY: number; shoulders: [Vector3, Vector3]; knot: Vector3; buckle: Vector3 }
+export interface Anchors { earLobe: Vector3; eyeY: number; shoulders: [Vector3, Vector3]; knot: Vector3; buckle: Vector3; knotEng: Vector3; buckleEng: Vector3 }
 
 const smooth = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
@@ -934,29 +941,39 @@ function garmentOffset(kind: GarmentKind, b: string, P: Vector3, N: Vector3, r: 
       // Ringelhemd: liegt dicht auf dem Hemd der Grundfigur, überall wo es Hemd gibt
       if (cTop < 0 || hand) return -1;
       return cTop + 0.004;
+    case 'hemd':
+      // eng anliegendes Hemd überall, wo die Grundfigur eines trägt (ersetzt es unter Mantel und Weste)
+      if (cTop < 0 || hand) return -1;
+      return Math.min(cTop * 0.6, SHIRT_CAP - 0.004) + 0.004;
     case 'tunika':
       // lange Tunika: Oberkörper und Ärmel wie das Hemd, unten bis zur Mitte des Oberschenkels
       if (hand) return -1;
       if (cTop >= 0) return Math.max(0.012, under + 0.006);
       if ((torso || /UpperLeg$/.test(b)) && P.y < r.hipsY && P.y > r.hipsY - (r.hipsY - r.kneeY) * 0.5) return Math.max(0.02, under + 0.008 + (r.hipsY - P.y) * 0.06);
       return -1;
-    case 'weste':
+    case 'weste': {
+      // Weste über dem engen Hemd: Rumpf ohne Ärmel, vorn offen, bis über die Schultern
+      if (hand || arm) return -1;
+      if (cTop < 0 && !(torso && P.y > r.hipsY - 0.04 && P.y < r.neckY + 0.02)) return -1;
+      if (P.y < r.hipsY - 0.04 || P.y > r.neckY + 0.02) return -1;
+      // schmaler als die Mantelöffnung, damit die Weste im Ausschnitt sichtbar bleibt
+      if (N.z > 0.35 && N.y < 0.45 && Math.abs(P.x) < 0.012 + Math.max(0, P.y - (r.hipsY + 0.25)) * 0.12) return -1;
+      return Math.max(0.016, Math.min(Math.max(cTop, 0), SHIRT_CAP) + 0.008);
+    }
     case 'jacke': {
       // Weste: Rumpf ohne Ärmel, vorn offen; Jacke: überall, wo die Grundfigur ein Hemd trägt, dazu lange Ärmel.
       // Fläche nach dem Hemd statt nach Knochen – die Brust hängt an eigenen Knochen (sonst Löcher)
       if (hand) return -1;
-      if (arm) return kind === 'jacke' ? Math.max(0.016, cTop + 0.008) : -1;
-      if (cTop < 0 && !(torso && P.y > r.hipsY - 0.04 && P.y < r.neckY - 0.03)) return -1;
-      if (kind === 'weste') {
-        if (P.y < r.hipsY - 0.04 || P.y > r.neckY - 0.02) return -1;
-        if (N.z > 0.35 && Math.abs(P.x) < 0.02 + Math.max(0, P.y - (r.hipsY + 0.18)) * 0.2) return -1;
-      }
+      if (arm) return Math.max(0.016, cTop + 0.008);
+      if (cTop < 0 && !(torso && P.y > r.hipsY - 0.04 && P.y < r.neckY + 0.02)) return -1;
       return Math.max(0.018, cTop + 0.009);
     }
     case 'guertel':
+    case 'guertelEng':
       // Schärpe bzw. Koppel: breites Band um die Taille, über Hemd, Hose, Weste und Tunika, unter dem Mantel
+      // (Eng: über dem erzeugten engen Hemd unter Mantel/Weste)
       if (!isPelvis || P.y < r.hipsY - 0.005 || P.y > r.hipsY + 0.065) return -1;
-      return Math.max(0.026, under + 0.026);
+      return kind === 'guertelEng' ? Math.max(0.026, Math.min(under, SHIRT_CAP) + 0.02) : Math.max(0.026, under + 0.026);
     case 'handschuhe':
       // Fäustlinge: Hand und Finger, knapp über das Handgelenk
       if (!hand) return -1;
@@ -971,20 +988,24 @@ function garmentOffset(kind: GarmentKind, b: string, P: Vector3, N: Vector3, r: 
       return Math.max(0.026 + smooth(r.kneeY - r.leg * 0.32, r.kneeY - r.leg * 0.1, P.y) * 0.022, cBot + 0.008, cShoe + 0.005);
     case 'mantelKurz':
     case 'mantelLang': {
-      // über allem anderen: mindestens 2,6 cm über Hemd, Weste und Schärpe
-      const over = under + 0.034;
-      if (arm) return Math.max(/UpperArm$/.test(b) ? 0.036 : 0.028, cTop + 0.022);
-      if (torso && P.y >= r.hipsY - 0.03 && P.y < r.neckY - 0.015) {
-        // offene Front: vorn in der Mitte bleibt Weste und Hemd sichtbar, oben weiter (Revers)
-        const open = 0.045 + smooth(r.hipsY + 0.22, r.neckY, P.y) * 0.045;
+      // eng über Hemd und Weste (2 cm), nur über der Schärpe weiter; Ärmel schlank – vorher überall 3,4–3,6 cm (klobig)
+      // unter dem Mantel liegt immer das enge Hemd (höchstens SHIRT_CAP dick)
+      const thin = Math.min(Math.max(cTop, 0), SHIRT_CAP);
+      const over = Math.max(0.024, thin + 0.016);
+      if (arm) return /UpperArm$/.test(b) ? Math.max(0.018, thin + 0.01) : Math.max(0.015, thin + 0.008);
+      // bis über die Schultern (die Schulterhaut liegt auf Höhe des Halsansatzes; Hals und Kopf gehören zu eigenen Knochen)
+      if (torso && P.y >= r.hipsY - 0.03 && P.y < r.neckY + 0.03) {
+        // offene Front: schmales V, Schultern und nach oben zeigende Flächen bleiben bedeckt
+        const open = 0.04 + smooth(r.hipsY + 0.22, r.neckY, P.y) * 0.025;
         if (N.z > 0.4 && N.y < 0.45 && Math.abs(P.x) < open) return -1;
-        return Math.max(0.034, over);
+        const band = smooth(r.hipsY - 0.03, r.hipsY - 0.005, P.y) * (1 - smooth(r.hipsY + 0.075, r.hipsY + 0.1, P.y));
+        return over + band * 0.016;
       }
-      // Schöße nur beim langen Mantel: seitlich und hinten bis übers Knie, nach unten weiter
+      // Schöße nur beim langen Mantel: seitlich und hinten bis übers Knie, nach unten etwas weiter
       if (kind === 'mantelLang' && (torso || /UpperLeg$/.test(b)) && P.y < r.hipsY && P.y > r.kneeY + 0.02) {
         if (N.z > 0.2) return -1;
         if ((P.x > 0 && N.x < -0.35) || (P.x < 0 && N.x > 0.35)) return -1;
-        return Math.max(0.04 + (r.hipsY - P.y) * 0.22, over + 0.01);
+        return Math.max(0.03 + (r.hipsY - P.y) * 0.16, over + 0.01);
       }
       return -1;
     }
