@@ -290,6 +290,65 @@ function rope(group: Group, a: Vector3, b: Vector3, r: number, sag: number, segs
     px = nx; py = ny; pz = nz;
   }
 }
+/**
+ * Belegungsraster eines Deckbereichs: Zellen sind belegt, wo ein Läufer (Radius 0,3) nicht stehen kann. `ok()` prüft per
+ * Flutfüllung, ob zwischen zwei Punkten noch ein Weg besteht. So bleibt beim Aufstellen von Fässern, Geschützen und Beiboot
+ * immer ein durchgehender Gang offen (vorher sperrte eine Reihe aus Boot, Geschützen und Fässern bei der Fregatte das Deck ab).
+ */
+class Occ {
+  private nx: number;
+  private nz: number;
+  private cnt: Uint8Array;
+  private seen: Uint8Array;
+  private stack: number[] = [];
+  constructor(private x0: number, private z0: number, private cs: number, w: number, h: number, walk: (z: number) => number, private q: { ax: number; az: number; bx: number; bz: number }) {
+    this.nx = Math.ceil(w / cs) + 1;
+    this.nz = Math.ceil(h / cs) + 1;
+    this.cnt = new Uint8Array(this.nx * this.nz);
+    this.seen = new Uint8Array(this.nx * this.nz);
+    for (let j = 0; j < this.nz; j++) for (let i = 0; i < this.nx; i++) if (Math.abs(x0 + i * cs) > walk(z0 + j * cs)) this.cnt[j * this.nx + i] = 1;
+  }
+  private apply(b: Blocker, d: number) {
+    const R = 0.3, cs = this.cs;
+    const i0 = Math.max(0, Math.ceil((b.cx - b.hx - R - this.x0) / cs)), i1 = Math.min(this.nx - 1, Math.floor((b.cx + b.hx + R - this.x0) / cs));
+    const j0 = Math.max(0, Math.ceil((b.cz - b.hz - R - this.z0) / cs)), j1 = Math.min(this.nz - 1, Math.floor((b.cz + b.hz + R - this.z0) / cs));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) this.cnt[j * this.nx + i] += d;
+  }
+  add(b: Blocker) { this.apply(b, 1); }
+  remove(b: Blocker) { this.apply(b, -1); }
+  private cell(x: number, z: number): number {
+    // nächste freie Zelle im Umkreis von drei Zellen
+    const ci = Math.round((x - this.x0) / this.cs), cj = Math.round((z - this.z0) / this.cs);
+    for (let r = 0; r <= 3; r++) for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) {
+      const i = ci + di, j = cj + dj;
+      if (i < 0 || j < 0 || i >= this.nx || j >= this.nz) continue;
+      if (this.cnt[j * this.nx + i] === 0) return j * this.nx + i;
+    }
+    return -1;
+  }
+  /** Besteht ein Weg vom Start zum Ziel? (Ist Start oder Ziel selbst versperrt, gilt der Test als bestanden.) */
+  ok(): boolean {
+    const a = this.cell(this.q.ax, this.q.az), b = this.cell(this.q.bx, this.q.bz);
+    if (a < 0 || b < 0) return true;
+    this.seen.fill(0);
+    const st = this.stack;
+    st.length = 0;
+    st.push(a);
+    this.seen[a] = 1;
+    const nx = this.nx, nz = this.nz;
+    while (st.length) {
+      const k = st.pop()!;
+      if (k === b) return true;
+      const i = k % nx, j = (k - i) / nx;
+      if (i > 0 && !this.seen[k - 1] && this.cnt[k - 1] === 0) { this.seen[k - 1] = 1; st.push(k - 1); }
+      if (i < nx - 1 && !this.seen[k + 1] && this.cnt[k + 1] === 0) { this.seen[k + 1] = 1; st.push(k + 1); }
+      if (j > 0 && !this.seen[k - nx] && this.cnt[k - nx] === 0) { this.seen[k - nx] = 1; st.push(k - nx); }
+      if (j < nz - 1 && !this.seen[k + nx] && this.cnt[k + nx] === 0) { this.seen[k + nx] = 1; st.push(k + nx); }
+    }
+    return false;
+  }
+}
+
 /** Baut ein Schiff einer Klasse im eigenen Look. Bug zeigt nach +Z. */
 export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel {
   const group = new Group();
@@ -301,7 +360,19 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   const blockers: Blocker[] = [];
   /** Zusatzteile, die nicht mit dem Rest verschmolzen werden */
   const keepExtra: Mesh[] = [];
-  const block = (cx: number, cz: number, hx: number, hz: number) => { blockers.push({ cx, cz, hx, hz }); };
+  const occs: Occ[] = [];
+  const block = (cx: number, cz: number, hx: number, hz: number) => { const b = { cx, cz, hx, hz }; blockers.push(b); for (const o of occs) o.add(b); };
+  /** Platz frei UND bleibt danach an Deck ein durchgehender Weg (Treppenfuß hinten bis Treppenfuß vorn, Treppe bis Steuerrad)? */
+  const canAdd = (cx: number, cz: number, hx: number, hz: number, margin = 0.1) => {
+    if (!fits(cx, cz, hx, hz, margin)) return false;
+    const b = { cx, cz, hx, hz };
+    for (const o of occs) o.add(b);
+    const ok = occs.every((o) => o.ok());
+    for (const o of occs) o.remove(b);
+    return ok;
+  };
+  /** Ist an dieser Stelle (Mitte, halbe Ausdehnung) noch Platz, ohne in schon Gebautes zu ragen? */
+  const fits = (cx: number, cz: number, hx: number, hz: number, margin = 0.1) => !blockers.some((b) => Math.abs(cx - b.cx) < hx + b.hx + margin && Math.abs(cz - b.cz) < hz + b.hz + margin);
   /** Oberkante des Rumpfs bei t (−1 Heck … +1 Bug): Breite und Länge samt Vorsteven-Neigung, damit Deck und Reling bis zur Spitze passen */
   const edge = (t: number) => ({ x: (t >= 0.999 ? 0.004 : Math.max(0.04, widthAt(t))) * c.W / 2 * 0.9, z: t * c.L / 2 + rakeAt(t, c.L) });
 
@@ -737,7 +808,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     const upper = new Mesh(new CylinderGeometry(0.06 * ms, 0.1 * ms, h * 0.42, 8), darkWood);
     upper.position.set(0, D + h * 0.79, z);
     group.add(lower, upper);
-    block(0, z, 0.19 * ms + 0.1, 0.19 * ms + 0.1);
+    if (c.L < 24) block(0, z, 0.19 * ms + 0.1, 0.19 * ms + 0.1);
     const nest = new Mesh(new CylinderGeometry(0.45 * Math.min(sc, 3), 0.35 * Math.min(sc, 3), 0.4, 10), wood);
     nest.position.set(0, D + h * 0.78, z);
     group.add(nest);
@@ -944,6 +1015,15 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     // Standflächen erst hinter dem Treppenfuß des Achterdecks und vor dem Treppenfuß des Vordecks
     const castleEnd = castleZ1 + stairLen + 0.8;
     const foreStart = fore ? fore.z0 - fore.stairLen - 0.9 : c.L * 0.34;
+    // Masten (Nagelbank-Ring) sind feste Hindernisse; dazu das Belegungsraster für den Hauptgang vom Treppenfuß hinten zum Treppenfuß vorn
+    if (c.L >= 24) for (const m of c.masts) { const rr0 = 0.19 * Math.min(sc, 3.2) + 0.55; block(0, m * c.L, rr0 + 0.05, rr0 + 0.05); }
+    if (fore) {
+      const za = castleZ1 + stairLen + 0.6, zb2 = fore.z0 - fore.stairLen - 0.6;
+      const xa = stairXc(stairX[0], 0);
+      const o = new Occ(-(c.W / 2 + 1), za - 0.8, 0.35, c.W + 2, zb2 - za + 1.6, (z) => halfWidth(z) * 0.85 - 0.35, { ax: xa, az: za, bx: fore.stairX[0], bz: zb2 });
+      for (const b of blockers) o.add(b);
+      occs.push(o);
+    }
     // Gitterluke mittschiffs
     const hs = 0.75 * kk;
     // Luke mittschiffs, aber nicht in einem Mast: nächster freier Platz zur Mitte zwischen den Treppen
@@ -974,14 +1054,15 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       const z = zLo + (i + 0.5) / props * (zHi - zLo) + (rnd() - 0.5) * 0.6;
       if (c.masts.some((m) => Math.abs(m * c.L - z) < 1.4)) continue;
       const sd = i % 2 ? 1 : -1;
-      const x = sd * halfWidth(z) * (0.7 + rnd() * 0.12);
+      const x = sd * halfWidth(z) * (0.76 + rnd() * 0.08);
+      if (!canAdd(x, z, 0.5 * kk, 0.75 * kk)) continue;
       if (rnd() < 0.55) {
         const br = 0.34 * kk, bh = 0.8 * kk;
         put(group, cyl(br * 0.92, br * 0.92, bh, 10), barrelMat, x, D + bh / 2, z);
         put(group, cyl(br * 1.06, br * 1.06, 0.05, 10), barrelMat, x, D + bh / 2, z);
         for (const hy of [0.18, 0.5, 0.82]) put(group, cyl(br * 1.08, br * 1.08, 0.05, 10), iron, x, D + bh * hy, z);
         block(x, z, br * 1.05, br * 1.05);
-        if (rnd() < 0.4) { const bz = z + (rnd() - 0.5) * 0.3; put(group, cyl(br * 0.92, br * 0.92, bh, 10), barrelMat, x - sd * br * 1.9, D + bh / 2, bz); block(x - sd * br * 1.9, bz, br * 1.05, br * 1.05); }
+        if (rnd() < 0.4 && canAdd(x, z + br * 2.1, br * 1.05, br * 1.05)) { const bz = z + br * 2.1; put(group, cyl(br * 0.92, br * 0.92, bh, 10), barrelMat, x, D + bh / 2, bz); block(x, bz, br * 1.05, br * 1.05); }
       } else {
         const cw = (0.55 + rnd() * 0.25) * kk;
         put(group, box(cw, cw * 0.85, cw), crateMat, x, D + cw * 0.425, z, 0, rnd() * 0.5, 0);
@@ -1018,6 +1099,12 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     const xr = (z: number) => halfWidth(z) * 0.9 * 1.04 - 0.3; // nutzbare halbe Breite auf dem Achterdeck
     const coil = (x: number, y: number, z: number, r = 0.26) => { for (let i = 0; i < 3; i++) put(group, torus(r - i * 0.015, 0.045, 10), rp2, x, y + 0.05 + i * 0.07, z, Math.PI / 2, 0, 0); };
     const brandX = c.L >= 70 ? 0 : xr(castleZ1) * 0.35;
+    // Achterdeck: Weg von der Treppe zum Steuerrad muss frei bleiben
+    {
+      const oq = new Occ(-(c.W / 2 + 1), castleZ0 + 0.4, 0.3, c.W + 2, sternLen - 0.4, (z) => halfWidth(z) * 0.86 - 0.35, { ax: stairX[0], az: castleZ1 - 0.7, bx: 0, bz: helm.z });
+      for (const b of blockers) oq.add(b);
+      occs.push(oq);
+    }
     /** Karronade auf Lafette mit Rädern: Rohr zeigt nach außen (sd), y = Standfläche */
     const carr = (gx: number, gy: number, gz: number, sd: number) => {
       put(group, box(1.2, 0.28, 0.7), darkWood, gx, gy + 0.28, gz);
@@ -1098,13 +1185,17 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
         put(group, cyl(0.2, 0.2, 0.5, 8), wood, tx + 0.2, qy + 0.25, tz + 0.95);
         block(tx, tz, 0.85, 0.65);
         for (const sd of [-1, 1]) {
-          for (const f of [0.22, 0.78]) { const gz2 = castleZ0 + sternLen * f; carr(sd * xr(gz2) * 0.9, qy, gz2, sd); }
-          const bz2 = castleZ1 - 1.6, bx2 = sd * xr(bz2) * 0.9;
-          const bm = toon({ color: '#6F4A2B', roughness: 0.85 });
-          put(group, cyl(0.32, 0.32, 0.8, 10), bm, bx2, qy + 0.4, bz2);
-          for (const hy of [0.18, 0.5, 0.82]) put(group, cyl(0.345, 0.345, 0.05, 10), iron, bx2, qy + 0.8 * hy, bz2);
-          put(group, cyl(0.32, 0.32, 0.8, 10), bm, bx2 - sd * 0.7, qy + 0.4, bz2 + 0.2);
-          block(bx2 - sd * 0.35, bz2 + 0.1, 0.8, 0.5);
+          for (const f of [0.22, 0.78]) { const gz2 = castleZ0 + sternLen * f; if (canAdd(sd * xr(gz2) * 0.9, gz2, 0.8, 0.42)) carr(sd * xr(gz2) * 0.9, qy, gz2, sd); }
+          // Tonnen nie an den Treppenaustritt stellen (bei der Einzeltreppe die Seite der Treppe auslassen); sonst am Heckrand, wo Platz ist
+          const stairSide = !grand && Math.sign(stairX[0]) === sd;
+          const bz2 = castleZ0 + sternLen * 0.4, bx2 = sd * xr(bz2) * 0.9;
+          if (!stairSide && canAdd(bx2 - sd * 0.35, bz2 + 0.1, 0.8, 0.5)) {
+            const bm = toon({ color: '#6F4A2B', roughness: 0.85 });
+            put(group, cyl(0.32, 0.32, 0.8, 10), bm, bx2, qy + 0.4, bz2);
+            for (const hy of [0.18, 0.5, 0.82]) put(group, cyl(0.345, 0.345, 0.05, 10), iron, bx2, qy + 0.8 * hy, bz2);
+            put(group, cyl(0.32, 0.32, 0.8, 10), bm, bx2 - sd * 0.7, qy + 0.4, bz2 + 0.2);
+            block(bx2 - sd * 0.35, bz2 + 0.1, 0.8, 0.5);
+          }
         }
         coil(-xr(castleZ0 + 2.2) * 0.35, qy, castleZ0 + 2.0, 0.34);
         coil(xr(castleZ0 + 2.2) * 0.35, qy, castleZ0 + 2.1, 0.3);
@@ -1132,7 +1223,6 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
         put(group, cyl(0.022, 0.022, 0.26, 5), gold, Math.cos(a) * rr * 1.0, mb + 0.97, Math.sin(a) * rr + m.z);
         if (k % 2 === 0) put(group, torus(0.13, 0.025, 8), rp2, Math.cos(a) * rr, mb + 0.6, Math.sin(a) * rr + m.z, 0, a, 0);
       }
-      block(0, m.z, rr + 0.05, rr + 0.05);
       for (const sd of [-1, 1]) {
         for (const dz of [-1.3, 0, 1.3]) {
           const z = m.z + dz, sx = sd * (halfWidth(z) * 0.915 + 0.05), sy = D - 0.25 + sheerAt(z / (c.L / 2), c.L);
@@ -1149,7 +1239,10 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
         const gz0 = castleZ1 + stairLen + 1.4, gz1 = Math.max(gz0 + 4, (fore ? fore.z0 - fore.stairLen : c.L * 0.3) - 1.4);
         const gz = gz0 + ((i + 0.5) / per) * (gz1 - gz0);
         for (const sd of [-1, 1]) {
-          carr(sd * halfWidth(gz) * 0.48, D, gz, sd);
+          for (const dz of [0, 0.7, -0.7, 1.4, -1.4]) {
+            const gx = sd * halfWidth(gz + dz) * 0.48;
+            if (canAdd(gx, gz + dz, 0.8, 0.42)) { carr(gx, D, gz + dz, sd); break; }
+          }
         }
       }
     }
@@ -1163,7 +1256,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
         if (mastTops.some((m) => Math.abs(m.z - z) < len / 2 + 1.5 + Math.min(sc, 3.2) * 0.3)) continue;
         if (Math.abs(z - mid) < best) { best = Math.abs(z - mid); bz = z; }
       }
-      if (bz !== null) {
+      if (bz !== null && canAdd(0, bz, len * 0.3 + 0.2, len / 2 + 0.1, 0)) {
         const bw = len * 0.3, by = D + 1.0;
         const boatMat = toon({ color: '#8A6840', map: planksTex, roughness: 0.85 });
         const inner = toon('#3A2616');

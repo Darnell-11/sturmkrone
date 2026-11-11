@@ -111,9 +111,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 }
 .toast {
   position: fixed; left: 50%; top: calc(36% + env(safe-area-inset-top, 0px)); transform: translateX(-50%);
-  pointer-events: none !important; background: var(--hudbg); border: 1px solid var(--line); border-radius: 999px;
-  padding: 9px 18px; font-weight: 700; white-space: nowrap; opacity: 0; transition: opacity 0.3s; max-width: 92vw;
-  overflow: hidden; text-overflow: ellipsis;
+  pointer-events: none !important; background: var(--hudbg); border: 1px solid var(--line); border-radius: 18px;
+  padding: 9px 18px; font-weight: 700; white-space: normal; text-align: center; line-height: 1.3; width: max-content; opacity: 0; transition: opacity 0.3s; max-width: min(92vw, 640px);
 }
 .toast.on { opacity: 1; }
 
@@ -583,7 +582,9 @@ body { background: #0b0f14; }
 }
 /* Hochformat am Handy: Bedienhinweis oben unter die Anzeigen, damit er den Aktionsknopf nicht verdeckt */
 @media (max-width: 520px) and (orientation: portrait) {
-  .hint { top: calc(200px + env(safe-area-inset-top, 0px)); bottom: auto; }
+  .hint { top: calc(262px + env(safe-area-inset-top, 0px)); bottom: auto; }
+  /* Meldungen unter den Hinweis, sonst liegen beide übereinander */
+  .toast { top: calc(340px + env(safe-area-inset-top, 0px)); }
 }
 
 /* Installieren und Teilen im Hauptmenü */

@@ -1,5 +1,22 @@
 # Was ist neu
 
+## 2.9.57 – Polish-Runde: Stabilität, Wege an Deck, Handy-Anzeige, schnellere Schiffsbauten (12.11.2026)
+
+Diese Runde ist eine gründliche Prüfung von Code, Logik, Grafik und Gestaltung. Gefunden und behoben:
+
+- **Speicherleck bei der Crew:** Beim Neuaufstellen der Crew (Schiffswechsel, Anheuern) blieben die Grafikteile der Schiffskatze im Grafikspeicher. Pro Aufstellung gingen etwa zehn Netze verloren. Jetzt werden sie freigegeben (Probe: Grafikspeicher bleibt über fünf Runden mit je sechs Aufstellungen konstant).
+- **Deck immer begehbar:** Beim Fregattentyp bildeten Beiboot, Luke, Geschütze und Fässer eine durchgehende Sperre, man kam nicht von der Achterdeck-Treppe zum Vordeck. Der Schiffsbau prüft jetzt bei jedem Aufbau per Flutfüllung, ob noch ein durchgehender Weg bleibt (Treppenfuß hinten bis Treppenfuß vorn, Achterdeck-Treppe bis Steuerrad), und lässt Teile sonst weg. Probe für alle sieben Klassen: Steuerrad, Treppen, Vordeck und Bugspitze sind erreichbar (96–100 % aller freien Flächen).
+- **Keine übereinanderstehenden Aufbauten:** Fässer, Kisten, Deckgeschütze, Karronaden und Tonnen am Achterdeck überlappten sich teilweise; sie prüfen jetzt ihren Platz. Tonnen stehen nicht mehr am Austritt der Achterdeck-Treppe. Doppelte Mast-Hindernisse entfernt.
+- **Beiboot, Segel:** Segel bleiben nicht mehr durchsichtig, wenn man aus der Draufsicht an Land geht oder ins Menü wechselt.
+- **Laternen-Lichter ruhiger:** Die Lichter wechseln nicht mehr schlagartig zwischen Trägern (erst ausblenden, dann springen) und erzeugen keinen Speichermüll je Bild mehr.
+- **Handy-Anzeige:** Meldungen werden nicht mehr mit „…“ abgeschnitten, sondern umbrochen. Im Hochformat lagen Hinweis, Meldung und Auftragsanzeige übereinander; sie stehen jetzt untereinander.
+- **Editor:** Die Kompassleiste hing noch über dem Figuren-Editor und den Fenstern (Inventar, Fähigkeiten) und ist dort jetzt aus.
+- **Schiffsbau schneller:** Die Konturen großer Schiffe brauchten über 140 ms (Textschlüssel je Eckpunkt). Mit Zahlenschlüsseln sind es etwa 35 ms; der Bau des Leviathan sank von etwa 210 ms auf etwa 100 ms, der der Fregatte von etwa 115 ms auf etwa 60 ms. Das mindert das Ruckeln, wenn große Feindschiffe auftauchen.
+
+**Geprüft (alles ohne Fehler):** `tsc`, 69 Tests, Produktionsbau; 45 Kombinationen aus Wetter und Tageszeit (keine schwarzen oder überbelichteten Bilder); alle fünf Grafikstufen; Wechsel der Stufen (Lichterzahl, Programme); Entern aller sieben Schiffsklassen (Höhe von Spieler und Gegnern auf dem fremden Deck, keine Gegner in Hindernissen); Sturm-Probe (Spielerhöhe folgt dem Deck auf wenige Zentimeter bei Neigungen bis 0,22 rad); Insel betreten und verlassen (Speicher flach); zwei Minuten Segeln mit Wetterwechsel (keine NaN, kein Fehler, Speicher stabil); alle Menüs ohne Fehler; Handy-Hochformat (Niedrig und Mittel). **Nicht geprüft:** echte Maus, Tastatur, Gamepad und Touch; echtes Handy; Kämpfe über längere Zeit; Audio; Laufen über die Kurventreppe mit echter Steuerung.
+
+**Technik (für Entwickler):** `shipBuilder.ts`: `Occ` (Belegungsraster, Flutfüllung), `canAdd`/`fits`, Mast-Ringe früh als Hindernisse; `outline.ts`: `ensureOutlineNormals` mit Zahlenschlüssel; `lamps.ts`: `LampPool` mit fester Zuteilung; `crewAboard.ts`: `disposeObject` für die Katze; `seaWorld.ts`: Segel zurücksetzen; `game.ts`: Kompass im Editor aus; `styles.css`: `.toast` umbrechend, Hochformat-Abstände.
+
 ## 2.9.56 – Prunkaufgang, begehbares Vordeck, Laternen an den Figuren, stimmungsvollere Tageszeiten (12.11.2026)
 
 - **Treppen repariert:** Auf den Stufen standen Fässer und Kisten, weil die Standflächen schon am Achterdeck-Aufgang begannen; die Luke konnte im Mast stehen. Jetzt beginnen Fässer, Kisten, Luke, Deckgeschütze und Crew-Plätze erst hinter dem Treppenfuß, und die Luke weicht den Masten aus.

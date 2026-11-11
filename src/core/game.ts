@@ -372,6 +372,8 @@ export class Game {
   private render(alpha: number, frameDt: number) {
     this.updateAudio(frameDt);
     if (this.state.is('editor') && this.stage) {
+      // Kompassleiste gehört zum Spiel: im Editor und in den Fenstern (Inventar, Fähigkeiten) nicht darüber zeigen
+      this.compass.setVisible(false);
       this.stage.update(frameDt);
       const portrait = innerHeight > innerWidth || innerWidth < 700;
       const sk = this.stage instanceof SkillStage;

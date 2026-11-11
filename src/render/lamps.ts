@@ -72,6 +72,11 @@ export class LampPool {
   private active = 0;
   private tmp = new Vector3();
   private t = 0;
+  /** Zuteilung: welcher Träger gehört zu welchem Licht (bleibt, bis er zu weit weg ist – dann blendet das Licht aus und wechselt) */
+  private target: (Object3D | null)[] = [];
+  /** Auswahl der nächsten Träger ohne Zuteilungen je Bild */
+  private bestO: (Object3D | null)[] = [];
+  private bestD: number[] = [];
 
   constructor(scene: Scene, readonly max = 4) {
     for (let i = 0; i < max; i++) {
@@ -79,49 +84,56 @@ export class LampPool {
       l.castShadow = false;
       scene.add(l);
       this.lights.push(l);
+      this.target.push(null);
+      this.bestO.push(null);
+      this.bestD.push(0);
     }
   }
 
   /** Anzahl genutzter Lichter nach Grafikstufe (0 = keine; Lichtzahl ändert sich nur beim Stufenwechsel) */
   setCount(n: number) {
     this.active = Math.max(0, Math.min(this.max, n));
-    this.lights.forEach((l, i) => { l.visible = i < this.active; });
+    this.lights.forEach((l, i) => { l.visible = i < this.active; if (i >= this.active) { l.intensity = 0; this.target[i] = null; } });
   }
 
   /**
-   * Jedes Bild: die nächsten Träger (Position der Laterne) wählen und die Lichter dorthin setzen.
+   * Jedes Bild: die nächsten Träger wählen; jedes Licht bleibt bei seinem Träger, solange er unter den nächsten ist.
+   * Wechselt ein Träger, blendet das Licht erst aus und springt dann (kein Aufblitzen an der falschen Stelle).
    * `lamps`: Laternen-Objekte der sichtbaren Figuren; `focus`: Kamera- oder Spielerposition.
    */
   update(dt: number, focus: Vector3, lamps: Iterable<Object3D>) {
     this.t += dt;
     const night = lampShared.night;
-    if (this.active === 0) return;
-    // nächste Träger bestimmen (ohne Zuteilungen je Bild: kleine Auswahl der N besten)
-    const best: { o: Object3D; d: number }[] = [];
+    const n = this.active;
+    if (n === 0) return;
+    // die n nächsten Träger (Einfügesortierung in festen Feldern)
+    let count = 0;
     for (const o of lamps) {
-      const h = o.parent;
-      if (!h) continue;
+      if (!o.parent) continue;
       o.getWorldPosition(this.tmp);
       const d = (this.tmp.x - focus.x) ** 2 + (this.tmp.y - focus.y) ** 2 + (this.tmp.z - focus.z) ** 2;
       if (d > 45 * 45) continue;
-      if (best.length < this.active) { best.push({ o, d }); best.sort((a, b) => a.d - b.d); }
-      else if (d < best[best.length - 1].d) { best[best.length - 1] = { o, d }; best.sort((a, b) => a.d - b.d); }
+      if (count === n && d >= this.bestD[n - 1]) continue;
+      let i = count < n ? count : n - 1;
+      while (i > 0 && this.bestD[i - 1] > d) { this.bestD[i] = this.bestD[i - 1]; this.bestO[i] = this.bestO[i - 1]; i--; }
+      this.bestD[i] = d; this.bestO[i] = o;
+      if (count < n) count++;
     }
-    for (let i = 0; i < this.lights.length; i++) {
+    const inBest = (o: Object3D | null) => { if (!o) return false; for (let k = 0; k < count; k++) if (this.bestO[k] === o) return true; return false; };
+    const taken = (o: Object3D) => { for (let k = 0; k < n; k++) if (this.target[k] === o) return true; return false; };
+    for (let i = 0; i < n; i++) {
       const l = this.lights[i];
-      const b = best[i];
-      if (!b || night <= 0.001) { l.intensity += (0 - l.intensity) * Math.min(1, dt * 8); continue; }
-      b.o.getWorldPosition(l.position);
-      l.position.y -= 0.23 * (b.o.scale.y || 1);
-      // Licht etwas von der Figur weg nach außen setzen: sonst blendet es die Haut und Kleidung des Trägers aus (Abstandsabfall)
-      const hd = b.o.userData.holder as Object3D | undefined;
-      if (hd) {
-        hd.getWorldPosition(this.tmp);
-        const ox = l.position.x - this.tmp.x, oz = l.position.z - this.tmp.z, ol = Math.hypot(ox, oz) || 1;
-        l.position.x += (ox / ol) * 0.55;
-        l.position.z += (oz / ol) * 0.55;
-        l.position.y += 0.1;
+      let tg = this.target[i];
+      // Träger weg (außer Reichweite, entfernt, ausgeblendet)? Licht ausblenden, danach neu zuteilen
+      const gone = tg !== null && (!inBest(tg) || !tg.parent);
+      if (tg === null || gone) {
+        if (l.intensity > 0.05) { l.intensity += (0 - l.intensity) * Math.min(1, dt * 9); if (tg !== null) { this.place(l, tg); continue; } }
+        tg = null;
+        for (let k = 0; k < count; k++) { const c = this.bestO[k]!; if (!taken(c)) { tg = c; break; } }
+        this.target[i] = tg;
+        if (tg === null) { l.intensity = 0; continue; }
       }
+      this.place(l, tg);
       // sanftes Flackern, je Licht eigene Phase
       const fl = 1 + 0.06 * Math.sin(this.t * 9.1 + i * 2.3) + 0.04 * Math.sin(this.t * 17.3 + i);
       const want = 2.8 * night * fl;
@@ -129,7 +141,20 @@ export class LampPool {
     }
   }
 
-  /** Alle Lichter aus (Menü, Ladebild) */
-  off() { for (const l of this.lights) l.intensity = 0; }
-}
+  /** Licht an die Laterne setzen, etwas von der Figur weg nach außen (sonst blendet es Haut und Kleidung des Trägers aus) */
+  private place(l: PointLight, o: Object3D) {
+    o.getWorldPosition(l.position);
+    l.position.y -= 0.23 * (o.scale.y || 1);
+    const hd = o.userData.holder as Object3D | undefined;
+    if (hd) {
+      hd.getWorldPosition(this.tmp);
+      const ox = l.position.x - this.tmp.x, oz = l.position.z - this.tmp.z, ol = Math.hypot(ox, oz) || 1;
+      l.position.x += (ox / ol) * 0.55;
+      l.position.z += (oz / ol) * 0.55;
+      l.position.y += 0.1;
+    }
+  }
 
+  /** Alle Lichter aus (Menü, Ladebild) */
+  off() { for (let i = 0; i < this.lights.length; i++) { this.lights[i].intensity = 0; this.target[i] = null; } }
+}

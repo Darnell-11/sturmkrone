@@ -1833,6 +1833,8 @@ export class SeaWorld {
     const cam = this.camera;
     if (this.mode === 'foot' && this.foot && this.player && !inMenu) {
       this.camSailInit = false;
+      // Segel aus der Draufsicht wieder undurchsichtig machen (zu Fuß an Land oder im Menü sieht man sonst durch sie hindurch)
+      if (this.sailFaded && !this.ownDeck) this.setSailFade(this.ship, false);
       const p = this.foot;
       const px = MathUtils.lerp(p.prev.x, p.x, alpha);
       const pz = MathUtils.lerp(p.prev.z, p.z, alpha);
@@ -1855,6 +1857,8 @@ export class SeaWorld {
       this.focus.set(px, py + 1, pz);
     } else if (inMenu) {
       this.camSailInit = false;
+      // Segel aus der Draufsicht wieder undurchsichtig machen (zu Fuß an Land oder im Menü sieht man sonst durch sie hindurch)
+      if (this.sailFaded && !this.ownDeck) this.setSailFade(this.ship, false);
       const a = this.menuOrbit;
       cam.position.set(x + Math.sin(a) * 30, 9 + Math.sin(a * 2) * 1.5, z + Math.cos(a) * 30);
       cam.lookAt(x, 4, z);

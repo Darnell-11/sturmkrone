@@ -92,25 +92,40 @@ let hullsVisible = true;
 onForget((o) => hulls.delete(o as Mesh));
 const smoothed = new WeakSet<BufferGeometry>();
 
-/** Gemittelte Normalen pro Position, damit die Kontur an harten Kanten nicht aufreißt. */
+/**
+ * Gemittelte Normalen pro Position, damit die Kontur an harten Kanten nicht aufreißt.
+ * Gleiche Positionen (auf 2 mm gerundet) werden über einen Zahlenschlüssel gefunden – die frühere Textschlüssel-Fassung
+ * kostete bei großen Schiffen über 140 ms je Bau.
+ */
 function ensureOutlineNormals(geo: BufferGeometry) {
   if (smoothed.has(geo) || geo.getAttribute('outlineNormal')) return;
   if (!geo.getAttribute('normal')) geo.computeVertexNormals();
   const pos = geo.getAttribute('position');
   const nor = geo.getAttribute('normal');
-  const map = new Map<string, [number, number, number]>();
-  const key = (i: number) => `${pos.getX(i).toFixed(3)},${pos.getY(i).toFixed(3)},${pos.getZ(i).toFixed(3)}`;
-  for (let i = 0; i < pos.count; i++) {
-    const k = key(i);
-    const a = map.get(k) ?? [0, 0, 0];
-    a[0] += nor.getX(i); a[1] += nor.getY(i); a[2] += nor.getZ(i);
-    map.set(k, a);
+  const n = pos.count;
+  const px = new Float32Array(n * 3), nx = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    px[i * 3] = pos.getX(i); px[i * 3 + 1] = pos.getY(i); px[i * 3 + 2] = pos.getZ(i);
+    nx[i * 3] = nor.getX(i); nx[i * 3 + 1] = nor.getY(i); nx[i * 3 + 2] = nor.getZ(i);
   }
-  const out = new Float32Array(pos.count * 3);
-  for (let i = 0; i < pos.count; i++) {
-    const a = map.get(key(i))!;
-    const l = Math.hypot(a[0], a[1], a[2]) || 1;
-    out[i * 3] = a[0] / l; out[i * 3 + 1] = a[1] / l; out[i * 3 + 2] = a[2] / l;
+  const ids = new Int32Array(n);
+  const ids2 = new Map<number, number>();
+  let unique = 0;
+  for (let i = 0; i < n; i++) {
+    // 3 × 17 Bit (Umlauf bei ±262 m: nur weit entfernte Punkte desselben Netzes könnten zusammenfallen)
+    const ix = Math.round(px[i * 3] * 500) & 0x1ffff, iy = Math.round(px[i * 3 + 1] * 500) & 0x1ffff, iz = Math.round(px[i * 3 + 2] * 500) & 0x1ffff;
+    const key = ix * 17179869184 + iy * 131072 + iz;
+    let id = ids2.get(key);
+    if (id === undefined) { id = unique++; ids2.set(key, id); }
+    ids[i] = id;
+  }
+  const sum = new Float32Array(unique * 3);
+  for (let i = 0; i < n; i++) { const id = ids[i] * 3; sum[id] += nx[i * 3]; sum[id + 1] += nx[i * 3 + 1]; sum[id + 2] += nx[i * 3 + 2]; }
+  const out = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const id = ids[i] * 3;
+    const l = Math.hypot(sum[id], sum[id + 1], sum[id + 2]) || 1;
+    out[i * 3] = sum[id] / l; out[i * 3 + 1] = sum[id + 1] / l; out[i * 3 + 2] = sum[id + 2] / l;
   }
   geo.setAttribute('outlineNormal', new BufferAttribute(out, 3));
   smoothed.add(geo);

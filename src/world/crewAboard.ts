@@ -6,6 +6,7 @@ import type { CharacterAssets } from '../entities/character/assets';
 import { Character } from '../entities/character/character';
 import type { Ship } from '../entities/ship/ship';
 import { addOutlines } from '../render/outline';
+import { disposeObject } from '../render/dispose';
 import { toon } from '../render/toon';
 import type { Ground } from './islandGround';
 import { seeded } from './waves';
@@ -80,7 +81,7 @@ export class CrewAboard {
 
   /** Crew auf das (neu gebaute) Schiff stellen */
   setDeck(ship: Ship, hired: string[]) {
-    for (const d of this.deck) { d.char?.dispose(); d.cat?.removeFromParent(); }
+    for (const d of this.deck) { d.char?.dispose(); disposeObject(d.cat); }
     this.deck = [];
     this.ship = ship;
     const g = ship.model.group;
