@@ -1,5 +1,11 @@
 # Was ist neu
 
+## 2.9.55 – Neue Version lädt sich im Menü selbst (11.11.2026)
+
+- **Updates kommen an:** Die Seite hielt nach einem Update oft noch die alte Version vor, bis man zweimal neu lud. Sobald im Hintergrund die neue Version bereit ist, lädt sich das Menü jetzt selbst neu. Mitten im Spiel passiert das nicht (nichts geht verloren); der nächste Start nimmt dann die neue Version.
+
+**Technik (für Entwickler):** `main.ts`: `controllerchange`-Handler (nur Produktionsbau, nur im Zustand `menu`/`boot`). Geprüft: `tsc`, Bau. Nicht geprüft: der Wechsel zwischen zwei echten Versionen im Browser.
+
 ## 2.9.54 – Welt-Werkstatt auf der veröffentlichten Seite freischaltbar (11.11.2026)
 
 - **Werkstatt wieder erreichbar:** Seit 2.9.7 gab es die Welt-Werkstatt (Zeit, Wetter, Orte, Gold, Faji) nur in der Entwicklerversion. Jetzt schaltet man sie auf der echten Seite mit der Adresse `https://darnell-11.github.io/sturmkrone/?werkstatt` frei. Der Browser merkt sich das; der Knopf „Welt-Werkstatt (Test)“ steht dann im Pause-Menü. Mit `?werkstatt=aus` verschwindet er wieder. Ohne Freischaltung sehen ihn andere Spieler nicht.

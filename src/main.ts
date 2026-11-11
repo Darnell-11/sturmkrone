@@ -19,6 +19,14 @@ try {
   const game = new Game(document.getElementById('game') as HTMLCanvasElement, document.getElementById('ui')!);
   // Startfehler (z. B. Netz weg beim Laden der Figuren) freundlich anzeigen statt unbehandelt in der Konsole
   game.start().catch((e) => { console.error(e); fail('Beim Start ist ein Fehler aufgetreten. Bitte lade die Seite neu.'); });
+  // Neue Version aktiv (Service Worker hat gewechselt): im Menü sofort neu laden, mitten im Spiel nicht (der nächste Start nimmt sie)
+  if (!import.meta.env.DEV && 'serviceWorker' in navigator) {
+    let hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) { hadController = true; return; }
+      if (game.state.is('menu', 'boot')) location.reload();
+    });
+  }
   // Zum Ausprobieren in der Browser-Konsole
   (window as any).sturmkrone = game;
   // Nur in der Entwicklung: Bild an einen lokalen Empfänger schicken (für automatische Sichtprüfungen)
