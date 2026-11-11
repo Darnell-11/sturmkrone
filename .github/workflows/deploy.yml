@@ -29,6 +29,19 @@ jobs:
       - run: npm run build
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
+      - name: Dateiliste für eingebundene Seiten (z. B. wildhunt.com.de/sturmkrone)
+        run: |
+          node -e "
+          const fs = require('fs'), path = require('path'), crypto = require('crypto');
+          const root = 'dist', out = [];
+          (function walk(d) { for (const n of fs.readdirSync(d)) { const p = path.join(d, n); fs.statSync(p).isDirectory() ? walk(p) : out.push(p); } })(root);
+          const files = out.map(p => ({ path: path.relative(root, p).split(path.sep).join('/'), size: fs.statSync(p).size,
+            sha256: crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex') }));
+          fs.writeFileSync(path.join(root, 'build-files.json'), JSON.stringify({ version: require('./package.json').version,
+            commit: process.env.GITHUB_SHA, built: new Date().toISOString(), base: process.env.BASE_PATH, files }, null, 1));
+          "
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
