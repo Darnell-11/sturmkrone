@@ -1,5 +1,11 @@
 # Was ist neu
 
+## 2.9.54 – Welt-Werkstatt auf der veröffentlichten Seite freischaltbar (11.11.2026)
+
+- **Werkstatt wieder erreichbar:** Seit 2.9.7 gab es die Welt-Werkstatt (Zeit, Wetter, Orte, Gold, Faji) nur in der Entwicklerversion. Jetzt schaltet man sie auf der echten Seite mit der Adresse `https://darnell-11.github.io/sturmkrone/?werkstatt` frei. Der Browser merkt sich das; der Knopf „Welt-Werkstatt (Test)“ steht dann im Pause-Menü. Mit `?werkstatt=aus` verschwindet er wieder. Ohne Freischaltung sehen ihn andere Spieler nicht.
+
+**Technik (für Entwickler):** `menus.ts`: `workshopUnlocked()` (DEV oder localStorage `sturmkrone2-workshop`). Geprüft: `tsc`. Nicht geprüft: die freigeschaltete Seite im Produktionsbau.
+
 ## 2.9.53 – Gold-Knopf in der Welt-Werkstatt (11.11.2026)
 
 - **Gold geben:** In der Welt-Werkstatt gibt es unter „Gold (Test)“ den Knopf **+10.000 Gold**. Man kann ihn beliebig oft drücken, jeder Druck gibt 10.000 Gold und speichert. Die Werkstatt gibt es nur in der Entwicklerversion, nicht auf der veröffentlichten Seite.

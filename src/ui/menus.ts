@@ -10,6 +10,22 @@ import { FIGUREHEADS, FLAGS, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, STRIPE_COLO
 import { downloadText, esc, formatDate, formatPlayTime, pickFile } from './dom';
 import { QUEST_BY_ID, TOWN_NPCS, type QuestDef, type ShopKind, type TownNpcDef } from '../data/quests';
 import { CREW, CREW_BY_ID, CREW_ROLE_LABEL } from '../data/crew';
+
+const WORKSHOP_KEY = 'sturmkrone2-workshop';
+
+/**
+ * Welt-Werkstatt sichtbar? Immer in der Entwicklerversion. Auf der veröffentlichten Seite nur, wenn man sie einmal
+ * mit `?werkstatt` am Ende der Adresse freigeschaltet hat (merkt sich der Browser; `?werkstatt=aus` schaltet sie wieder ab).
+ */
+function workshopUnlocked(): boolean {
+  if (import.meta.env.DEV) return true;
+  try {
+    const q = new URLSearchParams(location.search).get('werkstatt');
+    if (q === 'aus') localStorage.removeItem(WORKSHOP_KEY);
+    else if (q !== null) localStorage.setItem(WORKSHOP_KEY, '1');
+    return localStorage.getItem(WORKSHOP_KEY) === '1';
+  } catch { return false; }
+}
 import { hostileLegends } from '../data/legends';
 import { RARITY, TRINKETS, TRINKET_BY_ID } from '../data/trinkets';
 import { ACHIEVEMENTS } from '../data/achievements';
@@ -279,7 +295,7 @@ export class Menus {
       <button class="secondary" data-a="loot">Talismane &amp; Erfolge</button>
       <button class="secondary" data-a="look">Aussehen ändern</button>
       <button class="secondary" data-a="settings">Einstellungen</button>
-      ${import.meta.env.DEV ? '<button class="secondary" data-a="workshop">Welt-Werkstatt (Test)</button>' : ''}
+      ${workshopUnlocked() ? '<button class="secondary" data-a="workshop">Welt-Werkstatt (Test)</button>' : ''}
       <button class="secondary" data-a="save">Speichern</button>
       <button class="secondary" data-a="quit">Speichern &amp; Hauptmenü</button>`,
       {
