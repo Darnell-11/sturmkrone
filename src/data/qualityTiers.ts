@@ -39,6 +39,8 @@ export interface QualityConfig {
   fogStart: number;
   /** Bis zu dieser Entfernung werden Figuren (Bewohner, Gegner, Crew) gezeichnet */
   figureDistance: number;
+  /** Echte Laternenlichter, die den nächsten Figuren folgen (0 = nur sichtbar leuchtende Laternen) */
+  lamps: number;
   /** Multiplikator für Partikelmengen */
   particles: number;
   /** Detailstufe für Geometrie (Wellenauflösung, Vegetation …) */
@@ -81,7 +83,7 @@ export const RENDER_LOOK = {
   /** Belichtung vor dem ACES-Filmic-Tonemapping: hellt um ~5 % auf, nichts brennt weiß aus (gemessen Mittag/Abend/Nacht/Sturm/Stadt) */
   exposure: 1.1,
   /** Leuchten nur über Helligkeit 1: Sonne, Laternen, Magie – normale Flächen bleiben im Mittag unter 0,8 */
-  bloom: { threshold: 1.0, smoothing: 0.12, intensity: 1.0, radius: 0.7 },
+  bloom: { threshold: 1.0, smoothing: 0.12, intensity: 1.3, radius: 0.78 },
   /** dezente Vignette an den Bildrändern */
   vignette: { offset: 0.38, darkness: 0.42 },
 };
@@ -100,6 +102,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     viewDistance: 420,
     fogStart: 0.2,
     figureDistance: 59,
+    lamps: 0,
     particles: 0.35,
     detail: 0.5,
     textureScale: 1,
@@ -120,6 +123,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     viewDistance: 560,
     fogStart: 0.2,
     figureDistance: 78,
+    lamps: 2,
     particles: 0.6,
     detail: 0.75,
     textureScale: 1,
@@ -139,6 +143,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     viewDistance: 800,
     fogStart: 0.2,
     figureDistance: 112,
+    lamps: 3,
     particles: 1,
     detail: 1,
     textureScale: 2,
@@ -158,6 +163,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     viewDistance: 900,
     fogStart: 0.27,
     figureDistance: 168,
+    lamps: 4,
     particles: 1.5,
     detail: 1.25,
     textureScale: 2,
@@ -177,6 +183,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     viewDistance: 960,
     fogStart: 0.375,
     figureDistance: 252,
+    lamps: 4,
     particles: 2,
     detail: 1.6,
     textureScale: 4,

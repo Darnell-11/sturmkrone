@@ -75,7 +75,7 @@ export class CrewAboard {
   /** Arbeitsbereich an Deck (Schiffs-z): hinter dem Achterdeck-Aufgang bis vor das Vorderkastell */
   private zone(ship: Ship) {
     const q = ship.model.quarter, L = ship.cls.L;
-    return { lo: q ? q.z1 + q.stairLen + 1.0 : -L / 2 + L * 0.28, hi: ship.model.fore ? ship.model.fore.z0 - 1.2 : L * 0.4 };
+    return { lo: q ? q.z1 + q.stairLen + 1.0 : -L / 2 + L * 0.28, hi: ship.model.fore ? ship.model.fore.z0 - ship.model.fore.stairLen - 1.0 : L * 0.4 };
   }
 
   /** Crew auf das (neu gebaute) Schiff stellen */
@@ -95,7 +95,7 @@ export class CrewAboard {
       const lane = Math.floor(i / 2) % 2 ? 0.34 : 0.56;
       let z = lo + ((i + 0.5) / Math.max(1, n)) * (hi - lo);
       let x = side * ship.model.halfWidth(z) * lane;
-      for (let k = 0; k < 24 && !freeSpot(ship.model.blockers, x, z, 0.5); k++) {
+      for (let k = 0; k < 70 && !freeSpot(ship.model.blockers, x, z, 0.45); k++) {
         z = Math.max(lo, Math.min(hi, z + (k % 2 ? -1 : 1) * 0.2 * (1 + Math.floor(k / 2))));
         x = side * ship.model.halfWidth(z) * lane;
       }

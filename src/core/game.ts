@@ -388,6 +388,14 @@ export class Game {
     const a = this.state.is('play', 'pause') ? alpha : 1;
     this.world.render(a, frameDt, this.state.is('menu', 'boot'));
     this.skyProbe.update(frameDt);
+    {
+      // Farbstimmung der Nachbearbeitung nach Tageszeit (Mondlicht-Blau nachts, Bernstein zur goldenen Stunde)
+      const pal = this.world.env.palette;
+      const dark = 1 - pal.sunVis;
+      const nightK = Math.min(1, Math.max(0, (dark - 0.2) / 0.7));
+      const lowSun = Math.min(1, Math.max(0, (0.5 - pal.sunDir.y) / 0.38));
+      this.renderer.setMood(nightK, pal.sunVis * lowSun);
+    }
     // Gegner, Crew und Stadtleute zwischen den 60-Hz-Logikschritten weich darstellen
     Character.present(a);
     // Tiefenunschärfe: beim Erfassen eines Gegners auf ihn scharfstellen

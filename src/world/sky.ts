@@ -37,7 +37,10 @@ const SKY_FRAG = /* glsl */ `
     c = mix(c, uHorizon, exp(-max(d.y, 0.0) * 14.0) * 0.45);
     // Mond mit Hof
     float m = max(dot(d, normalize(uMoonDir)), 0.0);
-    c += vec3(0.85, 0.9, 1.0) * (smoothstep(0.99955, 0.9997, m) * 3.0 + pow(max(m, 1e-4), 200.0) * 0.25) * uMoonVis;
+    // Mond: Scheibe, weicher Hof und weiter Schimmer (Dunst im Mondlicht)
+    c += vec3(0.85, 0.9, 1.0) * (smoothstep(0.9993, 0.99945, m) * 3.4 + pow(max(m, 1e-4), 180.0) * 0.35 + pow(max(m, 1e-4), 26.0) * 0.10) * uMoonVis;
+    // Abendglut: breites warmes Band am Horizont in Richtung der tiefen Sonne
+    c += uGlow * exp(-h * 9.0) * pow(max(s, 1e-4), 2.2) * 0.55 * uSunVis * (1.0 - h);
     // Sterne
     if (uStars > 0.01) {
       vec2 g = vec2(atan(d.z, d.x) * 90.0, asin(clamp(d.y, -1.0, 1.0)) * 90.0);
@@ -45,8 +48,21 @@ const SKY_FRAG = /* glsl */ `
       float r = h21(cell);
       vec2 o = vec2(h21(cell + 7.1), h21(cell + 3.7)) * 0.6 + 0.2;
       float dd = length(fract(g) - o);
-      float star = step(0.975, r) * (1.0 - smoothstep(0.04, 0.14, dd)) * (0.6 + 0.4 * sin(uTime * 2.5 + r * 80.0));
-      c += vec3(star) * uStars * smoothstep(0.02, 0.25, d.y) * (1.0 - uGrey);
+      float star = step(0.955, r) * (1.0 - smoothstep(0.04, 0.15, dd)) * (0.55 + 0.45 * sin(uTime * 2.5 + r * 80.0));
+      // je Stern eigene Farbe (bläulich bis bernsteinfarben) und wenige besonders helle
+      vec3 sc = mix(vec3(0.7, 0.8, 1.0), vec3(1.0, 0.85, 0.65), h21(cell + 1.3));
+      float bright = 1.0 + 1.6 * step(0.992, r);
+      c += sc * star * bright * uStars * smoothstep(0.02, 0.25, d.y) * (1.0 - uGrey);
+      // feinerer Sternenstaub in einem zweiten Raster
+      vec2 g2 = g * 2.7; vec2 cell2 = floor(g2);
+      float r2 = h21(cell2 + 19.0);
+      float dd2 = length(fract(g2) - (vec2(h21(cell2 + 2.1), h21(cell2 + 5.9)) * 0.6 + 0.2));
+      c += vec3(0.8, 0.88, 1.0) * step(0.93, r2) * (1.0 - smoothstep(0.03, 0.12, dd2)) * 0.5 * uStars * smoothstep(0.05, 0.3, d.y) * (1.0 - uGrey);
+      // Milchstraße: schräges Band aus weichem Sternenlicht mit dunklen Staubfetzen
+      vec3 bn = normalize(vec3(0.35, 0.8, -0.5));
+      float band = exp(-pow(dot(d, bn) * 3.2, 2.0));
+      float cloudN = h21(floor(g * 0.35)) * 0.5 + h21(floor(g * 0.8) + 3.0) * 0.5;
+      c += vec3(0.32, 0.36, 0.55) * band * (0.35 + cloudN) * 0.22 * uStars * smoothstep(0.05, 0.4, d.y) * (1.0 - uGrey);
     }
     // Unter dem Horizont: der Abgrund hinter dem Weltrand
     if (d.y < 0.0) c = mix(uHorizon, uHorizon * 0.25, clamp(-d.y * 3.0, 0.0, 1.0));

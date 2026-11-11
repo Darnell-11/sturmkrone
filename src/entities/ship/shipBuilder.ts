@@ -32,6 +32,9 @@ import { disposeGeometry } from '../../render/dispose';
 import { toon } from '../../render/toon';
 import { toonPbr } from '../../render/pbrMaps';
 
+/** Anfang des Vorderkastells als Anteil der halben Länge (t = 2·z / L) */
+const FORE_T0 = 0.46;
+
 /** Achsenparalleler fester Block im Schiffskoordinatensystem */
 export interface Blocker { cx: number; cz: number; hx: number; hz: number }
 
@@ -51,11 +54,11 @@ export interface ShipModel {
   wheel: Group;
   /**
    * Achterdeck und Treppen (Schiffskoordinaten; Höhen relativ zum Hauptdeck): für Begehen und Kollision.
-   * `bulge`: seitliche Ausbuchtung der geschwungenen Treppen (m, zur Schiffsmitte hin; 0 = gerade)
+   * `flare`: Schwung der Treppen (m): unten rücken sie um so viel nach außen, oben liegen sie an der Tür; 0 = gerade
    */
-  quarter: { z0: number; z1: number; top: number; stairX: number[]; stairW: number; stairLen: number; bulge: number };
-  /** Vorderkastell (massiver Aufbau am Bug, nicht begehbar), null = keins */
-  fore: { z0: number; z1: number } | null;
+  quarter: { z0: number; z1: number; top: number; stairX: number[]; stairW: number; stairLen: number; flare: number };
+  /** Vorderkastell (begehbares Vordeck bis zum Bug, Treppen an der Rückwand), null = keins */
+  fore: { z0: number; z1: number; top: number; stairX: number[]; stairW: number; stairLen: number } | null;
   /** Feste Aufbauten an Deck (Mitte, halbe Ausdehnung, Schiffskoordinaten): Masten, Luke, Fässer, Möbel … */
   blockers: Blocker[];
   /** Deck-Material und Grundfarbe (Nässe dunkelt das Holz ab) */
@@ -335,11 +338,21 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   {
     const RN = 18;
     const railMat = darkWood;
-    const rp: { x: number; y: number; z: number }[] = [];
+    const rpFull: { x: number; y: number; z: number }[] = [];
     for (let i = 0; i <= RN; i++) {
       const t = -0.96 + (i / RN) * 1.94;
       const e = edge(t);
-      rp.push({ x: e.x * 0.985, y: D + sheerAt(t, c.L), z: e.z });
+      rpFull.push({ x: e.x * 0.985, y: D + sheerAt(t, c.L), z: e.z });
+    }
+    // Reling nur bis zum Vorderkastell (dort übernimmt dessen eigene Reling oben); Zierleiste läuft ganz durch
+    const rp: { x: number; y: number; z: number }[] = [];
+    {
+      const tEnd = c.L > 20 ? FORE_T0 : 0.98;
+      for (let i = 0; i <= RN; i++) {
+        const t = -0.96 + (i / RN) * (tEnd + 0.96);
+        const e = edge(t);
+        rp.push({ x: e.x * 0.985, y: D + sheerAt(t, c.L), z: e.z });
+      }
     }
     const seg = (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }, hy: number, th: number, mat: Mesh['material']) => railSeg(group, a, b, hy, th, mat);
     for (const sd of [-1, 1]) {
@@ -364,8 +377,8 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     {
       const trimMat = toon({ color: '#E3B04B', spec: 0.9 });
       for (const sd of [-1, 1]) {
-        for (let i = 0; i < rp.length - 1; i++) {
-          const a0 = { x: rp[i].x * sd * 1.03, y: rp[i].y - 0.04, z: rp[i].z }, b0 = { x: rp[i + 1].x * sd * 1.03, y: rp[i + 1].y - 0.04, z: rp[i + 1].z };
+        for (let i = 0; i < rpFull.length - 1; i++) {
+          const a0 = { x: rpFull[i].x * sd * 1.03, y: rpFull[i].y - 0.04, z: rpFull[i].z }, b0 = { x: rpFull[i + 1].x * sd * 1.03, y: rpFull[i + 1].y - 0.04, z: rpFull[i + 1].z };
           railSeg(group, a0, b0, 0, 0.07, trimMat, 0.14);
         }
       }
@@ -374,7 +387,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       void e1;
     }
     // Heckreling quer über das Heck, Bugreling vorn
-    const sternP = rp[0], bowP = rp[rp.length - 1];
+    const sternP = rp[0], bowP = rpFull[rpFull.length - 1];
     seg({ x: -sternP.x, y: sternP.y, z: sternP.z }, { x: sternP.x, y: sternP.y, z: sternP.z }, 0.88, 0.1, railMat);
     seg({ x: -sternP.x, y: sternP.y, z: sternP.z }, { x: sternP.x, y: sternP.y, z: sternP.z }, 0.46, 0.06, railMat);
     for (let k = 1; k < 6; k++) put(group, cyl(0.025, 0.03, 0.42, 5), wood, -sternP.x + (2 * sternP.x * k) / 6, sternP.y + 0.67, sternP.z);
@@ -411,22 +424,30 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   const stairW = Math.min(2.4, 0.9 + c.W * 0.075);
   const stairLen = topY / 0.58;
   // Das größte Schiff bekommt eine Doppeltreppe (beidseits der Kajütentür), alle anderen eine Treppe an Steuerbord
-  const stairX = c.L >= 70 ? [-1, 1].map((sd) => sd * (xfront - stairW / 2 - 0.35)) : [-(xfront - stairW / 2 - 0.35)];
+  // Das größte Schiff: Doppeltreppe wie ein Prunkaufgang – oben liegen die Läufe beidseits der Kajütentür, unten schwingen sie in
+  // einer Trompetenkurve nach außen und enden in runden Antrittsstufen mit Schnecken
+  const doorW = Math.min(1.7, 0.95 + c.W * 0.035);
+  const grand = c.L >= 70;
+  const stairX = grand ? [-1, 1].map((sd) => sd * (doorW / 2 + 0.95 + stairW / 2)) : [-(xfront - stairW / 2 - 0.35)];
   const doorLamps: number[][] = [];
-  // Das größte Schiff: die beiden Treppen schwingen auf halber Höhe zur Mitte hin aus (Ausbuchtung), wie bei edlen Schiffen
-  const bulge = c.L >= 70 ? stairLen * 0.16 : 0;
-  /** Mittellinie einer Treppe an Position t (0 unten … 1 oben) */
-  const stairXc = (xs: number, t: number) => xs - Math.sign(xs) * bulge * Math.sin(Math.PI * t);
+  const flare = grand ? Math.max(0, Math.min(3.6, halfWidth(castleZ1 + stairLen) * 0.8 - (doorW / 2 + 0.95 + stairW / 2) - stairW / 2 - 0.2)) : 0;
+  /** Mittellinie einer Treppe an Position t (0 unten … 1 oben): sanft nach außen ausschwingend */
+  const stairXc = (xs: number, t: number) => xs + Math.sign(xs) * flare * (1 - t) * (1 - t);
+  /** Querrichtung (Einheitsvektor in x/z, senkrecht zur Lauflinie) bei t */
+  const stairN = (xs: number, t: number) => {
+    const dx = -2 * Math.sign(xs) * flare * (1 - t), dz = -stairLen, l = Math.hypot(dx, dz);
+    return { nx: -dz / l, nz: dx / l, yaw: Math.atan2(dx, dz) };
+  };
   {
     const treadMat = toon({ color: '#A67C4E', roughness: 0.85 });
     const riserMat = toon({ color: '#5E3A22', roughness: 0.9 });
     const zBot = castleZ1 + stairLen;
     const n = Math.max(6, Math.ceil(topY / 0.24));
     const run = stairLen / n, rise = topY / n;
-    const K = bulge > 0 ? 10 : 1;
+    const K = flare > 0 ? 16 : 1;
     for (const xs of stairX) {
       for (const e of [-1, 1]) {
-        const pt = (t: number) => ({ x: stairXc(xs, t) + e * (stairW / 2 - 0.05), y: D + topY * t, z: zBot - stairLen * t });
+        const pt = (t: number) => { const N = stairN(xs, t), o = e * (stairW / 2 - 0.05); return { x: stairXc(xs, t) + N.nx * o, y: D + topY * t, z: zBot - stairLen * t + N.nz * o }; };
         // Wange (Seitenbrett) und Handlauf mit Zwischenholm, Docken und Pfosten mit goldener Kappe
         for (let j = 0; j < K; j++) {
           const a0 = pt(j / K), b0 = pt((j + 1) / K);
@@ -444,20 +465,26 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
           put(group, box(0.1, 1.12, 0.1), wood, p.x, p.y + 0.56, p.z);
           put(group, cyl(0.07, 0.07, 0.07, 6), gold, p.x, p.y + 1.15, p.z);
         }
-        // geschwungene Treppen enden unten in einer Schnecke (goldene Kugel auf dickem Pfosten)
-        if (bulge > 0) {
+        // Prunkaufgang: unten dicker Pfosten mit goldener Kugel (Schnecke) und ein zweiter Zierpfosten an der Rundung
+        if (flare > 0) {
           const p = pt(0);
-          put(group, cyl(0.1, 0.13, 1.0, 8), darkWood, p.x, p.y + 0.5, p.z + 0.1);
-          put(group, new SphereGeometry(0.17, 10, 8), gold, p.x, p.y + 1.1, p.z + 0.1);
+          put(group, cyl(0.12, 0.16, 1.15, 10), darkWood, p.x, p.y + 0.57, p.z + 0.1);
+          put(group, cyl(0.2, 0.2, 0.06, 10), gold, p.x, p.y + 1.17, p.z + 0.1);
+          put(group, new SphereGeometry(0.2, 12, 10), gold, p.x, p.y + 1.36, p.z + 0.1);
+          const q2 = pt(0.14);
+          put(group, cyl(0.07, 0.09, 1.0, 8), wood, q2.x, q2.y + 0.5, q2.z);
+          put(group, new SphereGeometry(0.1, 8, 6), gold, q2.x, q2.y + 1.05, q2.z);
         }
       }
       for (let k = 1; k <= n; k++) {
         const t = (k - 0.5) / n;
         const z = zBot - (k - 0.5) * run, y = D + k * rise;
-        const yaw = bulge > 0 ? Math.atan2(-Math.sign(xs) * bulge * Math.PI * Math.cos(Math.PI * t), -stairLen) : 0;
+        const yaw = flare > 0 ? stairN(xs, t).yaw : 0;
         const x = stairXc(xs, t);
-        put(group, box(stairW - 0.14, 0.07, run + 0.07), treadMat, x, y - 0.035, z, 0, yaw, 0);
-        put(group, box(stairW - 0.14, rise, 0.04), riserMat, stairXc(xs, (k - 1) / n), y - rise / 2, zBot - (k - 1) * run - 0.03, 0, yaw, 0);
+        // untere Antrittsstufen etwas breiter: die Rundung des Aufgangs
+        const wide = flare > 0 && k <= 3 ? 1 + (4 - k) * 0.1 : 1;
+        put(group, box((stairW - 0.14) * wide, 0.07, run + 0.07), treadMat, x, y - 0.035, z, 0, yaw, 0);
+        put(group, box((stairW - 0.14) * wide, rise, 0.04), riserMat, stairXc(xs, (k - 1) / n), y - rise / 2, zBot - (k - 1) * run - 0.03, 0, yaw, 0);
       }
     }
     // Kapitänskajüte: Tür in der Vorderwand des Achterkastells, Goldrahmen, Messingknauf, Oberlicht, Wandlaternen
@@ -478,7 +505,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     tw.userData.noOutline = true;
     group.add(tw);
     transomWin = tw;
-    doorLamps.push([-(dw / 2 + 0.55), D + dh * 0.78, zd + 0.25], [dw / 2 + 0.55, D + dh * 0.78, zd + 0.25]);
+    doorLamps.push([-(dw / 2 + 0.45), D + dh * 0.78, zd + 0.25], [dw / 2 + 0.45, D + dh * 0.78, zd + 0.25]);
   }
   {
     const ry = D + topY;
@@ -533,82 +560,136 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       put(group, box(0.04, 0.45, 0.04), fr, wx, wy, wz);
     }
   }
-  // Vorderkastell (ab Brigg): erhöhtes Vordeck, das der Rumpfkurve folgt. Massiv und nicht begehbar (Kollision), mit Planken-Deck,
-  // Reling, Goldleiste, Tür samt Laternen zum Hauptdeck und Buggeschützen oben – statt eines braunen Klotzes
-  let fore: { z0: number; z1: number } | null = null;
+  // Vorderkastell (ab Brigg): begehbares Vordeck bis in die Bugspitze. Zwei Treppen beidseits der Doppeltür an der Rückwand führen hinauf;
+  // oben Plankendeck, Reling rundum, Goldleisten, Buggeschütze (ab Korvette), Poller und Tauwerk
+  let fore: { z0: number; z1: number; top: number; stairX: number[]; stairW: number; stairLen: number } | null = null;
   if (c.L > 20) {
-    const f0 = c.L / 2 - c.L * 0.27, f1 = c.L / 2 - c.L * 0.1;
-    fore = { z0: f0, z1: f1 };
+    const f0 = FORE_T0 * c.L / 2;
     const fh = 0.9 + c.decks * 0.2;
+    const topF = fh + 0.12;
+    const tipZ = edge(1).z;
+    // Grundriss aus der Rumpfkante (wie das Deck): Seiten bündig mit der Bordwand bis zur Spitze
+    const NF = 12;
+    const plan: { x: number; z: number }[] = [];
+    for (let i = 0; i <= NF; i++) { const t = FORE_T0 + (i / NF) * (1 - FORE_T0); const e = edge(t); plan.push({ x: e.x * 0.99 + 0.03, z: e.z }); }
     const fs = new Shape();
-    for (let i = 0; i <= 6; i++) { const z = f0 + (i / 6) * (f1 - f0); const x = halfWidth(z) * 0.88; if (i === 0) fs.moveTo(x, -z); else fs.lineTo(x, -z); }
-    for (let i = 6; i >= 0; i--) { const z = f0 + (i / 6) * (f1 - f0); fs.lineTo(-halfWidth(z) * 0.88, -z); }
+    plan.forEach((p, i) => (i === 0 ? fs.moveTo(p.x, -p.z) : fs.lineTo(p.x, -p.z)));
+    for (let i = NF; i >= 0; i--) fs.lineTo(-plan[i].x, -plan[i].z);
     const foreBody = new Mesh(new ExtrudeGeometry(fs, { depth: fh, bevelEnabled: false }).rotateX(-Math.PI / 2), wood);
     foreBody.position.y = D;
     group.add(foreBody);
-    // Deckplatte, etwas überstehend, mit Planken
     const foreTop = new Mesh(new ExtrudeGeometry(fs, { depth: 0.12, bevelEnabled: false }).rotateX(-Math.PI / 2), toon({ color: '#B58A5C', map: deckTex, unique: true, ...toonPbr(deckTex, { strength: 0.7, rough: 0.88, roughVar: 0.2, ao: 0.75 }, oak) }));
     foreTop.position.y = D + fh;
-    foreTop.scale.set(1.05, 1, 1.01);
+    foreTop.scale.set(1.04, 1, 1.0);
     group.add(foreTop);
-    // Goldleiste unter der Deckplatte, Sockelleiste unten
+    // Goldleiste unter der Deckplatte
     const ftr = new Shape();
-    for (let i = 0; i <= 6; i++) { const z = f0 - 0.05 + (i / 6) * (f1 - f0 + 0.1); const x = halfWidth(z) * 0.88 * 1.04 + 0.03; if (i === 0) ftr.moveTo(x, -z); else ftr.lineTo(x, -z); }
-    for (let i = 6; i >= 0; i--) { const z = f0 - 0.05 + (i / 6) * (f1 - f0 + 0.1); ftr.lineTo(-halfWidth(z) * 0.88 * 1.04 - 0.03, -z); }
+    plan.forEach((p, i) => (i === 0 ? ftr.moveTo(p.x + 0.05, -p.z) : ftr.lineTo(p.x + 0.05, -p.z)));
+    for (let i = NF; i >= 0; i--) ftr.lineTo(-plan[i].x - 0.05, -plan[i].z);
     const foreTrim = new Mesh(new ExtrudeGeometry(ftr, { depth: 0.1, bevelEnabled: false }).rotateX(-Math.PI / 2), gold);
     foreTrim.position.y = D + fh * 0.72;
     group.add(foreTrim);
-    const foreBase = new Mesh(new ExtrudeGeometry(ftr, { depth: 0.12, bevelEnabled: false }).rotateX(-Math.PI / 2), darkWood);
-    foreBase.position.y = D;
-    group.add(foreBase);
-    // Reling oben: vorn und an den Seiten (hinten offen zur Optik, die Rückwand trägt die Tür)
-    const ry = D + fh + 0.12;
-    const zs = [f0 + 0.2, (f0 + f1) / 2, f1 - 0.15];
-    const xAt = (z: number) => halfWidth(z) * 0.88 * 1.03;
-    for (const sd of [-1, 1]) {
-      for (let i = 0; i < zs.length - 1; i++) {
-        const a0 = { x: sd * xAt(zs[i]), y: ry, z: zs[i] }, b0 = { x: sd * xAt(zs[i + 1]), y: ry, z: zs[i + 1] };
-        railSeg(group, a0, b0, 0.78, 0.08, darkWood);
-        railSeg(group, a0, b0, 0.4, 0.05, darkWood);
-        for (const f of [0.35, 0.7]) put(group, cyl(0.022, 0.026, 0.34, 5), wood, a0.x + (b0.x - a0.x) * f, ry + 0.58, a0.z + (b0.z - a0.z) * f);
-      }
-      for (const z of zs) { put(group, box(0.07, 0.8, 0.07), wood, sd * xAt(z), ry + 0.4, z); put(group, cyl(0.05, 0.05, 0.05, 6), gold, sd * xAt(z), ry + 0.83, z); }
-    }
-    const zfr = zs[2], xfr = xAt(zfr);
-    railSeg(group, { x: -xfr, y: ry, z: zfr }, { x: xfr, y: ry, z: zfr }, 0.78, 0.08, darkWood);
-    railSeg(group, { x: -xfr, y: ry, z: zfr }, { x: xfr, y: ry, z: zfr }, 0.4, 0.05, darkWood);
-    const mfr = Math.floor((2 * xfr) / 0.5);
-    for (let i = 1; i < mfr; i++) put(group, cyl(0.022, 0.026, 0.34, 5), wood, -xfr + ((2 * xfr) * i) / mfr, ry + 0.58, zfr);
-    // Rückwand zum Hauptdeck: Doppeltür mit Goldrahmen, Bullaugen und zwei Wandlaternen
+    // Rückwand zum Hauptdeck: Doppeltür, Bullaugen, dazu die beiden Treppen
+    const stairLenF = topF / 0.58;
+    const dwF = Math.min(1.5, 0.8 + c.W * 0.03);
+    const stairWF = Math.min(1.6, 0.8 + c.W * 0.04);
+    const xsF = dwF / 2 + 0.4 + stairWF / 2;
+    const stairXF = [-xsF, xsF];
+    const zb = f0 - stairLenF;
     {
       const zw = f0 - 0.03;
-      const dh = Math.min(fh * 0.8, 1.7), dw = Math.min(1.5, 0.8 + c.W * 0.03);
-      put(group, box(dw, dh, 0.07), toon('#2B1A10'), 0, D + dh / 2, zw);
+      const dh = Math.min(fh * 0.85, 1.8);
+      put(group, box(dwF, dh, 0.07), toon('#2B1A10'), 0, D + dh / 2, zw);
       put(group, box(0.03, dh - 0.08, 0.03), toon('#1B100A'), 0, D + dh / 2, zw - 0.05);
       const fr = toon({ color: '#E3B04B', spec: 0.9 });
-      for (const e of [-1, 1]) put(group, box(0.09, dh + 0.1, 0.1), fr, e * (dw / 2 + 0.05), D + dh / 2 + 0.03, zw - 0.02);
-      put(group, box(dw + 0.28, 0.12, 0.12), fr, 0, D + dh + 0.08, zw - 0.02);
+      for (const e of [-1, 1]) put(group, box(0.09, dh + 0.1, 0.1), fr, e * (dwF / 2 + 0.05), D + dh / 2 + 0.03, zw - 0.02);
+      put(group, box(dwF + 0.28, 0.12, 0.12), fr, 0, D + dh + 0.08, zw - 0.02);
+      // Bullaugen mit Goldring außen neben den Treppen
       for (const e of [-1, 1]) {
-        const px = e * (dw / 2 + 0.55 + c.W * 0.045);
-        if (Math.abs(px) < xAt(f0) - 0.4) {
+        const px = e * (xsF + stairWF / 2 + 0.4);
+        if (Math.abs(px) < plan[0].x - 0.3) {
           put(group, cyl(0.2, 0.2, 0.06, 12), fr, px, D + fh * 0.5, zw - 0.02, Math.PI / 2, 0, 0);
           put(group, cyl(0.15, 0.15, 0.07, 12), toon('#1B2A3A'), px, D + fh * 0.5, zw - 0.03, Math.PI / 2, 0, 0);
         }
       }
-    }
-    // Buggeschütze oben (ab Korvette): zwei Drehgeschütze mit Zapfen nach vorn
-    if (c.L >= 30) {
-      const cu = COPPER(), ir = IRON();
-      for (const sd of [-1, 1]) {
-        const gz = f1 - 0.9, gx = sd * Math.min(halfWidth(gz) * 0.5, 1.6 + c.W * 0.06);
-        put(group, cyl(0.1, 0.12, 0.5, 6), darkWood, gx, ry + 0.25, gz);
-        const barrel = put(group, cyl(0.12, 0.17, 1.15, 10), cu, gx, ry + 0.58, gz + 0.35, Math.PI / 2, 0, 0);
-        barrel.scale.setScalar(Math.min(1.2, sc * 0.7 + 0.4));
-        put(group, cyl(0.19, 0.19, 0.06, 10), ir, gx, ry + 0.58, gz + 0.1, Math.PI / 2, 0, 0);
-        put(group, box(0.5, 0.1, 0.4), ir, gx, ry + 0.52, gz + 0.1);
+      // Treppen (Stufen, Wangen, Handläufe, Pfosten)
+      const treadMat = toon({ color: '#A67C4E', roughness: 0.85 });
+      const riserMat = toon({ color: '#5E3A22', roughness: 0.9 });
+      const n = Math.max(5, Math.ceil(topF / 0.24));
+      const run = stairLenF / n, rise = topF / n;
+      for (const xs of stairXF) {
+        for (let k = 1; k <= n; k++) {
+          const z = zb + (k - 0.5) * run, y = D + k * rise;
+          put(group, box(stairWF - 0.12, 0.07, run + 0.07), treadMat, xs, y - 0.035, z);
+          put(group, box(stairWF - 0.12, rise, 0.04), riserMat, xs, y - rise / 2, zb + (k - 1) * run + 0.03);
+        }
+        for (const e of [-1, 1]) {
+          const x = xs + e * (stairWF / 2 - 0.05);
+          const a0 = { x, y: D, z: zb }, b0 = { x, y: D + topF, z: f0 };
+          railSeg(group, a0, b0, 0.14, 0.09, wood, 0.34);
+          railSeg(group, a0, b0, 0.92, 0.07, darkWood);
+          railSeg(group, a0, b0, 0.48, 0.05, darkWood);
+          const nb = Math.max(3, Math.floor(stairLenF / 0.5));
+          for (let i = 1; i < nb; i++) put(group, cyl(0.022, 0.028, 0.74, 5), wood, x, D + (topF * i) / nb + 0.46, zb + (stairLenF * i) / nb);
+          for (const t of [0, 1]) { put(group, box(0.1, 1.05, 0.1), wood, x, D + topF * t + 0.52, zb + stairLenF * t); put(group, cyl(0.065, 0.065, 0.07, 6), gold, x, D + topF * t + 1.08, zb + stairLenF * t); }
+        }
+        // Wangen als feste Wände (Begrenzung beim Laufen)
+        for (const e of [-1, 1]) block(xs + e * (stairWF / 2 + 0.04), zb + stairLenF / 2, 0.06, stairLenF / 2);
       }
     }
-    block(0, (f0 + f1) / 2, c.L, (f1 - f0) / 2 + 0.05);
+    // Reling oben: Seiten, vorn um die Spitze und hinten mit Lücken an den Treppen
+    const ry = D + topF;
+    const rail = (a: { x: number; z: number }, b: { x: number; z: number }) => {
+      const a0 = { x: a.x, y: ry, z: a.z }, b0 = { x: b.x, y: ry, z: b.z };
+      railSeg(group, a0, b0, 0.78, 0.08, darkWood);
+      railSeg(group, a0, b0, 0.4, 0.05, darkWood);
+      const len = Math.hypot(b.x - a.x, b.z - a.z), m = Math.floor(len / 0.5);
+      for (let i = 1; i < m; i++) put(group, cyl(0.022, 0.026, 0.34, 5), wood, a.x + ((b.x - a.x) * i) / m, ry + 0.58, a.z + ((b.z - a.z) * i) / m);
+    };
+    const post = (x: number, z: number) => { put(group, box(0.07, 0.8, 0.07), wood, x, ry + 0.4, z); put(group, cyl(0.05, 0.05, 0.05, 6), gold, x, ry + 0.83, z); };
+    const rp2: { x: number; z: number }[] = plan.filter((_, i) => i % 2 === 0 || i === NF);
+    for (const sd of [-1, 1]) {
+      for (let i = 0; i < rp2.length - 1; i++) rail({ x: sd * rp2[i].x * 0.97, z: rp2[i].z }, { x: sd * rp2[i + 1].x * 0.97, z: rp2[i + 1].z });
+      for (const p of rp2) post(sd * p.x * 0.97, p.z);
+    }
+    {
+      // hintere Kante (Rückseite der Deckplatte) mit Öffnungen an den Treppen
+      const xe = plan[0].x * 0.97, gaps = stairXF.map((xs) => [xs - stairWF / 2, xs + stairWF / 2]);
+      let cur = -xe;
+      for (const g2 of gaps) { if (g2[0] - cur > 0.25) { rail({ x: cur, z: f0 + 0.15 }, { x: g2[0], z: f0 + 0.15 }); post(cur, f0 + 0.15); post(g2[0], f0 + 0.15); } cur = g2[1]; }
+      if (xe - cur > 0.25) { rail({ x: cur, z: f0 + 0.15 }, { x: xe, z: f0 + 0.15 }); post(cur, f0 + 0.15); post(xe, f0 + 0.15); }
+    }
+    // Ausstattung oben: Poller, Tauwerk, Buggeschütze (ab Korvette)
+    {
+      const ir = IRON(), cu = COPPER(), rp3 = ROPE();
+      const zf = f0 + (tipZ - f0) * 0.3, zg = f0 + (tipZ - f0) * 0.62;
+      for (const sd of [-1, 1]) {
+        const hx = edge(FORE_T0 + (1 - FORE_T0) * 0.3).x * 0.8;
+        put(group, cyl(0.1, 0.12, 0.4, 8), ir, sd * hx, ry + 0.2, zf);
+        put(group, cyl(0.15, 0.1, 0.08, 8), ir, sd * hx, ry + 0.42, zf);
+        block(sd * hx, zf, 0.2, 0.2);
+        for (let i = 0; i < 3; i++) put(group, new TorusGeometry(0.28 - i * 0.02, 0.05, 5, 12), rp3, sd * hx * 0.6, ry + 0.06 + i * 0.07, zf + 0.7, Math.PI / 2, 0, 0);
+      }
+      if (c.L >= 30) {
+        for (const sd of [-1, 1]) {
+          const gx = sd * Math.max(0.5, Math.min(edge(0.8).x * 0.5, 1.4 + c.W * 0.06));
+          put(group, cyl(0.1, 0.12, 0.5, 6), darkWood, gx, ry + 0.25, zg);
+          const barrel = put(group, cyl(0.12, 0.17, 1.15, 10), cu, gx, ry + 0.58, zg + 0.35, Math.PI / 2, 0, 0);
+          barrel.scale.setScalar(Math.min(1.2, sc * 0.7 + 0.4));
+          put(group, cyl(0.19, 0.19, 0.06, 10), ir, gx, ry + 0.58, zg + 0.1, Math.PI / 2, 0, 0);
+          put(group, box(0.5, 0.1, 0.4), ir, gx, ry + 0.52, zg + 0.1);
+          block(gx, zg + 0.2, 0.3, 0.55);
+        }
+      }
+    }
+    // Rückwand als feste Wand (Lücken an den Treppen): man steigt nur über die Treppen hinauf
+    {
+      const gaps = stairXF.map((xs) => [xs - stairWF / 2, xs + stairWF / 2]);
+      let cur = -c.L;
+      for (const g2 of gaps) { if (g2[0] > cur) block((cur + g2[0]) / 2, f0, (g2[0] - cur) / 2, 0.07); cur = g2[1]; }
+      if (c.L > cur) block((cur + c.L) / 2, f0, (c.L - cur) / 2, 0.07);
+    }
+    fore = { z0: f0, z1: tipZ, top: topF, stairX: stairXF, stairW: stairWF, stairLen: stairLenF };
   }
 
   // Steuerrad
@@ -805,6 +886,13 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
           const lid = new Mesh(new BoxGeometry(0.05, 0.12, 0.75), lidMat);
           lid.position.set(x + s * 0.05, y + 0.36, z);
           group.add(port, lid);
+          // nachts leuchtet das Innere der Stückpforten (Laternen im Geschützdeck)
+          const glow = new Mesh(new PlaneGeometry(0.5, 0.42), winMat);
+          glow.position.set(x + s * 0.085, y, z);
+          glow.rotation.y = s * Math.PI / 2;
+          glow.userData.noOutline = true;
+          group.add(glow);
+          windows.push(glow);
         }
       }
     }
@@ -817,7 +905,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   const lampIron = IRON();
   if (look.lanterns) {
     const mainTop = mastTops[Math.min(mastTops.length - 1, c.masts.length > 1 ? 1 : 0)];
-    const spots: number[][] = [[c.W * 0.35, D + castleH + 0.6, -c.L / 2 + 0.6], [-c.W * 0.35, D + castleH + 0.6, -c.L / 2 + 0.6], [0, bowTop + 0.7, bowZ - 1.4]];
+    const spots: number[][] = [[c.W * 0.35, D + castleH + 0.6, -c.L / 2 + 0.6], [-c.W * 0.35, D + castleH + 0.6, -c.L / 2 + 0.6], [0, Math.max(bowTop + 0.7, D + (fore ? fore.top : 0) + 0.8), bowZ - 1.4]];
     if (mainTop) spots.push([0, D + mainTop.h * 0.78 + 0.75, mainTop.z + 0.9]);
     for (const dl of doorLamps) spots.push(dl);
     // Lichtquellen: Heck (mittig) und Mastkorb
@@ -853,11 +941,19 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   {
     const iron = IRON();
     const kk = Math.min(1.6, 0.7 + sc * 0.35);
-    const castleEnd = castleZ1 + 0.8;
-    const foreStart = c.L > 20 ? c.L / 2 - c.L * 0.27 - 0.8 : c.L * 0.34;
+    // Standflächen erst hinter dem Treppenfuß des Achterdecks und vor dem Treppenfuß des Vordecks
+    const castleEnd = castleZ1 + stairLen + 0.8;
+    const foreStart = fore ? fore.z0 - fore.stairLen - 0.9 : c.L * 0.34;
     // Gitterluke mittschiffs
-    const hz = (castleEnd + foreStart) / 2 - c.L * 0.02;
     const hs = 0.75 * kk;
+    // Luke mittschiffs, aber nicht in einem Mast: nächster freier Platz zur Mitte zwischen den Treppen
+    const ringR = 0.19 * Math.min(sc, 3.2) + 0.55;
+    const hMid = (castleEnd + foreStart) / 2 - c.L * 0.02;
+    let hz = hMid, hBest = 1e9;
+    for (let z = castleEnd + hs * 1.1 + 0.3; z <= foreStart - hs * 1.1 - 0.3; z += 0.2) {
+      if (c.masts.some((m) => Math.abs(m * c.L - z) < hs * 1.1 + ringR + 0.3)) continue;
+      if (Math.abs(z - hMid) < hBest) { hBest = Math.abs(z - hMid); hz = z; }
+    }
     put(group, box(hs * 2.2, 0.16, hs * 2.2), darkWood, 0, D + 0.08, hz);
     block(0, hz, hs * 1.1, hs * 1.1);
     for (let i = -3; i <= 3; i++) put(group, box(0.05, 0.06, hs * 2), iron, i * hs * 0.3, D + 0.19, hz);
@@ -908,7 +1004,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     const arms = put(group, torus(0.5 * kk, 0.06 * kk, 10, Math.PI), iron, ax, ay - 0.55 * kk, az, 0, 0, Math.PI);
     arms.rotation.y = Math.PI / 2;
     for (const e of [-1, 1]) put(group, cone(0.14 * kk, 0.3 * kk), iron, ax, ay - 0.35 * kk, az + e * 0.5 * kk, 0, 0, e * -0.6);
-    const cz = c.L * 0.3;
+    const cz = Math.min(c.L * 0.3, foreStart - 0.5);
     for (let i = 0; i < 4; i++) put(group, torus((0.3 - i * 0.04) * kk, 0.05 * kk, 8), iron, halfWidth(cz) * 0.55, D + 0.04 + i * 0.07, cz, Math.PI / 2, 0, 0);
   }
 
@@ -1027,13 +1123,14 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     // Masten: Nagelbank mit Tauen (Ring aus Rahmen, Nägeln und Tauwerk) und Wantenspanner an der Bordwand
     for (const m of mastTops) {
       const ms2 = Math.min(sc, 3.2), rr = 0.19 * ms2 + 0.55;
-      put(group, torus(rr, 0.045, 18), darkWood, 0, D + 0.85, m.z, Math.PI / 2, 0, 0);
+      const mb = fore && m.z > fore.z0 ? D + fore.top : D; // auf dem Vordeck steht die Nagelbank auf dessen Plankendeck
+      put(group, torus(rr, 0.045, 18), darkWood, 0, mb + 0.85, m.z, Math.PI / 2, 0, 0);
       for (let k = 0; k < 6; k++) {
         const a = (k / 6) * Math.PI * 2;
-        put(group, cyl(0.035, 0.04, 0.85, 5), wood, Math.cos(a) * rr, D + 0.42, Math.sin(a) * rr + m.z);
+        put(group, cyl(0.035, 0.04, 0.85, 5), wood, Math.cos(a) * rr, mb + 0.42, Math.sin(a) * rr + m.z);
         // Belegnagel mit hängender Tauschlinge
-        put(group, cyl(0.022, 0.022, 0.26, 5), gold, Math.cos(a) * rr * 1.0, D + 0.97, Math.sin(a) * rr + m.z);
-        if (k % 2 === 0) put(group, torus(0.13, 0.025, 8), rp2, Math.cos(a) * rr, D + 0.6, Math.sin(a) * rr + m.z, 0, a, 0);
+        put(group, cyl(0.022, 0.022, 0.26, 5), gold, Math.cos(a) * rr * 1.0, mb + 0.97, Math.sin(a) * rr + m.z);
+        if (k % 2 === 0) put(group, torus(0.13, 0.025, 8), rp2, Math.cos(a) * rr, mb + 0.6, Math.sin(a) * rr + m.z, 0, a, 0);
       }
       block(0, m.z, rr + 0.05, rr + 0.05);
       for (const sd of [-1, 1]) {
@@ -1049,7 +1146,8 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     if (c.decks >= 2) {
       const per = Math.max(2, Math.floor(c.can * 0.7));
       for (let i = 0; i < per; i++) {
-        const gz = castleZ1 + 3.5 + ((i + 0.5) / per) * (Math.max(castleZ1 + 8, (fore ? fore.z0 : c.L * 0.3) - 3) - castleZ1 - 3.5);
+        const gz0 = castleZ1 + stairLen + 1.4, gz1 = Math.max(gz0 + 4, (fore ? fore.z0 - fore.stairLen : c.L * 0.3) - 1.4);
+        const gz = gz0 + ((i + 0.5) / per) * (gz1 - gz0);
         for (const sd of [-1, 1]) {
           carr(sd * halfWidth(gz) * 0.48, D, gz, sd);
         }
@@ -1058,7 +1156,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
 
     // Beiboot auf Böcken über der Luke (wo zwischen den Masten Platz ist)
     if (c.L >= 30) {
-      const castleEnd = castleZ1 + 0.8, foreStart = fore ? fore.z0 - 0.8 : c.L * 0.34;
+      const castleEnd = castleZ1 + stairLen + 0.8, foreStart = fore ? fore.z0 - fore.stairLen - 0.9 : c.L * 0.34;
       const len = Math.min(5.2, c.L * 0.1 + 0.5), mid = (castleEnd + foreStart) / 2 - c.L * 0.02;
       let bz: number | null = null, best = 1e9;
       for (let z = castleEnd + len / 2 + 1; z <= foreStart - len / 2 - 1; z += 0.25) {
@@ -1127,7 +1225,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     if ((o as Mesh).isMesh && !o.userData.noOutline) { o.castShadow = true; o.receiveShadow = true; }
   });
   addOutlines(group);
-  return { group, sails, muzzlesL, muzzlesR, lanterns, windows, flag, deckY: D, helm, wheel, quarter: { z0: castleZ0, z1: castleZ1, top: topY, stairX, stairW, stairLen, bulge }, fore, blockers, halfWidth, deckMat, deckBase, lights };
+  return { group, sails, muzzlesL, muzzlesR, lanterns, windows, flag, deckY: D, helm, wheel, quarter: { z0: castleZ0, z1: castleZ1, top: topY, stairX, stairW, stairLen, flare }, fore, blockers, halfWidth, deckMat, deckBase, lights };
 }
 
 /** Feste Teile pro Material zu einem Mesh zusammenfassen (weniger Zeichenaufrufe) */

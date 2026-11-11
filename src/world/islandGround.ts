@@ -136,7 +136,10 @@ export interface Ground {
 }
 
 /** Achterdeck mit Treppen (Schiffskoordinaten, Höhen relativ zum Hauptdeck) */
-export interface QuarterDeck { z0: number; z1: number; top: number; stairX: number[]; stairW: number; stairLen: number; bulge?: number }
+export interface QuarterDeck { z0: number; z1: number; top: number; stairX: number[]; stairW: number; stairLen: number; flare?: number }
+
+/** Vordeck mit zwei geraden Treppen an der Rückwand (z0 = Rückkante, z1 = Spitze) */
+export interface ForeDeck { z0: number; z1: number; top: number; stairX: number[]; stairW: number; stairLen: number }
 
 /** Dünne feste Wand im Schiffsraum (Mitte, halbe Ausdehnung) */
 interface DeckWall { cx: number; cz: number; hx: number; hz: number }
@@ -149,7 +152,8 @@ interface DeckWall { cx: number; cz: number; hx: number; hz: number }
 export class DeckGround implements Ground {
   private walls: DeckWall[] = [];
 
-  constructor(private ship: { x: number; z: number; heading: number; cls: { L: number }; model: { deckY: number; group: { position: { y: number } }; halfWidth(z: number): number; quarter?: QuarterDeck; fore?: { z0: number; z1: number } | null; blockers?: DeckWall[] } }) {
+  constructor(private ship: { x: number; z: number; heading: number; cls: { L: number }; model: { deckY: number; group: { position: { y: number }; matrixWorld: { elements: ArrayLike<number> }; updateMatrixWorld(force?: boolean): void }; halfWidth(z: number): number; quarter?: QuarterDeck; fore?: ForeDeck | null; blockers?: DeckWall[] } }) {
+    ship.model.group.updateMatrixWorld(true);
     // feste Aufbauten (Masten, Luke, Fässer, Möbel, Vorderkastell) sind Hindernisse
     for (const b of ship.model.blockers ?? []) this.walls.push(b);
     const q = ship.model.quarter;
@@ -160,26 +164,35 @@ export class DeckGround implements Ground {
     let cur = -big;
     for (const g of gaps) { if (g[0] > cur) this.walls.push({ cx: (cur + g[0]) / 2, cz: q.z1, hx: (g[0] - cur) / 2, hz: 0.07 }); cur = g[1]; }
     if (big > cur) this.walls.push({ cx: (cur + big) / 2, cz: q.z1, hx: (big - cur) / 2, hz: 0.07 });
-    // Wangen der Treppen
-    const b = q.bulge ?? 0;
+    // Wangen der Treppen (bei geschwungenen Treppen als Kette kurzer Stücke entlang der Kurve)
+    const fl = q.flare ?? 0;
     for (const sx of q.stairX) {
       for (const e of [-1, 1]) {
-        if (b <= 0) { this.walls.push({ cx: sx + e * (q.stairW / 2 + 0.04), cz: q.z1 + q.stairLen / 2, hx: 0.06, hz: q.stairLen / 2 }); continue; }
-        // geschwungene Treppe: Wangen als Kette kurzer Stücke entlang der Kurve
-        const S = 14;
-        for (let j = 0; j < S; j++) {
-          const t0 = j / S, t1 = (j + 1) / S;
-          const x0 = this.stairCx(sx, t0) + e * (q.stairW / 2 + 0.04), x1 = this.stairCx(sx, t1) + e * (q.stairW / 2 + 0.04);
-          this.walls.push({ cx: (x0 + x1) / 2, cz: q.z1 + q.stairLen * (1 - (t0 + t1) / 2), hx: Math.abs(x1 - x0) / 2 + 0.06, hz: q.stairLen / S / 2 + 0.01 });
+        if (fl <= 0) { this.walls.push({ cx: sx + e * (q.stairW / 2 + 0.04), cz: q.z1 + q.stairLen / 2, hx: 0.06, hz: q.stairLen / 2 }); continue; }
+        const S = 18;
+        let prev: { x: number; z: number } | null = null;
+        for (let j = 0; j <= S; j++) {
+          const t = j / S, N = this.stairN(sx, t), o = e * (q.stairW / 2 + 0.04);
+          const pt = { x: this.stairCx(sx, t) + N.nx * o, z: q.z1 + q.stairLen * (1 - t) + N.nz * o };
+          if (prev) this.walls.push({ cx: (pt.x + prev.x) / 2, cz: (pt.z + prev.z) / 2, hx: Math.abs(pt.x - prev.x) / 2 + 0.06, hz: Math.abs(pt.z - prev.z) / 2 + 0.06 });
+          prev = pt;
         }
       }
     }
   }
 
-  /** Mittellinie einer Treppe bei t (0 unten … 1 oben); geschwungene Treppen buchten zur Mitte aus */
+  /** Mittellinie einer Treppe bei t (0 unten … 1 oben); geschwungene Treppen schwingen unten nach außen */
   private stairCx(sx: number, t: number) {
-    const b = this.ship.model.quarter?.bulge ?? 0;
-    return sx - Math.sign(sx) * b * Math.sin(Math.PI * t);
+    const f = this.ship.model.quarter?.flare ?? 0;
+    return sx + Math.sign(sx) * f * (1 - t) * (1 - t);
+  }
+
+  /** Querrichtung (x/z) senkrecht zur Lauflinie bei t; nx ist zugleich der Kosinus der Schräge */
+  private stairN(sx: number, t: number) {
+    const q = this.ship.model.quarter!;
+    const f = q.flare ?? 0;
+    const dx = -2 * Math.sign(sx) * f * (1 - t), dz = -q.stairLen, l = Math.hypot(dx, dz);
+    return { nx: -dz / l, nz: dx / l };
   }
 
   private toLocal(x: number, z: number) {
@@ -193,24 +206,33 @@ export class DeckGround implements Ground {
     return { x: this.ship.x + lx * c + lz * s, z: this.ship.z - lx * s + lz * c };
   }
 
-  /** Höhe über dem Hauptdeck an einer Schiffsposition: Achterdeck oben, Treppen als Rampe, sonst 0 */
+  /** Höhe über dem Hauptdeck an einer Schiffsposition: Achterdeck und Vordeck oben, Treppen als Rampe, sonst 0 */
   private level(lx: number, lz: number): number {
     const q = this.ship.model.quarter;
+    const f = this.ship.model.fore;
+    if (f) {
+      if (lz >= f.z0) return f.top;
+      if (lz > f.z0 - f.stairLen) for (const sx of f.stairX) if (Math.abs(lx - sx) <= f.stairW / 2 + 0.08) return f.top * (1 - (f.z0 - lz) / f.stairLen);
+    }
     if (!q) return 0;
     if (lz <= q.z1) return lz >= q.z0 - 0.5 ? q.top : 0;
     if (lz < q.z1 + q.stairLen) {
       const t = 1 - (lz - q.z1) / q.stairLen;
-      for (const sx of q.stairX) if (Math.abs(lx - this.stairCx(sx, t)) <= q.stairW / 2 + 0.08) return q.top * (1 - (lz - q.z1) / q.stairLen);
+      for (const sx of q.stairX) if (Math.abs(lx - this.stairCx(sx, t)) * this.stairN(sx, t).nx <= q.stairW / 2 + 0.08) return q.top * (1 - (lz - q.z1) / q.stairLen);
     }
     return 0;
   }
 
-  /** Ohne Position: Höhe des Hauptdecks (z. B. für Gegner beim Entern) */
+  /**
+   * Höhe des Decks an einer Weltposition. Folgt der Neigung des Schiffs (Nicken und Rollen im Seegang), nicht nur dem Auf und Ab:
+   * sonst schwebt man im Sturm über dem Deck oder steckt in den Planken, besonders auf den Treppen. Ohne Position: Höhe des Hauptdecks.
+   */
   height(x?: number, z?: number) {
-    const base = this.ship.model.group.position.y + this.ship.model.deckY;
-    if (x === undefined || z === undefined) return base;
+    const m = this.ship.model.group.matrixWorld.elements;
+    if (x === undefined || z === undefined) return m[5] * this.ship.model.deckY + m[13];
     const { lx, lz } = this.toLocal(x, z);
-    return base + this.level(lx, lz);
+    const ly = this.ship.model.deckY + this.level(lx, lz);
+    return m[1] * lx + m[5] * ly + m[9] * lz + m[13];
   }
 
   /** Kreis (r) aus einer Wand herausschieben, auf der Seite, auf der er gerade ist (die Wände sind dünn, die Schritte klein) */
@@ -232,10 +254,10 @@ export class DeckGround implements Ground {
     const L = this.ship.cls.L;
     const q = this.ship.model.quarter;
     const zMin = q ? q.z0 + 0.35 + radius : -L / 2 + L * 0.28;
-    const fore = this.ship.model.fore;
-    const cz = Math.max(zMin, Math.min(fore ? fore.z0 - radius : L / 2 - L * 0.12, lz));
+    // bis ganz nach vorn in die Bugspitze (dort wird das Deck schmal)
+    const cz = Math.max(zMin, Math.min(L / 2 * 0.93, lz));
     const top = !!q && cz <= q.z1;
-    const hw = this.ship.model.halfWidth(cz) * (top ? 0.86 : 0.85) - radius;
+    const hw = Math.max(0.3, this.ship.model.halfWidth(cz) * (top ? 0.86 : 0.85) - radius);
     let px = Math.max(-hw, Math.min(hw, lx)), pz = cz;
     for (let it = 0; it < 2; it++) for (const w of this.walls) { const o = this.pushWall(w, px, pz, radius); px = o.lx; pz = o.lz; }
     return this.toWorld(px, pz);
@@ -266,8 +288,8 @@ export class DeckGround implements Ground {
     const L = this.ship.cls.L;
     const q = this.ship.model.quarter;
     const zStart = q ? q.z1 + q.stairLen + 0.8 : -L / 2 + L * 0.28;
-    // vor dem Vorderkastell enden (dahinter ist massives Holz)
-    const zEnd = this.ship.model.fore ? this.ship.model.fore.z0 - 1.0 : L / 2 - L * 0.12;
+    // vor dem Treppenfuß des Vordecks enden
+    const zEnd = this.ship.model.fore ? this.ship.model.fore.z0 - this.ship.model.fore.stairLen - 0.8 : L / 2 - L * 0.12;
     const lz = zStart + (fz * 0.5 + 0.5) * Math.max(2, zEnd - zStart);
     return this.toWorld(fx * this.ship.model.halfWidth(lz) * 0.7, lz);
   }

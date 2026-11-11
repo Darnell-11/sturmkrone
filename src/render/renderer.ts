@@ -81,6 +81,7 @@ export class GameRenderer {
   private godRays: GodRaysEffect | null = null;
   private dof: DepthOfFieldEffect | null = null;
   private heat: HeatEffect | null = null;
+  private grade: GradeEffect | null = null;
   /** Tiefenunschärfe: weich nachgeführter Fokuspunkt und optionales Ziel (erfasster Gegner) */
   private dofFocus = new Vector3();
   private dofRange = 60;
@@ -168,6 +169,7 @@ export class GameRenderer {
     this.heat = null;
     this.godRays = null;
     this.dof = null;
+    this.grade = null;
     const c = this.config;
     // Niedrig/Mittel: Konturen als Inverted Hull, Hoch/Maximal: Kantenerkennung als Post-Effekt
     setHullsVisible(!c.post.outlines);
@@ -235,7 +237,8 @@ export class GameRenderer {
     if (c.post.outlines) effects.push(new EdgeEffect({ thickness: Math.max(1, this.pixelRatio()), fadeFar: 320 }));
     if (c.post.colorGrading) {
       // ernster, düsterer Anime-Look: kühle Schatten, warme Lichter, ruhigere Farben, dezente Vignette
-      effects.push(new GradeEffect());
+      this.grade = new GradeEffect();
+      effects.push(this.grade);
       effects.push(new VignetteEffect(RENDER_LOOK.vignette));
     }
     // Immer zuletzt: fertiges Bild undurchsichtig (sonst schwarze Flächen auf Samsung-Handys)
@@ -343,6 +346,14 @@ export class GameRenderer {
         mat.needsUpdate = true;
       }
     });
+  }
+
+  /** Stimmung für die Farbkorrektur: Nacht (Mondlicht-Blau) und goldene Stunde (warme Lichter), je 0 … 1 */
+  setMood(night: number, gold: number) {
+    const u = this.grade?.uniforms;
+    if (!u) return;
+    u.get('uNight')!.value = night;
+    u.get('uGold')!.value = gold;
   }
 
   render(dt: number) {

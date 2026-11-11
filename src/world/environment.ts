@@ -290,7 +290,7 @@ export class Environment {
     ou.uHorizon.value.copy(horizon);
     ou.uSunDir.value.copy(pal.sunVis > 0.1 ? pal.sunDir : pal.moonDir);
     ou.uSunCol.value.copy(pal.light);
-    ou.uSpecK.value = Math.max(pal.sunVis, pal.moonVis * 0.5) * (1 - greyK);
+    ou.uSpecK.value = Math.max(pal.sunVis, pal.moonVis * 0.9) * (1 - greyK);
     ou.uWindDir.value = this.windDir;
     ou.uWindK.value = w.wind;
     this.ocean.follow(camera.position.x, camera.position.z, camera.position);

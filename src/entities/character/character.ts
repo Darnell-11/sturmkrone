@@ -25,6 +25,7 @@ import { CHARACTER_INK, toon, toonChar, toonFx, type Surface, type ToonFxUniform
 import { disposeMaterial } from '../../render/dispose';
 import { audio } from '../../audio/audio';
 import { WeaponTrail } from '../../render/weaponTrail';
+import { createLamp } from '../../render/lamps';
 import { Quaternion, Vector3 as V3, type Scene } from 'three';
 import type { ColorRepresentation, Material, Mesh } from 'three';
 import { disposeObject, markShared } from '../../render/dispose';
@@ -93,6 +94,11 @@ export class Character {
   // Die Logik setzt die Position 60-mal pro Sekunde (place); die Darstellung gleitet bei jedem Bild
   // zwischen dem letzten und dem aktuellen Schritt (present). So ruckelt nichts auf 90/120/144-Hz-Bildschirmen.
   private static moving = new Set<Character>();
+  /** Alle Figuren mit Laterne (für die Lichter, die den nächsten Trägern folgen) */
+  static readonly lamped = new Set<Character>();
+  /** Laterne an der Hüfte (hängt am Becken-Knochen, pendelt beim Gehen) */
+  lamp: Mesh | null = null;
+  private lampPhase = Math.random() * 6.28;
   private from = { x: 0, y: 0, z: 0, yaw: 0 };
   private tgt = { x: 0, y: 0, z: 0, yaw: 0 };
   private placed = false;
@@ -213,6 +219,7 @@ export class Character {
     });
     this.look = look;
     this.applyLook(look);
+    this.mountLamp();
   }
 
   // ---------- Anime-Figur (VRoid) ----------
@@ -271,6 +278,25 @@ export class Character {
     this.look = look;
     this.applyVroidLook(look);
     if (this.outline) this.rig.traverse((o) => { const m = o as SkinnedMesh; if (m.isSkinnedMesh && !(m.material as { transparent?: boolean }).transparent) addOutlines(m, 0.7); });
+    this.mountLamp();
+  }
+
+  /** Laterne ans Bein hängen: am Becken, außen an der rechten Hüfte, etwa in Oberschenkelhöhe */
+  private mountLamp() {
+    this.lamp?.removeFromParent();
+    this.lamp = null;
+    const hips = this.bones.hips;
+    if (!hips) { Character.lamped.delete(this); return; }
+    this.rig.updateMatrixWorld(true);
+    const ws = new Vector3();
+    hips.getWorldScale(ws);
+    const k = 1 / Math.max(1e-4, (ws.y + ws.x) / 2);
+    const lamp = createLamp(k * 1.25);
+    lamp.position.set(-0.27 * k, 0.04 * k, 0.0);
+    lamp.userData.holder = this.holder;
+    hips.add(lamp);
+    this.lamp = lamp;
+    Character.lamped.add(this);
   }
 
   /** Farben der Anime-Figur aus dem Look (Haut, Haare, Kleidung, Augen) */
@@ -764,6 +790,13 @@ export class Character {
     this.undoLean();
     this.mixer.update(dt);
     this.applyLean();
+    if (this.lamp) {
+      // die Laterne pendelt leicht, beim Gehen stärker
+      const lt = performance.now() * 0.001 + this.lampPhase;
+      const w = this.currentName === 'Walking_A' ? 1 : this.currentName === 'Running_A' || this.currentName === 'Running_B' ? 1.8 : 0.35;
+      this.lamp.rotation.z = Math.sin(lt * 2.6) * 0.07 * w;
+      this.lamp.rotation.x = Math.sin(lt * 3.1 + 1) * 0.06 * w;
+    }
     // Mimik: blinzeln, beim Jubeln strahlen, beim Reden den Mund bewegen
     const f = this.face;
     if (f && f.mesh.morphTargetInfluences) {
@@ -816,6 +849,9 @@ export class Character {
   /** Figur entfernen und alles freigeben, was nur ihr gehört (Kleidung, Hut, Waffen, Skelett-Daten) */
   dispose() {
     Character.moving.delete(this);
+    Character.lamped.delete(this);
+    this.lamp?.removeFromParent();
+    this.lamp = null;
     this.dropTrails();
     // Effekt-Kopien gehören nur dieser Figur (hängen sie gerade nicht an einem Netz, hier freigeben)
     for (const m of this.fxMats) disposeMaterial(m);

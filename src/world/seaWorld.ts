@@ -23,6 +23,7 @@ import type { CharacterLook, NpcRole } from '../data/characterParts';
 import { CAMERA_PLANES, type QualityConfig } from '../data/qualityTiers';
 import { EDGE_WALL, WORLD_SCALE } from '../data/world';
 import type { CharacterAssets } from '../entities/character/assets';
+import { LampPool, lampShared } from '../render/lamps';
 import { Character } from '../entities/character/character';
 import { weaponsFor } from '../entities/character/weapons';
 import { Npc } from '../entities/npc';
@@ -39,7 +40,7 @@ import { SITES } from '../data/settlements';
 import { buildSite } from './settlement';
 import { setSiteNight } from './architecture';
 import { cachedProto, floraProto, Scatter, type Biome, type VegChunk } from './vegetation';
-import type { Material } from 'three';
+import type { Material, Object3D } from 'three';
 import { IslandFauna } from './fauna';
 import { texDetail } from '../render/texDetail';
 import type { IslandStyle } from '../data/regions';
@@ -274,6 +275,8 @@ export class SeaWorld {
   private seaYaw = 0;
   private camIdle = 0;
   /** Geglättete Seekamera: Blickwinkel, Abstand, Höhe und Ankerpunkt werden einzeln nachgeführt (sonst schneidet die Kamera beim Umschwenken durchs Schiff) */
+  private lampPool!: LampPool;
+  private lampList: Object3D[] = [];
   private camAz = 0;
   /** Kameraradius und Höhenwinkel der Schiffskamera (geglättet) */
   private camR = 0;
@@ -305,6 +308,7 @@ export class SeaWorld {
     this.boat = this.ship.model.group;
 
     this.fauna = new IslandFauna(this.scene);
+    this.lampPool = new LampPool(this.scene, 4);
     this.islands = this.buildIslands();
     this.env.setIslands(this.islands);
     this.buildBuoys();
@@ -731,6 +735,7 @@ export class SeaWorld {
 
   applyQuality(c: QualityConfig) {
     this.figureDist = c.figureDistance;
+    this.lampPool.setCount(c.lamps);
     this.viewDist = c.viewDistance;
     // Sparstufen des Leistungs-Wächters kürzen die Sichtweite von Gras, Büschen und Blumen (weniger Zeichenaufrufe)
     this.vegLod = Math.max(0.4, Math.min(1.25, c.viewDistance / 800)) * (1 - 0.17 * (c.budget ?? 0));
@@ -1763,6 +1768,7 @@ export class SeaWorld {
     // Lichter gehen bei Nacht an und im Unwetter schon am Tag (dunkle Wolken)
     const night = Math.max(1 - pal.sunVis, Math.min(1, Math.max(0, env.weather.p.grey - 0.4) * 2.2));
     const sea = this.seaEnv;
+    lampShared.set(night);
 
     const wy = env.heightAt(x, z);
     const f = this.fwd(h);
@@ -1934,6 +1940,13 @@ export class SeaWorld {
       const s = this.shake * this.shake * 0.6;
       cam.position.x += (Math.random() - 0.5) * s;
       cam.position.y += (Math.random() - 0.5) * s;
+    }
+    // Laternen: die nächsten Träger bekommen echtes Licht
+    {
+      const list = this.lampList;
+      list.length = 0;
+      for (const ch of Character.lamped) if (ch.lamp && ch.holder.visible) list.push(ch.lamp);
+      this.lampPool.update(frameDt, cam.position.distanceTo(this.focus) < 60 ? this.focus : cam.position, list);
     }
     env.render(cam, this.focus);
   }
