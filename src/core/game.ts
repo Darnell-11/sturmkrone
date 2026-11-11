@@ -1699,6 +1699,16 @@ export class Game {
     return 'Repariert!';
   }
 
+  /** Testwerkzeug: Gold geben (Welt-Werkstatt, unbegrenzt oft); liefert den neuen Stand */
+  testGold(n: number) {
+    const s = this.save;
+    if (!s) return 0;
+    s.player.gold += n;
+    audio.play('coin');
+    this.persist();
+    return s.player.gold;
+  }
+
   /** Testwerkzeug: Punkte und Stufen geben */
   testGrant(sp: number, levels: number) {
     const s = this.save;

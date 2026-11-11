@@ -715,6 +715,9 @@ export class Menus {
       <div class="opt"><span class="label">Orte</span>
         <div class="row"><button class="mini" data-a="edge">Zum Weltrand</button><button class="mini" data-a="home">Zurück zum Start</button><button class="mini" data-a="yard">Werft öffnen</button></div>
       </div>
+      <div class="opt"><span class="label">Gold (Test)</span>
+        <div class="row"><button class="mini" data-a="gold">+10.000 Gold</button></div>
+      </div>
       <div class="opt"><span class="label">Faji (Test)</span>
         <div class="row"><button class="mini" data-a="sp">+5 Faji-Punkte</button><button class="mini" data-a="lvl">+5 Stufen</button><button class="mini" data-a="awaken">Erwachen zeigen</button></div>
       </div>
@@ -728,6 +731,7 @@ export class Menus {
         edge: () => { g.world.teleport(EDGE_WALL - 160, 0, Math.PI / 2); g.resume(); g.hud.toast('Vor dir liegt der Weltrand …', 3); },
         home: () => { g.world.teleport(0, 12, 0); g.resume(); },
         yard: () => this.showShipyard('', () => this.showWorkshop()),
+        gold: () => { const total = g.testGold(10000); g.hud.toast(`+10.000 Gold (jetzt ${total.toLocaleString('de-DE')})`); },
         sp: () => { g.testGrant(5, 0); g.hud.toast('+5 Faji-Punkte'); },
         lvl: () => { g.testGrant(5, 5); g.hud.toast('+5 Stufen'); },
         awaken: () => { g.resume(); g.checkAwakening('koerper'); },

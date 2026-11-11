@@ -1,5 +1,11 @@
 # Was ist neu
 
+## 2.9.53 – Gold-Knopf in der Welt-Werkstatt (11.11.2026)
+
+- **Gold geben:** In der Welt-Werkstatt gibt es unter „Gold (Test)“ den Knopf **+10.000 Gold**. Man kann ihn beliebig oft drücken, jeder Druck gibt 10.000 Gold und speichert. Die Werkstatt gibt es nur in der Entwicklerversion, nicht auf der veröffentlichten Seite.
+
+**Technik (für Entwickler):** `game.ts`: `testGold(n)`; `menus.ts`: Knopf `gold` in `showWorkshop`. Geprüft: `tsc`, Knopf im Spiel (200 → 10.200 → 20.200).
+
 ## 2.9.52 – Ruhiges Schiff, echte Umlaufkamera mit Draufsicht, lebendige Crew und reich ausgestattete Schiffe (11.11.2026)
 
 - **Zittern behoben:** Verließ man bei voller Fahrt das Ruder oder ging an Land, zitterte das Schiff stark. Ursache: Das Schiff wurde zu Fuß nicht mehr fortgeschrieben, die Darstellung mischte aber weiter zwischen alter und neuer Lage (bei Tempo 14 sprang es etwa 25 cm hin und her). Jetzt liegt das Schiff still, sobald man das Ruder verlässt: Fahrt, Drehung und Interpolationslage werden gleichgesetzt (gemessen: höchstens 2,6 mm Bewegung pro Bild, Drehung 0).
