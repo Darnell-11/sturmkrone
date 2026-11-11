@@ -33,8 +33,12 @@ export interface QualityConfig {
   };
   /** Kantenglättung im Post-Effekt-Puffer (0 = aus) */
   multisampling: number;
-  /** Sichtweite in Metern (Nebel-Ende und Kamera-Fernebene) */
+  /** Sichtweite in Metern (Nebel-Ende); muss unter der Kamera-Fernebene bleiben (CAMERA_PLANES.far) */
   viewDistance: number;
+  /** Anteil der Sichtweite, ab dem der Dunst bei klarem Wetter beginnt (höher = die mittlere Entfernung bleibt klarer) */
+  fogStart: number;
+  /** Bis zu dieser Entfernung werden Figuren (Bewohner, Gegner, Crew) gezeichnet */
+  figureDistance: number;
   /** Multiplikator für Partikelmengen */
   particles: number;
   /** Detailstufe für Geometrie (Wellenauflösung, Vegetation …) */
@@ -46,6 +50,8 @@ export interface QualityConfig {
   supersample: number;
   /** Spiegelungen (IBL): Sekunden zwischen zwei Aufnahmen des Himmels; 0 = aus (einfacher Himmelsverlauf) */
   ibl: number;
+  /** Sparstufe des Leistungs-Wächters (0 = keine), siehe render/watchdog.ts */
+  budget?: number;
 }
 
 /** Horizont-basierte Umgebungsverdeckung (GTAO-Art), in halber Auflösung berechnet */
@@ -62,6 +68,13 @@ export interface AoConfig {
 
 /** Handy-Grafikchips sind viel schwächer: dort rechnet die Umgebungsverdeckung mit weniger Proben */
 export const MOBILE_AO_LIMIT = { dirs: 3, steps: 3, scale: 0.5 };
+
+/**
+ * Feste Schnittebenen der Spielkamera (Meter): nah 0,1 – nichts wird direkt vor der Kamera abgeschnitten;
+ * fern 1000 – alles dahinter liegt im Nebel. Himmel, Wolken und das Meer bis zum Horizont werden auf die
+ * Fernebene gelegt statt abgeschnitten (sky.ts, ocean.ts). Tiefen-Effekte lesen die Werte von der Kamera.
+ */
+export const CAMERA_PLANES = { near: 0.1, far: 1000 };
 
 /** Gemeinsamer Bild-Look aller Stufen */
 export const RENDER_LOOK = {
@@ -85,6 +98,8 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     post: { enabled: true, bloom: false, outlines: false, colorGrading: true, godRays: false, depthOfField: false, ambientOcclusion: null },
     multisampling: 0,
     viewDistance: 420,
+    fogStart: 0.2,
+    figureDistance: 59,
     particles: 0.35,
     detail: 0.5,
     textureScale: 1,
@@ -103,6 +118,8 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     post: { enabled: true, bloom: true, outlines: false, colorGrading: true, godRays: false, depthOfField: false, ambientOcclusion: null },
     multisampling: 2,
     viewDistance: 560,
+    fogStart: 0.2,
+    figureDistance: 78,
     particles: 0.6,
     detail: 0.75,
     textureScale: 1,
@@ -120,6 +137,8 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 4, steps: 3, scale: 0.5, radius: 1.1, intensity: 0.85 }, heat: true, ssr: { steps: 14, scale: 0.5 } },
     multisampling: 4,
     viewDistance: 800,
+    fogStart: 0.2,
+    figureDistance: 112,
     particles: 1,
     detail: 1,
     textureScale: 2,
@@ -136,7 +155,9 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     shadows: { enabled: true, mapSize: 2048, soft: true, cascades: 3, far: 320, smallRange: 70 },
     post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 6, steps: 4, scale: 0.5, radius: 1.3, intensity: 0.95 }, heat: true, ssr: { steps: 20, scale: 0.5 } },
     multisampling: 4,
-    viewDistance: 1200,
+    viewDistance: 900,
+    fogStart: 0.27,
+    figureDistance: 168,
     particles: 1.5,
     detail: 1.25,
     textureScale: 2,
@@ -153,7 +174,9 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     shadows: { enabled: true, mapSize: 4096, soft: true, cascades: 4, far: 520, smallRange: 110 },
     post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 8, steps: 5, scale: 0.75, radius: 1.4, intensity: 1 }, heat: true, ssr: { steps: 28, scale: 0.6 } },
     multisampling: 8,
-    viewDistance: 1800,
+    viewDistance: 960,
+    fogStart: 0.375,
+    figureDistance: 252,
     particles: 2,
     detail: 1.6,
     textureScale: 4,

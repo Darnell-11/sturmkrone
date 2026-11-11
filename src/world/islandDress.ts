@@ -21,6 +21,9 @@ import { boxBlocker, coastK, type WalkIsland } from './islandGround';
 import { plant, type StyleKit } from './islandStyle';
 import { hashId, seeded } from './waves';
 import { markWind, windify } from '../render/wind';
+import { cachedProto, floraProto, noise, type Scatter } from './vegetation';
+import { build, colliders } from './architecture';
+import type { StructureType } from '../data/settlements';
 
 /** Ein Punkt in Inselkoordinaten (y = Bodenhöhe) */
 export interface Spot { x: number; y: number; z: number }
@@ -34,6 +37,8 @@ export interface DressOpts {
   glow: Set<Mesh>;
   density: number;
   style: IslandStyle;
+  /** Sammler für instanzierten Bewuchs (Bäume, Büsche, Gras, Felsen) */
+  veg: Scatter;
 }
 
 const FLOWERS: Record<IslandStyle, string[]> = {
@@ -43,6 +48,8 @@ const FLOWERS: Record<IslandStyle, string[]> = {
   glut: ['#D2602E', '#8C4432'],
   sturm: ['#C2CCD2', '#8FA0AC'],
   schlund: ['#78D8F2', '#A886F0'],
+  festland: ['#E8D44A', '#F2F0E6', '#C8443C', '#7B8FE0'],
+  klippe: ['#C2CCD2', '#9AA8C8'],
 };
 
 /**
@@ -51,7 +58,7 @@ const FLOWERS: Record<IslandStyle, string[]> = {
  * Liefert Baum-, Busch- und Feuerplätze für Tiere und Effekte.
  */
 export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fires: Spot[] } {
-  const { group, def, kit, walk, hAt, glow, style } = o;
+  const { group, def, kit, walk, hAt, glow, style, veg } = o;
   const rnd = seeded(hashId(def.id) ^ 0x9e3779b9);
   const r = def.r;
   const dens = Math.max(0.4, Math.min(1.6, o.density));
@@ -83,6 +90,30 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     m.rotation.y = yaw;
     group.add(m);
     return m;
+  };
+  /** Bauwerk aus world/architecture.ts aufstellen, mit seinem Kollisions-Gitter */
+  const mount = (t: StructureType, x: number, z: number, yaw: number, len?: number) => {
+    const b = build(t, rnd, len);
+    const y = hAt(x, z);
+    b.g.position.set(x, y, z);
+    b.g.rotation.y = yaw;
+    group.add(b.g);
+    for (const c of colliders(b, walk.x + x, walk.z + z, yaw)) { walk.blockers.push(c); taken.push({ x: c.x - walk.x, z: c.z - walk.z, r: c.r }); }
+    if (b.fire) fires.push({ x: x + b.fire[0] * Math.cos(yaw) + b.fire[2] * Math.sin(yaw), y: y + b.fire[1], z: z - b.fire[0] * Math.sin(yaw) + b.fire[2] * Math.cos(yaw) });
+  };
+  /** Wohnhäuser je Region: jede Gegend baut anders */
+  const HOMES: Record<IslandStyle, (StructureType | 'rundhuette')[]> = {
+    tropisch: ['rundhuette', 'stelzenhuette'],
+    nebel: ['stelzenhuette', 'holzhuette', 'stelzenhuette'],
+    nord: ['holzhuette', 'steinhaus', 'holzhuette', 'scheune'],
+    glut: ['steinhaus', 'steinhaus', 'holzhuette'],
+    sturm: ['steinhaus', 'holzhuette', 'steinhaus', 'wachturm'],
+    schlund: ['steinhaus', 'stelzenhuette', 'holzhuette'],
+    festland: ['steinhaus', 'holzhuette'],
+    klippe: ['steinhaus'],
+  };
+  const home = (t: StructureType | 'rundhuette', x: number, z: number, yaw: number) => {
+    if (t === 'rundhuette') { put(hut(rnd), x, z, yaw); block(x, z, 2.2); } else mount(t, x, z, yaw);
   };
   const grassCol = new Color(((kit.grass as MeshToonMaterial).color ?? new Color('#55894a')).getHex());
   const rockCol = new Color(((kit.rock as MeshToonMaterial).color ?? new Color('#7a746a')).getHex());
@@ -195,18 +226,44 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       break;
     }
     case 'quiet': {
-      const c = spot(0.1, 0.35, 6, 20) ?? { x: 0, z: 0 };
-      const n = 3 + Math.floor(rnd() * 3);
-      for (let i = 0; i < n; i++) {
-        const a = (i / n) * Math.PI * 2 + rnd() * 0.4, d = 6 + rnd() * 3;
-        const x = c.x + Math.cos(a) * d, z = c.z + Math.sin(a) * d;
-        if (Math.hypot(x, z) > E(Math.atan2(z, x)) * 0.82 || !free(x, z, 2.4)) continue;
-        put(hut(rnd), x, z, Math.atan2(c.x - x, c.z - z));
-        block(x, z, 2.2);
+      // Jedes Dorf anders: Bauweise nach Region, dazu eine von drei Anlagen (Rund um den Platz, Zeile am Strand, lose verstreut)
+      const homes = HOMES[style];
+      const mixed = rnd() < 0.5, first = Math.floor(rnd() * homes.length);
+      const kindOf = (i: number) => homes[(first + (mixed ? i : 0)) % homes.length];
+      const layout = Math.floor(rnd() * 3);
+      const n = 3 + Math.floor(rnd() * 4);
+      let c = spot(0.1, 0.35, 6, 20) ?? { x: 0, z: 0 };
+      if (layout === 1) {
+        // Zeile am Strand, Türen zum Meer
+        const a0 = rnd() * Math.PI * 2, d = E(a0) * 0.66;
+        c = { x: Math.cos(a0) * (d + 7), z: Math.sin(a0) * (d + 7) };
+        for (let i = 0; i < n; i++) {
+          const t = (i - (n - 1) / 2) * (8.5 + rnd() * 1.5);
+          const x = Math.cos(a0) * d - Math.sin(a0) * t, z = Math.sin(a0) * d + Math.cos(a0) * t;
+          if (Math.hypot(x, z) > E(Math.atan2(z, x)) * 0.8 || !free(x, z, 3.6)) continue;
+          home(kindOf(i), x, z, Math.atan2(Math.cos(a0), Math.sin(a0)) + (rnd() - 0.5) * 0.3);
+        }
+      } else {
+        for (let i = 0; i < n; i++) {
+          const a = (i / n) * Math.PI * 2 + rnd() * 0.4, d = layout === 0 ? 8 + rnd() * 3 : 9 + rnd() * 14;
+          const x = c.x + Math.cos(a) * d, z = c.z + Math.sin(a) * d;
+          if (Math.hypot(x, z) > E(Math.atan2(z, x)) * 0.82 || !free(x, z, 3.6)) continue;
+          home(kindOf(i), x, z, Math.atan2(c.x - x, c.z - z) + (layout === 2 ? (rnd() - 0.5) * 1.2 : 0));
+        }
       }
-      const pit = campfire(glow, true);
-      put(pit, c.x, c.z, 0);
-      fires.push({ x: c.x, y: hAt(c.x, c.z) + 0.3, z: c.z });
+      if (free(c.x, c.z, 1.4)) {
+        // Dorfmitte: Feuerstelle oder Brunnen
+        if (rnd() < 0.65) { const pit = campfire(glow, true); put(pit, c.x, c.z, 0); fires.push({ x: c.x, y: hAt(c.x, c.z) + 0.3, z: c.z }); block(c.x, c.z, 0.9); }
+        else mount('brunnen', c.x, c.z, rnd() * 6);
+      }
+      // Hausrat: was herumsteht, würfelt jede Insel selbst
+      const props: StructureType[] = ['kisten', 'fass', 'faesser', 'heu', 'laterne', 'zaun', 'kisten'];
+      for (let i = 0; i < 2 + Math.floor(rnd() * 4); i++) {
+        const a = rnd() * Math.PI * 2, d = 4 + rnd() * 9;
+        const x = c.x + Math.cos(a) * d, z = c.z + Math.sin(a) * d;
+        if (Math.hypot(x, z) > E(Math.atan2(z, x)) * 0.84 || !free(x, z, 2.2)) continue;
+        mount(props[Math.floor(rnd() * props.length)], x, z, rnd() * 6, 5 + rnd() * 4);
+      }
       // Netze trocknen am Strand, Ruderboote liegen im Sand
       for (let i = 0; i < 2; i++) {
         const a = rnd() * Math.PI * 2, d = E(a) * 0.84;
@@ -214,6 +271,32 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
         if (!free(x, z, 1.6)) continue;
         put(i === 0 ? netRack(darkWood) : rowboat(), x, z, a + Math.PI / 2);
         block(x, z, 1.2);
+      }
+      break;
+    }
+    case 'harbor': {
+      // Außenposten: Häuser im Bogen hinter dem Steg (der Steg zeigt zur Weltmitte, siehe seaWorld)
+      const facing = Math.atan2(-def.x, -def.z);
+      // Steg und Zugang freihalten: dort liegen keine Felsen, Kisten oder Büsche
+      { const pe = E(Math.atan2(Math.cos(facing), Math.sin(facing))); for (let d = pe * 0.7; d <= pe + 30; d += 2) taken.push({ x: Math.sin(facing) * d, z: Math.cos(facing) * d, r: 3 }); }
+      const homes = HOMES[style];
+      const n = 4 + Math.floor(rnd() * 3), first = Math.floor(rnd() * homes.length);
+      for (let i = 0; i < n; i++) {
+        const a = facing + (i - (n - 1) / 2) * (0.36 + rnd() * 0.1);
+        const d = E(Math.atan2(Math.cos(a), Math.sin(a))) * (0.48 + rnd() * 0.2);
+        const x = Math.sin(a) * d, z = Math.cos(a) * d;
+        if (!free(x, z, 4)) continue;
+        const t = homes[(first + i) % homes.length];
+        home(t === 'wachturm' && i !== n - 1 ? 'holzhuette' : t, x, z, a + (rnd() - 0.5) * 0.35);
+      }
+      // Kai: Laternen, Kisten und Fässer am Fuß des Stegs
+      const quay: StructureType[] = ['laterne', 'kisten', 'faesser', 'laterne', 'fass', 'netz', 'boot'];
+      for (let i = 0; i < 4 + Math.floor(rnd() * 3); i++) {
+        const a = facing + (rnd() - 0.5) * 0.7, d = E(Math.atan2(Math.cos(a), Math.sin(a))) * (0.76 + rnd() * 0.12);
+        const x = Math.sin(a) * d, z = Math.cos(a) * d;
+        // der Weg vom Steg ins Dorf bleibt frei
+        if (Math.abs(a - facing) * d < 3 || !free(x, z, 2)) continue;
+        mount(quay[(first + i) % quay.length], x, z, a + (rnd() - 0.5) * 1.2);
       }
       break;
     }
@@ -294,16 +377,24 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   }
 
   // ---------- Bäume ----------
-  const nTrees = Math.round((r * 0.16 + 1) * dens * (0.5 + rnd()));
-  for (let i = 0; i < nTrees; i++) {
+  // Jede Insel hat ihren eigenen Bewuchs: karg, normal oder dicht bewaldet; die Bäume stehen in Hainen mit Lichtungen
+  // dazwischen (nicht gleichmäßig verstreut), und in den Tropen mischt jede Insel Palmen und Laubbäume anders
+  const wooded = [0.5, 0.8, 1.1, 1.8][Math.floor(rnd() * 4)];
+  const groveSize = 12 + rnd() * 16, groveThr = 0.28 + rnd() * 0.24, groveSeed = hashId(def.id) & 0xfff;
+  const broadK = rnd() < 0.25 ? 0 : rnd();
+  const birchK = style === 'nord' ? rnd() * 0.35 : 0;
+  const nTrees = Math.round((r * 0.16 + 1) * dens * (0.5 + rnd()) * wooded);
+  for (let i = 0, placed = 0; i < nTrees * 4 && placed < nTrees; i++) {
     const p = spot(0.1, 0.78, 1.4);
     if (!p) continue;
-    let t: Group;
-    if (style === 'tropisch' && rnd() < 0.55) t = broadleaf(kit, rnd);
-    else t = plant(kit, rnd);
-    t.scale.setScalar(0.75 + rnd() * 0.6);
-    t.traverse((c) => { if (c.userData.noOutline) glow.add(c as Mesh); });
-    put(t, p.x, p.z, undefined, 0.1);
+    if (noise(p.x / groveSize, p.z / groveSize, groveSeed) < groveThr) continue;
+    placed++;
+    // Vorlagen statt Einzelbäume: wenige Varianten je Region, per InstancedMesh beliebig oft gezeichnet
+    const v = Math.floor(rnd() * 4);
+    const proto = style === 'tropisch' ? floraProto('tropisch', rnd() < broadK ? 'laubbaum' : 'palme', v)
+      : rnd() < birchK ? floraProto('festland', 'birke', v)
+      : cachedProto(`kit:${style}:plant:${v}`, (pr) => plant(kit, pr), { collide: 0.6 });
+    veg.add(proto, p.x, hAt(p.x, p.z) - 0.1, p.z, rnd() * Math.PI * 2, 0.75 + rnd() * 0.6);
     block(p.x, p.z, 0.6);
     trees.push({ x: p.x, y: hAt(p.x, p.z), z: p.z });
   }
@@ -313,10 +404,8 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     for (let i = 0; i < Math.round(r * 0.1 * dens); i++) {
       const p = spot(0.72, 0.86, 1.2, 6);
       if (!p) continue;
-      const t = plant(kit, rnd);
-      t.scale.setScalar(0.6 + rnd() * 0.35);
-      t.rotation.z = (rnd() - 0.5) * 0.5;
-      put(t, p.x, p.z, undefined, 0.1);
+      const proto = style === 'tropisch' ? floraProto('tropisch', 'palme', Math.floor(rnd() * 4)) : cachedProto(`kit:${style}:plant:${Math.floor(rnd() * 4)}`, (pr) => plant(kit, pr), { collide: 0.6 });
+      veg.add(proto, p.x, hAt(p.x, p.z) - 0.1, p.z, rnd() * Math.PI * 2, 0.6 + rnd() * 0.35, undefined, 0, (rnd() - 0.5) * 0.5);
       block(p.x, p.z, 0.5);
       trees.push({ x: p.x, y: hAt(p.x, p.z), z: p.z });
     }
@@ -328,17 +417,24 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   for (let i = 0; i < nBush; i++) {
     const p = spot(0.08, 0.86, 0.9, 6);
     if (!p) continue;
-    const b = new Group();
-    const mat = tuftMats[Math.floor(rnd() * 3)];
-    for (let k = 0; k < 2 + Math.floor(rnd() * 3); k++) {
-      const s = 0.45 + rnd() * 0.55;
-      const m = new Mesh(new IcosahedronGeometry(s, 0), mat);
-      m.position.set((rnd() - 0.5) * 1.2, s * 0.6, (rnd() - 0.5) * 1.2);
-      m.scale.y = 0.75;
-      b.add(m);
+    const v = Math.floor(rnd() * 3);
+    if (style === 'tropisch' && rnd() < 0.4) {
+      veg.add(floraProto('tropisch', 'farn', v), p.x, hAt(p.x, p.z), p.z, rnd() * Math.PI * 2, 0.9 + rnd() * 0.7, undefined, 0, 0, 0.85 + rnd() * 0.3);
+      continue;
     }
-    windify(b, 0.07, 1.1);
-    put(b, p.x, p.z);
+    const proto = cachedProto(`kit:${style}:bush:${v}`, (pr) => {
+      const b = new Group();
+      for (let k = 0; k < 2 + Math.floor(pr() * 3); k++) {
+        const s = 0.45 + pr() * 0.55;
+        const m = new Mesh(new IcosahedronGeometry(s, 0), tuftMats[v]);
+        m.position.set((pr() - 0.5) * 1.2, s * 0.6, (pr() - 0.5) * 1.2);
+        m.scale.y = 0.75;
+        b.add(m);
+      }
+      windify(b, 0.07, 1.1);
+      return b;
+    }, { near: 320 });
+    veg.add(proto, p.x, hAt(p.x, p.z), p.z, rnd() * Math.PI * 2, 0.8 + rnd() * 0.5, undefined, 0, 0, 0.88 + rnd() * 0.24);
     taken.push({ x: p.x, z: p.z, r: 0.8 });
     bushes.push({ x: p.x, y: hAt(p.x, p.z), z: p.z });
   }
@@ -347,17 +443,20 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     const a = rnd() * Math.PI * 2, d = E(a) * Math.sqrt(rnd()) * 0.86;
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
     if (!free(x, z, 0.2)) continue;
-    const tuft = new Group();
-    const mat = tuftMats[Math.floor(rnd() * 3)];
-    for (let k = 0; k < 3; k++) {
-      const h = 0.35 + rnd() * 0.45;
-      const blade = new Mesh(new ConeGeometry(0.07, h, 3), mat);
-      blade.position.set((rnd() - 0.5) * 0.3, h / 2, (rnd() - 0.5) * 0.3);
-      blade.rotation.set((rnd() - 0.5) * 0.5, 0, (rnd() - 0.5) * 0.5);
-      tuft.add(blade);
-    }
-    windify(tuft, 0.16, 0.8);
-    put(tuft, x, z);
+    const v = Math.floor(rnd() * 3);
+    const proto = cachedProto(`kit:${style}:tuft:${v}`, (pr) => {
+      const tuft = new Group();
+      for (let k = 0; k < 4; k++) {
+        const h = 0.35 + pr() * 0.45;
+        const blade = new Mesh(new ConeGeometry(0.07, h, 3, 1, true), tuftMats[v]);
+        blade.position.set((pr() - 0.5) * 0.36, h / 2, (pr() - 0.5) * 0.36);
+        blade.rotation.set((pr() - 0.5) * 0.5, 0, (pr() - 0.5) * 0.5);
+        tuft.add(blade);
+      }
+      windify(tuft, 0.16, 0.8);
+      return tuft;
+    }, { near: 105, cast: false, outline: false, soft: true });
+    veg.add(proto, x, hAt(x, z), z, rnd() * Math.PI * 2, 0.8 + rnd() * 0.5, undefined, 0, 0, 0.85 + rnd() * 0.3);
   }
   const flowers = FLOWERS[style];
   const nFlower = Math.round(r * (style === 'tropisch' || style === 'nord' ? 0.7 : 0.2) * dens);
@@ -387,13 +486,13 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     const d = E(a) * (inWater ? 1.04 + rnd() * 0.12 : 0.55 + rnd() * 0.4);
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
     const s = (inWater ? 1.2 : 0.6) + rnd() * (inWater ? 2.2 : 1.4);
-    if (!inWater && !free(x, z, s)) continue;
-    const rock = new Mesh(new DodecahedronGeometry(s, 0), rockMats[Math.floor(rnd() * 3)]);
-    rock.scale.set(1 + rnd() * 0.5, 0.6 + rnd() * (inWater ? 1.4 : 0.6), 1 + rnd() * 0.5);
-    rock.rotation.set(rnd(), rnd() * 6, rnd());
-    rock.position.set(x, (inWater ? 0 : hAt(x, z)) + s * 0.25, z);
-    group.add(rock);
-    block(x, z, s * Math.max(rock.scale.x, rock.scale.z) * 0.82);
+    // auch Felsen im Wasser: nicht auf Stege und Bootsplätze
+    if (!free(x, z, s)) continue;
+    const v = Math.floor(rnd() * 3);
+    const proto = cachedProto(`kit:${style}:rock:${v}`, () => new Mesh(new DodecahedronGeometry(1, 0), rockMats[v]));
+    const wide = 1 + rnd() * 0.5;
+    veg.add(proto, x, (inWater ? 0 : hAt(x, z)) + s * 0.25, z, rnd() * 6, s * wide, s * (0.6 + rnd() * (inWater ? 1.4 : 0.6)), rnd() - 0.5, rnd() - 0.5);
+    block(x, z, s * wide * 0.82);
   }
   if (style !== 'glut') {
     for (let i = 0; i < 1 + Math.floor(rnd() * 3); i++) {
@@ -426,25 +525,6 @@ function glowPetal(col: string) {
   let m = petalCache.get(col);
   if (!m) { m = new MeshBasicMaterial({ color: new Color(col).multiplyScalar(2.2) }); petalCache.set(col, m); }
   return m;
-}
-
-/** Laubbaum: knorriger Stamm und mehrere Kronenballen */
-function broadleaf(kit: StyleKit, rnd: () => number): Group {
-  const g = new Group();
-  const h = 4 + rnd() * 3;
-  const trunk = new Mesh(new CylinderGeometry(0.22, 0.38, h, 6), kit.trunk);
-  trunk.position.y = h / 2;
-  trunk.rotation.z = (rnd() - 0.5) * 0.15;
-  g.add(trunk);
-  for (let i = 0; i < 4; i++) {
-    const s = 1.4 + rnd() * 1.1;
-    const b = new Mesh(new IcosahedronGeometry(s, 0), kit.leaf);
-    b.position.set((rnd() - 0.5) * 2.2, h + (rnd() - 0.2) * 1.4, (rnd() - 0.5) * 2.2);
-    b.scale.y = 0.8;
-    g.add(b);
-  }
-  windify(g, 0.38, h + 2);
-  return g;
 }
 
 /** Lagerfeuer: Steinring, Holzscheite, Glut (Rauch und Funken macht die Welt) */

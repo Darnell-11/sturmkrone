@@ -41,7 +41,7 @@ function dot(): CanvasTexture {
 const VERT = /* glsl */ `
   attribute vec3 iP0;
   attribute vec3 iV0;
-  attribute vec4 iT;   // Startzeit, Lebensdauer, Schwerkraft, –
+  attribute vec4 iT;   // Startzeit, Lebensdauer, Schwerkraft, Größenfaktor (0 = 1)
   attribute vec3 iCol;
   uniform float uTime;
   uniform float uSize;
@@ -56,7 +56,7 @@ const VERT = /* glsl */ `
     float dr = (pow(0.25, age) - 1.0) / -1.3862944;
     vec3 p = iP0 + vec3(iV0.x * dr, iV0.y * age - 0.5 * iT.z * age * age, iV0.z * dr);
     vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
-    mvPosition.xy += position.xy * uSize * SIZE_CURVE;
+    mvPosition.xy += position.xy * uSize * SIZE_CURVE * (iT.w > 0.0 ? iT.w : 1.0);
     gl_Position = projectionMatrix * mvPosition;
     vUv = uv;
     vCol = iCol;
@@ -76,7 +76,9 @@ const FRAG = /* glsl */ `
     #include <fog_fragment>
   }`;
 
-export interface EmitOpts { speed: number; up: number; life: number; color: Color; gravity?: number; spread?: number }
+export interface EmitOpts { speed: number; up: number; life: number; color: Color; gravity?: number; spread?: number;
+  /** Größenfaktor (Tröpfchen < 1) und zusätzliche Anfangsgeschwindigkeit, z. B. seitlich vom Rumpf weg */
+  size?: number; vx?: number; vz?: number }
 
 /**
  * GPU-instanziertes Partikelsystem (Gischt, Funken, Staub, Trefferfunken, Magie).
@@ -152,12 +154,13 @@ export class ParticleSystem {
       P[i * 3] = x + (Math.random() - 0.5) * sp;
       P[i * 3 + 1] = y;
       P[i * 3 + 2] = z + (Math.random() - 0.5) * sp;
-      V[i * 3] = Math.cos(a) * s;
+      V[i * 3] = Math.cos(a) * s + (opts.vx ?? 0) * (0.6 + Math.random() * 0.8);
       V[i * 3 + 1] = opts.up * (0.6 + Math.random() * 0.6);
-      V[i * 3 + 2] = Math.sin(a) * s;
+      V[i * 3 + 2] = Math.sin(a) * s + (opts.vz ?? 0) * (0.6 + Math.random() * 0.8);
       T[i * 4] = this.time;
       T[i * 4 + 1] = opts.life * (0.6 + Math.random() * 0.6);
       T[i * 4 + 2] = opts.gravity ?? 14;
+      T[i * 4 + 3] = opts.size ?? 0;
       C[i * 3] = opts.color.r; C[i * 3 + 1] = opts.color.g; C[i * 3 + 2] = opts.color.b;
       if (this.dirtyFrom < 0 || i < this.dirtyFrom) this.dirtyFrom = i;
       if (i > this.dirtyTo) this.dirtyTo = i;

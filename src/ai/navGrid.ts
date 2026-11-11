@@ -2,14 +2,14 @@ import { coastK, inBox, type WalkIsland } from '../world/islandGround';
 
 /**
  * Begehbarkeits-Netz (NavMesh als Raster) einer Insel für Gegner und Crew.
- *  - Zellen 0,6 m; gesperrt sind Meer (außerhalb der Küstenlinie) und alle runden Hindernisse (Häuser, Felsen, Bäume, Kisten)
+ *  - Zellen 0,6 m (Festland: 1 m); gesperrt sind Meer (außerhalb der Küstenlinie) und alle runden Hindernisse (Häuser, Felsen, Bäume, Kisten)
  *  - Freiraum je Zelle (Abstand zum nächsten Hindernis in Metern, Chamfer-Distanztransformation):
  *    jede Figur plant mit ihrem eigenen Radius, große Gegner nehmen keine engen Gassen
  *  - A*-Suche (8 Nachbarn, keine Ecken schneiden) mit vorab angelegten Puffern – keine Speicheranforderung je Suche
  *  - Weg wird mit Sichtlinien geglättet (String Pulling), die Figur läuft direkte Linien statt Zickzack
  */
 export class NavGrid {
-  readonly cell = 0.6;
+  readonly cell: number;
   readonly ox: number;
   readonly oz: number;
   readonly w: number;
@@ -28,6 +28,8 @@ export class NavGrid {
   private tmp: Int32Array;
 
   constructor(readonly island: WalkIsland) {
+    // große Länder (Festland) mit gröberem Raster: sonst über eine Million Zellen und ein spürbarer Ruck beim Landgang
+    this.cell = island.r > 150 ? 1 : 0.6;
     let cmax = 0;
     for (let i = 0; i < 64; i++) cmax = Math.max(cmax, coastK(island.coast, (i / 64) * Math.PI * 2));
     const R = island.r * cmax * 1.06 + 2;

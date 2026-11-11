@@ -57,6 +57,16 @@ export const MIGRATIONS: Record<number, Migration> = {
     look.shoes = 'stiefel';
     return { ...d, version: 9, player: { ...p, look } };
   },
+  // 2.9.27: Die Welt ist doppelt so weit (vierfache Fläche). Das Schiff bleibt in seinem Meer bei seiner Insel:
+  // seine Lage wandert mit der Karte nach außen. Rund um Ankerglück ändert sich nichts (die Stadt blieb an ihrem Platz).
+  9: (d) => {
+    const world = { ...(d.world ?? {}) };
+    const b = world.boat;
+    if (b && typeof b.x === 'number' && typeof b.z === 'number' && Math.hypot(b.x, b.z - 160) > 220) {
+      world.boat = { ...b, x: b.x * 2, z: b.z * 2 };
+    }
+    return { ...d, version: 10, world };
+  },
 };
 
 export type MigrationResult =

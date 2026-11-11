@@ -137,7 +137,8 @@ const CLOUD_VERT = /* glsl */ `
     vec4 mv = viewMatrix * vec4(wp, 1.0);
     mv.xy += position.xy * vec2(aData.y, aData.y * 0.62);
     gl_Position = projectionMatrix * mv;
-    gl_Position.z = min(gl_Position.z, gl_Position.w * 0.99999);
+    // Wolken jenseits der Kamera-Fernebene nicht abschneiden, sondern knapp davor legen
+    gl_Position.z = min(gl_Position.z, gl_Position.w * 0.999999);
     vUv = uv * 0.5 + vec2(mod(aData.x, 2.0), 1.0 - floor(aData.x / 2.0)) * 0.5;
     float dist = length(wp.xz - uCenter.xz);
     vFar = smoothstep(uRange * 0.35, uRange, dist);
@@ -171,6 +172,10 @@ const CLOUD_FRAG = /* glsl */ `
 `;
 
 const MAX_CLOUDS = 120;
+/** Abstand der Sonnenscheibe zur Kamera – innerhalb der Kamera-Fernebene (CAMERA_PLANES.far), sonst würde sie abgeschnitten */
+const SUN_DIST = 900;
+/** Scheinbare Größe wie bisher (28 m Radius in 1500 m Abstand) */
+const SUN_RADIUS = (28 / 1500) * SUN_DIST;
 
 export class Sky {
   readonly dome: Mesh;
@@ -229,7 +234,7 @@ export class Sky {
 
     // Sichtbare Sonnenscheibe – auch Lichtquelle für die Sonnenstrahlen (Hoch/Maximal)
     this.sunMesh = new Mesh(
-      new SphereGeometry(28, 24, 12),
+      new SphereGeometry(SUN_RADIUS, 24, 12),
       new MeshBasicMaterial({ color: new Color(6, 5.2, 4), transparent: true, depthWrite: false, fog: false }),
     );
     this.sunMesh.frustumCulled = false;
@@ -267,7 +272,7 @@ export class Sky {
   /** Jeden Frame: Himmel und Sonne um die Kamera zentrieren */
   follow(camPos: Vector3, sunDir: Vector3, sunVisible: number) {
     this.dome.position.copy(camPos);
-    this.sunMesh.position.copy(camPos).addScaledVector(sunDir, 1500);
+    this.sunMesh.position.copy(camPos).addScaledVector(sunDir, SUN_DIST);
     this.sunMesh.visible = sunVisible > 0.05;
     (this.sunMesh.material as MeshBasicMaterial).opacity = sunVisible;
     this.cloudU.uCenter.value.copy(camPos);

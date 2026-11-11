@@ -9,6 +9,8 @@ interface Bar { el: HTMLElement; fill: HTMLElement; lag: HTMLElement; last: numb
 export type NumberStyle = 'hit' | 'crit' | 'hurt' | 'heal' | 'info' | 'gold' | 'xp';
 
 const tmp = new Vector3();
+/** Sekunden, die eine Kombo nach dem letzten Treffer offen bleibt */
+const COMBO_TIME = 2.2;
 
 /** Schadenszahlen, Speedlines, Impact-Frames, Lebensbalken und Kombo-Zähler. */
 export class CombatOverlay {
@@ -21,13 +23,22 @@ export class CombatOverlay {
   private combo: HTMLElement;
   private comboCount = 0;
   private comboTimer = 0;
+  private comboRank = 0;
+  private comboNum: HTMLElement;
+  private comboLabel: HTMLElement;
+  private comboBar: HTMLElement;
   private reticle: HTMLElement;
   private boss: HTMLElement;
   private bossFill: HTMLElement;
   private bossLag: HTMLElement;
   private bossName: HTMLElement;
+  private bossBrk: HTMLElement;
   private banner: HTMLElement;
   private cutin: HTMLElement;
+  private victoryEl: HTMLElement;
+  private lootEl: HTMLElement;
+  private lootTimer = 0;
+  private victoryTimer = 0;
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
@@ -36,23 +47,31 @@ export class CombatOverlay {
       <div class="cbt-speed"></div>
       <div class="cbt-impact"></div>
       <div class="cbt-vign"></div>
-      <div class="cbt-combo" hidden><b>0</b><span>Treffer</span></div>
+      <div class="cbt-combo" hidden><em class="fin">Finisher!</em><b>0</b><span>Treffer</span><u><i></i></u></div>
       <div class="cbt-reticle" hidden></div>
-      <div class="cbt-boss" hidden><div class="cbt-boss-name fell"></div><div class="cbt-boss-bar"><i class="lag"></i><i class="fill"></i></div></div>
+      <div class="cbt-boss" hidden><div class="cbt-boss-name fell"></div><div class="cbt-boss-bar"><i class="lag"></i><i class="fill"></i><s class="p1"></s><s class="p2"></s></div><div class="cbt-boss-break"><i></i><b>BREAK!</b></div></div>
       <div class="cbt-banner"><h2 class="fell"></h2><p></p></div>
-      <div class="cbt-cutin"><b></b></div>`;
+      <div class="cbt-cutin"><b></b></div>
+      <div class="cbt-victory" hidden><div class="rays"></div><div class="vbox"><small>Sieg</small><h2 class="fell"></h2><p></p><div class="vstats"></div></div></div>
+      <div class="cbt-loot" hidden></div>`;
     parent.appendChild(this.root);
     this.speed = this.root.querySelector('.cbt-speed')!;
     this.impact = this.root.querySelector('.cbt-impact')!;
     this.vignette = this.root.querySelector('.cbt-vign')!;
     this.combo = this.root.querySelector('.cbt-combo')!;
+    this.comboNum = this.combo.querySelector('b')!;
+    this.comboLabel = this.combo.querySelector('span')!;
+    this.comboBar = this.combo.querySelector('u i')!;
     this.reticle = this.root.querySelector('.cbt-reticle')!;
     this.boss = this.root.querySelector('.cbt-boss')!;
     this.bossFill = this.boss.querySelector('.fill')!;
     this.bossLag = this.boss.querySelector('.lag')!;
     this.bossName = this.boss.querySelector('.cbt-boss-name')!;
+    this.bossBrk = this.boss.querySelector('.cbt-boss-break i')!;
     this.banner = this.root.querySelector('.cbt-banner')!;
     this.cutin = this.root.querySelector('.cbt-cutin')!;
+    this.victoryEl = this.root.querySelector('.cbt-victory')!;
+    this.lootEl = this.root.querySelector('.cbt-loot')!;
   }
 
   setVisible(v: boolean) { this.root.hidden = !v; }
@@ -101,14 +120,29 @@ export class CombatOverlay {
 
   addCombo() {
     this.comboCount++;
-    this.comboTimer = 2.2;
-    if (this.comboCount >= 3) {
+    this.comboTimer = COMBO_TIME;
+    if (this.comboCount >= 2) {
       this.combo.hidden = false;
-      this.combo.querySelector('b')!.textContent = String(this.comboCount);
+      this.comboNum.textContent = String(this.comboCount);
+      const rank = this.comboCount >= 15 ? 3 : this.comboCount >= 10 ? 2 : this.comboCount >= 6 ? 1 : 0;
+      if (rank !== this.comboRank) {
+        this.comboRank = rank;
+        this.comboLabel.textContent = ['Treffer', 'Stark!', 'Brutal!', 'Legendär!'][rank];
+        this.combo.dataset.rank = String(rank);
+      }
       this.combo.classList.remove('pop');
       void this.combo.offsetWidth;
       this.combo.classList.add('pop');
     }
+  }
+
+  /** Kombo-Finisher (Leicht → Leicht → Schwer): Schriftzug am Zähler, hält die Kombo länger offen */
+  finisher() {
+    this.comboTimer = Math.max(this.comboTimer, COMBO_TIME + 0.6);
+    this.combo.hidden = false;
+    this.combo.classList.remove('fin-on');
+    void this.combo.offsetWidth;
+    this.combo.classList.add('fin-on');
   }
 
   /** Großes Banner (Stufenaufstieg, Sieg) */
@@ -125,6 +159,40 @@ export class CombatOverlay {
     this.banner.classList.add('show');
   }
 
+  /**
+   * Siegesbild für besiegte Legenden: goldene Strahlen, großer Schriftzug, Fanfare. Dauert etwa 4 Sekunden.
+   * stats: kurze Zeilen darunter (z. B. Gold, Beute)
+   */
+  victory(title: string, sub = '', stats: string[] = []) {
+    audio.play('victory');
+    const el = this.victoryEl;
+    el.hidden = false;
+    el.querySelector('h2')!.textContent = title;
+    el.querySelector('p')!.textContent = sub;
+    el.querySelector('.vstats')!.innerHTML = stats.map((t) => `<span>${esc(t)}</span>`).join('');
+    el.classList.remove('show');
+    void el.offsetWidth;
+    el.classList.add('show');
+    this.victoryTimer = 4.4;
+    this.impactFrame();
+  }
+
+  /** Beute-Karte für seltene Funde: je Seltenheit Farbe, Glühen und Fanfare (selten = 1, episch = 2, legendär = 3) */
+  lootCard(title: string, sub: string, color: string, tier: number) {
+    audio.play(tier >= 3 ? 'fanfareLegend' : tier === 2 ? 'fanfareEpic' : 'fanfareRare');
+    const el = this.lootEl;
+    el.hidden = false;
+    el.style.setProperty('--lc', color);
+    el.dataset.tier = String(tier);
+    el.innerHTML = `<i></i><b>${esc(title)}</b><span>${esc(sub)}</span>`;
+    el.classList.remove('show');
+    void el.offsetWidth;
+    el.classList.add('show');
+    this.lootTimer = tier >= 2 ? 4.2 : 3;
+    if (tier >= 2) this.impactFrame();
+    if (tier >= 3) this.speedlines(0.8);
+  }
+
   /** Cut-in-Banner für Ultimates und Boss-Auftritte */
   showCutin(text: string, color = '#E3B04B') {
     audio.play('cutin');
@@ -135,12 +203,18 @@ export class CombatOverlay {
     this.cutin.classList.add('show');
   }
 
-  setBoss(name: string | null, frac = 1) {
+  /** Boss-Leiste: Leben (mit Nachlauf und Phasenmarken), darunter der Haltebalken (Break-Bar). Extra: Haltebalken 0 … 1, Break aktiv, Phase 1 … 3 */
+  setBoss(name: string | null, frac = 1, extra?: { brk: number; broken: boolean; phase: number }) {
     this.boss.hidden = !name;
     if (!name) return;
-    this.bossName.textContent = name;
+    if (this.bossName.textContent !== name) this.bossName.textContent = name;
     const s = `scaleX(${Math.max(0, Math.min(1, frac)).toFixed(3)})`;
     if (this.bossFill.style.transform !== s) { this.bossFill.style.transform = s; this.bossLag.style.transform = s; }
+    if (!extra) return;
+    const b = `scaleX(${Math.max(0, Math.min(1, extra.brk)).toFixed(3)})`;
+    if (this.bossBrk.style.transform !== b) this.bossBrk.style.transform = b;
+    this.boss.classList.toggle('broken', extra.broken);
+    if (this.boss.dataset.phase !== String(extra.phase)) this.boss.dataset.phase = String(extra.phase);
   }
 
   /** Lebensbalken über einem Gegner (key = Gegnerobjekt). frac < 0 entfernt ihn. */
@@ -194,6 +268,8 @@ export class CombatOverlay {
   }
 
   update(dt: number, camera: Camera) {
+    if (this.victoryTimer > 0 && (this.victoryTimer -= dt) <= 0) this.victoryEl.hidden = true;
+    if (this.lootTimer > 0 && (this.lootTimer -= dt) <= 0) this.lootEl.hidden = true;
     if (this.bannerQ.length && performance.now() >= this.bannerUntil) { const [a, b] = this.bannerQ.shift()!; this.showBanner(a, b); }
     for (const t of this.texts) {
       t.life -= dt;
@@ -214,7 +290,9 @@ export class CombatOverlay {
     this.placeBars(camera);
     if (this.comboTimer > 0) {
       this.comboTimer -= dt;
-      if (this.comboTimer <= 0) { this.comboCount = 0; this.combo.hidden = true; }
+      // Restzeit als schrumpfender Balken (transform, kein Layout)
+      this.comboBar.style.transform = `scaleX(${Math.max(0, Math.min(1, this.comboTimer / COMBO_TIME)).toFixed(3)})`;
+      if (this.comboTimer <= 0) { this.comboCount = 0; this.comboRank = 0; this.combo.hidden = true; this.combo.classList.remove('fin-on'); this.comboLabel.textContent = 'Treffer'; this.combo.dataset.rank = '0'; }
     }
   }
 }

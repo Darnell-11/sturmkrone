@@ -60,6 +60,9 @@ export class SkillTree {
 
   refresh() { this.render(); }
 
+  /** Von außen schließen (Taste K) */
+  close() { this.o.onClose(); }
+
   private render() {
     const st = this.o.state;
     const b = this.branch;

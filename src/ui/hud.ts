@@ -8,6 +8,11 @@ export class Hud {
   private envEl: HTMLElement;
   private hpEl: HTMLElement;
   private xpEl: HTMLElement;
+  private hpBar: HTMLElement;
+  private hpLag: HTMLElement;
+  private stBar: HTMLElement;
+  private stEl: HTMLElement;
+  private stLag: HTMLElement;
   private goldEl: HTMLElement;
   private ctxEl: HTMLButtonElement;
   private fjEl: HTMLElement;
@@ -59,8 +64,9 @@ export class Hud {
       <div class="hud-panel">
         <div class="hud-name"></div>
         <div class="hud-sub"></div>
-        <div class="hud-bars"><div class="hud-bar hp" title="Leben"><i></i></div><div class="hud-bar fj" title="Faji"><i></i></div><div class="hud-bar xp" title="Erfahrung"><i></i></div></div>
+        <div class="hud-bars"><div class="hud-bar hp" title="Leben"><i class="lag"></i><i class="fill"></i></div><div class="hud-bar st" title="Ausdauer" hidden><i class="lag"></i><i class="fill"></i></div><div class="hud-bar fj" title="Faji"><i></i></div><div class="hud-bar xp" title="Erfahrung"><i></i></div></div>
         <div class="hud-gold"></div>
+        <div class="hud-weapons" title="Waffe wechseln: Q · Platz 1: Z · Platz 2: X"><span class="w0 on"></span><span class="w1"></span></div>
         <div class="hud-sea" hidden>
           <div class="hud-bar ship" title="Rumpf"><i></i></div>
           <div class="hud-seainfo"><span class="wind" title="Wind">➤</span><span class="seatxt"></span></div>
@@ -75,14 +81,19 @@ export class Hud {
           <button class="icon-btn hud-pause" aria-label="Pause"><svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></button>
         </div>
         <button class="hud-mini" aria-label="Karte und Logbuch"><canvas></canvas><span class="hud-potions" title="Proviant"></span></button>
-        <div class="hud-quest" hidden><div class="q-arrow">➤</div><div class="q-body"><b class="q-title"></b><span class="q-step"></span></div></div>
+        <div class="hud-quest" hidden><div class="q-arrow">➤</div><div class="q-body"><b class="q-title"></b><span class="q-step"></span><i class="q-bar" hidden><s></s></i><em class="q-hint">L · Auftragsbuch</em></div></div>
       </div>`;
     parent.appendChild(this.root);
     this.nameEl = this.root.querySelector('.hud-name')!;
     this.subEl = this.root.querySelector('.hud-sub')!;
     this.fpsEl = this.root.querySelector('.hud-fps')!;
     this.envEl = this.root.querySelector('.hud-env')!;
-    this.hpEl = this.root.querySelector('.hud-bar.hp i')!;
+    this.hpBar = this.root.querySelector('.hud-bar.hp')!;
+    this.hpEl = this.hpBar.querySelector('.fill')!;
+    this.hpLag = this.hpBar.querySelector('.lag')!;
+    this.stBar = this.root.querySelector('.hud-bar.st')!;
+    this.stEl = this.stBar.querySelector('.fill')!;
+    this.stLag = this.stBar.querySelector('.lag')!;
     this.xpEl = this.root.querySelector('.hud-bar.xp i')!;
     this.goldEl = this.root.querySelector('.hud-gold')!;
     this.root.querySelector('.hud-pause')!.addEventListener('click', () => this.onPause());
@@ -157,10 +168,48 @@ export class Hud {
     this.bar(this.reloadR, 1 - info.reloadR);
   }
 
+  /** Beide Waffenplätze mit Namen; aktiv hebt hervor */
+  setWeapons(a: string, b: string, active: 0 | 1) {
+    const el = this.root.querySelector('.hud-weapons');
+    if (!el) return;
+    const w0 = el.querySelector<HTMLElement>('.w0')!, w1 = el.querySelector<HTMLElement>('.w1')!;
+    w0.textContent = `1 ${a}`; w1.textContent = `2 ${b}`;
+    w0.classList.toggle('on', active === 0); w1.classList.toggle('on', active === 1);
+  }
+
   setFaji(frac: number, sp: number) {
     this.bar(this.fjEl, frac);
     if (this.badge.hidden !== sp <= 0) this.badge.hidden = sp <= 0;
     if (sp > 0 && this.badge.textContent !== String(sp)) this.badge.textContent = String(sp);
+  }
+
+  private itemBar: HTMLElement | null = null;
+  private itemKey = '';
+
+  /** Schnellleiste für Güter (Tasten 1–4): Symbol, Menge, Abklingzeit als Kreisausschnitt, laufende Stärkung als Rand */
+  setItemBar(show: boolean, views: { id: string | null; icon: string; name: string; color: string; count: number; cdFrac: number; ready: boolean; active: number }[], keys: string[]) {
+    if (!this.itemBar) {
+      this.itemBar = document.createElement('div');
+      this.itemBar.className = 'itembar';
+      this.root.appendChild(this.itemBar);
+    }
+    const bar = this.itemBar;
+    bar.hidden = !show || this.root.hidden;
+    if (bar.hidden) return;
+    const key = views.map((v) => `${v.id}${v.count}`).join('|') + keys.join();
+    if (key !== this.itemKey) {
+      this.itemKey = key;
+      bar.innerHTML = views.map((v, i) => `<div class="ib${v.id ? '' : ' empty'}" style="--c:${v.color}" title="${esc(v.name)}"><kbd>${esc(keys[i] ?? '')}</kbd><span class="ic">${v.icon}</span>${v.id ? `<b class="cnt">${v.count}</b>` : ''}</div>`).join('');
+    }
+    views.forEach((v, i) => {
+      const el = bar.children[i] as HTMLElement | undefined;
+      if (!el) return;
+      this.put(el, '--p', v.cdFrac.toFixed(3));
+      this.put(el, '--a', v.active.toFixed(3));
+      el.classList.toggle('ready', v.ready);
+      el.classList.toggle('none', !!v.id && v.count <= 0);
+      el.classList.toggle('buff', v.active > 0);
+    });
   }
 
   /** Fähigkeitsleiste unten (nur ohne Touch) */
@@ -181,8 +230,24 @@ export class Hud {
     });
   }
 
+  /**
+   * Ausdauerbalken (zu Fuß; null blendet ihn aus). Der helle Nachlauf folgt verzögert (CSS), bei zu wenig Ausdauer
+   * blinkt der Balken rot.
+   */
+  setStamina(frac: number | null, flash = false) {
+    const hide = frac === null;
+    if (this.stBar.hidden !== hide) this.stBar.hidden = hide;
+    if (hide) return;
+    this.bar(this.stEl, frac);
+    this.bar(this.stLag, frac);
+    this.stBar.classList.toggle('flash', flash);
+    this.stBar.classList.toggle('low', frac < 0.25);
+  }
+
   setStats(hpFrac: number, xpFrac: number, gold: number) {
     this.bar(this.hpEl, hpFrac);
+    this.bar(this.hpLag, hpFrac);
+    this.hpBar.classList.toggle('low', hpFrac < 0.25 && hpFrac > 0);
     this.bar(this.xpEl, xpFrac);
     const g = `Gold ${Math.round(gold).toLocaleString('de-DE')}`;
     if (this.goldEl.textContent !== g) this.goldEl.textContent = g;
@@ -205,10 +270,15 @@ export class Hud {
   }
 
   /** Verfolgter Auftrag mit Richtungspfeil (Winkel relativ zur Kamera, null = keiner) */
-  setQuest(q: { title: string; step: string; angle: number | null; dist: number | null } | null) {
+  setQuest(q: { title: string; step: string; angle: number | null; dist: number | null; frac?: number | null; main?: boolean } | null) {
     this.questEl.hidden = !q;
     if (!q) { this.questKey = ''; return; }
     const step = q.dist !== null && q.dist > 25 ? `${q.step} · ${q.dist >= 1000 ? `${(q.dist / 1000).toFixed(1).replace('.', ',')} km` : `${Math.round(q.dist / 10) * 10} m`}` : q.step;
+    const bar = this.questEl.querySelector<HTMLElement>('.q-bar')!;
+    const frac = q.frac ?? null;
+    if (bar.hidden !== (frac === null)) bar.hidden = frac === null;
+    if (frac !== null) (bar.firstElementChild as HTMLElement).style.transform = `scaleX(${frac.toFixed(2)})`;
+    this.questEl.classList.toggle('main', !!q.main);
     const key = q.title + step;
     if (key !== this.questKey) {
       this.questKey = key;

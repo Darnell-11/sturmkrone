@@ -3,8 +3,9 @@ import { BlendFunction, Effect } from 'postprocessing';
 
 /**
  * Hitzeflimmern (Refraction/Distortion): Um heiße Stellen (Feuer, Explosionen, Meteore, aufladende Kämpfer)
- * wird das fertige Bild leicht verzerrt – wie flirrende Luft. Kein zusätzlicher Render-Durchgang:
- * bis zu 6 Hitzequellen werden auf den Bildschirm projiziert und verschieben die Leseposition (mainUv).
+ * wird das Bild leicht verzerrt – wie flirrende Luft. Kein zusätzlicher Render-Durchgang:
+ * bis zu 6 Hitzequellen werden auf den Bildschirm projiziert und verschieben die Leseposition (mainUv)
+ * des gemeinsamen Effekt-Durchgangs (siehe renderer.ts).
  */
 const MAX = 6;
 
@@ -32,13 +33,13 @@ const FRAG = /* glsl */ `
   uniform float uTime;
   void mainUv(inout vec2 uv) {
     vec2 off = vec2(0.0);
+    // feste Durchlaufzahl ohne continue: leere Quellen (Stärke 0) und Punkte außerhalb des Radius wiegen 0
     for (int i = 0; i < ${MAX}; i++) {
       vec4 h = uHeat[i];
-      if (h.w <= 0.0) continue;
       vec2 d = (uv - h.xy) * vec2(aspect, 1.0);
-      float r = length(d) / h.z;
-      if (r >= 1.0) continue;
-      float fall = (1.0 - r) * (1.0 - r);
+      float r = length(d) / max(h.z, 1e-4);
+      float fall = max(1.0 - r, 0.0);
+      fall *= fall * step(1e-5, h.w);
       // aufsteigendes Flirren: Wellen, die nach oben wandern, quer etwas schwächer
       float w = sin(uv.y * 140.0 - uTime * 11.0 + float(i) * 1.7) + 0.6 * sin(uv.x * 95.0 + uTime * 6.0 + uv.y * 30.0);
       off += vec2(w * 0.55, w) * fall * h.w;

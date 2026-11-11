@@ -14,7 +14,8 @@ import {
   type WebGLRenderer,
 } from 'three';
 import { BlendFunction, Effect, EffectAttribute, Pass } from 'postprocessing';
-import type { AoConfig } from '../data/qualityTiers';
+import { CAMERA_PLANES, type AoConfig } from '../data/qualityTiers';
+import { DEPTH_PARS, SKY_DEPTH } from './depthGlsl';
 
 /**
  * Umgebungsverdeckung nach dem Horizont-Verfahren (GTAO/HBAO-Art).
@@ -24,7 +25,12 @@ import type { AoConfig } from '../data/qualityTiers';
  *    je höher die Nachbargeometrie über die Fläche ragt, desto weniger Umgebungslicht kommt an.
  *    Ergebnis: R = Verdeckung (1 = frei), G = Abstand zur Kamera (für das kantenbewahrende Weichzeichnen).
  * 2. AoEffect (volle Auflösung, im gemeinsamen Effekt-Durchgang): weichzeichnen ohne über Kanten zu
- *    bluten (3×3, nach Tiefe gewichtet), dann das Bild abdunkeln. Wasser und Himmel bleiben frei.
+ *    bluten (nach Tiefe gewichtet), dann das Bild abdunkeln. Wasser und Himmel bleiben frei.
+ *
+ * Ruhiges Bild: Suchrichtungen und Schrittversatz wechseln in einem festen 2×2-Muster. Der Weichzeichner mittelt
+ * immer genau ein solches 2×2-Feld (eine Probe auf der Ecke zwischen vier Bildpunkten) und blendet zwischen den
+ * vier umliegenden Feldern. Das Muster hebt sich dadurch vollständig auf – die Verdeckung hängt nur noch von der
+ * Geometrie ab und wandert bei Kamerabewegung nicht mehr als Schraffur über Wände und Böden.
  */
 
 const AO_VERT = /* glsl */ `
@@ -38,72 +44,51 @@ const AO_VERT = /* glsl */ `
 const AO_FRAG = /* glsl */ `
   #include <common>
   #include <packing>
-  uniform highp sampler2D tDepth;
+  ${DEPTH_PARS}
   uniform sampler2D tColor;
-  uniform vec2 depthTexel;
-  uniform vec2 projScale;
-  uniform float cameraNear;
-  uniform float cameraFar;
   uniform float radius;
   uniform float fadeFar;
   varying vec2 vUv;
 
-  float readDepth(vec2 uv) {
-    #if DEPTH_PACKING == 3201
-      return unpackRGBAToDepth(texture2D(tDepth, uv));
-    #else
-      return texture2D(tDepth, uv).r;
-    #endif
-  }
-  vec3 viewPos(vec2 uv, float d) {
-    float z = perspectiveDepthToViewZ(d, cameraNear, cameraFar);
-    vec2 ndc = uv * 2.0 - 1.0;
-    return vec3(ndc.x * -z / projScale.x, ndc.y * -z / projScale.y, z);
-  }
-  // Interleaved Gradient Noise: verteilt die Suchrichtungen je Pixel, das 3×3-Weichzeichnen glättet es
-  float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
-
   void main() {
-    float d = readDepth(vUv);
+    ivec2 size = textureSize(tDepth, 0);
+    vec2 fsize = vec2(size);
+    // Bildpunkt des Tiefenpuffers unter diesem Pixel; ein Bildpunkt Rand bleibt frei, damit alle vier Nachbarn existieren
+    ivec2 p = clamp(ivec2(vUv * fsize), ivec2(1), size - 2);
+    float d = skDepth(p);
     // Himmel und Wasser (Alpha-Markierung) bekommen keine Verdeckung
-    if (d >= 0.9999 || texture2D(tColor, vUv).a < 0.5) { gl_FragColor = vec4(1.0, 1e4, 0.0, 1.0); return; }
-    vec3 P = viewPos(vUv, d);
-    float dist = -P.z;
+    if (d >= SK_SKY_DEPTH || textureLod(tColor, (vec2(p) + 0.5) / fsize, 0.0).a < 0.5) { gl_FragColor = vec4(1.0, 1e4, 0.0, 1.0); return; }
+    vec3 P = skViewPos(p, d, fsize);
+    float dist = max(-P.z, cameraNear);
+    vec3 N = skNormalAt(p, P, fsize);
 
-    // Normale aus den Nachbarn – je Achse die Seite mit dem kleineren Tiefensprung (saubere Kanten)
-    vec2 tx = depthTexel;
-    vec3 Pr = viewPos(vUv + vec2(tx.x, 0.0), readDepth(vUv + vec2(tx.x, 0.0)));
-    vec3 Pl = viewPos(vUv - vec2(tx.x, 0.0), readDepth(vUv - vec2(tx.x, 0.0)));
-    vec3 Pu = viewPos(vUv + vec2(0.0, tx.y), readDepth(vUv + vec2(0.0, tx.y)));
-    vec3 Pd = viewPos(vUv - vec2(0.0, tx.y), readDepth(vUv - vec2(0.0, tx.y)));
-    vec3 dx = abs(Pr.z - P.z) < abs(P.z - Pl.z) ? Pr - P : P - Pl;
-    vec3 dy = abs(Pu.z - P.z) < abs(P.z - Pd.z) ? Pu - P : P - Pd;
-    vec3 N = normalize(cross(dx, dy));
-    if (dot(N, -P) < 0.0) N = -N;
-
-    // Suchradius in Bildkoordinaten (nah begrenzt, sonst wird es teuer und fleckig)
+    // Suchradius in Bildpunkten (nah begrenzt, sonst wird es teuer und fleckig)
     vec2 rUv = radius * projScale * 0.5 / dist;
     rUv *= min(1.0, 0.12 / max(rUv.y, 1e-5));
-    float noise = ign(gl_FragCoord.xy);
-    float jitter = fract(noise * 7.13 + 0.37);
+    vec2 rPx = rUv * fsize;
+    vec2 pc = vec2(p) + 0.5;
+    // festes 2×2-Muster (Bayer): vier Drehungen der Suchrichtungen, vier Schrittversätze – der Weichzeichner hebt es auf
+    ivec2 cell = ivec2(gl_FragCoord.xy) & 1;
+    float noise = (float((cell.x * 2 + cell.y * 3) & 3) + 0.5) * 0.25;
+    float jitter = fract(noise * 3.0);
     float occ = 0.0;
+    // feste Durchlaufzahl, kein break/continue; Tiefe nur über texelFetch (keine Ableitungen in der Schleife)
     for (int i = 0; i < DIRS; i++) {
       float a = (float(i) + noise) * (PI2 / float(DIRS));
       vec2 dir = vec2(cos(a), sin(a));
       float horizon = 0.0;
-      // erster Schritt mindestens zwei Bildpunkte entfernt (sonst verdeckt sich die Fläche durch Rundungsfehler selbst)
-      vec2 start = dir * depthTexel * 2.5;
       for (int j = 0; j < STEPS; j++) {
         float t = (float(j) + jitter) / float(STEPS);
-        vec2 suv = vUv + start + dir * rUv * t;
-        float sd = readDepth(suv);
-        if (sd >= 0.9999) continue;
-        vec3 v = viewPos(suv, sd) - P;
+        // erster Schritt mindestens zweieinhalb Bildpunkte entfernt (sonst verdeckt sich die Fläche durch Rundungsfehler selbst)
+        ivec2 q = clamp(ivec2(floor(pc + dir * (2.5 + rPx * t))), ivec2(0), size - 1);
+        float sd = skDepth(q);
+        vec3 v = skViewPos(q, sd, fsize) - P;
         float l = length(v);
         // Anstieg über der Fläche (mit kleinem Versatz gegen Selbstverdeckung), weich ausgeblendet mit der Entfernung
         float h = clamp((dot(N, v) / max(l, 1e-4) - 0.2) / 0.8, 0.0, 1.0);
         float fall = 1.0 - smoothstep(radius * 0.45, radius, l);
-        horizon = max(horizon, h * fall);
+        // Himmel hinter einer Kante verdeckt nichts
+        horizon = max(horizon, h * fall * step(sd, SK_SKY_DEPTH));
       }
       occ += horizon;
     }
@@ -131,10 +116,9 @@ export class AoPass extends Pass {
       uniforms: {
         tDepth: new Uniform(null),
         tColor: new Uniform(null),
-        depthTexel: new Uniform(new Vector2(1, 1)),
         projScale: new Uniform(new Vector2(1, 1)),
-        cameraNear: new Uniform(0.1),
-        cameraFar: new Uniform(1000),
+        cameraNear: new Uniform(CAMERA_PLANES.near),
+        cameraFar: new Uniform(CAMERA_PLANES.far),
         radius: new Uniform(cfg.radius),
         fadeFar: new Uniform(140),
       },
@@ -166,7 +150,6 @@ export class AoPass extends Pass {
 
   override setSize(width: number, height: number) {
     this.target.setSize(Math.max(1, Math.ceil(width * this.cfg.scale)), Math.max(1, Math.ceil(height * this.cfg.scale)));
-    this.mat.uniforms.depthTexel.value.set(1 / Math.max(1, width), 1 / Math.max(1, height));
   }
 
   override dispose() {
@@ -180,26 +163,39 @@ const COMPOSITE_FRAG = /* glsl */ `
   uniform sampler2D tAo;
   uniform vec2 aoTexel;
   uniform float intensity;
+  // eine Probe genau auf der Ecke zwischen vier Bildpunkten des Verdeckungsbildes (bilinear = Mittel dieser vier);
+  // nur ähnliche Tiefe zählt (keine dunklen Höfe an Silhouetten)
+  void aoTap(const in vec2 corner, const in float weight, const in float dist, const in float tol, inout float sum, inout float wsum) {
+    vec2 s = textureLod(tAo, corner * aoTexel, 0.0).rg;
+    float w = weight * exp(-abs(s.g - dist) / tol);
+    sum += s.r * w;
+    wsum += w;
+  }
   void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth, out vec4 outputColor) {
-    if (depth >= 0.9999 || inputColor.a < 0.5) { outputColor = inputColor; return; }
+    if (depth >= ${SKY_DEPTH} || inputColor.a < 0.5) { outputColor = inputColor; return; }
     float dist = -getViewZ(depth);
-    // 3×3 weichzeichnen, nur über ähnliche Tiefe (keine dunklen Höfe an Silhouetten)
-    float sum = 0.0, wsum = 0.0;
     float tol = 0.06 * dist + 0.05;
-    for (int y = -1; y <= 1; y++) {
-      for (int x = -1; x <= 1; x++) {
-        vec2 s = texture2D(tAo, uv + vec2(float(x), float(y)) * aoTexel).rg;
-        float w = exp(-abs(s.g - dist) / tol);
-        sum += s.r * w;
-        wsum += w;
-      }
-    }
-    float ao = wsum > 1e-4 ? sum / wsum : 1.0;
+    float sum = 0.0, wsum = 0.0;
+    // Vier feste Proben ohne Schleife und mit festem Mip-Level (texture2D in einer Schleife ergab unter
+    // ANGLE/Direct3D die Warnung X3595 und undefinierte Ableitungen): zwischen den vier umliegenden Ecken blenden
+    vec2 c = uv / aoTexel;
+    vec2 k = floor(c);
+    vec2 t = c - k;
+    aoTap(k, (1.0 - t.x) * (1.0 - t.y), dist, tol, sum, wsum);
+    aoTap(k + vec2(1.0, 0.0), t.x * (1.0 - t.y), dist, tol, sum, wsum);
+    aoTap(k + vec2(0.0, 1.0), (1.0 - t.x) * t.y, dist, tol, sum, wsum);
+    aoTap(k + vec2(1.0, 1.0), t.x * t.y, dist, tol, sum, wsum);
+    float ao = wsum > 1e-4 ? clamp(sum / wsum, 0.0, 1.0) : 1.0;
     outputColor = vec4(inputColor.rgb * mix(1.0, ao, intensity), inputColor.a);
   }
 `;
 
+/** Mittags (steile Sonne, kurze harte Schatten) braucht es mehr Kontaktschatten: Faktor auf die Stärke, von der Umgebung gesetzt */
+export const aoShared = { boost: 1 };
+
 export class AoEffect extends Effect {
+  private base: number;
+
   constructor(pass: AoPass, intensity: number) {
     super('AoEffect', COMPOSITE_FRAG, {
       blendFunction: BlendFunction.NORMAL,
@@ -211,6 +207,11 @@ export class AoEffect extends Effect {
       ]),
     });
     this.pass = pass;
+    this.base = intensity;
+  }
+
+  override update() {
+    this.uniforms.get('intensity')!.value = Math.min(1.25, this.base * aoShared.boost);
   }
 
   private pass: AoPass;

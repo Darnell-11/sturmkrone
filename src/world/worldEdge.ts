@@ -19,7 +19,7 @@ import {
 // Wiederverwendete Rechenvektoren (keine neuen Objekte pro Bild)
 const OUT = new Vector3();
 const VIEW = new Vector3();
-import { WORLD_RADIUS } from '../data/world';
+import { WORLD_RADIUS, WORLD_SCALE } from '../data/world';
 
 const FALL_HEIGHT = 700;
 const MIST_COUNT = 70;
@@ -68,7 +68,7 @@ export class WorldEdge {
         #include <fog_pars_fragment>
         float hh(float x) { x = fract(x * 0.1031); x *= x + 33.33; x *= x + x; return fract(x); }
         void main() {
-          float col = floor(vUv.x * 2400.0);
+          float col = floor(vUv.x * ${(2400 * WORLD_SCALE).toFixed(1)});
           float sp = 0.7 + hh(col) * 0.8;
           float s = fract(vUv.y * 7.0 * sp + uTime * 0.9 * sp + hh(col) * 9.0);
           float streak = smoothstep(0.45, 1.0, s);
@@ -83,7 +83,7 @@ export class WorldEdge {
           #include <fog_fragment>
         }`,
     });
-    this.fall = new Mesh(new CylinderGeometry(WORLD_RADIUS, WORLD_RADIUS * 0.985, FALL_HEIGHT, 360, 1, true), fallMat);
+    this.fall = new Mesh(new CylinderGeometry(WORLD_RADIUS, WORLD_RADIUS * 0.985, FALL_HEIGHT, 360 * WORLD_SCALE, 1, true), fallMat);
     this.fall.position.y = -FALL_HEIGHT / 2 + 0.3;
     this.fall.frustumCulled = false;
     this.fall.renderOrder = 1;
@@ -105,7 +105,7 @@ export class WorldEdge {
         varying vec2 vUv; varying float vA;
         void main() {
           float life = fract(aData.y + uTime * (0.035 + aData.z * 0.03));
-          float ang = uAngle + aData.x * 0.16;
+          float ang = uAngle + aData.x * ${(0.16 / WORLD_SCALE).toFixed(4)};
           float r = ${WORLD_RADIUS.toFixed(1)} + 15.0 + aData.z * 50.0;
           vec3 c = vec3(cos(ang) * r, -50.0 + life * 150.0, sin(ang) * r);
           vec4 mv = viewMatrix * vec4(c, 1.0);

@@ -13,6 +13,8 @@ import { CREW, CREW_BY_ID, CREW_ROLE_LABEL } from '../data/crew';
 import { hostileLegends } from '../data/legends';
 import { RARITY, TRINKETS, TRINKET_BY_ID } from '../data/trinkets';
 import { ACHIEVEMENTS } from '../data/achievements';
+import { CONSUMABLES, HEADS } from '../data/items';
+import { itemCount } from '../core/inventory';
 import { ARMOR, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, WEAPON_LINES, type IslandDef } from '../data/regions';
 import { stepText } from '../story/questSystem';
 import { drawMap } from './minimap';
@@ -269,6 +271,9 @@ export class Menus {
       `<h2 class="fell">Pause</h2>
       <button class="primary" data-a="resume" data-focus>Weiterspielen</button>
       <button class="secondary" data-a="map">Karte &amp; Logbuch</button>
+      <button class="secondary" data-a="quests">Auftragsbuch</button>
+      <button class="secondary" data-a="inv">Inventar &amp; Ausrüstung</button>
+      <button class="secondary" data-a="faji">Faji-Talente</button>
       <button class="secondary" data-a="crew">Crew</button>
       <button class="secondary" data-a="rank">Rangliste der Legenden</button>
       <button class="secondary" data-a="loot">Talismane &amp; Erfolge</button>
@@ -281,6 +286,9 @@ export class Menus {
         resume: () => g.resume(),
         look: () => g.openEditor(null),
         map: () => this.showMap('logbuch', () => this.showPause()),
+        quests: () => { g.resume(); g.openQuestLog(); },
+        inv: () => { g.resume(); g.openInventory(); },
+        faji: () => { g.resume(); g.openSkills(); },
         crew: () => this.showCrew(() => this.showPause()),
         rank: () => this.showRanking(() => this.showPause()),
         loot: () => this.showLoot(() => this.showPause()),
@@ -511,8 +519,9 @@ export class Menus {
     );
   }
 
-  private openShop(npc: TownNpcDef) {
-    const back = () => this.showDialog(npc);
+  /** Laden öffnen; back führt zurück (Standard: das alte Gesprächsmenü) */
+  openShop(npc: TownNpcDef, backTo?: () => void) {
+    const back = backTo ?? (() => this.showDialog(npc));
     switch (npc.shop) {
       case 'smith': this.showSmith(back); break;
       case 'market': this.showMarket(back); break;
@@ -558,10 +567,19 @@ export class Menus {
       <div class="slot"><div class="slot-head"><b>${POTION.n}</b><span>${POTION.price} Gold</span></div>
         <div class="meta">Heilt ${Math.round(POTION.heal * 100)} % deiner Lebenspunkte. Du trägst ${s.gear.potions} von ${POTION.max}.</div>
         <div class="row"><button class="mini brass" data-a="buy" data-id="1" ${s.gear.potions >= POTION.max ? 'disabled' : ''}>1 kaufen</button><button class="mini brass" data-a="buy" data-id="${POTION.max}" ${s.gear.potions >= POTION.max ? 'disabled' : ''}>Auffüllen</button></div></div>
-      <p class="small soft">Essen: Taste <kbd>${esc(g.input.keyLabel(g.input.getKeyBindings().potion?.[0] ?? 'KeyH'))}</kbd> oder der grüne Knopf am Handy.</p>
+      <p class="small soft">Essen: Taste <kbd>${esc(g.input.keyLabel(g.input.getKeyBindings().potion?.[0] ?? 'KeyH'))}</kbd> oder der grüne Knopf am Handy. Alle Güter landen in der Schnellleiste (Tasten 1–4, Inventar: <kbd>${esc(g.input.keyLabel(g.input.getKeyBindings().inventory?.[0] ?? 'KeyI'))}</kbd>).</p>
+      <h3>Tränke und Stärkungen</h3>
+      ${CONSUMABLES.filter((c) => c.id !== 'proviant').map((c) => { const n = itemCount(s.gear, c.id); return `<div class="slot"><div class="slot-head"><b>${c.icon} ${esc(c.n)}</b><span>${c.price} Gold</span></div>
+        <div class="meta">${esc(c.d)} Du trägst ${n} von ${c.max}.</div>
+        <div class="row"><button class="mini brass" data-a="item" data-id="${c.id}" ${n >= c.max ? 'disabled' : ''}>Kaufen</button></div></div>`; }).join('')}
+      <h3>Kopfbedeckungen</h3>
+      ${HEADS.map((h) => { const own = s.gear.heads?.includes(h.id); return `<div class="slot"><div class="slot-head"><b>🎩 ${esc(h.n)}</b><span>${own ? 'gekauft' : `${h.price} Gold`}</span></div>
+        <div class="meta">${esc(h.d)}${h.rank > g.playerRank && !own ? ` · ab Rang „${RANKS[s.player.faction][h.rank]}“` : ''}</div>
+        ${own ? '' : `<div class="row"><button class="mini brass" data-a="head" data-id="${h.id}" ${h.rank > g.playerRank ? 'disabled' : ''}>Kaufen und aufsetzen</button></div>`}</div>`; }).join('')}
       <button class="primary" data-a="back">Zurück</button>`,
-      { buy: (id) => re(g.buyPotions(+id)), back },
+      { buy: (id) => re(g.buyPotions(+id)), item: (id) => re(g.buyItem(id)), head: (id) => re(g.buyHead(id)), back },
       back,
+      { wide: true },
     );
   }
 
@@ -619,7 +637,7 @@ export class Menus {
       cv.style.width = `${size}px`;
       cv.width = cv.height = Math.round(size * Math.min(2, devicePixelRatio));
       const ctx = cv.getContext('2d');
-      if (ctx) drawMap(ctx, size, g.world.islandDefs.filter((i) => g.world.discovered.has(i.id)), g.mapMarkers(), tab === 'welt' ? 'world' : 'region');
+      if (ctx) drawMap(ctx, size, g.world.islandDefs.filter((i) => g.world.discovered.has(i.id)), g.mapMarkers(), tab === 'welt' ? 'world' : 'region', g.mapOpts);
     }
   }
 

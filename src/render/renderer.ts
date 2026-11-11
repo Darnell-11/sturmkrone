@@ -30,6 +30,7 @@ import {
   VignetteEffect,
   type Effect,
 } from 'postprocessing';
+import { budgetConfig } from './watchdog';
 import { MOBILE_AO_LIMIT, QUALITY_TIERS, RENDER_LOOK, type QualityConfig, type QualityTier } from '../data/qualityTiers';
 import { AoEffect, AoPass } from './gtao';
 import { HeatEffect, heatShared } from './heat';
@@ -39,11 +40,28 @@ import { EdgeEffect, OpaqueEffect, WATER_ALPHA, setHullsVisible } from './outlin
 import { GradeEffect } from './grade';
 import { SsrEffect, SsrPass } from './ssr';
 import { DynamicResolution } from './dynamicResolution';
+import { installShaderLogFilter } from './shaderLog';
 
 export class WebGLUnavailableError extends Error {}
 
 /** Grundstärke der Sonnenstrahlen */
 const GOD_WEIGHT = 0.26;
+
+/**
+ * Schutz vor „schwarzen Blöcken": Ein einziger ungültiger Bildpunkt (NaN/Unendlich aus irgendeinem Material) würde
+ * vom Mipmap-Weichzeichner des Bloom über große Teile des Bildes verschmiert und als schwarzes Flackern sichtbar.
+ * Der Helligkeits-Filter des Bloom verwirft solche Werte deshalb und begrenzt die Helligkeit.
+ */
+function guardBloom(bloom: BloomEffect) {
+  const mat = bloom.luminanceMaterial;
+  const read = 'vec4 texel=texture2D(inputBuffer,vUv);';
+  if (!mat.fragmentShader.includes(read)) {
+    if (import.meta.env.DEV) console.warn('Bloom-Schutz: Shader der Bibliothek hat sich geändert, Schutz nicht aktiv');
+    return;
+  }
+  mat.fragmentShader = mat.fragmentShader.replace(read, read + 'if(!(dot(abs(texel.rgb),vec3(1.0))<1.0e6)){texel=vec4(0.0);}texel.rgb=clamp(texel.rgb,0.0,64.0);');
+  mat.needsUpdate = true;
+}
 
 export class GameRenderer {
   readonly gl: WebGLRenderer;
@@ -75,6 +93,7 @@ export class GameRenderer {
     } catch {
       throw new WebGLUnavailableError();
     }
+    installShaderLogFilter();
     // Atmosphärischer Nebel ersetzt den linearen Nebel, bevor der erste Shader übersetzt wird
     installAtmosphere();
     // ACES Filmic mit ausgewogener Belichtung (gilt auch für den Tonemapping-Effekt der Nachbearbeitung)
@@ -93,9 +112,20 @@ export class GameRenderer {
   /** Wird nach jedem Stufenwechsel aufgerufen (Welt passt Schatten, Sichtweite, Partikel an). */
   onQualityChange(l: (c: QualityConfig, tier: QualityTier) => void) { this.listeners.push(l); }
 
-  applyQuality(tier: QualityTier) {
+  /** Sparstufe des Leistungs-Wächters (0 … 3) */
+  budget = 0;
+
+  /** Sparstufe wechseln: gleiche Grafikstufe, aber weniger Schatten-, AO- und Vegetationslast */
+  setBudget(level: number) {
+    if (level === this.budget) return;
+    this.budget = level;
+    this.applyQuality(this.tier, true);
+  }
+
+  applyQuality(tier: QualityTier, keepBudget = false) {
     this.tier = tier;
-    this.config = QUALITY_TIERS[tier];
+    if (!keepBudget) this.budget = 0;
+    this.config = budgetConfig(QUALITY_TIERS[tier], this.budget);
     const c = this.config;
     const sm = this.gl.shadowMap;
     const enabledBefore = sm.enabled;
@@ -122,6 +152,16 @@ export class GameRenderer {
     this.rebuildComposer();
   }
 
+  /**
+   * Bild-Pipeline. Der Kern ist auf jeder Stufe derselbe und besteht nur aus Standard-Durchgängen:
+   *
+   *   RenderPass (Szene, HDR)  →  Bloom (Mipmap-Weichzeichner im Unreal-Stil, hohe Schwelle)  →  ACES-Filmic-Tonemapping
+   *
+   * Auf Hoch/Maximal/Ultra kommen davor zwei Hilfsbilder in reduzierter Auflösung (Umgebungsverdeckung, Spiegelungen)
+   * und die Tiefenunschärfe dazu. Alles Übrige (Konturen, Farbkorrektur, Vignette, Hitzeflimmern) rechnet im selben
+   * Abschluss-Durchgang wie Bloom und Tonemapping mit – es gibt keine weiteren Vollbild-Durchgänge.
+   * Alle eigenen Shader folgen den Regeln in depthGlsl.ts (feste Schleifen, keine Ableitungen in Schleifen).
+   */
   private rebuildComposer() {
     this.composer?.dispose();
     this.composer = null;
@@ -139,19 +179,22 @@ export class GameRenderer {
 
     const samples = Math.min(c.multisampling, this.gl.capabilities.maxSamples ?? 0);
     const composer = new EffectComposer(this.gl, { frameBufferType: HalfFloatType, multisampling: samples });
+
+    // 1. Szene
     composer.addPass(new RenderPass(this.scene, cam));
 
-    // Umgebungsverdeckung: eigener Durchgang in halber Auflösung, direkt nach dem Bild (liest Tiefe und Wasser-Markierung)
+    // 2. Hilfsbilder in reduzierter Auflösung (lesen Tiefe und Wasser-Markierung, verändern das Bild selbst nicht)
     const aoBase = c.post.ambientOcclusion;
     const aoCfg = aoBase && this.mobile
       ? { ...aoBase, dirs: Math.min(aoBase.dirs, MOBILE_AO_LIMIT.dirs), steps: Math.min(aoBase.steps, MOBILE_AO_LIMIT.steps), scale: Math.min(aoBase.scale, MOBILE_AO_LIMIT.scale) }
       : aoBase;
     const aoPass = aoCfg ? new AoPass(cam, aoCfg) : null;
     if (aoPass) composer.addPass(aoPass);
-    // Bildschirm-Spiegelungen: eigener Durchgang in reduzierter Auflösung (am Handy zu teuer)
+    // Bildschirm-Spiegelungen (am Handy zu teuer)
     const ssrPass = c.post.ssr && !this.mobile ? new SsrPass(cam, c.post.ssr) : null;
     if (ssrPass) composer.addPass(ssrPass);
 
+    // 3. Tiefenunschärfe (braucht als Weichzeichner einen eigenen Durchgang)
     if (c.post.depthOfField && this.focus && !(this.mobile && this.tier === 'high')) {
       // Nur der ferne Hintergrund wird weich: Vordergrund und alles bis zur Figur bleiben scharf.
       // (Vorher wurde in beide Richtungen unscharf gezeichnet, mit festem Bereich von 40 m – das traf Wellen,
@@ -167,7 +210,13 @@ export class GameRenderer {
       composer.addPass(new EffectPass(cam, dof));
     }
 
+    // 4. Abschluss: ein einziger Durchgang für alles Übrige
     const effects: Effect[] = [];
+    // Hitzeflimmern verschiebt nur die Leseposition dieses Durchgangs (früher ein eigener Vollbild-Durchgang am Ende)
+    if (c.post.heat) {
+      this.heat = new HeatEffect();
+      effects.push(this.heat);
+    }
     if (aoPass && aoCfg) effects.push(new AoEffect(aoPass, aoCfg.intensity));
     if (ssrPass) effects.push(new SsrEffect(ssrPass));
     if (c.post.godRays && this.sun) {
@@ -178,7 +227,9 @@ export class GameRenderer {
     if (c.post.bloom) {
       // Bloom im Stil von Unreal (Mipmap-Weichzeichnen) mit hoher Schwelle: nur echte Lichtquellen und Magie leuchten
       const b = RENDER_LOOK.bloom;
-      effects.push(new BloomEffect({ intensity: b.intensity, luminanceThreshold: b.threshold, luminanceSmoothing: b.smoothing, mipmapBlur: true, radius: b.radius }));
+      const bloom = new BloomEffect({ intensity: b.intensity, luminanceThreshold: b.threshold, luminanceSmoothing: b.smoothing, mipmapBlur: true, radius: b.radius });
+      guardBloom(bloom);
+      effects.push(bloom);
     }
     effects.push(new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC }));
     if (c.post.outlines) effects.push(new EdgeEffect({ thickness: Math.max(1, this.pixelRatio()), fadeFar: 320 }));
@@ -190,11 +241,6 @@ export class GameRenderer {
     // Immer zuletzt: fertiges Bild undurchsichtig (sonst schwarze Flächen auf Samsung-Handys)
     effects.push(new OpaqueEffect());
     composer.addPass(new EffectPass(cam, ...effects));
-    // Hitzeflimmern verschiebt die Leseposition des fertigen Bildes – eigener kurzer Durchgang am Ende
-    if (c.post.heat) {
-      this.heat = new HeatEffect();
-      composer.addPass(new EffectPass(cam, this.heat));
-    }
     this.composer = composer;
   }
 

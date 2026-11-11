@@ -7,7 +7,6 @@ import {
   Color,
   ConeGeometry,
   CylinderGeometry,
-  DodecahedronGeometry,
   Group,
   MathUtils,
   Mesh,
@@ -21,8 +20,8 @@ import {
 import type { Input } from '../core/input/input';
 import type { StyleId } from '../data/animations';
 import type { CharacterLook, NpcRole } from '../data/characterParts';
-import type { QualityConfig } from '../data/qualityTiers';
-import { EDGE_WALL } from '../data/world';
+import { CAMERA_PLANES, type QualityConfig } from '../data/qualityTiers';
+import { EDGE_WALL, WORLD_SCALE } from '../data/world';
 import type { CharacterAssets } from '../entities/character/assets';
 import { Character } from '../entities/character/character';
 import { weaponsFor } from '../entities/character/weapons';
@@ -31,16 +30,23 @@ import { PlayerFoot } from '../entities/player/playerFoot';
 import { addOutlines } from '../render/outline';
 import { toon } from '../render/toon';
 import { Environment, type EnvState } from './environment';
-import { coastK, coastMax, IslandGround, makeIslandShape, type WalkIsland } from './islandGround';
+import { coastK, coastMax, fitHills, IslandGround, makeIslandShape, shelfOf, WATERLINE, type WalkIsland } from './islandGround';
 import type { IslandShape } from './ocean';
 import { ParticleSystem } from './particles';
 import { hashId, seeded } from './waves';
 import { dressIsland } from './islandDress';
+import { SITES } from '../data/settlements';
+import { buildSite } from './settlement';
+import { setSiteNight } from './architecture';
+import { cachedProto, floraProto, Scatter, type Biome, type VegChunk } from './vegetation';
+import type { Material } from 'three';
 import { IslandFauna } from './fauna';
 import { texDetail } from '../render/texDetail';
 import type { IslandStyle } from '../data/regions';
 import { CombatFx } from '../combat/fx';
 import { CombatSystem } from '../combat/combat';
+import type { LootDrop } from '../data/loot';
+import { EVENT, WorldEvents } from './events';
 import type { EnemyKind } from '../data/combat';
 import type { Faction } from '../core/save/types';
 import type { CombatOverlay } from '../ui/combatOverlay';
@@ -56,18 +62,20 @@ import { BERNSTEINSEE, REGIONS, regionAt, seaLevelAt, type IslandDef, type Regio
 import { SmokeSystem } from './smoke';
 import { setElementSmoke } from '../faji/elementFx';
 import { DebrisSystem } from './debris';
-import { islandLabel, islandTerrain, outpost, plant, styleKit, volcano } from './islandStyle';
+import { islandLabel, islandTerrain, OUTPOST_PIER, outpost, plant, ROCK_TYPES, rockFormation, styleKit, volcano } from './islandStyle';
 import type { Sprite } from 'three';
 import { ABYSS_LAIR, SeaBoss } from '../naval/seaBoss';
 import { buildTown, mergeByMaterial, type TownBuild } from './town';
 import { SeaLife } from './life';
 import { warmupShaders } from '../core/warmup';
 import type { WebGLRenderer } from 'three';
-import { TOWN_NPCS, type TownNpcDef } from '../data/quests';
+import { TOWN_NPCS, VILLAGE_NPCS, type TownNpcDef } from '../data/quests';
 
 // Feste Partikelfarben (die Partikel kopieren die Farbe – so entsteht pro Bild kein neues Objekt)
 const FOAM_COL = new Color(0.95, 0.98, 1);
 const SPLASH_COL = new Color(0.78, 0.84, 0.9);
+const WHEEL_L = new Vector3();
+const WHEEL_R = new Vector3();
 const EMBER_COL = new Color(3.2, 1.3, 0.3);
 const CRYSTAL_COL = new Color(1.4, 0.8, 2.4);
 const DIG_COL = new Color(0.9, 0.8, 0.6);
@@ -81,12 +89,11 @@ const CAMP_BY_LEVEL: EnemyKind[][] = [
   ['hauptmann', 'matrose', 'schildtraeger', 'musketier', 'fajiwirker', 'schlaeger'],
 ];
 
-const WAKE_INTERVAL = 0.22;
 
 /** Inselstil einer Region */
 const styleOf = (regionId?: string): IslandStyle => REGIONS.find((r) => r.id === regionId)?.style ?? 'tropisch';
 
-interface WakePoint { x: number; z: number; age: number; strength: number }
+interface WakePoint { x: number; z: number; age: number; strength: number; dx: number; dz: number; hw: number; spd: number }
 
 export type SeaMode = 'sail' | 'foot';
 export interface SeaState { boat: { x: number; z: number; heading: number } | null; env: EnvState }
@@ -95,9 +102,12 @@ export interface SeaState { boat: { x: number; z: number; heading: number } | nu
  * Testwelt: Schiff, Inseln, Spielfigur zu Fuß, Bewohner und die komplette Umgebung.
  * Echte Regionen, Städte und Schiffe folgen in den Meilensteinen 5 und 6.
  */
+/** Standbild bei wirksamen Treffern (Sekunden) */
+const HIT_STOP = 0.035;
+
 export class SeaWorld {
   readonly scene = new Scene();
-  readonly camera = new PerspectiveCamera(55, 1, 0.3, 2600);
+  readonly camera = new PerspectiveCamera(55, 1, CAMERA_PLANES.near, CAMERA_PLANES.far);
   readonly env: Environment;
   /** Punkt, auf den Kamera, Schatten und Tiefenunschärfe zielen */
   readonly focus = new Vector3();
@@ -120,6 +130,16 @@ export class SeaWorld {
   onDig: (island: string) => void = () => {};
   onEnterIsland: (def: IslandDef) => void = () => {};
   onIslandCleared: (id: string) => void = () => {};
+  /** Beute aufgehoben (Beute-Säule): Spielstand und Anzeige setzt das Spiel */
+  onLootDrop: (d: LootDrop) => void = () => {};
+  /** Zufällige Zonen-Ereignisse (Invasion, Elite-Jäger) */
+  private events = new WorldEvents({
+    banner: (t, s) => this.overlay?.showBanner(t, s),
+    cutin: (t, c) => this.overlay?.showCutin(t, c),
+    message: (t) => this.onMessage(t),
+    gold: (n) => this.onGold(n),
+    drop: (x, z, d) => { const g = this.ground.height(x, z); this.combat?.loot.drop(x, (Number.isFinite(g) ? g : 0) + 1, z, d, 3); },
+  });
   /** Braucht ein laufender Auftrag diese Insel freigekämpft? Dann ignoriert sie die Ruhezeit */
   questWantsClear: (id: string) => boolean = () => false;
   /** Auf einer bewohnten Insel gelandet (Geschenk der Dorfbewohner) */
@@ -127,6 +147,7 @@ export class SeaWorld {
   private assets: CharacterAssets | null = null;
   /** Dorfbewohner der ruhigen Inseln, nur solange man dort an Land ist */
   private visitors: Npc[] = [];
+  private hullList: { x: number; z: number; h: number; L: number; W: number; speed: number; vis: number; trail?: boolean }[] = [];
   /** Faji-Kristall einer Ruine erweckt */
   onCrystal: (id: string) => void = () => {};
   onRescue: () => void = () => {};
@@ -159,6 +180,9 @@ export class SeaWorld {
   /** Kamerastoß: Feder-gedämpfter Versatz, angestoßen in Trefferrichtung */
   private kick = new Vector3();
   private kickV = new Vector3();
+  private shakeAx = new Vector3();
+  private shakeDir = 0;
+  private shakePh = 0;
   combat: CombatSystem | null = null;
   playerFaction: Faction = 'pirat';
   private fx: CombatFx | null = null;
@@ -211,6 +235,13 @@ export class SeaWorld {
   private viewDist = 800;
   /** Lagerfeuer auf den Inseln (Rauch und Glut) */
   private campfires: { x: number; y: number; z: number }[] = [];
+  /** Schornsteine der Dörfer */
+  private chimneys: { x: number; y: number; z: number }[] = [];
+  /** Kacheln mit Gras, Blumen, Farn und Büschen: jenseits ihrer Sichtweite ausgeblendet */
+  private vegChunks: VegChunk[] = [];
+  private vegLod = 1;
+  /** Dorfmitte der handgebauten Länder (dort schlendern die Bewohner) */
+  private villages = new Map<string, { x: number; z: number; r: number }>();
   /** Krabben, Schildkröten, Vögel, Glühwürmchen und springende Fische */
   readonly fauna: IslandFauna;
   private spray: ParticleSystem;
@@ -220,7 +251,6 @@ export class SeaWorld {
   /** Splitter, Planken und Fässer */
   readonly debris: DebrisSystem;
   private wake: WakePoint[] = [];
-  private wakeTimer = 0;
 
   private player: Character | null = null;
   private foot: PlayerFoot | null = null;
@@ -243,7 +273,25 @@ export class SeaWorld {
   /** Blickrichtung der Seekamera (folgt Schiff oder Gegner) */
   private seaYaw = 0;
   private camIdle = 0;
+  /** Geglättete Seekamera: Blickwinkel, Abstand, Höhe und Ankerpunkt werden einzeln nachgeführt (sonst schneidet die Kamera beim Umschwenken durchs Schiff) */
+  private camAz = 0;
+  /** Kameraradius und Höhenwinkel der Schiffskamera (geglättet) */
+  private camR = 0;
+  private camE = 0;
+  /** Draufsicht 0 … 1: wächst, wenn man über den größten Zoom hinaus herauszoomt (Ziel und geglätteter Wert) */
+  private camTop = 0;
+  private camTopS = 0;
+  /** Segel gerade durchsichtig (zu Fuß an Deck oder in der Draufsicht)? */
+  private sailFaded = false;
+  private camAx = 0;
+  private camAz2 = 0;
+  private camSailInit = false;
   private footYaw = 0;
+  /** Zielerfassung: Überblendfaktor 0 … 1 und letzte Richtung zum Ziel (für den Kamera-Ausschnitt) */
+  private prevLock: { alive: boolean } | null = null;
+  private lockK = 0;
+  private lockDX = 0;
+  private lockDZ = 0;
   private footPitch = 0.32;
   private footDist = 7;
   private menuOrbit = 0;
@@ -253,7 +301,7 @@ export class SeaWorld {
 
   constructor() {
     this.env = new Environment(this.scene);
-    this.ship = new Ship(this.scene, 0, DEFAULT_SHIP_LOOK('pirat'), 'pirat');
+    this.ship = new Ship(this.scene, 0, DEFAULT_SHIP_LOOK('pirat'), 'pirat', 0, true);
     this.boat = this.ship.model.group;
 
     this.fauna = new IslandFauna(this.scene);
@@ -315,7 +363,7 @@ export class SeaWorld {
       const x = pp.x + Math.sin(a) * r, z = pp.z + Math.cos(a) * r;
       const gy = g.height(x, z), wy = this.env.heightAt(x, z);
       const y = Number.isFinite(gy) ? Math.max(gy, wy) : wy;
-      this.spray.emit(2, x, y + 0.04, z, { speed: 0.9, up: 1.8, life: 0.28, color: SPLASH_COL, gravity: 14, spread: 0.04 });
+      this.spray.emit(2, x, y + 0.04, z, { speed: 0.9, up: 1.8, life: 0.28, color: SPLASH_COL, gravity: 14, spread: 0.04, size: 0.3 });
     }
   }
 
@@ -326,7 +374,7 @@ export class SeaWorld {
     const shapes: IslandShape[] = [];
     // Alle Regionen sind handgemacht: Bernsteinsee in der Mitte, fünf Meere im Ring
     const specs = REGIONS.flatMap((reg) => reg.islands.map((d) => ({
-      x: d.x, z: d.z, r: d.r, hill: d.hill, palms: d.palms, tower: d.kind === 'lighthouse', def: d, kit: styleKit(reg.style ?? 'tropisch'),
+      x: d.x, z: d.z, r: d.r, hill: d.hill, palms: d.palms, tower: d.kind === 'lighthouse', def: d, kit: styleKit(d.biome ?? reg.style ?? 'tropisch'),
     })));
     this.islandDefs = specs.map((s) => s.def);
     const stone = toon(0xe8e2d4);
@@ -340,60 +388,53 @@ export class SeaWorld {
       // Jede Insel bekommt ihre eigene Form: langgezogen, gelappt, sichelförmig oder rund, mit 1–3 Hügeln.
       // Stadt, Häfen, Leuchtturm und Vulkane bleiben schlicht (ihre Bauten stehen um die Mitte).
       const shapeRnd = seeded(hashId(s.def.id));
-      const simple = town || s.def.kind === 'harbor' || s.tower || s.def.region === 'glut';
-      const form = makeIslandShape(r, s.hill, shapeRnd, simple);
-      const walk: WalkIsland = { x: s.x, z: s.z, r, beachY: 1.3, hillY: 1.2, coast: form.coast, hills: form.hills.map((h) => ({ ...h, x: s.x + h.x, z: s.z + h.z })), blockers: [] };
-      shapes.push({ x: s.x, z: s.z, r: r * coastMax(form.coast) * 1.1, coast: form.coast, base: r * 1.1 });
+      // schlicht (rund, ein Hügel in der Mitte) nur noch dort, wo ein Bauwerk die Mitte braucht: Stadt, Leuchtturm, Vulkan
+      const volcanic = s.def.region === 'glut' && s.def.kind !== 'harbor' && s.def.kind !== 'treasure';
+      const simple = town || s.tower || volcanic;
+      // Handgebaute Länder (Festland, neue Inseln) bringen Küste und Hügel aus ihren Daten mit
+      const site = s.def.site ? SITES[s.def.site] : null;
+      const form = site ? { coast: site.coast, hills: fitHills(r, site.coast, site.hills) } : makeIslandShape(r, s.hill, shapeRnd, simple);
+      const walk: WalkIsland = { x: s.x, z: s.z, r, beachY: 1.3, hillY: 1.2, coast: form.coast, hills: form.hills.map((h) => ({ ...h, x: s.x + h.x, z: s.z + h.z })), shelf: shelfOf(r), blockers: [] };
+      // Brandung und Flachwasser beginnen an der echten Wasserlinie (Böschung je nach Inselgröße)
+      const wl = 1 + walk.shelf * WATERLINE;
+      shapes.push({ x: s.x, z: s.z, r: r * coastMax(form.coast) * wl, coast: form.coast, base: r * wl });
       const kit = s.kit;
       const glow = new Set<Mesh>(this.lamps);
       // Grasfläche: üppig bis fast an den Strand oder karg mit viel Sand – je nach Region und Inselart
-      const style = styleOf(s.def.region);
+      const style = s.def.biome ?? styleOf(s.def.region);
       const lushK = style === 'tropisch' || style === 'nord' ? 1 : style === 'nebel' ? 0.8 : style === 'schlund' ? 0.6 : 0.35;
-      const grassFrac = town ? 0.8 : s.def.kind === 'treasure' ? 0.35 + shapeRnd() * 0.25 : (0.45 + shapeRnd() * 0.4) * lushK + (1 - lushK) * 0.2;
-      const terrain = islandTerrain(kit, r, form.coast, form.hills, grassFrac, shapeRnd);
+      const grassFrac = site ? site.grass : town ? 0.8 : s.def.kind === 'treasure' ? 0.35 + shapeRnd() * 0.25 : (0.45 + shapeRnd() * 0.4) * lushK + (1 - lushK) * 0.2;
+      const terrain = islandTerrain(kit, r, form.coast, form.hills, grassFrac, shapeRnd, town || site ? 0 : 0.45 + shapeRnd() * 0.55, walk.shelf);
       isl.add(terrain.beach, ...terrain.hills);
       /** Bodenhöhe in Inselkoordinaten – dieselbe Rechnung wie beim Laufen */
       const solo = new IslandGround();
       solo.add(walk);
       const hAt = (lx: number, lz: number) => Math.max(-2, solo.height(s.x + lx, s.z + lz));
       const hillTop = Math.max(...walk.hills.map((h) => h.r * h.h));
+      // Bäume, Sträucher, Gras und Felsen der Insel: gesammelt und am Ende als InstancedMesh gebaut
+      const veg = new Scatter();
       const rocks = s.def.rocks ?? (rnd() < 0.4 && !s.tower && !town ? 1 : 0);
+      const rockPick = hashId(s.def.id + 'fels');
       for (let k = 0; k < rocks; k++) {
         const a = rnd() * Math.PI * 2, rr = r * (0.35 + rnd() * 0.3);
-        const size = r * (0.1 + rnd() * 0.08);
-        // Felsgruppe statt Pyramide: eine schiefe Felsnadel mit Brocken drumherum, jede anders
-        const rk = new Group();
-        const tall = size * (1.2 + rnd() * 1.2) * kit.rockScale;
-        const spire = new Mesh(new DodecahedronGeometry(size, 0), kit.rock);
-        spire.scale.set(0.8 + rnd() * 0.4, tall / size, 0.8 + rnd() * 0.4);
-        spire.position.y = tall * 0.45;
-        spire.rotation.set((rnd() - 0.5) * 0.25, rnd() * 3, (rnd() - 0.5) * 0.25);
-        rk.add(spire);
-        for (let b = 0; b < 2 + Math.floor(rnd() * 3); b++) {
-          const bs = size * (0.3 + rnd() * 0.4);
-          const boulder = new Mesh(new DodecahedronGeometry(bs, 0), kit.rock);
-          const ba = rnd() * Math.PI * 2;
-          boulder.position.set(Math.cos(ba) * size * 1.1, bs * 0.5, Math.sin(ba) * size * 1.1);
-          boulder.rotation.set(rnd(), rnd(), rnd());
-          boulder.scale.y = 0.7;
-          rk.add(boulder);
-          // jeder Felsbrocken am Fuß bekommt einen eigenen Kollider (vorher nur der Hauptfelsen)
-          walk.blockers.push({ x: s.x + Math.cos(a) * rr + boulder.position.x, z: s.z + Math.sin(a) * rr + boulder.position.z, r: bs * 0.85 });
-        }
-        rk.position.set(Math.cos(a) * rr, hAt(Math.cos(a) * rr, Math.sin(a) * rr) - 0.3, Math.sin(a) * rr);
-        isl.add(rk);
-        walk.blockers.push({ x: s.x + Math.cos(a) * rr, z: s.z + Math.sin(a) * rr, r: size });
+        // Felsformation in menschlichem Maß (vorher überall dieselbe Felsnadel, bis über 30 m hoch):
+        // jede Insel hat eine Hauptform aus ihrem Namen, dazwischen einzelne andere
+        const size = Math.min(6.5, r * (0.065 + rnd() * 0.04));
+        const kinds = ROCK_TYPES[style];
+        const type = rnd() < 0.65 ? kinds[rockPick % kinds.length] : kinds[Math.floor(rnd() * kinds.length)];
+        const f = rockFormation(type, kit, rnd, size);
+        const fx = Math.cos(a) * rr, fz = Math.sin(a) * rr;
+        f.g.position.set(fx, hAt(fx, fz) - 0.3, fz);
+        isl.add(f.g);
+        for (const b of f.blocks) walk.blockers.push({ x: s.x + fx + b.x, z: s.z + fz + b.z, r: b.r });
       }
       for (let k = 0; k < s.palms; k++) {
         const pa = town ? (k / s.palms) * Math.PI * 2 + rnd() * 0.2 : rnd() * Math.PI * 2;
         const pr = r * (town ? 0.84 + rnd() * 0.08 : 0.3 + rnd() * 0.55);
-        const palm = plant(kit, rnd);
-        palm.traverse((o) => { if (o.userData.noOutline) glow.add(o as Mesh); });
         const px = Math.cos(pa) * pr, pz = Math.sin(pa) * pr;
-        palm.position.set(px, hAt(px, pz) - 0.1, pz);
-        palm.rotation.z = (rnd() - 0.5) * (kit.flora === 'palme' ? 0.4 : 0.15);
-        palm.rotation.y = rnd() * Math.PI * 2;
-        isl.add(palm);
+        // Tropen: geschwungene Palmen mit Kokosnüssen (die geraden Stangenpalmen der alten Karte sind Geschichte)
+        const proto = style === 'tropisch' ? floraProto('tropisch', 'palme', Math.floor(rnd() * 4)) : cachedProto(`kit:${style}:plant:${Math.floor(rnd() * 4)}`, (prnd) => plant(kit, prnd), { collide: 0.45 });
+        veg.add(proto, px, hAt(px, pz) - 0.1, pz, rnd() * Math.PI * 2, 1, 1, 0, (rnd() - 0.5) * (kit.flora === 'palme' ? 0.4 : 0.15));
         walk.blockers.push({ x: s.x + px, z: s.z + pz, r: 0.45 });
       }
       if (s.tower) {
@@ -409,7 +450,7 @@ export class SeaWorld {
         walk.blockers.push({ x: s.x, z: s.z, r: 2.5 });
       }
       // Vulkan-Glut auf den Hügeln des Glutrings
-      if (s.def.region === 'glut' && s.def.kind !== 'harbor' && s.def.kind !== 'treasure') {
+      if (volcanic) {
         const v = volcano(kit, r, 1.2 + r * 0.75 * s.hill * 0.5, s.def.kind === 'boss');
         isl.add(v.g);
         v.g.traverse((o) => { if (o.userData.noOutline) glow.add(o as Mesh); });
@@ -420,22 +461,42 @@ export class SeaWorld {
       if (s.def.kind === 'harbor') {
         const lanterns: Mesh[] = [];
         const facing = Math.atan2(-s.x, -s.z);
-        isl.add(outpost(r, facing, lanterns));
+        // Hafeninseln haben jetzt eine eigene Küstenform: der Steg setzt an der echten Wasserlinie an
+        const e = r * coastK(form.coast, Math.atan2(Math.cos(facing), Math.sin(facing)));
+        isl.add(outpost(e, facing, lanterns));
         const fx = Math.sin(facing), fz = Math.cos(facing);
-        this.piers.push({ ax: s.x + fx * (r - 5), az: s.z + fz * (r - 5), bx: s.x + fx * (r + 17), bz: s.z + fz * (r + 17), hw: 1.5 });
+        this.piers.push({ ax: s.x + fx * (e + OUTPOST_PIER.from), az: s.z + fz * (e + OUTPOST_PIER.from), bx: s.x + fx * (e + OUTPOST_PIER.to), bz: s.z + fz * (e + OUTPOST_PIER.to), hw: 1.5 });
         for (const l of lanterns) glow.add(l);
+        // Pfähle beiderseits und Laternenmast sind fest (Positionen wie in outpost())
+        for (let d = e + 2; d <= e + OUTPOST_PIER.to - 1; d += 5) for (const sd of [-1, 1]) walk.blockers.push({ x: s.x + fx * d + fz * 1.6 * sd, z: s.z + fz * d - fx * 1.6 * sd, r: 0.22 });
+        walk.blockers.push({ x: s.x + fx * (e + OUTPOST_PIER.to - 3) + fz * 1.2, z: s.z + fz * (e + OUTPOST_PIER.to - 3) - fx * 1.2, r: 0.16 });
       }
       // Natur, Bauten und Treibgut passend zu Region und Inselart
-      if (!town) {
-        const dressed = dressIsland({ group: isl, def: s.def, kit, walk, hAt, glow, density: texDetail.density, style: styleOf(s.def.region) });
+      if (site) {
+        // Dörfer, Höfe, Türme und Ruinen mit Kollisions-Gitter, danach der Bewuchs des Bioms
+        const built = buildSite({ group: isl, def: s.def, site, biome: style as Biome, walk, hAt, veg, density: texDetail.density });
+        this.campfires.push(...built.fires.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
+        this.chimneys.push(...built.chimneys.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
+        this.piers.push(...built.piers);
+        this.villages.set(s.def.id, built.village);
+        this.fauna.addIsland(s.def, s.x, s.z, r, built.trees.map((t) => ({ x: s.x + t.x, y: t.y, z: s.z + t.z })), built.bushes.map((b) => ({ x: s.x + b.x, y: b.y, z: s.z + b.z })), style, (ang) => r * coastK(form.coast, ang));
+      } else if (!town) {
+        const dressed = dressIsland({ group: isl, def: s.def, kit, walk, hAt, glow, density: texDetail.density, style, veg });
         this.campfires.push(...dressed.fires.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
-        this.fauna.addIsland(s.def, s.x, s.z, r, dressed.trees.map((t) => ({ x: s.x + t.x, y: t.y, z: s.z + t.z })), dressed.bushes.map((b) => ({ x: s.x + b.x, y: b.y, z: s.z + b.z })), styleOf(s.def.region), (ang) => r * coastK(form.coast, ang));
+        this.fauna.addIsland(s.def, s.x, s.z, r, dressed.trees.map((t) => ({ x: s.x + t.x, y: t.y, z: s.z + t.z })), dressed.bushes.map((b) => ({ x: s.x + b.x, y: b.y, z: s.z + b.z })), style, (ang) => r * coastK(form.coast, ang));
       }
       this.scene.add(isl);
       this.islandGroups.push({ g: isl, x: s.x, z: s.z, r });
       mergeByMaterial(isl, glow);
+      // Fenster und Lampen der Dörfer (ein gemeinsames Leuchtmaterial): weder Kontur noch Schatten
+      isl.traverse((o) => {
+        const mm = (o as Mesh).material as Material | Material[] | undefined;
+        if (mm && !Array.isArray(mm) && mm.userData.glow) o.userData.noOutline = true;
+      });
+      // instanzierter Bewuchs erst nach dem Verschmelzen (InstancedMesh darf nicht mit verschmolzen werden)
+      this.vegChunks.push(...veg.build(isl));
       // Namensschild (wie in 1.0): erscheint, sobald die Insel entdeckt ist
-      const label = islandLabel(s.def.name, s.def.kind, s.def.level);
+      const label = islandLabel(s.def.name, s.def.kind, s.def.level, site?.label);
       label.position.set(s.x, 1.2 + hillTop + 22, s.z);
       label.visible = false;
       this.scene.add(label);
@@ -484,7 +545,13 @@ export class SeaWorld {
   /** Shader aller Figuren- und Effektarten vorkompilieren (beim Laden, hinter dem Ladebildschirm) */
   async warmup(renderer: WebGLRenderer, renderFrame: () => void, progress: (k: number) => void) {
     if (!this.assets || !this.fx) { progress(1); return; }
+    // Partikelsysteme einmal anstoßen (Puffer, Attribute, erste Aktualisierung), dann sofort ablaufen lassen
+    const at = this.camera.position;
+    this.spray.emit(24, at.x, 0.5, at.z + 8, { speed: 3, up: 5, life: 0.6, color: FOAM_COL, spread: 1 });
+    this.dust.emit(12, at.x, 0.5, at.z + 8, { speed: 2, up: 3, life: 0.6, color: DIG_COL, spread: 1 });
+    this.sparks.emit(12, at.x, 0.5, at.z + 8, { speed: 4, up: 4, life: 0.6, color: EMBER_COL, spread: 1 });
     await warmupShaders({ renderer, scene: this.scene, camera: this.camera, assets: this.assets, fx: this.fx, particles: this.sparks, renderFrame }, progress);
+    this.spray.update(10); this.dust.update(10);
   }
 
   setCharacters(assets: CharacterAssets, look: CharacterLook, style: StyleId, overlay?: CombatOverlay) {
@@ -514,6 +581,7 @@ export class SeaWorld {
         kill: (e) => this.onKill(e),
         gold: (n) => this.onGold(n),
         message: (t) => this.onMessage(t),
+        loot: (d) => this.onLootDrop(d),
       });
       this.combat.smoke = this.smoke;
       const home = this.ground.islands[0];
@@ -521,9 +589,11 @@ export class SeaWorld {
       this.combat.addDummy(home.x - 6, home.z - home.r * 0.55);
     }
     this.combat?.leaveIsland();
+    this.events.cancel();
     this.foot = new PlayerFoot(this.player, style, {
       combat: this.combat, fx: this.fx, overlay: this.overlay,
       onDown: () => { this.downT = 3.2; this.onPlayerDown(); },
+      onSwap: (st) => { this.style = st; this.equip(st); this.onWeaponSwapped(st); },
     });
     if (this.combat) this.combat.player = this.foot;
     this.style = style;
@@ -560,7 +630,7 @@ export class SeaWorld {
   /** Floß oder Flasche irgendwo in der Bernsteinsee, nicht auf Inseln */
   private spawnFloaterSomewhere(kind: 'raft' | 'bottle') {
     for (let i = 0; i < 20; i++) {
-      const a = Math.random() * Math.PI * 2, d = 150 + Math.random() * 650;
+      const a = Math.random() * Math.PI * 2, d = 150 + Math.random() * 650 * WORLD_SCALE;
       const x = BERNSTEINSEE.x + Math.cos(a) * d, z = BERNSTEINSEE.z + Math.sin(a) * d;
       if (!this.ground.islandAt(x, z, 40)) { this.life?.spawnFloater(kind, x, z); return; }
     }
@@ -587,6 +657,18 @@ export class SeaWorld {
     this.faji.onEmpty = () => this.onOpenSkills();
   }
 
+  /** Waffe wechselt (Wechselschlag oder Ruhe): Spiel rechnet Fähigkeiten-Werte neu */
+  onWeaponSwapped: (style: StyleId) => void = () => {};
+
+  /** Waffenwechsel zu Fuß; false, wenn gerade nicht möglich */
+  swapWeapon(style: StyleId): boolean {
+    if (this.mode !== 'foot' || !this.foot) return false;
+    return this.foot.swapTo(style, null);
+  }
+
+  /** Kampfstil der Spielfigur im Moment */
+  get currentStyle(): StyleId { return this.style; }
+
   /** Aussehen und Kampfstil der Spielfigur ändern */
   updatePlayer(look: CharacterLook, style: StyleId) {
     if (!this.player || !this.foot) return;
@@ -607,6 +689,8 @@ export class SeaWorld {
 
   private equip(style: StyleId) {
     if (!this.player) return;
+    // Am Steuer sind die Hände am Rad: keine Waffe in der Hand (sie kommt beim Verlassen des Ruders wieder)
+    if (this.mode === 'sail') { this.player.hold('r', null, 0.8); this.player.hold('l', null, 0.8); return; }
     const w = weaponsFor(style, this.weaponLook);
     this.player.hold('r', w.right);
     this.player.hold('l', w.left);
@@ -619,6 +703,8 @@ export class SeaWorld {
     this.player.holder.position.copy(this.ship.model.helm);
     this.player.holder.scale.setScalar(1);
     this.player.holder.rotation.set(0, 0, 0);
+    this.player.hold('r', null, 0.8);
+    this.player.hold('l', null, 0.8);
     this.player.play('steer', { fade: 0.2 });
   }
 
@@ -634,13 +720,20 @@ export class SeaWorld {
     // Inseln im Nebel jenseits der Sichtweite gar nicht erst zeichnen (spart auf Handys viele Zeichenaufrufe)
     const vd = this.viewDist * 1.05;
     for (const i of this.islandGroups) i.g.visible = Math.hypot(i.x - cp.x, i.z - cp.z) < vd + i.r * 1.2;
+    // Gras, Blumen und Büsche nur in der Nähe zeichnen (Kacheln mit eigener Sichtweite)
+    for (const c of this.vegChunks) {
+      const dx = c.x - cp.x, dz = c.z - cp.z, lim = c.max * this.vegLod + c.r;
+      c.mesh.visible = dx * dx + dz * dz < lim * lim;
+    }
     const home = BERNSTEINSEE.islands[0];
     if (this.town) this.town.group.visible = Math.hypot(home.x - cp.x, home.z - cp.z) < vd + home.r * 1.5;
   }
 
   applyQuality(c: QualityConfig) {
-    this.figureDist = c.viewDistance * 0.14;
+    this.figureDist = c.figureDistance;
     this.viewDist = c.viewDistance;
+    // Sparstufen des Leistungs-Wächters kürzen die Sichtweite von Gras, Büschen und Blumen (weniger Zeichenaufrufe)
+    this.vegLod = Math.max(0.4, Math.min(1.25, c.viewDistance / 800)) * (1 - 0.17 * (c.budget ?? 0));
     this.env.applyQuality(c);
     this.spray.scale = c.particles;
     this.sparks.scale = c.particles;
@@ -659,12 +752,16 @@ export class SeaWorld {
   setState(s: Partial<SeaState>) {
     if (s.boat) {
       this.x = s.boat.x; this.z = s.boat.z; this.heading = s.boat.heading;
+      // nie an Land aufwachen (alte Spielstände nach dem Umbau der Karte, Teleport): an die nächste Küste hinaus
+      const isl = this.ground.islandAt(this.x, this.z, 14);
+      if (isl) { const p = this.ground.pushOut(isl, this.x, this.z, isl.r * 0.14 + 18); this.x = p.x; this.z = p.z; }
     } else {
       this.x = 0; this.z = 12; this.heading = 0;
     }
     if (s.env) this.env.setState(s.env);
     this.speed = 0;
     this.camYaw = 0;
+    this.camTop = this.camTopS = 0;
     this.wake = [];
     const sh = this.ship;
     sh.x = this.x; sh.z = this.z; sh.heading = this.heading; sh.speed = 0; sh.sailLevel = 1; sh.throttle = 0.5; this.seaYaw = this.heading;
@@ -672,6 +769,7 @@ export class SeaWorld {
     this.naval?.clear();
     if (this.mode === 'foot') {
       this.combat?.leaveIsland();
+      this.events.cancel();
       if (this.foot) { this.foot.onFoot = false; this.foot.revive(); }
       this.downT = 0;
       if (this.ownDeck) { this.ownDeck = false; this.deckGround = null; this.setSailFade(this.ship, false); }
@@ -713,6 +811,8 @@ export class SeaWorld {
   }
 
   /** Lebenspunkte und Angriffskraft der Spielfigur (aus Stufe und Ausrüstung) */
+  setGearReduce(r: number) { if (this.foot) this.foot.gearReduce = r; }
+
   setPlayerPower(maxHp: number, atk: number) {
     if (this.foot) {
       const frac = this.foot.maxHp > 0 ? this.foot.hp / this.foot.maxHp : 1;
@@ -741,6 +841,8 @@ export class SeaWorld {
   healPlayer() { if (this.foot) this.foot.hp = this.foot.maxHp; }
 
   get playerHp() { return this.foot ? { hp: this.foot.hp, max: this.foot.maxHp } : null; }
+  /** Ausdauer zu Fuß (null auf See): Anteil 0 … 1 und ob „zu wenig“ gerade blinkt */
+  get playerStamina() { return this.foot && this.foot.onFoot ? { frac: this.foot.stamina / this.foot.maxStamina, flash: this.foot.staminaFlash > 0 } : null; }
 
   /** Heilt um einen Anteil der Lebenspunkte (Proviant) */
   healFrac(f: number) {
@@ -775,8 +877,23 @@ export class SeaWorld {
 
   /** Weltposition einer Stadtbewohnerin/eines Stadtbewohners */
   npcPos(id: string) {
-    const n = this.npcs.find((m) => m.townDef?.id === id);
+    const n = this.npcs.find((m) => m.townDef?.id === id) ?? this.visitors.find((m) => m.townDef?.id === id);
     return n ? { x: n.x, z: n.z } : null;
+  }
+
+  /** Lebende Gegner an Land (für Minikarte und Kompass) */
+  footEnemies(): { x: number; z: number; boss: boolean }[] {
+    const out: { x: number; z: number; boss: boolean }[] = [];
+    for (const e of this.combat?.enemies ?? []) if (e.alive) out.push({ x: e.x, z: e.z, boss: !!e.def.boss });
+    return out;
+  }
+
+  /** Sprechende in der Nähe (Stadt und Dörfer), nächste zuerst */
+  talkables(x: number, z: number, maxDist: number): { npc: Npc; dist: number }[] {
+    const out: { npc: Npc; dist: number }[] = [];
+    for (const n of this.npcs) if (n.townDef) { const d = Math.hypot(n.x - x, n.z - z); if (d < maxDist) out.push({ npc: n, dist: d }); }
+    for (const n of this.visitors) if (n.townDef) { const d = Math.hypot(n.x - x, n.z - z); if (d < maxDist) out.push({ npc: n, dist: d }); }
+    return out.sort((a, b) => a.dist - b.dist);
   }
 
   private _allyWorld: AllyWorld | null = null;
@@ -980,6 +1097,7 @@ export class SeaWorld {
   private setMode(m: SeaMode) {
     this.mode = m;
     if (m === 'sail') this.attachToHelm();
+    else this.equip(this.style);
     this.onModeChange(m);
   }
 
@@ -1007,6 +1125,11 @@ export class SeaWorld {
     }
     // Schornsteine der Hafenstadt
     if (this.town && Math.random() < dt * 5) for (const p of this.town.smoke) if (Math.hypot(p.x - this.x, p.z - this.z) < 400) this.smoke.puff(p.x, p.y, p.z, { size: 0.5, grow: 3.5, life: 6, tone: 0.62, vy: 1.2, spread: 0.15, rise: 0.3, alpha: 0.5, wind: 0.7 });
+    // Schornsteine der Dörfer auf dem Festland und den Inseln
+    if (this.chimneys.length && Math.random() < dt * 5) {
+      const pp = this.playerPos;
+      for (const p of this.chimneys) if (Math.hypot(p.x - pp.x, p.z - pp.z) < 420) this.smoke.puff(p.x, p.y, p.z, { size: 0.5, grow: 3.5, life: 6, tone: 0.62, vy: 1.2, spread: 0.15, rise: 0.3, alpha: 0.5, wind: 0.7 });
+    }
     this.shake = Math.max(0, this.shake - dt * 1.8);
     this.updateWake(dt);
     this.naval?.update(dt, this.mode === 'sail' && this.cinematic <= 0);
@@ -1065,7 +1188,7 @@ export class SeaWorld {
 
   get seaEnv(): SeaEnv {
     const env = this.env;
-    return { heightAt: (x, z) => env.heightAt(x, z), windDir: env.windDir, windStrength: env.weather.p.wind, time: env.clock };
+    return { heightAt: (x, z) => env.heightAt(x, z), windDir: env.windDir, windStrength: env.weather.p.wind, time: env.clock, sunDir: env.palette.sunDir, sunVis: env.palette.sunVis };
   }
 
   private updateSail(dt: number, input: Input) {
@@ -1156,16 +1279,32 @@ export class SeaWorld {
     const lx = ld.x * 0.006 + la.x * 2.2 * dt;
     const ly = ld.y * 0.004 + la.y * 1.4 * dt;
     if (lx || ly) this.camIdle = 0; else this.camIdle += dt;
-    this.camYaw -= lx;
+    // Winkel immer in −π … π halten: sonst dreht die Kamera nach langem Drehen auf dem Rückweg ganze Runden zurück
+    this.camYaw = Math.atan2(Math.sin(this.camYaw - lx), Math.cos(this.camYaw - lx));
     this.camPitch = MathUtils.clamp(this.camPitch + ly, 0.06, 1.1);
-    if (this.camIdle > 2.5) this.camYaw *= 1 - Math.min(1, dt * 1.2);
-    this.camDist = MathUtils.clamp(this.camDist + input.zoomDelta() * 2, 12, 45);
+    // Blickwinkel bleibt, wo der Spieler ihn hingedreht hat; erst nach langer Ruhe und nur unter Fahrt schwenkt er sanft hinter das Schiff zurück
+    if (this.camIdle > 8 && this.speed > 3) this.camYaw *= 1 - Math.min(1, dt * 0.5);
+    // Zoom: Rauszoomen bis zum Maximum, danach kippt die Kamera Stück für Stück in die Draufsicht; Reinzoomen kippt zuerst zurück
+    const zd = input.zoomDelta() * 2;
+    if (zd > 0) {
+      const room = 45 - this.camDist;
+      const used = Math.min(zd, room);
+      this.camDist += used;
+      this.camTop = Math.min(1, this.camTop + (zd - used) / 16);
+    } else if (zd < 0) {
+      const back = Math.min(-zd, this.camTop * 16);
+      this.camTop -= back / 16;
+      this.camDist = Math.max(12, this.camDist + zd + back);
+    }
     this.focus.set(this.x, 0, this.z);
   }
 
   private updateFoot(dt: number, input: Input) {
     const f = this.foot;
     if (!f || !this.player) return;
+    // Das eigene Schiff wird zu Fuß nicht gesteuert: stillhalten, sonst zittert es zwischen alter und neuer Lage
+    this.ship.settle();
+    this.speed = 0;
     const ld = input.lookDelta();
     const la = input.lookAxis();
     this.footYaw -= ld.x * 0.006 + la.x * 2.4 * dt;
@@ -1173,8 +1312,14 @@ export class SeaWorld {
     this.footDist = MathUtils.clamp(this.footDist + input.zoomDelta() * 0.8, 3.5, 14);
     const c = this.combat;
     if (c && input.pressed('lockon')) c.toggleLock(f.x, f.z, this.footYaw);
+    // Ziel gefallen: zum nächsten Gegner in Reichweite wechseln statt die Erfassung zu verlieren
+    if (c && !c.lock && this.prevLock && !this.prevLock.alive) c.retarget(f.x, f.z, this.footYaw);
+    this.prevLock = c?.lock ?? null;
     const lock = c?.lock?.alive ? c.lock : null;
     const lockYaw = lock ? Math.atan2(lock.x - f.x, lock.z - f.z) : null;
+    // weiche Zielerfassung: Überblendfaktor und Richtung zum Ziel (für Kamera-Ausschnitt)
+    this.lockK += ((lock ? 1 : 0) - this.lockK) * (1 - Math.exp(-dt * 4));
+    if (lock) { this.lockDX = lock.x - f.x; this.lockDZ = lock.z - f.z; }
     f.update(dt, input, this.footYaw, this.groundProxy, lockYaw);
     // Entern: Deck geräumt?
     if (this.boarding && c && c.hostilesLeft === 0 && this.boardDone === 0) {
@@ -1188,14 +1333,28 @@ export class SeaWorld {
     if (lockYaw !== null && !(ld.x || la.x)) {
       // Erfasstes Ziel: Kamera hinter die Figur, Blick aufs Ziel
       const diff = MathUtils.euclideanModulo(lockYaw - this.footYaw + Math.PI, Math.PI * 2) - Math.PI;
-      this.footYaw += diff * Math.min(1, dt * 4);
+      this.footYaw += diff * (1 - Math.exp(-dt * 5));
+      // Neigung: bei höher stehendem Ziel etwas flacher blicken, bei tiefer stehendem steiler (bleibt in Bildschirmmitte)
+      if (!ld.y && !la.y) this.footPitch += (MathUtils.clamp(0.4 + (f.y - lock!.y) * 0.05, 0.22, 0.62) - this.footPitch) * (1 - Math.exp(-dt * 3));
     } else if (f.speed > 4 && !(ld.x || la.x)) {
       const diff = MathUtils.euclideanModulo(f.yaw - this.footYaw + Math.PI, Math.PI * 2) - Math.PI;
       if (Math.abs(diff) < 2.2) this.footYaw += diff * Math.min(1, dt * 0.8);
     }
     this.focus.set(f.x, f.y, f.z);
+    this.updateEvents(dt);
     // Boot liegt vor Anker und schaukelt nur
     this.speed = 0;
+  }
+
+  /** Zonen-Ereignisse: nur zu Fuß auf einer Insel ohne Lager (kein Boss, keine Ruine), lebendig und ab Stufe 2 */
+  private updateEvents(dt: number) {
+    const c = this.combat, f = this.foot;
+    if (!c || !f) return;
+    const isl = c.activeIsland ?? this.ground.islandAt(f.x, f.z);
+    const def = isl ? this.islandDefs[this.ground.islands.indexOf(isl)] : null;
+    const allowed = !!isl && !!def && def.kind !== 'boss' && def.kind !== 'ruin' && !this.boarding && !this.ownDeck
+      && f.onFoot && f.state !== 'down' && this.downT <= 0 && c.campLeft === 0 && c.mods.playerLevel >= EVENT.minLevel;
+    this.events.update(dt, { allowed, combat: c, isl, level: c.mods.playerLevel, faction: this.playerFaction, px: f.x, pz: f.z });
   }
 
   private updateContext(input: Input) {
@@ -1217,8 +1376,8 @@ export class SeaWorld {
           if (input.pressed('interact')) this.disembark(isl);
         }
       } else {
-        // wie in 1.0: aufs eigene Deck gehen
-        this.contextLabel = 'An Deck gehen';
+        // Ruder loslassen: man bleibt am Rad stehen und geht zu Fuß weiter
+        this.contextLabel = 'Ruder verlassen';
         if (input.pressed('interact')) this.goDeck();
       }
     } else if (this.ownDeck) {
@@ -1234,6 +1393,9 @@ export class SeaWorld {
           else { this.player.play('idle', { fade: 0.2 }); this.onFish(false); }
           this.fishing = null;
         }
+      } else if (dg && dg.onQuarter(f.x, f.z) && dg.distTo(f.x, f.z, 0, this.ship.model.helm.z) < 1.5) {
+        this.contextLabel = 'Ans Steuer';
+        if (input.pressed('interact')) this.toHelm();
       } else if (hand) {
         this.contextLabel = `Mit ${hand.name.split(' ')[0]} reden`;
         if (input.pressed('interact')) this.onCrewLine(hand, hand.lines[Math.floor(Math.random() * hand.lines.length)]);
@@ -1244,9 +1406,6 @@ export class SeaWorld {
           this.player.play('fishCast', { restart: true, onDone: () => this.player?.play('fishIdle', { fade: 0.2 }) });
           audio.play('whoosh', 0.6);
         }
-      } else {
-        this.contextLabel = 'Ans Steuer';
-        if (input.pressed('interact')) this.toHelm();
       }
     } else if (this.boarding) {
       this.contextLabel = 'Zurück an Bord';
@@ -1267,7 +1426,7 @@ export class SeaWorld {
         }
         return;
       }
-      const npc = this.npcs.find((n) => n.townDef && Math.hypot(n.x - f.x, n.z - f.z) < 3.2);
+      const npc = this.talkables(f.x, f.z, 3.2)[0]?.npc;
       const d = Math.hypot(f.x - this.anchor.x, f.z - this.anchor.z);
       if (dig) {
         this.contextLabel = 'Graben';
@@ -1280,16 +1439,26 @@ export class SeaWorld {
         }
       } else if (npc?.townDef) {
         this.contextLabel = `Sprechen: ${npc.townDef.name}`;
-        if (input.pressed('interact')) {
+        if (input.pressed('interact') || input.pressed('talk')) {
           npc.yaw = Math.atan2(f.x - npc.x, f.z - npc.z);
           npc.char.play('talk', { restart: true, onDone: () => npc.char.play('idle') });
           this.onTalk(npc.townDef);
         }
-      } else if (d < 6) {
+      } else if (d < 12 || this.shipReach(f.x, f.z) < 14) {
         this.contextLabel = 'An Bord gehen';
         if (input.pressed('interact')) this.embark();
       }
     }
+  }
+
+  /** Abstand von einem Punkt zur Schiffshülle (Rechteck aus Länge und Breite, in Schiffsrichtung gedreht): so zählt jede Stelle am Strand,
+   *  von der aus das Schiff nah ist, nicht nur der eine Landepunkt */
+  private shipReach(px: number, pz: number): number {
+    const s = this.ship;
+    const dx = px - s.x, dz = pz - s.z;
+    const fx = Math.sin(s.heading), fz = Math.cos(s.heading);
+    const lz = dx * fx + dz * fz, lx = dx * fz - dz * fx;
+    return Math.hypot(Math.max(0, Math.abs(lx) - s.cls.W / 2), Math.max(0, Math.abs(lz) - s.cls.L / 2));
   }
 
   /** Inseln in der Nähe und geräumte Lager melden (für Aufträge) */
@@ -1314,7 +1483,8 @@ export class SeaWorld {
     this.lastIsland = id;
     const c = this.combat;
     if (c?.activeIsland && !this.boarding) {
-      const left = c.hostilesLeft;
+      // nur Lager-Gegner zählen (Gegner eines Weltereignisses nicht: sie dürfen „Insel befreit“ nicht auslösen)
+      const left = c.campLeft;
       if (left === 0 && this.hostilesBefore > 0) {
         const def = this.islandDefs[this.ground.islands.indexOf(c.activeIsland)];
         if (def) { this.onIslandCleared(def.id); this.overlay?.showBanner('Insel befreit!', def.name); }
@@ -1360,13 +1530,13 @@ export class SeaWorld {
     this.ship.throttle = 0;
     this.deckGround = new DeckGround(this.ship);
     this.scene.add(this.player.holder);
-    // mittschiffs, Blick zum Heck: die Kamera steht über dem freien Vorschiff
-    const start = this.deckGround.spot(0, 0.3);
+    // Der Steuermann bleibt am Steuerrad stehen (kein Versetzen): von dort läuft man selbst die Treppe hinunter aufs Hauptdeck
+    const start = this.deckGround.world(0, this.ship.model.helm.z - 0.15);
     this.footDist = 6.5;
-    this.footPitch = 0.75;
-    this.foot.place(start.x, start.z, this.ship.heading + Math.PI, this.groundProxy);
+    this.footPitch = 0.55;
+    this.foot.place(start.x, start.z, this.ship.heading, this.groundProxy);
     this.foot.onFoot = true;
-    this.footYaw = this.ship.heading + Math.PI;
+    this.footYaw = this.ship.heading;
     this.setSailFade(this.ship, true);
     this.setMode('foot');
   }
@@ -1382,6 +1552,7 @@ export class SeaWorld {
 
   /** Segel beim Entern durchsichtig (wie in 1.0), damit sie die Kamera nicht verdecken */
   private setSailFade(ship: Ship, fade: boolean) {
+    if (ship === this.ship) this.sailFaded = fade;
     for (const s of ship.model.sails) {
       const m = s.material as { transparent: boolean; opacity: number; depthWrite: boolean; needsUpdate: boolean };
       m.transparent = fade;
@@ -1422,8 +1593,20 @@ export class SeaWorld {
     if (def.kind === 'harbor') { this.onMessage(`${where}: ${def.info}`); return; }
     if (def.kind === 'quiet' && this.assets) {
       // ein kleines Dorf wie in 1.0: Leute schlendern umher und begrüßen die Crew
-      (['fischer', 'buerger', 'buerger'] as NpcRole[]).forEach((role) => {
-        const n = new Npc(this.assets!, isl, this.ground, role, Math.random, this.outlineNpcs);
+      // handgebaute Länder: mehr Leute, und sie bleiben rund um ihr Dorf
+      const site = def.site ? SITES[def.site] : null;
+      const v = this.villages.get(def.id);
+      const home: WalkIsland = v ? { ...isl, x: v.x, z: v.z, r: v.r } : isl;
+      const folk: NpcRole[] = ['fischer', 'buerger', 'buerger', 'haendler', 'koch', 'fischer', 'buerger', 'haendler'];
+      // benannte Dorfbewohner: sprechen, geben Aufträge (E)
+      for (const d of VILLAGE_NPCS[def.id] ?? []) {
+        const n = new Npc(this.assets!, home, this.ground, d.role, Math.random, this.outlineNpcs);
+        n.townDef = d;
+        this.scene.add(n.char.holder);
+        this.visitors.push(n);
+      }
+      folk.slice(0, Math.max(1, (site ? site.villagers : 3) - (VILLAGE_NPCS[def.id]?.length ?? 0))).forEach((role) => {
+        const n = new Npc(this.assets!, home, this.ground, role, Math.random, this.outlineNpcs);
         this.scene.add(n.char.holder);
         this.visitors.push(n);
       });
@@ -1493,6 +1676,7 @@ export class SeaWorld {
       this.boardDone = 0;
       this.deckGround = null;
       this.combat?.leaveIsland();
+      this.events.cancel();
     }
     const c = this.combat;
     if (c?.activeIsland) {
@@ -1535,12 +1719,18 @@ export class SeaWorld {
     let n = 0;
     for (const w of this.wake) { w.age += dt; if (w.age < 6) this.wake[n++] = w; }
     this.wake.length = n;
-    this.wakeTimer -= dt;
-    if (this.wakeTimer <= 0 && Math.abs(this.speed) > 1.5) {
-      this.wakeTimer = WAKE_INTERVAL;
+    // Spurpunkt alle 2,4 m Fahrweg (nicht nach Zeit): dichte, gleichmäßige Bahn, die in Kurven sauber mitbiegt
+    if (Math.abs(this.speed) > 1.5) {
       const f = this.fwd();
       const back = this.ship.cls.L * 0.42;
-      this.wake.unshift({ x: this.x - f.x * back, z: this.z - f.z * back, age: 0, strength: Math.min(1, Math.abs(this.speed) / 10) });
+      const px = this.x - f.x * back, pz = this.z - f.z * back;
+      const last = this.wake[0];
+      if (!last || Math.hypot(px - last.x, pz - last.z) >= 2.4) {
+        // Spurpunkt am Heck: bleibt im Wasser liegen; Richtung = tatsächliche Fahrtrichtung (Abdrift in Kurven)
+        const cs = this.ship.course;
+        this.wake.unshift({ x: px, z: pz, age: 0, strength: Math.min(1, Math.abs(this.speed) / 10), dx: Math.sin(cs), dz: Math.cos(cs), hw: this.ship.cls.W * 0.5, spd: Math.abs(this.speed) });
+        if (this.wake.length > 32) this.wake.length = 32;
+      }
     }
     this.env.ocean.setWake(this.wake);
   }
@@ -1548,7 +1738,10 @@ export class SeaWorld {
   /** Fahrtrichtung (in einen wiederverwendeten Vektor – sofort benutzen, nicht aufheben) */
   /** Wirksamer Treffer: 30–40 ms Standbild und ein Kamerastoß in Trefferrichtung, der federnd zurückschwingt */
   impact(dirX: number, dirZ: number, strength: number) {
-    this.hitstop.freeze = Math.max(this.hitstop.freeze, strength >= 1 ? 0.04 : 0.03);
+    this.hitstop.freeze = Math.max(this.hitstop.freeze, HIT_STOP);
+    // gerichtetes Wackeln: Schwingung entlang der Trefferachse (quer zur Blickrichtung wirkt sie am stärksten)
+    this.shakeAx.set(dirX, 0, dirZ);
+    this.shakeDir = Math.min(1.2, Math.max(this.shakeDir, strength * 0.55));
     const k = Math.min(1.5, strength);
     this.kickV.x += dirX * k * 2.4;
     this.kickV.z += dirZ * k * 2.4;
@@ -1567,19 +1760,60 @@ export class SeaWorld {
     const h = s.prev.heading + (s.heading - s.prev.heading) * alpha;
     const env = this.env;
     const pal = env.palette;
-    const night = 1 - pal.sunVis;
+    // Lichter gehen bei Nacht an und im Unwetter schon am Tag (dunkle Wolken)
+    const night = Math.max(1 - pal.sunVis, Math.min(1, Math.max(0, env.weather.p.grey - 0.4) * 2.2));
     const sea = this.seaEnv;
 
     const wy = env.heightAt(x, z);
     const f = this.fwd(h);
     s.render(alpha, sea, night, frameDt);
-    for (const e of this.naval?.enemies ?? []) e.ship.render(alpha, sea, night, frameDt);
-    const L = s.cls.L;
-    if (s.speed > 3 && Math.random() < frameDt * 30) {
-      this.spray.emit(2, x - f.x * L * 0.5, wy + 0.1, z - f.z * L * 0.5, { speed: 1, up: 1.2, life: 1.2, color: FOAM_COL, gravity: 3, spread: s.cls.W * 0.4 });
+    // Steuermann lehnt sich beim Drehen des Rades in die Kurve
+    if (this.mode === 'sail' && this.player && this.boat === s.model.group) {
+      this.player.holder.rotation.z = -s.steerAmount * 0.12;
+      // Hände greifen das drehende Steuerrad (Griffe auf 10 und 2 Uhr, drehen mit dem Rad mit)
+      s.model.group.updateMatrixWorld(true);
+      const wheel = s.model.wheel;
+      wheel.updateMatrixWorld(true);
+      wheel.localToWorld(WHEEL_L.set(0.3, 0.5, -0.07));
+      wheel.localToWorld(WHEEL_R.set(-0.3, 0.5, -0.07));
+      this.player.reach('l', WHEEL_L);
+      this.player.reach('r', WHEEL_R);
     }
-    if (s.speed > 6 && Math.random() < frameDt * 18 && this.mode === 'sail') {
-      this.spray.emit(5, x + f.x * L * 0.5, wy + 0.6, z + f.z * L * 0.5, { speed: 2.5, up: 4, life: 1, color: FOAM_COL });
+    for (const e of this.naval?.enemies ?? []) e.ship.render(alpha, sea, night, frameDt);
+    // Das Wasser zeichnet Rumpfschaum und Bugwelle: eigenes Schiff zuerst, dann die nächsten (höchstens sechs, nur in Sichtweite)
+    {
+      const hulls = this.hullList;
+      hulls.length = 0;
+      const add = (sh: Ship) => { if (sh.alive) hulls.push({ x: sh.hullFx.x, z: sh.hullFx.z, h: sh.hullFx.h, L: sh.cls.L, W: sh.cls.W, speed: sh.hullFx.speed, vis: 1 - Math.min(1, Math.max(0, (Math.hypot(sh.hullFx.x - x, sh.hullFx.z - z) - 220) / 140)) }); };
+      add(s);
+      if (hulls.length && this.wake.length > 1) hulls[0].trail = true;
+      const near = (this.naval?.enemies ?? []).map((e) => e.ship).filter((sh) => sh !== s && sh.alive && Math.hypot(sh.hullFx.x - x, sh.hullFx.z - z) < 360);
+      near.sort((p, q) => Math.hypot(p.hullFx.x - x, p.hullFx.z - z) - Math.hypot(q.hullFx.x - x, q.hullFx.z - z));
+      for (let i = 0; i < near.length && hulls.length < 6; i++) add(near[i]);
+      this.env.ocean.setHulls(hulls);
+    }
+    const L = s.cls.L;
+    // Gischt wird dort geschleudert, wo der Rumpf das Wasser verdrängt: von den Bugflanken seitlich weg, am Heck feiner Wirbel
+    if (s.speed > 2.5 && this.mode === 'sail') {
+      const sp = Math.min(1, s.hullFx.speed);
+      const W = s.cls.W;
+      const rx = f.z, rz = -f.x;
+      const flank = (side: number) => {
+        if (Math.random() > frameDt * (14 + 70 * sp)) return;
+        const back = L * (0.02 + Math.random() * 0.22);
+        const px = x + f.x * (L * 0.5 - back) + rx * side * W * 0.42;
+        const pz = z + f.z * (L * 0.5 - back) + rz * side * W * 0.42;
+        this.spray.emit(2, px, this.env.heightAt(px, pz) + 0.15, pz, { speed: 0.3, up: 1.8 + 3.2 * sp, life: 0.55 + 0.4 * sp, color: FOAM_COL, gravity: 11, spread: 0.3, size: 0.22, vx: rx * side * (1.5 + 4 * sp) + f.x * sp, vz: rz * side * (1.5 + 4 * sp) + f.z * sp });
+      };
+      flank(1); flank(-1);
+      if (Math.random() < frameDt * 40 * sp) {
+        const px = x + f.x * L * 0.52, pz = z + f.z * L * 0.52;
+        this.spray.emit(2, px, this.env.heightAt(px, pz) + 0.2, pz, { speed: 0.9, up: 2.5 + 3 * sp, life: 0.5, color: FOAM_COL, gravity: 10, spread: W * 0.3, size: 0.4, vx: f.x * 2 * sp, vz: f.z * 2 * sp });
+      }
+      if (Math.random() < frameDt * 26 * sp) {
+        const px = x - f.x * L * 0.48, pz = z - f.z * L * 0.48;
+        this.spray.emit(1, px, this.env.heightAt(px, pz) + 0.1, pz, { speed: 0.6, up: 0.9, life: 1.1, color: FOAM_COL, gravity: 3, spread: W * 0.6, size: 0.55 });
+      }
     }
     for (const b of this.buoys) {
       b.g.position.set(b.x, env.heightAt(b.x, b.z) - 0.3, b.z);
@@ -1587,10 +1821,12 @@ export class SeaWorld {
       b.lamp.visible = night > 0.3 || Math.sin(env.clock * 3 + b.z) > 0;
     }
     for (const l of this.lamps) l.scale.setScalar(0.6 + night * 0.7);
+    setSiteNight(night);
     if (this.town) for (const l of this.town.lights) l.visible = night > 0.2;
 
     const cam = this.camera;
     if (this.mode === 'foot' && this.foot && this.player && !inMenu) {
+      this.camSailInit = false;
       const p = this.foot;
       const px = MathUtils.lerp(p.prev.x, p.x, alpha);
       const pz = MathUtils.lerp(p.prev.z, p.z, alpha);
@@ -1599,14 +1835,20 @@ export class SeaWorld {
       this.player.holder.position.set(px, py, pz);
       this.player.holder.rotation.set(0, pyaw, 0);
       const cp = Math.cos(this.footPitch);
-      this.tmp.set(px - Math.sin(this.footYaw) * this.footDist * cp, py + 1.4 + Math.sin(this.footPitch) * this.footDist, pz - Math.cos(this.footYaw) * this.footDist * cp);
+      // Zielerfassung: Kamera rückt mit wachsendem Abstand zum Ziel zurück und blickt ein Stück zu ihm hin (Figur und Ziel im Bild)
+      const ld = Math.hypot(this.lockDX, this.lockDZ);
+      const lk = this.lockK * (ld > 0.01 ? 1 : 0);
+      const dist = this.footDist + lk * MathUtils.clamp((ld - 5) * 0.3, 0, 3.5);
+      const shift = ld > 0.01 ? (lk * Math.min(3.2, ld * 0.28)) / ld : 0;
+      this.tmp.set(px - Math.sin(this.footYaw) * dist * cp, py + 1.4 + Math.sin(this.footPitch) * dist, pz - Math.cos(this.footYaw) * dist * cp);
       cam.position.lerp(this.tmp, Math.min(1, frameDt * 10));
       const gy = this.ground.height(cam.position.x, cam.position.z);
       const floor = Math.max(env.heightAt(cam.position.x, cam.position.z) + 0.8, Number.isFinite(gy) ? gy + 0.6 : -99);
       if (cam.position.y < floor) cam.position.y = floor;
-      cam.lookAt(px, py + 1.3, pz);
+      cam.lookAt(px + this.lockDX * shift, py + 1.3, pz + this.lockDZ * shift);
       this.focus.set(px, py + 1, pz);
     } else if (inMenu) {
+      this.camSailInit = false;
       const a = this.menuOrbit;
       cam.position.set(x + Math.sin(a) * 30, 9 + Math.sin(a * 2) * 1.5, z + Math.cos(a) * 30);
       cam.lookAt(x, 4, z);
@@ -1618,22 +1860,49 @@ export class SeaWorld {
       const want = foe ? Math.atan2(foe.x - x, foe.z - z) : h;
       this.seaYaw += (MathUtils.euclideanModulo(want - this.seaYaw + Math.PI, Math.PI * 2) - Math.PI) * Math.min(1, frameDt * (foe ? 1.4 : 1.8));
       const sep = foe ? Math.hypot(foe.x - x, foe.z - z) : 0;
-      // Abstand und Höhe wie in 1.0 (Hochformat weiter weg), Zoom und Neigung vom Spieler
-      const yaw = this.seaYaw + Math.PI + this.camYaw;
+      // Abstand und Höhe wie in 1.0 (Hochformat weiter weg), Zoom und Neigung vom Spieler. Echte Umlaufbahn: Radius R und Höhenwinkel E um den Schiffsmittelpunkt
+      const wantAz = this.seaYaw + Math.PI + this.camYaw;
       const zoom = this.camDist / 22;
-      const back = ((portrait ? 22 : 16) + L * 1.45 + sep * 0.3 + (s.boost > 0 ? 4 : 0)) * zoom;
-      const up = ((portrait ? 12 : 8) + L * 0.6 + sep * (portrait ? 0.5 : 0.32)) * zoom * (0.6 + this.camPitch * 1.3);
-      this.tmp.set(x + Math.sin(yaw) * back, Math.max(wy + 2, up), z + Math.cos(yaw) * back);
-      cam.position.lerp(this.tmp, Math.min(1, frameDt * 3));
+      const back0 = ((portrait ? 22 : 16) + L * 1.45 + sep * 0.3 + (s.boost > 0 ? 4 : 0)) * zoom;
+      const up0 = ((portrait ? 12 : 8) + L * 0.6 + sep * (portrait ? 0.5 : 0.32)) * zoom * 0.99;
+      const wantR = Math.hypot(back0, up0);
+      // Grundwinkel (bei Standardneigung 0,3) plus Neigung des Spielers: steil nach oben bis fast senkrecht
+      const wantE = MathUtils.clamp(Math.atan2(up0, back0) + (this.camPitch - 0.3) * 1.3, 0.1, 1.32);
+      this.camTopS += (this.camTop - this.camTopS) * Math.min(1, frameDt * 3);
+      const tk = this.camTopS * this.camTopS * (3 - 2 * this.camTopS); // weiches Überblenden
+      if (!this.camSailInit) { this.camAz = wantAz; this.camR = wantR; this.camE = wantE; this.camAx = x; this.camAz2 = z; this.camSailInit = true; }
+      // Winkel auf dem kürzesten Weg nachführen, Radius und Höhenwinkel weich, der Ankerpunkt folgt dem Schiff mit leichter Verzögerung (Fahrtgefühl)
+      this.camAz += (MathUtils.euclideanModulo(wantAz - this.camAz + Math.PI, Math.PI * 2) - Math.PI) * Math.min(1, frameDt * 5);
+      this.camR += (wantR - this.camR) * Math.min(1, frameDt * 3);
+      this.camE += (wantE - this.camE) * Math.min(1, frameDt * 3);
+      const lag = Math.min(1, frameDt * 7);
+      this.camAx += (x - this.camAx) * lag;
+      this.camAz2 += (z - this.camAz2) * lag;
+      if (Math.hypot(x - this.camAx, z - this.camAz2) > 40) { this.camAx = x; this.camAz2 = z; }
+      // Draufsicht: Höhenwinkel fast senkrecht, aus ungefähr derselben Entfernung wie beim größten Zoom (nur wenig höher, damit mehr Meer ins Bild kommt)
+      const E = MathUtils.lerp(this.camE, 1.5, tk);
+      const R = this.camR * (1 + 0.12 * tk);
+      // in der Draufsicht verdecken die Segel das Deck: durchsichtig
+      const wantFade = tk > 0.5;
+      if (wantFade !== this.sailFaded) this.setSailFade(this.ship, wantFade);
+      const pivotY = 1.5;
+      const ce = Math.cos(E);
+      this.tmp.set(this.camAx + Math.sin(this.camAz) * ce * R, pivotY + Math.sin(E) * R, this.camAz2 + Math.cos(this.camAz) * ce * R);
+      cam.position.copy(this.tmp);
       const camWater = env.heightAt(cam.position.x, cam.position.z) + 1.2;
       if (cam.position.y < camWater) cam.position.y = camWater;
-      if (foe) cam.lookAt(x + (foe.x - x) * 0.45, 2, z + (foe.z - z) * 0.45);
-      else cam.lookAt(x + Math.sin(this.seaYaw) * (12 + L), 2, z + Math.cos(this.seaYaw) * (12 + L));
-      // Die Kamera rollt leicht mit dem Schiff: Dünung und Rückstoß der Breitseiten werden spürbar
+      // Blick: immer in Blickrichtung der Kamera vor das Schiff (das Schiff steht im unteren Bilddrittel); mit Gegner Richtung Feind, in der Draufsicht genau auf das Schiff.
+      // (Früher zeigte der Blick immer in Fahrtrichtung, auch bei seitlich gedrehter Kamera – das Schiff wanderte aus dem Bild und die Kamera „drehte ein“.)
+      const vx = -Math.sin(this.camAz), vz = -Math.cos(this.camAz);
+      // Je steiler der Blick von oben, desto weniger weit vor dem Schiff (sonst wandert es unten aus dem Bild)
+      const aheadK = MathUtils.clamp(Math.cos(E) / Math.cos(Math.atan2(up0, back0)), 0, 1.15);
+      const ahead = (foe ? sep * 0.45 : 12 + L) * aheadK * (1 - tk);
+      cam.lookAt(x + vx * ahead, 2, z + vz * ahead);
+      // Die Kamera rollt leicht mit dem Schiff: Dünung und Rückstoß der Breitseiten werden spürbar (in der Draufsicht nicht)
       const g = s.model.group.rotation;
-      const rel = this.seaYaw + this.camYaw - h;
+      const rel = this.camAz + Math.PI - h;
       // (Kamera-Z zeigt nach hinten, Schiffs-Z nach vorn – daher das Minus)
-      cam.rotateZ(-(g.z * Math.cos(rel) - g.x * Math.sin(rel)) * 0.3);
+      cam.rotateZ(-(g.z * Math.cos(rel) - g.x * Math.sin(rel)) * 0.3 * (1 - tk));
       this.focus.set(x, wy + 2, z);
     }
     if (this.cinematic > 0 && !inMenu) {
@@ -1654,6 +1923,12 @@ export class SeaWorld {
       this.kick.addScaledVector(this.kickV, dt);
       if (inMenu) { this.kick.set(0, 0, 0); this.kickV.set(0, 0, 0); }
       cam.position.add(this.kick);
+    }
+    if (this.shakeDir > 0.001) {
+      this.shakePh += frameDt * 62;
+      const o = Math.sin(this.shakePh) * this.shakeDir * this.shakeDir * 0.22;
+      cam.position.addScaledVector(this.shakeAx, o);
+      this.shakeDir = Math.max(0, this.shakeDir - frameDt * 4.5);
     }
     if (this.shake > 0) {
       const s = this.shake * this.shake * 0.6;

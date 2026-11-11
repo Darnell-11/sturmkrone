@@ -19,9 +19,20 @@ export interface WalkIsland extends IslandShape {
   /** Küstenlinie: Radius × (1 + Σ a·sin(f·Winkel + p)) */
   coast: { a: number; f: number; p: number }[];
   hills: Hill[];
+  /** Breite der Strandböschung als Anteil des Küstenradius (shelfOf) */
+  shelf: number;
   /** Hindernisse in Weltkoordinaten: rund (r) oder gedrehter Quader (hw, hd, yaw; r = umschließender Radius) */
   blockers: Blocker[];
 }
+
+/**
+ * Breite der Strandböschung als Anteil des Küstenradius. Bis 2.9.27 überall 25 % – bei kleinen Inseln 7–25 m, beim Festland
+ * aber über 70 m: Das Wasser begann erst 30 m hinter der Küste, Stege lagen auf dem Trockenen und Schiffe kamen nicht nah
+ * genug heran, um anzulegen. Jetzt höchstens 22 m (kleine Inseln bleiben wie bisher).
+ */
+export function shelfOf(r: number): number { return Math.min(0.25, 22 / r); }
+/** Die Wasserlinie liegt auf der Böschung bei diesem Anteil ihrer Breite (Plateau 1,3 m, Böschung 3 m hinab) */
+export const WATERLINE = 1.3 / 3;
 
 /** Kollider eines festen Objekts: Kreis oder gedrehtes Rechteck (Häuser, Mauern, Zäune, Stände, Karren) */
 export interface Blocker { x: number; z: number; r: number; hw?: number; hd?: number; yaw?: number }
@@ -97,15 +108,79 @@ export function makeIslandShape(r: number, hill: number, rnd: () => number, simp
   return { coast, hills };
 }
 
+/**
+ * Vorgegebene Hügel (Inselkoordinaten) an die Küste anpassen: jeder Hügel wird so weit verkleinert,
+ * bis er ganz auf dem Strandplateau liegt (sonst ragte sein Fuß über die Wasserlinie hinaus).
+ */
+export function fitHills(r: number, coast: WalkIsland['coast'], hills: Hill[]): Hill[] {
+  return hills.map((h) => {
+    let hr = h.r;
+    for (let t = 0; t < 24; t++) {
+      let ok = true;
+      for (let k = 0; k < 24 && ok; k++) {
+        const b = (k / 24) * Math.PI * 2;
+        const px = h.x + Math.cos(b) * hr, pz = h.z + Math.sin(b) * hr;
+        if (Math.hypot(px, pz) > r * coastK(coast, Math.atan2(pz, px)) * 0.92) ok = false;
+      }
+      if (ok) break;
+      hr *= 0.92;
+    }
+    return { ...h, r: hr };
+  });
+}
+
 /** Etwas Begehbares: Insel oder Schiffsdeck */
 export interface Ground {
   height(x: number, z: number): number;
   constrain(x: number, z: number, radius?: number): { x: number; z: number };
 }
 
-/** Deck eines (beim Entern ruhig liegenden) Schiffs */
+/** Achterdeck mit Treppen (Schiffskoordinaten, Höhen relativ zum Hauptdeck) */
+export interface QuarterDeck { z0: number; z1: number; top: number; stairX: number[]; stairW: number; stairLen: number; bulge?: number }
+
+/** Dünne feste Wand im Schiffsraum (Mitte, halbe Ausdehnung) */
+interface DeckWall { cx: number; cz: number; hx: number; hz: number }
+
+/**
+ * Deck eines Schiffs: Hauptdeck, Achterdeck (nur über die Treppen erreichbar) und die Treppenrampen. Höhe und Kollision folgen
+ * dem Modell: Die Vorderwand des Achterkastells ist eine feste Wand mit Öffnungen genau an den Treppen, die Treppen haben
+ * seitlich Wangen. Man läuft also wirklich hinauf und hinunter, ohne Sprung oder Verschiebung.
+ */
 export class DeckGround implements Ground {
-  constructor(private ship: { x: number; z: number; heading: number; cls: { L: number }; model: { deckY: number; group: { position: { y: number } }; halfWidth(z: number): number } }) {}
+  private walls: DeckWall[] = [];
+
+  constructor(private ship: { x: number; z: number; heading: number; cls: { L: number }; model: { deckY: number; group: { position: { y: number } }; halfWidth(z: number): number; quarter?: QuarterDeck; fore?: { z0: number; z1: number } | null; blockers?: DeckWall[] } }) {
+    // feste Aufbauten (Masten, Luke, Fässer, Möbel, Vorderkastell) sind Hindernisse
+    for (const b of ship.model.blockers ?? []) this.walls.push(b);
+    const q = ship.model.quarter;
+    if (!q) return;
+    const big = ship.cls.L;
+    const gaps = q.stairX.map((x) => [x - q.stairW / 2, x + q.stairW / 2]).sort((a, b) => a[0] - b[0]);
+    // Vorderwand des Achterkastells mit Öffnungen an den Treppen
+    let cur = -big;
+    for (const g of gaps) { if (g[0] > cur) this.walls.push({ cx: (cur + g[0]) / 2, cz: q.z1, hx: (g[0] - cur) / 2, hz: 0.07 }); cur = g[1]; }
+    if (big > cur) this.walls.push({ cx: (cur + big) / 2, cz: q.z1, hx: (big - cur) / 2, hz: 0.07 });
+    // Wangen der Treppen
+    const b = q.bulge ?? 0;
+    for (const sx of q.stairX) {
+      for (const e of [-1, 1]) {
+        if (b <= 0) { this.walls.push({ cx: sx + e * (q.stairW / 2 + 0.04), cz: q.z1 + q.stairLen / 2, hx: 0.06, hz: q.stairLen / 2 }); continue; }
+        // geschwungene Treppe: Wangen als Kette kurzer Stücke entlang der Kurve
+        const S = 14;
+        for (let j = 0; j < S; j++) {
+          const t0 = j / S, t1 = (j + 1) / S;
+          const x0 = this.stairCx(sx, t0) + e * (q.stairW / 2 + 0.04), x1 = this.stairCx(sx, t1) + e * (q.stairW / 2 + 0.04);
+          this.walls.push({ cx: (x0 + x1) / 2, cz: q.z1 + q.stairLen * (1 - (t0 + t1) / 2), hx: Math.abs(x1 - x0) / 2 + 0.06, hz: q.stairLen / S / 2 + 0.01 });
+        }
+      }
+    }
+  }
+
+  /** Mittellinie einer Treppe bei t (0 unten … 1 oben); geschwungene Treppen buchten zur Mitte aus */
+  private stairCx(sx: number, t: number) {
+    const b = this.ship.model.quarter?.bulge ?? 0;
+    return sx - Math.sign(sx) * b * Math.sin(Math.PI * t);
+  }
 
   private toLocal(x: number, z: number) {
     const dx = x - this.ship.x, dz = z - this.ship.z;
@@ -118,15 +193,52 @@ export class DeckGround implements Ground {
     return { x: this.ship.x + lx * c + lz * s, z: this.ship.z - lx * s + lz * c };
   }
 
-  height() { return this.ship.model.group.position.y + this.ship.model.deckY; }
+  /** Höhe über dem Hauptdeck an einer Schiffsposition: Achterdeck oben, Treppen als Rampe, sonst 0 */
+  private level(lx: number, lz: number): number {
+    const q = this.ship.model.quarter;
+    if (!q) return 0;
+    if (lz <= q.z1) return lz >= q.z0 - 0.5 ? q.top : 0;
+    if (lz < q.z1 + q.stairLen) {
+      const t = 1 - (lz - q.z1) / q.stairLen;
+      for (const sx of q.stairX) if (Math.abs(lx - this.stairCx(sx, t)) <= q.stairW / 2 + 0.08) return q.top * (1 - (lz - q.z1) / q.stairLen);
+    }
+    return 0;
+  }
+
+  /** Ohne Position: Höhe des Hauptdecks (z. B. für Gegner beim Entern) */
+  height(x?: number, z?: number) {
+    const base = this.ship.model.group.position.y + this.ship.model.deckY;
+    if (x === undefined || z === undefined) return base;
+    const { lx, lz } = this.toLocal(x, z);
+    return base + this.level(lx, lz);
+  }
+
+  /** Kreis (r) aus einer Wand herausschieben, auf der Seite, auf der er gerade ist (die Wände sind dünn, die Schritte klein) */
+  private pushWall(w: DeckWall, lx: number, lz: number, r: number) {
+    const nx = Math.max(w.cx - w.hx, Math.min(w.cx + w.hx, lx));
+    const nz = Math.max(w.cz - w.hz, Math.min(w.cz + w.hz, lz));
+    let dx = lx - nx, dz = lz - nz;
+    const d = Math.hypot(dx, dz);
+    if (d >= r) return { lx, lz };
+    if (d > 1e-5) return { lx: nx + (dx / d) * r, lz: nz + (dz / d) * r };
+    // Mittelpunkt in der Wand: entlang der kürzesten Achse hinaus
+    dx = lx - w.cx; dz = lz - w.cz;
+    if (Math.abs(dx) / (w.hx + 1e-6) > Math.abs(dz) / (w.hz + 1e-6)) return { lx: w.cx + Math.sign(dx || 1) * (w.hx + r), lz };
+    return { lx, lz: w.cz + Math.sign(dz || 1) * (w.hz + r) };
+  }
 
   constrain(x: number, z: number, radius = 0.35) {
     const { lx, lz } = this.toLocal(x, z);
     const L = this.ship.cls.L;
-    const cz = Math.max(-L / 2 + L * 0.28, Math.min(L / 2 - L * 0.12, lz));
-    const hw = this.ship.model.halfWidth(cz) * 0.85 - radius;
-    const cx = Math.max(-hw, Math.min(hw, lx));
-    return this.toWorld(cx, cz);
+    const q = this.ship.model.quarter;
+    const zMin = q ? q.z0 + 0.35 + radius : -L / 2 + L * 0.28;
+    const fore = this.ship.model.fore;
+    const cz = Math.max(zMin, Math.min(fore ? fore.z0 - radius : L / 2 - L * 0.12, lz));
+    const top = !!q && cz <= q.z1;
+    const hw = this.ship.model.halfWidth(cz) * (top ? 0.86 : 0.85) - radius;
+    let px = Math.max(-hw, Math.min(hw, lx)), pz = cz;
+    for (let it = 0; it < 2; it++) for (const w of this.walls) { const o = this.pushWall(w, px, pz, radius); px = o.lx; pz = o.lz; }
+    return this.toWorld(px, pz);
   }
 
   /** Lokale Deckposition (z: Anteil der Länge) in Weltkoordinaten */
@@ -136,11 +248,32 @@ export class DeckGround implements Ground {
     return this.ship.model.halfWidth(lz) * 0.95 - Math.abs(lx);
   }
 
+  /** Auf dem Achterdeck (oben)? */
+  onQuarter(x: number, z: number) {
+    const q = this.ship.model.quarter;
+    if (!q) return false;
+    const { lz } = this.toLocal(x, z);
+    return lz <= q.z1 && lz >= q.z0 - 0.5;
+  }
+
+  /** Abstand eines Weltpunkts zum Steuerplatz (Schiffskoordinate z, x = 0) in der Ebene */
+  distTo(x: number, z: number, lx0: number, lz0: number) {
+    const { lx, lz } = this.toLocal(x, z);
+    return Math.hypot(lx - lx0, lz - lz0);
+  }
+
   spot(fx: number, fz: number) {
     const L = this.ship.cls.L;
-    const lz = -L / 2 + L * 0.28 + (fz * 0.5 + 0.5) * (L * 0.6);
+    const q = this.ship.model.quarter;
+    const zStart = q ? q.z1 + q.stairLen + 0.8 : -L / 2 + L * 0.28;
+    // vor dem Vorderkastell enden (dahinter ist massives Holz)
+    const zEnd = this.ship.model.fore ? this.ship.model.fore.z0 - 1.0 : L / 2 - L * 0.12;
+    const lz = zStart + (fz * 0.5 + 0.5) * Math.max(2, zEnd - zStart);
     return this.toWorld(fx * this.ship.model.halfWidth(lz) * 0.7, lz);
   }
+
+  /** Punkt in Schiffskoordinaten in die Welt */
+  world(lx: number, lz: number) { return this.toWorld(lx, lz); }
 }
 
 export class IslandGround implements Ground {
@@ -175,7 +308,8 @@ export class IslandGround implements Ground {
         if (d > i.r * 1.9 + W) continue;
         const a = Math.atan2(pz - i.z, px - i.x);
         const e = i.r * coastK(i.coast, a);
-        const lim = e * 1.11 + W * 0.5 + 1.2;
+        // knapp vor der Wasserlinie halten (vorher fest 11 % des Radius: beim Festland 30–37 m vor dem Strand)
+        const lim = e * (1 + i.shelf * WATERLINE) + W * 0.5 + 1.2;
         if (d >= lim) continue;
         x += Math.cos(a) * (lim - d);
         z += Math.sin(a) * (lim - d);
@@ -199,9 +333,9 @@ export class IslandGround implements Ground {
       const d = Math.hypot(x - i.x, z - i.z);
       if (d > i.r * 1.9) continue;
       const e = this.edge(i, x, z);
-      if (d > e * 1.25) continue;
-      // Plateau bis zur Küste, dann gleichmäßig 3 m bis 1,25 × Küstenradius hinab (wie das Strand-Mesh)
-      let y = d <= e ? i.beachY : i.beachY - ((d - e) / (e * 0.25)) * 3;
+      if (d > e * (1 + i.shelf)) continue;
+      // Plateau bis zur Küste, dann gleichmäßig 3 m über die Böschung hinab (wie das Strand-Mesh)
+      let y = d <= e ? i.beachY : i.beachY - ((d - e) / (e * i.shelf)) * 3;
       for (const h of i.hills) {
         const dh = Math.hypot(x - h.x, z - h.z);
         if (dh < h.r) y = Math.max(y, i.hillY + hillProfile(dh / h.r) * h.r * h.h);
@@ -244,7 +378,7 @@ export class IslandGround implements Ground {
     // bis an die Wasserlinie, nicht weiter (vorher bis 102 % des Radius – dort lag der Boden schon tief unter dem Strand)
     const dx = x - isl.x, dz = z - isl.z;
     const d = Math.hypot(dx, dz);
-    const max = this.edge(isl, x, z) * 1.04;
+    const max = this.edge(isl, x, z) * (1 + isl.shelf * 0.16);
     if (d > max) { x = isl.x + (dx / d) * max; z = isl.z + (dz / d) * max; }
     return { x, z };
   }

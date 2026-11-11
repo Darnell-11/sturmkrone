@@ -1,7 +1,12 @@
 // Grundwerte der Welt. Regionen und echte Inseln kommen in Meilenstein 6.
 
+/**
+ * Längenfaktor der Welt gegenüber der ersten Karte (bis 2.9.26): 2 = doppelter Radius = vierfache Fläche.
+ * Alle Inselabstände, Regionen und Grenzen leiten sich daraus ab (siehe data/regions.ts).
+ */
+export const WORLD_SCALE = 2;
 /** Radius der Meeresscheibe in Metern. Dahinter stürzt das Meer als Wasserfall in die Tiefe. */
-export const WORLD_RADIUS = 2000;
+export const WORLD_RADIUS = 2000 * WORLD_SCALE;
 /** Unsichtbare Wand: so nah dürfen Schiffe an die Kante */
 export const EDGE_WALL = WORLD_RADIUS - 70;
 
@@ -19,13 +24,17 @@ export interface WaveDef {
 /** Gerstner-Wellen, von groß nach klein. Höhe wird mit dem Wetter skaliert. */
 export const WAVES: WaveDef[] = [
   // lange Dünung aus einer anderen Richtung: das Meer hebt und senkt sich unregelmäßig wie echte See
-  { dir: -62, length: 170, amp: 0.38, steep: 0.3 },
-  { dir: 20, length: 110, amp: 0.75, steep: 0.55 },
-  { dir: -35, length: 64, amp: 0.42, steep: 0.6 },
-  { dir: 75, length: 37, amp: 0.22, steep: 0.65 },
-  { dir: 145, length: 21, amp: 0.11, steep: 0.6 },
-  { dir: 112, length: 15.5, amp: 0.07, steep: 0.6 },
-  { dir: 5, length: 11, amp: 0.05, steep: 0.5 },
+  { dir: -62, length: 170, amp: 0.38, steep: 0.25 },
+  { dir: 20, length: 110, amp: 0.75, steep: 0.45 },
+  { dir: -35, length: 64, amp: 0.42, steep: 0.49 },
+  { dir: 75, length: 37, amp: 0.22, steep: 0.53 },
+  { dir: 145, length: 21, amp: 0.11, steep: 0.49 },
+  { dir: 112, length: 15.5, amp: 0.07, steep: 0.49 },
+  { dir: 5, length: 11, amp: 0.05, steep: 0.41 },
+  // mittlere Windsee und Kabbelwasser: bricht die großen Muster auf und lässt das Meer lebendig arbeiten
+  { dir: -12, length: 46, amp: 0.17, steep: 0.51 },
+  { dir: 52, length: 27, amp: 0.1, steep: 0.51 },
+  { dir: -78, length: 8.5, amp: 0.034, steep: 0.41 },
 ];
 
 /** Echte Minuten für einen ganzen Tag im Spiel */
@@ -60,7 +69,7 @@ export const TIME_KEYS: TimeKey[] = [
   { h: 6.2, name: 'Morgenrot', zenith: 0x34588e, horizon: 0xe8a07a, light: 0xffbe90, lightI: 1.5, ambientSky: 0xa4b0d0, ambientGround: 0x323c4a, ambientI: 0.72, seaDeep: 0x0a3a62, seaShallow: 0x2a8f9e, cloudLit: 0xf2c4a6, cloudShade: 0x6e6888, rim: 0xffc898, stars: 0.15 },
   { h: 8.5, name: 'Tag', zenith: 0x2f689e, horizon: 0xbcd4e0, light: 0xfff0d8, lightI: 2.45, ambientSky: 0xc8dcea, ambientGround: 0x2a4652, ambientI: 0.86, seaDeep: 0x07456e, seaShallow: 0x27a6b2, cloudLit: 0xf4f2ee, cloudShade: 0x8592a8, rim: 0xfff0dc, stars: 0 },
   // Mittagssonne: hoch, fast weiß, kräftig – kurze, harte Schatten und tiefblauer Zenit
-  { h: 12.5, name: 'Mittag', zenith: 0x2a62a4, horizon: 0xc6dce8, light: 0xfff8ee, lightI: 2.6, ambientSky: 0xd0e2f0, ambientGround: 0x2c4a56, ambientI: 0.9, seaDeep: 0x064a74, seaShallow: 0x25acb8, cloudLit: 0xfbfaf6, cloudShade: 0x8a98ae, rim: 0xfff4e6, stars: 0 },
+  { h: 12.5, name: 'Mittag', zenith: 0x2a62a4, horizon: 0xc2d6e0, light: 0xfff2dc, lightI: 2.45, ambientSky: 0xc6d6e2, ambientGround: 0x2c4a56, ambientI: 0.8, seaDeep: 0x064a74, seaShallow: 0x25acb8, cloudLit: 0xfbfaf6, cloudShade: 0x8a98ae, rim: 0xfff4e6, stars: 0 },
   { h: 16, name: 'Tag', zenith: 0x2f689e, horizon: 0xc2d6e0, light: 0xffecd0, lightI: 2.35, ambientSky: 0xc8dcea, ambientGround: 0x2a4652, ambientI: 0.82, seaDeep: 0x07456e, seaShallow: 0x27a6b2, cloudLit: 0xf4efe6, cloudShade: 0x8592a8, rim: 0xfff0dc, stars: 0 },
   { h: 18.4, name: 'Abendrot', zenith: 0x2e3c78, horizon: 0xe8703e, light: 0xff8a48, lightI: 1.85, ambientSky: 0xc08c98, ambientGround: 0x30222e, ambientI: 0.7, seaDeep: 0x14325a, seaShallow: 0x347888, cloudLit: 0xf09a62, cloudShade: 0x5e4270, rim: 0xffa070, stars: 0.05 },
   { h: 19.8, name: 'Dämmerung', zenith: 0x10163c, horizon: 0x583a66, light: 0xb880a0, lightI: 0.75, ambientSky: 0x625688, ambientGround: 0x10101e, ambientI: 0.56, seaDeep: 0x081834, seaShallow: 0x1a4c60, cloudLit: 0x765a88, cloudShade: 0x221d3c, rim: 0xb090f0, stars: 0.5 },

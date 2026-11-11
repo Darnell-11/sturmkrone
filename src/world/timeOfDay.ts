@@ -16,13 +16,15 @@ export interface Palette {
   lightDir: Vector3;
   /** Helligkeit des Hauptlichts beim Wechsel Sonne ↔ Mond: geht kurz auf 0, damit Schatten nicht springen */
   lightK: number;
+  /** Mittagshöhe der Sonne 0 … 1: steuert Farbtemperatur, Fülllicht und Schattenhärte */
+  noon: number;
 }
 
 export function createPalette(): Palette {
   return {
     name: '', zenith: new Color(), horizon: new Color(), light: new Color(), ambientSky: new Color(), ambientGround: new Color(),
     seaDeep: new Color(), seaShallow: new Color(), cloudLit: new Color(), cloudShade: new Color(), rim: new Color(),
-    lightI: 1, ambientI: 1, stars: 0, sunDir: new Vector3(), moonDir: new Vector3(), sunVis: 1, moonVis: 0, lightDir: new Vector3(), lightK: 1,
+    lightI: 1, ambientI: 1, stars: 0, sunDir: new Vector3(), moonDir: new Vector3(), sunVis: 1, moonVis: 0, lightDir: new Vector3(), lightK: 1, noon: 0,
   };
 }
 
@@ -61,6 +63,13 @@ export function samplePalette(hour: number, out: Palette): Palette {
   celestial(h + 12, 52, out.moonDir);
   out.sunVis = MathUtils.smoothstep(out.sunDir.y, -0.04, 0.06);
   out.moonVis = MathUtils.smoothstep(out.moonDir.y, -0.04, 0.08) * (1 - out.sunVis);
+  // Mittagskurve: steht die Sonne hoch, wird ihr Licht wärmer und etwas schwächer, das blaue Himmelsfüllicht sinkt –
+  // so bleiben harte Schatten und die Texturen von Stein, Holz und Gras erhalten, statt in weiß-blauem Licht auszuwaschen
+  out.noon = MathUtils.smoothstep(out.sunDir.y, 0.6, 0.93) * out.sunVis;
+  out.light.lerp(tmpA.setRGB(1, 0.93, 0.8), 0.38 * out.noon);
+  out.ambientSky.lerp(tmpA.setRGB(0.78, 0.82, 0.84), 0.3 * out.noon);
+  out.lightI *= 1 - 0.08 * out.noon;
+  out.ambientI *= 1 - 0.1 * out.noon;
   // Hauptlicht nie ganz flach, damit Schatten nicht endlos lang werden
   out.lightDir.copy(out.sunVis >= 0.5 || out.sunDir.y > out.moonDir.y ? out.sunDir : out.moonDir);
   // Übergabe Sonne ↔ Mond: das Hauptlicht blendet um den Wechsel herum aus und wieder ein,

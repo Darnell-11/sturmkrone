@@ -1,5 +1,5 @@
 import { CanvasTexture, CatmullRomCurve3, CircleGeometry, LatheGeometry, Shape, ShapeGeometry, Sprite, SpriteMaterial, SRGBColorSpace, TorusGeometry, TubeGeometry, Vector2, Vector3, Box3 } from 'three';
-import { BoxGeometry, Color, ConeGeometry, CylinderGeometry, Group, Mesh, MeshBasicMaterial, OctahedronGeometry, SphereGeometry, type Material } from 'three';
+import { BoxGeometry, Color, ConeGeometry, CylinderGeometry, DodecahedronGeometry, Group, Mesh, MeshBasicMaterial, OctahedronGeometry, SphereGeometry, type Material, type MeshToonMaterial } from 'three';
 import type { IslandStyle } from '../data/regions';
 import { coastK, hillProfile } from './islandGround';
 import { toon } from '../render/toon';
@@ -11,6 +11,8 @@ import { markWind, windify } from '../render/wind';
 export interface StyleKit {
   sand: Material;
   grass: Material;
+  /** Flache Wiese auf dem Strandplateau (liegt 2 cm über dem Sand: eigene Tiefenschicht gegen Flimmern in der Ferne) */
+  grassCap: Material;
   rock: Material;
   trunk: Material;
   leaf: Material;
@@ -22,8 +24,9 @@ export interface StyleKit {
 const cache = new Map<IslandStyle, StyleKit>();
 
 export function styleKit(style: IslandStyle): StyleKit {
-  let k = cache.get(style);
-  if (k) return k;
+  const hit = cache.get(style);
+  if (hit) return hit;
+  let k: Omit<StyleKit, 'grassCap'>;
   const glow = (c: Color) => new MeshBasicMaterial({ color: c });
   switch (style) {
     case 'nebel': k = { sand: toon({ color: 0xc9c2a8, detail: 'sand', rim: 0.1, puddles: 0.75 }), grass: toon({ color: 0x7d8f6a, detail: 'grass', rim: 0.35, puddles: 0.45 }), rock: toon({ color: 0x7a7e80, flatShading: true, detail: 'rock' }), trunk: toon(0x5a4a3a), leaf: toon({ color: 0x6a7a5a, flatShading: true }), extra: null, flora: 'tot', rockScale: 1.1 }; break;
@@ -31,22 +34,27 @@ export function styleKit(style: IslandStyle): StyleKit {
     case 'glut': k = { sand: toon({ color: 0x4a3c38, detail: 'sand', rim: 0.1, puddles: 0.75 }), grass: toon({ color: 0x6a5048, detail: 'grass', rim: 0.35, puddles: 0.45 }), rock: toon({ color: 0x2e2626, flatShading: true, detail: 'rock' }), trunk: toon(0x2a2020), leaf: toon({ color: 0x3a2e2a, flatShading: true }), extra: glow(new Color(5, 1.4, 0.25)), flora: 'tot', rockScale: 1.3 }; break;
     case 'sturm': k = { sand: toon({ color: 0xb8b4a8, detail: 'sand', rim: 0.1, puddles: 0.75 }), grass: toon({ color: 0x5a7a6a, detail: 'grass', rim: 0.35, puddles: 0.45 }), rock: toon({ color: 0x5a6070, flatShading: true, detail: 'rock' }), trunk: toon(0x4a3a2a), leaf: toon({ color: 0x3e5e4e, flatShading: true }), extra: null, flora: 'kiefer', rockScale: 1.7 }; break;
     case 'schlund': k = { sand: toon({ color: 0x8a86a0, detail: 'sand', rim: 0.1, puddles: 0.75 }), grass: toon({ color: 0x5a4a8a, detail: 'grass', rim: 0.35, puddles: 0.45 }), rock: toon({ color: 0x3a3450, flatShading: true, detail: 'rock' }), trunk: toon(0x3a3048), leaf: toon({ color: 0x4a3a6a, flatShading: true }), extra: glow(new Color(1.2, 2.6, 4.5)), flora: 'kristall', rockScale: 1.2 }; break;
+    // Festland: fette Weiden, heller Kiesstrand, graue Feldsteine
+    case 'festland': k = { sand: toon({ color: 0xcfc09a, detail: 'sand', rim: 0.1, puddles: 0.75 }), grass: toon({ color: 0x5e9648, detail: 'grass', rim: 0.35, puddles: 0.45 }), rock: toon({ color: 0x8a857a, flatShading: true, detail: 'rock' }), trunk: toon(0x5e4630), leaf: toon({ color: 0x3f7a38, flatShading: true }), extra: null, flora: 'palme', rockScale: 1 }; break;
+    // Sturmklippe: dunkler Basaltkies, karges Moos, schwarzer Fels
+    case 'klippe': k = { sand: toon({ color: 0x66666c, detail: 'sand', rim: 0.1, puddles: 0.8 }), grass: toon({ color: 0x5c6c52, detail: 'grass', rim: 0.35, puddles: 0.5 }), rock: toon({ color: 0x3a3c42, flatShading: true, detail: 'rock' }), trunk: toon(0x3e342c), leaf: toon({ color: 0x2e4e3e, flatShading: true }), extra: null, flora: 'kiefer', rockScale: 1.5 }; break;
     // gedämpftes, satteres Grün statt Knallgrün, sonnengebleichter Sand
     default: k = { sand: toon({ color: 0xdcc392, detail: 'sand', rim: 0.1, puddles: 0.75 }), grass: toon({ color: 0x55894a, detail: 'grass', rim: 0.35, puddles: 0.45 }), rock: toon({ color: 0x7a746a, flatShading: true, detail: 'rock' }), trunk: toon(0x6e4a28), leaf: toon({ color: 0x356e34, flatShading: true }), extra: null, flora: 'palme', rockScale: 1 };
   }
   markWind(k.leaf);
   markWind(k.trunk);
-  cache.set(style, k);
-  return k;
+  const kit: StyleKit = { ...k, grassCap: toon({ color: (k.grass as MeshToonMaterial).color.getHex(), detail: 'grass', rim: 0.35, puddles: 0.45, layer: 0.5 }) };
+  cache.set(style, kit);
+  return kit;
 }
 
 /**
  * Strandplateau mit unregelmäßiger Küste und 1–3 Hügeln – aus denselben Werten wie die Laufhöhe (islandGround).
  * hills: Inselkoordinaten.
  */
-export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: number; p: number }[], hills: { x: number; z: number; r: number; h: number }[], grassFrac = 0, rnd: () => number = Math.random): { beach: Mesh; hills: Mesh[] } {
+export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: number; p: number }[], hills: { x: number; z: number; r: number; h: number }[], grassFrac = 0, rnd: () => number = Math.random, ragged = 0, shelf = 0.25): { beach: Mesh; hills: Mesh[] } {
   const k = (a: number) => coastK(coast, a);
-  const bg = new CylinderGeometry(r, r * 1.25, 3, 128, 2);
+  const bg = new CylinderGeometry(r, r * (1 + shelf), 3, Math.max(128, Math.round(r * 1.2)), 2);
   const bp = bg.attributes.position;
   for (let i = 0; i < bp.count; i++) {
     const x = bp.getX(i), z = bp.getZ(i);
@@ -59,18 +67,22 @@ export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: n
   const meshes: Mesh[] = [];
   // flache Grasfläche mit eigener, unregelmäßiger Kante auf dem Strandplateau
   if (grassFrac > 0.2) {
-    const seed = rnd() * 100, n = 96;
+    // große Länder mit mehr Stützpunkten, sonst wird der Wiesenrand eckig
+    const seed = rnd() * 100, n = Math.max(96, Math.round(r * 1.3));
+    const lobes = 2 + Math.floor(rnd() * 2);
     const shape = new Shape();
     for (let i = 0; i <= n; i++) {
       const a = (i / n) * Math.PI * 2;
-      const wobble = 1 + 0.08 * Math.sin(a * 5 + seed) + 0.05 * Math.sin(a * 11 + seed * 2) + 0.03 * Math.sin(a * 23 + seed * 3);
-      const rr = r * k(a) * grassFrac * wobble;
+      // ragged: große Buchten und Zungen im Wiesenrand – jede Insel bekommt ihren eigenen Umriss statt eines Kreises
+      const wobble = 1 + 0.08 * Math.sin(a * 5 + seed) + 0.05 * Math.sin(a * 11 + seed * 2) + 0.03 * Math.sin(a * 23 + seed * 3)
+        + ragged * (0.2 * Math.sin(a * lobes + seed * 1.7) + 0.13 * Math.sin(a * (lobes + 1) - seed * 0.9) + 0.07 * Math.sin(a * 7 + seed * 2.3));
+      const rr = r * k(a) * Math.min(0.95, grassFrac * wobble);
       const x = Math.cos(a) * rr, y = -Math.sin(a) * rr;
       if (i === 0) shape.moveTo(x, y); else shape.lineTo(x, y);
     }
     const gg = new ShapeGeometry(shape, 1);
     gg.rotateX(-Math.PI / 2);
-    const cap = new Mesh(gg, kit.grass);
+    const cap = new Mesh(gg, kit.grassCap);
     cap.position.y = 1.32;
     cap.receiveShadow = true;
     meshes.push(cap);
@@ -91,11 +103,11 @@ export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: n
 const KIND_LABEL: Record<string, string> = { town: 'Hafenstadt', harbor: 'Hafen', camp: 'Lager', ruin: 'Ruine', quiet: '', treasure: 'Schatzinsel', lighthouse: 'Leuchtturm', boss: 'Boss' };
 
 /** Schwebendes Namensschild über einer Insel (wie in 1.0): Name, Art und Stufe */
-export function islandLabel(name: string, kind: string, level?: number): Sprite {
+export function islandLabel(name: string, kind: string, level?: number, kindLabel?: string): Sprite {
   const c = document.createElement('canvas');
   c.width = 512; c.height = 128;
   const g = c.getContext('2d')!;
-  const sub = [KIND_LABEL[kind] ?? '', level ? `Stufe ${level}` : ''].filter(Boolean).join(' · ');
+  const sub = [kindLabel ?? KIND_LABEL[kind] ?? '', level ? `Stufe ${level}` : ''].filter(Boolean).join(' · ');
   g.textAlign = 'center';
   g.lineJoin = 'round';
   // lange Namen („Festung Nordwacht“) wurden am Rand abgeschnitten: Schrift so weit verkleinern, dass sie passt
@@ -256,46 +268,162 @@ export function volcano(kit: StyleKit, r: number, baseY: number, tall: boolean):
 }
 
 const wood = () => toon(0x8a5a2b);
-const plaster = () => toon(0xefe4cc);
-const roof = () => toon(0xa8322a);
 
-/** Kleiner Außenposten-Hafen: Steg, Häuser, Laternen */
+export type RockType = 'bloecke' | 'nadeln' | 'platten' | 'bogen' | 'basalt';
+/** Welche Felsformen in welcher Region vorkommen (die erste Wahl der Insel wird aus ihrem Namen gewürfelt) */
+export const ROCK_TYPES: Record<IslandStyle, RockType[]> = {
+  tropisch: ['bloecke', 'platten', 'bogen', 'bloecke'],
+  nebel: ['nadeln', 'platten', 'bloecke', 'bogen'],
+  nord: ['bloecke', 'platten', 'nadeln'],
+  glut: ['basalt', 'nadeln', 'bloecke'],
+  sturm: ['nadeln', 'basalt', 'bogen', 'platten'],
+  schlund: ['nadeln', 'bogen', 'basalt'],
+  festland: ['bloecke', 'platten'],
+  klippe: ['basalt', 'nadeln'],
+};
+
+/** Eckpunkte verschieben: gleiche Lage = gleiche Verschiebung (das Netz bleibt dicht), jeder Fels wird ein Einzelstück */
+function deform(geo: import('three').BufferGeometry, seed: number, amt: number, flatY = false) {
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const h = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719 + seed * 4.11) * 43758.5453;
+    const k = 1 + (h - Math.floor(h) - 0.5) * 2 * amt;
+    pos.setXYZ(i, x * k, flatY ? y : y * k, z * k);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Felsformation: Blockhaufen, Felsnadeln, Plattenstapel, Felsbogen oder Basaltsäulen – statt überall derselben Felsnadel.
+ * size = Grundmaß in Metern. Liefert die Gruppe und die Kollisionskreise (Gruppenkoordinaten).
+ */
+export function rockFormation(type: RockType, kit: StyleKit, rnd: () => number, size: number): { g: Group; blocks: { x: number; z: number; r: number }[] } {
+  const g = new Group();
+  const blocks: { x: number; z: number; r: number }[] = [];
+  const mat = kit.rock;
+  const boulder = (s: number, x: number, z: number, squash = 0.6 + rnd() * 0.3, solid = true) => {
+    const m = new Mesh(deform(new DodecahedronGeometry(s, 0), rnd() * 100, 0.2), mat);
+    m.scale.set(1 + rnd() * 0.3, squash, 1 + rnd() * 0.3);
+    m.position.set(x, s * squash * 0.45, z);
+    m.rotation.y = rnd() * 6;
+    g.add(m);
+    if (solid) blocks.push({ x, z, r: s * 0.9 });
+    return m;
+  };
+  const spire = (w: number, h: number, x: number, z: number) => {
+    const geo = new CylinderGeometry(w * (0.12 + rnd() * 0.16), w, h, 6, 3);
+    geo.translate(0, h / 2, 0);
+    const m = new Mesh(deform(geo, rnd() * 100, 0.2, true), mat);
+    m.position.set(x, -0.5, z);
+    m.rotation.set((rnd() - 0.5) * 0.3, rnd() * 6, (rnd() - 0.5) * 0.3);
+    g.add(m);
+    blocks.push({ x, z, r: w * 0.95 });
+  };
+  const scatter = (n: number, d0: number, d1: number, s0: number, s1: number) => {
+    for (let i = 0; i < n; i++) { const a = rnd() * 6.283, d = d0 + rnd() * (d1 - d0); boulder(s0 + rnd() * (s1 - s0), Math.cos(a) * d, Math.sin(a) * d); }
+  };
+  switch (type) {
+    case 'bloecke': {
+      boulder(size * (0.8 + rnd() * 0.3), 0, 0, 0.7 + rnd() * 0.35);
+      scatter(3 + Math.floor(rnd() * 4), size * 0.8, size * 1.9, size * 0.25, size * 0.6);
+      break;
+    }
+    case 'nadeln': {
+      const n = 3 + Math.floor(rnd() * 3);
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * 6.283 + rnd(), d = i === 0 ? 0 : size * (0.55 + rnd() * 0.6);
+        const w = size * (i === 0 ? 0.5 : 0.25 + rnd() * 0.2);
+        spire(w, Math.min(17, w * (3 + rnd() * 2.6) * Math.sqrt(kit.rockScale)), Math.cos(a) * d, Math.sin(a) * d);
+      }
+      scatter(2 + Math.floor(rnd() * 2), size * 1.1, size * 1.8, size * 0.18, size * 0.35);
+      break;
+    }
+    case 'platten': {
+      const n = 3 + Math.floor(rnd() * 3);
+      let y = 0, ox = 0, oz = 0;
+      for (let i = 0; i < n; i++) {
+        const s = size * (1 - i * 0.14) * (0.8 + rnd() * 0.25);
+        const th = size * (0.2 + rnd() * 0.12);
+        const m = new Mesh(deform(new CylinderGeometry(s * 0.9, s, th, 7, 1), rnd() * 100, 0.16, true), mat);
+        ox += (rnd() - 0.5) * s * 0.5; oz += (rnd() - 0.5) * s * 0.5;
+        m.position.set(ox, y + th / 2 - 0.2, oz);
+        m.rotation.set((rnd() - 0.5) * 0.2, rnd() * 6, (rnd() - 0.5) * 0.2);
+        g.add(m);
+        y += th * 0.86;
+        if (i === 0) blocks.push({ x: ox, z: oz, r: s * 0.95 });
+      }
+      scatter(2 + Math.floor(rnd() * 2), size * 1.1, size * 1.7, size * 0.2, size * 0.4);
+      break;
+    }
+    case 'bogen': {
+      const span = size * (0.9 + rnd() * 0.3), h = size * (1.3 + rnd() * 0.6);
+      for (const sgn of [-1, 1]) {
+        const w = size * (0.38 + rnd() * 0.14);
+        const geo = new CylinderGeometry(w * 0.8, w, h + 1, 6, 2);
+        geo.translate(0, (h - 1) / 2, 0);
+        const m = new Mesh(deform(geo, rnd() * 100, 0.18, true), mat);
+        m.position.set(sgn * span, 0, 0);
+        g.add(m);
+        blocks.push({ x: sgn * span, z: 0, r: w });
+      }
+      const top = new Mesh(deform(new DodecahedronGeometry(1, 0), rnd() * 100, 0.18), mat);
+      top.scale.set(span * 1.55, size * 0.42, size * 0.62);
+      top.position.y = h + size * 0.1;
+      top.rotation.z = (rnd() - 0.5) * 0.12;
+      g.add(top);
+      scatter(2 + Math.floor(rnd() * 3), span * 1.5, span * 2.2, size * 0.2, size * 0.45);
+      break;
+    }
+    case 'basalt': {
+      const rr = Math.max(0.55, size * 0.17);
+      const n = 12 + Math.floor(rnd() * 9);
+      const peak = size * (1.3 + rnd() * 1.1) * Math.sqrt(kit.rockScale);
+      let reach = 0;
+      for (let i = 0; i < n; i++) {
+        // Spirale über ein Sechseckraster: dichtes Bündel, außen niedriger
+        const q = Math.round(Math.cos(i * 2.4) * Math.sqrt(i) * 0.8), rI = Math.round(Math.sin(i * 2.4) * Math.sqrt(i) * 0.8);
+        const x = Math.sqrt(3) * rr * (q + rI / 2), z = 1.5 * rr * rI;
+        const d = Math.hypot(x, z);
+        const h = Math.max(0.6, (peak - d * 1.25) * (0.6 + rnd() * 0.55));
+        const col = new Mesh(new CylinderGeometry(rr, rr, h + 1.4, 6), mat);
+        col.position.set(x, (h - 1.4) / 2, z);
+        g.add(col);
+        reach = Math.max(reach, d + rr);
+      }
+      blocks.push({ x: 0, z: 0, r: reach * 0.92 });
+      g.rotation.y = rnd() * 6;
+      // gedrehte Gruppe: Kollisionskreis liegt in der Mitte, braucht keine Umrechnung
+      break;
+    }
+  }
+  return { g, blocks };
+}
+
+/** Länge der Hafenstege der Außenposten: beginnt 5 m an Land, reicht gut 20 m übers Wasser */
+export const OUTPOST_PIER = { from: -5, to: 27 };
+
+/** Kleiner Außenposten-Hafen: Steg mit Laterne (r = Küstenradius in Stegrichtung) */
 export function outpost(r: number, facing: number, lanterns: Mesh[]): Group {
   const g = new Group();
-  const w = wood(), p = plaster(), rf = roof();
-  const deck = new BoxGeometry(3, 0.4, 22);
-  deckUV(deck, 3, 22);
+  const w = wood();
+  const len = OUTPOST_PIER.to - OUTPOST_PIER.from, mid = (OUTPOST_PIER.to + OUTPOST_PIER.from) / 2;
+  const deck = new BoxGeometry(3, 0.4, len);
+  deckUV(deck, 3, len);
   const pier = new Mesh(deck, toon({ color: '#A8804E', map: plankTexture(), puddles: 0.6, ...toonPbr(plankTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) }));
-  pier.position.set(Math.sin(facing) * (r + 6), 1.25, Math.cos(facing) * (r + 6));
+  pier.position.set(Math.sin(facing) * (r + mid), 1.25, Math.cos(facing) * (r + mid));
   pier.rotation.y = facing;
   g.add(pier);
-  for (let i = 0; i < 4; i++) {
-    const post = new Mesh(new CylinderGeometry(0.18, 0.18, 3, 6), w);
-    const d = r + 0 + i * 5;
-    post.position.set(Math.sin(facing) * d + Math.cos(facing) * 1.6, 0.4, Math.cos(facing) * d - Math.sin(facing) * 1.6);
+  // Pfähle beiderseits, bis ins Wasser hinab
+  for (let d = r + 2; d <= r + OUTPOST_PIER.to - 1; d += 5) for (const s of [-1, 1]) {
+    const post = new Mesh(new CylinderGeometry(0.18, 0.18, 4, 6), w);
+    post.position.set(Math.sin(facing) * d + Math.cos(facing) * 1.6 * s, -0.1, Math.cos(facing) * d - Math.sin(facing) * 1.6 * s);
     g.add(post);
   }
-  for (let i = 0; i < 4; i++) {
-    const a = facing + (i - 1.5) * 0.45;
-    const d = r * 0.55;
-    const house = new Group();
-    const body = new Mesh(new BoxGeometry(5, 3.4, 4.2), p);
-    body.position.y = 1.7;
-    const top = new Mesh(new ConeGeometry(4, 2.4, 4), rf);
-    top.position.y = 4.6;
-    top.rotation.y = Math.PI / 4;
-    house.add(body, top);
-    const win = new Mesh(new BoxGeometry(1, 1, 0.1), new MeshBasicMaterial({ color: new Color(3.5, 2.4, 1) }));
-    win.position.set(0, 1.9, 2.12);
-    win.userData.noOutline = true;
-    house.add(win);
-    lanterns.push(win);
-    house.position.set(Math.sin(a) * d, 1.3, Math.cos(a) * d);
-    house.rotation.y = a;
-    g.add(house);
-  }
+  // die Häuser des Hafens baut islandDress je nach Region (vorher vier gleiche Häuschen in jedem Hafen)
   const lamp = new Mesh(new SphereGeometry(0.35, 8, 6), new MeshBasicMaterial({ color: new Color(4, 3, 1.2) }));
-  lamp.position.set(Math.sin(facing) * (r + 16), 3.2, Math.cos(facing) * (r + 16));
+  lamp.position.set(Math.sin(facing) * (r + OUTPOST_PIER.to - 3) + Math.cos(facing) * 1.2, 3.2, Math.cos(facing) * (r + OUTPOST_PIER.to - 3) - Math.sin(facing) * 1.2);
   lamp.userData.noOutline = true;
   lanterns.push(lamp);
   const pole = new Mesh(new CylinderGeometry(0.1, 0.1, 2, 5), w);

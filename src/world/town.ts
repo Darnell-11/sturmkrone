@@ -43,9 +43,9 @@ export interface TownBuild {
 /** Gebäude: Wände, Satteldach, Tür, Fenster, Fundament */
 function house(w: number, d: number, h: number, wall: string, roof: string, windowMat: Material, lights: Mesh[], sign?: string): Group {
   const g = new Group();
-  const base = new Mesh(new BoxGeometry(w + 0.4, 3, d + 0.4), toon('#9A8A70'));
+  const base = new Mesh(new BoxGeometry(w + 0.4, 3, d + 0.4), toon({ color: '#9A8A70', detail: 'stone' }));
   base.position.y = -1.3;
-  const walls = new Mesh(new BoxGeometry(w, h, d), toon(wall));
+  const walls = new Mesh(new BoxGeometry(w, h, d), toon({ color: wall, detail: 'plaster' }));
   walls.position.y = h / 2;
   const beams = toon('#6A4426');
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
@@ -55,7 +55,7 @@ function house(w: number, d: number, h: number, wall: string, roof: string, wind
   }
   // Satteldach als Prisma
   const roofGeo = new CylinderGeometry(0.01, 1, 1, 4, 1).rotateY(Math.PI / 4);
-  const roofMesh = new Mesh(roofGeo, toon(roof));
+  const roofMesh = new Mesh(roofGeo, toon({ color: roof, flatShading: true, detail: 'tile' }));
   roofMesh.scale.set(w * 0.78, h * 0.55, d * 0.78);
   roofMesh.position.y = h + h * 0.27;
   const door = new Mesh(new BoxGeometry(1.2, 2.1, 0.12), toon('#5A3A22'));
@@ -249,7 +249,7 @@ function cobbleTexture(): CanvasTexture {
 }
 
 /** Straße als Band, das dem Boden folgt */
-function roadMesh(pts: [number, number][], width: number, cx: number, cz: number, groundAt: (x: number, z: number) => number, mat: Material): Mesh {
+export function roadMesh(pts: [number, number][], width: number, cx: number, cz: number, groundAt: (x: number, z: number) => number, mat: Material): Mesh {
   // Punkte alle 1,2 m, drei Stützreihen quer – so schaut kein Hügel durch die Mitte
   const path: { x: number; z: number }[] = [];
   for (let i = 0; i < pts.length - 1; i++) {

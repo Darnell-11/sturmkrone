@@ -167,7 +167,60 @@ export const QUESTS: QuestDef[] = [
   },
 ];
 
+// Nebenaufträge der Dorfbewohner (Festland und Küstenländer)
+QUESTS.push(
+  {
+    id: 'ruinen', title: 'Die Säulen im Norden', giver: 'wanda', after: 'k2',
+    intro: 'Mein Großvater erzählt von einer Insel mit versunkenen Säulen, ein Tempel aus der Zeit vor dem Faji. Sieh dir den Ort an und berichte mir – ich will wissen, ob er wahr ist.',
+    outro: 'Also stimmt es! Ein Tempel unter Wasser … Mein Großvater wird weinen vor Freude. Hier, für deine Mühe.',
+    steps: [
+      { type: 'goto', island: 'versunkenertempel', text: 'Erkunde die Ruinen-Insel „Versunkener Tempel“' },
+      { type: 'talk', npc: 'wanda', text: 'Berichte Wanda in Weidenbrück' },
+    ],
+    reward: { gold: 450, xp: 300, fame: 45, sp: 1 },
+  },
+  {
+    id: 'pluenderer', title: 'Plünderer an der Küste', giver: 'toni',
+    intro: 'Plünderer treiben sich an der Küste herum und scheuchen meine Schafe auf. Wenn du fünf von ihnen vertreibst, kehrt hier wieder Ruhe ein.',
+    outro: 'Ruhe! Ich höre die Schafe wieder blöken. Nimm das, du hast es verdient.',
+    steps: [
+      { type: 'kill', count: 5, text: 'Besiege 5 Gegner an Land' },
+      { type: 'talk', npc: 'toni', text: 'Berichte Toni in Weidenbrück' },
+    ],
+    reward: { gold: 220, xp: 160, fame: 25 },
+  },
+  {
+    id: 'muscheln', title: 'Muscheln für den Markt', giver: 'kiri',
+    intro: 'Die Flut hat Dinge angespült, die ich nicht allein heben kann. Siehst du die Insel dort im Dunst? Sieh nach, ob dort etwas liegt, das uns nützt.',
+    outro: 'Du hast es gefunden! Das bringt auf dem Markt ein hübsches Sümmchen. Hier dein Anteil.',
+    steps: [
+      { type: 'goto', island: 'muschelruh', text: 'Erkunde die Insel Muschelruh' },
+      { type: 'talk', npc: 'kiri', text: 'Kehre zu Kiri zurück' },
+    ],
+    reward: { gold: 180, xp: 140, fame: 20 },
+  },
+);
+
 QUESTS.push(...CREW_QUESTS);
+
+/** Dorfbewohner der handgebauten Länder (Schlüssel = Insel-ID): sprechen, Aufträge vergeben; Plätze wählt die Welt */
+export const VILLAGE_NPCS: Record<string, TownNpcDef[]> = {
+  gruenmark: [
+    { id: 'wanda', name: 'Wanda Kornblum', role: 'buerger', title: 'Bäuerin in Weidenbrück', x: 0, z: 0, yaw: 0, greet: ['Guten Tag, Fremde! Frisch gemähtes Heu und kalte Milch – nimm dir, was du brauchst.', 'Hier draußen ist es still. Das mag ich.'] },
+    { id: 'toni', name: 'Toni Hirtenstab', role: 'buerger', title: 'Schäfer', x: 0, z: 0, yaw: 0, greet: ['Pst! Du verschreckst die Schafe. Na gut, einen Gruß bekommst du trotzdem.', 'Der Wind riecht nach Regen.'] },
+  ],
+  palmenkueste: [
+    { id: 'kiri', name: 'Kiri Muschelsang', role: 'fischer', title: 'Strandsammlerin', x: 0, z: 0, yaw: 0, greet: ['Salzwind und Sonne – was braucht man mehr?', 'Hör mal, die Brandung klingt heute anders.'] },
+  ],
+  sturmklippe: [
+    { id: 'sven', name: 'Sven Windfang', role: 'fischer', title: 'Einsiedler der Klippe', x: 0, z: 0, yaw: 0, greet: ['Wer kommt da? Ach, ein Mensch. Selten geworden.', 'Wenn die Möwen schreien, kommt Sturm.'] },
+  ],
+  faehrholm: [
+    { id: 'fenna', name: 'Fenna Ruderblatt', role: 'fischer', title: 'Fährfrau', x: 0, z: 0, yaw: 0, greet: ['Willkommen auf Fährholm! Wohin soll es gehen?', 'Das Wasser ist heute freundlich. Heute.'] },
+  ],
+};
+
+export const VILLAGE_NPC_BY_ID: Record<string, TownNpcDef> = Object.fromEntries(Object.values(VILLAGE_NPCS).flat().map((n) => [n.id, n]));
 export const QUEST_BY_ID: Record<string, QuestDef> = Object.fromEntries(QUESTS.map((q) => [q.id, q]));
 
 // ---------- Bewohner von Ankerglück ----------

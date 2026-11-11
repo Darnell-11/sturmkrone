@@ -25,8 +25,16 @@
 >   - Kaskadierte Schatten: `src/render/csm.ts` mit dem three.js-CSM in `world/environment.ts`, aktiv ab `shadows.cascades ≥ 2`. Beleuchtete Materialien brauchen `ensureCsm()`; Kopien von Toon-Materialien entstehen mit `cloneToon()`.
 >   - Umgebungsverdeckung: `src/render/gtao.ts`, ein `AoPass` in halber Auflösung plus `AoEffect`.
 >   - Belichtung, Bloom-Schwelle und Vignette stehen in `RENDER_LOOK` in `data/qualityTiers.ts`.
+> - Welt und Bewuchs:
+>   - Weltgröße: `WORLD_SCALE` in `data/world.ts`. Handgebaute Länder (Form, Siedlungen, Bewuchs) stehen als Daten in `data/settlements.ts`.
+>   - Gebäude kommen aus `world/architecture.ts` (immer mit Kollisions-Gitter), aufgestellt von `world/settlement.ts` oder `mount` in `world/islandDress.ts`.
+>   - Bäume, Sträucher, Gras und Felsen laufen über `world/vegetation.ts` (`Scatter`, `InstancedMesh`), nicht als Einzelnetze. Wind für Instanzen: `WIND_VERTEX` in `render/wind.ts`.
 
-> **Abstimmung mit dem Briefing unten:** Diese Richtlinien gelten zusätzlich zum Projekt-Briefing. Der Anime-Stil (Toon-Material, Konturen) bleibt die Art Direction: PBR-Kanäle (Normal, Roughness, Metallic, AO) fließen in das Toon-Material ein, statt es zu ersetzen. Post-Effekte laufen weiter über `postprocessing` (pmndrs) mit den gleichwertigen Effekten (Bloom, AO, Tiefenunschärfe). Schwere Effekte (AO, CSM, PCSS, Tiefenunschärfe) gelten für High/Max; Handys auf Low/Mid haben Vorrang bei den 60 FPS.
+> - Figuren (Stylized Realism): Oberflächen über `surface` am Toon-Material (`render/toon.ts`), fremde Bausteine über `toonChar()`. Figuren tragen keine Tusche-Konturen, sondern Fresnel-Randlicht (`CHARACTER_INK`); die Welt behält ihre Konturen.
+
+> - Kampf-Systeme: Boss-Warnflächen `combat/zones.ts`, Beute-Säulen `combat/loot.ts` (Werte in `data/loot.ts`), Zonen-Ereignisse `world/events.ts`. Gegner eines Ereignisses tragen `tag` und zählen nicht für „Insel befreit“ (`campLeft`).
+
+> **Abstimmung mit dem Briefing unten:** Diese Richtlinien gelten zusätzlich zum Projekt-Briefing. Der Anime-Stil (Toon-Material, Konturen an der Welt, Randlicht an Figuren) bleibt die Art Direction: PBR-Kanäle (Normal, Roughness, Metallic, AO) fließen in das Toon-Material ein, statt es zu ersetzen. Post-Effekte laufen weiter über `postprocessing` (pmndrs) mit den gleichwertigen Effekten (Bloom, AO, Tiefenunschärfe). Schwere Effekte (AO, CSM, PCSS, Tiefenunschärfe) gelten für High/Max; Handys auf Low/Mid haben Vorrang bei den 60 FPS.
 
 ---
 

@@ -46,6 +46,26 @@ export const WIND_PARS = /* glsl */ `
   }
 `;
 
+/**
+ * Verschiebung im Vertex-Shader (nach <begin_vertex>). Instanzierte Netze (InstancedMesh): die Weltposition kommt aus der
+ * Instanzmatrix, und die Verschiebung wird aus dem Weltraum in den Raum der Instanz zurückgerechnet – so weht der Wind
+ * für alle Instanzen in dieselbe Richtung, egal wie sie gedreht oder skaliert sind.
+ */
+export const WIND_VERTEX = /* glsl */ `
+  {
+    vec4 skWl = vec4(transformed, 1.0);
+    #ifdef USE_INSTANCING
+      skWl = instanceMatrix * skWl;
+    #endif
+    vec3 skWo = skWind(transformed, (modelMatrix * skWl).xyz, aWind);
+    #ifdef USE_INSTANCING
+      mat3 skWm = mat3(instanceMatrix);
+      skWo = (skWo * skWm) / max(vec3(dot(skWm[0], skWm[0]), dot(skWm[1], skWm[1]), dot(skWm[2], skWm[2])), vec3(1e-6));
+    #endif
+    transformed += skWo;
+  }
+`;
+
 const _m = new Matrix4();
 const _v = new Vector3();
 

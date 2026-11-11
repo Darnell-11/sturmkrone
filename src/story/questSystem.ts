@@ -45,8 +45,19 @@ export class QuestSystem {
     return prog && q ? q.steps[prog.step] ?? null : null;
   }
 
+  /** Auftrag zum Verfolgen wählen (Auftragsbuch) */
+  setTracked(id: string | null) { if (id) this.p.flags.tracked = id; else delete this.p.flags.tracked; }
+
   /** Verfolgter Auftrag: Hauptgeschichte zuerst */
   tracked(): { q: QuestDef; step: QuestStep; count: number } | null {
+    // vom Spieler gewählter Auftrag (Auftragsbuch) hat Vorrang, solange er läuft
+    const pick = this.p.flags.tracked;
+    if (typeof pick === 'string') {
+      const prog = this.p.quests.find((x) => x.id === pick);
+      const q = QUEST_BY_ID[pick];
+      const step = prog && q?.steps[prog.step];
+      if (prog && q && step) return { q, step, count: prog.count };
+    }
     const list = [...this.p.quests].sort((a, b) => Number(!!QUEST_BY_ID[b.id]?.main) - Number(!!QUEST_BY_ID[a.id]?.main));
     for (const prog of list) {
       const q = QUEST_BY_ID[prog.id];

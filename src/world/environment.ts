@@ -4,6 +4,7 @@ import type { QualityConfig } from '../data/qualityTiers';
 import { forEachToon, toonShared } from '../render/toon';
 import { csmShared, ensureCsm } from '../render/csm';
 import { fogShared } from '../render/atmosphere';
+import { aoShared } from '../render/gtao';
 import { windShared } from '../render/wind';
 import { updateWetness } from '../render/wetness';
 import { envShared } from '../render/ibl';
@@ -40,6 +41,7 @@ export class Environment {
   windDir = 0.6;
 
   private viewDistance = 520;
+  private fogStart = 0.2;
   /** Größte Texturgröße der Grafikkarte (setzt das Spiel) */
   maxTex = 4096;
   private shadowExtent = 40;
@@ -66,6 +68,7 @@ export class Environment {
 
   applyQuality(c: QualityConfig) {
     this.viewDistance = c.viewDistance;
+    this.fogStart = c.fogStart;
     this.setupCsm(c);
     const sh = this.sun.shadow;
     // mit Kaskaden übernehmen deren Lichter Licht und Schatten der Sonne
@@ -227,7 +230,7 @@ export class Environment {
     const fog = this.scene.fog as Fog;
     fog.color.copy(horizon);
     fog.far = this.viewDistance * w.visibility;
-    fog.near = fog.far * (w.visibility < 0.5 ? 0.05 : 0.2);
+    fog.near = fog.far * (w.visibility < 0.5 ? 0.05 : this.fogStart);
 
     // Licht
     const light = w.light;
@@ -253,7 +256,14 @@ export class Environment {
     // Atmosphäre: Dunst nimmt in Sonnenrichtung die Lichtfarbe auf (nachts und bei Sturm kaum)
     fogShared.skFogSunDir.value.copy(pal.lightDir).normalize();
     fogShared.skFogSunCol.value.copy(pal.light).multiplyScalar(0.9 + 0.3 * pal.sunVis);
-    fogShared.skFogHaze.value = pal.sunVis * (1 - greyK * 0.8) * 0.6;
+    fogShared.skFogHaze.value = Math.max(pal.sunVis * (1 - greyK * 0.8) * 0.6, pal.moonVis * (1 - greyK) * 0.22);
+    {
+      // Bodennebel dichter in der Dämmerung, nachts und im Unwetter; die Nebelfarbe folgt dem Horizont (golden, tiefblau, graublau)
+      const hh = this.time;
+      const twi = Math.max(0, 1 - Math.min(Math.abs(hh - 18.6), Math.abs(hh - 6.4)) / 1.8);
+      fogShared.skFogGround.value = Math.min(1, 0.18 + twi * 0.5 + (1 - pal.sunVis) * 0.3 + greyK * 0.5);
+      aoShared.boost = 0.85 + 0.45 * pal.noon + greyK * 0.1;
+    }
     // Spiegelungen: Ersatz-Himmelsverlauf (ohne Umgebungskarte) und Stärke nach Helligkeit
     toonShared.envLow.value.copy(horizon).multiplyScalar(0.8);
     toonShared.envHigh.value.copy(zenith);
@@ -267,6 +277,7 @@ export class Environment {
       const night = h < 5.5 || h > 20 ? 1 : 0;
       toonShared.shadowTint.value.setRGB(0.74 + dusk * 0.14 - night * 0.06, 0.8 - dusk * 0.1, 1.12 + dusk * 0.04 + night * 0.08);
     }
+    toonShared.shadowTint.value.multiplyScalar(1 - 0.08 * pal.noon);
     toonShared.rimStrength.value = 0.55 * (1 - greyK * 0.6) * (0.35 + 0.65 * pal.sunVis);
 
     // Meer

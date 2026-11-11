@@ -180,6 +180,8 @@ export class CombatFx {
     m.position.copy(pos).setY(pos.y + 0.08);
     this.scene.add(m);
     this.live.push({ obj: m, life: 0.45, max: 0.45, kind: 'wave', data: radius });
+    // Refraktion: die Druckwelle verzerrt kurz das Bild (nur Grafikstufen mit Hitzeeffekt)
+    if (radius >= 2.2) heatShared.add(pos.x, pos.y + 0.6, pos.z, radius * 0.9, Math.min(0.7, 0.25 + radius * 0.06), 0.5);
     this.dust.emit(Math.round(26 * this.scale), pos.x, pos.y + 0.2, pos.z, { speed: radius * 2.2, up: 1.5, life: 0.8, color: DUST_COL, gravity: 2, spread: 0.6 });
   }
 

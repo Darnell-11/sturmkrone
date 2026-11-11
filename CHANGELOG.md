@@ -1,5 +1,508 @@
 # Was ist neu
 
+## 2.9.52 – Ruhiges Schiff, echte Umlaufkamera mit Draufsicht, lebendige Crew und reich ausgestattete Schiffe (11.11.2026)
+
+- **Zittern behoben:** Verließ man bei voller Fahrt das Ruder oder ging an Land, zitterte das Schiff stark. Ursache: Das Schiff wurde zu Fuß nicht mehr fortgeschrieben, die Darstellung mischte aber weiter zwischen alter und neuer Lage (bei Tempo 14 sprang es etwa 25 cm hin und her). Jetzt liegt das Schiff still, sobald man das Ruder verlässt: Fahrt, Drehung und Interpolationslage werden gleichgesetzt (gemessen: höchstens 2,6 mm Bewegung pro Bild, Drehung 0).
+- **Bug-Klotz ersetzt:** Das braune Vorderkastell war ein nackter Holzblock, man lief hindurch, und die Crew stand darin. Jetzt ist es ein massiver, nicht begehbarer Aufbau mit Deckplatte aus Planken, Goldleiste, Sockelleiste, Reling rundum, Doppeltür mit Goldrahmen, Bullaugen und (ab Korvette) zwei Drehgeschützen oben. Die Crew steht davor, nicht darin.
+- **Feste Gegenstände:** Masten, Luke, Ankerwinde, Fässer, Kisten, Kompasshaus, Oberlicht, Truhen, Karronaden, Kartentisch, Beiboot und das Vorderkastell sind jetzt Hindernisse. Man läuft nicht mehr hindurch (auch auf Feindschiffen).
+- **Crew arbeitet:** Statt nur zu stehen oder zu sitzen, hat jedes Crewmitglied Tätigkeiten: Köchin rührt, Zimmermann und Schmiedin hämmern, Kanoniere prüfen Kanonen und heben Kugeln auf, Segelmacherin näht, Ausguck schaut aufs Meer und winkt, Musiker jubelt, Enterkämpfer macht Liegestütze. Alle wenden sich zur Reling oder zum Mast, wechseln nach einigen Sekunden die Arbeit und gehen ab und zu zu einem neuen Platz an Deck (nur auf freiem Weg, nie durch Masten oder Fässer). Wer gerade spricht, hält inne und arbeitet danach weiter.
+- **Große Schiffe mit mehr Inhalt:** Achterdeck mit Kompasshaus (leuchtendes Nachtlicht), Oberlicht, Kompassrose als Goldintarsie, Fernrohr auf Dreibein, Schiffsglocke, Heckflagge am Stock, Truhen und Drehgeschützen; ab Galeone dazu Kartentisch mit Hocker, Karronaden an beiden Seiten, Tonnen und Tauwerk. Masten mit Nagelbank (Ring, Belegnägel, Taue), Mastkorb mit Reling und goldener Spitze, Wantenspanner an der Bordwand. Ab Fregatte Deckgeschütze mit Rädern und Brooktau. Ab Korvette ein Beiboot mit Riemen auf Böcken (dort, wo zwischen den Masten Platz ist). Ab Fregatte eine Heckgalerie unter den Fenstern.
+- **Geschwungene Doppeltreppe:** Das größte Schiff (Leviathan) hat zwei Treppen, die in der Mitte zur Schiffsmitte hin ausschwingen, mit gebogenen Handläufen, schrägen Stufen und goldenen Kugeln auf Pfosten unten. Man läuft sie auch wirklich hinauf (Höhe und Wangen folgen der Kurve).
+- **Kamera:** Die Kamera umkreist das Schiff jetzt wirklich (Umlaufbahn mit Radius und Höhenwinkel um das Schiff). Vorher zeigte der Blick immer in Fahrtrichtung, auch bei seitlich gedrehter Kamera: das Schiff wanderte aus dem Bild, und die Kamera „drehte ein“. Der gewählte Blickwinkel bleibt jetzt stehen (Rückschwenk hinter das Schiff erst nach 8 s Ruhe und nur unter Fahrt, sanft). Steile Blickwinkel gehen bis fast senkrecht, ohne dass das Schiff unten aus dem Bild fällt.
+- **Draufsicht:** Wer am größten Zoom weiter herauszoomt, bei dem kippt die Kamera Stück für Stück in eine Draufsicht (Fahrtrichtung nach oben), die Segel werden dabei durchsichtig, damit man das Deck sieht. Hineinzoomen kippt zuerst zurück.
+- **Ausgeliefert:** GitHub ist wieder erreichbar; alle bisher nur lokal gesammelten Runden (seit 2.9.9) sind veröffentlicht.
+
+**Technik (für Entwickler):** `ship.ts`: `settle()` (Fahrt, Gierrate, `course` und `prev` gleichsetzen), aufgerufen in `SeaWorld.updateFoot`. `shipBuilder.ts`: `Blocker`, `ShipModel.blockers/fore/quarter.bulge`, `block()`, Vorderkastell-Aufbau, Treppenmittellinie `stairXc`, Block „Ausstattung großer Schiffe“ mit Hilfsfunktion `carr` (Karronade). `islandGround.ts`: `DeckGround` übernimmt `blockers` als Wände, `stairCx`/`level` für gebogene Treppen, Wangen als Kette kurzer Stücke, Begehbereich endet vor `fore.z0`, `spot()` ebenso. `crewAboard.ts`: Tätigkeiten (`DECK_TASKS`), `startTask`, `tryWalk` (freie Wege), Plätze nicht in Hindernissen. `seaWorld.ts`: Schiffskamera als Umlaufbahn (`camR`, `camE`, `camTop`/`camTopS`, `sailFaded`), Blickziel entlang der Kamerarichtung, Zoom über das Maximum hinaus in `camTop`. Geprüft: `tsc`, 69 Tests, Zittertest (Schiff steht nach „Ruder verlassen“), alle sieben Schiffsklassen mit 14 Crewmitgliedern ohne Platz in Hindernissen, Kamera von hinten, seitlich, steil und in der Draufsicht (Klasse 2 und 6), Crew arbeitet und geht (Positionen über 12 s), Leviathan-Treppen und Achterdeck von oben. Nicht geprüft: Mausdrehen und Mausrad mit echter Hardware, Handy, Heckgalerie aus nächster Nähe, Laufen über die gebogene Treppe mit echter Tastatur.
+
+## 2.9.51 – Treppen, Kapitänskajüte und prächtigere Schiffe (11.11.2026)
+
+- **Treppe und Kapitänskajüte auf jedem Schiff:** Das Achterdeck (dort steht der Kapitän am Steuerrad) hat jetzt eine **echte, begehbare Treppe** auf der Steuerbordseite, vorn an der Kajütenwand. Mit Stufen, Wangen, Handlauf mit Zwischenholm, Docken und Pfosten mit goldener Kappe. In der Vorderwand sitzt die **Kapitänskajüte**: Tür mit Goldrahmen, Brettern, Messingknäufen, Oberlicht (leuchtet nachts) und zwei Wandlaternen. Die Treppe wächst mit dem Schiff (Breite und Länge). Das **größte Schiff (Leviathan) hat eine Doppeltreppe** beidseits der Tür.
+- **Ruder verlassen ohne Versetzen:** Statt „An Deck gehen“ (der Spieler sprang mittschiffs aufs Deck) heißt es jetzt „Ruder verlassen“. Man bleibt am Steuerrad stehen und läuft selbst über das Achterdeck und die Treppe hinunter aufs Hauptdeck. Zurück: „Ans Steuer“ erscheint nur oben nahe am Rad.
+- **Echte Wege und Wände:** Die Vorderwand des Achterdecks ist fest, offen nur an den Treppen; die Treppen haben seitlich Wangen. Man läuft stufenlos als Rampe hinauf und hinunter (Höhe folgt der Treppe), kann nicht durch die Wand und nicht seitlich auf die Treppe springen. Auf Feindschiffen gilt dasselbe. Die Crew steht nicht mehr auf den Stufen.
+- **Prächtigere Schiffe:** Segel neu gemalt (höhere Auflösung, Bahnen mit genähten Nähten, zwei Reffbänder mit Reffbändseln, Liektau-Rand mit Ösen und Zurrings, Flicken, Wasserflecken, Schimmel an den unteren Ecken, ausgeblichene Streifen). Goldene Zierleiste an der Oberkante des Rumpfes und am Vorsteven. Goldrahmen mit Sprosse um die Heckfenster. Wimpel auf jeder Mastspitze. Das Relief des Rumpfes ist ruhiger (weniger Kratzlinien).
+- **Fehler behoben:** Kielwasser endete bei hohem Tempo mit einer hellen Querlinie hinten; die letzten Spurpunkte blenden jetzt aus.
+- **Sicherung:** `backups/schiff-2.9.51/`.
+
+**Technik (für Entwickler):** `shipBuilder.ts`: `ShipModel.quarter` (z0, z1, top, stairX, stairW, stairLen), Treppen, Tür, Reling mit Lücken, Sheer-Zierleiste, Wimpel; `railSeg` mit Höhenparameter. `islandGround.ts`: `DeckGround` mit `level()` (Achterdeck, Rampe), Wänden (`pushWall`, seitentreu), `height(x?, z?)`, `onQuarter`, `distTo`, `world`. `seaWorld.ts`: `goDeck` bleibt am Rad, Kontext „Ans Steuer“ nur am Rad. `crewAboard.ts`: Plätze nicht auf der Treppe. `textures.ts`: neue `sailTexture` (512 × 384). Geprüft: `tsc`, 69 Tests, Schiffe der Klassen 0 bis 6 von hinten und vorn, Laufweg über die Treppe als Rechnung (Höhe 1,84 → 0), Wandtests von beiden Seiten, Spieler auf der Treppe im Bild, Entern eines Feindschiffs ohne Fehler. Nicht geprüft: Laufen mit echter Tastatur/Gamepad über die Treppe, Doppeltreppe zu Fuß, Crew auf großen Schiffen mit Treppe, Handy-Leistung durch mehr Teile je Schiff.
+
+## 2.9.50 – Seekamera, Einsteigen, Möwen und detailliertere Schiffe (11.11.2026)
+
+- **Seekamera (alter Fehler seit Projektbeginn):** Der Kamerawinkel wuchs beim Drehen unbegrenzt (zum Beispiel 7 Radiant) und wurde nach der Ruhepause über den langen Weg zurückgedreht, dabei drehte sich die Kamera ganze Runden „ein“ und wieder „aus“. Der Winkel bleibt jetzt immer zwischen −180° und +180°. Die Kamera selbst wurde früher als gerade Linie zur neuen Position bewegt und schnitt dabei durchs Schiff. Jetzt werden Blickwinkel (kürzester Weg), Abstand und Höhe einzeln und weich nachgeführt, der Ankerpunkt folgt dem Schiff mit leichter Verzögerung.
+- **Einsteigen vom Strand:** Der Knopf „An Bord gehen“ erschien nur nahe dem einen Landepunkt (6 m). Jetzt zählt der Abstand zur Schiffshülle (Rechteck aus Länge und Breite in Schiffsrichtung gedreht, bis 14 m) oder bis zu 12 m zum Landepunkt. Von jeder Stelle am Strand, von der aus das Schiff nah ist, kommt der Knopf.
+- **Möwen:** Statt zwei Dreiecken ein kleines Modell mit Körper, Kopf, gelbem Schnabel, Schwanzfächer und je Flügel Arm und Hand (weiß, grauer Mantel, schwarze Spitzen). Die Flügel schlagen auf der Grafikkarte, im Wechsel mit Gleitflug; beim Steigen kräftiger. Schräglage in der Kurve, Neigung beim Steigen, Höhenwellen. Die Gruppe am Schiff fliegt in lockerer Formation vor und neben dem Bug.
+- **Schiffsfehler behoben:** (1) Flackernde Zierleiste am Achterdeck: Die goldene Leiste lag mit denselben Flächen im Kastell-Körper (Tiefenkonflikt), sie ist jetzt etwas größer. (2) Lücke am Bug: Der Bug war eine stumpfe senkrechte Wand mit offener Spitze, Deck und Reling ragten darüber hinaus. Jetzt gibt es einen nach vorn geneigten Vorsteven, der letzte Spant schließt zur Schneide, und Deck, Reling, Bugspriet, Galionsfigur und Lampe sitzen auf der neuen Oberkante. (3) Der Steuermann stand 14 cm im Deckbrett.
+- **Mehr Detail:** Reling mit Handlauf, Zwischenholm, Pfosten, gedrechselten Docken und goldenen Kappen, dazu Heckreling quer über das Heck. Das Achterdeck hat eine Reling rundum mit Durchgang vorn.
+- **Lebendiger:** Das **Steuerrad dreht** mit dem Ruder (voller Ausschlag etwa 140°, leichter Nachlauf), der Steuermann lehnt sich in die Kurve.
+- **Steuermann (Nachtrag):** (1) **Drehung im Kreis behoben:** Die Neigung des Oberkörpers wurde Bild für Bild auf die Wirbelsäule aufaddiert, sobald ein Clip diese Knochen nicht jedes Mal neu setzt (beim Steuern der Fall). Der Oberkörper kippte dadurch immer weiter und drehte sich endlos im Kreis. Die Neigung wird jetzt vor der Animation wieder abgezogen und neu angelegt, sie summiert sich nicht mehr auf (gilt für alle Figuren). (2) **Keine Waffe am Ruder:** Am Steuer ist die Hand leer und leicht geschlossen; die Waffe kommt beim Verlassen des Ruders zurück. (3) **Hände am Rad:** Beide Arme werden jedes Bild per Zwei-Knochen-Zielführung zu den Radgriffen auf 10 und 2 Uhr gestreckt (Ellbogen nach außen und unten) und drehen mit dem Rad mit.
+- **Hände am Rad (Überarbeitung):** Die erste Fassung sah schlecht aus (eine Hand verbogen, die andere steif). Ursache war ein Fehler in der Armführung: Die Hilfsvektoren fielen zusammen, dadurch überschrieb die Handgelenk-Position das Ziel des Ellbogens und der Oberarm drehte sich nicht. Behoben. Dazu ist das Steuerrad etwas kleiner (85 %), sitzt tiefer und näher am Steuermann, die Hände greifen oben auf 11 und 1 Uhr: Die Arme gehen jetzt nach vorn, leicht angewinkelt, statt weit zur Seite zu zeigen.
+- **Sicherung:** `backups/schiff-2.9.50/` (seaWorld, ship, shipBuilder, life vor dieser Runde).
+
+**Technik (für Entwickler):** `seaWorld.ts`: `camYaw` mit `atan2` normiert, `camAz`/`camBackS`/`camUpS`/`camAx` geglättet, `camSailInit`; `shipReach()` für den Einsteigen-Knopf. `gull.ts` neu (Instanzen mit `aFlap`-Attribut, Flügelschlag im Vertex-Shader). `shipBuilder.ts`: `rakeAt`, `edge()`, Reling über `railSeg()`, `ShipModel.wheel` (Rad als ein Netz, nicht mit dem Schiff verschmolzen). `ship.ts`: `wheelA`, `steerAmount`. `character.ts`: `undoLean`/`leanApplied`, `reach()` (Zwei-Knochen-IK mit `aimBone`), `hold(side, obj, grip)`; `seaWorld.ts` ruft `reach` nach dem Schiffsbild auf. Geprüft: `tsc`, 69 Tests, Schiffe der Klassen 0, 1, 2, 4, 5 von mehreren Seiten, Möwen im Flug, Rad in der Kurve. Nicht geprüft: die Kamera und das Einsteigen im echten Spiel mit Maus und Gamepad (nur nach Code und Rechnung), Kamera im Hochformat, Steuermann-Haltung im Spiel, große Schiffe: untere Stückpforten stehen leicht vor der Bordwand.
+
+## 2.9.49 – Zurück auf das Wasser von 2.9.48, nur das Kielwasser biegt sich in Kurven mit (11.11.2026)
+
+- **Zurückgenommen:** Alle Wasser-Änderungen der verworfenen Zwischenrunde (neue Wellenverteilung mit Gruppen, schärfere Kräuselung, Spurhöhe, Schaumsäume) sind raus. Wellen, Licht, Farben und Kräuselung sind wieder genau wie in 2.9.48. Die verworfene Fassung liegt zur Ansicht unter `backups/wasser-2.9.49-verworfen/`.
+- **Neu, nur die Logik der Spur:** Der Schaum hinter dem Schiff liegt in Spurkoordinaten (seitlicher Abstand zur gefahrenen Bahn und Alter). Er bleibt im Wasser liegen, wo das Schiff gefahren ist, biegt sich in Kurven mit dem Fahrweg, wird mit der Zeit breiter und dünner und zerfasert. Spurpunkte entstehen alle 2,4 m Fahrweg statt nach Zeit (keine Lücken bei hohem Tempo). Die Spur läuft am Heck und am ältesten Punkt weich aus, ohne gerade Kante.
+- **Keine Linien mehr neben Schiffen:** Die Spur verformt das Wasser nicht (das hatte Haarlinien erzeugt). Der starre V-Ansatz am Rumpf endet nach etwa einer Rumpflänge, bei Feindschiffen vorher bis zu sieben Längen.
+
+**Technik (für Entwickler):** `ocean.ts`: `skWakeFind` (nächster Spurpunkt, Endenausblendung `endK`), Schaumteppich im Fragment-Shader, `skDispH = skHullH`, Cache-Key `sk-ocean25`. `seaWorld.ts`: Spurpunkte nach Wegstrecke (`WAKE_INTERVAL` entfernt). `data/world.ts` und alle Wasserwerte wie 2.9.48. Geprüft: `tsc`, Geradeaus, Kurven nach beiden Seiten, alle fünf Stufen ohne Shader-Fehler. Nicht geprüft: Handy, Nacht, Feindschiffe mit gebogener Spur (haben nur den kurzen Rumpfansatz).
+
+## 2.9.48 – Echte Delfine, weiche Schiffsbewegung, keine weißen Striche mehr (11.11.2026)
+
+- **Delfine neu gebaut:** Statt Kugel, Kegel und Brett gibt es jetzt einen glatten Delfinkörper mit Schnabel, Melone und Schwanzstiel, grau oben und hell am Bauch, mit Rückenflosse, Brustflossen und Fluke. Der Körper schlängelt sich wie bei echten Tieren (Welle von der Nase zum Schwanz, die Fluke folgt). Sie begleiten das Schiff in 9–15 m Abstand, tauchen mit der Rückenflosse auf, springen in echten Bögen (Neigung folgt der Flugbahn, Nase vorn) und tauchen mit Gischt wieder ein. Sie halten mit dem Schiff Schritt (vorher blieben sie bei Tempo 20 zurück) und sinken am Ende ab, statt zu verschwinden. Sie werden wiederverwendet, es entsteht kein Speicherleck mehr.
+- **Weiße Striche auf Deck und Rumpf:** Die Eichentextur enthielt 18 senkrechte weiße „Salzstreifen“ über die ganze Höhe, die als Striche über Deck und Bordwand liefen. Sie sind durch wenige kurze, sehr schwache Fahnen ersetzt; helle Maserung abgeschwächt, Relief und Glanz von Rumpf und Deck gedämpft. Am Heckspiegel bleiben feine helle Fugenkanten sichtbar.
+- **Schiff und Wasser geschmeidiger:** Höhe, Neigung und Rollen des Schiffes folgen den Wellen jetzt über gedämpfte Federn (je größer das Schiff, desto träger) statt Welle für Welle sofort. Das Schiff hebt bei Fahrt den Bug leicht. Gischt von den Bugflanken ist feiner.
+- **Mehr Wasser-Look:** Großflächige Farbfelder (türkisgrün bis tiefblau) färben das Meer langsam und ohne Wandern, dazu die früheren Verbesserungen von 2.9.46/47.
+- **Sicherung:** `backups/wasser-2.9.48/`.
+
+**Technik (für Entwickler):** neue Datei `world/dolphin.ts` (`DolphinModel`: Ringe mit Radienprofil, Vertexfarben, CPU-Schlängeln mit `computeVertexNormals` und Nachführen von `outlineNormal`, Fluke-Gelenk); `world/life.ts` Pool, Sprungbahn `hAt`, Lage relativ zum Schiff. `ship.ts`: Federn `sm` (Eigenfrequenz 2,6 → 1,2 rad/s). `textures.ts`: Salzstreifen. `ocean.ts`: Farbfelder, Cache-Key `sk-ocean18`. Geprüft: `tsc`, 69 Tests, alle fünf Stufen ohne Shader-Fehler (2–5 ms), Delfine im Sprung und beim Schwimmen in Bildern. Nicht geprüft: Delfine bei Nacht und Sturm, Handy, Delfine bei Kurvenfahrt und beim Entern, Gefühl der neuen Schiffsfederung am Gamepad.
+
+## 2.9.47 – Schwere Schiffe, Spur im Wasser, weicheres Meer (11.11.2026)
+
+- **Warum das Wasser „zog“:** Eine 18-m-Schaluppe fuhr mit rund 29 m/s (über 55 Knoten), das Wasser schoss darum wie ein Fluss unter ihr durch. Das Grundtempo aller Schiffe ist jetzt rund 27 % niedriger (`SEA_SPEED` 1,3 → 0,95, Schaluppe etwa 21 m/s).
+- **Schwerfälliges, mächtiges Steuern:** Alle Schiffe haben jetzt Masse. Ruderausschlag baut die Drehung langsam auf und ab, die Drehgeschwindigkeit ist deutlich geringer (Schaluppe etwa 0,6 rad/s, Leviathan etwa 0,25), je größer das Schiff, desto träger beim Beschleunigen, Bremsen und Wenden. Kurven kosten etwas Fahrt, das Schiff neigt sich in die Kurve und **driftet seitlich**: die Fahrtrichtung folgt dem Bug mit Verzögerung, man sieht, wie der Rumpf über das Wasser schiebt.
+- **Spur im Wasser statt am Schiff:** Bugwelle-V, Querwellen und Heckmulde hingen starr am Rumpf und schwenkten in Kurven mit. Jetzt entsteht alles hinter dem Heck aus den gespeicherten Spurpunkten und bleibt im Wasser liegen, wo das Schiff gefahren ist. In Kurven biegt sich die Spur mit dem Fahrweg und klingt langsam ab. Nur der kurze Ansatz am Bug bleibt am Rumpf.
+- **Weicheres, natürlicheres Meer:** Weniger spitze Kämme (Wellensteilheit rund 18 % niedriger), sanftere Kräuselung ohne lange Streifen, feineres Gitter. Das Brechen von Schaum an den Verdrängungswellen setzt erst bei steilen Kanten ein, das Kielwasser ist schmaler und zerfasert.
+- **Nachtrag – „fließt durchgehend“ (auch im Startbild):** Ursache waren zwei Dinge. Erstens wanderten alle Rausch- und Schaummuster mit einer festen Geschwindigkeit in eine Richtung, das sieht wie ein Fluss aus. Sie schwingen jetzt hin und her, ohne Nettobewegung. Zweitens bestand die Kräuselung aus wenigen Wellenrichtungen und bildete lange, gleichlaufende Streifen (wie Seide). Jetzt kommt sie aus allen Richtungen (goldener Winkel, 18 Wellen, 9 m bis 0,5 m), schwächer und mit der Windrichtung leicht bevorzugt. Die Fresnel-Spiegelung nutzt eine geglättete Normale, damit flach geschautes Wasser nicht zwischen dunkel und gleißend flackert.
+- **Sicherung:** `backups/wasser-2.9.47/` (Wasser, Seewelt und Schiff vor dieser Runde).
+
+**Technik (für Entwickler):** `ship.ts`: `yawRate`, `course` (Abdrift), Masse `m` aus `cls.L`; Kurswinkel-Reset bei Sprung über 1 rad (Teleport, Respawn). `ocean.ts`: `hullGlsl(wakeN)` mit `skHullH` (Rumpf, Flag `uHull.w` = hat Spur) und `skWakeH` (nächster Punkt des Spurzugs, nicht Summe aller Abschnitte, sonst entstehen Kanten), neues Uniform `uWakeD` (Richtung, Halbbreite, Tempo), `skDispH` im Vertex- und Fragment-Shader, Cache-Key `sk-ocean17` (`skOsc` für schwingende Muster). `seaWorld.ts` schreibt Spurpunkte mit Fahrtrichtung. Geprüft: `tsc`, 69 Tests, Kurvenfahrt mit Bildern, alle fünf Stufen ohne Shader-Fehler (2–7 ms je Bild am Desktop), Feindschiffe. Nicht geprüft: Handy, Gamepad-Stick-Gefühl, Balance der Gefechte mit dem neuen Tempo und den Wenderadien.
+
+## 2.9.46 – Meer mit echtem Licht und lebendigem Seegang (11.11.2026)
+
+- **Sonnenglanz wie in echt:** Die Spiegelung der Sonne rechnet jetzt wie bei echtem Wasser (GGX-Glanz an den Wellenfacetten mit Fresnel). Bei tiefer Sonne entsteht eine breite, warme Glitzerbahn bis zum Horizont, die nah an der Kamera in einzelne Funken zerfällt und in der Ferne weich wird. Mit mehr Wind und höherem Seegang wird die Bahn breiter.
+- **Himmelsspiegelung und Fresnel:** Flach geschaut spiegelt das Meer den Himmel fast vollständig, steil geschaut sieht man tief ins Wasser. Der Himmel in der Spiegelung hat Horizontaufhellung und einen warmen Schein um die Sonne. Dünne Wellenkämme gegen die Sonne leuchten grün-türkis, Wellenflanken und Tiefe bekommen Streulicht.
+- **Lebendigerer Seegang:** Drei zusätzliche Wellenschichten (Windsee 46 m, 27 m und feines Kabbelwasser 8,5 m). Das Meer arbeitet unruhiger und weniger gleichmäßig; die Schiffe schaukeln mit.
+- **Weißkappen und Schaumschleppen:** Wellengruppen türmen sich in Böen auf und fallen zusammen. Hinter jedem brechenden Kamm bleibt eine Schaumschleppe zurück, die langsam zerfällt. Im Sturm bricht der Schaum in Strähnen und Fäden statt in flachen Platten.
+- **Sicherung:** `backups/wasser-2.9.46/ocean.vor-runde.ts`.
+
+**Technik (für Entwickler):** `ocean.ts`: GGX (`rough` aus Wind, Seegang und Entfernung, `min(spec, 60)`), Schlick-Fresnel mit Faktor 1,35, Funkeln über Mikronormale, Wellengruppen `grp`, Schaumschleppe über zwei zusätzliche `skGerstner`-Aufrufe in Laufrichtung der Hauptwelle (nur ab `uDetail > 0.7`), Strähnenrauschen gegen Platten. `data/world.ts`: drei neue `WAVES`. Cache-Key `sk-ocean11`. Geprüft: `tsc`, 69 Tests, Mittag, Abend (vier Blickrichtungen), Sturm, Nacht, alle fünf Stufen ohne Shader-Fehler (3–5,5 ms je Bild am Desktop). Nicht geprüft: echte Handys, Mondglanz bei Nacht (Mond war nicht im Bild), Nebel.
+
+## 2.9.45 – Das Schiff spaltet das Wasser wirklich (11.11.2026)
+
+- **Nicht mehr „ziehend“:** Alle Wellen und Schaummuster laufen jetzt deutlich ruhiger (Wellen mit rund 40 % der bisherigen Geschwindigkeit, Kräuselung, Kaustiken, Schaumstreifen und Brandung ebenfalls langsamer). Das Meer wirkt schwer und weit statt wie ein reißender Fluss. Schiffe schaukeln passend dazu.
+- **Echte Wasserverdrängung:** Das Schiff verformt die Wasseroberfläche selbst: Bugwulst vor dem Steven, Mulden an der Bordwand, zwei V-förmige Bugwellen-Kämme mit Querwellen, Heckwellen und ein Loch im Kielwasser. Das ist echte Geometrie mit richtigen Lichtreflexen, nicht nur Textur.
+- **Schaum bricht dort, wo es steil wird:** Auf den steilen Verdrängungskämmen bricht das Wasser in Fäden und Bläschen, Luftblasen färben es heller und türkis.
+- **Neues Kielwasser:** Ein zusammenhängendes Band statt einzelner Scheiben, das nach hinten breiter, dünner und spitzenartiger ausläuft.
+- **Gischt:** Feine Tröpfchen werden von den Bugflanken seitlich weggeschleudert, am Bug spritzt es hoch, am Heck wirbelt feiner Nebel (die großen weißen Kugeln sind weg).
+- **Sicherung:** `backups/wasser-2.9.45/` (Wasser und Seewelt vor dieser Runde).
+
+- **Prüfrunde der offenen Punkte (gleiche Version):** Wasser im Sturm bei Nacht, bei Regen am Mittag und im Nebel bei Dämmerung angesehen, mit fünf Feindschiffen in der Nähe: keine Shader-Fehler, alle fünf Grafikstufen laufen sauber (Desktop 3,6 ms Niedrig bis 7,5 ms Ultra je Bild). Seegefecht 25 Sekunden simuliert (Breitseiten, Schaden an beiden Seiten, ein Feindschiff versenkt): keine Fehler, keine ungültigen Zahlen. Speicher bei acht Stufenwechseln und drei Wetterwechseln stabil (Geometrien und Texturen gleichbleibend). Minikarte kostet etwa 0,2 ms je Zeichnung.
+- **Behoben:** Regentropfen-Spritzer waren große weiße Kugeln, jetzt klein. Handys (Niedrig/Mittel) berechnen die Wasserverdrängung nur für 2 bzw. 3 Schiffe, Niedrig ohne Feinnormale. Pausenmenü hat jetzt Auftragsbuch, Inventar und Faji-Talente, damit Gamepad- und Touch-Spieler sie ohne Tastatur erreichen (vorher hatten sie dort keine Taste).
+- **Kein Fehler:** Die Zahl der Shader-Programme stieg anfangs bei Stufenwechseln leicht, das war nur das erstmalige Übersetzen je Stufe. Nach den ersten Durchläufen bleibt sie stabil (406, keine Duplikate). Echte Handys, Touch-Gesten und Gamepad-Steuerung am Gerät konnte ich ohne Hardware nicht testen.
+
+**Technik (für Entwickler):** `ocean.ts`: `HULL_GLSL`/`skHullH` (Vertex und Fragment, Normale per Differenz, `skHg` für Brechschaum), `WAVE_SPEED = 0.42` (gilt auch für `heightAt`), Kielwasser als Segmentband zwischen `uWake`-Punkten, Cache-Key `sk-ocean9`. `particles.ts`: `EmitOpts.size/vx/vz` (Größe in `iT.w`). `seaWorld.ts`: Flanken-, Bug- und Heckgischt. Geprüft: `tsc` fehlerfrei, keine Shader-Fehler, Bilder von vorn, seitlich und hinten. Nicht geprüft: Sturm und Nacht, Feindschiffe, Handy-Leistung (Vertex-Schleife über bis zu 6 Schiffe).
+
+## 2.9.44 – Wasser schäumt um den Rumpf, statt dass eine Fläche dranhängt (11.11.2026)
+
+- **Bugwelle und Rumpfschaum neu:** Die aufgesetzten Schaum-Flächen links, rechts und vorn am Schiff sind weg (sie sahen wie angeklebte Bilder aus). Stattdessen zeichnet das **Wasser selbst** den Schaum, im selben Shader wie Wellenkämme und Kielwasser: feiner Spitzenschaum direkt an der Bordwand (am Bug am breitesten, mit Tempo mehr), zwei **V-förmige Bugwellen-Kämme** (Kelvin-Winkel etwa 20°), ein Gischtwulst vor dem Steven und Schaum, der mit der Strömung am Rumpf entlang nach hinten läuft. Er liegt auf den Wellen, verändert sich mit Tempo, Kurs und Zeit und hat keine harten Kanten.
+- Gilt für das eigene Schiff und die sechs nächsten Schiffe in Sichtweite (weiter weg blendet es aus, damit es nichts kostet). Gesunkene Schiffe schäumen nicht mehr.
+
+- **Natürlicherer Schaum (Überarbeitung):** Der Schaum ist nicht mehr glatt und weiß, sondern besteht aus Strähnen entlang der Strömung, Bläschen und dünnen Stellen mit ausgefranstem Rand. Luftblasen färben das Wasser rund um Rumpf und Bugwelle heller und türkis (Tiefe unter dem Schaum). Die Wasseroberfläche selbst blieb unverändert.
+- **Sicherung:** Das Wasser (`ocean.ts`) vor allen Änderungen dieser Sitzung liegt als Kopie unter `backups/wasser-2.9.44/ocean.original-vor-sitzung.ts`, dazu der Stand mit Rumpfschaum und eine Kopie des ganzen Quellcodes unter `backups/projekt-2.9.44/`.
+
+**Technik (für Entwickler):** `world/ocean.ts`: Uniforms `uHull`/`uHullD` (`setHulls`, höchstens 6) und Schaum im Fragment-Shader in Schiffskoordinaten; `world/seaWorld.ts` meldet die Rümpfe je Bild (`Ship.hullFx`). Aus `shipBuilder.ts` und `ship.ts` sind Schaumnetz und Schaum-Textur entfernt. Geprüft: `tsc` fehlerfrei, im Spiel von hinten und von der Seite gesehen, keine Shader-Fehler. Nicht geprüft: Nacht und Sturm, Feindschiffe im Kampf, Handy-Leistung.
+
+
+## 2.9.43 – Closed Beta 1.0: Vorwärmen, Leistungs-Wächter, stimmiges Bild (11.11.2026)
+
+### Übersicht: die 15 System-Upgrades der Closed Beta
+
+| # | System | Version | Kurz |
+|---|---|---|---|
+| 1 | Schiffe 2.0 | 2.9.36 | Eichenholz, Kupferkanonen, Laternen mit Licht, Takelage, Segel mit Windbiegung, Bugwelle |
+| 2 | Häuser, Bäume, Felsen | 2.9.37 | Mauerwerk, Dachziegel, Fachwerk, Fenster mit Scheibe, Props, Borke, Blatt-Durchleuchtung, Moos |
+| 3 | Licht-Kalibrierung | 2.9.38 | Mittagskurve, stärkere Kontaktschatten, Lichter bei Nacht und Sturm, Bodennebel |
+| 4 | Talentbaum (K) | 2.9.39 | Faji-Baum per Taste K, Punkte für Passive und Aktiv-Fähigkeiten |
+| 5 | Waffenwechsel | 2.9.39 | Q/Z/X, Wechselschlag mitten in der Kombo |
+| 6 | Siegesfanfaren | 2.9.39 | Beute-Karten, Fanfaren, Zeitlupe beim Boss-Todesstoß, Siegesbild |
+| 7 | Sprechende NPCs | 2.9.40 | !/?-Zeichen, „E · Sprechen“, benannte Dorfbewohner |
+| 8 | Dialogsystem | 2.9.40 | Anime-Fenster, Schreibmaschine, verzweigte Antworten |
+| 9 | Auftragsbuch (L) und Tracker | 2.9.40 | Haupt- und Nebenaufträge, Verfolgen, Fortschrittsbalken |
+| 10 | Inventar (I) | 2.9.41 | Raster mit Ausrüstung und Verbrauchsgütern |
+| 11 | Ausrüstung und Werte | 2.9.41 | Kopf, Rüstung, Waffe, Zubehör; Werte und 3D-Modell in Echtzeit |
+| 12 | Schnellleiste (1–4) | 2.9.41 | Tränke und Stärkungen mit Abklingzeit-Kreis |
+| 13 | Minikarte | 2.9.42 | Dreht mit der Kamera, echte Inselformen, Sichtkegel, Symbole |
+| 14 | Kompassleiste | 2.9.42 | Gradskala mit Feinden, Bossen, Auftragspersonen, Ziel |
+| 15 | Weltkarte (M) | 2.9.42 | Vollbild, ziehen und zoomen, Inselinfo, „?“ für Unentdecktes |
+
+Dazu in dieser Version der Feinschliff für die Closed Beta:
+
+- **Vorwärmen beim Laden:** Der Ladebildschirm übersetzt jetzt zusätzlich die Shader aller sieben Schiffsklassen (Rumpf, Segel, Takelage, Schaum), lädt **alle Texturen der Szene** (Inseln, Dörfer, Schiffe) schon auf die Grafikkarte, stößt alle Partikelsysteme (Gischt, Staub, Funken) einmal an und wärmt **jeden wichtigen Klang** (Treffer, Schuss, Fanfaren, Wechsel …) beim ersten Tippen fast lautlos vor. So entfällt das Stocken beim ersten Erscheinen von Schiffen, Texturen und Klängen. Die Inseln selbst stehen schon beim Start komplett in der Szene, ihre Programme sind damit vorübersetzt.
+- **Leistungs-Wächter:** Fällt die Bildrate unter 50 fps (zwei Messfenster à 2,5 s), nimmt das Spiel der Reihe nach unsichtbare Last weg: **Stufe 1** halbiert die Schattenkarte und senkt AO-Richtungen und -Schritte, **Stufe 2** viertelt sie, begrenzt auf zwei Kaskaden, setzt AO auf Minimum und kürzt Vegetation und Partikel, **Stufe 3** schaltet AO, Tiefenunschärfe und Spiegelungen ab, nutzt nur noch eine Schattenkarte und kürzt die Vegetation weiter. Läuft es über 15 s mit 58 fps oder mehr, gibt er die Stufen einzeln zurück (nach einer zu frühen Rücknahme 90 s Pause). Erst wenn alle drei nicht reichen, greifen wie bisher dynamische Auflösung und dann die Absenkung der Grafikstufe. Im FPS-Anzeiger steht „Spar 1 … 3“. Nur bei automatischer Grafikstufe.
+- **Stimmigeres Bild (Boden, Schiff, Tiefe):** Gras, Sand und Fels wirken nicht mehr flach neben dem sehr detaillierten Schiff. **Sand:** Windrippel, Korn und Kiesel als Relief im Licht, dunkle Treibgutkörner, hellere Rippelkämme. **Gras:** weiches Halm- und Büschelrelief, Klee- und Blütentupfer, dunkle Rillen zwischen den Büscheln. **Fels:** Risse und Schichtkanten mit Relief. Alles blendet mit der Entfernung aus (kein Flimmern). Im Gegenzug etwas ruhiger: das Eichenholz des Rumpfs (Relief 1,1 → 0,8, schwächere Fugen und Rillen). Für mehr Tiefe setzt der Dunst in der Mittelentfernung etwas früher ein.
+
+**Technik (für Entwickler):**
+- `render/watchdog.ts`: `PerfWatchdog`, `budgetConfig(base, level)`; `GameRenderer.setBudget()` baut Schatten und Nachbearbeitung mit der gesparten Konfiguration neu auf (`QualityConfig.budget`); `SeaWorld.vegLod` wird je Stufe um 17 % gekürzt. `core/game.ts` schaltet Wächter, dynamische Auflösung und Stufenabsenkung hintereinander.
+- `core/warmup.ts`: Schiffsklassen, `renderer.initTexture` für alle Texturen, Entsorgung der Wegwerf-Schiffe; `audio.prewarm()` (verteilt über viele Bilder); `SeaWorld.warmup` stößt die Partikel an.
+- `render/toon.ts`: `DETAIL_FRAG` für `sand`, `grass`, `rock` liefert `skDetH`/`skDetA`; der Bump-Block gilt jetzt für alle Detail-Arten.
+- Tests: `tests/watchdog.test.ts` (Auslösen, Halten, Zurückgeben, Konfiguration). Geprüft: `tsc` fehlerfrei, 69 Tests grün; im Spiel Gras, Sand und Schiff angesehen, keine neuen Shader-Fehler.
+- Nicht geprüft (bitte in der Beta messen): echte Ladezeit und Speicher auf Handys (7 zusätzliche Schiffe und alle Texturen beim Start), Wächter auf echter schwacher Hardware, Erscheinen von Gegnern auf neuen Inseln (die Figuren selbst entstehen weiter erst beim Betreten), Ultra-Stufe, Nacht und Regen mit dem neuen Bodenrelief.
+
+
+## 2.9.42 – Minikarte, Kompassleiste und Weltkarte (11.11.2026)
+
+- **Minikarte (oben rechts):** Sie dreht sich jetzt mit der Kamera (oben = Blickrichtung), die Himmelsrichtungen N, O, S, W wandern am Rand mit. Ein heller **Sichtkegel** zeigt, wohin du schaust, der Pfeil, wohin du läufst. Inseln erscheinen mit ihrer **echten Küstenform** (Flachwasser, Sand, Land in der Farbe der Inselart) statt als Kreise. Zu Fuß zoomt sie auf 85 m an die Insel heran, auf See zeigt sie weiter 420 m.
+- **Orientierungspunkte:** Rote Punkte = Feinde, **Totenkopf** = Boss (Legenden, Boss-Inseln), **! (gold)** = Person mit Auftrag, **? (grün)** = Abgabe möglich, blaue Punkte = übrige Gesprächspartner, **Stern** = Ziel des verfolgten Auftrags. Die Symbole bleiben aufrecht, auch wenn sich die Karte dreht. Gilt für Minikarte, Kompass und Weltkarte.
+- **Kompassleiste (oben Mitte):** Gradskala mit N/NO/O/…, Mittenmarke und dieselben Symbole in ihrer Richtung, bei Auftrag, Boss und Ziel mit Entfernung. Liegt ein wichtiger Punkt außerhalb des Sichtfelds, klemmt sein Symbol blass am Rand der Leiste. Feinde blenden mit der Entfernung aus. In dieser Welt liegt Osten bei −x: wer nach Norden schaut, hat Osten rechts.
+- **Weltkarte (Taste M):** Vollbild mit allen sechs Meeren, allen Inseln, dem Weltrand und einem Gitter alle 500 m. Entdeckte Inseln zeigen Form und Namen, unentdeckte erscheinen als „?“. Ziehen (Maus oder Finger), Mausrad, Zwei-Finger-Geste, Pfeiltasten/WASD und +/− zoomen und bewegen; Knöpfe springen zu den Meeren, „Zu mir“ und „Alles“. Ein Klick auf eine Insel zeigt Art, Meer, Stufe, Entfernung, Boss und Auftragshinweis. Das Logbuch (Aufträge, Taten) bleibt über den Knopf „Logbuch“ und das Pausenmenü erreichbar; ein Klick auf die Minikarte öffnet ebenfalls die Weltkarte.
+
+**Technik (für Entwickler):**
+- `ui/minimap.ts`: `drawMap` bekommt `view`, `range`, `pois` und `MapOpts.shape` (Küstenlinie aus `world.islands`), neu `drawPoi`, `drawWorldMap`, `worldToScreen`/`screenToWorld`. Neu: `ui/compass.ts` (`Compass`, Canvas, zeichnet nur bei Änderung), `ui/worldMap.ts` (`WorldMapScreen`, Zeiger-Ereignisse, eigener Zeichenbetrieb nur bei Änderung).
+- `core/game.ts`: `mapPois()`, `questIslandMarks()`, `mapOpts`, `openWorldMap()`, `updateCompass()`; `SeaWorld.footEnemies()`. Peilung der Leiste: Kompasswinkel = −Weltwinkel (wie die Auftragspfeile).
+- Tests: `tests/map.test.ts` (Umrechnung Bildschirm ↔ Welt, Spiegelung). Geprüft: `tsc` fehlerfrei, 64 Tests grün; im Spiel Minikarte zu Fuß (Küstenform, Auftragszeichen, Ziel, Sichtkegel), Kompass, Weltkarte als Gesamtansicht und Zoom auf Ankerglück.
+- Nicht geprüft: Minikarte und Kompass auf See und mit Bossen im Kampf, Weltkarte mit entdeckten Inseln aller Meere, Touch-Gesten auf einem Handy, Gamepad (Weltkarte nur mit Maus, Tastatur oder Touch), Kosten der Minikarte auf Handys (wird 10-mal pro Sekunde mit Inselformen gezeichnet).
+
+
+## 2.9.41 – Inventar, Ausrüstung und Schnellleiste (11.11.2026)
+
+- **Inventar (I):** Links die Figur im 3D-Fenster, rechts vier Ausrüstungsplätze (**Kopf, Rüstung, Waffe, Zubehör**), Werteanzeige, Raster mit allem, was du besitzt (Filter: Alles, Kopf, Rüstung, Waffe, Zubehör, Verbrauch) und die Schnellleiste. Ein Klick wählt ein Stück, **Ausrüsten** legt es an, **Ablegen** nimmt Kopf und Zubehör ab, **Benutzen** verbraucht ein Gut. I oder Esc schließt.
+- **Werte in Echtzeit:** Wer ein Stück nur auswählt, sieht die Änderung als Vorschau (▲ grün, ▼ rot) bei Leben, Angriff, Volltreffer, Schadensminderung, Faji-Erholung und Goldbonus. Beim Ausrüsten gelten die neuen Werte sofort im Spiel, und das **3D-Modell** zieht sich um: Kopfbedeckung (Mütze, Dreispitz, Helm, Brille, Admiralshut), Rüstungsstufe (Weste, Kettenjacke, Gezeitenpanzer, Faji-Harnisch mit Mantel) und Klingenfarbe/Leuchten der Waffe. Das im Editor gewählte Aussehen bleibt gespeichert.
+- **Ausrüstung wählen:** Gekaufte Waffen- und Rüstungsstufen bleiben im Besitz und lassen sich jetzt wieder anlegen (bisher zählte immer die höchste).
+- **Neue Güter:** Festmahl (heilt 80 %), Kraftsaft (+25 % Angriff, 60 s), Eisenhaut-Trank (25 % weniger Schaden, 45 s), Falkenauge (+15 % Volltreffer, 60 s), Faji-Essenz (füllt 60 % Faji). Neue Kopfbedeckungen: Seidenkopftuch, Wollmütze, Kapitänshut, Eisenhelm, Fliegerbrille, Admiralshut. Beides gibt es am Markt; seltene und epische Beute-Säulen mit Proviant liefern jetzt oft ein besonderes Gut.
+- **Schnellleiste (Tasten 1–4):** Unten am Bildschirm vier Plätze für Heiltränke und Stärkungen mit Menge und **Abklingzeit als Kreisausschnitt**; eine laufende Stärkung leuchtet mit schmalem Zeitbalken. Jedes Gut hat seine Abklingzeit, dazu eine kurze gemeinsame Pause (1,2 s). Plätze belegt das Inventar; der erste Kauf legt ein Gut gleich in einen freien Platz. Proviant liegt anfangs auf Platz 1; **H** isst weiter Proviant.
+- **Tastenänderung:** Die Fähigkeiten liegen jetzt auf **F1–F3** (so heißen sie auch auf der Leiste und am Handy), die Ziffern 1–4 gehören der Schnellleiste.
+
+**Technik (für Entwickler):**
+- Neu: `data/items.ts` (Güter, Kopfbedeckungen, `ARMOR_LOOK`), `core/inventory.ts` (`computeStats`, `ensureGear`, Zählen und Ablegen von Gütern; eine Stelle für alle Werte), `ui/inventory.ts` (`InventoryScreen`, `InventoryHost`), `Hud.setItemBar`. `GearState` hat neue optionale Felder (`items`, `heads`, `head`, `bar`, `weaponEq`, `armorEq`); alte Spielstände bekommen Standardwerte (`ensureGear`), keine Migration nötig.
+- `core/game.ts`: `playerStats()` speist `applyPower()` (Leben, Angriff, Volltreffer, Faji-Erholung, Schadensminderung) und das Inventar; `displayLook()` legt Kopfbedeckung und Rüstung über das gespeicherte Aussehen; `useItem()`, `tickItems()`, `buyItem()`, `buyHead()`, `openInventory()`. `PlayerFoot.gearReduce` addiert sich zur Faji-Schadensminderung. Neue Aktionen `inventory`, `item1` … `item4`.
+- Tests: `tests/inventory.test.ts` (Zählen mit Obergrenze, Werte beim Ausrüsten, Stärkungen, alte Spielstände). Geprüft: `tsc` fehlerfrei, 62 Tests grün; im Spiel Kauf, Schnellleiste mit Stärkung und Abklingzeit, Inventar mit Ausrüsten, Ablegen und Vorschau, Figur zieht sich um.
+- Nicht geprüft: Touch (keine Schnellleisten-Knöpfe, nur der Proviant-Knopf), Gamepad, die Marktseite im Menü auf kleinen Bildschirmen, Tränke auf See (nur an Land), Zubehör-Wechsel mit Talisman im Spiel nach neuem Fund, Inventar im Hochformat.
+
+
+## 2.9.40 – Gespräche, Auftragsbuch und sprechende Dorfbewohner (11.11.2026)
+
+- **Sprechende Personen:** In Ankerglück und in den Dörfern (Weidenbrück, Palmenküste, Sturmklippe, Fährholm) schweben über Gesprächspartnern Zeichen: **!** = Auftrag zu vergeben, **?** = Abgabe möglich. Wer nah genug steht, sieht über der Person die Aufforderung **„E · Sprechen“** mit ihrem Namen. Neue benannte Dorfbewohner: Wanda und Toni (Weidenbrück), Kiri (Palmenküste), Sven (Sturmklippe), Fenna (Fährholm).
+- **Dialogfenster im Anime-Stil:** Namensschild mit Titel, Porträt, Text mit Schreibmaschineneffekt (Klick, Leertaste, Eingabe oder E überspringt), nummerierte Antworten (Klick oder Ziffern 1–9), Esc beendet. Die Gespräche verzweigen: Auftragsangebote (ansehen, annehmen oder später), Nachfragen zu laufenden Aufträgen, Themen mit eigenen Antworten (jede Person hat mindestens eines), Laden öffnen und zurück ins Gespräch. Abgegebene Aufträge werden im Gespräch mit Dank und Belohnung gewürdigt.
+- **Auftragsbuch (L):** Haupt- und Nebenaufträge in zwei Reitern (laufend, erledigt) mit Auftraggeber, Einleitung, Schritten mit Haken, Belohnung und Knopf **Verfolgen** (bestimmt Anzeige und Richtungspfeil). L oder Esc schließt.
+- **Auftragsanzeige am rechten Rand:** Fortschrittsbalken bei Zählschritten, Farbe nach Hauptgeschichte (golden) oder Nebenauftrag (blau), Hinweis „L · Auftragsbuch“.
+- **Neue Nebenaufträge:** „Die Säulen im Norden“ (Wanda, **Erkunde die Ruinen-Insel** Versunkener Tempel, nach Kapitel 2), „Plünderer an der Küste“ (Toni, 5 Gegner), „Muscheln für den Markt“ (Kiri, Muschelruh erkunden).
+- **Tasten:** **E** spricht zu Fuß (auf See bleibt E die rechte Breitseite), **L** öffnet das Auftragsbuch. Blocken liegt dafür nur noch auf **C**.
+
+**Technik (für Entwickler):**
+- Neu: `story/dialog.ts` (`DialogSession`, rein logisch), `data/dialogs.ts` (`TALKS`: Themen und Knoten je Person), `ui/dialogOverlay.ts`, `ui/npcMarkers.ts`, `ui/questLog.ts`. `data/quests.ts`: `VILLAGE_NPCS`, `VILLAGE_NPC_BY_ID`, drei neue Aufträge. `QuestSystem.setTracked()`; der gewählte Auftrag steht in `progress.flags.tracked`.
+- `world/seaWorld.ts`: `talkables()` (Stadt und Dorf), benannte Dorfbewohner entstehen in `spawnCamp`. `core/game.ts`: `talkTo()` öffnet das Dialogfenster, `openQuestLog()`, `updateNpcMarkers()`. `Menus.openShop(npc, back)` ist öffentlich. Das alte Menü-Gespräch bleibt für Hafenmenü und Taverne.
+- Neue Aktionen `quests` (L), `talk` (E); Tests: `tests/dialog.test.ts` (alle Knoten erreichbar, Auftrag annehmen, Abgabe, Laden, Ende), `tests/actions.test.ts` angepasst. Geprüft: `tsc` fehlerfrei, 57 Tests grün; im Spiel Ankerglück (Zeichen, Aufforderung, E, Verzweigung, Auftrag annehmen, Auftragsbuch) und Weidenbrück (Wanda, Toni).
+- Nicht geprüft: Gamepad und Touch (keine Standardtaste für Sprechen und Auftragsbuch), Dialog in der Taverne (altes Menü), Laden aus dem neuen Dialog, Nebenaufträge von Wanda und Kiri bis zum Abschluss, schmale Handy-Bildschirme.
+
+
+## 2.9.39 – Talentbaum auf K, Waffenwechsel, Siegesfanfaren (11.11.2026)
+
+- **Talentbaum (K):** Der Faji-Baum (Punkte für passive Boni und Aktiv-Fähigkeiten, Vorschau, Synergien) öffnet sich jetzt mit **K** und schließt sich mit K wieder. Der schwere Angriff liegt dafür neu auf **U** (frei umbelegbar im Menü).
+- **Zwei Waffenplätze:** **Q** wechselt die Waffe, **Z** wählt Platz 1, **X** Platz 2 (auf dem Handy der Knopf „Waffe“). Platz 1 ist die im Editor gewählte Waffe, Platz 2 standardmäßig Faust (bei Faustkämpfern der Säbel). Beide stehen im HUD, der aktive ist hervorgehoben; der aktive Platz wird gespeichert. Der Wechsel kostet etwas Ausdauer, Fähigkeiten-Boni passen sich der Waffe an.
+- **Wechselschlag:** Mitten in einer Kombo (Hieb läuft oder Kombo-Fenster offen) setzt der Wechsel sofort einen Hieb der neuen Waffe an, mit kurzer Überblendung statt Pause, 1,6-fachem Schaden, Schockring und Speedlines; die Kombo zählt weiter. Aus der Ruhe wechselt die Waffe sofort mit Ring und Funken.
+- **Siegesfanfaren:**
+  - **Beute:** Seltene, epische und legendäre Funde zeigen eine Karte in der Farbe der Seltenheit (legendär größer, mit Blitz und Speedlines) und spielen je eine eigene Fanfare.
+  - **Boss-Todesstoß:** Eine halbe Sekunde Zeitlupe mit Kamerastoß, Schockring und Lichtblitz, danach das Siegesbild mit rotierenden goldenen Strahlen, großem Schriftzug, Name der Legende und Belohnungen, begleitet von einer Fanfare mit Paukenwirbel und Blechakkord.
+
+**Technik (für Entwickler):**
+- `data/actions.ts`: neue Aktionen `skills`, `swap`, `weapon1`, `weapon2`; `heavy` jetzt `KeyU`. Gespeicherte eigene Belegungen bleiben gültig (nur Abweichungen vom Standard stehen im Spielstand).
+- `entities/player/playerFoot.ts`: `swapTo(style)`, `swapCd`, `swMult` (Schadensfaktor des laufenden Hiebs); `STAMINA.swap`. `world/seaWorld.ts`: `swapWeapon()`, `currentStyle`. `core/game.ts`: `weaponSlots()`, `activeStyle()`, `swapWeapon()`, `refreshWeaponHud()`; `SaveData.player.alt` und `.slot` sind optional, alte Spielstände brauchen keine Migration.
+- `ui/combatOverlay.ts`: `victory()` und `lootCard()`; `audio/audio.ts`: `fanfareRare`, `fanfareEpic`, `fanfareLegend`, `victory`; Zeitlupe über den vorhandenen `hitstop(0,5 s, 0,15)`.
+- Neuer Test `tests/actions.test.ts` (Belegung: K/Q/U, keine Tastenkonflikte). Geprüft: `tsc` fehlerfrei, 51 Tests grün; im Spiel Wechsel aus der Ruhe, Wechselschlag mitten im Hieb (Kombo 2, Faktor 1,6), K öffnen und schließen, Siegesbild und Beute-Karte angesehen.
+- Nicht geprüft: echter Boss-Todesstoß im Kampf (Zeitlupe und Siegesbild wurden direkt ausgelöst), Gamepad (keine Standardtaste für den Wechsel), Touch-Knopf auf einem Handy, Wechselschlag mit allen Waffenpaaren und Animationsübergänge im Detail, Klang der Fanfaren über Lautsprecher.
+
+
+## 2.9.38 – Licht-Kalibrierung: Mittag, Kontaktschatten, Nacht und Sturm (11.11.2026)
+
+- **Mittagssonne:** Je höher die Sonne steht, desto wärmer (leicht gelblich statt weiß-blau) und etwas schwächer wird ihr Licht; das blaue Himmelsfüllicht sinkt, die Schattenseiten werden kühler und dunkler. Stein, Holz und Gras behalten dadurch Struktur und harte Schatten, statt auszuwaschen. Die Mittags-Stimmung (12:30) ist nachgestellt.
+- **Kontaktschatten:** Die Umgebungsverdeckung (High, Max, Ultra) wird mittags um bis zu 45 % stärker, weil steile Sonne sonst Häuser, Klippen und Schiffe „schweben“ lässt; im Unwetter etwas stärker. Die Stärke ist begrenzt (höchstens 1,25).
+- **Nacht und Sturm:** Fenster, Laternen, Schiffs-Lichter und Leuchtfeuer gehen nicht nur nachts an, sondern auch im Regen, Nebel und Sturm am Tag (je dunkler der Himmel, desto stärker). Das Spielerschiff wirft dann sein warmes Punktlicht.
+- **Nebel:** Bodennebel liegt dichter nahe der Wasserlinie und wird nach oben dünner. Er ist morgens und abends stärker, nachts und im Unwetter am stärksten. Die Nebelfarbe folgt weiter dem Horizont (golden in der Dämmerung, tiefblau nachts, graublau im Sturm), nachts schimmert der Dunst zusätzlich leicht im Mondlicht.
+
+**Technik (für Entwickler):**
+- `world/timeOfDay.ts`: `Palette.noon` (Smoothstep der Sonnenhöhe 0,6 … 0,93) beeinflusst Lichtfarbe, `lightI`, `ambientSky`, `ambientI`. `data/world.ts`: Schlüssel „Mittag“ angepasst.
+- `render/atmosphere.ts`: neue Uniform `skFogGround` (Bodennebel nach Höhe über dem Meer). `render/gtao.ts`: `aoShared.boost`, `AoEffect.update()` skaliert die Stärke. `world/environment.ts` setzt beides und mindert die Schattenfarbe mittags.
+- `world/seaWorld.ts`: `night` für Lichter ist jetzt `max(1 − sunVis, (grey − 0,4) · 2,2)`.
+- Bewusst nicht geändert: Der SSAO-Pass bleibt auf High/Max/Ultra (Handys auf Low/Mid haben Vorrang bei den 60 FPS, siehe `CLAUDE.md`). Weitere Punktlichter gibt es nicht, es bleibt bei den zwei des Spielerschiffs; Fenster und Fackeln leuchten über Emission und Bloom.
+- Geprüft: `tsc` fehlerfrei; im Spiel Dorf bei Mittag, Sturm, Abendrot und Nacht angesehen. Nicht geprüft: Kosten auf Handys, Mittag auf See mit Schiffen, Ultra, Ozean im Sturm bei Nacht, Zeitmessung gegen vorher.
+
+
+## 2.9.37 – Häuser, Bäume und Felsen auf High-End-Niveau (11.11.2026)
+
+- **Häuser:**
+  - **Stein:** Mauerwerk aus Quadern im Läuferverband mit Mörtelfugen, Relief im Licht, Farbvarianten je Stein und Moos auf Oberseiten und in feuchten Flecken (auch an Ruinen, Mauern und Fundamenten).
+  - **Dächer:** Ziegel- und Schindelreihen mit gerundeten, überlappenden Kanten, versetzt je Reihe; leichter Moosbelag. Das Relief folgt dem Gefälle, egal wie das Haus gedreht ist.
+  - **Putz:** feine Körnung, Flecken und Schmutz an Wänden.
+  - **Fachwerk:** Obergeschoss des Gasthauses mit Schwelle und Diagonalstreben.
+  - **Fenster:** warmer Innenraum mit Sprossenkreuz und Vorhängen, der nachts leuchtet; davor eine spiegelnde Scheibe (tags hell mit Himmelsreflex, nachts nur ein Hauch), dazu Rahmen und steinerne Fensterbank.
+  - **Stadt (Ankerglück):** Wände, Sockel und Dächer der Häuser nutzen jetzt ebenfalls Putz, Stein und Ziegel.
+- **Props an Wohnhäusern** (Holzhütte, Steinhaus, Gasthaus): Pflasterweg von der Tür, Hängelaterne an der Wand und Laternenpfahl am Weg, Holzstapel mit Hackklotz, Wäscheleine mit bunten Tüchern hinter dem Haus und Lattenzaun mit Lücke für den Weg. Alles hat Kollision.
+- **Bewuchs:**
+  - **Borke:** Stämme haben längs laufende Rillen als Relief und dunkle Furchen.
+  - **Laub und Gras:** Licht scheint durchs Blatt, wenn man gegen die Sonne schaut (gelbliches Leuchten, Subsurface-Näherung).
+  - **Moos:** Felsen tragen Moos auf Oberseiten und in feuchten Flecken.
+  - **Platzierung:** Dichte Grasbüschel und Farn rund um die Hauswände (Tür und Weg frei), bemooste Felsen an den Hausecken, Gras und Steine beidseitig an den Wegen.
+
+**Technik (für Entwickler):**
+- `render/toon.ts`: neue `DetailKind`-Werte `stone`, `tile`, `plaster` (Muster aus Weltposition, Fläche aus `dFdx/dFdy` der Weltposition, Achsen entlang und quer zum Gefälle). Das Muster liefert `skDetH` und `skDetA`; danach kippt die Normale per Bildschirm-Ableitung (Bump). Programmschlüssel enthalten den Detailnamen.
+- `world/vegetation.ts`: `patchVeg()` setzt auf das gemeinsame Bewuchs-Material auf (Attribute `aSurf` 1 Borke, 2 Laub, 3 Fels und `aBk` für Stammkoordinaten aus dem Zylinder-UV; Optionen `surf` je Pflanze in `FLORA`). Borke, Moos und Durchleuchtung laufen im selben Shader; die Durchleuchtung nutzt die erste Richtungslichtquelle. Weiterhin ein Material und ein Zeichenaufruf je Vorlage und Kachel.
+- `world/architecture.ts`: `dress()` (Props), `fachwerk()`, Fenster mit `windowTexture()`/`glassTexture()` und `glassMat` (Deckkraft in `setSiteNight`). `world/settlement.ts`: Gras und Felsen an Wänden und Wegen aus dem Bewuchs-System (`veg.add`).
+- Geprüft: `tsc` fehlerfrei, 48 Tests grün, keine Shader-Fehler. Im Spiel angesehen: Ankerglück, Dorf Weidenbrück bei Tag, Abend und Nacht (Fenster, Laternen), Wald mit Borke, Moosfelsen, Blätter im Gegenlicht. Beim Test gefunden und behoben: Gras an Wegen und Wänden war doppelt so hoch wie nötig, Mauerwerk zu dunkel, Flimmern durch zu feines Rauschen im Stein.
+- Nicht geprüft: Kosten auf echten Handys (mehr Shader-Arbeit je Pixel an Wänden und Laub, mehr Gras-Instanzen), Regen auf Stein und Ziegel, Ruinen, Scheune und Stelzenhütte aus der Nähe, die Stadt bei Nacht (Fenster dort noch ohne Scheibe).
+
+
+## 2.9.36 – Schiffe 2.0: Details, Eichenholz, Takelage, Bugwelle (11.11.2026)
+
+Alle sieben Klassen (Schaluppe bis Leviathan) laufen über denselben Baukasten (`buildShip`) und bekommen alles automatisch, je größer das Schiff, desto mehr.
+
+- **Deck und Rumpf:**
+  - **Eichenholz:** Neue Holz-Textur mit tiefen Rillen, langer Maserung, Astlöchern, Salzstreifen und Nägeln; der Rumpf ist dunkler und verwittert (Streifen, Schmutz an der Wasserlinie). Die Bretter haben Relief, Rauheit und Verdeckung aus der Textur.
+  - **Ausstattung an Deck:** Gitterluke, Ankerwinde mit Speichen, Fässer (mit Eisenreifen) und Kisten an den Bordwänden, aufgerollte Kette, Steuerrad mit Griffen und Nabe, zweite Reling-Leiste, Anker mit Kette am Bug.
+  - **Kanonen:** Kupferrohre mit Eisenbändern und Mündungswulst auf Holzlafetten; jede Stückpforte hat einen Eisenrahmen mit Ringschraube (auch die oberen Reihen).
+  - **Rost-Eisen:** Beschläge, Reifen, Kette und Anker haben ein eigenes, raues Eisen-Material.
+- **Laternen:** Eisengehäuse mit Deckel, Streben und Haken; neue Laterne am Mastkorb. Auf dem **Spielerschiff** werfen Heck- und Mastlaterne ein warmes, leicht flackerndes **Punktlicht**, das mit der Dämmerung aufblendet (Tag: aus).
+- **Nässe:** Gischt bei schneller Fahrt in rauer See und Regen färben die Deckplanken dunkel; dazu kommen der Glanz und die Pfützen aus dem bestehenden Nässe-System.
+- **Segel:**
+  - **Zerfetzt:** Ausgefranster Saum, angenagte Ecken und Risse (Alpha-Maske), höhere Auflösung (10 × 6).
+  - **Windbiegung:** Der Bauch wächst und schrumpft mit Böen, Wellen laufen übers Tuch, die Kanten flattern stärker; mehr Wind = mehr Bewegung.
+  - **Durchleuchtung:** Steht die Sonne hinter dem Tuch, glüht es warm, tiefe Sonne stärker.
+- **Takelage:** Webleinen (Sprossen) zwischen den Wanten, Rah-Hängetaue und dicke, leicht durchhängende Taue: Stage zwischen den Masten, Stag zum Bugspriet, Pardunen zum Heck.
+- **Bugwelle und Schaum:** Schaumstreifen an Rumpf und Bug auf Höhe der Wasserlinie, der Bug wölbt sich weit nach außen. Deckkraft und Lauf folgen dem Tempo; bei Nacht dunkel.
+
+**Technik (für Entwickler):**
+- `entities/ship/shipBuilder.ts`: neue Bausteine `box`/`cyl`/`torus`/`cone` (geteilte Netze über `sharedGeo`), `rope()` (durchhängendes Tau aus Zylindern), `foamCanvasOnce()`. `buildShip(c, look, hero)`; `ShipModel` neu: `deckMat`, `deckBase`, `lights`, `foam`. `mergeStatic` gibt jetzt die Netze der verschmolzenen Einzelteile frei (vorher Leck) und behält Lichter.
+- `entities/ship/ship.ts`: Konstruktor-Parameter `hero` (Spielerschiff: Lichter und Segel-Normalen jedes Bild). `SeaEnv` hat optional `sunDir` und `sunVis` (aus `seaWorld.seaEnv`). Segel-Ausgangsform in `userData.baseP`.
+- `render/textures.ts`: `oakTexture()`, `sailTexture(..., tattered)`.
+- Es gibt nur zwei Punktlichter in der ganzen Szene (Spielerschiff, Anzahl bleibt konstant, Stärke 0 am Tag), damit sich die Shader nicht neu übersetzen.
+- Geprüft: `tsc` fehlerfrei, 48 Tests grün; im Spiel Schaluppe, Fregatte, Galeone und Linienschiff bei Tag, Abend und Nacht angesehen, keine neuen Shader-Fehler. Nicht geprüft: Kosten auf echten Handys (zwei Punktlichter, dichtere Rumpftextur, Segel-Neuberechnung je Bild), Regen und Gischt-Nässe an Deck, Leviathan, Schäden an Segeln mit der neuen Alpha-Maske, Feindschiffe in Kämpfen.
+
+
+## 2.9.35 – PBR-Beleuchtung statt harter Toon-Stufen (11.11.2026)
+
+- **Weiche Beleuchtung:** Die harte 3-Stufen-Rampe ist weg. Licht und Schatten gehen jetzt stufenlos ineinander über; die Schattenseite bleibt wie im Anime angehoben (32 %) und kühl getönt, hat aber keine Kante mehr. Gilt für die ganze Welt: Inseln, Gebäude, Schiffe, Figuren, Waffen.
+- **Echtes Metall, Leder, Stoff, Haut:** Der Glanz der Sonne folgt jetzt dem Cook-Torrance-Modell (GGX) mit Rauheit, Metallanteil und Fresnel. Metall verliert seine matte Grundfarbe und lebt von Glanz und Spiegelung, raue Flächen glänzen breit und schwach, glatte klein und scharf. Aus dem harten „Glanzfleck“ ist ein weicher Verlauf geworden. Nässe bei Regen glättet die Fläche weiter.
+- **Spiegelungen auf mehr Oberflächen:** Der Himmel spiegelt sich jetzt auch auf Leder, Haut und glattem Holz (Rauheit unter 0,75), nicht mehr nur auf Metall und Eis.
+- **Feinrelief auch an der Welt:** Das prozedurale Mikro-Relief (Stoffwebung, Lederpore, gekratzter Stahl) wirkt jetzt auf das Licht, nicht nur auf den Glanz, und gilt auch außerhalb der Figuren: Metall (Kanonen, Gold, Beschläge) bekommt automatisch gekratzten Stahl, Segel gewebten Stoff. In der Ferne blendet es aus, bevor es flimmert.
+- **Anime-Akzente bleiben:** Fresnel-Randlicht aus dem Himmel an Figuren, anisotroper Haarglanz und die zwei Glanzpunkte in den Augen sind unverändert; Haare und Augen bekommen keinen zusätzlichen GGX-Glanz.
+
+**Technik (für Entwickler):**
+- Es bleibt beim `MeshToonMaterial` (nur so bleiben Kaskaden-Schatten, Nebel, Nässe, Wind, Treffer-Leuchten und Auflösen in einem Shader). Der Baustein `lights_toon_pars_fragment` wird in `render/toon.ts` durch `LIGHTS_GLSL` ersetzt: `RE_Direct_Toon` mit weicher Kurve `mix(0,32, 1, smoothstep(−0,3, 0,95, N·L))`, `albedo × (1 − 0,8 · metal)` und GGX (D, Smith-Sichtbarkeit, Schlick-Fresnel, bei rauen Flächen gedämpft). Der Toon-Shader zählt `directSpecular` nicht mit, der Glanz geht deshalb in `directDiffuse`. Rauheit und Metall aus den Uniforms `uRough`/`uMetal` und den Karten; `uWet` senkt die Rauheit.
+- Der alte Glanzfleck (`smoothstep(0.45, 0.55, …)` mit `uSpec`) ist entfernt; `uSpec` und `spec` in den Optionen bestimmen weiter, ob ein Material als Metall gilt.
+- `ToonOptions.micro`: Feinrelief ohne Figuren-Effekte. Neue Defines `SK_MICRO` (Relief, Normalenstörung mit `SK_RELIEF` 0,35 Haut / 0,7 Stoff und Leder / 0,5 Stahl) und `SK_CHAR` (nur Figuren: Randlicht, Haut, Haare, Augen, Alpha-Maske). Die Normale selbst wird gestört (`normal = mix(normal, skMicroN, SK_RELIEF)`), damit das Diffuse mitgeht.
+- `env` (Himmelsspiegelung) jetzt ab Rauheit < 0,75; Programmschlüssel `sk-toon-7`. Segel: `micro: 'cloth'`, Rauheit 0,92 (`entities/ship/shipBuilder.ts`).
+- Beim Test gefunden und behoben: Der Fresnel-Glanz überzog Stoff im Gegenlicht mit Dunst (der Mantel wirkte grau und durchscheinend); er wird bei rauen Flächen jetzt mit `1 − 0,88 · rough` gedämpft.
+- Bewusst nicht umgestellt: Ozean (eigener Wasser-Shader mit weicher Rampe), Himmel, Effekt-Materialien.
+- Geprüft: `tsc` fehlerfrei, 48 Tests grün. Im Spiel: keine Shader-Fehler auf Niedrig, Mittel, Hoch und Ultra (alle Programme übersetzt), Figur von vorn, hinten und im Gesicht, Deck, Hafen und Schiff mit Segeln angesehen. Nicht geprüft: Kosten auf echten Handys (der GGX-Anteil und die Himmelsspiegelung kosten pro Bildpunkt etwas mehr, Figuren und Metall sind klein im Bild), Nacht, Regen mit nassen Flächen, Zeitmessung gegen vorher.
+
+## 2.9.34 – Boss-Mechaniken, Beute-Säulen und Zonen-Ereignisse (11.11.2026)
+
+- **Bosskämpfe in Phasen (Legenden):**
+  - **Warnflächen:** Rote Flächen am Boden zeigen, wo der nächste Angriff einschlägt, und füllen sich bis dahin: Kreis, Ring (innen sicher), Linie und Kegel. Wer vorher hinausläuft, wird nicht getroffen. Der Boss dreht sich beim Ausholen nicht mehr mit, die Fläche zeigt ehrlich dorthin, wo er hinsah.
+  - **Break-Bar:** Unter dem Lebensbalken liegt der Haltebalken. Treffer leeren ihn, eine perfekte Parade nimmt 40 %. Ist er leer, ist der Boss **gebrochen**: Er taumelt 3,2 s, nimmt 50 % mehr Schaden, seine laufende Warnfläche verfällt. Danach ist der Balken wieder voll; ohne Treffer lädt er sich langsam auf. Normale Treffer unterbrechen Bosse im Angriff nicht mehr.
+  - **Phase 2 (unter 60 % Leben) und Phase 3 (unter 30 %):** Der Boss brüllt, ist 2,1 s unverwundbar, ein Schockring geht aus, ein Banner meldet die Phase, seine Ränder glühen rot. Danach gelten neue Angriffe: Lanzenstoß (Linie), Sturmschlag (Kegel), Schlachtruf (Ring), Himmelsfall (Kreis auf dich); in Phase 3 dazu Kreuzschlag, Zornring (Kreis plus Ring mit sicherem Band) und Dreifach-Lanzenstoß. Phasenmarken stehen im Lebensbalken, der Name des Angriffs erscheint über dem Boss.
+- **Beute-Säulen:** Besiegte Gegner lassen mit Wahrscheinlichkeit Beute fallen (normal 14–30 %, Elite 85 %, Bosse immer vier Stück, das erste mindestens episch). Jedes Stück fällt in einem Bogen heraus und leuchtet als **Lichtsäule** in der Farbe seiner Seltenheit: Gewöhnlich grau, Selten blau, Episch lila, Legendär golden; je seltener, desto höher, breiter und heller (Bloom), epische und legendäre Säulen sprühen Funken. Darin schwebt ein Metall-Stück (Edelstein, Goldstapel oder Proviant). Näherst du dich (4,5 bis 8 m), wird es **magnetisch eingesaugt**. Der Inhalt ist ein Talisman genau dieser Seltenheit, Gold oder Proviant; gibt es keinen neuen Talisman der Seltenheit mehr, wird daraus Gold. Beim Verlassen der Insel nimmt die Crew liegen gebliebene Beute mit.
+- **Zonen-Ereignisse:** Zu Fuß auf Inseln ohne Lager (nicht Boss- und Ruineninseln, ab Stufe 2) passiert alle 110 bis 200 s etwas, das erste nach etwa 50 s:
+  - **Piraten-Invasion** (für Marine-Spieler „Marine-Landung“): Boote landen in zwei Wellen an einem Strand etwa 70 m entfernt.
+  - **Elite-Jäger:** ein Hauptmann mit zwei Begleitern taucht 22–30 m entfernt auf.
+  - Belohnung: Gold und 2 (Invasion) bzw. 3 (Elite) Beute-Säulen, mindestens selten. Die Gegner gehören nicht zum Lager: „Insel befreit“ und die Lagerbelohnung lassen sich damit nicht doppelt auslösen.
+
+**Technik (für Entwickler):**
+- Neue Dateien: `combat/zones.ts` (`ZoneSystem`, `zoneContains` als reine Rechnung), `combat/loot.ts` (`LootSystem`), `data/loot.ts` (Seltenheits-Gewichte, Säulen-Aussehen, `rollLoot`), `world/events.ts` (`WorldEvents`, `EVENT`), `tests/loot.test.ts` (9 neue Tests: Gewichte, Bossbeute, Formen der Flächen). Balancing steht in `data/combat.ts` (`BOSS`, `ZoneSpec`, `phaseAttacks`), `data/loot.ts` und `EVENT`.
+- `EnemyAttack.zones`: Schaden kommt beim Einschlag der Fläche (`CombatSystem.detonate`, höchstens einmal je Angriff und Boss), nicht über den Hieb (`enemyStrike` kehrt zurück). Flächen verfallen ohne Schaden, wenn `Enemy.atkSeq` sich ändert oder der Boss nicht mehr in `windup`/`attack`/`recover` ist. Netze sind geteilt (`sharedGeo`), Materialien je Fläche werden freigegeben.
+- `Enemy`: neuer Zustand `transition`, `phase`, `brokenT`, `breakFrac`, `atkSeq`, `tag`. `takeHit(h, now, w)` und `parried(w)` bekommen die Welt; `EnemyWorld` hat `bossPhase()` und `bossBreak()`. Der Rotton ab Phase 2 läuft über `updateFlash`/`setTint`.
+- Beute: `LootDrop` (Seltenheit steht beim Fallen fest, Inhalt bei Aufheben), `rollTrinket(..., exact)`. Die Säule ist ein additiver Zylinder mit Alpha-Verlauf, das Stück ein Toon-Material mit `metalness`/`roughness`/`emissive` (PBR). Alle Materialien und Netze sind geteilt. Aufheben: `CombatHooks.loot` → `SeaWorld.onLootDrop` → `Game.onLootPickup`.
+- `CombatSystem`: `campLeft` (ohne Ereignis-Gegner) statt `hostilesLeft` für „Insel befreit“, `tagLeft`, `beginEvent`, `spawnWave`.
+- Geprüft: `tsc` fehlerfrei, 48 Tests grün. Im Spiel gemessen: Phasenwechsel mit Unverwundbarkeit, Warnflächen aller Formen gesehen und Schaden innen, keiner außen und keiner nach Abbruch, Break nach 6 schweren Treffern mit +50 % Schaden und Erholung nach 3,2 s, Phase 3 mit allen fünf Angriffen über 70 s ohne hängenden Zustand und ohne Speicherzuwachs, Beute-Säulen gesehen und eingesaugt (Gold, Proviant, Talisman), Elite- und Invasionsereignis samt Belohnung. Ein Fehler beim Test gefunden und behoben: Beim Einsaugen gingen bis zu zwei weitere Stücke verloren.
+- Nicht geprüft: Gamepad und Touch, Ereignis-Häufigkeit und Beute-Balance über eine längere Sitzung, Seeboss und Schiffsbosse (unverändert, ohne Warnflächen), Crew als Ziel der Warnflächen (sie treffen nur dich), Beute-Säulen im Regen und bei Nacht.
+
+## Release-Zusammenfassung – behobene Fehler bis 2.9.33 (11.11.2026)
+
+Ein Überblick über alle Fehler, die seit 2.7.0 behoben wurden, nach Bereich und mit der Version, in der es geschah. Einzelheiten stehen in den Einträgen darunter.
+
+**Bildfehler und schwarze Flächen**
+- Schwarzes Wasser auf Samsung-Handys (2.9.9) und schwarzes Meer an Handys durch ungültige Rechenwerte, die der Leuchteffekt verschmierte (2.9.7). Ursache jedes Mal: `NaN` oder `pow(0, x)`; Schutz im Bloom (2.9.26).
+- Schwarzer Bildschirm beim Schwerthieb (2.7.0), beim Regen durch Wurzel aus minimal negativer Zahl (2.9.18), schwarze Flecken am Vulkan durch 168 ungültige Eckpunkte (2.9.14).
+- Dunkle Linien und wandernde Schraffur der Umgebungsverdeckung (2.9.26); `smoothstep` mit vertauschten Grenzen lieferte auf manchen Treibern 0 (2.9.18).
+- Unsichtbarer Regen (Quads als Rückseite verworfen, 2.9.18); Schiffsrumpf fälschlich als spiegelnd erkannt (2.9.17); Wassermaterial ohne Kaskaden-Schalter (2.9.12); Schiffsflagge doppelt gemalt (2.9.12).
+- Flimmern an Straßenkreuzungen, Fenstern aus der Ferne und im Brunnenwasser (2.9.22); Wimpern und Augenglanz verdeckten sich gegenseitig (2.9.22, nach dem ersten Treffer erneut, 2.9.33).
+
+**Laufen, Kollision, Gelände**
+- Figuren sanken am Inselrand ein (2.9.0) oder schwebten an Hängen (2.7.0): Laufhöhe ist jetzt das sichtbare Gelände.
+- Schiffe lagen mit dem Bug auf dem Strand (2.9.5); am Festland ließ sich nie anlegen, Stege lagen auf dem Trockenen (2.9.28).
+- Torbogen-Kollision neben den Säulen, riesige unsichtbare Kreisfläche um die Werft (2.9.22); Pfähle, Poller, Laternenmasten und Fässer an Stegen waren durchlaufbar (2.9.33).
+- Gegner flogen in dich hinein und zitterten (2.0.0-m5); Gegner und später der Spieler rutschten mit den Füßen (2.9.15, 2.9.31); Bodenrisse schwebten an Hängen (2.9.15).
+
+**Hängende Zustände und Zeitabläufe**
+- Spielfigur, Gegner und Crew konnten in Parade, Fähigkeit, Angriff oder Flug festhängen, wenn eine Animation ihr Ende nicht meldete (2.9.22).
+- Verzögerte Ereignisse liefen nach Pause, Menü oder Spielstandwechsel weiter (Banner, Abspann, Breitseiten, Donner); sie laufen jetzt in Spielzeit und verfallen (2.9.22).
+- Brand und Gift schadeten nach dem Verlassen der Insel unsichtbar weiter, Gegner-Geschosse flogen nach dem Ablegen weiter, Münzen gingen verloren (2.9.14); nach dem Untergang des eigenen Schiffs blieben Lebensbalken und Beutekisten stehen (2.7.0).
+
+**Kampf und Aufträge**
+- Treffer-Aufblitzen der Gegner wirkte nie, weil nur ein Netz getauscht wurde (2.9.13); Tritte der Faustkämpfer trafen nie, Klingenrichtung beim ersten Hiebschritt war falsch (2.9.19).
+- Geenterte Legende zählte doppelt als Sieg und Revanche, „Schiff versenkt!“ erschien nach dem Entern (2.7.0); Prolog nicht abgebbar, Befreiungsaufträge hingen, Werftwechsel reparierte gratis, neuer Kampfstil ohne Boni bis zum Neustart (2.9.5).
+
+**Speicher**
+- Wachsender Speicher bei jedem Eistreffer (9 Netze, 2.9.15); Grundfiguren-Texturen nicht als geteilt markiert (2.9.13, 2.9.12); Freigabe aller entfernten Objekte über `disposeObject` (2.9.10). Prüfung in 2.9.33: nach 10 Gefechtsrunden mit sechs Gegnertypen und 12 Aussehenwechseln bleiben Netze, Texturen und Szenenobjekte konstant.
+
+**Build**
+- `VroidBase.irisUv()` fehlte, das Projekt ließ sich nicht bauen (2.9.30).
+
+## 2.9.33 – Audit: Kollision, Transparenz, Speicher (11.11.2026)
+
+- **Kollision der neuen Inseln geprüft:** Alle 37 Inseln wurden gescannt (3616 hohe Bäume, Palmen, Felsen, Basaltsäulen und 3528 weitere Netze). Jedes feste Objekt hat einen Kollider, Gebäude, Mauern, Ruinen, Felsen und Bewuchs sind lückenlos abgedeckt. Die einzige Lücke: **Stegpfähle, Poller, Laternenmasten und das Fass am Steg** waren durchlaufbar. Sie haben jetzt Kollider (175 neue, auf Außenposten-Häfen, Fähranlegern und Fischerdörfern).
+- **Transparenz:** Nach dem ersten Treffer verloren die durchscheinenden Gesichtsteile (Wimpern, Augenglanz) `depthWrite = false` und sortierten sich falsch. Behoben für alle Materialkopien. Die Flaschenpost im Meer schrieb Tiefe, obwohl sie durchscheinend ist, das ist abgestellt. Alle übrigen durchscheinenden Materialien (Partikel, Rauch, Wasserfall, Regen, Effekte) hatten es schon richtig.
+- **Speicher:** Zehn Runden Landgang mit sechs Gegnertypen (spawnen, kämpfen, besiegen, Insel verlassen) und zwölf Aussehenwechsel mit Treffer-Leuchten ergeben nach der Aufwärmphase unveränderte Zahlen: 613 Netze, 422 Texturen, 8790 Szenenobjekte. Gefunden und behoben wurden Lecks im Seekampf: Jede Beutekiste legte ein eigenes Netz an (Faji-Splitter auch ein Material), jede Brandkugel ein eigenes Material, beides wurde beim Einsammeln nie freigegeben; die Faji-Wellen gaben beim Aufräumen ihr Material nicht frei. Kisten und Brandkugeln teilen sich jetzt Netz und Material.
+
+**Technik (für Entwickler):**
+- Es gibt keinen Physik-Körper (kein Rigidbody oder `MeshCollider`): Kollision sind 2D-`Blocker` je Insel (Kreis oder gedrehtes Rechteck, `world/islandGround.ts`). „Jedes feste Objekt hat einen Kollider“ heißt hier: ein `Blocker` deckt seinen Standort ab.
+- Methode (im Spiel, ohne Test-Datei): Für jedes Netz einer Inselgruppe, auch jede Instanz der `InstancedMesh`-Bäume, Standort gegen `blockers` geprüft. Zusätzlich alle Eckpunkte zwischen 0,6 und 2,2 m über dem Boden, Terrain-Netze (über 150 m) ausgenommen, auf Abdeckung mit 0,9 m Rand. Vorher 37 unabgedeckte Zellen, nachher 5, alle ≈ 1 m neben einem Kollider (breitere Sockel von Felsen und Türmen, kein Loch).
+- `world/architecture.ts` `steg()`: `circles` für Pfähle, Poller, Mast und Fass. `world/seaWorld.ts`: Außenposten-Hafen schiebt Pfähle (alle 5 m beiderseits, r 0,22) und Laternenmast (r 0,16) nach den Positionen aus `islandStyle.ts` `outpost()` als `walk.blockers` ein.
+- `render/toon.ts`: neue `inheritState()` übernimmt `alphaTest`, `depthWrite`, `depthTest` und `polygonOffset*` nach jeder Kopie; `toonChar()` und `toonFx()` nutzen sie. Ursache: Diese Werte stehen nicht in `ToonOptions`, `toonFx()` hat sie bisher verloren.
+- `world/life.ts`: Flaschenpost `depthWrite: false`.
+- `naval/naval.ts`: `crateGeo`, `shardMat`, `fireMat` als Felder; `clear()` gibt das Wellen-Material frei. Kanonenkugeln teilten sich schon `ballGeo` und die gecachten Toon-Materialien.
+- Offen/bewusst so: Die Pfähle im Wasser (unter 0,9 m Bodenhöhe) und Baumkronen haben keinen Kollider, sie liegen nicht auf begehbarem Grund bzw. über Kopfhöhe. Die Seekampf-Korrektur ist nur gelesen und per `tsc` geprüft, nicht im Spiel gemessen (Schiffsgefecht nicht gefahren). Nicht geprüft: Speicher bei Wetterwechsel, Qualitätsstufenwechsel und Schiffskauf.
+- Geprüft: `tsc` fehlerfrei, 39 Tests grün.
+
+## 2.9.32 – Kombo-Finisher, Zielerfassung, Ausdauer und HUD (11.11.2026)
+
+- **Leicht → Leicht → Schwer:** Nach zwei leichten Hieben löst der schwere Hieb (auch wenn er schon im zweiten Hieb gedrückt wird oder kurz nach dem Kombo-Ende) einen **Finisher** aus statt des normalen schweren Hiebs. Jeder Kampfstil hat seinen eigenen Clip: Faust und Langklinge Wirbel, Säbel weiter Schrägschlag, Zweihänder Wirbel mit hohem Schaden, Doppelklingen Wirbelhieb, Faji Zauberwelle. Effekte: Schockring, Bodenrisse, Siegel, Impact-Frame, Speedlines und ein „Finisher!“-Schriftzug am Zähler. Ein schwerer Hieb ohne Kette bleibt wie bisher aufladbar.
+- **Zielerfassung (F oder mittlere Maustaste, dazu T, Tab, Gamepad R3):** Die Kamera dreht weich auf das Ziel (ca. 1 s), neigt sich nach dessen Höhe, blickt ein Stück zum Ziel hin und rückt bei großem Abstand zurück. Fällt das Ziel, erfasst die Kamera den nächsten Gegner in 14 m statt die Erfassung zu verlieren. Erneutes Drücken wechselt zum Gegner, der der Kamerarichtung am nächsten liegt. Wer eigene Tasten belegt hat, behält sie.
+- **Ausdauer:** Neuer grüner Balken unter den Lebenspunkten (nur zu Fuß). Rolle kostet 18, schwerer Hieb 14, Finisher 20; nach 0,55 s Pause lädt er auf (32 pro Sekunde, im Stand 48). Leichte Hiebe und Blocken kosten nichts. Reicht sie nicht (unter 6), blinkt der Balken rot und die Aktion entfällt.
+- **HUD:** Lebens- und Ausdauerbalken haben einen hellen Nachlauf, der kurz stehen bleibt und dann nachzieht; bei unter 25 % Leben pulsiert der Balken. Der Kombo-Zähler erscheint ab 2 Treffern, zeigt die Restzeit als Balken und steigert sich bei 6, 10 und 15 Treffern („Stark!“, „Brutal!“, „Legendär!“) mit Farbe und Größe. Fähigkeiten blitzen auf, sobald sie wieder bereit sind.
+
+**Technik (für Entwickler):**
+- `data/combat.ts`: `FINISHERS` (je Stil ein `AttackDef`) und `STAMINA` (Kosten, Aufladung, Pause). Alles Balancing steht dort.
+- `PlayerFoot`: `kind` (`light`/`heavy`/`finisher`) je Hieb, `combo` zählt die Leicht-Kette (schwerer Hieb setzt sie zurück), `finisherReady` entscheidet über Finisher oder Aufladen. Ausdauer in `stamina`/`spend()`/`staminaFlash`, Aufladung im Logikschritt. Finisher-Effekte in `processAttack`.
+- `CombatOverlay`: `finisher()`, Kombo-Rang und Restzeit (`COMBO_TIME`); `Hud.setStamina()` plus Nachlaufstreifen `.lag` (CSS-Transition mit Verzögerung, nur `transform`).
+- Kamera: `SeaWorld.lockK`/`lockDX`/`lockDZ` (weicher Überblendfaktor), `prevLock` für den Wechsel bei gefallenem Ziel; `Combat.retarget()` und `lockScore()`. Ausschnitt und Abstand im Fuß-Kamerablock.
+- Neue Standardtasten in `data/actions.ts` (`lockon`: F, Mouse1, T, Tab); gespeichert werden nur eigene Abweichungen.
+- Geprüft: `tsc` fehlerfrei, 39 Tests grün. Im Spiel: L-L-H startet den Finisher (Ausdauer 100 → 80, Zähler „Stark!“ mit Schriftzug), fünf Rollen leeren die Ausdauer, die sechste bei 10 und danach wird verweigert (Balken blinkt); Kamera dreht in ca. 1 s auf das Ziel (Winkelfehler 1,8 → 0,0 rad), Wechsel auf den nächsten Gegner bei gefallenem Ziel. HUD per Bildschirmfoto gesehen. Nicht geprüft: Gamepad, Touch, Finisher-Effekte der anderen fünf Stile per Auge, Balance der Ausdauer im echten Kampf.
+
+## 2.9.31 – Bewegung: Schrittsync am echten Tempo, weichere Übergänge (11.11.2026)
+
+- **Keine rutschenden Füße mehr:** Die Schrittgeschwindigkeit folgt jetzt dem tatsächlich zurückgelegten Weg statt dem Stick-Befehl. Gegen Reling, Mauern oder Hänge rennt die Figur nicht mehr auf der Stelle, sondern steht.
+- **Auch bei Tempo-Bonus exakt:** Der Spielraum der Lauf- und Geh-Animation ist größer (Gehen bis 3,1 m/s, Rennen bis 9,6 m/s). Das Gehen mit halber Stickneigung (bis 3 m/s) und Läufe mit Fähigkeiten-Tempo rutschten vorher.
+- **Gehen ↔ Rennen ohne Sprung:** Die Schrittphase wird beim Wechsel übernommen, das Bein springt nicht mehr um. Die Wechselschwellen haben eine Hysterese (Rennen ab 3,4 m/s, zurück ab 2,7 m/s), kein Flackern an der Grenze.
+- **Neigung nach echtem Tempo:** Die Neigung in Kurven und beim Antreten nutzt das gemessene Tempo, an einer Wand lehnt sich die Figur nicht ins Leere.
+- Schon vorhanden und unverändert: Überblendzeiten 0,08–0,2 s je Übergang (Ruhe, Laufen, Angriff, Kombo, Rolle, Parade, Treffer) und der Eingabepuffer (0,25 s) für Angriff, Rolle und schweren Hieb; Hiebe und Rollen aus Ausschwung, Treffer oder Rolle heraus werden nachgeholt.
+
+**Technik (für Entwickler):**
+- `PlayerFoot.realSpeed`: aus `prev` zu aktueller Position je Logikschritt, geglättet (`dt * 18`), nach oben auf `speed * 1.5 + 0.5` begrenzt. Speist `setLocoSpeed`, die Ruhe/Gehen/Rennen-Wahl und `Character.lean` (`min(speed, realSpeed + 0.3)`). `place()` setzt ihn zurück.
+- `Character.setLocoSpeed`: Gehen `mps / 1,5` auf 0,4–2,1, Rennen `mps / 3,7` auf 0,7–2,6.
+- `Character.playClip`: zwischen `Walking_A` und `Running_A` (`LOCO_CLIPS`) wird die normierte Zeit übernommen, bevor `crossFadeFrom` startet.
+- Gegner, Crew und NPCs nutzten schon das echte Tempo (`Character.place`); unverändert.
+- Geprüft: `tsc` fehlerfrei, 39 Tests grün. Im Spiel an Deck gemessen: Gehen 1,97 und 2,97 m/s sowie Rennen 6,2 m/s entsprechen dem Clip-Tempo; gegen die Reling Tempo 0 und Ruhe-Animation. Nicht gemessen: Sprint-Bonus über 8 m/s, Schrittphase per Auge, Handy.
+
+## 2.9.30 – Figuren im Stil „Stylized Realism“ (11.11.2026)
+
+- **Anime-Formen, echte Oberflächen:** Gesichter und Proportionen bleiben Anime. Haut, Stoff, Leder und Stahl haben jetzt je eine eigene Oberfläche: Webmuster im Stoff, Narbung im Leder, gebürstete Riefen im Stahl, feine Poren im Hautglanz.
+- **Haut:** Licht streut unter der Haut. Rötlicher Saum an der Schattengrenze, warme statt kühle Schatten, Durchleuchten an Ohren und Fingern im Gegenlicht.
+- **Haare:** ein Lichtband quer über den Kopf, das mit Blickwinkel und Sonne wandert. Es nimmt die Haarfarbe an (blond hell, schwarz nur ein Schimmer).
+- **Augen:** zwei scharfe Glanzpunkte je Iris, die ein Stück mit dem Licht wandern.
+- **Randlicht statt Tusche:** Figuren haben keine schwarzen Konturen mehr. Ihre Ränder leuchten im Himmelslicht ihrer Seite, zur Sonne hin in deren Farbe. Schiffe, Bauten und Landschaft behalten ihre Konturen.
+- **Editor:** Die Kleidung zeigte im Editor Streifen (Schatten der Figur auf sich selbst). Behoben.
+
+**Technik (für Entwickler):**
+- Kein eigenes `ShaderMaterial`: Die Figuren-Fassung ist eine Option des Toon-Materials (`surface` in `ToonOptions`, `render/toon.ts`). So bleiben Kaskaden-Schatten, Nebel, Nässe, Treffer-Leuchten und Auflösen erhalten.
+  - `surface`: `skin`, `cloth`, `leather`, `steel`, `hair`, `eye`, `plain`. Shader-Define `SK_CHAR` und `SK_SURF`.
+  - `toonChar(mat)` liefert die Figuren-Fassung eines vorhandenen Toon-Materials (Metall wird Stahl, sonst Stoff). `Character.stylize()` wendet sie auf Kleidung, Hüte, Schmuck und gehaltene Waffen an.
+- Feinrelief (`MICRO_PARS_GLSL`, `MICRO_FRAG_GLSL`): prozedurale Höhe aus der Körperposition vor dem Skinning (`vSkObj`, in Metern), Normale über Bildschirm-Ableitungen. Braucht weder UV noch Tangenten und blendet aus, bevor das Muster kleiner als ein Bildpunkt wird.
+- Haut, Glanz je Oberfläche, Haar, Auge und Randlicht stehen in `CHAR_GLSL`.
+  - Haar: Kajiya-Kay mit zwei Bändern. Die Tangente kommt aus der Kopfrundung (`vSkSph`, Kugelmitte `hairC` aus `VroidBase.hairCenter()`), nicht aus den Strähnen-Normalen. Sonst zerfällt das Band.
+  - Auge: `eyeUv` aus `VroidBase.irisUv()`. Die Iris-Textur enthält beide Augen nebeneinander, v läuft nach unten.
+  - Randlicht: `pow(1 − N·V, 3,4)`, Farbe aus `uEnvLow`/`uEnvHigh` nach Normalenrichtung plus Sonnenanteil.
+- Konturen: `CHARACTER_INK = false`. Figuren bekommen keine Hüllen mehr (`addOutlines`). Für die Kantenerkennung (High bis Ultra) schreiben sie Alpha 0,98 (`CHAR_ALPHA`); `EdgeEffect` lässt diese Pixel aus. SSR und AO werten 0,98 wie 1.
+- `world/editorStage.ts`: `shadow.bias` und `shadow.normalBias` am Hauptlicht.
+- Behoben: `VroidBase.irisUv()` fehlte, das Projekt ließ sich nicht bauen.
+- Geprüft: `tsc` fehlerfrei, 39 Tests grün. Im Spiel angesehen: Editor (beide Grundfiguren, braunes, schwarzes und blondes Haar, Nahaufnahmen von Augen und Stoff) und an Deck bei Tag auf Ultra, Mid und Low. Nicht angesehen: Nacht, Regen, Kampf, Gegner und NPCs, echtes Handy.
+
+## 2.9.29 – Kampfgefühl: Schweif, Fähigkeiten-Stufen, Trefferwucht (10.11.2026)
+
+- **Waffenschweif glatter:** Der leuchtende Klingenschweif wird jetzt als Kurve gezeichnet (dreifach unterteilt) statt als Knickzug – auch bei niedriger Bildrate ein runder Bogen.
+- **Fähigkeiten in Stufen:** Jede Fähigkeit beginnt mit einer Aufladephase (Siegel am Boden zieht sich zusammen, Funken steigen auf, Hitzeflimmern um die Figur), danach folgen Einschlag, Schockwelle und Bodenspuren.
+- **Druckwellen verzerren das Bild** (Refraktion) bei Schockwellen ab 2,2 m Radius.
+- **Trefferpause 35 ms** bei jedem wirksamen Treffer, dazu ein **gerichtetes Kamerawackeln** entlang der Trefferrichtung, das schnell abklingt.
+- **Spuren am Boden:** Kritische Treffer, Kills und schwere Hiebe hinterlassen Brandflecken (Klinge, Magie) oder Risse (Faust).
+
+**Technik (für Entwickler):**
+- `render/weaponTrail.ts`: Catmull-Rom (`S = 3`), Arbeitsfelder `ctl`/`ctlAge`, keine Allokation pro Bild.
+- `faji/abilities.ts`: `charge()` (gehaltenes Sigil-Decal, gehaltene Hitzequelle, `rise`) wird in `cast` vor dem Wirken gestartet.
+- `combat/fx.ts`: `shockwave` fügt eine `heatShared`-Quelle hinzu.
+- `world/seaWorld.ts`: `HIT_STOP = 0.035`; `shakeAx`/`shakeDir`/`shakePh` für die gerichtete Schwingung, zusätzlich zur Feder (`kick`).
+- `combat/combat.ts`: Decals in `applyHit`.
+- Geprüft: `tsc` fehlerfrei, 39 Tests grün. Nicht im Spiel angesehen.
+
+## 2.9.28 – Anlegen am Festland, Stege im Wasser, schnellere Schiffe (10.11.2026)
+
+- **Anlegen überall möglich:** Am Festland Grünmark erschien „An Land gehen“ nie, weil das Schiff zu weit vor dem Strand gestoppt wurde. Jetzt kann man an jeder Insel aus jeder Richtung anlegen. Geprüft an allen 37 Inseln aus je 36 Richtungen und mit echten Anfahrten.
+- **Stege im Wasser:** Bei großen Inseln begann das Wasser erst 30–37 m hinter der Küste, die Stege lagen ganz auf dem Sand. Jetzt reicht jeder Steg 15–32 m ins Wasser.
+- **Längere Hafenstege:** Die Stege der Außenposten-Häfen (Nebelhafen, Kiefernhafen, Glutheim, Donnerbucht, Letzter Hafen) sind 32 m statt 22 m lang. Der zweite Steg der Palmenküste ist 28 m statt 20 m lang.
+- **Keine Felsen auf Stegen:** In Nebelhafen lagen zwei Felsen auf dem Steg. Steg und Zugang bleiben jetzt frei.
+- **Schnellere Schiffe:** Alle Schiffe segeln 30 % schneller (Schaluppe jetzt knapp 29 m/s bei voller Fahrt). Feinde ebenso, damit Verfolgen und Fliehen gleich bleiben.
+
+**Technik (für Entwickler):**
+- Ursache: Die Strandböschung war fest 25 % des Inselradius (`CylinderGeometry(r, r * 1.25)`, Laufhöhe bis `e * 1.25`, Schiffsgrenze `e * 1.11`). Beim Festland (r 270) lag die Wasserlinie gut 30 m vor der Küste, das Schiff wurde dort gehalten, und `islandAt(…, 30 + W)` traf nicht mehr.
+- Neu: `shelfOf(r) = min(0.25, 22 / r)` und `WATERLINE` in `world/islandGround.ts`, Feld `shelf` an `WalkIsland`. Strand-Mesh (`islandTerrain`), Laufhöhe (`height`), Schiffsgrenze (`pushShip`), Laufgrenze (`constrain`) und Brandungskarte (`IslandShape.base`) nutzen alle denselben Wert. Inseln bis r 88 bleiben unverändert.
+- `SEA_SPEED = 1.3` in `data/ships.ts`, angewandt in `Ship.steer`. Die Werftanzeige zeigt weiter die Grundwerte.
+- `OUTPOST_PIER` in `world/islandStyle.ts` (Steg und Kollider von −5 bis +27 m ab Küste, Pfähle beiderseits). Harbor-Fall in `islandDress.ts` hält den Stegstreifen frei; Felsen im Wasser prüfen jetzt auch belegte Flächen.
+- Test „lässt Schiffe an jeder Inselgröße nah genug zum Anlegen heran“ (39 Tests grün).
+- Geprüft im Spiel: Anfahrt an Grünmark aus sechs Richtungen und an sechs weiteren Inseln aus zwei Richtungen; alle 13 Stege von See aus angesehen; Rechenprüfung aller 37 Inseln × 36 Richtungen ohne Fehler.
+- Hinweis: Beim Testen hat ein angeschlossener Gamepad-Stick das Schiff dauerhaft gelenkt. Falls das Schiff ohne Eingabe im Kreis fährt: Gamepad prüfen (Stick-Drift).
+
+## 2.9.27 – Große Welt: Festland, neue Inseln, Dörfer und Biome (10.11.2026)
+
+- **Vierfache Karte:** Die Welt ist doppelt so weit (Radius 4000 m statt 2000 m). Alle Inseln liegen wie bisher zueinander, nur weiter auseinander, und sind rund ein Viertel größer. Ankerglück bleibt an seinem Platz. Die Wege über See sind dadurch etwa doppelt so lang.
+- **Festland Grünmark:** südlich von Ankerglück, gut einen halben Kilometer breit. Weiden, Laubwälder und Birken, das Dorf Weidenbrück mit Gasthaus, ein Wachturm mit Leuchtfeuer auf dem Hügel, ein Hof mit Kornfeldern, eine Abteiruine, ein Fischerweiler, ein Fähranleger und Wege dazwischen.
+- **Drei neue Inseln:**
+  - Palmenküste (Tropen): weißer Sand, geschwungene Palmen, Fischerdorf auf Stelzen mit zwei Stegen.
+  - Sturmklippe: schwarze Basaltsäulen, windschiefe Kiefern, Steinturm und Ruinen.
+  - Fährholm: Hirtenhof mit Steinhäusern, Trockenmauern, Feld und Fähre zum Festland.
+- **Bauten mit Kollision:** Holzhütten, Stelzenhütten, Steinhäuser, Gasthaus, Scheune, Wachtürme, Ruinen, Säulen, Zäune, Mauern, Stege, Kisten, Fässer, Brunnen, Laternen, Boote. Fenster und Laternen leuchten nachts, Schornsteine rauchen.
+- **Alte Inseln sehen nicht mehr gleich aus:**
+  - Die überall gleichen, bis über 30 m hohen Felsklötze sind weg. Dafür gibt es fünf Felsformen in menschlichem Maß: Blockhaufen, Felsnadeln, Plattenstapel, Felsbögen und Basaltsäulen. Jede Insel hat ihre Hauptform.
+  - Häfen: statt vier gleicher roter Häuschen baut jede Region anders (Stelzenhütten im Nebel, Blockhäuser und Scheunen im Norden, Steinhäuser im Sturm). Hafeninseln sind nicht mehr kreisrund.
+  - Dörfer der ruhigen Inseln: drei Anlagen (um einen Platz, Zeile am Strand, verstreut), Bauweise je Region, Brunnen oder Feuerstelle, eigener Hausrat.
+  - Bewuchs: Bäume stehen in Hainen mit Lichtungen. Jede Insel ist karg, normal oder dicht bewaldet und mischt in den Tropen Palmen und Laubbäume anders. Die Wiese hat Buchten und Zungen statt eines runden Rands.
+  - Neue geschwungene Palmen und Farn auf allen Tropeninseln, Birken im Norden.
+  - Kahle Stellen auf Asche- und Schlundinseln sind nicht mehr sandhell.
+- **Wind:** Bäume, Büsche, Farn, Gras, Schilf und Kornfelder wiegen sich im Wind, auch die neuen instanzierten Pflanzen.
+- **Spielstände:** Alte Stände bleiben lesbar. Das Schiff wandert mit der Karte nach außen; wer vor Ankerglück lag, liegt weiter dort.
+- **Karte:** Welt- und Regionskarte zeigen die neuen Länder.
+
+**Technik (für Entwickler):**
+- Welt: `WORLD_SCALE = 2` in `data/world.ts`; `WORLD_RADIUS`, Regionen, Inselabstände, Seestufen (`seaLevelAt`), Tiefenschlund-Lage, Treibgut, Weltrand (Segmente, Gischt) und Brandungskarte (2048², Zelle bleibt 4 m) leiten sich daraus ab.
+- Länder als Daten: `data/settlements.ts` (`SITES`: Küste, Hügel, Siedlungen aus Bauwerkslisten, Wege, Bewuchs-Schichten je Hektar). Neue Felder an `IslandDef`: `biome`, `site`, `placed`. Neue Stile `festland` und `klippe`.
+- `world/architecture.ts`: Baukasten der Gebäude. Jedes Modell liefert sein Kollisions-Gitter (gedrehte Rechtecke und Kreise); `colliders()` rechnet es in Weltkoordinaten um. Ein gemeinsames Fenster- und Lampenmaterial (`setSiteNight`).
+- `world/settlement.ts`: stellt Siedlungen auf, trägt Kollider, Stege (Schiffskollision), Feuer und Schornsteine ein, baut Wege (`roadMesh`) und Felder.
+- `world/vegetation.ts`: instanzierter Bewuchs.
+  - Vorlagen (`cachedProto`, `floraProto`): ein Netz je Pflanze mit Eckpunktfarben, ein Material für alles (`vegMat`).
+  - `Scatter` baut je Vorlage und Geländekachel ein `InstancedMesh` (Bäume und Felsen 240 m, Kleinkram 80 m) mit Farbton je Instanz.
+  - Kleinkram hat eine Sichtweite (Gras 105 m, Büsche 230 m) und wird in `cullFigures` ausgeblendet, skaliert mit der Grafikstufe.
+  - `Occupancy` (Raster) und `scatterSite` (Gürtel, Haine über Rauschen, Hanglage).
+  - Auch die alten Inseln nutzen es (`islandDress.ts`, Palmen in `seaWorld.ts`) statt verschmolzener Einzelnetze.
+- Wind mit Instanzen: `WIND_VERTEX` in `render/wind.ts` nimmt die Weltposition aus der Instanzmatrix und rechnet die Verschiebung in den Instanzraum zurück. Die Tusche-Kontur (`render/outline.ts`) kann instanzierte Netze und teilt sich deren Matrizen.
+- Felsen: `rockFormation` und `ROCK_TYPES` in `world/islandStyle.ts`. Wiesenrand: Parameter `ragged` in `islandTerrain`. Hafenhäuser und Dörfer: `HOMES` und `mount` in `islandDress.ts`; `outpost` baut nur noch den Steg.
+- Toon-Option `layer` (Tiefenverschiebung für Bodenschichten): Die Wiese lag 2 cm über dem Sand und flimmerte auf großen Inseln in der Ferne.
+- `NavGrid`: Zellgröße 1 m ab Inselradius 150 m (Festland: 0,45 Mio. Zellen, Aufbau etwa 100 ms beim ersten Landgang).
+- `SeaWorld.setState` schiebt ein Schiff, das an Land läge, an die Küste.
+- Spielstand-Version 10 (Migration 9 → 10). Tests: Weltgröße, neue Länder, Siedlungsdaten, Migration (38 Tests grün).
+- Neue Dateien: `data/settlements.ts`, `world/architecture.ts`, `world/settlement.ts`, `world/vegetation.ts`.
+- Geprüft (RTX 5070 Ti, Ultra, 2400 × 1800, Bilder von Hand weitergeschaltet): alle 37 Inseln einzeln aus der Luft, zwölf davon aus Bodenhöhe; Tag und Nacht im Dorf; Stufe Niedrig mit Konturen. Bildzeit Ankerglück 7,9 ms, Festland vom Schiff 7,4 ms, Festland zu Fuß 13,5 ms (74 Bilder/s), Mittel 7,4 ms.
+- Nicht geprüft: echtes Handy, Hochformat, Regen und Sturm auf den neuen Inseln, Kämpfe und Aufträge auf den umgebauten Inseln, ein echter alter Spielstand (nur der Migrations-Test).
+
+## 2.9.26 – Stabile Bild-Pipeline (Start 3.0-Update) (10.11.2026)
+
+- **Schwarzes Flimmern behoben:** Die Umgebungsverdeckung (Kontaktschatten) zeichnete dunkle Linien quer über Böden und eine wandernde Schraffur auf Wände. Beides ist weg, die Schatten in Ecken sind jetzt ruhig und weich.
+- **Keine Shader-Warnung mehr:** Die Meldung X3595 („gradient instruction in loop“) tritt nicht mehr auf.
+- **Feste Kamera-Ebenen:** nah 0,1 m, fern 1000 m. Meer, Himmel, Wolken und Sonne werden nicht abgeschnitten.
+- **Sichtweite Maximal/Ultra:** Wegen der festen Fernebene endet die Sicht bei 900 m (Maximal, vorher 1200 m) bzw. 960 m (Ultra, vorher 1800 m). Der Dunst beginnt in derselben Entfernung wie bisher, schließt sich aber früher.
+
+**Technik (für Entwickler):**
+- Behobene Fehler:
+  - X3595: Der 3×3-Weichzeichner des `AoEffect` las mit `texture2D` in einer Schleife (undefinierte Ableitungen). Jetzt vier feste Proben mit `textureLod`, keine Schleife.
+  - Dunkle Linien: `AoPass`/`SsrPass` lasen die Tiefe mit `texture2D` genau auf Bildpunkt-Grenzen (halbe bzw. 0,75-fache Auflösung); je nach Rundung kam der falsche Nachbar, die Flächennormale kippte, ganze Bildzeilen wurden verdeckt. Jetzt `texelFetch` und Position aus derselben Bildpunkt-Mitte (`render/depthGlsl.ts`).
+  - Schraffur: Zufallsmuster (IGN) durch festes 2×2-Muster ersetzt; der Weichzeichner mittelt exakt ein 2×2-Feld, das Muster hebt sich auf.
+  - Mögliche ungültige Werte entfernt: entartete Normalen am Bildrand, `pow(0, x)` im Fresnel der Spiegelungen, Division durch 0 bei der Projektion.
+- Schleifen: Strahlverfolgung der Spiegelungen, Horizontsuche und Hitzeflimmern laufen mit fester Durchlaufzahl ohne `break`/`continue`.
+- Pipeline (`render/renderer.ts`): Kern auf allen Stufen RenderPass → Bloom (Mipmap, Schwelle 1,0) → ACES Filmic. Niedrig/Mittel: nur RenderPass + ein Effekt-Durchgang. Hoch bis Ultra: zusätzlich AoPass, SsrPass, Tiefenunschärfe. Das Hitzeflimmern rechnet im Abschluss-Durchgang mit (ein Vollbild-Durchgang weniger). AO, Spiegelungen, Tiefenunschärfe, Konturen und Farbkorrektur bleiben erhalten (Vorgabe aus CLAUDE.md).
+- `guardBloom`: Der Helligkeitsfilter des Bloom verwirft NaN/Unendlich und begrenzt die Helligkeit (ein einzelner ungültiger Bildpunkt wurde sonst als schwarzer Block verschmiert).
+- `render/shaderLog.ts`: filtert nur die harmlose Notiz X4122 aus three.js' eigenem PMREM-Shader; alle anderen Meldungen bleiben.
+- Kamera: `CAMERA_PLANES` (0,1 / 1000) in `data/qualityTiers.ts`. Himmels-Schwelle der Tiefen-Effekte 0,9999 → 0,999999 (`SKY_DEPTH`; die alte Schwelle hätte bei den neuen Ebenen alles ab 500 m als Himmel gewertet). Sonne in 900 m Abstand (gleiche scheinbare Größe), Meer und Wolken werden an die Fernebene gelegt statt abgeschnitten, Höhennebel schließt sich am Ende der Sichtweite ganz.
+- Neue Stufenwerte: `figureDistance` (Zeichenweite der Figuren, unverändert zu vorher), `fogStart`.
+- Geänderte Dateien: `render/renderer.ts`, `render/gtao.ts`, `render/ssr.ts`, `render/heat.ts`, `render/outline.ts`, `render/atmosphere.ts`, `render/depthGlsl.ts` (neu), `render/shaderLog.ts` (neu), `data/qualityTiers.ts`, `world/seaWorld.ts`, `world/environment.ts`, `world/sky.ts`, `world/ocean.ts`.
+- Geprüft (RTX 5070 Ti, ANGLE/Direct3D 11): alle 171 Shader-Programme frisch übersetzt – nur noch die PMREM-Notiz; alle fünf Stufen auf See mit stehendem Bild identisch von Bild zu Bild, keine schwarzen Bildpunkte; Stadt auf Ultra vorher/nachher verglichen. Noch nicht geprüft: Regen/Pfützen, Nacht, Sturm, Hitzeflimmern im Kampf, Sonnenstrahlen, Handy-Einstellung, Hochformat.
+
 ## 2.9.25 – Mantel oben geschlossen und schlank (10.11.2026)
 
 - **Mantel rundum geschlossen:** Oben fehlte vorn, hinten und an den Seiten ein Streifen, weil der Mantel 1,5 cm unter dem Halsansatz aufhörte. Die Schulterpartie des Körpers liegt aber genau auf dieser Höhe. Jetzt reicht der Mantel bis über die Schultern. Hals und Kopf bleiben frei.

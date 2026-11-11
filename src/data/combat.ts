@@ -98,6 +98,22 @@ export const STYLE_ATTACKS: Record<StyleId, StyleAttacks> = {
   },
 };
 
+/**
+ * Kombo-Abschluss je Kampfstil: Leicht → Leicht → Schwer löst statt des normalen schweren Hiebs diesen Finisher aus
+ * (eigener Clip, größere Reichweite, mehr Wucht). Die Effekte (Schockring, Impact-Frame) setzt PlayerFoot.
+ */
+export const FINISHERS: Record<StyleId, AttackDef> = {
+  faust: A({ clip: 'Melee_2H_Attack_Spin', speed: 1.45, hitStart: 0.2, hitEnd: 0.75, range: 2.8, arc: 6.3, dmg: 1.9, poise: 32, knock: 11, launch: 8, fx: 'spin', hitstop: 0.11, shake: 0.55, lunge: 1, smearTilt: 0 }),
+  saebel: A({ clip: 'Melee_2H_Attack_Slice', speed: 1.2, hitStart: 0.32, hitEnd: 0.55, range: 3.2, arc: 3.4, dmg: 2.1, poise: 34, knock: 9, launch: 5, fx: 'heavy', hitstop: 0.12, shake: 0.55, lunge: 4, smearTilt: 0.9 }),
+  langklinge: A({ clip: 'Melee_2H_Attack_Spin', speed: 1.25, hitStart: 0.2, hitEnd: 0.75, range: 3.8, arc: 6.3, dmg: 2.3, poise: 36, knock: 11, fx: 'spin', hitstop: 0.11, shake: 0.5, smearTilt: 0 }),
+  zweihaender: A({ clip: 'Melee_2H_Attack_Spin', speed: 1.1, hitStart: 0.2, hitEnd: 0.75, range: 4.0, arc: 6.3, dmg: 3.2, poise: 55, knock: 13, fx: 'spin', hitstop: 0.14, shake: 0.8, smearTilt: 0 }),
+  doppel: A({ clip: 'Melee_2H_Attack_Spinning', speed: 1.2, hitStart: 0.1, hitEnd: 0.85, range: 3.0, arc: 6.3, dmg: 2.2, poise: 28, knock: 10, fx: 'spin', hitstop: 0.1, shake: 0.5, smearTilt: 0 }),
+  effekt: A({ clip: 'Ranged_Magic_Spellcasting', speed: 1.1, hitStart: 0.45, hitEnd: 0.62, range: 6, arc: 6.3, dmg: 2.4, poise: 40, knock: 12, launch: 7, fx: 'magic', hitstop: 0.12, shake: 0.6, lunge: 0 }),
+};
+
+/** Ausdauer der Spielfigur: Rolle und schwere Hiebe kosten, danach lädt sie nach kurzer Pause wieder auf */
+export const STAMINA = { max: 100, regen: 32, regenIdle: 48, delay: 0.55, roll: 18, heavy: 14, finisher: 20, need: 6, swap: 8 };
+
 /** Grundwerte der Spielfigur (aus 1.0) */
 export const PLAYER_BASE = {
   hp: (lvl: number) => 100 + (lvl - 1) * 14,
@@ -112,8 +128,23 @@ export const PLAYER_BASE = {
 
 export type EnemyKind = 'matrose' | 'schildtraeger' | 'musketier' | 'schlaeger' | 'fajiwirker' | 'hauptmann' | 'legende';
 
+/** Form einer Warnfläche am Boden (rot, füllt sich bis zum Einschlag) */
+export type ZoneShape = 'circle' | 'ring' | 'line' | 'cone';
+
+/**
+ * Warnfläche eines Gegnerangriffs. size: Radius (Kreis, Ring, Kegel) bzw. Länge (Linie).
+ * Ring: inner = Innenradius (dort ist man sicher). Linie: width. Kegel: arc = Öffnungswinkel (Bogenmaß).
+ * at 'self': am Gegner, Richtung beim Ausholen. at 'player': dort, wo der Spieler beim Ausholen steht.
+ * turn dreht die Fläche (Bogenmaß, z. B. π/2 für den zweiten Arm eines Kreuzes). extra: Sekunden zwischen Ausholen und Einschlag.
+ */
+export interface ZoneSpec { shape: ZoneShape; size: number; inner?: number; width?: number; arc?: number; at?: 'self' | 'player'; turn?: number; extra?: number }
+
 export interface EnemyAttack {
   clip: string;
+  /** Warnflächen (Boss-Angriffe): der Schaden kommt beim Einschlag der Fläche, nicht über den Hieb */
+  zones?: ZoneSpec[];
+  /** Anzeigename, der beim Ausholen über dem Boss erscheint (nur Bosse) */
+  label?: string;
   speed: number;
   /** Ausholen (Warnzeichen) vor dem Treffer in Sekunden */
   windup: number;
@@ -148,7 +179,24 @@ export interface EnemyDef {
   gold: [number, number];
   elite?: boolean;
   boss?: boolean;
+  /**
+   * Boss: Angriffe ab Phase 2 und 3 (ersetzen die Angriffe der Phase davor). Der Wechsel geschieht bei den Lebensanteilen
+   * in BOSS.phaseAt und beginnt mit einer kurzen Unverwundbarkeit (Brüllen, Schockring).
+   */
+  phaseAttacks?: { 2?: EnemyAttack[]; 3?: EnemyAttack[] };
 }
+
+/** Boss-Mechanik: Lebensanteile der Phasenwechsel, Dauer der Wechsel und des „Break“-Zustands (Haltebalken leer) */
+export const BOSS = {
+  /** Phase 2 beginnt unter diesem Lebensanteil, Phase 3 unter dem zweiten */
+  phaseAt: [0.6, 0.3] as [number, number],
+  transition: 2.1,
+  /** Break: so lange taumelt der Boss und nimmt mehr Schaden */
+  breakTime: 3.2,
+  breakDmg: 1.5,
+  /** Haltebalken lädt sich auf, wenn der Boss 3 s nicht getroffen wurde (pro Sekunde, Anteil vom Maximum) */
+  breakRegen: 0.06,
+};
 
 const EA = (o: Partial<EnemyAttack> & Pick<EnemyAttack, 'clip'>): EnemyAttack => ({
   speed: 1, windup: 0.45, hitAt: 0.42, range: 2.2, arc: 1.8, dmg: 1, knock: 4, fx: 'slash', ...o,
@@ -197,6 +245,23 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
       EA({ clip: 'Melee_2H_Attack_Spin', speed: 1.3, windup: 0.6, range: 3.6, arc: 6.3, knock: 9, fx: 'spin' }),
       EA({ clip: 'Ranged_Magic_Raise', speed: 1.2, windup: 0.8, hitAt: 0.5, range: 22, arc: 6.3, aoe: { radius: 5, delay: 1.2 }, knock: 10, fx: 'magic' }),
     ],
+    // Phase 2 (unter 60 %): Warnflächen in allen Formen. Phase 3 (unter 30 %): dazu Kreuzschlag und Zornring.
+    phaseAttacks: {
+      2: [
+        EA({ label: 'Lanzenstoß', clip: 'Melee_2H_Attack_Stab', speed: 1.1, windup: 0.75, range: 12, arc: 1, dmg: 1.2, knock: 8, fx: 'stab', zones: [{ shape: 'line', size: 11, width: 2.4 }] }),
+        EA({ label: 'Sturmschlag', clip: 'Melee_2H_Attack_Slice', speed: 1.1, windup: 0.7, range: 7, arc: 2.2, dmg: 1.1, knock: 8, zones: [{ shape: 'cone', size: 6.5, arc: 2.0 }] }),
+        EA({ label: 'Schlachtruf', clip: 'Ranged_Magic_Raise', speed: 1.1, windup: 1.0, range: 10, arc: 6.3, dmg: 1.1, knock: 10, fx: 'magic', zones: [{ shape: 'ring', size: 9, inner: 3.4 }] }),
+        EA({ label: 'Himmelsfall', clip: 'Ranged_Magic_Raise', speed: 1.2, windup: 0.8, range: 22, arc: 6.3, dmg: 1.2, knock: 10, fx: 'magic', zones: [{ shape: 'circle', size: 5, at: 'player', extra: 1.1 }] }),
+        EA({ clip: 'Melee_2H_Attack_Spin', speed: 1.25, windup: 0.6, range: 3.6, arc: 6.3, knock: 9, fx: 'spin' }),
+      ],
+      3: [
+        EA({ label: 'Kreuzschlag', clip: 'Melee_2H_Attack_Chop', speed: 1.1, windup: 0.9, range: 13, arc: 1, dmg: 1.3, knock: 9, fx: 'heavy', zones: [{ shape: 'line', size: 12, width: 2.2 }, { shape: 'line', size: 12, width: 2.2, turn: Math.PI / 2 }] }),
+        EA({ label: 'Zornring', clip: 'Ranged_Magic_Raise', speed: 1.1, windup: 1.1, range: 13, arc: 6.3, dmg: 1.3, knock: 11, fx: 'magic', zones: [{ shape: 'circle', size: 3 }, { shape: 'ring', size: 12, inner: 6 }] }),
+        EA({ label: 'Lanzenstoß', clip: 'Melee_2H_Attack_Stab', speed: 1.2, windup: 0.6, range: 12, arc: 1, dmg: 1.3, knock: 8, fx: 'stab', zones: [{ shape: 'line', size: 11, width: 2.4 }, { shape: 'line', size: 11, width: 2.4, turn: 0.55 }, { shape: 'line', size: 11, width: 2.4, turn: -0.55 }] }),
+        EA({ label: 'Himmelsfall', clip: 'Ranged_Magic_Raise', speed: 1.3, windup: 0.7, range: 22, arc: 6.3, dmg: 1.3, knock: 10, fx: 'magic', zones: [{ shape: 'circle', size: 4.5, at: 'player', extra: 0.9 }] }),
+        EA({ clip: 'Melee_2H_Attack_Spin', speed: 1.35, windup: 0.5, range: 3.8, arc: 6.3, knock: 10, fx: 'spin' }),
+      ],
+    },
   },
 };
 

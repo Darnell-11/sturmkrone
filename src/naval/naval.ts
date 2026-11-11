@@ -113,6 +113,10 @@ export class NavalSystem {
   private crates: Crate[] = [];
   private spawnT = 20;
   private ballGeo = new SphereGeometry(0.3, 8, 6);
+  // Beutekisten und Brandkugeln teilen sich Netz und Material (vorher je Stück neu angelegt und nie freigegeben)
+  private crateGeo = new BoxGeometry(1.2, 0.9, 1.2);
+  private shardMat = new MeshBasicMaterial({ color: new Color(1.6, 0.9, 2.6) });
+  private fireMat = new MeshBasicMaterial({ color: new Color(4, 1.6, 0.4) });
   // Zielfächer wie in 1.0: hell links und rechts, rot, sobald ein Gegner darin ist
   private fanGroup = new Group();
   private fans: Mesh[] = [];
@@ -304,7 +308,7 @@ export class NavalSystem {
   }
 
   private spawnBall(pos: Vector3, vel: Vector3, owner: Ship, dmg: number, ammo: AmmoId) {
-    const mat = ammo === 'brand' ? new MeshBasicMaterial({ color: new Color(4, 1.6, 0.4) }) : toon({ color: AMMO[ammo].color, spec: 1 });
+    const mat = ammo === 'brand' ? this.fireMat : toon({ color: AMMO[ammo].color, spec: 1 });
     const m = new Mesh(this.ballGeo, mat);
     m.position.copy(pos);
     this.scene.add(m);
@@ -728,7 +732,7 @@ export class NavalSystem {
   }
 
   private spawnCrate(x: number, z: number, gold: number, shard: boolean) {
-    const m = new Mesh(new BoxGeometry(1.2, 0.9, 1.2), shard ? new MeshBasicMaterial({ color: new Color(1.6, 0.9, 2.6) }) : toon('#8A5A2B'));
+    const m = new Mesh(this.crateGeo, shard ? this.shardMat : toon('#8A5A2B'));
     m.position.set(x, 0, z);
     this.scene.add(m);
     this.crates.push({ mesh: m, x, z, gold, shard, t: 0 });
@@ -1103,7 +1107,7 @@ export class NavalSystem {
     this.balls = [];
     for (const c of this.crates) c.mesh.removeFromParent();
     this.crates = [];
-    for (const w of this.waves) { w.mesh.removeFromParent(); w.mesh.geometry.dispose(); }
+    for (const w of this.waves) { w.mesh.removeFromParent(); w.mesh.geometry.dispose(); (w.mesh.material as MeshBasicMaterial).dispose(); }
     this.waves = [];
   }
 }

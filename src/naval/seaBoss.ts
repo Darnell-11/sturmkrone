@@ -4,9 +4,10 @@ import { toon } from '../render/toon';
 import type { Ship } from '../entities/ship/ship';
 import { disposeObject } from '../render/dispose';
 import { keepIf } from '../core/arrays';
+import { WORLD_SCALE } from '../data/world';
 
 /** Lage des Tiefenschlunds im Schlundriff */
-export const ABYSS_LAIR = { x: -1607, z: 522 };
+export const ABYSS_LAIR = { x: -1607 * WORLD_SCALE, z: 522 * WORLD_SCALE };
 
 export interface SeaBossHooks {
   shake(a: number): void;

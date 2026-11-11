@@ -21,6 +21,13 @@ export interface ShipClass {
   decks: number;
 }
 
+/**
+ * Tempo-Faktor aller Schiffe auf See (eigene und feindliche, damit Verfolgung und Flucht gleich bleiben).
+ * 2.9.27: Die Welt wurde doppelt so weit, die Fahrten zu lang – darum 30 % schneller.
+ * 2.9.47: Auf 0,95 gesenkt: 1,3 war bei einer 18-m-Schaluppe über 50 Knoten und ließ das Wasser wie einen Fluss vorbeiziehen.
+ */
+export const SEA_SPEED = 0.95;
+
 // Größer als in 1.0: schon die Schaluppe wirkt wie ein echtes Schiff, späte Klassen sind gewaltig
 export const SHIP_CLASSES: ShipClass[] = [
   { id: 'schaluppe', n: 'Schaluppe', L: 18, W: 5.8, mh: 13, masts: [0.06], hp: 120, can: 2, spd: 22, crew: 2, price: 0, rank: 0, decks: 1 },

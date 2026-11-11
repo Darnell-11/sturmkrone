@@ -1,8 +1,9 @@
 // Handgemachte Regionen: die Bernsteinsee in der Mitte, fünf weitere Meere im Ring bis zum Weltrand.
+import { WORLD_SCALE } from './world';
 
 export type IslandKind = 'town' | 'harbor' | 'camp' | 'ruin' | 'quiet' | 'treasure' | 'lighthouse' | 'boss';
 /** Aussehen der Inseln einer Region */
-export type IslandStyle = 'tropisch' | 'nebel' | 'nord' | 'glut' | 'sturm' | 'schlund';
+export type IslandStyle = 'tropisch' | 'nebel' | 'nord' | 'glut' | 'sturm' | 'schlund' | 'festland' | 'klippe';
 
 export interface IslandDef {
   id: string;
@@ -23,6 +24,12 @@ export interface IslandDef {
   boss?: string;
   /** Region (wird beim Aufbau gesetzt) */
   region?: string;
+  /** Eigenes Biom (sonst das der Region): Boden, Pflanzen, Felsen */
+  biome?: IslandStyle;
+  /** Handgebaute Siedlung und Landform aus data/settlements.ts */
+  site?: string;
+  /** Lage und Größe sind schon endgültig (neue Länder): nicht mit der Welt skalieren, Größe nicht würfeln */
+  placed?: boolean;
 }
 
 export interface RegionDef {
@@ -138,6 +145,27 @@ export const SCHLUNDRIFF: RegionDef = {
 };
 
 export const REGIONS: RegionDef[] = [BERNSTEINSEE, NEBELARCHIPEL, NORDWACHT, GLUTRING, STURMGUERTEL, SCHLUNDRIFF];
+
+/**
+ * Die Welt wächst mit WORLD_SCALE: Regionen und Inseln rücken vom Weltmittelpunkt aus auseinander, die Anordnung
+ * (wer liegt neben wem, welche Insel in welchem Meer) bleibt erhalten. Ankerglück bleibt als Heimathafen an seinem Platz –
+ * Startpunkt, Steg und Stadtplan hängen daran.
+ */
+for (const r of REGIONS) {
+  r.x *= WORLD_SCALE; r.z *= WORLD_SCALE; r.r *= WORLD_SCALE;
+  for (const i of r.islands) if (i.kind !== 'town') { i.x *= WORLD_SCALE; i.z *= WORLD_SCALE; }
+}
+
+/**
+ * Neue Länder im frei gewordenen Meer der Bernsteinsee (Lage in fertigen Weltkoordinaten):
+ * das Festland Grünmark südlich von Ankerglück und drei Inseln mit eigenem Biom. Form, Bauten und Bewuchs: data/settlements.ts.
+ */
+BERNSTEINSEE.islands.push(
+  { id: 'gruenmark', name: 'Grünmark', x: -40, z: -650, r: 270, hill: 0.1, kind: 'quiet', palms: 0, rocks: 0, biome: 'festland', site: 'gruenmark', placed: true, info: 'Das Festland der Bernsteinsee: Weiden, Laubwälder, das Dorf Weidenbrück und ein alter Wachturm auf dem Hügel.' },
+  { id: 'palmenkueste', name: 'Palmenküste', x: 720, z: -900, r: 105, hill: 0.1, kind: 'quiet', palms: 0, rocks: 0, biome: 'tropisch', site: 'palmenkueste', placed: true, info: 'Weißer Sand, schiefe Palmen und ein Fischerdorf aus Holzhütten auf Stelzen.' },
+  { id: 'sturmklippe', name: 'Sturmklippe', x: -900, z: -1060, r: 95, hill: 0.22, kind: 'quiet', palms: 0, rocks: 0, biome: 'klippe', site: 'sturmklippe', placed: true, info: 'Schwarze Basaltsäulen im Wind. Zwischen den Ruinen einer alten Warte hält ein einsamer Turm Ausschau.' },
+  { id: 'faehrholm', name: 'Fährholm', x: -520, z: -270, r: 68, hill: 0.12, kind: 'quiet', palms: 0, rocks: 0, biome: 'festland', site: 'faehrholm', placed: true, info: 'Ein Hirtenhof zwischen Steinmauern und Zäunen. Von hier setzt die Fähre zum Festland über.' },
+);
 for (const r of REGIONS) for (const i of r.islands) i.region = r.id;
 
 /**
@@ -157,9 +185,12 @@ function nameHash(id: string): number {
 export const ISLAND_REACH = 1.45;
 {
   const all = REGIONS.flatMap((r) => r.islands);
+  // Mit der größeren Welt wachsen auch die alten Inseln ein Stück mit (die Stadt behält ihren Stadtplan)
+  const grow = 1 + (WORLD_SCALE - 1) * 0.25;
   for (const i of all) {
+    if (i.placed) continue;
     const [lo, hi] = SIZE_BY_KIND[i.kind];
-    i.r = Math.round(i.r * (lo + nameHash(i.id) * (hi - lo)));
+    i.r = Math.round(i.r * (lo + nameHash(i.id) * (hi - lo)) * (i.kind === 'town' ? 1 : grow));
   }
   for (let pass = 0; pass < 6; pass++) {
     for (let a = 0; a < all.length; a++) for (let b = a + 1; b < all.length; b++) {
@@ -168,8 +199,8 @@ export const ISLAND_REACH = 1.45;
       const d = Math.hypot(A.x - B.x, A.z - B.z);
       if (d >= need) continue;
       const k = Math.max(0.6, (d - 50) / ((A.r + B.r) * ISLAND_REACH));
-      if (A.kind !== 'town') A.r = Math.round(A.r * k);
-      if (B.kind !== 'town') B.r = Math.round(B.r * k);
+      if (A.kind !== 'town' && !A.placed) A.r = Math.round(A.r * k);
+      if (B.kind !== 'town' && !B.placed) B.r = Math.round(B.r * k);
     }
   }
 }
@@ -191,9 +222,9 @@ export function seaLevelAt(x: number, z: number): number {
   const reg = regionAt(x, z);
   if (reg === BERNSTEINSEE) {
     const home = BERNSTEINSEE.islands[0];
-    return Math.max(1, Math.min(4, 1 + Math.floor(Math.hypot(x - home.x, z - home.z) / 260)));
+    return Math.max(1, Math.min(4, 1 + Math.floor(Math.hypot(x - home.x, z - home.z) / (260 * WORLD_SCALE))));
   }
-  const out = Math.max(0, Math.min(2, Math.floor((Math.hypot(x, z) - 1150) / 280)));
+  const out = Math.max(0, Math.min(2, Math.floor((Math.hypot(x, z) - 1150 * WORLD_SCALE) / (280 * WORLD_SCALE))));
   return (reg.level ?? 1) + out;
 }
 

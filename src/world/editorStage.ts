@@ -57,6 +57,9 @@ export class EditorStage {
     key.position.set(3, 5, 4);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
+    // ohne Versatz wirft die Kleidung Streifen auf sich selbst (Schatten-Akne)
+    key.shadow.bias = -0.0004;
+    key.shadow.normalBias = 0.02;
     const sc = key.shadow.camera;
     sc.left = -2; sc.right = 2; sc.top = 3; sc.bottom = -1; sc.near = 1; sc.far = 15;
     const back = new DirectionalLight(0x9fd8ff, 1.2);

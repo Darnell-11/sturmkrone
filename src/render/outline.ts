@@ -2,6 +2,7 @@ import {
   BackSide,
   BufferAttribute,
   Color,
+  InstancedMesh,
   Mesh,
   ShaderMaterial,
   SkinnedMesh,
@@ -13,7 +14,8 @@ import {
 } from 'three';
 import { BlendFunction, Effect, EffectAttribute } from 'postprocessing';
 import { markShared, onForget } from './dispose';
-import { WIND_PARS, windShared } from './wind';
+import { WIND_PARS, WIND_VERTEX, windShared } from './wind';
+import { SKY_DEPTH } from './depthGlsl';
 
 export const INK = new Color(0x1b1410);
 
@@ -56,8 +58,13 @@ const hullMaterial = new ShaderMaterial({
       #include <skinnormal_vertex>
       vec3 transformed = position;
       #include <skinning_vertex>
-      { vec4 skWw = modelMatrix * vec4(transformed, 1.0); transformed += skWind(transformed, skWw.xyz, aWind); }
-      vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
+      ${WIND_VERTEX}
+      vec4 skHullPos = vec4(transformed, 1.0);
+      #ifdef USE_INSTANCING
+        skHullPos = instanceMatrix * skHullPos;
+        objectNormal = mat3(instanceMatrix) * objectNormal;
+      #endif
+      vec4 mvPosition = modelViewMatrix * skHullPos;
       vec3 n = normalize(normalMatrix * objectNormal);
       // Konstante Linienbreite auf dem Bildschirm, nah begrenzt
       float w = uWidth * clamp(-mvPosition.z * 0.0032, 0.012, 0.6);
@@ -133,6 +140,12 @@ export function addOutlines(root: Object3D, width = 1) {
       sm.bind((m as SkinnedMesh).skeleton, (m as SkinnedMesh).bindMatrix);
       sm.frustumCulled = m.frustumCulled;
       h = sm;
+    } else if ((m as InstancedMesh).isInstancedMesh) {
+      // instanzierter Bewuchs: die Kontur teilt sich die Instanzmatrizen mit dem Netz
+      const im = new InstancedMesh(m.geometry, mat, (m as InstancedMesh).count);
+      im.instanceMatrix = (m as InstancedMesh).instanceMatrix;
+      im.boundingSphere = (m as InstancedMesh).boundingSphere;
+      h = im;
     } else h = new Mesh(m.geometry, mat);
     h.userData.noOutline = true;
     h.castShadow = false;
@@ -181,7 +194,9 @@ const EDGE_FRAG = /* glsl */ `
     // Wasser (Alpha 0, siehe ocean.ts) bekommt keine Linien – sonst zeichnen Wellenkämme Striche
     // Alpha aus dem unbearbeiteten Szenenbild lesen: Bloom/Tonemapping im selben Durchgang verändern inputColor.a
     float srcA = texture2D(inputBuffer, uv).a;
-    if (depth >= 0.9999 || srcA < 0.5 || inputColor.a < 0.5) edge = 0.0;
+    if (depth >= ${SKY_DEPTH} || srcA < 0.5 || inputColor.a < 0.5) edge = 0.0;
+    // Figuren (Alpha 0,98, siehe toon.ts) zeichnen ihre Ränder mit Licht statt mit Tusche
+    if (abs(srcA - 0.98) < 0.012) edge = 0.0;
     outputColor = vec4(mix(inputColor.rgb, edgeColor, edge * strength), inputColor.a);
   }
 `;

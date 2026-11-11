@@ -1,7 +1,7 @@
 import { MathUtils, Vector3, type AnimationAction } from 'three';
 import type { Input } from '../../core/input/input';
 import { STYLE_ANIMS, type StyleId } from '../../data/animations';
-import { PLAYER_BASE, STYLE_ATTACKS, type AttackDef } from '../../data/combat';
+import { FINISHERS, PLAYER_BASE, STAMINA, STYLE_ATTACKS, type AttackDef } from '../../data/combat';
 import type { CombatSystem, PlayerTarget } from '../../combat/combat';
 import type { CombatFx } from '../../combat/fx';
 import type { CombatOverlay } from '../../ui/combatOverlay';
@@ -35,6 +35,8 @@ export interface FootDeps {
   fx: CombatFx | null;
   overlay: CombatOverlay | null;
   onDown: () => void;
+  /** Waffe gewechselt: neue Waffen in die Hände, Fähigkeiten-Werte neu rechnen */
+  onSwap?: (style: StyleId) => void;
 }
 
 /** Steuerung und Kampf zu Fuß. */
@@ -57,6 +59,8 @@ export class PlayerFoot implements PlayerTarget {
   dmgMult = 1;
   /** Schadensreduktion 0 … 0,85, Ausweichchance, Tempo, Unverwundbarkeit (Fähigkeiten) */
   reduce = 0;
+  /** Schadensminderung durch Ausrüstung und Stärkungen (zusätzlich zu den Faji-Passiven) */
+  gearReduce = 0;
   dodgeChance = 0;
   speedMult = 1;
   invuln = false;
@@ -88,6 +92,24 @@ export class PlayerFoot implements PlayerTarget {
   private flip = false;
   private kx = 0;
   private kz = 0;
+  /** Gemessenes, geglättetes Lauftempo (m/s) für die Schrittgeschwindigkeit */
+  private realSpeed = 0;
+  /** Ausdauer (Rolle, schwere Hiebe); staminaPause = Sekunden bis zum Aufladen, staminaFlash = Anzeige „zu wenig“ */
+  stamina = STAMINA.max;
+  readonly maxStamina = STAMINA.max;
+  private staminaPause = 0;
+  staminaFlash = 0;
+  /** Art des laufenden Hiebs: leicht (Kombo), schwer oder Kombo-Finisher */
+  private kind: 'light' | 'heavy' | 'finisher' = 'light';
+  private finFx = false;
+  /** Wechsel-Abklingzeit und Schadensfaktor des laufenden Hiebs (Wechselschlag) */
+  private swapCd = 0;
+  private swMult = 1;
+
+  private spend(cost: number) {
+    this.stamina = Math.max(0, this.stamina - cost);
+    this.staminaPause = STAMINA.delay;
+  }
 
   constructor(private char: Character, public style: StyleId, private deps: FootDeps) {}
 
@@ -101,6 +123,45 @@ export class PlayerFoot implements PlayerTarget {
     this.state = 'move';
     this.locomotion = '';
     this.kx = this.kz = 0;
+    this.realSpeed = 0;
+    this.stamina = STAMINA.max;
+    this.combo = 0;
+  }
+
+  /**
+   * Waffenwechsel. Aus Ruhe oder Lauf: die Waffen wechseln sofort, ein Ring und Funken zeigen es an.
+   * Mitten in der Kombo (Schlag läuft oder Kombo-Fenster offen): Wechselschlag – der nächste Hieb der neuen Waffe
+   * setzt ohne Pause an (kurze Überblendung), trifft 1,6-fach und führt die Kombo mit der neuen Waffe weiter.
+   * Gibt zurück, ob gewechselt wurde.
+   */
+  swapTo(style: StyleId, yawHint: number | null): boolean {
+    if (!this.active || this.swapCd > 0 || this.state === 'roll' || this.state === 'hurt' || this.state === 'charge') return false;
+    if (style === this.style) return false;
+    if (this.stamina < STAMINA.need) { this.staminaFlash = 0.35; return false; }
+    const mid = this.state === 'attack' || (this.comboWindow > 0 && this.combo > 0);
+    this.spend(STAMINA.swap);
+    this.swapCd = 0.4;
+    this.style = style;
+    this.deps.onSwap?.(style);
+    const at = new Vector3(this.x, this.y, this.z);
+    this.deps.fx?.puffColor(at.clone().setY(this.y + 1.1), STYLE_COLOR[style]);
+    if (!mid) {
+      this.deps.fx?.shockwave(at.clone().setY(this.y + 0.1), 1.6, STYLE_COLOR[style]);
+      this.deps.overlay?.number(new Vector3(this.x, this.y + 2.3, this.z), 'Waffe gewechselt', 'info');
+      return true;
+    }
+    const atks = STYLE_ATTACKS[style];
+    const def = atks.combo[this.combo % atks.combo.length];
+    this.buf.attack = -1;
+    this.comboQueued = false;
+    this.chaining = true;
+    this.combo = Math.min(this.combo + 1, 2);
+    this.comboWindow = 0.9;
+    this.startAttack(def, yawHint ?? this.yaw, 'light', 1.6);
+    this.deps.fx?.shockwave(at.clone().setY(this.y + 0.1), 2.4, STYLE_COLOR[style]);
+    this.deps.overlay?.number(new Vector3(this.x, this.y + 2.3, this.z), 'Wechselschlag!', 'crit');
+    this.deps.overlay?.speedlines(0.6);
+    return true;
   }
 
   /** Volle Heilung (nach K.O. oder Rast) */
@@ -123,7 +184,7 @@ export class PlayerFoot implements PlayerTarget {
     if (!this.active) return 'dodged';
     if (this.iframes > 0 || this.invuln) return 'dodged';
     if (Math.random() < this.dodgeChance) return 'dodged';
-    dmg *= 1 - Math.min(0.85, this.reduce);
+    dmg *= 1 - Math.min(0.85, this.reduce + this.gearReduce);
     if (this.state === 'block') {
       // Von vorn? Dann Block bzw. perfekte Parade
       const facing = Math.sin(this.yaw) * -dirX + Math.cos(this.yaw) * -dirZ;
@@ -179,9 +240,14 @@ export class PlayerFoot implements PlayerTarget {
     const pv = this.prev;
     pv.x = this.x; pv.z = this.z; pv.y = this.y; pv.yaw = this.yaw;
     this.iframes -= dt;
+    this.swapCd -= dt;
     this.comboWindow -= dt;
     this.blockSince += dt;
     this.clock += dt;
+    // Ausdauer: nach kurzer Pause laden, im Stand schneller
+    this.staminaFlash = Math.max(0, this.staminaFlash - dt);
+    if (this.staminaPause > 0) this.staminaPause -= dt;
+    else if (this.stamina < STAMINA.max) this.stamina = Math.min(STAMINA.max, this.stamina + dt * (this.state === 'move' && this.realSpeed < 0.5 ? STAMINA.regenIdle : STAMINA.regen));
     // Eingaben puffern: was zu früh kommt (mitten in Rolle, Treffer oder Schlag), wird nachgeholt, sobald es geht
     // Während einer Rolle oder Trefferreaktion zählt die Eingabe ab deren Ende (sonst verfiele sie bei langen Rollen)
     const busy = this.state === 'roll' ? Math.max(0, this.rollT) : this.state === 'hurt' ? Math.max(0, this.hurtT) : 0;
@@ -212,7 +278,10 @@ export class PlayerFoot implements PlayerTarget {
 
     // Eingaben
     // Rolle: auch aus dem Ausschwung eines Schlags, kurz vor Ende einer Trefferreaktion oder direkt nach der letzten Rolle
-    if (wants('dodge') && (canAct || this.state === 'attack' && this.char.progress > 0.45 || this.state === 'hurt' && this.hurtT < 0.15 || this.state === 'roll' && this.rollT < 0.06)) {
+    const canRoll = canAct || this.state === 'attack' && this.char.progress > 0.45 || this.state === 'hurt' && this.hurtT < 0.15 || this.state === 'roll' && this.rollT < 0.06;
+    if (wants('dodge') && canRoll && this.stamina < STAMINA.need) this.staminaFlash = 0.35;
+    if (wants('dodge') && canRoll && this.stamina >= STAMINA.need) {
+      this.spend(STAMINA.roll);
       this.buf.dodge = -1;
       this.buf.attack = this.buf.attack > this.clock - 0.05 ? this.buf.attack : -1;
       this.state = 'roll';
@@ -236,14 +305,32 @@ export class PlayerFoot implements PlayerTarget {
     if (this.state === 'attack' && this.attack && !this.comboQueued && mag > 0.35 && this.char.progress > this.attack.hitEnd + 0.15) {
       this.toMove();
     }
-    if (wants('heavy') && canAct) {
-      this.buf.heavy = -1;
-      this.state = 'charge';
-      this.chargeT = 0;
-      this.yaw = attackYaw;
-      this.aim = aimAt;
-      this.char.playClip(atks.charge.clip, { loop: false, speed: 0.15, fade: FADE.attack, restart: true });
-      this.locomotion = '';
+    // Leicht → Leicht → Schwer: aus dem zweiten Hieb (sobald er „sitzt“) oder kurz danach wird der schwere Hieb zum Finisher
+    const atkNow = this.attack;
+    const finisherReady = this.combo >= 2 && (
+      (this.state === 'attack' && this.kind === 'light' && !!atkNow && this.char.progress > atkNow.hitStart - 0.05)
+      || (canAct && this.comboWindow > 0));
+    if (wants('heavy') && (finisherReady || canAct)) {
+      if (this.stamina < STAMINA.need) this.staminaFlash = 0.35;
+      else if (finisherReady) {
+        this.buf.heavy = -1;
+        this.spend(STAMINA.finisher);
+        this.combo = 0;
+        this.comboWindow = 0;
+        this.comboQueued = false;
+        this.aim = aimAt;
+        this.chaining = true;
+        this.startAttack(FINISHERS[this.style], attackYaw, 'finisher');
+      } else {
+        this.buf.heavy = -1;
+        this.spend(STAMINA.heavy);
+        this.state = 'charge';
+        this.chargeT = 0;
+        this.yaw = attackYaw;
+        this.aim = aimAt;
+        this.char.playClip(atks.charge.clip, { loop: false, speed: 0.15, fade: FADE.attack, restart: true });
+        this.locomotion = '';
+      }
     }
     if (input.pressed('block')) this.blockSince = 0;
     if (canAct) {
@@ -285,7 +372,7 @@ export class PlayerFoot implements PlayerTarget {
         if (!input.down('heavy') || this.chargeT >= CHARGE_TIME) {
           const full = this.chargeT >= CHARGE_TIME * 0.8;
           this.state = 'move';
-          this.startAttack(full ? atks.charge : atks.heavy, this.yaw);
+          this.startAttack(full ? atks.charge : atks.heavy, this.yaw, 'heavy');
           if (full) { this.deps.overlay?.speedlines(1); this.deps.overlay?.showCutin(`${STYLE_ANIMS[this.style].label}!`, STYLE_COLOR[this.style]); }
           this.endAura();
         }
@@ -327,7 +414,8 @@ export class PlayerFoot implements PlayerTarget {
     }
     this.speed = Math.hypot(vx, vz);
     this.applyMove(dt, vx, vz, ground);
-    this.char.lean(this.yaw, this.speed, dt);
+    // Neigung nach dem tatsächlichen Tempo: an einer Wand lehnt sich die Figur nicht ins Leere
+    this.char.lean(this.yaw, Math.min(this.speed, this.realSpeed + 0.3), dt);
     // Lichtschweif an der Waffe: während des Hiebs (vom Ausholen bis kurz nach dem Treffer) und beim Wirken
     {
       const a = this.attack;
@@ -337,14 +425,24 @@ export class PlayerFoot implements PlayerTarget {
     }
     if (this.state === 'move' && this.onFoot) this.char.footsteps(this.x, this.y, this.z);
 
+    // Tatsächliches Tempo (nicht das befohlene): an Wänden oder Hängen laufen die Füße sonst auf der Stelle
+    const moved = dt > 0 ? Math.hypot(this.x - pv.x, this.z - pv.z) / dt : this.speed;
+    this.realSpeed += (Math.min(moved, this.speed * 1.5 + 0.5) - this.realSpeed) * Math.min(1, dt * 18);
+
     if (this.state === 'move') {
-      const want = this.speed < 0.1 ? 'idle' : this.speed > 4 ? 'run' : 'walk';
+      // Schwellen mit Hysterese, damit Gehen/Rennen/Stehen an der Grenze nicht flackern
+      const cur = this.locomotion;
+      const sp = this.realSpeed;
+      const want = cur === 'idle' || cur === ''
+        ? (sp > 0.25 ? (sp > 3.4 ? 'run' : 'walk') : 'idle')
+        : cur === 'run' ? (sp < 2.7 ? (sp < 0.15 ? 'idle' : 'walk') : 'run')
+          : (sp > 3.4 ? 'run' : sp < 0.15 ? 'idle' : 'walk');
       if (want !== this.locomotion) {
         this.locomotion = want;
         if (want === 'idle') this.char.playClip(STYLE_ANIMS[this.style].idle.clip, { loop: true, fade: FADE.idle });
         else this.char.play(want === 'run' ? 'run' : 'walk', { fade: FADE.locomotion });
       }
-      if (want !== 'idle') this.char.setLocoSpeed(this.speed);
+      if (want !== 'idle') this.char.setLocoSpeed(this.realSpeed);
     }
   }
 
@@ -371,9 +469,14 @@ export class PlayerFoot implements PlayerTarget {
     return i;
   }
 
-  private startAttack(def: AttackDef, yaw: number) {
+  private startAttack(def: AttackDef, yaw: number, kind: 'light' | 'heavy' | 'finisher' = 'light', mult = 1) {
+    this.swMult = mult;
     this.state = 'attack';
     this.attack = def;
+    this.kind = kind;
+    this.finFx = false;
+    // schwere Hiebe unterbrechen die Leicht-Kette (der Zähler beginnt neu)
+    if (kind === 'heavy') this.combo = 0;
     this.yaw = yaw;
     this.comboQueued = false;
     this.locomotion = '';
@@ -403,13 +506,25 @@ export class PlayerFoot implements PlayerTarget {
       this.deps.fx?.smear(new Vector3(this.x, this.y + 1.05, this.z), this.yaw, tilt, def.range, def.arc, color, this.flip);
     }
     if (p >= def.hitStart && p <= def.hitEnd && def.projectile) {
-      if (!this.fired) { this.fired = true; this.deps.combat?.shoot(def, this.x, this.y, this.z, this.yaw, this.dmgMult); }
+      if (!this.fired) { this.fired = true; this.deps.combat?.shoot(def, this.x, this.y, this.z, this.yaw, this.dmgMult * this.swMult); }
     } else if (!def.projectile && p >= def.hitStart - SWEEP_LEAD && p <= def.hitEnd + SWEEP_TAIL) {
       // Klingen-Sweep beginnt etwas vor dem Trefferfenster: viele Animationen ziehen die Klinge früher durch,
       // getroffen wird dort, wo sie sichtbar die Trefferzone schneidet
-      this.deps.combat?.swing(this.swingId, def, this.x, this.y, this.z, this.yaw, this.dmgMult, color, this.char, p < def.hitStart || p > def.hitEnd);
+      this.deps.combat?.swing(this.swingId, def, this.x, this.y, this.z, this.yaw, this.dmgMult * this.swMult, color, this.char, p < def.hitStart || p > def.hitEnd);
     }
-    if (p >= def.hitStart && def.fx === 'heavy' && !this.fired && !def.projectile) {
+    // Finisher: Schockring, Bodenrisse, Impact-Frame und Speedlines beim Durchziehen
+    if (this.kind === 'finisher' && !this.finFx && p >= def.hitStart - 0.02) {
+      this.finFx = true;
+      const fx = this.deps.fx;
+      const at = new Vector3(this.x + Math.sin(this.yaw) * 1.2, this.y, this.z + Math.cos(this.yaw) * 1.2);
+      fx?.shockwave(at, def.range * 1.6, color);
+      fx?.crack(at, def.range * 1.3);
+      fx?.sigil(new Vector3(this.x, this.y, this.z), def.range * 1.1, color, 0.9);
+      this.deps.overlay?.impactFrame();
+      this.deps.overlay?.speedlines(1);
+      this.deps.overlay?.finisher();
+    }
+    if (p >= def.hitStart && def.fx === 'heavy' && this.kind !== 'finisher' && !this.fired && !def.projectile) {
       this.fired = true;
       const front = new Vector3(this.x + Math.sin(this.yaw) * 1.6, this.y, this.z + Math.cos(this.yaw) * 1.6);
       this.deps.fx?.shockwave(front, def.range * 1.3, color);

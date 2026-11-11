@@ -17,6 +17,8 @@ import {
  * Wird bei jedem Bild (nicht nur im Logikschritt) abgetastet – dadurch auch bei schnellen Schlägen glatt.
  */
 const N = 24;          // Stützpunkte entlang des Schweifs
+const S = 3;           // Unterteilung je Segment (Catmull-Rom): glatte Bögen auch bei niedriger Bildrate
+const M = (N - 1) * S + 1;
 const MAX_AGE = 0.16;  // so lange zieht das Licht nach (Sekunden)
 
 const VERT = /* glsl */ `
@@ -46,9 +48,11 @@ const FRAG = /* glsl */ `
 
 export class WeaponTrail {
   readonly mesh: Mesh;
-  private pos = new Float32Array(N * 2 * 3);
-  private age = new Float32Array(N * 2);
+  private pos = new Float32Array(M * 2 * 3);
+  private age = new Float32Array(M * 2);
   private samples: { b: Vector3; t: Vector3; time: number }[] = [];
+  private ctl = new Float32Array(N * 6);
+  private ctlAge = new Float32Array(N);
   private head = 0;
   private count = 0;
   private now = 0;
@@ -63,11 +67,11 @@ export class WeaponTrail {
     const geo = new BufferGeometry();
     geo.setAttribute('position', new BufferAttribute(this.pos, 3).setUsage(35048));
     geo.setAttribute('aAge', new BufferAttribute(this.age, 1).setUsage(35048));
-    const side = new Float32Array(N * 2);
-    for (let i = 0; i < N; i++) { side[i * 2] = 0; side[i * 2 + 1] = 1; }
+    const side = new Float32Array(M * 2);
+    for (let i = 0; i < M; i++) { side[i * 2] = 0; side[i * 2 + 1] = 1; }
     geo.setAttribute('aSide', new BufferAttribute(side, 1));
     const idx: number[] = [];
-    for (let i = 0; i < N - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    for (let i = 0; i < M - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
     geo.setIndex(idx);
     this.mat = new ShaderMaterial({
       vertexShader: VERT, fragmentShader: FRAG,
@@ -99,24 +103,43 @@ export class WeaponTrail {
         this.count = Math.min(N, this.count + 1);
       }
     }
-    // Band von alt nach neu aufbauen; der neueste Punkt klebt an der Klinge
+    // Stützpunkte von alt nach neu in Arbeitsfelder (der neueste klebt an der Klinge), dann Catmull-Rom-Unterteilung
     let live = 0;
+    const last = this.samples[(this.head + N - 1) % N];
     for (let k = 0; k < N; k++) {
       const s = this.samples[(this.head - this.count + k + N * 2) % N];
-      const i = k;
-      const a = k < this.count && s.time >= 0 ? (this.now - s.time) / MAX_AGE : 2;
+      const valid = k < this.count && s.time >= 0;
+      const a = valid ? (this.now - s.time) / MAX_AGE : 2;
       if (a < 1) live++;
-      const src = k < this.count ? s : this.samples[(this.head + N - 1) % N];
-      this.pos[i * 6] = src.b.x; this.pos[i * 6 + 1] = src.b.y; this.pos[i * 6 + 2] = src.b.z;
-      this.pos[i * 6 + 3] = src.t.x; this.pos[i * 6 + 4] = src.t.y; this.pos[i * 6 + 5] = src.t.z;
-      this.age[i * 2] = this.age[i * 2 + 1] = Math.min(2, a);
+      const src = valid ? s : last;
+      const o = k * 6;
+      this.ctl[o] = src.b.x; this.ctl[o + 1] = src.b.y; this.ctl[o + 2] = src.b.z;
+      this.ctl[o + 3] = src.t.x; this.ctl[o + 4] = src.t.y; this.ctl[o + 5] = src.t.z;
+      this.ctlAge[k] = Math.min(2, a);
     }
     if (this.active && this.count > 0) {
-      // letzter Stützpunkt genau an der aktuellen Klinge (kein Spalt zwischen Klinge und Licht)
-      const i = Math.min(this.count, N) - 1;
-      this.pos[i * 6] = this.wb.x; this.pos[i * 6 + 1] = this.wb.y; this.pos[i * 6 + 2] = this.wb.z;
-      this.pos[i * 6 + 3] = this.wt.x; this.pos[i * 6 + 4] = this.wt.y; this.pos[i * 6 + 5] = this.wt.z;
-      this.age[i * 2] = this.age[i * 2 + 1] = 0;
+      const i = Math.min(this.count, N) - 1, o = i * 6;
+      this.ctl[o] = this.wb.x; this.ctl[o + 1] = this.wb.y; this.ctl[o + 2] = this.wb.z;
+      this.ctl[o + 3] = this.wt.x; this.ctl[o + 4] = this.wt.y; this.ctl[o + 5] = this.wt.z;
+      this.ctlAge[i] = 0;
+    }
+    for (let k = 0; k < N - 1; k++) {
+      const i0 = Math.max(0, k - 1), i2 = k + 1, i3 = Math.min(N - 1, k + 2);
+      for (let u = 0; u < S; u++) {
+        const t = u / S, t2 = t * t, t3 = t2 * t;
+        const o = (k * S + u) * 6;
+        for (let c = 0; c < 6; c++) {
+          const p0 = this.ctl[i0 * 6 + c], p1 = this.ctl[k * 6 + c], p2 = this.ctl[i2 * 6 + c], p3 = this.ctl[i3 * 6 + c];
+          this.pos[o + c] = 0.5 * (2 * p1 + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (3 * p1 - p0 - 3 * p2 + p3) * t3);
+        }
+        const ag = this.ctlAge[k] + (this.ctlAge[i2] - this.ctlAge[k]) * t;
+        this.age[(k * S + u) * 2] = this.age[(k * S + u) * 2 + 1] = ag;
+      }
+    }
+    {
+      const o = (M - 1) * 6;
+      for (let c = 0; c < 6; c++) this.pos[o + c] = this.ctl[(N - 1) * 6 + c];
+      this.age[(M - 1) * 2] = this.age[(M - 1) * 2 + 1] = this.ctlAge[N - 1];
     }
     this.mesh.visible = live > 1;
     if (!this.mesh.visible && !this.active) this.count = 0;

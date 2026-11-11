@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { defaultProgress } from '../src/core/save/types';
 import { CREW_BY_ID } from '../src/data/crew';
 import { LEGENDS } from '../src/data/legends';
-import { QUESTS, TOWN_NPCS } from '../src/data/quests';
+import { QUESTS, TOWN_NPCS, VILLAGE_NPC_BY_ID } from '../src/data/quests';
 import { REGIONS, regionAt } from '../src/data/regions';
 import { QuestSystem } from '../src/story/questSystem';
 
@@ -10,7 +10,7 @@ const islands = new Set(REGIONS.flatMap((r) => r.islands.map((i) => i.id)));
 
 describe('Aufträge', () => {
   it('verweisen nur auf vorhandene Inseln und Bewohner', () => {
-    const npcs = new Set([...TOWN_NPCS.map((n) => n.id), ...Object.keys(CREW_BY_ID)]);
+    const npcs = new Set([...TOWN_NPCS.map((n) => n.id), ...Object.keys(VILLAGE_NPC_BY_ID), ...Object.keys(CREW_BY_ID)]);
     for (const q of QUESTS) {
       expect(npcs.has(q.giver), `${q.id}: Auftraggeber ${q.giver}`).toBe(true);
       for (const s of q.steps) {

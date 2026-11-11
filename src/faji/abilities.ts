@@ -94,6 +94,7 @@ export class AbilityRunner {
     const dmg = c.power * a.dmg(level);
     const color = ELEMENT_COLORS[a.el];
     if (a.ult) { c.cutin(`${s.n}!`, color); c.speedlines(1); }
+    this.charge(a.el, a.ult ? 0.45 : 0.22);
     switch (a.shape) {
       case 'nova': return this.nova(a, dmg);
       case 'cone': return this.cone(a, dmg);
@@ -140,6 +141,26 @@ export class AbilityRunner {
   private burst(p: Vector3, el: Element, n: number, speed = 5, up = 5) {
     const gravity = el === 'feuer' || el === 'meteor' ? -2 : el === 'gift' || el === 'schatten' ? -0.5 : 8;
     this.ctx.particles.emit(n, p.x, p.y, p.z, { speed, up, life: 0.8, color: col(el, 2.2), gravity, spread: 0.6 });
+  }
+
+  /** Stufe 1 jeder Fähigkeit: Auflade-Siegel am Boden, aufsteigende Funken und Hitzeflimmern um die Figur */
+  private charge(el: Element, dur: number) {
+    const c = this.ctx;
+    const f = this.feet();
+    const seal = c.fx.sigil(f, 3.4, ELEMENT_COLORS[el], dur + 0.3);
+    c.fx.decals.hold(seal, true);
+    const heat = c.fx.heat(f, 2.2, 0.4, dur + 0.4);
+    heat.held = true;
+    const r: Running = { t: 0, done: false, update: (dt) => {
+      r.t += dt;
+      const k = Math.min(1, r.t / dur);
+      const cc = this.ctx.caster;
+      c.fx.decals.move(seal, cc.x, cc.y, cc.z, 3.4 - k * 1.6);
+      heat.x = cc.x; heat.y = cc.y + 0.8; heat.z = cc.z;
+      c.fx.rise(this.ctx.caster as unknown as Vector3, ELEMENT_COLORS[el], 2 + Math.round(k * 4), 1.4 - k * 0.8);
+      if (r.t >= dur) { c.fx.decals.hold(seal, false, 0.25); heat.held = false; heat.t = heat.life - 0.2; r.done = true; }
+    } };
+    this.running.push(r);
   }
 
   private aura(el: Element, dur: number) {

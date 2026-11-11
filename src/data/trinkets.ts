@@ -33,13 +33,14 @@ export const TRINKETS: TrinketDef[] = [
 export const TRINKET_BY_ID: Record<string, TrinketDef> = Object.fromEntries(TRINKETS.map((t) => [t.id, t]));
 
 /** Zufälliger Talisman; min = geringste Seltenheit, luck verschiebt nach oben */
-export function rollTrinket(min: Rarity, luck = 0, owned: string[] = []): TrinketDef | null {
+export function rollTrinket(min: Rarity, luck = 0, owned: string[] = [], exact = false): TrinketDef | null {
   const order: Rarity[] = ['gewoehnlich', 'selten', 'episch', 'legendaer'];
   let i = order.indexOf(min);
   const r = Math.random() + luck;
-  if (r > 0.97) i += 2; else if (r > 0.75) i += 1;
+  // exact: Beute-Säulen stehen mit ihrer Farbe fest, der Inhalt darf nicht höher oder niedriger ausfallen
+  if (!exact) { if (r > 0.97) i += 2; else if (r > 0.75) i += 1; }
   i = Math.min(3, i);
-  for (let k = i; k >= 0; k--) {
+  for (let k = i; k >= (exact ? i : 0); k--) {
     const pool = TRINKETS.filter((t) => t.rarity === order[k] && !owned.includes(t.id));
     if (pool.length) return pool[Math.floor(Math.random() * pool.length)];
   }

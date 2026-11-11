@@ -7,6 +7,7 @@ export type Mood = 'menu' | 'sea' | 'harbor' | 'night' | 'battle' | 'boss' | 'vi
 export type Sfx =
   | 'punch' | 'boom' | 'broadside' | 'splash' | 'hit' | 'heavy' | 'swing' | 'clang' | 'parry' | 'hurt' | 'roll'
   | 'coin' | 'treasure' | 'ui' | 'uiBack' | 'dig' | 'roar' | 'sink' | 'crack' | 'level' | 'win' | 'quest' | 'eat'
+  | 'fanfareRare' | 'fanfareEpic' | 'fanfareLegend' | 'victory' | 'switch'
   | 'bell' | 'horn' | 'thunder' | 'shard' | 'ko' | 'board' | 'sail' | 'whoosh' | 'crit' | 'cutin' | 'step';
 
 /** Weltposition eines Klangs (y optional: sonst etwa Bodenhöhe beim Hörer) */
@@ -155,6 +156,7 @@ class AudioEngine {
     const d = nb.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     this.noiseBuf = nb;
+    setTimeout(() => this.prewarm(), 800);
     // Großer Hall für die Musik (erzeugte Raumantwort: wie ein Orchester in einer weiten Halle)
     const conv = c.createConvolver();
     conv.buffer = this.impulse(3.2, 2.6);
@@ -465,6 +467,30 @@ class AudioEngine {
 
   // ---------- Soundeffekte ----------
 
+  /**
+   * Klänge vorwärmen: jeden wichtigen Effekt einmal fast lautlos abspielen, damit Filter, Hüllkurven und Rauschpuffer
+   * schon im Speicher sind (verhindert das Stocken beim ersten Treffer, Schuss oder Fanfarenklang). Verteilt über
+   * viele Bilder, damit es selbst nichts verursacht. Läuft einmal, sobald der Browser Klang erlaubt.
+   */
+  prewarm() {
+    if (this.warmed) return;
+    // der Browser startet den Klang manchmal erst einen Moment nach dem ersten Tippen
+    if (!this.running) { if (this.warmTries++ < 10) setTimeout(() => this.prewarm(), 500); return; }
+    this.warmed = true;
+    const list: Sfx[] = ['punch', 'hit', 'heavy', 'swing', 'clang', 'parry', 'hurt', 'roll', 'step', 'whoosh', 'crit', 'boom', 'broadside', 'splash', 'crack', 'coin', 'shard', 'ui', 'uiBack',
+      'level', 'win', 'quest', 'cutin', 'bell', 'horn', 'board', 'sail', 'sink', 'roar', 'thunder', 'eat', 'switch', 'fanfareRare', 'fanfareEpic', 'fanfareLegend', 'victory'];
+    let i = 0;
+    const next = () => {
+      if (i >= list.length) return;
+      try { this.play(list[i++], 0.0001); } catch { /* ein Klang darf das Vorwärmen nicht stoppen */ }
+      setTimeout(next, 35);
+    };
+    setTimeout(next, 400);
+  }
+
+  private warmed = false;
+  private warmTries = 0;
+
   /** Effekt abspielen; at = Weltposition für Lautstärke nach Entfernung und Stereo */
   play(name: Sfx, vol = 1, at?: SoundPos) {
     if (!this.running) return;
@@ -563,6 +589,23 @@ class AudioEngine {
       case 'cutin': this.noise(t, 0.6, 0.3 * v, 300, 'bandpass', undefined, 0, 5000); this.tone(mtof(57), t + 0.1, 0.9, 'sawtooth', 0.06 * v, 0.6, mtof(69)); break;
       case 'level': [62, 66, 69, 74, 78, 81].forEach((m, i) => this.squeeze(m, t + i * 0.1, 0.35, 0.05 * v, this.sfxBus)); this.tone(mtof(86), t + 0.6, 0.8, 'triangle', 0.08 * v, 0.6); break;
       case 'win': [62, 66, 69, 74, 69, 74, 78, 81].forEach((m, i) => this.squeeze(m, t + i * 0.14, 0.28, 0.05 * v, this.sfxBus)); break;
+      // Fanfaren: Beute ab selten, und der Sieg über eine Legende (Blech, Pauken, Glitzern)
+      case 'fanfareRare': [67, 71, 74].forEach((m, i) => this.brass(m, t + i * 0.1, i === 2 ? 0.7 : 0.22, 0.07 * v, this.sfxBus)); this.tone(mtof(91), t + 0.3, 0.9, 'sine', 0.05 * v, 0.7); break;
+      case 'fanfareEpic':
+        [62, 66, 69, 74, 78].forEach((m, i) => this.brass(m, t + i * 0.09, i === 4 ? 1.1 : 0.25, 0.08 * v, this.sfxBus));
+        this.tone(80, t, 0.5, 'sine', 0.3 * v, 0.2, 40); [93, 98, 102].forEach((m, i) => this.tone(mtof(m), t + 0.45 + i * 0.07, 0.9, 'sine', 0.04 * v, 0.8)); break;
+      case 'fanfareLegend':
+        this.tone(70, t, 0.8, 'sine', 0.4 * v, 0.2, 36); this.noise(t, 1.4, 0.18 * v, 5000, 'highpass');
+        [57, 62, 66, 69, 74, 78, 81].forEach((m, i) => this.brass(m, t + 0.1 + i * 0.1, i === 6 ? 1.6 : 0.3, 0.09 * v, this.sfxBus));
+        [98, 102, 105, 110].forEach((m, i) => this.tone(mtof(m), t + 0.8 + i * 0.08, 1.2, 'sine', 0.045 * v, 0.9)); break;
+      case 'victory':
+        // Sieg über eine Legende: Paukenwirbel, dann Hauptmotiv und langer Schlussakkord
+        for (let i = 0; i < 6; i++) this.tone(75 - i * 3, t + i * 0.07, 0.3, 'sine', 0.3 * v, 0.1, 40);
+        [57, 61, 64].forEach((m) => this.brass(m, t + 0.5, 0.5, 0.07 * v, this.sfxBus));
+        [64, 66, 69, 73, 76].forEach((m, i) => this.brass(m, t + 1.0 + i * 0.16, i === 4 ? 1.8 : 0.3, 0.09 * v, this.sfxBus));
+        [69, 73, 76, 81].forEach((m) => this.brass(m - 12, t + 1.8, 1.6, 0.06 * v, this.sfxBus));
+        this.noise(t + 1.8, 1.8, 0.14 * v, 6000, 'highpass'); [100, 105, 109].forEach((m, i) => this.tone(mtof(m), t + 2 + i * 0.1, 1.4, 'sine', 0.04 * v, 1)); break;
+      case 'switch': if (!this.ok('sw', 0.1)) return; this.noise(t, 0.12, 0.2 * v, 3500, 'bandpass', undefined, pan, 1200); this.tone(mtof(86), t + 0.03, 0.14, 'triangle', 0.05 * v, 0.2); break;
       case 'quest': [67, 71, 74, 79].forEach((m, i) => this.brass(m, t + i * 0.11, i === 3 ? 0.9 : 0.25, 0.07 * v, this.sfxBus)); this.tone(mtof(91), t + 0.45, 1, 'sine', 0.05 * v, 0.7); break;
     }
   }

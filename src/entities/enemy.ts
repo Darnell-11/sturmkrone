@@ -10,7 +10,7 @@ import {
   SpriteMaterial,
   Vector3,
 } from 'three';
-import { ENEMIES, enemyScale, type EnemyAttack, type EnemyDef, type EnemyKind } from '../data/combat';
+import { BOSS, ENEMIES, enemyScale, type EnemyAttack, type EnemyDef, type EnemyKind } from '../data/combat';
 import { randomLook, type NpcRole } from '../data/characterParts';
 import type { Faction } from '../core/save/types';
 import type { CharacterAssets } from './character/assets';
@@ -21,7 +21,7 @@ import { NavAgent, type NavGrid } from '../ai/navGrid';
 import { ENEMY_TREE, perceive, type BrainCtx } from '../ai/enemyBrain';
 import { Hurtbox } from '../combat/hitbox';
 
-export type EnemyState = 'idle' | 'patrol' | 'suspicious' | 'chase' | 'strafe' | 'flank' | 'retreat' | 'windup' | 'attack' | 'recover' | 'hit' | 'stagger' | 'air' | 'down' | 'dead';
+export type EnemyState = 'idle' | 'patrol' | 'suspicious' | 'chase' | 'strafe' | 'flank' | 'retreat' | 'windup' | 'attack' | 'recover' | 'hit' | 'stagger' | 'air' | 'down' | 'dead' | 'transition';
 
 /** Zustände, in denen der Verhaltensbaum entscheidet (alle anderen gehören zu Angriffen und Treffer-Reaktionen) */
 const FREE: ReadonlySet<EnemyState> = new Set(['idle', 'patrol', 'suspicious', 'chase', 'strafe', 'flank', 'retreat']);
@@ -45,6 +45,10 @@ export interface EnemyWorld {
   readonly targetYaw: number;
   /** Wie viele andere Gegner greifen das Ziel von e gerade an? */
   attackersNear(e: Enemy): number;
+  /** Boss beginnt Phase 2 oder 3 (Brüllen, Schockring, Banner) */
+  bossPhase(e: Enemy, phase: number): void;
+  /** Haltebalken des Bosses leer: „Break“ */
+  bossBreak(e: Enemy): void;
 }
 
 export interface HitInfo {
@@ -114,7 +118,18 @@ export class Enemy {
   private marker: Sprite;
   private aim: Line | null = null;
   private strafeDir = Math.random() < 0.5 ? -1 : 1;
-  private phase = 1;
+  /** Boss-Phase 1 … 3 (nach Lebensanteil) */
+  phase = 1;
+  /** Break: Restzeit, in der der Boss taumelt und mehr Schaden nimmt */
+  brokenT = 0;
+  /** Nummer des laufenden Angriffs: Warnflächen verfallen, wenn er abgebrochen wird */
+  atkSeq = 0;
+  /** Sekunden seit dem letzten Treffer (Aufladen des Haltebalkens) */
+  private sinceHit = 99;
+  /** Zuletzt gewählter Angriff (der Boss wiederholt sich nicht) */
+  private lastAtk: EnemyAttack | null = null;
+  /** Zugehörigkeit zu einem Weltereignis (Invasion, Elite) – null = normaler Gegner */
+  tag: string | null = null;
   // ---------- Verhaltensbaum (Tafel) ----------
   /** Hat das Ziel erkannt und kämpft */
   aggro = false;
@@ -203,7 +218,7 @@ export class Enemy {
 
   /** Betäuben bzw. einfrieren */
   stun(dur: number, freeze = false) {
-    if (!this.alive || this.state === 'air') return;
+    if (!this.alive || this.state === 'air' || this.state === 'transition') return;
     this.cancelAttack();
     if (this.hasToken) this.hasToken = false;
     this.state = 'stagger';
@@ -266,10 +281,15 @@ export class Enemy {
   headInto(out: Vector3) { return out.set(this.x, this.y + 2.2 * this.def.scale, this.z); }
 
   /** Treffer durch den Spieler. Rückgabe: ob geblockt wurde */
-  takeHit(h: HitInfo, now: number): 'hit' | 'blocked' | 'stagger' | 'kill' {
+  takeHit(h: HitInfo, now: number, w?: EnemyWorld): 'hit' | 'blocked' | 'stagger' | 'kill' {
     if (!this.alive) return 'hit';
     this.aggro = true;
     this.lastHit = now;
+    this.sinceHit = 0;
+    // Phasenwechsel: der Boss brüllt und ist unverwundbar
+    if (this.state === 'transition') return 'blocked';
+    // Break: Schwachstelle offen, mehr Schaden
+    if (this.brokenT > 0) h = { ...h, dmg: h.dmg * BOSS.breakDmg };
     // Schildträger: Angriffe von vorn prallen ab (außer schwere)
     if (this.def.frontBlock && !h.heavy && this.state !== 'stagger') {
       const facing = Math.sin(this.yaw) * -h.dirX + Math.cos(this.yaw) * -h.dirZ;
@@ -284,11 +304,35 @@ export class Enemy {
     if (!this.aggro) this.becomeAlert();
     // Fresnel-Randlicht: schwere Treffer heller und wärmer
     this.char.hitFlash(h.heavy ? '#FFD9A0' : '#FFFFFF', h.heavy ? 1.3 : 1);
-    this.cancelAttack();
+    // Bosse haben Standfestigkeit im Angriff: normale Treffer unterbrechen sie nicht, nur der Break
+    if (!this.def.boss) this.cancelAttack();
     if (this.hp <= 0) {
       this.hp = 0;
+      this.cancelAttack();
       this.die(h);
       return 'kill';
+    }
+    // Boss: Haltebalken leer = Break (langes Taumeln, +50 % Schaden), dann lädt er sich neu
+    if (this.def.boss) {
+      if (this.brokenT <= 0) this.poise -= h.poise * 0.8;
+      this.vx += h.dirX * h.knock * 0.3;
+      this.vz += h.dirZ * h.knock * 0.3;
+      if (this.poise <= 0 && this.brokenT <= 0) {
+        this.poise = 0;
+        this.brokenT = BOSS.breakTime;
+        this.cancelAttack();
+        if (this.hasToken) { w?.releaseToken(this); this.hasToken = false; }
+        this.state = 'stagger';
+        this.timer = BOSS.breakTime;
+        this.char.play('stun', { fade: 0.08, restart: true });
+        w?.bossBreak(this);
+        return 'stagger';
+      }
+      if (this.state === 'stagger' || this.state === 'attack' || this.state === 'windup') return 'hit';
+      this.state = 'hit';
+      this.timer = 0.25;
+      this.char.play(h.heavy ? 'hitHeavy' : 'hit', { fade: 0.04, restart: true });
+      return 'hit';
     }
     this.poise -= h.poise;
     this.vx += h.dirX * h.knock;
@@ -315,12 +359,34 @@ export class Enemy {
   }
 
   /** Perfekte Parade des Spielers: Gegner taumelt */
-  parried() {
+  parried(w?: EnemyWorld) {
+    if (this.state === 'transition') return;
     this.cancelAttack();
     this.state = 'stagger';
     this.timer = 1.6;
-    this.poise = this.def.poise;
+    if (this.def.boss) {
+      // Perfekte Parade nimmt dem Boss 40 % des Haltebalkens; ist er leer, folgt der Break
+      this.poise = Math.max(0, this.poise - this.def.poise * 0.4);
+      if (this.hasToken) { w?.releaseToken(this); this.hasToken = false; }
+      if (this.poise <= 0 && this.brokenT <= 0) { this.brokenT = BOSS.breakTime; this.timer = BOSS.breakTime; w?.bossBreak(this); }
+    } else this.poise = this.def.poise;
     this.char.play('stun', { fade: 0.05, restart: true });
+  }
+
+  /** Haltebalken 0 … 1 (0 im Break) */
+  get breakFrac() { return this.brokenT > 0 ? 0 : Math.max(0, Math.min(1, this.poise / this.def.poise)); }
+
+  /** Phase 2 oder 3 beginnt: Brüllen, kurz unverwundbar, danach neue Angriffe */
+  private beginTransition(w: EnemyWorld) {
+    this.cancelAttack();
+    if (this.hasToken) { w.releaseToken(this); this.hasToken = false; }
+    this.state = 'transition';
+    this.timer = BOSS.transition;
+    this.poise = this.def.poise;
+    this.brokenT = 0;
+    this.lastAtk = null;
+    this.char.play('cheer', { fade: 0.1, restart: true });
+    w.bossPhase(this, this.phase);
   }
 
   private die(h: HitInfo) {
@@ -356,6 +422,7 @@ export class Enemy {
     else if (this.state === 'windup' && this.stateT > 4) { this.cancelAttack(); if (this.hasToken) { w.releaseToken(this); this.hasToken = false; } this.toChase(); }
     else if (this.state === 'air' && this.stateT > 6) { this.vy = 0; this.y = w.ground(this.x, this.z); this.state = 'down'; this.timer = 0.6; this.char.play('lie', { fade: 0.1 }); }
     this.timer -= dt;
+    this.sinceHit += dt;
     this.flash -= dt;
     this.slowT -= dt;
     this.fearT -= dt;
@@ -369,10 +436,15 @@ export class Enemy {
     const toPlayer = Math.atan2(dx, dz);
     const def = this.def;
     // Boss-Phasen
-    if (def.boss) {
+    if (def.boss && this.alive) {
       const frac = this.hp / this.maxHp;
-      const ph = frac < 0.3 ? 3 : frac < 0.65 ? 2 : 1;
-      if (ph !== this.phase) { this.phase = ph; this.dmg *= 1.15; }
+      const ph = frac < BOSS.phaseAt[1] ? 3 : frac < BOSS.phaseAt[0] ? 2 : 1;
+      if (ph > this.phase && this.state !== 'air') { this.phase = ph; this.dmg *= 1.15; this.beginTransition(w); }
+      // Break läuft ab, danach ist der Haltebalken wieder voll; sonst lädt er sich nach 3 s ohne Treffer langsam auf
+      if (this.brokenT > 0) {
+        this.brokenT -= dt;
+        if (this.brokenT <= 0) { this.brokenT = 0; this.poise = this.def.poise; }
+      } else if (this.poise < this.def.poise && w.playerActive && this.sinceHit > 3) this.poise = Math.min(this.def.poise, this.poise + this.def.poise * BOSS.breakRegen * dt);
     }
     const speed = def.speed * (def.boss ? 1 + (this.phase - 1) * 0.15 : 1) * (this.slowT > 0 ? 0.45 : 1);
 
@@ -427,8 +499,14 @@ export class Enemy {
     }
 
     switch (this.state) {
+      case 'transition':
+        // Brüllen: Blick zum Spieler, Rückstoß gegen alles ringsum kommt aus bossPhase
+        face(toPlayer, 4);
+        if (this.timer <= 0) this.toChase();
+        break;
       case 'windup':
-        face(toPlayer, 5);
+        // Warnflächen „am Boss“ zeigen dorthin, wo er beim Ausholen hinsah: er dreht sich danach nicht mehr mit
+        if (!(this.atk?.zones && this.atk.zones.some((z) => z.at !== 'player'))) face(toPlayer, 5);
         if (this.timer <= 0 && this.atk) {
           this.state = 'attack';
           this.marker.visible = false;
@@ -505,12 +583,16 @@ export class Enemy {
   startWindup(w: EnemyWorld) {
     this.markerT = 0;
     (this.marker.material as SpriteMaterial).map = EXCL_TEX;
-    const opts = this.def.attacks;
+    // Bosse: eigene Angriffe je Phase
+    const opts = (this.def.boss && this.def.phaseAttacks?.[this.phase as 2 | 3]) || this.def.attacks;
     const p = w.playerPos;
     const dist = p ? Math.hypot(p.x - this.x, p.z - this.z) : 99;
-    // Passenden Angriff wählen: Fernkampf auf Distanz, sonst zufällig
-    const usable = opts.filter((a) => a.range >= dist - 0.5 || a.projectile || a.aoe);
+    // Passenden Angriff wählen: Fernkampf auf Distanz, sonst zufällig (Bosse wiederholen sich nicht)
+    let usable = opts.filter((a) => a.range >= dist - 0.5 || a.projectile || a.aoe || a.zones);
+    if (this.def.boss && usable.length > 1) usable = usable.filter((a) => a !== this.lastAtk);
     this.atk = (usable.length ? usable : opts)[Math.floor(Math.random() * (usable.length || opts.length))];
+    this.lastAtk = this.atk;
+    this.atkSeq++;
     this.state = 'windup';
     this.timer = this.atk.windup * (this.def.boss && this.phase === 3 ? 0.7 : 1);
     this.marker.visible = true;
@@ -538,7 +620,10 @@ export class Enemy {
 
   /** Eingefroren: eisblaue Färbung über das Randlicht (der Treffer-Blitz läuft im Effekt-Shader) */
   private updateFlash() {
-    this.char.setTint('#9FE6FF', this.frozenT > 0 ? 0.85 : 0);
+    if (this.frozenT > 0) this.char.setTint('#9FE6FF', 0.85);
+    // Boss ab Phase 2: dauerhaft gerötete Ränder (entfesselt), in Phase 3 stärker
+    else if (this.def.boss && this.phase >= 2 && this.alive) this.char.setTint('#FF3A2A', this.phase >= 3 ? 0.42 : 0.28);
+    else this.char.setTint('#9FE6FF', 0);
   }
 
   dispose() {

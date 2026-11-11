@@ -160,6 +160,62 @@ export class VroidBase {
   private find(root: Object3D, name: string) { return root.getObjectByName(name) ?? null; }
 
   /**
+   * Lage der Iris in ihrer Textur, gemessen an den UV-Koordinaten des Augen-Netzes (für die Glanzpunkte). Die Textur
+   * enthält beide Augen nebeneinander: Abstand der Mitten von u = 0,5, Mitte v, halbe Breite (u), halbe Höhe (v).
+   */
+  private irisBox: [number, number, number, number] | null = null;
+  irisUv(): [number, number, number, number] {
+    if (this.irisBox) return this.irisBox;
+    let u0 = Infinity, u1 = -Infinity, w0 = Infinity, w1 = -Infinity;
+    this.template.traverse((o) => {
+      const m = o as SkinnedMesh;
+      const p = m.isSkinnedMesh ? this.parts[m.userData.vroidPart as number] : null;
+      const uv = p?.slot === 'iris' ? m.geometry.attributes.uv : null;
+      if (!uv) return;
+      for (let i = 0; i < uv.count; i++) {
+        // eine Hälfte der Textur je Auge: auf die rechte Hälfte falten
+        const u = Math.abs(uv.getX(i) - 0.5), w = uv.getY(i);
+        u0 = Math.min(u0, u); u1 = Math.max(u1, u); w0 = Math.min(w0, w); w1 = Math.max(w1, w);
+      }
+    });
+    this.irisBox = Number.isFinite(u0) ? [(u0 + u1) / 2, (w0 + w1) / 2, Math.max(0.02, (u1 - u0) / 2), Math.max(0.02, (w1 - w0) / 2)] : [0.25, 0.5, 0.15, 0.3];
+    return this.irisBox;
+  }
+
+  /**
+   * Kopfmitte im Raum der Haar-Netze: Kugel durch die Haarkuppe (oberste 8 cm). Das Lichtband im Haar folgt dieser
+   * Rundung statt den Normalen der einzelnen Strähnen.
+   */
+  private hairBall: [number, number, number] | null = null;
+  hairCenter(): [number, number, number] {
+    if (this.hairBall) return this.hairBall;
+    const pts: number[] = [];
+    this.template.traverse((o) => {
+      const m = o as SkinnedMesh;
+      const p = m.isSkinnedMesh ? this.parts[m.userData.vroidPart as number] : null;
+      if (p?.slot !== 'hair') return;
+      const pos = m.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) pts.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+    });
+    if (!pts.length) return (this.hairBall = [0, 0, 0]);
+    const ys: number[] = [];
+    for (let i = 1; i < pts.length; i += 3) ys.push(pts[i]);
+    ys.sort((a, b) => a - b);
+    // einzelne abstehende Strähnen zählen nicht (wie beim Hutsitz)
+    const top = ys[Math.floor(ys.length * 0.985)];
+    const d = 0.08;
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (let i = 0; i < pts.length; i += 3) {
+      if (pts[i + 1] < top - d || pts[i + 1] > top) continue;
+      minX = Math.min(minX, pts[i]); maxX = Math.max(maxX, pts[i]);
+      minZ = Math.min(minZ, pts[i + 2]); maxZ = Math.max(maxZ, pts[i + 2]);
+    }
+    const a = Math.max(maxX - minX, maxZ - minZ) / 2;
+    const R = Math.min(0.16, Math.max(0.08, (a * a + d * d) / (2 * d)));
+    return (this.hairBall = [(minX + maxX) / 2, top - R, (minZ + maxZ) / 2]);
+  }
+
+  /**
    * Ausrichtungskorrektur je Knochen: die alte Figur steht in Ruhe leicht im A, die neue im T.
    * C dreht die Ruherichtung des neuen Knochens auf die des alten, damit Bewegungen gleich aussehen.
    */

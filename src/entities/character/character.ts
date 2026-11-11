@@ -21,7 +21,7 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { ROLES, type AnimRole, type ClipRef } from '../../data/animations';
 import type { CharacterLook } from '../../data/characterParts';
 import { addOutlines } from '../../render/outline';
-import { toon, toonFx, type ToonFxUniforms } from '../../render/toon';
+import { CHARACTER_INK, toon, toonChar, toonFx, type Surface, type ToonFxUniforms } from '../../render/toon';
 import { disposeMaterial } from '../../render/dispose';
 import { audio } from '../../audio/audio';
 import { WeaponTrail } from '../../render/weaponTrail';
@@ -80,6 +80,11 @@ export interface PlayOptions {
 }
 
 /** Eine animierte Figur (Spieler oder NPC). */
+/** Oberfläche je Teil der Anime-Figur */
+/** Schleifen mit Schrittzyklus (gleiche Phasenlage, siehe playClip) */
+const LOCO_CLIPS = new Set(['Walking_A', 'Running_A']);
+const SLOT_SURFACE: Record<string, Surface> = { skin: 'skin', hair: 'hair', top: 'cloth', bottom: 'cloth', shoes: 'leather', iris: 'eye' };
+
 export class Character {
   /** In die Welt setzen und bewegen */
   readonly holder = new Group();
@@ -173,6 +178,8 @@ export class Character {
   static readonly PROPORTIONS: Record<string, number> = { head: 0.68, spine: 1.05 };
 
   constructor(private assets: CharacterAssets, look: CharacterLook, private outline = true) {
+    // Figuren zeichnen ihre Ränder mit Himmelslicht (Fresnel) statt mit Tusche
+    this.outline = outline && CHARACTER_INK;
     const vb = assets.vroid ? (isFemale(look) ? assets.vroid.female : assets.vroid.male) : null;
     if (vb) { this.initVroid(vb, look); return; }
     this.rig = cloneSkinned(assets.rig);
@@ -281,7 +288,7 @@ export class Character {
       const i = m.userData.vroidPart as number | undefined;
       if (!m.isSkinnedMesh || i === undefined) return;
       const p = vb.parts[i];
-      const mat = toon({ color: colorFor[p.slot], map: p.gray ?? p.map, side: p.doubleSided ? DoubleSide : FrontSide, transparent: p.transparent, spec: p.slot === 'hair' ? 0.7 : 0, rim: p.slot === 'fixed' ? 0.4 : 1 });
+      const mat = toon({ color: colorFor[p.slot], map: p.gray ?? p.map, side: p.doubleSided ? DoubleSide : FrontSide, transparent: p.transparent, spec: p.slot === 'hair' ? 0.7 : 0, rim: p.slot === 'fixed' ? 0.4 : 1, surface: SLOT_SURFACE[p.slot] ?? 'plain', eyeUv: p.slot === 'iris' ? vb.irisUv() : undefined, hairC: p.slot === 'hair' ? vb.hairCenter() : undefined });
       mat.alphaTest = p.alphaTest || (p.transparent ? 0 : 0.5);
       // durchscheinende Gesichtsteile (Wimpern, Augenglanz) liegen übereinander: ohne Tiefenschreiben verdecken sie
       // sich nicht gegenseitig je nach Zeichenreihenfolge (wie MToon „Transparent“ ohne ZWrite)
@@ -308,6 +315,23 @@ export class Character {
     const base = vb.template.scale.x;
     const wide = look.body === 'kraeftig' ? 1.07 : look.body === 'schmal' ? 0.95 : 1;
     this.rig.scale.set(base * h * wide, base * h, base * h * wide);
+    this.stylize(this.holder);
+  }
+
+  /**
+   * Alles an der Figur (Kleidung, Hüte, Schmuck, Waffen) bekommt die Figuren-Fassung seines Materials:
+   * Feinrelief, passender Glanz und Randlicht. Tusche-Hüllen fremder Bausteine (Waffen) fallen weg.
+   */
+  private stylize(root: Object3D) {
+    const hulls: Object3D[] = [];
+    root.traverse((o) => {
+      const m = o as Mesh;
+      if (!m.isMesh || Array.isArray(m.material)) return;
+      const mat = m.material as Material & { userData: { outline?: boolean; toon?: boolean } };
+      if (mat.userData?.outline) { if (!CHARACTER_INK) hulls.push(m); return; }
+      if (mat.userData?.toon) m.material = toonChar(mat);
+    });
+    for (const h of hulls) h.removeFromParent();
   }
 
   /**
@@ -364,7 +388,7 @@ export class Character {
     // Streifen des Ringelhemds zeichnet der Shader (Höhe im Körpermodell; 3,5 cm in Weltmaß)
     if (set.attributes.stripe) geo.setAttribute('stripe', set.attributes.stripe);
     const ringel = look.outfit === 'matrose' ? 0.035 / Math.max(1e-4, body.getWorldScale(new V3()).y) : 0;
-    const mat = toon({ color: 0xffffff, vertexColors: true, side: DoubleSide, rim: 0.8, ringel });
+    const mat = toon({ color: 0xffffff, vertexColors: true, side: DoubleSide, rim: 0.8, ringel, surface: 'cloth' });
     // kleine Tiefenverschiebung: Kleidung liegt außen – letzte Millimeter der Grundkleidung stechen nicht mehr durch
     mat.polygonOffset = true; mat.polygonOffsetFactor = -1; mat.polygonOffsetUnits = -2;
     const m = new SkinnedMesh(geo, mat);
@@ -402,7 +426,7 @@ export class Character {
     }
     entry.users++;
     this.key = key;
-    const mat = toon({ color: 0xffffff, vertexColors: true, spec: 0.15 });
+    const mat = toon({ color: 0xffffff, vertexColors: true, spec: 0.15, surface: 'cloth' });
     this.mesh = new SkinnedMesh(entry.main, mat);
     // Bindungsraum = Raum der Vorlage; die Bindungsmatrizen des Skeletts bleiben unverändert
     this.mesh.bind(this.skeleton, IDENTITY);
@@ -466,6 +490,11 @@ export class Character {
     a.timeScale = speed;
     a.enabled = true;
     a.setEffectiveWeight(1);
+    // Gehen ↔ Rennen: Schrittphase übernehmen, damit beim Überblenden nicht plötzlich das andere Bein vorn ist
+    if (this.current && this.current !== a && loop && LOCO_CLIPS.has(name) && LOCO_CLIPS.has(this.currentName)) {
+      const cur = this.current;
+      a.time = ((cur.time / cur.getClip().duration) % 1) * a.getClip().duration;
+    }
     if (this.current && this.current !== a) a.crossFadeFrom(this.current, fade, false);
     else a.fadeIn(fade);
     a.play();
@@ -484,8 +513,9 @@ export class Character {
   setLocoSpeed(mps: number) {
     const a = this.current;
     if (!a) return;
-    if (this.currentName === 'Walking_A') a.timeScale = Math.max(0.45, Math.min(1.6, mps / 1.5));
-    else if (this.currentName === 'Running_A') a.timeScale = Math.max(0.7, Math.min(1.75, mps / 3.7));
+    // Weite Grenzen: bei schnellerem Spieler (Fähigkeiten, Tempo-Bonus) darf der Clip nicht an die Grenze stoßen, sonst rutscht er
+    if (this.currentName === 'Walking_A') a.timeScale = Math.max(0.4, Math.min(2.1, mps / 1.5));
+    else if (this.currentName === 'Running_A') a.timeScale = Math.max(0.7, Math.min(2.6, mps / 3.7));
   }
 
   /** Fortschritt der aktuellen Animation 0 … 1 */
@@ -562,14 +592,89 @@ export class Character {
     this.leanPitch += (wantPitch - this.leanPitch) * k;
   }
 
+  /** Zuletzt auf Wirbelsäule und Brust addierte Neigung: wird vor der Animation wieder abgezogen. Ohne das summierte sie sich Bild für Bild auf,
+   *  sobald ein Clip diese Knochen nicht jedes Mal neu setzt – der Oberkörper drehte sich dann endlos im Kreis. */
+  private leanApplied: Record<string, Quaternion> = { spine: new Quaternion(), chest: new Quaternion() };
+  private static readonly LQ2 = new Quaternion();
+
+  private undoLean() {
+    for (const name of ['spine', 'chest']) {
+      const q = this.leanApplied[name];
+      if (q.x === 0 && q.y === 0 && q.z === 0) continue;
+      const b = this.bones[name];
+      if (b) b.quaternion.multiply(Character.LQ2.copy(q).invert());
+      q.set(0, 0, 0, 1);
+    }
+  }
+
   private applyLean() {
     if (Math.abs(this.leanRoll) < 0.002 && Math.abs(this.leanPitch) < 0.002) return;
     for (const [name, share] of [['spine', 0.55], ['chest', 0.45]] as const) {
       const b = this.bones[name];
       if (!b) continue;
-      b.quaternion.multiply(Character.LQ.setFromAxisAngle(Character.AX, this.leanRoll * share));
-      b.quaternion.multiply(Character.LQ.setFromAxisAngle(Character.AXP, this.leanPitch * share));
+      const q = this.leanApplied[name];
+      q.copy(Character.LQ.setFromAxisAngle(Character.AX, this.leanRoll * share)).multiply(Character.LQ2.setFromAxisAngle(Character.AXP, this.leanPitch * share));
+      b.quaternion.multiply(q);
     }
+  }
+
+  // ---------- Arme zu einem Ziel strecken (Steuerrad) ----------
+  private static readonly IK_S = new V3();
+  private static readonly IK_SS = new V3();
+  private static readonly IK_EL = new V3();
+  private static readonly IK_T = new V3();
+  private static readonly IK_W2 = new V3();
+  private static readonly IK_D2 = new V3();
+  private static readonly IK_E = new V3();
+  private static readonly IK_W = new V3();
+  private static readonly IK_D = new V3();
+  private static readonly IK_H = new V3();
+  private static readonly IK_Q = new Quaternion();
+  private static readonly IK_PQ = new Quaternion();
+
+  /** Knochen so drehen, dass die Richtung zu seinem Kind auf das Ziel zeigt (Weltraum) */
+  private aimBone(bone: Bone, child: Bone, target: V3) {
+    // eigene Hilfsvektoren: das Ziel darf nicht mit ihnen zusammenfallen (sonst überschreibt die Kindposition das Ziel)
+    const tgt = Character.IK_T.copy(target);
+    const P = Character.IK_S.set(0, 0, 0), C = Character.IK_W2, Dn = Character.IK_D2;
+    bone.getWorldPosition(P);
+    child.getWorldPosition(C);
+    const cur = C.sub(P).normalize();
+    const want = Dn.copy(tgt).sub(P).normalize();
+    const dq = Character.IK_Q.setFromUnitVectors(cur, want);
+    bone.getWorldQuaternion(Character.IK_PQ);
+    const nq = dq.multiply(Character.IK_PQ);
+    const par = bone.parent;
+    if (par) { par.getWorldQuaternion(Character.IK_PQ); bone.quaternion.copy(Character.IK_PQ.invert().multiply(nq)); } else bone.quaternion.copy(nq);
+    bone.updateMatrixWorld(true);
+  }
+
+  /**
+   * Zwei-Knochen-Zielführung: Hand ans Ziel (Weltposition), Ellbogen nach außen und unten.
+   * Läuft nach der Animation (jedes Bild neu aus dem Ziel berechnet, summiert sich nicht auf).
+   */
+  reach(side: 'l' | 'r', target: V3) {
+    const up = this.bones[`upperarm${side}`], lo = this.bones[`lowerarm${side}`], wr = this.bones[`wrist${side}`];
+    if (!up || !lo || !wr) return;
+    this.holder.updateWorldMatrix(true, true);
+    const S = Character.IK_SS, E = Character.IK_E, W = Character.IK_W;
+    up.getWorldPosition(S);
+    lo.getWorldPosition(E);
+    wr.getWorldPosition(W);
+    const a = E.distanceTo(S), b = W.distanceTo(E);
+    const dir = Character.IK_D.copy(target).sub(S);
+    const dist = Math.min(Math.max(dir.length(), 0.05), (a + b) * 0.995);
+    dir.normalize();
+    // Ellbogen-Hinweis: nach außen (zur Körperseite) und unten, in Blickrichtung der Figur gedreht
+    const hint = Character.IK_H.set(side === 'l' ? 0.6 : -0.6, -1, -0.45);
+    this.holder.getWorldQuaternion(Character.IK_Q);
+    hint.applyQuaternion(Character.IK_Q);
+    hint.addScaledVector(dir, -hint.dot(dir)).normalize();
+    const x = (a * a - b * b + dist * dist) / (2 * dist);
+    const h = Math.sqrt(Math.max(0, a * a - x * x));
+    const elbow = Character.IK_EL.copy(S).addScaledVector(dir, x).addScaledVector(hint, h);
+    this.aimBone(up, lo, elbow);
+    this.aimBone(lo, wr, target);
   }
 
   // ---------- Treffer-Randlicht und Auflösen ----------
@@ -656,6 +761,7 @@ export class Character {
       const v = Math.max(this.tintAmt, this.hitAmp * (this.hitT / 0.16));
       for (const u of this.fxU) u.hit.value = v;
     }
+    this.undoLean();
     this.mixer.update(dt);
     this.applyLean();
     // Mimik: blinzeln, beim Jubeln strahlen, beim Reden den Mund bewegen
@@ -672,14 +778,14 @@ export class Character {
   }
 
   /** Objekt in eine Hand legen ('r' oder 'l'). null entfernt. */
-  hold(side: 'l' | 'r', obj: Object3D | null) {
+  hold(side: 'l' | 'r', obj: Object3D | null, grip = 0.3) {
     const slot = this.bones[`handslot${side}`];
     if (!slot) return;
     // neue Waffe: Schweife beim nächsten Einschalten neu anlegen
     this.dropTrails();
     for (const c of [...slot.children]) slot.remove(c);
-    if (obj) slot.add(obj);
-    this.curl(side, obj ? 1 : 0.3);
+    if (obj) { slot.add(obj); this.stylize(obj); }
+    this.curl(side, obj ? 1 : grip);
   }
 
   /**

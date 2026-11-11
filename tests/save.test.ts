@@ -31,6 +31,15 @@ describe('Spielstände', () => {
     expect(k.data.player.look.coatColor).toBe('#2F6E4F');
   });
 
+  it('rückt das Schiff mit der größeren Karte nach außen, nur vor Ankerglück bleibt es liegen (9 → 10)', () => {
+    const far = MIGRATIONS[9]({ version: 9, world: { boat: { x: -500, z: 900, heading: 1 }, time: 9, weather: 'klar' } });
+    expect(far.version).toBe(10);
+    expect(far.world.boat).toEqual({ x: -1000, z: 1800, heading: 1 });
+    const home = MIGRATIONS[9]({ version: 9, world: { boat: { x: 10, z: 30, heading: 0 }, time: 9, weather: 'klar' } });
+    expect(home.world.boat).toEqual({ x: 10, z: 30, heading: 0 });
+    expect(MIGRATIONS[9]({ version: 9, world: { boat: null, time: 9, weather: 'klar' } }).world.boat).toBeNull();
+  });
+
   it('speichert und lädt einen Platz', () => {
     const m = new SaveManager(new MemoryStore(), V);
     const s = createSave('Fynn', 'pirat', V);

@@ -2,7 +2,7 @@
 import { defaultLook, type CharacterLook } from '../../data/characterParts';
 import { DEFAULT_SHIP_LOOK, type AmmoId, type ShipLook } from '../../data/ships';
 
-export const SAVE_VERSION = 9;
+export const SAVE_VERSION = 10;
 
 export interface QuestProgress { id: string; step: number; count: number }
 
@@ -23,6 +23,17 @@ export interface GearState {
   /** Gefundene Talismane (IDs) und der angelegte */
   trinkets: string[];
   trinket: string | null;
+  /** Inventar (alles optional: alte Spielstände bekommen Standardwerte, siehe core/inventory.ts ensureGear) */
+  /** Verbrauchsgüter außer Proviant (ID → Anzahl) */
+  items?: Record<string, number>;
+  /** Gekaufte Kopfbedeckungen und die angelegte */
+  heads?: string[];
+  head?: string | null;
+  /** Schnellleiste (Tasten 1–4): Güter-IDs */
+  bar?: (string | null)[];
+  /** Angelegte Waffen- und Rüstungsstufe, falls nicht die höchste */
+  weaponEq?: number;
+  armorEq?: number;
 }
 
 export interface ShipState {
@@ -76,6 +87,9 @@ export interface SaveData {
     faction: Faction;
     style: FightStyle;
     blade: string;
+    /** Zweite Waffe (Platz 2, StyleId) und aktiver Platz 0/1 – fehlt in alten Spielständen (dann gilt der Standard) */
+    alt?: string;
+    slot?: 0 | 1;
     level: number;
     xp: number;
     gold: number;
@@ -117,7 +131,7 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
     },
     world: { boat: null, time: 9, weather: 'klar' },
     progress: defaultProgress(),
-    gear: { weapon: 0, armor: 0, potions: 3, shrine: 0, trinkets: [], trinket: null },
+    gear: { weapon: 0, armor: 0, potions: 3, shrine: 0, trinkets: [], trinket: null, items: {}, heads: [], head: null, bar: ['proviant', null, null, null] },
     skills: { learned: {}, slots: [null, null, null], sp: 1, awakened: [] },
     ship: defaultShip(faction),
     crew: { hired: [], party: [], loyalty: {} },

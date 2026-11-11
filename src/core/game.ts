@@ -32,17 +32,29 @@ import { Input } from './input/input';
 import { GameLoop } from './loop';
 import { SaveManager } from './save/saveManager';
 import { createSave, type SaveData } from './save/types';
+import { DialogOverlay } from '../ui/dialogOverlay';
+import { InventoryScreen, type InvItem, type InventoryHost } from '../ui/inventory';
+import { addItem, armorEq, bagConsumables, computeStats, ensureGear, headEq, itemCount, takeItem, weaponEq, type StatSheet } from './inventory';
+import { ARMOR_LOOK, BAR_SLOTS, CONSUMABLE_BY_ID, CONSUMABLES, GLOBAL_ITEM_CD, HEADS, HEAD_BY_ID, type SlotId } from '../data/items';
+import { NpcMarkers, type NpcMark } from '../ui/npcMarkers';
+import { QuestLog } from '../ui/questLog';
+import { DialogSession } from '../story/dialog';
+import { STYLE_ANIMS, type StyleId } from '../data/animations';
 import { SettingsStore } from './settings';
 import { StateMachine } from './state';
 import { browserStore } from './storage';
 import { audio, type Mood } from '../audio/audio';
 import { EDGE_WALL } from '../data/world';
 import { QuestSystem, stepText } from '../story/questSystem';
-import type { QuestDef, TownNpcDef } from '../data/quests';
-import { ARMOR, BERNSTEINSEE, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, WEAPON_LINES, type IslandDef, type RegionDef } from '../data/regions';
-import { drawMap, mapPalette, type MapMarkers } from '../ui/minimap';
+import { TOWN_NPCS, VILLAGE_NPC_BY_ID, VILLAGE_NPCS, type QuestDef, type TownNpcDef } from '../data/quests';
+import { ARMOR, BERNSTEINSEE, POTION, REGIONS, REST_PRICE, SHRINE_PRICE, WEAPONS, WEAPON_LINES, type IslandDef, type RegionDef } from '../data/regions';
+import { PerfWatchdog } from '../render/watchdog';
+import { drawMap, mapPalette, type MapMarkers, type MapOpts, type Poi, type WorldMapData } from '../ui/minimap';
+import { Compass, type CompassPoi } from '../ui/compass';
+import { WorldMapScreen } from '../ui/worldMap';
 import { CREW_BY_ID } from '../data/crew';
 import { RARITY, rollTrinket, TRINKET_BY_ID, type Rarity } from '../data/trinkets';
+import { RARITIES, type LootDrop } from '../data/loot';
 import { ACHIEVEMENTS } from '../data/achievements';
 import { ABYSS_LAIR } from '../naval/seaBoss';
 import { QUESTS, QUEST_BY_ID } from '../data/quests';
@@ -80,6 +92,7 @@ export class Game {
   private slot: number | null = null;
   private save: SaveData | null = null;
   private autoQuality = new AutoQuality();
+  private watchdog = new PerfWatchdog();
   private autosaveTimer = 0;
   private saveFailedShown = false;
   private stage: EditorStage | null = null;
@@ -87,6 +100,20 @@ export class Game {
   private listenDir = new Vector3();
   private editor: CharacterEditor | null = null;
   private uiRoot: HTMLElement;
+  private dialogUi!: DialogOverlay;
+  private markers!: NpcMarkers;
+  private questLog: QuestLog | null = null;
+  private inventoryUi: InventoryScreen | null = null;
+  private compass!: Compass;
+  private worldMap: WorldMapScreen | null = null;
+  private shapeById: Map<string, import('../ui/minimap').ShapeLike> | null = null;
+  /** Laufende Stärkungen (Güter), Abklingzeiten je Gut und die gemeinsame Pause der Leiste (Sekunden, nicht gespeichert) */
+  private buffs: { id: string; t: number }[] = [];
+  private itemCd = new Map<string, number>();
+  private globalCd = 0;
+  private dialogSession: DialogSession | null = null;
+  private dialogNpc: TownNpcDef | null = null;
+  private markPos = new Map<string, Vector3>();
   private quests: QuestSystem | null = null;
   /** Im laufenden Gespräch abgeschlossene Aufträge (für die Abschlusstexte) */
   private justDone: QuestDef[] | null = null;
@@ -144,6 +171,9 @@ export class Game {
 
     this.overlay = new CombatOverlay(uiRoot);
     this.overlay.setVisible(false);
+    this.dialogUi = new DialogOverlay(uiRoot);
+    this.markers = new NpcMarkers(uiRoot);
+    this.compass = new Compass(uiRoot);
     this.world.onMessage = (m) => this.hud.toast(m);
     this.world.onModeChange = (m) => this.onModeChange(m);
     this.world.onKill = (e) => this.onKill(e);
@@ -208,6 +238,7 @@ export class Game {
     };
     this.world.onEnterIsland = (def) => this.enterIsland(def);
     this.world.onIslandCleared = (id) => this.islandCleared(id);
+    this.world.onLootDrop = (d) => this.onLootPickup(d);
     this.world.questWantsClear = (id) => !!this.save?.progress.quests.some((p) => { const st = QUEST_BY_ID[p.id]?.steps[p.step]; return st?.type === 'clear' && st.island === id; });
     this.world.onCrystal = (id) => this.awakenCrystal(id);
     this.world.onVillage = (id) => this.villageGift(id);
@@ -223,7 +254,7 @@ export class Game {
     };
     this.world.onBottle = () => this.findBottle();
     this.world.onDig = (id) => this.dig(id);
-    this.hud.onMap = () => { if (this.state.is('play')) { this.state.set('pause'); this.menus.showMap('karte'); } };
+    this.hud.onMap = () => this.openWorldMap();
     this.world.onPlayerDown = () => {
       audio.play('ko');
       this.overlay.showBanner('K.O.', 'Die Crew eilt zu Hilfe …');
@@ -312,8 +343,16 @@ export class Game {
     this.input.beginStep();
     if (this.state.is('play')) {
       if (this.input.pressed('pause')) { this.pause(); return; }
-      if (this.input.pressed('map')) { this.state.set('pause'); this.menus.showMap('karte'); return; }
+      if (this.input.pressed('map')) { this.openWorldMap(); return; }
+      if (this.input.pressed('skills')) { this.openSkills(); return; }
+      if (this.input.pressed('quests')) { this.openQuestLog(); return; }
+      if (this.input.pressed('swap')) this.swapWeapon();
+      if (this.input.pressed('weapon1')) this.swapWeapon(0);
+      if (this.input.pressed('weapon2')) this.swapWeapon(1);
       if (this.input.pressed('potion')) this.usePotion();
+      if (this.input.pressed('inventory')) { this.openInventory(); return; }
+      for (let i = 0; i < BAR_SLOTS; i++) if (this.input.pressed(`item${i + 1}` as 'item1')) this.useItem(this.save?.gear.bar?.[i] ?? null);
+      this.tickItems(dt);
       this.legendT -= dt;
       if (this.legendT <= 0) { this.legendT = 1; this.updateLegends(); this.checkAchievements(); }
       this.world.update(dt, this.input);
@@ -321,6 +360,10 @@ export class Game {
       if (this.save) this.save.meta.playTime += dt;
       this.autosaveTimer += dt;
       if (this.autosaveTimer >= AUTOSAVE_SECONDS) this.persist();
+    } else if (this.state.is('editor') && this.skillTree && this.input.pressed('skills')) {
+      this.skillTree.close();
+    } else if (this.state.is('editor') && this.inventoryUi && this.input.pressed('inventory')) {
+      this.closeInventory();
     } else if (this.state.is('menu')) {
       this.world.idle(dt);
     }
@@ -353,12 +396,16 @@ export class Game {
     Character.renderTrails(frameDt);
     this.renderer.render(frameDt);
     this.overlay.update(this.state.is('play') ? frameDt * this.loop.timeScale : 0, this.world.camera);
+    this.updateNpcMarkers();
+    this.updateCompass();
     if (this.state.is('play')) {
       const s = this.settings.data;
       if (this.save) {
         const hp = this.world.playerHp;
         const p = this.save.player;
         this.hud.setStats(hp ? hp.hp / hp.max : 1, p.xp / PLAYER_BASE.xpNeed(p.level), p.gold);
+        const stm = this.world.playerStamina;
+        this.hud.setStamina(stm ? stm.frac : null, !!stm?.flash);
         const sh = this.world.ship;
         this.hud.setSea(this.world.mode === 'sail' ? {
           hull: sh.hull / sh.maxHull, sail: sh.sail, crew: sh.crew, level: SAIL_LEVELS[sh.sailLevel].n, ammo: AMMO[sh.ammo].n,
@@ -378,18 +425,25 @@ export class Game {
         }
       }
       const dyn = this.renderer.dynRes.scale;
-      this.hud.setFps(s.showFps, `${this.loop.fps} fps · ${QUALITY_TIERS[this.renderer.tier].label}${dyn < 0.999 ? ` · ${Math.round(dyn * 100)} %` : ''}`);
+      this.hud.setFps(s.showFps, `${this.loop.fps} fps · ${QUALITY_TIERS[this.renderer.tier].label}${this.renderer.budget ? ` · Spar ${this.renderer.budget}` : ''}${dyn < 0.999 ? ` · ${Math.round(dyn * 100)} %` : ''}`);
       const env = this.world.env;
       this.hud.setEnv(`${formatClock(env.time)} · ${env.timeName} · ${WEATHER[env.weather.target].label}`);
       const key = this.input.lastDevice === 'keyboard' ? this.input.keyLabel(this.input.getKeyBindings().interact[0] ?? 'KeyR')
         : this.input.lastDevice === 'gamepad' ? 'X' : null;
       this.hud.setContext(this.world.contextLabel, key);
       this.updateQuestHud(frameDt);
+      this.hud.setItemBar(this.input.lastDevice !== 'touch', this.itemBarViews(), (['item1', 'item2', 'item3', 'item4'] as const).map((a) => this.input.keyLabel(this.input.getKeyBindings()[a][0] ?? '')));
       // Erst die Auflösung anpassen (unsichtbarer), die ganze Grafikstufe erst senken, wenn das nicht reicht
-      if (s.dynamicResolution && this.renderer.dynRes.sample(frameDt)) this.renderer.resize();
+      // Leistungs-Wächter: unter 50 fps zuerst unsichtbare Last abbauen (Schatten, AO, Vegetation), erst danach Auflösung und Grafikstufe
       if (s.qualityAuto) {
+        const lv = this.watchdog.sample(frameDt);
+        if (lv !== null) { this.renderer.setBudget(lv); this.renderer.dynRes.rewarm(); this.autoQuality.reset(); }
+      } else if (this.watchdog.level > 0) { this.watchdog.reset(); this.renderer.setBudget(0); }
+      const budgetSpent = !s.qualityAuto || this.watchdog.level >= PerfWatchdog.MAX;
+      if (s.dynamicResolution && (budgetSpent || this.watchdog.level >= 2) && this.renderer.dynRes.sample(frameDt)) this.renderer.resize();
+      if (s.qualityAuto && budgetSpent) {
         if (s.dynamicResolution && this.renderer.dynRes.hasRoom) this.autoQuality.reset();
-        else if (this.autoQuality.sample(frameDt)) this.autoLower();
+        else if (this.autoQuality.sample(frameDt)) { this.watchdog.reset(); this.autoLower(); }
       }
     }
   }
@@ -447,22 +501,54 @@ export class Game {
 
   // ---------- Fortschritt ----------
 
+  /** Alle Werte der Spielfigur aus Ausrüstung, Talisman, Crew und Stärkungen (Inventar zeigt sie, applyPower wendet sie an) */
+  playerStats(gearOverride?: Partial<import('./save/types').GearState>): StatSheet {
+    const s = this.save!;
+    const has = (id: string) => s.crew.hired.includes(id);
+    const buff = { atk: 0, reduce: 0, crit: 0 };
+    for (const b of this.buffs) {
+      const d = CONSUMABLE_BY_ID[b.id]?.buff;
+      if (d) { buff.atk += d.atk ?? 0; buff.reduce += d.reduce ?? 0; buff.crit += d.crit ?? 0; }
+    }
+    return computeStats({
+      level: s.player.level,
+      gear: gearOverride ? { ...s.gear, ...gearOverride } : s.gear,
+      style: s.player.style,
+      hpPassive: this.world.faji?.passives.hpMax ?? 0,
+      critPassive: this.world.faji?.passives.crit ?? 0,
+      atkCrew: (has('ram') ? 1.1 : 1) * (has('musik') ? 1.05 : 1),
+      weaponCrew: has('schmied') ? 1.12 : 1,
+      fajiCrew: has('lehrer') ? 0.2 : 0,
+      buff,
+    });
+  }
+
+  /** Aussehen mit angelegter Kopfbedeckung und Rüstung (das gespeicherte Aussehen bleibt unverändert) */
+  private displayLook(d: SaveData | null = this.save) {
+    const p = d!.player;
+    const look = structuredClone(p.look);
+    const g = d!.gear;
+    const head = headEq(g);
+    if (head) { look.hat = head.hat; look.hatColor = head.color; }
+    const al = ARMOR_LOOK[armorEq(g)];
+    if (al) Object.assign(look, al);
+    return look;
+  }
+
   private applyPower() {
     if (!this.save) return;
     const lvl = this.save.player.level;
-    const hpBonus = 1 + (this.world.faji?.passives.hpMax ?? 0);
     const gear = this.save.gear;
-    const armor = ARMOR[gear.armor]?.hp ?? 0;
-    const weapon = WEAPONS[gear.weapon]?.dmg ?? 0;
-    const wdef = WEAPONS[gear.weapon];
+    ensureGear(gear);
+    const wdef = WEAPONS[weaponEq(gear)];
     if (wdef) this.world.setWeaponLook({ blade: wdef.col, glow: !!wdef.glow });
     const has = (id: string) => this.save!.crew.hired.includes(id);
     const up = this.save.ship.up;
     const tb = (gear.trinket ? TRINKET_BY_ID[gear.trinket]?.bonus : null) ?? {};
-    // Crew-Boni wie in 1.0, dazu der Talisman
-    const atkMult = (has('ram') ? 1.1 : 1) * (has('musik') ? 1.05 : 1) * (1 + (tb.atk ?? 0));
-    const weaponMult = has('schmied') ? 1.12 : 1;
-    this.world.setPlayerPower((PLAYER_BASE.hp(lvl) + armor) * hpBonus * (1 + (tb.hp ?? 0)), (PLAYER_BASE.atk(lvl) + weapon * 0.5 * weaponMult) * atkMult);
+    // Alle Werte aus einer Stelle (core/inventory.ts): Ausrüstung, Talisman, Crew, Stärkungen
+    const st = this.playerStats();
+    this.world.setPlayerPower(st.hp, st.atk);
+    this.world.setGearReduce(st.reduce);
     this.world.shipSpeedMult = (has('nav') ? 1.15 : 1) * (has('esra') ? 1.1 : 1) * (1 + up.sail * 0.05) * (1 + (tb.speed ?? 0));
     this.world.ship.turnMult = has('helm') ? 1.6 : 1;
     this.world.rangeMult = has('look') ? 1.25 : 1;
@@ -472,9 +558,8 @@ export class Game {
       this.world.setShip(this.save.ship.tier, this.save.ship.look, this.world.ship.ammo, this.world.ship.hull / Math.max(1, this.world.ship.maxHull), this.save.player.faction);
     }
     // Stilbonus der Waffenlinie: Foki laden Faji schneller nach, Kampfhandschuhe treffen öfter voll
-    const style = this.save.player.style;
-    if (this.world.faji) this.world.faji.extraRegen = (has('lehrer') ? 0.2 : 0) + (tb.faji ?? 0) + (style === 'effekt' ? gear.weapon * 0.05 : 0);
-    if (this.world.combat) this.world.combat.critChance = 0.1 + (this.world.faji?.passives.crit ?? 0) + (tb.crit ?? 0) + (style === 'faust' ? gear.weapon * 0.02 : 0);
+    if (this.world.faji) this.world.faji.extraRegen = st.fajiRegen;
+    if (this.world.combat) this.world.combat.critChance = st.crit;
     const nav = this.world.naval;
     if (nav) {
       nav.playerLevel = lvl;
@@ -587,7 +672,7 @@ export class Game {
     this.overlay.showCutin('Faji-Kristall!', '#C77DFF');
     this.after(() => this.overlay.showBanner('Dein Faji erwacht', `+2 Fähigkeitspunkte${pick ? ` und die Fähigkeit „${pick.n}“` : ''}`), 900);
     this.grantXp(200, 150);
-    this.world.faji?.refresh(s.player.level, styleIdOf(s.player.style, s.player.blade));
+    this.world.faji?.refresh(s.player.level, this.activeStyle());
     this.applyPower();
     this.persist();
   }
@@ -595,11 +680,11 @@ export class Game {
   // ---------- Talismane und Erfolge ----------
 
   /** Talisman als Beute; ein fester (id) oder zufällig ab einer Seltenheit */
-  private dropTrinket(min: Rarity, luck = 0, id?: string) {
+  private dropTrinket(min: Rarity, luck = 0, id?: string, exact = false): boolean {
     const s = this.save;
-    if (!s) return;
-    const t = id ? TRINKET_BY_ID[id] : rollTrinket(min, luck, s.gear.trinkets);
-    if (!t || s.gear.trinkets.includes(t.id)) return;
+    if (!s) return false;
+    const t = id ? TRINKET_BY_ID[id] : rollTrinket(min, luck, s.gear.trinkets, exact);
+    if (!t || s.gear.trinkets.includes(t.id)) return false;
     s.gear.trinkets.push(t.id);
     if (!s.gear.trinket) s.gear.trinket = t.id;
     const r = RARITY[t.rarity];
@@ -607,6 +692,36 @@ export class Game {
     this.after(() => this.overlay.showBanner(`${r.mark} ${t.n}`, `Talisman gefunden (${r.n}) · ${t.d}`), 1200);
     this.applyPower();
     this.persist();
+    return true;
+  }
+
+  /**
+   * Beute-Säule aufgehoben: Talisman (genau in der Seltenheit der Säule), Gold oder Proviant. Gibt es keinen neuen
+   * Talisman dieser Seltenheit mehr, wird daraus Gold – nichts geht verloren.
+   */
+  private onLootPickup(d: LootDrop) {
+    const s = this.save;
+    if (!s) return;
+    const r = RARITY[d.rarity];
+    const pp = this.world.playerPos;
+    const h = this.world.ground.height(pp.x, pp.z);
+    const above = () => new Vector3(pp.x, (Number.isFinite(h) ? h : 0) + 2.4, pp.z);
+    const gold = () => {
+      const g = Math.round(d.value * this.goldMult(true));
+      s.player.gold += g;
+      this.overlay.number(above(), `${r.mark} +${g} Gold`, 'gold');
+    };
+    // Seltene Funde: Karte und Fanfare (selten ◆, episch ★, legendär ♛)
+    const tier = RARITIES.indexOf(d.rarity);
+    if (tier >= 1) this.overlay.lootCard(`${r.mark} ${r.n}er Fund`, d.kind === 'trinket' ? 'Talisman' : d.kind === 'proviant' ? 'Proviant' : `${Math.round(d.value * this.goldMult(true))} Gold`, r.col, tier);
+    if (d.kind === 'trinket') { if (!this.dropTrinket(d.rarity, 0, undefined, true)) gold(); return; }
+    if (d.kind === 'proviant') {
+      // ab selten oft ein besonderes Gut (Festmahl, Stärkung, Essenz) statt schlichtem Proviant
+      const pool = tier >= 1 ? CONSUMABLES.filter((c) => c.rarity === d.rarity) : [];
+      const def = pool.length ? pool[Math.floor(Math.random() * pool.length)] : CONSUMABLE_BY_ID.proviant;
+      if (addItem(s.gear, def.id, 1)) { this.overlay.number(above(), `${r.mark} +1 ${def.n}`, 'heal'); return; }
+    }
+    gold();
   }
 
   equipTrinket(id: string | null) {
@@ -851,16 +966,184 @@ export class Game {
     this.world.setDigs([...this.quests.treasureIslands(), ...this.save.progress.maps]);
   }
 
+  /** Gespräch zu Fuß: Anime-Dialogfenster mit Schreibmaschinentext und Antworten */
   private talkTo(npc: TownNpcDef) {
-    if (!this.quests || !this.state.is('play')) return;
+    const qs = this.quests;
+    const save = this.save;
+    if (!qs || !save || !this.state.is('play')) return;
     this.justDone = [];
-    this.questEvent({ type: 'enter', island: 'ankerglueck' });
+    // Stadtbewohner: wer hier spricht, ist in Ankerglück angekommen; Dorfbewohner melden nur das Gespräch
+    if (TOWN_NPCS.some((n) => n.id === npc.id)) this.questEvent({ type: 'enter', island: 'ankerglueck' });
     this.questEvent({ type: 'talk', npc: npc.id });
     const done = this.justDone;
     this.justDone = null;
     this.state.set('pause');
-    this.menus.dialogExit = () => this.resume();
-    this.menus.showDialog(npc, done);
+    this.dialogNpc = npc;
+    this.dialogSession = new DialogSession({
+      npc, done,
+      offers: () => qs.available(npc.id),
+      running: () => save.progress.quests.map((p) => QUEST_BY_ID[p.id]).filter((q) => q && q.giver === npc.id).map((q) => ({ q, step: qs.step(q.id)?.text ?? '' })),
+      introOf: (q) => qs.introOf(q),
+      rewardText: (q) => [`${q.reward.gold} Gold`, `${q.reward.xp} EP`, `${q.reward.fame} Ruhm`, q.reward.sp ? `${q.reward.sp} Faji-Punkt${q.reward.sp > 1 ? 'e' : ''}` : ''].filter(Boolean).join(' · '),
+      accept: (id) => this.acceptQuest(id),
+    });
+    this.dialogUi.show(this.dialogSession.start(), (id) => this.dialogChoose(id), () => this.endDialog());
+  }
+
+  private dialogChoose(id: string) {
+    const s = this.dialogSession, npc = this.dialogNpc;
+    if (!s || !npc) return;
+    const r = s.choose(id);
+    if ('end' in r) { this.endDialog(); return; }
+    if ('shop' in r) {
+      this.dialogUi.hide();
+      this.menus.dialogExit = () => this.endDialog();
+      // aus dem Laden zurück ins Gespräch
+      this.menus.openShop(npc, () => { this.menus.hide(); this.dialogUi.show(s.menu(), (c) => this.dialogChoose(c), () => this.endDialog()); });
+      return;
+    }
+    this.dialogUi.set(r.view);
+  }
+
+  private endDialog() {
+    this.dialogUi.hide();
+    this.dialogSession = null;
+    this.dialogNpc = null;
+    this.menus.hide();
+    this.resume();
+  }
+
+  // ---------- Inventar ----------
+
+  private closeInventory() {
+    this.inventoryUi?.dispose();
+    this.inventoryUi = null;
+    this.stage = null;
+    this.useWorldView();
+    this.renderer.resize();
+    this.state.set('play');
+    this.input.flush();
+    this.loop.resetClock();
+  }
+
+  /** Inventar (Taste I): Figur im 3D-Fenster, Ausrüstung, Werte, Raster und Schnellleiste */
+  openInventory() {
+    const s = this.save;
+    if (!s || !this.assets || !this.state.is('play') || this.inventoryUi) return;
+    this.menus.hide();
+    ensureGear(s.gear);
+    const stage = new SkillStage();
+    this.stage = stage;
+    const style = () => this.activeStyle();
+    stage.show(this.assets, this.displayLook(), style());
+    this.renderer.setView(stage.scene, stage.camera);
+    this.renderer.setEffectSources(null, stage.focus);
+    this.state.set('editor');
+    const g = s.gear;
+    const wl = () => WEAPON_LINES[s.player.style];
+    const rar = (r: keyof typeof RARITY) => RARITY[r].col;
+    const items = (): InvItem[] => {
+      const out: InvItem[] = [];
+      HEADS.forEach((h) => { if (g.heads!.includes(h.id)) out.push({ key: `head:${h.id}`, cat: 'head', name: h.n, icon: '🎩', color: rar(h.rarity), desc: h.d, stat: '', equipped: g.head === h.id }); });
+      ARMOR.forEach((a, i) => { if (i <= g.armor) out.push({ key: `armor:${i}`, cat: 'armor', name: a.n, icon: ['👕', '🦺', '⛓', '🛡', '✨'][i] ?? '🛡', color: '#8AA0B8', desc: `Rüstungsstufe ${i + 1}`, stat: `+${a.hp} Leben`, equipped: armorEq(g) === i }); });
+      WEAPONS.forEach((w, i) => { if (i <= g.weapon) out.push({ key: `weapon:${i}`, cat: 'weapon', name: wl().names[i] ?? w.n, icon: s.player.style === 'faust' ? '🥊' : s.player.style === 'effekt' ? '🔮' : '🗡', color: w.col, desc: `Waffenstufe ${i + 1}`, stat: wl().stat(w, i), equipped: weaponEq(g) === i }); });
+      g.trinkets.forEach((id) => { const t = TRINKET_BY_ID[id]; if (t) out.push({ key: `trinket:${id}`, cat: 'trinket', name: t.n, icon: '📿', color: rar(t.rarity), desc: `${RARITY[t.rarity].n}er Talisman`, stat: t.d, equipped: g.trinket === id }); });
+      bagConsumables(g).forEach(({ def, n }) => out.push({ key: `cons:${def.id}`, cat: 'cons', name: def.n, icon: def.icon, color: def.color, desc: def.d, stat: `Abklingzeit ${def.cd} s`, equipped: false, count: n, cid: def.id }));
+      return out;
+    };
+    const overrideFor = (key: string): Partial<typeof g> | null => {
+      const [kind, id] = key.split(':');
+      if (kind === 'head') return { head: id };
+      if (kind === 'armor') return { armorEq: +id };
+      if (kind === 'weapon') return { weaponEq: +id };
+      if (kind === 'trinket') return { trinket: id };
+      return null;
+    };
+    const refreshLook = () => { this.world.updatePlayer(this.displayLook(), style()); stage.show(this.assets!, this.displayLook(), style()); };
+    const apply = () => { this.applyPower(); this.persist(); refreshLook(); this.inventoryUi?.refresh(); };
+    const host: InventoryHost = {
+      items,
+      equipped: () => {
+        const h = headEq(g), wi = weaponEq(g), ai = armorEq(g), t = g.trinket ? TRINKET_BY_ID[g.trinket] : null;
+        const none = null;
+        return {
+          head: h ? { name: h.n, icon: '🎩', color: rar(h.rarity) } : none,
+          armor: { name: ARMOR[ai].n, icon: ['👕', '🦺', '⛓', '🛡', '✨'][ai] ?? '🛡', color: '#8AA0B8' },
+          weapon: { name: wl().names[wi] ?? WEAPONS[wi].n, icon: s.player.style === 'faust' ? '🥊' : s.player.style === 'effekt' ? '🔮' : '🗡', color: WEAPONS[wi].col },
+          trinket: t ? { name: t.n, icon: '📿', color: rar(t.rarity) } : none,
+        };
+      },
+      stats: (key) => {
+        const cur = this.playerStats();
+        const ov = key ? overrideFor(key) : null;
+        return { cur, next: ov ? this.playerStats(ov) : null };
+      },
+      bar: () => (g.bar ?? []).map((id) => { const d = id ? CONSUMABLE_BY_ID[id] : null; return d ? { name: d.n, icon: d.icon, color: d.color, count: itemCount(g, d.id) } : null; }),
+      gold: () => s.player.gold,
+      equip: (key) => {
+        const [kind, id] = key.split(':');
+        if (kind === 'head') g.head = id;
+        else if (kind === 'armor') g.armorEq = +id;
+        else if (kind === 'weapon') g.weaponEq = +id;
+        else if (kind === 'trinket') g.trinket = id;
+        else return;
+        audio.play('switch');
+        apply();
+      },
+      unequip: (slot: SlotId) => {
+        if (slot === 'head') g.head = null;
+        else if (slot === 'trinket') g.trinket = null;
+        else return;
+        audio.play('switch');
+        apply();
+      },
+      use: (cid) => { this.useItem(cid); this.inventoryUi?.refresh(); },
+      setBar: (slot, cid) => {
+        const bar = g.bar!;
+        if (cid) for (let i = 0; i < bar.length; i++) if (bar[i] === cid) bar[i] = null;
+        bar[slot] = cid;
+        this.persist();
+      },
+      close: () => this.closeInventory(),
+    };
+    this.inventoryUi = new InventoryScreen(this.uiRoot, host);
+  }
+
+  /** Auftragsbuch (Taste L) */
+  openQuestLog() {
+    const s = this.save, qs = this.quests;
+    if (!s || !qs || !this.state.is('play') || this.questLog) return;
+    this.state.set('pause');
+    const close = () => {
+      this.questLog?.dispose();
+      this.questLog = null;
+      this.resume();
+    };
+    this.questLog = new QuestLog(this.uiRoot, {
+      qs, progress: s.progress,
+      giverName: (id) => TOWN_NPCS.find((n) => n.id === id)?.name ?? VILLAGE_NPC_BY_ID[id]?.name ?? CREW_BY_ID[id]?.name ?? id,
+      onTrack: (id) => { qs.setTracked(id); this.persist(); this.hud.toast('Auftrag wird verfolgt.', 1.6); },
+      onClose: close,
+    });
+  }
+
+  /** Schwebende Zeichen (!/?) und die Aufforderung „E · Sprechen“ über Gesprächspartnern in der Nähe */
+  private updateNpcMarkers() {
+    const qs = this.quests, save = this.save;
+    const foot = this.state.is('play') && this.world.mode === 'foot' && !this.dialogUi.isOpen && !!qs && !!save;
+    if (!foot) { this.markers.update([], null, ''); return; }
+    const pos = this.world.playerPos;
+    const list = this.world.talkables(pos.x, pos.z, 30);
+    const key = this.input.keyLabel(this.input.getKeyBindings().talk[0] ?? 'KeyE');
+    const marks: NpcMark[] = list.map(({ npc, dist }, i) => {
+      const d = npc.townDef!;
+      const mark = qs!.available(d.id).length ? '!' : save!.progress.quests.some((p) => { const st = qs!.step(p.id); return st?.type === 'talk' && st.npc === d.id; }) ? '?' : '';
+      const p = this.markPos.get(d.id) ?? new Vector3();
+      this.markPos.set(d.id, p);
+      p.copy(npc.char.holder.position).y += 2.5;
+      return { id: d.id, name: d.name, pos: p, mark, near: i === 0 && dist < 3.2 };
+    });
+    this.markers.update(marks, this.world.camera, key);
   }
 
   /** Gespräch aus dem Hafenmenü (Spiel ist schon pausiert) */
@@ -967,21 +1250,100 @@ export class Game {
     this.persist();
   }
 
-  private usePotion() {
+  private usePotion() { this.useItem('proviant'); }
+
+  /** Gut aus der Schnellleiste oder dem Inventar benutzen: heilt, stärkt oder füllt Faji auf */
+  useItem(id: string | null): boolean {
     const s = this.save;
+    const def = id ? CONSUMABLE_BY_ID[id] : null;
+    if (!s || !def) return false;
     const hp = this.world.playerHp;
-    if (!s || !hp) return;
-    if (this.world.mode !== 'foot') { this.hud.toast('Proviant isst man an Land.'); return; }
-    if (s.gear.potions <= 0) { this.hud.toast('Kein Proviant mehr – Mara verkauft welchen am Markt.', 3); return; }
-    if (hp.hp >= hp.max) { this.hud.toast('Du bist satt und gesund.'); return; }
-    s.gear.potions--;
-    audio.play('eat');
-    const heal = POTION.heal * (s.crew.hired.includes('cook') ? 2 : 1) * (s.crew.hired.includes('arzt') ? 1.4 : 1);
-    this.world.healFrac(heal);
-    this.hud.toast(`Mmh! +${Math.round(Math.min(1, heal) * 100)} % Leben · noch ${s.gear.potions}`);
+    if (this.world.mode !== 'foot') { this.hud.toast(`${def.n}: nur an Land.`); return false; }
+    if (itemCount(s.gear, def.id) <= 0) { this.hud.toast(`Kein ${def.n} mehr${def.id === 'proviant' ? ' – Mara verkauft welchen am Markt.' : '.'}`, 3); return false; }
+    if ((this.itemCd.get(def.id) ?? 0) > 0 || this.globalCd > 0) return false;
+    if (def.heal && !def.buff && !def.faji && hp && hp.hp >= hp.max) { this.hud.toast('Du bist satt und gesund.'); return false; }
+    const fj = this.world.faji;
+    if (def.faji && !def.heal && fj && fj.faji >= fj.maxFaji - 0.5) { this.hud.toast('Dein Faji ist voll.'); return false; }
+    takeItem(s.gear, def.id);
+    this.itemCd.set(def.id, def.cd);
+    this.globalCd = GLOBAL_ITEM_CD;
+    let msg = def.n;
+    if (def.heal) {
+      const heal = def.heal * (def.id === 'proviant' ? (s.crew.hired.includes('cook') ? 2 : 1) * (s.crew.hired.includes('arzt') ? 1.4 : 1) : 1);
+      this.world.healFrac(heal);
+      msg = `+${Math.round(Math.min(1, heal) * 100)} % Leben`;
+      audio.play('eat');
+    }
+    if (def.faji && fj) { fj.faji = Math.min(fj.maxFaji, fj.faji + fj.maxFaji * def.faji); msg = `+${Math.round(def.faji * 100)} % Faji`; audio.play('shard'); }
+    if (def.buff) {
+      this.buffs = this.buffs.filter((b) => b.id !== def.id);
+      this.buffs.push({ id: def.id, t: def.buff.dur });
+      this.applyPower();
+      msg = `${def.n} wirkt ${def.buff.dur} s`;
+      audio.play('level', 0.5);
+    }
+    this.hud.toast(`${def.icon} ${msg} · noch ${itemCount(s.gear, def.id)}`);
+    this.inventoryUi?.refresh();
+    return true;
+  }
+
+  /** Stärkungen und Abklingzeiten ticken lassen (Logikschritt) */
+  private tickItems(dt: number) {
+    this.globalCd = Math.max(0, this.globalCd - dt);
+    for (const [k, v] of this.itemCd) { if (v - dt <= 0) this.itemCd.delete(k); else this.itemCd.set(k, v - dt); }
+    if (!this.buffs.length) return;
+    let ended = false;
+    for (const b of this.buffs) b.t -= dt;
+    const before = this.buffs.length;
+    this.buffs = this.buffs.filter((b) => b.t > 0);
+    if (this.buffs.length !== before) ended = true;
+    if (ended) { this.applyPower(); this.hud.toast('Eine Stärkung ist abgeklungen.', 2); }
+  }
+
+  /** Schnellleiste für die Anzeige: Gut, Menge, Abklingzeit (Anteil, 1 = gerade benutzt) und Stärkung läuft */
+  private itemBarViews() {
+    const g = this.save!.gear;
+    return (g.bar ?? []).map((id) => {
+      const def = id ? CONSUMABLE_BY_ID[id] : null;
+      if (!def) return { id: null as string | null, icon: '', name: '', color: '#6a6458', count: 0, cdFrac: 0, ready: false, active: 0 };
+      const own = this.itemCd.get(def.id) ?? 0;
+      const buff = this.buffs.find((b) => b.id === def.id);
+      const count = itemCount(g, def.id);
+      return { id: def.id as string | null, icon: def.icon, name: def.n, color: def.color, count, cdFrac: Math.min(1, Math.max(own > 0 ? own / def.cd : 0, this.globalCd > 0 ? this.globalCd / GLOBAL_ITEM_CD * 0.5 : 0)), ready: count > 0 && own <= 0 && this.globalCd <= 0, active: buff && def.buff ? buff.t / def.buff.dur : 0 };
+    });
   }
 
   // ---------- Läden ----------
+
+  /** Verbrauchsgut kaufen (Proviant gibt es weiter über buyPotions) */
+  buyItem(id: string): string {
+    const s = this.save, def = CONSUMABLE_BY_ID[id];
+    if (!s || !def) return '';
+    if (itemCount(s.gear, id) >= def.max) return 'Deine Taschen sind voll.';
+    if (s.player.gold < def.price) return 'Nicht genug Gold.';
+    s.player.gold -= def.price;
+    addItem(s.gear, id, 1);
+    // erster Kauf: gleich in einen freien Platz der Schnellleiste legen
+    const bar = s.gear.bar ?? [];
+    if (!bar.includes(id)) { const free = bar.indexOf(null); if (free >= 0) bar[free] = id; }
+    this.persist();
+    return `${def.n} gekauft.`;
+  }
+
+  /** Kopfbedeckung kaufen und gleich aufsetzen */
+  buyHead(id: string): string {
+    const s = this.save, h = HEAD_BY_ID[id];
+    if (!s || !h || s.gear.heads?.includes(id)) return '';
+    if (rankIndex(s.player.fame) < h.rank) return `Rang „${rankName(s.player.faction, FAME_THRESHOLDS[h.rank])}“ nötig.`;
+    if (s.player.gold < h.price) return `Dafür fehlen ${h.price - s.player.gold} Gold.`;
+    s.player.gold -= h.price;
+    (s.gear.heads ??= []).push(id);
+    s.gear.head = id;
+    this.world.updatePlayer(this.displayLook(), this.activeStyle());
+    this.applyPower();
+    this.persist();
+    return `${h.n} gekauft und aufgesetzt.`;
+  }
 
   buyGear(kind: 'weapon' | 'armor', i: number): string {
     const s = this.save;
@@ -995,6 +1357,7 @@ export class Game {
     if (s.player.gold < cost) return `Dafür fehlen ${cost - s.player.gold} Gold.`;
     s.player.gold -= cost;
     s.gear[kind] = i;
+    if (kind === 'weapon') delete s.gear.weaponEq; else { delete s.gear.armorEq; this.world.updatePlayer(this.displayLook(), this.activeStyle()); }
     this.applyPower();
     this.world.healPlayer();
     this.persist();
@@ -1052,7 +1415,7 @@ export class Game {
     const isl = (id: string) => { const d = this.world.islandDefs.find((i) => i.id === id); return d ? { x: d.x, z: d.z } : null; };
     const nearest = (list: { x: number; z: number }[]) => list.reduce<{ x: number; z: number } | null>((b, p) => (!b || Math.hypot(p.x - pos.x, p.z - pos.z) < Math.hypot(b.x - pos.x, b.z - pos.z) ? p : b), null);
     switch (t.step.type) {
-      case 'talk': return this.world.npcPos(t.step.npc) ?? (CREW_BY_ID[t.step.npc] ? { x: this.world.ship.x, z: this.world.ship.z } : null);
+      case 'talk': return this.world.npcPos(t.step.npc) ?? (CREW_BY_ID[t.step.npc] ? { x: this.world.ship.x, z: this.world.ship.z } : isl(Object.keys(VILLAGE_NPCS).find((k) => VILLAGE_NPCS[k].some((n) => n.id === (t.step as { npc: string }).npc)) ?? ''));
       case 'goto': case 'clear': case 'treasure': return isl(t.step.island);
       case 'sink': case 'board': return nearest(this.world.enemyShips.filter((e) => !e.ally));
       case 'rescue': return this.world.nearestFloater('raft');
@@ -1061,14 +1424,119 @@ export class Game {
     }
   }
 
+  /** Inselformen für die Karten (Küstenlinie wie in der Welt) */
+  get mapOpts(): MapOpts {
+    if (!this.shapeById) {
+      this.shapeById = new Map();
+      this.world.islandDefs.forEach((d, i) => { const sh = this.world.islands[i]; if (sh) this.shapeById!.set(d.id, sh); });
+    }
+    const m = this.shapeById;
+    return { shape: (id) => m.get(id) };
+  }
+
+  /** Auftragszeichen je Insel: ! = hier wartet ein Auftrag, ? = hier lässt sich einer abgeben (Stadt und Dörfer) */
+  private questIslandMarks(): Map<string, 'quest' | 'turnin'> {
+    const out = new Map<string, 'quest' | 'turnin'>();
+    const qs = this.quests, s = this.save;
+    if (!qs || !s) return out;
+    const mark = (id: string) => qs.available(id).length ? 'quest' as const : s.progress.quests.some((p) => { const st = qs.step(p.id); return st?.type === 'talk' && st.npc === id; }) ? 'turnin' as const : null;
+    const put = (island: string, ids: string[]) => {
+      const marks = ids.map(mark);
+      const m = marks.includes('turnin') ? 'turnin' : marks.includes('quest') ? 'quest' : null;
+      if (m) out.set(island, m);
+    };
+    put('ankerglueck', TOWN_NPCS.map((n) => n.id));
+    for (const [island, npcs] of Object.entries(VILLAGE_NPCS)) put(island, npcs.map((n) => n.id));
+    return out;
+  }
+
+  /** Orientierungspunkte für Minikarte und Kompass: Feinde (rot), Bosse (Totenkopf), Auftragspersonen (! / ?), Ziel */
+  private mapPois(): Poi[] {
+    const out: Poi[] = [];
+    const qs = this.quests, s = this.save;
+    const foot = this.world.mode === 'foot';
+    if (foot) {
+      for (const e of this.world.footEnemies()) out.push({ x: e.x, z: e.z, kind: e.boss ? 'boss' : 'enemy' });
+      const pos = this.world.playerPos;
+      if (qs && s) for (const { npc } of this.world.talkables(pos.x, pos.z, 400)) {
+        const id = npc.townDef!.id;
+        const k = qs.available(id).length ? 'quest' as const : s.progress.quests.some((p) => { const st = qs.step(p.id); return st?.type === 'talk' && st.npc === id; }) ? 'turnin' as const : null;
+        out.push({ x: npc.x, z: npc.z, kind: k ?? 'npc', name: npc.townDef!.name });
+      }
+      return out;
+    }
+    // auf See: Boss-Inseln und Inseln mit Auftragspersonen, nur entdeckte
+    const marks = this.questIslandMarks();
+    for (const d of this.world.islandDefs) {
+      if (!this.world.discovered.has(d.id)) continue;
+      if (d.kind === 'boss') out.push({ x: d.x, z: d.z, kind: 'boss', name: d.boss ?? d.name });
+      const m = marks.get(d.id);
+      if (m) out.push({ x: d.x, z: d.z, kind: m, name: d.name });
+    }
+    return out;
+  }
+
   mapMarkers(): MapMarkers {
     const pos = this.world.playerPos;
+    const foot = this.world.mode === 'foot';
     return {
       player: pos,
-      enemies: this.world.enemyShips,
+      enemies: foot ? [] : this.world.enemyShips,
       target: this.questTarget(),
       digs: (this.world.life?.digs ?? []).map((d) => ({ x: d.x, z: d.z })),
+      view: this.world.cameraYaw,
+      range: foot ? 85 : 420,
+      pois: this.mapPois(),
     };
+  }
+
+  /** Daten der Weltkarte */
+  private worldMapData(): WorldMapData {
+    return {
+      islands: this.world.islandDefs,
+      regions: REGIONS,
+      known: (id) => this.world.discovered.has(id),
+      islandMarks: this.questIslandMarks(),
+      markers: { ...this.mapMarkers(), pois: undefined },
+      shape: this.mapOpts.shape,
+    };
+  }
+
+  /** Weltkarte (Taste M): ganze Welt im Vollbild, ziehen und zoomen */
+  openWorldMap() {
+    if (!this.save || !this.state.is('play') || this.worldMap) return;
+    this.state.set('pause');
+    this.menus.hide();
+    const data = this.worldMapData();
+    const close = () => {
+      this.worldMap?.dispose();
+      this.worldMap = null;
+      this.resume();
+    };
+    this.worldMap = new WorldMapScreen(this.uiRoot, {
+      data: () => data,
+      close,
+      logbook: () => { this.worldMap?.dispose(); this.worldMap = null; this.menus.showMap('logbuch', () => this.resume()); },
+    });
+  }
+
+  /** Kompassleiste: Punkte mit Peilung (Welt) und Entfernung */
+  private updateCompass() {
+    const on = this.state.is('play') && !!this.save;
+    this.compass.setVisible(on);
+    if (!on) return;
+    const pos = this.world.playerPos;
+    const list: CompassPoi[] = [];
+    const add = (x: number, z: number, kind: CompassPoi['kind']) => {
+      const dx = x - pos.x, dz = z - pos.z;
+      list.push({ bearing: Math.atan2(dx, dz), dist: Math.hypot(dx, dz), kind });
+    };
+    const foot = this.world.mode === 'foot';
+    for (const p of this.mapPois()) if (foot ? Math.hypot(p.x - pos.x, p.z - pos.z) < (p.kind === 'enemy' ? 70 : 400) : true) add(p.x, p.z, p.kind);
+    if (!foot) for (const e of this.world.enemyShips) if (!e.ally && Math.hypot(e.x - pos.x, e.z - pos.z) < 300) add(e.x, e.z, e.legend ? 'boss' : 'enemy');
+    const t = this.questTarget();
+    if (t) add(t.x, t.z, 'target');
+    this.compass.update(this.world.cameraYaw, list);
   }
 
   private updateQuestHud(frameDt: number) {
@@ -1092,14 +1560,15 @@ export class Game {
         const rel = this.world.cameraYaw - Math.atan2(dx, dz);
         angle = Math.atan2(Math.sin(rel), Math.cos(rel));
       }
-      this.hud.setQuest({ title: t.q.title, step: stepText(t.step, t.count), angle, dist });
+      const frac = 'count' in t.step && t.step.count > 1 ? Math.min(1, t.count / t.step.count) : null;
+      this.hud.setQuest({ title: t.q.title, step: stepText(t.step, t.count), angle, dist, frac, main: !!t.q.main });
     }
     // Minikarte etwa 10× pro Sekunde
     this.mapT -= frameDt;
     if (this.mapT <= 0) {
       this.mapT = 0.1;
       const c = this.hud.miniCanvas();
-      if (c) drawMap(c.ctx, c.size, this.world.islandDefs.filter((i) => this.world.discovered.has(i.id)), this.mapMarkers(), 'mini');
+      if (c) drawMap(c.ctx, c.size, this.world.islandDefs.filter((i) => this.world.discovered.has(i.id)), this.mapMarkers(), 'mini', this.mapOpts);
     }
   }
 
@@ -1123,7 +1592,7 @@ export class Game {
     if (up) {
       this.applyPower();
       this.world.healPlayer();
-      this.world.faji?.refresh(p.level, styleIdOf(p.style, p.blade));
+      this.world.faji?.refresh(p.level, this.activeStyle());
       audio.play('level');
       this.overlay.showBanner(`Stufe ${p.level}!`, '+1 Faji-Punkt · mehr Leben und Angriffskraft');
       this.checkAwakening();
@@ -1237,10 +1706,53 @@ export class Game {
     s.skills.sp += sp + levels;
     s.player.level += levels;
     this.applyPower();
-    this.world.faji?.refresh(s.player.level, styleIdOf(s.player.style, s.player.blade));
+    this.world.faji?.refresh(s.player.level, this.activeStyle());
     this.hud.setPlayer(s.player.name, `${FACTION_LABELS[s.player.faction]} · ${rankName(s.player.faction, s.player.fame)} · Stufe ${s.player.level}`);
     this.persist();
   }
+
+  // ---------- Waffenplätze ----------
+
+  /** Standard der zweiten Waffe: wer mit der Faust kämpft, trägt Säbel, alle anderen die Faust */
+  private weaponSlots(d: SaveData | null = this.save): [StyleId, StyleId] {
+    const p = d!.player;
+    const first = styleIdOf(p.style, p.blade);
+    let alt = (p.alt as StyleId | undefined) ?? (first === 'faust' ? 'saebel' : 'faust');
+    if (alt === first) alt = first === 'faust' ? 'saebel' : 'faust';
+    return [first, alt];
+  }
+
+  /** Waffe des aktiven Platzes */
+  private activeStyle(d: SaveData | null = this.save): StyleId {
+    return this.weaponSlots(d)[d!.player.slot === 1 ? 1 : 0];
+  }
+
+  private refreshWeaponHud() {
+    const s = this.save;
+    if (!s) return;
+    const [a, b] = this.weaponSlots();
+    this.hud.setWeapons(STYLE_ANIMS[a].label, STYLE_ANIMS[b].label, s.player.slot === 1 ? 1 : 0);
+  }
+
+  /** Waffe wechseln (Q: der jeweils andere Platz; Z/X: Platz 1 bzw. 2). Nur zu Fuß und im Spiel. */
+  swapWeapon(to?: 0 | 1) {
+    const s = this.save;
+    if (!s || !this.state.is('play') || this.world.mode !== 'foot') return;
+    const cur = s.player.slot === 1 ? 1 : 0;
+    const next: 0 | 1 = to ?? (cur ? 0 : 1);
+    if (next === cur) return;
+    const style = this.weaponSlots()[next];
+    if (!this.world.swapWeapon(style)) return;
+    s.player.slot = next;
+    s.player.alt = this.weaponSlots()[1];
+    this.world.faji?.refresh(s.player.level, style);
+    this.applyPower();
+    audio.play('whoosh', 0.9);
+    this.refreshWeaponHud();
+    this.persist();
+  }
+
+  private skillTree: SkillTree | null = null;
 
   openSkills() {
     const s = this.save;
@@ -1252,7 +1764,7 @@ export class Game {
     this.renderer.setView(stage.scene, stage.camera);
     this.renderer.setEffectSources(null, stage.focus);
     this.state.set('editor');
-    const tree: SkillTree = new SkillTree(this.uiRoot, {
+    const tree: SkillTree = this.skillTree = new SkillTree(this.uiRoot, {
       state: s.skills,
       level: s.player.level,
       onLearn: (id) => {
@@ -1264,7 +1776,7 @@ export class Game {
           const free = s.skills.slots.indexOf(null);
           if (free >= 0) s.skills.slots[free] = id;
         }
-        this.world.faji?.refresh(s.player.level, styleIdOf(s.player.style, s.player.blade));
+        this.world.faji?.refresh(s.player.level, this.activeStyle());
         this.applyPower();
         this.persist();
       },
@@ -1277,6 +1789,7 @@ export class Game {
       onPreview: (def, lv) => stage.previewSkill(def, lv),
       onClose: () => {
         tree.dispose();
+        this.skillTree = null;
         this.stage = null;
         this.useWorldView();
         this.renderer.resize();
@@ -1335,7 +1848,10 @@ export class Game {
       this.save.player.look = r.look;
       this.save.player.style = r.style;
       this.save.player.blade = r.blade;
-      this.world.updatePlayer(r.look, styleIdOf(r.style, r.blade));
+      this.save.player.slot = 0;
+      this.save.player.alt = undefined;
+      this.refreshWeaponHud();
+      this.world.updatePlayer(this.displayLook(), styleIdOf(r.style, r.blade));
       // Kampfstil gewechselt: Kombos, Stilboni und Waffenname passen sich an
       this.world.faji?.refresh(this.save.player.level, styleIdOf(r.style, r.blade));
       this.applyPower();
@@ -1374,7 +1890,10 @@ export class Game {
     this.world.setState({ boat: data.world.boat, env: { time: data.world.time, weather: data.world.weather as WeatherId } });
     const p = data.player;
     this.world.playerFaction = p.faction;
-    if (this.assets) this.world.setCharacters(this.assets, p.look, styleIdOf(p.style, p.blade), this.overlay);
+    ensureGear(data.gear);
+    this.buffs = [];
+    this.itemCd.clear();
+    if (this.assets) this.world.setCharacters(this.assets, this.displayLook(data), this.activeStyle(data), this.overlay);
     this.world.setSkills(data.skills, p.level);
     this.world.setShip(data.ship.tier, data.ship.look, data.ship.ammo, data.ship.hull, p.faction);
     this.quests = new QuestSystem(data.progress, p.faction, {
@@ -1392,10 +1911,12 @@ export class Game {
     this.applyPower();
     this.world.healPlayer();
     this.hud.setPlayer(p.name, `${FACTION_LABELS[p.faction]} · ${rankName(p.faction, p.fame)} · Stufe ${p.level}`);
+    this.refreshWeaponHud();
     this.menus.hide();
     this.input.flush();
     this.autosaveTimer = 0;
     this.autoQuality.reset();
+    this.watchdog.rewarm();
     this.renderer.dynRes.rewarm();
     this.state.set('play');
     this.loop.resetClock();
@@ -1416,6 +1937,7 @@ export class Game {
     this.menus.hide();
     this.input.flush();
     this.autoQuality.reset();
+    this.watchdog.rewarm();
     this.renderer.dynRes.rewarm();
     this.state.set('play');
     this.loop.resetClock();
@@ -1461,6 +1983,7 @@ export class Game {
       this.renderer.applyQuality(tier);
     }
     this.autoQuality.reset();
+    this.watchdog.rewarm();
   }
 
   private applySettings() {
