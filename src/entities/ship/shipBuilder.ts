@@ -37,7 +37,7 @@ import { toon } from '../../render/toon';
 import { toonPbr } from '../../render/pbrMaps';
 import { hullPlankTexture } from '../../render/shipTextures';
 import { ships2 } from '../../core/flags';
-import { hullGeometry2 } from './shipHull2';
+import { hullGeometry2, hullSideX } from './shipHull2';
 import { archParts, hasArch } from '../../world/envModels';
 import { hasProp, placeMatrix, PropBatch, propRoles, type PropId } from '../../world/worldProps';
 
@@ -84,12 +84,19 @@ export interface ShipModel {
 }
 
 /** Breite des Rumpfs entlang der Länge: vorn spitz, hinten breit */
-function widthAt(t: number): number {
+/** Schiffe 2: Grundrissform je Klasse (Bugschärfe, Völligkeit, Heckbreite); gesetzt zu Beginn von buildShip (läuft ohne Unterbrechung) */
+const HULL_VARIANTS: Record<string, { e: number; p: number; s: number }> = {
+  schaluppe: { e: 2.1, p: 0.62, s: 0.8 }, brigg: { e: 2.3, p: 0.6, s: 0.78 }, korvette: { e: 2.7, p: 0.58, s: 0.76 }, fregatte: { e: 2.9, p: 0.55, s: 0.74 },
+  galeone: { e: 2.0, p: 0.7, s: 0.84 }, linienschiff: { e: 2.4, p: 0.65, s: 0.8 }, leviathan: { e: 2.2, p: 0.72, s: 0.86 },
+};
+const HULL_DEFAULT = { e: 2.3, p: 0.6, s: 0.78 };
+const widthAt = (t: number) => widthWith(HULL_DEFAULT, t);
+function widthWith(hullVar: { e: number; p: number; s: number }, t: number): number {
   // t: −1 Heck … +1 Bug. Durchgehend geschwungen wie ein echter Rumpf (vorher über 2/3 der Länge kastenförmig):
   // fein zulaufender Bug, größte Breite etwas hinter der Mitte, breiter Heckspiegel
-  if (t >= 0) return Math.pow(Math.max(0, 1 - Math.pow(t, 2.3)), 0.6);
+  if (t >= 0) return Math.pow(Math.max(0, 1 - Math.pow(t, hullVar.e)), hullVar.p);
   const u = -t;
-  return 0.78 + 0.22 * Math.pow(Math.max(0, 1 - Math.pow(u, 3)), 0.5);
+  return hullVar.s + (1 - hullVar.s) * Math.pow(Math.max(0, 1 - Math.pow(u, 3)), 0.5);
 }
 
 /** Deckssprung: Bug und Heck steigen an (bei großen Schiffen begrenzt) */
@@ -386,6 +393,9 @@ class Occ {
 
 /** Baut ein Schiff einer Klasse im eigenen Look. Bug zeigt nach +Z. */
 export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel {
+  // je Schiff eigene Grundrissform (die Funktion lebt in den Hüllen von halfWidth und Kollision weiter)
+  const hv = ships2() ? (HULL_VARIANTS[c.id] ?? HULL_DEFAULT) : HULL_DEFAULT;
+  const widthAt = (t: number) => widthWith(hv, t);
   const group = new Group();
   // Bordwandhöhe wächst mit der Schiffsgröße (große Schiffe ragen hoch aus dem Wasser)
   const hk = Math.pow(Math.max(1, c.L / 24), 0.6);
@@ -1117,8 +1127,8 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   for (let i = 0; i < c.can; i++) {
     const z = c.can === 1 ? 0 : ((i / (c.can - 1)) - 0.5) * c.L * 0.55;
     for (const s of [-1, 1]) {
-      const x = s * halfWidth(z);
       const cy = D - 0.7;
+      const x = s * (v2 ? hullSideX(c, D, { widthAt, sheerAt, rakeAt }, z, cy) + 0.01 : halfWidth(z));
       if (hasProp('kanone')) {
         // Blender-Kanone auf Holzlafette (Mündung bei +Z des Modells, 0,7 m vor dem Ursprung): Mündung bleibt 0,82 m vor der Bordwand
         batch.add('kanone', placeMatrix(x + s * (0.82 - 0.7 * cs1), cy, z, s * Math.PI / 2, cs1));
@@ -1142,7 +1152,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       for (let i = 0; i < c.can + 1; i++) {
         const z = ((i / c.can) - 0.5) * c.L * 0.62;
         for (const s of [-1, 1]) {
-          const x = s * halfWidth(z) * 1.0;
+          const x = s * (v2 ? hullSideX(c, D, { widthAt, sheerAt, rakeAt }, z, y) + 0.01 : halfWidth(z) * 1.0);
           const port = new Mesh(new BoxGeometry(0.06, 0.55, 0.65), portMat);
           port.position.set(x + s * 0.02, y, z);
           portFrame(x, y, z, s, 0.65, 0.55);
@@ -1607,7 +1617,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     }
     // Ankerkette (Glieder) und Anker an der Steuerbord-Bugseite, aufgerollte Kette am Deck
     const az = c.L * 0.36;
-    const ax = -(halfWidth(az) + 0.12);
+    const ax = -((v2 ? hullSideX(c, D, { widthAt, sheerAt, rakeAt }, az, D * 0.85) + 0.07 : halfWidth(az)) + 0.12);
     const links = 10;
     for (let i = 0; i < links; i++) {
       const lk = put(group, torus(0.11 * kk, 0.028 * kk, 8), iron, ax, D * 0.85 - i * 0.26 * kk, az, 0, i % 2 ? Math.PI / 2 : 0, 0);
@@ -1816,7 +1826,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     }
 
     // Heckgalerie (ab Fregatte): Balkon unter den Heckfenstern mit Konsolen und gedrechselter Brüstung
-    if (c.L >= 38) {
+    if (c.L >= 38 && !v2) {
       const gw = Math.min(halfWidth(castleZ0) * 0.88, c.W * 0.34), gz0 = castleZ0 - 0.02, gd = 0.8, gy = D + castleH * 0.18;
       put(group, box(gw * 2 + 0.2, 0.12, gd), wood, 0, gy, gz0 - gd / 2);
       put(group, box(gw * 2 + 0.3, 0.07, gd + 0.1), gold, 0, gy - 0.09, gz0 - gd / 2);

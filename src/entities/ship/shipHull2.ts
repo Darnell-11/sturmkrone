@@ -45,6 +45,20 @@ function profile(): P[] {
 
 const smooth = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
+/** Halbbreite des Rumpfs (Steuerbord, positiv) in Höhe y an der Schiffsposition z: dieselbe Spantform wie `hullGeometry2`, damit Stückpforten, Geschütze und Anbauten bündig an der Bordwand sitzen */
+export function hullSideX(c: ShipClass, D: number, fn: HullFns, z: number, y: number): number {
+  const t = Math.max(-1, Math.min(1, z / (c.L / 2)));
+  const w = Math.max(0.04, fn.widthAt(t)) * c.W / 2;
+  const rise = fn.sheerAt(t, c.L);
+  const f = Math.min(1, Math.max(0, (y - (y > 0.5 ? rise : 0)) / D));
+  const base = f < 0.35 ? 1 - 0.02 * Math.pow((0.35 - f) / 0.35, 2) : 1 - 0.095 * Math.pow((f - 0.35) / 0.65, 1.5);
+  let off = 0;
+  for (const wl of WALES) if (f >= wl.a && f <= wl.b) off = wl.off;
+  const tuck = t < 0 ? 0.035 * smooth(0, -0.95, t) : 0;
+  const flare = t > 0 ? 0.11 * smooth(0.15, 0.95, t) : 0;
+  return (base + off) * (1 - tuck * f * f + flare * f) * w;
+}
+
 export function hullGeometry2(c: ShipClass, D: number, look: ShipLook, fn: HullFns): BufferGeometry {
   const sections = Math.round(30 + c.L * 0.35);
   const prof = profile();

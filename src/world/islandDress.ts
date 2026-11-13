@@ -54,6 +54,10 @@ const FLOWERS: Record<IslandStyle, string[]> = {
   klippe: ['#C2CCD2', '#9AA8C8'],
 };
 
+/** Bewuchs-Palette (Blender-Pflanzen) je Inselstil; null = eigene Farbwelt des Stils (Glut, Schlund, Nebel behalten die Eigenbau-Pflanzen) */
+const biomeOf = (st: IslandStyle): 'festland' | 'tropisch' | 'klippe' | null =>
+  st === 'tropisch' ? 'tropisch' : st === 'festland' || st === 'nord' ? 'festland' : st === 'klippe' || st === 'sturm' ? 'klippe' : null;
+
 /**
  * Stattet eine Insel aus: Pflanzen, Felsen, Strandgut und – je nach Art – Lager, Dorf, Wrack, Ruine oder Wehranlage.
  * Alles wird aus dem Namen der Insel ausgewürfelt: jede Insel sieht anders aus, aber bei jedem Start gleich.
@@ -106,13 +110,13 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   };
   /** Wohnhäuser je Region: jede Gegend baut anders */
   const HOMES: Record<IslandStyle, (StructureType | 'rundhuette')[]> = {
-    tropisch: ['rundhuette', 'stelzenhuette'],
+    tropisch: ['kolonialhaus', 'stelzenhuette', 'rundhuette', 'kolonialhaus', 'stelzenhuette'],
     nebel: ['stelzenhuette', 'holzhuette', 'stelzenhuette'],
-    nord: ['holzhuette', 'steinhaus', 'holzhuette', 'scheune'],
+    nord: ['fachwerkhaus', 'holzhuette', 'steinhaus', 'fachwerkhaus', 'scheune'],
     glut: ['steinhaus', 'steinhaus', 'holzhuette'],
     sturm: ['steinhaus', 'holzhuette', 'steinhaus', 'wachturm'],
     schlund: ['steinhaus', 'stelzenhuette', 'holzhuette'],
-    festland: ['steinhaus', 'holzhuette'],
+    festland: ['fachwerkhaus', 'steinhaus', 'holzhuette', 'kolonialhaus'],
     klippe: ['steinhaus'],
   };
   const home = (t: StructureType | 'rundhuette', x: number, z: number, yaw: number) => {
@@ -129,69 +133,35 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
    * ein hoher Bergfried – die mächtigste Seefestung der Welt soll auch so aussehen.
    */
   const fortress = () => {
-    const wallMat = toon({ color: '#8E8A80', flatShading: true, detail: 'rock' });
-    const capMat = toon({ color: '#A8A398', flatShading: true });
-    const slate = toon({ color: '#3C4654', flatShading: true });
-    const banner = toon({ color: '#1F4E79', side: DoubleSide });
+    // Ringmauer aus Zinnenmauer-Stücken (je 6 m), Rundtürme alle vier Stücke, drei Torhäuser mit Fallgitter, Bergfried im Hof
     const wa = rnd() * Math.PI * 2;
     const gates = [wa, wa + 2.1, wa + 4.2];
-    const nearGate = (a: number) => gates.some((g) => Math.abs(Math.atan2(Math.sin(a - g), Math.cos(a - g))) < 0.28);
     const ringAt = (a: number) => E(a) * 0.5;
-    const step = 0.13;
-    for (let a = 0; a < Math.PI * 2 - 0.01; a += step) {
-      if (nearGate(a + step / 2)) continue;
-      const d = ringAt(a + step / 2);
-      const x = Math.cos(a + step / 2) * d, z = Math.sin(a + step / 2) * d;
-      const len = d * step * 1.08;
-      const seg = new Group();
-      const body = new Mesh(new BoxGeometry(len, 4.4, 1.8), wallMat);
-      body.position.y = 2.2;
-      seg.add(body);
-      // Zinnen
-      for (let k = 0; k < Math.max(2, Math.floor(len / 1.5)); k++) {
-        const m = new Mesh(new BoxGeometry(0.7, 0.8, 1.9), capMat);
-        m.position.set(-len / 2 + 0.5 + k * 1.5, 4.8, 0);
-        seg.add(m);
-      }
-      put(seg, x, z, -(a + step / 2) + Math.PI / 2, 0.3);
-      blockBox(x, z, len + 0.1, 1.9, -(a + step / 2) + Math.PI / 2);
-    }
-    const tower = (x: number, z: number, h: number, rr: number) => {
-      const t = new Group();
-      const body = new Mesh(new CylinderGeometry(rr, rr * 1.15, h, 12), wallMat);
-      body.position.y = h / 2;
-      const crown = new Mesh(new CylinderGeometry(rr * 1.25, rr * 1.1, 1.1, 12), capMat);
-      crown.position.y = h + 0.5;
-      const roofM = new Mesh(new ConeGeometry(rr * 1.35, rr * 1.9, 12), slate);
-      roofM.position.y = h + 1.05 + rr * 0.95;
-      const pole = new Mesh(new CylinderGeometry(0.06, 0.06, 2.4, 5), darkWood);
-      pole.position.y = h + 1.05 + rr * 1.9 + 1.1;
-      const flag = new Mesh(new PlaneGeometry(1.6, 0.8), banner);
-      flag.position.set(0.8, h + 1.05 + rr * 1.9 + 1.8, 0);
-      flag.userData.noOutline = true;
-      // schmale Schießscharten
-      for (let k = 0; k < 4; k++) {
-        const sl = new Mesh(new BoxGeometry(0.25, 1.1, 0.2), toon('#1C1A1A'));
-        const a = (k / 4) * Math.PI * 2;
-        sl.position.set(Math.sin(a) * rr * 1.02, h * 0.6, Math.cos(a) * rr * 1.02);
-        sl.rotation.y = a;
-        sl.userData.noOutline = true;
-        t.add(sl);
-      }
-      t.add(body, crown, roofM, pole, flag);
-      put(t, x, z, rnd() * Math.PI * 2, 0.2);
-      block(x, z, rr + 0.4);
-    };
-    // Tortürme beiderseits jedes Tores
-    for (const g of gates) for (const side of [-1, 1]) {
-      const a = g + side * 0.31;
+    const angDiff = (a: number, g: number) => Math.abs(Math.atan2(Math.sin(a - g), Math.cos(a - g)));
+    const nearGate = (a: number) => gates.some((g) => angDiff(a, g) < 0.19);
+    for (const g of gates) { const d = ringAt(g); mount('torhaus', Math.cos(g) * d, Math.sin(g) * d, Math.PI / 2 - g); }
+    let a = wa + 0.19, k = 0;
+    const end = wa + Math.PI * 2;
+    while (a < end - 0.05) {
       const d = ringAt(a);
-      tower(Math.cos(a) * d, Math.sin(a) * d, 8.5, 2.1);
+      const step = 6 / d;
+      if (nearGate(a + step / 2)) { a += step; continue; }
+      const am = a + step / 2, dm = ringAt(am);
+      mount('zinnenmauer', Math.cos(am) * dm, Math.sin(am) * dm, Math.PI / 2 - am);
+      if (k % 4 === 3 && !nearGate(a + step + 0.1) && !nearGate(a - 0.1)) mount('zinnenturm', Math.cos(a + step) * ringAt(a + step), Math.sin(a + step) * ringAt(a + step), rnd() * 6);
+      a += step; k++;
     }
     // Bergfried am Rand des Hofes, gegenüber dem ersten Tor (die Mitte bleibt frei für den Bosskampf)
     const ka = wa + Math.PI;
-    const kd = ringAt(ka) * 0.62;
-    tower(Math.cos(ka) * kd, Math.sin(ka) * kd, 15, 3.4);
+    const kd = ringAt(ka) * 0.55;
+    mount('bergfried', Math.cos(ka) * kd, Math.sin(ka) * kd, Math.PI / 2 - ka);
+    // Hof: Kapelle, Lagerhäuser, Kasernen (Steinhäuser) und Feuer
+    const inner: [StructureType, number, number][] = [['kapelle', 0.5, 0.3], ['lagerhaus', 0.55, 1.7], ['steinhaus', 0.5, 2.5], ['steinhaus', 0.5, 3.2], ['lagerhaus', 0.5, 4.5], ['steinhaus', 0.55, 5.4], ['kran', 0.7, 0.9]];
+    for (const [t, f, ang] of inner) {
+      const aa = wa + ang, dd = ringAt(aa) * f;
+      const x = Math.cos(aa) * dd, z = Math.sin(aa) * dd;
+      if (free(x, z, 6)) mount(t, x, z, Math.PI / 2 - aa + Math.PI + (rnd() - 0.5) * 0.4);
+    }
   };
 
   // ---------- Bauten je Inselart (zuerst, damit sie Platz bekommen) ----------
@@ -293,6 +263,21 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
         const t = homes[(first + i) % homes.length];
         home(t === 'wachturm' && i !== n - 1 ? 'holzhuette' : t, x, z, a + (rnd() - 0.5) * 0.35);
       }
+      // Hafenanlagen: Lagerhaus am Kai, Hebekran, Marktstände, Kapelle hinter den Häusern
+      {
+        const fa = facing;
+        const place = (t: StructureType, ang: number, frac: number, yawOff: number, rr: number) => {
+          const a = fa + ang, d = E(Math.atan2(Math.cos(a), Math.sin(a))) * frac;
+          const x = Math.sin(a) * d, z = Math.cos(a) * d;
+          if (free(x, z, rr)) mount(t, x, z, a + yawOff);
+        };
+        place('lagerhaus', 0.42, 0.7, 0.35, 7);
+        place('lagerhaus', -0.5, 0.68, -0.35, 7);
+        place('kran', 0.2, 0.84, 0, 3.5);
+        place('marktstand', -0.22, 0.74, Math.PI, 2.6);
+        place('marktstand', -0.3, 0.7, Math.PI + 0.3, 2.6);
+        place('kapelle', 0.05, 0.28, 0, 7);
+      }
       // Kai: Laternen, Kisten und Fässer am Fuß des Stegs
       const quay: StructureType[] = ['laterne', 'kisten', 'faesser', 'laterne', 'fass', 'netz', 'boot'];
       for (let i = 0; i < 4 + Math.floor(rnd() * 3); i++) {
@@ -355,27 +340,30 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     case 'boss': {
       if (style === 'glut') break; // dort steht der Vulkan
       if (def.id === 'festungnordwacht') { fortress(); break; }
-      const stone = toon({ color: rockCol.clone().lerp(new Color('#8A8478'), 0.4), flatShading: true });
-      for (let i = 0; i < 2; i++) {
-        const p = spot(0.45, 0.7, 3.2, 20);
-        if (!p) continue;
-        put(watchtower(stone, darkWood, rnd), p.x, p.z);
-        block(p.x, p.z, 2.6);
-      }
+      // Wehranlage: Torhaus in der Mitte eines Mauerbogens, Rundtürme an den Enden und davor, Wachhaus
       const wa = rnd() * Math.PI * 2;
-      for (let k = -4; k <= 4; k++) {
-        const a = wa + k * 0.12, d = E(a) * 0.62;
-        const x = Math.cos(a) * d, z = Math.sin(a) * d;
-        if (!free(x, z, 1.4)) continue;
-        const seg = new Mesh(new BoxGeometry(d * 0.13, 2.8, 1.2), stone);
-        put(seg, x, z, -a + Math.PI / 2, 0.3).position.y += 1.2;
-        blockBox(x, z, d * 0.13 + 0.1, 1.3, -a + Math.PI / 2);
+      const ringD = (a: number) => E(a) * 0.6;
+      mount('torhaus', Math.cos(wa) * ringD(wa), Math.sin(wa) * ringD(wa), Math.PI / 2 - wa);
+      for (const sd of [-1, 1]) {
+        let a = wa + sd * 0.2;
+        for (let k = 0; k < 6; k++) {
+          const st = (6 / ringD(a)) * sd, am = a + st / 2;
+          mount('zinnenmauer', Math.cos(am) * ringD(am), Math.sin(am) * ringD(am), Math.PI / 2 - am);
+          a += st;
+        }
+        mount('zinnenturm', Math.cos(a) * ringD(a), Math.sin(a) * ringD(a), rnd() * 6);
       }
+      const p = spot(0.25, 0.45, 4, 20);
+      if (p) mount('steinhaus', p.x, p.z, rnd() * 6);
       break;
     }
     case 'lighthouse': {
-      const p = spot(0.35, 0.6, 2.5);
-      if (p) { put(hut(rnd), p.x, p.z); block(p.x, p.z, 2.2); }
+      const p = spot(0.1, 0.3, 5);
+      if (p) {
+        mount('leuchtturm', p.x, p.z, rnd() * 6);
+        const q = { x: p.x + 7, z: p.z + 2 };
+        if (free(q.x, q.z, 4)) mount('steinhaus', q.x, q.z, Math.atan2(p.x - q.x, p.z - q.z));
+      }
       break;
     }
   }
@@ -387,17 +375,21 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   const groveSize = 12 + rnd() * 16, groveThr = 0.28 + rnd() * 0.24, groveSeed = hashId(def.id) & 0xfff;
   const broadK = rnd() < 0.25 ? 0 : rnd();
   const birchK = style === 'nord' ? rnd() * 0.35 : 0;
-  const nTrees = Math.round((r * 0.16 + 1) * dens * (0.5 + rnd()) * wooded);
+  const nTrees = Math.round((r * 0.22 + 1) * dens * (0.55 + rnd()) * wooded);
   for (let i = 0, placed = 0; i < nTrees * 4 && placed < nTrees; i++) {
     const p = spot(0.1, 0.78, 1.4);
     if (!p) continue;
     if (noise(p.x / groveSize, p.z / groveSize, groveSeed) < groveThr) continue;
     placed++;
     // Vorlagen statt Einzelbäume: wenige Varianten je Region, per InstancedMesh beliebig oft gezeichnet
-    const v = Math.floor(rnd() * 4);
+    const v = Math.floor(rnd() * 6);
+    const bio = biomeOf(style);
     const proto = style === 'tropisch' ? floraProto('tropisch', rnd() < broadK ? 'laubbaum' : 'palme', v)
+      : style === 'festland' ? floraProto('festland', rnd() < 0.2 ? 'birke' : 'laubbaum', v)
+      : style === 'nord' ? floraProto('festland', rnd() < 0.3 + birchK ? 'birke' : 'windkiefer', v)
+      : bio === 'klippe' ? floraProto('klippe', 'windkiefer', v)
       : rnd() < birchK ? floraProto('festland', 'birke', v)
-      : cachedProto(`kit:${style}:plant:${v}`, (pr) => plant(kit, pr), { collide: 0.6 });
+      : cachedProto(`kit:${style}:plant:${v % 4}`, (pr) => plant(kit, pr), { collide: 0.6 });
     veg.add(proto, p.x, hAt(p.x, p.z) - 0.1, p.z, rnd() * Math.PI * 2, 0.75 + rnd() * 0.6);
     block(p.x, p.z, 0.6);
     trees.push({ x: p.x, y: hAt(p.x, p.z), z: p.z });
@@ -408,7 +400,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     for (let i = 0; i < Math.round(r * 0.1 * dens); i++) {
       const p = spot(0.72, 0.86, 1.2, 6);
       if (!p) continue;
-      const proto = style === 'tropisch' ? floraProto('tropisch', 'palme', Math.floor(rnd() * 4)) : cachedProto(`kit:${style}:plant:${Math.floor(rnd() * 4)}`, (pr) => plant(kit, pr), { collide: 0.6 });
+      const proto = style === 'tropisch' ? floraProto('tropisch', 'palme', Math.floor(rnd() * 6)) : cachedProto(`kit:${style}:plant:${Math.floor(rnd() * 4)}`, (pr) => plant(kit, pr), { collide: 0.6 });
       veg.add(proto, p.x, hAt(p.x, p.z) - 0.1, p.z, rnd() * Math.PI * 2, 0.6 + rnd() * 0.35, undefined, 0, (rnd() - 0.5) * 0.5);
       block(p.x, p.z, 0.5);
       trees.push({ x: p.x, y: hAt(p.x, p.z), z: p.z });
@@ -417,13 +409,24 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
 
   // ---------- Büsche, Gras, Blumen ----------
   const lush = style === 'tropisch' || style === 'nord' || style === 'nebel';
-  const nBush = Math.round(r * (lush ? 0.55 : 0.25) * dens * (0.5 + rnd()));
+  const nBush = Math.round(r * (lush ? 0.8 : 0.4) * dens * (0.55 + rnd()));
   for (let i = 0; i < nBush; i++) {
     const p = spot(0.08, 0.86, 0.9, 6);
     if (!p) continue;
     const v = Math.floor(rnd() * 3);
+    const bio = biomeOf(style);
     if (style === 'tropisch' && rnd() < 0.4) {
       veg.add(floraProto('tropisch', 'farn', v), p.x, hAt(p.x, p.z), p.z, rnd() * Math.PI * 2, 0.9 + rnd() * 0.7, undefined, 0, 0, 0.85 + rnd() * 0.3);
+      continue;
+    }
+    if (bio) {
+      // Blender-Pflanzen in der Palette der Region: Bananenstauden, Agaven, Blütensträucher, dürres Gebüsch
+      const roll = rnd();
+      const kind: 'banane' | 'agave' | 'busch' = style === 'tropisch' && roll < 0.3 ? 'banane' : (bio !== 'tropisch' && roll < 0.14) || (style === 'tropisch' && roll > 0.9) ? 'agave' : 'busch';
+      const sz = kind === 'busch' ? 0.8 + rnd() * 0.55 : 0.85 + rnd() * 0.5;
+      veg.add(floraProto(bio, kind, Math.floor(rnd() * 4)), p.x, hAt(p.x, p.z), p.z, rnd() * Math.PI * 2, sz, sz * (0.9 + rnd() * 0.2));
+      taken.push({ x: p.x, z: p.z, r: 0.8 });
+      bushes.push({ x: p.x, y: hAt(p.x, p.z), z: p.z });
       continue;
     }
     const bushCol = () => `#${(tuftMats[v] as unknown as { color: { getHexString(): string } }).color.getHexString()}`;
@@ -443,12 +446,18 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     taken.push({ x: p.x, z: p.z, r: 0.8 });
     bushes.push({ x: p.x, y: hAt(p.x, p.z), z: p.z });
   }
-  const nTuft = Math.round(r * (lush ? 1.6 : 0.6) * dens);
+  const nTuft = Math.round(r * (lush ? 3.2 : 1.4) * dens);
   for (let i = 0; i < nTuft; i++) {
     const a = rnd() * Math.PI * 2, d = E(a) * Math.sqrt(rnd()) * 0.86;
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
     if (!free(x, z, 0.2)) continue;
     const v = Math.floor(rnd() * 3);
+    const gb = biomeOf(style);
+    if (gb && style !== 'nebel') {
+      const gs = 0.9 + rnd() * 0.7;
+      veg.add(floraProto(gb, 'gras', v), x, hAt(x, z), z, rnd() * Math.PI * 2, gs, gs * (0.85 + rnd() * 0.3));
+      continue;
+    }
     const proto = cachedProto(`kit:${style}:tuft:${v}`, (pr) => {
       const tuft = new Group();
       for (let k = 0; k < 4; k++) {
@@ -464,11 +473,17 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     veg.add(proto, x, hAt(x, z), z, rnd() * Math.PI * 2, 0.8 + rnd() * 0.5, undefined, 0, 0, 0.85 + rnd() * 0.3);
   }
   const flowers = FLOWERS[style];
-  const nFlower = Math.round(r * (style === 'tropisch' || style === 'nord' ? 0.7 : 0.2) * dens);
+  const nFlower = Math.round(r * (style === 'tropisch' || style === 'nord' ? 1.5 : style === 'festland' ? 1.1 : 0.35) * dens);
   for (let i = 0; i < nFlower; i++) {
     const a = rnd() * Math.PI * 2, d = E(a) * Math.sqrt(rnd()) * 0.8;
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
     if (!free(x, z, 0.2)) continue;
+    const fb = biomeOf(style);
+    if (fb) {
+      const fs = 0.9 + rnd() * 0.6;
+      veg.add(floraProto(fb, 'blume', Math.floor(rnd() * 3)), x, hAt(x, z), z, rnd() * Math.PI * 2, fs, fs);
+      continue;
+    }
     const f = new Group();
     const col = flowers[Math.floor(rnd() * flowers.length)];
     const petal = style === 'schlund' ? glowPetal(col) : toon(col);
@@ -481,6 +496,21 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       f.add(stem, head);
     }
     put(f, x, z);
+  }
+
+  // Schilf und Rohrkolben am Ufer von Inseln mit Grün (Lagunenrand)
+  if (biomeOf(style) && style !== 'sturm') {
+    const nReed = Math.round(r * 0.28 * dens);
+    for (let i = 0; i < nReed; i++) {
+      const a = rnd() * Math.PI * 2, d = E(a) * (0.84 + rnd() * 0.07);
+      const x = Math.cos(a) * d, z = Math.sin(a) * d;
+      if (!free(x, z, 0.5) || hAt(x, z) < 0.9) continue;
+      for (let k = 0; k < 2 + Math.floor(rnd() * 3); k++) {
+        const rx = x + (rnd() - 0.5) * 2.2, rz = z + (rnd() - 0.5) * 2.2;
+        if (hAt(rx, rz) < 0.9) continue;
+        veg.add(floraProto(biomeOf(style)!, 'schilf', Math.floor(rnd() * 2)), rx, hAt(rx, rz), rz, rnd() * Math.PI * 2, 0.8 + rnd() * 0.6, 0.8 + rnd() * 0.5);
+      }
+    }
   }
 
   // ---------- Felsen und Strandgut ----------
@@ -669,16 +699,3 @@ function wreck(rnd: () => number): Group {
   return g;
 }
 
-/** Wachturm aus Stein mit Holzdach */
-function watchtower(stone: Material, wood: Material, rnd: () => number): Group {
-  const g = new Group();
-  const h = 7 + rnd() * 3;
-  const body = new Mesh(new CylinderGeometry(1.8, 2.3, h, 8), stone);
-  body.position.y = h / 2;
-  const top = new Mesh(new CylinderGeometry(2.4, 2.2, 0.8, 8), stone);
-  top.position.y = h + 0.4;
-  const roof = new Mesh(new ConeGeometry(2.6, 2.4, 8), wood);
-  roof.position.y = h + 2;
-  g.add(body, top, roof);
-  return g;
-}

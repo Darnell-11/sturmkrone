@@ -691,6 +691,14 @@ const DETAIL_FRAG: Record<DetailKind, string> = {
     vec3 dry = diffuseColor.rgb * vec3(1.45, 1.28, 0.7);
     vec3 lush = diffuseColor.rgb * vec3(0.72, 0.92, 0.72);
     diffuseColor.rgb = mix(lush, dry, smoothstep(0.35, 0.75, macro));
+    // Großflächige Abwechslung (aus der Ferne sichtbar): Wiesenflecken, dunkler Waldboden mit kühlem Grün, Wildblumeninseln
+    float patchN = skdF(p * 0.018 + 11.0);
+    diffuseColor.rgb *= 1.0 + (patchN - 0.5) * 0.55;
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.74, 0.84, 0.7), smoothstep(0.55, 0.8, skdF(p * 0.03 + 5.0)) * 0.75);
+    float meadowK = smoothstep(0.6, 0.78, skdF(p * 0.05 + 21.0));
+    float flK = step(0.93, skdN(p * 15.0 + 3.0)) * meadowK;
+    vec3 flC = mix(vec3(0.96, 0.86, 0.34), vec3(0.88, 0.42, 0.56), step(0.5, skdN(p * 3.1 + 7.0)));
+    diffuseColor.rgb = mix(diffuseColor.rgb, flC, flK * 0.85 * (1.0 - smoothstep(70.0, 220.0, camD)));
     float mid = skdN(p * 0.45) - 0.5;
     // Halme: gestreckte weiche Rauschmuster in zwei Richtungen (wirkt wie dichter Rasen statt Pixel)
     float fineK = 1.0 - smoothstep(6.0, 34.0, camD);

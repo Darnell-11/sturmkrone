@@ -14,13 +14,16 @@ import { windify } from '../render/wind';
 export const ENV_MODELS = [
   'palme_1', 'palme_2', 'palme_3', 'palme_4', 'laubbaum_1', 'laubbaum_2', 'laubbaum_3', 'busch_1', 'busch_2', 'farn_1', 'farn_2',
   'treibholz_1', 'treibholz_2', 'treibholz_3', 'fels_1', 'fels_2', 'fels_3', 'klippe_1', 'klippe_2',
+  'palme_5', 'palme_6', 'laubbaum_4', 'laubbaum_5', 'laubbaum_6', 'birke_1', 'birke_2', 'kiefer_1', 'kiefer_2', 'kiefer_3', 'banane_1', 'banane_2', 'agave_1',
+  'schilf_1', 'schilf_2', 'gras_1', 'gras_2', 'gras_3', 'blume_1', 'blume_2', 'blume_3', 'busch_3', 'busch_4', 'fels_4', 'fels_5',
 ] as const;
 
 const BASE = `${import.meta.env.BASE_URL}models/env/`;
 const ARCH_BASE = `${import.meta.env.BASE_URL}models/architecture/`;
 /** Bauten aus Blender (tools/blender/build_arch.py): Hütte, Steinhaus, Taverne, Steg-Modul, Torbogen */
 export const ARCH_MODELS = ['haus_huette', 'haus_stein', 'haus_taverne', 'steg_modul', 'bogen', 'feuerstelle', 'feuerkorb', 'fackel', 'laternenpfahl',
-  'kajuete_schreibtisch', 'kajuete_stuhl', 'kajuete_koje', 'kajuete_kartentisch', 'kajuete_regal', 'kajuete_truhe', 'kajuete_globus', 'kajuete_lampe', 'kajuete_teppich'] as const;
+  'kajuete_schreibtisch', 'kajuete_stuhl', 'kajuete_koje', 'kajuete_kartentisch', 'kajuete_regal', 'kajuete_truhe', 'kajuete_globus', 'kajuete_lampe', 'kajuete_teppich',
+  'haus_fachwerk', 'haus_kolonial', 'lagerhaus', 'kapelle', 'marktstand', 'kran', 'turm_zinnen', 'mauer_zinnen', 'torhaus', 'bergfried', 'leuchtturm'] as const;
 /** Prunkmöbel der zweiten Schiffsfassung (tools/blender/build_kajuete2.py), nur mit ships2() geladen */
 const KAJUETE2 = ['kajuete_himmelbett', 'kajuete_kronleuchter', 'kajuete_anrichte', 'kajuete_fensterbank', 'kajuete_waffenwand', 'kajuete_gemaelde', 'kajuete_ofen', 'kajuete_tafel'];
 /** Kajütenmöbel liegen in public/models/ships/ (tools/blender/build_kajuete.py) */
@@ -34,6 +37,7 @@ const models = new Map<string, EnvPart[]>();
 
 export async function loadEnvModels(names: readonly string[] = ENV_MODELS): Promise<void> {
   await Promise.all(names.map(async (name) => {
+    if (models.has(name)) return;
     try {
       const g = await preload.loadGltf(`${BASE}${name}.glb`);
       g.scene.updateMatrixWorld(true);
@@ -57,6 +61,7 @@ export const hasEnv = (name: string) => models.has(name);
 
 export async function loadArchModels(names: readonly string[] = ships2() ? [...ARCH_MODELS, ...KAJUETE2] : ARCH_MODELS): Promise<void> {
   await Promise.all(names.map(async (name) => {
+    if (arch.has(name)) return;
     try {
       const g = await preload.loadGltf(`${LIGHT_MODELS.has(name) ? LIGHT_BASE : name.startsWith('kajuete_') ? SHIP_FURNITURE_BASE : ARCH_BASE}${name}.glb`);
       g.scene.updateMatrixWorld(true);

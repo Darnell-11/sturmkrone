@@ -7,6 +7,8 @@ import '@fontsource/alegreya-sans/latin-800.css';
 import './ui/styles.css';
 import { Game } from './core/game';
 import { WebGLUnavailableError } from './render/renderer';
+import { loadArchModels, loadEnvModels } from './world/envModels';
+import { loadWorldProps } from './world/worldProps';
 
 function fail(message: string) {
   const el = document.createElement('div');
@@ -15,7 +17,13 @@ function fail(message: string) {
   document.body.appendChild(el);
 }
 
+/**
+ * Die Welt (Inseln, Städte, Burgen, Pflanzen) wird schon im Konstruktor des Spiels gebaut. Die Blender-Modelle dafür müssen
+ * deshalb vorher geladen sein – sonst bleiben alle Inseln bei den einfachen Eigenbau-Formen (Palmen als Sterne, Kistenhäuser).
+ */
+async function boot() {
 try {
+  await Promise.all([loadEnvModels(), loadArchModels(), loadWorldProps()]).catch((e) => console.warn('Welt-Modelle konnten nicht vorab geladen werden', e));
   const game = new Game(document.getElementById('game') as HTMLCanvasElement, document.getElementById('ui')!);
   // Startfehler (z. B. Netz weg beim Laden der Figuren) freundlich anzeigen statt unbehandelt in der Konsole
   game.start().catch((e) => { console.error(e); fail('Beim Start ist ein Fehler aufgetreten. Bitte lade die Seite neu.'); });
@@ -96,3 +104,5 @@ try {
     fail('Beim Start ist ein Fehler aufgetreten. Bitte lade die Seite neu.');
   }
 }
+}
+void boot();

@@ -516,6 +516,9 @@ const MAKERS: Record<FloraId, (pal: Pal, rnd: () => number, v: number) => Group>
     }
     return g;
   },
+  banane: (pal, rnd, v) => MAKERS.palme(pal, rnd, v),
+  agave: (pal, rnd, v) => MAKERS.busch(pal, rnd, v),
+  schilf: (pal, rnd, v) => MAKERS.halme(pal, rnd, v),
   basaltblock: (pal, rnd) => {
     const g = new Group();
     const rr = 0.55;
@@ -534,40 +537,50 @@ const MAKERS: Record<FloraId, (pal: Pal, rnd: () => number, v: number) => Group>
 
 interface FloraSpec extends ProtoOpts { variants: number; sink: number; tint: number; tilt: number; tree?: boolean; bush?: boolean; lee?: boolean }
 const FLORA: Record<FloraId, FloraSpec> = {
-  palme: { surf: 'tree', variants: 4, collide: 0.42, sink: 0.15, tint: 0.14, tilt: 0.1, tree: true },
-  laubbaum: { surf: 'tree', variants: 3, collide: 0.5, sink: 0.2, tint: 0.16, tilt: 0.05, tree: true },
+  palme: { surf: 'tree', variants: 6, collide: 0.42, sink: 0.15, tint: 0.14, tilt: 0.1, tree: true, outline: false },
+  laubbaum: { surf: 'tree', variants: 6, collide: 0.5, sink: 0.2, tint: 0.16, tilt: 0.05, tree: true },
   birke: { surf: 'tree', variants: 2, collide: 0.3, sink: 0.15, tint: 0.12, tilt: 0.06, tree: true },
   windkiefer: { surf: 'tree', variants: 3, collide: 0.4, sink: 0.2, tint: 0.12, tilt: 0.05, tree: true, lee: true },
-  busch: { surf: 'plant', variants: 2, near: 230, sink: 0.05, tint: 0.18, tilt: 0, bush: true },
+  busch: { surf: 'plant', variants: 4, near: 230, sink: 0.05, tint: 0.18, tilt: 0, bush: true },
   farn: { surf: 'plant', variants: 2, near: 150, cast: false, outline: false, soft: true, sink: 0.02, tint: 0.2, tilt: 0 },
-  gras: { surf: 'plant', variants: 2, near: 105, cast: false, outline: false, soft: true, sink: 0.02, tint: 0.22, tilt: 0 },
+  gras: { surf: 'plant', variants: 3, near: 105, cast: false, outline: false, soft: true, sink: 0.02, tint: 0.22, tilt: 0 },
   halme: { surf: 'plant', variants: 2, near: 140, cast: false, outline: false, soft: true, sink: 0.02, tint: 0.16, tilt: 0 },
   blume: { surf: 'plant', variants: 3, near: 85, cast: false, outline: false, soft: true, sink: 0, tint: 0.08, tilt: 0 },
-  fels: { surf: 'rock', variants: 3, collide: 0.9, sink: 0.12, tint: 0.14, tilt: 0.12 },
+  fels: { surf: 'rock', variants: 5, collide: 0.9, sink: 0.12, tint: 0.14, tilt: 0.12 },
   basalt: { variants: 4, collide: 1.75, sink: 0.1, tint: 0.12, tilt: 0.03 },
   basaltblock: { variants: 3, collide: 0.7, sink: 0.05, tint: 0.12, tilt: 0 },
   treibholz: { surf: 'tree', variants: 3, cast: false, near: 190, sink: 0.02, tint: 0.1, tilt: 0 },
   klippe: { surf: 'rock', variants: 2, collide: 3.2, sink: 0.4, tint: 0.1, tilt: 0.02 },
+  banane: { surf: 'plant', variants: 2, near: 260, sink: 0.05, tint: 0.15, tilt: 0.04, bush: true },
+  agave: { surf: 'plant', variants: 1, near: 200, sink: 0.03, tint: 0.12, tilt: 0, bush: true },
+  schilf: { surf: 'plant', variants: 2, near: 150, cast: false, outline: false, soft: true, sink: 0.02, tint: 0.15, tilt: 0 },
 };
 
 /** Modellname und Windausschlag der Blender-Fassung einer Flora-Art (die übrigen bleiben Eigenbau) */
 const ENV_FLORA: Partial<Record<FloraId, { name: string; wind: number }>> = {
   palme: { name: 'palme', wind: 0.55 }, laubbaum: { name: 'laubbaum', wind: 0.34 }, busch: { name: 'busch', wind: 0.08 },
   farn: { name: 'farn', wind: 0.13 }, fels: { name: 'fels', wind: 0 }, treibholz: { name: 'treibholz', wind: 0 }, klippe: { name: 'klippe', wind: 0 },
+  birke: { name: 'birke', wind: 0.3 }, windkiefer: { name: 'kiefer', wind: 0.22 }, gras: { name: 'gras', wind: 0.18 }, blume: { name: 'blume', wind: 0.1 },
+  banane: { name: 'banane', wind: 0.2 }, agave: { name: 'agave', wind: 0.04 }, schilf: { name: 'schilf', wind: 0.16 },
 };
 
 /** Farbe je Rolle des Blender-Modells aus der Palette des Biomes */
 function envColors(pal: Pal, flora: FloraId, k: number) {
-  const low = flora === 'busch' || flora === 'farn';
-  const leaf = low ? pal.bush : pal.leaf;
+  const low = flora === 'busch' || flora === 'farn' || flora === 'agave';
+  const leaf = low ? pal.bush : flora === 'gras' || flora === 'schilf' ? pal.grass : pal.leaf;
   return (role: string): string => {
     switch (role) {
       case 'trunk': return pal.trunk;
       case 'leaf': return leaf[0];
       case 'leaf2': return leaf[1 % leaf.length];
       case 'leaf3': return leaf[2 % leaf.length];
-      case 'nut': return '#5A3E22';
+      case 'nut': return flora === 'schilf' ? '#5A3C26' : '#5A3E22';
       case 'drift': return '#9C8A6E';
+      case 'bark2': return '#E4E0D2';
+      case 'fruit': return flora === 'blume' ? '#E8C84A' : '#D8B83A';
+      case 'flower': return pal.flowers[k % pal.flowers.length];
+      case 'flower2': return pal.flowers[(k + 2) % pal.flowers.length];
+      case 'moss': return leaf[0];
       default: return pal.rock[k % pal.rock.length];
     }
   };

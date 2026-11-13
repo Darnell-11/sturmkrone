@@ -1,5 +1,28 @@
 # Was ist neu
 
+## 2.9.69 – Welt 2: Blender-Inseln, Piratenstädte, Burgen, neue Pflanzen (14.11.2026)
+
+**Wichtigster Fund: die Blender-Modelle der Welt waren nie auf den Inseln.** `SeaWorld` baut die Inseln im Konstruktor des Spiels, die Modelle (Palmen, Bäume, Häuser, Türme …) luden erst danach in `Game.start()`. Deshalb standen auf allen Inseln und in Ankerglück die alten Eigenbau-Formen (Sternpalmen, Kistenhäuser). `main.ts` lädt Pflanzen, Bauten und Welt-Props jetzt vor dem Spiel (`loadEnvModels`, `loadArchModels`, `loadWorldProps`, Doppelladen wird übersprungen).
+
+**Neue Bauten (`tools/blender/build_arch2.py`, `public/models/architecture/`, `StructureType` in `data/settlements.ts`)**
+- **Fachwerkhaus** (Überhang, Streben, Blumenkästen, Schornstein), **Kolonialhaus** (Balkon über die ganze Front, Bogentür und Bogenfenster, Terrakotta-Walmdach, acht Pastellfarben), **Lagerhaus** (große Doppeltür, Ladeluke mit Hebebalken, Tau und Haken, Rampe mit Fässern), **Kapelle** (Glockenturm mit Glocke und Spitzdach), **Marktstand** (gestreifte Markise, Obst, Fässer), **Hafenkran** (Tretrad, Ausleger), **Leuchtturm** (rot-weiße Ringe, Galerie, Laternenhaus mit Leuchtfläche und Lichthof).
+- **Burgteile:** Zinnenturm (rund, Machikuli, Fahne), Zinnenmauer-Stück (6 m), **Torhaus** mit Fallgitter und Wappen, **Bergfried** mit vier Ecktürmchen.
+- **Festung Nordwacht** besteht jetzt aus Zinnenmauern rundum, Rundtürmen alle 24 m, drei Torhäusern, einem Bergfried und Hofgebäuden. Die Bosse der anderen Inseln bekommen ein Torhaus mit Mauerbogen und Rundtürmen. Leuchtfeuer-Inseln haben einen echten Leuchtturm mit Wärterhaus.
+- **Ankerglück:** Taverne und Hafenmeisterei aus den Blender-Häusern, Hafentor (Torhaus über der Hauptstraße) mit Zinnenmauern und Türmen, Hebekräne am Kai, drei Lagerhäuser, Kapelle, bis zu 8 Marktstände am Platz, alle Wohnhäuser im Wechsel Fachwerk, Kolonial, Stein und Holz. Nur jedes dritte Haus raucht.
+- **Häfen:** je ein bis zwei Lagerhäuser, Kran, Marktstände und Kapelle; Bauweise je Region (Fachwerk im Norden, Kolonialhäuser in den Tropen).
+
+**Neue Pflanzen (`tools/blender/build_env2.py`, `public/models/env/`)**
+- Kokospalmen mit Fiederblättern (sechs Varianten, ersetzen die Sternpalmen, ohne Tuschkontur), mächtige Eichen mit Wurzelanläufen, Birken mit Rindenmalen, Kiefern und Windkiefern in Etagen, Bananenstauden mit Fruchtstand, Agaven, Schilf mit Rohrkolben, Grasbüschel (drei Formen), Blumen (Farben je Palette), blühende und dürre Büsche, bemooste Felsen. Rollen `bark2`, `fruit`, `flower`, `flower2`, `moss` färbt `envColors` je Region.
+- Dichte der Inseln: mehr Bäume, Büsche, Gras (doppelt), Blumen (doppelt) und Schilf am Ufer; Bananen und Agaven nach Region.
+- **Gras-Shader:** großflächige Wiesenflecken, dunkler Waldboden und Wildblumeninseln, die man schon aus der Luft sieht.
+
+**Schiffe (Schiffe 2, nur Entwicklung)**
+- Geschütze und Stückpforten sitzen bündig an der neuen Rumpfform (`hullSideX`), die zweite Heckgalerie (alt) entfällt, jede Klasse hat eine eigene Grundrissform (Bugschärfe, Völligkeit, Heckbreite); die Form lebt je Schiff in einer eigenen Funktion, damit Kollision und Deck des einen Schiffs nicht vom nächsten Bau abhängen.
+
+**Geprüft (Playwright):** Ankerglück am Boden und aus der Luft, Nordwacht von außen und am Tor, Palmenküste, Grünmark, Leuchtturm, Sturmklippe, Häfen verschiedener Regionen, jedes neue Modell einzeln. `tsc`, 72 Tests, Produktionsbau; Konsole ohne Fehler. Leistung (Palmenküste, zwei Bilder gezählt): rund 540 Zeichenaufrufe, 5,5 Mio. Dreiecke inklusive Schattenkaskaden; Ankerglück 1 860 Aufrufe für zwei Bilder.
+
+**Nicht gebaut / offen:** Geländekanten und Wege (die Dorfwege bleiben schmale Pfade), eigene Burgen für Schlundkrone und Blitzspitze (sie bekommen das allgemeine Torhaus-Ensemble), Gefechte mit vielen Schiffen vor den neuen Inseln und echte Handys sind nicht gemessen; auf schwachen Geräten kann die höhere Pflanzendichte kosten, die Grafikstufe skaliert sie (`texDetail.density`).
+
 ## 2.9.68 – Schiffe 2 (Entwicklungsfassung) und Fix der Kajütentür (13.11.2026)
 
 **Fix, gilt für alle Fassungen:** Die Kapitänskajüte war zu Fuß **nie erreichbar**. Die Vorderwand des Achterkastells hatte für das Hauptdeck keine Lücke an der Tür, die Figur blieb 0,4 m davor stehen (nur Sprünge ins Innere funktionierten). Die Wand lässt jetzt die Türlücke frei; auf dem Achterdeck schließt die Türwand sie weiter gegen den Absturz. Per Laufskript geprüft: Schaluppe, Brigg, Fregatte, Galeone, Linienschiff und Leviathan erreichen den Raum und die Heckwand.

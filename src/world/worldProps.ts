@@ -28,6 +28,7 @@ const models = new Map<PropId, Map<string, BufferGeometry>>();
 
 export async function loadWorldProps(names: readonly PropId[] = [...WORLD_PROPS, ...SHIP_PROPS]): Promise<void> {
   await Promise.all(names.map(async (name) => {
+    if (models.has(name)) return;
     try {
       const g = await preload.loadGltf(`${(SHIP_PROPS as readonly string[]).includes(name) ? SHIP_BASE : BASE}${name}.glb`);
       g.scene.updateMatrixWorld(true);

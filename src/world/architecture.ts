@@ -181,7 +181,7 @@ function windowAt(g: Group, x: number, y: number, z: number, yaw = 0, w = 0.8, h
 
 /** Material der Blender-Bauten: Farbe und Oberfläche wie die Eigenbau-Fassung, dazu Eckpunktfarben für die Ambient-Occlusion */
 const AM = (color: string, detail?: 'stone' | 'plaster' | 'tile') => toon({ color, detail, vertexColors: true });
-type ArchSet = { wall?: string; wallDetail?: 'stone' | 'plaster' | 'tile'; roof: string; roofDetail?: 'tile' };
+type ArchSet = { wall?: string; wallDetail?: 'stone' | 'plaster' | 'tile'; roof: string; roofDetail?: 'tile'; cloth?: string };
 /** Rollen→Material eines Hauses; Dach und Wand je Haustyp */
 const houseMats = (s: ArchSet) => (role: string) => {
   switch (role) {
@@ -194,6 +194,14 @@ const houseMats = (s: ArchSet) => (role: string) => {
     case 'iron': return AM('#3A3C40');
     case 'rope': return AM('#B8A070');
     case 'gold': return AM('#C9A24E');
+    case 'greenery': return AM('#4F7A3A');
+    case 'flower': return AM('#D4505C');
+    case 'cloth': return AM(s.cloth ?? '#A8322A');
+    case 'cloth2': return AM('#E8DFC8');
+    case 'fruit1': return AM('#D94A2B');
+    case 'fruit2': return AM('#E8B33A');
+    case 'fruit3': return AM('#6E8B3D');
+    case 'paint': return AM('#8E2A24');
     default: return AM('#8A6A44');
   }
 };
@@ -841,6 +849,100 @@ function fachwerk(g: Group, w: number, d: number, y0: number, h: number) {
   }
 }
 
+// ---------- Bauten der zweiten Welt-Fassung (tools/blender/build_arch2.py) ----------
+const WALL_TINTS = ['#E2D6BC', '#D9C08E', '#C9CFD0', '#DCC4B0', '#D8D2C2'];
+const COLONIAL_TINTS = ['#EBC86A', '#E39A7A', '#9CCBC0', '#EAD9B0', '#D98AA0', '#8EBBD8', '#EDD2A2', '#B5D58C'];
+const ROOF_TINTS = ['#6E4A2E', '#46525E', '#8E3A2A', '#5A4A3A'];
+const pick = <T,>(a: T[], rnd: () => number): T => a[Math.floor(rnd() * a.length) % a.length];
+
+function fachwerkhaus(rnd: () => number): Built {
+  const g = new Group();
+  const w = 6.4, d = 5.2, h1 = 2.7, h2 = 2.5, ov = 0.45;
+  g.add(archGroup('haus_fachwerk', houseMats({ wall: pick(WALL_TINTS, rnd), wallDetail: 'plaster', roof: pick(ROOF_TINTS, rnd), roofDetail: 'tile' }))!);
+  windowAt(g, w * 0.25, 1.75, d / 2 + 0.03);
+  for (const sx of [-1, 1]) {
+    windowAt(g, sx * w * 0.25, h1 + 1.3, d / 2 + ov + 0.03, 0, 0.8, 0.9);
+    windowAt(g, sx * w * 0.25, h1 + 1.3, -d / 2 - ov - 0.03, Math.PI, 0.8, 0.9);
+  }
+  windowAt(g, w * 0.25, 1.75, -d / 2 - 0.03, Math.PI);
+  return { g, boxes: [[w + 0.4, d + 0.4]], circles: [], smoke: [-w * 0.28, h1 + h2 + 3.6, -0.3] };
+}
+
+function kolonialhaus(rnd: () => number): Built {
+  const g = new Group();
+  const w = 7.2, d = 5.8, h1 = 3.1;
+  g.add(archGroup('haus_kolonial', houseMats({ wall: pick(COLONIAL_TINTS, rnd), wallDetail: 'plaster', roof: '#B5502E', roofDetail: 'tile' }))!);
+  for (const x of [-2.3, 2.3]) windowAt(g, x, 1.65, d / 2 + 0.04, 0, 0.7, 1.05);
+  for (const x of [-w * 0.28, 0, w * 0.28]) windowAt(g, x, h1 + 1.2, d / 2 + 0.05, 0, 0.7, 1.5);
+  for (const x of [-w * 0.25, w * 0.25]) { windowAt(g, x, 2.0, -d / 2 - 0.03, Math.PI, 0.8, 1.0); windowAt(g, x, h1 + 1.3, -d / 2 - 0.03, Math.PI, 0.8, 1.0); }
+  return { g, boxes: [[w + 0.4, d + 0.4], [w + 0.9, 0.5, 0, d / 2 + 1.5]], circles: [], smoke: [w * 0.28, 9.0, -0.5] };
+}
+
+function lagerhaus(rnd: () => number): Built {
+  const g = new Group();
+  const w = 10.4, d = 7;
+  g.add(archGroup('lagerhaus', houseMats({ wall: pick(['#C9B890', '#B8A47C', '#C4C0B0'], rnd), wallDetail: 'plaster', roof: pick(['#5A4A3A', '#46525E', '#6E4A2E'], rnd), roofDetail: 'tile' }))!);
+  windowAt(g, 3.6, 2.6, d / 2 + 0.03, 0, 0.7, 0.9);
+  windowAt(g, -4, 2.6, -d / 2 - 0.03, Math.PI, 0.7, 0.9); windowAt(g, 0, 2.6, -d / 2 - 0.03, Math.PI, 0.7, 0.9);
+  return { g, boxes: [[w + 0.4, d + 0.4], [4.2, 2.4, 3.2, d / 2 + 1.3]], circles: [], smoke: [w * 0.33, 7.0, -0.5], glows: [{ kind: 'lamp', x: -3.6, y: 3.0, z: d / 2 + 0.5, gy: 0, size: 0.7, pool: 5 }] };
+}
+
+function kapelle(): Built {
+  const g = new Group();
+  const w = 6.2, L = 10, tw = 3, tz = L / 2 + tw / 2 - 0.1;
+  g.add(archGroup('kapelle', houseMats({ roof: '#46525E', roofDetail: 'tile' }))!);
+  for (const sx of [-1, 1]) for (const z of [-2.0, 1.6]) windowAt(g, sx * (w / 2 + 0.2), 2.4, z, sx * Math.PI / 2, 0.8, 1.9);
+  return { g, boxes: [[w + 0.9, L + 0.3], [tw + 0.3, tw + 0.2, 0, tz]], circles: [], glows: [{ kind: 'lamp', x: 1.6, y: 2.9, z: tz + tw / 2 + 0.5, gy: 0, size: 0.7, pool: 5 }, { kind: 'lamp', x: -1.6, y: 2.9, z: tz + tw / 2 + 0.5, gy: 0, size: 0.7, pool: 5 }] };
+}
+
+function marktstand(rnd: () => number): Built {
+  const g = new Group();
+  g.add(archGroup('marktstand', houseMats({ roof: '#7A1F1A', cloth: pick(['#A8322A', '#1F4E79', '#365C46', '#C98A2A', '#6A3A78'], rnd) }))!);
+  return { g, boxes: [[3.5, 2.5, 0, 0.1]], circles: [] };
+}
+
+function kran(): Built {
+  const g = new Group();
+  g.add(archGroup('kran', houseMats({ roof: '#6E4A2E' }))!);
+  return { g, boxes: [[3.8, 3.8]], circles: [] };
+}
+
+function zinnenturm(): Built {
+  const g = new Group();
+  g.add(archGroup('turm_zinnen', houseMats({ wall: '#8E8A80', roof: '#3C4654', cloth: '#1F4E79' }))!);
+  return { g, boxes: [], circles: [[3.5]] };
+}
+
+function zinnenmauer(): Built {
+  const g = new Group();
+  g.add(archGroup('mauer_zinnen', houseMats({ roof: '#3C4654' }))!);
+  return { g, boxes: [[6.1, 2.2]], circles: [] };
+}
+
+function torhaus(): Built {
+  const g = new Group();
+  g.add(archGroup('torhaus', houseMats({ roof: '#3C4654', cloth: '#1F4E79' }))!);
+  const off = 15 / 2 - 4.6 / 2;
+  return { g, boxes: [[4.9, 6.8, -off, 0], [4.9, 6.8, off, 0]], circles: [], glows: [{ kind: 'torch', x: -2.6, y: 3.2, z: 3.4, gy: 0, size: 0.62, pool: 5 }, { kind: 'torch', x: 2.6, y: 3.2, z: 3.4, gy: 0, size: 0.62, pool: 5 }] };
+}
+
+function leuchtturm(): Built {
+  const g = new Group();
+  g.add(archGroup('leuchtturm', houseMats({ roof: '#6E4A2E', wall: '#EDE6D6', wallDetail: 'plaster' }))!);
+  // Laternenraum: leuchtende Glasfläche, nachts weit sichtbar
+  const lamp = new Mesh(new CylinderGeometry(1.42, 1.42, 1.9, 12, 1, true), lampMat);
+  lamp.position.y = 21 + 1.4;
+  lamp.userData.noOutline = true;
+  g.add(lamp);
+  return { g, boxes: [], circles: [[4.1]], glows: [{ kind: 'lamp', x: 0, y: 22.5, z: 0, gy: null, size: 5, pool: 14 }, { kind: 'lamp', x: 0, y: 22.5, z: 0, gy: null, size: 3, pool: 6 }] };
+}
+
+function bergfried(): Built {
+  const g = new Group();
+  g.add(archGroup('bergfried', houseMats({ roof: '#3C4654', cloth: '#1F4E79' }))!);
+  return { g, boxes: [[14.2, 14.2]], circles: [] };
+}
+
 export function colliders(b: Built, wx: number, wz: number, yaw: number): Blocker[] {
   const c = Math.cos(yaw), s = Math.sin(yaw);
   const out: Blocker[] = [];
@@ -922,6 +1024,17 @@ function buildInner(t: StructureType, rnd: () => number, len: number): Built {
     case 'ruine': return ruine(rnd);
     case 'ruinenbogen': return ruinenbogen();
     case 'saeulen': return saeulen(rnd);
+    case 'fachwerkhaus': { if (!hasArch('haus_fachwerk')) return steinhaus(rnd); const b = fachwerkhaus(rnd); return dress(b, rnd, 6.4, 5.2); }
+    case 'kolonialhaus': { if (!hasArch('haus_kolonial')) return steinhaus(rnd); const b = kolonialhaus(rnd); return dress(b, rnd, 7.2, 5.8 + 1.6); }
+    case 'lagerhaus': return hasArch('lagerhaus') ? lagerhaus(rnd) : scheune();
+    case 'kapelle': return hasArch('kapelle') ? kapelle() : steinhaus(rnd);
+    case 'marktstand': return hasArch('marktstand') ? marktstand(rnd) : kisten(rnd);
+    case 'kran': return hasArch('kran') ? kran() : kisten(rnd);
+    case 'zinnenturm': return hasArch('turm_zinnen') ? zinnenturm() : steinturm();
+    case 'zinnenmauer': return hasArch('mauer_zinnen') ? zinnenmauer() : mauer(len, rnd);
+    case 'torhaus': return hasArch('torhaus') ? torhaus() : steinturm();
+    case 'bergfried': return hasArch('bergfried') ? bergfried() : steinturm();
+    case 'leuchtturm': return hasArch('leuchtturm') ? leuchtturm() : steinturm();
     case 'zaun': return zaun(len);
     case 'mauer': return mauer(len, rnd);
     case 'steg': return steg(len);

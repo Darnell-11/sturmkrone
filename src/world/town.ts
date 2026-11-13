@@ -28,6 +28,9 @@ import { boxBlocker, type WalkIsland } from './islandGround';
 import { hasProp, propGroup } from './worldProps';
 import { markShared } from '../render/dispose';
 import { toonPbr } from '../render/pbrMaps';
+import { build as buildStruct, colliders as structColliders } from './architecture';
+import type { StructureType } from '../data/settlements';
+import { hasArch as hasArchModel } from './envModels';
 
 // verwitterter Putz und satte, gedeckte Dachfarben (Hafenstadt, kein Ferienort)
 const WALLS = ['#E2D6BC', '#D4BF9A', '#C9CFD0', '#DCC4B0', '#CDD2BE'];
@@ -341,6 +344,21 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
     walk.blockers.push({ x: cx + x + lx * c + lz * s, z: cz + z - lx * s + lz * c, r });
   };
   const face = (x: number, z: number) => Math.atan2(-x, -z); // Tür zur Platzmitte
+  // fester Zufall der Stadt (gleiche Farben und Bauten bei jedem Start)
+  let seed = 90210;
+  const trnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  /** Blender-Bau (world/architecture.ts) aufstellen: mit Kollisionsgitter, Rauch und seinen Fenstern */
+  let smokeN = 0;
+  const placeB = (t: StructureType, x: number, z: number, yaw: number, len = 8) => {
+    const b = buildStruct(t, trnd, len);
+    const wx = cx + x, wz = cz + z;
+    b.g.position.set(wx, groundAt(wx, wz), wz);
+    b.g.rotation.y = yaw;
+    group.add(b.g);
+    for (const c of structColliders(b, wx, wz, yaw)) walk.blockers.push(c);
+    if (b.smoke && smokeN++ % 3 === 0) smoke.push(new Vector3(wx + b.smoke[0] * Math.cos(yaw) + b.smoke[2] * Math.sin(yaw), groundAt(wx, wz) + b.smoke[1], wz - b.smoke[0] * Math.sin(yaw) + b.smoke[2] * Math.cos(yaw)));
+    return b;
+  };
 
   // Steg nach Süden
   const pier = new Group();
@@ -373,10 +391,10 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   }
 
   // Wichtige Gebäude
-  place(house(12, 10, 5.5, '#E8D2A8', '#7A1F1A', windowMat, lights, '#A8322A'), -40, -2, Math.PI / 2, [12.6, 10.6]); // Taverne
-  place(house(8, 7, 4.2, '#D9E4E8', '#1F4E79', windowMat, lights, '#1F4E79'), -16, -60, Math.PI, [8.6, 7.6]); // Hafenmeisterei
-  const smithy = house(9, 8, 4.5, '#C8B8A0', '#3A3A44', windowMat, lights, '#5A4A3A');
-  const chimney = new Mesh(new BoxGeometry(1.2, 4, 1.2), toon('#7A6A5A'));
+  placeB('gasthaus', -40, -2, Math.PI / 2); // Taverne
+  placeB('kolonialhaus', -16, -58, Math.PI); // Hafenmeisterei
+  const smithy = buildStruct('steinhaus', trnd).g;
+  const chimney = new Mesh(new BoxGeometry(0.01, 0.01, 0.01), toon('#7A6A5A'));
   chimney.position.set(3, 6, -2);
   const forge = new Mesh(new SphereGeometry(0.7, 10, 8), new MeshBasicMaterial({ color: new Color(5, 1.6, 0.3) }));
   forge.position.set(-3, 1, 5);
@@ -384,7 +402,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   const anvil = new Mesh(new BoxGeometry(1.2, 0.8, 0.6), toon({ color: '#3A3A44', spec: 1 }));
   anvil.position.set(-1, 0.4, 6);
   smithy.add(chimney, forge, anvil);
-  place(smithy, 38, 14, -Math.PI / 2, [9.6, 8.6]);
+  place(smithy, 38, 14, -Math.PI / 2, [7.4, 5.6]);
   extra(38, 14, -Math.PI / 2, -1, 6, 0.75);
   extra(38, 14, -Math.PI / 2, -3, 5, 0.75);
   smoke.push(new Vector3(cx + 38 - 2, groundAt(cx + 38, cz + 14) + 8, cz + 14 + 3));
@@ -403,13 +421,19 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   crane.position.set(5, 4.5, 0);
   const boom = new Mesh(new BoxGeometry(6, 0.4, 0.4), toon('#5A3A22'));
   boom.position.set(2.5, 9, 0);
-  yard.add(keel, crane, boom);
+  yard.add(keel);
+  if (hasArchModel('kran')) { const k = buildStruct('kran', trnd).g; k.position.set(6.5, 0, 0); k.rotation.y = -Math.PI / 2; yard.add(k); } else yard.add(crane, boom);
   // Rumpfgerippe (6 m breit, 14 m lang) und Kran daneben
   place(yard, 52, -26, 0.3, [6.6, 14.4]);
   extra(52, -26, 0.3, 5, 0, 0.5);
 
   // Markt mit Ständen
   for (let i = 0; i < 4; i++) {
+    if (hasArchModel('marktstand')) {
+      const a = -0.75 + i * 0.5;
+      placeB('marktstand', Math.sin(a) * 27, 25 + Math.cos(a) * 3, Math.PI + a * 0.8);
+      continue;
+    }
     const stall = new Group();
     const table = new Mesh(new BoxGeometry(3, 1, 1.6), toon('#8A5A2B'));
     table.position.y = 0.5;
@@ -421,6 +445,10 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
     stall.add(table, awning);
     const a = -0.6 + i * 0.4;
     place(stall, Math.sin(a) * 26, 26 + Math.cos(a) * 2, Math.PI + a, [3.5, 2.1, 0, -0.1]);
+  }
+
+  if (hasArchModel('marktstand')) {
+    for (const [x, z, y] of [[-12, 20, 0.5], [12, 21, -0.5], [-20, 8, 1.2], [20, 9, -1.2]] as const) placeB('marktstand', x, z, Math.PI + y);
   }
 
   // Faji-Schrein mit schwebendem Kristall
@@ -455,10 +483,31 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   fountain.add(basin, water, column);
   place(fountain, 0, 2, 0, 3.4);
 
+  // Hafentor und Hafenmauer: Torhaus über der Hauptstraße, Zinnenmauern und Rundtürme links und rechts
+  if (hasArchModel('torhaus')) {
+    const gz = -def.r + 16;
+    placeB('torhaus', 0, gz, Math.PI);
+    for (const sd of [-1, 1]) {
+      for (let k = 0; k < 3; k++) placeB('zinnenmauer', sd * (10.5 + 3 + k * 6), gz + 0.4 * k, Math.PI);
+      placeB('zinnenturm', sd * (10.5 + 3 + 3 * 6 + 1.5), gz + 1.6, sd * 0.7);
+    }
+    // Hebekräne und Lagerhäuser am Kai
+    placeB('kran', -9, -def.r + 6, 0);
+    placeB('kran', 9.5, -def.r + 6.5, 0.15);
+    placeB('lagerhaus', -22, gz + 22, Math.PI / 2 + 0.15);
+    placeB('lagerhaus', 24, gz + 24, -Math.PI / 2 - 0.1);
+    placeB('lagerhaus', -22, gz + 36, Math.PI / 2);
+  }
+  // Kapelle hinter dem Schrein-Platz
+  if (hasArchModel('kapelle')) placeB('kapelle', -24, 56, face(-24, 56) + Math.PI);
+
   // Wohnhäuser rundherum
   const spots: [number, number][] = [[-30, 34], [-50, 22], [-56, -24], [-30, -34], [24, 44], [46, 40], [58, 2], [22, -40], [-12, 46], [12, 66], [-34, 56], [36, 60]];
+  const HOUSE_TYPES: StructureType[] = ['fachwerkhaus', 'kolonialhaus', 'steinhaus', 'kolonialhaus', 'fachwerkhaus', 'holzhuette'];
+  const useBlender = hasArchModel('haus_fachwerk') && hasArchModel('haus_kolonial');
   spots.forEach(([x, z], i) => {
     const w = 6 + (i % 3) * 1.5, d = 5 + (i % 2) * 1.5;
+    if (useBlender) { placeB(HOUSE_TYPES[i % HOUSE_TYPES.length], x, z, face(x, z)); return; }
     place(house(w, d, 3.6 + (i % 2), WALLS[i % WALLS.length], ROOFS[(i * 3) % ROOFS.length], windowMat, lights), x, z, face(x, z), [w + 0.6, d + 0.6]);
   });
 
@@ -499,6 +548,8 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   const taken: [number, number, number][] = [
     [-26, -2, 6], [26, 14, 6], [4, 26, 6], [0, 52, 6], [40, -26, 6], [-10, -52, 6], [14, -60, 6],
     [-40, -2, 9], [-16, -60, 7], [38, 14, 8], [52, -26, 11], [0, 62, 9], [0, 27, 15], [0, 0, 17], [0, -43, 11],
+    [0, -def.r + 16, 12], [-13, -def.r + 16, 9], [13, -def.r + 16, 9], [-22, -def.r + 38, 9], [24, -def.r + 40, 9], [-22, -def.r + 52, 9], [-24, 56, 9],
+    [-12, 20, 3], [12, 21, 3], [-20, 8, 3], [20, 9, 3],
     ...spots.map(([x, z]) => [x, z, 9] as [number, number, number]),
   ];
   const free = (x: number, z: number, r: number) => Math.hypot(x, z) < def.r * 0.78 && segDist(x, z) > r + 3.2 && taken.every(([tx, tz, tr]) => Math.hypot(x - tx, z - tz) > tr + r);
@@ -511,7 +562,8 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
       const r = Math.max(w, d) * 0.62;
       if (!free(x, z, r)) continue;
       // Tür zur nächsten Straße statt stur zur Platzmitte
-      place(house(w, d, 4.4 + (hi % 3) * 0.9, WALLS[(hi + 2) % WALLS.length], ROOFS[(hi * 5 + 1) % ROOFS.length], windowMat, lights, hi % 4 === 0 ? ROOFS[hi % ROOFS.length] : undefined), x, z, face(x, z), [w + 0.6, d + 0.6]);
+      if (useBlender) placeB(HOUSE_TYPES[(hi * 7 + 1) % HOUSE_TYPES.length], x, z, face(x, z));
+      else place(house(w, d, 4.4 + (hi % 3) * 0.9, WALLS[(hi + 2) % WALLS.length], ROOFS[(hi * 5 + 1) % ROOFS.length], windowMat, lights, hi % 4 === 0 ? ROOFS[hi % ROOFS.length] : undefined), x, z, face(x, z), [w + 0.6, d + 0.6]);
       taken.push([x, z, r + 2]);
       // vor der Tür: Kisten, Fässer oder ein Karren
       const fx = x - Math.sin(face(x, z)) * -(d / 2 + 1.6), fz = z - Math.cos(face(x, z)) * -(d / 2 + 1.6);
@@ -533,8 +585,8 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
     const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
     if (free(x, z, 1)) { place(bush(i), x, z, a, 0); taken.push([x, z, 2]); }
   }
-  place(crateStack(1), -3.4, -def.r + 8, 0.3, [2.7, 1.7, 0.55, 0]);
-  place(crateStack(4), 3.6, -def.r + 12, 1.1, [2.7, 1.7, 0.55, 0]);
+  place(crateStack(1), -9.5, -def.r + 24, 0.3, [2.7, 1.7, 0.55, 0]);
+  place(crateStack(4), 9.5, -def.r + 26, 1.1, [2.7, 1.7, 0.55, 0]);
   // Wimpelleinen über der Hauptstraße, Fahnen am Platz
   for (const [ax, az, bx, bz] of [[-4, -40, 4, -25], [-4, -40, 4, -55], [-10, -10, 10, -10], [-12, 14, 12, 14]] as const) {
     group.add(bunting(new Vector3(cx + ax, groundAt(cx + ax, cz + az) + 2.85, cz + az), new Vector3(cx + bx, groundAt(cx + bx, cz + bz) + 2.85, cz + bz)));

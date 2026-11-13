@@ -5,6 +5,8 @@
 export type StructureType =
   | 'holzhuette' | 'stelzenhuette' | 'steinhaus' | 'gasthaus' | 'scheune'
   | 'wachturm' | 'steinturm'
+  | 'fachwerkhaus' | 'kolonialhaus' | 'lagerhaus' | 'kapelle' | 'marktstand' | 'kran'
+  | 'zinnenturm' | 'zinnenmauer' | 'torhaus' | 'bergfried' | 'leuchtturm'
   | 'ruine' | 'ruinenbogen' | 'saeulen'
   | 'zaun' | 'mauer' | 'steg'
   | 'kisten' | 'fass' | 'faesser'
@@ -37,7 +39,7 @@ export interface ClusterDef {
 }
 
 /** Pflanzen und Felsen aus world/vegetation.ts */
-export type FloraId = 'palme' | 'laubbaum' | 'birke' | 'windkiefer' | 'busch' | 'farn' | 'gras' | 'halme' | 'blume' | 'fels' | 'basalt' | 'basaltblock' | 'treibholz' | 'klippe';
+export type FloraId = 'palme' | 'laubbaum' | 'birke' | 'windkiefer' | 'busch' | 'farn' | 'gras' | 'halme' | 'blume' | 'fels' | 'basalt' | 'basaltblock' | 'treibholz' | 'klippe' | 'banane' | 'agave' | 'schilf';
 
 export interface ScatterLayer {
   flora: FloraId;
