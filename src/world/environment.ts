@@ -17,6 +17,8 @@ import { Weather } from './weather';
 import { WorldEdge } from './worldEdge';
 import { smokeShared } from './smoke';
 
+const BOUNCE = new Color('#9A8A70');
+
 export interface EnvState { time: number; weather: WeatherId }
 
 const GREY = new Color(0x8a96a4);
@@ -237,7 +239,8 @@ export class Environment {
     this.sun.color.copy(pal.light);
     this.sun.intensity = pal.lightI * light * light * Math.max(pal.sunVis, pal.moonVis * 0.9 + 0.1) * pal.lightK + flash * 2;
     this.hemi.color.copy(pal.ambientSky).lerp(GREY, greyK * 0.5);
-    this.hemi.groundColor.copy(pal.ambientGround);
+    // Streulicht vom hellen Sand und vom Gras: Wände im Schatten bleiben lesbar statt schwarz (Tag stark, Nacht gar nicht)
+    this.hemi.groundColor.copy(pal.ambientGround).lerp(BOUNCE, 0.34 * light);
     this.hemi.intensity = pal.ambientI * (0.3 + 0.7 * light) + flash * 1.5;
     this.sun.position.copy(focus).addScaledVector(pal.lightDir, 200);
     this.sun.target.position.copy(focus);

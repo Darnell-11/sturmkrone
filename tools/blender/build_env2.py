@@ -260,10 +260,10 @@ def build_schilf(v):
 def build_gras(v):
     rnd = random.Random(1600 + v)
     m = Model(f'gras_{v + 1}')
-    nb = [9, 12, 8][v]
+    nb = [17, 22, 15][v]
     for i in range(nb):
-        a = rnd.random() * 6.28; r = rnd.random() * 0.18
-        h = [0.45, 0.62, 0.95][v] * (0.6 + rnd.random() * 0.6)
+        a = rnd.random() * 6.28; r = rnd.random() * 0.26
+        h = [0.5, 0.7, 1.05][v] * (0.55 + rnd.random() * 0.65)
         w = [0.05, 0.055, 0.04][v]
         b = Vector((math.cos(a) * r, 0, math.sin(a) * r))
         out = Vector((math.cos(a), 0, math.sin(a)))
@@ -353,6 +353,81 @@ def build_fels2(v):
     m.ao(lambda role, p: 0.6 + 0.4 * sstep(0.0, top, p.y))
     m.export(os.path.join(ENV_DIR, f'fels_{v + 4}.glb'))
 
+
+# ======================= Kieselhaufen =======================
+def build_kiesel(v):
+    rnd = random.Random(2000 + v)
+    m = Model(f'kiesel_{v + 1}')
+    n = [6, 9, 12][v]
+    for k in range(n):
+        a = rnd.random() * 6.28; rr = (0.05 + rnd.random() * 0.35) * (1 + v * 0.3)
+        s_ = 0.07 + rnd.random() * 0.11 + (0.06 if k == 0 else 0)
+        m.rock('rock', rock_points(rnd, s_ * 1.3, s_ * 0.8, s_, 8, 0.25, s_ * 0.2), TR(x=math.cos(a) * rr, z=math.sin(a) * rr, ry=rnd.random() * 3), bevel=0.0)
+    m.ao(lambda role, p: 0.7 + 0.3 * sstep(0.0, 0.25, p.y))
+    m.export(os.path.join(ENV_DIR, f'kiesel_{v + 1}.glb'))
+
+# ======================= Strandgras (Dünengras mit Ähren) =======================
+def build_strandgras(v):
+    rnd = random.Random(2100 + v)
+    m = Model(f'strandgras_{v + 1}')
+    nb = [26, 34][v]
+    for i in range(nb):
+        a = rnd.random() * 6.28; r = rnd.random() * 0.3
+        h = (0.8 + rnd.random() * 0.8) * (1.0 + v * 0.3)
+        b = Vector((math.cos(a) * r, 0, math.sin(a) * r))
+        out = Vector((math.cos(a), 0, math.sin(a)))
+        lean = h * (0.3 + rnd.random() * 0.5)
+        t1 = Vector((-out.z, 0, out.x)) * 0.035
+        mid = b + out * (lean * 0.3) + Vector((0, h * 0.62, 0)); tip = b + out * lean + Vector((0, h * 0.9 - lean * 0.25, 0))
+        role = ('leaf', 'leaf2')[i % 2]
+        m.leaf(role, [b - t1, b + t1, mid + t1 * 0.5, mid - t1 * 0.5])
+        m.leaf(role, [mid - t1 * 0.5, mid + t1 * 0.5, tip])
+        if i % 5 == 0:                                                                       # Ähre am hohen Halm
+            top = b + out * (lean * 0.8) + Vector((0, h * 0.78, 0))
+            m.tube('fruit', [top, top + out * 0.05 + Vector((0, 0.16, 0)), top + out * 0.12 + Vector((0, 0.3, 0))], [0.012, 0.016, 0.004], seg=4, vscale=1.0)
+    m.ao(lambda role, p: 0.55 + 0.45 * sstep(0.0, 1.2, p.y))
+    m.export(os.path.join(ENV_DIR, f'strandgras_{v + 1}.glb'))
+
+# ======================= Baumstumpf, umgestürzter Stamm, Pilze =======================
+def build_stumpf(v):
+    rnd = random.Random(2200 + v)
+    m = Model('stumpf_1')
+    m.tube('trunk', [(0, -0.1, 0), (0.02, 0.2, 0), (0.0, 0.5, 0.0)], [0.34, 0.27, 0.25], seg=9, vscale=0.5)
+    for k in range(5):                                                                      # Wurzelanläufe
+        a = k * 1.26
+        m.tube('trunk', [(math.cos(a) * 0.15, 0.25, math.sin(a) * 0.15), (math.cos(a) * 0.4, 0.08, math.sin(a) * 0.4), (math.cos(a) * 0.65, -0.02, math.sin(a) * 0.65)], [0.12, 0.08, 0.03], seg=5, vscale=0.5)
+    m.cyl('nut', 0.26, 0.04, TR(y=0.5), seg=9)                                              # Schnittfläche (Rolle nut = hell-braun)
+    m.blob('moss', 0.22, TR(x=0.12, y=0.5, z=0.08), subdiv=1, noise=0.3, seed=2, squash=0.35)
+    m.ao(lambda role, p: 0.6 + 0.4 * sstep(-0.1, 0.5, p.y))
+    m.export(os.path.join(ENV_DIR, 'stumpf_1.glb'))
+
+def build_stamm(v):
+    rnd = random.Random(2300 + v)
+    m = Model('stamm_1')
+    L = 3.2
+    path = [(L * (k / 8 - 0.5), 0.3 + 0.03 * math.sin(k * 0.9), 0.05 * math.sin(k * 0.7)) for k in range(9)]
+    m.tube('trunk', path, [0.3 - 0.07 * k / 8 for k in range(9)], seg=9, vscale=0.4)
+    for j in range(3):                                                                      # Aststummel
+        k = 2 + j * 2
+        p = Vector(path[k]); d = Vector((rnd.random() - 0.5, 0.7, rnd.random() - 0.5)).normalized()
+        m.tube('trunk', [p, p + d * 0.4, p + d * 0.75], [0.07, 0.05, 0.02], seg=5, vscale=1.0)
+    m.blob('moss', 0.3, TR(x=0.3, y=0.58, z=0.05), subdiv=1, noise=0.3, seed=3, squash=0.3)
+    m.blob('moss', 0.22, TR(x=-0.7, y=0.55, z=-0.02), subdiv=1, noise=0.3, seed=4, squash=0.3)
+    m.ao(lambda role, p: 0.62 + 0.38 * sstep(0.0, 0.6, p.y))
+    m.export(os.path.join(ENV_DIR, 'stamm_1.glb'))
+
+def build_pilz(v):
+    rnd = random.Random(2400 + v)
+    m = Model('pilz_1')
+    for k in range(5):
+        a = rnd.random() * 6.28; rr = rnd.random() * 0.14
+        h = 0.1 + rnd.random() * 0.14
+        x, z = math.cos(a) * rr, math.sin(a) * rr
+        m.tube('bark2', [(x, 0, z), (x + 0.01, h * 0.5, z), (x, h, z)], [0.022, 0.018, 0.015], seg=5, vscale=1.0)
+        m.lathe('flower', [(0.0, h + 0.05), (0.07 + rnd.random() * 0.05, h + 0.01), (0.09, h - 0.01)], TR(x=x, z=z), seg=8, caps=False)
+    m.ao(lambda role, p: 0.7 + 0.3 * sstep(0.0, 0.25, p.y))
+    m.export(os.path.join(ENV_DIR, 'pilz_1.glb'))
+
 for v in range(6): clear_gear(); build_palme2(v)
 for v in range(3): clear_gear(); build_eiche(v)
 for v in range(2): clear_gear(); build_birke(v)
@@ -364,3 +439,9 @@ for v in range(3): clear_gear(); build_gras(v)
 for v in range(3): clear_gear(); build_blume(v)
 for v in range(2): clear_gear(); build_busch2(v)
 for v in range(2): clear_gear(); build_fels2(v)
+
+for v in range(3): clear_gear(); build_kiesel(v)
+for v in range(2): clear_gear(); build_strandgras(v)
+clear_gear(); build_stumpf(0)
+clear_gear(); build_stamm(0)
+clear_gear(); build_pilz(0)

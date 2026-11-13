@@ -738,60 +738,80 @@ const DETAIL_FRAG: Record<DetailKind, string> = {
     skDetA = 0.07 * (1.0 - smoothstep(14.0, 70.0, camD));
   }`,
   stone: /* glsl */ `{
-    // Mauerwerk: Quader im Läuferverband, Mörtelfugen, Moos auf Oberseiten und in feuchten Flecken
-    vec3 wn = normalize(cross(dFdx(vSkWorld), dFdy(vSkWorld)));
+    // Mauerwerk: Quader im Läuferverband, Mörtelfugen, Moos auf Oberseiten und in feuchten Flecken.
+    // Alles Feine blendet nach der Pixelgröße aus (fp = Meter je Pixel): so flimmert und kritzelt nichts mehr.
+    // Fläche und Pixelgröße aus Ansichts-Koordinaten (klein und genau): aus Weltkoordinaten mit Beträgen bis 3000 m rauschte die Normale je Pixel
+    vec3 wn = normalize(normalize(cross(dFdx(-vViewPosition), dFdy(-vViewPosition))) * mat3(viewMatrix));
+    float fpx = max(length(dFdx(vViewPosition)), length(dFdy(vViewPosition)));
     vec3 t3 = vec3(-wn.z, 0.0, wn.x); float tl = length(t3); t3 = tl > 0.05 ? t3 / tl : vec3(1.0, 0.0, 0.0);
     vec3 s3 = cross(wn, t3);
     float u = dot(vSkWorld, t3), v = dot(vSkWorld, s3);
     float camD = distance(vSkWorld, cameraPosition);
+    float fp = min(fpx, 0.6);
+    float lod = 1.0 - smoothstep(0.010, 0.05, fp);
     float row = floor(v / 0.34);
     float uu = u / 0.62 + skdH(vec2(row, 3.7)) * 4.0 + mod(row, 2.0) * 0.5;
     vec2 cell = vec2(floor(uu), row);
     vec2 f = vec2(fract(uu), fract(v / 0.34));
     float ed = min(min(f.x, 1.0 - f.x) * 0.62, min(f.y, 1.0 - f.y) * 0.34);
-    float aa = fwidth(ed) * 1.2 + 0.001;
-    float mortar = 1.0 - smoothstep(0.012 - aa, 0.03 + aa, ed);
+    float aa = fp * 0.9 + 0.004;
+    float mortar = (1.0 - smoothstep(0.014 - aa, 0.034 + aa, ed)) * lod;
     float rnd = skdH(cell + 11.0);
-    float fadeD = 1.0 - smoothstep(14.0, 55.0, camD);
-    diffuseColor.rgb *= 1.12 + rnd * 0.3 + (skdN(vec2(u, v) * 9.0) - 0.5) * 0.18 * fadeD;
-    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.78, 0.75, 0.7), mortar * fadeD);
+    float fadeD = lod;
+    // Quader leicht verschieden hell, Verwitterung in großen Flecken
+    float weather = skdF(vec2(u, v) * 0.7 + 3.0) - 0.5;
+    diffuseColor.rgb *= 1.08 + mix(0.0, (rnd - 0.5) * 0.3, lod) + weather * 0.22 + (skdN(vec2(u, v) * 5.0) - 0.5) * 0.1 * lod;
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.52, 0.5, 0.47), mortar);
+    // Kantenabrundung der Quader: helle Oberkante, dunkle Unterkante
+    float bevel = (smoothstep(0.0, 0.1, f.y) - smoothstep(0.78, 1.0, f.y)) * lod;
+    diffuseColor.rgb *= 1.0 + (f.y > 0.5 ? 0.06 : -0.08) * (1.0 - bevel) * lod;
     float up = clamp(wn.y, 0.0, 1.0);
     float mossN = skdF(vSkWorld.xz * 0.55 + vSkWorld.y * 0.3 + 7.0);
-    float moss = smoothstep(0.52, 0.82, mossN + up * 0.3) * 0.6;
-    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.26, 0.4, 0.17) * (0.8 + rnd * 0.4), moss);
-    skDetH = (1.0 - mortar) * (0.7 + rnd * 0.3); skDetA = 0.05 * fadeD;
+    float moss = smoothstep(0.52, 0.82, mossN + up * 0.3) * 0.55;
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.26, 0.4, 0.17) * (0.85 + weather), moss);
+    // Relief: weiche Fugenrinne (stetig), keine Zufallsstufen je Quader
+    skDetH = -mortar * 0.8 + bevel * 0.12; skDetA = 0.02 * lod;
   }`,
   tile: /* glsl */ `{
-    // Dachziegel: überlappende Reihen entlang des Gefälles, gerundete Kanten, versetzt je Reihe
-    vec3 wn = normalize(cross(dFdx(vSkWorld), dFdy(vSkWorld)));
+    // Dachziegel: überlappende Reihen entlang des Gefälles, gerundete Kanten, versetzt je Reihe; bandbegrenzt nach Pixelgröße
+    // Fläche und Pixelgröße aus Ansichts-Koordinaten (klein und genau): aus Weltkoordinaten mit Beträgen bis 3000 m rauschte die Normale je Pixel
+    vec3 wn = normalize(normalize(cross(dFdx(-vViewPosition), dFdy(-vViewPosition))) * mat3(viewMatrix));
+    float fpx = max(length(dFdx(vViewPosition)), length(dFdy(vViewPosition)));
     vec3 t3 = vec3(-wn.z, 0.0, wn.x); float tl = length(t3); t3 = tl > 0.05 ? t3 / tl : vec3(1.0, 0.0, 0.0);
     vec3 s3 = cross(wn, t3);
     float u = dot(vSkWorld, t3), v = dot(vSkWorld, s3);
     float camD = distance(vSkWorld, cameraPosition);
+    float fp = min(fpx, 0.6);
+    float lod = 1.0 - smoothstep(0.012, 0.06, fp);
     float row = floor(v / 0.3);
     float uu = u / 0.24 + mod(row, 2.0) * 0.5;
     float cu = fract(uu), cv = fract(v / 0.3);
     float rnd = skdH(vec2(floor(uu), row));
-    float fadeD = 1.0 - smoothstep(14.0, 60.0, camD);
-    // Ziegelhöhe: runde Wölbung quer, Kante unten überlappt
-    float prof = (1.0 - pow(abs(cu - 0.5) * 2.0, 2.0)) * 0.5 + cv * 0.5;
-    float gap = smoothstep(0.0, 0.1, cv) * smoothstep(0.0, 0.07, min(cu, 1.0 - cu));
-    diffuseColor.rgb *= (0.78 + rnd * 0.4 + (skdN(vec2(u, v) * 7.0) - 0.5) * 0.2) * mix(1.0, 0.62 + 0.38 * gap, fadeD);
+    // Ziegelschatten: unten dunkle Überlappung, Seitenfugen
+    float aa = fp * 0.8 + 0.01;
+    float gapY = smoothstep(0.0, 0.14 + aa, cv);
+    float gapX = smoothstep(0.0, 0.07 + aa, min(cu, 1.0 - cu));
+    float gap = gapY * gapX;
+    float tileTone = 0.84 + mix(0.0, (rnd - 0.5) * 0.4, lod) + (skdF(vec2(u, v) * 0.6) - 0.5) * 0.2;
+    diffuseColor.rgb *= tileTone * mix(0.9, 0.7 + 0.3 * gap, lod);
     float moss = smoothstep(0.7, 0.9, skdF(vSkWorld.xz * 0.4 + 2.0)) * 0.4 * clamp(wn.y * 1.5, 0.0, 1.0);
     diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.16, 0.28, 0.12), moss);
-    skDetH = prof; skDetA = 0.06 * fadeD;
+    skDetH = (gap - 0.5) * 0.6; skDetA = 0.05 * lod;
   }`,
   plaster: /* glsl */ `{
-    // Putz: feine Körnung, Flecken und etwas Schmutz
-    vec3 wn = normalize(cross(dFdx(vSkWorld), dFdy(vSkWorld)));
+    // Putz: feine Körnung nur aus der Nähe, große Flecken und Schmutz am Sockel und unter der Traufe
+    // Fläche und Pixelgröße aus Ansichts-Koordinaten (klein und genau): aus Weltkoordinaten mit Beträgen bis 3000 m rauschte die Normale je Pixel
+    vec3 wn = normalize(normalize(cross(dFdx(-vViewPosition), dFdy(-vViewPosition))) * mat3(viewMatrix));
+    float fpx = max(length(dFdx(vViewPosition)), length(dFdy(vViewPosition)));
     vec3 t3 = vec3(-wn.z, 0.0, wn.x); float tl = length(t3); t3 = tl > 0.05 ? t3 / tl : vec3(1.0, 0.0, 0.0);
     float u = dot(vSkWorld, t3), v = vSkWorld.y;
     float camD = distance(vSkWorld, cameraPosition);
-    float fadeD = 1.0 - smoothstep(10.0, 40.0, camD);
-    float g = skdN(vec2(u, v) * 26.0) * 0.6 + skdN(vec2(u, v) * 7.0) * 0.4;
-    diffuseColor.rgb *= 0.93 + (skdF(vec2(u, v) * 0.9) - 0.5) * 0.22 + (g - 0.5) * 0.1 * fadeD;
-    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.78, 0.74, 0.66), smoothstep(0.55, 0.9, skdN(vec2(u * 0.7, v * 1.6) + 4.0)) * 0.5);
-    skDetH = g; skDetA = 0.012 * fadeD;
+    float fp = min(fpx, 0.6);
+    float lod = 1.0 - smoothstep(0.006, 0.03, fp);
+    float g = skdN(vec2(u, v) * 18.0) * 0.6 + skdN(vec2(u, v) * 6.0) * 0.4;
+    diffuseColor.rgb *= 0.95 + (skdF(vec2(u, v) * 0.8) - 0.5) * 0.2 + (g - 0.5) * 0.08 * lod;
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.8, 0.76, 0.68), smoothstep(0.55, 0.9, skdN(vec2(u * 0.7, v * 1.6) + 4.0)) * 0.45);
+    skDetH = (g - 0.5) * 0.6; skDetA = 0.01 * lod;
   }`,
 };
 
@@ -913,7 +933,10 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
     vec3 skSx = dFdx(-vViewPosition), skSy = dFdy(-vViewPosition);
     vec3 skR1 = cross(skSy, normal), skR2 = cross(normal, skSx);
     float skDet = dot(skSx, skR1);
-    vec3 skG = sign(skDet) * (dFdx(skDetH) * skR1 + dFdy(skDetH) * skR2) * skDetA;
+    vec2 skGd = vec2(dFdx(skDetH), dFdy(skDetH));
+    float skGl = length(skGd);
+    skGd *= min(1.0, 0.22 / max(skGl, 1e-5));
+    vec3 skG = sign(skDet) * (skGd.x * skR1 + skGd.y * skR2) * skDetA;
     normal = normalize(abs(skDet) * normal - skG);
   }`);
       }

@@ -16,6 +16,7 @@ export const ENV_MODELS = [
   'treibholz_1', 'treibholz_2', 'treibholz_3', 'fels_1', 'fels_2', 'fels_3', 'klippe_1', 'klippe_2',
   'palme_5', 'palme_6', 'laubbaum_4', 'laubbaum_5', 'laubbaum_6', 'birke_1', 'birke_2', 'kiefer_1', 'kiefer_2', 'kiefer_3', 'banane_1', 'banane_2', 'agave_1',
   'schilf_1', 'schilf_2', 'gras_1', 'gras_2', 'gras_3', 'blume_1', 'blume_2', 'blume_3', 'busch_3', 'busch_4', 'fels_4', 'fels_5',
+  'kiesel_1', 'kiesel_2', 'kiesel_3', 'strandgras_1', 'strandgras_2', 'stumpf_1', 'stamm_1', 'pilz_1',
 ] as const;
 
 const BASE = `${import.meta.env.BASE_URL}models/env/`;

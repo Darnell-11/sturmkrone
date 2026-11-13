@@ -1,3 +1,4 @@
+import { cobbleMaterial, dirtMaterial, roadMesh } from './town';
 import {
   BoxGeometry,
   Color,
@@ -98,8 +99,9 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     return m;
   };
   /** Bauwerk aus world/architecture.ts aufstellen, mit seinem Kollisions-Gitter */
-  const mount = (t: StructureType, x: number, z: number, yaw: number, len?: number) => {
+  const mount = (t: StructureType, x: number, z: number, yaw: number, len?: number, sx = 1) => {
     const b = build(t, rnd, len);
+    if (sx !== 1) { b.g.scale.x = sx; b.boxes = b.boxes.map(([w, d, ox = 0, oz = 0, by = 0]) => [w * sx, d, ox * sx, oz, by] as [number, number, number, number, number]); }
     const y = hAt(x, z);
     b.g.position.set(x, y, z);
     b.g.rotation.y = yaw;
@@ -119,8 +121,18 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     festland: ['fachwerkhaus', 'steinhaus', 'holzhuette', 'kolonialhaus'],
     klippe: ['steinhaus'],
   };
+  /** Wege (Inselkoordinaten, Breite): werden am Ende als Erdbänder auf den Boden gelegt */
+  const paths: { pts: [number, number][]; w: number }[] = [];
+  const placedHomes: { x: number; z: number; yaw: number }[] = [];
   const home = (t: StructureType | 'rundhuette', x: number, z: number, yaw: number) => {
+    placedHomes.push({ x, z, yaw });
     if (t === 'rundhuette') { put(hut(rnd), x, z, yaw); block(x, z, 2.2); } else mount(t, x, z, yaw);
+  };
+  /** Weg von der Tür eines Hauses zu einem Punkt: leicht geschwungen */
+  const pathFromDoor = (h: { x: number; z: number; yaw: number }, to: { x: number; z: number }, w = 2.2) => {
+    const door: [number, number] = [h.x + Math.sin(h.yaw) * 3.6, h.z + Math.cos(h.yaw) * 3.6];
+    const mx = (door[0] + to.x) / 2 + (rnd() - 0.5) * 2.4, mz = (door[1] + to.z) / 2 + (rnd() - 0.5) * 2.4;
+    paths.push({ pts: [door, [mx, mz], [to.x, to.z]], w });
   };
   const grassCol = new Color(((kit.grass as MeshToonMaterial).color ?? new Color('#55894a')).getHex());
   const rockCol = new Color(((kit.rock as MeshToonMaterial).color ?? new Color('#7a746a')).getHex());
@@ -132,35 +144,70 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
    * Festung Nordwacht: Ringmauer mit Zinnen und drei Toren, Rundtürme mit Schieferdächern und Wimpeln,
    * ein hoher Bergfried – die mächtigste Seefestung der Welt soll auch so aussehen.
    */
-  const fortress = () => {
-    // Ringmauer aus Zinnenmauer-Stücken (je 6 m), Rundtürme alle vier Stücke, drei Torhäuser mit Fallgitter, Bergfried im Hof
+  /**
+   * Burgring: ein geschlossenes Vieleck aus Zinnenmauern (Länge je Kante ≈ 7 m, auf die Kante gestreckt), Torhäuser an gleichmäßig
+   * verteilten Stellen (15 m Kante, Durchgang nach außen), Rundtürme an jeder dritten Mauerecke. Die Kanten schließen lückenlos,
+   * weil erst die Eckpunkte entlang der Küstenform berechnet werden und jedes Teil genau zwischen zwei Eckpunkten sitzt.
+   * Liefert Eckpunkte, Mittelpunkte der Tore und den Radius.
+   */
+  const curtainWall = (frac: number, nGates: number) => {
+    const ringR = (a: number) => E(a) * frac;
+    let avg = 0;
+    for (let i = 0; i < 24; i++) avg += ringR((i / 24) * Math.PI * 2);
+    avg /= 24;
     const wa = rnd() * Math.PI * 2;
-    const gates = [wa, wa + 2.1, wa + 4.2];
-    const ringAt = (a: number) => E(a) * 0.5;
-    const angDiff = (a: number, g: number) => Math.abs(Math.atan2(Math.sin(a - g), Math.cos(a - g)));
-    const nearGate = (a: number) => gates.some((g) => angDiff(a, g) < 0.19);
-    for (const g of gates) { const d = ringAt(g); mount('torhaus', Math.cos(g) * d, Math.sin(g) * d, Math.PI / 2 - g); }
-    let a = wa + 0.19, k = 0;
-    const end = wa + Math.PI * 2;
-    while (a < end - 0.05) {
-      const d = ringAt(a);
-      const step = 6 / d;
-      if (nearGate(a + step / 2)) { a += step; continue; }
-      const am = a + step / 2, dm = ringAt(am);
-      mount('zinnenmauer', Math.cos(am) * dm, Math.sin(am) * dm, Math.PI / 2 - am);
-      if (k % 4 === 3 && !nearGate(a + step + 0.1) && !nearGate(a - 0.1)) mount('zinnenturm', Math.cos(a + step) * ringAt(a + step), Math.sin(a + step) * ringAt(a + step), rnd() * 6);
-      a += step; k++;
+    const sector = (Math.PI * 2 * avg) / nGates;
+    const edges: { gate: boolean; len: number }[] = [];
+    for (let g = 0; g < nGates; g++) {
+      edges.push({ gate: true, len: 15 });
+      const nW = Math.max(2, Math.round((sector - 15) / 7));
+      for (let i = 0; i < nW; i++) edges.push({ gate: false, len: Math.max(4, (sector - 15) / nW) });
     }
-    // Bergfried am Rand des Hofes, gegenüber dem ersten Tor (die Mitte bleibt frei für den Bosskampf)
-    const ka = wa + Math.PI;
-    const kd = ringAt(ka) * 0.55;
-    mount('bergfried', Math.cos(ka) * kd, Math.sin(ka) * kd, Math.PI / 2 - ka);
-    // Hof: Kapelle, Lagerhäuser, Kasernen (Steinhäuser) und Feuer
-    const inner: [StructureType, number, number][] = [['kapelle', 0.5, 0.3], ['lagerhaus', 0.55, 1.7], ['steinhaus', 0.5, 2.5], ['steinhaus', 0.5, 3.2], ['lagerhaus', 0.5, 4.5], ['steinhaus', 0.55, 5.4], ['kran', 0.7, 0.9]];
-    for (const [t, f, ang] of inner) {
-      const aa = wa + ang, dd = ringAt(aa) * f;
+    let a = wa;
+    const raw = [wa];
+    for (const e of edges) { a += e.len / ringR(a); raw.push(a); }
+    const k = (Math.PI * 2) / (a - wa);
+    const ang = raw.map((x) => wa + (x - wa) * k);
+    const V = ang.slice(0, edges.length).map((x) => ({ x: Math.cos(x) * ringR(x), z: Math.sin(x) * ringR(x), a: x }));
+    const gates: { x: number; z: number; a: number }[] = [];
+    let walls = 0;
+    edges.forEach((e, i) => {
+      const p = V[i], q = V[(i + 1) % V.length];
+      const dx = q.x - p.x, dz = q.z - p.z, len = Math.hypot(dx, dz) || 1;
+      const yaw = Math.atan2(-dz / len, dx / len) + Math.PI;     // lokales +z zeigt nach außen, lokales x läuft entlang der Kante
+      const mx = (p.x + q.x) / 2, mz = (p.z + q.z) / 2;
+      if (e.gate) { mount('torhaus', mx, mz, yaw, undefined, len / 15); gates.push({ x: mx, z: mz, a: Math.atan2(mz, mx) }); }
+      else {
+        mount('zinnenmauer', mx, mz, yaw, undefined, len / 6);
+        walls++;
+        if (walls % 3 === 0 && !edges[(i + 1) % edges.length].gate) mount('zinnenturm', q.x, q.z, rnd() * 6);
+      }
+    });
+    if (import.meta.env.DEV) ((window as unknown as { __gates?: Record<string, { x: number; z: number }[]> }).__gates ??= {})[def.id] = gates.map((g2) => ({ x: walk.x + g2.x, z: walk.z + g2.z })); // QA-Hilfe (nur Entwicklung)
+    return { V, gates, avg, wa };
+  };
+  /** Gepflasterte Wege von den Toren zur Hofmitte */
+  const courtRoads = (gates: { x: number; z: number }[], to: { x: number; z: number }) => {
+    gates.forEach((g2, i) => {
+      const pts: [number, number][] = [[g2.x * 1.18, g2.z * 1.18], [g2.x * 1.0, g2.z * 1.0], [g2.x * 0.7 + to.x * 0.3, g2.z * 0.7 + to.z * 0.3], [g2.x * 0.3 + to.x * 0.7, g2.z * 0.3 + to.z * 0.7]];
+      group.add(roadMesh(pts, 4.4, 0, 0, hAt, cobbleMaterial(i + 1)));
+    });
+  };
+
+  /** Festung Nordwacht: Ringmauer mit drei Torhäusern, Bergfried, Kapelle, Lagerhäuser und Kasernen im Hof */
+  const fortress = () => {
+    const { gates, avg, wa } = curtainWall(0.5, 3);
+    const ka = wa + Math.PI + 0.35;
+    const kd = avg * 0.5;
+    const keep = { x: Math.cos(ka) * kd, z: Math.sin(ka) * kd };
+    mount('bergfried', keep.x, keep.z, Math.atan2(-keep.x, -keep.z));
+    courtRoads(gates, { x: keep.x * 0.5, z: keep.z * 0.5 });
+    // Hofgebäude an den Wegen entlang, Türen zur Hofmitte
+    const inner: [StructureType, number, number][] = [['kapelle', 0.56, 1.0], ['lagerhaus', 0.6, 2.0], ['steinhaus', 0.62, 2.7], ['steinhaus', 0.62, 3.5], ['lagerhaus', 0.6, 4.2], ['steinhaus', 0.62, 5.4], ['kran', 0.72, 0.4]];
+    for (const [t, f, an] of inner) {
+      const aa = wa + an, dd = avg * f;
       const x = Math.cos(aa) * dd, z = Math.sin(aa) * dd;
-      if (free(x, z, 6)) mount(t, x, z, Math.PI / 2 - aa + Math.PI + (rnd() - 0.5) * 0.4);
+      if (free(x, z, 6)) mount(t, x, z, Math.atan2(-x, -z) + (rnd() - 0.5) * 0.3);
     }
   };
 
@@ -225,6 +272,9 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
           home(kindOf(i), x, z, Math.atan2(c.x - x, c.z - z) + (layout === 2 ? (rnd() - 0.5) * 1.2 : 0));
         }
       }
+      // Wege: von jeder Tür zur Dorfmitte (bei der Zeile am Strand zusätzlich entlang der Häuser)
+      for (const h of placedHomes) pathFromDoor(h, c, layout === 1 ? 2.6 : 2.2);
+      if (layout === 1 && placedHomes.length > 1) paths.push({ pts: placedHomes.map((h) => [h.x + Math.sin(h.yaw) * 4.4, h.z + Math.cos(h.yaw) * 4.4] as [number, number]), w: 3.0 });
       if (free(c.x, c.z, 1.4)) {
         // Dorfmitte: Feuerstelle oder Brunnen
         if (rnd() < 0.65) { const pit = campfire(glow, true); put(pit, c.x, c.z, 0); fires.push({ x: c.x, y: hAt(c.x, c.z) + 0.3, z: c.z }); block(c.x, c.z, 0.9); }
@@ -262,6 +312,15 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
         if (!free(x, z, 4)) continue;
         const t = homes[(first + i) % homes.length];
         home(t === 'wachturm' && i !== n - 1 ? 'holzhuette' : t, x, z, a + (rnd() - 0.5) * 0.35);
+      }
+      // Hauptweg vom Steg ins Dorf, Stichwege zu den Haustüren
+      {
+        const root = E(Math.atan2(Math.cos(facing), Math.sin(facing)));
+        const top: [number, number] = [Math.sin(facing) * root * 0.92, Math.cos(facing) * root * 0.92];
+        const mid: [number, number] = [Math.sin(facing) * root * 0.7, Math.cos(facing) * root * 0.7];
+        const end: [number, number] = [Math.sin(facing) * root * 0.42, Math.cos(facing) * root * 0.42];
+        paths.push({ pts: [top, mid, end], w: 3.6 });
+        for (const h of placedHomes) pathFromDoor(h, { x: mid[0] * 0.5 + end[0] * 0.5, z: mid[1] * 0.5 + end[1] * 0.5 }, 2.0);
       }
       // Hafenanlagen: Lagerhaus am Kai, Hebekran, Marktstände, Kapelle hinter den Häusern
       {
@@ -340,30 +399,22 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     case 'boss': {
       if (style === 'glut') break; // dort steht der Vulkan
       if (def.id === 'festungnordwacht') { fortress(); break; }
-      // Wehranlage: Torhaus in der Mitte eines Mauerbogens, Rundtürme an den Enden und davor, Wachhaus
-      const wa = rnd() * Math.PI * 2;
-      const ringD = (a: number) => E(a) * 0.6;
-      mount('torhaus', Math.cos(wa) * ringD(wa), Math.sin(wa) * ringD(wa), Math.PI / 2 - wa);
-      for (const sd of [-1, 1]) {
-        let a = wa + sd * 0.2;
-        for (let k = 0; k < 6; k++) {
-          const st = (6 / ringD(a)) * sd, am = a + st / 2;
-          mount('zinnenmauer', Math.cos(am) * ringD(am), Math.sin(am) * ringD(am), Math.PI / 2 - am);
-          a += st;
-        }
-        mount('zinnenturm', Math.cos(a) * ringD(a), Math.sin(a) * ringD(a), rnd() * 6);
+      // Wehranlage: kleiner Burgring mit zwei Torhäusern, Rundtürmen, einem Wachhaus und gepflasterten Wegen
+      const fort = curtainWall(0.46, 2);
+      courtRoads(fort.gates, { x: 0, z: 0 });
+      for (let i = 0; i < 2; i++) {
+        const aa = fort.wa + 1.2 + i * 2.4, dd = fort.avg * 0.62;
+        const x = Math.cos(aa) * dd, z = Math.sin(aa) * dd;
+        if (free(x, z, 5)) mount(i ? 'lagerhaus' : 'steinhaus', x, z, Math.atan2(-x, -z));
       }
-      const p = spot(0.25, 0.45, 4, 20);
-      if (p) mount('steinhaus', p.x, p.z, rnd() * 6);
       break;
     }
     case 'lighthouse': {
-      const p = spot(0.1, 0.3, 5);
-      if (p) {
-        mount('leuchtturm', p.x, p.z, rnd() * 6);
-        const q = { x: p.x + 7, z: p.z + 2 };
-        if (free(q.x, q.z, 4)) mount('steinhaus', q.x, q.z, Math.atan2(p.x - q.x, p.z - q.z));
-      }
+      // Der Leuchtturm steht in der Inselmitte, daneben das Wärterhaus mit Weg
+      mount('leuchtturm', 0, 0, rnd() * 6);
+      const qa = rnd() * Math.PI * 2;
+      const q = { x: Math.cos(qa) * 11, z: Math.sin(qa) * 11 };
+      if (free(q.x, q.z, 4)) { mount('steinhaus', q.x, q.z, Math.atan2(-q.x, -q.z)); paths.push({ pts: [[q.x * 0.72, q.z * 0.72], [q.x * 0.36, q.z * 0.36], [0, 0]], w: 2.2 }); }
       break;
     }
   }
@@ -446,7 +497,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     taken.push({ x: p.x, z: p.z, r: 0.8 });
     bushes.push({ x: p.x, y: hAt(p.x, p.z), z: p.z });
   }
-  const nTuft = Math.round(r * (lush ? 3.2 : 1.4) * dens);
+  const nTuft = Math.round(r * (lush ? 9.5 : 4.2) * dens);
   for (let i = 0; i < nTuft; i++) {
     const a = rnd() * Math.PI * 2, d = E(a) * Math.sqrt(rnd()) * 0.86;
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
@@ -473,7 +524,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     veg.add(proto, x, hAt(x, z), z, rnd() * Math.PI * 2, 0.8 + rnd() * 0.5, undefined, 0, 0, 0.85 + rnd() * 0.3);
   }
   const flowers = FLOWERS[style];
-  const nFlower = Math.round(r * (style === 'tropisch' || style === 'nord' ? 1.5 : style === 'festland' ? 1.1 : 0.35) * dens);
+  const nFlower = Math.round(r * (style === 'tropisch' || style === 'nord' ? 2.6 : style === 'festland' ? 2.0 : 0.6) * dens);
   for (let i = 0; i < nFlower; i++) {
     const a = rnd() * Math.PI * 2, d = E(a) * Math.sqrt(rnd()) * 0.8;
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
@@ -496,6 +547,50 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       f.add(stem, head);
     }
     put(f, x, z);
+  }
+
+  // ---------- Strand und Waldboden: Kiesel, Dünengras, Stümpfe, Stämme, Pilze – damit Sand und Wiese nirgends leer wirken ----------
+  {
+    const rockHex = (v: number) => () => `#${rockMats[v % 3].color.getHexString()}`;
+    const nPeb = Math.round(r * 1.5 * dens);
+    for (let i = 0; i < nPeb; i++) {
+      const a = rnd() * Math.PI * 2, d = E(a) * (0.55 + rnd() * 0.42);
+      const x = Math.cos(a) * d, z = Math.sin(a) * d;
+      if (hAt(x, z) < 1.1 || !free(x, z, 0.5)) continue;
+      const v = Math.floor(rnd() * 3);
+      const proto = envProto(`kit:${style}:kiesel:${v}`, `kiesel_${v + 1}`, rockHex(v), { near: 150, cast: false });
+      if (proto) veg.add(proto, x, hAt(x, z) - 0.03, z, rnd() * 6, 0.8 + rnd() * 1.0);
+    }
+    if (style !== 'glut' && style !== 'schlund') {
+      const dune = (): string => (style === 'tropisch' ? '#C9C07A' : style === 'nord' || style === 'sturm' ? '#A8AE86' : '#BDB880');
+      const nDune = Math.round(r * 1.3 * dens);
+      for (let i = 0; i < nDune; i++) {
+        const a = rnd() * Math.PI * 2, d = E(a) * (0.48 + rnd() * 0.46);
+        const x = Math.cos(a) * d, z = Math.sin(a) * d;
+        if (hAt(x, z) < 1.1 || !free(x, z, 0.4)) continue;
+        const v = Math.floor(rnd() * 2);
+        const proto = envProto(`kit:${style}:strandgras:${v}`, `strandgras_${v + 1}`, (role) => (role === 'fruit' ? '#E5DCA8' : role === 'leaf2' ? '#A9A66A' : dune()), { surf: 'plant', near: 170, cast: false, outline: false, soft: true, wind: 0.2 });
+        if (proto) { const sz = 0.9 + rnd() * 0.8; veg.add(proto, x, hAt(x, z), z, rnd() * 6, sz, sz * (0.85 + rnd() * 0.3)); }
+      }
+    }
+    if (lush) {
+      const woodCol = style === 'nord' ? '#5A4634' : '#6E4F34';
+      const forest = (name: string, id: string, n: number, color: (role: string) => string, size: [number, number], opts: Parameters<typeof envProto>[3], block0 = 0) => {
+        for (let i = 0; i < n; i++) {
+          const a = rnd() * Math.PI * 2, d = E(a) * (0.12 + rnd() * 0.62);
+          const x = Math.cos(a) * d, z = Math.sin(a) * d;
+          if (!free(x, z, block0 + 0.6)) continue;
+          const proto = envProto(id, name, color, opts);
+          if (!proto) continue;
+          const sz = size[0] + rnd() * (size[1] - size[0]);
+          veg.add(proto, x, hAt(x, z) - 0.05, z, rnd() * 6, sz, sz);
+          if (block0 > 0) block(x, z, block0 * sz);
+        }
+      };
+      forest('stumpf_1', `kit:${style}:stumpf`, Math.round(r * 0.1 * dens), (role) => (role === 'nut' ? '#B8956A' : role === 'moss' ? '#5E7A4A' : woodCol), [0.9, 1.5], { surf: 'tree', near: 200 }, 0.4);
+      forest('stamm_1', `kit:${style}:stamm`, Math.round(r * 0.06 * dens), (role) => (role === 'moss' ? '#5E7A4A' : woodCol), [0.8, 1.3], { surf: 'tree', near: 220 }, 0.5);
+      forest('pilz_1', `kit:${style}:pilz`, Math.round(r * 0.35 * dens), (role) => (role === 'flower' ? '#C4503A' : '#E8E0CC'), [0.9, 1.6], { surf: 'plant', near: 90, cast: false, outline: false });
+    }
   }
 
   // Schilf und Rohrkolben am Ufer von Inseln mit Grün (Lagunenrand)
@@ -553,6 +648,13 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       group.add(m);
     }
   }
+
+  // Wege auf den Boden legen (nach allen Bauten, damit sie unter ihnen liegen)
+  paths.forEach((pa, i) => {
+    const len = pa.pts.reduce((a, p, k) => a + (k ? Math.hypot(p[0] - pa.pts[k - 1][0], p[1] - pa.pts[k - 1][1]) : 0), 0);
+    if (len < 3 || pa.pts.some((p) => Math.hypot(p[0], p[1]) > E(Math.atan2(p[1], p[0])) * 0.98)) return;
+    group.add(roadMesh(pa.pts, pa.w, 0, 0, hAt, dirtMaterial(i % 6), 0.07));
+  });
 
   return { trees, bushes, fires, glows };
 }

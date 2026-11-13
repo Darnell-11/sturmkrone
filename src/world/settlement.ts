@@ -19,7 +19,7 @@ export interface SiteBuild {
   /** Lampen, Fackeln und Feuer für Lichtschein und Flammen (Inselkoordinaten) */
   glows: GlowPlaced[];
   /** Stege als Strecke in Weltkoordinaten (Schiffskollision) */
-  piers: { ax: number; az: number; bx: number; bz: number; hw: number }[];
+  piers: { ax: number; az: number; bx: number; bz: number; hw: number; y: number }[];
   /** Hauptsiedlung: hier schlendern die Bewohner (Weltkoordinaten) */
   village: { x: number; z: number; r: number };
 }
@@ -85,7 +85,7 @@ export function buildSite(o: SiteOpts): SiteBuild {
         t -= 3;
         x = px + dx * t; z = pz + dz * t;
         y = 0;
-        out.piers.push({ ax: def.x + x, az: def.z + z, bx: def.x + x + dx * b.pier, bz: def.z + z + dz * b.pier, hw: 1.6 });
+        out.piers.push({ ax: def.x + x, az: def.z + z, bx: def.x + x + dx * (b.pier + 2.5), bz: def.z + z + dz * (b.pier + 2.5), hw: 1.5, y: 1.45 });
         // unter und neben den Bohlen wächst nichts und liegt kein Fels
         for (let s = -6; s <= b.pier; s += 2) occ.add({ x: def.x + x + dx * s, z: def.z + z + dz * s, r: 2.6 });
       } else y = hAt(x, z);

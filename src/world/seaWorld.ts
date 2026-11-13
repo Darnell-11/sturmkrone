@@ -59,7 +59,8 @@ import type { SkillState } from '../core/save/types';
 import { Ship, type SeaEnv } from '../entities/ship/ship';
 import { AMMO, AMMO_IDS, DEFAULT_SHIP_LOOK, SHIP_CLASSES, type AmmoId, type ShipLook } from '../data/ships';
 import { NavalSystem, type EnemyShip } from '../naval/naval';
-import { DeckGround, type Ground } from './islandGround';
+import { DeckGround, type Ground, type Pier } from './islandGround';
+import { hasArch } from './envModels';
 import { actAt, ELEMENT_COLORS } from '../data/skills';
 import { BERNSTEINSEE, REGIONS, regionAt, seaLevelAt, type IslandDef, type RegionDef } from '../data/regions';
 import { SmokeSystem } from './smoke';
@@ -231,7 +232,7 @@ export class SeaWorld {
   /** Rauchende Vulkankrater */
   private smokeVents: { x: number; y: number; z: number }[] = [];
   /** Stege als Strecke a→b mit halber Breite (Schiffskollision) */
-  private piers: { ax: number; az: number; bx: number; bz: number; hw: number }[] = [];
+  private piers: Pier[] = [];
   private lamps: Mesh[] = [];
   /** Inselgruppen (für das Ausblenden jenseits der Sichtweite) */
   private islandGroups: { g: Group; x: number; z: number; r: number }[] = [];
@@ -317,6 +318,7 @@ export class SeaWorld {
     this.lampPool = new LampPool(this.scene, 4);
     glowHub.clear();
     this.glow = new GlowSystem(this.scene);
+    this.ground.piers = this.piers;
     this.islands = this.buildIslands();
     this.env.setIslands(this.islands);
     this.buildBuoys();
@@ -406,7 +408,9 @@ export class SeaWorld {
       // Handgebaute Länder (Festland, neue Inseln) bringen Küste und Hügel aus ihren Daten mit
       const site = s.def.site ? SITES[s.def.site] : null;
       const form = site ? { coast: site.coast, hills: fitHills(r, site.coast, site.hills) } : makeIslandShape(r, s.hill, shapeRnd, simple);
-      const walk: WalkIsland = { x: s.x, z: s.z, r, beachY: 1.3, hillY: 1.2, coast: form.coast, hills: form.hills.map((h) => ({ ...h, x: s.x + h.x, z: s.z + h.z })), shelf: shelfOf(r), blockers: [] };
+      const walk: WalkIsland = { x: s.x, z: s.z, r, beachY: 1.3, hillY: 1.2, coast: form.coast, hills: form.hills.map((h) => ({ ...h, x: s.x + h.x, z: s.z + h.z })), shelf: shelfOf(r), blockers: [],
+        // Relief: die Stadt bleibt fast eben, Dörfer und Wildnis rollen (Meter Ausschlag)
+        reliefAmp: town ? 0.1 : site ? 0.55 : s.def.kind === 'harbor' || s.def.kind === 'quiet' ? 0.4 : 0.5, reliefSeed: hashId(s.def.id) & 0xffff };
       // Brandung und Flachwasser beginnen an der echten Wasserlinie (Böschung je nach Inselgröße)
       const wl = 1 + walk.shelf * WATERLINE;
       shapes.push({ x: s.x, z: s.z, r: r * coastMax(form.coast) * wl, coast: form.coast, base: r * wl });
@@ -416,11 +420,11 @@ export class SeaWorld {
       const style = s.def.biome ?? styleOf(s.def.region);
       const lushK = style === 'tropisch' || style === 'nord' ? 1 : style === 'nebel' ? 0.8 : style === 'schlund' ? 0.6 : 0.35;
       const grassFrac = site ? site.grass : town ? 0.8 : s.def.kind === 'treasure' ? 0.35 + shapeRnd() * 0.25 : (0.45 + shapeRnd() * 0.4) * lushK + (1 - lushK) * 0.2;
-      const terrain = islandTerrain(kit, r, form.coast, form.hills, grassFrac, shapeRnd, town || site ? 0 : 0.45 + shapeRnd() * 0.55, walk.shelf);
-      isl.add(terrain.beach, ...terrain.hills);
       /** Bodenhöhe in Inselkoordinaten – dieselbe Rechnung wie beim Laufen */
       const solo = new IslandGround();
       solo.add(walk);
+      const terrain = islandTerrain(kit, r, form.coast, form.hills, grassFrac, shapeRnd, town || site ? 0 : 0.45 + shapeRnd() * 0.55, walk.shelf, (lx, lz) => { const v = solo.height(s.x + lx, s.z + lz); return Number.isFinite(v) ? v : -1.7; });
+      isl.add(terrain.beach, ...terrain.hills);
       const hAt = (lx: number, lz: number) => Math.max(-2, solo.height(s.x + lx, s.z + lz));
       const hillTop = Math.max(...walk.hills.map((h) => h.r * h.h));
       // Bäume, Sträucher, Gras und Felsen der Insel: gesammelt und am Ende als InstancedMesh gebaut
@@ -449,7 +453,7 @@ export class SeaWorld {
         veg.add(proto, px, hAt(px, pz) - 0.1, pz, rnd() * Math.PI * 2, 1, 1, 0, (rnd() - 0.5) * (kit.flora === 'palme' ? 0.4 : 0.15));
         walk.blockers.push({ x: s.x + px, z: s.z + pz, r: 0.45 });
       }
-      if (s.tower) {
+      if (s.tower && !hasArch('leuchtturm')) {
         const tower = new Mesh(new CylinderGeometry(1.6, 2.4, 16, 12), stone);
         tower.position.set(0, 9, 0);
         const band = new Mesh(new CylinderGeometry(1.95, 2.05, 2, 12), red);
@@ -478,7 +482,7 @@ export class SeaWorld {
         const e = r * coastK(form.coast, Math.atan2(Math.cos(facing), Math.sin(facing)));
         isl.add(outpost(e, facing, lanterns));
         const fx = Math.sin(facing), fz = Math.cos(facing);
-        this.piers.push({ ax: s.x + fx * (e + OUTPOST_PIER.from), az: s.z + fz * (e + OUTPOST_PIER.from), bx: s.x + fx * (e + OUTPOST_PIER.to), bz: s.z + fz * (e + OUTPOST_PIER.to), hw: 1.5 });
+        this.piers.push({ ax: s.x + fx * (e + OUTPOST_PIER.from), az: s.z + fz * (e + OUTPOST_PIER.from), bx: s.x + fx * (e + OUTPOST_PIER.to), bz: s.z + fz * (e + OUTPOST_PIER.to), hw: 1.5, y: 1.45 });
         for (const l of lanterns) { glow.add(l); glowHub.add(makeEmitter('lamp', 0, 0, 0, { obj: l, size: 0.8, glint: true })); }
         // Pfähle beiderseits und Laternenmast sind fest (Positionen wie in outpost())
         for (let d = e + 2; d <= e + OUTPOST_PIER.to - 1; d += 5) for (const sd of [-1, 1]) walk.blockers.push({ x: s.x + fx * d + fz * 1.6 * sd, z: s.z + fz * d - fx * 1.6 * sd, r: 0.22 });
@@ -523,7 +527,7 @@ export class SeaWorld {
       this.ground.add(walk);
       if (town) {
         // Steg nach Süden (siehe buildTown): ragt weit über den Inselrand hinaus
-        this.piers.push({ ax: s.x, az: s.z - r + 5, bx: s.x, bz: s.z - r - 41, hw: 2.5 });
+        this.piers.push({ ax: s.x, az: s.z - r + 5, bx: s.x, bz: s.z - r - 41, hw: 2.4, y: 1.65 });
         this.town = buildTown(s.def, walk, (x, z) => { const h = this.ground.height(x, z); return Number.isFinite(h) ? h : 1.3; });
         this.scene.add(this.town.group);
         // Laternen der Hafenstadt: Lichthof und Bodenlicht (Glas-Kugeln aus town.ts; Fensterflächen leuchten selbst)
@@ -1480,7 +1484,7 @@ export class SeaWorld {
           npc.char.play('talk', { restart: true, onDone: () => npc.char.play('idle') });
           this.onTalk(npc.townDef);
         }
-      } else if (d < 12 || this.shipReach(f.x, f.z) < 14) {
+      } else if (d < 16 || this.shipReach(f.x, f.z) < 26) {
         this.contextLabel = 'An Bord gehen';
         if (input.pressed('interact')) this.embark();
       }
@@ -1539,24 +1543,40 @@ export class SeaWorld {
   /** Auf dem eigenen Deck unterwegs (wie in 1.0) */
   private ownDeck = false;
 
-  /** Stege sind schmale Hindernisse: das Schiff legt seitlich an, statt hindurchzufahren (Bug, Mitte, Heck prüfen) */
+  /**
+   * Stege: das Schiff legt seitlich an. Die Hülle (Rechteck aus Länge und Breite) wird von der Stegkante abgehalten, nicht mehr
+   * ruckartig gestoppt: das Schiff gleitet daran entlang, dreht sich sanft parallel zum Steg und verliert nur wenig Fahrt.
+   */
   private collidePiers(s: Ship) {
     for (const p of this.piers) {
       const vx = p.bx - p.ax, vz = p.bz - p.az;
-      const len2 = vx * vx + vz * vz;
-      for (const k of [-0.42, 0, 0.42]) {
-        const px = s.x + Math.sin(s.heading) * s.cls.L * k, pz = s.z + Math.cos(s.heading) * s.cls.L * k;
-        const t = Math.max(0, Math.min(1, ((px - p.ax) * vx + (pz - p.az) * vz) / len2));
+      const len = Math.hypot(vx, vz) || 1;
+      const ux = vx / len, uz = vz / len;
+      const fx = Math.sin(s.heading), fz = Math.cos(s.heading);
+      let worst = 0, wnx = 0, wnz = 0;
+      for (const k of [-0.46, -0.3, -0.15, 0, 0.15, 0.3, 0.46]) {
+        const px = s.x + fx * s.cls.L * k, pz = s.z + fz * s.cls.L * k;
+        const t = Math.max(0, Math.min(1, ((px - p.ax) * ux + (pz - p.az) * uz) / len));
         const cx = p.ax + vx * t, cz = p.az + vz * t;
         let dx = px - cx, dz = pz - cz;
         let d = Math.hypot(dx, dz);
-        const min = p.hw + s.cls.W * 0.5 + 0.6;
+        const min = p.hw + s.cls.W * 0.5 + 0.35;
         if (d >= min) continue;
-        if (d < 1e-3) { dx = -vz; dz = vx; d = Math.hypot(dx, dz); }
-        s.x += (dx / d) * (min - d);
-        s.z += (dz / d) * (min - d);
-        s.speed *= 0.8;
+        if (d < 1e-3) { dx = -uz; dz = ux; d = 1; }
+        const pen = min - d;
+        if (pen > worst) { worst = pen; wnx = dx / d; wnz = dz / d; }
       }
+      if (worst <= 0) continue;
+      s.x += wnx * worst;
+      s.z += wnz * worst;
+      // Fahrt nur so weit bremsen, wie das Schiff auf die Kante zuhält
+      const into = Math.max(0, -(fx * wnx + fz * wnz)) * Math.sign(s.speed || 1);
+      s.speed *= 1 - 0.35 * Math.min(1, into * 1.2) - 0.01;
+      // sanft parallel zum Steg drehen
+      let target = Math.atan2(ux, uz);
+      let da = Math.atan2(Math.sin(target - s.heading), Math.cos(target - s.heading));
+      if (Math.abs(da) > Math.PI / 2) { target += Math.PI; da = Math.atan2(Math.sin(target - s.heading), Math.cos(target - s.heading)); }
+      s.heading += da * Math.min(0.06, 0.02 + worst * 0.05);
     }
   }
 
@@ -1606,7 +1626,14 @@ export class SeaWorld {
 
   private disembark(isl: WalkIsland) {
     if (!this.player || !this.foot) return;
-    const p = this.ground.shorePoint(isl, this.x, this.z);
+    let p = this.ground.shorePoint(isl, this.x, this.z);
+    // liegt das Schiff an einem Steg, geht man dort an Land (auf den Bohlen neben dem Schiff) statt am fernen Strandpunkt
+    const pn = this.ground.pierNear(this.x, this.z, 45);
+    if (pn) {
+      const ux = (pn.p.bx - pn.p.ax) / pn.len, uz = (pn.p.bz - pn.p.az) / pn.len;
+      const u = Math.max(1.5, Math.min(pn.len - 1.5, (this.x - pn.p.ax) * ux + (this.z - pn.p.az) * uz));
+      p = { x: pn.p.ax + ux * u, z: pn.p.az + uz * u, angle: p.angle };
+    }
     this.anchor = { x: p.x, z: p.z };
     this.speed = 0;
     this.scene.add(this.player.holder);

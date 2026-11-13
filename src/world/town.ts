@@ -252,8 +252,58 @@ function cobbleTexture(): CanvasTexture {
   return cobbleTex;
 }
 
+let dirtTex: CanvasTexture | null = null;
+/** Festgetretene Erde mit Kieseln und Spuren (Dorfwege, Ränder der Pflasterstraßen) */
+function dirtTexture(): CanvasTexture {
+  if (dirtTex) return dirtTex;
+  const { c, g } = detailCanvas(256, 256);
+  g.fillStyle = '#8c7856';
+  g.fillRect(0, 0, 256, 256);
+  let sd = 23;
+  const r = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
+  // weiche Flecken
+  for (let i = 0; i < 70; i++) {
+    const x = r() * 256, y = r() * 256, rr = 10 + r() * 28;
+    const gr = g.createRadialGradient(x, y, 0, x, y, rr);
+    const dark = r() < 0.5;
+    gr.addColorStop(0, dark ? 'rgba(60,44,28,0.28)' : 'rgba(200,176,132,0.26)');
+    gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr; g.fillRect(x - rr, y - rr, rr * 2, rr * 2);
+  }
+  // Wagenspuren längs (v-Richtung): zwei dunklere Bänder
+  for (const bx of [70, 186]) { const gr = g.createLinearGradient(bx - 14, 0, bx + 14, 0); gr.addColorStop(0, 'rgba(50,36,22,0)'); gr.addColorStop(0.5, 'rgba(50,36,22,0.22)'); gr.addColorStop(1, 'rgba(50,36,22,0)'); g.fillStyle = gr; g.fillRect(bx - 14, 0, 28, 256); }
+  // Kiesel
+  for (let i = 0; i < 160; i++) {
+    const x = r() * 256, y = r() * 256, rr = 1.2 + r() * 3.2, v = Math.round(150 + r() * 70);
+    g.fillStyle = `rgba(${v},${v - 8},${v - 20},0.9)`;
+    g.beginPath(); g.ellipse(x, y, rr, rr * 0.7, r() * 3, 0, Math.PI * 2); g.fill();
+    g.fillStyle = 'rgba(0,0,0,0.25)'; g.beginPath(); g.ellipse(x + 0.8, y + 0.9, rr, rr * 0.7, r() * 3, 0, Math.PI * 2); g.fill();
+  }
+  // feine Körnung
+  for (let i = 0; i < 1800; i++) { const v = r() < 0.5 ? 0 : 255; g.fillStyle = `rgba(${v},${v},${v},0.06)`; g.fillRect(r() * 256, r() * 256, 1.5, 1.5); }
+  dirtTex = markShared(new CanvasTexture(c));
+  dirtTex.wrapS = dirtTex.wrapT = RepeatWrapping;
+  dirtTex.colorSpace = SRGBColorSpace;
+  dirtTex.anisotropy = texDetail.aniso;
+  return dirtTex;
+}
+
+/** Erdweg-Material (Dörfer, Außenposten, Wegränder); k = Tiefenschicht */
+export function dirtMaterial(k = 0, tint = '#8F6F4A'): Material {
+  const m = cloneToon(toon({ color: tint, map: dirtTexture(), side: DoubleSide, puddles: 1, ...toonPbr(dirtTexture(), { strength: 1.1, rough: 0.92, roughVar: 0.3, ao: 0.85 }) }));
+  m.polygonOffset = true; m.polygonOffsetFactor = -1 - k * 0.5; m.polygonOffsetUnits = -2 - k;
+  return m;
+}
+
+/** Pflaster-Material für Wege außerhalb der Stadt (Burghöfe, Dörfer); k = Tiefenschicht gegen Flackern bei Überlappung */
+export function cobbleMaterial(k = 1, tint = '#A89C88'): Material {
+  const m = cloneToon(toon({ color: tint, map: cobbleTexture(), side: DoubleSide, puddles: 1, ...toonPbr(cobbleTexture(), { strength: 1.6, rough: 0.7, roughVar: 0.3, ao: 0.9 }) }));
+  m.polygonOffset = true; m.polygonOffsetFactor = -1 - k; m.polygonOffsetUnits = -2 - k * 2;
+  return m;
+}
+
 /** Straße als Band, das dem Boden folgt */
-export function roadMesh(pts: [number, number][], width: number, cx: number, cz: number, groundAt: (x: number, z: number) => number, mat: Material): Mesh {
+export function roadMesh(pts: [number, number][], width: number, cx: number, cz: number, groundAt: (x: number, z: number) => number, mat: Material, lift = 0.09): Mesh {
   // Punkte alle 1,2 m, drei Stützreihen quer – so schaut kein Hügel durch die Mitte
   const path: { x: number; z: number }[] = [];
   for (let i = 0; i < pts.length - 1; i++) {
@@ -273,7 +323,7 @@ export function roadMesh(pts: [number, number][], width: number, cx: number, cz:
       // Ränder leicht unregelmäßig, damit es nicht wie ein Lineal aussieht
       const w = width / 2 * (1 + Math.sin(along * 0.7 + s) * 0.08);
       const x = cx + p.x + nx * w * s, z = cz + p.z + nz * w * s;
-      pos.push(x, groundAt(x, z) + 0.09, z);
+      pos.push(x, groundAt(x, z) + lift, z);
       uv.push((s + 1) / 2 * width / 3, along / 3);
     }
     if (i > 0) {
@@ -392,7 +442,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
 
   // Wichtige Gebäude
   placeB('gasthaus', -40, -2, Math.PI / 2); // Taverne
-  placeB('kolonialhaus', -16, -58, Math.PI); // Hafenmeisterei
+  placeB('kolonialhaus', -16, -55.5, Math.PI); // Hafenmeisterei an der Kaistraße, Tür zur Straße
   const smithy = buildStruct('steinhaus', trnd).g;
   const chimney = new Mesh(new BoxGeometry(0.01, 0.01, 0.01), toon('#7A6A5A'));
   chimney.position.set(3, 6, -2);
@@ -494,101 +544,155 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
     // Hebekräne und Lagerhäuser am Kai
     placeB('kran', -9, -def.r + 6, 0);
     placeB('kran', 9.5, -def.r + 6.5, 0.15);
-    placeB('lagerhaus', -22, gz + 22, Math.PI / 2 + 0.15);
-    placeB('lagerhaus', 24, gz + 24, -Math.PI / 2 - 0.1);
-    placeB('lagerhaus', -22, gz + 36, Math.PI / 2);
+    // Lagerhäuser an der Kaistraße: Tore zur Straße (Süden), davor die Ladefläche
+    placeB('lagerhaus', -34, -55, Math.PI);
+    placeB('lagerhaus', 17, -55, Math.PI);
+    placeB('lagerhaus', 38, -55, Math.PI);
   }
   // Kapelle hinter dem Schrein-Platz
   if (hasArchModel('kapelle')) placeB('kapelle', -24, 56, face(-24, 56) + Math.PI);
 
-  // Wohnhäuser rundherum
-  const spots: [number, number][] = [[-30, 34], [-50, 22], [-56, -24], [-30, -34], [24, 44], [46, 40], [58, 2], [22, -40], [-12, 46], [12, 66], [-34, 56], [36, 60]];
-  const HOUSE_TYPES: StructureType[] = ['fachwerkhaus', 'kolonialhaus', 'steinhaus', 'kolonialhaus', 'fachwerkhaus', 'holzhuette'];
-  const useBlender = hasArchModel('haus_fachwerk') && hasArchModel('haus_kolonial');
-  spots.forEach(([x, z], i) => {
-    const w = 6 + (i % 3) * 1.5, d = 5 + (i % 2) * 1.5;
-    if (useBlender) { placeB(HOUSE_TYPES[i % HOUSE_TYPES.length], x, z, face(x, z)); return; }
-    place(house(w, d, 3.6 + (i % 2), WALLS[i % WALLS.length], ROOFS[(i * 3) % ROOFS.length], windowMat, lights), x, z, face(x, z), [w + 0.6, d + 0.6]);
-  });
-
-  // Laternen am Weg vom Steg zum Platz und um den Platz
-  for (const [x, z] of [[-4, -70], [4, -55], [-4, -40], [4, -25], [-10, -10], [10, -10], [-12, 14], [12, 14], [-6, 44], [6, 52]]) {
-    place(lantern(lampMat, lights), x, z, 0, 0.3);
-  }
-  // Fässer und Kisten als Leben
-  for (let i = 0; i < 10; i++) {
-    const a = i * 2.3;
-    const barrel = new Mesh(new CylinderGeometry(0.45, 0.4, 1, 10), toon('#8A5A2B'));
-    const x = Math.cos(a) * (18 + (i % 4) * 6), z = Math.sin(a) * (18 + (i % 4) * 6);
-    barrel.position.set(cx + x, groundAt(cx + x, cz + z) + 0.5, cz + z);
-    group.add(barrel);
-    walk.blockers.push({ x: cx + x, z: cz + z, r: 0.5 });
-  }
-
-  // ---------- Straßen, zweite Häuserreihe und Leben in den Gassen ----------
-  const roads: [number, number][][] = [
-    [[0, -def.r + 4], [0, -36], [-3, -14], [0, 0]],          // vom Steg zum Platz
-    [[0, 0], [2, 20], [0, 40], [0, 56]],                       // zum Schrein
-    [[0, 0], [-16, -1], [-33, -2]],                            // zur Taverne
-    [[0, 0], [16, 6], [30, 14]],                               // zur Schmiede
-    [[0, -36], [22, -30], [44, -26]],                          // zur Werft
-    [[0, -36], [-10, -48], [-14, -54]],                        // zur Hafenmeisterei
+  // ---------- Straßennetz und Viertel ----------
+  // Eine echte Hafenstadt: Hauptstraße vom Steg durchs Hafentor zum Platz und weiter zum Schrein, Kaistraße mit Lagerhäusern,
+  // Ringstraße um den Platz, Gassen in die Außenviertel. Die Wohnhäuser stehen entlang der Straßen, die Türen zur Straße,
+  // mit Vorgarten; Werft, Taverne, Schmiede und Hafenmeisterei sitzen an den Enden der Wege.
+  type Street = { pts: [number, number][]; w: number; houses: boolean; tier: 0 | 1 | 2 };
+  const ring: [number, number][] = [];
+  for (let i = 0; i <= 40; i++) { const an = (i / 40) * Math.PI * 2 + 0.3; ring.push([Math.cos(an) * 28, Math.sin(an) * 28]); }
+  // Außenring (nur die nördliche Hälfte; im Süden liegen Kai und Hafentor): verbindet die Gassen, Häuser an beiden Seiten
+  const ring2: [number, number][] = [];
+  for (let i = 0; i <= 34; i++) { const an = -0.35 + (i / 34) * (Math.PI + 0.7); ring2.push([Math.cos(an) * 53, Math.sin(an) * 53]); }
+  const STREETS: Street[] = [
+    { pts: [[0, -def.r + 4], [0, -68], [0, -48], [-3, -22], [0, 0]], w: 5.4, houses: false, tier: 0 },     // Hauptstraße vom Steg
+    { pts: [[0, 0], [2, 20], [0, 40], [0, 54]], w: 5.0, houses: true, tier: 0 },                          // zum Schrein
+    { pts: [[0, 0], [-16, -1], [-31, -2]], w: 4.6, houses: true, tier: 1 },                               // West: Taverne
+    { pts: [[0, 0], [16, 6], [28, 12]], w: 4.6, houses: true, tier: 1 },                                  // Ost: Schmiede
+    { pts: [[-56, -62], [-28, -65], [0, -64], [28, -65], [56, -62]], w: 4.8, houses: false, tier: 1 },     // Kaistraße
+    { pts: [[0, -36], [24, -32], [42, -27]], w: 4.0, houses: false, tier: 2 },                            // zur Werft
+    { pts: ring, w: 4.2, houses: true, tier: 1 },                                                         // Ringstraße um den Platz
+    { pts: [[-22, 24], [-40, 44], [-52, 62]], w: 3.8, houses: true, tier: 2 },                            // Gasse Nordwest
+    { pts: [[22, 26], [40, 44], [52, 60]], w: 3.8, houses: true, tier: 2 },                               // Gasse Nordost
+    { pts: [[-14, -34], [-32, -40], [-52, -38]], w: 3.8, houses: true, tier: 2 },                         // Gasse Südwest (Hafenviertel)
+    { pts: [[15, -34], [34, -44], [54, -46]], w: 3.8, houses: true, tier: 2 },                            // Gasse Südost
+    { pts: ring2, w: 4.0, houses: true, tier: 2 },                                                       // Außenring
   ];
-  const segDist = (x: number, z: number) => {
-    let best = Infinity;
-    for (const road of roads) for (let i = 0; i < road.length - 1; i++) {
-      const [ax, az] = road[i], [bx, bz] = road[i + 1];
-      const vx = bx - ax, vz = bz - az, L2 = vx * vx + vz * vz;
-      const t = Math.max(0, Math.min(1, ((x - ax) * vx + (z - az) * vz) / L2));
-      best = Math.min(best, Math.hypot(x - ax - vx * t, z - az - vz * t));
+  const sampleAt = (pts: [number, number][], sd: number) => {
+    let acc = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+      const len = Math.hypot(bx - ax, bz - az);
+      if (sd <= acc + len || i === pts.length - 2) {
+        const t = Math.max(0, Math.min(1, (sd - acc) / (len || 1)));
+        return { x: ax + (bx - ax) * t, z: az + (bz - az) * t, tx: (bx - ax) / (len || 1), tz: (bz - az) / (len || 1) };
+      }
+      acc += len;
     }
+    return { x: 0, z: 0, tx: 1, tz: 0 };
+  };
+  const polyLen = (pts: [number, number][]) => { let L2 = 0; for (let i = 0; i < pts.length - 1; i++) L2 += Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]); return L2; };
+  /** Abstand zu den Straßen außer der eigenen (ein Haus darf nicht auf einer Querstraße stehen) */
+  const distToStreets = (x: number, z: number, skip: number) => {
+    let best = Infinity;
+    STREETS.forEach((st, si) => {
+      if (si === skip) return;
+      for (let i = 0; i < st.pts.length - 1; i++) {
+        const [ax, az] = st.pts[i], [bx, bz] = st.pts[i + 1];
+        const vx = bx - ax, vz = bz - az, L2 = vx * vx + vz * vz || 1;
+        const t = Math.max(0, Math.min(1, ((x - ax) * vx + (z - az) * vz) / L2));
+        best = Math.min(best, Math.hypot(x - ax - vx * t, z - az - vz * t) - st.w / 2);
+      }
+    });
     return best;
   };
-  // Plätze, die frei bleiben müssen: Händler, Puppen, Schrein, Markt, Werft, bestehende Häuser
+  // Plätze, die frei bleiben müssen: Händler, Schrein, Markt, Werft, Platz, Hafentor und die bestehenden Gebäude
   const taken: [number, number, number][] = [
     [-26, -2, 6], [26, 14, 6], [4, 26, 6], [0, 52, 6], [40, -26, 6], [-10, -52, 6], [14, -60, 6],
-    [-40, -2, 9], [-16, -60, 7], [38, 14, 8], [52, -26, 11], [0, 62, 9], [0, 27, 15], [0, 0, 17], [0, -43, 11],
-    [0, -def.r + 16, 12], [-13, -def.r + 16, 9], [13, -def.r + 16, 9], [-22, -def.r + 38, 9], [24, -def.r + 40, 9], [-22, -def.r + 52, 9], [-24, 56, 9],
-    [-12, 20, 3], [12, 21, 3], [-20, 8, 3], [20, 9, 3],
-    ...spots.map(([x, z]) => [x, z, 9] as [number, number, number]),
+    [-40, -2, 9], [-16, -56, 7], [38, 14, 8], [52, -26, 11], [0, 62, 9], [0, 27, 15], [0, 0, 19], [0, -43, 9],
+    [0, -def.r + 16, 12], [-13, -def.r + 16, 9], [13, -def.r + 16, 9], [-24, 56, 9],
+    [-34, -55, 7], [17, -55, 7], [38, -55, 7],
   ];
-  const free = (x: number, z: number, r: number) => Math.hypot(x, z) < def.r * 0.78 && segDist(x, z) > r + 3.2 && taken.every(([tx, tz, tr]) => Math.hypot(x - tx, z - tz) > tr + r);
+  const free = (x: number, z: number, r: number) => Math.hypot(x, z) < def.r * 0.8 && taken.every(([tx, tz, tr]) => Math.hypot(x - tx, z - tz) > tr + r);
+  const HOUSE_SPEC: Record<string, { w: number; d: number; extra: number }> = {
+    fachwerkhaus: { w: 6.8, d: 5.6, extra: 0.2 }, kolonialhaus: { w: 7.6, d: 5.8, extra: 1.7 }, steinhaus: { w: 6.9, d: 5.0, extra: 0.5 }, holzhuette: { w: 6.0, d: 4.3, extra: 0.5 },
+  };
+  const TIER_TYPES: StructureType[][] = [
+    ['kolonialhaus', 'fachwerkhaus', 'kolonialhaus', 'fachwerkhaus', 'steinhaus'],
+    ['fachwerkhaus', 'steinhaus', 'kolonialhaus', 'fachwerkhaus', 'steinhaus'],
+    ['holzhuette', 'fachwerkhaus', 'steinhaus', 'holzhuette', 'fachwerkhaus'],
+  ];
+  const useBlender = hasArchModel('haus_fachwerk') && hasArchModel('haus_kolonial');
   let hi = 0;
-  for (const rad of [22, 32, 44, 54]) {
-    for (let k = 0; k < 28; k++) {
-      const a = (k / 28) * Math.PI * 2 + rad * 0.13;
-      const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
-      const w = 6.5 + (hi % 3) * 1.4, d = 5.5 + (hi % 2) * 1.6;
-      const r = Math.max(w, d) * 0.62;
-      if (!free(x, z, r)) continue;
-      // Tür zur nächsten Straße statt stur zur Platzmitte
-      if (useBlender) placeB(HOUSE_TYPES[(hi * 7 + 1) % HOUSE_TYPES.length], x, z, face(x, z));
-      else place(house(w, d, 4.4 + (hi % 3) * 0.9, WALLS[(hi + 2) % WALLS.length], ROOFS[(hi * 5 + 1) % ROOFS.length], windowMat, lights, hi % 4 === 0 ? ROOFS[hi % ROOFS.length] : undefined), x, z, face(x, z), [w + 0.6, d + 0.6]);
-      taken.push([x, z, r + 2]);
-      // vor der Tür: Kisten, Fässer oder ein Karren
-      const fx = x - Math.sin(face(x, z)) * -(d / 2 + 1.6), fz = z - Math.cos(face(x, z)) * -(d / 2 + 1.6);
-      const side = (hi % 2 ? 1 : -1) * (w / 2 - 0.6);
-      const px = fx + Math.cos(face(x, z)) * side, pz = fz - Math.sin(face(x, z)) * side;
-      if (hi % 3 === 0) place(cart(), px, pz, face(x, z) + 1.2, [1.9, 3.9, 0, 0.8]);
-      else place(crateStack(hi), px, pz, hi, [2.7, 1.7, 0.55, 0]);
-      hi++;
+  STREETS.forEach((st, si) => {
+    if (!st.houses) return;
+    const total = polyLen(st.pts);
+    for (const side of [1, -1]) {
+      let sd = 3 + trnd() * 3;
+      while (sd < total - 3) {
+        const type = TIER_TYPES[st.tier][Math.floor(trnd() * TIER_TYPES[st.tier].length)];
+        const sp = HOUSE_SPEC[type];
+        const mid = sampleAt(st.pts, sd + sp.w / 2);
+        const nx = -mid.tz * side, nz = mid.tx * side;                               // Normale, weg von der Straße
+        const off = st.w / 2 + 1.0 + sp.extra + sp.d / 2;
+        const x = mid.x + nx * off, z = mid.z + nz * off;
+        const r = Math.max(sp.w, sp.d) * 0.56;
+        const yaw = Math.atan2(-nx, -nz);                                            // Tür zur Straße
+        if (free(x, z, r) && distToStreets(x, z, si) > r * 0.9) {
+          if (useBlender) placeB(type, x, z, yaw);
+          else place(house(sp.w, sp.d, 3.6 + (hi % 2), WALLS[hi % WALLS.length], ROOFS[(hi * 3) % ROOFS.length], windowMat, lights), x, z, yaw, [sp.w + 0.6, sp.d + 0.6]);
+          taken.push([x, z, r]);
+          // vor der Tür am Straßenrand: Kisten, Fässer oder ein Karren
+          if (hi % 3 === 1) {
+            const px = mid.x + nx * (st.w / 2 + 0.9) + mid.tx * (sp.w / 2 - 0.6), pz = mid.z + nz * (st.w / 2 + 0.9) + mid.tz * (sp.w / 2 - 0.6);
+            if (hi % 2) place(crateStack(hi), px, pz, yaw + 1.57, [2.7, 1.7, 0.55, 0]);
+            else place(cart(), px, pz, yaw + 0.4, [1.9, 3.9, 0, 0.8]);
+          }
+          // Lattenzaun beiderseits des Weges zur Tür (Lücke in der Mitte)
+          if (hi % 3 === 0) {
+            const fl = Math.max(1.6, sp.w / 2 - 1.5);
+            for (const e of [-1, 1]) {
+              const fxp = mid.x + nx * (st.w / 2 + 0.55) + mid.tx * e * (1.5 + fl / 2), fzp = mid.z + nz * (st.w / 2 + 0.55) + mid.tz * e * (1.5 + fl / 2);
+              if (free(fxp, fzp, 0.3)) place(fence(fl), fxp, fzp, yaw + Math.PI / 2, [fl + 0.2, 0.35]);
+            }
+          }
+          hi++;
+          sd += sp.w + 1.0 + trnd() * 1.2;
+        } else sd += 2.2;
+      }
     }
-  }
-  // Zäune und Büsche an manchen Häusern, Kistenstapel am Steg
-  for (let i = 0; i < spots.length; i += 2) {
-    const [x, z] = spots[i];
-    const a = face(x, z);
-    place(fence(7), x + Math.sin(a) * 5.5 + Math.cos(a) * 4, z + Math.cos(a) * 5.5 - Math.sin(a) * 4, a + Math.PI / 2, [7.2, 0.35]);
-  }
-  for (let i = 0; i < 18; i++) {
-    const a = i * 2.17, rad = 14 + (i * 7) % 46;
-    const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
-    if (free(x, z, 1)) { place(bush(i), x, z, a, 0); taken.push([x, z, 2]); }
+  });
+  // Straßenlaternen: abwechselnd links und rechts alle 13 m (Lichthof und Spiegelung kommen aus dem GlowSystem)
+  STREETS.forEach((st, si) => {
+    const total = polyLen(st.pts);
+    let side = 1;
+    for (let sd = 6 + si; sd < total - 4; sd += 13) {
+      const q = sampleAt(st.pts, sd);
+      const lx = q.x + -q.tz * side * (st.w / 2 + 0.6), lz = q.z + q.tx * side * (st.w / 2 + 0.6);
+      side = -side;
+      if (Math.hypot(lx, lz) > def.r * 0.8 || taken.some(([tx, tz, tr]) => Math.hypot(lx - tx, lz - tz) < tr * 0.55 + 0.5)) continue;
+      if (distToStreets(lx, lz, si) < 0.6) continue;
+      place(lantern(lampMat, lights), lx, lz, 0, 0.3);
+    }
+  });
+  // Fässer, Kisten, Bänke und Büsche als Leben in Gassen und Höfen
+  for (let i = 0; i < 26; i++) {
+    const st = STREETS[i % STREETS.length];
+    const q = sampleAt(st.pts, (0.13 + (i * 0.37) % 0.8) * polyLen(st.pts));
+    const sdn = i % 2 ? 1 : -1;
+    const x = q.x - q.tz * sdn * (st.w / 2 + 1.0), z = q.z + q.tx * sdn * (st.w / 2 + 1.0);
+    if (!free(x, z, 0.8) || distToStreets(x, z, STREETS.indexOf(st)) < 0.4) continue;
+    if (i % 3 === 0) {
+      const barrel = new Mesh(new CylinderGeometry(0.45, 0.4, 1, 10), toon('#8A5A2B'));
+      barrel.position.set(cx + x, groundAt(cx + x, cz + z) + 0.5, cz + z);
+      group.add(barrel);
+      walk.blockers.push({ x: cx + x, z: cz + z, r: 0.5 });
+    } else if (i % 3 === 1) place(crateStack(i), x, z, i, [2.7, 1.7, 0.55, 0]);
+    else place(bush(i), x, z, i, 0);
+    taken.push([x, z, 1.2]);
   }
   place(crateStack(1), -9.5, -def.r + 24, 0.3, [2.7, 1.7, 0.55, 0]);
   place(crateStack(4), 9.5, -def.r + 26, 1.1, [2.7, 1.7, 0.55, 0]);
-  // Wimpelleinen über der Hauptstraße, Fahnen am Platz
-  for (const [ax, az, bx, bz] of [[-4, -40, 4, -25], [-4, -40, 4, -55], [-10, -10, 10, -10], [-12, 14, 12, 14]] as const) {
+  // Wimpelleinen über der Hauptstraße und am Platz, Fahnen
+  for (const [ax, az, bx, bz] of [[-4, -52, 4, -40], [-4, -40, 4, -26], [-10, -10, 10, -10], [-12, 14, 12, 14], [-6, 34, 6, 46]] as const) {
     group.add(bunting(new Vector3(cx + ax, groundAt(cx + ax, cz + az) + 2.85, cz + az), new Vector3(cx + bx, groundAt(cx + bx, cz + bz) + 2.85, cz + bz)));
   }
   for (const [x, z, col] of [[-15, 10, '#A8322A'], [15, -9, '#1F4E79'], [-9, -15, '#E3B04B']] as const) place(flagPole(col), x, z, 0.6, 0.3);
@@ -608,7 +712,9 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
     m.polygonOffset = true; m.polygonOffsetFactor = -1 - k; m.polygonOffsetUnits = -2 - k * 2;
     return m;
   };
-  roads.forEach((road, i) => group.add(roadMesh(road, 5.2, cx, cz, groundAt, layered(i + 1))));
+  // Randstreifen aus festgetretener Erde unter dem Pflaster: die Straße wirkt eingebettet statt aufgeklebt
+  STREETS.forEach((st) => group.add(roadMesh(st.pts, st.w + 1.7, cx, cz, groundAt, dirtMaterial(0), 0.075)));
+  STREETS.forEach((st, i) => group.add(roadMesh(st.pts, st.w, cx, cz, groundAt, layered(i + 1))));
   group.add(plazaMesh(16, cx, cz, groundAt, layered(0)));
   return { group, lights: glow, crystal, smoke };
 }

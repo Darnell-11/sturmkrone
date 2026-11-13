@@ -22,11 +22,34 @@ def arch_ring(m, cx, cy, r_in, r_out, z, depth, role='stonelight', n=9, bevel=0.
                 pts.append((cx + math.cos(a) * R, cy + math.sin(a) * R, z + dz))
         m.rock(role, pts, Matrix.Identity(4), bevel=bevel)
 
-def courses(m, w, d, h, step=0.9, role='stonelight', th=0.05):
+def vault_fill(m, cx, cy, r_in, half_w, top, z, depth, role='stone', n=16, bevel=0.0):
+    """Mauerwerk rund um eine Bogenöffnung: Keile vom Bogen (Radius r_in) bis zum Rechteck (halbe Breite half_w, Oberkante top).
+    So bleibt über und neben dem Bogen keine Lücke und die Öffnung ist wirklich offen."""
+    def outer(a):
+        c, s_ = math.cos(a), math.sin(a)
+        tx = half_w / max(abs(c), 1e-4); ty = (top - cy) / max(s_, 1e-4)
+        return min(tx, ty)
+    corner_a = math.atan2(top - cy, half_w)
+    for sgn in (1, -1):
+        for k in range(n):
+            a0 = (math.pi / 2) * k / n; a1 = (math.pi / 2) * (k + 1) / n
+            # Winkel von der Senkrechten aus gezählt: Spiegelung links/rechts
+            A0 = a0 if sgn == 1 else math.pi - a0; A1 = a1 if sgn == 1 else math.pi - a1
+            pts2 = [(cx + math.cos(A0) * r_in, cy + math.sin(A0) * r_in), (cx + math.cos(A1) * r_in, cy + math.sin(A1) * r_in)]
+            for aa in (A1, A0):
+                t = outer(aa); pts2.append((cx + math.cos(aa) * t, cy + math.sin(aa) * t))
+            lo, hi = sorted((a0, a1)) if sgn == 1 else sorted((math.pi - a0, math.pi - a1))
+            ca = corner_a if sgn == 1 else math.pi - corner_a
+            if min(A0, A1) < ca < max(A0, A1):
+                t = outer(ca); pts2.append((cx + math.cos(ca) * t, cy + math.sin(ca) * t))
+            pts = [(x, y, z + dz) for (x, y) in pts2 for dz in (-depth / 2, depth / 2)]
+            m.rock(role, pts, Matrix.Identity(4), bevel=bevel)
+
+def courses(m, w, d, h, step=0.9, role='stonelight', th=0.05, cx=0.0):
     """Waagerechte Steinbänder an allen vier Seiten (Gesimse): bricht flache Wände auf."""
     y = step
     while y < h - 0.2:
-        m.box(role, (w + 0.08, th, d + 0.08), TR(y=y))
+        m.box(role, (w + 0.08, th, d + 0.08), TR(x=cx, y=y))
         y += step
 
 def crenels(m, w, d, y, n_x=None, n_z=None, role='stone', mh=0.9, mw=0.8, mt=0.6, inset=0.0):
@@ -288,7 +311,7 @@ def build_turm_zinnen():
     m = Model('turm_zinnen'); R, H = 2.9, 11.0
     rnd = random.Random(61)
     # Mauerwerk: leicht nach oben verjüngter Schaft in Lagen, helle Gesimsringe
-    prof = [(R + 0.5, -0.8), (R + 0.5, 0.0), (R + 0.15, 0.9), (R, 1.8), (R - 0.02, H - 1.6), (R + 0.1, H - 1.3)]
+    prof = [(R + 0.6, -2.8), (R + 0.5, -0.8), (R + 0.5, 0.0), (R + 0.15, 0.9), (R, 1.8), (R - 0.02, H - 1.6), (R + 0.1, H - 1.3)]
     m.lathe('stone', prof, TR(), seg=16, caps=False)
     for yy in (2.4, 4.8, 7.2, 9.4): m.torus('stonelight', R - 0.02 + (0.05 if yy > 9 else 0), 0.07, TR(y=yy), seg=24, sec=4)
     # Kragsteine (Machikuli) und Wehrgang
@@ -321,7 +344,7 @@ def build_turm_zinnen():
 def build_mauer_zinnen():
     m = Model('mauer_zinnen'); Lw, T, H = 6.0, 1.7, 5.4
     rnd = random.Random(71)
-    block(m, 'stone', (Lw, 1.0, T + 0.5), TR(y=0.2), bevel=0.06)                              # Sockel mit Anlauf
+    block(m, 'stone', (Lw + 0.1, 3.2, T + 0.6), TR(y=-0.9), bevel=0.06)                       # Sockel mit Anlauf, tief im Boden
     m.box('stone', (Lw, H, T), TR(y=H / 2))
     courses(m, Lw, T, H, 0.9, 'stonelight', 0.06)
     m.box('stonelight', (Lw + 0.1, 0.22, T + 0.4), TR(y=H + 0.05))                              # Wehrgang-Abschluss
@@ -341,34 +364,35 @@ def build_torhaus():
     rnd = random.Random(81)
     for sx in (-1, 1):
         cx = sx * (W / 2 - tw / 2)
-        block(m, 'stone', (tw + 0.6, 1.2, D + 0.6), TR(x=cx, y=0.5), bevel=0.07)
+        block(m, 'stone', (tw + 0.6, 3.4, D + 0.6), TR(x=cx, y=-0.7), bevel=0.07)
         m.box('stone', (tw, H, D), TR(x=cx, y=H / 2))
-        courses(m, tw, D, H, 1.0)
+        courses(m, tw, D, H, 1.0, cx=cx)
         for yy in (H - 1.1,): m.box('stonelight', (tw + 0.7, 0.4, D + 0.7), TR(x=cx, y=yy))
         m.box('stone', (tw + 0.8, 1.0, D + 0.8), TR(x=cx, y=H + 0.2))
         crenels(m, tw + 0.8, D + 0.8, H + 0.7, role='stone', mh=1.0, mw=0.85, mt=0.5)
         for j in range(3): m.box('iron', (0.1, 1.0, 0.34), TR(x=cx - 0.0 + (j - 1) * 1.2, y=5.2, z=D / 2 + 0.0))
         m.box('iron', (0.34, 1.0, 0.1), TR(x=cx + sx * tw / 2, y=5.2, z=0.0))
-    # Obergeschoss über dem Durchgang mit Wehrerker
-    m.box('stone', (gap + 0.2, H - 6.2, D), TR(y=6.2 + (H - 6.2) / 2))
-    block(m, 'stonelight', (gap + 0.4, 0.5, D + 0.2), TR(y=6.2), bevel=0.05)
+    # Durchgang: Rundbogen, Mauerwerk bis zur Oberkante 6,4 m ohne Lücken, darüber Obergeschoss mit Wehrerker
+    ar = gap / 2 - 0.9; cyA = 3.2; topP = 6.4
+    for sz, zz in ((1, D / 2), (-1, -D / 2)):
+        arch_ring(m, 0, cyA, ar, ar + 0.5, zz + sz * 0.05, 0.6, n=11)
+    vault_fill(m, 0, cyA, ar, gap / 2 + 0.1, topP, 0.0, D, role='stone', n=14)
+    for sx in (-1, 1): m.box('stone', (gap / 2 + 0.1 - ar, cyA, D), TR(x=sx * (ar + (gap / 2 + 0.1 - ar) / 2), y=cyA / 2))
+    block(m, 'stonelight', (gap + 0.4, 0.5, D + 0.2), TR(y=topP + 0.1), bevel=0.05)
+    m.box('stone', (gap + 0.2, H - topP - 0.35, D), TR(y=topP + 0.35 + (H - topP - 0.35) / 2))
     for i in range(7):
         x = -gap / 2 + 0.3 + i * (gap - 0.6) / 6
-        m.box('stonelight', (0.4, 0.8, 0.9), TR(x=x, y=6.0, z=D / 2 + 0.3))                         # Konsolen des Erkers
-    m.box('wood', (gap + 0.2, 0.2, 1.1), TR(y=6.5, z=D / 2 + 0.55))
-    m.box('stone', (gap + 0.2, 1.0, 0.4), TR(y=7.1, z=D / 2 + 1.0))
-    for i in range(4): block(m, 'stone', (0.8, 0.8, 0.4), TR(x=-gap / 2 + 0.7 + i * (gap - 1.4) / 3, y=7.9, z=D / 2 + 1.0), bevel=0.05)
-    # Durchgang: Spitzbogen, Fallgitter halb gehoben, Torflügel offen
-    ar = gap / 2 - 0.4
-    arch_ring(m, 0, 4.6, ar, ar + 0.5, D / 2 + 0.05, 0.6, n=11)
-    arch_ring(m, 0, 4.6, ar, ar + 0.5, -D / 2 - 0.05, 0.6, n=11)
-    for sx in (-1, 1): m.box('stone', (0.5, 4.6, D), TR(x=sx * (ar + 0.25), y=2.3))
-    for k in range(7):
-        x = -ar + 0.3 + k * (2 * ar - 0.6) / 6
-        m.box('iron', (0.1, 3.0, 0.1), TR(x=x, y=5.6, z=0.2))
-    for yy in (4.5, 5.4, 6.3): m.box('iron', (2 * ar - 0.4, 0.1, 0.1), TR(y=yy - 0.5, z=0.2))
+        m.box('stonelight', (0.4, 0.8, 0.9), TR(x=x, y=6.2, z=D / 2 + 0.3))                         # Konsolen des Erkers
+    m.box('wood', (gap + 0.2, 0.2, 1.1), TR(y=6.7, z=D / 2 + 0.55))
+    m.box('stone', (gap + 0.2, 1.0, 0.4), TR(y=7.3, z=D / 2 + 1.0))
+    for i in range(4): block(m, 'stone', (0.8, 0.8, 0.4), TR(x=-gap / 2 + 0.7 + i * (gap - 1.4) / 3, y=8.1, z=D / 2 + 1.0), bevel=0.05)
+    # Fallgitter halb gehoben im Bogen, Torflügel offen an der Innenseite
+    for k in range(6):
+        x = -ar + 0.35 + k * (2 * ar - 0.7) / 5
+        m.box('iron', (0.1, 3.0, 0.1), TR(x=x, y=4.3, z=0.35))
+    for yy in (3.1, 4.0, 4.9): m.box('iron', (2 * ar - 0.5, 0.1, 0.1), TR(y=yy, z=0.35))
     for sx in (-1, 1):
-        m.box('darkwood', (0.2, 4.2, 1.9), TR(x=sx * (ar - 0.1), y=2.1, z=-D / 2 + 0.6, ry=sx * 1.2))
+        m.box('darkwood', (0.2, 3.0, 1.8), TR(x=sx * (ar - 0.1), y=1.5, z=-D / 2 + 0.7, ry=sx * 1.25))
     # Wappen (Gold auf Rot) und Wimpel
     m.box('paint', (1.3, 1.6, 0.1), TR(y=8.0, z=D / 2 + 0.12)); m.box('gold', (0.8, 0.12, 0.12), TR(y=8.1, z=D / 2 + 0.2)); m.box('gold', (0.12, 1.0, 0.12), TR(y=8.0, z=D / 2 + 0.2))
     for sx in (-1, 1):
@@ -382,7 +406,7 @@ def build_torhaus():
 def build_bergfried():
     m = Model('bergfried'); W, H = 13.0, 17.0
     rnd = random.Random(91)
-    block(m, 'stone', (W + 1.4, 1.6, W + 1.4), TR(y=0.6), bevel=0.08)
+    block(m, 'stone', (W + 1.4, 3.8, W + 1.4), TR(y=-0.5), bevel=0.08)
     m.box('stone', (W, H, W), TR(y=H / 2))
     courses(m, W, W, H, 1.2)
     for sx in (-1, 1):                                                                         # Ecktürmchen

@@ -1,7 +1,7 @@
-import { CanvasTexture, CatmullRomCurve3, CircleGeometry, LatheGeometry, Shape, ShapeGeometry, Sprite, SpriteMaterial, SRGBColorSpace, TorusGeometry, TubeGeometry, Vector2, Vector3, Box3 } from 'three';
+import { BufferGeometry, Float32BufferAttribute, CanvasTexture, CatmullRomCurve3, CircleGeometry, LatheGeometry, Sprite, SpriteMaterial, SRGBColorSpace, TorusGeometry, TubeGeometry, Vector2, Vector3, Box3 } from 'three';
 import { BoxGeometry, Color, ConeGeometry, CylinderGeometry, DodecahedronGeometry, Group, Mesh, MeshBasicMaterial, OctahedronGeometry, SphereGeometry, type Material, type MeshToonMaterial } from 'three';
 import type { IslandStyle } from '../data/regions';
-import { coastK, hillProfile } from './islandGround';
+import { coastK } from './islandGround';
 import { toon } from '../render/toon';
 import { deckUV, plankTexture } from '../render/textures';
 import { toonPbr } from '../render/pbrMaps';
@@ -52,48 +52,67 @@ export function styleKit(style: IslandStyle): StyleKit {
  * Strandplateau mit unregelmäßiger Küste und 1–3 Hügeln – aus denselben Werten wie die Laufhöhe (islandGround).
  * hills: Inselkoordinaten.
  */
-export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: number; p: number }[], hills: { x: number; z: number; r: number; h: number }[], grassFrac = 0, rnd: () => number = Math.random, ragged = 0, shelf = 0.25): { beach: Mesh; hills: Mesh[] } {
+export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: number; p: number }[], hills: { x: number; z: number; r: number; h: number }[], grassFrac = 0, rnd: () => number = Math.random, ragged = 0, shelf = 0.25, H: (x: number, z: number) => number = () => 1.3): { beach: Mesh; hills: Mesh[] } {
   const k = (a: number) => coastK(coast, a);
-  const bg = new CylinderGeometry(r, r * (1 + shelf), 3, Math.max(128, Math.round(r * 1.2)), 2);
-  const bp = bg.attributes.position;
-  for (let i = 0; i < bp.count; i++) {
-    const x = bp.getX(i), z = bp.getZ(i);
-    const f = k(Math.atan2(z, x));
-    bp.setX(i, x * f); bp.setZ(i, z * f);
-  }
-  bg.computeVertexNormals();
+  /** Polargitter: Ringe t (Anteile des Küstenradius, optional mit Radius je Winkel) und Winkel; Höhe aus H (Inselkoordinaten) */
+  const polar = (cx: number, cz: number, radiusAt: (a: number) => number, ringT: number[], segs: number, lift: number, flipV = false): BufferGeometry => {
+    const pos: number[] = [], idx: number[] = [];
+    for (const t of ringT) {
+      for (let i = 0; i <= segs; i++) {
+        const a = (i / segs) * Math.PI * 2;
+        const rad = radiusAt(a) * t;
+        const x = cx + Math.cos(a) * rad, z = cz + Math.sin(a) * rad;
+        pos.push(x, H(x, z) + lift, z);
+      }
+    }
+    const row = segs + 1;
+    for (let j = 0; j < ringT.length - 1; j++) for (let i = 0; i < segs; i++) {
+      const a = j * row + i, b = a + 1, c = a + row, d = c + 1;
+      if (flipV) idx.push(a, b, c, b, d, c); else idx.push(a, c, b, b, c, d);
+    }
+    const geo = new BufferGeometry();
+    geo.setAttribute('position', new Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    return geo;
+  };
+  const rings = (n: number, from = 0, to = 1) => Array.from({ length: n + 1 }, (_, i) => from + (to - from) * (i / n));
+  // Strand: Plateau und Böschung bis ins Wasser, Ringe etwa alle 4 m
+  const nPlateau = Math.max(10, Math.round(r / 4));
+  const segsB = Math.max(160, Math.round(r * 1.5));
+  const beachT = [...rings(nPlateau, 0.0001, 1), ...rings(7, 1, 1 + shelf).slice(1)];
+  let bg = polar(0, 0, (a) => r * k(a), beachT, segsB, 0, false);
+  // Winkelrichtung: Kosinus/Sinus in xz laufen gegen den Uhrzeigersinn von oben gesehen: Dreiecke so drehen, dass die Normale nach oben zeigt
+  const probe = bg.attributes.normal;
+  if (probe.getY(Math.floor(probe.count / 3)) < 0) bg = polar(0, 0, (a) => r * k(a), beachT, segsB, 0, true);
   const beach = new Mesh(bg, kit.sand);
-  beach.position.y = -0.2;
   const meshes: Mesh[] = [];
-  // flache Grasfläche mit eigener, unregelmäßiger Kante auf dem Strandplateau
+  // Grasfläche mit eigener, unregelmäßiger Kante auf dem Strandplateau – jetzt mit Relief
   if (grassFrac > 0.2) {
-    // große Länder mit mehr Stützpunkten, sonst wird der Wiesenrand eckig
-    const seed = rnd() * 100, n = Math.max(96, Math.round(r * 1.3));
+    const seed = rnd() * 100;
     const lobes = 2 + Math.floor(rnd() * 2);
-    const shape = new Shape();
-    for (let i = 0; i <= n; i++) {
-      const a = (i / n) * Math.PI * 2;
+    const radiusAt = (a: number) => {
       // ragged: große Buchten und Zungen im Wiesenrand – jede Insel bekommt ihren eigenen Umriss statt eines Kreises
       const wobble = 1 + 0.08 * Math.sin(a * 5 + seed) + 0.05 * Math.sin(a * 11 + seed * 2) + 0.03 * Math.sin(a * 23 + seed * 3)
         + ragged * (0.2 * Math.sin(a * lobes + seed * 1.7) + 0.13 * Math.sin(a * (lobes + 1) - seed * 0.9) + 0.07 * Math.sin(a * 7 + seed * 2.3));
-      const rr = r * k(a) * Math.min(0.95, grassFrac * wobble);
-      const x = Math.cos(a) * rr, y = -Math.sin(a) * rr;
-      if (i === 0) shape.moveTo(x, y); else shape.lineTo(x, y);
-    }
-    const gg = new ShapeGeometry(shape, 1);
-    gg.rotateX(-Math.PI / 2);
+      return r * k(a) * Math.min(0.95, grassFrac * wobble);
+    };
+    const nG = Math.max(8, Math.round(r * grassFrac / 3.6));
+    const segsG = Math.max(120, Math.round(r * 1.6));
+    let gg = polar(0, 0, radiusAt, rings(nG, 0.0001, 1), segsG, 0.15, false);
+    const pn = gg.attributes.normal;
+    if (pn.getY(Math.floor(pn.count / 3)) < 0) gg = polar(0, 0, radiusAt, rings(nG, 0.0001, 1), segsG, 0.15, true);
     const cap = new Mesh(gg, kit.grassCap);
-    cap.position.y = 1.32;
     cap.receiveShadow = true;
     meshes.push(cap);
   }
   meshes.push(...hills.map((h) => {
-    // gleiche Form wie die Laufhöhe (hillProfile), vom Fuß zur Kuppe
-    const pts: Vector2[] = [];
-    for (let i = 0; i <= 28; i++) { const t = 1 - i / 28; pts.push(new Vector2(Math.max(0.001, t * h.r), hillProfile(t) * h.r * h.h)); }
-    const hg = new LatheGeometry(pts, 56);
+    // gleiche Höhe wie die Laufhöhe (Hügelprofil und Relief), vom Fuß zur Kuppe
+    const nH = Math.max(14, Math.round(h.r / 3));
+    let hg = polar(h.x, h.z, () => h.r, rings(nH, 0.0001, 1), 64, 0.19, false);
+    const hn = hg.attributes.normal;
+    if (hn.getY(Math.floor(hn.count / 3)) < 0) hg = polar(h.x, h.z, () => h.r, rings(nH, 0.0001, 1), 64, 0.19, true);
     const m = new Mesh(hg, kit.grass);
-    m.position.set(h.x, 1.2, h.z);
     m.receiveShadow = true;
     return m;
   }));

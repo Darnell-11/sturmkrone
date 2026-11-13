@@ -279,7 +279,7 @@ interface Pal { trunk: string; leaf: string[]; bush: string[]; grass: string[]; 
 const PAL: Record<Biome, Pal> = {
   festland: { trunk: '#5E4630', leaf: ['#3F7A38', '#4E8C3C', '#6A9A40', '#356A34'], bush: ['#3E7238', '#4F8440', '#5E8E3A'], grass: ['#5C9448', '#6CA24E', '#4E843E'], reed: '#B8A85A', rock: ['#8A857A', '#9A948A', '#7A766C'], flowers: ['#E8D44A', '#F2F0E6', '#C8443C', '#7B8FE0', '#E28AB0'] },
   tropisch: { trunk: '#7A5A36', leaf: ['#3E8A3A', '#4E9A3E', '#2E7A40', '#66A83E'], bush: ['#2F7A44', '#3E8A3E', '#56984A'], grass: ['#5E9A4A', '#72AA4E', '#4A8A40'], reed: '#C2B26A', rock: ['#9A8E7C', '#AAA08C', '#857A6A'], flowers: ['#E0483C', '#F0A030', '#F4F0E0', '#C060C8', '#F06A90'] },
-  klippe: { trunk: '#3E342C', leaf: ['#2E4E3E', '#38584A', '#274438', '#34503C'], bush: ['#3E5446', '#4A5E4A', '#55664E'], grass: ['#6E7E5A', '#7E8A62', '#5E6E52'], reed: '#A8A078', rock: ['#3A3C42', '#44464E', '#30323A'], flowers: ['#C2CCD2', '#9AA8C8', '#D8D4C4'] },
+  klippe: { trunk: '#3E342C', leaf: ['#2E4E3E', '#38584A', '#274438', '#34503C'], bush: ['#3E5446', '#4A5E4A', '#55664E'], grass: ['#6E7E5A', '#7E8A62', '#5E6E52'], reed: '#A8A078', rock: ['#4C4F58', '#5A5D68', '#42454E'], flowers: ['#C2CCD2', '#9AA8C8', '#D8D4C4'] },
 };
 
 const flat = (c: string) => toon({ color: c, flatShading: true });
@@ -510,7 +510,7 @@ const MAKERS: Record<FloraId, (pal: Pal, rnd: () => number, v: number) => Group>
       const col = new Mesh(new CylinderGeometry(rr, rr, h + 1.6, 6), flat(pal.rock[Math.floor(rnd() * pal.rock.length)]));
       col.position.set(x, (h - 1.6) / 2, z);
       // verwitterte, hellere Deckfläche
-      const cap = new Mesh(new CylinderGeometry(rr * 0.9, rr * 0.99, 0.08, 6), flat('#5A5C62'));
+      const cap = new Mesh(new CylinderGeometry(rr * 0.9, rr * 0.99, 0.08, 6), flat('#7A7C84'));
       cap.position.set(x, h + 0.03, z);
       g.add(col, cap);
     }
@@ -527,7 +527,7 @@ const MAKERS: Record<FloraId, (pal: Pal, rnd: () => number, v: number) => Group>
       const x = i === 0 ? 0 : Math.sqrt(3) * rr * (i === 1 ? 1 : 0.5), z = i === 2 ? 1.5 * rr : 0;
       const col = new Mesh(new CylinderGeometry(rr, rr, h + 0.8, 6), flat(pal.rock[Math.floor(rnd() * pal.rock.length)]));
       col.position.set(x, (h - 0.8) / 2, z);
-      const cap = new Mesh(new CylinderGeometry(rr * 0.9, rr * 0.99, 0.06, 6), flat('#5A5C62'));
+      const cap = new Mesh(new CylinderGeometry(rr * 0.9, rr * 0.99, 0.06, 6), flat('#7A7C84'));
       cap.position.set(x, h + 0.02, z);
       g.add(col, cap);
     }
@@ -595,7 +595,8 @@ export function envProto(id: string, name: string, color: (role: string) => stri
 /** Zufallsvariante einer Flora-Art; Palme, Laubbaum, Busch, Farn, Fels, Treibholz und Klippe kommen aus Blender */
 export function floraProto(biome: Biome, flora: FloraId, v: number): Proto {
   const spec = FLORA[flora];
-  const k = v % spec.variants;
+  // der dürre Strauch (Variante 4) gehört nur auf Klippen, nicht in grüne Wiesen
+  const k = flora === 'busch' && biome !== 'klippe' ? v % 3 : v % spec.variants;
   const env = ENV_FLORA[flora];
   const id = `${biome}:${flora}:${k}`;
   const fromEnv = env && hasEnv(`${env.name}_${k + 1}`) ? envProto(id, `${env.name}_${k + 1}`, envColors(PAL[biome], flora, k), { ...spec, wind: env.wind }) : null;
@@ -685,7 +686,9 @@ export function scatterSite(o: ScatterSiteOpts): { trees: Spot[]; bushes: Spot[]
     const solid = (spec.collide ?? 0) > 0 || spec.bush;
     const area = Math.PI * o.r * o.r * (Math.min(1, L.zone[1]) ** 2 - L.zone[0] ** 2);
     // Kleinkram folgt der Detailstufe ganz, Bäume und Felsen nur halb (die Insel soll überall gleich aussehen)
-    const want = Math.round((area / 10000) * L.perHa * (solid ? 0.5 + dens * 0.5 : dens));
+    // Kleinkram (Gras, Blumen, Farn, Schilf) deutlich dichter: aus der Nähe soll die Wiese ein Teppich sein, nicht Einzelhalme; Bäume und Felsen wie bisher
+    const dense = solid ? 1 : L.flora === 'gras' ? 4.2 : L.flora === 'blume' ? 2.2 : L.flora === 'farn' ? 1.8 : 1.6;
+    const want = Math.round((area / 10000) * L.perHa * dense * (solid ? 0.5 + dens * 0.5 : dens));
     let placed = 0;
     for (let t = 0; t < want * 8 && placed < want; t++) {
       const a = rnd() * Math.PI * 2;

@@ -23,6 +23,30 @@ export interface WalkIsland extends IslandShape {
   shelf: number;
   /** Hindernisse in Weltkoordinaten: rund (r) oder gedrehter Quader (hw, hd, yaw; r = umschließender Radius) */
   blockers: Blocker[];
+  /** Sanftes Bodenrelief (Meter Ausschlag) und Startwert: Wiesen rollen, Sand liegt in Dünen; an der Wasserlinie läuft es auf 0 aus */
+  reliefAmp?: number;
+  reliefSeed?: number;
+}
+
+function vnoise(x: number, z: number, seed: number): number {
+  const h = (i: number, j: number) => {
+    let n = Math.imul(i, 374761393) + Math.imul(j, 668265263) + Math.imul(seed, 1274126177);
+    n = Math.imul(n ^ (n >>> 13), 1274126177);
+    return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+  };
+  const i = Math.floor(x), j = Math.floor(z);
+  let fx = x - i, fz = z - j;
+  fx = fx * fx * (3 - 2 * fx); fz = fz * fz * (3 - 2 * fz);
+  return (h(i, j) * (1 - fx) + h(i + 1, j) * fx) * (1 - fz) + (h(i, j + 1) * (1 - fx) + h(i + 1, j + 1) * fx) * fz;
+}
+
+/** Bodenrelief an einem Punkt in Inselkoordinaten (−amp … +amp): große Wellen, mittlere Hügelchen, kleine Buckel */
+export function reliefAt(i: WalkIsland, lx: number, lz: number): number {
+  const amp = i.reliefAmp ?? 0;
+  if (amp <= 0) return 0;
+  const sd = i.reliefSeed ?? 1;
+  const n = (vnoise(lx / 44, lz / 44, sd) - 0.5) + (vnoise(lx / 15, lz / 15, sd + 3) - 0.5) * 0.55 + (vnoise(lx / 5.2, lz / 5.2, sd + 7) - 0.5) * 0.16;
+  return n * 2 * amp;
 }
 
 /**
@@ -128,6 +152,9 @@ export function fitHills(r: number, coast: WalkIsland['coast'], hills: Hill[]): 
     return { ...h, r: hr };
   });
 }
+
+/** Steg als Strecke a → b mit halber Breite hw; y = Höhe der Bohlen (Oberkante). Begehbar bis zur Spitze, Schiffe legen seitlich an. */
+export interface Pier { ax: number; az: number; bx: number; bz: number; hw: number; y: number }
 
 /** Etwas Begehbares: Insel oder Schiffsdeck */
 export interface Ground {
@@ -347,6 +374,25 @@ export class DeckGround implements Ground {
 
 export class IslandGround implements Ground {
   readonly islands: WalkIsland[] = [];
+  /** Stege (Weltkoordinaten): begehbar auch über dem Wasser, die Bohlen liegen auf pier.y */
+  piers: Pier[] = [];
+
+  /** Nächster Steg zu einem Punkt: Parameter t (0 … 1 entlang), Abstand quer zur Mitte (lat) und Länge */
+  pierNear(x: number, z: number, margin: number): { p: Pier; t: number; lat: number; len: number; cx: number; cz: number } | null {
+    let best: { p: Pier; t: number; lat: number; len: number; cx: number; cz: number } | null = null;
+    for (const p of this.piers) {
+      const vx = p.bx - p.ax, vz = p.bz - p.az;
+      const len = Math.hypot(vx, vz) || 1;
+      const t = ((x - p.ax) * vx + (z - p.az) * vz) / (len * len);
+      if (t < -margin / len || t > 1 + margin / len) continue;
+      const tc = Math.max(0, Math.min(1, t));
+      const cx = p.ax + vx * tc, cz = p.az + vz * tc;
+      const lat = Math.hypot(x - cx, z - cz);
+      if (lat > p.hw + margin) continue;
+      if (!best || lat < best.lat) best = { p, t: tc, lat, len, cx, cz };
+    }
+    return best;
+  }
 
   add(i: WalkIsland) { this.islands.push(i); }
 
@@ -395,21 +441,38 @@ export class IslandGround implements Ground {
     return { x: i.x + Math.cos(a) * e, z: i.z + Math.sin(a) * e };
   }
 
+  /** Höhe einer einzelnen Insel (Weltkoordinaten); −∞ außerhalb. Gleiche Rechnung für Gelände-Mesh und Laufhöhe. */
+  islandHeight(i: WalkIsland, x: number, z: number): number {
+    const d = Math.hypot(x - i.x, z - i.z);
+    if (d > i.r * 1.9) return -Infinity;
+    const e = this.edge(i, x, z);
+    if (d > e * (1 + i.shelf)) return -Infinity;
+    // Plateau bis zur Küste, dann gleichmäßig 3 m über die Böschung hinab (wie das Strand-Mesh)
+    let y = d <= e ? i.beachY : i.beachY - ((d - e) / (e * i.shelf)) * 3;
+    for (const h of i.hills) {
+      const dh = Math.hypot(x - h.x, z - h.z);
+      if (dh < h.r) y = Math.max(y, i.hillY + hillProfile(dh / h.r) * h.r * h.h);
+    }
+    // Relief: überall im Inland, zur Wasserlinie hin auslaufend (Stege, Strand und Brandung bleiben, wie sie sind)
+    if (d < e) {
+      const t = d / e;
+      const fade = 1 - Math.min(1, Math.max(0, (t - 0.78) / 0.2));
+      y += reliefAt(i, x - i.x, z - i.z) * fade * fade * (3 - 2 * fade) ;
+    }
+    return y;
+  }
+
   /** Bodenhöhe an einem Punkt (−∞ wenn kein Land) – identisch mit dem sichtbaren Gelände */
   height(x: number, z: number): number {
     let best = -Infinity;
     for (const i of this.islands) {
-      const d = Math.hypot(x - i.x, z - i.z);
-      if (d > i.r * 1.9) continue;
-      const e = this.edge(i, x, z);
-      if (d > e * (1 + i.shelf)) continue;
-      // Plateau bis zur Küste, dann gleichmäßig 3 m über die Böschung hinab (wie das Strand-Mesh)
-      let y = d <= e ? i.beachY : i.beachY - ((d - e) / (e * i.shelf)) * 3;
-      for (const h of i.hills) {
-        const dh = Math.hypot(x - h.x, z - h.z);
-        if (dh < h.r) y = Math.max(y, i.hillY + hillProfile(dh / h.r) * h.r * h.h);
-      }
-      best = Math.max(best, y);
+      const y = this.islandHeight(i, x, z);
+      if (y > best) best = y;
+    }
+    // Stege: Bohlen auf ihrer Höhe (auch dort, wo kein Land mehr ist)
+    if (this.piers.length) {
+      const pn = this.pierNear(x, z, 0);
+      if (pn && pn.lat <= pn.p.hw) best = Math.max(best, pn.p.y);
     }
     return best;
   }
@@ -417,7 +480,12 @@ export class IslandGround implements Ground {
   /** Bewegung auf der Insel halten und um Hindernisse herumschieben */
   constrain(x: number, z: number, radius = 0.35): { x: number; z: number } {
     const isl = this.islandAt(x, z, 4);
-    if (!isl) return { x, z };
+    // Wer auf einem Steg steht, bleibt auf den Bohlen (quer begrenzt, an der Spitze gestoppt)
+    const pn = this.piers.length ? this.pierNear(x, z, 1.0) : null;
+    if (!isl) {
+      if (!pn) return { x, z };
+      return this.clampToPier(pn, x, z, radius);
+    }
     // bis zu drei Durchgänge: wer aus einem Objekt geschoben wird, kann im Nachbarobjekt landen (Haus mit Kisten davor)
     for (let pass = 0; pass < 3; pass++) {
     const x0 = x, z0 = z;
@@ -448,8 +516,26 @@ export class IslandGround implements Ground {
     const dx = x - isl.x, dz = z - isl.z;
     const d = Math.hypot(dx, dz);
     const max = this.edge(isl, x, z) * (1 + isl.shelf * 0.16);
-    if (d > max) { x = isl.x + (dx / d) * max; z = isl.z + (dz / d) * max; }
+    if (d > max) {
+      // jenseits der Wasserlinie nur auf einem Steg weitergehen
+      const pn2 = this.piers.length ? this.pierNear(x, z, 1.0) : null;
+      if (pn2) return this.clampToPier(pn2, x, z, radius);
+      x = isl.x + (dx / d) * max; z = isl.z + (dz / d) * max;
+    }
     return { x, z };
+  }
+
+  /** Punkt auf die Bohlen eines Stegs setzen: quer höchstens bis zum Rand, längs bis zur Spitze */
+  private clampToPier(pn: { p: Pier; t: number; lat: number; len: number; cx: number; cz: number }, x: number, z: number, radius: number): { x: number; z: number } {
+    const p = pn.p;
+    const vx = (p.bx - p.ax) / pn.len, vz = (p.bz - p.az) / pn.len;
+    // Längs- und Querkoordinate
+    let u = (x - p.ax) * vx + (z - p.az) * vz;
+    let l = (x - p.ax) * -vz + (z - p.az) * vx;
+    const lim = Math.max(0.2, p.hw - Math.min(radius, 0.5) * 0.6);
+    l = Math.max(-lim, Math.min(lim, l));
+    u = Math.min(pn.len - 0.35, u);
+    return { x: p.ax + vx * u - vz * l, z: p.az + vz * u + vx * l };
   }
 
   /** Nächster Strandpunkt einer Insel zu einer Position (zum Anlanden) */
