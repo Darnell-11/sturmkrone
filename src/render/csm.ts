@@ -38,6 +38,10 @@ export function csmDefines(mat: Material): boolean {
   const n = csmShared.cascades;
   if (n >= 2) {
     inject();
+    // Die Kaskaden-Grenzen füllt erst der nächste Weltschritt. Bis dahin müssen so viele Einträge da sein, wie der
+    // Shader erwartet – sonst wirft das erste Bild nach einem Stufenwechsel einen Fehler (gesehen im Editor-Raum).
+    const br = csmShared.uniforms.CSM_cascades.value;
+    while (br.length < n) br.push(new Vector2());
     if (d.USE_CSM === 1 && d.CSM_CASCADES === n) return false;
     d.USE_CSM = 1;
     d.CSM_CASCADES = n;

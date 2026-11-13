@@ -60,6 +60,11 @@ export interface CharacterLook {
   scarf: boolean;
   /** Fäustlinge (automatisch bei Faustkämpfern) */
   gloves: boolean;
+  /**
+   * Zusätzliche Ausrüstung aus dem Inventar (IDs aus data/equipment.ts). Wird nur für die Anzeige gesetzt und nie
+   * gespeichert – im Spielstand steht sie unter gear.
+   */
+  extra?: string[];
 }
 
 export const SKIN_TONES = ['#F7DCC6', '#F0C8A8', '#E8BE96', '#DDA77F', '#C68A5E', '#A9714A', '#8D5A3B', '#6B4229'];

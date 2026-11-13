@@ -3,9 +3,14 @@
 import type { Coat, Hat, Outfit } from './characterParts';
 import type { Rarity } from './trinkets';
 
-export type SlotId = 'head' | 'armor' | 'weapon' | 'trinket';
+/** Plätze für einzeln gekaufte Ausrüstungsstücke (seit Spielstand 11) */
+export type GearSlot = 'hands' | 'legs' | 'feet' | 'offhand';
+export const GEAR_SLOTS: GearSlot[] = ['hands', 'legs', 'feet', 'offhand'];
+export type SlotId = 'head' | 'armor' | 'weapon' | 'trinket' | GearSlot;
 
-export const SLOT_LABEL: Record<SlotId, string> = { head: 'Kopf', armor: 'Rüstung', weapon: 'Waffe', trinket: 'Zubehör' };
+export const SLOT_LABEL: Record<SlotId, string> = {
+  head: 'Kopf', armor: 'Rüstung', weapon: 'Waffe', trinket: 'Zubehör', hands: 'Hände', legs: 'Beine', feet: 'Füße', offhand: 'Nebenhand',
+};
 
 /** Verbrauchsgut: heilt, stärkt für eine Weile oder füllt Faji auf */
 export interface ConsumableDef {
@@ -70,12 +75,49 @@ export const HEADS: HeadDef[] = [
 
 export const HEAD_BY_ID: Record<string, HeadDef> = Object.fromEntries(HEADS.map((h) => [h.id, h]));
 
-/** Optik der Rüstungsstufen (Index = Stufe in ARMOR): überschreibt Oberteil und Mantel der Figur; Stufe 0 zeigt das eigene Aussehen */
-export const ARMOR_LOOK: ({ outfit?: Outfit; outfitColor?: string; coat?: Coat; coatColor?: string } | null)[] = [
+/** Ausrüstungsstück für Hände, Beine, Füße oder Nebenhand: Werte und das Aussehen am Modell */
+export interface GearDef {
+  id: string;
+  n: string;
+  slot: GearSlot;
+  icon: string;
+  /** Teil aus data/equipment.ts, das die Figur dafür trägt */
+  equip?: string;
+  /** Füße: Farbe der Stiefel */
+  shoesColor?: string;
+  /** Nebenhand: Farbe des Schilds */
+  shield?: string;
+  d: string;
+  rarity: Rarity;
+  hp: number;
+  reduce?: number;
+  crit?: number;
+  price: number;
+  rank: number;
+}
+
+export const GEAR: GearDef[] = [
+  { id: 'armschienen_leder', n: 'Lederne Armschienen', slot: 'hands', icon: '🧤', equip: 'armschienen_leder', d: '+25 Leben', rarity: 'gewoehnlich', hp: 25, price: 150, rank: 0 },
+  { id: 'armschienen_stahl', n: 'Stählerne Armschienen', slot: 'hands', icon: '🧤', equip: 'armschienen_stahl', d: '+50 Leben, 4 % weniger Schaden', rarity: 'selten', hp: 50, reduce: 0.04, price: 750, rank: 3 },
+  { id: 'beinschienen_leder', n: 'Lederne Beinschienen', slot: 'legs', icon: '🦿', equip: 'beinschienen_leder', d: '+25 Leben', rarity: 'gewoehnlich', hp: 25, price: 160, rank: 0 },
+  { id: 'beinschienen_stahl', n: 'Stählerne Beinschienen', slot: 'legs', icon: '🦿', equip: 'beinschienen_stahl', d: '+60 Leben, 4 % weniger Schaden', rarity: 'selten', hp: 60, reduce: 0.04, price: 800, rank: 3 },
+  { id: 'seestiefel', n: 'Seestiefel', slot: 'feet', icon: '🥾', equip: 'stiefel', shoesColor: '#2A2420', d: '+20 Leben', rarity: 'gewoehnlich', hp: 20, price: 140, rank: 0 },
+  { id: 'kapitaensstiefel', n: 'Kapitänsstiefel', slot: 'feet', icon: '🥾', equip: 'stiefel', shoesColor: '#5A1F1A', d: '+40 Leben, +2 % Volltreffer', rarity: 'selten', hp: 40, crit: 0.02, price: 600, rank: 2 },
+  { id: 'holzschild', n: 'Holzschild', slot: 'offhand', icon: '🛡', shield: '#7A4A22', d: '+30 Leben, 3 % weniger Schaden', rarity: 'gewoehnlich', hp: 30, reduce: 0.03, price: 300, rank: 1 },
+  { id: 'eisenschild', n: 'Eisenschild', slot: 'offhand', icon: '🛡', shield: '#6E7781', d: '+60 Leben, 7 % weniger Schaden', rarity: 'selten', hp: 60, reduce: 0.07, price: 1100, rank: 3 },
+];
+
+export const GEAR_BY_ID: Record<string, GearDef> = Object.fromEntries(GEAR.map((x) => [x.id, x]));
+
+/**
+ * Optik der Rüstungsstufen (Index = Stufe in ARMOR): überschreibt Oberteil und Mantel der Figur; Stufe 0 zeigt das
+ * eigene Aussehen. extra: zusätzliche Teile aus data/equipment.ts (Brustplatte, Schulterplatten).
+ */
+export const ARMOR_LOOK: ({ outfit?: Outfit; outfitColor?: string; coat?: Coat; coatColor?: string; extra?: string[] } | null)[] = [
   null,
   { outfit: 'weste', outfitColor: '#7A5230' },
-  { outfit: 'jacke', outfitColor: '#8A939C' },
-  { outfit: 'jacke', outfitColor: '#2F7A8A', coat: 'kurz', coatColor: '#1F4E5A' },
+  { outfit: 'jacke', outfitColor: '#8A939C', extra: ['kuerass'] },
+  { outfit: 'jacke', outfitColor: '#2F7A8A', coat: 'kurz', coatColor: '#1F4E5A', extra: ['schulterplatten'] },
   { outfit: 'uniform', outfitColor: '#5A3A8A', coat: 'kapitaen', coatColor: '#E3B04B' },
 ];
 

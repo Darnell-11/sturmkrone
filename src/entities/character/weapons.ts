@@ -146,6 +146,16 @@ function shield(color = '#7A1F1A'): Group {
   return g;
 }
 
+/** Schild für die linke Hand der Spielfigur (auf die gedrehte Halterung ausgerichtet) */
+export function shieldFor(color: string): Object3D {
+  const s = new Group();
+  s.rotation.z = Math.PI / 2;
+  s.add(shield(color));
+  // breit: die Laterne weicht auf die andere Hüfte aus (Character.hold)
+  s.userData.wide = true;
+  return s;
+}
+
 /** Waffen für Gegner (zusätzlich Muskete und Schild) */
 export function enemyWeapons(kind: StyleId | 'muskete' | 'schild'): HeldWeapons {
   if (kind === 'muskete') return { right: inHand(musket()), left: null };

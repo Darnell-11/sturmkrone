@@ -36,7 +36,7 @@ export interface InventoryHost {
 }
 
 type Filter = 'all' | SlotId | 'cons';
-const FILTERS: [Filter, string][] = [['all', 'Alles'], ['head', 'Kopf'], ['armor', 'Rüstung'], ['weapon', 'Waffe'], ['trinket', 'Zubehör'], ['cons', 'Verbrauch']];
+const FILTERS: [Filter, string][] = [['all', 'Alles'], ['head', 'Kopf'], ['armor', 'Rüstung'], ['weapon', 'Waffe'], ['hands', 'Hände'], ['legs', 'Beine'], ['feet', 'Füße'], ['offhand', 'Nebenhand'], ['trinket', 'Zubehör'], ['cons', 'Verbrauch']];
 
 const STAT_ROWS: { k: keyof StatSheet; n: string; fmt: (v: number) => string }[] = [
   { k: 'hp', n: 'Leben', fmt: (v) => String(Math.round(v)) },
@@ -103,7 +103,7 @@ export class InventoryScreen {
       actions = `<button class="mini brass" data-a="use" data-v="${it.cid}">Benutzen</button>
         <span class="small soft">In die Leiste:</span>${[0, 1, 2, 3].map((i) => `<button class="mini" data-a="bar" data-v="${i}|${it.cid}" aria-label="Platz ${i + 1}">${i + 1}</button>`).join('')}`;
     } else if (it.equipped) {
-      actions = it.cat === 'head' || it.cat === 'trinket' ? `<button class="mini" data-a="unequip" data-v="${it.cat}">Ablegen</button>` : '<span class="small soft">Angelegt ✓</span>';
+      actions = it.cat !== 'armor' && it.cat !== 'weapon' ? `<button class="mini" data-a="unequip" data-v="${it.cat}">Ablegen</button>` : '<span class="small soft">Angelegt ✓</span>';
     } else {
       actions = `<button class="mini brass" data-a="equip" data-v="${esc(it.key)}">Ausrüsten</button>`;
     }
@@ -136,7 +136,7 @@ export class InventoryScreen {
       <div class="editor-panel card inv-panel">
         <div class="editor-head"><h2 class="fell">Inventar</h2><div class="sk-sp">Gold <b>${this.h.gold().toLocaleString('de-DE')}</b></div><button class="icon-btn" data-a="close" aria-label="Schließen">✕</button></div>
         <div class="editor-body">
-          <div class="inv-equip">${(['head', 'armor', 'weapon', 'trinket'] as SlotId[]).map(slot).join('')}</div>
+          <div class="inv-equip">${(['head', 'armor', 'weapon', 'trinket', 'hands', 'legs', 'feet', 'offhand'] as SlotId[]).map(slot).join('')}</div>
           <ul class="inv-stats">${STAT_ROWS.map(statRow).join('')}</ul>
           <div class="tabs inv-tabs">${FILTERS.map(([f, n]) => `<button data-a="filter" data-v="${f}" aria-pressed="${this.filter === f}">${n}</button>`).join('')}</div>
           <div class="inv-grid">${items.map((i) => this.cell(i)).join('') || '<p class="soft small">Hier liegt noch nichts. Kaufe beim Händler oder besiege Gegner.</p>'}</div>

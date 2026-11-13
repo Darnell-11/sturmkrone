@@ -2,7 +2,7 @@
 import { defaultLook, type CharacterLook } from '../../data/characterParts';
 import { DEFAULT_SHIP_LOOK, type AmmoId, type ShipLook } from '../../data/ships';
 
-export const SAVE_VERSION = 10;
+export const SAVE_VERSION = 11;
 
 export interface QuestProgress { id: string; step: number; count: number }
 
@@ -34,6 +34,9 @@ export interface GearState {
   /** Angelegte Waffen- und Rüstungsstufe, falls nicht die höchste */
   weaponEq?: number;
   armorEq?: number;
+  /** Gekaufte Ausrüstungsstücke (IDs aus GEAR) und die angelegten je Platz (seit Version 11) */
+  owned?: string[];
+  worn?: Partial<Record<'hands' | 'legs' | 'feet' | 'offhand', string | null>>;
 }
 
 export interface ShipState {
@@ -131,7 +134,7 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
     },
     world: { boat: null, time: 9, weather: 'klar' },
     progress: defaultProgress(),
-    gear: { weapon: 0, armor: 0, potions: 3, shrine: 0, trinkets: [], trinket: null, items: {}, heads: [], head: null, bar: ['proviant', null, null, null] },
+    gear: { weapon: 0, armor: 0, potions: 3, shrine: 0, trinkets: [], trinket: null, items: {}, heads: [], head: null, bar: ['proviant', null, null, null], owned: [], worn: {} },
     skills: { learned: {}, slots: [null, null, null], sp: 1, awakened: [] },
     ship: defaultShip(faction),
     crew: { hired: [], party: [], loyalty: {} },

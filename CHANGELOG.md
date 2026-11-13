@@ -1,5 +1,126 @@
 # Was ist neu
 
+## 2.9.60 – Figuren 3.0, Teil 3: Abnahme (13.11.2026)
+
+Phase 5 aus `docs/CHARACTER_SYSTEM_3.0.md`: gemessen, verglichen und dabei noch drei Dinge behoben.
+
+- **Schneller mit vielen Figuren.** Die neue Hülle, die das Verschwinden von Teilen am Bildrand verhindert, war zu großzügig: Mit 30 Figuren und Schatten kostete sie ein Fünftel mehr Bildzeit. Sie folgt jetzt eng der Hüfte jeder Figur.
+- **Hemdsaum und Hosenbund flackern nicht mehr gegeneinander.** Beide lagen auf gleicher Höhe. Jedes Oberteil liegt jetzt klar über der Hose, und die Hose wird darunter nicht mehr gezeichnet.
+- **Seltener Fehler beim Wechsel der Grafikstufe abgesichert.** Das erste Bild nach dem Umschalten auf „Hoch“ oder höher konnte einen Fehler werfen (das Bild danach war wieder in Ordnung). Der Fehler steckte schon in 2.9.57. Er trat nur gelegentlich auf (zweimal in etwa zehn Läufen); nach der Korrektur kam er in den folgenden Läufen nicht mehr vor, sicher ausschließen kann ich ihn damit nicht.
+
+**Leistung (30 Figuren mit Schatten im Editor-Raum, Bildzeit je Bild auf diesem Rechner):**
+
+| Stufe | 2.9.57 | jetzt | Zeichenaufrufe 2.9.57 → jetzt |
+|---|---|---|---|
+| Niedrig | 10,2 ms | 9,8 ms | 644 → 642 |
+| Mittel | 12,4 ms | 13,9 ms | 826 → 965 |
+| Hoch | 12,9 ms | 14,0 ms | 839 → 978 |
+| Maximal | 13,3 ms | 13,8 ms | 839 → 978 |
+| Ultra | 12,3 ms | 14,3 ms | 839 → 978 |
+
+Ab „Mittel“ ist der neue Stand 4 bis 16 % langsamer. Der Grund: Vorher fielen Figuren-Teile fälschlich aus dem Schattenbild (derselbe Fehler, durch den Teile am Bildrand verschwanden); jetzt werden sie gezeichnet. Auf „Niedrig“ (ohne Schatten) ist er gleich schnell. Die Bildzeit schwankt von Lauf zu Lauf um etwa 1 ms.
+
+**Flackern auf Entfernung (Bildpunkte, die bei winzigem Kamerazittern die Farbe wechseln; Stufe Hoch, 100 m):**
+
+| Kleidung | 2.9.57 | jetzt |
+|---|---|---|
+| Hemd und langer Mantel | 3 036 | 2 539 |
+| Jacke und langer Mantel | 4 348 | 2 518 |
+| Weste | 2 773 | 2 341 |
+| Tunika | 2 636 | 2 083 |
+
+Das sind 16 bis 42 % weniger. Ein Teil der verbleibenden Punkte sind Kanten der Figur, die bei jedem Zittern wechseln; wie groß dieser Anteil ist, habe ich nicht getrennt gemessen. Auf 60 m und 150 m sind es bei Hemd und Mantel je 18 % weniger.
+
+**Durchstiche (Schlussmessung, 26 Figuren, je 75 Posen):** 20 Punkte je Figur und Pose (2.9.57: 150), Haut durch Kleidung 1 857 (4 843), kein Netz außerhalb seiner Hülle (67 % der Posen).
+
+**Gesichtet:** alle fünf Grafikstufen mit 30 Figuren (gleiches Bild der Figuren auf jeder Stufe), Inventar mit acht Plätzen im Handy-Hochformat (375 × 812, nichts abgeschnitten, kein seitliches Rollen), Hemd-, Westen-, Ringelhemd- und Mantelsäume aus der Nähe, Sitzen.
+
+**Geprüft:** `tsc`, 72 Tests, Produktionsbau, Speicher über 130 Runden unverändert (413 Netze). **Nicht geprüft:** ein echtes Handy (nur die Größe wurde nachgestellt), die Bildrate im laufenden Spiel mit vielen Figuren (gemessen wurde im Editor-Raum mit angehaltener Spielschleife), langes Spielen, die Bausteinfigur.
+
+**Technik (für Entwickler):**
+- `Character.fitCull`/`syncCull`: alle Netze einer Figur teilen sich eine `Sphere`, deren Mitte nach jedem `mixer.update` auf die Hüfte gesetzt wird (Halbmesser `CULL_RADIUS` 1,45 m). Vorher eine feste Kugel von 3,2 m je Netz.
+- `vroid.ts` `garmentOffset`: `overHose` hebt Hemd, Ringelhemd und Tunika im Bereich der Hose auf mindestens 17 mm, `slim` ist das enge Hemd an einer Stelle; `GARMENT_LEVEL.hemd = 2`.
+- `render/csm.ts` `csmDefines`: füllt `CSM_cascades` auf die erwartete Länge, bis der nächste Weltschritt die Grenzen setzt.
+- `audit.ts`: `__audit.ready()`, `__audit.perf(stufe, n, bilder)` und `__audit.flicker(stufe, entfernung, figur)`. Die Flacker-Probe zittert in fester Folge; mit Zufall schwankte sie um ein Drittel.
+
+## 2.9.59 – Figuren 3.0, Teil 2: gerade Säume, neue Rüstungsteile, vier neue Ausrüstungsplätze (12.11.2026)
+
+Phase 4 aus `docs/CHARACTER_SYSTEM_3.0.md`.
+
+- **Gerade Säume.** Mantelkanten, Ärmel, Hosenbund, Schärpe und Tunika enden jetzt an einer sauberen Linie. Vorher folgte jeder Saum dem Zickzack der Körper-Dreiecke, und an Achsel, Knie und Taille fehlten einzelne Stücke.
+- **Schärpe und Gürtel laufen ganz um den Körper**, auch hinten über dem Hemd.
+- **Mantelschöße hängen am Becken.** Sie klebten als zweite Haut an jedem Oberschenkel und rissen beim Ausfallschritt auseinander. Jetzt folgen sie den Beinen nur noch etwa zur Hälfte.
+- **Uniformrock:** Die Uniform ist ein eigenes Kleidungsstück mit langen Ärmeln und kurzem Schoß. Vorher war sie nur das eingefärbte Hemd.
+- **Neue Rüstungsteile:** Brustplatte (Kettenhemd-Stufe), Schulterplatten (Gezeitenpanzer-Stufe), Armschienen und Beinschienen aus Leder oder Stahl, zwei Paar Stiefel und zwei Schilde.
+- **Vier neue Ausrüstungsplätze:** Hände, Beine, Füße und Nebenhand. Die Stücke gibt es beim Händler unter „Schienen, Stiefel und Schilde“, sie bringen Leben, Schadensminderung oder Volltreffer und sind an der Figur zu sehen. Der Schild wird getragen, wenn der Kampfstil die linke Hand frei lässt (nicht bei Langklinge, Zweihänder, Doppelklingen und Faust). Die Laterne wechselt dann auf die rechte Hüfte.
+- **Editor:** Das Oberteil ist jetzt wählbar (Hemd, Weste, Jacke, Ringelhemd, Uniform, Tunika), dazu Narbe, Halstuch und Handschuhe. Vorher gab es bei den Anime-Figuren nur Farben.
+- **Halstuch** liegt wieder eng um den Hals und sitzt über dem Mantelkragen.
+- **Spielstände:** Version 11. Alte Stände werden übernommen, die neuen Plätze sind dort leer, Rüstungsstufe und alles andere bleibt.
+
+**Gemessen (26 Prüf-Figuren, je 75 Posen; strengere Zählung als in 2.9.58: nur Flächen direkt übereinander):**
+
+| | 2.9.57 | jetzt |
+|---|---|---|
+| durchstechende Punkte je Figur und Pose | 150 | 19 |
+| davon Haut durch Kleidung (Summe) | 4 843 | 1 857 |
+| Netze außerhalb ihrer Hülle | 67 % der Posen | 0 % |
+| gezeichnete Dreiecke je Figur | 32 050 | 30 571 |
+
+Die Zahlen aus 2.9.58 (190 und 27) stammen aus der gröberen Zählung und sind mit dieser Tabelle nicht vergleichbar. Die Dreieckszahl liegt höher als in 2.9.58, weil die geschnittenen Säume zusätzliche Dreiecke brauchen.
+
+**Mit Bildern verglichen (vorher gegen nachher, 14 Ansichten, dazu die neuen Teile):** Dabei gefunden und behoben: ein Schulterstück schwenkte mit dem Arm von der Schulter weg, das Halstuch wurde zum Schulterkragen, das Ringelhemd blitzte am Ellbogen unter dem Mantelärmel hervor, der Schild verdeckte die Laterne.
+
+**Nicht umgesetzt:** Sandalen zeigen weiter die Schuhe der Figur. Der Fuß der Grundfigur ist unter dem Schuh nicht ausgearbeitet und sähe barfuß falsch aus. Brustplatte, Schienen und Schulterplatten haben die passende Farbe, aber noch keinen eigenen Stahl- oder Lederglanz (alle Hüllen teilen ein Stoff-Material). Die Brustplatte entfällt unter einem Mantel.
+
+**Geprüft:** `tsc`, 72 Tests (drei neue: Übernahme alter Stände, Werte der neuen Stücke, Übersetzung von Aussehen in Ausrüstung), Produktionsbau; Speicher über 130 Runden Anlegen, Umziehen, Treffer-Leuchten und Entfernen unverändert (496 Netze); im Spiel: neuer Stand, vier Stücke gekauft und angelegt, Inventar mit acht Plätzen, Landgang mit Schild ohne Fehlermeldung. **Nicht geprüft:** echtes Handy und die Grafikstufen einzeln, Bildrate mit vielen Figuren, Kampf mit Schild über längere Zeit (der Schild ist reine Optik plus Werte, die Kampfanimationen bleiben), der Händler-Dialog mit echter Maus, Hochformat des Inventars mit acht Plätzen, die Bausteinfigur.
+
+**Technik (für Entwickler):**
+- `vroid.ts` `buildGarment`: Zugehörigkeit je Hautpunkt über Gewichtssummen der Körperregionen (`boneClass`, `NCLS`) statt über den stärksten Knochen. Angeschnittene Haut-Dreiecke werden an der Saumlinie geteilt (`cutVert`, Halbierungssuche über `evalEdge`, `CUT_HEMS`). `TAIL_HIPS` mischt die Gewichte der Mantelschöße zum Becken.
+- Neue `GarmentKind`: `uniform`, `kuerass`, `armschiene`, `beinschiene`. `TopUnder` kennt `uniform`. `GarmentCtx.boots`. Unter einem Mantel sitzen eigene Oberteile schlank (`cT`), der Mantel zählt deshalb im Schlüssel (`garmentKey`). `BANDS` (Tuch, Gürtel, Schienen) verdecken bis an ihren Rand.
+- `animeHats.ts` `buildPauldron`; `shoulderAnchors(ctx, kind)` misst am äußersten Stück über der Schulter und mittelt die Gewichte der Schulterkuppe.
+- `data/equipment.ts`: neue Einträge, `notUnderCoat`, starre Teile mit Farbe, `CharacterLook.extra` (nur Anzeige, nie gespeichert) wird in `loadoutFromLook` eingehängt.
+- `data/items.ts`: `GearSlot`, `GEAR`, `ARMOR_LOOK[].extra`. `core/inventory.ts`: `wornGear`, Werte in `computeStats`. `core/game.ts`: `buyPiece`, `displayLook` mit Extras, Inventar-Host für die neuen Plätze. `GearState.owned`/`worn`, `SAVE_VERSION = 11`, Migration 10 → 11.
+- `seaWorld.ts` `setOffhand`, `weapons.ts` `shieldFor`; `Character.hold` verlegt die Laterne bei breiten Teilen links.
+- `audit.ts`: Vergleich nur noch mit der Fläche direkt über einem Punkt (seitlich höchstens 1 cm); `__audit.start()`/`.last` für lange Läufe, `__audit.shot(name, look, yaw, …)` für Bilder aus dem Editor-Raum (braucht einen lokalen Empfänger auf Port 5199).
+
+## 2.9.58 – Figuren 3.0, Teil 1: Kleidung sticht nicht mehr durch, nichts verschwindet am Bildrand (12.11.2026)
+
+Grundlage ist der Bauplan in `docs/CHARACTER_SYSTEM_3.0.md`. Umgesetzt sind die Phasen 0 bis 3.
+
+- **Mäntel und Gürtel über Jacke, Tunika und Ringelhemd sitzen richtig.** Vorher rechneten Mantel und Schärpe immer mit einem dünnen Hemd darunter. Trug die Figur eine Jacke, stach diese flächig durch den Mantel, und die Schärpe versank im Oberteil. Jetzt richten sich Mantel, Schärpe und Halstuch nach dem, was wirklich darunter liegt.
+- **Verdecktes wird nicht mehr gezeichnet.** Haut unter Kleidung, Hemd unter Weste und Mantel, Schuh unter dem Stiefelschaft und Haare unter Kopftuch, Mütze und Helm fallen weg. Dort kann nichts mehr durchstechen oder auf Entfernung flackern. Unter jedem Saum bleibt ein Streifen stehen, damit man nie in ein Loch sieht.
+- **Nichts verschwindet mehr am Bildrand.** Lag oder rollte eine Figur, konnten Haare, Gesicht oder Kleidung einzeln verschwinden, bis die Kamera sich bewegte. Jede Figur hat jetzt eine feste, großzügige Hülle für alle ihre Teile.
+- **Schärpenknoten, Gürtelschnalle und Schulterstücke bewegen sich mit dem Stoff.** Sie hingen starr an einem Knochen und schwebten oder tauchten ein, wenn die Figur sich beugte oder die Arme hob.
+- **Das Halstuch liegt über dem Mantelkragen** statt auf gleicher Höhe (dort flackerte es).
+
+**Gemessen (26 Prüf-Figuren, je 75 Posen aus 15 Animationen):**
+
+| | vorher | nachher |
+|---|---|---|
+| durchstechende Punkte je Figur und Pose | 190 | 27 |
+| davon Haut durch Kleidung (Summe) | 37 399 | 6 806 |
+| Jacke durch Schärpe | 50 % der Punkte | 4 % |
+| Jacke, Tunika, Ringelhemd durch den Mantel | 33–41 % | 2 % |
+| Netze außerhalb ihrer Hülle | 67 % der Posen, bis 2 m | 0 % |
+| gezeichnete Dreiecke je Figur | 32 050 | 27 868 |
+
+**Mit Bildern verglichen (alt gegen neu, 14 Ansichten):** Hemd, Weste, Jacke, Tunika, Ringelhemd, Uniform, kurzer, langer und Kapitänsmantel, Stiefel, Helm, Mütze, Kopftuch, Sitzen, Rennen, Treffer, Tritt, Jubeln. Dabei gefunden und behoben: feine Risse an den Schulternähten (Nahtpunkte bekamen verschiedene Gewichte), kahle Kopfhaut unter dem Helm (zu schmaler Haarstreifen unter dem Rand), dunkle Lücken am Mantelrand (Saumrand zu schmal).
+
+**Noch offen (Phase 4):** Lange Mantelschöße folgen weiter den Beinen (Beine treten beim Ausfallschritt durch). Das Hemd der Grundfigur hängt hinten über die Schärpe. Säume sind noch gezackt. Uniform und Sandalen haben kein eigenes Stück. Das Inventar kennt die neuen Plätze (Beine, Füße, Hände) noch nicht.
+
+**Geprüft:** `tsc`, 69 Tests, Produktionsbau; Speicher über 130 Runden Anlegen, Umziehen, Treffer-Leuchten und Entfernen unverändert (529 Netze); neuer Spielstand, Segeln und Landgang in Ankerglück mit 17 Bewohnern ohne Fehlermeldung. **Nicht geprüft:** echtes Handy, die vier Qualitätsstufen einzeln, Bildrate mit vielen Figuren, das Flackern auf große Entfernung im laufenden Spiel (nur gerechnet), Bausteinfigur (Ersatz, wenn die Anime-Figuren nicht laden).
+
+**Technik (für Entwickler):**
+- **Prüfwerkzeug** `entities/character/audit.ts` (nur Entwicklung): `await __audit.run()` misst ohne zu zeichnen Durchstiche je Schichtpaar, Schichtabstände und Hüllkugeln; `__audit.one(look)` für eine Figur. Verglichen werden nur Punkte, die schon in Ruhe benachbart sind. `Character.auditLayers()` liefert die Schichten.
+- **`BodyMaskingEngine`** (`entities/character/bodyMask.ts`): eigene Dreiecksliste je Netz ohne verdeckte Dreiecke, Punktdaten bleiben mit der Vorlage geteilt, ein Zeichenaufruf. Listen sind je Kombination zwischengespeichert und gezählt (`indexFor`, `release`). Ein Dreieck fällt weg, wenn ein einzelnes Stück höherer Ebene alle drei Ecken verdeckt. Ebenen in `GARMENT_LEVEL`.
+- **Masken-Daten** in `vroid.ts`: `garmentCover` (je Stück, nur wo es höchstens 4 cm absteht, Saumrand 0 bis 2 Haut-Ringe je nach Abstand), `baseCover` (Hemd und Schuhe der Grundfigur, per Strahl je Hautpunkt, Textur-Löcher beachtet), `baseSrc`, `hairUnderCap`, `erodeCover`. Das Hemd der Grundfigur selbst wird nicht maskiert.
+- **Abstände nach Zusammenhang:** `GarmentCtx { under, coat }`. Schärpe, Halstuch und Mantel rechnen mit der Außenfläche des Oberteils darunter. `guertelEng` entfällt (jetzt `guertel` mit `under: 'eng'`).
+- **Gewichte nach dem Glätten:** verschobene Punkte übernehmen die Gewichte der Haut unter ihrer neuen Lage; Nahtpunkte teilen sich ein Ergebnis.
+- **Sockets** (`entities/character/sockets.ts`): `SocketRig` mit `head`, `chest`, `legs`, `feet`, `hands`, `mainHand`, `offHand`; `node()` liefert eine Halterung in Metern mit +Z nach vorn, `bone()` den rohen Knochen. `SkinAnchor` bewegt sich mit gewichteten Knochen wie ein Hautpunkt (ohne neue Objekte je Bild). Laterne, Waffen, Hut, Knoten, Schnalle und Schulterstücke hängen an Sockets bzw. Ankern.
+- **Ausrüstung als Daten** (`data/equipment.ts`): `EQUIPMENT`, `Loadout`, `loadoutFromLook`, `resolveLoadout`. `Character.equip(loadout)` setzt Ausrüstung unabhängig vom Aussehen; `setLook` leitet sie wie bisher ab. Spielstände sind unverändert.
+- **Hüllkugel:** `Character.fitCull` setzt je Netz eine feste Kugel (3,2 m), weil `SkinnedMesh` seine Kugel sonst nur einmal aus der ersten Pose berechnet.
+- Nicht umgesetzt aus Phase 1: feste Zeichenreihenfolge der durchscheinenden Gesichtsteile (in den Bildern kein Fehler sichtbar; die Änderung hätte Wimpern vor Rauch zeichnen können) und der Freiraum ohne Deckel (durch die Abstände nach Zusammenhang nicht mehr nötig).
+
 ## 2.9.57 – Polish-Runde: Stabilität, Wege an Deck, Handy-Anzeige, schnellere Schiffsbauten (12.11.2026)
 
 Diese Runde ist eine gründliche Prüfung von Code, Logik, Grafik und Gestaltung. Gefunden und behoben:

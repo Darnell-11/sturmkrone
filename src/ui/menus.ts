@@ -29,7 +29,7 @@ function workshopUnlocked(): boolean {
 import { hostileLegends } from '../data/legends';
 import { RARITY, TRINKETS, TRINKET_BY_ID } from '../data/trinkets';
 import { ACHIEVEMENTS } from '../data/achievements';
-import { CONSUMABLES, HEADS } from '../data/items';
+import { CONSUMABLES, GEAR, HEADS, SLOT_LABEL } from '../data/items';
 import { itemCount } from '../core/inventory';
 import { ARMOR, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, WEAPON_LINES, type IslandDef } from '../data/regions';
 import { stepText } from '../story/questSystem';
@@ -592,8 +592,12 @@ export class Menus {
       ${HEADS.map((h) => { const own = s.gear.heads?.includes(h.id); return `<div class="slot"><div class="slot-head"><b>🎩 ${esc(h.n)}</b><span>${own ? 'gekauft' : `${h.price} Gold`}</span></div>
         <div class="meta">${esc(h.d)}${h.rank > g.playerRank && !own ? ` · ab Rang „${RANKS[s.player.faction][h.rank]}“` : ''}</div>
         ${own ? '' : `<div class="row"><button class="mini brass" data-a="head" data-id="${h.id}" ${h.rank > g.playerRank ? 'disabled' : ''}>Kaufen und aufsetzen</button></div>`}</div>`; }).join('')}
+      <h3>Schienen, Stiefel und Schilde</h3>
+      ${GEAR.map((d) => { const own = s.gear.owned?.includes(d.id); return `<div class="slot"><div class="slot-head"><b>${d.icon} ${esc(d.n)}</b><span>${own ? 'gekauft' : `${d.price} Gold`}</span></div>
+        <div class="meta">${SLOT_LABEL[d.slot]} · ${esc(d.d)}${d.rank > g.playerRank && !own ? ` · ab Rang „${RANKS[s.player.faction][d.rank]}“` : ''}</div>
+        ${own ? '' : `<div class="row"><button class="mini brass" data-a="piece" data-id="${d.id}" ${d.rank > g.playerRank ? 'disabled' : ''}>Kaufen und anlegen</button></div>`}</div>`; }).join('')}
       <button class="primary" data-a="back">Zurück</button>`,
-      { buy: (id) => re(g.buyPotions(+id)), item: (id) => re(g.buyItem(id)), head: (id) => re(g.buyHead(id)), back },
+      { buy: (id) => re(g.buyPotions(+id)), item: (id) => re(g.buyItem(id)), head: (id) => re(g.buyHead(id)), piece: (id) => re(g.buyPiece(id)), back },
       back,
       { wide: true },
     );

@@ -67,6 +67,8 @@ export const MIGRATIONS: Record<number, Migration> = {
     }
     return { ...d, version: 10, world };
   },
+  // 11: Plätze für Hände, Beine, Füße und Nebenhand (leer; die Rüstungsstufe bleibt, wie sie ist)
+  10: (d) => ({ ...d, version: 11, gear: { ...(d.gear ?? {}), owned: [], worn: {} } }),
 };
 
 export type MigrationResult =

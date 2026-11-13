@@ -22,6 +22,7 @@ import {
   type MeshStandardMaterial,
 } from 'three';
 import type { HairFit } from './animeHats';
+import type { SkinPin } from './sockets';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { markShared } from '../../render/dispose';
@@ -288,9 +289,13 @@ export class VroidBase {
         transparent: mat.transparent, alphaTest: mat.alphaTest, doubleSided: mat.side === 2,
       });
       first.userData.vroidPart = this.parts.length - 1;
+      this.partGeo.push(first.geometry);
       first.frustumCulled = false;
     }
   }
+
+  /** Netz jedes Teils der Vorlage (Index wie parts) – Figuren teilen sich dessen Punktdaten, auch mit eigener Dreiecksliste */
+  readonly partGeo: BufferGeometry[] = [];
 
   /** Halterung so legen, dass die Waffe in der Welt genauso liegt wie an der alten Figur */
   private slotFor(s: 'l' | 'r', srcSlot: Vector3) {
@@ -319,10 +324,11 @@ export class VroidBase {
   }
 
   /** Kleidungsstücke aus dem Körper selbst (einmal je Grundfigur berechnet) */
-  private garments = new Map<GarmentKind, BufferGeometry | null>();
-  garment(kind: GarmentKind): BufferGeometry | null {
-    if (!this.garments.has(kind)) this.garments.set(kind, this.buildGarment(kind));
-    return this.garments.get(kind) ?? null;
+  private garments = new Map<string, BufferGeometry | null>();
+  garment(kind: GarmentKind, ctx: GarmentCtx = PLAIN): BufferGeometry | null {
+    const key = garmentKey(kind, ctx);
+    if (!this.garments.has(key)) this.garments.set(key, this.buildGarment(kind, ctx));
+    return this.garments.get(key) ?? null;
   }
 
   /**
@@ -330,21 +336,182 @@ export class VroidBase {
    * zu welchem Stück ein Punkt gehört – daraus färbt jede Figur ihre Stücke selbst ein.
    */
   private sets = new Map<string, BufferGeometry | null>();
-  garmentSet(kinds: GarmentKind[]): BufferGeometry | null {
-    const key = kinds.join('+');
+  garmentSet(kinds: GarmentKind[], ctx: GarmentCtx = PLAIN): BufferGeometry | null {
+    const key = kinds.map((k) => garmentKey(k, ctx)).join('+');
     if (!this.sets.has(key)) {
+      const body = this.bodySkin(this.template)!;
+      const skinIdx = body.geometry.index!;
+      // je Dreieck: die drei Hautpunkte, aus denen es entstand, und die Ebene seines Stücks (für die Maske, bodyMask.ts)
+      const src: number[] = [], level: number[] = [];
       const geos = kinds.map((k, i) => {
-        const g = this.garment(k);
+        const g = this.garment(k, ctx);
         if (!g) return null;
         const c = g.clone();
+        c.userData = {};
         c.setAttribute('part', new BufferAttribute(new Float32Array(g.attributes.position.count).fill(i), 1));
+        for (const t of (g.userData as GarmentData).srcTri) { src.push(skinIdx.getX(t * 3), skinIdx.getX(t * 3 + 1), skinIdx.getX(t * 3 + 2)); level.push(GARMENT_LEVEL[k]); }
         return c;
       }).filter((g): g is BufferGeometry => !!g);
       const merged = geos.length ? mergeGeometries(geos, false) : null;
-      if (merged) { merged.computeBoundingSphere(); if (merged.boundingSphere) merged.boundingSphere.radius *= 1.6; }
+      if (merged) {
+        merged.computeBoundingSphere();
+        if (merged.boundingSphere) merged.boundingSphere.radius *= 1.6;
+        merged.userData = { key, src: Int32Array.from(src), level: Uint8Array.from(level) } satisfies GarmentSetData;
+      }
       this.sets.set(key, merged ? markShared(merged) : null);
     }
     return this.sets.get(key) ?? null;
+  }
+
+  /** Hautpunkte, die ein Kleidungsstück eng und deckend verdeckt (Saumrand schon abgezogen) */
+  garmentCover(kind: GarmentKind, ctx: GarmentCtx = PLAIN): Uint8Array | null {
+    return (this.garment(kind, ctx)?.userData as GarmentData | undefined)?.cover ?? null;
+  }
+
+  // ---------- Aufbau der Haut (für Masken) ----------
+  private topo: { weld: Int32Array; n: number } | null = null;
+  /** Nahtpunkte der Haut (gleiche Lage, getrennte Punkte für Texturkanten) auf einen gemeinsamen Punkt abbilden */
+  private skinWeld() {
+    if (this.topo) return this.topo;
+    const pos = this.bodySkin(this.template)!.geometry.attributes.position;
+    const weld = new Int32Array(pos.count);
+    const seen = new Map<string, number>();
+    for (let i = 0; i < pos.count; i++) {
+      const key = `${Math.round(pos.getX(i) * 1e4)},${Math.round(pos.getY(i) * 1e4)},${Math.round(pos.getZ(i) * 1e4)}`;
+      const c = seen.get(key);
+      if (c === undefined) { seen.set(key, i); weld[i] = i; } else weld[i] = c;
+    }
+    return (this.topo = { weld, n: pos.count });
+  }
+
+  /**
+   * Bedeckte Fläche um „rings“ Punkt-Ringe vom Rand zurücknehmen: unter jedem Saum bleibt ein Streifen der unteren
+   * Schicht stehen, damit man nie in ein Loch sieht. Negative Werte weiten die Fläche um so viele Ringe aus.
+   * (Ein Ring der Haut ist etwa 3 cm breit.)
+   */
+  erodeCover(cover: Uint8Array, rings: number): Uint8Array {
+    const { weld, n } = this.skinWeld();
+    const idx = this.bodySkin(this.template)!.geometry.index!;
+    let cur = new Uint8Array(n);
+    for (let i = 0; i < n; i++) cur[weld[i]] = 1;
+    for (let i = 0; i < n; i++) if (!cover[i]) cur[weld[i]] = 0;
+    for (let r = 0; r < Math.abs(rings); r++) {
+      const next = cur.slice();
+      for (let t = 0; t < idx.count; t += 3) {
+        const a = weld[idx.getX(t)], b = weld[idx.getX(t + 1)], c = weld[idx.getX(t + 2)];
+        if (rings > 0) { if (!(cur[a] && cur[b] && cur[c])) next[a] = next[b] = next[c] = 0; }
+        else if (cur[a] || cur[b] || cur[c]) next[a] = next[b] = next[c] = 1;
+      }
+      cur = next;
+    }
+    const out = new Uint8Array(n);
+    for (let i = 0; i < n; i++) out[i] = cur[weld[i]];
+    return out;
+  }
+
+  /**
+   * Hautpunkte unter der eng anliegenden, deckenden Grundkleidung (Hemd bzw. Schuhe der Vorlage), Saumrand abgezogen.
+   * Gemessen mit einem Strahl je Hautpunkt entlang seiner Normale: trifft er innerhalb von 2,5 cm ein Stoff-Dreieck,
+   * dessen Textur dort deckt, liegt der Punkt sicher unter dem Stoff. (Die Haut ist grob aufgeteilt – nach
+   * Punkt-Nachbarschaft allein blieben zu viele Lücken.)
+   */
+  private baseCovers = new Map<string, Uint8Array>();
+  baseCover(slot: 'top' | 'shoes'): Uint8Array {
+    let c = this.baseCovers.get(slot);
+    if (c) return c;
+    const body = this.bodySkin(this.template)!;
+    this.template.updateMatrixWorld(true);
+    const cl = this.clearance();
+    const near = slot === 'top' ? cl.top : cl.shoes;
+    const pos = body.geometry.attributes.position, nor = body.geometry.attributes.normal;
+    const n = pos.count;
+    const nm = new Matrix3().getNormalMatrix(body.matrixWorld);
+    // Schuhe sind rundum geschlossen: der Fuß darin ist nie zu sehen, auch wo die Sohle dick ist
+    const reach = slot === 'shoes' ? 0.06 : BASE_TIGHT;
+    // Stoff-Dreiecke in Weltlage, mit Hüllkasten und Texturkoordinaten
+    const tris: { a: Vector3; e1: Vector3; e2: Vector3; lo: Vector3; hi: Vector3; uv: number[]; alpha: ((u: number, v: number) => boolean) | null }[] = [];
+    this.template.traverse((o) => {
+      const m = o as SkinnedMesh;
+      const part = m.isSkinnedMesh ? this.parts[m.userData.vroidPart as number] : null;
+      if (!part || part.slot !== slot || !m.geometry.index) return;
+      const cp = m.geometry.attributes.position, uv = m.geometry.attributes.uv, idx = m.geometry.index;
+      const alpha = alphaSampler(part.map);
+      for (let t = 0; t < idx.count; t += 3) {
+        const i0 = idx.getX(t), i1 = idx.getX(t + 1), i2 = idx.getX(t + 2);
+        const a = new Vector3().fromBufferAttribute(cp, i0).applyMatrix4(m.matrixWorld);
+        const b = new Vector3().fromBufferAttribute(cp, i1).applyMatrix4(m.matrixWorld);
+        const d = new Vector3().fromBufferAttribute(cp, i2).applyMatrix4(m.matrixWorld);
+        tris.push({
+          a, e1: b.clone().sub(a), e2: d.clone().sub(a), lo: a.clone().min(b).min(d).addScalar(-reach - 0.005), hi: a.clone().max(b).max(d).addScalar(reach + 0.005),
+          uv: uv ? [uv.getX(i0), uv.getY(i0), uv.getX(i1), uv.getY(i1), uv.getX(i2), uv.getY(i2)] : [], alpha,
+        });
+      }
+    });
+    const hit = new Uint8Array(n);
+    const P = new Vector3(), N = new Vector3(), h = new Vector3(), sV = new Vector3(), q = new Vector3();
+    for (let i = 0; i < n; i++) {
+      if (near[i] < 0) continue;
+      P.fromBufferAttribute(pos, i).applyMatrix4(body.matrixWorld);
+      N.fromBufferAttribute(nor, i).applyMatrix3(nm).normalize();
+      // knapp unter der Haut beginnen (anliegender Stoff liegt stellenweise auf ihr)
+      P.addScaledVector(N, -0.004);
+      let bestT = Infinity, solid = false;
+      for (const tr of tris) {
+        if (P.x < tr.lo.x || P.y < tr.lo.y || P.z < tr.lo.z || P.x > tr.hi.x || P.y > tr.hi.y || P.z > tr.hi.z) continue;
+        h.crossVectors(N, tr.e2);
+        const det = tr.e1.dot(h);
+        if (Math.abs(det) < 1e-12) continue;
+        const f = 1 / det;
+        sV.subVectors(P, tr.a);
+        const u = f * sV.dot(h);
+        if (u < 0 || u > 1) continue;
+        q.crossVectors(sV, tr.e1);
+        const v = f * N.dot(q);
+        if (v < 0 || u + v > 1) continue;
+        const t = f * tr.e2.dot(q);
+        if (t < 0 || t > reach + 0.004 || t >= bestT) continue;
+        bestT = t;
+        const w = 1 - u - v;
+        solid = !!tr.alpha && tr.uv.length === 6 && tr.alpha(tr.uv[0] * w + tr.uv[2] * u + tr.uv[4] * v, tr.uv[1] * w + tr.uv[3] * u + tr.uv[5] * v);
+      }
+      if (solid) hit[i] = 1;
+    }
+    c = this.erodeCover(hit, BASE_RINGS);
+    this.baseCovers.set(slot, c);
+    return c;
+  }
+
+  /**
+   * Haar-Dreiecke unter einer Kappe (Kopftuch, Mütze, Helm …): alles, was ganz über dem Hutrand liegt, fällt weg.
+   * Liefert die Dreiecksliste des Haar-Teils ohne diese Dreiecke (geteilt, je Sitztiefe einmal berechnet).
+   */
+  private hairLists = new Map<string, BufferAttribute | null>();
+  hairUnderCap(part: number, sink: number): BufferAttribute | null {
+    const key = `${part}|${sink}`;
+    if (this.hairLists.has(key)) return this.hairLists.get(key)!;
+    let out: BufferAttribute | null = null;
+    const fit = this.hairFit?.(sink);
+    const head = this.find(this.template, 'J_Bip_C_Head');
+    let mesh: SkinnedMesh | null = null;
+    this.template.traverse((o) => { const m = o as SkinnedMesh; if (m.isSkinnedMesh && m.userData.vroidPart === part) mesh = m; });
+    const m = mesh as SkinnedMesh | null;
+    if (fit && head && m?.geometry.index) {
+      this.template.updateMatrixWorld(true);
+      const inv = head.matrixWorld.clone().invert().multiply(m.matrixWorld);
+      const pos = m.geometry.attributes.position, idx = m.geometry.index;
+      const above = new Uint8Array(pos.count);
+      // Streifen unter dem Rand bleibt stehen (der Hut sitzt etwas ins Haar gedrückt)
+      const limit = fit.seat + CAP_RIM;
+      for (let i = 0; i < pos.count; i++) if (v1.fromBufferAttribute(pos, i).applyMatrix4(inv).y > limit) above[i] = 1;
+      const keep: number[] = [];
+      for (let t = 0; t < idx.count; t += 3) {
+        const a = idx.getX(t), b = idx.getX(t + 1), c = idx.getX(t + 2);
+        if (!(above[a] && above[b] && above[c])) keep.push(a, b, c);
+      }
+      if (keep.length < idx.count) out = markShared(new BufferAttribute(pos.count > 65535 ? Uint32Array.from(keep) : Uint16Array.from(keep), 1));
+    }
+    this.hairLists.set(key, out);
+    return out;
   }
 
   /** Weibliche Grundfigur? (Rock wird ausgeblendet, darunter trägt sie die erzeugte Hose) */
@@ -373,13 +540,18 @@ export class VroidBase {
       const k = key(P.x, P.y, P.z);
       (grid.get(k) ?? grid.set(k, []).get(k)!).push(i);
     }
-    const out: Clearance = { top: new Float32Array(n).fill(-1), bottom: new Float32Array(n).fill(-1), shoes: new Float32Array(n).fill(-1) };
+    const out: Clearance = { top: new Float32Array(n).fill(-1), bottom: new Float32Array(n).fill(-1), shoes: new Float32Array(n).fill(-1), topSolid: new Uint8Array(n), shoesSolid: new Uint8Array(n), topLoose: new Uint8Array(n), shoesLoose: new Uint8Array(n), owners: new Map() };
+    // direkter Befund je Hautpunkt: 1 = eng und deckend bedeckt, 2 = bedeckt, aber lose oder durchsichtig
+    const direct = { top: new Uint8Array(n), bottom: new Uint8Array(n), shoes: new Uint8Array(n) };
     this.template.traverse((o) => {
       const m = o as SkinnedMesh;
       const part = m.isSkinnedMesh ? this.parts[m.userData.vroidPart as number] : null;
       if (!part || (part.slot !== 'top' && part.slot !== 'bottom' && part.slot !== 'shoes')) return;
-      const dst = out[part.slot];
-      const cp = m.geometry.attributes.position;
+      const dst = out[part.slot], dir = direct[part.slot];
+      const cp = m.geometry.attributes.position, uv = m.geometry.attributes.uv;
+      const owner = new Int32Array(cp.count).fill(-1);
+      out.owners.set(m.userData.vroidPart as number, owner);
+      const alpha = alphaSampler(part.map);
       for (let j = 0; j < cp.count; j++) {
         P.fromBufferAttribute(cp, j).applyMatrix4(m.matrixWorld);
         const cx = Math.floor(P.x / cell), cy = Math.floor(P.y / cell), cz = Math.floor(P.z / cell);
@@ -397,6 +569,11 @@ export class VroidBase {
         const along = (P.x - SP[best * 3]) * SN[best * 3] + (P.y - SP[best * 3 + 1]) * SN[best * 3 + 1] + (P.z - SP[best * 3 + 2]) * SN[best * 3 + 2];
         // Ausreißer (Kragen, Falten weit weg von der Haut) begrenzen – sonst bläht sich alles darüber auf
         dst[best] = Math.max(dst[best], Math.min(0.04, Math.max(0, along)));
+        owner[j] = best;
+        // für die Maske: nur wo der Stoff deckt (kein Loch in der Textur) und eng anliegt – unter losem Stoff
+        // (Kragen, Puffärmel) könnte man sonst von der Seite ins Leere sehen
+        const solid = !!alpha && !!uv && alpha(uv.getX(j), uv.getY(j)) && along <= BASE_TIGHT;
+        if (solid) { if (dir[best] === 0) dir[best] = 1; } else dir[best] = 2;
       }
     });
     // Lücken füllen: Hautpunkte ohne eigenen Wert zwischen gefundenen bekommen den Wert ihrer Nachbarn
@@ -412,6 +589,10 @@ export class VroidBase {
       }
       arr.set(next);
     }
+    for (let i = 0; i < n; i++) {
+      out.topSolid[i] = direct.top[i] === 1 ? 1 : 0; out.shoesSolid[i] = direct.shoes[i] === 1 ? 1 : 0;
+      out.topLoose[i] = direct.top[i] === 2 ? 1 : 0; out.shoesLoose[i] = direct.shoes[i] === 2 ? 1 : 0;
+    }
     this.clear = out;
     return out;
   }
@@ -425,8 +606,8 @@ export class VroidBase {
     if (this.anchorCache) return this.anchorCache;
     const T = this.template;
     T.updateMatrixWorld(true);
-    const head = this.find(T, 'J_Bip_C_Head')!, chest = this.find(T, 'J_Bip_C_Chest')!, hips = this.find(T, 'J_Bip_C_Hips')!;
-    const toHead = head.matrixWorld.clone().invert(), toChest = chest.matrixWorld.clone().invert(), toHips = hips.matrixWorld.clone().invert();
+    const head = this.find(T, 'J_Bip_C_Head')!, chest = this.find(T, 'J_Bip_C_Chest')!;
+    const toHead = head.matrixWorld.clone().invert(), toChest = chest.matrixWorld.clone().invert();
     const P = new Vector3();
     // Hautpunkte in Weltlage (Kopf aus Gesicht und Körper, Rumpf aus dem Körper)
     const skin: { m: SkinnedMesh; face: boolean }[] = [];
@@ -470,23 +651,117 @@ export class VroidBase {
       const w = new Vector3(j.x * 0.92, (Number.isFinite(top) ? top : j.y + 0.04) + Math.min(c, SHIRT_CAP) + 0.026, j.z);
       return w.applyMatrix4(toChest);
     };
-    // Schärpe: Ellipse der Taille (Haut + Kleidung + Bandstärke) knapp über der Hüfte
-    const hipsY = hips.getWorldPosition(new Vector3()).y;
-    let hx = 0, hzF = 0, under = 0;
-    for (let i = 0; i < bpos.count; i++) {
-      P.fromBufferAttribute(bpos, i).applyMatrix4(body.matrixWorld);
-      if (P.y < hipsY || P.y > hipsY + 0.06 || Math.abs(P.x) > 0.25) continue;
-      hx = Math.max(hx, Math.abs(P.x)); hzF = Math.max(hzF, P.z);
-      under = Math.max(under, cl.top[i]);
-    }
-    const a = 0.75; // Knoten seitlich vorn
-    const onBand = (band: number) => {
-      const ex = hx + band + 0.006, ez = hzF + band + 0.006;
-      return { knot: new Vector3(Math.sin(a) * ex, hipsY + 0.032, Math.cos(a) * ez).applyMatrix4(toHips), buckle: new Vector3(0, hipsY + 0.032, ez).applyMatrix4(toHips) };
-    };
-    const wide = onBand(Math.max(0.026, under + 0.026)), eng = onBand(Math.max(0.026, Math.min(under, SHIRT_CAP) + 0.02));
-    this.anchorCache = { earLobe, eyeY, shoulders: [shoulder('L'), shoulder('R')], knot: wide.knot, buckle: wide.buckle, knotEng: eng.knot, buckleEng: eng.buckle };
+    this.anchorCache = { earLobe, eyeY, shoulders: [shoulder('L'), shoulder('R')] };
     return this.anchorCache;
+  }
+
+  /** Welt-Ausrichtung eines Knochens in der Ruhehaltung der Vorlage (für die Halterungen der Sockets) */
+  restQuat(bone: string): Quaternion | null {
+    const b = this.find(this.template, bone);
+    if (!b) return null;
+    this.template.updateMatrixWorld(true);
+    return b.getWorldQuaternion(new Quaternion());
+  }
+
+  /** je Dreieck eines Grundkleidungs-Teils die drei Hautpunkte unter seinen Ecken (für die Maske) */
+  private baseSrcs = new Map<number, Int32Array>();
+  baseSrc(part: number): Int32Array | null {
+    let out = this.baseSrcs.get(part);
+    if (!out) {
+      const owner = this.clearance().owners.get(part), idx = this.partGeo[part]?.index;
+      if (!owner || !idx) return null;
+      out = new Int32Array(idx.count);
+      for (let i = 0; i < idx.count; i++) out[i] = owner[idx.getX(i)];
+      this.baseSrcs.set(part, out);
+    }
+    return out;
+  }
+
+  /**
+   * Sitz von Schärpenknoten und Gürtelschnalle, am erzeugten Band selbst gemessen: Lage im Hüftraum und die Gewichte
+   * des Bandes an dieser Stelle. Damit sitzt beides in jeder Pose auf dem Band (vorher starr am Hüftknochen).
+   */
+  private belts = new Map<string, BeltAnchors | null>();
+  beltAnchors(ctx: GarmentCtx): BeltAnchors | null {
+    const key = garmentKey('guertel', ctx);
+    if (this.belts.has(key)) return this.belts.get(key)!;
+    const g = this.garment('guertel', ctx), body = this.bodySkin(this.template), hips = this.find(this.template, 'J_Bip_C_Hips');
+    let out: BeltAnchors | null = null;
+    if (g && body && hips) {
+      this.template.updateMatrixWorld(true);
+      const toHips = hips.matrixWorld.clone().invert();
+      const y0 = hips.getWorldPosition(new Vector3()).y + 0.032;
+      const pos = g.attributes.position, si = g.attributes.skinIndex, sw = g.attributes.skinWeight;
+      const P = new Vector3();
+      const at = (angle: number) => {
+        let best = -1, bd = Infinity;
+        const W = new Vector3();
+        for (let i = 0; i < pos.count; i++) {
+          P.fromBufferAttribute(pos, i).applyMatrix4(body.matrixWorld);
+          const d = Math.abs(Math.atan2(P.x, P.z) - angle) + Math.abs(P.y - y0) * 4;
+          if (d < bd) { bd = d; best = i; W.copy(P); }
+        }
+        if (best < 0) return null;
+        // knapp vor dem Band
+        W.x += Math.sin(angle) * 0.006; W.z += Math.cos(angle) * 0.006; W.y = y0;
+        const pin: SkinPin = { index: [si.getX(best), si.getY(best), si.getZ(best), si.getW(best)], weight: [sw.getX(best), sw.getY(best), sw.getZ(best), sw.getW(best)] };
+        return { pos: W.applyMatrix4(toHips), pin };
+      };
+      // Knoten seitlich vorn (links), Schnalle mittig vorn
+      const knot = at(0.96), buckle = at(0);
+      if (knot && buckle) out = { knot: knot.pos, knotPin: knot.pin, buckle: buckle.pos, bucklePin: buckle.pin };
+    }
+    this.belts.set(key, out);
+    return out;
+  }
+
+  /**
+   * Sitz von Schulterstücken und Schulterplatten (Brustraum) samt den Gewichten des Stoffs dort: gemessen am
+   * angegebenen Kleidungsstück (dem äußersten über der Schulter) oder, ohne eines, an der Haut.
+   */
+  private epaulettes = new Map<string, { pos: Vector3; pin: SkinPin }[] | null>();
+  shoulderAnchors(ctx: GarmentCtx, kind: GarmentKind | null): { pos: Vector3; pin: SkinPin }[] | null {
+    const key = kind ? garmentKey(kind, ctx) : 'haut';
+    if (this.epaulettes.has(key)) return this.epaulettes.get(key)!;
+    const body = this.bodySkin(this.template), chest = this.find(this.template, 'J_Bip_C_Chest');
+    const g = kind ? this.garment(kind, ctx) : body?.geometry ?? null;
+    const bare = kind ? null : this.clearance().top;
+    let out: { pos: Vector3; pin: SkinPin }[] | null = null;
+    if (g && body && chest) {
+      this.template.updateMatrixWorld(true);
+      const toChest = chest.matrixWorld.clone().invert();
+      const pos = g.attributes.position, si = g.attributes.skinIndex, sw = g.attributes.skinWeight;
+      const P = new Vector3();
+      out = [];
+      for (const side of ['L', 'R']) {
+        const j = this.find(this.template, `J_Bip_${side}_UpperArm`)!.getWorldPosition(new Vector3());
+        // etwas zur Körpermitte hin: Schulterstücke sitzen auf der Schulter, nicht über dem Oberarm
+        const x = j.x * 0.92;
+        let best = -1, top = -Infinity;
+        for (let i = 0; i < pos.count; i++) {
+          P.fromBufferAttribute(pos, i).applyMatrix4(body.matrixWorld);
+          if (Math.abs(P.x - x) > 0.03 || Math.abs(P.z - j.z) > 0.04 || P.y > j.y + 0.12) continue;
+          if (P.y > top) { top = P.y; best = i; }
+        }
+        if (best < 0) { out = null; break; }
+        // Gewichte über die ganze Schulterkuppe mitteln: ein einzelner Punkt kann fast ganz am Arm hängen, dann
+        // schwenkt das Schulterstück mit dem Arm von der Schulter weg
+        const wm = new Map<number, number>();
+        for (let i = 0; i < pos.count; i++) {
+          P.fromBufferAttribute(pos, i).applyMatrix4(body.matrixWorld);
+          if (Math.abs(P.x - x) > 0.03 || Math.abs(P.z - j.z) > 0.04 || P.y > j.y + 0.12 || P.y < top - 0.02) continue;
+          for (let k = 0; k < 4; k++) { const w = sw.getComponent(i, k); if (w > 0) wm.set(si.getComponent(i, k), (wm.get(si.getComponent(i, k)) ?? 0) + w); }
+        }
+        const w4 = [...wm.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+        const sum = w4.reduce((t, e) => t + e[1], 0) || 1;
+        out.push({
+          pos: new Vector3(x, top + 0.005 + (bare ? Math.max(0, bare[best]) : 0), j.z).applyMatrix4(toChest),
+          pin: { index: [w4[0]?.[0] ?? 0, w4[1]?.[0] ?? 0, w4[2]?.[0] ?? 0, w4[3]?.[0] ?? 0], weight: [(w4[0]?.[1] ?? 0) / sum, (w4[1]?.[1] ?? 0) / sum, (w4[2]?.[1] ?? 0) / sum, (w4[3]?.[1] ?? 0) / sum] },
+        });
+      }
+    }
+    this.epaulettes.set(key, out);
+    return out;
   }
 
   /**
@@ -675,7 +950,7 @@ export class VroidBase {
    * geschoben und behalten ihre Gewichte – so bewegt sich das Stück genau mit dem Körper und schneidet nicht ein.
    * Lage in Weltmaßen der Vorlage: Figur schaut nach +Z, links liegt bei +X, Ruhehaltung T-Pose.
    */
-  private buildGarment(kind: GarmentKind): BufferGeometry | null {
+  private buildGarment(kind: GarmentKind, ctx: GarmentCtx): BufferGeometry | null {
     const body = this.bodySkin(this.template);
     if (!body) return null;
     this.template.updateMatrixWorld(true);
@@ -686,43 +961,110 @@ export class VroidBase {
     const mw = body.matrixWorld;
     const nm = new Matrix3().getNormalMatrix(mw);
     const scale = new Vector3().setFromMatrixScale(mw).x;
-    const at = (n: string) => this.find(this.template, n)?.getWorldPosition(new Vector3()).y ?? 0;
-    const hipsY = at('J_Bip_C_Hips'), kneeY = at('J_Bip_L_LowerLeg'), ankleY = at('J_Bip_L_Foot'), neckY = at('J_Bip_C_Neck');
-    const leg = kneeY - ankleY;
+    const wp = (n: string) => this.find(this.template, n)?.getWorldPosition(new Vector3()) ?? new Vector3();
+    const ankle = wp('J_Bip_L_Foot'), toe = wp('J_Bip_L_ToeBase'), elbow = wp('J_Bip_L_LowerArm'), wrist = wp('J_Bip_L_Hand');
+    const hipsY = wp('J_Bip_C_Hips').y, kneeY = wp('J_Bip_L_LowerLeg').y, ankleY = ankle.y, neckY = wp('J_Bip_C_Neck').y;
+    const R: Region = { hipsY, kneeY, ankleY, neckY, leg: kneeY - ankleY, ankleZ: ankle.z, toeZ: toe.z, elbowX: Math.abs(elbow.x), wristX: Math.abs(wrist.x) };
     const n = pos.count;
     const off = new Float32Array(n).fill(-1);
     const P = new Vector3(), N = new Vector3();
     const cl = this.clearance();
+    // Körperregion je Knochen und je Hautpunkt als Gewichtssumme (statt nur nach dem stärksten Knochen – an Achsel,
+    // Knie und Taille wechselt der von Punkt zu Punkt und riss Löcher)
+    const cls = bones.map((b) => boneClass(b.name));
+    const WP = new Float32Array(n * 3), WN = new Float32Array(n * 3), WW = new Float32Array(n * NCLS);
+    const who = new Float32Array(NCLS);
     for (let i = 0; i < n; i++) {
-      P.fromBufferAttribute(pos, i).applyMatrix4(mw);
-      N.fromBufferAttribute(nor, i).applyMatrix3(nm).normalize();
-      let bi = 0, bw = -1;
-      for (let k = 0; k < 4; k++) { const w = sw.getComponent(i, k); if (w > bw) { bw = w; bi = si.getComponent(i, k); } }
-      const b = bones[bi]?.name ?? '';
-      off[i] = garmentOffset(kind, b, P, N, { hipsY, kneeY, ankleY, neckY, leg }, cl.top[i], -1, cl.shoes[i]); // Hose der Grundfigur ist ausgeblendet (erzeugte Hose liegt eng an)
+      P.fromBufferAttribute(pos, i).applyMatrix4(mw); P.toArray(WP, i * 3);
+      N.fromBufferAttribute(nor, i).applyMatrix3(nm).normalize(); N.toArray(WN, i * 3);
+      for (let k = 0; k < 4; k++) {
+        const w = sw.getComponent(i, k), c = cls[si.getComponent(i, k)];
+        if (w > 0 && c) for (let j = 0; j < NCLS; j++) if (c & (1 << j)) WW[i * NCLS + j] += w;
+      }
+      for (let j = 0; j < NCLS; j++) who[j] = WW[i * NCLS + j];
+      off[i] = garmentOffset(kind, who, P, N, R, cl.top[i], -1, cl.shoes[i], ctx); // Hose der Grundfigur ist ausgeblendet (erzeugte Hose liegt eng an)
     }
-    // nur Dreiecke, deren Ecken alle zum Stück gehören
-    const src = geo.index;
-    const remap = new Int32Array(n).fill(-1);
-    const tris: number[] = [];
-    const triCount = src ? src.count / 3 : n / 3;
-    for (let t = 0; t < triCount; t++) {
-      const a = src ? src.getX(t * 3) : t * 3, b2 = src ? src.getX(t * 3 + 1) : t * 3 + 1, c = src ? src.getX(t * 3 + 2) : t * 3 + 2;
-      if (off[a] < 0 || off[b2] < 0 || off[c] < 0) continue;
-      tris.push(a, b2, c);
-    }
-    if (!tris.length) return null;
-    const used: number[] = [];
-    for (const v of tris) if (remap[v] < 0) { remap[v] = used.length; used.push(v); }
+    /** Abstand an einer Stelle der Kante a→b (t = 0 … 1): alle Größen wandern mit, der Freiraum bis zur Kantenmitte */
+    const evalEdge = (a: number, b: number, t: number) => {
+      P.set(WP[a * 3] + (WP[b * 3] - WP[a * 3]) * t, WP[a * 3 + 1] + (WP[b * 3 + 1] - WP[a * 3 + 1]) * t, WP[a * 3 + 2] + (WP[b * 3 + 2] - WP[a * 3 + 2]) * t);
+      N.set(WN[a * 3] + (WN[b * 3] - WN[a * 3]) * t, WN[a * 3 + 1] + (WN[b * 3 + 1] - WN[a * 3 + 1]) * t, WN[a * 3 + 2] + (WN[b * 3 + 2] - WN[a * 3 + 2]) * t).normalize();
+      for (let j = 0; j < NCLS; j++) who[j] = WW[a * NCLS + j] + (WW[b * NCLS + j] - WW[a * NCLS + j]) * t;
+      const mixc = (x: number, y: number) => (x >= 0 && y >= 0 ? x + (y - x) * t : t < 0.5 ? x : y);
+      return garmentOffset(kind, who, P, N, R, mixc(cl.top[a], cl.top[b]), -1, mixc(cl.shoes[a], cl.shoes[b]), ctx);
+    };
     // Arbeitsdaten je Kleidungspunkt: Hautlage, Normale, Abstand (Modelleinheiten), Gewichte
     const BP: number[] = [], BN: number[] = [], OF: number[] = [], SI: number[] = [], SW: number[] = [];
-    for (const v of used) {
+    const src = geo.index;
+    const remap = new Int32Array(n).fill(-1);
+    const vert = (v: number) => {
+      if (remap[v] >= 0) return remap[v];
+      const j = BP.length / 3;
       P.fromBufferAttribute(pos, v); N.fromBufferAttribute(nor, v).normalize();
       BP.push(P.x, P.y, P.z); BN.push(N.x, N.y, N.z); OF.push(off[v] / scale);
       for (let k = 0; k < 4; k++) { SI.push(si.getComponent(v, k)); SW.push(sw.getComponent(v, k)); }
+      return (remap[v] = j);
+    };
+    // Saum als Linie: wo der Rand des Stücks durch ein Haut-Dreieck läuft, wird es dort geschnitten (vorher fielen
+    // angeschnittene Dreiecke ganz weg – der Saum folgte dem Zickzack der Haut)
+    const cuts = new Map<number, number>();
+    const cutVert = (a: number, b: number) => {
+      // a liegt im Stück, b nicht
+      const key = a * 65536 + b;
+      const hit = cuts.get(key);
+      if (hit !== undefined) return hit;
+      let lo = 0, hi = 1, o = off[a];
+      for (let it = 0; it < 7; it++) {
+        const mid = (lo + hi) / 2, e = evalEdge(a, b, mid);
+        if (e >= 0) { lo = mid; o = e; } else hi = mid;
+      }
+      const j = BP.length / 3, t = lo;
+      for (let k = 0; k < 3; k++) BP.push(pos.getComponent(a, k) + (pos.getComponent(b, k) - pos.getComponent(a, k)) * t);
+      N.set(nor.getX(a) + (nor.getX(b) - nor.getX(a)) * t, nor.getY(a) + (nor.getY(b) - nor.getY(a)) * t, nor.getZ(a) + (nor.getZ(b) - nor.getZ(a)) * t).normalize();
+      BN.push(N.x, N.y, N.z); OF.push(o / scale);
+      const wm = new Map<number, number>();
+      for (const [e, f] of [[a, 1 - t], [b, t]] as const) for (let k = 0; k < 4; k++) { const w = sw.getComponent(e, k) * f; if (w > 0) wm.set(si.getComponent(e, k), (wm.get(si.getComponent(e, k)) ?? 0) + w); }
+      const top = [...wm.entries()].sort((x, y) => y[1] - x[1]).slice(0, 4);
+      const sum = top.reduce((u, e) => u + e[1], 0) || 1;
+      for (let k = 0; k < 4; k++) { SI.push(top[k]?.[0] ?? 0); SW.push(top[k] ? top[k][1] / sum : 0); }
+      cuts.set(key, j);
+      return j;
+    };
+    let T: number[] = [];
+    /** je Dreieck des Stücks: Nummer des Haut-Dreiecks, aus dem es entstand */
+    let srcTri: number[] = [];
+    const full: number[] = [];
+    const triCount = src ? src.count / 3 : n / 3;
+    for (let t = 0; t < triCount; t++) {
+      const v = [src ? src.getX(t * 3) : t * 3, src ? src.getX(t * 3 + 1) : t * 3 + 1, src ? src.getX(t * 3 + 2) : t * 3 + 2];
+      const ins = (off[v[0]] >= 0 ? 1 : 0) + (off[v[1]] >= 0 ? 1 : 0) + (off[v[2]] >= 0 ? 1 : 0);
+      if (ins === 0) continue;
+      if (ins === 3) { T.push(vert(v[0]), vert(v[1]), vert(v[2])); srcTri.push(t); full.push(v[0], v[1], v[2]); continue; }
+      if (!CUT_HEMS) continue;
+      if (ins === 1) {
+        // Ecke a innen: kleines Dreieck bis zur Schnittlinie (Umlaufsinn bleibt)
+        const k = off[v[0]] >= 0 ? 0 : off[v[1]] >= 0 ? 1 : 2;
+        const a = v[k], b = v[(k + 1) % 3], c = v[(k + 2) % 3];
+        T.push(vert(a), cutVert(a, b), cutVert(a, c)); srcTri.push(t);
+      } else {
+        // Ecke c außen: Viereck aus zwei Dreiecken
+        const k = off[v[0]] < 0 ? 0 : off[v[1]] < 0 ? 1 : 2;
+        const c = v[k], a = v[(k + 1) % 3], b = v[(k + 2) % 3];
+        const bc = cutVert(b, c), ac = cutVert(a, c);
+        T.push(vert(a), vert(b), bc, vert(a), bc, ac); srcTri.push(t, t);
+      }
     }
-    let T = tris.map((v) => remap[v]);
-    const soft = kind === 'weste' || kind === 'jacke' || kind === 'tunika' || kind === 'ringel' || kind === 'mantelKurz' || kind === 'mantelLang' || kind === 'guertel' || kind === 'guertelEng' || kind === 'schal' || kind === 'hose' || kind === 'stiefel' || kind === 'hemd';
+    if (!T.length) return null;
+    // Maske: Hautpunkte, die dieses Stück eng bedeckt (weit abstehende Teile wie Stulpen und Mantelschöße verdecken
+    // nichts – dort sieht man von unten hinein), um den Saumrand zurückgenommen
+    const tight = new Uint8Array(n);
+    for (const v of full) if (off[v] <= COVER_TIGHT || BANDS.has(kind)) tight[v] = 1;
+    // hauteng (Handschuhe, Hose): kein Saumrand nötig – in den schmalen Spalt am Saum sieht man nicht hinein
+    let far = 0;
+    for (const v of full) if (off[v] > far) far = off[v];
+    // je weiter ein Stück absteht, desto weiter sieht man schräg unter seinen Saum: dann bleibt ein breiterer Rand stehen
+    // Bänder und Schienen liegen dicht auf der Schicht darunter (nicht auf der Haut): auch sie brauchen keinen Rand
+    const cover = this.erodeCover(tight, far <= SNUG || BANDS.has(kind) ? 0 : far <= 0.02 ? COVER_RINGS : COVER_RINGS + 1);
+    const soft = !HARD.has(kind);
     if (soft) {
       // einmal feiner unterteilen (jedes Dreieck in vier): runde Formen und Ränder statt grober Treppen
       const mid = new Map<string, number>();
@@ -752,6 +1094,7 @@ export class VroidBase {
         T2.push(a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca);
       }
       T = T2;
+      srcTri = srcTri.flatMap((t) => [t, t, t, t]);
     }
     const m = BP.length / 3;
     const p2 = new Float32Array(m * 3);
@@ -805,6 +1148,68 @@ export class VroidBase {
           if (d < OF[j]) for (let k = 0; k < 3; k++) p2[j * 3 + k] += BN[j * 3 + k] * (OF[j] - d);
         }
       }
+      // Beim Glätten rutschen Punkte seitlich über den Körper. Ihre Gewichte müssen mitwandern: jeder verschobene Punkt
+      // übernimmt die Gewichte der Haut, über der er jetzt liegt – sonst biegt er sich am Gelenk wie seine alte Stelle
+      // und die Haut sticht durch.
+      if (REFETCH_WEIGHTS) {
+        const cell = 0.02 / scale, lim = (0.002 / scale) ** 2;
+        const grid = new Map<number, number[]>();
+        const gk = (x: number, y: number, z: number) => (Math.floor(x / cell) * 73856093) ^ (Math.floor(y / cell) * 19349663) ^ (Math.floor(z / cell) * 83492791);
+        for (let i = 0; i < n; i++) {
+          const k = gk(pos.getX(i), pos.getY(i), pos.getZ(i));
+          const list = grid.get(k);
+          if (list) list.push(i); else grid.set(k, [i]);
+        }
+        const wm = new Map<number, number>();
+        for (let j = 0; j < m; j++) {
+          // Nahtpunkte bekommen die Gewichte ihres gemeinsamen Punkts (unten) – sonst reißt die Naht in Bewegung auf
+          if (weld[j] !== j) continue;
+          const nx = BN[j * 3], ny = BN[j * 3 + 1], nz = BN[j * 3 + 2];
+          const d = (p2[j * 3] - BP[j * 3]) * nx + (p2[j * 3 + 1] - BP[j * 3 + 1]) * ny + (p2[j * 3 + 2] - BP[j * 3 + 2]) * nz;
+          // Fußpunkt auf der Haut
+          const fx = p2[j * 3] - nx * d, fy = p2[j * 3 + 1] - ny * d, fz = p2[j * 3 + 2] - nz * d;
+          if ((fx - BP[j * 3]) ** 2 + (fy - BP[j * 3 + 1]) ** 2 + (fz - BP[j * 3 + 2]) ** 2 < lim) continue;
+          // die drei nächsten Hautpunkte derselben Körperseite (nicht das andere Bein)
+          const near: [number, number][] = [];
+          for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+            const list = grid.get(gk(fx + dx * cell, fy + dy * cell, fz + dz * cell));
+            if (!list) continue;
+            for (const i of list) {
+              if (nor.getX(i) * nx + nor.getY(i) * ny + nor.getZ(i) * nz < 0.3) continue;
+              const d2 = (pos.getX(i) - fx) ** 2 + (pos.getY(i) - fy) ** 2 + (pos.getZ(i) - fz) ** 2;
+              if (d2 < cell * cell) near.push([d2, i]);
+            }
+          }
+          if (!near.length) continue;
+          near.sort((x, y) => x[0] - y[0]);
+          wm.clear();
+          for (const [d2, i] of near.slice(0, 3)) {
+            const w = 1 / (d2 + lim * 0.25);
+            for (let k = 0; k < 4; k++) { const sw0 = sw.getComponent(i, k); if (sw0 > 0) wm.set(si.getComponent(i, k), (wm.get(si.getComponent(i, k)) ?? 0) + sw0 * w); }
+          }
+          const top = [...wm.entries()].sort((x, y) => y[1] - x[1]).slice(0, 4);
+          const sum = top.reduce((t, e) => t + e[1], 0) || 1;
+          for (let k = 0; k < 4; k++) { SI[j * 4 + k] = top[k]?.[0] ?? 0; SW[j * 4 + k] = top[k] ? top[k][1] / sum : 0; }
+        }
+        for (let j = 0; j < m; j++) if (weld[j] !== j) for (let k = 0; k < 4; k++) { SI[j * 4 + k] = SI[weld[j] * 4 + k]; SW[j * 4 + k] = SW[weld[j] * 4 + k]; }
+      }
+    }
+    // Mantelschöße hängen am Becken und folgen den Beinen nur zum Teil: vorher klebten sie als verschobene
+    // Oberschenkel-Haut an jedem Bein und rissen beim Ausfallschritt auseinander
+    if (kind === 'mantelLang' && TAIL_HIPS > 0) {
+      const hipsBone = bones.findIndex((b) => /J_Bip_C_Hips$/.test(b.name));
+      const wm = new Map<number, number>();
+      if (hipsBone >= 0) for (let j = 0; j < m; j++) {
+        const y = P.set(BP[j * 3], BP[j * 3 + 1], BP[j * 3 + 2]).applyMatrix4(mw).y;
+        const k = smooth(hipsY - 0.03, hipsY - 0.16, y) * TAIL_HIPS;
+        if (k <= 0) continue;
+        wm.clear();
+        for (let q = 0; q < 4; q++) if (SW[j * 4 + q] > 0) wm.set(SI[j * 4 + q], (wm.get(SI[j * 4 + q]) ?? 0) + SW[j * 4 + q] * (1 - k));
+        wm.set(hipsBone, (wm.get(hipsBone) ?? 0) + k);
+        const top = [...wm.entries()].sort((x, y2) => y2[1] - x[1]).slice(0, 4);
+        const sum = top.reduce((u, e) => u + e[1], 0) || 1;
+        for (let q = 0; q < 4; q++) { SI[j * 4 + q] = top[q]?.[0] ?? 0; SW[j * 4 + q] = top[q] ? top[q][1] / sum : 0; }
+      }
     }
     const i2 = new Uint16Array(SI), w2 = new Float32Array(SW);
     // Ringelhemd: Maske für die Streifen (zeichnet der Shader), alle anderen Stücke einfarbig
@@ -829,6 +1234,7 @@ export class VroidBase {
     }
     out.computeBoundingSphere();
     if (out.boundingSphere) out.boundingSphere.radius *= 1.6;
+    out.userData = { srcTri: Uint32Array.from(srcTri), cover } satisfies GarmentData;
     return out;
   }
 
@@ -951,8 +1357,98 @@ export class VroidBase {
 }
 
 /** Kleidungsstücke, die aus dem Körper erzeugt werden */
-export type GarmentKind = 'hose' | 'stiefel' | 'mantelKurz' | 'mantelLang' | 'guertel' | 'guertelEng'
-  | 'weste' | 'jacke' | 'tunika' | 'ringel' | 'hemd' | 'handschuhe' | 'schal';
+export type GarmentKind = 'hose' | 'stiefel' | 'mantelKurz' | 'mantelLang' | 'guertel'
+  | 'weste' | 'jacke' | 'tunika' | 'ringel' | 'hemd' | 'handschuhe' | 'schal'
+  | 'uniform' | 'armschiene' | 'beinschiene' | 'kuerass';
+
+/**
+ * Was unter Gürtel, Halstuch und Mantel liegt – danach richtet sich, wie weit außen sie sitzen:
+ * „grund“ = Hemd der Grundfigur, „eng“ = erzeugtes enges Hemd, sonst das genannte eigene Oberteil.
+ */
+export type TopUnder = 'grund' | 'eng' | 'ringel' | 'tunika' | 'jacke' | 'uniform';
+export interface GarmentCtx { under: TopUnder; coat: 'keiner' | 'kurz' | 'lang'; /** Stiefel getragen (Beinschienen sitzen dann auf dem Schaft) */ boots?: boolean }
+const PLAIN: GarmentCtx = { under: 'grund', coat: 'keiner' };
+
+/** Maße der Vorlage, nach denen die Stücke zugeschnitten werden (Weltmaß, Ruhehaltung) */
+interface Region { hipsY: number; kneeY: number; ankleY: number; neckY: number; leg: number; ankleZ: number; toeZ: number; elbowX: number; wristX: number }
+
+/** Körperregionen als Bits; ein Hautpunkt gehört zu einer Region, wenn ihre Knochen zusammen mehr als die Hälfte wiegen */
+const C_HAND = 0, C_ARM = 1, C_UPARM = 2, C_TORSO = 3, C_PELVIS = 4, C_FOOT = 5, C_UPLEG = 6, C_LOWLEG = 7, C_LOWARM = 8, NCLS = 9;
+function boneClass(b: string): number {
+  let c = 0;
+  if (/Hand$|Thumb|Index|Middle|Ring|Little/.test(b)) c |= 1 << C_HAND;
+  if (/UpperArm$|LowerArm$/.test(b)) c |= 1 << C_ARM;
+  if (/UpperArm$/.test(b)) c |= 1 << C_UPARM;
+  if (/LowerArm$/.test(b)) c |= 1 << C_LOWARM;
+  if (/Hips$|Spine$|Chest$|UpperChest$|Shoulder$/.test(b)) c |= 1 << C_TORSO;
+  if (/Hips$|_Spine$/.test(b)) c |= 1 << C_PELVIS;
+  if (/Foot$|Toe/.test(b)) c |= 1 << C_FOOT;
+  if (/UpperLeg$/.test(b)) c |= 1 << C_UPLEG;
+  if (/LowerLeg$/.test(b)) c |= 1 << C_LOWLEG;
+  return c;
+}
+
+/** Stücke ohne Unterteilen und Glätten (harte Teile, schmale Riemen) */
+const HARD = new Set<GarmentKind>(['handschuhe', 'armschiene', 'beinschiene']);
+/** Schmale Stücke, die dicht auf der Schicht unter ihnen liegen: sie verdecken bis an ihren Rand */
+const BANDS = new Set<GarmentKind>(['schal', 'guertel', 'armschiene', 'beinschiene']);
+/** Säume an der Schnittlinie schneiden (statt angeschnittene Dreiecke wegzulassen) */
+const CUT_HEMS = true;
+/** Anteil, mit dem die Schöße des langen Mantels am Becken hängen (Rest folgt dem Bein) */
+const TAIL_HIPS = 0.55;
+
+/** Schlüssel eines Stücks: der Zusammenhang zählt nur bei den Stücken, deren Form von ihm abhängt */
+export function garmentKey(kind: GarmentKind, ctx: GarmentCtx) {
+  const coat = ctx.coat !== 'keiner';
+  if (kind === 'guertel' || kind === 'mantelKurz' || kind === 'mantelLang' || kind === 'kuerass') return `${kind}@${ctx.under}${coat ? '+m' : ''}`;
+  if (kind === 'ringel' || kind === 'tunika' || kind === 'jacke' || kind === 'uniform') return coat ? `${kind}+m` : kind;
+  if (kind === 'armschiene') return `${kind}@${ctx.under}/${ctx.coat}`;
+  if (kind === 'beinschiene') return `${kind}@${ctx.boots ? 'stiefel' : 'hose'}`;
+  if (kind === 'schal') return `${kind}@${ctx.under}/${ctx.coat}`;
+  return kind;
+}
+
+/** Daten am erzeugten Stück bzw. am zusammengeführten Satz (für die Maske) */
+export interface GarmentData { srcTri: Uint32Array; cover: Uint8Array }
+export interface GarmentSetData { key: string; src: Int32Array; level: Uint8Array }
+
+/** Gewichte nach dem Glätten von der Haut unter der neuen Lage holen */
+const REFETCH_WEIGHTS = true;
+/** Ein Stück verdeckt nur, wo es höchstens so weit von der Haut absteht (m) */
+const COVER_TIGHT = 0.04;
+/** Saumrand: so viele Punkt-Ringe der unteren Schicht bleiben unter jedem Saum stehen */
+const COVER_RINGS = 1;
+/** bis zu diesem Abstand (m) gilt ein Stück als hauteng */
+const SNUG = 0.012;
+/** Grundkleidung (eigenes Netz, lose Stellen): strenger */
+const BASE_TIGHT = 0.025;
+const BASE_RINGS = 1;
+/** Haare bleiben bis so weit über dem Hutrand stehen (m, Kopfraum) */
+const CAP_RIM = 0.035;
+
+/** Deckt die Textur an dieser Stelle? (Kleidung der Grundfigur hat teils durchsichtige Bereiche) */
+function alphaSampler(t: Texture | null): ((u: number, v: number) => boolean) | null {
+  const img = t?.image as (CanvasImageSource & { width: number; height: number }) | undefined;
+  if (!t || !img || !img.width) return null;
+  try {
+    const c = document.createElement('canvas');
+    c.width = img.width; c.height = img.height;
+    const g = c.getContext('2d', { willReadFrequently: true })!;
+    g.drawImage(img, 0, 0);
+    const a = g.getImageData(0, 0, c.width, c.height).data;
+    const w = c.width, h = c.height;
+    return (u, v) => {
+      const x = Math.min(w - 1, Math.floor((u - Math.floor(u)) * w)), y = Math.min(h - 1, Math.floor((v - Math.floor(v)) * h));
+      return a[(y * w + x) * 4 + 3] >= 128;
+    };
+  } catch { return null; }
+}
+
+/** Ebene jedes Kleidungsstücks, innen → außen: ein Stück verdeckt, was auf einer niedrigeren Ebene unter ihm liegt */
+export const GARMENT_LEVEL: Record<GarmentKind, number> = {
+  hose: 1, handschuhe: 1, hemd: 2, ringel: 2, tunika: 2, weste: 3, jacke: 3, uniform: 3, guertel: 4, kuerass: 4, stiefel: 5,
+  mantelKurz: 6, mantelLang: 6, beinschiene: 6, schal: 7, armschiene: 8,
+};
 
 /**
  * Unter Mantel und Weste wird das weite Hemd der Grundfigur (Puffärmel, abstehender Kragen) durch ein eng anliegendes,
@@ -964,13 +1460,24 @@ export const SHIRT_CAP = 0.014;
  * Abstand der Grundkleidung zur Haut je Hautpunkt (−1 = dort liegt keine). Kleidung, die darüber getragen wird,
  * muss mindestens so weit außen liegen – sonst sticht Hemd oder Hose hindurch.
  */
-export interface Clearance { top: Float32Array; bottom: Float32Array; shoes: Float32Array }
+export interface Clearance {
+  top: Float32Array; bottom: Float32Array; shoes: Float32Array;
+  /** 1 = dieser Hautpunkt liegt unter eng anliegendem, deckendem Hemd bzw. Schuh der Grundfigur */
+  topSolid: Uint8Array; shoesSolid: Uint8Array;
+  /** 1 = dort liegt Grundkleidung, aber lose oder mit Loch in der Textur (verdeckt nichts sicher) */
+  topLoose: Uint8Array; shoesLoose: Uint8Array;
+  /** je Teil der Grundkleidung (Index wie parts): nächster Hautpunkt jedes seiner Punkte, −1 = keiner */
+  owners: Map<number, Int32Array>;
+}
 
 /** Gemessene Ankerpunkte: Ohrläppchen und Augenhöhe im Kopfraum, Schultern im Brustraum, Schärpe im Hüftraum */
 /** Aus der Frisur gemessene Kappe (Kopfraum): Netz, Sitzhöhe, Mitte und mittlerer Randradius */
 export interface CapShell { geo: BufferGeometry; seatY: number; cx: number; cz: number; ringR: number }
 
-export interface Anchors { earLobe: Vector3; eyeY: number; shoulders: [Vector3, Vector3]; knot: Vector3; buckle: Vector3; knotEng: Vector3; buckleEng: Vector3 }
+export interface Anchors { earLobe: Vector3; eyeY: number; shoulders: [Vector3, Vector3] }
+
+/** Knoten und Schnalle am Band: Lage im Hüftraum und die Knochen, die das Band dort bewegen */
+export interface BeltAnchors { knot: Vector3; knotPin: SkinPin; buckle: Vector3; bucklePin: SkinPin }
 
 const smooth = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
@@ -980,32 +1487,50 @@ const smooth = (a: number, b: number, x: number) => { const t = Math.max(0, Math
  * cTop/cBot/cShoe: Abstand der Grundkleidung (Hemd, Hose, Schuhe) an diesem Punkt, −1 = keine.
  * Schichten von innen nach außen: Hemd → Ringelhemd/Tunika → Weste/Jacke → Gürtel/Schärpe → Schal → Mantel.
  */
-function garmentOffset(kind: GarmentKind, b: string, P: Vector3, N: Vector3, r: { hipsY: number; kneeY: number; ankleY: number; neckY: number; leg: number }, cTop: number, cBot: number, cShoe: number): number {
-  const isPelvis = /Hips$|_Spine$/.test(b);
-  const arm = /UpperArm$|LowerArm$/.test(b);
-  const hand = /Hand$|Thumb|Index|Middle|Ring|Little/.test(b);
-  const torso = /Hips$|Spine$|Chest$|UpperChest$|Shoulder$/.test(b);
+function garmentOffset(kind: GarmentKind, who: ArrayLike<number>, P: Vector3, N: Vector3, r: Region, cTop: number, cBot: number, cShoe: number, ctx: GarmentCtx): number {
+  const isPelvis = who[C_PELVIS] > 0.5;
+  const arm = who[C_ARM] > 0.5;
+  const hand = who[C_HAND] > 0.5;
+  const torso = who[C_TORSO] > 0.5;
+  const upperArm = who[C_UPARM] >= who[C_LOWARM];
+  const foot = who[C_FOOT] > 0.5;
   const under = Math.max(cTop, cBot, 0);
+  // Außenfläche eines eigenen Oberteils (Ringelhemd, Tunika, Jacke, Uniformrock) an dieser Stelle: was darüber getragen
+  // wird, muss darüber liegen. Vorher rechneten Gürtel und Mantel immer mit dem engen Hemd und versanken in der Jacke.
+  const own = ctx.under === 'ringel' || ctx.under === 'tunika' || ctx.under === 'jacke' || ctx.under === 'uniform';
+  // Unter einem Mantel sitzen auch eigene Oberteile schlank: sie folgen sonst den Puffärmeln des Hemds der Grundfigur,
+  // und an deren Saum blitzt das Oberteil unter dem Mantelärmel hervor
+  const cT = ctx.coat !== 'keiner' && cTop >= 0 ? Math.min(cTop, SHIRT_CAP) : cTop;
+  // Wo die Hose reicht (bis knapp über die Hüfte), liegt jedes Oberteil klar über ihr: ein eng anliegender Hemdsaum
+  // lag sonst auf gleicher Höhe wie der Hosenbund und flackerte auf Entfernung
+  const overHose = (o: number) => (P.y < r.hipsY + 0.07 ? Math.max(o, 0.017) : o);
+  const slim = cTop < 0 ? 0 : overHose(Math.min(cTop * 0.6, SHIRT_CAP - 0.004) + 0.004);
+  const T = ctx.under === 'jacke' || ctx.under === 'uniform' ? (cTop < 0 ? 0.018 : arm ? Math.max(0.016, cT + 0.008) : Math.max(0.018, cT + 0.009))
+    : ctx.under === 'tunika' ? (cTop < 0 ? 0.021 : overHose(Math.max(0.012, cT + 0.006)))
+    : ctx.under === 'ringel' ? (cTop < 0 ? 0 : overHose(cT + 0.004)) : 0;
+  /** Außenfläche dessen, was am Oberkörper unter Platten und Schienen liegt (0 = nackte Haut) */
+  const topSurface = () => (own ? (ctx.under === 'ringel' || ctx.under === 'tunika' ? (cTop < 0 ? 0 : T) : arm || torso ? T : 0)
+    : cTop < 0 ? 0 : ctx.under === 'eng' ? slim : cTop);
   switch (kind) {
     case 'hose':
       // Bund knapp über der Hüfte, Saum steckt in den Stiefeln; nur nach Höhe (das Becken hat gemischte Gewichte),
       // Hände und Arme liegen in der T-Pose ohnehin weiter oben
       // bis zum Knöchel (ohne Stiefel sonst eine zu kurze Hose), Fuß frei für die Schuhe
-      if (hand || /Arm$|Foot$|Toe/.test(b) || P.y > r.hipsY + 0.07 || P.y < r.ankleY + 0.012) return -1;
+      if (hand || arm || foot || P.y > r.hipsY + 0.07 || P.y < r.ankleY + 0.012) return -1;
       return 0.011;
     case 'ringel':
       // Ringelhemd: liegt dicht auf dem Hemd der Grundfigur, überall wo es Hemd gibt
       if (cTop < 0 || hand) return -1;
-      return cTop + 0.004;
+      return overHose(cT + 0.004);
     case 'hemd':
       // eng anliegendes Hemd überall, wo die Grundfigur eines trägt (ersetzt es unter Mantel und Weste)
       if (cTop < 0 || hand) return -1;
-      return Math.min(cTop * 0.6, SHIRT_CAP - 0.004) + 0.004;
+      return slim;
     case 'tunika':
       // lange Tunika: Oberkörper und Ärmel wie das Hemd, unten bis zur Mitte des Oberschenkels
       if (hand) return -1;
-      if (cTop >= 0) return Math.max(0.012, under + 0.006);
-      if ((torso || /UpperLeg$/.test(b)) && P.y < r.hipsY && P.y > r.hipsY - (r.hipsY - r.kneeY) * 0.5) return Math.max(0.02, under + 0.008 + (r.hipsY - P.y) * 0.06);
+      if (cTop >= 0) return overHose(Math.max(0.012, cT + 0.006));
+      if (who[C_TORSO] + who[C_UPLEG] > 0.5 && P.y < r.hipsY && P.y > r.hipsY - (r.hipsY - r.kneeY) * 0.5) return Math.max(0.02, under + 0.008 + (r.hipsY - P.y) * 0.06);
       return -1;
     case 'weste': {
       // Weste über dem engen Hemd: Rumpf ohne Ärmel, vorn offen, bis über die Schultern
@@ -1014,41 +1539,51 @@ function garmentOffset(kind: GarmentKind, b: string, P: Vector3, N: Vector3, r: 
       if (P.y < r.hipsY - 0.04 || P.y > r.neckY + 0.02) return -1;
       // schmaler als die Mantelöffnung, damit die Weste im Ausschnitt sichtbar bleibt
       if (N.z > 0.35 && N.y < 0.45 && Math.abs(P.x) < 0.012 + Math.max(0, P.y - (r.hipsY + 0.25)) * 0.12) return -1;
-      return Math.max(0.016, Math.min(Math.max(cTop, 0), SHIRT_CAP) + 0.008);
+      // immer 8 mm über dem engen Hemd darunter
+      return Math.max(0.016, slim + 0.008);
     }
     case 'jacke': {
       // Weste: Rumpf ohne Ärmel, vorn offen; Jacke: überall, wo die Grundfigur ein Hemd trägt, dazu lange Ärmel.
       // Fläche nach dem Hemd statt nach Knochen – die Brust hängt an eigenen Knochen (sonst Löcher)
       if (hand) return -1;
-      if (arm) return Math.max(0.016, cTop + 0.008);
+      if (arm) return Math.max(0.016, cT + 0.008);
       if (cTop < 0 && !(torso && P.y > r.hipsY - 0.04 && P.y < r.neckY + 0.02)) return -1;
-      return Math.max(0.018, cTop + 0.009);
+      return Math.max(0.018, cT + 0.009);
     }
     case 'guertel':
-    case 'guertelEng':
       // Schärpe bzw. Koppel: breites Band um die Taille, über Hemd, Hose, Weste und Tunika, unter dem Mantel
-      // (Eng: über dem erzeugten engen Hemd unter Mantel/Weste)
+      // (eng: über dem erzeugten engen Hemd unter Mantel/Weste; über einem eigenen Oberteil knapp auf diesem)
       if (!isPelvis || P.y < r.hipsY - 0.005 || P.y > r.hipsY + 0.065) return -1;
-      return kind === 'guertelEng' ? Math.max(0.026, Math.min(under, SHIRT_CAP) + 0.02) : Math.max(0.026, under + 0.026);
+      if (own) return Math.max(0.026, T + 0.008);
+      return ctx.under === 'eng' ? Math.max(0.026, Math.min(under, SHIRT_CAP) + 0.02, slim + 0.014) : Math.max(0.026, under + 0.026);
     case 'handschuhe':
       // Fäustlinge: Hand und Finger, knapp über das Handgelenk
       if (!hand) return -1;
       return 0.006;
     case 'schal':
       // Halstuch: Ring um den Hals auf Höhe des Kragens
-      if (P.y < r.neckY - 0.06 || P.y > r.neckY + 0.025 || hand || arm) return -1;
-      return Math.max(0.022, cTop + 0.012);
+      // nur um den Hals: die Schultern liegen auf gleicher Höhe und gehören nicht dazu (sonst wird es ein Schulterkragen)
+      if (P.y < r.neckY - 0.06 || P.y > r.neckY + 0.025 || hand || arm || Math.abs(P.x) > 0.1) return -1;
+      {
+        let o = own ? Math.max(0.022, T + 0.01) : Math.max(0.022, cTop + 0.012);
+        // über dem Mantelkragen, wo einer liegt (vorher lag das Tuch auf gleicher Höhe wie der Mantel und flackerte)
+        if (ctx.coat !== 'keiner') {
+          const c = garmentOffset(ctx.coat === 'kurz' ? 'mantelKurz' : 'mantelLang', who, P, N, r, cTop, cBot, cShoe, ctx);
+          if (c >= 0) o = Math.max(o, c + 0.008);
+        }
+        return o;
+      }
     case 'stiefel':
       // vom Knöchel bis knapp unter das Knie, oben eine weite Stulpe – immer über Hose und Schuhen
-      if (!/LowerLeg$|Foot$|Toe/.test(b) || P.y > r.kneeY - r.leg * 0.08 || P.y < r.ankleY - 0.06) return -1;
+      if (who[C_LOWLEG] + who[C_FOOT] <= 0.5 || P.y > r.kneeY - r.leg * 0.08 || P.y < r.ankleY - 0.06) return -1;
       return Math.max(0.026 + smooth(r.kneeY - r.leg * 0.32, r.kneeY - r.leg * 0.1, P.y) * 0.022, cBot + 0.008, cShoe + 0.005);
     case 'mantelKurz':
     case 'mantelLang': {
       // eng über Hemd und Weste (2 cm), nur über der Schärpe weiter; Ärmel schlank – vorher überall 3,4–3,6 cm (klobig)
       // unter dem Mantel liegt immer das enge Hemd (höchstens SHIRT_CAP dick)
       const thin = Math.min(Math.max(cTop, 0), SHIRT_CAP);
-      const over = Math.max(0.024, thin + 0.016);
-      if (arm) return /UpperArm$/.test(b) ? Math.max(0.018, thin + 0.01) : Math.max(0.015, thin + 0.008);
+      const over = own ? Math.max(0.024, T + 0.012) : Math.max(0.024, thin + 0.016);
+      if (arm) return own ? Math.max(0.018, T + 0.009) : upperArm ? Math.max(0.018, thin + 0.01) : Math.max(0.015, thin + 0.008);
       // bis über die Schultern (die Schulterhaut liegt auf Höhe des Halsansatzes; Hals und Kopf gehören zu eigenen Knochen)
       if (torso && P.y >= r.hipsY - 0.03 && P.y < r.neckY + 0.03) {
         // offene Front: schmales V, Schultern und nach oben zeigende Flächen bleiben bedeckt
@@ -1058,12 +1593,42 @@ function garmentOffset(kind: GarmentKind, b: string, P: Vector3, N: Vector3, r: 
         return over + band * 0.016;
       }
       // Schöße nur beim langen Mantel: seitlich und hinten bis übers Knie, nach unten etwas weiter
-      if (kind === 'mantelLang' && (torso || /UpperLeg$/.test(b)) && P.y < r.hipsY && P.y > r.kneeY + 0.02) {
+      if (kind === 'mantelLang' && who[C_TORSO] + who[C_UPLEG] > 0.5 && P.y < r.hipsY && P.y > r.kneeY + 0.02) {
         if (N.z > 0.2) return -1;
         if ((P.x > 0 && N.x < -0.35) || (P.x < 0 && N.x > 0.35)) return -1;
         return Math.max(0.03 + (r.hipsY - P.y) * 0.16, over + 0.01);
       }
       return -1;
+    }
+    case 'uniform': {
+      // Uniformrock: geschlossen, lange Ärmel, kurzer Schoß bis über die Hüfte
+      if (hand) return -1;
+      if (arm) return Math.max(0.016, cT + 0.008);
+      if (cTop >= 0 || (torso && P.y > r.hipsY - 0.04 && P.y < r.neckY + 0.02)) return Math.max(0.018, cT + 0.009);
+      if (who[C_TORSO] + who[C_UPLEG] > 0.5 && P.y <= r.hipsY && P.y > r.hipsY - 0.13) return 0.02 + (r.hipsY - P.y) * 0.07;
+      return -1;
+    }
+    case 'armschiene': {
+      // Schiene um den Unterarm, über Ärmel und Mantel
+      const f = (Math.abs(P.x) - r.elbowX) / Math.max(0.01, r.wristX - r.elbowX);
+      if (!arm || upperArm || hand || f < 0.22 || f > 0.9) return -1;
+      let o = Math.max(0.008, topSurface() + 0.006);
+      if (ctx.coat !== 'keiner') {
+        const c = garmentOffset(ctx.coat === 'kurz' ? 'mantelKurz' : 'mantelLang', who, P, N, r, cTop, cBot, cShoe, ctx);
+        if (c >= 0) o = Math.max(o, c + 0.006);
+      }
+      return o;
+    }
+    case 'beinschiene': {
+      // Platte vorn auf dem Schienbein, auf dem Stiefelschaft bzw. der Hose
+      if (who[C_LOWLEG] <= 0.5 || N.z < 0.05 || P.y > r.kneeY - r.leg * 0.14 || P.y < r.ankleY + r.leg * 0.14) return -1;
+      const base = ctx.boots ? garmentOffset('stiefel', who, P, N, r, cTop, cBot, cShoe, ctx) : 0.011;
+      return (base < 0 ? 0.011 : base) + 0.007;
+    }
+    case 'kuerass': {
+      // Brustplatte: Rumpf ohne Ärmel, von über der Schärpe bis unter den Hals
+      if (hand || arm || !torso || P.y < r.hipsY + 0.075 || P.y > r.neckY - 0.015) return -1;
+      return Math.max(0.026, topSurface() + 0.009);
     }
   }
 }

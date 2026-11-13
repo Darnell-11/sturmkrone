@@ -14,6 +14,7 @@ import {
   type AnimationAction,
   BufferAttribute,
   BufferGeometry,
+  Sphere,
   type Object3D,
   type Skeleton,
 } from 'three';
@@ -31,8 +32,12 @@ import type { ColorRepresentation, Material, Mesh } from 'three';
 import { disposeObject, markShared } from '../../render/dispose';
 import type { CharacterAssets } from './assets';
 import { buildCharacterGeometry, LIMB_EXT } from './builder';
-import { slotTurn, VROID_BONES, VroidBase, type GarmentKind } from './vroid';
-import { attachHeadgear, attachOutfit } from './animeHats';
+import { GARMENT_LEVEL, garmentKey, slotTurn, VROID_BONES, VroidBase, type GarmentKind, type GarmentSetData } from './vroid';
+import type { AuditLayer } from './audit';
+import { maskEngine, type MaskLayer } from './bodyMask';
+import { SocketRig } from './sockets';
+import { loadoutFromLook, resolveLoadout, type Loadout } from '../../data/equipment';
+import { attachHeadgear, buildBuckle, buildEpaulette, buildKnot, buildPauldron, CAPPED } from './animeHats';
 
 const CURL_Z = new Vector3(0, 0, 1), CURL_X = new Vector3(1, 0, 0);
 
@@ -43,6 +48,13 @@ function isFemale(l: CharacterLook) { return ['lang', 'pferdeschwanz', 'zoepfe',
 export const CHARACTER_SCALE = 0.8;
 
 const IDENTITY = new Matrix4();
+/**
+ * Halbmesser der Hüllkugel einer Figur um ihre Hüfte (m): kein Körperteil ist in irgendeiner Pose weiter entfernt.
+ * three.js berechnet die Kugel eines Skelett-Netzes sonst nur einmal aus der ersten Pose – liegt die Figur später,
+ * verschwinden Haare, Gesicht oder Kleidung einzeln am Bildrand. Die Kugel folgt deshalb der Hüfte; so bleibt sie eng
+ * (eine feste, große Kugel hielt 30 Figuren im Schattenbild und kostete ein Fünftel mehr Bildzeit).
+ */
+const CULL_RADIUS = 1.45;
 const geoCache = new Map<string, { main: BufferGeometry; detail: BufferGeometry | null; users: number }>();
 
 function lookKey(l: CharacterLook) { return JSON.stringify(l); }
@@ -169,7 +181,6 @@ export class Character {
   private face: { mesh: SkinnedMesh; blink: number; joy: number; mouth: number } | null = null;
   private blinkT = 2 + Math.random() * 3;
   private headgear: Group | null = null;
-  private outfit: Group[] = [];
   /** Aus dem Körper erzeugte Kleidung (Hose, Stiefel, Mantel) */
   private garments: SkinnedMesh[] = [];
   private mesh: SkinnedMesh | null = null;
@@ -208,6 +219,7 @@ export class Character {
     }
     this.rig.scale.setScalar(CHARACTER_SCALE);
     this.holder.add(this.rig);
+    this.sockets = new SocketRig(this.rig, 'block', (n) => assets.rig.getObjectByName(n)?.getWorldQuaternion(new Quaternion()) ?? null);
     applyAnimeProportions(this.rig, this.bones);
     this.mixer = new AnimationMixer(this.rig);
     this.mixer.addEventListener('finished', (e) => {
@@ -229,7 +241,7 @@ export class Character {
     const held = { l: this.bones.handslotl?.children[0] ?? null, r: this.bones.handslotr?.children[0] ?? null };
     // gehaltene Waffen wandern zur neuen Figur – vorher abnehmen, damit sie nicht mit der alten freigegeben werden
     held.l?.removeFromParent(); held.r?.removeFromParent();
-    if (old) { this.mixer?.stopAllAction(); this.mixer?.uncacheRoot(old); for (const g of this.garments) releaseGarment(g); this.garments = []; disposeRig(old); }
+    if (old) { this.mixer?.stopAllAction(); this.mixer?.uncacheRoot(old); this.undress(); disposeRig(old); }
     this.vroid = vb;
     this.actions.clear();
     this.current = null;
@@ -251,6 +263,7 @@ export class Character {
       if (held[s]) slot.add(held[s]!);
       this.curl(s, held[s] ? 1 : 0.3);
     }
+    this.sockets = new SocketRig(this.rig, 'vroid', (n) => vb.restQuat(n));
     this.face = null;
     this.rig.traverse((o) => {
       const m = o as SkinnedMesh;
@@ -281,20 +294,18 @@ export class Character {
     this.mountLamp();
   }
 
-  /** Laterne ans Bein hängen: am Becken, außen an der rechten Hüfte, etwa in Oberschenkelhöhe */
+  /** Laterne an die Hüfte hängen (Socket „legs“, Maße in Metern): außen an der Hüfte, etwa in Oberschenkelhöhe */
   private mountLamp() {
     this.lamp?.removeFromParent();
     this.lamp = null;
-    const hips = this.bones.hips;
-    if (!hips) { Character.lamped.delete(this); return; }
-    this.rig.updateMatrixWorld(true);
-    const ws = new Vector3();
-    hips.getWorldScale(ws);
-    const k = 1 / Math.max(1e-4, (ws.y + ws.x) / 2);
-    const lamp = createLamp(k * 1.25);
-    lamp.position.set(-0.27 * k, 0.04 * k, 0.0);
+    const node = this.sockets.node('legs');
+    if (!node) { Character.lamped.delete(this); return; }
+    this.sockets.normalize();
+    const lamp = createLamp(1.25);
+    // Anime-Figur: wie bisher an der linken Hüfte (die rechte Hand führt die Waffe), der Halter schaut nach hinten
+    if (this.vroid) { lamp.position.set(0.27, 0.04, 0); lamp.rotation.y = Math.PI; } else lamp.position.set(-0.27, 0.04, 0);
     lamp.userData.holder = this.holder;
-    hips.add(lamp);
+    node.add(lamp);
     this.lamp = lamp;
     Character.lamped.add(this);
   }
@@ -321,27 +332,7 @@ export class Character {
       mat.depthWrite = !p.transparent;
       m.material = mat;
     });
-    // Kopfschmuck und Piraten-Kleidung neu aufsetzen
-    disposeObject(this.headgear);
-    this.headgear = null;
-    for (const o of this.outfit) disposeObject(o);
-    const chest = this.rig.getObjectByName('J_Bip_C_Chest'), hips = this.rig.getObjectByName('J_Bip_C_Hips');
-    const marine = look.outfit === 'uniform' || look.hat === 'marine' || look.hat === 'zweispitz';
-    // gemessene Anker (Ohrläppchen, Schultern, Schärpe) statt geschätzter Abstände
-    const an0 = vb.anchors();
-    // unter Mantel, Weste, Jacke, Tunika und Ringelhemd sitzt das enge Band – Knoten und Schnalle dorthin
-    const engBand = look.outfit === 'matrose' || look.outfit === 'tunika' || look.outfit === 'jacke' || look.coat !== 'keiner' || look.outfit === 'weste';
-    const an = engBand ? { ...an0, knot: an0.knotEng, buckle: an0.buckleEng } : an0;
-    this.outfit = chest && hips ? attachOutfit(chest, hips, this.rig.getObjectByName('J_Bip_L_UpperArm') ?? null, this.rig.getObjectByName('J_Bip_R_UpperArm') ?? null, look, marine ? 'marine' : 'pirat', this.outline, an) : [];
-    this.dressVroid(vb, look);
-    const head = this.rig.getObjectByName('J_Bip_C_Head');
-    const face = { beard: look.beard !== 'keiner' ? vb.beard(look.beard) : null, scar: look.scar ? vb.scarPlacement() : null, cap: (sink: number, margin: number) => vb.capShell(sink, margin) };
-    if (head) this.headgear = attachHeadgear(head, this.rig.getObjectByName('J_Adj_L_FaceEye') ?? null, this.rig.getObjectByName('J_Adj_R_FaceEye') ?? null, look, this.outline, vb.hairFit, an, face);
-    const h = Math.min(1.1, Math.max(0.9, look.height));
-    const base = vb.template.scale.x;
-    const wide = look.body === 'kraeftig' ? 1.07 : look.body === 'schmal' ? 0.95 : 1;
-    this.rig.scale.set(base * h * wide, base * h, base * h * wide);
-    this.stylize(this.holder);
+    this.equipVroid(vb, look, this.custom ?? loadoutFromLook(look));
   }
 
   /**
@@ -360,70 +351,205 @@ export class Character {
     for (const h of hulls) h.removeFromParent();
   }
 
-  /**
-   * Piratenkleidung: Hose statt Faltenrock (die Grundfigur trägt eine Schuluniform), hohe Stiefel und Mantel.
-   * Die Stücke entstehen aus dem Körper selbst und bewegen sich deshalb genau mit.
-   */
-  private dressVroid(vb: VroidBase, look: CharacterLook) {
-    for (const g of this.garments) releaseGarment(g);
+  /** Halterungen der Figur (Head, Chest, Legs, Feet, Hands, MainHand, OffHand) */
+  sockets!: SocketRig;
+  /** Was die Figur gerade trägt */
+  loadout: Loadout | null = null;
+  /** Von außen gesetzte Ausrüstung (statt der aus dem Aussehen abgeleiteten) */
+  private custom: Loadout | null = null;
+  /** Netze mit eigener Dreiecksliste (verdeckte Dreiecke entfernt): Punktdaten bleiben die der Vorlage */
+  private masked: { mesh: SkinnedMesh; geo: BufferGeometry; src: BufferGeometry; index: BufferAttribute | null }[] = [];
+  private garmentIndex: BufferAttribute | null = null;
+
+  /** Ausrüstung direkt setzen, ohne das Aussehen zu ändern; null = wieder aus dem Aussehen ableiten */
+  equip(loadout: Loadout | null) {
+    this.custom = loadout;
+    this.setLook(this.look);
+  }
+
+  /** Kleidung, Hut, Anker und Masken abnehmen und alles freigeben, was nur dieser Figur gehört */
+  private undress() {
+    disposeObject(this.headgear);
+    this.headgear = null;
+    for (const a of this.sockets?.takeAnchors() ?? []) disposeObject(a);
+    const engine = this.vroid ? maskEngine(this.vroid) : null;
+    for (const g of this.garments) releaseGarment(g, !!engine?.release(this.garmentIndex));
     this.garments = [];
-    // Ringelhemd, Tunika und Jacke ersetzen das Hemd der Grundfigur (darunter würde es an Falten durchstechen);
-    // unter Mantel und Weste tritt ein eng anliegendes Hemd an seine Stelle (schlanke Mäntel ohne Durchstechen)
-    const ownTop = look.outfit === 'matrose' || look.outfit === 'tunika' || look.outfit === 'jacke';
-    const slimTop = !ownTop && (look.coat !== 'keiner' || look.outfit === 'weste');
-    const coversTop = ownTop || slimTop;
+    this.garmentIndex = null;
+    for (const k of this.masked) { k.mesh.geometry = k.src; releaseShared(k.geo, !!engine?.release(k.index)); }
+    this.masked = [];
+    this.worn = [];
+    this.wornPart = null;
+  }
+
+  /** Netz bekommt eine eigene Dreiecksliste; alle Punktdaten teilt es weiter mit der Vorlage */
+  private mask(m: SkinnedMesh, src: BufferGeometry, index: BufferAttribute, fromEngine: boolean) {
+    const geo = new BufferGeometry();
+    for (const k in src.attributes) geo.setAttribute(k, src.attributes[k]);
+    geo.setIndex(index);
+    geo.boundingSphere = src.boundingSphere;
+    m.geometry = geo;
+    this.masked.push({ mesh: m, geo, src, index: fromEngine ? index : null });
+  }
+
+  /**
+   * Ausrüstung anlegen (data/equipment.ts): Hüllen aus dem Körper (Hose, Hemd, Mantel …), starre Teile auf Haut-Ankern,
+   * Kopfbedeckung. Was unter deckender Kleidung liegt, wird nicht gezeichnet (bodyMask.ts).
+   */
+  private equipVroid(vb: VroidBase, look: CharacterLook, loadout: Loadout) {
+    this.undress();
+    this.loadout = loadout;
+    const R = resolveLoadout(loadout);
+    const engine = maskEngine(vb);
+    // deckende Schichten: erzeugte Stücke und die sichtbare Kleidung der Grundfigur
+    const layers: MaskLayer[] = [];
+    for (const s of R.shells) {
+      const cover = vb.garmentCover(s.kind, R.ctx);
+      if (cover) layers.push({ key: garmentKey(s.kind, R.ctx), level: GARMENT_LEVEL[s.kind], cover });
+    }
+    if (R.base.top) layers.push({ key: 'grund.top', level: 1, cover: vb.baseCover('top') });
+    if (R.base.shoes) layers.push({ key: 'grund.shoes', level: 1, cover: vb.baseCover('shoes') });
+    const cap = CAPPED[R.hat];
     this.rig.traverse((o) => {
       const m = o as SkinnedMesh;
       const i = m.userData.vroidPart as number | undefined;
       if (!m.isSkinnedMesh || i === undefined) return;
-      // Hose der Grundfigur ausblenden: an gebeugten Knien stach dort die Haut durch – die erzeugte Hose bewegt sich genau mit
-      if (vb.parts[i].slot === 'bottom') m.visible = false;
-      if (vb.parts[i].slot === 'top') m.visible = !coversTop;
+      const p = vb.parts[i], src = vb.partGeo[i];
+      // Hose bzw. Rock der Grundfigur bleibt aus: an gebeugten Knien stach dort die Haut durch – die erzeugte Hose bewegt sich genau mit
+      if (p.slot === 'bottom') { m.visible = false; return; }
+      if (p.slot === 'top') m.visible = R.base.top;
+      if (p.slot === 'shoes') m.visible = R.base.shoes;
+      if (!src.index) return;
+      let index: BufferAttribute | null = null;
+      if (p.slot === 'skin' && /^Body/.test(p.name)) index = engine.indexFor({ key: 'haut', index: src.index, src: src.index.array, level: 0 }, layers);
+      // Das Hemd der Grundfigur bleibt ganz: Schärpe und Halstuch liegen stellenweise unter seinem losen Saum bzw. Kragen –
+      // dort ein Loch ins Hemd zu schneiden sähe falsch aus. Nur der Schuh verschwindet unter dem Stiefelschaft.
+      else if (p.slot === 'shoes' && m.visible) {
+        const bs = vb.baseSrc(i);
+        if (bs) index = engine.indexFor({ key: `grund${i}`, index: src.index, src: bs, level: 1 }, layers);
+      } else if (p.slot === 'hair' && cap) index = vb.hairUnderCap(i, cap.sink);
+      if (index && index !== src.index) this.mask(m, src, index, p.slot !== 'hair');
     });
     const body = vb.bodySkin(this.rig);
-    if (!body?.parent) return;
-    const want: [GarmentKind, string][] = [];
-    want.push(['hose', look.pantsColor]);
-    // Oberteil-Art als eigenes Kleidungsstück über dem Hemd der Grundfigur (vorher nur eine andere Farbe)
-    if (look.outfit === 'matrose') want.push(['ringel', look.outfitColor]);
-    else if (look.outfit === 'tunika') want.push(['tunika', look.outfitColor]);
-    else if (look.outfit === 'jacke') want.push(['jacke', look.outfitColor]);
-    // „Weste und Hemd“: die Weste trägt die gewählte Farbe, darunter ein helles Leinenhemd
-    if (slimTop) want.push(['hemd', look.outfit === 'weste' ? '#EDE6D6' : look.outfitColor]);
-    if (look.outfit === 'weste') want.push(['weste', look.outfitColor]);
-    want.push([coversTop ? 'guertelEng' : 'guertel', look.outfit === 'uniform' || look.hat === 'marine' || look.hat === 'zweispitz' ? '#2A2420' : look.accentColor]);
-    if (look.scarf) want.push(['schal', look.accentColor]);
-    if (look.gloves) want.push(['handschuhe', '#5A3A22']);
-    if (look.shoes === 'stiefel') want.push(['stiefel', look.shoesColor]);
-    if (look.coat === 'kurz') want.push(['mantelKurz', look.coatColor]);
-    else if (look.coat === 'lang' || look.coat === 'kapitaen') want.push(['mantelLang', look.coatColor]);
-    const set = vb.garmentSet(want.map((w) => w[0]));
-    if (!set) return;
-    // eigene Farben je Figur, Lage und Gewichte werden geteilt
-    const geo = new BufferGeometry();
-    for (const name of ['position', 'normal', 'skinIndex', 'skinWeight'] as const) geo.setAttribute(name, set.attributes[name]);
-    geo.setIndex(set.index);
-    geo.boundingSphere = set.boundingSphere;
-    const part = set.attributes.part, stripe = set.attributes.stripe;
-    const cols = want.map((w) => new Color(w[1]));
-    const white = new Color('#F2EEE4');
-    const col = new Float32Array(part.count * 3);
-    void stripe; void white;
-    for (let i = 0; i < part.count; i++) cols[part.getX(i)].toArray(col, i * 3);
-    geo.setAttribute('color', new BufferAttribute(col, 3));
-    // Streifen des Ringelhemds zeichnet der Shader (Höhe im Körpermodell; 3,5 cm in Weltmaß)
-    if (set.attributes.stripe) geo.setAttribute('stripe', set.attributes.stripe);
-    const ringel = look.outfit === 'matrose' ? 0.035 / Math.max(1e-4, body.getWorldScale(new V3()).y) : 0;
-    const mat = toon({ color: 0xffffff, vertexColors: true, side: DoubleSide, rim: 0.8, ringel, surface: 'cloth' });
-    // kleine Tiefenverschiebung: Kleidung liegt außen – letzte Millimeter der Grundkleidung stechen nicht mehr durch
-    mat.polygonOffset = true; mat.polygonOffsetFactor = -1; mat.polygonOffsetUnits = -2;
-    const m = new SkinnedMesh(geo, mat);
-    m.bind(body.skeleton, body.bindMatrix);
-    m.castShadow = true;
-    m.receiveShadow = true;
-    body.parent.add(m);
-    if (this.outline) addOutlines(m, 0.7);
-    this.garments.push(m);
+    const set = vb.garmentSet(R.shells.map((s) => s.kind), R.ctx);
+    if (body?.parent && set) {
+      this.worn = R.shells.map((s) => s.kind);
+      this.wornPart = set.attributes.part as BufferAttribute;
+      const sd = set.userData as GarmentSetData;
+      const index = engine.indexFor({ key: sd.key, index: set.index!, src: sd.src, level: sd.level }, layers);
+      this.garmentIndex = index !== set.index ? index : null;
+      // eigene Farben je Figur, Lage und Gewichte werden geteilt
+      const geo = new BufferGeometry();
+      for (const name of ['position', 'normal', 'skinIndex', 'skinWeight'] as const) geo.setAttribute(name, set.attributes[name]);
+      geo.setIndex(index);
+      geo.boundingSphere = set.boundingSphere;
+      const part = set.attributes.part;
+      const cols = R.shells.map((s) => new Color(s.color));
+      const col = new Float32Array(part.count * 3);
+      for (let i = 0; i < part.count; i++) cols[part.getX(i)].toArray(col, i * 3);
+      geo.setAttribute('color', new BufferAttribute(col, 3));
+      // Streifen des Ringelhemds zeichnet der Shader (Höhe im Körpermodell; 3,5 cm in Weltmaß)
+      if (set.attributes.stripe) geo.setAttribute('stripe', set.attributes.stripe);
+      const ringel = this.worn.includes('ringel') ? 0.035 / Math.max(1e-4, body.getWorldScale(new V3()).y) : 0;
+      const mat = toon({ color: 0xffffff, vertexColors: true, side: DoubleSide, rim: 0.8, ringel, surface: 'cloth' });
+      // kleine Tiefenverschiebung: am Saumrand liegt die untere Schicht noch darunter – ihre letzten Millimeter stechen nicht durch
+      mat.polygonOffset = true; mat.polygonOffsetFactor = -1; mat.polygonOffsetUnits = -2;
+      const m = new SkinnedMesh(geo, mat);
+      m.bind(body.skeleton, body.bindMatrix);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      body.parent.add(m);
+      if (this.outline) addOutlines(m, 0.7);
+      this.garments.push(m);
+    }
+    // starre Kleinteile auf Haut-Ankern: sie bewegen sich mit dem Stoff unter ihnen
+    if (body) for (const r of R.rigid) {
+      if (r.build === 'schulterstuecke' || r.build === 'schulterplatten') {
+        // gemessen am äußersten Stück über der Schulter
+        const over = (['mantelLang', 'mantelKurz', 'jacke', 'uniform', 'weste', 'tunika', 'ringel', 'hemd'] as GarmentKind[]).find((k) => this.worn.includes(k)) ?? null;
+        for (const s of vb.shoulderAnchors(R.ctx, over) ?? []) {
+          this.sockets.skinAnchor(body.skeleton, s.pin, 'J_Bip_C_Chest')?.add(r.build === 'schulterstuecke' ? buildEpaulette(s.pos, this.outline) : buildPauldron(s.pos, r.color, this.outline));
+        }
+      } else {
+        const b = vb.beltAnchors(R.ctx);
+        if (!b) continue;
+        const knot = r.build === 'knoten';
+        this.sockets.skinAnchor(body.skeleton, knot ? b.knotPin : b.bucklePin, 'J_Bip_C_Hips')?.add(knot ? buildKnot(r.color, b.knot, this.outline) : buildBuckle(b.buckle, this.outline));
+      }
+    }
+    // Kopf: Hut, Schmuck, Bart und Narbe (gemessene Anker statt geschätzter Abstände)
+    const head = this.sockets.bone('head');
+    const hatLook: CharacterLook = { ...look, hat: R.hat, hatColor: loadout.colors.hat };
+    const face = { beard: look.beard !== 'keiner' ? vb.beard(look.beard) : null, scar: look.scar ? vb.scarPlacement() : null, cap: (sink: number, margin: number) => vb.capShell(sink, margin) };
+    if (head) this.headgear = attachHeadgear(head, this.rig.getObjectByName('J_Adj_L_FaceEye') ?? null, this.rig.getObjectByName('J_Adj_R_FaceEye') ?? null, hatLook, this.outline, vb.hairFit, vb.anchors(), face);
+    const h = Math.min(1.1, Math.max(0.9, look.height));
+    const base = vb.template.scale.x;
+    const wide = look.body === 'kraeftig' ? 1.07 : look.body === 'schmal' ? 0.95 : 1;
+    this.rig.scale.set(base * h * wide, base * h, base * h * wide);
+    this.sockets.normalize();
+    this.fitCull();
+    this.stylize(this.holder);
+  }
+
+  /** Hüllkugel aller Netze der Figur: folgt der Hüfte (siehe CULL_RADIUS) */
+  private cull = new Sphere();
+  /** Raum des Hüft-Elternknotens → Raum der Netze (beides bewegt sich nicht gegeneinander) */
+  private cullM = new Matrix4();
+  private cullOn = false;
+
+  /** Alle Netze der Figur teilen sich eine Hüllkugel, die bei jedem Schritt der Hüfte nachgeführt wird */
+  private fitCull() {
+    const hips = this.bones.hips;
+    this.cullOn = false;
+    if (!hips?.parent) return;
+    this.holder.updateMatrixWorld(true);
+    let first: SkinnedMesh | null = null;
+    this.rig.traverse((o) => {
+      const m = o as SkinnedMesh;
+      if (!m.isSkinnedMesh) return;
+      // die Netze der Figur liegen alle im selben Raum; ein abweichendes bleibt sicherheitshalber immer sichtbar
+      if (!first) first = m;
+      else if (!m.matrixWorld.equals((first as SkinnedMesh).matrixWorld)) { m.frustumCulled = false; return; }
+      m.boundingSphere = this.cull;
+      m.frustumCulled = true;
+    });
+    const ref = first as SkinnedMesh | null;
+    if (!ref) return;
+    this.cullM.copy(ref.matrixWorld).invert().multiply(hips.parent.matrixWorld);
+    this.holder.getWorldScale(tmpA);
+    ref.getWorldScale(tmpB);
+    this.cull.radius = (CULL_RADIUS * Math.min(1.1, Math.max(0.9, this.look.height)) * Math.max(tmpA.x, tmpA.y, tmpA.z)) / Math.max(1e-4, Math.min(tmpB.x, tmpB.y, tmpB.z));
+    this.cullOn = true;
+    this.syncCull();
+  }
+
+  /** Hüllkugel auf die Hüfte setzen (nach jedem Animationsschritt; ohne neue Objekte) */
+  syncCull() {
+    if (this.cullOn) this.cull.center.copy(this.bones.hips.position).applyMatrix4(this.cullM);
+  }
+
+  private worn: GarmentKind[] = [];
+  private wornPart: BufferAttribute | null = null;
+
+  /** Für das Prüfwerkzeug (audit.ts): alle gezeichneten Schichten von innen nach außen */
+  auditLayers(): AuditLayer[] {
+    const vb = this.vroid;
+    if (!vb) return [];
+    const out: AuditLayer[] = [];
+    this.rig.traverse((o) => {
+      const m = o as SkinnedMesh;
+      const i = m.userData.vroidPart as number | undefined;
+      if (!m.isSkinnedMesh || i === undefined || !m.visible) return;
+      const p = vb.parts[i];
+      if (p.slot === 'skin' && /^Body/.test(p.name)) out.push({ name: 'haut', level: 0, mesh: m });
+      else if (p.slot === 'top') out.push({ name: 'grundhemd', level: 1, mesh: m });
+      else if (p.slot === 'shoes') out.push({ name: 'grundschuhe', level: 1, mesh: m });
+    });
+    const g = this.garments[0];
+    if (g && this.wornPart) this.worn.forEach((k, id) => out.push({ name: k, level: GARMENT_LEVEL[k], mesh: g, part: { attr: this.wornPart!, id } }));
+    // Reihenfolge innen → außen
+    out.sort((a, b) => a.level - b.level);
+    return out;
   }
 
   /** Aussehen ändern (baut die Figur neu) */
@@ -789,6 +915,7 @@ export class Character {
     }
     this.undoLean();
     this.mixer.update(dt);
+    this.syncCull();
     this.applyLean();
     if (this.lamp) {
       // die Laterne pendelt leicht, beim Gehen stärker
@@ -812,12 +939,14 @@ export class Character {
 
   /** Objekt in eine Hand legen ('r' oder 'l'). null entfernt. */
   hold(side: 'l' | 'r', obj: Object3D | null, grip = 0.3) {
-    const slot = this.bones[`handslot${side}`];
+    const slot = this.sockets.node(side === 'r' ? 'mainHand' : 'offHand');
     if (!slot) return;
     // neue Waffe: Schweife beim nächsten Einschalten neu anlegen
     this.dropTrails();
     for (const c of [...slot.children]) slot.remove(c);
     if (obj) { slot.add(obj); this.stylize(obj); }
+    // ein Schild links verdeckt die Laterne an der linken Hüfte: sie wechselt dann die Seite
+    if (side === 'l' && this.lamp && this.vroid) this.lamp.position.x = obj?.userData.wide ? -0.27 : 0.27;
     this.curl(side, obj ? 1 : grip);
   }
 
@@ -860,19 +989,27 @@ export class Character {
     this.releaseGeometry();
     this.mixer.stopAllAction();
     this.mixer.uncacheRoot(this.rig);
-    for (const g of this.garments) releaseGarment(g);
-    this.garments = [];
-    this.outfit = [];
-    this.headgear = null;
+    this.undress();
     disposeRig(this.holder);
   }
 }
 
-/** Kleidung teilt Lage und Gewichte mit der Grundfigur: nur die eigenen Farben freigeben, nie die geteilten Puffer */
-function releaseGarment(m: SkinnedMesh) {
+/**
+ * Geometrie freigeben, die ihre Punktdaten mit der Grundfigur teilt: nur was der Figur allein gehört.
+ * Die geteilten Puffer werden vorher abgehängt (dispose() gäbe sonst deren Grafikspeicher frei); die Dreiecksliste
+ * bleibt nur dran, wenn sie verworfen ist und mit freigegeben werden soll.
+ */
+function releaseShared(g: BufferGeometry, freeIndex: boolean, own: string[] = []) {
+  for (const name of Object.keys(g.attributes)) if (!own.includes(name)) g.deleteAttribute(name);
+  if (!freeIndex) g.setIndex(null);
+  g.dispose();
+}
+
+/** Kleidung teilt Lage, Gewichte und Dreiecksliste: nur die eigenen Farben freigeben */
+function releaseGarment(m: SkinnedMesh, freeIndex: boolean) {
   const g = m.geometry;
-  for (const name of ['position', 'normal', 'skinIndex', 'skinWeight']) g.deleteAttribute(name);
-  g.setIndex(null);
+  for (const name of ['position', 'normal', 'skinIndex', 'skinWeight', 'stripe']) g.deleteAttribute(name);
+  if (!freeIndex) g.setIndex(null);
   disposeObject(m);
 }
 

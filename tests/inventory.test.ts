@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { addItem, armorEq, bagConsumables, computeStats, ensureGear, itemCount, takeItem, weaponEq, type StatInput } from '../src/core/inventory';
 import { createSave } from '../src/core/save/types';
-import { ARMOR_LOOK, CONSUMABLES, HEADS } from '../src/data/items';
+import { ARMOR_LOOK, CONSUMABLES, GEAR, HEADS } from '../src/data/items';
+import { EQUIP_BY_ID, loadoutFromLook, resolveLoadout } from '../src/data/equipment';
+import { defaultLook } from '../src/data/characterParts';
 import { ARMOR } from '../src/data/regions';
 
 const base = (gear: ReturnType<typeof createSave>['gear']): StatInput => ({
@@ -56,5 +58,38 @@ describe('Inventar', () => {
     expect(ARMOR_LOOK.length).toBe(ARMOR.length);
     expect(new Set(CONSUMABLES.map((c) => c.id)).size).toBe(CONSUMABLES.length);
     expect(new Set(HEADS.map((h) => h.id)).size).toBe(HEADS.length);
+  });
+
+  it('angelegte Schienen, Stiefel und Schilde zählen zu den Werten; jedes Stück verweist auf ein vorhandenes Teil', () => {
+    const g = createSave('A', 'pirat', 'x').gear;
+    ensureGear(g);
+    const before = computeStats(base(g));
+    g.owned = ['armschienen_stahl', 'eisenschild'];
+    g.worn = { hands: 'armschienen_stahl', offhand: 'eisenschild' };
+    const after = computeStats(base(g));
+    expect(after.hp - before.hp).toBeCloseTo(110);
+    expect(after.reduce - before.reduce).toBeCloseTo(0.11);
+    // ein Stück auf dem falschen Platz zählt nicht
+    g.worn = { legs: 'armschienen_stahl' };
+    expect(computeStats(base(g)).hp).toBeCloseTo(before.hp);
+    expect(new Set(GEAR.map((d) => d.id)).size).toBe(GEAR.length);
+    for (const d of GEAR) if (d.equip) expect(EQUIP_BY_ID[d.equip]).toBeTruthy();
+    for (const a of ARMOR_LOOK) for (const e of a?.extra ?? []) expect(EQUIP_BY_ID[e]).toBeTruthy();
+  });
+
+  it('das Aussehen wird vollständig in Ausrüstung übersetzt', () => {
+    const l = loadoutFromLook({ ...defaultLook('pirat'), outfit: 'jacke', coat: 'kurz', scarf: true, gloves: true, extra: ['kuerass', 'schulterplatten', 'armschienen_leder'] });
+    const r = resolveLoadout(l);
+    const kinds = r.shells.map((s) => s.kind);
+    // die Brustplatte entfällt unter dem Mantel, alles andere ist da
+    expect(kinds).toEqual(['hose', 'jacke', 'guertel', 'schal', 'handschuhe', 'stiefel', 'mantelKurz', 'armschiene']);
+    expect(r.ctx).toEqual({ under: 'jacke', coat: 'kurz', boots: true });
+    expect(r.rigid.map((x) => x.build)).toEqual(['schulterplatten', 'knoten']);
+    expect(r.base.top).toBe(false);
+    // Hemd ohne Mantel zeigt das Hemd der Grundfigur, mit Mantel ein enges Hemd
+    expect(resolveLoadout(loadoutFromLook({ ...defaultLook('pirat'), outfit: 'hemd', coat: 'keiner' })).base.top).toBe(true);
+    const slim = resolveLoadout(loadoutFromLook({ ...defaultLook('pirat'), outfit: 'hemd', coat: 'lang' }));
+    expect(slim.base.top).toBe(false);
+    expect(slim.shells.some((s) => s.kind === 'hemd')).toBe(true);
   });
 });

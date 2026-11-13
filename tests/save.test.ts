@@ -156,4 +156,16 @@ describe('Spielstände', () => {
       delete MIGRATIONS[0];
     }
   });
+
+  it('alte Stände bekommen leere Plätze für Hände, Beine, Füße und Nebenhand (10 → 11), nichts geht verloren', () => {
+    const old = { ...createSave('Fynn', 'pirat', V), version: 10 } as Record<string, any>;
+    old.gear = { weapon: 2, armor: 3, potions: 4, shrine: 1, trinkets: ['x'], trinket: null, heads: ['kopftuch'], head: 'kopftuch' };
+    const r = migrateSave(old, V);
+    if (!r.ok) throw new Error(r.error);
+    expect(r.data.version).toBe(SAVE_VERSION);
+    expect(r.data.gear.owned).toEqual([]);
+    expect(r.data.gear.worn).toEqual({});
+    expect(r.data.gear.armor).toBe(3);
+    expect(r.data.gear.head).toBe('kopftuch');
+  });
 });

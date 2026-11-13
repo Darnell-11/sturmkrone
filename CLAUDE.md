@@ -32,6 +32,8 @@
 
 > - Figuren (Stylized Realism): Oberflächen über `surface` am Toon-Material (`render/toon.ts`), fremde Bausteine über `toonChar()`. Figuren tragen keine Tusche-Konturen, sondern Fresnel-Randlicht (`CHARACTER_INK`); die Welt behält ihre Konturen.
 
+> - Figuren-Ausrüstung: Plätze und Teile stehen als Daten in `data/equipment.ts` (`EQUIPMENT`, `loadoutFromLook`). Teile hängen an Sockets (`entities/character/sockets.ts`: `node()` in Metern, `SkinAnchor` für Teile auf Stoff). Neue Hüllen-Kleidung braucht eine Ebene in `GARMENT_LEVEL` (`vroid.ts`); was sie verdeckt, blendet `bodyMask.ts` aus. Nach Änderungen an Figuren `await __audit.run()` in der Konsole (Entwicklung) und Bilder alt gegen neu vergleichen. Bauplan: `docs/CHARACTER_SYSTEM_3.0.md`.
+
 > - Kampf-Systeme: Boss-Warnflächen `combat/zones.ts`, Beute-Säulen `combat/loot.ts` (Werte in `data/loot.ts`), Zonen-Ereignisse `world/events.ts`. Gegner eines Ereignisses tragen `tag` und zählen nicht für „Insel befreit“ (`campLeft`).
 
 > **Abstimmung mit dem Briefing unten:** Diese Richtlinien gelten zusätzlich zum Projekt-Briefing. Der Anime-Stil (Toon-Material, Konturen an der Welt, Randlicht an Figuren) bleibt die Art Direction: PBR-Kanäle (Normal, Roughness, Metallic, AO) fließen in das Toon-Material ein, statt es zu ersetzen. Post-Effekte laufen weiter über `postprocessing` (pmndrs) mit den gleichwertigen Effekten (Bloom, AO, Tiefenunschärfe). Schwere Effekte (AO, CSM, PCSS, Tiefenunschärfe) gelten für High/Max; Handys auf Low/Mid haben Vorrang bei den 60 FPS.

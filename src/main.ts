@@ -31,6 +31,8 @@ try {
   (window as any).sturmkrone = game;
   // Nur in der Entwicklung: Bild an einen lokalen Empfänger schicken (für automatische Sichtprüfungen)
   if (import.meta.env.DEV) {
+    // Prüfwerkzeug für Figuren (Durchstiche, Schichtabstände, Hüllkugeln): await __audit.run()
+    void import('./entities/character/audit').then((m) => m.installAudit(game));
     (window as any).__shot = async (name: string, w = 560) => {
       (game as any).render(1, 1 / 60);
       const gl = game.renderer.gl.getContext();

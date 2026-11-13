@@ -34,8 +34,8 @@ import { SaveManager } from './save/saveManager';
 import { createSave, type SaveData } from './save/types';
 import { DialogOverlay } from '../ui/dialogOverlay';
 import { InventoryScreen, type InvItem, type InventoryHost } from '../ui/inventory';
-import { addItem, armorEq, bagConsumables, computeStats, ensureGear, headEq, itemCount, takeItem, weaponEq, type StatSheet } from './inventory';
-import { ARMOR_LOOK, BAR_SLOTS, CONSUMABLE_BY_ID, CONSUMABLES, GLOBAL_ITEM_CD, HEADS, HEAD_BY_ID, type SlotId } from '../data/items';
+import { addItem, armorEq, bagConsumables, computeStats, ensureGear, headEq, itemCount, takeItem, weaponEq, wornGear, type StatSheet } from './inventory';
+import { ARMOR_LOOK, BAR_SLOTS, CONSUMABLE_BY_ID, CONSUMABLES, GEAR, GEAR_BY_ID, GEAR_SLOTS, GLOBAL_ITEM_CD, HEADS, HEAD_BY_ID, type GearSlot, type SlotId } from '../data/items';
 import { NpcMarkers, type NpcMark } from '../ui/npcMarkers';
 import { QuestLog } from '../ui/questLog';
 import { DialogSession } from '../story/dialog';
@@ -541,7 +541,13 @@ export class Game {
     const head = headEq(g);
     if (head) { look.hat = head.hat; look.hatColor = head.color; }
     const al = ARMOR_LOOK[armorEq(g)];
-    if (al) Object.assign(look, al);
+    const extra: string[] = [];
+    if (al) { const { extra: more, ...rest } = al; Object.assign(look, rest); if (more) extra.push(...more); }
+    // einzeln angelegte Stücke: Schienen als zusätzliche Teile, Stiefel ersetzen das Schuhwerk
+    for (const d of wornGear(g)) {
+      if (d.slot === 'feet') { look.shoes = 'stiefel'; if (d.shoesColor) look.shoesColor = d.shoesColor; } else if (d.equip) extra.push(d.equip);
+    }
+    if (extra.length) look.extra = extra;
     return look;
   }
 
@@ -552,6 +558,7 @@ export class Game {
     ensureGear(gear);
     const wdef = WEAPONS[weaponEq(gear)];
     if (wdef) this.world.setWeaponLook({ blade: wdef.col, glow: !!wdef.glow });
+    this.world.setOffhand(wornGear(gear).find((d) => d.slot === 'offhand')?.shield ?? null);
     const has = (id: string) => this.save!.crew.hired.includes(id);
     const up = this.save.ship.up;
     const tb = (gear.trinket ? TRINKET_BY_ID[gear.trinket]?.bonus : null) ?? {};
@@ -1057,6 +1064,7 @@ export class Game {
       HEADS.forEach((h) => { if (g.heads!.includes(h.id)) out.push({ key: `head:${h.id}`, cat: 'head', name: h.n, icon: '🎩', color: rar(h.rarity), desc: h.d, stat: '', equipped: g.head === h.id }); });
       ARMOR.forEach((a, i) => { if (i <= g.armor) out.push({ key: `armor:${i}`, cat: 'armor', name: a.n, icon: ['👕', '🦺', '⛓', '🛡', '✨'][i] ?? '🛡', color: '#8AA0B8', desc: `Rüstungsstufe ${i + 1}`, stat: `+${a.hp} Leben`, equipped: armorEq(g) === i }); });
       WEAPONS.forEach((w, i) => { if (i <= g.weapon) out.push({ key: `weapon:${i}`, cat: 'weapon', name: wl().names[i] ?? w.n, icon: s.player.style === 'faust' ? '🥊' : s.player.style === 'effekt' ? '🔮' : '🗡', color: w.col, desc: `Waffenstufe ${i + 1}`, stat: wl().stat(w, i), equipped: weaponEq(g) === i }); });
+      GEAR.forEach((d) => { if (g.owned!.includes(d.id)) out.push({ key: `gear:${d.id}`, cat: d.slot, name: d.n, icon: d.icon, color: rar(d.rarity), desc: d.d, stat: '', equipped: g.worn![d.slot] === d.id }); });
       g.trinkets.forEach((id) => { const t = TRINKET_BY_ID[id]; if (t) out.push({ key: `trinket:${id}`, cat: 'trinket', name: t.n, icon: '📿', color: rar(t.rarity), desc: `${RARITY[t.rarity].n}er Talisman`, stat: t.d, equipped: g.trinket === id }); });
       bagConsumables(g).forEach(({ def, n }) => out.push({ key: `cons:${def.id}`, cat: 'cons', name: def.n, icon: def.icon, color: def.color, desc: def.d, stat: `Abklingzeit ${def.cd} s`, equipped: false, count: n, cid: def.id }));
       return out;
@@ -1067,6 +1075,7 @@ export class Game {
       if (kind === 'armor') return { armorEq: +id };
       if (kind === 'weapon') return { weaponEq: +id };
       if (kind === 'trinket') return { trinket: id };
+      if (kind === 'gear' && GEAR_BY_ID[id]) return { worn: { ...g.worn, [GEAR_BY_ID[id].slot]: id } };
       return null;
     };
     const refreshLook = () => { this.world.updatePlayer(this.displayLook(), style()); stage.show(this.assets!, this.displayLook(), style()); };
@@ -1076,7 +1085,9 @@ export class Game {
       equipped: () => {
         const h = headEq(g), wi = weaponEq(g), ai = armorEq(g), t = g.trinket ? TRINKET_BY_ID[g.trinket] : null;
         const none = null;
+        const worn = (slot: GearSlot) => { const d = wornGear(g).find((x) => x.slot === slot); return d ? { name: d.n, icon: d.icon, color: rar(d.rarity) } : none; };
         return {
+          hands: worn('hands'), legs: worn('legs'), feet: worn('feet'), offhand: worn('offhand'),
           head: h ? { name: h.n, icon: '🎩', color: rar(h.rarity) } : none,
           armor: { name: ARMOR[ai].n, icon: ['👕', '🦺', '⛓', '🛡', '✨'][ai] ?? '🛡', color: '#8AA0B8' },
           weapon: { name: wl().names[wi] ?? WEAPONS[wi].n, icon: s.player.style === 'faust' ? '🥊' : s.player.style === 'effekt' ? '🔮' : '🗡', color: WEAPONS[wi].col },
@@ -1096,6 +1107,7 @@ export class Game {
         else if (kind === 'armor') g.armorEq = +id;
         else if (kind === 'weapon') g.weaponEq = +id;
         else if (kind === 'trinket') g.trinket = id;
+        else if (kind === 'gear' && GEAR_BY_ID[id]) g.worn![GEAR_BY_ID[id].slot] = id;
         else return;
         audio.play('switch');
         apply();
@@ -1103,6 +1115,7 @@ export class Game {
       unequip: (slot: SlotId) => {
         if (slot === 'head') g.head = null;
         else if (slot === 'trinket') g.trinket = null;
+        else if ((GEAR_SLOTS as string[]).includes(slot)) g.worn![slot as GearSlot] = null;
         else return;
         audio.play('switch');
         apply();
@@ -1338,6 +1351,23 @@ export class Game {
     if (!bar.includes(id)) { const free = bar.indexOf(null); if (free >= 0) bar[free] = id; }
     this.persist();
     return `${def.n} gekauft.`;
+  }
+
+  /** Ausrüstungsstück (Hände, Beine, Füße, Nebenhand) kaufen und gleich anlegen */
+  buyPiece(id: string): string {
+    const s = this.save, d = GEAR_BY_ID[id];
+    if (!s || !d) return '';
+    ensureGear(s.gear);
+    if (s.gear.owned!.includes(id)) return '';
+    if (rankIndex(s.player.fame) < d.rank) return `Rang „${rankName(s.player.faction, FAME_THRESHOLDS[d.rank])}“ nötig.`;
+    if (s.player.gold < d.price) return `Dafür fehlen ${d.price - s.player.gold} Gold.`;
+    s.player.gold -= d.price;
+    s.gear.owned!.push(id);
+    s.gear.worn![d.slot] = id;
+    this.world.updatePlayer(this.displayLook(), this.activeStyle());
+    this.applyPower();
+    this.persist();
+    return `${d.n} gekauft und angelegt.`;
   }
 
   /** Kopfbedeckung kaufen und gleich aufsetzen */

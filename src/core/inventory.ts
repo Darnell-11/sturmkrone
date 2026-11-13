@@ -1,6 +1,6 @@
 import { PLAYER_BASE } from '../data/combat';
 import { ARMOR, WEAPONS } from '../data/regions';
-import { BAR_SLOTS, CONSUMABLE_BY_ID, HEAD_BY_ID, type ConsumableDef, type HeadDef } from '../data/items';
+import { BAR_SLOTS, CONSUMABLE_BY_ID, GEAR_BY_ID, GEAR_SLOTS, HEAD_BY_ID, type ConsumableDef, type GearDef, type HeadDef } from '../data/items';
 import { TRINKET_BY_ID } from '../data/trinkets';
 import type { GearState } from './save/types';
 
@@ -9,6 +9,8 @@ export function ensureGear(g: GearState): void {
   g.items ??= {};
   g.heads ??= [];
   if (g.head === undefined) g.head = null;
+  g.owned ??= [];
+  g.worn ??= {};
   if (!g.bar || g.bar.length !== BAR_SLOTS) g.bar = Array.from({ length: BAR_SLOTS }, (_, i) => g.bar?.[i] ?? (i === 0 ? 'proviant' : null));
 }
 
@@ -16,6 +18,12 @@ export function ensureGear(g: GearState): void {
 export const weaponEq = (g: GearState) => Math.min(g.weapon, g.weaponEq ?? g.weapon);
 export const armorEq = (g: GearState) => Math.min(g.armor, g.armorEq ?? g.armor);
 export const headEq = (g: GearState): HeadDef | null => (g.head ? HEAD_BY_ID[g.head] ?? null : null);
+/** Angelegte Ausrüstungsstücke (Hände, Beine, Füße, Nebenhand) */
+export function wornGear(g: GearState): GearDef[] {
+  const out: GearDef[] = [];
+  for (const s of GEAR_SLOTS) { const id = g.worn?.[s]; const d = id ? GEAR_BY_ID[id] : null; if (d && d.slot === s) out.push(d); }
+  return out;
+}
 
 /** Anzahl eines Verbrauchsguts (Proviant liegt in gear.potions) */
 export function itemCount(g: GearState, id: string): number {
@@ -83,11 +91,13 @@ export function computeStats(i: StatInput): StatSheet {
   const head = headEq(g);
   const tb = (g.trinket ? TRINKET_BY_ID[g.trinket]?.bonus : null) ?? {};
   const wi = weaponEq(g);
+  let gearHp = 0, gearCrit = 0, gearReduce = 0;
+  for (const d of wornGear(g)) { gearHp += d.hp; gearCrit += d.crit ?? 0; gearReduce += d.reduce ?? 0; }
   return {
-    hp: (PLAYER_BASE.hp(i.level) + armor + (head?.hp ?? 0)) * (1 + i.hpPassive) * (1 + (tb.hp ?? 0)),
+    hp: (PLAYER_BASE.hp(i.level) + armor + (head?.hp ?? 0) + gearHp) * (1 + i.hpPassive) * (1 + (tb.hp ?? 0)),
     atk: (PLAYER_BASE.atk(i.level) + weapon * 0.5 * i.weaponCrew) * i.atkCrew * (1 + (tb.atk ?? 0)) * (1 + i.buff.atk),
-    crit: 0.1 + i.critPassive + (tb.crit ?? 0) + (head?.crit ?? 0) + i.buff.crit + (i.style === 'faust' ? wi * 0.02 : 0),
-    reduce: (head?.reduce ?? 0) + i.buff.reduce,
+    crit: 0.1 + i.critPassive + (tb.crit ?? 0) + (head?.crit ?? 0) + gearCrit + i.buff.crit + (i.style === 'faust' ? wi * 0.02 : 0),
+    reduce: (head?.reduce ?? 0) + gearReduce + i.buff.reduce,
     fajiRegen: i.fajiCrew + (tb.faji ?? 0) + (i.style === 'effekt' ? wi * 0.05 : 0),
     gold: tb.gold ?? 0,
   };

@@ -154,95 +154,72 @@ export function buildHeadgear(look: CharacterLook, r: number, outline: boolean, 
 }
 
 /**
- * Piraten-Kleidung über der Grundfigur: Schärpe bzw. Koppel an der Hüfte, für Kapitäne goldene Schulterstücke.
- * Maße kommen aus den Knochenabständen; Blick der Knochen nach −Z (Figur ist gedreht), daher rotation.y = π.
+ * Starre Kleinteile der Kleidung. Jedes wird im Raum eines Knochens gebaut (Hüfte bzw. Brust) und hängt an einem
+ * Haut-Anker (sockets.ts), der sich mit dem Stoff darunter bewegt – so sitzt es in jeder Pose auf Band bzw. Schulter.
  */
-export function attachOutfit(chest: Object3D, hips: Object3D, armL: Object3D | null, armR: Object3D | null, look: CharacterLook, faction: 'pirat' | 'marine', outline: boolean, an: Anchors | null = null): Group[] {
-  const out: Group[] = [];
-  const sw = armL && armR ? Math.abs(armL.position.x - armR.position.x) * 0.5 : 0.09;
-  const w = Math.max(0.1, sw + 0.05);
-  const acc = toon(look.accentColor);
+function finish(g: Group, outline: boolean) {
+  g.traverse((o) => { (o as Mesh).castShadow = true; });
+  if (outline) addOutlines(g, 0.7);
+  return g;
+}
+
+/** Knoten der Schärpe mit herabhängendem Ende (Hüftraum) */
+export function buildKnot(color: string, pos: Vector3, outline: boolean): Group {
+  const g = new Group();
+  const acc = toon(color);
+  const knot = new Mesh(new SphereGeometry(0.022, 8, 6), acc);
+  knot.position.copy(pos);
+  const tail = new Mesh(new BoxGeometry(0.03, 0.12, 0.008), acc);
+  tail.position.copy(pos).add(new Vector3(0, -0.07, 0));
+  tail.lookAt(pos.clone().multiplyScalar(2).setY(tail.position.y));
+  tail.rotateZ(0.12);
+  g.add(knot, tail);
+  return finish(g, outline);
+}
+
+/** Schnalle des Koppels (Hüftraum) */
+export function buildBuckle(pos: Vector3, outline: boolean): Group {
+  const g = new Group();
+  const buckle = new Mesh(new BoxGeometry(0.05, 0.034, 0.01), toon({ color: '#E3B04B', spec: 0.9 }));
+  buckle.position.copy(pos);
+  buckle.lookAt(pos.clone().multiplyScalar(2).setY(pos.y));
+  g.add(buckle);
+  return finish(g, outline);
+}
+
+/** Eine gewölbte Schulterplatte aus Stahl (Brustraum), sitzt außen über dem Schultergelenk */
+export function buildPauldron(sp: Vector3, color: string, outline: boolean): Group {
+  const g = new Group();
+  const steel = toon({ color, spec: 1, side: DoubleSide });
+  const s = sp.x < 0 ? -1 : 1;
+  const dome = new Mesh(new SphereGeometry(0.058, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), steel);
+  dome.scale.set(1, 0.6, 1.15);
+  dome.position.set(sp.x + s * 0.022, sp.y - 0.012, sp.z);
+  dome.rotation.z = -s * 0.55;
+  const rim = new Mesh(new TorusGeometry(0.058, 0.005, 5, 20), toon({ color: '#E3B04B', spec: 0.9 }));
+  rim.rotation.x = Math.PI / 2;
+  rim.scale.set(1, 1.15, 1);
+  dome.add(rim);
+  g.add(dome);
+  return finish(g, outline);
+}
+
+/** Ein goldenes Schulterstück mit Fransen (Brustraum) */
+export function buildEpaulette(sp: Vector3, outline: boolean): Group {
+  const g = new Group();
   const gold = toon({ color: '#E3B04B', spec: 0.9 });
-  // Schärpe (Piraten) bzw. Koppel (Marine)
-  // das Band selbst entsteht aus dem Körper (bewegt sich mit), hier nur Schnalle bzw. Knoten
-  const belt = new Group();
-  if (faction === 'marine') {
-    const buckle = new Mesh(new BoxGeometry(w * 0.32, w * 0.22, w * 0.06), gold);
-    buckle.position.set(0, 0, w * 1.05);
-    belt.add(buckle);
-  } else {
-    const knot = new Mesh(new SphereGeometry(w * 0.16, 8, 6), acc);
-    knot.position.set(w * 1.0, 0, w * 0.55);
-    const tail = new Mesh(new BoxGeometry(w * 0.2, w * 0.8, w * 0.04), acc);
-    tail.position.set(w * 1.08, -w * 0.42, w * 0.5);
-    tail.rotation.z = 0.15;
-    belt.add(knot, tail);
+  const s = sp.x < 0 ? -1 : 1;
+  const plate = new Mesh(new CylinderGeometry(0.042, 0.042, 0.008, 16), gold);
+  plate.position.copy(sp);
+  plate.rotation.z = -s * 0.2;
+  g.add(plate);
+  for (let k = 0; k < 5; k++) {
+    const fr = new Mesh(new CylinderGeometry(0.003, 0.003, 0.026, 4), gold);
+    const a = (k / 4 - 0.5) * 1.6;
+    fr.position.set(sp.x + s * 0.04, sp.y - 0.014, sp.z + Math.sin(a) * 0.03);
+    g.add(fr);
   }
-  belt.position.set(0, -w * 0.02, 0);
-  belt.rotation.y = Math.PI;
-  if (an) {
-    // gemessen: Knoten bzw. Schnalle liegen genau auf dem Band (vorher nach Schulterbreite geschätzt – schwebte oder steckte im Bauch)
-    belt.rotation.y = 0; belt.position.set(0, 0, 0);
-    belt.clear();
-    if (faction === 'marine') {
-      const buckle = new Mesh(new BoxGeometry(0.05, 0.034, 0.01), gold);
-      buckle.position.copy(an.buckle);
-      buckle.lookAt(an.buckle.clone().multiplyScalar(2).setY(an.buckle.y));
-      belt.add(buckle);
-    } else {
-      const knot = new Mesh(new SphereGeometry(0.022, 8, 6), acc);
-      knot.position.copy(an.knot);
-      const tail = new Mesh(new BoxGeometry(0.03, 0.12, 0.008), acc);
-      tail.position.copy(an.knot).add(new Vector3(0, -0.07, 0));
-      tail.lookAt(an.knot.clone().multiplyScalar(2).setY(tail.position.y));
-      tail.rotateZ(0.12);
-      belt.add(knot, tail);
-    }
-  }
-  hips.add(belt);
-  out.push(belt);
-  // Kapitäns-Schulterstücke (starre Westen/Mäntel schneiden in die weite Grundkleidung – daher nur Abzeichen)
-  if (look.coat === 'kapitaen' && an) {
-    // auf den gemessenen Schultern (vorher nach dem Abstand der Armknochen geschätzt – schwebten neben dem Körper)
-    const ep = new Group();
-    for (const sp of an.shoulders) {
-      const s = sp.x < 0 ? -1 : 1;
-      const plate = new Mesh(new CylinderGeometry(0.042, 0.042, 0.008, 16), gold);
-      plate.position.copy(sp);
-      plate.rotation.z = -s * 0.2;
-      ep.add(plate);
-      for (let k = 0; k < 5; k++) {
-        const fr = new Mesh(new CylinderGeometry(0.003, 0.003, 0.026, 4), gold);
-        const a = (k / 4 - 0.5) * 1.6;
-        fr.position.set(sp.x + s * 0.04, sp.y - 0.014, sp.z + Math.sin(a) * 0.03);
-        ep.add(fr);
-      }
-    }
-    chest.add(ep);
-    out.push(ep);
-  } else if (look.coat === 'kapitaen') {
-    const ep = new Group();
-    for (const s of [-1, 1]) {
-      const plate = new Mesh(new CylinderGeometry(w * 0.34, w * 0.34, w * 0.07, 16), gold);
-      plate.position.set(s * (w + 0.035), w * 0.9, 0);
-      plate.rotation.z = s * 0.25;
-      ep.add(plate);
-      for (let k = 0; k < 5; k++) {
-        const fr = new Mesh(new CylinderGeometry(w * 0.025, w * 0.025, w * 0.22, 4), gold);
-        const a = (k / 4 - 0.5) * 1.6;
-        fr.position.set(s * (w + 0.035) + Math.sin(a) * w * 0.32 * s, w * 0.8, Math.cos(a) * w * 0.15);
-        ep.add(fr);
-      }
-    }
-    ep.rotation.y = Math.PI;
-    chest.add(ep);
-    out.push(ep);
-  }
-  for (const g of out) {
-    g.traverse((o) => { (o as Mesh).castShadow = true; });
-    if (outline) addOutlines(g, 0.7);
-  }
-  return out;
+  return finish(g, outline);
 }
 
 /** Kopfschmuck an einen Kopfknochen hängen: Mitte, Blickrichtung und Größe aus den Augenknochen */
@@ -283,7 +260,7 @@ export type HairFit = (sink: number) => { seat: number; cx: number; cz: number; 
 export interface FaceParts { beard: BufferGeometry | null; scar: { pos: Vector3; tilt: number } | null; cap?: (sink: number, margin: number) => CapShell | null }
 
 /** Kopfbedeckungen, die sich als gemessene Kappe um die Frisur legen: Sitztiefe und Abstand zum Haar */
-const CAPPED: Partial<Record<string, { sink: number; margin: number }>> = { kochmuetze: { sink: 0.06, margin: 0.006 }, zweispitz: { sink: 0.06, margin: 0.007 }, bandana: { sink: 0.095, margin: 0.005 }, muetze: { sink: 0.08, margin: 0.009 }, suedwester: { sink: 0.07, margin: 0.008 }, helm: { sink: 0.07, margin: 0.01 } };
+export const CAPPED: Partial<Record<string, { sink: number; margin: number }>> = { kochmuetze: { sink: 0.06, margin: 0.006 }, zweispitz: { sink: 0.06, margin: 0.007 }, bandana: { sink: 0.095, margin: 0.005 }, muetze: { sink: 0.08, margin: 0.009 }, suedwester: { sink: 0.07, margin: 0.008 }, helm: { sink: 0.07, margin: 0.01 } };
 
 /**
  * Senkrechte Streckung einer Hut-Halbkugel (Radius R, Mitte capY über dem Hutursprung), damit sie die Frisur

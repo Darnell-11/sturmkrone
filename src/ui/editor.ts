@@ -192,8 +192,8 @@ export class CharacterEditor {
       case 'kleidung':
         if (this.o.anime) {
           body = this.opt('Mantel', this.chips('coat', COATS) + (r.look.coat !== 'keiner' ? this.swatches('coatColor', CLOTH_COLORS) : ''))
-            + this.opt('Weste und Hemd', this.swatches('outfitColor', CLOTH_COLORS))
-            + this.opt('Gürtel', `<div class="chips"><button data-a="set" data-k="outfit" data-v="hemd" aria-pressed="${r.look.outfit !== 'uniform'}">Schärpe</button><button data-a="set" data-k="outfit" data-v="uniform" aria-pressed="${r.look.outfit === 'uniform'}">Koppel</button></div>` + (r.look.outfit !== 'uniform' ? this.swatches('accentColor', CLOTH_COLORS) : ''))
+            + this.opt('Oberteil', this.chips('outfit', OUTFITS) + this.swatches('outfitColor', CLOTH_COLORS))
+            + this.opt('Schärpe und Akzente', this.swatches('accentColor', CLOTH_COLORS))
             + this.opt('Hose', this.swatches('pantsColor', CLOTH_COLORS))
             + this.opt('Schuhe', `<div class="chips"><button data-a="set" data-k="shoes" data-v="stiefel" aria-pressed="${r.look.shoes === 'stiefel'}">Hohe Stiefel</button><button data-a="set" data-k="shoes" data-v="schuhe" aria-pressed="${r.look.shoes !== 'stiefel'}">Schuhe</button></div>` + this.swatches('shoesColor', ['#5A3A22', '#1E1A20', '#8A5A2B', '#7A1F1A', '#F3E6C8']));
           break;
@@ -205,7 +205,7 @@ export class CharacterEditor {
         break;
       case 'extras':
         body = this.opt('Kopfbedeckung', this.chips('hat', HATS) + (r.look.hat !== 'keiner' && r.look.hat !== 'helm' ? this.swatches('hatColor', CLOTH_COLORS) : ''))
-          + this.opt('Accessoires', (this.o.anime ? `<div class="chips">${this.toggle('eyepatch', 'Augenklappe')}${this.toggle('earring', 'Ohrring')}</div>` : `<div class="chips">${this.toggle('eyepatch', 'Augenklappe')}${this.toggle('scar', 'Narbe')}${this.toggle('earring', 'Ohrring')}${this.toggle('scarf', 'Halstuch')}${this.toggle('gloves', 'Handschuhe')}</div>`));
+          + this.opt('Accessoires', `<div class="chips">${this.toggle('eyepatch', 'Augenklappe')}${this.toggle('scar', 'Narbe')}${this.toggle('earring', 'Ohrring')}${this.toggle('scarf', 'Halstuch')}${this.toggle('gloves', 'Handschuhe')}</div>`);
         break;
     }
     this.panel.innerHTML = `

@@ -25,7 +25,7 @@ import { EDGE_WALL, WORLD_SCALE } from '../data/world';
 import type { CharacterAssets } from '../entities/character/assets';
 import { LampPool, lampShared } from '../render/lamps';
 import { Character } from '../entities/character/character';
-import { weaponsFor } from '../entities/character/weapons';
+import { shieldFor, weaponsFor } from '../entities/character/weapons';
 import { Npc } from '../entities/npc';
 import { PlayerFoot } from '../entities/player/playerFoot';
 import { addOutlines } from '../render/outline';
@@ -691,13 +691,21 @@ export class SeaWorld {
     this.equip(this.style);
   }
 
+  /** Schild in der Nebenhand (Farbe) oder null; wird nur getragen, wenn der Kampfstil die linke Hand frei lässt */
+  private offhand: string | null = null;
+  setOffhand(color: string | null) {
+    if (color === this.offhand) return;
+    this.offhand = color;
+    this.equip(this.style);
+  }
+
   private equip(style: StyleId) {
     if (!this.player) return;
     // Am Steuer sind die Hände am Rad: keine Waffe in der Hand (sie kommt beim Verlassen des Ruders wieder)
     if (this.mode === 'sail') { this.player.hold('r', null, 0.8); this.player.hold('l', null, 0.8); return; }
     const w = weaponsFor(style, this.weaponLook);
     this.player.hold('r', w.right);
-    this.player.hold('l', w.left);
+    this.player.hold('l', w.left ?? (this.offhand && style !== 'zweihaender' && style !== 'langklinge' ? shieldFor(this.offhand) : null));
   }
 
   private attachToHelm() {
