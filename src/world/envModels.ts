@@ -1,3 +1,4 @@
+import { ships2 } from '../core/flags';
 import { BufferGeometry, Group, Mesh, type ColorRepresentation, type Material } from 'three';
 import { markShared } from '../render/dispose';
 import { preload } from '../core/preload';
@@ -20,6 +21,8 @@ const ARCH_BASE = `${import.meta.env.BASE_URL}models/architecture/`;
 /** Bauten aus Blender (tools/blender/build_arch.py): Hütte, Steinhaus, Taverne, Steg-Modul, Torbogen */
 export const ARCH_MODELS = ['haus_huette', 'haus_stein', 'haus_taverne', 'steg_modul', 'bogen', 'feuerstelle', 'feuerkorb', 'fackel', 'laternenpfahl',
   'kajuete_schreibtisch', 'kajuete_stuhl', 'kajuete_koje', 'kajuete_kartentisch', 'kajuete_regal', 'kajuete_truhe', 'kajuete_globus', 'kajuete_lampe', 'kajuete_teppich'] as const;
+/** Prunkmöbel der zweiten Schiffsfassung (tools/blender/build_kajuete2.py), nur mit ships2() geladen */
+const KAJUETE2 = ['kajuete_himmelbett', 'kajuete_kronleuchter', 'kajuete_anrichte', 'kajuete_fensterbank', 'kajuete_waffenwand', 'kajuete_gemaelde', 'kajuete_ofen', 'kajuete_tafel'];
 /** Kajütenmöbel liegen in public/models/ships/ (tools/blender/build_kajuete.py) */
 const SHIP_FURNITURE_BASE = `${import.meta.env.BASE_URL}models/ships/`;
 /** Davon liegen diese in public/models/light/ (tools/blender/build_light.py) */
@@ -52,7 +55,7 @@ export async function loadEnvModels(names: readonly string[] = ENV_MODELS): Prom
 
 export const hasEnv = (name: string) => models.has(name);
 
-export async function loadArchModels(names: readonly string[] = ARCH_MODELS): Promise<void> {
+export async function loadArchModels(names: readonly string[] = ships2() ? [...ARCH_MODELS, ...KAJUETE2] : ARCH_MODELS): Promise<void> {
   await Promise.all(names.map(async (name) => {
     try {
       const g = await preload.loadGltf(`${LIGHT_MODELS.has(name) ? LIGHT_BASE : name.startsWith('kajuete_') ? SHIP_FURNITURE_BASE : ARCH_BASE}${name}.glb`);

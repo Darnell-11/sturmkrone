@@ -89,7 +89,7 @@ export class Ship {
   private glowLights() {
     for (const l of this.model.lanterns) glowHub.add(makeEmitter('lamp', 0, 0, 0, { obj: l, size: (l.userData.glowSize as number | undefined) ?? 0.62 * Math.min(1.5, this.cls.L / 28 + 0.55), owner: this, glint: !l.userData.glowSize }));
     // Fenster (Heckgalerie, Stückpforten) leuchten nachts: Hof an der Fläche, sichtbar nur, wenn das Schiff sie anzeigt
-    for (const w of this.model.windows) glowHub.add(makeEmitter('window', 0, 0, 0, { obj: w, size: 0.5, owner: this }));
+    for (const w of this.model.windows) if (!w.userData.noHalo) glowHub.add(makeEmitter('window', 0, 0, 0, { obj: w, size: 0.5, owner: this }));
   }
 
   /** Ruderausschlag −1 … 1 (für Steuerrad und Haltung des Steuermanns) */

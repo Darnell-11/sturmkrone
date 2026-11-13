@@ -35,6 +35,9 @@ import { sharedGeo } from '../../render/geoCache';
 import { disposeGeometry, markShared } from '../../render/dispose';
 import { toon } from '../../render/toon';
 import { toonPbr } from '../../render/pbrMaps';
+import { hullPlankTexture } from '../../render/shipTextures';
+import { ships2 } from '../../core/flags';
+import { hullGeometry2 } from './shipHull2';
 import { archParts, hasArch } from '../../world/envModels';
 import { hasProp, placeMatrix, PropBatch, propRoles, type PropId } from '../../world/worldProps';
 
@@ -92,6 +95,8 @@ function widthAt(t: number): number {
 /** Deckssprung: Bug und Heck steigen an (bei großen Schiffen begrenzt) */
 export function sheerAt(t: number, L: number): number {
   const k = Math.min(1.6, L / 15) * 0.55;
+  // Schiffe 2: stärkerer, weich auslaufender Deckssprung (Bug steigt kräftig, Heck sanfter)
+  if (ships2()) return (t > 0 ? Math.pow(t, 2.4) * 1.75 : t * t * 0.95) * k;
   return (t > 0 ? t * t * 1.1 : t * t * 0.8) * k;
 }
 
@@ -411,8 +416,10 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   const planksTex = plankTexture();
   const oak = oakTexture();
   // beidseitig: auch die Innenseite der Bordwand (vom Deck aus) und der Heckspiegel von hinten bleiben sichtbar
-  const hullMat = toon({ color: 0xffffff, vertexColors: true, map: oak, side: DoubleSide, roughness: 0.9, ...toonPbr(oak, { strength: 0.28, rough: 0.92, roughVar: 0.25, ao: 0.6 }) });
-  const hull = new Mesh(hullGeometry(c, D, look), hullMat);
+  const v2 = ships2();
+  const hullTex = v2 ? hullPlankTexture() : oak;
+  const hullMat = toon({ color: 0xffffff, vertexColors: true, map: hullTex, side: DoubleSide, roughness: 0.9, ...toonPbr(hullTex, v2 ? { strength: 0.5, rough: 0.85, roughVar: 0.2, ao: 0.7 } : { strength: 0.28, rough: 0.92, roughVar: 0.25, ao: 0.6 }) });
+  const hull = new Mesh(v2 ? hullGeometry2(c, D, look, { widthAt, sheerAt, rakeAt }) : hullGeometry(c, D, look), hullMat);
   group.add(hull);
 
   // Deck
@@ -506,8 +513,16 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   const castleZ0 = -c.L / 2 + c.L * 0.02, castleZ1 = castleZ0 + sternLen;
   const cs = new Shape();
   const CN = 8;
+  // Schiffe 2: die Heckwand des Kastells wölbt sich nach hinten (Heckgalerie wie bei Galeonen) statt einer flachen Platte
+  const xmC = halfWidth(castleZ0) * 0.9;
+  const BULGE = v2 ? Math.min(1.7, 0.026 * c.L + 0.16) : 0;
+  const rearZ = (x: number, off = 0) => castleZ0 - off - BULGE * Math.pow(Math.max(0, 1 - (x / xmC) * (x / xmC)), 0.7);
+  const RM = 14;
+  /** Punkte der gewölbten Heckkante von +x nach −x (ohne die Endpunkte) */
+  const rearArc = (off = 0, grow = 1) => { const a: { x: number; z: number }[] = []; if (v2) for (let j = 1; j < RM; j++) { const x = xmC * (1 - (2 * j) / RM); a.push({ x: x * grow, z: rearZ(x, off) }); } return a; };
   for (let i = 0; i <= CN; i++) { const z = castleZ0 + (i / CN) * sternLen; const x = halfWidth(z) * 0.9; if (i === 0) cs.moveTo(x, -z); else cs.lineTo(x, -z); }
   for (let i = CN; i >= 0; i--) { const z = castleZ0 + (i / CN) * sternLen; cs.lineTo(-halfWidth(z) * 0.9, -z); }
+  for (const p of rearArc().reverse()) cs.lineTo(p.x, -p.z);
   // Hohles Achterkastell: Wandring von 0,16 m um die Kapitänskajüte, vorn mit Türlücke (die Tür ist begehbar, siehe DeckGround).
   // Eine einzige Umrisslinie führt außen herum und an der Tür nach innen (wie ein Schlüsselloch), so bleibt die Form einfach.
   const wallT = 0.16;
@@ -522,6 +537,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     to(doorWC / 2, castleZ1);
     to(xOut(castleZ1), castleZ1);
     for (let i = CN - 1; i >= 0; i--) { const z = castleZ0 + (i / CN) * sternLen; to(xOut(z), z); }
+    for (const p of rearArc()) to(p.x, p.z);
     for (let i = 0; i <= CN; i++) { const z = castleZ0 + (i / CN) * sternLen; to(-xOut(z), z); }
     to(-doorWC / 2, castleZ1);
     to(-doorWC / 2, zB);
@@ -543,11 +559,13 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   const ts = new Shape();
   for (let i = 0; i <= CN; i++) { const z = castleZ0 - 0.07 + (i / CN) * (sternLen + 0.14); const x = halfWidth(z) * 0.9 * 1.035 + 0.04; if (i === 0) ts.moveTo(x, -z); else ts.lineTo(x, -z); }
   for (let i = CN; i >= 0; i--) { const z = castleZ0 - 0.07 + (i / CN) * (sternLen + 0.14); ts.lineTo(-halfWidth(z) * 0.9 * 1.035 - 0.04, -z); }
+  for (const p of rearArc(0.07).reverse()) ts.lineTo(p.x * 1.035 + Math.sign(p.x) * 0.04, -p.z);
   // Ring statt Platte: die Zierleiste liegt nur außen um die Wand, der Raum darunter ist die begehbare Kajüte
   {
     const hole = new Path();
     for (let i = 0; i <= CN; i++) { const z = castleZ0 + (i / CN) * sternLen; if (i === 0) hole.moveTo(-xOut(z) * 0.995, -z); else hole.lineTo(-xOut(z) * 0.995, -z); }
     for (let i = CN; i >= 0; i--) { const z = castleZ0 + (i / CN) * sternLen; hole.lineTo(xOut(z) * 0.995, -z); }
+    for (const p of rearArc(0, 0.995)) hole.lineTo(p.x, -p.z);
     ts.holes.push(hole);
   }
   const trim = new Mesh(new ExtrudeGeometry(ts, { depth: 0.12, bevelEnabled: false }).rotateX(-Math.PI / 2), gold);
@@ -690,7 +708,93 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   }
   const castleMid = (castleZ0 + castleZ1) / 2;
   const winMat = GLOW_WINDOW;
-  for (let i = 0; i < c.decks + 2; i++) {
+  /**
+   * Schiffe 2: Heckgalerie. Bogenfenster in goldenen Rahmen (ein oder zwei Reihen), Zwischenpfeiler, Balkone mit Geländer
+   * auf der Wölbung der Heckwand, Sockel- und Kranzleiste, kleine Bogenfenster an den Seiten des Kastells.
+   */
+  function buildSternGallery() {
+    const rows = castleH >= 3.3 ? 2 : 1;
+    const ww = Math.min(0.78, 0.4 + castleH * 0.075), hh = Math.min(1.5, castleH * (rows === 2 ? 0.27 : 0.4));
+    const nT = Math.round((2 * xmC * 0.8) / (ww * 1.75));
+    const n = Math.max(3, nT % 2 ? nT : nT + 1);
+    const span = 2 * xmC * 0.8;
+    const glassDay = toon({ color: '#1B2430', spec: 0.9, roughness: 0.25 });
+    const pil = toon('#4A2E1A');
+    const archShape = (w: number, h: number) => { const s = new Shape(); const r = w / 2; s.moveTo(-r, -h / 2); s.lineTo(r, -h / 2); s.lineTo(r, h / 2 - r); s.absarc(0, h / 2 - r, r, 0, Math.PI, false); s.lineTo(-r, -h / 2); return s; };
+    const arch = (w: number, h: number) => sharedGeo(`ship-arch-${w.toFixed(3)}-${h.toFixed(3)}`, () => new ShapeGeometry(archShape(w, h), 8));
+    const wput = (geo: BufferGeometry, mat: Mesh['material'], cx: number, cy: number, cz: number, th: number, lx: number, ly: number, lz: number) =>
+      put(group, geo, mat, cx + lx * Math.cos(th) + lz * Math.sin(th), cy + ly, cz - lx * Math.sin(th) + lz * Math.cos(th), 0, th, 0);
+    /** Bogenfenster samt Rahmen an Stelle (cx, cy, cz) mit Blickrichtung th; glow = nachts leuchtende Scheibe */
+    const archWindow = (cx: number, cy: number, cz: number, th: number, w: number, h: number, glow: boolean, halo = true) => {
+      wput(arch(w, h), glassDay, cx, cy, cz, th, 0, 0, 0.012);
+      if (glow) {
+        const g = new Mesh(arch(w, h), winMat);
+        g.position.set(cx + Math.sin(th) * 0.024, cy, cz + Math.cos(th) * 0.024);
+        g.rotation.y = th;
+        g.userData.noOutline = true;
+        if (!halo) g.userData.noHalo = true;   // nur Glas, ohne eigenen Lichthof (spart Leuchtstellen im GlowSystem)
+        group.add(g);
+        windows.push(g);
+      }
+      wput(torus(w / 2 + 0.02, 0.026, 10, Math.PI), gold, cx, cy, cz, th, 0, h / 2 - w / 2, 0.035);
+      for (const e of [-1, 1]) wput(box(0.05, h - w / 2, 0.07), gold, cx, cy, cz, th, e * (w / 2 + 0.02), -w / 4, 0.035);
+      wput(box(w + 0.16, 0.06, 0.15), gold, cx, cy, cz, th, 0, -h / 2 - 0.02, 0.06);
+      wput(box(0.03, h - w / 2, 0.03), gold, cx, cy, cz, th, 0, -w / 4, 0.04);
+      wput(box(w, 0.03, 0.03), gold, cx, cy, cz, th, 0, -h * 0.1, 0.04);
+    };
+    const slope = (x: number) => (rearZ(x + 0.01) - rearZ(x - 0.01)) / 0.02;
+    const centers = rows === 2 ? [0.28, 0.66] : [0.56];
+    centers.forEach((rc, r) => {
+      const cy = D + castleH * rc;
+      for (let i = 0; i < n; i++) {
+        const x = (i - (n - 1) / 2) * (span / (n - 1));
+        archWindow(x, cy, rearZ(x), Math.atan2(slope(x), -1), ww, hh, true, r === 0 && (n <= 5 || i % 2 === 0));
+      }
+      // Pfeiler zwischen den Fenstern (und an den Enden)
+      for (let i = 0; i <= n; i++) {
+        const x = (i - n / 2) * (span / (n - 1));
+        if (Math.abs(x) > xmC * 0.97) continue;
+        const th = Math.atan2(slope(x), -1);
+        wput(cyl(0.05, 0.06, hh * 1.12, 6), pil, x, cy, rearZ(x), th, 0, 0, 0.05);
+      }
+      // Balkon unter der Reihe: Bohlen auf der Wölbung, Geländer mit Docken
+      const ly = cy - hh / 2 - 0.07, proj = 0.34 + (r === 0 ? 0.08 : 0);
+      const ls = new Shape();
+      for (let j = 0; j <= RM; j++) { const x = xmC * (1 - (2 * j) / RM); if (j === 0) ls.moveTo(x, -rearZ(x, proj)); else ls.lineTo(x, -rearZ(x, proj)); }
+      for (let j = RM; j >= 0; j--) { const x = xmC * (1 - (2 * j) / RM); ls.lineTo(x, -rearZ(x, -0.04)); }
+      const ledge = new Mesh(new ExtrudeGeometry(ls, { depth: 0.09, bevelEnabled: false }).rotateX(-Math.PI / 2), wood);
+      ledge.position.y = ly;
+      group.add(ledge);
+      keepExtra.push(ledge);
+      const pts: { x: number; y: number; z: number }[] = [];
+      for (let j = 0; j <= RM; j++) { const x = xmC * (1 - (2 * j) / RM); pts.push({ x, y: ly + 0.09, z: rearZ(x, proj - 0.05) }); }
+      for (let j = 0; j < RM; j++) {
+        const a = pts[j], b = pts[j + 1];
+        railSeg(group, a, b, 0.62, 0.07, gold);
+        railSeg(group, a, b, 0.1, 0.045, darkWood);
+        put(group, cyl(0.02, 0.026, 0.52, 6), darkWood, (a.x + b.x) / 2, a.y + 0.34, (a.z + b.z) / 2);
+      }
+      for (let j = 0; j <= RM; j += 2) put(group, cyl(0.045, 0.055, 0.7, 6), gold, pts[j].x, pts[j].y + 0.35, pts[j].z);
+    });
+    // Sockelleiste und Kranzleiste rund um das Kastell
+    for (const [yy, hgt] of [[-0.02, 0.12], [castleH - 0.17, 0.1]] as const) {
+      const rb = new Mesh(new ExtrudeGeometry(ts, { depth: hgt, bevelEnabled: false }).rotateX(-Math.PI / 2), gold);
+      rb.position.y = D + yy;
+      group.add(rb);
+    }
+    // Seitenfenster des Kastells (Bogenfenster, nur Zierde; Innenraum hat eigene Fenster nach hinten)
+    {
+      const w2 = ww * 0.8, h2 = hh * 0.92, cy = D + castleH * (rows === 2 ? 0.5 : 0.56);
+      const cnt = Math.max(2, Math.min(5, Math.round(sternLen / (w2 * 2.6))));
+      for (const sd of [-1, 1]) for (let k = 0; k < cnt; k++) {
+        const z = castleZ0 + sternLen * (0.12 + 0.76 * ((k + 0.5) / cnt)) * 0.9 + 0.2;
+        archWindow(sd * (xOut(z) + 0.004), cy, z, sd * Math.PI / 2, w2, h2, true, false);
+      }
+    }
+    return { ww, hh, n, span, centers, arch };
+  }
+  const gal = v2 ? buildSternGallery() : null;
+  if (!v2) for (let i = 0; i < c.decks + 2; i++) {
     const w = new Mesh(new PlaneGeometry(0.5, 0.45), winMat);
     w.position.set((i - (c.decks + 1) / 2) * (c.W * 0.62 / (c.decks + 2)), D + castleH * 0.55, castleZ0 - 0.02);
     w.rotation.y = Math.PI;
@@ -1104,15 +1208,23 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   const cabinBlockers: Blocker[] = [];
   let cabinLight: PointLight | null = null;
   {
-    const ROLE_HEX: Record<string, string> = { wood: '#8A5A30', darkwood: '#4A2E1A', brass: '#D9B24C', iron: '#3A3C40', paper: '#E8DCB8', cloth: '#7A1F1A', bedding: '#DCD4BC', leather: '#4A2E1C', book1: '#7A1A1A', book2: '#245234', book3: '#5A3A20', book4: '#28407A', globe: '#3A7390', rug: '#7A1F1A', rugtrim: '#C9A24E' };
+    const ROLE_HEX: Record<string, string> = { wood: '#8A5A30', darkwood: '#4A2E1A', brass: '#D9B24C', iron: '#3A3C40', paper: '#E8DCB8', cloth: '#7A1F1A', bedding: '#DCD4BC', leather: '#4A2E1C', book1: '#7A1A1A', book2: '#245234', book3: '#5A3A20', book4: '#28407A', globe: '#3A7390', rug: '#7A1F1A', rugtrim: '#C9A24E', velvet: '#6A1424', paint1: '#2F6A86', paint2: '#D6A868', steel: '#C4CAD2', glass: '#8FB8C6' };
     const geos: BufferGeometry[] = [];
     const m4 = new Matrix4(), qf = new Quaternion(), ef = new Euler(), pv = new Vector3(), sv = new Vector3(), rc = new Color();
+    const flameGeos: BufferGeometry[] = [];
     const furn = (name: string, x: number, z: number, yaw: number, s: number, hx = 0, hz = 0, y = 0) => {
       const parts = archParts(name);
       if (!parts) return;
       m4.compose(pv.set(x, D + y, z), qf.setFromEuler(ef.set(0, yaw, 0)), sv.set(s, s, s));
       for (const p of parts) {
         if (p.role === 'glow') continue;
+        if (p.role === 'flame') {
+          // Kerzenflammen: eigenes leuchtendes Netz (GLOW_LAMP), ohne Vertexfarbe
+          const fg = p.geo.clone().applyMatrix4(m4);
+          fg.deleteAttribute('color'); fg.deleteAttribute('uv');
+          flameGeos.push(fg.index ? fg.toNonIndexed() : fg);
+          continue;
+        }
         const g = p.geo.clone().applyMatrix4(m4);
         const n = g.attributes.position.count, ao = g.attributes.color;
         rc.set(ROLE_HEX[p.role] ?? '#8A5A30');
@@ -1124,10 +1236,164 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       }
       if (hx > 0) cabinBlockers.push({ cx: x, cz: z, hx, hz, cabin: true });
     };
+    /** Beliebiges Teil (Box, Ring …) mit fester Farbe in die zusammengefasste Einrichtung aufnehmen (Wände, Leisten, Parkett) */
+    const addGeo = (g0: BufferGeometry, hex: string, ao = 1) => {
+      const g = g0.index ? g0.toNonIndexed() : g0;
+      const n = g.attributes.position.count;
+      rc.set(hex);
+      const col = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) { col[i * 3] = rc.r * ao; col[i * 3 + 1] = rc.g * ao; col[i * 3 + 2] = rc.b * ao; }
+      g.deleteAttribute('uv');
+      g.setAttribute('color', new Float32BufferAttribute(col, 3));
+      geos.push(g);
+    };
     if (hasArch('kajuete_schreibtisch')) {
       const R = zB - zA, zm = (zA + zB) / 2;
       const k = Math.min(1.12, Math.max(0.7, R / 7.5));
       const wAt = (z: number) => xIn(z);
+      const palatial = v2 && R >= 8 && hasArch('kajuete_himmelbett') && hasArch('kajuete_tafel');
+      if (v2) {
+        // ---- Raumschale: Parkett, Sockel, Wandvertäfelung mit Füllungen, Zierleiste, Pilaster und Kranzleiste ----
+        const upperHex = R >= 12 ? '#F2E2B8' : R >= 8 ? '#E0CB9A' : '#B8905F';
+        const hW = Math.min(1.15, castleH * 0.36), top = castleH - 0.17;
+        {
+          const pos: number[] = [], nor: number[] = [], col: number[] = [];
+          const cell = 0.42 * Math.min(1.35, Math.max(1, castleH / 3));
+          const rowsN = Math.max(3, Math.round(R / cell)), dzr = R / rowsN, yF = D + 0.006;
+          // gleiche Spaltenzahl in jeder Reihe (nach der engsten), damit das Muster durchläuft statt zu zacken
+          const cols = Math.max(2, Math.round((2 * (Math.min(wAt(zA), wAt(zB)) - 0.02)) / cell));
+          for (let r = 0; r < rowsN; r++) {
+            const z0 = zA + r * dzr, z1 = z0 + dzr;
+            const half = Math.min(wAt(z0), wAt(z1)) - 0.02;
+            const cw = (2 * half) / cols;
+            for (let q = 0; q < cols; q++) {
+              const x0 = -half + q * cw, x1 = x0 + cw;
+              rc.set(((r + q) & 1) ? '#946739' : '#B28850');
+              const v = 0.9 + ((r * 7 + q * 13) % 5) * 0.03;
+              for (const [px, pz] of [[x0, z0], [x0, z1], [x1, z1], [x0, z0], [x1, z1], [x1, z0]] as const) {
+                pos.push(px, yF, pz); nor.push(0, 1, 0); col.push(rc.r * v, rc.g * v, rc.b * v);
+              }
+            }
+          }
+          const pg = new BufferGeometry();
+          pg.setAttribute('position', new Float32BufferAttribute(pos, 3));
+          pg.setAttribute('normal', new Float32BufferAttribute(nor, 3));
+          pg.setAttribute('color', new Float32BufferAttribute(col, 3));
+          geos.push(pg);
+        }
+        /** Leiste an der Innenwand von (ax,az) nach (bx,bz) zwischen den Höhen y0 und y1, th dick, nach innen versetzt */
+        const wallStrip = (ax: number, az: number, bx: number, bz: number, y0: number, y1: number, th: number, hex: string, ao = 1) => {
+          const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz);
+          if (len < 0.02) return;
+          const cx = (ax + bx) / 2, cz = (az + bz) / 2;
+          let nx = -dz / len, nz = dx / len;
+          if (nx * (0 - cx) + nz * (zm - cz) < 0) { nx = -nx; nz = -nz; }
+          const g = new BoxGeometry(th, y1 - y0, len);
+          g.rotateY(Math.atan2(dx, dz));
+          g.translate(cx + nx * (th / 2 + 0.004), D + (y0 + y1) / 2, cz + nz * (th / 2 + 0.004));
+          addGeo(g, hex, ao);
+        };
+        const GOLD = '#D9B24C', DARK = '#4E3019', DARKER = '#33200F';
+        const NS = 8;
+        type Seg = { a: [number, number]; b: [number, number]; rear?: boolean };
+        const segs: Seg[] = [];
+        for (const sd of [-1, 1]) for (let i = 0; i < NS; i++) {
+          const z0 = zA + (i / NS) * R, z1 = zA + ((i + 1) / NS) * R;
+          segs.push({ a: [sd * wAt(z0), z0], b: [sd * wAt(z1), z1] });
+        }
+        segs.push({ a: [-wAt(zA), zA], b: [wAt(zA), zA], rear: true });
+        const dh = doorWC / 2 + 0.05;
+        segs.push({ a: [-wAt(zB), zB], b: [-dh, zB] }, { a: [dh, zB], b: [wAt(zB), zB] });
+        for (const sg of segs) {
+          const [ax, az] = sg.a, [bx, bz] = sg.b;
+          wallStrip(ax, az, bx, bz, 0, 0.14, 0.07, DARKER);
+          wallStrip(ax, az, bx, bz, top - 0.03, top, 0.07, DARK);
+          wallStrip(ax, az, bx, bz, top, castleH - 0.03, 0.1, GOLD);
+          if (sg.rear) {
+            wallStrip(ax, az, bx, bz, 0.14, top - 0.03, 0.02, upperHex);
+            continue;
+          }
+          wallStrip(ax, az, bx, bz, 0.14, hW, 0.04, DARK);
+          wallStrip(ax, az, bx, bz, hW - 0.04, hW + 0.04, 0.075, GOLD);
+          wallStrip(ax, az, bx, bz, hW + 0.04, top - 0.03, 0.02, upperHex);
+          const len = Math.hypot(bx - ax, bz - az), np = Math.max(1, Math.round(len / 1.0));
+          for (let i = 0; i < np; i++) {
+            const t0 = (i + 0.07) / np, t1 = (i + 0.93) / np;
+            wallStrip(ax + (bx - ax) * t0, az + (bz - az) * t0, ax + (bx - ax) * t1, az + (bz - az) * t1, 0.26, hW - 0.12, 0.062, '#6B4424');
+          }
+        }
+        // Pilaster an den Seitenwänden und in den Ecken
+        const npil = Math.max(2, Math.round(R / 2.2));
+        for (const sd of [-1, 1]) for (let i = 0; i <= npil; i++) {
+          const z = zA + 0.14 + (i / npil) * (R - 0.28);
+          const x = sd * wAt(z), u = 0.075;
+          wallStrip(x, z - u, x, z + u, 0, top, 0.11, DARKER);
+          wallStrip(x, z - u * 1.25, x, z + u * 1.25, top - 0.2, top, 0.14, GOLD);
+          wallStrip(x, z - u * 1.25, x, z + u * 1.25, 0, 0.2, 0.14, GOLD);
+        }
+      }
+      if (palatial) {
+        // ---- Prunkkajüte (ab 8 m Raumlänge): Schreibtisch vor den Heckfenstern mit Fensterbänken, lange Tafel mit Stühlen, Himmelbett,
+        // Anrichten mit Spiegel, Bücherregale, Waffenwände, Gemälde, Kajütenofen, Truhen und Kronleuchter ----
+        const sc = Math.min(1.5, Math.max(1, castleH / 3.3));
+        const grandR = R >= 12;
+        furn('kajuete_teppich', 0, zm + 0.1, 0, Math.min(2.1, (2 * wAt(zm) - 1.6) / 2.6, (R * 0.62) / 1.9));
+        const ds = Math.min(1.3 * sc, (2 * wAt(zA + 0.6) - 2.0) / 1.7);
+        const dz = zA + 0.43 * ds + 0.05;
+        furn('kajuete_schreibtisch', 0, dz, 0, ds, 0.85 * ds, 0.43 * ds);
+        furn('kajuete_stuhl', 0, dz + 0.425 * ds + 0.5 * ds * 0.9, Math.PI, ds * 0.95, 0.28 * ds, 0.26 * ds);
+        const bs = sc * 0.95;
+        const nb = Math.max(0, Math.floor((wAt(zA + 0.3) - 0.85 * ds - 0.15) / (1.4 * bs)));
+        for (const sdn of [-1, 1]) for (let i = 0; i < nb; i++) furn('kajuete_fensterbank', sdn * (0.85 * ds + 0.12 + 0.7 * bs + i * 1.4 * bs), zA + 0.21 * bs + 0.035, 0, bs, 0.7 * bs, 0.21 * bs);
+        // lange Tafel in der Raummitte (ab 9 m), sonst Kartentisch
+        const tz = zm + 0.2;
+        if (R >= 9) {
+          const ts = Math.min(1.25, 0.55 + (R - 8) * 0.15), cs = ts * 0.95 + 0.05;
+          furn('kajuete_tafel', 0, tz, 0, ts, 0.56 * ts, 1.62 * ts);
+          for (const sdn of [-1, 1]) for (const dzz of [-1.1, 0, 1.1]) furn('kajuete_stuhl', sdn * (0.55 * ts + 0.28 * cs), tz + dzz * ts, sdn > 0 ? -Math.PI / 2 : Math.PI / 2, cs, 0.25 * cs, 0.25 * cs);
+          furn('kajuete_stuhl', 0, tz - (1.6 * ts + 0.32 * cs), 0, cs, 0.26 * cs, 0.25 * cs);
+          furn('kajuete_stuhl', 0, tz + (1.6 * ts + 0.32 * cs), Math.PI, cs, 0.26 * cs, 0.25 * cs);
+        } else {
+          const kt = Math.min(1.2, sc);
+          furn('kajuete_kartentisch', 0.25 * wAt(zm), zm + 0.2, 0, kt, 0.68 * kt, 0.47 * kt);
+          furn('kajuete_stuhl', 0.25 * wAt(zm) - 0.3 * kt, zm + 0.2 + 0.72 * kt, Math.PI, kt * 0.95, 0.24 * kt, 0.23 * kt);
+          furn('kajuete_stuhl', 0.25 * wAt(zm) + 0.3 * kt, zm + 0.2 - 0.72 * kt, 0, kt * 0.95, 0.24 * kt, 0.23 * kt);
+        }
+        const sr = sc * 0.9, as = sc * 0.9;
+        const zr1 = zA + 0.2 * R + 0.3;
+        // Backbordwand: Regale, Anrichte mit Spiegel, Himmelbett vorn
+        furn('kajuete_regal', -(wAt(zr1) - 0.19 * sr - 0.02), zr1, Math.PI / 2, sr, 0.19 * sr, 0.5 * sr);
+        if (R >= 9) furn('kajuete_regal', -(wAt(zr1 + 1.02 * sr) - 0.19 * sr - 0.02), zr1 + 1.02 * sr, Math.PI / 2, sr, 0.19 * sr, 0.5 * sr);
+        const za2 = zm + 0.1 + (R >= 9 ? 0.1 * R : 0.05 * R);
+        furn('kajuete_anrichte', -(wAt(za2) - 0.28 * as - 0.02), za2, Math.PI / 2, as, 0.28 * as, 0.85 * as);
+        const bb = sc * 0.95, bz = zB - 0.45 - 1.05 * bb;
+        furn('kajuete_himmelbett', -(wAt(bz) - 0.75 * bb - 0.04), bz, 0, bb, 0.75 * bb, 1.05 * bb);
+        // Steuerbordwand: Globus, Regal, Waffenwand, Anrichte, Truhen mit Gemälde, Ofen vorn
+        furn('kajuete_globus', wAt(zA + 1.7) - 0.5, zA + 1.7, 0, Math.min(1.25, sc), 0.3 * sc, 0.3 * sc);
+        furn('kajuete_regal', wAt(zr1) - 0.19 * sr - 0.02, zr1, -Math.PI / 2, sr, 0.19 * sr, 0.5 * sr);
+        const zw = zr1 + 1.3 * sr + 0.2;
+        furn('kajuete_waffenwand', wAt(zw) - 0.03, zw, -Math.PI / 2, sc, 0, 0, 1.05 * sc);
+        const zan = zm + 0.1 + (R >= 9 ? 0.1 * R : 0.05 * R);
+        furn('kajuete_anrichte', wAt(zan) - 0.28 * as - 0.02, zan, -Math.PI / 2, as, 0.28 * as, 0.85 * as);
+        furn('kajuete_ofen', wAt(zB - 0.8) - 0.42 * sc, zB - 0.8, 0, sc * 0.95, 0.34 * sc, 0.34 * sc);
+        for (let i = 0; i < 2; i++) { const tzz = zB - 1.9 - i * 1.0 * sc; furn('kajuete_truhe', wAt(tzz) - 0.31, tzz, -Math.PI / 2, 0.95 * sc, 0.3 * sc, 0.48 * sc); }
+        const zg = zB - 1.9 - 0.5 * sc;
+        furn('kajuete_gemaelde', wAt(zg) - 0.03, zg, -Math.PI / 2, sc * 0.95, 0, 0, 1.25 * sc);
+        // Vorderwand: Gemälde neben der Tür
+        const fx = wAt(zB) * 0.5 + doorWC / 4;
+        furn('kajuete_gemaelde', fx, zB - 0.03, Math.PI, sc * 0.95, 0, 0, 1.3 * sc);
+        if (grandR || wAt(zB) > 4.4) furn('kajuete_gemaelde', -fx, zB - 0.03, Math.PI, sc * 0.95, 0, 0, 1.3 * sc);
+        if (grandR) {
+          furn('kajuete_globus', -(wAt(zA + 1.7) - 0.5), zA + 1.7, 0, Math.min(1.25, sc), 0.3 * sc, 0.3 * sc);
+          furn('kajuete_waffenwand', -(wAt(zw + 2.2) - 0.03), zw + 2.2, Math.PI / 2, sc, 0, 0, 1.05 * sc);
+        }
+        // Kajütenofen: Rauchrohr bis zur Decke
+        {
+          const ox = wAt(zB - 0.8) - 0.42 * sc, oz = zB - 0.8, y0 = 1.3 * sc * 0.95;
+          const pg = new CylinderGeometry(0.055 * sc, 0.055 * sc, castleH - y0, 8).translate(ox, D + y0 + (castleH - y0) / 2, oz);
+          addGeo(pg, '#3A3C40');
+        }
+      } else {
       furn('kajuete_teppich', 0, zm, 0, Math.min(k, Math.max(0.5, (2 * wAt(zm) - 0.5) / 2.6)));
       // Schreibtisch am Heck (Rücken an der Wand), Kapitänsstuhl davor
       const sd = Math.min(k, (2 * wAt(zA + 0.6) - 0.15) / 1.7);
@@ -1165,16 +1431,48 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
         furn('kajuete_koje', wAt(zm - 0.3) - 0.46 * sb2 - 0.02, zm - 0.3, 0, sb2, 0.46 * sb2, 1.03 * sb2);
         furn('kajuete_regal', -(wAt(zA + 1.6) - 0.21), zA + 1.6, Math.PI / 2, Math.min(k, 1), 0.19, 0.5);
       }
+      }
       // Hängelampe an der Decke; die Flamme ist ein leuchtender Kern (Lichthof und Spiegelung kommen aus render/glow.ts)
-      furn('kajuete_lampe', 0, zm, 0, 0.6, 0, 0, castleH);
-      const flame = new Mesh(new SphereGeometry(0.07, 10, 8), GLOW_LAMP);
-      flame.position.set(0, D + castleH - 0.4, zm);
-      flame.userData.noOutline = true;
-      flame.userData.glowSize = 0.3;
-      group.add(flame);
-      lanterns.push(flame);
+      if (palatial) {
+        const sc2 = Math.min(1.5, Math.max(1, castleH / 3.3));
+        const spots = R >= 12 ? [zA + 0.28 * R, zA + 0.72 * R] : [zm + 0.2];
+        const cs3 = Math.min(1.6, sc2 * (0.85 + R / 40));
+        for (const cz of spots) {
+          furn('kajuete_kronleuchter', 0, cz, 0, cs3, 0, 0, castleH);
+          const fl = new Mesh(new SphereGeometry(0.1, 10, 8), GLOW_LAMP);
+          fl.position.set(0, D + castleH - 0.78 * cs3, cz);
+          fl.userData.noOutline = true;
+          fl.userData.glowSize = 0.55;
+          group.add(fl);
+          lanterns.push(fl);
+        }
+      } else {
+        furn('kajuete_lampe', 0, zm, 0, 0.6, 0, 0, castleH);
+        const flame = new Mesh(new SphereGeometry(0.07, 10, 8), GLOW_LAMP);
+        flame.position.set(0, D + castleH - 0.4, zm);
+        flame.userData.noOutline = true;
+        flame.userData.glowSize = 0.3;
+        group.add(flame);
+        lanterns.push(flame);
+      }
       // Heckfenster von innen: Himmelslicht am Tag, nachts dunkel, mit Rahmen
-      for (let i = 0; i < c.decks + 2; i++) {
+      if (gal) {
+        const { ww, hh, n, span, centers, arch } = gal;
+        const FR = '#D9B24C';
+        for (const rcn of centers) for (let i = 0; i < n; i++) {
+          const wx = (i - (n - 1) / 2) * (span / (n - 1)), wy = D + castleH * rcn;
+          if (Math.abs(wx) > xIn(zA) - ww / 2 - 0.12) continue;
+          const iw = new Mesh(arch(ww, hh), CABIN_WINDOW);
+          iw.position.set(wx, wy, zA + 0.03);
+          iw.userData.noOutline = true;
+          group.add(iw);
+          for (const e of [-1, 1]) addGeo(new BoxGeometry(0.05, hh - ww / 2, 0.05).translate(wx + e * (ww / 2 + 0.02), wy - ww / 4, zA + 0.05), FR);
+          addGeo(new BoxGeometry(ww + 0.14, 0.06, 0.1).translate(wx, wy - hh / 2 - 0.02, zA + 0.07), FR);
+          addGeo(new TorusGeometry(ww / 2 + 0.02, 0.025, 4, 10, Math.PI).translate(wx, wy + hh / 2 - ww / 2, zA + 0.05), FR);
+          addGeo(new BoxGeometry(0.03, hh - ww / 2, 0.03).translate(wx, wy - ww / 4, zA + 0.055), FR);
+          addGeo(new BoxGeometry(ww, 0.03, 0.03).translate(wx, wy - hh * 0.1, zA + 0.055), FR);
+        }
+      } else for (let i = 0; i < c.decks + 2; i++) {
         const wx = (i - (c.decks + 1) / 2) * (c.W * 0.62 / (c.decks + 2)), wy = D + castleH * 0.55;
         if (Math.abs(wx) > xIn(zA) - 0.3) continue;
         const iw = new Mesh(new PlaneGeometry(0.5, 0.45), CABIN_WINDOW);
@@ -1188,7 +1486,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
         put(group, box(0.03, 0.45, 0.03), fr, wx, wy, zA + 0.03);
       }
       if (hero) {
-        cabinLight = new PointLight(0xffc27a, 0, 10 + R * 0.4, 1.6);
+        cabinLight = new PointLight(0xffc27a, 0, v2 ? 12 + R * 0.8 : 10 + R * 0.4, 1.6);
         cabinLight.position.set(0, D + castleH - 0.65, zm);
         group.add(cabinLight);
       }
@@ -1203,6 +1501,16 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
         keepExtra.push(fm);
       }
     }
+    if (flameGeos.length) {
+      const fmerged = mergeGeometries(flameGeos, false);
+      for (const g of flameGeos) g.dispose();
+      if (fmerged) {
+        const ff = new Mesh(fmerged, GLOW_LAMP);
+        ff.userData.noOutline = true;
+        group.add(ff);
+        keepExtra.push(ff);
+      }
+    }
   }
 
   // Deck-Ausstattung: Luke, Ankerwinde, Fässer, Kisten, Ankerkette und Anker – feste Positionen, damit jedes Schiff gleich aussieht
@@ -1213,7 +1521,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     const castleEnd = castleZ1 + stairLen + 0.8;
     const foreStart = fore ? fore.z0 - fore.stairLen - 0.9 : c.L * 0.34;
     // Masten (Nagelbank-Ring) sind feste Hindernisse; dazu das Belegungsraster für den Hauptgang vom Treppenfuß hinten zum Treppenfuß vorn
-    if (c.L >= 24) for (const m of c.masts) { const rr0 = 0.19 * Math.min(sc, 3.2) + 0.55; block(0, m * c.L, rr0 + 0.05, rr0 + 0.05); }
+    if (c.L >= 24) for (const m of c.masts) { const rr0 = 0.19 * Math.min(sc, 3.2) + (v2 ? 0.2 : 0.55); block(0, m * c.L, rr0 + 0.05, rr0 + 0.05); }
     if (fore) {
       const za = castleZ1 + stairLen + 0.6, zb2 = fore.z0 - fore.stairLen - 0.6;
       const xa = stairXc(stairX[0], 0);
@@ -1539,6 +1847,28 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     const fh = figurehead(look.figurehead, Math.min(2.2, 0.8 * sc));
     fh.position.set(0, bowTop - 0.1, bowZ + 0.15);
     group.add(fh);
+  }
+  // Schiffe 2: Galion – Backenhölzer aus Gold zur Figur, dazwischen ein Grätingdeck, und seitlich die Katköpfe für den Anker
+  if (v2 && c.L >= 24) {
+    const bk = Math.min(1.7, c.L / 26);
+    const gz = bowZ, gy = bowTop;
+    const hwB = halfWidth(gz - 1.4 * bk) * 0.6;
+    for (const sd of [-1, 1]) {
+      const pts = [{ x: sd * hwB, y: gy - 0.4 * bk, z: gz - 1.4 * bk }, { x: sd * hwB * 0.5, y: gy - 0.62 * bk, z: gz - 0.2 * bk }, { x: sd * 0.2 * bk, y: gy - 0.55 * bk, z: gz + 0.75 * bk }];
+      railSeg(group, pts[0], pts[1], 0, 0.15 * bk, gold, 0.17 * bk);
+      railSeg(group, pts[1], pts[2], 0, 0.13 * bk, gold, 0.15 * bk);
+      put(group, cyl(0.06 * bk, 0.06 * bk, 0.7 * bk, 6), darkWood, pts[1].x, pts[1].y - 0.3 * bk, pts[1].z);
+    }
+    const gs = new Shape();
+    gs.moveTo(-hwB * 0.92, -(gz - 1.4 * bk)); gs.lineTo(hwB * 0.92, -(gz - 1.4 * bk)); gs.lineTo(0.2 * bk, -(gz + 0.7 * bk)); gs.lineTo(-0.2 * bk, -(gz + 0.7 * bk)); gs.closePath();
+    const grating = new Mesh(new ShapeGeometry(gs).rotateX(-Math.PI / 2), toon({ color: '#6A4426', side: DoubleSide }));
+    grating.position.y = gy - 0.58 * bk;
+    group.add(grating);
+    for (const sd of [-1, 1]) {
+      const cz = gz - 2.8 * bk, hw2 = halfWidth(cz);
+      put(group, box(1.5 * bk, 0.2 * bk, 0.22 * bk), darkWood, sd * (hw2 * 0.92 + 0.45 * bk), D + sheerAt(cz / (c.L / 2), c.L) + 0.28 * bk, cz);
+      put(group, cyl(0.1 * bk, 0.1 * bk, 0.26 * bk, 8), gold, sd * (hw2 * 0.92 + 1.1 * bk), D + sheerAt(cz / (c.L / 2), c.L) + 0.28 * bk, cz, Math.PI / 2, 0, 0);
+    }
   }
 
   if (transomWin) windows.push(transomWin);

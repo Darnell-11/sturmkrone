@@ -1,5 +1,23 @@
 # Was ist neu
 
+## 2.9.68 – Schiffe 2 (Entwicklungsfassung) und Fix der Kajütentür (13.11.2026)
+
+**Fix, gilt für alle Fassungen:** Die Kapitänskajüte war zu Fuß **nie erreichbar**. Die Vorderwand des Achterkastells hatte für das Hauptdeck keine Lücke an der Tür, die Figur blieb 0,4 m davor stehen (nur Sprünge ins Innere funktionierten). Die Wand lässt jetzt die Türlücke frei; auf dem Achterdeck schließt die Türwand sie weiter gegen den Absturz. Per Laufskript geprüft: Schaluppe, Brigg, Fregatte, Galeone, Linienschiff und Leviathan erreichen den Raum und die Heckwand.
+
+**Schiffe 2 – nur als Entwicklungsfassung, die bisherigen Schiffe bleiben**
+- **Schalter:** `src/core/flags.ts`. In `npm run dev` ist Schiffe 2 an, auf der veröffentlichten Seite aus. Mit `?schiffe2` hinter der Adresse einschalten, mit `?schiffe2=aus` ausschalten (der Browser merkt es sich). Die alte Fassung ist unverändert im Code (`hullGeometry`, flache Heckwand, alte Kajüteneinrichtung).
+- **Rumpf (`entities/ship/shipHull2.ts`):** dichtere Spanten (30 bis 56 Schnitte statt 22), echte Berghölzer als Stufen (Kette, Haupt, oben, Schandeckel in Gold), Tumblehome am Heck, Flare am Bug, Heckspiegel weicht unten zurück (Gegenhölzer), Kupferboden mit Grünspan an der Wasserlinie, Schmuckband zwischen den Geschützreihen, beide Bordseiten vollständig. Stärkerer, weich auslaufender Deckssprung (Bug steigt kräftig, Heck sanfter). Neue helle Plankentextur (`render/shipTextures.ts`): Plankengänge, Stoßfugen, Holznägel.
+- **Heckgalerie:** die Heckwand des Achterkastells wölbt sich nach hinten, Bogenfenster in goldenen Rahmen mit Pfeilern (eine Reihe, ab 3,3 m Kastellhöhe zwei Reihen), Balkone mit Geländer und Docken, Sockel- und Kranzleiste rundum, Bogenfenster auch seitlich. Die Fenster leuchten nachts (Glas auf allen, Lichthof nur auf jedem zweiten der unteren Reihe, damit das GlowSystem nicht überläuft).
+- **Galion (ab Brigg):** goldene Backen zur Figur, Gräting, Katköpfe mit Rolle.
+- **Prunkkajüten ab 8 m Raumlänge (Fregatte bis Leviathan, Höhe bis 5,3 m):** neue Blender-Möbel (`tools/blender/build_kajuete2.py`, `public/models/ships/`): Himmelbett mit Baldachin und Vorhängen, Kronleuchter, Anrichte mit Spiegel und Aufsatz, Fensterbank mit Samtkissen und Vorhängen, Waffenwand (Säbel, Pistolen, Rundschild), Gemälde, Kajütenofen mit Rauchrohr bis zur Decke, lange Tafel mit Gedecken (dazu 6 bis 8 Stühle). Dazu Schreibtisch vor den Heckfenstern, Bücherregale, Globen, große Teppiche. Die Raumschale kommt für alle Klassen: Parkett im Schachbrett, Sockel, Wandvertäfelung mit Füllungen und Zierleiste, Pilaster, Kranzleiste (Wandfarbe je Größe), Bogenfenster von innen. Kerzenflammen leuchten (eigenes Netz mit dem Lampenmaterial). Die Linienschiffe und der Leviathan bekommen zwei Kronleuchter.
+- **Erreichbarkeit:** der Ring um die Masten hat in Schiffe 2 nur noch 0,2 m Aufschlag (vorher 0,55 m), damit man um den Besan herum zur Tür kommt.
+
+**Geprüft (Playwright):** alle sieben Klassen von Heck, Bug und Seite verglichen mit der alten Fassung, Kajüten von oben und in der Spielkamera (Tag und Nacht), Heckgalerie bei Nacht, Laufweg in die Kajüte, `tsc`, 72 Tests.
+
+**Kosten:** je Schiff +3 bis +21 Netze und +16 % (Schaluppe) bis +27 % (Leviathan) Dreiecke gegenüber der alten Fassung (gemessen an der Schiffsgruppe, mit Konturen; 104 000 bis 287 000). Nicht gemessen: Gefecht mit vielen Schiffen, echte Handys, einzelne Grafikstufen.
+
+**Nicht gebaut:** Beakhead mit Schnitzwerk, eigene Rumpfformen je Klasse (alle Klassen teilen die Draufsicht), Mannschaftsdeck und Laderaum.
+
 ## 2.9.67 – Fenster, Wasserspiegelung, Hüftlaterne und begehbare Kapitänskajüte (13.11.2026)
 
 **Offene Punkte aus 2.9.66, erledigt**

@@ -175,7 +175,9 @@ export class DeckGround implements Ground {
     const q = ship.model.quarter;
     if (!q) return;
     const big = ship.cls.L;
-    const gaps = q.stairX.map((x) => [x - q.stairW / 2, x + q.stairW / 2]).sort((a, b) => a[0] - b[0]);
+    // Öffnungen in der Vorderwand: die Treppen und die Kajütentür (ohne die Tür blieb die Kajüte vom Hauptdeck aus unerreichbar;
+    // auf dem Achterdeck schließt die Türwand unten die Lücke wieder gegen den Absturz)
+    const gaps = [...q.stairX.map((x) => [x - q.stairW / 2, x + q.stairW / 2]), ...(q.cabin ? [[-(q.doorHalf ?? 0.6), q.doorHalf ?? 0.6]] : [])].sort((a, b) => a[0] - b[0]);
     // Vorderwand des Achterkastells mit Öffnungen an den Treppen
     let cur = -big;
     for (const g of gaps) { if (g[0] > cur) this.walls.push({ cx: (cur + g[0]) / 2, cz: q.z1, hx: (g[0] - cur) / 2, hz: 0.07, edge: true }); cur = g[1]; }
