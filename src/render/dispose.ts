@@ -1,4 +1,4 @@
-import type { BufferGeometry, Material, Mesh, Object3D, Texture } from 'three';
+import type { BufferGeometry, InstancedMesh, Material, Mesh, Object3D, Texture } from 'three';
 
 /**
  * Speicherverwaltung: Grafikspeicher (Geometrien, Materialien, Texturen) wird beim Entfernen eines Objekts
@@ -52,6 +52,8 @@ export function disposeObject(root: Object3D | null | undefined) {
     const m = o as Mesh;
     if (m.geometry) disposeGeometry(m.geometry);
     if (m.material) disposeMaterial(m.material as Material | Material[]);
+    // Instanzmatrizen liegen im Grafikspeicher und gehören dem Netz, auch wenn Geometrie und Material geteilt sind
+    if ((o as InstancedMesh).isInstancedMesh) (o as InstancedMesh).dispose();
     for (const fn of forgetHooks) fn(o);
   });
 }

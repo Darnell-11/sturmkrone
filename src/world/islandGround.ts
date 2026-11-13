@@ -136,13 +136,27 @@ export interface Ground {
 }
 
 /** Achterdeck mit Treppen (Schiffskoordinaten, Höhen relativ zum Hauptdeck) */
-export interface QuarterDeck { z0: number; z1: number; top: number; stairX: number[]; stairW: number; stairLen: number; flare?: number }
+export interface QuarterDeck {
+  z0: number; z1: number; top: number; stairX: number[]; stairW: number; stairLen: number; flare?: number;
+  /** Halbe Breite der Kajütentür in der Vorderwand des Achterkastells (Tür bei x = 0) */
+  doorHalf?: number;
+  /** Innenraum der Kapitänskajüte unter dem Achterdeck: hintere und vordere Innenkante (z) */
+  cabin?: { zA: number; zB: number };
+}
 
 /** Vordeck mit zwei geraden Treppen an der Rückwand (z0 = Rückkante, z1 = Spitze) */
 export interface ForeDeck { z0: number; z1: number; top: number; stairX: number[]; stairW: number; stairLen: number }
 
 /** Dünne feste Wand im Schiffsraum (Mitte, halbe Ausdehnung) */
-interface DeckWall { cx: number; cz: number; hx: number; hz: number }
+interface DeckWall {
+  cx: number; cz: number; hx: number; hz: number;
+  /** Möbel der Kajüte: nur im Innenraum fest */
+  cabin?: boolean;
+  /** Vorderwand mit Treppenlücken: immer fest */
+  edge?: boolean;
+  /** Wand über der Kajütentür: fest nur auf dem Achterdeck (oben), damit man dort nicht durch die Türlücke fällt */
+  door?: boolean;
+}
 
 /**
  * Deck eines Schiffs: Hauptdeck, Achterdeck (nur über die Treppen erreichbar) und die Treppenrampen. Höhe und Kollision folgen
@@ -151,8 +165,10 @@ interface DeckWall { cx: number; cz: number; hx: number; hz: number }
  */
 export class DeckGround implements Ground {
   private walls: DeckWall[] = [];
+  /** Wo steht die Figur: 0 Hauptdeck, 1 Achterdeck (oben), 2 Kapitänskajüte (unter dem Achterdeck, durch die Tür); −1 = noch unbekannt */
+  private zone = -1;
 
-  constructor(private ship: { x: number; z: number; heading: number; cls: { L: number }; model: { deckY: number; group: { position: { y: number }; matrixWorld: { elements: ArrayLike<number> }; updateMatrixWorld(force?: boolean): void }; halfWidth(z: number): number; quarter?: QuarterDeck; fore?: ForeDeck | null; blockers?: DeckWall[] } }) {
+  constructor(private ship: { x: number; z: number; heading: number; cls: { L: number }; model: { deckY: number; group: { position: { y: number }; matrixWorld: { elements: ArrayLike<number> }; updateMatrixWorld(force?: boolean): void }; halfWidth(z: number): number; quarter?: QuarterDeck; fore?: ForeDeck | null; blockers?: DeckWall[]; cabinRoof?: { visible: boolean } } }) {
     ship.model.group.updateMatrixWorld(true);
     // feste Aufbauten (Masten, Luke, Fässer, Möbel, Vorderkastell) sind Hindernisse
     for (const b of ship.model.blockers ?? []) this.walls.push(b);
@@ -162,8 +178,10 @@ export class DeckGround implements Ground {
     const gaps = q.stairX.map((x) => [x - q.stairW / 2, x + q.stairW / 2]).sort((a, b) => a[0] - b[0]);
     // Vorderwand des Achterkastells mit Öffnungen an den Treppen
     let cur = -big;
-    for (const g of gaps) { if (g[0] > cur) this.walls.push({ cx: (cur + g[0]) / 2, cz: q.z1, hx: (g[0] - cur) / 2, hz: 0.07 }); cur = g[1]; }
-    if (big > cur) this.walls.push({ cx: (cur + big) / 2, cz: q.z1, hx: (big - cur) / 2, hz: 0.07 });
+    for (const g of gaps) { if (g[0] > cur) this.walls.push({ cx: (cur + g[0]) / 2, cz: q.z1, hx: (g[0] - cur) / 2, hz: 0.07, edge: true }); cur = g[1]; }
+    if (big > cur) this.walls.push({ cx: (cur + big) / 2, cz: q.z1, hx: (big - cur) / 2, hz: 0.07, edge: true });
+    // Türlücke: auf dem Achterdeck zu (Absturzkante), vom Hauptdeck aus offen
+    if (q.cabin) this.walls.push({ cx: 0, cz: q.z1, hx: q.doorHalf ?? 0.6, hz: 0.07, door: true });
     // Wangen der Treppen (bei geschwungenen Treppen als Kette kurzer Stücke entlang der Kurve)
     const fl = q.flare ?? 0;
     for (const sx of q.stairX) {
@@ -215,7 +233,7 @@ export class DeckGround implements Ground {
       if (lz > f.z0 - f.stairLen) for (const sx of f.stairX) if (Math.abs(lx - sx) <= f.stairW / 2 + 0.08) return f.top * (1 - (f.z0 - lz) / f.stairLen);
     }
     if (!q) return 0;
-    if (lz <= q.z1) return lz >= q.z0 - 0.5 ? q.top : 0;
+    if (lz <= q.z1) return lz >= q.z0 - 0.5 ? (this.zone === 2 ? 0 : q.top) : 0;
     if (lz < q.z1 + q.stairLen) {
       const t = 1 - (lz - q.z1) / q.stairLen;
       for (const sx of q.stairX) if (Math.abs(lx - this.stairCx(sx, t)) * this.stairN(sx, t).nx <= q.stairW / 2 + 0.08) return q.top * (1 - (lz - q.z1) / q.stairLen);
@@ -233,6 +251,29 @@ export class DeckGround implements Ground {
     const { lx, lz } = this.toLocal(x, z);
     const ly = this.ship.model.deckY + this.level(lx, lz);
     return m[1] * lx + m[5] * ly + m[9] * lz + m[13];
+  }
+
+  /** In der Kapitänskajüte? (Dach und Reling oben werden dann ausgeblendet, die Kamera rückt näher) */
+  get inCabin() { return this.zone === 2; }
+
+  /** Zone wechseln: über die Treppe aufs Achterdeck, durch die Tür in die Kajüte, vorn wieder hinaus aufs Hauptdeck */
+  private updateZone(lx: number, lz: number, q: QuarterDeck) {
+    const z1 = q.z1;
+    const before = this.zone;
+    if (this.zone < 0) this.zone = lz <= z1 ? 1 : 0;
+    else if (lz > z1 + 0.04) this.zone = 0;
+    else if (this.zone === 0 && lz <= z1 - 0.02) this.zone = Math.abs(lx) < (q.doorHalf ?? 0.6) ? 2 : 1;
+    if (before !== this.zone) { const roof = this.ship.model.cabinRoof; if (roof) roof.visible = this.zone !== 2; }
+  }
+
+  /** Gilt die Wand gerade? Möbel nur in der Kajüte, Aufbauten des Achterdecks nicht darunter, die Wand über der Tür nur oben */
+  private active(w: DeckWall): boolean {
+    if (w.edge) return true;
+    if (w.door) return this.zone === 1;
+    if (w.cabin) return this.zone === 2;
+    const q = this.ship.model.quarter;
+    if (this.zone === 2 && q && w.cz <= q.z1 && w.cz >= q.z0 - 0.5) return false;
+    return true;
   }
 
   /** Kreis (r) aus einer Wand herausschieben, auf der Seite, auf der er gerade ist (die Wände sind dünn, die Schritte klein) */
@@ -253,13 +294,17 @@ export class DeckGround implements Ground {
     const { lx, lz } = this.toLocal(x, z);
     const L = this.ship.cls.L;
     const q = this.ship.model.quarter;
-    const zMin = q ? q.z0 + 0.35 + radius : -L / 2 + L * 0.28;
+    if (q?.cabin) this.updateZone(lx, lz, q);
+    const cab = this.zone === 2 && !!q?.cabin;
+    const zMin = cab ? q!.cabin!.zA + radius : q ? q.z0 + 0.35 + radius : -L / 2 + L * 0.28;
     // bis ganz nach vorn in die Bugspitze (dort wird das Deck schmal)
     const cz = Math.max(zMin, Math.min(L / 2 * 0.93, lz));
     const top = !!q && cz <= q.z1;
-    const hw = Math.max(0.3, this.ship.model.halfWidth(cz) * (top ? 0.86 : 0.85) - radius);
+    const hw = Math.max(0.3, cab ? this.ship.model.halfWidth(cz) * 0.9 - 0.18 - radius : this.ship.model.halfWidth(cz) * (top ? 0.86 : 0.85) - radius);
     let px = Math.max(-hw, Math.min(hw, lx)), pz = cz;
-    for (let it = 0; it < 2; it++) for (const w of this.walls) { const o = this.pushWall(w, px, pz, radius); px = o.lx; pz = o.lz; }
+    for (let it = 0; it < 2; it++) for (const w of this.walls) { if (!this.active(w)) continue; const o = this.pushWall(w, px, pz, radius); px = o.lx; pz = o.lz; }
+    // in der Kajüte nie hinter die Heckwand (auch nicht, wenn ein Möbelstück den Punkt herausschiebt)
+    if (cab) pz = Math.max(pz, q!.cabin!.zA + radius);
     return this.toWorld(px, pz);
   }
 
@@ -275,7 +320,7 @@ export class DeckGround implements Ground {
     const q = this.ship.model.quarter;
     if (!q) return false;
     const { lz } = this.toLocal(x, z);
-    return lz <= q.z1 && lz >= q.z0 - 0.5;
+    return this.zone !== 2 && lz <= q.z1 && lz >= q.z0 - 0.5;
   }
 
   /** Abstand eines Weltpunkts zum Steuerplatz (Schiffskoordinate z, x = 0) in der Ebene */

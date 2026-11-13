@@ -14,6 +14,8 @@ Stand: 12.11.2026, Code-Version 2.9.57 (three.js 0.186.1).
 - Die Tabelle in 3.2 (Flackern ab 80 bis 135 m) ist gerechnet. Gemessen wurde eine Abnahme der wechselnden Bildpunkte um 16 bis 42 % auf 100 m, kein vollständiges Verschwinden.
 - Waffen bleiben bei `Character.hold` (Sockets `mainHand`, `offHand`); als Gegenstände in `data/equipment.ts` kommen sie mit dem Inventar in Phase 4.
 
+**Nachfolger (2.9.61):** Rüstungssets, Oberflächen, Borten und Muster, Umhänge, Helme und der neue Editor stehen im `CHANGELOG.md` unter 2.9.61.
+
 **Was dieses Dokument ist:** eine Analyse des heutigen Figuren-, Kleidungs- und Animationssystems und ein Bauplan für drei neue Bausteine: Sichtbarkeits-Hülle, `BodyMaskingEngine` und Socket-System. Es wurde noch nichts am Spielcode geändert.
 
 **Wie belastbar die Befunde sind:** Alle Ursachen stammen aus dem Lesen des Codes und der three.js-Quelle. Im laufenden Spiel nachgemessen ist davon noch nichts. Jeder Befund trägt deshalb eine Einstufung:

@@ -2,7 +2,7 @@
 // Alles Balancing steht hier; die Darstellung (combat/loot.ts) und die Übergabe an Spielstand und Anzeigen (core/game.ts) lesen es nur.
 import { RARITY, type Rarity } from './trinkets';
 
-export type LootKind = 'trinket' | 'gold' | 'proviant';
+export type LootKind = 'trinket' | 'gold' | 'proviant' | 'gear';
 
 /** Ein Beutestück: Seltenheit steht beim Fallenlassen fest (Farbe der Säule), der Inhalt wird beim Aufheben gewürfelt */
 export interface LootDrop { rarity: Rarity; kind: LootKind; value: number }
@@ -51,7 +51,11 @@ function make(rarity: Rarity, src: DropSource, rnd: () => number): LootDrop {
   const avg = (src.gold[0] + src.gold[1]) / 2 * (1 + 0.2 * (src.level - 1)) * (src.boss ? 0.5 : 1);
   const value = Math.max(5, Math.round(avg * LOOT_GOLD_MULT[i] * (0.85 + rnd() * 0.3)));
   const r = rnd();
-  const kind: LootKind = i === 0 ? (r < 0.3 ? 'proviant' : 'gold') : i === 1 ? (r < 0.6 ? 'trinket' : 'gold') : (r < 0.85 ? 'trinket' : 'gold');
+  // Ausrüstung (Rüstungsteile der Sets, data/gear.ts) ist die häufigste Beute ab selten
+  const kind: LootKind = i === 0 ? (r < 0.22 ? 'proviant' : r < 0.36 ? 'gear' : 'gold')
+    : i === 1 ? (r < 0.3 ? 'trinket' : r < 0.78 ? 'gear' : 'gold')
+    : i === 2 ? (r < 0.3 ? 'trinket' : r < 0.9 ? 'gear' : 'gold')
+    : (r < 0.25 ? 'trinket' : r < 0.97 ? 'gear' : 'gold');
   return { rarity, kind, value };
 }
 

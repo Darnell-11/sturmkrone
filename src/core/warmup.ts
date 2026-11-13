@@ -84,6 +84,19 @@ export async function warmupShaders(d: WarmupDeps, progress: (k: number) => void
       figs.push(c);
     }
   }
+  // ---- Ausrüstung: Figuren in ganzen Sets, damit alle Oberflächen (Stoff, Leder, Stahl, Gold, Seide) samt Borten und Mustern vorab übersetzt sind ----
+  for (const set of ['eisenwall', 'drache', 'sturmkrone', 'kapitaen', 'strand']) {
+    const look = randomLook(Math.random, 'pirat');
+    look.extra = ['head', 'shoulder', 'chest', 'cloak', 'hands', 'legs', 'feet', 'mainhand', 'offhand'].map((c) => `${set}_${c}`);
+    if (set === 'strand') look.hairModel = 'frisur_mehrlagig';
+    const c = new Character(d.assets, look, true);
+    c.holder.position.copy(at).add(new Vector3(figs.length * 0.9 - 1.4, 0, 0));
+    scene.add(c.holder);
+    c.play('idle');
+    c.update(0.016);
+    c.enableFx();
+    figs.push(c);
+  }
   // ---- Schiffe: jede Klasse einmal (Rümpfe, Segel, Takelage, Kanonen, Schaum haben eigene Materialien) ----
   const ships: Group[] = [];
   for (const cls of SHIP_CLASSES) {

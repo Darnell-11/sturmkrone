@@ -21,7 +21,9 @@ import { boxBlocker, coastK, type WalkIsland } from './islandGround';
 import { plant, type StyleKit } from './islandStyle';
 import { hashId, seeded } from './waves';
 import { markWind, windify } from '../render/wind';
-import { cachedProto, floraProto, noise, type Scatter } from './vegetation';
+import { cachedProto, envProto, floraProto, noise, type Scatter } from './vegetation';
+import type { GlowPlaced } from '../render/glow';
+import { archGroup, hasArch } from './envModels';
 import { build, colliders } from './architecture';
 import type { StructureType } from '../data/settlements';
 
@@ -57,14 +59,14 @@ const FLOWERS: Record<IslandStyle, string[]> = {
  * Alles wird aus dem Namen der Insel ausgewürfelt: jede Insel sieht anders aus, aber bei jedem Start gleich.
  * Liefert Baum-, Busch- und Feuerplätze für Tiere und Effekte.
  */
-export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fires: Spot[] } {
+export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fires: Spot[]; glows: GlowPlaced[] } {
   const { group, def, kit, walk, hAt, glow, style, veg } = o;
   const rnd = seeded(hashId(def.id) ^ 0x9e3779b9);
   const r = def.r;
   const dens = Math.max(0.4, Math.min(1.6, o.density));
   /** Küstenradius in einer Richtung (die Inseln sind nicht mehr rund) */
   const E = (a: number) => r * coastK(walk.coast, a);
-  const trees: Spot[] = [], bushes: Spot[] = [], fires: Spot[] = [];
+  const trees: Spot[] = [], bushes: Spot[] = [], fires: Spot[] = [], glows: GlowPlaced[] = [];
   // belegte Flächen (Inselkoordinaten): vorhandene Hindernisse plus alles, was hier entsteht
   const taken: { x: number; z: number; r: number }[] = walk.blockers.map((b) => ({ x: b.x - walk.x, z: b.z - walk.z, r: b.r }));
   if (def.kind === 'ruin' || def.kind === 'boss') taken.push({ x: 0, z: 0, r: 6 }); // Kristall / Bosskampf in der Mitte
@@ -100,6 +102,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     group.add(b.g);
     for (const c of colliders(b, walk.x + x, walk.z + z, yaw)) { walk.blockers.push(c); taken.push({ x: c.x - walk.x, z: c.z - walk.z, r: c.r }); }
     if (b.fire) fires.push({ x: x + b.fire[0] * Math.cos(yaw) + b.fire[2] * Math.sin(yaw), y: y + b.fire[1], z: z - b.fire[0] * Math.sin(yaw) + b.fire[2] * Math.cos(yaw) });
+    for (const gl of b.glows ?? []) glows.push({ kind: gl.kind, x: x + gl.x * Math.cos(yaw) + gl.z * Math.sin(yaw), y: y + gl.y, z: z - gl.x * Math.sin(yaw) + gl.z * Math.cos(yaw), ground: gl.gy == null ? null : y + gl.gy, size: gl.size, pool: gl.pool, pdx: (gl.px ?? 0) * Math.cos(yaw) + (gl.pz ?? 0) * Math.sin(yaw), pdz: -(gl.px ?? 0) * Math.sin(yaw) + (gl.pz ?? 0) * Math.cos(yaw), glint: gl.glint });
   };
   /** Wohnhäuser je Region: jede Gegend baut anders */
   const HOMES: Record<IslandStyle, (StructureType | 'rundhuette')[]> = {
@@ -198,6 +201,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       const fire = campfire(glow);
       put(fire, c.x, c.z, 0);
       fires.push({ x: c.x, y: hAt(c.x, c.z) + 0.4, z: c.z });
+      glows.push({ kind: 'fire', x: c.x, y: hAt(c.x, c.z) + 0.26, z: c.z, ground: hAt(c.x, c.z), size: 1.2, pool: 8.5 });
       block(c.x, c.z, 1.1);
       const n = 2 + Math.floor(rnd() * 3);
       for (let i = 0; i < n; i++) {
@@ -422,7 +426,8 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       veg.add(floraProto('tropisch', 'farn', v), p.x, hAt(p.x, p.z), p.z, rnd() * Math.PI * 2, 0.9 + rnd() * 0.7, undefined, 0, 0, 0.85 + rnd() * 0.3);
       continue;
     }
-    const proto = cachedProto(`kit:${style}:bush:${v}`, (pr) => {
+    const bushCol = () => `#${(tuftMats[v] as unknown as { color: { getHexString(): string } }).color.getHexString()}`;
+    const proto = envProto(`kit:${style}:bush:${v}`, `busch_${(v % 2) + 1}`, bushCol, { surf: 'plant', near: 320, wind: 0.08 }) ?? cachedProto(`kit:${style}:bush:${v}`, (pr) => {
       const b = new Group();
       for (let k = 0; k < 2 + Math.floor(pr() * 3); k++) {
         const s = 0.45 + pr() * 0.55;
@@ -489,7 +494,13 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     // auch Felsen im Wasser: nicht auf Stege und Bootsplätze
     if (!free(x, z, s)) continue;
     const v = Math.floor(rnd() * 3);
-    const proto = cachedProto(`kit:${style}:rock:${v}`, () => new Mesh(new DodecahedronGeometry(1, 0), rockMats[v]));
+    // abgeschrägte Blender-Felsen; Moos nur auf grünen Inseln, große Brocken im Wasser als Klippenformation
+    const rockCol = () => `#${rockMats[v].color.getHexString()}`;
+    const cliff = inWater && s > 2.2;
+    const moss = lush ? 'rock' : undefined;
+    const proto = (cliff ? envProto(`kit:${style}:klippe:${v % 2}`, `klippe_${(v % 2) + 1}`, rockCol, { surf: moss, collide: 0 }) : null)
+      ?? envProto(`kit:${style}:rock:${v}`, `fels_${v + 1}`, rockCol, { surf: moss })
+      ?? cachedProto(`kit:${style}:rock:${v}`, () => new Mesh(new DodecahedronGeometry(1, 0), rockMats[v]));
     const wide = 1 + rnd() * 0.5;
     veg.add(proto, x, (inWater ? 0 : hAt(x, z)) + s * 0.25, z, rnd() * 6, s * wide, s * (0.6 + rnd() * (inWater ? 1.4 : 0.6)), rnd() - 0.5, rnd() - 0.5);
     block(x, z, s * wide * 0.82);
@@ -497,10 +508,9 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   if (style !== 'glut') {
     for (let i = 0; i < 1 + Math.floor(rnd() * 3); i++) {
       const a = rnd() * Math.PI * 2, d = E(a) * (0.9 + rnd() * 0.08);
-      const log = new Mesh(new CylinderGeometry(0.16, 0.2, 2.4 + rnd() * 2, 6), toon('#9C8A6E'));
-      log.rotation.set(Math.PI / 2, 0, rnd() * 3);
-      log.position.set(Math.cos(a) * d, hAt(Math.cos(a) * d, Math.sin(a) * d) + 0.12, Math.sin(a) * d);
-      group.add(log);
+      // Treibholz aus Blender (ohne Datei: liegender Stamm als Ausweichform in vegetation.ts)
+      const lx = Math.cos(a) * d, lz = Math.sin(a) * d;
+      veg.add(floraProto('tropisch', 'treibholz', Math.floor(rnd() * 3)), lx, hAt(lx, lz) - 0.02, lz, rnd() * 6, 0.85 + rnd() * 0.5);
     }
     const shellMat = toon('#EFD9C2'), starMat = toon('#D2603A');
     for (let i = 0; i < Math.round(6 * dens); i++) {
@@ -514,7 +524,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     }
   }
 
-  return { trees, bushes, fires };
+  return { trees, bushes, fires, glows };
 }
 
 // ---------- Bausteine ----------
@@ -529,6 +539,15 @@ function glowPetal(col: string) {
 
 /** Lagerfeuer: Steinring, Holzscheite, Glut (Rauch und Funken macht die Welt) */
 function campfire(glow: Set<Mesh>, small = false): Group {
+  if (hasArch('feuerstelle')) {
+    // Blender-Feuerstelle: Steinring mit abgeschrägten Kanten, gekreuzte Scheite mit verkohlten Enden, Aschebett und Glut
+    const ember = new MeshBasicMaterial({ color: new Color(4, 1.4, 0.3) });
+    const mk = (c: string, flat = false) => toon({ color: c, flatShading: flat, vertexColors: true });
+    const fg = archGroup('feuerstelle', (role) => role === 'ember' ? ember : role === 'stone' ? mk('#6E6A64', true) : role === 'log' ? mk('#3A2A1E') : mk('#1A1614'))!;
+    fg.traverse((o) => { if ((o as Mesh).isMesh && (o as Mesh).material === ember) { o.userData.noOutline = true; glow.add(o as Mesh); } });
+    if (small) fg.scale.setScalar(0.78);
+    return fg;
+  }
   const g = new Group();
   const stone = toon({ color: '#6E6A64', flatShading: true });
   const n = small ? 7 : 9;
@@ -544,8 +563,9 @@ function campfire(glow: Set<Mesh>, small = false): Group {
     log.position.y = 0.3;
     g.add(log);
   }
-  const ember = new Mesh(new ConeGeometry(0.4, 0.8, 6), new MeshBasicMaterial({ color: new Color(4, 1.4, 0.3) }));
-  ember.position.y = 0.45;
+  // Glutbett: flache glühende Scheibe; die Flamme darüber zeichnet das GlowSystem (render/glow.ts)
+  const ember = new Mesh(new CylinderGeometry(small ? 0.38 : 0.5, small ? 0.45 : 0.58, 0.1, 9), new MeshBasicMaterial({ color: new Color(4, 1.4, 0.3) }));
+  ember.position.y = 0.2;
   ember.userData.noOutline = true;
   glow.add(ember);
   g.add(ember);

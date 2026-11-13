@@ -5,6 +5,7 @@ import { toon } from '../render/toon';
 import { build } from './architecture';
 import { boxBlocker, coastK, type Blocker, type WalkIsland } from './islandGround';
 import { roadMesh } from './town';
+import type { GlowPlaced } from '../render/glow';
 import { floraProto, Occupancy, scatterSite, type Biome, type Scatter, type Spot } from './vegetation';
 import { hashId, seeded } from './waves';
 
@@ -15,6 +16,8 @@ export interface SiteBuild {
   fires: Spot[];
   /** Schornsteine (Inselkoordinaten, y = Welt-Höhe) */
   chimneys: Spot[];
+  /** Lampen, Fackeln und Feuer für Lichtschein und Flammen (Inselkoordinaten) */
+  glows: GlowPlaced[];
   /** Stege als Strecke in Weltkoordinaten (Schiffskollision) */
   piers: { ax: number; az: number; bx: number; bz: number; hw: number }[];
   /** Hauptsiedlung: hier schlendern die Bewohner (Weltkoordinaten) */
@@ -47,7 +50,7 @@ export function buildSite(o: SiteOpts): SiteBuild {
   const r = def.r;
   const E = (a: number) => r * coastK(walk.coast, a);
   const occ = new Occupancy();
-  const out: SiteBuild = { trees: [], bushes: [], fires: [], chimneys: [], piers: [], village: { x: def.x, z: def.z, r: r * 0.5 } };
+  const out: SiteBuild = { trees: [], bushes: [], fires: [], chimneys: [], glows: [], piers: [], village: { x: def.x, z: def.z, r: r * 0.5 } };
   const clear: { x: number; z: number; r: number }[] = [];
   const block = (b: Blocker) => { walk.blockers.push(b); occ.add(b); };
 
@@ -128,6 +131,7 @@ export function buildSite(o: SiteOpts): SiteBuild {
       const at = (p: [number, number, number]): Spot => ({ x: x + p[0] * c0 + p[2] * s0, y: y + p[1], z: z - p[0] * s0 + p[2] * c0 });
       if (b.fire) out.fires.push(at(b.fire));
       if (b.smoke) out.chimneys.push(at(b.smoke));
+      for (const gl of b.glows ?? []) { const q = at([gl.x, gl.y, gl.z]); out.glows.push({ kind: gl.kind, x: q.x, y: q.y, z: q.z, ground: gl.gy == null ? null : y + gl.gy, size: gl.size, pool: gl.pool, pdx: (gl.px ?? 0) * c0 + (gl.pz ?? 0) * s0, pdz: -(gl.px ?? 0) * s0 + (gl.pz ?? 0) * c0, glint: gl.glint }); }
       // Feld: goldene Halme in Reihen (instanziert, wiegen sich im Wind)
       if (b.rows) for (const [rx, rz, len] of b.rows) {
         for (let s = 0; s < len; s += 0.55) {

@@ -37,7 +37,7 @@ export interface ClusterDef {
 }
 
 /** Pflanzen und Felsen aus world/vegetation.ts */
-export type FloraId = 'palme' | 'laubbaum' | 'birke' | 'windkiefer' | 'busch' | 'farn' | 'gras' | 'halme' | 'blume' | 'fels' | 'basalt' | 'basaltblock';
+export type FloraId = 'palme' | 'laubbaum' | 'birke' | 'windkiefer' | 'busch' | 'farn' | 'gras' | 'halme' | 'blume' | 'fels' | 'basalt' | 'basaltblock' | 'treibholz' | 'klippe';
 
 export interface ScatterLayer {
   flora: FloraId;

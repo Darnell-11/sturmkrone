@@ -15,7 +15,7 @@ import {
   BufferAttribute,
   BufferGeometry,
   Sphere,
-  type Object3D,
+  Object3D,
   type Skeleton,
 } from 'three';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
@@ -27,6 +27,7 @@ import { disposeMaterial } from '../../render/dispose';
 import { audio } from '../../audio/audio';
 import { WeaponTrail } from '../../render/weaponTrail';
 import { createLamp } from '../../render/lamps';
+import { glowHub, makeEmitter } from '../../render/glow';
 import { Quaternion, Vector3 as V3, type Scene } from 'three';
 import type { ColorRepresentation, Material, Mesh } from 'three';
 import { disposeObject, markShared } from '../../render/dispose';
@@ -36,8 +37,11 @@ import { GARMENT_LEVEL, garmentKey, slotTurn, VROID_BONES, VroidBase, type Garme
 import type { AuditLayer } from './audit';
 import { maskEngine, type MaskLayer } from './bodyMask';
 import { SocketRig } from './sockets';
-import { loadoutFromLook, resolveLoadout, type Loadout } from '../../data/equipment';
+import { loadoutFromLook, resolveLoadout, type Finish, type Loadout, type ResolvedLoadout } from '../../data/equipment';
 import { attachHeadgear, buildBuckle, buildEpaulette, buildKnot, buildPauldron, CAPPED } from './animeHats';
+import { BELT_KINDS, HELM_KINDS, SHOULDERS, buildBeltExtras } from './gear/rigid';
+import { finishMat } from './gear/kit';
+import { buildHeld, buildSkinned, glbModel } from './gear/glbGear';
 
 const CURL_Z = new Vector3(0, 0, 1), CURL_X = new Vector3(1, 0, 0);
 
@@ -298,6 +302,7 @@ export class Character {
   private mountLamp() {
     this.lamp?.removeFromParent();
     this.lamp = null;
+    glowHub.removeOwner(this);
     const node = this.sockets.node('legs');
     if (!node) { Character.lamped.delete(this); return; }
     this.sockets.normalize();
@@ -307,6 +312,8 @@ export class Character {
     lamp.userData.holder = this.holder;
     node.add(lamp);
     this.lamp = lamp;
+    // Lichthof an der Laterne (das Glas hängt etwa 0,25 m unter dem Aufhängepunkt)
+    glowHub.add(makeEmitter('lamp', 0, 0, 0, { obj: lamp, oy: -0.35, size: 0.26, owner: this }));
     Character.lamped.add(this);
   }
 
@@ -373,7 +380,11 @@ export class Character {
     this.headgear = null;
     for (const a of this.sockets?.takeAnchors() ?? []) disposeObject(a);
     const engine = this.vroid ? maskEngine(this.vroid) : null;
-    for (const g of this.garments) releaseGarment(g, !!engine?.release(this.garmentIndex));
+    // gemeinsame Dreiecksliste der Kleidung nur einmal zurückgeben (mehrere Netze können sie teilen)
+    const freed = !!engine?.release(this.garmentIndex);
+    for (const g of this.garments) releaseGarment(g, g.userData.ownIndex ? true : freed);
+    for (const k of ['r', 'l'] as const) { const h = this.heldSkin[k]; if (h?.parent) h.parent.remove(h); }
+    this.heldSkin = { r: null, l: null };
     this.garments = [];
     this.garmentIndex = null;
     for (const k of this.masked) { k.mesh.geometry = k.src; releaseShared(k.geo, !!engine?.release(k.index)); }
@@ -407,9 +418,16 @@ export class Character {
       const cover = vb.garmentCover(s.kind, R.ctx);
       if (cover) layers.push({ key: garmentKey(s.kind, R.ctx), level: GARMENT_LEVEL[s.kind], cover });
     }
+    for (const g of R.glb) {
+      const cover = g.maskAs ? vb.garmentCover(g.maskAs, R.ctx) : null;
+      if (g.maskAs && cover && glbModel(g.model)) layers.push({ key: `glb.${g.model}.${g.maskAs}`, level: GARMENT_LEVEL[g.maskAs], cover });
+    }
+    const hideHair = R.glb.some((g) => g.hidesHair && glbModel(g.model));
     if (R.base.top) layers.push({ key: 'grund.top', level: 1, cover: vb.baseCover('top') });
     if (R.base.shoes) layers.push({ key: 'grund.shoes', level: 1, cover: vb.baseCover('shoes') });
-    const cap = CAPPED[R.hat];
+    // Hüte aus Modellen bekommen dieselbe Haar-Ausblendung wie Helme
+    const glbHat = R.glb.some((g) => g.trimsHair && glbModel(g.model));
+    const cap = glbHat ? { sink: 0.13, margin: 0.012 } : CAPPED[R.hat];
     this.rig.traverse((o) => {
       const m = o as SkinnedMesh;
       const i = m.userData.vroidPart as number | undefined;
@@ -417,6 +435,8 @@ export class Character {
       const p = vb.parts[i], src = vb.partGeo[i];
       // Hose bzw. Rock der Grundfigur bleibt aus: an gebeugten Knien stach dort die Haut durch – die erzeugte Hose bewegt sich genau mit
       if (p.slot === 'bottom') { m.visible = false; return; }
+      // Frisur aus einem Modell ersetzt das Haar der Grundfigur
+      if (p.slot === 'hair') { m.visible = !hideHair; if (hideHair) return; }
       if (p.slot === 'top') m.visible = R.base.top;
       if (p.slot === 'shoes') m.visible = R.base.shoes;
       if (!src.index) return;
@@ -427,7 +447,7 @@ export class Character {
       else if (p.slot === 'shoes' && m.visible) {
         const bs = vb.baseSrc(i);
         if (bs) index = engine.indexFor({ key: `grund${i}`, index: src.index, src: bs, level: 1 }, layers);
-      } else if (p.slot === 'hair' && cap) index = vb.hairUnderCap(i, cap.sink);
+      } else if (p.slot === 'hair' && cap) index = vb.hairUnderCap(i, cap.sink, HELM_KINDS.includes(R.hat) || glbHat ? -0.012 : undefined);
       if (index && index !== src.index) this.mask(m, src, index, p.slot !== 'hair');
     });
     const body = vb.bodySkin(this.rig);
@@ -438,33 +458,52 @@ export class Character {
       const sd = set.userData as GarmentSetData;
       const index = engine.indexFor({ key: sd.key, index: set.index!, src: sd.src, level: sd.level }, layers);
       this.garmentIndex = index !== set.index ? index : null;
-      // eigene Farben je Figur, Lage und Gewichte werden geteilt
-      const geo = new BufferGeometry();
-      for (const name of ['position', 'normal', 'skinIndex', 'skinWeight'] as const) geo.setAttribute(name, set.attributes[name]);
-      geo.setIndex(index);
-      geo.boundingSphere = set.boundingSphere;
-      const part = set.attributes.part;
-      const cols = R.shells.map((s) => new Color(s.color));
-      const col = new Float32Array(part.count * 3);
-      for (let i = 0; i < part.count; i++) cols[part.getX(i)].toArray(col, i * 3);
-      geo.setAttribute('color', new BufferAttribute(col, 3));
-      // Streifen des Ringelhemds zeichnet der Shader (Höhe im Körpermodell; 3,5 cm in Weltmaß)
-      if (set.attributes.stripe) geo.setAttribute('stripe', set.attributes.stripe);
-      const ringel = this.worn.includes('ringel') ? 0.035 / Math.max(1e-4, body.getWorldScale(new V3()).y) : 0;
-      const mat = toon({ color: 0xffffff, vertexColors: true, side: DoubleSide, rim: 0.8, ringel, surface: 'cloth' });
-      // kleine Tiefenverschiebung: am Saumrand liegt die untere Schicht noch darunter – ihre letzten Millimeter stechen nicht durch
-      mat.polygonOffset = true; mat.polygonOffsetFactor = -1; mat.polygonOffsetUnits = -2;
-      const m = new SkinnedMesh(geo, mat);
-      m.bind(body.skeleton, body.bindMatrix);
-      m.castShadow = true;
-      m.receiveShadow = true;
-      body.parent.add(m);
-      if (this.outline) addOutlines(m, 0.7);
-      this.garments.push(m);
+      this.addShells(body, set, index, R.shells);
+    }
+    if (body?.parent && R.cape) this.addCape(vb, body, R.cape);
+    // Modelle aus Blender: Stiefel, Hose, Gehrock (am Körper) und Hut, Frisur (an einem Knochen)
+    if (body?.parent) for (const g of R.glb) {
+      const model = glbModel(g.model);
+      if (!model) continue;
+      // Frisur unter einem Hut aus einem Modell: Haare über dem Hutrand (Höhe 1,668 der männlichen Vorlage) weglassen
+      for (const m of buildSkinned(vb, model, g.mode, g.bone, body, g.look, g.hidesHair && glbHat ? 1.668 : undefined)) {
+        m.userData.parts = [];
+        // fürs Prüfwerkzeug (audit.ts): Name und Ebene des Modells; Hüte und Frisuren (an einem Knochen) liegen ganz außen
+        m.userData.glbModel = g.model;
+        // Hosen liegen über dem Hemd (Hemd in die Hose gesteckt)
+        m.userData.glbLevel = g.maskAs === 'hose' ? 3 : g.maskAs ? GARMENT_LEVEL[g.maskAs] : g.mode === 'bone' ? 9 : 2;
+        m.name = `glb:${g.model}/${m.userData.glbRole}`;
+        body.parent.add(m);
+        this.garments.push(m);
+      }
+    }
+    // Waffen aus Modellen: ersetzen den Säbel (rechts) und füllen die freie Linke mit dem Dolch (siehe hold)
+    this.heldSkin = { r: null, l: null };
+    for (const h of R.held) {
+      const model = glbModel(h.model);
+      if (model) this.heldSkin[h.hand] = buildHeld(model, h.look);
     }
     // starre Kleinteile auf Haut-Ankern: sie bewegen sich mit dem Stoff unter ihnen
     if (body) for (const r of R.rigid) {
-      if (r.build === 'schulterstuecke' || r.build === 'schulterplatten') {
+      if (SHOULDERS[r.build]) {
+        // Schulterpanzer aus dem Bausatz: Rahmen x nach außen, y oben, z vorn (die Brust-Knochen schauen nach −Z)
+        const over = (['mantelLang', 'mantelKurz', 'jacke', 'uniform', 'weste', 'tunika', 'ringel', 'hemd'] as GarmentKind[]).find((k) => this.worn.includes(k)) ?? null;
+        for (const s of vb.shoulderAnchors(R.ctx, over) ?? []) {
+          const piece = SHOULDERS[r.build](r.color, r.color2);
+          const wrap = new Group();
+          wrap.position.copy(s.pos);
+          wrap.scale.set(s.pos.x < 0 ? -1 : 1, 1, -1);
+          wrap.add(piece);
+          this.sockets.skinAnchor(body.skeleton, s.pin, 'J_Bip_C_Chest')?.add(wrap);
+        }
+      } else if (BELT_KINDS.includes(r.build)) {
+        const b = vb.beltAnchors(R.ctx);
+        if (!b) continue;
+        const wrap = new Group();
+        wrap.rotation.y = Math.PI;
+        wrap.add(buildBeltExtras(r.build, r.color, r.color2));
+        this.sockets.skinAnchor(body.skeleton, b.bucklePin, 'J_Bip_C_Hips')?.add(wrap);
+      } else if (r.build === 'schulterstuecke' || r.build === 'schulterplatten') {
         // gemessen am äußersten Stück über der Schulter
         const over = (['mantelLang', 'mantelKurz', 'jacke', 'uniform', 'weste', 'tunika', 'ringel', 'hemd'] as GarmentKind[]).find((k) => this.worn.includes(k)) ?? null;
         for (const s of vb.shoulderAnchors(R.ctx, over) ?? []) {
@@ -479,7 +518,7 @@ export class Character {
     }
     // Kopf: Hut, Schmuck, Bart und Narbe (gemessene Anker statt geschätzter Abstände)
     const head = this.sockets.bone('head');
-    const hatLook: CharacterLook = { ...look, hat: R.hat, hatColor: loadout.colors.hat };
+    const hatLook: CharacterLook = { ...look, hat: R.hat, hatColor: R.hatColor ?? loadout.colors.hat, hatAccent: R.hatAccent ?? undefined };
     const face = { beard: look.beard !== 'keiner' ? vb.beard(look.beard) : null, scar: look.scar ? vb.scarPlacement() : null, cap: (sink: number, margin: number) => vb.capShell(sink, margin) };
     if (head) this.headgear = attachHeadgear(head, this.rig.getObjectByName('J_Adj_L_FaceEye') ?? null, this.rig.getObjectByName('J_Adj_R_FaceEye') ?? null, hatLook, this.outline, vb.hairFit, vb.anchors(), face);
     const h = Math.min(1.1, Math.max(0.9, look.height));
@@ -489,6 +528,109 @@ export class Character {
     this.sockets.normalize();
     this.fitCull();
     this.stylize(this.holder);
+  }
+
+  /**
+   * Hüllen als Netze je Oberfläche (Stoff, Leder, Stahl, Gold …): jede Gruppe bekommt ihr eigenes Material, alle teilen Lage,
+   * Gewichte und Randabstand. Farben, Borten und Muster sind Attribute je Punkt und Figur.
+   */
+  private addShells(body: SkinnedMesh, set: BufferGeometry, index: BufferAttribute, shells: ResolvedLoadout['shells']) {
+    const part = set.attributes.part as BufferAttribute;
+    const n = part.count;
+    const fin = shells.map((s) => s.spec.finish);
+    const trimmed = shells.map((s) => !!(s.spec.trim || s.spec.pattern));
+    const anyTrim = trimmed.some(Boolean);
+    const col = new Float32Array(n * 3);
+    const trimC = anyTrim ? new Float32Array(n * 3) : null, patC = anyTrim ? new Float32Array(n * 3) : null, gset = anyTrim ? new Float32Array(n * 4) : null;
+    const cols = shells.map((s) => new Color(s.color));
+    const tcols = shells.map((s) => new Color(s.spec.trim ?? s.spec.patColor));
+    const pcols = shells.map((s) => new Color(s.spec.patColor));
+    for (let i = 0; i < n; i++) {
+      const k = part.getX(i);
+      cols[k].toArray(col, i * 3);
+      if (anyTrim) {
+        tcols[k].toArray(trimC!, i * 3); pcols[k].toArray(patC!, i * 3);
+        const sp = shells[k].spec;
+        gset![i * 4] = sp.pattern; gset![i * 4 + 1] = sp.patSize; gset![i * 4 + 2] = sp.trimW; gset![i * 4 + 3] = sp.trimStyle;
+      }
+    }
+    const own: BufferAttribute[] = [new BufferAttribute(col, 3)];
+    if (anyTrim) own.push(new BufferAttribute(trimC!, 3), new BufferAttribute(patC!, 3), new BufferAttribute(gset!, 4));
+    // Dreiecke je Oberfläche sortieren (nur nötig, wenn mehrere vorkommen)
+    const kinds = [...new Set(fin)];
+    const lists = new Map<string, number[]>();
+    if (kinds.length > 1) {
+      const idx = index;
+      for (let t = 0; t < idx.count; t += 3) {
+        const f = fin[part.getX(idx.getX(t))];
+        const l = lists.get(f);
+        if (l) l.push(idx.getX(t), idx.getX(t + 1), idx.getX(t + 2)); else lists.set(f, [idx.getX(t), idx.getX(t + 1), idx.getX(t + 2)]);
+      }
+    }
+    const scale = Math.max(1e-4, body.getWorldScale(new V3()).y);
+    for (const f of kinds) {
+      const ids = shells.map((_, i) => i).filter((i) => fin[i] === f);
+      const needTrim = ids.some((i) => trimmed[i]);
+      const hasRingel = ids.some((i) => shells[i].kind === 'ringel');
+      const geo = new BufferGeometry();
+      for (const name of ['position', 'normal', 'skinIndex', 'skinWeight'] as const) geo.setAttribute(name, set.attributes[name]);
+      geo.setAttribute('color', own[0]);
+      if (needTrim) {
+        geo.setAttribute('rimD', set.attributes.rimD);
+        geo.setAttribute('trimC', own[1]); geo.setAttribute('patC', own[2]); geo.setAttribute('gset', own[3]);
+      }
+      // Streifen des Ringelhemds zeichnet der Shader (Höhe im Körpermodell; 3,5 cm in Weltmaß)
+      if (set.attributes.stripe && hasRingel) geo.setAttribute('stripe', set.attributes.stripe);
+      let own_ = false;
+      if (kinds.length > 1) {
+        const l = lists.get(f)!;
+        geo.setIndex(new BufferAttribute(set.attributes.position.count > 65535 ? Uint32Array.from(l) : Uint16Array.from(l), 1));
+        own_ = true;
+      } else geo.setIndex(index);
+      geo.boundingSphere = set.boundingSphere;
+      const mat = finishMat(f as Finish, '#ffffff', { vertexColors: true, rim: 0.8, trim: needTrim, ringel: hasRingel ? 0.035 / scale : 0 });
+      // kleine Tiefenverschiebung: am Saumrand liegt die untere Schicht noch darunter – ihre letzten Millimeter stechen nicht durch
+      mat.polygonOffset = true; mat.polygonOffsetFactor = -1; mat.polygonOffsetUnits = -2;
+      const m = new SkinnedMesh(geo, mat);
+      m.bind(body.skeleton, body.bindMatrix);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      m.userData.ownIndex = own_;
+      m.userData.parts = ids;
+      body.parent!.add(m);
+      if (this.outline) addOutlines(m, 0.7);
+      this.garments.push(m);
+    }
+  }
+
+  /** Umhang als eigenes Netz am Skelett (Form und Gewichte kommen von der Grundfigur, Farbe und Borte von der Figur) */
+  private addCape(vb: VroidBase, body: SkinnedMesh, c: NonNullable<ResolvedLoadout['cape']>) {
+    const g0 = vb.cape(c.len);
+    if (!g0) return;
+    const n = g0.attributes.position.count;
+    const geo = new BufferGeometry();
+    for (const name of ['position', 'normal', 'skinIndex', 'skinWeight', 'rimD'] as const) geo.setAttribute(name, g0.attributes[name]);
+    geo.setIndex(g0.index);
+    geo.boundingSphere = g0.boundingSphere;
+    const col = new Float32Array(n * 3), trimC = new Float32Array(n * 3), patC = new Float32Array(n * 3), gset = new Float32Array(n * 4);
+    const base = new Color(c.color), tc = new Color(c.spec.trim ?? c.spec.patColor), pc = new Color(c.spec.patColor);
+    for (let i = 0; i < n; i++) {
+      base.toArray(col, i * 3); tc.toArray(trimC, i * 3); pc.toArray(patC, i * 3);
+      gset[i * 4] = c.spec.pattern; gset[i * 4 + 1] = c.spec.patSize; gset[i * 4 + 2] = c.spec.trimW; gset[i * 4 + 3] = c.spec.trimStyle;
+    }
+    geo.setAttribute('color', new BufferAttribute(col, 3));
+    geo.setAttribute('trimC', new BufferAttribute(trimC, 3));
+    geo.setAttribute('patC', new BufferAttribute(patC, 3));
+    geo.setAttribute('gset', new BufferAttribute(gset, 4));
+    const mat = finishMat(c.spec.finish, '#ffffff', { vertexColors: true, rim: 0.8, trim: true });
+    const m = new SkinnedMesh(geo, mat);
+    m.bind(body.skeleton, body.bindMatrix);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    m.userData.ownIndex = false;
+    m.userData.parts = [];
+    body.parent!.add(m);
+    this.garments.push(m);
   }
 
   /** Hüllkugel aller Netze der Figur: folgt der Hüfte (siehe CULL_RADIUS) */
@@ -545,8 +687,9 @@ export class Character {
       else if (p.slot === 'top') out.push({ name: 'grundhemd', level: 1, mesh: m });
       else if (p.slot === 'shoes') out.push({ name: 'grundschuhe', level: 1, mesh: m });
     });
-    const g = this.garments[0];
-    if (g && this.wornPart) this.worn.forEach((k, id) => out.push({ name: k, level: GARMENT_LEVEL[k], mesh: g, part: { attr: this.wornPart!, id } }));
+    if (this.wornPart) for (const g of this.garments) for (const id of (g.userData.parts as number[]) ?? []) out.push({ name: this.worn[id], level: GARMENT_LEVEL[this.worn[id]], mesh: g, part: { attr: this.wornPart, id } });
+    // Modelle aus Blender: je Rolle eine Schicht
+    for (const g of this.garments) if (g.userData.glbModel) out.push({ name: g.name, level: g.userData.glbLevel as number, mesh: g });
     // Reihenfolge innen → außen
     out.sort((a, b) => a.level - b.level);
     return out;
@@ -701,6 +844,7 @@ export class Character {
   }
 
   private dropTrails() {
+    glowHub.removeOwner(this);
     for (const t of this.trails) t.dispose();
     this.trails = [];
     Character.trailed.delete(this);
@@ -938,12 +1082,29 @@ export class Character {
   }
 
   /** Objekt in eine Hand legen ('r' oder 'l'). null entfernt. */
+  /** Waffen aus Modellen der Ausrüstung (Entermesser rechts, Parierdolch links) und ob rechts gerade ein Säbel liegt */
+  private heldSkin: { r: Object3D | null; l: Object3D | null } = { r: null, l: null };
+  private sabre = false;
+
   hold(side: 'l' | 'r', obj: Object3D | null, grip = 0.3) {
     const slot = this.sockets.node(side === 'r' ? 'mainHand' : 'offHand');
     if (!slot) return;
+    if (side === 'r') {
+      this.sabre = !!obj?.userData.swordSkin;
+      if (obj && this.sabre && this.heldSkin.r) {
+        // Lichtschweif-Marken des Säbels übernehmen (Klinge des Entermessers: Ansatz bei 0,3, Spitze bei 0,9)
+        const skin = this.heldSkin.r;
+        for (const c of [...skin.children]) if (c.name === 'trailBase' || c.name === 'trailTip') skin.remove(c);
+        const b = new Object3D(); b.name = 'trailBase'; b.position.set(0.02, 0.3, 0);
+        const t = new Object3D(); t.name = 'trailTip'; t.position.set(0.11, 0.84, 0);
+        skin.add(b, t);
+        obj = skin;
+      }
+    } else if (!obj && this.sabre && this.heldSkin.l) obj = this.heldSkin.l;
     // neue Waffe: Schweife beim nächsten Einschalten neu anlegen
     this.dropTrails();
-    for (const c of [...slot.children]) slot.remove(c);
+    // Vorige Waffe freigeben (Modelle aus Blender sind geteilt und bleiben, Säbel und Schilde aus Formen werden frei)
+    for (const c of [...slot.children]) { slot.remove(c); if (c !== obj) disposeObject(c); }
     if (obj) { slot.add(obj); this.stylize(obj); }
     // ein Schild links verdeckt die Laterne an der linken Hüfte: sie wechselt dann die Seite
     if (side === 'l' && this.lamp && this.vroid) this.lamp.position.x = obj?.userData.wide ? -0.27 : 0.27;
@@ -1008,7 +1169,7 @@ function releaseShared(g: BufferGeometry, freeIndex: boolean, own: string[] = []
 /** Kleidung teilt Lage, Gewichte und Dreiecksliste: nur die eigenen Farben freigeben */
 function releaseGarment(m: SkinnedMesh, freeIndex: boolean) {
   const g = m.geometry;
-  for (const name of ['position', 'normal', 'skinIndex', 'skinWeight', 'stripe']) g.deleteAttribute(name);
+  for (const name of ['position', 'normal', 'uv', 'skinIndex', 'skinWeight', 'stripe', 'rimD']) g.deleteAttribute(name);
   if (!freeIndex) g.setIndex(null);
   disposeObject(m);
 }

@@ -1,7 +1,8 @@
 import { BufferAttribute, CircleGeometry, Color, MathUtils, Mesh, MeshBasicMaterial, Vector3, type Scene } from 'three';
 import { AMMO, SEA_SPEED, SHIP_CLASSES, type AmmoId, type ShipClass, type ShipLook } from '../../data/ships';
 import { toon } from '../../render/toon';
-import { buildShip, type ShipModel } from './shipBuilder';
+import { buildShip, CABIN_WINDOW, GLOW_LAMP, type ShipModel } from './shipBuilder';
+import { glowHub, makeEmitter } from '../../render/glow';
 import { disposeObject, markShared } from '../../render/dispose';
 import { wetShared } from '../../render/wetness';
 
@@ -81,6 +82,14 @@ export class Ship {
     this.maxHull = this.hull = this.cls.hp + hullBonus;
     this.model = buildShip(this.cls, look, hero);
     scene.add(this.model.group);
+    this.glowLights();
+  }
+
+  /** Laternen des Schiffs als Lichtquellen anmelden (bewegen sich mit dem Schiff) */
+  private glowLights() {
+    for (const l of this.model.lanterns) glowHub.add(makeEmitter('lamp', 0, 0, 0, { obj: l, size: (l.userData.glowSize as number | undefined) ?? 0.62 * Math.min(1.5, this.cls.L / 28 + 0.55), owner: this, glint: !l.userData.glowSize }));
+    // Fenster (Heckgalerie, Stückpforten) leuchten nachts: Hof an der Fläche, sichtbar nur, wenn das Schiff sie anzeigt
+    for (const w of this.model.windows) glowHub.add(makeEmitter('window', 0, 0, 0, { obj: w, size: 0.5, owner: this }));
   }
 
   /** Ruderausschlag −1 … 1 (für Steuerrad und Haltung des Steuermanns) */
@@ -92,6 +101,7 @@ export class Ship {
   /** Klasse oder Aussehen ändern (Werft) */
   rebuild(tier: number, look: ShipLook, hullBonus = 0) {
     const frac = this.hull / this.maxHull;
+    glowHub.removeOwner(this);
     disposeObject(this.model.group);
     this.cls = SHIP_CLASSES[tier];
     this.look = look;
@@ -99,6 +109,7 @@ export class Ship {
     this.hull = Math.max(1, this.maxHull * frac);
     this.model = buildShip(this.cls, look, this.hero);
     this.scene.add(this.model.group);
+    this.glowLights();
     this.holes = 0;
   }
 
@@ -316,11 +327,14 @@ export class Ship {
     }
     fp.needsUpdate = true;
     for (const l of this.model.lanterns) l.scale.setScalar(0.7 + night * 0.8);
+    // Flamme tagsüber gedämpft (sonst brennt sie in der Mittagssonne weiß aus und blüht im Bloom), nachts voll
+    CABIN_WINDOW.color.setRGB(0.8, 0.95, 1.2).multiplyScalar(1 - 0.94 * Math.min(1, night * 1.5));
+    GLOW_LAMP.color.setRGB(4, 2.4, 0.9).multiplyScalar(0.28 + 0.72 * Math.min(1, night * 1.6));
     for (const w of this.model.windows) w.visible = night > 0.25;
   }
 
   /** Schiff aus der Szene nehmen und seinen Grafikspeicher freigeben */
-  dispose() { disposeObject(this.model.group); }
+  dispose() { glowHub.removeOwner(this); disposeObject(this.model.group); }
 }
 
 export const SHIP_WOOD = toon('#6A4426');

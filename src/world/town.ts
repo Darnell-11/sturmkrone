@@ -25,6 +25,7 @@ import { cloneToon, toon } from '../render/toon';
 import { crateTexture, deckUV, plankTexture } from '../render/textures';
 import { detailCanvas, texDetail } from '../render/texDetail';
 import { boxBlocker, type WalkIsland } from './islandGround';
+import { hasProp, propGroup } from './worldProps';
 import { markShared } from '../render/dispose';
 import { toonPbr } from '../render/pbrMaps';
 
@@ -356,6 +357,15 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   pier.position.set(cx, 0, cz - def.r - 18);
   group.add(pier);
   for (let i = 0; i < 4; i++) {
+    if (hasProp('kiste')) {
+      // Blender-Kiste mit Eisenecken, Brettern und Schloss; Boden auf der Stegoberkante (1,65 m)
+      const crate = propGroup('kiste', (role) => role === 'iron' ? toon('#3A3C40') : role === 'brass' ? toon({ color: '#E3B04B', spec: 1, metalness: 1, roughness: 0.4 }) : role === 'darkwood' ? toon('#5A3A22') : toon({ color: '#9A6A3A', roughness: 0.85 }));
+      crate.scale.setScalar(1.1);
+      crate.position.set(cx + (i % 2 ? 1.6 : -1.6), 1.65, cz - def.r - 4 - i * 6);
+      crate.rotation.y = i;
+      group.add(crate);
+      continue;
+    }
     const crate = new Mesh(new BoxGeometry(1.1, 1.1, 1.1), toon({ color: '#9A6A3A', map: crateTexture(), ...toonPbr(crateTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) }));
     crate.position.set(cx + (i % 2 ? 1.6 : -1.6), 2.2, cz - def.r - 4 - i * 6);
     crate.rotation.y = i;
@@ -564,7 +574,9 @@ export function mergeByMaterial(group: Group, keep: Set<Mesh>) {
     let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
     // Texturkoordinaten nur behalten, wenn das Material eine Textur hat (Kisten, Fässer)
     const keepUv = !!(m.material as Material & { map?: unknown }).map && !!g.attributes.uv;
-    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'aWind' && !(keepUv && k === 'uv')) g.deleteAttribute(k);
+    // Eckpunktfarben (Ambient-Occlusion der Blender-Bauten) bleiben, wenn das Material sie nutzt
+    const keepCol = !!(m.material as Material & { vertexColors?: boolean }).vertexColors;
+    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'aWind' && !(keepUv && k === 'uv') && !(keepCol && k === 'color')) g.deleteAttribute(k);
     g = g.applyMatrix4(rel(m));
     b.geos.push(g);
     b.meshes.push(m);

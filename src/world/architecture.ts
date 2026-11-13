@@ -23,6 +23,9 @@ import { toonPbr } from '../render/pbrMaps';
 import { crateTexture, deckUV, plankTexture } from '../render/textures';
 import { toon } from '../render/toon';
 import { boxBlocker, type Blocker } from './islandGround';
+import { hasProp, propGroup, type PropId } from './worldProps';
+import { archGroup, hasArch } from './envModels';
+import type { GlowSpec } from '../render/glow';
 
 /**
  * Bauten für Dörfer, Höfe und Ruinen: jedes Modell kommt mit seinem Kollisions-Gitter
@@ -38,6 +41,8 @@ export interface Built {
   /** Rauch (Schornstein) bzw. Feuer mit Glut: Punkt im Objektraum */
   smoke?: [number, number, number];
   fire?: [number, number, number];
+  /** Lampen und Fackeln (Objektraum): bekommen Lichthof, Bodenlicht und Flamme aus render/glow.ts */
+  glows?: GlowSpec[];
   /** Steg: Länge ab Ursprung in +z (Schiffe prallen daran ab) */
   pier?: number;
   /** Feld: Reihen im Objektraum, auf denen Halme wachsen (Start x, z, Länge entlang x) */
@@ -164,6 +169,9 @@ function windowAt(g: Group, x: number, y: number, z: number, yaw = 0, w = 0.8, h
   const sill = box(w + 0.3, 0.07, 0.16, M.stoneLight, x + Math.sin(yaw) * 0.06, y - h / 2 - 0.1, z + Math.cos(yaw) * 0.06);
   bar.rotation.y = top.rotation.y = sill.rotation.y = yaw;
   g.add(win, glass, bar, top, sill);
+  // Lichtschein des Fensters: kleiner Hof, bei Fenstern im Erdgeschoss ein Lichtfleck auf dem Boden davor
+  const nx = Math.sin(yaw), nz = Math.cos(yaw);
+  (g.userData.winGlows ??= [] as GlowSpec[]).push({ kind: 'window', x, y, z, gy: y < 2.7 ? 0 : null, size: Math.max(0.45, w * 0.6), px: nx * 1.3, pz: nz * 1.3, pool: 2.4 + w });
   for (const sx of [-1, 1]) {
     const side = box(0.08, h, 0.06, frame, x + Math.cos(yaw) * sx * (w / 2 + 0.04) + ox, y, z - Math.sin(yaw) * sx * (w / 2 + 0.04) + oz);
     side.rotation.y = yaw;
@@ -171,10 +179,43 @@ function windowAt(g: Group, x: number, y: number, z: number, yaw = 0, w = 0.8, h
   }
 }
 
+/** Material der Blender-Bauten: Farbe und Oberfläche wie die Eigenbau-Fassung, dazu Eckpunktfarben für die Ambient-Occlusion */
+const AM = (color: string, detail?: 'stone' | 'plaster' | 'tile') => toon({ color, detail, vertexColors: true });
+type ArchSet = { wall?: string; wallDetail?: 'stone' | 'plaster' | 'tile'; roof: string; roofDetail?: 'tile' };
+/** Rollen→Material eines Hauses; Dach und Wand je Haustyp */
+const houseMats = (s: ArchSet) => (role: string) => {
+  switch (role) {
+    case 'wall': return AM(s.wall ?? '#E2D6BC', s.wallDetail);
+    case 'stone': return AM('#A8A092', 'stone');
+    case 'stonelight': return AM('#C4BCAC', 'stone');
+    case 'wood': return AM('#8A6A44');
+    case 'darkwood': return AM('#4A3220');
+    case 'roof': return AM(s.roof, s.roofDetail);
+    case 'iron': return AM('#3A3C40');
+    case 'rope': return AM('#B8A070');
+    case 'gold': return AM('#C9A24E');
+    default: return AM('#8A6A44');
+  }
+};
+
+/** Materialien der Licht-Bausätze (Feuerstelle, Feuerkorb, Fackel, Laternenpfahl); die Glut leuchtet selbst */
+const lightMats = (role: string): Material => {
+  switch (role) {
+    case 'ember': return emberMat;
+    case 'stone': return toon({ color: '#6E6A64', flatShading: true, vertexColors: true });
+    case 'log': return AM('#3A2A1E');
+    case 'charcoal': return AM('#1A1614');
+    case 'iron': return AM('#3A3C40');
+    case 'darkwood': return AM('#4A3220');
+    case 'brass': return AM('#C9A24E');
+    default: return AM('#6A5038');
+  }
+};
+
 /** Fundament, das auch am Hang bis in den Boden reicht */
 const footing = (w: number, d: number, mat: Material) => box(w, 2.4, d, mat, 0, -1.05, 0);
 
-function holzhuette(rnd: () => number): Built {
+function holzhuettePlain(rnd: () => number): Built {
   const g = new Group();
   const w = 5 + rnd() * 0.8, d = 4, h = 2.6;
   g.add(footing(w + 0.5, d + 0.5, M.stoneDark), box(w, h, d, M.planks, 0, 0.15 + h / 2, 0));
@@ -218,7 +259,7 @@ function stelzenhuette(rnd: () => number): Built {
   return { g, boxes: [[w + 1.3, d + 2.2, 0, 0.5]], circles: [] };
 }
 
-function steinhaus(rnd: () => number): Built {
+function steinhausPlain(rnd: () => number): Built {
   const g = new Group();
   const w = 6.2 + rnd() * 0.8, d = 5, h = 3.1;
   g.add(footing(w + 0.5, d + 0.5, M.stoneDark), box(w, h, d, M.stone, 0, h / 2, 0));
@@ -238,7 +279,7 @@ function steinhaus(rnd: () => number): Built {
   return { g, boxes: [[w + 0.3, d + 0.3]], circles: [], smoke: [cx, h + 3.1, -0.6] };
 }
 
-function gasthaus(): Built {
+function gasthausPlain(): Built {
   const g = new Group();
   const w = 9.2, d = 6.2, h1 = 3, h2 = 2.6;
   g.add(footing(w + 0.5, d + 0.5, M.stoneDark), box(w, h1, d, M.stone, 0, h1 / 2, 0));
@@ -338,12 +379,18 @@ function steinturm(): Built {
   }
   g.add(box(1.3, 2.2, 0.3, M.darkWood, 0, 1.1, r * 1.1), box(1.7, 0.3, 0.5, M.stoneLight, 0, 2.35, r * 1.1));
   // Feuerkorb als Leuchtfeuer
-  g.add(cyl(0.7, 0.45, 0.6, 8, M.iron, 0, h + 1, 0), cyl(0.07, 0.07, 1, 5, M.iron, 0, h + 0.4, 0));
-  const flame = new Mesh(new ConeGeometry(0.55, 1.2, 6), emberMat);
-  flame.position.y = h + 1.8;
-  flame.userData.noOutline = true;
-  g.add(flame);
-  return { g, boxes: [], circles: [[r * 1.16]], fire: [0, h + 2, 0] };
+  if (hasArch('feuerkorb')) {
+    const kb = archGroup('feuerkorb', lightMats)!;
+    kb.position.y = h + 0.06;
+    g.add(kb);
+  } else {
+    g.add(cyl(0.7, 0.45, 0.6, 8, M.iron, 0, h + 1, 0), cyl(0.07, 0.07, 1, 5, M.iron, 0, h + 0.4, 0));
+    const coals = new Mesh(new CylinderGeometry(0.55, 0.6, 0.12, 8), emberMat);
+    coals.position.y = h + 1.27;
+    coals.userData.noOutline = true;
+    g.add(coals);
+  }
+  return { g, boxes: [], circles: [[r * 1.16]], fire: [0, h + 1.35, 0], glows: [{ kind: 'fire', x: 0, y: h + 1.35, z: 0, gy: null, size: 2.1 }] };
 }
 
 /** Ruine eines Steinhauses: zerbrochene Mauern unterschiedlicher Höhe, Fensterlücke, Schutt */
@@ -391,7 +438,7 @@ function ruine(rnd: () => number): Built {
   return { g, boxes, circles };
 }
 
-function ruinenbogen(): Built {
+function ruinenbogenPlain(): Built {
   const g = new Group();
   for (const s of [-1, 1]) g.add(box(1.2, 5.6 + 1.6, 1.2, M.ruin, s * 2.6, (5.6 - 1.6) / 2, 0), box(1.6, 0.4, 1.6, M.ruin, s * 2.6, 0.2, 0));
   const top = new Mesh(new TorusGeometry(2.6, 0.6, 4, 10, Math.PI), M.ruin);
@@ -449,42 +496,102 @@ function mauer(len: number, rnd: () => number): Built {
 /** Steg: Bohlen auf Pfählen, Poller und Laterne am Ende. Ursprung an der Wasserlinie, verläuft nach +z. */
 function steg(len: number): Built {
   const g = new Group();
-  const deck = new BoxGeometry(3, 0.36, len + 6);
-  deckUV(deck, 3, len + 6);
-  const pier = new Mesh(deck, M.deck);
-  pier.position.set(0, 1.27, len / 2 - 3);
-  g.add(pier);
+  const glbPier = hasArch('steg_modul');
+  if (glbPier) {
+    // Blender-Steg: Module von 4,5 m mit einzelnen Bohlen, Längsträgern, Pfählen und umwickelten Tauen
+    for (let i = 0; i * 4.5 < len + 6; i++) {
+      const mod = archGroup('steg_modul', pierMats)!;
+      mod.position.z = -3 + i * 4.5;
+      g.add(mod);
+    }
+  } else {
+    const deck = new BoxGeometry(3, 0.36, len + 6);
+    deckUV(deck, 3, len + 6);
+    const pier = new Mesh(deck, M.deck);
+    pier.position.set(0, 1.27, len / 2 - 3);
+    g.add(pier);
+  }
   // Pfähle, Poller, Laternenmast und Fass sind fest (Kollisionsprüfung 2.9.33: vorher ging man durch sie hindurch)
   const circles: Built['circles'] = [];
-  for (let z = 1; z <= len - 0.5; z += 4.5) for (const sx of [-1, 1]) { g.add(cyl(0.17, 0.19, 4.4, 6, M.darkWood, sx * 1.55, -0.6, z)); circles.push([0.22, sx * 1.55, z]); }
+  // Pfähle: im Modul bei z = 1 (Modulanfang -3 + 4,5·i, also z = -2 + 4,5·i); sonst Zylinder wie früher
+  if (glbPier) { for (let z = -2; z <= len - 0.5; z += 4.5) if (z > 0) for (const sx of [-1, 1]) circles.push([0.22, sx * 1.55, z]); }
+  else for (let z = 1; z <= len - 0.5; z += 4.5) for (const sx of [-1, 1]) { g.add(cyl(0.17, 0.19, 4.4, 6, M.darkWood, sx * 1.55, -0.6, z)); circles.push([0.22, sx * 1.55, z]); }
   for (const sx of [-1, 1]) { g.add(cyl(0.2, 0.22, 1.1, 6, M.darkWood, sx * 1.2, 1.9, len - 0.6)); circles.push([0.26, sx * 1.2, len - 0.6]); }
   g.add(cyl(0.08, 0.1, 2.6, 6, M.darkWood, 1.25, 2.7, len * 0.5));
   circles.push([0.18, 1.25, len * 0.5], [0.32, -0.9, len * 0.72]);
   const lamp = new Mesh(new SphereGeometry(0.24, 10, 8), lampMat);
   lamp.position.set(1.25, 4.05, len * 0.5);
   lamp.userData.noOutline = true;
-  g.add(lamp, cyl(0.3, 0.27, 0.7, 8, M.barrel, -0.9, 1.8, len * 0.72));
+  g.add(lamp);
+  if (hasProp('fass')) {
+    const b = harborProp('fass', barrelWood);
+    b.position.set(-0.9, 1.45, len * 0.72);
+    g.add(b);
+  } else g.add(cyl(0.3, 0.27, 0.7, 8, M.barrel, -0.9, 1.8, len * 0.72));
+  if (hasProp('kiste')) {
+    const k = harborProp('kiste', crateWood);
+    k.scale.setScalar(0.9);
+    k.position.set(-0.95, 1.45, len * 0.4);
+    k.rotation.y = 0.3;
+    g.add(k);
+    circles.push([0.55, -0.95, len * 0.4]);
+  }
+  if (hasProp('laterne')) {
+    const h = harborProp('laterne', crateWood);
+    h.scale.setScalar(0.9);
+    h.position.copy(lamp.position);
+    g.add(h);
+  }
   // Taurolle
   const rope = new Mesh(new TorusGeometry(0.34, 0.1, 5, 10), toon('#B8A070'));
   rope.rotation.x = Math.PI / 2;
   rope.position.set(0.8, 1.52, len * 0.86);
   g.add(rope);
-  return { g, boxes: [], circles, pier: len };
+  return { g, boxes: [], circles, pier: len, glows: [{ kind: 'lamp', x: 1.25, y: 4.05, z: len * 0.5, gy: 1.45, size: 1.0, pool: 6.5, glint: true }] };
 }
 
 function kisten(rnd: () => number): Built {
   const g = new Group();
   const n = 3 + Math.floor(rnd() * 3);
+  const sizes: number[] = [];
   for (let i = 0; i < n; i++) {
     const s = 0.8 + rnd() * 0.3;
-    const c = box(s, s, s, M.crate, (i % 2) * 1.05 - 0.52, s / 2 + (i >= 2 && i < 4 ? 0.92 : 0), i >= 4 ? 1.05 : (i % 3) * 0.12);
+    sizes.push(s);
+    const lift = i >= 2 && i < 4 ? 0.85 * sizes[i - 2] : 0;     // obere Kiste steht auf der darunter
+    const px = (i % 2) * 1.05 - 0.52, pz = i >= 4 ? 1.05 : (i % 3) * 0.12;
+    if (hasProp('kiste')) {
+      const c = harborProp('kiste', crateWood);
+      c.scale.setScalar(s);
+      c.position.set(px, lift, pz);
+      c.rotation.y = (rnd() - 0.5) * 0.5;
+      g.add(c);
+      continue;
+    }
+    const c = box(s, s, s, M.crate, px, s / 2 + (i >= 2 && i < 4 ? 0.92 : 0), pz);
     c.rotation.y = (rnd() - 0.5) * 0.5;
     g.add(c);
   }
   return { g, boxes: [[2.2, n > 4 ? 2.3 : 1.3, 0, n > 4 ? 0.5 : 0.05]], circles: [] };
 }
 
+/** Blender-Prop mit den Materialien der Hafenbauten (ohne Textur: die gepackten UV-Inseln taugen nicht für Kachel-Holz) */
+const harborProp = (id: PropId, wood: () => Material) => propGroup(id, (role) => {
+  switch (role) {
+    case 'iron': return M.iron;
+    case 'brass': return toon({ color: '#E3B04B', spec: 1, metalness: 1, roughness: 0.4 });
+    case 'darkwood': return M.darkWood;
+    default: return wood();
+  }
+});
+const barrelWood = () => toon({ color: '#7A5030', roughness: 0.85 });
+const crateWood = () => toon({ color: '#9A6A3A', roughness: 0.85 });
 const barrelMesh = (x: number, z: number, s = 1) => {
+  if (hasProp('fass')) {
+    const b = harborProp('fass', barrelWood);
+    b.scale.setScalar(1.2 * s);
+    b.position.set(x, 0, z);
+    return b;
+  }
   const b = new Group();
   b.add(cyl(0.4 * s, 0.36 * s, 1 * s, 10, M.barrel, 0, 0.5 * s, 0));
   for (const y of [0.22, 0.78]) b.add(cyl(0.415 * s, 0.4 * s, 0.07 * s, 10, M.iron, 0, y * s, 0));
@@ -523,12 +630,20 @@ function brunnen(): Built {
 
 function laterne(): Built {
   const g = new Group();
-  g.add(cyl(0.08, 0.1, 3, 6, M.darkWood, 0, 1.5, 0), box(0.7, 0.08, 0.08, M.darkWood, 0.3, 2.9, 0));
-  const lamp = new Mesh(new SphereGeometry(0.22, 10, 8), lampMat);
+  const glbPost = hasArch('laternenpfahl');
+  if (glbPost) g.add(archGroup('laternenpfahl', lightMats)!);
+  else g.add(cyl(0.08, 0.1, 3, 6, M.darkWood, 0, 1.5, 0), box(0.7, 0.08, 0.08, M.darkWood, 0.3, 2.9, 0));
+  const lamp = new Mesh(new SphereGeometry(glbPost ? 0.14 : 0.22, 10, 8), lampMat);
   lamp.position.set(0.6, 2.7, 0);
   lamp.userData.noOutline = true;
   g.add(lamp);
-  return { g, boxes: [], circles: [[0.22]] };
+  if (!glbPost && hasProp('laterne')) {
+    const h = harborProp('laterne', crateWood);
+    h.scale.setScalar(0.8);
+    h.position.copy(lamp.position);
+    g.add(h);
+  }
+  return { g, boxes: [], circles: [[0.22]], glows: [{ kind: 'lamp', x: 0.6, y: 2.7, z: 0, gy: 0, size: 0.9, pool: 6 }] };
 }
 
 /** Acker: gepflügte Furchen – die Halme darauf setzt die Siedlung als instanzierte Pflanzen */
@@ -578,27 +693,30 @@ function netz(): Built {
 
 function feuer(): Built {
   const g = new Group();
+  const glbFire = hasArch('feuerstelle');
+  if (glbFire) g.add(archGroup('feuerstelle', lightMats)!);
   const stone = toon({ color: '#6E6A64', flatShading: true });
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0; !glbFire && i < 9; i++) {
     const a = (i / 9) * Math.PI * 2;
     const s = new Mesh(new DodecahedronGeometry(0.22, 0), stone);
     s.position.set(Math.cos(a) * 0.75, 0.12, Math.sin(a) * 0.75);
     g.add(s);
   }
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; !glbFire && i < 4; i++) {
     const log = cyl(0.08, 0.1, 1.1, 5, toon('#3A2A1E'), 0, 0.3, 0);
     log.rotation.set(0.5, (i / 4) * Math.PI * 2, 0);
     g.add(log);
   }
-  const ember = new Mesh(new ConeGeometry(0.4, 0.8, 6), emberMat);
-  ember.position.y = 0.45;
+  // Glutbett: flache glühende Scheibe zwischen den Holzscheiten; die Flamme darüber zeichnet das GlowSystem
+  const ember = new Mesh(new CylinderGeometry(0.5, 0.58, 0.1, 9), emberMat);
+  ember.position.y = 0.2;
   ember.userData.noOutline = true;
-  g.add(ember);
+  if (!glbFire) g.add(ember);
   // Sitzbalken
   const seat = cyl(0.2, 0.22, 2.2, 6, toon('#6A5038'), 0, 0.2, 1.9);
   seat.rotation.z = Math.PI / 2;
   g.add(seat);
-  return { g, boxes: [[2.2, 0.5, 0, 1.9]], circles: [[1]], fire: [0, 0.4, 0] };
+  return { g, boxes: [[2.2, 0.5, 0, 1.9]], circles: [[1]], fire: [0, 0.4, 0], glows: [{ kind: 'fire', x: 0, y: 0.26, z: 0, gy: 0, size: 1.25, pool: 9 }] };
 }
 
 /** Kollisions-Gitter eines aufgestellten Bauwerks in Weltkoordinaten (wx, wz = Standort, yaw = rotation.y) */
@@ -700,6 +818,7 @@ function dress(b: Built, rnd: () => number, w: number, d: number, wide = false):
   }
   b.boxes.push(...boxes);
   b.circles.push(...circles);
+  (b.glows ??= []).push({ kind: 'lamp', x: lx, y: 2.28, z: front + 0.5, gy: 0, size: 0.7, pool: 4.8 }, { kind: 'lamp', x: px - 0.45, y: 2.22, z: pz, gy: 0, size: 0.8, pool: 5.5 });
   return b;
 }
 
@@ -730,8 +849,68 @@ export function colliders(b: Built, wx: number, wz: number, yaw: number): Blocke
   return out;
 }
 
+/** Materialien des Blender-Stegs: Bohlen und Balken aus Holz, Taue, Klampen aus Eisen */
+const pierMats = (role: string) => role === 'rope' ? AM('#B8A070') : role === 'iron' ? AM('#3A3C40') : role === 'darkwood' ? AM('#4A3220') : AM('#A8804E');
+
+function holzhuette(rnd: () => number): Built {
+  if (!hasArch('haus_huette')) return holzhuettePlain(rnd);
+  const g = new Group();
+  const w = 5.4, d = 4;
+  const thatch = rnd() < 0.5;
+  g.add(archGroup('haus_huette', houseMats({ wall: '#A07C50', roof: thatch ? '#A8904E' : '#6E4A2E', roofDetail: thatch ? undefined : 'tile' }))!);
+  windowAt(g, w * 0.22, 1.75, d / 2 + 0.03);
+  windowAt(g, 0, 1.75, -d / 2 - 0.03, Math.PI);
+  g.add(box(1.6, 0.1, 0.4, M.wood, w * 0.22, 0.5, d / 2 + 0.35), box(0.1, 0.5, 0.36, M.wood, w * 0.22 - 0.7, 0.25, d / 2 + 0.35), box(0.1, 0.5, 0.36, M.wood, w * 0.22 + 0.7, 0.25, d / 2 + 0.35));
+  return { g, boxes: [[w + 0.3, d + 0.3], [1.7, 0.5, w * 0.22, d / 2 + 0.35]], circles: [] };
+}
+
+function steinhaus(rnd: () => number): Built {
+  if (!hasArch('haus_stein')) return steinhausPlain(rnd);
+  const g = new Group();
+  const w = 6.6, d = 5, h = 3.1;
+  const slate = rnd() < 0.5;
+  g.add(archGroup('haus_stein', houseMats({ roof: slate ? '#46525E' : '#8E3A2A', roofDetail: 'tile' }))!);
+  windowAt(g, -w * 0.3, 1.8, d / 2 + 0.03);
+  windowAt(g, w * 0.3, 1.8, d / 2 + 0.03);
+  windowAt(g, 0, 1.8, -d / 2 - 0.03, Math.PI);
+  return { g, boxes: [[w + 0.3, d + 0.3]], circles: [], smoke: [w * 0.3, h + 3.1, -0.6] };
+}
+
+function gasthaus(): Built {
+  if (!hasArch('haus_taverne')) return gasthausPlain();
+  const g = new Group();
+  const w = 9.2, d = 6.2, h1 = 3, h2 = 2.6;
+  g.add(archGroup('haus_taverne', houseMats({ wall: '#E2D6BC', wallDetail: 'plaster', roof: '#8E3A2A', roofDetail: 'tile' }))!);
+  for (const sx of [-1, 1]) { windowAt(g, sx * 2.9, 1.75, d / 2 + 0.03, 0, 1, 1); windowAt(g, sx * 2.9, h1 + 1.3, d / 2 + 0.3, 0, 0.9, 0.9); windowAt(g, sx * 2.9, h1 + 1.3, -d / 2 - 0.3, Math.PI, 0.9, 0.9); }
+  windowAt(g, 0, h1 + 1.3, d / 2 + 0.3, 0, 0.9, 0.9);
+  // Bänke und Tisch vor dem Haus
+  g.add(box(2, 0.1, 0.8, M.wood, -3, 0.8, d / 2 + 1.6), box(0.12, 0.8, 0.7, M.wood, -3.8, 0.4, d / 2 + 1.6), box(0.12, 0.8, 0.7, M.wood, -2.2, 0.4, d / 2 + 1.6));
+  // Wandfackeln links und rechts der Tür (Eisenhalter, Holzschaft mit Pechkopf); Flamme und Lichtschein kommen aus render/glow.ts
+  for (const sx of [-1, 1]) {
+    g.add(box(0.1, 0.1, 0.5, M.iron, sx * 1.55, 2.35, d / 2 + 0.25));
+    if (hasArch('fackel')) { const t = archGroup('fackel', lightMats)!; t.position.set(sx * 1.55, 1.58, d / 2 + 0.5); g.add(t); }
+    else g.add(cyl(0.05, 0.07, 0.34, 6, toon('#3A2A1E'), sx * 1.55, 2.5, d / 2 + 0.5), cyl(0.08, 0.05, 0.1, 6, M.iron, sx * 1.55, 2.7, d / 2 + 0.5));
+  }
+  return { g, boxes: [[w + 0.6, d + 0.6], [2.1, 0.9, -3, d / 2 + 1.6]], circles: [], smoke: [-w * 0.3, h1 + h2 + 3.7, 0.4], glows: [{ kind: 'torch', x: -1.55, y: 2.78, z: d / 2 + 0.5, gy: 0, size: 0.62, pool: 4.8 }, { kind: 'torch', x: 1.55, y: 2.78, z: d / 2 + 0.5, gy: 0, size: 0.62, pool: 4.8 }] };
+}
+
+function ruinenbogen(): Built {
+  if (!hasArch('bogen')) return ruinenbogenPlain();
+  const g = new Group();
+  g.add(archGroup('bogen', (role) => role === 'stonelight' ? AM('#5E7A4A') : AM('#9C978A', 'stone'))!);
+  return { g, boxes: [], circles: [[0.95, -2.6, 0], [0.95, 2.6, 0]] };
+}
+
 /** Bauwerk nach Art erzeugen (rnd: fester Zufall der Insel, len: Länge für Zaun, Mauer, Steg, Feld) */
 export function build(t: StructureType, rnd: () => number, len = 8): Built {
+  const b = buildInner(t, rnd, len);
+  // Fensterlichter (von windowAt am Gruppenobjekt gesammelt) gehören zu den Lichtquellen des Baus
+  const wg = b.g.userData.winGlows as GlowSpec[] | undefined;
+  if (wg) (b.glows ??= []).push(...wg);
+  return b;
+}
+
+function buildInner(t: StructureType, rnd: () => number, len: number): Built {
   switch (t) {
     case 'holzhuette': { const b = holzhuette(rnd); return dress(b, rnd, b.boxes[0][0] - 0.3, 4); }
     case 'stelzenhuette': return stelzenhuette(rnd);

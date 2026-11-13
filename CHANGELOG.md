@@ -1,5 +1,223 @@
 # Was ist neu
 
+## 2.9.67 – Fenster, Wasserspiegelung, Hüftlaterne und begehbare Kapitänskajüte (13.11.2026)
+
+**Offene Punkte aus 2.9.66, erledigt**
+- **Fenster leuchten:** Fenster der Häuser, der Hafenstadt und der Schiffe (Heckgalerie, Oberlicht) haben einen kleinen Lichthof; Fenster im Erdgeschoss werfen zusätzlich einen warmen Lichtfleck auf den Boden davor. Die Richtung kommt aus der Drehung der Fläche (`GlowSpec.px/pz`, `pdx/pdz`). Neue Lichtart `window` im GlowSystem (ruhiges Flackern, kürzere Reichweite von 150 m).
+- **Spiegelung im Wasser:** Schiffslaternen, Bojen, die Steg-Laterne und die Laternen der Außenposten werfen einen Lichtstreifen aufs Wasser, der von der Lampe zum Betrachter läuft (Funkelbänder, nahe am Betrachter breiter). Vierte Schicht im GlowSystem, 48 Streifen, 170 m Reichweite, nur nachts.
+- **Hüftlaterne der Figuren:** neues Modell mit Henkel, Dach mit Knauf, Glaszylinder, heller Flamme, Messingband, Streben und Fuß.
+- **Stimmung und Leistung:** Morgenrot, Abendrot und Nacht angesehen, die Palette bleibt (stimmig). Leistung mit und ohne GlowSystem im nächtlichen Dorf: 530 gegen 528 Zeichenaufrufe, Dreiecke gleich, CPU-Zeit je Bild 3 ms in beiden Fällen.
+
+**Begehbare Kapitänskajüte auf allen sieben Schiffsklassen**
+- **Achterkastell hohl:** Wandring von 0,16 m um den Innenraum (eine Umrisslinie führt außen herum und an der Tür nach innen), Sturz über der Tür. Mindesthöhe 2,55 m (die kleinen Schiffe hatten 1,7 m; darunter ist die Kajüte für eine 1,75 m große Figur). Die goldene Zierleiste ist jetzt ein Ring um die Wand statt einer vollen Platte (die wirkte sonst wie eine Decke). Die Tür steht offen: ein Flügel schwingt nach außen.
+- **Betreten:** Durch die Tür in der Vorderwand des Achterkastells (Treppe bleibt der Weg aufs Achterdeck). `DeckGround` kennt drei Zonen: Hauptdeck, Achterdeck, Kajüte. Das Wechseln folgt dem Laufweg (über die Treppe nach oben, durch die Tür hinein, vorn wieder hinaus); die Höhe passt sich an, Möbel und Wände gelten nur in der passenden Zone, die Wand über der Tür nur auf dem Achterdeck (kein Absturz durch die Türlücke).
+- **Kamera und Dach:** Steht die Figur in der Kajüte, rückt die Kamera näher und steiler über sie, das „Dach“ (Achterdeck samt Reling, Steuerrad, Kompassrose, Truhen und Laternen) wird als Gruppe ausgeblendet, ein Fülllicht geht an (nur Spielerschiff). Beim Verlassen ist alles wieder da; nach Sprüngen oder Landgang stellt `seaWorld` das Dach selbst wieder her.
+- **Einrichtung (Blender, `tools/blender/build_kajuete.py`, `public/models/ships/kajuete_*.glb`):** Schreibtisch mit Schubladen, Tintenfass, Feder, Kerze und Kartenrolle; Kapitänsstuhl; Koje mit Decke und Kissen; Kartentisch mit Seekarte, Kompass, Zirkel und Kerze; Bücherregal mit vielen Büchern; Truhe mit Messingbändern; Globus; Hängelampe; Teppich. Auswahl und Größe richten sich nach der Raumlänge (3,6 m bei der Schaluppe bis 16 m beim Leviathan): kleine Räume bekommen Schreibtisch, Stuhl, Koje, Truhe und Teppich, größere Regal, Kartentisch mit Stühlen, Globus, zweite Koje, ab 10 m eine zweite Tafel und eine Truhenreihe, ab 12,5 m weitere Regale. Möbel sind feste Hindernisse (nur in der Kajüte).
+- **Technik:** Alle Möbel werden mit ihren Rollenfarben und der Ambient-Occlusion zu einem Netz zusammengefasst (ein Zeichenaufruf, keine Kontur, kein Schatten). Heckfenster von innen (`CABIN_WINDOW`, Himmelslicht am Tag, nachts dunkel), die Hängelampe leuchtet (Lichthof, bei Nacht auch von außen durch die offene Tür sichtbar).
+
+**Geprüft (Playwright):** Kajüte von Schaluppe, Fregatte, Galeone (auch bei Nacht) und Leviathan in der Spielkamera, Außenansicht der Fregatte und Galeone, Laufweg per Skript durch alle Zonen (Start am Steuerrad, Tür hinein, Heckwand und Seitenwand, hinaus, Treppe hinauf, Türkante oben). `tsc`, 72 Tests, Produktionsbau; Konsole ohne Fehler und Warnungen.
+
+**Kosten und Grenzen:** Die Einrichtung kostet je Schiff einen Zeichenaufruf und 3 400 (Schaluppe) bis 14 000 Dreiecke (Leviathan); sie wird auch für Feindschiffe gebaut, weil man sie entern und betreten kann. Das ist nicht gemessen im Gefecht mit vielen Schiffen. Echte Handys und die einzelnen Grafikstufen sind nicht geprüft. Nicht gebaut: weitere Räume (Mannschaftsdeck, Laderaum), ein Neubau der Rümpfe oder Segel, neue Schiffsformen nach historischen Vorbildern. Die Takelage hatte schon Mastkorb, Wanten mit Webeleinen, Bugspriet, Stage und Nagelbänke, dort habe ich nichts ergänzt.
+
+## 2.9.66 – Licht und Feuer: Flammen, Lichtschein, Bodenlicht (13.11.2026)
+
+Alle Lichtquellen der Welt laufen jetzt über ein gemeinsames System (`render/glow.ts`). Vorher waren Lagerfeuer eine starre orange Kegelfigur, Laternen nur leuchtende Kugeln ohne Schein.
+
+**Neues Licht-System (`GlowSystem`, Anmeldestelle `glowHub`)**
+- **Flamme:** eine Zunge aus Rauschen mit Kern, Rand und flackernder Spitze (senkrecht, dreht sich nur zur Kamera). Lagerfeuer und Leuchtfeuer haben je nach Entfernung vier, zwei oder eine Zunge mit eigener Phase, Fackeln zwei.
+- **Lichthof:** weicher orangefarbener Schein um Lampen, Fackeln und Feuer, wächst mit der Entfernung (aus der Ferne bleibt eine Lampe als Lichtpunkt), tagsüber kaum sichtbar, geht mit der Dämmerung an. Im Regen etwas matter.
+- **Bodenlicht:** warmer, leicht unruhiger Lichtfleck auf dem Boden unter Lampen und Feuern (Steg, Wege, Sand), nur nah und nur in Dämmerung und Nacht.
+- Drei Instanz-Netze mit je einem Zeichenaufruf (150 Flammen, 220 Höfe, 90 Bodenlichter), die Nächsten gewinnen (alle 20 Bilder neu sortiert), keine Zuweisungen je Bild.
+- **Echte Lichter:** Feuer und Wandfackeln gehen als feste Träger in den `LampPool`; die nächsten bekommen ein echtes Punktlicht (28 m Reichweite, kräftiger als Laternen, brennen auch am Tag ein wenig, stärkeres Flackern).
+
+**Angeschlossene Lichtquellen:** Lagerfeuer der Inseln und Siedlungen, Leuchtfeuer am Steinturm, Wandfackeln an der Taverne, Laternenpfähle, Tür- und Wegelaternen der Häuser, Steg-Laterne, Laternen der Hafenstadt, Leuchtturm, Hafen-Außenposten, Bojen (rot und grün), Schiffslaternen (bewegen sich mit dem Schiff, werden mit dem Schiff abgemeldet) und die Laternen an den Hüften der Figuren.
+
+**Neue Modelle (`public/models/light/`, `tools/blender/build_light.py`):** `feuerstelle` (Steinring mit abgeschrägten Kanten, gekreuzte Scheite mit verkohlten Enden, Aschebett und leuchtende Glut), `feuerkorb` (Dreibein mit Eisenschale und Stäben), `fackel`, `laternenpfahl` (geschwungener Arm mit Hängelaterne). Die Glut leuchtet selbst, die Flamme darüber kommt aus dem GlowSystem.
+
+**Technik:** Bauten melden Lichter über `Built.glows`, Inseln und Siedlungen reichen sie als `GlowPlaced` an die Welt (`seaWorld.addGlows`). `GlowEmitter` kann an ein Objekt gebunden sein (Schiff, Figur, Boje) und folgt ihm. Die Gruppe wird nur gezeichnet, wenn das Objekt samt Eltern sichtbar ist. Qualität: Stufe Low zeichnet keinen Schein (wie die echten Lichter). `scripts/compress-gear.mjs` komprimiert jetzt auch `light`.
+
+**Geprüft (Playwright, Dorf Weidenbrück, Schiff, Lagerfeuer):** Abendrot (Lampen gehen an, Steg bekommt sein Bodenlicht), Nacht (Lichthöfe in der Siedlung, Wachturm-Feuer in der Ferne sichtbar), Morgenrot (Lampen aus), Lagerfeuer aus der Nähe (mehrere Flammenzungen, Lichtfleck auf dem Sand), Schiff bei Nacht. `tsc`, 72 Tests, Produktionsbau; Konsole ohne Fehler. Der Mehraufwand ist die Arbeit von drei Zeichenaufrufen und einer Schleife über die Lichter in Reichweite. Gemessen wurde die Bildzeit nicht eigens.
+
+**Noch offen aus dem Auftrag:** Die Palette der Tageszeiten (Morgenrot, Tag, Abendrot, Nacht) habe ich nach den Bildern nicht verändert, sie wirkte stimmig. Die Fensterleuchten der Häuser und Schiffe sind noch flache leuchtende Flächen ohne eigenen Schein. Die Laterne an den Hüften der Figuren hat jetzt einen Lichthof, ihr Modell ist unverändert. Lichtreflexe der Lampen im Wasser fehlen. Handy und Grafikstufen nicht geprüft. Die Schiffe (neue Modelle, Kapitänskajüte) und die Inselvegetation folgen als eigene Pakete.
+
+## 2.9.65 – Welt-Grafik: Flora, Klippen, Bauten und Schiffsdetails aus Blender (13.11.2026)
+
+Weiter auf dem Weg zu 3.0. Ozean-Shader, Schiffsrümpfe und Segel blieben unangetastet. Neue Modelle entstehen per Skript in Blender (headless), laufen komprimiert (Draco) und jedes trägt Ambient-Occlusion je Eckpunkt (Farbattribut `COLOR_0`) sowie UV-Inseln ohne Überlappung.
+
+**Neue Dateien**
+- `public/models/env/` (`tools/blender/build_env.py`): Kokospalmen `palme_1..4` (gebogener Stamm mit Ringnarben, 15 Wedel mit Fiederblättern, Kokosnüsse), Laubbäume `laubbaum_1..3` (Äste, mehrschichtige Blattcluster mit gezackten Spitzen), Büsche `busch_1..2`, Farne `farn_1..2`, Treibholz `treibholz_1..3`, Felsen `fels_1..3` (Einzelblock, Dreiergruppe, geschichtete Küstenklippe) und große Klippenformationen `klippe_1..2`. Felsen haben abgeschrägte Kanten (Bevel) und flache Facetten; Kronen sind im Kern dunkel und an den Spitzen hell.
+- `public/models/architecture/` (`build_arch.py`): `haus_huette`, `haus_stein`, `haus_taverne` (Fachwerk mit Streben, überstehende Schindeldächer aus überlappenden Reihen, Sparrenköpfe, Ortgangbretter, Fensterläden, Türen mit Beschlägen, Schornsteine, Taverne mit Balkenköpfen unter dem Überstand und Schildausleger), `steg_modul` (4,5-m-Modul: einzelne Bohlen mit Fugen, Längsträger, Pfähle mit umwickelten Tauen, Klampen) und `bogen` (Torbogen aus abgeschrägten Quadern, eingestürzte Steine).
+- `public/models/ships/` (`build_ships.py`): geschnitzte Drachen-Galionsfigur `galionsfigur_drache` (Hals, Kiefer mit Zähnen, Hörner, Flossenohren, Rückenkamm) und ein detaillierteres Steuerrad `steuerrad` (zehn gedrechselte Speichen mit Griffen, Messingbänder und -hülsen, Nabe). Das Steuerrad ersetzt das aus 2.9.63 (`world/steuerrad.glb` entfällt). Rümpfe und Segel unverändert.
+- Gemeinsame Bausteine in `tools/blender/proplib.py` (Röhren entlang Kurven, doppelseitige Blätter, Klumpen, abgeschrägte Felsen, AO-Export); `build_worldprops.py` nutzt sie ebenfalls.
+
+**Einbindung**
+- **Flora und Felsen:** `floraProto` (`world/vegetation.ts`) baut Palme, Laubbaum, Busch, Farn, Fels, Treibholz und Klippe aus den Modellen, in den Biome-Farben (`PAL`). Sie laufen durch dieselbe `InstancedMesh`-Pipeline wie bisher, mit Wind (`windify`), Borke-Bump am Stamm, Laub-Durchleuchtung und Moos auf Felsen; die Ambient-Occlusion der Datei geht in die Eckpunktfarben. Kollisionsradien und Belegung sind unverändert. Neu in den Daten: Flora-Arten `treibholz` und `klippe`. Die Insel-Bausteine (`islandDress.ts`) nutzen die Modelle für Büsche, Felsen (große Brocken im Wasser als Klippenformation) und Treibholz am Strand.
+- **Bauten:** `holzhuette`, `steinhaus`, `gasthaus`, `ruinenbogen` und `steg` (`world/architecture.ts`) bauen aus den Modellen; Fenster mit Nachtleuchten, Bank, Kollisionsflächen und Rauchpunkte bleiben im Code. Das Zusammenfassen der Siedlungen (`mergeByMaterial`) behält jetzt die Eckpunktfarben von Materialien mit `vertexColors`. Die alten Funktionen bleiben als Ausweichform, falls eine Datei fehlt.
+- **Schiffe:** Die Drachen-Galionsfigur und das Hero-Steuerrad sitzen an den bestehenden Schiffen (`shipBuilder.ts`), ohne Rumpf oder Segel zu ändern. Die Adler-Figur der Marine und die übrigen Figuren bleiben Eigenbau.
+- **Shader:** Der Bewuchs-Shader (`patchVeg`) bekam für Felsen eine Spritzzone an der Wasserlinie: nasser, dunklerer Stein und ein Himmelsglanz im flachen Blickwinkel (Fresnel); Programmschlüssel `veg3`. Wind, Randlicht und Regennässe liefen schon über die gemeinsame Toon-Pipeline. ACES und Nachbearbeitung blieben unverändert.
+- **Werkzeug:** `scripts/compress-gear.mjs` komprimiert jetzt alle fünf Modellordner (2,5 MB auf 0,7 MB). Lader: `world/envModels.ts` (Flora, Bauten), `world/worldProps.ts` (Schiffs-Props); beide laufen über den zentralen Preloader.
+
+**Geprüft:** `tsc`, 72 Tests, Produktionsbau; Konsole ohne Fehler und Warnungen. Im Spiel (Playwright, Mittag) angesehen: Palmen, Laubbäume, Büsche, Felsen, das Dorf Weidenbrück mit Steg, Taverne, Steinhaus und Hütten, Küstenfelsen, Galionsfigur. `renderer.info` je Bild mit den Modellen gegen die alten Formen (Mittelwert über 3 s je Ort): Dorf 384 gegen 384 Aufrufe, Ankerglück 1264 gegen 1287, Palmeninsel 340 gegen 340; Dreiecke gleich hoch (Ankerglück 1,76 Mio. gegen 1,79 Mio.).
+
+**Nicht umgesetzt / nicht geprüft:** Birke und Windkiefer sowie die nicht-tropischen Bäume der Insel-Bausteine (`plant(kit)`) bleiben Eigenbau; Ankerglück selbst (`town.ts`) hat eigene Häuser, die nicht ersetzt wurden; Steg-Ende, Stelzenhütte, Scheune, Türme und Ruinenmauern bleiben Eigenbau; die Adler-Galionsfigur ist nicht ersetzt. Die Galionsfigur wurde nur als Modell und im Spiel von hinten geprüft, die Drachen-Ansicht von vorn steht aus. Echtes Handy und die Grafikstufen einzeln sind nicht geprüft; ob Instanz-Pools mit den dichteren Palmen (2000 statt etwa 300 Dreiecke) auf schwachen Handys genug Luft lassen, ist nicht gemessen.
+
+## 2.9.64 – Zwischenstand vor Sturmkrone 3.0: Figuren, Ausrüstung und Schiffe (13.11.2026)
+
+Der Figuren- und Ausrüstungsumbau seit 2.9.57 ist abgeschlossen; Sturmkrone 3.0 selbst folgt nach der Welt-Grafik. Die einzelnen Schritte stehen mit allen Zahlen darunter (2.9.58 bis 2.9.63); hier das Wichtigste auf einen Blick.
+
+**Figuren ohne Durchstiche**
+- **Dreiecks-Maskierung (`BodyMaskingEngine`):** Was Kleidung vollständig verdeckt (Haut unter Stoff, Hemd unter Mantel, Schuh unter Stiefelschaft), wird gar nicht erst gezeichnet. Jede Figur bekommt eine eigene Dreiecksliste, ein Material und ein Zeichenaufruf bleiben, Treffer-Leuchten, Auflösen und Schatten laufen unverändert. Auch Hafen-NPCs, Gegner, Verbündete und Schiffscrew nutzen sie, weil alle über dieselbe `Character`-Klasse laufen.
+- **Sichtbarkeits-Hülle:** Eine Hüllkugel je Figur folgt der Hüfte, damit Haare, Gesicht und Kleidung am Bildrand nicht mehr verschwinden.
+- **Ebenen und Zugehörigkeit:** Mäntel und Schärpen kennen das Oberteil darunter (`GarmentCtx`), Säume sind gerade geschnitten, der Abstand der Schichten verhindert Flackern.
+
+**Ausrüstung mit Plätzen (Sockets)**
+- Sieben Sockets (Kopf, Brust, Beine, Füße, Hände, Haupthand, Nebenhand) und Ausrüstung als Daten (`data/equipment.ts`); `loadoutFromLook` übersetzt das bisherige Aussehen, Spielstand-Version 11 migrierte alte Stände.
+- Inventar mit allen Plätzen: ausgerüstete Stücke mit Namen, anlegen und ablegen per Klick; das Modell der Figur aktualisiert sich sofort, alte Netze werden freigegeben (Speicherprobe über 130 Runden unverändert).
+- Rüstungssets mit Oberflächen, Borten und Mustern, Umhänge, Helme und der neue Editor.
+
+**Echte Modelle aus Blender (alle per Skript, headless)**
+- Ausrüstung: Stulpenstiefel, Riemen-Sandalen, Stoffhose (zwei Fassungen), Kapitäns-Gehrock, Dreispitz, mehrlagige Frisur mit senkrechten UVs für den Haar-Shader, Entermesser und Parierdolch. Die Modelle wurden in einem Straffungsdurchgang schlanker gemacht und an die weibliche Grundfigur angepasst.
+- Welt: Kanone auf Holzlafette, Steuerrad, Admiralitätsanker, Hängelaterne, Fass und Kiste. Auf allen Schiffen als `InstancedMesh`, in den Häfen als Einzelnetze; neu sind Deckkanonen ab der Korvette.
+- Arbeitsweise: `blender --background --python tools/blender/headless.py -- build_<name>.py`, kein offenes Blender-Fenster nötig (Skill `blender-3d-assets`, CLAUDE.md).
+
+**Technik und Leistung**
+- Alle Modelle laden über den zentralen Preloader (`core/preload.ts`) und zählen im Ladebalken mit; Ausrüstungs- und Welt-Modelle laden jetzt gleichzeitig statt nacheinander. Das Warm-up (`core/warmup.ts`) zieht Figuren in allen Sets samt Frisur, jede Schiffsklasse und alle Effekte vorab auf die Grafikkarte.
+- Messung nach dem Start (Entwicklungsserver): beim Anlegen neuer Sets und beim Schiffswechsel wird **kein neues Shader-Programm** übersetzt (Programmzahl 249 bis 251 unverändert). Neue Ausrüstungskombinationen bauen sich in 1 bis 42 ms.
+- Leuchtflächen der Schiffe (Fenster, Laternenflamme, Glas) sind jetzt ein geteiltes Material für alle Schiffe statt je Schiff ein eigenes; die Laternen sind tagsüber gedämpft.
+- Speicher: `disposeObject` gibt bei `InstancedMesh` die Instanzmatrizen frei.
+- Gebaut und geprüft: `tsc` ohne Fehler, 72 Tests, Produktionsbau (Hauptpaket 1,93 MB, 590 KB gepackt; die Warnung zur Paketgröße gab es schon vorher).
+
+**Bekannt und offen**
+- **Ruckler beim Schiffswechsel:** Das erste Bild nach einem Schiffswechsel braucht im Entwicklungsserver dieses Rechners (Software-Grafik) 350 bis 640 ms, danach 10 bis 20 ms. Es tritt mit und ohne die neuen Welt-Modelle gleich auf, also nicht durch den Umbau. Gemessen wurde ein einzelnes Shader-Programm (`basic`), das beim Abbau des alten Schiffs freigegeben und neu übersetzt wird; die Ursache ist nicht abschließend geklärt (das Teilen der Leuchtflächen allein hat es nicht behoben). Auf echter Grafikhardware dürfte es kleiner ausfallen, ist aber nicht gemessen.
+- Echtes Handy und Bildrate im laufenden Spiel auf allen Grafikstufen stehen noch aus; Flackern im Bewegtbild bei großem Kameraabstand wurde nur auf Standbildern geprüft.
+- An Ellbogen und Schulter blitzen bei bestimmten Posen noch kleine Hautflecken durch den Ärmel; das Hemd der Grundfigur sticht bei etwa 20 bis 30 % der Posen leicht durch die Hose.
+- Die Flunken des Ankers sind schlicht gehalten. Spielstände von 2.x bleiben lesbar (Migration auf Version 11).
+
+## 2.9.63 – Hero-Props aus Blender für Schiffe und Häfen (13.11.2026)
+
+Sechs neue Modelle, per Skript in Blender gebaut (`tools/blender/build_worldprops.py`, headless) und nach `public/models/world/` exportiert, jedes mit sauberen UV-Inseln ohne Überlappung. Materialname = Rolle, das Spiel setzt seine Toon-Materialien ein:
+
+- **Kanone auf Holzlafette** (Bronzerohr mit Eisenbändern, Traubenknopf, Schildzapfen, Wangen, Räder, Keil), **Steuerrad** (Felge, Innenring, acht Speichen mit gedrehten Griffen, Messingnabe), **Admiralitätsanker**, **Hängelaterne** (Dach, Streben, Boden, Ring), **Fass** (Bauch, Eisenreifen, Spundloch, eingelassener Deckel) und **Kiste** (Bretter, Eisenecken, Deckelleisten, Schloss).
+- **Schiffe (alle Klassen):** Kanonen an den Stückpforten, Laternen, Fässer, Kisten und der Anker stehen als `InstancedMesh` je Modell und Rolle (`world/worldProps.ts`, `PropBatch`). Das Steuerrad bleibt ein eigenes Netz, weil es sich dreht. Neu ab der Korvette: Deckkanonen an den Bordwänden (nur wo `canAdd` den Weg frei lässt).
+- **Häfen:** Fässer, Kisten und Laternen an Stegen und Kai (`architecture.ts`, `town.ts`) nutzen dieselben Modelle als Einzelnetze, weil der Aufbau der Dörfer sie ohnehin je Material zusammenfasst (ein Zeichenaufruf je Material). Ohne Textur: die gepackten UV-Inseln taugen nicht für die Kachel-Texturen.
+- **Ausweichform:** Fehlt eine Datei, bauen die alten Eigenbau-Formen das Teil wie bisher.
+- **Speicher:** `disposeObject` ruft bei `InstancedMesh` jetzt `dispose()` auf, damit die Instanzmatrizen aus dem Grafikspeicher verschwinden. Die Geometrien sind geteilt (`markShared`).
+- **Kleine Teile ohne Kontur und Schatten:** Eisenbänder, Messing und Laternen haben weder Kontur noch Schattenwurf (sie kosteten je Kaskade einen Zeichenaufruf), nur Rohre, Fässer und Kisten werfen Schatten.
+- **Look-Dev:** Laternenflammen sind tagsüber auf 28 % gedämpft (vorher brannten sie in der Mittagssonne weiß aus und blühten im Bloom), nachts voll. ACES, Bloom-Schwelle, GTAO und Roughness blieben unverändert: auf den Bildern war nichts flach oder überstrahlt.
+
+**Geprüft (Playwright auf `http://localhost:5174/`, Galeone, Mittag und Nacht):** Konsole ohne Fehler und Warnungen (die einzige Meldung kam von einer falschen Adresse in meinem Prüfskript); `renderer.info` je Bild, Mittelwert über rund 250 Bilder, mit Props gegen die alten Eigenbau-Formen:
+
+| Schiff | Zeichenaufrufe | Dreiecke |
+|---|---|---|
+| Galeone | 991 gegen 966 (+2,6 %) | 1,24 Mio. gegen 1,17 Mio. (+5,7 %) |
+| Schaluppe | 1047 gegen 1018 (+2,8 %) | 1,26 Mio. gegen 1,22 Mio. (+3,3 %) |
+| Leviathan | 775 gegen 757 (+2,4 %) | 1,01 Mio. gegen 0,98 Mio. (+2,7 %) |
+
+Die Bildrate liegt im Messrauschen dieses Rechners (zum Beispiel Galeone 70 gegen 74 fps); eine ruhige Gegenmessung steht aus. Zusätzlich gesichtet: Nahaufnahme der Figur im Kapitänsset (Gehrock, Dreispitz, Stulpenstiefel, Entermesser, Dolch), Ausweichrolle am Bildrand (nichts verschwindet), Kamera 90 m über dem Deck (kein Flackern auf dem Standbild), steile Mittagssonne gegen Nacht mit Laternen.
+
+**Nicht geprüft:** echtes Handy, die einzelnen Grafikstufen, Flackern im Bewegtbild bei 90 m (nur Standbilder), die Häfen der anderen Regionen. Die Flunken des Ankers sind schlicht gehalten.
+
+## 2.9.62 (Nachtrag 4) – Prüfung: Phase 2 bis 5 stehen schon (13.11.2026)
+
+Auf Anfrage, Phase 2 bis 5 umzusetzen, wurde der Code gegen die drei Vorgaben geprüft. Nachgebaut wurde nichts, es gab nichts zu ersetzen:
+
+- **Dreiecks-Maskierung:** `bodyMask.ts` gibt jedem Netz eine eigene Dreiecksliste ohne verdeckte Dreiecke (Haut unter Stoff, Hemd unter Mantel, Schuh unter Stiefel). Weder `material.visible` noch `geometry.groups` kommen vor, ein Material und ein Zeichenaufruf bleiben, Treffer-Leuchten und Auflösen laufen unverändert.
+- **Sockets und Migration:** Die sieben Plätze (Kopf, Brust, Beine, Füße, Hände, Haupt- und Nebenhand) liegen in `sockets.ts` und `data/equipment.ts`; `loadoutFromLook` übersetzt das bestehende Aussehen, Spielstand-Version 11 migriert alte Stände (`migrations.ts`).
+- **Hüllkugel:** Die Punktdaten bleiben bei der Maskierung unverändert, nur die Dreiecksliste wechselt. Deshalb muss keine Kugel neu gerechnet werden; die Figur nutzt ihre eigene Kugel an der Hüfte (`fitCull`), die geladenen Netze rechnen sie beim Bauen.
+
+## 2.9.62 (Nachtrag 3) – Schlanker statt klobig (13.11.2026)
+
+Rückmeldung: Vieles wirkte klobig. Die Modelle sind jetzt deutlich schlanker, nach Bildern aus mehreren Winkeln und beim Gehen geprüft:
+
+- **Stiefel:** Schaft 7 statt 12 mm über der Haut, Umschlag halb so breit und nur noch aus Leder (vorher goldene Wülste), dünnere Sohle, schmalere Riemen.
+- **Hose:** 7 bis 15 statt 16 bis 30 mm Weite, Bauschung halbiert, Falten leiser.
+- **Gehrock:** Schoß weitet sich um 9 statt 17 cm, Rumpf und Ärmel liegen enger, Stulpen und Kragen kleiner, Schulterklappen kleiner.
+- **Lendenschurz (Hüftplatten, alle Sets):** liegt enger und weitet sich nur noch um 2,8 statt 5,5 cm; er sah an der Hüfte wie eine Windel aus.
+- **Behoben beim Straffen:** Haut und Weste stachen durch die dünneren Ärmel und die Brust. Ursache: Die Querschnitte der Arme waren bei dünn besetzten Stellen zu klein (jetzt wie beim Rumpf geglättet), und der Gehrock hatte eine Maske für die Hülle „Mantel“, die Löcher in Weste und Haut schnitt (entfernt). Statt der Hemd-Hülle trägt der Gehrock eine Innenweste im Modell selbst; so gibt es keine losen Schichten mehr darunter.
+- **Offen:** an Ellbogen und Schulter blitzen bei bestimmten Posen noch kleine Hautflecken durch den Ärmel.
+
+## 2.9.62 (Nachtrag 2) – Fehlerbereinigung nach den Blender-Modellen (13.11.2026)
+
+Gefundene Unstimmigkeiten und ihre Behebung:
+
+- **Modelle passten nicht auf die weibliche Grundfigur** (sie ist etwa 10 % kleiner, mit schmalen Schultern und kürzeren Armen): Sie schwebten oder klafften. Jetzt werden alle Modelle beim Laden an die Grundfigur angepasst (`glbGear.ts`, `mapper`/`adapt`): Höhen stückweise von Knöchel, Knie, Hüfte, Hals und Kopf, Breiten nach Höhe, Armlänge; Kopf und Hut behalten ihre Größe. Für die männliche Figur bleibt alles unverändert. Bei der weiblichen Figur gesichtet (Kapitänsset, Strandläufer).
+- **Haare ragten durch Mantel und Hemd** (33 bis 45 % der Posen, bis 25 mm): Die Nackenlocken hingen bis auf die Schultern. Sie enden jetzt über dem Kragen (0,15 und 0,10 m statt 0,27 und 0,20 m), die Seitenlocken sind kürzer. Das Prüfwerkzeug zeigt dort jetzt keine nennenswerten Werte mehr.
+- **Haare unter dem Dreispitz:** Das Haar der Frisur ragte durch die Hutkuppel. Die Dreiecke über dem Hutrand werden jetzt weggelassen (eigene Dreiecksliste, wird mit der Figur freigegeben).
+- **Gehrock:** Der Schnitt auf Schulterhöhe nahm die Arme der T-Pose mit und bildete einen Wulst um den Hals. Der Rumpf-Schnitt ist dort jetzt auf den Rumpf begrenzt, die Schulterpartie liegt enger an, die Ärmel sind schlanker (0,014 statt 0,022 m).
+- **Stoffhose:** Am Bund war sie weiter als das Hemd (das Hemd stach durch). Sie liegt dort jetzt enger. In den Stiefeln steckt die schmale Fassung `stoffhose_stiefel`, über den Sandalen die gebauschte `stoffhose`.
+- **Prüfwerkzeug trennt jetzt Entwurf von Durchstich:** Liegt die äußere Schicht schon in Ruhe innen (Hose im Stiefel, Hemd unter dem Mantel), zählt das als Entwurfsmaß (`design`), nicht als Durchstich durch Bewegung. Vorher meldete es bei Hose gegen Stiefel und Gehrock 40 bis 80 % Durchstich, jetzt 3 bis 8 % mit höchstens 16 mm. Es kennt außerdem die Prüf-Figuren der weiblichen Grundfigur (`gear-kapitaen-w`, `gear-strand-w`).
+- **Waffen-Teile erklären sich selbst:** Haupt- und Nebenhand-Stücke nennen im Namen der Beschreibung, dass sie den Säbel ersetzen bzw. nur mit Säbel in der Linken wirken (beim Faustkämpfer, Faji-Wirker und den anderen Klingenformen bleibt die Waffe des Kampfstils).
+- **Schnittfunktion der Werkzeuge:** `section(…, legacy=True)` hält den geprüften Zuschnitt der Stiefel fest; `loft`/`loft2` bekommen sonst die glättere Fassung.
+
+**Messung nach den Korrekturen (34 Figuren, je 75 Posen):** 26 Prüf-Figuren der Grundfigur 4,3 Durchstiche je Figur und Pose (mit der neuen, strengeren Zählung ohne Entwurfsmaße; der alte Wert 19,9 ist damit nicht vergleichbar), kein Netz außerhalb seiner Hüllkugel, auch nicht bei den Ausrüstungs-Figuren. Weibliche Figur im Kapitänsset: Hemd gegen Gehrock 7 % mit bis zu 24 mm (die Brust der weiblichen Figur ist tiefer als die abgebildete männliche), Hemd gegen Hose 6 %.
+
+**Noch offen:** Das Hemd der Grundfigur (locker, über der Hose getragen) sticht an der Hose bei etwa 20 bis 30 % der Posen mit 12 bis 15 mm leicht durch (wenige Punkte). Sandalensohle gegen Haut: 6 % mit 8 mm.
+
+- **Modelle ohne Oberfläche bauen:** `tools/blender/headless.py` führt die Modell-Skripte mit `blender --background --python … -- build_<name>.py` aus (lädt Körper und Helfer selbst). Der Skill `blender-3d-assets` nennt das jetzt als Standardweg; die offene MCP-Verbindung ist nur noch Ausnahme für Sichtprüfungen. Getestet mit den Stiefeln: gleiche Fläche wie vorher (5 496), im Spiel unverändert. Dabei aufgefallen: ein späterer Umbau der Schnittfunktion hatte die Stiefel verändert; `section(…, legacy=True)` hält den geprüften Zuschnitt fest.
+- **Phase 0 und 1 aus `docs/CHARACTER_SYSTEM_3.0.md` waren schon umgesetzt** (2.9.58 bis 2.9.60), es gab nichts nachzubauen: Prüfwerkzeug `__audit` (Messen von Durchstichen, Schichtabständen und Hüllkugeln ohne Zeichnen), Sichtbarkeits-Hülle (`Character.fitCull`/`syncCull`: eine Kugel je Figur, die der Hüfte folgt, damit Haare, Gesicht und Kleidung am Bildrand nicht verschwinden), Gewichte nach dem Glätten neu holen, fester Zeichenreihenfolge der Gesichtsteile, Freiraum ohne Deckel. Nachgemessen nach 2.9.61 mit den 26 Prüf-Figuren: Durchstich unverändert bei etwa 20 Punkten je Figur und Pose. 
+- **Prüfwerkzeug kennt jetzt die Blender-Modelle:** `Character.auditLayers()` liefert je Modell und Rolle eine Schicht (`glb:<modell>/<rolle>`, Ebene aus der Maske oder: Hose 3, Hut und Frisur 9, sonst 2); `testLooks()` enthält sechs Ausrüstungs-Figuren (`gear-…`, Index ab 26: `await __audit.run(26)`). Erste Messung: Keine Netze außerhalb ihrer Hüllkugel. Die Paarwerte der Modelle sind aber **mit Vorsicht zu lesen**: Hose gegen Stiefel und Gehrock zeigt 40 bis 80 % Durchstich bei der Höchsttiefe von 25 mm, obwohl die Bilder (Stand, Seite, Gehen) sauber aussehen. Das Werkzeug vergleicht Punkt gegen Punkt; die Modelle haben doppelte Schalen (Verdickung) und grob verteilte Punkte, was bei den Hüllen der Grundfigur nicht vorkommt. Offene Punkte: Dreispitz gegen Haut (14 bis 40 %, 11 bis 14 mm) und Frisur gegen Hemd. Das Werkzeug müsste für Modelle die Dreiecke statt der Punkte vergleichen.
+- **Hose in Stiefeln:** Die Hose gibt es jetzt in zwei Fassungen: `stoffhose` (gebauscht, für Sandalen) und `stoffhose_stiefel` (steckt schmal im Schaft, Kapitänsset). Beide kommen aus `build_hose.py`; Hosen liegen im Prüfwerkzeug über dem Hemd.
+
+## 2.9.62 – Echte Modelle aus Blender: Stiefel, Sandalen, Hose, Gehrock, Dreispitz, Frisur, Entermesser, Dolch (13.11.2026)
+
+Acht Ausrüstungsteile sind keine Code-Formen mehr, sondern in Blender modellierte `.glb`-Dateien (`public/models/gear/`, zusammen 298 KB mit Draco). Sie passen sich dem Körper der Grundfigur an und biegen sich beim Gehen mit.
+
+- **Piraten-Stulpenstiefel:** hoher Schaft, umgeschlagene Stulpe, zwei Riemen mit Schnalle, Ledersohle.
+- **Riemen-Sandalen:** offene Sohle, drei Spannriemen, Knöchelband mit Schnalle, nackte Waden und Füße in der Hautfarbe der Figur (die aufgemalten Socken der Grundfigur sind verdeckt).
+- **Stoffhose mit Faltenwurf:** weite Beine, am Knie gebauscht, in die Stiefel gesteckt, Bund mit Gürtelschlaufen.
+- **Kapitäns-Gehrock:** langer Schoß mit Rückenschlitz, offene Front mit Revers und Knöpfen, Ärmel mit Aufschlägen, Stehkragen, goldene Schulterklappen mit Fransen.
+- **Dreispitz:** Filzkuppel mit Hutband, dreifach hochgeschlagene Krempe mit Goldborte, Kokarde und Federn.
+- **Mehrlagige Anime-Frisur:** Kopfhaube, zwei Lagen Nackenlocken, Seitenlocken, Pony aus spitzen Strähnen, Scheitelzipfel. Alle Texturkoordinaten laufen senkrecht (Wurzel → Spitze), der anisotrope Haar-Shader zeichnet sein Lichtband darauf. Im Editor unter „Haare“ wählbar („Mehrlagig“).
+- **Verziertes Entermesser** mit gebogenem Handschutz und **Parierdolch** mit Glockenhandschutz. Sie ersetzen den Säbel des Schwertkämpfers und füllen seine freie linke Hand.
+- **Zwei neue Sets:** *Piratenkapitän* (selten, Stufe 14: Dreispitz, Gehrock, Hose, Stiefel, Entermesser, Parierdolch) und *Strandläufer* (gewöhnlich, Stufe 3: Leinenhose, Sandalen). Zwei neue Plätze: Haupthand und Nebenhand.
+- **Behoben (alt):** Beim Wechsel der Waffe in der Hand wurden die alten Geometrien nie freigegeben. Im Editor wuchs der Grafikspeicher mit jeder Änderung (etwa vier Netze je Klick).
+
+**Bekannte Grenzen:** Die Modelle sind an der männlichen Grundfigur gemessen; auf der weiblichen sind sie nicht geprüft. Der Gehrock wirft an Schulter und Achsel noch leichte Falten, die Ärmel wirken etwas aufgebläht. Unter dem Dreispitz ist das neue Haar nicht abgeschnitten.
+
+**Technik (für Entwickler):**
+- Werkzeuge in `tools/blender/`: `gearlib.py` (Körperhaut ausschneiden und aufblasen, Ringe um Gliedmaßen `loft`/`loft2`/`loft_x`, Riemen `band_y`, Export), ein `build_*.py` je Modell; Blender mit `scripts/start-blender-mcp.ps1` starten, Modelle mit `node scripts/compress-gear.mjs` verkleinern.
+- Materialname im Modell = Rolle (`main`, `trim`, `leather`, `steel`, `gold`, `dark`, `cloth`, `skin`, `hair`); `data/equipment.ts` Teil `glb` ordnet jeder Rolle Oberfläche und Farbe zu, Teil `held` hängt Waffen an die Handhalterung.
+- `entities/character/gear/glbGear.ts`: Lader, drei Befestigungsarten: `skinned` (Gewichte von den nächsten Hautpunkten derselben Körperseite, Seite je zusammenhängendem Teil, danach über das Netz geglättet), `bone` (Hut, Frisur) und `foot` (Regel nach Höhe und Zehengelenk, für feine Riemen).
+- `Character.hold`: gibt die vorige Waffe frei; Säbel (`userData.swordSkin`) wird durch das Entermesser ersetzt, die Linke durch den Dolch.
+- Neue Oberflächen `haut` und `haar` in `gear/kit.ts`.
+
+## 2.9.61 – Figuren-Overhaul: 12 Rüstungssets, Beute-Ausrüstung, neuer Editor (13.11.2026)
+
+Die Figuren sehen jetzt aus wie Helden: echte Rüstungen mit Platten, Kettenhemd, Schuppen, Brokat und Borten, dazu Helme, Schulterpanzer und Umhänge. Der Charakter-Editor ist komplett neu.
+
+- **12 Rüstungssets mit bis zu 7 Teilen** (Kopf, Schultern, Oberkörper, Umhang, Hände, Beine, Füße), 80 Teile insgesamt. Sie wachsen mit dem Spielfortschritt:
+  - *Gewöhnlich:* Hafenarbeiter (Segeltuch und Leder), Küstenwache (gesteppter Waffenrock).
+  - *Selten:* Kettenjäger (Kettenhemd), Sturmleder (genietetes Leder, Pelz, Hörnerhelm), Marinegarde (Paradeuniform mit Gold).
+  - *Episch:* Eisenwall (Plattenpanzer mit Stachelschultern), Seekönig (Brokatmantel, Krone, Schleppe), Schuppenwache (Schuppenpanzer, Kabuto mit Mondzier), Nebelwandler (Kapuze und Nebelmantel).
+  - *Legendär:* Drachenpanzer (glühende Hörner), Abgrundwächter (violette Kristalle), Sturmgeborene (weiß-goldene Platten, Sturmkrone mit schwebenden Lichtsplittern).
+- **Oberflächen, die man sieht:** Stahl, dunkler Stahl, Gold, Leder, Seide und Stoff glänzen unterschiedlich. Dazu Muster direkt im Material: Plattenlamellen, Kettenglieder, Schuppen, Rautenbrokat, Nieten, Steppnähte, Streifen. An Säumen, Ärmelrändern, Kragen und Mantelöffnungen laufen scharfe Borten, auch mit Zierlinie oder Zickzack.
+- **Neue Formen:** Hüftplatten und Lendenschurz, Stehkragen und Halsberge, Umhänge in drei Längen (kurz, lang, Schleppe) hinter dem Rücken, neun Helme (Eisenkappe, Ritterhelm, Hörnerhelm, Flügelhelm, Krone, Kapuze, Kabuto, Drachenhelm, Sturmkrone), acht Schulterpanzer, Gürteltaschen, Ketten und Schwerttasche.
+- **Beute:** Besiegte Gegner lassen jetzt Rüstungsteile fallen (ab selten die häufigste Beute). Seltenheit der Lichtsäule = Seltenheit des Teils; Teile von Sets, von denen du schon etwas hast, sind etwas wahrscheinlicher. Doppelte werden zu Gold. Neue Teile legen sich automatisch an, wenn der Platz leer ist oder das Teil seltener ist als das getragene.
+- **Setbonus:** Ab drei Teilen eines Sets gibt es einen Bonus, mit allen Teilen einen größeren. Alle Werte (Leben, Schadensminderung, Volltreffer, Angriff, Faji-Erholung, Gold) zählen im Inventar mit.
+- **Ausrüster:** Die gewöhnlichen und seltenen Sets kaufst du beim Händler unter „Ausrüster: Rüstungssets“. Epische und legendäre Sets gibt es nur als Beute.
+- **Gegner tragen Ausrüstung:** Eliten und Bosse in ganzen Sets, einfache Gegner gelegentlich einzelne Teile – nach Stufe des Gegners. Damit sehen Kämpfe und Inseln deutlich vielfältiger aus.
+- **Neuer Charakter-Editor:**
+  - Studio-Bühne mit weichem Licht, dunklem Drehteller und Kamera-Voreinstellungen (Gesamt, Kopf, Rüstung, Beine, Rücken), die weich anfahren. Zoom mit Mausrad oder zwei Fingern, Drehen durch Ziehen, abschaltbarer Drehteller.
+  - Reiter *Stil, Körper, Gesicht, Haare, Kleidung, Ausrüstung, Rüstkammer*. Körperbau und Frisur als Karten, Bart, Narbe, Augenklappe und Ohrring im Gesicht-Reiter.
+  - *Ausrüstung:* sieben Plätze wie bei einer Puppe, Teile als Karten mit Seltenheit, Werten und Set, direkt anlegen; **jedes Teil lässt sich in Haupt- und Zierfarbe färben** (Farbfelder oder eigene Farbe), Setbonus-Anzeige.
+  - *Rüstkammer:* alle Sets des Spiels, jedes Teil und jedes ganze Set **anprobieren**, auch Ungefundenes (ändert nichts an deiner Ausrüstung). Die Bühne glimmt in der Farbe der Seltenheit.
+  - Die Vorschau zeigt jetzt immer die angelegte Ausrüstung.
+- **Spielstände:** Alles bleibt erhalten. Neue Felder (`gear.loot`, `gear.outfit`, `gear.dyes`) werden bei alten Ständen leer angelegt; Rüstungsstufen, Kopfbedeckungen und gekaufte Schienen funktionieren weiter. Beute-Teile auf einem Platz ersetzen die alte Ausrüstung dort, damit nichts doppelt zählt.
+
+**Leistung (30 Figuren, jede in einem ganzen Set, im Editor-Raum):** Hoch 11,1 ms (ohne Ausrüstung etwa 10 ms), Mittel 10,8 ms gegenüber 9,8 ms; Zeichenaufrufe 965 → 1397 (je Figur etwa 14 mehr: je Oberfläche ein Netz plus Zierteile). Das Aufwärmen beim Laden übersetzt die neuen Oberflächen vorab (drei Figuren in ganzen Sets).
+
+**Gesichtet:** alle zwölf Sets von vorn, von der Seite und von hinten, alle neun Helme aus der Nähe, Kamera-Voreinstellungen im Editor, Ausrüstungs-Reiter. **Nicht geprüft:** ein echtes Handy, die Bildrate im laufenden Spiel mit vielen geschmückten Gegnern, lange Spielzeiten.
+
+**Technik (für Entwickler):**
+- `render/toon.ts`: Option `trim` (nur mit `surface`) schaltet die Attribute `rimD` (Abstand zum Rand in m), `trimC`, `patC`, `gset` (Muster, Maß, Bortenbreite, Bortenart) ein; `GEAR_FRAG_GLSL` zeichnet Borte und Muster aus `vSkObj` (Körperposition vor dem Skinning). Muster blenden in der Ferne aus (`fwidth`).
+- `vroid.ts`: jede Hülle trägt `rimD` (`rimDistance`, Kantenweg über das Netz, höchstens 9 cm); neue Hüllen `kilt` (Ebene 3, Schöße 80 % am Becken) und `kragen`; `VroidBase.cape(len)` baut den Umhang als Gitter hinter dem Rücken (Profil der Haut, nie wieder nach vorn, Hüftwulst, Gewichte Brust → Wirbelsäule → Hüfte, unten halb Oberschenkel).
+- `character.ts`: `addShells` teilt die Hüllen nach Oberfläche (`Finish`) in je ein Netz; Position, Gewichte und `rimD` werden geteilt, Farben/Muster sind eigene Attribute je Figur. Die Dreiecksliste der Maske wird bei mehreren Oberflächen je Figur sortiert (`userData.ownIndex`).
+- `entities/character/gear/kit.ts` (Formen, `Bag`, `finishMat`, `glowMat`) und `gear/rigid.ts` (`SHOULDERS`, `HELMS`, `buildBeltExtras`). Helme setzen auf eine enge Schädelkuppel (`HEAD_R`, `HELM_RISE`) statt der weiten Frisurkappe und blenden das Haar über dem Rand aus (`hairUnderCap(…, rim)`).
+- `data/gear.ts`: `SETS` (Daten), `GEAR_CATALOG` (daraus erzeugte `EquipDef`), `gearForNpc`. `data/equipment.ts`: `ShellLook`, Plätze `GearCat`, Farben `item`/`item2` (aus Palette oder `look.dye`), `replace` ersetzt auf dem Platz.
+- `core/gearBag.ts`: `ensureLoot`, `wearLoot`, `lootBonus` (Summe plus Setbonus), `rollLootGear`, `grantLoot`. `LootKind` kennt `gear`; `Game.dropGear`, `buyLoot`, `dyeLoot`.
+- `ui/editor.ts` neu, `world/editorStage.ts` mit `preset`, `setAura`, `autoSpin`; im Editor ist die Farbstimmung neutral (`renderer.setMood(0, 0)`).
+- `audit.ts`: `__audit.perf(stufe, n, bilder, bild, true)` lässt jede Figur ein ganzes Set tragen. Anprobe im Editor und Bilder: `__audit.shot(name, look, …)` mit `look.extra = ['eisenwall_head', …]`.
+
 ## 2.9.60 – Figuren 3.0, Teil 3: Abnahme (13.11.2026)
 
 Phase 5 aus `docs/CHARACTER_SYSTEM_3.0.md`: gemessen, verglichen und dabei noch drei Dinge behoben.

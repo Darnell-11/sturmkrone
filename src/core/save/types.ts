@@ -37,6 +37,10 @@ export interface GearState {
   /** Gekaufte Ausrüstungsstücke (IDs aus GEAR) und die angelegten je Platz (seit Version 11) */
   owned?: string[];
   worn?: Partial<Record<'hands' | 'legs' | 'feet' | 'offhand', string | null>>;
+  /** Beute-Ausrüstung (data/gear.ts): besessene Stücke, angelegte je Platz und eigene Farben (Haupt-, Zierfarbe) */
+  loot?: string[];
+  outfit?: Partial<Record<'head' | 'shoulder' | 'chest' | 'cloak' | 'hands' | 'legs' | 'feet' | 'mainhand' | 'offhand', string | null>>;
+  dyes?: Record<string, [string, string]>;
 }
 
 export interface ShipState {

@@ -6,10 +6,11 @@ import type { Rarity } from './trinkets';
 /** Plätze für einzeln gekaufte Ausrüstungsstücke (seit Spielstand 11) */
 export type GearSlot = 'hands' | 'legs' | 'feet' | 'offhand';
 export const GEAR_SLOTS: GearSlot[] = ['hands', 'legs', 'feet', 'offhand'];
-export type SlotId = 'head' | 'armor' | 'weapon' | 'trinket' | GearSlot;
+export type SlotId = 'head' | 'armor' | 'weapon' | 'trinket' | GearSlot | 'shoulder' | 'chest' | 'cloak' | 'mainhand';
 
 export const SLOT_LABEL: Record<SlotId, string> = {
   head: 'Kopf', armor: 'Rüstung', weapon: 'Waffe', trinket: 'Zubehör', hands: 'Hände', legs: 'Beine', feet: 'Füße', offhand: 'Nebenhand',
+  shoulder: 'Schultern', chest: 'Oberkörper', cloak: 'Umhang', mainhand: 'Haupthand',
 };
 
 /** Verbrauchsgut: heilt, stärkt für eine Weile oder füllt Faji auf */

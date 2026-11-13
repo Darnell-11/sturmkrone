@@ -774,3 +774,53 @@ body { background: #0b0f14; }
 /* Anzeigen, die nie Mausklicks schlucken dürfen (die Oberfläche setzt sonst pointer-events auf allen Kindern) */
 .npcm, .npcm *, .compass, .cbt-victory, .cbt-loot, .itembar, .itembar * { pointer-events: none !important; }
 .dlgx[hidden], .qlog[hidden], .wmap[hidden] { display: none !important; }
+
+/* ---------- Editor 3.0: Studio, Kamera-Voreinstellungen, Ausrüstung, Rüstkammer ---------- */
+.ed3-cam { position: absolute; left: calc(10px + env(safe-area-inset-left, 0px)); top: calc(10px + env(safe-area-inset-top, 0px)); display: flex; flex-direction: column; gap: 6px; }
+.ed3-cam .mini, .ed3 .editor-preview .mini { background: var(--hudbg); }
+.ed3-cam .mini[aria-pressed='true'], .ed3 .editor-preview .mini[aria-pressed='true'] { background: var(--brass); color: var(--on-brass); }
+.ed3-banner { position: absolute; left: 50%; transform: translateX(-50%); top: calc(10px + env(safe-area-inset-top, 0px)); display: flex; gap: 10px; align-items: center; padding: 6px 12px; border-radius: 999px; background: var(--hudbg); border: 1px solid var(--brass); font-size: 0.9rem; max-width: 92vw; }
+.ed3-banner[hidden] { display: none; }
+.ed3-tabs button { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.ed3-tabs .ic { font-size: 1.05em; }
+.ed3-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
+.ed3-pick { display: grid; gap: 2px; text-align: left; padding: 10px 12px; border-radius: 10px; border: 2px solid var(--line); background: rgba(255, 255, 255, 0.04); color: inherit; font: inherit; cursor: pointer; }
+.ed3-pick small { color: var(--muted); font-size: 0.78rem; }
+.ed3-pick[aria-pressed='true'] { border-color: var(--brass); background: color-mix(in srgb, var(--brass) 18%, transparent); }
+.ed3-doll { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
+.ed3-slot { display: grid; justify-items: center; gap: 1px; padding: 8px 4px; border-radius: 10px; border: 2px solid color-mix(in srgb, var(--c) 70%, #000); background: rgba(255, 255, 255, 0.05); color: inherit; font: inherit; cursor: pointer; min-width: 0; }
+.ed3-slot[aria-pressed='true'] { background: color-mix(in srgb, var(--c) 24%, transparent); box-shadow: 0 0 14px color-mix(in srgb, var(--c) 60%, transparent); border-color: var(--c); }
+.ed3-slot .ic { font-size: 1.6rem; line-height: 1.1; }
+.ed3-slot small { font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.ed3-slot em { font-style: normal; font-size: 0.72rem; font-weight: 700; text-align: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed3-list { display: grid; gap: 8px; margin-bottom: 12px; }
+.ed3-item { display: flex; gap: 10px; align-items: center; text-align: left; padding: 8px 10px; border-radius: 10px; border: 2px solid color-mix(in srgb, var(--c, #6a6458) 70%, #000); background: rgba(255, 255, 255, 0.04); color: inherit; font: inherit; cursor: pointer; }
+.ed3-item[aria-pressed='true'] { border-color: var(--c, var(--brass)); background: color-mix(in srgb, var(--c, #888) 20%, transparent); box-shadow: 0 0 12px color-mix(in srgb, var(--c, #888) 45%, transparent); }
+.ed3-item .ic { font-size: 1.8rem; }
+.ed3-item .tx { display: grid; gap: 1px; min-width: 0; }
+.ed3-item .tx small { color: var(--muted); font-size: 0.78rem; }
+.ed3-rar { color: var(--c); font-weight: 800; font-size: 0.72rem; letter-spacing: 0.03em; }
+.ed3-dye { margin: 0 0 10px; }
+.ed3-dye .sw { width: 30px; height: 30px; }
+.sw.pick { position: relative; display: inline-block; overflow: hidden; cursor: pointer; }
+.sw.pick input { position: absolute; inset: -6px; opacity: 0; width: 44px; height: 44px; cursor: pointer; }
+.ed3-bonus { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; font-size: 0.86rem; }
+.ed3-bonus i { color: var(--brass); font-style: normal; font-weight: 700; }
+.ed3-set { padding: 10px 12px; margin-bottom: 10px; border-radius: 12px; border: 2px solid color-mix(in srgb, var(--c) 65%, #000); background: linear-gradient(135deg, color-mix(in srgb, var(--c) 12%, transparent), transparent 60%); }
+.ed3-sethead { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.ed3-sethead b { font-size: 1.05rem; color: var(--c); }
+.ed3-pieces { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+.ed3-piece { position: relative; width: 44px; height: 44px; border-radius: 10px; border: 2px solid var(--line); background: rgba(255, 255, 255, 0.05); color: inherit; font-size: 1.3rem; cursor: pointer; padding: 0; opacity: 0.75; }
+.ed3-piece.own { opacity: 1; border-color: var(--c); }
+.ed3-piece i { position: absolute; right: -2px; bottom: -4px; font-style: normal; font-size: 0.7rem; }
+@media (max-width: 700px), (max-aspect-ratio: 1/1) {
+  .ed3-cam { flex-direction: row; flex-wrap: wrap; max-width: calc(100vw - 70px); }
+  .ed3-cam .mini { padding: 0.3rem 0.55rem; font-size: 0.8rem; }
+  .ed3 .editor-preview { gap: 4px; }
+  .ed3 .editor-preview .mini { padding: 0.28rem 0.5rem; font-size: 0.76rem; }
+  /* Puppe: alle sieben Plätze in einer Reihe, Name steht im Beutel-Titel darunter */
+  .ed3-doll { grid-template-columns: repeat(9, 1fr); gap: 4px; }
+  .ed3-slot { padding: 6px 2px; }
+  .ed3-slot em { display: none; }
+  .ed3-slot small { font-size: 0.56rem; letter-spacing: 0; }
+}

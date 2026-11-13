@@ -3,6 +3,9 @@ import { preload } from '../../core/preload';
 import { Vector3 } from 'three';
 import { ANIM_FILES } from '../../data/animations';
 import { loadVroid, type VroidBase } from './vroid';
+import { loadGearModels } from './gear/glbGear';
+import { loadWorldProps } from '../../world/worldProps';
+import { loadArchModels, loadEnvModels } from '../../world/envModels';
 
 const BASE = `${import.meta.env.BASE_URL}assets/characters/kaykit/`;
 
@@ -42,6 +45,9 @@ export class CharacterAssets {
     }
     const assets = new CharacterAssets(rig, boneIndex, clips);
     assets.vroid = await loadVroid(rig, clips, new Vector3(0, 0.096, -0.058));
+    // Ausrüstungsmodelle aus Blender (klein; fehlende Dateien werden übersprungen)
+    // beide Gruppen laden gleichzeitig (kleine Dateien, derselbe Fortschrittsbalken)
+    await Promise.all([loadGearModels(), loadWorldProps(), loadEnvModels(), loadArchModels()]);
     return assets;
   }
 }

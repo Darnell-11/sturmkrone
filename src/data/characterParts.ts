@@ -14,10 +14,17 @@ export const BEARD_STYLES = { keiner: 'Keiner', kinnbart: 'Kinnbart', schnurrbar
 export const OUTFITS = { hemd: 'Hemd', weste: 'Weste', jacke: 'Jacke', matrose: 'Ringelhemd', uniform: 'Uniform', tunika: 'Tunika' } as const;
 export const COATS = { keiner: 'Keiner', kurz: 'Kurzer Mantel', lang: 'Langer Mantel', kapitaen: 'Kapitänsmantel' } as const;
 export const SHOES = { stiefel: 'Stiefel', schuhe: 'Schuhe', sandalen: 'Sandalen' } as const;
-export const HATS = {
+/** Kopfbedeckungen, die jeder frei wählen kann (Editor) */
+export const COSMETIC_HATS = {
   keiner: 'Keiner', dreispitz: 'Dreispitz', zweispitz: 'Zweispitz', bandana: 'Kopftuch', muetze: 'Wollmütze',
   marine: 'Marinemütze', kochmuetze: 'Kochmütze', suedwester: 'Südwester', helm: 'Helm', brille: 'Fliegerbrille',
 } as const;
+/** Helme der Ausrüstung (gear/rigid.ts): kommen nur als Beute und aus dem Laden, nicht aus dem Editor */
+export const GEAR_HATS = {
+  helm_kappe: 'Eisenkappe', helm_ritter: 'Ritterhelm', helm_hoerner: 'Hörnerhelm', helm_fluegel: 'Flügelhelm', helm_krone: 'Krone',
+  helm_kapuze: 'Kapuze', helm_samurai: 'Kabuto', helm_drache: 'Drachenhelm', helm_sturmkrone: 'Sturmkrone',
+} as const;
+export const HATS = { ...COSMETIC_HATS, ...GEAR_HATS } as const;
 
 export type BodyType = keyof typeof BODY_TYPES;
 export type FaceShape = keyof typeof FACE_SHAPES;
@@ -54,6 +61,10 @@ export interface CharacterLook {
   coatColor: string;
   hat: Hat;
   hatColor: string;
+  /** Frisur aus einem Modell (data/equipment.ts, Teil „frisur_…“); leer = Haare der Grundfigur */
+  hairModel?: string;
+  /** Zierfarbe des Helms (Gold, Federn, Edelsteine), nur für Ausrüstung */
+  hatAccent?: string;
   scar: boolean;
   earring: boolean;
   eyepatch: boolean;
@@ -65,6 +76,8 @@ export interface CharacterLook {
    * gespeichert – im Spielstand steht sie unter gear.
    */
   extra?: string[];
+  /** Eigene Farben für Ausrüstung (Stück-ID → Hauptfarbe, Zierfarbe); nur zur Anzeige */
+  dye?: Record<string, [string, string]>;
 }
 
 export const SKIN_TONES = ['#F7DCC6', '#F0C8A8', '#E8BE96', '#DDA77F', '#C68A5E', '#A9714A', '#8D5A3B', '#6B4229'];

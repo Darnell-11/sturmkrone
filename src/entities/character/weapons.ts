@@ -179,7 +179,12 @@ function inHand(o: Object3D): Object3D {
 /** Waffen passend zum Kampfstil */
 export function weaponsFor(style: StyleId, look: WeaponLook = { blade: '#C9D2DA' }): HeldWeapons {
   switch (style) {
-    case 'saebel': return { right: inHand(sword(0.78, 0.09, 0.12, look)), left: null };
+    case 'saebel': {
+      // Entermesser aus Blender (und Parierdolch links) ersetzen diesen Säbel, wenn die Figur sie trägt (Character.hold)
+      const r = inHand(sword(0.78, 0.09, 0.12, look));
+      r.userData.swordSkin = true;
+      return { right: r, left: null };
+    }
     case 'langklinge': return { right: inHand(sword(1.05, 0.07, 0.06, look, true)), left: null };
     case 'zweihaender': return { right: inHand(sword(1.3, 0.16, 0.0, look, true)), left: null };
     case 'doppel': return { right: inHand(sword(0.6, 0.08, 0.08, look)), left: inHand(sword(0.6, 0.08, 0.08, look)) };

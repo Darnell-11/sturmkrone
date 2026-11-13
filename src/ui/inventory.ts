@@ -36,7 +36,7 @@ export interface InventoryHost {
 }
 
 type Filter = 'all' | SlotId | 'cons';
-const FILTERS: [Filter, string][] = [['all', 'Alles'], ['head', 'Kopf'], ['armor', 'Rüstung'], ['weapon', 'Waffe'], ['hands', 'Hände'], ['legs', 'Beine'], ['feet', 'Füße'], ['offhand', 'Nebenhand'], ['trinket', 'Zubehör'], ['cons', 'Verbrauch']];
+const FILTERS: [Filter, string][] = [['all', 'Alles'], ['head', 'Kopf'], ['shoulder', 'Schultern'], ['chest', 'Oberkörper'], ['cloak', 'Umhang'], ['armor', 'Rüstung'], ['weapon', 'Waffe'], ['mainhand', 'Haupthand'], ['hands', 'Hände'], ['legs', 'Beine'], ['feet', 'Füße'], ['offhand', 'Nebenhand'], ['trinket', 'Zubehör'], ['cons', 'Verbrauch']];
 
 const STAT_ROWS: { k: keyof StatSheet; n: string; fmt: (v: number) => string }[] = [
   { k: 'hp', n: 'Leben', fmt: (v) => String(Math.round(v)) },
@@ -136,7 +136,7 @@ export class InventoryScreen {
       <div class="editor-panel card inv-panel">
         <div class="editor-head"><h2 class="fell">Inventar</h2><div class="sk-sp">Gold <b>${this.h.gold().toLocaleString('de-DE')}</b></div><button class="icon-btn" data-a="close" aria-label="Schließen">✕</button></div>
         <div class="editor-body">
-          <div class="inv-equip">${(['head', 'armor', 'weapon', 'trinket', 'hands', 'legs', 'feet', 'offhand'] as SlotId[]).map(slot).join('')}</div>
+          <div class="inv-equip">${(['head', 'shoulder', 'chest', 'cloak', 'armor', 'weapon', 'mainhand', 'hands', 'legs', 'feet', 'offhand', 'trinket'] as SlotId[]).map(slot).join('')}</div>
           <ul class="inv-stats">${STAT_ROWS.map(statRow).join('')}</ul>
           <div class="tabs inv-tabs">${FILTERS.map(([f, n]) => `<button data-a="filter" data-v="${f}" aria-pressed="${this.filter === f}">${n}</button>`).join('')}</div>
           <div class="inv-grid">${items.map((i) => this.cell(i)).join('') || '<p class="soft small">Hier liegt noch nichts. Kaufe beim Händler oder besiege Gegner.</p>'}</div>

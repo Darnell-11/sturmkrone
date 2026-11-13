@@ -4,6 +4,8 @@ import type { CharacterLook } from '../../data/characterParts';
 import type { Anchors, CapShell } from './vroid';
 import { toon } from '../../render/toon';
 import { addOutlines } from '../../render/outline';
+import { HELMS, HELM_KINDS, HEAD_R, HELM_RISE } from './gear/rigid';
+import { finishMat } from './gear/kit';
 
 /** Wird gesetzt, solange gemessene Anker gelten (dann hängt der Ohrring am Ohrläppchen statt am Hutrand) */
 const ANCHORED = { earring: false };
@@ -260,7 +262,7 @@ export type HairFit = (sink: number) => { seat: number; cx: number; cz: number; 
 export interface FaceParts { beard: BufferGeometry | null; scar: { pos: Vector3; tilt: number } | null; cap?: (sink: number, margin: number) => CapShell | null }
 
 /** Kopfbedeckungen, die sich als gemessene Kappe um die Frisur legen: Sitztiefe und Abstand zum Haar */
-export const CAPPED: Partial<Record<string, { sink: number; margin: number }>> = { kochmuetze: { sink: 0.06, margin: 0.006 }, zweispitz: { sink: 0.06, margin: 0.007 }, bandana: { sink: 0.095, margin: 0.005 }, muetze: { sink: 0.08, margin: 0.009 }, suedwester: { sink: 0.07, margin: 0.008 }, helm: { sink: 0.07, margin: 0.01 } };
+export const CAPPED: Partial<Record<string, { sink: number; margin: number }>> = { kochmuetze: { sink: 0.06, margin: 0.006 }, zweispitz: { sink: 0.06, margin: 0.007 }, bandana: { sink: 0.095, margin: 0.005 }, muetze: { sink: 0.08, margin: 0.009 }, suedwester: { sink: 0.07, margin: 0.008 }, helm: { sink: 0.07, margin: 0.01 }, ...Object.fromEntries(HELM_KINDS.map((k) => [k, { sink: 0.13, margin: 0.012 }])) };
 
 /**
  * Senkrechte Streckung einer Hut-Halbkugel (Radius R, Mitte capY über dem Hutursprung), damit sie die Frisur
@@ -394,6 +396,19 @@ function capHat(look: CharacterLook, sh: CapShell, outline: boolean): Group {
     t.position.set(sh.cx, y, sh.cz);
     return t;
   };
+  const gearHelm = HELMS[look.hat];
+  if (gearHelm) {
+    // Ausrüstungshelm (gear/rigid.ts): Kappe um die Frisur in der gewählten Oberfläche plus Zierteile
+    // enge Schädelkuppel statt der weiten Frisurkappe (das Haar darüber ist ausgeblendet) und ein Rand über der Stirn
+    const r = gearHelm({ sh, topY: sh.seatY + HELM_RISE, c: look.hatColor, c2: look.hatAccent ?? '#E3B04B' });
+    const cm = finishMat(r.cap.finish, r.cap.color ?? look.hatColor);
+    const skull = new Mesh(new SphereGeometry(1, 28, 14, 0, Math.PI * 2, 0, Math.PI / 2), cm);
+    skull.scale.set(HEAD_R, HELM_RISE, HEAD_R * 1.04);
+    skull.position.set(sh.cx, sh.seatY, sh.cz);
+    g.add(skull, r.bag.build());
+    g.traverse((o) => { (o as Mesh).castShadow = false; });
+    return g;
+  }
   switch (look.hat) {
     case 'bandana': {
       g.add(new Mesh(sh.geo, cloth));

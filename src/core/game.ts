@@ -1,7 +1,7 @@
 import { lowerTier, QUALITY_TIERS, type QualityTier } from '../data/qualityTiers';
 import { FACTION_LABELS, rankIndex, rankName } from '../data/ranks';
 import { TOUCH_FOOT, TOUCH_SEA } from '../data/touchLayout';
-import { randomLook } from '../data/characterParts';
+import { randomLook, type CharacterLook } from '../data/characterParts';
 import { WEATHER, type WeatherId } from '../data/world';
 import { CharacterAssets } from '../entities/character/assets';
 import { Character } from '../entities/character/character';
@@ -21,7 +21,7 @@ import { SkillStage } from '../world/skillStage';
 import { detectWebGpu, AutoQuality, benchmarkGpu, detectTier, gatherDeviceInfo, needsBench, type DeviceInfo, type Detected } from '../render/quality';
 import { GameRenderer } from '../render/renderer';
 import { setTexDetail } from '../render/texDetail';
-import { CharacterEditor, styleIdOf, type EditorResult } from '../ui/editor';
+import { CharacterEditor, styleIdOf, type EditorGearHost, type EditorResult } from '../ui/editor';
 import { Hud } from '../ui/hud';
 import { Menus } from '../ui/menus';
 import { TouchControls } from '../ui/touchControls';
@@ -55,6 +55,8 @@ import { WorldMapScreen } from '../ui/worldMap';
 import { CREW_BY_ID } from '../data/crew';
 import { RARITY, rollTrinket, TRINKET_BY_ID, type Rarity } from '../data/trinkets';
 import { RARITIES, type LootDrop } from '../data/loot';
+import { CAT_LABEL, GEAR_CATS, catOf, type GearCat } from '../data/equipment';
+import { clearOld, ensureLoot, grantLoot, lootDef, rollLootGear, setLine, wearLoot, wornLoot } from './gearBag';
 import { ACHIEVEMENTS } from '../data/achievements';
 import { ABYSS_LAIR } from '../naval/seaBoss';
 import { QUESTS, QUEST_BY_ID } from '../data/quests';
@@ -62,6 +64,9 @@ import { hostileLegends, LEGEND_BY_ID, rankRows } from '../data/legends';
 
 export const GAME_VERSION = __APP_VERSION__;
 const AUTOSAVE_SECONDS = 30;
+
+/** Kurzzeichen der Ausrüstungsplätze im Inventar */
+const LOOT_ICON: Record<GearCat, string> = { head: '🪖', shoulder: '🛡', chest: '🦺', cloak: '🧣', hands: '🧤', legs: '👖', feet: '🥾', mainhand: '🗡', offhand: '🔪' };
 
 export class Game {
   readonly state = new StateMachine();
@@ -374,6 +379,8 @@ export class Game {
     if (this.state.is('editor') && this.stage) {
       // Kompassleiste gehört zum Spiel: im Editor und in den Fenstern (Inventar, Fähigkeiten) nicht darüber zeigen
       this.compass.setVisible(false);
+      // Studio: neutrale Farbstimmung, nicht die der letzten Tageszeit
+      this.renderer.setMood(0, 0);
       this.stage.update(frameDt);
       const portrait = innerHeight > innerWidth || innerWidth < 700;
       const sk = this.stage instanceof SkillStage;
@@ -534,9 +541,9 @@ export class Game {
   }
 
   /** Aussehen mit angelegter Kopfbedeckung und Rüstung (das gespeicherte Aussehen bleibt unverändert) */
-  private displayLook(d: SaveData | null = this.save) {
+  private displayLook(d: SaveData | null = this.save, base?: CharacterLook, tryOn?: string[] | null) {
     const p = d!.player;
-    const look = structuredClone(p.look);
+    const look = structuredClone(base ?? p.look);
     const g = d!.gear;
     const head = headEq(g);
     if (head) { look.hat = head.hat; look.hatColor = head.color; }
@@ -544,9 +551,14 @@ export class Game {
     const extra: string[] = [];
     if (al) { const { extra: more, ...rest } = al; Object.assign(look, rest); if (more) extra.push(...more); }
     // einzeln angelegte Stücke: Schienen als zusätzliche Teile, Stiefel ersetzen das Schuhwerk
+    // Beute-Ausrüstung: ersetzt auf ihrem Platz, was sonst getragen wird; Farben je Stück aus dem Spielstand
+    const loot = wornLoot(g);
+    if (loot.length) { for (const d of loot) extra.push(d.id); if (g.dyes && Object.keys(g.dyes).length) look.dye = g.dyes; }
     for (const d of wornGear(g)) {
       if (d.slot === 'feet') { look.shoes = 'stiefel'; if (d.shoesColor) look.shoesColor = d.shoesColor; } else if (d.equip) extra.push(d.equip);
     }
+    // Anprobe: zusätzliche Stücke nur zur Anzeige (ersetzen auf ihrem Platz, ohne etwas anzulegen)
+    if (tryOn?.length) extra.push(...tryOn);
     if (extra.length) look.extra = extra;
     return look;
   }
@@ -730,8 +742,9 @@ export class Game {
     };
     // Seltene Funde: Karte und Fanfare (selten ◆, episch ★, legendär ♛)
     const tier = RARITIES.indexOf(d.rarity);
-    if (tier >= 1) this.overlay.lootCard(`${r.mark} ${r.n}er Fund`, d.kind === 'trinket' ? 'Talisman' : d.kind === 'proviant' ? 'Proviant' : `${Math.round(d.value * this.goldMult(true))} Gold`, r.col, tier);
+    if (tier >= 1) this.overlay.lootCard(`${r.mark} ${r.n}er Fund`, d.kind === 'trinket' ? 'Talisman' : d.kind === 'gear' ? 'Ausrüstung' : d.kind === 'proviant' ? 'Proviant' : `${Math.round(d.value * this.goldMult(true))} Gold`, r.col, tier);
     if (d.kind === 'trinket') { if (!this.dropTrinket(d.rarity, 0, undefined, true)) gold(); return; }
+    if (d.kind === 'gear') { if (!this.dropGear(d.rarity)) gold(); return; }
     if (d.kind === 'proviant') {
       // ab selten oft ein besonderes Gut (Festmahl, Stärkung, Essenz) statt schlichtem Proviant
       const pool = tier >= 1 ? CONSUMABLES.filter((c) => c.rarity === d.rarity) : [];
@@ -739,6 +752,22 @@ export class Game {
       if (addItem(s.gear, def.id, 1)) { this.overlay.number(above(), `${r.mark} +1 ${def.n}`, 'heal'); return; }
     }
     gold();
+  }
+
+  /** Rüstungsteil als Beute: genau in der Seltenheit der Säule; leer ausgehen gibt es nur, wenn alles dieser Seltenheit schon gefunden ist */
+  private dropGear(rarity: Rarity): boolean {
+    const s = this.save;
+    if (!s) return false;
+    ensureLoot(s.gear);
+    const d = rollLootGear(rarity, s.player.level, s.gear.loot!);
+    if (!d || !grantLoot(s.gear, d)) return false;
+    const r = RARITY[rarity];
+    audio.play('shard');
+    this.after(() => this.overlay.showBanner(`${r.mark} ${d.n}`, `${CAT_LABEL[catOf(d)]} gefunden (${r.n}) · ${d.d}`), 1200);
+    this.world.updatePlayer(this.displayLook(), this.activeStyle());
+    this.applyPower();
+    this.persist();
+    return true;
   }
 
   equipTrinket(id: string | null) {
@@ -1065,6 +1094,10 @@ export class Game {
       ARMOR.forEach((a, i) => { if (i <= g.armor) out.push({ key: `armor:${i}`, cat: 'armor', name: a.n, icon: ['👕', '🦺', '⛓', '🛡', '✨'][i] ?? '🛡', color: '#8AA0B8', desc: `Rüstungsstufe ${i + 1}`, stat: `+${a.hp} Leben`, equipped: armorEq(g) === i }); });
       WEAPONS.forEach((w, i) => { if (i <= g.weapon) out.push({ key: `weapon:${i}`, cat: 'weapon', name: wl().names[i] ?? w.n, icon: s.player.style === 'faust' ? '🥊' : s.player.style === 'effekt' ? '🔮' : '🗡', color: w.col, desc: `Waffenstufe ${i + 1}`, stat: wl().stat(w, i), equipped: weaponEq(g) === i }); });
       GEAR.forEach((d) => { if (g.owned!.includes(d.id)) out.push({ key: `gear:${d.id}`, cat: d.slot, name: d.n, icon: d.icon, color: rar(d.rarity), desc: d.d, stat: '', equipped: g.worn![d.slot] === d.id }); });
+      for (const id of g.loot ?? []) {
+        const d = lootDef(id);
+        if (d) out.push({ key: `loot:${id}`, cat: catOf(d), name: d.n, icon: LOOT_ICON[catOf(d)], color: rar(d.rarity!), desc: `${RARITY[d.rarity!].n} · ${d.d}`, stat: setLine(d, g), equipped: g.outfit?.[catOf(d)] === id });
+      }
       g.trinkets.forEach((id) => { const t = TRINKET_BY_ID[id]; if (t) out.push({ key: `trinket:${id}`, cat: 'trinket', name: t.n, icon: '📿', color: rar(t.rarity), desc: `${RARITY[t.rarity].n}er Talisman`, stat: t.d, equipped: g.trinket === id }); });
       bagConsumables(g).forEach(({ def, n }) => out.push({ key: `cons:${def.id}`, cat: 'cons', name: def.n, icon: def.icon, color: def.color, desc: def.d, stat: `Abklingzeit ${def.cd} s`, equipped: false, count: n, cid: def.id }));
       return out;
@@ -1075,7 +1108,13 @@ export class Game {
       if (kind === 'armor') return { armorEq: +id };
       if (kind === 'weapon') return { weaponEq: +id };
       if (kind === 'trinket') return { trinket: id };
-      if (kind === 'gear' && GEAR_BY_ID[id]) return { worn: { ...g.worn, [GEAR_BY_ID[id].slot]: id } };
+      if (kind === 'gear' && GEAR_BY_ID[id]) return { worn: { ...g.worn, [GEAR_BY_ID[id].slot]: id }, outfit: GEAR_BY_ID[id].slot === 'offhand' ? g.outfit : { ...g.outfit, [GEAR_BY_ID[id].slot]: null } };
+      if (kind === 'loot') {
+        const d = lootDef(id);
+        if (!d) return null;
+        const c = catOf(d);
+        return { outfit: { ...g.outfit, [c]: id }, head: c === 'head' ? null : g.head, worn: c === 'hands' || c === 'legs' || c === 'feet' ? { ...g.worn, [c]: null } : g.worn };
+      }
       return null;
     };
     const refreshLook = () => { this.world.updatePlayer(this.displayLook(), style()); stage.show(this.assets!, this.displayLook(), style()); };
@@ -1085,10 +1124,12 @@ export class Game {
       equipped: () => {
         const h = headEq(g), wi = weaponEq(g), ai = armorEq(g), t = g.trinket ? TRINKET_BY_ID[g.trinket] : null;
         const none = null;
+        const lootView = (c: GearCat) => { const d = lootDef(g.outfit?.[c]); return d && g.loot?.includes(d.id) ? { name: d.n, icon: LOOT_ICON[c], color: rar(d.rarity!) } : none; };
         const worn = (slot: GearSlot) => { const d = wornGear(g).find((x) => x.slot === slot); return d ? { name: d.n, icon: d.icon, color: rar(d.rarity) } : none; };
         return {
-          hands: worn('hands'), legs: worn('legs'), feet: worn('feet'), offhand: worn('offhand'),
-          head: h ? { name: h.n, icon: '🎩', color: rar(h.rarity) } : none,
+          hands: lootView('hands') ?? worn('hands'), legs: lootView('legs') ?? worn('legs'), feet: lootView('feet') ?? worn('feet'), offhand: lootView('offhand') ?? worn('offhand'),
+          shoulder: lootView('shoulder'), chest: lootView('chest'), cloak: lootView('cloak'), mainhand: lootView('mainhand'),
+          head: lootView('head') ?? (h ? { name: h.n, icon: '🎩', color: rar(h.rarity) } : none),
           armor: { name: ARMOR[ai].n, icon: ['👕', '🦺', '⛓', '🛡', '✨'][ai] ?? '🛡', color: '#8AA0B8' },
           weapon: { name: wl().names[wi] ?? WEAPONS[wi].n, icon: s.player.style === 'faust' ? '🥊' : s.player.style === 'effekt' ? '🔮' : '🗡', color: WEAPONS[wi].col },
           trinket: t ? { name: t.n, icon: '📿', color: rar(t.rarity) } : none,
@@ -1103,20 +1144,22 @@ export class Game {
       gold: () => s.player.gold,
       equip: (key) => {
         const [kind, id] = key.split(':');
-        if (kind === 'head') g.head = id;
+        if (kind === 'head') { g.head = id; g.outfit!.head = null; }
+        else if (kind === 'loot') wearLoot(g, id);
         else if (kind === 'armor') g.armorEq = +id;
         else if (kind === 'weapon') g.weaponEq = +id;
         else if (kind === 'trinket') g.trinket = id;
-        else if (kind === 'gear' && GEAR_BY_ID[id]) g.worn![GEAR_BY_ID[id].slot] = id;
+        else if (kind === 'gear' && GEAR_BY_ID[id]) { g.worn![GEAR_BY_ID[id].slot] = id; if (GEAR_BY_ID[id].slot !== 'offhand') g.outfit![GEAR_BY_ID[id].slot as GearCat] = null; }
         else return;
         audio.play('switch');
         apply();
       },
       unequip: (slot: SlotId) => {
+        if ((GEAR_CATS as string[]).includes(slot)) { g.outfit![slot as GearCat] = null; clearOld(g, slot as GearCat); }
         if (slot === 'head') g.head = null;
         else if (slot === 'trinket') g.trinket = null;
         else if ((GEAR_SLOTS as string[]).includes(slot)) g.worn![slot as GearSlot] = null;
-        else return;
+        else if (!(GEAR_CATS as string[]).includes(slot)) return;
         audio.play('switch');
         apply();
       },
@@ -1364,10 +1407,39 @@ export class Game {
     s.player.gold -= d.price;
     s.gear.owned!.push(id);
     s.gear.worn![d.slot] = id;
+    if (d.slot !== 'offhand') (s.gear.outfit ??= {})[d.slot] = null;
     this.world.updatePlayer(this.displayLook(), this.activeStyle());
     this.applyPower();
     this.persist();
     return `${d.n} gekauft und angelegt.`;
+  }
+
+  /** Rüstungsteil eines Sets (Ausrüster) kaufen und gleich anlegen */
+  buyLoot(id: string): string {
+    const s = this.save, d = lootDef(id);
+    if (!s || !d) return '';
+    ensureLoot(s.gear);
+    if (s.gear.loot!.includes(id)) return '';
+    const price = d.price ?? 0;
+    if (s.player.level < (d.level ?? 1)) return `Stufe ${d.level} nötig.`;
+    if (s.player.gold < price) return `Dafür fehlen ${price - s.player.gold} Gold.`;
+    s.player.gold -= price;
+    s.gear.loot!.push(id);
+    wearLoot(s.gear, id);
+    this.world.updatePlayer(this.displayLook(), this.activeStyle());
+    this.applyPower();
+    this.persist();
+    return `${d.n} gekauft und angelegt.`;
+  }
+
+  /** Eigene Farben eines Stücks (Haupt-, Zierfarbe); null = Werksfarben */
+  dyeLoot(id: string, colors: [string, string] | null) {
+    const s = this.save;
+    if (!s || !lootDef(id)) return;
+    ensureLoot(s.gear);
+    if (colors) s.gear.dyes![id] = colors; else delete s.gear.dyes![id];
+    this.world.updatePlayer(this.displayLook(), this.activeStyle());
+    this.persist();
   }
 
   /** Kopfbedeckung kaufen und gleich aufsetzen */
@@ -1379,6 +1451,7 @@ export class Game {
     s.player.gold -= h.price;
     (s.gear.heads ??= []).push(id);
     s.gear.head = id;
+    (s.gear.outfit ??= {}).head = null;
     this.world.updatePlayer(this.displayLook(), this.activeStyle());
     this.applyPower();
     this.persist();
@@ -1862,24 +1935,44 @@ export class Game {
       : { name: p.name, faction: p.faction, style: p.style, blade: p.blade, look: structuredClone(p.look) };
     this.menus.hide();
     this.stage ??= new EditorStage();
-    this.stage.show(this.assets, initial.look, styleIdOf(initial.style, initial.blade));
+    // Vorschau mit der angelegten Ausrüstung: eigener Look aus dem Editor, darüber Beute, Schienen, Helm und die Anprobe
+    const gearLook = (look: CharacterLook, tryOn: string[] | null) => (this.save ? this.displayLook(this.save, look, tryOn) : (tryOn?.length ? { ...look, extra: tryOn } : look));
+    this.stage.show(this.assets, gearLook(initial.look, null), styleIdOf(initial.style, initial.blade));
+    this.stage.preset('gesamt');
     this.renderer.setView(this.stage.scene, this.stage.camera);
     this.renderer.setEffectSources(null, this.stage.focus);
     this.state.set('editor');
     const close = () => {
       this.editor?.dispose();
       this.editor = null;
+      this.stage?.setAura(null);
       this.useWorldView();
       this.renderer.resize();
     };
+    const s = this.save;
+    const gear = !isNew && s ? ((): EditorGearHost => {
+      const g = s.gear;
+      ensureLoot(g);
+      return {
+        owned: () => [...g.loot!],
+        worn: () => ({ ...g.outfit }),
+        equip: (cat, id) => { wearLoot(g, id, cat); this.applyPower(); this.persist(); },
+        dyes: () => g.dyes!,
+        dye: (id, c) => this.dyeLoot(id, c),
+      };
+    })() : undefined;
     this.editor = new CharacterEditor(this.uiRoot, {
       isNew,
       anime: !!this.assets.vroid,
       initial,
-      onChange: (r, sid) => { this.stage?.show(this.assets!, r.look, sid); },
+      gear,
+      onChange: (r, sid, tryOn) => { this.stage?.show(this.assets!, gearLook(r.look, tryOn), sid); },
       onPreview: (k) => this.stage?.preview(k),
       onRotate: (dx) => this.stage?.rotate(dx),
       onZoom: (d) => this.stage?.zoomBy(d),
+      onPreset: (p) => this.stage?.preset(p),
+      onAura: (c) => this.stage?.setAura(c),
+      onSpin: (on) => { if (this.stage) this.stage.autoSpin = on; },
       onDone: (r) => {
         close();
         if (isNew) this.newGame(newSlot!, r);

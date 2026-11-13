@@ -1,4 +1,4 @@
-import { BoxGeometry, BufferGeometry, Color, ConeGeometry, CylinderGeometry, Float32BufferAttribute, Mesh, MeshBasicMaterial, PointLight, SphereGeometry, Vector3, type Object3D, type Scene } from 'three';
+import { BoxGeometry, BufferGeometry, Color, ConeGeometry, CylinderGeometry, Float32BufferAttribute, Mesh, MeshBasicMaterial, PointLight, SphereGeometry, TorusGeometry, Vector3, type Object3D, type Scene } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { markShared } from './dispose';
 
@@ -12,7 +12,9 @@ import { markShared } from './dispose';
 
 const IRON: [number, number, number] = [0.12, 0.09, 0.07];
 const CORD: [number, number, number] = [0.42, 0.3, 0.18];
-const GLASS: [number, number, number] = [3.4, 2.1, 0.9];
+const GLASS: [number, number, number] = [2.6, 1.55, 0.6];
+const FLAME: [number, number, number] = [5.0, 3.2, 1.2];
+const BRASS: [number, number, number] = [0.55, 0.4, 0.14];
 
 /** Laterne, Aufhängepunkt im Ursprung, hängt nach unten (Meter) */
 function lampGeometry(): BufferGeometry {
@@ -27,13 +29,21 @@ function lampGeometry(): BufferGeometry {
     n.setAttribute('color', new Float32BufferAttribute(c, 3));
     parts.push(n);
   };
-  add(new CylinderGeometry(0.006, 0.006, 0.16, 4), CORD, 0, -0.08, 0);
-  add(new ConeGeometry(0.04, 0.03, 8), IRON, 0, -0.175, 0);
-  add(new SphereGeometry(0.036, 10, 8), GLASS, 0, -0.23, 0);
-  add(new CylinderGeometry(0.03, 0.036, 0.02, 8), IRON, 0, -0.282, 0);
+  // Schnur, Henkel, Dach mit Knauf, Glaszylinder mit heller Flamme, Messingband, Streben und Fuß
+  add(new CylinderGeometry(0.006, 0.006, 0.13, 4), CORD, 0, -0.065, 0);
+  const handle = new TorusGeometry(0.036, 0.0045, 4, 10, Math.PI);
+  add(handle, IRON, 0, -0.17, 0);
+  add(new ConeGeometry(0.046, 0.04, 8), IRON, 0, -0.205, 0);
+  add(new CylinderGeometry(0.03, 0.046, 0.012, 8), IRON, 0, -0.232, 0);
+  add(new SphereGeometry(0.009, 5, 4), BRASS, 0, -0.18, 0);
+  add(new CylinderGeometry(0.029, 0.034, 0.088, 10, 1, true), GLASS, 0, -0.282, 0);
+  add(new SphereGeometry(0.016, 6, 5), FLAME, 0, -0.285, 0);
+  add(new CylinderGeometry(0.036, 0.036, 0.008, 10), BRASS, 0, -0.238, 0);
+  add(new CylinderGeometry(0.03, 0.038, 0.018, 10), IRON, 0, -0.332, 0);
+  add(new CylinderGeometry(0.02, 0.02, 0.01, 8), IRON, 0, -0.346, 0);
   for (let k = 0; k < 4; k++) {
     const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
-    add(new BoxGeometry(0.008, 0.1, 0.008), IRON, Math.cos(a) * 0.034, -0.23, Math.sin(a) * 0.034);
+    add(new BoxGeometry(0.0075, 0.1, 0.0075), IRON, Math.cos(a) * 0.033, -0.286, Math.sin(a) * 0.033);
   }
   const merged = mergeGeometries(parts, false)!;
   for (const p of parts) p.dispose();
@@ -43,6 +53,7 @@ function lampGeometry(): BufferGeometry {
 let geo: BufferGeometry | null = null;
 const mat = markShared(new MeshBasicMaterial({ vertexColors: true }));
 const WARM = new Color(1.0, 0.62, 0.28);
+const FIRE_L = new Color(1.0, 0.5, 0.2);
 
 export const lampShared = {
   /** Abend und Nacht 0 … 1 (steuert Glühen und Licht) */
@@ -136,7 +147,13 @@ export class LampPool {
       this.place(l, tg);
       // sanftes Flackern, je Licht eigene Phase
       const fl = 1 + 0.06 * Math.sin(this.t * 9.1 + i * 2.3) + 0.04 * Math.sin(this.t * 17.3 + i);
-      const want = 2.8 * night * fl;
+      // Feuer und Fackeln (feste Träger) brennen auch am Tag ein wenig und leuchten kräftiger und weiter als Laternen an Figuren
+      const fire = tg.userData.fire === true;
+      const k = (tg.userData.lightK as number | undefined) ?? 1;
+      const fl2 = fire ? fl + 0.12 * Math.sin(this.t * 13.7 + i * 1.9) + 0.07 * Math.sin(this.t * 31 + i) : fl;
+      const want = 2.8 * (fire ? Math.max(night, 0.22) : night) * k * fl2;
+      l.color.copy(fire ? FIRE_L : WARM);
+      l.distance = fire ? 28 : 16;
       l.intensity += (want - l.intensity) * Math.min(1, dt * 10);
     }
   }
@@ -144,6 +161,7 @@ export class LampPool {
   /** Licht an die Laterne setzen, etwas von der Figur weg nach außen (sonst blendet es Haut und Kleidung des Trägers aus) */
   private place(l: PointLight, o: Object3D) {
     o.getWorldPosition(l.position);
+    if (o.userData.fixed) return;
     l.position.y -= 0.23 * (o.scale.y || 1);
     const hd = o.userData.holder as Object3D | undefined;
     if (hd) {

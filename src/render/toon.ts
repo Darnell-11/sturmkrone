@@ -111,6 +111,11 @@ export interface ToonOptions {
   /** Ringelstreifen: Streifenhöhe in Modelleinheiten; gilt für Punkte mit Attribut stripe = 1 (Ringelhemd) */
   ringel?: number;
   /**
+   * Ausrüstungs-Verzierung (nur mit `surface`): Borte am Saum (Attribut rimD = Abstand zum Rand in Metern), Muster (Kettenhemd,
+   * Platten, Schuppen, Brokat, Nieten, Steppung) und Farben je Stück aus den Attributen trimC, patC und gset (Muster, Maß, Bortenbreite, Bortenart).
+   */
+  trim?: boolean;
+  /**
    * Bodenschicht, die knapp über einer anderen liegt (Wiese auf Strand, Weg auf Wiese): Tiefenverschiebung, damit die
    * Schichten in der Ferne nicht flimmern. Höhere Zahl = liegt weiter oben.
    */
@@ -342,6 +347,89 @@ void RE_IndirectDiffuse_Toon( const in vec3 irradiance, const in vec3 geometryPo
 }
 #define RE_Direct RE_Direct_Toon
 #define RE_IndirectDiffuse RE_IndirectDiffuse_Toon
+`;
+
+/**
+ * Muster und Borten der Ausrüstung. Muster-Nummer in vGSet.x: 1 Platten (Lamellen), 2 Kettenhemd, 3 Schuppen, 4 Brokat (Rauten),
+ * 5 Nieten, 6 Steppung, 7 Streifen. vGSet.y = Maß in Metern (Größe einer Masche, Lamelle, Raute), vGSet.z = Bortenbreite in Metern,
+ * vGSet.w = Bortenart (0 schlicht, 1 mit Zierlinie, 2 Zickzack).
+ */
+const GEAR_FRAG_GLSL = /* glsl */ `
+  {
+    vec3 skGp = vSkObj;
+    float skGpat = vGSet.x;
+    float skGm = max(vGSet.y, 0.002);
+    if (skGpat > 0.5) {
+      // in der Ferne ausblenden, bevor das Muster kleiner als ein Bildpunkt wird
+      float skGpx = (length(dFdx(skGp)) + length(dFdy(skGp))) / skGm;
+      float skGfade = 1.0 - smoothstep(0.35, 0.9, skGpx);
+      vec2 skGuv = vec2(atan(skGp.x, skGp.z) * 0.13 / skGm, skGp.y / skGm);
+      if (skGpat < 1.5) {
+        // Platten: waagrechte Lamellen, jede heller zur Oberkante und mit dunkler Fuge unten
+        float f = fract(skGuv.y);
+        float lame = mix(0.66, 1.08, pow(f, 0.75));
+        float edge = smoothstep(0.0, 0.05, f) * (1.0 - smoothstep(0.93, 1.0, f));
+        diffuseColor.rgb *= mix(1.0, lame * (0.55 + 0.45 * edge), skGfade);
+      } else if (skGpat < 2.5) {
+        // Kettenhemd: versetzte Ringreihen, Ringe hell, Mitte dunkel
+        vec2 q = skGuv;
+        q.x += 0.5 * mod(floor(q.y), 2.0);
+        vec2 c = fract(q) - 0.5;
+        float l = length(c * vec2(1.0, 1.4));
+        float ring = smoothstep(0.16, 0.26, l) * (1.0 - smoothstep(0.36, 0.5, l));
+        diffuseColor.rgb *= mix(1.0, 0.5 + 0.65 * ring, skGfade);
+      } else if (skGpat < 3.5) {
+        // Schuppen: dachziegelartig versetzte Halbkreise, Unterkante heller abgesetzt
+        vec2 q = skGuv;
+        q.x += 0.5 * mod(floor(q.y), 2.0);
+        vec2 c = vec2(fract(q.x) - 0.5, fract(q.y) * 1.25 - 0.45);
+        float d = length(c);
+        float sc = 1.0 - smoothstep(0.44, 0.52, d);
+        float rim = smoothstep(0.34, 0.5, d) * sc;
+        float shade = mix(0.6, 1.08, sc) + rim * 0.2;
+        diffuseColor.rgb = mix(diffuseColor.rgb, vGPat, rim * 0.35 * skGfade) * mix(1.0, shade, skGfade);
+      } else if (skGpat < 4.5) {
+        // Brokat: Rauten mit Zierfarbe und feiner Linie
+        vec2 d = abs(fract(skGuv * vec2(1.0, 0.85)) - 0.5);
+        float dia = d.x + d.y;
+        float inner = 1.0 - smoothstep(0.2, 0.24, dia);
+        float line = smoothstep(0.36, 0.38, dia) * (1.0 - smoothstep(0.4, 0.43, dia));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vGPat, (inner * 0.55 + line * 0.8) * skGfade);
+      } else if (skGpat < 5.5) {
+        // Nieten: Gitter runder Metallköpfe
+        vec2 c = fract(skGuv * 0.5) - 0.5;
+        float dot0 = 1.0 - smoothstep(0.1, 0.16, length(c));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vGPat, dot0 * skGfade);
+      } else if (skGpat < 6.5) {
+        // Steppung: dunkle Nähte in zwei diagonalen Richtungen
+        vec2 q = skGuv * 0.7;
+        float a = abs(fract(q.x + q.y) - 0.5), b = abs(fract(q.x - q.y) - 0.5);
+        float seam = 1.0 - smoothstep(0.0, 0.07, min(a, b));
+        diffuseColor.rgb *= 1.0 - seam * 0.42 * skGfade;
+      } else {
+        // Streifen: senkrechte Bahnen in der Zierfarbe
+        float s = smoothstep(0.42, 0.5, abs(fract(skGuv.x * 0.5) - 0.5));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vGPat, s * 0.9 * skGfade);
+      }
+    }
+    // Borte am Rand des Stücks
+    float skGw = vGSet.z;
+    if (skGw > 0.0005) {
+      float aa = fwidth(vGRim) * 0.8 + 1e-5;
+      float rimD = vGRim;
+      if (vGSet.w > 1.5) rimD += (abs(fract(skGp.x * 90.0 + skGp.z * 90.0) - 0.5) - 0.25) * skGw * 0.9;
+      float band = 1.0 - smoothstep(skGw - aa, skGw + aa, rimD);
+      diffuseColor.rgb = mix(diffuseColor.rgb, vGTrim, band);
+      // dunkle Kante an der Borte und, bei Art 1, eine feine Zierlinie knapp darüber
+      float edge = smoothstep(skGw - aa * 2.0, skGw, rimD) * (1.0 - smoothstep(skGw, skGw + aa * 2.5, rimD));
+      diffuseColor.rgb *= 1.0 - edge * 0.35;
+      if (vGSet.w > 0.5 && vGSet.w < 1.5) {
+        float li = abs(rimD - (skGw + 0.0075));
+        float line = 1.0 - smoothstep(0.0012 - aa, 0.0012 + aa, li);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vGTrim, line);
+      }
+    }
+  }
 `;
 
 /** Feinrelief (Micro-Normals) aus der Körperposition in Metern: klebt an der Figur, braucht weder UV noch Tangenten */
@@ -699,7 +787,7 @@ const DETAIL_FRAG: Record<DetailKind, string> = {
   }`,
 };
 
-interface PbrPatch { rough: number; metal: number; roughMap: Texture | null; metalMap: Texture | null; env: boolean; fx?: ToonFxUniforms; reflect: number; puddles: number; ringel: number; surf: number; char: boolean; eyeUv: [number, number, number, number] | null; hairC: [number, number, number] | null; mask: boolean }
+interface PbrPatch { rough: number; metal: number; roughMap: Texture | null; metalMap: Texture | null; env: boolean; fx?: ToonFxUniforms; reflect: number; puddles: number; ringel: number; trim: boolean; surf: number; char: boolean; eyeUv: [number, number, number, number] | null; hairC: [number, number, number] | null; mask: boolean }
 
 function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailKind | undefined, pbr: PbrPatch) {
   const uSpec = { value: spec };
@@ -797,6 +885,15 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
         .replace('#include <common>', '#include <common>\nuniform float uRingel;\nvarying float vSkRingel;\nvarying float vSkRingY;')
         .replace('#include <color_fragment>', '#include <color_fragment>\nif (vSkRingel > 0.5) { float q = vSkRingY / uRingel; float aa = fwidth(q) * 0.7; float s = smoothstep(0.5 - aa, 0.5 + aa, fract(q)) - smoothstep(1.0 - aa, 1.0, fract(q)); diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.93, 0.91, 0.86), s); }');
     }
+    if (pbr.trim && pbr.surf >= 0) {
+      // Borte und Muster der Ausrüstung: scharf aus Randabstand und Körperposition (vor dem Skinning – klebt am Körper)
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float rimD;\nattribute vec3 trimC;\nattribute vec3 patC;\nattribute vec4 gset;\nvarying float vGRim;\nvarying vec3 vGTrim;\nvarying vec3 vGPat;\nvarying vec4 vGSet;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGRim = rimD;\nvGTrim = trimC;\nvGPat = patC;\nvGSet = gset;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying float vGRim;\nvarying vec3 vGTrim;\nvarying vec3 vGPat;\nvarying vec4 vGSet;')
+        .replace('#include <color_fragment>', '#include <color_fragment>\n' + GEAR_FRAG_GLSL);
+    }
     if (detail) {
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', '#include <common>\n' + DETAIL_GLSL + 'float skDetH = 0.0;\nfloat skDetA = 0.0;\n')
@@ -814,7 +911,7 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
       }
     }
   };
-  const progKey = `sk-toon-7${pbr.surf >= 0 ? (pbr.char ? 'c' : 'u') + pbr.surf + (pbr.mask ? 'k' : '') : ''}${detail ? '-' + detail : ''}-${pbr.env ? 'e' : ''}${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}${pbr.fx ? 'f' : ''}${pbr.reflect > 0 ? 's' : ''}${pbr.puddles > 0 ? 'p' : ''}${pbr.ringel > 0 ? 'g' : ''}-wet`;
+  const progKey = `sk-toon-7${pbr.surf >= 0 ? (pbr.char ? 'c' : 'u') + pbr.surf + (pbr.mask ? 'k' : '') : ''}${detail ? '-' + detail : ''}-${pbr.env ? 'e' : ''}${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}${pbr.fx ? 'f' : ''}${pbr.reflect > 0 ? 's' : ''}${pbr.puddles > 0 ? 'p' : ''}${pbr.ringel > 0 ? 'g' : ''}${pbr.trim ? 't' : ''}-wet`;
   mat.customProgramCacheKey = () => progKey + (isWind(mat) ? 'w' : '');
 }
 
@@ -861,6 +958,7 @@ export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial 
     reflect: o.reflect ?? 0,
     puddles: o.puddles ?? 0,
     ringel: o.ringel ?? 0,
+    trim: !!o.trim,
     // Feinrelief: Figuren-Oberfläche, ausdrücklich gewählt (micro) oder bei Metall ohne eigene Reliefkarte gekratzter Stahl
     surf: o.surface ? SURF_ID[o.surface] : o.micro ? SURF_ID[o.micro] : metal > 0 && !o.normalMap ? SURF_ID.steel : -1,
     char: !!o.surface,

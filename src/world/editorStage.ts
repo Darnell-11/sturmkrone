@@ -6,10 +6,13 @@ import {
   HemisphereLight,
   MathUtils,
   Mesh,
+  MeshToonMaterial,
   PerspectiveCamera,
+  PointLight,
   Scene,
   ShaderMaterial,
   SphereGeometry,
+  TorusGeometry,
   Vector3,
 } from 'three';
 import type { StyleId } from '../data/animations';
@@ -28,15 +31,24 @@ export class EditorStage {
   readonly focus = new Vector3(0, 1.0, 0);
   char: Character | null = null;
   yaw = 0.5;
+  /** Zielwerte der Kamera; die sichtbaren (cz, cy) gleiten dorthin */
   zoom = 1;
+  private lookY = 0.95;
+  private cz = 1;
+  private cy = 0.95;
+  private yawTarget: number | null = null;
   private idleTime = 0;
+  autoSpin = true;
   private style: StyleId = 'saebel';
+  /** Schein hinter der Figur in der Farbe der Seltenheit des gezeigten Stücks */
+  private aura = new PointLight(0xffffff, 0, 6, 1.6);
+  private ring!: Mesh;
 
   constructor() {
     const bg = new Mesh(new SphereGeometry(40, 32, 16), new ShaderMaterial({
       side: BackSide,
       depthWrite: false,
-      uniforms: { top: { value: new Color(0x1c3a5e) }, bottom: { value: new Color(0xe8b98a) } },
+      uniforms: { top: { value: new Color(0x0d1624) }, bottom: { value: new Color(0x4a5568) } },
       vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
       fragmentShader: `uniform vec3 top, bottom; varying vec3 vP;
         void main(){ float t = smoothstep(-0.3, 0.6, vP.y); vec3 c = mix(bottom, top, t); gl_FragColor = vec4(c, 1.0);
@@ -45,15 +57,18 @@ export class EditorStage {
         }`,
     }));
     this.scene.add(bg);
-    const floor = new Mesh(new CylinderGeometry(1.6, 1.75, 0.18, 48), toon(0x8a5a2b));
+    const floor = new Mesh(new CylinderGeometry(1.6, 1.75, 0.18, 48), toon(0x2a303c));
     floor.position.y = -0.09;
     floor.receiveShadow = true;
-    const rim = new Mesh(new CylinderGeometry(1.62, 1.62, 0.06, 48), toon({ color: 0xe3b04b, spec: 0.8 }));
-    rim.position.y = 0.01;
+    const rim = new Mesh(new TorusGeometry(1.6, 0.03, 8, 72), toon({ color: 0xe3b04b, spec: 0.8, unique: true }));
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = 0.0;
     addOutlines(floor);
-    this.scene.add(floor, rim);
+    this.ring = rim;
+    this.aura.position.set(-1.2, 1.4, -1.6);
+    this.scene.add(floor, rim, this.aura);
 
-    const key = new DirectionalLight(0xfff2dc, 2.6);
+    const key = new DirectionalLight(0xfff6e8, 2.5);
     key.position.set(3, 5, 4);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
@@ -62,9 +77,12 @@ export class EditorStage {
     key.shadow.normalBias = 0.02;
     const sc = key.shadow.camera;
     sc.left = -2; sc.right = 2; sc.top = 3; sc.bottom = -1; sc.near = 1; sc.far = 15;
-    const back = new DirectionalLight(0x9fd8ff, 1.2);
+    const back = new DirectionalLight(0xbfe0ff, 1.5);
     back.position.set(-3, 3, -4);
-    this.scene.add(key, back, new HemisphereLight(0xdff3ff, 0x5a3a2a, 1.1));
+    // Füllicht von der Seite (hellt die Schattenseite der Rüstung auf, ohne das Studio zu flach zu machen)
+    const fill = new DirectionalLight(0xd8e4ff, 0.7);
+    fill.position.set(-4, 1.5, 3);
+    this.scene.add(key, back, fill, new HemisphereLight(0xe6efff, 0x3a3f4a, 1.0));
   }
 
   /** Figur anzeigen (neu oder aktualisiert) */
@@ -107,12 +125,41 @@ export class EditorStage {
     }
   }
 
-  rotate(dx: number) { this.yaw += dx * 0.01; this.idleTime = 0; }
-  zoomBy(d: number) { this.zoom = MathUtils.clamp(this.zoom + d, 0.45, 1.3); }
+  rotate(dx: number) { this.yaw += dx * 0.01; this.idleTime = 0; this.yawTarget = null; }
+  zoomBy(d: number) { this.zoom = MathUtils.clamp(this.zoom + d, 0.22, 1.3); this.idleTime = 0; }
+
+  /** Kamera-Voreinstellung: gleitet weich zu Zoom, Blickhöhe und Drehung */
+  preset(p: 'gesamt' | 'kopf' | 'oberkoerper' | 'beine' | 'ruecken') {
+    this.idleTime = 0;
+    switch (p) {
+      case 'gesamt': this.zoom = 1; this.lookY = 0.95; this.yawTarget = 0.5; break;
+      case 'kopf': this.zoom = 0.27; this.lookY = 1.58; this.yawTarget = 0.35; break;
+      case 'oberkoerper': this.zoom = 0.5; this.lookY = 1.25; this.yawTarget = 0.45; break;
+      case 'beine': this.zoom = 0.52; this.lookY = 0.55; this.yawTarget = 0.5; break;
+      case 'ruecken': this.zoom = 0.85; this.lookY = 1.0; this.yawTarget = Math.PI + 0.25; break;
+    }
+  }
+
+  /** Schein in der Farbe eines Stücks (Seltenheit); null = aus */
+  setAura(color: string | null) {
+    this.auraTarget = color ? 3.2 : 0;
+    if (color) { this.aura.color.set(color); (this.ring.material as MeshToonMaterial).color.set(color); } else (this.ring.material as MeshToonMaterial).color.set(0xe3b04b);
+  }
+  private auraTarget = 0;
 
   update(dt: number) {
     this.idleTime += dt;
-    if (this.idleTime > 4) this.yaw += dt * 0.25;
+    // Kamera gleitet zu den Zielwerten (unabhängig von der Bildrate)
+    const k = 1 - Math.exp(-dt * 7);
+    this.cz += (this.zoom - this.cz) * k;
+    this.cy += (this.lookY - this.cy) * k;
+    if (this.yawTarget !== null) {
+      let d = (this.yawTarget - this.yaw) % (Math.PI * 2);
+      if (d > Math.PI) d -= Math.PI * 2; else if (d < -Math.PI) d += Math.PI * 2;
+      this.yaw += d * k;
+      if (Math.abs(d) < 0.01) this.yawTarget = null;
+    } else if (this.autoSpin && this.idleTime > 4) this.yaw += dt * 0.25;
+    this.aura.intensity += (this.auraTarget - this.aura.intensity) * k;
     if (this.char) {
       this.char.holder.rotation.y = this.yaw;
       this.char.update(dt);
@@ -126,9 +173,9 @@ export class EditorStage {
     const cam = this.camera;
     cam.aspect = aspect;
     cam.fov = portrait ? 40 : 30;
-    const dist = (portrait ? 7.4 : 6.6) * this.zoom;
-    const lookY = this.zoom < 0.7 ? 1.4 : 0.95;
-    cam.position.set(0, lookY + 0.35, dist);
+    const dist = (portrait ? 7.4 : 6.6) * this.cz;
+    const lookY = this.cy;
+    cam.position.set(0, lookY + 0.35 * Math.min(1, this.cz + 0.2), dist);
     cam.lookAt(0, lookY, 0);
     // Figur nach oben bzw. links schieben, damit das Menü sie nicht verdeckt
     if (portrait) cam.setViewOffset(1000, 1000, 0, panelFraction * 500, 1000, 1000);

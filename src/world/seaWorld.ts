@@ -9,6 +9,7 @@ import {
   CylinderGeometry,
   Group,
   MathUtils,
+  Quaternion,
   Mesh,
   MeshBasicMaterial,
   OctahedronGeometry,
@@ -24,6 +25,7 @@ import { CAMERA_PLANES, type QualityConfig } from '../data/qualityTiers';
 import { EDGE_WALL, WORLD_SCALE } from '../data/world';
 import type { CharacterAssets } from '../entities/character/assets';
 import { LampPool, lampShared } from '../render/lamps';
+import { GlowSystem, glowHub, makeEmitter, type GlowPlaced } from '../render/glow';
 import { Character } from '../entities/character/character';
 import { shieldFor, weaponsFor } from '../entities/character/weapons';
 import { Npc } from '../entities/npc';
@@ -40,7 +42,7 @@ import { SITES } from '../data/settlements';
 import { buildSite } from './settlement';
 import { setSiteNight } from './architecture';
 import { cachedProto, floraProto, Scatter, type Biome, type VegChunk } from './vegetation';
-import type { Material, Object3D } from 'three';
+import { Object3D, type Material } from 'three';
 import { IslandFauna } from './fauna';
 import { texDetail } from '../render/texDetail';
 import type { IslandStyle } from '../data/regions';
@@ -276,6 +278,10 @@ export class SeaWorld {
   private camIdle = 0;
   /** Geglättete Seekamera: Blickwinkel, Abstand, Höhe und Ankerpunkt werden einzeln nachgeführt (sonst schneidet die Kamera beim Umschwenken durchs Schiff) */
   private lampPool!: LampPool;
+  private glow!: GlowSystem;
+  private glowNight = 0;
+  /** Unsichtbare feste Träger für echte Lichter an Feuern und Fackeln (LampPool wählt die nächsten) */
+  private fireCarriers: Object3D[] = [];
   private lampList: Object3D[] = [];
   private camAz = 0;
   /** Kameraradius und Höhenwinkel der Schiffskamera (geglättet) */
@@ -309,6 +315,8 @@ export class SeaWorld {
 
     this.fauna = new IslandFauna(this.scene);
     this.lampPool = new LampPool(this.scene, 4);
+    glowHub.clear();
+    this.glow = new GlowSystem(this.scene);
     this.islands = this.buildIslands();
     this.env.setIslands(this.islands);
     this.buildBuoys();
@@ -450,6 +458,7 @@ export class SeaWorld {
         lamp.position.set(0, 18, 0);
         lamp.userData.noOutline = true;
         this.lamps.push(lamp);
+        glowHub.add(makeEmitter('lamp', 0, 0, 0, { obj: lamp, size: 3.2 }));
         isl.add(tower, band, lamp);
         walk.blockers.push({ x: s.x, z: s.z, r: 2.5 });
       }
@@ -470,7 +479,7 @@ export class SeaWorld {
         isl.add(outpost(e, facing, lanterns));
         const fx = Math.sin(facing), fz = Math.cos(facing);
         this.piers.push({ ax: s.x + fx * (e + OUTPOST_PIER.from), az: s.z + fz * (e + OUTPOST_PIER.from), bx: s.x + fx * (e + OUTPOST_PIER.to), bz: s.z + fz * (e + OUTPOST_PIER.to), hw: 1.5 });
-        for (const l of lanterns) glow.add(l);
+        for (const l of lanterns) { glow.add(l); glowHub.add(makeEmitter('lamp', 0, 0, 0, { obj: l, size: 0.8, glint: true })); }
         // Pfähle beiderseits und Laternenmast sind fest (Positionen wie in outpost())
         for (let d = e + 2; d <= e + OUTPOST_PIER.to - 1; d += 5) for (const sd of [-1, 1]) walk.blockers.push({ x: s.x + fx * d + fz * 1.6 * sd, z: s.z + fz * d - fx * 1.6 * sd, r: 0.22 });
         walk.blockers.push({ x: s.x + fx * (e + OUTPOST_PIER.to - 3) + fz * 1.2, z: s.z + fz * (e + OUTPOST_PIER.to - 3) - fx * 1.2, r: 0.16 });
@@ -480,6 +489,7 @@ export class SeaWorld {
         // Dörfer, Höfe, Türme und Ruinen mit Kollisions-Gitter, danach der Bewuchs des Bioms
         const built = buildSite({ group: isl, def: s.def, site, biome: style as Biome, walk, hAt, veg, density: texDetail.density });
         this.campfires.push(...built.fires.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
+        this.addGlows(built.glows, s.x, s.z);
         this.chimneys.push(...built.chimneys.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
         this.piers.push(...built.piers);
         this.villages.set(s.def.id, built.village);
@@ -487,6 +497,7 @@ export class SeaWorld {
       } else if (!town) {
         const dressed = dressIsland({ group: isl, def: s.def, kit, walk, hAt, glow, density: texDetail.density, style, veg });
         this.campfires.push(...dressed.fires.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
+        this.addGlows(dressed.glows, s.x, s.z);
         this.fauna.addIsland(s.def, s.x, s.z, r, dressed.trees.map((t) => ({ x: s.x + t.x, y: t.y, z: s.z + t.z })), dressed.bushes.map((b) => ({ x: s.x + b.x, y: b.y, z: s.z + b.z })), style, (ang) => r * coastK(form.coast, ang));
       }
       this.scene.add(isl);
@@ -515,6 +526,16 @@ export class SeaWorld {
         this.piers.push({ ax: s.x, az: s.z - r + 5, bx: s.x, bz: s.z - r - 41, hw: 2.5 });
         this.town = buildTown(s.def, walk, (x, z) => { const h = this.ground.height(x, z); return Number.isFinite(h) ? h : 1.3; });
         this.scene.add(this.town.group);
+        // Laternen der Hafenstadt: Lichthof und Bodenlicht (Glas-Kugeln aus town.ts; Fensterflächen leuchten selbst)
+        this.town.group.updateMatrixWorld(true);
+        const tq = new Quaternion();
+        for (const l of this.town.lights) {
+          const v = l.getWorldPosition(new Vector3());
+          if ((l.geometry as { type?: string }).type === 'SphereGeometry') { glowHub.add(makeEmitter('lamp', v.x, v.y, v.z, { size: 0.8, ground: v.y - 2.3, pool: 5.5 })); continue; }
+          // Fensterflächen: Hof und Lichtfleck auf dem Boden vor dem Fenster (Blickrichtung aus der Drehung der Fläche)
+          const n = new Vector3(0, 0, 1).applyQuaternion(l.getWorldQuaternion(tq));
+          glowHub.add(makeEmitter('window', v.x, v.y, v.z, { size: 0.5, ground: v.y < 3.2 ? v.y - 1.9 : null, pool: 2.8, pdx: n.x * 1.3, pdz: n.z * 1.3 }));
+        }
       }
     }
     return shapes;
@@ -542,6 +563,7 @@ export class SeaWorld {
       addOutlines(g);
       this.scene.add(g);
       this.buoys.push({ g, x, z, lamp });
+      glowHub.add(makeEmitter('lamp', 0, 0, 0, { obj: lamp, size: 0.55, glint: true, color: i % 2 ? new Color(3.4, 0.5, 0.4) : new Color(0.5, 3.4, 0.8) }));
     }
   }
 
@@ -744,6 +766,7 @@ export class SeaWorld {
   applyQuality(c: QualityConfig) {
     this.figureDist = c.figureDistance;
     this.lampPool.setCount(c.lamps);
+    this.glow.quality = c.lamps > 0 ? 1 : 0;
     this.viewDist = c.viewDistance;
     // Sparstufen des Leistungs-Wächters kürzen die Sichtweite von Gras, Büschen und Blumen (weniger Zeichenaufrufe)
     this.vegLod = Math.max(0.4, Math.min(1.25, c.viewDistance / 800)) * (1 - 0.17 * (c.budget ?? 0));
@@ -1777,6 +1800,7 @@ export class SeaWorld {
     const night = Math.max(1 - pal.sunVis, Math.min(1, Math.max(0, env.weather.p.grey - 0.4) * 2.2));
     const sea = this.seaEnv;
     lampShared.set(night);
+    this.glowNight = night;
 
     const wy = env.heightAt(x, z);
     const f = this.fwd(h);
@@ -1850,13 +1874,18 @@ export class SeaWorld {
       const pyaw = p.prev.yaw + (MathUtils.euclideanModulo(p.yaw - p.prev.yaw + Math.PI, Math.PI * 2) - Math.PI) * alpha;
       this.player.holder.position.set(px, py, pz);
       this.player.holder.rotation.set(0, pyaw, 0);
-      const cp = Math.cos(this.footPitch);
+      // In der Kapitänskajüte: steilere, nähere Kamera über der Figur (das Dach ist ausgeblendet), Kajütenlicht an
+      const inCab = !!this.deckGround?.inCabin;
+      const cabLight = this.ship.model.cabinLight;
+      if (cabLight) cabLight.intensity += ((inCab ? 4.5 : 0) - cabLight.intensity) * Math.min(1, frameDt * 6);
+      const fPitch = inCab ? Math.max(this.footPitch, 0.95) : this.footPitch;
+      const cp = Math.cos(fPitch);
       // Zielerfassung: Kamera rückt mit wachsendem Abstand zum Ziel zurück und blickt ein Stück zu ihm hin (Figur und Ziel im Bild)
       const ld = Math.hypot(this.lockDX, this.lockDZ);
       const lk = this.lockK * (ld > 0.01 ? 1 : 0);
-      const dist = this.footDist + lk * MathUtils.clamp((ld - 5) * 0.3, 0, 3.5);
+      const dist = Math.min(this.footDist + lk * MathUtils.clamp((ld - 5) * 0.3, 0, 3.5), inCab ? 4.8 : 99);
       const shift = ld > 0.01 ? (lk * Math.min(3.2, ld * 0.28)) / ld : 0;
-      this.tmp.set(px - Math.sin(this.footYaw) * dist * cp, py + 1.4 + Math.sin(this.footPitch) * dist, pz - Math.cos(this.footYaw) * dist * cp);
+      this.tmp.set(px - Math.sin(this.footYaw) * dist * cp, py + 1.4 + Math.sin(fPitch) * dist, pz - Math.cos(this.footYaw) * dist * cp);
       cam.position.lerp(this.tmp, Math.min(1, frameDt * 10));
       const gy = this.ground.height(cam.position.x, cam.position.z);
       const floor = Math.max(env.heightAt(cam.position.x, cam.position.z) + 0.8, Number.isFinite(gy) ? gy + 0.6 : -99);
@@ -1958,8 +1987,28 @@ export class SeaWorld {
       const list = this.lampList;
       list.length = 0;
       for (const ch of Character.lamped) if (ch.lamp && ch.holder.visible) list.push(ch.lamp);
+      for (const c of this.fireCarriers) list.push(c);
       this.lampPool.update(frameDt, cam.position.distanceTo(this.focus) < 60 ? this.focus : cam.position, list);
     }
+    // Dach der Kajüte nur ausgeblendet, solange jemand drinnen steht (nach Sprüngen, Landgang oder Schiffswechsel wieder sichtbar)
+    if (!this.deckGround?.inCabin) { const roof = this.ship.model.cabinRoof; if (roof && !roof.visible) roof.visible = true; }
+    // Lichtschein und Flammen aller Lampen und Feuer (nach der Kamera, damit nichts hinterherhinkt)
+    this.glow.update(frameDt, cam, this.glowNight, env.weather.p.rain);
     env.render(cam, this.focus);
+  }
+
+  /** Lichtquellen einer Insel anmelden (Inselkoordinaten + Versatz); Feuer und Fackeln bekommen zusätzlich ein echtes Licht */
+  private addGlows(list: GlowPlaced[], ox: number, oz: number) {
+    for (const g of list) {
+      const x = ox + g.x, z = oz + g.z;
+      glowHub.add(makeEmitter(g.kind, x, g.y, z, { ground: g.ground, size: g.size, pool: g.pool, pdx: g.pdx, pdz: g.pdz, glint: g.glint }));
+      if (g.kind === 'lamp' || g.kind === 'window') continue;
+      const c = new Object3D();
+      c.position.set(x, g.y + 0.6, z);
+      c.userData.fire = true; c.userData.fixed = true; c.userData.lightK = g.kind === 'fire' ? 1.7 : 1.1;
+      this.scene.add(c);
+      c.updateMatrixWorld(true);
+      this.fireCarriers.push(c);
+    }
   }
 }

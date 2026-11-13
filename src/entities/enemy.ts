@@ -12,6 +12,7 @@ import {
 } from 'three';
 import { BOSS, ENEMIES, enemyScale, type EnemyAttack, type EnemyDef, type EnemyKind } from '../data/combat';
 import { randomLook, type NpcRole } from '../data/characterParts';
+import { gearForNpc } from '../data/gear';
 import type { Faction } from '../core/save/types';
 import type { CharacterAssets } from './character/assets';
 import { Character } from './character/character';
@@ -184,6 +185,9 @@ export class Enemy {
     const look = randomLook(Math.random, role);
     if (kind === 'schlaeger') { look.body = 'kraeftig'; look.gloves = true; }
     if (this.def.elite) { look.coat = 'kapitaen'; look.coatColor = faction === 'marine' ? '#14284A' : '#4A1418'; }
+    // Ausrüstung nach Stufe: Eliten und Bosse tragen ganze Sets, einfache Gegner gelegentlich einzelne Teile
+    const gear = gearForNpc(level, this.def.boss ? 'boss' : this.def.elite ? 'elite' : 'normal', faction === 'marine');
+    if (gear.length) look.extra = gear;
     this.char = new Character(assets, look, outline);
     this.char.holder.scale.setScalar(this.def.scale);
     const w = enemyWeapons(this.def.weapon);

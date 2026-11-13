@@ -30,6 +30,8 @@ import { hostileLegends } from '../data/legends';
 import { RARITY, TRINKETS, TRINKET_BY_ID } from '../data/trinkets';
 import { ACHIEVEMENTS } from '../data/achievements';
 import { CONSUMABLES, GEAR, HEADS, SLOT_LABEL } from '../data/items';
+import { CAT_LABEL, EQUIP_BY_ID, catOf, type GearCat } from '../data/equipment';
+import { SETS } from '../data/gear';
 import { itemCount } from '../core/inventory';
 import { ARMOR, POTION, REST_PRICE, SHRINE_PRICE, WEAPONS, WEAPON_LINES, type IslandDef } from '../data/regions';
 import { stepText } from '../story/questSystem';
@@ -588,6 +590,10 @@ export class Menus {
       ${CONSUMABLES.filter((c) => c.id !== 'proviant').map((c) => { const n = itemCount(s.gear, c.id); return `<div class="slot"><div class="slot-head"><b>${c.icon} ${esc(c.n)}</b><span>${c.price} Gold</span></div>
         <div class="meta">${esc(c.d)} Du trägst ${n} von ${c.max}.</div>
         <div class="row"><button class="mini brass" data-a="item" data-id="${c.id}" ${n >= c.max ? 'disabled' : ''}>Kaufen</button></div></div>`; }).join('')}
+      <h3>Ausrüster: Rüstungssets</h3>
+      <p class="small soft">Epische und legendäre Sets gibt es nur als Beute. Jedes Stück ist im Editor färbbar.</p>
+      ${SETS.filter((set) => set.rarity === 'gewoehnlich' || set.rarity === 'selten').map((set) => `<div class="slot"><div class="slot-head"><b style="color:${RARITY[set.rarity].col}">${RARITY[set.rarity].mark} ${esc(set.n)}</b><span>ab Stufe ${set.level}</span></div><div class="meta">${esc(set.d)}</div>
+        ${(Object.keys(set.pieces) as GearCat[]).map((c) => { const d = EQUIP_BY_ID[`${set.id}_${c}`]; const own = s.gear.loot?.includes(d.id); return `<div class="slot-head"><span>${esc(CAT_LABEL[catOf(d)])}: ${esc(d.n)} <small class="soft">${esc(d.d ?? '')}</small></span>${own ? '<span>gekauft</span>' : `<button class="mini brass" data-a="loot" data-id="${d.id}" ${s.player.level < (d.level ?? 1) ? 'disabled' : ''}>${d.price} Gold</button>`}</div>`; }).join('')}</div>`).join('')}
       <h3>Kopfbedeckungen</h3>
       ${HEADS.map((h) => { const own = s.gear.heads?.includes(h.id); return `<div class="slot"><div class="slot-head"><b>🎩 ${esc(h.n)}</b><span>${own ? 'gekauft' : `${h.price} Gold`}</span></div>
         <div class="meta">${esc(h.d)}${h.rank > g.playerRank && !own ? ` · ab Rang „${RANKS[s.player.faction][h.rank]}“` : ''}</div>
@@ -597,7 +603,7 @@ export class Menus {
         <div class="meta">${SLOT_LABEL[d.slot]} · ${esc(d.d)}${d.rank > g.playerRank && !own ? ` · ab Rang „${RANKS[s.player.faction][d.rank]}“` : ''}</div>
         ${own ? '' : `<div class="row"><button class="mini brass" data-a="piece" data-id="${d.id}" ${d.rank > g.playerRank ? 'disabled' : ''}>Kaufen und anlegen</button></div>`}</div>`; }).join('')}
       <button class="primary" data-a="back">Zurück</button>`,
-      { buy: (id) => re(g.buyPotions(+id)), item: (id) => re(g.buyItem(id)), head: (id) => re(g.buyHead(id)), piece: (id) => re(g.buyPiece(id)), back },
+      { buy: (id) => re(g.buyPotions(+id)), item: (id) => re(g.buyItem(id)), head: (id) => re(g.buyHead(id)), piece: (id) => re(g.buyPiece(id)), loot: (id) => re(g.buyLoot(id)), back },
       back,
       { wide: true },
     );

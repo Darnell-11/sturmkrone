@@ -26,6 +26,7 @@ import { toon } from '../render/toon';
 import { markWind, windify } from '../render/wind';
 import { inBox, type Blocker } from './islandGround';
 import { hashId, seeded } from './waves';
+import { envGroup, hasEnv } from './envModels';
 
 /**
  * Instanzierter Bewuchs: Bäume, Sträucher, Gras und Felsen werden nicht mehr als einzelne Netze gebaut und pro Insel
@@ -123,9 +124,18 @@ float skvN(vec2 p) {
     float skMn = skvN(vSkVW.xz * 2.3 + vSkVW.y * 1.1) * 0.6 + skvN(vSkVW.xz * 7.0) * 0.4;
     float skMoss = smoothstep(0.42, 0.78, skUp * 0.75 + skMn * 0.55 - 0.1);
     diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.36, 0.13) * (0.75 + skMn * 0.6), skMoss * 0.85);
+    // Spritzzone an der Wasserlinie (Meeresspiegel y = 0): der Stein ist nass, dunkler und satter, Moos fällt dort weg
+    float skWl = 1.0 - smoothstep(0.35, 2.4, vSkVW.y);
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.6, 0.64, 0.7), skWl);
   }
 }`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+// Nasser Stein glänzt: Himmelslicht im flachen Blickwinkel (Fresnel), nur an Felsen in Wassernähe
+if (vSkSurf > 2.5) {
+  float skWl2 = 1.0 - smoothstep(0.35, 2.4, vSkVW.y);
+  float skFr = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 3.0);
+  totalEmissiveRadiance += vec3(0.46, 0.58, 0.68) * skFr * skWl2 * 0.4;
+}
 #if NUM_DIR_LIGHTS > 0
 if (vSkSurf > 1.5 && vSkSurf < 2.5) {
   // Licht scheint durchs Blatt: Kamera schaut gegen die Sonne
@@ -137,7 +147,7 @@ if (vSkSurf > 1.5 && vSkSurf < 2.5) {
 }
 #endif`);
   };
-  m.customProgramCacheKey = () => key() + 'veg2';
+  m.customProgramCacheKey = () => key() + 'veg3';
 }
 
 const protos = new Map<string, Proto>();
@@ -152,7 +162,9 @@ function protoFrom(id: string, obj: Object3D, o: ProtoOpts): Proto {
     if (!m.isMesh) return;
     const mat = m.material as MeshToonMaterial;
     const g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
-    const isCyl = m.geometry.type === 'CylinderGeometry';
+    const isCyl = m.geometry.type === 'CylinderGeometry' || !!m.userData.bark;
+    // Blender-Modelle tragen Ambient-Occlusion je Eckpunkt (Farbattribut): dunkler Kronenkern, helle Blattspitzen
+    const ao = g.attributes.color as BufferAttribute | undefined;
     for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'aWind' && !(k === 'uv' && isCyl)) g.deleteAttribute(k);
     g.applyMatrix4(m.matrixWorld);
     const n = g.attributes.position.count;
@@ -173,7 +185,7 @@ function protoFrom(id: string, obj: Object3D, o: ProtoOpts): Proto {
       }
       if (!g.attributes.aWind) g.setAttribute('aWind', new BufferAttribute(new Float32Array(n), 1));
       // Oberfläche je Eckpunkt: Stamm-Zylinder bekommen Borke und ihre Koordinaten, alles Grüne Durchleuchtung, Fels Moos
-      const surf = o.surf === 'tree' ? (isCyl ? 1 : 2) : o.surf === 'plant' ? 2 : o.surf === 'rock' ? 3 : 0;
+      const surf = (m.userData.surf as number | undefined) ?? (o.surf === 'tree' ? (isCyl ? 1 : 2) : o.surf === 'plant' ? 2 : o.surf === 'rock' ? 3 : 0);
       g.setAttribute('aSurf', new BufferAttribute(new Float32Array(n).fill(surf), 1));
       const bk = new Float32Array(n * 2);
       const uv = g.attributes.uv;
@@ -181,7 +193,10 @@ function protoFrom(id: string, obj: Object3D, o: ProtoOpts): Proto {
       g.deleteAttribute('uv');
       g.setAttribute('aBk', new BufferAttribute(bk, 2));
       const col = new Float32Array(n * 3);
-      for (let i = 0; i < n; i++) { col[i * 3] = mat.color.r; col[i * 3 + 1] = mat.color.g; col[i * 3 + 2] = mat.color.b; }
+      for (let i = 0; i < n; i++) {
+        const k = ao ? ao.getX(i) : 1;
+        col[i * 3] = mat.color.r * k; col[i * 3 + 1] = mat.color.g * k; col[i * 3 + 2] = mat.color.b * k;
+      }
       g.setAttribute('color', new BufferAttribute(col, 3));
       geos.push(g);
     }
@@ -296,6 +311,15 @@ function blade(len: number, wid: number, mat: Material, pitch: number, yaw: numb
 }
 
 const MAKERS: Record<FloraId, (pal: Pal, rnd: () => number, v: number) => Group> = {
+  treibholz: (_pal, rnd) => {
+    const g = new Group();
+    const log = new Mesh(new CylinderGeometry(0.14, 0.18, 2.2 + rnd(), 6), toon('#9C8A6E'));
+    log.rotation.z = Math.PI / 2;
+    log.position.y = 0.15;
+    g.add(log);
+    return g;
+  },
+  klippe: (pal, rnd, v) => MAKERS.fels(pal, rnd, v),
   palme: (pal, rnd) => {
     const g = new Group();
     const h = 6.2 + rnd() * 2.6;
@@ -522,12 +546,47 @@ const FLORA: Record<FloraId, FloraSpec> = {
   fels: { surf: 'rock', variants: 3, collide: 0.9, sink: 0.12, tint: 0.14, tilt: 0.12 },
   basalt: { variants: 4, collide: 1.75, sink: 0.1, tint: 0.12, tilt: 0.03 },
   basaltblock: { variants: 3, collide: 0.7, sink: 0.05, tint: 0.12, tilt: 0 },
+  treibholz: { surf: 'tree', variants: 3, cast: false, near: 190, sink: 0.02, tint: 0.1, tilt: 0 },
+  klippe: { surf: 'rock', variants: 2, collide: 3.2, sink: 0.4, tint: 0.1, tilt: 0.02 },
 };
 
+/** Modellname und Windausschlag der Blender-Fassung einer Flora-Art (die übrigen bleiben Eigenbau) */
+const ENV_FLORA: Partial<Record<FloraId, { name: string; wind: number }>> = {
+  palme: { name: 'palme', wind: 0.55 }, laubbaum: { name: 'laubbaum', wind: 0.34 }, busch: { name: 'busch', wind: 0.08 },
+  farn: { name: 'farn', wind: 0.13 }, fels: { name: 'fels', wind: 0 }, treibholz: { name: 'treibholz', wind: 0 }, klippe: { name: 'klippe', wind: 0 },
+};
+
+/** Farbe je Rolle des Blender-Modells aus der Palette des Biomes */
+function envColors(pal: Pal, flora: FloraId, k: number) {
+  const low = flora === 'busch' || flora === 'farn';
+  const leaf = low ? pal.bush : pal.leaf;
+  return (role: string): string => {
+    switch (role) {
+      case 'trunk': return pal.trunk;
+      case 'leaf': return leaf[0];
+      case 'leaf2': return leaf[1 % leaf.length];
+      case 'leaf3': return leaf[2 % leaf.length];
+      case 'nut': return '#5A3E22';
+      case 'drift': return '#9C8A6E';
+      default: return pal.rock[k % pal.rock.length];
+    }
+  };
+}
+
+/** Vorlage aus einem Blender-Modell (oder null, wenn die Datei fehlt) – mit eigener Kennung, damit jede Quelle ihre Variante hat */
+export function envProto(id: string, name: string, color: (role: string) => string, o: ProtoOpts & { wind?: number } = {}): Proto | null {
+  if (!hasEnv(name)) return null;
+  return cachedProto(id, () => envGroup(name, color, o.wind ?? 0)!, o);
+}
+
+/** Zufallsvariante einer Flora-Art; Palme, Laubbaum, Busch, Farn, Fels, Treibholz und Klippe kommen aus Blender */
 export function floraProto(biome: Biome, flora: FloraId, v: number): Proto {
   const spec = FLORA[flora];
   const k = v % spec.variants;
-  return cachedProto(`${biome}:${flora}:${k}`, (rnd) => MAKERS[flora](PAL[biome], rnd, k), spec);
+  const env = ENV_FLORA[flora];
+  const id = `${biome}:${flora}:${k}`;
+  const fromEnv = env && hasEnv(`${env.name}_${k + 1}`) ? envProto(id, `${env.name}_${k + 1}`, envColors(PAL[biome], flora, k), { ...spec, wind: env.wind }) : null;
+  return fromEnv ?? cachedProto(id, (rnd) => MAKERS[flora](PAL[biome], rnd, k), spec);
 }
 
 // ---------- Belegung und Verteilung ----------

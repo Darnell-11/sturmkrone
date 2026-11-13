@@ -26,7 +26,7 @@ const CELL = 0.025;
 /** so nah (m, quer zur Normale) muss ein Punkt der äußeren Schicht liegen, um als „direkt darüber“ zu gelten */
 const LATERAL = 0.01;
 
-interface Skinned { P: Float32Array; N: Float32Array; drawn: Uint8Array; R: Float32Array }
+interface Skinned { P: Float32Array; N: Float32Array; drawn: Uint8Array; R: Float32Array; RN: Float32Array }
 
 /** Ruhelage aller Punkte (Bindungsraum): nur Punkte, die schon in Ruhe benachbart sind, werden verglichen –
  *  sonst zählt eine Hand, die in der Pose an der Hüfte liegt, als Durchstich durch den Gürtel */
@@ -50,7 +50,7 @@ function skinAll(mesh: SkinnedMesh): Skinned {
   const n = pos.count;
   mesh.skeleton.update();
   const bm = mesh.skeleton.boneMatrices as Float32Array, b = mesh.bindMatrix.elements;
-  const P = new Float32Array(n * 3), N = new Float32Array(n * 3), drawn = new Uint8Array(n);
+  const P = new Float32Array(n * 3), N = new Float32Array(n * 3), RN = new Float32Array(n * 3), drawn = new Uint8Array(n);
   const idx = g.index;
   if (idx) for (let i = 0; i < idx.count; i++) drawn[idx.getX(i)] = 1; else drawn.fill(1);
   for (let i = 0; i < n; i++) {
@@ -71,18 +71,20 @@ function skinAll(mesh: SkinnedMesh): Skinned {
       ny += wt * (bm[o + 1] * u + bm[o + 5] * v + bm[o + 9] * w);
       nz += wt * (bm[o + 2] * u + bm[o + 6] * v + bm[o + 10] * w);
     }
+    const rl = Math.hypot(u, v, w) || 1;
+    RN[i * 3] = u / rl; RN[i * 3 + 1] = v / rl; RN[i * 3 + 2] = w / rl;
     const l = Math.hypot(nx, ny, nz) || 1;
     P[i * 3] = px; P[i * 3 + 1] = py; P[i * 3 + 2] = pz;
     N[i * 3] = nx / l; N[i * 3 + 1] = ny / l; N[i * 3 + 2] = nz / l;
   }
-  return { P, N, drawn, R: restAll(mesh) };
+  return { P, N, drawn, R: restAll(mesh), RN };
 }
 
 const cellKey = (x: number, y: number, z: number) => (Math.floor(x / CELL) * 73856093) ^ (Math.floor(y / CELL) * 19349663) ^ (Math.floor(z / CELL) * 83492791);
 
 function inLayer(l: AuditLayer, s: Skinned, i: number) { return !!s.drawn[i] && (!l.part || l.part.attr.getX(i) === l.part.id); }
 
-export interface PairStat { inner: string; outer: string; n: number; poke: number; depth: number; gaps: number[] }
+export interface PairStat { inner: string; outer: string; n: number; poke: number; depth: number; gaps: number[]; /** schon in Ruhe liegt die äußere Schicht innen: Entwurf des Teils, kein Fehler der Bewegung */ design: number }
 
 /** Innere gegen äußere Schicht in einer Pose: wie viele innere Punkte liegen weiter außen als die äußere Schicht darüber? */
 function comparePair(inner: AuditLayer, si: Skinned, outer: AuditLayer, so: Skinned, st: PairStat) {
@@ -119,6 +121,10 @@ function comparePair(inner: AuditLayer, si: Skinned, outer: AuditLayer, so: Skin
       }
     }
     if (best < 0) continue;
+    // In der Ruhehaltung gemessen: liegt die äußere Schicht dort schon innen, ist es ein Entwurfsmaß (Hose im Stiefel, Haar auf dem Hemd),
+    // kein Durchstechen durch Bewegung. Nur das zweite zählt als Durchstich.
+    const rest = (so.R[best * 3] - si.R[i * 3]) * si.RN[i * 3] + (so.R[best * 3 + 1] - si.R[i * 3 + 1]) * si.RN[i * 3 + 1] + (so.R[best * 3 + 2] - si.R[i * 3 + 2]) * si.RN[i * 3 + 2];
+    if (rest < -POKE) { st.design++; continue; }
     st.n++;
     if (d < -POKE) { st.poke++; st.depth = Math.max(st.depth, -d); }
     else if (d > 0) st.gaps.push(d);
@@ -129,7 +135,7 @@ export interface LookResult {
   id: string;
   /** gezeichnete Dreiecke aller Netze der Figur */
   tris: number;
-  pairs: Record<string, { count: number; share: number; worstPose: number; depthMm: number; gapP5Mm: number; flickerFromM: number }>;
+  pairs: Record<string, { design: number; count: number; share: number; worstPose: number; depthMm: number; gapP5Mm: number; flickerFromM: number }>;
   /** je Netz: Anteil der Posen außerhalb der Hüllkugel, größter Überstand (m) */
   vis: Record<string, { out: number; excess: number }>;
 }
@@ -147,6 +153,17 @@ function testLooks(): { id: string; look: CharacterLook }[] {
     }
     out.push({ id: `${hair === 'kurz' ? 'm' : 'w'}-weste-kurz-stiefel`, look: { ...defaultLook('pirat'), hair, outfit: 'weste', coat: 'kurz', hat: 'bandana', earring: false } });
   }
+  // Ausrüstung mit Modellen aus Blender: ganze Sets und Teile, einzeln und gemischt
+  const set = (id: string, extra: string[], hairModel?: string, hair: 'kurz' | 'lang' = 'kurz') => out.push({ id: `gear-${id}`, look: { ...defaultLook('pirat'), hair, outfit: 'hemd', coat: 'keiner', hat: 'keiner', earring: false, extra, hairModel } });
+  const all = ['head', 'chest', 'legs', 'feet', 'mainhand', 'offhand'].map((c) => `kapitaen_${c}`);
+  set('kapitaen', all);
+  set('kapitaen-frisur', all, 'frisur_mehrlagig');
+  set('strand', ['strand_legs', 'strand_feet'], 'frisur_mehrlagig');
+  set('kapitaen-w', all, 'frisur_mehrlagig', 'lang');
+  set('strand-w', ['strand_legs', 'strand_feet'], undefined, 'lang');
+  set('stiefel', ['kapitaen_feet']);
+  set('gehrock', ['kapitaen_chest']);
+  set('hose-stiefel', ['kapitaen_legs', 'kapitaen_feet']);
   return out;
 }
 
@@ -198,7 +215,7 @@ function auditLook(assets: CharacterAssets, id: string, look: CharacterLook): Lo
         if (outer.level <= inner.level) continue;
         const key = `${inner.name} < ${outer.name}`;
         let st = pairStats.get(key);
-        if (!st) { st = { inner: inner.name, outer: outer.name, n: 0, poke: 0, depth: 0, gaps: [], worst: 0 }; pairStats.set(key, st); }
+        if (!st) { st = { inner: inner.name, outer: outer.name, n: 0, poke: 0, depth: 0, gaps: [], worst: 0, design: 0 }; pairStats.set(key, st); }
         const n0 = st.n, p0 = st.poke;
         comparePair(inner, get(inner.mesh), outer, get(outer.mesh), st);
         if (st.n > n0) st.worst = Math.max(st.worst, (st.poke - p0) / (st.n - n0));
@@ -207,10 +224,10 @@ function auditLook(assets: CharacterAssets, id: string, look: CharacterLook): Lo
   }
   const pairs: LookResult['pairs'] = {};
   for (const [key, st] of pairStats) {
-    if (!st.n) continue;
+    if (!st.n && !st.design) continue;
     st.gaps.sort((x, y) => x - y);
     const p5 = st.gaps.length ? st.gaps[Math.floor(st.gaps.length * 0.05)] : 0;
-    pairs[key] = { count: st.poke, share: st.poke / st.n, worstPose: st.worst, depthMm: st.depth * 1000, gapP5Mm: p5 * 1000, flickerFromM: p5 > 0 ? Math.sqrt(p5 * 0.1 * 16777216) : 0 };
+    pairs[key] = { design: st.design, count: st.poke, share: st.n ? st.poke / st.n : 0, worstPose: st.worst, depthMm: st.depth * 1000, gapP5Mm: p5 * 1000, flickerFromM: p5 > 0 ? Math.sqrt(p5 * 0.1 * 16777216) : 0 };
   }
   const visOut: LookResult['vis'] = {};
   for (const [k, r] of Object.entries(vis)) visOut[k] = { out: r.out / r.frames, excess: r.excess };
@@ -313,7 +330,7 @@ export function installAudit(game: GameLike) {
      * Leistung: n Figuren (gehend, rennend, stehend) im Editor-Raum auf der angegebenen Grafikstufe.
      * Liefert Zeichenaufrufe und Dreiecke je Bild sowie die mittlere Bildzeit (mit gl.finish, also samt Grafikkarte).
      */
-    async perf(tier: string, n = 30, frames = 120, shot = '') {
+    async perf(tier: string, n = 30, frames = 120, shot = '', gear = false) {
       game.renderer.applyQuality(tier);
       if (!game.state.is('editor') || !game.stage?.char) game.openEditor(2);
       const st = game.stage;
@@ -321,7 +338,10 @@ export function installAudit(game: GameLike) {
       const looks = testLooks();
       const cs: Character[] = [];
       for (let i = 0; i < n; i++) {
-        const c = new Character(game.assets, looks[i % looks.length].look, false);
+        const look = structuredClone(looks[i % looks.length].look);
+        // gear = true: jede Figur trägt ein ganzes Beute-Set (alle Sets im Wechsel)
+        if (gear) { const ids = ['eisenwall', 'seekoenig', 'schuppen', 'drache', 'sturmkrone', 'abgrund', 'kette', 'marine']; look.extra = ['head', 'shoulder', 'chest', 'cloak', 'hands', 'legs', 'feet'].map((cat) => `${ids[i % ids.length]}_${cat}`); }
+        const c = new Character(game.assets, look, false);
         c.holder.position.set(((i % 6) - 2.5) * 1.1, 0, -Math.floor(i / 6) * 1.4);
         st.scene.add(c.holder);
         c.playClip(i % 3 === 0 ? 'Idle_A' : i % 3 === 1 ? 'Walking_A' : 'Running_A');
