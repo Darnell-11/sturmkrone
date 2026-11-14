@@ -22,6 +22,7 @@ import {
 } from 'three';
 import type { IslandDef, IslandStyle } from '../data/regions';
 import { toon } from '../render/toon';
+import { coalMaterial } from '../render/lampMaterials';
 import { boxBlocker, coastK, type WalkIsland } from './islandGround';
 import { plant, type StyleKit } from './islandStyle';
 import { hashId, seeded } from './waves';
@@ -746,7 +747,7 @@ function glowPetal(col: string) {
 function campfire(glow: Set<Mesh>, small = false): Group {
   if (hasArch('feuerstelle')) {
     // Blender-Feuerstelle: Steinring mit abgeschrägten Kanten, gekreuzte Scheite mit verkohlten Enden, Aschebett und Glut
-    const ember = new MeshBasicMaterial({ color: new Color(4, 1.4, 0.3) });
+    const ember = coalMaterial;
     const mk = (c: string, flat = false) => toon({ color: c, flatShading: flat, vertexColors: true });
     const fg = archGroup('feuerstelle', (role) => role === 'ember' ? ember : role === 'stone' ? mk('#6E6A64', true) : role === 'log' ? mk('#3A2A1E') : mk('#1A1614'))!;
     fg.traverse((o) => { if ((o as Mesh).isMesh && (o as Mesh).material === ember) { o.userData.noOutline = true; glow.add(o as Mesh); } });

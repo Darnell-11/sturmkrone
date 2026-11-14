@@ -316,7 +316,7 @@ export class SeaWorld {
     this.boat = this.ship.model.group;
 
     this.fauna = new IslandFauna(this.scene);
-    this.lampPool = new LampPool(this.scene, 4);
+    this.lampPool = new LampPool(this.scene, 6);
     glowHub.clear();
     this.glow = new GlowSystem(this.scene);
     this.ground.piers = this.piers;
@@ -358,6 +358,7 @@ export class SeaWorld {
     this.runTimers(dt);
     const w = this.windVec();
     this.smoke.wind = w;
+    this.glow.wind = w;
     this.smoke.update(dt);
     this.debris.update(dt, (x, z) => this.env.heightAt(x, z), w);
     this.rainSplashes(dt);
@@ -772,7 +773,9 @@ export class SeaWorld {
   applyQuality(c: QualityConfig) {
     this.figureDist = c.figureDistance;
     this.lampPool.setCount(c.lamps);
-    this.glow.quality = c.lamps > 0 ? 1 : 0;
+    this.lampPool.setShadows(c.shadows.enabled && c.shadows.cascades >= 2);
+    this.glow.quality = c.lamps > 0 ? 1 : 0.5;
+    this.glow.heat = !!c.post.heat;
     this.viewDist = c.viewDistance;
     // Sparstufen des Leistungs-Wächters kürzen die Sichtweite von Gras, Büschen und Blumen (weniger Zeichenaufrufe)
     this.vegLod = Math.max(0.4, Math.min(1.25, c.viewDistance / 800)) * (1 - 0.17 * (c.budget ?? 0));
@@ -2023,6 +2026,7 @@ export class SeaWorld {
     // Dach der Kajüte nur ausgeblendet, solange jemand drinnen steht (nach Sprüngen, Landgang oder Schiffswechsel wieder sichtbar)
     if (!this.deckGround?.inCabin) { const roof = this.ship.model.cabinRoof; if (roof && !roof.visible) roof.visible = true; }
     // Lichtschein und Flammen aller Lampen und Feuer (nach der Kamera, damit nichts hinterherhinkt)
+    this.glow.mist = Math.min(1, Math.max(env.weather.p.rain * 0.9, (1 - env.weather.p.visibility) * 0.9));
     this.glow.update(frameDt, cam, this.glowNight, env.weather.p.rain);
     env.render(cam, this.focus);
   }
@@ -2031,11 +2035,12 @@ export class SeaWorld {
   private addGlows(list: GlowPlaced[], ox: number, oz: number) {
     for (const g of list) {
       const x = ox + g.x, z = oz + g.z;
-      glowHub.add(makeEmitter(g.kind, x, g.y, z, { ground: g.ground, size: g.size, pool: g.pool, pdx: g.pdx, pdz: g.pdz, glint: g.glint }));
+      const em = glowHub.add(makeEmitter(g.kind, x, g.y, z, { ground: g.ground, size: g.size, pool: g.pool, pdx: g.pdx, pdz: g.pdz, glint: g.glint }));
       if (g.kind === 'lamp' || g.kind === 'window') continue;
       const c = new Object3D();
-      c.position.set(x, g.y + 0.6, z);
-      c.userData.fire = true; c.userData.fixed = true; c.userData.lightK = g.kind === 'fire' ? 1.7 : 1.1;
+      c.userData.seed = em.seed;
+      c.position.set(x, g.y + Math.max(0.6, (g.size ?? 1) * 0.5), z);
+      c.userData.fire = true; c.userData.fixed = true; c.userData.lightK = g.kind === 'fire' ? 1.7 : 0.3;
       this.scene.add(c);
       c.updateMatrixWorld(true);
       this.fireCarriers.push(c);

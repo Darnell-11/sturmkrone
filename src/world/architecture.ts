@@ -22,6 +22,7 @@ import { markShared } from '../render/dispose';
 import { toonPbr } from '../render/pbrMaps';
 import { crateTexture, deckUV, plankTexture } from '../render/textures';
 import { toon } from '../render/toon';
+import { coalMaterial, lanternGlass } from '../render/lampMaterials';
 import { boxBlocker, type Blocker } from './islandGround';
 import { hasProp, propGroup, type PropId } from './worldProps';
 import { archGroup, hasArch } from './envModels';
@@ -207,9 +208,10 @@ const houseMats = (s: ArchSet) => (role: string) => {
 };
 
 /** Materialien der Licht-Bausätze (Feuerstelle, Feuerkorb, Fackel, Laternenpfahl); die Glut leuchtet selbst */
-const lightMats = (role: string): Material => {
+export const lightMats = (role: string): Material => {
   switch (role) {
-    case 'ember': return emberMat;
+    case 'ember': return coalMaterial;
+    case 'glass': return lanternGlass;
     case 'stone': return toon({ color: '#6E6A64', flatShading: true, vertexColors: true });
     case 'log': return AM('#3A2A1E');
     case 'charcoal': return AM('#1A1614');
@@ -360,10 +362,11 @@ function wachturm(): Built {
   ladder.position.set(0, ph / 2, s + 0.75);
   ladder.rotation.x = -0.09;
   g.add(ladder);
-  const lamp = new Mesh(new SphereGeometry(0.24, 10, 8), lampMat);
+  const lamp = new Mesh(new SphereGeometry(hasProp('laterne') ? 0.05 : 0.24, 10, 8), lampMat);
   lamp.position.set(1.7, ph + 2.3, 1.7);
   lamp.userData.noOutline = true;
   g.add(lamp);
+  if (hasProp('laterne')) { const h = harborProp('laterne', crateWood); h.scale.setScalar(0.9); h.position.copy(lamp.position); g.add(h); }
   return { g, boxes: [[3.5, 3.5], [1, 0.8, 0, s + 0.8]], circles: [] };
 }
 
@@ -527,7 +530,7 @@ function steg(len: number): Built {
   for (const sx of [-1, 1]) { g.add(cyl(0.2, 0.22, 1.1, 6, M.darkWood, sx * 1.2, 1.9, len - 0.6)); circles.push([0.26, sx * 1.2, len - 0.6]); }
   g.add(cyl(0.08, 0.1, 2.6, 6, M.darkWood, 1.25, 2.7, len * 0.5));
   circles.push([0.18, 1.25, len * 0.5], [0.32, -0.9, len * 0.72]);
-  const lamp = new Mesh(new SphereGeometry(0.24, 10, 8), lampMat);
+  const lamp = new Mesh(new SphereGeometry(hasProp('laterne') ? 0.05 : 0.24, 10, 8), lampMat);
   lamp.position.set(1.25, 4.05, len * 0.5);
   lamp.userData.noOutline = true;
   g.add(lamp);
@@ -588,6 +591,8 @@ const harborProp = (id: PropId, wood: () => Material) => propGroup(id, (role) =>
     case 'iron': return M.iron;
     case 'brass': return toon({ color: '#E3B04B', spec: 1, metalness: 1, roughness: 0.4 });
     case 'darkwood': return M.darkWood;
+    case 'glass': return lanternGlass;
+    case 'ember': return lampMat;
     default: return wood();
   }
 });
@@ -641,7 +646,7 @@ function laterne(): Built {
   const glbPost = hasArch('laternenpfahl');
   if (glbPost) g.add(archGroup('laternenpfahl', lightMats)!);
   else g.add(cyl(0.08, 0.1, 3, 6, M.darkWood, 0, 1.5, 0), box(0.7, 0.08, 0.08, M.darkWood, 0.3, 2.9, 0));
-  const lamp = new Mesh(new SphereGeometry(glbPost ? 0.14 : 0.22, 10, 8), lampMat);
+  const lamp = new Mesh(new SphereGeometry(glbPost || hasProp('laterne') ? 0.05 : 0.22, 10, 8), lampMat);
   lamp.position.set(0.6, 2.7, 0);
   lamp.userData.noOutline = true;
   g.add(lamp);
@@ -923,6 +928,17 @@ function torhaus(): Built {
   const g = new Group();
   g.add(archGroup('torhaus', houseMats({ roof: '#3C4654', cloth: '#1F4E79' }))!);
   const off = 15 / 2 - 4.6 / 2;
+  // Wandfackeln mit Eisenhalter, leicht nach außen geneigt (Kopf bei den Flammenpunkten)
+  if (hasArch('fackel')) {
+    for (const sx of [-1, 1]) {
+      const t = archGroup('fackel', lightMats)!;
+      const tilt = 0.25;
+      t.rotation.x = tilt;
+      t.position.set(sx * 2.6, 3.2 - 1.18 * Math.cos(tilt), 3.4 - 1.18 * Math.sin(tilt));
+      g.add(t);
+      g.add(box(0.1, 0.1, 0.5, M.iron, sx * 2.6, 2.1, 3.15));
+    }
+  }
   return { g, boxes: [[4.9, 6.8, -off, 0], [4.9, 6.8, off, 0]], circles: [], glows: [{ kind: 'torch', x: -2.6, y: 3.2, z: 3.4, gy: 0, size: 0.62, pool: 5 }, { kind: 'torch', x: 2.6, y: 3.2, z: 3.4, gy: 0, size: 0.62, pool: 5 }] };
 }
 

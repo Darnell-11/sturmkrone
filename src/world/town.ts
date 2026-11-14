@@ -28,10 +28,10 @@ import { boxBlocker, type WalkIsland } from './islandGround';
 import { hasProp, propGroup } from './worldProps';
 import { markShared } from '../render/dispose';
 import { toonPbr } from '../render/pbrMaps';
-import { build as buildStruct, colliders as structColliders } from './architecture';
+import { build as buildStruct, colliders as structColliders, lightMats } from './architecture';
 import type { StructureType } from '../data/settlements';
 import type { GlowPlaced } from '../render/glow';
-import { hasArch as hasArchModel } from './envModels';
+import { hasArch as hasArchModel, hasArch, archGroup } from './envModels';
 
 // verwitterter Putz und satte, gedeckte Dachfarben (Hafenstadt, kein Ferienort)
 const WALLS = ['#E2D6BC', '#D4BF9A', '#C9CFD0', '#DCC4B0', '#CDD2BE'];
@@ -90,14 +90,20 @@ function house(w: number, d: number, h: number, wall: string, roof: string, wind
 
 function lantern(lampMat: Material, lights: Mesh[]): Group {
   const g = new Group();
+  const glb = hasArch('laternenpfahl');
+  const lamp = new Mesh(new SphereGeometry(glb ? 0.05 : 0.22, 10, 8), lampMat);
+  lamp.position.set(0.6, 2.7, 0);
+  lamp.userData.noOutline = true;
+  lights.push(lamp);
+  if (glb) {
+    // Blender-Laternenpfahl: Eisenarm, Käfig mit Glasscheiben, Messingbänder; die Kugel ist nur der Kern (und der Anker des Lichthofs)
+    g.add(archGroup('laternenpfahl', lightMats)!, lamp);
+    return g;
+  }
   const post = new Mesh(new CylinderGeometry(0.08, 0.1, 3, 6), toon('#3A2A1E'));
   post.position.y = 1.5;
   const arm = new Mesh(new BoxGeometry(0.7, 0.08, 0.08), toon('#3A2A1E'));
   arm.position.set(0.3, 2.9, 0);
-  const lamp = new Mesh(new SphereGeometry(0.22, 10, 8), lampMat);
-  lamp.position.set(0.6, 2.7, 0);
-  lamp.userData.noOutline = true;
-  lights.push(lamp);
   g.add(post, arm, lamp);
   return g;
 }

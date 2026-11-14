@@ -1,6 +1,8 @@
 import { BoxGeometry, BufferGeometry, Color, ConeGeometry, CylinderGeometry, Float32BufferAttribute, Mesh, MeshBasicMaterial, PointLight, SphereGeometry, TorusGeometry, Vector3, type Object3D, type Scene } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { markShared } from './dispose';
+import { lampFx } from './lampMaterials';
+import { flickerOf } from './glow';
 
 /**
  * Laternen an den Hüften aller Figuren (Kapitän, Bewohner, Crew, Gegner).
@@ -61,6 +63,7 @@ export const lampShared = {
   /** Tag/Nacht setzen: Glas glüht ab der Dämmerung */
   set(night: number) {
     this.night = Math.max(0, Math.min(1, (night - 0.12) / 0.55));
+    lampFx.uNight.value = this.night;
     mat.color.setScalar(0.3 + 0.7 * this.night);
   },
 };
@@ -89,10 +92,15 @@ export class LampPool {
   private bestO: (Object3D | null)[] = [];
   private bestD: number[] = [];
 
-  constructor(scene: Scene, readonly max = 4) {
+  constructor(scene: Scene, readonly max = 6) {
     for (let i = 0; i < max; i++) {
       const l = new PointLight(WARM, 0, 16, 1.5);
       l.castShadow = false;
+      l.shadow.mapSize.set(512, 512);
+      l.shadow.camera.near = 0.3;
+      l.shadow.bias = -0.0008;
+      l.shadow.normalBias = 0.04;
+      l.shadow.radius = 3;
       scene.add(l);
       this.lights.push(l);
       this.target.push(null);
@@ -106,6 +114,17 @@ export class LampPool {
     this.active = Math.max(0, Math.min(this.max, n));
     this.lights.forEach((l, i) => { l.visible = i < this.active; if (i >= this.active) { l.intensity = 0; this.target[i] = null; } });
   }
+
+  /**
+   * Das erste Licht wirft Schatten (Würfel-Schattenkarte, 512²): es gehört immer dem nächsten Feuer oder der nächsten Lampe, damit
+   * Kisten, Figuren und Geländer Schatten ins Feuerlicht werfen. Das Flag bleibt fest (ein Wechsel würde alle Materialien neu übersetzen);
+   * am Tag friert die Karte ein (`autoUpdate` aus), kostet dann nichts.
+   */
+  setShadows(on: boolean) {
+    this.shadowOn = on;
+    for (let i = 0; i < this.lights.length; i++) this.lights[i].castShadow = on && i === 0;
+  }
+  private shadowOn = false;
 
   /**
    * Jedes Bild: die nächsten Träger wählen; jedes Licht bleibt bei seinem Träger, solange er unter den nächsten ist.
@@ -122,7 +141,8 @@ export class LampPool {
     for (const o of lamps) {
       if (!o.parent) continue;
       o.getWorldPosition(this.tmp);
-      const d = (this.tmp.x - focus.x) ** 2 + (this.tmp.y - focus.y) ** 2 + (this.tmp.z - focus.z) ** 2;
+      // Feuer und Fackeln haben Vorrang vor Laternen an Figuren (zählen, als wären sie näher)
+      const d = ((this.tmp.x - focus.x) ** 2 + (this.tmp.y - focus.y) ** 2 + (this.tmp.z - focus.z) ** 2) * (o.userData.fire === true ? 0.5 : 1);
       if (d > 45 * 45) continue;
       if (count === n && d >= this.bestD[n - 1]) continue;
       let i = count < n ? count : n - 1;
@@ -132,6 +152,20 @@ export class LampPool {
     }
     const inBest = (o: Object3D | null) => { if (!o) return false; for (let k = 0; k < count; k++) if (this.bestO[k] === o) return true; return false; };
     const taken = (o: Object3D) => { for (let k = 0; k < n; k++) if (this.target[k] === o) return true; return false; };
+    // Schattenlicht (Index 0) gehört dem nächsten Träger: Ziele samt Helligkeit tauschen, wenn ein anderer deutlich näher ist
+    if (this.shadowOn && count > 0) {
+      const near = this.bestO[0];
+      const j = near ? this.target.indexOf(near) : -1;
+      if (j > 0 && j < n) {
+        const t0 = this.target[0];
+        let d0 = Infinity;
+        if (t0 && t0.parent) { t0.getWorldPosition(this.tmp); d0 = ((this.tmp.x - focus.x) ** 2 + (this.tmp.y - focus.y) ** 2 + (this.tmp.z - focus.z) ** 2) * (t0.userData.fire === true ? 0.5 : 1); }
+        if (this.bestD[0] < d0 * 0.6) {
+          this.target[0] = near; this.target[j] = t0;
+          const li = this.lights[0].intensity; this.lights[0].intensity = this.lights[j].intensity; this.lights[j].intensity = li;
+        }
+      }
+    }
     for (let i = 0; i < n; i++) {
       const l = this.lights[i];
       let tg = this.target[i];
@@ -146,16 +180,20 @@ export class LampPool {
       }
       this.place(l, tg);
       // sanftes Flackern, je Licht eigene Phase
-      const fl = 1 + 0.06 * Math.sin(this.t * 9.1 + i * 2.3) + 0.04 * Math.sin(this.t * 17.3 + i);
+      // Flackern im Takt der sichtbaren Flamme (gleiche Funktion und Phase wie das GlowSystem); Laternen ruhiger
+      const seed = (tg.userData.seed as number | undefined) ?? i * 7.3;
+      const fl = 1 + (flickerOf(this.t, seed) - 1) * 0.3;
       // Feuer und Fackeln (feste Träger) brennen auch am Tag ein wenig und leuchten kräftiger und weiter als Laternen an Figuren
       const fire = tg.userData.fire === true;
       const k = (tg.userData.lightK as number | undefined) ?? 1;
-      const fl2 = fire ? fl + 0.12 * Math.sin(this.t * 13.7 + i * 1.9) + 0.07 * Math.sin(this.t * 31 + i) : fl;
-      const want = 2.8 * (fire ? Math.max(night, 0.22) : night) * k * fl2;
+      const fl2 = fire ? 1 + (flickerOf(this.t, seed) - 1) * 1.15 : fl;
+      const want = (fire ? 5.2 : 2.8) * (fire ? Math.max(night, 0.22) : night) * k * fl2;
       l.color.copy(fire ? FIRE_L : WARM);
       l.distance = fire ? 28 : 16;
       l.intensity += (want - l.intensity) * Math.min(1, dt * 10);
     }
+    // Schattenkarte nur rechnen, solange das Licht leuchtet
+    if (this.shadowOn) this.lights[0].shadow.autoUpdate = this.lights[0].intensity > 0.25 || !this.lights[0].shadow.map;
   }
 
   /** Licht an die Laterne setzen, etwas von der Figur weg nach außen (sonst blendet es Haut und Kleidung des Trägers aus) */

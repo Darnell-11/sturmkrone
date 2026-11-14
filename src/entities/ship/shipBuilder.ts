@@ -30,6 +30,7 @@ import {
 import type { FigureheadId, FlagId, ShipClass, ShipLook } from '../../data/ships';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { addOutlines } from '../../render/outline';
+import { lanternGlass } from '../../render/lampMaterials';
 import { oakTexture, plankTexture, sailTexture } from '../../render/textures';
 import { sharedGeo } from '../../render/geoCache';
 import { disposeGeometry, markShared } from '../../render/dispose';
@@ -1185,7 +1186,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     const lightSpots = new Set<number[]>([spots[0], spots[spots.length - 1]]);
     for (const p of spots) {
       const ls = Math.min(1.5, sc);
-      const l = new Mesh(new SphereGeometry(0.22 * ls, 10, 8), lampMat);
+      const l = new Mesh(new SphereGeometry(hasProp('laterne') ? 0.045 * ls : 0.22 * ls, 10, 8), lampMat);
       l.position.set(p[0], p[1], p[2]);
       l.userData.noOutline = true;
       group.add(l);
@@ -1905,6 +1906,8 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
         case 'iron': return iron2;
         case 'bronze': return cu2;
         case 'brass': return gold2;
+        case 'glass': return lanternGlass;
+        case 'ember': return GLOW_LAMP;
         case 'dark': return dark2;
         case 'darkwood': return darkWood;
         default: return id === 'fass' ? barrelCol : id === 'kiste' ? crateCol : wood;
