@@ -30,6 +30,7 @@ import { markShared } from '../render/dispose';
 import { toonPbr } from '../render/pbrMaps';
 import { build as buildStruct, colliders as structColliders } from './architecture';
 import type { StructureType } from '../data/settlements';
+import type { GlowPlaced } from '../render/glow';
 import { hasArch as hasArchModel } from './envModels';
 
 // verwitterter Putz und satte, gedeckte Dachfarben (Hafenstadt, kein Ferienort)
@@ -42,6 +43,8 @@ export interface TownBuild {
   lights: Mesh[];
   crystal: Mesh | null;
   smoke: Vector3[];
+  /** Lichthöfe und Bodenlicht der Bauten (Inselkoordinaten) für das GlowSystem */
+  glows: GlowPlaced[];
 }
 
 /** Gebäude: Wände, Satteldach, Tür, Fenster, Fundament */
@@ -399,6 +402,8 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   const trnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
   /** Blender-Bau (world/architecture.ts) aufstellen: mit Kollisionsgitter, Rauch und seinen Fenstern */
   let smokeN = 0;
+  const townGlows: TownBuild['glows'] = [];
+  let windowGlows = 0;
   const placeB = (t: StructureType, x: number, z: number, yaw: number, len = 8) => {
     const b = buildStruct(t, trnd, len);
     const wx = cx + x, wz = cz + z;
@@ -407,6 +412,11 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
     group.add(b.g);
     for (const c of structColliders(b, wx, wz, yaw)) walk.blockers.push(c);
     if (b.smoke && smokeN++ % 3 === 0) smoke.push(new Vector3(wx + b.smoke[0] * Math.cos(yaw) + b.smoke[2] * Math.sin(yaw), groundAt(wx, wz) + b.smoke[1], wz - b.smoke[0] * Math.sin(yaw) + b.smoke[2] * Math.cos(yaw)));
+    const c0 = Math.cos(yaw), s0 = Math.sin(yaw), gy0 = groundAt(wx, wz);
+    for (const gl of b.glows ?? []) {
+      if (gl.kind === 'window' && windowGlows++ > 140) continue;   // Obergrenze: das GlowSystem zeichnet nur die nächsten
+      townGlows.push({ kind: gl.kind, x: x + gl.x * c0 + gl.z * s0, y: gy0 + gl.y, z: z - gl.x * s0 + gl.z * c0, ground: gl.gy == null ? null : gy0 + gl.gy, size: gl.size, pool: gl.pool, pdx: (gl.px ?? 0) * c0 + (gl.pz ?? 0) * s0, pdz: -(gl.px ?? 0) * s0 + (gl.pz ?? 0) * c0, glint: gl.glint });
+    }
     return b;
   };
 
@@ -716,7 +726,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   STREETS.forEach((st) => group.add(roadMesh(st.pts, st.w + 1.7, cx, cz, groundAt, dirtMaterial(0), 0.075)));
   STREETS.forEach((st, i) => group.add(roadMesh(st.pts, st.w, cx, cz, groundAt, layered(i + 1))));
   group.add(plazaMesh(16, cx, cz, groundAt, layered(0)));
-  return { group, lights: glow, crystal, smoke };
+  return { group, lights: glow, crystal, smoke, glows: townGlows };
 }
 
 /** Statische Teile pro Material zusammenfassen (wenige Zeichenaufrufe) */

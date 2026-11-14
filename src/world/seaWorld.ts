@@ -530,6 +530,7 @@ export class SeaWorld {
         this.piers.push({ ax: s.x, az: s.z - r + 5, bx: s.x, bz: s.z - r - 41, hw: 2.4, y: 1.65 });
         this.town = buildTown(s.def, walk, (x, z) => { const h = this.ground.height(x, z); return Number.isFinite(h) ? h : 1.3; });
         this.scene.add(this.town.group);
+        this.addGlows(this.town.glows.map((g2) => ({ ...g2, x: g2.x, z: g2.z })), s.x, s.z);
         // Laternen der Hafenstadt: Lichthof und Bodenlicht (Glas-Kugeln aus town.ts; Fensterflächen leuchten selbst)
         this.town.group.updateMatrixWorld(true);
         const tq = new Quaternion();

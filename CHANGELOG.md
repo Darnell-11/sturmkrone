@@ -1,5 +1,19 @@
 # Was ist neu
 
+## 2.9.70 – Welt 2, zweiter Durchgang: Stege, Burgringe, Straßenstadt, Relief (14.11.2026)
+
+Rückmeldung zu 2.9.69 abgearbeitet: Burgen, Tore, Anfangshafen, Stege, Boden und Texturen.
+
+- **Stege begehbar:** neues `Pier`-System in `islandGround.ts`. Man läuft auf den Stegen bis zur Spitze, über den Wasserrand hinaus nur auf dem Steg. Anlegen (`collidePiers`) gleitet seitlich am Steg entlang und richtet das Schiff aus; „An Bord gehen“ greift früher (Abstand < 16 m oder Schiffsreichweite < 26 m); beim Anlegen steht man auf dem Steg neben dem Schiff. Pier-Höhen: Außenposten und Stellen 1,45 m, Stadt 1,65 m.
+- **Burgen mit Logik:** `curtainWall` baut einen geschlossenen Mauerring (Wehrgang-Kanten 7 m, Tore 15 m, Türme an jeder dritten Kante) mit Straßen im Hof (`courtRoads`) und der Festung (`fortress`: Bergfried, Kapelle, Lagerhäuser, Kaserne). Das Torhaus (`build_arch2.py`) hat einen gewölbten Durchgang mit Mauerwerk (`vault_fill`); die hellen Platten im Tor waren durchgehende Steinbänder (`courses` mit `cx`). Tiefere Fundamente an Mauer, Turm, Torhaus und Bergfried.
+- **Ankerglück als Straßenstadt:** Hauptstraße vom Hafentor, Ring- und Außenring, vier Gassen, Kaistraße; Häuser stehen an den Straßen mit Tür zur Straße, Zäune mit Lücke, Kisten und Karren, Laternen alle 13 m, Lagerhäuser und Hafenmeisterei an der Kaistraße. Kopfsteinpflaster mit Erdrand (`cobbleMaterial`, `dirtMaterial`, `roadMesh`).
+- **Relief:** `islandTerrain` baut Strand, Gras und Hügel als Polargitter mit gemeinsamer Höhenfunktion; `IslandGround` kennt das Relief (`reliefAt`), es klingt zum Wasserrand auf 0 ab. Man läuft über echte Hügel statt Flachland.
+- **Texturen:** Stein-, Ziegel- und Putz-Shader mit Tangentenraum aus Sicht-Ableitungen und Pixel-Footprint-LOD (das Gekritzel kam von numerisch instabilen Weltkoordinaten bis 3000 m); dunklerer Mörtel, Wiesenflecken im Gras.
+- **Bewuchs:** dichtere Büschel, Blumen und Gras, Pflanzen je Biom, Bodenbelag (Kiesel, Strandgras, Stümpfe, Stämme, Pilze), Schilf an Ufern, Dornenbusch nur auf Klippen.
+- **Licht:** Fenster- und Straßenlichter der Stadt melden sich bei `GlowSystem` an (`TownBuild.glows`), wärmeres Bodenlicht der Hemisphäre, hellere Aschepalette auf Glutheim.
+- **Fix:** Kajüte war zu Fuß nicht erreichbar (Türlücke fehlte in `DeckGround`).
+- **Geprüft:** alle 37 Inseln aus der Luft, Kollisionsprüfung der Gebäudeboxen (nur 1–2 m Berührung an Mauern/Türmen), Nachtansicht, Leistung ca. 760–810 Aufrufe und 1,4 Mio. Dreiecke je Bild auf Ultra bei 59 fps, `npm test`, Produktions-Build.
+
 ## 2.9.69 – Welt 2: Blender-Inseln, Piratenstädte, Burgen, neue Pflanzen (14.11.2026)
 
 **Wichtigster Fund: die Blender-Modelle der Welt waren nie auf den Inseln.** `SeaWorld` baut die Inseln im Konstruktor des Spiels, die Modelle (Palmen, Bäume, Häuser, Türme …) luden erst danach in `Game.start()`. Deshalb standen auf allen Inseln und in Ankerglück die alten Eigenbau-Formen (Sternpalmen, Kistenhäuser). `main.ts` lädt Pflanzen, Bauten und Welt-Props jetzt vor dem Spiel (`loadEnvModels`, `loadArchModels`, `loadWorldProps`, Doppelladen wird übersprungen).
