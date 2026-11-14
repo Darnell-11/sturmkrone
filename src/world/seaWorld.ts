@@ -25,6 +25,7 @@ import { CAMERA_PLANES, type QualityConfig } from '../data/qualityTiers';
 import { EDGE_WALL, WORLD_SCALE } from '../data/world';
 import type { CharacterAssets } from '../entities/character/assets';
 import { LampPool, lampShared } from '../render/lamps';
+import { installMatrixSkip } from '../render/matrixSkip';
 import { GlowSystem, glowHub, makeEmitter, type GlowPlaced } from '../render/glow';
 import { Character } from '../entities/character/character';
 import { shieldFor, weaponsFor } from '../entities/character/weapons';
@@ -311,6 +312,7 @@ export class SeaWorld {
   private npcTmp = new Vector3();
 
   constructor() {
+    installMatrixSkip(this.scene);
     this.env = new Environment(this.scene);
     this.ship = new Ship(this.scene, 0, DEFAULT_SHIP_LOOK('pirat'), 'pirat', 0, true);
     this.boat = this.ship.model.group;

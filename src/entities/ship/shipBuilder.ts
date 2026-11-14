@@ -1890,6 +1890,9 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   topGroup.add(castleTop); // sitzt bei z = 0 (die Form steckt in der Geometrie), die Suche unten fände es nicht
   for (const o of [...group.children]) {
     if (o === topGroup) continue;
+    // Lichter bleiben außerhalb des Dachs: verschwindet ein Licht beim Ausblenden, ändert sich die Lichtzahl und three.js übersetzt
+    // alle beleuchteten Materialien neu (beim Betreten der Kajüte stand das Bild dadurch mehrere Sekunden)
+    if ((o as { isLight?: boolean }).isLight) continue;
     if (o.position.y >= D + castleH - 0.01 && o.position.z > castleZ0 - 0.3 && o.position.z < castleZ1 + 0.1 && Math.abs(o.position.x) < c.W) topGroup.add(o);
   }
   blockers.push(...cabinBlockers);

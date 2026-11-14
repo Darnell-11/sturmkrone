@@ -1,5 +1,16 @@
 # Was ist neu
 
+## 2.9.75 – Leistung: Kajüte, Gegner-Spawn, Matrizen (14.11.2026)
+
+Gemessen mit einem Prüfaufbau im Entwicklungsserver (Zeit je Bild mit Grafikkarten-Abschluss, Chrome-Profiler, Programmzähler); Grafik und Details unverändert.
+
+- **Kajüte betreten (Hänger von bis zu 7 s):** Eine Schiffslaterne (Punktlicht) hing im Kajütendach. Beim Ausblenden des Daches änderte sich die Lichtzahl von 6 auf 5, three.js übersetzte alle beleuchteten Materialien neu (43 Programme). Lichter bleiben jetzt außerhalb des Dachs (`shipBuilder.ts`). Danach: 11–15 ms je Bild beim Betreten, keine neuen Programme.
+- **Gegner- und Schiffs-Spawn:** three.js gab die Shader-Programme eines Gegners frei, sobald der letzte seiner Art verschwand, und übersetzte sie beim nächsten Spawn neu (Bilder von 120–140 ms). `Renderer.pinPrograms()` hält jedes übersetzte Programm dauerhaft (rund 300, wenig Speicher). Jedes Programm wird nur noch einmal übersetzt; Spawn von vier Gegnern: erstes Bild 22–27 ms statt 120–140 ms.
+- **Matrizen (`render/matrixSkip.ts`):** Rund 70 % der 14 800 Szenenobjekte liegen in ausgeblendeten Gruppen (Inseln außer Sichtweite, ruhende Figuren). `Scene.updateMatrixWorld` besuchte sie trotzdem (etwa 3,3 ms je Bild). Die Aktualisierung der Szene überspringt jetzt Unsichtbares; direkte Aufrufe (`getWorldPosition`, `group.updateMatrixWorld(true)`) rechnen unverändert. Hafenstadt bei Nacht: 12,2 → 8,9 ms je Bild (zusammen mit dem nächsten Punkt).
+- **Gesichtsteile:** durchscheinende, doppelseitige Karten (Wimpern, Augen, Glanz; 108 Netze) zeichnete three.js in zwei Durchgängen und stieß dabei je Teil und Bild die Programmsuche an (`needsUpdate`). Sie laufen jetzt in einem Durchgang (`forceSinglePass`); Pixelvergleich gegen die alte Fassung: kein Unterschied über dem Rauschen.
+- **Geprüft ohne Befund (kein Leck):** 8 × 2200 Bilder in der Stadt, wiederholtes An- und Von-Bord-Gehen auf vier Inseln mit Gegnern und Kills, fünf Seegefechte mit Beschuss und Versenken: Geometrien, Texturen, Programme und Szenenobjekte bleiben flach (ein Seegefecht lässt rund 3 Objekte zurück, Kisten, harmlos). Bildzeit schwankt nur mit Tageszeit und Wetter (Nacht und Sturm kosten mehr).
+- **Bekannt, nicht geändert (würde Grafik ändern oder ist riskant):** Konturen als Hüllen auf Niedrig/Mittel verdoppeln die Dreiecke der Welt; Figuren haben je Netz ein eigenes Skelett (rund 158 Knochen-Texturen je Bild); der Heap liegt bei rund 500 MB (CPU-Kopien der Geometrien); echte Handys nicht gemessen.
+
 ## 2.9.74 – Veröffentlichung: Schiffe 2, Welt 2, Figuren und neues Licht zusammen (14.11.2026)
 
 - **Schiffe 2 ist jetzt Standard** auf der veröffentlichten Seite (`core/flags.ts`). Mit `?schiffe2=aus` hinter der Adresse kommt die bisherige Schiffsfassung zurück, mit `?schiffe2` wieder die neue (der Browser merkt sich die Wahl).

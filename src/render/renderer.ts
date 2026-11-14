@@ -2,6 +2,7 @@ import {
   ACESFilmicToneMapping,
   AdditiveBlending,
   CustomBlending,
+  DoubleSide,
   HalfFloatType,
   NormalBlending,
   OneFactor,
@@ -16,6 +17,7 @@ import {
   type Mesh,
   type PerspectiveCamera,
   type Scene,
+  type SkinnedMesh,
   Vector3,
 } from 'three';
 import {
@@ -334,6 +336,9 @@ export class GameRenderer {
       for (const mat of Array.isArray(m) ? m : [m]) {
         // Sicherheitsnetz: neu hinzugekommene beleuchtete Materialien zählen die Schatten-Kaskaden als ein Licht
         if (ensureCsm(mat)) mat.needsUpdate = true;
+        // Durchscheinende Gesichtsteile (Wimpern, Augen, Glanz) sind flache Karten ohne Tiefenschreiben: three.js zeichnete sie in zwei Durchgängen
+        // (Rück-, dann Vorderseite) und stieß dabei je Teil, Durchgang und Bild die Programmsuche an (needsUpdate); ein Durchgang sieht gleich aus
+        if (mat.transparent && !mat.depthWrite && mat.side === DoubleSide && (o as SkinnedMesh).isSkinnedMesh) mat.forceSinglePass = true;
         if (!mat.transparent || mat.userData.maskKept) continue;
         mat.userData.maskKept = true;
         const additive = mat.blending === AdditiveBlending;
@@ -391,6 +396,22 @@ export class GameRenderer {
       // Ohne Nachbearbeitung selbst löschen (der Composer schaltet autoClear ab – sonst bleiben alte Bilder stehen)
       this.gl.autoClear = true;
       this.gl.render(this.scene, this.camera);
+    }
+    this.pinPrograms();
+  }
+
+  /**
+   * Übersetzte Shader-Programme dauerhaft behalten. three.js gibt ein Programm frei, sobald kein Material es mehr nutzt
+   * (zum Beispiel wenn der letzte Gegner einer Art verschwindet) und übersetzt es beim nächsten Auftauchen neu – das kostete
+   * je Programm 50 bis 150 ms Stillstand beim Spawn von Gegnern und Schiffen. Ein zusätzlicher Verweis hält es am Leben
+   * (rund 300 Programme, das ist wenig Speicher).
+   */
+  private pinPrograms() {
+    const list = this.gl.info.programs as unknown as { usedTimes: number; pinned?: boolean }[] | null;
+    if (!list) return;
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
+      if (!p.pinned) { p.pinned = true; p.usedTimes++; }
     }
   }
 }
