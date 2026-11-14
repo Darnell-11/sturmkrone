@@ -722,8 +722,9 @@ export class VroidBase {
    * dem Gesäß nach vorn zurück. Lage in Körper-Einheiten wie die Hautpunkte; Gewichte und Rand-Abstand sind mit dabei.
    */
   private capes = new Map<string, BufferGeometry | null>();
-  cape(len: 'kurz' | 'lang' | 'schlepp'): BufferGeometry | null {
-    if (this.capes.has(len)) return this.capes.get(len)!;
+  cape(len: 'kurz' | 'lang' | 'schlepp', overCoat = false): BufferGeometry | null {
+    const key = overCoat ? len + '+m' : len;
+    if (this.capes.has(key)) return this.capes.get(key)!;
     const body = this.bodySkin(this.template);
     if (!body) return null;
     this.template.updateMatrixWorld(true);
@@ -751,14 +752,21 @@ export class VroidBase {
     for (let r = 0; r < rows; r++) {
       run = Math.min(run, zmin[r]);
       const t = r / (rows - 1);
-      // Abstand zum Rücken: oben über den Schulterblättern, unten weiter; um das Gesäß ein Wulst (die Hüfte dreht in der Bewegung)
+      // Abstand zum Rücken: oben locker über den Schulterblättern, am Gesäß nur ein Fingerbreit (der Stoff liegt auf), darunter fällt er
+      // senkrecht vom hintersten Punkt des Gesäßes (run bleibt dort stehen) und weitet sich erst am Saum zur Schleppe
+      const flare = Math.pow(Math.max(0, (t - 0.55) / 0.45), 2) * (len === 'schlepp' ? 0.11 : len === 'lang' ? 0.045 : 0.02);
+      // oben so weit, dass Kürass und Jacke darunter Platz haben (sonst reißt der Stoff Löcher), bis zur Hüfte eng
+      const top = 1 - Math.min(1, t / 0.42);
+      // über einem langen Mantel oder Rock (kilt): deren Schöße weiten sich nach unten (siehe garmentOffset) – der Umhang liegt darüber
       const y = yTop - r * dy;
-      const butt = Math.exp(-(((y - (hipsY - 0.07)) / 0.09) ** 2)) * 0.045;
-      zc[r] = run - (0.062 + (len === 'schlepp' ? 0.12 : 0.07) * Math.pow(t, 1.1) + butt * 1.4);
+      const coatGap = overCoat && y < hipsY + 0.05 ? Math.min(0.125, 0.082 + (hipsY - y) * 0.12) : 0;
+      // um die Taille liegt der Gürtel unter dem Umhang: dort ein Stück weiter, darunter wieder eng am Gesäß
+      const waist = 0.022 * Math.exp(-(((y - hipsY) / 0.12) ** 2));
+      zc[r] = run - Math.max(0.04 + 0.036 * top * top * (3 - 2 * top) + waist + flare, coatGap);
     }
     const hemW = len === 'kurz' ? 0.2 : len === 'lang' ? 0.25 : 0.3;
     const n = rows * cols;
-    const world = new Float32Array(n * 3), rim = new Float32Array(n);
+    const world = new Float32Array(n * 3), rim = new Float32Array(n), capeK = new Float32Array(n);
     const bones = body.skeleton.bones;
     const bi = (re: RegExp) => Math.max(0, bones.findIndex((b) => re.test(b.name)));
     const iUC = bi(/J_Bip_C_UpperChest$/), iCh = bi(/J_Bip_C_Chest$/), iSp = bi(/J_Bip_C_Spine$/), iHp = bi(/J_Bip_C_Hips$/), iLL = bi(/J_Bip_L_UpperLeg$/), iRL = bi(/J_Bip_R_UpperLeg$/);
@@ -776,6 +784,8 @@ export class VroidBase {
         const z = zc[r] + u * u * w * (0.85 - t * 0.35) + Math.sin(u * Math.PI * 3.2 + 0.6) * 0.011 * Math.min(1, t * 2.4);
         world[j * 3] = x; world[j * 3 + 1] = y; world[j * 3 + 2] = z;
         rim[j] = Math.min(r * dy, (rows - 1 - r) * dy, (1 - Math.abs(u)) * w * 0.9);
+        // Schwingung im Shader: 0 am Nacken, 1 am Saum (nach dem Gesäß erst, davor sitzt der Stoff fest)
+        capeK[j] = Math.pow(Math.max(0, (t - 0.18) / 0.82), 1.4);
         const hipsW = (1 - low * 0.5) * up * up, spineW = up * (1 - up) * 2 * (1 - low * 0.5);
         const chestW = Math.max(0, 1 - up * 1.35);
         const wl: [number, number][] = [[iUC, chestW * 0.5], [iCh, chestW * 0.5 + spineW * 0.25], [iSp, spineW * 0.75], [iHp, hipsW], [x > 0 ? iLL : iRL, low * 0.5 * up]];
@@ -798,11 +808,12 @@ export class VroidBase {
     out.setAttribute('skinIndex', new BufferAttribute(si, 4));
     out.setAttribute('skinWeight', new BufferAttribute(sw, 4));
     out.setAttribute('rimD', new BufferAttribute(rim, 1));
+    out.setAttribute('capeK', new BufferAttribute(capeK, 1));
     out.setIndex(T);
     out.computeVertexNormals();
     out.computeBoundingSphere();
     if (out.boundingSphere) out.boundingSphere.radius *= 1.6;
-    this.capes.set(len, markShared(out));
+    this.capes.set(key, markShared(out));
     return out;
   }
 

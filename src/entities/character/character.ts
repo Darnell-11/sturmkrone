@@ -28,8 +28,8 @@ import { audio } from '../../audio/audio';
 import { WeaponTrail } from '../../render/weaponTrail';
 import { createLamp } from '../../render/lamps';
 import { glowHub, makeEmitter } from '../../render/glow';
-import { Quaternion, Vector3 as V3, type Scene } from 'three';
-import type { ColorRepresentation, Material, Mesh } from 'three';
+import { Quaternion, Vector3 as V3, Vector4, type Scene } from 'three';
+import type { ColorRepresentation, Material, Mesh, MeshToonMaterial } from 'three';
 import { disposeObject, markShared } from '../../render/dispose';
 import type { CharacterAssets } from './assets';
 import { buildCharacterGeometry, LIMB_EXT } from './builder';
@@ -386,6 +386,7 @@ export class Character {
     for (const k of ['r', 'l'] as const) { const h = this.heldSkin[k]; if (h?.parent) h.parent.remove(h); }
     this.heldSkin = { r: null, l: null };
     this.garments = [];
+    this.capeU = [];
     this.garmentIndex = null;
     for (const k of this.masked) { k.mesh.geometry = k.src; releaseShared(k.geo, !!engine?.release(k.index)); }
     this.masked = [];
@@ -460,7 +461,7 @@ export class Character {
       this.garmentIndex = index !== set.index ? index : null;
       this.addShells(body, set, index, R.shells);
     }
-    if (body?.parent && R.cape) this.addCape(vb, body, R.cape);
+    if (body?.parent && R.cape) this.addCape(vb, body, R.cape, R.ctx.coat === 'lang' || this.worn.includes('kilt'));
     // Modelle aus Blender: Stiefel, Hose, Gehrock (am Körper) und Hut, Frisur (an einem Knochen)
     if (body?.parent) for (const g of R.glb) {
       const model = glbModel(g.model);
@@ -604,12 +605,12 @@ export class Character {
   }
 
   /** Umhang als eigenes Netz am Skelett (Form und Gewichte kommen von der Grundfigur, Farbe und Borte von der Figur) */
-  private addCape(vb: VroidBase, body: SkinnedMesh, c: NonNullable<ResolvedLoadout['cape']>) {
-    const g0 = vb.cape(c.len);
+  private addCape(vb: VroidBase, body: SkinnedMesh, c: NonNullable<ResolvedLoadout['cape']>, overCoat = false) {
+    const g0 = vb.cape(c.len, overCoat);
     if (!g0) return;
     const n = g0.attributes.position.count;
     const geo = new BufferGeometry();
-    for (const name of ['position', 'normal', 'skinIndex', 'skinWeight', 'rimD'] as const) geo.setAttribute(name, g0.attributes[name]);
+    for (const name of ['position', 'normal', 'skinIndex', 'skinWeight', 'rimD', 'capeK'] as const) geo.setAttribute(name, g0.attributes[name]);
     geo.setIndex(g0.index);
     geo.boundingSphere = g0.boundingSphere;
     const col = new Float32Array(n * 3), trimC = new Float32Array(n * 3), patC = new Float32Array(n * 3), gset = new Float32Array(n * 4);
@@ -622,7 +623,26 @@ export class Character {
     geo.setAttribute('trimC', new BufferAttribute(trimC, 3));
     geo.setAttribute('patC', new BufferAttribute(patC, 3));
     geo.setAttribute('gset', new BufferAttribute(gset, 4));
-    const mat = finishMat(c.spec.finish, '#ffffff', { vertexColors: true, rim: 0.8, trim: true });
+    // eigenes Material je Umhang: Wehen und Schwingen laufen über Werte, die diese Figur setzt (siehe update)
+    const mat = finishMat(c.spec.finish, '#ffffff', { vertexColors: true, rim: 0.8, trim: true, unique: true }) as MeshToonMaterial;
+    const U = { value: new Vector4(0, 0, 0.006, 0) };
+    const prev = mat.onBeforeCompile, prevKey = mat.customProgramCacheKey.bind(mat);
+    mat.onBeforeCompile = (sh, r) => {
+      prev.call(mat, sh, r);
+      sh.uniforms.uCape = U;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float capeK;\nuniform vec4 uCape;')
+        .replace('#include <skinning_vertex>', `#include <skinning_vertex>
+        {
+          // Stoff schwingt: weht beim Laufen nach hinten, flattert leicht in Wellen; oben am Nacken bleibt er fest
+          float ck = capeK;
+          transformed.z -= (uCape.x + sin(uCape.w * 1.7 + transformed.y * 5.0) * uCape.z) * ck;
+          transformed.x += (uCape.y + sin(uCape.w * 2.3 + transformed.y * 6.0 + transformed.x * 9.0) * uCape.z * 0.5) * ck;
+          transformed.y += uCape.x * ck * ck * 0.3;
+        }`);
+    };
+    mat.customProgramCacheKey = () => prevKey() + '-cape';
+    this.capeU.push(U);
     const m = new SkinnedMesh(geo, mat);
     m.bind(body.skeleton, body.bindMatrix);
     m.castShadow = true;
@@ -631,6 +651,24 @@ export class Character {
     m.userData.parts = [];
     body.parent!.add(m);
     this.garments.push(m);
+  }
+
+  /** Umhang-Schwingung: gemessen an der Bewegung der Hüfte (m/s), geglättet */
+  private capeU: { value: Vector4 }[] = [];
+  private capeT = 0;
+  private capeFlow = 0;
+  private capeLast = new Vector3();
+  private capeHas = false;
+  private updateCape(dt: number) {
+    if (!this.capeU.length || dt <= 0) return;
+    this.capeT += dt;
+    const hp = this.bones.hips.getWorldPosition(tmpA);
+    const sp = this.capeHas ? Math.min(8, Math.hypot(hp.x - this.capeLast.x, hp.z - this.capeLast.z) / dt) : 0;
+    this.capeLast.copy(hp);
+    this.capeHas = true;
+    this.capeFlow += (Math.min(1, sp / 4) - this.capeFlow) * Math.min(1, dt * 5);
+    const f = this.capeFlow;
+    for (const u of this.capeU) u.value.set(0.015 + f * 0.17, Math.sin(this.capeT * 1.1) * 0.01 * (1 - f * 0.5), 0.005 + f * 0.022, this.capeT * (1.3 + f * 3));
   }
 
   /** Hüllkugel aller Netze der Figur: folgt der Hüfte (siehe CULL_RADIUS) */
@@ -1061,6 +1099,7 @@ export class Character {
     this.mixer.update(dt);
     this.syncCull();
     this.applyLean();
+    this.updateCape(dt);
     if (this.lamp) {
       // die Laterne pendelt leicht, beim Gehen stärker
       const lt = performance.now() * 0.001 + this.lampPhase;
@@ -1169,7 +1208,7 @@ function releaseShared(g: BufferGeometry, freeIndex: boolean, own: string[] = []
 /** Kleidung teilt Lage, Gewichte und Dreiecksliste: nur die eigenen Farben freigeben */
 function releaseGarment(m: SkinnedMesh, freeIndex: boolean) {
   const g = m.geometry;
-  for (const name of ['position', 'normal', 'uv', 'skinIndex', 'skinWeight', 'stripe', 'rimD']) g.deleteAttribute(name);
+  for (const name of ['position', 'normal', 'uv', 'skinIndex', 'skinWeight', 'stripe', 'rimD', 'capeK']) g.deleteAttribute(name);
   if (!freeIndex) g.setIndex(null);
   disposeObject(m);
 }

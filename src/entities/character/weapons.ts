@@ -15,6 +15,8 @@ import {
 import type { StyleId } from '../../data/animations';
 import { addOutlines } from '../../render/outline';
 import { toon } from '../../render/toon';
+import { glbModel } from './gear/glbGear';
+import { finishMat, glowMat } from './gear/kit';
 
 /** Klingenfarben je Waffenstufe (aus 1.0: Rostiger Säbel … Himmelsschneide) */
 export interface WeaponLook { blade: string; glow?: boolean }
@@ -34,7 +36,9 @@ function bladeGeo(length: number, width: number, curve: number): BufferGeometry 
   return g;
 }
 
-function sword(length: number, width: number, curve: number, look: WeaponLook, twoHanded = false): Group {
+function sword(length: number, width: number, curve: number, look: WeaponLook, twoHanded = false, model?: string): Group {
+  const fromModel = model ? glbWeapon(model, look, [0.12 + length * 0.22, curve, 0.12 + length]) : null;
+  if (fromModel) return fromModel;
   const g = new Group();
   const bladeMat = toon({ color: look.blade, spec: 1, emissive: look.glow ? new Color(look.blade).multiplyScalar(0.35) : 0x000000 });
   const blade = new Mesh(bladeGeo(length, width, curve), bladeMat);
@@ -61,6 +65,37 @@ function sword(length: number, width: number, curve: number, look: WeaponLook, t
   return g;
 }
 
+
+/**
+ * Waffe aus einem Blender-Modell (public/models/gear/w_*.glb, tools/blender/build_waffen2.py): Rollen → Oberflächen.
+ * steel = Klinge in der Stufenfarbe, gold = Beschläge, leather = Griff, dark/cloth = Wicklung, glow = Edelsteine (leuchten bei Leuchtklingen in der Klingenfarbe).
+ * Liefert null, wenn das Modell fehlt (dann bleibt die Eigenbau-Form).
+ */
+function glbWeapon(model: string, look: WeaponLook, trail: [number, number, number]): Group | null {
+  const m = glbModel(model);
+  if (!m) return null;
+  const g = new Group();
+  const col = new Color(look.blade);
+  for (const [role, geo] of m.roles) {
+    let mat;
+    switch (role) {
+      case 'steel': mat = toon({ color: look.blade, surface: 'steel', spec: 1, metalness: 0.62, roughness: 0.34, rim: 0.9, emissive: look.glow ? col.clone().multiplyScalar(0.3) : 0x000000 }); break;
+      case 'gold': mat = finishMat('gold', GUARD); break;
+      case 'leather': mat = finishMat('leder', HANDLE); break;
+      case 'dark': mat = finishMat('dunkelstahl', '#33343C'); break;
+      case 'cloth': mat = finishMat('stoff', '#7A1E22'); break;
+      case 'glow': mat = glowMat(look.glow ? `#${col.getHexString()}` : '#FF6A3A', look.glow ? 2.6 : 1.8); break;
+      default: mat = finishMat('stahl', '#B8C0C8');
+    }
+    const mesh = new Mesh(geo, mat);
+    mesh.castShadow = true;
+    g.add(mesh);
+  }
+  addOutlines(g, 0.7);
+  trailMarks(g, trail[0], trail[1], trail[2]);
+  return g;
+}
+
 /** Unsichtbare Punkte, zwischen denen der Waffenschweif gespannt wird */
 function trailMarks(g: Group, baseY: number, tipX: number, tipY: number) {
   const b = new Object3D(); b.name = 'trailBase'; b.position.set(tipX * 0.2, baseY, 0);
@@ -70,9 +105,11 @@ function trailMarks(g: Group, baseY: number, tipX: number, tipY: number) {
 
 /** Leuchtende Faji-Kugel über der Hand */
 function orb(color: string, size = 1): Group {
+  const fokus = glbModel('w_fokus') ? glbWeapon('w_fokus', { blade: color, glow: true }, [0.0, 0.0, 0.16]) : null;
   const g = new Group();
   g.scale.setScalar(size);
-  const core = new Mesh(new SphereGeometry(0.09, 16, 12), new MeshBasicMaterial({ color: new Color(color).multiplyScalar(3) }));
+  const core = new Mesh(new SphereGeometry(fokus ? 0.001 : 0.09, 16, 12), new MeshBasicMaterial({ color: new Color(color).multiplyScalar(3) }));
+  if (fokus) { fokus.position.set(0, 0.12 - 0.175, 0.05); g.add(fokus); }
   const ring = new Mesh(new TorusGeometry(0.14, 0.012, 6, 24), new MeshBasicMaterial({ color: new Color(color).multiplyScalar(2) }));
   ring.rotation.x = Math.PI / 2;
   core.position.set(0, 0.12, 0.05);
@@ -86,6 +123,8 @@ export interface HeldWeapons { right: Object3D | null; left: Object3D | null }
 
 /** Kampfhandschuh: beschlagener Handrücken mit Knöchelleiste; ab höheren Stufen mit Dornen und Leuchten */
 function gauntlet(look: WeaponLook, tier: number): Group {
+  const fromModel = glbWeapon(tier >= 3 ? 'w_faust_dorn' : tier >= 1 ? 'w_faust_stahl' : 'w_faust_leder', look, [0.0, 0.0, 0.16]);
+  if (fromModel) return fromModel;
   const g = new Group();
   const metal = toon({ color: look.blade, spec: 1, emissive: look.glow ? new Color(look.blade).multiplyScalar(0.3) : 0x000000 });
   const leather = toon('#4A3220');
@@ -181,13 +220,13 @@ export function weaponsFor(style: StyleId, look: WeaponLook = { blade: '#C9D2DA'
   switch (style) {
     case 'saebel': {
       // Entermesser aus Blender (und Parierdolch links) ersetzen diesen Säbel, wenn die Figur sie trägt (Character.hold)
-      const r = inHand(sword(0.78, 0.09, 0.12, look));
+      const r = inHand(sword(0.78, 0.09, 0.12, look, false, 'w_saebel'));
       r.userData.swordSkin = true;
       return { right: r, left: null };
     }
-    case 'langklinge': return { right: inHand(sword(1.05, 0.07, 0.06, look, true)), left: null };
-    case 'zweihaender': return { right: inHand(sword(1.3, 0.16, 0.0, look, true)), left: null };
-    case 'doppel': return { right: inHand(sword(0.6, 0.08, 0.08, look)), left: inHand(sword(0.6, 0.08, 0.08, look)) };
+    case 'langklinge': return { right: inHand(sword(1.0, 0.07, 0.075, look, true, 'w_katana')), left: null };
+    case 'zweihaender': return { right: inHand(sword(1.3, 0.16, 0.0, look, true, 'w_zweihaender')), left: null };
+    case 'doppel': return { right: inHand(sword(0.6, 0.08, 0.09, look, false, 'w_kurzklinge')), left: inHand(sword(0.6, 0.08, 0.09, look, false, 'w_kurzklinge')) };
     case 'effekt': {
       const tier = TIER_OF[look.blade] ?? 0;
       return { right: orb(FOCUS_COLOR[look.blade] ?? look.blade, 1 + tier * 0.1), left: null };

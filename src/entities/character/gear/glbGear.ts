@@ -14,7 +14,7 @@ import { markShared } from '../../../render/dispose';
 import { finishMat } from './kit';
 import type { Finish } from '../../../data/equipment';
 
-export type GlbRole = 'main' | 'trim' | 'leather' | 'steel' | 'gold' | 'dark' | 'cloth' | 'skin';
+export type GlbRole = 'main' | 'trim' | 'leather' | 'steel' | 'gold' | 'dark' | 'cloth' | 'skin' | 'glow';
 export interface GlbRoleLook { finish: Finish; color: string }
 
 /** Ein geladenes Modell: je Rolle eine Geometrie (Lage, Normale, UV) */
@@ -22,7 +22,9 @@ export interface GlbModel { name: string; roles: Map<string, BufferGeometry> }
 
 const BASE = `${import.meta.env.BASE_URL}models/gear/`;
 /** Alle Modelle, die das Spiel kennt (Dateiname ohne .glb) */
-export const GLB_MODELS = ['stulpenstiefel', 'stoffhose', 'stoffhose_stiefel', 'gehrock', 'dreispitz', 'frisur_mehrlagig', 'entermesser', 'parierdolch', 'sandalen'];
+export const GLB_MODELS = ['stulpenstiefel', 'stoffhose', 'stoffhose_stiefel', 'gehrock', 'dreispitz', 'frisur_mehrlagig', 'entermesser', 'parierdolch', 'sandalen',
+  'helm_ritter2', 'helm_drache2', 'helm_kabuto2', 'helm_krone2', 'helm_kapuze2', 'helm_engel2', 'helm_hoerner2', 'schulter_lamellen2', 'schulter_drache3', 'schulter_fluegel3',
+  'w_saebel', 'w_katana', 'w_zweihaender', 'w_kurzklinge', 'w_faust_leder', 'w_faust_stahl', 'w_faust_dorn', 'w_fokus'];
 
 const models = new Map<string, GlbModel>();
 

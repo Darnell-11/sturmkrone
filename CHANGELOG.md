@@ -1,5 +1,13 @@
 # Was ist neu
 
+## 2.9.72 – Figuren und Ausrüstung: Umhänge, Blender-Helme und -Schultern, sechs neue Sets, neue Waffen (14.11.2026)
+
+- **Umhänge liegen am Körper statt abzustehen:** Der Stoff stand am Gesäß 16 cm vom Rücken ab (Wulst plus wachsender Abstand). Jetzt hängt er vom hintersten Punkt des Gesäßes senkrecht herab, weitet sich nur am Saum zur Schleppe und lässt oben und an der Taille Platz für Kürass, Jacke und Gürtel (die Löcher im Stoff kamen von zu geringem Abstand). Über einem langen Mantel oder Rock (`overCoat`) liegt er weiter außen. Der Umhang schwingt: er weht beim Laufen nach hinten und flattert leicht (Vertex-Shader mit `capeK`, ein eigenes Material je Figur, Werte aus der Hüftbewegung in `Character.updateCape`).
+- **Neue Blender-Modelle** (`tools/blender/armorlib.py`, `build_helme.py`, `build_schultern.py`, `build_waffen2.py`): Helme Ritter (Sallet mit Federbusch), Drache (Hörner, Glutaugen), Kabuto, Krone, Kapuze, Flügelreif und Hörnerhelm; Schultern Lamellen, Drachendornen und Federschwingen; Waffen Säbel, Katana, Zweihänder, Kurzklinge, Faustpanzer in drei Stufen und der Faji-Fokus (Kristall in goldener Fassung). Neue Rolle `glow` und Veredelung `glut` (leuchtet im Bloom). Waffen übernehmen die Stufenfarbe in der Klinge; fehlt ein Modell, bleibt die alte Eigenbau-Form.
+- **Alte Sets aufpoliert:** Kettenjäger, Sturmleder, Eisenwall, Seekönig, Schuppenwache, Nebelwandler, Drachenpanzer, Sturmgeborene und Abgrundwächter tragen jetzt die neuen Helme und Schultern statt der groben Kuppeln und Dorne.
+- **Sechs neue Sets** (`data/gear.ts`): Turnierritter (selten, Stufe 20), Schattenläufer (selten, 26), Mondwacht-Ronin (episch, 36), Wyrmjäger (episch, 42), Gezeitenkönig (legendär, 58), Himmelsrichter (legendär, 62). Sie erscheinen im Ausrüster, als Beute und an Gegnern.
+- **Geprüft:** alle 20 Sets von vorn, hinten und der Seite, Waffen jedes Kampfstils, Umhang im Lauf, `npm test`, Produktions-Build. Die Modelle sind mit Draco auf 0,6 MB verkleinert.
+
 ## 2.9.71 – Welt 2, dritter Durchgang: Mauerwerk ohne Gekritzel, weicher Wiesenrand, Piratenlager, Leuchtturmstrahl (14.11.2026)
 
 - **Mauerwerk, Ziegel und Putz scharf:** Die Muster rechnen mit Weltkoordinaten bis 3000 m; aus Pixel-Ableitungen schwankte die Flächenrichtung und daraus wurden Millimeter-Fehler – das war das „Abgekritzelte“ (Bogenmuster, Pünktchen an den Fugen). Stein-, Ziegel- und Putz-Materialien nutzen jetzt die exakten Eckpunkt-Normalen (kein `flatShading` mehr für diese drei), einen auf 1/4096 gerundeten Rahmen je Fläche und getrennte Phase (`skPhase`: Kameraanteil + kleiner Rest relativ zur Kamera). Ergebnis: echte Ziegelreihen mit Fugen und Fasen, Schieferziegel auf den Dächern, saubere Torhäuser. Burgstein etwas heller.

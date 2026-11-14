@@ -23,7 +23,7 @@ export type Tint = TintSource | ItemTint | `#${string}`;
 export type RigidKind = string;
 
 /** Oberfläche eines Stücks: bestimmt Glanz, Feinrelief und wie das Licht darauf spielt */
-export type Finish = 'stoff' | 'seide' | 'leder' | 'stahl' | 'dunkelstahl' | 'gold' | 'haut' | 'haar';
+export type Finish = 'stoff' | 'seide' | 'leder' | 'stahl' | 'dunkelstahl' | 'gold' | 'haut' | 'haar' | 'glut';
 export type PatternId = 'platten' | 'kette' | 'schuppen' | 'brokat' | 'nieten' | 'steppung' | 'streifen';
 /** Nummern der Muster im Shader (render/toon.ts, GEAR_FRAG_GLSL) */
 export const PATTERN_NO: Record<PatternId, number> = { platten: 1, kette: 2, schuppen: 3, brokat: 4, nieten: 5, steppung: 6, streifen: 7 };

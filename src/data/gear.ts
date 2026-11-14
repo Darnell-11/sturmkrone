@@ -81,7 +81,7 @@ export const SETS: GearSet[] = [
   {
     id: 'kette', n: 'Kettenjäger', rarity: 'selten', level: 12, palette: ['#8A9298', '#3E6B3A'], d: 'Kettenhemd unter grünem Jägermantel: leise, zäh und schnell im Unterholz.',
     pieces: {
-      head: { n: 'Jägerhaube', parts: [helm('helm_kapuze', '#3E6B3A', '#6A5A3A')] },
+      head: { n: 'Jägerhaube', parts: [glb('helm_kapuze2', { main: ['stoff', '#3E5A36'], trim: ['leder', '#6A5A3A'] }, { mode: 'bone', bone: 'J_Bip_C_Head' })] },
       chest: { n: 'Kettenhemd', top: 'tunika', parts: [sh('tunika', 'item', L('stahl', { pattern: 'kette', patSize: 0.0065, trim: '#3A2A1E', trimW: 0.010 })), sh('kragen', 'item', L('stahl', { pattern: 'kette', patSize: 0.0065 }))] },
       legs: { n: 'Kettenschurz', parts: [sh('hose', '#3A3F36'), sh('kilt', 'item', L('stahl', { pattern: 'kette', patSize: 0.0065, trim: 'item2', trimW: 0.012 })), sh('guertel', '#4A3322', L('leder')), rigid('guertel_taschen', '#5A3A22', 'item2'), rigid('schnalle')] },
       feet: { n: 'Jägerstiefel', parts: boots(L('leder', { trim: 'item2', trimW: 0.012, trimStyle: 1 }), '#4A3322') },
@@ -94,7 +94,7 @@ export const SETS: GearSet[] = [
   {
     id: 'sturmleder', n: 'Sturmleder', rarity: 'selten', level: 15, palette: ['#6A4A32', '#B8A070'], d: 'Genietetes Leder, Pelz an den Schultern und ein Helm mit Hörnern – wetterfest bis in die Knochen.',
     pieces: {
-      head: { n: 'Hörnerhelm', parts: [helm('helm_hoerner', '#7A7F86', '#CDBA8A')] },
+      head: { n: 'Hörnerhelm', parts: [glb('helm_hoerner2', { steel: ['stahl', '#8A8F96'], gold: ['gold', '#CDBA8A'], trim: ['stoff', '#E8E0D0'], cloth: ['stoff', '#6A5848'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true })] },
       chest: { n: 'Genietetes Lederwams', top: 'jacke', parts: [sh('jacke', 'item', L('leder', { pattern: 'nieten', patColor: 'item2', patSize: 0.028, trim: 'item2', trimW: 0.012, trimStyle: 1 }))] },
       legs: { n: 'Pelzbesetzter Rock', parts: [sh('hose', '#3A2E24'), sh('kilt', 'item', L('leder', { trim: 'item2', trimW: 0.016, trimStyle: 2 })), sh('guertel', '#2A2018', L('leder', { pattern: 'nieten', patColor: 'item2', patSize: 0.03 })), rigid('guertel_ketten', undefined, 'item2'), rigid('schnalle')] },
       feet: { n: 'Pelzstiefel', parts: boots(L('leder', { trim: '#E8E0D0', trimW: 0.03, trimStyle: 2 }), 'item') },
@@ -142,12 +142,12 @@ export const SETS: GearSet[] = [
   {
     id: 'eisenwall', n: 'Eisenwall', rarity: 'episch', level: 28, palette: ['#A3ACB6', '#C8302A'], d: 'Schwere Plattenrüstung mit Stachelschultern – wer sie trägt, wird zur Mauer.',
     pieces: {
-      head: { n: 'Eisenwall-Helm', parts: [helm('helm_ritter', 'item', 'item2')] },
+      head: { n: 'Eisenwall-Helm', parts: [glb('helm_ritter2', { steel: ['stahl', 'item'], gold: ['gold', '#C9A13B'], trim: ['seide', 'item2'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true })] },
       chest: { n: 'Eisenwall-Plattenpanzer', top: 'jacke', parts: [sh('jacke', '#2E2428', L('leder', { pattern: 'steppung', patSize: 0.02 })), sh('kuerass', 'item', L('stahl', { pattern: 'platten', patSize: 0.034, trim: 'item2', trimW: 0.012, trimStyle: 1 })), sh('kragen', 'item', L('stahl', { trim: 'item2', trimW: 0.008 }))] },
       legs: { n: 'Eisenwall-Beinzeug', parts: [sh('hose', '#2E2428'), sh('kilt', 'item', L('stahl', { pattern: 'platten', patSize: 0.034, trim: 'item2', trimW: 0.012 })), sh('beinschiene', 'item', L('stahl', { trim: 'item2', trimW: 0.008 })), sh('guertel', '#2A1E1A', L('leder', { pattern: 'nieten', patColor: '#C9A13B', patSize: 0.03 })), rigid('schnalle')] },
       feet: { n: 'Eisenwall-Stiefel', parts: boots(L('stahl', { trim: 'item2', trimW: 0.010, pattern: 'platten', patSize: 0.03 }), 'item') },
       hands: { n: 'Eisenwall-Panzerhandschuhe', parts: [sh('handschuhe', 'item', L('stahl', { trim: 'item2', trimW: 0.006 })), sh('armschiene', 'item', L('stahl', { pattern: 'platten', patSize: 0.03, trim: 'item2', trimW: 0.008 }))] },
-      shoulder: { n: 'Eisenwall-Schulterdorne', parts: [rigid('schulter_stachel', 'item', '#C9A13B')] },
+      shoulder: { n: 'Eisenwall-Schulterlamellen', parts: [glb('schulter_lamellen2', { steel: ['stahl', 'item'], main: ['dunkelstahl', '#3A3F48'], gold: ['gold', '#C9A13B'] })] },
       cloak: { n: 'Eisenwall-Umhang', parts: [cape('lang', 'item2', L('stoff', { trim: '#E3B04B', trimW: 0.018, trimStyle: 1 }))] },
     },
     bonus3: { reduce: 0.05, hp: 120 }, bonusAll: { reduce: 0.10, hp: 220 },
@@ -155,12 +155,12 @@ export const SETS: GearSet[] = [
   {
     id: 'seekoenig', n: 'Seekönig', rarity: 'episch', level: 32, palette: ['#7A1F2E', '#E3B04B'], d: 'Brokatmantel, Goldkrone und eine Schleppe, die über die Planken fegt – die Kleidung eines, der Meere besitzt.',
     pieces: {
-      head: { n: 'Königskrone', parts: [helm('helm_krone', 'item2', '#3FD0E0')] },
+      head: { n: 'Königskrone', parts: [glb('helm_krone2', { gold: ['gold', 'item2'], trim: ['gold', '#F0D890'], glow: ['glut', '#3FD0E0'], cloth: ['stoff', '#F4F0E6'], main: ['seide', 'item'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true })] },
       chest: { n: 'Brokatmantel des Seekönigs', top: 'eng', coat: 'lang', slimUnder: true, parts: [sh('hemd', LINEN), sh('mantelLang', 'item', L('seide', { pattern: 'brokat', patColor: 'item2', patSize: 0.022, trim: 'item2', trimW: 0.022, trimStyle: 1 })), sh('kragen', 'item', L('seide', { trim: 'item2', trimW: 0.012 }))] },
       legs: { n: 'Prunkhose mit Schärpe', parts: [sh('hose', '#1E1A20', L('seide', { trim: 'item2', trimW: 0.010 })), sh('kilt', 'item', L('seide', { pattern: 'brokat', patColor: 'item2', patSize: 0.022, trim: 'item2', trimW: 0.016, trimStyle: 1 })), sh('guertel', 'item2', L('gold')), rigid('schnalle')] },
       feet: { n: 'Königsstiefel', parts: boots(L('leder', { trim: 'item2', trimW: 0.022, trimStyle: 1 }), '#1E1A20') },
       hands: { n: 'Königshandschuhe', parts: [sh('handschuhe', '#1E1A20', L('seide', { trim: 'item2', trimW: 0.010 })), sh('armschiene', 'item2', L('gold', { trim: 'item', trimW: 0.006 }))] },
-      shoulder: { n: 'Goldene Prunkschultern', parts: [rigid('schulter_gold', 'item', 'item2')] },
+      shoulder: { n: 'Goldene Prunkschultern', parts: [glb('schulter_lamellen2', { steel: ['gold', 'item2'], main: ['seide', 'item'], gold: ['gold', '#F0D890'] })] },
       cloak: { n: 'Schleppe des Seekönigs', parts: [cape('schlepp', 'item', L('seide', { pattern: 'brokat', patColor: 'item2', patSize: 0.026, trim: 'item2', trimW: 0.03, trimStyle: 1 }))] },
     },
     bonus3: { gold: 0.15, hp: 100 }, bonusAll: { gold: 0.3, atk: 0.08, crit: 0.04 },
@@ -168,12 +168,12 @@ export const SETS: GearSet[] = [
   {
     id: 'schuppen', n: 'Schuppenwache', rarity: 'episch', level: 35, palette: ['#3A4A5A', '#C9A13B'], d: 'Dunkle Schuppenpanzer und ein Kabuto mit Mondzier, geschmiedet in den Werften des Ostens.',
     pieces: {
-      head: { n: 'Mondzier-Kabuto', parts: [helm('helm_samurai', 'item', 'item2')] },
+      head: { n: 'Mondzier-Kabuto', parts: [glb('helm_kabuto2', { dark: ['dunkelstahl', 'item'], gold: ['gold', 'item2'], main: ['leder', '#7A1F2E'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true })] },
       chest: { n: 'Schuppenpanzer', top: 'tunika', parts: [sh('tunika', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.018, patColor: 'item2', trim: 'item2', trimW: 0.012, trimStyle: 1 })), sh('kragen', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.018, patColor: 'item2', trim: 'item2', trimW: 0.008 }))] },
       legs: { n: 'Schuppenschurz', parts: [sh('hose', '#22262C'), sh('kilt', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.018, patColor: 'item2', trim: 'item2', trimW: 0.012 })), sh('beinschiene', 'item', L('dunkelstahl', { trim: 'item2', trimW: 0.008 })), sh('guertel', 'item2', L('seide')), rigid('guertel_schwerttasche', '#2A2018', 'item2')] },
       feet: { n: 'Schuppenstiefel', parts: boots(L('dunkelstahl', { pattern: 'schuppen', patSize: 0.016, patColor: 'item2', trim: 'item2', trimW: 0.008 }), 'item') },
       hands: { n: 'Schuppenhandschuhe', parts: [sh('handschuhe', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.012, patColor: 'item2' })), sh('armschiene', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.014, patColor: 'item2', trim: 'item2', trimW: 0.008 }))] },
-      shoulder: { n: 'Schuppenschulterplatten', parts: [rigid('schulter_platte', 'item', 'item2')] },
+      shoulder: { n: 'Schuppenschulterplatten', parts: [glb('schulter_lamellen2', { steel: ['dunkelstahl', 'item'], main: ['leder', '#7A1F2E'], gold: ['gold', 'item2'] })] },
       cloak: { n: 'Banner-Umhang', parts: [cape('kurz', '#7A1F2E', L('stoff', { trim: 'item2', trimW: 0.02, trimStyle: 1 }))] },
     },
     bonus3: { atk: 0.05, reduce: 0.03 }, bonusAll: { atk: 0.1, reduce: 0.07, crit: 0.03 },
@@ -181,7 +181,7 @@ export const SETS: GearSet[] = [
   {
     id: 'nebel', n: 'Nebelwandler', rarity: 'episch', level: 38, palette: ['#2F4A44', '#8FD0B8'], d: 'Schwere Stoffe in Graugrün, Kapuze tief im Gesicht: sie gehen lautlos durch den Nebel.',
     pieces: {
-      head: { n: 'Nebelkapuze', parts: [helm('helm_kapuze', 'item', 'item2')] },
+      head: { n: 'Nebelkapuze', parts: [glb('helm_kapuze2', { main: ['stoff', 'item'], trim: ['leder', 'item2'] }, { mode: 'bone', bone: 'J_Bip_C_Head' })] },
       chest: { n: 'Nebelmantel', top: 'tunika', coat: 'lang', parts: [sh('tunika', '#26302E', L('stoff', { pattern: 'steppung', patSize: 0.022 })), sh('mantelLang', 'item', L('stoff', { trim: 'item2', trimW: 0.016, trimStyle: 2 })), sh('kragen', 'item', L('stoff', { trim: 'item2', trimW: 0.010 }))] },
       legs: { n: 'Wanderhose', parts: [sh('hose', '#26302E', L('stoff', { pattern: 'steppung', patSize: 0.02 })), sh('guertel', '#3A3026', L('leder')), rigid('guertel_taschen', '#3A3026', 'item2'), rigid('schnalle')] },
       feet: { n: 'Nebelstiefel', parts: boots(L('leder', { trim: 'item2', trimW: 0.014, trimStyle: 2 }), '#2A2824') },
@@ -195,12 +195,12 @@ export const SETS: GearSet[] = [
   {
     id: 'drache', n: 'Drachenpanzer', rarity: 'legendaer', level: 50, palette: ['#4A1E22', '#F0A830'], d: 'Aus den Schuppen eines Meereswyrms geschmiedet. Die Hörner glühen noch.',
     pieces: {
-      head: { n: 'Drachenhelm', parts: [helm('helm_drache', 'item', 'item2')] },
+      head: { n: 'Drachenhelm', parts: [glb('helm_drache2', { main: ['dunkelstahl', 'item'], steel: ['stahl', '#9AA2AA'], gold: ['gold', 'item2'], glow: ['glut', 'item2'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true })] },
       chest: { n: 'Drachenschuppenpanzer', top: 'jacke', parts: [sh('jacke', '#1E1416', L('leder', { pattern: 'steppung', patSize: 0.02 })), sh('kuerass', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.02, patColor: 'item2', trim: 'item2', trimW: 0.014, trimStyle: 1 })), sh('kragen', 'item2', L('gold', { trim: 'item', trimW: 0.008 }))] },
       legs: { n: 'Drachenschuppenschurz', parts: [sh('hose', '#1E1416'), sh('kilt', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.02, patColor: 'item2', trim: 'item2', trimW: 0.016, trimStyle: 1 })), sh('beinschiene', 'item', L('dunkelstahl', { trim: 'item2', trimW: 0.010 })), sh('guertel', 'item2', L('gold')), rigid('schnalle')] },
       feet: { n: 'Drachenklauenstiefel', parts: boots(L('dunkelstahl', { pattern: 'schuppen', patSize: 0.018, patColor: 'item2', trim: 'item2', trimW: 0.012, trimStyle: 1 }), 'item') },
       hands: { n: 'Drachenpranken', parts: [sh('handschuhe', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.012, patColor: 'item2', trim: 'item2', trimW: 0.006 })), sh('armschiene', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.016, patColor: 'item2', trim: 'item2', trimW: 0.010, trimStyle: 1 }))] },
-      shoulder: { n: 'Drachenschwingen-Schultern', parts: [rigid('schulter_drache', 'item', 'item2')] },
+      shoulder: { n: 'Drachenschwingen-Schultern', parts: [glb('schulter_drache3', { main: ['dunkelstahl', 'item'], steel: ['dunkelstahl', '#2A2024'], gold: ['gold', 'item2'], glow: ['glut', 'item2'] })] },
       cloak: { n: 'Drachenhaut-Umhang', parts: [cape('lang', 'item', L('seide', { pattern: 'schuppen', patSize: 0.03, patColor: 'item2', trim: 'item2', trimW: 0.028, trimStyle: 2 }))] },
     },
     bonus3: { atk: 0.08, hp: 150 }, bonusAll: { atk: 0.16, hp: 320, reduce: 0.06, crit: 0.05 },
@@ -208,12 +208,12 @@ export const SETS: GearSet[] = [
   {
     id: 'sturmkrone', n: 'Sturmgeborene', rarity: 'legendaer', level: 60, palette: ['#E8EDF4', '#E3B04B'], d: 'Weißes Silber, gerahmt von Gold: die Rüstung derer, die die Sturmkrone tragen dürfen.',
     pieces: {
-      head: { n: 'Sturmkrone', parts: [helm('helm_sturmkrone', 'item2', '#7FD8FF')] },
+      head: { n: 'Sturmkrone', parts: [glb('helm_krone2', { gold: ['gold', 'item2'], trim: ['stahl', 'item'], glow: ['glut', '#7FD8FF'], cloth: ['stoff', '#F4F8FF'], main: ['seide', '#2A3A5A'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true })] },
       chest: { n: 'Sturmgeborener Brustpanzer', top: 'jacke', parts: [sh('jacke', '#2A3A5A', L('seide', { pattern: 'brokat', patColor: 'item2', patSize: 0.02 })), sh('kuerass', 'item', L('stahl', { pattern: 'platten', patSize: 0.036, trim: 'item2', trimW: 0.016, trimStyle: 1 })), sh('kragen', 'item', L('stahl', { trim: 'item2', trimW: 0.010 }))] },
       legs: { n: 'Sturmgeborene Beinplatten', parts: [sh('hose', '#2A3A5A', L('seide')), sh('kilt', 'item', L('stahl', { pattern: 'platten', patSize: 0.036, trim: 'item2', trimW: 0.016, trimStyle: 1 })), sh('beinschiene', 'item', L('stahl', { trim: 'item2', trimW: 0.010 })), sh('guertel', 'item2', L('gold')), rigid('schnalle')] },
       feet: { n: 'Sturmgeborene Stiefel', parts: boots(L('stahl', { trim: 'item2', trimW: 0.014, trimStyle: 1, pattern: 'platten', patSize: 0.03 }), 'item') },
       hands: { n: 'Sturmgeborene Handschuhe', parts: [sh('handschuhe', 'item', L('stahl', { trim: 'item2', trimW: 0.008 })), sh('armschiene', 'item', L('stahl', { pattern: 'platten', patSize: 0.03, trim: 'item2', trimW: 0.012, trimStyle: 1 }))] },
-      shoulder: { n: 'Sturmschwingen', parts: [rigid('schulter_fluegel', 'item', 'item2')] },
+      shoulder: { n: 'Sturmschwingen', parts: [glb('schulter_fluegel3', { steel: ['stahl', 'item'], main: ['gold', 'item2'], gold: ['gold', 'item2'], cloth: ['seide', '#F4F8FF'], glow: ['glut', '#7FD8FF'] })] },
       cloak: { n: 'Sturmmantel', parts: [cape('schlepp', '#2A3A5A', L('seide', { pattern: 'brokat', patColor: 'item2', patSize: 0.028, trim: 'item2', trimW: 0.034, trimStyle: 1 }))] },
     },
     bonus3: { atk: 0.1, faji: 0.15 }, bonusAll: { atk: 0.2, faji: 0.3, hp: 300, crit: 0.08, reduce: 0.08 },
@@ -221,15 +221,91 @@ export const SETS: GearSet[] = [
   {
     id: 'abgrund', n: 'Abgrundwächter', rarity: 'legendaer', level: 55, palette: ['#2A2038', '#B070FF'], d: 'Schwarzer Stahl, durchzogen von violettem Licht – gefunden dort, wo kein Licht mehr hinfällt.',
     pieces: {
-      head: { n: 'Abgrundhelm', parts: [helm('helm_fluegel', 'item', 'item2')] },
+      head: { n: 'Abgrundreif', parts: [glb('helm_engel2', { gold: ['dunkelstahl', 'item'], glow: ['glut', 'item2'], trim: ['seide', '#17121F'], cloth: ['seide', '#2A2038'], steel: ['dunkelstahl', 'item'] }, { mode: 'bone', bone: 'J_Bip_C_Head' })] },
       chest: { n: 'Abgrundpanzer', top: 'jacke', parts: [sh('jacke', '#17121F', L('seide')), sh('kuerass', 'item', L('dunkelstahl', { pattern: 'platten', patSize: 0.034, trim: 'item2', trimW: 0.012, trimStyle: 1 })), sh('kragen', 'item', L('dunkelstahl', { trim: 'item2', trimW: 0.008 }))] },
       legs: { n: 'Abgrundschurz', parts: [sh('hose', '#17121F', L('seide')), sh('kilt', 'item', L('dunkelstahl', { pattern: 'platten', patSize: 0.034, trim: 'item2', trimW: 0.012 })), sh('beinschiene', 'item', L('dunkelstahl', { trim: 'item2', trimW: 0.008 })), sh('guertel', 'item2', L('dunkelstahl')), rigid('schnalle')] },
       feet: { n: 'Abgrundstiefel', parts: boots(L('dunkelstahl', { trim: 'item2', trimW: 0.012, pattern: 'platten', patSize: 0.03 }), 'item') },
       hands: { n: 'Abgrundhandschuhe', parts: [sh('handschuhe', 'item', L('dunkelstahl', { trim: 'item2', trimW: 0.006 })), sh('armschiene', 'item', L('dunkelstahl', { pattern: 'platten', patSize: 0.03, trim: 'item2', trimW: 0.010, trimStyle: 1 }))] },
-      shoulder: { n: 'Kristallschultern des Abgrunds', parts: [rigid('schulter_kristall', 'item', 'item2')] },
+      shoulder: { n: 'Kristallschultern des Abgrunds', parts: [glb('schulter_drache3', { main: ['dunkelstahl', 'item'], steel: ['dunkelstahl', '#1A1426'], gold: ['dunkelstahl', 'item2'], glow: ['glut', 'item2'] })] },
       cloak: { n: 'Abgrundmantel', parts: [cape('lang', '#17121F', L('seide', { trim: 'item2', trimW: 0.024, trimStyle: 2 }))] },
     },
     bonus3: { crit: 0.05, faji: 0.15 }, bonusAll: { crit: 0.12, faji: 0.3, atk: 0.12, hp: 200 },
+  },  // =========================== NEUE SETS: MODELLE AUS BLENDER (Helme, Schultern) ===========================
+  {
+    id: 'ritter', n: 'Turnierritter', rarity: 'selten', level: 20, palette: ['#B9C2CC', '#B8282A'], d: 'Blank polierter Stahl, ein Federbusch in Rot und Schulterlamellen wie Dachziegel: so reiten Ritter zum Turnier.',
+    pieces: {
+      head: { n: 'Turnierhelm mit Federbusch', parts: [glb('helm_ritter2', { steel: ['stahl', 'item'], gold: ['gold', '#E3B04B'], trim: ['seide', 'item2'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true })] },
+      chest: { n: 'Turnierpanzer', top: 'jacke', parts: [sh('jacke', '#2A2F3A', L('seide', { pattern: 'brokat', patColor: '#4A5668', patSize: 0.02 })), sh('kuerass', 'item', L('stahl', { pattern: 'platten', patSize: 0.034, trim: '#E3B04B', trimW: 0.012, trimStyle: 1 })), sh('kragen', 'item', L('stahl', { trim: '#E3B04B', trimW: 0.008 }))] },
+      legs: { n: 'Turnierbeinzeug', parts: [sh('hose', '#2A2F3A', L('seide')), sh('kilt', 'item2', L('seide', { trim: '#E3B04B', trimW: 0.016, trimStyle: 1, pattern: 'streifen', patColor: '#E3B04B', patSize: 0.03 })), sh('beinschiene', 'item', L('stahl', { trim: '#E3B04B', trimW: 0.008 })), sh('guertel', '#3A2A1E', L('leder', { pattern: 'nieten', patColor: '#E3B04B', patSize: 0.03 })), rigid('schnalle')] },
+      feet: { n: 'Turnierstiefel', parts: boots(L('stahl', { trim: '#E3B04B', trimW: 0.012, trimStyle: 1, pattern: 'platten', patSize: 0.03 }), 'item') },
+      hands: { n: 'Turnierhandschuhe', parts: [sh('handschuhe', 'item', L('stahl', { trim: '#E3B04B', trimW: 0.006 })), sh('armschiene', 'item', L('stahl', { pattern: 'platten', patSize: 0.03, trim: '#E3B04B', trimW: 0.008 }))] },
+      shoulder: { n: 'Schulterlamellen', parts: [glb('schulter_lamellen2', { steel: ['stahl', 'item'], main: ['leder', '#3A2A22'], gold: ['gold', '#E3B04B'] })] },
+      cloak: { n: 'Turnierdecke', parts: [cape('lang', 'item2', L('stoff', { trim: '#E3B04B', trimW: 0.018, trimStyle: 1, pattern: 'streifen', patColor: '#7A1A1C', patSize: 0.05 }))] },
+    },
+    bonus3: { reduce: 0.03, hp: 70 }, bonusAll: { reduce: 0.06, atk: 0.05, hp: 120 },
+  },
+  {
+    id: 'schatten', n: 'Schattenläufer', rarity: 'selten', level: 26, palette: ['#2A2D36', '#8AA0C0'], d: 'Tiefe Kapuze, schwarzes Leder und ein kurzer Umhang: wer sie trägt, wird nur gesehen, wenn es zu spät ist.',
+    pieces: {
+      head: { n: 'Schattenkapuze', parts: [glb('helm_kapuze2', { main: ['stoff', 'item'], trim: ['leder', 'item2'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: false })] },
+      chest: { n: 'Schattenwams', top: 'jacke', parts: [sh('jacke', 'item', L('leder', { pattern: 'steppung', patSize: 0.022, trim: 'item2', trimW: 0.010, trimStyle: 1 })), sh('kragen', 'item', L('leder', { trim: 'item2', trimW: 0.008 }))] },
+      legs: { n: 'Schattenhose', parts: [sh('hose', '#1E2026', L('leder', { pattern: 'steppung', patSize: 0.02 })), sh('guertel', '#2A2018', L('leder', { pattern: 'nieten', patColor: '#8AA0C0', patSize: 0.03 })), rigid('guertel_taschen', '#2A2018', 'item2'), rigid('schnalle')] },
+      feet: { n: 'Schleichstiefel', parts: boots(L('leder', { trim: 'item2', trimW: 0.010, trimStyle: 1 }), '#1E2026') },
+      hands: { n: 'Schattenhandschuhe', parts: [sh('handschuhe', '#1E2026', L('leder', { trim: 'item2', trimW: 0.006 })), sh('armschiene', '#2A2D36', L('leder', { pattern: 'nieten', patColor: '#8AA0C0', patSize: 0.026, trim: 'item2', trimW: 0.008 }))] },
+      cloak: { n: 'Schattenumhang', parts: [cape('kurz', '#1E2026', L('stoff', { trim: 'item2', trimW: 0.014, trimStyle: 2 }))] },
+    },
+    bonus3: { crit: 0.04, hp: 60 }, bonusAll: { crit: 0.09, atk: 0.05, reduce: 0.02 },
+  },
+  {
+    id: 'ronin', n: 'Mondwacht-Ronin', rarity: 'episch', level: 36, palette: ['#22262E', '#C9A13B'], d: 'Schwarzlackierter Kabuto, wehender Haori und Schulterlamellen mit Goldrand: die Wache des Mondes kennt keinen Herrn mehr.',
+    pieces: {
+      head: { n: 'Mondzier-Kabuto', parts: [glb('helm_kabuto2', { dark: ['dunkelstahl', 'item'], gold: ['gold', 'item2'], main: ['leder', '#7A1F2E'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true })] },
+      chest: { n: 'Haori und Rüstrock', top: 'tunika', coat: 'lang', parts: [sh('tunika', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.018, patColor: 'item2', trim: 'item2', trimW: 0.012, trimStyle: 1 })), sh('mantelLang', '#7A1F2E', L('seide', { pattern: 'streifen', patColor: 'item2', patSize: 0.05, trim: 'item2', trimW: 0.02, trimStyle: 1 })), sh('kragen', 'item', L('dunkelstahl', { trim: 'item2', trimW: 0.008 }))] },
+      legs: { n: 'Hakama', parts: [sh('hose', '#1A1C22', L('seide', { pattern: 'steppung', patSize: 0.024 })), sh('guertel', 'item2', L('seide')), rigid('guertel_schwerttasche', '#2A2018', 'item2')] },
+      feet: { n: 'Lackstiefel', parts: boots(L('dunkelstahl', { trim: 'item2', trimW: 0.008, pattern: 'schuppen', patSize: 0.016, patColor: 'item2' }), 'item') },
+      hands: { n: 'Kote', parts: [sh('handschuhe', '#1A1C22', L('leder', { trim: 'item2', trimW: 0.006 })), sh('armschiene', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.014, patColor: 'item2', trim: 'item2', trimW: 0.008 }))] },
+      shoulder: { n: 'Sode-Lamellen', parts: [glb('schulter_lamellen2', { steel: ['dunkelstahl', 'item'], main: ['leder', '#7A1F2E'], gold: ['gold', 'item2'] })] },
+    },
+    bonus3: { atk: 0.05, crit: 0.03 }, bonusAll: { atk: 0.1, crit: 0.06, reduce: 0.04 },
+  },
+  {
+    id: 'wyrm', n: 'Wyrmjäger', rarity: 'episch', level: 42, palette: ['#2C3A34', '#F08A2A'], d: 'Aus den Hörnern und Schuppen erlegter Wyrme gefertigt; in den Augen des Helms glimmt noch das Feuer.',
+    pieces: {
+      head: { n: 'Wyrmhelm', parts: [glb('helm_drache2', { main: ['dunkelstahl', 'item'], steel: ['stahl', '#9AA2AA'], gold: ['gold', 'item2'], glow: ['glut', 'item2'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true })] },
+      chest: { n: 'Wyrmschuppenpanzer', top: 'jacke', parts: [sh('jacke', '#1A1E1C', L('leder', { pattern: 'steppung', patSize: 0.02 })), sh('kuerass', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.02, patColor: 'item2', trim: 'item2', trimW: 0.014, trimStyle: 1 })), sh('kragen', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.018, patColor: 'item2', trim: 'item2', trimW: 0.008 }))] },
+      legs: { n: 'Wyrmschurz', parts: [sh('hose', '#1A1E1C'), sh('kilt', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.02, patColor: 'item2', trim: 'item2', trimW: 0.014, trimStyle: 1 })), sh('beinschiene', 'item', L('dunkelstahl', { trim: 'item2', trimW: 0.008 })), sh('guertel', 'item2', L('gold')), rigid('schnalle')] },
+      feet: { n: 'Wyrmstiefel', parts: boots(L('dunkelstahl', { pattern: 'schuppen', patSize: 0.016, patColor: 'item2', trim: 'item2', trimW: 0.01, trimStyle: 1 }), 'item') },
+      hands: { n: 'Wyrmklauen', parts: [sh('handschuhe', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.012, patColor: 'item2', trim: 'item2', trimW: 0.006 })), sh('armschiene', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.016, patColor: 'item2', trim: 'item2', trimW: 0.01, trimStyle: 1 }))] },
+      shoulder: { n: 'Dornenschultern', parts: [glb('schulter_drache3', { main: ['dunkelstahl', 'item'], steel: ['stahl', '#9AA2AA'], gold: ['gold', 'item2'], glow: ['glut', 'item2'] })] },
+      cloak: { n: 'Wyrmhautumhang', parts: [cape('lang', '#1A1E1C', L('seide', { pattern: 'schuppen', patSize: 0.03, patColor: 'item2', trim: 'item2', trimW: 0.026, trimStyle: 2 }))] },
+    },
+    bonus3: { atk: 0.07, hp: 130 }, bonusAll: { atk: 0.14, hp: 260, reduce: 0.05, crit: 0.04 },
+  },
+  {
+    id: 'gezeiten', n: 'Gezeitenkönig', rarity: 'legendaer', level: 58, palette: ['#1D6A78', '#EAD8A0'], d: 'Perlenkrone, Meerglasbrokat und Schultern wie Wellenkämme – der Herrscher der Flut trägt, was das Meer ihm schenkt.',
+    pieces: {
+      head: { n: 'Perlenkrone der Gezeiten', parts: [glb('helm_krone2', { gold: ['gold', 'item2'], trim: ['gold', '#E8F4F0'], glow: ['glut', '#7FF0FF'], cloth: ['stoff', '#F4F8F4'], main: ['seide', '#17435A'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true })] },
+      chest: { n: 'Meerglasmantel', top: 'eng', coat: 'lang', slimUnder: true, parts: [sh('hemd', '#E8F0EE'), sh('mantelLang', 'item', L('seide', { pattern: 'brokat', patColor: 'item2', patSize: 0.022, trim: 'item2', trimW: 0.022, trimStyle: 1 })), sh('kragen', 'item', L('seide', { trim: 'item2', trimW: 0.012 }))] },
+      legs: { n: 'Gezeitenhose', parts: [sh('hose', '#12394A', L('seide', { trim: 'item2', trimW: 0.010 })), sh('kilt', 'item', L('seide', { pattern: 'brokat', patColor: 'item2', patSize: 0.022, trim: 'item2', trimW: 0.016, trimStyle: 1 })), sh('guertel', 'item2', L('gold')), rigid('schnalle')] },
+      feet: { n: 'Korallenstiefel', parts: boots(L('leder', { trim: 'item2', trimW: 0.022, trimStyle: 1 }), '#12394A') },
+      hands: { n: 'Perlenhandschuhe', parts: [sh('handschuhe', '#E8F0EE', L('seide', { trim: 'item2', trimW: 0.010 })), sh('armschiene', 'item2', L('gold', { trim: 'item', trimW: 0.006 }))] },
+      shoulder: { n: 'Wellenkammschultern', parts: [glb('schulter_fluegel3', { steel: ['gold', 'item2'], main: ['seide', 'item'], gold: ['gold', '#F4EAC8'], cloth: ['seide', '#E8F4F0'], glow: ['glut', '#7FF0FF'] })] },
+      cloak: { n: 'Flutschleppe', parts: [cape('schlepp', 'item', L('seide', { pattern: 'brokat', patColor: 'item2', patSize: 0.026, trim: 'item2', trimW: 0.03, trimStyle: 1 }))] },
+    },
+    bonus3: { gold: 0.15, faji: 0.15 }, bonusAll: { gold: 0.3, faji: 0.3, atk: 0.1, hp: 260, reduce: 0.06 },
+  },
+  {
+    id: 'himmel', n: 'Himmelsrichter', rarity: 'legendaer', level: 62, palette: ['#F2F0E8', '#E3B04B'], d: 'Weißes Gold und ein Flügelreif: wer in den Himmel blickt und nicht blinzelt, hat sie vielleicht schon gesehen.',
+    pieces: {
+      head: { n: 'Flügelreif', parts: [glb('helm_engel2', { gold: ['gold', 'item2'], glow: ['glut', '#8FE8FF'], trim: ['seide', '#E8EDF4'], cloth: ['seide', '#F8F8F4'], steel: ['stahl', 'item'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: false })] },
+      chest: { n: 'Richterpanzer', top: 'jacke', parts: [sh('jacke', '#E8EDF4', L('seide', { pattern: 'brokat', patColor: 'item2', patSize: 0.02 })), sh('kuerass', 'item', L('stahl', { pattern: 'platten', patSize: 0.036, trim: 'item2', trimW: 0.016, trimStyle: 1 })), sh('kragen', 'item', L('gold', { trim: 'item', trimW: 0.008 }))] },
+      legs: { n: 'Richterbeinplatten', parts: [sh('hose', '#E8EDF4', L('seide')), sh('kilt', 'item', L('stahl', { pattern: 'platten', patSize: 0.036, trim: 'item2', trimW: 0.016, trimStyle: 1 })), sh('beinschiene', 'item', L('stahl', { trim: 'item2', trimW: 0.010 })), sh('guertel', 'item2', L('gold')), rigid('schnalle')] },
+      feet: { n: 'Richterstiefel', parts: boots(L('stahl', { trim: 'item2', trimW: 0.014, trimStyle: 1, pattern: 'platten', patSize: 0.03 }), 'item') },
+      hands: { n: 'Richterhandschuhe', parts: [sh('handschuhe', 'item', L('stahl', { trim: 'item2', trimW: 0.008 })), sh('armschiene', 'item', L('stahl', { pattern: 'platten', patSize: 0.03, trim: 'item2', trimW: 0.012, trimStyle: 1 }))] },
+      shoulder: { n: 'Federschwingen', parts: [glb('schulter_fluegel3', { steel: ['stahl', 'item'], main: ['gold', 'item2'], gold: ['gold', 'item2'], cloth: ['seide', '#F8F8F4'], glow: ['glut', '#8FE8FF'] })] },
+      cloak: { n: 'Mantel des Richters', parts: [cape('schlepp', '#F4F2EA', L('seide', { pattern: 'brokat', patColor: 'item2', patSize: 0.028, trim: 'item2', trimW: 0.034, trimStyle: 1 }))] },
+    },
+    bonus3: { atk: 0.1, faji: 0.15 }, bonusAll: { atk: 0.2, faji: 0.3, hp: 300, crit: 0.08, reduce: 0.08 },
   },
 ];
 
