@@ -1,5 +1,14 @@
 # Was ist neu
 
+## 2.9.77 – Handy-Prüfung: Spielstand-Hinweis und Fehleranzeige (14.11.2026)
+
+Geprüft im Handyformat mit echten Touch-Ereignissen (Chrome-Emulation, Hoch-, Quer- und kleine Formate bis 320 × 568, Stufen Niedrig und Mittel, Entwicklungs- und Produktionsbau): Hauptmenü, Spielstände, Charakter-Editor, „Ablegen!“, Feuer, Links, Rechts und Munition reagieren; keine Fehler in der Konsole; die Knöpfe werden in keinem Format verdeckt; Schüsse und Breitseiten laufen für alle sechs Schiffsklassen und alle Munitionsarten ohne Fehler.
+
+- **Neuer Charakter nicht möglich:** Es gibt drei Spielstand-Plätze. Sind alle belegt, erscheint nirgends „Neues Spiel“ – das sah aus, als ginge das Erstellen am Handy nicht. Jetzt steht über den Plätzen ein Hinweis („Alle drei Plätze sind belegt“) mit dem Weg: bei einem Spielstand auf „Löschen“ tippen (vorher „Exportieren“); danach erscheint dort „Neues Spiel“. Löschen per Touch ist geprüft.
+- **Fehleranzeige:** Unbehandelte Fehler (Skript und Versprechen) blendet das Spiel jetzt kurz ein (höchstens drei verschiedene je Sitzung, `main.ts`), damit sich „reagiert nicht“ am echten Handy mit dem Fehlertext melden lässt.
+- **Nicht nachgestellt:** Der nicht reagierende Feuerknopf. Im Test feuern alle drei Knöpfe auch mit kurzem Antippen (Eingabe wird je Schritt zwischengespeichert, auch bei niedriger Bildrate). Die Bugkanone („Feuer“) hat 1,2 s Abkühlzeit. Bei echtem Auftreten bitte Handy, Szene und die eingeblendete Fehlermeldung nennen.
+- **Bekannt:** Der Heap liegt schon im Menü bei rund 410 MB (davon etwa 316 MB CPU-Kopien der Geometrien, 170 MB Texturen); auf Handys mit wenig Speicher ist das knapp.
+
 ## 2.9.76 – Leistung für Handys (14.11.2026)
 
 Gemessen im Handyformat (390 × 844, Pixelverhältnis 3) mit auf das Vierfache gedrosselter Prozessorleistung als Ersatz für ein Handy; echte Geräte sind nicht gemessen. Grafik unverändert.

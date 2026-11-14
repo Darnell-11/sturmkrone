@@ -35,6 +35,16 @@ try {
       if (game.state.is('menu', 'boot')) location.reload();
     });
   }
+  // Unbehandelte Fehler kurz einblenden (höchstens drei verschiedene je Sitzung), damit sich „es reagiert nicht“ am Handy melden lässt
+  const shown = new Set<string>();
+  const report = (msg: string) => {
+    const m = msg.slice(0, 120);
+    if (shown.size >= 3 || shown.has(m)) return;
+    shown.add(m);
+    try { game.hud.toast(`Fehler: ${m}`, 6); } catch { /* Oberfläche noch nicht bereit */ }
+  };
+  window.addEventListener('error', (e) => report(`${e.message || 'unbekannt'}${e.lineno ? ` (Zeile ${e.lineno})` : ''}`));
+  window.addEventListener('unhandledrejection', (e) => report(String((e.reason && (e.reason.message ?? e.reason)) || 'unbekannt')));
   // Zum Ausprobieren in der Browser-Konsole
   (window as any).sturmkrone = game;
   // Nur in der Entwicklung: Bild an einen lokalen Empfänger schicken (für automatische Sichtprüfungen)

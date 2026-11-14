@@ -217,7 +217,9 @@ export class Menus {
 
     this.open(
       `<h2 class="fell">Spielstände</h2>
-      ${legacy && hasEmpty ? `<p class="note">Ein Spielstand aus Sturmkrone 1.0 wurde gefunden: <b>${esc(legacy.player.name)}</b>, Stufe ${legacy.player.level}.
+      ${!hasEmpty ? `<p class="note"><b>Alle drei Plätze sind belegt.</b> Für einen neuen Charakter zuerst bei einem Spielstand auf <b>Löschen</b> tippen
+        (vorher <b>Exportieren</b>, wenn du ihn behalten willst). Danach erscheint dort „Neues Spiel“.</p>` : ''}
+      ${legacy && hasEmpty ?`<p class="note">Ein Spielstand aus Sturmkrone 1.0 wurde gefunden: <b>${esc(legacy.player.name)}</b>, Stufe ${legacy.player.level}.
         <button class="mini brass" data-a="legacy">In freien Platz übernehmen</button></p>` : ''}
       ${html}
       <button class="secondary" data-a="import">Spielstand-Datei importieren</button>
