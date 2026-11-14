@@ -544,9 +544,17 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   // Wasseroberfläche knapp über dem Beckendeckel (vorher genau auf 0,9 m – beide Flächen flackerten)
   water.position.y = 0.88;
   water.userData.noOutline = true;
-  const column = new Mesh(new CylinderGeometry(0.35, 0.5, 2.6, 10), toon('#C8C0B0'));
-  column.position.y = 1.6;
-  fountain.add(basin, water, column);
+  const column = new Mesh(new CylinderGeometry(0.22, 0.42, 2.0, 10), toon('#C8C0B0'));
+  column.position.y = 1.4;
+  // obere Schale mit Wasserspiegel und Kugelabschluss, damit die Säule wie ein Brunnen aussieht
+  const bowl = new Mesh(new CylinderGeometry(1.15, 0.5, 0.34, 16), toon('#C8C0B0'));
+  bowl.position.y = 2.5;
+  const bowlWater = new Mesh(new CylinderGeometry(0.98, 0.98, 0.04, 16), toon('#33C4D2'));
+  bowlWater.position.y = 2.68;
+  bowlWater.userData.noOutline = true;
+  const finial = new Mesh(new SphereGeometry(0.2, 10, 8), toon('#D8CFA8'));
+  finial.position.y = 2.95;
+  fountain.add(basin, water, column, bowl, bowlWater, finial);
   place(fountain, 0, 2, 0, 3.4);
 
   // Hafentor und Hafenmauer: Torhaus über der Hauptstraße, Zinnenmauern und Rundtürme links und rechts

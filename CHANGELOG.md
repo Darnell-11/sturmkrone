@@ -1,5 +1,12 @@
 # Was ist neu
 
+## 2.9.74 – Veröffentlichung: Schiffe 2, Welt 2, Figuren und neues Licht zusammen (14.11.2026)
+
+- **Schiffe 2 ist jetzt Standard** auf der veröffentlichten Seite (`core/flags.ts`). Mit `?schiffe2=aus` hinter der Adresse kommt die bisherige Schiffsfassung zurück, mit `?schiffe2` wieder die neue (der Browser merkt sich die Wahl).
+- **Brunnen auf dem Marktplatz von Ankerglück:** die schlichte Säule bekommt eine obere Schale mit Wasserspiegel und einen Kugelabschluss.
+- **Abschlussprüfung** (Playwright, Spielstart über die Menüs bis zum Spaziergang durch Ankerglück): Charakter-Editor, neuer Spielstand, Nacht, Sturm, Regen und Nebel auf See, alle sechs Schiffsklassen nachts (Heckgalerie, Laternen, Leuchtturmstrahl), Hafen, Tor, Straßen und Markt bei Nacht, Handyformat auf Mittel und Niedrig; Konsole ohne Fehler und Warnungen; `tsc`, 72 Tests, Produktionsbau.
+- **Bekannt:** Auf Niedrig ist die Figur nachts sehr dunkel (dort laufen keine Punktlichter). Nicht gemessen: echte Handys, Seegefechte mit vielen Schiffen in der neuen Schiffsfassung.
+
 ## 2.9.73 – Licht und Feuer: 3D-Flammen, Blender-Lampen, Lichtpool mit Schatten, Funken, Rauch, Hitzeflimmern (14.11.2026)
 
 - **Neue Blender-Modelle** (`tools/blender/build_light2.py`, Rollen `iron`, `brass`, `glass`, `ember`, `charcoal`, `log`): **Schiffs- und Hafenlaterne** (`world/laterne.glb`, `light/laternenpfahl.glb`: sechseckiger Schmiedekäfig mit Messingbändern, Glasscheiben, Haube mit Schornstein, Tragering, Kette, Ölnapf mit Docht), **Fackel** (gedrechselter Holzgriff, Eisenzwingen, Eisenkorb, Pechwickel, verkohlter Kopf mit Glutnestern), **Feuerschale** (schwere Eisenschale mit Wulstrand, Verstärkungsbändern und drei Nietenreihen, Dreibein mit Krallenfüßen, Tragringe, Kohle- und Scheitbett) und **Feuerstelle** (Steinring, Scheite, Glutnester). Eckpunktfarbe `Col` = Hitze der Glut. Ersetzen die alten Modelle unter gleichem Namen mit gleichen Flammenpunkten; Schiffe stellen die Laterne weiter per `PropBatch` (InstancedMesh) auf, Torhaus-Fackeln, Straßenlaternen, Stege und Wachtürme nutzen dieselben Modelle.
