@@ -42,6 +42,7 @@ import { attachHeadgear, buildBuckle, buildEpaulette, buildKnot, buildPauldron, 
 import { BELT_KINDS, HELM_KINDS, SHOULDERS, buildBeltExtras } from './gear/rigid';
 import { finishMat } from './gear/kit';
 import { buildHeld, buildSkinned, glbModel } from './gear/glbGear';
+import { registerCulled, unregisterCulled } from '../../render/matrixSkip';
 
 const CURL_Z = new Vector3(0, 0, 1), CURL_X = new Vector3(1, 0, 0);
 
@@ -104,7 +105,7 @@ const SLOT_SURFACE: Record<string, Surface> = { skin: 'skin', hair: 'hair', top:
 
 export class Character {
   /** In die Welt setzen und bewegen */
-  readonly holder = new Group();
+  readonly holder = registerCulled(new Group());
 
   // ---------- Weiche Darstellung zwischen den festen Logikschritten (60 Hz) ----------
   // Die Logik setzt die Position 60-mal pro Sekunde (place); die Darstellung gleitet bei jedem Bild
@@ -1179,6 +1180,7 @@ export class Character {
   dispose() {
     Character.moving.delete(this);
     Character.lamped.delete(this);
+    unregisterCulled(this.holder);
     this.lamp?.removeFromParent();
     this.lamp = null;
     this.dropTrails();

@@ -454,8 +454,8 @@ export class Game {
       // Leistungs-Wächter: unter 50 fps zuerst unsichtbare Last abbauen (Schatten, AO, Vegetation), erst danach Auflösung und Grafikstufe
       if (s.qualityAuto) {
         const lv = this.watchdog.sample(frameDt);
-        if (lv !== null) { this.renderer.setBudget(lv); this.renderer.dynRes.rewarm(); this.autoQuality.reset(); }
-      } else if (this.watchdog.level > 0) { this.watchdog.reset(); this.renderer.setBudget(0); }
+        if (lv !== null) { this.renderer.setBudget(lv); this.renderer.dynRes.rewarm(); this.autoQuality.reset(); this.world.env.shadowStride = this.deviceInfo.mobile && lv >= 1 ? 2 : 1; }
+      } else if (this.watchdog.level > 0) { this.watchdog.reset(); this.renderer.setBudget(0); this.world.env.shadowStride = 1; }
       const budgetSpent = !s.qualityAuto || this.watchdog.level >= PerfWatchdog.MAX;
       if (s.dynamicResolution && (budgetSpent || this.watchdog.level >= 2) && this.renderer.dynRes.sample(frameDt)) this.renderer.resize();
       if (s.qualityAuto && budgetSpent) {

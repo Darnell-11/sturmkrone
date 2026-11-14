@@ -1,5 +1,14 @@
 # Was ist neu
 
+## 2.9.76 – Leistung für Handys (14.11.2026)
+
+Gemessen im Handyformat (390 × 844, Pixelverhältnis 3) mit auf das Vierfache gedrosselter Prozessorleistung als Ersatz für ein Handy; echte Geräte sind nicht gemessen. Grafik unverändert.
+
+- **Figuren außerhalb des Bilds (`render/matrixSkip.ts`):** In der Stadt waren über 1 900 sichtbare Knoten Skelettknochen. Figuren außerhalb der Kamera (Sicherheitsabstand 6 m) rechnen ihr Skelett nicht mehr jedes Bild mit; der Halter bleibt aktuell, beim Wiedereintritt rechnet dasselbe Bild alles neu. Geprüft: 15 379 Knochen während einer Kameradrehung um 360 °, keiner veraltet. Hafenstadt bei Nacht auf Mittel: 30,6 → 26,3 ms je Bild (gedrosselt).
+- **Schatten-Takt (nur Handys, nur wenn der Leistungs-Wächter eingreift):** Die Schattenkarte der Stufe Mittel wird dann jedes zweite Bild neu gezeichnet (`Environment.shadowStride`); sie bleibt mit ihrer Matrix an die Welt gebunden, nur Schatten bewegter Figuren hinken ein Bild nach. Gemessen: 26,3 → 23,1 ms (insgesamt 30,6 → 23,1 gegenüber vorher). Auf Handys, die ohnehin 50 fps halten, bleibt alles wie bisher.
+- **Gemessene Werte (gedrosselt, je Bild):** Niedrig See 15 ms, Stadt Nacht 14 ms, Insel mit Kampf 14 ms; Mittel See 18 ms, Insel mit Kampf 14 ms, Stadt Nacht 26 ms (23 ms mit Schatten-Takt).
+- **Nicht geändert (würde Grafik ändern):** Dreiecksmenge der Stadt (1,7 Mio. auf Mittel, davon rund 0,6 Mio. im Schattendurchgang), Konturen als Hüllen, Figuren-Skelette je Netz.
+
 ## 2.9.75 – Leistung: Kajüte, Gegner-Spawn, Matrizen (14.11.2026)
 
 Gemessen mit einem Prüfaufbau im Entwicklungsserver (Zeit je Bild mit Grafikkarten-Abschluss, Chrome-Profiler, Programmzähler); Grafik und Details unverändert.

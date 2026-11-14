@@ -47,6 +47,9 @@ export class Environment {
   /** Größte Texturgröße der Grafikkarte (setzt das Spiel) */
   maxTex = 4096;
   private shadowExtent = 40;
+  /** 1 = jedes Bild, 2 = jedes zweite Bild neue Schattenkarte (siehe update) */
+  shadowStride = 1;
+  private shadowTick = 0;
   private tmpCol = new Color();
   private tmpZenith = new Color();
   private tmpGrey = new Color();
@@ -250,6 +253,11 @@ export class Environment {
     this.sun.target.position.z = Math.round(this.sun.target.position.z / texel) * texel;
     this.sun.position.x = this.sun.target.position.x + pal.lightDir.x * 200;
     this.sun.position.z = this.sun.target.position.z + pal.lightDir.z * 200;
+    // Spar-Taktung (nur Handys, wenn der Leistungs-Wächter eingreift): die einzelne Schattenkarte alle `shadowStride` Bilder neu zeichnen.
+    // Die Karte bleibt mit ihrer Matrix an die Welt gebunden, nur die Schatten bewegter Figuren hinken ein Bild nach.
+    const sh = this.sun.shadow;
+    if (this.shadowStride > 1 && sh.map && !this.csmWant) { sh.autoUpdate = false; sh.needsUpdate = this.shadowTick++ % this.shadowStride === 0; }
+    else if (!sh.autoUpdate) sh.autoUpdate = true;
     this.updateCsm(camera, pal.lightDir);
 
     // Wind für Pflanzen: Zeit, Richtung (wohin er weht) und Stärke nach Wetter
