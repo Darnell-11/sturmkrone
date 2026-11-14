@@ -43,7 +43,7 @@ export function styleKit(style: IslandStyle): StyleKit {
   }
   markWind(k.leaf);
   markWind(k.trunk);
-  const kit: StyleKit = { ...k, grassCap: toon({ color: (k.grass as MeshToonMaterial).color.getHex(), detail: 'grass', rim: 0.35, puddles: 0.45, layer: 0.5 }) };
+  const kit: StyleKit = { ...k, grassCap: toon({ color: (k.grass as MeshToonMaterial).color.getHex(), detail: 'grassCap', rim: 0.35, puddles: 0.45, layer: 0.5 }) };
   cache.set(style, kit);
   return kit;
 }
@@ -52,17 +52,21 @@ export function styleKit(style: IslandStyle): StyleKit {
  * Strandplateau mit unregelmäßiger Küste und 1–3 Hügeln – aus denselben Werten wie die Laufhöhe (islandGround).
  * hills: Inselkoordinaten.
  */
-export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: number; p: number }[], hills: { x: number; z: number; r: number; h: number }[], grassFrac = 0, rnd: () => number = Math.random, ragged = 0, shelf = 0.25, H: (x: number, z: number) => number = () => 1.3): { beach: Mesh; hills: Mesh[] } {
+export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: number; p: number }[], hills: { x: number; z: number; r: number; h: number }[], grassFrac = 0, rnd: () => number = Math.random, ragged = 0, shelf = 0.25, H: (x: number, z: number) => number = () => 1.3): { beach: Mesh; hills: Mesh[]; liftAt: (x: number, z: number) => number } {
   const k = (a: number) => coastK(coast, a);
   /** Polargitter: Ringe t (Anteile des Küstenradius, optional mit Radius je Winkel) und Winkel; Höhe aus H (Inselkoordinaten) */
-  const polar = (cx: number, cz: number, radiusAt: (a: number) => number, ringT: number[], segs: number, lift: number, flipV = false): BufferGeometry => {
-    const pos: number[] = [], idx: number[] = [];
+  const polar = (cx: number, cz: number, radiusAt: (a: number) => number, ringT: number[], segs: number, lift: number, flipV = false, edgeW = 0): BufferGeometry => {
+    const pos: number[] = [], idx: number[] = [], edge: number[] = [];
     for (const t of ringT) {
       for (let i = 0; i <= segs; i++) {
         const a = (i / segs) * Math.PI * 2;
-        const rad = radiusAt(a) * t;
+        const full = radiusAt(a);
+        const rad = full * t;
         const x = cx + Math.cos(a) * rad, z = cz + Math.sin(a) * rad;
-        pos.push(x, H(x, z) + lift, z);
+        // Wiesenrand: aEdge 0 … 1 auf den letzten edgeW Metern, die Fläche sinkt dort auf den Sand
+        const e = edgeW > 0 ? Math.max(0, Math.min(1, (rad - (full - edgeW)) / edgeW)) : 0;
+        pos.push(x, H(x, z) + lift * (1 - 0.85 * e * e), z);
+        edge.push(e);
       }
     }
     const row = segs + 1;
@@ -73,6 +77,7 @@ export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: n
     const geo = new BufferGeometry();
     geo.setAttribute('position', new Float32BufferAttribute(pos, 3));
     geo.setIndex(idx);
+    if (edgeW > 0) geo.setAttribute('aEdge', new Float32BufferAttribute(edge, 1));
     geo.computeVertexNormals();
     return geo;
   };
@@ -87,6 +92,22 @@ export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: n
   if (probe.getY(Math.floor(probe.count / 3)) < 0) bg = polar(0, 0, (a) => r * k(a), beachT, segsB, 0, true);
   const beach = new Mesh(bg, kit.sand);
   const meshes: Mesh[] = [];
+  /** Wie hoch die Wiesenfläche über dem Boden liegt (für Wege, die darüber laufen) */
+  let capR: ((a: number) => number) | null = null;
+  let capEdge = 0;
+  const hillEdges = hills.map((h) => Math.min(8, h.r * 0.22));
+  const liftAt = (x: number, z: number): number => {
+    let l = 0;
+    if (capR) {
+      const full = capR(Math.atan2(z, x)), rad = Math.hypot(x, z);
+      if (rad < full) { const e = Math.max(0, Math.min(1, (rad - (full - capEdge)) / capEdge)); l = 0.15 * (1 - 0.85 * e * e); }
+    }
+    hills.forEach((h, i) => {
+      const rad = Math.hypot(x - h.x, z - h.z);
+      if (rad < h.r) { const e = Math.max(0, Math.min(1, (rad - (h.r - hillEdges[i])) / hillEdges[i])); l = Math.max(l, 0.19 * (1 - 0.85 * e * e)); }
+    });
+    return l;
+  };
   // Grasfläche mit eigener, unregelmäßiger Kante auf dem Strandplateau – jetzt mit Relief
   if (grassFrac > 0.2) {
     const seed = rnd() * 100;
@@ -97,11 +118,13 @@ export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: n
         + ragged * (0.2 * Math.sin(a * lobes + seed * 1.7) + 0.13 * Math.sin(a * (lobes + 1) - seed * 0.9) + 0.07 * Math.sin(a * 7 + seed * 2.3));
       return r * k(a) * Math.min(0.95, grassFrac * wobble);
     };
-    const nG = Math.max(8, Math.round(r * grassFrac / 3.6));
-    const segsG = Math.max(120, Math.round(r * 1.6));
-    let gg = polar(0, 0, radiusAt, rings(nG, 0.0001, 1), segsG, 0.15, false);
+    const nG = Math.max(10, Math.round(r * grassFrac / 2.4));
+    const segsG = Math.max(150, Math.round(r * 2.2));
+    const edgeW = Math.min(9, Math.max(4.5, r * 0.11));
+    capR = radiusAt; capEdge = edgeW;
+    let gg = polar(0, 0, radiusAt, rings(nG, 0.0001, 1), segsG, 0.15, false, edgeW);
     const pn = gg.attributes.normal;
-    if (pn.getY(Math.floor(pn.count / 3)) < 0) gg = polar(0, 0, radiusAt, rings(nG, 0.0001, 1), segsG, 0.15, true);
+    if (pn.getY(Math.floor(pn.count / 3)) < 0) gg = polar(0, 0, radiusAt, rings(nG, 0.0001, 1), segsG, 0.15, true, edgeW);
     const cap = new Mesh(gg, kit.grassCap);
     cap.receiveShadow = true;
     meshes.push(cap);
@@ -109,14 +132,15 @@ export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: n
   meshes.push(...hills.map((h) => {
     // gleiche Höhe wie die Laufhöhe (Hügelprofil und Relief), vom Fuß zur Kuppe
     const nH = Math.max(14, Math.round(h.r / 3));
-    let hg = polar(h.x, h.z, () => h.r, rings(nH, 0.0001, 1), 64, 0.19, false);
+    const hEdge = Math.min(8, h.r * 0.22); // gleiche Rechnung wie hillEdges oben
+    let hg = polar(h.x, h.z, () => h.r, rings(nH, 0.0001, 1), 72, 0.19, false, hEdge);
     const hn = hg.attributes.normal;
-    if (hn.getY(Math.floor(hn.count / 3)) < 0) hg = polar(h.x, h.z, () => h.r, rings(nH, 0.0001, 1), 64, 0.19, true);
-    const m = new Mesh(hg, kit.grass);
+    if (hn.getY(Math.floor(hn.count / 3)) < 0) hg = polar(h.x, h.z, () => h.r, rings(nH, 0.0001, 1), 72, 0.19, true, hEdge);
+    const m = new Mesh(hg, kit.grassCap);
     m.receiveShadow = true;
     return m;
   }));
-  return { beach, hills: meshes };
+  return { beach, hills: meshes, liftAt };
 }
 
 const KIND_LABEL: Record<string, string> = { town: 'Hafenstadt', harbor: 'Hafen', camp: 'Lager', ruin: 'Ruine', quiet: '', treasure: 'Schatzinsel', lighthouse: 'Leuchtturm', boss: 'Boss' };
@@ -253,7 +277,8 @@ export function volcano(kit: StyleKit, r: number, baseY: number, tall: boolean):
   const cone = new Mesh(geo, rockMat);
   cone.position.y = baseY - 0.3;
   cone.castShadow = true;
-  cone.receiveShadow = true;
+  // Die großen, steilen Flächen zeigten Schattenmuster (dreieckige helle Flecken); das Licht kommt aus der Toon-Rampe
+  cone.receiveShadow = false;
   g.add(cone);
   // Lavaströme: glühende Rinnen, die sich vom Kraterrand die Flanke hinunterschlängeln
   if (kit.extra) for (let i = 0; i < (tall ? 6 : 3); i++) {

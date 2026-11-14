@@ -69,7 +69,8 @@ export const TOON_RAMP = (() => {
 export const WATER_RAMP = makeRamp([0.62, 0.84, 1.0]);
 
 /** Prozedurale Oberflächen aus der Weltposition; stone, tile und plaster werfen zusätzlich Relief (Bump) aufs Licht */
-export type DetailKind = 'sand' | 'grass' | 'rock' | 'stone' | 'tile' | 'plaster';
+/** 'grassCap' = Wiese mit ausgefranstem Rand (Attribut aEdge 0 … 1): geht in Büschel, Trockengras und Sand über */
+export type DetailKind = 'sand' | 'grass' | 'grassCap' | 'rock' | 'stone' | 'tile' | 'plaster';
 
 export interface ToonOptions {
   color: ColorRepresentation;
@@ -655,6 +656,12 @@ const DETAIL_GLSL = /* glsl */ `
     return mix(mix(skdH(i), skdH(i + vec2(1.0, 0.0)), f.x), mix(skdH(i + vec2(0.0, 1.0)), skdH(i + vec2(1.0, 1.0)), f.x), f.y);
   }
   float skdF(vec2 p) { return skdN(p) * 0.5 + skdN(p * 2.03) * 0.3 + skdN(p * 4.1) * 0.2; }
+  // Phase großer Koordinaten ohne Stufen: A = Kameraanteil (groß, je Pixel gleich), r = Rest (klein, genau). Liefert Zellnummer und Anteil darin.
+  void skPhase(float A, float r, float period, float off, out float cellI, out float fr) {
+    float b = A / period + off; float bi = floor(b);
+    float t = (b - bi) + r / period; float ti = floor(t);
+    cellI = bi + ti; fr = t - ti;
+  }
 `;
 const DETAIL_FRAG: Record<DetailKind, string> = {
   sand: /* glsl */ `{
@@ -672,6 +679,15 @@ const DETAIL_FRAG: Record<DetailKind, string> = {
     diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.06, 0.94, 0.8), smoothstep(0.45, 0.8, skdF(p * 0.07 + 3.1)) * 0.6);
     float wet = 1.0 - smoothstep(0.35, 1.15, vSkWorld.y);
     diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.66, 0.66, 0.7), wet * 0.85);
+    // Dünen: flache Wellen im Maßstab von Metern, Kämme heller, Mulden warm und dunkel (gibt der Fläche Tiefe, auch aus der Ferne)
+    float dn = skdF(p * 0.11 + 17.0);
+    float duneBand = sin((p.x * 0.7 + p.y * 0.45) * 0.55 + dn * 6.0) * 0.5 + 0.5;
+    diffuseColor.rgb *= 0.93 + duneBand * 0.14;
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.05, 0.9, 0.78), smoothstep(0.5, 0.85, skdF(p * 0.23 + 41.0)) * 0.45);
+    // Spülsaum: dunkle Linie aus Tang und Treibgut am Flutrand, dahinter feuchter Glanz
+    float tideY = vSkWorld.y - (0.78 + (skdN(p * 0.35) - 0.5) * 0.28);
+    float wrack = (1.0 - smoothstep(0.0, 0.07, abs(tideY))) * (0.35 + 0.65 * smoothstep(0.35, 0.8, skdN(p * 2.4 + 6.0)));
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.17, 0.11), wrack * 0.7 * (1.0 - smoothstep(60.0, 160.0, camD)));
     // Muschelsplitter / helle Körner
     float peb = smoothstep(0.86, 0.93, skdN(p * 13.0 + 5.7));
     diffuseColor.rgb += peb * 0.1 * nearK;
@@ -725,6 +741,7 @@ const DETAIL_FRAG: Record<DetailKind, string> = {
     skDetH = bl * 0.9 + tuft * 0.5;
     skDetA = 0.045 * (1.0 - smoothstep(8.0, 36.0, camD));
   }`,
+  grassCap: '', // unten aus grass + Randcode zusammengesetzt
   rock: /* glsl */ `{
     vec3 w = vSkWorld;
     float camD = distance(w, cameraPosition);
@@ -741,18 +758,29 @@ const DETAIL_FRAG: Record<DetailKind, string> = {
     // Mauerwerk: Quader im Läuferverband, Mörtelfugen, Moos auf Oberseiten und in feuchten Flecken.
     // Alles Feine blendet nach der Pixelgröße aus (fp = Meter je Pixel): so flimmert und kritzelt nichts mehr.
     // Fläche und Pixelgröße aus Ansichts-Koordinaten (klein und genau): aus Weltkoordinaten mit Beträgen bis 3000 m rauschte die Normale je Pixel
+    #ifdef FLAT_SHADED
     vec3 wn = normalize(normalize(cross(dFdx(-vViewPosition), dFdy(-vViewPosition))) * mat3(viewMatrix));
+    #else
+    // Eckpunkt-Normale (exakt, rauschfrei): aus den Ableitungen schwankte die Richtung je Pixel, und bei Koordinaten um 3000 m wurde daraus Gekritzel
+    vec3 wn = normalize((vec4(normalize(vNormal), 0.0) * viewMatrix).xyz);
+    #endif
     float fpx = max(length(dFdx(vViewPosition)), length(dFdy(vViewPosition)));
-    vec3 t3 = vec3(-wn.z, 0.0, wn.x); float tl = length(t3); t3 = tl > 0.05 ? t3 / tl : vec3(1.0, 0.0, 0.0);
-    vec3 s3 = cross(wn, t3);
-    float u = dot(vSkWorld, t3), v = dot(vSkWorld, s3);
+    // Rahmen aus der auf 1/4096 gerundeten Normale: je Fläche exakt gleich (die Interpolation schwankt um 1e-7, mal 3000 m wären das Millimeter-Rauschen)
+    vec3 wq = normalize(floor(wn * 4096.0 + 0.5) / 4096.0);
+    vec3 t3 = vec3(-wq.z, 0.0, wq.x); float tl = length(t3); t3 = tl > 0.05 ? t3 / tl : vec3(1.0, 0.0, 0.0);
+    vec3 s3 = cross(wq, t3);
+    // Koordinaten getrennt: Kameraanteil (groß, je Wand gleich) und Rest relativ zur Kamera (klein, genau) – so bleiben die Fugen auch bei 3000 m scharf
+    vec3 skRel = (vec4(-vViewPosition, 0.0) * viewMatrix).xyz;
+    float uA = dot(cameraPosition, t3), vA = dot(cameraPosition, s3);
+    float u = uA + dot(skRel, t3), v = vA + dot(skRel, s3);
     float camD = distance(vSkWorld, cameraPosition);
     float fp = min(fpx, 0.6);
     float lod = 1.0 - smoothstep(0.010, 0.05, fp);
-    float row = floor(v / 0.34);
-    float uu = u / 0.62 + skdH(vec2(row, 3.7)) * 4.0 + mod(row, 2.0) * 0.5;
-    vec2 cell = vec2(floor(uu), row);
-    vec2 f = vec2(fract(uu), fract(v / 0.34));
+    float row, rowF; skPhase(vA, dot(skRel, s3), 0.34, 0.0, row, rowF);
+    float rowOff = skdH(vec2(row, 3.7)) * 4.0 + mod(row, 2.0) * 0.5;
+    float cellX, fx; skPhase(uA, dot(skRel, t3), 0.62, rowOff, cellX, fx);
+    vec2 cell = vec2(cellX, row);
+    vec2 f = vec2(fx, rowF);
     float ed = min(min(f.x, 1.0 - f.x) * 0.62, min(f.y, 1.0 - f.y) * 0.34);
     float aa = fp * 0.9 + 0.004;
     float mortar = (1.0 - smoothstep(0.014 - aa, 0.034 + aa, ed)) * lod;
@@ -775,18 +803,26 @@ const DETAIL_FRAG: Record<DetailKind, string> = {
   tile: /* glsl */ `{
     // Dachziegel: überlappende Reihen entlang des Gefälles, gerundete Kanten, versetzt je Reihe; bandbegrenzt nach Pixelgröße
     // Fläche und Pixelgröße aus Ansichts-Koordinaten (klein und genau): aus Weltkoordinaten mit Beträgen bis 3000 m rauschte die Normale je Pixel
+    #ifdef FLAT_SHADED
     vec3 wn = normalize(normalize(cross(dFdx(-vViewPosition), dFdy(-vViewPosition))) * mat3(viewMatrix));
+    #else
+    // Eckpunkt-Normale (exakt, rauschfrei): aus den Ableitungen schwankte die Richtung je Pixel, und bei Koordinaten um 3000 m wurde daraus Gekritzel
+    vec3 wn = normalize((vec4(normalize(vNormal), 0.0) * viewMatrix).xyz);
+    #endif
     float fpx = max(length(dFdx(vViewPosition)), length(dFdy(vViewPosition)));
-    vec3 t3 = vec3(-wn.z, 0.0, wn.x); float tl = length(t3); t3 = tl > 0.05 ? t3 / tl : vec3(1.0, 0.0, 0.0);
-    vec3 s3 = cross(wn, t3);
-    float u = dot(vSkWorld, t3), v = dot(vSkWorld, s3);
+    // Rahmen aus der auf 1/4096 gerundeten Normale: je Fläche exakt gleich (die Interpolation schwankt um 1e-7, mal 3000 m wären das Millimeter-Rauschen)
+    vec3 wq = normalize(floor(wn * 4096.0 + 0.5) / 4096.0);
+    vec3 t3 = vec3(-wq.z, 0.0, wq.x); float tl = length(t3); t3 = tl > 0.05 ? t3 / tl : vec3(1.0, 0.0, 0.0);
+    vec3 s3 = cross(wq, t3);
+    vec3 skRel = (vec4(-vViewPosition, 0.0) * viewMatrix).xyz;
+    float uA = dot(cameraPosition, t3), vA = dot(cameraPosition, s3);
+    float u = uA + dot(skRel, t3), v = vA + dot(skRel, s3);
     float camD = distance(vSkWorld, cameraPosition);
     float fp = min(fpx, 0.6);
     float lod = 1.0 - smoothstep(0.012, 0.06, fp);
-    float row = floor(v / 0.3);
-    float uu = u / 0.24 + mod(row, 2.0) * 0.5;
-    float cu = fract(uu), cv = fract(v / 0.3);
-    float rnd = skdH(vec2(floor(uu), row));
+    float row, cv; skPhase(vA, dot(skRel, s3), 0.3, 0.0, row, cv);
+    float cellX, cu; skPhase(uA, dot(skRel, t3), 0.24, mod(row, 2.0) * 0.5, cellX, cu);
+    float rnd = skdH(vec2(cellX, row));
     // Ziegelschatten: unten dunkle Überlappung, Seitenfugen
     float aa = fp * 0.8 + 0.01;
     float gapY = smoothstep(0.0, 0.14 + aa, cv);
@@ -801,9 +837,16 @@ const DETAIL_FRAG: Record<DetailKind, string> = {
   plaster: /* glsl */ `{
     // Putz: feine Körnung nur aus der Nähe, große Flecken und Schmutz am Sockel und unter der Traufe
     // Fläche und Pixelgröße aus Ansichts-Koordinaten (klein und genau): aus Weltkoordinaten mit Beträgen bis 3000 m rauschte die Normale je Pixel
+    #ifdef FLAT_SHADED
     vec3 wn = normalize(normalize(cross(dFdx(-vViewPosition), dFdy(-vViewPosition))) * mat3(viewMatrix));
+    #else
+    // Eckpunkt-Normale (exakt, rauschfrei): aus den Ableitungen schwankte die Richtung je Pixel, und bei Koordinaten um 3000 m wurde daraus Gekritzel
+    vec3 wn = normalize((vec4(normalize(vNormal), 0.0) * viewMatrix).xyz);
+    #endif
     float fpx = max(length(dFdx(vViewPosition)), length(dFdy(vViewPosition)));
-    vec3 t3 = vec3(-wn.z, 0.0, wn.x); float tl = length(t3); t3 = tl > 0.05 ? t3 / tl : vec3(1.0, 0.0, 0.0);
+    // Rahmen aus der auf 1/4096 gerundeten Normale: je Fläche exakt gleich (die Interpolation schwankt um 1e-7, mal 3000 m wären das Millimeter-Rauschen)
+    vec3 wq = normalize(floor(wn * 4096.0 + 0.5) / 4096.0);
+    vec3 t3 = vec3(-wq.z, 0.0, wq.x); float tl = length(t3); t3 = tl > 0.05 ? t3 / tl : vec3(1.0, 0.0, 0.0);
     float u = dot(vSkWorld, t3), v = vSkWorld.y;
     float camD = distance(vSkWorld, cameraPosition);
     float fp = min(fpx, 0.6);
@@ -922,6 +965,12 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
         .replace('#include <common>', '#include <common>\nvarying float vGRim;\nvarying vec3 vGTrim;\nvarying vec3 vGPat;\nvarying vec4 vGSet;')
         .replace('#include <color_fragment>', '#include <color_fragment>\n' + GEAR_FRAG_GLSL);
     }
+    if (detail === 'grassCap') {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float aEdge;\nvarying float vSkEdge;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSkEdge = aEdge;');
+      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vSkEdge;\n');
+    }
     if (detail) {
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', '#include <common>\n' + DETAIL_GLSL + 'float skDetH = 0.0;\nfloat skDetA = 0.0;\n')
@@ -945,6 +994,20 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
   const progKey = `sk-toon-7${pbr.surf >= 0 ? (pbr.char ? 'c' : 'u') + pbr.surf + (pbr.mask ? 'k' : '') : ''}${detail ? '-' + detail : ''}-${pbr.env ? 'e' : ''}${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}${pbr.fx ? 'f' : ''}${pbr.reflect > 0 ? 's' : ''}${pbr.puddles > 0 ? 'p' : ''}${pbr.ringel > 0 ? 'g' : ''}${pbr.trim ? 't' : ''}-wet`;
   mat.customProgramCacheKey = () => progKey + (isWind(mat) ? 'w' : '');
 }
+
+// Wiesenrand: Trockengras und Sandflecken in Zungen, dann ausgefranst (Rauschen) – der Sand darunter schaut durch
+DETAIL_FRAG.grassCap = DETAIL_FRAG.grass + /* glsl */ `
+  {
+    float skE = vSkEdge;
+    vec2 ep = vSkWorld.xz;
+    float eN = skdN(ep * 1.7) * 0.5 + skdN(ep * 5.3 + 4.0) * 0.32 + skdN(ep * 17.0 + 9.0) * 0.18;
+    float eLine = skE + (eN - 0.5) * 0.9;
+    // trockenes, ausgebleichtes Gras vor dem Rand
+    float dryK = smoothstep(0.2, 0.75, eLine);
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.5, 1.32, 0.78) + vec3(0.03, 0.02, 0.0), dryK * 0.75);
+    // letzte Büschel: kleine Inseln, dann Sand
+    if (eLine > 0.86) discard;
+  }`;
 
 /** Toon-Material im Anime-Stil (gecacht – gleiche Optionen ergeben dasselbe Material). */
 export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial {
@@ -971,7 +1034,9 @@ export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial 
     aoMapIntensity: o.aoMapIntensity ?? 1,
   });
   if (o.normalMap) mat.normalScale.setScalar(o.normalScale ?? 1);
-  if (o.flatShading) (mat as any).flatShading = true;
+  // Stein, Ziegel und Putz brauchen die exakten Eckpunkt-Normalen (die Muster rechnen mit Weltkoordinaten bis 3000 m: aus Pixel-Ableitungen
+  // schwankte die Richtung und das Mauerwerk kritzelte). Flache Flächen bringen ihre Normalen aus dem Modell mit.
+  if (o.flatShading && o.detail !== 'stone' && o.detail !== 'tile' && o.detail !== 'plaster') (mat as any).flatShading = true;
   if (o.layer) { mat.polygonOffset = true; mat.polygonOffsetFactor = -o.layer; mat.polygonOffsetUnits = -4 * o.layer; }
   // Metall und Rauheit: bisherige Glanz-Materialien (spec ≥ 0,8: Klingen, Rüstung, Gold, Kanonen) werden zu Metall
   const spec = o.spec ?? 0;

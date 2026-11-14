@@ -292,7 +292,7 @@ function dirtTexture(): CanvasTexture {
 }
 
 /** Erdweg-Material (Dörfer, Außenposten, Wegränder); k = Tiefenschicht */
-export function dirtMaterial(k = 0, tint = '#8F6F4A'): Material {
+export function dirtMaterial(k = 0, tint = '#C4A676'): Material {
   const m = cloneToon(toon({ color: tint, map: dirtTexture(), side: DoubleSide, puddles: 1, ...toonPbr(dirtTexture(), { strength: 1.1, rough: 0.92, roughVar: 0.3, ao: 0.85 }) }));
   m.polygonOffset = true; m.polygonOffsetFactor = -1 - k * 0.5; m.polygonOffsetUnits = -2 - k;
   return m;
@@ -744,7 +744,7 @@ export function mergeByMaterial(group: Group, keep: Set<Mesh>) {
     const keepUv = !!(m.material as Material & { map?: unknown }).map && !!g.attributes.uv;
     // Eckpunktfarben (Ambient-Occlusion der Blender-Bauten) bleiben, wenn das Material sie nutzt
     const keepCol = !!(m.material as Material & { vertexColors?: boolean }).vertexColors;
-    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'aWind' && !(keepUv && k === 'uv') && !(keepCol && k === 'color')) g.deleteAttribute(k);
+    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'aWind' && k !== 'aEdge' && !(keepUv && k === 'uv') && !(keepCol && k === 'color')) g.deleteAttribute(k);
     g = g.applyMatrix4(rel(m));
     b.geos.push(g);
     b.meshes.push(m);
@@ -757,6 +757,9 @@ export function mergeByMaterial(group: Group, keep: Set<Mesh>) {
     // Windgewichte: Teile ohne Gewicht (z. B. Stamm-Material an Zäunen) bekommen 0, damit alle zusammenpassen
     if (b.geos.some((g) => g.attributes.aWind)) {
       for (const g of b.geos) if (!g.attributes.aWind) g.setAttribute('aWind', new Float32BufferAttribute(new Float32Array(g.attributes.position.count), 1));
+    }
+    if (b.geos.some((g) => g.attributes.aEdge)) {
+      for (const g of b.geos) if (!g.attributes.aEdge) g.setAttribute('aEdge', new Float32BufferAttribute(new Float32Array(g.attributes.position.count), 1));
     }
     const merged = mergeGeometries(b.geos, false);
     if (!merged) continue;

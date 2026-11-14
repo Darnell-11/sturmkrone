@@ -20,6 +20,8 @@ import { hashId, seeded } from './waves';
 const FOAM_COL = new Color(0.95, 0.98, 1);
 const FIREFLY_COL = new Color(1.3, 2.2, 0.5);
 const TMP_COL = new Color();
+const MOTE_COL = new Color(0.8, 0.72, 0.42);
+const SAND_COL = new Color(0.86, 0.76, 0.56);
 
 interface Spot { x: number; y: number; z: number }
 interface FIsland { x: number; z: number; r: number; style: IslandStyle; trees: Spot[]; bushes: Spot[]; edge: (a: number) => number }
@@ -58,6 +60,7 @@ export class IslandFauna {
   private dummy = new Object3D();
   private t = 0;
   private fishT = 3;
+  private moteT = 0;
   spray: ParticleSystem | null = null;
   sparks: ParticleSystem | null = null;
 
@@ -210,6 +213,27 @@ export class IslandFauna {
     this.fishMesh.count = n;
     this.fishMesh.instanceMatrix.needsUpdate = true;
 
+    // Tagsüber: Blütenstaub und Staubkörner im Sonnenlicht über dem Land, Windfahnen aus Sand an den Stränden
+    if (night < 0.35 && this.sparks && this.spray && this.islands.some((i) => Math.hypot(i.x - px, i.z - pz) < i.r * 1.05)) {
+      const wa = 0.7 + Math.sin(this.t * 0.07) * 0.5;
+      const wx = Math.cos(wa), wz = Math.sin(wa);
+      this.moteT += dt;
+      if (this.moteT > 0.12) {
+        this.moteT = 0;
+        for (let k = 0; k < 2; k++) {
+          const x = px + (Math.random() - 0.5) * 44, z = pz + (Math.random() - 0.5) * 44;
+          const g = ground(x, z);
+          if (!(g > 0.9)) continue; // nur über Land
+          this.sparks.emit(1, x, g + 0.8 + Math.random() * 2.6, z, { speed: 0.25, up: 0.08, life: 5, color: MOTE_COL, gravity: -0.01, spread: 0.2, size: 0.55, vx: wx * 0.7, vz: wz * 0.7 });
+        }
+        // Sandfahnen: flache, schnelle Streifen auf dem Strand (Höhe knapp über dem Wasser)
+        if (Math.random() < 0.55) {
+          const x = px + (Math.random() - 0.5) * 50, z = pz + (Math.random() - 0.5) * 50;
+          const g = ground(x, z);
+          if (g > 1.0 && g < 1.7 && Math.hypot(x - px, z - pz) > 3) this.spray.emit(2, x, g + 0.05, z, { speed: 0.25, up: 0.18, life: 1.7, color: SAND_COL, gravity: 0.15, spread: 0.6, size: 0.4, vx: wx * 3.6, vz: wz * 3.6 });
+        }
+      }
+    }
     // Glühwürmchen über den Büschen (nachts)
     if (night > 0.45 && this.sparks) {
       for (const i of this.islands) {

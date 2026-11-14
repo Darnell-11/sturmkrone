@@ -1,8 +1,12 @@
 import { cobbleMaterial, dirtMaterial, roadMesh } from './town';
 import {
   BoxGeometry,
+  CircleGeometry,
   Color,
   ConeGeometry,
+  ExtrudeGeometry,
+  Shape,
+  ShapeGeometry,
   CylinderGeometry,
   DodecahedronGeometry,
   Group,
@@ -25,6 +29,7 @@ import { markWind, windify } from '../render/wind';
 import { cachedProto, envProto, floraProto, noise, type Scatter } from './vegetation';
 import type { GlowPlaced } from '../render/glow';
 import { archGroup, hasArch } from './envModels';
+import { lighthouseBeams } from './lighthouseBeam';
 import { build, colliders } from './architecture';
 import type { StructureType } from '../data/settlements';
 
@@ -42,6 +47,8 @@ export interface DressOpts {
   style: IslandStyle;
   /** Sammler für instanzierten Bewuchs (Bäume, Büsche, Gras, Felsen) */
   veg: Scatter;
+  /** Höhe der Wiesenfläche über dem Boden an einer Stelle (Inselkoordinaten), damit Wege nicht darunter verschwinden */
+  liftAt?: (x: number, z: number) => number;
 }
 
 const FLOWERS: Record<IslandStyle, string[]> = {
@@ -190,7 +197,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   const courtRoads = (gates: { x: number; z: number }[], to: { x: number; z: number }) => {
     gates.forEach((g2, i) => {
       const pts: [number, number][] = [[g2.x * 1.18, g2.z * 1.18], [g2.x * 1.0, g2.z * 1.0], [g2.x * 0.7 + to.x * 0.3, g2.z * 0.7 + to.z * 0.3], [g2.x * 0.3 + to.x * 0.7, g2.z * 0.3 + to.z * 0.7]];
-      group.add(roadMesh(pts, 4.4, 0, 0, hAt, cobbleMaterial(i + 1)));
+      group.add(roadMesh(pts, 4.4, 0, 0, (x, z) => hAt(x, z) + (o.liftAt ? o.liftAt(x, z) : 0), cobbleMaterial(i + 1)));
     });
   };
 
@@ -214,36 +221,100 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   // ---------- Bauten je Inselart (zuerst, damit sie Platz bekommen) ----------
   switch (def.kind) {
     case 'camp': {
-      const c = spot(0.18, 0.45, 5, 20) ?? { x: r * 0.3, z: 0 };
+      // Piratenlager: Holzpalisade mit Tor zum Meer, zwei Wachtürme, Zelte und Hütte um eine Feuerstelle, Erdplatz, hohes Banner
+      const R = 15;
+      const c = spot(0.2, 0.44, R + 2, 40) ?? spot(0.1, 0.5, R, 30) ?? { x: r * 0.2, z: 0 };
+      const pa = Math.atan2(c.z, c.x);          // Richtung zum Meer: dort liegt das Tor
+      const gateHalf = 0.2;
+      const cx = (a: number, d: number) => ({ x: c.x + Math.cos(a) * d, z: c.z + Math.sin(a) * d });
+      const faceC = (p: { x: number; z: number }) => Math.atan2(c.x - p.x, c.z - p.z);
+      // Erdplatz: drei breite Bänder im Sechseck durch die Mitte, dazu der Weg zum Tor und zur Hütte
+      { const ex = cx(pa, R + 3), bk = cx(pa + Math.PI, R * 0.6);
+        paths.push({ pts: [[ex.x, ex.z], [c.x + (ex.x - c.x) * 0.5, c.z + (ex.z - c.z) * 0.5], [c.x, c.z], [bk.x, bk.z]], w: 4.6 });
+        for (let k = 0; k < 3; k++) { const a = pa + (k / 3) * Math.PI, dx = Math.cos(a) * 6.4, dz = Math.sin(a) * 6.4; paths.push({ pts: [[c.x - dx, c.z - dz], [c.x, c.z], [c.x + dx, c.z + dz]], w: 8.2 }); } }
+      // Wachtürme links und rechts vom Tor, Laternen am Durchgang
+      for (const s of [-1, 1]) {
+        const p = cx(pa + s * (gateHalf + 0.17), R + 0.4);
+        if (free(p.x, p.z, 2.2)) mount('wachturm', p.x, p.z, faceC(p));
+        const t = cx(pa + s * (gateHalf - 0.02), R - 1.6);
+        if (free(t.x, t.z, 0.6)) mount('laterne', t.x, t.z, 0);
+      }
+      // Kapitänshütte gegenüber dem Tor, Vorräte, Waffenständer
+      { const hp = cx(pa + Math.PI, R * 0.62);
+        if (free(hp.x, hp.z, 3.6)) { mount('holzhuette', hp.x, hp.z, faceC(hp)); placedHomes.push({ x: hp.x, z: hp.z, yaw: faceC(hp) }); }
+        for (const [t, ao, dd] of [['kisten', 0.62, 11.2], ['faesser', -0.55, 10.8], ['fass', 1.0, 11.6], ['kisten', -1.05, 11.4]] as [StructureType, number, number][]) {
+          const q = cx(pa + Math.PI + ao, dd);
+          if (free(q.x, q.z, 1.6)) mount(t, q.x, q.z, faceC(q) + (rnd() - 0.5) * 0.6);
+        }
+        const rq = cx(pa + Math.PI * 0.5 - 0.3, 5.6);
+        if (free(rq.x, rq.z, 1.4)) { put(weaponRack(darkWood), rq.x, rq.z, faceC(rq)); block(rq.x, rq.z, 0.9); }
+        // Banner: hohe Stange mit großem Tuch, aus der Luft schon weit zu erkennen
+        for (const [ba, bd] of [[0.82, 4.6], [0.7, 5.4], [-0.75, 5.0], [0.5, 6.4]]) {
+          const bp = cx(pa + Math.PI * ba, bd);
+          if (free(bp.x, bp.z, 0.8)) { put(flag('#8A1F1A', darkWood, 2.1), bp.x, bp.z); block(bp.x, bp.z, 0.4); break; }
+        } }
+      // Feuerstelle mit Sitzbalken, zweite Feuerstelle bei den Zelten
       const fire = campfire(glow);
       put(fire, c.x, c.z, 0);
       fires.push({ x: c.x, y: hAt(c.x, c.z) + 0.4, z: c.z });
-      glows.push({ kind: 'fire', x: c.x, y: hAt(c.x, c.z) + 0.26, z: c.z, ground: hAt(c.x, c.z), size: 1.2, pool: 8.5 });
+      glows.push({ kind: 'fire', x: c.x, y: hAt(c.x, c.z) + 0.26, z: c.z, ground: hAt(c.x, c.z), size: 1.4, pool: 11 });
       block(c.x, c.z, 1.1);
-      const n = 2 + Math.floor(rnd() * 3);
-      for (let i = 0; i < n; i++) {
-        const a = (i / n) * Math.PI * 2 + rnd() * 0.5, d = 4.5 + rnd() * 2;
-        const x = c.x + Math.cos(a) * d, z = c.z + Math.sin(a) * d;
-        if (!free(x, z, 1.8)) continue;
-        put(tent(canvas, darkWood, rnd), x, z, Math.atan2(c.x - x, c.z - z));
-        block(x, z, 1.7);
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + 0.5, p = cx(a, 2.6);
+        const log = new Mesh(new CylinderGeometry(0.2, 0.22, 2.0, 7), darkWood);
+        log.rotation.z = Math.PI / 2;
+        log.position.set(0, 0.25, 0);
+        const lg = new Group(); lg.add(log);
+        put(lg, p.x, p.z, a + Math.PI / 2);
       }
-      // Palisade auf der Seeseite
-      const pa = Math.atan2(c.z, c.x);
-      for (let k = -5; k <= 5; k++) {
-        const a = pa + k * 0.09, d = Math.hypot(c.x, c.z) + 9;
-        const x = Math.cos(a) * d, z = Math.sin(a) * d;
-        if (d > E(a) * 0.9 || !free(x, z, 0.3)) continue;
-        const stake = new Mesh(new ConeGeometry(0.22, 2.6 + rnd() * 0.6, 5), darkWood);
-        put(stake, x, z, 0, 0.2).position.y += 1.2;
-        block(x, z, 0.3);
+      { const f2 = cx(pa - Math.PI * 0.5 + 0.25, 7.2);
+        if (free(f2.x, f2.z, 1.4)) { put(campfire(glow, true), f2.x, f2.z, 0); fires.push({ x: f2.x, y: hAt(f2.x, f2.z) + 0.3, z: f2.z }); glows.push({ kind: 'fire', x: f2.x, y: hAt(f2.x, f2.z) + 0.22, z: f2.z, ground: hAt(f2.x, f2.z), size: 0.9, pool: 7 }); block(f2.x, f2.z, 0.9); } }
+      // Zelte im Ring um die Feuerstelle (nicht vor dem Tor und nicht an der Hütte), Türen zum Feuer
+      const tentCloth = [canvas, toon({ color: '#B9674A', side: DoubleSide }), toon({ color: '#7B94A4', side: DoubleSide }), toon({ color: '#C9B48E', side: DoubleSide })];
+      const tentAt: [number, number][] = [[1, 0.95], [-1, 0.95], [1, 1.4], [-1, 1.4], [1, 1.85], [-1, 1.85], [1, 2.3], [-1, 2.3]];
+      let nTent = 0;
+      for (const [sg, ao] of tentAt) {
+        if (nTent >= 5) break;
+        for (const dd of [8.8, 9.8, 7.8]) {
+          const p = cx(pa + sg * ao, dd);
+          if (!free(p.x, p.z, 2.4)) continue;
+          put(tent(tentCloth[nTent % tentCloth.length], darkWood, rnd), p.x, p.z, faceC(p));
+          blockBox(p.x, p.z, 3.0, 4.2, faceC(p));
+          nTent++;
+          break;
+        }
       }
-      const rack = weaponRack(darkWood);
-      const rp = spot(0.2, 0.6, 1.2);
-      if (rp) { put(rack, rp.x, rp.z); block(rp.x, rp.z, 0.8); }
-      const banner = flag('#5A1E1A', darkWood);
-      const bp = spot(0.2, 0.55, 0.5);
-      if (bp) put(banner, bp.x, bp.z);
+      // Palisade: dicht gesetzte, angespitzte Stämme; Lücke am Tor; Kollision in Abschnitten von ~2,3 m
+      const postMat = toon('#5A4129'), postTop = toon('#7B5C3C');
+      const nPost = Math.round((Math.PI * 2 * R) / 0.5);
+      let run = 0;
+      for (let i = 0; i < nPost; i++) {
+        const a = pa + Math.PI * 2 * (i / nPost);
+        const da = Math.min(i / nPost, 1 - i / nPost) * Math.PI * 2; // Winkelabstand zur Torrichtung
+        if (da < gateHalf) { run = 0; continue; }
+        const p = cx(a, R + (rnd() - 0.5) * 0.25);
+        if (Math.hypot(p.x, p.z) > E(Math.atan2(p.z, p.x)) * 0.92 || !free(p.x, p.z, 0.25)) { run = 0; continue; }
+        const h = 2.9 + rnd() * 0.9;
+        const post = new Mesh(new CylinderGeometry(0.2, 0.24, h, 6), postMat);
+        post.position.set(p.x, hAt(p.x, p.z) + h / 2 - 0.15, p.z);
+        post.rotation.set((rnd() - 0.5) * 0.05, 0, (rnd() - 0.5) * 0.05);
+        const tip = new Mesh(new ConeGeometry(0.2, 0.55, 6), postTop);
+        tip.position.set(p.x, hAt(p.x, p.z) + h - 0.15 + 0.22, p.z);
+        group.add(post, tip);
+        if (++run % 4 === 0) blockBox(p.x + Math.sin(a) * 0.75, p.z - Math.cos(a) * 0.75, 2.3, 0.7, -a - Math.PI / 2);
+      }
+      // Querbalken hinter den Stämmen (innen)
+      for (let i = 0; i < Math.floor(nPost / 7); i++) {
+        const a = pa + Math.PI * 2 * ((i * 7 + 3) / nPost);
+        if (Math.min((i * 7 + 3) / nPost, 1 - (i * 7 + 3) / nPost) * Math.PI * 2 < gateHalf) continue;
+        const p = cx(a, R - 0.35);
+        if (Math.hypot(p.x, p.z) > E(Math.atan2(p.z, p.x)) * 0.92) continue;
+        const bar = new Mesh(new BoxGeometry(3.6, 0.14, 0.16), darkWood);
+        bar.position.set(p.x, hAt(p.x, p.z) + 1.5, p.z);
+        bar.rotation.y = -a - Math.PI / 2;
+        group.add(bar);
+      }
+      taken.push({ x: c.x, z: c.z, r: R + 1.2 }); // Platz im Lager bleibt frei von Bäumen und Gras
       break;
     }
     case 'quiet': {
@@ -412,6 +483,8 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     case 'lighthouse': {
       // Der Leuchtturm steht in der Inselmitte, daneben das Wärterhaus mit Weg
       mount('leuchtturm', 0, 0, rnd() * 6);
+      // Umlaufender Lichtkegel (nachts): bleibt ungemergt (die Drehung rechnet der Shader um die Laterne)
+      { const bm = lighthouseBeams(); bm.position.set(0, hAt(0, 0) + 22.6, 0); group.add(bm); bm.traverse((o) => { if ((o as Mesh).isMesh) glow.add(o as Mesh); }); }
       const qa = rnd() * Math.PI * 2;
       const q = { x: Math.cos(qa) * 11, z: Math.sin(qa) * 11 };
       if (free(q.x, q.z, 4)) { mount('steinhaus', q.x, q.z, Math.atan2(-q.x, -q.z)); paths.push({ pts: [[q.x * 0.72, q.z * 0.72], [q.x * 0.36, q.z * 0.36], [0, 0]], w: 2.2 }); }
@@ -653,7 +726,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   paths.forEach((pa, i) => {
     const len = pa.pts.reduce((a, p, k) => a + (k ? Math.hypot(p[0] - pa.pts[k - 1][0], p[1] - pa.pts[k - 1][1]) : 0), 0);
     if (len < 3 || pa.pts.some((p) => Math.hypot(p[0], p[1]) > E(Math.atan2(p[1], p[0])) * 0.98)) return;
-    group.add(roadMesh(pa.pts, pa.w, 0, 0, hAt, dirtMaterial(i % 6), 0.07));
+    group.add(roadMesh(pa.pts, pa.w, 0, 0, (x, z) => hAt(x, z) + (o.liftAt ? o.liftAt(x, z) : 0), dirtMaterial(i % 6), 0.06));
   });
 
   return { trees, bushes, fires, glows };
@@ -706,15 +779,42 @@ function campfire(glow: Set<Mesh>, small = false): Group {
 
 /** Zelt aus Segeltuch */
 function tent(cloth: Material, pole: Material, rnd: () => number): Group {
+  // Giebelzelt: Prisma aus Segeltuch, Tür vorn (+z) mit dunkler Klappe, Firststange mit Zipfeln, Heringe und Spannseile
   const g = new Group();
-  const w = 2.6 + rnd() * 0.8;
-  const body = new Mesh(new ConeGeometry(w, 2.4, 4, 1, true), cloth);
-  body.rotation.y = Math.PI / 4;
-  body.scale.set(1, 1, 1.4);
-  body.position.y = 1.2;
-  const p = new Mesh(new CylinderGeometry(0.05, 0.05, 2.8, 4), pole);
-  p.position.y = 1.4;
-  g.add(body, p);
+  const w = 1.45 + rnd() * 0.25, h = 2.0 + rnd() * 0.35, L = 3.5 + rnd() * 0.6;
+  const sh = new Shape();
+  sh.moveTo(-w, 0); sh.lineTo(w, 0); sh.lineTo(0, h); sh.closePath();
+  const geo = new ExtrudeGeometry(sh, { depth: L, bevelEnabled: false });
+  geo.translate(0, 0, -L / 2);
+  const body = new Mesh(geo, cloth);
+  body.castShadow = true;
+  g.add(body);
+  const flapShape = new Shape();
+  flapShape.moveTo(-w * 0.42, 0); flapShape.lineTo(w * 0.42, 0); flapShape.lineTo(0, h * 0.74); flapShape.closePath();
+  const flap = new Mesh(new ShapeGeometry(flapShape), toon({ color: '#2C2118', side: DoubleSide }));
+  flap.position.set(0, 0.02, L / 2 + 0.012);
+  flap.userData.noOutline = true;
+  g.add(flap);
+  const ridge = new Mesh(new CylinderGeometry(0.045, 0.045, L + 0.9, 5), pole);
+  ridge.rotation.x = Math.PI / 2;
+  ridge.position.set(0, h + 0.03, 0);
+  g.add(ridge);
+  for (const sz of [-1, 1]) for (const sx of [-1, 1]) {
+    const stake = new Mesh(new CylinderGeometry(0.03, 0.04, 0.4, 4), pole);
+    stake.position.set(sx * (w + 0.7), 0.16, sz * (L / 2 - 0.2));
+    stake.rotation.z = -sx * 0.4;
+    g.add(stake);
+    const rope = new Mesh(new CylinderGeometry(0.012, 0.012, Math.hypot(0.75, h * 0.8), 3), pole);
+    rope.position.set(sx * (w + 0.35), h * 0.4, sz * (L / 2 - 0.2));
+    rope.rotation.z = -sx * Math.atan2(0.75, h * 0.8);
+    rope.userData.noOutline = true;
+    g.add(rope);
+  }
+  // Bündel und Rucksack vor dem Zelt
+  const pack = new Mesh(new BoxGeometry(0.55, 0.4, 0.35), toon('#6B5238'));
+  pack.position.set(w * 0.8, 0.2, L / 2 + 0.55);
+  pack.rotation.y = rnd();
+  g.add(pack);
   return g;
 }
 
@@ -734,14 +834,21 @@ function weaponRack(wood: Material): Group {
   return g;
 }
 
-function flag(col: string, wood: Material): Group {
+function flag(col: string, wood: Material, k = 1): Group {
   const g = new Group();
-  const pole = new Mesh(new CylinderGeometry(0.06, 0.08, 5, 5), wood);
-  pole.position.y = 2.5;
-  const cloth = new Mesh(new PlaneGeometry(1.5, 1), toon({ color: col, side: DoubleSide }));
-  cloth.position.set(0.78, 4.4, 0);
+  const pole = new Mesh(new CylinderGeometry(0.06 * k, 0.08 * k, 5 * k, 6), wood);
+  pole.position.y = 2.5 * k;
+  const cloth = new Mesh(new PlaneGeometry(1.5 * k, 1 * k), toon({ color: col, side: DoubleSide }));
+  cloth.position.set(0.78 * k, 4.4 * k, 0);
   cloth.userData.noOutline = true;
   g.add(pole, cloth);
+  if (k > 1.5) {
+    // Totenkopf-Fleck auf dem großen Banner
+    const skull = new Mesh(new CircleGeometry(0.28 * k, 10), toon({ color: '#EDE6D2', side: DoubleSide }));
+    skull.position.set(0.78 * k, 4.42 * k, 0.012);
+    skull.userData.noOutline = true;
+    g.add(skull);
+  }
   return g;
 }
 

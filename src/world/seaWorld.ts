@@ -70,6 +70,7 @@ import { islandLabel, islandTerrain, OUTPOST_PIER, outpost, plant, ROCK_TYPES, r
 import type { Sprite } from 'three';
 import { ABYSS_LAIR, SeaBoss } from '../naval/seaBoss';
 import { buildTown, mergeByMaterial, type TownBuild } from './town';
+import { updateBeams } from './lighthouseBeam';
 import { SeaLife } from './life';
 import { warmupShaders } from '../core/warmup';
 import type { WebGLRenderer } from 'three';
@@ -499,7 +500,7 @@ export class SeaWorld {
         this.villages.set(s.def.id, built.village);
         this.fauna.addIsland(s.def, s.x, s.z, r, built.trees.map((t) => ({ x: s.x + t.x, y: t.y, z: s.z + t.z })), built.bushes.map((b) => ({ x: s.x + b.x, y: b.y, z: s.z + b.z })), style, (ang) => r * coastK(form.coast, ang));
       } else if (!town) {
-        const dressed = dressIsland({ group: isl, def: s.def, kit, walk, hAt, glow, density: texDetail.density, style, veg });
+        const dressed = dressIsland({ group: isl, def: s.def, kit, walk, hAt, glow, density: texDetail.density, style, veg, liftAt: terrain.liftAt });
         this.campfires.push(...dressed.fires.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
         this.addGlows(dressed.glows, s.x, s.z);
         this.fauna.addIsland(s.def, s.x, s.z, r, dressed.trees.map((t) => ({ x: s.x + t.x, y: t.y, z: s.z + t.z })), dressed.bushes.map((b) => ({ x: s.x + b.x, y: b.y, z: s.z + b.z })), style, (ang) => r * coastK(form.coast, ang));
@@ -1191,6 +1192,7 @@ export class SeaWorld {
     this.updateAir(dt);
     {
       const pp = this.playerPos;
+      updateBeams(dt, Math.min(1, Math.max(0, (0.75 - this.env.palette.sunVis) * 2.2)));
       this.fauna.update(dt, pp.x, pp.z, 1 - this.env.palette.sunVis, (x, z) => this.ground.height(x, z), (x, z) => this.env.heightAt(x, z));
     }
     this.updateNpcs(dt);

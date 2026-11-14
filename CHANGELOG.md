@@ -1,5 +1,16 @@
 # Was ist neu
 
+## 2.9.71 – Welt 2, dritter Durchgang: Mauerwerk ohne Gekritzel, weicher Wiesenrand, Piratenlager, Leuchtturmstrahl (14.11.2026)
+
+- **Mauerwerk, Ziegel und Putz scharf:** Die Muster rechnen mit Weltkoordinaten bis 3000 m; aus Pixel-Ableitungen schwankte die Flächenrichtung und daraus wurden Millimeter-Fehler – das war das „Abgekritzelte“ (Bogenmuster, Pünktchen an den Fugen). Stein-, Ziegel- und Putz-Materialien nutzen jetzt die exakten Eckpunkt-Normalen (kein `flatShading` mehr für diese drei), einen auf 1/4096 gerundeten Rahmen je Fläche und getrennte Phase (`skPhase`: Kameraanteil + kleiner Rest relativ zur Kamera). Ergebnis: echte Ziegelreihen mit Fugen und Fasen, Schieferziegel auf den Dächern, saubere Torhäuser. Burgstein etwas heller.
+- **Wiesenrand:** Neues Detail `grassCap` (Attribut `aEdge`): die Wiese geht in trockenes Gras, ausgefranste Büschel und dann in den Sand über, die Kante sinkt auf den Sand; gilt auch für Hügel. `mergeByMaterial` behält `aEdge`.
+- **Sand:** Dünenwellen im Meterbereich, warme Mulden, Spülsaum mit Tang an der Flutlinie.
+- **Piratenlager neu gebaut** (alle Lager-Inseln): Holzpalisade mit Tor zum Meer und Querbalken, zwei Wachtürme und Laternen am Tor, Giebelzelte mit Türklappe, Firststange und Spannseilen, Kapitänshütte, Vorräte, Waffenständer, zwei Feuerstellen mit Sitzbalken, Erdplatz, hohes Banner mit Totenkopf – aus der Luft gut zu erkennen.
+- **Wege unter der Wiese:** Dorfwege und Burgstraßen lagen unter der Grasfläche (0,15–0,19 m); `islandTerrain` liefert jetzt `liftAt`, die Wege folgen der Wiese.
+- **Effekte:** Blütenstaub im Sonnenlicht und Sandfahnen am Strand (tags, in der Nähe der Spielfigur), umlaufender Lichtkegel des Leuchtturms nachts (`world/lighthouseBeam.ts`).
+- **Vulkan:** Die Kegel zeigten dreieckige Schattenflecken (Schatten auf großen steilen Flächen), jetzt ohne Schattenempfang.
+- **Geprüft:** alle 37 Inseln aus der Luft, Bodenansichten auf 8 Inseln, Tore, Dächer, Handy-Hochformat auf Niedrig (245 Aufrufe, 0,8 Mio. Dreiecke) und Mittel (337 Aufrufe, 1,0 Mio.), Ultra bei 59 fps, Tests und Build.
+
 ## 2.9.70 – Welt 2, zweiter Durchgang: Stege, Burgringe, Straßenstadt, Relief (14.11.2026)
 
 Rückmeldung zu 2.9.69 abgearbeitet: Burgen, Tore, Anfangshafen, Stege, Boden und Texturen.
