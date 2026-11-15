@@ -1,5 +1,13 @@
 # Was ist neu
 
+## 2.9.83 – Läuft auch auf eingebundenen Seiten mit strenger Sicherheitsrichtlinie (15.11.2026)
+
+- **Ladebalken blieb auf wildhunt.com.de/sturmkrone bei 2 % stehen (Ursache gefunden und nachgestellt):** Die Seite sendet eine strenge Content-Security-Policy (`worker-src 'self'`, `script-src` ohne `'wasm-unsafe-eval'`, `connect-src` ohne `blob:`). Das Spiel brauchte dreierlei, das sie verbietet: (1) Draco-Modelle (258 Dateien) dekodierte der Standard-DRACOLoader mit WebAssembly in einem Blob-Worker, (2) die acht KayKit-Animationsdateien waren mit Meshopt (WebAssembly) komprimiert, (3) eingebettete Texturen der GLB-Dateien lud der GLTFLoader per `fetch` von Blob-Adressen. Die Richtlinie wurde lokal nachgebaut (`qa3/csp-server.cjs`): vorher Stillstand im Ladebalken, jetzt Menü, Spiel und Figuren-Editor ohne eine einzige Fehlermeldung.
+- **Draco ohne WebAssembly:** Erkennt das Spiel die Einschränkung (`wasmAndBlobWorkersAllowed`), nutzt es den JavaScript-Decoder in einem Worker aus einer echten Datei (`libs/draco/draco-js-worker.js`, erzeugt von `scripts/build-draco-worker.mjs`). Auf normalen Seiten (GitHub Pages) bleibt alles wie bisher mit WebAssembly.
+- **Texturen:** Bei strenger Richtlinie lädt der GLTFLoader eingebettete Bilder über Bildelemente statt per fetch.
+- **Animationen ohne Meshopt:** Die acht KayKit-GLBs sind unkomprimiert (+20 % Größe, 2,3 → 2,8 MB), erzeugt mit `scripts/decode-meshopt.mjs`; Meshopt-Decoder entfällt.
+- **Hinweis für die Seite:** Mit `'wasm-unsafe-eval'` in `script-src` und `blob:` in `worker-src` und `connect-src` wäre das Spiel noch etwas schneller beim Laden, nötig ist es jetzt nicht mehr.
+
 ## 2.9.82 – Großer Qualitätsdurchgang: Gelände, Brunnen, Leuchtturm, Schiffe, Leistung (15.11.2026)
 
 **Gelände und Bauten (alle Inseln)**

@@ -1,8 +1,7 @@
-import { LoadingManager, type WebGLRenderer } from 'three';
+import { LoadingManager, TextureLoader, type WebGLRenderer } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
-import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 
 /**
  * Zentrale Lade-Pipeline.
@@ -13,11 +12,65 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
  *   - DRACOLoader (Geometrie-Kompression; Decoder liegt lokal unter libs/draco, offline verfügbar)
  *   - KTX2Loader (Basis Universal; Texturen bleiben auf der Grafikkarte komprimiert – weniger Grafikspeicher.
  *     Der Transcoder unter libs/basis wird erst geladen, wenn ein Modell wirklich KTX2 enthält)
- *   - MeshoptDecoder (kompakte Animations- und Netzdaten)
+ *   - Kein Meshopt: Meshopt braucht WebAssembly (siehe unten); die KayKit-Animationen sind deshalb unkomprimiert (scripts/decode-meshopt.mjs)
  *   Hinweis: Den früheren BasisTextureLoader gibt es in three.js nicht mehr – KTX2Loader ist sein Nachfolger.
  * - Audio: Musik und Klänge werden im Spiel erzeugt (Web Audio), es gibt keine Audiodateien zu laden.
  */
 const BASE = import.meta.env.BASE_URL;
+
+/**
+ * Strenge Sicherheitsrichtlinien eingebundener Seiten (z. B. wildhunt.com.de/sturmkrone: `worker-src 'self'`, `script-src` ohne
+ * `'wasm-unsafe-eval'`) verbieten WebAssembly und Blob-Worker. Der Standard-DRACOLoader braucht beides; das Spiel blieb dort bei 2 % im
+ * Ladebalken stehen. Prüfung ohne Nebenwirkung: winziges Modul übersetzen und einen leeren Blob-Worker starten.
+ */
+export function wasmAndBlobWorkersAllowed(): boolean {
+  try {
+    new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
+  } catch {
+    return false;
+  }
+  try {
+    const u = URL.createObjectURL(new Blob(['']));
+    const w = new Worker(u);
+    w.terminate();
+    URL.revokeObjectURL(u);
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Eingebettete Texturen der GLB-Dateien lädt der GLTFLoader standardmäßig mit dem ImageBitmapLoader, und der holt sie per fetch von einer
+ * Blob-Adresse; das verbietet `connect-src` strenger Sicherheitsrichtlinien (Blob nicht erlaubt), die Texturen blieben leer. Der
+ * TextureLoader nimmt ein Bildelement (`img-src` erlaubt blob:) und ist der offizielle Weg für Safari und Firefox. Gilt nur bei strenger Richtlinie.
+ */
+function useImageElementTextures(gltf: GLTFLoader, manager: LoadingManager) {
+  if (wasmAndBlobWorkersAllowed()) return;
+  gltf.register((parser) => {
+    (parser as unknown as { textureLoader: TextureLoader }).textureLoader = new TextureLoader(manager);
+    return { name: 'SK_ImageElementTextures' };
+  });
+}
+
+/** Draco ohne WebAssembly und ohne Blob-Worker: JavaScript-Decoder in einem Worker aus einer echten Datei (libs/draco/draco-js-worker.js) */
+function makeDraco(manager: LoadingManager): DRACOLoader {
+  const l = new DRACOLoader(manager);
+  l.setDecoderPath(`${BASE}libs/draco/`);
+  if (!wasmAndBlobWorkersAllowed()) {
+    const any = l as unknown as { _initDecoder: () => Promise<void>; decoderConfig: object; workerSourceURL: string; decoderPending: Promise<void> | null };
+    any._initDecoder = () => {
+      if (!any.decoderPending) {
+        any.decoderConfig = { type: 'js' };
+        any.workerSourceURL = `${BASE}libs/draco/draco-js-worker.js`;
+        any.decoderPending = Promise.resolve();
+      }
+      return any.decoderPending;
+    };
+    console.info('Sturmkrone: strenge Sicherheitsrichtlinie erkannt, Draco läuft ohne WebAssembly.');
+  }
+  return l;
+}
 
 interface Task { weight: number; done: number }
 
@@ -44,8 +97,7 @@ export class Preloader {
 
   /** Einmal mit dem Renderer aufrufen (KTX2 muss wissen, welche Kompressionsformate die Grafikkarte kann) */
   init(renderer: WebGLRenderer) {
-    this.draco = new DRACOLoader(this.manager);
-    this.draco.setDecoderPath(`${BASE}libs/draco/`);
+    this.draco = makeDraco(this.manager);
     // WebAssembly-Decoder ist Standard (setDecoderConfig ist seit three r186 veraltet und warnt)
     this.ktx2 = new KTX2Loader(this.manager);
     this.ktx2.setTranscoderPath(`${BASE}libs/basis/`);
@@ -53,7 +105,7 @@ export class Preloader {
     this.gltf = new GLTFLoader(this.manager);
     this.gltf.setDRACOLoader(this.draco);
     this.gltf.setKTX2Loader(this.ktx2);
-    this.gltf.setMeshoptDecoder(MeshoptDecoder);
+    useImageElementTextures(this.gltf, this.manager);
   }
 
   /** Gemeinsamer glTF-Loader (mit Draco/KTX2/Meshopt) */
@@ -61,10 +113,9 @@ export class Preloader {
     if (!this.gltf) {
       // ohne Renderer (z. B. in Tests): ohne KTX2
       this.gltf = new GLTFLoader(this.manager);
-      this.draco ??= new DRACOLoader(this.manager);
-      this.draco.setDecoderPath(`${BASE}libs/draco/`);
+      this.draco ??= makeDraco(this.manager);
       this.gltf.setDRACOLoader(this.draco);
-      this.gltf.setMeshoptDecoder(MeshoptDecoder);
+      useImageElementTextures(this.gltf, this.manager);
     }
     return this.gltf;
   }
