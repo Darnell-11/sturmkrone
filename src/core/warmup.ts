@@ -21,6 +21,7 @@ import { heatShared } from '../render/heat';
 import { buildShip } from '../entities/ship/shipBuilder';
 import { DEFAULT_SHIP_LOOK, SHIP_CLASSES } from '../data/ships';
 import { disposeObject } from '../render/dispose';
+import { tick } from './yield';
 
 /**
  * Shader vorkompilieren, bevor der Ladebildschirm verschwindet (gegen Ruckler beim ersten Erscheinen).
@@ -42,6 +43,10 @@ export interface WarmupDeps {
   particles: ParticleSystem;
   /** ein Bild zeichnen (inklusive Nachbearbeitung) */
   renderFrame(): void;
+  /** Szene parallel vorübersetzen (mit dem richtigen Zielpuffer, siehe GameRenderer.precompile); fehlt es, greift compileAsync */
+  precompile?(): Promise<void>;
+  /** Meldet, dass gleich eine lange, nicht teilbare Arbeit beginnt (true) beziehungsweise vorbei ist (false) */
+  onBlocking?(on: boolean): void;
 }
 
 let keeper: Group | null = null;
@@ -82,6 +87,8 @@ export async function warmupShaders(d: WarmupDeps, progress: (k: number) => void
       c.hitFlash('#ffffff');
       c.setTrail(true, '#ff6a4a');
       figs.push(c);
+      progress(0.02 + 0.04 * (figs.length / 9));
+      await tick();
     }
   }
   // ---- Ausrüstung: Figuren in ganzen Sets, damit alle Oberflächen (Stoff, Leder, Stahl, Gold, Seide) samt Borten und Mustern vorab übersetzt sind ----
@@ -96,6 +103,8 @@ export async function warmupShaders(d: WarmupDeps, progress: (k: number) => void
     c.update(0.016);
     c.enableFx();
     figs.push(c);
+    progress(0.02 + 0.04 * (figs.length / 9));
+    await tick();
   }
   // ---- Schiffe: jede Klasse einmal (Rümpfe, Segel, Takelage, Kanonen, Schaum haben eigene Materialien) ----
   const ships: Group[] = [];
@@ -105,6 +114,8 @@ export async function warmupShaders(d: WarmupDeps, progress: (k: number) => void
     m.group.scale.setScalar(0.01);
     scene.add(m.group);
     ships.push(m.group);
+    progress(0.06 + 0.09 * (ships.length / SHIP_CLASSES.length));
+    await tick();
   }
   progress(0.15);
 
@@ -121,6 +132,7 @@ export async function warmupShaders(d: WarmupDeps, progress: (k: number) => void
   const efx = new ElementFx(scene, fx, d.particles, { shake: () => {}, hitstop: () => {}, speedlines: () => {} });
   for (const el of Object.keys(ELEMENT_COLORS) as Element[]) efx.impact(at.clone(), el, 1);
   progress(0.3);
+  await tick();
 
   // Schweife einmal abtasten, damit ihr Netz Punkte hat
   Character.renderTrails(0.016);
@@ -149,30 +161,61 @@ export async function warmupShaders(d: WarmupDeps, progress: (k: number) => void
   scene.add(keeper);
   keeper.visible = true;
   progress(0.4);
+  await tick();
 
   // ---- Texturen schon jetzt auf die Grafikkarte laden (sonst ruckelt es, sobald eine Insel zum ersten Mal ins Bild kommt) ----
+  // in Häppchen von etwa 20 ms, dazwischen bekommt der Browser Luft
   const seenTex = new Set<string>();
-  let texN = 0;
+  const texList: { isTexture?: boolean; uuid?: string; image?: unknown }[] = [];
   scene.traverse((o) => {
     for (const m of materialsOf(o)) {
       for (const k in m) {
         const v = (m as unknown as Record<string, unknown>)[k] as { isTexture?: boolean; uuid?: string; image?: unknown } | null;
-        if (v && v.isTexture && v.image && v.uuid && !seenTex.has(v.uuid)) { seenTex.add(v.uuid); try { d.renderer.initTexture(v as never); texN++; } catch { /* Textur ohne Bild */ } }
+        if (v && v.isTexture && v.image && v.uuid && !seenTex.has(v.uuid)) { seenTex.add(v.uuid); texList.push(v); }
       }
     }
   });
+  let sliceStart = performance.now();
+  for (let i = 0; i < texList.length; i++) {
+    try { d.renderer.initTexture(texList[i] as never); } catch { /* Textur ohne Bild */ }
+    if (performance.now() - sliceStart > 20) { progress(0.4 + 0.2 * (i / texList.length)); await tick(); sliceStart = performance.now(); }
+  }
   progress(0.6);
 
   // ---- Übersetzen (parallel, wenn der Browser es kann) und zwei Bilder zeichnen ----
-  try {
-    await d.renderer.compileAsync(scene, camera);
-  } catch {
-    d.renderer.compile(scene, camera);
+  if (d.precompile) await d.precompile();
+  else {
+    try {
+      await d.renderer.compileAsync(scene, camera);
+    } catch {
+      d.renderer.compile(scene, camera);
+    }
   }
   progress(0.8);
-  d.renderFrame();
+  await tick();
+  // Das erste echte Bild übersetzt Schattentiefe und Nachbearbeitung (nicht parallel möglich). Beim allerersten Start auf einem Gerät
+  // kann das mehrere Sekunden am Stück dauern (die Grafikkarte merkt sich die Programme danach): der Ladebildschirm zeigt dann
+  // einen wandernden Streifen statt eines stehenden Balkens (siehe `onBlocking`).
+  // Damit es nicht ein einziger Block wird, zeichnen wir die Szene in Gruppen: zuerst ist alles ausgeblendet (Lichter bleiben, sonst
+  // ändert sich die Lichtzahl und damit die Programme), dann kommt Gruppe für Gruppe dazu. Jedes Bild übersetzt nur, was neu ist;
+  // dazwischen bekommt der Browser Luft und der Balken rückt vor. Danach ist alles wieder genau so sichtbar wie vorher.
+  const hideable = scene.children.filter((o) => o.visible && !(o as { isLight?: boolean }).isLight && !(o as { isCamera?: boolean }).isCamera);
+  for (const o of hideable) o.visible = false;
+  const batch = Math.max(1, Math.ceil(hideable.length / 10));
+  d.onBlocking?.(true);
+  await tick();
+  d.renderFrame(); // Nachbearbeitung und Schattenkarte (ohne sichtbare Objekte)
+  d.onBlocking?.(false);
+  for (let i = 0; i < hideable.length; i += batch) {
+    for (const o of hideable.slice(i, i + batch)) o.visible = true;
+    d.renderFrame();
+    progress(0.8 + 0.12 * Math.min(1, (i + batch) / hideable.length));
+    await tick();
+  }
+  for (const o of hideable) o.visible = true;
   d.renderFrame();
   progress(0.92);
+  await tick();
 
   // ---- Aufräumen: Effekte sofort ablaufen lassen, Figuren und Bewahrer unsichtbar ----
   efx.update(10);

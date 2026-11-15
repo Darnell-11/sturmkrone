@@ -16,6 +16,16 @@
 <body>
   <canvas id="game" aria-label="3D-Spielwelt"></canvas>
   <div id="ui"></div>
+  <!-- Ladebildschirm: steht sofort da (vor allen Skripten), das Spiel übernimmt ihn und füllt den Balken -->
+  <div id="boot-loading" class="loading waiting" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+    <div class="ld-card">
+      <div class="fell ld-title">Sturmkrone</div>
+      <div class="ld-phase">Die Crew macht sich bereit …</div>
+      <div class="bar"><i></i></div>
+      <div class="ld-pct">0 %</div>
+      <div class="ld-tip"></div>
+    </div>
+  </div>
   <noscript><p style="padding:24px;font-family:sans-serif">Sturmkrone braucht JavaScript.</p></noscript>
   <script type="module" src="/src/main.ts"></script>
 </body>

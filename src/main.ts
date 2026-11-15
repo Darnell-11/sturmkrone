@@ -9,6 +9,9 @@ import { Game } from './core/game';
 import { WebGLUnavailableError } from './render/renderer';
 import { loadArchModels, loadEnvModels } from './world/envModels';
 import { loadWorldProps } from './world/worldProps';
+import { LoadingScreen } from './ui/loadingScreen';
+import { preload } from './core/preload';
+import { tick } from './core/yield';
 
 function fail(message: string) {
   const el = document.createElement('div');
@@ -23,10 +26,18 @@ function fail(message: string) {
  */
 async function boot() {
 try {
+  // Ladeplan (Summe 1): alle Modell-Dateien 23 %, Inseln und Städte aufbauen 30 %, Bewohner erzeugen 10 %, Shader vorbereiten 37 %.
+  // Der Ladebildschirm steht schon in index.html; hier bekommt er seinen Fortschritt.
+  const loading = new LoadingScreen();
+  preload.plan(0.23, { world: 0.3, prepare: 0.1, shaders: 0.37 });
+  preload.onProgress((p, phase) => loading.set(p, phase));
+  preload.setPhase('Karten und Bauwerke werden geladen …');
   await Promise.all([loadEnvModels(), loadArchModels(), loadWorldProps()]).catch((e) => console.warn('Welt-Modelle konnten nicht vorab geladen werden', e));
-  const game = new Game(document.getElementById('game') as HTMLCanvasElement, document.getElementById('ui')!);
+  // Der Browser soll den Ladebildschirm einmal zeichnen, bevor der Aufbau beginnt
+  await tick();
+  const game = new Game(document.getElementById('game') as HTMLCanvasElement, document.getElementById('ui')!, true);
   // Startfehler (z. B. Netz weg beim Laden der Figuren) freundlich anzeigen statt unbehandelt in der Konsole
-  game.start().catch((e) => { console.error(e); fail('Beim Start ist ein Fehler aufgetreten. Bitte lade die Seite neu.'); });
+  game.start(loading).catch((e) => { console.error(e); fail('Beim Start ist ein Fehler aufgetreten. Bitte lade die Seite neu.'); });
   // Neue Version aktiv (Service Worker hat gewechselt): im Menü sofort neu laden, mitten im Spiel nicht (der nächste Start nimmt sie)
   if (!import.meta.env.DEV && 'serviceWorker' in navigator) {
     let hadController = !!navigator.serviceWorker.controller;

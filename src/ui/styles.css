@@ -269,6 +269,11 @@ kbd {
 /* Fortschritt über transform (weich, ohne Layout); die Breite bleibt fest */
 .loading .bar i { display: block; height: 100%; width: 100%; transform-origin: left center; transform: scaleX(0); background: linear-gradient(90deg, #c98f2c, #e3b04b 60%, #f6d58a); }
 .loading .ld-pct { margin-top: 8px; font-weight: 800; font-variant-numeric: tabular-nums; color: #e3b04b; }
+/* Solange noch nichts gemessen ist (Seite lädt, Skripte werden gelesen): ein wandernder Streifen, läuft auf dem Grafikchip und
+   bleibt in Bewegung, auch wenn der Browser gerade rechnet */
+.loading.waiting .bar i { width: 34%; animation: ld-wait 1.3s ease-in-out infinite; }
+.loading.waiting .ld-pct { visibility: hidden; }
+@keyframes ld-wait { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
 .loading .ld-tip { margin-top: 22px; font-size: 0.86rem; line-height: 1.35; color: #a9b6c8; min-height: 2.7em; }
 
 /* ---------- Kampf ---------- */

@@ -1,5 +1,16 @@
 # Was ist neu
 
+## 2.9.78 – Ladezeit: kein Hängen mehr, ehrlicher Ladebalken (15.11.2026)
+
+Gemessen im Produktionsbau, gleiche Bedingungen für alte (2.9.77) und neue Fassung: leerer Zwischenspeicher, Grafikkarte ohne gemerkte Programme (so läuft ein allererster Start), Messung der Hauptschleife mit dem Long-Task-Zähler des Browsers.
+
+- **Ladebildschirm sofort:** Er steht jetzt in `index.html` und erscheint nach rund 40 ms. Vorher war die Seite 4,6 s lang leer, weil er erst nach dem Aufbau der Welt entstand. Solange noch nichts gemessen ist, wandert ein Streifen (läuft auf dem Grafikchip weiter, auch wenn der Browser rechnet).
+- **Kein Stillstand mehr:** Inseln und Städte (`SeaWorld.buildSteps`, je Insel ein Schritt), Bewohner (`setCharactersSteps`, je Figur), Figuren, Schiffe und Texturen der Shader-Vorbereitung laufen in Stücken; nach jedem gibt `core/yield.ts` dem Browser Luft (per Nachricht, im Hintergrund-Tab nicht gebremst; auf ein gezeichnetes Bild wird höchstens 50 ms gewartet). Längster Block beim allerersten Start: **29,6 s → 6,3 s**; Gesamtdauer des allerersten Starts 40,7 s → 19,6 s.
+- **Shader parallel:** `GameRenderer.precompile` übersetzt die Szene mit dem Zielpuffer der Nachbearbeitung als Ziel. Zuvor übersetzte `compileAsync` für den falschen Farbraum, das erste echte Bild musste alles noch einmal am Stück übersetzen. Das erste Bild wird jetzt zusätzlich in Gruppen aufgebaut (Objekte nacheinander eingeblendet, Lichter bleiben, damit sich die Lichtzahl nicht ändert).
+- **Spielschleife erst nach dem Laden:** Hinter dem deckenden Ladebildschirm zeichnete sie jedes Bild umsonst (rund 1,4 s Rechenzeit).
+- **Ladebalken:** Vorher sprang er sofort auf 60 bis 70 %, weil nur die bisher angemeldeten Dateien zählten, stand dort 35 s lang und lief am Ende auf 85, 97, 100 %. Jetzt gilt ein Plan (Dateien 23 %, Inseln und Städte 30 %, Bewohner 10 %, Shader 37 %) mit der erwarteten Gesamtgröße der Modelle (10,4 MB) als Untergrenze; der größte Sprung beträgt 24 Prozentpunkte, der Balken zeigt erst am Ende 100 %. Der nicht teilbare Schritt (Nachbearbeitung übersetzen) zeigt wieder den wandernden Streifen mit dem Text, dass der allererste Start länger dauert.
+- **Bekannt:** Beim allerersten Start auf einem Gerät bleibt ein nicht teilbarer Block (hier 6,3 s, 52 Programme der Nachbearbeitung); die Grafikkarte merkt sich die Programme danach, spätere Starts sind deutlich kürzer. Handy nicht gemessen.
+
 ## 2.9.77 – Handy-Prüfung: Spielstand-Hinweis und Fehleranzeige (14.11.2026)
 
 Geprüft im Handyformat mit echten Touch-Ereignissen (Chrome-Emulation, Hoch-, Quer- und kleine Formate bis 320 × 568, Stufen Niedrig und Mittel, Entwicklungs- und Produktionsbau): Hauptmenü, Spielstände, Charakter-Editor, „Ablegen!“, Feuer, Links, Rechts und Munition reagieren; keine Fehler in der Konsole; die Knöpfe werden in keinem Format verdeckt; Schüsse und Breitseiten laufen für alle sechs Schiffsklassen und alle Munitionsarten ohne Fehler.

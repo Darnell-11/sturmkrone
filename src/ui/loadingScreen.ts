@@ -27,12 +27,17 @@ export class LoadingScreen {
   private last = performance.now();
 
   constructor(parent: HTMLElement = document.body) {
-    this.el = document.createElement('div');
-    this.el.className = 'loading';
-    this.el.setAttribute('role', 'progressbar');
-    this.el.setAttribute('aria-valuemin', '0');
-    this.el.setAttribute('aria-valuemax', '100');
-    this.el.innerHTML = `
+    // Die Seite (index.html) bringt den Ladebildschirm schon mit, damit er sofort erscheint und nicht erst nach dem schweren Aufbau
+    const existing = document.getElementById('boot-loading');
+    if (existing) {
+      this.el = existing;
+    } else {
+      this.el = document.createElement('div');
+      this.el.className = 'loading waiting';
+      this.el.setAttribute('role', 'progressbar');
+      this.el.setAttribute('aria-valuemin', '0');
+      this.el.setAttribute('aria-valuemax', '100');
+      this.el.innerHTML = `
       <div class="ld-card">
         <div class="fell ld-title">Sturmkrone</div>
         <div class="ld-phase">Die Crew macht sich bereit …</div>
@@ -40,7 +45,8 @@ export class LoadingScreen {
         <div class="ld-pct">0 %</div>
         <div class="ld-tip"></div>
       </div>`;
-    parent.appendChild(this.el);
+      parent.appendChild(this.el);
+    }
     this.bar = this.el.querySelector('.bar i')!;
     this.pct = this.el.querySelector('.ld-pct')!;
     this.phase = this.el.querySelector('.ld-phase')!;
@@ -51,8 +57,27 @@ export class LoadingScreen {
 
   /** Echter Fortschritt 0 … 1 und Phase (Text) */
   set(p: number, phase?: string) {
+    // Sobald es echten Fortschritt gibt, endet die Warte-Animation (ein wandernder Streifen, solange noch nichts gemessen ist)
+    if (p > 0.001) this.el.classList.remove('waiting');
     this.target = Math.max(this.target, Math.min(1, p));
     if (phase && this.phase.textContent !== phase) this.phase.textContent = phase;
+  }
+
+  private phaseBefore = '';
+  /**
+   * Gleich kommt eine lange, nicht teilbare Arbeit (die Grafikkarte übersetzt beim ersten Start die Effekte): die Seite kann in der Zeit
+   * nicht zeichnen. Ein wandernder Streifen (läuft auf dem Grafikchip weiter) und ein ehrlicher Text zeigen, dass noch gearbeitet wird,
+   * statt eines stehenden Balkens.
+   */
+  setBlocking(on: boolean) {
+    if (on) {
+      this.phaseBefore = this.phase.textContent ?? '';
+      this.phase.textContent = 'Effekte werden übersetzt – beim allerersten Start dauert das etwas länger …';
+      this.el.classList.add('waiting');
+    } else {
+      this.el.classList.remove('waiting');
+      if (this.phaseBefore) this.phase.textContent = this.phaseBefore;
+    }
   }
 
   private tick = (now: number) => {

@@ -21,6 +21,9 @@ const BASE = import.meta.env.BASE_URL;
 
 interface Task { weight: number; done: number }
 
+/** Erwartete Gesamtgröße aller Modelle beim Start (Bytes, gemessen: 136 Dateien, rund 10,3 MB); nur für den Ladebalken */
+const EXPECTED_BYTES = 10.4e6;
+
 export class Preloader {
   readonly manager = new LoadingManager();
   private tasks = new Map<string, Task>();
@@ -82,6 +85,8 @@ export class Preloader {
   }
 
   /** Gewichte festlegen: files = Anteil der Dateien, dazu benannte Aufgaben (Summe ≈ 1) */
+  get hasPlan() { return this.fileWeight > 0; }
+
   plan(files: number, tasks: Record<string, number>) {
     this.fileWeight = files;
     for (const [k, w] of Object.entries(tasks)) this.tasks.set(k, { weight: w, done: 0 });
@@ -97,11 +102,16 @@ export class Preloader {
 
   setPhase(phase: string) { this.phase = phase; this.emit(); }
 
+  private filesComplete = false;
+  /** Alle Dateien sind geladen: ab jetzt zählt die tatsächliche Größe, der Dateianteil ist voll */
+  completeFiles() { this.filesComplete = true; this.emit(); }
+
   get progress(): number {
     let loaded = 0, total = 0;
     for (const b of this.bytes.values()) { loaded += b.loaded; total += b.total || 1; }
-    // Dateien ohne Größenangabe zählen erst beim Abschluss
-    let p = total > 0 ? (loaded / total) * this.fileWeight : 0;
+    // Die Gesamtmenge ist anfangs unbekannt (Dateien melden sich erst beim Laden an): ohne Untergrenze stand der Balken nach den
+    // ersten kleinen Dateien schon bei 100 % des Dateianteils. Darum zählt mindestens die erwartete Gesamtgröße (EXPECTED_BYTES).
+    let p = loaded > 0 ? (loaded / Math.max(total, this.filesComplete ? 0 : EXPECTED_BYTES)) * this.fileWeight : 0;
     for (const t of this.tasks.values()) p += t.weight * t.done;
     return Math.min(1, p);
   }

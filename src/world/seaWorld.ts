@@ -118,7 +118,7 @@ export class SeaWorld {
   /** Punkt, auf den Kamera, Schatten und Tiefenunschärfe zielen */
   readonly focus = new Vector3();
   /** Inseln (Mittelpunkt und Radius) – für Karte und Flachwasser */
-  readonly islands: IslandShape[];
+  islands: IslandShape[] = [];
   readonly ground = new IslandGround();
   mode: SeaMode = 'sail';
   /** Text der Kontextaktion (z. B. „An Land gehen“) oder null */
@@ -311,7 +311,14 @@ export class SeaWorld {
   private fwdTmp = new Vector3();
   private npcTmp = new Vector3();
 
-  constructor() {
+  /** Inseln-Aufbau als Generator: je Insel ein Schritt (siehe buildSteps) */
+  private islandSteps: Generator<number, IslandShape[]>;
+
+  /**
+   * deferred = true: die Inseln werden NICHT im Konstruktor gebaut, sondern stückweise über `buildSteps()` (Ladebildschirm:
+   * der Browser bleibt dazwischen ansprechbar und der Balken bewegt sich). Ohne Angabe läuft alles wie bisher in einem Zug.
+   */
+  constructor(deferred = false) {
     installMatrixSkip(this.scene);
     this.env = new Environment(this.scene);
     this.ship = new Ship(this.scene, 0, DEFAULT_SHIP_LOOK('pirat'), 'pirat', 0, true);
@@ -322,9 +329,8 @@ export class SeaWorld {
     glowHub.clear();
     this.glow = new GlowSystem(this.scene);
     this.ground.piers = this.piers;
-    this.islands = this.buildIslands();
-    this.env.setIslands(this.islands);
-    this.buildBuoys();
+    this.islandSteps = this.buildIslands();
+    this.islandSteps.next(); // legt islandDefs an
     this.spray = new ParticleSystem(this.scene, false, 0.8);
     this.sparks = new ParticleSystem(this.scene, true, 0.32);
     this.dust = new ParticleSystem(this.scene, false, 0.7);
@@ -336,6 +342,16 @@ export class SeaWorld {
     this.debris.onSplash = (x, z, big) => {
       this.spray.emit(big ? 14 : 5, x, this.env.heightAt(x, z) + 0.1, z, { speed: big ? 2.5 : 1.5, up: big ? 5 : 3, life: 0.8, color: FOAM_COL, spread: 0.3 });
     };
+    if (!deferred) for (const _ of this.buildSteps()) { /* alles in einem Zug */ }
+  }
+
+  /** Inseln, Städte und Bojen aufbauen: liefert nach jeder Insel den Fortschritt 0 … 1 (der Aufrufer gibt dem Browser dazwischen Luft) */
+  *buildSteps(): Generator<number, void> {
+    let r = this.islandSteps.next();
+    while (!r.done) { yield r.value; r = this.islandSteps.next(); }
+    this.islands = r.value;
+    this.env.setIslands(this.islands);
+    this.buildBuoys();
   }
 
   /** Wind als Vektor (m/s) für Rauch und Treibgut */
@@ -387,7 +403,7 @@ export class SeaWorld {
 
   // ---------- Aufbau ----------
 
-  private buildIslands(): IslandShape[] {
+  private *buildIslands(): Generator<number, IslandShape[]> {
     const rnd = seeded(2024);
     const shapes: IslandShape[] = [];
     // Alle Regionen sind handgemacht: Bernsteinsee in der Mitte, fünf Meere im Ring
@@ -395,6 +411,8 @@ export class SeaWorld {
       x: d.x, z: d.z, r: d.r, hill: d.hill, palms: d.palms, tower: d.kind === 'lighthouse', def: d, kit: styleKit(d.biome ?? reg.style ?? 'tropisch'),
     })));
     this.islandDefs = specs.map((s) => s.def);
+    yield 0;
+    let built = 0;
     const stone = toon(0xe8e2d4);
     const red = toon(0xa8322a);
 
@@ -546,6 +564,7 @@ export class SeaWorld {
           glowHub.add(makeEmitter('window', v.x, v.y, v.z, { size: 0.5, ground: v.y < 3.2 ? v.y - 1.9 : null, pool: 2.8, pdx: n.x * 1.3, pdz: n.z * 1.3 }));
         }
       }
+      yield ++built / specs.length;
     }
     return shapes;
   }
@@ -578,18 +597,23 @@ export class SeaWorld {
 
   /** Spielfigur und Bewohner erzeugen, sobald die Figuren-Daten geladen sind */
   /** Shader aller Figuren- und Effektarten vorkompilieren (beim Laden, hinter dem Ladebildschirm) */
-  async warmup(renderer: WebGLRenderer, renderFrame: () => void, progress: (k: number) => void) {
+  async warmup(renderer: WebGLRenderer, renderFrame: () => void, progress: (k: number) => void, onBlocking?: (on: boolean) => void, precompile?: () => Promise<void>) {
     if (!this.assets || !this.fx) { progress(1); return; }
     // Partikelsysteme einmal anstoßen (Puffer, Attribute, erste Aktualisierung), dann sofort ablaufen lassen
     const at = this.camera.position;
     this.spray.emit(24, at.x, 0.5, at.z + 8, { speed: 3, up: 5, life: 0.6, color: FOAM_COL, spread: 1 });
     this.dust.emit(12, at.x, 0.5, at.z + 8, { speed: 2, up: 3, life: 0.6, color: DIG_COL, spread: 1 });
     this.sparks.emit(12, at.x, 0.5, at.z + 8, { speed: 4, up: 4, life: 0.6, color: EMBER_COL, spread: 1 });
-    await warmupShaders({ renderer, scene: this.scene, camera: this.camera, assets: this.assets, fx: this.fx, particles: this.sparks, renderFrame }, progress);
+    await warmupShaders({ renderer, scene: this.scene, camera: this.camera, assets: this.assets, fx: this.fx, particles: this.sparks, renderFrame, onBlocking, precompile }, progress);
     this.spray.update(10); this.dust.update(10);
   }
 
   setCharacters(assets: CharacterAssets, look: CharacterLook, style: StyleId, overlay?: CombatOverlay) {
+    for (const _ of this.setCharactersSteps(assets, look, style, overlay)) { /* in einem Zug */ }
+  }
+
+  /** Wie setCharacters, liefert aber nach jeder Figur den Fortschritt 0 … 1 (Ladebildschirm) */
+  *setCharactersSteps(assets: CharacterAssets, look: CharacterLook, style: StyleId, overlay?: CombatOverlay): Generator<number, void> {
     this.assets = assets;
     this.player?.dispose();
     this.player = new Character(assets, look, true);
@@ -635,10 +659,14 @@ export class SeaWorld {
     this.faji = null;
     this.equip(style);
     this.attachToHelm();
+    yield 0.1;
 
     if (!this.npcs.length) {
       const rng = seeded(4242);
       const home = this.ground.islands[0];
+      const roles: NpcRole[] = ['fischer', 'haendler', 'pirat', 'koch', 'buerger', 'pirat', 'buerger', 'buerger', 'fischer', 'haendler'];
+      const total = TOWN_NPCS.length + roles.length;
+      let made = 0;
       // Ladenbesitzer und wichtige Bewohner an festen Plätzen
       for (const d of TOWN_NPCS) {
         const n = new Npc(assets, home, this.ground, d.role, rng, this.outlineNpcs);
@@ -646,12 +674,13 @@ export class SeaWorld {
         n.townDef = d;
         this.scene.add(n.char.holder);
         this.npcs.push(n);
+        yield 0.1 + 0.85 * (++made / total);
       }
-      const roles: NpcRole[] = ['fischer', 'haendler', 'pirat', 'koch', 'buerger', 'pirat', 'buerger', 'buerger', 'fischer', 'haendler'];
       for (const role of roles) {
         const n = new Npc(assets, home, this.ground, role, rng, this.outlineNpcs);
         this.scene.add(n.char.holder);
         this.npcs.push(n);
+        yield 0.1 + 0.85 * (++made / total);
       }
     }
     if (!this.crew) this.crew = new CrewAboard(assets, true);

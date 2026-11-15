@@ -18,6 +18,7 @@ import {
   type PerspectiveCamera,
   type Scene,
   type SkinnedMesh,
+  type WebGLRenderTarget,
   Vector3,
 } from 'three';
 import {
@@ -400,6 +401,31 @@ export class GameRenderer {
       this.gl.render(this.scene, this.camera);
     }
     this.pinPrograms();
+  }
+
+  /**
+   * Programme der Szene parallel vorübersetzen (compileAsync), und zwar mit dem Zielpuffer der Nachbearbeitung als Ziel:
+   * ein Programm hängt vom Farbraum des Ziels ab. Ohne diesen Puffer übersetzte compileAsync für den Bildschirm, und das erste echte
+   * Bild musste alles noch einmal übersetzen (am Stück, mehrere Sekunden bis über eine Viertelminute beim allerersten Start).
+   */
+  async precompile(scene: Scene, camera: Camera) {
+    const prev = this.gl.getRenderTarget();
+    const rt = (this.composer as unknown as { inputBuffer?: WebGLRenderTarget } | null)?.inputBuffer ?? null;
+    try {
+      if (rt) this.gl.setRenderTarget(rt);
+      await this.gl.compileAsync(scene, camera);
+      // Auch die Vollbild-Durchgänge (Bloom, Tiefenunschärfe, Umgebungsverdeckung, Spiegelungen, Farbkorrektur …): jeder hat eigene Szene
+      // und Kamera mit einem Vollbild-Netz; sie übersetzen sonst erst beim ersten Bild und zwar nacheinander
+      const passes = (this.composer as unknown as { passes?: { scene?: Scene; camera?: Camera }[] } | null)?.passes ?? [];
+      for (const p of passes) {
+        if (!p.scene || !p.camera || p.scene === scene) continue;
+        try { await this.gl.compileAsync(p.scene, p.camera); } catch { /* wird beim ersten Bild übersetzt */ }
+      }
+    } catch {
+      try { this.gl.compile(scene, camera); } catch { /* wird beim ersten Bild übersetzt */ }
+    } finally {
+      this.gl.setRenderTarget(prev);
+    }
   }
 
   /**
