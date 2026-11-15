@@ -26,6 +26,8 @@ export interface WalkIsland extends IslandShape {
   /** Sanftes Bodenrelief (Meter Ausschlag) und Startwert: Wiesen rollen, Sand liegt in Dünen; an der Wasserlinie läuft es auf 0 aus */
   reliefAmp?: number;
   reliefSeed?: number;
+  /** Straßen und Wege (Weltkoordinaten): Bewohner spazieren darauf statt quer durch Häuser */
+  walkways?: { pts: [number, number][]; w: number }[];
 }
 
 function vnoise(x: number, z: number, seed: number): number {

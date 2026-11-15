@@ -38,6 +38,7 @@ import { toon } from '../../render/toon';
 import { toonPbr } from '../../render/pbrMaps';
 import { hullPlankTexture } from '../../render/shipTextures';
 import { ships2 } from '../../core/flags';
+import { addFlagWeights, pennantGeometry, waveFlag, waveMaterial } from '../../render/flags';
 import { hullGeometry2, hullSideX } from './shipHull2';
 import { archParts, hasArch } from '../../world/envModels';
 import { hasProp, placeMatrix, PropBatch, propRoles, type PropId } from '../../world/worldProps';
@@ -1055,12 +1056,12 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     // Wimpel an der Mastspitze (steht nach achtern im Wind)
     {
       const pl = Math.min(3.2, 1.2 + c.L * 0.03), ph2 = pl * 0.22;
-      const ps = new Shape();
-      ps.moveTo(0, ph2 / 2); ps.lineTo(pl, 0); ps.lineTo(0, -ph2 / 2); ps.closePath();
-      const pg = new ShapeGeometry(ps);
+      const pg = pennantGeometry(pl, ph2, 8);
       pg.rotateY(Math.PI / 2);
-      const pm = put(group, pg, toon({ color: look.flagColor, side: DoubleSide }), 0, D + h + 0.35, z);
+      addFlagWeights(pg, 'z', pl, -1); // nach dem Drehen läuft der Wimpel entlang −z
+      const pm = put(group, pg, waveMaterial(toon({ color: look.flagColor, side: DoubleSide }), 1.15), 0, D + h + 0.35, z);
       pm.userData.noOutline = true;
+      keepExtra.push(pm); // nicht verschmelzen: das Gewicht aFlag ginge verloren
     }
     // Wanten vom Mast zur Bordwand, dazu Webleinen (Sprossen) zwischen den Wanten zum Aufentern
     for (const s of [-1, 1]) {
@@ -1683,9 +1684,13 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       const px = 0, pz = castleZ0 + 0.4;
       put(group, cyl(0.04, 0.05, 3.4 * Math.min(1.5, sc * 0.5 + 0.4), 6), wood, px, qy + 1.7 * Math.min(1.5, sc * 0.5 + 0.4), pz);
       put(group, new SphereGeometry(0.1, 8, 6), gold, px, qy + 3.45 * Math.min(1.5, sc * 0.5 + 0.4), pz);
-      const ens = new Mesh(new PlaneGeometry(1.5 * Math.min(1.8, sc * 0.55), 0.95 * Math.min(1.8, sc * 0.55), 6, 1), new MeshBasicMaterial({ map: flagTex, side: DoubleSide }));
+      const em = Math.min(1.8, sc * 0.55);
+      const ensGeo = new PlaneGeometry(1.5 * em, 0.95 * em, 12, 4);
+      ensGeo.translate(0.75 * em, 0, 0); // Mastkante bei x = 0
+      // das Tuch ist um 90 Grad gedreht: seine +x-Richtung zeigt nach achtern (−z), und die Mastkante liegt am Stock
+      const ens = waveFlag(new Mesh(ensGeo, new MeshBasicMaterial({ map: flagTex, side: DoubleSide })), 'x', 1.5 * em);
       ens.rotation.y = Math.PI / 2;
-      ens.position.set(px, qy + 3.0 * Math.min(1.5, sc * 0.5 + 0.4), pz - 0.78 * Math.min(1.8, sc * 0.55));
+      ens.position.set(px, qy + 3.0 * Math.min(1.5, sc * 0.5 + 0.4), pz - 0.03 * em);
       ens.userData.noOutline = true;
       group.add(ens);
       keepExtra.push(ens);

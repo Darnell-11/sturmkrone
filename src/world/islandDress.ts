@@ -33,6 +33,7 @@ import { archGroup, hasArch } from './envModels';
 import { lighthouseBeams } from './lighthouseBeam';
 import { build, colliders } from './architecture';
 import type { StructureType } from '../data/settlements';
+import { waveFlag } from '../render/flags';
 
 /** Ein Punkt in Inselkoordinaten (y = Bodenhöhe) */
 export interface Spot { x: number; y: number; z: number }
@@ -839,14 +840,16 @@ function flag(col: string, wood: Material, k = 1): Group {
   const g = new Group();
   const pole = new Mesh(new CylinderGeometry(0.06 * k, 0.08 * k, 5 * k, 6), wood);
   pole.position.y = 2.5 * k;
-  const cloth = new Mesh(new PlaneGeometry(1.5 * k, 1 * k), toon({ color: col, side: DoubleSide }));
-  cloth.position.set(0.78 * k, 4.4 * k, 0);
+  const clothGeo = new PlaneGeometry(1.5 * k, 1 * k, 10, 3);
+  clothGeo.translate(0.75 * k, 0, 0); // Mastkante bei x = 0
+  const cloth = waveFlag(new Mesh(clothGeo, toon({ color: col, side: DoubleSide })), 'x', 1.5 * k);
+  cloth.position.set(0.05 * k, 4.4 * k, 0);
   cloth.userData.noOutline = true;
   g.add(pole, cloth);
   if (k > 1.5) {
     // Totenkopf-Fleck auf dem großen Banner
     const skull = new Mesh(new CircleGeometry(0.28 * k, 10), toon({ color: '#EDE6D2', side: DoubleSide }));
-    skull.position.set(0.78 * k, 4.42 * k, 0.012);
+    skull.position.set(0.8 * k, 4.42 * k, 0.012);
     skull.userData.noOutline = true;
     g.add(skull);
   }

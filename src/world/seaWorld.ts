@@ -34,7 +34,7 @@ import { PlayerFoot } from '../entities/player/playerFoot';
 import { addOutlines } from '../render/outline';
 import { toon } from '../render/toon';
 import { Environment, type EnvState } from './environment';
-import { coastK, coastMax, fitHills, IslandGround, makeIslandShape, shelfOf, WATERLINE, type WalkIsland } from './islandGround';
+import { coastK, coastMax, fitHills, inBox, IslandGround, makeIslandShape, shelfOf, WATERLINE, type WalkIsland } from './islandGround';
 import type { IslandShape } from './ocean';
 import { ParticleSystem } from './particles';
 import { hashId, seeded } from './waves';
@@ -285,6 +285,7 @@ export class SeaWorld {
   private glowNight = 0;
   /** Unsichtbare feste Träger für echte Lichter an Feuern und Fackeln (LampPool wählt die nächsten) */
   private fireCarriers: Object3D[] = [];
+  private windowCarriers = 0;
   private lampList: Object3D[] = [];
   private camAz = 0;
   /** Kameraradius und Höhenwinkel der Schiffskamera (geglättet) */
@@ -552,13 +553,58 @@ export class SeaWorld {
         this.piers.push({ ax: s.x, az: s.z - r + 5, bx: s.x, bz: s.z - r - 41, hw: 2.4, y: 1.65 });
         this.town = buildTown(s.def, walk, (x, z) => { const h = this.ground.height(x, z); return Number.isFinite(h) ? h : 1.3; });
         this.scene.add(this.town.group);
+        walk.walkways = this.town.streets;
+        // Wiese und Strand von Ankerglück: Gras, Blumen, Büsche, Treibholz – nur abseits von Straßen und Bauten
+        {
+          const tv = new Scatter();
+          const trnd = seeded(hashId(s.def.id) ^ 0x51ed);
+          const dens = Math.max(0.4, Math.min(1.6, texDetail.density));
+          const near = (px: number, pz: number, rr: number) => {
+            const wx = s.x + px, wz = s.z + pz;
+            for (const st of walk.walkways ?? []) {
+              for (let i = 1; i < st.pts.length; i++) {
+                const [ax, az] = st.pts[i - 1], [bx, bz] = st.pts[i];
+                const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
+                const t = Math.max(0, Math.min(1, ((wx - ax) * dx + (wz - az) * dz) / l2));
+                if (Math.hypot(wx - (ax + dx * t), wz - (az + dz * t)) < st.w / 2 + 0.9 + rr) return true;
+              }
+            }
+            return walk.blockers.some((b) => (b.hw !== undefined ? inBox(b, wx, wz, rr + 0.5) : Math.hypot(wx - b.x, wz - b.z) < b.r + rr + 0.3));
+          };
+          const put = (kind: 'gras' | 'blume' | 'busch' | 'halme' | 'treibholz', n: number, d0: number, d1: number, rr: number, sc: [number, number], minH: number, maxH = 99) => {
+            for (let i = 0; i < n; i++) {
+              const a = trnd() * Math.PI * 2, d = r * coastK(form.coast, a) * (d0 + trnd() * (d1 - d0));
+              const x = Math.cos(a) * d, z = Math.sin(a) * d, h = hAt(x, z);
+              if (h < minH || h > maxH || near(x, z, rr)) continue;
+              const k = sc[0] + trnd() * (sc[1] - sc[0]);
+              veg_add(floraProto('tropisch', kind, Math.floor(trnd() * 3)), x, h, z, trnd() * 6.28, k, k * (0.85 + trnd() * 0.3));
+            }
+          };
+          const veg_add = (p: ReturnType<typeof floraProto>, x: number, y: number, z: number, yaw: number, sx: number, sy: number) => tv.add(p, x, y, z, yaw, sx, sy);
+          put('gras', Math.round(r * 34 * dens), 0.1, 0.92, 0.2, [0.9, 1.7], 1.0);
+          put('blume', Math.round(r * 8 * dens), 0.15, 0.8, 0.2, [0.9, 1.5], 1.0);
+          put('busch', Math.round(r * 0.9 * dens), 0.2, 0.85, 0.9, [0.8, 1.3], 1.0);
+          put('halme', Math.round(r * 7 * dens), 0.7, 0.97, 0.3, [0.9, 1.6], 0.8, 1.6);
+          put('treibholz', 3, 0.9, 0.98, 1.2, [0.85, 1.35], 0.5, 1.4);
+          this.vegChunks.push(...tv.build(isl));
+        }
         this.addGlows(this.town.glows.map((g2) => ({ ...g2, x: g2.x, z: g2.z })), s.x, s.z);
         // Laternen der Hafenstadt: Lichthof und Bodenlicht (Glas-Kugeln aus town.ts; Fensterflächen leuchten selbst)
         this.town.group.updateMatrixWorld(true);
         const tq = new Quaternion();
         for (const l of this.town.lights) {
           const v = l.getWorldPosition(new Vector3());
-          if ((l.geometry as { type?: string }).type === 'SphereGeometry') { glowHub.add(makeEmitter('lamp', v.x, v.y, v.z, { size: 0.8, ground: v.y - 2.3, pool: 5.5 })); continue; }
+          if ((l.geometry as { type?: string }).type === 'SphereGeometry') {
+            const em = glowHub.add(makeEmitter('lamp', v.x, v.y, v.z, { size: 0.8, ground: v.y - 2.3, pool: 8 }));
+            // Straßenlaterne: auch ein echtes, weiches Licht (der LampPool nimmt die nächsten)
+            const c = new Object3D();
+            c.userData.seed = em.seed; c.userData.fire = false; c.userData.fixed = true; c.userData.lightK = 1.15;
+            c.position.set(v.x, v.y - 0.1, v.z);
+            this.scene.add(c);
+            c.updateMatrixWorld(true);
+            this.fireCarriers.push(c);
+            continue;
+          }
           // Fensterflächen: Hof und Lichtfleck auf dem Boden vor dem Fenster (Blickrichtung aus der Drehung der Fläche)
           const n = new Vector3(0, 0, 1).applyQuaternion(l.getWorldQuaternion(tq));
           glowHub.add(makeEmitter('window', v.x, v.y, v.z, { size: 0.5, ground: v.y < 3.2 ? v.y - 1.9 : null, pool: 2.8, pdx: n.x * 1.3, pdz: n.z * 1.3 }));
@@ -1785,7 +1831,7 @@ export class SeaWorld {
       c.leaveIsland();
     }
     if (this.foot) { this.foot.stopEffects(); this.foot.onFoot = false; }
-    for (const n of this.visitors) { n.char.holder.removeFromParent(); n.char.dispose(); }
+    for (const n of this.visitors) { n.dispose(); n.char.holder.removeFromParent(); n.char.dispose(); }
     this.visitors = [];
     this.crew?.clearAllies();
     if (this.combat) this.combat.allies = [];
@@ -2057,7 +2103,8 @@ export class SeaWorld {
     // Dach der Kajüte nur ausgeblendet, solange jemand drinnen steht (nach Sprüngen, Landgang oder Schiffswechsel wieder sichtbar)
     if (!this.deckGround?.inCabin) { const roof = this.ship.model.cabinRoof; if (roof && !roof.visible) roof.visible = true; }
     // Lichtschein und Flammen aller Lampen und Feuer (nach der Kamera, damit nichts hinterherhinkt)
-    this.glow.mist = Math.min(1, Math.max(env.weather.p.rain * 0.9, (1 - env.weather.p.visibility) * 0.9));
+    // nachts liegt immer ein leichter Dunst in der Luft: Lichthöfe wachsen und werden weicher, unter Laternen zeichnen sich Lichtkegel ab
+    this.glow.mist = Math.min(1, Math.max(env.weather.p.rain * 0.9, (1 - env.weather.p.visibility) * 0.9, this.glowNight * 0.24));
     this.glow.update(frameDt, cam, this.glowNight, env.weather.p.rain);
     env.render(cam, this.focus);
   }
@@ -2067,11 +2114,14 @@ export class SeaWorld {
     for (const g of list) {
       const x = ox + g.x, z = oz + g.z;
       const em = glowHub.add(makeEmitter(g.kind, x, g.y, z, { ground: g.ground, size: g.size, pool: g.pool, pdx: g.pdx, pdz: g.pdz, glint: g.glint }));
-      if (g.kind === 'lamp' || g.kind === 'window') continue;
+      // Fenster: nur die unteren (mit Bodenlicht) und davon jedes zweite bekommen ein echtes Licht, sonst gäbe es hunderte Träger
+      if (g.kind === 'window' && (g.ground === null || (this.windowCarriers++ & 1))) continue;
       const c = new Object3D();
       c.userData.seed = em.seed;
-      c.position.set(x, g.y + Math.max(0.6, (g.size ?? 1) * 0.5), z);
-      c.userData.fire = true; c.userData.fixed = true; c.userData.lightK = g.kind === 'fire' ? 1.7 : 0.3;
+      const soft = g.kind === 'lamp' || g.kind === 'window';
+      // Laternen und Fenster leuchten als weiche, warme Punktlichter (kein Feuer): der LampPool wählt die nächsten und blendet sie weich über
+      c.position.set(x, soft ? g.y - 0.1 : g.y + Math.max(0.6, (g.size ?? 1) * 0.5), z);
+      c.userData.fire = !soft; c.userData.fixed = true; c.userData.lightK = g.kind === 'fire' ? 1.7 : g.kind === 'lamp' ? 1.15 : g.kind === 'window' ? 0.55 : 0.3;
       this.scene.add(c);
       c.updateMatrixWorld(true);
       this.fireCarriers.push(c);

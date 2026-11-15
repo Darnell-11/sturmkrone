@@ -1,5 +1,16 @@
 # Was ist neu
 
+## 2.9.79 – Ankerglück aufgeräumt, Flaggen wehen, Licht mit Tiefe (15.11.2026)
+
+- **Stadtaufbau Ankerglück:** Häuser stehen mit Türhöhe am Hang und bekommen bei Gefälle einen Sockel statt zu schweben oder zu versinken. Gartenzäune und Beiwerk der Häuser sind in der Stadt kompakt (`setYardCompact`) und reichen nicht mehr auf die Straßen. Marktstände, Kisten, Karren und Wimpelmasten sitzen an den Straßen statt darauf. Bewohner starten und laufen entlang der Straßen (`walkways`), weichen Hindernissen und einander aus und werden aus Hindernissen herausgeschoben.
+- **Licht:** Straßenlaternen und niedrige Fenster besitzen echte, weiche Lichter; Lichthof und Bodenlicht sind größer und weicher abgestuft, nachts liegt ein leichter Dunst über der Stadt. Nicht mehr grell, dafür mit Tiefe. Hinweis: die Anzahl der Lichter bleibt gleich, nur die Träger wechseln.
+- **Flaggen:** Fahnen der Inseln und der Stadt, Heckflaggen und Mastwimpel der Schiffe wehen mit dem Wind (Wellen vom Mast zur freien Kante, Windstärke des Wetters), im Grafikchip gerechnet, ohne Kosten auf dem Prozessor (`render/flags.ts`).
+- **Schwerthiebe:** Der Schmierbogen liegt immer vor der Figur und läuft in der Richtung der jeweiligen Animation (`SMEAR_LEFT_TO_RIGHT`): Säbel, Langklinge, Zweihänder, Doppelklingen.
+- **Laufen:** Der Takt der Laufanimation passt zur Geschwindigkeit, Neigung des Oberkörpers ist deutlich ruhiger, Gehen und Rennen wechseln mit Hysterese.
+- **Wiese und Strand von Ankerglück:** viel mehr Gras, Halme, Blumen, Büsche und Treibholz (instanziert), abseits von Straßen und Bauten.
+- **Leistung:** Neue Dinge laufen über `InstancedMesh`; im Testaufbau (hohe Stufe, Marktplatz) 11,6 ms je Bild. Eine neue, gründliche Suche nach weiteren Leistungsfressern wurde in dieser Fassung nicht durchgeführt.
+- **Bekannt:** Die Gehanimation selbst (Walking_A) ist unverändert, nur ihr Tempo und die Neigung; ein Handy wurde nicht gemessen. Nachts und die Flaggenbewegung wurden nicht abschließend mit Bildern verglichen.
+
 ## 2.9.78 – Ladezeit: kein Hängen mehr, ehrlicher Ladebalken (15.11.2026)
 
 Gemessen im Produktionsbau, gleiche Bedingungen für alte (2.9.77) und neue Fassung: leerer Zwischenspeicher, Grafikkarte ohne gemerkte Programme (so läuft ein allererster Start), Messung der Hauptschleife mit dem Long-Task-Zähler des Browsers.

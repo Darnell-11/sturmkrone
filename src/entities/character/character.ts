@@ -842,14 +842,15 @@ export class Character {
 
   /**
    * Schrittgeschwindigkeit an die echte Bewegung anpassen, damit die Füße nicht über den Boden rutschen.
-   * Gemessen: Gehen ≈ 1,5 m/s, Rennen ≈ 3,7 m/s bei normaler Abspielgeschwindigkeit.
+   * Gemessen (Fußkontakte, Welt-Maßstab der Figur 1,085): Gehen ≈ 1,5 m/s, Rennen ≈ 5,9 m/s bei normaler Abspielgeschwindigkeit.
+   * Früher stand für Rennen 3,7: bei 6,2 m/s lief der Clip mit dem 1,7-Fachen seiner Geschwindigkeit, die Beine hasteten wie im Trickfilm.
    */
   setLocoSpeed(mps: number) {
     const a = this.current;
     if (!a) return;
     // Weite Grenzen: bei schnellerem Spieler (Fähigkeiten, Tempo-Bonus) darf der Clip nicht an die Grenze stoßen, sonst rutscht er
     if (this.currentName === 'Walking_A') a.timeScale = Math.max(0.4, Math.min(2.1, mps / 1.5));
-    else if (this.currentName === 'Running_A') a.timeScale = Math.max(0.7, Math.min(2.6, mps / 3.7));
+    else if (this.currentName === 'Running_A') a.timeScale = Math.max(0.6, Math.min(1.7, mps / 5.9));
   }
 
   /** Fortschritt der aktuellen Animation 0 … 1 */
@@ -920,8 +921,8 @@ export class Character {
     const turn = dy / Math.max(dt, 1e-3);
     const accel = (speed - this.leanSpeed) / Math.max(dt, 1e-3);
     this.leanSpeed = speed;
-    const wantRoll = MathUtils.clamp(-turn * Math.min(speed, 7) * 0.012, -0.24, 0.24);
-    const wantPitch = MathUtils.clamp(speed * 0.012 + accel * 0.006, -0.06, 0.16);
+    const wantRoll = MathUtils.clamp(-turn * Math.min(speed, 7) * 0.008, -0.14, 0.14);
+    const wantPitch = MathUtils.clamp(speed * 0.007 + accel * 0.004, -0.05, 0.09);
     const k = Math.min(1, dt * 8);
     this.leanRoll += (wantRoll - this.leanRoll) * k;
     this.leanPitch += (wantPitch - this.leanPitch) * k;

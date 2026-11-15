@@ -163,7 +163,8 @@ const poolFrag = /* glsl */ `${COMMON_FRAG}
     if (r > 1.0) discard;
     // Lichtfleck: weicher Abfall, leicht unruhig wie Flammenlicht (Boden wird nicht flach ausgeleuchtet)
     float n = gN(vUv * 5.0 + vec2(uTime * 0.7 + vSeed, vSeed)) * 0.25 + 0.875;
-    float g = pow(1.0 - r, 2.2) * n;
+    // breiter, weicher Abfall mit kleinem hellem Kern: wirkt wie Licht in der Luft, nicht wie eine Scheibe
+    float g = (0.62 * pow(1.0 - r, 1.7) + 0.38 * pow(1.0 - r, 3.4)) * n;
     gl_FragColor = vec4(vCol * g * vI, 1.0);
   }`;
 
@@ -408,7 +409,7 @@ export class GlowSystem {
         const night2 = lampOn * (e.kind === 'fire' ? 1 : 0.9) + (e.kind === 'fire' ? 0.12 : 0);
         // nasser Boden wirft das Licht kräftiger zurück (Pfützen, Pflaster glänzen)
         const wetUp = 1 + 0.45 * smooth(0.25, 0.7, rain);
-        const li = k * lit * night2 * fl * wetUp * (e.kind === 'window' ? 0.3 : e.kind === 'fire' ? 0.62 : 0.45);
+        const li = k * lit * night2 * fl * wetUp * (e.kind === 'window' ? 0.5 : e.kind === 'fire' ? 0.62 : 0.62);
         if (li > 0.01) {
           const o = P.n++;
           P.pos.array[o * 3] = e.x + e.pdx; P.pos.array[o * 3 + 1] = e.ground + 0.06; P.pos.array[o * 3 + 2] = e.z + e.pdz;

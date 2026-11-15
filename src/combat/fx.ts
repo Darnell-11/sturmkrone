@@ -148,7 +148,12 @@ export class CombatFx {
   }
 
   /** Schmier-Bogen eines Schwerthiebs */
-  smear(origin: Vector3, yaw: number, tilt: number, range: number, arc: number, color: string, flip = false) {
+  /**
+   * `front` = Schwerthieb des Spielers: der Bogen liegt immer VOR der Figur (Mitte in Blickrichtung) und `flip` spiegelt nur die Laufrichtung
+   * (false: von rechts nach links, true: von links nach rechts). Ohne `front` (Fähigkeiten, alte Aufrufe) dreht `flip` den Bogen um 180 Grad:
+   * der ungedrehte Bogen liegt hinter der Figur – früher wechselte der Spieler bei jedem Hieb zwischen vorn und hinten.
+   */
+  smear(origin: Vector3, yaw: number, tilt: number, range: number, arc: number, color: string, flip = false, front = false) {
     const a = Math.min(arc, Math.PI * 1.9);
     // gleiche Reichweite und Bogenweite → dasselbe Netz (Schwerthiebe wiederholen sich ständig)
     const r = q(range), aq = q(a, 0.02);
@@ -166,8 +171,9 @@ export class CombatFx {
     m.position.copy(origin);
     // Ebene: waagrecht (tilt 0) bis senkrecht (π/2), Bogen öffnet nach vorn
     m.rotation.order = 'YXZ';
-    m.rotation.set(-Math.PI / 2 + tilt, yaw, flip ? Math.PI : 0);
+    m.rotation.set(-Math.PI / 2 + tilt, yaw, front || flip ? Math.PI : 0);
     m.rotateZ(Math.PI / 2);
+    if (front && flip) m.scale.x = -1;
     m.renderOrder = 9;
     this.scene.add(m);
     this.live.push({ obj: m, life: 0.2, max: 0.2, kind: 'smear' });

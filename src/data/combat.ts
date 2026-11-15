@@ -32,6 +32,15 @@ export interface AttackDef {
   smearTilt?: number;
 }
 
+/**
+ * Klingenbewegung von LINKS nach RECHTS (aus Sicht der Figur) statt von rechts nach links: gemessen an der Handbahn im Trefferfenster
+ * (seitliche Verschiebung der Schwerthand). Der Schmier-Bogen läuft dann in dieselbe Richtung wie die Klinge, nicht entgegen.
+ */
+export const SMEAR_LEFT_TO_RIGHT = new Set([
+  'Melee_1H_Attack_Slice_Diagonal', 'Melee_2H_Attack_Slice', 'Melee_2H_Attack_Chop', 'Melee_2H_Attack_Spin',
+  'Melee_Dualwield_Attack_Slice', 'Melee_Dualwield_Attack_Chop', 'Melee_1H_Attack_Chop',
+]);
+
 const A = (o: Partial<AttackDef> & Pick<AttackDef, 'clip'>): AttackDef => ({
   speed: 1, hitStart: 0.3, hitEnd: 0.5, range: 2.2, arc: 2.2, dmg: 1, poise: 10, knock: 3, hitstop: 0.06, shake: 0.15, fx: 'slash', lunge: 2, ...o,
 });

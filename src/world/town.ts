@@ -28,7 +28,8 @@ import { boxBlocker, type WalkIsland } from './islandGround';
 import { hasProp, propGroup } from './worldProps';
 import { markShared } from '../render/dispose';
 import { toonPbr } from '../render/pbrMaps';
-import { build as buildStruct, colliders as structColliders, lightMats } from './architecture';
+import { waveFlag } from '../render/flags';
+import { build as buildStruct, colliders as structColliders, lightMats, setYardCompact } from './architecture';
 import type { StructureType } from '../data/settlements';
 import type { GlowPlaced } from '../render/glow';
 import { hasArch as hasArchModel, hasArch, archGroup } from './envModels';
@@ -45,6 +46,8 @@ export interface TownBuild {
   smoke: Vector3[];
   /** Lichthöfe und Bodenlicht der Bauten (Inselkoordinaten) für das GlowSystem */
   glows: GlowPlaced[];
+  /** Straßen in Weltkoordinaten (Mittellinie, Breite): Bewohner gehen darauf spazieren */
+  streets: { pts: [number, number][]; w: number }[];
 }
 
 /** Gebäude: Wände, Satteldach, Tür, Fenster, Fundament */
@@ -146,24 +149,6 @@ function crateStack(seed: number): Group {
   return g;
 }
 
-/** Niedriger Holzzaun */
-function fence(len: number): Group {
-  const g = new Group();
-  const wood = toon('#8A6A44');
-  const n = Math.round(len / 1.4);
-  for (let i = 0; i <= n; i++) {
-    const p = new Mesh(new BoxGeometry(0.14, 1.1, 0.14), wood);
-    p.position.set(-len / 2 + (i / n) * len, 0.55, 0);
-    g.add(p);
-  }
-  for (const y of [0.45, 0.85]) {
-    const rail = new Mesh(new BoxGeometry(len, 0.1, 0.08), wood);
-    rail.position.y = y;
-    g.add(rail);
-  }
-  return g;
-}
-
 /** Busch aus ein paar Kugeln */
 function bush(seed: number): Group {
   const g = new Group();
@@ -218,8 +203,10 @@ function flagPole(col: string): Group {
   const g = new Group();
   const pole = new Mesh(new CylinderGeometry(0.08, 0.1, 7, 6), toon('#4A3220'));
   pole.position.y = 3.5;
-  const cloth = new Mesh(new PlaneGeometry(1.8, 1.1), toon({ color: col, side: DoubleSide }));
-  cloth.position.set(0.95, 6.3, 0);
+  const clothGeo = new PlaneGeometry(1.8, 1.1, 10, 3);
+  clothGeo.translate(0.9, 0, 0); // Mastkante bei x = 0
+  const cloth = waveFlag(new Mesh(clothGeo, toon({ color: col, side: DoubleSide })), 'x', 1.8);
+  cloth.position.set(0.06, 6.3, 0);
   cloth.userData.noOutline = true;
   const knob = new Mesh(new SphereGeometry(0.14, 8, 6), toon({ color: '#E3B04B', spec: 1 }));
   knob.position.y = 7.05;
@@ -378,20 +365,36 @@ function plazaMesh(r: number, cx: number, cz: number, groundAt: (x: number, z: n
 
 /** Baut Ankerglück auf der Stadtinsel. Liefert die Gruppe und trägt Hindernisse in die Insel ein. */
 export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number, z: number) => number): TownBuild {
+  setYardCompact(true); // enge Höfe: nichts ragt von den Häusern in die Straße
   const group = new Group();
   const lights: Mesh[] = [];
   const smoke: Vector3[] = [];
   // Fenster liegen 2 cm vor der Wand: Tiefenverschiebung, damit sie in der Ferne nicht mit der Wand flackern
   const windowMat = new MeshBasicMaterial({ color: new Color(2.6, 1.8, 0.7), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
   const lampMat = new MeshBasicMaterial({ color: new Color(4, 2.6, 1) });
+  const plinthMat = toon('#8E8576');
   const cx = def.x, cz = def.z;
   /**
    * Objekt aufstellen. Kollider: Zahl = Kreisradius, [Breite, Tiefe, Versatz x, Versatz z] = gedrehtes Rechteck
    * (Häuser, Stände, Karren, Zäune: Kreise ließen Ecken frei und standen als unsichtbare Wand vor den Seiten).
    */
+  /** Bodenhöhen auf einem gedrehten Rechteck (5 × 5 Proben): tiefster und höchster Punkt */
+  const rectRange = (wx: number, wz: number, yaw: number, w: number, d: number, ox = 0, oz = 0) => {
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    let mn = Infinity, mx = -Infinity;
+    for (let i = 0; i < 5; i++) for (let j = 0; j < 5; j++) {
+      const lx = ox + (i / 4 - 0.5) * w, lz = oz + (j / 4 - 0.5) * d;
+      const h = groundAt(wx + lx * c + lz * s, wz - lx * s + lz * c);
+      if (h < mn) mn = h;
+      if (h > mx) mx = h;
+    }
+    return { mn, mx };
+  };
   const place = (o: Group | Mesh, x: number, z: number, yaw: number, block: number | [number, number, number?, number?]) => {
     const wx = cx + x, wz = cz + z;
-    o.position.set(wx, groundAt(wx, wz), wz);
+    // Auf dem Hang steht ein Ding mit Grundfläche auf dem tiefsten Punkt darunter (nichts schwebt, nur die Bergseite steckt im Boden)
+    const rr = Array.isArray(block) ? rectRange(wx, wz, yaw, block[0], block[1], block[2] ?? 0, block[3] ?? 0) : { mn: groundAt(wx, wz), mx: groundAt(wx, wz) };
+    o.position.set(wx, rr.mn, wz);
     o.rotation.y = yaw;
     group.add(o);
     if (Array.isArray(block)) walk.blockers.push(boxBlocker(wx, wz, block[0], block[1], yaw, block[2] ?? 0, block[3] ?? 0));
@@ -413,12 +416,26 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   const placeB = (t: StructureType, x: number, z: number, yaw: number, len = 8) => {
     const b = buildStruct(t, trnd, len);
     const wx = cx + x, wz = cz + z;
-    b.g.position.set(wx, groundAt(wx, wz), wz);
+    // Fußboden auf Höhe des Bodens vor der Tür (Tür liegt bei +z), nicht in der Mitte: sonst schwebt das Haus auf der einen Seite und
+    // versinkt auf der anderen. Fällt das Gelände dahinter ab, trägt ein Steinsockel das Haus bis zum tiefsten Punkt.
+    const big = b.boxes.reduce((m, q) => (q[0] * q[1] > m[0] * m[1] ? q : m), b.boxes[0] ?? [4, 4, 0, 0]);
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const fz = (big[3] ?? 0) + big[1] / 2 + 0.7, fx = big[2] ?? 0;
+    const frontY = groundAt(wx + fx * cy + fz * sy, wz - fx * sy + fz * cy);
+    const rr = rectRange(wx, wz, yaw, big[0], big[1], big[2] ?? 0, big[3] ?? 0);
+    const baseY = Math.max(rr.mn + 0.05, Math.min(frontY, rr.mn + 1.6));
+    b.g.position.set(wx, baseY, wz);
     b.g.rotation.y = yaw;
     group.add(b.g);
+    const drop = baseY - rr.mn + 0.35;
+    if (drop > 0.4 && big[0] > 3) {
+      const plinth = new Mesh(new BoxGeometry(big[0] + 0.25, drop, big[1] + 0.25), plinthMat);
+      plinth.position.set(big[2] ?? 0, 0.1 - drop / 2, big[3] ?? 0);
+      b.g.add(plinth);
+    }
     for (const c of structColliders(b, wx, wz, yaw)) walk.blockers.push(c);
-    if (b.smoke && smokeN++ % 3 === 0) smoke.push(new Vector3(wx + b.smoke[0] * Math.cos(yaw) + b.smoke[2] * Math.sin(yaw), groundAt(wx, wz) + b.smoke[1], wz - b.smoke[0] * Math.sin(yaw) + b.smoke[2] * Math.cos(yaw)));
-    const c0 = Math.cos(yaw), s0 = Math.sin(yaw), gy0 = groundAt(wx, wz);
+    if (b.smoke && smokeN++ % 3 === 0) smoke.push(new Vector3(wx + b.smoke[0] * Math.cos(yaw) + b.smoke[2] * Math.sin(yaw), baseY + b.smoke[1], wz - b.smoke[0] * Math.sin(yaw) + b.smoke[2] * Math.cos(yaw)));
+    const c0 = Math.cos(yaw), s0 = Math.sin(yaw), gy0 = baseY;
     for (const gl of b.glows ?? []) {
       if (gl.kind === 'window' && windowGlows++ > 140) continue;   // Obergrenze: das GlowSystem zeichnet nur die nächsten
       townGlows.push({ kind: gl.kind, x: x + gl.x * c0 + gl.z * s0, y: gy0 + gl.y, z: z - gl.x * s0 + gl.z * c0, ground: gl.gy == null ? null : gy0 + gl.gy, size: gl.size, pool: gl.pool, pdx: (gl.px ?? 0) * c0 + (gl.pz ?? 0) * s0, pdz: -(gl.px ?? 0) * s0 + (gl.pz ?? 0) * c0, glint: gl.glint });
@@ -496,8 +513,10 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   // Markt mit Ständen
   for (let i = 0; i < 4; i++) {
     if (hasArchModel('marktstand')) {
-      const a = -0.75 + i * 0.5;
-      placeB('marktstand', Math.sin(a) * 27, 25 + Math.cos(a) * 3, Math.PI + a * 0.8);
+      // Marktstände stehen im Ring zwischen Platz (Radius 16) und Ringstraße (Radius 28), nicht auf der Straße, Tür zur Platzmitte
+      const a = [-0.33, 0.33, -0.95, 0.95][i];
+      const sx = Math.sin(a) * 22, sz = Math.cos(a) * 22;
+      placeB('marktstand', sx, sz, face(sx, sz));
       continue;
     }
     const stall = new Group();
@@ -514,7 +533,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   }
 
   if (hasArchModel('marktstand')) {
-    for (const [x, z, y] of [[-12, 20, 0.5], [12, 21, -0.5], [-20, 8, 1.2], [20, 9, -1.2]] as const) placeB('marktstand', x, z, Math.PI + y);
+    for (const [x, z, y] of [[-13, 18, 0.5], [13, 19, -0.5], [-20, 8, 1.2], [18, 15, -1.2]] as const) placeB('marktstand', x, z, Math.PI + y);
   }
 
   // Faji-Schrein mit schwebendem Kristall
@@ -664,19 +683,13 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
           if (useBlender) placeB(type, x, z, yaw);
           else place(house(sp.w, sp.d, 3.6 + (hi % 2), WALLS[hi % WALLS.length], ROOFS[(hi * 3) % ROOFS.length], windowMat, lights), x, z, yaw, [sp.w + 0.6, sp.d + 0.6]);
           taken.push([x, z, r]);
-          // vor der Tür am Straßenrand: Kisten, Fässer oder ein Karren
-          if (hi % 3 === 1) {
-            const px = mid.x + nx * (st.w / 2 + 0.9) + mid.tx * (sp.w / 2 - 0.6), pz = mid.z + nz * (st.w / 2 + 0.9) + mid.tz * (sp.w / 2 - 0.6);
-            if (hi % 2) place(crateStack(hi), px, pz, yaw + 1.57, [2.7, 1.7, 0.55, 0]);
-            else place(cart(), px, pz, yaw + 0.4, [1.9, 3.9, 0, 0.8]);
-          }
-          // Lattenzaun beiderseits des Weges zur Tür (Lücke in der Mitte)
-          if (hi % 3 === 0) {
-            const fl = Math.max(1.6, sp.w / 2 - 1.5);
-            for (const e of [-1, 1]) {
-              const fxp = mid.x + nx * (st.w / 2 + 0.55) + mid.tx * e * (1.5 + fl / 2), fzp = mid.z + nz * (st.w / 2 + 0.55) + mid.tz * e * (1.5 + fl / 2);
-              if (free(fxp, fzp, 0.3)) place(fence(fl), fxp, fzp, yaw + Math.PI / 2, [fl + 0.2, 0.35]);
-            }
+          // vor der Tür am Straßenrand: Kisten oder ein Karren, nur wo zwischen Straße und Haus Platz ist (Kolonialhäuser mit Veranda),
+          // längs zur Straße ausgerichtet; vorher ragte der Karren 3,9 m quer in den Weg
+          if (hi % 3 === 1 && sp.extra >= 1.5) {
+            const px = mid.x + nx * (st.w / 2 + 1.5) + mid.tx * (sp.w / 2 - 1.2), pz = mid.z + nz * (st.w / 2 + 1.5) + mid.tz * (sp.w / 2 - 1.2);
+            const along = Math.atan2(-mid.tz, mid.tx);
+            if (hi % 2) place(crateStack(hi), px, pz, along, [2.7, 1.7, 0.55, 0]);
+            else place(cart(), px, pz, along + Math.PI / 2, [1.9, 3.9, 0, 0.8]);
           }
           hi++;
           sd += sp.w + 1.0 + trnd() * 1.2;
@@ -703,7 +716,8 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
     const q = sampleAt(st.pts, (0.13 + (i * 0.37) % 0.8) * polyLen(st.pts));
     const sdn = i % 2 ? 1 : -1;
     const x = q.x - q.tz * sdn * (st.w / 2 + 1.0), z = q.z + q.tx * sdn * (st.w / 2 + 1.0);
-    if (!free(x, z, 0.8) || distToStreets(x, z, STREETS.indexOf(st)) < 0.4) continue;
+    // Kistenstapel sind 2,7 m lang: auch von Querstraßen genug Abstand, sonst stehen sie mitten im Weg
+    if (!free(x, z, 0.8) || distToStreets(x, z, STREETS.indexOf(st)) < 1.6) continue;
     if (i % 3 === 0) {
       const barrel = new Mesh(new CylinderGeometry(0.45, 0.4, 1, 10), toon('#8A5A2B'));
       barrel.position.set(cx + x, groundAt(cx + x, cz + z) + 0.5, cz + z);
@@ -713,10 +727,20 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
     else place(bush(i), x, z, i, 0);
     taken.push([x, z, 1.2]);
   }
-  place(crateStack(1), -9.5, -def.r + 24, 0.3, [2.7, 1.7, 0.55, 0]);
-  place(crateStack(4), 9.5, -def.r + 26, 1.1, [2.7, 1.7, 0.55, 0]);
+  // am Kai, nördlich der Kaistraße (z ≈ −64) und beiderseits der Hauptstraße
+  place(crateStack(1), -9.5, -def.r + 31, 0.3, [2.7, 1.7, 0.55, 0]);
+  place(crateStack(4), 9.5, -def.r + 32, 1.1, [2.7, 1.7, 0.55, 0]);
   // Wimpelleinen über der Hauptstraße und am Platz, Fahnen
   for (const [ax, az, bx, bz] of [[-4, -52, 4, -40], [-4, -40, 4, -26], [-10, -10, 10, -10], [-12, 14, 12, 14], [-6, 34, 6, 46]] as const) {
+    // Die Leine hängt zwischen zwei Masten (vorher schwebte sie frei in der Luft)
+    const top = 3.1;
+    for (const [px, pz] of [[ax, az], [bx, bz]] as const) {
+      const gy = groundAt(cx + px, cz + pz);
+      const mast = new Mesh(new CylinderGeometry(0.09, 0.12, top + 0.4, 6), toon('#4A3220'));
+      mast.position.set(cx + px, gy + (top + 0.4) / 2 - 0.2, cz + pz);
+      group.add(mast);
+      walk.blockers.push({ x: cx + px, z: cz + pz, r: 0.18 });
+    }
     group.add(bunting(new Vector3(cx + ax, groundAt(cx + ax, cz + az) + 2.85, cz + az), new Vector3(cx + bx, groundAt(cx + bx, cz + bz) + 2.85, cz + bz)));
   }
   for (const [x, z, col] of [[-15, 10, '#A8322A'], [15, -9, '#1F4E79'], [-9, -15, '#E3B04B']] as const) place(flagPole(col), x, z, 0.6, 0.3);
@@ -740,7 +764,8 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   STREETS.forEach((st) => group.add(roadMesh(st.pts, st.w + 1.7, cx, cz, groundAt, dirtMaterial(0), 0.075)));
   STREETS.forEach((st, i) => group.add(roadMesh(st.pts, st.w, cx, cz, groundAt, layered(i + 1))));
   group.add(plazaMesh(16, cx, cz, groundAt, layered(0)));
-  return { group, lights: glow, crystal, smoke, glows: townGlows };
+  setYardCompact(false);
+  return { group, lights: glow, crystal, smoke, glows: townGlows, streets: STREETS.map((st) => ({ pts: st.pts.map(([px, pz]) => [cx + px, cz + pz] as [number, number]), w: st.w })) };
 }
 
 /** Statische Teile pro Material zusammenfassen (wenige Zeichenaufrufe) */
@@ -758,7 +783,7 @@ export function mergeByMaterial(group: Group, keep: Set<Mesh>) {
     const keepUv = !!(m.material as Material & { map?: unknown }).map && !!g.attributes.uv;
     // Eckpunktfarben (Ambient-Occlusion der Blender-Bauten) bleiben, wenn das Material sie nutzt
     const keepCol = !!(m.material as Material & { vertexColors?: boolean }).vertexColors;
-    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'aWind' && k !== 'aEdge' && !(keepUv && k === 'uv') && !(keepCol && k === 'color')) g.deleteAttribute(k);
+    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'aWind' && k !== 'aEdge' && k !== 'aFlag' && !(keepUv && k === 'uv') && !(keepCol && k === 'color')) g.deleteAttribute(k);
     g = g.applyMatrix4(rel(m));
     b.geos.push(g);
     b.meshes.push(m);
@@ -771,6 +796,9 @@ export function mergeByMaterial(group: Group, keep: Set<Mesh>) {
     // Windgewichte: Teile ohne Gewicht (z. B. Stamm-Material an Zäunen) bekommen 0, damit alle zusammenpassen
     if (b.geos.some((g) => g.attributes.aWind)) {
       for (const g of b.geos) if (!g.attributes.aWind) g.setAttribute('aWind', new Float32BufferAttribute(new Float32Array(g.attributes.position.count), 1));
+    }
+    if (b.geos.some((g) => g.attributes.aFlag)) {
+      for (const g of b.geos) if (!g.attributes.aFlag) g.setAttribute('aFlag', new Float32BufferAttribute(new Float32Array(g.attributes.position.count), 1));
     }
     if (b.geos.some((g) => g.attributes.aEdge)) {
       for (const g of b.geos) if (!g.attributes.aEdge) g.setAttribute('aEdge', new Float32BufferAttribute(new Float32Array(g.attributes.position.count), 1));

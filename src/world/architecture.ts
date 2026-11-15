@@ -738,11 +738,19 @@ function feuer(): Built {
  * Pflasterweg von der Tür, Hängelaterne und Laternenpfahl, Holzstapel mit Hackklotz, Wäscheleine hinter dem Haus
  * und ein Lattenzaun mit Lücke für den Weg. Jedes Stück bringt seine Kollision mit.
  */
+/**
+ * Enge Höfe (Stadt): Die Häuser stehen nur 1 bis 2,7 m hinter dem Straßenrand. Mit dem normalen Vorgarten (Zaun 3,4 m, Pfahl 5,2 m, Weg
+ * 6 m vor der Tür) lag das alles mitten auf der Straße. Im engen Hof sind Weg, Zaun und Hofpfahl kurz, die Straße hat eigene Laternen.
+ */
+let yardCompact = false;
+export function setYardCompact(on: boolean) { yardCompact = on; }
+
 function dress(b: Built, rnd: () => number, w: number, d: number, wide = false): Built {
   const g = b.g;
   const front = d / 2;
+  const tight = yardCompact;
   // gepflasterter Steinweg: unregelmäßige Platten, leicht schlängelnd
-  const n = wide ? 11 : 9;
+  const n = tight ? 2 : wide ? 11 : 9;
   for (let i = 0; i < n; i++) {
     const z = front + 0.8 + i * 0.62;
     const cx = Math.sin(i * 0.8 + 1) * 0.3;
@@ -764,12 +772,15 @@ function dress(b: Built, rnd: () => number, w: number, d: number, wide = false):
   g.add(lamp, cyl(0.08, 0.14, 0.08, 6, M.iron, lx, 2.46, front + 0.5), cyl(0.14, 0.08, 0.08, 6, M.iron, lx, 2.1, front + 0.5));
   // Laternenpfahl am Wegrand
   const px = 1.5, pz = front + 5.2;
-  g.add(cyl(0.07, 0.1, 2.5, 6, M.darkWood, px, 1.25, pz), box(0.5, 0.06, 0.06, M.iron, px - 0.22, 2.4, pz));
-  const post = new Mesh(new SphereGeometry(0.17, 8, 6), lampMat);
-  post.position.set(px - 0.45, 2.22, pz);
-  post.userData.noOutline = true;
-  g.add(post);
-  const circles: Built['circles'] = [[0.2, px, pz]];
+  const circles: Built['circles'] = [];
+  if (!tight) {
+    g.add(cyl(0.07, 0.1, 2.5, 6, M.darkWood, px, 1.25, pz), box(0.5, 0.06, 0.06, M.iron, px - 0.22, 2.4, pz));
+    const post = new Mesh(new SphereGeometry(0.17, 8, 6), lampMat);
+    post.position.set(px - 0.45, 2.22, pz);
+    post.userData.noOutline = true;
+    g.add(post);
+    circles.push([0.2, px, pz]);
+  }
   const boxes: Built['boxes'] = [];
   // Holzstapel mit Hackklotz an der Seitenwand
   const sx = rnd() < 0.5 ? -1 : 1;
@@ -816,7 +827,7 @@ function dress(b: Built, rnd: () => number, w: number, d: number, wide = false):
   }
   // Lattenzaun vor dem Haus, Lücke für den Weg
   if (rnd() < 0.8) {
-    const fz = front + 3.4;
+    const fz = front + (tight ? 0.75 : 3.4);
     for (const e of [-1, 1]) {
       const x0 = e * 1.2, x1 = e * (w / 2 + 1.8);
       const len = Math.abs(x1 - x0), mid = (x0 + x1) / 2;
@@ -831,7 +842,8 @@ function dress(b: Built, rnd: () => number, w: number, d: number, wide = false):
   }
   b.boxes.push(...boxes);
   b.circles.push(...circles);
-  (b.glows ??= []).push({ kind: 'lamp', x: lx, y: 2.28, z: front + 0.5, gy: 0, size: 0.7, pool: 4.8 }, { kind: 'lamp', x: px - 0.45, y: 2.22, z: pz, gy: 0, size: 0.8, pool: 5.5 });
+  (b.glows ??= []).push({ kind: 'lamp', x: lx, y: 2.28, z: front + 0.5, gy: 0, size: 0.7, pool: 4.8 });
+  if (!tight) b.glows.push({ kind: 'lamp', x: px - 0.45, y: 2.22, z: pz, gy: 0, size: 0.8, pool: 5.5 });
   return b;
 }
 

@@ -187,9 +187,9 @@ export class LampPool {
       const fire = tg.userData.fire === true;
       const k = (tg.userData.lightK as number | undefined) ?? 1;
       const fl2 = fire ? 1 + (flickerOf(this.t, seed) - 1) * 1.15 : fl;
-      const want = (fire ? 5.2 : 2.8) * (fire ? Math.max(night, 0.22) : night) * k * fl2;
+      const want = (fire ? 5.2 : 3.4) * (fire ? Math.max(night, 0.22) : night) * k * fl2;
       l.color.copy(fire ? FIRE_L : WARM);
-      l.distance = fire ? 28 : 16;
+      l.distance = fire ? 28 : 20;
       l.intensity += (want - l.intensity) * Math.min(1, dt * 10);
     }
     // Schattenkarte nur rechnen, solange das Licht leuchtet

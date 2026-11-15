@@ -1,7 +1,7 @@
 import { MathUtils, Vector3, type AnimationAction } from 'three';
 import type { Input } from '../../core/input/input';
 import { STYLE_ANIMS, type StyleId } from '../../data/animations';
-import { FINISHERS, PLAYER_BASE, STAMINA, STYLE_ATTACKS, type AttackDef } from '../../data/combat';
+import { FINISHERS, PLAYER_BASE, SMEAR_LEFT_TO_RIGHT, STAMINA, STYLE_ATTACKS, type AttackDef } from '../../data/combat';
 import type { CombatSystem, PlayerTarget } from '../../combat/combat';
 import type { CombatFx } from '../../combat/fx';
 import type { CombatOverlay } from '../../ui/combatOverlay';
@@ -405,7 +405,8 @@ export class PlayerFoot implements PlayerTarget {
         break;
       case 'move':
         if (mag > 0.05) {
-          const sp = (mag > 0.7 ? RUN : WALK * (mag / 0.7) + 0.6) * this.speedMult;
+          // Gehen bis 2,2 m/s (Gehclip läuft dann höchstens mit dem 1,5-Fachen), darüber Rennen: dazwischen gäbe es keinen passenden Clip
+          const sp = (mag > 0.7 ? RUN : 0.6 + 1.6 * (mag / 0.7)) * this.speedMult;
           vx = dx * sp;
           vz = dz * sp;
           this.turnTo(lockYaw !== null && mag < 0.7 ? lockYaw : Math.atan2(dx, dz), dt, 12);
@@ -434,9 +435,9 @@ export class PlayerFoot implements PlayerTarget {
       const cur = this.locomotion;
       const sp = this.realSpeed;
       const want = cur === 'idle' || cur === ''
-        ? (sp > 0.25 ? (sp > 3.4 ? 'run' : 'walk') : 'idle')
-        : cur === 'run' ? (sp < 2.7 ? (sp < 0.15 ? 'idle' : 'walk') : 'run')
-          : (sp > 3.4 ? 'run' : sp < 0.15 ? 'idle' : 'walk');
+        ? (sp > 0.25 ? (sp > 3.0 ? 'run' : 'walk') : 'idle')
+        : cur === 'run' ? (sp < 2.4 ? (sp < 0.15 ? 'idle' : 'walk') : 'run')
+          : (sp > 3.0 ? 'run' : sp < 0.15 ? 'idle' : 'walk');
       if (want !== this.locomotion) {
         this.locomotion = want;
         if (want === 'idle') this.char.playClip(STYLE_ANIMS[this.style].idle.clip, { loop: true, fade: FADE.idle });
@@ -503,7 +504,7 @@ export class PlayerFoot implements PlayerTarget {
     if (!this.smeared && p >= def.hitStart - 0.06 && !def.projectile && def.fx !== 'punch') {
       this.smeared = true;
       const tilt = def.smearTilt ?? (def.fx === 'heavy' ? 1.45 : 0.4);
-      this.deps.fx?.smear(new Vector3(this.x, this.y + 1.05, this.z), this.yaw, tilt, def.range, def.arc, color, this.flip);
+      this.deps.fx?.smear(new Vector3(this.x, this.y + 1.05, this.z), this.yaw, tilt, def.range, def.arc, color, SMEAR_LEFT_TO_RIGHT.has(def.clip), true);
     }
     if (p >= def.hitStart && p <= def.hitEnd && def.projectile) {
       if (!this.fired) { this.fired = true; this.deps.combat?.shoot(def, this.x, this.y, this.z, this.yaw, this.dmgMult * this.swMult); }
