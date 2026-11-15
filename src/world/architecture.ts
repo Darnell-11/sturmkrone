@@ -747,6 +747,14 @@ export function setYardCompact(on: boolean) { yardCompact = on; }
 
 /** Bauten mit Grundfläche, die auf Hängen auf Türhöhe stehen und einen Sockel bekommen */
 export const SETTLES = new Set<StructureType>(['holzhuette', 'steinhaus', 'gasthaus', 'scheune', 'fachwerkhaus', 'kolonialhaus', 'lagerhaus', 'kapelle']);
+/** Grundfläche eines Baus einebnen (größter Kollisionsquader, etwas größer): Weltmitte, Drehung; `addPad` kommt von der Insel (WalkIsland.addPad) */
+export function levelFootprint(b: Built, wx: number, wz: number, yaw: number, addPad: ((x: number, z: number, w: number, d: number, yaw: number, blend?: number, round?: boolean) => number) | undefined, margin = 0.9, blend = 2.6) {
+  if (!addPad || !b.boxes.length) return;
+  const big = b.boxes.reduce((m, q) => (q[0] * q[1] > m[0] * m[1] ? q : m), b.boxes[0]);
+  const c = Math.cos(yaw), s = Math.sin(yaw), ox = big[2] ?? 0, oz = big[3] ?? 0;
+  addPad(wx + ox * c + oz * s, wz - ox * s + oz * c, big[0] + margin, big[1] + margin, yaw, blend);
+}
+
 const plinthMat = markShared(toon('#8E8576'));
 /**
  * Bau auf einem Hang aufstellen: der Fußboden liegt auf Höhe des Bodens vor der Tür (Tür bei +z), nicht in der Mitte – sonst schwebt das
@@ -873,7 +881,7 @@ function dress(b: Built, rnd: () => number, w: number, d: number, wide = false):
         g.add(box(0.1, 0.9, 0.05, M.planksGrey, x, 0.43, fz), cyl(0.0, 0.07, 0.12, 4, M.planksGrey, x, 0.94, fz));
       }
       for (const y of [0.3, 0.68]) g.add(box(len, 0.07, 0.05, M.wood, mid, y, fz - 0.05));
-      boxes.push([len, 0.3, mid, fz]);
+      boxes.push([len, 0.12, mid, fz]);
     }
   }
   b.boxes.push(...boxes);
@@ -1010,7 +1018,12 @@ function bergfried(): Built {
 export function colliders(b: Built, wx: number, wz: number, yaw: number): Blocker[] {
   const c = Math.cos(yaw), s = Math.sin(yaw);
   const out: Blocker[] = [];
-  for (const [w, d, ox = 0, oz = 0, by = 0] of b.boxes) out.push(boxBlocker(wx + ox * c + oz * s, wz - ox * s + oz * c, w, d, yaw + (by * Math.PI) / 180));
+  // Quader eng an der sichtbaren Wand: die Bau-Daten tragen 30 bis 40 cm Zugabe; mit dem Figurenradius (0,38 m) wirkte das wie eine unsichtbare Wand
+  // vor jeder Hauswand. Große Quader (Häuser) verlieren 14 cm in jeder Richtung, dünne (Zäune) bleiben dünn.
+  for (const [w, d, ox = 0, oz = 0, by = 0] of b.boxes) {
+    const shrink = (v: number) => (v > 2.4 ? v - 0.14 : v);
+    out.push(boxBlocker(wx + ox * c + oz * s, wz - ox * s + oz * c, shrink(w), shrink(d), yaw + (by * Math.PI) / 180));
+  }
   for (const [r, ox = 0, oz = 0] of b.circles) out.push({ x: wx + ox * c + oz * s, z: wz - ox * s + oz * c, r });
   return out;
 }

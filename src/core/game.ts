@@ -5,7 +5,7 @@ import { randomLook, type CharacterLook } from '../data/characterParts';
 import { WEATHER, type WeatherId } from '../data/world';
 import { CharacterAssets } from '../entities/character/assets';
 import { Character } from '../entities/character/character';
-import { Vector3, type ShaderMaterial } from 'three';
+import { Vector3, type PerspectiveCamera, type ShaderMaterial } from 'three';
 import { SkyProbe } from '../render/ibl';
 import { preload } from './preload';
 import { LoadingScreen } from '../ui/loadingScreen';
@@ -394,6 +394,8 @@ export class Game {
   }
 
   private render(alpha: number, frameDt: number) {
+    // Grafikstufe wird gerade angewendet (Shader werden parallel übersetzt): nicht zeichnen, sonst übersetzt das Zeichnen sie am Stück und der Browser hängt
+    if (this.qualitySwitching) return;
     this.updateAudio(frameDt);
     if (this.state.is('editor') && this.stage) {
       // Kompassleiste gehört zum Spiel: im Editor und in den Fenstern (Inventar, Fähigkeiten) nicht darüber zeigen
@@ -488,8 +490,11 @@ export class Game {
     const lower = lowerTier(this.renderer.tier);
     if (!lower) return;
     this.settings.update({ quality: lower });
+    // wie setQuality: nicht zeichnen, bis die Shader der neuen Stufe parallel übersetzt sind
+    this.qualitySwitching = true;
     this.renderer.applyQuality(lower);
-    this.recompileAfterQualityChange();
+    this.world.env.ensureCsm(this.world.camera as PerspectiveCamera);
+    this.renderer.precompile(this.world.scene, this.world.camera).catch(() => {}).finally(() => { this.qualitySwitching = false; });
     this.hud.toast(`Grafikstufe auf „${QUALITY_TIERS[lower].label}“ gesenkt, damit es flüssig läuft.`, 3.5);
   }
 
@@ -2137,27 +2142,36 @@ export class Game {
 
   // ---------- Einstellungen ----------
 
-  setQuality(tier: QualityTier | 'auto') {
-    if (tier === 'auto') {
-      this.settings.update({ qualityAuto: true, quality: this.detected.tier });
-      this.renderer.applyQuality(this.detected.tier);
-    } else {
-      this.settings.update({ qualityAuto: false, quality: tier });
-      this.renderer.applyQuality(tier);
-    }
-    this.autoQuality.reset();
-    this.watchdog.rewarm();
-    this.recompileAfterQualityChange();
-  }
+  /** Während eines Stufenwechsels wird nicht gezeichnet (siehe setQuality) */
+  private qualitySwitching = false;
 
   /**
-   * Ein Stufenwechsel schaltet Kaskaden-Schatten, Lichter und Nachbearbeitung um: alle beleuchteten Materialien brauchen neue Shader.
-   * Ohne Vorbereitung übersetzt der nächste Bildaufbau sie nacheinander (Browser hängt mehrere Sekunden). Hier werden sie sofort alle
-   * zugleich angestoßen (parallele Shader-Übersetzung), ein Bild später sind sie fertig.
+   * Grafikstufe wechseln. Ein Wechsel schaltet Kaskaden-Schatten, Lichter und Nachbearbeitung um; alle beleuchteten Materialien brauchen
+   * neue Shader (beim ersten Wechsel auf Maximal über 19 s, wenn das Zeichnen sie nacheinander übersetzt: der Browser hing). Darum:
+   * Stufe setzen, solange nicht zeichnen, alle Shader parallel übersetzen (compileAsync, der Browser bleibt bedienbar), dann weiterzeichnen.
+   * Bereits übersetzte Stufen (Programme bleiben gehalten) wechseln ohne Pause.
    */
-  private recompileAfterQualityChange() {
-    if (!this.world?.scene || !this.world.camera) return;
-    this.renderer.precompile(this.world.scene, this.world.camera).catch(() => {});
+  async setQuality(tier: QualityTier | 'auto') {
+    if (this.qualitySwitching) return;
+    this.qualitySwitching = true;
+    try {
+      if (tier === 'auto') {
+        this.settings.update({ qualityAuto: true, quality: this.detected.tier });
+        this.renderer.applyQuality(this.detected.tier);
+      } else {
+        this.settings.update({ qualityAuto: false, quality: tier });
+        this.renderer.applyQuality(tier);
+      }
+      this.autoQuality.reset();
+      this.watchdog.rewarm();
+      if (this.world?.scene && this.world.camera) {
+        this.world.env.ensureCsm(this.world.camera as PerspectiveCamera);
+        this.hud.toast('Grafik wird angewendet …', 1.6);
+        await this.renderer.precompile(this.world.scene, this.world.camera).catch(() => {});
+      }
+    } finally {
+      this.qualitySwitching = false;
+    }
   }
 
   private applySettings() {

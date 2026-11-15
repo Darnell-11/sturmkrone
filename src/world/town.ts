@@ -29,7 +29,7 @@ import { hasProp, propGroup } from './worldProps';
 import { markShared } from '../render/dispose';
 import { toonPbr } from '../render/pbrMaps';
 import { waveFlag } from '../render/flags';
-import { build as buildStruct, colliders as structColliders, lightMats, setYardCompact } from './architecture';
+import { build as buildStruct, colliders as structColliders, levelFootprint, lightMats, setYardCompact } from './architecture';
 import type { StructureType } from '../data/settlements';
 import type { GlowPlaced } from '../render/glow';
 import { hasArch as hasArchModel, hasArch, archGroup } from './envModels';
@@ -375,6 +375,8 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   const lampMat = new MeshBasicMaterial({ color: new Color(4, 2.6, 1) });
   const plinthMat = toon('#8E8576');
   const cx = def.x, cz = def.z;
+  // Marktplatz: runde, eingeebnete Fläche (Radius 16,5) mit weichem Übergang in den Hang
+  walk.addPad?.(cx, cz, 33, 33, 0, 7, true);
   /**
    * Objekt aufstellen. Kollider: Zahl = Kreisradius, [Breite, Tiefe, Versatz x, Versatz z] = gedrehtes Rechteck
    * (Häuser, Stände, Karren, Zäune: Kreise ließen Ecken frei und standen als unsichtbare Wand vor den Seiten).
@@ -393,6 +395,11 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   };
   const place = (o: Group | Mesh, x: number, z: number, yaw: number, block: number | [number, number, number?, number?]) => {
     const wx = cx + x, wz = cz + z;
+    // Größere Dinge (Stände, Schrein) stehen auf einer eingeebneten Fläche
+    if (Array.isArray(block) && block[0] * block[1] >= 6) {
+      const c1 = Math.cos(yaw), s1 = Math.sin(yaw), px = block[2] ?? 0, pz = block[3] ?? 0;
+      walk.addPad?.(wx + px * c1 + pz * s1, wz - px * s1 + pz * c1, block[0] + 0.6, block[1] + 0.6, yaw, 2);
+    }
     // Auf dem Hang steht ein Ding mit Grundfläche auf dem tiefsten Punkt darunter (nichts schwebt, nur die Bergseite steckt im Boden)
     const rr = Array.isArray(block) ? rectRange(wx, wz, yaw, block[0], block[1], block[2] ?? 0, block[3] ?? 0) : { mn: groundAt(wx, wz), mx: groundAt(wx, wz) };
     o.position.set(wx, rr.mn, wz);
@@ -417,6 +424,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   const placeB = (t: StructureType, x: number, z: number, yaw: number, len = 8) => {
     const b = buildStruct(t, trnd, len);
     const wx = cx + x, wz = cz + z;
+    if (t !== 'zinnenmauer' && t !== 'zinnenturm' && t !== 'torhaus' && t !== 'kran') levelFootprint(b, wx, wz, yaw, walk.addPad);
     // Fußboden auf Höhe des Bodens vor der Tür (Tür liegt bei +z), nicht in der Mitte: sonst schwebt das Haus auf der einen Seite und
     // versinkt auf der anderen. Fällt das Gelände dahinter ab, trägt ein Steinsockel das Haus bis zum tiefsten Punkt.
     const big = b.boxes.reduce((m, q) => (q[0] * q[1] > m[0] * m[1] ? q : m), b.boxes[0] ?? [4, 4, 0, 0]);

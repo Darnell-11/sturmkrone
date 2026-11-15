@@ -20,11 +20,13 @@ export class Npc {
   private acc = 0;
   /** Eigenes Gehtempo (jeder geht etwas anders) und aktuelle Geschwindigkeit (für sanftes Anlaufen) */
   private pace: number;
+  private stepV = 0.6;
   private vel = 0;
   private stuckT = 0;
 
   constructor(assets: CharacterAssets, private home: WalkIsland, private ground: IslandGround, readonly role: NpcRole, private rng: () => number, outline: boolean) {
     this.char = new Character(assets, randomLook(rng, role), outline);
+    this.char.walkVariant = 'Walking_B';
     // Stadtleute laufen leiser
     this.char.stepVol = 0.3;
     // Startplatz: auf einer Straße der Stadt (falls es welche gibt), sonst irgendwo frei; nie in einem Haus, Zaun oder Stapel
@@ -174,7 +176,9 @@ export class Npc {
         this.x = c.x; this.z = c.z;
         // Schritte im Takt der echten Bewegung
         const moved = Math.hypot(this.x - bx, this.z - bz) / Math.max(dt, 1e-4);
-        this.char.setLocoSpeed(Math.max(0.6, moved));
+        // geglättet: kleine Schwankungen der echten Bewegung (Ausweichen, Hindernisse) ließen die Beine sonst zucken
+        this.stepV += (Math.max(0.6, moved) - this.stepV) * Math.min(1, dt * 5);
+        this.char.setLocoSpeed(this.stepV);
         // hängt an einer Wand fest: stehen bleiben und etwas anderes tun
         this.stuckT = moved < this.vel * 0.4 && this.vel > 0.3 ? this.stuckT + dt : 0;
         if (this.stuckT > 0.8) this.timer = 0;

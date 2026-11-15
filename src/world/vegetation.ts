@@ -47,6 +47,8 @@ export interface Proto {
   near: number;
   cast: boolean;
   outline: boolean;
+  /** Gras und Kräuter: dünnt mit der Entfernung weich aus (siehe vegSoftMat) */
+  soft: boolean;
 }
 export interface ProtoOpts {
   collide?: number; near?: number; cast?: boolean; outline?: boolean;
@@ -75,7 +77,21 @@ export function vegMat(): MeshToonMaterial {
  *  - Laub: Licht scheint durch, wenn Kamera und Sonne auf gegenüberliegenden Seiten stehen (Subsurface-Näherung, gelblich)
  *  - Fels: Moos auf Oberseiten und in feuchten Flecken
  */
-function patchVeg(m: MeshToonMaterial) {
+let vegSoftMaterial: MeshToonMaterial | null = null;
+/**
+ * Material für Gras, Halme und Blumen: wie vegMat, dazu dünnt der Vertex-Shader die Instanzen mit der Entfernung weich aus
+ * (voll bis 24 m, ab etwa 54 m nur noch jede zehnte; je Instanz ein fester Zufallswert aus ihrer Lage, die Halme schrumpfen statt zu
+ * springen). Gras wirft keine Schatten (cast aus), bewegt sich nur im Shader (Wind) und kostet keine CPU-Arbeit je Bild.
+ */
+export function vegSoftMat(): MeshToonMaterial {
+  if (!vegSoftMaterial) {
+    vegSoftMaterial = markShared(markWind(toon({ color: 0xffffff, vertexColors: true, unique: true })) as MeshToonMaterial);
+    patchVeg(vegSoftMaterial, true);
+  }
+  return vegSoftMaterial;
+}
+
+function patchVeg(m: MeshToonMaterial, thin = false) {
   const orig = m.onBeforeCompile.bind(m);
   const key = m.customProgramCacheKey.bind(m);
   m.onBeforeCompile = (shader, renderer) => {
@@ -89,6 +105,12 @@ varying vec2 vSkBk;
 varying vec3 vSkVW;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
 vSkSurf = aSurf; vSkBk = aBk;
+${thin ? `#ifdef USE_INSTANCING
+{ vec3 skIp = (modelMatrix * vec4(instanceMatrix[3].xyz, 1.0)).xyz;
+  float skKeep = 1.0 - smoothstep(24.0, 54.0, distance(skIp, cameraPosition));
+  float skRnd = fract(sin(dot(skIp.xz, vec2(12.9898, 78.233))) * 43758.5453);
+  transformed *= clamp(1.0 + (skKeep * 1.1 - skRnd) * 5.0, 0.0, 1.0); }
+#endif` : ''}
 { vec4 skVp = vec4(transformed, 1.0);
 #ifdef USE_INSTANCING
 skVp = instanceMatrix * skVp;
@@ -147,7 +169,7 @@ if (vSkSurf > 1.5 && vSkSurf < 2.5) {
 }
 #endif`);
   };
-  m.customProgramCacheKey = () => key() + 'veg3';
+  m.customProgramCacheKey = () => key() + (thin ? 'veg3t' : 'veg3');
 }
 
 const protos = new Map<string, Proto>();
@@ -206,7 +228,7 @@ function protoFrom(id: string, obj: Object3D, o: ProtoOpts): Proto {
   for (const g of geos) g.dispose();
   const glowGeo = glowGeos.length ? markShared(mergeGeometries(glowGeos, false)!) : null;
   for (const g of glowGeos) g.dispose();
-  return { id, geo, glow: glowGeo && glowMat ? { geo: glowGeo, mat: glowMat } : null, collide: o.collide ?? 0, near: o.near ?? 0, cast: o.cast ?? true, outline: o.outline ?? true };
+  return { id, geo, glow: glowGeo && glowMat ? { geo: glowGeo, mat: glowMat } : null, collide: o.collide ?? 0, near: o.near ?? 0, cast: o.cast ?? true, outline: o.outline ?? true, soft: !!o.soft };
 }
 
 /** Vorlage holen oder einmalig bauen (make bekommt einen festen Zufall aus dem Namen – jede Variante sieht immer gleich aus) */
@@ -242,10 +264,9 @@ export class Scatter {
   /** Netze erzeugen und an die Inselgruppe hängen. Liefert die Kacheln mit begrenzter Sichtweite. */
   build(group: Group): VegChunk[] {
     const chunks: VegChunk[] = [];
-    const mat = vegMat();
     for (const bin of this.bins.values()) {
       const n = bin.c.length / 3;
-      const mesh = new InstancedMesh(bin.proto.geo, mat, n);
+      const mesh = new InstancedMesh(bin.proto.geo, bin.proto.soft ? vegSoftMat() : vegMat(), n);
       (mesh.instanceMatrix.array as Float32Array).set(bin.m);
       mesh.instanceColor = new InstancedBufferAttribute(new Float32Array(bin.c), 3);
       mesh.castShadow = bin.proto.cast;

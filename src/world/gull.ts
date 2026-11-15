@@ -86,12 +86,16 @@ export function createGulls(count: number): GullSwarm {
         // Flügelschlag: Arm hebt sich, Handspitzen folgen versetzt; im Gleitflug (kleine Stärke) stehen sie leicht gewinkelt
         float wx = abs(position.x);
         float ph = aFlap.x;
+        float fl = max(aFlap.y, 0.0);
+        float fold = clamp(-aFlap.y, 0.0, 1.0); // sitzende Möwe: Flügel angelegt
         float hand = max(wx - 0.55, 0.0);
-        transformed.y += aFlap.y * (0.34 * wx * sin(ph) + 0.62 * hand * sin(ph - 1.0));
-        transformed.y += (1.0 - aFlap.y) * (0.1 * wx - 0.16 * hand);
-        transformed.z += aFlap.y * 0.1 * hand * (1.0 - sin(ph - 1.0));`);
+        transformed.y += fl * (0.34 * wx * sin(ph) + 0.62 * hand * sin(ph - 1.0));
+        transformed.y += (1.0 - fl) * (0.1 * wx - 0.16 * hand) * (1.0 - fold);
+        transformed.z += fl * 0.1 * hand * (1.0 - sin(ph - 1.0));
+        transformed.x *= 1.0 - 0.74 * fold;
+        transformed.z -= fold * 0.18 * wx;`);
   };
-  mat.customProgramCacheKey = () => 'sk-gull1';
+  mat.customProgramCacheKey = () => 'sk-gull2';
   const mesh = new InstancedMesh(geo, mat, count);
   mesh.frustumCulled = false;
   return { mesh, flap };

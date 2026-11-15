@@ -103,6 +103,7 @@ export interface PlayOptions {
 const LOCO_CLIPS = new Set(['Walking_A', 'Walking_B', 'Walking_C', 'Running_A']);
 /** Natürliche Geschwindigkeit der Geh-Clips in m/s (aus Fußkontakten gemessen: Schrittweite × 2 / Dauer) */
 /** Beckenhöhe im Gehen (Mittel der Clips), Dämpfung der Auf-und-ab-Bewegung, Anhebung in m */
+const GAIT_ELBOW = 0.5, GAIT_UPRIGHT = -0.1;
 const GAIT_HIP = 0.848, GAIT_DAMP = 0.35, GAIT_LIFT = 0.03, GAIT_ANKLE = 0.08, GAIT_FOOT = 0.42;
 export const WALK_NATURAL: Record<string, number> = { Walking_A: 1.5, Walking_B: 1.63, Walking_C: 0.82 };
 const SLOT_SURFACE: Record<string, Surface> = { skin: 'skin', hair: 'hair', top: 'cloth', bottom: 'cloth', shoes: 'leather', iris: 'eye' };
@@ -806,10 +807,13 @@ export class Character {
     return a;
   }
 
+  /** Eigener Geh-Clip dieser Figur (Bewohner schlendern mit `Walking_B`: ruhiger Gang, passt zu 1 bis 1,6 m/s) */
+  walkVariant: string | null = null;
+
   /** Eine Spielaktion abspielen (siehe data/animations.ts) */
   play(role: AnimRole, opts: PlayOptions = {}) {
     const r = ROLES[role] as ClipRef;
-    return this.playClip(r.clip, { loop: r.loop, speed: r.speed, ...opts });
+    return this.playClip(role === 'walk' && this.walkVariant ? this.walkVariant : r.clip, { loop: r.loop, speed: r.speed, ...opts });
   }
 
   playClip(name: string, opts: PlayOptions = {}): AnimationAction | null {
@@ -948,12 +952,13 @@ export class Character {
   }
 
   private applyLean() {
-    if (Math.abs(this.leanRoll) < 0.002 && Math.abs(this.leanPitch) < 0.002) return;
+    const pitch = this.leanPitch + this.gaitPitch;
+    if (Math.abs(this.leanRoll) < 0.002 && Math.abs(pitch) < 0.002) return;
     for (const [name, share] of [['spine', 0.55], ['chest', 0.45]] as const) {
       const b = this.bones[name];
       if (!b) continue;
       const q = this.leanApplied[name];
-      q.copy(Character.LQ.setFromAxisAngle(Character.AX, this.leanRoll * share)).multiply(Character.LQ2.setFromAxisAngle(Character.AXP, this.leanPitch * share));
+      q.copy(Character.LQ.setFromAxisAngle(Character.AX, this.leanRoll * share)).multiply(Character.LQ2.setFromAxisAngle(Character.AXP, pitch * share));
       b.quaternion.multiply(q);
     }
   }
@@ -1023,6 +1028,12 @@ export class Character {
    * dort, wo der Clip sie hinsetzt (kein Rutschen), nur die Knie strecken sich.
    */
   private softenGait() {
+    // Arme: der Clip hält die Ellbogen fast im rechten Winkel (wie beim Joggen); zum Gehen nur halb gebeugt, Oberkörper etwas aufrechter
+    for (const sd of ['l', 'r']) {
+      const lo = this.bones[`lowerarm${sd}`];
+      if (lo) lo.quaternion.slerp(Character.IDQ, GAIT_ELBOW);
+    }
+    this.gaitPitchWant = GAIT_UPRIGHT;
     const hips = this.bones.hips;
     if (!hips || !hips.parent) return;
     this.holder.updateWorldMatrix(true, true);
@@ -1072,6 +1083,9 @@ export class Character {
     }
   }
   private sgLegs = [0, 1].map(() => ({ up: null as unknown as Bone, lo: null as unknown as Bone, ft: null as unknown as Bone, ank: new V3(), knee: new V3(), q: new Quaternion(), a: 0.4, b: 0.4 }));
+  private static readonly IDQ = new Quaternion();
+  private gaitPitch = 0;
+  private gaitPitchWant = 0;
   private static readonly SG_B = new V3();
   private static readonly SG_H = new V3();
   private static readonly SG_S = new V3();
@@ -1167,7 +1181,9 @@ export class Character {
     }
     this.undoLean();
     this.mixer.update(dt);
+    this.gaitPitchWant = 0;
     if (this.currentName in WALK_NATURAL) this.softenGait();
+    this.gaitPitch += (this.gaitPitchWant - this.gaitPitch) * Math.min(1, dt * 6);
     this.syncCull();
     this.applyLean();
     this.updateCape(dt);

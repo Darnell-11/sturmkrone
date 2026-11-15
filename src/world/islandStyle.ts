@@ -52,11 +52,11 @@ export function styleKit(style: IslandStyle): StyleKit {
  * Strandplateau mit unregelmäßiger Küste und 1–3 Hügeln – aus denselben Werten wie die Laufhöhe (islandGround).
  * hills: Inselkoordinaten.
  */
-export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: number; p: number }[], hills: { x: number; z: number; r: number; h: number }[], grassFrac = 0, rnd: () => number = Math.random, ragged = 0, shelf = 0.25, H: (x: number, z: number) => number = () => 1.3): { beach: Mesh; hills: Mesh[]; liftAt: (x: number, z: number) => number } {
+export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: number; p: number }[], hills: { x: number; z: number; r: number; h: number }[], grassFrac = 0, rnd: () => number = Math.random, ragged = 0, shelf = 0.25, H: (x: number, z: number) => number = () => 1.3): { beach: Mesh; hills: Mesh[]; liftAt: (x: number, z: number) => number; refresh: (Hn: (x: number, z: number) => number, bounds: [number, number, number, number][]) => void } {
   const k = (a: number) => coastK(coast, a);
   /** Polargitter: Ringe t (Anteile des Küstenradius, optional mit Radius je Winkel) und Winkel; Höhe aus H (Inselkoordinaten) */
   const polar = (cx: number, cz: number, radiusAt: (a: number) => number, ringT: number[], segs: number, lift: number, flipV = false, edgeW = 0): BufferGeometry => {
-    const pos: number[] = [], idx: number[] = [], edge: number[] = [];
+    const pos: number[] = [], idx: number[] = [], edge: number[] = [], off: number[] = [];
     for (const t of ringT) {
       for (let i = 0; i <= segs; i++) {
         const a = (i / segs) * Math.PI * 2;
@@ -65,7 +65,9 @@ export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: n
         const x = cx + Math.cos(a) * rad, z = cz + Math.sin(a) * rad;
         // Wiesenrand: aEdge 0 … 1 auf den letzten edgeW Metern, die Fläche sinkt dort auf den Sand
         const e = edgeW > 0 ? Math.max(0, Math.min(1, (rad - (full - edgeW)) / edgeW)) : 0;
-        pos.push(x, H(x, z) + lift * (1 - 0.85 * e * e), z);
+        const lo = lift * (1 - 0.85 * e * e);
+        pos.push(x, H(x, z) + lo, z);
+        off.push(lo);
         edge.push(e);
       }
     }
@@ -76,6 +78,7 @@ export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: n
     }
     const geo = new BufferGeometry();
     geo.setAttribute('position', new Float32BufferAttribute(pos, 3));
+    geo.userData.off = new Float32Array(off);
     geo.setIndex(idx);
     if (edgeW > 0) geo.setAttribute('aEdge', new Float32BufferAttribute(edge, 1));
     geo.computeVertexNormals();
@@ -140,7 +143,28 @@ export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: n
     m.receiveShadow = true;
     return m;
   }));
-  return { beach, hills: meshes, liftAt };
+  /**
+   * Gelände-Mesh an eingeebnete Standflächen anpassen (nach dem Aufbau der Insel, wenn alle Bauten stehen): jeder Eckpunkt bekommt die neue
+   * Bodenhöhe (ohne Wiesendecke) plus seinen alten Abstand zum Boden (Wiesendecke, Rand). Danach neue Normalen und Hüllkugeln.
+   * `bounds`: nur Eckpunkte innerhalb dieser Rechtecke (Insel-Koordinaten, [x0, z0, x1, z1]) werden angefasst.
+   */
+  const refresh = (Hn: (x: number, z: number) => number, bounds: [number, number, number, number][]) => {
+    for (const mesh of [beach, ...meshes]) {
+      const g = mesh.geometry, pa = g.attributes.position, off = g.userData.off as Float32Array | undefined;
+      if (!off) continue;
+      let touched = false;
+      for (let i = 0; i < pa.count; i++) {
+        const x = pa.getX(i), z = pa.getZ(i);
+        let inB = false;
+        for (const b of bounds) if (x >= b[0] && x <= b[2] && z >= b[1] && z <= b[3]) { inB = true; break; }
+        if (!inB) continue;
+        const y = Hn(x, z) + off[i];
+        if (Math.abs(y - pa.getY(i)) > 1e-4) { pa.setY(i, y); touched = true; }
+      }
+      if (touched) { pa.needsUpdate = true; g.computeVertexNormals(); g.computeBoundingSphere(); g.computeBoundingBox(); }
+    }
+  };
+  return { beach, hills: meshes, liftAt, refresh };
 }
 
 const KIND_LABEL: Record<string, string> = { town: 'Hafenstadt', harbor: 'Hafen', camp: 'Lager', ruin: 'Ruine', quiet: '', treasure: 'Schatzinsel', lighthouse: 'Leuchtturm', boss: 'Boss' };

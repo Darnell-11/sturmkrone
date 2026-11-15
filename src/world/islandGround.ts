@@ -3,6 +3,13 @@ import type { IslandShape } from './ocean';
 /** Ein Hügel: Mitte (Welt), Radius und Höhenfaktor (Kuppe = Halbkugel, in der Höhe gestaucht) */
 export interface Hill { x: number; z: number; r: number; h: number }
 
+/**
+ * Ebene Standfläche unter einem Bau (Welt): rechteckig (hw, hd, yaw) mit weichem Übergang `blend` ins Gelände. Das Gelände steigt oder
+ * fällt zur Standfläche hin; innerhalb ist es genau auf Höhe `y` (Mittel der Grundfläche vor dem Einebnen). Kein Haus versinkt mehr im Hang
+ * und keines hängt in der Luft; Wege, Zäune und Pflanzen davor folgen dem eingeebneten Gelände.
+ */
+export interface Pad { x: number; z: number; hw: number; hd: number; yaw: number; blend: number; y: number; r2: number; round?: boolean }
+
 /** Hügelform 0 … 1 (t = Abstand / Radius): weich auslaufend statt Halbkugel – keine Kante am Hügelfuß */
 export function hillProfile(t: number): number {
   return t >= 1 ? 0 : Math.pow(1 - t * t, 1.6);
@@ -30,6 +37,10 @@ export interface WalkIsland extends IslandShape {
   walkways?: { pts: [number, number][]; w: number }[];
   /** Dicke der Wiesendecke über dem Grundgelände (Inselkoordinaten): wer auf der Wiese steht, steht auf ihr, nicht 15 bis 19 cm darin */
   lift?: (lx: number, lz: number) => number;
+  /** Eingeebnete Standflächen (Welt) unter Bauten; Gelände-Mesh wird nach dem Aufbau der Insel nachgeführt */
+  pads?: Pad[];
+  /** Standfläche anmelden: Mitte (Welt), Breite, Tiefe, Drehung, Übergangsbreite; gibt die Höhe der Fläche zurück (setzt die Welt) */
+  addPad?: (x: number, z: number, w: number, d: number, yaw: number, blend?: number, round?: boolean) => number;
 }
 
 function vnoise(x: number, z: number, seed: number): number {
@@ -446,7 +457,7 @@ export class IslandGround implements Ground {
   }
 
   /** Höhe einer einzelnen Insel (Weltkoordinaten); −∞ außerhalb. Gleiche Rechnung für Gelände-Mesh und Laufhöhe. */
-  islandHeight(i: WalkIsland, x: number, z: number): number {
+  islandHeight(i: WalkIsland, x: number, z: number, withLift = true, withPads = true): number {
     const d = Math.hypot(x - i.x, z - i.z);
     if (d > i.r * 1.9) return -Infinity;
     const e = this.edge(i, x, z);
@@ -463,7 +474,25 @@ export class IslandGround implements Ground {
       const fade = 1 - Math.min(1, Math.max(0, (t - 0.78) / 0.2));
       y += reliefAt(i, x - i.x, z - i.z) * fade * fade * (3 - 2 * fade) ;
     }
-    if (i.lift) y += i.lift(x - i.x, z - i.z);
+    if (withPads && i.pads && d < e) {
+      // von hinten nach vorn: früher angemeldete Flächen gewinnen (ein Haus behält seinen Boden, wenn später ein Nachbar einebnet)
+      for (let k = i.pads.length - 1; k >= 0; k--) {
+        const p = i.pads[k];
+        const dx = x - p.x, dz = z - p.z;
+        if (dx * dx + dz * dz > p.r2) continue;
+        let sd: number;
+        if (p.round) sd = Math.max(0, Math.hypot(dx, dz) - p.hw);
+        else {
+          const c = Math.cos(p.yaw), sn = Math.sin(p.yaw);
+          const lx = Math.abs(dx * c - dz * sn) - p.hw, lz = Math.abs(dx * sn + dz * c) - p.hd;
+          sd = Math.hypot(Math.max(lx, 0), Math.max(lz, 0));
+        }
+        if (sd >= p.blend) continue;
+        const t = 1 - sd / p.blend, w = t * t * (3 - 2 * t);
+        y += (p.y - y) * w;
+      }
+    }
+    if (withLift && i.lift) y += i.lift(x - i.x, z - i.z);
     return y;
   }
 

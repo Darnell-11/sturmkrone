@@ -1,5 +1,45 @@
 # Was ist neu
 
+## 2.9.82 – Großer Qualitätsdurchgang: Gelände, Brunnen, Leuchtturm, Schiffe, Leistung (15.11.2026)
+
+**Gelände und Bauten (alle Inseln)**
+- **Einebnen unter Bauten:** Wohnhäuser, Gasthäuser, Lagerhäuser, Kapellen, Scheunen, Marktstände und der Marktplatz stehen auf eingeebneten Standflächen (`Pad` in `islandGround.ts`, `WalkIsland.addPad`, `levelFootprint`): das Gelände steigt oder fällt mit weichem Übergang (2,4 bis 7 m) zur Fläche, Boden = Mittel der Grundfläche. Das Gelände-Mesh wird nach dem Aufbau der Insel nachgeführt (`islandTerrain().refresh`), die Laufhöhe folgt automatisch. Der Steinsockel bleibt nur noch als Rest für Extremfälle (Ankerglück: 78 Flächen).
+- **Gelände-Meshes nicht mehr verschmolzen:** Sie werden aus der Zusammenfassung ausgenommen, damit die Anpassung greift (wenige Zeichenaufrufe mehr).
+- **Wege und Gras:** Auf Wegen (Erde, Pflaster) und dem Marktplatz wächst kein Gras mehr (`onPath`); Pflasterwege liegen sichtbar auf der Wiese (Strahltest: 0 bis 9 cm Abstand).
+- **Kollisionen:** Haus-Quader liegen 14 cm enger an der sichtbaren Wand, Zaun-Collider 12 statt 30 cm dick (mit Figurenradius 0,38 m blieben Lücken vorher zu schmal).
+- **Wiese und Laufhöhe:** (aus 2.9.81) Wiesendecke zählt zur Laufhöhe.
+
+**Brunnen (Ankerglück)**
+- Neuer dreistufiger Steinbrunnen aus Blender (`tools/blender/build_brunnen.py`, 14 000 Dreiecke): gestufter Sockel, gegliedertes Becken mit Pilastern und acht Löwenköpfen mit Speiern, Mittelsäule mit vier Delfinen, drei Schalen, goldene Spitze, Moos.
+- Wasser im Grafikchip (`world/fountain.ts`): spiegelnde Wasserflächen mit Wellenringen, acht Wasserbögen aus den Speiern, Schleier über die Schalenränder, tanzende Tropfen und Gischt. Nachts gedämpft.
+
+**Leuchtturm**
+- Neu gebaut (`world/lighthouseBeam.ts`): zwei Strahlen mit weitem Außenkegel und hellem Kern (Fresnel-Rand, weiche Abnahme, wandernder Dunst), Staub und Gischt im Strahl, glühende Fresnel-Linse mit Prismenringen, pulsierender Lampenkern, Lichthof. Additiv, ohne Tiefenschreiben, doppelseitig, kein Nebel, kein Schattenwurf, sichere Potenzen: keine schwarzen Streifen mehr.
+- Steuerung: aus am klaren Tag, sanft an abends, nachts und bei Nebel, Regen oder Sturm (`updateBeams(dt, Nacht, Wetter)`).
+
+**Schiffe**
+- **Deck:** neue Deckstextur (`deckTexture`): warm verwittertes Eichenholz, dunkle Teerfugen, versetzte Stöße mit Holznägeln, 1024 px, Mipmaps und Anisotropie; schwaches Relief, Rauheit 0,77; Pfützen zurückhaltend. Auch Achter- und Vorderdeck. Das weiße Kriseln (helle Fugenlinien der Normalkarte und Nässeglanz) ist weg; geprüft bei Tag, Regen und Nacht.
+- **Flagge:** nur noch eine Flagge am höchsten Mast (die Wimpel auf jedem Mast waren die zweite); fein unterteilt (22 × 10), weht im Vertex-Shader.
+- **Segel:** wehen im Vertex-Shader (`sailMaterial`): Böen, Wellen, flatternde Kanten, Normale folgt der Welle; 26 × 16 statt 10 × 6 Unterteilungen. Die CPU bewegt keinen Eckpunkt mehr (vorher jedes Bild jedes Segel, bei Hero-Schiffen mit Normalen).
+
+**Tiere**
+- **Möwen:** eigenes Verhalten je Tier statt fester Formation: kreisen über ihrer Insel, begleiten ein *fahrendes* Schiff (Zahl nach Tempo, vorn, seitlich oder hinterm Heck, nach 25 bis 80 s drehen sie ab), landen im Wasser neben einem still liegenden Schiff (Flügel angelegt, wippen) und starten wieder, Sturzflüge auf Fische mit Gischt.
+- **Delfine:** vier Auftrittsarten (Bugwelle bei schneller Fahrt, Rudel an der Seite, Mutter mit Kalb, einzelner großer Sprung weiter draußen); schon ab 3 Knoten.
+
+**Kampf und Bewegung**
+- **Schwerthiebe:** Der Lichtbogen ist jetzt der Schweif an der echten Klinge (verlängert über die Spitze, glühende Schneidenkante, länger nachziehend); der feste Bogen vor der Figur liegt nur noch bei Rundumhieben (er lag je nach Clip hinter oder neben der Klinge). Takt: sammeln, Peitschenbewegung durchs Trefferfenster, zügig zurück.
+- **Gehen:** Ellbogen nur halb gebeugt und Oberkörper etwas aufrechter (zusätzlich zur Beinführung aus 2.9.80); Bewohner gehen mit `Walking_B` (passt zu 1 bis 1,6 m/s) und geglätteter Schrittgeschwindigkeit.
+
+**Leistung und Fehler**
+- **Grafik umstellen hängte den Browser:** Gemessen: erster Wechsel auf Maximal 19 s im ersten Bild (alle Shader am Stück). Jetzt: Kaskaden sofort anlegen, nicht zeichnen, alle Shader parallel übersetzen (`compileAsync`), dann weiter. Erstes Bild danach unter 1 s; Rückwechsel auf bekannte Stufen 60 bis 100 ms. Gilt auch für die automatische Absenkung.
+- **Ruckler bei neuen Gegnern:** Shader neuer Gegner werden beim Erscheinen parallel vorübersetzt (`Renderer.warmObject`), nicht erst beim Schwenk der Kamera.
+- **Schattenkaskaden gestaffelt:** nahe Kaskade jedes Bild, zweite jedes zweite, die weiteren jedes dritte. Ankerglück auf Maximal: 19,8 → 17,1 ms, Zeichenaufrufe 1395 → 888, Dreiecke 2,07 → 1,16 Mio. je Bild.
+- **Gras:** eigenes Material (`vegSoftMat`) mit weichem Ausdünnen im Vertex-Shader (voll bis 24 m, ab 54 m etwa jede zehnte Instanz, Halme schrumpfen statt zu springen); Gras warf schon keine Schatten, Wind läuft im Shader.
+- **Tiefenschärfe:** deutlich dezenter (Unschärfe 0,9 bis 1,35 statt 1,3 bis 2,2, größerer scharfer Bereich).
+- **Straßenlaternen:** größerer Lichthof, stärkeres echtes Licht.
+- **Flaggen-Shader:** Absicherung gegen NaN.
+- **Erkannt, nicht umgesetzt:** Das Gras ist bereits instanziert (Blender-Modelle aus `build_env2.py`), ein neues Blender-Büschel wurde nicht gebaut; weitere Details bei Tieren (Modelle) nicht verändert.
+
 ## 2.9.81 – Füße am Boden, Wege nicht mehr unter der Wiese, ruhigeres Menü (15.11.2026)
 
 - **Schuhe und Boden (Ursache gefunden):** Die Wiesendecke (Gras und Hügelkappen) liegt 15 bis 19 cm über dem Grundgelände, die Laufhöhe war aber die des Grundgeländes. Figuren standen dadurch mit den Schuhen halb in der Wiese (die Stiefel wirkten wie lang gezogene, abgeschnittene Spitzen), und Häuser, Pflanzen und die Pflasterstraßen der Stadt (nur 8 bis 9 cm über dem Grundgelände) waren teilweise unter der Wiese vergraben. Jetzt zählt die Wiesendecke zur Laufhöhe (`WalkIsland.lift`, gesetzt in `seaWorld.buildIslands`); Figuren, Häuser, Pflanzen, Wege und Straßen stehen auf der sichtbaren Fläche. Strahl-Messung an sechs Punkten: Abstand zwischen Laufhöhe und sichtbarer Fläche vorher 18 cm, jetzt 0 bis 9 cm.

@@ -21,8 +21,9 @@ import { archGroup } from './envModels';
  * denselben Maßen: spiegelnde, bewegte Wasserflächen mit Wellenringen unter jedem Strahl, acht Wasserbögen aus den Löwenköpfen, dünne Schleier an
  * den Schalenrändern und tanzende Tropfen (alles im Grafikchip, ohne CPU-Arbeit je Bild).
  */
-const T = { uTime: { value: 0 } };
-export function updateFountains(dt: number) { T.uTime.value += dt; }
+const T = { uTime: { value: 0 }, uDay: { value: 1 } };
+/** `day`: Helligkeit des Wassers 0,18 (Nacht) … 1 (Tag): die Wasserflächen leuchten selbst und dürfen nachts nicht strahlen */
+export function updateFountains(dt: number, day = 1) { T.uTime.value += dt; T.uDay.value += (day - T.uDay.value) * Math.min(1, dt * 2); }
 
 /** Maße des Modells (siehe Kopf von build_brunnen.py) */
 const POOL = { y: 0.84, r: 2.86, hole: 0.56 };
@@ -41,6 +42,7 @@ function poolMaterial(src: [number, number, number][], r: number, hole: number):
   return new ShaderMaterial({
     uniforms: {
       uTime: T.uTime,
+      uDay: T.uDay,
       uSrc: { value: Array.from({ length: 8 }, (_, i) => new Vector3(...(src[i] ?? [0, 0, 0]))) },
       uSrcN: { value: src.length },
       uR: { value: r },
@@ -57,6 +59,7 @@ function poolMaterial(src: [number, number, number][], r: number, hole: number):
       }`,
     fragmentShader: /* glsl */ `
       uniform float uTime;
+      uniform float uDay;
       uniform vec3 uSrc[8];
       uniform int uSrcN;
       uniform float uR;
@@ -103,6 +106,7 @@ function poolMaterial(src: [number, number, number][], r: number, hole: number):
         float edge = smoothstep(uR - 0.2, uR, r) + (uHole > 0.0 ? smoothstep(uHole + 0.22, uHole, r) : 0.0);
         float foam = edge * (0.5 + 0.5 * sin(atan(vP.y, vP.x) * 24.0 + uTime * 1.5 + r * 30.0));
         col = mix(col, vec3(0.92, 0.97, 1.0), foam * 0.55);
+        col *= mix(0.16, 1.0, uDay);
         gl_FragColor = vec4(col, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -127,7 +131,7 @@ let flowMat: ShaderMaterial | null = null;
 function flowMaterial(): ShaderMaterial {
   if (flowMat) return flowMat;
   flowMat = markShared(new ShaderMaterial({
-    uniforms: { uTime: T.uTime },
+    uniforms: { uTime: T.uTime, uDay: T.uDay },
     vertexShader: /* glsl */ `
       attribute float aU;
       attribute float aSeed;
@@ -141,13 +145,14 @@ function flowMaterial(): ShaderMaterial {
       }`,
     fragmentShader: /* glsl */ `
       uniform float uTime;
+      uniform float uDay;
       varying float vU; varying float vSeed; varying vec3 vN; varying vec3 vV;
       void main() {
         float s = 0.7 + 0.3 * sin(vU * 46.0 - uTime * 15.0 + vSeed * 6.28);
         s *= 0.8 + 0.2 * sin(vU * 17.0 - uTime * 8.0 + vSeed * 11.0);
         float side = clamp(abs(dot(normalize(vN), normalize(vV))), 0.0, 1.0);
         float ends = smoothstep(0.0, 0.06, vU) * (1.0 - smoothstep(0.92, 1.0, vU));
-        float a = clamp(s * pow(max(side, 1e-4), 0.8) * ends * 0.55, 0.0, 1.0);
+        float a = clamp(s * pow(max(side, 1e-4), 0.8) * ends * 0.55 * mix(0.3, 1.0, uDay), 0.0, 1.0);
         if (a < 0.02) discard;
         gl_FragColor = vec4(vec3(0.7, 0.88, 1.0) * (0.8 + 0.5 * s), a);
       }`,
@@ -232,7 +237,7 @@ let dropMat: ShaderMaterial | null = null;
 function dropMaterial(): ShaderMaterial {
   if (dropMat) return dropMat;
   dropMat = markShared(new ShaderMaterial({
-    uniforms: { uTime: T.uTime },
+    uniforms: { uTime: T.uTime, uDay: T.uDay },
     vertexShader: /* glsl */ `
       uniform float uTime;
       attribute vec3 aVel;
@@ -251,10 +256,11 @@ function dropMaterial(): ShaderMaterial {
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: /* glsl */ `
+      uniform float uDay;
       varying float vA;
       void main() {
         float d = length(gl_PointCoord - 0.5);
-        float a = smoothstep(0.5, 0.1, d) * vA * 0.9;
+        float a = smoothstep(0.5, 0.1, d) * vA * 0.9 * mix(0.3, 1.0, uDay);
         if (a < 0.02) discard;
         gl_FragColor = vec4(vec3(0.85, 0.95, 1.0) * 1.3, a);
       }`,

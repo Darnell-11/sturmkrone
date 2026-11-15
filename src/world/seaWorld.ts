@@ -453,8 +453,30 @@ export class SeaWorld {
       isl.add(terrain.beach, ...terrain.hills);
       // ab jetzt zählt die Wiesendecke zur Laufhöhe (Figuren, Häuser, Pflanzen stehen auf ihr); das Mesh ist schon gebaut
       walk.lift = terrain.liftAt;
+      // Gelände-Meshes nicht mit anderem verschmelzen: sie werden nach dem Aufbau an eingeebnete Standflächen angepasst (terrain.refresh)
+      glow.add(terrain.beach);
+      for (const m of terrain.hills) glow.add(m);
       const hAt = (lx: number, lz: number) => Math.max(-2, solo.height(s.x + lx, s.z + lz));
       const hillTop = Math.max(...walk.hills.map((h) => h.r * h.h));
+      // Eingeebnete Standflächen unter Bauten (siehe Pad in islandGround.ts); das Gelände-Mesh wird nach dem Aufbau nachgeführt
+      walk.pads = [];
+      const padBounds: [number, number, number, number][] = [];
+      walk.addPad = (wx, wz, w, d, yaw, blend = 2.4, round = false) => {
+        let sum = 0, n = 0;
+        const c = Math.cos(yaw), sn = Math.sin(yaw);
+        for (let i = 0; i < 5; i++) for (let j = 0; j < 5; j++) {
+          const lx = (i / 4 - 0.5) * w, lz = (j / 4 - 0.5) * d;
+          const h = solo.islandHeight(walk, wx + lx * c + lz * sn, wz - lx * sn + lz * c, false, true);
+          if (Number.isFinite(h)) { sum += h; n++; }
+        }
+        if (!n) return 0;
+        const y = sum / n;
+        const hw = round ? w / 2 : w / 2, hd = round ? w / 2 : d / 2;
+        const R = Math.hypot(hw, hd) + blend;
+        walk.pads!.push({ x: wx, z: wz, hw, hd, yaw, blend, y, r2: R * R, round });
+        padBounds.push([wx - s.x - R, wz - s.z - R, wx - s.x + R, wz - s.z + R]);
+        return y;
+      };
       // Bäume, Sträucher, Gras und Felsen der Insel: gesammelt und am Ende als InstancedMesh gebaut
       const veg = new Scatter();
       const rocks = s.def.rocks ?? (rnd() < 0.4 && !s.tower && !town ? 1 : 0);
@@ -532,6 +554,12 @@ export class SeaWorld {
         this.addGlows(dressed.glows, s.x, s.z);
         this.fauna.addIsland(s.def, s.x, s.z, r, dressed.trees.map((t) => ({ x: s.x + t.x, y: t.y, z: s.z + t.z })), dressed.bushes.map((b) => ({ x: s.x + b.x, y: b.y, z: s.z + b.z })), style, (ang) => r * coastK(form.coast, ang));
       }
+      // Gelände unter den Bauten einebnen: Mesh an die Standflächen anpassen (Laufhöhe folgt automatisch)
+      if (walk.pads.length) {
+        const Hn = (lx: number, lz: number) => { const v = solo.islandHeight(walk, s.x + lx, s.z + lz, false, true); return Number.isFinite(v) ? v : -1.7; };
+        terrain.refresh(Hn, padBounds);
+        padBounds.length = 0;
+      }
       this.scene.add(isl);
       this.islandGroups.push({ g: isl, x: s.x, z: s.z, r });
       mergeByMaterial(isl, glow);
@@ -559,6 +587,11 @@ export class SeaWorld {
         this.town = buildTown(s.def, walk, (x, z) => { const h = this.ground.height(x, z); return Number.isFinite(h) ? h : 1.3; });
         this.scene.add(this.town.group);
         walk.walkways = this.town.streets;
+        if (padBounds.length) {
+          const Hn2 = (lx: number, lz: number) => { const v = solo.islandHeight(walk, s.x + lx, s.z + lz, false, true); return Number.isFinite(v) ? v : -1.7; };
+          terrain.refresh(Hn2, padBounds);
+          padBounds.length = 0;
+        }
         // Wiese und Strand von Ankerglück: Gras, Blumen, Büsche, Treibholz – nur abseits von Straßen und Bauten
         {
           const tv = new Scatter();
@@ -566,6 +599,7 @@ export class SeaWorld {
           const dens = Math.max(0.4, Math.min(1.6, texDetail.density));
           const near = (px: number, pz: number, rr: number) => {
             const wx = s.x + px, wz = s.z + pz;
+            if (Math.hypot(px, pz) < 17.8 + rr) return true; // Marktplatz
             for (const st of walk.walkways ?? []) {
               for (let i = 1; i < st.pts.length; i++) {
                 const [ax, az] = st.pts[i - 1], [bx, bz] = st.pts[i];
@@ -600,10 +634,10 @@ export class SeaWorld {
         for (const l of this.town.lights) {
           const v = l.getWorldPosition(new Vector3());
           if ((l.geometry as { type?: string }).type === 'SphereGeometry') {
-            const em = glowHub.add(makeEmitter('lamp', v.x, v.y, v.z, { size: 0.8, ground: v.y - 2.3, pool: 8 }));
+            const em = glowHub.add(makeEmitter('lamp', v.x, v.y, v.z, { size: 1.25, ground: v.y - 2.3, pool: 10 }));
             // Straßenlaterne: auch ein echtes, weiches Licht (der LampPool nimmt die nächsten)
             const c = new Object3D();
-            c.userData.seed = em.seed; c.userData.fire = false; c.userData.fixed = true; c.userData.lightK = 1.15;
+            c.userData.seed = em.seed; c.userData.fire = false; c.userData.fixed = true; c.userData.lightK = 1.9;
             c.position.set(v.x, v.y - 0.1, v.z);
             this.scene.add(c);
             c.updateMatrixWorld(true);
@@ -1278,7 +1312,7 @@ export class SeaWorld {
     this.updateAir(dt);
     {
       const pp = this.playerPos;
-      updateFountains(dt);
+      updateFountains(dt, Math.min(1, Math.max(0, 0.18 + 0.82 * this.env.palette.sunVis)));
       // Leuchtturm: nur abends und nachts oder bei schlechter Sicht (Nebel, Regen, Sturm); klarer Tag = aus
       const wp = this.env.weather.p, bad = Math.max(wp.grey * 1.25, wp.rain * 1.2, wp.lightning);
       updateBeams(dt, Math.min(1, Math.max(0, (0.75 - this.env.palette.sunVis) * 2.2)), Math.min(1, Math.max(0, (bad - 0.3) / 0.35)));

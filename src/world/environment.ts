@@ -56,6 +56,7 @@ export class Environment {
   private focus = new Vector3();
   /** Kaskadierte Schatten (ab Stufe Hoch); null = eine Schattenkarte um die Figur */
   private csm: CSM | null = null;
+  private csmFrame = 0;
   private csmWant: { cascades: number; mapSize: number; far: number; soft: boolean } | null = null;
   private csmCam = { cam: null as PerspectiveCamera | null, fov: 0, aspect: 0, near: 0, far: 0 };
 
@@ -117,6 +118,11 @@ export class Environment {
     });
   }
 
+  /** Kaskaden sofort anlegen (nicht erst im ersten Bild): ihre Lichter ändern die Shader aller beleuchteten Materialien, die vorher übersetzt sein müssen */
+  ensureCsm(camera: PerspectiveCamera) {
+    if (this.csmWant && !this.csm) this.createCsm(camera);
+  }
+
   private createCsm(camera: PerspectiveCamera) {
     const w = this.csmWant!;
     const csm = new CSM({
@@ -159,6 +165,14 @@ export class Environment {
     for (const l of csm.lights) { l.color.copy(this.sun.color); l.intensity = this.sun.intensity; }
     camera.updateMatrixWorld();
     csm.update();
+    // Kaskaden gestaffelt zeichnen: die nächste jedes Bild, die zweite jedes zweite, die weiteren jedes dritte (versetzt). Die fernen Kaskaden
+    // decken große Flächen mit grobem Raster ab, da fällt das nicht auf; die Schattenkarten kosteten auf Maximal rund 8 ms von 20 je Bild.
+    this.csmFrame++;
+    csm.lights.forEach((l, i) => {
+      l.shadow.autoUpdate = false;
+      const every = i === 0 ? 1 : i === 1 ? 2 : 3;
+      if (every === 1 || (this.csmFrame + i) % every === 0 || !l.shadow.map) l.shadow.needsUpdate = true;
+    });
     const u = csmShared.uniforms;
     (csm as unknown as { _getExtendedBreaks(t: unknown[]): void })._getExtendedBreaks(u.CSM_cascades.value);
     u.cameraNear.value = camera.near;

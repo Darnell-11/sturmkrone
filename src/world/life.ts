@@ -33,11 +33,25 @@ const DOLPHIN_SPRAY = new Color(0.95, 0.98, 1);
 interface Boat { g: Group; cx: number; cz: number; r: number; a: number; speed: number }
 export interface DigSpot { island: string; x: number; z: number; marker: Mesh }
 
+/**
+ * Eine Möwe mit eigenem Verhalten (statt fester Formation neben dem Schiff):
+ *  - orbit: kreist über ihrer Insel (Aufwind), ab und zu ein Sturzflug auf einen Fisch (dive)
+ *  - escort: begleitet ein fahrendes Schiff (nur bei Fahrt: vorn, seitlich oder hinterm Heck, wechselnd), nach einiger Zeit dreht sie ab
+ *  - sit: das Schiff liegt still, einzelne Möwen landen im Wasser daneben (Flügel angelegt, wippt) und starten wieder
+ *  - climb: Start aus dem Wasser oder nach dem Sturzflug (kräftiger Flügelschlag)
+ */
+interface Gull {
+  cx: number; cz: number; r: number; h: number; dir: number; ph: number; fl: number;
+  x: number; y: number; z: number; yaw: number; roll: number; pitch: number; spd: number;
+  mode: "orbit" | "escort" | "sit" | "dive" | "climb"; timer: number; ahead: number; side: number; tidy: number; homeX?: number; homeZ?: number;
+}
+
 /** Möwen, Delfine, Wal, Fischerboote, Schiffbrüchige, Flaschenpost und Grabstellen. */
 export class SeaLife {
   private gulls: InstancedMesh;
   private gullFlap: import('three').InstancedBufferAttribute;
-  private gullData: { cx: number; cz: number; r: number; h: number; a: number; s: number; ph: number; fl: number }[] = [];
+  private gullData: Gull[] = [];
+  private gullJoinT = 2;
   private dolphins: Dolphin[] = [];
   private dolphinPool: DolphinModel[] = [];
   private boats: Boat[] = [];
@@ -58,7 +72,12 @@ export class SeaLife {
     const homes = islands.filter((i) => i.kind !== 'camp');
     for (let i = 0; i < GULLS; i++) {
       const h = homes[i % homes.length];
-      this.gullData.push({ cx: h.x, cz: h.z, r: h.r * (0.6 + Math.random()), h: 12 + Math.random() * 14, a: Math.random() * Math.PI * 2, s: (0.25 + Math.random() * 0.3) * (Math.random() < 0.5 ? -1 : 1), ph: Math.random() * 6.28, fl: 0.5 });
+      const a = Math.random() * Math.PI * 2, r = h.r * (0.6 + Math.random());
+      this.gullData.push({
+        cx: h.x, cz: h.z, r, h: 12 + Math.random() * 14, dir: Math.random() < 0.5 ? -1 : 1, ph: Math.random() * 6.28, fl: 0.5,
+        x: h.x + Math.cos(a) * r, y: 12 + Math.random() * 14, z: h.z + Math.sin(a) * r, yaw: a + Math.PI / 2, roll: 0, pitch: 0, spd: 6 + Math.random() * 3,
+        mode: 'orbit', timer: 0, ahead: 0, side: 0, tidy: Math.random(),
+      });
     }
 
     // Wal
@@ -162,66 +181,168 @@ export class SeaLife {
     return best;
   }
 
-  update(dt: number, heightAt: (x: number, z: number) => number, ship: { x: number; z: number; heading: number; speed: number }, sailing: boolean) {
-    this.t += dt;
-    // Möwen: Kreisen mit Höhenwellen, Schräglage in der Kurve und Neigung beim Steigen; im Wechsel Gleitflug und Flügelschlag.
-    // Eine Gruppe begleitet das Schiff in lockerer Formation vor und neben dem Bug.
+  private stillT = 0;
+  private updateGulls(dt: number, heightAt: (x: number, z: number) => number, ship: { x: number; z: number; heading: number; speed: number }, sailing: boolean) {
     const fa = this.gullFlap.array as Float32Array;
-    this.gullData.forEach((d, i) => {
-      d.a += d.s * dt;
-      const follow = i < 6 && sailing;
-      let x: number, z: number, y: number, yaw: number, roll: number, vy: number, spd: number;
-      if (follow) {
-        const sh = Math.sin(ship.heading), ch = Math.cos(ship.heading);
-        const ahead = 6 + (i % 3) * 7 + Math.sin(this.t * 0.4 + i) * 9;
-        const side = (i % 2 ? 1 : -1) * (6 + Math.floor(i / 2) * 4) + Math.sin(this.t * 0.3 + i * 2) * 5;
-        x = ship.x + sh * ahead + ch * side;
-        z = ship.z + ch * ahead - sh * side;
-        y = 7 + i * 1.4 + Math.sin(this.t * 0.6 + i) * 2.2;
-        vy = 1.32 * Math.cos(this.t * 0.6 + i);
-        spd = Math.max(8, ship.speed);
-        yaw = ship.heading + Math.sin(this.t * 0.5 + i) * 0.25;
-        roll = -Math.cos(this.t * 0.5 + i) * 0.22;
-      } else {
-        const r = d.r * (1 + 0.15 * Math.sin(this.t * 0.2 + i));
-        const sg = d.s > 0 ? 1 : -1;
-        x = d.cx + Math.cos(d.a) * r; z = d.cz + Math.sin(d.a) * r;
-        y = d.h + Math.sin(this.t * 0.7 + i) * 2.2;
-        vy = 1.54 * Math.cos(this.t * 0.7 + i);
-        spd = Math.max(5, r * Math.abs(d.s));
-        const vx = -Math.sin(d.a) * sg, vz = Math.cos(d.a) * sg;
-        yaw = Math.atan2(vx, vz);
-        // Mitte des Kreises liegt seitlich: zur Kurveninnenseite neigen (lokale +x-Seite liegt links vom Flugweg)
-        const cxv = -Math.cos(d.a), czv = -Math.sin(d.a);
-        const turn = vz * cxv - vx * czv;
-        roll = -0.4 * Math.sign(turn);
+    const fast = sailing && ship.speed > 3.5;
+    this.stillT = sailing && ship.speed < 1.5 ? this.stillT + dt : 0;
+    const sh = Math.sin(ship.heading), ch = Math.cos(ship.heading);
+    // Begleiter anwerben: je schneller das Schiff, desto mehr; sie kommen aus der Nähe (kein Aufpoppen aus dem Nichts)
+    this.gullJoinT -= dt;
+    if (this.gullJoinT <= 0) {
+      this.gullJoinT = 1.5 + Math.random() * 2.5;
+      if (fast) {
+        const want = Math.min(5, 1 + Math.floor(ship.speed / 6));
+        let have = 0;
+        for (const g of this.gullData) if (g.mode === 'escort') have++;
+        if (have < want) {
+          let best: Gull | null = null, bd = 260 * 260;
+          for (const g of this.gullData) {
+            if (g.mode !== 'orbit') continue;
+            const d = (g.x - ship.x) ** 2 + (g.z - ship.z) ** 2;
+            if (d < bd) { bd = d; best = g; }
+          }
+          if (best) {
+            best.mode = 'escort';
+            best.timer = 25 + Math.random() * 55;
+            // mal vorn, mal seitlich, oft hinter dem Heck (dort gibt es Futter)
+            best.ahead = (Math.random() < 0.45 ? -1 : 1) * (4 + Math.random() * 16);
+            best.side = (Math.random() < 0.5 ? -1 : 1) * (5 + Math.random() * 10);
+          }
+        }
+      } else if (this.stillT > 5) {
+        // Schiff liegt still: ein bis drei Möwen aus der Nähe landen daneben
+        let sitting = 0;
+        for (const g of this.gullData) if (g.mode === 'sit') sitting++;
+        if (sitting < 3 && Math.random() < 0.6) {
+          let best: Gull | null = null, bd = 260 * 260;
+          for (const g of this.gullData) {
+            if (g.mode !== 'orbit' && g.mode !== 'escort') continue;
+            const d = (g.x - ship.x) ** 2 + (g.z - ship.z) ** 2;
+            if (d < bd) { bd = d; best = g; }
+          }
+          if (best) {
+            best.mode = 'sit';
+            const a = Math.random() * Math.PI * 2, rr = 5 + Math.random() * 9;
+            // Landepunkt im Wasser neben dem Schiff (Weltkoordinate); cx/cz sind im Sitzen der Landepunkt, die Heimat merkt sich homeX/homeZ
+            best.homeX = best.homeX ?? best.cx; best.homeZ = best.homeZ ?? best.cz;
+            best.cx = ship.x + Math.cos(a) * rr; best.cz = ship.z + Math.sin(a) * rr;
+            best.timer = 12 + Math.random() * 28;
+          }
+        }
       }
-      // Wechsel zwischen Gleiten und Schlagen; beim Steigen schlagen sie kräftiger
+    }
+    this.gullData.forEach((d, i) => {
+      d.timer -= dt;
+      // ---- Ziel und Wunschtempo je Verhalten ----
+      let tx: number, tz: number, ty: number, wantSpd: number, rate = 1.3, flapBase = 0, flapBoost = 0;
+      const wy = heightAt(d.x, d.z);
+      if (d.mode !== 'sit' && d.homeX !== undefined) { d.cx = d.homeX; d.cz = d.homeZ!; d.homeX = undefined; d.homeZ = undefined; }
+      if (d.mode === 'escort') {
+        if ((!fast && this.stillT > 2) || !sailing || d.timer <= 0) { d.mode = 'orbit'; d.timer = 0; }
+        tx = ship.x + sh * d.ahead + ch * d.side; tz = ship.z + ch * d.ahead - sh * d.side;
+        ty = 6 + (i % 4) * 1.6 + Math.sin(this.t * 0.5 + i) * 1.8;
+        const dist = Math.hypot(tx - d.x, tz - d.z);
+        wantSpd = Math.max(6, ship.speed * 1.02 + Math.min(10, dist * 0.45));
+        rate = 1.9;
+        flapBase = 0.3;
+      } else if (d.mode === 'sit') {
+        if (fast && d.timer > 0.5 + (i % 5) * 0.6) d.timer = 0.5 + (i % 5) * 0.6;
+        if (d.timer <= 0) { d.mode = 'climb'; d.timer = 3 + Math.random() * 2; }
+        tx = d.cx; tz = d.cz; ty = wy + 0.12;
+        const dist = Math.hypot(tx - d.x, tz - d.z);
+        if (dist < 1.6 && d.y < wy + 0.5) {
+          // gelandet: auf dem Wasser, Flügel angelegt (aFlap.y < 0), wippt mit den Wellen
+          d.spd = 0; d.y = wy + 0.12 + Math.sin(this.t * 1.3 + i) * 0.06; d.pitch = 0; d.roll *= 0.9;
+          d.yaw += Math.sin(this.t * 0.2 + i * 3) * 0.2 * dt;
+          fa[i * 2] = d.ph; fa[i * 2 + 1] = -1;
+          this.placeGull(i, d);
+          return;
+        }
+        // Landeanflug: flach hinunter, Tempo nimmt ab, Flügel breit (bremsen)
+        wantSpd = Math.max(2.2, Math.min(9, dist * 0.5));
+        ty = dist > 14 ? 5 : wy + 0.25 + dist * 0.2;
+        flapBase = 0.55;
+      } else if (d.mode === 'dive') {
+        tx = d.x + Math.sin(d.yaw) * 10; tz = d.z + Math.cos(d.yaw) * 10; ty = wy + 0.15;
+        wantSpd = 15; rate = 0.6;
+        if (d.y < wy + 0.6) {
+          this.spray.emit(5, d.x, wy + 0.1, d.z, { speed: 0.9, up: 3.2, life: 0.6, color: DOLPHIN_SPRAY, gravity: 11, spread: 0.6, size: 0.3 });
+          d.mode = 'climb'; d.timer = 2.5 + Math.random();
+        }
+      } else if (d.mode === 'climb') {
+        tx = d.x + Math.sin(d.yaw) * 20; tz = d.z + Math.cos(d.yaw) * 20; ty = Math.max(d.h * 0.6, wy + 9);
+        wantSpd = 9; flapBoost = 1; rate = 0.9;
+        if (d.timer <= 0) d.mode = 'orbit';
+      } else {
+        // orbit: Kreis um die Heimatinsel in Aufwind-Wellen, Ziel liegt auf dem Kreis ein Stück voraus
+        const homeA = Math.atan2(d.z - d.cz, d.x - d.cx);
+        const r = d.r * (1 + 0.15 * Math.sin(this.t * 0.2 + i));
+        const a2 = homeA + d.dir * 0.45;
+        tx = d.cx + Math.cos(a2) * r; tz = d.cz + Math.sin(a2) * r;
+        ty = d.h + Math.sin(this.t * 0.7 + i) * 2.2;
+        wantSpd = 6.5 + (i % 5) * 0.7 + (d.tidy - 0.5) * 2;
+        // fern von der Insel (kommt von einer Begleitung zurück): gerade heimwärts
+        const hd = Math.hypot(d.x - d.cx, d.z - d.cz);
+        if (hd > d.r * 1.8) { tx = d.cx; tz = d.cz; wantSpd = 10; rate = 0.8; }
+        // gelegentlich Sturzflug auf einen Fisch, wenn sie über offenem Wasser sind
+        if (hd > d.r * 0.7 && Math.random() < dt / 170 && d.y < d.h + 3) { d.mode = 'dive'; d.timer = 4; }
+      }
+      // ---- Steuern, Bewegen ----
+      const want = Math.atan2(tx - d.x, tz - d.z);
+      const diff = ((want - d.yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      d.yaw += Math.max(-rate * dt, Math.min(rate * dt, diff));
+      d.roll += ((-Math.max(-1, Math.min(1, diff)) * 0.6) - d.roll) * Math.min(1, dt * 2.2);
+      d.spd += (wantSpd - d.spd) * Math.min(1, dt * 1.1);
+      const vy = Math.max(-7, Math.min(4.5, (ty - d.y) * 0.7));
+      d.y += vy * dt;
+      d.x += Math.sin(d.yaw) * d.spd * dt; d.z += Math.cos(d.yaw) * d.spd * dt;
+      d.pitch += (Math.atan2(vy, Math.max(d.spd, 1)) - d.pitch) * Math.min(1, dt * 3);
+      // Flügel: Gleiten und Schlagen im Wechsel, beim Steigen kräftig; Begleiter schlagen mehr, Landende bremsen mit breiten Flügeln
       const cyc = Math.sin(this.t * 0.35 + d.ph + i * 1.7);
-      const want = Math.min(1, Math.max(0.12, 0.12 + 0.88 * Math.min(1, Math.max(0, (cyc + 0.2) / 0.6)) + Math.max(0, vy) * 0.25));
-      d.fl += (want - d.fl) * Math.min(1, dt * 2.5);
+      let wantFl = 0.12 + 0.88 * Math.min(1, Math.max(0, (cyc + 0.2) / 0.6)) + Math.max(0, vy) * 0.25;
+      wantFl = Math.min(1, Math.max(flapBase, wantFl) + flapBoost);
+      d.fl += (wantFl - d.fl) * Math.min(1, dt * 2.5);
       d.ph += dt * (7 + (i % 4) * 0.9) * (0.35 + 0.65 * d.fl);
       fa[i * 2] = d.ph;
       fa[i * 2 + 1] = d.fl;
-      this.dummy.position.set(x, y, z);
-      this.dummy.rotation.set(-Math.atan2(vy, spd), yaw, roll, 'YXZ');
-      this.dummy.scale.setScalar(0.95);
-      this.dummy.updateMatrix();
-      this.gulls.setMatrixAt(i, this.dummy.matrix);
+      this.placeGull(i, d);
     });
     this.gulls.instanceMatrix.needsUpdate = true;
     this.gullFlap.needsUpdate = true;
+  }
+
+  private placeGull(i: number, d: Gull) {
+    this.dummy.position.set(d.x, d.y, d.z);
+    this.dummy.rotation.set(-d.pitch, d.yaw, d.roll, 'YXZ');
+    this.dummy.scale.setScalar(0.9 + d.tidy * 0.2);
+    this.dummy.updateMatrix();
+    this.gulls.setMatrixAt(i, this.dummy.matrix);
+  }
+
+  update(dt: number, heightAt: (x: number, z: number) => number, ship: { x: number; z: number; heading: number; speed: number }, sailing: boolean) {
+    this.t += dt;
+    this.updateGulls(dt, heightAt, ship, sailing);
 
     // Delfine begleiten das Schiff, tauchen in Bögen auf und springen (Bahn aus Wurfparabel, Neigung folgt der Flugbahn)
     this.dolphinT -= dt;
-    if (sailing && ship.speed > 4 && this.dolphinT <= 0 && this.dolphins.length === 0) {
-      this.dolphinT = 14 + Math.random() * 16;
-      const n = 2 + Math.floor(Math.random() * 2);
+    if (sailing && ship.speed > 3 && this.dolphinT <= 0 && this.dolphins.length === 0) {
+      this.dolphinT = 10 + Math.random() * 18;
+      // Vier Auftrittsarten mit Logik: Bugwelle (bei schneller Fahrt, dicht vor dem Bug), Rudel an der Seite, Mutter mit Kalb, einzelner großer
+      // Sprung weiter draußen
+      const r = Math.random();
+      const variant = ship.speed > 8 && r < 0.3 ? 'bow' : r < 0.55 ? 'side' : r < 0.8 ? 'pair' : 'breach';
       const side = Math.random() < 0.5 ? -1 : 1;
+      const n = variant === 'breach' ? 1 : variant === 'pair' ? 2 : variant === 'bow' ? 2 + Math.floor(Math.random() * 2) : 2 + Math.floor(Math.random() * 3);
       for (let i = 0; i < n; i++) {
         const m = this.dolphinPool[i] ?? (this.dolphinPool[i] = this.addDolphin());
         const period = 2.1 + Math.random() * 0.5;
-        this.dolphins.push({ m, t: 0, side, lat: 9 + i * 3.2 + Math.random() * 2, along: 4 - i * 5 + Math.random() * 3, off: Math.random() * period, period, jump: 0.5, air: false, life: 0, idx: i });
+        let lat = 9 + i * 3.2 + Math.random() * 2, along = 4 - i * 5 + Math.random() * 3, jump = 0.5, idx = i, sc = 1, sd = side;
+        if (variant === 'bow') { lat = 2.2 + Math.random() * 1.3; along = 9 + i * 2.6 + Math.random() * 1.5; jump = 0.34; idx = 0; sd = i % 2 ? 1 : -1; }
+        else if (variant === 'pair') { lat = 7 + i * 1.7; along = 2 + i * 2.2; sc = i ? 0.62 : 1; idx = i ? 0 : 1; }
+        else if (variant === 'breach') { lat = 22 + Math.random() * 14; along = -8 + Math.random() * 28; jump = 0.62; idx = 4; }
+        this.dolphins.push({ m, t: 0, side: sd, lat, along, off: Math.random() * period, period: variant === 'breach' ? 3.1 : period, jump, air: false, life: 0, idx });
+        m.group.scale.setScalar(sc);
         m.group.visible = true;
       }
     }

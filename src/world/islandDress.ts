@@ -31,7 +31,7 @@ import { cachedProto, envProto, floraProto, noise, type Scatter } from './vegeta
 import type { GlowPlaced } from '../render/glow';
 import { archGroup, hasArch } from './envModels';
 import { lighthouseBeams } from './lighthouseBeam';
-import { build, colliders, SETTLES, settleOnSlope } from './architecture';
+import { build, colliders, levelFootprint, SETTLES, settleOnSlope } from './architecture';
 import type { StructureType } from '../data/settlements';
 import { waveFlag } from '../render/flags';
 
@@ -86,7 +86,19 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   if (def.kind === 'ruin' || def.kind === 'boss') taken.push({ x: 0, z: 0, r: 6 }); // Kristall / Bosskampf in der Mitte
   // Grabstelle für Schatzkarten freihalten (gleiche Formel wie SeaLife.addDig)
   { const da = (def.x * 13 + def.z * 7) % (Math.PI * 2); taken.push({ x: Math.cos(da) * r * 0.55, z: Math.sin(da) * r * 0.55, r: 3 }); }
-  const free = (x: number, z: number, rr: number) => taken.every((t) => Math.hypot(x - t.x, z - t.z) > t.r + rr);
+  /** Auf einem Weg (Erde, Pflaster) wächst nichts: Abstand zum Linienzug (Inselkoordinaten) */
+  const onPath = (x: number, z: number, rr: number) => {
+    for (const pa of paths) {
+      for (let i = 1; i < pa.pts.length; i++) {
+        const [ax, az] = pa.pts[i - 1], [bx, bz] = pa.pts[i];
+        const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
+        const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2));
+        if (Math.hypot(x - (ax + dx * t), z - (az + dz * t)) < pa.w / 2 + 0.35 + rr) return true;
+      }
+    }
+    return false;
+  };
+  const free = (x: number, z: number, rr: number) => taken.every((t) => Math.hypot(x - t.x, z - t.z) > t.r + rr) && !onPath(x, z, rr);
   const block = (x: number, z: number, rr: number) => { taken.push({ x, z, r: rr }); walk.blockers.push({ x: walk.x + x, z: walk.z + z, r: rr }); };
   /** Rechteck-Kollider (Mauern, Steinblöcke): gedreht wie das Objekt */
   const blockBox = (x: number, z: number, w: number, d: number, yaw: number) => {
@@ -111,6 +123,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   const mount = (t: StructureType, x: number, z: number, yaw: number, len?: number, sx = 1) => {
     const b = build(t, rnd, len);
     if (sx !== 1) { b.g.scale.x = sx; b.boxes = b.boxes.map(([w, d, ox = 0, oz = 0, by = 0]) => [w * sx, d, ox * sx, oz, by] as [number, number, number, number, number]); }
+    if (SETTLES.has(t) || t === 'marktstand') levelFootprint(b, walk.x + x, walk.z + z, yaw, walk.addPad);
     let y = hAt(x, z);
     if (SETTLES.has(t)) y = settleOnSlope(b, x, z, yaw, hAt);
     else { b.g.position.set(x, y, z); b.g.rotation.y = yaw; }
