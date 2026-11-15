@@ -1,5 +1,12 @@
 # Was ist neu
 
+## 2.9.80 – Gehen ruhiger, Stelzenhütten, Prüfung der Schwerthiebe (15.11.2026)
+
+- **Gehen (Spieler und Bewohner):** Gemessen am Clip `Walking_A`: das Becken sackte bei jedem Schritt um bis zu 14 cm ab (knickende Knie), der Fuß hob sich beim Schwingen bis 65 cm (Ferse zum Gesäß wie beim Joggen). `Character.softenGait` dämpft das Auf und Ab des Beckens auf gut ein Drittel, hebt es etwas und hält die Füße per Beinführung genau an den Stellen des Clips (kein Rutschen); der Fußhub wird auf gut 40 % gedämpft. Gilt nur für Geh-Clips, nicht für Rennen. Kosten: weniger als 0,1 ms je Bild. Auf den Testbildern stehen die Beine gestreckter, die Füße am Boden, der Fersentritt ist weg; der Schritt bleibt weit (power-walk), die Armhaltung des Clips ist unverändert.
+- **Schwerthiebe geprüft:** Für alle 34 Angriffe der fünf Kampfstile die Bahn der Schwerthand im Trefferfenster gemessen: Laufrichtung der Schmier-Bögen passt bei allen Clips mit klarer Richtung (Drehhiebe, Diagonal-, Kopf- und Sprunghiebe); Stöße und fast gerade Hiebe laufen neutral. Bögen erscheinen auf Bildern an der Klinge, vor der Figur.
+- **Stelzenhütten:** Pfähle reichen 4,6 m unter den Boden (vorher 2,2 m), auch an steilen Hängen stehen sie am Boden.
+- **Leistung:** Messung im Testaufbau (hohe Stufe, 1,5-facher Bildpunktfaktor): Spielschritt 0,3 ms, Zeichnen 8,9 ms (Schatten 3,3 ms davon), je Stufe Low 3,6 / Mid 5,2 / High 8,9 / Max 13,2 ms. Kein neuer Leistungsfresser gefunden; Handy nicht gemessen. Keine Grafik gekürzt.
+
 ## 2.9.79 – Ankerglück aufgeräumt, Flaggen wehen, Licht mit Tiefe (15.11.2026)
 
 - **Stadtaufbau Ankerglück:** Häuser stehen mit Türhöhe am Hang und bekommen bei Gefälle einen Sockel statt zu schweben oder zu versinken. Gartenzäune und Beiwerk der Häuser sind in der Stadt kompakt (`setYardCompact`) und reichen nicht mehr auf die Straßen. Marktstände, Kisten, Karren und Wimpelmasten sitzen an den Straßen statt darauf. Bewohner starten und laufen entlang der Straßen (`walkways`), weichen Hindernissen und einander aus und werden aus Hindernissen herausgeschoben.

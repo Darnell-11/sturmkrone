@@ -100,7 +100,11 @@ export interface PlayOptions {
 /** Eine animierte Figur (Spieler oder NPC). */
 /** Oberfläche je Teil der Anime-Figur */
 /** Schleifen mit Schrittzyklus (gleiche Phasenlage, siehe playClip) */
-const LOCO_CLIPS = new Set(['Walking_A', 'Running_A']);
+const LOCO_CLIPS = new Set(['Walking_A', 'Walking_B', 'Walking_C', 'Running_A']);
+/** Natürliche Geschwindigkeit der Geh-Clips in m/s (aus Fußkontakten gemessen: Schrittweite × 2 / Dauer) */
+/** Beckenhöhe im Gehen (Mittel der Clips), Dämpfung der Auf-und-ab-Bewegung, Anhebung in m */
+const GAIT_HIP = 0.848, GAIT_DAMP = 0.35, GAIT_LIFT = 0.03, GAIT_ANKLE = 0.08, GAIT_FOOT = 0.42;
+export const WALK_NATURAL: Record<string, number> = { Walking_A: 1.5, Walking_B: 1.63, Walking_C: 0.82 };
 const SLOT_SURFACE: Record<string, Surface> = { skin: 'skin', hair: 'hair', top: 'cloth', bottom: 'cloth', shoes: 'leather', iris: 'eye' };
 
 export class Character {
@@ -849,7 +853,7 @@ export class Character {
     const a = this.current;
     if (!a) return;
     // Weite Grenzen: bei schnellerem Spieler (Fähigkeiten, Tempo-Bonus) darf der Clip nicht an die Grenze stoßen, sonst rutscht er
-    if (this.currentName === 'Walking_A') a.timeScale = Math.max(0.4, Math.min(2.1, mps / 1.5));
+    if (this.currentName in WALK_NATURAL) a.timeScale = Math.max(0.4, Math.min(2.1, mps / WALK_NATURAL[this.currentName]));
     else if (this.currentName === 'Running_A') a.timeScale = Math.max(0.6, Math.min(1.7, mps / 5.9));
   }
 
@@ -1013,6 +1017,70 @@ export class Character {
     this.aimBone(lo, wr, target);
   }
 
+  /**
+   * Gehen ruhiger machen: Der Clip senkt das Becken bei jedem Schritt um bis zu 14 cm (knickende Knie, "Stampfen"). Hier wird die
+   * Auf-und-ab-Bewegung auf gut ein Drittel gedämpft und das Becken etwas höher geführt; die Füße bleiben dank Beinführung genau
+   * dort, wo der Clip sie hinsetzt (kein Rutschen), nur die Knie strecken sich.
+   */
+  private softenGait() {
+    const hips = this.bones.hips;
+    if (!hips || !hips.parent) return;
+    this.holder.updateWorldMatrix(true, true);
+    const sc = this.holder.scale.y || 1;
+    const base = Character.SG_B.set(0, 0, 0);
+    this.holder.getWorldPosition(base);
+    const hp = Character.SG_H;
+    hips.getWorldPosition(hp);
+    const h = (hp.y - base.y) / sc;
+    const want = GAIT_HIP + (h - GAIT_HIP) * GAIT_DAMP + GAIT_LIFT;
+    const dy = (want - h) * sc;
+    if (Math.abs(dy) < 0.002) return;
+    const legs = this.sgLegs;
+    for (let i = 0; i < 2; i++) {
+      const side = i ? 'r' : 'l', L = legs[i];
+      L.up = this.bones[`upperleg${side}`]; L.lo = this.bones[`lowerleg${side}`]; L.ft = this.bones[`foot${side}`];
+      if (!L.up || !L.lo || !L.ft) return;
+      L.ft.getWorldPosition(L.ank); L.lo.getWorldPosition(L.knee); L.ft.getWorldQuaternion(L.q);
+      // Knochenlängen aus der unveränderten Pose (vor Beckenverschiebung und Fußhub-Dämpfung)
+      L.up.getWorldPosition(Character.SG_T);
+      L.a = L.knee.distanceTo(Character.SG_T); L.b = L.ank.distanceTo(L.knee);
+      // Fußhub dämpfen: der Clip hebt den Fuß beim Schwingen bis über 65 cm (Ferse zum Gesäß, wie beim Joggen); ein Gehen hebt ihn ~25 cm
+      L.ank.y = base.y + sc * (GAIT_ANKLE + 0.02 + (((L.ank.y - base.y) / sc) - GAIT_ANKLE) * GAIT_FOOT);
+    }
+    hp.y += dy;
+    hips.position.copy(hips.parent.worldToLocal(hp));
+    hips.updateMatrixWorld(true);
+    for (const L of legs) {
+      const S = Character.SG_S.set(0, 0, 0);
+      L.up.getWorldPosition(S);
+      const a = L.a, b = L.b;
+      const dir = Character.SG_D.copy(L.ank).sub(S);
+      const dist = Math.min(Math.max(dir.length(), 0.05), (a + b) * 0.998);
+      dir.normalize();
+      // Kniebeuge zeigt dorthin, wohin das Knie im Clip zeigte
+      const hint = Character.SG_K.copy(L.knee).sub(S);
+      hint.addScaledVector(dir, -hint.dot(dir));
+      if (hint.lengthSq() < 1e-8) continue;
+      hint.normalize();
+      const x = (a * a - b * b + dist * dist) / (2 * dist);
+      const hh = Math.sqrt(Math.max(0, a * a - x * x));
+      const knee = Character.SG_E.copy(S).addScaledVector(dir, x).addScaledVector(hint, hh);
+      this.aimBone(L.up, L.lo, knee);
+      this.aimBone(L.lo, L.ft, Character.SG_A.copy(L.ank));
+      const par = L.ft.parent;
+      if (par) { par.getWorldQuaternion(Character.IK_PQ); L.ft.quaternion.copy(Character.IK_PQ.invert().multiply(L.q)); L.ft.updateMatrixWorld(true); }
+    }
+  }
+  private sgLegs = [0, 1].map(() => ({ up: null as unknown as Bone, lo: null as unknown as Bone, ft: null as unknown as Bone, ank: new V3(), knee: new V3(), q: new Quaternion(), a: 0.4, b: 0.4 }));
+  private static readonly SG_B = new V3();
+  private static readonly SG_H = new V3();
+  private static readonly SG_S = new V3();
+  private static readonly SG_T = new V3();
+  private static readonly SG_D = new V3();
+  private static readonly SG_K = new V3();
+  private static readonly SG_E = new V3();
+  private static readonly SG_A = new V3();
+
   // ---------- Treffer-Randlicht und Auflösen ----------
   private fxU: ToonFxUniforms[] = [];
   private fxMats: Material[] = [];
@@ -1099,13 +1167,14 @@ export class Character {
     }
     this.undoLean();
     this.mixer.update(dt);
+    if (this.currentName in WALK_NATURAL) this.softenGait();
     this.syncCull();
     this.applyLean();
     this.updateCape(dt);
     if (this.lamp) {
       // die Laterne pendelt leicht, beim Gehen stärker
       const lt = performance.now() * 0.001 + this.lampPhase;
-      const w = this.currentName === 'Walking_A' ? 1 : this.currentName === 'Running_A' || this.currentName === 'Running_B' ? 1.8 : 0.35;
+      const w = this.currentName in WALK_NATURAL ? 1 : this.currentName === 'Running_A' || this.currentName === 'Running_B' ? 1.8 : 0.35;
       this.lamp.rotation.z = Math.sin(lt * 2.6) * 0.07 * w;
       this.lamp.rotation.x = Math.sin(lt * 3.1 + 1) * 0.06 * w;
     }

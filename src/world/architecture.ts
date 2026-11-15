@@ -244,7 +244,7 @@ function holzhuettePlain(rnd: () => number): Built {
 function stelzenhuette(rnd: () => number): Built {
   const g = new Group();
   const w = 4.6, d = 3.8, fl = 1.25, h = 2.3;
-  for (const sx of [-1, 0, 1]) for (const sz of [-1, 1]) g.add(cyl(0.13, 0.15, fl + 2.2, 6, M.darkWood, sx * (w / 2 + 0.25), (fl - 2.2) / 2, sz * (d / 2 + 0.25)));
+  for (const sx of [-1, 0, 1]) for (const sz of [-1, 1]) g.add(cyl(0.13, 0.15, fl + 4.6, 6, M.darkWood, sx * (w / 2 + 0.25), (fl - 4.6) / 2, sz * (d / 2 + 0.25)));
   const floor = new BoxGeometry(w + 1.2, 0.22, d + 2);
   g.add(new Mesh(floor, M.planksGrey));
   g.children[g.children.length - 1].position.set(0, fl, 0.5);
