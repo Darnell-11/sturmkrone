@@ -199,7 +199,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   const courtRoads = (gates: { x: number; z: number }[], to: { x: number; z: number }) => {
     gates.forEach((g2, i) => {
       const pts: [number, number][] = [[g2.x * 1.18, g2.z * 1.18], [g2.x * 1.0, g2.z * 1.0], [g2.x * 0.7 + to.x * 0.3, g2.z * 0.7 + to.z * 0.3], [g2.x * 0.3 + to.x * 0.7, g2.z * 0.3 + to.z * 0.7]];
-      group.add(roadMesh(pts, 4.4, 0, 0, (x, z) => hAt(x, z) + (o.liftAt ? o.liftAt(x, z) : 0), cobbleMaterial(i + 1)));
+      group.add(roadMesh(pts, 4.4, 0, 0, (x, z) => hAt(x, z), cobbleMaterial(i + 1)));
     });
   };
 
@@ -728,7 +728,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   paths.forEach((pa, i) => {
     const len = pa.pts.reduce((a, p, k) => a + (k ? Math.hypot(p[0] - pa.pts[k - 1][0], p[1] - pa.pts[k - 1][1]) : 0), 0);
     if (len < 3 || pa.pts.some((p) => Math.hypot(p[0], p[1]) > E(Math.atan2(p[1], p[0])) * 0.98)) return;
-    group.add(roadMesh(pa.pts, pa.w, 0, 0, (x, z) => hAt(x, z) + (o.liftAt ? o.liftAt(x, z) : 0), dirtMaterial(i % 6), 0.06));
+    group.add(roadMesh(pa.pts, pa.w, 0, 0, (x, z) => hAt(x, z), dirtMaterial(i % 6), 0.06));
   });
 
   return { trees, bushes, fires, glows };

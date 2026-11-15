@@ -448,6 +448,8 @@ export class SeaWorld {
       solo.add(walk);
       const terrain = islandTerrain(kit, r, form.coast, form.hills, grassFrac, shapeRnd, town || site ? 0 : 0.45 + shapeRnd() * 0.55, walk.shelf, (lx, lz) => { const v = solo.height(s.x + lx, s.z + lz); return Number.isFinite(v) ? v : -1.7; });
       isl.add(terrain.beach, ...terrain.hills);
+      // ab jetzt zählt die Wiesendecke zur Laufhöhe (Figuren, Häuser, Pflanzen stehen auf ihr); das Mesh ist schon gebaut
+      walk.lift = terrain.liftAt;
       const hAt = (lx: number, lz: number) => Math.max(-2, solo.height(s.x + lx, s.z + lz));
       const hillTop = Math.max(...walk.hills.map((h) => h.r * h.h));
       // Bäume, Sträucher, Gras und Felsen der Insel: gesammelt und am Ende als InstancedMesh gebaut
@@ -2007,7 +2009,7 @@ export class SeaWorld {
       // Segel aus der Draufsicht wieder undurchsichtig machen (zu Fuß an Land oder im Menü sieht man sonst durch sie hindurch)
       if (this.sailFaded && !this.ownDeck) this.setSailFade(this.ship, false);
       const a = this.menuOrbit;
-      cam.position.set(x + Math.sin(a) * 30, 9 + Math.sin(a * 2) * 1.5, z + Math.cos(a) * 30);
+      cam.position.set(x + Math.sin(a) * 32, 15 + Math.sin(a * 2) * 1.5, z + Math.cos(a) * 32);
       cam.lookAt(x, 4, z);
       this.focus.set(x, wy + 2, z);
     } else {

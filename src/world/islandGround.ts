@@ -28,6 +28,8 @@ export interface WalkIsland extends IslandShape {
   reliefSeed?: number;
   /** Straßen und Wege (Weltkoordinaten): Bewohner spazieren darauf statt quer durch Häuser */
   walkways?: { pts: [number, number][]; w: number }[];
+  /** Dicke der Wiesendecke über dem Grundgelände (Inselkoordinaten): wer auf der Wiese steht, steht auf ihr, nicht 15 bis 19 cm darin */
+  lift?: (lx: number, lz: number) => number;
 }
 
 function vnoise(x: number, z: number, seed: number): number {
@@ -461,6 +463,7 @@ export class IslandGround implements Ground {
       const fade = 1 - Math.min(1, Math.max(0, (t - 0.78) / 0.2));
       y += reliefAt(i, x - i.x, z - i.z) * fade * fade * (3 - 2 * fade) ;
     }
+    if (i.lift) y += i.lift(x - i.x, z - i.z);
     return y;
   }
 

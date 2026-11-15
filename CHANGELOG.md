@@ -1,5 +1,12 @@
 # Was ist neu
 
+## 2.9.81 – Füße am Boden, Wege nicht mehr unter der Wiese, ruhigeres Menü (15.11.2026)
+
+- **Schuhe und Boden (Ursache gefunden):** Die Wiesendecke (Gras und Hügelkappen) liegt 15 bis 19 cm über dem Grundgelände, die Laufhöhe war aber die des Grundgeländes. Figuren standen dadurch mit den Schuhen halb in der Wiese (die Stiefel wirkten wie lang gezogene, abgeschnittene Spitzen), und Häuser, Pflanzen und die Pflasterstraßen der Stadt (nur 8 bis 9 cm über dem Grundgelände) waren teilweise unter der Wiese vergraben. Jetzt zählt die Wiesendecke zur Laufhöhe (`WalkIsland.lift`, gesetzt in `seaWorld.buildIslands`); Figuren, Häuser, Pflanzen, Wege und Straßen stehen auf der sichtbaren Fläche. Strahl-Messung an sechs Punkten: Abstand zwischen Laufhöhe und sichtbarer Fläche vorher 18 cm, jetzt 0 bis 9 cm.
+- **Menü:** Die Kamera kreiste 9 m hoch und streifte dabei Palmwedel und Stegleinen am Hafenstadt-Steg, die in der Nahsicht als lange Streifen erscheinen. Jetzt 15 m hoch und 32 m Abstand.
+- **Flaggen:** Schutz im Shader gegen Netze ohne Normale oder Gewicht (verhindert NaN-Eckpunkte an geteilten Materialien).
+- **Bekannt:** Im Menü bleiben bei manchen Blickwinkeln lange Stegleinen und -reling sichtbar (echte Geometrie in starker Perspektive, kein Fehler im Bildaufbau; Nachbearbeitung wie Reflexionen, Verdeckung, Schatten, Konturen als Ursache ausgeschlossen). Ein Handy ist nicht gemessen.
+
 ## 2.9.80 – Gehen ruhiger, Stelzenhütten, Prüfung der Schwerthiebe (15.11.2026)
 
 - **Gehen (Spieler und Bewohner):** Gemessen am Clip `Walking_A`: das Becken sackte bei jedem Schritt um bis zu 14 cm ab (knickende Knie), der Fuß hob sich beim Schwingen bis 65 cm (Ferse zum Gesäß wie beim Joggen). `Character.softenGait` dämpft das Auf und Ab des Beckens auf gut ein Drittel, hebt es etwas und hält die Füße per Beinführung genau an den Stellen des Clips (kein Rutschen); der Fußhub wird auf gut 40 % gedämpft. Gilt nur für Geh-Clips, nicht für Rennen. Kosten: weniger als 0,1 ms je Bild. Auf den Testbildern stehen die Beine gestreckter, die Füße am Boden, der Fersentritt ist weg; der Schritt bleibt weit (power-walk), die Armhaltung des Clips ist unverändert.

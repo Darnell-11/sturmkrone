@@ -42,9 +42,14 @@ export function waveMaterial<T extends Material>(m: T, strength = 1): T {
           // Wellen laufen vom Mast zur freien Kante, dazu ein langsames Mitschwingen und ein feines Flattern
           float ph = uSkTime * 4.2 - fk * 5.4 + position.y * 1.3;
           float wave = sin(ph) * 0.62 + sin(uSkTime * 7.3 - fk * 9.0) * 0.22 + sin(uSkTime * 1.7) * 0.35;
-          transformed += normalize(normal) * wave * wind * fk * ${(0.27 * strength).toFixed(3)};
-          // das Tuch hängt zur freien Kante etwas durch und verkürzt sich beim Schwingen leicht
-          transformed.y -= fk * fk * 0.05 * (1.2 - wind);
+          // nur Eckpunkte mit Gewicht UND gültiger Normale: geteilte Materialien tragen auch Netze ohne aFlag/normal
+          // (normalize(0) ergibt NaN, NaN * 0 bleibt NaN: Eckpunkte flogen als lange Streifen davon)
+          float nl = length(normal);
+          if (fk > 0.0001 && nl > 0.5) {
+            transformed += (normal / nl) * wave * wind * fk * ${(0.27 * strength).toFixed(3)};
+            // das Tuch hängt zur freien Kante etwas durch und verkürzt sich beim Schwingen leicht
+            transformed.y -= fk * fk * 0.05 * (1.2 - wind);
+          }
         }`);
   };
   m.customProgramCacheKey = () => (prevKey ? prevKey.call(m) : '') + '|flag' + strength;
