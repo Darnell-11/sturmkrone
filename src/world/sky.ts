@@ -61,7 +61,12 @@ const SKY_FRAG = /* glsl */ `
       // Milchstraße: schräges Band aus weichem Sternenlicht mit dunklen Staubfetzen
       vec3 bn = normalize(vec3(0.35, 0.8, -0.5));
       float band = exp(-pow(dot(d, bn) * 3.2, 2.0));
-      float cloudN = h21(floor(g * 0.35)) * 0.5 + h21(floor(g * 0.8) + 3.0) * 0.5;
+      // weiches Wertrauschen (bilinear, geglättet) statt harter Quadrate
+      vec2 gq = g * 0.35, gi = floor(gq), gf = fract(gq); gf = gf * gf * (3.0 - 2.0 * gf);
+      float n1 = mix(mix(h21(gi), h21(gi + vec2(1.0, 0.0)), gf.x), mix(h21(gi + vec2(0.0, 1.0)), h21(gi + vec2(1.0, 1.0)), gf.x), gf.y);
+      vec2 gq2 = g * 0.8 + 3.0, gi2 = floor(gq2), gf2 = fract(gq2); gf2 = gf2 * gf2 * (3.0 - 2.0 * gf2);
+      float n2 = mix(mix(h21(gi2), h21(gi2 + vec2(1.0, 0.0)), gf2.x), mix(h21(gi2 + vec2(0.0, 1.0)), h21(gi2 + vec2(1.0, 1.0)), gf2.x), gf2.y);
+      float cloudN = n1 * 0.5 + n2 * 0.5;
       c += vec3(0.32, 0.36, 0.55) * band * (0.35 + cloudN) * 0.22 * uStars * smoothstep(0.05, 0.4, d.y) * (1.0 - uGrey);
     }
     // Unter dem Horizont: der Abgrund hinter dem Weltrand

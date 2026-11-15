@@ -2,7 +2,7 @@ import { DoubleSide, type Group } from 'three';
 import type { IslandDef } from '../data/regions';
 import type { SiteDef } from '../data/settlements';
 import { toon } from '../render/toon';
-import { build } from './architecture';
+import { build, SETTLES, settleOnSlope } from './architecture';
 import { boxBlocker, coastK, type Blocker, type WalkIsland } from './islandGround';
 import { roadMesh } from './town';
 import type { GlowPlaced } from '../render/glow';
@@ -89,8 +89,8 @@ export function buildSite(o: SiteOpts): SiteBuild {
         // unter und neben den Bohlen wächst nichts und liegt kein Fels
         for (let s = -6; s <= b.pier; s += 2) occ.add({ x: def.x + x + dx * s, z: def.z + z + dz * s, r: 2.6 });
       } else y = hAt(x, z);
-      b.g.position.set(x, y, z);
-      b.g.rotation.y = yaw;
+      if (b.pier === undefined && SETTLES.has(it.t)) y = settleOnSlope(b, x, z, yaw, hAt);
+      else { b.g.position.set(x, y, z); b.g.rotation.y = yaw; }
       group.add(b.g);
       const c0 = Math.cos(yaw), s0 = Math.sin(yaw);
       const toWorld = (ox: number, oz: number): [number, number] => [def.x + x + ox * c0 + oz * s0, def.z + z - ox * s0 + oz * c0];

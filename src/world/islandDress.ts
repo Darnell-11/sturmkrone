@@ -31,7 +31,7 @@ import { cachedProto, envProto, floraProto, noise, type Scatter } from './vegeta
 import type { GlowPlaced } from '../render/glow';
 import { archGroup, hasArch } from './envModels';
 import { lighthouseBeams } from './lighthouseBeam';
-import { build, colliders } from './architecture';
+import { build, colliders, SETTLES, settleOnSlope } from './architecture';
 import type { StructureType } from '../data/settlements';
 import { waveFlag } from '../render/flags';
 
@@ -111,9 +111,9 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   const mount = (t: StructureType, x: number, z: number, yaw: number, len?: number, sx = 1) => {
     const b = build(t, rnd, len);
     if (sx !== 1) { b.g.scale.x = sx; b.boxes = b.boxes.map(([w, d, ox = 0, oz = 0, by = 0]) => [w * sx, d, ox * sx, oz, by] as [number, number, number, number, number]); }
-    const y = hAt(x, z);
-    b.g.position.set(x, y, z);
-    b.g.rotation.y = yaw;
+    let y = hAt(x, z);
+    if (SETTLES.has(t)) y = settleOnSlope(b, x, z, yaw, hAt);
+    else { b.g.position.set(x, y, z); b.g.rotation.y = yaw; }
     group.add(b.g);
     for (const c of colliders(b, walk.x + x, walk.z + z, yaw)) { walk.blockers.push(c); taken.push({ x: c.x - walk.x, z: c.z - walk.z, r: c.r }); }
     if (b.fire) fires.push({ x: x + b.fire[0] * Math.cos(yaw) + b.fire[2] * Math.sin(yaw), y: y + b.fire[1], z: z - b.fire[0] * Math.sin(yaw) + b.fire[2] * Math.cos(yaw) });

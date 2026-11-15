@@ -42,7 +42,7 @@ export function waveMaterial<T extends Material>(m: T, strength = 1): T {
           // Wellen laufen vom Mast zur freien Kante, dazu ein langsames Mitschwingen und ein feines Flattern
           float ph = uSkTime * 4.2 - fk * 5.4 + position.y * 1.3;
           float wave = sin(ph) * 0.62 + sin(uSkTime * 7.3 - fk * 9.0) * 0.22 + sin(uSkTime * 1.7) * 0.35;
-          transformed += normalize(normal) * wave * wind * fk * ${(0.34 * strength).toFixed(3)};
+          transformed += normalize(normal) * wave * wind * fk * ${(0.27 * strength).toFixed(3)};
           // das Tuch hängt zur freien Kante etwas durch und verkürzt sich beim Schwingen leicht
           transformed.y -= fk * fk * 0.05 * (1.2 - wind);
         }`);

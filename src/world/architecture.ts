@@ -745,6 +745,42 @@ function feuer(): Built {
 let yardCompact = false;
 export function setYardCompact(on: boolean) { yardCompact = on; }
 
+/** Bauten mit Grundfläche, die auf Hängen auf Türhöhe stehen und einen Sockel bekommen */
+export const SETTLES = new Set<StructureType>(['holzhuette', 'steinhaus', 'gasthaus', 'scheune', 'fachwerkhaus', 'kolonialhaus', 'lagerhaus', 'kapelle']);
+const plinthMat = markShared(toon('#8E8576'));
+/**
+ * Bau auf einem Hang aufstellen: der Fußboden liegt auf Höhe des Bodens vor der Tür (Tür bei +z), nicht in der Mitte – sonst schwebt das
+ * Haus auf der einen Seite und versinkt auf der anderen. Fällt das Gelände dahinter ab, trägt ein Steinsockel bis zum tiefsten Punkt.
+ * `hAt` in denselben Koordinaten wie x/z. Liefert die Höhe des Fußbodens; setzt Position und Drehung von `b.g`.
+ */
+export function settleOnSlope(b: Built, x: number, z: number, yaw: number, hAt: (x: number, z: number) => number): number {
+  const big = b.boxes.reduce((m, q) => (q[0] * q[1] > m[0] * m[1] ? q : m), b.boxes[0] ?? [4, 4, 0, 0]);
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  const ox = big[2] ?? 0, oz = big[3] ?? 0;
+  let mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < 5; i++) for (let j = 0; j < 5; j++) {
+    const lx = ox + (i / 4 - 0.5) * big[0], lz = oz + (j / 4 - 0.5) * big[1];
+    const h = hAt(x + lx * c + lz * s, z - lx * s + lz * c);
+    if (h < mn) mn = h;
+    if (h > mx) mx = h;
+  }
+  let y = hAt(x, z);
+  if (mx - mn > 0.45) {
+    const fz = oz + big[1] / 2 + 0.7;
+    const frontY = hAt(x + ox * c + fz * s, z - ox * s + fz * c);
+    y = Math.max(mn + 0.05, Math.min(frontY, mn + 1.6));
+    const drop = y - mn + 0.35;
+    if (drop > 0.4 && big[0] > 3) {
+      const plinth = new Mesh(new BoxGeometry(big[0] + 0.25, drop, big[1] + 0.25), plinthMat);
+      plinth.position.set(ox, 0.1 - drop / 2, oz);
+      b.g.add(plinth);
+    }
+  }
+  b.g.position.set(x, y, z);
+  b.g.rotation.y = yaw;
+  return y;
+}
+
 function dress(b: Built, rnd: () => number, w: number, d: number, wide = false): Built {
   const g = b.g;
   const front = d / 2;

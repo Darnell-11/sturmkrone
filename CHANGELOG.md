@@ -8,8 +8,11 @@
 - **Schwerthiebe:** Der Schmierbogen liegt immer vor der Figur und läuft in der Richtung der jeweiligen Animation (`SMEAR_LEFT_TO_RIGHT`): Säbel, Langklinge, Zweihänder, Doppelklingen.
 - **Laufen:** Der Takt der Laufanimation passt zur Geschwindigkeit, Neigung des Oberkörpers ist deutlich ruhiger, Gehen und Rennen wechseln mit Hysterese.
 - **Wiese und Strand von Ankerglück:** viel mehr Gras, Halme, Blumen, Büsche und Treibholz (instanziert), abseits von Straßen und Bauten.
+- **Alle Inseln geprüft (37):** Gleiches Problem wie in Ankerglück auf anderen Inseln: Häuser standen mit der Mitte auf dem Boden, am Hang schwebten sie auf einer Seite (bis 5,6 m Höhenunterschied unter der Grundfläche). Jetzt stehen Wohnhäuser, Scheunen, Gasthäuser, Lagerhäuser und Kapellen überall auf Türhöhe, bei Gefälle trägt ein Steinsockel (`settleOnSlope` in `architecture.ts`, genutzt von `islandDress.ts` und `settlement.ts`). Stelzenhütten, Mauern und Türme sind unverändert.
+- **Sternenhimmel:** Die Milchstraße bestand aus harten Quadraten (sichtbar auf Max); sie ist jetzt weiches Rauschen.
+- **Flaggen:** Ausschlag etwas gemäßigter, nach Blick von oben und von der Seite geprüft (Wellen laufen vom Mast zur Kante).
 - **Leistung:** Neue Dinge laufen über `InstancedMesh`; im Testaufbau (hohe Stufe, Marktplatz) 11,6 ms je Bild. Eine neue, gründliche Suche nach weiteren Leistungsfressern wurde in dieser Fassung nicht durchgeführt.
-- **Bekannt:** Die Gehanimation selbst (Walking_A) ist unverändert, nur ihr Tempo und die Neigung; ein Handy wurde nicht gemessen. Nachts und die Flaggenbewegung wurden nicht abschließend mit Bildern verglichen.
+- **Bekannt:** Die Gehanimation selbst (Walking_A) ist unverändert, nur ihr Tempo und die Neigung; ein Handy wurde nicht gemessen. Schwerthieb-Richtung und Nachtlicht der übrigen Inseln wurden nicht mit Vergleichsbildern geprüft; Stelzenhütten an steilen Hängen können mit einem Pfahl über dem Boden enden.
 
 ## 2.9.78 – Ladezeit: kein Hängen mehr, ehrlicher Ladebalken (15.11.2026)
 
