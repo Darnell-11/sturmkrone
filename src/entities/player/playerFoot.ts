@@ -1,7 +1,7 @@
 import { MathUtils, Vector3, type AnimationAction } from 'three';
 import type { Input } from '../../core/input/input';
 import { STYLE_ANIMS, type StyleId } from '../../data/animations';
-import { FINISHERS, PLAYER_BASE, SMEAR_LEFT_TO_RIGHT, STAMINA, STYLE_ATTACKS, type AttackDef } from '../../data/combat';
+import { FINISHERS, PLAYER_BASE, STAMINA, STYLE_ATTACKS, type AttackDef } from '../../data/combat';
 import type { CombatSystem, PlayerTarget } from '../../combat/combat';
 import type { CombatFx } from '../../combat/fx';
 import type { CombatOverlay } from '../../ui/combatOverlay';
@@ -499,12 +499,14 @@ export class PlayerFoot implements PlayerTarget {
     if (!def) return;
     const p = this.char.progress;
     const color = STYLE_COLOR[this.style];
-    // Takt wie im Anime: schnell ausholen, den Hieb sichtbar durchziehen, zügig zurück
-    if (this.attackAction) this.attackAction.timeScale = def.speed * (p < def.hitStart - 0.08 ? 1.35 : p <= def.hitEnd ? 0.9 : 1.2);
-    if (!this.smeared && p >= def.hitStart - 0.06 && !def.projectile && def.fx !== 'punch') {
+    // Takt wie im Film: kurz sammeln (Ausholen langsamer), dann in einer Peitschenbewegung durch das Trefferfenster (schnell), danach zügig zurück
+    if (this.attackAction) this.attackAction.timeScale = def.speed * (p < def.hitStart - 0.12 ? 1.15 : p < def.hitStart - 0.02 ? 0.72 : p <= def.hitEnd ? 1.45 : 1.15);
+    // Der Lichtbogen eines Hiebs ist der Waffenschweif an der echten Klinge (Character.setTrail). Ein fest vor die Figur gesetzter Bogen lag je nach
+    // Clip hinter oder neben der Klinge. Nur Rundumhiebe (Drehung um die Figur) bekommen einen Ring, der liegt immer richtig.
+    if (!this.smeared && p >= def.hitStart - 0.06 && !def.projectile && def.fx !== 'punch' && def.arc >= 5.5) {
       this.smeared = true;
-      const tilt = def.smearTilt ?? (def.fx === 'heavy' ? 1.45 : 0.4);
-      this.deps.fx?.smear(new Vector3(this.x, this.y + 1.05, this.z), this.yaw, tilt, def.range, def.arc, color, SMEAR_LEFT_TO_RIGHT.has(def.clip), true);
+      const tilt = def.smearTilt ?? 0.15;
+      this.deps.fx?.smear(new Vector3(this.x, this.y + 1.05, this.z), this.yaw, tilt, def.range, def.arc, color, false, true);
     }
     if (p >= def.hitStart && p <= def.hitEnd && def.projectile) {
       if (!this.fired) { this.fired = true; this.deps.combat?.shoot(def, this.x, this.y, this.z, this.yaw, this.dmgMult * this.swMult); }

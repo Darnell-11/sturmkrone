@@ -162,6 +162,7 @@ export class Game {
     setTexDetail(startTier.textureScale, Math.min(startTier.anisotropy, caps.getMaxAnisotropy()), startTier.detail);
     this.world = new SeaWorld(deferWorld);
     this.world.env.maxTex = caps.maxTextureSize;
+    this.world.warmHook = (o) => this.renderer.warmObject(o);
     // Spiegelungen (IBL): der Himmel wird regelmäßig als vorgefilterte Umgebungskarte aufgenommen
     this.skyProbe = new SkyProbe(this.renderer.gl, this.world.env.sky.dome.material as ShaderMaterial);
     this.renderer.onQualityChange((c) => this.world.applyQuality(c));
@@ -488,6 +489,7 @@ export class Game {
     if (!lower) return;
     this.settings.update({ quality: lower });
     this.renderer.applyQuality(lower);
+    this.recompileAfterQualityChange();
     this.hud.toast(`Grafikstufe auf „${QUALITY_TIERS[lower].label}“ gesenkt, damit es flüssig läuft.`, 3.5);
   }
 
@@ -2145,6 +2147,17 @@ export class Game {
     }
     this.autoQuality.reset();
     this.watchdog.rewarm();
+    this.recompileAfterQualityChange();
+  }
+
+  /**
+   * Ein Stufenwechsel schaltet Kaskaden-Schatten, Lichter und Nachbearbeitung um: alle beleuchteten Materialien brauchen neue Shader.
+   * Ohne Vorbereitung übersetzt der nächste Bildaufbau sie nacheinander (Browser hängt mehrere Sekunden). Hier werden sie sofort alle
+   * zugleich angestoßen (parallele Shader-Übersetzung), ein Bild später sind sie fertig.
+   */
+  private recompileAfterQualityChange() {
+    if (!this.world?.scene || !this.world.camera) return;
+    this.renderer.precompile(this.world.scene, this.world.camera).catch(() => {});
   }
 
   private applySettings() {

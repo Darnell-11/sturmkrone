@@ -72,6 +72,7 @@ import type { Sprite } from 'three';
 import { ABYSS_LAIR, SeaBoss } from '../naval/seaBoss';
 import { buildTown, mergeByMaterial, type TownBuild } from './town';
 import { updateBeams } from './lighthouseBeam';
+import { updateFountains } from './fountain';
 import { SeaLife } from './life';
 import { warmupShaders } from '../core/warmup';
 import type { WebGLRenderer } from 'three';
@@ -190,6 +191,8 @@ export class SeaWorld {
   private shakeDir = 0;
   private shakePh = 0;
   combat: CombatSystem | null = null;
+  /** Neue Figuren und Objekte für das Zeichnen vorbereiten (setzt das Spiel: Shader parallel übersetzen) */
+  warmHook: ((o: Object3D) => void) | null = null;
   playerFaction: Faction = 'pirat';
   private fx: CombatFx | null = null;
   private overlay: CombatOverlay | null = null;
@@ -691,6 +694,7 @@ export class SeaWorld {
         loot: (d) => this.onLootDrop(d),
       });
       this.combat.smoke = this.smoke;
+      this.combat.onSpawn = (o) => this.warmHook?.(o);
       const home = this.ground.islands[0];
       this.combat.addDummy(home.x + 6, home.z - home.r * 0.55);
       this.combat.addDummy(home.x - 6, home.z - home.r * 0.55);
@@ -1274,7 +1278,10 @@ export class SeaWorld {
     this.updateAir(dt);
     {
       const pp = this.playerPos;
-      updateBeams(dt, Math.min(1, Math.max(0, (0.75 - this.env.palette.sunVis) * 2.2)));
+      updateFountains(dt);
+      // Leuchtturm: nur abends und nachts oder bei schlechter Sicht (Nebel, Regen, Sturm); klarer Tag = aus
+      const wp = this.env.weather.p, bad = Math.max(wp.grey * 1.25, wp.rain * 1.2, wp.lightning);
+      updateBeams(dt, Math.min(1, Math.max(0, (0.75 - this.env.palette.sunVis) * 2.2)), Math.min(1, Math.max(0, (bad - 0.3) / 0.35)));
       this.fauna.update(dt, pp.x, pp.z, 1 - this.env.palette.sunVis, (x, z) => this.ground.height(x, z), (x, z) => this.env.heightAt(x, z));
     }
     this.updateNpcs(dt);

@@ -80,3 +80,58 @@ export function pennantGeometry(length: number, height: number, segs = 8) {
   g.setIndex(idx);
   return g;
 }
+
+/** Gemeinsame Uniform-Sätze eines Segels (je Segel eigener Satz, das Material ist je Segel einmalig) */
+export interface SailUniforms {
+  uRip: { value: number };
+  uGust: { value: number };
+  uAmp: { value: number };
+  uPh: { value: number };
+  uSw: { value: number };
+  uSh: { value: number };
+}
+export function makeSailUniforms(sw: number, sh: number, ph: number): SailUniforms {
+  return { uRip: { value: 0 }, uGust: { value: 0.5 }, uAmp: { value: 0.1 }, uPh: { value: ph }, uSw: { value: sw }, uSh: { value: sh } };
+}
+
+/**
+ * Segel wehen im Vertex-Shader (vorher bewegte die CPU jeden Eckpunkt jedes Segels in jedem Bild, bei Hero-Schiffen samt Normalen):
+ * Böen blähen das Tuch (Tiefe), Wellen laufen übers Tuch, die Kanten flattern stärker als die Mitte, die Normale folgt dem Wellenverlauf.
+ * Die Grundform (Bauch) steckt weiter in der Geometrie, damit Schatten und Hüllkugel stimmen.
+ */
+export function sailMaterial<T extends Material>(m: T, u: SailUniforms): T {
+  const prev = m.onBeforeCompile;
+  const prevKey = m.customProgramCacheKey;
+  m.onBeforeCompile = function (shader: WebGLProgramParametersWithUniforms, renderer) {
+    prev.call(this, shader, renderer);
+    Object.assign(shader.uniforms, u);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        uniform float uRip; uniform float uGust; uniform float uAmp; uniform float uPh; uniform float uSw; uniform float uSh;
+        float skSailDyn(vec3 p) {
+          float ex = abs(p.x) / (uSw * 0.5), ey = 0.5 - p.y / uSh;
+          float edge = 0.35 + 0.65 * max(ex * ex, ey * ey);
+          float a = uRip + p.x * 0.9 + p.y * 0.5 + uPh;
+          float b = uRip * 1.7 - p.y * 1.3 + p.x * 0.4 + uPh * 0.6;
+          return (sin(a) + 0.35 * sin(b)) * uAmp * edge;
+        }`)
+      .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+        {
+          // Normale folgt der Welle: Steigung der dynamischen Verschiebung in x und y (die Grundform steckt schon in objectNormal)
+          float e = 0.1;
+          float d0 = skSailDyn(position);
+          float gx = (skSailDyn(vec3(position.x + e, position.yz)) - d0) / e;
+          float gy = (skSailDyn(vec3(position.x, position.y + e, position.z)) - d0) / e;
+          objectNormal = normalize(objectNormal + vec3(-gx, -gy, 0.0) * 0.9);
+        }`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        {
+          float ey2 = 0.5 - position.y / uSh;
+          transformed.z = position.z * (0.88 + 0.22 * uGust) + skSailDyn(position);
+          transformed.x += sin(uRip * 0.8 + position.y * 0.7 + uPh) * uAmp * 0.25 * ey2;
+        }`);
+  };
+  m.customProgramCacheKey = () => (prevKey ? prevKey.call(m) : '') + '|sail';
+  m.needsUpdate = true;
+  return m;
+}

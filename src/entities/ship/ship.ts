@@ -1,10 +1,11 @@
-import { BufferAttribute, CircleGeometry, Color, MathUtils, Mesh, MeshBasicMaterial, Vector3, type Scene } from 'three';
+import { CircleGeometry, Color, MathUtils, Mesh, MeshBasicMaterial, Vector3, type Scene } from 'three';
 import { AMMO, SEA_SPEED, SHIP_CLASSES, type AmmoId, type ShipClass, type ShipLook } from '../../data/ships';
 import { toon } from '../../render/toon';
 import { buildShip, CABIN_WINDOW, GLOW_LAMP, type ShipModel } from './shipBuilder';
 import { glowHub, makeEmitter } from '../../render/glow';
 import { disposeObject, markShared } from '../../render/dispose';
 import { wetShared } from '../../render/wetness';
+import type { SailUniforms } from '../../render/flags';
 
 export interface SeaEnv {
   heightAt(x: number, z: number): number;
@@ -278,24 +279,12 @@ export class Ship {
     this.ripple += frameDt * (2.2 + wind * 3.5);
     for (const s of this.model.sails) {
       s.scale.set(1, Math.max(0.15, k), 0.6 + k * 0.5 + Math.sin(env.time * 2 + s.position.y) * 0.05);
-      // Windbiegung: Bauch wächst und schrumpft mit Böen, Wellen laufen übers Tuch, die Kanten flattern stärker
-      const base = s.userData.baseP as Float32Array | undefined;
-      if (!base) continue;
-      const geo = s.geometry.attributes.position as BufferAttribute;
-      const sw = s.userData.sw as number, sh = s.userData.sh as number;
-      const amp = (0.05 + wind * 0.16) * (this.cls.L / 15) * (1.1 - k * 0.5);
-      const ph = s.position.y * 0.7;
-      const arr = geo.array as Float32Array;
-      for (let i = 0; i < geo.count; i++) {
-        const bx = base[i * 3], by = base[i * 3 + 1], bz = base[i * 3 + 2];
-        const ex = Math.abs(bx) / (sw * 0.5);
-        const ey = 0.5 - by / sh;
-        const edge = 0.35 + 0.65 * Math.max(ex * ex, ey * ey);
-        arr[i * 3 + 2] = bz * (0.88 + 0.22 * gust) + Math.sin(this.ripple + bx * 0.9 + by * 0.5 + ph) * amp * edge;
-        arr[i * 3] = bx + Math.sin(this.ripple * 0.8 + by * 0.7 + ph) * amp * 0.25 * ey;
-      }
-      geo.needsUpdate = true;
-      if (this.hero) s.geometry.computeVertexNormals();
+      // Windbiegung: Bauch, Wellen und Kantenflattern laufen im Vertex-Shader (render/flags.ts, sailMaterial); hier nur die Uniforms
+      const su = s.userData.sailU as SailUniforms | undefined;
+      if (!su) continue;
+      su.uRip.value = this.ripple;
+      su.uGust.value = gust;
+      su.uAmp.value = (0.05 + wind * 0.16) * (this.cls.L / 15) * (1.1 - k * 0.5);
       // Stoff-Durchleuchtung: Steht die Sonne hinter dem Tuch, glüht es warm (tiefe Sonne mehr als hohe)
       const m = s.material as unknown as { emissive?: Color; color: Color };
       if (m.emissive && env.sunDir) {
@@ -317,15 +306,7 @@ export class Ship {
       const nightK = Math.max(0, Math.min(1, (night - 0.15) / 0.6));
       l.intensity = nightK * (28 + 7 * Math.sin(env.time * 7.3 + i * 2.1) * Math.sin(env.time * 3.1 + i)) * (this.cls.L / 20);
     }
-    // Flagge flattert
-    const fp = this.model.flag.geometry.attributes.position as BufferAttribute;
-    const base = this.model.flag.userData.base as Float32Array;
-    for (let i = 0; i < fp.count; i++) {
-      const bx = base[i * 3];
-      const w = (bx + 1) * 0.5;
-      fp.setZ(i, Math.sin(env.time * 7 + bx * 3) * 0.18 * w * (0.5 + env.windStrength));
-    }
-    fp.needsUpdate = true;
+    // Flagge: weht im Vertex-Shader (render/flags.ts), hier nichts zu tun
     for (const l of this.model.lanterns) l.scale.setScalar(0.7 + night * 0.8);
     // Flamme tagsüber gedämpft (sonst brennt sie in der Mittagssonne weiß aus und blüht im Bloom), nachts voll
     CABIN_WINDOW.color.setRGB(0.8, 0.95, 1.2).multiplyScalar(1 - 0.94 * Math.min(1, night * 1.5));

@@ -19,7 +19,9 @@ import {
 const N = 24;          // Stützpunkte entlang des Schweifs
 const S = 3;           // Unterteilung je Segment (Catmull-Rom): glatte Bögen auch bei niedriger Bildrate
 const M = (N - 1) * S + 1;
-const MAX_AGE = 0.16;  // so lange zieht das Licht nach (Sekunden)
+const MAX_AGE = 0.26;  // so lange zieht das Licht nach (Sekunden)
+/** Band-Ausdehnung relativ zur Klingenlänge: von 28 % der Klinge bis 24 % über die Spitze hinaus (der Hieb wirkt länger und schneidiger als die Klinge) */
+const IN = 0.28, OUT = 0.24;
 
 const VERT = /* glsl */ `
   attribute float aAge;
@@ -38,12 +40,13 @@ const FRAG = /* glsl */ `
   varying float vSide;
   void main() {
     float a = clamp(1.0 - vAge, 0.0, 1.0);
-    // zur Spitze hin heller und weißer Kern direkt hinter der Klinge
-    float tip = mix(0.35, 1.0, vSide);
-    vec3 c = mix(uColor, vec3(1.0), pow(a, 3.0) * 0.6 * vSide);
-    float alpha = a * a * tip * uOpacity;
+    // Schneidenkante (außen) glüht weißheiß, der Körper des Bandes verläuft weich in der Waffenfarbe nach innen
+    float edge = smoothstep(0.7, 1.0, vSide);
+    float body = pow(clamp(vSide, 0.0, 1.0), 1.6);
+    vec3 c = mix(uColor * 1.5, vec3(1.0, 0.97, 0.9), edge * (0.35 + 0.65 * a));
+    float alpha = (body * 0.5 + edge * 0.85) * a * a * uOpacity;
     if (alpha < 0.003) discard;
-    gl_FragColor = vec4(c * (1.2 + 1.6 * a), alpha);
+    gl_FragColor = vec4(c * (1.2 + 2.2 * a * (0.4 + edge)), alpha);
   }`;
 
 export class WeaponTrail {
@@ -58,6 +61,7 @@ export class WeaponTrail {
   private now = 0;
   private wb = new Vector3();
   private wt = new Vector3();
+  private wd = new Vector3();
   private mat: ShaderMaterial;
   /** an: Schweif zeichnet neue Punkte; aus: vorhandener Schweif verglüht */
   active = false;
@@ -94,6 +98,10 @@ export class WeaponTrail {
     if (this.active) {
       this.base.getWorldPosition(this.wb);
       this.tip.getWorldPosition(this.wt);
+      // Band über die Klinge hinaus verlängern (Länge der Klinge: Ansatz → Spitze)
+      this.wd.copy(this.wt).sub(this.wb);
+      this.wt.addScaledVector(this.wd, OUT);
+      this.wb.addScaledVector(this.wd, IN);
       const last = this.samples[(this.head + N - 1) % N];
       // nur neue Stützpunkte bei echter Bewegung (ruhige Klinge zeichnet nichts)
       if (this.count === 0 || last.t.distanceToSquared(this.wt) > 0.0004) {

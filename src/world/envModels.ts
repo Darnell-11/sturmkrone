@@ -24,7 +24,7 @@ const ARCH_BASE = `${import.meta.env.BASE_URL}models/architecture/`;
 /** Bauten aus Blender (tools/blender/build_arch.py): Hütte, Steinhaus, Taverne, Steg-Modul, Torbogen */
 export const ARCH_MODELS = ['haus_huette', 'haus_stein', 'haus_taverne', 'steg_modul', 'bogen', 'feuerstelle', 'feuerkorb', 'fackel', 'laternenpfahl',
   'kajuete_schreibtisch', 'kajuete_stuhl', 'kajuete_koje', 'kajuete_kartentisch', 'kajuete_regal', 'kajuete_truhe', 'kajuete_globus', 'kajuete_lampe', 'kajuete_teppich',
-  'haus_fachwerk', 'haus_kolonial', 'lagerhaus', 'kapelle', 'marktstand', 'kran', 'turm_zinnen', 'mauer_zinnen', 'torhaus', 'bergfried', 'leuchtturm'] as const;
+  'haus_fachwerk', 'haus_kolonial', 'lagerhaus', 'kapelle', 'marktstand', 'kran', 'turm_zinnen', 'mauer_zinnen', 'torhaus', 'bergfried', 'leuchtturm', 'brunnen'] as const;
 /** Prunkmöbel der zweiten Schiffsfassung (tools/blender/build_kajuete2.py), nur mit ships2() geladen */
 const KAJUETE2 = ['kajuete_himmelbett', 'kajuete_kronleuchter', 'kajuete_anrichte', 'kajuete_fensterbank', 'kajuete_waffenwand', 'kajuete_gemaelde', 'kajuete_ofen', 'kajuete_tafel'];
 /** Kajütenmöbel liegen in public/models/ships/ (tools/blender/build_kajuete.py) */

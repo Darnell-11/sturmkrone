@@ -486,7 +486,12 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       // Der Leuchtturm steht in der Inselmitte, daneben das Wärterhaus mit Weg
       mount('leuchtturm', 0, 0, rnd() * 6);
       // Umlaufender Lichtkegel (nachts): bleibt ungemergt (die Drehung rechnet der Shader um die Laterne)
-      { const bm = lighthouseBeams(); bm.position.set(0, hAt(0, 0) + 22.6, 0); group.add(bm); bm.traverse((o) => { if ((o as Mesh).isMesh) glow.add(o as Mesh); }); }
+      {
+        const ly = hAt(0, 0) + 22.6;
+        const bm = lighthouseBeams(); bm.position.set(0, ly, 0); group.add(bm); bm.traverse((o) => { if ((o as Mesh).isMesh) glow.add(o as Mesh); });
+        // Lichthof um die Lampe (nachts) und Lichtfleck auf der Galerie
+        glows.push({ kind: 'lamp', x: 0, y: ly, z: 0, ground: ly - 1.9, size: 6.5, pool: 6 });
+      }
       const qa = rnd() * Math.PI * 2;
       const q = { x: Math.cos(qa) * 11, z: Math.sin(qa) * 11 };
       if (free(q.x, q.z, 4)) { mount('steinhaus', q.x, q.z, Math.atan2(-q.x, -q.z)); paths.push({ pts: [[q.x * 0.72, q.z * 0.72], [q.x * 0.36, q.z * 0.36], [0, 0]], w: 2.2 }); }

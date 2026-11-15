@@ -1,7 +1,6 @@
 import {
   BoxGeometry,
   ExtrudeGeometry,
-  BufferAttribute,
   BufferGeometry,
   CanvasTexture,
   Color,
@@ -36,9 +35,9 @@ import { sharedGeo } from '../../render/geoCache';
 import { disposeGeometry, markShared } from '../../render/dispose';
 import { toon } from '../../render/toon';
 import { toonPbr } from '../../render/pbrMaps';
-import { hullPlankTexture } from '../../render/shipTextures';
+import { deckTexture, hullPlankTexture } from '../../render/shipTextures';
 import { ships2 } from '../../core/flags';
-import { addFlagWeights, pennantGeometry, waveFlag, waveMaterial } from '../../render/flags';
+import { makeSailUniforms, sailMaterial, waveFlag } from '../../render/flags';
 import { hullGeometry2, hullSideX } from './shipHull2';
 import { archParts, hasArch } from '../../world/envModels';
 import { hasProp, placeMatrix, PropBatch, propRoles, type PropId } from '../../world/worldProps';
@@ -441,14 +440,15 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   for (let i = 0; i <= N; i++) { const e = edge(deckT(i)); i === 0 ? deckShape.moveTo(e.x * 0.99, e.z) : deckShape.lineTo(e.x * 0.99, e.z); }
   for (let i = N; i >= 0; i--) { const e = edge(deckT(i)); deckShape.lineTo(-e.x * 0.99, e.z); }
   const deckGeo = new ShapeGeometry(deckShape).rotateX(Math.PI / 2);
-  const deckTex = oak.clone();
+  const deckTex = deckTexture().clone();
   deckTex.center.set(0.5, 0.5);
   deckTex.rotation = Math.PI / 2;
-  deckTex.repeat.set(0.35, 0.35);
+  deckTex.repeat.set(0.3, 0.3);
   deckTex.needsUpdate = true;
-  // Deckplanken: dunkles Eichenholz mit Rillen; Nässe (Regen, Gischt) färbt es ab und lässt es glänzen (Pfützen-Shader)
-  const deckBase = new Color('#B58A5C');
-  const deckMat = toon({ color: deckBase, side: DoubleSide, map: deckTex, unique: true, puddles: 0.6, ...toonPbr(deckTex, { strength: 0.7, rough: 0.88, roughVar: 0.2, ao: 0.75 }, oak) });
+  // Deckplanken: warmes, verwittertes Eichenholz mit dunklen Teerfugen (Textur trägt die Farbe, das Material färbt nur leicht und dunkelt bei
+  // Nässe ab). Relief und Rauheit schwach (Normalkarte aus der Textur), damit nichts glitzert; Rauheit 0,68 bis 0,85. Pfützen nur sehr zurückhaltend.
+  const deckBase = new Color('#F2E4CE');
+  const deckMat = toon({ color: deckBase, side: DoubleSide, map: deckTex, unique: true, puddles: 0.3, ...toonPbr(deckTex, { strength: 0.3, rough: 0.77, roughVar: 0.1, ao: 0.8 }, deckTexture()) });
   const deck = new Mesh(deckGeo, deckMat);
   deck.position.y = D - 0.05;
   deck.userData.noOutline = true;
@@ -562,7 +562,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     // Sturz über der Tür
     put(group, box(doorWC + 0.04, castleH - doorHC, wallT + 0.02), wood, 0, D + doorHC + (castleH - doorHC) / 2, castleZ1 - wallT / 2);
   }
-  const castleTop = new Mesh(new ExtrudeGeometry(cs, { depth: 0.14, bevelEnabled: false }).rotateX(-Math.PI / 2), toon({ color: '#B58A5C', map: deckTex, unique: true, ...toonPbr(deckTex, { strength: 0.7, rough: 0.88, roughVar: 0.2, ao: 0.75 }, oak) }));
+  const castleTop = new Mesh(new ExtrudeGeometry(cs, { depth: 0.14, bevelEnabled: false }).rotateX(-Math.PI / 2), toon({ color: deckBase, map: deckTex, unique: true, puddles: 0.3, ...toonPbr(deckTex, { strength: 0.3, rough: 0.77, roughVar: 0.1, ao: 0.8 }, deckTexture()) }));
   castleTop.position.y = D + castleH;
   castleTop.scale.set(1.06, 1, 1.02);
   group.add(castleTop);
@@ -841,7 +841,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     const foreBody = new Mesh(new ExtrudeGeometry(fs, { depth: fh, bevelEnabled: false }).rotateX(-Math.PI / 2), wood);
     foreBody.position.y = D;
     group.add(foreBody);
-    const foreTop = new Mesh(new ExtrudeGeometry(fs, { depth: 0.12, bevelEnabled: false }).rotateX(-Math.PI / 2), toon({ color: '#B58A5C', map: deckTex, unique: true, ...toonPbr(deckTex, { strength: 0.7, rough: 0.88, roughVar: 0.2, ao: 0.75 }, oak) }));
+    const foreTop = new Mesh(new ExtrudeGeometry(fs, { depth: 0.12, bevelEnabled: false }).rotateX(-Math.PI / 2), toon({ color: deckBase, map: deckTex, unique: true, puddles: 0.3, ...toonPbr(deckTex, { strength: 0.3, rough: 0.77, roughVar: 0.1, ao: 0.8 }, deckTexture()) }));
     foreTop.position.y = D + fh;
     foreTop.scale.set(1.04, 1, 1.0);
     group.add(foreTop);
@@ -1028,7 +1028,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       yard.position.set(0, y + h * 0.2, z);
       group.add(yard);
       const sh = h * 0.235;
-      const sg = new PlaneGeometry(w * 0.95, sh, 10, 6);
+      const sg = new PlaneGeometry(w * 0.95, sh, 26, 16);
       const sp = sg.attributes.position;
       for (let i = 0; i < sp.count; i++) {
         const x = sp.getX(i), yy = sp.getY(i);
@@ -1036,12 +1036,12 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
         sp.setZ(i, Math.cos((x / (w * 0.95)) * Math.PI) * 1.05 * sc * (1 - Math.abs(yy) / sh * 0.35) * (1.1 - (yy / sh + 0.5) * 0.3));
       }
       sg.computeVertexNormals();
-      const baseZ = (sp.array as Float32Array).slice(); // Ausgangsform für Windbiegung in Ship.render
       const withEmblem = mi === mainMast && k === (yards > 2 ? 1 : 0);
-      const sailMat = toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, withEmblem ? emblem : null, sailSeed++, true), unique: true, micro: 'cloth', roughness: 0.92 });
+      const sailU = makeSailUniforms(w * 0.95, sh, (y + h * 0.1) * 0.7);
+      const sailMat = sailMaterial(toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, withEmblem ? emblem : null, sailSeed++, true), unique: true, micro: 'cloth', roughness: 0.92 }), sailU);
       sailMat.alphaTest = 0.5; // ausgefranste Ränder und Risse
       const sail = new Mesh(sg, sailMat);
-      sail.userData.baseP = baseZ;
+      sail.userData.sailU = sailU;
       sail.userData.sw = w * 0.95;
       sail.userData.sh = sh;
       sail.position.set(0, y + h * 0.1, z + 0.15);
@@ -1053,16 +1053,6 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       for (const s of [-1, 1]) rig.push(s * w / 2, y + h * 0.2, z, s * halfWidth(z) * 0.95, D + 0.8, z - 1.5);
     }
     mastTops.push({ z, h });
-    // Wimpel an der Mastspitze (steht nach achtern im Wind)
-    {
-      const pl = Math.min(3.2, 1.2 + c.L * 0.03), ph2 = pl * 0.22;
-      const pg = pennantGeometry(pl, ph2, 8);
-      pg.rotateY(Math.PI / 2);
-      addFlagWeights(pg, 'z', pl, -1); // nach dem Drehen läuft der Wimpel entlang −z
-      const pm = put(group, pg, waveMaterial(toon({ color: look.flagColor, side: DoubleSide }), 1.15), 0, D + h + 0.35, z);
-      pm.userData.noOutline = true;
-      keepExtra.push(pm); // nicht verschmelzen: das Gewicht aFlag ginge verloren
-    }
     // Wanten vom Mast zur Bordwand, dazu Webleinen (Sprossen) zwischen den Wanten zum Aufentern
     for (const s of [-1, 1]) {
       for (let k = -1; k <= 1; k++) rig.push(0, D + h * 0.95, z, s * halfWidth(z + k) * 0.95, D + 0.8, z + k * 1.2);
@@ -1849,13 +1839,16 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     }
   }
 
-  // Flagge am höchsten Mast
-  const top =c.masts.reduce((a, b) => (Math.abs(b) < Math.abs(a) ? b : a), c.masts[0]) * c.L;
-  const flag = new Mesh(new PlaneGeometry(1.8 * Math.min(2, sc), 1.1 * Math.min(2, sc), 8, 1), new MeshBasicMaterial({ map: flagTex, side: DoubleSide }));
-  flag.position.set(0, D + c.mh + 0.7, top - 1);
-  flag.rotation.y = Math.PI / 2;
+  // Eine Flagge am höchsten Mast (die Wimpel auf jedem Mast sind weg: zwei Fahnen oben waren zu viel). Das Tuch ist fein unterteilt und weht im
+  // Vertex-Shader (Wellen vom Mast zur freien Kante, Wetter-Wind); Schatten und Kontur gibt es nicht, die Fläche ist selbstleuchtend im Wappen.
+  const top = c.masts.reduce((a, b) => (Math.abs(b) < Math.abs(a) ? b : a), c.masts[0]) * c.L;
+  const fk = Math.min(2, sc);
+  const flagGeo = new PlaneGeometry(2.1 * fk, 1.25 * fk, 22, 10);
+  flagGeo.translate(1.05 * fk, 0, 0); // Mastkante bei x = 0
+  const flag = waveFlag(new Mesh(flagGeo, new MeshBasicMaterial({ map: flagTex, side: DoubleSide })), 'x', 2.1 * fk, 1, 1.25);
+  flag.position.set(0, D + c.mh + 0.75, top - 0.04 * fk);
+  flag.rotation.y = Math.PI / 2; // +x des Tuchs zeigt nach achtern (−z)
   flag.userData.noOutline = true;
-  flag.userData.base = (flag.geometry.attributes.position as BufferAttribute).array.slice();
   group.add(flag);
 
   // Galionsfigur

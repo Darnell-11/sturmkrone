@@ -20,6 +20,7 @@ import {
   type SkinnedMesh,
   type WebGLRenderTarget,
   Vector3,
+  type Object3D,
 } from 'three';
 import {
   BloomEffect,
@@ -383,10 +384,10 @@ export class GameRenderer {
       // Nahaufnahme (Kamera nah an der Figur, z. B. zu Fuß oder beim Lock-on): Hintergrund deutlich weicher;
       // weit weg (auf See): nur der Horizont wird weich
       const close = Math.min(1, Math.max(0, (14 - d) / 10));
-      const range = MathUtils.lerp(Math.max(60, d * 6), Math.max(5, d * 1.6), Math.max(close, this.dofTarget ? 0.8 : 0));
+      const range = MathUtils.lerp(Math.max(70, d * 7), Math.max(11, d * 3.2), Math.max(close * 0.8, this.dofTarget ? 0.6 : 0));
       this.dofRange += (range - this.dofRange) * k;
       this.dof.cocMaterial.focusRange = this.dofRange;
-      this.dof.bokehScale = MathUtils.lerp(1.3, 2.2, close);
+      this.dof.bokehScale = MathUtils.lerp(0.9, 1.35, close); // dezent: Tiefenschärfe war zu stark, die Stadt hinter der Figur verschwamm
     }
     this.time += dt;
     heatShared.update(dt);
@@ -401,6 +402,21 @@ export class GameRenderer {
       this.gl.render(this.scene, this.camera);
     }
     this.pinPrograms();
+  }
+
+  /**
+   * Neues Objekt vor seinem ersten Auftritt vorbereiten: seine Shader-Programme werden mit den Lichtern der Szene parallel übersetzt
+   * (compileAsync). Ohne das übersetzt der erste Bildaufbau, in dem die Kamera es zeigt, alle neuen Programme am Stück (starker Ruckler beim
+   * Schwenk zu frisch erschienenen Gegnern).
+   */
+  warmObject(o: Object3D) {
+    if (!this.scene || !this.camera) return;
+    const rt = (this.composer as unknown as { inputBuffer?: WebGLRenderTarget } | null)?.inputBuffer ?? null;
+    const prev = this.gl.getRenderTarget();
+    try {
+      if (rt) this.gl.setRenderTarget(rt);
+      this.gl.compileAsync(o, this.camera, this.scene).catch(() => {});
+    } finally { this.gl.setRenderTarget(prev); }
   }
 
   /**

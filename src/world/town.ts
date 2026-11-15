@@ -33,6 +33,7 @@ import { build as buildStruct, colliders as structColliders, lightMats, setYardC
 import type { StructureType } from '../data/settlements';
 import type { GlowPlaced } from '../render/glow';
 import { hasArch as hasArchModel, hasArch, archGroup } from './envModels';
+import { buildFountain } from './fountain';
 
 // verwitterter Putz und satte, gedeckte Dachfarben (Hafenstadt, kein Ferienort)
 const WALLS = ['#E2D6BC', '#D4BF9A', '#C9CFD0', '#DCC4B0', '#CDD2BE'];
@@ -555,26 +556,29 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
   shrine.add(crystal);
   place(shrine, 0, 62, 0, 5.5);
 
-  // Brunnen auf dem Platz
-  const fountain = new Group();
-  const basin = new Mesh(new CylinderGeometry(3, 3.3, 0.9, 20), toon('#C8C0B0'));
-  basin.position.y = 0.45;
-  const water = new Mesh(new CylinderGeometry(2.7, 2.7, 0.1, 20), toon('#33C4D2'));
-  // Wasseroberfläche knapp über dem Beckendeckel (vorher genau auf 0,9 m – beide Flächen flackerten)
-  water.position.y = 0.88;
-  water.userData.noOutline = true;
-  const column = new Mesh(new CylinderGeometry(0.22, 0.42, 2.0, 10), toon('#C8C0B0'));
-  column.position.y = 1.4;
-  // obere Schale mit Wasserspiegel und Kugelabschluss, damit die Säule wie ein Brunnen aussieht
-  const bowl = new Mesh(new CylinderGeometry(1.15, 0.5, 0.34, 16), toon('#C8C0B0'));
-  bowl.position.y = 2.5;
-  const bowlWater = new Mesh(new CylinderGeometry(0.98, 0.98, 0.04, 16), toon('#33C4D2'));
-  bowlWater.position.y = 2.68;
-  bowlWater.userData.noOutline = true;
-  const finial = new Mesh(new SphereGeometry(0.2, 10, 8), toon('#D8CFA8'));
-  finial.position.y = 2.95;
-  fountain.add(basin, water, column, bowl, bowlWater, finial);
-  place(fountain, 0, 2, 0, 3.4);
+  // Brunnen auf dem Platz: dreistufiger Steinbrunnen aus Blender mit bewegtem Wasser (world/fountain.ts); ohne Modell der alte Eigenbau
+  const modelFountain = hasArchModel('brunnen') ? buildFountain() : null;
+  if (modelFountain) {
+    place(modelFountain, 0, 2, 0, 3.55);
+  } else {
+    const fountain = new Group();
+    const basin = new Mesh(new CylinderGeometry(3, 3.3, 0.9, 20), toon('#C8C0B0'));
+    basin.position.y = 0.45;
+    const water = new Mesh(new CylinderGeometry(2.7, 2.7, 0.1, 20), toon('#33C4D2'));
+    water.position.y = 0.88;
+    water.userData.noOutline = true;
+    const column = new Mesh(new CylinderGeometry(0.22, 0.42, 2.0, 10), toon('#C8C0B0'));
+    column.position.y = 1.4;
+    const bowl = new Mesh(new CylinderGeometry(1.15, 0.5, 0.34, 16), toon('#C8C0B0'));
+    bowl.position.y = 2.5;
+    const bowlWater = new Mesh(new CylinderGeometry(0.98, 0.98, 0.04, 16), toon('#33C4D2'));
+    bowlWater.position.y = 2.68;
+    bowlWater.userData.noOutline = true;
+    const finial = new Mesh(new SphereGeometry(0.2, 10, 8), toon('#D8CFA8'));
+    finial.position.y = 2.95;
+    fountain.add(basin, water, column, bowl, bowlWater, finial);
+    place(fountain, 0, 2, 0, 3.4);
+  }
 
   // Hafentor und Hafenmauer: Torhaus über der Hauptstraße, Zinnenmauern und Rundtürme links und rechts
   if (hasArchModel('torhaus')) {

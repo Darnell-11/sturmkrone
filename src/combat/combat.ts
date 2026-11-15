@@ -12,6 +12,7 @@ import {
   Vector3,
   type Camera,
   type Scene,
+  type Object3D,
 } from 'three';
 import { ENEMIES, type AttackDef, type EnemyAttack, type EnemyKind } from '../data/combat';
 import { rollLoot, type LootDrop } from '../data/loot';
@@ -115,6 +116,8 @@ export class CombatSystem implements EnemyWorld {
   private barVec = new Vector3();
   private engagedTmp: Enemy[] = [];
   playerActive = false;
+  /** Neue Gegner vorwärmen (Shader übersetzen, bevor die Kamera sie zeigt): setzt die Welt */
+  onSpawn: ((o: Object3D) => void) | null = null;
   /** Basis-Angriffswert des Spielers */
   atk = 12;
   critChance = 0.1;
@@ -825,6 +828,7 @@ export class CombatSystem implements EnemyWorld {
       e.y = this.ground(e.x, e.z);
       e.alert();
       this.scene.add(e.char.holder);
+      this.onSpawn?.(e.char.holder);
       this.enemies.push(e);
       out.push(e);
     });
