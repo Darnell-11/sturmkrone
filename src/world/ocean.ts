@@ -103,7 +103,9 @@ function hullGlsl(wakeN: number): string { return /* glsl */ `
       // Bugwulst: das Wasser staut sich vor dem Steven
       float ahead = max(lz - hl, 0.0);
       float bow = exp(-(ahead * ahead) / (hw * hw * 0.9 + 0.3) - (lx * lx) / (hw * hw * 1.6 + 0.3));
-      H += amp * 1.25 * bow * (1.0 - smoothstep(hl * 0.5, hl * 1.2, ahead));
+      // Der Wulst gehört vor den Steven: ohne diesen Faktor lief er (ahead = 0) als Band entlang der ganzen Mittellinie nach hinten und brach hinter dem Schiff
+      // an der Grenze der Rumpf-Schleife hart ab (der Buckel mit scharfer Kante im Kielwasser). Jetzt steigt er erst ab der Schiffsmitte weich zum Bug an.
+      H += amp * 1.25 * bow * smoothstep(hl * 0.35, hl * 1.0, lz) * (1.0 - smoothstep(hl * 0.5, hl * 1.2, ahead));
       // Mulde an der Bordwand (Wasser wird zur Seite gedrückt)
       float sideT = exp(-pow((ax - hw * 1.15) / (hw * 0.55 + 0.2), 2.0));
       H -= amp * 0.55 * sideT * smoothstep(-hl * 1.1, hl * 0.2, lz) * (1.0 - smoothstep(hl * 0.8, hl * 1.1, lz));
@@ -593,7 +595,7 @@ export class Ocean {
           // die das Bild danach wieder undurchsichtig machen – sonst wäre das Wasser auf manchen Handys durchsichtig)
           gl_FragColor.a = uWaterAlpha;`);
     };
-    mat.customProgramCacheKey = () => `sk-ocean27-${wakeN}`;
+    mat.customProgramCacheKey = () => `sk-ocean28-${wakeN}`;
     // Kaskaden-Schatten: auch ein neu gebautes Wassermaterial zählt alle Kaskaden als ein Licht
     ensureCsm(mat);
     return mat;

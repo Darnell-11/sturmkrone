@@ -1,5 +1,9 @@
 # Was ist neu
 
+## 2.9.87 – Buckel mit scharfer Kante hinter dem Schiff behoben (17.11.2026)
+
+- **Der helle Buckel mit messerscharfer Kammlinie im Wasser, 6 bis 7 m hinter dem Heck** (bei jeder Fahrt sichtbar): Ursache gefunden durch schrittweises Abschalten der Rumpf-Verdrängung im Ozean-Shader (`skHullH` in `world/ocean.ts`). Der Bugwulst (Wasser staut sich vor dem Steven) war nur nach vorn gedämpft; hinter dem Steven war der Dämpfungsfaktor immer 1. Der Wulst lief deshalb als Band entlang der ganzen Mittellinie bis hinter das Schiff und brach dort an der Grenze der Rumpf-Schleife hart ab. Er steigt jetzt erst ab der Schiffsmitte weich zum Steven an. Schaum, Kielwasser und alle anderen Wassereffekte sind unverändert. `npx tsc --noEmit` fehlerfrei, vorher und nachher dieselbe Kurvenfahrt im Spiel verglichen.
+
 ## 2.9.86 – Kampf-Kollision ohne Wanddurchbrüche, Segel-HP und Crew-% als spürbare Schiffsmechanik (17.11.2026)
 
 Erster Schritt der Mehrspieler-tauglichen Kampfphysik: Alles, was später für Coop synchronisiert werden soll, läuft jetzt über eindeutige Kennungen, Absichten und serialisierbaren Zustand, getrennt von der Darstellung. Es gibt noch kein Backend.
