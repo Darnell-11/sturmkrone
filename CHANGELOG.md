@@ -1,5 +1,20 @@
 # Was ist neu
 
+## 2.9.85 – Startbildschirm ohne Streifen, Karibik-Meer (17.11.2026)
+
+**Startbildschirm: lange gezogene Streifen und Flächen (Ursache gefunden und behoben)**
+- **Symptom:** Im Menü (und überall, wo viele Figuren in der Nähe stehen) liefen dicke, glänzende Streifen von der Mitte des Bilds bis zum unteren Rand, je nach Kamerawinkel auch lange Linien über die Hafenmole. Sie hingen am Weltursprung (0, 0, 0): Je nach Blickrichtung zur Hafenstadt zeigten sie sich oder nicht.
+- **Ursache (gemessen):** `render/matrixSkip.ts` überspringt die Knochen von Figuren außerhalb des Bildes (Leistung in der Stadt). Deren Weltmatrizen bleiben dabei stehen, bei frisch erzeugten Figuren ist es die Einheitsmatrix am Ursprung. three.js prüft das Sichtfeld aber mit genau diesen Matrizen und zeichnete die Figur trotzdem, sobald der Ursprung im Bild lag: halb mit aktuellen Knochen (Hüfte, von der IK nachgeführt), halb mit veralteten am Ursprung. Das ergab lange Dreiecke von dort bis zur Figur. 28 Haut-Netze von Figuren der Hafenstadt waren betroffen (Eckpunkte bis 196 m von der Figur entfernt); mit ihnen ausgeblendet waren die Streifen weg.
+- **Behebung:** Übersprungene Figuren werden für die Dauer des Zeichnens unsichtbar (`updateCulledHolders` blendet den Halter aus, `restoreCulledHolders` stellt ihn nach dem Bild wieder her, auch bei einer Ausnahme). Das gilt für alle Durchgänge (Hauptbild, Schattenkaskaden, Spiegelung, Umgebungsverdeckung). Die Weltmatrix des Halters wird vor dem Test frisch berechnet (vorher lief sie dem Bild um eine Runde nach). Weitere Folge: Figuren, die sich außerhalb des Bildes bewegten, erschienen als eingefrorene „Geister“ an der letzten Stelle; auch das ist weg.
+- **Möwen, Fischerboote und Treibgut lagen im Startbildschirm übereinander am Weltursprung** (Instanzmatrizen beginnen als Einheitsmatrix, bewegt wurde erst im Spiel): als weiße Flecken auf dem Wasser und als „Floß mit Segel“ neben dem Schiff sichtbar. `SeaLife` setzt Möwen, Boote und Treibgut jetzt beim Erzeugen an ihren Ort, und das Leben läuft schon im Menü (`SeaWorld.idle`): Möwen kreisen, Fischerboote fahren vor dem Hafen.
+- **Geprüft und in Ordnung (Laufzeitmessung):** Hautgewichte aller 150 Figuren-Geometrien (Summe 1, kein Eckpunkt ohne Gewicht, Knochenindizes im Bereich); alle 1984 Geometrien der Szene (6,2 Mio. Eckpunkte) ohne NaN, Inf oder Indexfehler; Takelage (`LineSegments`, 66 Eckpunkte) ohne Fehler; Instanznetze für Wolken und Weltrandnebel setzen ihre Orte im Shader (Einheitsmatrix ist dort richtig).
+- 5 neue Prüfungen in `tests/matrixSkip.test.ts` (86 von 86 bestanden).
+
+**Technik (für Entwickler):**
+- Wer eine Figur außerhalb von `Renderer.render` zeichnet, ruft `updateCulledHolders`/`restoreCulledHolders` selbst. Die Zweige `skipKids`/`wasSkipped` in der Matrix-Überschreibung entfallen: übersprungene Halter sind während des Bildes `visible = false`.
+- Neue Instanznetze: Matrizen sofort setzen (nicht erst im ersten `update`) oder `count = 0`.
+- Fehlersuche, die gezielt zum Ziel führte: Strahl (Raycaster) durch Pixel, Ausblenden von Gruppen mit Bildvergleich, danach Haut-Eckpunkte per `SkinnedMesh.getVertexPosition` im Weltraum messen; Kamera für Messungen einfrieren (`Object.defineProperty(world, 'menuOrbit', …)`).
+
 ## 2.9.84 – Qualitätsdurchgang: Laternen, schwebende Felsen, schärfere Texturen, ruhigere Wächter (17.11.2026)
 
 Reiner Prüf- und Reparaturdurchgang, keine neuen Funktionen. Gemessen im laufenden Spiel (Chrome mit RTX 5070 Ti, Playwright, Max und Ultra), danach behoben.

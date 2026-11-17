@@ -40,7 +40,7 @@ import { AoEffect, AoPass } from './gtao';
 import { HeatEffect, heatShared } from './heat';
 import { installAtmosphere } from './atmosphere';
 import { ensureCsm } from './csm';
-import { updateCulledHolders } from './matrixSkip';
+import { restoreCulledHolders, updateCulledHolders } from './matrixSkip';
 import { EdgeEffect, OpaqueEffect, WATER_ALPHA, setHullsVisible } from './outline';
 import { GradeEffect } from './grade';
 import { SsrEffect, SsrPass } from './ssr';
@@ -394,12 +394,17 @@ export class GameRenderer {
     this.heat?.updateSources(this.camera, this.time);
     this.maskT -= dt;
     if (this.maskT <= 0) { this.maskT = 0.25; this.keepWaterMask(this.scene); }
+    // Figuren außerhalb des Bilds tragen veraltete Knochen und werden für dieses Bild gar nicht gezeichnet (siehe matrixSkip.ts)
     updateCulledHolders(this.camera);
-    if (this.composer) this.composer.render(dt);
-    else {
-      // Ohne Nachbearbeitung selbst löschen (der Composer schaltet autoClear ab – sonst bleiben alte Bilder stehen)
-      this.gl.autoClear = true;
-      this.gl.render(this.scene, this.camera);
+    try {
+      if (this.composer) this.composer.render(dt);
+      else {
+        // Ohne Nachbearbeitung selbst löschen (der Composer schaltet autoClear ab – sonst bleiben alte Bilder stehen)
+        this.gl.autoClear = true;
+        this.gl.render(this.scene, this.camera);
+      }
+    } finally {
+      restoreCulledHolders();
     }
     this.pinPrograms();
   }

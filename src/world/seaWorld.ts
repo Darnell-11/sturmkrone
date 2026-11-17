@@ -1901,6 +1901,8 @@ export class SeaWorld {
     this.fx?.update(dt);
     this.updateNpcs(dt);
     this.player?.update(dt);
+    // Möwen kreisen, Fischerboote fahren und Treibgut schaukelt schon im Startbildschirm
+    this.life?.update(dt, (x, z) => this.env.heightAt(x, z), this.ship, false);
   }
 
   private updateWake(dt: number) {

@@ -15,12 +15,21 @@ let inSceneUpdate = false;
 let installed = false;
 
 /**
- * Figuren außerhalb des Kamerabilds: ihr Halter rechnet weiter (Position, Eltern bleiben richtig), aber ihr Skelett (je Figur
- * rund 100 Knochen, in der Stadt über 1 900 sichtbare Knoten) wird in der Szenenaktualisierung übersprungen. Kehrt die Figur ins Bild
- * zurück, rechnet die Aktualisierung desselben Bildes alles neu, bevor gezeichnet wird. Alles, was Knochen später braucht
- * (Treffer, Waffen, Laternen), fragt über `getWorldPosition`, das sich selbst aktualisiert.
+ * Figuren außerhalb des Kamerabilds: ihr Skelett (je Figur rund 100 Knochen, in der Stadt über 1 900 sichtbare Knoten) wird in der
+ * Szenenaktualisierung übersprungen. Kehrt die Figur ins Bild zurück, rechnet die Aktualisierung desselben Bildes alles neu, bevor
+ * gezeichnet wird. Alles, was Knochen später braucht (Treffer, Waffen, Laternen), fragt über `getWorldPosition`, das sich selbst
+ * aktualisiert.
+ *
+ * Wichtig: Eine solche Figur darf in diesem Bild auch NICHT gezeichnet werden. Ihre Netze und Knochen tragen veraltete
+ * Weltmatrizen (bei frisch erzeugten Figuren die Einheitsmatrix am Weltursprung), und three.js prüft das Sichtfeld mit genau
+ * diesen Matrizen. Blickte die Kamera zufällig zum Ursprung, zeichnete es die Figur dort mit teils aktuellen, teils
+ * veralteten Knochen: lange Streifen und Flächen vom Ursprung bis zur Figur (Startbildschirm, Hafenstadt). Darum wird der
+ * Halter für die Dauer des Zeichnens unsichtbar gemacht (`restoreCulledHolders` nach dem Bild); das gilt für alle
+ * Durchgänge (Hauptbild, Schattenkaskaden, Spiegelung, Umgebungsverdeckung).
  */
 const culled = new Set<Object3D>();
+/** Halter, die `updateCulledHolders` für dieses Bild ausgeblendet hat (werden nach dem Zeichnen wieder eingeblendet) */
+const hiddenNow: Object3D[] = [];
 const frustum = new Frustum();
 const pv = new Matrix4();
 const sph = new Sphere();
@@ -28,20 +37,42 @@ const sph = new Sphere();
 const CULL_MARGIN = 6;
 
 export function registerCulled<T extends Object3D>(o: T): T { culled.add(o); return o; }
-export function unregisterCulled(o: Object3D) { culled.delete(o); o.userData.skipKids = false; }
+export function unregisterCulled(o: Object3D) {
+  culled.delete(o);
+  o.userData.skipKids = false;
+  const i = hiddenNow.indexOf(o);
+  if (i >= 0) { hiddenNow.splice(i, 1); o.visible = true; }
+}
 
-/** Einmal je Bild vor dem Zeichnen: welche Figuren liegen außerhalb des Bilds? */
+/** Einmal je Bild vor dem Zeichnen: welche Figuren liegen außerhalb des Bilds? Sie werden bis `restoreCulledHolders` ausgeblendet. */
 export function updateCulledHolders(camera: Camera) {
   if (!culled.size) return;
+  // Falls ein früheres Bild nicht bis zum Ende kam (Ausnahme beim Zeichnen), zuerst alles zurückstellen
+  restoreCulledHolders();
   camera.updateMatrixWorld();
   pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   frustum.setFromProjectionMatrix(pv);
   for (const h of culled) {
+    h.userData.skipKids = false;
+    // vom Spiel selbst ausgeblendet (zum Beispiel zu weit weg): nichts zu tun
+    if (!h.visible) continue;
+    // Die Weltmatrix des Halters jetzt frisch rechnen (in einem ausgeblendeten Halter tut das die Szenenaktualisierung nicht)
+    h.updateWorldMatrix(true, false);
     const e = h.matrixWorld.elements;
     sph.center.set(e[12], e[13], e[14]);
     sph.radius = CULL_MARGIN;
-    h.userData.skipKids = h.visible && !frustum.intersectsSphere(sph);
+    if (!frustum.intersectsSphere(sph)) {
+      h.userData.skipKids = true;
+      h.visible = false;
+      hiddenNow.push(h);
+    }
   }
+}
+
+/** Nach dem Zeichnen: die für dieses Bild ausgeblendeten Figuren wieder einblenden (das Spiel sieht sie als sichtbar) */
+export function restoreCulledHolders() {
+  for (let i = 0; i < hiddenNow.length; i++) hiddenNow[i].visible = true;
+  hiddenNow.length = 0;
 }
 
 export function installMatrixSkip(scene: Scene) {
@@ -51,21 +82,6 @@ export function installMatrixSkip(scene: Scene) {
     Object3D.prototype.updateMatrixWorld = function (this: Object3D, force?: boolean) {
       if (!inSceneUpdate) { base.call(this, force); return; }
       if (this.visible === false) return;
-      const ud = this.userData;
-      if (ud.skipKids === true) {
-        // nur den Halter selbst aktualisieren, die Knochen darunter nicht
-        if (this.matrixAutoUpdate) this.updateMatrix();
-        if (this.matrixWorldNeedsUpdate || force) {
-          if (this.matrixWorldAutoUpdate === true) {
-            if (this.parent === null) this.matrixWorld.copy(this.matrix);
-            else this.matrixWorld.multiplyMatrices(this.parent.matrixWorld, this.matrix);
-          }
-          this.matrixWorldNeedsUpdate = false;
-        }
-        ud.wasSkipped = true;
-        return;
-      }
-      if (ud.wasSkipped === true) { ud.wasSkipped = false; force = true; }
       base.call(this, force);
     };
   }

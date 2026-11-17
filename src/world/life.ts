@@ -79,6 +79,12 @@ export class SeaLife {
         mode: 'orbit', timer: 0, ahead: 0, side: 0, tidy: Math.random(),
       });
     }
+    // Startstellung gleich setzen: Instanzmatrizen beginnen als Einheitsmatrix. Ohne das säßen alle Möwen im Startbildschirm
+    // (vor dem ersten `update`) als weißer Klumpen übereinander am Weltursprung
+    const fa = this.gullFlap.array as Float32Array;
+    this.gullData.forEach((d, i) => { fa[i * 2] = d.ph; fa[i * 2 + 1] = d.fl; this.placeGull(i, d); });
+    this.gulls.instanceMatrix.needsUpdate = true;
+    this.gullFlap.needsUpdate = true;
 
     // Wal
     this.whale = new Group();
@@ -109,7 +115,11 @@ export class SeaLife {
     g.add(hull, mast, sail);
     addOutlines(g);
     this.scene.add(g);
-    return { g, cx, cz, r, a: Math.random() * Math.PI * 2, speed: 0.08 + Math.random() * 0.05 };
+    // gleich auf die Bahn setzen (sonst liegen alle Boote bis zum ersten `update` übereinander am Weltursprung)
+    const a = Math.random() * Math.PI * 2;
+    g.position.set(cx + Math.cos(a) * r, -0.1, cz + Math.sin(a) * r);
+    g.rotation.y = -a;
+    return { g, cx, cz, r, a, speed: 0.08 + Math.random() * 0.05 };
   }
 
   private addDolphin(): DolphinModel {
@@ -139,6 +149,8 @@ export class SeaLife {
       g.add(bottle, cork);
     }
     addOutlines(g);
+    // gleich an den Ort setzen (die Höhe folgt im `update`); sonst läge das Treibgut bis dahin am Weltursprung
+    g.position.set(x, 0.05, z);
     this.scene.add(g);
     this.floaters.push({ g, x, z, kind, t: Math.random() * 10 });
   }
