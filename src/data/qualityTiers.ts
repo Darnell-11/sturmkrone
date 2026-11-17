@@ -90,7 +90,7 @@ export const RENDER_LOOK = {
   /** Leuchten nur über Helligkeit 1: Sonne, Laternen, Magie – normale Flächen bleiben im Mittag unter 0,8 */
   bloom: { threshold: 1.0, smoothing: 0.12, intensity: 1.3, radius: 0.78 },
   /** dezente Vignette an den Bildrändern */
-  vignette: { offset: 0.38, darkness: 0.42 },
+  vignette: { offset: 0.4, darkness: 0.3 },
 };
 
 export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {

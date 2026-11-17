@@ -1889,7 +1889,23 @@ export class SeaWorld {
     for (const n of this.visitors) n.update(dt, p, Math.hypot(cam.x - n.x, cam.z - n.z));
   }
 
-  /** Im Menü: Schiff treibt, Zeit und Wetter laufen weiter */
+  /**
+   * Startbildschirm: strahlender Karibik-Vormittag bei klarem Himmel, die Zeit steht still (sonst wandert die Stimmung
+   * innerhalb von Minuten in Abendrot und Nacht) und das Wetter wechselt nicht.
+   */
+  titleMood() {
+    this.env.setState({ time: 10.1 + Math.random() * 1.6, weather: 'klar' });
+    this.env.timeSpeed = 0;
+    this.env.weather.auto = false;
+  }
+
+  /** Beim Betreten des Spiels läuft der Tag wieder, das Wetter wechselt wieder von selbst */
+  leaveTitle() {
+    this.env.timeSpeed = 1;
+    this.env.weather.auto = true;
+  }
+
+  /** Im Menü: Schiff treibt, Wellen und Leben laufen weiter (Zeit und Wetter stehen, siehe titleMood) */
   idle(dt: number) {
     this.env.update(dt, this.focus);
     this.menuOrbit += dt * 0.08;
@@ -2051,9 +2067,17 @@ export class SeaWorld {
       this.camSailInit = false;
       // Segel aus der Draufsicht wieder undurchsichtig machen (zu Fuß an Land oder im Menü sieht man sonst durch sie hindurch)
       if (this.sailFaded && !this.ownDeck) this.setSailFade(this.ship, false);
-      const a = this.menuOrbit;
-      cam.position.set(x + Math.sin(a) * 32, 15 + Math.sin(a * 2) * 1.5, z + Math.cos(a) * 32);
-      cam.lookAt(x, 4, z);
+      // Titelbild: ruhige Kamerafahrt vor der Insel (statt voller Umkreisung, die oft nur leeres Meer zeigt). Die Kamera schwingt
+      // langsam um die Richtung, aus der man Strand, Palmen und Hafen hinter dem Schiff sieht (menuOrbit ist die Phase, nicht ein Winkel).
+      // Auf breiten Bildschirmen steht das Schiff links neben dem Menü, nicht dahinter.
+      const a = 2.55 + Math.sin(this.menuOrbit) * 0.5;
+      const R = 44;
+      const wide = innerWidth > innerHeight * 1.15 && innerWidth >= 900;
+      // seitlicher Versatz in Metern, so dass das Schiff in der Mitte des freien Bildteils neben dem Menü (480 px breit) steht
+      const halfW = R * Math.tan(MathUtils.degToRad(cam.fov / 2)) * (innerWidth / innerHeight);
+      const side = wide ? (0.5 + 240 / innerWidth) * halfW : 0;
+      cam.position.set(x + Math.sin(a) * R, 12 + Math.sin(this.menuOrbit * 1.7) * 0.9, z + Math.cos(a) * R);
+      cam.lookAt(x + Math.cos(a) * side, wide ? 6.5 : 4.5, z - Math.sin(a) * side);
       this.focus.set(x, wy + 2, z);
     } else {
       // Kampfkamera wie in 1.0: das nächste Feindschiff kommt mit ins Bild

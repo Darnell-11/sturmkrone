@@ -232,6 +232,9 @@ export class Ocean {
     uShoreSize: { value: SHORE_SIZE },
     uWorldR: { value: WORLD_RADIUS },
     uDeep: { value: new Color(0x0b6a96) },
+    /** Mitteltiefes Wasser (Azur) und heller Sand des Meeresgrunds (derselbe Ton wie der Inselstrand) */
+    uMid: { value: new Color(0x0e93c9) },
+    uSand: { value: new Color(0xf3e5c2) },
     uShallow: { value: new Color(0x33c4d2) },
     uFoam: { value: new Color(0xffffff) },
     uZenith: { value: new Color(0x2a7fd6) },
@@ -308,7 +311,7 @@ export class Ocean {
           uniform sampler2D uShore;
           uniform float uShoreSize;
           uniform float uWorldR;
-          uniform vec3 uDeep, uShallow, uFoam, uZenith, uHorizon, uSunDir, uSunCol;
+          uniform vec3 uDeep, uMid, uSand, uShallow, uFoam, uZenith, uHorizon, uSunDir, uSunCol;
           uniform float uSpecK, uWindDir, uWindK, uDetail, uWaterAlpha;
           ${hullGlsl(wakeN)}
           varying vec3 vSkW;
@@ -370,21 +373,31 @@ export class Ocean {
             skD.y += h0;
           }
           float sd = texture2D(uShore, vSkW.xz / uShoreSize + 0.5).r * 255.0;
-          float shallow = 1.0 - smoothstep(0.0, 48.0, sd);
-          // Tiefes Wasser bleibt satt und dunkel; nur Wellenberge und Küsten werden heller
-          vec3 skBase = mix(uDeep, uShallow, clamp(shallow * 0.92 + smoothstep(-0.6, 1.8, skD.y) * 0.13, 0.0, 1.0));
+          // Wassertiefe (Meter) aus dem Küstenabstand: flache Lagune am Strand, dazu Sandbänke und Riffflecken, dann der Abfall in die offene See
+          float skSb = skNoise(vSkW.xz * 0.021 + 5.3) * 0.62 + skNoise(vSkW.xz * 0.057 - 2.1) * 0.38;
+          float skBank = smoothstep(0.52, 0.74, skSb) * smoothstep(10.0, 45.0, sd) * (1.0 - smoothstep(60.0, 215.0, sd));
+          float skZ = max(0.1 + sd * 0.042 + smoothstep(52.0, 235.0, sd) * 24.0 - skBank * (1.1 + sd * 0.028), 0.08);
+          float shallow = 1.0 - smoothstep(0.0, 3.2, skZ);
+          // Wassersäule: leuchtendes Türkis (flach) → Azur → tiefes Saphirblau. Wellenberge sind etwas heller.
+          vec3 skWater = mix(uShallow, uMid, smoothstep(1.2, 8.0, skZ));
+          skWater = mix(skWater, uDeep, smoothstep(7.0, 30.0, skZ));
+          skWater *= 0.94 + 0.14 * smoothstep(-0.8, 1.6, skD.y);
+          // Meeresgrund: heller Sand scheint durch das klare Wasser, Rot wird zuerst verschluckt (daher türkis);
+          // Lichtnetze (Kaustiken) wandern darüber. Mit der Tiefe verschwindet der Grund.
+          vec2 skCp = vSkW.xz * 0.5;
+          float skC1 = abs(skNoise(skCp + skOsc(0.3, 0.25)) - skNoise(skCp * 1.73 - skOsc(0.21, 0.27)));
+          float skC2 = abs(skNoise(skCp * 2.3 + skOsc(0.27, 0.33) + 7.0) - skNoise(skCp * 3.9 - skOsc(0.18, 0.24)));
+          float caust = pow(max(1.0 - clamp(skC1 * 2.4, 0.0, 1.0), 1e-4), 6.0) * 0.75 + pow(max(1.0 - clamp(skC2 * 2.8, 0.0, 1.0), 1e-4), 6.0) * 0.55;
+          float skCFade = (1.0 - smoothstep(70.0, 260.0, camD)) * uSpecK;
+          vec3 skAbs = exp(-vec3(0.62, 0.11, 0.05) * skZ * 1.7);
+          vec3 skBed = uSand * (0.74 + 0.2 * skNoise(vSkW.xz * 0.8 + 3.0) + caust * 1.15 * skCFade) * skAbs;
+          float skVis = exp(-skZ * 0.55);
+          vec3 skBase = mix(skWater, skBed * 0.95 + skWater * 0.2, clamp(skVis * 1.05, 0.0, 1.0));
           // Großflächige Farbfelder: Strömungen und Plankton färben das Meer mal türkisgrün, mal tiefblau (langsam, ohne Wandern)
           {
             float pt = skNoise(vSkW.xz * 0.0035 + skOsc(0.01, 0.013) * 0.3) * 0.65 + skNoise(vSkW.xz * 0.012 - skOsc(0.02, 0.017) * 0.3) * 0.35;
             skBase = mix(skBase, skBase * vec3(0.8, 1.1, 1.12) + vec3(0.0, 0.015, 0.02), smoothstep(0.4, 0.78, pt) * 0.55 * (1.0 - shallow));
             skBase = mix(skBase, skBase * vec3(0.88, 0.94, 1.12), (1.0 - smoothstep(0.15, 0.55, pt)) * 0.35 * (1.0 - shallow));
-          }
-          // Lichtspiele am Grund im Flachwasser (Kaustiken)
-          {
-            vec2 cp = vSkW.xz * 0.38;
-            float c1 = abs(skNoise(cp + skOsc(0.3, 0.25)) - skNoise(cp * 1.7 - skOsc(0.21, 0.27)));
-            float caust = pow(max(1.0 - clamp(c1 * 2.2, 0.0, 1.0), 1e-4), 5.0);
-            skBase += uShallow * caust * shallow * shallow * 0.45 * uSpecK * (1.0 - smoothstep(60.0, 220.0, camD));
           }
           // Gischt auf Wellenkämmen, aufgebrochen durch Rauschen
           float nz = skNoise(vSkW.xz * 0.35 + skOsc(0.17, 0.13)) * 0.6 + skNoise(vSkW.xz * 1.3 - skOsc(0.2, 0.23)) * 0.4;
@@ -408,12 +421,16 @@ export class Ocean {
           skFoam *= smoothstep(0.34, 0.66, lace2 * 0.65 + strand * 0.45 + skFoam * 0.08) * 0.9;
           // Brandungsringe und Küstenlinie
           // anrollende Brandungswellen: schmale, aufgerissene Schaumlinien, die zur Küste hin dichter werden
-          float bands = smoothstep(0.9, 0.995, sin(sd * 0.45 - uTime * 0.9 + nz * 1.2)) * (1.0 - smoothstep(3.0, 22.0, sd));
-          float coast = 1.0 - smoothstep(0.0, 4.5, sd + (nz - 0.5) * 3.0);
+          // (Karibik: breite Brandungszone, mehrere Wellenzüge laufen auf den Strand, dazu ein Schaumteppich, der den Sand hinauf- und herunterläuft)
+          float skSurf = sd * 0.3 - uTime * 0.55 + nz * 1.5;
+          float bands = smoothstep(0.82, 0.985, sin(skSurf * 3.14159)) * (1.0 - smoothstep(5.0, 38.0, sd));
+          float coast = 1.0 - smoothstep(0.0, 5.5, sd + (nz - 0.5) * 3.5);
           // blasiger Küstenschaum: dichte Kante, nach außen zerfasernde Spitze statt glatter Fläche
           float bub = skNoise(vSkW.xz * 2.2 + skOsc(0.25, 0.18)) * 0.6 + skNoise(vSkW.xz * 5.5 - skOsc(0.31, 0.22)) * 0.4;
-          float coastFoam = coast * smoothstep(0.62 - coast * 0.5, 0.75 - coast * 0.45, bub);
-          skFoam = max(skFoam, max(bands * smoothstep(0.35, 0.6, bub) * 0.75, coastFoam * 0.9));
+          float coastFoam = coast * smoothstep(0.58 - coast * 0.5, 0.72 - coast * 0.45, bub);
+          float wash = (1.0 - smoothstep(0.0, 9.0, sd + (nz - 0.5) * 6.0)) * (0.5 + 0.5 * sin(uTime * 0.85 + nz * 7.0));
+          float washFoam = wash * smoothstep(0.4, 0.68, bub);
+          skFoam = max(skFoam, max(max(bands * smoothstep(0.32, 0.58, bub) * 0.85, coastFoam * 0.96), washFoam * 0.7));
           // Schaumstreifen in Windrichtung (je stärker der Wind, desto mehr), wie auf echter offener See
           {
             vec2 wd = vec2(sin(uWindDir), cos(uWindDir));
@@ -545,7 +562,13 @@ export class Ocean {
               vec2 tn = vec2(skNoise(sp2 + skOsc(0.9, 0.7)), skNoise(sp2 * 1.3 - skOsc(0.8, 1.0))) - 0.5;
               vec3 Nt = normalize(Nw + vec3(tn.x, 0.0, tn.y) * 0.5);
               float ts = pow(max(dot(reflect(-Vw, Nt), uSunDir), 1e-4), 700.0);
-              outgoingLight += uSunCol * ts * 5.0 * uSpecK * uDetail * (1.0 - skFoam) * (1.0 - smoothstep(30.0, 260.0, camD));
+              outgoingLight += uSunCol * ts * 7.0 * uSpecK * uDetail * (1.0 - skFoam) * (1.0 - smoothstep(30.0, 260.0, camD));
+              // zweite, feinere Funkelschicht (Sonnenreflexe auf sanften tropischen Wellen)
+              vec2 sp3 = vSkW.xz * 12.0;
+              vec2 tn2 = vec2(skNoise(sp3 + skOsc(1.1, 0.8)), skNoise(sp3 * 1.2 - skOsc(0.9, 1.2))) - 0.5;
+              vec3 Nt2 = normalize(Nw + vec3(tn2.x, 0.0, tn2.y) * 0.7);
+              float ts2 = pow(max(dot(reflect(-Vw, Nt2), uSunDir), 1e-4), 1100.0);
+              outgoingLight += uSunCol * ts2 * 6.0 * uSpecK * uDetail * (1.0 - skFoam) * (1.0 - smoothstep(20.0, 150.0, camD));
             }
             // Licht im Wasserkörper: gegen die Sonne leuchten dünne Wellenkämme grün-türkis, die Wellenflanken zur Sonne werden heller
             float back = pow(clamp(dot(Vw, -uSunDir) * 0.5 + 0.5, 1e-4, 1.0), 3.0);
@@ -570,7 +593,7 @@ export class Ocean {
           // die das Bild danach wieder undurchsichtig machen – sonst wäre das Wasser auf manchen Handys durchsichtig)
           gl_FragColor.a = uWaterAlpha;`);
     };
-    mat.customProgramCacheKey = () => `sk-ocean26-${wakeN}`;
+    mat.customProgramCacheKey = () => `sk-ocean27-${wakeN}`;
     // Kaskaden-Schatten: auch ein neu gebautes Wassermaterial zählt alle Kaskaden als ein Licht
     ensureCsm(mat);
     return mat;

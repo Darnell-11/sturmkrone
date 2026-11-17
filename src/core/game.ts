@@ -332,8 +332,9 @@ export class Game {
         this.worldPending = false;
       }
       preload.step('world', 1);
-      // Titelbild: zufällige schöne Stimmung
-      this.world.setState({ boat: null, env: { time: [7, 10, 17.8, 18.6][Math.floor(Math.random() * 4)], weather: 'klar' } });
+      // Titelbild: strahlender Karibik-Vormittag (Zeit und Wetter stehen, bis das Spiel beginnt)
+      this.world.setState({ boat: null });
+      this.world.titleMood();
       preload.setPhase('Figuren und Animationen werden geladen …');
       this.assets = await CharacterAssets.load();
       preload.completeFiles();
@@ -2072,6 +2073,7 @@ export class Game {
     this.session++;
     this.slot = slot;
     this.save = data;
+    this.world.leaveTitle();
     this.world.setState({ boat: data.world.boat, env: { time: data.world.time, weather: data.world.weather as WeatherId } });
     const p = data.player;
     this.world.playerFaction = p.faction;
@@ -2131,6 +2133,7 @@ export class Game {
     this.save = null;
     this.slot = null;
     this.quests = null;
+    this.world.titleMood();
     this.state.set('menu');
     this.menus.showMain();
   }

@@ -2,8 +2,8 @@ import { Effect } from 'postprocessing';
 import { Uniform } from 'three';
 
 /**
- * Filmische Farbkorrektur für den ernsten, düsteren Anime-Look:
- * Schatten kühl und stahlblau, Lichter warm, Farben leicht entsättigt, mehr Kontrast.
+ * Filmische Farbkorrektur für den Karibik-Look:
+ * Schatten frisch und türkisblau, Lichter sonnig-golden, Farben kräftig und lebendig, mäßiger Kontrast.
  * Der Alpha-Kanal bleibt unangetastet (er markiert Wasser für Konturen und Schattierung).
  */
 const FRAG = /* glsl */ `
@@ -15,9 +15,9 @@ const FRAG = /* glsl */ `
   void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
     vec3 c = inputColor.rgb;
     float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-    // Teiltonung: Schatten Richtung Stahlblau, Lichter Richtung Bernstein
-    vec3 shadowTone = vec3(0.82, 0.92, 1.06);
-    vec3 lightTone = vec3(1.06, 1.0, 0.9);
+    // Teiltonung: Schatten Richtung Türkisblau, Lichter Richtung sonniges Gold
+    vec3 shadowTone = vec3(0.9, 0.99, 1.04);
+    vec3 lightTone = vec3(1.04, 1.0, 0.94);
     vec3 graded = c * mix(shadowTone, lightTone, smoothstep(0.05, 0.75, l));
     // Nacht: Mondlicht-Look – Schatten und Mitteltöne ins Blau-Türkis, ein kleiner Aufheller, damit nichts absäuft
     graded *= mix(vec3(1.0), vec3(0.84, 0.97, 1.18), uNight * (1.0 - smoothstep(0.1, 0.85, l)));
@@ -36,7 +36,7 @@ const FRAG = /* glsl */ `
   }`;
 
 export class GradeEffect extends Effect {
-  constructor(strength = 1, saturation = 0.84, contrast = 0.32) {
+  constructor(strength = 1, saturation = 1.1, contrast = 0.2) {
     super('GradeEffect', FRAG, {
       uniforms: new Map<string, Uniform>([
         ['uStrength', new Uniform(strength)],

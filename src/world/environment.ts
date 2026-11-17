@@ -17,7 +17,8 @@ import { Weather } from './weather';
 import { WorldEdge } from './worldEdge';
 import { smokeShared } from './smoke';
 
-const BOUNCE = new Color('#9A8A70');
+/** Rückstrahl von hellem Sand und flachem Türkiswasser: Schatten bleiben frisch statt braun oder schwarz */
+const BOUNCE = new Color('#c9d6a8');
 
 export interface EnvState { time: number; weather: WeatherId }
 
@@ -300,7 +301,8 @@ export class Environment {
       const h = this.time;
       const dusk = Math.max(0, 1 - Math.min(Math.abs(h - 18.6), Math.abs(h - 6.4)) / 1.6);
       const night = h < 5.5 || h > 20 ? 1 : 0;
-      toonShared.shadowTint.value.setRGB(0.74 + dusk * 0.14 - night * 0.06, 0.8 - dusk * 0.1, 1.12 + dusk * 0.04 + night * 0.08);
+      // tags frisches Türkisblau (tropische Schatten), im Abendrot warm-rosa, nachts tiefes Blau
+      toonShared.shadowTint.value.setRGB(0.72 + dusk * 0.2 - night * 0.04, 0.88 - dusk * 0.14, 1.08 + dusk * 0.0 + night * 0.1);
     }
     toonShared.shadowTint.value.multiplyScalar(1 - 0.08 * pal.noon);
     toonShared.rimStrength.value = 0.55 * (1 - greyK * 0.6) * (0.35 + 0.65 * pal.sunVis);
@@ -309,7 +311,9 @@ export class Environment {
     const ou = this.ocean.uniforms;
     ou.uDeep.value.copy(pal.seaDeep).lerp(this.tmpGrey.copy(GREY).multiplyScalar(0.3), greyK * 0.5);
     ou.uShallow.value.copy(pal.seaShallow).lerp(this.tmpGrey.copy(GREY).multiplyScalar(0.55), greyK * 0.4);
+    ou.uMid.value.copy(pal.seaMid).lerp(this.tmpGrey.copy(GREY).multiplyScalar(0.42), greyK * 0.45);
     ou.uDeep.value.multiplyScalar(0.55 + 0.45 * gloom);
+    ou.uMid.value.multiplyScalar(0.55 + 0.45 * gloom);
     ou.uShallow.value.multiplyScalar(0.55 + 0.45 * gloom);
     ou.uZenith.value.copy(zenith);
     ou.uHorizon.value.copy(horizon);

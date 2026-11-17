@@ -2,12 +2,12 @@ import { Color, MathUtils, Vector3 } from 'three';
 import { TIME_KEYS, type TimeKey } from '../data/world';
 
 type ColorKey = Exclude<keyof TimeKey, 'h' | 'name' | 'lightI' | 'ambientI' | 'stars'>;
-const COLOR_KEYS: ColorKey[] = ['zenith', 'horizon', 'light', 'ambientSky', 'ambientGround', 'seaDeep', 'seaShallow', 'cloudLit', 'cloudShade', 'rim'];
+const COLOR_KEYS: ColorKey[] = ['zenith', 'horizon', 'light', 'ambientSky', 'ambientGround', 'seaDeep', 'seaMid', 'seaShallow', 'cloudLit', 'cloudShade', 'rim'];
 
 export interface Palette {
   name: string;
   zenith: Color; horizon: Color; light: Color; ambientSky: Color; ambientGround: Color;
-  seaDeep: Color; seaShallow: Color; cloudLit: Color; cloudShade: Color; rim: Color;
+  seaDeep: Color; seaMid: Color; seaShallow: Color; cloudLit: Color; cloudShade: Color; rim: Color;
   lightI: number; ambientI: number; stars: number;
   sunDir: Vector3; moonDir: Vector3;
   /** Sichtbarkeit von Sonne bzw. Mond über dem Horizont (0 … 1) */
@@ -23,7 +23,7 @@ export interface Palette {
 export function createPalette(): Palette {
   return {
     name: '', zenith: new Color(), horizon: new Color(), light: new Color(), ambientSky: new Color(), ambientGround: new Color(),
-    seaDeep: new Color(), seaShallow: new Color(), cloudLit: new Color(), cloudShade: new Color(), rim: new Color(),
+    seaDeep: new Color(), seaMid: new Color(), seaShallow: new Color(), cloudLit: new Color(), cloudShade: new Color(), rim: new Color(),
     lightI: 1, ambientI: 1, stars: 0, sunDir: new Vector3(), moonDir: new Vector3(), sunVis: 1, moonVis: 0, lightDir: new Vector3(), lightK: 1, noon: 0,
   };
 }
@@ -63,13 +63,13 @@ export function samplePalette(hour: number, out: Palette): Palette {
   celestial(h + 12, 52, out.moonDir);
   out.sunVis = MathUtils.smoothstep(out.sunDir.y, -0.04, 0.06);
   out.moonVis = MathUtils.smoothstep(out.moonDir.y, -0.04, 0.08) * (1 - out.sunVis);
-  // Mittagskurve: steht die Sonne hoch, wird ihr Licht wärmer und etwas schwächer, das blaue Himmelsfüllicht sinkt –
-  // so bleiben harte Schatten und die Texturen von Stein, Holz und Gras erhalten, statt in weiß-blauem Licht auszuwaschen
+  // Mittagskurve: steht die Sonne hoch, wird ihr Licht goldener (#fff3d1) und etwas schwächer, das Himmelsfüllicht bleibt lichtblau –
+  // so bleiben kräftige Schatten und die Texturen von Stein, Holz und Gras erhalten, statt in weiß-blauem Licht auszuwaschen
   out.noon = MathUtils.smoothstep(out.sunDir.y, 0.6, 0.93) * out.sunVis;
-  out.light.lerp(tmpA.setRGB(1, 0.93, 0.8), 0.38 * out.noon);
-  out.ambientSky.lerp(tmpA.setRGB(0.78, 0.82, 0.84), 0.3 * out.noon);
-  out.lightI *= 1 - 0.08 * out.noon;
-  out.ambientI *= 1 - 0.1 * out.noon;
+  out.light.lerp(tmpA.setRGB(1, 0.9, 0.64), 0.3 * out.noon);
+  out.ambientSky.lerp(tmpA.setRGB(0.4, 0.66, 0.96), 0.22 * out.noon);
+  out.lightI *= 1 - 0.06 * out.noon;
+  out.ambientI *= 1 - 0.04 * out.noon;
   // Hauptlicht nie ganz flach, damit Schatten nicht endlos lang werden
   out.lightDir.copy(out.sunVis >= 0.5 || out.sunDir.y > out.moonDir.y ? out.sunDir : out.moonDir);
   // Übergabe Sonne ↔ Mond: das Hauptlicht blendet um den Wechsel herum aus und wieder ein,
