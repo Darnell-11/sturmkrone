@@ -155,7 +155,8 @@ function hullGlsl(wakeN: number): string { return /* glsl */ `
         best = dq;
         vec2 dir = mix(d1.xy, d2.xy, tt);
         dir /= max(length(dir), 1e-3);
-        bs = dot(e, vec2(dir.y, -dir.x));
+        // Abstand zur Spur selbst (stetig). Die Projektion auf die Segmentrichtung sprang an den Knicken der Spur und zeichnete scharfe Kanten
+        bs = sqrt(dq);
         bage = mix(w.z, two ? w2.z : w.z, tt);
         bhw = mix(d1.z, d2.z, tt);
         bspd = mix(d1.w, d2.w, tt);
@@ -458,7 +459,7 @@ export class Ocean {
               float life = wstr * (1.0 - smoothstep(0.4, 4.2, wage)) * smoothstep(0.0, 0.25, wage);
               float lace = skNoise(vSkW.xz * 1.5 + vec2(0.0, uTime * 0.1)) * 0.5 + skNoise(vSkW.xz * 4.2 - uTime * 0.1) * 0.35 + skNoise(vSkW.xz * 10.0) * 0.15;
               float thr = 0.57 + (1.0 - core) * 0.32 + wage * 0.07;
-              skFoam = max(skFoam, smoothstep(thr, thr + 0.16, lace + core * 0.24) * core * life * 0.75);
+              skFoam = max(skFoam, smoothstep(thr, thr + 0.3, lace + core * 0.24) * core * life * 0.75);
               skWk = (1.0 - smoothstep(0.0, w0 * 3.0, ax)) * life;
             }
           }
@@ -509,9 +510,9 @@ export class Ocean {
           }
           {
             // brechender Schaum auf den steilen Verdrängungskämmen, in Fäden aufgerissen
-            float brk = smoothstep(0.5, 1.15, skHg);
+            float brk = smoothstep(0.8, 2.0, skHg);
             float lc = skNoise(vSkW.xz * 2.4 + skOsc(0.33, 0.2)) * 0.55 + skNoise(vSkW.xz * 6.5 - skOsc(0.25, 0.29)) * 0.45;
-            skFoam = max(skFoam, smoothstep(0.5, 0.78, lc + brk * 0.4) * brk * 0.8);
+            skFoam = max(skFoam, smoothstep(0.42, 0.98, lc + brk * 0.4) * brk * 0.6);
             skAer = max(skAer, brk * 0.6);
           }
           skBase = mix(skBase, skBase * 1.5 + vec3(0.03, 0.1, 0.11), clamp(skAer, 0.0, 1.0) * 0.55);
@@ -593,7 +594,7 @@ export class Ocean {
           // die das Bild danach wieder undurchsichtig machen – sonst wäre das Wasser auf manchen Handys durchsichtig)
           gl_FragColor.a = uWaterAlpha;`);
     };
-    mat.customProgramCacheKey = () => `sk-ocean27-${wakeN}`;
+    mat.customProgramCacheKey = () => `sk-ocean28-${wakeN}`;
     // Kaskaden-Schatten: auch ein neu gebautes Wassermaterial zählt alle Kaskaden als ein Licht
     ensureCsm(mat);
     return mat;

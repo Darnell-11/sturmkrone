@@ -1,5 +1,9 @@
 # Was ist neu
 
+## 2.9.87 – Weichere Schaumkanten hinter dem Schiff (17.11.2026)
+
+- **Scharfe, kantige Schaumstreifen im Wasser hinter dem Schiff** (bei jedem Wetter): Der brechende Schaum auf den Verdrängungskämmen (`brk` im Ozean-Shader, `world/ocean.ts`) setzte mit harter Schwelle an und zeichnete dünne, gerade Linien und eckige Flecken. Er setzt jetzt später und über einen breiteren `smoothstep` ein und ist etwas schwächer. Außerdem rechnet die Kielwasser-Spur mit dem echten Abstand zur Spur statt mit der Projektion auf die Segmentrichtung, die an Knicken in Kurven sprang, und der Schaumrand der Spur ist weicher. Sonst keine Änderung an den Schiffs- und Wassereffekten. `npx tsc --noEmit` fehlerfrei, Kurvenfahrt im Spiel geprüft (die dünne Linie ist zur weichen Wolke geworden).
+
 ## 2.9.86 – Kampf-Kollision ohne Wanddurchbrüche, Segel-HP und Crew-% als spürbare Schiffsmechanik (17.11.2026)
 
 Erster Schritt der Mehrspieler-tauglichen Kampfphysik: Alles, was später für Coop synchronisiert werden soll, läuft jetzt über eindeutige Kennungen, Absichten und serialisierbaren Zustand, getrennt von der Darstellung. Es gibt noch kein Backend.
