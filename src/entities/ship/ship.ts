@@ -6,11 +6,19 @@ import { glowHub, makeEmitter } from '../../render/glow';
 import { disposeObject, markShared } from '../../render/dispose';
 import { wetShared } from '../../render/wetness';
 import type { SailUniforms } from '../../render/flags';
+import { mintEntityId, type EntityId } from '../../sim/entityId';
+import type { CrewRefillIntent, SailRepairIntent } from '../../sim/intents';
+import {
+  applyDamage, applyStorm, createShipSim, crewEffects, crewFrac, missingHeads, refillCrew, sailFrac, sailPerformance,
+  setCrewFrac, startRepair, stepPassiveRepair, stepRepair, stepSailSet, type CrewEffects, type SailPerformance, type ShipSimState,
+} from '../../naval/shipSim';
 
 export interface SeaEnv {
   heightAt(x: number, z: number): number;
   windDir: number;
   windStrength: number;
+  /** Sturmstärke 0 … 1 (Wellenhöhe über dem Regenwetter): reißt gesetztes Tuch ein */
+  storm?: number;
   time: number;
   /** Sonnenrichtung (zeigt zur Sonne) und Sichtbarkeit 0 … 1: Licht scheint durch die Segel */
   sunDir?: { x: number; y: number; z: number };
@@ -23,6 +31,15 @@ const HOLE_MAT = markShared(new MeshBasicMaterial({ color: 0x1b1410, side: 2 }))
 
 /** Ein Schiff mit Fahrphysik, Schadenszonen und sichtbaren Schäden. */
 export class Ship {
+  /** Kennung dieses Schiffs (Schadens-, Reparatur- und Crew-Absichten sprechen es darüber an) */
+  readonly entityId: EntityId;
+  /** Serialisierbarer Zustand: Rumpf, Segel-HP, Crew je Schiff, gesetztes Tuch, Reparatur-Auftrag. Das Schiff stellt ihn nur dar. */
+  readonly sim: ShipSimState;
+  /** Wirkung der Crew und des Segelzustands (je Bild neu berechnet, ohne Zuweisungen) */
+  readonly crewFx: CrewEffects = { reloadMult: 1, sailSetRate: 0, repairPerSec: 0, repairTime: 1 };
+  readonly perf: SailPerformance = { speed: 1, accel: 1, turn: 1, drift: 0 };
+  /** Rumpfpunkte je Sekunde zusätzlich (Schiffskoch), wirken nur mit genug Crew */
+  repairBonus = 0;
   model: ShipModel;
   cls: ShipClass;
   x = 0;
@@ -37,10 +54,6 @@ export class Ship {
   turnMult = 1;
   /** Höchsttempo der KI-Schiffe (wie in 1.0 langsamer als der Spieler); null = frei */
   speedCap: number | null = null;
-  hull: number;
-  maxHull: number;
-  sail = 1;
-  crew = 1;
   fire = 0;
   reloadL = 0;
   reloadR = 0;
@@ -80,7 +93,8 @@ export class Ship {
   /** hero: Spielerschiff – bekommt Laternenlichter und rechnet die Segel-Normalen jedes Bild neu */
   constructor(private scene: Scene, tier: number, public look: ShipLook, readonly faction: 'pirat' | 'marine', hullBonus = 0, private hero = false) {
     this.cls = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier))];
-    this.maxHull = this.hull = this.cls.hp + hullBonus;
+    this.entityId = mintEntityId('ship');
+    this.sim = createShipSim(this.entityId, this.cls.hp + hullBonus, this.cls.hp, this.cls.crew);
     this.model = buildShip(this.cls, look, hero);
     scene.add(this.model.group);
     this.glowLights();
@@ -93,6 +107,19 @@ export class Ship {
     for (const w of this.model.windows) if (!w.userData.noHalo) glowHub.add(makeEmitter('window', 0, 0, 0, { obj: w, size: 0.5, owner: this }));
   }
 
+  get hull() { return this.sim.hull; }
+  set hull(v: number) { this.sim.hull = v; }
+  get maxHull() { return this.sim.maxHull; }
+  set maxHull(v: number) { this.sim.maxHull = v; }
+  /** Segelzustand 0 … 1 (Anteil der Segel-HP) */
+  get sail() { return sailFrac(this.sim); }
+  set sail(v: number) { this.sim.sail.hp = Math.max(0, Math.min(1, v)) * this.sim.sail.max; }
+  /** Crew-% 0 … 1 */
+  get crew() { return crewFrac(this.sim.crew); }
+  set crew(v: number) { setCrewFrac(this.sim.crew, Math.max(0, Math.min(1, v))); }
+  /** Faktor auf die Nachladezeit der Geschütze nach Crew-% */
+  get reloadScale() { return crewEffects(this.crew, this.crewFx).reloadMult; }
+
   /** Ruderausschlag −1 … 1 (für Steuerrad und Haltung des Steuermanns) */
   get steerAmount() { return this.turnInput; }
   get alive() { return this.hull > 0; }
@@ -102,16 +129,25 @@ export class Ship {
   /** Klasse oder Aussehen ändern (Werft) */
   rebuild(tier: number, look: ShipLook, hullBonus = 0) {
     const frac = this.hull / this.maxHull;
+    const sailF = this.sail, crewF = this.crew;
     glowHub.removeOwner(this);
     disposeObject(this.model.group);
     this.cls = SHIP_CLASSES[tier];
     this.look = look;
-    this.maxHull = this.cls.hp + hullBonus;
-    this.hull = Math.max(1, this.maxHull * frac);
+    // Segel-HP und Crew-Höchstwerte folgen der neuen Klasse, die Anteile bleiben erhalten
+    const fresh = createShipSim(this.entityId, this.cls.hp + hullBonus, this.cls.hp, this.cls.crew);
+    this.sim.maxHull = fresh.maxHull;
+    this.sim.hull = Math.max(1, this.sim.maxHull * frac);
+    this.sim.sail = fresh.sail;
+    this.sim.crew = fresh.crew;
+    this.sim.repair = null;
+    this.sail = sailF;
+    this.crew = crewF;
     this.model = buildShip(this.cls, look, this.hero);
     this.scene.add(this.model.group);
     this.glowLights();
     this.holes = 0;
+    this.updateSailDamage();
   }
 
   /** Steuerung: throttle −1 … 1 ändert Fahrstufe nicht, turn −1 … 1 */
@@ -125,22 +161,31 @@ export class Ship {
     this.shield -= dt;
     this.reloadL = Math.max(0, this.reloadL - dt);
     this.reloadR = Math.max(0, this.reloadR - dt);
+    // Crew-% und Segelzustand bestimmen Setzen, Fahrt, Wendigkeit, Treiben und die passive Reparatur
+    const sim = this.sim;
+    const fx = crewEffects(this.crew, this.crewFx);
+    const perf = sailPerformance(this.sail, this.perf);
+    const level = this.throttle ?? [0, 0.55, 1][this.sailLevel];
+    if (this.throttle !== null) this.sailLevel = level < 0.05 ? 0 : level < 0.75 ? 1 : 2;
+    stepSailSet(sim, level, dt, fx);
+    stepPassiveRepair(sim, dt, fx, this.repairBonus);
+    if (env.storm) applyStorm(sim, dt, env.storm);
+    this.tickRepair(dt);
     if (this.frozen > 0) { this.speed *= Math.pow(0.05, dt); return; }
     // Wind: Rückenwind schneller, Gegenwind etwas langsamer (Tempo wie in 1.0)
     const rel = Math.cos(this.heading - env.windDir);
     // wie in 1.0: das Tempo hängt nur vom Gashebel ab (der Wind wechselte sonst in jeder Kurve das Tempo)
     const windK = this.throttle !== null ? 1 : 0.96 + 0.24 * (rel * 0.5 + 0.5) + env.windStrength * 0.05;
-    const level = this.throttle ?? [0, 0.55, 1][this.sailLevel];
-    if (this.throttle !== null) this.sailLevel = level < 0.05 ? 0 : level < 0.75 ? 1 : 2;
-    const sailK = level * (0.4 + 0.6 * this.sail);
+    // Fläche des gesetzten Tuchs mal Leistung des Segelzustands (100 % = volle Fahrt, unter 30 % stark verlangsamt, 0 % treibt)
+    const sailK = sim.sailSet * perf.speed;
     let target = this.cls.spd * SEA_SPEED * sailK * windK * speedMult * (this.boost > 0 ? 1.7 : 1);
     if (this.speedCap !== null) target = Math.min(target, this.speedCap);
     // Schwere Schiffe: je größer, desto träger beim Beschleunigen, Bremsen und Wenden (m: 0 Schaluppe … 1 Leviathan)
     const m = Math.min(1, Math.max(0, (this.cls.L - 15) / 59));
-    this.speed += (target - this.speed) * Math.min(1, dt * (target < this.speed ? 0.45 : 0.62) * (1.25 - 0.7 * m));
-    // Wenden: Ruderausschlag baut Drehgeschwindigkeit nur langsam auf und ab; Kurven kosten Fahrt
+    this.speed += (target - this.speed) * Math.min(1, dt * (target < this.speed ? 0.45 : 0.62 * perf.accel) * (1.25 - 0.7 * m));
+    // Wenden: Ruderausschlag baut Drehgeschwindigkeit nur langsam auf und ab; Kurven kosten Fahrt; zerfetztes Tuch lässt das Ruder ins Leere greifen
     this.turnInput += (turn - this.turnInput) * Math.min(1, dt * 4);
-    const maxRate = (0.58 - 0.33 * m) * this.turnMult * (0.3 + 0.7 * Math.min(1, this.speed / 8));
+    const maxRate = (0.58 - 0.33 * m) * this.turnMult * perf.turn * (0.3 + 0.7 * Math.min(1, this.speed / 8));
     this.yawRate += (this.turnInput * maxRate - this.yawRate) * Math.min(1, dt * (1.5 - 0.8 * m));
     this.heading -= this.yawRate * dt;
     this.speed -= this.speed * Math.min(0.5, Math.abs(this.yawRate) * 0.07 * dt);
@@ -152,6 +197,12 @@ export class Ship {
     this.course += dc * Math.min(1, dt * (3.2 - 1.6 * m));
     this.x += Math.sin(this.course) * this.speed * dt;
     this.z += Math.cos(this.course) * this.speed * dt;
+    // Ohne Segel treibt das Schiff mit dem Wind (im Sturm schneller); Bug und Ruder bleiben, wie sie sind
+    if (perf.drift > 0) {
+      const d = (0.35 + 1.7 * env.windStrength) * perf.drift * dt;
+      this.x += Math.sin(env.windDir) * d;
+      this.z += Math.cos(env.windDir) * d;
+    }
     // Feuer frisst den Rumpf
     if (this.fire > 0) { this.fire -= dt; this.hull -= dt * this.maxHull * 0.012; }
   }
@@ -170,15 +221,16 @@ export class Ship {
     pv.x = this.x; pv.z = this.z; pv.heading = this.heading;
   }
 
-  /** Schaden mit Munitionsart; liefert den Rumpfschaden */
-  damage(base: number, ammo: AmmoId, hitLocal: Vector3 | null): number {
+  /**
+   * Schaden mit Munitionsart; liefert den Rumpfschaden. `zone` 'sail' = die Kugel traf das Tuch (Segel-HP sinken, Rumpf kaum),
+   * 'hull' = Rumpf. Kettenkugeln zerfetzen Segel in beiden Zonen am stärksten.
+   */
+  damage(base: number, ammo: AmmoId, hitLocal: Vector3 | null, zone: 'hull' | 'sail' = 'hull'): number {
     if (!this.alive) return 0;
     if (this.shield > 0) base *= 1 - this.shieldK;
     const a = AMMO[ammo];
-    const hullDmg = base * a.hull;
-    this.hull = Math.max(0, this.hull - hullDmg);
-    this.sail = Math.max(0.05, this.sail - base * a.sail / this.maxHull * 1.6);
-    this.crew = Math.max(0, this.crew - base * a.crew / this.maxHull * 1.4);
+    const r = applyDamage(this.sim, base, a, zone);
+    const hullDmg = r.hull;
     if (a.fire > 0 && Math.random() < 0.6) this.fire = Math.max(this.fire, 8);
     if (hitLocal && this.holes < 24 && a.hull >= 0.5) this.addHole(hitLocal);
     this.updateSailDamage();
@@ -196,10 +248,14 @@ export class Ship {
     this.model.group.add(hole);
   }
 
+  /** Segelschäden an die Darstellung geben: Risse und Ruß im Tuch (Shader `uDmg`) und dunkleres Tuch */
   private updateSailDamage() {
+    const dmg = 1 - this.sail;
     for (const s of this.model.sails) {
-      const m = s.material as any;
-      m.color = new Color(this.look.sail).lerp(new Color('#5A4A3A'), (1 - this.sail) * 0.6);
+      const su = s.userData.sailU as SailUniforms | undefined;
+      if (su) su.uDmg.value = dmg;
+      const m = s.material as unknown as { color: Color };
+      m.color.set(this.look.sail).lerp(_sc.set('#5A4A3A'), dmg * 0.45);
     }
   }
 
@@ -209,14 +265,38 @@ export class Ship {
     this.recoilT = 0;
   }
 
+  /** Werft oder Notreparatur: Rumpf und Segel-HP um einen Anteil auffüllen, Feuer löschen */
   repair(frac: number) {
     this.sinkPitch = 0;
     this.sinkRoll = 0;
-    this.hull = Math.min(this.maxHull, this.hull + this.maxHull * frac);
-    this.sail = Math.min(1, this.sail + frac);
+    this.sim.hull = Math.min(this.maxHull, this.hull + this.maxHull * frac);
+    this.sim.sail.hp = Math.min(this.sim.sail.max, this.sim.sail.hp + this.sim.sail.max * frac);
+    this.sim.repair = null;
     this.fire = 0;
     this.updateSailDamage();
   }
+
+  /** Reparatur-Absicht (Segeltuch, Holz, Notsegel, Werft). Auf See dauert sie je nach Crew; liefert, ob sie begonnen wurde. */
+  requestRepair(intent: SailRepairIntent): boolean {
+    const ok = startRepair(this.sim, intent, crewEffects(this.crew, this.crewFx));
+    if (ok && intent.material === 'hafen') { this.fire = 0; this.updateSailDamage(); }
+    return ok;
+  }
+
+  /** Laufende Reparatur auf See vorrücken; liefert das Ergebnis, sobald sie fertig ist (für Meldung und Effekte) */
+  tickRepair(dt: number) {
+    const r = stepRepair(this.sim, dt);
+    if (r) { this.updateSailDamage(); this.onRepaired?.(r); }
+    return r;
+  }
+  /** Wird aufgerufen, wenn eine Reparatur fertig ist (setzt die Welt für Meldung, Ton, Funken) */
+  onRepaired: ((r: { sail: number; hull: number }) => void) | null = null;
+
+  /** Crew aufstocken (Taverne, Hafen); liefert die angeheuerten Köpfe */
+  requestCrewRefill(intent: CrewRefillIntent): number { return refillCrew(this.sim.crew, intent); }
+  get missingCrew() { return missingHeads(this.sim.crew); }
+  /** Mindestbesatzung (z. B. nach dem Untergang): hebt die Crew auf diesen Anteil, wenn sie darunter liegt */
+  ensureCrew(f: number) { if (this.crew < f) this.crew = f; }
 
   /** Darstellung: auf Wellen setzen, Segel blähen, Flagge flattern, sinken */
   render(alpha: number, env: SeaEnv, night: number, frameDt: number) {
@@ -273,7 +353,8 @@ export class Ship {
     this.model.wheel.rotation.z = this.wheelA;
     // Segel: Fahrstufe und Wind
     // Segel wachsen stufenlos mit dem Gashebel (springen nicht mehr zwischen drei Größen)
-    const k = (this.throttle !== null ? 0.15 + this.throttle * 0.85 : [0.15, 0.6, 1][this.sailLevel]) * this.sail;
+    // (gesetztes Tuch folgt dem Gashebel so schnell, wie die Crew arbeitet; zerfetztes Tuch hängt kürzer)
+    const k = (0.15 + this.sim.sailSet * 0.85) * (0.35 + 0.65 * this.sail);
     const wind = env.windStrength;
     const gust = 0.5 + 0.5 * Math.sin(env.time * 0.9 + this.x * 0.01);
     this.ripple += frameDt * (2.2 + wind * 3.5);

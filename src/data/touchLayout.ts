@@ -21,6 +21,7 @@ export const TOUCH_SEA: TouchButtonDef[] = [
   { action: 'skill1', label: 'F1', size: 52, right: 30, bottom: 206, color: 'brass' },
   { action: 'skill2', label: 'F2', size: 52, right: 96, bottom: 180, color: 'brass' },
   { action: 'skill3', label: 'F3', size: 52, right: 180, bottom: 96, color: 'brass' },
+  { action: 'repair', label: 'Flicken', size: 46, right: 252, bottom: 30, color: 'ok' },
 ];
 
 // Touch-Buttons zu Fuß

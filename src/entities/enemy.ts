@@ -21,6 +21,8 @@ import { markShared } from '../render/dispose';
 import { NavAgent, type NavGrid } from '../ai/navGrid';
 import { ENEMY_TREE, perceive, type BrainCtx } from '../ai/enemyBrain';
 import { Hurtbox } from '../combat/hitbox';
+import { sweepMove, type SweepGround } from '../combat/sweep';
+import { mintEntityId, type EntityId } from '../sim/entityId';
 
 export type EnemyState = 'idle' | 'patrol' | 'suspicious' | 'chase' | 'strafe' | 'flank' | 'retreat' | 'windup' | 'attack' | 'recover' | 'hit' | 'stagger' | 'air' | 'down' | 'dead' | 'transition';
 
@@ -169,6 +171,19 @@ export class Enemy {
   private faceTarget = false;
   private faceYaw = 0;
   private strafeK = 0;
+
+  /** Kennung dieses Gegners (gleiche Pipeline wie jede andere Kämpfer-Entität) */
+  readonly entityId: EntityId = mintEntityId('enemy');
+  private sweepG: SweepGround | null = null;
+  private sweepW: EnemyWorld | null = null;
+  /** Boden für die gesweepte Bewegung: Höhe und Hindernisse der Welt, mit Abstand zu anderen Kämpfern */
+  private sweepGround(w: EnemyWorld): SweepGround {
+    if (!this.sweepG || this.sweepW !== w) {
+      this.sweepW = w;
+      this.sweepG = { height: (x, z) => w.ground(x, z), constrain: (x, z, r) => w.constrain(x, z, r ?? this.radius, this) };
+    }
+    return this.sweepG;
+  }
 
   constructor(assets: CharacterAssets, readonly kind: EnemyKind, readonly level: number, faction: Faction, x: number, z: number, outline: boolean, readonly name?: string) {
     this.def = ENEMIES[kind];
@@ -571,9 +586,8 @@ export class Enemy {
     // Bewegung, Rückstoß, Boden
     this.vx *= Math.pow(0.02, dt);
     this.vz *= Math.pow(0.02, dt);
-    const c = w.constrain(this.x + (mvx + this.vx) * dt, this.z + (mvz + this.vz) * dt, this.radius, this);
-    this.x = c.x;
-    this.z = c.z;
+    // Rückstoß und Schritte als gesweepte Bewegung: kein Wanddurchbruch bei hohem Tempo (Teilschritte ≤ 0,15 m)
+    sweepMove(this, (mvx + this.vx) * dt, (mvz + this.vz) * dt, this.sweepGround(w), false);
     if (this.state !== 'air' && this.state !== 'dead') {
       const g = w.ground(this.x, this.z);
       this.y += ((Number.isFinite(g) ? g : this.y) - this.y) * Math.min(1, dt * 15);

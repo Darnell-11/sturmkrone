@@ -595,7 +595,7 @@ export class NavalSystem {
           const lv = e.level;
           const dmg = (6 + tier * 2) * (1 + 0.12 * (lv - 1) + 0.004 * (lv - 1) * (lv - 1)) * (e.role === 'legende' ? 1.4 : 1);
           this.broadside(s, side, dist, dmg, e.role === 'legende' && Math.random() < 0.3 ? 'brand' : 'kugel', target);
-          e.reload = (2.4 + Math.random()) / Math.sqrt(lv * 0.5 + 0.5);
+          e.reload = (2.4 + Math.random()) / Math.sqrt(lv * 0.5 + 0.5) * s.reloadScale;
           break;
         }
       }
@@ -618,7 +618,7 @@ export class NavalSystem {
           const range = Math.hypot(lead.x - s.x, lead.z - s.z);
           const dmg = e.companion ? this.canDmg * 0.6 : (7 + e.level * 2.4) * (e.role === 'legende' ? 1.6 : 1);
           this.broadside(s, side, range, dmg, e.role === 'legende' && Math.random() < 0.3 ? 'brand' : 'kugel');
-          const reload = 3.2 - Math.min(1.2, e.level * 0.08);
+          const reload = (3.2 - Math.min(1.2, e.level * 0.08)) * s.reloadScale;
           if (side > 0) s.reloadL = reload; else s.reloadR = reload;
         }
       }
@@ -694,8 +694,8 @@ export class NavalSystem {
   }
 
   private hitShip(s: Ship, b: Ball, local: Vector3, sailHit: boolean) {
-    const ammo: AmmoId = sailHit ? 'kette' : b.ammo;
-    const dmg = s.damage(b.dmg, ammo, sailHit ? null : local);
+    // Treffer im Tuch zählen als Segelzone: die Munition bleibt, was sie ist (Kettenkugeln zerfetzen am stärksten)
+    const dmg = s.damage(b.dmg, b.ammo, sailHit ? null : local, sailHit ? 'sail' : 'hull');
     const p = b.mesh.position.clone();
     audio.play('crack', 1, p);
     this.fx.hit(p, 'heavy', b.ammo === 'brand' ? '#FF7A2A' : '#FFD08A');

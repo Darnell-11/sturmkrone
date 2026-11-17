@@ -1,3 +1,4 @@
+import { mintEntityId, type EntityId } from '../sim/entityId';
 import { MathUtils, Vector3 } from 'three';
 import { randomLook, sanitizeLook } from '../data/characterParts';
 import type { StyleId } from '../data/animations';
@@ -52,6 +53,8 @@ export class Ally implements AllyTarget {
   readonly char: Character;
   x = 0; y = 0; z = 0; yaw = 0;
   readonly radius = 0.45;
+  /** Kennung dieser Crew-Figur */
+  readonly entityId: EntityId = mintEntityId('ally');
   hp: number;
   maxHp: number;
   private dmg: number;

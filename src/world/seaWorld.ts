@@ -327,6 +327,10 @@ export class SeaWorld {
     this.env = new Environment(this.scene);
     this.ship = new Ship(this.scene, 0, DEFAULT_SHIP_LOOK('pirat'), 'pirat', 0, true);
     this.boat = this.ship.model.group;
+    this.ship.onRepaired = (r) => {
+      this.onMessage(r.sail > 0.5 || r.hull > 0.5 ? `Geflickt: Segel +${Math.round(r.sail)} HP${r.hull > 0.5 ? `, Rumpf +${Math.round(r.hull)}` : ''}.` : 'Fertig geflickt.');
+      audio.play('level', 0.4);
+    };
 
     this.fauna = new IslandFauna(this.scene);
     this.lampPool = new LampPool(this.scene, 6);
@@ -940,13 +944,15 @@ export class SeaWorld {
   }
 
   /** Eigenes Schiff: Klasse, Aussehen, Munition, Zustand (aus Spielstand oder Werft) */
-  setShip(tier: number, look: ShipLook, ammo: AmmoId, hullFrac: number, faction: Faction) {
+  setShip(tier: number, look: ShipLook, ammo: AmmoId, hullFrac: number, faction: Faction, sailFrac?: number, crewFrac?: number) {
     const onBoard = this.player && this.player.holder.parent === this.ship.model.group;
     if (onBoard) this.scene.add(this.player!.holder);
     this.ship.rebuild(tier, look, this.hullBonus);
     (this.ship as any).faction = faction;
     this.ship.ammo = ammo;
     this.ship.hull = Math.max(1, this.ship.maxHull * Math.max(0.05, Math.min(1, hullFrac)));
+    if (sailFrac !== undefined) this.ship.sail = sailFrac;
+    if (crewFrac !== undefined) this.ship.crew = crewFrac;
     this.ship.x = this.x; this.ship.z = this.z; this.ship.heading = this.heading;
     this.ship.prev = { x: this.x, z: this.z, heading: this.heading };
     this.boat = this.ship.model.group;
@@ -1215,8 +1221,10 @@ export class SeaWorld {
   fanHot(side: number) { return this.mode === 'sail' && !!this.naval?.inFan(side, this.seaRange); }
 
   get seaRange() { return (75 + Math.max(0, SHIP_CLASSES.indexOf(this.ship.cls)) * 6) * this.rangeMult; }
+  /** Kennung der lokalen Spielfigur (jede Absicht nennt ihren Urheber; ein Server vergibt später weitere) */
+  get playerEntityId(): string { return this.foot?.entityId ?? 'foot-local'; }
   /** Nachladezeit wie in 1.0 */
-  get reloadTime() { return 1.9 * (this.naval?.reloadMult ?? 1); }
+  get reloadTime() { return 1.9 * (this.naval?.reloadMult ?? 1) * this.ship.reloadScale; }
 
   /** Kampfnähe 0 … 1 (für die Musik) */
   get threat() {
@@ -1344,6 +1352,7 @@ export class SeaWorld {
     if (this.ship.sinking > 4) {
       this.ship.sinking = 0;
       this.ship.repair(0.5);
+      this.ship.ensureCrew(0.6);
       this.naval?.clear();
       this.teleport(0, 12, 0);
       this.onMessage('Dein Schiff ist gesunken! Die Crew hat es zurück in den Hafen geschleppt.');
@@ -1354,7 +1363,9 @@ export class SeaWorld {
 
   get seaEnv(): SeaEnv {
     const env = this.env;
-    return { heightAt: (x, z) => env.heightAt(x, z), windDir: env.windDir, windStrength: env.weather.p.wind, time: env.clock, sunDir: env.palette.sunDir, sunVis: env.palette.sunVis };
+    // Sturmstärke: Wellenhöhe ab Regenwetter (1,7) bis Sturm (2,7)
+    const storm = Math.max(0, Math.min(1, (env.weather.p.waves - 1.8) / 0.9));
+    return { heightAt: (x, z) => env.heightAt(x, z), windDir: env.windDir, windStrength: env.weather.p.wind, storm, time: env.clock, sunDir: env.palette.sunDir, sunVis: env.palette.sunVis };
   }
 
   private updateSail(dt: number, input: Input) {
@@ -1411,7 +1422,7 @@ export class SeaWorld {
     }
     const nav = this.naval;
     if (nav && s.alive) {
-      if (input.pressed('attack') && this.cdBow <= 0) { this.cdBow = 1.2; nav.bowShot(s, nav.canDmg, s.ammo); }
+      if (input.pressed('attack') && this.cdBow <= 0) { this.cdBow = 1.2 * s.reloadScale; nav.bowShot(s, nav.canDmg, s.ammo); }
       // Breitseiten wie in 1.0: antippen (oder halten) = feuern, gezielt wird automatisch
       for (const [act, side] of [['fireLeft', 1], ['fireRight', -1]] as const) {
         const ready = side > 0 ? s.reloadL <= 0 : s.reloadR <= 0;

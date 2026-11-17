@@ -52,6 +52,9 @@ export interface ShipState {
   ammo: AmmoId;
   /** Rumpfzustand 0 … 1 */
   hull: number;
+  /** Segelzustand (Segel-HP) und Crew-% 0 … 1; fehlt in älteren Spielständen (dann 1) */
+  sail?: number;
+  crew?: number;
   /** Ausbauten der Werft (je 0 … 5): Kanonen, Rumpf, Segel */
   up: { can: number; hull: number; sail: number };
 }

@@ -352,12 +352,14 @@ export class Menus {
       ${running.map((q) => { const st = qs.step(q!.id); return st ? `<p class="small soft">Laufend: <b>${esc(q!.title)}</b> – ${esc(st.text)}</p>` : ''; }).join('')}
       ${npc.shop ? `<button class="secondary" data-a="shop">${shopBtn[npc.shop]}</button>` : ''}
       ${npc.shop === 'tavern' ? `<button class="secondary" data-a="hire">Crew anheuern</button>
+        <button class="secondary" data-a="sailors" ${g.crewRefillCost() <= 0 ? 'disabled' : ''}>${g.crewRefillCost() > 0 ? `Matrosen für das Schiff anheuern (${g.crewRefillCost()} Gold)` : 'Mannschaft vollzählig'}</button>
         <div class="opt"><span class="label">Würfeln mit Baldo</span><div class="row">${[20, 50, 200].map((b) => `<button class="mini" data-a="dice" data-id="${b}">${b} Gold setzen</button>`).join('')}</div></div>` : ''}
       <button class="primary" data-a="bye" data-focus>Auf Wiedersehen</button>`,
       {
         accept: (id) => { g.acceptQuest(id); this.showDialog(npc, [], 'Auftrag angenommen! Das Ziel siehst du oben rechts.'); },
         shop: () => this.openShop(npc),
         hire: () => this.showHire(() => this.showDialog(npc)),
+        sailors: () => this.showDialog(npc, [], g.refillCrew()),
         dice: (id) => this.showDialog(npc, [], g.dice(+id)),
         bye: exit,
       },
@@ -399,6 +401,7 @@ export class Menus {
         <button class="secondary" data-a="market">Markt</button>
         <button class="secondary" data-a="shrine">Faji-Schrein</button>
         <button class="secondary" data-a="hire">Crew anheuern</button>
+        <button class="secondary" data-a="sailors" ${g.crewRefillCost() <= 0 ? 'disabled' : ''}>${g.crewRefillCost() > 0 ? `Matrosen (${g.crewRefillCost()} Gold)` : 'Mannschaft vollzählig'}</button>
         <button class="secondary" data-a="rest">Rasten (${REST_PRICE} Gold)</button>
       </div>
       <button class="secondary" data-a="ashore">An Land gehen und durch die Stadt laufen</button>
@@ -410,6 +413,7 @@ export class Menus {
         market: () => this.showMarket(back),
         shrine: () => this.showShrine(back),
         hire: () => this.showHire(back),
+        sailors: () => this.showHarbor(g.refillCrew()),
         rest: () => this.showHarbor(g.rest()),
         ashore: () => { g.resume(); g.world.goAshore(); },
         leave: () => g.resume(),
@@ -588,7 +592,7 @@ export class Menus {
         <div class="meta">Heilt ${Math.round(POTION.heal * 100)} % deiner Lebenspunkte. Du trägst ${s.gear.potions} von ${POTION.max}.</div>
         <div class="row"><button class="mini brass" data-a="buy" data-id="1" ${s.gear.potions >= POTION.max ? 'disabled' : ''}>1 kaufen</button><button class="mini brass" data-a="buy" data-id="${POTION.max}" ${s.gear.potions >= POTION.max ? 'disabled' : ''}>Auffüllen</button></div></div>
       <p class="small soft">Essen: Taste <kbd>${esc(g.input.keyLabel(g.input.getKeyBindings().potion?.[0] ?? 'KeyH'))}</kbd> oder der grüne Knopf am Handy. Alle Güter landen in der Schnellleiste (Tasten 1–4, Inventar: <kbd>${esc(g.input.keyLabel(g.input.getKeyBindings().inventory?.[0] ?? 'KeyI'))}</kbd>).</p>
-      <h3>Tränke und Stärkungen</h3>
+      <h3>Tränke, Stärkungen und Schiffsbedarf</h3>
       ${CONSUMABLES.filter((c) => c.id !== 'proviant').map((c) => { const n = itemCount(s.gear, c.id); return `<div class="slot"><div class="slot-head"><b>${c.icon} ${esc(c.n)}</b><span>${c.price} Gold</span></div>
         <div class="meta">${esc(c.d)} Du trägst ${n} von ${c.max}.</div>
         <div class="row"><button class="mini brass" data-a="item" data-id="${c.id}" ${n >= c.max ? 'disabled' : ''}>Kaufen</button></div></div>`; }).join('')}
@@ -691,7 +695,9 @@ export class Menus {
     this.open(
       `<h2 class="fell">Werft</h2>
       <p class="soft">Gold: <b>${g.playerGold.toLocaleString('de-DE')}</b>${msg ? ` · <b>${esc(msg)}</b>` : ''}</p>
-      <button class="secondary" data-a="repair" ${cost <= 0 ? 'disabled' : ''}>${cost > 0 ? `Reparieren (${cost} Gold)` : 'Schiff ist unbeschädigt'}</button>
+      <p class="small soft">Rumpf ${Math.round(g.world.ship.hull / g.world.ship.maxHull * 100)} % · Segel ${Math.round(g.world.ship.sail * 100)} % · Crew ${Math.round(g.world.ship.crew * 100)} %</p>
+      <button class="secondary" data-a="repair" ${cost <= 0 ? 'disabled' : ''}>${cost > 0 ? `Rumpf und Segel reparieren (${cost} Gold)` : 'Rumpf und Segel sind in Ordnung'}</button>
+      <button class="secondary" data-a="sailors" ${g.crewRefillCost() <= 0 ? 'disabled' : ''}>${g.crewRefillCost() > 0 ? `Matrosen anheuern (${g.crewRefillCost()} Gold)` : 'Mannschaft vollzählig'}</button>
       <h3>Ausbauten</h3>
       ${(['can', 'hull', 'sail'] as const).map((k) => { const lv = st.up[k]; const price = g.upgradeCost(k); const n = { can: 'Schwere Kanonen', hull: 'Verstärkter Rumpf', sail: 'Leichte Segel' }[k]; const d = { can: '+12 % Kanonenschaden', hull: '+15 % Rumpfpunkte', sail: '+5 % Tempo' }[k]; return `<div class="slot"><div class="slot-head"><b>${n}</b><span>Stufe ${lv}/5</span></div><div class="meta">${d} je Stufe · <span class="pips">${'●'.repeat(lv)}${'○'.repeat(5 - lv)}</span></div>${lv < 5 ? `<button class="mini brass" data-a="up" data-id="${k}">Ausbauen (${price.toLocaleString('de-DE')} Gold)</button>` : ''}</div>`; }).join('')}
       <h3>Schiffsklassen</h3>${classes}
@@ -706,6 +712,7 @@ export class Menus {
       {
         cls: (id) => rerender(g.shipyardSelect(+id)),
         repair: () => rerender(g.shipyardRepair()),
+        sailors: () => rerender(g.refillCrew()),
         up: (id) => rerender(g.shipUpgrade(id as 'can' | 'hull' | 'sail')),
         lk: (id) => { const [k, v] = id.split('|'); g.shipyardLook({ ...look, [k]: v }); rerender(); },
         lanterns: () => { g.shipyardLook({ ...look, lanterns: !look.lanterns }); rerender(); },

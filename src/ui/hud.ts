@@ -36,6 +36,10 @@ export class Hud {
   private shipEl!: HTMLElement;
   private windEl!: HTMLElement;
   private seaTxt!: HTMLElement;
+  private sailBar!: HTMLElement;
+  private crewBar!: HTMLElement;
+  private repairBar!: HTMLElement;
+  private seaTip!: HTMLElement;
   private reloadL!: HTMLElement;
   private reloadR!: HTMLElement;
   private arrowEl!: HTMLElement;
@@ -69,8 +73,12 @@ export class Hud {
         <div class="hud-weapons" title="Waffe wechseln: Q · Platz 1: Z · Platz 2: X"><span class="w0 on"></span><span class="w1"></span></div>
         <div class="hud-sea" hidden>
           <div class="hud-bar ship" title="Rumpf"><i></i></div>
+          <div class="hud-bar sailb" title="Segel"><i></i></div>
+          <div class="hud-bar crewb" title="Crew"><i></i></div>
+          <div class="hud-bar repb" hidden title="Reparatur"><i></i></div>
           <div class="hud-seainfo"><span class="wind" title="Wind">➤</span><span class="seatxt"></span></div>
           <div class="hud-reload"><i class="l"></i><i class="r"></i></div>
+          <div class="hud-tip" hidden></div>
         </div>
         <div class="hud-env"></div>
         <div class="hud-fps" hidden></div>
@@ -103,6 +111,14 @@ export class Hud {
     this.shipEl = this.seaEl.querySelector('.ship i')!;
     this.windEl = this.seaEl.querySelector('.wind')!;
     this.seaTxt = this.seaEl.querySelector('.seatxt')!;
+    this.sailBar = this.seaEl.querySelector('.sailb i')!;
+    this.crewBar = this.seaEl.querySelector('.crewb i')!;
+    this.repairBar = this.seaEl.querySelector('.repb i')!;
+    this.seaTip = this.seaEl.querySelector('.hud-tip')!;
+    // Erklärung zu Segel-% und Crew-%: am PC beim Überfahren, am Handy per Antippen
+    this.seaEl.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') this.seaTip.hidden = false; });
+    this.seaEl.addEventListener('pointerleave', () => { this.seaTip.hidden = true; });
+    this.seaEl.addEventListener('click', () => { this.seaTip.hidden = !this.seaTip.hidden; });
     this.reloadL = this.seaEl.querySelector('.l')!;
     this.reloadR = this.seaEl.querySelector('.r')!;
     this.arrowEl = this.root.querySelector('.q-arrow')!;
@@ -156,13 +172,22 @@ export class Hud {
   }
 
   /** Schiffsanzeige; null blendet sie aus */
-  setSea(info: { hull: number; sail: number; crew: number; level: string; ammo: string; reloadL: number; reloadR: number; windRel: number; fire: boolean } | null) {
+  setSea(info: { hull: number; sail: number; crew: number; level: string; ammo: string; reloadL: number; reloadR: number; windRel: number; fire: boolean; repair?: number | null; tip?: string } | null) {
     const el = this.seaEl;
     if (el.hidden !== !info) el.hidden = !info;
     if (!info) return;
     this.bar(this.shipEl, info.hull);
+    this.bar(this.sailBar, info.sail);
+    this.bar(this.crewBar, info.crew);
+    const rb = this.repairBar.parentElement!;
+    const repairing = info.repair !== null && info.repair !== undefined;
+    if (rb.hidden === repairing) rb.hidden = !repairing;
+    if (repairing) this.bar(this.repairBar, info.repair!);
+    this.sailBar.parentElement!.classList.toggle('low', info.sail < 0.3);
+    this.crewBar.parentElement!.classList.toggle('low', info.crew < 0.3);
+    if (info.tip && !this.seaTip.hidden && this.seaTip.textContent !== info.tip) this.seaTip.textContent = info.tip;
     this.put(this.windEl, 'transform', `rotate(${(-info.windRel - Math.PI / 2).toFixed(2)}rad)`);
-    const t = `${info.level} · ${info.ammo}${info.fire ? ' · 🔥' : ''} · Segel ${Math.round(info.sail * 100)} % · Crew ${Math.round(info.crew * 100)} %`;
+    const t = `${info.level} · ${info.ammo}${info.fire ? ' · 🔥' : ''} · Segel ${Math.round(info.sail * 100)} % · Crew ${Math.round(info.crew * 100)} %${repairing ? ` · Flicken ${Math.round(info.repair! * 100)} %` : ''}`;
     if (this.seaTxt.textContent !== t) this.seaTxt.textContent = t;
     this.bar(this.reloadL, 1 - info.reloadL);
     this.bar(this.reloadR, 1 - info.reloadR);

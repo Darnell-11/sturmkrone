@@ -9,6 +9,9 @@ import type { Ground } from '../../world/islandGround';
 import type { Character } from '../character/character';
 import type { Enemy } from '../enemy';
 import type { DecalHandle } from '../../render/decals';
+import { makeDashLatch, resolveDash, sweepMove, type SweepResult } from '../../combat/sweep';
+import { mintEntityId, type EntityId } from '../../sim/entityId';
+import type { DashIntent } from '../../sim/intents';
 
 const WALK = 2.4;
 const RUN = 6.2;
@@ -46,6 +49,15 @@ const SWEEP_LEAD = 0.2;
 const SWEEP_TAIL = 0.22;
 
 export class PlayerFoot implements PlayerTarget {
+  /** Kennung dieser Spielfigur: Absichten (Ausfallschritt, Rolle, Reparatur) nennen sie als Urheber */
+  readonly entityId: EntityId = mintEntityId('foot');
+  /** Kapselradius für die Kollision (Grundriss: Kreis) */
+  readonly radius = 0.35;
+  /** Blockade des laufenden Vorwärts-Impulses (frontaler Aufprall an einer Wand endet ihn) */
+  private readonly dashLatch = makeDashLatch();
+  /** Reiner Zustand des letzten Impulses: Ergebnis des Sweeps (Wand berührt, Stufe genommen, Steilhang), für Prüfungen */
+  lastSweep: SweepResult = { moved: 0, hit: false, blocked: false, nx: 0, nz: 0, climbed: false, steep: false, groundY: 0, steps: 0 };
+  private readonly dashIntent: DashIntent = { type: 'dash', entityId: '', kind: 'lunge', id: 0, dirX: 0, dirZ: 1, speed: 0 };
   x = 0;
   z = 0;
   y = 0;
@@ -285,6 +297,7 @@ export class PlayerFoot implements PlayerTarget {
       this.buf.dodge = -1;
       this.buf.attack = this.buf.attack > this.clock - 0.05 ? this.buf.attack : -1;
       this.state = 'roll';
+      this.rollSeq++;
       this.rollT = ROLL_TIME;
       this.iframes = PLAYER_BASE.rollIframes;
       this.rollDir = dl > 0.001 ? { x: dx, z: dz } : { x: -Math.sin(this.yaw), z: -Math.cos(this.yaw) };
@@ -414,7 +427,9 @@ export class PlayerFoot implements PlayerTarget {
         break;
     }
     this.speed = Math.hypot(vx, vz);
-    this.applyMove(dt, vx, vz, ground);
+    // Impulse (Ausfallschritt eines Hiebs, Rolle) laufen als Absicht durch die gesweepte Kollision, alles andere gewöhnlich
+    const impulse = this.state === 'roll' ? 'roll' : this.state === 'attack' && this.attack && (vx !== 0 || vz !== 0) ? 'lunge' : null;
+    this.applyMove(dt, vx, vz, ground, impulse);
     // Neigung nach dem tatsächlichen Tempo: an einer Wand lehnt sich die Figur nicht ins Leere
     this.char.lean(this.yaw, Math.min(this.speed, this.realSpeed + 0.3), dt);
     // Lichtschweif an der Waffe: während des Hiebs (vom Ausholen bis kurz nach dem Treffer) und beim Wirken
@@ -447,16 +462,41 @@ export class PlayerFoot implements PlayerTarget {
     }
   }
 
-  private applyMove(dt: number, vx: number, vz: number, ground: Ground) {
+  private applyMove(dt: number, vx: number, vz: number, ground: Ground, impulse: 'roll' | 'lunge' | null = null) {
     this.kx *= Math.pow(0.01, dt);
     this.kz *= Math.pow(0.01, dt);
-    const c = ground.constrain(this.x + (vx + this.kx) * dt, this.z + (vz + this.kz) * dt);
-    this.x = c.x;
-    this.z = c.z;
-    const h = ground.height(this.x, this.z);
-    const targetY = Number.isFinite(h) ? h : this.y;
+    let targetY: number;
+    if (impulse) {
+      // Vorwärts-Impuls: Teilschritte von höchstens 0,15 m, Kapsel gegen alle Hindernisse, Stufen und Rampen hinauf, Wände stoppen
+      const sp = Math.hypot(vx, vz);
+      const it = this.dashIntent;
+      it.entityId = this.entityId;
+      it.kind = impulse;
+      it.id = impulse === 'roll' ? -this.rollSeq : this.swingId;
+      it.dirX = sp > 1e-6 ? vx / sp : 0;
+      it.dirZ = sp > 1e-6 ? vz / sp : 0;
+      it.speed = sp;
+      const r = resolveDash(this, this.dashLatch, it, ground, dt);
+      this.lastSweep = r;
+      // Rückstoß läuft getrennt, ebenfalls gesweept (ohne die strenge Steilhang-Regel)
+      if (Math.abs(this.kx) + Math.abs(this.kz) > 0.01) sweepMove(this, this.kx * dt, this.kz * dt, ground, false);
+      targetY = r.groundY;
+    } else {
+      const total = Math.hypot(vx + this.kx, vz + this.kz) * dt;
+      if (total > 0.15) sweepMove(this, (vx + this.kx) * dt, (vz + this.kz) * dt, ground, false);
+      else {
+        const c = ground.constrain(this.x + (vx + this.kx) * dt, this.z + (vz + this.kz) * dt);
+        this.x = c.x;
+        this.z = c.z;
+      }
+      const h = ground.height(this.x, this.z);
+      targetY = Number.isFinite(h) ? h : this.y;
+    }
+    if (!Number.isFinite(targetY)) targetY = this.y;
     this.y += (targetY - this.y) * Math.min(1, dt * 15);
   }
+  /** Zähler der Rollen (jede Rolle ist ein eigener Impuls, auch wenn die vorige an einer Wand endete) */
+  private rollSeq = 0;
 
   private turnTo(want: number, dt: number, rate: number) {
     const diff = MathUtils.euclideanModulo(want - this.yaw + Math.PI, Math.PI * 2) - Math.PI;

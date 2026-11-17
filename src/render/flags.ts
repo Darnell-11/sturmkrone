@@ -89,9 +89,11 @@ export interface SailUniforms {
   uPh: { value: number };
   uSw: { value: number };
   uSh: { value: number };
+  /** Segelschaden 0 (heil) … 1 (Fetzen): Risse und Löcher im Tuch, Ruß und Verdunkelung */
+  uDmg: { value: number };
 }
 export function makeSailUniforms(sw: number, sh: number, ph: number): SailUniforms {
-  return { uRip: { value: 0 }, uGust: { value: 0.5 }, uAmp: { value: 0.1 }, uPh: { value: ph }, uSw: { value: sw }, uSh: { value: sh } };
+  return { uRip: { value: 0 }, uGust: { value: 0.5 }, uAmp: { value: 0.1 }, uPh: { value: ph }, uSw: { value: sw }, uSh: { value: sh }, uDmg: { value: 0 } };
 }
 
 /**
@@ -129,9 +131,39 @@ export function sailMaterial<T extends Material>(m: T, u: SailUniforms): T {
           float ey2 = 0.5 - position.y / uSh;
           transformed.z = position.z * (0.88 + 0.22 * uGust) + skSailDyn(position);
           transformed.x += sin(uRip * 0.8 + position.y * 0.7 + uPh) * uAmp * 0.25 * ey2;
+          vSailP = position.xy;
         }`);
+    shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>
+        varying vec2 vSailP;`);
+    // Schaden: Risse (senkrecht gestreckt wie vom Wind aufgerissen) und Löcher; die Ränder sind angekokelt, das Tuch dunkelt ab.
+    // Sinusfreie Hashes (Handys), keine pow(0, x): alles läuft über Produkte und smoothstep mit geordneten Rändern.
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec2 vSailP;
+        uniform float uDmg; uniform float uPh;
+        float skSH(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+        float skSN(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(skSH(i), skSH(i + vec2(1.0, 0.0)), f.x), mix(skSH(i + vec2(0.0, 1.0)), skSH(i + vec2(1.0, 1.0)), f.x), f.y);
+        }
+        float skTear(vec2 p) {
+          vec2 q = vec2(p.x * 0.9, p.y * 0.38) + vec2(uPh * 1.7, uPh * 0.6);
+          return skSN(q * 1.7) * 0.55 + skSN(q * 4.3 + 11.0) * 0.3 + skSN(vec2(p.x * 2.6, p.y * 0.9) + 5.0) * 0.15;
+        }`)
+      .replace('#include <alphatest_fragment>', `
+        if (uDmg > 0.01) {
+          float tr = skTear(vSailP);
+          float cut = 1.0 - 0.62 * (0.35 * uDmg + 0.65 * uDmg * uDmg);
+          // Rand des Lochs: angekokelt und dunkel
+          float rim = smoothstep(cut - 0.09, cut, tr);
+          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.16, 0.12, 0.09), rim * 0.9);
+          diffuseColor.rgb *= 1.0 - 0.38 * uDmg;
+          if (tr > cut) diffuseColor.a = 0.0;
+        }
+        #include <alphatest_fragment>`);
   };
-  m.customProgramCacheKey = () => (prevKey ? prevKey.call(m) : '') + '|sail';
+  m.customProgramCacheKey = () => (prevKey ? prevKey.call(m) : '') + '|sail2';
   m.needsUpdate = true;
   return m;
 }

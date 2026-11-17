@@ -2,6 +2,7 @@
 // Waffen, Rüstungen und Talismane stehen weiter in data/regions.ts bzw. data/trinkets.ts – hier nur, was das Inventar zusätzlich braucht.
 import type { Coat, Hat, Outfit } from './characterParts';
 import type { Rarity } from './trinkets';
+import type { RepairMaterial } from '../sim/intents';
 
 /** Plätze für einzeln gekaufte Ausrüstungsstücke (seit Spielstand 11) */
 export type GearSlot = 'hands' | 'legs' | 'feet' | 'offhand';
@@ -25,6 +26,8 @@ export interface ConsumableDef {
   heal?: number;
   /** Anteil des Faji-Vorrats, der sofort zurückkommt */
   faji?: number;
+  /** Schiffsbedarf: bessert auf See Segel (und Rumpf) aus; wirkt nur an Bord (Taste G oder Schnellleiste) */
+  repair?: RepairMaterial;
   /** Zeitlich begrenzte Stärkung: Angriff, Schadensminderung und Volltreffer-Chance (Anteile), Dauer in Sekunden */
   buff?: { atk?: number; reduce?: number; crit?: number; dur: number };
   /** Abklingzeit in Sekunden, bevor dieses Gut wieder benutzt werden darf */
@@ -42,6 +45,8 @@ export const CONSUMABLES: ConsumableDef[] = [
   { id: 'kraftsaft', n: 'Kraftsaft', icon: '⚔', d: '+25 % Angriff für 60 Sekunden.', rarity: 'selten', buff: { atk: 0.25, dur: 60 }, cd: 20, price: 70, max: 5, color: '#E0663A' },
   { id: 'eisenhaut', n: 'Eisenhaut-Trank', icon: '🛡', d: '25 % weniger Schaden für 45 Sekunden.', rarity: 'selten', buff: { reduce: 0.25, dur: 45 }, cd: 20, price: 70, max: 5, color: '#8AA0B8' },
   { id: 'falkenauge', n: 'Falkenauge', icon: '👁', d: '+15 % Volltreffer-Chance für 60 Sekunden.', rarity: 'selten', buff: { crit: 0.15, dur: 60 }, cd: 20, price: 80, max: 5, color: '#E3B04B' },
+  { id: 'segeltuch', n: 'Segeltuch', icon: '🧵', d: 'Flickt auf See 40 % der Segel-HP (Taste G; die Crew braucht ein paar Sekunden).', rarity: 'gewoehnlich', repair: 'segeltuch', cd: 0, price: 45, max: 8, color: '#E8DCC0' },
+  { id: 'planken', n: 'Holzplanken', icon: '🪵', d: 'Flickt auf See 12 % Rumpf und 15 % Segel-HP (Taste G).', rarity: 'gewoehnlich', repair: 'planken', cd: 0, price: 35, max: 8, color: '#A57A4A' },
   { id: 'fajiessenz', n: 'Faji-Essenz', icon: '✦', d: 'Füllt 60 % deines Faji auf.', rarity: 'episch', faji: 0.6, cd: 15, price: 110, max: 5, color: '#8A6AC0' },
 ];
 

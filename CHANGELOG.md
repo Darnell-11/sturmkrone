@@ -1,5 +1,38 @@
 # Was ist neu
 
+## 2.9.86 – Kampf-Kollision ohne Wanddurchbrüche, Segel-HP und Crew-% als spürbare Schiffsmechanik (17.11.2026)
+
+Erster Schritt der Mehrspieler-tauglichen Kampfphysik: Alles, was später für Coop synchronisiert werden soll, läuft jetzt über eindeutige Kennungen, Absichten und serialisierbaren Zustand, getrennt von der Darstellung. Es gibt noch kein Backend.
+
+**Schwerthieb-Dash und Kampf-Kollisionen**
+- **Keine Wand-Durchbrüche mehr:** Ausfallschritte der Hiebe, Ausweichrollen und Rückstöße werden in Teilschritte von höchstens 0,15 m zerlegt (`combat/sweep.ts`). Jeder Teilschritt prüft die Kapsel der Figur (Radius 0,35 m) gegen alle Gebäude-Quader, Mauern, Zäune, Felsen, die Küste und die Reling. Weil jeder Teilschritt kürzer als der Figurenradius ist, springt keine Figur über einen dünnen Zaun, auch nicht bei einem langen Bild (0,25 s) oder Tempo 40 m/s.
+- **Wand oder Stufe?** Höhensprünge bis 0,45 m und Rampen unter 42° steigt die Figur hinauf (Schiffstreppen haben 30°). Höhere Kanten und steilere Hänge zählen als Wand. Die Steigung wird über 0,6 m vor der Figur gemessen: eine 0,45-m-Stufe bleibt flach, eine Felswand wird steil.
+- **Gleiten statt Kleben:** Trifft der Impuls schräg (mehr als 35° von der Wand-Normale), gleitet die Figur an der Wand entlang. Trifft er fast senkrecht, endet der Impuls dort und bleibt für den Rest dieser Aktion gesperrt (er läuft nicht beim nächsten Bild weiter). Eine neue Aktion hebt die Sperre auf. Ein Abschluss prüft, dass die Endposition frei ist; sonst geht die Figur auf den letzten sicheren Punkt zurück.
+- **Für jede Kämpfer-Entität gleich:** Die Spielfigur (Ausfallschritt des Hiebs, Rolle) und die Gegner (Rückstoß) laufen durch denselben Code. Normales Laufen bleibt wie bisher und nutzt die Teilschritte nur, wenn ein Bild länger als 0,15 m wäre.
+
+**Segel-HP**
+- Segel haben eigene Lebenspunkte (36 % der Rumpfklassen-Punkte, Schaluppe 43, Leviathan 396). Treffer im Tuch (Kugel über 2,5 m Deckhöhe) zählen als Segelzone: der Rumpf nimmt kaum Schaden, das Segel mindestens mit 70 % Wirkung der Munition; Kettenkugeln zerfetzen am stärksten. Früher zählte jeder Segeltreffer wie eine Kettenkugel.
+- **Stufenlos an die Fahrt gekoppelt** (gemessen im Spiel, Schaluppe 20 s Vollgas): 100 % = 10,5 m/s, 60 % = 7,6, 30 % = 4,7, 15 % = 1,9, 0 % = treibt nur noch mit dem Wind (20 m in 20 s, Ruder greift nicht). Auch Beschleunigung und Wendigkeit folgen der Kurve (`sailCurve`: bei 30 % noch 45 % Tempo, stetig und streng steigend).
+- **Schwere Stürme** zerreißen gesetztes Tuch (bis 21 % je Minute bei voll gesetzten Segeln, gerefft deutlich weniger); ein Sturm allein lässt mindestens 20 % übrig, nur Beschuss zerstört das Segel ganz.
+- **Sichtbar:** Das Tuch reißt im Fragment-Shader auf (`uDmg` in `render/flags.ts`): senkrecht gezogene Risse und Löcher mit angekohlten Rändern, dunkleres Tuch, kürzer hängende Segel. Sinusfreie Hashes (Handys), keine `pow(0, x)`.
+- **Reparatur auf See** (Taste G, am Handy „Flicken“, oder die Güter in der Schnellleiste): Segeltuch +40 % Segel-HP (5 s), Holzplanken +15 % Segel und +12 % Rumpf (6 s). Ohne Material näht die Crew ein Notsegel (12 s, bis 15 %), damit man nie hilflos treibt. Die Dauer hängt an der Crew. Im Hafen stellt die Werft Rumpf und Segel her (Kosten enthalten die Segel). Segeltuch und Planken gibt es auf dem Markt (45 und 35 Gold) und als Beute.
+
+**Crew-%**
+- **Nachladen:** Faktor 1,0 bei voller Crew, 1,8 bei 50 %, 2,8 bei 0 % (Breitseiten, Bugkanone, auch Gegner).
+- **Segel setzen:** Die Segelfläche folgt dem Gashebel mit Crew-Tempo: volle Fläche in etwa 3 s bei voller Crew, bei 30 % Crew erst nach etwa 7 s; Reffen geht 1,8-mal schneller.
+- **Passive Rumpfreparatur** nach 8 s ohne Treffer, bis 0,16 %/s bei voller Crew, unter 15 % Crew keine. Der Schiffskoch ist jetzt ein Bonus darauf (+1,2/s), der nur mit genug Seeleuten wirkt.
+- **Anzeige:** Segel- und Crew-Balken im Schiffs-HUD, Reparaturbalken, Erklärung beim Überfahren (PC) oder Antippen (Handy).
+- **Auffüllen:** Taverne, Hafenmenü und Werft („Matrosen anheuern“, Gold je Kopf, wächst mit der Klasse). Ein gesunkenes Schiff startet mit mindestens 60 % Crew.
+- Spielstand: `ship.sail` und `ship.crew` (optional, fehlt es, gilt 100 %), keine neue Version nötig.
+
+**Technik (für Entwickler):**
+- **Kennungen und Absichten:** `sim/entityId.ts` (`mintEntityId`, `EntityId`) vergibt `foot-n`, `enemy-n`, `ally-n`, `ship-n`; `PlayerFoot`, `Enemy`, `Ally` und `Ship` tragen `entityId`. `sim/intents.ts`: `DashIntent`, `SailRepairIntent`, `CrewRefillIntent` sind reine Daten mit Urheber (`entityId`) und Ziel (`shipId`). Es gibt nirgends ein globales Spieler-Objekt; die Welt reicht die Kennung über `playerEntityId`.
+- **Kollision:** `combat/sweep.ts` ohne three.js, `SweepGround` = `height` + `constrain` (jede `Ground` der Welt erfüllt es, auch `DeckGround`). Die Kontakt-Normale folgt aus der Verschiebung durch `constrain`, die Auflösung selbst blieb unverändert. `resolveDash(body, latch, intent, ground, dt)` für Impulse, `sweepMove(..., impulse)` allgemein. Konstanten in `SWEEP`. `PlayerFoot.lastSweep` liefert Wand-/Stufen-/Steilhang-Ergebnis für Prüfungen.
+- **Schiffssimulation:** `naval/shipSim.ts` (ohne three.js): `ShipSimState` (Rumpf, Segel-HP, Crew je `shipId`, gesetzte Segelfläche, Reparaturauftrag) ist JSON-tauglich. Crew in Gruppen (`CREW_POOLS`, jetzt nur `matrosen`; Köpfe `HEADS_PER_CREW_POINT` = 8 je Klassen-Crew), Crew-% = gewichteter Anteil. **Das Zwei-Stufen-Crew-System dockt an**, indem es einen Eintrag in `CREW_POOLS` und einen Pool in `makeCrew` ergänzt (Gewicht, Verlustreihenfolge); alle Wirkungen (`crewEffects`) hängen nur an der Crew-%. `Ship` hält `sim` und stellt `hull`, `sail`, `crew` als Zugriffe bereit (alter Code läuft unverändert).
+- **Segel-Shader:** `SailUniforms.uDmg`, Varying `vSailP`; der Riss-Test sitzt vor `alphatest_fragment` (Segel haben `alphaTest`). Schatten der Segel zeigen die Löcher nicht (Tiefenmaterial).
+- **Prüfung:** `tests/sweep.test.ts` (18, darunter 2000 zufällige Impulse gegen 14 Häuser, Treppe, Rampen 30° bis 70°, Deck) und `tests/shipSim.test.ts` (18). `npx tsc --noEmit` fehlerfrei, 122 von 122 Tests bestanden. Im Spiel (Playwright, echte GPU): Segelfahrt je Segel-%, Nachladezeit, Segelsetzen, Reparatur, Notsegel, Sturm, Matrosen anheuern; 217 Rollen und 217 Hiebe gegen 74 Häuser der Heimatinsel ohne Einbruch (kleinster Abstand 0,26 m, nur beim Quetschen zwischen Haus und Nachbarzaun, wie schon beim Laufen); Treppe der Galeone per Rolle, Hieb und Laufen ohne Höhensprung.
+- Nicht geprüft: echtes Handy, Seegefecht mit Gegnerschiffen im Dauertest, Sturm im laufenden Wetter über Minuten.
+
 ## 2.9.85 – Startbildschirm ohne Streifen, Karibik-Meer (17.11.2026)
 
 **Startbildschirm: lange gezogene Streifen und Flächen (Ursache gefunden und behoben)**

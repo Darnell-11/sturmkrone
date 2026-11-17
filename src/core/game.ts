@@ -60,6 +60,8 @@ import { CAT_LABEL, GEAR_CATS, catOf, type GearCat } from '../data/equipment';
 import { clearOld, ensureLoot, grantLoot, lootDef, rollLootGear, setLine, wearLoot, wornLoot } from './gearBag';
 import { ACHIEVEMENTS } from '../data/achievements';
 import { ABYSS_LAIR } from '../naval/seaBoss';
+import { crewFrac, crewHeads, crewPricePerHead, missingHeads, needsRepair, REPAIR_MATERIALS, shipTooltip, type ShipSimState } from '../naval/shipSim';
+import type { RepairMaterial } from '../sim/intents';
 import { QUESTS, QUEST_BY_ID } from '../data/quests';
 import { hostileLegends, LEGEND_BY_ID, rankRows } from '../data/legends';
 
@@ -377,13 +379,13 @@ export class Game {
       if (this.input.pressed('weapon1')) this.swapWeapon(0);
       if (this.input.pressed('weapon2')) this.swapWeapon(1);
       if (this.input.pressed('potion')) this.usePotion();
+      if (this.input.pressed('repair')) this.repairAtSea();
       if (this.input.pressed('inventory')) { this.openInventory(); return; }
       for (let i = 0; i < BAR_SLOTS; i++) if (this.input.pressed(`item${i + 1}` as 'item1')) this.useItem(this.save?.gear.bar?.[i] ?? null);
       this.tickItems(dt);
       this.legendT -= dt;
       if (this.legendT <= 0) { this.legendT = 1; this.updateLegends(); this.checkAchievements(); }
       this.world.update(dt, this.input);
-      if (this.save?.crew.hired.includes('cook') && this.world.mode === 'sail') { const sh = this.world.ship; if (sh.alive && sh.hull < sh.maxHull) sh.hull = Math.min(sh.maxHull, sh.hull + dt * 1.2); }
       if (this.save) this.save.meta.playTime += dt;
       this.autosaveTimer += dt;
       if (this.autosaveTimer >= AUTOSAVE_SECONDS) this.persist();
@@ -451,6 +453,7 @@ export class Game {
         this.hud.setSea(this.world.mode === 'sail' ? {
           hull: sh.hull / sh.maxHull, sail: sh.sail, crew: sh.crew, level: SAIL_LEVELS[sh.sailLevel].n, ammo: AMMO[sh.ammo].n,
           reloadL: sh.reloadL / this.world.reloadTime, reloadR: sh.reloadR / this.world.reloadTime, windRel: this.world.env.windDir - sh.heading, fire: sh.fire > 0,
+          repair: sh.sim.repair ? 1 - sh.sim.repair.left / sh.sim.repair.total : null, tip: shipTooltip(sh.sim),
         } : null);
         const fj = this.world.faji;
         this.hud.setFaji(fj ? fj.faji / fj.maxFaji : 1, this.save.skills.sp);
@@ -640,6 +643,8 @@ export class Game {
       nav.canDmg = (12 + lvl * 1.4) * (1 + this.save.ship.tier * 0.06) * (1 + up.can * 0.12) * (has('bruno') ? 1.2 : 1) * (1 + (tb.cannon ?? 0));
       nav.reloadMult = has('gun') ? 0.7 : 1;
     }
+    // Schiffskoch: bessert den Rumpf zusätzlich aus, aber nur, solange genug Seeleute an Bord sind (siehe stepPassiveRepair)
+    this.world.ship.repairBonus = has('cook') ? 1.2 : 0;
     const c = this.save.crew;
     this.world.setCrew(c.hired, c.party, c.loyalty, lvl, (has('musik') ? 1.15 : 1) * (has('ram') ? 1.15 : 1));
   }
@@ -1366,6 +1371,7 @@ export class Game {
     const s = this.save;
     const def = id ? CONSUMABLE_BY_ID[id] : null;
     if (!s || !def) return false;
+    if (def.repair) return this.repairAtSea(def.repair);
     const hp = this.world.playerHp;
     if (this.world.mode !== 'foot') { this.hud.toast(`${def.n}: nur an Land.`); return false; }
     if (itemCount(s.gear, def.id) <= 0) { this.hud.toast(`Kein ${def.n} mehr${def.id === 'proviant' ? ' – Mara verkauft welchen am Markt.' : '.'}`, 3); return false; }
@@ -1821,7 +1827,64 @@ export class Game {
   /** Reparatur kostet Gold je fehlendem Rumpfanteil */
   repairCost() {
     const sh = this.world.ship;
-    return Math.ceil((1 - sh.hull / sh.maxHull) * sh.maxHull * 0.6);
+    const hull = (1 - sh.hull / sh.maxHull) * sh.maxHull * 0.6;
+    const sail = (sh.sim.sail.max - sh.sim.sail.hp) * 0.9;
+    return Math.ceil(hull + sail);
+  }
+
+  /** Preis, die fehlende Besatzung aufzufüllen */
+  crewRefillCost() {
+    const sh = this.world.ship;
+    return Math.ceil(missingHeads(sh.sim.crew) * crewPricePerHead(this.save?.ship.tier ?? 0));
+  }
+
+  /** Taverne und Hafen: Seeleute für das Schiff anheuern (Crew-%). Gold je Kopf, wächst mit der Schiffsklasse. */
+  refillCrew(): string {
+    const s = this.save;
+    if (!s) return '';
+    const sh = this.world.ship;
+    const miss = missingHeads(sh.sim.crew);
+    if (miss <= 0) return 'Deine Mannschaft ist vollzählig.';
+    const per = crewPricePerHead(s.ship.tier);
+    // so viele Köpfe, wie das Gold hergibt (mindestens einer, sonst Hinweis)
+    const heads = Math.min(miss, Math.floor(s.player.gold / per));
+    if (heads <= 0) return `Ein Seemann kostet ${per} Gold Handgeld.`;
+    const got = sh.requestCrewRefill({ type: 'crewRefill', entityId: this.world.playerEntityId, shipId: sh.entityId, heads });
+    s.player.gold -= Math.ceil(got * per);
+    audio.play('level', 0.5);
+    this.persist();
+    const h = crewHeads(sh.sim.crew);
+    return missingHeads(sh.sim.crew) <= 0 ? `Die Mannschaft ist vollzählig: ${Math.round(h.n)} Seeleute, Crew 100 %.` : `${Math.round(got)} Seeleute angeheuert (Crew ${Math.round(crewFrac(sh.sim.crew) * 100)} %) – mehr kann das Gold nicht bezahlen.`;
+  }
+
+  /**
+   * Segel und Rumpf auf See flicken (Taste G / Knopf „Flicken“): nimmt Segeltuch, sonst Holzplanken, sonst ein Notsegel, wenn das Tuch fast
+   * ganz fehlt. Die Crew arbeitet je nach Crew-% schneller oder langsamer; die Reparatur zählt als Absicht des Spielers an sein Schiff.
+   */
+  repairAtSea(matId?: RepairMaterial): boolean {
+    const s = this.save;
+    if (!s || !this.state.is('play')) return false;
+    if (this.world.mode !== 'sail') { this.hud.toast('Flicken geht nur an Bord auf See.'); return false; }
+    const sh = this.world.ship;
+    if (!sh.alive) return false;
+    if (sh.sim.repair) { this.hud.toast('Die Crew arbeitet schon am Schaden.'); return false; }
+    const order: RepairMaterial[] = matId ? [matId] : sh.sail < 0.999 ? ['segeltuch', 'planken', 'notsegel'] : ['planken'];
+    const who = this.world.playerEntityId;
+    for (const m of order) {
+      if (!needsRepair(sh.sim, m)) continue;
+      const own = m === 'notsegel' ? 1 : itemCount(s.gear, m);
+      if (own <= 0) continue;
+      if (!sh.requestRepair({ type: 'sailRepair', entityId: who, shipId: sh.entityId, material: m })) continue;
+      if (m !== 'notsegel') takeItem(s.gear, m);
+      const job = sh.sim.repair as ShipSimState['repair'];
+      const t = job?.total ?? 0;
+      this.hud.toast(m === 'notsegel' ? `Die Crew näht ein Notsegel (${Math.round(t)} s).` : `Die Crew flickt mit ${REPAIR_MATERIALS[m].label} (${Math.round(t)} s) – noch ${itemCount(s.gear, m)}.`);
+      audio.play('sail');
+      this.inventoryUi?.refresh();
+      return true;
+    }
+    this.hud.toast(sh.sail >= 0.999 && sh.hull >= sh.maxHull - 0.5 ? 'Nichts zu flicken.' : 'Kein Segeltuch oder Holz an Bord – kaufe welches auf dem Markt (Hafen).');
+    return false;
   }
 
   upgradeCost(k: 'can' | 'hull' | 'sail') {
@@ -2082,7 +2145,7 @@ export class Game {
     this.itemCd.clear();
     if (this.assets) this.world.setCharacters(this.assets, this.displayLook(data), this.activeStyle(data), this.overlay);
     this.world.setSkills(data.skills, p.level);
-    this.world.setShip(data.ship.tier, data.ship.look, data.ship.ammo, data.ship.hull, p.faction);
+    this.world.setShip(data.ship.tier, data.ship.look, data.ship.ammo, data.ship.hull, p.faction, data.ship.sail ?? 1, data.ship.crew ?? 1);
     this.quests = new QuestSystem(data.progress, p.faction, {
       completed: (q) => this.onQuestDone(q),
       advanced: (_q, next) => this.hud.toast(`Neues Ziel: ${next.text}`, 3.5),
@@ -2146,6 +2209,8 @@ export class Game {
     this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather };
     const sh = this.world.ship;
     this.save.ship.hull = sh.maxHull > 0 ? Math.max(0.05, sh.hull / sh.maxHull) : 1;
+    this.save.ship.sail = sh.sail;
+    this.save.ship.crew = sh.crew;
     this.save.ship.ammo = sh.ammo;
     const ok = this.saves.save(this.slot, this.save);
     if (!ok && !this.saveFailedShown) {

@@ -7,6 +7,7 @@ export const ACTION_IDS = [
   'potion', 'map', 'skills', 'quests', 'talk', 'inventory',
   'item1', 'item2', 'item3', 'item4',
   'swap', 'weapon1', 'weapon2',
+  'repair',
   'pause',
 ] as const;
 
@@ -41,6 +42,7 @@ export const ACTION_LABELS: Record<ActionId, string> = {
   swap: 'Waffe wechseln',
   weapon1: 'Waffenplatz 1',
   weapon2: 'Waffenplatz 2',
+  repair: 'Segel flicken (See)',
   pause: 'Pause',
 };
 
@@ -74,6 +76,7 @@ export const DEFAULT_KEYS: Record<ActionId, string[]> = {
   swap: ['KeyQ'],
   weapon1: ['KeyZ'],
   weapon2: ['KeyX'],
+  repair: ['KeyG'],
   pause: ['Escape', 'KeyP'],
 };
 
@@ -107,6 +110,7 @@ export const DEFAULT_PAD: Record<ActionId, number[]> = {
   swap: [],
   weapon1: [],
   weapon2: [],
+  repair: [],
   pause: [9],
 };
 
