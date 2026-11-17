@@ -243,7 +243,7 @@ const WET_PRE_GLSL = /* glsl */ `
   float skPud = 0.0;
   vec3 skUpV = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
   float skUp = clamp(dot(normal, skUpV), 0.0, 1.0);
-  float skWetK = uWet * (0.35 + 0.65 * skUp);
+  float skWetK = max(uWet * (0.35 + 0.65 * skUp), skShoreWet * (0.35 + 0.65 * skUp));
   vec3 skWN = normal;
   #ifdef SK_PUDDLE
   if (uPuddle > 0.002) {
@@ -682,8 +682,10 @@ const DETAIL_FRAG: Record<DetailKind, string> = {
     diffuseColor.rgb *= 1.0 + grain + (ripK - 0.5) * 0.16 * (1.0 - smoothstep(50.0, 140.0, camD)) + macro * 0.26;
     // Farbspiel: helle, trockene Flächen gegen goldbraune Senken
     diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.06, 0.94, 0.8), smoothstep(0.45, 0.8, skdF(p * 0.07 + 3.1)) * 0.6);
-    float wet = 1.0 - smoothstep(0.35, 1.15, vSkWorld.y);
-    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.66, 0.66, 0.7), wet * 0.85);
+    // Nass-Sand an der Wasserlinie: dunkler, warm und satt (goldbraun), mit feuchtem Glanz (Himmelsspiegelung über skShoreWet)
+    float wet = 1.0 - smoothstep(0.62, 1.95, vSkWorld.y);
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.74, 0.64, 0.5), wet * 0.9);
+    skShoreWet = wet * 0.85;
     // Dünen: flache Wellen im Maßstab von Metern, Kämme heller, Mulden warm und dunkel (gibt der Fläche Tiefe, auch aus der Ferne)
     float dn = skdF(p * 0.11 + 17.0);
     float duneBand = sin((p.x * 0.7 + p.y * 0.45) * 0.55 + dn * 6.0) * 0.5 + 0.5;
@@ -923,7 +925,7 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
     const relief = [0, 0.35, 0.7, 0.7, 0.5, 0, 0][Math.max(0, pbr.surf)];
     const defs = (pbr.surf >= 0 ? `#define SK_MICRO\n#define SK_SURF ${pbr.surf}\n#define SK_CAVITY ${cav.toFixed(2)}\n#define SK_RELIEF ${relief.toFixed(2)}\n` : '') + (pbr.char ? '#define SK_CHAR\n' : '') + (pbr.puddles > 0 ? '#define SK_PUDDLE\n' : '') + (pbr.roughMap ? '#define SK_ROUGHMAP\n' : '') + (pbr.metalMap ? '#define SK_METALMAP\n' : '') + (pbr.env ? '#define SK_ENV\n' + cubeUvDefines() : '') + (pbr.fx ? '#define SK_FX\n' : '');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', defs + '#include <common>\nuniform vec3 uShadowTint;\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uSpec;\nuniform float uRimAmount;\n' + PBR_PARS_GLSL + WET_PARS + (pbr.puddles > 0 ? 'uniform float uPuddleAmt;\n' : '') + (pbr.fx ? FX_PARS_GLSL : '') + (pbr.surf >= 0 ? (pbr.char ? 'uniform vec4 uEyeUv;\n' + (pbr.surf === 5 ? 'varying vec3 vSkSph;\n' : '') + (pbr.mask && !(pbr.reflect > 0 || pbr.puddles > 0) ? 'uniform float uSkMaskOff;\n' : '') : '') + MICRO_PARS_GLSL : '') + (pbr.env ? '#include <cube_uv_reflection_fragment>\n' : ''))
+      .replace('#include <common>', defs + '#include <common>\nuniform vec3 uShadowTint;\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uSpec;\nuniform float uRimAmount;\n' + PBR_PARS_GLSL + WET_PARS + 'float skShoreWet = 0.0;\n' + (pbr.puddles > 0 ? 'uniform float uPuddleAmt;\n' : '') + (pbr.fx ? FX_PARS_GLSL : '') + (pbr.surf >= 0 ? (pbr.char ? 'uniform vec4 uEyeUv;\n' + (pbr.surf === 5 ? 'varying vec3 vSkSph;\n' : '') + (pbr.mask && !(pbr.reflect > 0 || pbr.puddles > 0) ? 'uniform float uSkMaskOff;\n' : '') : '') + MICRO_PARS_GLSL : '') + (pbr.env ? '#include <cube_uv_reflection_fragment>\n' : ''))
       .replace('#include <lights_toon_pars_fragment>', LIGHTS_GLSL)
       .replace('#include <opaque_fragment>', WET_PRE_GLSL + RIM_SPEC_GLSL + WET_POST_GLSL + '\n#include <opaque_fragment>'
         + (pbr.reflect > 0 ? '\ngl_FragColor.a = mix(1.0 - 0.4 * clamp(uReflect, 0.0, 1.0), 1.0, uSkMaskOff);' : '')
@@ -1000,7 +1002,7 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
       }
     }
   };
-  const progKey = `sk-toon-7${pbr.surf >= 0 ? (pbr.char ? 'c' : 'u') + pbr.surf + (pbr.mask ? 'k' : '') : ''}${detail ? '-' + detail : ''}-${pbr.env ? 'e' : ''}${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}${pbr.fx ? 'f' : ''}${pbr.reflect > 0 ? 's' : ''}${pbr.puddles > 0 ? 'p' : ''}${pbr.ringel > 0 ? 'g' : ''}${pbr.trim ? 't' : ''}-wet`;
+  const progKey = `sk-toon-8${pbr.surf >= 0 ? (pbr.char ? 'c' : 'u') + pbr.surf + (pbr.mask ? 'k' : '') : ''}${detail ? '-' + detail : ''}-${pbr.env ? 'e' : ''}${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}${pbr.fx ? 'f' : ''}${pbr.reflect > 0 ? 's' : ''}${pbr.puddles > 0 ? 'p' : ''}${pbr.ringel > 0 ? 'g' : ''}${pbr.trim ? 't' : ''}-wet`;
   mat.customProgramCacheKey = () => progKey + (isWind(mat) ? 'w' : '');
 }
 

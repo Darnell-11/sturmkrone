@@ -302,7 +302,7 @@ export class Environment {
       const dusk = Math.max(0, 1 - Math.min(Math.abs(h - 18.6), Math.abs(h - 6.4)) / 1.6);
       const night = h < 5.5 || h > 20 ? 1 : 0;
       // tags frisches Türkisblau (tropische Schatten), im Abendrot warm-rosa, nachts tiefes Blau
-      toonShared.shadowTint.value.setRGB(0.72 + dusk * 0.2 - night * 0.04, 0.88 - dusk * 0.14, 1.08 + dusk * 0.0 + night * 0.1);
+      toonShared.shadowTint.value.setRGB(0.8 + dusk * 0.14 - night * 0.08, 0.92 - dusk * 0.14, 1.06 + night * 0.1);
     }
     toonShared.shadowTint.value.multiplyScalar(1 - 0.08 * pal.noon);
     toonShared.rimStrength.value = 0.55 * (1 - greyK * 0.6) * (0.35 + 0.65 * pal.sunVis);

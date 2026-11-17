@@ -169,11 +169,13 @@ if (vSkSurf > 1.5 && vSkSurf < 2.5) {
   vec3 skL = directionalLights[0].direction;
   float skBack = clamp(-dot(skV, skL), 0.0, 1.0);
   float skSun = clamp(dot(directionalLights[0].color, vec3(0.333)) * 1.3, 0.0, 1.0);
-  totalEmissiveRadiance += diffuseColor.rgb * vec3(1.0, 1.0, 0.45) * pow(skBack, 1.4) * skSun * 1.1;
+  float skThin = 1.0 - smoothstep(-0.15, 0.65, dot(normal, skL));
+  totalEmissiveRadiance += diffuseColor.rgb * vec3(1.0, 0.95, 0.32) * pow(skBack, 1.4) * skSun * 1.25
+    + diffuseColor.rgb * vec3(0.5, 0.9, 0.18) * skThin * skSun * (0.1 + 0.34 * pow(skBack, 0.8));
 }
 #endif`);
   };
-  m.customProgramCacheKey = () => key() + (thin ? 'veg3t' : 'veg3');
+  m.customProgramCacheKey = () => key() + (thin ? 'veg4t' : 'veg4');
 }
 
 const protos = new Map<string, Proto>();
@@ -335,8 +337,8 @@ export class Scatter {
 export type Biome = 'festland' | 'tropisch' | 'klippe';
 interface Pal { trunk: string; leaf: string[]; bush: string[]; grass: string[]; reed: string; rock: string[]; flowers: string[] }
 const PAL: Record<Biome, Pal> = {
-  festland: { trunk: '#5E4630', leaf: ['#3F7A38', '#4E8C3C', '#6A9A40', '#356A34'], bush: ['#3E7238', '#4F8440', '#5E8E3A'], grass: ['#5C9448', '#6CA24E', '#4E843E'], reed: '#B8A85A', rock: ['#8A857A', '#9A948A', '#7A766C'], flowers: ['#E8D44A', '#F2F0E6', '#C8443C', '#7B8FE0', '#E28AB0'] },
-  tropisch: { trunk: '#7A5A36', leaf: ['#3E8A3A', '#4E9A3E', '#2E7A40', '#66A83E'], bush: ['#2F7A44', '#3E8A3E', '#56984A'], grass: ['#5E9A4A', '#72AA4E', '#4A8A40'], reed: '#C2B26A', rock: ['#9A8E7C', '#AAA08C', '#857A6A'], flowers: ['#E0483C', '#F0A030', '#F4F0E0', '#C060C8', '#F06A90'] },
+  festland: { trunk: '#5E4630', leaf: ['#2F8C3C', '#3E9E42', '#5AAE42', '#267A36'], bush: ['#34823A', '#459444', '#58A042'], grass: ['#4AA048', '#5CB050', '#3E9040'], reed: '#B8A85A', rock: ['#A8A392', '#B8B3A2', '#98938A'], flowers: ['#E8D44A', '#F2F0E6', '#C8443C', '#7B8FE0', '#E28AB0'] },
+  tropisch: { trunk: '#8A6A42', leaf: ['#1C9446', '#2AA84A', '#12803F', '#52B83C'], bush: ['#238A48', '#2F9A44', '#4AA84A'], grass: ['#3FA84A', '#58B850', '#33963F'], reed: '#C9BB70', rock: ['#CFC6AE', '#BDB49C', '#DDD4BC'], flowers: ['#E0483C', '#F0A030', '#F4F0E0', '#C060C8', '#F06A90'] },
   klippe: { trunk: '#3E342C', leaf: ['#2E4E3E', '#38584A', '#274438', '#34503C'], bush: ['#3E5446', '#4A5E4A', '#55664E'], grass: ['#6E7E5A', '#7E8A62', '#5E6E52'], reed: '#A8A078', rock: ['#4C4F58', '#5A5D68', '#42454E'], flowers: ['#C2CCD2', '#9AA8C8', '#D8D4C4'] },
 };
 

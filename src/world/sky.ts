@@ -24,7 +24,7 @@ const SKY_FRAG = /* glsl */ `
   void main() {
     vec3 d = normalize(vDir);
     float h = clamp(d.y, 0.0, 1.0);
-    vec3 c = mix(uHorizon, uZenith, pow(max(h, 1e-4), 0.45));
+    vec3 c = mix(uHorizon, uZenith, pow(max(h, 1e-4), 0.36));
     // Leuchten um die Sonne / Abendrot am Horizont
     float s = max(dot(d, normalize(uSunDir)), 0.0);
     c += uGlow * pow(max(s, 1e-4), 6.0) * (1.0 - h) * 0.9;
