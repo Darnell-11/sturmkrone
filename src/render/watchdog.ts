@@ -1,4 +1,5 @@
 import type { QualityConfig } from '../data/qualityTiers';
+import { FrameWindow } from './frameStats';
 
 /**
  * Leistungs-Wächter: Fällt die Bildrate unter 50 fps, nimmt er der Reihe nach Last weg, die man am wenigsten sieht
@@ -14,8 +15,8 @@ export class PerfWatchdog {
   /** aktuelle Sparstufe 0 (aus) … 3 */
   level = 0;
   private warm = 0;
-  private acc = 0;
-  private frames = 0;
+  private warmFor = 8;
+  private win = new FrameWindow();
   private bad = 0;
   private good = 0;
   /** nach einer Rücknahme, die sofort wieder zu langsam war, bis dahin nicht erneut zurückgeben (Spielzeit s) */
@@ -23,8 +24,11 @@ export class PerfWatchdog {
   private clock = 0;
   private lastUp = -99;
 
-  /** Nach Laden, Pause oder Szenenwechsel neu messen (Shader-Übersetzung verfälscht die ersten Sekunden) */
-  rewarm() { this.warm = 0; this.acc = 0; this.frames = 0; this.bad = 0; this.good = 0; }
+  /**
+   * Nach Laden, Pause, Szenenwechsel (an Land gehen, Entern, Schnellreise) neu messen: Shader-Übersetzung, Figuren-Aufbau und Nachladen
+   * verfälschen die ersten Sekunden. `grace` = Sekunden ohne Messung (Standard 4, nach dem Start 8).
+   */
+  rewarm(grace = 4) { this.warmFor = grace; this.warm = 0; this.win.reset(); this.bad = 0; this.good = 0; }
 
   reset() { this.level = 0; this.rewarm(); this.blockUpUntil = 0; this.lastUp = -99; }
 
@@ -34,12 +38,12 @@ export class PerfWatchdog {
     if (frameDt <= 0 || frameDt > 0.2 || (typeof document !== 'undefined' && document.hidden)) return null;
     this.clock += frameDt;
     this.warm += frameDt;
-    if (this.warm < 4) return null;
-    this.acc += frameDt;
-    this.frames++;
-    if (this.acc < 2.5) return null;
-    const fps = this.frames / this.acc;
-    this.acc = 0; this.frames = 0;
+    if (this.warm < this.warmFor) return null;
+    this.win.push(frameDt);
+    if (this.win.acc < 2.5) return null;
+    // ohne die langsamsten 4 % der Bilder: einzelne Ruckler (Shader, Speicherbereinigung) zählen nicht als Dauerlast
+    const fps = this.win.fps();
+    this.win.reset();
     if (fps < PerfWatchdog.LOW) {
       this.good = 0;
       // wurde gerade erst zurückgegeben und es ruckelt wieder: Rücknahme war zu früh
@@ -47,7 +51,7 @@ export class PerfWatchdog {
       if (++this.bad >= 2 && this.level < PerfWatchdog.MAX) {
         this.bad = 0;
         this.level++;
-        this.warm = 2; // kurz beruhigen lassen (Schattenkarten und Nachbearbeitung werden neu aufgebaut)
+        this.warmFor = 4; this.warm = 2; // 2 s beruhigen lassen (Schattenkarten und Nachbearbeitung werden neu aufgebaut)
         return this.level;
       }
     } else if (fps >= PerfWatchdog.HIGH) {
@@ -56,7 +60,7 @@ export class PerfWatchdog {
         this.good = 0;
         this.level--;
         this.lastUp = this.clock;
-        this.warm = 2;
+        this.warmFor = 4; this.warm = 2;
         return this.level;
       }
     } else {

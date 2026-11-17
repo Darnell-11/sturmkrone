@@ -1,3 +1,5 @@
+import { FrameWindow } from './frameStats';
+
 /**
  * Dynamische Auflösung (Renderer-Watchdog).
  * Fällt die Bildrate mehrere Sekunden unter 50 fps, rechnet das Spiel mit etwas weniger Pixeln (in Schritten von
@@ -15,8 +17,8 @@ export class DynamicResolution {
   private min = 1;
   private clock = 0;
   private warm = 0;
-  private acc = 0;
-  private frames = 0;
+  private warmFor = 6;
+  private win = new FrameWindow();
   private lowWins = 0;
   private highWins = 0;
   private lastChange = -99;
@@ -34,26 +36,26 @@ export class DynamicResolution {
   reset(basePixelRatio: number) {
     this.scale = 1;
     this.min = Math.min(1, DynamicResolution.FLOOR / Math.max(0.01, basePixelRatio));
-    this.warm = 0; this.acc = 0; this.frames = 0; this.lowWins = 0; this.highWins = 0; this.probe = null;
+    this.warm = 0; this.win.reset(); this.lowWins = 0; this.highWins = 0; this.probe = null;
   }
 
-  /** Messung neu beginnen, Faktor behalten (nach Pause, Ladebildschirm) */
-  rewarm() { this.warm = 0; this.acc = 0; this.frames = 0; this.lowWins = 0; this.highWins = 0; this.probe = null; }
+  /** Messung neu beginnen, Faktor behalten (nach Pause, Ladebildschirm, Szenenwechsel); `grace` = Sekunden ohne Messung */
+  rewarm(grace = 6) { this.warmFor = grace; this.warm = 0; this.win.reset(); this.lowWins = 0; this.highWins = 0; this.probe = null; }
 
   /** Kann die Auflösung noch weiter sinken? (Solange ja, senkt das Spiel nicht gleich die ganze Grafikstufe) */
   get hasRoom() { return this.scale > this.min + 0.001 && this.clock >= this.blockDownUntil; }
 
   /** Je Bild aufrufen; Rückgabe true = Faktor geändert (Renderer muss die Größe neu setzen) */
   sample(frameDt: number): boolean {
-    if (frameDt <= 0 || frameDt > 0.2 || document.hidden) return false;
+    if (frameDt <= 0 || frameDt > 0.2 || (typeof document !== 'undefined' && document.hidden)) return false;
     this.clock += frameDt;
     this.warm += frameDt;
-    if (this.warm < 4) return false;
-    this.acc += frameDt;
-    this.frames++;
-    if (this.acc < 1) return false;
-    const fps = this.frames / this.acc;
-    this.acc = 0; this.frames = 0;
+    if (this.warm < this.warmFor) return false;
+    this.win.push(frameDt);
+    if (this.win.acc < 1) return false;
+    // ohne die langsamsten 4 % der Bilder: ein Ruckler (Shader-Übersetzung, Nachladen) senkt die Auflösung nicht
+    const fps = this.win.fps();
+    this.win.reset();
 
     // Ergebnis eines Versuchs nach zwei Messfenstern auswerten
     if (this.probe) {

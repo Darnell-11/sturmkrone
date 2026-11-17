@@ -25,11 +25,12 @@ import { cloneToon, toon } from '../render/toon';
 import { crateTexture, deckUV, plankTexture } from '../render/textures';
 import { detailCanvas, texDetail } from '../render/texDetail';
 import { boxBlocker, type WalkIsland } from './islandGround';
+import { auditPlacement } from './placeAudit';
 import { hasProp, propGroup } from './worldProps';
 import { markShared } from '../render/dispose';
 import { toonPbr } from '../render/pbrMaps';
 import { waveFlag } from '../render/flags';
-import { build as buildStruct, colliders as structColliders, levelFootprint, lightMats, setYardCompact } from './architecture';
+import { build as buildStruct, colliders as structColliders, lanternMats, levelFootprint, setYardCompact, settleYard } from './architecture';
 import type { StructureType } from '../data/settlements';
 import type { GlowPlaced } from '../render/glow';
 import { hasArch as hasArchModel, hasArch, archGroup } from './envModels';
@@ -101,7 +102,7 @@ function lantern(lampMat: Material, lights: Mesh[]): Group {
   lights.push(lamp);
   if (glb) {
     // Blender-Laternenpfahl: Eisenarm, Käfig mit Glasscheiben, Messingbänder; die Kugel ist nur der Kern (und der Anker des Lichthofs)
-    g.add(archGroup('laternenpfahl', lightMats)!, lamp);
+    g.add(archGroup('laternenpfahl', lanternMats)!, lamp);
     return g;
   }
   const post = new Mesh(new CylinderGeometry(0.08, 0.1, 3, 6), toon('#3A2A1E'));
@@ -404,6 +405,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
     const rr = Array.isArray(block) ? rectRange(wx, wz, yaw, block[0], block[1], block[2] ?? 0, block[3] ?? 0) : { mn: groundAt(wx, wz), mx: groundAt(wx, wz) };
     o.position.set(wx, rr.mn, wz);
     o.rotation.y = yaw;
+    auditPlacement?.('ankerglueck', 'place', o, groundAt);
     group.add(o);
     if (Array.isArray(block)) walk.blockers.push(boxBlocker(wx, wz, block[0], block[1], yaw, block[2] ?? 0, block[3] ?? 0));
     else if (block > 0) walk.blockers.push({ x: wx, z: wz, r: block });
@@ -435,6 +437,8 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
     const baseY = Math.max(rr.mn + 0.05, Math.min(frontY, rr.mn + 1.6));
     b.g.position.set(wx, baseY, wz);
     b.g.rotation.y = yaw;
+    settleYard(b, wx, wz, yaw, groundAt);
+    auditPlacement?.('ankerglueck', t, b.g, groundAt);
     group.add(b.g);
     const drop = baseY - rr.mn + 0.35;
     if (drop > 0.4 && big[0] > 3) {

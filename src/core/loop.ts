@@ -15,6 +15,11 @@ export class GameLoop {
   fps = 0;
   /** Durchschnittliche Frame-Dauer in ms (für die automatische Grafikstufe) */
   frameMs = 16.7;
+  /**
+   * Gleitender Mittelwert der Rechenzeit je Bild in ms (Logik + Zeichenbefehle, ohne das Warten auf die Grafikkarte). Liegt er nahe an
+   * `frameMs`, bremst der Prozessor (Zeichenaufrufe), nicht die Grafikkarte: weniger Pixel oder weicherer Schatten würden dann nichts bringen.
+   */
+  cpuMs = 8;
 
   private acc = 0;
   private last = 0;
@@ -45,6 +50,7 @@ export class GameLoop {
 
   /** Einen Frame mit gegebener Dauer (Sekunden) vorrücken. Öffentlich für Tests. */
   advance(frameDt: number): number {
+    const t0 = performance.now();
     const dt = Math.min(MAX_FRAME, Math.max(0, frameDt));
     this.acc += dt * this.timeScale;
     let steps = 0;
@@ -55,6 +61,9 @@ export class GameLoop {
     }
     if (steps === MAX_STEPS) this.acc = 0;
     this.cb.render(this.acc / this.step, dt);
+    // Ausreißer (Shader-Übersetzung, Nachladen) zählen nicht in den Mittelwert
+    const cpu = performance.now() - t0;
+    if (cpu < 60) this.cpuMs += (cpu - this.cpuMs) * 0.05;
     return steps;
   }
 

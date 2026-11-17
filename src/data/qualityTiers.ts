@@ -48,6 +48,11 @@ export interface QualityConfig {
   /** Auflösung der gemalten Texturen (1 = Standard, 4 = Ultra) und Texturfilterung */
   textureScale: number;
   anisotropy: number;
+  /**
+   * Zusatzfaktor nur für die kleinen gemalten Texturen (Basis ≤ 256 px: Rumpfplanken, Pflaster, Erde, Rauch): Max malt sie in 1024 px,
+   * Ultra in 2048 px (Basis 256 × textureScale × textureBoost). Große Basen (Deck 1024 px) bleiben bei Basis × textureScale.
+   */
+  textureBoost: number;
   /** Supersampling: mehr Pixel rendern als der Bildschirm hat (Ultra, begrenzt durch maxPixels) */
   supersample: number;
   /** Spiegelungen (IBL): Sekunden zwischen zwei Aufnahmen des Himmels; 0 = aus (einfacher Himmelsverlauf) */
@@ -107,6 +112,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     detail: 0.5,
     textureScale: 1,
     anisotropy: 2,
+    textureBoost: 1,
     supersample: 1,
     ibl: 0,
   },
@@ -128,6 +134,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     detail: 0.75,
     textureScale: 1,
     anisotropy: 4,
+    textureBoost: 1,
     supersample: 1,
     ibl: 20,
   },
@@ -148,6 +155,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     detail: 1,
     textureScale: 2,
     anisotropy: 8,
+    textureBoost: 1,
     supersample: 1,
     ibl: 8,
   },
@@ -168,6 +176,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     detail: 1.25,
     textureScale: 2,
     anisotropy: 16,
+    textureBoost: 2,
     supersample: 1,
     ibl: 6,
   },
@@ -188,6 +197,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     detail: 1.6,
     textureScale: 4,
     anisotropy: 16,
+    textureBoost: 2,
     supersample: 1.5,
     ibl: 4,
   },

@@ -14,6 +14,7 @@ import {
   SphereGeometry,
   TorusGeometry,
   type Material,
+  type Object3D,
   CanvasTexture,
   SRGBColorSpace,
 } from 'three';
@@ -22,7 +23,7 @@ import { markShared } from '../render/dispose';
 import { toonPbr } from '../render/pbrMaps';
 import { crateTexture, deckUV, plankTexture } from '../render/textures';
 import { toon } from '../render/toon';
-import { coalMaterial, lanternGlass } from '../render/lampMaterials';
+import { coalMaterial, lanternCoal, lanternGlass } from '../render/lampMaterials';
 import { boxBlocker, type Blocker } from './islandGround';
 import { hasProp, propGroup, type PropId } from './worldProps';
 import { archGroup, hasArch } from './envModels';
@@ -208,6 +209,8 @@ const houseMats = (s: ArchSet) => (role: string) => {
 };
 
 /** Materialien der Licht-Bausätze (Feuerstelle, Feuerkorb, Fackel, Laternenpfahl); die Glut leuchtet selbst */
+/** Wie `lightMats`, aber mit Flammenkern, der nur nachts leuchtet (Laternen brennen nicht am Tag) */
+export const lanternMats = (role: string): Material => role === 'ember' ? lanternCoal : lightMats(role);
 export const lightMats = (role: string): Material => {
   switch (role) {
     case 'ember': return coalMaterial;
@@ -480,8 +483,15 @@ function saeulen(rnd: () => number): Built {
 function zaun(len: number): Built {
   const g = new Group();
   const n = Math.max(1, Math.round(len / 1.5));
-  for (let i = 0; i <= n; i++) g.add(box(0.14, 1.9, 0.14, M.wood, -len / 2 + (i / n) * len, 0.2, 0));
-  for (const y of [0.45, 0.85]) g.add(box(len, 0.1, 0.08, M.wood, 0, y, 0));
+  const yard: Object3D[] = [];
+  const add = (o: Object3D) => { g.add(o); yard.push(o); return o; };
+  for (let i = 0; i <= n; i++) add(box(0.14, 1.9, 0.14, M.wood, -len / 2 + (i / n) * len, 0.2, 0));
+  // Latten je Feld zwischen zwei Pfosten (nicht ein langer Balken): `settleYard` legt jedes Feld in die Neigung des Bodens
+  for (let i = 0; i < n; i++) {
+    const x0 = -len / 2 + (i / n) * len, x1 = -len / 2 + ((i + 1) / n) * len;
+    for (const y of [0.45, 0.85]) { const r = add(box(x1 - x0 + 0.02, 0.1, 0.08, M.wood, (x0 + x1) / 2, y, 0)); r.userData.seg = [x0, x1]; }
+  }
+  g.userData.yard = yard;
   return { g, boxes: [[len, 0.3]], circles: [] };
 }
 
@@ -489,18 +499,23 @@ function zaun(len: number): Built {
 function mauer(len: number, rnd: () => number): Built {
   const g = new Group();
   const n = Math.max(1, Math.round(len / 1.7));
+  const yard: Object3D[] = [];
   for (let i = 0; i < n; i++) {
     const h = 0.95 + rnd() * 0.35;
     const seg = box(len / n + 0.06, h + 1.4, 0.62 + rnd() * 0.12, M.stoneDark, -len / 2 + (i + 0.5) * (len / n), (h - 1.4) / 2, (rnd() - 0.5) * 0.08);
     g.add(seg);
+    yard.push(seg);
     if (rnd() < 0.5) {
       const cap = new Mesh(new DodecahedronGeometry(0.34, 0), M.stoneLight);
       cap.position.set(seg.position.x + (rnd() - 0.5) * 0.6, h + 0.1, 0);
       cap.scale.y = 0.6;
       cap.rotation.y = rnd() * 3;
       g.add(cap);
+      yard.push(cap);
     }
   }
+  // jedes Mauerstück folgt dem Boden (Trockenmauer auf dem Hang stuft sich ab); die Steine reichen 1,4 m in den Boden
+  g.userData.yard = yard;
   return { g, boxes: [[len, 0.8]], circles: [] };
 }
 
@@ -644,7 +659,7 @@ function brunnen(): Built {
 function laterne(): Built {
   const g = new Group();
   const glbPost = hasArch('laternenpfahl');
-  if (glbPost) g.add(archGroup('laternenpfahl', lightMats)!);
+  if (glbPost) g.add(archGroup('laternenpfahl', lanternMats)!);
   else g.add(cyl(0.08, 0.1, 3, 6, M.darkWood, 0, 1.5, 0), box(0.7, 0.08, 0.08, M.darkWood, 0.3, 2.9, 0));
   const lamp = new Mesh(new SphereGeometry(glbPost || hasProp('laterne') ? 0.05 : 0.22, 10, 8), lampMat);
   lamp.position.set(0.6, 2.7, 0);
@@ -789,12 +804,73 @@ export function settleOnSlope(b: Built, x: number, z: number, yaw: number, hAt: 
   return y;
 }
 
+/**
+ * Teile eines Bauwerks, die dem Boden folgen sollen (Zaunfelder, Mauerstücke, Trittsteine, Holzstapel): nach dem Aufstellen jedes einzelne
+ * auf die Höhe des Bodens an seiner Stelle setzen (Verschiebung gegenüber dem Ursprung des Baus, höchstens ±1,5 m). Zaunfelder (`seg`) legen
+ * sich zusätzlich in die Neigung zwischen ihren Pfosten. Vorher standen Zaun, Weg und Mauer auf der Höhe des Ursprungs: auf Hängen
+ * schwebten Latten und Trittsteine, oder sie steckten im Hang. `hAt` in denselben Koordinaten wie x/z.
+ */
+export function settleYard(b: Built, x: number, z: number, yaw: number, hAt: (x: number, z: number) => number) {
+  const yard = b.g.userData.yard as Object3D[] | undefined;
+  if (!yard?.length) return;
+  const c = Math.cos(yaw), s = Math.sin(yaw), y0 = b.g.position.y;
+  const at = (lx: number, lz: number) => hAt(x + lx * c + lz * s, z - lx * s + lz * c);
+  const lim = (v: number) => Math.max(-1.5, Math.min(1.5, v));
+  for (const o of yard) {
+    const p = o.position;
+    const seg = o.userData.seg as [number, number] | undefined;
+    if (seg) {
+      const d0 = lim(at(seg[0], p.z) - y0), d1 = lim(at(seg[1], p.z) - y0);
+      p.y += (d0 + d1) / 2;
+      o.rotation.z = Math.atan2(d1 - d0, seg[1] - seg[0]);
+      continue;
+    }
+    const dy = lim(at(p.x, p.z) - y0);
+    if (Math.abs(dy) < 0.005) continue;
+    p.y += dy;
+    const mate = o.userData.mate as Object3D | undefined;
+    if (mate) mate.position.y += dy;
+  }
+}
+
+/** Steinbauten ohne Einebnung (Festungstore, Türme), die auf Hängen einen Steinsockel bis zum Boden bekommen */
+export const PLINTHED = new Set<StructureType>(['torhaus', 'zinnenturm', 'bergfried', 'steinturm', 'wachturm', 'kran']);
+
+/**
+ * Steinsockel unter jedem Kollisionsquader eines Baus: reicht von der Unterkante des Baus bis zum tiefsten Boden darunter. Der Bau selbst
+ * bleibt, wo er ist; auf der Talseite eines Hangs sieht man so keinen Spalt mehr unter dem Fundament (Torhäuser schwebten bis 2,5 m).
+ * Muss nach dem Setzen von Position und Drehung von `b.g` aufgerufen werden; `hAt` in denselben Koordinaten wie x/z.
+ */
+export function addPlinths(b: Built, x: number, z: number, yaw: number, hAt: (x: number, z: number) => number) {
+  const c = Math.cos(yaw), s = Math.sin(yaw), y0 = b.g.position.y;
+  for (const [w, d, ox = 0, oz = 0, by = 0] of b.boxes) {
+    if (w < 3 || d < 3) continue;
+    const cb = Math.cos((by * Math.PI) / 180), sb = Math.sin((by * Math.PI) / 180);
+    let mn = Infinity;
+    for (let i = 0; i < 5; i++) for (let j = 0; j < 5; j++) {
+      // Punkt im Quader (Objektraum, Quader um `by` gedreht), dann in die Welt (um yaw)
+      const u = (i / 4 - 0.5) * w, v = (j / 4 - 0.5) * d;
+      const lx = ox + u * cb + v * sb, lz = oz - u * sb + v * cb;
+      const h = hAt(x + lx * c + lz * s, z - lx * s + lz * c);
+      if (h < mn) mn = h;
+    }
+    const drop = y0 - mn + 0.35;
+    if (drop < 0.4 || drop > 9) continue;
+    const plinth = new Mesh(new BoxGeometry(w + 0.25, drop, d + 0.25), plinthMat);
+    plinth.position.set(ox, 0.1 - drop / 2, oz);
+    plinth.rotation.y = (by * Math.PI) / 180;
+    b.g.add(plinth);
+  }
+}
+
 function dress(b: Built, rnd: () => number, w: number, d: number, wide = false): Built {
   const g = b.g;
   const front = d / 2;
   const tight = yardCompact;
   // gepflasterter Steinweg: unregelmäßige Platten, leicht schlängelnd
   const n = tight ? 2 : wide ? 11 : 9;
+  // Teile des Vorgartens, die dem Boden folgen (settleYard): Trittsteine, Holzstapel, Zaun
+  const yard: Object3D[] = [];
   for (let i = 0; i < n; i++) {
     const z = front + 0.8 + i * 0.62;
     const cx = Math.sin(i * 0.8 + 1) * 0.3;
@@ -805,6 +881,7 @@ function dress(b: Built, rnd: () => number, w: number, d: number, wide = false):
       st.position.set(cx + dx + (rnd() - 0.5) * 0.18, 0.03, z + (rnd() - 0.5) * 0.14);
       st.rotation.y = rnd() * 3;
       g.add(st);
+      yard.push(st);
     }
   }
   // Hängelaterne neben der Tür
@@ -840,8 +917,11 @@ function dress(b: Built, rnd: () => number, w: number, d: number, wide = false):
   logs.position.set(wx, 0, wz);
   logs.rotation.y = Math.PI / 2;
   g.add(logs);
+  yard.push(logs);
   const block = cyl(0.26, 0.28, 0.4, 8, M.wood, wx + sx * 0.2, 0.2, wz + 1.3);
-  g.add(block, box(0.05, 0.5, 0.05, M.darkWood, wx + sx * 0.2, 0.6, wz + 1.3));
+  const axe = box(0.05, 0.5, 0.05, M.darkWood, wx + sx * 0.2, 0.6, wz + 1.3);
+  g.add(block, axe);
+  yard.push(block, axe);
   boxes.push([1.6, 0.8, wx, wz, 0]);
   boxes.push([0.6, 0.6, wx + sx * 0.2, wz + 1.3]);
   // Wäscheleine hinter dem Haus mit bunten Tüchern
@@ -878,14 +958,19 @@ function dress(b: Built, rnd: () => number, w: number, d: number, wide = false):
       const pk = Math.max(3, Math.round(len / 0.3));
       for (let i = 0; i <= pk; i++) {
         const x = x0 + (x1 - x0) * (i / pk);
-        g.add(box(0.1, 0.9, 0.05, M.planksGrey, x, 0.43, fz), cyl(0.0, 0.07, 0.12, 4, M.planksGrey, x, 0.94, fz));
+        // Latte und Spitze folgen zusammen dem Boden: ein Paar bekommt dieselbe Verschiebung (Spitze = Kind-Eintrag der Latte)
+        const paling = box(0.1, 0.9, 0.05, M.planksGrey, x, 0.43, fz), tip = cyl(0.0, 0.07, 0.12, 4, M.planksGrey, x, 0.94, fz);
+        g.add(paling, tip);
+        yard.push(paling);
+        paling.userData.mate = tip;
       }
-      for (const y of [0.3, 0.68]) g.add(box(len, 0.07, 0.05, M.wood, mid, y, fz - 0.05));
+      for (const y of [0.3, 0.68]) { const rail = box(len, 0.07, 0.05, M.wood, mid, y, fz - 0.05); g.add(rail); yard.push(rail); }
       boxes.push([len, 0.12, mid, fz]);
     }
   }
   b.boxes.push(...boxes);
   b.circles.push(...circles);
+  g.userData.yard = yard;
   (b.glows ??= []).push({ kind: 'lamp', x: lx, y: 2.28, z: front + 0.5, gy: 0, size: 0.7, pool: 4.8 });
   if (!tight) b.glows.push({ kind: 'lamp', x: px - 0.45, y: 2.22, z: pz, gy: 0, size: 0.8, pool: 5.5 });
   return b;

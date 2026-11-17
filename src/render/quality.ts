@@ -1,4 +1,5 @@
 import { lowerTier, type QualityTier } from '../data/qualityTiers';
+import { FrameWindow } from './frameStats';
 
 export interface DeviceInfo {
   mobile: boolean;
@@ -119,24 +120,30 @@ export function needsBench(info: DeviceInfo): boolean {
  */
 export class AutoQuality {
   private warmup = 0;
-  private total = 0;
-  private frames = 0;
+  private warmFor = 8;
+  private win = new FrameWindow();
+  /** aufeinanderfolgende zu langsame Messfenster (6 s): erst das zweite senkt die Stufe */
+  private bad = 0;
 
-  reset() { this.warmup = 0; this.total = 0; this.frames = 0; }
+  reset(grace = 8) { this.warmFor = grace; this.warmup = 0; this.win.reset(); this.bad = 0; }
 
-  /** true = Stufe senken */
+  /**
+   * true = Stufe senken. Die Stufe bleibt dann für die Sitzung gesenkt, deshalb gilt der strengste Maßstab der drei Wächter: zwei
+   * aufeinanderfolgende Fenster von 6 s unter ~42 fps, gemessen ohne die langsamsten 4 % der Bilder (Ruckler durch Shader-Übersetzung,
+   * Nachladen oder Speicherbereinigung zählen nicht), und nicht in den ersten 8 s nach Start, Szenenwechsel oder Stufenwechsel.
+   */
   sample(frameDt: number): boolean {
     // Sehr lange Frames kommen von gedrosselten Hintergrund-Tabs, nicht von zu hoher Grafiklast
-    if (frameDt <= 0 || frameDt > 0.2 || document.hidden) return false;
+    if (frameDt <= 0 || frameDt > 0.2 || (typeof document !== 'undefined' && document.hidden)) return false;
     this.warmup += frameDt;
-    if (this.warmup < 4) return false; // Shader-Kompilierung und Laden abwarten
-    this.total += frameDt;
-    this.frames++;
-    if (this.total < 6) return false;
-    const avg = this.total / this.frames;
-    this.total = 0;
-    this.frames = 0;
-    if (avg > 1 / 42) { this.warmup = 0; return true; }
+    if (this.warmup < this.warmFor) return false; // Shader-Kompilierung und Laden abwarten
+    this.win.push(frameDt);
+    if (this.win.acc < 6) return false;
+    const fps = this.win.fps();
+    this.win.reset();
+    if (fps < 42) {
+      if (++this.bad >= 2) { this.bad = 0; this.warmup = 0; this.warmFor = 8; return true; }
+    } else this.bad = 0;
     return false;
   }
 }

@@ -2,12 +2,13 @@ import { DoubleSide, type Group } from 'three';
 import type { IslandDef } from '../data/regions';
 import type { SiteDef } from '../data/settlements';
 import { toon } from '../render/toon';
-import { build, levelFootprint, SETTLES, settleOnSlope } from './architecture';
+import { addPlinths, build, levelFootprint, PLINTHED, SETTLES, settleOnSlope, settleYard } from './architecture';
 import { boxBlocker, coastK, type Blocker, type WalkIsland } from './islandGround';
 import { roadMesh } from './town';
 import type { GlowPlaced } from '../render/glow';
 import { floraProto, Occupancy, scatterSite, type Biome, type Scatter, type Spot } from './vegetation';
 import { hashId, seeded } from './waves';
+import { auditPlacement } from './placeAudit';
 
 export interface SiteBuild {
   trees: Spot[];
@@ -92,6 +93,9 @@ export function buildSite(o: SiteOpts): SiteBuild {
       if (b.pier === undefined && (SETTLES.has(it.t) || it.t === 'marktstand')) { levelFootprint(b, def.x + x, def.z + z, yaw, walk.addPad); y = hAt(x, z); }
       if (b.pier === undefined && SETTLES.has(it.t)) y = settleOnSlope(b, x, z, yaw, hAt);
       else { b.g.position.set(x, y, z); b.g.rotation.y = yaw; }
+      settleYard(b, x, z, yaw, hAt);
+      if (PLINTHED.has(it.t)) addPlinths(b, x, z, yaw, hAt);
+      auditPlacement?.(def.id, it.t, b.g, hAt);
       group.add(b.g);
       const c0 = Math.cos(yaw), s0 = Math.sin(yaw);
       const toWorld = (ox: number, oz: number): [number, number] => [def.x + x + ox * c0 + oz * s0, def.z + z - ox * s0 + oz * c0];

@@ -33,10 +33,31 @@ describe('Leistungs-Wächter', () => {
 
   it('zwischen 50 und 58 fps bleibt die Stufe', () => {
     const w = new PerfWatchdog();
-    run(w, 35, 20);
+    run(w, 35, 60);
     const l = w.level;
+    expect(l).toBe(3);
     expect(run(w, 54, 60)).toEqual([]);
     expect(w.level).toBe(l);
+  });
+
+  it('einzelne Ruckler (Shader-Übersetzung, Nachladen) senken nichts', () => {
+    const w = new PerfWatchdog();
+    const out: number[] = [];
+    // 60 fps, dazu alle 40 Bilder ein 150-ms-Ruckler: das ist kein Dauerzustand
+    for (let i = 0; i < 60 * 90; i++) { const r = w.sample(i % 40 === 0 ? 0.15 : 1 / 60); if (r !== null) out.push(r); }
+    expect(out).toEqual([]);
+    expect(w.level).toBe(0);
+  });
+
+  it('die Schonfrist nach einem Szenenwechsel wird nicht gemessen', () => {
+    const w = new PerfWatchdog();
+    w.rewarm(10);
+    // 8 s sehr langsam (Aufbau einer Insel), danach flüssig: kein Eingriff
+    const out: number[] = [];
+    for (let t = 0; t < 8; t += 1 / 20) { const r = w.sample(1 / 20); if (r !== null) out.push(r); }
+    expect(run(w, 60, 30)).toEqual([]);
+    expect(out).toEqual([]);
+    expect(w.level).toBe(0);
   });
 
   it('Sparstufen senken Schatten, AO und Partikel', () => {

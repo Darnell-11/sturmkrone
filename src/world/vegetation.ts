@@ -49,6 +49,10 @@ export interface Proto {
   outline: boolean;
   /** Gras und Kräuter: dünnt mit der Entfernung weich aus (siehe vegSoftMat) */
   soft: boolean;
+  /** Unterkante der Form bei Größe 1 (Bounding-Box min.y, Meter) – Blender-Felsen stehen mit angehobenem Boden im Modell (bis +0,3 m) */
+  minY: number;
+  /** Mittlerer Halbmesser des Fußabdrucks bei Größe 1 (Meter) */
+  rad: number;
 }
 export interface ProtoOpts {
   collide?: number; near?: number; cast?: boolean; outline?: boolean;
@@ -228,7 +232,12 @@ function protoFrom(id: string, obj: Object3D, o: ProtoOpts): Proto {
   for (const g of geos) g.dispose();
   const glowGeo = glowGeos.length ? markShared(mergeGeometries(glowGeos, false)!) : null;
   for (const g of glowGeos) g.dispose();
-  return { id, geo, glow: glowGeo && glowMat ? { geo: glowGeo, mat: glowMat } : null, collide: o.collide ?? 0, near: o.near ?? 0, cast: o.cast ?? true, outline: o.outline ?? true, soft: !!o.soft };
+  // Bounding-Box der Form: Unterkante und Fußabdruck (für Platzierung exakt auf dem Boden, siehe groundY)
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox;
+  const minY = bb && isFinite(bb.min.y) ? bb.min.y : 0;
+  const rad = bb && isFinite(bb.min.x) ? ((bb.max.x - bb.min.x) + (bb.max.z - bb.min.z)) / 4 : 0.5;
+  return { id, geo, glow: glowGeo && glowMat ? { geo: glowGeo, mat: glowMat } : null, collide: o.collide ?? 0, near: o.near ?? 0, cast: o.cast ?? true, outline: o.outline ?? true, soft: !!o.soft, minY, rad };
 }
 
 /** Vorlage holen oder einmalig bauen (make bekommt einen festen Zufall aus dem Namen – jede Variante sieht immer gleich aus) */
@@ -243,6 +252,33 @@ const _q = new Quaternion(), _e = new Euler(), _p = new Vector3(), _s = new Vect
 const CELL_NEAR = 80, CELL_FAR = 240;
 
 interface Bin { proto: Proto; m: number[]; c: number[] }
+
+/** Wie tief eine Form im Boden verankert steht (Meter): leicht eingegraben statt schwebend */
+export const ANCHOR = 0.08;
+
+/**
+ * Tiefster Boden unter dem Fuß einer Form (Mitte und acht Punkte auf dem Fußabdruck): auf der Talseite eines Hangs bleibt so kein Spalt,
+ * die Bergseite versinkt etwas im Hang (wie ein echter Stein).
+ */
+export function lowestGround(hAt: (x: number, z: number) => number, x: number, z: number, rad: number): number {
+  let h = hAt(x, z);
+  if (rad < 0.25) return h;
+  for (let k = 0; k < 8; k++) {
+    const a = k * (Math.PI / 4);
+    const v = hAt(x + Math.cos(a) * rad, z + Math.sin(a) * rad);
+    if (v < h) h = v;
+  }
+  return h;
+}
+
+/**
+ * Höhe (y) einer Instanz so, dass die echte Unterkante der Form (Bounding-Box min.y mal Höhenmaßstab) ANCHOR unter dem tiefsten Boden unter
+ * ihrem Fuß liegt. sxz = Maßstab in der Breite, sy = in der Höhe. Ersetzt feste Zuschläge wie `+ s * 0.25`, die Formen mit angehobenem
+ * Modellboden bis zu einem Meter schweben ließen.
+ */
+export function groundY(proto: Proto, hAt: (x: number, z: number) => number, x: number, z: number, sxz: number, sy: number, anchor = ANCHOR): number {
+  return lowestGround(hAt, x, z, Math.min(5, proto.rad * sxz * 0.75)) - anchor - proto.minY * sy;
+}
 
 /** Sammelt Instanzen einer Insel (Inselkoordinaten) und baut daraus die InstancedMeshes */
 export class Scatter {
@@ -269,6 +305,7 @@ export class Scatter {
       const mesh = new InstancedMesh(bin.proto.geo, bin.proto.soft ? vegSoftMat() : vegMat(), n);
       (mesh.instanceMatrix.array as Float32Array).set(bin.m);
       mesh.instanceColor = new InstancedBufferAttribute(new Float32Array(bin.c), 3);
+      mesh.name = bin.proto.id;
       mesh.castShadow = bin.proto.cast;
       mesh.receiveShadow = true;
       mesh.userData.noOutline = !bin.proto.outline;
@@ -734,7 +771,12 @@ export function scatterSite(o: ScatterSiteOpts): { trees: Spot[]; bushes: Spot[]
       const tint = 1 + (rnd() - 0.5) * 2 * spec.tint;
       const warm = (rnd() - 0.5) * spec.tint;
       const yaw = spec.lee ? lee + (rnd() - 0.5) * 0.5 : rnd() * Math.PI * 2;
-      veg.add(floraProto(o.biome, L.flora, v), x, y - spec.sink * s, z, yaw, s, s * (0.88 + rnd() * 0.26),
+      const proto = floraProto(o.biome, L.flora, v);
+      const sy = s * (0.88 + rnd() * 0.26);
+      // Felsen aus Blender stehen im Modell mit angehobenem Boden (min.y bis +0,3 m): ihre echte Unterkante kommt exakt auf den Boden, 8 cm verankert
+      // (Zufallsfolge unverändert: sy wird an derselben Stelle gezogen wie vorher im Aufruf)
+      const rocky = proto.minY >= -0.05 && (spec.surf === 'rock' || L.flora === 'basalt' || L.flora === 'basaltblock');
+      veg.add(proto, x, rocky ? groundY(proto, hAt, x, z, s, sy) : y - spec.sink * s, z, yaw, s, sy,
         (rnd() - 0.5) * 2 * spec.tilt, (rnd() - 0.5) * 2 * spec.tilt, tint + warm, tint, tint - warm);
       if (solid) {
         const b: Blocker = { x: o.wx + x, z: o.wz + z, r: Math.max(0.4, (spec.collide ?? 0.5) * s) };

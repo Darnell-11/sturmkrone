@@ -1,5 +1,53 @@
 # Was ist neu
 
+## 2.9.84 – Qualitätsdurchgang: Laternen, schwebende Felsen, schärfere Texturen, ruhigere Wächter (17.11.2026)
+
+Reiner Prüf- und Reparaturdurchgang, keine neuen Funktionen. Gemessen im laufenden Spiel (Chrome mit RTX 5070 Ti, Playwright, Max und Ultra), danach behoben.
+
+**Laternen (Ursache gefunden)**
+- **Das Laternenglas leuchtete nachts nie.** `UniformsUtils.merge` klont die übergebenen Uniform-Objekte: `lanternGlass`, `coalMaterial` bekamen Kopien von `lampFx.uNight` und `lampFx.uTime`, das GlowSystem schrieb aber jedes Bild in die Originale. Gemessen nachts: `lampFx.uNight = 1`, `lanternGlass.uniforms.uNight = 0`, Zeit stand still (kein Flackern, auch die Glut der Feuerstellen pulsierte nicht). Jetzt werden die gemeinsamen Objekte nach dem Anlegen wieder eingesetzt (`linkShared` in `render/lampMaterials.ts`). Bild bei 22:41 in Ankerglück: Straßenlaternen zeigen Rahmen und warmes Glas statt weißer Punkte.
+- **Laternen brannten am Tag:** Der Flammenkern der Laternenpfähle (Rolle `ember`) leuchtete immer voll. Neu `lanternCoal` (10 % am Tag, voll ab der Dämmerung) für Straßen-, Wege- und Hafenlaternen; Feuerstellen, Feuerkörbe und Fackeln behalten die Glut.
+- Geprüft und in Ordnung: Tag/Nacht/Wetter-Steuerung (Nachtwert 0 von 7:30 bis 17:00, 1 ab 18:30; Regen 0,44, Nebel 0,77, Sturm 0,88 auch am Tag), alle 591 bis 645 Lichtquellen unter der Kapazität (2048), Leuchtturmstrahl nur bei Dunkelheit oder schlechter Sicht (`updateBeams`).
+
+**Schwebende und versunkene Dinge**
+- **Felsen schwebten (gemessen):** Die Felsen der Inselausstattung wurden mit `+ s · 0,25` über den Boden gesetzt, die Blender-Felsen haben ihren Boden aber 0,09 bis 0,30 m über dem Ursprung. Messung an 897 Fels-Instanzen: an Land im Mittel 0,38 m über dem Boden (bis 1,12 m), im Wasser bis 1,15 m über dem Meer. Außerdem kippten sie bis 28°. Jetzt sitzt die echte Unterkante (Bounding-Box `min.y`, neu in `Proto.minY`) 8 cm unter dem tiefsten Boden unter dem Fuß (`groundY`/`lowestGround` in `vegetation.ts`); im Wasser stehen sie unter den Wellen, Neigung höchstens 8,6°. Nachmessung: an Land im Mittel 0,20 m im Boden (höchstens 0,18 m darüber, nur an Hängen), im Wasser im Mittel 0,59 m unter dem Meer. Auch die Felsen der handgebauten Länder (`festland:fels`, `basalt`) nutzen `groundY`.
+- **Zäune, Mauern, Vorgärten folgen dem Hang:** Zaunfelder sind einzelne Felder zwischen zwei Pfosten und neigen sich mit dem Boden, Mauerstücke stufen sich ab, Trittsteine, Holzstapel und Lattenzaun der Häuser sitzen auf dem Boden an ihrer Stelle (`settleYard` in `architecture.ts`).
+- **Festungstore und Türme:** Torhäuser schwebten auf Hängen bis 2,5 m über der Talseite. Steinsockel bis zum tiefsten Boden unter jedem Quader (`addPlinths`); Nachmessung höchstens 0,19 m.
+- **Prüfwerkzeug (nur Entwicklung):** `world/placeAudit.ts` misst beim Aufbau jedes aufgestellte Objekt (Fußabdruck im Objektraum, 5 × 5 Punkte) und meldet Schweben und Hangneigung: `__placeAudit` und `__placeAuditSummary()` in der Konsole.
+
+**Kollisionen**
+- Geprüft, nichts zu beheben: Es gibt keine großen Welt-Boxen um gedrehte Zäune mehr, Zäune, Mauern und Häuser sind gedrehte Quader (`boxBlocker`, drei Durchgänge in `constrain`). 16 Messpunkte an schrägen Zäunen (Enden frei, Seiten frei, Herausschieben genau entlang der Normalen): 0 Abweichungen.
+
+**Texturen**
+- **Kleine gemalte Texturen schärfer:** Rumpfplanken, Pflaster, Erde, Rauch (Basis 256 px) malen auf Maximal in 1024 px und auf Ultra in 2048 px (`textureBoost` in `QualityConfig`, höchstens 4096 px je Seite); das Deck (Basis 1024 px) bleibt wie bisher.
+- **Modell-Texturen mit Anisotropie:** Der GLTFLoader lässt sie auf 1; ein Plugin (`useAnisotropy` in `core/preload.ts`) setzt vor dem Hochladen den Wert der Grafikstufe (Figuren, Blender-Bauten, KTX2).
+- **Kriseln bei flachem Blickwinkel:** Sand, Gras und Fels (`toon.ts`, `DETAIL_FRAG`) blenden ihre feinen Muster zusätzlich nach der Pixelgröße aus (`skFade`, Ableitung der Ansichtsposition: Muster mit der Periode T verschwinden zwischen 8 und 3 Pixeln je Periode). Die Abstandsfunktionen bleiben; sie sahen einen flachen Blickwinkel zu grob. Geprüft bei Tag und Nacht in Ankerglück (Pflaster, Gras, Erdweg scharf, keine Shaderfehler in der Konsole).
+
+**Leistungs-Wächter**
+- **Ruckler zählen nicht mehr als Dauerlast:** `render/frameStats.ts` misst die Bildrate ohne die langsamsten 4 % der Bilder (Shader-Übersetzung, Nachladen, Speicherbereinigung). Leistungs-Wächter, dynamische Auflösung und automatische Grafikstufe nutzen sie.
+- **Schonfristen:** Nach Spielstart (10 s), Szenenwechsel (an Land gehen, Ablegen, Entern: 6 s), Pause, Tab-Rückkehr und Stufenwechsel wird nicht gemessen (`Game.sceneChanged`).
+- **Prozessor oder Grafikkarte:** `GameLoop.cpuMs` misst die Rechenzeit je Bild. Liegt sie über 85 % der Bilddauer (Zeichenaufrufe bremsen), bleibt die Auflösung unangetastet; weniger Pixel brächten nichts.
+- **Automatische Grafikstufe:** Erst zwei langsame Fenster zu 6 s hintereinander senken die Stufe (vorher eines), nicht in den ersten 8 s.
+- Test im laufenden Spiel (Ultra, Auto): alle 500 ms ein Ruckler von 150 ms, 50 s lang: Stufe, Sparstufe und Auflösung unverändert. 5 neue Prüfungen in `tests/frameStats.test.ts` und `tests/watchdog.test.ts` (81 von 81 bestanden).
+
+**Gemessen, kein Eingriff nötig**
+- Bildrate Ankerglück zu Fuß: Maximal 2560 × 1440: 82 fps, Maximal 3840 × 2160: 80 bis 85 fps, Ultra (Auto) 3840 × 2160: Tag 85 fps, Nacht 56 bis 62 fps; Sparstufe 0, Auflösung 100 %. Auf See 118 bis 120 fps.
+- Zeichenaufrufe: etwa 970 bis 1230 je Bild in der Stadt (Hauptdurchgang 650, Schatten 600). Die Inseln sind schon fast vollständig instanziert (Ankerglück: 662 von 786 Netzen, 41 656 Instanzen); Bremse ist die Rechenzeit der Zeichenbefehle, nicht die Grafikkarte (Maximal 1920 × 1080: 12,8 ms je Bild mit Warten auf die Grafikkarte, davon 12,3 ms Rechenzeit; Ultra 3840 × 2160: 12,7 ms, davon 10,2 ms Rechenzeit).
+- `compileAsync` im Ladeablauf, Anisotropie und Mipmaps der gemalten Texturen, Fußabdruck-Ausblendung im Mauerwerk-Shader waren schon vorhanden.
+
+**Offen**
+- Zwei Mauerstücke der Festungsringe zeigen an der Stoßkante Zackenmuster (Z-Fighting, Bild Sturmzahn); nicht behoben.
+- Steinhäuser und Lagerhäuser auf sehr steilen Hängen (Geisterriff, Blitzspitze): höchstens 1 bis 1,2 m Spalt auf der Talseite nach der Messung; Zinnentürme höchstens 0,8 m. Kein Sichttest der Burgringe.
+- Leuchtturm bei Nacht und ein Handy nicht im Bild geprüft.
+
+**Technik (für Entwickler):**
+- `UniformsUtils.merge` klont Uniform-Objekte: gemeinsame Uniforms (`lampFx`) danach wieder einsetzen (`linkShared`). Jedes neue Material mit geteilten Uniforms prüfen: `material.uniforms.x === geteiltes.x`.
+- Neue Platzierung auf dem Boden: `groundY(proto, hAt, x, z, sxz, sy)` statt fester Zuschläge; `Proto.minY` und `Proto.rad` kommen aus der Bounding-Box der verschmolzenen Form. Zufallsfolge der Inseln unverändert (Werte werden an derselben Stelle gezogen).
+- `Scatter.build` benennt die Netze nach der Vorlage (`mesh.name = proto.id`).
+- `texDetail.boost`, `QualityConfig.textureBoost`, `detailCanvas` begrenzt auf 4096 px.
+- `FrameWindow` (feste Felder, Sortierung nur am Fensterende); `PerfWatchdog.rewarm(grace)`, `DynamicResolution.rewarm(grace)`, `AutoQuality.reset(grace)`.
+- Prüfen im Entwicklungsserver: Playwright, Seite neu laden nach jeder Änderung (Vite lädt komplett neu); `__placeAuditSummary()` nach dem Laden; Zeichenaufrufe je Durchgang über Austausch von `renderer.renderBufferDirect`.
+
 ## 2.9.83 – Läuft auch auf eingebundenen Seiten mit strenger Sicherheitsrichtlinie (15.11.2026)
 
 - **Ladebalken blieb auf wildhunt.com.de/sturmkrone bei 2 % stehen (Ursache gefunden und nachgestellt):** Die Seite sendet eine strenge Content-Security-Policy (`worker-src 'self'`, `script-src` ohne `'wasm-unsafe-eval'`, `connect-src` ohne `blob:`). Das Spiel brauchte dreierlei, das sie verbietet: (1) Draco-Modelle (258 Dateien) dekodierte der Standard-DRACOLoader mit WebAssembly in einem Blob-Worker, (2) die acht KayKit-Animationsdateien waren mit Meshopt (WebAssembly) komprimiert, (3) eingebettete Texturen der GLB-Dateien lud der GLTFLoader per `fetch` von Blob-Adressen. Die Richtlinie wurde lokal nachgebaut (`qa3/csp-server.cjs`): vorher Stillstand im Ladebalken, jetzt Menü, Spiel und Figuren-Editor ohne eine einzige Fehlermeldung.

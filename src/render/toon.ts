@@ -656,6 +656,10 @@ const DETAIL_GLSL = /* glsl */ `
     return mix(mix(skdH(i), skdH(i + vec2(1.0, 0.0)), f.x), mix(skdH(i + vec2(0.0, 1.0)), skdH(i + vec2(1.0, 1.0)), f.x), f.y);
   }
   float skdF(vec2 p) { return skdN(p) * 0.5 + skdN(p * 2.03) * 0.3 + skdN(p * 4.1) * 0.2; }
+  // Anti-Flimmern: ein Muster mit der Periode T (Meter) blendet nach der Pixelgröße fp (Meter je Pixel, aus Ansichts-Koordinaten) aus.
+  // Ab etwa 8 Pixeln je Periode beginnt es zu verschwinden, ab etwa 3 Pixeln ist es weg (dann würde es kriseln und glitzern).
+  // Gilt zusätzlich zu den Abstands-Ausblendungen: dort sieht ein flacher Blickwinkel die Fläche viel gröber, als die Entfernung sagt.
+  float skFade(float T, float fp) { return 1.0 - smoothstep(T * 0.125, T * 0.34, fp); }
   // Phase großer Koordinaten ohne Stufen: A = Kameraanteil (groß, je Pixel gleich), r = Rest (klein, genau). Liefert Zellnummer und Anteil darin.
   void skPhase(float A, float r, float period, float off, out float cellI, out float fr) {
     float b = A / period + off; float bi = floor(b);
@@ -667,10 +671,11 @@ const DETAIL_FRAG: Record<DetailKind, string> = {
   sand: /* glsl */ `{
     vec2 p = vSkWorld.xz;
     float camD = distance(vSkWorld, cameraPosition);
+    float skFp = min(max(length(dFdx(vViewPosition)), length(dFdy(vViewPosition))), 2.0);
     float nearK = 1.0 - smoothstep(25.0, 90.0, camD);
     // feines Korn aus weichem Rauschen (keine Pixelquadrate aus der Nähe)
-    float fineK = 1.0 - smoothstep(8.0, 40.0, camD);
-    float grain = (skdN(p * 34.0) - 0.5) * 0.2 * fineK + (skdN(p * 11.0) - 0.5) * 0.12 * nearK + (skdN(p * 5.0) - 0.5) * 0.14 * (1.0 - smoothstep(60.0, 160.0, camD));
+    float fineK = (1.0 - smoothstep(8.0, 40.0, camD)) * skFade(0.03, skFp);
+    float grain = (skdN(p * 34.0) - 0.5) * 0.2 * fineK + (skdN(p * 11.0) - 0.5) * 0.12 * nearK * skFade(0.09, skFp) + (skdN(p * 5.0) - 0.5) * 0.14 * (1.0 - smoothstep(60.0, 160.0, camD)) * skFade(0.2, skFp);
     float rip = sin((p.x * 0.8 + p.y * 0.35) * 3.2 + skdN(p * 0.6) * 4.0) * 0.5 + 0.5;
     float macro = skdF(p * 0.04) - 0.5;
     float ripK = smoothstep(0.25, 0.75, rip);
@@ -689,10 +694,10 @@ const DETAIL_FRAG: Record<DetailKind, string> = {
     float wrack = (1.0 - smoothstep(0.0, 0.07, abs(tideY))) * (0.35 + 0.65 * smoothstep(0.35, 0.8, skdN(p * 2.4 + 6.0)));
     diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.17, 0.11), wrack * 0.7 * (1.0 - smoothstep(60.0, 160.0, camD)));
     // Muschelsplitter / helle Körner
-    float peb = smoothstep(0.86, 0.93, skdN(p * 13.0 + 5.7));
+    float peb = smoothstep(0.86, 0.93, skdN(p * 13.0 + 5.7)) * skFade(0.077, skFp);
     diffuseColor.rgb += peb * 0.1 * nearK;
     // Kiesel und dunkle Treibgutkörner, Rippelkämme etwas heller: mehr Tiefe im Nahbereich
-    float dark = smoothstep(0.9, 0.96, skdN(p * 21.0 + 1.3));
+    float dark = smoothstep(0.9, 0.96, skdN(p * 21.0 + 1.3)) * skFade(0.048, skFp);
     diffuseColor.rgb *= 1.0 - dark * 0.22 * nearK;
     diffuseColor.rgb *= 0.92 + ripK * 0.14 * (1.0 - smoothstep(30.0, 110.0, camD));
     // Relief fürs Licht: Windrippel, Korn und Kiesel
@@ -712,17 +717,20 @@ const DETAIL_FRAG: Record<DetailKind, string> = {
     diffuseColor.rgb *= 1.0 + (patchN - 0.5) * 0.55;
     diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.74, 0.84, 0.7), smoothstep(0.55, 0.8, skdF(p * 0.03 + 5.0)) * 0.75);
     float meadowK = smoothstep(0.6, 0.78, skdF(p * 0.05 + 21.0));
-    float flK = step(0.93, skdN(p * 15.0 + 3.0)) * meadowK;
+    float skFp = min(max(length(dFdx(vViewPosition)), length(dFdy(vViewPosition))), 2.0);
+    float flK = step(0.93, skdN(p * 15.0 + 3.0)) * meadowK * skFade(0.067, skFp);
     vec3 flC = mix(vec3(0.96, 0.86, 0.34), vec3(0.88, 0.42, 0.56), step(0.5, skdN(p * 3.1 + 7.0)));
     diffuseColor.rgb = mix(diffuseColor.rgb, flC, flK * 0.85 * (1.0 - smoothstep(70.0, 220.0, camD)));
     float mid = skdN(p * 0.45) - 0.5;
     // Halme: gestreckte weiche Rauschmuster in zwei Richtungen (wirkt wie dichter Rasen statt Pixel)
-    float fineK = 1.0 - smoothstep(6.0, 34.0, camD);
+    float fineK = (1.0 - smoothstep(6.0, 34.0, camD)) * skFade(0.025, skFp);
     vec2 r1 = vec2(p.x * 0.8 + p.y * 0.6, -p.x * 0.6 + p.y * 0.8);
     float bl = skdN(vec2(r1.x * 46.0, r1.y * 9.0)) * 0.6 + skdN(vec2(p.x * 40.0, p.y * 11.0) + 3.3) * 0.4;
-    float blades = (bl - 0.5) * 0.34 * fineK + (skdN(p * 6.0) - 0.5) * 0.18 * (1.0 - smoothstep(40.0, 130.0, camD));
+    // Halme aus mehr als ~8 m Abstand oder flachem Blickwinkel: nur noch der Mittelwert (kein Kriseln)
+    bl = mix(0.5, bl, skFade(0.025, skFp));
+    float blades = (bl - 0.5) * 0.34 * fineK + (skdN(p * 6.0) - 0.5) * 0.18 * (1.0 - smoothstep(40.0, 130.0, camD)) * skFade(0.17, skFp);
     // Halmbüschel und dunkle Lücken dazwischen
-    float tuft = (smoothstep(0.7, 0.9, skdN(vec2(p.x * 9.0, p.y * 2.2))) - smoothstep(0.75, 0.95, skdN(p * 3.1 + 9.1)) * 0.6) * nearK;
+    float tuft = (smoothstep(0.7, 0.9, skdN(vec2(p.x * 9.0, p.y * 2.2))) * skFade(0.11, skFp) - smoothstep(0.75, 0.95, skdN(p * 3.1 + 9.1)) * 0.6) * nearK;
     diffuseColor.rgb *= 1.0 + mid * 0.24 + blades + tuft * 0.18;
     float dirt = smoothstep(0.78, 0.86, skdN(p * 0.09 + 7.3));
     // Erdflecken nie heller als der Boden drumherum (auf Asche und Schlundgras leuchteten sie wie Sandinseln)
@@ -730,13 +738,13 @@ const DETAIL_FRAG: Record<DetailKind, string> = {
     float skDirtK = clamp(dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114)) / 0.17, 0.3, 1.0);
     float skGreen = clamp((diffuseColor.g - max(diffuseColor.r, diffuseColor.b)) * 9.0, 0.0, 1.0);
     vec3 skDirt = mix(diffuseColor.rgb * vec3(0.72, 0.66, 0.6), vec3(0.42, 0.33, 0.22) * skDirtK, skGreen);
-    diffuseColor.rgb = mix(diffuseColor.rgb, skDirt * (0.88 + skdN(p * 16.0) * 0.24), dirt * 0.7);
+    diffuseColor.rgb = mix(diffuseColor.rgb, skDirt * mix(1.0, 0.88 + skdN(p * 16.0) * 0.24, skFade(0.06, skFp)), dirt * 0.7);
     // Klee- und Blütentupfer, dunkle Rillen zwischen den Büscheln, feine Lichtkanten: Tiefe wie bei den Pflanzen darüber
-    float clover = smoothstep(0.62, 0.9, skdN(p * 4.2 + 2.2)) * nearK;
+    float clover = smoothstep(0.62, 0.9, skdN(p * 4.2 + 2.2)) * nearK * skFade(0.24, skFp);
     diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.8, 1.12, 0.8), clover * 0.5);
-    float bloom = step(0.992, skdN(p * 26.0 + 8.4)) * nearK;
+    float bloom = step(0.992, skdN(p * 26.0 + 8.4)) * nearK * skFade(0.038, skFp);
     diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.95, 0.88, 0.45), bloom * 0.7);
-    float gap = smoothstep(0.7, 0.15, skdN(vec2(p.x * 6.0, p.y * 6.0) + 4.0)) * nearK;
+    float gap = smoothstep(0.7, 0.15, skdN(vec2(p.x * 6.0, p.y * 6.0) + 4.0)) * nearK * skFade(0.17, skFp);
     diffuseColor.rgb *= 1.0 - gap * 0.12;
     skDetH = bl * 0.9 + tuft * 0.5;
     skDetA = 0.045 * (1.0 - smoothstep(8.0, 36.0, camD));
@@ -745,13 +753,14 @@ const DETAIL_FRAG: Record<DetailKind, string> = {
   rock: /* glsl */ `{
     vec3 w = vSkWorld;
     float camD = distance(w, cameraPosition);
+    float skFp = min(max(length(dFdx(vViewPosition)), length(dFdy(vViewPosition))), 2.0);
     float strata = sin(w.y * 3.1 + skdN(w.xz * 0.3) * 3.0) * 0.5 + 0.5;
-    float speck = (skdN((w.xz + w.y) * 16.0) - 0.5) * 0.16 * (1.0 - smoothstep(20.0, 70.0, camD));
+    float speck = (skdN((w.xz + w.y) * 16.0) - 0.5) * 0.16 * (1.0 - smoothstep(20.0, 70.0, camD)) * skFade(0.06, skFp);
     diffuseColor.rgb *= 0.9 + strata * 0.16 + speck + (skdF(w.xz * 0.2 + w.y * 0.1) - 0.5) * 0.18;
-    // Risse und Schichtkanten: dunkle Fugen, die im Licht Tiefe geben
-    float cr = 1.0 - smoothstep(0.0, 0.035, abs(skdN((w.xz + w.y * 0.7) * 2.6) - 0.5));
+    // Risse und Schichtkanten: dunkle Fugen, die im Licht Tiefe geben (dünne Linien: nach der Pixelgröße ausgeblendet, sonst flimmern sie)
+    float cr = (1.0 - smoothstep(0.0, 0.035, abs(skdN((w.xz + w.y * 0.7) * 2.6) - 0.5))) * skFade(0.04, skFp);
     diffuseColor.rgb *= 1.0 - cr * 0.28 * (1.0 - smoothstep(20.0, 80.0, camD));
-    skDetH = strata * 0.6 + (skdN((w.xz + w.y) * 9.0) - 0.5) * 0.7 - cr * 0.8;
+    skDetH = strata * 0.6 + (skdN((w.xz + w.y) * 9.0) - 0.5) * 0.7 * skFade(0.11, skFp) - cr * 0.8;
     skDetA = 0.07 * (1.0 - smoothstep(14.0, 70.0, camD));
   }`,
   stone: /* glsl */ `{

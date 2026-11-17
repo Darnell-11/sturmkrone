@@ -65,8 +65,19 @@ const GLASS_FRAG = /* glsl */ `
     #include <fog_fragment>
   }`;
 
+/**
+ * Zeit und Nachtwert gemeinsam nutzen: `UniformsUtils.merge` KLONT die übergebenen Uniform-Objekte, das Material bekam also eigene Kopien
+ * (`uNight` blieb für immer 0, `uTime` stand still) und das Laternenglas leuchtete nachts nie, obwohl das GlowSystem `lampFx` jedes Bild
+ * setzte. Hier werden die Kopien nach dem Anlegen wieder durch die gemeinsamen Objekte ersetzt (vor dem ersten Übersetzen des Programms).
+ */
+function linkShared<M extends ShaderMaterial>(m: M): M {
+  if ('uTime' in m.uniforms) m.uniforms.uTime = lampFx.uTime;
+  if ('uNight' in m.uniforms) m.uniforms.uNight = lampFx.uNight;
+  return m;
+}
+
 /** Laternenglas (alle Laternen teilen es) */
-export const lanternGlass = markShared(new ShaderMaterial({
+export const lanternGlass = markShared(linkShared(new ShaderMaterial({
   uniforms: UniformsUtils.merge([UniformsLib.fog, { uTime: lampFx.uTime, uNight: lampFx.uNight }]),
   vertexShader: GLASS_VERT,
   fragmentShader: GLASS_FRAG,
@@ -74,7 +85,7 @@ export const lanternGlass = markShared(new ShaderMaterial({
   depthWrite: false,
   side: DoubleSide,
   fog: true,
-}));
+})));
 lanternGlass.userData.glow = true;
 
 const COAL_VERT = /* glsl */ `
@@ -108,11 +119,26 @@ const COAL_FRAG = /* glsl */ `
   }`;
 
 /** Glut und Kohlenester (Eckpunktfarbe = Hitze) */
-export const coalMaterial = markShared(new ShaderMaterial({
+export const coalMaterial = markShared(linkShared(new ShaderMaterial({
   uniforms: UniformsUtils.merge([UniformsLib.fog, { uTime: lampFx.uTime }]),
   vertexShader: COAL_VERT,
   fragmentShader: COAL_FRAG,
   vertexColors: true,
   fog: true,
-}));
+})));
 coalMaterial.userData.glow = true;
+
+/**
+ * Flammenkern in Laternen (Straßen-, Wege- und Hafenlaternen): wie die Glut, aber nur ab der Dämmerung hell. Am Tag ist die Laterne aus
+ * (Kern auf 10 %), nachts brennt sie voll. Feuerstellen, Feuerkörbe und Fackeln behalten die Glut (`coalMaterial`): sie brennen auch am Tag.
+ */
+export const lanternCoal = markShared(linkShared(new ShaderMaterial({
+  uniforms: UniformsUtils.merge([UniformsLib.fog, { uTime: lampFx.uTime, uNight: lampFx.uNight }]),
+  vertexShader: COAL_VERT,
+  fragmentShader: COAL_FRAG
+    .replace('uniform float uTime;', 'uniform float uTime;\n  uniform float uNight;')
+    .replace('gl_FragColor = vec4(col * (1.0 + 1.5 * t), 1.0);', 'gl_FragColor = vec4(col * (1.0 + 1.5 * t) * mix(0.1, 1.0, clamp(uNight, 0.0, 1.0)), 1.0);'),
+  vertexColors: true,
+  fog: true,
+})));
+lanternCoal.userData.glow = true;

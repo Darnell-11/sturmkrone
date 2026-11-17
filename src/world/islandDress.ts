@@ -27,11 +27,12 @@ import { boxBlocker, coastK, type WalkIsland } from './islandGround';
 import { plant, type StyleKit } from './islandStyle';
 import { hashId, seeded } from './waves';
 import { markWind, windify } from '../render/wind';
-import { cachedProto, envProto, floraProto, noise, type Scatter } from './vegetation';
+import { cachedProto, envProto, floraProto, groundY, noise, type Scatter } from './vegetation';
+import { auditPlacement } from './placeAudit';
 import type { GlowPlaced } from '../render/glow';
 import { archGroup, hasArch } from './envModels';
 import { lighthouseBeams } from './lighthouseBeam';
-import { build, colliders, levelFootprint, SETTLES, settleOnSlope } from './architecture';
+import { addPlinths, build, colliders, levelFootprint, PLINTHED, SETTLES, settleOnSlope, settleYard } from './architecture';
 import type { StructureType } from '../data/settlements';
 import { waveFlag } from '../render/flags';
 
@@ -116,6 +117,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   const put = (m: Group | Mesh, x: number, z: number, yaw = rnd() * Math.PI * 2, sink = 0) => {
     m.position.set(x, hAt(x, z) - sink, z);
     m.rotation.y = yaw;
+    auditPlacement?.(def.id, 'put', m, hAt);
     group.add(m);
     return m;
   };
@@ -127,6 +129,9 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     let y = hAt(x, z);
     if (SETTLES.has(t)) y = settleOnSlope(b, x, z, yaw, hAt);
     else { b.g.position.set(x, y, z); b.g.rotation.y = yaw; }
+    settleYard(b, x, z, yaw, hAt);
+    if (PLINTHED.has(t)) addPlinths(b, x, z, yaw, hAt);
+    auditPlacement?.(def.id, t, b.g, hAt);
     group.add(b.g);
     for (const c of colliders(b, walk.x + x, walk.z + z, yaw)) { walk.blockers.push(c); taken.push({ x: c.x - walk.x, z: c.z - walk.z, r: c.r }); }
     if (b.fire) fires.push({ x: x + b.fire[0] * Math.cos(yaw) + b.fire[2] * Math.sin(yaw), y: y + b.fire[1], z: z - b.fire[0] * Math.sin(yaw) + b.fire[2] * Math.cos(yaw) });
@@ -720,7 +725,14 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       ?? envProto(`kit:${style}:rock:${v}`, `fels_${v + 1}`, rockCol, { surf: moss })
       ?? cachedProto(`kit:${style}:rock:${v}`, () => new Mesh(new DodecahedronGeometry(1, 0), rockMats[v]));
     const wide = 1 + rnd() * 0.5;
-    veg.add(proto, x, (inWater ? 0 : hAt(x, z)) + s * 0.25, z, rnd() * 6, s * wide, s * (0.6 + rnd() * (inWater ? 1.4 : 0.6)), rnd() - 0.5, rnd() - 0.5);
+    const yaw = rnd() * 6;
+    const sy = s * (0.6 + rnd() * (inWater ? 1.4 : 0.6));
+    // Neigung nur ±0,15 rad: die Blender-Felsen haben einen flachen Boden, bei ±0,5 rad (28°) schwebte eine Seite bis zu einem halben Meter
+    const tiltX = (rnd() - 0.5) * 0.3, tiltZ = (rnd() - 0.5) * 0.3;
+    // Boden: an Land liegt die echte Unterkante des Felsens (Bounding-Box) 8 cm unter dem tiefsten Boden unter dem Fuß; im Wasser steht er unter
+    // den Wellen (vorher `+ s * 0.25` über Boden bzw. Meer: Felsen schwebten bis 1,2 m, im Mittel 0,4 m)
+    const py = inWater ? -(0.3 + 0.12 * sy) - proto.minY * sy : groundY(proto, hAt, x, z, s * wide, sy);
+    veg.add(proto, x, py, z, yaw, s * wide, sy, tiltX, tiltZ);
     block(x, z, s * wide * 0.82);
   }
   if (style !== 'glut') {

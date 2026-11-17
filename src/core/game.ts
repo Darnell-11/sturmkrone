@@ -159,7 +159,9 @@ export class Game {
     if (!s.quality || s.qualityAuto) this.settings.update({ quality: this.detected.tier, qualityAuto: true });
     const startTier = QUALITY_TIERS[this.settings.data.quality ?? this.detected.tier];
     const caps = this.renderer.gl.capabilities;
-    setTexDetail(startTier.textureScale, Math.min(startTier.anisotropy, caps.getMaxAnisotropy()), startTier.detail);
+    setTexDetail(startTier.textureScale, Math.min(startTier.anisotropy, caps.getMaxAnisotropy()), startTier.detail, startTier.textureBoost);
+    // Alle Modell-Texturen (Figuren, Blender-Bauten) laden mit derselben Filterung wie die gemalten
+    preload.setAnisotropy(Math.min(startTier.anisotropy, caps.getMaxAnisotropy()));
     this.world = new SeaWorld(deferWorld);
     this.world.env.maxTex = caps.maxTextureSize;
     this.world.warmHook = (o) => this.renderer.warmObject(o);
@@ -299,7 +301,7 @@ export class Game {
       if (document.hidden) {
         if (this.state.is('play')) this.pause();
         else this.persist();
-      } else this.loop.resetClock();
+      } else { this.loop.resetClock(); this.sceneChanged(4); }
     });
     addEventListener('pagehide', () => this.persist());
 
@@ -478,7 +480,10 @@ export class Game {
         if (lv !== null) { this.renderer.setBudget(lv); this.renderer.dynRes.rewarm(); this.autoQuality.reset(); this.world.env.shadowStride = this.deviceInfo.mobile && lv >= 1 ? 2 : 1; }
       } else if (this.watchdog.level > 0) { this.watchdog.reset(); this.renderer.setBudget(0); this.world.env.shadowStride = 1; }
       const budgetSpent = !s.qualityAuto || this.watchdog.level >= PerfWatchdog.MAX;
-      if (s.dynamicResolution && (budgetSpent || this.watchdog.level >= 2) && this.renderer.dynRes.sample(frameDt)) this.renderer.resize();
+      // Bremst der Prozessor (Zeichenaufrufe) statt der Grafikkarte, bringen weniger Pixel nichts: die Auflösung bleibt dann unangetastet
+      // (sonst würde das Bild ohne Gewinn unscharf, bis der Probelauf der dynamischen Auflösung es zurücknimmt)
+      const cpuBound = this.loop.cpuMs > 0.85 * this.loop.frameMs && this.loop.frameMs > 15;
+      if (s.dynamicResolution && !cpuBound && (budgetSpent || this.watchdog.level >= 2) && this.renderer.dynRes.sample(frameDt)) this.renderer.resize();
       if (s.qualityAuto && budgetSpent) {
         if (s.dynamicResolution && this.renderer.dynRes.hasRoom) this.autoQuality.reset();
         else if (this.autoQuality.sample(frameDt)) { this.watchdog.reset(); this.autoLower(); }
@@ -498,7 +503,19 @@ export class Game {
     this.hud.toast(`Grafikstufe auf „${QUALITY_TIERS[lower].label}“ gesenkt, damit es flüssig läuft.`, 3.5);
   }
 
+  /**
+   * Szenenwechsel (an Land gehen, Ablegen, Entern, Schnellreise): Figuren, Gegner und Inselteile werden aufgebaut, neue Shader übersetzt.
+   * Die Wächter messen danach erst wieder nach einer Schonfrist, sonst senkte ein einziger Ruckler beim Betreten einer Insel
+   * Auflösung oder Grafikstufe.
+   */
+  private sceneChanged(grace = 6) {
+    this.watchdog.rewarm(grace);
+    this.renderer.dynRes.rewarm(grace);
+    this.autoQuality.reset(grace + 2);
+  }
+
   private onModeChange(m: SeaMode) {
+    this.sceneChanged();
     this.touch.setLayout(m === 'foot' ? TOUCH_FOOT : TOUCH_SEA);
     if (this.state.is('play')) this.hud.hint(this.controlsHint(), 8);
   }
@@ -2083,9 +2100,8 @@ export class Game {
     this.menus.hide();
     this.input.flush();
     this.autosaveTimer = 0;
-    this.autoQuality.reset();
-    this.watchdog.rewarm();
-    this.renderer.dynRes.rewarm();
+    // Neues Spiel oder Spielstand laden: Figuren und Inseln werden aufgebaut, die ersten Sekunden gehören nicht zur Messung
+    this.sceneChanged(10);
     this.state.set('play');
     this.loop.resetClock();
     this.touch.setLayout(TOUCH_SEA);
@@ -2104,9 +2120,7 @@ export class Game {
     if (!this.state.is('pause')) return;
     this.menus.hide();
     this.input.flush();
-    this.autoQuality.reset();
-    this.watchdog.rewarm();
-    this.renderer.dynRes.rewarm();
+    this.sceneChanged(4);
     this.state.set('play');
     this.loop.resetClock();
   }
@@ -2162,8 +2176,7 @@ export class Game {
         this.settings.update({ qualityAuto: false, quality: tier });
         this.renderer.applyQuality(tier);
       }
-      this.autoQuality.reset();
-      this.watchdog.rewarm();
+      this.sceneChanged(6);
       if (this.world?.scene && this.world.camera) {
         this.world.env.ensureCsm(this.world.camera as PerspectiveCamera);
         this.hud.toast('Grafik wird angewendet …', 1.6);
@@ -2171,6 +2184,8 @@ export class Game {
       }
     } finally {
       this.qualitySwitching = false;
+      // nach dem Übersetzen noch einmal: die ersten Bilder der neuen Stufe laden Schattenkarten und Zielpuffer nach
+      this.sceneChanged(6);
     }
   }
 

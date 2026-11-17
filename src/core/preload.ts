@@ -1,4 +1,4 @@
-import { LoadingManager, TextureLoader, type WebGLRenderer } from 'three';
+import { LoadingManager, TextureLoader, type Material, type Mesh, type Object3D, type Texture, type WebGLRenderer } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
@@ -53,6 +53,31 @@ function useImageElementTextures(gltf: GLTFLoader, manager: LoadingManager) {
   });
 }
 
+/**
+ * Anisotrope Filterung für alle Texturen der geladenen Modelle (Figuren-Haut und -Haare, Blender-Bauten, KTX2): der GLTFLoader lässt sie auf 1,
+ * dann verschwimmen sie schon bei flachem Blickwinkel. Gesetzt wird der Wert vor dem ersten Hochladen, kostet also nichts.
+ */
+function useAnisotropy(gltf: GLTFLoader, get: () => number) {
+  gltf.register(() => ({
+    name: 'SK_Anisotropy',
+    afterRoot: (result: { scenes: Object3D[] }) => {
+      const a = get();
+      if (a <= 1) return null;
+      const seen = new Set<unknown>();
+      for (const scene of result.scenes) scene.traverse((o) => {
+        const mat = (o as Mesh).material as Material | Material[] | undefined;
+        if (!mat) return;
+        for (const m of Array.isArray(mat) ? mat : [mat]) {
+          if (seen.has(m)) continue;
+          seen.add(m);
+          for (const v of Object.values(m)) if (v && (v as Texture).isTexture && (v as Texture).anisotropy < a) (v as Texture).anisotropy = a;
+        }
+      });
+      return null;
+    },
+  }));
+}
+
 /** Draco ohne WebAssembly und ohne Blob-Worker: JavaScript-Decoder in einem Worker aus einer echten Datei (libs/draco/draco-js-worker.js) */
 function makeDraco(manager: LoadingManager): DRACOLoader {
   const l = new DRACOLoader(manager);
@@ -90,10 +115,15 @@ export class Preloader {
   private gltf: GLTFLoader | null = null;
   private draco: DRACOLoader | null = null;
   private ktx2: KTX2Loader | null = null;
+  /** Texturfilterung der Modell-Texturen (Wert der Grafikstufe, siehe setAnisotropy) */
+  private aniso = 1;
 
   constructor() {
     this.manager.onError = (url) => console.warn('Datei konnte nicht geladen werden:', url);
   }
+
+  /** Anisotrope Filterung der Modell-Texturen; gilt für alle danach geladenen Dateien */
+  setAnisotropy(n: number) { this.aniso = Math.max(1, Math.floor(n)); }
 
   /** Einmal mit dem Renderer aufrufen (KTX2 muss wissen, welche Kompressionsformate die Grafikkarte kann) */
   init(renderer: WebGLRenderer) {
@@ -106,6 +136,7 @@ export class Preloader {
     this.gltf.setDRACOLoader(this.draco);
     this.gltf.setKTX2Loader(this.ktx2);
     useImageElementTextures(this.gltf, this.manager);
+    useAnisotropy(this.gltf, () => this.aniso);
   }
 
   /** Gemeinsamer glTF-Loader (mit Draco/KTX2/Meshopt) */
@@ -116,6 +147,7 @@ export class Preloader {
       this.draco ??= makeDraco(this.manager);
       this.gltf.setDRACOLoader(this.draco);
       useImageElementTextures(this.gltf, this.manager);
+      useAnisotropy(this.gltf, () => this.aniso);
     }
     return this.gltf;
   }
