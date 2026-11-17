@@ -502,13 +502,7 @@ export class Ocean {
             float ahead = length(vec2(lx * 0.8, max(0.0, lz - hl)));
             float sr = 1.0 - smoothstep(0.0, 1.1 + sp * 1.4, ahead);
             float bowSplash = smoothstep(0.45, 0.8, lace2 * 0.9 + sr * 0.4) * sr * step(hl * 0.7, lz) * sp;
-            // 4) Heckschaum: Wo der Spiegel aus dem Wasser taucht, schäumt es. Ohne ihn liegt eine glatte, harte Kante zwischen dunklem Rumpf und
-            //    Meer. Der Schaum beginnt unter dem Rumpf und läuft nach hinten und zu den Seiten weich aus (nur smoothstep, keine Stufen).
-            float sd = -lz - hl;
-            float sAcross = 1.0 - smoothstep(hw * 0.7, hw * 1.35 + 0.5, abs(lx) + (skNoise(fl * 1.1 + 7.0) - 0.5) * 0.9);
-            float sAlong = smoothstep(-1.6, 0.0, sd) * (1.0 - smoothstep(0.6, 2.2 + sp * 3.2, sd));
-            float sternFoam = smoothstep(0.32, 0.8, lace2 * 0.95 + sAlong * 0.35) * sAlong * sAcross * (0.3 + 0.7 * sp);
-            skFoam = max(skFoam, max(max(max(hullFoam, bowWave * 0.85), bowSplash * 0.8), sternFoam * 0.8) * hd.w * 0.88);
+            skFoam = max(skFoam, max(max(hullFoam, bowWave * 0.85), bowSplash * 0.8) * hd.w * 0.88);
             // Luftblasen färben das Wasser um Rumpf und Bugwellen heller und türkis (unter dem Schaum, weich auslaufend)
             float aer = (1.0 - smoothstep(0.0, 1.8 + sp * 2.4, e)) * along * (0.2 + 0.8 * sp) + rd * vk * sp * 0.7 + sr * sp * 0.6;
             skAer = max(skAer, aer * skPch * hd.w);
@@ -599,7 +593,7 @@ export class Ocean {
           // die das Bild danach wieder undurchsichtig machen – sonst wäre das Wasser auf manchen Handys durchsichtig)
           gl_FragColor.a = uWaterAlpha;`);
     };
-    mat.customProgramCacheKey = () => `sk-ocean28-${wakeN}`;
+    mat.customProgramCacheKey = () => `sk-ocean27-${wakeN}`;
     // Kaskaden-Schatten: auch ein neu gebautes Wassermaterial zählt alle Kaskaden als ein Licht
     ensureCsm(mat);
     return mat;

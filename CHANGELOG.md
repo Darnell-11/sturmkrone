@@ -1,9 +1,5 @@
 # Was ist neu
 
-## 2.9.87 – Weicher Heckschaum statt harter Kante am Schiffsende (17.11.2026)
-
-- **Die harte Kante hinten am Schiff im Wasser** (bei jedem Wetter sichtbar, nicht nur bei Regen): Hinter dem Spiegel fehlte Schaum, der Rumpf stieß mit einer glatten, scharfen Linie auf das Wasser. Der Ozean-Shader (`world/ocean.ts`, Rumpfschleife) zeichnet jetzt einen Heckschaum, der unter dem Rumpf beginnt und nach hinten und zu den Seiten nur über `smoothstep` ausläuft (Stärke mit dem Tempo, ausgefranst durch Rauschen). Das Kielwasser selbst und alle anderen Schiffseffekte blieben unverändert (es ist ein Shader im Wasser, kein Band-Netz: `depthWrite` und `polygonOffset` gibt es dort nicht). `npx tsc --noEmit` fehlerfrei, Prüfung im Spiel bei Tag.
-
 ## 2.9.86 – Kampf-Kollision ohne Wanddurchbrüche, Segel-HP und Crew-% als spürbare Schiffsmechanik (17.11.2026)
 
 Erster Schritt der Mehrspieler-tauglichen Kampfphysik: Alles, was später für Coop synchronisiert werden soll, läuft jetzt über eindeutige Kennungen, Absichten und serialisierbaren Zustand, getrennt von der Darstellung. Es gibt noch kein Backend.
