@@ -1,9 +1,5 @@
 # Was ist neu
 
-## 2.9.87 – Gezackte Linie im Wasser hinter dem Schiff behoben (17.11.2026)
-
-- **Eine haarfeine, gezackte helle Linie im Wasser hinter dem Schiff** (bei jedem Wetter, auch im Menü sichtbar): Die Kielwasser-Spur (`skWakeFind` in `world/ocean.ts`) maß den seitlichen Abstand über die Richtung des nächsten Spurstücks. An Knicken der Spur sprang dieser Wert, und über das Ende der Spur hinaus entstand ein gerader Strahl. Sie rechnet jetzt mit dem echten Abstand zur Spur (stetig). Dazu sind die Wellenkämme der Bugwelle breiter und schwächer (das grobe Wassergitter bildete sie als Sägezähne ab), und der brechende Schaum auf diesen Kämmen setzt weicher ein. Der Schaum der Spur und am Rumpf blieb unverändert. `npx tsc --noEmit` fehlerfrei, Kurvenfahrt im Spiel geprüft.
-
 ## 2.9.86 – Kampf-Kollision ohne Wanddurchbrüche, Segel-HP und Crew-% als spürbare Schiffsmechanik (17.11.2026)
 
 Erster Schritt der Mehrspieler-tauglichen Kampfphysik: Alles, was später für Coop synchronisiert werden soll, läuft jetzt über eindeutige Kennungen, Absichten und serialisierbaren Zustand, getrennt von der Darstellung. Es gibt noch kein Backend.

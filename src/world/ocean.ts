@@ -109,13 +109,13 @@ function hullGlsl(wakeN: number): string { return /* glsl */ `
       H -= amp * 0.55 * sideT * smoothstep(-hl * 1.1, hl * 0.2, lz) * (1.0 - smoothstep(hl * 0.8, hl * 1.1, lz));
       if (behind > 0.0) {
         float rx = hw * 0.7 + behind * 0.34;
-        float wdt = 2.4 + behind * 0.25 + hw * 0.4;
+        float wdt = 0.7 + behind * 0.08 + hw * 0.15;
         float rid = exp(-pow((ax - rx) / wdt, 2.0));
         float osc = 0.62 + 0.38 * cos(behind * (6.2831853 / (hd.x * (0.28 + 0.25 * sp))));
         float dec = smoothstep(0.0, hl * 0.35, behind) / (1.0 + behind / (hl * 1.6));
         // Schiffe mit Spur: der V-Ansatz endet am Heck, den Rest zeichnet die Spur im Wasser
         float cut = 1.0 - smoothstep(hl * 1.7, hl * 2.4, behind);
-        H += amp * 0.5 * rid * osc * dec * cut;
+        H += amp * 0.95 * rid * osc * dec * cut;
         if (false) {
           float lam = hd.x * (0.55 + 0.55 * sp);
           float tr = cos(6.2831853 * (behind - hl * 1.6) / lam);
@@ -155,7 +155,7 @@ function hullGlsl(wakeN: number): string { return /* glsl */ `
         best = dq;
         vec2 dir = mix(d1.xy, d2.xy, tt);
         dir /= max(length(dir), 1e-3);
-        bs = sqrt(dq);
+        bs = dot(e, vec2(dir.y, -dir.x));
         bage = mix(w.z, two ? w2.z : w.z, tt);
         bhw = mix(d1.z, d2.z, tt);
         bspd = mix(d1.w, d2.w, tt);
@@ -509,9 +509,9 @@ export class Ocean {
           }
           {
             // brechender Schaum auf den steilen Verdrängungskämmen, in Fäden aufgerissen
-            float brk = smoothstep(0.8, 2.0, skHg);
+            float brk = smoothstep(0.5, 1.15, skHg);
             float lc = skNoise(vSkW.xz * 2.4 + skOsc(0.33, 0.2)) * 0.55 + skNoise(vSkW.xz * 6.5 - skOsc(0.25, 0.29)) * 0.45;
-            skFoam = max(skFoam, smoothstep(0.42, 0.98, lc + brk * 0.4) * brk * 0.6);
+            skFoam = max(skFoam, smoothstep(0.5, 0.78, lc + brk * 0.4) * brk * 0.8);
             skAer = max(skAer, brk * 0.6);
           }
           skBase = mix(skBase, skBase * 1.5 + vec3(0.03, 0.1, 0.11), clamp(skAer, 0.0, 1.0) * 0.55);
@@ -593,7 +593,7 @@ export class Ocean {
           // die das Bild danach wieder undurchsichtig machen – sonst wäre das Wasser auf manchen Handys durchsichtig)
           gl_FragColor.a = uWaterAlpha;`);
     };
-    mat.customProgramCacheKey = () => `sk-ocean28-${wakeN}`;
+    mat.customProgramCacheKey = () => `sk-ocean27-${wakeN}`;
     // Kaskaden-Schatten: auch ein neu gebautes Wassermaterial zählt alle Kaskaden als ein Licht
     ensureCsm(mat);
     return mat;
