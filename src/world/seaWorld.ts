@@ -465,28 +465,6 @@ export class SeaWorld {
     this.smoke.update(dt);
     this.debris.update(dt, (x, z) => this.env.heightAt(x, z), w);
     this.rainSplashes(dt);
-    this.rainRings(dt);
-  }
-
-  private ringAcc = 0;
-  /**
-   * Aufschlagringe auf dem Wasser rund um die Kamera: dicht in der Nähe, nach außen dünner (gleichverteilt im Radius = Dichte ~ 1/r),
-   * nie auf festem Grund (Deck, Sand, Steg). Rate folgt Regenstärke und Grafikstufe (`Weather.density`).
-   */
-  private rainRings(dt: number) {
-    const wt = this.env.weather;
-    const rain = wt.p.rain;
-    if (rain < 0.15) { this.ringAcc = 0; return; }
-    wt.waterY ??= (x, z) => this.env.heightAt(x, z);
-    this.ringAcc = Math.min(60, this.ringAcc + dt * (rain - 0.05) * 480 * Math.min(1, wt.density));
-    const c = this.camera.position, g = this.groundProxy;
-    while (this.ringAcc >= 1) {
-      this.ringAcc -= 1;
-      const a = Math.random() * Math.PI * 2, r = 2 + Math.random() * 46;
-      const x = c.x + Math.sin(a) * r, z = c.z + Math.cos(a) * r;
-      if (Number.isFinite(g.height(x, z))) continue;
-      wt.addRing(x, this.env.heightAt(x, z), z);
-    }
   }
 
   private splashAcc = 0;

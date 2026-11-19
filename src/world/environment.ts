@@ -324,6 +324,7 @@ export class Environment {
     ou.uSpecK.value = Math.max(pal.sunVis, pal.moonVis * 0.9) * (1 - greyK);
     ou.uWindDir.value = this.windDir;
     ou.uWindK.value = w.wind;
+    ou.uRain.value = w.rain;
     this.ocean.follow(camera.position.x, camera.position.z, camera.position);
 
     this.sky.follow(camera.position, pal.sunDir, pal.sunVis * (1 - greyK * 0.95));

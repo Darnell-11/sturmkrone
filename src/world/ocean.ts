@@ -251,6 +251,8 @@ export class Ocean {
     uDetail: { value: 1 },
     /** 0 = Wasser im Alpha markieren (nur mit Post-Effekten), 1 = undurchsichtig */
     uWaterAlpha: WATER_ALPHA,
+    /** Regenstärke 0 … 1: Tropfen schlagen Ringwellen ins Wasser (Normalen) */
+    uRain: { value: 0 },
     uWake: { value: Array.from({ length: MAX_WAKE }, () => new Vector4()) },
     /** Spurpunkte: Richtung x, z, Halbbreite, Tempo in m/s */
     uWakeD: { value: Array.from({ length: MAX_WAKE }, () => new Vector4()) },
@@ -314,7 +316,7 @@ export class Ocean {
           uniform float uShoreSize;
           uniform float uWorldR;
           uniform vec3 uDeep, uMid, uSand, uShallow, uFoam, uZenith, uHorizon, uSunDir, uSunCol;
-          uniform float uSpecK, uWindDir, uWindK, uDetail, uWaterAlpha;
+          uniform float uSpecK, uWindDir, uWindK, uDetail, uWaterAlpha, uRain;
           ${hullGlsl(wakeN)}
           varying vec3 vSkW;
           varying float vCrest;
@@ -323,6 +325,37 @@ export class Ocean {
           float skNoise(vec2 p) {
             vec2 i = floor(p); vec2 fr = fract(p); fr = fr * fr * (3.0 - 2.0 * fr);
             return mix(mix(skHash(i), skHash(i + vec2(1, 0)), fr.x), mix(skHash(i + vec2(0, 1)), skHash(i + vec2(1, 1)), fr.x), fr.y);
+          }
+          // Regentropfen als Wellen IN der Wasseroberfläche: je Zelle (Kantenlänge cs, Meter) ein Tropfen an zufälliger Stelle, dessen
+          // Ringwelle (Wellenpaket der Breite ~0,11 · rm, wandert bis zum Radius rm, dabei abklingend) die Normale kippt. Das verformt
+          // Spiegelung, Sonnenglanz und Licht wie echtes Wasser; geprüft werden nur die vier nächsten Zellen (Ringe bleiben unter 0,5 Zellen)
+          vec2 skRainRipples(vec2 p, float cs, float rm, float seed, float dens) {
+            vec2 q = p / cs;
+            vec2 c0 = floor(q);
+            vec2 f = fract(q);
+            vec2 sg = vec2(f.x < 0.5 ? -1.0 : 1.0, f.y < 0.5 ? -1.0 : 1.0);
+            vec2 g = vec2(0.0);
+            for (int n = 0; n < 4; n++) {
+              vec2 cell = c0 + vec2(mod(float(n), 2.0), floor(float(n) * 0.5)) * sg;
+              float h4 = skHash(cell - seed + 5.3);
+              if (h4 > dens) continue;
+              float h1 = skHash(cell + seed);
+              float h2 = skHash(cell * 1.7 + seed + 3.1);
+              float h3 = skHash(cell + seed + 9.7);
+              vec2 dv = (q - (cell + vec2(0.2 + 0.6 * h1, 0.2 + 0.6 * h2))) * cs;
+              float t = fract(uTime / (0.8 + 0.8 * h3) + h3 * 7.0);
+              float d = length(dv);
+              float w = rm * 0.11;
+              float x = d - t * rm;
+              float env = exp(-(x * x) / (w * w)) * (1.0 - t) * (1.0 - t);
+              // zweite, kleinere Welle läuft hinterher (wie bei einem echten Aufprall)
+              float x2 = d - t * rm * 0.62;
+              float env2 = exp(-(x2 * x2) / (w * w * 1.4)) * (1.0 - t) * (1.0 - t) * smoothstep(0.08, 0.3, t) * 0.55;
+              float k = 6.2831853 / (w * 2.7);
+              float s = sin(k * x) * env + sin(k * x2) * env2;
+              g += (dv / max(d, 1e-3)) * s;
+            }
+            return g;
           }`)
         .replace('#include <color_fragment>', `#include <color_fragment>
           // Wellen-Normale und Kamm pro Pixel: keine Keile und Kanten vom groben Gitter
@@ -361,6 +394,16 @@ export class Ocean {
             float rz = skNoise((rp + vec2(0.0, e)) * 0.9 + t1);
             rn += vec2(r0 - rx, r0 - rz) * 0.25 * (1.0 - smoothstep(20.0, 120.0, camD));
             skNf = normalize(skNf + vec3(rn.x, 0.0, rn.y) * uDetail * wk);
+          }
+          // Regen: Tropfen schlagen Ringwellen ins Wasser (drei Größen: große seltene, mittlere, feines Nieseln nah an der Kamera)
+          float skRainI = 0.0;
+          if (uRain > 0.02 && uDetail > 0.0) {
+            float dens = clamp(uRain * 1.3 - 0.08, 0.0, 1.0);
+            vec2 rg = skRainRipples(vSkW.xz, 1.5, 0.7, 1.0, dens) * (1.0 - smoothstep(40.0, 100.0, camD));
+            rg += skRainRipples(vSkW.xz, 3.3, 1.45, 7.0, dens * 0.8) * (1.0 - smoothstep(80.0, 190.0, camD)) * 0.85;
+            rg += skRainRipples(vSkW.xz, 0.7, 0.34, 13.0, dens) * (1.0 - smoothstep(14.0, 40.0, camD)) * 0.75;
+            skRainI = min(length(rg), 1.5);
+            skNf = normalize(skNf + vec3(rg.x, 0.0, rg.y) * (0.42 + 0.3 * uRain));
           }
           // Schiffsverdrängung: Normale aus der Verdrängungshöhe, Brechschaum auf den steilen Kämmen
           float skHg = 0.0;
@@ -544,7 +587,7 @@ export class Ocean {
             outgoingLight = mix(outgoingLight, skyC, fr * 0.78);
             // Sonnenglanz: GGX-Spiegelung an den Wellenfacetten. Rauer mit Wind, Entfernung und Seegang, damit
             // die Glitzerbahn zum Horizont hin breit und weich wird (kein Flimmern) und nah an der Kamera funkelt
-            float rough = clamp(0.055 + 0.05 * uWindK + 0.02 * clamp(uWaveScale - 1.0, 0.0, 2.0) + 0.22 * smoothstep(40.0, 1400.0, camD), 0.04, 0.5);
+            float rough = clamp(0.055 + 0.05 * uWindK + 0.02 * clamp(uWaveScale - 1.0, 0.0, 2.0) + 0.03 * uRain + 0.22 * smoothstep(40.0, 1400.0, camD), 0.04, 0.5);
             float a2 = rough * rough;
             vec3 Hh = normalize(uSunDir + Vw);
             float nh = clamp(dot(Nw, Hh), 0.0, 1.0);
@@ -558,6 +601,12 @@ export class Ocean {
             // Sonnenbahn: breiter, warmer Glanz bis zum Horizont
             float sheen = pow(sdot, 18.0);
             outgoingLight += uSunCol * sheen * 0.2 * uSpecK * (1.0 - skFoam);
+            // Regenringe: die gekippten Flanken spiegeln helleren Himmel (bei bedecktem Himmel trägt das den Ring), kleine Aufprallpunkte glitzern
+            {
+              float ri = smoothstep(0.08, 0.9, skRainI);
+              outgoingLight += (max(uHorizon * 0.55, vec3(0.09, 0.12, 0.19)) + uSunCol * 0.1 * uSpecK) * ri * (0.25 + 0.75 * nvF) * (1.0 - skFoam) * (0.6 + 0.8 * uRain);
+              outgoingLight *= 1.0 - 0.07 * uRain * (1.0 - ri);
+            }
             // feines Funkeln: winzige Facetten nah an der Kamera blitzen auf, wenn sie die Sonne treffen
             {
               vec2 sp2 = vSkW.xz * 5.5;
@@ -595,7 +644,7 @@ export class Ocean {
           // die das Bild danach wieder undurchsichtig machen – sonst wäre das Wasser auf manchen Handys durchsichtig)
           gl_FragColor.a = uWaterAlpha;`);
     };
-    mat.customProgramCacheKey = () => `sk-ocean28-${wakeN}`;
+    mat.customProgramCacheKey = () => `sk-ocean29-${wakeN}`;
     // Kaskaden-Schatten: auch ein neu gebautes Wassermaterial zählt alle Kaskaden als ein Licht
     ensureCsm(mat);
     return mat;

@@ -1,5 +1,15 @@
 # Was ist neu
 
+## 3.0.4 – Regen im Wasser statt auf dem Wasser (19.11.2026)
+
+Nur lokal, noch nicht veröffentlicht. **Kein neuer Spielstand.**
+
+**Regen auf dem Meer (`world/ocean.ts`, `world/weather.ts`)**
+- **Die Aufschlagringe sind jetzt Wellen in der Wasseroberfläche.** Die aufgesetzten, additiven Ringe aus 3.0.3 (eigenes Netz mit 480 Instanzen) sind weg; stattdessen rechnet der Ozean-Shader die Tropfen selbst (`skRainRipples`, Uniform `uRain`): je Zelle ein Tropfen an zufälliger Stelle, dessen Ringwelle (Wellenpaket, abklingend, mit zweiter, kleinerer Welle dahinter) die Normale der Wasserfläche kippt. Dadurch verformen die Ringe Himmelsspiegelung, Sonnenglanz und Funkeln wie echtes Wasser: im Abendlicht fangen sie die Glitzerbahn, bei bedecktem Himmel tragen die gekippten Flanken den helleren Himmel (`skRainI`), nachts bleibt ein schwacher Mindestschimmer.
+- Drei Größen (Zellen 3,3 m / 1,5 m / 0,7 m, Ringradius bis 1,45 m / 0,7 m / 0,34 m) mit Entfernungsüberblendung (die feinsten verschwinden ab ~40 m, die größten ab ~190 m), Dichte folgt der Regenstärke. Der Regen macht die Fläche etwas rauer und dämpft den Glanz zwischen den Ringen leicht.
+- Kosten: nur beim Regen und nur mit Wasserdetail (`uDetail > 0`, also nicht auf der niedrigsten Stufe); vier Zellen je Größe, keine CPU-Arbeit mehr (die Ringliste und die Wasserhöhen-Nachführung der 3.0.3 sind entfernt). Der Spritzer-Funke und der Spritzkranz an Deck und an Land bleiben (`SeaWorld.rainSplashes`).
+- Programm-Schlüssel des Ozeans auf `sk-ocean29`.
+
 ## 3.0.3 – Regen mit Tiefe (19.11.2026)
 
 **Kein neuer Spielstand.**

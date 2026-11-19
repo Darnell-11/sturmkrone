@@ -45,20 +45,4 @@ describe('Regen', () => {
     const d2 = ((w as unknown as { drift: Vector3 }).drift).clone();
     expect(d2.x - d1.x).toBeLessThan(1.1);
   });
-
-  it('Aufschlagringe: Ringpuffer läuft um, Ringe zeigen nur bei Regen', () => {
-    const { w, cam, scene } = setup();
-    w.addRing(0, 0, 0);
-    expect((w as unknown as { ringAt: number }).ringAt).toBe(0); // ohne Regen kein Ring
-    w.setWeather('regen', true);
-    w.render(1, cam, look());
-    for (let i = 0; i < 200; i++) w.addRing(i, 0, 0);
-    expect((w as unknown as { ringAt: number }).ringAt).toBe(200);
-    w.render(1.02, cam, look());
-    const ring = scene.children.find((c) => c.renderOrder === 5)!;
-    expect(ring.visible).toBe(true);
-    // nach der Lebensdauer ohne neue Ringe verschwindet das Netz
-    for (let t = 1.1; t < 3; t += 0.1) w.render(t, cam, look());
-    expect(ring.visible).toBe(false);
-  });
 });
