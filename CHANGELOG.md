@@ -2,14 +2,14 @@
 
 ## 3.0.3 – Regen mit Tiefe (19.11.2026)
 
-Nur lokal, noch nicht veröffentlicht. **Kein neuer Spielstand.**
+**Kein neuer Spielstand.**
 
 **Regen (`world/weather.ts`)**
 - **Drei Tiefenschichten statt einer Strichwolke:** nah (wenige, kräftige, kurze Striche), mittel (die Hauptmasse) und fern (viele feine, lange, blasse Striche, die zusammen einen Regenvorhang bis zum Horizont ergeben). Alle laufen über dieselben Samen und denselben Shader; Mengen folgen der Grafikstufe wie vorher (`setMaxDrops`).
 - **Weicher Rand:** Die Tropfen blenden am Rand des Regenkastens und direkt vor der Linse aus, statt aus dem Nichts aufzutauchen oder als dicke Striche durchs Bild zu ziehen. Kern mit weichem Rand, je Tropfen eigene Helligkeit und Länge.
 - **Licht und Farbe:** Der Regen nimmt Nebel- und Horizontfarbe auf und folgt der Helligkeit (nachts und im Unwetter dunkel statt grellweiß). Vor Sonne und Mond leuchten die Tropfen im Gegenlicht auf, Blitze hellen ihn kurz auf (`RainLook`, von `Environment.render` je Bild gefüllt).
 - **Böen und Wind:** Fallzeit und Winddrift werden einzeln aufsummiert statt als `Geschwindigkeit × Uhrzeit` gerechnet; dadurch springt das Tropfenmuster nicht mehr, wenn sich der Wind ändert. Dazu ein glattes Hin- und Herwehen mit der Höhe.
-- **Aufschlagringe auf dem Wasser:** Bis zu 96 Ringe gleichzeitig (`Weather.addRing`, ein Instanz-Netz): in der Nähe zu jedem Tropfen, draußen bis 40 m nur Ringe, damit die Wasserfläche bis zum Horizont vom Regen aufgewühlt wirkt. Auf festem Grund (Deck, Sand, Steg) bleibt der Spritzkranz, gelegentlich mit größeren Tropfen (`SeaWorld.rainSplashes`).
+- **Aufschlagringe auf dem Wasser:** Bis zu 480 Ringe gleichzeitig (`Weather.addRing`, ein Instanz-Netz), gestreut rund um die Kamera (gleichverteilt im Radius, also dicht in der Nähe und nach außen dünner, 2 bis 48 m; Rate `(Regen − 0,05) × 480` je Sekunde, skaliert mit der Grafikstufe über `Weather.density`; nie auf festem Grund). Die Ringe sind dünn und scharf, additiv gezeichnet (nachts hell auf dunklem Wasser, am Tag feines Funkeln), mit hellem Aufprallpunkt, einem zweiten, weicheren Ring und größer mit der Entfernung. Sie gleiten mit der Welle (`Weather.waterY`, Wasserhöhe in Drittel-Scheiben nachgeführt, etwa 0,26 ms je Bild im Höchstfall). Auf festem Grund (Deck, Sand, Steg) bleibt der Spritzkranz, gelegentlich mit größeren Tropfen (`SeaWorld.rainSplashes`, `SeaWorld.rainRings`).
 - Kosten: etwa 2,7-mal so viele Quads wie vorher (bei der Grundstufe rund 7 000), ein Zeichenaufruf je Schicht; kein Mehraufwand auf der CPU außer den Ringen. `tests/weather.test.ts` (3 Tests).
 
 ## 3.0.2 – Flaggen standen auf dem Kopf (19.11.2026)

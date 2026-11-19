@@ -35,8 +35,8 @@ const RAIN_LAYERS = [
 ] as const;
 const FALL = 28;
 /** Aufschlagringe auf dem Wasser: Zahl gleichzeitiger Ringe und Lebensdauer (s) */
-const RING_N = 96;
-const RING_LIFE = 0.85;
+const RING_N = 480;
+const RING_LIFE = 0.7;
 const WHITE = new Color(1, 1, 1);
 
 interface RainLayer { mesh: Mesh; geo: InstancedBufferGeometry; mat: ShaderMaterial; share: number; alpha: number }
@@ -81,6 +81,10 @@ export class Weather {
   private ringData = new Float32Array(RING_N * 4).fill(-1000);
   private ringAt = 0;
   private ringLive = 0;
+  private ringDirty = false;
+  private ringChunk = 0;
+  /** Wasserhöhe an einem Ort (das Spiel setzt die Wellenfunktion); ohne sie bleiben die Ringe auf ihrer Starthöhe */
+  waterY: ((x: number, z: number) => number) | null = null;
   /** Sekunden bis zum Donner nach einem Blitz (< 0: keiner geplant) */
   private thunderT = -1;
   private maxDrops = 3000;
@@ -200,16 +204,20 @@ export class Weather {
     rg.instanceCount = RING_N;
     this.ringGeo = rg;
     this.ringMat = new ShaderMaterial({
-      transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+      // additiv: auf dunklem Wasser glitzern die dünnen Ringe, am Tag bleiben sie ein feines Funkeln
+      transparent: true, depthWrite: false, blending: AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
       uniforms: { uTime: { value: 0 }, uColor: { value: new Color(0.8, 0.86, 0.95) }, uAlpha: { value: 0 } },
       vertexShader: /* glsl */ `
         attribute vec4 aRing;
         uniform float uTime;
         varying vec2 vUv;
         varying float vT;
+        varying float vH;
         void main() {
           vT = (uTime - aRing.w) / ${RING_LIFE.toFixed(2)};
-          float size = 1.3 + 0.9 * fract(aRing.w * 13.7);
+          vH = fract(aRing.w * 13.7 + aRing.x * 0.37);
+          // weiter weg größer (gleiche Bildgröße), sonst werden die Ringe zu Punkten
+          float size = (0.62 + 0.6 * vH) * (1.0 + 0.04 * distance(cameraPosition, aRing.xyz));
           vec3 p = aRing.xyz + position * size;
           vUv = uv;
           gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
@@ -218,15 +226,21 @@ export class Weather {
         uniform vec3 uColor; uniform float uAlpha;
         varying vec2 vUv;
         varying float vT;
+        varying float vH;
         void main() {
           if (vT < 0.0 || vT > 1.0) discard;
           float r = length(vUv - 0.5) * 2.0;
-          float fade = (1.0 - vT) * (1.0 - vT);
-          float ring = 1.0 - smoothstep(0.0, 0.2, abs(r - vT));
-          float ring2 = 1.0 - smoothstep(0.0, 0.1, abs(r - vT * 0.55));
-          float a = (ring + ring2 * 0.5) * fade * uAlpha * (1.0 - smoothstep(0.85, 1.0, r));
+          // Ringe: dünn und scharf, der erste läuft nach außen, ein zweiter folgt weicher; zu Beginn ein heller Aufprallpunkt
+          float w = 0.05 + 0.04 * vT;
+          float r1 = 0.12 + 0.88 * (1.0 - (1.0 - vT) * (1.0 - vT));
+          float ring = 1.0 - smoothstep(0.0, w, abs(r - r1));
+          float r2 = r1 * 0.58;
+          float ring2 = (1.0 - smoothstep(0.0, w * 1.4, abs(r - r2))) * 0.55 * smoothstep(0.1, 0.35, vT);
+          float hit = (1.0 - smoothstep(0.0, 0.2, r)) * (1.0 - smoothstep(0.0, 0.22, vT));
+          float fade = (1.0 - vT) * (1.0 - vT * 0.5);
+          float a = (ring + ring2 + hit * 0.8) * fade * uAlpha * (0.6 + 0.4 * vH) * (1.0 - smoothstep(0.8, 1.0, r));
           if (a < 0.01) discard;
-          gl_FragColor = vec4(uColor, a);
+          gl_FragColor = vec4(uColor * a, 1.0);
           #include <colorspace_fragment>
         }`,
     });
@@ -269,6 +283,9 @@ export class Weather {
   }
 
   setMaxDrops(n: number) { this.maxDrops = Math.min(MAX_DROPS, n); }
+
+  /** Dichte der Grafikstufe (1 = Grundstufe, darunter Handys und Sparstufen) für alles, was mit dem Regen mitwächst */
+  get density() { return this.maxDrops / 2600; }
 
   /** Logik (feste Schritte) */
   update(dt: number, focus: Vector3) {
@@ -350,7 +367,7 @@ export class Weather {
     if (this.p.rain < 0.15) return;
     const i = this.ringAt++ % RING_N;
     this.ringData[i * 4] = x; this.ringData[i * 4 + 1] = y + 0.05; this.ringData[i * 4 + 2] = z; this.ringData[i * 4 + 3] = Math.max(0, this.lastT);
-    (this.ringGeo.getAttribute('aRing') as InstancedBufferAttribute).needsUpdate = true;
+    this.ringDirty = true;
     this.ringLive = RING_LIFE + 0.2;
   }
 
@@ -393,8 +410,18 @@ export class Weather {
     if (this.ringMesh.visible) {
       const ru = this.ringMat.uniforms;
       ru.uTime.value = time;
-      ru.uAlpha.value = (0.5 + 0.35 * rainK) * (0.45 + 0.55 * lit);
-      ru.uColor.value.copy(this.tint);
+      ru.uAlpha.value = (0.5 + 0.35 * rainK) * (0.75 + 0.25 * lit) * (1 + flash);
+      // nachts bleibt der Ring hell genug, um sich vom dunklen Wasser abzuheben
+      ru.uColor.value.copy(this.tint).multiplyScalar(1.5).addScalar(0.12 * (1 - lit));
+      // lebende Ringe gleiten mit der Welle: Wasserhöhe in Drittel-Scheiben nachführen (jeder Ring alle 3 Bilder)
+      if (this.waterY) {
+        const per = RING_N / 3, from = (this.ringChunk++ % 3) * per, d = this.ringData;
+        for (let i = from; i < from + per; i++) {
+          const age = time - d[i * 4 + 3];
+          if (age >= 0 && age < RING_LIFE) { d[i * 4 + 1] = this.waterY(d[i * 4], d[i * 4 + 2]) + 0.06; this.ringDirty = true; }
+        }
+      }
+      if (this.ringDirty) { (this.ringGeo.getAttribute('aRing') as InstancedBufferAttribute).needsUpdate = true; this.ringDirty = false; }
     }
   }
 }
