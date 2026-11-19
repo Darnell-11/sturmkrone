@@ -82,6 +82,8 @@ export class Ship {
   canDisable = false;
   /** Auch der Gnadenstoß versenkt es nicht (Legenden, Marine-Kommandoschiffe, die zwei größten Klassen): nur Entern beendet den Kampf */
   noKill = false;
+  /** Vorläufig: das eigene Schiff nimmt keinen Schaden, solange die Spielfigur nicht am Steuer steht (Landgang, Raids, Entern) */
+  unsinkable = false;
   disabled = false;
   /** Sekunden in der Enterphase (für das Ausbrennen nach langer Zeit ohne Spieler) */
   disabledFor = 0;
@@ -234,7 +236,7 @@ export class Ship {
     // Feuer frisst den Rumpf
     if (this.disabled) this.disabledFor += dt;
     else if (this.fire > 0) {
-      this.fire -= dt; this.hull -= dt * this.maxHull * 0.012;
+      this.fire -= dt; if (!this.unsinkable) this.hull -= dt * this.maxHull * 0.012;
       if (enterPhaseCheck(this.sim, this.canDisable, this.disabled)) this.enterPhase();
     }
   }
@@ -273,7 +275,7 @@ export class Ship {
    * 'hull' = Rumpf. Kettenkugeln zerfetzen Segel in beiden Zonen am stärksten.
    */
   damage(base: number, ammo: AmmoId, hitLocal: Vector3 | null, zone: 'hull' | 'sail' = 'hull'): number {
-    if (!this.alive) return 0;
+    if (!this.alive || this.unsinkable) return 0;
     // Enterphase: ein weiterer Treffer ist der Gnadenstoß (bei Schiffen, die nie untergehen, wirkungslos: nur Entern)
     // (die ersten 2 s zählen nicht: Kugeln derselben Breitseite, die noch fliegen, sind kein neuer Treffer)
     if (this.disabled) return this.disabledFor < 2 ? 0 : finishingBlow(this.sim, this.noKill) ? base : 0;

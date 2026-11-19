@@ -1496,6 +1496,8 @@ export class SeaWorld {
   update(dt: number, input: Input) {
     this.env.update(dt, this.focus);
 
+    // Vorläufig: das eigene Schiff geht nicht unter, solange die Spielfigur nicht am Steuer steht
+    this.ship.unsinkable = this.mode !== 'sail';
     if (this.cinematic > 0) this.cinematic -= dt;
     else if (this.mode === 'sail') this.updateSail(dt, input);
     else this.updateFoot(dt, input);
