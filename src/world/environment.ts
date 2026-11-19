@@ -14,6 +14,7 @@ import { Ocean, type IslandShape } from './ocean';
 import { Sky } from './sky';
 import { createPalette, samplePalette } from './timeOfDay';
 import { Weather, type RainLook } from './weather';
+import { lampLight } from '../render/lamps';
 import { WorldEdge } from './worldEdge';
 import { smokeShared } from './smoke';
 
@@ -284,6 +285,12 @@ export class Environment {
     // Atmosphäre: Dunst nimmt in Sonnenrichtung die Lichtfarbe auf (nachts und bei Sturm kaum)
     fogShared.skFogSunDir.value.copy(pal.lightDir).normalize();
     fogShared.skFogSunCol.value.copy(pal.light).multiplyScalar(0.9 + 0.3 * pal.sunVis);
+    {
+      // Licht für die Hüftlaternen: Sonne oder Mond samt Wetter, dazu das Himmelslicht der Umgebung
+      lampLight.sunDir.value.copy(pal.lightDir).normalize();
+      lampLight.sunCol.value.copy(pal.light).multiplyScalar((0.15 + 0.85 * Math.max(pal.sunVis, pal.moonVis * 0.45)) * (1 - greyK * 0.55) * (0.6 + 0.4 * light));
+      lampLight.amb.value.copy(this.hemi.color).multiplyScalar(Math.min(0.95, Math.max(0.16, this.hemi.intensity * 0.55)));
+    }
     fogShared.skFogHaze.value = Math.max(pal.sunVis * (1 - greyK * 0.8) * 0.6, pal.moonVis * (1 - greyK) * 0.22);
     {
       // Bodennebel dichter in der Dämmerung, nachts und im Unwetter; die Nebelfarbe folgt dem Horizont (golden, tiefblau, graublau)

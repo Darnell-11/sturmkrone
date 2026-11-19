@@ -323,7 +323,7 @@ export class Character {
     node.add(lamp);
     this.lamp = lamp;
     // Lichthof an der Laterne (das Glas hängt etwa 0,25 m unter dem Aufhängepunkt)
-    glowHub.add(makeEmitter('lamp', 0, 0, 0, { obj: lamp, oy: -0.35, size: 0.26, owner: this }));
+    glowHub.add(makeEmitter('lamp', 0, 0, 0, { obj: (lamp.userData.glowAnchor as Object3D | undefined) ?? lamp, oy: lamp.userData.glowAnchor ? 0 : -0.35, size: 0.26, owner: this }));
     Character.lamped.add(this);
   }
 

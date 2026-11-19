@@ -1,5 +1,15 @@
 # Was ist neu
 
+## 3.0.6 – Neue Schiffslaterne an der Hüfte (19.11.2026)
+
+**Hüftlaterne: neues Aussehen** (`render/lamps.ts`)
+- **Form:** Kuppeldach mit Randwulst, Kaminhals und Hut, gewölbtes Glas in Messingbändern, sechs Käfigdrähte mit Schutzring, gewölbter Messing-Ölbehälter mit Wulstring und drei Füßen, Henkel mit zwei Scharnieraugen und Ring, fünf Kettenglieder zur Gürtelhalterung (Lederschlaufe, Messingplatte mit Nieten, Haken-Arm). Der Arm ist 5 cm lang (`LAMP_ARM`), damit der Dachrand nicht in den Mantel ragt.
+- **Textur:** Eckpunktfarben tragen Altern: Ruß und Schmutz nach unten, fleckiger Rost auf dem Eisen, matte und blanke Stellen im Messing. Ein Wert je Punkt (`aMat`: Leder, Eisen, Messing, Glas) steuert im Shader die Oberfläche.
+- **Licht:** Das Material (`MeshBasicMaterial` mit `onBeforeCompile`, weiter ein Zeichenaufruf je Laterne) rechnet einfaches Licht aus Sonne oder Mond und Himmelslicht der Umgebung (`lampLight`, von `Environment.render` gesetzt, mit Wetter), Glanz auf Metall (Messing warm, Eisen kühl), Randlicht; nachts leuchtet die Flamme Dach, Käfig und Behälter von innen warm an. Das Glas ist tagsüber dunkles Bernsteinglas mit Glanz und glüht nachts von innen (Kern auf Flammenhöhe am hellsten, zum Rand kühler, leises Flackern). Vorher war es ein unbeleuchtetes Netz, das am Tag auf 30 % abgedunkelt wurde.
+- Der Lichthof sitzt jetzt an einem eigenen Ankerpunkt auf Flammenhöhe (`userData.glowAnchor`), weil die Laterne neben dem Befestigungspunkt hängt.
+- Kosten: wie vorher ein Zeichenaufruf je Träger, etwa 3 000 Dreiecke je Laterne (geteilte Geometrie); keine neuen Lichter.
+- `tests/lamps.test.ts` an die neuen Maße angepasst. Geprüft im Editor von vorn, hinten und beiden Seiten, bei Tag und Nacht.
+
 ## 3.0.5 – Hüftlaterne hängt am Gürtel (19.11.2026)
 
 **Fehler behoben**

@@ -1,4 +1,4 @@
-import { BoxGeometry, BufferGeometry, Color, ConeGeometry, CylinderGeometry, Float32BufferAttribute, Mesh, MeshBasicMaterial, PointLight, SphereGeometry, TorusGeometry, Vector3, type Object3D, type Scene } from 'three';
+import { BoxGeometry, BufferGeometry, Color, CylinderGeometry, DoubleSide, Float32BufferAttribute, LatheGeometry, Mesh, MeshBasicMaterial, Object3D, PointLight, SphereGeometry, TorusGeometry, Vector2, Vector3, type Scene } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { markShared } from './dispose';
 import { lampFx } from './lampMaterials';
@@ -7,69 +7,185 @@ import { clamp01 } from '../core/mathUtil';
 
 /**
  * Laternen an den Hüften aller Figuren (Kapitän, Bewohner, Crew, Gegner).
- *  - Sichtbar: kleine Eisenlaterne an einer Schnur mit leuchtendem Glas (ein Netz mit Vertexfarben, ein Zeichenaufruf je Figur).
- *    Das Glas glüht erst abends und nachts (`lampShared.set`), tagsüber ist es nur mattes Bernsteinglas.
+ *  - Sichtbar: Schiffslaterne an einer Gürtelhalterung (ein Netz, ein Zeichenaufruf je Figur): Kuppeldach mit Kamin, gewölbtes Glas, sechs Käfigdrähte,
+ *    Messingbänder, Ölbehälter mit Füßen; Eckpunktfarben tragen Altern (Ruß unten, Rost auf dem Eisen), ein Wert je Punkt (`aMat`) wählt im Shader
+ *    Leder, Eisen, Messing oder Glas. Das Glas glüht erst abends und nachts (`lampShared.set`), tagsüber ist es dunkles Bernsteinglas.
  *  - Licht: Echte Punktlichter kosten jedes beleuchtete Pixel etwas, deshalb gibt es nur wenige feste Lichter (`LampPool`),
  *    die jedes Bild den nächsten Laternen-Trägern folgen. Alle anderen Laternen leuchten sichtbar, ohne die Umgebung zu erhellen.
  */
 
-const IRON: [number, number, number] = [0.12, 0.09, 0.07];
-const LEATHER: [number, number, number] = [0.2, 0.12, 0.07];
-const GLASS: [number, number, number] = [2.6, 1.55, 0.6];
-const FLAME: [number, number, number] = [5.0, 3.2, 1.2];
-const BRASS: [number, number, number] = [0.55, 0.4, 0.14];
+type RGB = [number, number, number];
+const K_LEATHER = 0, K_IRON = 1, K_BRASS = 2, K_GLASS = 3;
+const LEATHER: RGB = [0.27, 0.16, 0.09];
+const IRON: RGB = [0.17, 0.15, 0.14];
+const BRASS: RGB = [0.82, 0.58, 0.2];
+const RUST: RGB = [0.36, 0.19, 0.09];
 
 /** Länge des Haken-Arms nach außen (Meter vor der Skalierung): so weit hängt die Laterne neben dem Befestigungspunkt */
-export const LAMP_ARM = 0.036;
+export const LAMP_ARM = 0.05;
+/** Höhe der Flamme in der Laterne (Meter vor der Skalierung, unter dem Befestigungspunkt) */
+const FLAME_Y = -0.289;
+
+/** Zahlenrauschen 0 … 1 aus drei Koordinaten (nur beim Bauen, deterministisch) */
+const hsh = (x: number, y: number, z: number) => { const s = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453; return s - Math.floor(s); };
+
+function lathe(pts: [number, number][], seg: number): BufferGeometry {
+  return new LatheGeometry(pts.map(([r, y]) => new Vector2(r, y)), seg);
+}
 
 /**
  * Laterne an einer Gürtelhalterung, Ursprung = Befestigungspunkt AM Körper (Gürtelhöhe), der Körper liegt in +x, nach außen geht −x,
- * alles hängt nach unten (Meter, vor der Skalierung): Lederschlaufe mit Messingplatte am Gürtel, ein Haken-Arm nach außen, Öse, vier Kettenglieder,
- * dann der Henkel der Laterne. Alles hängt zusammen (vorher stand eine starre Schnur im Leeren, die Laterne schwebte neben dem Bein).
+ * alles hängt nach unten (Meter, vor der Skalierung): Lederschlaufe mit Messingplatte am Gürtel, ein Haken-Arm nach außen, Öse, fünf Kettenglieder,
+ * dann der Henkel der Laterne mit Scharnieren am Dach. Alles hängt zusammen (vorher stand eine starre Schnur im Leeren, die Laterne schwebte neben dem Bein).
  */
 function lampGeometry(): BufferGeometry {
   const parts: BufferGeometry[] = [];
-  const add = (g: BufferGeometry, col: [number, number, number], x = 0, y = 0, z = 0, pre?: (n: BufferGeometry) => void) => {
+  const add = (g: BufferGeometry, kind: number, col: RGB, x = 0, y = 0, z = 0, pre?: (n: BufferGeometry) => void) => {
     const n = g.index ? g.toNonIndexed() : g.clone();
     for (const k of Object.keys(n.attributes)) if (k !== 'position' && k !== 'normal') n.deleteAttribute(k);
     if (pre) pre(n);
     n.translate(x, y, z);
-    const count = n.attributes.position.count;
+    const pos = n.attributes.position;
+    const count = pos.count;
     const c = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) { c[i * 3] = col[0]; c[i * 3 + 1] = col[1]; c[i * 3 + 2] = col[2]; }
+    for (let i = 0; i < count; i++) {
+      const px = pos.getX(i), py = pos.getY(i), pz = pos.getZ(i);
+      // Altern: unten dunkler (Ruß und Schmutz), kleine Schwankung je Punkt, Eisen rostet fleckig
+      const t = Math.min(1, Math.max(0, (py + 0.37) / 0.3));
+      let f = (0.78 + 0.22 * t * t * (3 - 2 * t)) * (0.92 + 0.16 * hsh(px * 91, py * 77, pz * 53));
+      let r = col[0], g = col[1], b = col[2];
+      if (kind === K_IRON) {
+        const rust = Math.min(1, Math.max(0, (hsh(Math.round(px * 260), Math.round(py * 260), Math.round(pz * 260)) - 0.78) * 4.5)) * 0.75;
+        r += (RUST[0] - r) * rust; g += (RUST[1] - g) * rust; b += (RUST[2] - b) * rust;
+      } else if (kind === K_BRASS) {
+        // blank geriebene Kanten, matte Stellen dazwischen
+        f *= 0.93 + 0.14 * hsh(Math.round(px * 90), Math.round(py * 90), Math.round(pz * 90));
+      }
+      c[i * 3] = r * f; c[i * 3 + 1] = g * f; c[i * 3 + 2] = b * f;
+    }
     n.setAttribute('color', new Float32BufferAttribute(c, 3));
+    n.setAttribute('aMat', new Float32BufferAttribute(new Float32Array(count).fill(kind), 1));
     parts.push(n);
   };
-  // Gürtelhalterung: Lederschlaufe am Gürtel, Messingplatte darauf, Haken-Arm nach außen (−x), Öse am Ende, vier Kettenglieder
+  const flatX = (n: BufferGeometry) => n.rotateX(Math.PI / 2);
   const OX = -LAMP_ARM;
-  add(new BoxGeometry(0.008, 0.085, 0.026), LEATHER, 0.0, -0.035, 0);
-  add(new BoxGeometry(0.007, 0.032, 0.038), BRASS, -0.0075, -0.02, 0);
-  for (const dz of [-0.013, 0.013]) add(new SphereGeometry(0.0042, 5, 4), BRASS, -0.0115, -0.02, dz);
-  add(new CylinderGeometry(0.0055, 0.0055, LAMP_ARM - 0.006, 6), IRON, -(LAMP_ARM + 0.006) / 2, -0.02, 0, (n) => n.rotateZ(Math.PI / 2));
-  add(new TorusGeometry(0.0115, 0.0032, 5, 10), IRON, OX, -0.0325, 0, (n) => n.rotateY(Math.PI / 2));
-  for (let k = 0; k < 4; k++) add(new TorusGeometry(0.0105, 0.003, 4, 8), IRON, OX, -0.0565 - k * 0.0235, 0, (n) => n.rotateY(k % 2 ? 0 : Math.PI / 2));
-  // Henkel, Dach mit Knauf, Glaszylinder mit heller Flamme, Messingband, Streben und Fuß
-  const handle = new TorusGeometry(0.036, 0.0045, 4, 10, Math.PI);
-  add(handle, IRON, OX, -0.17, 0);
-  add(new ConeGeometry(0.046, 0.04, 8), IRON, OX, -0.205, 0);
-  add(new CylinderGeometry(0.03, 0.046, 0.012, 8), IRON, OX, -0.232, 0);
-  add(new SphereGeometry(0.009, 5, 4), BRASS, OX, -0.18, 0);
-  add(new CylinderGeometry(0.029, 0.034, 0.088, 10, 1, true), GLASS, OX, -0.282, 0);
-  add(new SphereGeometry(0.016, 6, 5), FLAME, OX, -0.285, 0);
-  add(new CylinderGeometry(0.036, 0.036, 0.008, 10), BRASS, OX, -0.238, 0);
-  add(new CylinderGeometry(0.03, 0.038, 0.018, 10), IRON, OX, -0.332, 0);
-  add(new CylinderGeometry(0.02, 0.02, 0.01, 8), IRON, OX, -0.346, 0);
-  for (let k = 0; k < 4; k++) {
-    const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
-    add(new BoxGeometry(0.0075, 0.1, 0.0075), IRON, OX + Math.cos(a) * 0.033, -0.286, Math.sin(a) * 0.033);
+
+  // Gürtelhalterung: Lederschlaufe am Gürtel, Messingplatte darauf, Haken-Arm nach außen (−x), Öse am Ende, Kette
+  add(new BoxGeometry(0.008, 0.085, 0.026), K_LEATHER, LEATHER, 0.0, -0.035, 0);
+  add(new BoxGeometry(0.007, 0.032, 0.038), K_BRASS, BRASS, -0.0075, -0.02, 0);
+  for (const dz of [-0.013, 0.013]) add(new SphereGeometry(0.0042, 6, 5), K_BRASS, BRASS, -0.0115, -0.02, dz);
+  add(new CylinderGeometry(0.0055, 0.0055, LAMP_ARM - 0.006, 7), K_IRON, IRON, -(LAMP_ARM + 0.006) / 2, -0.02, 0, (n) => n.rotateZ(Math.PI / 2));
+  add(new TorusGeometry(0.0115, 0.0032, 6, 12), K_IRON, IRON, OX, -0.0325, 0, (n) => n.rotateY(Math.PI / 2));
+  for (let k = 0; k < 5; k++) add(new TorusGeometry(0.0105, 0.003, 5, 10), K_IRON, IRON, OX, -0.0565 - k * 0.0235, 0, (n) => n.rotateY(k % 2 ? 0 : Math.PI / 2));
+  // Ring am Scheitel des Henkels, Henkel mit zwei Scharnieraugen am Dach
+  add(new TorusGeometry(0.0105, 0.003, 5, 10), K_IRON, IRON, OX, -0.1745, 0, (n) => n.rotateY(Math.PI / 2));
+  add(new TorusGeometry(0.034, 0.0036, 6, 18, Math.PI), K_IRON, IRON, OX, -0.208, 0);
+  for (const s of [-1, 1]) add(new SphereGeometry(0.0065, 7, 6), K_BRASS, BRASS, OX + s * 0.034, -0.208, 0);
+
+  // Kuppeldach mit Randwulst, Kaminhals und Hut, Messingknauf
+  add(lathe([[0.041, -0.236], [0.0462, -0.2345], [0.0485, -0.232], [0.0462, -0.2255], [0.041, -0.2165], [0.0345, -0.2085], [0.0275, -0.2025], [0.0215, -0.1985], [0.0165, -0.196], [0.0165, -0.1905], [0.0215, -0.188], [0.0238, -0.1845], [0.0195, -0.1815], [0.0098, -0.1796], [0, -0.1788]], 14), K_IRON, IRON, OX, 0, 0);
+  add(new TorusGeometry(0.0455, 0.0038, 6, 16), K_BRASS, BRASS, OX, -0.2335, 0, flatX);
+  add(new SphereGeometry(0.005, 6, 5), K_BRASS, BRASS, OX, -0.1782, 0);
+
+  // Glas: leicht gewölbter Zylinder, oben und unten von Messingbändern gefasst, mit Käfigdrähten (sechs) und einem Schutzring
+  add(lathe([[0.0285, -0.3215], [0.0302, -0.304], [0.0314, -0.283], [0.0304, -0.262], [0.0286, -0.2435]], 14), K_GLASS, [1, 1, 1], OX, 0, 0);
+  add(new TorusGeometry(0.0298, 0.0034, 6, 16), K_BRASS, BRASS, OX, -0.2428, 0, flatX);
+  add(new TorusGeometry(0.0302, 0.0034, 6, 16), K_BRASS, BRASS, OX, -0.3215, 0, flatX);
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2 + Math.PI / 6;
+    add(new CylinderGeometry(0.0026, 0.0026, 0.0885, 5), K_IRON, IRON, OX + Math.cos(a) * 0.0335, -0.2805, Math.sin(a) * 0.0335);
   }
+  add(new TorusGeometry(0.0324, 0.0022, 5, 16), K_IRON, IRON, OX, -0.279, 0, flatX);
+
+  // Ölbehälter aus Messing: gewölbter Bauch mit Wulstring, drei kleine Füße
+  add(lathe([[0.0, -0.352], [0.021, -0.352], [0.027, -0.349], [0.0335, -0.343], [0.0385, -0.3355], [0.039, -0.33], [0.0365, -0.3255], [0.0315, -0.3225], [0.0, -0.3225]], 14), K_BRASS, BRASS, OX, 0, 0);
+  add(new TorusGeometry(0.0386, 0.003, 5, 16), K_BRASS, BRASS, OX, -0.3345, 0, flatX);
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI * 2 + 0.5;
+    add(new SphereGeometry(0.0062, 6, 5), K_IRON, IRON, OX + Math.cos(a) * 0.026, -0.3535, Math.sin(a) * 0.026);
+  }
+
   const merged = mergeGeometries(parts, false)!;
   for (const p of parts) p.dispose();
   return merged;
 }
 
 let geo: BufferGeometry | null = null;
-const mat = markShared(new MeshBasicMaterial({ vertexColors: true }));
+
+/** Licht für die Laternen-Körper (die Umgebung setzt es je Bild): Sonnen- oder Mondrichtung und -farbe, Umgebungslicht */
+export const lampLight = {
+  sunDir: { value: new Vector3(0.3, 1, 0.2).normalize() },
+  sunCol: { value: new Color(0.8, 0.75, 0.65) },
+  amb: { value: new Color(0.35, 0.4, 0.5) },
+};
+
+/**
+ * Ein Material für Leder, Eisen, Messing und Glas (Wert `aMat` je Eckpunkt): einfaches Licht aus Sonne und Umgebung, Glanz auf Metall,
+ * Randlicht, nachts warmer Schein der eigenen Flamme auf Dach, Käfig und Behälter; Glas glüht nachts von innen und flackert leise.
+ */
+const mat = markShared(new MeshBasicMaterial({ vertexColors: true, side: DoubleSide }));
+mat.onBeforeCompile = (shader) => {
+  shader.uniforms.uSunDir = lampLight.sunDir;
+  shader.uniforms.uSunCol = lampLight.sunCol;
+  shader.uniforms.uAmb = lampLight.amb;
+  shader.uniforms.uNight = lampFx.uNight;
+  shader.uniforms.uTime = lampFx.uTime;
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', `#include <common>
+      attribute float aMat;
+      varying float vMat;
+      varying vec3 vWn;
+      varying vec3 vWp;
+      varying vec3 vLp;`)
+    .replace('#include <begin_vertex>', `#include <begin_vertex>
+      vMat = aMat;
+      vLp = position;
+      vWn = normalize(mat3(modelMatrix) * normal);
+      vWp = (modelMatrix * vec4(position, 1.0)).xyz;`);
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', `#include <common>
+      uniform vec3 uSunDir;
+      uniform vec3 uSunCol;
+      uniform vec3 uAmb;
+      uniform float uNight;
+      uniform float uTime;
+      varying float vMat;
+      varying vec3 vWn;
+      varying vec3 vWp;
+      varying vec3 vLp;`)
+    .replace('#include <color_fragment>', `#include <color_fragment>
+      {
+        const vec3 FC = vec3(${(-LAMP_ARM).toFixed(4)}, ${FLAME_Y.toFixed(4)}, 0.0);
+        vec3 n = normalize(vWn);
+        if (!gl_FrontFacing) n = -n;
+        vec3 v = normalize(cameraPosition - vWp);
+        float ndv = clamp(dot(n, v), 0.0, 1.0);
+        vec3 l = normalize(uSunDir);
+        float w = dot(n, l) * 0.5 + 0.5;
+        vec3 light = uAmb * (0.75 + 0.25 * n.y) + uSunCol * w * w;
+        float df = distance(vLp, FC);
+        float night = clamp(uNight, 0.0, 1.0);
+        // nachts leuchtet die Flamme Dach, Käfig und Behälter von innen warm an
+        vec3 inner = vec3(1.0, 0.52, 0.18) * night * 1.4 * (1.0 - smoothstep(0.02, 0.14, df));
+        float metal = step(0.5, vMat) * (1.0 - step(2.5, vMat));
+        float brass = step(1.5, vMat) * (1.0 - step(2.5, vMat));
+        float glass = step(2.5, vMat);
+        vec3 h = normalize(l + v);
+        float sun = max(max(uSunCol.r, uSunCol.g), uSunCol.b);
+        float sp = pow(max(dot(n, h), 0.0), mix(26.0, 54.0, brass)) * (0.3 + 0.7 * brass) * (0.25 + sun);
+        vec3 spc = mix(vec3(0.85, 0.9, 1.0), vec3(1.0, 0.82, 0.5), brass);
+        float rim = pow(1.0 - ndv, 3.0);
+        vec3 col = diffuseColor.rgb * (light + inner) + spc * sp * metal + uAmb * rim * (0.2 + 0.5 * metal);
+        // Glas: tags dunkles Bernsteinglas mit Glanz, nachts von innen glühend (Kern auf Flammenhöhe am hellsten, zum Rand kühler)
+        float fl = 0.93 + 0.07 * sin(uTime * 7.3 + vWp.x * 3.1 + vWp.z * 2.3);
+        float core = exp(-df * df * 420.0);
+        vec3 gDay = vec3(0.4, 0.23, 0.08) * (0.4 + 0.55 * ndv) * (0.35 + 0.35 * min(light, vec3(1.6))) + vec3(0.9, 0.7, 0.35) * core * 0.12;
+        vec3 gNight = (vec3(1.3, 0.56, 0.13) * (0.5 + 0.7 * ndv) + vec3(1.9, 1.05, 0.34) * core) * fl;
+        vec3 g = mix(gDay, gNight, night) + vec3(1.0, 0.95, 0.85) * pow(max(dot(n, h), 0.0), 60.0) * sun * 0.6 * (1.0 - night);
+        diffuseColor.rgb = mix(col, g, glass);
+      }`);
+};
+mat.customProgramCacheKey = () => 'sk-lamp2';
 const WARM = new Color(1.0, 0.62, 0.28);
 const FIRE_L = new Color(1.0, 0.5, 0.2);
 
@@ -80,7 +196,6 @@ export const lampShared = {
   set(night: number) {
     this.night = clamp01((night - 0.12) / 0.55);
     lampFx.uNight.value = this.night;
-    mat.color.setScalar(0.3 + 0.7 * this.night);
   },
 };
 
@@ -93,6 +208,11 @@ export function createLamp(height = 1): Mesh {
   m.scale.setScalar(height);
   m.castShadow = false;
   m.frustumCulled = false; // hängt an einem Skelett: die Hülle des Netzes folgt den Knochen nicht
+  // Ankerpunkt auf Flammenhöhe für den Lichthof: die Laterne hängt LAMP_ARM neben dem Befestigungspunkt
+  const anchor = new Object3D();
+  anchor.position.set(-LAMP_ARM, FLAME_Y, 0);
+  m.add(anchor);
+  m.userData.glowAnchor = anchor;
   return m;
 }
 
