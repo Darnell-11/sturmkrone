@@ -1,4 +1,5 @@
 import { BufferAttribute, Matrix4, Vector2, Vector3, type Material, type Mesh, type Object3D } from 'three';
+import { clamp01 } from '../core/mathUtil';
 
 /**
  * Wind für Pflanzen (Gras, Büsche, Baumkronen, Palmwedel): Verschiebung im Vertex-Shader aus Rauschen
@@ -84,7 +85,7 @@ export function windify(plant: Object3D, amp: number, height: number) {
     const rel = new Matrix4().multiplyMatrices(inv, m.matrixWorld);
     for (let i = 0; i < pos.count; i++) {
       _v.fromBufferAttribute(pos, i).applyMatrix4(rel);
-      const t = Math.min(1, Math.max(0, _v.y / Math.max(0.01, height)));
+      const t = clamp01(_v.y / Math.max(0.01, height));
       w[i] = amp * Math.pow(t, 1.6);
     }
     m.geometry.setAttribute('aWind', new BufferAttribute(w, 1));

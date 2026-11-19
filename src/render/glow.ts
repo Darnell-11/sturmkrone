@@ -24,6 +24,7 @@ import {
   CONE_FRAG, CONE_VERT, EMBER_FRAG, EMBER_VERT, FLAME_FRAG, FLAME_VERT, SMOKE_FRAG, SMOKE_VERT,
   coneGeometry, emberGeometry, flameGeometry, smokeGeometry,
 } from './flameShaders';
+import { smoothstep } from '../core/mathUtil';
 
 /**
  * Lichtschein und Flammen: jede Lichtquelle der Welt (Lagerfeuer, Feuerkörbe, Fackeln, Laternen an Land, auf Schiffen, an
@@ -246,7 +247,6 @@ function makeLayer(scene: Scene, max: number, vert: string, frag: string, unifor
 }
 
 const visibleUp = (o: Object3D | null) => { while (o) { if (!o.visible) return false; o = o.parent; } return true; };
-const smooth = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const _p = new Vector3();
 
 /** Schreibt eine Instanz (Ort, vier Größenwerte, Farbe) in eine Schicht */
@@ -313,7 +313,7 @@ export class GlowSystem {
     this.wind3.value.set(this.wind.x, Math.min(1, ws / 9), this.wind.z);
     const cp = cam.position;
     // Lampen gehen mit der Dämmerung an, volle Helligkeit in der Nacht; im Regen etwas matter (nasse Luft streut, Funken fehlen)
-    const lampOn = smooth(0.04, 0.55, night);
+    const lampOn = smoothstep(0.04, 0.55, night);
     const wetK = 1 - 0.18 * rain;
     const mist = this.mist;
     // Kandidaten: Abstand² je Emitter, danach die Nächsten je Schicht
@@ -345,7 +345,7 @@ export class GlowSystem {
       // Flamme (Feuer und Fackeln): eine Hauptzunge und kleinere Nebenzungen mit eigener Phase, wie ein echtes Feuer
       if (lite && d > 90 && e.kind !== 'fire') continue;
       if (e.kind !== 'lamp' && e.kind !== 'window' && d < RANGE.flame) {
-        const k = 1 - smooth(RANGE.flame * 0.7, RANGE.flame, d);
+        const k = 1 - smoothstep(RANGE.flame * 0.7, RANGE.flame, d);
         const tongues = lite ? 1 : e.kind === 'fire' ? (d < 70 ? 4 : d < 130 ? 2 : 1) : (d < 60 ? 2 : 1);
         const h0 = e.size * (0.9 + 0.2 * fl) * (0.8 + 0.2 * Math.min(1, e.on));
         const toCamX = cp.x - e.x, toCamZ = cp.z - e.z, tl = Math.hypot(toCamX, toCamZ) || 1;
@@ -359,56 +359,56 @@ export class GlowSystem {
         // Funken und Rauch aus derselben Quelle
         const er = e.kind === 'fire' ? RANGE.ember : RANGE.emberTorch;
         if (!lite && E.n < E.max && d < er) {
-          const kk = 1 - smooth(er * 0.6, er, d);
+          const kk = 1 - smoothstep(er * 0.6, er, d);
           put(E, e.x, e.y, e.z, e.size, Math.min(1, lit * kk * (e.kind === 'fire' ? 0.8 : 0.3)), e.seed, 0, e.color);
         }
         const sr = e.kind === 'fire' ? RANGE.smoke : RANGE.smokeTorch;
         if (!lite && S.n < S.max && d < sr) {
-          const kk = 1 - smooth(sr * 0.6, sr, d);
+          const kk = 1 - smoothstep(sr * 0.6, sr, d);
           put(S, e.x, e.y, e.z, e.size * (e.kind === 'fire' ? 0.75 : 0.45), 0.85, e.seed, kk * (e.kind === 'fire' ? 1 : 0.4) * Math.min(1, lit), e.color);
         }
         // Hitzeflimmern über den nächsten drei Feuern
         if (!lite && this.heat && heatN < this.heatSlots.length && d < RANGE.heat) {
-          const kk = 1 - smooth(RANGE.heat * 0.5, RANGE.heat, d);
+          const kk = 1 - smoothstep(RANGE.heat * 0.5, RANGE.heat, d);
           this.setHeat(heatN++, e.x, e.y + e.size * 0.9, e.z, e.size * 1.6, (e.kind === 'fire' ? 0.3 : 0.14) * kk * Math.min(1, lit));
         }
       }
       // kleine Kerzenflamme im Glas der Laternen (nur nah)
       if (!lite && e.kind === 'lamp' && d < RANGE.lampFlame && e.size > 0.3 && L.n < L.max) {
-        const k = 1 - smooth(RANGE.lampFlame * 0.6, RANGE.lampFlame, d);
+        const k = 1 - smoothstep(RANGE.lampFlame * 0.6, RANGE.lampFlame, d);
         const hh = e.size * 0.3 * (0.92 + 0.16 * fl);
         put(L, e.x, e.y - hh * 0.22, e.z, hh * 0.6, hh, k * lit * lampOn, e.seed, e.color);
       }
       // Lichtkegel unter Laternen: nachts leise, in Nebel und Regen deutlich
       if (!lite && e.kind === 'lamp' && e.size > 0.3 && C.n < C.max && d < RANGE.cone && lampOn > 0.05) {
-        const k = 1 - smooth(RANGE.cone * 0.6, RANGE.cone, d);
+        const k = 1 - smoothstep(RANGE.cone * 0.6, RANGE.cone, d);
         const gi = k * lit * lampOn * (0.1 + 0.8 * mist) * (0.85 + 0.15 * fl);
         if (gi > 0.01) { const cs = Math.min(e.size, 1.5); put(C, e.x, e.y, e.z, cs * 3.0, cs * 2.6, gi, e.seed, e.color); }
       }
       // Lichthof; im Dunst wächst er und wird heller
       const hr = e.kind === 'fire' ? RANGE.haloFire : e.kind === 'torch' ? RANGE.haloTorch : e.kind === 'window' ? RANGE.haloWindow : RANGE.haloLamp;
       if (H.n < H.max && d < hr) {
-        const k = 1 - smooth(hr * 0.7, hr, d);
+        const k = 1 - smoothstep(hr * 0.7, hr, d);
         const cy = e.kind === 'lamp' || e.kind === 'window' ? 0 : e.size * 0.5;
         // der Hof wächst mit der Entfernung (aus der Ferne bleibt eine Lampe als Lichtpunkt sichtbar), tagsüber klein und flach
         const far = 1 + Math.min(2.4, d * 0.012);
         const r = e.size * (e.kind === 'lamp' ? 1.7 : e.kind === 'window' ? 1.5 : 2.1) * far * (0.85 + 0.15 * fl) * (1 + 0.7 * mist);
-        const nearK = 0.2 + 0.8 * smooth(0.8, 7, d);                          // ganz nah gehört das Bild der Flamme und dem Modell, nicht dem Hof
+        const nearK = 0.2 + 0.8 * smoothstep(0.8, 7, d);                          // ganz nah gehört das Bild der Flamme und dem Modell, nicht dem Hof
         const inten = k * lit * fl * nearK * (0.1 + 0.55 * sky) * (e.kind === 'fire' ? 0.5 : e.kind === 'torch' ? 0.6 : e.kind === 'window' ? 0.5 : 0.85) * (1 + 0.55 * mist);
         put(H, e.x, e.y + cy, e.z, r, r, inten, e.seed, e.color);
       }
       // Wasserspiegelung: Lichtstreifen von der Lampe zum Betrachter (Schiffe, Bojen, Stege), nur nachts
       if (!lite && e.glint && G.n < G.max && d < RANGE.glint && d > 3) {
-        const k = 1 - smooth(RANGE.glint * 0.6, RANGE.glint, d);
+        const k = 1 - smoothstep(RANGE.glint * 0.6, RANGE.glint, d);
         const gi = k * lit * lampOn * fl * 0.5;
         if (gi > 0.01) put(G, e.x, 0.12, e.z, Math.max(0.8, e.size * 1.8), Math.min(15, 4 + d * 0.06), gi, e.seed, e.color);
       }
       // Bodenlicht: nur nah, nur in der Dämmerung und Nacht
       if (!lite && e.ground !== null && P.n < P.max && d < RANGE.pool) {
-        const k = 1 - smooth(RANGE.pool * 0.6, RANGE.pool, d);
+        const k = 1 - smoothstep(RANGE.pool * 0.6, RANGE.pool, d);
         const night2 = lampOn * (e.kind === 'fire' ? 1 : 0.9) + (e.kind === 'fire' ? 0.12 : 0);
         // nasser Boden wirft das Licht kräftiger zurück (Pfützen, Pflaster glänzen)
-        const wetUp = 1 + 0.45 * smooth(0.25, 0.7, rain);
+        const wetUp = 1 + 0.45 * smoothstep(0.25, 0.7, rain);
         const li = k * lit * night2 * fl * wetUp * (e.kind === 'window' ? 0.5 : e.kind === 'fire' ? 0.62 : 0.62);
         if (li > 0.01) {
           const o = P.n++;

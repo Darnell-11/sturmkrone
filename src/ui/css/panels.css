@@ -1,0 +1,225 @@
+/* ==========================================================================
+   Bausteine: Rauchglas-Tafel, Menükarte, Pergament, Messingplakette, Anzeigebalken, Karten für Einträge
+   ========================================================================== */
+
+/* ---------- Rauchglas-Tafel (HUD) ---------- */
+.panel {
+  position: relative;
+  padding: 0.5em 0.75em 0.6em;
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, rgba(34, 20, 12, 0.7), var(--glass) 40%, rgba(12, 8, 6, 0.72));
+  -webkit-backdrop-filter: blur(9px) saturate(1.15);
+  backdrop-filter: blur(9px) saturate(1.15);
+  box-shadow: var(--shadow-1);
+}
+/* feine Innenlinie und vier Nieten an den Ecken */
+.panel::before {
+  content: '';
+  position: absolute; inset: 3px;
+  border: 1px solid var(--hairline);
+  border-radius: calc(var(--r-md) - 2px);
+  pointer-events: none;
+}
+.panel::after, .card::after {
+  content: '';
+  position: absolute; inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 7px 7px, #f2d890 0 1.2px, var(--brass-deep) 1.8px, transparent 2.6px),
+    radial-gradient(circle at calc(100% - 7px) 7px, #f2d890 0 1.2px, var(--brass-deep) 1.8px, transparent 2.6px),
+    radial-gradient(circle at 7px calc(100% - 7px), #f2d890 0 1.2px, var(--brass-deep) 1.8px, transparent 2.6px),
+    radial-gradient(circle at calc(100% - 7px) calc(100% - 7px), #f2d890 0 1.2px, var(--brass-deep) 1.8px, transparent 2.6px);
+  opacity: 0.8;
+}
+html[data-fx='lite'] .panel { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(20, 12, 8, 0.88); }
+.panel > * { position: relative; }
+
+/* ---------- Menükarte: Mahagoni mit Messingeinlage ---------- */
+.card {
+  position: relative;
+  width: 100%;
+  max-width: 30rem;
+  margin: auto;
+  padding: 26px 22px 22px;
+  border: 1px solid var(--brass-500);
+  border-radius: var(--r-md);
+  background: var(--tex-wood), var(--wood-panel);
+  background-blend-mode: multiply, normal;
+  box-shadow: 0 0 0 1px #000, 0 0 0 5px var(--mahogany-900), 0 0 0 6px rgba(215, 174, 82, 0.35), var(--shadow-2);
+  color: var(--ink);
+}
+.card.wide { max-width: 38rem; }
+.card h1 { font-size: clamp(2.6rem, 13vw, 3.8rem); line-height: 0.95; margin: 0 0 0.15em; }
+.card h2 {
+  margin: 0 0 0.7em;
+  font: 400 1.9rem/1.05 var(--font-serif); letter-spacing: 0.03em;
+  color: var(--brass-100);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.55);
+}
+.card h3 {
+  margin: 1.2em 0 0.5em;
+  font: 700 0.8rem/1.2 var(--font-text); letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--brass-300);
+}
+.card p { line-height: 1.5; margin: 0 0 0.85em; font-size: 1.03rem; }
+.card .dlg-line, .story .dlg-line { font-style: italic; color: #e6d8b6; }
+
+/* Tauwerk unter jeder Überschrift */
+.card h2::after { content: ''; display: block; height: 5px; margin-top: 0.4em; border-radius: 3px; background: var(--rope); opacity: 0.8; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.18); }
+
+/* ---------- Pergament (Karten, Kataloge, Auftragsbuch) ---------- */
+.parchment {
+  position: relative;
+  color: var(--parch-ink);
+  background:
+    var(--tex-stain),
+    var(--tex-parchment),
+    radial-gradient(ellipse at 50% 40%, var(--parch-100), var(--parch-200) 70%, var(--parch-300));
+  border: 1px solid #6b4a1c;
+  border-radius: var(--r-sm);
+  box-shadow: inset 0 0 70px rgba(98, 62, 20, 0.5), inset 0 0 0 3px rgba(255, 244, 210, 0.35), 0 10px 26px rgba(0, 0, 0, 0.5);
+}
+.parchment h2, .parchment h3, .parchment b { color: var(--parch-ink); }
+.parchment .soft, .parchment small { color: var(--parch-ink-soft); }
+.parchment hr { border: 0; height: 1px; background: var(--parch-line); }
+
+/* ---------- Anzeigebalken ----------
+   Ein Baustein für HUD, Raid-Tafel und Menüs: <div class="gauge" style="--v:.4"><i class="fill"></i></div>
+   --v (0 … 1) füllt den Balken; im HUD setzt das Spiel die Füllung direkt per transform (ein Wert je Bild, ohne Layout). */
+.gauge {
+  --c: var(--danger);
+  position: relative;
+  height: 0.62em;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #060403, #150c07);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(215, 174, 82, 0.28), 0 1px 0 rgba(255, 226, 150, 0.08);
+  overflow: hidden;
+}
+.gauge > i {
+  position: absolute; inset: 0;
+  width: 100%;
+  transform-origin: left center;
+  transform: scaleX(var(--v, 1));
+  will-change: transform;
+}
+.gauge > .fill {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--c) 70%, #fff) 0%, var(--c) 45%, color-mix(in srgb, var(--c) 62%, #000) 100%);
+  transition: transform 0.12s ease-out;
+}
+/* Glanzlicht und Skalenstriche machen den Balken plastisch */
+.gauge::after {
+  content: '';
+  position: absolute; inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 46%, rgba(0, 0, 0, 0.18)),
+    repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), rgba(0, 0, 0, 0.34) calc(10% - 1px) 10%);
+}
+/* Nachlauf: der helle Streifen bleibt kurz stehen und zieht dann dem Füllstand nach (zeigt, wie viel verloren ging) */
+.gauge > .lag { background: var(--brass-100); opacity: 0.8; transition: transform 0.45s ease-out 0.35s; }
+.gauge.thin { height: 0.32em; }
+.gauge.tall { height: 0.9em; }
+.gauge.low > .fill { animation: gauge-low 0.9s ease-in-out infinite; }
+@keyframes gauge-low { 50% { filter: brightness(1.7); } }
+.gauge.flash { animation: gauge-flash 0.18s linear 2; }
+@keyframes gauge-flash { 50% { box-shadow: inset 0 0 0 99px rgba(196, 69, 47, 0.6); } }
+
+/* Beschriftete Messzeile: Name – Balken – Zahl */
+.gline { display: grid; grid-template-columns: 4.2rem 1fr auto; align-items: center; gap: 0.5rem; font-size: 0.8rem; margin: 6px 0; }
+.gline > span { color: var(--ink-dim); font-weight: 600; letter-spacing: 0.04em; }
+.gline > b { font: 600 0.95rem var(--font-num); color: var(--ink); min-width: 3.2rem; text-align: right; }
+
+/* ---------- Einträge in Menüs ---------- */
+.slot {
+  position: relative;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--glass-edge-soft);
+  border-left: 3px solid var(--c, var(--brass-400));
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, rgba(255, 226, 150, 0.045), rgba(0, 0, 0, 0.18));
+}
+.slot.main { border-color: var(--brass-300); border-left-color: var(--brass-200); background: linear-gradient(180deg, rgba(215, 174, 82, 0.1), rgba(0, 0, 0, 0.2)); }
+.slot.legend.beaten { opacity: 0.6; }
+.slot-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.slot-head b { font: 400 1.12rem var(--font-serif); letter-spacing: 0.02em; color: var(--brass-100); }
+.slot-head span { font: 600 0.82rem var(--font-num); letter-spacing: 0.03em; color: var(--ink-dim); text-align: right; }
+.slot .meta { margin: 3px 0 8px; font-size: 0.9rem; color: var(--ink-dim); line-height: 1.4; }
+.slot .meta .warn { color: var(--danger-hi); }
+.slot .row { margin-top: 4px; }
+
+.menu-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: 8px; margin-top: 10px; }
+.menu-grid .secondary { margin: 0; min-height: 46px; padding: 10px 12px; font-size: 0.97rem; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; margin-bottom: 8px; }
+.grid2 button { margin: 0; text-align: left; display: grid; gap: 1px; }
+.grid2 button small { font-weight: 500; color: var(--ink-dim); font-size: 0.74rem; }
+
+/* Hinweise */
+.note, .warn {
+  margin: 0 0 0.85em; padding: 9px 12px;
+  border-radius: var(--r-sm);
+  font-size: 0.93rem; line-height: 1.45;
+}
+.note { background: rgba(90, 167, 184, 0.1); border: 1px solid rgba(90, 167, 184, 0.28); border-left: 3px solid var(--sea); }
+.warn { background: rgba(196, 69, 47, 0.12); border: 1px solid rgba(196, 69, 47, 0.32); border-left: 3px solid var(--danger); }
+
+.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; margin: 10px 0; }
+.facts div { font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); }
+.facts b { display: block; margin-top: 2px; font: 600 1rem var(--font-text); letter-spacing: 0; text-transform: none; color: var(--ink); overflow-wrap: anywhere; }
+.tier-desc { font-size: 0.92rem; color: var(--ink-dim); margin: 8px 0 0; }
+.ver { margin-top: 14px; font: 600 0.78rem var(--font-num); letter-spacing: 0.08em; color: var(--ink-faint); }
+
+.pip { display: inline-grid; place-items: center; width: 18px; height: 18px; margin-left: 4px; vertical-align: middle; border-radius: 50%; background: var(--danger); color: #fff; font: 700 0.72rem var(--font-num); }
+.pip.ok { background: var(--brass-300); color: var(--ink-engrave); }
+.pips { letter-spacing: 2px; color: var(--brass-300); }
+.loy { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; font-size: 0.8rem; margin: 6px 0; }
+.loy .gauge { --c: var(--brass-300); }
+
+/* Rangliste */
+.rank { list-style: none; counter-reset: r; padding: 0; margin: 8px 0 14px; }
+.rank li { counter-increment: r; display: grid; grid-template-columns: 34px 1fr auto; grid-template-rows: auto auto; column-gap: 8px; padding: 6px 10px; border-radius: var(--r-sm); }
+.rank li::before { content: counter(r) '.'; grid-row: span 2; align-self: center; font: 600 1rem var(--font-num); color: var(--ink-faint); }
+.rank li span { grid-column: 2; font-size: 0.78rem; color: var(--ink-dim); }
+.rank li em { grid-row: 1 / span 2; grid-column: 3; align-self: center; font: 600 0.9rem var(--font-num); font-style: normal; color: var(--brass-200); }
+.rank li:nth-child(odd) { background: rgba(255, 226, 150, 0.04); }
+.rank li.me { background: rgba(215, 174, 82, 0.2); box-shadow: inset 3px 0 0 var(--brass-300); }
+
+/* Erfolge */
+.ach { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.ach-i { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid var(--glass-edge-soft); border-radius: var(--r-sm); background: rgba(0, 0, 0, 0.2); font-size: 0.84rem; }
+.ach-i span { color: var(--ink-dim); font-size: 0.76rem; }
+.ach-i.ok { background: rgba(215, 174, 82, 0.12); border-color: var(--brass-500); }
+.ach-i .gauge { --c: var(--brass-300); height: 0.32rem; }
+
+/* Erzähltafel */
+.story { text-align: center; padding: 8px 4px 4px; }
+.story .kicker { margin: 0; letter-spacing: 0.3em; text-transform: uppercase; font-size: 0.72rem; color: var(--brass-300); }
+.story h2 { margin: 4px 0 12px; border: 0; }
+.story .dlg-line { font-size: 1.05rem; line-height: 1.6; text-align: left; }
+
+/* Gespräch in Menüs */
+.dlg-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.dlg-head > div:last-child { display: grid; }
+.dlg-head b { font: 400 1.25rem var(--font-serif); color: var(--brass-100); }
+.dlg-face { width: 48px; height: 48px; flex: none; display: grid; place-items: center; border-radius: 50%; border: 2px solid var(--brass-400); background: var(--brass-plate); color: var(--ink-engrave); font: 700 1.4rem var(--font-serif); box-shadow: var(--bevel-brass); }
+.dlg-done { margin: 8px 0; padding: 8px 12px; border: 1px solid var(--brass-400); border-radius: var(--r-sm); background: rgba(215, 174, 82, 0.1); }
+.steps { margin: 6px 0 2px; padding-left: 20px; font-size: 0.88rem; line-height: 1.5; }
+.steps li { color: var(--ink-dim); }
+.steps li.ok { text-decoration: line-through; }
+.steps li.now { color: var(--ink); font-weight: 800; }
+
+/* Ruf & Ehre */
+.slot.rep { border-left-width: 4px; }
+.repbar { display: block; position: relative; height: 8px; margin: 6px 0; border-radius: 4px; background: linear-gradient(90deg, #7a1f1a 0%, #5a4a3a 50%, #2f7a4f 100%); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.55); }
+.repbar::after { content: ''; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: rgba(244, 226, 184, 0.5); }
+.repbar i { position: absolute; top: -3px; width: 5px; height: 14px; margin-left: -2.5px; border-radius: 3px; background: var(--brass-100); box-shadow: 0 0 0 1.5px #1b1410; }
+
+/* Erfassen einer Taste */
+.capture {
+  position: fixed; inset: 0; z-index: var(--z-capture);
+  display: grid; place-items: center; padding: 24px;
+  background: var(--scrim); color: var(--brass-100);
+  font: 400 1.5rem/1.4 var(--font-serif); text-align: center;
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+}

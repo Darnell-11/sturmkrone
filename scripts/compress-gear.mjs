@@ -1,5 +1,5 @@
-// Verkleinert die Modelle aus Blender in place (Draco-Geometrie, doppelte Daten entfernen): public/models/gear, world, ships, env, architecture, light.
-// Aufruf: node scripts/compress-gear.mjs [ordner ...]   (ohne Angabe alle sechs; nach jedem neuen Export aus Blender; Skripte dafür: tools/blender/)
+// Verkleinert die Modelle aus Blender in place (Draco-Geometrie, doppelte Daten entfernen): public/models/gear, world, ships, env, architecture, light, factions, bosses, figureheads.
+// Aufruf: node scripts/compress-gear.mjs [ordner ...]   (ohne Angabe alle sieben; nach jedem neuen Export aus Blender; Skripte dafür: tools/blender/)
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { NodeIO } from '@gltf-transform/core';
@@ -7,7 +7,7 @@ import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { dedup, draco, prune } from '@gltf-transform/functions';
 import draco3d from 'draco3dgltf';
 
-const DIRS = process.argv.length > 2 ? process.argv.slice(2) : ['gear', 'world', 'ships', 'env', 'architecture', 'light'];
+const DIRS = process.argv.length > 2 ? process.argv.slice(2) : ['gear', 'world', 'ships', 'env', 'architecture', 'light', 'factions', 'bosses', 'figureheads'];
 const dirOf = (d) => new URL(`../public/models/${d}/`, import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({
   'draco3d.decoder': await draco3d.createDecoderModule(),

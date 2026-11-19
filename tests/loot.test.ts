@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { LOOT_WEIGHTS, RARITIES, rollEventLoot, rollLoot } from '../src/data/loot';
+import { LOOT_WEIGHTS, rollEventLoot, rollLoot } from '../src/data/loot';
+import { RARITIES } from '../src/data/rarity';
 import { zoneContains } from '../src/combat/zones';
 import { rollTrinket, TRINKETS } from '../src/data/trinkets';
 

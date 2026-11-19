@@ -20,6 +20,7 @@ import {
 const OUT = new Vector3();
 const VIEW = new Vector3();
 import { WORLD_RADIUS, WORLD_SCALE } from '../data/world';
+import { clamp01 } from '../core/mathUtil';
 
 const FALL_HEIGHT = 700;
 const MIST_COUNT = 70;
@@ -164,7 +165,7 @@ export class WorldEdge {
    */
   render(time: number, focus: Vector3, camPos: Vector3, sunDir: Vector3, daylight: number, clearSky: number, mistLit: Color, mistShade: Color) {
     const distToEdge = WORLD_RADIUS - Math.hypot(focus.x, focus.z);
-    const near = 1 - Math.min(1, Math.max(0, (distToEdge - 150) / 900));
+    const near = 1 - clamp01((distToEdge - 150) / 900);
     this.fall.visible = near > 0;
     this.mist.visible = near > 0;
     this.fallU.uTime.value = time;
@@ -179,7 +180,7 @@ export class WorldEdge {
     const out = OUT.set(Math.cos(ang), 0, Math.sin(ang));
     const view = VIEW.set(out.x * WORLD_RADIUS - camPos.x, 0, out.z * WORLD_RADIUS - camPos.z).normalize();
     const behind = Math.max(0, -(view.x * sunDir.x + view.z * sunDir.z));
-    const close = Math.max(0, Math.min(1, (near - 0.6) / 0.35));
+    const close = clamp01((near - 0.6) / 0.35);
     this.bowU.uAlpha.value = close * close * daylight * clearSky * (0.35 + 0.65 * behind);
     this.rainbow.visible = this.bowU.uAlpha.value > 0.01;
     this.rainbow.position.set(out.x * (WORLD_RADIUS + 260), -140, out.z * (WORLD_RADIUS + 260));

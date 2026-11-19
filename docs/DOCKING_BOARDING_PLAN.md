@@ -1,5 +1,7 @@
 # Andocken und Entern: technische Bestandsaufnahme (Stand 2.9.86)
 
+> **Umgesetzt in 2.9.89** (siehe `CHANGELOG.md` und `CLAUDE.md`): `CompositeGround`, Liegeplätze mit Überhang-Regel, Gangway, Strickleiter am Ufer, Entern mit Planken und Leitern, Laufwege für Offiziere und Trupps. Die Abschnitte unten beschreiben den Ausgangszustand von 2.9.86 (`groundProxy`, Versetzen per `foot.place`, Sprung über die Reling gibt es nicht mehr).
+
 Nur Analyse, kein Spielcode geändert. Alle Zeilenangaben beziehen sich auf den Stand von 2.9.86 und sind Orientierung, keine Zusage.
 
 ## 1. Relevante Dateien

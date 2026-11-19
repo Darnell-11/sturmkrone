@@ -16,11 +16,12 @@ import {
   type Scene,
 } from 'three';
 import { audio } from '../audio/audio';
-import { LOOT_LOOK, RARITIES, type LootDrop } from '../data/loot';
-import { RARITY, type Rarity } from '../data/trinkets';
+import { LOOT_LOOK, type LootDrop } from '../data/loot';
+import { RARITIES, RARITY, type Rarity } from '../data/rarity';
 import { markShared } from '../render/dispose';
 import { toon } from '../render/toon';
 import type { CombatFx } from './fx';
+import { clamp01 } from '../core/mathUtil';
 
 /**
  * Beute am Boden: eine Lichtsäule in der Farbe der Seltenheit (Höhe und Glanz wachsen mit ihr), darin ein schwebendes
@@ -147,7 +148,7 @@ export class LootSystem {
         }
       }
       // Säule wächst beim Auftreffen empor
-      const grow = Math.min(1, Math.max(0, (it.t - 0.15) / 0.6));
+      const grow = clamp01((it.t - 0.15) / 0.6);
       const ease = 1 - (1 - grow) * (1 - grow);
       const pulse = 1 + 0.07 * Math.sin(this.t * 5 + it.phase);
       let fade = 1;

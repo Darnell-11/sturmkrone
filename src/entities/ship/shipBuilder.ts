@@ -25,19 +25,24 @@ import {
   SphereGeometry,
   TorusGeometry,
   Vector3,
+  Object3D,
 } from 'three';
 import type { FigureheadId, FlagId, ShipClass, ShipLook } from '../../data/ships';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { addOutlines } from '../../render/outline';
 import { lanternGlass } from '../../render/lampMaterials';
-import { oakTexture, plankTexture, sailTexture } from '../../render/textures';
+import { plankTexture, sailTexture } from '../../render/textures';
 import { sharedGeo } from '../../render/geoCache';
 import { disposeGeometry, markShared } from '../../render/dispose';
 import { toon } from '../../render/toon';
 import { toonPbr } from '../../render/pbrMaps';
 import { deckTexture, hullPlankTexture } from '../../render/shipTextures';
-import { ships2 } from '../../core/flags';
-import { makeSailUniforms, sailMaterial, waveFlag } from '../../render/flags';
+import { makeSailUniforms, sailMaterial } from '../../render/flags';
+import { clothGeometry, clothMaterial, clothTextures, makeClothUniforms, type ClothFlag, type FlagSpec } from '../../render/flagCloth';
+import { FIGUREHEAD_DEFS, figureheadModel, figureheadScale } from '../../data/figureheads';
+import { buildFigurehead } from './figureheads';
+import { factionFlagTexture, sailHeraldry } from '../../render/heraldry';
+import { FACTIONS } from '../../data/factions';
 import { hullGeometry2, hullSideX } from './shipHull2';
 import { archParts, hasArch } from '../../world/envModels';
 import { hasProp, placeMatrix, PropBatch, propRoles, type PropId } from '../../world/worldProps';
@@ -58,6 +63,8 @@ export interface ShipModel {
   lanterns: Mesh[];
   windows: Mesh[];
   flag: Mesh;
+  /** Wehende Tuchflaggen (Mast und Heck): `ship.ts` treibt sie je Bild mit Wind und Fahrt */
+  flags: ClothFlag[];
   deckY: number;
   helm: Vector3;
   /** Steuerrad (Drehpunkt in der Mitte; dreht mit dem Ruder) */
@@ -73,6 +80,10 @@ export interface ShipModel {
   cabinLight: PointLight | null;
   /** Vorderkastell (begehbares Vordeck bis zum Bug, Treppen an der Rückwand), null = keins */
   fore: { z0: number; z1: number; top: number; stairX: number[]; stairW: number; stairLen: number } | null;
+  /** Obere Mastteile samt Rahen, Korb und Segeln je Mast (eigene Gruppe, Ursprung 0): knicken in der Enterphase an der Höhe `pivotY` um */
+  masts: { up: Group; z: number; pivotY: number }[];
+  /** Takelage (Linien), fällt mit geknickten Masten weg */
+  rigging: LineSegments;
   /** Feste Aufbauten an Deck (Mitte, halbe Ausdehnung, Schiffskoordinaten): Masten, Luke, Fässer, Möbel … */
   blockers: Blocker[];
   /** Deck-Material und Grundfarbe (Nässe dunkelt das Holz ab) */
@@ -82,16 +93,17 @@ export interface ShipModel {
   lights: PointLight[];
   /** Halbe Breite an Position z (für Treffer und Löcher) */
   halfWidth(z: number): number;
+  /** Teile der Seitenreling am Hauptdeck (Holme, Docken, Pfosten) mit Lage: Gangway und Leitern öffnen sie dort, wo sie ans Deck kommen */
+  railParts: { m: Object3D; x: number; z: number }[];
 }
 
 /** Breite des Rumpfs entlang der Länge: vorn spitz, hinten breit */
-/** Schiffe 2: Grundrissform je Klasse (Bugschärfe, Völligkeit, Heckbreite); gesetzt zu Beginn von buildShip (läuft ohne Unterbrechung) */
+/** Grundrissform je Klasse (Bugschärfe, Völligkeit, Heckbreite); gesetzt zu Beginn von buildShip (läuft ohne Unterbrechung) */
 const HULL_VARIANTS: Record<string, { e: number; p: number; s: number }> = {
   schaluppe: { e: 2.1, p: 0.62, s: 0.8 }, brigg: { e: 2.3, p: 0.6, s: 0.78 }, korvette: { e: 2.7, p: 0.58, s: 0.76 }, fregatte: { e: 2.9, p: 0.55, s: 0.74 },
   galeone: { e: 2.0, p: 0.7, s: 0.84 }, linienschiff: { e: 2.4, p: 0.65, s: 0.8 }, leviathan: { e: 2.2, p: 0.72, s: 0.86 },
 };
 const HULL_DEFAULT = { e: 2.3, p: 0.6, s: 0.78 };
-const widthAt = (t: number) => widthWith(HULL_DEFAULT, t);
 function widthWith(hullVar: { e: number; p: number; s: number }, t: number): number {
   // t: −1 Heck … +1 Bug. Durchgehend geschwungen wie ein echter Rumpf (vorher über 2/3 der Länge kastenförmig):
   // fein zulaufender Bug, größte Breite etwas hinter der Mitte, breiter Heckspiegel
@@ -103,9 +115,8 @@ function widthWith(hullVar: { e: number; p: number; s: number }, t: number): num
 /** Deckssprung: Bug und Heck steigen an (bei großen Schiffen begrenzt) */
 export function sheerAt(t: number, L: number): number {
   const k = Math.min(1.6, L / 15) * 0.55;
-  // Schiffe 2: stärkerer, weich auslaufender Deckssprung (Bug steigt kräftig, Heck sanfter)
-  if (ships2()) return (t > 0 ? Math.pow(t, 2.4) * 1.75 : t * t * 0.95) * k;
-  return (t > 0 ? t * t * 1.1 : t * t * 0.8) * k;
+  // stärkerer, weich auslaufender Deckssprung (Bug steigt kräftig, Heck sanfter)
+  return (t > 0 ? Math.pow(t, 2.4) * 1.75 : t * t * 0.95) * k;
 }
 
 /** Vorsprung des Stevens: der Bug neigt sich oben nach vorn (geschwungener Vorsteven statt senkrechter Wand) */
@@ -114,67 +125,7 @@ export function rakeAt(t: number, L: number): number {
   return L * 0.075 * u * u;
 }
 
-function hullGeometry(c: ShipClass, D: number, look: ShipLook): BufferGeometry {
-  const sections = 22;
-  // Spantform: größte Breite auf halber Höhe, oben leicht eingezogen (Tumblehome), unten runder Bauch
-  const prof = [[-0.9, D], [-1, D * 0.55], [-0.95, D * 0.15], [-0.7, -0.5], [-0.32, -0.92], [0, -1.05], [0.32, -0.92], [0.7, -0.5], [0.95, D * 0.15], [1, D * 0.55], [0.9, D]];
-  const pos: number[] = [];
-  const col: number[] = [];
-  const uv: number[] = [];
-  const hull = new Color(look.hull), stripe = new Color(look.stripe), bottom = new Color('#6E3524'), dark = new Color(look.hull).multiplyScalar(0.5);
-  const ring = (i: number) => {
-    const t = (i / sections) * 2 - 1;
-    const z = t * c.L / 2;
-    // Letzter Ring schließt den Bug zu einer Schneide (vorher blieb dort ein Spalt)
-    const w = (i === sections ? 0.004 : Math.max(0.04, widthAt(t))) * c.W / 2;
-    const rise = sheerAt(t, c.L);
-    const rk = rakeAt(t, c.L);
-    const draft = D / (1.4 + c.decks * 0.75); // Tiefgang wächst mit der Schiffsgröße
-    return prof.map(([px, py0]) => {
-      const py = py0 < 0 ? py0 * draft : py0;
-      // Kiel steigt zum Bug an (Vorfuß), die Oberkante bleibt auf Deckshöhe; der Vorsteven ragt oben nach vorn
-      const pyy = py < 0 ? py * (1 - Math.max(0, t - 0.85) * 1.6) : py;
-      const topK = Math.min(1, Math.max(0, (py + 0.3) / (D + 0.3)));
-      return new Vector3(px * w, pyy + (py > 0.5 ? rise : rise * Math.max(0, (py + 1.05) / (D + 1.05))), z + rk * Math.pow(topK, 1.3));
-    });
-  };
-  // waagerechte Bergholz-Leisten statt senkrechter Streifen, dunkles Unterwasserschiff
-  const colorFor = (y: number, _i: number) => {
-    if (y < 0.05) return bottom;
-    if (Math.abs(y - (D - 0.7)) < 0.28) return stripe;
-    if (Math.abs(y - D * 0.32) < 0.14 || Math.abs(y - (D + 0.25)) < 0.1) return dark;
-    return hull;
-  };
-  for (let i = 0; i < sections; i++) {
-    const a = ring(i), b = ring(i + 1);
-    for (let k = 0; k < prof.length - 1; k++) {
-      // Drehsinn so, dass die Außenseite sichtbar ist (vorher zeigte sie nach innen – der Rumpf war von außen unsichtbar)
-      const quad = [a[k], b[k + 1], b[k], a[k], a[k + 1], b[k + 1]];
-      for (const p of quad) {
-        pos.push(p.x, p.y, p.z);
-        uv.push(p.z / 3, p.y * 0.35);
-        const cc = colorFor(p.y, i);
-        // Verwitterung: Salzstreifen und Schmutz am Wasser, ungleichmäßig nachgedunkelt
-        const wv = (0.84 + 0.16 * Math.sin(p.z * 2.1 + p.y * 5.3) * Math.sin(p.z * 0.7 + 1)) * (p.y < 1.2 ? 0.82 + 0.18 * Math.max(0, p.y) / 1.2 : 1) * 0.92;
-        col.push(cc.r * wv, cc.g * wv, cc.b * wv);
-      }
-    }
-  }
-  // Heckspiegel
-  const st = ring(0);
-  // Fächer über alle Profilpunkte bis zur gegenüberliegenden Oberkante (vorher fehlte das letzte Dreieck)
-  for (let k = 1; k < st.length - 1; k++) {
-    for (const p of [st[0], st[k + 1], st[k]]) { pos.push(p.x, p.y, p.z); col.push(dark.r, dark.g, dark.b); uv.push(p.x / 3, p.y * 0.35); }
-  }
-  const g = new BufferGeometry();
-  g.setAttribute('position', new Float32BufferAttribute(pos, 3));
-  g.setAttribute('color', new Float32BufferAttribute(col, 3));
-  g.setAttribute('uv', new Float32BufferAttribute(uv, 2));
-  g.computeVertexNormals();
-  return g;
-}
-
-function flagTexture(flag: FlagId, color: string): CanvasTexture {
+export function flagTexture(flag: FlagId, color: string): CanvasTexture {
   const c = document.createElement('canvas');
   c.width = 128; c.height = 80;
   const g = c.getContext('2d')!;
@@ -300,15 +251,16 @@ function put(group: Group, geo: BufferGeometry, mat: Mesh['material'], x: number
   return m;
 }
 /** Holm von a nach b (Länge aus den Endpunkten), um hy angehoben, Stärke th */
-function railSeg(group: Group, a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }, hy: number, th: number, mat: Mesh['material'], h = th * 0.9) {
+function railSeg(group: Group, a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }, hy: number, th: number, mat: Mesh['material'], h = th * 0.9): Mesh | undefined {
   const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
   const len = Math.hypot(dx, dy, dz);
-  if (len < 1e-4) return;
+  if (len < 1e-4) return undefined;
   const m = new Mesh(box(th, h, len), mat);
   m.position.set((a.x + b.x) / 2, (a.y + b.y) / 2 + hy, (a.z + b.z) / 2);
   m.rotation.order = 'YXZ';
   m.rotation.set(-Math.asin(dy / len), Math.atan2(dx, dz), 0);
   group.add(m);
+  return m;
 }
 /** Tau von a nach b, in der Mitte durchhängend (sag Meter), aus kurzen Zylindern */
 function rope(group: Group, a: Vector3, b: Vector3, r: number, sag: number, segs = 6) {
@@ -395,7 +347,10 @@ class Occ {
 /** Baut ein Schiff einer Klasse im eigenen Look. Bug zeigt nach +Z. */
 export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel {
   // je Schiff eigene Grundrissform (die Funktion lebt in den Hüllen von halfWidth und Kollision weiter)
-  const hv = ships2() ? (HULL_VARIANTS[c.id] ?? HULL_DEFAULT) : HULL_DEFAULT;
+  const hv0 = HULL_VARIANTS[c.id] ?? HULL_DEFAULT;
+  // Niederländische Galleonen sind bauchig: vollerer Bug und breiteres Heck (Rumpfform der Macht, data/factions.ts `fullness`)
+  const fullK = look.power ? FACTIONS[look.power].ship.fullness : 0;
+  const hv = fullK ? { e: hv0.e * 0.86, p: Math.min(0.9, hv0.p * 1.16), s: Math.min(0.95, hv0.s + 0.07) } : hv0;
   const widthAt = (t: number) => widthWith(hv, t);
   const group = new Group();
   // Bordwandhöhe wächst mit der Schiffsgröße (große Schiffe ragen hoch aus dem Wasser)
@@ -410,6 +365,9 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   const keepExtra: Mesh[] = [];
   const occs: Occ[] = [];
   const block = (cx: number, cz: number, hx: number, hz: number) => { const b = { cx, cz, hx, hz }; blockers.push(b); for (const o of occs) o.add(b); };
+  /** Dekor an der Reling (Fässer, Kisten): zählt nur gegen anderes Dekor, nie gegen Läufer und Kämpfer (es steht im Randstreifen) */
+  const decor: Blocker[] = [];
+  const soft = (cx: number, cz: number, hx: number, hz: number) => { decor.push({ cx, cz, hx, hz }); };
   /** Platz frei UND bleibt danach an Deck ein durchgehender Weg (Treppenfuß hinten bis Treppenfuß vorn, Treppe bis Steuerrad)? */
   const canAdd = (cx: number, cz: number, hx: number, hz: number, margin = 0.1) => {
     if (!fits(cx, cz, hx, hz, margin)) return false;
@@ -420,17 +378,15 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     return ok;
   };
   /** Ist an dieser Stelle (Mitte, halbe Ausdehnung) noch Platz, ohne in schon Gebautes zu ragen? */
-  const fits = (cx: number, cz: number, hx: number, hz: number, margin = 0.1) => !blockers.some((b) => Math.abs(cx - b.cx) < hx + b.hx + margin && Math.abs(cz - b.cz) < hz + b.hz + margin);
+  const fits = (cx: number, cz: number, hx: number, hz: number, margin = 0.1) => !blockers.some((b) => Math.abs(cx - b.cx) < hx + b.hx + margin && Math.abs(cz - b.cz) < hz + b.hz + margin) && !decor.some((b) => Math.abs(cx - b.cx) < hx + b.hx + margin && Math.abs(cz - b.cz) < hz + b.hz + margin);
   /** Oberkante des Rumpfs bei t (−1 Heck … +1 Bug): Breite und Länge samt Vorsteven-Neigung, damit Deck und Reling bis zur Spitze passen */
   const edge = (t: number) => ({ x: (t >= 0.999 ? 0.004 : Math.max(0.04, widthAt(t))) * c.W / 2 * 0.9, z: t * c.L / 2 + rakeAt(t, c.L) });
 
   const planksTex = plankTexture();
-  const oak = oakTexture();
   // beidseitig: auch die Innenseite der Bordwand (vom Deck aus) und der Heckspiegel von hinten bleiben sichtbar
-  const v2 = ships2();
-  const hullTex = v2 ? hullPlankTexture() : oak;
-  const hullMat = toon({ color: 0xffffff, vertexColors: true, map: hullTex, side: DoubleSide, roughness: 0.9, ...toonPbr(hullTex, v2 ? { strength: 0.5, rough: 0.85, roughVar: 0.2, ao: 0.7 } : { strength: 0.28, rough: 0.92, roughVar: 0.25, ao: 0.6 }) });
-  const hull = new Mesh(v2 ? hullGeometry2(c, D, look, { widthAt, sheerAt, rakeAt }) : hullGeometry(c, D, look), hullMat);
+  const hullTex = hullPlankTexture();
+  const hullMat = toon({ color: 0xffffff, vertexColors: true, map: hullTex, side: DoubleSide, roughness: 0.9, ...toonPbr(hullTex, { strength: 0.5, rough: 0.85, roughVar: 0.2, ao: 0.7 }) });
+  const hull = new Mesh(hullGeometry2(c, D, look, { widthAt, sheerAt, rakeAt }), hullMat);
   group.add(hull);
 
   // Deck
@@ -457,6 +413,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   const darkWood = toon('#4A2E1A');
   const gold = toon({ color: '#E3B04B', spec: 0.9 });
   // Reling: Handlauf, Zwischenholm, Pfosten, Docken (gedrechselte Stäbe) und Handlauf-Kappen; Heckreling und Bugreling schließen sie ringsum
+  const railParts: ShipModel['railParts'] = [];
   {
     const RN = 18;
     const railMat = darkWood;
@@ -481,18 +438,18 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       const pts = rp.map((p) => ({ x: p.x * sd, y: p.y, z: p.z }));
       for (let i = 0; i < pts.length - 1; i++) {
         const a0 = pts[i], b0 = pts[i + 1];
-        seg(a0, b0, 0.88, 0.1, railMat);
-        seg(a0, b0, 0.46, 0.06, railMat);
+        const mx = (a0.x + b0.x) / 2, mz = (a0.z + b0.z) / 2;
+        for (const m of [seg(a0, b0, 0.88, 0.1, railMat), seg(a0, b0, 0.46, 0.06, railMat)]) if (m) railParts.push({ m, x: mx, z: mz });
         // gedrechselte Docken zwischen den Pfosten
         for (const f of [0.33, 0.66]) {
           const bx = a0.x + (b0.x - a0.x) * f, bz = a0.z + (b0.z - a0.z) * f, by = a0.y + (b0.y - a0.y) * f;
-          put(group, cyl(0.025, 0.03, 0.42, 5), wood, bx, by + 0.67, bz);
+          railParts.push({ m: put(group, cyl(0.025, 0.03, 0.42, 5), wood, bx, by + 0.67, bz), x: bx, z: bz });
         }
       }
       for (let i = 0; i < pts.length; i++) {
         const p = pts[i];
-        put(group, box(0.08, 0.9, 0.08), wood, p.x, p.y + 0.45, p.z);
-        put(group, cyl(0.06, 0.06, 0.05, 6), gold, p.x, p.y + 0.93, p.z);
+        railParts.push({ m: put(group, box(0.08, 0.9, 0.08), wood, p.x, p.y + 0.45, p.z), x: p.x, z: p.z });
+        railParts.push({ m: put(group, cyl(0.06, 0.06, 0.05, 6), gold, p.x, p.y + 0.93, p.z), x: p.x, z: p.z });
       }
     }
     // Goldene Zierleiste entlang der Oberkante des Rumpfes (außen) und am Vorsteven
@@ -525,13 +482,13 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   const castleZ0 = -c.L / 2 + c.L * 0.02, castleZ1 = castleZ0 + sternLen;
   const cs = new Shape();
   const CN = 8;
-  // Schiffe 2: die Heckwand des Kastells wölbt sich nach hinten (Heckgalerie wie bei Galeonen) statt einer flachen Platte
+  // Die Heckwand des Kastells wölbt sich nach hinten (Heckgalerie wie bei Galeonen) statt einer flachen Platte
   const xmC = halfWidth(castleZ0) * 0.9;
-  const BULGE = v2 ? Math.min(1.7, 0.026 * c.L + 0.16) : 0;
+  const BULGE = Math.min(1.7, 0.026 * c.L + 0.16);
   const rearZ = (x: number, off = 0) => castleZ0 - off - BULGE * Math.pow(Math.max(0, 1 - (x / xmC) * (x / xmC)), 0.7);
   const RM = 14;
   /** Punkte der gewölbten Heckkante von +x nach −x (ohne die Endpunkte) */
-  const rearArc = (off = 0, grow = 1) => { const a: { x: number; z: number }[] = []; if (v2) for (let j = 1; j < RM; j++) { const x = xmC * (1 - (2 * j) / RM); a.push({ x: x * grow, z: rearZ(x, off) }); } return a; };
+  const rearArc = (off = 0, grow = 1) => { const a: { x: number; z: number }[] = []; for (let j = 1; j < RM; j++) { const x = xmC * (1 - (2 * j) / RM); a.push({ x: x * grow, z: rearZ(x, off) }); } return a; };
   for (let i = 0; i <= CN; i++) { const z = castleZ0 + (i / CN) * sternLen; const x = halfWidth(z) * 0.9; if (i === 0) cs.moveTo(x, -z); else cs.lineTo(x, -z); }
   for (let i = CN; i >= 0; i--) { const z = castleZ0 + (i / CN) * sternLen; cs.lineTo(-halfWidth(z) * 0.9, -z); }
   for (const p of rearArc().reverse()) cs.lineTo(p.x, -p.z);
@@ -805,24 +762,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     }
     return { ww, hh, n, span, centers, arch };
   }
-  const gal = v2 ? buildSternGallery() : null;
-  if (!v2) for (let i = 0; i < c.decks + 2; i++) {
-    const w = new Mesh(new PlaneGeometry(0.5, 0.45), winMat);
-    w.position.set((i - (c.decks + 1) / 2) * (c.W * 0.62 / (c.decks + 2)), D + castleH * 0.55, castleZ0 - 0.02);
-    w.rotation.y = Math.PI;
-    w.userData.noOutline = true;
-    group.add(w);
-    windows.push(w);
-    // Goldrahmen mit Sprosse um jedes Heckfenster
-    {
-      const fr = toon({ color: '#E3B04B', spec: 0.9 });
-      const wx = w.position.x, wy = w.position.y, wz = castleZ0 - 0.05;
-      put(group, box(0.56, 0.05, 0.05), fr, wx, wy + 0.25, wz);
-      put(group, box(0.56, 0.05, 0.05), fr, wx, wy - 0.25, wz);
-      for (const e of [-1, 1]) put(group, box(0.05, 0.5, 0.05), fr, wx + e * 0.27, wy, wz);
-      put(group, box(0.04, 0.45, 0.04), fr, wx, wy, wz);
-    }
-  }
+  const gal = buildSternGallery();
   // Vorderkastell (ab Brigg): begehbares Vordeck bis in die Bugspitze. Zwei Treppen beidseits der Doppeltür an der Rückwand führen hinauf;
   // oben Plankendeck, Reling rundum, Goldleisten, Buggeschütze (ab Korvette), Poller und Tauwerk
   let fore: { z0: number; z1: number; top: number; stairX: number[]; stairW: number; stairLen: number } | null = null;
@@ -991,12 +931,20 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   // Masten, Rahen, Segel
   const sails: Mesh[] = [];
   // Flagge einmal malen: dieselbe Leinwand dient als Wappen auf dem Großsegel
-  const flagTex = flagTexture(look.flag, look.flagColor);
+  // Schiffe der Weltmächte tragen ihre geteilte Flaggen-Textur und Segelmuster (render/heraldry.ts)
+  const flagTex = look.power ? factionFlagTexture(look.power) : flagTexture(look.flag, look.flagColor);
   const emblem = flagTex.image as HTMLCanvasElement;
+  // Tuchflaggen (hochaufgelöst, geteilte Texturen je Aussehen): Wappen der Macht oder Flaggenart und -farbe des Spielers
+  const flagSpec: FlagSpec = { flag: look.flag, color: look.flagColor, power: look.power ?? null };
+  const clothTex = clothTextures(flagSpec);
+  const clothFlags: ClothFlag[] = [];
+  const addCloth = (mesh: Mesh, u: ReturnType<typeof makeClothUniforms>, mat: ReturnType<typeof clothMaterial>) => { mesh.userData.noOutline = true; mesh.castShadow = false; mesh.receiveShadow = true; clothFlags.push({ mesh, u, mat, ang: 0, ph: Math.random() * 6 }); };
+  const heraldry = look.power ? sailHeraldry(look.power) : null;
   const mainMast = c.masts.length > 1 ? 1 : 0;
   let sailSeed = 1;
   const rig: number[] = [];
   const mastTops: { z: number; h: number }[] = [];
+  const mastParts: { up: Group; z: number; pivotY: number; h: number }[] = [];
   c.masts.forEach((mz, mi) => {
     const z = mz * c.L;
     const h = c.mh * (mi === 0 && c.masts.length > 1 ? 0.92 : mi === c.masts.length - 1 && c.masts.length > 2 ? 0.8 : 1);
@@ -1006,18 +954,23 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     lower.position.set(0, D + h * 0.32, z);
     const upper = new Mesh(new CylinderGeometry(0.06 * ms, 0.1 * ms, h * 0.42, 8), darkWood);
     upper.position.set(0, D + h * 0.79, z);
-    group.add(lower, upper);
+    // der obere Teil mit Rahen, Korb und Segeln ist eine eigene Gruppe: in der Enterphase knickt er ab
+    const mUp = new Group();
+    group.add(mUp);
+    mastParts.push({ up: mUp, z, pivotY: D + h * 0.64, h });
+    group.add(lower);
+    mUp.add(upper);
     if (c.L < 24) block(0, z, 0.19 * ms + 0.1, 0.19 * ms + 0.1);
     const nest = new Mesh(new CylinderGeometry(0.45 * Math.min(sc, 3), 0.35 * Math.min(sc, 3), 0.4, 10), wood);
     nest.position.set(0, D + h * 0.78, z);
-    group.add(nest);
+    mUp.add(nest);
     // Mastkorb: Reling aus Ring, Pfosten und Handlauf, goldene Kugel an der Mastspitze (große Schiffe)
     if (c.L >= 24) {
       const ns = Math.min(sc, 3), top = D + h * 0.78 + 0.2;
-      put(group, torus(0.5 * ns, 0.025, 14), darkWood, 0, top + 0.5, z, Math.PI / 2, 0, 0);
-      put(group, torus(0.5 * ns, 0.02, 14), darkWood, 0, top + 0.22, z, Math.PI / 2, 0, 0);
-      for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; put(group, cyl(0.02, 0.02, 0.55, 4), wood, Math.cos(a) * 0.5 * ns, top + 0.27, Math.sin(a) * 0.5 * ns + z); }
-      put(group, new SphereGeometry(0.11 * Math.min(sc, 2.4), 8, 6), gold, 0, D + h + 0.12, z);
+      put(mUp, torus(0.5 * ns, 0.025, 14), darkWood, 0, top + 0.5, z, Math.PI / 2, 0, 0);
+      put(mUp, torus(0.5 * ns, 0.02, 14), darkWood, 0, top + 0.22, z, Math.PI / 2, 0, 0);
+      for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; put(mUp, cyl(0.02, 0.02, 0.55, 4), wood, Math.cos(a) * 0.5 * ns, top + 0.27, Math.sin(a) * 0.5 * ns + z); }
+      put(mUp, new SphereGeometry(0.11 * Math.min(sc, 2.4), 8, 6), gold, 0, D + h + 0.12, z);
     }
     const yards = c.L > 16 ? 3 : 2;
     for (let k = 0; k < yards; k++) {
@@ -1026,7 +979,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       const yard = new Mesh(new CylinderGeometry(0.06 * Math.min(sc, 3), 0.06 * Math.min(sc, 3), w, 6), darkWood);
       yard.rotation.z = Math.PI / 2;
       yard.position.set(0, y + h * 0.2, z);
-      group.add(yard);
+      mUp.add(yard);
       const sh = h * 0.235;
       const sg = new PlaneGeometry(w * 0.95, sh, 26, 16);
       const sp = sg.attributes.position;
@@ -1038,7 +991,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       sg.computeVertexNormals();
       const withEmblem = mi === mainMast && k === (yards > 2 ? 1 : 0);
       const sailU = makeSailUniforms(w * 0.95, sh, (y + h * 0.1) * 0.7);
-      const sailMat = sailMaterial(toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, withEmblem ? emblem : null, sailSeed++, true), unique: true, micro: 'cloth', roughness: 0.92 }), sailU);
+      const sailMat = sailMaterial(toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, withEmblem ? emblem : null, sailSeed++, true, heraldry ? { pattern: heraldry.pattern, emblem: withEmblem ? heraldry.emblem : () => {} } : null), unique: true, micro: 'cloth', roughness: 0.92 }), sailU);
       sailMat.alphaTest = 0.5; // ausgefranste Ränder und Risse
       const sail = new Mesh(sg, sailMat);
       sail.userData.sailU = sailU;
@@ -1047,7 +1000,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       sail.position.set(0, y + h * 0.1, z + 0.15);
       sail.userData.noOutline = true;
       sail.userData.base = sail.position.y;
-      group.add(sail);
+      mUp.add(sail);
       sails.push(sail);
       // Takelage: Rah-Enden zur Bordwand
       for (const s of [-1, 1]) rig.push(s * w / 2, y + h * 0.2, z, s * halfWidth(z) * 0.95, D + 0.8, z - 1.5);
@@ -1074,7 +1027,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   // Tuch-Textur über die Dreiecksfläche legen
   const juv = jibGeo.attributes.uv;
   for (let i = 0; i < juv.count; i++) juv.setXY(i, juv.getX(i) / (c.L * 0.22), juv.getY(i) / (c.mh * 0.6));
-  const jibMat = toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, null, 99, true), unique: true, micro: 'cloth', roughness: 0.92 });
+  const jibMat = toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, null, 99, true, heraldry ? { pattern: heraldry.pattern, emblem: () => {} } : null), unique: true, micro: 'cloth', roughness: 0.92 });
   jibMat.alphaTest = 0.5;
   const jib = new Mesh(jibGeo, jibMat);
   jib.rotation.y = -Math.PI / 2;
@@ -1120,7 +1073,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     const z = c.can === 1 ? 0 : ((i / (c.can - 1)) - 0.5) * c.L * 0.55;
     for (const s of [-1, 1]) {
       const cy = D - 0.7;
-      const x = s * (v2 ? hullSideX(c, D, { widthAt, sheerAt, rakeAt }, z, cy) + 0.01 : halfWidth(z));
+      const x = s * (hullSideX(c, D, { widthAt, sheerAt, rakeAt }, z, cy) + 0.01);
       if (hasProp('kanone')) {
         // Blender-Kanone auf Holzlafette (Mündung bei +Z des Modells, 0,7 m vor dem Ursprung): Mündung bleibt 0,82 m vor der Bordwand
         batch.add('kanone', placeMatrix(x + s * (0.82 - 0.7 * cs1), cy, z, s * Math.PI / 2, cs1));
@@ -1144,7 +1097,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       for (let i = 0; i < c.can + 1; i++) {
         const z = ((i / c.can) - 0.5) * c.L * 0.62;
         for (const s of [-1, 1]) {
-          const x = s * (v2 ? hullSideX(c, D, { widthAt, sheerAt, rakeAt }, z, y) + 0.01 : halfWidth(z) * 1.0);
+          const x = s * (hullSideX(c, D, { widthAt, sheerAt, rakeAt }, z, y) + 0.01);
           const port = new Mesh(new BoxGeometry(0.06, 0.55, 0.65), portMat);
           port.position.set(x + s * 0.02, y, z);
           portFrame(x, y, z, s, 0.65, 0.55);
@@ -1253,8 +1206,8 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       const R = zB - zA, zm = (zA + zB) / 2;
       const k = Math.min(1.12, Math.max(0.7, R / 7.5));
       const wAt = (z: number) => xIn(z);
-      const palatial = v2 && R >= 8 && hasArch('kajuete_himmelbett') && hasArch('kajuete_tafel');
-      if (v2) {
+      const palatial = R >= 8 && hasArch('kajuete_himmelbett') && hasArch('kajuete_tafel');
+      {
         // ---- Raumschale: Parkett, Sockel, Wandvertäfelung mit Füllungen, Zierleiste, Pilaster und Kranzleiste ----
         const upperHex = R >= 12 ? '#F2E2B8' : R >= 8 ? '#E0CB9A' : '#B8905F';
         const hW = Math.min(1.15, castleH * 0.36), top = castleH - 0.17;
@@ -1458,7 +1411,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
         lanterns.push(flame);
       }
       // Heckfenster von innen: Himmelslicht am Tag, nachts dunkel, mit Rahmen
-      if (gal) {
+      {
         const { ww, hh, n, span, centers, arch } = gal;
         const FR = '#D9B24C';
         for (const rcn of centers) for (let i = 0; i < n; i++) {
@@ -1474,21 +1427,9 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
           addGeo(new BoxGeometry(0.03, hh - ww / 2, 0.03).translate(wx, wy - ww / 4, zA + 0.055), FR);
           addGeo(new BoxGeometry(ww, 0.03, 0.03).translate(wx, wy - hh * 0.1, zA + 0.055), FR);
         }
-      } else for (let i = 0; i < c.decks + 2; i++) {
-        const wx = (i - (c.decks + 1) / 2) * (c.W * 0.62 / (c.decks + 2)), wy = D + castleH * 0.55;
-        if (Math.abs(wx) > xIn(zA) - 0.3) continue;
-        const iw = new Mesh(new PlaneGeometry(0.5, 0.45), CABIN_WINDOW);
-        iw.position.set(wx, wy, zA + 0.01);
-        iw.userData.noOutline = true;
-        group.add(iw);
-        const fr = toon('#4A2E1A');
-        put(group, box(0.6, 0.05, 0.04), fr, wx, wy + 0.25, zA + 0.03);
-        put(group, box(0.6, 0.05, 0.04), fr, wx, wy - 0.25, zA + 0.03);
-        for (const e of [-1, 1]) put(group, box(0.05, 0.5, 0.04), fr, wx + e * 0.29, wy, zA + 0.03);
-        put(group, box(0.03, 0.45, 0.03), fr, wx, wy, zA + 0.03);
       }
       if (hero) {
-        cabinLight = new PointLight(0xffc27a, 0, v2 ? 12 + R * 0.8 : 10 + R * 0.4, 1.6);
+        cabinLight = new PointLight(0xffc27a, 0, 12 + R * 0.8, 1.6);
         cabinLight.position.set(0, D + castleH - 0.65, zm);
         group.add(cabinLight);
       }
@@ -1523,7 +1464,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     const castleEnd = castleZ1 + stairLen + 0.8;
     const foreStart = fore ? fore.z0 - fore.stairLen - 0.9 : c.L * 0.34;
     // Masten (Nagelbank-Ring) sind feste Hindernisse; dazu das Belegungsraster für den Hauptgang vom Treppenfuß hinten zum Treppenfuß vorn
-    if (c.L >= 24) for (const m of c.masts) { const rr0 = 0.19 * Math.min(sc, 3.2) + (v2 ? 0.2 : 0.55); block(0, m * c.L, rr0 + 0.05, rr0 + 0.05); }
+    if (c.L >= 24) for (const m of c.masts) { const rr0 = 0.19 * Math.min(sc, 3.2) + 0.1; block(0, m * c.L, rr0 + 0.04, rr0 + 0.04); }
     if (fore) {
       const za = castleZ1 + stairLen + 0.6, zb2 = fore.z0 - fore.stairLen - 0.6;
       const xa = stairXc(stairX[0], 0);
@@ -1542,7 +1483,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       if (Math.abs(z - hMid) < hBest) { hBest = Math.abs(z - hMid); hz = z; }
     }
     put(group, box(hs * 2.2, 0.16, hs * 2.2), darkWood, 0, D + 0.08, hz);
-    block(0, hz, hs * 1.1, hs * 1.1);
+    // die Gitterluke liegt flach im Deck (16 cm): man geht darüber, sie nimmt keine Kampffläche
     for (let i = -3; i <= 3; i++) put(group, box(0.05, 0.06, hs * 2), iron, i * hs * 0.3, D + 0.19, hz);
     for (let i = -3; i <= 3; i++) put(group, box(hs * 2, 0.06, 0.05), iron, 0, D + 0.17, hz + i * hs * 0.3);
     // Ankerwinde vorn
@@ -1552,18 +1493,19 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     for (let i = 0; i < 4; i++) put(group, box(1.5 * kk, 0.07, 0.07), darkWood, 0, D + 0.62 * kk, wz).rotation.y = (i / 4) * Math.PI;
     // Deckkanonen an den Bordwänden (Blender-Modell auf Lafette): ab der Korvette, höchstens vier je Seite; nur wo der Weg frei bleibt
     if (hasProp('kanone') && c.L >= 30) {
-      const nGun = Math.min(4, Math.max(2, Math.floor(c.can / 2)));
-      const gs = Math.min(1.25, 0.8 + sc * 0.12);
+      const nGun = c.L < 46 ? 2 : 3;
+      const gs = Math.min(1.1, 0.75 + sc * 0.1);
       const gLo = castleEnd + 1.2, gHi = Math.max(gLo + 1, foreStart - 1.6);
       for (let i = 0; i < nGun; i++) {
         const z = gLo + (i + 0.5) / nGun * (gHi - gLo);
         if (c.masts.some((m) => Math.abs(m * c.L - z) < 1.8)) continue;
         for (const sd of [-1, 1]) {
-          const x = sd * (halfWidth(z) * 0.9 - 0.82 * gs);
-          if (!canAdd(x, z, 0.85 * gs, 0.5 * gs)) continue;
+          // Das Geschütz steht in der Bordwand (Rohr durch die Stückpforte, Rad und Lafette im Randstreifen): nur der Verschluss ragt ins Deck
+          const x = sd * (halfWidth(z) * 0.9 - 0.55 * gs);
+          if (!canAdd(x - sd * 0.45 * gs, z, 0.4 * gs, 0.45 * gs)) continue;
           // Rohr zeigt nach außen; die Räder stehen auf dem Deck (Rohrachse 0,57 m darüber)
           batch.add('kanone', placeMatrix(x, D + 0.57 * gs, z, sd * Math.PI / 2, gs));
-          block(x, z, 0.85 * gs, 0.5 * gs);
+          block(x - sd * 0.45 * gs, z, 0.4 * gs, 0.45 * gs);
         }
       }
     }
@@ -1572,34 +1514,35 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
     const barrelMat = toon({ color: '#6F4A2B', roughness: 0.85 });
     const crateMat = toon({ color: '#8A6840', roughness: 0.9 });
-    const props = 3 + c.decks * 2 + Math.floor(c.L / 14);
+    const props = 2 + c.decks + Math.floor(c.L / 22);
     const zLo = castleEnd, zHi = Math.max(zLo + 1, foreStart - 0.3);
     for (let i = 0; i < props; i++) {
       const z = zLo + (i + 0.5) / props * (zHi - zLo) + (rnd() - 0.5) * 0.6;
       if (c.masts.some((m) => Math.abs(m * c.L - z) < 1.4)) continue;
       const sd = i % 2 ? 1 : -1;
-      const x = sd * halfWidth(z) * (0.76 + rnd() * 0.08);
+      // dicht an der Bordwand (im Randstreifen außerhalb der begehbaren Fläche): Dekor, kein Hindernis
+      const x = sd * (halfWidth(z) * 0.95 - 0.3 * kk);
       if (!canAdd(x, z, 0.5 * kk, 0.75 * kk)) continue;
       if (rnd() < 0.55) {
-        const br = 0.34 * kk, bh = 0.8 * kk;
+        const br = 0.3 * kk, bh = 0.74 * kk;
         const barrelAt = (bx: number, bz: number) => {
-          if (hasProp('fass')) { batch.add('fass', placeMatrix(bx, D, bz, rnd() * 6.28, kk)); return; }
+          if (hasProp('fass')) { batch.add('fass', placeMatrix(bx, D, bz, rnd() * 6.28, kk * 0.9)); return; }
           put(group, cyl(br * 0.92, br * 0.92, bh, 10), barrelMat, bx, D + bh / 2, bz);
           put(group, cyl(br * 1.06, br * 1.06, 0.05, 10), barrelMat, bx, D + bh / 2, bz);
           for (const hy of [0.18, 0.5, 0.82]) put(group, cyl(br * 1.08, br * 1.08, 0.05, 10), iron, bx, D + bh * hy, bz);
         };
         barrelAt(x, z);
-        block(x, z, br * 1.05, br * 1.05);
-        if (rnd() < 0.4 && canAdd(x, z + br * 2.1, br * 1.05, br * 1.05)) { const bz = z + br * 2.1; barrelAt(x, bz); block(x, bz, br * 1.05, br * 1.05); }
+        soft(x, z, br * 1.05, br * 1.05);
+        if (rnd() < 0.4 && canAdd(x, z + br * 2.1, br * 1.05, br * 1.05)) { const bz = z + br * 2.1; barrelAt(x, bz); soft(x, bz, br * 1.05, br * 1.05); }
       } else {
-        const cw = (0.55 + rnd() * 0.25) * kk;
+        const cw = (0.5 + rnd() * 0.2) * kk;
         const yaw = rnd() * 0.5;
         if (hasProp('kiste')) batch.add('kiste', placeMatrix(x, D, z, yaw, cw));
         else {
           put(group, box(cw, cw * 0.85, cw), crateMat, x, D + cw * 0.425, z, 0, yaw, 0);
           put(group, box(cw * 1.02, 0.05, cw * 1.02), iron, x, D + cw * 0.2, z);
         }
-        block(x, z, cw * 0.62, cw * 0.62);
+        soft(x, z, cw * 0.62, cw * 0.62);
         if (rnd() < 0.35) {
           const y2 = rnd();
           if (hasProp('kiste')) batch.add('kiste', placeMatrix(x, D + cw * 0.85, z, y2, cw * 0.7));
@@ -1609,7 +1552,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     }
     // Ankerkette (Glieder) und Anker an der Steuerbord-Bugseite, aufgerollte Kette am Deck
     const az = c.L * 0.36;
-    const ax = -((v2 ? hullSideX(c, D, { widthAt, sheerAt, rakeAt }, az, D * 0.85) + 0.07 : halfWidth(az)) + 0.12);
+    const ax = -(hullSideX(c, D, { widthAt, sheerAt, rakeAt }, az, D * 0.85) + 0.07 + 0.12);
     const links = 10;
     for (let i = 0; i < links; i++) {
       const lk = put(group, torus(0.11 * kk, 0.028 * kk, 8), iron, ax, D * 0.85 - i * 0.26 * kk, az, 0, i % 2 ? Math.PI / 2 : 0, 0);
@@ -1654,7 +1597,8 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       put(group, cyl(0.235, 0.235, 0.07, 10), iron, gx - sd * 0.25, gy + 0.62, gz, 0, 0, Math.PI / 2);
       put(group, cyl(0.25, 0.2, 0.14, 10), cu, gx + sd * 0.8, gy + 0.62, gz, 0, 0, Math.PI / 2);
       put(group, torus(0.22, 0.03, 8), rp2, gx - sd * 0.5, gy + 0.62, gz, 0, Math.PI / 2, 0);
-      block(gx, gz, 0.8, 0.42);
+      // nur der Verschluss (innen) nimmt Platz; Rohr und Räder stehen im Randstreifen an der Bordwand
+      block(gx - sd * 0.4, gz, 0.4, 0.4);
     };
 
     // Achterdeck: Kompasshaus (Nachthaus) vor dem Steuerrad, Oberlicht, Heckflagge, Truhen, Schiffsglocke, Drehgeschütze
@@ -1670,18 +1614,20 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       put(group, new ConeGeometry(0.85, 0.5, 4), skyGlass, 0, qy + 0.65, sz, 0, Math.PI / 4, 0).scale.set(1.1, 1, 0.62);
       for (const e of [-1, 1]) put(group, box(0.06, 0.06, 1.1), gold, e * 0.95, qy + 0.42, sz);
       block(0, sz, 1.0, 0.6);
-      // Heckflagge: Fahnenstock mit Wappentuch
+      // Heckflagge: Fahnenstock mit goldener Kugel und Wappentuch (Schwalbenschwanz), weht mit Wind und Fahrt
       const px = 0, pz = castleZ0 + 0.4;
-      put(group, cyl(0.04, 0.05, 3.4 * Math.min(1.5, sc * 0.5 + 0.4), 6), wood, px, qy + 1.7 * Math.min(1.5, sc * 0.5 + 0.4), pz);
-      put(group, new SphereGeometry(0.1, 8, 6), gold, px, qy + 3.45 * Math.min(1.5, sc * 0.5 + 0.4), pz);
+      const stk = Math.min(1.5, sc * 0.5 + 0.4);
+      put(group, cyl(0.04, 0.05, 3.4 * stk, 6), wood, px, qy + 1.7 * stk, pz);
+      put(group, new SphereGeometry(0.1, 10, 8), gold, px, qy + 3.45 * stk, pz);
+      for (const yy of [2.55, 3.4]) put(group, torus(0.07, 0.014, 8), gold, px, qy + yy * stk, pz, Math.PI / 2, 0, 0);
       const em = Math.min(1.8, sc * 0.55);
-      const ensGeo = new PlaneGeometry(1.5 * em, 0.95 * em, 12, 4);
-      ensGeo.translate(0.75 * em, 0, 0); // Mastkante bei x = 0
+      const ensU = makeClothUniforms(1.5 * em, 0.95 * em);
+      const ensMat = clothMaterial(clothTex, ensU);
+      const ens = new Mesh(clothGeometry({ len: 1.5 * em, height: 0.95 * em, taper: 0.08, swallow: 0.2 }), ensMat);
       // das Tuch ist um 90 Grad gedreht: seine +x-Richtung zeigt nach achtern (−z), und die Mastkante liegt am Stock
-      const ens = waveFlag(new Mesh(ensGeo, new MeshBasicMaterial({ map: flagTex, side: DoubleSide })), 'x', 1.5 * em);
       ens.rotation.y = Math.PI / 2;
-      ens.position.set(px, qy + 3.0 * Math.min(1.5, sc * 0.5 + 0.4), pz - 0.03 * em);
-      ens.userData.noOutline = true;
+      ens.position.set(px, qy + 3.0 * stk, pz - 0.03 * em);
+      addCloth(ens, ensU, ensMat);
       group.add(ens);
       keepExtra.push(ens);
       // Truhen an den Seiten (gewölbter Deckel, Eisenbänder)
@@ -1730,7 +1676,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
         put(group, cyl(0.2, 0.2, 0.5, 8), wood, tx + 0.2, qy + 0.25, tz + 0.95);
         block(tx, tz, 0.85, 0.65);
         for (const sd of [-1, 1]) {
-          for (const f of [0.22, 0.78]) { const gz2 = castleZ0 + sternLen * f; if (canAdd(sd * xr(gz2) * 0.9, gz2, 0.8, 0.42)) carr(sd * xr(gz2) * 0.9, qy, gz2, sd); }
+          for (const f of [0.22, 0.78]) { const gz2 = castleZ0 + sternLen * f; if (canAdd(sd * xr(gz2) * 0.9 - sd * 0.4, gz2, 0.4, 0.4)) carr(sd * xr(gz2) * 0.9, qy, gz2, sd); }
           // Tonnen nie an den Treppenaustritt stellen (bei der Einzeltreppe die Seite der Treppe auslassen); sonst am Heckrand, wo Platz ist
           const stairSide = !grand && Math.sign(stairX[0]) === sd;
           const bz2 = castleZ0 + sternLen * 0.4, bx2 = sd * xr(bz2) * 0.9;
@@ -1779,14 +1725,15 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
 
     // Deckgeschütze auf Fregatten und größer: Karronaden hinter der Reling, mit Rädern und Brooktau
     if (c.decks >= 2) {
-      const per = Math.max(2, Math.floor(c.can * 0.7));
+      const per = Math.min(4, Math.max(2, Math.floor(c.can * 0.3)));
       for (let i = 0; i < per; i++) {
         const gz0 = castleZ1 + stairLen + 1.4, gz1 = Math.max(gz0 + 4, (fore ? fore.z0 - fore.stairLen : c.L * 0.3) - 1.4);
         const gz = gz0 + ((i + 0.5) / per) * (gz1 - gz0);
         for (const sd of [-1, 1]) {
           for (const dz of [0, 0.7, -0.7, 1.4, -1.4]) {
-            const gx = sd * halfWidth(gz + dz) * 0.48;
-            if (canAdd(gx, gz + dz, 0.8, 0.42)) { carr(gx, D, gz + dz, sd); break; }
+            // an der Bordwand (Rohr zeigt nach außen), nicht mitten auf dem Deck
+            const gx = sd * (halfWidth(gz + dz) * 0.89 - 0.85);
+            if (canAdd(gx - sd * 0.4, gz + dz, 0.4, 0.4)) { carr(gx, D, gz + dz, sd); break; }
           }
         }
       }
@@ -1802,7 +1749,8 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
         if (Math.abs(z - mid) < best) { best = Math.abs(z - mid); bz = z; }
       }
       if (bz !== null && canAdd(0, bz, len * 0.3 + 0.2, len / 2 + 0.1, 0)) {
-        const bw = len * 0.3, by = D + 1.0;
+        // das Boot liegt hoch auf Böcken (Lichte 2,1 m): darunter kann man gehen, nur die Böcke nehmen Platz
+        const bw = len * 0.3, by = D + 2.2;
         const boatMat = toon({ color: '#8A6840', map: planksTex, roughness: 0.85 });
         const inner = toon('#3A2616');
         const hullB = new Mesh(new SphereGeometry(1, 14, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), boatMat);
@@ -1816,49 +1764,49 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
         // Riemen nebeneinander im Boot
         for (const e of [-1, 1]) put(group, cyl(0.03, 0.05, len * 0.9, 5), wood, e * bw * 0.4, by + bw * 0.55 + 0.05, bz, Math.PI / 2, 0, 0);
         // Böcke
-        for (const e of [-0.5, 0.5]) { put(group, box(bw * 1.4, 0.18, 0.2), darkWood, 0, D + 0.9, bz + e * len * 0.5); for (const s of [-1, 1]) put(group, box(0.14, 0.9, 0.14), darkWood, s * bw * 0.6, D + 0.45, bz + e * len * 0.5); }
-        block(0, bz, bw + 0.2, len / 2 + 0.1);
+        for (const e of [-0.5, 0.5]) { put(group, box(bw * 1.4, 0.18, 0.2), darkWood, 0, D + 2.1, bz + e * len * 0.5); for (const s of [-1, 1]) { put(group, box(0.14, 2.1, 0.14), darkWood, s * bw * 0.6, D + 1.05, bz + e * len * 0.5); block(s * bw * 0.6, bz + e * len * 0.5, 0.15, 0.15); } }
       }
-    }
-
-    // Heckgalerie (ab Fregatte): Balkon unter den Heckfenstern mit Konsolen und gedrechselter Brüstung
-    if (c.L >= 38 && !v2) {
-      const gw = Math.min(halfWidth(castleZ0) * 0.88, c.W * 0.34), gz0 = castleZ0 - 0.02, gd = 0.8, gy = D + castleH * 0.18;
-      put(group, box(gw * 2 + 0.2, 0.12, gd), wood, 0, gy, gz0 - gd / 2);
-      put(group, box(gw * 2 + 0.3, 0.07, gd + 0.1), gold, 0, gy - 0.09, gz0 - gd / 2);
-      for (let k = -3; k <= 3; k++) put(group, cone(0.12, 0.45), darkWood, (k / 3) * gw * 0.92, gy - 0.3, gz0 - 0.1, Math.PI, 0, 0);
-      const bpts = [{ x: -gw, z: gz0 }, { x: -gw, z: gz0 - gd }, { x: gw, z: gz0 - gd }, { x: gw, z: gz0 }];
-      for (let i = 0; i < bpts.length - 1; i++) {
-        const a0 = { x: bpts[i].x, y: gy + 0.06, z: bpts[i].z }, b0 = { x: bpts[i + 1].x, y: gy + 0.06, z: bpts[i + 1].z };
-        railSeg(group, a0, b0, 0.85, 0.07, darkWood);
-        railSeg(group, a0, b0, 0.18, 0.05, darkWood);
-        const L2 = Math.hypot(b0.x - a0.x, b0.z - a0.z), nbal = Math.max(1, Math.floor(L2 / 0.26));
-        for (let k = 1; k < nbal; k++) put(group, cyl(0.022, 0.028, 0.66, 5), wood, a0.x + ((b0.x - a0.x) * k) / nbal, gy + 0.5, a0.z + ((b0.z - a0.z) * k) / nbal);
-      }
-      for (const p of bpts) { put(group, box(0.09, 0.95, 0.09), wood, p.x, gy + 0.5, p.z); put(group, cyl(0.06, 0.06, 0.06, 6), gold, p.x, gy + 1.0, p.z); }
     }
   }
 
-  // Eine Flagge am höchsten Mast (die Wimpel auf jedem Mast sind weg: zwei Fahnen oben waren zu viel). Das Tuch ist fein unterteilt und weht im
-  // Vertex-Shader (Wellen vom Mast zur freien Kante, Wetter-Wind); Schatten und Kontur gibt es nicht, die Fläche ist selbstleuchtend im Wappen.
-  const top = c.masts.reduce((a, b) => (Math.abs(b) < Math.abs(a) ? b : a), c.masts[0]) * c.L;
+  // Eine Flagge am höchsten Mast: Flaggenstock mit vergoldeter Kugel, Messingringen am Tuch und Flaggenleine (Fall) bis zum Deck. Alles hängt am oberen
+  // Mastteil (knickt der Mast, fällt die Flagge mit). Das Tuch (32 × 20 Stücke, als Wimpel verjüngt) weht im Stoff-Shader (render/flagCloth.ts).
+  const topIdx = c.masts.reduce((bi, m, i) => (Math.abs(m) < Math.abs(c.masts[bi]) ? i : bi), 0);
+  const topZ = c.masts[topIdx] * c.L;
+  const topH = c.mh * (topIdx === 0 && c.masts.length > 1 ? 0.92 : topIdx === c.masts.length - 1 && c.masts.length > 2 ? 0.8 : 1);
+  const mastTopY = D + topH;
   const fk = Math.min(2, sc);
-  const flagGeo = new PlaneGeometry(2.1 * fk, 1.25 * fk, 22, 10);
-  flagGeo.translate(1.05 * fk, 0, 0); // Mastkante bei x = 0
-  const flag = waveFlag(new Mesh(flagGeo, new MeshBasicMaterial({ map: flagTex, side: DoubleSide })), 'x', 2.1 * fk, 1, 1.25);
-  flag.position.set(0, D + c.mh + 0.75, top - 0.04 * fk);
+  const fL = 2.1 * fk, fH = 1.25 * fk;
+  const flagY = mastTopY + fH / 2 + 0.2 * fk;
+  const mUpTop = mastParts[topIdx]?.up ?? group;
+  const staffTop = flagY + fH / 2 + 0.42 * fk;
+  put(mUpTop, cyl(0.026 * fk, 0.034 * fk, staffTop - mastTopY + 0.3, 6), darkWood, 0, (staffTop + mastTopY - 0.3) / 2, topZ);
+  put(mUpTop, new SphereGeometry(0.085 * fk, 12, 10), gold, 0, staffTop + 0.05 * fk, topZ);
+  put(mUpTop, cyl(0.07 * fk, 0.03 * fk, 0.1 * fk, 8), gold, 0, staffTop - 0.05 * fk, topZ);
+  for (const yy of [flagY + fH / 2 - 0.03 * fk, flagY - fH / 2 + 0.03 * fk]) put(mUpTop, torus(0.05 * fk, 0.012 * fk, 8), gold, 0, yy, topZ, Math.PI / 2, 0, 0);
+  rope(mUpTop, new Vector3(0.04 * fk, staffTop - 0.12 * fk, topZ + 0.02), new Vector3(0.1 * Math.min(sc, 3), D + 1.1, topZ + 0.32 * Math.min(sc, 3)), 0.012 * fk + 0.006, 0.12 + sc * 0.03, 10);
+  const flagU = makeClothUniforms(fL, fH);
+  const flagMat = clothMaterial(clothTex, flagU);
+  const flag = new Mesh(clothGeometry({ len: fL, height: fH, taper: 0.22, swallow: 0.18 }), flagMat);
+  flag.position.set(0, flagY, topZ - 0.04 * fk);
   flag.rotation.y = Math.PI / 2; // +x des Tuchs zeigt nach achtern (−z)
-  flag.userData.noOutline = true;
-  group.add(flag);
+  addCloth(flag, flagU, flagMat);
+  mUpTop.add(flag);
 
-  // Galionsfigur
-  if (look.figurehead !== 'keine') {
-    const fh = figurehead(look.figurehead, Math.min(2.2, 0.8 * sc));
+  // Galionsfigur: skulpturiertes Modell (data/figureheads.ts, Blender) mit verziertem Sockel; Maßstab nach Länge und Breite der Klasse. Die Figur steht
+  // über dem Bugspriet (das Bugspriet tritt tiefer aus dem Vorsteven); ein vergoldeter Kragen fasst das Bugspriet am Austritt ein.
+  const fhId = figureheadModel(look.figurehead);
+  if (fhId) {
+    const fhScale = figureheadScale(fhId, c.L, c.W);
+    const fh = buildFigurehead(fhId, fhScale, c.L) ?? figurehead(FIGUREHEAD_DEFS[fhId].fallback, Math.min(2.2, 0.8 * sc));
     fh.position.set(0, bowTop - 0.1, bowZ + 0.15);
     group.add(fh);
+    const sd = Math.min(sc, 3);
+    const bsStart = bowZ + c.L * 0.08 - Math.cos(0.25) * c.L * 0.125 * 0.97;
+    put(group, torus(0.2 * sd * 0.8, 0.034 * sd, 10), gold, 0, bowTop - 0.15 - Math.sin(0.25) * c.L * 0.125 * 0.97 + Math.sin(0.25) * c.L * 0.04, bsStart + c.L * 0.04, Math.PI / 2 - 0.25 + 0.0, 0, 0);
   }
-  // Schiffe 2: Galion – Backenhölzer aus Gold zur Figur, dazwischen ein Grätingdeck, und seitlich die Katköpfe für den Anker
-  if (v2 && c.L >= 24) {
+  // Galion – Backenhölzer aus Gold zur Figur, dazwischen ein Grätingdeck, und seitlich die Katköpfe für den Anker
+  if (c.L >= 24) {
     const bk = Math.min(1.7, c.L / 26);
     const gz = bowZ, gy = bowTop;
     const hwB = halfWidth(gz - 1.4 * bk) * 0.6;
@@ -1893,11 +1841,15 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     if ((o as { isLight?: boolean }).isLight) continue;
     if (o.position.y >= D + castleH - 0.01 && o.position.z > castleZ0 - 0.3 && o.position.z < castleZ1 + 0.1 && Math.abs(o.position.x) < c.W) topGroup.add(o);
   }
+  for (const m of mastParts) if (D + m.h * 0.79 >= D + castleH - 0.01 && m.z > castleZ0 - 0.3 && m.z < castleZ1 + 0.1) topGroup.add(m.up);
   blockers.push(...cabinBlockers);
   const keepSet = new Set<Mesh>([...sails, ...lanterns, ...windows, ...keepExtra, flag, deck]);
   wheel.traverse((o) => { if ((o as Mesh).isMesh) keepSet.add(o as Mesh); });
-  mergeStatic(topGroup, keepSet);
-  mergeStatic(group, keepSet, topGroup);
+  // jeder obere Mastteil wird für sich verschmolzen (wenige Zeichenaufrufe) und bleibt als Gruppe beweglich
+  for (const m of mastParts) mergeStatic(m.up, keepSet);
+  const apart = [topGroup, ...mastParts.map((m) => m.up)];
+  mergeStatic(topGroup, keepSet, apart.slice(1));
+  mergeStatic(group, keepSet, apart);
   // Blender-Props nach dem Verschmelzen aufstellen (ein InstancedMesh darf nicht mit verschmolzen werden)
   if (batch.size) {
     const barrelCol = toon({ color: '#6F4A2B', roughness: 0.85 }), crateCol = toon({ color: '#8A6840', roughness: 0.9 });
@@ -1919,17 +1871,17 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     if ((o as Mesh).isMesh && !o.userData.noOutline) { o.castShadow = true; o.receiveShadow = true; }
   });
   addOutlines(group);
-  return { group, sails, muzzlesL, muzzlesR, lanterns, windows, flag, deckY: D, helm, wheel, quarter: { z0: castleZ0, z1: castleZ1, top: topY, stairX, stairW, stairLen, flare, doorHalf: doorWC / 2, cabin: { zA, zB } }, cabinRoof: topGroup, cabinLight, fore, blockers, halfWidth, deckMat, deckBase, lights };
+  return { group, sails, muzzlesL, muzzlesR, lanterns, windows, flag, flags: clothFlags, deckY: D, helm, wheel, quarter: { z0: castleZ0, z1: castleZ1, top: topY, stairX, stairW, stairLen, flare, doorHalf: doorWC / 2, cabin: { zA, zB } }, cabinRoof: topGroup, cabinLight, fore, masts: mastParts.map((m) => ({ up: m.up, z: m.z, pivotY: m.pivotY })), rigging, blockers, halfWidth, deckMat, deckBase, lights, railParts };
 }
 
 /** Feste Teile pro Material zu einem Mesh zusammenfassen (weniger Zeichenaufrufe) */
-function mergeStatic(group: Group, keep: Set<Mesh>, skip: Group | null = null) {
+function mergeStatic(group: Group, keep: Set<Mesh>, skip: Group[] = []) {
   group.updateMatrixWorld(true);
   const buckets = new Map<object, { mat: any; geos: BufferGeometry[]; meshes: Mesh[] }>();
   group.traverse((o) => {
     const m = o as Mesh;
     if (!m.isMesh || keep.has(m) || (m as InstancedMesh).isInstancedMesh) return;
-    if (skip) { let p = m.parent; while (p) { if (p === skip) return; p = p.parent; } }
+    if (skip.length) { let p = m.parent; while (p) { if (skip.includes(p as Group)) return; p = p.parent; } }
     const b = buckets.get(m.material as object) ?? { mat: m.material, geos: [], meshes: [] };
     let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
     for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'color') g.deleteAttribute(k);

@@ -1,0 +1,138 @@
+/* ==========================================================================
+   Sturmkrone 3.0 – Designsystem „Kapitänskajüte“
+   Alle Farben, Maße, Schatten und Texturen stehen hier. Die anderen Dateien (base, panels, hud, screens, touch)
+   benutzen nur diese Werte, nie rohe Farben.
+   Material: tiefes Mahagoni und Eiche, gebürstetes und angelaufenes Messing, geschmiedetes Eisen, Pergament, Rauchglas.
+   ========================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  /* ---------- Holz ---------- */
+  --mahogany-950: #110806;
+  --mahogany-900: #190d08;
+  --mahogany-850: #211209;
+  --mahogany-800: #2b170d;
+  --mahogany-700: #3c2112;
+  --mahogany-600: #523020;
+  --oak-500: #8a6a41;
+  --oak-300: #b69a69;
+
+  /* ---------- Metall ---------- */
+  --brass-50: #fdf3d6;
+  --brass-100: #f4e2ab;
+  --brass-200: #e8cb7c;
+  --brass-300: #d7ae52;
+  --brass-400: #b98d34;
+  --brass-500: #93691f;
+  --brass-600: #6c4b14;
+  --brass-700: #43300d;
+  --iron-950: #090b0e;
+  --iron-900: #0f1217;
+  --iron-800: #171b21;
+  --iron-700: #21262e;
+  --iron-600: #303741;
+  --iron-500: #49515e;
+  --iron-300: #8993a1;
+  --verdigris: #5f9388;
+  /* Gravur und Glanz auf Messing, Schalen aus dunklem Holz */
+  --ink-engrave: #2a1a07;
+  --brass-deep: #8a6320;
+  --brass-glint: #fff1c0;
+  --wood-face-hi: #2b190d;
+  --wood-face-lo: #150b06;
+  --wood-edge: #1a0e08;
+
+  /* ---------- Pergament ---------- */
+  --parch-50: #fbf4de;
+  --parch-100: #f2e6c4;
+  --parch-200: #e5d3a6;
+  --parch-300: #cfb784;
+  --parch-400: #a98e5b;
+  --parch-ink: #2f2113;
+  --parch-ink-soft: #5d4630;
+  --parch-line: rgba(70, 48, 20, 0.3);
+
+  /* ---------- Schrift und Signale ---------- */
+  --ink: #f0e6cd;
+  --ink-dim: #bcb095;
+  --ink-faint: #8c8470;
+  --danger: #c4452f;
+  --danger-hi: #e8624a;
+  --ok: #86b46d;
+  --warn: #e2a63f;
+  --sea: #5aa7b8;
+  --violet: #9a7ad6;
+
+  /* ---------- Seltenheit (gleiche Farben wie data/rarity.ts) ---------- */
+  --rar-gewoehnlich: #9a9a9a;
+  --rar-selten: #3a8fe0;
+  --rar-episch: #a05ae0;
+  --rar-legendaer: #e8a82a;
+
+  /* ---------- Flächen ---------- */
+  /* Rauchglas: warm getönt, nie reines Schwarz */
+  --glass: rgba(16, 11, 8, 0.66);
+  --glass-strong: rgba(14, 9, 6, 0.86);
+  --glass-edge: rgba(215, 174, 82, 0.36);
+  --glass-edge-soft: rgba(215, 174, 82, 0.16);
+  --hairline: rgba(244, 226, 171, 0.1);
+  --scrim: rgba(7, 4, 3, 0.62);
+
+  /* ---------- Schrift ---------- */
+  --font-serif: 'IM Fell English SC', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --font-text: 'Alegreya Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-num: 'Barlow Semi Condensed', 'Alegreya Sans', system-ui, sans-serif;
+
+  /* ---------- Maße ---------- */
+  --r-xs: 2px;
+  --r-sm: 4px;
+  --r-md: 7px;
+  --r-lg: 12px;
+  --gap: 0.5rem;
+  --edge: max(10px, env(safe-area-inset-left, 0px));
+  --text-scale: 1;
+  --hud-scale: 1;
+
+  /* ---------- Schatten und Glanz ---------- */
+  --shadow-1: 0 1px 0 rgba(255, 228, 160, 0.07) inset, 0 6px 18px rgba(0, 0, 0, 0.42);
+  --shadow-2: 0 1px 0 rgba(255, 228, 160, 0.08) inset, 0 20px 50px rgba(0, 0, 0, 0.55);
+  --bevel-brass: inset 0 1px 0 rgba(255, 244, 205, 0.55), inset 0 -2px 0 rgba(60, 38, 8, 0.45), 0 2px 0 rgba(0, 0, 0, 0.45), 0 6px 14px rgba(0, 0, 0, 0.4);
+  --brass-plate: linear-gradient(180deg, #f1d891 0%, #d7ae52 22%, #b98d34 52%, #a67b2b 56%, #cba24a 100%);
+  --brass-plate-hover: linear-gradient(180deg, #f8e5a9 0%, #e2ba60 22%, #c79a3c 52%, #b3862f 56%, #d6ae55 100%);
+  --wood-panel: linear-gradient(180deg, #2f190e 0%, #1f1109 55%, #160b06 100%);
+  --iron-plate: linear-gradient(180deg, #2a303a 0%, #1a1e25 60%, #14171c 100%);
+
+  /* ---------- Texturen (kleine SVG-Kacheln, ohne Bilddateien) ---------- */
+  /* Holzmaserung: lange, waagerechte Streifen */
+  --tex-wood: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='200'%3E%3Cfilter id='w' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.004 0.16' numOctaves='3' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.04 0 0 0 0 0.02 0 0 0 0 0.01 0 0 0 1.15 -0.38'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23w)'/%3E%3C/svg%3E");
+  /* Pergamentfasern */
+  --tex-parchment: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='p' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='3' seed='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.36 0 0 0 0 0.24 0 0 0 0 0.1 0 0 0 0.55 -0.16'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23p)'/%3E%3C/svg%3E");
+  /* Fleckige Wolken auf Pergament (Alterung) */
+  --tex-stain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='s' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012' numOctaves='3' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.45 0 0 0 0 0.3 0 0 0 0 0.12 0 0 0 0.9 -0.34'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23s)'/%3E%3C/svg%3E");
+  /* Tau: schräg gewundene Fasern, als Rand und Trenner */
+  --rope: repeating-linear-gradient(118deg, #c3a56a 0 3px, #8d7141 3px 5px, #a98a52 5px 7px, #6f562f 7px 9px);
+
+  /* ---------- Ebenen ---------- */
+  --z-world: 2;
+  --z-hud: 4;
+  --z-fade: 5;
+  --z-screen: 6;
+  --z-npc: 9;
+  --z-overlay: 25;
+  --z-dialog: 30;
+  --z-capture: 50;
+  --z-loading: 60;
+  --z-error: 100;
+
+  /* Dauer der Bewegungen */
+  --t-fast: 0.12s;
+  --t-med: 0.22s;
+}
+
+/* Farbenblind-freundlich: Rot wird Orange, Grün wird Blau */
+:root.cb {
+  --danger: #e07a1f;
+  --danger-hi: #f29a3c;
+  --ok: #6fb3e8;
+}

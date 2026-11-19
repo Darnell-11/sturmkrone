@@ -1,5 +1,6 @@
-import { BufferAttribute, BufferGeometry, Float32BufferAttribute, type Material, type Mesh, type WebGLProgramParametersWithUniforms } from 'three';
+import { BufferAttribute, BufferGeometry, type Material, type Mesh, type WebGLProgramParametersWithUniforms } from 'three';
 import { windShared } from './wind';
+import { clamp01 } from '../core/mathUtil';
 
 /**
  * Flaggen und Wimpel, die im Wind wehen. Das Tuch bekommt je Eckpunkt ein Gewicht `aFlag` (0 am Mast, 1 an der freien Kante); der
@@ -15,7 +16,7 @@ export function addFlagWeights(geo: BufferGeometry, axis: 'x' | 'z', len: number
   const w = new Float32Array(pos.count);
   for (let i = 0; i < pos.count; i++) {
     const v = (axis === 'x' ? pos.getX(i) : pos.getZ(i)) * dir / len;
-    w[i] = Math.max(0, Math.min(1, v));
+    w[i] = clamp01(v);
   }
   geo.setAttribute('aFlag', new BufferAttribute(w, 1));
 }
@@ -63,22 +64,6 @@ export function waveFlag(mesh: Mesh, axis: 'x' | 'z', len: number, dir = 1, stre
   const mat = mesh.material as Material | Material[];
   for (const m of Array.isArray(mat) ? mat : [mat]) waveMaterial(m, strength);
   return mesh;
-}
-
-/** Spitz zulaufender Wimpel (Dreieck) mit Unterteilungen, damit er sich verbiegen kann: Länge entlang +x, Höhe an der Mastseite */
-export function pennantGeometry(length: number, height: number, segs = 8) {
-  const pos: number[] = [], nor: number[] = [], idx: number[] = [];
-  for (let i = 0; i <= segs; i++) {
-    const t = i / segs, half = (1 - t) * height / 2;
-    pos.push(t * length, half, 0, t * length, -half, 0);
-    nor.push(0, 0, 1, 0, 0, 1);
-    if (i < segs) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
-  }
-  const g = new BufferGeometry();
-  g.setAttribute('position', new Float32BufferAttribute(pos, 3));
-  g.setAttribute('normal', new Float32BufferAttribute(nor, 3));
-  g.setIndex(idx);
-  return g;
 }
 
 /** Gemeinsame Uniform-Sätze eines Segels (je Segel eigener Satz, das Material ist je Segel einmalig) */

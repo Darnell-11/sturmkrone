@@ -1,12 +1,31 @@
 import { Vector3, type Camera, type Object3D } from 'three';
 import { esc } from './dom';
+import { fmtPct } from '../core/format';
 import { audio } from '../audio/audio';
+import { clamp01 } from '../core/mathUtil';
 
 interface FloatText { el: HTMLElement; pos: Vector3; life: number; max: number; vy: number }
 /** anchor: Objekt, dem der Balken bei jedem Bild folgt (weich dargestellte Figur/Schiff), sonst die feste Position pos */
 interface Bar { el: HTMLElement; fill: HTMLElement; lag: HTMLElement; last: number; pos: Vector3; anchor: Object3D | null; dy: number; tf: string }
 
 export type NumberStyle = 'hit' | 'crit' | 'hurt' | 'heal' | 'info' | 'gold' | 'xp';
+
+/** Was die Boss-Leiste zeigt: Name, Titel, Leben mit Phasenmarken, Haltebalken und wer das Ziel des Bosses ist */
+export interface BossView {
+  name: string;
+  title?: string;
+  /** Leben 0 … 1 */
+  frac: number;
+  /** Haltebalken 0 … 1 (Break) */
+  brk?: number;
+  broken?: boolean;
+  /** aktuelle Phase 1 … 3 */
+  phase?: number;
+  /** Lebensanteile, bei denen die nächste Phase beginnt (Marken auf dem Balken) */
+  marks?: number[];
+  /** Aggro: gerade bedrohtes Ziel; `mine` = die Spielfigur, `share` = ihre Bedrohung im Vergleich zur höchsten (0 … 1,5) */
+  aggro?: { target: string; mine: boolean; share: number } | null;
+}
 
 const tmp = new Vector3();
 /** Sekunden, die eine Kombo nach dem letzten Treffer offen bleibt */
@@ -31,8 +50,11 @@ export class CombatOverlay {
   private boss: HTMLElement;
   private bossFill: HTMLElement;
   private bossLag: HTMLElement;
-  private bossName: HTMLElement;
   private bossBrk: HTMLElement;
+  private bossBar: HTMLElement;
+  private bossKey = '';
+  /** Schadenszahlen zeigen (Einstellung); Klänge laufen weiter */
+  numbers = true;
   private banner: HTMLElement;
   private cutin: HTMLElement;
   private victoryEl: HTMLElement;
@@ -40,7 +62,8 @@ export class CombatOverlay {
   private lootTimer = 0;
   private victoryTimer = 0;
 
-  constructor(parent: HTMLElement) {
+  /** `bossParent`: Zone des HUD, in der die Boss-Leiste steht (Standard: dieselbe Fläche) */
+  constructor(parent: HTMLElement, bossParent: HTMLElement = parent) {
     this.root = document.createElement('div');
     this.root.className = 'cbt';
     this.root.innerHTML = `
@@ -49,7 +72,6 @@ export class CombatOverlay {
       <div class="cbt-vign"></div>
       <div class="cbt-combo" hidden><em class="fin">Finisher!</em><b>0</b><span>Treffer</span><u><i></i></u></div>
       <div class="cbt-reticle" hidden></div>
-      <div class="cbt-boss" hidden><div class="cbt-boss-name fell"></div><div class="cbt-boss-bar"><i class="lag"></i><i class="fill"></i><s class="p1"></s><s class="p2"></s></div><div class="cbt-boss-break"><i></i><b>BREAK!</b></div></div>
       <div class="cbt-banner"><h2 class="fell"></h2><p></p></div>
       <div class="cbt-cutin"><b></b></div>
       <div class="cbt-victory" hidden><div class="rays"></div><div class="vbox"><small>Sieg</small><h2 class="fell"></h2><p></p><div class="vstats"></div></div></div>
@@ -63,18 +85,22 @@ export class CombatOverlay {
     this.comboLabel = this.combo.querySelector('span')!;
     this.comboBar = this.combo.querySelector('u i')!;
     this.reticle = this.root.querySelector('.cbt-reticle')!;
-    this.boss = this.root.querySelector('.cbt-boss')!;
+    this.boss = document.createElement('div');
+    this.boss.className = 'hud-boss';
+    this.boss.hidden = true;
+    this.boss.innerHTML = '<div class="boss-name fell"></div><div class="boss-title"></div><div class="boss-bar"><i class="lag"></i><i class="fill"></i></div><div class="boss-foot"><span class="boss-phase"></span><span class="boss-aggro" hidden><i></i><em>Ziel</em><b></b><small></small></span></div><div class="boss-break"><i></i><b>BREAK!</b></div>';
+    bossParent.appendChild(this.boss);
+    this.bossBar = this.boss.querySelector('.boss-bar')!;
     this.bossFill = this.boss.querySelector('.fill')!;
     this.bossLag = this.boss.querySelector('.lag')!;
-    this.bossName = this.boss.querySelector('.cbt-boss-name')!;
-    this.bossBrk = this.boss.querySelector('.cbt-boss-break i')!;
+    this.bossBrk = this.boss.querySelector('.boss-break i')!;
     this.banner = this.root.querySelector('.cbt-banner')!;
     this.cutin = this.root.querySelector('.cbt-cutin')!;
     this.victoryEl = this.root.querySelector('.cbt-victory')!;
     this.lootEl = this.root.querySelector('.cbt-loot')!;
   }
 
-  setVisible(v: boolean) { this.root.hidden = !v; }
+  setVisible(v: boolean) { this.root.hidden = !v; if (!v) this.boss.hidden = true; }
 
   /** Schwebende Zahl oder kurzer Text an einer Weltposition */
   number(pos: Vector3, value: number | string, style: NumberStyle = 'hit') {
@@ -88,6 +114,7 @@ export class CombatOverlay {
     else if (value === 'Parade!') audio.play('parry');
     else if (value === 'Geblockt' || value === 'Abgewehrt') audio.play('clang', 1, at);
     else if (value === 'Ausgewichen') audio.play('roll');
+    if (!this.numbers && typeof value === 'number') return;
     const el = document.createElement('div');
     el.className = `cbt-num n-${style}`;
     el.textContent = typeof value === 'number' ? String(Math.round(value)) : value;
@@ -203,18 +230,40 @@ export class CombatOverlay {
     this.cutin.classList.add('show');
   }
 
-  /** Boss-Leiste: Leben (mit Nachlauf und Phasenmarken), darunter der Haltebalken (Break-Bar). Extra: Haltebalken 0 … 1, Break aktiv, Phase 1 … 3 */
-  setBoss(name: string | null, frac = 1, extra?: { brk: number; broken: boolean; phase: number }) {
-    this.boss.hidden = !name;
-    if (!name) return;
-    if (this.bossName.textContent !== name) this.bossName.textContent = name;
-    const s = `scaleX(${Math.max(0, Math.min(1, frac)).toFixed(3)})`;
-    if (this.bossFill.style.transform !== s) { this.bossFill.style.transform = s; this.bossLag.style.transform = s; }
-    if (!extra) return;
-    const b = `scaleX(${Math.max(0, Math.min(1, extra.brk)).toFixed(3)})`;
+  /** Endboss-Leiste oben in der Mitte: Name und Titel, Leben mit Nachlauf und Phasenmarken, Haltebalken (leer = Break) und Aggro-Anzeige; null blendet sie aus */
+  setBoss(v: BossView | null) {
+    const el = this.boss;
+    if (!v) { if (!el.hidden) el.hidden = true; this.bossKey = ''; return; }
+    if (el.hidden) el.hidden = false;
+    // feste Teile (Name, Titel, Marken) nur bei Änderung neu schreiben
+    const key = `${v.name}|${v.title ?? ''}|${(v.marks ?? []).join(',')}`;
+    if (key !== this.bossKey) {
+      this.bossKey = key;
+      el.querySelector('.boss-name')!.textContent = v.name;
+      const t = el.querySelector<HTMLElement>('.boss-title')!;
+      t.textContent = v.title ?? ''; t.hidden = !v.title;
+      this.bossBar.querySelectorAll('s').forEach((s) => s.remove());
+      for (const m of v.marks ?? []) { const s = document.createElement('s'); s.style.setProperty('--at', String(m)); s.dataset.at = String(m); this.bossBar.appendChild(s); }
+    }
+    const f = `scaleX(${Math.max(0, Math.min(1, v.frac)).toFixed(3)})`;
+    if (this.bossFill.style.transform !== f) {
+      this.bossFill.style.transform = f; this.bossLag.style.transform = f;
+      this.bossBar.querySelectorAll<HTMLElement>('s').forEach((s) => s.classList.toggle('past', v.frac <= +s.dataset.at!));
+    }
+    const b = `scaleX(${Math.max(0, Math.min(1, v.brk ?? 1)).toFixed(3)})`;
     if (this.bossBrk.style.transform !== b) this.bossBrk.style.transform = b;
-    this.boss.classList.toggle('broken', extra.broken);
-    if (this.boss.dataset.phase !== String(extra.phase)) this.boss.dataset.phase = String(extra.phase);
+    el.classList.toggle('broken', !!v.broken);
+    const ph = String(v.phase ?? 1);
+    if (el.dataset.phase !== ph) { el.dataset.phase = ph; el.querySelector('.boss-phase')!.textContent = v.marks?.length ? `Phase ${ph} von ${v.marks.length + 1}` : ''; }
+    const ag = el.querySelector<HTMLElement>('.boss-aggro')!;
+    ag.hidden = !v.aggro;
+    if (v.aggro) {
+      ag.classList.toggle('me', v.aggro.mine);
+      const who = ag.querySelector('b')!, share = ag.querySelector('small')!;
+      if (who.textContent !== v.aggro.target) who.textContent = v.aggro.target;
+      const sh = `Bedrohung ${fmtPct(v.aggro.share)}`;
+      if (share.textContent !== sh) share.textContent = sh;
+    }
   }
 
   /** Lebensbalken über einem Gegner (key = Gegnerobjekt). frac < 0 entfernt ihn. */
@@ -291,7 +340,7 @@ export class CombatOverlay {
     if (this.comboTimer > 0) {
       this.comboTimer -= dt;
       // Restzeit als schrumpfender Balken (transform, kein Layout)
-      this.comboBar.style.transform = `scaleX(${Math.max(0, Math.min(1, this.comboTimer / COMBO_TIME)).toFixed(3)})`;
+      this.comboBar.style.transform = `scaleX(${clamp01(this.comboTimer / COMBO_TIME).toFixed(3)})`;
       if (this.comboTimer <= 0) { this.comboCount = 0; this.comboRank = 0; this.combo.hidden = true; this.combo.classList.remove('fin-on'); this.comboLabel.textContent = 'Treffer'; this.combo.dataset.rank = '0'; }
     }
   }

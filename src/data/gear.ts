@@ -5,7 +5,7 @@
 import type { EquipDef, EquipPart, GearBonus, GearCat, ShellLook, Tint } from './equipment';
 import type { TopUnder } from '../entities/character/vroid';
 import type { Hat } from './characterParts';
-import type { Rarity } from './trinkets';
+import type { Rarity } from './rarity';
 
 type Finish = NonNullable<ShellLook['finish']>;
 const L = (finish: Finish, o: Omit<ShellLook, 'finish'> = {}): ShellLook => ({ finish, ...o });
@@ -41,6 +41,8 @@ export interface GearSet {
   /** Setbonus ab 3 und ab allen Stücken */
   bonus3: GearBonus;
   bonusAll: GearBonus;
+  /** Nur aus Raids: fällt nie aus zufälliger Beute, taucht in keinem Laden auf und wird nur von Endbossen getragen (raid/raidLoot.ts) */
+  raid?: boolean;
 }
 
 /** Modell aus Blender (public/models/gear/<name>.glb): Rollen im Modell → Oberfläche und Farbe */
@@ -51,6 +53,16 @@ const glb = (model: string, roles: Record<string, [Finish, Tint]>, o: { mode?: '
 const held = (model: string, hand: 'r' | 'l', roles: Record<string, [Finish, Tint]>): EquipPart => ({
   type: 'held', model, hand, roles: Object.fromEntries(Object.entries(roles).map(([k, [finish, tint]]) => [k, { finish, tint }])),
 });
+
+
+/** Waffen und Köpfe der Raid-Endbosse (public/models/bosses/, tools/blender/build_bosse.py): alle Rollen mit Standardfarben, `item` und `item2` kommen aus der Palette des Sets */
+const bossHeld = (model: string, hand: 'r' | 'l', o: Partial<Record<string, [Finish, Tint]>> = {}): EquipPart => held(`bosses/${model}`, hand, {
+  steel: ['stahl', '#C9D2DA'], gold: ['gold', 'item2'], leather: ['leder', '#2E1C10'], dark: ['dunkelstahl', '#33343C'], cloth: ['stoff', 'item'], glow: ['glut', '#8FD8FF'], main: ['stahl', '#C9D2DA'], ...o,
+} as Record<string, [Finish, Tint]>);
+const bossHead = (model: string, roles: Record<string, [Finish, Tint]>): EquipPart => glb(`bosses/${model}`, roles, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true });
+const BOSS_LV = 42;
+/** Kabuto mit Mondzier: gemeinsames Teil der Schuppenwache und der Mondwacht-Ronin */
+const KABUTO_MOND = glb('helm_kabuto2', { dark: ['dunkelstahl', 'item'], gold: ['gold', 'item2'], main: ['leder', '#7A1F2E'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true });
 
 export const SETS: GearSet[] = [
   // =========================== GEWÖHNLICH ===========================
@@ -168,7 +180,7 @@ export const SETS: GearSet[] = [
   {
     id: 'schuppen', n: 'Schuppenwache', rarity: 'episch', level: 35, palette: ['#3A4A5A', '#C9A13B'], d: 'Dunkle Schuppenpanzer und ein Kabuto mit Mondzier, geschmiedet in den Werften des Ostens.',
     pieces: {
-      head: { n: 'Mondzier-Kabuto', parts: [glb('helm_kabuto2', { dark: ['dunkelstahl', 'item'], gold: ['gold', 'item2'], main: ['leder', '#7A1F2E'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true })] },
+      head: { n: 'Mondzier-Kabuto', parts: [KABUTO_MOND] },
       chest: { n: 'Schuppenpanzer', top: 'tunika', parts: [sh('tunika', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.018, patColor: 'item2', trim: 'item2', trimW: 0.012, trimStyle: 1 })), sh('kragen', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.018, patColor: 'item2', trim: 'item2', trimW: 0.008 }))] },
       legs: { n: 'Schuppenschurz', parts: [sh('hose', '#22262C'), sh('kilt', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.018, patColor: 'item2', trim: 'item2', trimW: 0.012 })), sh('beinschiene', 'item', L('dunkelstahl', { trim: 'item2', trimW: 0.008 })), sh('guertel', 'item2', L('seide')), rigid('guertel_schwerttasche', '#2A2018', 'item2')] },
       feet: { n: 'Schuppenstiefel', parts: boots(L('dunkelstahl', { pattern: 'schuppen', patSize: 0.016, patColor: 'item2', trim: 'item2', trimW: 0.008 }), 'item') },
@@ -259,7 +271,7 @@ export const SETS: GearSet[] = [
   {
     id: 'ronin', n: 'Mondwacht-Ronin', rarity: 'episch', level: 36, palette: ['#22262E', '#C9A13B'], d: 'Schwarzlackierter Kabuto, wehender Haori und Schulterlamellen mit Goldrand: die Wache des Mondes kennt keinen Herrn mehr.',
     pieces: {
-      head: { n: 'Mondzier-Kabuto', parts: [glb('helm_kabuto2', { dark: ['dunkelstahl', 'item'], gold: ['gold', 'item2'], main: ['leder', '#7A1F2E'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true })] },
+      head: { n: 'Ronin-Kabuto', parts: [KABUTO_MOND] },
       chest: { n: 'Haori und Rüstrock', top: 'tunika', coat: 'lang', parts: [sh('tunika', 'item', L('dunkelstahl', { pattern: 'schuppen', patSize: 0.018, patColor: 'item2', trim: 'item2', trimW: 0.012, trimStyle: 1 })), sh('mantelLang', '#7A1F2E', L('seide', { pattern: 'streifen', patColor: 'item2', patSize: 0.05, trim: 'item2', trimW: 0.02, trimStyle: 1 })), sh('kragen', 'item', L('dunkelstahl', { trim: 'item2', trimW: 0.008 }))] },
       legs: { n: 'Hakama', parts: [sh('hose', '#1A1C22', L('seide', { pattern: 'steppung', patSize: 0.024 })), sh('guertel', 'item2', L('seide')), rigid('guertel_schwerttasche', '#2A2018', 'item2')] },
       feet: { n: 'Lackstiefel', parts: boots(L('dunkelstahl', { trim: 'item2', trimW: 0.008, pattern: 'schuppen', patSize: 0.016, patColor: 'item2' }), 'item') },
@@ -307,6 +319,76 @@ export const SETS: GearSet[] = [
     },
     bonus3: { atk: 0.1, faji: 0.15 }, bonusAll: { atk: 0.2, faji: 0.3, hp: 300, crit: 0.08, reduce: 0.08 },
   },
+
+  // =========================== RAID-BOSSE (nur aus Belagerungen) ===========================
+  {
+    id: 'boss_england', raid: true, n: 'Admiral der Royal Navy', rarity: 'legendaer', level: BOSS_LV, palette: ['#14284A', '#E3B04B'], d: 'Der Rock des Lord-Admirals Blackwood: Nachtblau, Gold und ein Zweispitz, unter dem schon ganze Flotten verloren gingen. Dazu Säbel und Pistole.',
+    pieces: {
+      head: { n: 'Zweispitz des Lord-Admirals', parts: [bossHead('blackwood_head', { main: ['stoff', 'item'], trim: ['gold', 'item2'], gold: ['gold', 'item2'], cloth: ['seide', '#F4F0E6'], glow: ['glut', '#8FD8FF'], steel: ['stahl', '#C9D2DA'], dark: ['dunkelstahl', '#33343C'], leather: ['leder', '#2E1C10'] })] },
+      chest: { n: 'Admiralsrock', top: 'uniform', parts: [sh('uniform', 'item', L('stoff', { trim: 'item2', trimW: 0.014, trimStyle: 1, pattern: 'streifen', patColor: 'item2', patSize: 0.03 })), sh('kragen', 'item', L('stoff', { trim: 'item2', trimW: 0.012 }))] },
+      shoulder: { n: 'Admiralsepauletten', parts: [rigid('schulter_gold', 'item', 'item2')] },
+      cloak: { n: 'Mantel der Admiralität', parts: [cape('lang', 'item', L('seide', { trim: 'item2', trimW: 0.03, trimStyle: 1 }))] },
+      mainhand: { n: 'Säbel des Lord-Admirals', parts: [bossHeld('blackwood_saebel', 'r', { cloth: ['stoff', '#1B2A55'], glow: ['glut', '#6FB8FF'] })] },
+      offhand: { n: 'Steinschlosspistole des Admirals', parts: [bossHeld('blackwood_pistole', 'l', { leather: ['leder', '#4A2E1C'], glow: ['glut', '#FFB347'] })] },
+    },
+    bonus3: { atk: 0.08, hp: 200 }, bonusAll: { atk: 0.2, crit: 0.08, hp: 500, reduce: 0.06 },
+  },
+  {
+    id: 'boss_niederlande', raid: true, n: 'Generalgouverneur der Kompanie', rarity: 'legendaer', level: BOSS_LV, palette: ['#E8761E', '#1B2E5C'], d: 'Orange, Weiß und Dunkelblau: der Prunkharnisch Van Der Bergs samt Morion mit Federn und seiner schweren Hellebarde.',
+    pieces: {
+      head: { n: 'Morion des Gouverneurs', parts: [bossHead('vanderberg_head', { steel: ['stahl', '#B8C0C8'], gold: ['gold', 'item2'], cloth: ['seide', 'item'], main: ['stahl', '#B8C0C8'], dark: ['dunkelstahl', '#33343C'], leather: ['leder', '#2E1C10'], trim: ['gold', 'item2'], glow: ['glut', '#FFB347'] })] },
+      chest: { n: 'Prunkharnisch der Kompanie', top: 'jacke', parts: [sh('jacke', 'item', L('seide', { pattern: 'brokat', patColor: 'item2', patSize: 0.02, trim: 'item2', trimW: 0.014 })), sh('kuerass', '#B8C0C8', L('stahl', { pattern: 'platten', patSize: 0.036, trim: 'item', trimW: 0.012, trimStyle: 1 })), sh('kragen', 'item2', L('stoff', { trim: 'item', trimW: 0.01 }))] },
+      shoulder: { n: 'Kontor-Schulterplatten', parts: [rigid('schulter_leder', '#B8C0C8', 'item')] },
+      cloak: { n: 'Orangener Kompaniemantel', parts: [cape('kurz', 'item', L('seide', { trim: 'item2', trimW: 0.025, trimStyle: 2 }))] },
+      mainhand: { n: 'Hellebarde des Gouverneurs', parts: [bossHeld('vanderberg_hellebarde', 'r', { cloth: ['stoff', '#E8761E'], leather: ['leder', '#4A2E1C'] })] },
+    },
+    bonus3: { hp: 260, reduce: 0.03 }, bonusAll: { hp: 600, reduce: 0.1, gold: 0.15 },
+  },
+  {
+    id: 'boss_deutschland', raid: true, n: 'Großkomtur der Preußischen Marine', rarity: 'legendaer', level: BOSS_LV, palette: ['#26262C', '#D4A82A'], d: 'Schwarz, Gold und Stahl: Topfhelm mit Adlerschwingen und der gewaltige Zweihänder des Großkomturs von Eisenstein.',
+    pieces: {
+      head: { n: 'Eisenhelm des Großkomturs', parts: [bossHead('eisenstein_head', { steel: ['stahl', '#8A8F98'], gold: ['gold', 'item2'], dark: ['dunkelstahl', '#2A2A30'], cloth: ['stoff', '#15151A'], main: ['stahl', '#8A8F98'], leather: ['leder', '#2E1C10'], trim: ['gold', 'item2'], glow: ['glut', '#FFD27A'] })] },
+      chest: { n: 'Komturs-Plattenpanzer', top: 'jacke', parts: [sh('jacke', 'item', L('stoff', { trim: 'item2', trimW: 0.012 })), sh('kuerass', '#6E7078', L('stahl', { pattern: 'platten', patSize: 0.034, trim: 'item2', trimW: 0.016, trimStyle: 1 })), sh('kragen', 'item2', L('gold', { trim: 'item', trimW: 0.008 }))] },
+      shoulder: { n: 'Adlerschultern', parts: [glb('schulter_lamellen2', { steel: ['dunkelstahl', '#34353C'], main: ['stahl', '#8A8F98'], gold: ['gold', 'item2'] })] },
+      cloak: { n: 'Schwarzer Ordensmantel', parts: [cape('lang', 'item', L('stoff', { trim: 'item2', trimW: 0.035, trimStyle: 1 }))] },
+      mainhand: { n: 'Zweihänder des Großkomturs', parts: [bossHeld('eisenstein_zweihaender', 'r', { steel: ['stahl', '#9AA0AA'], leather: ['leder', '#1E1812'], glow: ['glut', '#FFB347'] })] },
+    },
+    bonus3: { atk: 0.07, reduce: 0.04 }, bonusAll: { atk: 0.16, reduce: 0.12, hp: 700 },
+  },
+  {
+    id: 'boss_frankreich', raid: true, n: 'Marquis der Armada Royale', rarity: 'legendaer', level: BOSS_LV, palette: ['#2A4BA6', '#D8B23A'], d: 'Königsblau, Weiß und Gold: Kavalierhut mit Lilienbrosche und das Hofdegen-Rapier des Marquis-Amirals De Valois.',
+    pieces: {
+      head: { n: 'Federhut des Marquis', parts: [bossHead('devalois_head', { main: ['seide', 'item'], gold: ['gold', 'item2'], cloth: ['seide', '#F6F3EA'], glow: ['glut', '#7FB0FF'], steel: ['stahl', '#C9D2DA'], dark: ['dunkelstahl', '#33343C'], leather: ['leder', '#2E1C10'], trim: ['gold', 'item2'] })] },
+      chest: { n: 'Hofrock des Marquis', top: 'uniform', parts: [sh('uniform', '#F3F0E6', L('seide', { pattern: 'brokat', patColor: 'item2', patSize: 0.02, trim: 'item', trimW: 0.016, trimStyle: 1 })), sh('kragen', 'item', L('seide', { trim: 'item2', trimW: 0.01 }))] },
+      shoulder: { n: 'Goldene Epauletten', parts: [rigid('schulter_gold', 'item', 'item2')] },
+      cloak: { n: 'Königsblauer Mantel', parts: [cape('schlepp', 'item', L('seide', { pattern: 'brokat', patColor: 'item2', patSize: 0.026, trim: 'item2', trimW: 0.03, trimStyle: 1 }))] },
+      mainhand: { n: 'Hofdegen des Marquis', parts: [bossHeld('devalois_rapier', 'r', { cloth: ['seide', '#2A4BA6'], glow: ['glut', '#7FB0FF'] })] },
+    },
+    bonus3: { crit: 0.05, atk: 0.05 }, bonusAll: { crit: 0.14, atk: 0.12, faji: 0.15, hp: 400 },
+  },
+  {
+    id: 'boss_kurogane', raid: true, n: 'Schattenfürst von Kurogane', rarity: 'legendaer', level: BOSS_LV, palette: ['#0E0E12', '#B01818'], d: 'Obsidianschwarz mit blutroter Schnur: Kabuto mit Mondsichel und Dämonenmaske, dazu Katana und Wakizashi des Schattenfürsten.',
+    pieces: {
+      head: { n: 'Kabuto des Schattenfürsten', parts: [bossHead('kurogane_head', { dark: ['dunkelstahl', '#15151B'], steel: ['stahl', '#4A4A54'], steel2: ['dunkelstahl', '#2A2A30'], gold: ['gold', '#C9A13B'], cloth: ['stoff', 'item2'], glow: ['glut', '#FF3A2A'], main: ['dunkelstahl', '#15151B'], leather: ['leder', '#2A1A1A'], trim: ['gold', '#C9A13B'] })] },
+      chest: { n: 'Lackharnisch der Nacht', top: 'jacke', parts: [sh('jacke', 'item', L('leder', { pattern: 'schuppen', patColor: 'item2', patSize: 0.03, trim: 'item2', trimW: 0.014, trimStyle: 1 })), sh('kuerass', '#1A1A20', L('stahl', { pattern: 'platten', patSize: 0.034, trim: 'item2', trimW: 0.012 }))] },
+      shoulder: { n: 'Schuppenschultern der Nacht', parts: [glb('schulter_lamellen2', { steel: ['dunkelstahl', '#15151B'], main: ['leder', '#7A1F2E'], gold: ['gold', 'item2'] })] },
+      cloak: { n: 'Schattenumhang des Fürsten', parts: [cape('lang', 'item', L('seide', { trim: 'item2', trimW: 0.03, trimStyle: 2 }))] },
+      mainhand: { n: 'Katana des Schattenfürsten', parts: [bossHeld('kurogane_katana', 'r', { steel: ['stahl', '#C9D2DA'], dark: ['dunkelstahl', '#1A1A20'], cloth: ['stoff', '#B01818'], glow: ['glut', '#FF3A2A'] })] },
+      offhand: { n: 'Wakizashi des Schattenfürsten', parts: [bossHeld('kurogane_wakizashi', 'l', { steel: ['stahl', '#C9D2DA'], dark: ['dunkelstahl', '#1A1A20'], cloth: ['stoff', '#15151B'], glow: ['glut', '#FF3A2A'] })] },
+    },
+    bonus3: { crit: 0.06, atk: 0.06 }, bonusAll: { crit: 0.16, atk: 0.16, hp: 350 },
+  },
+  {
+    id: 'boss_marine', raid: true, n: 'Großadmiral der Marine', rarity: 'legendaer', level: BOSS_LV, palette: ['#1B3A6B', '#E3B04B'], d: 'Weiß und Marineblau mit Gold: Mütze mit Anker, Admiralsmantel und die Kanonenfaust des Obersten Gefängniswärters Valken.',
+    pieces: {
+      head: { n: 'Admiralsmütze des Wärters', parts: [bossHead('valken_head', { main: ['stoff', 'item'], cloth: ['stoff', '#F2F0EA'], gold: ['gold', 'item2'], dark: ['dunkelstahl', '#1A1A20'], steel: ['stahl', '#C9D2DA'], leather: ['leder', '#2E1C10'], glow: ['glut', '#8FD8FF'], trim: ['gold', 'item2'] })] },
+      chest: { n: 'Großadmiralsuniform', top: 'uniform', parts: [sh('uniform', '#F2F0EA', L('stoff', { trim: 'item', trimW: 0.016, trimStyle: 1, pattern: 'streifen', patColor: 'item2', patSize: 0.03 })), sh('kragen', 'item', L('stoff', { trim: 'item2', trimW: 0.012 }))] },
+      shoulder: { n: 'Admiralsepauletten des Wärters', parts: [rigid('schulter_gold', 'item', 'item2')] },
+      cloak: { n: 'Admiralsmantel', parts: [cape('lang', 'item', L('stoff', { trim: 'item2', trimW: 0.03, trimStyle: 1 }))] },
+      mainhand: { n: 'Kanonenfaust der Gerechtigkeit', parts: [bossHeld('valken_kanone', 'r', { steel: ['stahl', '#9AA3B0'], dark: ['dunkelstahl', '#26262C'], glow: ['glut', '#FF7A3C'] })] },
+    },
+    bonus3: { hp: 300, atk: 0.06 }, bonusAll: { hp: 800, atk: 0.14, reduce: 0.1, gold: 0.1 },
+  },
 ];
 
 // ---------- Werte, Preise, Texte ----------
@@ -316,20 +398,23 @@ const BASE_RED: Record<Rarity, number> = { gewoehnlich: 0.004, selten: 0.014, ep
 const BASE_PRICE: Record<Rarity, number> = { gewoehnlich: 90, selten: 380, episch: 1100, legendaer: 3200 };
 /** Anteil der Grundwerte je Platz */
 const WEIGHT: Record<GearCat, number> = { chest: 1, legs: 0.75, head: 0.65, shoulder: 0.55, feet: 0.45, hands: 0.4, cloak: 0.3, mainhand: 0.7, offhand: 0.4 };
-/** Schwere Stoffe und Platten geben mehr Schutz, Hüllen aus Stoff mehr Faji/Volltreffer */
-const NAMES: Record<string, string> = { hp: 'Leben', reduce: 'weniger Schaden', crit: 'Volltreffer', atk: 'Angriff', faji: 'Faji-Erholung', gold: 'Gold' };
+/** Anzeigezeilen eines Bonus: Name, Wert („+40“, „6 %“) und der Satz („+40 Leben“, „6 % weniger Schaden“) */
+const BONUS_ROWS: { k: keyof GearBonus; label: string; value: (v: number) => string; text: (v: number) => string }[] = [
+  { k: 'hp', label: 'Leben', value: (v) => `+${Math.round(v)}`, text: (v) => `+${Math.round(v)} Leben` },
+  { k: 'atk', label: 'Angriff', value: (v) => `+${Math.round(v * 100)} %`, text: (v) => `+${Math.round(v * 100)} % Angriff` },
+  { k: 'crit', label: 'Volltreffer', value: (v) => `+${Math.round(v * 100)} %`, text: (v) => `+${Math.round(v * 100)} % Volltreffer` },
+  { k: 'reduce', label: 'Schadensminderung', value: (v) => `${Math.round(v * 100)} %`, text: (v) => `${Math.round(v * 100)} % weniger Schaden` },
+  { k: 'faji', label: 'Faji-Erholung', value: (v) => `+${Math.round(v * 100)} %`, text: (v) => `+${Math.round(v * 100)} % Faji-Erholung` },
+  { k: 'gold', label: 'Goldbonus', value: (v) => `+${Math.round(v * 100)} %`, text: (v) => `+${Math.round(v * 100)} % Gold` },
+];
+
+export function bonusRows(b: GearBonus): { label: string; value: string; text: string }[] {
+  return BONUS_ROWS.filter((r) => b[r.k]).map((r) => ({ label: r.label, value: r.value(b[r.k]!), text: r.text(b[r.k]!) }));
+}
 
 export function describeBonus(b: GearBonus): string {
-  const out: string[] = [];
-  if (b.hp) out.push(`+${Math.round(b.hp)} Leben`);
-  if (b.atk) out.push(`+${Math.round(b.atk * 100)} % Angriff`);
-  if (b.crit) out.push(`+${Math.round(b.crit * 100)} % Volltreffer`);
-  if (b.reduce) out.push(`${Math.round(b.reduce * 100)} % weniger Schaden`);
-  if (b.faji) out.push(`+${Math.round(b.faji * 100)} % Faji-Erholung`);
-  if (b.gold) out.push(`+${Math.round(b.gold * 100)} % Gold`);
-  return out.join(', ');
+  return bonusRows(b).map((r) => r.text).join(', ');
 }
-void NAMES;
 
 /** Grundwerte eines Stücks aus Seltenheit, Stufe und Platz; das Set gibt dem Stück seinen Schwerpunkt */
 function bonusFor(set: GearSet, cat: GearCat): GearBonus {
@@ -368,15 +453,27 @@ export const GEAR_SET_BY_ID: Record<string, GearSet> = Object.fromEntries(SETS.m
  * Ausrüstung für Gegner und Stadtleute: das Set richtet sich nach der Stufe, Eliten tragen mehr Teile, Bosse das ganze Set.
  * Marine bevorzugt die Marinegarde. Liefert Stück-IDs für look.extra.
  */
+/** Welche Stücke eines Sets ein Gegner trägt: Bosse alle, Eliten vier bis sechs, Gewöhnliche null bis drei; Köpfe und Rümpfe zuerst (die fallen im Kampf am meisten auf) */
+function pickPieces(set: GearSet, kind: 'normal' | 'elite' | 'boss', rnd: () => number): string[] {
+  const cats = Object.keys(set.pieces) as GearCat[];
+  const want = kind === 'boss' ? cats.length : kind === 'elite' ? Math.min(cats.length, 4 + Math.floor(rnd() * 3)) : rnd() < 0.5 ? 0 : 1 + Math.floor(rnd() * 3);
+  const weight = (c: GearCat) => (c === 'chest' ? 3 : c === 'head' ? 2 : c === 'shoulder' ? 1 : 0);
+  const order = [...cats].sort((a, b) => weight(b) - weight(a) + (rnd() - 0.5) * 1.5);
+  return order.slice(0, want).map((c) => `${set.id}_${c}`);
+}
+
+/** Teile eines festen Sets (Uniformen der Weltmächte, data/factions.ts): Eliten tragen mehr, Bosse das ganze Set */
+export function gearFromSet(setId: string, kind: 'normal' | 'elite' | 'boss', rnd: () => number = Math.random): string[] {
+  const set = SETS.find((s) => s.id === setId);
+  if (!set) return [];
+  return pickPieces(set, kind, rnd);
+}
+
 export function gearForNpc(level: number, kind: 'normal' | 'elite' | 'boss', marine: boolean, rnd: () => number = Math.random): string[] {
-  const pool = SETS.filter((s) => s.level <= level + 6 && s.level >= level - 24 && (kind === 'boss' ? s.rarity !== 'gewoehnlich' : true));
+  const pool = SETS.filter((s) => !s.raid && s.level <= level + 6 && s.level >= level - 24 && (kind === 'boss' ? s.rarity !== 'gewoehnlich' : true));
   const sets = pool.length ? pool : SETS.slice(0, 2);
   const marineSet = SETS.find((s) => s.id === 'marine');
   let set = sets[Math.floor(rnd() * sets.length)];
   if (marine && marineSet && level >= marineSet.level - 6 && rnd() < 0.7) set = marineSet;
-  const cats = Object.keys(set.pieces) as GearCat[];
-  const want = kind === 'boss' ? cats.length : kind === 'elite' ? Math.min(cats.length, 4 + Math.floor(rnd() * 3)) : rnd() < 0.5 ? 0 : 1 + Math.floor(rnd() * 3);
-  // Köpfe und Rümpfe zuerst: die fallen im Kampf am meisten auf
-  const order = [...cats].sort((a, b) => (b === 'chest' ? 3 : b === 'head' ? 2 : b === 'shoulder' ? 1 : 0) - (a === 'chest' ? 3 : a === 'head' ? 2 : a === 'shoulder' ? 1 : 0) + (rnd() - 0.5) * 1.5);
-  return order.slice(0, want).map((c) => `${set.id}_${c}`);
+  return pickPieces(set, kind, rnd);
 }

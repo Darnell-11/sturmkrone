@@ -5,10 +5,23 @@
  * Alle Inselabstände, Regionen und Grenzen leiten sich daraus ab (siehe data/regions.ts).
  */
 export const WORLD_SCALE = 2;
-/** Radius der Meeresscheibe in Metern. Dahinter stürzt das Meer als Wasserfall in die Tiefe. */
-export const WORLD_RADIUS = 2000 * WORLD_SCALE;
+/** Radius der Kernwelt (die Scheibe bis 2.9.89): Bernsteinsee und die fünf Ringmeere. Darüber liegt das äußere Band mit den Endgame-Festungen. */
+export const WORLD_CORE_RADIUS = 2000 * WORLD_SCALE;
+/**
+ * Radius der Meeresscheibe in Metern (seit 2.9.90 mit äußerem Band: Grenzfestungen der Marine bei rund 3000 m,
+ * Endgame-Inseln der fünf Mächte bei 4850 m, das Marine-Hauptquartier bei 5080 m). Dahinter stürzt das Meer als Wasserfall in die Tiefe.
+ */
+export const WORLD_RADIUS = 2900 * WORLD_SCALE;
 /** Unsichtbare Wand: so nah dürfen Schiffe an die Kante */
 export const EDGE_WALL = WORLD_RADIUS - 70;
+
+/**
+ * Heimatplatz des eigenen Schiffs: Spielstart eines neuen Spiels, „Zurück in den Hafen“ und Heimschleppen nach einem Untergang.
+ * Er liegt im freien Wasser südwestlich vor dem Steg von Ankerglück (der Steg läuft bei x = 0 von der Küste bis etwa z = −5 hinaus),
+ * der Bug zeigt auf den Stegansatz. Früher stand das Schiff bei (0, 12) mitten auf dem Stegende: die Planken ragten durch den Rumpf,
+ * und die Stegkollision schob es beim ersten Fahren ruckartig zur Seite.
+ */
+export const HOME_SPAWN = { x: -42, z: -44, heading: 0.34 } as const;
 
 export interface WaveDef {
   /** Richtung in Grad (0 = +X) */

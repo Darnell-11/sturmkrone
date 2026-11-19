@@ -11,6 +11,7 @@ import {
   SphereGeometry,
 } from 'three';
 import { markShared } from '../render/dispose';
+import { clamp01 } from '../core/mathUtil';
 
 /**
  * Leuchtturm: zwei gegenüberliegende, umlaufende Lichtkegel (je ein weiter Außenkegel und ein schmaler heller Kern), Staub und Gischt im
@@ -217,7 +218,7 @@ export function lighthouseBeams(length = 140): Group {
     geo.rotateZ(-Math.PI / 2);
     geo.translate(length / 2, 0, 0);
     const uv = geo.getAttribute('uv'), pos = geo.getAttribute('position');
-    for (let i = 0; i < uv.count; i++) uv.setY(i, Math.min(1, Math.max(0, pos.getX(i) / length)));
+    for (let i = 0; i < uv.count; i++) uv.setY(i, clamp01(pos.getX(i) / length));
     return geo;
   };
   const outer = mkCone(R), core = mkCone(R * 0.36);

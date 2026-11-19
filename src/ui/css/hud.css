@@ -1,0 +1,511 @@
+/* ==========================================================================
+   HUD: ein Raster aus sieben Zonen statt vieler fester Pixelpositionen. Jede Anzeige gehört zu genau einer Zone und stapelt sich dort,
+   darum überlappen sich Tafeln, Meldungen und Knöpfe nie. Alle Maße in em: die Einstellung „HUD-Größe“ (--hud-scale) skaliert alles.
+   ========================================================================== */
+
+.hud {
+  position: fixed; inset: 0;
+  z-index: var(--z-hud);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 0.5em;
+  padding: max(10px, env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px)) max(10px, env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
+  font-size: calc(1rem * var(--hud-scale));
+  font-variant-numeric: tabular-nums lining-nums;
+  pointer-events: none !important;
+}
+.hud button { pointer-events: auto; }
+
+.hud-tl, .hud-tc, .hud-tr, .hud-ml, .hud-bl, .hud-bc, .hud-br { display: flex; flex-direction: column; gap: 0.5em; min-width: 0; pointer-events: none; }
+/* nur die Mittelzone darf schrumpfen (die Tafel der Belagerung scrollt dort); die anderen bestimmen die Höhe ihrer Reihe */
+.hud-ml { min-height: 0; }
+.hud-tl { grid-area: 1 / 1; align-items: flex-start; }
+/* die obere Mitte darf über die erste und zweite Reihe laufen: so zwingt ein langer Stapel (Kompass, Sektor, Boss) die Tafeln links und rechts nicht klein */
+.hud-tc { grid-area: 1 / 2 / 3 / 3; align-items: center; align-self: start; }
+.hud-tr { grid-area: 1 / 3; align-items: flex-end; }
+.hud-ml { grid-area: 2 / 1; align-items: flex-start; justify-content: center; }
+.hud-bl { grid-area: 3 / 1; align-items: flex-start; justify-content: flex-end; }
+.hud-bc { grid-area: 3 / 2; align-items: center; justify-content: flex-end; }
+.hud-br { grid-area: 3 / 3; align-items: flex-end; justify-content: flex-end; }
+
+/* Meldungen und Hinweise: eine eigene Spalte in der Mitte, nie über den Zonen */
+.hud-notice {
+  position: fixed; left: 50%; top: 31%; /* JS rückt sie unter den Stapel der oberen Mitte (Hud.placeNotice) */
+  transform: translateX(-50%);
+  /* zwischen den Tafeln links und rechts bleiben, nie darüber */
+  width: min(40em, max(14em, calc(100vw - 34em)));
+  display: flex; flex-direction: column; align-items: center; gap: 0.5em;
+  z-index: calc(var(--z-hud) + 1);
+  pointer-events: none !important;
+  font-size: calc(1rem * var(--hud-scale));
+}
+
+/* Schmale Hochformate und Handys: oben links und rechts, darunter die Mitte über die ganze Breite */
+@media (max-width: 720px) and (orientation: portrait) {
+  /* schmale Handys: die Tafeln links und der Auftrag rechts teilen sich nur 2 × halbe Breite; unter ~420 px schrumpft das HUD mit der Breite mit */
+  .hud, .hud-notice { font-size: calc(min(1rem, 3.8vw) * var(--hud-scale)); }
+  /* die Tafeln bleiben in ihrer Spalte (sonst ragt die Schiffstafel unter den Auftrag und die Minikarte) */
+  .hud .hud-cap, .hud .hud-ship, .hud .hud-quest { min-width: 0; max-width: 100%; }
+  .hud { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; }
+  .hud-tl { grid-area: 1 / 1; }
+  .hud-tr { grid-area: 1 / 2; }
+  .hud-tc { grid-area: 2 / 1 / 3 / 3; }
+  .hud-ml { grid-area: 3 / 1; }
+  .hud-bl { grid-area: 4 / 1; }
+  .hud-bc { grid-area: 4 / 1 / 5 / 3; }
+  html.touch .hud-bc { padding-bottom: 17em; }
+  /* Steuerkompass über den Touch-Knöpfen unten links, kleiner */
+  html.touch .hud-bl { padding-bottom: 5.2em; }
+  html.touch .hud-helm canvas { width: 6.2em; height: 6.2em; }
+  .hud-br { grid-area: 4 / 2; }
+  .hud-notice { top: 42%; width: min(92vw, 40em); }
+}
+
+/* ---------- Kapitänstafel ---------- */
+.hud-cap { min-width: 11.5em; max-width: min(16em, 52vw); }
+.cap-head { display: flex; flex-direction: column; margin-bottom: 0.4em; }
+.cap-name { font: 400 1.18em/1.1 var(--font-serif); letter-spacing: 0.02em; color: var(--brass-100); text-shadow: 0 1px 0 #000, 0 0 10px rgba(0, 0, 0, 0.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cap-sub { font: 600 0.72em var(--font-num); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cap-gauges { display: grid; gap: 0.28em; }
+.cap-gauges .gauge.hp { --c: var(--danger); height: 0.95em; }
+.cap-gauges .gauge.st { --c: #5fae6a; }
+.cap-gauges .gauge.fj { --c: var(--violet); }
+.cap-gauges .gauge.xp { --c: var(--brass-300); }
+.gauge .gv {
+  position: absolute; inset: 0; z-index: 2;
+  display: grid; place-items: center;
+  font: 700 0.66em/1 var(--font-num); font-style: normal; letter-spacing: 0.05em;
+  color: #fff; text-shadow: 0 1px 2px #000, 0 0 3px #000;
+  pointer-events: none;
+}
+.cap-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0.35em 0.8em; margin-top: 0.45em; font: 600 0.95em var(--font-num); }
+.cap-gold, .cap-prov { display: inline-flex; align-items: center; gap: 0.35em; }
+.coin { width: 0.95em; height: 0.95em; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff2c0, var(--brass-300) 50%, var(--brass-deep)); box-shadow: 0 0 0 1px #5b4012, 0 1px 2px rgba(0, 0, 0, 0.6); }
+.cap-prov { color: var(--ink-dim); }
+.cap-env { flex-basis: 100%; font: 600 0.74em var(--font-text); letter-spacing: 0.04em; color: var(--ink-dim); }
+.cap-weapons { display: flex; gap: 0.35em; margin-top: 0.4em; }
+.cap-weapons span {
+  padding: 0.1em 0.55em;
+  border: 1px solid var(--glass-edge-soft); border-radius: 3px;
+  font: 600 0.72em var(--font-text); letter-spacing: 0.03em;
+  color: var(--ink-faint);
+  transition: color var(--t-med), background var(--t-med);
+}
+.cap-weapons span.on { color: var(--ink-engrave); background: var(--brass-plate); border-color: var(--brass-600); text-shadow: 0 1px 0 rgba(255, 238, 190, 0.5); }
+.cap-fps { margin-top: 0.3em; font: 600 0.74em var(--font-num); color: var(--ink-faint); }
+/* Besatzungszeile: Offiziere und Truppen */
+.cap-crew { display: flex; flex-wrap: wrap; gap: 0.2em 0.9em; margin-top: 0.45em; padding-top: 0.4em; border-top: 1px solid var(--glass-edge-soft); font: 600 0.78em var(--font-num); color: var(--ink-dim); }
+.cap-crew b { color: var(--ink); font-weight: 700; }
+.cap-crew .full b { color: var(--ok); }
+
+/* ---------- Schiffstafel (nur auf See) ---------- */
+.hud-ship { min-width: 13.5em; max-width: min(17em, 56vw); position: relative; cursor: help; }
+.hud-ship .ship-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.6em; margin-bottom: 0.25em; }
+.hud-ship .ship-name { font: 400 1.05em var(--font-serif); color: var(--brass-100); }
+.hud-ship .ship-sail { font: 700 0.7em var(--font-num); letter-spacing: 0.08em; text-transform: uppercase; color: var(--sea); white-space: nowrap; }
+.hud-ship .gline { grid-template-columns: 3.4em 1fr 3.2em; margin: 0.3em 0; font-size: 0.78em; }
+.hud-ship .gauge { height: 0.7em; }
+.hud-ship .gline > b { min-width: 0; font-size: 1.1em; white-space: nowrap; }
+.hud-ship .gauge.hull { --c: #a86a35; }
+.hud-ship .gauge.sail { --c: #d9cfae; }
+.hud-ship .gauge.crew { --c: var(--sea); }
+.hud-ship .gauge.rep { --c: var(--brass-300); }
+.hud-ship .gauge.low > .fill { background: linear-gradient(180deg, #e8795f, #c4452f 50%, #7d261b); }
+.ship-crew { display: flex; flex-wrap: wrap; gap: 0.15em 0.9em; margin: 0.3em 0 0.1em; font: 600 0.74em var(--font-num); color: var(--ink-dim); }
+.ship-crew b { color: var(--ink); }
+.ship-fire { margin-top: 0.3em; padding: 0.1em 0.5em; border-radius: 3px; background: rgba(196, 69, 47, 0.3); border: 1px solid var(--danger); font: 800 0.74em var(--font-text); letter-spacing: 0.06em; text-transform: uppercase; color: #ffd0c0; animation: fire-pulse 0.9s ease-in-out infinite; }
+@keyframes fire-pulse { 50% { box-shadow: 0 0 10px rgba(232, 98, 74, 0.7); } }
+/* Geschützdeck: Nachladen beider Seiten und Munitionswahl */
+.ship-guns { margin-top: 0.45em; padding-top: 0.45em; border-top: 1px solid var(--glass-edge-soft); }
+.guns-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5em; }
+.gun { display: grid; gap: 0.2em; font: 700 0.66em var(--font-num); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); }
+.gun .gauge { --c: var(--brass-300); height: 0.5em; }
+.gun .gauge > .fill { transform-origin: left center; }
+.gun.r .gauge > .fill { transform-origin: right center; }
+.gun.ready { color: var(--ok); }
+.gun.ready .gauge { --c: var(--ok); }
+.ammo { display: flex; flex-wrap: wrap; gap: 0.25em; margin-top: 0.45em; }
+.ammo button {
+  display: inline-flex; align-items: center; gap: 0.3em;
+  padding: 0.12em 0.5em;
+  border: 1px solid var(--glass-edge-soft); border-radius: 3px;
+  background: rgba(0, 0, 0, 0.3);
+  font: 600 0.7em var(--font-text); color: var(--ink-dim);
+}
+.ammo button i { width: 0.7em; height: 0.7em; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6); }
+.ammo button.on { color: var(--ink-engrave); background: var(--brass-plate); border-color: var(--brass-600); }
+.hud-tip {
+  position: absolute; left: 0; top: 100%; z-index: 30;
+  width: min(20em, 80vw); margin-top: 0.4em; padding: 0.55em 0.7em;
+  border: 1px solid var(--glass-edge); border-radius: var(--r-sm);
+  background: var(--glass-strong);
+  color: var(--ink); font: 500 0.78em/1.4 var(--font-text); white-space: pre-line;
+  pointer-events: none;
+}
+
+/* ---------- Steuerkompass (Kurs und Wind) ---------- */
+.hud-helm { display: flex; flex-direction: column; align-items: center; gap: 0.3em; }
+.hud-helm canvas { width: 7.6em; height: 7.6em; filter: drop-shadow(0 4px 7px rgba(0, 0, 0, 0.6)); }
+.helm-sector {
+  display: inline-flex; align-items: center; gap: 0.45em; max-width: 12em;
+  padding: 0.12em 0.7em 0.14em 0.5em;
+  border: 1px solid var(--glass-edge); border-radius: 999px;
+  background: var(--glass-strong);
+  font: 700 0.68em var(--font-text); letter-spacing: 0.05em; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.helm-sector i { flex: none; width: 0.55em; height: 0.9em; background: var(--c, var(--brass-300)); clip-path: polygon(0 0, 100% 15%, 100% 85%, 0 100%); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5); }
+
+/* ---------- Obere Mitte: Kompassleiste, Sektor, Besatzung, Boss ---------- */
+.compass { width: min(26em, 44vw); aspect-ratio: 420 / 46; height: auto; pointer-events: none; filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.55)); }
+@media (max-width: 720px) { .compass { width: min(22em, 78vw); } }
+
+.hud-sector {
+  display: flex; align-items: center; gap: 0.7em;
+  max-width: min(30em, 94vw);
+  padding: 0.35em 1em 0.4em 0.8em;
+  border: 1px solid var(--glass-edge); border-radius: var(--r-sm);
+  background: linear-gradient(90deg, transparent, var(--glass-strong) 14%, var(--glass-strong) 86%, transparent);
+  text-align: left;
+  opacity: 0; transform: translateY(-0.6em);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.hud-sector.on { opacity: 1; transform: none; }
+.hud-sector .flag { flex: none; width: 1.3em; height: 2em; background: var(--c, var(--brass-300)); clip-path: polygon(0 0, 100% 12%, 82% 50%, 100% 88%, 0 100%); box-shadow: 0 0 10px color-mix(in srgb, var(--c, var(--brass-300)) 55%, transparent); }
+.hud-sector b { display: block; font: 400 1.15em/1.1 var(--font-serif); letter-spacing: 0.03em; color: var(--brass-100); }
+.hud-sector span { display: block; font: 600 0.74em var(--font-text); letter-spacing: 0.04em; color: var(--ink-dim); }
+.hud-sector .track { margin-top: 0.15em; font: 600 0.72em var(--font-text); font-style: italic; color: var(--sea); }
+.hud-sector .track:empty { display: none; }
+
+.hud-occ { max-width: min(30em, 94vw); padding: 0.45em 1.1em; text-align: center; font-size: 0.82em; line-height: 1.3; }
+.hud-occ .occ { display: grid; gap: 0.12em; }
+.hud-occ .occ b:first-child { font: 400 1.1em var(--font-serif); color: var(--brass-100); }
+.hud-occ .occ span b { color: var(--brass-100); font-family: var(--font-num); }
+.hud-occ .occ i { font-style: normal; font-size: 0.86em; color: var(--ink-dim); }
+.hud-occ.warn { border-color: var(--danger-hi); background: linear-gradient(180deg, rgba(80, 20, 14, 0.82), rgba(40, 10, 8, 0.86)); animation: occ-pulse 1s ease-in-out infinite; }
+.hud-occ.warn .occ b:first-child { color: #ffb7a4; }
+@keyframes occ-pulse { 50% { box-shadow: 0 0 18px rgba(255, 70, 40, 0.55); } }
+
+/* Endboss-Leiste */
+.hud-boss { width: min(36em, 92vw); text-align: center; }
+.boss-name { font: 400 1.5em/1.05 var(--font-serif); letter-spacing: 0.04em; color: var(--brass-50); text-shadow: 0 2px 0 #000, 0 0 16px rgba(0, 0, 0, 0.8); }
+.boss-title { margin: 0.1em 0 0.3em; font: 700 0.7em var(--font-text); letter-spacing: 0.22em; text-transform: uppercase; color: var(--danger-hi); text-shadow: 0 1px 0 #000; }
+.boss-bar { --c: var(--danger); position: relative; height: 1.1em; border-radius: 3px; background: linear-gradient(180deg, #060403, #150c07); border: 2px solid var(--brass-400); box-shadow: 0 0 0 1px #000, 0 4px 12px rgba(0, 0, 0, 0.6), inset 0 2px 5px rgba(0, 0, 0, 0.8); overflow: hidden; }
+.boss-bar > i { position: absolute; inset: 0; width: 100%; transform-origin: left center; will-change: transform; }
+.boss-bar .lag { background: var(--brass-100); opacity: 0.85; transition: transform 0.4s; }
+.boss-bar .fill { background: linear-gradient(180deg, #ef8a74, var(--c) 40%, #6e1f14); }
+.boss-bar::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 46%, rgba(0, 0, 0, 0.2)); }
+/* Phasenmarken: Anteile stehen als --at an der Marke; erreichte Phasen leuchten */
+.boss-bar s { position: absolute; top: 0; bottom: 0; left: calc(var(--at, 0.5) * 100%); width: 3px; margin-left: -1px; z-index: 2; background: repeating-linear-gradient(180deg, var(--brass-100) 0 3px, transparent 3px 5px); opacity: 0.8; }
+.boss-bar s.past { background: var(--danger-hi); box-shadow: 0 0 6px var(--danger-hi); }
+.hud-boss[data-phase='2'] .boss-bar { --c: #e0652a; }
+.hud-boss[data-phase='3'] .boss-bar { --c: #c93ad0; }
+.boss-foot { display: flex; align-items: center; justify-content: space-between; gap: 0.8em; margin-top: 0.3em; font: 700 0.7em var(--font-num); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); }
+.boss-phase { color: var(--brass-200); }
+/* Aggro: wer ist gerade das Ziel des Bosses */
+.boss-aggro { display: inline-flex; align-items: center; gap: 0.45em; padding: 0.1em 0.6em; border: 1px solid var(--glass-edge-soft); border-radius: 999px; background: rgba(0, 0, 0, 0.4); color: var(--ink); }
+.boss-aggro i { width: 0.7em; height: 0.7em; border-radius: 50%; background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.boss-aggro.me { border-color: var(--danger-hi); color: #ffd0c0; }
+.boss-aggro.me i { background: var(--danger-hi); box-shadow: 0 0 8px var(--danger-hi); animation: fire-pulse 0.8s ease-in-out infinite; }
+.boss-aggro em { font-style: normal; color: var(--ink-faint); }
+.boss-break { position: relative; height: 0.42em; width: 58%; margin: 0.35em auto 0; border: 1px solid #000; border-radius: 2px; background: rgba(0, 0, 0, 0.7); }
+.boss-break i { position: absolute; inset: 0; width: 100%; transform-origin: left center; background: linear-gradient(90deg, var(--brass-400), var(--brass-100)); transition: transform 0.12s; will-change: transform; }
+.boss-break b { display: none; position: absolute; left: 50%; top: 100%; transform: translate(-50%, 2px); font: 800 0.95em var(--font-text); letter-spacing: 0.14em; color: var(--brass-100); text-shadow: 0 1px 0 #000; }
+.hud-boss.broken .boss-break { animation: brk 0.3s linear infinite; }
+.hud-boss.broken .boss-break b { display: block; }
+@keyframes brk { 50% { box-shadow: 0 0 10px 2px var(--brass-100); } }
+
+/* ---------- Oben rechts: Knöpfe, Minikarte, Auftrag ---------- */
+.hud-btns { display: flex; gap: 0.5em; }
+.hud-mini {
+  position: relative; width: 8em; height: 8em; padding: 0;
+  border: 0; border-radius: 50%; background: none;
+  box-shadow: 0 0 0 2px #120a05, 0 0 0 4px var(--brass-400), 0 0 0 5px #3d2a10, 0 6px 14px rgba(0, 0, 0, 0.6);
+}
+.hud-mini canvas { display: block; width: 100%; height: 100%; border-radius: 50%; }
+.hud-mini::after { content: ''; position: absolute; inset: 0; border-radius: 50%; pointer-events: none; background: radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.2), transparent 42%); }
+.hud-quest { display: flex; align-items: center; gap: 0.6em; max-width: min(21em, 46vw); padding: 0.45em 0.8em 0.45em 0.6em; border-left: 3px solid var(--sea); }
+.hud-quest.main { border-left-color: var(--brass-200); }
+.hud-quest .q-arrow { flex: none; width: 1.9em; height: 1.9em; display: grid; place-items: center; color: var(--brass-200); font-size: 1.25em; text-shadow: 0 1px 0 #000; transition: transform 0.12s linear; }
+.hud-quest .q-body { display: grid; min-width: 0; }
+.hud-quest .q-title { font: 700 0.66em var(--font-text); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hud-quest .q-step { font: 700 0.86em/1.2 var(--font-text); color: var(--ink); }
+.hud-quest .q-bar { display: block; height: 0.3em; margin-top: 0.3em; border-radius: 2px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.hud-quest .q-bar s { display: block; height: 100%; background: var(--brass-300); transform-origin: left; transition: transform 0.3s; }
+.hud-quest .q-hint { margin-top: 0.15em; font: 500 0.62em var(--font-text); font-style: normal; color: var(--ink-faint); }
+@media (max-width: 520px), (max-height: 480px) {
+  .hud-mini { width: 6.2em; height: 6.2em; }
+  .hud-quest .q-step { font-size: 0.76em; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .hud-quest .q-hint, .cap-env, .cap-fps { display: none; }
+  .cap-weapons { display: none; }
+  .hud-cap { min-width: 0; max-width: 48vw; }
+  .icon-btn { width: 2.5em; height: 2.5em; }
+  .ammo { display: none; }
+}
+@media (max-height: 480px) { .hud-helm canvas { width: 5.4em; height: 5.4em; } .hud-ship .gline:nth-of-type(n+4) { display: none; } }
+/*
+ * Handy quer: die rechte Spalte (Knöpfe, Minikarte, Auftrag) darf nicht in die Touch-Knöpfe unten rechts ragen. Minikarte etwas kleiner,
+ * der Auftrag als schmaler Streifen ohne Titelzeile (Platz für F1 bis F3 bleibt frei).
+ */
+@media (max-height: 480px) {
+  html.touch .hud-mini { width: 5em; height: 5em; }
+  html.touch .hud-quest { max-width: min(14.5em, 40vw); padding: 0.3em 0.6em 0.3em 0.45em; gap: 0.4em; }
+  html.touch .hud-quest .q-title { display: none; }
+  html.touch .hud-quest .q-arrow { width: 1.4em; height: 1.4em; font-size: 1.05em; }
+  html.touch .hud-quest .q-step { -webkit-line-clamp: 2; }
+}
+
+/* ---------- Linke Mitte: Belagerungstafel ---------- */
+.hud-raid { width: min(19em, 44vw); max-height: 52vh; overflow: auto; padding: 0.55em 0.75em; font-size: 0.8em; line-height: 1.3; pointer-events: none; }
+.hud-raid h3 { margin: 0 0 0.1em; font: 400 1.18em var(--font-serif); color: var(--brass-100); }
+.hud-raid .rp-phase { margin: 0 0 0.45em; font: 700 0.8em var(--font-num); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); }
+.hud-raid ul, .hud-raid ol { margin: 0.3em 0; padding: 0; list-style: none; }
+.hud-raid .rp-obj li { display: flex; gap: 0.45em; align-items: baseline; padding: 0.08em 0; }
+.hud-raid .rp-obj li.done { color: var(--ok); text-decoration: line-through; text-decoration-thickness: 1px; }
+.hud-raid .rp-obj li b, .hud-raid .rp-dist li b { margin-left: auto; font-family: var(--font-num); color: var(--brass-200); }
+.hud-raid .rp-struct { display: grid; gap: 0.25em; margin: 0.45em 0; }
+.hud-raid .rp-row { display: grid; grid-template-columns: 1fr 5.4em; gap: 0.45em; align-items: center; }
+.hud-raid .rp-row .gauge { --c: #c9863a; height: 0.5em; }
+.hud-raid .rp-row.damaged .gauge { --c: var(--brass-300); }
+.hud-raid .rp-row.breached { opacity: 0.5; }
+.hud-raid .rp-row.breached span { text-decoration: line-through; }
+.hud-raid .rp-dist li { position: relative; display: flex; gap: 0.45em; padding: 0.08em 0 0.08em 1.1em; color: var(--ink-faint); }
+.hud-raid .rp-dist li::before { content: '◆'; position: absolute; left: 0; font-size: 0.7em; top: 0.35em; color: var(--iron-500); }
+.hud-raid .rp-dist li.aktiv { color: var(--ink); }
+.hud-raid .rp-dist li.aktiv::before { color: var(--danger-hi); }
+.hud-raid .rp-dist li.erobert { color: var(--ok); }
+.hud-raid .rp-dist li.erobert::before { color: var(--ok); }
+.hud-raid .rp-hint { margin: 0 0 0.45em; padding: 0.3em 0.5em; border-left: 2px solid var(--brass-300); background: rgba(215, 174, 82, 0.1); color: var(--brass-100); font-weight: 700; }
+.hud-raid .rp-boss { margin: 0.45em 0; padding: 0.4em 0.55em; border: 1px solid rgba(232, 98, 74, 0.45); border-radius: var(--r-sm); background: rgba(168, 50, 42, 0.22); }
+.hud-raid .rp-boss b { color: #ffb4a0; }
+.hud-raid .rp-threat { display: flex; flex-wrap: wrap; gap: 0.2em 0.6em; margin-top: 0.25em; font-size: 0.88em; color: #ffd9a0; }
+.hud-raid .rp-cap li { display: grid; grid-template-columns: 1fr auto; gap: 0 0.45em; align-items: center; padding: 0.08em 0; }
+.hud-raid .rp-cap li i { font-style: normal; font-size: 0.85em; color: var(--sea); }
+.hud-raid .rp-cap .gauge { grid-column: 1 / -1; --c: var(--danger); height: 0.35em; }
+
+/* ---------- Unten: Kontextplakette, Befehle, Schnellleisten ---------- */
+/* Kontextknopf: Messingplakette mit Gravur und Tastenkappe; Arten färben sie ein */
+.hud-ctx {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 0.7em;
+  max-width: min(94vw, 26em);
+  padding: 0.62em 1.3em 0.66em;
+  border: 1px solid var(--brass-600); border-radius: var(--r-sm);
+  background: var(--brass-plate);
+  color: var(--ink-engrave);
+  font: 800 1.02em/1.15 var(--font-text); letter-spacing: 0.03em; text-shadow: 0 1px 0 rgba(255, 238, 190, 0.55);
+  box-shadow: var(--bevel-brass);
+  animation: ctx-pulse 1.3s ease-in-out infinite;
+  overflow: hidden;
+}
+.hud-ctx::before, .hud-ctx::after { content: ''; flex: none; width: 0.38em; height: 0.38em; border-radius: 50%; background: radial-gradient(circle at 35% 30%, var(--brass-glint), var(--brass-deep)); box-shadow: 0 1px 1px rgba(0, 0, 0, 0.5); order: -1; }
+.hud-ctx::after { order: 9; }
+.hud-ctx kbd { margin: 0; background: linear-gradient(180deg, #3a2412, #1b0f08); border-color: #1b0f08; color: var(--brass-100); }
+.hud-ctx[data-kind='board'] { background: linear-gradient(180deg, #e98a72 0%, #c4452f 30%, #8d2a1b 56%, #b53c28 100%); border-color: #5a1a10; color: #fff3ec; text-shadow: 0 1px 0 rgba(60, 10, 4, 0.7); }
+.hud-ctx[data-kind='harbor'] { background: linear-gradient(180deg, #f6eac8, #e3cf9d 45%, #cdb680 100%); border-color: #7b5b25; }
+.hud-ctx[data-kind='dock'] { background: var(--brass-plate); }
+.hud-ctx[data-kind='low'] { padding: 0.35em 0.9em; font-size: 0.86em; opacity: 0.82; animation: none; }
+.hud-ctx[data-kind='board'] kbd { background: linear-gradient(180deg, #4a1a12, #2a0e09); border-color: #2a0e09; color: #ffd8cc; }
+@keyframes ctx-pulse { 50% { transform: scale(1.04); } }
+
+/* Befehlstafel der Truppen: [1] Sturmangriff · [2] Folgen · [3] Position halten */
+.hud-cmds { display: flex; align-items: stretch; gap: 0.3em; padding: 0.3em; }
+.hud-cmds .cmd {
+  display: flex; align-items: center; gap: 0.5em;
+  padding: 0.28em 0.8em 0.28em 0.38em;
+  border: 1px solid var(--glass-edge-soft); border-radius: var(--r-sm);
+  background: rgba(0, 0, 0, 0.35);
+  font: 700 0.86em var(--font-text); letter-spacing: 0.03em; color: var(--ink-dim);
+  transition: background var(--t-med), color var(--t-med), border-color var(--t-med);
+}
+.hud-cmds .cmd kbd { margin: 0; min-width: 1.7em; }
+.hud-cmds .cmd.on { color: var(--ink-engrave); background: var(--brass-plate); border-color: var(--brass-600); text-shadow: 0 1px 0 rgba(255, 238, 190, 0.5); box-shadow: var(--bevel-brass); }
+.hud-cmds .cmd.on kbd { background: linear-gradient(180deg, #3a2412, #1b0f08); }
+.hud-cmds .cmd-label { padding: 0 0.5em 0 0.3em; align-self: center; font: 700 0.62em var(--font-num); letter-spacing: 0.16em; text-transform: uppercase; color: var(--brass-300); }
+@media (max-width: 520px) { .hud-cmds .cmd { padding-right: 0.5em; } .hud-cmds .cmd-label { display: none; } }
+
+/* Fähigkeitsleiste (nur ohne Touch) */
+.skillbar { display: flex; gap: 0.5em; }
+.skillbar .sb {
+  position: relative; width: 4.2em; height: 4.2em; padding: 3px;
+  display: grid; place-items: center; text-align: center;
+  border: 1px solid var(--brass-500); border-radius: var(--r-sm);
+  background: conic-gradient(var(--c) calc(var(--p) * 360deg), rgba(0, 0, 0, 0.6) 0);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.5), 0 4px 10px rgba(0, 0, 0, 0.5);
+}
+.skillbar .sb span { display: grid; place-items: center; width: 100%; height: 100%; padding: 2px; border-radius: 2px; background: linear-gradient(180deg, var(--wood-face-hi), var(--wood-face-lo)); font: 800 0.62em/1.1 var(--font-text); letter-spacing: 0.02em; overflow: hidden; white-space: pre-line; color: var(--ink); }
+.skillbar .sb.ready span { background: linear-gradient(180deg, color-mix(in srgb, var(--c) 55%, var(--wood-face-hi)), color-mix(in srgb, var(--c) 28%, var(--wood-face-lo))); box-shadow: inset 0 0 12px color-mix(in srgb, var(--c) 60%, transparent); }
+.skillbar .sb kbd { position: absolute; top: -0.65em; left: -0.5em; z-index: 2; font-size: 0.7em; }
+.skillbar .sb.empty { opacity: 0.55; background: rgba(0, 0, 0, 0.3); border: 1px dashed var(--iron-500); box-shadow: none; }
+.skillbar .sb.empty span { background: none; color: var(--ink-faint); }
+.skillbar .sb.dim { opacity: 0.4; filter: grayscale(0.8); }
+.skillbar .sb.ready { animation: sb-ready 0.45s ease-out; }
+@keyframes sb-ready { 0% { filter: brightness(2.2); transform: scale(1.12); } 100% { filter: none; transform: none; } }
+
+/* Schnellleiste für Güter: Abklingzeit als Kreisausschnitt, laufende Stärkung als leuchtender Rand */
+.itembar { position: relative; display: flex; gap: 0.5em; padding: 0.5em 0.5em 0.4em; }
+.itembar .ib {
+  position: relative; width: 3.7em; height: 3.7em;
+  display: grid; place-items: center;
+  border: 2px solid color-mix(in srgb, var(--c) 65%, #000); border-radius: var(--r-sm);
+  background: linear-gradient(180deg, var(--wood-face-hi), var(--wood-face-lo));
+  transition: opacity var(--t-med), border-color var(--t-med);
+}
+.itembar .ib .ic { font-size: 1.5em; line-height: 1; filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.5)); }
+.itembar .ib kbd { position: absolute; top: -0.7em; left: -0.5em; z-index: 3; font-size: 0.7em; }
+.itembar .ib .cnt { position: absolute; right: 0.25em; bottom: 0.1em; z-index: 3; font: 700 0.78em var(--font-num); text-shadow: 0 1px 0 #000; }
+.itembar .ib::after { content: ''; position: absolute; inset: 0; border-radius: 2px; z-index: 2; pointer-events: none; background: conic-gradient(from 0deg, rgba(0, 0, 0, 0.68) calc(var(--p, 0) * 360deg), transparent 0); }
+.itembar .ib.ready { box-shadow: 0 0 10px color-mix(in srgb, var(--c) 55%, transparent); }
+.itembar .ib.empty { opacity: 0.4; border-style: dashed; }
+.itembar .ib.none { opacity: 0.45; filter: grayscale(0.8); }
+.itembar .ib.buff { border-color: #fff; box-shadow: 0 0 14px var(--c), inset 0 0 10px var(--c); }
+.itembar .ib.buff::before { content: ''; position: absolute; left: 3px; right: 3px; bottom: -0.55em; height: 0.28em; border-radius: 3px; background: var(--c); transform-origin: left; transform: scaleX(var(--a, 0)); }
+/* Befehlsmodus: solange Trupps im Einsatz sind, gehören die Tasten 1–3 den Befehlen; Güter liegen auf Platz 4 */
+.itembar.cmdmode { padding-top: 1.5em; }
+.itembar .ib.cmd { border-color: var(--brass-500); }
+.itembar .ib.cmd .ic, .itembar .ib.cmd .cnt { opacity: 0.25; filter: grayscale(1); }
+.itembar .ib.cmd .cmdname { position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; padding: 0.1em; font: 800 0.58em/1.05 var(--font-text); letter-spacing: 0.06em; text-transform: uppercase; text-align: center; color: var(--brass-100); text-shadow: 0 1px 2px #000; }
+.itembar .mode {
+  position: absolute; left: 0; top: 0; right: 0;
+  display: flex; align-items: center; justify-content: center; gap: 0.5em;
+  height: 1.4em; border-bottom: 1px solid var(--glass-edge-soft);
+  font: 800 0.64em var(--font-num); letter-spacing: 0.18em; text-transform: uppercase; color: var(--brass-200);
+}
+.itembar .mode i { width: 0.6em; height: 0.6em; border-radius: 50%; background: var(--danger-hi); box-shadow: 0 0 6px var(--danger-hi); animation: fire-pulse 1.1s ease-in-out infinite; }
+
+/* ---------- Meldung und Hinweis ---------- */
+.hud-toast {
+  max-width: min(92vw, 38em);
+  padding: 0.55em 1.3em 0.6em;
+  border: 1px solid var(--glass-edge); border-bottom: 2px solid var(--brass-400); border-radius: var(--r-sm);
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-1);
+  font: 700 1em/1.3 var(--font-text); text-align: center; letter-spacing: 0.01em;
+  opacity: 0; transform: translateY(0.4em);
+  transition: opacity 0.3s, transform 0.3s;
+}
+.hud-toast.on { opacity: 1; transform: none; }
+.hud-hint {
+  max-width: min(92vw, 36em);
+  padding: 0.3em 1em;
+  border-radius: var(--r-sm);
+  background: rgba(10, 6, 4, 0.55);
+  color: var(--ink); font: 600 0.92em/1.35 var(--font-text); text-align: center; text-shadow: 0 1px 3px #000;
+  transition: opacity 0.6s;
+}
+@media (max-width: 520px) { .hud-toast, .hud-hint { font-size: 0.84em; } }
+
+/* ---------- Kampf: Zahlen, Balken, Banner, Beute ---------- */
+.cbt { position: fixed; inset: 0; z-index: var(--z-world); overflow: hidden; pointer-events: none !important; font-variant-numeric: tabular-nums lining-nums; }
+.cbt * { pointer-events: none; }
+/* Schadenszahlen: kräftige, ruhige Ziffern mit dunklem Rand statt Comic-Schrägschrift */
+.cbt-num {
+  position: absolute; left: 0; top: 0;
+  font: 700 1.35rem/1 var(--font-num); letter-spacing: 0.02em; white-space: nowrap; color: #fff;
+  text-shadow: 0 1px 0 #000, 0 0 3px #000, 0 2px 6px rgba(0, 0, 0, 0.7);
+  will-change: transform;
+}
+.cbt-num.n-crit { color: var(--brass-100); font-size: 2rem; text-shadow: 0 1px 0 #000, 0 0 12px rgba(215, 174, 82, 0.8); }
+.cbt-num.n-hurt { color: #ff7d68; font-size: 1.5rem; }
+.cbt-num.n-heal { color: #9be08a; }
+.cbt-num.n-info { color: #f6e9c4; font-size: 1.2rem; letter-spacing: 0.06em; font-family: var(--font-text); font-weight: 800; }
+.cbt-num.n-gold { color: var(--brass-200); font-size: 1.1rem; }
+.cbt-num.n-xp { color: #9fe0f0; font-size: 1rem; }
+:root.cb .cbt-num.n-heal { color: #8fd0ff; }
+.cbt-speed {
+  position: absolute; inset: -20%; opacity: 0;
+  background: repeating-conic-gradient(from 0deg, rgba(255, 255, 255, 0) 0deg 3deg, rgba(255, 255, 255, 0.5) 3.4deg 4deg, rgba(255, 255, 255, 0) 4.4deg 9deg);
+  -webkit-mask-image: radial-gradient(circle, transparent 32%, #000 70%); mask-image: radial-gradient(circle, transparent 32%, #000 70%);
+}
+.cbt-speed.on { animation: speedl 0.35s ease-out; }
+@keyframes speedl { 0% { opacity: calc(0.9 * var(--s, 1)); transform: scale(1.15) rotate(0deg); } 100% { opacity: 0; transform: scale(1) rotate(4deg); } }
+.cbt-impact { position: absolute; inset: 0; background: #fff; mix-blend-mode: difference; opacity: 0; }
+.cbt-impact.on { animation: impactf 0.12s steps(2, end); }
+@keyframes impactf { 0% { opacity: 1; } 100% { opacity: 0; } }
+.cbt-vign { position: absolute; inset: 0; box-shadow: inset 0 0 120px 40px rgba(170, 24, 16, 0.6); opacity: 0; }
+.cbt-vign.on { animation: vign 0.4s ease-out; }
+@keyframes vign { 0% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .cbt-speed.on, .cbt-impact.on { animation: none; } }
+
+/* Kombo-Zähler */
+.cbt-combo { position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); top: calc(40% - 40px); text-align: right; color: #fff; text-shadow: 0 2px 0 #000; }
+.cbt-combo b { display: block; font: 700 3rem/0.9 var(--font-num); color: var(--brass-100); }
+.cbt-combo span { font: 700 0.95rem var(--font-text); letter-spacing: 0.14em; text-transform: uppercase; }
+.cbt-combo.pop b { animation: cpop 0.18s ease-out; }
+.cbt-combo[data-rank='1'] b { color: #f3b04a; }
+.cbt-combo[data-rank='2'] b { color: #ee7a52; font-size: 3.4rem; }
+.cbt-combo[data-rank='3'] b { color: #f19be0; font-size: 3.8rem; text-shadow: 0 0 14px rgba(241, 155, 224, 0.7), 0 2px 0 #000; }
+.cbt-combo u { display: block; height: 4px; width: 96px; margin: 4px 0 0 auto; border-radius: 2px; background: rgba(0, 0, 0, 0.55); overflow: hidden; }
+.cbt-combo u i { display: block; height: 100%; background: var(--brass-200); transform-origin: right center; will-change: transform; }
+.cbt-combo em.fin { display: none; font: 800 1.1rem var(--font-text); font-style: normal; letter-spacing: 0.18em; text-transform: uppercase; color: #fff; }
+.cbt-combo.fin-on em.fin { display: block; animation: finin 0.5s ease-out; }
+@keyframes finin { 0% { transform: translateX(40px) scale(1.6); opacity: 0; } 100% { transform: none; opacity: 1; } }
+@keyframes cpop { 0% { transform: scale(1.5); } 100% { transform: scale(1); } }
+
+/* Zielmarke und Gegnerbalken */
+.cbt-reticle { position: absolute; left: 0; top: 0; width: 46px; height: 46px; border-radius: 50%; border: 2px solid var(--brass-200); box-shadow: 0 0 0 2px #000, inset 0 0 0 2px #000, 0 0 12px rgba(215, 174, 82, 0.6); animation: ret 1s linear infinite; }
+@keyframes ret { 50% { width: 38px; height: 38px; } }
+.cbt-ebar { position: absolute; left: 0; top: 0; width: 64px; height: 7px; border: 1px solid #000; border-radius: 2px; background: rgba(8, 5, 3, 0.8); overflow: hidden; }
+.cbt-ebar.elite { width: 96px; height: 9px; border-color: var(--brass-300); }
+.cbt-ebar i { position: absolute; left: 0; top: 0; bottom: 0; width: 100%; transform-origin: left center; will-change: transform; }
+.cbt-ebar .lag { background: var(--brass-100); transition: transform 0.4s; }
+.cbt-ebar .fill { background: linear-gradient(180deg, #e8795f, var(--danger)); }
+.cbt-ebar.board::after { content: attr(data-label); position: absolute; left: 50%; bottom: 140%; transform: translateX(-50%); font: 800 0.85rem var(--font-text); letter-spacing: 0.12em; color: var(--brass-100); text-shadow: 0 1px 0 #000, 0 0 4px #000; white-space: nowrap; animation: ctx-pulse 1s ease-in-out infinite; }
+
+/* Banner, Cut-in, Sieg */
+.cbt-banner { position: absolute; left: 0; right: 0; top: 30%; padding: 0 16px; text-align: center; opacity: 0; }
+.cbt-banner h2 { margin: 0; font: 400 clamp(2.2rem, 10vw, 3.6rem)/1.05 var(--font-serif); letter-spacing: 0.04em; color: var(--brass-50); text-shadow: 0 3px 0 #000, 0 0 28px rgba(0, 0, 0, 0.7); }
+.cbt-banner p { max-width: 640px; margin: 0.3em auto 0; font: 700 1.05rem var(--font-text); letter-spacing: 0.04em; color: #e9dcc0; text-shadow: 0 2px 0 #000; }
+.cbt-banner.show { animation: bn 2.8s ease-out forwards; }
+@keyframes bn { 0% { opacity: 0; transform: translateY(12px) scale(1.2); } 10% { opacity: 1; transform: none; } 80% { opacity: 1; } 100% { opacity: 0; } }
+.cbt-cutin { position: absolute; left: -10%; right: -10%; top: 38%; height: 5.2rem; display: grid; place-items: center; transform: skewY(-4deg) scaleX(0); background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--cc) 78%, #000) 18%, color-mix(in srgb, var(--cc) 78%, #000) 82%, transparent); }
+.cbt-cutin::before, .cbt-cutin::after { content: ''; position: absolute; left: 12%; right: 12%; height: 2px; background: linear-gradient(90deg, transparent, var(--brass-200), transparent); }
+.cbt-cutin::before { top: 6px; } .cbt-cutin::after { bottom: 6px; }
+.cbt-cutin b { font: 400 clamp(1.8rem, 9vw, 3.2rem) var(--font-serif); letter-spacing: 0.06em; color: #fff; text-shadow: 0 3px 0 #000; }
+.cbt-cutin.show { animation: cut 1.1s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+@keyframes cut { 0% { transform: skewY(-4deg) scaleX(0); } 18% { transform: skewY(-4deg) scaleX(1); } 80% { transform: skewY(-4deg) scaleX(1); opacity: 1; } 100% { transform: skewY(-4deg) scaleX(1.1); opacity: 0; } }
+.cbt-victory { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; opacity: 0; pointer-events: none; }
+.cbt-victory.show { animation: vic 4.4s ease-out forwards; }
+.cbt-victory .rays { position: absolute; left: 50%; top: 42%; width: 220vmax; height: 220vmax; margin: -110vmax 0 0 -110vmax; background: repeating-conic-gradient(from 0deg, rgba(255, 214, 120, 0.3) 0deg 7deg, rgba(255, 214, 120, 0) 7deg 20deg); -webkit-mask-image: radial-gradient(circle, #000 0, transparent 38%); mask-image: radial-gradient(circle, #000 0, transparent 38%); animation: vicspin 14s linear infinite; mix-blend-mode: screen; }
+.cbt-victory .vbox { position: relative; padding: 0 16px; text-align: center; transform: translateY(-8%); }
+.cbt-victory small { display: block; letter-spacing: 0.6em; text-indent: 0.6em; font: 700 0.9rem var(--font-text); color: var(--brass-100); text-shadow: 0 2px 0 #000; }
+.cbt-victory h2 { margin: 0.1em 0 0; font: 400 clamp(2.4rem, 11vw, 4.6rem)/1 var(--font-serif); color: var(--brass-50); text-shadow: 0 4px 0 #6c4b14, 0 0 36px rgba(255, 190, 70, 0.8); }
+.cbt-victory p { margin: 0.2em 0 0.6em; font: 700 1.2rem var(--font-text); color: #fff; text-shadow: 0 2px 0 #000; }
+.cbt-victory .vstats { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.cbt-victory .vstats span { padding: 4px 14px; border: 1px solid var(--brass-300); border-radius: var(--r-sm); background: var(--glass-strong); font: 700 1rem var(--font-num); color: var(--brass-50); }
+.cbt-victory.show .vbox { animation: vicpop 0.7s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+@keyframes vic { 0% { opacity: 0; } 8% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes vicspin { to { transform: rotate(360deg); } }
+@keyframes vicpop { 0% { transform: translateY(-8%) scale(0.4); opacity: 0; } 100% { transform: translateY(-8%) scale(1); opacity: 1; } }
+
+/* Beutekarte: Pergamentstreifen mit Seltenheitsfarbe */
+.cbt-loot {
+  position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); top: 36%;
+  min-width: 13em; padding: 0.65em 1.1em 0.65em 1.4em;
+  border: 1px solid color-mix(in srgb, var(--lc) 70%, #000); border-radius: var(--r-sm);
+  background: linear-gradient(90deg, rgba(12, 8, 5, 0.94), rgba(12, 8, 5, 0.72));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--lc) 60%, transparent), 0 6px 14px rgba(0, 0, 0, 0.5);
+  opacity: 0; pointer-events: none;
+}
+.cbt-loot i { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background: var(--lc); box-shadow: 0 0 10px var(--lc); }
+.cbt-loot b { display: block; font: 400 1.15rem var(--font-serif); letter-spacing: 0.03em; color: var(--lc); text-shadow: 0 0 10px color-mix(in srgb, var(--lc) 70%, transparent), 0 1px 0 #000; }
+.cbt-loot span { font: 600 0.88rem var(--font-text); color: #e7dcc6; }
+.cbt-loot[data-tier='2'] { box-shadow: 0 0 30px var(--lc), inset 0 0 18px rgba(255, 255, 255, 0.08); }
+.cbt-loot[data-tier='3'] { box-shadow: 0 0 44px var(--lc), inset 0 0 24px rgba(255, 255, 255, 0.14); }
+.cbt-loot[data-tier='3'] b { font-size: 1.4rem; }
+.cbt-loot.show { animation: lootcard 3.4s cubic-bezier(0.2, 1, 0.3, 1) forwards; }
+@keyframes lootcard { 0% { opacity: 0; transform: translateX(-60px) scale(0.9); } 10% { opacity: 1; transform: translateX(0) scale(1.05); } 16% { transform: scale(1); } 85% { opacity: 1; } 100% { opacity: 0; transform: translateX(-30px); } }
+
+/* Schwebende Gesprächs-Anzeigen über Personen */
+.npcm { position: fixed; inset: 0; z-index: var(--z-npc); pointer-events: none !important; }
+.npcm * { pointer-events: none !important; }
+.npcm-item { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; will-change: transform; }
+.npcm-mark { display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid var(--brass-600); border-radius: 50%; background: var(--brass-plate); color: var(--ink-engrave); font: 800 1.05rem var(--font-text); box-shadow: 0 0 12px rgba(215, 174, 82, 0.8), 0 2px 0 #4b360e; animation: npcbob 1.2s ease-in-out infinite; }
+.npcm-mark.ok { background: linear-gradient(180deg, #b9e0a6, #86b46d); border-color: #3e6a2c; box-shadow: 0 0 12px rgba(134, 180, 109, 0.8), 0 2px 0 #2c4d1f; }
+.npcm-prompt { display: flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--glass-edge); border-radius: var(--r-sm); background: var(--glass-strong); font: 700 0.82rem var(--font-text); color: var(--brass-100); white-space: nowrap; }
+.npcm-prompt small { margin-left: 2px; font-weight: 500; color: var(--ink-dim); }
+@keyframes npcbob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+
+@media (prefers-reduced-motion: reduce) { .hud-ctx { animation: none; } .hud-toast, .hud-hint, .hud-sector { transition: none; } }

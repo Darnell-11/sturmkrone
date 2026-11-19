@@ -2,8 +2,8 @@
 // Alle Maße in Metern. Teile werden aus wenigen Grundformen zusammengesetzt und je Material zu einem Netz verschmolzen
 // (ein Zeichenaufruf je Material).
 import {
-  BufferGeometry, Color, CylinderGeometry, DoubleSide, Euler, ExtrudeGeometry, Float32BufferAttribute, Group, LatheGeometry, Matrix4, Mesh, ConeGeometry,
-  Quaternion, Shape, SphereGeometry, TorusGeometry, TubeGeometry, CatmullRomCurve3, Vector2, Vector3, OctahedronGeometry, BoxGeometry,
+  BufferGeometry, Color, CylinderGeometry, DoubleSide, Euler, ExtrudeGeometry, Float32BufferAttribute, Group, Matrix4, Mesh, ConeGeometry,
+  Quaternion, Shape, SphereGeometry, TorusGeometry, TubeGeometry, CatmullRomCurve3, Vector3, OctahedronGeometry, BoxGeometry,
   type Material,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -91,11 +91,6 @@ export class Bag {
 export function dome(rx: number, ry: number, rz: number, th0 = 0, th1 = Math.PI / 2, ph0 = 0, ph1 = Math.PI * 2, seg = 20): BufferGeometry {
   const g = new SphereGeometry(1, seg, Math.max(6, Math.round(seg / 2)), ph0, ph1 - ph0, th0, th1 - th0);
   return put(g, { s: [rx, ry, rz] });
-}
-
-/** Drehkörper aus einem Profil [Radius, Höhe] von unten nach oben */
-export function lathe(profile: [number, number][], seg = 24, ph0 = 0, ph1 = Math.PI * 2): BufferGeometry {
-  return new LatheGeometry(profile.map(([r, y]) => new Vector2(r, y)), seg, ph0, ph1 - ph0);
 }
 
 /** Röhre entlang einer Kurve durch die Punkte */

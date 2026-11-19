@@ -3,15 +3,11 @@
 // baut animeHats.ts, Hüte ebenfalls. Das Aussehen einer Figur (CharacterLook) wird mit loadoutFromLook übersetzt.
 import type { GarmentCtx, GarmentKind, TopUnder } from '../entities/character/vroid';
 import type { CharacterLook, Hat } from './characterParts';
-import type { Rarity } from './trinkets';
+import type { Rarity } from './rarity';
 import { GEAR_CATALOG } from './gear';
 
 export const SOCKETS = ['head', 'chest', 'legs', 'feet', 'hands', 'mainHand', 'offHand'] as const;
 export type SocketId = (typeof SOCKETS)[number];
-
-export const SOCKET_LABEL: Record<SocketId, string> = {
-  head: 'Kopf', chest: 'Oberkörper', legs: 'Beine', feet: 'Füße', hands: 'Hände', mainHand: 'Haupthand', offHand: 'Nebenhand',
-};
 
 /** Woher ein Teil seine Farbe nimmt: ein Farbfeld der Figur oder eine feste Farbe (#RRGGBB) */
 export type TintSource = 'outfit' | 'accent' | 'pants' | 'shoes' | 'coat' | 'hat' | 'belt' | 'skin' | 'hair';
@@ -66,8 +62,6 @@ export type EquipPart =
 export type GearCat = 'head' | 'shoulder' | 'chest' | 'cloak' | 'hands' | 'legs' | 'feet' | 'mainhand' | 'offhand';
 export const GEAR_CATS: GearCat[] = ['head', 'shoulder', 'chest', 'cloak', 'hands', 'legs', 'feet', 'mainhand', 'offhand'];
 export const CAT_LABEL: Record<GearCat, string> = { head: 'Kopf', shoulder: 'Schultern', chest: 'Oberkörper', cloak: 'Umhang', hands: 'Hände', legs: 'Beine', feet: 'Füße', mainhand: 'Haupthand', offhand: 'Nebenhand' };
-/** Socket je Platz */
-export const CAT_SOCKET: Record<GearCat, SocketId> = { head: 'head', shoulder: 'chest', chest: 'chest', cloak: 'chest', hands: 'hands', legs: 'legs', feet: 'feet', mainhand: 'mainHand', offhand: 'offHand' };
 
 /** Werte eines Stücks (Anteile 0 … 1 außer hp) */
 export interface GearBonus { hp?: number; reduce?: number; crit?: number; atk?: number; faji?: number; gold?: number }

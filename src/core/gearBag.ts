@@ -2,8 +2,7 @@
 // Die Stücke selbst stehen in data/gear.ts, ihr Aussehen in data/equipment.ts.
 import { CAT_LABEL, EQUIP_BY_ID, GEAR_CATS, catOf, type EquipDef, type GearBonus, type GearCat } from '../data/equipment';
 import { GEAR_SET_BY_ID, SETS } from '../data/gear';
-import { RARITIES } from '../data/loot';
-import type { Rarity } from '../data/trinkets';
+import { rarityRank, type Rarity } from '../data/rarity';
 import type { GearState } from './save/types';
 
 export { CAT_LABEL };
@@ -88,7 +87,7 @@ export function clearOld(g: GearState, cat: GearCat): void {
 /** Beute-Stück zufällig würfeln: genau in der Seltenheit, nur Neues; Stufe nicht weit über dem Spieler */
 export function rollLootGear(rarity: Rarity, level: number, owned: readonly string[], rnd: () => number = Math.random): EquipDef | null {
   const reach = level + (rarity === 'legendaer' ? 22 : rarity === 'episch' ? 14 : 8);
-  const all = SETS.filter((s) => s.rarity === rarity).flatMap((s) => (Object.keys(s.pieces) as GearCat[]).map((c) => EQUIP_BY_ID[`${s.id}_${c}`]));
+  const all = SETS.filter((s) => s.rarity === rarity && !s.raid).flatMap((s) => (Object.keys(s.pieces) as GearCat[]).map((c) => EQUIP_BY_ID[`${s.id}_${c}`]));
   const fresh = all.filter((d) => d && !owned.includes(d.id));
   const near = fresh.filter((d) => (d.level ?? 1) <= reach);
   const pool = near.length ? near : fresh;
@@ -107,7 +106,7 @@ export function grantLoot(g: GearState, d: EquipDef): boolean {
   g.loot!.push(d.id);
   const c = catOf(d);
   const cur = lootDef(g.outfit![c]);
-  const better = !cur || RARITIES.indexOf(d.rarity ?? 'gewoehnlich') > RARITIES.indexOf(cur.rarity ?? 'gewoehnlich');
+  const better = !cur || rarityRank(d.rarity) > rarityRank(cur.rarity);
   if (better) wearLoot(g, d.id);
   return true;
 }

@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { markShared } from './dispose';
 import { lampFx } from './lampMaterials';
 import { flickerOf } from './glow';
+import { clamp01 } from '../core/mathUtil';
 
 /**
  * Laternen an den Hüften aller Figuren (Kapitän, Bewohner, Crew, Gegner).
@@ -62,7 +63,7 @@ export const lampShared = {
   night: 0,
   /** Tag/Nacht setzen: Glas glüht ab der Dämmerung */
   set(night: number) {
-    this.night = Math.max(0, Math.min(1, (night - 0.12) / 0.55));
+    this.night = clamp01((night - 0.12) / 0.55);
     lampFx.uNight.value = this.night;
     mat.color.setScalar(0.3 + 0.7 * this.night);
   },

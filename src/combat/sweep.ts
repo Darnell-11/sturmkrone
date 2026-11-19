@@ -32,9 +32,10 @@ const TAN_SLOPE = Math.tan((SWEEP.maxSlopeDeg * Math.PI) / 180);
 
 /** Boden, auf dem gesweept wird (jede `Ground` der Welt erfüllt das) */
 export interface SweepGround {
-  height(x: number, z: number): number;
+  /** `y` = Höhenhinweis des Läufers (wo mehrere Flächen übereinanderliegen: Gangway über dem Steg) */
+  height(x: number, z: number, y?: number): number;
   /** Position außerhalb aller Hindernisse und innerhalb des begehbaren Gebiets (schiebt entlang der Kontakt-Normale heraus) */
-  constrain(x: number, z: number, radius?: number): { x: number; z: number };
+  constrain(x: number, z: number, radius?: number, y?: number): { x: number; z: number };
 }
 
 /** Körper, der bewegt wird: Lage am Boden und Kapselradius (die Kapsel ist senkrecht, im Grundriss ein Kreis) */
@@ -83,7 +84,7 @@ const _res = makeSweepResult();
 const _n = { x: 0, z: 0 };
 
 function groundAt(g: SweepGround, x: number, z: number, fallback: number): number {
-  const h = g.height(x, z);
+  const h = g.height(x, z, fallback);
   return Number.isFinite(h) ? h : fallback;
 }
 
@@ -124,7 +125,7 @@ export function sweepMove(body: SweepBody & { x: number; z: number }, dx: number
   out.groundY = h0;
   if (len < 1e-6) {
     // Stillstand: trotzdem aus Hindernissen und anderen Kämpfern herausschieben (Gegner schieben sich auseinander)
-    if (!impulse) { const c = g.constrain(body.x, body.z, body.radius); body.x = c.x; body.z = c.z; }
+    if (!impulse) { const c = g.constrain(body.x, body.z, body.radius, h0); body.x = c.x; body.z = c.z; }
     return out;
   }
   const dirX = dx / len, dirZ = dz / len;
@@ -155,7 +156,7 @@ export function sweepMove(body: SweepBody & { x: number; z: number }, dx: number
       if (climbCheck(g, h0, cx, cz, sx / tl, sz / tl, tl) !== 0) { out.blocked = true; break; }
     }
     // 2. Kapsel gegen die Hindernisse: herausschieben entlang der Kontakt-Normale
-    const c = g.constrain(cx, cz, body.radius);
+    const c = g.constrain(cx, cz, body.radius, h0);
     const px = c.x - cx, pz = c.z - cz;
     const pl = Math.hypot(px, pz);
     if (pl > 1e-4) {
@@ -176,7 +177,7 @@ export function sweepMove(body: SweepBody & { x: number; z: number }, dx: number
     h0 = nh;
   }
   // 3. Abschluss: wirklich frei? (Eckklemme: mehrere Hindernisse schieben gegeneinander)
-  const fin = g.constrain(body.x, body.z, body.radius);
+  const fin = g.constrain(body.x, body.z, body.radius, h0);
   if (Math.hypot(fin.x - body.x, fin.z - body.z) > 1e-3) { body.x = safeX; body.z = safeZ; out.blocked = impulse; out.hit = true; }
   else { body.x = fin.x; body.z = fin.z; }
   out.moved = Math.hypot(body.x - startX, body.z - startZ);

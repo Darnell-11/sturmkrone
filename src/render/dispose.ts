@@ -13,10 +13,6 @@ export function markShared<T extends object>(r: T): T {
   return r;
 }
 
-export function isShared(r: object) {
-  return shared.has(r);
-}
-
 /** Registrierungen (z. B. Kontur-Liste) melden sich hier, damit entfernte Objekte nicht festgehalten werden. */
 export function onForget(fn: (o: Object3D) => void) {
   forgetHooks.push(fn);

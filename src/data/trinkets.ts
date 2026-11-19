@@ -1,13 +1,6 @@
 // Talismane: Beute mit Seltenheit. Einer ist angelegt und gibt seinen Bonus.
 
-export type Rarity = 'gewoehnlich' | 'selten' | 'episch' | 'legendaer';
-
-export const RARITY: Record<Rarity, { n: string; col: string; mark: string }> = {
-  gewoehnlich: { n: 'Gewöhnlich', col: '#9A9A9A', mark: '●' },
-  selten: { n: 'Selten', col: '#3A8FE0', mark: '◆' },
-  episch: { n: 'Episch', col: '#A05AE0', mark: '★' },
-  legendaer: { n: 'Legendär', col: '#E8A82A', mark: '♛' },
-};
+import { RARITIES, type Rarity } from './rarity';
 
 export interface TrinketBonus { atk?: number; hp?: number; gold?: number; faji?: number; crit?: number; cannon?: number; speed?: number }
 
@@ -34,7 +27,7 @@ export const TRINKET_BY_ID: Record<string, TrinketDef> = Object.fromEntries(TRIN
 
 /** Zufälliger Talisman; min = geringste Seltenheit, luck verschiebt nach oben */
 export function rollTrinket(min: Rarity, luck = 0, owned: string[] = [], exact = false): TrinketDef | null {
-  const order: Rarity[] = ['gewoehnlich', 'selten', 'episch', 'legendaer'];
+  const order: readonly Rarity[] = RARITIES;
   let i = order.indexOf(min);
   const r = Math.random() + luck;
   // exact: Beute-Säulen stehen mit ihrer Farbe fest, der Inhalt darf nicht höher oder niedriger ausfallen

@@ -6,6 +6,7 @@ import { toon } from '../render/toon';
 import { deckUV, plankTexture } from '../render/textures';
 import { toonPbr } from '../render/pbrMaps';
 import { markWind, windify } from '../render/wind';
+import { clamp01 } from '../core/mathUtil';
 
 /** Farben und Pflanzen je Region */
 export interface StyleKit {
@@ -64,7 +65,7 @@ export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: n
         const rad = full * t;
         const x = cx + Math.cos(a) * rad, z = cz + Math.sin(a) * rad;
         // Wiesenrand: aEdge 0 … 1 auf den letzten edgeW Metern, die Fläche sinkt dort auf den Sand
-        const e = edgeW > 0 ? Math.max(0, Math.min(1, (rad - (full - edgeW)) / edgeW)) : 0;
+        const e = edgeW > 0 ? clamp01((rad - (full - edgeW)) / edgeW) : 0;
         const lo = lift * (1 - 0.85 * e * e);
         pos.push(x, H(x, z) + lo, z);
         off.push(lo);
@@ -103,11 +104,11 @@ export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: n
     let l = 0;
     if (capR) {
       const full = capR(Math.atan2(z, x)), rad = Math.hypot(x, z);
-      if (rad < full) { const e = Math.max(0, Math.min(1, (rad - (full - capEdge)) / capEdge)); l = 0.15 * (1 - 0.85 * e * e); }
+      if (rad < full) { const e = clamp01((rad - (full - capEdge)) / capEdge); l = 0.15 * (1 - 0.85 * e * e); }
     }
     hills.forEach((h, i) => {
       const rad = Math.hypot(x - h.x, z - h.z);
-      if (rad < h.r) { const e = Math.max(0, Math.min(1, (rad - (h.r - hillEdges[i])) / hillEdges[i])); l = Math.max(l, 0.19 * (1 - 0.85 * e * e)); }
+      if (rad < h.r) { const e = clamp01((rad - (h.r - hillEdges[i])) / hillEdges[i]); l = Math.max(l, 0.19 * (1 - 0.85 * e * e)); }
     });
     return l;
   };
@@ -167,14 +168,14 @@ export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: n
   return { beach, hills: meshes, liftAt, refresh };
 }
 
-const KIND_LABEL: Record<string, string> = { town: 'Hafenstadt', harbor: 'Hafen', camp: 'Lager', ruin: 'Ruine', quiet: '', treasure: 'Schatzinsel', lighthouse: 'Leuchtturm', boss: 'Boss' };
+const KIND_LABEL: Record<string, string> = { town: 'Hafenstadt', harbor: 'Hafen', camp: 'Lager', ruin: 'Ruine', quiet: '', treasure: 'Schatzinsel', lighthouse: 'Leuchtturm', boss: 'Boss', marinefort: 'Marine-Festung', citadel: 'Festungsinsel' };
 
 /** Schwebendes Namensschild über einer Insel (wie in 1.0): Name, Art und Stufe */
-export function islandLabel(name: string, kind: string, level?: number, kindLabel?: string): Sprite {
+export function islandLabel(name: string, kind: string, level?: number, kindLabel?: string, owner?: string): Sprite {
   const c = document.createElement('canvas');
   c.width = 512; c.height = 128;
   const g = c.getContext('2d')!;
-  const sub = [kindLabel ?? KIND_LABEL[kind] ?? '', level ? `Stufe ${level}` : ''].filter(Boolean).join(' · ');
+  const sub = [kindLabel ?? KIND_LABEL[kind] ?? '', owner ?? '', level ? `Stufe ${level}` : ''].filter(Boolean).join(' · ');
   g.textAlign = 'center';
   g.lineJoin = 'round';
   // lange Namen („Festung Nordwacht“) wurden am Rand abgeschnitten: Schrift so weit verkleinern, dass sie passt
@@ -189,7 +190,7 @@ export function islandLabel(name: string, kind: string, level?: number, kindLabe
     g.font = '700 32px "Alegreya Sans", sans-serif';
     g.lineWidth = 7;
     g.strokeText(sub, 256, 108);
-    g.fillStyle = kind === 'camp' || kind === 'boss' || kind === 'ruin' ? '#FFB49A' : '#CFEFFF';
+    g.fillStyle = kind === 'camp' || kind === 'boss' || kind === 'ruin' || kind === 'citadel' ? '#FFB49A' : '#CFEFFF';
     g.fillText(sub, 256, 108);
   }
   const t = new CanvasTexture(c);
@@ -469,8 +470,8 @@ export function rockFormation(type: RockType, kit: StyleKit, rnd: () => number, 
   return { g, blocks };
 }
 
-/** Länge der Hafenstege der Außenposten: beginnt 5 m an Land, reicht gut 20 m übers Wasser */
-export const OUTPOST_PIER = { from: -5, to: 27 };
+/** Länge der Hafenstege der Außenposten: beginnt 5 m an Land, reicht gut 50 m übers Wasser (2.9.90: vorher 27; so liegen auch große Schiffe weit genug draußen, um wieder abzulegen) */
+export const OUTPOST_PIER = { from: -5, to: 60 };
 
 /** Kleiner Außenposten-Hafen: Steg mit Laterne (r = Küstenradius in Stegrichtung) */
 export function outpost(r: number, facing: number, lanterns: Mesh[]): Group {

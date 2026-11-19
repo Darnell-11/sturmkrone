@@ -1,6 +1,5 @@
 import { PLAYER_BASE } from '../data/combat';
-import { ARMOR, WEAPONS } from '../data/regions';
-import { BAR_SLOTS, CONSUMABLE_BY_ID, GEAR_BY_ID, GEAR_SLOTS, HEAD_BY_ID, type ConsumableDef, type GearDef, type HeadDef } from '../data/items';
+import { ARMOR, BAR_SLOTS, CONSUMABLE_BY_ID, WEAPONS, GEAR_BY_ID, GEAR_SLOTS, HEAD_BY_ID, type ConsumableDef, type GearDef, type HeadDef } from '../data/items';
 import { TRINKET_BY_ID } from '../data/trinkets';
 import type { GearState } from './save/types';
 import { ensureLoot, lootBonus } from './gearBag';

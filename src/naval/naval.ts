@@ -22,7 +22,11 @@ import {
   type Scene,
 } from 'three';
 import type { CombatFx } from '../combat/fx';
-import { AMMO, DEFAULT_SHIP_LOOK, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, type AmmoId, type NavalRole } from '../data/ships';
+import { AMMO, DEFAULT_SHIP_LOOK, factionShipLook, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, type AmmoId, type NavalRole, type ShipLook } from '../data/ships';
+import { BORDER_FORTS, BORDERS, FACTIONS, borderDistance, marineStance, sectorAt, type FactionId } from '../data/factions';
+import { BATTLE, battleSite, compassWord, nextDelay, sideSize, type BattleSite } from './battleRules';
+import { cannotBeSunk } from './shipSim';
+import { REP, hasService, isHostile, isPeaceful, judgeBattle, newStats, type BattleStats } from '../data/reputation';
 import { WORLD_RADIUS } from '../data/world';
 import { Ship, type SeaEnv } from '../entities/ship/ship';
 import { cloneToon, toon } from '../render/toon';
@@ -31,7 +35,7 @@ import type { IslandGround } from '../world/islandGround';
 import type { ParticleSystem } from '../world/particles';
 import type { SmokeSystem } from '../world/smoke';
 import type { DebrisSystem } from '../world/debris';
-import { seaLevelAt } from '../data/regions';
+import { BERNSTEINSEE, regionAt, seaLevelAt } from '../data/regions';
 import { ElementFx } from '../faji/elementFx';
 import { ELEMENT_COLORS, type ActiveDef, type Element } from '../data/skills';
 import { markShared } from '../render/dispose';
@@ -39,6 +43,9 @@ import { keepIf } from '../core/arrays';
 
 const G = 9.8;
 const BALL_SPEED = 46;
+
+/** Ab dieser Entfernung zum Spieler (Meter) bekommen Schüsse und Treffer der KI untereinander nur den kleinen Rauchfleck */
+const FAR_FX = 240;
 
 export interface EnemyShip {
   ship: Ship;
@@ -62,7 +69,58 @@ export interface EnemyShip {
   training?: boolean;
   /** Durch Entern erobert (nicht versenkt) */
   captured?: boolean;
+  /** Weltmacht des Schiffs (data/factions.ts): bestimmt Rumpf, Segelmuster und Flagge; Marine-Schiffe können friedlich sein (siehe Ansehen) */
+  power?: FactionId;
+  /** Marine-Patrouillenboot einer Grenzfestung (BORDER_FORTS-ID): kreuzt auf der Grenzlinie */
+  station?: string;
+  /** Der Spieler hat auf dieses Marine-Schiff geschossen: es ist ab jetzt feindlich */
+  provoked?: boolean;
+  /** Wachschiff einer Raid-Instanz bzw. Schiff einer Rückeroberungs-Flotte: hält seine Station, wird nie entfernt */
+  raid?: 'guard' | 'recon';
+  /** Rückeroberungs-Flotte (Besatzung): Kennung der Insel, die sie zurückholen will */
+  reconId?: string;
+  home?: { x: number; z: number };
+  /** Kennung in der Raid-Sitzung (RaidGuardDef.guardId) */
+  guardId?: string;
+  /** Teilnehmer einer Seeschlacht an der Grenze (KI gegen KI): Nummer der Schlacht und Seite (0, 1; 2 = Marine-Patrouille, die eingreift) */
+  battle?: { id: number; side: 0 | 1 | 2 };
+  /** Marine-Schiff, das dem Spieler (Dienststatus) gegen feindliche Schiffe hilft */
+  helper?: boolean;
+  /** Kopfgeldjäger oder Fahnder einer Macht, hinter dem Spieler her */
+  hunter?: boolean;
+  /** Zeitpunkt des letzten Treffers durch den Spieler (Takt des Seesystems) */
+  lastPlayerHit?: number;
+  /** Schiff wurde für Enterphase und Nur-Entern-Regel eingerichtet (Ship.canDisable / noKill) */
+  armed?: boolean;
+  /** Der Abschuss (Enterphase oder Untergang) zählt schon in der Bilanz der Seeschlacht */
+  countedSunk?: boolean;
+  /** Zeit des letzten Hinweises „nur Entern“ */
+  noKillHint?: number;
+  /** Wird gerade vom Spieler geentert (setzt die Seewelt): Schüsse anderer Schiffe richten nichts an, eine Seeschlacht läuft weiter, bis der Enterkampf entschieden ist */
+  boarded?: boolean;
 }
+
+/** Eine laufende Seeschlacht zwischen zwei Mächten an einer Grenzlinie */
+export interface SeaBattle {
+  id: number;
+  site: BattleSite;
+  t: number;
+  stats: BattleStats;
+  marineDone: boolean;
+  smokeT: number;
+  announced: boolean;
+  /** Der Spieler hat mindestens einmal getroffen */
+  engaged: boolean;
+  /** Gegen welche Seite die Marine kämpft (bevorzugt die der Schwarzsegel) */
+  marineFoe: 0 | 1;
+  ended?: boolean;
+}
+
+/** Markierung einer laufenden Seeschlacht für Kompass und Weltkarte */
+export interface BattleMark { id: number; x: number; z: number; a: FactionId; b: FactionId; left: [number, number]; borderIndex: number }
+
+/** Ergebnis einer Seeschlacht an das Spiel (nur wenn der Spieler eingegriffen hat): Bilanz und Grund des Endes */
+export interface BattleResult { id: number; stats: BattleStats; reason: 'besiegt' | 'zeit' | 'verlassen'; sides: [FactionId, FactionId] }
 
 /** Verlauf für Faji-Wellen: hell in der Mitte, mit Schlieren in Laufrichtung */
 const WAVE_TEX = (() => {
@@ -82,7 +140,10 @@ const WAVE_TEX = (() => {
   return markShared(new CanvasTexture(c));
 })();
 
-interface Ball { mesh: Mesh; vel: Vector3; owner: Ship; dmg: number; ammo: AmmoId; life: number; trail: number }
+interface Ball { mesh: Mesh; vel: Vector3; /** null: Kugel einer Küstenbatterie */ owner: Ship | null; dmg: number; ammo: AmmoId; life: number; trail: number }
+
+/** Bauwerke, die Kugeln der eigenen Flotte treffen können (Seetor, Mauern, Batterien der Raid-Insel) */
+export interface BallTarget { hitBall(p: Vector3, dmg: number, ammo: AmmoId): boolean }
 interface Crate { mesh: Mesh; x: number; z: number; gold: number; shard: boolean; t: number }
 
 export interface NavalHooks {
@@ -91,6 +152,9 @@ export interface NavalHooks {
   message(t: string): void;
   sunk(e: EnemyShip): void;
   loot(gold: number, shard: boolean): void;
+  /** Seeschlacht beginnt in der Nähe (Meldung) bzw. endet (nur wenn der Spieler eingegriffen hat: Auswertung) */
+  battleStart?(m: BattleMark, where: string): void;
+  battleEnd?(r: BattleResult): void;
 }
 
 
@@ -101,6 +165,26 @@ export class NavalSystem {
   playerFaction: 'pirat' | 'marine' = 'pirat';
   playerLevel = 1;
   playerRank = 0;
+  /** Ansehen bei einer Weltmacht (setzt die Welt aus dem Spielstand); Marine: ab 20 verbündet, unter 0 feindlich */
+  standingOf: (id: FactionId) => number = () => 0;
+  /** Raid-Instanz aktiv: keine natürlichen Begegnungen, keine Grenzpatrouillen, Wachschiffe bleiben bestehen */
+  raidMode = false;
+  /** Anzahl Begleitschiffe im Raid (eigene plus Söldner); null = nach Rang wie sonst */
+  raidEscorts: number | null = null;
+  /** Laufende Seeschlachten an den Grenzlinien (höchstens eine zugleich) */
+  battles: SeaBattle[] = [];
+  /** Seeschlachten aus: für Prüfungen und Raids */
+  battlesOn = true;
+  /** Detailstufe der Grafikstufe (Teilchenfaktor: 0,35 Low, 0,6 Mid, ab 1 High): bestimmt Schiffe je Seite und Aufwand der Schlachteffekte */
+  detail = 1;
+  private battleId = 0;
+  private battleT = nextDelay(true);
+  private clock = 0;
+  /** Kopfgeld auf den Spieler je Macht (setzt das Spiel aus dem Spielstand): zieht Kopfgeldjäger an */
+  bountyOf: (id: FactionId) => number = () => 0;
+  private huntT = 90;
+  /** Bauwerke der Raid-Insel, die Kugeln der eigenen Flotte treffen */
+  raidTargets: BallTarget | null = null;
   /** Zusätzliches Ziel für Kanonenkugeln (Seeungeheuer) */
   extraTarget: { hitTest(p: Vector3): boolean; damage(n: number): void } | null = null;
   /** Kanonenschaden des Spielers */
@@ -299,6 +383,83 @@ export class NavalSystem {
     });
   }
 
+  /** Küstenbatterie feuert auf ein Schiff (mit Vorhalt, leichte Streuung); die Kugel gehört keinem Schiff */
+  fireBattery(from: Vector3, target: Ship, dmg: number) {
+    const T = Math.hypot(target.x - from.x, target.z - from.z) / BALL_SPEED;
+    const ex = target.x + Math.sin(target.heading) * target.speed * T, ez = target.z + Math.cos(target.heading) * target.speed * T;
+    const dir = new Vector3(ex - from.x, 0, ez - from.z);
+    const r = dir.length() * (0.95 + Math.random() * 0.1);
+    dir.normalize().applyAxisAngle(new Vector3(0, 1, 0), (Math.random() - 0.5) * 0.05);
+    const t = Math.max(0.2, r / BALL_SPEED);
+    const vel = dir.multiplyScalar(BALL_SPEED).setY(0.5 * G * t - (from.y - 0.6) / t);
+    audio.play('boom', 1, { x: from.x, z: from.z });
+    this.spawnBall(from.clone(), vel, null, dmg, 'kugel');
+  }
+
+  /**
+   * Wachschiff einer Raid-Instanz: stark gepanzert (Rumpf, Segel-HP und Mannschaft über den Klassenwerten), hält seine Station und
+   * greift ab 520 m an. `kind` skaliert mit der Gruppe: je weiterer Spieler 60 % mehr Rumpf.
+   */
+  spawnGuard(d: { guardId: string; tier: number; x: number; z: number; heading: number; hull: number; sail: number; crew: number; name: string }, look: ShipLook, level: number, power: FactionId, groupScale = 1): EnemyShip {
+    const cls = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, d.tier))];
+    const ship = new Ship(this.scene, d.tier, look, power === 'marine' ? 'marine' : 'pirat', Math.round(cls.hp * (d.hull * groupScale - 1 + level * 0.03)));
+    ship.sim.sail.max = Math.round(ship.sim.sail.max * d.sail * groupScale);
+    ship.sim.sail.hp = ship.sim.sail.max;
+    const m = ship.sim.crew.pools.matrosen;
+    if (m) { m.max = Math.round(m.max * d.crew); m.n = m.max; }
+    ship.x = d.x; ship.z = d.z; ship.heading = d.heading;
+    ship.prev = { x: d.x, z: d.z, heading: d.heading };
+    const e: EnemyShip = { ship, role: 'jaeger', level, state: 'patrol', wander: { x: d.x, z: d.z }, aiT: 0, name: d.name, power, raid: 'guard', home: { x: d.x, z: d.z }, guardId: d.guardId };
+    this.enemies.push(e);
+    return e;
+  }
+
+  /**
+   * Rückeroberungs-Flotte der ursprünglichen Macht (Besatzung einer Festungsinsel): `count` Kriegsschiffe laufen in Linie vor die Insel,
+   * halten dort Station und greifen alles in 520 m an. Die Schiffe bleiben bestehen, bis sie versenkt sind (`reconAlive`). Stärke je Schiff:
+   * Rumpf etwa ×1,5 und Mannschaft ×1,3 über der Klasse (Wachschiffe der Belagerung: ×2,1).
+   */
+  spawnReconFleet(o: { islandId: string; x: number; z: number; heading: number; homeX: number; homeZ: number; count: number; level: number; power: FactionId; look: ShipLook; name: string }): EnemyShip[] {
+    const out: EnemyShip[] = [];
+    const tiers = [4, 4, 5, 4, 6, 4];
+    // quer zur Fahrtrichtung in einer Linie, 70 m Abstand
+    const nx = Math.cos(o.heading), nz = -Math.sin(o.heading);
+    for (let i = 0; i < o.count; i++) {
+      const off = (i - (o.count - 1) / 2) * 70;
+      const tier = tiers[i % tiers.length];
+      const cls = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier))];
+      const ship = new Ship(this.scene, tier, { ...o.look }, o.power === 'marine' ? 'marine' : 'pirat', Math.round(cls.hp * (2.0 - 1 + o.level * 0.03)));
+      ship.sim.sail.max = Math.round(ship.sim.sail.max * 1.5);
+      ship.sim.sail.hp = ship.sim.sail.max;
+      const m = ship.sim.crew.pools.matrosen;
+      if (m) { m.max = Math.round(m.max * 1.3); m.n = m.max; }
+      ship.x = o.x + nx * off; ship.z = o.z + nz * off; ship.heading = o.heading;
+      ship.prev = { x: ship.x, z: ship.z, heading: o.heading };
+      const hx = o.homeX + nx * off, hz = o.homeZ + nz * off;
+      const e: EnemyShip = { ship, role: 'jaeger', level: o.level, state: 'patrol', wander: { x: hx, z: hz }, aiT: 0, name: `${o.name} ${i + 1}`, power: o.power, raid: 'recon', home: { x: hx, z: hz }, reconId: o.islandId };
+      this.enemies.push(e);
+      out.push(e);
+    }
+    return out;
+  }
+
+  /** Wie viele Schiffe der Rückeroberungs-Flotte einer Insel sind noch im Gefecht? */
+  reconAlive(islandId: string): number {
+    let n = 0;
+    for (const e of this.enemies) if (e.reconId === islandId && e.ship.alive && !e.captured) n++;
+    return n;
+  }
+
+  /** Rückeroberungs-Flotte einer Insel abziehen (die Besatzung endet oder die Flotte hat gesiegt) */
+  clearRecon(islandId: string) {
+    keepIf(this.enemies, (e) => {
+      if (e.reconId !== islandId) return true;
+      e.ship.dispose();
+      this.overlay.setBar(e, null, -1, false, null);
+      return false;
+    });
+  }
+
   /** Bugkanone nach vorn */
   bowShot(ship: Ship, dmg: number, ammo: AmmoId) {
     const f = new Vector3(Math.sin(ship.heading), 0, Math.cos(ship.heading));
@@ -307,7 +468,7 @@ export class NavalSystem {
     this.spawnBall(from, f.multiplyScalar(BALL_SPEED + ship.speed).setY(6), ship, dmg * 0.8, ammo);
   }
 
-  private spawnBall(pos: Vector3, vel: Vector3, owner: Ship, dmg: number, ammo: AmmoId) {
+  private spawnBall(pos: Vector3, vel: Vector3, owner: Ship | null, dmg: number, ammo: AmmoId) {
     const mat = ammo === 'brand' ? this.fireMat : toon({ color: AMMO[ammo].color, spec: 1 });
     const m = new Mesh(this.ballGeo, mat);
     m.position.copy(pos);
@@ -316,6 +477,12 @@ export class NavalSystem {
     // Mündungsfeuer
     const h = Math.hypot(vel.x, vel.z) || 1;
     const dx = vel.x / h, dz = vel.z / h;
+    // Schüsse fremder Schiffe weit weg vom Spieler (Seeschlacht am Horizont): nur eine kleine Pulverwolke, die Rauchsäule trägt das Bild
+    const pl = this.player;
+    if (owner !== pl && pl && Math.hypot(pos.x - pl.x, pos.z - pl.z) > FAR_FX) {
+      this.smoke?.puff(pos.x + dx * 1.2, pos.y, pos.z + dz * 1.2, { n: 1, size: 2.4, grow: 9, life: 5, tone: 0.84, vx: dx * 8, vy: 0.5, vz: dz * 8, spread: 1, rise: 0.3, drag: 1.4, alpha: 0.5, wind: 0.9, jitter: 0.8 });
+      return;
+    }
     this.sparks.emit(8, pos.x + dx * 0.6, pos.y, pos.z + dz * 0.6, { speed: 6, up: 1, life: 0.3, color: new Color(4, 1.9, 0.5), gravity: 0, spread: 0.3 });
     this.fx.hit(pos.clone().addScaledVector(new Vector3(dx, 0, dz), 0.8), 'punch', '#FFB45A', true);
     if (this.smoke) {
@@ -335,7 +502,7 @@ export class NavalSystem {
    * Heimatnahe Gewässer: vor allem Händler; weiter draußen mehr Patrouillen und Jäger.
    * Ab und zu fährt ein Händler mit Begleitschutz.
    */
-  private spawnEnemy(px: number, pz: number, forceRole?: NavalRole, near?: { x: number; z: number; heading: number }) {
+  private spawnEnemy(px: number, pz: number, forceRole?: NavalRole, near?: { x: number; z: number; heading: number }, forcePower?: FactionId, hunter = false) {
     // Stärke hängt am Meer, nicht an der eigenen Stufe: wer aufsteigt, wird in alten Gewässern
     // spürbar überlegen – und muss sich in neue Meere erst hineinkämpfen.
     const zone = this.zoneLevel(px, pz);
@@ -350,10 +517,16 @@ export class NavalSystem {
       const x = near ? near.x - Math.sin(near.heading) * 28 + (Math.random() - 0.5) * 20 : px + Math.cos(a) * d;
       const z = near ? near.z - Math.cos(near.heading) * 28 + (Math.random() - 0.5) * 20 : pz + Math.sin(a) * d;
       if (Math.hypot(x, z) > WORLD_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
-      const foe: 'pirat' | 'marine' = role === 'haendler' ? (Math.random() < 0.5 ? 'pirat' : 'marine') : this.playerFaction === 'pirat' ? 'marine' : 'pirat';
-      const tier = Math.max(0, Math.min(5, Math.floor(lvl / 2) + Math.floor(Math.random() * 2) - (role === 'haendler' ? 0 : 1)));
-      const look = DEFAULT_SHIP_LOOK(foe);
-      if (role === 'haendler') { look.hull = HULL_COLORS[Math.floor(Math.random() * 3)]; look.sail = SAIL_COLORS[Math.floor(Math.random() * 3)]; look.flag = 'anker'; look.flagColor = '#2F6E4F'; look.figurehead = 'keine'; }
+      let foe: 'pirat' | 'marine' = role === 'haendler' ? (Math.random() < 0.5 ? 'pirat' : 'marine') : this.playerFaction === 'pirat' ? 'marine' : 'pirat';
+      const tier = Math.max(0, Math.min(role === 'haendler' ? 3 : 5, Math.floor(lvl / 2) + Math.floor(Math.random() * 2) - (role === 'haendler' ? 0 : 1)));
+      // Die Macht des Meeres (Kuchenstück, Besitzer der nächsten Insel, Marine an den Grenzlinien) bestimmt, wessen Schiff hier fährt
+      // Sektor-Treue: in jedem Kuchenstück fahren hauptsächlich Kriegs- UND Handelsschiffe der Macht des Sektors (Farben, Segelmuster, Flagge,
+      // Galionsfigur aus data/factions.ts), die man schon von weitem erkennt; Handelsschiffe sind kleiner und flüchten
+      const power = forcePower ?? this.powerAt(x, z);
+      const useFaction = !!power;
+      const look = useFaction ? factionShipLook(power!) : DEFAULT_SHIP_LOOK(foe);
+      if (useFaction) foe = power === 'marine' ? 'marine' : power === 'kurogane' ? 'pirat' : foe;
+      if (role === 'haendler' && !useFaction) { look.hull = HULL_COLORS[Math.floor(Math.random() * 3)]; look.sail = SAIL_COLORS[Math.floor(Math.random() * 3)]; look.flag = 'anker'; look.flagColor = '#2F6E4F'; look.figurehead = 'keine'; }
       // erfahrene Crews halten mehr aus (sonst wären Schiffe in hohen Meeren aus Papier)
       const ship = new Ship(this.scene, tier, look, foe, Math.round(SHIP_CLASSES[tier].hp * 0.07 * (lvl - 1)));
       // Route: quer durch das Gebiet, am Spieler vorbei statt direkt auf ihn zu
@@ -363,18 +536,319 @@ export class NavalSystem {
       ship.prev = { x, z, heading: ship.heading };
       const far = 900;
       const wander = { x: x + Math.sin(heading) * far, z: z + Math.cos(heading) * far };
-      const e: EnemyShip = { ship, role, level: lvl, state: 'patrol', wander, aiT: 60 };
+      const e: EnemyShip = { ship, role, level: lvl, state: 'patrol', wander, aiT: 60, power: useFaction ? power! : undefined };
+      if (useFaction) e.name = hunter ? (power === 'marine' ? 'Marine-Fahndungsschiff' : `Kopfgeldjäger von ${FACTIONS[power!].name}`) : `${FACTIONS[power!].name}-${role === 'haendler' ? 'Handelsschiff' : 'Kriegsschiff'}`;
+      if (hunter) { e.hunter = true; e.provoked = true; e.state = 'engage'; }
       this.enemies.push(e);
       // Händler mit Begleitschutz
-      if (role === 'haendler' && !near && zone >= 2 && Math.random() < 0.35) this.spawnEnemy(px, pz, 'patrouille', { x, z, heading });
+      if (role === 'haendler' && !near && zone >= 2 && Math.random() < 0.35) this.spawnEnemy(px, pz, 'patrouille', { x, z, heading }, power ?? undefined);
       return e;
     }
     return null;
   }
 
+  /**
+   * Welche Macht fährt an diesem Punkt? Außerhalb der Bernsteinsee das Kuchenstück (data/factions.ts), an den Grenzlinien (±420 m) oft die
+   * Marine; in der Bernsteinsee der Besitzer der nächsten Insel (bis 800 m), sonst keine (die alten Schiffe). Händler tragen nur Niederlande.
+   */
+  private powerAt(x: number, z: number): FactionId | null {
+    if (regionAt(x, z) === BERNSTEINSEE) {
+      let best: FactionId | null = null, bd = 800;
+      for (const i of BERNSTEINSEE.islands) {
+        if (!i.factionId) continue;
+        const d = Math.hypot(i.x - x, i.z - z) - i.r;
+        if (d < bd) { bd = d; best = i.factionId; }
+      }
+      return best;
+    }
+    const bd = borderDistance(x, z);
+    if (bd.dist < 420 && Math.random() < 0.35) return 'marine';
+    const own = sectorAt(x, z).factionId;
+    // dicht an der Grenzlinie fährt manchmal ein Schiff der Nachbarmacht (Handel und Streifen über die Linie)
+    if (bd.dist < 700 && Math.random() < 0.16) { const [a, b] = BORDERS[bd.borderIndex].between; return own === a ? b : a; }
+    return own;
+  }
+
+  /** Marine-Schiffe greifen nur an, wenn das Ansehen unter 0 liegt oder man auf sie geschossen hat */
+  private peaceful(e: EnemyShip): boolean {
+    if (e.provoked || e.companion || e.raid || e.hunter || !e.power) return false;
+    if (e.power === 'marine') return marineStance(this.standingOf('marine')) !== 'feindlich';
+    // andere Mächte: friedliche Durchfahrt im Sektor ab gutem Ansehen (Ehre aus Seeschlachten)
+    return isPeaceful(this.standingOf(e.power));
+  }
+
+  /** Dienststatus bei der Marine: ihre Schiffe helfen im Kampf */
+  private marineService(): boolean { return hasService(this.standingOf('marine')); }
+
+  private patrolT = 0;
+  /**
+   * Marine-Patrouillenboote bei den fünf Grenzfestungen: je Festung zwei Boote, die auf der Grenzlinie kreuzen, solange der Spieler
+   * näher als 560 m ist (weiter weg werden Schiffe ohnehin entfernt). Sie fahren Marine-Weiß mit blauen Streifen.
+   */
+  private ensureBorderPatrols(dt: number) {
+    const p = this.player;
+    if (!p) return;
+    this.patrolT -= dt;
+    if (this.patrolT > 0) return;
+    this.patrolT = 3;
+    for (const f of BORDER_FORTS) {
+      const a = (BORDERS[f.borderIndex].deg * Math.PI) / 180;
+      const fx = Math.sin(a) * f.radius, fz = Math.cos(a) * f.radius;
+      if (Math.hypot(p.x - fx, p.z - fz) > 560) continue;
+      let have = this.enemies.reduce((n, e) => n + (e.station === f.id && e.ship.alive && !e.ship.sinking ? 1 : 0), 0);
+      for (let tries = 0; have < 2 && tries < 8; tries++) {
+        // auf der dem Spieler zugewandten Seite der Festung, 150 bis 300 m von ihr entfernt, mit etwas Versatz quer zur Linie
+        const toward = Math.sign((p.x - fx) * Math.sin(a) + (p.z - fz) * Math.cos(a)) || 1;
+        const t = f.radius + toward * (150 + Math.random() * 150 + have * 90), off = (Math.random() - 0.5) * 110;
+        const x = Math.sin(a) * t + Math.cos(a) * off, z = Math.cos(a) * t - Math.sin(a) * off;
+        if (this.ground.islandAt(x, z, 40) || Math.hypot(x, z) > WORLD_RADIUS - 150) continue;
+        const lvl = f.level, tier = Math.max(2, Math.min(4, Math.floor(lvl / 3)));
+        const ship = new Ship(this.scene, tier, factionShipLook('marine'), 'marine', Math.round(SHIP_CLASSES[tier].hp * 0.07 * (lvl - 1)));
+        ship.x = x; ship.z = z; ship.heading = a + (Math.random() < 0.5 ? 0 : Math.PI);
+        ship.prev = { x, z, heading: ship.heading };
+        this.enemies.push({ ship, role: 'patrouille', level: lvl, state: 'patrol', wander: { x, z }, aiT: 0, power: 'marine', station: f.id, name: 'Marine-Patrouillenboot' });
+        have++;
+      }
+    }
+  }
+
+  // ---------- Seeschlachten (KI gegen KI) ----------
+
+  /** Das Ziel eines Schiffs in einer Seeschlacht: das nächste Schiff der Gegenseite (die Marine: Schwarzsegel bzw. die gewählte Seite) */
+  private battleFoe(e: EnemyShip): Ship | null {
+    const me = e.battle!, s = e.ship;
+    const bt = this.battles.find((x) => x.id === me.id);
+    let best = 520, foe: Ship | null = null;
+    for (const o of this.enemies) {
+      const ob = o.battle;
+      if (o === e || !ob || ob.id !== me.id || !o.ship.alive || o.ship.sinking > 0 || o.boarded || o.ship.disabled) continue;
+      const d = Math.hypot(o.ship.x - s.x, o.ship.z - s.z);
+      let hostile: boolean;
+      if (me.side === 2) hostile = ob.side !== 2 && (o.power === 'kurogane' || (bt ? bt.marineFoe === ob.side : true));
+      else if (ob.side === 2) hostile = d < 240;                                // die Flotten wehren sich gegen die Marine in der Nähe
+      else hostile = ob.side !== me.side;
+      if (hostile && d < best) { best = d; foe = o.ship; }
+    }
+    return foe;
+  }
+
+  /** Ziel für ein Marine-Schiff mit Dienststatus: ein feindliches Schiff in der Nähe des Spielers (keine Marine, keine Händler, keine Schiffe einer Seeschlacht) */
+  private helperFoe(e: EnemyShip, p: Ship): Ship | null {
+    const s = e.ship;
+    let best = 420, foe: Ship | null = null;
+    for (const o of this.enemies) {
+      if (o === e || o.companion || o.battle || o.role === 'haendler' || o.power === 'marine' || !o.ship.alive || o.ship.sinking > 0 || o.ship.disabled) continue;
+      if (this.peaceful(o)) continue;
+      if (Math.hypot(o.ship.x - p.x, o.ship.z - p.z) > 380) continue;
+      const d = Math.hypot(o.ship.x - s.x, o.ship.z - s.z);
+      if (d < best) { best = d; foe = o.ship; }
+    }
+    return foe;
+  }
+
+  /** Treffer des Spielers auf ein Schiff einer Seeschlacht: Bilanz führen */
+  private noteBattleHit(s: Ship, dealt: number) {
+    const e = this.enemies.find((o) => o.ship === s);
+    if (!e?.battle || e.battle.side === 2 || dealt <= 0) return;
+    const bt = this.battles.find((x) => x.id === e.battle!.id);
+    if (!bt) return;
+    bt.stats.dmg[e.battle.side] += dealt;
+    if (!bt.engaged) { bt.engaged = true; this.hooks.message('Du greifst in die Seeschlacht ein – die Flotten werden sich merken, wen du beschießt.'); }
+  }
+
+  /** Neue Seeschlacht an der Grenzlinie: zwei Flotten zu 2 bis 3 Kriegsschiffen, 130 m auseinander, beiderseits der Linie */
+  private startBattle(site: BattleSite) {
+    const p = this.player!;
+    const zone = this.zoneLevel(site.x, site.z);
+    const lvl = Math.max(2, zone + Math.floor(Math.random() * 3) - 1);
+    const id = ++this.battleId;
+    const powers: [FactionId, FactionId] = [site.a, site.b];
+    // schwächere Geräte (Low, Mid): höchstens zwei Schiffe je Seite (sechs Schiffe samt Rauch kosten dort mehr als die halbe Bildzeit)
+    const cap = this.detail < 1 ? 2 : 3;
+    const sizes = [Math.min(cap, sideSize()), Math.min(cap, sideSize())];
+    // auf Low (Teilchenfaktor unter 0,5) fährt eine Seite nur mit einem Schiff: drei Schiffe statt vier
+    if (this.detail < 0.5) sizes[Math.random() < 0.5 ? 0 : 1] = 1;
+    const hulls: number[] = [0, 0], counts = [0, 0];
+    for (const side of [0, 1] as const) {
+      for (let i = 0; i < sizes[side]; i++) {
+        const spread = (i - (sizes[side] - 1) / 2) * 52 + (Math.random() - 0.5) * 16;
+        const dir = side === 0 ? -1 : 1;
+        const x = site.x + site.across.x * dir * BATTLE.split + site.along.x * spread, z = site.z + site.across.z * dir * BATTLE.split + site.along.z * spread;
+        if (Math.hypot(x, z) > WORLD_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
+        const power = powers[side];
+        const tier = Math.max(1, Math.min(4, Math.floor(lvl / 2) + Math.floor(Math.random() * 2)));
+        const foe: 'pirat' | 'marine' = power === 'kurogane' ? 'pirat' : 'marine';
+        const ship = new Ship(this.scene, tier, factionShipLook(power), foe, Math.round(SHIP_CLASSES[tier].hp * 0.07 * (lvl - 1)));
+        ship.x = x; ship.z = z;
+        // beide Flotten fahren erst aufeinander zu, dann in Breitseitenabstand umeinander
+        ship.heading = Math.atan2(-site.across.x * dir, -site.across.z * dir) + (Math.random() - 0.5) * 0.4;
+        ship.prev = { x, z, heading: ship.heading };
+        this.enemies.push({ ship, role: 'patrouille', level: lvl, state: 'engage', wander: { x, z }, aiT: 0, name: `${FACTIONS[power].name}-Kriegsschiff`, power, battle: { id, side } });
+        hulls[side] += ship.maxHull; counts[side]++;
+      }
+    }
+    if (!counts[0] || !counts[1]) {
+      // kein Platz für beide Seiten: wieder abbauen
+      keepIf(this.enemies, (e) => { if (e.battle?.id !== id) return true; e.ship.dispose(); return false; });
+      this.battleT = 8;
+      return;
+    }
+    const marineFoe: 0 | 1 = powers[0] === 'kurogane' ? 0 : powers[1] === 'kurogane' ? 1 : Math.random() < 0.5 ? 0 : 1;
+    const b: SeaBattle = { id, site, t: 0, stats: newStats(site.a, site.b, hulls[0] / counts[0], hulls[1] / counts[1]), marineDone: false, smokeT: 0, announced: false, engaged: false, marineFoe };
+    this.battles.push(b);
+    const m = this.battleMark(b);
+    if (m) this.hooks.battleStart?.(m, compassWord(p.x, p.z, m.x, m.z));
+  }
+
+  /** Marine-Patrouille greift ein: ein bis zwei Boote aus 380 m Entfernung, bevorzugt gegen die Schwarzsegel */
+  private marineStep(b: SeaBattle) {
+    const site = b.site, n = 1 + (this.detail >= 1 && Math.random() < 0.4 ? 1 : 0);
+    const dir = Math.random() < 0.5 ? -1 : 1;
+    for (let i = 0; i < n; i++) {
+      const x = site.x + site.across.x * dir * 380 + site.along.x * (i - 0.5) * 70, z = site.z + site.across.z * dir * 380 + site.along.z * (i - 0.5) * 70;
+      if (Math.hypot(x, z) > WORLD_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
+      const lvl = Math.max(2, this.zoneLevel(x, z));
+      const tier = Math.max(2, Math.min(4, Math.floor(lvl / 3) + 1));
+      const ship = new Ship(this.scene, tier, factionShipLook('marine'), 'marine', Math.round(SHIP_CLASSES[tier].hp * 0.07 * (lvl - 1)));
+      ship.x = x; ship.z = z; ship.heading = Math.atan2(site.x - x, site.z - z);
+      ship.prev = { x, z, heading: ship.heading };
+      this.enemies.push({ ship, role: 'patrouille', level: lvl, state: 'engage', wander: { x, z }, aiT: 0, name: 'Marine-Patrouillenboot', power: 'marine', battle: { id: b.id, side: 2 } });
+    }
+    this.hooks.message('Marine-Patrouillenboote greifen in die Seeschlacht ein!');
+  }
+
+  /** Markierung einer Schlacht: Schwerpunkt ihrer lebenden Schiffe und Zahl der Überlebenden je Seite; null, wenn keine mehr da ist */
+  private battleMark(b: SeaBattle): BattleMark | null {
+    let x = 0, z = 0, n = 0;
+    const left: [number, number] = [0, 0];
+    for (const e of this.enemies) {
+      if (e.battle?.id !== b.id || !e.ship.alive || e.ship.sinking > 0) continue;
+      x += e.ship.x; z += e.ship.z; n++;
+      if (e.battle.side !== 2 && !e.ship.disabled) left[e.battle.side]++;
+    }
+    return n ? { id: b.id, x: x / n, z: z / n, a: b.site.a, b: b.site.b, left, borderIndex: b.site.borderIndex } : null;
+  }
+
+  /** Alle laufenden Schlachten für Kompass und Weltkarte */
+  battleMarks(): BattleMark[] {
+    const out: BattleMark[] = [];
+    for (const b of this.battles) { const m = this.battleMark(b); if (m) out.push(m); }
+    return out;
+  }
+
+  private updateBattles(dt: number, active: boolean) {
+    this.clock += dt;
+    const p = this.player;
+    if (!p) return;
+    if (active && this.battlesOn && !this.raidMode && !this.battles.length) {
+      this.battleT -= dt;
+      if (this.battleT <= 0) {
+        const site = battleSite(p.x, p.z);
+        if (site) this.startBattle(site); else this.battleT = 6;
+      }
+    }
+    if (!this.battles.length) return;
+    for (const b of this.battles) {
+      b.t += dt;
+      const m = this.battleMark(b);
+      if (!b.marineDone && b.t >= BATTLE.marineAfter) { b.marineDone = true; if (Math.random() < BATTLE.marineChance) this.marineStep(b); }
+      // Rauchsäule über der Schlacht: von weitem sichtbar, dichter, je länger sie dauert
+      b.smokeT -= dt;
+      if (m && b.smokeT <= 0 && this.smoke && Math.hypot(m.x - p.x, m.z - p.z) < 3200) {
+        b.smokeT = this.detail < 1 ? 1.1 : 0.7;
+        this.smoke.puff(m.x + (Math.random() - 0.5) * 40, 10, m.z + (Math.random() - 0.5) * 40, { n: 1, size: 3.2, grow: 18, life: 12, tone: 0.2, vy: 8, spread: 3, rise: 2.4, drag: 0.5, alpha: 0.66, wind: 1.2, jitter: 12, glow: 0.35 });
+      }
+      let reason: BattleResult['reason'] | null = null;
+      if (!m) reason = 'verlassen';
+      else if (m.left[0] === 0 || m.left[1] === 0) reason = 'besiegt';
+      else if (b.t > BATTLE.duration) reason = 'zeit';
+      // mitten im Enterkampf bleibt die Schlacht bestehen: die Prise zählt erst, wenn sie erobert ist
+      if (reason && !this.enemies.some((o) => o.battle?.id === b.id && o.boarded)) this.finishBattle(b, reason);
+    }
+    keepIf(this.battles, (b) => !b.ended);
+  }
+
+  private finishBattle(b: SeaBattle, reason: BattleResult['reason']) {
+    b.ended = true;
+    // Überlebende lösen sich aus dem Gefecht und segeln weiter (ihre Macht bleibt dieselbe)
+    for (const e of this.enemies) {
+      if (e.battle?.id !== b.id) continue;
+      e.battle = undefined;
+      e.state = 'patrol';
+      const a = Math.random() * Math.PI * 2;
+      e.wander = { x: e.ship.x + Math.cos(a) * 700, z: e.ship.z + Math.sin(a) * 700 };
+      e.aiT = 30;
+    }
+    this.battleT = nextDelay(false);
+    if (b.engaged) this.hooks.battleEnd?.({ id: b.id, stats: b.stats, reason, sides: [b.site.a, b.site.b] });
+  }
+
+  /** Nach einem Doppelspiel: die Jäger kommen bald */
+  callHunters() { this.huntT = Math.min(this.huntT, 14); }
+
+  /** Eine Schlacht ohne Wartezeit beginnen (Prüfungen, Weltwerkstatt); liefert false, wenn keine Grenze in der Nähe liegt */
+  forceBattle(): boolean {
+    const p = this.player;
+    if (!p || this.battles.length) return false;
+    const site = battleSite(p.x, p.z);
+    if (!site) return false;
+    this.startBattle(site);
+    return this.battles.length > 0;
+  }
+
+  /**
+   * Kopfgeldjäger und Fahnder: wer bei einer Macht Kopfgeld hat, den jagen ihre Schiffe (höchstens zwei zugleich, im Abstand von
+   * etwa 70 bis 120 Sekunden; je höher das Kopfgeld, desto wahrscheinlicher).
+   */
+  private updateHunters(dt: number) {
+    const p = this.player;
+    if (!p) return;
+    this.huntT -= dt;
+    if (this.huntT > 0) return;
+    this.huntT = 70 + Math.random() * 50;
+    if (this.enemies.filter((e) => e.hunter && e.ship.alive).length >= 2) return;
+    let pick: FactionId | null = null, w = 0;
+    for (const f of Object.keys(FACTIONS) as FactionId[]) {
+      const b = this.bountyOf(f);
+      if (b <= 0) continue;
+      w += b;
+      if (Math.random() * w < b) pick = f;
+    }
+    if (!pick || Math.random() > Math.min(0.9, w / 1100)) return;
+    const e = this.spawnEnemy(p.x, p.z, 'jaeger', undefined, pick, true);
+    if (e) this.hooks.message(`${e.name ?? 'Ein Jäger'} hat deine Spur aufgenommen!`);
+  }
+
+  /** Gegner bekommen die Enterphase; Legenden (auch Marine-Legenden) und die zwei größten Klassen sind nur durch Entern zu besiegen */
+  private arm(e: EnemyShip) {
+    e.armed = true;
+    const s = e.ship;
+    if (e.companion || s === this.player) return;
+    s.canDisable = true;
+    s.noKill = cannotBeSunk({ tier: Math.max(0, SHIP_CLASSES.indexOf(s.cls)), legend: e.role === 'legende' || !!e.legendId });
+  }
+
+  /** Beginn der Enterphase (Wirkung auf die Welt: Knall, Trümmer, Meldung, Bilanz der Schlacht) */
+  private onDisabled(e: EnemyShip, byPlayer: boolean) {
+    const s = e.ship;
+    const p = new Vector3(s.x, s.model.deckY + 2, s.z);
+    audio.play('sink', 0.7, s);
+    this.fx.shockwave(new Vector3(s.x, 0.5, s.z), s.cls.L * 0.5, '#FF9A3A');
+    this.sparks.emit(60, s.x, s.model.deckY + 1, s.z, { speed: 9, up: 9, life: 1.3, color: new Color(3.5, 1.4, 0.35), gravity: 6, spread: s.cls.W });
+    this.debris?.splinters(p.x, p.y, p.z, 0, 1, 24, s.look.hull);
+    this.smoke?.puff(p.x, p.y, p.z, { n: 8, size: 3, grow: 14, life: 9, tone: 0.2, vy: 3, spread: 2.5, rise: 1.6, alpha: 0.8, glow: 0.9, jitter: s.cls.L * 0.25 });
+    this.hooks.shake(byPlayer ? 0.6 : 0.25);
+    if (!byPlayer) return;
+    const bt = e.battle && e.battle.side !== 2 ? this.battles.find((x) => x.id === e.battle!.id) : undefined;
+    if (bt && e.battle && !e.countedSunk) { e.countedSunk = true; bt.engaged = true; bt.stats.sunk[e.battle.side as 0 | 1]++; }
+    const name = e.name ?? 'Das Schiff';
+    this.overlay.showBanner('Kampfunfähig!', s.noKill ? 'Dieses Schiff geht durch Kanonen nie unter – entere es!' : 'Entere es oder gib ihm den Gnadenstoß');
+    this.hooks.message(s.noKill ? `${name} ist besiegt – nur Entern kann es noch erledigen (Kanonen und Kräfte richten nichts mehr aus).` : `${name} ist besiegt: entere es – oder ein weiterer Treffer versenkt es.`);
+  }
+
   /** Sichtweite, ab der ein Schiff angreift (vorher segelt es seine Route) – einmal im Gefecht, bleibt es länger dran */
   private sight(e: EnemyShip) {
-    const base = e.role === 'legende' ? 480 : e.role === 'jaeger' ? 300 : e.ghost ? 320 : 220;
+    const base = e.hunter ? 1100 : e.raid ? 520 : e.role === 'legende' ? 480 : e.role === 'jaeger' ? 300 : e.ghost ? 320 : 220;
     return e.state === 'engage' ? Math.max(base, 420) : base;
   }
 
@@ -431,7 +905,7 @@ export class NavalSystem {
 
   /** Begleitschiffe ab höheren Rängen */
   private ensureCompanions() {
-    const want = this.playerRank >= 8 ? 2 : this.playerRank >= 5 ? 1 : 0;
+    const want = this.raidEscorts ?? (this.playerRank >= 8 ? 2 : this.playerRank >= 5 ? 1 : 0);
     const have = this.enemies.filter((e) => e.companion && e.ship.alive).length;
     const p = this.player;
     if (!p || have >= want) return;
@@ -452,24 +926,31 @@ export class NavalSystem {
     this.trainCd -= dt;
     if (p && active) {
       // Begegnungen statt Dauerbeschuss: nach einem Gefecht kehrt erst Ruhe ein, neue Schiffe kommen vom Horizont
-      const fighting = this.enemies.some((e) => !e.companion && e.ship.alive && !e.ship.sinking && e.state === 'engage' && e.role !== 'haendler');
+      const fighting = this.enemies.some((e) => !e.companion && !e.battle && e.ship.alive && !e.ship.sinking && e.state === 'engage' && e.role !== 'haendler');
       if (!fighting) this.spawnT -= dt;
       else this.spawnT = Math.max(this.spawnT, 20 + Math.random() * 10);
       const zone = this.zoneLevel(p.x, p.z);
       // nur Schiffe in der Nähe zählen (vorbeigesegelte nicht), Händler halb
-      const present = this.enemies.reduce((n, e) => n + (!e.companion && e.ship.alive && !e.legendId && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) < 650 ? (e.role === 'haendler' ? 0.5 : 1) : 0), 0);
+      const present = this.enemies.reduce((n, e) => n + (!e.companion && !e.battle && !e.hunter && e.ship.alive && !e.legendId && !e.station && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) < 650 ? (e.role === 'haendler' ? 0.5 : 1) : 0), 0);
       const cap = zone <= 2 ? 2 : zone <= 6 ? 3 : 4;
-      if (this.spawnT <= 0 && present < cap) {
+      if (!this.raidMode && this.spawnT <= 0 && present < cap) {
         this.spawnT = (zone <= 2 ? 30 : 25) + Math.random() * 30;
         this.spawnEnemy(p.x, p.z);
       }
       this.ensureCompanions();
+      if (!this.raidMode) { this.ensureBorderPatrols(dt); this.updateHunters(dt); }
+    }
+    this.updateBattles(dt, !!p && active);
+    for (const e of this.enemies) {
+      if (!e.armed) this.arm(e);
+      // Wer lange ohne Spieler brennt (kein Kommandoschiff), geht nach 150 s weit weg vom Spieler von selbst unter
+      if (e.ship.disabled && !e.ship.noKill && !e.boarded && e.ship.disabledFor > 150 && e.ship.sinking <= 0 && (!p || Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > 350)) { e.ship.hull = 0; this.sink(e.ship); }
     }
     for (const e of this.enemies) this.ai(e, dt);
     for (const e of this.enemies) this.damageFx(e.ship, dt);
     if (p) this.damageFx(p, dt);
     // Weit entfernte entfernen, gesunkene aufräumen
-    const gone = (e: EnemyShip) => e.ship.sinking > 9 || (!!p && !e.companion && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > (e.state === 'engage' || e.legendId ? 1200 : 900));
+    const gone = (e: EnemyShip) => e.ship.sinking > 9 || (!!p && !e.companion && !e.raid && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > (e.battle ? 1900 : e.state === 'engage' || e.legendId ? 1200 : 900));
     keepIf(this.enemies, (e) => {
       if (!gone(e)) return true;
       e.ship.dispose();
@@ -508,6 +989,30 @@ export class NavalSystem {
     const fx = Math.sin(s.heading), fz = Math.cos(s.heading);
     const deck = s.model.group.position.y + s.model.deckY;
     const at = () => { const k = (Math.random() - 0.5) * s.cls.L * 0.6; return { x: s.x + fx * k, z: s.z + fz * k }; };
+    if (s.disabled && s.sinking <= 0) {
+      // Enterphase: das ganze Deck brennt – Flammenzungen an mehreren Stellen, dicker schwarzer Qualm, Funkenflug
+      for (let k = 0; k < 3; k++) {
+        if (Math.random() < dt * 14) {
+          const q = at();
+          sm.puff(q.x, deck + 0.4, q.z, { n: 1, size: 1.3, grow: 5, life: 1.3, tone: new Color(1.0, 0.5, 0.12), vy: 4, spread: 0.5, rise: 2.2, drag: 0.6, alpha: 0.9, glow: 2, wind: 0.6, jitter: s.cls.W * 0.28 });
+        }
+      }
+      if (Math.random() < dt * 12) {
+        const q = at();
+        sm.puff(q.x, deck + 1.2, q.z, { size: 2.2, grow: 16, life: 10, tone: 0.1, vy: 3, spread: 0.6, rise: 1.8, drag: 0.8, alpha: 0.85, glow: 0.4, wind: 1.1, jitter: s.cls.W * 0.3 });
+      }
+      if (Math.random() < dt * 24) {
+        const q = at();
+        this.sparks.emit(3, q.x, deck + 0.6, q.z, { speed: 1.2, up: 6, life: 1.1, color: new Color(3.4, 1.3, 0.3), gravity: -2.5, spread: s.cls.W * 0.35 });
+      }
+      if (s.crashed) {
+        s.crashed = false;
+        this.debris?.splinters(s.x, deck + 1, s.z, 0, 1, 20, s.look.hull);
+        this.spray.emit(40, s.x, 1, s.z, { speed: 6, up: 8, life: 1.6, color: new Color(0.95, 0.98, 1), spread: s.cls.W });
+        audio.play('crack', 0.9, s);
+      }
+      return;
+    }
     if (s.fire > 0 || s.sinking > 0) {
       if (Math.random() < dt * 9) {
         const q = at();
@@ -544,6 +1049,8 @@ export class NavalSystem {
     const s = e.ship;
     const p = this.player;
     if (!s.alive) return;
+    // Enterphase: das Schiff treibt brennend und wehrlos (keine Geschütze, kein Fahrtziel)
+    if (s.disabled) { e.state = 'patrol'; s.sailLevel = 0; s.throttle = 0; s.steer(dt, 0, this.env); return; }
     e.aiT -= dt;
     let turn = 0;
     const steerTo = (tx: number, tz: number) => {
@@ -551,12 +1058,25 @@ export class NavalSystem {
       const diff = ((want - s.heading + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
       return Math.max(-1, Math.min(1, -diff * 2));
     };
-    // Ziel: Begleiter kämpfen gegen Feinde, Feinde gegen den Spieler (und Begleiter)
+    // Ziel: Begleiter kämpfen gegen Feinde, Feinde gegen den Spieler (und Begleiter); Schiffe einer Seeschlacht gegeneinander
     let target: Ship | null = null;
-    if (e.companion) {
+    /** Schiff gegen Schiff (Seeschlacht, Marine-Hilfe): kämpft wie ein Begleiter gegen sein Ziel */
+    let duel = false;
+    if (e.battle) {
+      const foe = this.battleFoe(e);
+      const dp = p?.alive ? Math.hypot(p.x - s.x, p.z - s.z) : 9999;
+      // wer vom Spieler beschossen wurde (oder ihm feindlich gesinnt ist), wendet sich ihm zu, sobald er nah ist
+      if (p?.alive && dp < 220 && (e.provoked || (!!e.power && isHostile(this.standingOf(e.power))))) target = p;
+      else if (foe) { target = foe; duel = true; }
+    } else if (!e.companion && !e.raid && !e.hunter && e.power === 'marine' && p?.alive && this.marineService() && this.peaceful(e)) {
+      // Dienststatus: die Marine hilft im Kampf gegen Schiffe, die den Spieler bedrohen
+      const foe = this.helperFoe(e, p);
+      e.helper = !!foe;
+      if (foe) { target = foe; duel = true; }
+    } else if (e.companion) {
       let best = 260;
-      for (const o of this.enemies) if (!o.companion && o.ship.alive && o.role !== 'haendler') { const d = Math.hypot(o.ship.x - s.x, o.ship.z - s.z); if (d < best) { best = d; target = o.ship; } }
-    } else if (p?.alive && e.role !== 'haendler') target = p;
+      for (const o of this.enemies) if (!o.companion && o.ship.alive && !o.ship.disabled && o.role !== 'haendler') { const d = Math.hypot(o.ship.x - s.x, o.ship.z - s.z); if (d < best) { best = d; target = o.ship; } }
+    } else if (p?.alive && e.role !== 'haendler' && !this.peaceful(e)) target = p;
     const dist = target ? Math.hypot(target.x - s.x, target.z - s.z) : 9999;
 
     if (e.companion && !target && p) {
@@ -569,7 +1089,7 @@ export class NavalSystem {
       s.speedCap = 11 - Math.max(0, SHIP_CLASSES.indexOf(s.cls)) * 0.4;
       if (threatened && p) { turn = steerTo(s.x * 2 - p.x, s.z * 2 - p.z); s.sailLevel = 2; e.state = 'flee'; }
       else { if (e.aiT <= 0 || Math.hypot(e.wander.x - s.x, e.wander.z - s.z) < 30) { e.aiT = 20; e.wander = { x: s.x + (Math.random() - 0.5) * 600, z: s.z + (Math.random() - 0.5) * 600 }; } turn = steerTo(e.wander.x, e.wander.z); s.sailLevel = 1; }
-    } else if (target && !e.companion && dist < this.sight(e)) {
+    } else if (target && !e.companion && !duel && dist < this.sight(e)) {
       // Wie in 1.0: in Breitseitenabstand umkreisen, feuern, sobald eine Seite zeigt
       e.state = 'engage';
       const tier = Math.max(0, SHIP_CLASSES.indexOf(s.cls));
@@ -599,7 +1119,7 @@ export class NavalSystem {
           break;
         }
       }
-    } else if (target && e.companion && dist < 420) {
+    } else if (target && (e.companion || duel) && dist < 420) {
       e.state = s.hull < s.maxHull * 0.2 && e.role !== 'legende' && !e.companion ? 'flee' : 'engage';
       if (e.state === 'flee') { turn = steerTo(s.x * 2 - target.x, s.z * 2 - target.z); s.sailLevel = 2; }
       else {
@@ -627,8 +1147,19 @@ export class NavalSystem {
       if (!e.companion) s.speedCap = 10;
       if (e.aiT <= 0 || Math.hypot(e.wander.x - s.x, e.wander.z - s.z) < 40) {
         e.aiT = 25;
-        const a = Math.random() * Math.PI * 2;
-        e.wander = { x: s.x + Math.cos(a) * 400, z: s.z + Math.sin(a) * 400 };
+        const st = e.station ? BORDER_FORTS.find((f) => f.id === e.station) : null;
+        if (st) {
+          // Grenzstreife: auf der Grenzlinie hin und her, 200 bis 700 m beiderseits der Festung
+          const a = (BORDERS[st.borderIndex].deg * Math.PI) / 180, t = st.radius + (Math.random() < 0.5 ? -1 : 1) * (200 + Math.random() * 500), off = (Math.random() - 0.5) * 120;
+          e.wander = { x: Math.sin(a) * t + Math.cos(a) * off, z: Math.cos(a) * t - Math.sin(a) * off };
+        } else if (e.raid && e.home) {
+          // Wachschiff: kreuzt vor seiner Station
+          const a = Math.random() * Math.PI * 2;
+          e.wander = { x: e.home.x + Math.cos(a) * 120, z: e.home.z + Math.sin(a) * 120 };
+        } else {
+          const a = Math.random() * Math.PI * 2;
+          e.wander = { x: s.x + Math.cos(a) * 400, z: s.z + Math.sin(a) * 400 };
+        }
       }
       turn = steerTo(e.wander.x, e.wander.z);
       s.sailLevel = 1;
@@ -672,6 +1203,8 @@ export class NavalSystem {
         b.life = 0;
         break;
       }
+      // Raid: Kugeln der eigenen Flotte gegen Seetor, Mauern und Batterien
+      if (b.life > 0 && this.raidTargets && b.owner && (b.owner === this.player || this.enemies.some((e) => e.companion && e.ship === b.owner)) && this.raidTargets.hitBall(p, b.dmg, b.ammo)) b.life = 0;
       if (b.life > 0 && b.owner === this.player && this.extraTarget?.hitTest(p)) {
         b.life = 0;
         this.extraTarget.damage(b.dmg);
@@ -694,9 +1227,39 @@ export class NavalSystem {
   }
 
   private hitShip(s: Ship, b: Ball, local: Vector3, sailHit: boolean) {
+    // Schüsse auf ein Marine-Schiff: es wird feindlich, das Ansehen leidet beim Versenken (siehe Game.onShipSunk)
+    if (b.owner === this.player) {
+      const en = this.enemies.find((o) => o.ship === s);
+      if (en?.power === 'marine' && !en.provoked) { en.provoked = true; if (!en.companion) this.hooks.message('Du hast auf ein Schiff der Marine geschossen – sie wird dich jagen!'); }
+      // Wer auf das Schiff einer Macht schießt, hat sich ihr Wohlwollen verspielt: auch friedliche Schiffe greifen nun an
+      else if (en?.power && !en.provoked && !en.companion) en.provoked = true;
+      if (en) en.lastPlayerHit = this.clock;
+    }
     // Treffer im Tuch zählen als Segelzone: die Munition bleibt, was sie ist (Kettenkugeln zerfetzen am stärksten)
-    const dmg = s.damage(b.dmg, b.ammo, sailHit ? null : local, sailHit ? 'sail' : 'hull');
+    // Schiffe in einer Seeschlacht zerlegen sich nicht in Sekunden: Schüsse der KI untereinander wirken gedämpft, damit der Spieler Zeit zum Eingreifen hat
+    const target = b.owner !== this.player && s !== this.player ? this.enemies.find((o) => o.ship === s) : undefined;
+    const foeBattle = !!b.owner && !!target?.battle;
+    // wer gerade geentert wird, geht den anderen Schiffen nicht unter den Füßen des Spielers verloren
+    // Kampfunfähige Schiffe erledigt nur der Spieler (Gnadenstoß); Schüsse anderer Schiffe prallen auf Wrack und Flammen
+    if (target?.ship.disabled && b.owner !== this.player) {
+      this.smoke?.puff(b.mesh.position.x, b.mesh.position.y, b.mesh.position.z, { n: 1, size: 1.2, grow: 5, life: 2.4, tone: 0.3, spread: 0.8, rise: 1, alpha: 0.6 });
+      return;
+    }
+    const wasDisabled = s.disabled;
+    const dmg = s.damage(b.dmg * (target?.boarded ? 0 : foeBattle ? BATTLE.aiDamage : 1), b.ammo, sailHit ? null : local, sailHit ? 'sail' : 'hull');
+    const en2 = this.enemies.find((o) => o.ship === s);
+    if (en2 && !wasDisabled && s.disabled) this.onDisabled(en2, b.owner === this.player);
+    // Schiffe, die nie untergehen: weitere Treffer wirken nicht, der Hinweis kommt höchstens alle 8 s
+    else if (en2 && wasDisabled && s.noKill && s.disabledFor >= 2 && b.owner === this.player && this.clock - (en2.noKillHint ?? -99) > 8) { en2.noKillHint = this.clock; this.hooks.message('Dieses Schiff geht durch Kanonen nie unter – nur Entern besiegt es!'); }
+    if (b.owner === this.player) this.noteBattleHit(s, dmg);
     const p = b.mesh.position.clone();
+    // Treffer weit weg vom Spieler, an denen er nicht beteiligt ist: ein Rauchfleck genügt (kein Ton, keine Funken, keine Splitter)
+    const pl = this.player;
+    if (foeBattle && pl && Math.hypot(p.x - pl.x, p.z - pl.z) > FAR_FX) {
+      this.smoke?.puff(p.x, p.y, p.z, { n: 1, size: 1.4, grow: 5, life: 2.8, tone: 0.5, spread: 0.8, rise: 0.8, alpha: 0.6 });
+      if (!s.alive) this.sink(s);
+      return;
+    }
     audio.play('crack', 1, p);
     this.fx.hit(p, 'heavy', b.ammo === 'brand' ? '#FF7A2A' : '#FFD08A');
     this.sparks.emit(10, p.x, p.y, p.z, { speed: 6, up: 5, life: 0.9, color: new Color(0.55, 0.36, 0.2), gravity: 14, spread: 0.3 });
@@ -704,7 +1267,8 @@ export class NavalSystem {
     const h = Math.hypot(b.vel.x, b.vel.z) || 1;
     this.debris?.splinters(p.x, p.y, p.z, b.vel.x / h, b.vel.z / h, sailHit ? 2 : 9, sailHit ? s.look.sail : s.look.hull);
     this.smoke?.puff(p.x, p.y, p.z, { n: 2, size: 0.9, grow: 4.5, life: 2.6, tone: b.ammo === 'brand' ? 0.25 : 0.55, vx: b.vel.x / h * 2, vz: b.vel.z / h * 2, spread: 0.8, rise: 0.8, alpha: 0.7, glow: b.ammo === 'brand' ? 0.8 : 0.3 });
-    if (dmg > 0) this.overlay.number(p.clone().setY(p.y + 1.5), dmg, s === this.player ? 'hurt' : 'hit');
+    // die Zahlen der KI-Schlacht würden nur den Bildschirm füllen: sie zeigen nur, was der Spieler austeilt oder einsteckt
+    if (dmg > 0 && !foeBattle) this.overlay.number(p.clone().setY(p.y + 1.5), dmg, s === this.player ? 'hurt' : 'hit');
     if (s === this.player) { this.hooks.shake(0.45); this.overlay.hurt(); }
     else if (b.owner === this.player) this.hooks.hitstop(0.03);
     if (!s.alive) this.sink(s);
@@ -723,10 +1287,18 @@ export class NavalSystem {
     this.spray.emit(60, s.x, 1, s.z, { speed: 6, up: 10, life: 2, color: new Color(0.95, 0.98, 1), spread: s.cls.W });
     this.sparks.emit(50, s.x, s.model.deckY + 1, s.z, { speed: 9, up: 9, life: 1.2, color: new Color(3.5, 1.4, 0.35), gravity: 6, spread: s.cls.W });
     if (e && !e.companion) {
-      this.hooks.sunk(e);
+      // Seeschlacht: versenkt der Spieler beide Seiten, gibt es maximalen Doppel-Loot (×2,5); was die KI versenkt, zählt nicht als Abschuss des Spielers
+      const byPlayer = e.lastPlayerHit !== undefined && this.clock - e.lastPlayerHit < 10;
+      let lootK = 1;
+      const bt = e.battle ? this.battles.find((x) => x.id === e.battle!.id) : undefined;
+      if (bt && e.battle && e.battle.side !== 2) {
+        if (byPlayer && !e.countedSunk) { e.countedSunk = true; bt.stats.sunk[e.battle.side]++; }
+        lootK = judgeBattle(bt.stats).kind === 'both' ? REP.both.lootMult : byPlayer ? 1 : 0.7;
+      }
+      if (!e.battle || byPlayer) this.hooks.sunk(e);
       // Beute: deutlich mehr als früher (weniger, aber bedeutendere Gefechte); Händler sind am reichsten
-      const n = 2 + Math.floor(s.cls.L / 12);
-      const total = (45 + e.level * 26) * (1 + Math.max(0, SHIP_CLASSES.indexOf(s.cls)) * 0.25) * (e.role === 'haendler' ? 2.6 : e.role === 'legende' ? 4 : 1);
+      const n = 2 + Math.floor(s.cls.L / 12) + (lootK > 1 ? 2 : 0);
+      const total = (45 + e.level * 26) * lootK * (1 + Math.max(0, SHIP_CLASSES.indexOf(s.cls)) * 0.25) * (e.role === 'haendler' ? 2.6 : e.role === 'legende' ? 4 : 1);
       for (let i = 0; i < n; i++) this.spawnCrate(s.x + (Math.random() - 0.5) * s.cls.W * 2, s.z + (Math.random() - 0.5) * s.cls.L * 0.8, Math.round(total / n * (0.7 + Math.random() * 0.6)), Math.random() < (e.role === 'legende' ? 0.8 : 0.14 / n));
     }
   }
@@ -764,7 +1336,7 @@ export class NavalSystem {
   /** Angeschlagen genug zum Entern? */
   isWeak(e: EnemyShip) {
     const s = e.ship;
-    return s.hull < s.maxHull * 0.35 || s.crew < 0.3 || (e.role === 'haendler' && s.hull < s.maxHull * 0.6);
+    return s.disabled || s.hull < s.maxHull * 0.35 || s.crew < 0.3 || (e.role === 'haendler' && s.hull < s.maxHull * 0.6);
   }
 
   boardable(): EnemyShip | null {
@@ -788,12 +1360,17 @@ export class NavalSystem {
    * (sonst zählte eine geenterte Legende gleichzeitig als Sieg und als Revanche).
    */
   capture(e: EnemyShip) {
+    const bt = e.battle && e.battle.side < 2 ? this.battles.find((x) => x.id === e.battle!.id) : undefined;
+    if (bt && e.battle) { bt.engaged = true; if (!e.countedSunk) { e.countedSunk = true; bt.stats.sunk[e.battle.side as 0 | 1]++; } }
     e.captured = true;
+    e.boarded = false;
     e.ship.hull = 0;
     e.ship.sinking = 0.01;
+    // Doppelspiel in einer Seeschlacht: auch die Prise bringt den Doppel-Loot
+    const lootK = bt && judgeBattle(bt.stats).kind === 'both' ? REP.both.lootMult : 1;
     audio.play('sink', 0.8, e.ship);
     this.debris?.wreck(e.ship.x, e.ship.z, e.ship.cls.L * 0.6, e.ship.cls.W, e.ship.heading, e.ship.look.hull);
-    this.spawnCrate(e.ship.x, e.ship.z, Math.round((90 + e.level * 34) * (1 + Math.max(0, SHIP_CLASSES.indexOf(e.ship.cls)) * 0.25) * (e.role === 'legende' ? 4 : e.role === 'haendler' ? 2.8 : 1.2)), e.role === 'legende' || Math.random() < 0.18);
+    this.spawnCrate(e.ship.x, e.ship.z, Math.round((90 + e.level * 34) * lootK * (1 + Math.max(0, SHIP_CLASSES.indexOf(e.ship.cls)) * 0.25) * (e.role === 'legende' ? 4 : e.role === 'haendler' ? 2.8 : 1.2)), e.role === 'legende' || lootK > 1 || Math.random() < 0.18);
   }
 
   // ---------- Faji auf See ----------
@@ -868,8 +1445,12 @@ export class NavalSystem {
     const big = a.ult ? 1.35 : 1;
     const hit = (e: EnemyShip, d: number) => {
       if (!e.ship.alive) return;
+      const was = e.ship.disabled;
       const real = e.ship.damage(d, 'kugel', null);
       this.overlay.number(new Vector3(e.ship.x, e.ship.model.deckY + 6, e.ship.z), real, 'crit');
+      e.lastPlayerHit = this.clock;
+      if (!was && e.ship.disabled) this.onDisabled(e, true);
+      else if (was && e.ship.noKill && e.ship.disabledFor >= 2 && this.clock - (e.noKillHint ?? -99) > 8) { e.noKillHint = this.clock; this.hooks.message('Dieses Schiff geht durch Kräfte nie unter – nur Entern besiegt es!'); }
       if (!e.ship.alive) this.sink(e.ship);
     };
     const own = new Vector3(p.x, p.model.deckY + 1.5, p.z);

@@ -4,12 +4,9 @@ import {
   FrontSide,
   LinearFilter,
   MeshToonMaterial,
-  NearestFilter,
   RGBAFormat,
   type ColorRepresentation,
   type Material,
-  type Mesh,
-  type Object3D,
   type Side,
   type Texture,
   Vector3,
@@ -22,6 +19,7 @@ import { fogUniforms } from './atmosphere';
 import { isWind, windShared, WIND_PARS, WIND_VERTEX } from './wind';
 import { WATER_ALPHA } from './outline';
 import { WET_PARS, wetShared } from './wetness';
+import { clamp01 } from '../core/mathUtil';
 
 /** Gemeinsame Werte für alle Toon-Materialien – die Umgebung passt sie an Tageszeit und Wetter an. */
 export const toonShared = {
@@ -35,25 +33,13 @@ export const toonShared = {
   envHigh: { value: new Color(0.7, 0.8, 0.95) },
 };
 
-function makeRamp(levels: number[]): DataTexture {
-  const data = new Uint8Array(levels.length * 4);
-  levels.forEach((l, i) => {
-    const v = Math.round(l * 255);
-    data.set([v, v, v, 255], i * 4);
-  });
-  const t = new DataTexture(data, levels.length, 1, RGBAFormat);
-  t.minFilter = t.magFilter = NearestFilter;
-  t.generateMipmaps = false;
-  t.needsUpdate = true;
-  return markShared(t);
-}
 /** 3-stufige Licht-Rampe mit sauberen, leicht weichen Kanten (Schatten, Halbton, Licht) */
 export const TOON_RAMP = (() => {
   const n = 64;
   const data = new Uint8Array(n * 4);
   for (let i = 0; i < n; i++) {
     const t = i / (n - 1);
-    const s = (a: number, b: number) => Math.min(1, Math.max(0, (t - a) / (b - a)));
+    const s = (a: number, b: number) => clamp01((t - a) / (b - a));
     // tiefere Schattenstufe für mehr Dramatik (vorher 0,46)
     const v = 0.4 + 0.3 * s(0.3, 0.36) + 0.3 * s(0.6, 0.66);
     const b = Math.round(v * 255);
@@ -65,8 +51,6 @@ export const TOON_RAMP = (() => {
   t.needsUpdate = true;
   return markShared(t);
 })();
-/** Weichere Rampe für Wasser */
-export const WATER_RAMP = makeRamp([0.62, 0.84, 1.0]);
 
 /** Prozedurale Oberflächen aus der Weltposition; stone, tile und plaster werfen zusätzlich Relief (Bump) aufs Licht */
 /** 'grassCap' = Wiese mit ausgefranstem Rand (Attribut aEdge 0 … 1): geht in Büschel, Trockengras und Sand über */
@@ -1096,27 +1080,4 @@ export function cloneToon<T extends Material>(src: T): T {
   c.defines = { ...(src.defines ?? {}) };
   ensureCsm(c);
   return c;
-}
-
-/** Ersetzt die Materialien fremder Modelle durch unser Toon-Material (Farbe und Textur bleiben). */
-export function toonify(root: Object3D, extra: Partial<ToonOptions> = {}) {
-  root.traverse((o) => {
-    const m = o as Mesh;
-    if (!m.isMesh) return;
-    const conv = (mat: Material): Material => {
-      const src = mat as any;
-      if (src.userData?.toon || src.isShaderMaterial || src.isMeshBasicMaterial) return mat;
-      return toon({
-        color: src.color ?? 0xffffff,
-        map: src.map ?? null,
-        transparent: src.transparent,
-        opacity: src.opacity,
-        side: src.side,
-        vertexColors: src.vertexColors,
-        spec: src.metalness > 0.4 ? 0.8 : 0,
-        ...extra,
-      });
-    };
-    m.material = Array.isArray(m.material) ? m.material.map(conv) : conv(m.material);
-  });
 }

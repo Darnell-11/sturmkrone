@@ -100,8 +100,8 @@ Es gibt **keine** Kapazitätsangabe für Offiziere oder Truppen je Klasse (nur `
 6. Massentruppen im Kampf: `TroopSquad` ohne Grafik (Zahlenmodell, Tests), dann Instanz-Darstellung, dann Anbindung an `board` und Landgang.
 7. QA: Leistung mit 100 Köpfen im Playwright-Lauf (Bildrate je Grafikstufe), Savegame-Hin-und-Zurück, Entern auf Leviathan.
 
-## 7. Offene Fragen an dich
+## 7. Entschiedene Fragen (umgesetzt in 2.9.88)
 
-- Dürfen Truppen auch an Land mitkämpfen oder nur beim Entern und auf See?
-- Wie viele Offiziere gleichzeitig (heute 3)? Wachsen die Plätze mit der Schiffsklasse?
-- Sollen Truppen Treue, Namen oder Aufträge haben, oder reine Zahlen mit Typ und Stufe sein?
+- Truppen kämpfen beim Entern und bei Landgängen (Beiboot oder Steg).
+- Offiziers-Plätze wachsen mit der Klasse: Schaluppe/Brigg 2, Korvette/Fregatte 3, Galeone/Linienschiff 4, Leviathan 5 (`data/crewTiers.ts`).
+- Truppen sind reine Zahlen mit Typ und Stufe (Kanonenfutter): Verluste erst `truppen`, dann `matrosen`, Offiziere sterben nie.

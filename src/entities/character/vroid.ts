@@ -27,6 +27,8 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { markShared } from '../../render/dispose';
 import { preload } from '../../core/preload';
+import { smoothstep } from '../../core/mathUtil';
+import { clamp01 } from '../../core/mathUtil';
 
 /** Unsere Knochennamen (KayKit-Skelett) → VRoid-Knochen */
 export const VROID_BONES: Record<string, string> = {
@@ -53,8 +55,6 @@ function slotOf(name: string): TintSlot {
   if (/EyeIris/i.test(name)) return 'iris';
   return 'fixed';
 }
-
-export interface VroidPart { mesh: SkinnedMesh; slot: TintSlot; map: Texture | null; gray: Texture | null; transparent: boolean; alphaTest: number; doubleSided: boolean }
 
 const q1 = new Quaternion(), q2 = new Quaternion(), q3 = new Quaternion();
 const v1 = new Vector3(), v2 = new Vector3();
@@ -775,8 +775,8 @@ export class VroidBase {
       const t = r / (rows - 1), y = yTop - r * dy;
       const w = 0.155 + (hemW - 0.155) * Math.pow(t, 0.9);
       // Hüfte → Beine nach unten, Brust → Wirbelsäule nach oben
-      const up = Math.min(1, Math.max(0, (neckY - y) / Math.max(0.01, neckY - hipsY)));
-      const low = Math.min(1, Math.max(0, (hipsY - y) / 0.3));
+      const up = clamp01((neckY - y) / Math.max(0.01, neckY - hipsY));
+      const low = clamp01((hipsY - y) / 0.3);
       for (let c = 0; c < cols; c++) {
         const u = (2 * c) / (cols - 1) - 1, x = u * w, j = r * cols + c;
         // Seiten biegen sich nach vorn um den Körper
@@ -1303,7 +1303,7 @@ export class VroidBase {
       const wm = new Map<number, number>();
       if (hipsBone >= 0) for (let j = 0; j < m; j++) {
         const y = P.set(BP[j * 3], BP[j * 3 + 1], BP[j * 3 + 2]).applyMatrix4(mw).y;
-        const k = smooth(hipsY - 0.03, hipsY - 0.16, y) * (kind === 'kilt' ? 0.8 : TAIL_HIPS);
+        const k = smoothstep(hipsY - 0.03, hipsY - 0.16, y) * (kind === 'kilt' ? 0.8 : TAIL_HIPS);
         if (k <= 0) continue;
         wm.clear();
         for (let q = 0; q < 4; q++) if (SW[j * 4 + q] > 0) wm.set(SI[j * 4 + q], (wm.get(SI[j * 4 + q]) ?? 0) + SW[j * 4 + q] * (1 - k));
@@ -1582,7 +1582,6 @@ export interface Anchors { earLobe: Vector3; eyeY: number; shoulders: [Vector3, 
 /** Knoten und Schnalle am Band: Lage im Hüftraum und die Knochen, die das Band dort bewegen */
 export interface BeltAnchors { knot: Vector3; knotPin: SkinPin; buckle: Vector3; bucklePin: SkinPin }
 
-const smooth = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 /**
  * Abstand eines Hautpunkts zur Kleidung in Metern, −1 = gehört nicht dazu.
@@ -1679,7 +1678,7 @@ function garmentOffset(kind: GarmentKind, who: ArrayLike<number>, P: Vector3, N:
     case 'stiefel':
       // vom Knöchel bis knapp unter das Knie, oben eine weite Stulpe – immer über Hose und Schuhen
       if (who[C_LOWLEG] + who[C_FOOT] <= 0.5 || P.y > r.kneeY - r.leg * 0.08 || P.y < r.ankleY - 0.06) return -1;
-      return Math.max(0.026 + smooth(r.kneeY - r.leg * 0.32, r.kneeY - r.leg * 0.1, P.y) * 0.022, cBot + 0.008, cShoe + 0.005);
+      return Math.max(0.026 + smoothstep(r.kneeY - r.leg * 0.32, r.kneeY - r.leg * 0.1, P.y) * 0.022, cBot + 0.008, cShoe + 0.005);
     case 'mantelKurz':
     case 'mantelLang': {
       // eng über Hemd und Weste (2 cm), nur über der Schärpe weiter; Ärmel schlank – vorher überall 3,4–3,6 cm (klobig)
@@ -1690,9 +1689,9 @@ function garmentOffset(kind: GarmentKind, who: ArrayLike<number>, P: Vector3, N:
       // bis über die Schultern (die Schulterhaut liegt auf Höhe des Halsansatzes; Hals und Kopf gehören zu eigenen Knochen)
       if (torso && P.y >= r.hipsY - 0.03 && P.y < r.neckY + 0.03) {
         // offene Front: schmales V, Schultern und nach oben zeigende Flächen bleiben bedeckt
-        const open = 0.04 + smooth(r.hipsY + 0.22, r.neckY, P.y) * 0.025;
+        const open = 0.04 + smoothstep(r.hipsY + 0.22, r.neckY, P.y) * 0.025;
         if (N.z > 0.4 && N.y < 0.45 && Math.abs(P.x) < open) return -1;
-        const band = smooth(r.hipsY - 0.03, r.hipsY - 0.005, P.y) * (1 - smooth(r.hipsY + 0.075, r.hipsY + 0.1, P.y));
+        const band = smoothstep(r.hipsY - 0.03, r.hipsY - 0.005, P.y) * (1 - smoothstep(r.hipsY + 0.075, r.hipsY + 0.1, P.y));
         return over + band * 0.016;
       }
       // Schöße nur beim langen Mantel: seitlich und hinten bis übers Knie, nach unten etwas weiter
@@ -1734,7 +1733,7 @@ function garmentOffset(kind: GarmentKind, who: ArrayLike<number>, P: Vector3, N:
       const bot = r.hipsY - (r.hipsY - r.kneeY) * 0.6;
       if (hand || arm || who[C_TORSO] + who[C_UPLEG] <= 0.5 || P.y > r.hipsY + 0.012 || P.y < bot) return -1;
       if ((P.x > 0.005 && N.x < -0.3) || (P.x < -0.005 && N.x > 0.3)) return -1;
-      const k = Math.min(1, Math.max(0, (r.hipsY + 0.012 - P.y) / (r.hipsY + 0.012 - bot)));
+      const k = clamp01((r.hipsY + 0.012 - P.y) / (r.hipsY + 0.012 - bot));
       // unter dem Gürtel: knapp über dem, was darunter liegt
       return Math.max(0.016, under + 0.008) + k * k * 0.028;
     }
@@ -1746,7 +1745,7 @@ function garmentOffset(kind: GarmentKind, who: ArrayLike<number>, P: Vector3, N:
         const c = garmentOffset(ctx.coat === 'kurz' ? 'mantelKurz' : 'mantelLang', who, P, N, r, cTop, cBot, cShoe, ctx);
         if (c >= 0) o = Math.max(o, c + 0.01);
       }
-      return o + smooth(r.neckY - 0.01, r.neckY + 0.045, P.y) * 0.02;
+      return o + smoothstep(r.neckY - 0.01, r.neckY + 0.045, P.y) * 0.02;
     }
     case 'kuerass': {
       // Brustplatte: Rumpf ohne Ärmel, von über der Schärpe bis unter den Hals

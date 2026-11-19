@@ -3,6 +3,8 @@
  * Der Balken läuft weich auf den echten Fortschritt zu (kein Springen) und wird über transform gezeichnet.
  * Er verschwindet erst, wenn alles geladen UND alle Shader vorbereitet sind.
  */
+import { crestSvg } from './logoSvg';
+
 const TIPS = [
   'Halte den schweren Angriff gedrückt – aufgeladen trifft er mit voller Wucht.',
   'Eine Rolle macht dich kurz unverwundbar. Gedrückt während eines Schlags, folgt sie direkt danach.',
@@ -39,6 +41,7 @@ export class LoadingScreen {
       this.el.setAttribute('aria-valuemax', '100');
       this.el.innerHTML = `
       <div class="ld-card">
+        <div class="ld-crest">${crestSvg({ flat: true })}</div>
         <div class="fell ld-title">Sturmkrone</div>
         <div class="ld-phase">Die Crew macht sich bereit …</div>
         <div class="bar"><i></i></div>

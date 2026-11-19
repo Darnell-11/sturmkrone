@@ -1,6 +1,7 @@
-import { CircleGeometry, Color, MathUtils, Mesh, MeshBasicMaterial, Vector3, type Scene } from 'three';
+import { updateClothFlag } from '../../render/flagCloth';
+import { CircleGeometry, Color, Euler, MathUtils, Mesh, MeshBasicMaterial, Vector3, type Object3D, type Scene } from 'three';
 import { AMMO, SEA_SPEED, SHIP_CLASSES, type AmmoId, type ShipClass, type ShipLook } from '../../data/ships';
-import { toon } from '../../render/toon';
+import { troopCapacity } from '../../data/crewTiers';
 import { buildShip, CABIN_WINDOW, GLOW_LAMP, type ShipModel } from './shipBuilder';
 import { glowHub, makeEmitter } from '../../render/glow';
 import { disposeObject, markShared } from '../../render/dispose';
@@ -8,10 +9,13 @@ import { wetShared } from '../../render/wetness';
 import type { SailUniforms } from '../../render/flags';
 import { mintEntityId, type EntityId } from '../../sim/entityId';
 import type { CrewRefillIntent, SailRepairIntent } from '../../sim/intents';
+import type { DockingState } from '../../world/docking';
 import {
-  applyDamage, applyStorm, createShipSim, crewEffects, crewFrac, missingHeads, refillCrew, sailFrac, sailPerformance,
-  setCrewFrac, startRepair, stepPassiveRepair, stepRepair, stepSailSet, type CrewEffects, type SailPerformance, type ShipSimState,
+  applyDamage, applyStorm, boardingStrength, createShipSim, crewEffects, crewFrac, enterPhaseCheck, finishingBlow, missingHeads, poolHeads, refillCrew, sailFrac, sailPerformance,
+  setCrewFrac, setPoolHeads, type BoardingStrength, startRepair, stepPassiveRepair, stepRepair, stepSailSet, type CrewEffects, type SailPerformance, type ShipSimState,
 } from '../../naval/shipSim';
+import { wrapAngle } from '../../core/mathUtil';
+import { clamp01 } from '../../core/mathUtil';
 
 export interface SeaEnv {
   heightAt(x: number, z: number): number;
@@ -26,6 +30,8 @@ export interface SeaEnv {
 }
 
 const _sc = new Color();
+const _eu = new Euler();
+const _pv = new Vector3();
 
 const HOLE_MAT = markShared(new MeshBasicMaterial({ color: 0x1b1410, side: 2 }));
 
@@ -67,6 +73,25 @@ export class Ship {
   shield = 0;
   shieldK = 0;
   prev = { x: 0, z: 0, heading: 0 };
+  /** Liegeplatz am Steg (nur Daten, siehe `world/docking.ts`); null = frei. Solange gesetzt, fährt das Schiff nicht. */
+  moored: DockingState | null = null;
+  /**
+   * Enterphase: Gegner gehen durch Schaden nie unter, sondern bleiben mit 1 Rumpfpunkt liegen (Segel zerfetzt, Masten geknickt, Brand) und
+   * sind besiegt, bis sie geentert oder durch einen weiteren Treffer des Spielers versenkt werden (Gnadenstoß).
+   */
+  canDisable = false;
+  /** Auch der Gnadenstoß versenkt es nicht (Legenden, Marine-Kommandoschiffe, die zwei größten Klassen): nur Entern beendet den Kampf */
+  noKill = false;
+  disabled = false;
+  /** Sekunden in der Enterphase (für das Ausbrennen nach langer Zeit ohne Spieler) */
+  disabledFor = 0;
+  /** Setzt auf wahr, wenn ein Mast aufschlägt (Wrackteile und Gischt, einmal abzuholen) */
+  crashed = false;
+  private fall = 0;
+  private fallPlan: { up: Object3D; py: number; pz: number; roll: number; pitch: number }[] = [];
+  /** Wellenberuhigung 0 … 1 (Anlegen, Heranziehen beim Entern): Nicken, Rollen und Auf und Ab klingen ab; `calmTo` ist das Ziel */
+  calm = 0;
+  calmTo = 0;
   private holes = 0;
   private turnInput = 0;
   /** Drehgeschwindigkeit (rad/s) mit Trägheit und Fahrtrichtung, die dem Bug hinterherhinkt (Abdrift in Kurven) */
@@ -94,7 +119,7 @@ export class Ship {
   constructor(private scene: Scene, tier: number, public look: ShipLook, readonly faction: 'pirat' | 'marine', hullBonus = 0, private hero = false) {
     this.cls = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier))];
     this.entityId = mintEntityId('ship');
-    this.sim = createShipSim(this.entityId, this.cls.hp + hullBonus, this.cls.hp, this.cls.crew);
+    this.sim = createShipSim(this.entityId, this.cls.hp + hullBonus, this.cls.hp, this.cls.crew, hero ? troopCapacity(tier) : 0);
     this.model = buildShip(this.cls, look, hero);
     scene.add(this.model.group);
     this.glowLights();
@@ -113,10 +138,10 @@ export class Ship {
   set maxHull(v: number) { this.sim.maxHull = v; }
   /** Segelzustand 0 … 1 (Anteil der Segel-HP) */
   get sail() { return sailFrac(this.sim); }
-  set sail(v: number) { this.sim.sail.hp = Math.max(0, Math.min(1, v)) * this.sim.sail.max; }
+  set sail(v: number) { this.sim.sail.hp = clamp01(v) * this.sim.sail.max; }
   /** Crew-% 0 … 1 */
   get crew() { return crewFrac(this.sim.crew); }
-  set crew(v: number) { setCrewFrac(this.sim.crew, Math.max(0, Math.min(1, v))); }
+  set crew(v: number) { setCrewFrac(this.sim.crew, clamp01(v)); }
   /** Faktor auf die Nachladezeit der Geschütze nach Crew-% */
   get reloadScale() { return crewEffects(this.crew, this.crewFx).reloadMult; }
 
@@ -130,12 +155,13 @@ export class Ship {
   rebuild(tier: number, look: ShipLook, hullBonus = 0) {
     const frac = this.hull / this.maxHull;
     const sailF = this.sail, crewF = this.crew;
+    const troopsN = poolHeads(this.sim.crew, 'truppen');
     glowHub.removeOwner(this);
     disposeObject(this.model.group);
     this.cls = SHIP_CLASSES[tier];
     this.look = look;
     // Segel-HP und Crew-Höchstwerte folgen der neuen Klasse, die Anteile bleiben erhalten
-    const fresh = createShipSim(this.entityId, this.cls.hp + hullBonus, this.cls.hp, this.cls.crew);
+    const fresh = createShipSim(this.entityId, this.cls.hp + hullBonus, this.cls.hp, this.cls.crew, this.hero ? troopCapacity(tier) : 0);
     this.sim.maxHull = fresh.maxHull;
     this.sim.hull = Math.max(1, this.sim.maxHull * frac);
     this.sim.sail = fresh.sail;
@@ -143,6 +169,8 @@ export class Ship {
     this.sim.repair = null;
     this.sail = sailF;
     this.crew = crewF;
+    // Truppen bleiben als Köpfe erhalten (die neue Klasse kappt sie auf ihre Kapazität; ohne Truppenplätze gibt es keinen Pool)
+    setPoolHeads(this.sim.crew, 'truppen', troopsN);
     this.model = buildShip(this.cls, look, this.hero);
     this.scene.add(this.model.group);
     this.glowLights();
@@ -181,7 +209,7 @@ export class Ship {
     let target = this.cls.spd * SEA_SPEED * sailK * windK * speedMult * (this.boost > 0 ? 1.7 : 1);
     if (this.speedCap !== null) target = Math.min(target, this.speedCap);
     // Schwere Schiffe: je größer, desto träger beim Beschleunigen, Bremsen und Wenden (m: 0 Schaluppe … 1 Leviathan)
-    const m = Math.min(1, Math.max(0, (this.cls.L - 15) / 59));
+    const m = clamp01((this.cls.L - 15) / 59);
     this.speed += (target - this.speed) * Math.min(1, dt * (target < this.speed ? 0.45 : 0.62 * perf.accel) * (1.25 - 0.7 * m));
     // Wenden: Ruderausschlag baut Drehgeschwindigkeit nur langsam auf und ab; Kurven kosten Fahrt; zerfetztes Tuch lässt das Ruder ins Leere greifen
     this.turnInput += (turn - this.turnInput) * Math.min(1, dt * 4);
@@ -192,7 +220,7 @@ export class Ship {
     // Die Fahrtrichtung folgt dem Bug mit Verzögerung: das Schiff schiebt in Kurven seitlich über das Wasser
     if (!this.courseOk) { this.course = this.heading; this.courseOk = true; }
     let dc = this.heading - this.course;
-    dc = Math.atan2(Math.sin(dc), Math.cos(dc));
+    dc = wrapAngle(dc);
     if (Math.abs(dc) > 1.0) { this.course = this.heading; dc = 0; }
     this.course += dc * Math.min(1, dt * (3.2 - 1.6 * m));
     this.x += Math.sin(this.course) * this.speed * dt;
@@ -204,7 +232,11 @@ export class Ship {
       this.z += Math.cos(env.windDir) * d;
     }
     // Feuer frisst den Rumpf
-    if (this.fire > 0) { this.fire -= dt; this.hull -= dt * this.maxHull * 0.012; }
+    if (this.disabled) this.disabledFor += dt;
+    else if (this.fire > 0) {
+      this.fire -= dt; this.hull -= dt * this.maxHull * 0.012;
+      if (enterPhaseCheck(this.sim, this.canDisable, this.disabled)) this.enterPhase();
+    }
   }
 
   /**
@@ -222,11 +254,29 @@ export class Ship {
   }
 
   /**
+   * An einen neuen Ort setzen (Titelbild-Schnitt): Lage, Fahrtrichtung und die Federung auf den Wellen beginnen neu, damit nichts
+   * nachfedert oder als Schlieren über das Wasser zieht. Die Fahrt bleibt, wie sie ist.
+   */
+  place(x: number, z: number, heading: number) {
+    this.x = x; this.z = z; this.heading = heading;
+    this.course = heading; this.courseOk = true;
+    this.yawRate = 0; this.turnInput = 0;
+    this.prev.x = x; this.prev.z = z; this.prev.heading = heading;
+    this.sm.init = false;
+  }
+
+  /** Segel einholen (Festmachen): das gesetzte Tuch fährt auf null, auch wenn das Schiff nicht gesteuert wird */
+  furl(dt: number) { stepSailSet(this.sim, 0, dt, crewEffects(this.crew, this.crewFx)); }
+
+  /**
    * Schaden mit Munitionsart; liefert den Rumpfschaden. `zone` 'sail' = die Kugel traf das Tuch (Segel-HP sinken, Rumpf kaum),
    * 'hull' = Rumpf. Kettenkugeln zerfetzen Segel in beiden Zonen am stärksten.
    */
   damage(base: number, ammo: AmmoId, hitLocal: Vector3 | null, zone: 'hull' | 'sail' = 'hull'): number {
     if (!this.alive) return 0;
+    // Enterphase: ein weiterer Treffer ist der Gnadenstoß (bei Schiffen, die nie untergehen, wirkungslos: nur Entern)
+    // (die ersten 2 s zählen nicht: Kugeln derselben Breitseite, die noch fliegen, sind kein neuer Treffer)
+    if (this.disabled) return this.disabledFor < 2 ? 0 : finishingBlow(this.sim, this.noKill) ? base : 0;
     if (this.shield > 0) base *= 1 - this.shieldK;
     const a = AMMO[ammo];
     const r = applyDamage(this.sim, base, a, zone);
@@ -234,7 +284,45 @@ export class Ship {
     if (a.fire > 0 && Math.random() < 0.6) this.fire = Math.max(this.fire, 8);
     if (hitLocal && this.holes < 24 && a.hull >= 0.5) this.addHole(hitLocal);
     this.updateSailDamage();
+    if (enterPhaseCheck(this.sim, this.canDisable, this.disabled)) this.enterPhase();
     return hullDmg;
+  }
+
+  /** Der Rumpf hat nichts mehr: Segel in Fetzen, ein bis zwei Masten knicken um, das Schiff brennt (Rauch und Flammen zeichnet die Seewelt) */
+  enterPhase() {
+    if (this.disabled) return;
+    this.disabled = true;
+    this.disabledFor = 0;
+    this.sim.hull = 1;
+    this.sim.sail.hp = 0;
+    this.sim.sailSet = 0;
+    this.fire = 1e9;
+    this.speed *= 0.5;
+    this.updateSailDamage();
+    const masts = this.model.masts;
+    // 1 bis 2 Masten knicken um (ein einziger Mast immer); die Takelage fällt mit weg
+    const idx = masts.map((_, i) => i).sort(() => Math.random() - 0.5).slice(0, masts.length > 1 && (this.cls.L >= 30 || Math.random() < 0.5) ? 2 : 1);
+    this.fallPlan = idx.map((i, k) => {
+      const m = masts[i];
+      return { up: m.up, py: m.pivotY, pz: m.z, roll: (k % 2 ? -1 : 1) * (Math.random() < 0.5 ? -1 : 1) * (1.0 + Math.random() * 0.45), pitch: (Math.random() - 0.5) * 0.6 };
+    });
+    if (this.fallPlan.length) this.model.rigging.visible = false;
+    this.fall = 0;
+  }
+
+  /** Maststurz je Bild: die oberen Teile kippen beschleunigt um (Drehpunkt an der Bruchstelle) und schlagen auf */
+  private stepFall(frameDt: number) {
+    if (!this.disabled || this.fall >= 1 || !this.fallPlan.length) return;
+    this.fall = Math.min(1, this.fall + frameDt / 1.5);
+    const e = this.fall * this.fall;
+    for (const f of this.fallPlan) {
+      const up = f.up;
+      _eu.set(f.pitch * e, 0, f.roll * e);
+      up.rotation.copy(_eu);
+      _pv.set(0, f.py, f.pz);
+      up.position.copy(_pv).sub(_pv.clone().applyEuler(_eu));
+    }
+    if (this.fall >= 1) this.crashed = true;
   }
 
   private addHole(p: Vector3) {
@@ -294,7 +382,15 @@ export class Ship {
 
   /** Crew aufstocken (Taverne, Hafen); liefert die angeheuerten Köpfe */
   requestCrewRefill(intent: CrewRefillIntent): number { return refillCrew(this.sim.crew, intent); }
-  get missingCrew() { return missingHeads(this.sim.crew); }
+  get missingCrew() { return missingHeads(this.sim.crew, 'matrosen'); }
+  /** Truppen-Köpfe an Bord (0 ohne Truppenplätze) und Kapazität */
+  get troopHeads() { return poolHeads(this.sim.crew, 'truppen'); }
+  get troopMax() { return this.sim.crew.pools.truppen?.max ?? 0; }
+  /** Truppen-Köpfe setzen (Anheuern, Rückkehr aus dem Gefecht, Spielstand); höchstens bis zur Kapazität */
+  setTroopHeads(n: number) { setPoolHeads(this.sim.crew, 'truppen', n); }
+  /** Enterkraft der Truppen (Schaden und Trefferpunkte der eigenen Enterer) */
+  get boarding(): BoardingStrength { return boardingStrength(this.sim.crew, this.boardingTmp); }
+  private boardingTmp: BoardingStrength = { heads: 0, frac: 0, damage: 1, hp: 1 };
   /** Mindestbesatzung (z. B. nach dem Untergang): hebt die Crew auf diesen Anteil, wenn sie darunter liegt */
   ensureCrew(f: number) { if (this.crew < f) this.crew = f; }
 
@@ -304,9 +400,10 @@ export class Ship {
     const z = MathUtils.lerp(this.prev.z, this.z, alpha);
     const h = this.prev.heading + (this.heading - this.prev.heading) * alpha;
     const L = this.cls.L, W = this.cls.W;
+    this.stepFall(frameDt);
     const fx = Math.sin(h), fz = Math.cos(h);
     this.hullFx.x = x; this.hullFx.z = z; this.hullFx.h = h;
-    this.hullFx.speed = this.sinking > 0 ? 0 : Math.max(0, Math.min(1, (this.speed - 0.5) / 9));
+    this.hullFx.speed = this.sinking > 0 ? 0 : clamp01((this.speed - 0.5) / 9);
     const wy = env.heightAt(x, z);
     const ahead = env.heightAt(x + fx * L * 0.4, z + fz * L * 0.4);
     const behind = env.heightAt(x - fx * L * 0.4, z - fz * L * 0.4);
@@ -325,12 +422,15 @@ export class Ship {
     // erst langsam vollaufen, dann immer schneller wegsacken
     const depth = sink * 0.35 + sink * sink * 0.16;
     const tilt = Math.min(1, sink / 5.5);
-    const m = Math.min(1, Math.max(0, (L - 15) / 59));
-    const tgtY = (ahead + behind) / 2 * 0.6 + wy * 0.4 - 0.25;
+    const m = clamp01((L - 15) / 59);
+    // Festgemacht oder herangezogen: Seegang klingt ab (Höhe zur ruhigen Wasserlinie, Neigung und Rollen gegen null)
+    this.calm += (this.calmTo - this.calm) * Math.min(1, frameDt * 1.4);
+    const calmK = 1 - 0.88 * this.calm;
+    const tgtY = -0.25 + ((ahead + behind) / 2 * 0.6 + wy * 0.4) * (1 - 0.85 * this.calm);
     // Bug hebt sich mit Fahrt (Gleiten), das Heck sackt leicht ein
     const lift = Math.min(1, this.speed / 14);
-    const tgtP = Math.atan2(behind - ahead, L * 0.8) - lift * 0.02;
-    const tgtR = Math.atan2(sideA - sideB, W * 0.9) * 0.8;
+    const tgtP = (Math.atan2(behind - ahead, L * 0.8) - lift * 0.02) * calmK;
+    const tgtR = Math.atan2(sideA - sideB, W * 0.9) * 0.8 * calmK;
     const sm = this.sm;
     if (!sm.init) { sm.y = tgtY; sm.p = tgtP; sm.r = tgtR; sm.vy = sm.vp = sm.vr = 0; sm.init = true; }
     // Federn: je größer das Schiff, desto träger (Eigenfrequenz 2,6 → 1,2 rad/s), leicht unterdämpft für weiches Nachschwingen
@@ -376,15 +476,25 @@ export class Ship {
         m.emissive.copy(m.color).multiplyScalar(sss).lerp(_sc.setRGB(1, 0.62, 0.3), 0.18 * sss);
       }
     }
+    // Flaggen: scheinbarer Wind (Wetter-Wind minus Fahrtwind) streckt das Tuch und schwenkt es um den Mast; im Gegenlicht glüht das Tuch warm
+    for (const f of this.model.flags) {
+      updateClothFlag(f, frameDt, h, env.windDir, wind, this.sinking > 0 ? 0 : this.speed);
+      if (env.sunDir) {
+        const sd = env.sunDir;
+        const hl = Math.hypot(sd.x, sd.z) || 1;
+        const side = Math.abs((sd.x * fz - sd.z * fx) / hl);
+        f.mat.emissive.setScalar((env.sunVis ?? 0) * (0.05 + 0.4 * side) * (1.15 - Math.min(1, Math.abs(sd.y)) * 0.6) * 0.55);
+      }
+    }
     // Deck: Gischt bei Fahrt in rauer See und Regen machen die Planken dunkel und nass
-    this.spray = Math.max(0, Math.min(1, this.spray + frameDt * (Math.min(1, this.speed / 12) * (0.1 + env.windStrength * 0.7) - 0.06)));
+    this.spray = clamp01(this.spray + frameDt * (Math.min(1, this.speed / 12) * (0.1 + env.windStrength * 0.7) - 0.06));
     const wet = Math.max(this.spray, wetShared.uWet.value * 0.9);
     const dm = this.model.deckMat as unknown as { color: Color };
     dm.color.copy(this.model.deckBase).multiplyScalar(1 - 0.4 * wet);
     // Laternen: warmes Punktlicht bei Dämmerung und Nacht, leicht flackernd
     for (let i = 0; i < this.model.lights.length; i++) {
       const l = this.model.lights[i];
-      const nightK = Math.max(0, Math.min(1, (night - 0.15) / 0.6));
+      const nightK = clamp01((night - 0.15) / 0.6);
       l.intensity = nightK * (28 + 7 * Math.sin(env.time * 7.3 + i * 2.1) * Math.sin(env.time * 3.1 + i)) * (this.cls.L / 20);
     }
     // Flagge: weht im Vertex-Shader (render/flags.ts), hier nichts zu tun
@@ -398,5 +508,3 @@ export class Ship {
   /** Schiff aus der Szene nehmen und seinen Grafikspeicher freigeben */
   dispose() { glowHub.removeOwner(this); disposeObject(this.model.group); }
 }
-
-export const SHIP_WOOD = toon('#6A4426');

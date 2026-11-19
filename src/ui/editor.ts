@@ -6,7 +6,7 @@ import {
 import type { Faction, FightStyle } from '../core/save/types';
 import { CAT_LABEL, EQUIP_BY_ID, GEAR_CATS, catOf, type EquipDef, type GearCat } from '../data/equipment';
 import { SETS, describeBonus, type GearSet } from '../data/gear';
-import { RARITY, type Rarity } from '../data/trinkets';
+import { RARITY, type Rarity } from '../data/rarity';
 import { setBonuses } from '../core/gearBag';
 import { esc } from './dom';
 

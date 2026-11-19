@@ -40,12 +40,14 @@ import { AoEffect, AoPass } from './gtao';
 import { HeatEffect, heatShared } from './heat';
 import { installAtmosphere } from './atmosphere';
 import { ensureCsm } from './csm';
+import { baseFov } from './lens';
 import { restoreCulledHolders, updateCulledHolders } from './matrixSkip';
 import { EdgeEffect, OpaqueEffect, WATER_ALPHA, setHullsVisible } from './outline';
 import { GradeEffect } from './grade';
 import { SsrEffect, SsrPass } from './ssr';
 import { DynamicResolution } from './dynamicResolution';
 import { installShaderLogFilter } from './shaderLog';
+import { clamp01 } from '../core/mathUtil';
 
 export class WebGLUnavailableError extends Error {}
 
@@ -290,7 +292,7 @@ export class GameRenderer {
     if (cam?.isPerspectiveCamera) {
       cam.aspect = w / h;
       // Im Hochformat etwas weiter, damit das Schiff ins Bild passt
-      cam.fov = h > w ? 70 : 55;
+      cam.fov = baseFov(w, h);
       cam.updateProjectionMatrix();
     }
   }
@@ -371,7 +373,7 @@ export class GameRenderer {
       const cp = this.camera.position, sp = this.sun.position;
       const elev = (sp.y - cp.y) / (Math.hypot(sp.x - cp.x, sp.y - cp.y, sp.z - cp.z) || 1);
       // ab etwa 6° Sonnenhöhe einblenden (auch Abendlicht), sehr tief wären es Streifen übers ganze Meer
-      const k = Math.min(1, Math.max(0, (elev - 0.1) / 0.25));
+      const k = clamp01((elev - 0.1) / 0.25);
       this.godRays.godRaysMaterial.uniforms.weight.value = GOD_WEIGHT * k;
     }
     // Schärfebereich wächst mit dem Kameraabstand: zu Fuß ist die Stadt dahinter leicht weich, auf See erst der Horizont
@@ -383,7 +385,7 @@ export class GameRenderer {
       const d = this.camera.position.distanceTo(this.dofFocus);
       // Nahaufnahme (Kamera nah an der Figur, z. B. zu Fuß oder beim Lock-on): Hintergrund deutlich weicher;
       // weit weg (auf See): nur der Horizont wird weich
-      const close = Math.min(1, Math.max(0, (14 - d) / 10));
+      const close = clamp01((14 - d) / 10);
       const range = MathUtils.lerp(Math.max(70, d * 7), Math.max(11, d * 3.2), Math.max(close * 0.8, this.dofTarget ? 0.6 : 0));
       this.dofRange += (range - this.dofRange) * k;
       this.dof.cocMaterial.focusRange = this.dofRange;

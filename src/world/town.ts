@@ -35,6 +35,7 @@ import type { StructureType } from '../data/settlements';
 import type { GlowPlaced } from '../render/glow';
 import { hasArch as hasArchModel, hasArch, archGroup } from './envModels';
 import { buildFountain } from './fountain';
+import { clamp01 } from '../core/mathUtil';
 
 // verwitterter Putz und satte, gedeckte Dachfarben (Hafenstadt, kein Ferienort)
 const WALLS = ['#E2D6BC', '#D4BF9A', '#C9CFD0', '#DCC4B0', '#CDD2BE'];
@@ -458,17 +459,17 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
 
   // Steg nach Süden
   const pier = new Group();
-  const deck = new BoxGeometry(5, 0.3, 46);
-  deckUV(deck, 5, 46);
+  const deck = new BoxGeometry(5, 0.3, 80);
+  deckUV(deck, 5, 80);
   const plank = new Mesh(deck, toon({ color: '#B08A58', map: plankTexture(), puddles: 0.6, ...toonPbr(plankTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) }));
   plank.position.set(0, 1.5, 0);
   pier.add(plank);
-  for (let i = 0; i < 9; i++) for (const s of [-1, 1]) {
+  for (let i = 0; i < 16; i++) for (const s of [-1, 1]) {
     const post = new Mesh(new CylinderGeometry(0.22, 0.25, 5, 6), toon('#5A3A22'));
-    post.position.set(s * 2.4, -0.8, -21 + i * 5.2);
+    post.position.set(s * 2.4, -0.8, -38 + i * 5.2);
     pier.add(post);
   }
-  pier.position.set(cx, 0, cz - def.r - 18);
+  pier.position.set(cx, 0, cz - def.r - 35);
   group.add(pier);
   for (let i = 0; i < 4; i++) {
     if (hasProp('kiste')) {
@@ -641,7 +642,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
       const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
       const len = Math.hypot(bx - ax, bz - az);
       if (sd <= acc + len || i === pts.length - 2) {
-        const t = Math.max(0, Math.min(1, (sd - acc) / (len || 1)));
+        const t = clamp01((sd - acc) / (len || 1));
         return { x: ax + (bx - ax) * t, z: az + (bz - az) * t, tx: (bx - ax) / (len || 1), tz: (bz - az) / (len || 1) };
       }
       acc += len;
@@ -657,7 +658,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
       for (let i = 0; i < st.pts.length - 1; i++) {
         const [ax, az] = st.pts[i], [bx, bz] = st.pts[i + 1];
         const vx = bx - ax, vz = bz - az, L2 = vx * vx + vz * vz || 1;
-        const t = Math.max(0, Math.min(1, ((x - ax) * vx + (z - az) * vz) / L2));
+        const t = clamp01(((x - ax) * vx + (z - az) * vz) / L2);
         best = Math.min(best, Math.hypot(x - ax - vx * t, z - az - vz * t) - st.w / 2);
       }
     });

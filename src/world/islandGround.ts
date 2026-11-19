@@ -1,4 +1,6 @@
 import type { IslandShape } from './ocean';
+import { BRIDGE_CLEARANCE, BRIDGE_STEP, frameCoords, frameHeight, makeFrame, setFrame, spanLength, type Anchor, type BridgeDef, type BridgeFrame } from './docking';
+import { clamp01 } from '../core/mathUtil';
 
 /** Ein Hügel: Mitte (Welt), Radius und Höhenfaktor (Kuppe = Halbkugel, in der Höhe gestaucht) */
 export interface Hill { x: number; z: number; r: number; h: number }
@@ -169,12 +171,18 @@ export function fitHills(r: number, coast: WalkIsland['coast'], hills: Hill[]): 
 }
 
 /** Steg als Strecke a → b mit halber Breite hw; y = Höhe der Bohlen (Oberkante). Begehbar bis zur Spitze, Schiffe legen seitlich an. */
-export interface Pier { ax: number; az: number; bx: number; bz: number; hw: number; y: number }
+export interface Pier { ax: number; az: number; bx: number; bz: number; hw: number; y: number; /** Kennung (vergibt die Welt nach dem Aufbau: `pier-<n>`) */ id?: string }
 
-/** Etwas Begehbares: Insel oder Schiffsdeck */
+/**
+ * Etwas Begehbares: Insel, Schiffsdeck oder ihr Verbund (`CompositeGround`). Der Höhenhinweis `y` (Höhe des Läufers) ist optional:
+ * Wo mehrere Flächen übereinanderliegen (Gangway über dem Steg), entscheidet er, auf welcher der Läufer steht.
+ */
 export interface Ground {
-  height(x: number, z: number): number;
-  constrain(x: number, z: number, radius?: number): { x: number; z: number };
+  height(x: number, z: number, y?: number): number;
+  constrain(x: number, z: number, radius?: number, y?: number): { x: number; z: number };
+  /** Nur im Verbund: Lage auf einer Leiter (Anteil t, 0 = Fuß) und ihre Raumlänge, für Läufer, die klettern */
+  ladderAt?(id: string, t: number, out: { x: number; y: number; z: number }): boolean;
+  ladderLength?(id: string): number;
 }
 
 /** Achterdeck mit Treppen (Schiffskoordinaten, Höhen relativ zum Hauptdeck) */
@@ -210,7 +218,7 @@ export class DeckGround implements Ground {
   /** Wo steht die Figur: 0 Hauptdeck, 1 Achterdeck (oben), 2 Kapitänskajüte (unter dem Achterdeck, durch die Tür); −1 = noch unbekannt */
   private zone = -1;
 
-  constructor(private ship: { x: number; z: number; heading: number; cls: { L: number }; model: { deckY: number; group: { position: { y: number }; matrixWorld: { elements: ArrayLike<number> }; updateMatrixWorld(force?: boolean): void }; halfWidth(z: number): number; quarter?: QuarterDeck; fore?: ForeDeck | null; blockers?: DeckWall[]; cabinRoof?: { visible: boolean } } }) {
+  constructor(private ship: { entityId?: string; x: number; z: number; heading: number; cls: { L: number }; model: { deckY: number; group: { position: { y: number }; matrixWorld: { elements: ArrayLike<number> }; updateMatrixWorld(force?: boolean): void }; halfWidth(z: number): number; quarter?: QuarterDeck; fore?: ForeDeck | null; blockers?: DeckWall[]; cabinRoof?: { visible: boolean } } }) {
     ship.model.group.updateMatrixWorld(true);
     // feste Aufbauten (Masten, Luke, Fässer, Möbel, Vorderkastell) sind Hindernisse
     for (const b of ship.model.blockers ?? []) this.walls.push(b);
@@ -383,6 +391,35 @@ export class DeckGround implements Ground {
     return this.toWorld(fx * this.ship.model.halfWidth(lz) * 0.7, lz);
   }
 
+  /** Kennung des Schiffs (leer, wenn es keine hat) */
+  get shipId(): string { return this.ship.entityId ?? ''; }
+
+  /** Liegt ein Weltpunkt im Rumpfgrundriss (Bordwand innen, Bug- und Hecklinie)? Entscheidet im Verbund, ob das Deck zuständig ist */
+  inHull(x: number, z: number): boolean {
+    const dx = x - this.ship.x, dz = z - this.ship.z;
+    const c = Math.cos(-this.ship.heading), s = Math.sin(-this.ship.heading);
+    const lx = dx * c + dz * s, lz = -dx * s + dz * c;
+    const half = this.ship.cls.L / 2 * 0.97;
+    return Math.abs(lz) <= half && Math.abs(lx) <= this.ship.model.halfWidth(lz);
+  }
+
+  /** Halbe begehbare Breite des Hauptdecks bei Schiffs-z (wie `constrain`, für Radius `r`) */
+  walkHalf(lz: number, r = 0.35): number { return Math.max(0.3, this.ship.model.halfWidth(lz) * 0.85 - r); }
+
+  /**
+   * Ankerpunkt am Deck ohne Allokation: Schiffskoordinaten (lx, lz) und Höhe `dy` über dem Hauptdeck → Welt (x, y, z). Folgt der Lage
+   * der Schiffsmatrix (Nicken und Rollen), die Brücke liegt also jederzeit bündig an der bewegten Bordwand.
+   */
+  anchorInto(lx: number, lz: number, dy: number, out: { x: number; y: number; z: number }) {
+    const h = this.ship.heading, c = Math.cos(h), s = Math.sin(h);
+    out.x = this.ship.x + lx * c + lz * s;
+    out.z = this.ship.z - lx * s + lz * c;
+    const m = this.ship.model.group.matrixWorld.elements;
+    const ly = this.ship.model.deckY + dy;
+    out.y = m[1] * lx + m[5] * ly + m[9] * lz + m[13];
+    return out;
+  }
+
   /** Punkt in Schiffskoordinaten in die Welt */
   world(lx: number, lz: number) { return this.toWorld(lx, lz); }
 }
@@ -391,6 +428,8 @@ export class IslandGround implements Ground {
   readonly islands: WalkIsland[] = [];
   /** Stege (Weltkoordinaten): begehbar auch über dem Wasser, die Bohlen liegen auf pier.y */
   piers: Pier[] = [];
+  /** Feste Hindernisse nur für Schiffe (Seetor und Mauern der Raid-Instanz): gedrehte Quader in Weltkoordinaten; leer = nichts zu prüfen */
+  shipBlockers: Blocker[] = [];
 
   /** Nächster Steg zu einem Punkt: Parameter t (0 … 1 entlang), Abstand quer zur Mitte (lat) und Länge */
   pierNear(x: number, z: number, margin: number): { p: Pier; t: number; lat: number; len: number; cx: number; cz: number } | null {
@@ -400,7 +439,7 @@ export class IslandGround implements Ground {
       const len = Math.hypot(vx, vz) || 1;
       const t = ((x - p.ax) * vx + (z - p.az) * vz) / (len * len);
       if (t < -margin / len || t > 1 + margin / len) continue;
-      const tc = Math.max(0, Math.min(1, t));
+      const tc = clamp01(t);
       const cx = p.ax + vx * tc, cz = p.az + vz * tc;
       const lat = Math.hypot(x - cx, z - cz);
       if (lat > p.hw + margin) continue;
@@ -445,6 +484,20 @@ export class IslandGround implements Ground {
         z += Math.sin(a) * (lim - d);
         hit = true;
       }
+      // Seetor und Mauern: aus dem Quader auf der Seite mit der kleinsten Eindringtiefe herausschieben
+      for (const b of this.shipBlockers) {
+        const dx = px - b.x, dz = pz - b.z;
+        if (dx * dx + dz * dz > (b.r + W + 2) ** 2) continue;
+        const c = Math.cos(b.yaw ?? 0), s = Math.sin(b.yaw ?? 0);
+        const lx = dx * c - dz * s, lz = dx * s + dz * c;
+        const hw = (b.hw ?? 0) + W * 0.5 + 1, hd = (b.hd ?? 0) + W * 0.5 + 1;
+        if (Math.abs(lx) >= hw || Math.abs(lz) >= hd) continue;
+        let nx = lx, nz = lz;
+        if (hw - Math.abs(lx) < hd - Math.abs(lz)) nx = (lx < 0 ? -1 : 1) * hw; else nz = (lz < 0 ? -1 : 1) * hd;
+        x += b.x + nx * c + nz * s - px;
+        z += b.z - nx * s + nz * c - pz;
+        hit = true;
+      }
     }
     return { x, z, hit };
   }
@@ -471,7 +524,7 @@ export class IslandGround implements Ground {
     // Relief: überall im Inland, zur Wasserlinie hin auslaufend (Stege, Strand und Brandung bleiben, wie sie sind)
     if (d < e) {
       const t = d / e;
-      const fade = 1 - Math.min(1, Math.max(0, (t - 0.78) / 0.2));
+      const fade = 1 - clamp01((t - 0.78) / 0.2);
       y += reliefAt(i, x - i.x, z - i.z) * fade * fade * (3 - 2 * fade) ;
     }
     if (withPads && i.pads && d < e) {
@@ -577,5 +630,162 @@ export class IslandGround implements Ground {
     const a = Math.atan2(fromZ - isl.z, fromX - isl.x);
     const e = isl.r * coastK(isl.coast, a) * 0.9;
     return { x: isl.x + Math.cos(a) * e, z: isl.z + Math.sin(a) * e, angle: a };
+  }
+}
+
+/** Laufende Brücke im Verbund: Beschreibung (Daten), aktuelle Lage und ob man darauf geht (Leitern: nur Klettern) */
+export interface BridgeRt { def: BridgeDef; f: BridgeFrame; walk: boolean; ok: boolean }
+
+const _a = { x: 0, y: 0, z: 0 };
+const _b = { x: 0, y: 0, z: 0 };
+const _sl = { s: 0, l: 0 };
+
+/**
+ * Gemeinsamer Boden: Insel mit Stegen (`IslandGround`), bis zu zwei aktive Schiffsdecks (eigenes und geentertes Schiff) und die aktiven
+ * Brücken dazwischen (Gangway, Enterplanken, Leitern, Watweg zum Ufer). Eine gemeinsame `constrain`/`height`-Pipeline:
+ *  1. Läufer MIT Höhenhinweis `y`: steht er auf einer Brücke (Grundriss im Streifen und Höhe innerhalb der Stufenhöhe), gilt die Brücke;
+ *     sonst das Deck, in dessen Rumpf er steht, sonst Insel/Steg. Unter einer Brücke ist die Fläche gesperrt, solange die lichte Höhe
+ *     unter `BRIDGE_CLEARANCE` liegt (man geht nicht quer in die Rampe).
+ *  2. Aufrufer OHNE Hinweis (Gegner, Kamera, Effekte): das Deck, in dessen Rumpf der Punkt liegt, sonst Insel/Steg.
+ * Brücken hängen an Ankern (fest in der Welt oder am Deck eines Schiffs); `update()` rechnet ihre Lage je Logikbild neu, ohne Allokation:
+ * die bewegte Deckshöhe an der Bordwand (aus der Schiffsmatrix) und die feste Steg-/Uferhöhe ergeben die Neigung, die Brücke liegt bündig.
+ */
+export class CompositeGround implements Ground {
+  readonly bridges: BridgeRt[] = [];
+  private decks: DeckGround[] = [];
+
+  constructor(readonly island: IslandGround) {}
+
+  // ---------- Verwaltung ----------
+
+  /** Aktive Decks setzen (höchstens zwei: eigenes Schiff und geentertes Schiff) */
+  setDecks(...d: (DeckGround | null | undefined)[]) {
+    this.decks.length = 0;
+    for (const x of d) if (x && this.decks.length < 2) this.decks.push(x);
+  }
+  get deckCount() { return this.decks.length; }
+  deckOf(shipId: string): DeckGround | null { for (const d of this.decks) if (d.shipId === shipId) return d; return null; }
+
+  /** Brücke eintragen (ersetzt eine mit gleicher Kennung); `walk` = begehbar (Gangway, Planke, Watweg) */
+  addBridge(def: BridgeDef, walk = def.kind !== 'ladder'): BridgeRt {
+    this.removeBridge(def.id);
+    const rt: BridgeRt = { def, f: makeFrame(), walk, ok: false };
+    this.bridges.push(rt);
+    this.resolve(rt);
+    return rt;
+  }
+  removeBridge(id: string) {
+    const i = this.bridges.findIndex((b) => b.def.id === id);
+    if (i >= 0) this.bridges.splice(i, 1);
+  }
+  clearBridges() { this.bridges.length = 0; }
+  bridge(id: string): BridgeRt | null { for (const b of this.bridges) if (b.def.id === id) return b; return null; }
+
+  /** Anker in Weltkoordinaten; false, wenn das Deck nicht (mehr) aktiv ist */
+  private anchor(a: Anchor, out: { x: number; y: number; z: number }): boolean {
+    if (a.ref === 'world') { out.x = a.x; out.y = a.y; out.z = a.z; return true; }
+    const d = this.deckOf(a.shipId);
+    if (!d) return false;
+    d.anchorInto(a.lx, a.lz, a.dy, out);
+    return true;
+  }
+
+  private resolve(b: BridgeRt) {
+    b.ok = this.anchor(b.def.a, _a) && this.anchor(b.def.b, _b);
+    if (b.ok) setFrame(b.f, _a.x, _a.y, _a.z, _b.x, _b.y, _b.z);
+  }
+
+  /** Je Logikbild: Lage aller Brücken aus den Ankern (feste Steghöhe ↔ bewegte Deckshöhe) neu berechnen */
+  update() { for (const b of this.bridges) this.resolve(b); }
+
+  /** Lage auf einer Leiter (Anteil t, 0 = unten/Anfang) – für Kletter-Läufer */
+  ladderAt(id: string, t: number, out: { x: number; y: number; z: number }): boolean {
+    const b = this.bridge(id);
+    if (!b || !b.ok) return false;
+    const k = clamp01(t);
+    out.x = b.f.ax + (b.f.bx - b.f.ax) * k;
+    out.z = b.f.az + (b.f.bz - b.f.az) * k;
+    out.y = b.f.ay + (b.f.by - b.f.ay) * k;
+    return true;
+  }
+  ladderLength(id: string): number { const b = this.bridge(id); return b && b.ok ? spanLength(b.f) : 0; }
+
+  // ---------- Boden ----------
+
+  /** Höhe des Watwegs: Gelände unter Wasser, mindestens 0,5 m unter der Wasserlinie */
+  private wadeH(x: number, z: number): number {
+    const h = this.island.height(x, z);
+    return Number.isFinite(h) ? Math.max(-0.5, h) : -0.5;
+  }
+
+  private bridgeH(b: BridgeRt, s: number, x: number, z: number): number {
+    return b.def.kind === 'wade' ? this.wadeH(x, z) : frameHeight(b.f, s);
+  }
+
+  /** Brücke, auf der ein Läufer mit Höhe y an (x, z) steht (nächste in der Höhe); füllt `_sl` mit s und l */
+  private pickBridge(x: number, z: number, y: number): BridgeRt | null {
+    let best: BridgeRt | null = null, bd = Infinity, bs = 0, bl = 0;
+    for (const b of this.bridges) {
+      if (!b.walk || !b.ok || b.def.out < 0.98) continue;
+      frameCoords(b.f, x, z, _sl);
+      if (_sl.s < 0 || _sl.s > b.f.len || Math.abs(_sl.l) > b.def.hw + 0.12) continue;
+      const dy = Math.abs(this.bridgeH(b, _sl.s, x, z) - y);
+      const lim = b.def.kind === 'wade' ? 1.3 : BRIDGE_STEP;
+      if (dy <= lim && dy < bd) { bd = dy; best = b; bs = _sl.s; bl = _sl.l; }
+    }
+    _sl.s = bs; _sl.l = bl;
+    return best;
+  }
+
+  private deckAt(x: number, z: number): DeckGround | null {
+    for (const d of this.decks) if (d.inHull(x, z)) return d;
+    return null;
+  }
+
+  /** Deck, in dessen Rumpfgrundriss ein Punkt liegt (null auf Insel, Steg und Brücke) */
+  deckAtPoint(x: number, z: number): DeckGround | null { return this.decks.length ? this.deckAt(x, z) : null; }
+
+  /** Steht ein Läufer mit Höhe y auf einer begehbaren Brücke? */
+  onBridge(x: number, z: number, y: number): boolean { return this.bridges.length > 0 && this.pickBridge(x, z, y) !== null; }
+
+  height(x: number, z: number, y?: number): number {
+    if (y !== undefined && this.bridges.length) {
+      const b = this.pickBridge(x, z, y);
+      if (b) return this.bridgeH(b, _sl.s, x, z);
+    }
+    const d = this.decks.length ? this.deckAt(x, z) : null;
+    return d ? d.height(x, z) : this.island.height(x, z);
+  }
+
+  constrain(x: number, z: number, radius = 0.35, y?: number): { x: number; z: number } {
+    if (y !== undefined && this.bridges.length) {
+      const b = this.pickBridge(x, z, y);
+      if (b) {
+        const s = _sl.s;
+        let l = _sl.l;
+        const f = b.f, def = b.def;
+        // Geländer nur zwischen den freien Enden; Enden über Deck/Steg lassen seitlich frei
+        if (s >= def.freeA && s <= f.len - def.freeB) {
+          const lim = Math.max(0.25, def.hw - Math.min(radius, 0.45) * 0.7);
+          l = Math.max(-lim, Math.min(lim, l));
+        }
+        return { x: f.ax + f.ux * s - f.uz * l, z: f.az + f.uz * s + f.ux * l };
+      }
+      // unter einer Rampe: gesperrt, solange die lichte Höhe zu klein ist (nicht quer in die Gangway laufen)
+      for (const bb of this.bridges) {
+        if (!bb.walk || !bb.ok || bb.def.kind === 'wade') continue;
+        frameCoords(bb.f, x, z, _sl);
+        if (_sl.s < 0 || _sl.s > bb.f.len || Math.abs(_sl.l) > bb.def.hw + radius) continue;
+        const clear = frameHeight(bb.f, _sl.s) - y;
+        if (clear > BRIDGE_STEP && clear < BRIDGE_CLEARANCE) {
+          const edge = (bb.def.hw + radius + 0.03) * (_sl.l >= 0 ? 1 : -1);
+          x = bb.f.ax + bb.f.ux * _sl.s - bb.f.uz * edge;
+          z = bb.f.az + bb.f.uz * _sl.s + bb.f.ux * edge;
+          break;
+        }
+      }
+    }
+    const d = this.decks.length ? this.deckAt(x, z) : null;
+    return d ? d.constrain(x, z, radius) : this.island.constrain(x, z, radius);
   }
 }

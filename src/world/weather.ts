@@ -38,6 +38,8 @@ export class Weather {
 
   private changeTimer = 240;
   private boltTimer = 5;
+  /** Gehaltene Werte (siehe `hold`) */
+  private held: Partial<Params> | null = null;
   private rain: Mesh;
   /** Sekunden bis zum Donner nach einem Blitz (< 0: keiner geplant) */
   private thunderT = -1;
@@ -136,7 +138,19 @@ export class Weather {
   setWeather(id: WeatherId, instant = false) {
     this.target = id;
     this.changeTimer = 180 + Math.random() * 240;
-    if (instant) Object.assign(this.p, this.paramsOf(id));
+    if (instant) Object.assign(this.p, this.goalOf());
+  }
+
+  /** Eigene Werte, die über dem Wetter-Typ stehen (Titelbild: Abendhimmel, Sturmfront ohne zufällige Blitze); `null` gibt das Wetter wieder frei */
+  hold(values: Partial<Params> | null, instant = false) {
+    this.held = values ? { ...values } : null;
+    if (instant) Object.assign(this.p, this.goalOf());
+  }
+
+  /** Zielwerte: Vorgabe des Wetter-Typs, darüber die gehaltenen Werte (ohne neue Objekte je Schritt) */
+  private goalOf(): Params {
+    const base = this.paramsOf(this.target);
+    return this.held ? Object.assign(base, this.held) : base;
   }
 
   setMaxDrops(n: number) { this.maxDrops = Math.min(MAX_DROPS, n); }
@@ -144,7 +158,7 @@ export class Weather {
   /** Logik (feste Schritte) */
   update(dt: number, focus: Vector3) {
     if (this.thunderT >= 0 && (this.thunderT -= dt) < 0) audio.play('thunder', 0.6 + Math.random() * 0.4);
-    const goal = this.paramsOf(this.target);
+    const goal = this.goalOf();
     const k = Math.min(1, dt / 12); // ca. 12 s bis zum größten Teil des Übergangs
     for (const key of PARAM_KEYS) this.p[key] += (goal[key] - this.p[key]) * k;
 
@@ -180,7 +194,12 @@ export class Weather {
   private strike(focus: Vector3) {
     const a = Math.random() * Math.PI * 2;
     const d = 160 + Math.random() * 380;
-    const base = new Vector3(focus.x + Math.cos(a) * d, 0, focus.z + Math.sin(a) * d);
+    this.strikeAt(focus, focus.x + Math.cos(a) * d, focus.z + Math.sin(a) * d);
+  }
+
+  /** Blitz an einem bestimmten Ort (das Titelbild lässt ihn vor der Kamera einschlagen); `focus` bestimmt nur, wie das Band zum Betrachter steht */
+  strikeAt(focus: Vector3, x: number, z: number) {
+    const base = new Vector3(x, 0, z);
     const pts: Vector3[] = [];
     let p = base.clone().setY(230);
     pts.push(p.clone());

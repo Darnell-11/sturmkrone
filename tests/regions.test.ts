@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BERNSTEINSEE, ISLAND_REACH, REGIONS, regionAt, seaLevelAt } from '../src/data/regions';
 import { SITES } from '../src/data/settlements';
 import { IslandGround, shelfOf, WATERLINE } from '../src/world/islandGround';
-import { WORLD_RADIUS, WORLD_SCALE } from '../src/data/world';
+import { WORLD_CORE_RADIUS, WORLD_RADIUS, WORLD_SCALE } from '../src/data/world';
 
 describe('Stärke der Meere', () => {
   it('ist vor Ankerglück am schwächsten und steigt bis zum Rand der Bernsteinsee', () => {
@@ -17,6 +17,8 @@ describe('Stärke der Meere', () => {
     for (const r of REGIONS) {
       if (r === BERNSTEINSEE) continue;
       for (const i of r.islands) {
+        // die Marine-Grenzfestungen und Endgame-Inseln im äußeren Band (ab 2.9.90) steigen bis +4 (siehe tests/factions.test.ts)
+        if (i.marine || i.kind === 'citadel') continue;
         const lv = seaLevelAt(i.x, i.z);
         expect(lv, `${r.id}/${i.id}`).toBeGreaterThanOrEqual(r.level!);
         expect(lv, `${r.id}/${i.id}`).toBeLessThanOrEqual(r.level! + 2);
@@ -49,8 +51,9 @@ describe('Stärke der Meere', () => {
 });
 
 describe('Große Welt', () => {
-  it('hat die vierfache Fläche, Ankerglück bleibt der Heimathafen am alten Platz', () => {
-    expect(WORLD_RADIUS).toBe(4000);
+  it('hat die vierfache Fläche in der Kernwelt (plus äußeres Band), Ankerglück bleibt der Heimathafen am alten Platz', () => {
+    expect(WORLD_CORE_RADIUS).toBe(4000);
+    expect(WORLD_RADIUS).toBe(5800);
     expect(BERNSTEINSEE.islands[0]).toMatchObject({ id: 'ankerglueck', x: 0, z: 160 });
   });
 
@@ -63,7 +66,7 @@ describe('Große Welt', () => {
       expect(regionAt(i.x, i.z).id, i.id).toBe('bernsteinsee');
     }
     const mainland = lands.find((i) => i.id === 'gruenmark')!;
-    expect(mainland.r).toBeGreaterThan(2.5 * Math.max(...REGIONS.flatMap((r) => r.islands).filter((i) => !i.site).map((i) => i.r)) / 1.3);
+    expect(mainland.r).toBeGreaterThan(2.5 * Math.max(...REGIONS.flatMap((r) => r.islands).filter((i) => !i.site && !i.placed).map((i) => i.r)) / 1.3);
   });
 
   it('lässt Schiffe an jeder Inselgröße nah genug zum Anlegen heran', () => {

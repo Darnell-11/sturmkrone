@@ -28,6 +28,9 @@ import { boxBlocker, type Blocker } from './islandGround';
 import { hasProp, propGroup, type PropId } from './worldProps';
 import { archGroup, hasArch } from './envModels';
 import type { GlowSpec } from '../render/glow';
+import type { FactionId } from '../data/factions';
+import { factionRole, setFactionNight } from './factionMats';
+import { pickOne } from '../core/mathUtil';
 
 /**
  * Bauten für Dörfer, Höfe und Ruinen: jedes Modell kommt mit seinem Kollisions-Gitter
@@ -96,6 +99,7 @@ export function setSiteNight(night: number) {
   // Scheibe spiegelt tagsüber den Himmel, nachts bleibt nur ein Hauch
   glassMat.opacity = 0.12 + 0.48 * (1 - Math.min(1, night * 1.3));
   lampMat.color.copy(LAMP_ON).multiplyScalar(0.22 + 0.78 * Math.min(1, night * 1.4));
+  setFactionNight(night);
 }
 
 const plank = (color: string) => toon({ color, map: plankTexture(), ...toonPbr(plankTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) });
@@ -181,11 +185,20 @@ function windowAt(g: Group, x: number, y: number, z: number, yaw = 0, w = 0.8, h
   }
 }
 
+/**
+ * Farbwelt einer Weltmacht für die Blender-Bauten (nur während `build`, nur für diese Bauarten): Tore, Türme, Mauern, Bergfried, Kran,
+ * Lagerhaus und Kapelle einer Macht sehen so aus wie ihre Festungen (Kalkstein, Backstein, Granit, Sandstein, Schwarzholz, Weiß).
+ */
+let archTheme: FactionId | null = null;
+export const THEMED_TYPES = new Set<StructureType>(['torhaus', 'zinnenturm', 'zinnenmauer', 'bergfried', 'kran', 'lagerhaus', 'kapelle']);
+
 /** Material der Blender-Bauten: Farbe und Oberfläche wie die Eigenbau-Fassung, dazu Eckpunktfarben für die Ambient-Occlusion */
 const AM = (color: string, detail?: 'stone' | 'plaster' | 'tile') => toon({ color, detail, vertexColors: true });
 type ArchSet = { wall?: string; wallDetail?: 'stone' | 'plaster' | 'tile'; roof: string; roofDetail?: 'tile'; cloth?: string };
 /** Rollen→Material eines Hauses; Dach und Wand je Haustyp */
 const houseMats = (s: ArchSet) => (role: string) => {
+  // Festungsbauten einer Weltmacht (data/factions.ts): Mauerwerk, Dach und Tuch in der Farbwelt der Macht
+  if (archTheme) return factionRole(archTheme, role);
   switch (role) {
     case 'wall': return AM(s.wall ?? '#E2D6BC', s.wallDetail);
     case 'stone': return AM('#A8A092', 'stone');
@@ -999,12 +1012,11 @@ function fachwerk(g: Group, w: number, d: number, y0: number, h: number) {
 const WALL_TINTS = ['#E2D6BC', '#D9C08E', '#C9CFD0', '#DCC4B0', '#D8D2C2'];
 const COLONIAL_TINTS = ['#EBC86A', '#E39A7A', '#9CCBC0', '#EAD9B0', '#D98AA0', '#8EBBD8', '#EDD2A2', '#B5D58C'];
 const ROOF_TINTS = ['#6E4A2E', '#46525E', '#8E3A2A', '#5A4A3A'];
-const pick = <T,>(a: T[], rnd: () => number): T => a[Math.floor(rnd() * a.length) % a.length];
 
 function fachwerkhaus(rnd: () => number): Built {
   const g = new Group();
   const w = 6.4, d = 5.2, h1 = 2.7, h2 = 2.5, ov = 0.45;
-  g.add(archGroup('haus_fachwerk', houseMats({ wall: pick(WALL_TINTS, rnd), wallDetail: 'plaster', roof: pick(ROOF_TINTS, rnd), roofDetail: 'tile' }))!);
+  g.add(archGroup('haus_fachwerk', houseMats({ wall: pickOne(WALL_TINTS, rnd), wallDetail: 'plaster', roof: pickOne(ROOF_TINTS, rnd), roofDetail: 'tile' }))!);
   windowAt(g, w * 0.25, 1.75, d / 2 + 0.03);
   for (const sx of [-1, 1]) {
     windowAt(g, sx * w * 0.25, h1 + 1.3, d / 2 + ov + 0.03, 0, 0.8, 0.9);
@@ -1017,7 +1029,7 @@ function fachwerkhaus(rnd: () => number): Built {
 function kolonialhaus(rnd: () => number): Built {
   const g = new Group();
   const w = 7.2, d = 5.8, h1 = 3.1;
-  g.add(archGroup('haus_kolonial', houseMats({ wall: pick(COLONIAL_TINTS, rnd), wallDetail: 'plaster', roof: '#B5502E', roofDetail: 'tile' }))!);
+  g.add(archGroup('haus_kolonial', houseMats({ wall: pickOne(COLONIAL_TINTS, rnd), wallDetail: 'plaster', roof: '#B5502E', roofDetail: 'tile' }))!);
   for (const x of [-2.3, 2.3]) windowAt(g, x, 1.65, d / 2 + 0.04, 0, 0.7, 1.05);
   for (const x of [-w * 0.28, 0, w * 0.28]) windowAt(g, x, h1 + 1.2, d / 2 + 0.05, 0, 0.7, 1.5);
   for (const x of [-w * 0.25, w * 0.25]) { windowAt(g, x, 2.0, -d / 2 - 0.03, Math.PI, 0.8, 1.0); windowAt(g, x, h1 + 1.3, -d / 2 - 0.03, Math.PI, 0.8, 1.0); }
@@ -1027,7 +1039,7 @@ function kolonialhaus(rnd: () => number): Built {
 function lagerhaus(rnd: () => number): Built {
   const g = new Group();
   const w = 10.4, d = 7;
-  g.add(archGroup('lagerhaus', houseMats({ wall: pick(['#C9B890', '#B8A47C', '#C4C0B0'], rnd), wallDetail: 'plaster', roof: pick(['#5A4A3A', '#46525E', '#6E4A2E'], rnd), roofDetail: 'tile' }))!);
+  g.add(archGroup('lagerhaus', houseMats({ wall: pickOne(['#C9B890', '#B8A47C', '#C4C0B0'], rnd), wallDetail: 'plaster', roof: pickOne(['#5A4A3A', '#46525E', '#6E4A2E'], rnd), roofDetail: 'tile' }))!);
   windowAt(g, 3.6, 2.6, d / 2 + 0.03, 0, 0.7, 0.9);
   windowAt(g, -4, 2.6, -d / 2 - 0.03, Math.PI, 0.7, 0.9); windowAt(g, 0, 2.6, -d / 2 - 0.03, Math.PI, 0.7, 0.9);
   return { g, boxes: [[w + 0.4, d + 0.4], [4.2, 2.4, 3.2, d / 2 + 1.3]], circles: [], smoke: [w * 0.33, 7.0, -0.5], glows: [{ kind: 'lamp', x: -3.6, y: 3.0, z: d / 2 + 0.5, gy: 0, size: 0.7, pool: 5 }] };
@@ -1043,7 +1055,7 @@ function kapelle(): Built {
 
 function marktstand(rnd: () => number): Built {
   const g = new Group();
-  g.add(archGroup('marktstand', houseMats({ roof: '#7A1F1A', cloth: pick(['#A8322A', '#1F4E79', '#365C46', '#C98A2A', '#6A3A78'], rnd) }))!);
+  g.add(archGroup('marktstand', houseMats({ roof: '#7A1F1A', cloth: pickOne(['#A8322A', '#1F4E79', '#365C46', '#C98A2A', '#6A3A78'], rnd) }))!);
   return { g, boxes: [[3.5, 2.5, 0, 0.1]], circles: [] };
 }
 
@@ -1166,8 +1178,10 @@ function ruinenbogen(): Built {
 }
 
 /** Bauwerk nach Art erzeugen (rnd: fester Zufall der Insel, len: Länge für Zaun, Mauer, Steg, Feld) */
-export function build(t: StructureType, rnd: () => number, len = 8): Built {
-  const b = buildInner(t, rnd, len);
+export function build(t: StructureType, rnd: () => number, len = 8, theme: FactionId | null = null): Built {
+  archTheme = theme && THEMED_TYPES.has(t) ? theme : null;
+  let b: Built;
+  try { b = buildInner(t, rnd, len); } finally { archTheme = null; }
   // Fensterlichter (von windowAt am Gruppenobjekt gesammelt) gehören zu den Lichtquellen des Baus
   const wg = b.g.userData.winGlows as GlowSpec[] | undefined;
   if (wg) (b.glows ??= []).push(...wg);

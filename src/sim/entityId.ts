@@ -5,7 +5,7 @@
 /** Kennung einer Spielfigur, eines Gegners, einer Crew-Figur oder eines Schiffs: `<art>-<nummer>` */
 export type EntityId = string;
 
-export type EntityKind = 'foot' | 'enemy' | 'ally' | 'ship' | 'npc';
+export type EntityKind = 'foot' | 'enemy' | 'ally' | 'ship' | 'npc' | 'squad';
 
 const counters = new Map<EntityKind, number>();
 

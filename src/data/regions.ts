@@ -1,7 +1,10 @@
 // Handgemachte Regionen: die Bernsteinsee in der Mitte, fünf weitere Meere im Ring bis zum Weltrand.
+// Seit 2.9.90 ist der Ring in fünf Kuchenstücke zu je 72° geteilt (data/factions.ts): jedes gehört einer Macht, dazu kommen
+// die Marine-Grenzfestungen auf den Grenzlinien und im äußeren Band die Endgame-Festungen.
 import { WORLD_SCALE } from './world';
+import { BORDER_FORTS, BORDERS, CITADELS, FACTIONS, borderDistance, isExclave, islandOwner, sectorAt, sectorIndexAt, type FactionId } from './factions';
 
-export type IslandKind = 'town' | 'harbor' | 'camp' | 'ruin' | 'quiet' | 'treasure' | 'lighthouse' | 'boss';
+export type IslandKind = 'town' | 'harbor' | 'camp' | 'ruin' | 'quiet' | 'treasure' | 'lighthouse' | 'boss' | 'marinefort' | 'citadel';
 /** Aussehen der Inseln einer Region */
 export type IslandStyle = 'tropisch' | 'nebel' | 'nord' | 'glut' | 'sturm' | 'schlund' | 'festland' | 'klippe';
 
@@ -30,6 +33,15 @@ export interface IslandDef {
   site?: string;
   /** Lage und Größe sind schon endgültig (neue Länder): nicht mit der Welt skalieren, Größe nicht würfeln */
   placed?: boolean;
+  /** Besitzer (data/factions.ts); null = unabhängig (Ankerglück). Wird beim Aufbau gesetzt. */
+  factionId?: FactionId | null;
+  /** Nummer des Kuchenstücks (0 … 4), in dem die Insel liegt */
+  sectorIndex?: number;
+  /** Kolonie: gehört einer anderen Macht als dem Kuchenstück, in dem sie liegt */
+  exclave?: boolean;
+  /** Marine-Anlage: Grenzfestung auf einer Grenzlinie (`border`, mit `borderIndex`) oder das Hauptquartier am Weltrand (`hq`) */
+  marine?: 'border' | 'hq';
+  borderIndex?: number;
 }
 
 export interface RegionDef {
@@ -166,7 +178,44 @@ BERNSTEINSEE.islands.push(
   { id: 'sturmklippe', name: 'Sturmklippe', x: -900, z: -1060, r: 95, hill: 0.22, kind: 'quiet', palms: 0, rocks: 0, biome: 'klippe', site: 'sturmklippe', placed: true, info: 'Schwarze Basaltsäulen im Wind. Zwischen den Ruinen einer alten Warte hält ein einsamer Turm Ausschau.' },
   { id: 'faehrholm', name: 'Fährholm', x: -520, z: -270, r: 68, hill: 0.12, kind: 'quiet', palms: 0, rocks: 0, biome: 'festland', site: 'faehrholm', placed: true, info: 'Ein Hirtenhof zwischen Steinmauern und Zäunen. Von hier setzt die Fähre zum Festland über.' },
 );
-for (const r of REGIONS) for (const i of r.islands) i.region = r.id;
+
+/**
+ * Äußeres Band (seit 2.9.90): Marine-Grenzfestungen genau auf den fünf Grenzlinien zwischen den Kuchenstücken, ganz hinten am Rand
+ * jedes Kuchenstücks eine riesige Festungsinsel der Macht (Endgame) und, ebenfalls am Rand, das Marine-Hauptquartier Weißwacht.
+ * Alles in fertigen Weltkoordinaten (`placed`); die Einträge stehen in data/factions.ts (BORDER_FORTS, CITADELS).
+ */
+const polar = (deg: number, dist: number) => ({ x: Math.round(Math.sin((deg * Math.PI) / 180) * dist), z: Math.round(Math.cos((deg * Math.PI) / 180) * dist) });
+const regionOfPoint = (x: number, z: number): RegionDef => {
+  const d = (Math.atan2(x, z) * 180) / Math.PI;
+  const deg = d >= 324 ? d - 360 : d < -36 ? d + 360 : d;
+  return REGIONS.find((r) => r.arc && deg >= r.arc[0] && deg < r.arc[1]) ?? NEBELARCHIPEL;
+};
+for (const f of BORDER_FORTS) {
+  const b = BORDERS[f.borderIndex];
+  const p = polar(b.deg, f.radius);
+  regionOfPoint(p.x, p.z).islands.push({
+    id: f.id, name: f.name, ...p, r: f.r, hill: 0.3, kind: 'marinefort', palms: 0, rocks: 4, level: f.level, biome: 'klippe', placed: true,
+    marine: 'border', borderIndex: f.borderIndex, info: f.info,
+  });
+}
+for (const c of CITADELS) {
+  const p = polar(c.deg, c.dist);
+  const hq = c.factionId === 'marine';
+  regionOfPoint(p.x, p.z).islands.push({
+    id: c.id, name: c.name, ...p, r: c.r, hill: hq ? 0.16 : 0.22, kind: hq ? 'marinefort' : 'citadel', palms: 0, rocks: hq ? 3 : 5, level: c.level, boss: c.boss, placed: true,
+    biome: c.factionId === 'deutschland' ? 'nord' : c.factionId === 'kurogane' ? 'glut' : 'festland',
+    marine: hq ? 'hq' : undefined, info: c.info,
+  });
+}
+for (const r of REGIONS) {
+  for (const i of r.islands) {
+    i.region = r.id;
+    // Besitz: Marine-Anlagen gehören der Marine, alle anderen laut data/factions.ts (Ankerglück bleibt unabhängig)
+    i.factionId = i.marine ? 'marine' : CITADELS.find((c) => c.id === i.id)?.factionId ?? islandOwner(i.id, r.id);
+    i.sectorIndex = sectorIndexAt(i.x, i.z);
+    i.exclave = isExclave(i.factionId, i.x, i.z);
+  }
+}
 
 /**
  * Inseln deutlich größer und unterschiedlicher als in 1.0: der Faktor wird aus dem Namen gewürfelt
@@ -175,6 +224,8 @@ for (const r of REGIONS) for (const i of r.islands) i.region = r.id;
 const SIZE_BY_KIND: Record<IslandKind, [number, number]> = {
   town: [1.15, 1.15], harbor: [1.35, 1.5], lighthouse: [1.4, 1.6], camp: [1.4, 2.1],
   ruin: [1.5, 2.1], boss: [1.6, 2.2], quiet: [1.2, 2.3], treasure: [1.1, 1.9],
+  // Marine-Festungen und Endgame-Inseln sind `placed` (feste Größe); die Werte stehen nur der Vollständigkeit halber da
+  marinefort: [1, 1], citadel: [1, 1],
 };
 function nameHash(id: string): number {
   let h = 2166136261;
@@ -216,7 +267,8 @@ export function regionAt(x: number, z: number): RegionDef {
 
 /**
  * Stärke der Schiffe auf offener See an einem Punkt.
- * Bernsteinsee: 1 vor Ankerglück bis 4 am Rand. Äußere Meere: Stufe der Region, nach außen bis +2.
+ * Bernsteinsee: 1 vor Ankerglück bis 4 am Rand. Äußere Meere: Stufe der Region, nach außen bis +2; im äußeren Band
+ * (hinter den Grenzfestungen, ab 3420 m) steigt sie weiter bis +4 an den Endgame-Festungen.
  */
 export function seaLevelAt(x: number, z: number): number {
   const reg = regionAt(x, z);
@@ -224,59 +276,17 @@ export function seaLevelAt(x: number, z: number): number {
     const home = BERNSTEINSEE.islands[0];
     return Math.max(1, Math.min(4, 1 + Math.floor(Math.hypot(x - home.x, z - home.z) / (260 * WORLD_SCALE))));
   }
-  const out = Math.max(0, Math.min(2, Math.floor((Math.hypot(x, z) - 1150 * WORLD_SCALE) / (280 * WORLD_SCALE))));
+  const out = Math.max(0, Math.min(4, Math.floor((Math.hypot(x, z) - 1150 * WORLD_SCALE) / (280 * WORLD_SCALE))));
   return (reg.level ?? 1) + out;
 }
 
-// ---------- Ausrüstung (aus 1.0) ----------
+/** Wo man gerade segelt, für Kompass, Steuerkompass und die Sektor-Einblendung */
+export interface SectorLabel { key: string; name: string; color: string; epithet: string }
 
-export interface WeaponDef { n: string; dmg: number; price: number; rank: number; col: string; glow?: boolean }
-export const WEAPONS: WeaponDef[] = [
-  { n: 'Rostiger Säbel', dmg: 0, price: 0, rank: 0, col: '#8C8C8C' },
-  { n: 'Stahlklinge', dmg: 6, price: 220, rank: 0, col: '#C9D2DA' },
-  { n: 'Damastklinge', dmg: 14, price: 750, rank: 2, col: '#9FB4C8' },
-  { n: 'Sturmklinge', dmg: 25, price: 1900, rank: 4, col: '#7FD6FF', glow: true },
-  { n: 'Gezeitenklinge', dmg: 40, price: 4800, rank: 6, col: '#FFD166', glow: true },
-  { n: 'Himmelsschneide', dmg: 60, price: 11000, rank: 8, col: '#FF8AD8', glow: true },
-];
-
-/**
- * Waffenlinien je Kampfstil: gleiche Stufen, Preise und Schadenswerte wie WEAPONS,
- * aber eigene Namen, eigenes Aussehen und ein kleiner Stilbonus.
- */
-export interface WeaponLine { title: string; names: string[]; stat: (w: WeaponDef, tier: number) => string; flavor: string }
-export const WEAPON_LINES: Record<'faust' | 'schwert' | 'effekt', WeaponLine> = {
-  schwert: {
-    title: 'Klingen',
-    names: WEAPONS.map((w) => w.n),
-    stat: (w) => `+${w.dmg} Schaden${w.glow ? ' · leuchtet' : ''}`,
-    flavor: 'Grete schmiedet dir jede Klingenform – Säbel, Langklinge, Zweihänder oder Doppelklingen.',
-  },
-  faust: {
-    title: 'Kampfhandschuhe',
-    names: ['Lederwickel', 'Eisenknöchel', 'Stahlfäuste', 'Sturmfäuste', 'Gezeitenfäuste', 'Himmelsfäuste'],
-    stat: (w, t) => `+${w.dmg} Schlagkraft · +${t * 2} % Volltreffer${w.glow ? ' · leuchtet' : ''}`,
-    flavor: 'Beschlagene Handschuhe: jeder Schlag sitzt härter, Volltreffer werden häufiger.',
-  },
-  effekt: {
-    title: 'Faji-Foki',
-    names: ['Holzamulett', 'Bernsteinfokus', 'Runenstein', 'Sturmkristall', 'Gezeitenperle', 'Himmelsauge'],
-    stat: (w, t) => `+${w.dmg} Faji-Kraft · +${t * 5} % Faji-Erholung${w.glow ? ' · leuchtet' : ''}`,
-    flavor: 'Ein Fokus bündelt dein Faji: stärkere Geschosse, schneller wieder bereit.',
-  },
-};
-
-export interface ArmorDef { n: string; hp: number; price: number; rank: number }
-export const ARMOR: ArmorDef[] = [
-  { n: 'Leinenhemd', hp: 0, price: 0, rank: 0 },
-  { n: 'Lederweste', hp: 40, price: 200, rank: 0 },
-  { n: 'Kettenhemd', hp: 95, price: 700, rank: 2 },
-  { n: 'Gezeitenpanzer', hp: 170, price: 2300, rank: 5 },
-  { n: 'Faji-Harnisch', hp: 280, price: 6500, rank: 7 },
-];
-
-export const POTION = { n: 'Proviant', price: 25, heal: 0.4, max: 10 };
-/** Faji-Punkt im Schrein: Preis steigt mit jedem Kauf */
-export const SHRINE_PRICE = (bought: number) => 300 + bought * 250;
-/** Übernachten in der Taverne */
-export const REST_PRICE = 20;
+/** Sektor unter einem Punkt: Macht des Kuchenstücks, „Grenze · Marine“ an den Grenzlinien, in der Bernsteinsee neutral */
+export function sectorLabel(x: number, z: number): SectorLabel {
+  if (regionAt(x, z) === BERNSTEINSEE) return { key: 'bernstein', name: 'Bernsteinsee · neutral', color: '#E8B33A', epithet: 'Das freie Meer der Händler und Schmuggler' };
+  if (borderDistance(x, z).dist < 260 && Math.hypot(x, z) > 2200) return { key: 'grenze', name: 'Grenze · Marine', color: FACTIONS.marine.color, epithet: 'Wachwasser der Marine zwischen zwei Mächten' };
+  const f = FACTIONS[sectorAt(x, z).factionId];
+  return { key: f.id, name: `Sektor ${f.name}`, color: f.color, epithet: f.epithet };
+}

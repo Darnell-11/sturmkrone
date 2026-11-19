@@ -13,18 +13,23 @@ import { preload } from '../../../core/preload';
 import { markShared } from '../../../render/dispose';
 import { finishMat } from './kit';
 import type { Finish } from '../../../data/equipment';
+import { smoothstep } from '../../../core/mathUtil';
 
-export type GlbRole = 'main' | 'trim' | 'leather' | 'steel' | 'gold' | 'dark' | 'cloth' | 'skin' | 'glow';
 export interface GlbRoleLook { finish: Finish; color: string }
 
 /** Ein geladenes Modell: je Rolle eine Geometrie (Lage, Normale, UV) */
 export interface GlbModel { name: string; roles: Map<string, BufferGeometry> }
 
 const BASE = `${import.meta.env.BASE_URL}models/gear/`;
+const MODELS = `${import.meta.env.BASE_URL}models/`;
 /** Alle Modelle, die das Spiel kennt (Dateiname ohne .glb) */
 export const GLB_MODELS = ['stulpenstiefel', 'stoffhose', 'stoffhose_stiefel', 'gehrock', 'dreispitz', 'frisur_mehrlagig', 'entermesser', 'parierdolch', 'sandalen',
   'helm_ritter2', 'helm_drache2', 'helm_kabuto2', 'helm_krone2', 'helm_kapuze2', 'helm_engel2', 'helm_hoerner2', 'schulter_lamellen2', 'schulter_drache3', 'schulter_fluegel3',
-  'w_saebel', 'w_katana', 'w_zweihaender', 'w_kurzklinge', 'w_faust_leder', 'w_faust_stahl', 'w_faust_dorn', 'w_fokus'];
+  'w_saebel', 'w_katana', 'w_zweihaender', 'w_kurzklinge', 'w_faust_leder', 'w_faust_stahl', 'w_faust_dorn', 'w_fokus',
+  // Raid-Endbosse (public/models/bosses/, tools/blender/build_bosse.py)
+  'bosses/blackwood_head', 'bosses/blackwood_saebel', 'bosses/blackwood_pistole', 'bosses/vanderberg_head', 'bosses/vanderberg_hellebarde', 'bosses/eisenstein_head',
+  'bosses/eisenstein_zweihaender', 'bosses/devalois_head', 'bosses/devalois_rapier', 'bosses/kurogane_head', 'bosses/kurogane_katana', 'bosses/kurogane_wakizashi',
+  'bosses/valken_head', 'bosses/valken_kanone'];
 
 const models = new Map<string, GlbModel>();
 
@@ -32,7 +37,7 @@ const models = new Map<string, GlbModel>();
 export async function loadGearModels(names: readonly string[] = GLB_MODELS): Promise<void> {
   await Promise.all(names.map(async (name) => {
     try {
-      const g = await preload.loadGltf(`${BASE}${name}.glb`);
+      const g = await preload.loadGltf(name.startsWith('bosses/') ? `${MODELS}${name}.glb` : `${BASE}${name}.glb`);
       const by = new Map<string, BufferGeometry[]>();
       g.scene.updateMatrixWorld(true);
       g.scene.traverse((o) => {
@@ -78,11 +83,7 @@ function mergeList(list: BufferGeometry[]): BufferGeometry {
   return out;
 }
 
-export const hasGlb = (name: string) => models.has(name);
 export const glbModel = (name: string) => models.get(name) ?? null;
-
-/** Spielerfreundliche Zusammenfassung für die Entwicklung: welche Modelle geladen sind */
-export const loadedGlbs = () => [...models.keys()];
 
 // ---------- Gewichte ----------
 
@@ -234,7 +235,6 @@ export function fitFoot(base: object, key: string, geo: BufferGeometry, body: Sk
   const p = geo.attributes.position, n = p.count;
   const side = componentSide(geo);
   const si = new Uint16Array(n * 4), sw = new Float32Array(n * 4);
-  const sm = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   const cache = new Map<number, { leg: number; foot: number; toe: number; ry: number; tz: number }>();
   for (let v = 0; v < n; v++) {
     const s = side[v] || (p.getX(v) < 0 ? -1 : 1);
@@ -244,8 +244,8 @@ export function fitFoot(base: object, key: string, geo: BufferGeometry, body: Sk
       c = { leg: idx(`J_Bip_${L}_LowerLeg`), foot: idx(`J_Bip_${L}_Foot`), toe: idx(`J_Bip_${L}_ToeBase`), ry: rest(`J_Bip_${L}_Foot`).y, tz: rest(`J_Bip_${L}_ToeBase`).z };
       cache.set(s, c);
     }
-    const wLeg = sm(c.ry + 0.01, c.ry + 0.07, p.getY(v));
-    const wToe = (1 - wLeg) * sm(-0.012, 0.03, c.tz - p.getZ(v));
+    const wLeg = smoothstep(c.ry + 0.01, c.ry + 0.07, p.getY(v));
+    const wToe = (1 - wLeg) * smoothstep(-0.012, 0.03, c.tz - p.getZ(v));
     const wFoot = Math.max(0, 1 - wLeg - wToe);
     si[v * 4] = c.leg; sw[v * 4] = wLeg; si[v * 4 + 1] = c.foot; sw[v * 4 + 1] = wFoot; si[v * 4 + 2] = c.toe; sw[v * 4 + 2] = wToe;
   }
@@ -411,14 +411,6 @@ export function buildHeld(model: GlbModel, look: Record<string, GlbRoleLook>): G
     g.add(m);
   }
   return g;
-}
-
-/** Freigeben, was eine Figur an Modell-Netzen besitzt: Lage, Normale, UV, Liste und Gewichte gehören dem Modell */
-export function releaseSkinned(m: SkinnedMesh) {
-  const g = m.geometry;
-  for (const k of ['position', 'normal', 'uv', 'skinIndex', 'skinWeight']) g.deleteAttribute(k);
-  g.setIndex(null);
-  g.dispose();
 }
 
 void Vector3;

@@ -1,5 +1,8 @@
 import { audio } from '../audio/audio';
-import { CrewAboard } from './crewAboard';
+import { CrewAboard, type CrossingPlan, type LandingPlan } from './crewAboard';
+import type { CommandState, TroopRoster } from '../data/troops';
+import { rosterTotal } from '../data/troops';
+import type { TroopSquad, TroopWorld } from '../entities/troops/squad';
 import type { CrewDef } from '../data/crew';
 import type { AllyWorld } from '../entities/ally';
 import { navForIsland } from '../ai/navGrid';
@@ -22,7 +25,7 @@ import type { Input } from '../core/input/input';
 import type { StyleId } from '../data/animations';
 import type { CharacterLook, NpcRole } from '../data/characterParts';
 import { CAMERA_PLANES, type QualityConfig } from '../data/qualityTiers';
-import { EDGE_WALL, WORLD_SCALE } from '../data/world';
+import { EDGE_WALL, HOME_SPAWN, WORLD_SCALE } from '../data/world';
 import type { CharacterAssets } from '../entities/character/assets';
 import { LampPool, lampShared } from '../render/lamps';
 import { installMatrixSkip } from '../render/matrixSkip';
@@ -38,7 +41,7 @@ import { coastK, coastMax, fitHills, inBox, IslandGround, makeIslandShape, shelf
 import type { IslandShape } from './ocean';
 import { ParticleSystem } from './particles';
 import { hashId, seeded } from './waves';
-import { dressIsland } from './islandDress';
+import { dressIsland, plantFactionBanners } from './islandDress';
 import { SITES } from '../data/settlements';
 import { buildSite } from './settlement';
 import { setSiteNight } from './architecture';
@@ -58,14 +61,25 @@ import type { Enemy } from '../entities/enemy';
 import { FajiController } from '../faji/fajiController';
 import type { SkillState } from '../core/save/types';
 import { Ship, type SeaEnv } from '../entities/ship/ship';
-import { AMMO, AMMO_IDS, DEFAULT_SHIP_LOOK, SHIP_CLASSES, type AmmoId, type ShipLook } from '../data/ships';
-import { NavalSystem, type EnemyShip } from '../naval/naval';
-import { DeckGround, type Ground, type Pier } from './islandGround';
+import { AMMO, AMMO_IDS, DEFAULT_SHIP_LOOK, factionShipLook, SHIP_CLASSES, TITLE_SHIP, type AmmoId, type ShipLook } from '../data/ships';
+import { TitleDirector } from './titleDirector';
+import { NavalSystem, type BattleMark, type BattleResult, type EnemyShip } from '../naval/naval';
+import { CompositeGround, DeckGround, type Ground, type Pier } from './islandGround';
+import { DockingSystem } from './dockingSystem';
+import type { BoardingPhase } from './docking';
 import { hasArch } from './envModels';
 import { actAt, ELEMENT_COLORS } from '../data/skills';
 import { BERNSTEINSEE, REGIONS, regionAt, seaLevelAt, type IslandDef, type RegionDef } from '../data/regions';
+import { FACTIONS, marineStance, type FactionId } from '../data/factions';
+import { RaidDirector, type RaidEnd, type RaidHostWorld, type RaidView } from '../raid/raidDirector';
+import { Garrison, makePlayerBanner, playerPalette } from './garrison';
+import type { RaidWorld } from '../raid/raidWorld';
+import type { RaidPartyContext } from '../raid/raidTypes';
+import type { LootOwned } from '../raid/raidLoot';
+import { MARINE_SERVICE_STANDING } from '../raid/raidRules';
 import { SmokeSystem } from './smoke';
 import { setElementSmoke } from '../faji/elementFx';
+import { distToSegment, wrapAngle } from '../core/mathUtil';
 import { DebrisSystem } from './debris';
 import { islandLabel, islandTerrain, OUTPOST_PIER, outpost, plant, ROCK_TYPES, rockFormation, styleKit, volcano } from './islandStyle';
 import type { Sprite } from 'three';
@@ -75,6 +89,7 @@ import { updateBeams } from './lighthouseBeam';
 import { updateFountains } from './fountain';
 import { SeaLife } from './life';
 import { warmupShaders } from '../core/warmup';
+import { clamp01 } from '../core/mathUtil';
 import type { WebGLRenderer } from 'three';
 import { TOWN_NPCS, VILLAGE_NPCS, type TownNpcDef } from '../data/quests';
 
@@ -121,6 +136,8 @@ export class SeaWorld {
   /** Inseln (Mittelpunkt und Radius) – für Karte und Flachwasser */
   islands: IslandShape[] = [];
   readonly ground = new IslandGround();
+  /** Gemeinsamer Boden: Insel + Stege, aktive Decks (eigenes, geentertes) und Brücken (Gangway, Planken, Leitern, Watweg) */
+  readonly composite = new CompositeGround(this.ground);
   mode: SeaMode = 'sail';
   /** Text der Kontextaktion (z. B. „An Land gehen“) oder null */
   contextLabel: string | null = null;
@@ -133,6 +150,10 @@ export class SeaWorld {
   onShipSunk: (e: EnemyShip) => void = () => {};
   onLoot: (gold: number, shard: boolean) => void = () => {};
   onBoardWon: (e: EnemyShip) => void = () => {};
+  /** Seeschlacht an einer Grenze beginnt in der Nähe / endet (nur wenn der Spieler eingriff: Bilanz); Kopfgeld je Macht kommt aus dem Spielstand */
+  onBattleStart: (m: BattleMark, where: string) => void = () => {};
+  onBattleEnd: (r: BattleResult) => void = () => {};
+  bountyOf: (id: FactionId) => number = () => 0;
   onTalk: (npc: TownNpcDef) => void = () => {};
   onDig: (island: string) => void = () => {};
   onEnterIsland: (def: IslandDef) => void = () => {};
@@ -175,12 +196,13 @@ export class SeaWorld {
   onBottle: () => void = () => {};
   private lastIsland: string | null = null;
   private hostilesBefore = 0;
-  /** Aktueller Boden: Inseln oder (beim Entern) das feindliche Deck */
+  /** Der Boden der Welt für alle Läufer: `CompositeGround` (Insel, Stege, Decks und Brücken in einer Pipeline) */
   private readonly groundProxy: Ground = {
-    height: (x, z) => (this.deckGround ?? this.ground).height(x, z),
-    constrain: (x, z, r) => (this.deckGround ?? this.ground).constrain(x, z, r),
+    height: (x, z, y) => this.composite.height(x, z, y),
+    constrain: (x, z, r, y) => this.composite.constrain(x, z, r, y),
+    ladderAt: (id, t, o) => this.composite.ladderAt(id, t, o),
+    ladderLength: (id) => this.composite.ladderLength(id),
   };
-  private boardDone = 0;
   /** Angeforderte Trefferpause (vom Spiel in Echtzeit abgearbeitet) */
   /** Trefferpause: t = Zeitlupe (Sekunden), freeze = echtes Standbild (Sekunden, läuft in Echtzeit ab) */
   hitstop = { t: 0, scale: 0.05, freeze: 0 };
@@ -194,6 +216,20 @@ export class SeaWorld {
   /** Neue Figuren und Objekte für das Zeichnen vorbereiten (setzt das Spiel: Shader parallel übersetzen) */
   warmHook: ((o: Object3D) => void) | null = null;
   playerFaction: Faction = 'pirat';
+  /** Ansehen bei einer Weltmacht (−100 … 100); setzt das Spiel aus dem Spielstand (progress.standing). Marine: ab 20 verbündet, unter 0 feindlich. */
+  standingOf: (id: FactionId) => number = () => 0;
+  /** Laufende Belagerung (instanzierter Raid): solange gesetzt, ist die Hauptkarte pausiert und nur die Raid-Insel ist da */
+  raid: RaidDirector | null = null;
+  /** Hauptkarte während eines Raids (Inseln, Definitionen, Stege, Küstenformen, Rauch- und Feuerstellen) */
+  private mainSaved: { islands: WalkIsland[]; defs: IslandDef[]; piers: Pier[]; shapes: IslandShape[]; vents: { x: number; y: number; z: number }[]; fires: { x: number; y: number; z: number }[]; chimneys: { x: number; y: number; z: number }[] } | null = null;
+  private raidHostObj: RaidHostWorld | null = null;
+  private raidMsgCd = 0;
+  /** Oberfläche des Raids: Ziele und Hinweise (null = kein Raid) */
+  onRaidView: (v: RaidView | null) => void = () => {};
+  /** Der Raid ist zu Ende (Sieg oder Rückzug): die Welt ist schon wiederhergestellt */
+  onRaidEnd: (info: RaidEnd) => void = () => {};
+  /** Anfrage, eine Festungsinsel zu belagern (Kontext-Taste an der Küste der Endgame-Inseln und des Marine-Hauptquartiers) */
+  onRaidRequest: (def: IslandDef) => void = () => {};
   private fx: CombatFx | null = null;
   private overlay: CombatOverlay | null = null;
   private dust: ParticleSystem;
@@ -219,11 +255,30 @@ export class SeaWorld {
   private crewLoyalty: Record<string, number> = {};
   private crewLevel = 1;
   private allyBuff = 1;
+  /** Massentruppen an Bord (Truppentyp → Köpfe) und Kapazität; Überlebende kommen über `onTroopsReturn` zurück ins Spiel */
+  private crewTroops: TroopRoster = {};
   private clearedNow = false;
+  /** Nach dem Gefecht: die überlebenden Truppen (Bestand je Typ) – das Spiel zieht Verluste vom Schiffs-Pool ab und speichert */
+  onTroopsReturn: (survivors: TroopRoster, before: TroopRoster) => void = () => {};
+  private troopsBefore: TroopRoster = {};
   onCrewLine: (who: CrewDef, text: string) => void = () => {};
   private sailCd = 0;
   private boarding: EnemyShip | null = null;
+  /** Das Deck, auf dem die Spielfigur gerade steht (aus der Lage abgeleitet; null auf Insel, Steg und Brücke) */
   private deckGround: DeckGround | null = null;
+  /** Deck des eigenen Schiffs (bleibt bestehen, bis das Schiff umgebaut wird) und das des geenterten Schiffs */
+  private ownDG: DeckGround | null = null;
+  private preyDG: DeckGround | null = null;
+  /** Anlegen, Gangway, Leitern und Enterbrücken */
+  docking!: DockingSystem;
+  /** Das Gefecht auf dem Feindschiff ist gewonnen (Brücken werden eingeholt, sobald die Spielfigur wieder an Bord ist) */
+  private boardWon = false;
+  private boardBack = 0;
+  private boardRetreat = false;
+  private homeSent = false;
+  /** Wartet das Spiel noch auf die Rückkehr der Spielfigur aufs eigene Deck (nach Landgang) */
+  private landed = false;
+  private climbPose = { x: 0, y: 0, z: 0, yaw: 0 };
   /** Steht die Spielfigur auf einem Schiffsdeck (Entern, an Bord)? */
   get onDeck() { return !!this.deckGround || this.mode === 'sail'; }
   /** Inseldaten (gleiche Reihenfolge wie ground.islands) */
@@ -240,7 +295,7 @@ export class SeaWorld {
   private piers: Pier[] = [];
   private lamps: Mesh[] = [];
   /** Inselgruppen (für das Ausblenden jenseits der Sichtweite) */
-  private islandGroups: { g: Group; x: number; z: number; r: number }[] = [];
+  private islandGroups: { g: Group; x: number; z: number; r: number; id: string }[] = [];
   private viewDist = 800;
   /** Lagerfeuer auf den Inseln (Rauch und Glut) */
   private campfires: { x: number; y: number; z: number }[] = [];
@@ -264,7 +319,6 @@ export class SeaWorld {
   private player: Character | null = null;
   private foot: PlayerFoot | null = null;
   private npcs: Npc[] = [];
-  private anchor = { x: 0, z: 0 };
   private outlineNpcs = true;
 
   private x = 0;
@@ -310,7 +364,8 @@ export class SeaWorld {
   private lockDZ = 0;
   private footPitch = 0.32;
   private footDist = 7;
-  private menuOrbit = 0;
+  /** Titelbild: Kamerafahrt des Prachtschiffs in drei Stimmungen (siehe titleDirector.ts) */
+  readonly title: TitleDirector;
   private tmp = new Vector3();
   private fwdTmp = new Vector3();
   private npcTmp = new Vector3();
@@ -327,6 +382,14 @@ export class SeaWorld {
     this.env = new Environment(this.scene);
     this.ship = new Ship(this.scene, 0, DEFAULT_SHIP_LOOK('pirat'), 'pirat', 0, true);
     this.boat = this.ship.model.group;
+    this.docking = new DockingSystem({
+      scene: this.scene, ground: this.ground, composite: this.composite, ship: this.ship,
+      ownDeck: () => this.ownDeckGround(),
+      waterY: (x, z) => this.env.heightAt(x, z),
+      say: (t) => this.onMessage(t),
+      onBoard: (ph) => this.onBoardPhase(ph),
+      bump: (x, y, z) => { this.shake = Math.max(this.shake, 0.5); audio.play('crack', 0.7, { x, y, z }); this.spray.emit(26, x, this.env.heightAt(x, z), z, { speed: 5, up: 4.5, life: 1.1, color: new Color(0.85, 0.92, 0.95), gravity: 12, spread: 3.5 }); },
+    });
     this.ship.onRepaired = (r) => {
       this.onMessage(r.sail > 0.5 || r.hull > 0.5 ? `Geflickt: Segel +${Math.round(r.sail)} HP${r.hull > 0.5 ? `, Rumpf +${Math.round(r.hull)}` : ''}.` : 'Fertig geflickt.');
       audio.play('level', 0.4);
@@ -350,6 +413,20 @@ export class SeaWorld {
     this.debris.onSplash = (x, z, big) => {
       this.spray.emit(big ? 14 : 5, x, this.env.heightAt(x, z) + 0.1, z, { speed: big ? 2.5 : 1.5, up: big ? 5 : 3, life: 0.8, color: FOAM_COL, spread: 0.3 });
     };
+    // Meereswerte für die Fahrphysik im Titelbild: ohne Sturmschaden an den Segeln (dort reißt nichts), ein Objekt für alle Schritte
+    const titleSea: SeaEnv = { heightAt: (x, z) => this.env.heightAt(x, z), windDir: 0, windStrength: 0, storm: 0, time: 0 };
+    this.title = new TitleDirector({
+      env: this.env,
+      ship: this.ship,
+      seaEnv: () => { titleSea.windDir = this.env.windDir; titleSea.windStrength = this.env.weather.p.wind; titleSea.time = this.env.clock; return titleSea; },
+      sea: (x, z) => this.env.heightAt(x, z),
+      free: (x, z, r) => !this.ground.islandAt(x, z, r) && !this.piers.some((p) => distToSegment(x, z, p.ax, p.az, p.bx, p.bz) < r + p.hw),
+      moved: (cut) => {
+        const s = this.ship;
+        this.x = s.x; this.z = s.z; this.heading = s.heading; this.speed = s.speed;
+        if (cut) { this.wake = []; this.env.ocean.setWake(this.wake); this.seaYaw = s.heading; }
+      },
+    });
     if (!deferred) for (const _ of this.buildSteps()) { /* alles in einem Zug */ }
   }
 
@@ -398,7 +475,7 @@ export class SeaWorld {
     this.splashAcc += dt * (rain - 0.1) * 70;
     if (this.splashAcc < 1) return;
     const pp = this.playerPos;
-    const g = this.deckGround ?? this.ground;
+    const g = this.groundProxy;
     while (this.splashAcc >= 1) {
       this.splashAcc -= 1;
       const a = Math.random() * Math.PI * 2, r = 1.5 + Math.sqrt(Math.random()) * 13;
@@ -433,7 +510,7 @@ export class SeaWorld {
       // Stadt, Häfen, Leuchtturm und Vulkane bleiben schlicht (ihre Bauten stehen um die Mitte).
       const shapeRnd = seeded(hashId(s.def.id));
       // schlicht (rund, ein Hügel in der Mitte) nur noch dort, wo ein Bauwerk die Mitte braucht: Stadt, Leuchtturm, Vulkan
-      const volcanic = s.def.region === 'glut' && s.def.kind !== 'harbor' && s.def.kind !== 'treasure';
+      const volcanic = s.def.region === 'glut' && s.def.kind !== 'harbor' && s.def.kind !== 'treasure' && s.def.kind !== 'citadel' && s.def.kind !== 'marinefort';
       const simple = town || s.tower || volcanic;
       // Handgebaute Länder (Festland, neue Inseln) bringen Küste und Hügel aus ihren Daten mit
       const site = s.def.site ? SITES[s.def.site] : null;
@@ -449,7 +526,7 @@ export class SeaWorld {
       // Grasfläche: üppig bis fast an den Strand oder karg mit viel Sand – je nach Region und Inselart
       const style = s.def.biome ?? styleOf(s.def.region);
       const lushK = style === 'tropisch' || style === 'nord' ? 1 : style === 'nebel' ? 0.8 : style === 'schlund' ? 0.6 : 0.35;
-      const grassFrac = site ? site.grass : town ? 0.8 : s.def.kind === 'treasure' ? 0.35 + shapeRnd() * 0.25 : (0.45 + shapeRnd() * 0.4) * lushK + (1 - lushK) * 0.2;
+      const grassFrac = site ? site.grass : town ? 0.8 : s.def.kind === 'citadel' || s.def.kind === 'marinefort' ? 0.8 : s.def.kind === 'treasure' ? 0.35 + shapeRnd() * 0.25 : (0.45 + shapeRnd() * 0.4) * lushK + (1 - lushK) * 0.2;
       /** Bodenhöhe in Inselkoordinaten – dieselbe Rechnung wie beim Laufen */
       const solo = new IslandGround();
       solo.add(walk);
@@ -546,6 +623,7 @@ export class SeaWorld {
       if (site) {
         // Dörfer, Höfe, Türme und Ruinen mit Kollisions-Gitter, danach der Bewuchs des Bioms
         const built = buildSite({ group: isl, def: s.def, site, biome: style as Biome, walk, hAt, veg, density: texDetail.density });
+        plantFactionBanners(isl, s.def, walk, hAt);
         this.campfires.push(...built.fires.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
         this.addGlows(built.glows, s.x, s.z);
         this.chimneys.push(...built.chimneys.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
@@ -555,6 +633,7 @@ export class SeaWorld {
       } else if (!town) {
         const dressed = dressIsland({ group: isl, def: s.def, kit, walk, hAt, glow, density: texDetail.density, style, veg, liftAt: terrain.liftAt });
         this.campfires.push(...dressed.fires.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
+        if (dressed.patrols.length) this.patrolRoutes.set(s.def.id, dressed.patrols.map((r) => r.map((p) => ({ x: s.x + p.x, z: s.z + p.z }))));
         this.addGlows(dressed.glows, s.x, s.z);
         this.fauna.addIsland(s.def, s.x, s.z, r, dressed.trees.map((t) => ({ x: s.x + t.x, y: t.y, z: s.z + t.z })), dressed.bushes.map((b) => ({ x: s.x + b.x, y: b.y, z: s.z + b.z })), style, (ang) => r * coastK(form.coast, ang));
       }
@@ -565,7 +644,7 @@ export class SeaWorld {
         padBounds.length = 0;
       }
       this.scene.add(isl);
-      this.islandGroups.push({ g: isl, x: s.x, z: s.z, r });
+      this.islandGroups.push({ g: isl, x: s.x, z: s.z, r, id: s.def.id });
       mergeByMaterial(isl, glow);
       // Fenster und Lampen der Dörfer (ein gemeinsames Leuchtmaterial): weder Kontur noch Schatten
       isl.traverse((o) => {
@@ -575,7 +654,7 @@ export class SeaWorld {
       // instanzierter Bewuchs erst nach dem Verschmelzen (InstancedMesh darf nicht mit verschmolzen werden)
       this.vegChunks.push(...veg.build(isl));
       // Namensschild (wie in 1.0): erscheint, sobald die Insel entdeckt ist
-      const label = islandLabel(s.def.name, s.def.kind, s.def.level, site?.label);
+      const label = islandLabel(s.def.name, s.def.kind, s.def.level, site?.label, s.def.factionId ? FACTIONS[s.def.factionId].name : undefined);
       label.position.set(s.x, 1.2 + hillTop + 22, s.z);
       label.visible = false;
       this.scene.add(label);
@@ -587,7 +666,7 @@ export class SeaWorld {
       this.ground.add(walk);
       if (town) {
         // Steg nach Süden (siehe buildTown): ragt weit über den Inselrand hinaus
-        this.piers.push({ ax: s.x, az: s.z - r + 5, bx: s.x, bz: s.z - r - 41, hw: 2.4, y: 1.65 });
+        this.piers.push({ ax: s.x, az: s.z - r + 5, bx: s.x, bz: s.z - r - 75, hw: 2.4, y: 1.65 });
         this.town = buildTown(s.def, walk, (x, z) => { const h = this.ground.height(x, z); return Number.isFinite(h) ? h : 1.3; });
         this.scene.add(this.town.group);
         walk.walkways = this.town.streets;
@@ -608,7 +687,7 @@ export class SeaWorld {
               for (let i = 1; i < st.pts.length; i++) {
                 const [ax, az] = st.pts[i - 1], [bx, bz] = st.pts[i];
                 const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
-                const t = Math.max(0, Math.min(1, ((wx - ax) * dx + (wz - az) * dz) / l2));
+                const t = clamp01(((wx - ax) * dx + (wz - az) * dz) / l2);
                 if (Math.hypot(wx - (ax + dx * t), wz - (az + dz * t)) < st.w / 2 + 0.9 + rr) return true;
               }
             }
@@ -717,9 +796,14 @@ export class SeaWorld {
         message: (t) => this.onMessage(t),
         sunk: (e) => this.onShipSunk(e),
         loot: (g, shard) => this.onLoot(g, shard),
+        battleStart: (m, w) => this.onBattleStart(m, w),
+        battleEnd: (r) => this.onBattleEnd(r),
       });
       this.naval.player = this.ship;
+      this.naval.bountyOf = (id) => this.bountyOf(id);
+      this.naval.standingOf = (id) => this.standingOf(id);
       this.naval.smoke = this.smoke;
+      this.naval.detail = this.smoke.scale;
       this.naval.debris = this.debris;
       this.combat = new CombatSystem(this.scene, this.fx, this.overlay, assets, this.groundProxy, {
         heal: (n) => { if (this.foot) this.foot.hp = Math.min(this.foot.maxHp, this.foot.hp + n); },
@@ -879,6 +963,14 @@ export class SeaWorld {
     for (const n of this.npcs) set(n.char.holder);
     for (const e of this.combat?.enemies ?? []) set(e.char.holder);
     for (const a of this.crew?.allies ?? []) set(a.char.holder);
+    // Raid: die Hauptkarte ruht (Inseln, Bewuchs, Stadt unsichtbar; matrixSkip überspringt unsichtbare Teilbäume), nur die Instanz wird gezeichnet
+    if (this.raid) {
+      for (const i of this.islandGroups) i.g.visible = false;
+      for (const c of this.vegChunks) c.mesh.visible = false;
+      if (this.town) this.town.group.visible = false;
+      this.raid.world?.cull(cp.x, cp.z, this.vegLod);
+      return;
+    }
     // Inseln im Nebel jenseits der Sichtweite gar nicht erst zeichnen (spart auf Handys viele Zeichenaufrufe)
     const vd = this.viewDist * 1.05;
     for (const i of this.islandGroups) i.g.visible = Math.hypot(i.x - cp.x, i.z - cp.z) < vd + i.r * 1.2;
@@ -905,6 +997,7 @@ export class SeaWorld {
     this.sparks.scale = c.particles;
     this.dust.scale = c.particles;
     this.smoke.scale = c.particles;
+    if (this.naval) this.naval.detail = c.particles;
     this.debris.scale = c.particles;
     if (this.fx) this.fx.scale = c.particles;
   }
@@ -912,7 +1005,9 @@ export class SeaWorld {
   // ---------- Spielstand ----------
 
   getState(): SeaState {
-    return { boat: { x: this.x, z: this.z, heading: this.heading }, env: this.env.getState() };
+    // Während eines Raids gilt als Lage des Schiffs der Ausgangsort (die Instanz wird nie gespeichert)
+    const o = this.raid?.originPos;
+    return { boat: o ? { x: o.x, z: o.z, heading: o.heading } : { x: this.x, z: this.z, heading: this.heading }, env: this.env.getState() };
   }
 
   setState(s: Partial<SeaState>) {
@@ -922,7 +1017,7 @@ export class SeaWorld {
       const isl = this.ground.islandAt(this.x, this.z, 14);
       if (isl) { const p = this.ground.pushOut(isl, this.x, this.z, isl.r * 0.14 + 18); this.x = p.x; this.z = p.z; }
     } else {
-      this.x = 0; this.z = 12; this.heading = 0;
+      this.x = HOME_SPAWN.x; this.z = HOME_SPAWN.z; this.heading = HOME_SPAWN.heading;
     }
     if (s.env) this.env.setState(s.env);
     this.speed = 0;
@@ -933,8 +1028,14 @@ export class SeaWorld {
     sh.x = this.x; sh.z = this.z; sh.heading = this.heading; sh.speed = 0; sh.sailLevel = 1; sh.throttle = 0.5; this.seaYaw = this.heading;
     sh.prev = { x: sh.x, z: sh.z, heading: sh.heading };
     this.naval?.clear();
+    this.docking.reset();
+    if (this.boarding) this.boarding.boarded = false;
+    this.boarding = null; this.preyDG = null; this.boardWon = false; this.boardRetreat = false; this.homeSent = false; this.landed = false;
     if (this.mode === 'foot') {
       this.combat?.leaveIsland();
+      this.crew?.clearAllies();
+      this.endLandCombat();
+      if (this.combat) this.combat.allies = [];
       this.events.cancel();
       if (this.foot) { this.foot.onFoot = false; this.foot.revive(); }
       this.downT = 0;
@@ -944,7 +1045,11 @@ export class SeaWorld {
   }
 
   /** Eigenes Schiff: Klasse, Aussehen, Munition, Zustand (aus Spielstand oder Werft) */
-  setShip(tier: number, look: ShipLook, ammo: AmmoId, hullFrac: number, faction: Faction, sailFrac?: number, crewFrac?: number) {
+  setShip(tier: number, look: ShipLook, ammo: AmmoId, hullFrac: number, faction: Faction, sailFrac?: number, crewFrac?: number, troopHeads?: number) {
+    // neues Schiffsmodell: Deck und Brücken hängen am alten – abbauen und danach (falls es am Steg lag) neu festmachen
+    const wasMoored = !!this.ship.moored && this.mode === 'sail';
+    this.docking?.reset();
+    this.ownDG = null;
     const onBoard = this.player && this.player.holder.parent === this.ship.model.group;
     if (onBoard) this.scene.add(this.player!.holder);
     this.ship.rebuild(tier, look, this.hullBonus);
@@ -953,29 +1058,116 @@ export class SeaWorld {
     this.ship.hull = Math.max(1, this.ship.maxHull * Math.max(0.05, Math.min(1, hullFrac)));
     if (sailFrac !== undefined) this.ship.sail = sailFrac;
     if (crewFrac !== undefined) this.ship.crew = crewFrac;
+    if (troopHeads !== undefined) this.ship.setTroopHeads(troopHeads);
     this.ship.x = this.x; this.ship.z = this.z; this.ship.heading = this.heading;
     this.ship.prev = { x: this.x, z: this.z, heading: this.heading };
     this.boat = this.ship.model.group;
     if (this.naval) this.naval.player = this.ship;
     if (this.mode === 'sail') this.attachToHelm();
-    this.crew?.setDeck(this.ship, this.crewHired);
+    this.crew?.setDeck(this.ship, this.crewHired, this.crewTroops);
+    if (wasMoored) { const b = this.docking.findBerth(); if (b) this.docking.moor(b); }
   }
 
-  /** Crew an Bord und Landtrupp einstellen */
-  setCrew(hired: string[], party: string[], loyalty: Record<string, number>, level: number, allyBuff: number) {
+  /** Crew an Bord und Landtrupp einstellen (`party` = die Offiziere, die auf dieser Schiffsklasse mitkämpfen; `troops` = Massentruppen an Bord) */
+  setCrew(hired: string[], party: string[], loyalty: Record<string, number>, level: number, allyBuff: number, troops: TroopRoster = this.crewTroops) {
     this.crewHired = [...hired];
     this.crewParty = [...party];
     this.crewLoyalty = loyalty;
     this.crewLevel = level;
     this.allyBuff = allyBuff;
-    this.crew?.setDeck(this.ship, this.crewHired);
+    this.crewTroops = { ...troops };
+    // während eines Gefechts steht der Bestand am Ort des Kampfes (die Deck-Anzeige bleibt ausgeblendet, bis die Truppen zurück sind)
+    this.crew?.setDeck(this.ship, this.crewHired, this.crew.squadsActive ? {} : this.crewTroops);
   }
 
-  private spawnParty(yaw: number) {
+  /** Bestand der Massentruppen an Bord ändern (Anheuern, Verluste, Rückkehr): die Deck-Anzeige folgt */
+  setTroops(troops: TroopRoster) {
+    this.crewTroops = { ...troops };
+    if (this.crew && !this.crew.squadsActive) this.crew.setDeckTroops(this.ship, this.crewTroops);
+  }
+
+  /** Befehl an Offiziere und Trupps: Sturmangriff, Folgen, Position halten */
+  orderTroops(c: CommandState) {
+    this.crew?.setCommand(c);
+    const label = c === 'sturm' ? 'Sturmangriff!' : c === 'folgen' ? 'Folgt mir!' : 'Position halten!';
+    if (this.foot && this.mode === 'foot') this.overlay?.number(new Vector3(this.foot.x, this.foot.y + 2.6, this.foot.z), label, 'info');
+  }
+
+  /** Für die Anzeige: Offiziere (im Einsatz / Plätze) und Truppen (Köpfe im Einsatz oder an Bord / Kapazität), aktueller Befehl */
+  get crewHud() {
+    const c = this.crew;
+    const inField = !!c && (c.allies.length > 0 || c.squadsActive);
+    return {
+      officers: c ? (inField ? c.allies.length : this.crewParty.length) : 0,
+      troops: c?.squadsActive ? c.squadHeads : rosterTotal(this.crewTroops),
+      troopMax: this.ship.troopMax,
+      command: c?.command ?? 'sturm',
+      /** Befehlstasten 1–3 sind belegt, solange Trupps im Einsatz sind */
+      commands: !!c && c.squadsActive,
+    };
+  }
+
+  /** Trupps im Einsatz? */
+  get squadsActive() { return !!this.crew?.squadsActive; }
+
+  private spawnParty(yaw: number, plan: LandingPlan | null = null, cross?: CrossingPlan) {
     if (!this.crew || !this.foot || !this.combat) return;
-    this.crew.spawnAllies(this.scene, this.crewParty, this.crewLevel, this.crewLoyalty, this.foot.x, this.foot.z, yaw, this.groundProxy, this.allyBuff);
-    this.combat.allies = this.crew.allies;
+    const bs = this.ship.boarding;
+    this.crew.spawnAllies(this.scene, this.crewParty, this.crewLevel, this.crewLoyalty, this.foot.x, this.foot.z, yaw, this.groundProxy, this.allyBuff, bs, cross);
+    // Massentruppen gehen mit: über Gangway, Enterplanken und Leitern zu Fuß (`cross`), an der Küste ohne Steg im Beiboot (`plan`)
+    this.troopsBefore = { ...this.crewTroops };
+    if ((plan || cross) && rosterTotal(this.crewTroops) > 0) this.crew.spawnSquads(this.scene, this.crewTroops, this.crewLevel, this.playerEntityId, { x: this.foot.x, z: this.foot.z, yaw }, this.groundProxy, plan, cross);
+    this.combat.allies = this.crew.targets();
     this.clearedNow = false;
+  }
+
+  /** Landetrupp-Plan für die Küste ohne Steg: Start am Schiff (Bordwand zum Ziel hin), Übersetzen im Beiboot */
+  private landingPlan(tx: number, tz: number, boat: boolean, ship: Ship = this.ship): LandingPlan {
+    const dx = tx - ship.x, dz = tz - ship.z, d = Math.hypot(dx, dz) || 1;
+    const out = ship.cls.W / 2 + 2.2;
+    const fx = ship.x + (dx / d) * out, fz = ship.z + (dz / d) * out;
+    return { fromX: fx, fromZ: fz, fromY: this.env.heightAt(fx, fz), boat };
+  }
+
+  /**
+   * Kampf an Land/Deck beendet: Überlebende der Truppen melden (Verluste bleiben), danach gehen Offiziere und Trupps über die Brücke
+   * (`home`) aufs Schiff zurück und verschwinden dort; ohne Brücke (Küste, Notfall) werden sie sofort abgebaut.
+   */
+  private endLandCombat(home: CrossingPlan | null = null) {
+    const c = this.crew;
+    if (!c) return;
+    if (c.squads.length) {
+      const left = c.survivors();
+      const before = this.troopsBefore;
+      this.troopsBefore = {};
+      this.crewTroops = left;
+      this.onTroopsReturn(left, before);
+      if (!home) c.clearSquads();
+      c.setDeckTroops(this.ship, this.crewTroops);
+    } else if (!home) c.clearSquads();
+    if (home) c.beginHome(home);
+    else { c.clearAllies(); if (this.combat) this.combat.allies = []; }
+  }
+
+  /** Was Trupps von der Welt sehen (Gegner, Treffer, Boden, Netz) */
+  private _troopWorld: TroopWorld | null = null;
+  private get troopWorld(): TroopWorld {
+    return this._troopWorld ??= {
+      enemies: () => this.combat?.foes ?? [],
+      hit: (e, dmg, dx, dz, col, heavy, src) => this.combat?.foeHit(e as Enemy | TroopSquad, dmg, dx, dz, col, heavy, src),
+      ground: this.groundProxy,
+      nav: () => {
+        if (this.deckGround || !this.foot) return null;
+        const isl = this.ground.islandAt(this.foot.x, this.foot.z, 4);
+        return isl ? navForIsland(isl) : null;
+      },
+      shot: (x, y, z, tx, tz) => {
+        const dx = tx - x, dz = tz - z, d = Math.hypot(dx, dz) || 1;
+        this.sparks.emit(7, x + (dx / d) * 0.9, y, z + (dz / d) * 0.9, { speed: 3, up: 0.6, life: 0.35, color: new Color(1.0, 0.82, 0.5).multiplyScalar(3), gravity: -0.5, spread: 0.5 });
+        audio.play('swing', 0.35, { x, y, z });
+      },
+      text: (x, y, z, t) => this.overlay?.number(new Vector3(x, y, z), t, 'hurt'),
+    };
   }
 
   /** Lebenspunkte und Angriffskraft der Spielfigur (aus Stufe und Ausrüstung) */
@@ -1068,7 +1260,7 @@ export class SeaWorld {
   private get allyWorld(): AllyWorld {
     return this._allyWorld ??= {
       enemies: () => this.combat?.enemies ?? [],
-      hit: (e, dmg, dx, dz, col, heavy) => this.combat?.allyHit(e, dmg, dx, dz, col, heavy),
+      hit: (e, dmg, dx, dz, col, heavy, src) => this.combat?.allyHit(e, dmg, dx, dz, col, heavy, src),
       status: (e, s, dur) => this.combat?.applyStatus(e, s, dur, 0),
       healPlayer: (f) => {
         if (!this.foot) return;
@@ -1105,7 +1297,7 @@ export class SeaWorld {
       roar: () => audio.play('roar'),
     });
     const show = b.alive && nearLair && this.mode === 'sail';
-    this.overlay?.setBoss(show ? 'Der Tiefenschlund' : null, b.frac);
+    this.overlay?.setBoss(show ? { name: 'Der Tiefenschlund', title: 'Herr der Tiefe', frac: b.frac } : null);
     if (b.dead && this.bossGone === 0) {
       this.bossGone = 8;
       this.overlay?.setBoss(null);
@@ -1131,7 +1323,14 @@ export class SeaWorld {
         const say = a.update(dt, { x: this.foot.x, z: this.foot.z, yaw: this.foot.yaw }, this.allyWorld, cleared);
         if (say) this.overlay?.number(new Vector3(a.x, a.y + 2.4 * (a.def.big ?? 1), a.z), say, 'info');
       }
+      crew.separateAllies(dt, this.groundProxy);
     }
+    if (this.mode === 'foot' && this.foot && crew.squads.length) {
+      crew.updateSquads(dt, this.env.clock, { x: this.foot.x, z: this.foot.z, yaw: this.foot.yaw }, this.troopWorld, (x, z) => this.env.heightAt(x, z));
+    }
+    crew.purgeHome();
+    if (!crew.homing && !crew.allies.length && !crew.squads.length && this.combat && this.combat.allies.length) this.combat.allies = [];
+    crew.updateDeckTroops(this.env.clock, dt);
     const line = crew.updateDeck(dt, this.mode === 'sail' && this.camDist < 30, this.mode === 'sail' && this.threat < 0.2, this.env.clock);
     if (line) this.onCrewLine(line.who, line.text);
   }
@@ -1226,11 +1425,17 @@ export class SeaWorld {
   /** Nachladezeit wie in 1.0 */
   get reloadTime() { return 1.9 * (this.naval?.reloadMult ?? 1) * this.ship.reloadScale; }
 
+  /** Entermanöver läuft (Haken, Heranziehen, Gefecht an Deck): für die Musik */
+  get isBoarding() { return !!this.boarding; }
+
+  /** Lage der Belagerung für die Musik (null: keine Instanz) */
+  get musicRaid() { return this.raid?.musicState() ?? null; }
+
   /** Kampfnähe 0 … 1 (für die Musik) */
   get threat() {
     if (this.mode === 'foot') return this.combat && this.combat.hostilesLeft > 0 && this.combat.enemies.some((e) => e.alive && e.engaged) ? 1 : this.combat?.hostilesLeft ? 0.4 : 0;
     const f = this.nearestFoe(this.x, this.z, 220);
-    return f ? Math.max(0, Math.min(1, 1.3 - Math.hypot(f.x - this.x, f.z - this.z) / 160)) : 0;
+    return f ? clamp01(1.3 - Math.hypot(f.x - this.x, f.z - this.z) / 160) : 0;
   }
 
   /** Legende oder Boss in der Nähe? */
@@ -1252,6 +1457,9 @@ export class SeaWorld {
   }
 
   /** Lebende Feindschiffe (für Karte und Auftragspfeil) */
+  /** Laufende Seeschlachten für Kompass und Weltkarte */
+  get battleMarks(): BattleMark[] { return this.naval?.battleMarks() ?? []; }
+
   get enemyShips() {
     return (this.naval?.enemies ?? []).filter((e) => e.ship.alive && !e.ship.sinking).map((e) => ({ x: e.ship.x, z: e.ship.z, legend: e.role === 'legende', ally: !!e.companion }));
   }
@@ -1262,6 +1470,11 @@ export class SeaWorld {
   /** Testwerkzeug: Schiff an eine Position setzen */
   teleport(x: number, z: number, heading: number) {
     this.setState({ boat: { x, z, heading } });
+  }
+
+  /** Zurück zum Heimatplatz vor dem Steg von Ankerglück (siehe HOME_SPAWN) */
+  teleportHome() {
+    this.teleport(HOME_SPAWN.x, HOME_SPAWN.z, HOME_SPAWN.heading);
   }
 
   private setMode(m: SeaMode) {
@@ -1280,9 +1493,24 @@ export class SeaWorld {
     else if (this.mode === 'sail') this.updateSail(dt, input);
     else this.updateFoot(dt, input);
 
+    // Anlegen, Gangway, Enterhaken und Brücken vorrücken; danach feststellen, wo die Spielfigur steht (Deck, Brücke, Land)
+    // Entern: verschwindet oder sinkt das Feindschiff mitten im Heranziehen oder Kampf (Weltwechsel, Raid-Start, Absturz anderer Systeme),
+    // bricht der Ablauf sauber ab: Brücken und zweites Deck weg, die Figur steht wieder an Bord (kein Hängenbleiben in der Enter-Kamera)
+    if (this.boarding && !this.boardWon) {
+      const be = this.boarding;
+      if (!this.naval?.enemies.includes(be) || be.ship.sinking > 0 || !be.ship.alive || !Number.isFinite(be.ship.x + be.ship.z)) {
+        this.onMessage('Das Feindschiff ist gesunken – die Crew zieht dich zurück an Bord.');
+        this.rescueToShip();
+      }
+    }
+    this.docking.update(dt);
+    this.updateWhere(dt);
     this.updateContext(input);
-    this.updateWorldEvents();
-    this.life?.update(dt, (x, z) => this.env.heightAt(x, z), this.ship, this.mode === 'sail');
+    this.raidMsgCd -= dt;
+    if (!this.raid) {
+      this.updateWorldEvents();
+      this.life?.update(dt, (x, z) => this.env.heightAt(x, z), this.ship, this.mode === 'sail');
+    }
     if (this.town?.crystal) { this.town.crystal.rotation.y += dt; this.town.crystal.position.y += Math.sin(this.env.clock * 2) * dt * 0.3; }
     // Vulkane: dicke Aschesäulen mit Glut am Krater, weithin sichtbar
     if (Math.random() < dt * 3) for (const p of this.smokeVents) if (Math.hypot(p.x - this.x, p.z - this.z) < 900) this.smoke.puff(p.x, p.y, p.z, { size: 5, grow: 26, life: 14, tone: 0.28, vy: 5, spread: 1.5, rise: 0.5, drag: 0.5, alpha: 0.65, glow: 0.6, wind: 0.8, jitter: 3 });
@@ -1303,6 +1531,8 @@ export class SeaWorld {
     this.shake = Math.max(0, this.shake - dt * 1.8);
     this.updateWake(dt);
     this.naval?.update(dt, this.mode === 'sail' && this.cinematic <= 0);
+    this.raid?.update(dt);
+    this.updateGarrisons(dt);
     this.regen(dt);
     this.checkZone();
     if (this.crystal) {
@@ -1320,10 +1550,10 @@ export class SeaWorld {
     this.updateAir(dt);
     {
       const pp = this.playerPos;
-      updateFountains(dt, Math.min(1, Math.max(0, 0.18 + 0.82 * this.env.palette.sunVis)));
+      updateFountains(dt, clamp01(0.18 + 0.82 * this.env.palette.sunVis));
       // Leuchtturm: nur abends und nachts oder bei schlechter Sicht (Nebel, Regen, Sturm); klarer Tag = aus
       const wp = this.env.weather.p, bad = Math.max(wp.grey * 1.25, wp.rain * 1.2, wp.lightning);
-      updateBeams(dt, Math.min(1, Math.max(0, (0.75 - this.env.palette.sunVis) * 2.2)), Math.min(1, Math.max(0, (bad - 0.3) / 0.35)));
+      updateBeams(dt, clamp01((0.75 - this.env.palette.sunVis) * 2.2), clamp01((bad - 0.3) / 0.35));
       this.fauna.update(dt, pp.x, pp.z, 1 - this.env.palette.sunVis, (x, z) => this.ground.height(x, z), (x, z) => this.env.heightAt(x, z));
     }
     this.updateNpcs(dt);
@@ -1344,7 +1574,7 @@ export class SeaWorld {
       this.downT -= dt;
       if (this.downT <= 0) {
         this.foot?.revive();
-        this.embark();
+        this.rescueToShip();
         this.onMessage('Deine Crew hat dich an Bord gezogen.');
       }
     }
@@ -1353,10 +1583,16 @@ export class SeaWorld {
       this.ship.sinking = 0;
       this.ship.repair(0.5);
       this.ship.ensureCrew(0.6);
-      this.naval?.clear();
-      this.teleport(0, 12, 0);
-      this.onMessage('Dein Schiff ist gesunken! Die Crew hat es zurück in den Hafen geschleppt.');
-      this.onPlayerDown();
+      if (this.raid && !this.raid.over) {
+        // Raid: das Flaggschiff ist gesunken, die Flotte zieht sich zurück (die Instanz wird abgebaut, das Schiff kehrt zum Ausgangsort zurück)
+        this.raid.retreat('Dein Flaggschiff ist gesunken – die Flotte zieht sich zurück.');
+        this.onPlayerDown();
+      } else if (!this.raid) {
+        this.naval?.clear();
+        this.teleportHome();
+        this.onMessage('Dein Schiff ist gesunken! Die Crew hat es zurück in den Hafen geschleppt.');
+        this.onPlayerDown();
+      }
     }
     if (this.ship.hull <= 0 && this.ship.sinking === 0) this.ship.sinking = 0.01;
   }
@@ -1364,8 +1600,9 @@ export class SeaWorld {
   get seaEnv(): SeaEnv {
     const env = this.env;
     // Sturmstärke: Wellenhöhe ab Regenwetter (1,7) bis Sturm (2,7)
-    const storm = Math.max(0, Math.min(1, (env.weather.p.waves - 1.8) / 0.9));
-    return { heightAt: (x, z) => env.heightAt(x, z), windDir: env.windDir, windStrength: env.weather.p.wind, storm, time: env.clock, sunDir: env.palette.sunDir, sunVis: env.palette.sunVis };
+    const storm = clamp01((env.weather.p.waves - 1.8) / 0.9);
+    // Sichtbarkeit der Sonne wie am Himmel (dichte Wolken verdecken sie): sonst glühen Segel und Flaggen im Unwetter, als schiene sie dahinter
+    return { heightAt: (x, z) => env.heightAt(x, z), windDir: env.windDir, windStrength: env.weather.p.wind, storm, time: env.clock, sunDir: env.palette.sunDir, sunVis: env.palette.sunVis * (1 - env.weather.p.grey * 0.9) };
   }
 
   private updateSail(dt: number, input: Input) {
@@ -1379,24 +1616,27 @@ export class SeaWorld {
       if (input.down('up')) th = Math.min(1, th + dt * 0.8);
       if (input.down('down')) th = Math.max(0, th - dt * 0.8);
     } else if (Math.hypot(mv.x, mv.y) > 0.2) th = MathUtils.clamp(0.5 + mv.y * 0.65, 0, 1);
-    s.throttle = th;
-    if ((before < 0.95 && th >= 0.95) || (before > 0.05 && th <= 0.05)) { this.onMessage(th > 0.5 ? 'Volle Fahrt!' : 'Anker geworfen'); audio.play('sail'); }
+    // Festgemacht oder beim Entern herangezogen: Fahrt gesperrt (das Schiff bewegt der Ablauf in `docking`)
+    const locked = !!s.moored || !!this.docking.session;
+    s.throttle = locked ? 0 : th;
+    if (!locked && ((before < 0.95 && th >= 0.95) || (before > 0.05 && th <= 0.05))) { this.onMessage(th > 0.5 ? 'Volle Fahrt!' : 'Anker geworfen'); audio.play('sail'); }
     this.sailCd -= dt;
     this.faji?.tick(dt);
-    s.steer(dt, mv.x, this.seaEnv, this.shipSpeedMult);
+    if (locked) s.settle();
+    else s.steer(dt, mv.x, this.seaEnv, this.shipSpeedMult);
     const storm = this.env.weather.p.waves;
-    if (storm > 1.5) {
+    if (!locked && storm > 1.5) {
       s.x += Math.sin(this.env.clock * 0.3) * (storm - 1.5) * 0.6 * dt;
       s.z += Math.cos(this.env.clock * 0.23) * (storm - 1.5) * 0.6 * dt;
     }
     // Nicht auf Inseln auffahren
-    const o = this.ground.pushShip(s.x, s.z, s.heading, s.cls.L, s.cls.W);
+    const o = locked ? { hit: false, x: s.x, z: s.z } : this.ground.pushShip(s.x, s.z, s.heading, s.cls.L, s.cls.W);
     if (o.hit) {
       s.x = o.x; s.z = o.z;
       if (s.speed > 6) { this.shake = Math.max(this.shake, 0.5); this.onMessage('Auf Grund gelaufen!'); s.damage(s.speed * 1.5, 'kugel', null); }
       s.speed *= 0.4;
     }
-    this.collidePiers(s);
+    if (!locked) this.collidePiers(s);
     const d = Math.hypot(s.x, s.z);
     if (d > EDGE_WALL) {
       s.x *= EDGE_WALL / d;
@@ -1409,19 +1649,18 @@ export class SeaWorld {
 
     this.boostCd = Math.max(0, this.boostCd - dt);
     this.cdBow = Math.max(0, this.cdBow - dt);
-    if (input.pressed('dodge') && this.boostCd <= 0) {
+    if (!locked && input.pressed('dodge') && this.boostCd <= 0) {
       s.boost = 2.5;
       this.boostCd = 8;
       this.shake = Math.max(this.shake, 0.5);
       this.overlay?.speedlines(0.6);
       this.onMessage('Volle Kraft voraus!');
     }
-    if (input.pressed('heavy')) {
-      s.ammo = AMMO_IDS[(AMMO_IDS.indexOf(s.ammo) + 1) % AMMO_IDS.length];
-      this.onMessage(`Munition: ${AMMO[s.ammo].n} – ${AMMO[s.ammo].d}`);
+    if (!locked && input.pressed('heavy')) {
+      this.selectAmmo(AMMO_IDS[(AMMO_IDS.indexOf(s.ammo) + 1) % AMMO_IDS.length]);
     }
     const nav = this.naval;
-    if (nav && s.alive) {
+    if (nav && s.alive && !locked) {
       if (input.pressed('attack') && this.cdBow <= 0) { this.cdBow = 1.2 * s.reloadScale; nav.bowShot(s, nav.canDmg, s.ammo); }
       // Breitseiten wie in 1.0: antippen (oder halten) = feuern, gezielt wird automatisch
       for (const [act, side] of [['fireLeft', 1], ['fireRight', -1]] as const) {
@@ -1457,7 +1696,7 @@ export class SeaWorld {
     const ly = ld.y * 0.004 + la.y * 1.4 * dt;
     if (lx || ly) this.camIdle = 0; else this.camIdle += dt;
     // Winkel immer in −π … π halten: sonst dreht die Kamera nach langem Drehen auf dem Rückweg ganze Runden zurück
-    this.camYaw = Math.atan2(Math.sin(this.camYaw - lx), Math.cos(this.camYaw - lx));
+    this.camYaw = wrapAngle(this.camYaw - lx);
     this.camPitch = MathUtils.clamp(this.camPitch + ly, 0.06, 1.1);
     // Blickwinkel bleibt, wo der Spieler ihn hingedreht hat; erst nach langer Ruhe und nur unter Fahrt schwenkt er sanft hinter das Schiff zurück
     if (this.camIdle > 8 && this.speed > 3) this.camYaw *= 1 - Math.min(1, dt * 0.5);
@@ -1497,15 +1736,13 @@ export class SeaWorld {
     // weiche Zielerfassung: Überblendfaktor und Richtung zum Ziel (für Kamera-Ausschnitt)
     this.lockK += ((lock ? 1 : 0) - this.lockK) * (1 - Math.exp(-dt * 4));
     if (lock) { this.lockDX = lock.x - f.x; this.lockDZ = lock.z - f.z; }
-    f.update(dt, input, this.footYaw, this.groundProxy, lockYaw);
+    if (this.docking.isClimbing) {
+      // Klettern (Strickleiter, Enterleiter): die Figur folgt der Leiter, Eingaben ruhen
+      const cp = this.climbPose;
+      if (this.docking.stepClimb(dt, cp)) f.drive(cp.x, cp.y, cp.z, cp.yaw, true);
+    } else f.update(dt, input, this.footYaw, this.groundProxy, lockYaw);
     // Entern: Deck geräumt?
-    if (this.boarding && c && c.hostilesLeft === 0 && this.boardDone === 0) {
-      this.boardDone = 2.6;
-      this.overlay?.showBanner('Schiff erobert!', 'Die Beute gehört dir');
-      this.naval?.capture(this.boarding);
-      this.onBoardWon(this.boarding);
-    }
-    if (this.boardDone > 0) { this.boardDone -= dt; if (this.boardDone <= 0) this.embark(); }
+    this.updateBoardVictory(dt);
     this.faji?.update(dt, input, this.style, lockYaw);
     if (lockYaw !== null && !(ld.x || la.x)) {
       // Erfasstes Ziel: Kamera hinter die Figur, Blick aufs Ziel
@@ -1537,30 +1774,80 @@ export class SeaWorld {
   private updateContext(input: Input) {
     this.contextLabel = null;
     if (!this.player || !this.foot) return;
+    const ship = this.ship;
     if (this.mode === 'sail') {
+      // Enterhaken, Heranziehen und Gleiten an den Liegeplatz laufen von selbst
+      if (this.docking.session) return;
+      const dock = ship.moored;
+      if (dock) {
+        // Festgemacht: im Hafen öffnet die Taste das Hafenmenü, sonst geht es über die Gangway an Land (Ablegen steht am Steuerrad)
+        if (dock.phase !== 'moored') return;
+        const isl = this.ground.islandAt(this.x, this.z, 30 + ship.cls.W);
+        const def = isl ? this.islandDefs[this.ground.islands.indexOf(isl)] : null;
+        if (def && (def.kind === 'town' || def.kind === 'harbor')) {
+          this.contextLabel = 'Hafen';
+          if (input.pressed('interact')) this.onHarbor(def);
+        } else {
+          this.contextLabel = 'An Land gehen';
+          if (input.pressed('interact')) this.goAshore();
+        }
+        return;
+      }
       const prey = this.naval?.boardable();
-      const isl = this.ground.islandAt(this.x, this.z, 30 + this.ship.cls.W);
       if (prey) {
         this.contextLabel = 'Entern!';
         if (input.pressed('interact')) this.board(prey);
-      } else if (isl) {
+        return;
+      }
+      if (this.docking.ladderId) {
+        this.contextLabel = 'Anker lichten';
+        if (input.pressed('interact')) { this.docking.raiseLadder(); this.onMessage('Anker gelichtet – die Leiter ist eingeholt.'); }
+        return;
+      }
+      const berth = this.docking.findBerth();
+      if (berth) {
+        this.contextLabel = 'Anlegen';
+        if (input.pressed('interact')) this.docking.moor(berth);
+        return;
+      }
+      const isl = this.ground.islandAt(this.x, this.z, 30 + ship.cls.W);
+      if (isl) {
         const def = this.islandDefs[this.ground.islands.indexOf(isl)];
-        if (def?.kind === 'town' || def?.kind === 'harbor') {
+        if (this.raidContext(def, input)) return;
+        if (this.docking.canDropLadder()) {
+          this.contextLabel = 'Ankern & Leiter auswerfen';
+          if (input.pressed('interact')) this.goAshore();
+        } else if (def?.kind === 'town' || def?.kind === 'harbor') {
           this.contextLabel = 'Hafen';
-          if (input.pressed('interact')) { this.ship.throttle = 0; this.onHarbor(def); }
+          if (input.pressed('interact')) { ship.throttle = 0; this.onHarbor(def); }
         } else {
           this.contextLabel = 'An Land gehen';
-          if (input.pressed('interact')) this.disembark(isl);
+          if (input.pressed('interact')) this.goAshore();
         }
       } else {
         // Ruder loslassen: man bleibt am Rad stehen und geht zu Fuß weiter
         this.contextLabel = 'Ruder verlassen';
         if (input.pressed('interact')) this.goDeck();
       }
-    } else if (this.ownDeck) {
-      const f = this.foot;
+      return;
+    }
+    const f = this.foot;
+    if (this.docking.isClimbing) return;
+    // Leiter in Reichweite (Strickleiter am Ufer, Enterleitern): hinauf oder hinab klettern
+    const lad = this.fishing ? null : this.docking.ladderNear(f.x, f.y, f.z);
+    if (lad) {
+      const coast = lad.id === 'ladder-coast';
+      this.contextLabel = lad.atBottom ? (coast ? 'An Bord klettern' : 'Leiter hinaufklettern') : (coast ? 'Zum Ufer hinabklettern' : 'Leiter hinabklettern');
+      if (input.pressed('interact')) {
+        this.player.play('walk', { fade: 0.15 });
+        this.docking.climb(lad.id, lad.atBottom, () => this.player?.play('idle', { fade: 0.2 }));
+      }
+      return;
+    }
+    if (this.ownDeck) {
       const hand = this.crew?.deckHandNear(f.x, f.z, 1.9) ?? null;
       const dg = this.deckGround;
+      const onOwn = !!dg && dg === this.ownDG;
       const atRail = dg ? dg.railDistance(f.x, f.z) < 0.9 : false;
       if (this.fishing) {
         const fi = this.fishing;
@@ -1570,13 +1857,25 @@ export class SeaWorld {
           else { this.player.play('idle', { fade: 0.2 }); this.onFish(false); }
           this.fishing = null;
         }
-      } else if (dg && dg.onQuarter(f.x, f.z) && dg.distTo(f.x, f.z, 0, this.ship.model.helm.z) < 1.5) {
-        this.contextLabel = 'Ans Steuer';
-        if (input.pressed('interact')) this.toHelm();
-      } else if (hand) {
+      } else if (onOwn && !this.boarding && dg!.onQuarter(f.x, f.z) && dg!.distTo(f.x, f.z, 0, ship.model.helm.z) < 1.5) {
+        // am Steuerrad: festgemacht = Ablegen (Gangway und Taue werden eingeholt), vor Anker = Anker lichten, sonst ans Steuer
+        this.contextLabel = ship.moored ? 'Ablegen' : this.docking.ladderId ? 'Anker lichten' : 'Ans Steuer';
+        if (input.pressed('interact')) {
+          const out = (this.crew?.allies.length ?? 0) > 0 || (this.crew?.squads.length ?? 0) > 0;
+          if (out) this.onMessage('Deine Crew ist noch nicht wieder an Bord.');
+          else {
+            if (ship.moored) this.docking.castOff();
+            else if (this.docking.ladderId) { this.docking.raiseLadder(); this.onMessage('Anker gelichtet – die Leiter ist eingeholt.'); }
+            this.toHelm();
+          }
+        }
+      } else if (this.boarding && onOwn && !this.boardWon && !this.boardRetreat) {
+        this.contextLabel = 'Rückzug: Brücken einholen';
+        if (input.pressed('interact')) { this.boardRetreat = true; this.sendCrewHome(); this.onMessage('Rückzug! Die Crew holt die Brücken ein.'); }
+      } else if (hand && onOwn) {
         this.contextLabel = `Mit ${hand.name.split(' ')[0]} reden`;
         if (input.pressed('interact')) this.onCrewLine(hand, hand.lines[Math.floor(Math.random() * hand.lines.length)]);
-      } else if (atRail && this.threat < 0.1) {
+      } else if (atRail && onOwn && !this.boarding && this.threat < 0.1) {
         this.contextLabel = 'Angeln';
         if (input.pressed('interact')) {
           this.fishing = { wait: 2.5 + Math.random() * 5, bite: 0 };
@@ -1584,11 +1883,7 @@ export class SeaWorld {
           audio.play('whoosh', 0.6);
         }
       }
-    } else if (this.boarding) {
-      this.contextLabel = 'Zurück an Bord';
-      if (input.pressed('interact')) this.embark();
     } else {
-      const f = this.foot;
       const cr = this.crystal && Math.hypot(this.crystal.x - f.x, this.crystal.z - f.z) < 3.2 && !this.combat?.hostilesLeft ? this.crystal : null;
       const dig = this.life?.digs.find((dd) => Math.hypot(dd.x - f.x, dd.z - f.z) < 2.6);
       if (cr) {
@@ -1604,7 +1899,6 @@ export class SeaWorld {
         return;
       }
       const npc = this.talkables(f.x, f.z, 3.2)[0]?.npc;
-      const d = Math.hypot(f.x - this.anchor.x, f.z - this.anchor.z);
       if (dig) {
         this.contextLabel = 'Graben';
         if (input.pressed('interact')) {
@@ -1621,21 +1915,8 @@ export class SeaWorld {
           npc.char.play('talk', { restart: true, onDone: () => npc.char.play('idle') });
           this.onTalk(npc.townDef);
         }
-      } else if (d < 16 || this.shipReach(f.x, f.z) < 26) {
-        this.contextLabel = 'An Bord gehen';
-        if (input.pressed('interact')) this.embark();
       }
     }
-  }
-
-  /** Abstand von einem Punkt zur Schiffshülle (Rechteck aus Länge und Breite, in Schiffsrichtung gedreht): so zählt jede Stelle am Strand,
-   *  von der aus das Schiff nah ist, nicht nur der eine Landepunkt */
-  private shipReach(px: number, pz: number): number {
-    const s = this.ship;
-    const dx = px - s.x, dz = pz - s.z;
-    const fx = Math.sin(s.heading), fz = Math.cos(s.heading);
-    const lz = dx * fx + dz * fz, lx = dx * fz - dz * fx;
-    return Math.hypot(Math.max(0, Math.abs(lx) - s.cls.W / 2), Math.max(0, Math.abs(lz) - s.cls.L / 2));
   }
 
   /** Inseln in der Nähe und geräumte Lager melden (für Aufträge) */
@@ -1652,7 +1933,7 @@ export class SeaWorld {
     for (const l of this.labels) {
       const d = Math.hypot(l.x - px, l.z - pz);
       if (!this.discovered.has(l.id) && d < disc + l.r) { this.discovered.add(l.id); this.onDiscover(l.id); }
-      l.sprite.visible = this.discovered.has(l.id) && d < 760 && d > l.r + 25;
+      l.sprite.visible = !this.raid && this.discovered.has(l.id) && d < 760 && d > l.r + 25;
     }
     const reg = regionAt(this.x, this.z);
     if (reg.id !== this.lastRegion) { this.lastRegion = reg.id; this.onEnterRegion(reg); }
@@ -1693,7 +1974,7 @@ export class SeaWorld {
       let worst = 0, wnx = 0, wnz = 0;
       for (const k of [-0.46, -0.3, -0.15, 0, 0.15, 0.3, 0.46]) {
         const px = s.x + fx * s.cls.L * k, pz = s.z + fz * s.cls.L * k;
-        const t = Math.max(0, Math.min(1, ((px - p.ax) * ux + (pz - p.az) * uz) / len));
+        const t = clamp01(((px - p.ax) * ux + (pz - p.az) * uz) / len);
         const cx = p.ax + vx * t, cz = p.az + vz * t;
         let dx = px - cx, dz = pz - cz;
         let d = Math.hypot(dx, dz);
@@ -1711,20 +1992,28 @@ export class SeaWorld {
       s.speed *= 1 - 0.35 * Math.min(1, into * 1.2) - 0.01;
       // sanft parallel zum Steg drehen
       let target = Math.atan2(ux, uz);
-      let da = Math.atan2(Math.sin(target - s.heading), Math.cos(target - s.heading));
-      if (Math.abs(da) > Math.PI / 2) { target += Math.PI; da = Math.atan2(Math.sin(target - s.heading), Math.cos(target - s.heading)); }
+      let da = wrapAngle(target - s.heading);
+      if (Math.abs(da) > Math.PI / 2) { target += Math.PI; da = wrapAngle(target - s.heading); }
       s.heading += da * Math.min(0.06, 0.02 + worst * 0.05);
     }
+  }
+
+  /** Deck des eigenen Schiffs; wird beim Umbau des Schiffs neu angelegt */
+  private ownDeckGround(): DeckGround {
+    if (!this.ownDG) { this.ownDG = new DeckGround(this.ship); this.composite.setDecks(this.ownDG, this.preyDG); }
+    return this.ownDG;
   }
 
   private goDeck() {
     if (!this.player || !this.foot) return;
     this.ownDeck = true;
+    this.landed = false;
     this.ship.throttle = 0;
-    this.deckGround = new DeckGround(this.ship);
+    const dg = this.ownDeckGround();
+    this.deckGround = dg;
     this.scene.add(this.player.holder);
     // Der Steuermann bleibt am Steuerrad stehen (kein Versetzen): von dort läuft man selbst die Treppe hinunter aufs Hauptdeck
-    const start = this.deckGround.world(0, this.ship.model.helm.z - 0.15);
+    const start = dg.world(0, this.ship.model.helm.z - 0.15);
     this.footDist = 6.5;
     this.footPitch = 0.55;
     this.foot.place(start.x, start.z, this.ship.heading, this.groundProxy);
@@ -1736,6 +2025,7 @@ export class SeaWorld {
 
   private toHelm() {
     this.ownDeck = false;
+    this.landed = false;
     this.deckGround = null;
     this.fishing = null;
     if (this.foot) this.foot.onFoot = false;
@@ -1755,31 +2045,322 @@ export class SeaWorld {
     }
   }
 
-  /** An der nächsten Insel an Land gehen (Hafenmenü) */
-  goAshore() {
-    const isl = this.ground.islandAt(this.x, this.z, 40 + this.ship.cls.W);
-    if (isl && this.mode === 'sail') this.disembark(isl);
+  /** Ablegen vom Steg (Hafenmenü, Steuerrad); vor Anker: Anker lichten. Nur am Steuer (See-Modus). */
+  castOff() {
+    if (this.mode !== 'sail') return;
+    // Offiziere und Trupps, die noch an Land oder auf der Gangway sind, bleiben nicht zurück: erst heimkehren lassen
+    if ((this.crew?.allies.length ?? 0) > 0 || (this.crew?.squads.length ?? 0) > 0) { this.onMessage('Deine Crew ist noch nicht wieder an Bord.'); return; }
+    if (this.ship.moored) this.docking.castOff();
+    else if (this.docking.ladderId) { this.docking.raiseLadder(); this.onMessage('Anker gelichtet – die Leiter ist eingeholt.'); }
   }
 
-  private disembark(isl: WalkIsland) {
-    if (!this.player || !this.foot) return;
-    let p = this.ground.shorePoint(isl, this.x, this.z);
-    // liegt das Schiff an einem Steg, geht man dort an Land (auf den Bohlen neben dem Schiff) statt am fernen Strandpunkt
-    const pn = this.ground.pierNear(this.x, this.z, 45);
-    if (pn) {
-      const ux = (pn.p.bx - pn.p.ax) / pn.len, uz = (pn.p.bz - pn.p.az) / pn.len;
-      const u = Math.max(1.5, Math.min(pn.len - 1.5, (this.x - pn.p.ax) * ux + (this.z - pn.p.az) * uz));
-      p = { x: pn.p.ax + ux * u, z: pn.p.az + uz * u, angle: p.angle };
+  /**
+   * An Land gehen (Hafenmenü, Kontext-Taste): Liegt das Schiff am Steg, läuft man von Bord über die Gangway. Vor einer Küste ohne Steg
+   * wirft die Crew den Anker und lässt die Strickleiter an der ufernäheren Bordseite herab. Sonst muss das Schiff näher heran.
+   * Es gibt kein Versetzen: die Figur steht am Steuerrad und geht selbst.
+   */
+  goAshore() {
+    if (this.mode !== 'sail') return;
+    {
+      // Festungsinseln der Weltmächte und das Marine-Hauptquartier werden belagert, nicht einfach betreten; im Raid gilt die Landungsregel
+      const isl0 = this.ground.islandAt(this.x, this.z, 30 + this.ship.cls.W);
+      const d0 = isl0 ? this.islandDefs[this.ground.islands.indexOf(isl0)] : undefined;
+      if (!this.raid && d0 && this.isRaidIsland(d0) && !this.occupied.has(d0.id)) { this.onRaidRequest(d0); return; }
+      if (this.raid && !this.ship.moored) {
+        const l = this.raid.landing(this.x, this.z);
+        if (!l.ok) { this.onMessage(l.reason); return; }
+      }
     }
-    this.anchor = { x: p.x, z: p.z };
-    this.speed = 0;
-    this.scene.add(this.player.holder);
-    this.foot.place(p.x, p.z, Math.atan2(isl.x - p.x, isl.z - p.z), this.ground);
-    this.foot.onFoot = true;
-    this.footYaw = this.foot.yaw;
-    this.setMode('foot');
-    this.spawnCamp(isl);
-    this.spawnParty(this.foot.yaw);
+    const dock = this.ship.moored;
+    if (dock) {
+      if (dock.phase !== 'moored') { this.onMessage('Das Schiff legt gerade an …'); return; }
+      this.onMessage('Die Gangway ist ausgefahren – lauf an Land.');
+      this.goDeck();
+      return;
+    }
+    if (this.docking.ladderId || this.docking.dropLadder()) {
+      this.onMessage('Die Strickleiter hängt an der Bordwand – klettere hinab ins flache Wasser.');
+      this.goDeck();
+      return;
+    }
+    this.onMessage('Zu weit vom Ufer: lege an einem Steg an oder fahre näher an den Strand heran.');
+  }
+
+  /** Die Spielfigur hat Gangway oder Watweg verlassen und steht an Land: Insel-Ereignisse beginnen, Offiziere und Trupps folgen über die Brücke */
+  private arriveAshore() {
+    const f = this.foot;
+    if (!f) return;
+    const isl = this.ground.islandAt(f.x, f.z, 8) ?? this.ground.islandAt(this.x, this.z, 60);
+    this.ownDeck = false;
+    this.landed = true;
+    this.fishing = null;
+    this.setSailFade(this.ship, false);
+    if (!isl) return;
+    if (this.raid) this.raid.onAshore(this.ship.x, this.ship.z);
+    else this.spawnCamp(isl);
+    // Steg: Offiziere und Trupps laufen von ihren Plätzen an Deck über die Gangway; Küste ohne Steg: Truppen im Beiboot
+    const bridged = this.ship.moored?.phase === 'moored';
+    this.spawnParty(f.yaw, bridged ? null : this.landingPlan(f.x, f.z, true), bridged ? this.crossOut() : undefined);
+  }
+
+  /** Laufwege für das Verlassen des Schiffs über die Gangway (Start am Deck-Ende) */
+  private crossOut(): CrossingPlan {
+    return { routeFor: () => { const g = this.docking.gangway; return g ? this.docking.routeAcross(g.def.id, false) : null; } };
+  }
+
+  /** Laufwege für die Rückkehr aufs Schiff über die Gangway (Start am Stegfuß) */
+  private crossIn(): CrossingPlan {
+    return { routeFor: () => { const g = this.docking.gangway; return g ? this.docking.routeAcross(g.def.id, true) : null; } };
+  }
+
+  /** Laufwege über die Enterbrücken, reihum auf die Planken/Leitern verteilt: `toEnemy` = vom eigenen aufs Feindschiff */
+  private crossBoard(toEnemy: boolean): CrossingPlan {
+    const own = this.ship.entityId;
+    return {
+      routeFor: (i) => {
+        const list = this.docking.bridgeList;
+        if (!list.length) return null;
+        const it = list[i % list.length];
+        const b = this.composite.bridge(it.id);
+        if (!b) return null;
+        const aOwn = b.def.a.ref === 'ship' && b.def.a.shipId === own;
+        return this.docking.routeAcross(it.id, toEnemy ? aOwn : !aOwn);
+      },
+    };
+  }
+
+  /** Die Spielfigur steht nach dem Landgang wieder auf dem eigenen Deck (über Gangway oder Strickleiter) */
+  private returnedToShip() {
+    this.landed = false;
+    this.ownDeck = true;
+    const c = this.combat;
+    if (c?.activeIsland) {
+      const idx = this.ground.islands.indexOf(c.activeIsland);
+      if (c.hostilesLeft === 0) this.cleared.set(idx, this.env.clock + 300);
+      c.leaveIsland();
+    }
+    this.events.cancel();
+    this.foot?.stopEffects();
+    for (const n of this.visitors) { n.dispose(); n.char.holder.removeFromParent(); n.char.dispose(); }
+    this.visitors = [];
+    // Offiziere und Trupps gehen über die Gangway zurück (an der Küste ohne Steg verschwinden sie ohne Weg)
+    this.endLandCombat(this.ship.moored?.phase === 'moored' ? this.crossIn() : null);
+    this.setSailFade(this.ship, true);
+    this.onMessage('Wieder an Bord. Am Steuerrad kannst du ablegen.');
+  }
+
+  // ---------- Besatzung (Insel in der Hand des Spielers) ----------
+
+  /** Rundgänge der Wachen je Festungsinsel (Weltkoordinaten), beim Aufbau der Inseln gesammelt */
+  private patrolRoutes = new Map<string, { x: number; z: number }[][]>();
+  /** Besetzte Inseln: Flagge des Spielers und die Wachen (nur solange der Spieler in der Nähe ist) */
+  private occupied = new Map<string, { look: ShipLook; level: number; garrison: Garrison | null }>();
+  isOccupied(id: string) { return this.occupied.has(id); }
+  get occupiedIds(): string[] { return [...this.occupied.keys()]; }
+
+  /** Insel besetzen (look = Flagge des Spielers) oder wieder freigeben (null): Banner tauschen, Wachen auf- bzw. abziehen */
+  setOccupied(id: string, look: ShipLook | null, level = 15) {
+    const had = this.occupied.get(id);
+    if (!look) {
+      if (had) { had.garrison?.dispose(); this.occupied.delete(id); }
+      this.swapBanners(id, null);
+      return;
+    }
+    if (had) { had.look = look; had.level = level; } else this.occupied.set(id, { look, level, garrison: null });
+    this.swapBanners(id, look);
+  }
+
+  /** Zwillinge der Banner (Flagge des Spielers) je besetzter Insel */
+  private bannerTwins = new Map<string, Object3D[]>();
+
+  /**
+   * Banner der Macht gegen die Flagge des Spielers tauschen (und zurück). Die Banner-Meshes sind beim Verschmelzen der Insel eigene Netze geblieben
+   * und tragen die Lage ihres Banners (`userData.bannerPose`); die Zwillinge stehen am selben Platz im selben Maß.
+   */
+  private swapBanners(id: string, look: ShipLook | null) {
+    const grp = this.islandGroups.find((i) => i.id === id);
+    if (!grp) return;
+    for (const t of this.bannerTwins.get(id) ?? []) t.removeFromParent();
+    this.bannerTwins.delete(id);
+    const poses = new Set<{ x: number; y: number; z: number; yaw: number; k: number }>();
+    grp.g.traverse((o) => { const p = o.userData.bannerPose; if (p) { poses.add(p); o.visible = !look; } });
+    if (!look) return;
+    const twins: Object3D[] = [];
+    for (const p of poses) {
+      const t = makePlayerBanner(look, p.k);
+      t.position.set(p.x, p.y, p.z);
+      t.rotation.y = p.yaw;
+      grp.g.add(t);
+      twins.push(t);
+    }
+    this.bannerTwins.set(id, twins);
+  }
+
+  /** Wachen der besetzten Inseln: erscheinen, wenn der Spieler näher als 520 m ist, verschwinden jenseits von 780 m */
+  private updateGarrisons(dt: number) {
+    if (!this.occupied.size || this.raid) return;
+    const pp = this.playerPos;
+    for (const [id, o] of this.occupied) {
+      const idx = this.islandDefs.findIndex((d) => d.id === id);
+      const def = this.islandDefs[idx];
+      if (!def) continue;
+      const d = Math.hypot(def.x - pp.x, def.z - pp.z);
+      if (!o.garrison && d < 520 && this.assets && this.combat) {
+        const routes = this.patrolRoutes.get(id);
+        const isl = this.ground.islands[idx];
+        if (routes?.length && isl) o.garrison = new Garrison(this.scene, playerPalette(o.look), routes, o.level, this.playerEntityId, this.garrisonWorld(isl), navForIsland(isl));
+      } else if (o.garrison && d > 780) { o.garrison.dispose(); o.garrison = null; }
+      if (o.garrison) o.garrison.update(dt, this.env.clock, { x: pp.x, z: pp.z, yaw: 0 });
+    }
+  }
+
+  /** Was die Wachen von der Welt sehen: Boden und Begehbarkeits-Netz ihrer Insel (auch wenn der Spieler auf dem Schiff steht), Gegner, Treffer */
+  private garrisonWorld(isl: WalkIsland): TroopWorld {
+    const base = this.troopWorld;
+    return { ...base, nav: () => navForIsland(isl) };
+  }
+
+  /** Rückeroberungs-Flotte der ursprünglichen Macht aufbauen (Besatzung); Anzahl der Schiffe, die tatsächlich erscheinen */
+  spawnRecon(def: IslandDef, o: { x: number; z: number; heading: number; homeX: number; homeZ: number; count: number; level: number }): number {
+    const n = this.naval;
+    if (!n || !def.factionId) return 0;
+    const fid = def.factionId;
+    return n.spawnReconFleet({ islandId: def.id, ...o, power: fid, look: factionShipLook(fid), name: `${FACTIONS[fid].name}-Rückeroberungsflotte` }).length;
+  }
+  reconAlive(id: string): number { return this.naval?.reconAlive(id) ?? 0; }
+  clearRecon(id: string) { this.naval?.clearRecon(id); }
+
+  // ---------- Belagerungs-Raids ----------
+
+  /** Ist das eine Insel, die belagert wird (Endgame-Festung oder Marine-Hauptquartier)? */
+  isRaidIsland(def: IslandDef) { return def.kind === 'citadel' || def.marine === 'hq'; }
+
+  /**
+   * Kontext-Taste an einer Raid-Insel. Ohne Raid: „Belagerung vorbereiten“ (Marine mit hohem Dienststatus: „Hafen“, ihr sicherer Stützpunkt).
+   * Im Raid: an der Küste nur dort an Land, wo eine Landungsbucht freigegeben ist. Liefert true, wenn die Taste hier behandelt wurde.
+   */
+  private raidContext(def: IslandDef | undefined, input: Input): boolean {
+    if (!def) return false;
+    if (!this.raid) {
+      if (!this.isRaidIsland(def)) return false;
+      const safe = (def.marine === 'hq' && this.standingOf('marine') >= MARINE_SERVICE_STANDING) || this.occupied.has(def.id);
+      this.contextLabel = safe ? 'Hafen' : 'Belagerung vorbereiten';
+      if (input.pressed('interact')) { this.ship.throttle = 0; this.onRaidRequest(def); }
+      return true;
+    }
+    if (this.docking.canDropLadder()) {
+      const l = this.raid.landing(this.x, this.z);
+      if (l.ok) {
+        this.contextLabel = 'Ankern & Leiter auswerfen';
+        if (input.pressed('interact')) this.goAshore();
+      } else if (this.raidMsgCd <= 0) { this.raidMsgCd = 7; this.onMessage(l.reason); }
+    }
+    return true;
+  }
+
+  /** Belagerung beginnen: Instanz bauen, Hauptkarte pausieren, Flotte vor die Küste. false, wenn gerade nicht möglich */
+  startRaid(def: IslandDef, ctx: RaidPartyContext, opts: { level: number; playerId: string; firstClear: boolean; conquestsBefore?: number; owned?: () => LootOwned }): boolean {
+    if (this.raid || !this.naval || !this.combat || !this.assets) return false;
+    const align = def.factionId === 'marine' ? 'marine' : this.playerFaction === 'pirat' ? 'marine' : 'pirat';
+    this.raid = new RaidDirector(this.raidHost(), def, ctx, { ...opts, align });
+    this.raid.begin();
+    return true;
+  }
+
+  /** Belagerung ohne Abschluss verwerfen (Spiel beenden, anderer Spielstand): baut alles ab, ruft aber `onRaidEnd` nicht auf */
+  abortRaid() {
+    const r = this.raid;
+    if (!r) return;
+    this.raid = null;
+    r.dispose();
+    this.onRaidView(null);
+  }
+
+  /** Rückzug aus der Belagerung (Pausenmenü) */
+  retreatRaid(why = 'Rückzug befohlen: die Flotte zieht sich zurück.') { this.raid?.retreat(why); }
+
+  private raidHost(): RaidHostWorld {
+    return this.raidHostObj ??= {
+      scene: this.scene, ground: this.ground, naval: this.naval!, combat: this.combat!, smoke: this.smoke, sparks: this.sparks, debris: this.debris,
+      playerShip: this.ship,
+      shipPos: () => ({ x: this.ship.x, z: this.ship.z, heading: this.ship.heading }),
+      footOnIsland: () => {
+        const f = this.foot;
+        if (this.mode !== 'foot' || !f || this.deckGround) return null;
+        return this.ground.islandAt(f.x, f.z, 6) ? { x: f.x, y: f.y, z: f.z } : null;
+      },
+      message: (t) => this.onMessage(t),
+      banner: (t, s) => this.overlay?.showBanner(t, s),
+      cutin: (t) => this.overlay?.showCutin(t, '#A8322A'),
+      teleportShip: (x, z, h) => this.teleport(x, z, h),
+      suspendMain: (w, def) => this.suspendMain(w, def),
+      resumeMain: () => this.resumeMain(),
+      setRaidPiers: (p) => { this.piers.length = 0; this.piers.push(...p); this.docking.clearBerthCache(); },
+      setWeather: (id) => { this.env.weather.auto = false; this.env.weather.setWeather(id, false); },
+      view: (v) => this.onRaidView(v),
+      ended: (i) => { this.raid = null; this.onRaidEnd(i); },
+    };
+  }
+
+  /** Hauptkarte pausieren: Inseln, Definitionen, Stege, Küstenformen und Dampfquellen tauschen gegen die Raid-Insel (Ausblenden besorgt `cullFigures`) */
+  private suspendMain(w: RaidWorld, def: IslandDef) {
+    this.mainSaved = {
+      islands: this.ground.islands.splice(0), defs: this.islandDefs, piers: this.piers.splice(0), shapes: this.islands,
+      vents: this.smokeVents, fires: this.campfires, chimneys: this.chimneys,
+    };
+    this.ground.islands.push(w.walk);
+    this.islandDefs = [def];
+    this.smokeVents = []; this.campfires = []; this.chimneys = [];
+    this.env.setIslands([w.shape]);
+    this.docking.clearBerthCache();
+  }
+
+  /** Hauptkarte wieder einsetzen (Raid-Insel ist schon aus der Szene entfernt oder wird es sofort) */
+  private resumeMain() {
+    const m = this.mainSaved;
+    if (!m) return;
+    this.ground.islands.length = 0;
+    this.ground.islands.push(...m.islands);
+    this.islandDefs = m.defs;
+    this.piers.length = 0;
+    this.piers.push(...m.piers);
+    this.smokeVents = m.vents; this.campfires = m.fires; this.chimneys = m.chimneys;
+    this.env.setIslands(m.shapes);
+    this.docking.clearBerthCache();
+    this.mainSaved = null;
+    this.cullFigures();
+  }
+
+  /**
+   * Festungsinseln der Weltmächte (`citadel`) und der Marine (`marinefort`: Grenzfestungen und Hauptquartier Weißwacht).
+   * Marine: bei gutem Ansehen (verbündet) oder im Lager der Marine kein Angriff, das Hauptquartier lässt sich nicht angreifen; neutral:
+   * die Wachen beobachten nur; feindlich (Piratenstatus, schlechtes Ansehen): die Garnison greift an. Die Festungen der fünf Mächte
+   * halten immer ihre Garnison in der Uniform der Macht, der Kommandant wartet im Hof.
+   */
+  private spawnFortress(isl: WalkIsland, def: IslandDef, idx: number) {
+    const c = this.combat;
+    if (!c) return;
+    const fid: FactionId = def.factionId ?? 'marine';
+    const F = FACTIONS[fid];
+    const hq = def.marine === 'hq';
+    if (def.kind === 'marinefort') {
+      const stance = marineStance(this.standingOf('marine'));
+      if (stance === 'verbuendet') {
+        this.onMessage(hq ? `${def.name}: Die Marine grüßt dich. Das Hauptquartier ist für Verbündete tabu – hier wird nicht gekämpft.` : `${def.name}: Die Marine lässt dich passieren. Verbündete werden nicht angegriffen.`);
+        return;
+      }
+      if (stance === 'neutral') { this.onMessage(`${def.name}: Die Wachen mustern dich misstrauisch. Ärger gibt es nur, wenn du ihn suchst.`); return; }
+    }
+    if (this.occupied.has(def.id)) { this.onMessage(`${def.name} ist in deiner Hand: Deine Wachen halten Burg und Stadt.`); return; }
+    const until = this.cleared.get(idx) ?? 0;
+    if (until > this.env.clock && !this.questWantsClear(def.id)) { this.onMessage(`${def.name} ist ruhig – fürs Erste.`); return; }
+    const lv = def.level ?? 12;
+    const garrison: EnemyKind[] = ['hauptmann', 'hauptmann', 'fajiwirker', 'musketier', 'musketier', 'schildtraeger', 'schildtraeger', 'schlaeger'];
+    const kinds: EnemyKind[] = def.boss ? ['legende', ...garrison] : garrison;
+    // Marine-Soldaten sind „marine“ (Beute, Entern), alle anderen Mächte stehen gegen das Lager des Spielers
+    const align: Faction = fid === 'marine' ? 'marine' : this.playerFaction === 'pirat' ? 'marine' : 'pirat';
+    c.enterIsland(isl, kinds, lv, align, def.boss, { power: fid, spread: 0.3 });
+    this.onMessage(def.boss ? `${def.name}: ${def.boss} erwartet dich – ${F.name} verteidigt seine Festung! (Stufe ${lv})` : `${def.name}: ${F.name}-Garnison! (Stufe ${lv})`);
   }
 
   /** Was auf der Insel passiert: Stadt, Lager, Legende oder Ruhe */
@@ -1814,83 +2395,156 @@ export class SeaWorld {
       this.onVillage(def.id);
       return;
     }
+    if (def.kind === 'marinefort' || def.kind === 'citadel') { this.spawnFortress(isl, def, idx); return; }
     if (def.kind !== 'camp' && def.kind !== 'boss' && def.kind !== 'ruin') { this.onMessage(`${where}: ${def.info}`); return; }
     const until = this.cleared.get(idx) ?? 0;
     if (until > this.env.clock && !this.questWantsClear(def.id)) { this.onMessage(`${where} ist ruhig – fürs Erste.`); return; }
     const enemyFaction: Faction = this.playerFaction === 'pirat' ? 'marine' : 'pirat';
     if (def.kind === 'boss') {
       const lv = def.level ?? 6;
-      c.enterIsland(isl, lv >= 9 ? ['legende', 'hauptmann', 'fajiwirker', 'musketier', 'schildtraeger', 'schlaeger'] : ['legende', 'matrose', 'musketier', 'schildtraeger'], lv, enemyFaction, def.boss ?? 'Die Legende');
+      c.enterIsland(isl, lv >= 9 ? ['legende', 'hauptmann', 'fajiwirker', 'musketier', 'schildtraeger', 'schlaeger'] : ['legende', 'matrose', 'musketier', 'schildtraeger'], lv, enemyFaction, def.boss ?? 'Die Legende', { power: def.factionId ?? undefined });
       this.onMessage(`${where}: ${def.boss ?? 'Eine Legende'} erwartet dich!`);
       return;
     }
     if (def.kind === 'ruin') {
       const lv = def.level ?? 5;
-      c.enterIsland(isl, ['fajiwirker', 'fajiwirker', 'schlaeger', 'musketier', 'schildtraeger', ...(lv >= 12 ? ['hauptmann' as const] : [])], lv, enemyFaction);
+      c.enterIsland(isl, ['fajiwirker', 'fajiwirker', 'schlaeger', 'musketier', 'schildtraeger', ...(lv >= 12 ? ['hauptmann' as const] : [])], lv, enemyFaction, undefined, { power: def.factionId ?? undefined });
       this.onMessage(`${where}: Faji-Wirker hüten die Ruine! (Stufe ${lv})`);
       return;
     }
     const level = def.level ?? 1;
-    c.enterIsland(isl, CAMP_BY_LEVEL[Math.min(CAMP_BY_LEVEL.length - 1, level - 1)], level, enemyFaction);
+    c.enterIsland(isl, CAMP_BY_LEVEL[Math.min(CAMP_BY_LEVEL.length - 1, level - 1)], level, enemyFaction, undefined, { power: def.factionId ?? undefined });
     this.onMessage(`${where}: Feindliches Lager! (Stufe ${level})`);
   }
 
-  /** Entern: über einen Enterhaken aufs feindliche Deck */
+  /**
+   * Entern (Black Flag): Enterhaken fliegen, die Crew zieht beide Schiffe Bord an Bord, dann schlagen Planken (Deckshöhe bis 1,8 m
+   * Unterschied) oder Leitern über. Der Ablauf steckt in `DockingSystem`; hier bleibt das Gefecht.
+   */
   private board(e: EnemyShip) {
-    if (!this.player || !this.foot || !this.combat) return;
+    if (!this.player || !this.foot || !this.combat || this.docking.session) return;
     this.boarding = e;
-    this.boardDone = 0;
-    this.ship.speed = 0; this.ship.sailLevel = 0;
-    e.ship.speed = 0; e.ship.sailLevel = 0; e.ship.frozen = 999;
-    this.deckGround = new DeckGround(e.ship);
-    const crewN = Math.max(2, Math.min(7, Math.round(e.ship.cls.crew * (0.4 + e.ship.crew * 0.6))));
+    e.boarded = true;
+    this.boardWon = false;
+    this.boardRetreat = false;
+    this.homeSent = false;
+    this.boardBack = 0;
+    this.ship.speed = 0; this.ship.sailLevel = 0; this.ship.throttle = 0;
+    e.ship.speed = 0; e.ship.sailLevel = 0; e.ship.frozen = 999; e.ship.ceasefire = 120;
+    this.preyDG = new DeckGround(e.ship);
+    this.docking.startBoarding(e.ship, this.preyDG);
+    this.overlay?.showCutin('Entern!', '#A8322A');
+    this.overlay?.speedlines(1);
+    audio.play('board');
+  }
+
+  /** Phasenwechsel des Enterkampfs (aus `DockingSystem`) */
+  private onBoardPhase(ph: BoardingPhase) {
+    const e = this.boarding;
+    if (!e) return;
+    if (ph === 'hooks') this.onMessage('Enterhaken fliegen! Die Crew zieht die Schiffe zusammen …');
+    else if (ph === 'bridging') { this.onMessage(this.docking.session?.bridgeType === 'ladders' ? 'Belagerungsleitern haken sich an der Bordwand fest!' : 'Enterplanken schlagen auf die Reling!'); audio.play('board', 0.7); }
+    else if (ph === 'fight') this.startBoardFight(e);
+    else if (ph === 'done') this.endBoardCleanup(e);
+  }
+
+  /** Die Brücken stehen: Besatzung des Feindschiffs erscheint, die Spielfigur geht von ihrem Steuerrad aus los */
+  private startBoardFight(e: EnemyShip) {
+    if (!this.player || !this.foot || !this.combat || !this.preyDG) return;
+    // Massentruppen an Bord fordern mehr Gegner (je 14 Köpfe einer), damit das Entern mit ihnen ein Gefecht bleibt; höchstens 12 Gegner
+    const extra = Math.min(5, Math.round(rosterTotal(this.crewTroops) / 14));
+    const crewN = Math.max(2, Math.min(7, Math.round(e.ship.cls.crew * (0.4 + e.ship.crew * 0.6)))) + extra;
     const kinds: EnemyKind[] = [];
     if (e.role === 'legende') kinds.push('legende');
     else if (e.ship.cls.L > 25) kinds.push('hauptmann');
     const pool: EnemyKind[] = e.level >= 4 ? ['matrose', 'schildtraeger', 'musketier', 'schlaeger', 'fajiwirker'] : ['matrose', 'matrose', 'musketier', 'schildtraeger'];
     while (kinds.length < crewN) kinds.push(pool[Math.floor(Math.random() * pool.length)]);
-    const enemyFaction: Faction = e.ship.faction;
-    this.combat.enterDeck(this.deckGround, kinds, e.level, enemyFaction, e.name);
-    this.scene.add(this.player.holder);
-    // Mitte des Decks, Blick zum Heck: die Kamera steht dann über dem freien Vorschiff statt hinter dem Steuerrad
-    const start = this.deckGround.spot(0, 0.2);
-    this.footDist = 6.5;
+    this.combat.enterDeck(this.preyDG, kinds, e.level, e.ship.faction, e.name, e.power);
+    this.goDeck();
     // steiler von oben: bei den größeren Schiffen stand sonst ein Mast mitten im Bild
     this.footPitch = 0.78;
-    this.foot.place(start.x, start.z, e.ship.heading + Math.PI, this.groundProxy);
-    this.foot.onFoot = true;
-    this.footYaw = e.ship.heading + Math.PI;
     this.setSailFade(e.ship, true);
-    this.overlay?.showCutin('Entern!', '#A8322A');
-    this.overlay?.speedlines(1);
-    audio.play('board');
-    this.setMode('foot');
-    this.spawnParty(e.ship.heading);
+    this.onMessage(this.docking.session?.bridgeType === 'ladders' ? 'Zu den Leitern und hinauf aufs Feindschiff!' : 'Lauf über die Planken aufs Feindschiff!');
+    this.spawnParty(this.ship.heading, null, this.crossBoard(true));
   }
 
-  private embark() {
-    if (this.boarding) {
-      this.setSailFade(this.boarding.ship, false);
-      this.boarding.ship.frozen = 0;
-      this.boarding = null;
-      this.boardDone = 0;
-      this.deckGround = null;
-      this.combat?.leaveIsland();
-      this.events.cancel();
+  /** Enterkampf entschieden: Beute und Rückweg */
+  private updateBoardVictory(dt: number) {
+    const c = this.combat, f = this.foot;
+    const e = this.boarding;
+    if (!e || !c || !f || this.docking.session?.phase !== 'fight') return;
+    if (!this.boardWon && c.hostilesLeft === 0) {
+      this.boardWon = true;
+      this.overlay?.showBanner('Schiff erobert!', 'Lauf zurück an Bord – die Beute gehört dir');
+      this.onBoardWon(e);
+      this.sendCrewHome();
     }
+    if (!(this.boardWon || this.boardRetreat) || !this.ownDG || this.deckGround !== this.ownDG) { this.boardBack = 0; return; }
+    // wieder auf dem eigenen Deck: die Crew holt Planken und Leitern ein (nach dem Heimkehren der Offiziere und Trupps, spätestens nach 8 s)
+    this.boardBack += dt;
+    if (this.boardBack > 0.6 && (!this.crew?.homing || this.boardBack > 8)) this.docking.endBoarding();
+  }
+
+  /** Offiziere und Trupps gehen über die Brücken zurück aufs eigene Schiff */
+  private sendCrewHome() {
+    if (this.homeSent) return;
+    this.homeSent = true;
+    this.endLandCombat(this.crossBoard(false));
+  }
+
+  /** Brücken sind abgebaut: Feindschiff freigeben (oder erobern), Gefecht beenden */
+  private endBoardCleanup(e: EnemyShip) {
+    this.setSailFade(e.ship, false);
+    e.boarded = false;
+    e.ship.frozen = 0;
+    e.ship.ceasefire = 0;
+    const won = this.boardWon;
+    this.boarding = null;
+    this.boardWon = false; this.boardRetreat = false; this.homeSent = false; this.boardBack = 0;
+    this.preyDG = null;
+    this.combat?.leaveIsland();
+    this.events.cancel();
+    if (!this.crew?.homing) { this.crew?.clearAllies(); this.endLandCombat(null); if (this.combat) this.combat.allies = []; }
+    if (won) this.naval?.capture(e);
+    this.onMessage(won ? 'Brücken eingeholt – die Prise geht unter, die Beute treibt herüber.' : 'Brücken eingeholt.');
+  }
+
+  /**
+   * Notfall (K.O. der Spielfigur): die Crew zieht dich an Bord, Brücken und Leitern werden sofort eingeholt. Ein Erzähl-Sprung,
+   * kein Laufweg: nur hier, nicht beim Landgang, Entern oder Anlegen.
+   */
+  private rescueToShip() {
+    if (this.boarding) { this.docking.abortBoarding(); }
     const c = this.combat;
     if (c?.activeIsland) {
       const idx = this.ground.islands.indexOf(c.activeIsland);
       if (c.hostilesLeft === 0) this.cleared.set(idx, this.env.clock + 300);
       c.leaveIsland();
     }
+    this.events.cancel();
     if (this.foot) { this.foot.stopEffects(); this.foot.onFoot = false; }
     for (const n of this.visitors) { n.dispose(); n.char.holder.removeFromParent(); n.char.dispose(); }
     this.visitors = [];
     this.crew?.clearAllies();
+    this.endLandCombat(null);
     if (this.combat) this.combat.allies = [];
+    this.ownDeck = false;
+    this.landed = false;
+    this.deckGround = null;
+    this.setSailFade(this.ship, false);
     this.setMode('sail');
-    this.onMessage('Leinen los!');
+  }
+
+  /** Wo steht die Spielfigur? Leitet das Deck unter ihr ab und löst Landung und Rückkehr aus (zu Fuß über Gangway, Watweg oder Planke) */
+  private updateWhere(_dt: number) {
+    const f = this.foot;
+    if (this.mode !== 'foot' || !f) return;
+    this.deckGround = this.composite.deckAtPoint(f.x, f.z);
+    if (this.docking.isClimbing || this.cinematic > 0 || this.downT > 0 || this.boarding) return;
+    const onOwn = !!this.ownDG && this.deckGround === this.ownDG;
+    if (this.ownDeck && !onOwn && !this.composite.onBridge(f.x, f.z, f.y) && (this.ship.moored || this.docking.ladderId)) {
+      if (Number.isFinite(this.ground.height(f.x, f.z))) this.arriveAshore();
+    } else if (this.landed && onOwn) this.returnedToShip();
   }
 
   private updateNpcs(dt: number) {
@@ -1901,25 +2555,34 @@ export class SeaWorld {
   }
 
   /**
-   * Startbildschirm: strahlender Karibik-Vormittag bei klarem Himmel, die Zeit steht still (sonst wandert die Stimmung
-   * innerhalb von Minuten in Abendrot und Nacht) und das Wetter wechselt nicht.
+   * Startbildschirm: das Prachtschiff (Galeone im Gold der Sturmkrone) segelt durch drei Stimmungen, Zeit und Wetter gehören der Regie
+   * (siehe titleDirector.ts). Das Schiff steht auf einem neuen Platz und das eigene Schiff kommt beim Spielstart aus dem Spielstand zurück.
    */
   titleMood() {
-    this.env.setState({ time: 10.1 + Math.random() * 1.6, weather: 'klar' });
-    this.env.timeSpeed = 0;
-    this.env.weather.auto = false;
+    this.setState({ boat: null });
+    this.setShip(TITLE_SHIP.tier, TITLE_SHIP.look, 'kugel', 1, 'pirat', 1, 1);
+    // Inselschilder gehören zum Spiel (nach „Zurück zum Titel“ blieben die zuletzt gezeigten stehen und sähen aus der Ferne wie dunkle Striche aus)
+    for (const l of this.labels) l.sprite.visible = false;
+    this.title.start();
   }
 
   /** Beim Betreten des Spiels läuft der Tag wieder, das Wetter wechselt wieder von selbst */
   leaveTitle() {
+    this.title.stop();
+    this.title.releaseCamera(this.camera);
     this.env.timeSpeed = 1;
     this.env.weather.auto = true;
   }
 
-  /** Im Menü: Schiff treibt, Wellen und Leben laufen weiter (Zeit und Wetter stehen, siehe titleMood) */
+  /** Munition wählen (Taste und Knopf der Schiffstafel) */
+  selectAmmo(id: AmmoId) {
+    this.ship.ammo = id;
+    this.onMessage(`Munition: ${AMMO[id].n} – ${AMMO[id].d}`);
+  }
+
+  /** Im Menü: Wellen, Gischt und Leben laufen weiter; Schiff, Zeit und Wetter führt die Regie (`title`) in `render` */
   idle(dt: number) {
     this.env.update(dt, this.focus);
-    this.menuOrbit += dt * 0.08;
     this.updateWake(dt);
     this.spray.update(dt);
     this.sparks.update(dt);
@@ -1971,6 +2634,11 @@ export class SeaWorld {
   // ---------- Darstellung ----------
 
   render(alpha: number, frameDt: number, inMenu: boolean) {
+    // Titelbild: die Regie fährt das Schiff (in Echtzeit je Bild, nicht in den 60-Hz-Schritten: auch auf schnellen Bildschirmen ruckelfrei)
+    if (inMenu) {
+      if (!this.title.active) this.title.start();
+      this.title.update(frameDt);
+    }
     this.cullFigures();
     const s = this.ship;
     const x = MathUtils.lerp(s.prev.x, s.x, alpha);
@@ -2000,11 +2668,13 @@ export class SeaWorld {
       this.player.reach('r', WHEEL_R);
     }
     for (const e of this.naval?.enemies ?? []) e.ship.render(alpha, sea, night, frameDt);
+    // Gangway, Planken, Leitern und Taue folgen der bewegten Bordwand (Matrizen der Schiffe sind jetzt aktuell)
+    this.docking.frame(frameDt);
     // Das Wasser zeichnet Rumpfschaum und Bugwelle: eigenes Schiff zuerst, dann die nächsten (höchstens sechs, nur in Sichtweite)
     {
       const hulls = this.hullList;
       hulls.length = 0;
-      const add = (sh: Ship) => { if (sh.alive) hulls.push({ x: sh.hullFx.x, z: sh.hullFx.z, h: sh.hullFx.h, L: sh.cls.L, W: sh.cls.W, speed: sh.hullFx.speed, vis: 1 - Math.min(1, Math.max(0, (Math.hypot(sh.hullFx.x - x, sh.hullFx.z - z) - 220) / 140)) }); };
+      const add = (sh: Ship) => { if (sh.alive) hulls.push({ x: sh.hullFx.x, z: sh.hullFx.z, h: sh.hullFx.h, L: sh.cls.L, W: sh.cls.W, speed: sh.hullFx.speed, vis: 1 - clamp01((Math.hypot(sh.hullFx.x - x, sh.hullFx.z - z) - 220) / 140) }); };
       add(s);
       if (hulls.length && this.wake.length > 1) hulls[0].trail = true;
       const near = (this.naval?.enemies ?? []).map((e) => e.ship).filter((sh) => sh !== s && sh.alive && Math.hypot(sh.hullFx.x - x, sh.hullFx.z - z) < 360);
@@ -2078,17 +2748,8 @@ export class SeaWorld {
       this.camSailInit = false;
       // Segel aus der Draufsicht wieder undurchsichtig machen (zu Fuß an Land oder im Menü sieht man sonst durch sie hindurch)
       if (this.sailFaded && !this.ownDeck) this.setSailFade(this.ship, false);
-      // Titelbild: ruhige Kamerafahrt vor der Insel (statt voller Umkreisung, die oft nur leeres Meer zeigt). Die Kamera schwingt
-      // langsam um die Richtung, aus der man Strand, Palmen und Hafen hinter dem Schiff sieht (menuOrbit ist die Phase, nicht ein Winkel).
-      // Auf breiten Bildschirmen steht das Schiff links neben dem Menü, nicht dahinter.
-      const a = 2.55 + Math.sin(this.menuOrbit) * 0.5;
-      const R = 44;
-      const wide = innerWidth > innerHeight * 1.15 && innerWidth >= 900;
-      // seitlicher Versatz in Metern, so dass das Schiff in der Mitte des freien Bildteils neben dem Menü (480 px breit) steht
-      const halfW = R * Math.tan(MathUtils.degToRad(cam.fov / 2)) * (innerWidth / innerHeight);
-      const side = wide ? (0.5 + 240 / innerWidth) * halfW : 0;
-      cam.position.set(x + Math.sin(a) * R, 12 + Math.sin(this.menuOrbit * 1.7) * 0.9, z + Math.cos(a) * R);
-      cam.lookAt(x + Math.cos(a) * side, wide ? 6.5 : 4.5, z - Math.sin(a) * side);
+      // Titelbild: die Kamerafahrt der Regie; auf breiten Bildschirmen steht das Schiff links neben dem Menü, im Hochformat darüber
+      this.title.frame(cam, innerWidth / innerHeight);
       this.focus.set(x, wy + 2, z);
     } else {
       // Kampfkamera wie in 1.0: das nächste Feindschiff kommt mit ins Bild

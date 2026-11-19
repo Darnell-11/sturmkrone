@@ -5,10 +5,12 @@
 import type { AmmoDef } from '../data/ships';
 import type { EntityId } from '../sim/entityId';
 import type { CrewRefillIntent, RepairMaterial, SailRepairIntent } from '../sim/intents';
+import { TROOPS, type TroopType } from '../data/troops';
+import { clamp01 } from '../core/mathUtil';
 
 // ---------- Crew (je Schiff, in Gruppen, damit ein Zwei-Stufen-System andocken kann) ----------
 
-/** Eine Gruppe der Besatzung (z. B. Matrosen). Weitere Stufen (Offiziere, Spezialisten) kommen als weiterer Eintrag in `CREW_POOLS`. */
+/** Eine Gruppe der Besatzung (Matrosen, Truppen). Weitere Stufen kommen als weiterer Eintrag in `CREW_POOLS`. */
 export interface CrewPool { n: number; max: number }
 
 export interface ShipCrewState {
@@ -17,17 +19,28 @@ export interface ShipCrewState {
   pools: Record<string, CrewPool>;
 }
 
-/** Gruppen der Besatzung: Gewicht in der Crew-%, Verluste treffen die Gruppen in `casualty`-Reihenfolge (kleiner = zuerst) */
+/**
+ * Gruppen der Besatzung: Gewicht in der Crew-%, Verluste treffen die Gruppen in `casualty`-Reihenfolge (kleiner = zuerst).
+ * Matrosen (Seeleute) bedienen Kanonen, Segel und Reparatur (Gewicht 1). Truppen (Massentruppen, nur Leviathan) zählen NICHT zur Crew-%
+ * (Gewicht 0): sie wirken beim Entern und an Land (`boardingStrength`), fallen aber bei Beschuss als Erste. Offiziere sind keine Gruppe:
+ * sie sind benannte Einzelpersonen (data/crew.ts) und sterben nie dauerhaft.
+ */
 export const CREW_POOLS: Record<string, { label: string; weight: number; casualty: number }> = {
+  truppen: { label: 'Truppen', weight: 0, casualty: -1 },
   matrosen: { label: 'Matrosen', weight: 1, casualty: 0 },
 };
 
 /** Besatzungsstärke (Köpfe) je Schiffsklasse: `cls.crew` × 8 (Schaluppe 16, Leviathan 104) */
 export const HEADS_PER_CREW_POINT = 8;
 
-export function makeCrew(shipId: EntityId, classCrew: number): ShipCrewState {
+/**
+ * Besatzung einer Klasse. `troopCap` > 0 legt zusätzlich den Truppen-Pool an (er startet leer: Truppen werden im Hafen angeheuert).
+ */
+export function makeCrew(shipId: EntityId, classCrew: number, troopCap = 0): ShipCrewState {
   const max = Math.max(4, Math.round(classCrew * HEADS_PER_CREW_POINT));
-  return { shipId, pools: { matrosen: { n: max, max } } };
+  const pools: Record<string, CrewPool> = { matrosen: { n: max, max } };
+  if (troopCap > 0) pools.truppen = { n: 0, max: Math.round(troopCap) };
+  return { shipId, pools };
 }
 
 /** Crew-% 0 … 1: gewichteter Anteil aller Gruppen */
@@ -46,7 +59,16 @@ export function crewHeads(c: ShipCrewState): { n: number; max: number } {
   return { n, max };
 }
 
-/** Verluste in Köpfen verteilen (zuerst die Gruppe mit der niedrigsten `casualty`) */
+/** Köpfe einer Gruppe (0, wenn das Schiff die Gruppe nicht hat) */
+export const poolHeads = (c: ShipCrewState, pool: string): number => c.pools[pool]?.n ?? 0;
+
+/** Anteil einer Gruppe 0 … 1 (0, wenn es sie nicht gibt) */
+export const poolFrac = (c: ShipCrewState, pool: string): number => {
+  const p = c.pools[pool];
+  return p && p.max > 0 ? p.n / p.max : 0;
+};
+
+/** Verluste in Köpfen verteilen: zuerst die Truppen, dann die Matrosen (Reihenfolge `casualty`); Offiziere sind nie betroffen */
 export function loseCrew(c: ShipCrewState, heads: number): number {
   let left = heads;
   const order = Object.keys(c.pools).sort((a, b) => (CREW_POOLS[a]?.casualty ?? 0) - (CREW_POOLS[b]?.casualty ?? 0));
@@ -59,9 +81,43 @@ export function loseCrew(c: ShipCrewState, heads: number): number {
   return heads - left;
 }
 
-/** Besatzung auf einen Anteil setzen (Spielstand, Tests) */
+/** Seeleute (alle Gruppen mit Gewicht > 0) auf einen Anteil setzen (Spielstand, Tests); Truppen bleiben unberührt */
 export function setCrewFrac(c: ShipCrewState, f: number) {
-  for (const p of Object.values(c.pools)) p.n = Math.max(0, Math.min(p.max, p.max * f));
+  for (const [id, p] of Object.entries(c.pools)) if ((CREW_POOLS[id]?.weight ?? 1) > 0) p.n = Math.max(0, Math.min(p.max, p.max * f));
+}
+
+/** Eine Gruppe auf eine Kopfzahl setzen (gerundet, höchstens bis zum Maximum) */
+export function setPoolHeads(c: ShipCrewState, pool: string, heads: number): boolean {
+  const p = c.pools[pool];
+  if (!p) return false;
+  p.n = Math.max(0, Math.min(p.max, Math.round(heads)));
+  return true;
+}
+
+// ---------- Enterkraft der Truppen ----------
+
+export interface BoardingStrength {
+  /** Truppen-Köpfe an Bord */
+  heads: number;
+  /** Anteil der Truppen-Kapazität 0 … 1 */
+  frac: number;
+  /** Faktor auf die Durchschlagskraft (Schaden) der eigenen Enterer */
+  damage: number;
+  /** Faktor auf die Trefferpunkte der eigenen Enterer */
+  hp: number;
+}
+
+/**
+ * Enterkraft: wächst mit dem Truppen-Pool. Ohne Truppen (andere Klassen, leerer Pool) bleibt alles bei 1. Voller Pool: +45 % Durchschlagskraft
+ * und +60 % Trefferpunkte für Offiziere und Enterer. Nachladen, Segeln und Reparatur hängen NICHT daran (siehe `crewEffects`, nur Seeleute).
+ */
+export function boardingStrength(c: ShipCrewState, out: BoardingStrength = { heads: 0, frac: 0, damage: 1, hp: 1 }): BoardingStrength {
+  const f = poolFrac(c, 'truppen');
+  out.heads = poolHeads(c, 'truppen');
+  out.frac = f;
+  out.damage = 1 + 0.45 * f;
+  out.hp = 1 + 0.6 * f;
+  return out;
 }
 
 // ---------- Wirkung der Crew ----------
@@ -81,7 +137,7 @@ export interface CrewEffects {
 const REPAIR_PER_SEC_FULL = 0.0016;
 
 export function crewEffects(frac: number, out: CrewEffects = { reloadMult: 1, sailSetRate: 0, repairPerSec: 0, repairTime: 1 }): CrewEffects {
-  const c = Math.max(0, Math.min(1, frac));
+  const c = clamp01(frac);
   out.reloadMult = 1 + 1.8 * Math.pow(1 - c, 1.2);
   out.sailSetRate = 0.36 * (0.12 + 0.88 * c);
   out.repairPerSec = c < 0.15 ? 0 : REPAIR_PER_SEC_FULL * Math.pow(c, 1.6);
@@ -120,7 +176,7 @@ export interface SailPerformance {
  * bei 0 % nur noch Treiben. Stetig und streng steigend, ohne Sprünge.
  */
 export function sailCurve(f: number): number {
-  const s = Math.max(0, Math.min(1, f));
+  const s = clamp01(f);
   if (s < 0.3) return 0.45 * Math.pow(s / 0.3, 1.15);
   return 0.45 + 0.55 * Math.pow((s - 0.3) / 0.7, 0.8);
 }
@@ -156,13 +212,42 @@ export interface ShipSimState {
   repair: RepairJob | null;
 }
 
-export function createShipSim(shipId: EntityId, hull: number, classHp: number, classCrew: number): ShipSimState {
+export function createShipSim(shipId: EntityId, hull: number, classHp: number, classCrew: number, troopCap = 0): ShipSimState {
   return {
     shipId, hull, maxHull: hull,
     sail: { hp: Math.round(classHp * SAIL_HP_PER_HULL), max: Math.round(classHp * SAIL_HP_PER_HULL) },
-    crew: makeCrew(shipId, classCrew),
+    crew: makeCrew(shipId, classCrew, troopCap),
     sailSet: 0.55, sinceHit: 99, repair: null,
   };
+}
+
+/** Rumpfpunkte in der Enterphase: das Schiff hält sich gerade noch über Wasser (nie 0 durch normalen Schaden) */
+export const ENTER_HULL = 1;
+
+/**
+ * Schiffe, die nie durch Kanonen oder Kräfte allein untergehen: Legenden (Piraten- und Marine-Legenden) und die zwei größten Klassen
+ * (Linienschiff, Leviathan). In der Enterphase bleiben sie unzerstörbar; nur Entern beendet den Kampf.
+ */
+export function cannotBeSunk(o: { tier: number; legend?: boolean }): boolean {
+  return !!o.legend || o.tier >= 5;
+}
+
+/**
+ * Enterphase auslösen, wenn der Rumpf auf 0 fiele: Rumpf bleibt bei `ENTER_HULL`, die Segel sind ganz zerfetzt. Gilt nur für Schiffe, die
+ * sie haben dürfen (Gegner). Liefert, ob die Phase jetzt beginnt.
+ */
+export function enterPhaseCheck(s: ShipSimState, canDisable: boolean, alreadyDisabled: boolean): boolean {
+  if (!canDisable || alreadyDisabled || s.hull > 0) return false;
+  s.hull = ENTER_HULL;
+  s.sail.hp = 0;
+  return true;
+}
+
+/** Gnadenstoß: wirkt nur auf ein Schiff in der Enterphase, das untergehen darf; liefert, ob es untergeht (Rumpf 0) */
+export function finishingBlow(s: ShipSimState, noKill: boolean): boolean {
+  if (noKill) return false;
+  s.hull = 0;
+  return true;
 }
 
 export const sailFrac = (s: ShipSimState) => (s.sail.max > 0 ? s.sail.hp / s.sail.max : 1);
@@ -178,7 +263,8 @@ const _dmg: DamageResult = { hull: 0, sail: 0, crewHeads: 0 };
 export function applyDamage(s: ShipSimState, base: number, a: AmmoDef, zone: 'hull' | 'sail'): DamageResult {
   const hull = base * (zone === 'sail' ? Math.min(a.hull, 0.35) : a.hull);
   const sail = base * (zone === 'sail' ? Math.max(a.sail, SAIL_ZONE_MIN) : a.sail) * SAIL_DAMAGE_K;
-  const heads = (base * a.crew * (zone === 'sail' ? 0.4 : 1)) / s.maxHull * 1.4 * crewHeads(s.crew).max;
+  // Basis sind die Matrosen (wie vor den Truppen): die Truppen fangen die Verluste nur zuerst ab, sie vergrößern sie nicht
+  const heads = (base * a.crew * (zone === 'sail' ? 0.4 : 1)) / s.maxHull * 1.4 * (s.crew.pools.matrosen?.max ?? crewHeads(s.crew).max);
   s.hull = Math.max(0, s.hull - hull);
   s.sail.hp = Math.max(0, s.sail.hp - sail);
   const lost = loseCrew(s.crew, heads);
@@ -265,25 +351,31 @@ export function stepRepair(s: ShipSimState, dt: number): { intent: SailRepairInt
   return { intent: r.intent, ...applyRepair(s, r.intent.material) };
 }
 
-export function cancelRepair(s: ShipSimState) { s.repair = null; }
-
 // ---------- Besatzung auffüllen (Taverne, Hafen) ----------
 
 /** Preis je angeheuertem Seemann (Gold), wächst mit der Klasse */
 export const crewPricePerHead = (tier: number) => 6 + tier * 3;
 
-/** Fehlende Köpfe */
-export function missingHeads(c: ShipCrewState): number {
+/** Fehlende Köpfe (aller Gruppen oder nur einer) */
+export function missingHeads(c: ShipCrewState, pool?: string): number {
+  if (pool) { const p = c.pools[pool]; return p ? Math.max(0, Math.round(p.max - p.n)) : 0; }
   const h = crewHeads(c);
   return Math.max(0, Math.round(h.max - h.n));
 }
 
-/** Besatzung aufstocken; liefert die angeheuerten Köpfe */
+/** Preis je angeheuertem Truppenkopf (Gold) eines Typs */
+export const troopPricePerHead = (typ: TroopType) => TROOPS[typ].price;
+
+/**
+ * Besatzung aufstocken; liefert die angeheuerten Köpfe. `intent.pool` nennt die Gruppe ('matrosen', 'truppen'); ohne Angabe füllen
+ * alle Gruppen auf (Gruppe mit der höchsten `casualty` zuerst).
+ */
 export function refillCrew(c: ShipCrewState, intent: CrewRefillIntent): number {
   if (intent.shipId !== c.shipId) return 0;
   let left = intent.heads ?? Infinity;
   let added = 0;
-  const order = Object.keys(c.pools).sort((a, b) => (CREW_POOLS[b]?.casualty ?? 0) - (CREW_POOLS[a]?.casualty ?? 0));
+  const ids = intent.pool ? Object.keys(c.pools).filter((id) => id === intent.pool) : Object.keys(c.pools);
+  const order = ids.sort((a, b) => (CREW_POOLS[b]?.casualty ?? 0) - (CREW_POOLS[a]?.casualty ?? 0));
   for (const id of order) {
     const p = c.pools[id];
     const add = Math.min(p.max - p.n, left);
@@ -298,12 +390,15 @@ export function refillCrew(c: ShipCrewState, intent: CrewRefillIntent): number {
 export function shipTooltip(s: ShipSimState): string {
   const sf = sailFrac(s), cf = crewFrac(s.crew);
   const sp = sailPerformance(sf), fx = crewEffects(cf);
-  const heads = crewHeads(s.crew);
+  const sailors = s.crew.pools.matrosen ?? { n: 0, max: 0 };
+  const troops = s.crew.pools.truppen;
+  const bs = boardingStrength(s.crew);
   const pct = (v: number) => `${Math.round(v * 100)} %`;
   const sailNote = sf <= 0.0001 ? 'manövrierunfähig – das Schiff treibt' : sf < 0.3 ? 'stark verlangsamt' : sf < 1 ? 'beschädigt' : 'volle Fahrt';
   return [
     `Segel ${pct(sf)} (${Math.round(s.sail.hp)}/${s.sail.max}): ${sailNote}. Höchsttempo ${pct(sp.speed)}, Beschleunigung ${pct(sp.accel)}, Wendigkeit ${pct(sp.turn)}.`,
-    `Crew ${pct(cf)} (${Math.round(heads.n)}/${heads.max} Seeleute): Nachladen ×${fx.reloadMult.toFixed(1)} der Zeit, Segel setzen ${pct(fx.sailSetRate / 0.36)}, Rumpfreparatur ${cf < 0.15 ? 'keine' : pct(Math.pow(cf, 1.6))}.`,
+    `Crew ${pct(cf)} (${Math.round(sailors.n)}/${sailors.max} Seeleute): Nachladen ×${fx.reloadMult.toFixed(1)} der Zeit, Segel setzen ${pct(fx.sailSetRate / 0.36)}, Rumpfreparatur ${cf < 0.15 ? 'keine' : pct(Math.pow(cf, 1.6))}.`,
+    ...(troops ? [`Truppen ${Math.round(troops.n)}/${troops.max}: Enterkraft +${Math.round((bs.damage - 1) * 100)} % Schaden, +${Math.round((bs.hp - 1) * 100)} % Trefferpunkte – bei Beschuss fallen zuerst die Truppen, dann die Seeleute.`] : []),
     'Segel flicken: Segeltuch oder Holzplanken (Taste G), ohne Material ein Notsegel. Crew auffüllen: Taverne oder Werft.',
   ].join('\n');
 }

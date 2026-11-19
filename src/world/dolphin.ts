@@ -1,6 +1,7 @@
 import { BufferAttribute, BufferGeometry, DoubleSide, Group, Mesh, Shape, ShapeGeometry } from 'three';
 import { addOutlines } from '../render/outline';
 import { toon } from '../render/toon';
+import { clamp01 } from '../core/mathUtil';
 
 /**
  * Delfin aus einem glatten Körper (Schnabel, Melone, Rumpf, Schwanzstiel) mit Rückenflosse, Brustflossen und Fluke.
@@ -49,7 +50,7 @@ export class DolphinModel {
         pos[o + 1] = sy * r;
         pos[o + 2] = LEN / 2 - LEN * s;
         // Rücken grau, Bauch hell, weicher Übergang an der Flanke
-        const k = Math.min(1, Math.max(0, (0.15 - sy) / 0.55));
+        const k = clamp01((0.15 - sy) / 0.55);
         const m = k * k * (3 - 2 * k);
         for (let c = 0; c < 3; c++) col[o + c] = TOP[c] + (BELLY[c] - TOP[c]) * m;
       }

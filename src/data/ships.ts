@@ -1,8 +1,12 @@
 // Schiffe, Munition und Anpassung. Werte aus 1.0 übernommen und erweitert.
+import type { FigureheadId } from './figureheads';
+import { FACTIONS, type FactionId } from './factions';
 
 export interface ShipClass {
   id: string;
   n: string;
+  /** Kurzbeschreibung für Werft und Katalog */
+  desc: string;
   /** Länge, Breite, Masthöhe in Metern */
   L: number;
   W: number;
@@ -30,13 +34,13 @@ export const SEA_SPEED = 0.95;
 
 // Größer als in 1.0: schon die Schaluppe wirkt wie ein echtes Schiff, späte Klassen sind gewaltig
 export const SHIP_CLASSES: ShipClass[] = [
-  { id: 'schaluppe', n: 'Schaluppe', L: 18, W: 5.8, mh: 13, masts: [0.06], hp: 120, can: 2, spd: 22, crew: 2, price: 0, rank: 0, decks: 1 },
-  { id: 'brigg', n: 'Brigg', L: 24, W: 7.2, mh: 16, masts: [0.18, -0.14], hp: 200, can: 3, spd: 23, crew: 4, price: 1200, rank: 2, decks: 1 },
-  { id: 'korvette', n: 'Korvette', L: 30, W: 8.4, mh: 19, masts: [0.2, -0.15], hp: 290, can: 4, spd: 24, crew: 5, price: 2600, rank: 3, decks: 1 },
-  { id: 'fregatte', n: 'Fregatte', L: 38, W: 10, mh: 23, masts: [0.26, 0.03, -0.17], hp: 400, can: 5, spd: 23, crew: 6, price: 4800, rank: 4, decks: 2 },
-  { id: 'galeone', n: 'Galeone', L: 46, W: 12.5, mh: 27, masts: [0.27, 0.04, -0.16], hp: 560, can: 6, spd: 21.5, crew: 8, price: 8500, rank: 5, decks: 2 },
-  { id: 'linienschiff', n: 'Linienschiff', L: 58, W: 15, mh: 32, masts: [0.28, 0.06, -0.14], hp: 780, can: 8, spd: 21, crew: 10, price: 15000, rank: 7, decks: 3 },
-  { id: 'leviathan', n: 'Leviathan', L: 74, W: 19, mh: 38, masts: [0.31, 0.14, -0.02, -0.15], hp: 1100, can: 10, spd: 20, crew: 13, price: 30000, rank: 9, decks: 3 },
+  { id: 'schaluppe', n: 'Schaluppe', desc: 'Klein, flink und billig: ein Boot für mutige Anfänger, das jede Bucht erreicht und jedem großen Schiff davonsegelt.', L: 18, W: 5.8, mh: 13, masts: [0.06], hp: 120, can: 2, spd: 22, crew: 2, price: 0, rank: 0, decks: 1 },
+  { id: 'brigg', n: 'Brigg', desc: 'Zwei Masten, ein Vorderkastell und drei Kanonen je Seite: das erste Schiff, mit dem man ernsthaft jagen kann.', L: 24, W: 7.2, mh: 16, masts: [0.18, -0.14], hp: 200, can: 3, spd: 23, crew: 4, price: 1200, rank: 2, decks: 1 },
+  { id: 'korvette', n: 'Korvette', desc: 'Schnell und scharf geschnitten: Küstenwachen fürchten ihre Wendigkeit, Kaufleute ihre Breitseiten.', L: 30, W: 8.4, mh: 19, masts: [0.2, -0.15], hp: 290, can: 4, spd: 24, crew: 5, price: 2600, rank: 3, decks: 1 },
+  { id: 'fregatte', n: 'Fregatte', desc: 'Drei Masten, zwei Kanonendecks und Platz für eine echte Mannschaft: die Königin der Mittelklasse.', L: 38, W: 10, mh: 23, masts: [0.26, 0.03, -0.17], hp: 400, can: 5, spd: 23, crew: 6, price: 4800, rank: 4, decks: 2 },
+  { id: 'galeone', n: 'Galeone', desc: 'Hoch aufragend, schwer bewaffnet und voller Fracht: ein schwimmendes Kontor mit Zähnen.', L: 46, W: 12.5, mh: 27, masts: [0.27, 0.04, -0.16], hp: 560, can: 6, spd: 21.5, crew: 8, price: 8500, rank: 5, decks: 2 },
+  { id: 'linienschiff', n: 'Linienschiff', desc: 'Drei Decks voller Kanonen. Wer in die Schlachtlinie fährt, entscheidet Seegefechte, bevor sie begonnen haben.', L: 58, W: 15, mh: 32, masts: [0.28, 0.06, -0.14], hp: 780, can: 8, spd: 21, crew: 10, price: 15000, rank: 7, decks: 3 },
+  { id: 'leviathan', n: 'Leviathan', desc: 'Ein Gigant mit vier Masten und Raum für ganze Truppen: gebaut, um Festungen zu stürmen und Legenden zu jagen.', L: 74, W: 19, mh: 38, masts: [0.31, 0.14, -0.02, -0.15], hp: 1100, can: 10, spd: 20, crew: 13, price: 30000, rank: 9, decks: 3 },
 ];
 
 export type AmmoId = 'kugel' | 'kette' | 'kartaetsche' | 'brand';
@@ -56,9 +60,17 @@ export const HULL_COLORS = ['#8A5A2B', '#5A3A1E', '#3A2A1E', '#1E1A20', '#7A1F1A
 export const SAIL_COLORS = ['#F6EAD0', '#FFFFFF', '#1E1A20', '#A8322A', '#E8B33A', '#1F4E79', '#4A2E6E', '#2F6E4F'];
 export const STRIPE_COLORS = ['#1F4E79', '#A8322A', '#E3B04B', '#F3E6C8', '#1E1A20', '#2F8F9D', '#6E8B3D', '#4A2E6E'];
 export const FLAGS = { totenkopf: 'Grinsender Schädel', krone: 'Sturmkrone', anker: 'Anker', welle: 'Welle', stern: 'Stern', marine: 'Marine-Wappen' } as const;
-export const FIGUREHEADS = { keine: 'Keine', loewe: 'Löwe', drache: 'Seedrache', adler: 'Adler', meerfrau: 'Wellenfrau', kraken: 'Krake' } as const;
+export { FIGUREHEADS, type FigureheadId } from './figureheads';
 export type FlagId = keyof typeof FLAGS;
-export type FigureheadId = keyof typeof FIGUREHEADS;
+/** Beschreibung der Flaggen (Werft und Katalog) */
+export const FLAG_DESC: Record<FlagId, string> = {
+  totenkopf: 'Das Zeichen der Freibeuter: ein grinsender Schädel über gekreuzten Knochen.',
+  krone: 'Die Sturmkrone auf dunklem Grund: wer sie hisst, erhebt Anspruch auf die Meere.',
+  anker: 'Der Anker steht für Heimathafen und Treue: das Banner ehrlicher Handelsfahrer.',
+  welle: 'Eine Welle für Freiheit und Ungebundenheit: die Flagge der Fahrenden.',
+  stern: 'Ein Stern weist den Weg: das Zeichen der Navigatoren und Entdecker.',
+  marine: 'Das Wappen der Marine: Gerechtigkeit mit Kanonen.',
+};
 
 export interface ShipLook {
   hull: string;
@@ -68,11 +80,43 @@ export interface ShipLook {
   flagColor: string;
   figurehead: FigureheadId;
   lanterns: boolean;
+  /** Schiff einer Weltmacht (data/factions.ts): Segelmuster, Wappen und Flagge kommen aus render/heraldry.ts, Rumpf und Segel aus den Farben oben */
+  power?: FactionId;
 }
 
 export const DEFAULT_SHIP_LOOK = (faction: 'pirat' | 'marine'): ShipLook => faction === 'pirat'
   ? { hull: '#8A5A2B', stripe: '#A8322A', sail: '#F6EAD0', flag: 'totenkopf', flagColor: '#1E1A20', figurehead: 'drache', lanterns: true }
   : { hull: '#E8DCC0', stripe: '#14284A', sail: '#FFFFFF', flag: 'marine', flagColor: '#1F4E79', figurehead: 'adler', lanterns: true };
+
+/**
+ * Aussehen eines Schiffs der Weltmächte: Rumpf, Zierstreifen, Segeltuch und Galionsfigur aus data/factions.ts, dazu `power` für Muster,
+ * Wappen und Flagge. Man erkennt jede Macht auf See an Rumpffarbe, Segelmuster und Flagge.
+ */
+export const factionShipLook = (id: FactionId): ShipLook => {
+  const s = FACTIONS[id].ship;
+  return { hull: s.hull, stripe: s.stripe, sail: s.sail, flag: id === 'marine' ? 'marine' : 'totenkopf', flagColor: s.flagColor, figurehead: s.figurehead, lanterns: true, power: id };
+};
+
+/**
+ * Prachtschiff im Titelbild (nur Kulisse, kein Spielerschiff): eine Galeone in dunklem Mahagoni mit Goldzier, cremefarbenen Segeln,
+ * der Sturmkrone-Flagge und dem gekrönten Sturmdrachen am Bug. Beim Spielstart ersetzt das eigene Schiff es wieder.
+ */
+export const TITLE_SHIP: { tier: number; look: ShipLook } = {
+  tier: SHIP_CLASSES.findIndex((c) => c.id === 'galeone'),
+  look: { hull: '#5C3A1F', stripe: '#D9A441', sail: '#F4E6C6', flag: 'krone', flagColor: '#1E1A20', figurehead: 'storm_dragon', lanterns: true },
+};
+
+/** Ausbauten der Werft (höchstens SHIP_UPGRADE_MAX Stufen je Art): Name, Wirkung je Stufe und Text stehen nur hier – Werft, Katalog und applyPower lesen sie */
+export type ShipUpgradeId = 'can' | 'hull' | 'sail';
+export const SHIP_UPGRADE_MAX = 5;
+export const SHIP_UPGRADES: Record<ShipUpgradeId, { n: string; effect: string; perLevel: number; icon: string }> = {
+  can: { n: 'Schwere Kanonen', effect: 'Kanonenschaden', perLevel: 0.12, icon: '💥' },
+  hull: { n: 'Verstärkter Rumpf', effect: 'Rumpfpunkte', perLevel: 0.15, icon: '🛠' },
+  sail: { n: 'Leichte Segel', effect: 'Tempo', perLevel: 0.05, icon: '⛵' },
+};
+export const SHIP_UPGRADE_IDS = Object.keys(SHIP_UPGRADES) as ShipUpgradeId[];
+/** „+12 % Kanonenschaden“ */
+export const upgradeEffectText = (id: ShipUpgradeId): string => `+${Math.round(SHIP_UPGRADES[id].perLevel * 100)} % ${SHIP_UPGRADES[id].effect}`;
 
 /** Fahrstufen: Anteil der Segel */
 export const SAIL_LEVELS = [

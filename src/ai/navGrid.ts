@@ -1,4 +1,4 @@
-import { coastK, inBox, type WalkIsland } from '../world/islandGround';
+import { coastK, type WalkIsland } from '../world/islandGround';
 
 /**
  * Begehbarkeits-Netz (NavMesh als Raster) einer Insel für Gegner und Crew.
@@ -8,6 +8,21 @@ import { coastK, inBox, type WalkIsland } from '../world/islandGround';
  *  - A*-Suche (8 Nachbarn, keine Ecken schneiden) mit vorab angelegten Puffern – keine Speicheranforderung je Suche
  *  - Weg wird mit Sichtlinien geglättet (String Pulling), die Figur läuft direkte Linien statt Zickzack
  */
+/**
+ * Rechteck-Kollider im Raster: Dünne Wände (Hausmauern, Festungsmauern, Zäune, oft 0,2 m) trafen früher nur jede dritte Zellmitte und ließen
+ * Lücken, durch die die Wegfindung Pfade plante, die an der echten Wand endeten (Offiziere und Trupps hingen fest). Jetzt zählt jede Seite
+ * mindestens eine halbe Zelle: die Wand ist im Raster lückenlos, dicke Kollider bleiben unverändert.
+ */
+export function inThinBox(b: { x: number; z: number; hw?: number; hd?: number; yaw?: number }, x: number, z: number, cell: number): boolean {
+  const c = Math.cos(b.yaw ?? 0), s = Math.sin(b.yaw ?? 0);
+  const dx = x - b.x, dz = z - b.z;
+  // Konservativ: gesperrt ist jede Zelle, die der Quader berührt (die Zelle als Quadrat, ihre Ausdehnung entlang der Quader-Achsen kommt dazu).
+  // Nur die Zellmitte zu prüfen ließ zwischen zwei aneinanderstoßenden Mauerstücken (0,1 bis 0,3 m Fuge) ein Zellband frei:
+  // die Wegfindung plante durch die „Tür“, die echte Wand hielt die Figur auf (Burgring der Raids, Offiziere und Trupps hingen davor fest).
+  const ext = cell * 0.5 * (Math.abs(c) + Math.abs(s));
+  return Math.abs(dx * c - dz * s) <= (b.hw ?? 0) + ext && Math.abs(dx * s + dz * c) <= (b.hd ?? 0) + ext;
+}
+
 export class NavGrid {
   readonly cell: number;
   readonly ox: number;
@@ -71,7 +86,7 @@ export class NavGrid {
         const z = this.oz + (j + 0.5) * cell;
         for (let i = i0; i <= i1; i++) {
           const x = this.ox + (i + 0.5) * cell;
-          if (b.hw !== undefined ? inBox(b, x, z) : (x - b.x) ** 2 + (z - b.z) ** 2 < b.r * b.r) d[j * w + i] = 0;
+          if (b.hw !== undefined ? inThinBox(b, x, z, cell) : (x - b.x) ** 2 + (z - b.z) ** 2 < Math.max(b.r, cell * 0.5) ** 2) d[j * w + i] = 0;
         }
       }
     }
@@ -193,7 +208,7 @@ export class NavGrid {
    * Weg von (sx, sz) nach (tx, tz) für eine Figur mit Radius r. Ergebnis (geglättete Wegpunkte ohne Start) in out.
    * Ist das Ziel unerreichbar, führt der Weg zum erreichbaren Feld, das dem Ziel am nächsten liegt.
    */
-  findPath(sx: number, sz: number, tx: number, tz: number, radius: number, out: NavPath, maxNodes = 5000): boolean {
+  findPath(sx: number, sz: number, tx: number, tz: number, radius: number, out: NavPath, maxNodes = 60000): boolean {
     out.n = 0; out.i = 0;
     const need = radius * 0.9;
     const s = this.nearestCell(sx, sz, need, 4);
@@ -205,16 +220,18 @@ export class NavGrid {
     const id = ++this.search;
     const { g, f, parent, seen, closed, clear } = this;
     this.heapN = 0;
-    g[s] = 0; f[s] = hOf(s); parent[s] = -1; seen[s] = id;
+    // leicht gewichtete Heuristik (1,2): deutlich weniger Knoten um Festungsmauern herum, Wege höchstens ein paar Prozent länger
+    const HW = 1.2;
+    g[s] = 0; f[s] = HW * hOf(s); parent[s] = -1; seen[s] = id;
     this.push(s);
-    let best = s, bestH = f[s], nodes = 0;
+    let best = s, bestH = hOf(s), nodes = 0;
     let found = false;
     while (this.heapN > 0 && nodes++ < maxNodes) {
       const k = this.pop();
       if (closed[k] === id) continue;
       closed[k] = id;
       if (k === t) { found = true; break; }
-      const h = f[k] - g[k];
+      const h = (f[k] - g[k]) / HW;
       if (h < bestH) { bestH = h; best = k; }
       const i = k % w, j = (k - i) / w;
       for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
@@ -228,7 +245,7 @@ export class NavGrid {
         const ng = g[k] + (di && dj ? Math.SQRT2 : 1);
         if (seen[nk] === id && ng >= g[nk]) continue;
         seen[nk] = id; g[nk] = ng; parent[nk] = k;
-        f[nk] = ng + hOf(nk);
+        f[nk] = ng + HW * hOf(nk);
         this.push(nk);
       }
     }
@@ -300,6 +317,35 @@ export function navForIsland(isl: WalkIsland): NavGrid {
  * Lenkt eine Figur zu einem Ziel: bei freier Sicht direkt, sonst über den A*-Weg (alle 0,5 s oder bei
  * deutlich verschobenem Ziel neu geplant). Ergebnis: Richtung (Einheitsvektor) in out, Restweg als Rückgabe.
  */
+/** Sekunden ohne Fortschritt, nach denen ein Offizier oder Trupp aus einer Klemme befreit wird (Treppen, Planken, schmale Tore, Masten) */
+export const WEDGE_AFTER = 2.5;
+
+/** Boden, den `unstick` kennt: wie `Ground.constrain` */
+export interface UnstickGround { constrain(x: number, z: number, r?: number, y?: number): { x: number; z: number } }
+
+/**
+ * Befreiung aus einer Klemme: sucht in der Nähe einen freien Punkt, der dem Ziel nicht ferner liegt (zum Ziel hin und seitlich, 2,2 und 3,6 m),
+ * sonst setzt er auf das Ziel, wenn es höchstens 12 m weg und begehbar ist. Liefert den neuen Standort oder null.
+ */
+export function unstick(ground: UnstickGround, x: number, z: number, gx: number, gz: number, r: number, y: number, out: { x: number; z: number } = { x: 0, z: 0 }): { x: number; z: number } | null {
+  const base = Math.atan2(gx - x, gz - z), cur = Math.hypot(gx - x, gz - z);
+  let best = Infinity, found = false;
+  for (const dist of [2.2, 3.6]) for (const da of [0, 0.8, -0.8, 1.6, -1.6, 2.4, -2.4]) {
+    const px = x + Math.sin(base + da) * dist, pz = z + Math.cos(base + da) * dist;
+    const c = ground.constrain(px, pz, r, y);
+    if (Math.hypot(c.x - px, c.z - pz) > 0.15) continue;
+    const d = Math.hypot(gx - c.x, gz - c.z);
+    if (d > cur + 1 || d >= best) continue;
+    best = d; out.x = c.x; out.z = c.z; found = true;
+  }
+  if (found) return out;
+  if (cur < 12) {
+    const c = ground.constrain(gx, gz, r, y);
+    if (Math.hypot(c.x - gx, c.z - gz) < 3) { out.x = c.x; out.z = c.z; return out; }
+  }
+  return null;
+}
+
 export class NavAgent {
   readonly path = new NavPath();
   private repath = 0;
@@ -310,6 +356,10 @@ export class NavAgent {
   private stuckT = 0;
   private lx = 0;
   private lz = 0;
+  /** Zeit ohne nennenswerten Fortschritt trotz Bewegungswunsch (sinkt nur langsam): ab `WEDGE_AFTER` gilt die Figur als verkeilt */
+  private wedgeT = 0;
+  get wedged() { return this.wedgeT > WEDGE_AFTER; }
+  clearWedge() { this.wedgeT = 0; this.stuckT = 0; this.repath = 0; }
 
   steer(nav: NavGrid | null, x: number, z: number, gx: number, gz: number, radius: number, dt: number, out: { x: number; z: number }): number {
     const dist = Math.hypot(gx - x, gz - z);
@@ -320,6 +370,7 @@ export class NavAgent {
     const moved = Math.hypot(x - this.lx, z - this.lz);
     this.lx = x; this.lz = z;
     this.stuckT = moved < 0.2 * dt ? this.stuckT + dt : Math.max(0, this.stuckT - dt);
+    this.wedgeT = moved < 0.2 * dt ? this.wedgeT + dt : Math.max(0, this.wedgeT - dt * 2);
     if (!nav) { out.x = (gx - x) / dist; out.z = (gz - z) / dist; return dist; }
     const goalMoved = Math.hypot(gx - this.gx, gz - this.gz) > Math.max(1.2, dist * 0.15);
     if (this.repath <= 0 || goalMoved || this.stuckT > 0.6) {

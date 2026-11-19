@@ -1,5 +1,7 @@
 import { BufferGeometry, Color, Float32BufferAttribute, Vector3 } from 'three';
 import type { ShipClass, ShipLook } from '../../data/ships';
+import { smoothstep } from '../../core/mathUtil';
+import { clamp01 } from '../../core/mathUtil';
 
 /**
  * Rumpf der zweiten Schiffsfassung. Die Draufsicht (Breite je Länge, Deckssprung, Vorsteven) kommt aus denselben Funktionen wie
@@ -36,26 +38,25 @@ function profile(): P[] {
   const levels: number[] = [0, 0.1];
   for (const w of WALES) levels.push(w.a - eps, w.a, w.b, w.b + eps);
   levels.push(0.7, 0.93, 1.0);
-  const uniq = [...new Set(levels.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 1000) / 1000))].sort((p, q) => p - q);
+  const uniq = [...new Set(levels.map((v) => Math.round(clamp01(v) * 1000) / 1000))].sort((p, q) => p - q);
   for (const f of uniq) pts.push({ x: base(f) + offAt(f), f, below: false });
   // beide Seiten: erst die gespiegelte Backbordhälfte von oben zum Kiel, dann die Steuerbordhälfte hinauf (Drehsinn wie in der ersten Fassung)
   const port = pts.slice(1).reverse().map((p) => ({ ...p, x: -p.x }));
   return [...port, ...pts];
 }
 
-const smooth = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 /** Halbbreite des Rumpfs (Steuerbord, positiv) in Höhe y an der Schiffsposition z: dieselbe Spantform wie `hullGeometry2`, damit Stückpforten, Geschütze und Anbauten bündig an der Bordwand sitzen */
 export function hullSideX(c: ShipClass, D: number, fn: HullFns, z: number, y: number): number {
   const t = Math.max(-1, Math.min(1, z / (c.L / 2)));
   const w = Math.max(0.04, fn.widthAt(t)) * c.W / 2;
   const rise = fn.sheerAt(t, c.L);
-  const f = Math.min(1, Math.max(0, (y - (y > 0.5 ? rise : 0)) / D));
+  const f = clamp01((y - (y > 0.5 ? rise : 0)) / D);
   const base = f < 0.35 ? 1 - 0.02 * Math.pow((0.35 - f) / 0.35, 2) : 1 - 0.095 * Math.pow((f - 0.35) / 0.65, 1.5);
   let off = 0;
   for (const wl of WALES) if (f >= wl.a && f <= wl.b) off = wl.off;
-  const tuck = t < 0 ? 0.035 * smooth(0, -0.95, t) : 0;
-  const flare = t > 0 ? 0.11 * smooth(0.15, 0.95, t) : 0;
+  const tuck = t < 0 ? 0.035 * smoothstep(0, -0.95, t) : 0;
+  const flare = t > 0 ? 0.11 * smoothstep(0.15, 0.95, t) : 0;
   return (base + off) * (1 - tuck * f * f + flare * f) * w;
 }
 
@@ -75,17 +76,17 @@ export function hullGeometry2(c: ShipClass, D: number, look: ShipLook, fn: HullF
     const w = (i === sections ? 0.004 : Math.max(0.04, fn.widthAt(t))) * c.W / 2;
     const rise = fn.sheerAt(t, c.L), rk = fn.rakeAt(t, c.L);
     // Querschnitt je Länge: am Heck oben eingezogen, am Bug nach außen gestellt (Flare), mittschiffs die volle Bauchung
-    const tuck = t < 0 ? 0.035 * smooth(0, -0.95, t) : 0;
-    const flare = t > 0 ? 0.11 * smooth(0.15, 0.95, t) : 0;
+    const tuck = t < 0 ? 0.035 * smoothstep(0, -0.95, t) : 0;
+    const flare = t > 0 ? 0.11 * smoothstep(0.15, 0.95, t) : 0;
     return prof.map((p) => {
       const py = p.below ? p.f * draft : p.f * D;
       const pyy = py < 0 ? py * (1 - Math.max(0, t - 0.85) * 1.6) : py;
       const fk = p.below ? 0 : p.f;
       const px = p.x * (1 - tuck * fk * fk + flare * fk);
-      const topK = Math.min(1, Math.max(0, (py + 0.3) / (D + 0.3)));
+      const topK = clamp01((py + 0.3) / (D + 0.3));
       // Gegenhölzer: der Heckspiegel weicht unten nach vorn zurück, so ragt die Galerie darüber wie bei einer Galeone vor
-      const hK = Math.min(1, Math.max(0, (py + draft) / (D + draft)));
-      const counter = t < -0.78 ? smooth(0, 1, (-0.78 - t) / 0.22) * c.L * 0.04 * Math.pow(1 - hK, 1.5) : 0;
+      const hK = clamp01((py + draft) / (D + draft));
+      const counter = t < -0.78 ? smoothstep(0, 1, (-0.78 - t) / 0.22) * c.L * 0.04 * Math.pow(1 - hK, 1.5) : 0;
       return { v: new Vector3(px * w, pyy + (py > 0.5 ? rise : rise * Math.max(0, (py + 1.05) / (D + 1.05))), z + counter + rk * Math.pow(topK, 1.3)), f: p.f, below: p.below };
     });
   };

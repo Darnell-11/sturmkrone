@@ -70,7 +70,8 @@ export function buildSite(o: SiteOpts): SiteBuild {
     if (ci === 0) out.village = { x: def.x + cx, z: def.z + cz, r: Math.max(14, c.clear * 0.8) };
 
     for (const it of c.items) {
-      const b = build(it.t, rnd, it.len);
+      // Stege sind 22 m länger als in den Daten (2.9.90): weiter draußen liegt man freier und legt leichter ab
+      const b = build(it.t, rnd, it.t === 'steg' && it.len ? it.len + 22 : it.len);
       let x = cx + it.x * cs + it.z * sn, z = cz - it.x * sn + it.z * cs;
       const yaw = phi + (it.yaw ?? 0) * RAD;
       let y: number;

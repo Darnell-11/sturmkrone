@@ -1,7 +1,11 @@
 // Klang-Engine: komplett mit der Web Audio API erzeugt (keine Audiodateien nötig).
 // Musik in Schichten (ruhig, Spannung, Kampf), Umgebungsklang und Soundeffekte.
 
+import type { MusicSector } from '../data/musicTracks';
 import { SONGS, type SongId } from './songs';
+import { MusicDirector, type MusicContext, type NowPlaying } from './musicDirector';
+import { smoothstep } from '../core/mathUtil';
+import { clamp01 } from '../core/mathUtil';
 
 export type Mood = 'menu' | 'sea' | 'harbor' | 'night' | 'battle' | 'boss' | 'victory';
 export type Sfx =
@@ -16,7 +20,17 @@ export type Element = string;
 
 const mtof = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
 
-interface Ambience { waves: number; wind: number; rain: number; town: number; gulls: number; deep: number }
+/** Umgebungsschichten (je 0 … 1): Meer, Wind, Regen, Stadt, Möwen, Tiefe; auf See dazu Wind in den Segeln, Bugwelle und knarzendes Schiffsholz */
+interface Ambience { waves: number; wind: number; rain: number; town: number; gulls: number; deep: number; sailwind: number; bow: number; creak: number }
+
+/** Effekte, die die Musik kurz absenken (Pegel, Haltezeit in s) */
+const DUCK: Partial<Record<Sfx, [number, number]>> = {
+  fanfareRare: [0.55, 1.2], fanfareEpic: [0.45, 1.8], fanfareLegend: [0.4, 2.4], victory: [0.4, 2.2], level: [0.6, 1.2], quest: [0.65, 0.9], win: [0.6, 1.0],
+  ko: [0.45, 1.5], sink: [0.6, 1.2], thunder: [0.65, 0.8], horn: [0.6, 1.0], bell: [0.7, 0.8], cutin: [0.55, 1.2], roar: [0.6, 1.0], shard: [0.75, 0.5],
+};
+
+/** Reglerstand für Einstellungsmenü und HUD */
+export interface AudioPrefs { masterVolume: number; musicVolume: number; sfxVolume: number; ambienceVolume: number; muteWhenUnfocused: boolean }
 
 /**
  * Pegelausgleich je Stück (offline gemessen): ruhige Stücke etwas leiser als Kampf, aber alle gut hörbar.
@@ -82,8 +96,9 @@ class AudioEngine {
   private throttle: Record<string, number> = {};
   // Umgebung
   private amb: Record<keyof Ambience, { g: GainNode; f?: BiquadFilterNode }> | null = null;
-  private ambTarget: Ambience = { waves: 0.6, wind: 0.2, rain: 0, town: 0, gulls: 0.3, deep: 0 };
+  private ambTarget: Ambience = { waves: 0.6, wind: 0.2, rain: 0, town: 0, gulls: 0.3, deep: 0, sailwind: 0, bow: 0, creak: 0 };
   private gullT = 2;
+  private creakT = 3;
   // Musik: mehrere Spuren gleichzeitig, damit Stücke weich ineinander überblenden
   private mood: Mood = 'menu';
   private players: MusicPlayer[] = [];
@@ -128,19 +143,30 @@ class AudioEngine {
   attachUnlock() {
     const go = () => this.unlock();
     for (const ev of ['pointerdown', 'keydown', 'touchend']) addEventListener(ev, go, { capture: true, passive: true });
+    // Fenster ohne Fokus (anderes Fenster im Vordergrund) zählt wie ein versteckter Tab
+    addEventListener('blur', () => this.setFocused(false));
+    addEventListener('focus', () => this.setFocused(!document.hidden));
   }
 
   unlock() {
     const AC = window.AudioContext ?? (window as any).webkitAudioContext;
     if (!AC) return;
     if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {}); return; }
-    const c: AudioContext = new AC();
+    // 44,1 kHz wie die Musikdateien: sonst rechnen manche Geräte mit 96 kHz und die entschlüsselten Musikpuffer wären mehr als doppelt so groß
+    let c: AudioContext;
+    try { c = new AC({ sampleRate: 44100 }); } catch { c = new AC(); }
     this.ctx = c;
     this.master = c.createGain();
     const comp = c.createDynamicsCompressor();
     comp.threshold.value = -14; comp.ratio.value = 4;
     this.master.connect(comp); comp.connect(c.destination);
     this.musicBus = c.createGain(); this.musicBus.connect(this.master);
+    // Dateimusik (gerenderte Orchester-Stems, `musicDirector.ts`); bleibt sie aus, spielt die prozedurale Musik unten
+    this.director = new MusicDirector(c, this.musicBus, {
+      onTrack: (n) => { this.nowPlaying = n; for (const f of this.trackListeners) f(n); },
+      onSector: (s, p) => { for (const f of this.sectorListeners) f(s, p); },
+    });
+    this.director.setLite(this.lite);
     this.sfxBus = c.createGain(); this.sfxBus.connect(this.master);
     this.ambBus = c.createGain(); this.ambBus.connect(this.master);
     // Hall: Echo mit Tiefpass (klingt wie ein Holzschiff unter freiem Himmel)
@@ -189,6 +215,59 @@ class AudioEngine {
 
   setVolumes(v: Volumes) { this.vols = { ...v }; this.applyVolumes(); }
 
+  // ---------- Regler und Hooks (Einstellungsmenü, HUD) ----------
+
+  /** Dateimusik (Orchester-Stems) und ihr Zustand */
+  director: MusicDirector | null = null;
+  private nowPlaying: NowPlaying | null = null;
+  private trackListeners: ((n: NowPlaying | null) => void)[] = [];
+  private sectorListeners: ((s: MusicSector, prev: MusicSector) => void)[] = [];
+  private prefListeners: ((p: AudioPrefs) => void)[] = [];
+  private focused = true;
+  private mute = true;
+
+  get masterVolume() { return this.vols.master; }
+  set masterVolume(v: number) { this.setVolume('master', v); }
+  get musicVolume() { return this.vols.music; }
+  set musicVolume(v: number) { this.setVolume('music', v); }
+  get sfxVolume() { return this.vols.sfx; }
+  set sfxVolume(v: number) { this.setVolume('sfx', v); }
+  get ambienceVolume() { return this.vols.ambient; }
+  set ambienceVolume(v: number) { this.setVolume('ambient', v); }
+  /** Beim Verlassen des Fensters oder Tabs den Klang anhalten (Standard: an) */
+  get muteWhenUnfocused() { return this.mute; }
+  set muteWhenUnfocused(v: boolean) { if (v === this.mute) return; this.mute = v; this.applyFocus(); this.emitPrefs(); }
+  /** Titel des laufenden Musikstücks (leer, solange nur die prozedurale Musik oder keine spielt) */
+  get currentTrackTitle(): string { return this.nowPlaying?.title ?? ''; }
+  get currentTrack(): NowPlaying | null { return this.nowPlaying; }
+  get prefs(): AudioPrefs { return { masterVolume: this.vols.master, musicVolume: this.vols.music, sfxVolume: this.vols.sfx, ambienceVolume: this.vols.ambient, muteWhenUnfocused: this.mute }; }
+  /** Wechsel des Musikstücks (null: keine Dateimusik) */
+  onTrackChange(f: (n: NowPlaying | null) => void) { this.trackListeners.push(f); }
+  /** Wechsel der Sektor-Färbung der Musik (Überqueren einer Grenze) */
+  onSectorChange(f: (s: MusicSector, prev: MusicSector) => void) { this.sectorListeners.push(f); }
+  /** Ein Regler wurde über die Schnittstelle verstellt (das Spiel speichert ihn in den Einstellungen) */
+  onPrefsChange(f: (p: AudioPrefs) => void) { this.prefListeners.push(f); }
+  /** Gerade gewählte Musik-Lage vom Spiel (jedes Bild) */
+  setMusicContext(c: MusicContext) { this.musicCtx = c; }
+  private musicCtx: MusicContext | null = null;
+  private fileSince = 0;
+
+  private setVolume(k: keyof Volumes, v: number) {
+    const x = clamp01(Number.isFinite(v) ? v : 0);
+    if (x === this.vols[k]) return;
+    this.vols[k] = x;
+    this.applyVolumes();
+    this.emitPrefs();
+  }
+  private emitPrefs() { const p = this.prefs; for (const f of this.prefListeners) f(p); }
+
+  /** Tab oder Fenster hat den Fokus verloren oder wieder (mit „Stumm bei Fokusverlust“ wird der Klang angehalten) */
+  setFocused(f: boolean) { this.focused = f; this.applyFocus(); }
+  private applyFocus() {
+    if (!this.ctx) return;
+    (!this.focused && this.mute ? this.ctx.suspend() : this.ctx.resume()).catch(() => {});
+  }
+
   private applyVolumes() {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
@@ -213,7 +292,7 @@ class AudioEngine {
   setEars(x: number, y: number, z: number) { this.lx = x; this.ly = y; this.lz = z; }
 
   /** Sparsamer Modus (Handy, niedrige Grafikstufen): weniger Stimmen im Orchester */
-  setLite(v: boolean) { this.lite = v; }
+  setLite(v: boolean) { this.lite = v; this.director?.setLite(v); }
 
   /**
    * 3D-Hörer: Position (die Spielfigur – so klingt die eigene Figur nah) und Blickrichtung der Kamera,
@@ -313,7 +392,16 @@ class AudioEngine {
     const deep = this.loopNoise('lowpass', 90);
     const gulls = { g: c.createGain() };
     gulls.g.gain.value = 0; gulls.g.connect(this.ambBus);
-    this.amb = { waves, wind, rain, town, gulls, deep };
+    // Wind in den Segeln: schmales, pfeifendes Band, dessen Mitte mit den Böen wandert
+    const sailwind = this.loopNoise('bandpass', 520, 1.6);
+    const sl = c.createOscillator(); sl.frequency.value = 0.13;
+    const slg = c.createGain(); slg.gain.value = 190;
+    sl.connect(slg); slg.connect(sailwind.f!.frequency); sl.start();
+    // Bugwelle: Rauschen der Gischt am Steven, wächst mit der Fahrt
+    const bow = this.loopNoise('bandpass', 1500, 0.55);
+    const creak = { g: c.createGain() };
+    creak.g.gain.value = 0; creak.g.connect(this.ambBus);
+    this.amb = { waves, wind, rain, town, gulls, deep, sailwind, bow, creak };
   }
 
   setAmbience(a: Partial<Ambience>) { Object.assign(this.ambTarget, a); }
@@ -327,6 +415,14 @@ class AudioEngine {
     this.amb.rain.g.gain.setTargetAtTime(0.05 * a.rain, t, 0.8);
     this.amb.town.g.gain.setTargetAtTime(0.035 * a.town, t, 0.8);
     this.amb.deep.g.gain.setTargetAtTime(0.25 * a.deep, t, 1);
+    this.amb.sailwind.g.gain.setTargetAtTime(0.07 * a.sailwind, t, 0.8);
+    this.amb.bow.g.gain.setTargetAtTime(0.1 * a.bow * a.bow, t, 0.5);
+    // knarzendes Schiffsholz bei Seegang und Krängung: je stärker, desto öfter
+    this.creakT -= dt;
+    if (this.creakT <= 0) {
+      this.creakT = 1.2 + Math.random() * 3.5 / (0.25 + a.creak);
+      if (Math.random() < a.creak) this.creakWood();
+    }
     // Möwen und Stadtrufe
     this.gullT -= dt;
     if (this.gullT <= 0) {
@@ -356,6 +452,30 @@ class AudioEngine {
       const s = c.createGain(); s.gain.value = 0.3; g.connect(s); s.connect(this.send);
       o.start(t0); o.stop(t0 + 0.3);
     }
+  }
+
+  /** Knarzen von Schiffsholz: tiefes, gedehntes Reiben mit schwankender Tonhöhe, links oder rechts im Rumpf */
+  private creakWood() {
+    const c = this.ctx!;
+    const t = c.currentTime;
+    const dur = 0.5 + Math.random() * 0.9;
+    const f0 = 62 + Math.random() * 70;
+    const o = c.createOscillator(), f = c.createBiquadFilter(), v = c.createGain(), p = c.createStereoPanner();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.linearRampToValueAtTime(f0 * (0.8 + Math.random() * 0.5), t + dur);
+    // Reibung: schnelle, unregelmäßige Schwankung
+    const w = c.createOscillator(), wg = c.createGain();
+    w.frequency.value = 17 + Math.random() * 13; wg.gain.value = f0 * 0.08;
+    w.connect(wg); wg.connect(o.frequency);
+    f.type = 'bandpass'; f.frequency.value = 260 + Math.random() * 380; f.Q.value = 7;
+    v.gain.setValueAtTime(0.0001, t);
+    v.gain.exponentialRampToValueAtTime(0.09, t + dur * 0.35);
+    v.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    p.pan.value = Math.random() * 1.4 - 0.7;
+    o.connect(f); f.connect(v); v.connect(p); p.connect(this.amb!.creak.g);
+    this.amb!.creak.g.gain.setTargetAtTime(1, t, 0.05);
+    o.start(t); w.start(t); o.stop(t + dur + 0.05); w.stop(t + dur + 0.05);
   }
 
   private townCall() {
@@ -494,6 +614,9 @@ class AudioEngine {
   /** Effekt abspielen; at = Weltposition für Lautstärke nach Entfernung und Stereo */
   play(name: Sfx, vol = 1, at?: SoundPos) {
     if (!this.running) return;
+    // große Effekte senken die Musik kurz ab (nur hörbare, nicht das lautlose Vorwärmen)
+    const dk = DUCK[name];
+    if (dk && vol > 0.05) this.director?.duck(dk[0], dk[1]);
     const pan = 0;
     // Räumlicher Klang: Richtung (HRTF/Equal-Power) und Entfernungsdämpfung übernimmt ein PannerNode
     if (at) {
@@ -949,12 +1072,11 @@ class AudioEngine {
   private stemLevels(id: SongId): Record<Stem, number> {
     if (this.isFight(id)) return { base: 1, explore: 1, tension: 1, combat: 1 };
     const th = this.threatS;
-    const sm = (a: number, b: number, x: number) => { const k = Math.min(1, Math.max(0, (x - a) / (b - a))); return k * k * (3 - 2 * k); };
-    const combat = Math.sin(sm(0.3, 0.85, th) * Math.PI / 2);
+    const combat = Math.sin(smoothstep(0.3, 0.85, th) * Math.PI / 2);
     return {
       base: 1,
-      explore: Math.cos(sm(0.15, 0.8, th) * Math.PI / 2),
-      tension: sm(0.08, 0.4, th) * (1 - 0.45 * sm(0.6, 1, th)),
+      explore: Math.cos(smoothstep(0.15, 0.8, th) * Math.PI / 2),
+      tension: smoothstep(0.08, 0.4, th) * (1 - 0.45 * smoothstep(0.6, 1, th)),
       combat,
     };
   }
@@ -1135,7 +1257,16 @@ class AudioEngine {
   update(dt: number) {
     if (!this.running) return;
     this.updateAmbience(dt);
-    this.scheduleMusic(dt);
+    // Dateimusik hat Vorrang; die prozedurale Musik überblendet leise und ruht, solange jene läuft (und springt sofort wieder ein, wenn sie ausfällt)
+    const d = this.director;
+    if (d && this.musicCtx) d.update(this.musicCtx, dt);
+    const files = !!d && d.active;
+    this.fileSince = files ? this.fileSince + dt : 0;
+    this.musicMix.gain.setTargetAtTime(files ? 0 : 1.4, this.ctx!.currentTime, files ? 1.2 : 0.4);
+    if (files && this.fileSince > 4) {
+      for (const p of this.players) { p.gain.disconnect(); p.wet.disconnect(); }
+      this.players = [];
+    } else this.scheduleMusic(dt);
   }
 
   get currentMood() { return this.mood; }

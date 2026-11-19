@@ -136,8 +136,6 @@ export const SHOULDERS: Record<string, ShoulderBuilder> = {
   },
 };
 
-export const SHOULDER_KINDS = Object.keys(SHOULDERS);
-
 // ---------- Gürtel ----------
 
 /** Rahmen: Hüftsocket (Meter, +Z vorn, +X links). Taschen, Beutel, Scheiden sitzen starr an der Hüfte. */

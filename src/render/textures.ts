@@ -1,6 +1,7 @@
 import { CanvasTexture, RepeatWrapping, SRGBColorSpace, type BufferAttribute, type BufferGeometry } from 'three';
 import { detailCanvas, texDetail } from './texDetail';
 import { markShared } from './dispose';
+import type { SailHeraldry } from './heraldry';
 
 /** Kleiner, fester Zufall, damit Texturen bei jedem Start gleich aussehen */
 function rng(seed: number) {
@@ -52,72 +53,15 @@ export function plankTexture(): CanvasTexture {
   return t;
 }
 
-let oakCache: CanvasTexture | null = null;
-
-/** Dunkles, verwittertes Eichenholz (Graustufen): Planken mit tiefen Rillen, langer Maserung, Astlöchern, Salzstreifen und Nägeln */
-export function oakTexture(): CanvasTexture {
-  if (oakCache) return oakCache;
-  const { c, g } = detailCanvas(256, 256);
-  const r = rng(31);
-  g.fillStyle = '#9a9a9a';
-  g.fillRect(0, 0, 256, 256);
-  const rows = 6, h = 256 / rows;
-  for (let i = 0; i < rows; i++) {
-    const tone = 128 + Math.floor(r() * 44);
-    g.fillStyle = `rgb(${tone},${tone},${tone})`;
-    g.fillRect(0, i * h, 256, h);
-    // lange, leicht gewellte Maserung mit kräftigen Rillen
-    for (let k = 0; k < 8; k++) {
-      const y = i * h + 2 + r() * (h - 4);
-      const dark = r() < 0.35;
-      g.strokeStyle = dark ? "rgba(0,0,0,0.20)" : "rgba(255,255,255,0.035)";
-      g.lineWidth = dark ? 1.4 : 1;
-      g.beginPath();
-      g.moveTo(0, y);
-      const ph = r() * 6, amp = 0.8 + r() * 1.8;
-      for (let x = 0; x <= 256; x += 16) g.lineTo(x, y + Math.sin(x * 0.045 + ph) * amp);
-      g.stroke();
-    }
-    // Astloch
-    if (r() < 0.55) {
-      const kx = 20 + r() * 216, ky = i * h + h * 0.5;
-      g.fillStyle = 'rgba(0,0,0,0.38)';
-      g.beginPath(); g.ellipse(kx, ky, 6 + r() * 4, 3 + r() * 2, 0, 0, Math.PI * 2); g.fill();
-      g.strokeStyle = 'rgba(0,0,0,0.25)'; g.lineWidth = 1;
-      g.beginPath(); g.ellipse(kx, ky, 11, 6, 0, 0, Math.PI * 2); g.stroke();
-    }
-    // Stoßfugen und Nägel
-    const off = (i % 2) * 64 + Math.floor(r() * 30);
-    g.fillStyle = 'rgba(0,0,0,0.4)';
-    for (let x = off; x < 256; x += 128) g.fillRect(x, i * h, 2, h);
-    g.fillStyle = 'rgba(0,0,0,0.5)';
-    for (let x = off + 6; x < 256; x += 128) { g.fillRect(x, i * h + 6, 3, 3); g.fillRect(x, i * h + h - 9, 3, 3); }
-    // tiefe Fuge
-    g.fillStyle = 'rgba(0,0,0,0.45)';
-    g.fillRect(0, i * h + h - 3, 256, 3);
-  }
-  // Salz- und Wasserstreifen
-  // kurze, sehr schwache Salzfahnen statt durchgehender weißer Striche (die sahen von weitem wie Streifen auf Deck und Rumpf aus)
-  for (let k = 0; k < 14; k++) {
-    g.fillStyle = `rgba(255,248,235,${0.012 + r() * 0.02})`;
-    const len = 14 + r() * 46;
-    g.fillRect(r() * 256, r() * (256 - len), 2 + r() * 4, len);
-  }
-  const t = new CanvasTexture(c);
-  t.wrapS = t.wrapT = RepeatWrapping;
-  t.colorSpace = SRGBColorSpace;
-  t.anisotropy = texDetail.aniso;
-  oakCache = markShared(t);
-  return t;
-}
-
 /** Segeltuch: Bahnen mit Nähten, zwei Reffbänder mit Reffbändseln, Liektau-Rand, Ösen, Flecken, Wetterspuren – optional mit Wappen */
-export function sailTexture(color: string, emblem: HTMLCanvasElement | null, seed: number, tattered = false): CanvasTexture {
+export function sailTexture(color: string, emblem: HTMLCanvasElement | null, seed: number, tattered = false, heraldry: SailHeraldry | null = null): CanvasTexture {
   const W = 512, H = 384;
   const { c, g } = detailCanvas(W, H);
   const r = rng(seed);
   g.fillStyle = color;
   g.fillRect(0, 0, W, H);
+  // Fraktions-Muster (Kreuz, Streifen, Lilien …): kommt unter Gewebe, Nähte und Schatten, damit es wie Tuch wirkt
+  heraldry?.pattern?.(g, W, H);
   // Bahnen: jede etwas anders getönt, mit feinem Gewebe
   const panels = 8, pw = W / panels;
   for (let i = 0; i < panels; i++) {
@@ -196,8 +140,10 @@ export function sailTexture(color: string, emblem: HTMLCanvasElement | null, see
     g.strokeRect(x + 3, y + 3, w - 6, h - 6);
     g.setLineDash([]);
   }
-  // Wappen in der Mitte
-  if (emblem) {
+  // Wappen in der Mitte: das der Macht (großes Medaillon) oder die Flagge des Spielerschiffs
+  if (heraldry) {
+    heraldry.emblem(g, W, H);
+  } else if (emblem) {
     g.save();
     g.beginPath();
     g.arc(W / 2, H * 0.55, 98, 0, Math.PI * 2);

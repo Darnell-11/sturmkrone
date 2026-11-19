@@ -23,6 +23,7 @@ import { toonPbr } from '../render/pbrMaps';
 import { keepIf } from '../core/arrays';
 import { DolphinModel } from './dolphin';
 import { createGulls } from './gull';
+import { clamp01 } from '../core/mathUtil';
 
 const GULLS = 28;
 
@@ -312,7 +313,7 @@ export class SeaLife {
       d.pitch += (Math.atan2(vy, Math.max(d.spd, 1)) - d.pitch) * Math.min(1, dt * 3);
       // Flügel: Gleiten und Schlagen im Wechsel, beim Steigen kräftig; Begleiter schlagen mehr, Landende bremsen mit breiten Flügeln
       const cyc = Math.sin(this.t * 0.35 + d.ph + i * 1.7);
-      let wantFl = 0.12 + 0.88 * Math.min(1, Math.max(0, (cyc + 0.2) / 0.6)) + Math.max(0, vy) * 0.25;
+      let wantFl = 0.12 + 0.88 * clamp01((cyc + 0.2) / 0.6) + Math.max(0, vy) * 0.25;
       wantFl = Math.min(1, Math.max(flapBase, wantFl) + flapBoost);
       d.fl += (wantFl - d.fl) * Math.min(1, dt * 2.5);
       d.ph += dt * (7 + (i % 4) * 0.9) * (0.35 + 0.65 * d.fl);

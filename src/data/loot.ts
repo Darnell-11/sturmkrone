@@ -1,14 +1,11 @@
 // Beute-Pipeline: Was ein besiegter Gegner fallen lässt, in welcher Seltenheit und wie die Lichtsäule dazu aussieht.
 // Alles Balancing steht hier; die Darstellung (combat/loot.ts) und die Übergabe an Spielstand und Anzeigen (core/game.ts) lesen es nur.
-import { RARITY, type Rarity } from './trinkets';
+import { RARITIES, type Rarity } from './rarity';
 
 export type LootKind = 'trinket' | 'gold' | 'proviant' | 'gear';
 
 /** Ein Beutestück: Seltenheit steht beim Fallenlassen fest (Farbe der Säule), der Inhalt wird beim Aufheben gewürfelt */
 export interface LootDrop { rarity: Rarity; kind: LootKind; value: number }
-
-/** Reihenfolge der Seltenheiten: Gewöhnlich (Common), Selten (Rare), Episch (Epic), Legendär (Legendary) */
-export const RARITIES: Rarity[] = ['gewoehnlich', 'selten', 'episch', 'legendaer'];
 
 /** Aussehen der Lichtsäule je Seltenheit: Höhe und Radius in Metern, Leuchtstärke (über 1 = Bloom), Magnet-Reichweite, Funken je Sekunde */
 export const LOOT_LOOK: Record<Rarity, { height: number; radius: number; glow: number; magnet: number; sparks: number }> = {
@@ -74,4 +71,3 @@ export function rollEventLoot(src: DropSource, count: number, rnd: () => number 
   return Array.from({ length: count }, () => make(pick(LOOT_WEIGHTS.event, rnd), src, rnd));
 }
 
-export { RARITY };

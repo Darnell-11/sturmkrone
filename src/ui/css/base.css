@@ -1,0 +1,272 @@
+/* ==========================================================================
+   Grundlagen: Zurücksetzen, Schrift, Knöpfe, Eingabefelder, Tasten, Regler
+   ========================================================================== */
+
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+/* große Bildschirme (1600p, 4K): Schrift und Oberfläche wachsen leicht mit, Handys und Full HD bleiben bei 16 px */
+html { height: 100%; font-size: calc(clamp(16px, 9px + 0.45vmin, 20px) * var(--text-scale)); }
+body {
+  height: 100%;
+  margin: 0;
+  background: var(--mahogany-950);
+  color: var(--ink);
+  font-family: var(--font-text);
+  overflow: hidden;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+#game { position: fixed; inset: 0; display: block; width: 100%; height: 100%; }
+#ui { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+#ui > * { pointer-events: auto; }
+
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--brass-200);
+  outline-offset: 2px;
+}
+
+/* Schriften */
+.fell { font-family: var(--font-serif); font-weight: 400; letter-spacing: 0.02em; }
+.num, .hud { font-variant-numeric: tabular-nums lining-nums; }
+.num { font-family: var(--font-num); font-weight: 600; letter-spacing: 0.01em; }
+.soft { color: var(--ink-dim); }
+.small { font-size: 0.85rem; }
+.err { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; z-index: var(--z-error); background: var(--mahogany-950); color: var(--ink); font-size: 1.1rem; line-height: 1.5; }
+
+/* Dünne, messingfarbene Rollbalken */
+* { scrollbar-width: thin; scrollbar-color: var(--brass-500) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--brass-500); border-radius: 4px; border: 2px solid transparent; background-clip: padding-box; }
+
+/* ---------- Knöpfe ---------- */
+
+/* Hauptknopf: gebürstete Messingplakette mit Gravur */
+.primary, .secondary, .danger {
+  position: relative;
+  width: 100%;
+  min-height: 50px;
+  margin-top: 10px;
+  padding: 13px 18px;
+  border-radius: var(--r-sm);
+  font-weight: 700;
+  font-size: 1.04rem;
+  letter-spacing: 0.03em;
+  transition: filter var(--t-fast), transform var(--t-fast), background var(--t-med), border-color var(--t-med);
+}
+.primary {
+  border: 1px solid var(--brass-600);
+  background: var(--brass-plate);
+  color: var(--ink-engrave);
+  text-shadow: 0 1px 0 rgba(255, 238, 190, 0.55);
+  box-shadow: var(--bevel-brass);
+  overflow: hidden;
+}
+/* Lichtreflex, der beim Überfahren über die Plakette streicht */
+.primary::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 -60%;
+  width: 40%;
+  background: linear-gradient(100deg, transparent, rgba(255, 250, 225, 0.55), transparent);
+  transform: skewX(-18deg);
+  pointer-events: none;
+  opacity: 0;
+}
+@media (hover: hover) {
+  .primary:hover { background: var(--brass-plate-hover); }
+  .primary:hover::after { opacity: 1; animation: sheen 0.75s ease-out; }
+}
+.primary:active { transform: translateY(1px); filter: brightness(0.94); box-shadow: inset 0 2px 4px rgba(60, 38, 8, 0.5), 0 1px 0 rgba(0, 0, 0, 0.4); }
+@keyframes sheen { from { left: -60%; } to { left: 130%; } }
+
+/* Zweitknopf: dunkles Holz mit feiner Messingkante */
+.secondary {
+  border: 1px solid var(--glass-edge);
+  background: var(--wood-panel);
+  color: var(--ink);
+  box-shadow: inset 0 1px 0 rgba(255, 226, 150, 0.08), 0 3px 8px rgba(0, 0, 0, 0.35);
+}
+@media (hover: hover) { .secondary:hover { border-color: var(--brass-300); background: linear-gradient(180deg, #3b2012, #26140b); } }
+.secondary:active { transform: translateY(1px); }
+
+.danger {
+  border: 1px solid #7d2a1d;
+  background: linear-gradient(180deg, #4b1a12, #2f100b);
+  color: #f6b8a8;
+  box-shadow: inset 0 1px 0 rgba(255, 180, 150, 0.1), 0 3px 8px rgba(0, 0, 0, 0.35);
+}
+@media (hover: hover) { .danger:hover { border-color: var(--danger-hi); color: #ffd3c6; } }
+
+.card button:disabled, .screen button:disabled { opacity: 0.4; cursor: not-allowed; filter: grayscale(0.7); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.row > button { flex: 1 1 0; min-width: 0; }
+
+/* Kleiner Knopf (in Karten) */
+.mini {
+  min-height: 42px;
+  padding: 9px 13px;
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--r-sm);
+  background: var(--iron-plate);
+  font-weight: 700;
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+  transition: border-color var(--t-med), background var(--t-med);
+}
+@media (hover: hover) { .mini:hover { border-color: var(--brass-300); } }
+.mini.brass { background: var(--brass-plate); color: var(--ink-engrave); border-color: var(--brass-600); text-shadow: 0 1px 0 rgba(255, 238, 190, 0.5); box-shadow: var(--bevel-brass); }
+.mini.red { color: #f0a090; border-color: rgba(196, 69, 47, 0.55); }
+
+/* Runder Messingknopf mit Symbol */
+.icon-btn {
+  position: relative;
+  width: 46px; height: 46px;
+  display: grid; place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--brass-500);
+  background: radial-gradient(circle at 35% 28%, #3a2414, #170d07 70%);
+  box-shadow: inset 0 1px 0 rgba(255, 226, 150, 0.2), 0 0 0 2px rgba(0, 0, 0, 0.35), 0 4px 10px rgba(0, 0, 0, 0.5);
+  color: var(--brass-100);
+  transition: border-color var(--t-med), color var(--t-med);
+}
+@media (hover: hover) { .icon-btn:hover { border-color: var(--brass-200); color: var(--brass-50); } }
+.icon-btn svg { width: 20px; height: 20px; fill: currentColor; }
+.icon-btn .badge {
+  position: absolute; top: -5px; right: -5px;
+  min-width: 20px; height: 20px; padding: 0 5px;
+  display: grid; place-items: center;
+  border-radius: 10px;
+  background: var(--danger); color: #fff;
+  font: 700 0.75rem/1 var(--font-num);
+  box-shadow: 0 0 0 2px var(--mahogany-900);
+}
+
+/* Reiter und Auswahl-Chips */
+.tabs { display: flex; gap: 4px; margin: 0 0 14px; overflow-x: auto; padding-bottom: 2px; border-bottom: 1px solid var(--glass-edge-soft); }
+.tabs button, .chips button {
+  flex: none;
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid var(--glass-edge-soft);
+  border-radius: var(--r-sm);
+  background: rgba(255, 226, 150, 0.03);
+  font-weight: 700;
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
+  color: var(--ink-dim);
+  transition: color var(--t-med), border-color var(--t-med), background var(--t-med);
+}
+.tabs button { border-bottom: 0; border-radius: var(--r-sm) var(--r-sm) 0 0; }
+@media (hover: hover) { .tabs button:hover, .chips button:hover { color: var(--ink); border-color: var(--glass-edge); } }
+.tabs button[aria-pressed='true'], .chips button[aria-pressed='true'] {
+  color: var(--ink-engrave);
+  background: var(--brass-plate);
+  border-color: var(--brass-600);
+  text-shadow: 0 1px 0 rgba(255, 238, 190, 0.5);
+}
+.tabs button[style*='--c'][aria-pressed='true'] { background: var(--c); border-color: var(--c); color: #1b1410; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Beschriftete Auswahl */
+.opt { margin: 0 0 14px; }
+.opt > label, .opt > .label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--brass-300);
+}
+
+/* Eingabefeld */
+.txt {
+  -webkit-user-select: text; user-select: text;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--r-sm);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--ink);
+  font: inherit; font-size: 1.05rem;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.45);
+}
+
+/* Tastenkappe */
+kbd {
+  display: inline-block;
+  min-width: 1.5em;
+  padding: 1px 6px 2px;
+  border: 1px solid var(--brass-500);
+  border-bottom-width: 3px;
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, #2c1b0f, #170d07);
+  color: var(--brass-100);
+  font: 700 0.8rem/1.25 var(--font-num);
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* ---------- Regler (Lautstärke, Skalierung) ---------- */
+.slider {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr 3.2rem;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+.slider output { text-align: right; font: 600 1rem var(--font-num); color: var(--brass-200); }
+.slider input[type='range'] {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 22px;
+  background: transparent;
+  touch-action: pan-x;
+}
+.slider input[type='range']::-webkit-slider-runnable-track {
+  height: 6px; border-radius: 3px;
+  background: linear-gradient(90deg, var(--brass-400) var(--fill, 50%), #0d0805 var(--fill, 50%));
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(215, 174, 82, 0.25);
+}
+.slider input[type='range']::-moz-range-track {
+  height: 6px; border-radius: 3px;
+  background: linear-gradient(90deg, var(--brass-400) var(--fill, 50%), #0d0805 var(--fill, 50%));
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(215, 174, 82, 0.25);
+}
+.slider input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 20px; height: 20px; margin-top: -7px; border-radius: 50%;
+  border: 1px solid var(--brass-600);
+  background: radial-gradient(circle at 35% 30%, var(--brass-glint), var(--brass-300) 45%, var(--brass-deep));
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.6);
+}
+.slider input[type='range']::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 1px solid var(--brass-600);
+  background: radial-gradient(circle at 35% 30%, var(--brass-glint), var(--brass-300) 45%, var(--brass-deep));
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.6);
+}
+
+/* ---------- Farbfelder ---------- */
+.swatches { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 6px; }
+.sw {
+  width: 36px; height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 0, 0, 0.55);
+  box-shadow: 0 0 0 1px var(--glass-edge), inset 0 2px 3px rgba(255, 255, 255, 0.25);
+}
+.sw[aria-pressed='true'] { box-shadow: 0 0 0 2px var(--mahogany-900), 0 0 0 4px var(--brass-200); }
+.sw.pick { position: relative; display: inline-block; overflow: hidden; cursor: pointer; }
+.sw.pick input { position: absolute; inset: -6px; opacity: 0; width: 44px; height: 44px; cursor: pointer; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001s !important; animation-iteration-count: 1 !important; transition-duration: 0.001s !important; }
+}

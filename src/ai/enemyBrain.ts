@@ -1,6 +1,7 @@
 import { action, BT, cond, selector, sequence, tracked, type BtNode } from './behaviorTree';
 import type { NavGrid } from './navGrid';
 import type { Enemy, EnemyWorld } from '../entities/enemy';
+import { angleDiff } from '../core/mathUtil';
 
 /** Was der Baum je Logikschritt über die Lage weiß (ein Objekt für alle Gegner, wird nur neu befüllt) */
 export interface BrainCtx {
@@ -29,7 +30,7 @@ export function perceive(e: Enemy, c: BrainCtx) {
     e.suspicion = Math.max(0, e.suspicion - c.dt * 0.3);
     return;
   }
-  const facing = Math.abs(angDiff(c.toT, e.yaw));
+  const facing = angleDiff(c.toT, e.yaw);
   const seen = c.los && c.dist < SENSE.sight && (facing < SENSE.cone || c.dist < SENSE.near);
   let gain = 0;
   if (seen) gain = c.dist < 8 ? 2.6 : 0.3 + 1.4 * (1 - c.dist / SENSE.sight);
@@ -43,10 +44,6 @@ export function perceive(e: Enemy, c: BrainCtx) {
   if (gain > 0) e.suspicion += gain * c.dt;
   else e.suspicion = Math.max(0, e.suspicion - c.dt * 0.12);
   if (e.suspicion >= 1) e.becomeAlert();
-}
-
-export function angDiff(a: number, b: number) {
-  return ((a - b + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
 }
 
 // ---------- Blätter ----------

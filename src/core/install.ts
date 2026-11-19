@@ -45,8 +45,6 @@ export function installWay(): InstallWay {
   return 'manual';
 }
 
-export function onInstallChange(f: () => void) { listeners.push(f); return () => { listeners = listeners.filter((x) => x !== f); }; }
-
 /** Installationsdialog des Browsers öffnen. true = installiert */
 export async function promptInstall(): Promise<boolean> {
   if (!deferred) return false;

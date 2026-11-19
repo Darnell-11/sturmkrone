@@ -12,7 +12,9 @@ import {
 } from 'three';
 import { BOSS, ENEMIES, enemyScale, type EnemyAttack, type EnemyDef, type EnemyKind } from '../data/combat';
 import { randomLook, type NpcRole } from '../data/characterParts';
-import { gearForNpc } from '../data/gear';
+import { gearForNpc, gearFromSet } from '../data/gear';
+import type { FactionId } from '../data/factions';
+import { applyFactionUniform } from '../data/factionLook';
 import type { Faction } from '../core/save/types';
 import type { CharacterAssets } from './character/assets';
 import { Character } from './character/character';
@@ -23,6 +25,8 @@ import { ENEMY_TREE, perceive, type BrainCtx } from '../ai/enemyBrain';
 import { Hurtbox } from '../combat/hitbox';
 import { sweepMove, type SweepGround } from '../combat/sweep';
 import { mintEntityId, type EntityId } from '../sim/entityId';
+import { ThreatTable } from '../combat/threat';
+import { clamp01 } from '../core/mathUtil';
 
 export type EnemyState = 'idle' | 'patrol' | 'suspicious' | 'chase' | 'strafe' | 'flank' | 'retreat' | 'windup' | 'attack' | 'recover' | 'hit' | 'stagger' | 'air' | 'down' | 'dead' | 'transition';
 
@@ -62,6 +66,10 @@ export interface HitInfo {
   dirX: number;
   dirZ: number;
   heavy: boolean;
+  /** Urheber des Treffers (Spielfigur, Offizier, Trupp): speist die Bedrohungstabelle der Hauptmänner und Bosse */
+  src?: EntityId;
+  /** Fernkampf (Geschosse, Fähigkeiten): braucht 130 % Bedrohung, um das Ziel eines Bosses abzulösen */
+  ranged?: boolean;
 }
 
 const EXCL_TEX = (() => {
@@ -96,9 +104,41 @@ const QUEST_TEX = (() => {
 const BRAIN: BrainCtx = { w: null as unknown as EnemyWorld, nav: null, dt: 0, tx: 0, tz: 0, tYaw: NaN, dist: 0, toT: 0, los: false };
 const STEER = { x: 0, z: 0 };
 
+/** Wartezeit (s) einer Boss-Fähigkeit zwischen zwei Einsätzen, falls die Daten keine nennen */
+const MECH_CD: Record<string, number> = { summon: 26, guard: 20, counter: 15, blink: 7, lunge: 4, signal: 8 };
+
 export class Enemy {
   readonly char: Character;
   readonly def: EnemyDef;
+  /** Bedrohungstabelle (Hauptmänner und Endbosse): wer zuletzt wie viel Schaden gemacht hat, bestimmt das Ziel; null bei normalen Gegnern */
+  readonly threat: ThreatTable | null;
+  /** Ziel der Fähigkeiten dieses Gegners: Kennung aus der Bedrohungstabelle (Spielfigur, Offizier, Trupp oder später ein Mitspieler) */
+  /** Boss: Lebensanteile, bei denen die nächste Phase beginnt (für Marken in der Boss-Leiste) */
+  get phaseMarks(): number[] {
+    const pa = this.def.phaseAt ?? BOSS.phaseAt;
+    return (this.def.phases ?? 3) >= 3 ? [pa[0], pa[1]] : [pa[0]];
+  }
+  targetEntityId: EntityId | null = null;
+  /** Aura-Faktoren durch Hauptmänner in der Nähe (1 = keine): Schaden, erlittener Schaden, Tempo; Heilung je Sekunde (Anteil) */
+  auraDmg = 1;
+  auraTaken = 1;
+  auraSpeed = 1;
+  auraRegen = 0;
+  /** Frontale Deckung (Eisenstein): Treffer aus diesem Bogen vor dem Gegner prallen ab, solange `guardT` läuft */
+  guardT = 0;
+  guardArc = 0;
+  /** Konterhaltung (De Valois): der nächste Treffer löst einen Gegenschlag auf den Angreifer aus */
+  counterT = 0;
+  counterDmg = 1.5;
+  counterRadius = 3;
+  riposteReq: { x: number; z: number; dmg: number; r: number } | null = null;
+  /** Landepunkt des Schattensprungs (Kurogane), gesetzt beim Ausholen */
+  blinkTo: { x: number; z: number } | null = null;
+  /** Wann welche Fähigkeit wieder bereit ist (Spielzeit des Gegners) */
+  private readonly atkCd = new Map<EnemyAttack, number>();
+  private clock = 0;
+  /** Angriffswert mit Aura */
+  get strength() { return this.dmg * this.auraDmg; }
   x: number;
   z: number;
   y = 0;
@@ -185,8 +225,9 @@ export class Enemy {
     return this.sweepG;
   }
 
-  constructor(assets: CharacterAssets, readonly kind: EnemyKind, readonly level: number, faction: Faction, x: number, z: number, outline: boolean, readonly name?: string) {
-    this.def = ENEMIES[kind];
+  constructor(assets: CharacterAssets, readonly kind: EnemyKind, readonly level: number, faction: Faction, x: number, z: number, outline: boolean, readonly name?: string, readonly power?: FactionId, opts: { def?: EnemyDef } = {}) {
+    this.def = opts.def ?? ENEMIES[kind];
+    this.threat = this.def.raid ? new ThreatTable() : null;
     const sc = enemyScale(level);
     this.maxHp = this.hp = Math.round(this.def.hp * sc.hp);
     this.dmg = this.def.dmg * sc.dmg;
@@ -195,19 +236,27 @@ export class Enemy {
     this.z = z;
     this.homeX = this.spot.x = x;
     this.homeZ = this.spot.z = z;
-    this.retreatAt = this.def.boss ? 0 : this.def.elite ? 0.15 : kind === 'schlaeger' ? 0.12 : 0.25;
+    this.retreatAt = this.def.boss || this.def.raid ? 0 : this.def.elite ? 0.15 : kind === 'schlaeger' ? 0.12 : 0.25;
     const role: NpcRole = faction === 'marine' ? (this.def.elite ? 'offizier' : 'marine') : this.def.role === 'offizier' ? 'pirat' : this.def.role;
     const look = randomLook(Math.random, role);
     if (kind === 'schlaeger') { look.body = 'kraeftig'; look.gloves = true; }
     if (this.def.elite) { look.coat = 'kapitaen'; look.coatColor = faction === 'marine' ? '#14284A' : '#4A1418'; }
     // Ausrüstung nach Stufe: Eliten und Bosse tragen ganze Sets, einfache Gegner gelegentlich einzelne Teile
-    const gear = gearForNpc(level, this.def.boss ? 'boss' : this.def.elite ? 'elite' : 'normal', faction === 'marine');
-    if (gear.length) look.extra = gear;
+    // Besetzte Inseln und Festungen: Soldaten tragen die Uniform ihrer Weltmacht (data/factionLook.ts), sonst gilt die Ausrüstung nach Stufe
+    const rank = this.def.boss ? 'boss' : this.def.elite ? 'elite' : 'normal';
+    if (power) applyFactionUniform(look, power, rank);
+    else {
+      const gear = gearForNpc(level, rank, faction === 'marine');
+      if (gear.length) look.extra = gear;
+    }
+    // Raid-Boss: eigenes Beute-Set (Helm, Waffen, Rock aus Blender, public/models/bosses/) über der Uniform der Macht
+    if (this.def.kit) look.extra = [...(look.extra ?? []), ...gearFromSet(this.def.kit, 'boss')];
     this.char = new Character(assets, look, outline);
     this.char.holder.scale.setScalar(this.def.scale);
     const w = enemyWeapons(this.def.weapon);
-    this.char.hold('r', w.right);
-    this.char.hold('l', w.left);
+    // Boss-Waffen sind Blender-Modelle am Beute-Set (Haupt- und Nebenhand): die Standardwaffe weicht ihnen (Character.hold nimmt das Set-Modell)
+    if (this.def.kit && w.right) { w.right.userData.swordSkin = true; this.char.hold('r', w.right); this.char.hold('l', null); }
+    else { this.char.hold('r', w.right); this.char.hold('l', w.left); }
     this.marker = new Sprite(new SpriteMaterial({ map: EXCL_TEX, color: new Color(4, 1.2, 0.8), depthTest: false, transparent: true, blending: AdditiveBlending }));
     this.marker.scale.setScalar(0.7);
     this.marker.position.y = 2.4;
@@ -222,6 +271,8 @@ export class Enemy {
   slowT = 0;
   fearT = 0;
   frozenT = 0;
+  /** Dachschütze (Raid): steht fest in Höhe y auf einem Dach, bewegt sich nicht, fällt beim Tod zu Boden */
+  perch: { y: number } | null = null;
 
   get alive() { return this.state !== 'dead'; }
   get engaged() { return this.alive && !CALM.has(this.state); }
@@ -246,7 +297,7 @@ export class Enemy {
     else this.char.play('stun', { fade: 0.05, restart: true });
   }
 
-  fear(dur: number) { if (this.alive && !this.def.boss) { this.fearT = dur; this.cancelAttack(); this.toChase(); } }
+  fear(dur: number) { if (this.alive && !this.def.boss && this.def.raid !== 'captain') { this.fearT = dur; this.cancelAttack(); this.toChase(); } }
 
   launch(v: number) {
     if (!this.alive || this.def.boss || this.def.poise >= 100) return;
@@ -307,8 +358,29 @@ export class Enemy {
     this.sinceHit = 0;
     // Phasenwechsel: der Boss brüllt und ist unverwundbar
     if (this.state === 'transition') return 'blocked';
+    // Konterhaltung: jeder Treffer löst stattdessen einen Gegenschlag auf den Angreifer aus (Rückstoß und Schaden), die Haltung endet
+    if (this.counterT > 0) {
+      this.counterT = 0;
+      this.riposteReq = { x: this.x - h.dirX * 1.7, z: this.z - h.dirZ * 1.7, dmg: this.counterDmg, r: this.counterRadius };
+      this.char.hitFlash('#FFD27A', 1.3);
+      if (h.src) this.threat?.add(h.src, h.dmg * 0.3);
+      return 'blocked';
+    }
+    // Frontale Deckung: von vorn prallt alles ab; Flanke und Rücken bleiben offen
+    if (this.guardT > 0) {
+      const facing = Math.sin(this.yaw) * -h.dirX + Math.cos(this.yaw) * -h.dirZ;
+      if (facing > Math.cos(this.guardArc / 2)) {
+        this.char.hitFlash('#9FD8FF', 0.9);
+        if (h.src) this.threat?.add(h.src, h.dmg * 0.3);
+        return 'blocked';
+      }
+    }
+    // Rüstung der Raid-Gegner und Aura „Bollwerk“ eines Hauptmanns in der Nähe
+    const soak = (1 - (this.def.armor ?? 0)) * this.auraTaken;
+    if (soak !== 1) h = { ...h, dmg: h.dmg * soak };
     // Break: Schwachstelle offen, mehr Schaden
     if (this.brokenT > 0) h = { ...h, dmg: h.dmg * BOSS.breakDmg };
+    if (h.src && this.threat) this.threat.add(h.src, h.dmg, { ranged: !!h.ranged });
     // Schildträger: Angriffe von vorn prallen ab (außer schwere)
     if (this.def.frontBlock && !h.heavy && this.state !== 'stagger') {
       const facing = Math.sin(this.yaw) * -h.dirX + Math.cos(this.yaw) * -h.dirZ;
@@ -393,7 +465,7 @@ export class Enemy {
   }
 
   /** Haltebalken 0 … 1 (0 im Break) */
-  get breakFrac() { return this.brokenT > 0 ? 0 : Math.max(0, Math.min(1, this.poise / this.def.poise)); }
+  get breakFrac() { return this.brokenT > 0 ? 0 : clamp01(this.poise / this.def.poise); }
 
   /** Phase 2 oder 3 beginnt: Brüllen, kurz unverwundbar, danach neue Angriffe */
   private beginTransition(w: EnemyWorld) {
@@ -441,6 +513,11 @@ export class Enemy {
     else if (this.state === 'windup' && this.stateT > 4) { this.cancelAttack(); if (this.hasToken) { w.releaseToken(this); this.hasToken = false; } this.toChase(); }
     else if (this.state === 'air' && this.stateT > 6) { this.vy = 0; this.y = w.ground(this.x, this.z); this.state = 'down'; this.timer = 0.6; this.char.play('lie', { fade: 0.1 }); }
     this.timer -= dt;
+    this.clock += dt;
+    this.guardT = Math.max(0, this.guardT - dt);
+    this.counterT = Math.max(0, this.counterT - dt);
+    this.threat?.update(dt);
+    if (this.auraRegen > 0 && this.alive && this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + this.maxHp * this.auraRegen * dt);
     this.sinceHit += dt;
     this.flash -= dt;
     this.slowT -= dt;
@@ -457,7 +534,8 @@ export class Enemy {
     // Boss-Phasen
     if (def.boss && this.alive) {
       const frac = this.hp / this.maxHp;
-      const ph = frac < BOSS.phaseAt[1] ? 3 : frac < BOSS.phaseAt[0] ? 2 : 1;
+      const pa = def.phaseAt ?? BOSS.phaseAt;
+      const ph = (def.phases ?? 3) >= 3 && frac < pa[1] ? 3 : frac < pa[0] ? 2 : 1;
       if (ph > this.phase && this.state !== 'air') { this.phase = ph; this.dmg *= 1.15; this.beginTransition(w); }
       // Break läuft ab, danach ist der Haltebalken wieder voll; sonst lädt er sich nach 3 s ohne Treffer langsam auf
       if (this.brokenT > 0) {
@@ -465,7 +543,7 @@ export class Enemy {
         if (this.brokenT <= 0) { this.brokenT = 0; this.poise = this.def.poise; }
       } else if (this.poise < this.def.poise && w.playerActive && this.sinceHit > 3) this.poise = Math.min(this.def.poise, this.poise + this.def.poise * BOSS.breakRegen * dt);
     }
-    const speed = def.speed * (def.boss ? 1 + (this.phase - 1) * 0.15 : 1) * (this.slowT > 0 ? 0.45 : 1);
+    const speed = def.speed * (def.boss ? 1 + (this.phase - 1) * 0.15 : 1) * (this.slowT > 0 ? 0.45 : 1) * this.auraSpeed * (this.guardT > 0 ? 0.6 : 1);
 
     let mvx = 0, mvz = 0;
     const face = (target: number, rate = 8) => {
@@ -525,7 +603,7 @@ export class Enemy {
         break;
       case 'windup':
         // Warnflächen „am Boss“ zeigen dorthin, wo er beim Ausholen hinsah: er dreht sich danach nicht mehr mit
-        if (!(this.atk?.zones && this.atk.zones.some((z) => z.at !== 'player'))) face(toPlayer, 5);
+        if (!(this.atk?.zones && this.atk.zones.some((z) => z.at === undefined || z.at === 'self'))) face(toPlayer, 5);
         if (this.timer <= 0 && this.atk) {
           this.state = 'attack';
           this.marker.visible = false;
@@ -579,17 +657,18 @@ export class Enemy {
         this.vy -= 18 * dt;
         this.y = Math.max(w.ground(this.x, this.z), this.y + this.vy * dt);
         // nach dem Fallen in Glut auflösen (4 s nach dem Tod wird die Figur entfernt)
-        this.char.setDissolve(Math.min(1, Math.max(0, (2.7 - this.timer) / 1.8)));
+        this.char.setDissolve(clamp01((2.7 - this.timer) / 1.8));
         break;
     }
 
     // Bewegung, Rückstoß, Boden
+    if (this.perch && this.state !== 'dead' && this.state !== 'air') { mvx = 0; mvz = 0; this.vx = 0; this.vz = 0; }
     this.vx *= Math.pow(0.02, dt);
     this.vz *= Math.pow(0.02, dt);
     // Rückstoß und Schritte als gesweepte Bewegung: kein Wanddurchbruch bei hohem Tempo (Teilschritte ≤ 0,15 m)
     sweepMove(this, (mvx + this.vx) * dt, (mvz + this.vz) * dt, this.sweepGround(w), false);
     if (this.state !== 'air' && this.state !== 'dead') {
-      const g = w.ground(this.x, this.z);
+      const g = this.perch ? this.perch.y : w.ground(this.x, this.z);
       this.y += ((Number.isFinite(g) ? g : this.y) - this.y) * Math.min(1, dt * 15);
     }
     this.char.place(this.x, this.y, this.z, this.yaw);
@@ -608,8 +687,13 @@ export class Enemy {
     // Passenden Angriff wählen: Fernkampf auf Distanz, sonst zufällig (Bosse wiederholen sich nicht)
     let usable = opts.filter((a) => a.range >= dist - 0.5 || a.projectile || a.aoe || a.zones);
     if (this.def.boss && usable.length > 1) usable = usable.filter((a) => a !== this.lastAtk);
+    // Boss-Fähigkeiten mit Wartezeit (Verstärkung, Deckung, Konter, Sprung, Streuflächen): nur wenn bereit
+    const ready = usable.filter((a) => (this.atkCd.get(a) ?? 0) <= this.clock);
+    if (ready.length) usable = ready;
     this.atk = (usable.length ? usable : opts)[Math.floor(Math.random() * (usable.length || opts.length))];
     this.lastAtk = this.atk;
+    const cd = this.atk.mech ? MECH_CD[this.atk.mech.kind] ?? 0 : this.atk.zones?.some((z) => z.at === 'scatter') ? 7 : 0;
+    if (cd > 0) this.atkCd.set(this.atk, this.clock + cd);
     this.atkSeq++;
     this.state = 'windup';
     this.timer = this.atk.windup * (this.def.boss && this.phase === 3 ? 0.7 : 1);
@@ -639,6 +723,8 @@ export class Enemy {
   /** Eingefroren: eisblaue Färbung über das Randlicht (der Treffer-Blitz läuft im Effekt-Shader) */
   private updateFlash() {
     if (this.frozenT > 0) this.char.setTint('#9FE6FF', 0.85);
+    else if (this.guardT > 0) this.char.setTint('#8FC8FF', 0.7);
+    else if (this.counterT > 0) this.char.setTint('#FFD27A', 0.75);
     // Boss ab Phase 2: dauerhaft gerötete Ränder (entfesselt), in Phase 3 stärker
     else if (this.def.boss && this.phase >= 2 && this.alive) this.char.setTint('#FF3A2A', this.phase >= 3 ? 0.42 : 0.28);
     else this.char.setTint('#9FE6FF', 0);
@@ -646,6 +732,7 @@ export class Enemy {
 
   dispose() {
     this.cancelAttack();
+    this.threat?.clear();
     this.hasToken = false;
     this.char.dispose();
   }

@@ -32,15 +32,6 @@ export interface AttackDef {
   smearTilt?: number;
 }
 
-/**
- * Klingenbewegung von LINKS nach RECHTS (aus Sicht der Figur) statt von rechts nach links: gemessen an der Handbahn im Trefferfenster
- * (seitliche Verschiebung der Schwerthand). Der Schmier-Bogen läuft dann in dieselbe Richtung wie die Klinge, nicht entgegen.
- */
-export const SMEAR_LEFT_TO_RIGHT = new Set([
-  'Melee_1H_Attack_Slice_Diagonal', 'Melee_2H_Attack_Slice', 'Melee_2H_Attack_Chop', 'Melee_2H_Attack_Spin',
-  'Melee_Dualwield_Attack_Slice', 'Melee_Dualwield_Attack_Chop', 'Melee_1H_Attack_Chop',
-]);
-
 const A = (o: Partial<AttackDef> & Pick<AttackDef, 'clip'>): AttackDef => ({
   speed: 1, hitStart: 0.3, hitEnd: 0.5, range: 2.2, arc: 2.2, dmg: 1, poise: 10, knock: 3, hitstop: 0.06, shake: 0.15, fx: 'slash', lunge: 2, ...o,
 });
@@ -146,12 +137,44 @@ export type ZoneShape = 'circle' | 'ring' | 'line' | 'cone';
  * at 'self': am Gegner, Richtung beim Ausholen. at 'player': dort, wo der Spieler beim Ausholen steht.
  * turn dreht die Fläche (Bogenmaß, z. B. π/2 für den zweiten Arm eines Kreuzes). extra: Sekunden zwischen Ausholen und Einschlag.
  */
-export interface ZoneSpec { shape: ZoneShape; size: number; inner?: number; width?: number; arc?: number; at?: 'self' | 'player'; turn?: number; extra?: number }
+export interface ZoneSpec {
+  shape: ZoneShape; size: number; inner?: number; width?: number; arc?: number;
+  /** self: am Gegner, Richtung beim Ausholen · player: dort, wo das Ziel beim Ausholen steht · target: beim Ziel der Bedrohungstabelle (`targetEntityId`)
+   *  · scatter: `count` Flächen verstreut um alle Ziele in der Nähe (jedes Ziel bekommt mindestens eine) · behind: hinter dem Ziel · allies: eine Fläche je Ziel in Reichweite */
+  at?: 'self' | 'player' | 'target' | 'scatter' | 'behind' | 'allies';
+  turn?: number; extra?: number;
+  /** scatter: Anzahl Flächen und Verzögerung zwischen den Einschlägen (s); Streuradius um das Ziel (m) */
+  count?: number; stagger?: number; scatter?: number;
+  /** Bild am Boden, das mit der Fläche erscheint (Fass, Granate, Rune, Ketten) */
+  prop?: 'fass' | 'granate' | 'rune' | 'kette' | 'signal';
+  /** Nebenwirkung beim Einschlag auf das getroffene Ziel (Seestein-Ketten: Bewegung gebunden) */
+  bind?: { dur: number; slow: number };
+}
+
+/**
+ * Besondere Boss-Fähigkeiten über den Hieb hinaus (Raid-Endbosse, siehe raid/raidBosses.ts). Sie laufen beim Ausholen (`windup`) bzw. beim
+ * Einschlag, immer gegen `targetEntityId` (das Ziel aus der Bedrohungstabelle).
+ */
+export type BossMech =
+  /** Verstärkung ruft: `squad` = Verband (Massentruppen, instanziert), `elite` = Einzelfiguren; Aufstellung als Wall vor dem Boss, Ring oder im Rücken des Ziels */
+  | { kind: 'summon'; what: 'squad' | 'elite'; typ?: 'schwert' | 'musketier' | 'schlaeger'; heads?: number; kinds?: EnemyKind[]; shape: 'wall' | 'ring' | 'flank'; n?: number; label?: string }
+  /** Frontale Deckung: Treffer von vorn (Bogen `arc`) prallen ab, solange die Deckung steht; Flanke und Rücken sind offen */
+  | { kind: 'guard'; dur: number; arc: number }
+  /** Konterhaltung: Treffer in dieser Zeit lösen sofort einen Gegenschlag auf den Angreifer aus (statt Schaden) */
+  | { kind: 'counter'; dur: number; dmg: number; radius: number }
+  /** Blitzsprung hinter das Ziel (Schattenschritt) – die Landefläche ist vorher markiert */
+  | { kind: 'blink'; behind: boolean }
+  /** Ausfallschritt: schneller Satz in Richtung des Ziels, `dist` Meter */
+  | { kind: 'lunge'; dist: number; speed: number }
+  /** Signalrakete: Leuchtspur gen Himmel (die Flächen darunter sind Artillerieeinschläge) */
+  | { kind: 'signal'; color: string };
 
 export interface EnemyAttack {
   clip: string;
   /** Warnflächen (Boss-Angriffe): der Schaden kommt beim Einschlag der Fläche, nicht über den Hieb */
   zones?: ZoneSpec[];
+  /** Besondere Boss-Fähigkeit (Verstärkung, Deckung, Konter, Sprung …) */
+  mech?: BossMech;
   /** Anzeigename, der beim Ausholen über dem Boss erscheint (nur Bosse) */
   label?: string;
   speed: number;
@@ -193,7 +216,23 @@ export interface EnemyDef {
    * in BOSS.phaseAt und beginnt mit einer kurzen Unverwundbarkeit (Brüllen, Schockring).
    */
   phaseAttacks?: { 2?: EnemyAttack[]; 3?: EnemyAttack[] };
+  /** Raid: Hauptmann (Aura, Rüstung, Bedrohungstabelle) oder Endboss (zwei Phasen, Bedrohungstabelle, Boss-Fähigkeiten) */
+  raid?: 'captain' | 'boss';
+  /** Rüstung: Anteil des Schadens, der abgeprallt wird (0 … 0,8) */
+  armor?: number;
+  /** Phasenwechsel bei diesen Lebensanteilen statt `BOSS.phaseAt`; `phases` = 2: nach der zweiten Phase folgt keine dritte */
+  phaseAt?: [number, number];
+  phases?: 2 | 3;
+  /** Ehrentitel unter dem Namen in der Boss-Leiste (Raid-Endbosse: aus `RAID_BOSSES`) */
+  title?: string;
+  /** Aura: wirkt auf Verbündete im Umkreis (Hauptmänner, Bosse) */
+  aura?: AuraDef;
+  /** Ausrüstungsset aus data/gear.ts: Kopfbedeckung und Waffen des Bosses (Modelle aus Blender in public/models/bosses/) */
+  kit?: string;
 }
+
+/** Aura eines Hauptmanns: Faktoren auf Schaden, erlittenen Schaden und Tempo der Gegner im Umkreis; `regen` = Heilung je Sekunde (Anteil der Lebenspunkte) */
+export interface AuraDef { id: string; label: string; radius: number; color: string; dmg?: number; taken?: number; speed?: number; regen?: number }
 
 /** Boss-Mechanik: Lebensanteile der Phasenwechsel, Dauer der Wechsel und des „Break“-Zustands (Haltebalken leer) */
 export const BOSS = {
@@ -207,7 +246,7 @@ export const BOSS = {
   breakRegen: 0.06,
 };
 
-const EA = (o: Partial<EnemyAttack> & Pick<EnemyAttack, 'clip'>): EnemyAttack => ({
+export const EA = (o: Partial<EnemyAttack> & Pick<EnemyAttack, 'clip'>): EnemyAttack => ({
   speed: 1, windup: 0.45, hitAt: 0.42, range: 2.2, arc: 1.8, dmg: 1, knock: 4, fx: 'slash', ...o,
 });
 

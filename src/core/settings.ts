@@ -1,6 +1,8 @@
 import type { ActionId } from '../data/actions';
 import { QUALITY_IDS, type QualityTier } from '../data/qualityTiers';
 import type { KeyValueStore } from './storage';
+import { unitOr } from './sanitize';
+import { clamp } from './mathUtil';
 
 // Einstellungen gehören zum Gerät, nicht zum Spielstand.
 export const SETTINGS_KEY = 'sturmkrone2-settings';
@@ -13,8 +15,16 @@ export interface Settings {
   /** Dynamische Auflösung: bei Rucklern kurzzeitig mit weniger Pixeln rechnen */
   dynamicResolution: boolean;
   volume: { master: number; music: number; sfx: number; ambient: number; voice: number };
+  /** Klang anhalten, wenn Tab oder Fenster den Fokus verlieren */
+  muteWhenUnfocused: boolean;
   textScale: number;
   showFps: boolean;
+  /** Größe aller Anzeigen im Spiel (HUD), 0,8 … 1,4 */
+  hudScale: number;
+  /** Sektor- und Titeleinblendung beim Überqueren einer Grenze */
+  sectorBanner: boolean;
+  /** Schadenszahlen über den Gegnern */
+  damageNumbers: boolean;
   /** Farbenblind-freundliche Farben und Formen */
   colorblind: boolean;
   touchControls: 'auto' | 'on' | 'off';
@@ -30,8 +40,12 @@ export function defaultSettings(): Settings {
     qualityAuto: true,
     dynamicResolution: true,
     volume: { master: 0.8, music: 0.7, sfx: 0.8, ambient: 0.6, voice: 0.8 },
+    muteWhenUnfocused: true,
     textScale: 1,
     showFps: false,
+    hudScale: 1,
+    sectorBanner: true,
+    damageNumbers: true,
     colorblind: false,
     touchControls: 'auto',
     invertLookY: false,
@@ -39,7 +53,6 @@ export function defaultSettings(): Settings {
   };
 }
 
-const clamp01 = (v: unknown, d: number) => (typeof v === 'number' && isFinite(v) ? Math.min(1, Math.max(0, v)) : d);
 
 /** Liest gespeicherte Einstellungen und füllt fehlende oder kaputte Werte mit Standardwerten. */
 export function sanitizeSettings(raw: unknown): Settings {
@@ -53,20 +66,33 @@ export function sanitizeSettings(raw: unknown): Settings {
     qualityAuto: typeof r.qualityAuto === 'boolean' ? r.qualityAuto : d.qualityAuto,
     dynamicResolution: typeof r.dynamicResolution === 'boolean' ? r.dynamicResolution : d.dynamicResolution,
     volume: {
-      master: clamp01(vol.master, d.volume.master),
-      music: clamp01(vol.music, d.volume.music),
-      sfx: clamp01(vol.sfx, d.volume.sfx),
-      ambient: clamp01(vol.ambient, d.volume.ambient),
-      voice: clamp01(vol.voice, d.volume.voice),
+      master: unitOr(vol.master, d.volume.master),
+      music: unitOr(vol.music, d.volume.music),
+      sfx: unitOr(vol.sfx, d.volume.sfx),
+      ambient: unitOr(vol.ambient, d.volume.ambient),
+      voice: unitOr(vol.voice, d.volume.voice),
     },
+    muteWhenUnfocused: typeof r.muteWhenUnfocused === 'boolean' ? r.muteWhenUnfocused : d.muteWhenUnfocused,
     textScale: [1, 1.15, 1.3].includes(r.textScale) ? r.textScale : 1,
     showFps: typeof r.showFps === 'boolean' ? r.showFps : d.showFps,
+    hudScale: typeof r.hudScale === 'number' && Number.isFinite(r.hudScale) ? clamp(r.hudScale, 0.8, 1.4) : d.hudScale,
+    sectorBanner: typeof r.sectorBanner === 'boolean' ? r.sectorBanner : d.sectorBanner,
+    damageNumbers: typeof r.damageNumbers === 'boolean' ? r.damageNumbers : d.damageNumbers,
     colorblind: typeof r.colorblind === 'boolean' ? r.colorblind : false,
     touchControls: ['auto', 'on', 'off'].includes(r.touchControls) ? r.touchControls : 'auto',
     invertLookY: typeof r.invertLookY === 'boolean' ? r.invertLookY : false,
     keyBindings: r.keyBindings && typeof r.keyBindings === 'object' ? r.keyBindings : {},
   };
 }
+
+/** Welche Einstellungen zu welchem Reiter des Einstellungsmenüs gehören (für „Zurücksetzen“) */
+export type SettingsTab = 'grafik' | 'steuerung' | 'ton' | 'anzeige';
+export const SETTINGS_TAB_KEYS: Record<SettingsTab, (keyof Settings)[]> = {
+  grafik: ['quality', 'qualityAuto', 'dynamicResolution'],
+  steuerung: ['touchControls', 'invertLookY', 'keyBindings'],
+  ton: ['volume', 'muteWhenUnfocused'],
+  anzeige: ['textScale', 'showFps', 'colorblind', 'hudScale', 'sectorBanner', 'damageNumbers'],
+};
 
 export class SettingsStore {
   data: Settings;
@@ -82,6 +108,12 @@ export class SettingsStore {
     this.data = { ...this.data, ...patch };
     this.persist();
     for (const l of this.listeners) l(this.data);
+  }
+
+  /** Die Einstellungen eines Reiters auf den Standard zurücksetzen */
+  reset(tab: SettingsTab) {
+    const d = defaultSettings();
+    this.update(Object.fromEntries(SETTINGS_TAB_KEYS[tab].map((k) => [k, d[k]])) as Partial<Settings>);
   }
 
   onChange(l: (s: Settings) => void) { this.listeners.push(l); }

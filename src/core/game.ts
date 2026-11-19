@@ -16,14 +16,16 @@ import { PLAYER_BASE } from '../data/combat';
 import { CombatOverlay } from '../ui/combatOverlay';
 import { BRANCHES, branchPoints, learnBlock, SK, type Branch } from '../data/skills';
 import { SkillTree } from '../ui/skillTree';
-import { AMMO, SAIL_LEVELS, SHIP_CLASSES, type ShipLook } from '../data/ships';
+import { SAIL_LEVELS, SHIP_CLASSES, SHIP_UPGRADES, SHIP_UPGRADE_MAX, type ShipLook, type ShipUpgradeId } from '../data/ships';
 import { FAME_THRESHOLDS } from '../data/ranks';
 import { SkillStage } from '../world/skillStage';
 import { detectWebGpu, AutoQuality, benchmarkGpu, detectTier, gatherDeviceInfo, needsBench, type DeviceInfo, type Detected } from '../render/quality';
 import { GameRenderer } from '../render/renderer';
 import { setTexDetail } from '../render/texDetail';
 import { CharacterEditor, styleIdOf, type EditorGearHost, type EditorResult } from '../ui/editor';
-import { Hud } from '../ui/hud';
+import { Hud, type SeaView } from '../ui/hud';
+import { HelmDial } from '../ui/helmDial';
+import { SectorBanner } from '../ui/sectorBanner';
 import { Menus } from '../ui/menus';
 import { TouchControls } from '../ui/touchControls';
 import { EditorStage } from '../world/editorStage';
@@ -36,7 +38,7 @@ import { createSave, type SaveData } from './save/types';
 import { DialogOverlay } from '../ui/dialogOverlay';
 import { InventoryScreen, type InvItem, type InventoryHost } from '../ui/inventory';
 import { addItem, armorEq, bagConsumables, computeStats, ensureGear, headEq, itemCount, takeItem, weaponEq, wornGear, type StatSheet } from './inventory';
-import { ARMOR_LOOK, BAR_SLOTS, CONSUMABLE_BY_ID, CONSUMABLES, GEAR, GEAR_BY_ID, GEAR_SLOTS, GLOBAL_ITEM_CD, HEADS, HEAD_BY_ID, type GearSlot, type SlotId } from '../data/items';
+import { ARMOR, ARMOR_LOOK, BAR_SLOTS, CONSUMABLE_BY_ID, CONSUMABLES, GEAR, GEAR_BY_ID, GEAR_SLOTS, GLOBAL_ITEM_CD, HEADS, HEAD_BY_ID, HEAD_ICON, PROVIANT, REST_PRICE, SHRINE_PRICE, TRINKET_ICON, WEAPON_LINES, WEAPONS, type GearSlot, type SlotId } from '../data/items';
 import { NpcMarkers, type NpcMark } from '../ui/npcMarkers';
 import { QuestLog } from '../ui/questLog';
 import { DialogSession } from '../story/dialog';
@@ -48,22 +50,43 @@ import { audio, type Mood } from '../audio/audio';
 import { EDGE_WALL } from '../data/world';
 import { QuestSystem, stepText } from '../story/questSystem';
 import { TOWN_NPCS, VILLAGE_NPC_BY_ID, VILLAGE_NPCS, type QuestDef, type TownNpcDef } from '../data/quests';
-import { ARMOR, BERNSTEINSEE, POTION, REGIONS, REST_PRICE, SHRINE_PRICE, WEAPONS, WEAPON_LINES, type IslandDef, type RegionDef } from '../data/regions';
+import { BERNSTEINSEE, REGIONS, regionAt, sectorLabel, type IslandDef, type RegionDef } from '../data/regions';
+import { IDLE_MUSIC, type MusicContext } from '../audio/musicDirector';
+import type { MusicSector } from '../data/musicTracks';
+import { FACTIONS, FACTION_IDS, STANCE_LABEL, STANDING_EVENTS, clampStanding, marineStance, sectorAt, type FactionId } from '../data/factions';
+import { REP, applyOutcome, battleOutcome, blueprintDiscount, emptyReputation, harborDiscount, hasService, honorTitle, isPeaceful, repTier } from '../data/reputation';
+import type { BattleMark, BattleResult } from '../naval/naval';
+import { createRaidContext } from '../raid/raidSession';
+import { newRaidInstanceId, type RaidEnd, type RaidView } from '../raid/raidDirector';
+import { ESCORT_MAX, MARINE_RAID_PENALTY, MERCENARY_ESCORT_PRICE, mercenarySlots, ownEscortsForRank, raidAccess } from '../raid/raidRules';
+import { RaidPanel } from '../ui/raidPanel';
+import { OccupationBanner } from '../ui/occupationBanner';
+import { OccupationSystem } from './occupationSystem';
+import { emptyUnlocks } from '../raid/occupation';
+import type { PersonalLoot } from '../raid/raidLoot';
+import { mintEntityId, type EntityId } from '../sim/entityId';
 import { PerfWatchdog } from '../render/watchdog';
 import { drawMap, mapPalette, type MapMarkers, type MapOpts, type Poi, type WorldMapData } from '../ui/minimap';
 import { Compass, type CompassPoi } from '../ui/compass';
 import { WorldMapScreen } from '../ui/worldMap';
 import { CREW_BY_ID } from '../data/crew';
-import { RARITY, rollTrinket, TRINKET_BY_ID, type Rarity } from '../data/trinkets';
-import { RARITIES, type LootDrop } from '../data/loot';
-import { CAT_LABEL, GEAR_CATS, catOf, type GearCat } from '../data/equipment';
+import { officerSlots, troopCapacity, TROOP_RANK } from '../data/crewTiers';
+import { addTroops, cleanRoster, clampRoster, COMMANDS, rosterTotal, scaleRoster, TROOPS, type CommandState, type TroopRoster, type TroopType } from '../data/troops';
+import { COMMAND_ACTIONS, commandOnKey, type ActionId } from '../data/actions';
+import { activeParty, ensureCrewState, savedPools } from './crewRoster';
+import { rollTrinket, TRINKET_BY_ID } from '../data/trinkets';
+import { RARITIES, RARITY, type Rarity } from '../data/rarity';
+import { type LootDrop } from '../data/loot';
+import { CAT_LABEL, EQUIP_BY_ID, GEAR_CATS, catOf, type GearCat } from '../data/equipment';
 import { clearOld, ensureLoot, grantLoot, lootDef, rollLootGear, setLine, wearLoot, wornLoot } from './gearBag';
 import { ACHIEVEMENTS } from '../data/achievements';
 import { ABYSS_LAIR } from '../naval/seaBoss';
-import { crewFrac, crewHeads, crewPricePerHead, missingHeads, needsRepair, REPAIR_MATERIALS, shipTooltip, type ShipSimState } from '../naval/shipSim';
+import { crewFrac, crewPricePerHead, missingHeads, needsRepair, REPAIR_MATERIALS, shipTooltip, type ShipSimState } from '../naval/shipSim';
+import { wrapAngle } from './mathUtil';
 import type { RepairMaterial } from '../sim/intents';
 import { QUESTS, QUEST_BY_ID } from '../data/quests';
 import { hostileLegends, LEGEND_BY_ID, rankRows } from '../data/legends';
+import { clamp01 } from './mathUtil';
 
 export const GAME_VERSION = __APP_VERSION__;
 const AUTOSAVE_SECONDS = 30;
@@ -108,11 +131,25 @@ export class Game {
   private listenDir = new Vector3();
   private editor: CharacterEditor | null = null;
   private uiRoot: HTMLElement;
+  /** Schwarzblende zwischen den Einstellungen des Titelbilds (liegt unter den Menüs, über der 3D-Welt) */
+  private titleFade!: HTMLElement;
+  private fadeShown = -1;
   private dialogUi!: DialogOverlay;
   private markers!: NpcMarkers;
   private questLog: QuestLog | null = null;
   private inventoryUi: InventoryScreen | null = null;
   private compass!: Compass;
+  private helm!: HelmDial;
+  private sectorBanner!: SectorBanner;
+  private raidPanel!: RaidPanel;
+  /** Besatzung eroberter Festungsinseln (Timer, Flotte, Tribut) und ihr Banner oben in der Mitte */
+  occupation!: OccupationSystem;
+  private occBanner!: OccupationBanner;
+  private occT = 0;
+  /** Letzte Anzeige-Daten der Belagerung (Ziele, Markierungen für Karte und Kompass) */
+  private raidView: RaidView | null = null;
+  /** Spielerkennung in Raid-Gruppen (im Mehrspielerbetrieb ersetzt sie die des Servers) */
+  private localPlayerId: EntityId = mintEntityId('foot');
   private worldMap: WorldMapScreen | null = null;
   private shapeById: Map<string, import('../ui/minimap').ShapeLike> | null = null;
   /** Laufende Stärkungen (Güter), Abklingzeiten je Gut und die gemeinsame Pause der Leiste (Sekunden, nicht gespeichert) */
@@ -170,6 +207,7 @@ export class Game {
     // Spiegelungen (IBL): der Himmel wird regelmäßig als vorgefilterte Umgebungskarte aufgenommen
     this.skyProbe = new SkyProbe(this.renderer.gl, this.world.env.sky.dome.material as ShaderMaterial);
     this.renderer.onQualityChange((c) => this.world.applyQuality(c));
+    this.renderer.onQualityChange((_c, tier) => { document.documentElement.dataset.fx = tier === 'low' ? 'lite' : 'full'; });
     this.renderer.onQualityChange((c) => {
       this.skyProbe.setInterval(c.ibl);
       toonShared.envOn.value = c.ibl > 0 ? 1 : 0;
@@ -181,23 +219,59 @@ export class Game {
     this.hud = new Hud(uiRoot);
     this.touch = new TouchControls(uiRoot, this.input);
     this.touch.setLayout(TOUCH_SEA);
+    this.titleFade = document.createElement('div');
+    this.titleFade.className = 'title-fade';
+    uiRoot.appendChild(this.titleFade);
     this.menus = new Menus(uiRoot, this);
     this.menus.onError = () => this.hud.toast('Das hat leider nicht geklappt – bitte noch einmal versuchen.', 3);
 
-    this.overlay = new CombatOverlay(uiRoot);
+    // Zonen des HUD: oben Mitte stapeln sich Kompass, Sektor, Besatzungsbanner und Boss-Leiste (in dieser Reihenfolge angelegt)
+    const zone = this.hud.regions;
+    this.compass = new Compass(zone.tc);
+    this.sectorBanner = new SectorBanner(zone.tc);
+    this.occBanner = new OccupationBanner(zone.tc);
+    this.overlay = new CombatOverlay(uiRoot, zone.tc);
     this.overlay.setVisible(false);
     this.dialogUi = new DialogOverlay(uiRoot);
     this.markers = new NpcMarkers(uiRoot);
-    this.compass = new Compass(uiRoot);
+    this.raidPanel = new RaidPanel(zone.ml);
+    this.helm = new HelmDial(zone.bl);
+    this.occupation = new OccupationSystem({
+      save: () => this.save,
+      world: this.world,
+      toast: (t, secs) => this.hud.toast(t, secs),
+      banner: (t, sub) => this.overlay.showBanner(t, sub),
+      fame: (n) => this.grantXp(0, n),
+      provisions: (n) => { if (this.save) addItem(this.save.gear, 'proviant', n); },
+      persist: () => this.persist(),
+      cue: (k) => { audio.play(k); if (k === 'horn') audio.director?.sting('alarm'); },
+    });
     this.world.onMessage = (m) => this.hud.toast(m);
     this.world.onModeChange = (m) => this.onModeChange(m);
     this.world.onKill = (e) => this.onKill(e);
     this.world.onGold = (n) => { if (this.save) this.save.player.gold += Math.round(n * this.goldMult()); };
     this.world.onCrewLine = (who, text) => this.hud.toast(`${who.name}: „${text}“`, 4);
+    // Nach Entern/Landgang: Überlebende der Massentruppen zurück an Bord, Verluste bleiben bis zur nächsten Anheuerung
+    this.world.onTroopsReturn = (left, before) => this.troopsReturned(left, before);
+    this.world.standingOf = (id) => this.save?.progress.standing?.[id] ?? 0;
+    this.world.bountyOf = (id) => this.save?.progress.reputation?.bounty[id] ?? 0;
+    this.world.onBattleStart = (m, where) => this.battleStarted(m, where);
+    this.world.onBattleEnd = (r) => this.battleEnded(r);
+    this.world.onRaidRequest = (def) => this.openRaidRequest(def);
+    this.world.onRaidView = (v) => { this.raidView = v; this.raidPanel.update(v); };
+    this.world.onRaidEnd = (info) => this.raidEnded(info);
     this.world.onShipSunk = (e) => {
       if (!this.save || e.captured) return;
       const p = this.save.player;
       if (!e.companion) { this.save.progress.stats.sunk++; this.questEvent({ type: 'sink' }); }
+      // Ansehen: die Marine merkt sich versenkte Schiffe, Kurogane-Schwarzsegler zu versenken gefällt ihr
+      if (!e.companion && e.power === 'marine') this.shiftStanding('marine', STANDING_EVENTS.marineShipSunk);
+      else if (!e.companion && e.power === 'kurogane') this.shiftStanding('marine', STANDING_EVENTS.kuroganeShipSunk);
+      // Schiffe der anderen Mächte: außerhalb einer Seeschlacht kostet jedes versenkte Schiff Ansehen; Kopfgeldjäger zu versenken senkt das Kopfgeld
+      if (!e.companion && e.power && !e.battle) {
+        if (e.hunter) this.payBountyDown(e.power, 120);
+        else if (e.power !== 'marine') this.shiftStanding(e.power, REP.sinkOutside);
+      }
       if (e.legendId) { this.defeatLegend(e.legendId, false); return; }
       if (e.ghost && Math.random() < 0.4) this.dropTrinket('selten', 0.15);
       // Seegefechte sind seltener geworden – dafür zählt jedes einzelne mehr
@@ -216,6 +290,10 @@ export class Game {
       if (!this.save) return;
       const p = this.save.player;
       this.save.progress.stats.boarded++;
+      if (e.power === 'marine') this.shiftStanding('marine', STANDING_EVENTS.marineShipBoarded);
+      else if (e.power && !e.battle && !e.hunter) this.shiftStanding(e.power, REP.boardOutside);
+      // ein geenterter Kopfgeldjäger zählt wie ein versenkter: das Kopfgeld sinkt
+      if (e.hunter && e.power) this.payBountyDown(e.power, 120);
       this.addLoyalty(this.save.crew.party, 4);
       this.questEvent({ type: 'board' });
       // Legenden: genau ein Sieg (früher zählte Entern zusätzlich als „versenkt“ – und damit als Revanche)
@@ -280,8 +358,13 @@ export class Game {
       }
     };
     audio.attachUnlock();
+    // Regler über die Audio-Schnittstelle (3.0-Menü, HUD) landen in den Geräteeinstellungen; umgekehrt setzt applySettings sie
+    audio.onPrefsChange((p) => this.settings.update({ volume: { ...this.settings.data.volume, master: p.masterVolume, music: p.musicVolume, sfx: p.sfxVolume, ambient: p.ambienceVolume }, muteWhenUnfocused: p.muteWhenUnfocused }));
+    audio.onTrackChange((n) => this.sectorBanner.setTrack(n?.title ?? null, n?.category === 'region' || n?.category === 'harbor'));
+    this.hud.onAmmo = (id) => this.world.selectAmmo(id);
     this.hud.onPause = () => this.pause();
     this.hud.onFaji = () => this.openSkills();
+    this.hud.onCommand = (c) => this.orderTroops(c);
     this.hud.onContext = (down) => this.input.setVirtual('interact', down);
     this.applySettings();
     this.settings.onChange(() => this.applySettings());
@@ -299,7 +382,7 @@ export class Game {
     });
 
     document.addEventListener('visibilitychange', () => {
-      audio.suspend(document.hidden);
+      audio.setFocused(!document.hidden);
       if (document.hidden) {
         if (this.state.is('play')) this.pause();
         else this.persist();
@@ -334,8 +417,7 @@ export class Game {
         this.worldPending = false;
       }
       preload.step('world', 1);
-      // Titelbild: strahlender Karibik-Vormittag (Zeit und Wetter stehen, bis das Spiel beginnt)
-      this.world.setState({ boat: null });
+      // Titelbild: das Prachtschiff segelt durch Abendgold, Sturm und Mondnacht (Zeit und Wetter gehören der Regie, bis das Spiel beginnt)
       this.world.titleMood();
       preload.setPhase('Figuren und Animationen werden geladen …');
       this.assets = await CharacterAssets.load();
@@ -381,12 +463,25 @@ export class Game {
       if (this.input.pressed('potion')) this.usePotion();
       if (this.input.pressed('repair')) this.repairAtSea();
       if (this.input.pressed('inventory')) { this.openInventory(); return; }
-      for (let i = 0; i < BAR_SLOTS; i++) if (this.input.pressed(`item${i + 1}` as 'item1')) this.useItem(this.save?.gear.bar?.[i] ?? null);
+      // Solange Trupps im Einsatz sind, gehören ihre Tasten den Befehlen (standardmäßig 1–3: Sturm, Folgen, Halten). Güter auf einer
+      // Taste, die gerade ein Befehl belegt, ruhen (Schnellleiste: Platz 4 oder eigene Tasten); sonst gelten sie wie immer.
+      const cmdKeys = this.world.squadsActive && this.world.mode === 'foot';
+      const binds = this.input.getKeyBindings();
+      if (cmdKeys) for (const c of COMMANDS) if (this.input.pressed(COMMAND_ACTIONS[c.id])) this.orderTroops(c.id);
+      for (let i = 0; i < BAR_SLOTS; i++) {
+        const a = `item${i + 1}` as ActionId;
+        if (!this.input.pressed(a)) continue;
+        if (cmdKeys && commandOnKey(binds, a)) continue;
+        this.useItem(this.save?.gear.bar?.[i] ?? null);
+      }
       this.tickItems(dt);
       this.legendT -= dt;
       if (this.legendT <= 0) { this.legendT = 1; this.updateLegends(); this.checkAchievements(); }
       this.world.update(dt, this.input);
       if (this.save) this.save.meta.playTime += dt;
+      this.occupation.update(dt);
+      this.occT -= dt;
+      if (this.occT <= 0) { this.occT = 0.4; this.refreshOccBanner(); }
       this.autosaveTimer += dt;
       if (this.autosaveTimer >= AUTOSAVE_SECONDS) this.persist();
     } else if (this.state.is('editor') && this.skillTree && this.input.pressed('skills')) {
@@ -402,6 +497,12 @@ export class Game {
     // Grafikstufe wird gerade angewendet (Shader werden parallel übersetzt): nicht zeichnen, sonst übersetzt das Zeichnen sie am Stück und der Browser hängt
     if (this.qualitySwitching) return;
     this.updateAudio(frameDt);
+    // Titelbild: Blende der Regie (nur im Menü; in allen anderen Zuständen sofort klar, auch im Editor)
+    const inMenu = this.state.is('menu', 'boot');
+    {
+      const fade = inMenu ? Math.round(this.world.title.fade * 200) / 200 : 0;
+      if (fade !== this.fadeShown) { this.fadeShown = fade; this.titleFade.style.opacity = String(fade); this.titleFade.hidden = fade === 0; }
+    }
     if (this.state.is('editor') && this.stage) {
       // Kompassleiste gehört zum Spiel: im Editor und in den Fenstern (Inventar, Fähigkeiten) nicht darüber zeigen
       this.compass.setVisible(false);
@@ -421,14 +522,14 @@ export class Game {
     else if (hs.t > 0) { this.loop.timeScale = hs.scale; hs.t -= frameDt; }
     else { this.loop.timeScale = 1; hs.scale = 1; }
     const a = this.state.is('play', 'pause') ? alpha : 1;
-    this.world.render(a, frameDt, this.state.is('menu', 'boot'));
+    this.world.render(a, frameDt, inMenu);
     this.skyProbe.update(frameDt);
     {
       // Farbstimmung der Nachbearbeitung nach Tageszeit (Mondlicht-Blau nachts, Bernstein zur goldenen Stunde)
       const pal = this.world.env.palette;
       const dark = 1 - pal.sunVis;
-      const nightK = Math.min(1, Math.max(0, (dark - 0.2) / 0.7));
-      const lowSun = Math.min(1, Math.max(0, (0.5 - pal.sunDir.y) / 0.38));
+      const nightK = clamp01((dark - 0.2) / 0.7);
+      const lowSun = clamp01((0.5 - pal.sunDir.y) / 0.38);
       this.renderer.setMood(nightK, pal.sunVis * lowSun);
     }
     // Gegner, Crew und Stadtleute zwischen den 60-Hz-Logikschritten weich darstellen
@@ -446,17 +547,28 @@ export class Game {
       if (this.save) {
         const hp = this.world.playerHp;
         const p = this.save.player;
-        this.hud.setStats(hp ? hp.hp / hp.max : 1, p.xp / PLAYER_BASE.xpNeed(p.level), p.gold);
+        this.hud.setStats(hp ? hp.hp / hp.max : 1, p.xp / PLAYER_BASE.xpNeed(p.level), p.gold, hp ? { now: hp.hp, max: hp.max } : null);
         const stm = this.world.playerStamina;
         this.hud.setStamina(stm ? stm.frac : null, !!stm?.flash);
         const sh = this.world.ship;
-        this.hud.setSea(this.world.mode === 'sail' ? {
-          hull: sh.hull / sh.maxHull, sail: sh.sail, crew: sh.crew, level: SAIL_LEVELS[sh.sailLevel].n, ammo: AMMO[sh.ammo].n,
-          reloadL: sh.reloadL / this.world.reloadTime, reloadR: sh.reloadR / this.world.reloadTime, windRel: this.world.env.windDir - sh.heading, fire: sh.fire > 0,
-          repair: sh.sim.repair ? 1 - sh.sim.repair.left / sh.sim.repair.total : null, tip: shipTooltip(sh.sim),
-        } : null);
+        const sailing = this.world.mode === 'sail';
+        this.hud.setSea(sailing ? this.seaView(sh) : null);
+        // Steuerkompass (Kurs und Wind) und Sektor-Einblendung beim Überqueren einer Grenze
+        const where = sectorLabel(this.world.playerPos.x, this.world.playerPos.z);
+        this.helm.setVisible(sailing);
+        if (sailing) this.helm.update({ heading: sh.heading, windRel: this.world.env.windDir - sh.heading, wind: this.world.env.weather.p.wind, sector: where });
+        this.sectorBanner.update(sailing && !this.world.raid ? where : null);
+        {
+          // Besatzung in einer Zeile: Offiziere A/B | Truppen X/Y (+ Befehlsknöpfe [1] [2] [3], solange Trupps im Einsatz sind)
+          const ch = this.world.crewHud, tier = this.save.ship.tier;
+          const slots = officerSlots(tier);
+          const show = this.save.crew.hired.length > 0 || ch.troopMax > 0;
+          const b = this.input.getKeyBindings();
+          const keys = COMMANDS.map((c) => this.input.keyLabel(b[COMMAND_ACTIONS[c.id]][0] ?? ''));
+          this.hud.setCrewLine(show ? { officers: ch.officers, slots, troops: ch.troops, troopMax: ch.troopMax, cmds: ch.commands ? keys : null, active: ch.command } : null);
+        }
         const fj = this.world.faji;
-        this.hud.setFaji(fj ? fj.faji / fj.maxFaji : 1, this.save.skills.sp);
+        this.hud.setFaji(fj ? fj.faji / fj.maxFaji : 1, this.save.skills.sp, fj?.faji, fj?.maxFaji);
         if (fj) {
           const views = fj.slots();
           const foot = this.world.mode === 'foot';
@@ -476,7 +588,14 @@ export class Game {
         : this.input.lastDevice === 'gamepad' ? 'X' : null;
       this.hud.setContext(this.world.contextLabel, key);
       this.updateQuestHud(frameDt);
-      this.hud.setItemBar(this.input.lastDevice !== 'touch', this.itemBarViews(), (['item1', 'item2', 'item3', 'item4'] as const).map((a) => this.input.keyLabel(this.input.getKeyBindings()[a][0] ?? '')));
+      {
+        // Befehlsmodus der Schnellleiste: welche Plätze gerade ein Truppenbefehl belegt (gleiche Taste), sonst null
+        const b = this.input.getKeyBindings();
+        const items = ['item1', 'item2', 'item3', 'item4'] as const;
+        const cmdMode = this.world.squadsActive && this.world.mode === 'foot';
+        const cmd = cmdMode ? items.map((a) => { const c = commandOnKey(b, a); return c ? COMMANDS.find((x) => x.id === c)!.short : null; }) : null;
+        this.hud.setItemBar(this.input.lastDevice !== 'touch', this.itemBarViews(), items.map((a) => this.input.keyLabel(b[a][0] ?? '')), cmd);
+      }
       // Erst die Auflösung anpassen (unsichtbarer), die ganze Grafikstufe erst senken, wenn das nicht reicht
       // Leistungs-Wächter: unter 50 fps zuerst unsichtbare Last abbauen (Schatten, AO, Vegetation), erst danach Auflösung und Grafikstufe
       if (s.qualityAuto) {
@@ -550,16 +669,55 @@ export class Game {
       audio.surface = w.onDeck ? 'holz' : dTown < 70 ? 'stein' : 'sand';
       const wp = env.weather.p;
       const edge = Math.hypot(pos.x, pos.z);
+      // Umgebung nach Fahrt, Seegang und Küstennähe: knarzendes Holz, Wind in den Segeln, Bugwelle, Möwen nur in Küstennähe
+      const sailing = w.mode === 'sail';
+      const speed01 = sailing ? Math.min(1, Math.abs(w.ship.speed) / 14) : 0;
+      let coast = 9999;
+      for (const i of w.islandDefs) coast = Math.min(coast, Math.hypot(i.x - pos.x, i.z - pos.z) - i.r);
+      const coastal = Math.max(0, 1 - coast / 340);
+      const calmDock = sailing && !!w.ship.moored;
       audio.setAmbience({
         waves: w.mode === 'foot' ? 0.55 : 0.95, wind: 0.15 + wp.wind * 0.85, rain: wp.rain,
-        town: Math.max(0, 1 - dTown / 170), gulls: night || wp.rain > 0.3 ? 0.05 : 0.55,
-        deep: Math.max(0, Math.min(1, (edge - (EDGE_WALL - 450)) / 400)),
+        town: Math.max(0, 1 - dTown / 170), gulls: night || wp.rain > 0.3 ? 0.05 : 0.08 + 0.55 * coastal,
+        deep: clamp01((edge - (EDGE_WALL - 450)) / 400),
+        sailwind: sailing && !calmDock ? Math.min(1, wp.wind) * (0.3 + 0.7 * speed01) : 0,
+        bow: calmDock ? 0 : speed01,
+        creak: sailing ? Math.min(1, (calmDock ? 0.25 : 0.12) + 0.45 * Math.min(1, wp.waves / 2.7) + 0.4 * speed01) : w.onDeck ? 0.25 : 0,
       });
+      audio.setMusicContext(this.musicContext(w, pos, dTown, threat));
     } else if (this.state.is('menu', 'boot')) {
       audio.setMood('menu');
-      audio.setAmbience({ waves: 0.8, wind: 0.2, rain: 0, town: 0, gulls: 0.4, deep: 0 });
+      audio.setMusicContext(IDLE_MUSIC);
+      audio.setAmbience({ waves: 0.8, wind: 0.2, rain: 0, town: 0, gulls: 0.4, deep: 0, sailwind: 0, bow: 0, creak: 0 });
     }
     audio.update(dt);
+  }
+
+  /**
+   * Lage für den MusicDirector: Region unter der Spielfigur (Ankerglück im Kernmeer, sonst das Kuchenstück, an Marine-Festungen die Marine),
+   * Hafen, Fahrt, Wetter, Gefahr, Schlacht, Entern und Belagerung.
+   */
+  private musicContext(w: SeaWorld, pos: { x: number; z: number }, dTown: number, threat: number): MusicContext {
+    const wp = w.env.weather.p;
+    let sector: MusicSector = regionAt(pos.x, pos.z).id === BERNSTEINSEE.id ? 'ankergluck' : sectorAt(pos.x, pos.z).factionId;
+    let harborSector: MusicSector = sector;
+    let harbor = !!w.ship.moored && w.mode === 'sail';
+    for (const i of w.islandDefs) {
+      const d = Math.hypot(i.x - pos.x, i.z - pos.z);
+      if (i.kind === 'marinefort' && d < i.r + 520) sector = 'marine';
+      if ((i.kind === 'town' || i.kind === 'harbor') && d < i.r + 110) {
+        harbor = true;
+        harborSector = i.kind === 'town' ? 'ankergluck' : (regionAt(i.x, i.z).id === BERNSTEINSEE.id ? 'ankergluck' : sectorAt(i.x, i.z).factionId);
+      }
+    }
+    const speed = w.mode === 'sail' ? Math.min(1, Math.abs(w.ship.speed) / 14) : 0;
+    const storm = Math.max(clamp01((wp.waves - 1.8) / 0.8), Math.min(1, wp.lightning / 6));
+    const battle = w.battleMarks.some((m) => Math.hypot(m.x - pos.x, m.z - pos.z) < 900);
+    void dTown;
+    return {
+      mode: w.mode === 'foot' ? 'foot' : 'sail', sector, harbor, harborSector, speed, wind: Math.min(1, wp.wind), storm, threat,
+      seaBattle: battle && w.mode === 'sail', boarding: w.isBoarding, raid: w.musicRaid,
+    };
   }
 
   // ---------- Fortschritt ----------
@@ -624,10 +782,10 @@ export class Game {
     const st = this.playerStats();
     this.world.setPlayerPower(st.hp, st.atk);
     this.world.setGearReduce(st.reduce);
-    this.world.shipSpeedMult = (has('nav') ? 1.15 : 1) * (has('esra') ? 1.1 : 1) * (1 + up.sail * 0.05) * (1 + (tb.speed ?? 0));
+    this.world.shipSpeedMult = (has('nav') ? 1.15 : 1) * (has('esra') ? 1.1 : 1) * (1 + up.sail * SHIP_UPGRADES.sail.perLevel) * (1 + (tb.speed ?? 0));
     this.world.ship.turnMult = has('helm') ? 1.6 : 1;
     this.world.rangeMult = has('look') ? 1.25 : 1;
-    const hullBonus = (has('carp') ? 40 : 0) + Math.round(SHIP_CLASSES[this.save.ship.tier].hp * up.hull * 0.15);
+    const hullBonus = (has('carp') ? 40 : 0) + Math.round(SHIP_CLASSES[this.save.ship.tier].hp * up.hull * SHIP_UPGRADES.hull.perLevel);
     if (hullBonus !== this.world.hullBonus) {
       this.world.hullBonus = hullBonus;
       this.world.setShip(this.save.ship.tier, this.save.ship.look, this.world.ship.ammo, this.world.ship.hull / Math.max(1, this.world.ship.maxHull), this.save.player.faction);
@@ -640,13 +798,100 @@ export class Game {
       nav.playerLevel = lvl;
       nav.playerFaction = this.save.player.faction;
       nav.playerRank = rankIndex(this.save.player.fame);
-      nav.canDmg = (12 + lvl * 1.4) * (1 + this.save.ship.tier * 0.06) * (1 + up.can * 0.12) * (has('bruno') ? 1.2 : 1) * (1 + (tb.cannon ?? 0));
+      nav.canDmg = (12 + lvl * 1.4) * (1 + this.save.ship.tier * 0.06) * (1 + up.can * SHIP_UPGRADES.can.perLevel) * (has('bruno') ? 1.2 : 1) * (1 + (tb.cannon ?? 0));
       nav.reloadMult = has('gun') ? 0.7 : 1;
     }
     // Schiffskoch: bessert den Rumpf zusätzlich aus, aber nur, solange genug Seeleute an Bord sind (siehe stepPassiveRepair)
     this.world.ship.repairBonus = has('cook') ? 1.2 : 0;
     const c = this.save.crew;
-    this.world.setCrew(c.hired, c.party, c.loyalty, lvl, (has('musik') ? 1.15 : 1) * (has('ram') ? 1.15 : 1));
+    const tier = this.save.ship.tier;
+    // Offiziere: so viele, wie die Schiffsklasse zulässt (Rest bleibt als Reserve im Spielstand); Truppen: Bestand je Typ
+    this.world.setCrew(c.hired, activeParty(c.party, tier), c.loyalty, lvl, (has('musik') ? 1.15 : 1) * (has('ram') ? 1.15 : 1), this.troopRoster());
+  }
+
+  // ---------- Massentruppen (Stufe 2) ----------
+
+  /** Bestand der Massentruppen aus dem Spielstand, auf die Kapazität des Schiffs gekappt */
+  private troopRoster(): TroopRoster {
+    const s = this.save;
+    if (!s) return {};
+    return ensureCrewState(s.crew, s.ship.tier);
+  }
+
+  /**
+   * Schiffs-Pool und Bestand je Typ gleichhalten: Beschuss auf See senkt den Pool (der Bestand schrumpft verhältnismäßig mit), Anheuern und
+   * Rückkehr aus dem Gefecht setzen beide zugleich. Im Einsatz (Trupps an Land) ruht der Abgleich.
+   */
+  private syncTroops() {
+    const s = this.save;
+    if (!s || this.world.squadsActive) return;
+    const sh = this.world.ship;
+    let roster = this.troopRoster();
+    const pool = Math.round(sh.troopHeads);
+    if (sh.troopMax <= 0) return; // ohne Truppenplätze ruht der Bestand im Spielstand
+    if (pool < rosterTotal(roster)) { roster = scaleRoster(roster, pool); s.crew.troops = roster as Record<string, number>; this.world.setTroops(roster); }
+    else if (pool > rosterTotal(roster)) this.world.ship.setTroopHeads(rosterTotal(roster));
+  }
+
+  private troopsReturned(left: TroopRoster, before: TroopRoster) {
+    const s = this.save;
+    if (!s) return;
+    const lost = rosterTotal(before) - rosterTotal(left);
+    s.crew.troops = clampRoster(cleanRoster(left), this.world.ship.troopMax) as Record<string, number>;
+    this.world.ship.setTroopHeads(rosterTotal(s.crew.troops as TroopRoster));
+    if (lost > 0) this.hud.toast(`Truppen zurück an Bord: ${lost} gefallen. Auffüllen im Hafen oder in der Werft.`, 4.5);
+    else if (rosterTotal(before) > 0) this.hud.toast('Alle Truppen kehren unversehrt an Bord zurück.', 3);
+    this.persist();
+  }
+
+  /** Befehl an Offiziere und Trupps ([1] Sturmangriff, [2] Folgen, [3] Position halten) */
+  orderTroops(c: CommandState) {
+    if (!this.state.is('play') || this.world.mode !== 'foot') return;
+    this.world.orderTroops(c);
+    audio.play('bell', 0.35);
+  }
+
+  /** Kann das Schiff Truppen tragen und darf der Spieler sie anheuern? */
+  troopStatus(): { cap: number; heads: number; rankOk: boolean; rankName: string } {
+    const s = this.save;
+    const tier = s?.ship.tier ?? 0;
+    const cap = troopCapacity(tier);
+    const heads = s ? rosterTotal(this.troopRoster()) : 0;
+    const need = Math.min(TROOP_RANK, FAME_THRESHOLDS.length - 1);
+    return { cap, heads, rankOk: !!s && rankIndex(s.player.fame) >= need, rankName: s ? rankName(s.player.faction, FAME_THRESHOLDS[need]) : '' };
+  }
+
+  /** Truppen eines Typs anheuern (Handgeld je Kopf); `heads` = gewünschte Zahl, `Infinity` = bis zur Kapazität. Liefert die Meldung. */
+  recruitTroops(typ: TroopType, heads: number): string {
+    const s = this.save;
+    if (!s || !TROOPS[typ]) return '';
+    const st = this.troopStatus();
+    if (st.cap <= 0) return 'Dieses Schiff hat keinen Platz für Truppen – erst der Leviathan trägt Massentruppen.';
+    if (!st.rankOk) return `Truppen lassen sich erst ab dem Rang „${st.rankName}“ anheuern.`;
+    this.syncTroops();
+    const roster = this.troopRoster();
+    const price = TROOPS[typ].price;
+    const room = st.cap - rosterTotal(roster);
+    if (room <= 0) return 'Die Truppen sind vollzählig.';
+    const want = Math.min(Math.floor(heads), room, Math.floor(s.player.gold / price));
+    if (want <= 0) return `${TROOPS[typ].label} kosten ${price} Gold Handgeld je Kopf.`;
+    const sh = this.world.ship;
+    const got = addTroops(roster, typ, sh.requestCrewRefill({ type: 'crewRefill', entityId: this.world.playerEntityId, shipId: sh.entityId, heads: want, pool: 'truppen', troopType: typ }), st.cap);
+    // der Pool nimmt `got` Köpfe auf; der Bestand je Typ wächst mit
+    s.crew.troops = roster as Record<string, number>;
+    s.player.gold -= got * price;
+    sh.setTroopHeads(rosterTotal(roster));
+    this.world.setTroops(roster);
+    audio.play('level', 0.5);
+    this.persist();
+    const total = rosterTotal(roster);
+    return got < want ? `${got} ${TROOPS[typ].label} angeheuert (Truppen ${total}/${st.cap}).` : `${got} ${TROOPS[typ].label} angeheuert – Truppen ${total}/${st.cap}.`;
+  }
+
+  /** Preis, den Truppen-Pool mit einem Typ ganz aufzufüllen */
+  troopFillCost(typ: TroopType): number {
+    const st = this.troopStatus();
+    return Math.max(0, st.cap - st.heads) * TROOPS[typ].price;
   }
 
   /** Gold-Bonus der Crew (Katze, Taucherin für Beute) */
@@ -670,7 +915,7 @@ export class Game {
     const [n, v] = fishes[idx];
     const gold = Math.round(v * this.goldMult());
     s.player.gold += gold;
-    if (s.gear.potions < POTION.max && Math.random() < 0.4) { s.gear.potions++; this.hud.toast(`Gefangen: ${n}! +${gold} Gold und +1 Proviant`, 3); }
+    if (s.gear.potions < PROVIANT.max && Math.random() < 0.4) { s.gear.potions++; this.hud.toast(`Gefangen: ${n}! +${gold} Gold und +1 Proviant`, 3); }
     else this.hud.toast(`Gefangen: ${n}! +${gold} Gold`, 3);
     audio.play('coin');
     this.grantXp(6 + idx * 4, 0);
@@ -726,7 +971,7 @@ export class Game {
     const def = this.world.islandDefs.find((i) => i.id === id);
     const gold = Math.round(30 + (def?.level ?? Math.max(1, Math.floor(s.player.level / 2))) * 15);
     s.player.gold += gold;
-    if (s.gear.potions < POTION.max) s.gear.potions++;
+    if (s.gear.potions < PROVIANT.max) s.gear.potions++;
     audio.play('treasure');
     this.after(() => this.overlay.showBanner('Die Dorfbewohner freuen sich', `Du bekommst ${gold} Gold und Proviant`), 700);
     this.persist();
@@ -935,7 +1180,7 @@ export class Game {
     s.player.gold -= def.price;
     s.crew.hired.push(id);
     s.crew.loyalty[id] = 10;
-    if (!def.cat && s.crew.party.length < 3) s.crew.party.push(id);
+    if (!def.cat && s.crew.party.length < officerSlots(s.ship.tier)) s.crew.party.push(id);
     if (id === 'lehrer') s.skills.sp++;
     audio.play('bell');
     this.overlay.showBanner(`${def.name} heuert an!`, def.perk);
@@ -944,15 +1189,19 @@ export class Game {
     return `„${def.quote}“`;
   }
 
-  /** Landtrupp umstellen (höchstens 3) */
+  /** Plätze im Land-/Entertrupp des aktuellen Schiffs (Schaluppe/Brigg 2, Korvette/Fregatte 3, Galeone/Linienschiff 4, Leviathan 5) */
+  officerSlots(): number { return officerSlots(this.save?.ship.tier ?? 0); }
+
+  /** Landtrupp umstellen (höchstens `officerSlots` der Schiffsklasse) */
   toggleParty(id: string): string {
     const s = this.save;
     if (!s || !s.crew.hired.includes(id) || CREW_BY_ID[id]?.cat) return '';
     const p = s.crew.party;
+    const slots = officerSlots(s.ship.tier);
     const i = p.indexOf(id);
     if (i >= 0) p.splice(i, 1);
-    else if (p.length >= 3) return 'Der Landtrupp ist voll (höchstens 3).';
-    else p.push(id);
+    else if (activeParty(p, s.ship.tier).length >= slots) return `Der Landtrupp ist voll (höchstens ${slots} auf diesem Schiff).`;
+    else p.splice(activeParty(p, s.ship.tier).length, 0, id);
     this.applyPower();
     this.persist();
     return '';
@@ -1138,9 +1387,9 @@ export class Game {
     const rar = (r: keyof typeof RARITY) => RARITY[r].col;
     const items = (): InvItem[] => {
       const out: InvItem[] = [];
-      HEADS.forEach((h) => { if (g.heads!.includes(h.id)) out.push({ key: `head:${h.id}`, cat: 'head', name: h.n, icon: '🎩', color: rar(h.rarity), desc: h.d, stat: '', equipped: g.head === h.id }); });
-      ARMOR.forEach((a, i) => { if (i <= g.armor) out.push({ key: `armor:${i}`, cat: 'armor', name: a.n, icon: ['👕', '🦺', '⛓', '🛡', '✨'][i] ?? '🛡', color: '#8AA0B8', desc: `Rüstungsstufe ${i + 1}`, stat: `+${a.hp} Leben`, equipped: armorEq(g) === i }); });
-      WEAPONS.forEach((w, i) => { if (i <= g.weapon) out.push({ key: `weapon:${i}`, cat: 'weapon', name: wl().names[i] ?? w.n, icon: s.player.style === 'faust' ? '🥊' : s.player.style === 'effekt' ? '🔮' : '🗡', color: w.col, desc: `Waffenstufe ${i + 1}`, stat: wl().stat(w, i), equipped: weaponEq(g) === i }); });
+      HEADS.forEach((h) => { if (g.heads!.includes(h.id)) out.push({ key: `head:${h.id}`, cat: 'head', name: h.n, icon: HEAD_ICON, color: rar(h.rarity), desc: h.d, stat: '', equipped: g.head === h.id }); });
+      ARMOR.forEach((a, i) => { if (i <= g.armor) out.push({ key: `armor:${i}`, cat: 'armor', name: a.n, icon: a.icon, color: '#8AA0B8', desc: `Rüstungsstufe ${i + 1}`, stat: `+${a.hp} Leben`, equipped: armorEq(g) === i }); });
+      WEAPONS.forEach((w, i) => { if (i <= g.weapon) out.push({ key: `weapon:${i}`, cat: 'weapon', name: wl().names[i] ?? w.n, icon: wl().icon, color: w.col, desc: `Waffenstufe ${i + 1}`, stat: wl().stat(w, i), equipped: weaponEq(g) === i }); });
       GEAR.forEach((d) => { if (g.owned!.includes(d.id)) out.push({ key: `gear:${d.id}`, cat: d.slot, name: d.n, icon: d.icon, color: rar(d.rarity), desc: d.d, stat: '', equipped: g.worn![d.slot] === d.id }); });
       for (const id of g.loot ?? []) {
         const d = lootDef(id);
@@ -1177,10 +1426,10 @@ export class Game {
         return {
           hands: lootView('hands') ?? worn('hands'), legs: lootView('legs') ?? worn('legs'), feet: lootView('feet') ?? worn('feet'), offhand: lootView('offhand') ?? worn('offhand'),
           shoulder: lootView('shoulder'), chest: lootView('chest'), cloak: lootView('cloak'), mainhand: lootView('mainhand'),
-          head: lootView('head') ?? (h ? { name: h.n, icon: '🎩', color: rar(h.rarity) } : none),
-          armor: { name: ARMOR[ai].n, icon: ['👕', '🦺', '⛓', '🛡', '✨'][ai] ?? '🛡', color: '#8AA0B8' },
-          weapon: { name: wl().names[wi] ?? WEAPONS[wi].n, icon: s.player.style === 'faust' ? '🥊' : s.player.style === 'effekt' ? '🔮' : '🗡', color: WEAPONS[wi].col },
-          trinket: t ? { name: t.n, icon: '📿', color: rar(t.rarity) } : none,
+          head: lootView('head') ?? (h ? { name: h.n, icon: HEAD_ICON, color: rar(h.rarity) } : none),
+          armor: { name: ARMOR[ai].n, icon: ARMOR[ai].icon, color: '#8AA0B8' },
+          weapon: { name: wl().names[wi] ?? WEAPONS[wi].n, icon: wl().icon, color: WEAPONS[wi].col },
+          trinket: t ? { name: t.n, icon: TRINKET_ICON, color: rar(t.rarity) } : none,
         };
       },
       stats: (key) => {
@@ -1274,10 +1523,130 @@ export class Game {
 
   private openHarbor(def: IslandDef) {
     if (!this.state.is('play')) return;
+    this.harborFid = def.factionId ?? (def.marine ? 'marine' : null);
     audio.play('bell');
     this.state.set('pause');
     this.menus.showHarbor('', def);
   }
+
+  // ---------- Belagerungs-Raids ----------
+
+  /** Taste an der Küste einer Festungsinsel: Belagerung vorbereiten (Marine mit hohem Dienststatus: sicherer Hafen statt Kampf) */
+  private openRaidRequest(def: IslandDef) {
+    const s = this.save;
+    if (!s || !this.state.is('play') || this.world.raid) return;
+    const access = raidAccess(def.factionId ?? 'marine', { marineStanding: s.progress.standing?.marine ?? 0, occupied: this.occupation.occupied(def.id) });
+    if (access.safeBase) { this.hud.toast(access.reason, 4); this.openHarbor(def); return; }
+    audio.play('bell');
+    this.state.set('pause');
+    this.menus.showRaid(def);
+  }
+
+  /** Daten für das Briefing-Menü */
+  raidBriefing(def: IslandDef) {
+    const s = this.save;
+    if (!s) return null;
+    const own = ownEscortsForRank(this.playerRank);
+    return {
+      access: raidAccess(def.factionId ?? 'marine', { marineStanding: s.progress.standing?.marine ?? 0, occupied: this.occupation.occupied(def.id) }),
+      conquests: this.occupation.conquests(def.id),
+      own, mercSlots: mercenarySlots(own, 0), price: MERCENARY_ESCORT_PRICE, max: ESCORT_MAX,
+      level: def.level ?? 15, playerLevel: s.player.level, firstClear: !s.progress.flags[`raidwon_${def.id}`],
+    };
+  }
+
+  /** Belagerung beginnen. Liefert eine Fehlermeldung oder null; bei Erfolg geht das Spiel weiter (Seeschlacht) */
+  beginRaid(def: IslandDef, mercs: number): string | null {
+    const s = this.save;
+    const b = this.raidBriefing(def);
+    if (!s || !b) return 'Kein Spielstand.';
+    if (!b.access.allowed) return b.access.reason;
+    const m = Math.max(0, Math.min(mercs, b.mercSlots));
+    const cost = m * b.price;
+    if (s.player.gold < cost) return 'Nicht genug Gold für die Söldner.';
+    const fid = def.factionId ?? 'marine';
+    const { raidInstanceId, seed } = newRaidInstanceId(def.id, s.meta.created + Math.floor(s.meta.playTime));
+    const ctx = createRaidContext({ raidInstanceId, factionId: fid, seed, leaderPlayerId: this.localPlayerId, escorts: b.own, mercenaries: m, flagshipId: this.world.ship.entityId });
+    s.player.gold -= cost;
+    this.menus.hide();
+    this.resume();
+    const owned = () => ({ gear: [...(s.gear.loot ?? []), ...(s.progress.unlocks?.bossLoot ?? [])], sails: s.progress.unlocks?.sails ?? [], ornaments: s.progress.unlocks?.ornaments ?? [] });
+    if (!this.world.startRaid(def, ctx, { level: b.level, playerId: this.localPlayerId, firstClear: b.firstClear, conquestsBefore: this.occupation.conquests(def.id), owned })) { s.player.gold += cost; return 'Die Belagerung kann gerade nicht beginnen.'; }
+    // Ein Angriff auf das Marine-Hauptquartier macht die Marine zum Feind
+    if (fid === 'marine') this.shiftStanding('marine', -MARINE_RAID_PENALTY);
+    this.persist();
+    return null;
+  }
+
+  /** Belagerung zu Ende (Sieg oder Rückzug): Lohn und Folgen; die Welt ist schon wiederhergestellt */
+  private raidEnded(info: RaidEnd) {
+    const s = this.save;
+    this.raidView = null;
+    this.raidPanel.update(null);
+    // das Wetter der Region gilt wieder (für die Belagerung war es auf „bewölkt“ gestellt)
+    this.enterRegion(this.region);
+    if (!s) return;
+    const def = this.world.islandDefs.find((d) => d.id === info.defId);
+    const name = def?.name ?? 'Die Festung';
+    if (info.outcome === 'victory' && info.reward) {
+      const r = info.reward;
+      s.player.gold += r.gold;
+      this.grantXp(r.xp, r.fame);
+      s.progress.flags[`raidwon_${info.defId}`] = true;
+      // Marine-Hauptquartier erobert: die Marine ist dein erbitterter Feind
+      if (info.factionId === 'marine') s.progress.standing.marine = -100;
+      // Persönliche Beute dieses Spielers (jeder Teilnehmer hat seinen eigenen Wurf) und die Besatzung der Insel
+      const mine = info.loot.find((l) => l.participantId === this.localPlayerId);
+      if (mine) this.applyRaidLoot(mine);
+      const rec = def ? this.occupation.conquer(def, info.factionId ?? 'marine') : null;
+      this.overlay.showBanner(`${name} erobert!`, `+${r.gold.toLocaleString('de-DE')} Gold · +${r.xp.toLocaleString('de-DE')} Erfahrung${info.route ? ` · Route ${info.route}` : ''}`);
+      audio.play('win');
+      audio.director?.sting('conquest');
+      if (mine && rec) this.after(() => { if (this.state.is('play')) { this.state.set('pause'); this.menus.showRaidLoot({ island: name, boss: info.bossId, items: mine.items, minutes: Math.round(((rec.occupiedUntil ?? 0) - s.meta.playTime) / 60), conquests: rec.conquestCount }); } }, 2200);
+    } else this.hud.toast(`Rückzug von ${name}: deine Flotte kehrt um. Die Festung steht noch.`, 4);
+    this.persist();
+  }
+
+  /** Die persönliche Beute des Spielers anwenden: Gold, Erfahrung, Boss-Stücke (ins Beutel und angelegt, falls besser), Segel und Verzierungen (dauerhaft) */
+  private applyRaidLoot(l: PersonalLoot) {
+    const s = this.save;
+    if (!s) return;
+    ensureLoot(s.gear);
+    s.progress.unlocks ??= emptyUnlocks();
+    const u = s.progress.unlocks;
+    for (const it of l.items) {
+      switch (it.kind) {
+        case 'gold': s.player.gold += it.amount ?? 0; break;
+        case 'xp': this.grantXp(it.amount ?? 0, 0); break;
+        case 'gear': { const d = EQUIP_BY_ID[it.id]; if (d) { grantLoot(s.gear, d); if (!u.bossLoot.includes(it.id)) u.bossLoot.push(it.id); } break; }
+        case 'sail': if (!u.sails.includes(it.id)) u.sails.push(it.id); break;
+        case 'ornament': if (!u.ornaments.includes(it.id)) u.ornaments.push(it.id); break;
+      }
+    }
+    this.world.updatePlayer(this.displayLook(), this.activeStyle());
+    this.applyPower();
+  }
+
+  /** Banner oben in der Mitte: Rückeroberung (immer, solange sie droht) oder die nächste besetzte Insel in der Nähe */
+  private refreshOccBanner() {
+    if (!this.state.is('play') || this.world.raid) { this.occBanner.update(null); return; }
+    const views = this.occupation.views();
+    if (!views.length) { this.occBanner.update(null); return; }
+    const pos = this.world.playerPos;
+    let best: (typeof views)[number] | null = null, bd = Infinity;
+    for (const v of views) {
+      const d = this.world.islandDefs.find((x) => x.id === v.islandId);
+      if (!d) continue;
+      const dist = Math.hypot(d.x - pos.x, d.z - pos.z);
+      const warn = v.phase === 'endgame' && v.counter === 'inbound';
+      const score = warn ? dist - 1e6 : dist;
+      if ((warn || dist < 900) && score < bd) { bd = score; best = v; }
+    }
+    this.occBanner.update(best);
+  }
+
+  /** Besatzung einer Insel für Menüs (Hafen, Werft) */
+  islandOccupation(id: string) { return this.occupation.views().find((v) => v.islandId === id) ?? null; }
 
   /** Region betreten: Banner beim ersten Mal, vorherrschendes Wetter, Musik */
   region: RegionDef = BERNSTEINSEE;
@@ -1530,14 +1899,14 @@ export class Game {
   buyPotions(n: number): string {
     const s = this.save;
     if (!s) return '';
-    const want = Math.min(n, POTION.max - s.gear.potions);
-    const afford = Math.min(want, Math.floor(s.player.gold / POTION.price));
+    const want = Math.min(n, PROVIANT.max - s.gear.potions);
+    const afford = Math.min(want, Math.floor(s.player.gold / PROVIANT.price));
     if (want <= 0) return 'Deine Taschen sind voll.';
     if (afford <= 0) return 'Nicht genug Gold.';
     s.gear.potions += afford;
-    s.player.gold -= afford * POTION.price;
+    s.player.gold -= afford * PROVIANT.price;
     this.persist();
-    return `${afford} × ${POTION.n} gekauft.`;
+    return `${afford} × ${PROVIANT.n} gekauft.`;
   }
 
   buyShrine(): string {
@@ -1557,8 +1926,9 @@ export class Game {
   rest(): string {
     const s = this.save;
     if (!s) return '';
-    if (s.player.gold < REST_PRICE) return `Ein Bett kostet ${REST_PRICE} Gold.`;
-    s.player.gold -= REST_PRICE;
+    const price = this.restPrice();
+    if (s.player.gold < price) return `Ein Bett kostet ${price} Gold.`;
+    s.player.gold -= price;
     this.world.healPlayer();
     const env = this.world.env;
     env.time = 7;
@@ -1616,6 +1986,10 @@ export class Game {
   private mapPois(): Poi[] {
     const out: Poi[] = [];
     const qs = this.quests, s = this.save;
+    // Belagerung: Landungsplätze (Stern), Seetor (Krone), Batterien (rot), Burg (Totenkopf)
+    if (this.raidView) for (const m of this.raidView.marks) out.push({ x: m.x, z: m.z, kind: m.kind === 'slot' ? 'target' : m.kind === 'gate' ? 'citadel' : m.kind === 'battery' ? 'enemy' : 'boss', name: m.name });
+    // Besetzte Inseln (goldene Fahne) und die anrückende Rückeroberungs-Flotte (Alarm)
+    for (const p of this.occupation.pois()) out.push({ x: p.x, z: p.z, kind: p.kind, name: p.name, color: p.color });
     const foot = this.world.mode === 'foot';
     if (foot) {
       for (const e of this.world.footEnemies()) out.push({ x: e.x, z: e.z, kind: e.boss ? 'boss' : 'enemy' });
@@ -1627,7 +2001,14 @@ export class Game {
       }
       return out;
     }
-    // auf See: Boss-Inseln und Inseln mit Auftragspersonen, nur entdeckte
+    // auf See: Marine-Grenzfestungen und die sechs großen Außenfestungen (immer sichtbar: Wahrzeichen der Weltordnung)
+    for (const d of this.world.islandDefs) {
+      if (d.kind === 'marinefort' && d.marine === 'border') out.push({ x: d.x, z: d.z, kind: 'fort', name: d.name, color: FACTIONS.marine.color });
+      else if (d.kind === 'citadel' || d.marine === 'hq') out.push({ x: d.x, z: d.z, kind: 'citadel', name: d.name, color: d.marine === 'hq' ? '#F4F7FC' : d.factionId ? FACTIONS[d.factionId].color : undefined });
+    }
+    // Seeschlachten an den Grenzen (Welt-Ereignis): gekreuzte Kanonen auf Kompass, Minikarte und Seekarte
+    for (const b of this.world.battleMarks) out.push({ x: b.x, z: b.z, kind: 'battle', name: `Seeschlacht ${FACTIONS[b.a].name} gegen ${FACTIONS[b.b].name}` });
+    // Boss-Inseln und Inseln mit Auftragspersonen, nur entdeckte
     const marks = this.questIslandMarks();
     for (const d of this.world.islandDefs) {
       if (!this.world.discovered.has(d.id)) continue;
@@ -1661,6 +2042,15 @@ export class Game {
       islandMarks: this.questIslandMarks(),
       markers: { ...this.mapMarkers(), pois: undefined },
       shape: this.mapOpts.shape,
+      standing: this.save?.progress.standing,
+      battles: this.world.battleMarks,
+      occupations: this.occupation.views().map((v) => {
+        const d = this.world.islandDefs.find((x) => x.id === v.islandId);
+        const rec = this.occupation.record(v.islandId);
+        const f = d && rec && v.counter === 'inbound' ? this.occupation.fleetSpot(d, rec, this.save?.meta.playTime ?? 0) : undefined;
+        return { id: v.islandId, x: d?.x ?? 0, z: d?.z ?? 0, r: d?.r ?? 100, name: v.name, text: v.text, endgame: v.phase === 'endgame', fleet: f ? { x: f.x, z: f.z } : undefined };
+      }),
+      conquests: Object.fromEntries(this.occupation.conquered.map((r) => [r.islandId, r.conquestCount])),
     };
   }
 
@@ -1682,6 +2072,18 @@ export class Game {
     });
   }
 
+  /** Anzeige der Schiffstafel (Rumpf, Segel, Crew mit Aufschlüsselung, Geschützdeck, Munition) */
+  private seaView(sh: SeaWorld['ship']): SeaView {
+    const pools = sh.sim.crew.pools;
+    const troops = pools.truppen && pools.truppen.max > 0 ? pools.truppen : null;
+    return {
+      name: sh.cls.n, level: SAIL_LEVELS[sh.sailLevel].n, hull: sh.hull / sh.maxHull, sail: sh.sail, crew: sh.crew, ammo: sh.ammo,
+      reloadL: sh.reloadL / this.world.reloadTime, reloadR: sh.reloadR / this.world.reloadTime, fire: sh.fire > 0,
+      repair: sh.sim.repair ? 1 - sh.sim.repair.left / sh.sim.repair.total : null,
+      sailors: pools.matrosen ?? { n: 0, max: 0 }, troops, tip: shipTooltip(sh.sim),
+    };
+  }
+
   /** Kompassleiste: Punkte mit Peilung (Welt) und Entfernung */
   private updateCompass() {
     const on = this.state.is('play') && !!this.save;
@@ -1689,16 +2091,141 @@ export class Game {
     if (!on) return;
     const pos = this.world.playerPos;
     const list: CompassPoi[] = [];
-    const add = (x: number, z: number, kind: CompassPoi['kind']) => {
+    const add = (x: number, z: number, kind: CompassPoi['kind'], color?: string) => {
       const dx = x - pos.x, dz = z - pos.z;
-      list.push({ bearing: Math.atan2(dx, dz), dist: Math.hypot(dx, dz), kind });
+      list.push({ bearing: Math.atan2(dx, dz), dist: Math.hypot(dx, dz), kind, color });
     };
     const foot = this.world.mode === 'foot';
-    for (const p of this.mapPois()) if (foot ? Math.hypot(p.x - pos.x, p.z - pos.z) < (p.kind === 'enemy' ? 70 : 400) : true) add(p.x, p.z, p.kind);
+    for (const p of this.mapPois()) if (foot ? Math.hypot(p.x - pos.x, p.z - pos.z) < (p.kind === 'enemy' ? 70 : 400) : p.kind === 'fort' ? Math.hypot(p.x - pos.x, p.z - pos.z) < 2600 : true) add(p.x, p.z, p.kind, p.color);
     if (!foot) for (const e of this.world.enemyShips) if (!e.ally && Math.hypot(e.x - pos.x, e.z - pos.z) < 300) add(e.x, e.z, e.legend ? 'boss' : 'enemy');
     const t = this.questTarget();
     if (t) add(t.x, t.z, 'target');
-    this.compass.update(this.world.cameraYaw, list);
+    this.compass.update(this.world.cameraYaw, list, sectorLabel(pos.x, pos.z));
+  }
+
+  /** Ansehen bei einer Weltmacht ändern (−100 … 100); wechselt die Haltung der Marine, meldet das eine Nachricht */
+  private shiftStanding(id: FactionId, delta: number) {
+    const s = this.save;
+    if (!s) return;
+    s.progress.standing ??= {};
+    const before = s.progress.standing[id] ?? 0, after = clampStanding(before + delta);
+    s.progress.standing[id] = after;
+    if (id === 'marine' && marineStance(before) !== marineStance(after)) {
+      const st = marineStance(after);
+      this.hud.toast(`Die Marine ist dir jetzt ${STANCE_LABEL[st]} gesinnt${st === 'feindlich' ? ' – ihre Schiffe und Festungen greifen an!' : st === 'verbuendet' ? ' – kein Angriff, ihre Hauptquartiere sind tabu.' : '.'}`, 4);
+    }
+    // Dienststatus der Marine: ihre Schiffe helfen im Kampf, Weißwacht ist dein Stützpunkt
+    if (id === 'marine' && hasService(before) !== hasService(after)) this.hud.toast(hasService(after) ? 'Marine-Dienststatus erreicht: Ihre Schiffe helfen dir im Kampf, Weißwacht ist dein sicherer Stützpunkt.' : 'Der Marine-Dienststatus ist verloren.', 5);
+    // andere Mächte: Stufenwechsel melden (ab „Freundlich“ passieren ihre Schiffe friedlich)
+    if (id !== 'marine' && delta !== 0 && repTier(before).id !== repTier(after).id) {
+      this.hud.toast(`Ansehen bei ${FACTIONS[id].name}: ${repTier(after).label}${isPeaceful(after) && !isPeaceful(before) ? ' – ihre Schiffe lassen dich in ihrem Sektor friedlich passieren.' : !isPeaceful(after) && isPeaceful(before) ? ' – die friedliche Durchfahrt ist vorbei.' : '.'}`, 4);
+    }
+  }
+
+  // ---------- Fraktions-Ehre und Ruf (Seeschlachten an den Grenzen) ----------
+
+  /** Macht des Hafens, in dem der Spieler gerade liegt (Rabatt nach Ansehen); null auf See und in Ankerglück */
+  private harborFid: FactionId | null = null;
+
+  /** Rabatt der Hafenmacht (0 … 0,2) */
+  private harborK() { return this.harborFid ? harborDiscount(this.save?.progress.standing?.[this.harborFid] ?? 0) : 0; }
+  /** Faktor auf Werft-Preise (Reparatur, Ausbau): Hafenrabatt plus Baupläne, höchstens halber Preis */
+  private yardK() { return 1 - Math.min(0.5, this.harborK() + blueprintDiscount(this.save?.progress.reputation?.blueprints ?? [])); }
+  /** Faktor auf Heuer und Bett */
+  private crewK() { return 1 - this.harborK(); }
+  restPrice() { return Math.max(1, Math.round(REST_PRICE * this.crewK())); }
+
+  /** Anzeige im Hafenmenü: Ansehen bei der Hafenmacht und was es einbringt */
+  harborStanding() {
+    const f = this.harborFid;
+    if (!f) return null;
+    const st = this.save?.progress.standing?.[f] ?? 0;
+    return { name: FACTIONS[f].name, color: FACTIONS[f].color, tier: repTier(st).label, discount: this.harborK(), blueprints: blueprintDiscount(this.save?.progress.reputation?.blueprints ?? []) };
+  }
+
+  get inHarbor() { return !!this.harborFid; }
+
+  /** Daten für das Fenster „Ruf & Ehre“ */
+  reputationView() {
+    const s = this.save;
+    const rep = s?.progress.reputation ?? emptyReputation();
+    return {
+      rows: FACTION_IDS.map((id) => {
+        const st = s?.progress.standing?.[id] ?? 0;
+        return { id, name: FACTIONS[id].name, color: FACTIONS[id].color, standing: st, tier: repTier(st).label, honor: rep.honor[id] ?? 0, title: honorTitle(rep.honor[id] ?? 0), bounty: rep.bounty[id] ?? 0, discount: harborDiscount(st) };
+      }),
+      service: hasService(s?.progress.standing?.marine ?? 0),
+      blueprints: [...rep.blueprints],
+      blueprintDiscount: blueprintDiscount(rep.blueprints),
+      battles: rep.battles,
+      log: [...rep.log].reverse(),
+      gold: s?.player.gold ?? 0,
+    };
+  }
+
+  /** Kopfgeld bei einer Macht bezahlen (nur im Hafen): die Jäger lassen von dir ab, das Ansehen erholt sich etwas */
+  payBounty(f: FactionId): string {
+    const s = this.save;
+    const rep = s?.progress.reputation;
+    if (!s || !rep) return '';
+    const b = rep.bounty[f] ?? 0;
+    if (b <= 0) return 'Auf dich ist kein Kopfgeld ausgesetzt.';
+    if (!this.harborFid) return 'Kopfgeld lässt sich nur in einem Hafen begleichen.';
+    if (s.player.gold < b) return `Das Kopfgeld beträgt ${b} Gold – dafür fehlen ${b - s.player.gold}.`;
+    s.player.gold -= b;
+    delete rep.bounty[f];
+    this.shiftStanding(f, STANDING_EVENTS.bountyPaid);
+    audio.play('coin');
+    this.persist();
+    return `Kopfgeld bei ${FACTIONS[f].name} beglichen (${b} Gold).`;
+  }
+
+  /** Kopfgeld senken (zum Beispiel wenn ein Jäger versenkt wurde) */
+  private payBountyDown(f: FactionId, n: number) {
+    const rep = this.save?.progress.reputation;
+    const b = rep?.bounty[f] ?? 0;
+    if (!rep || b <= 0) return;
+    if (b - n <= 0) delete rep.bounty[f]; else rep.bounty[f] = b - n;
+  }
+
+  private battleStarted(m: BattleMark, where: string) {
+    this.hud.toast(`⚔ Seeschlacht: ${FACTIONS[m.a].name} gegen ${FACTIONS[m.b].name} im ${where}! Rauch und Geschützdonner am Horizont.`, 6);
+    audio.play('bell', 0.5);
+  }
+
+  /**
+   * Eine Seeschlacht, in die der Spieler eingegriffen hat, ist vorbei: Bilanz auswerten. Nur eine Seite beschossen = Partei ergriffen
+   * (Ehre und Ansehen beim Verbündeten; die andere Macht ist verstimmt); beide Seiten = Doppelspiel (Doppel-Loot, Waren, Bauplan, aber
+   * Ansehensverlust bei beiden Mächten und der Marine, Kopfgeld und Jäger).
+   */
+  private battleEnded(r: BattleResult) {
+    const s = this.save;
+    if (!s) return;
+    const rep = (s.progress.reputation ??= emptyReputation());
+    const o = battleOutcome(r.stats, rep.blueprints);
+    if (o.verdict.kind === 'none') return;
+    const name = (f: string) => FACTIONS[f as FactionId].name;
+    const lines: string[] = [];
+    applyOutcome(rep, o, (f, d) => this.shiftStanding(f, d), s.meta.playTime, o.text);
+    for (const [f, d] of Object.entries(o.honor)) lines.push(`Ehre ${name(f)} +${d}`);
+    for (const [f, d] of Object.entries(o.standing)) lines.push(`${name(f)} ${d > 0 ? '+' : '−'}${Math.abs(d as number)} Ansehen`);
+    if (o.verdict.kind === 'both') {
+      const got: string[] = [];
+      for (let i = 0; i < o.goods; i++) {
+        const id = ['segeltuch', 'planken', 'proviant'][i % 3];
+        if (addItem(s.gear, id, 1) > 0) got.push(CONSUMABLE_BY_ID[id].n); else s.player.gold += 60;
+      }
+      if (got.length) lines.push(`Waren: ${got.join(', ')}`);
+      if (o.blueprint) lines.push(`Bauplan ${name(o.blueprint.replace('bauplan_', ''))}: Werft −${Math.round(REP.blueprintDiscount * 100)} %`);
+      lines.push(`Kopfgeld ${Object.entries(o.bounty).map(([f, d]) => `${name(f)} ${d}`).join(', ')}`);
+      this.world.naval?.callHunters();
+    }
+    const [A, B] = r.sides;
+    this.overlay.showBanner(o.verdict.kind === 'both' ? 'Doppelspiel!' : 'Partei ergriffen!', o.verdict.kind === 'both' ? `${name(A)} und ${name(B)} jagen dich · Doppel-Loot` : o.text);
+    this.hud.toast(lines.join(' · '), 8);
+    audio.play(o.verdict.kind === 'both' ? 'crack' : 'win');
+    this.persist();
+    this.inventoryUi?.refresh();
   }
 
   private updateQuestHud(frameDt: number) {
@@ -1720,7 +2247,7 @@ export class Game {
         const dx = target.x - pos.x, dz = target.z - pos.z;
         dist = Math.hypot(dx, dz);
         const rel = this.world.cameraYaw - Math.atan2(dx, dz);
-        angle = Math.atan2(Math.sin(rel), Math.cos(rel));
+        angle = wrapAngle(rel);
       }
       const frac = 'count' in t.step && t.step.count > 1 ? Math.min(1, t.count / t.step.count) : null;
       this.hud.setQuest({ title: t.q.title, step: stepText(t.step, t.count), angle, dist, frac, main: !!t.q.main });
@@ -1824,18 +2351,33 @@ export class Game {
     this.persist();
   }
 
+  /** Erbeutete Fraktions-Segel und Verzierungen (Raid-Beute, dauerhaft): Segelmuster, Wappen und Flagge der Macht bzw. Galionsfigur und Zierstreifen */
+  get shipUnlocks() { return this.save?.progress.unlocks ?? emptyUnlocks(); }
+  applyFactionSail(fid: FactionId | null) {
+    const s = this.save;
+    if (!s) return;
+    const F = fid ? FACTIONS[fid] : null;
+    this.shipyardLook({ ...s.ship.look, power: F ? fid! : undefined, sail: F ? F.ship.sail : s.ship.look.sail });
+  }
+  applyFactionOrnament(fid: FactionId) {
+    const s = this.save;
+    if (!s) return;
+    const F = FACTIONS[fid];
+    this.shipyardLook({ ...s.ship.look, figurehead: F.ship.figurehead, stripe: F.ship.stripe });
+  }
+
   /** Reparatur kostet Gold je fehlendem Rumpfanteil */
   repairCost() {
     const sh = this.world.ship;
     const hull = (1 - sh.hull / sh.maxHull) * sh.maxHull * 0.6;
     const sail = (sh.sim.sail.max - sh.sim.sail.hp) * 0.9;
-    return Math.ceil(hull + sail);
+    return Math.ceil((hull + sail) * this.yardK());
   }
 
   /** Preis, die fehlende Besatzung aufzufüllen */
   crewRefillCost() {
     const sh = this.world.ship;
-    return Math.ceil(missingHeads(sh.sim.crew) * crewPricePerHead(this.save?.ship.tier ?? 0));
+    return Math.ceil(missingHeads(sh.sim.crew, 'matrosen') * crewPricePerHead(this.save?.ship.tier ?? 0) * this.crewK());
   }
 
   /** Taverne und Hafen: Seeleute für das Schiff anheuern (Crew-%). Gold je Kopf, wächst mit der Schiffsklasse. */
@@ -1843,18 +2385,18 @@ export class Game {
     const s = this.save;
     if (!s) return '';
     const sh = this.world.ship;
-    const miss = missingHeads(sh.sim.crew);
+    const miss = missingHeads(sh.sim.crew, 'matrosen');
     if (miss <= 0) return 'Deine Mannschaft ist vollzählig.';
-    const per = crewPricePerHead(s.ship.tier);
+    const per = crewPricePerHead(s.ship.tier) * this.crewK();
     // so viele Köpfe, wie das Gold hergibt (mindestens einer, sonst Hinweis)
     const heads = Math.min(miss, Math.floor(s.player.gold / per));
-    if (heads <= 0) return `Ein Seemann kostet ${per} Gold Handgeld.`;
-    const got = sh.requestCrewRefill({ type: 'crewRefill', entityId: this.world.playerEntityId, shipId: sh.entityId, heads });
+    if (heads <= 0) return `Ein Seemann kostet ${Math.ceil(per)} Gold Handgeld.`;
+    const got = sh.requestCrewRefill({ type: 'crewRefill', entityId: this.world.playerEntityId, shipId: sh.entityId, heads, pool: 'matrosen' });
     s.player.gold -= Math.ceil(got * per);
     audio.play('level', 0.5);
     this.persist();
-    const h = crewHeads(sh.sim.crew);
-    return missingHeads(sh.sim.crew) <= 0 ? `Die Mannschaft ist vollzählig: ${Math.round(h.n)} Seeleute, Crew 100 %.` : `${Math.round(got)} Seeleute angeheuert (Crew ${Math.round(crewFrac(sh.sim.crew) * 100)} %) – mehr kann das Gold nicht bezahlen.`;
+    const h = sh.sim.crew.pools.matrosen;
+    return missingHeads(sh.sim.crew, 'matrosen') <= 0 ? `Die Mannschaft ist vollzählig: ${Math.round(h.n)} Seeleute, Crew 100 %.` : `${Math.round(got)} Seeleute angeheuert (Crew ${Math.round(crewFrac(sh.sim.crew) * 100)} %) – mehr kann das Gold nicht bezahlen.`;
   }
 
   /**
@@ -1887,15 +2429,15 @@ export class Game {
     return false;
   }
 
-  upgradeCost(k: 'can' | 'hull' | 'sail') {
+  upgradeCost(k: ShipUpgradeId) {
     const s = this.save;
     if (!s) return 0;
-    return Math.round((s.ship.up[k] + 1) * 350 * (1 + s.ship.tier * 0.4));
+    return Math.round((s.ship.up[k] + 1) * 350 * (1 + s.ship.tier * 0.4) * this.yardK());
   }
 
-  shipUpgrade(k: 'can' | 'hull' | 'sail'): string {
+  shipUpgrade(k: ShipUpgradeId): string {
     const s = this.save;
-    if (!s || s.ship.up[k] >= 5) return '';
+    if (!s || s.ship.up[k] >= SHIP_UPGRADE_MAX) return '';
     const cost = this.upgradeCost(k);
     if (s.player.gold < cost) return `Dafür fehlen ${cost - s.player.gold} Gold.`;
     s.player.gold -= cost;
@@ -2133,6 +2675,9 @@ export class Game {
   }
 
   private enterPlay(slot: number, data: SaveData) {
+    this.world.abortRaid();
+    this.raidPanel.update(null);
+    this.raidView = null;
     this.session++;
     this.slot = slot;
     this.save = data;
@@ -2145,7 +2690,12 @@ export class Game {
     this.itemCd.clear();
     if (this.assets) this.world.setCharacters(this.assets, this.displayLook(data), this.activeStyle(data), this.overlay);
     this.world.setSkills(data.skills, p.level);
-    this.world.setShip(data.ship.tier, data.ship.look, data.ship.ammo, data.ship.hull, p.faction, data.ship.sail ?? 1, data.ship.crew ?? 1);
+    {
+      // Zwei-Stufen-Crew: Seeleute-Anteil und Truppen aus dem Spielstand (ältere Spielstände haben `crewPools`/`troops` nicht: alles bleibt voll/leer)
+      const roster = ensureCrewState(data.crew, data.ship.tier);
+      const pools = savedPools(data.ship, roster, data.ship.tier);
+      this.world.setShip(data.ship.tier, data.ship.look, data.ship.ammo, data.ship.hull, p.faction, data.ship.sail ?? 1, pools.matrosen, rosterTotal(roster));
+    }
     this.quests = new QuestSystem(data.progress, p.faction, {
       completed: (q) => this.onQuestDone(q),
       advanced: (_q, next) => this.hud.toast(`Neues Ziel: ${next.text}`, 3.5),
@@ -2157,6 +2707,8 @@ export class Game {
       disc.add('ankerglueck');
       this.world.discovered = disc;
     }
+    this.occupation.reset();
+    this.occupation.sync();
     this.after(() => this.startAutoChapters(), 2500);
     this.applyPower();
     this.world.healPlayer();
@@ -2183,6 +2735,7 @@ export class Game {
 
   resume() {
     if (!this.state.is('pause')) return;
+    this.harborFid = null;
     this.menus.hide();
     this.input.flush();
     this.sceneChanged(4);
@@ -2191,6 +2744,11 @@ export class Game {
   }
 
   quitToMenu() {
+    this.world.abortRaid();
+    this.occupation.reset();
+    this.occBanner.update(null);
+    this.raidPanel.update(null);
+    this.raidView = null;
     this.session++;
     this.persist();
     this.save = null;
@@ -2210,7 +2768,10 @@ export class Game {
     const sh = this.world.ship;
     this.save.ship.hull = sh.maxHull > 0 ? Math.max(0.05, sh.hull / sh.maxHull) : 1;
     this.save.ship.sail = sh.sail;
+    this.syncTroops();
     this.save.ship.crew = sh.crew;
+    this.save.ship.crewPools = { matrosen: sh.crew, truppen: sh.troopMax > 0 ? sh.troopHeads / sh.troopMax : 0 };
+    this.save.crew.officerSlots = officerSlots(this.save.ship.tier);
     this.save.ship.ammo = sh.ammo;
     const ok = this.saves.save(this.slot, this.save);
     if (!ok && !this.saveFailedShown) {
@@ -2260,9 +2821,14 @@ export class Game {
   private applySettings() {
     const s = this.settings.data;
     document.documentElement.style.setProperty('--text-scale', String(s.textScale));
+    document.documentElement.style.setProperty('--hud-scale', String(s.hudScale));
+    this.touch.setScale(s.hudScale);
+    this.sectorBanner.enabled = s.sectorBanner;
+    this.overlay.numbers = s.damageNumbers;
     this.input.setKeyBindings(s.keyBindings);
     this.input.invertY = s.invertLookY;
     audio.setVolumes(s.volume);
+    audio.muteWhenUnfocused = s.muteWhenUnfocused;
     document.documentElement.classList.toggle('cb', s.colorblind);
     mapPalette.colorblind = s.colorblind;
     if (!s.dynamicResolution) this.renderer?.resetDynamicResolution();
@@ -2273,6 +2839,8 @@ export class Game {
     const mode = this.settings.data.touchControls;
     const show = this.state.is('play') && (mode === 'on' || (mode === 'auto' && this.input.lastDevice === 'touch'));
     this.touch.setVisible(show);
+    // die Oberfläche lässt unten Platz für die Touch-Knöpfe (css/hud.css)
+    document.documentElement.classList.toggle('touch', show);
   }
 
   private controlsHint(): string {

@@ -1,7 +1,8 @@
 // Inventar: Verbrauchsgüter (Heilung, Buffs), Kopfbedeckungen und die Optik der Rüstungsstufen.
-// Waffen, Rüstungen und Talismane stehen weiter in data/regions.ts bzw. data/trinkets.ts – hier nur, was das Inventar zusätzlich braucht.
+// Alle Werte der Ausrüstung an einer Stelle: Waffen- und Rüstungsstufen (Schmied), Kopfbedeckungen, Schienen, Stiefel und Schilde, Verbrauchsgüter
+// und die Preise der Läden. Talismane stehen in data/trinkets.ts, Rüstungssets in data/gear.ts, Seltenheiten in data/rarity.ts.
 import type { Coat, Hat, Outfit } from './characterParts';
-import type { Rarity } from './trinkets';
+import type { Rarity } from './rarity';
 import type { RepairMaterial } from '../sim/intents';
 
 /** Plätze für einzeln gekaufte Ausrüstungsstücke (seit Spielstand 11) */
@@ -51,6 +52,12 @@ export const CONSUMABLES: ConsumableDef[] = [
 ];
 
 export const CONSUMABLE_BY_ID: Record<string, ConsumableDef> = Object.fromEntries(CONSUMABLES.map((c) => [c.id, c]));
+
+/** Proviant (Taste H, Markt): liegt im Spielstand in gear.potions; Preis, Heilung und Höchstzahl stehen nur hier */
+export const PROVIANT = CONSUMABLE_BY_ID.proviant as ConsumableDef & { heal: number };
+/** Symbol der Kopfbedeckungen und Talismane im Inventar */
+export const HEAD_ICON = '🎩';
+export const TRINKET_ICON = '📿';
 
 /** Pause zwischen zwei beliebigen Gütern der Leiste (verhindert Leertrinken im Kampf) */
 export const GLOBAL_ITEM_CD = 1.2;
@@ -129,3 +136,60 @@ export const ARMOR_LOOK: ({ outfit?: Outfit; outfitColor?: string; coat?: Coat; 
 
 /** Plätze der Schnellleiste (Tasten 1–4) */
 export const BAR_SLOTS = 4;
+
+// ---------- Waffen und Rüstungen (Stufen, gekauft beim Schmied) ----------
+
+export interface WeaponDef { n: string; dmg: number; price: number; rank: number; col: string; glow?: boolean }
+export const WEAPONS: WeaponDef[] = [
+  { n: 'Rostiger Säbel', dmg: 0, price: 0, rank: 0, col: '#8C8C8C' },
+  { n: 'Stahlklinge', dmg: 6, price: 220, rank: 0, col: '#C9D2DA' },
+  { n: 'Damastklinge', dmg: 14, price: 750, rank: 2, col: '#9FB4C8' },
+  { n: 'Sturmklinge', dmg: 25, price: 1900, rank: 4, col: '#7FD6FF', glow: true },
+  { n: 'Gezeitenklinge', dmg: 40, price: 4800, rank: 6, col: '#FFD166', glow: true },
+  { n: 'Himmelsschneide', dmg: 60, price: 11000, rank: 8, col: '#FF8AD8', glow: true },
+];
+
+/**
+ * Waffenlinien je Kampfstil: gleiche Stufen, Preise und Schadenswerte wie WEAPONS,
+ * aber eigene Namen, eigenes Symbol, eigenes Aussehen und ein kleiner Stilbonus.
+ */
+export interface WeaponLine { title: string; icon: string; names: string[]; stat: (w: WeaponDef, tier: number) => string; flavor: string }
+export const WEAPON_LINES: Record<'faust' | 'schwert' | 'effekt', WeaponLine> = {
+  schwert: {
+    title: 'Klingen',
+    icon: '🗡',
+    names: WEAPONS.map((w) => w.n),
+    stat: (w) => `+${w.dmg} Schaden${w.glow ? ' · leuchtet' : ''}`,
+    flavor: 'Grete schmiedet dir jede Klingenform – Säbel, Langklinge, Zweihänder oder Doppelklingen.',
+  },
+  faust: {
+    title: 'Kampfhandschuhe',
+    icon: '🥊',
+    names: ['Lederwickel', 'Eisenknöchel', 'Stahlfäuste', 'Sturmfäuste', 'Gezeitenfäuste', 'Himmelsfäuste'],
+    stat: (w, t) => `+${w.dmg} Schlagkraft · +${t * 2} % Volltreffer${w.glow ? ' · leuchtet' : ''}`,
+    flavor: 'Beschlagene Handschuhe: jeder Schlag sitzt härter, Volltreffer werden häufiger.',
+  },
+  effekt: {
+    title: 'Faji-Foki',
+    icon: '🔮',
+    names: ['Holzamulett', 'Bernsteinfokus', 'Runenstein', 'Sturmkristall', 'Gezeitenperle', 'Himmelsauge'],
+    stat: (w, t) => `+${w.dmg} Faji-Kraft · +${t * 5} % Faji-Erholung${w.glow ? ' · leuchtet' : ''}`,
+    flavor: 'Ein Fokus bündelt dein Faji: stärkere Geschosse, schneller wieder bereit.',
+  },
+};
+
+export interface ArmorDef { n: string; icon: string; hp: number; price: number; rank: number }
+export const ARMOR: ArmorDef[] = [
+  { n: 'Leinenhemd', icon: '👕', hp: 0, price: 0, rank: 0 },
+  { n: 'Lederweste', icon: '🦺', hp: 40, price: 200, rank: 0 },
+  { n: 'Kettenhemd', icon: '⛓', hp: 95, price: 700, rank: 2 },
+  { n: 'Gezeitenpanzer', icon: '🛡', hp: 170, price: 2300, rank: 5 },
+  { n: 'Faji-Harnisch', icon: '✨', hp: 280, price: 6500, rank: 7 },
+];
+
+// ---------- Preise der Läden ----------
+
+/** Faji-Punkt im Schrein: Preis steigt mit jedem Kauf */
+export const SHRINE_PRICE = (bought: number) => 300 + bought * 250;
+/** Übernachten in der Taverne */
+export const REST_PRICE = 20;

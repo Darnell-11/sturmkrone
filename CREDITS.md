@@ -16,6 +16,7 @@ Herkunft und Lizenz jedes fremden Assets und jeder Bibliothek.
 |---|---|---|---|
 | IM Fell English SC | Igino Marini | SIL Open Font License 1.1 | https://fontsource.org/fonts/im-fell-english-sc |
 | Alegreya Sans | Juan Pablo del Peral (Huerta Tipográfica) | SIL Open Font License 1.1 | https://fontsource.org/fonts/alegreya-sans |
+| Barlow Semi Condensed | Jeremy Tribby | SIL Open Font License 1.1 | https://fontsource.org/fonts/barlow-semi-condensed |
 
 ## 3D-Modelle und Animationen
 

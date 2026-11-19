@@ -1,6 +1,8 @@
 import { CREW_BY_ID, defaultParty } from '../../data/crew';
+import { officerSlots } from '../../data/crewTiers';
 import { defaultLook, type CharacterLook } from '../../data/characterParts';
 import { defaultProgress, defaultShip, SAVE_VERSION, type Faction, type FightStyle, type SaveData, type SkillState } from './types';
+import { finiteOr } from '../sanitize';
 
 /** localStorage-Schlüssel von Sturmkrone 1.0 */
 export const LEGACY_KEY = 'sturmkrone-saga-1';
@@ -11,7 +13,6 @@ export function isLegacy10(raw: unknown): raw is Record<string, any> {
   return r.v === 1 && typeof r.lvl === 'number' && (r.faction === 'pirat' || r.faction === 'marine');
 }
 
-const num = (v: unknown, d: number) => (typeof v === 'number' && isFinite(v) ? v : d);
 const hex = (v: unknown) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : undefined);
 
 /** Übersetzt den einfachen Look aus 1.0 (bzw. Spielstand-Version 1/2) in den Charakter-Editor 2.0. */
@@ -40,7 +41,7 @@ export function lookFromLegacy(raw: unknown, faction: Faction, style: FightStyle
 
 /** Wandelt einen 1.0-Spielstand in das 2.0-Format (Version 1) um. Nichts geht verloren: Alles liegt zusätzlich in legacy10. */
 export function convertLegacy10(raw: Record<string, any>, gameVersion: string, now = Date.now()): SaveData {
-  const up = (v: unknown) => Math.max(0, Math.min(5, Math.floor(num(v, 0))));
+  const up = (v: unknown) => Math.max(0, Math.min(5, Math.floor(finiteOr(v, 0))));
   const hired: string[] = Array.isArray(raw.crew) ? raw.crew.filter((c: unknown) => typeof c === 'string' && CREW_BY_ID[c as string]) : [];
   const style: FightStyle = ['faust', 'schwert', 'effekt'].includes(raw.style) ? raw.style : 'schwert';
   const look = lookFromLegacy(raw.look, raw.faction as Faction, style);
@@ -52,30 +53,30 @@ export function convertLegacy10(raw: Record<string, any>, gameVersion: string, n
       faction: raw.faction as Faction,
       style,
       blade: typeof raw.blade === 'string' ? raw.blade : 'saebel',
-      level: Math.max(1, Math.floor(num(raw.lvl, 1))),
-      xp: Math.max(0, num(raw.xp, 0)),
-      gold: Math.max(0, num(raw.gold, 0)),
-      fame: Math.max(0, num(raw.ruhm, 0)),
+      level: Math.max(1, Math.floor(finiteOr(raw.lvl, 1))),
+      xp: Math.max(0, finiteOr(raw.xp, 0)),
+      gold: Math.max(0, finiteOr(raw.gold, 0)),
+      fame: Math.max(0, finiteOr(raw.ruhm, 0)),
       look,
     },
     // Die 1.0-Welt hatte andere Koordinaten – das Schiff startet neu am Hafen.
     world: { boat: null, time: 9, weather: 'klar' },
     progress: {
-      ...defaultProgress(),
+      ...defaultProgress(raw.faction as Faction),
       flags: raw.flags && typeof raw.flags === 'object' ? { ...raw.flags } : {},
-      quest: Math.max(0, Math.floor(num(raw.quest, 0))),
+      quest: Math.max(0, Math.floor(finiteOr(raw.quest, 0))),
       stats: {
-        kills: Math.max(0, Math.floor(num(raw.stats?.beaten, 0))), sunk: Math.max(0, Math.floor(num(raw.stats?.sunk, 0))),
-        boarded: Math.max(0, Math.floor(num(raw.stats?.boarded, 0))), treasures: 0, rescued: 0,
+        kills: Math.max(0, Math.floor(finiteOr(raw.stats?.beaten, 0))), sunk: Math.max(0, Math.floor(finiteOr(raw.stats?.sunk, 0))),
+        boarded: Math.max(0, Math.floor(finiteOr(raw.stats?.boarded, 0))), treasures: 0, rescued: 0,
       },
     },
     gear: {
-      weapon: Math.max(0, Math.min(5, Math.floor(num(raw.weapon, 0)))), armor: Math.max(0, Math.min(4, Math.floor(num(raw.armor, 0)))),
-      potions: Math.max(0, Math.min(10, Math.floor(num(raw.potions, 3)))), shrine: 0, trinkets: [], trinket: null,
+      weapon: Math.max(0, Math.min(5, Math.floor(finiteOr(raw.weapon, 0)))), armor: Math.max(0, Math.min(4, Math.floor(finiteOr(raw.armor, 0)))),
+      potions: Math.max(0, Math.min(10, Math.floor(finiteOr(raw.potions, 3)))), shrine: 0, trinkets: [], trinket: null,
     },
-    skills: skillsFromLegacy(raw, Math.max(1, Math.floor(num(raw.lvl, 1)))),
-    ship: { ...defaultShip(raw.faction as Faction, Math.max(0, Math.min(6, Math.floor(num(raw.tier, 0))))), up: { can: up(raw.up?.can), hull: up(raw.up?.hull), sail: up(raw.up?.sail) } },
-    crew: { hired, party: defaultParty(hired), loyalty: {} },
+    skills: skillsFromLegacy(raw, Math.max(1, Math.floor(finiteOr(raw.lvl, 1)))),
+    ship: { ...defaultShip(raw.faction as Faction, Math.max(0, Math.min(6, Math.floor(finiteOr(raw.tier, 0))))), up: { can: up(raw.up?.can), hull: up(raw.up?.hull), sail: up(raw.up?.sail) } },
+    crew: { hired, party: defaultParty(hired, officerSlots(6)), loyalty: {} },
     legends: raw.legends && typeof raw.legends === 'object' ? Object.keys(raw.legends).filter((k) => raw.legends[k]) : [],
     legacy10: JSON.parse(JSON.stringify(raw)),
   };

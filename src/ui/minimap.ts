@@ -1,10 +1,11 @@
 import type { IslandDef, RegionDef } from '../data/regions';
 import { WORLD_RADIUS } from '../data/world';
 import { BERNSTEINSEE } from '../data/regions';
+import { BORDERS, FACTIONS, SECTORS, type FactionId } from '../data/factions';
 
 /** Orientierungspunkte: Feinde (rot), Bosse (Totenkopf), Auftragspersonen (! Auftrag, ? Abgabe), Ziel des Auftrags */
-export type PoiKind = 'enemy' | 'boss' | 'quest' | 'turnin' | 'npc' | 'target';
-export interface Poi { x: number; z: number; kind: PoiKind; name?: string }
+export type PoiKind = 'enemy' | 'boss' | 'quest' | 'turnin' | 'npc' | 'target' | 'fort' | 'citadel' | 'alarm' | 'battle';
+export interface Poi { x: number; z: number; kind: PoiKind; name?: string; /** Farbe der Macht (Grenzfestung, Endgame-Festung) */ color?: string }
 
 /** Küstenlinie einer Insel (wie in der Welt gebaut), damit die Karte die echte Form zeigt statt eines Kreises */
 export interface ShapeLike { x: number; z: number; base?: number; r: number; coast?: { a: number; f: number; p: number }[] }
@@ -24,7 +25,7 @@ export interface MapMarkers {
 /** Farbenblind-Modus (vom Spiel gesetzt) */
 export const mapPalette = { colorblind: false };
 
-const KIND_COLOR: Record<string, string> = { town: '#E3B04B', camp: '#C0503A', boss: '#8A2A3A', quiet: '#5E9450', treasure: '#5E9450', lighthouse: '#E8E2D4', ruin: '#8A8A98', harbor: '#E3B04B' };
+const KIND_COLOR: Record<string, string> = { town: '#E3B04B', camp: '#C0503A', boss: '#8A2A3A', quiet: '#5E9450', treasure: '#5E9450', lighthouse: '#E8E2D4', ruin: '#8A8A98', harbor: '#E3B04B', marinefort: '#D8E4F4', citadel: '#8A2A3A' };
 
 export interface MapOpts {
   /** Form der Insel nach ID */
@@ -54,12 +55,24 @@ function outline(ctx: CanvasRenderingContext2D, X: (x: number) => number, Y: (z:
   } else ctx.arc(X(i.x), Y(i.z), Math.max(2, i.r * s * grow), 0, Math.PI * 2);
 }
 
+/** Ring in der Farbe der Besitzmacht um eine Insel (gestrichelt bei Kolonien in fremdem Kuchenstück) */
+function ownerRing(ctx: CanvasRenderingContext2D, X: (x: number) => number, Y: (z: number) => number, s: number, i: IslandDef) {
+  const f = i.factionId ? FACTIONS[i.factionId] : null;
+  if (!f) return;
+  ctx.strokeStyle = f.color;
+  ctx.lineWidth = i.kind === 'citadel' || i.marine ? 3.2 : 2.2;
+  if (i.exclave) ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.arc(X(i.x), Y(i.z), Math.max(6, i.r * s * 1.55), 0, Math.PI * 2); ctx.stroke();
+  ctx.setLineDash([]);
+}
+
 /** Eine Insel mit Brandungsring, Sand, Grün und (auf großen Karten) Namen */
 function drawIsland(ctx: CanvasRenderingContext2D, X: (x: number) => number, Y: (z: number) => number, s: number, i: IslandDef, shape: ShapeLike | undefined, label: 0 | 1 | 2, known = true) {
   if (!known) {
     ctx.strokeStyle = 'rgba(232,214,170,0.35)'; ctx.setLineDash([3, 4]); ctx.lineWidth = 1.2;
     ctx.beginPath(); ctx.arc(X(i.x), Y(i.z), Math.max(4, i.r * s), 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle = 'rgba(232,214,170,0.5)'; ctx.font = '800 11px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('?', X(i.x), Y(i.z) + 4);
+    ownerRing(ctx, X, Y, s, i);
     return;
   }
   // Flachwasser-Ring, Sand, Landfläche: die echte Form (Küstenlinie)
@@ -69,6 +82,7 @@ function drawIsland(ctx: CanvasRenderingContext2D, X: (x: number) => number, Y: 
   outline(ctx, X, Y, s, i, shape, 1); ctx.fill();
   ctx.fillStyle = KIND_COLOR[i.kind] ?? '#6DBB4C';
   outline(ctx, X, Y, s, i, shape, 0.7); ctx.fill();
+  ownerRing(ctx, X, Y, s, i);
   if (label) {
     ctx.font = label === 2 ? '700 13px "Alegreya Sans", sans-serif' : '700 10px "Alegreya Sans", sans-serif';
     ctx.textAlign = 'center';
@@ -81,7 +95,7 @@ function drawIsland(ctx: CanvasRenderingContext2D, X: (x: number) => number, Y: 
 }
 
 /** Symbole: roter Punkt, Totenkopf, Ausrufezeichen, Fragezeichen, Ziel-Stern */
-export function drawPoi(ctx: CanvasRenderingContext2D, x: number, y: number, kind: PoiKind, k = 1) {
+export function drawPoi(ctx: CanvasRenderingContext2D, x: number, y: number, kind: PoiKind, k = 1, col?: string) {
   const cb = mapPalette.colorblind;
   ctx.save();
   ctx.translate(x, y);
@@ -110,10 +124,58 @@ export function drawPoi(ctx: CanvasRenderingContext2D, x: number, y: number, kin
       ctx.textBaseline = 'alphabetic';
       break;
     }
+    case 'alarm': {
+      // Rückeroberungs-Flotte: pulsierendes rotes Warndreieck mit Ausrufezeichen
+      const p = 1 + 0.12 * Math.sin(performance.now() / 160);
+      ctx.scale(p, p);
+      ctx.fillStyle = '#FF3A2A'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(8, 6); ctx.lineTo(-8, 6); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#FFF3C8'; ctx.font = '900 10px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('!', 0, 1.5); ctx.textBaseline = 'alphabetic';
+      break;
+    }
+    case 'battle': {
+      // Seeschlacht: zwei gekreuzte Kanonenrohre mit flackerndem Mündungsfeuer in einem dunklen Medaillon mit pulsierendem Ring
+      const t = performance.now() / 1000;
+      const pl = 1 + 0.1 * Math.sin(t * 7);
+      ctx.scale(pl, pl);
+      ctx.fillStyle = 'rgba(34,20,14,0.92)'; ctx.strokeStyle = cb ? '#FFD23A' : '#FF8A3A'; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      for (const sgn of [-1, 1]) {
+        ctx.save(); ctx.rotate(sgn * 0.8);
+        ctx.fillStyle = '#D9D2C4'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(-2.1, 6); ctx.lineTo(-1.3, -6); ctx.lineTo(1.3, -6); ctx.lineTo(2.1, 6); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#7A7468'; ctx.fillRect(-2.4, 4, 4.8, 2.2);
+        // Mündungsblitz, abwechselnd an beiden Rohren
+        if (Math.sin(t * 17 + (sgn > 0 ? 0 : 2.4)) > 0.1) {
+          ctx.fillStyle = '#FFE066'; ctx.strokeStyle = '#FF6A1F'; ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2, rr = k % 2 ? 1.8 : 4; ctx.lineTo(Math.sin(a) * rr, -8 - Math.cos(a) * rr * 0.9); }
+          ctx.closePath(); ctx.fill(); ctx.stroke();
+        }
+        ctx.restore();
+      }
+      break;
+    }
     case 'npc':
       ctx.fillStyle = '#9ED0E8'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.2;
       ctx.beginPath(); ctx.arc(0, 0, 2.8, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
       break;
+    case 'fort': {
+      // Marine-Grenzfestung: weißer Schild mit blauem Anker
+      ctx.fillStyle = '#F4F7FC'; ctx.strokeStyle = '#16306A'; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.moveTo(-6, -6); ctx.lineTo(6, -6); ctx.lineTo(6, 1); ctx.quadraticCurveTo(5, 6, 0, 8); ctx.quadraticCurveTo(-5, 6, -6, 1); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = '#16306A'; ctx.lineWidth = 1.4; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(0, -4); ctx.lineTo(0, 4); ctx.moveTo(-2.4, -2); ctx.lineTo(2.4, -2); ctx.moveTo(-3.4, 1); ctx.quadraticCurveTo(0, 6.5, 3.4, 1); ctx.stroke();
+      break;
+    }
+    case 'citadel': {
+      // Endgame-Festung: Krone in der Farbe der Macht
+      ctx.fillStyle = col ?? '#E3B04B'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(-8, 5); ctx.lineTo(-8, -4); ctx.lineTo(-4, 0); ctx.lineTo(0, -7); ctx.lineTo(4, 0); ctx.lineTo(8, -4); ctx.lineTo(8, 5); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#F4EEDC'; ctx.fillRect(-8, 5, 16, 2.6); ctx.strokeRect(-8, 5, 16, 2.6);
+      break;
+    }
     case 'target':
       ctx.fillStyle = '#FFD166'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -180,7 +242,7 @@ export function drawMap(ctx: CanvasRenderingContext2D, size: number, islands: Is
   for (const p of m.pois ?? []) {
     const x = X(p.x), y = Y(p.z);
     if (mini && Math.hypot(x - size / 2, y - size / 2) > size / 2 + 6) continue;
-    ctx.save(); ctx.translate(x, y); ctx.rotate(-rot); drawPoi(ctx, 0, 0, p.kind, mini ? 0.9 : 1); ctx.restore();
+    ctx.save(); ctx.translate(x, y); ctx.rotate(-rot); drawPoi(ctx, 0, 0, p.kind, mini ? 0.9 : 1, p.color); ctx.restore();
   }
   if (m.target) {
     const tx = X(m.target.x), ty = Y(m.target.z);
@@ -230,6 +292,14 @@ export interface WorldMapData {
   islandMarks: Map<string, 'quest' | 'turnin'>;
   markers: MapMarkers;
   shape?: (id: string) => ShapeLike | undefined;
+  /** Ansehen bei den Weltmächten (Spielstand), für die Haltung der Marine im Inselfenster */
+  standing?: Partial<Record<FactionId, number>>;
+  /** Besetzte Festungsinseln (Spieler-Flagge, Countdown); im Endspurt mit der Lage der Rückeroberungs-Flotte */
+  /** Laufende Seeschlachten an den Grenzen (Mitte, beteiligte Mächte, Überlebende je Seite) */
+  battles?: { id: number; x: number; z: number; a: FactionId; b: FactionId; left: [number, number] }[];
+  occupations?: { id: string; x: number; z: number; r: number; name: string; text: string; endgame: boolean; fleet?: { x: number; z: number } }[];
+  /** Wie oft eine Festungsinsel schon erobert wurde (Insel-ID → Zahl; bleibt auch nach einer Rückeroberung) */
+  conquests?: Record<string, number>;
 }
 
 /** Bildschirmposition ↔ Welt (x gespiegelt wie überall) */
@@ -255,14 +325,37 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
   // Weltrand
   ctx.strokeStyle = 'rgba(232,214,170,0.6)'; ctx.setLineDash([8, 6]); ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(X(0), Y(0), WORLD_RADIUS * s, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
-  // Regionen: weiche Flächen mit Namen
+  // Die fünf Kuchenstücke (je 72°) in der Farbe ihrer Macht, darunter die Kernzone der Bernsteinsee
+  for (const sec of SECTORS) {
+    const a0 = (sec.fromDeg * Math.PI) / 180, a1 = (sec.toDeg * Math.PI) / 180;
+    ctx.beginPath(); ctx.moveTo(X(0), Y(0));
+    for (let k = 0; k <= 28; k++) { const a = a0 + ((a1 - a0) * k) / 28; ctx.lineTo(X(Math.sin(a) * WORLD_RADIUS), Y(Math.cos(a) * WORLD_RADIUS)); }
+    ctx.closePath();
+    ctx.fillStyle = FACTIONS[sec.factionId].color + '24'; ctx.fill();
+  }
+  // Grenzlinien: die Marine hält sie (weiß gestrichelt, von der Mitte bis zum Weltrand)
+  ctx.strokeStyle = 'rgba(236,243,255,0.6)'; ctx.setLineDash([10, 7]); ctx.lineWidth = 2;
+  for (const b of BORDERS) {
+    const a = (b.deg * Math.PI) / 180;
+    ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(Math.sin(a) * WORLD_RADIUS), Y(Math.cos(a) * WORLD_RADIUS)); ctx.stroke();
+  }
+  ctx.setLineDash([]);
   for (const r of d.regions) {
-    ctx.fillStyle = r.color + '22';
-    ctx.beginPath(); ctx.arc(X(r.x), Y(r.z), r.r * s, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = r.color + '66'; ctx.lineWidth = 1.5; ctx.stroke();
+    if (r.id === 'bernsteinsee') {
+      ctx.fillStyle = r.color + '1e';
+      ctx.beginPath(); ctx.arc(X(r.x), Y(r.z), r.r * s, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = r.color + '77'; ctx.lineWidth = 1.5; ctx.stroke();
+    }
     ctx.font = `800 ${Math.max(12, Math.min(26, r.r * s * 0.16))}px "Alegreya", serif`; ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(244,226,184,0.55)';
     ctx.fillText(r.name.toUpperCase(), X(r.x), Y(r.z) - r.r * s * 0.78);
+  }
+  // Namen der Mächte entlang der Mittellinie jedes Kuchenstücks, nahe am Rand
+  for (const sec of SECTORS) {
+    const f = FACTIONS[sec.factionId], a = (((sec.fromDeg + sec.toDeg) / 2) * Math.PI) / 180;
+    const px = X(Math.sin(a) * WORLD_RADIUS * 0.7), py = Y(Math.cos(a) * WORLD_RADIUS * 0.7);
+    ctx.font = `900 ${Math.max(13, Math.min(34, WORLD_RADIUS * s * 0.06))}px "Alegreya", serif`; ctx.textAlign = 'center';
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(8,16,28,0.7)'; ctx.strokeText(f.name.toUpperCase(), px, py); ctx.fillStyle = f.color; ctx.fillText(f.name.toUpperCase(), px, py);
   }
   const showNames = s > 0.045;
   for (const i of d.islands) {
@@ -273,8 +366,54 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
       ctx.beginPath(); ctx.arc(X(i.x), Y(i.z), Math.max(10, i.r * s * 1.5), 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
     }
     if (known && i.kind === 'boss') drawPoi(ctx, X(i.x) + i.r * s * 0.9, Y(i.z) - i.r * s * 0.9, 'boss', 1.1);
+    // Marine-Grenzfestungen und die sechs großen Außenfestungen sind immer zu sehen (auch unentdeckt): Wahrzeichen der Weltordnung
+    if (i.kind === 'marinefort' || i.kind === 'citadel') {
+      const f = i.factionId ? FACTIONS[i.factionId] : null;
+      const big = i.kind === 'citadel' || i.marine === 'hq';
+      drawPoi(ctx, X(i.x), Y(i.z) - Math.max(14, i.r * s * 1.9), big && i.marine !== 'hq' ? 'citadel' : i.marine === 'hq' ? 'citadel' : 'fort', big ? 1.5 : 1.2, i.marine === 'hq' ? '#F4F7FC' : f?.color);
+      if (!known || !showNames) {
+        ctx.font = `800 ${big ? 13 : 11}px "Alegreya Sans", sans-serif`; ctx.textAlign = 'center';
+        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(8,16,28,0.85)';
+        const ly = Y(i.z) - Math.max(14, i.r * s * 1.9) - 14;
+        ctx.strokeText(i.name, X(i.x), ly); ctx.fillStyle = '#FFF3C8'; ctx.fillText(i.name, X(i.x), ly);
+      }
+    }
     const mk = d.islandMarks.get(i.id);
     if (known && mk) drawPoi(ctx, X(i.x) + Math.max(12, i.r * s * 1.45), Y(i.z), mk, 1.2);
+  }
+  // Besetzte Inseln: goldener Ring mit Fahne und Countdown; im Endspurt pulsiert er rot, die Flotte läuft als Warnzeichen auf die Insel zu
+  for (const o of d.occupations ?? []) {
+    const x = X(o.x), y = Y(o.z), rr = Math.max(13, o.r * s * 1.5), t = performance.now() / 1000;
+    ctx.save();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = o.endgame ? `rgba(255,${Math.round(80 + 60 * Math.sin(t * 6))},50,0.95)` : 'rgba(227,176,75,0.95)';
+    ctx.setLineDash(o.endgame ? [5, 4] : []);
+    ctx.beginPath(); ctx.arc(x, y, rr, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    // Fahne
+    ctx.strokeStyle = '#1b1410'; ctx.fillStyle = '#E3B04B'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x - 2, y - rr - 16); ctx.lineTo(x - 2, y - rr + 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x - 2, y - rr - 16); ctx.lineTo(x + 12, y - rr - 11); ctx.lineTo(x - 2, y - rr - 6); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.font = '800 12px "Alegreya Sans", sans-serif'; ctx.textAlign = 'center';
+    const label = o.endgame ? `⚠ ${o.text}` : o.text;
+    ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(8,16,28,0.9)'; ctx.strokeText(label, x, y + rr + 15);
+    ctx.fillStyle = o.endgame ? '#FF8A6A' : '#FFE3A0'; ctx.fillText(label, x, y + rr + 15);
+    ctx.restore();
+    if (o.fleet) { ctx.setLineDash([4, 5]); ctx.strokeStyle = 'rgba(255,90,60,0.7)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(X(o.fleet.x), Y(o.fleet.z)); ctx.lineTo(x, y); ctx.stroke(); ctx.setLineDash([]); drawPoi(ctx, X(o.fleet.x), Y(o.fleet.z), 'alarm', 1.5); }
+  }
+  // Seeschlachten: gekreuzte Kanonen auf pulsierendem Ring, darunter „Macht ⚔ Macht“ in ihren Farben
+  for (const b of d.battles ?? []) {
+    const x = X(b.x), y = Y(b.z), t = performance.now() / 1000, rr = 20 + 3 * Math.sin(t * 5);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,138,58,0.85)'; ctx.lineWidth = 2.5; ctx.setLineDash([6, 4]);
+    ctx.beginPath(); ctx.arc(x, y, rr, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+    ctx.restore();
+    drawPoi(ctx, x, y, 'battle', 1.5);
+    const A = FACTIONS[b.a], B = FACTIONS[b.b];
+    ctx.font = '800 12px "Alegreya Sans", sans-serif'; ctx.textAlign = 'center';
+    const txt = `Seeschlacht ${A.name} ⚔ ${B.name} (${b.left[0]}:${b.left[1]})`;
+    ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(8,16,28,0.9)'; ctx.strokeText(txt, x, y + rr + 15);
+    ctx.fillStyle = '#FFB070'; ctx.fillText(txt, x, y + rr + 15);
   }
   const m = d.markers;
   for (const dg of m.digs) {

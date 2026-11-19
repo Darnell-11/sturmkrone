@@ -4,6 +4,7 @@ import { SaveManager } from '../src/core/save/saveManager';
 import { migrateSave, MIGRATIONS } from '../src/core/save/migrations';
 import { createSave, SAVE_VERSION } from '../src/core/save/types';
 import { LEGACY_KEY } from '../src/core/save/legacy';
+import { activeParty, ensureCrewState, savedPools } from '../src/core/crewRoster';
 
 const V = '2.0.0-test';
 
@@ -167,5 +168,66 @@ describe('Spielstände', () => {
     expect(r.data.gear.worn).toEqual({});
     expect(r.data.gear.armor).toBe(3);
     expect(r.data.gear.head).toBe('kopftuch');
+  });
+
+  describe('Zwei-Stufen-Crew (abwärtskompatibel, optionale Felder)', () => {
+    it('ein alter Stand ohne troops/officerSlots/crewPools lädt ohne Fehler und ohne Versionssprung', () => {
+      const old = createSave('Fynn', 'pirat', V) as Record<string, any>;
+      delete old.crew.troops; delete old.crew.officerSlots; delete old.ship.crewPools;
+      old.ship.crew = 0.6; old.crew = { hired: ['cook', 'nav'], party: ['cook', 'nav'], loyalty: { cook: 10 } };
+      const r = migrateSave(old, V);
+      if (!r.ok) throw new Error(r.error);
+      expect(r.data.version).toBe(SAVE_VERSION);
+      expect(r.data.crew.party).toEqual(['cook', 'nav']);
+      expect(r.data.crew.troops).toBeUndefined();
+      // Helfer füllen auf, ohne etwas zu löschen
+      const roster = ensureCrewState(r.data.crew, 6);
+      expect(roster).toEqual({});
+      expect(r.data.crew.troops).toEqual({});
+      expect(r.data.crew.officerSlots).toBe(5);
+      expect(r.data.crew.party).toEqual(['cook', 'nav']);
+      // Seeleute-Anteil kommt aus dem alten Feld `crew`, Truppen sind leer
+      expect(savedPools(r.data.ship, roster, 6)).toEqual({ matrosen: 0.6, truppen: 0 });
+    });
+
+    it('neue Felder überleben Speichern und Laden', () => {
+      const m = new SaveManager(new MemoryStore(), V);
+      const s = createSave('Ada', 'marine', V);
+      s.ship.tier = 6;
+      s.crew.troops = { schwert: 40, musketier: 25 };
+      s.crew.officerSlots = 5;
+      s.ship.crewPools = { matrosen: 0.75, truppen: 0.65 };
+      expect(m.save(1, s)).toBe(true);
+      const d = m.load(1).data!;
+      expect(d.crew.troops).toEqual({ schwert: 40, musketier: 25 });
+      expect(d.crew.officerSlots).toBe(5);
+      expect(d.ship.crewPools).toEqual({ matrosen: 0.75, truppen: 0.65 });
+      expect(savedPools(d.ship, ensureCrewState(d.crew, 6), 6)).toEqual({ matrosen: 0.75, truppen: 0.65 });
+    });
+
+    it('Unsinn im Bestand wird bereinigt, auf Schiffen ohne Truppenplätze ruht er (nichts geht verloren)', () => {
+      const s = createSave('Ole', 'pirat', V);
+      s.crew.troops = { schwert: 30, quatsch: 99, musketier: -5 } as Record<string, number>;
+      expect(ensureCrewState(s.crew, 2)).toEqual({});           // Korvette-Klasse: keine Truppenplätze
+      expect(s.crew.troops).toEqual({ schwert: 30 });            // …aber der Bestand bleibt erhalten
+      expect(ensureCrewState(s.crew, 6)).toEqual({ schwert: 30 });
+      s.crew.troops = { schwert: 400 };
+      expect(ensureCrewState(s.crew, 6)).toEqual({ schwert: 100 }); // auf die Kapazität gekappt
+    });
+
+    it('Reserve-Offiziere bleiben beim Wechsel auf ein kleineres Schiff erhalten', () => {
+      const party = ['a', 'b', 'c', 'd', 'e'];
+      expect(activeParty(party, 6)).toEqual(party);
+      expect(activeParty(party, 0)).toEqual(['a', 'b']);
+      expect(party).toHaveLength(5);
+    });
+
+    it('kaputte Pool-Werte fallen auf den alten Wert zurück', () => {
+      const s = createSave('Kai', 'pirat', V);
+      s.ship.crew = 0.4; s.ship.crewPools = { matrosen: Number.NaN, truppen: 3 };
+      expect(savedPools(s.ship, {}, 6).matrosen).toBe(0.4);
+      s.ship.crewPools = { matrosen: 7 };
+      expect(savedPools(s.ship, {}, 6).matrosen).toBe(1);
+    });
   });
 });

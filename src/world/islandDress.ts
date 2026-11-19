@@ -32,9 +32,33 @@ import { auditPlacement } from './placeAudit';
 import type { GlowPlaced } from '../render/glow';
 import { archGroup, hasArch } from './envModels';
 import { lighthouseBeams } from './lighthouseBeam';
-import { addPlinths, build, colliders, levelFootprint, PLINTHED, SETTLES, settleOnSlope, settleYard } from './architecture';
+import { addPlinths, build, colliders, levelFootprint, PLINTHED, SETTLES, settleOnSlope, settleYard, type Built } from './architecture';
+import { FACTIONS, type FactionId } from '../data/factions';
+import { factionBanner, factionBuilt } from './factionArch';
 import type { StructureType } from '../data/settlements';
 import { waveFlag } from '../render/flags';
+import { clamp01 } from '../core/mathUtil';
+
+/**
+ * Banner der Besitzmacht an der Landestelle einer handgebauten Insel (Festland, Palmenküste, Sturmklippe, Fährholm): `buildSite` kennt
+ * den Besitz nicht, darum setzt die Welt die Banner danach. Meidet Hindernisse; liefert die Zahl der gesetzten Banner.
+ */
+export function plantFactionBanners(group: Group, def: IslandDef, walk: WalkIsland, hAt: (x: number, z: number) => number): number {
+  if (!def.factionId) return 0;
+  const seaA = Math.atan2(-def.z, -def.x);
+  let n = 0;
+  for (const da of [-0.16, 0.16]) {
+    const a = seaA + da, d = def.r * coastK(walk.coast, a) * 0.84;
+    const x = Math.cos(a) * d, z = Math.sin(a) * d;
+    if (walk.blockers.some((b) => Math.hypot(b.x - (walk.x + x), b.z - (walk.z + z)) < (b.r ?? 2) + 3)) continue;
+    const b = factionBanner(def.factionId, 1);
+    b.g.position.set(x, hAt(x, z), z);
+    group.add(b.g);
+    walk.blockers.push({ x: walk.x + x, z: walk.z + z, r: 0.5 });
+    n++;
+  }
+  return n;
+}
 
 /** Ein Punkt in Inselkoordinaten (y = Bodenhöhe) */
 export interface Spot { x: number; y: number; z: number }
@@ -74,7 +98,7 @@ const biomeOf = (st: IslandStyle): 'festland' | 'tropisch' | 'klippe' | null =>
  * Alles wird aus dem Namen der Insel ausgewürfelt: jede Insel sieht anders aus, aber bei jedem Start gleich.
  * Liefert Baum-, Busch- und Feuerplätze für Tiere und Effekte.
  */
-export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fires: Spot[]; glows: GlowPlaced[] } {
+export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fires: Spot[]; glows: GlowPlaced[]; patrols: { x: number; z: number }[][] } {
   const { group, def, kit, walk, hAt, glow, style, veg } = o;
   const rnd = seeded(hashId(def.id) ^ 0x9e3779b9);
   const r = def.r;
@@ -82,9 +106,11 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   /** Küstenradius in einer Richtung (die Inseln sind nicht mehr rund) */
   const E = (a: number) => r * coastK(walk.coast, a);
   const trees: Spot[] = [], bushes: Spot[] = [], fires: Spot[] = [], glows: GlowPlaced[] = [];
+  /** Rundgänge der Wachen einer Festung (Inselkoordinaten): Burghof, Wehrgang, Tor – Mitte – Tor */
+  const patrols: { x: number; z: number }[][] = [];
   // belegte Flächen (Inselkoordinaten): vorhandene Hindernisse plus alles, was hier entsteht
   const taken: { x: number; z: number; r: number }[] = walk.blockers.map((b) => ({ x: b.x - walk.x, z: b.z - walk.z, r: b.r }));
-  if (def.kind === 'ruin' || def.kind === 'boss') taken.push({ x: 0, z: 0, r: 6 }); // Kristall / Bosskampf in der Mitte
+  if (def.kind === 'ruin' || def.kind === 'boss' || def.kind === 'citadel' || def.kind === 'marinefort') taken.push({ x: 0, z: 0, r: def.kind === 'citadel' || (def.kind === 'marinefort' && def.marine === 'hq') ? 14 : 8 }); // Kristall / Bosskampf in der Mitte
   // Grabstelle für Schatzkarten freihalten (gleiche Formel wie SeaLife.addDig)
   { const da = (def.x * 13 + def.z * 7) % (Math.PI * 2); taken.push({ x: Math.cos(da) * r * 0.55, z: Math.sin(da) * r * 0.55, r: 3 }); }
   /** Auf einem Weg (Erde, Pflaster) wächst nichts: Abstand zum Linienzug (Inselkoordinaten) */
@@ -93,7 +119,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       for (let i = 1; i < pa.pts.length; i++) {
         const [ax, az] = pa.pts[i - 1], [bx, bz] = pa.pts[i];
         const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
-        const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2));
+        const t = clamp01(((x - ax) * dx + (z - az) * dz) / l2);
         if (Math.hypot(x - (ax + dx * t), z - (az + dz * t)) < pa.w / 2 + 0.35 + rr) return true;
       }
     }
@@ -122,16 +148,19 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     return m;
   };
   /** Bauwerk aus world/architecture.ts aufstellen, mit seinem Kollisions-Gitter */
-  const mount = (t: StructureType, x: number, z: number, yaw: number, len?: number, sx = 1) => {
-    const b = build(t, rnd, len);
+  // `t` darf auch ein fertiger Baustein sein (Blender-Module der Weltmächte aus factionArch.ts): sie werden eingeebnet und bekommen einen Sockel
+  const mount = (t: StructureType | Built, x: number, z: number, yaw: number, len?: number, sx = 1) => {
+    const pre = typeof t !== 'string';
+    // Bauten einer Weltmacht (Tore, Türme, Mauern …) tragen die Farbwelt ihrer Macht (architecture.ts, THEMED_TYPES)
+    const b = pre ? t : build(t, rnd, len, def.factionId ?? null);
     if (sx !== 1) { b.g.scale.x = sx; b.boxes = b.boxes.map(([w, d, ox = 0, oz = 0, by = 0]) => [w * sx, d, ox * sx, oz, by] as [number, number, number, number, number]); }
-    if (SETTLES.has(t) || t === 'marktstand') levelFootprint(b, walk.x + x, walk.z + z, yaw, walk.addPad);
+    if (pre || SETTLES.has(t) || t === 'marktstand') levelFootprint(b, walk.x + x, walk.z + z, yaw, walk.addPad, pre ? 1.4 : 0.9);
     let y = hAt(x, z);
-    if (SETTLES.has(t)) y = settleOnSlope(b, x, z, yaw, hAt);
+    if (!pre && SETTLES.has(t)) y = settleOnSlope(b, x, z, yaw, hAt);
     else { b.g.position.set(x, y, z); b.g.rotation.y = yaw; }
     settleYard(b, x, z, yaw, hAt);
-    if (PLINTHED.has(t)) addPlinths(b, x, z, yaw, hAt);
-    auditPlacement?.(def.id, t, b.g, hAt);
+    if (pre || PLINTHED.has(t)) addPlinths(b, x, z, yaw, hAt);
+    auditPlacement?.(def.id, pre ? 'faction' : t, b.g, hAt);
     group.add(b.g);
     for (const c of colliders(b, walk.x + x, walk.z + z, yaw)) { walk.blockers.push(c); taken.push({ x: c.x - walk.x, z: c.z - walk.z, r: c.r }); }
     if (b.fire) fires.push({ x: x + b.fire[0] * Math.cos(yaw) + b.fire[2] * Math.sin(yaw), y: y + b.fire[1], z: z - b.fire[0] * Math.sin(yaw) + b.fire[2] * Math.cos(yaw) });
@@ -153,7 +182,10 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   const placedHomes: { x: number; z: number; yaw: number }[] = [];
   const home = (t: StructureType | 'rundhuette', x: number, z: number, yaw: number) => {
     placedHomes.push({ x, z, yaw });
-    if (t === 'rundhuette') { put(hut(rnd), x, z, yaw); block(x, z, 2.2); } else mount(t, x, z, yaw);
+    // Kurogane baut mit geschwungenen Dächern und dunklem Holz (Blender-Baustein haus_kuro)
+    const kuro = def.factionId === 'kurogane' && t !== 'wachturm' ? factionBuilt('kurogane', 'haus_kuro') : null;
+    if (kuro) mount(kuro, x, z, yaw);
+    else if (t === 'rundhuette') { put(hut(rnd), x, z, yaw); block(x, z, 2.2); } else mount(t, x, z, yaw);
   };
   /** Weg von der Tür eines Hauses zu einem Punkt: leicht geschwungen */
   const pathFromDoor = (h: { x: number; z: number; yaw: number }, to: { x: number; z: number }, w = 2.2) => {
@@ -177,7 +209,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
    * weil erst die Eckpunkte entlang der Küstenform berechnet werden und jedes Teil genau zwischen zwei Eckpunkten sitzt.
    * Liefert Eckpunkte, Mittelpunkte der Tore und den Radius.
    */
-  const curtainWall = (frac: number, nGates: number) => {
+  const curtainWall = (frac: number, nGates: number, opt: { towerEvery?: number; onTower?: (q: { x: number; z: number }) => void } = {}) => {
     const ringR = (a: number) => E(a) * frac;
     let avg = 0;
     for (let i = 0; i < 24; i++) avg += ringR((i / 24) * Math.PI * 2);
@@ -207,7 +239,9 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       else {
         mount('zinnenmauer', mx, mz, yaw, undefined, len / 6);
         walls++;
-        if (walls % 3 === 0 && !edges[(i + 1) % edges.length].gate) mount('zinnenturm', q.x, q.z, rnd() * 6);
+        if (walls % (opt.towerEvery ?? 3) === 0 && !edges[(i + 1) % edges.length].gate) {
+          if (opt.onTower) opt.onTower(q); else mount('zinnenturm', q.x, q.z, rnd() * 6);
+        }
       }
     });
     if (import.meta.env.DEV) ((window as unknown as { __gates?: Record<string, { x: number; z: number }[]> }).__gates ??= {})[def.id] = gates.map((g2) => ({ x: walk.x + g2.x, z: walk.z + g2.z })); // QA-Hilfe (nur Entwicklung)
@@ -223,7 +257,12 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
 
   /** Festung Nordwacht: Ringmauer mit drei Torhäusern, Bergfried, Kapelle, Lagerhäuser und Kasernen im Hof */
   const fortress = () => {
-    const { gates, avg, wa } = curtainWall(0.5, 3);
+    // Nordwacht gehört der Preußischen Marine: Granitbastionen an den Mauerecken (Blender-Baustein bastion_granit)
+    const prussian = def.factionId === 'deutschland';
+    const { gates, avg, wa } = curtainWall(0.5, 3, prussian ? {
+      towerEvery: 4,
+      onTower: (q) => { const b = factionBuilt('deutschland', 'bastion_granit'); if (b) mount(b, q.x, q.z, Math.atan2(q.x, q.z)); else mount('zinnenturm', q.x, q.z, rnd() * 6); },
+    } : {});
     const ka = wa + Math.PI + 0.35;
     const kd = avg * 0.5;
     const keep = { x: Math.cos(ka) * kd, z: Math.sin(ka) * kd };
@@ -235,6 +274,104 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       const aa = wa + an, dd = avg * f;
       const x = Math.cos(aa) * dd, z = Math.sin(aa) * dd;
       if (free(x, z, 6)) mount(t, x, z, Math.atan2(-x, -z) + (rnd() - 0.5) * 0.3);
+    }
+  };
+
+  /** Wappen-Banner der Macht auf einem Mast; `yaw` nur der Ordnung halber (das Tuch hängt zu beiden Seiten gleich) */
+  const banner = (fid: FactionId, x: number, z: number, yaw: number, k = 1) => {
+    if (!free(x, z, 0.9 * k)) return false;
+    // Das Banner bleibt ein eigenes Netz (nicht verschmolzen) und trägt die Macht: bei einer Besatzung der Insel tauscht die Welt es gegen die Flagge des Spielers
+    const b = factionBanner(fid, k);
+    mount(b, x, z, yaw);
+    // Beim Verschmelzen der Insel lösen sich die behaltenen Meshes aus ihrer Gruppe: jedes Teil trägt darum die Lage des ganzen Banners
+    const pose = { x: b.g.position.x, y: b.g.position.y, z: b.g.position.z, yaw: b.g.rotation.y, k: b.g.scale.x, fid };
+    b.g.traverse((m) => { if ((m as Mesh).isMesh) { glow.add(m as Mesh); m.userData.bannerPose = pose; } });
+    return true;
+  };
+
+  /**
+   * Große Festung einer Weltmacht (Endgame-Inseln und Marine-Anlagen): Burgring aus Mauern und Toren, an den Ecken Bausteine der Macht
+   * (Sternbastion, Granitbastion, Barockpavillon, Marine-Wachturm), im Hof ihre Gebäude (Kontore, Pavillons, Kurogane-Häuser,
+   * Zellenblöcke), Banner an jedem Tor. Der Platz in der Mitte bleibt frei: dort wartet der Kommandant.
+   */
+  const grandFortress = (fid: FactionId) => {
+    const F = FACTIONS[fid].fort;
+    const big = r > 200;
+    const outward = (q: { x: number; z: number }) => Math.atan2(q.x, q.z);
+    const inward = (x: number, z: number) => Math.atan2(-x, -z);
+    // Auf den großen Endgame-Inseln bauen die Mächte ihre Bausteine größer (Bastionen 1,8-fach, Hallen 1,4-fach), damit die Festung gewaltig wirkt
+    const kc = big ? 1.8 : 1, kh = big ? 1.4 : 1;
+    const corner = (model: string) => (q: { x: number; z: number }) => {
+      const b = factionBuilt(fid, model, kc);
+      if (b) mount(b, q.x, q.z, outward(q)); else mount('zinnenturm', q.x, q.z, rnd() * 6);
+    };
+    const onTower = F.style === 'sternfestung' ? corner('bastion_stern') : F.style === 'bastion' ? corner('bastion_granit')
+      : F.style === 'zitadelle' ? corner('wachturm_marine') : F.style === 'barock' ? corner('pavillon_barock') : undefined;
+    const fort = curtainWall(big ? 0.6 : 0.58, big ? 6 : 2, { towerEvery: big ? 9 : 4, onTower });
+    courtRoads(fort.gates, { x: 0, z: 0 });
+    // Hofgebäude im Ring um die Mitte, Türen zur Hofmitte
+    const ringAt = (items: (StructureType | Built | null)[], frac: number, a0: number, rr: number) => {
+      items.forEach((it, i) => {
+        if (!it) return;
+        const a = a0 + (i / items.length) * Math.PI * 2, d = fort.avg * frac;
+        const x = Math.cos(a) * d, z = Math.sin(a) * d;
+        if (free(x, z, rr)) mount(it, x, z, inward(x, z) + (rnd() - 0.5) * 0.12);
+      });
+    };
+    const keepA = fort.wa + Math.PI + 0.3, kx = Math.cos(keepA) * fort.avg * 0.6, kz = Math.sin(keepA) * fort.avg * 0.6;
+    const nHall = big ? 9 : 4;
+    const mk = (model: string, n: number, k = kh) => Array.from({ length: n }, () => factionBuilt(fid, model, k));
+    switch (F.style) {
+      case 'sternfestung':
+        mount('bergfried', kx, kz, inward(kx, kz));
+        ringAt(['kapelle', 'lagerhaus', 'lagerhaus', 'steinhaus', 'steinhaus', 'steinhaus', 'steinhaus', 'lagerhaus'].slice(0, nHall - 1) as StructureType[], 0.74, fort.wa + 0.25, 6.5);
+        break;
+      case 'kontor': {
+        mount('kapelle', kx, kz, inward(kx, kz));
+        ringAt([...mk('kontor_giebel', nHall), 'lagerhaus'], 0.7, fort.wa + 0.3, 7);
+        // Hafenkräne am Ufer vor der Mauer, Ausleger zum Meer
+        const seaA = Math.atan2(-def.z, -def.x);
+        for (const da of [-0.3, 0, 0.3]) {
+          const a = seaA + da, d = E(a) * 0.86, kb = factionBuilt(fid, 'kran_rad', kh);
+          if (kb && free(Math.cos(a) * d, Math.sin(a) * d, 4)) mount(kb, Math.cos(a) * d, Math.sin(a) * d, Math.PI / 2 - a);
+        }
+        break;
+      }
+      case 'bastion':
+        mount('bergfried', kx, kz, inward(kx, kz));
+        ringAt(['lagerhaus', 'steinhaus', 'lagerhaus', 'steinhaus', 'lagerhaus', 'steinhaus', 'kapelle'].slice(0, nHall - 1) as StructureType[], 0.74, fort.wa + 0.2, 6.5);
+        break;
+      case 'barock':
+        mount('kapelle', kx, kz, inward(kx, kz));
+        ringAt([...mk('pavillon_barock', big ? 7 : 3), 'lagerhaus'], 0.7, fort.wa + 0.2, 8);
+        break;
+      case 'burg': {
+        const keep = factionBuilt(fid, 'dach_kuro', big ? 1.6 : 1);
+        if (keep) mount(keep, kx, kz, inward(kx, kz)); else mount('bergfried', kx, kz, inward(kx, kz));
+        ringAt([...mk('haus_kuro', big ? 10 : 5)], 0.72, fort.wa + 0.2, 6);
+        // schwarze Tore vor den Torhäusern
+        for (const g2 of fort.gates) {
+          const tb = factionBuilt(fid, 'tor_kuro', kh), n = Math.hypot(g2.x, g2.z) || 1;
+          if (tb) mount(tb, g2.x * 1.1, g2.z * 1.1, outward({ x: g2.x / n, z: g2.z / n }));
+        }
+        break;
+      }
+      case 'zitadelle': {
+        const cells = factionBuilt(fid, 'zellenblock_marine', kh);
+        if (cells) mount(cells, kx, kz, inward(kx, kz)); else mount('bergfried', kx, kz, inward(kx, kz));
+        // Weißwacht: um das Zentrum weitere Zellenblöcke (das Gefängnis wächst in die Tiefe), davor Lager und Kapelle
+        ringAt([...(big ? mk('zellenblock_marine', 5) : [null]), 'kapelle', 'lagerhaus', 'lagerhaus'], 0.74, fort.wa + 0.15, 9);
+        break;
+      }
+    }
+    // Rundgänge für die Wachen der Besatzung (Spieler hält die Insel): Burghof, Wehrgang innen an der Mauer, von Tor zu Tor durch die Mitte
+    const ring = (frac: number, n: number, a0: number) => Array.from({ length: n }, (_, i) => { const a = a0 + (i / n) * Math.PI * 2; return { x: Math.cos(a) * fort.avg * frac, z: Math.sin(a) * fort.avg * frac }; });
+    patrols.push(ring(0.5, 8, fort.wa + 0.1), ring(0.86, 12, fort.wa + 0.4));
+    if (fort.gates.length) patrols.push(fort.gates.flatMap((g2) => [{ x: g2.x * 0.78, z: g2.z * 0.78 }, { x: 0, z: 0 }]));
+    // Banner der Macht links und rechts neben jedem Tor (außen)
+    for (const g2 of fort.gates) {
+      const n = Math.hypot(g2.x, g2.z) || 1, nx = g2.x / n, nz = g2.z / n;
+      for (const sd of [-1, 1]) banner(fid, g2.x * 1.07 - nz * 7.5 * sd, g2.z * 1.07 + nx * 7.5 * sd, outward({ x: nx, z: nz }), big ? 1.4 : 1.1);
     }
   };
 
@@ -271,7 +408,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
         // Banner: hohe Stange mit großem Tuch, aus der Luft schon weit zu erkennen
         for (const [ba, bd] of [[0.82, 4.6], [0.7, 5.4], [-0.75, 5.0], [0.5, 6.4]]) {
           const bp = cx(pa + Math.PI * ba, bd);
-          if (free(bp.x, bp.z, 0.8)) { put(flag('#8A1F1A', darkWood, 2.1), bp.x, bp.z); block(bp.x, bp.z, 0.4); break; }
+          if (free(bp.x, bp.z, 0.8)) { put(flag(def.factionId ? FACTIONS[def.factionId].fort.cloth : '#8A1F1A', darkWood, 2.1), bp.x, bp.z); block(bp.x, bp.z, 0.4); break; }
         } }
       // Feuerstelle mit Sitzbalken, zweite Feuerstelle bei den Zelten
       const fire = campfire(glow);
@@ -416,14 +553,14 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       // Hafenanlagen: Lagerhaus am Kai, Hebekran, Marktstände, Kapelle hinter den Häusern
       {
         const fa = facing;
-        const place = (t: StructureType, ang: number, frac: number, yawOff: number, rr: number) => {
+        const place = (t: StructureType | Built, ang: number, frac: number, yawOff: number, rr: number) => {
           const a = fa + ang, d = E(Math.atan2(Math.cos(a), Math.sin(a))) * frac;
           const x = Math.sin(a) * d, z = Math.cos(a) * d;
           if (free(x, z, rr)) mount(t, x, z, a + yawOff);
         };
         place('lagerhaus', 0.42, 0.7, 0.35, 7);
         place('lagerhaus', -0.5, 0.68, -0.35, 7);
-        place('kran', 0.2, 0.84, 0, 3.5);
+        place(def.factionId === 'niederlande' ? factionBuilt('niederlande', 'kran_rad') ?? 'kran' : 'kran', 0.2, 0.84, 0, 3.5);
         place('marktstand', -0.22, 0.74, Math.PI, 2.6);
         place('marktstand', -0.3, 0.7, Math.PI + 0.3, 2.6);
         place('kapelle', 0.05, 0.28, 0, 7);
@@ -514,6 +651,20 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       const q = { x: Math.cos(qa) * 11, z: Math.sin(qa) * 11 };
       if (free(q.x, q.z, 4)) { mount('steinhaus', q.x, q.z, Math.atan2(-q.x, -q.z)); paths.push({ pts: [[q.x * 0.72, q.z * 0.72], [q.x * 0.36, q.z * 0.36], [0, 0]], w: 2.2 }); }
       break;
+    }
+    case 'citadel': case 'marinefort': {
+      // Festungsinseln der Weltmächte und der Marine (data/factions.ts): in der Mitte wartet der Kommandant
+      if (def.factionId) grandFortress(def.factionId);
+      break;
+    }
+  }
+
+  // ---------- Besitz: Banner der Macht an der Landestelle ----------
+  if (def.factionId && def.kind !== 'citadel' && def.kind !== 'marinefort') {
+    const seaA = Math.atan2(-def.z, -def.x); // Richtung zur Weltmitte: dort legen die meisten Schiffe an
+    for (const da of [-0.14, 0.14]) {
+      const a = seaA + da, d = E(a) * 0.84;
+      banner(def.factionId, Math.cos(a) * d, Math.sin(a) * d, a, def.kind === 'boss' ? 1.4 : 1);
     }
   }
 
@@ -761,7 +912,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     group.add(roadMesh(pa.pts, pa.w, 0, 0, (x, z) => hAt(x, z), dirtMaterial(i % 6), 0.06));
   });
 
-  return { trees, bushes, fires, glows };
+  return { trees, bushes, fires, glows, patrols };
 }
 
 // ---------- Bausteine ----------

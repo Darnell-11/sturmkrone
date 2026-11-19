@@ -3,20 +3,28 @@ import { MathUtils, Vector3 } from 'three';
 import { randomLook, sanitizeLook } from '../data/characterParts';
 import type { StyleId } from '../data/animations';
 import type { CrewDef } from '../data/crew';
+import { formationSlot } from '../data/crewTiers';
+import type { CommandState } from '../data/troops';
 import type { CharacterAssets } from './character/assets';
 import { Character } from './character/character';
 import { weaponsFor } from './character/weapons';
 import type { Enemy } from './enemy';
 import type { Ground } from '../world/islandGround';
 import { seeded } from '../world/waves';
-import { NavAgent, type NavGrid } from '../ai/navGrid';
+import { routeDone, stepRoute, type Route } from '../world/docking';
+import { NavAgent, unstick, type NavGrid } from '../ai/navGrid';
 
 const STEER = { x: 0, z: 0 };
+const STEER2 = { x: 0, z: 0 };
 
 /** Ziel, das Gegner statt der Spielfigur angreifen können */
 export interface AllyTarget {
+  /** Kennung (Bedrohungstabelle der Hauptmänner und Bosse); Offiziere und Trupps haben eine */
+  readonly entityId?: EntityId;
   x: number; y: number; z: number; radius: number;
   readonly alive: boolean;
+  /** Name für Anzeigen (z. B. wer das Ziel eines Bosses ist) */
+  readonly label?: string;
   /** Zieht Gegner besonders an (Tanks) */
   readonly taunt: boolean;
   receive(dmg: number, dirX: number, dirZ: number): void;
@@ -25,7 +33,7 @@ export interface AllyTarget {
 /** Was eine Verbündete/ein Verbündeter vom Kampfsystem braucht */
 export interface AllyWorld {
   enemies(): Enemy[];
-  hit(e: Enemy, dmg: number, dirX: number, dirZ: number, color: string, heavy: boolean): void;
+  hit(e: Enemy, dmg: number, dirX: number, dirZ: number, color: string, heavy: boolean, srcId?: EntityId): void;
   status(e: Enemy, s: 'stun' | 'slow' | 'burn' | 'freeze', dur: number): void;
   healPlayer(frac: number): void;
   reviveCrew(): void;
@@ -76,6 +84,13 @@ export class Ally implements AllyTarget {
   /** Schadensbonus durch das Schlachtlied */
   buff = 0;
   buffMult = 1;
+  /** Befehl: Sturmangriff (wie bisher: nächster Gegner), Folgen (nur Gegner nahe bei dir), Position halten (Haltepunkt) */
+  commandState: CommandState = 'sturm';
+  holdX = 0; holdZ = 0;
+  /** Laufweg über Gangway, Planke oder Leiter (null = frei); `homeBound`: geht zurück an Bord und wird dort entfernt */
+  route: Route | null = null;
+  homeBound = false;
+  arrivedHome = false;
 
   constructor(assets: CharacterAssets, readonly def: CrewDef, level: number, loyalty: number, private slot: number, outline: boolean) {
     const look = sanitizeLook({ ...randomLook(seeded(def.id.length * 977 + def.name.charCodeAt(0)), 'pirat'), ...(def.look ?? {}) }, 'pirat');
@@ -94,11 +109,28 @@ export class Ally implements AllyTarget {
     this.dmg = (5 + level * 1.6) * (def.role === 'schaden' ? 1.35 : def.role === 'tank' ? 1.1 : 0.7) * loyal;
   }
 
-  get alive() { return this.koT <= 0; }
+  get alive() { return this.koT <= 0 && !this.homeBound; }
+
+  /** Laufweg beginnen; der Offizier kämpft erst wieder, wenn er drüben ist (oder wird beim Heimweg an Bord entfernt) */
+  startRoute(r: Route, homeBound = false) { this.route = r; this.homeBound = homeBound; this.arrivedHome = false; this.anim = ''; }
   get taunt() { return this.def.role === 'tank'; }
+  get label() { return this.def.name; }
+
+  /** Rückhalt der Truppen: mehr Trefferpunkte (Lebenspunkte werden voll aufgefüllt) */
+  scaleHp(k: number) {
+    this.maxHp = Math.round(this.maxHp * k);
+    this.hp = this.maxHp;
+  }
+
+  /** Befehl erteilen; „Position halten“ merkt sich den aktuellen Ort */
+  command(c: CommandState) {
+    this.commandState = c;
+    if (c === 'halten') { this.holdX = this.x; this.holdZ = this.z; }
+  }
 
   place(x: number, z: number, yaw: number, ground: Ground) {
     this.x = x; this.z = z; this.yaw = yaw;
+    this.holdX = x; this.holdZ = z;
     const h = ground.height(x, z);
     this.y = Number.isFinite(h) ? h : 0;
     this.koT = 0;
@@ -128,7 +160,7 @@ export class Ally implements AllyTarget {
 
   /** Wieder aufstehen (Ärztin, Kampfende) */
   revive(frac = 0.5) {
-    if (this.alive) { this.hp = Math.max(this.hp, this.maxHp * frac); return; }
+    if (this.koT <= 0) { this.hp = Math.max(this.hp, this.maxHp * frac); return; }
     this.koT = 0;
     this.hp = this.maxHp * frac;
     this.char.play('spawn', { fade: 0.2, restart: true });
@@ -151,27 +183,45 @@ export class Ally implements AllyTarget {
     if ((this.anim === 'attack' || this.anim === 'spawn') && this.animT > 3) this.anim = '';
     if (this.sweep) {
       this.sweep.t -= dt;
-      if (this.sweep.t <= 0) { const s = this.sweep; this.sweep = null; if (this.alive) this.sweepHit(s.foes, s.w); }
+      if (this.sweep.t <= 0) { const s = this.sweep; this.sweep = null; if (this.koT <= 0) this.sweepHit(s.foes, s.w); }
     }
-    if (!this.alive) {
+    if (this.koT > 0) {
       this.koT -= dt;
       if (this.koT <= 0) this.revive(0.4);
       this.sync(); this.char.update(dt);
       return null;
     }
-    const foes = w.enemies().filter((e) => e.alive);
+    // Laufweg über eine Brücke: erst ankommen, dann kämpfen (Nachrück-Wächter in `stepRoute` löst Hänger an schmalen Kanten)
+    if (this.route) {
+      if (routeDone(this.route)) { this.route = null; this.holdX = this.x; this.holdZ = this.z; if (this.homeBound) this.arrivedHome = true; }
+      else {
+        const st = stepRoute(this, this.route, dt, 4.6, w.ground, 1.5);
+        if (st.moving) this.face(st.heading, dt);
+        this.play(st.climbing ? 'walk' : 'run');
+        this.char.setLocoSpeed((st.climbing ? 1.4 : 4.6) / (this.def.big ?? 1));
+        this.sync(); this.char.update(dt);
+        return null;
+      }
+    }
+    // Gegner im Blick: Sturmangriff = alle, Folgen = nur nahe bei dir oder bei ihr/ihm, Halten = nur nahe am Haltepunkt
+    const cmd = this.commandState;
+    const foes = w.enemies().filter((e) => {
+      if (!e.alive) return false;
+      if (cmd === 'folgen') return Math.hypot(e.x - player.x, e.z - player.z) < 9 || Math.hypot(e.x - this.x, e.z - this.z) < 5;
+      if (cmd === 'halten') return Math.hypot(e.x - this.holdX, e.z - this.holdZ) < 6;
+      return true;
+    });
     let say: string | null = null;
     let moveTo: { x: number; z: number } | null = null;
     let speed = 4.6;
     const pd = Math.hypot(player.x - this.x, player.z - this.z);
     if (!foes.length) {
-      // Folgen in Formation hinter der Spielfigur
-      const side = this.slot === 0 ? -1 : this.slot === 1 ? 1 : 0;
-      const back = this.slot === 2 ? 2.6 : 1.6;
-      const fx = player.x - Math.sin(player.yaw) * back + Math.cos(player.yaw) * side * 1.5;
-      const fz = player.z - Math.cos(player.yaw) * back - Math.sin(player.yaw) * side * 1.5;
+      // Folgen in Formation hinter der Spielfigur (Plätze aus data/crewTiers.ts: bis zu 5 Offiziere)
+      const { side, back } = formationSlot(this.slot);
+      const fx = cmd === 'halten' ? this.holdX : player.x - Math.sin(player.yaw) * back + Math.cos(player.yaw) * side * 1.5;
+      const fz = cmd === 'halten' ? this.holdZ : player.z - Math.cos(player.yaw) * back - Math.sin(player.yaw) * side * 1.5;
       if (Math.hypot(fx - this.x, fz - this.z) > 0.8) moveTo = { x: fx, z: fz };
-      speed = pd > 8 ? 7 : 4.2;
+      speed = pd > 8 && cmd !== 'halten' ? 7 : 4.2;
       this.lineT -= dt;
       if (cleared && this.lineT <= 0) { this.lineT = 14 + Math.random() * 10; say = this.def.lines[Math.floor(Math.random() * this.def.lines.length)]; }
     } else {
@@ -191,6 +241,7 @@ export class Ally implements AllyTarget {
         const d = Math.hypot(target.x - this.x, target.z - this.z);
         const reach = atk.range + target.radius;
         if (keepNear && pd > 4.5 && d > reach) moveTo = { x: player.x, z: player.z };
+        else if (cmd === 'halten' && d > reach * 0.92) moveTo = Math.hypot(this.x - this.holdX, this.z - this.holdZ) > 0.8 ? { x: this.holdX, z: this.holdZ } : null;
         else if (d > reach * 0.92) moveTo = { x: target.x, z: target.z };
         else {
           this.face(Math.atan2(target.x - this.x, target.z - this.z), dt);
@@ -216,7 +267,7 @@ export class Ally implements AllyTarget {
           const dx = e.x - this.x, dz = e.z - this.z, d = Math.hypot(dx, dz) || 1;
           const mult = (1 + (this.buff > 0 ? 0.3 : 0)) * this.buffMult;
           const range = ATTACKS[this.style].range;
-          if (range > 4 ? d < range + e.radius + 0.6 : w.reach(this.x, this.y, this.z, Math.atan2(dx, dz), range + 0.3, e)) w.hit(e, this.dmg * mult * (0.85 + Math.random() * 0.3), dx / d, dz / d, this.def.col, this.style === 'zweihaender');
+          if (range > 4 ? d < range + e.radius + 0.6 : w.reach(this.x, this.y, this.z, Math.atan2(dx, dz), range + 0.3, e)) w.hit(e, this.dmg * mult * (0.85 + Math.random() * 0.3), dx / d, dz / d, this.def.col, this.style === 'zweihaender', this.entityId);
         }
       }
     }
@@ -227,13 +278,15 @@ export class Ally implements AllyTarget {
         const step = Math.min(d, speed * dt);
         this.x += STEER.x * step; this.z += STEER.z * step;
         this.face(Math.atan2(STEER.x, STEER.z), dt);
-        const c = w.ground.constrain(this.x, this.z, this.radius);
+        const c = w.ground.constrain(this.x, this.z, this.radius, this.y);
         this.x = c.x; this.z = c.z;
+        // verkeilt (Treppe, Planke, enge Lücke, Mast)? Nach 2,5 s ein Stück zum Ziel hin versetzen
+        if (this.agent.wedged) { const u = unstick(w.ground, this.x, this.z, moveTo.x, moveTo.z, this.radius, this.y, STEER2); if (u) { this.x = u.x; this.z = u.z; } this.agent.clearWedge(); }
       }
       this.play(speed > 5 ? 'run' : 'walk');
       this.char.setLocoSpeed(speed / (this.def.big ?? 1));
     } else if (this.anim !== 'attack' && this.anim !== 'hit' && this.anim !== 'spawn' && this.hurtT <= 0) this.play(cleared && foes.length === 0 && pd < 6 && this.lineT > 12 ? 'cheer' : 'idle');
-    const h = w.ground.height(this.x, this.z);
+    const h = w.ground.height(this.x, this.z, this.y);
     if (Number.isFinite(h)) this.y += (h - this.y) * Math.min(1, dt * 12);
     this.sync();
     this.char.update(dt);
@@ -274,7 +327,7 @@ export class Ally implements AllyTarget {
       if (!e.alive || !alive.has(e)) continue;
       const dx = e.x - this.x, dz = e.z - this.z, d = Math.hypot(dx, dz) || 1;
       if (d > (this.def.id === 'tomo' ? 6 : 4.2)) continue;
-      w.hit(e, this.dmg * 2.2 * this.buffMult, dx / d, dz / d, col, true);
+      w.hit(e, this.dmg * 2.2 * this.buffMult, dx / d, dz / d, col, true, this.entityId);
       if (this.def.role === 'tank') w.status(e, 'stun', this.def.id === 'tomo' ? 2 : 1.2);
       if (this.def.id === 'lehrer') w.status(e, 'burn', 3);
     }

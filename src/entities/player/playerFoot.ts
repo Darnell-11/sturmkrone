@@ -67,6 +67,11 @@ export class PlayerFoot implements PlayerTarget {
   speed = 0;
   hp = 100;
   maxHp = 100;
+  /** Seestein-Ketten (Boss-Fähigkeit): Restzeit und Tempoverlust (0 … 1) */
+  private bindT = 0;
+  private bindSlow = 0;
+  /** Fesseln: Bewegung für `dur` Sekunden um den Anteil `slow` gebremst */
+  bind(dur: number, slow: number) { this.bindT = Math.max(this.bindT, dur); this.bindSlow = Math.max(this.bindSlow, Math.min(0.85, slow)); }
   /** Schadensfaktor (Waffe, Fähigkeiten, Crew) */
   dmgMult = 1;
   /** Schadensreduktion 0 … 0,85, Ausweichchance, Tempo, Unverwundbarkeit (Fähigkeiten) */
@@ -138,6 +143,26 @@ export class PlayerFoot implements PlayerTarget {
     this.realSpeed = 0;
     this.stamina = STAMINA.max;
     this.combo = 0;
+  }
+
+  /**
+   * Skriptete Bewegung (Leiter, Reling): Lage direkt setzen, Eingabe ruht. Die Darstellung gleitet von der letzten zur neuen Lage
+   * (`prev`), die Beine laufen im Gehen-Takt, solange `moving` gilt (Klettern: Schritt für Schritt die Sprossen hinauf).
+   */
+  drive(x: number, y: number, z: number, yaw: number, moving: boolean, speed = 1.3) {
+    const pv = this.prev;
+    pv.x = this.x; pv.z = this.z; pv.y = this.y; pv.yaw = this.yaw;
+    this.x = x; this.y = y; this.z = z; this.yaw = yaw;
+    this.state = 'move';
+    this.speed = 0;
+    this.realSpeed = moving ? speed : 0;
+    const want = moving ? 'walk' : 'idle';
+    if (want !== this.locomotion) {
+      this.locomotion = want;
+      if (moving) this.char.play('walk', { fade: FADE.locomotion });
+      else this.char.playClip(STYLE_ANIMS[this.style].idle.clip, { loop: true, fade: FADE.idle });
+    }
+    if (moving) this.char.setLocoSpeed(speed);
   }
 
   /**
@@ -255,6 +280,7 @@ export class PlayerFoot implements PlayerTarget {
     this.swapCd -= dt;
     this.comboWindow -= dt;
     this.blockSince += dt;
+    if (this.bindT > 0) { this.bindT -= dt; this.char.setTint('#7FA8D8', 0.55); if (this.bindT <= 0) { this.bindSlow = 0; this.char.setTint('#7FA8D8', 0); } }
     this.clock += dt;
     // Ausdauer: nach kurzer Pause laden, im Stand schneller
     this.staminaFlash = Math.max(0, this.staminaFlash - dt);
@@ -419,7 +445,7 @@ export class PlayerFoot implements PlayerTarget {
       case 'move':
         if (mag > 0.05) {
           // Gehen bis 2,2 m/s (Gehclip läuft dann höchstens mit dem 1,5-Fachen), darüber Rennen: dazwischen gäbe es keinen passenden Clip
-          const sp = (mag > 0.7 ? RUN : 0.6 + 1.6 * (mag / 0.7)) * this.speedMult;
+          const sp = (mag > 0.7 ? RUN : 0.6 + 1.6 * (mag / 0.7)) * this.speedMult * (this.bindT > 0 ? 1 - this.bindSlow : 1);
           vx = dx * sp;
           vz = dz * sp;
           this.turnTo(lockYaw !== null && mag < 0.7 ? lockYaw : Math.atan2(dx, dz), dt, 12);
@@ -485,11 +511,11 @@ export class PlayerFoot implements PlayerTarget {
       const total = Math.hypot(vx + this.kx, vz + this.kz) * dt;
       if (total > 0.15) sweepMove(this, (vx + this.kx) * dt, (vz + this.kz) * dt, ground, false);
       else {
-        const c = ground.constrain(this.x + (vx + this.kx) * dt, this.z + (vz + this.kz) * dt);
+        const c = ground.constrain(this.x + (vx + this.kx) * dt, this.z + (vz + this.kz) * dt, undefined, this.y);
         this.x = c.x;
         this.z = c.z;
       }
-      const h = ground.height(this.x, this.z);
+      const h = ground.height(this.x, this.z, this.y);
       targetY = Number.isFinite(h) ? h : this.y;
     }
     if (!Number.isFinite(targetY)) targetY = this.y;

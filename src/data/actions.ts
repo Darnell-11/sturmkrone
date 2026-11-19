@@ -1,3 +1,5 @@
+import type { CommandState } from './troops';
+
 // Alle Spielaktionen. Das Spiel fragt nur Aktionen ab, nie konkrete Tasten.
 export const ACTION_IDS = [
   'up', 'down', 'left', 'right',
@@ -6,6 +8,7 @@ export const ACTION_IDS = [
   'skill1', 'skill2', 'skill3',
   'potion', 'map', 'skills', 'quests', 'talk', 'inventory',
   'item1', 'item2', 'item3', 'item4',
+  'cmdSturm', 'cmdFollow', 'cmdHold',
   'swap', 'weapon1', 'weapon2',
   'repair',
   'pause',
@@ -39,6 +42,9 @@ export const ACTION_LABELS: Record<ActionId, string> = {
   item2: 'Schnellleiste 2',
   item3: 'Schnellleiste 3',
   item4: 'Schnellleiste 4',
+  cmdSturm: 'Befehl: Sturmangriff',
+  cmdFollow: 'Befehl: Folgen',
+  cmdHold: 'Befehl: Position halten',
   swap: 'Waffe wechseln',
   weapon1: 'Waffenplatz 1',
   weapon2: 'Waffenplatz 2',
@@ -73,6 +79,10 @@ export const DEFAULT_KEYS: Record<ActionId, string[]> = {
   item2: ['Digit2'],
   item3: ['Digit3'],
   item4: ['Digit4'],
+  // Befehle teilen sich die Tasten 1–3 mit der Schnellleiste: solange Trupps im Einsatz sind, gehören sie den Befehlen (siehe Game.update)
+  cmdSturm: ['Digit1'],
+  cmdFollow: ['Digit2'],
+  cmdHold: ['Digit3'],
   swap: ['KeyQ'],
   weapon1: ['KeyZ'],
   weapon2: ['KeyX'],
@@ -107,6 +117,9 @@ export const DEFAULT_PAD: Record<ActionId, number[]> = {
   item2: [],
   item3: [],
   item4: [],
+  cmdSturm: [],
+  cmdFollow: [],
+  cmdHold: [],
   swap: [],
   weapon1: [],
   weapon2: [],
@@ -116,3 +129,28 @@ export const DEFAULT_PAD: Record<ActionId, number[]> = {
 
 /** Aktionen, die im Menü nicht umbelegt werden dürfen (Escape bleibt immer Pause/Zurück). */
 export const FIXED_CODES = ['Escape'];
+
+/** Teilen zwei Aktionen eine Taste (Schnellleiste 1–3 und die Truppenbefehle)? */
+export const sharesKey = (a: readonly string[], b: readonly string[]): boolean => a.some((c) => b.includes(c));
+
+/** Aktion je Truppenbefehl (Anzeige und Auswertung nutzen dieselbe Zuordnung) */
+export const COMMAND_ACTIONS: Record<CommandState, ActionId> = { sturm: 'cmdSturm', folgen: 'cmdFollow', halten: 'cmdHold' };
+
+/**
+ * Welcher Truppenbefehl belegt die Taste einer Schnellleisten-Aktion? Solange Trupps im Einsatz sind, gehört eine gemeinsame Taste dem Befehl
+ * (das Gut ruht); null = die Aktion teilt keine Taste mit einem Befehl und gilt immer. Eingabe und Anzeige fragen hier dasselbe.
+ */
+export function commandOnKey(binds: Record<ActionId, string[]>, item: ActionId): CommandState | null {
+  for (const c of Object.keys(COMMAND_ACTIONS) as CommandState[]) if (sharesKey(binds[item], binds[COMMAND_ACTIONS[c]])) return c;
+  return null;
+}
+
+/** Bereiche der Tastenbelegung im Einstellungsmenü; jede Aktion steht in genau einem Bereich (ein Test prüft das) */
+export const ACTION_GROUPS: { id: string; label: string; actions: ActionId[] }[] = [
+  { id: 'move', label: 'Bewegung und Aktion', actions: ['up', 'down', 'left', 'right', 'dodge', 'interact', 'talk', 'lockon'] },
+  { id: 'fight', label: 'Kampf', actions: ['attack', 'heavy', 'block', 'skill1', 'skill2', 'skill3', 'swap', 'weapon1', 'weapon2'] },
+  { id: 'sea', label: 'See', actions: ['fireLeft', 'fireRight', 'repair'] },
+  { id: 'troops', label: 'Truppenbefehle', actions: ['cmdSturm', 'cmdFollow', 'cmdHold'] },
+  { id: 'quick', label: 'Schnellleiste', actions: ['potion', 'item1', 'item2', 'item3', 'item4'] },
+  { id: 'menus', label: 'Menüs', actions: ['map', 'skills', 'quests', 'inventory', 'pause'] },
+];

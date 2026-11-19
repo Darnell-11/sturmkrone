@@ -25,8 +25,8 @@ export default defineConfig({
         short_name: 'Sturmkrone',
         description: 'Anime-Piratenabenteuer auf hoher See – zu Fuß und mit dem eigenen Schiff.',
         lang: 'de',
-        theme_color: '#12243C',
-        background_color: '#12243C',
+        theme_color: '#190D08',
+        background_color: '#190D08',
         display: 'fullscreen',
         orientation: 'any',
         start_url: base,
@@ -41,8 +41,14 @@ export default defineConfig({
       workbox: {
         // Draco-Decoder (wasm) gehört zum Offline-Paket; der KTX2-Transcoder wird nur bei Bedarf geladen
         globPatterns: ['**/*.{js,css,html,svg,png,woff2,json,glb,wasm}'],
-        globIgnores: ['**/libs/basis/**'],
+        globIgnores: ['**/libs/basis/**', '**/audio/music/manifest.json'],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        // Musik (rund 22 MB als Ogg) gehört nicht ins Offline-Paket, wird aber beim ersten Hören zwischengespeichert; ohne Datei spielt die prozedurale Musik
+        runtimeCaching: [{
+          urlPattern: ({ url }: { url: URL }) => url.pathname.includes('/audio/music/') && url.pathname.endsWith('.ogg'),
+          handler: 'CacheFirst',
+          options: { cacheName: 'sturmkrone-musik', expiration: { maxEntries: 80 }, cacheableResponse: { statuses: [200] } },
+        }],
       },
     }),
   ],

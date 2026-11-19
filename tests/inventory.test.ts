@@ -4,7 +4,7 @@ import { createSave } from '../src/core/save/types';
 import { ARMOR_LOOK, CONSUMABLES, GEAR, HEADS } from '../src/data/items';
 import { EQUIP_BY_ID, loadoutFromLook, resolveLoadout } from '../src/data/equipment';
 import { defaultLook } from '../src/data/characterParts';
-import { ARMOR } from '../src/data/regions';
+import { ARMOR } from '../src/data/items';
 
 const base = (gear: ReturnType<typeof createSave>['gear']): StatInput => ({
   level: 5, gear, style: 'schwert', hpPassive: 0, critPassive: 0, atkCrew: 1, weaponCrew: 1, fajiCrew: 0, buff: { atk: 0, reduce: 0, crit: 0 },

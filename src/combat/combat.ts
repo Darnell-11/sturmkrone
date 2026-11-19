@@ -8,22 +8,24 @@ import {
   Group,
   Mesh,
   MeshBasicMaterial,
+  RingGeometry,
   SphereGeometry,
   Vector3,
   type Camera,
   type Scene,
   type Object3D,
 } from 'three';
-import { ENEMIES, type AttackDef, type EnemyAttack, type EnemyKind } from '../data/combat';
+import { ENEMIES, type AttackDef, type BossMech, type EnemyAttack, type EnemyKind, type ZoneSpec } from '../data/combat';
 import { rollLoot, type LootDrop } from '../data/loot';
 import { LootSystem } from './loot';
 import { ZoneSystem, zoneContains, type WarnZone } from './zones';
 import type { Faction } from '../core/save/types';
+import type { FactionId } from '../data/factions';
 import type { CharacterAssets } from '../entities/character/assets';
 import { Enemy, type EnemyWorld, type HitInfo } from '../entities/enemy';
 import { addOutlines } from '../render/outline';
 import { toon } from '../render/toon';
-import type { CombatOverlay } from '../ui/combatOverlay';
+import type { BossView, CombatOverlay } from '../ui/combatOverlay';
 import type { DeckGround, Ground, WalkIsland } from '../world/islandGround';
 import type { CombatFx } from './fx';
 import type { AbilityTarget } from '../faji/abilities';
@@ -32,8 +34,16 @@ import { markShared } from '../render/dispose';
 import { navForIsland, type NavGrid } from '../ai/navGrid';
 import { attackVolume, Hurtbox, LogicFrame, OBB, weaponSegments, ZONE_MULT, type Zone } from './hitbox';
 import type { Character } from '../entities/character/character';
+import type { TroopSquad } from '../entities/troops/squad';
+import type { EntityId } from '../sim/entityId';
+import { sharedGeo } from '../render/geoCache';
+import { clamp01 } from '../core/mathUtil';
 
 export interface PlayerTarget {
+  /** Kennung der Spielfigur (Schlüssel der Bedrohungstabellen) */
+  readonly entityId: EntityId;
+  /** Seestein-Ketten: Bewegung für `dur` Sekunden auf den Faktor `slow` gebremst (0 … 1 = so viel Tempo geht verloren) */
+  bind?(dur: number, slow: number): void;
   readonly x: number;
   readonly z: number;
   readonly y: number;
@@ -51,6 +61,18 @@ const SEG_A = new Vector3(), SEG_B = new Vector3(), SEG_D = new Vector3();
 /** Teststrecken je Schlag: je Klinge/Glied die echte Strecke und ihr Schwertwind */
 const MAX_SEGS = 8;
 const PL_FRAME = new LogicFrame();
+/** Ziel einer Fähigkeit (Spielfigur als Ort): wird vor jeder Nutzung neu gefüllt */
+const ENT = { x: 0, y: 0, z: 0, radius: 0.35 };
+type Spot = { x: number; y: number; z: number; radius: number };
+/** Wie stark ein Hieb die Formation eines Verbands trifft (er trifft viele Köpfe auf einmal) */
+const MASS_CLEAVE = 2.4;
+/** Aura-Ringe der Hauptmänner: ein Ring je Aura, geteilte Netze */
+const AURA_MATS = new Map<string, MeshBasicMaterial>();
+function auraMat(id: string, color: string): MeshBasicMaterial {
+  let m = AURA_MATS.get(id);
+  if (!m) { m = markShared(new MeshBasicMaterial({ color: new Color(color).multiplyScalar(2.2), transparent: true, opacity: 0.55, blending: AdditiveBlending, depthWrite: false, side: 2, fog: false })); AURA_MATS.set(id, m); }
+  return m;
+}
 
 export interface CombatHooks {
   heal(n: number): void;
@@ -116,6 +138,21 @@ export class CombatSystem implements EnemyWorld {
   private barVec = new Vector3();
   private engagedTmp: Enemy[] = [];
   playerActive = false;
+  /** Verbände der Verteidiger (Raid): zählen als Ziele für Hiebe, Geschosse und Fähigkeiten und als Gegner der eigenen Trupps */
+  mass: TroopSquad[] = [];
+  /** Alle Gegner einschließlich Verbände für die Trupps (jedes Bild neu gefüllt, ohne neue Liste) */
+  readonly foes: (Enemy | TroopSquad)[] = [];
+  /** Endboss beginnt eine neue Phase / ruft Verstärkung (setzt der Raid) */
+  onBossPhase: ((e: Enemy, phase: number) => void) | null = null;
+  onSummon: ((e: Enemy, mech: Extract<BossMech, { kind: 'summon' }>) => void) | null = null;
+  private dtLast = 1 / 60;
+  private threatFor: Enemy | null = null;
+  private readonly threatOk = (id: EntityId): boolean => {
+    const e = this.threatFor, t = this.entityAt(id);
+    return !!e && !!t && Math.hypot(t.x - e.x, t.z - e.z) < 70;
+  };
+  private tauntAt = new Map<EntityId, number>();
+  private auraFx = new Map<Enemy, Mesh>();
   /** Neue Gegner vorwärmen (Shader übersetzen, bevor die Kamera sie zeigt): setzt die Welt */
   onSpawn: ((o: Object3D) => void) | null = null;
   /** Basis-Angriffswert des Spielers */
@@ -169,9 +206,10 @@ export class CombatSystem implements EnemyWorld {
 
   requestToken(e: Enemy) {
     for (const t of this.tokens) if (!t.alive) this.tokens.delete(t);
-    const max = e.def.boss ? 3 : 2;
+    const big = e.def.boss || e.def.raid === 'captain';
+    const max = big ? 3 : 2;
     if (this.tokens.has(e)) return true;
-    if (this.tokens.size >= max && !e.def.boss) return false;
+    if (this.tokens.size >= max && !big) return false;
     this.tokens.add(e);
     return true;
   }
@@ -221,6 +259,8 @@ export class CombatSystem implements EnemyWorld {
 
   /** Boss beginnt eine neue Phase: Brüllen mit Schockring, Banner, Kamerawackeln */
   bossPhase(e: Enemy, phase: number) {
+    e.guardT = 0; e.counterT = 0;
+    this.onBossPhase?.(e, phase);
     const at = new Vector3(e.x, this.ground(e.x, e.z), e.z);
     this.fx.shockwave(at, 10, '#FF5A3C');
     this.fx.crack(at, 8);
@@ -229,7 +269,7 @@ export class CombatSystem implements EnemyWorld {
     this.hooks.hitstop(0.2, 0.1);
     this.overlay.impactFrame();
     this.overlay.showCutin(phase >= 3 ? 'Letzter Atem!' : 'Der Zorn erwacht!', '#FF3A2A');
-    this.overlay.showBanner(e.name ?? e.def.label, phase >= 3 ? 'Phase 3 – er gibt nichts mehr auf' : 'Phase 2 – neue Angriffe');
+    if (e.def.phases !== 2) this.overlay.showBanner(e.name ?? e.def.label, phase >= 3 ? 'Phase 3 – er gibt nichts mehr auf' : 'Phase 2 – neue Angriffe');
   }
 
   /** Haltebalken des Bosses leer: Break (er taumelt, +50 % Schaden) */
@@ -242,36 +282,168 @@ export class CombatSystem implements EnemyWorld {
     this.hooks.hitstop(0.14, 0.08);
   }
 
+  // ---------- Ziele über Kennungen ----------
+
+  /** Ort und Radius eines Ziels über seine Kennung (Spielfigur, Offizier, Trupp); null, wenn gefallen oder nicht im Kampf */
+  private entityAt(id: EntityId | null): Spot | null {
+    if (!id) return null;
+    const pl = this.player;
+    if (pl && pl.entityId === id) { if (!pl.active) return null; ENT.x = pl.x; ENT.y = pl.y; ENT.z = pl.z; ENT.radius = 0.35; return ENT; }
+    for (const a of this.allies) if (a.alive && a.entityId === id) return a;
+    return null;
+  }
+
+  /** Alle Ziele in Reichweite eines Gegners: Spielfigur und Crew (je als eigener Ort) */
+  private victims(e: Enemy, range = 40): Spot[] {
+    const out: Spot[] = [];
+    const pl = this.player;
+    if (pl?.active && Math.hypot(pl.x - e.x, pl.z - e.z) < range) out.push({ x: pl.x, y: pl.y, z: pl.z, radius: 0.35 });
+    for (const a of this.allies) if (a.alive && Math.hypot(a.x - e.x, a.z - e.z) < range) out.push(a);
+    return out;
+  }
+
+  /** Das Ziel eines Gegners: das aus der Bedrohungstabelle, sonst das, was ihm das Kampfsystem gerade als Ziel hinlegt */
+  private targetSpot(e: Enemy): Spot | null {
+    const t = this.entityAt(e.targetEntityId);
+    if (t) return { x: t.x, y: t.y, z: t.z, radius: t.radius };
+    const p = this.playerPos;
+    return p ? { x: p.x, y: p.y, z: p.z, radius: 0.35 } : null;
+  }
+
   enemyTelegraph(e: Enemy, atk: EnemyAttack) {
-    if (atk.zones && this.playerPos) {
+    const tg = this.targetSpot(e);
+    if (atk.mech) this.mechTelegraph(e, atk.mech);
+    if (atk.zones && tg) {
       const phaseK = e.def.boss && e.phase >= 3 ? 0.7 : 1;
-      for (const zs of atk.zones) {
-        const onPlayer = zs.at === 'player';
-        const cx = onPlayer ? this.playerPos.x : e.x;
-        const cz = onPlayer ? this.playerPos.z : e.z;
-        const t = atk.windup * phaseK + (zs.extra ?? 0.35);
-        this.zones.spawn(e, zs, cx, cz, this.ground(cx, cz), e.yaw + (zs.turn ?? 0), t, e.dmg * atk.dmg * 1.3, atk.knock, e.atkSeq);
-      }
+      const dmg = e.strength * atk.dmg * 1.3;
+      const list = this.victims(e);
+      for (const zs of atk.zones) this.spawnZones(e, atk, zs, tg, list, phaseK, dmg);
       if (atk.label) this.overlay.number(e.head.setY(e.y + 3.4 * e.def.scale), atk.label, 'info');
-    }
+    } else if (atk.label) this.overlay.number(e.head.setY(e.y + 3.4 * e.def.scale), atk.label, 'info');
     if (atk.aoe && this.playerPos) {
       const at = atk.aoe.delay > 0 ? this.playerPos.clone() : new Vector3(e.x + Math.sin(e.yaw) * 1.8, e.y, e.z + Math.cos(e.yaw) * 1.8);
       at.y = this.ground(at.x, at.z);
       const total = atk.windup + (atk.aoe.delay > 0 ? atk.aoe.delay : 0.35);
       this.fx.telegraph(at, atk.aoe.radius, total);
-      this.aoes.push({ x: at.x, z: at.z, y: at.y, r: atk.aoe.radius, t: total, dmg: e.dmg * atk.dmg * 1.3, knock: atk.knock, from: e });
+      this.aoes.push({ x: at.x, z: at.z, y: at.y, r: atk.aoe.radius, t: total, dmg: e.strength * atk.dmg * 1.3, knock: atk.knock, from: e });
     }
+  }
+
+  /** Warnflächen einer Angriffs-Zone anlegen: am Gegner, beim Ziel, hinter dem Ziel, bei jedem Ziel oder verstreut */
+  private spawnZones(e: Enemy, atk: EnemyAttack, zs: ZoneSpec, tg: Spot, list: Spot[], phaseK: number, dmg: number) {
+    const at = zs.at ?? 'self';
+    const base = atk.windup * phaseK + (zs.extra ?? 0.35);
+    const sticky = (at !== 'self' && at !== 'player') || (zs.extra ?? 0) >= 0.8;
+    const solo = at === 'scatter' || at === 'allies' || at === 'target' || at === 'behind';
+    const put = (cx: number, cz: number, yaw: number, delay: number) =>
+      this.zones.spawn(e, zs, cx, cz, this.ground(cx, cz), yaw, base + delay, dmg, atk.knock, e.atkSeq, { sticky, solo });
+    if (at === 'scatter') {
+      const n = Math.max(1, zs.count ?? 3), v = list.length ? list : [tg];
+      for (let i = 0; i < n; i++) {
+        const t = v[i % v.length], a = Math.random() * Math.PI * 2;
+        // jedes Ziel bekommt zuerst eine Fläche in seiner Nähe, die übrigen fallen verstreut
+        const d = i < v.length ? 1.2 : (zs.scatter ?? 8) * Math.sqrt(Math.random());
+        put(t.x + Math.cos(a) * d, t.z + Math.sin(a) * d, 0, i * (zs.stagger ?? 0.25));
+      }
+    } else if (at === 'allies') {
+      (list.length ? list : [tg]).forEach((t, i) => put(t.x, t.z, 0, i * (zs.stagger ?? 0.1)));
+    } else if (at === 'behind') {
+      const dx = tg.x - e.x, dz = tg.z - e.z, d = Math.hypot(dx, dz) || 1;
+      const cx = tg.x + (dx / d) * 2.4, cz = tg.z + (dz / d) * 2.4;
+      e.blinkTo = { x: cx, z: cz };
+      put(cx, cz, Math.atan2(-dx, -dz) + (zs.turn ?? 0), 0);
+    } else if (at === 'player' || at === 'target') put(tg.x, tg.z, e.yaw + (zs.turn ?? 0), 0);
+    else put(e.x, e.z, e.yaw + (zs.turn ?? 0), 0);
+  }
+
+  /** Besondere Boss-Fähigkeit beim Ausholen: Deckung und Konterhaltung beginnen sofort, Verstärkung und Sprung folgen beim Hieb */
+  private mechTelegraph(e: Enemy, mech: BossMech) {
+    const at = new Vector3(e.x, this.ground(e.x, e.z), e.z);
+    switch (mech.kind) {
+      case 'guard':
+        e.guardT = mech.dur; e.guardArc = mech.arc;
+        this.fx.sigil(at, 4.2, '#9FD8FF', 1.4);
+        this.overlay.number(e.head, 'Deckung – von der Seite!', 'info');
+        break;
+      case 'counter':
+        e.counterT = mech.dur; e.counterDmg = mech.dmg; e.counterRadius = mech.radius;
+        this.fx.sigil(at, 3.6, '#FFD27A', 1.2);
+        break;
+      case 'signal':
+        this.flare(at, mech.color);
+        break;
+      case 'summon':
+        this.fx.sigil(at, 6, '#FFD27A', 1.8);
+        break;
+      case 'blink':
+        e.blinkTo = null;
+        this.fx.sigil(at, 3.4, '#8A4AFF', 1.0);
+        break;
+      default: break;
+    }
+  }
+
+  /** Leuchtspur gen Himmel (Artillerie-Signal) */
+  private flare(at: Vector3, color: string) {
+    for (let i = 0; i < 7; i++) this.fx.puffColor(new Vector3(at.x, at.y + 2 + i * 2.2, at.z), color);
+    this.fx.shockwave(at, 3.2, color);
+  }
+
+  /** Besondere Boss-Fähigkeit beim Hieb */
+  private mechStrike(e: Enemy, mech: BossMech) {
+    const here = new Vector3(e.x, this.ground(e.x, e.z), e.z);
+    switch (mech.kind) {
+      case 'summon':
+        this.fx.shockwave(here, 7, '#FFD27A');
+        this.hooks.shake(0.5);
+        this.onSummon?.(e, mech);
+        break;
+      case 'blink': {
+        const to = e.blinkTo;
+        if (!to) break;
+        this.fx.shockwave(here, 4.5, '#8A4AFF');
+        const c = this.constrain(to.x, to.z, e.radius, e);
+        e.x = c.x; e.z = c.z; e.y = this.ground(c.x, c.z);
+        const tg = this.targetSpot(e);
+        if (tg) e.yaw = Math.atan2(tg.x - e.x, tg.z - e.z);
+        e.char.place(e.x, e.y, e.z, e.yaw);
+        e.blinkTo = null;
+        this.fx.shockwave(new Vector3(e.x, e.y, e.z), 5.5, '#8A4AFF');
+        this.hooks.shake(0.35);
+        break;
+      }
+      case 'lunge': {
+        // Weg ≈ Anfangstempo / 3,9 (der Schwung klingt mit 0,02^s ab)
+        const v = mech.dist * 3.9;
+        e.vx += Math.sin(e.yaw) * v; e.vz += Math.cos(e.yaw) * v;
+        this.fx.shockwave(here, 3, '#FFE7B0');
+        break;
+      }
+      default: break;
+    }
+  }
+
+  /** Gegenschlag der Konterhaltung: kurze Warnfläche am Angreifer, die fast sofort einschlägt */
+  private riposte(e: Enemy) {
+    const r = e.riposteReq;
+    if (!r) return;
+    e.riposteReq = null;
+    const spec: ZoneSpec = { shape: 'circle', size: r.r };
+    this.zones.spawn(e, spec, r.x, r.z, this.ground(r.x, r.z), 0, 0.28, e.strength * r.dmg * 1.3, 10, e.atkSeq, { sticky: true, solo: true });
+    this.overlay.number(e.head.setY(e.y + 3.2 * e.def.scale), 'Konter!', 'crit');
+    this.fx.shockwave(new Vector3(e.x, e.y, e.z), 3, '#FFD27A');
   }
 
   enemyStrike(e: Enemy, atk: EnemyAttack) {
     // Hieb des Gegners ist dort zu hören, wo er steht
     if (!atk.projectile) audio.play('swing', 0.75, { x: e.x, y: e.y + 1.2, z: e.z });
-    if (atk.aoe || atk.zones) return; // Schaden kommt über den Warnkreis bzw. die Warnfläche
+    if (atk.mech) this.mechStrike(e, atk.mech);
+    if (atk.aoe || atk.zones || atk.mech?.kind === 'summon') return; // Schaden kommt über den Warnkreis bzw. die Warnfläche
     if (atk.projectile) {
       const p = this.playerPos;
       const from = new Vector3(e.x + Math.sin(e.yaw) * 0.8, e.y + 1.3, e.z + Math.cos(e.yaw) * 0.8);
       const dir = p ? new Vector3(p.x - from.x, p.y + 1 - from.y, p.z - from.z).normalize() : new Vector3(Math.sin(e.yaw), 0, Math.cos(e.yaw));
-      this.spawnProjectile(from, dir.multiplyScalar(atk.projectile.speed), atk.projectile.radius, e.dmg * atk.dmg, atk.knock, 'enemy', e, false, atk.projectile.color, 0);
+      this.spawnProjectile(from, dir.multiplyScalar(atk.projectile.speed), atk.projectile.radius, e.strength * atk.dmg, atk.knock, 'enemy', e, false, atk.projectile.color, 0);
       this.fx.hit(from, 'punch', atk.projectile.color);
       return;
     }
@@ -282,7 +454,7 @@ export class CombatSystem implements EnemyWorld {
       if (!tg.alive) return;
       const ax = tg.x - e.x, az = tg.z - e.z, ad = Math.hypot(ax, az);
       if (!HB_TARGET.fromUpright(tg.x, tg.y, tg.z, Math.atan2(-ax, -az), 1).overlap(VOL)) return;
-      tg.receive(e.dmg * atk.dmg, ax / (ad || 1), az / (ad || 1));
+      tg.receive(e.strength * atk.dmg, ax / (ad || 1), az / (ad || 1));
       this.fx.hit(new Vector3(tg.x, tg.y + 1.1, tg.z), atk.fx === 'heavy' ? 'heavy' : 'slash', '#FF8A6A');
       return;
     }
@@ -291,8 +463,11 @@ export class CombatSystem implements EnemyWorld {
     const dx = pl.x - e.x, dz = pl.z - e.z;
     const d = Math.hypot(dx, dz);
     if (!HB_TARGET.fromUpright(pl.x, pl.y, pl.z, pl.yaw, 1).overlap(VOL)) return;
-    this.hitPlayer(e.dmg * atk.dmg, dx / (d || 1), dz / (d || 1), atk.knock, e, atk.fx === 'heavy');
+    this.hitPlayer(e.strength * atk.dmg, dx / (d || 1), dz / (d || 1), atk.knock, e, atk.fx === 'heavy');
   }
+
+  /** Ein Verband der Verteidiger trifft die Spielfigur (Hieb oder Salve) */
+  strikePlayer(dmg: number, dirX: number, dirZ: number, heavy: boolean) { this.hitPlayer(dmg, dirX, dirZ, heavy ? 8 : 4, null, heavy); }
 
   private hitPlayer(dmg: number, dirX: number, dirZ: number, knock: number, from: Enemy | null, heavy: boolean) {
     const pl = this.player;
@@ -364,7 +539,7 @@ export class CombatSystem implements EnemyWorld {
         if (rl < 0.15) { rx = SEG_D.x; rz = SEG_D.z; rl = Math.hypot(rx, rz) || 1; }
         // (immer vorhanden, damit die Zahl der Strecken von Schritt zu Schritt gleich bleibt)
         // Fäuste und Füße: nur ausgestreckt (Schlag, Tritt) reicht der Wind weiter – ein Standbein trifft nicht
-        const limbK = s.ext > 0 ? Math.min(1, Math.max(0, (rl - 0.4) / 0.3)) : 1;
+        const limbK = s.ext > 0 ? clamp01((rl - 0.4) / 0.3) : 1;
         const reach = Math.max(0.05, (def.range - rl) * limbK);
         const wy = Math.min(y + 1.75, Math.max(y + 0.45, tip.y));
         this.sweepCur[n * 2].copy(tip);
@@ -412,8 +587,55 @@ export class CombatSystem implements EnemyWorld {
     };
     for (const e of this.enemies) if (e.alive) test(e, e.x, e.z, e.radius);
     for (const dm of this.dummies) test(dm, dm.x, dm.z, dm.radius);
+    // Verbände der Verteidiger: jeder Schwung trifft jeden Verband in Reichweite einmal (er trifft viele Köpfe)
+    if (this.mass.length && !early) {
+      for (const q of this.mass) {
+        if (!q.alive || done.has(q)) continue;
+        const dx = q.x - x, dz = q.z - z, d = Math.hypot(dx, dz), fr = q.sepRadius() * 0.7;
+        if (d > def.range + fr + 0.8) continue;
+        const ang = Math.abs(((Math.atan2(dx, dz) - yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+        if (ang > def.arc / 2 + 0.7 && d > fr + 1.2) continue;
+        done.add(q);
+        this.massHit(q, def, dx / (d || 1), dz / (d || 1), mult, color);
+        hits++;
+      }
+    }
     for (let i = 0; i < n * 2; i++) this.sweepPrev[i].copy(this.sweepCur[i]);
     return hits;
+  }
+
+  /** Hieb des Spielers gegen einen Verband: Schaden mit Schwung-Bonus, Funken, Zahl und Treffer-Rückmeldung */
+  private massHit(q: TroopSquad, def: AttackDef, dirX: number, dirZ: number, mult: number, color: string) {
+    const crit = Math.random() < this.critChance;
+    const dmg = Math.round(this.atk * def.dmg * mult * MASS_CLEAVE * (crit ? this.mods.critMult : 1) * (0.92 + Math.random() * 0.16));
+    if (this.mods.lifesteal > 0) this.hooks.heal(dmg * this.mods.lifesteal * 0.2);
+    const before = q.heads;
+    q.receive(dmg, dirX, dirZ);
+    const pos = new Vector3(q.x - dirX * 0.8, q.y + 1.2, q.z - dirZ * 0.8);
+    this.fx.hit(pos, def.fx, color, crit || def.fx === 'heavy');
+    this.overlay.number(pos.clone().setY(pos.y + 0.5), q.heads < before ? `${dmg} (−${before - q.heads})` : dmg, crit ? 'crit' : 'hit');
+    this.overlay.addCombo();
+    this.hooks.impact(dirX, dirZ, 0.7);
+    this.hooks.hitstop(def.hitstop * 0.5);
+    this.hooks.shake(def.shake * 0.8);
+    if (q.heads <= 0) this.onSquadDown(q);
+  }
+
+  private onSquadDown(q: TroopSquad) {
+    this.hooks.gold(Math.round(q.maxHeads * (3 + this.mods.playerLevel * 0.4)));
+    this.fx.shockwave(new Vector3(q.x, q.y, q.z), 4, '#FFD27A');
+  }
+
+  /** Treffer auf ein Ziel der eigenen Trupps: Einzelgegner (mit Rückmeldung) oder ein Verband der Verteidiger */
+  foeHit(e: Enemy | TroopSquad, dmg: number, dirX: number, dirZ: number, color: string, heavy: boolean, srcId?: EntityId) {
+    if ('squadId' in e) {
+      if (!e.alive) return;
+      e.receive(dmg, dirX, dirZ);
+      if (heavy || Math.random() < 0.25) this.fx.hit(new Vector3(e.x, e.y + 1.1, e.z), heavy ? 'heavy' : 'slash', color);
+      if (e.heads <= 0) this.onSquadDown(e);
+      return;
+    }
+    this.allyHit(e, dmg, dirX, dirZ, color, heavy, srcId);
   }
 
   /** Crew-Hieb: Angriffsvolumen vor dem Crewmitglied gegen die Trefferzonen des Gegners */
@@ -452,7 +674,7 @@ export class CombatSystem implements EnemyWorld {
       return;
     }
     const e = obj as Enemy;
-    const res = e.takeHit({ dmg, poise: def.poise, knock: def.knock, launch: def.launch, dirX, dirZ, heavy } as HitInfo, this.now, this);
+    const res = e.takeHit({ dmg, poise: def.poise, knock: def.knock, launch: def.launch, dirX, dirZ, heavy, src: this.player?.entityId, ranged: def.fx === 'magic' } as HitInfo, this.now, this);
     const pos = e.head.setY(e.y + 1.3 * e.def.scale);
     // Funken genau dort, wo die Klinge die Trefferzone schneidet
     const contact = at ? at.clone() : pos;
@@ -509,7 +731,7 @@ export class CombatSystem implements EnemyWorld {
     const total = Math.round((g0 + Math.random() * (g1 - g0)) * (1 + 0.2 * (e.level - 1)));
     for (let i = 0; i < n; i++) this.spawnCoin(e.x, e.y + 1, e.z, Math.max(1, Math.round(total / n)));
     // Beute-Säulen: Seltenheit nach Gegnerart (Elite besser, Bosse vier Stück, mindestens eine epische)
-    for (const d of rollLoot({ boss: e.def.boss, elite: e.def.elite, level: e.level, gold: e.def.gold })) this.loot.drop(e.x, e.y + 1, e.z, d, e.def.boss ? 4 : 2.2);
+    if (e.def.raid !== 'boss') for (const d of rollLoot({ boss: e.def.boss, elite: e.def.elite, level: e.level, gold: e.def.gold })) this.loot.drop(e.x, e.y + 1, e.z, d, e.def.boss ? 4 : 2.2);
     this.hooks.kill(e);
     if (e.def.boss) {
       // Todesstoß: eine halbe Sekunde Zeitlupe mit Schockring, dann Siegesbild und Fanfare
@@ -519,11 +741,11 @@ export class CombatSystem implements EnemyWorld {
       this.fx.shockwave(new Vector3(e.x, e.y + 0.2, e.z), 7, '#FFD27A');
       this.overlay.impactFrame();
       this.overlay.setBoss(null);
-      setTimeout(() => this.overlay.victory('Legende besiegt!', name, [`${total} Gold`, 'Beute fällt als Lichtsäulen']), 520);
+      setTimeout(() => this.overlay.victory(e.def.raid === 'boss' ? 'Endboss besiegt!' : 'Legende besiegt!', name, [`${total} Gold`, 'Beute fällt als Lichtsäulen']), 520);
     }
   }
 
-  /** Einschlag einer Warnfläche: Druckwelle, Risse, Schaden für alle darin (höchstens einmal je Angriff) */
+  /** Einschlag einer Warnfläche: Druckwelle, Risse, Schaden für alle darin (Spielfigur, Offiziere, Trupps) – je Angriff höchstens einmal, Streuflächen einzeln */
   private detonate(z: WarnZone) {
     const s = z.spec;
     const at = new Vector3(z.x, z.y, z.z);
@@ -542,17 +764,26 @@ export class CombatSystem implements EnemyWorld {
       fx.shockwave(p, s.size * 0.6, '#FF9A6A');
       fx.crack(p, s.size * 0.5);
     } else {
-      fx.shockwave(at, s.size * 1.1, '#FF9A6A');
+      fx.shockwave(at, s.size * 1.1, z.propKind === 'rune' ? '#B06AFF' : z.propKind === 'kette' ? '#7FA8D8' : '#FF9A6A');
       fx.crack(at, s.size * 0.9);
+      if (z.propKind === 'fass' || z.propKind === 'granate') this.smoke?.puff(z.x, z.y + 0.6, z.z, { n: 4, size: 1.2, grow: 4, life: 1.6, tone: 0.3, spread: 1.6, rise: 1.2, alpha: 0.6, wind: 0.3 });
     }
     this.hooks.shake(0.5);
+    if (!z.from.alive) return;
+    // Crew und Trupps in der Fläche leiden mit (Trupps stärker: die Fläche trifft viele Köpfe auf einmal)
+    for (const a of this.allies) {
+      if (!a.alive || !zoneContains(z, a.x, a.z, a.radius)) continue;
+      const dx = a.x - z.x, dz = a.z - z.z, d = Math.hypot(dx, dz) || 1;
+      a.receive(z.dmg * ('squadId' in a ? 2.2 : 0.55), dx / d, dz / d);
+    }
     const pl = this.player;
-    if (!pl?.active || !z.from.alive || this.zoneHit.get(z.from) === z.seq) return;
+    if (!pl?.active || (!z.solo && this.zoneHit.get(z.from) === z.seq)) return;
     if (!zoneContains(z, pl.x, pl.z, 0.3)) return;
-    this.zoneHit.set(z.from, z.seq);
+    if (!z.solo) this.zoneHit.set(z.from, z.seq);
     const dx = pl.x - z.x, dz = pl.z - z.z;
     const d = Math.hypot(dx, dz) || 1;
     this.hitPlayer(z.dmg, dx / d, dz / d, z.knock, z.from, true);
+    if (s.bind) { pl.bind?.(s.bind.dur, s.bind.slow); this.overlay.number(new Vector3(pl.x, pl.y + 2.2, pl.z), 'Gefesselt!', 'info'); }
   }
 
   private spawnProjectile(from: Vector3, vel: Vector3, radius: number, dmg: number, knock: number, team: 'player' | 'enemy', src: Enemy | null, pierce: boolean, color: string, poise: number) {
@@ -585,6 +816,13 @@ export class CombatSystem implements EnemyWorld {
         shove: (dx, dz) => { const c = this.constrain(e.x + dx, e.z + dz, e.radius, e); e.x = c.x; e.z = c.z; },
       });
     }
+    for (const q of this.mass) {
+      if (!q.alive) continue;
+      list.push({
+        x: q.x, y: q.y, z: q.z, radius: q.sepRadius() * 0.7, alive: true,
+        hit: (dmg, _status, _dur, dx, dz) => this.massAbility(q, dmg * this.mods.skillMult, dx, dz),
+      });
+    }
     for (const d of this.dummies) {
       list.push({
         x: d.x, y: d.group.position.y, z: d.z, radius: d.radius, alive: true,
@@ -598,10 +836,19 @@ export class CombatSystem implements EnemyWorld {
     return list;
   }
 
+  private massAbility(q: TroopSquad, dmg: number, dx: number, dz: number) {
+    const amount = Math.round(dmg * MASS_CLEAVE * 0.8);
+    q.receive(amount, dx, dz);
+    const pos = new Vector3(q.x, q.y + 1.6, q.z);
+    this.overlay.number(pos, amount, 'hit');
+    this.overlay.addCombo();
+    if (q.heads <= 0) this.onSquadDown(q);
+  }
+
   private abilityHit(e: Enemy, dmg: number, status: Status | undefined, dur: number, dx: number, dz: number, el: Element) {
     const crit = Math.random() < this.critChance;
     const amount = Math.round(dmg * (crit ? this.mods.critMult : 1));
-    const res = e.takeHit({ dmg: amount, poise: 25, knock: status === 'launch' ? 2 : 4, dirX: dx, dirZ: dz, heavy: true } as HitInfo, this.now, this);
+    const res = e.takeHit({ dmg: amount, poise: 25, knock: status === 'launch' ? 2 : 4, dirX: dx, dirZ: dz, heavy: true, src: this.player?.entityId, ranged: true } as HitInfo, this.now, this);
     const pos = e.head.setY(e.y + 1.4 * e.def.scale);
     this.overlay.number(pos, amount, crit ? 'crit' : 'hit');
     this.overlay.addCombo();
@@ -701,17 +948,18 @@ export class CombatSystem implements EnemyWorld {
   // ---------- Inseln ----------
 
   /** Gegnerlager einer Insel aufbauen */
-  enterIsland(isl: WalkIsland, kinds: EnemyKind[], level: number, faction: Faction, bossName?: string) {
+  enterIsland(isl: WalkIsland, kinds: EnemyKind[], level: number, faction: Faction, bossName?: string, opts: { power?: FactionId; spread?: number } = {}) {
     this.leaveIsland();
     this.island = isl;
     this.nav = navForIsland(isl);
     const spot = { x: 0, z: 0 };
     kinds.forEach((k, i) => {
       const a = (i / kinds.length) * Math.PI * 2 + Math.random() * 0.4;
-      const r = isl.r * (k === 'legende' ? 0.15 : 0.35 + Math.random() * 0.3);
+      // `spread`: große Festungsinseln halten die Garnison im Hof statt über die ganze Insel verstreut
+      const r = isl.r * (k === 'legende' ? 0.15 * (opts.spread ?? 1) : (0.35 + Math.random() * 0.3) * (opts.spread ?? 1));
       // nicht in einem Haus oder Felsen erscheinen
       this.nav!.snap(isl.x + Math.cos(a) * r, isl.z + Math.sin(a) * r, ENEMIES[k].radius * ENEMIES[k].scale, spot);
-      const e = new Enemy(this.assets, k, level, faction, spot.x, spot.z, this.outline, k === 'legende' ? bossName : undefined);
+      const e = new Enemy(this.assets, k, level, faction, spot.x, spot.z, this.outline, k === 'legende' ? bossName : undefined, opts.power);
       e.y = this.ground(e.x, e.z);
       this.scene.add(e.char.holder);
       this.enemies.push(e);
@@ -724,12 +972,12 @@ export class CombatSystem implements EnemyWorld {
   setGround(g: Ground) { this.groundRef = g; }
 
   /** Deckkampf beim Entern: Crew auf dem feindlichen Deck */
-  enterDeck(deck: DeckGround, kinds: EnemyKind[], level: number, faction: Faction, bossName?: string) {
+  enterDeck(deck: DeckGround, kinds: EnemyKind[], level: number, faction: Faction, bossName?: string, power?: FactionId) {
     this.leaveIsland();
     this.nav = null;
     kinds.forEach((k, i) => {
       const p = deck.spot((Math.random() - 0.5) * 1.6, 0.2 + (i / Math.max(1, kinds.length - 1)) * 0.7 - 0.1);
-      const e = new Enemy(this.assets, k, level, faction, p.x, p.z, this.outline, k === 'legende' ? bossName : undefined);
+      const e = new Enemy(this.assets, k, level, faction, p.x, p.z, this.outline, k === 'legende' ? bossName : undefined, power);
       e.y = deck.height();
       e.alert();
       this.scene.add(e.char.holder);
@@ -761,6 +1009,9 @@ export class CombatSystem implements EnemyWorld {
     // Beute-Säulen, die noch liegen, nimmt die Crew mit (nichts geht verloren); Warnflächen verschwinden
     this.loot.collectAll();
     this.zones.clear();
+    for (const m of this.auraFx.values()) m.removeFromParent();
+    this.auraFx.clear();
+    this.tauntAt.clear();
     this.lock = null;
     this.island = null;
     this.nav = null;
@@ -770,8 +1021,55 @@ export class CombatSystem implements EnemyWorld {
     this.overlay.setBoss(null);
   }
 
+  /**
+   * Hauptmänner und Endbosse wählen ihr Ziel über die Bedrohungstabelle: Schaden und Nähe erzeugen Bedrohung, Spott (Tank-Offiziere) zieht
+   * das Ziel für kurze Zeit, ein Wechsel braucht 110 % (Nahkampf) bzw. 130 % (Fernkampf) der Bedrohung des bisherigen Ziels.
+   * Liefert die Crew-Figur oder null (= die Spielfigur); `e.targetEntityId` nennt in beiden Fällen die Kennung.
+   */
+  private pickByThreat(e: Enemy): AllyTarget | null {
+    const th = e.threat!;
+    const pl = this.player, dt = this.dtLast;
+    if (pl?.active) th.touch(pl.entityId, Math.hypot(pl.x - e.x, pl.z - e.z), dt);
+    for (const a of this.allies) {
+      if (!a.alive || !a.entityId) continue;
+      const d = Math.hypot(a.x - e.x, a.z - e.z);
+      th.touch(a.entityId, d, dt);
+      // Tank-Offizier: spottet alle 6 s, wenn er nah am Gegner steht
+      if (a.taunt && d < 10 && (this.tauntAt.get(a.entityId) ?? 0) <= this.now) { this.tauntAt.set(a.entityId, this.now + 6); th.taunt(a.entityId, 2.6); }
+    }
+    // gültig ist, wer noch im Kampf steht und nicht weiter als 70 m entfernt ist (Gefallene und Abgereiste zählen nicht mehr)
+    this.threatFor = e;
+    let id = th.pick(this.threatOk);
+    if (!id && pl?.active) { id = pl.entityId; th.add(id, 1); th.pick(this.threatOk); }
+    e.targetEntityId = id;
+    if (!id || (pl && id === pl.entityId)) return null;
+    const ally = this.allies.find((a) => a.entityId === id) ?? null;
+    if (ally) this.targets.set(e, { t: ally, until: this.now + 0.4 });
+    return ally;
+  }
+
+  /** Boss-Leiste: Name, Titel, Leben, Phasenmarken, Haltebalken und wer gerade das Ziel des Bosses ist (Bedrohungstabelle) */
+  private bossView(b: Enemy): BossView {
+    let aggro: BossView['aggro'] = null;
+    const pl = this.player;
+    if (b.threat) {
+      const ranked = b.threat.ranked();
+      const top = ranked[0]?.value ?? 0;
+      const mine = pl ? ranked.find((r) => r.id === pl.entityId)?.value ?? 0 : 0;
+      const id = b.targetEntityId;
+      const target = id && pl && id === pl.entityId ? 'Du' : this.allies.find((a) => a.entityId === id)?.label ?? 'Verbündeter';
+      if (target) aggro = { target, mine: target === 'Du', share: top > 0 ? Math.min(1.5, mine / top) : 0 };
+    }
+    return { name: b.name ?? b.def.label, title: b.def.title, frac: b.hp / b.maxHp, brk: b.breakFrac, broken: b.brokenT > 0, phase: b.phase, marks: b.phaseMarks, aggro };
+  }
+
   private pickTarget(e: Enemy): AllyTarget | null {
     if (!e.alive) return null;
+    if (e.threat) {
+      const t = this.pickByThreat(e);
+      if (!t) this.targets.delete(e);
+      return t;
+    }
     const cur = this.targets.get(e);
     if (cur && cur.until > this.now && (!cur.t || cur.t.alive)) return cur.t;
     let t: AllyTarget | null = null;
@@ -790,9 +1088,9 @@ export class CombatSystem implements EnemyWorld {
   }
 
   /** Treffer durch die Crew */
-  allyHit(e: Enemy, dmg: number, dirX: number, dirZ: number, color: string, heavy: boolean) {
+  allyHit(e: Enemy, dmg: number, dirX: number, dirZ: number, color: string, heavy: boolean, srcId?: EntityId) {
     if (!e.alive) return;
-    const res = e.takeHit({ dmg: Math.round(dmg), poise: heavy ? 22 : 10, knock: heavy ? 3 : 1.5, dirX, dirZ, heavy } as HitInfo, this.now, this);
+    const res = e.takeHit({ dmg: Math.round(dmg), poise: heavy ? 22 : 10, knock: heavy ? 3 : 1.5, dirX, dirZ, heavy, src: srcId } as HitInfo, this.now, this);
     const pos = e.head.setY(e.y + 1.4 * e.def.scale);
     this.fx.hit(pos.clone(), heavy ? 'heavy' : 'slash', color);
     if (res === 'blocked') this.overlay.number(pos, 'Abgewehrt', 'info');
@@ -801,7 +1099,7 @@ export class CombatSystem implements EnemyWorld {
   }
 
   get activeIsland() { return this.island; }
-  get hostilesLeft() { return this.enemies.filter((e) => e.alive).length; }
+  get hostilesLeft() { return this.enemies.filter((e) => e.alive).length + this.mass.filter((q) => q.alive).length; }
   /** Lebende Gegner des Lagers (ohne die eines Weltereignisses): nur sie zählen für „Insel befreit“ */
   get campLeft() { return this.enemies.filter((e) => e.alive && !e.tag).length; }
   tagLeft(tag: string) { return this.enemies.filter((e) => e.alive && e.tag === tag).length; }
@@ -815,7 +1113,7 @@ export class CombatSystem implements EnemyWorld {
    * Gegner zusätzlich zu den vorhandenen erscheinen lassen (Weltereignisse). at: Mittelpunkt, spread: Streuung in Metern;
    * die Gegner greifen sofort an.
    */
-  spawnWave(kinds: EnemyKind[], level: number, faction: Faction, tag: string, at: { x: number; z: number }, spread: number): Enemy[] {
+  spawnWave(kinds: EnemyKind[], level: number, faction: Faction, tag: string, at: { x: number; z: number }, spread: number, opts: { power?: FactionId; name?: string; def?: import('../data/combat').EnemyDef } = {}): Enemy[] {
     const nav = this.nav;
     const out: Enemy[] = [];
     const spot = { x: 0, z: 0 };
@@ -823,7 +1121,7 @@ export class CombatSystem implements EnemyWorld {
       const a = (i / kinds.length) * Math.PI * 2;
       const px = at.x + Math.cos(a) * spread * (0.4 + (i % 2) * 0.5), pz = at.z + Math.sin(a) * spread * (0.4 + (i % 2) * 0.5);
       if (nav) nav.snap(px, pz, ENEMIES[k].radius * ENEMIES[k].scale, spot); else { spot.x = px; spot.z = pz; }
-      const e = new Enemy(this.assets, k, level, faction, spot.x, spot.z, this.outline);
+      const e = new Enemy(this.assets, k, level, faction, spot.x, spot.z, this.outline, k === 'legende' || opts.def ? opts.name : undefined, opts.power, { def: opts.def });
       e.tag = tag;
       e.y = this.ground(e.x, e.z);
       e.alert();
@@ -835,10 +1133,66 @@ export class CombatSystem implements EnemyWorld {
     return out;
   }
 
+  // ---------- Auren der Hauptmänner ----------
+
+  /**
+   * Auren: jeder lebende Hauptmann (und Boss mit Aura) stärkt die Gegner und Verbände in seinem Umkreis. Faktoren werden jedes Bild neu
+   * gesetzt (Schlachtruf: mehr Schaden, Bollwerk: weniger erlittener Schaden, Eilmarsch: Tempo, Feldscher: Heilung) und mit einem Bodenring gezeigt.
+   */
+  private applyAuras(dt: number) {
+    void dt;
+    let any = false;
+    for (const e of this.enemies) if (e.def.aura && e.alive) { any = true; break; }
+    if (!any && !this.auraFx.size) return;
+    for (const e of this.enemies) { e.auraDmg = 1; e.auraTaken = 1; e.auraSpeed = 1; e.auraRegen = 0; }
+    for (const q of this.mass) { q.auraDmg = 1; q.auraTaken = 1; q.auraSpeed = 1; }
+    for (const c of this.enemies) {
+      const A = c.def.aura;
+      if (!A || !c.alive) continue;
+      const r2 = A.radius * A.radius;
+      for (const e of this.enemies) {
+        if (!e.alive || e === c) continue;
+        const dx = e.x - c.x, dz = e.z - c.z;
+        if (dx * dx + dz * dz > r2) continue;
+        if (A.dmg) e.auraDmg = Math.max(e.auraDmg, A.dmg);
+        if (A.taken) e.auraTaken = Math.min(e.auraTaken, A.taken);
+        if (A.speed) e.auraSpeed = Math.max(e.auraSpeed, A.speed);
+        if (A.regen) e.auraRegen = Math.max(e.auraRegen, A.regen);
+      }
+      for (const q of this.mass) {
+        if (!q.alive) continue;
+        const dx = q.x - c.x, dz = q.z - c.z;
+        if (dx * dx + dz * dz > r2) continue;
+        if (A.dmg) q.auraDmg = Math.max(q.auraDmg, A.dmg);
+        if (A.taken) q.auraTaken = Math.min(q.auraTaken, A.taken);
+        if (A.speed) q.auraSpeed = Math.max(q.auraSpeed, A.speed);
+      }
+    }
+    // Ringe: einer je Hauptmann, am Boden; verschwindet mit ihm
+    for (const [e, m] of this.auraFx) {
+      if (e.alive && this.enemies.includes(e)) continue;
+      m.removeFromParent(); this.auraFx.delete(e);
+    }
+    for (const c of this.enemies) {
+      const A = c.def.aura;
+      if (!A || !c.alive) continue;
+      let m = this.auraFx.get(c);
+      if (!m) {
+        m = new Mesh(sharedGeo('aura:ring', () => new RingGeometry(0.93, 1, 72).rotateX(-Math.PI / 2)), auraMat(A.id, A.color));
+        m.renderOrder = 2; m.frustumCulled = false; m.userData.noOutline = true;
+        this.scene.add(m);
+        this.auraFx.set(c, m);
+      }
+      m.position.set(c.x, c.y + 0.12, c.z);
+      m.scale.setScalar(A.radius * (0.985 + 0.015 * Math.sin(this.now * 3)));
+    }
+  }
+
   // ---------- Schleife ----------
 
   update(dt: number, camera: Camera) {
     this.now += dt;
+    this.dtLast = dt;
     const pl = this.player;
     this.playerActive = !!pl && pl.active;
     this.playerPos = pl ? this.plVec.set(pl.x, pl.y, pl.z) : null;
@@ -857,6 +1211,11 @@ export class CombatSystem implements EnemyWorld {
       e.update(dt, this);
     }
     this.playerPos = plPos; this.playerActive = plAct;
+    for (const e of this.enemies) if (e.riposteReq) this.riposte(e);
+    this.applyAuras(dt);
+    this.foes.length = 0;
+    for (const e of this.enemies) if (e.alive) this.foes.push(e);
+    for (const q of this.mass) if (q.alive) this.foes.push(q);
     for (const d of this.dummies) d.update(dt);
     this.updateDots(dt);
 
@@ -889,6 +1248,20 @@ export class CombatSystem implements EnemyWorld {
             p.hit.add(e);
             const d = Math.hypot(p.vel.x, p.vel.z) || 1;
             this.applyHit(e, { dmg: p.dmg / this.atk, poise: p.poise, knock: p.knock, fx: 'magic', hitstop: 0.05, shake: 0.15 } as AttackDef, p.vel.x / d, p.vel.z / d, ZONE_MULT[res.zone], p.color, res.zone, HIT_P);
+            if (!p.pierce) { p.life = 0; break; }
+          }
+        }
+        for (const q of this.mass) {
+          if (!q.alive || p.hit.has(q)) continue;
+          const fr = q.sepRadius() * 0.7;
+          if (Math.hypot(pos.x - q.x, pos.z - q.z) < p.radius + fr + 0.4) {
+            p.hit.add(q);
+            const d = Math.hypot(p.vel.x, p.vel.z) || 1;
+            const dmg = Math.round(p.dmg * MASS_CLEAVE * 0.7);
+            q.receive(dmg, p.vel.x / d, p.vel.z / d);
+            this.fx.hit(pos.clone(), 'magic', p.color);
+            this.overlay.number(new Vector3(q.x, q.y + 1.6, q.z), dmg, 'hit');
+            if (q.heads <= 0) this.onSquadDown(q);
             if (!p.pierce) { p.life = 0; break; }
           }
         }
@@ -936,9 +1309,13 @@ export class CombatSystem implements EnemyWorld {
     { let n = 0; for (const a of this.aoes) if (a.t > 0) this.aoes[n++] = a; this.aoes.length = n; }
 
     // Warnflächen der Bosse: verfallen, wenn der Angriff unterbrochen wird (Break, Tod, Phasenwechsel); sonst Einschlag
+    // Langlebige Flächen (Streuflächen, Fässer, Ketten, Konter) schlagen auch ein, wenn der Boss schon den nächsten Angriff begonnen hat:
+    // sie verfallen nur mit seinem Tod, bei einem Break (Unterbrechung) und beim Phasenwechsel
     this.zones.update(dt, (z) => {
       const e = z.from;
-      return e.alive && e.atkSeq === z.seq && (e.state === 'windup' || e.state === 'attack' || e.state === 'recover');
+      if (!e.alive) return false;
+      if (z.sticky) return e.brokenT <= 0 && e.state !== 'transition';
+      return e.atkSeq === z.seq && (e.state === 'windup' || e.state === 'attack' || e.state === 'recover');
     }, (z) => this.detonate(z));
     // Beute-Säulen: fallen, leuchten, werden vom Spieler magnetisch eingesaugt
     this.loot.update(dt, pl && pl.active ? pl : null, (x, z) => this.ground(x, z));
@@ -978,7 +1355,7 @@ export class CombatSystem implements EnemyWorld {
 
     // Anzeigen
     const boss = this.enemies.find((e) => e.def.boss && e.alive);
-    this.overlay.setBoss(boss ? boss.name ?? boss.def.label : null, boss ? boss.hp / boss.maxHp : 0, boss ? { brk: boss.breakFrac, broken: boss.brokenT > 0, phase: boss.phase } : undefined);
+    this.overlay.setBoss(boss ? this.bossView(boss) : null);
     for (const e of this.enemies) {
       const show = e.alive && !e.def.boss && (this.now - e.lastHit < 5 || e === this.lock || e.def.elite);
       this.overlay.setBar(e, show ? e.headInto(this.barVec) : null, show ? e.hp / e.maxHp : -1, !!e.def.elite, camera, '', e.char.holder, 2.2 * e.def.scale);

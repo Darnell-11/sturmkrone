@@ -27,6 +27,7 @@ import { markWind, windify } from '../render/wind';
 import { inBox, type Blocker } from './islandGround';
 import { hashId, seeded } from './waves';
 import { envGroup, hasEnv } from './envModels';
+import { pickOne } from '../core/mathUtil';
 
 /**
  * Instanzierter Bewuchs: Bäume, Sträucher, Gras und Felsen werden nicht mehr als einzelne Netze gebaut und pro Insel
@@ -344,7 +345,6 @@ const PAL: Record<Biome, Pal> = {
 
 const flat = (c: string) => toon({ color: c, flatShading: true });
 const smooth = (c: string) => toon(c);
-const pick = <T>(a: T[], rnd: () => number) => a[Math.floor(rnd() * a.length)];
 
 /** Stamm als gebogene Kette von Zylindern: lehnt sich um `lean` Meter in +x. Liefert die Spitze. */
 function bentTrunk(g: Group, h: number, lean: number, r0: number, r1: number, mat: Material, n = 6): { x: number; y: number } {
@@ -470,7 +470,7 @@ const MAKERS: Record<FloraId, (pal: Pal, rnd: () => number, v: number) => Group>
     const g = new Group();
     for (let k = 0; k < 3 + Math.floor(rnd() * 3); k++) {
       const s = 0.5 + rnd() * 0.55;
-      const m = new Mesh(new IcosahedronGeometry(s, 0), flat(pick(pal.bush, rnd)));
+      const m = new Mesh(new IcosahedronGeometry(s, 0), flat(pickOne(pal.bush, rnd)));
       m.position.set((rnd() - 0.5) * 1.3, s * 0.6, (rnd() - 0.5) * 1.3);
       m.scale.y = 0.75;
       m.rotation.set(rnd(), rnd() * 3, rnd());
@@ -482,7 +482,7 @@ const MAKERS: Record<FloraId, (pal: Pal, rnd: () => number, v: number) => Group>
   farn: (pal, rnd) => {
     const g = new Group();
     const n = 7 + Math.floor(rnd() * 3);
-    for (let i = 0; i < n; i++) g.add(blade(1 + rnd() * 0.5, 0.2, flat(pick(pal.bush, rnd)), 0.85 + rnd() * 0.45, (i / n) * Math.PI * 2 + rnd() * 0.4, 0.3));
+    for (let i = 0; i < n; i++) g.add(blade(1 + rnd() * 0.5, 0.2, flat(pickOne(pal.bush, rnd)), 0.85 + rnd() * 0.45, (i / n) * Math.PI * 2 + rnd() * 0.4, 0.3));
     windify(g, 0.13, 0.8);
     return g;
   },
@@ -490,7 +490,7 @@ const MAKERS: Record<FloraId, (pal: Pal, rnd: () => number, v: number) => Group>
     const g = new Group();
     for (let k = 0; k < 6; k++) {
       const h = 0.38 + rnd() * 0.45;
-      const b = new Mesh(new ConeGeometry(0.07, h, 3, 1, true), flat(pick(pal.grass, rnd)));
+      const b = new Mesh(new ConeGeometry(0.07, h, 3, 1, true), flat(pickOne(pal.grass, rnd)));
       b.position.set((rnd() - 0.5) * 0.5, h / 2, (rnd() - 0.5) * 0.5);
       b.rotation.set((rnd() - 0.5) * 0.6, rnd() * 3, (rnd() - 0.5) * 0.6);
       g.add(b);

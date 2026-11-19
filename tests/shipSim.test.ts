@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { AMMO } from '../src/data/ships';
 import {
-  applyDamage, applyStorm, createShipSim, crewEffects, crewFrac, crewHeads, crewPricePerHead, loseCrew, missingHeads, refillCrew, sailCurve,
+  applyDamage, applyStorm, boardingStrength, createShipSim, makeCrew, poolFrac, poolHeads, setPoolHeads, troopPricePerHead, crewEffects, crewFrac, crewHeads, crewPricePerHead, loseCrew, missingHeads, refillCrew, sailCurve,
   sailFrac, sailPerformance, setCrewFrac, shipTooltip, startRepair, stepPassiveRepair, stepRepair, stepSailSet, STORM_SAIL_FLOOR,
 } from '../src/naval/shipSim';
+import { ENTER_HULL, cannotBeSunk, enterPhaseCheck, finishingBlow } from '../src/naval/shipSim';
 import { mintEntityId, entityKind } from '../src/sim/entityId';
 
 const mk = () => createShipSim('ship-test', 400, 400, 6);
@@ -211,5 +212,138 @@ describe('Entity-Kennungen', () => {
     expect(new Set([a, b, c]).size).toBe(3);
     expect(entityKind(a)).toBe('foot');
     expect(entityKind(c)).toBe('ship');
+  });
+});
+
+
+describe('Zwei-Stufen-Crew: Truppen-Pool', () => {
+  const withTroops = (n: number) => { const s = createShipSim('ship-t', 1100, 1100, 13, 100); setPoolHeads(s.crew, 'truppen', n); return s; };
+
+  it('nur Schiffe mit Truppenplätzen (Leviathan) haben einen Truppen-Pool, er startet leer', () => {
+    expect(makeCrew('ship-a', 13).pools.truppen).toBeUndefined();
+    const c = makeCrew('ship-b', 13, 100);
+    expect(c.pools.truppen).toEqual({ n: 0, max: 100 });
+    expect(c.pools.matrosen).toEqual({ n: 104, max: 104 });
+  });
+
+  it('Verlustreihenfolge: erst Truppen, dann Seeleute – Offiziere gehören zu keinem Pool und sind nie betroffen', () => {
+    const s = withTroops(60);
+    expect(loseCrew(s.crew, 40)).toBe(40);
+    expect(poolHeads(s.crew, 'truppen')).toBe(20);
+    expect(poolHeads(s.crew, 'matrosen')).toBe(104);
+    expect(loseCrew(s.crew, 50)).toBe(50);          // 20 Truppen, dann 30 Seeleute
+    expect(poolHeads(s.crew, 'truppen')).toBe(0);
+    expect(poolHeads(s.crew, 'matrosen')).toBe(74);
+    expect(Object.keys(s.crew.pools).sort()).toEqual(['matrosen', 'truppen']);
+    // mehr Verlust als Köpfe: nie negativ
+    expect(loseCrew(s.crew, 1e6)).toBe(74);
+    expect(poolHeads(s.crew, 'matrosen')).toBe(0);
+  });
+
+  it('Kanonentreffer fordern zuerst die Truppen; die Zahl der Gefallenen ändert sich durch Truppen nicht', () => {
+    const a = withTroops(100), b = createShipSim('ship-b', 1100, 1100, 13);
+    applyDamage(a, 30, AMMO.kartaetsche, 'hull'); applyDamage(b, 30, AMMO.kartaetsche, 'hull');
+    const lostA = 100 - poolHeads(a.crew, 'truppen') + 104 - poolHeads(a.crew, 'matrosen');
+    const lostB = 104 - poolHeads(b.crew, 'matrosen');
+    expect(lostA).toBeCloseTo(lostB, 6);            // gleiche Zahl Gefallener
+    expect(poolHeads(a.crew, 'matrosen')).toBe(104); // …aber nur Truppen fielen
+    expect(poolHeads(a.crew, 'truppen')).toBeLessThan(100);
+  });
+
+  it('Crew-% und ihre Wirkung (Nachladen, Segelsetzen, Reparatur) zählen nur die Seeleute', () => {
+    const none = withTroops(0), full = withTroops(100);
+    expect(crewFrac(none.crew)).toBe(1);
+    expect(crewFrac(full.crew)).toBe(1);
+    // alle Truppen fallen: die Crew-% bleibt 100 %
+    loseCrew(full.crew, 100);
+    expect(crewFrac(full.crew)).toBe(1);
+    expect(crewEffects(crewFrac(full.crew))).toEqual(crewEffects(1));
+    // Seeleute fallen: die Crew-% sinkt, volle Truppen heben sie nicht
+    const half = withTroops(100); setCrewFrac(half.crew, 0.5);
+    expect(crewFrac(half.crew)).toBeCloseTo(0.5, 6);
+    expect(poolHeads(half.crew, 'truppen')).toBe(100);      // setCrewFrac lässt die Truppen unberührt
+    expect(crewEffects(crewFrac(half.crew)).reloadMult).toBeGreaterThan(1.4);
+  });
+
+  it('boardingStrength: ohne Truppen 1, mit vollem Pool deutlich stärker, wächst stetig', () => {
+    const base = boardingStrength(createShipSim('ship-x', 400, 400, 6).crew);
+    expect(base).toEqual({ heads: 0, frac: 0, damage: 1, hp: 1 });
+    expect(boardingStrength(withTroops(0).crew)).toMatchObject({ damage: 1, hp: 1, heads: 0 });
+    const full = boardingStrength(withTroops(100).crew);
+    expect(full.damage).toBeGreaterThan(1.4); expect(full.hp).toBeGreaterThan(1.5);
+    let prev = 0;
+    for (const n of [0, 20, 40, 60, 80, 100]) { const b = boardingStrength(withTroops(n).crew); expect(b.damage).toBeGreaterThanOrEqual(prev); prev = b.damage; }
+    expect(boardingStrength(withTroops(50).crew).frac).toBe(0.5);
+  });
+
+  it('Auffüllen je Gruppe: Matrosen und Truppen getrennt, nie über das Maximum', () => {
+    const s = withTroops(30);
+    loseCrew(s.crew, 30 + 20);                       // alle 30 Truppen und 20 Seeleute
+    expect(missingHeads(s.crew, 'matrosen')).toBe(20);
+    expect(missingHeads(s.crew, 'truppen')).toBe(100);
+    const sail = refillCrew(s.crew, { type: 'crewRefill', entityId: 'foot-1', shipId: 'ship-t', heads: null, pool: 'matrosen' });
+    expect(sail).toBe(20);
+    expect(poolHeads(s.crew, 'truppen')).toBe(0);    // Truppen blieben leer
+    const troops = refillCrew(s.crew, { type: 'crewRefill', entityId: 'foot-1', shipId: 'ship-t', heads: 70, pool: 'truppen', troopType: 'schwert' });
+    expect(troops).toBe(70);
+    expect(poolFrac(s.crew, 'truppen')).toBeCloseTo(0.7, 6);
+    expect(refillCrew(s.crew, { type: 'crewRefill', entityId: 'foot-1', shipId: 'ship-t', heads: 500, pool: 'truppen' })).toBe(30);
+    // Absicht für ein anderes Schiff wird abgelehnt
+    expect(refillCrew(s.crew, { type: 'crewRefill', entityId: 'foot-1', shipId: 'ship-other', heads: 10, pool: 'truppen' })).toBe(0);
+  });
+
+  it('Preis je Kopf steht in den Truppendaten; Tooltip nennt die Truppen und ihre Wirkung', () => {
+    expect(troopPricePerHead('schwert')).toBeGreaterThan(0);
+    expect(troopPricePerHead('schlaeger')).toBeGreaterThan(troopPricePerHead('schwert'));
+    const s = withTroops(80);
+    const tip = shipTooltip(s);
+    expect(tip).toContain('Truppen 80/100');
+    expect(tip).toContain('Seeleute');
+    expect(shipTooltip(createShipSim('ship-n', 400, 400, 6))).not.toContain('Truppen');
+  });
+
+  it('Zustand mit Truppen-Pool bleibt reines JSON', () => {
+    const s = withTroops(42);
+    expect(JSON.parse(JSON.stringify(s))).toEqual(s);
+  });
+});
+
+
+describe('Enterphase (Rumpf bleibt bei 1, Gnadenstoß, Nur-Entern)', () => {
+  it('Gegner gehen nie durch Schaden unter: aus dem Rumpf 0 wird 1, die Segel sind ganz zerfetzt', () => {
+    const s = mk();
+    for (let i = 0; i < 30; i++) { applyDamage(s, 500, AMMO.kugel, 'hull'); if (enterPhaseCheck(s, true, false)) break; }
+    expect(s.hull).toBe(ENTER_HULL);
+    expect(s.sail.hp).toBe(0);
+    // ohne die Erlaubnis (Spielerschiff, Begleiter) sinkt der Rumpf wie bisher auf 0
+    const p = mk();
+    applyDamage(p, 99999, AMMO.kugel, 'hull');
+    expect(enterPhaseCheck(p, false, false)).toBe(false);
+    expect(p.hull).toBe(0);
+  });
+
+  it('löst nur einmal aus und nur bei 0 Rumpfpunkten', () => {
+    const s = mk();
+    expect(enterPhaseCheck(s, true, false)).toBe(false);
+    s.hull = 0;
+    expect(enterPhaseCheck(s, true, true)).toBe(false);
+    expect(enterPhaseCheck(s, true, false)).toBe(true);
+  });
+
+  it('Gnadenstoß versenkt normale Schiffe, nie die Nur-Entern-Schiffe', () => {
+    const a = mk(); a.hull = 1;
+    expect(finishingBlow(a, false)).toBe(true);
+    expect(a.hull).toBe(0);
+    const b = mk(); b.hull = 1;
+    expect(finishingBlow(b, true)).toBe(false);
+    expect(b.hull).toBe(1);
+  });
+
+  it('Legenden (auch Marine-Legenden) und die zwei größten Klassen sind nur durch Entern zu besiegen', () => {
+    for (const tier of [0, 1, 2, 3, 4]) expect(cannotBeSunk({ tier })).toBe(false);
+    expect(cannotBeSunk({ tier: 5 })).toBe(true);
+    expect(cannotBeSunk({ tier: 6 })).toBe(true);
+    expect(cannotBeSunk({ tier: 1, legend: true })).toBe(true);
+    expect(cannotBeSunk({ tier: 4 })).toBe(false);
   });
 });

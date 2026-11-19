@@ -35,12 +35,14 @@ export interface SailRepairIntent {
   material: RepairMaterial;
 }
 
-/** Crew eines Schiffs aufstocken (Taverne, Hafen); `heads` = höchstens so viele Seeleute, `null` = bis zum Maximum */
+/** Crew eines Schiffs aufstocken (Taverne, Hafen, Werft); `heads` = höchstens so viele Köpfe, `null` = bis zum Maximum */
 export interface CrewRefillIntent {
   type: 'crewRefill';
   entityId: EntityId;
   shipId: EntityId;
   heads: number | null;
+  /** Gruppe der Besatzung ('matrosen' oder 'truppen'); fehlt sie, füllen alle Gruppen auf */
+  pool?: 'matrosen' | 'truppen';
+  /** Nur bei `pool: 'truppen'`: der angeheuerte Truppentyp (der Bestand je Typ liegt im Spielstand, nicht im Schiffs-Pool) */
+  troopType?: string;
 }
-
-export type ShipIntent = SailRepairIntent | CrewRefillIntent;

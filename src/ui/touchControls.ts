@@ -13,6 +13,11 @@ export class TouchControls {
   private origin = { x: 0, y: 0 };
   private lookId: number | null = null;
   private lookLast = { x: 0, y: 0 };
+  private layout: TouchButtonDef[] = [];
+  /** Größe der Knöpfe und Abstände (Einstellung „HUD-Größe“) */
+  private scale = 1;
+  /** Höhenfaktor, mit dem die Knöpfe zuletzt aufgebaut wurden (siehe heightFit) */
+  private fitShown = 1;
 
   constructor(parent: HTMLElement, private input: Input) {
     this.root = document.createElement('div');
@@ -73,17 +78,37 @@ export class TouchControls {
     const endLook = (e: PointerEvent) => { if (e.pointerId === this.lookId) this.lookId = null; };
     lookZone.addEventListener('pointerup', endLook);
     lookZone.addEventListener('pointercancel', endLook);
+    // Drehen des Geräts oder neue Fenstergröße: Knöpfe passend neu aufbauen
+    addEventListener('resize', () => { if (this.layout.length && this.heightFit() !== this.fitShown) this.setLayout(this.layout); });
+  }
+
+  /** Knöpfe und Abstände skalieren (0,8 … 1,4) und neu aufbauen */
+  setScale(scale: number) {
+    if (scale === this.scale) return;
+    this.scale = scale;
+    if (this.layout.length) this.setLayout(this.layout);
+  }
+
+  /**
+   * Knöpfe schrumpfen auf niedrigen Bildschirmen (Handy quer, rund 390 px hoch): sonst reicht die Knopfgruppe bis unter die Minikarte
+   * und die Auftragstafel. Ab 700 px Höhe voll groß, mindestens 80 % (der kleinste Knopf bleibt über 36 px: noch gut mit dem Daumen zu treffen).
+   */
+  private heightFit(): number {
+    return Math.min(1, Math.max(0.8, (innerHeight - 110) / 590));
   }
 
   setLayout(defs: TouchButtonDef[]) {
+    this.layout = defs;
+    this.fitShown = this.heightFit();
+    const k = this.scale * this.fitShown;
     this.buttonsEl.textContent = '';
     for (const def of defs) {
       const b = document.createElement('button');
       b.className = `touch-btn c-${def.color}`;
       b.dataset.action = def.action;
-      b.style.width = b.style.height = def.size + 'px';
-      b.style.right = `calc(${def.right}px + env(safe-area-inset-right, 0px))`;
-      b.style.bottom = `calc(${def.bottom}px + env(safe-area-inset-bottom, 0px))`;
+      b.style.width = b.style.height = Math.round(def.size * k) + 'px';
+      b.style.right = `calc(${Math.round(def.right * k)}px + env(safe-area-inset-right, 0px))`;
+      b.style.bottom = `calc(${Math.round(def.bottom * k)}px + env(safe-area-inset-bottom, 0px))`;
       b.setAttribute('aria-label', def.label.replace('\n', ''));
       const span = document.createElement('span');
       span.innerText = def.label;

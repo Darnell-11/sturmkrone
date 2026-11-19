@@ -4,11 +4,22 @@ import '@fontsource/alegreya-sans/latin-400.css';
 import '@fontsource/alegreya-sans/latin-500.css';
 import '@fontsource/alegreya-sans/latin-700.css';
 import '@fontsource/alegreya-sans/latin-800.css';
-import './ui/styles.css';
+// Scharfe Ziffern für Anzeigen und Zahlen
+import '@fontsource/barlow-semi-condensed/latin-500.css';
+import '@fontsource/barlow-semi-condensed/latin-600.css';
+import '@fontsource/barlow-semi-condensed/latin-700.css';
+// Oberfläche: Designsystem in Modulen (Reihenfolge zählt: Werte, Grundlagen, Bausteine, HUD, Bildschirme, Touch)
+import './ui/css/tokens.css';
+import './ui/css/base.css';
+import './ui/css/panels.css';
+import './ui/css/hud.css';
+import './ui/css/screens.css';
+import './ui/css/touch.css';
 import { Game } from './core/game';
 import { WebGLUnavailableError } from './render/renderer';
 import { loadArchModels, loadEnvModels } from './world/envModels';
 import { loadWorldProps } from './world/worldProps';
+import { loadFigureheads } from './entities/ship/figureheads';
 import { LoadingScreen } from './ui/loadingScreen';
 import { preload } from './core/preload';
 import { tick } from './core/yield';
@@ -32,7 +43,7 @@ try {
   preload.plan(0.23, { world: 0.3, prepare: 0.1, shaders: 0.37 });
   preload.onProgress((p, phase) => loading.set(p, phase));
   preload.setPhase('Karten und Bauwerke werden geladen …');
-  await Promise.all([loadEnvModels(), loadArchModels(), loadWorldProps()]).catch((e) => console.warn('Welt-Modelle konnten nicht vorab geladen werden', e));
+  await Promise.all([loadEnvModels(), loadArchModels(), loadWorldProps(), loadFigureheads()]).catch((e) => console.warn('Welt-Modelle konnten nicht vorab geladen werden', e));
   // Der Browser soll den Ladebildschirm einmal zeichnen, bevor der Aufbau beginnt
   await tick();
   const game = new Game(document.getElementById('game') as HTMLCanvasElement, document.getElementById('ui')!, true);

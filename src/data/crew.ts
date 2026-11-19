@@ -2,6 +2,7 @@
 import type { CharacterLook } from './characterParts';
 import type { QuestDef } from './quests';
 import type { StyleId } from './animations';
+import { OFFICER_SLOTS } from './crewTiers';
 
 export type CrewRole = 'tank' | 'heiler' | 'schaden' | 'unterstuetzung' | 'keine';
 
@@ -99,11 +100,14 @@ export const CREW: CrewDef[] = [
 
 export const CREW_BY_ID: Record<string, CrewDef> = Object.fromEntries(CREW.map((c) => [c.id, c]));
 
-/** Landtrupp aus den angeheuerten: bis zu drei Kämpfer, Tanks und Heiler zuerst */
-export function defaultParty(hired: string[]): string[] {
+/**
+ * Landtrupp aus den angeheuerten: bis zu `slots` Kämpfer (Offiziers-Plätze der Schiffsklasse, data/crewTiers.ts), Tanks und Heiler zuerst.
+ * Ohne Angabe gelten die Plätze der kleinsten Klasse.
+ */
+export function defaultParty(hired: string[], slots = OFFICER_SLOTS[0]): string[] {
   const order: CrewRole[] = ['tank', 'heiler', 'schaden', 'unterstuetzung'];
   return hired.filter((id) => CREW_BY_ID[id] && !CREW_BY_ID[id].cat)
-    .sort((a, b) => order.indexOf(CREW_BY_ID[a].role) - order.indexOf(CREW_BY_ID[b].role)).slice(0, 3);
+    .sort((a, b) => order.indexOf(CREW_BY_ID[a].role) - order.indexOf(CREW_BY_ID[b].role)).slice(0, Math.max(0, slots));
 }
 
 export const CREW_ROLE_LABEL: Record<CrewRole, string> = { tank: 'Beschützer', heiler: 'Heiler', schaden: 'Angreifer', unterstuetzung: 'Unterstützer', keine: 'Maskottchen' };

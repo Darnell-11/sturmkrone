@@ -146,7 +146,10 @@ export class Input {
   private onKeyUp = (e: KeyboardEvent) => { this.held.delete(e.code); };
 
   private onPointerDown = (e: PointerEvent) => {
-    if (e.pointerType !== 'mouse') return; // Touch übernimmt die Touch-Steuerung
+    // Ein Fingertipp auf die Spielwelt macht das Gerät zum Touch-Gerät (Laptops und Tablets mit feinem Zeiger melden beim Start nicht „coarse“;
+    // sonst blieben die Touch-Knöpfe im Auto-Modus für immer weg). Die Steuerung selbst übernehmen die Touch-Zonen.
+    if (e.pointerType === 'touch') { this.setDevice('touch'); return; }
+    if (e.pointerType !== 'mouse') return;
     this.setDevice('keyboard');
     const code = 'Mouse' + e.button;
     if (this.captureNext) {

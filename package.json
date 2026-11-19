@@ -1,8 +1,8 @@
 {
   "name": "sturmkrone",
   "private": true,
-  "version": "2.9.87",
-  "description": "Sturmkrone 2.0 – Anime-Piratenabenteuer für Browser auf Handy und PC",
+  "version": "3.0.1",
+  "description": "Sturmkrone 3.0 – Piratenabenteuer für Browser auf Handy und PC",
   "type": "module",
   "scripts": {
     "dev": "vite --host",
@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@fontsource/alegreya-sans": "5.3.0",
+    "@fontsource/barlow-semi-condensed": "5.3.0",
     "@fontsource/im-fell-english-sc": "5.3.0",
     "@types/three": "0.186.0",
     "postprocessing": "6.39.5",

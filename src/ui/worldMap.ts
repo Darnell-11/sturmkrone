@@ -1,7 +1,9 @@
 import { REGIONS, type IslandDef, type IslandKind } from '../data/regions';
+import { FACTIONS, STANCE_LABEL, marineStance } from '../data/factions';
 import { WORLD_RADIUS } from '../data/world';
 import { drawWorldMap, screenToWorld, type WorldMapData, type WorldView } from './minimap';
 import { esc } from './dom';
+import { fmtDist } from '../core/format';
 
 export interface WorldMapHost {
   data(): WorldMapData;
@@ -12,6 +14,7 @@ export interface WorldMapHost {
 
 const KIND_LABEL: Record<IslandKind, string> = {
   town: 'Stadt', harbor: 'Hafen', camp: 'Feindliches Lager', ruin: 'Ruine', quiet: 'Ruhige Insel', treasure: 'Schatzinsel', lighthouse: 'Leuchtturm', boss: 'Boss-Insel',
+  marinefort: 'Marine-Festung', citadel: 'Festungsinsel (Endgame)',
 };
 
 const MIN_SCALE = 0.03;
@@ -26,6 +29,8 @@ export class WorldMapScreen {
   private cv: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private info: HTMLElement;
+  private occEl: HTMLElement;
+  private occHtml = '';
   private view: WorldView;
   private w = 0;
   private h = 0;
@@ -56,13 +61,16 @@ export class WorldMapScreen {
           <button class="icon-btn" data-a="close" aria-label="Schließen">✕</button>
         </div>
       </div>
-      <div class="wmap-legend small"><span><i class="lg me"></i>Du</span><span><i class="lg q">!</i>Auftrag</span><span><i class="lg t">?</i>Abgabe</span><span><i class="lg b">☠</i>Boss</span><span><i class="lg e"></i>Feind</span><span><i class="lg s">★</i>Ziel</span><span><i class="lg x">✕</i>Schatz</span></div>
-      <div class="wmap-info" hidden></div>
+      <div class="wmap-legend small wmap-powers">${(['england', 'deutschland', 'kurogane', 'niederlande', 'frankreich'] as const).map((id) => `<span><i class="lg" style="background:${FACTIONS[id].color}"></i>${FACTIONS[id].name}</span>`).join('')}<span><i class="lg" style="background:#F4F7FC;border:2px solid #16306A"></i>Marine (Grenzen)</span><span>◌ gestrichelt: Kolonie</span></div>
+      <div class="wmap-legend small"><span><i class="lg me"></i>Du</span><span><i class="lg q">!</i>Auftrag</span><span><i class="lg t">?</i>Abgabe</span><span><i class="lg b">☠</i>Boss</span><span><i class="lg e"></i>Feind</span><span><i class="lg s">★</i>Ziel</span><span><i class="lg x">✕</i>Schatz</span><span><i class="lg w">⚔</i>Seeschlacht</span></div>
+      <div class="wmap-occ" aria-live="polite" hidden></div>
+      <div class="wmap-info panel" hidden></div>
       <p class="wmap-hint small soft">Ziehen: Karte bewegen · Mausrad oder Zwei-Finger-Geste: zoomen · M oder Esc: schließen</p>`;
     parent.appendChild(this.root);
     this.cv = this.root.querySelector('.wmap-cv')!;
     this.ctx = this.cv.getContext('2d')!;
     this.info = this.root.querySelector('.wmap-info')!;
+    this.occEl = this.root.querySelector('.wmap-occ')!;
     const d = this.h_.data();
     this.root.querySelector('.wmap-regions')!.innerHTML = d.regions.map((r) => `<button class="mini" data-a="region" data-v="${r.id}" style="--c:${r.color}">${esc(r.name)}</button>`).join('');
     this.view = { cx: 0, cz: 0, scale: 0.1 };
@@ -206,19 +214,38 @@ export class WorldMapScreen {
     const dist = Math.hypot(i.x - p.x, i.z - p.z);
     const region = REGIONS.find((r) => r.islands.includes(i));
     const mk = d.islandMarks.get(i.id);
+    // Besitzer: Macht, Kolonie-Hinweis und bei der Marine die Haltung zum Spieler (Ansehen)
+    const owner = i.factionId ? FACTIONS[i.factionId] : null;
+    const occ = d.occupations?.find((o) => o.id === i.id);
+    const times = d.conquests?.[i.id] ?? 0;
+    const occLine = occ ? `<p class="small" style="color:#E3B04B">⚑ <b>In deiner Hand</b> · noch ${esc(occ.text)}${occ.endgame ? ' · <b style="color:#FF8A6A">Rückeroberungs-Flotte unterwegs!</b>' : ''}</p>` : times > 0 ? `<p class="small soft">⚑ ${times}× erobert – die ${esc(owner?.name ?? 'Macht')} hat sie zurückgeholt; ein neuer Sturm ist möglich.</p>` : '';
+    const stand = d.standing?.marine ?? 0;
+    const ownerLine = owner
+      ? `<p class="small" style="color:${owner.color}">⚑ <b>${esc(owner.name)}</b>${i.exclave ? ' · Kolonie in fremdem Gewässer' : ''}${i.marine ? ` · Haltung zu dir: <b>${STANCE_LABEL[marineStance(stand)]}</b>${marineStance(stand) === 'verbuendet' ? ' (nicht angreifbar)' : marineStance(stand) === 'feindlich' ? ' (Garnison greift an)' : ''}` : ''}</p>`
+      : '<p class="small soft">⚑ Unabhängig und neutral.</p>';
     this.info.innerHTML = known
       ? `<button class="icon-btn" data-a="closeinfo" aria-label="Schließen">✕</button><h3 class="fell">${esc(i.name)}</h3>
-         <p class="small soft">${KIND_LABEL[i.kind]}${region ? ` · ${esc(region.name)}` : ''}${i.level ? ` · Stufe ${i.level}` : ''} · ${dist >= 1000 ? `${(dist / 1000).toFixed(1).replace('.', ',')} km` : `${Math.round(dist / 10) * 10} m`} entfernt</p>
-         <p class="small">${esc(i.info)}</p>${i.boss ? `<p class="small">☠ <b>${esc(i.boss)}</b></p>` : ''}${mk ? `<p class="small">${mk === 'quest' ? '<b>!</b> Hier wartet ein Auftrag.' : '<b>?</b> Hier kannst du einen Auftrag abgeben.'}</p>` : ''}`
+         <p class="small soft">${KIND_LABEL[i.kind]}${region ? ` · ${esc(region.name)}` : ''}${i.level ? ` · Stufe ${i.level}` : ''} · ${fmtDist(dist)} entfernt</p>
+         ${ownerLine}${occLine}<p class="small">${esc(i.info)}</p>${i.boss ? `<p class="small">☠ <b>${esc(i.boss)}</b></p>` : ''}${mk ? `<p class="small">${mk === 'quest' ? '<b>!</b> Hier wartet ein Auftrag.' : '<b>?</b> Hier kannst du einen Auftrag abgeben.'}</p>` : ''}`
       : `<button class="icon-btn" data-a="closeinfo" aria-label="Schließen">✕</button><h3 class="fell">Unbekannte Insel</h3><p class="small soft">Noch nicht entdeckt. Segle in ihre Nähe, um sie zu erkunden.</p>${region ? `<p class="small soft">Liegt im Meer „${esc(region.name)}“.</p>` : ''}`;
+  }
+
+  /** Besetzte Inseln mit Countdown und Rückeroberungs-Warnung: immer sichtbar, nicht nur beim Antippen einer Insel */
+  private paintOcc(d: WorldMapData) {
+    const html = (d.occupations ?? []).map((o) => `<div class="occ-item${o.endgame ? ' warn' : ''}"><b>${o.endgame ? '⚠' : '⚑'} ${esc(o.name)}</b><span>${o.endgame ? 'Rückeroberungs-Flotte unterwegs · ' : 'in deiner Hand · '}noch <b>${esc(o.text)}</b></span></div>`).join('');
+    if (html === this.occHtml) return;
+    this.occHtml = html;
+    this.occEl.innerHTML = html;
+    this.occEl.hidden = !html;
   }
 
   private loop() {
     this.raf = requestAnimationFrame(() => {
-      if (this.dirty) {
+      const dd = this.h_.data();
+      this.paintOcc(dd);
+      if (this.dirty || dd.occupations?.some((o) => o.endgame)) {
         this.dirty = false;
-        const d = this.h_.data();
-        drawWorldMap(this.ctx, this.w, this.h, this.dpr, this.view, d, this.sel);
+        drawWorldMap(this.ctx, this.w, this.h, this.dpr, this.view, dd, this.sel);
       }
       this.loop();
     });
