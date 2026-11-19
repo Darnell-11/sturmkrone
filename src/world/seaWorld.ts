@@ -482,7 +482,19 @@ export class SeaWorld {
       const x = pp.x + Math.sin(a) * r, z = pp.z + Math.cos(a) * r;
       const gy = g.height(x, z), wy = this.env.heightAt(x, z);
       const y = Number.isFinite(gy) ? Math.max(gy, wy) : wy;
-      this.spray.emit(2, x, y + 0.04, z, { speed: 0.9, up: 1.8, life: 0.28, color: SPLASH_COL, gravity: 14, spread: 0.04, size: 0.3 });
+      // Aufprall: auf Wasser ein Ring (und nur ein feiner Spritzer), auf festem Grund (Deck, Sand, Steg) ein kleiner Spritzkranz mit Streuung
+      const water = !Number.isFinite(gy) || gy <= wy + 0.02;
+      if (water) {
+        this.env.weather.addRing(x, wy, z);
+        this.spray.emit(1, x, y + 0.04, z, { speed: 0.6, up: 1.4, life: 0.24, color: SPLASH_COL, gravity: 14, spread: 0.03, size: 0.22 });
+        // weiter draußen nur Ringe: die Wasserfläche wirkt bis zum Horizont vom Regen aufgewühlt
+        const fa = Math.random() * Math.PI * 2, fr = 14 + Math.sqrt(Math.random()) * 26;
+        const fx = pp.x + Math.sin(fa) * fr, fz = pp.z + Math.cos(fa) * fr;
+        if (!Number.isFinite(g.height(fx, fz))) this.env.weather.addRing(fx, this.env.heightAt(fx, fz), fz);
+      } else {
+        const big = Math.random() < 0.25;
+        this.spray.emit(big ? 3 : 2, x, y + 0.04, z, { speed: big ? 1.3 : 0.9, up: big ? 2.4 : 1.8, life: big ? 0.36 : 0.28, color: SPLASH_COL, gravity: 14, spread: big ? 0.08 : 0.04, size: big ? 0.36 : 0.3 });
+      }
     }
   }
 

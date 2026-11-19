@@ -13,7 +13,7 @@ import type { Material, Mesh } from 'three';
 import { Ocean, type IslandShape } from './ocean';
 import { Sky } from './sky';
 import { createPalette, samplePalette } from './timeOfDay';
-import { Weather } from './weather';
+import { Weather, type RainLook } from './weather';
 import { WorldEdge } from './worldEdge';
 import { smokeShared } from './smoke';
 
@@ -54,6 +54,8 @@ export class Environment {
   private tmpCol = new Color();
   private tmpZenith = new Color();
   private tmpGrey = new Color();
+  /** Licht und Nebel für den Regen (je Bild neu gefüllt, ohne neue Objekte) */
+  private rainLook: RainLook = { horizon: new Color(), lit: 1, sunK: 0, sunDir: new Vector3(0, 1, 0) };
   private focus = new Vector3();
   /** Kaskadierte Schatten (ab Stufe Hoch); null = eine Schattenkarte um die Figur */
   private csm: CSM | null = null;
@@ -325,7 +327,15 @@ export class Environment {
     this.ocean.follow(camera.position.x, camera.position.z, camera.position);
 
     this.sky.follow(camera.position, pal.sunDir, pal.sunVis * (1 - greyK * 0.95));
-    this.weather.render(this.clock, camera);
+    {
+      // Regen nimmt Nebelfarbe und Licht auf: tags hell, nachts und im Unwetter dunkel, vor Sonne oder Mond glänzt er auf
+      const rl = this.rainLook;
+      rl.horizon.copy(horizon);
+      rl.lit = Math.min(1, 0.3 + 0.7 * Math.max(pal.sunVis * light, pal.moonVis * 0.55));
+      rl.sunK = Math.max(pal.sunVis * (1 - greyK * 0.7), pal.moonVis * 0.6 * (1 - greyK * 0.8));
+      rl.sunDir.copy(pal.sunVis > 0.1 ? pal.sunDir : pal.moonDir);
+      this.weather.render(this.clock, camera, rl);
+    }
     this.edge.setWaterColors(ou.uShallow.value, ou.uDeep.value);
     this.edge.render(this.clock, focus, camera.position, pal.sunDir, pal.sunVis, 1 - greyK, cu.uLit.value, cu.uShade.value);
   }

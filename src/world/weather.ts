@@ -21,8 +21,37 @@ import { WEATHER, WEATHER_IDS, type WeatherDef, type WeatherId } from '../data/w
 type Params = Omit<WeatherDef, 'label' | 'weight'>;
 const PARAM_KEYS: (keyof Params)[] = ['clouds', 'cloudDark', 'visibility', 'grey', 'rain', 'waves', 'wind', 'lightning', 'light'];
 
-const MAX_DROPS = 6000;
-const RAIN_BOX = new Vector3(70, 40, 70);
+const MAX_DROPS = 12000;
+
+/**
+ * Regen in drei Tiefenschichten (alle aus denselben Samen, je Schicht anders verschoben): nah (wenige, dicke, lange Striche mit viel Glanz),
+ * mittel (die Hauptmasse) und fern (viele feine, lange, blasse Striche, die zusammen einen Regenvorhang ergeben).
+ * `share` = Anteil an `maxDrops`, `len`/`width` in Metern, `alpha` Grunddeckkraft, `fade` = Entfernung (m), ab der die Tropfen vor der Linse einblenden.
+ */
+const RAIN_LAYERS = [
+  { box: [24, 20, 24], share: 0.34, len: 1.35, width: 0.022, alpha: 0.62, fade: [2.6, 6.5], shift: [0.31, 0.57, 0.83] },
+  { box: [70, 40, 70], share: 0.8, len: 1.15, width: 0.014, alpha: 0.48, fade: [2.6, 6.5], shift: [0, 0, 0] },
+  { box: [200, 70, 200], share: 1.7, len: 3.6, width: 0.017, alpha: 0.27, fade: [8, 20], shift: [0.67, 0.13, 0.29] },
+] as const;
+const FALL = 28;
+/** Aufschlagringe auf dem Wasser: Zahl gleichzeitiger Ringe und Lebensdauer (s) */
+const RING_N = 96;
+const RING_LIFE = 0.85;
+const WHITE = new Color(1, 1, 1);
+
+interface RainLayer { mesh: Mesh; geo: InstancedBufferGeometry; mat: ShaderMaterial; share: number; alpha: number }
+
+/** Licht und Nebel für den Regen (die Umgebung reicht sie je Bild mit) */
+export interface RainLook {
+  /** Horizontfarbe (Nebelfarbe), der Regen mischt sie in seine Farbe */
+  horizon: Color;
+  /** Helligkeit 0 (Nacht, Unwetterdunkel) … 1 (Sonne) */
+  lit: number;
+  /** Stärke des Gegenlichts (Sonne oder Mond sichtbar), 0 … 1 */
+  sunK: number;
+  /** Richtung zur Lichtquelle (normiert) */
+  sunDir: Vector3;
+}
 
 /** Wetterzustand mit weichen Übergängen, Regen und Blitzen. */
 export class Weather {
@@ -40,11 +69,20 @@ export class Weather {
   private boltTimer = 5;
   /** Gehaltene Werte (siehe `hold`) */
   private held: Partial<Params> | null = null;
-  private rain: Mesh;
+  private layers: RainLayer[] = [];
+  /** Aufsummierte Fallzeit und Winddrift: ändert sich der Wind, treibt der Regen sanft mit statt zu springen */
+  private fall = 0;
+  private readonly drift = new Vector3();
+  private lastT = -1;
+  private readonly tint = new Color();
+  private ringGeo: InstancedBufferGeometry;
+  private ringMat: ShaderMaterial;
+  private ringMesh: Mesh;
+  private ringData = new Float32Array(RING_N * 4).fill(-1000);
+  private ringAt = 0;
+  private ringLive = 0;
   /** Sekunden bis zum Donner nach einem Blitz (< 0: keiner geplant) */
   private thunderT = -1;
-  private rainGeo: InstancedBufferGeometry;
-  private rainMat: ShaderMaterial;
   private maxDrops = 3000;
   private bolt: Mesh;
   private boltLife = 0;
@@ -56,71 +94,148 @@ export class Weather {
     const seeds = new Float32Array(MAX_DROPS * 3);
     for (let i = 0; i < MAX_DROPS; i++) seeds.set([Math.random(), Math.random(), Math.random()], i * 3);
     const quad = new PlaneGeometry(1, 1);
-    const geo = new InstancedBufferGeometry();
-    geo.index = quad.index;
-    geo.setAttribute('position', quad.getAttribute('position'));
-    geo.setAttribute('uv', quad.getAttribute('uv'));
-    geo.setAttribute('aSeed', new InstancedBufferAttribute(seeds, 3));
-    geo.instanceCount = 0;
-    this.rainGeo = geo;
-    this.rainMat = new ShaderMaterial({
-      transparent: true,
-      // der Streifen dreht sich zur Kamera, seine Wicklung hängt aber von der Fallrichtung ab: beide Seiten zeichnen
-      side: DoubleSide,
-      depthWrite: false,
-      uniforms: {
-        uTime: { value: 0 },
-        uCenter: { value: new Vector3() },
-        uBox: { value: RAIN_BOX.clone() },
-        uWind: { value: new Vector3(6, 0, 2) },
-        uAlpha: { value: 0 },
-        uColor: { value: new Color(0.75, 0.82, 0.95) },
-        uLen: { value: 0.9 },
-        uWidth: { value: 0.014 },
-      },
+    const seedAttr = new InstancedBufferAttribute(seeds, 3);
+    for (const L of RAIN_LAYERS) {
+      const geo = new InstancedBufferGeometry();
+      geo.index = quad.index;
+      geo.setAttribute('position', quad.getAttribute('position'));
+      geo.setAttribute('uv', quad.getAttribute('uv'));
+      geo.setAttribute('aSeed', seedAttr);
+      geo.instanceCount = 0;
+      const mat = new ShaderMaterial({
+        transparent: true,
+        // der Streifen dreht sich zur Kamera, seine Wicklung hängt aber von der Fallrichtung ab: beide Seiten zeichnen
+        side: DoubleSide,
+        depthWrite: false,
+        uniforms: {
+          uFall: { value: 0 },
+          uTime: { value: 0 },
+          uDrift: { value: new Vector3() },
+          uCenter: { value: new Vector3() },
+          uBox: { value: new Vector3(L.box[0], L.box[1], L.box[2]) },
+          uShift: { value: new Vector3(L.shift[0], L.shift[1], L.shift[2]) },
+          uWind: { value: new Vector3(6, 0, 2) },
+          uAlpha: { value: 0 },
+          uColor: { value: new Color(0.75, 0.82, 0.95) },
+          uLen: { value: L.len },
+          uWidth: { value: L.width },
+          uFade: { value: new Vector3(L.fade[0], L.fade[1], 0) },
+          uSunDir: { value: new Vector3(0, 1, 0) },
+          uSunK: { value: 0 },
+        },
+        vertexShader: /* glsl */ `
+          attribute vec3 aSeed;
+          uniform float uFall, uTime, uLen, uWidth, uSunK;
+          uniform vec3 uCenter, uBox, uWind, uDrift, uShift, uFade, uSunDir;
+          varying vec2 vUv;
+          varying float vNear;
+          varying float vVar;
+          varying float vGlint;
+          void main() {
+            vec3 s = fract(aSeed + uShift);
+            float sp = 0.85 + s.y * 0.3;
+            // Fall und Winddrift werden einzeln aufsummiert (CPU): ändert sich der Wind, treibt der Regen sanft mit statt zu springen
+            vec3 rel = s * uBox + vec3(0.0, -${FALL.toFixed(1)} * sp * uFall, 0.0) + uDrift;
+            rel = mod(rel - uCenter + uBox * 0.5, uBox) - uBox * 0.5;
+            vec3 p = rel + uCenter;
+            // Böen: die Luft schwankt mit der Höhe leicht hin und her (glatt, ohne Sprünge)
+            float gust = sin(uTime * 0.6 + p.y * 0.07 + p.x * 0.021) * 0.6 + sin(uTime * 1.3 + p.z * 0.03) * 0.4;
+            p.xz += uWind.xz * 0.05 * gust;
+            vec3 vel = vec3(uWind.x * (1.0 + 0.12 * gust), -${FALL.toFixed(1)} * sp, uWind.z * (1.0 + 0.12 * gust));
+            vec3 dir = normalize(vel);
+            vec3 toCam = normalize(cameraPosition - p);
+            vec3 side = normalize(cross(dir, toCam));
+            float camD = distance(cameraPosition, p);
+            // weiter weg etwas breiter, damit Tropfen nicht zu flimmernden Pixeln werden
+            float w = uWidth * (1.0 + camD * 0.045);
+            // Tropfen direkt vor der Linse ausblenden, am Rand des Regenkastens weich ein- und ausblenden (kein Auftauchen aus dem Nichts)
+            vec3 e = abs(rel) / (uBox * 0.5);
+            float edge = 1.0 - smoothstep(0.7, 1.0, max(max(e.x, e.z), e.y));
+            vNear = smoothstep(uFade.x, uFade.y, camD) * edge;
+            vVar = 0.5 + 0.5 * fract(s.x * 7.31 + s.z * 3.77);
+            // Gegenlicht: Tropfen vor der Sonne oder dem Mond leuchten auf
+            vec3 view = normalize(p - cameraPosition);
+            vGlint = uSunK * smoothstep(0.35, 0.97, dot(view, uSunDir));
+            float len = uLen * (0.75 + s.z * 0.5);
+            vec3 q = p - dir * (position.y + 0.5) * len + side * position.x * w;
+            vUv = uv;
+            gl_Position = projectionMatrix * viewMatrix * vec4(q, 1.0);
+          }`,
+        fragmentShader: /* glsl */ `
+          uniform float uAlpha; uniform vec3 uColor;
+          varying vec2 vUv;
+          varying float vNear;
+          varying float vVar;
+          varying float vGlint;
+          void main() {
+            // Kopf hell, Schweif läuft aus; heller Kern mit weichem Rand (kein harter Strich)
+            float along = vUv.y;
+            float across = clamp(1.0 - abs(vUv.x - 0.5) * 2.0, 0.0, 1.0);
+            float core = across * sqrt(across);
+            float body = (1.0 - smoothstep(0.1, 1.0, along)) * smoothstep(0.0, 0.1, along);
+            float a = uAlpha * (0.45 + 0.55 * vVar) * core * body * vNear * (1.0 + 1.1 * vGlint);
+            if (a < 0.01) discard;
+            vec3 col = uColor * (0.8 + 0.4 * vVar) + vec3(0.9, 0.95, 1.0) * vGlint * 0.35;
+            gl_FragColor = vec4(col, min(a, 0.9));
+            #include <colorspace_fragment>
+          }`,
+      });
+      const mesh = new Mesh(geo, mat);
+      mesh.renderOrder = 6;
+      mesh.userData.noOutline = true;
+      mesh.frustumCulled = false;
+      mesh.visible = false;
+      scene.add(mesh);
+      this.layers.push({ mesh, geo, mat, share: L.share, alpha: L.alpha });
+    }
+
+    // Aufschlagringe auf dem Wasser: flache Quads (Ort setzt `addRing`), der Ring breitet sich aus und verblasst
+    const ringQuad = new PlaneGeometry(1, 1);
+    ringQuad.rotateX(-Math.PI / 2);
+    const rg = new InstancedBufferGeometry();
+    rg.index = ringQuad.index;
+    rg.setAttribute('position', ringQuad.getAttribute('position'));
+    rg.setAttribute('uv', ringQuad.getAttribute('uv'));
+    rg.setAttribute('aRing', new InstancedBufferAttribute(this.ringData, 4));
+    rg.instanceCount = RING_N;
+    this.ringGeo = rg;
+    this.ringMat = new ShaderMaterial({
+      transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+      uniforms: { uTime: { value: 0 }, uColor: { value: new Color(0.8, 0.86, 0.95) }, uAlpha: { value: 0 } },
       vertexShader: /* glsl */ `
-        attribute vec3 aSeed;
-        uniform float uTime, uLen, uWidth; uniform vec3 uCenter, uBox, uWind;
+        attribute vec4 aRing;
+        uniform float uTime;
         varying vec2 vUv;
-        varying float vNear;
+        varying float vT;
         void main() {
-          vec3 vel = vec3(uWind.x, -28.0, uWind.z);
-          float sp = 0.85 + aSeed.y * 0.3;
-          vec3 p = aSeed * uBox + vel * uTime * sp;
-          p = mod(p - uCenter + uBox * 0.5, uBox) - uBox * 0.5 + uCenter;
-          // Streifen entlang der Fallrichtung, quer dazu zur Kamera gedreht
-          vec3 dir = normalize(vel);
-          vec3 toCam = normalize(cameraPosition - p);
-          vec3 side = normalize(cross(dir, toCam));
-          // weiter weg etwas breiter, damit Tropfen nicht zu flimmernden Pixeln werden
-          float camD = distance(cameraPosition, p);
-          float w = uWidth * (1.0 + camD * 0.05);
-          // Tropfen direkt vor der Linse ausblenden (sonst dicke Streifen quer durchs Bild)
-          vNear = smoothstep(1.2, 4.0, camD);
-          vec3 q = p - dir * (position.y + 0.5) * uLen * (0.8 + aSeed.z * 0.4) + side * position.x * w;
+          vT = (uTime - aRing.w) / ${RING_LIFE.toFixed(2)};
+          float size = 1.3 + 0.9 * fract(aRing.w * 13.7);
+          vec3 p = aRing.xyz + position * size;
           vUv = uv;
-          gl_Position = projectionMatrix * viewMatrix * vec4(q, 1.0);
+          gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
         }`,
       fragmentShader: /* glsl */ `
-        uniform float uAlpha; uniform vec3 uColor;
+        uniform vec3 uColor; uniform float uAlpha;
         varying vec2 vUv;
-        varying float vNear;
+        varying float vT;
         void main() {
-          // Kopf hell, Schweif läuft aus; Ränder weich
-          float along = vUv.y;
-          float across = clamp(1.0 - abs(vUv.x - 0.5) * 2.0, 0.0, 1.0);
-          float a = uAlpha * (1.0 - smoothstep(0.15, 1.0, along)) * smoothstep(0.0, 0.08, along) * sqrt(max(across, 0.0)) * vNear;
+          if (vT < 0.0 || vT > 1.0) discard;
+          float r = length(vUv - 0.5) * 2.0;
+          float fade = (1.0 - vT) * (1.0 - vT);
+          float ring = 1.0 - smoothstep(0.0, 0.2, abs(r - vT));
+          float ring2 = 1.0 - smoothstep(0.0, 0.1, abs(r - vT * 0.55));
+          float a = (ring + ring2 * 0.5) * fade * uAlpha * (1.0 - smoothstep(0.85, 1.0, r));
           if (a < 0.01) discard;
           gl_FragColor = vec4(uColor, a);
           #include <colorspace_fragment>
         }`,
     });
-    this.rain = new Mesh(geo, this.rainMat);
-    this.rain.renderOrder = 6;
-    this.rain.userData.noOutline = true;
-    this.rain.frustumCulled = false;
-    this.rain.visible = false;
-    scene.add(this.rain);
+    this.ringMesh = new Mesh(rg, this.ringMat);
+    this.ringMesh.renderOrder = 5;
+    this.ringMesh.userData.noOutline = true;
+    this.ringMesh.frustumCulled = false;
+    this.ringMesh.visible = false;
+    scene.add(this.ringMesh);
 
     this.bolt = new Mesh(new BufferGeometry(), new MeshBasicMaterial({ color: new Color(9, 9, 12), transparent: true, blending: AdditiveBlending, depthWrite: false, side: DoubleSide, fog: false }));
     this.bolt.frustumCulled = false;
@@ -230,17 +345,56 @@ export class Weather {
     this.onLightning(base);
   }
 
-  /** Darstellung (jeder Frame) */
-  render(time: number, camera: Camera) {
-    const drops = Math.round(this.maxDrops * MathUtils.clamp(this.p.rain, 0, 1));
-    this.rain.visible = drops > 10;
-    if (this.rain.visible) {
-      this.rainGeo.instanceCount = drops;
-      const u = this.rainMat.uniforms;
+  /** Neuer Aufschlagring auf dem Wasser (Ort und Wasserhöhe); das Spiel ruft es je Regentropfen in Wassernähe auf */
+  addRing(x: number, y: number, z: number) {
+    if (this.p.rain < 0.15) return;
+    const i = this.ringAt++ % RING_N;
+    this.ringData[i * 4] = x; this.ringData[i * 4 + 1] = y + 0.05; this.ringData[i * 4 + 2] = z; this.ringData[i * 4 + 3] = Math.max(0, this.lastT);
+    (this.ringGeo.getAttribute('aRing') as InstancedBufferAttribute).needsUpdate = true;
+    this.ringLive = RING_LIFE + 0.2;
+  }
+
+  /** Darstellung (jeder Frame); `look` = Licht und Nebel der Umgebung (ohne: neutrales Bläulichweiß) */
+  render(time: number, camera: Camera, look?: RainLook) {
+    const rainK = MathUtils.clamp(this.p.rain, 0, 1);
+    const total = Math.round(this.maxDrops * rainK);
+    const visible = total > 10;
+    const dt = this.lastT < 0 ? 0 : MathUtils.clamp(time - this.lastT, 0, 0.1);
+    this.lastT = time;
+    // Farbe: Horizont (Nebel) mit Licht gemischt, nachts dunkel statt grellweiß, Blitze hellen auf
+    const lit = look ? look.lit : 1;
+    const flash = this.flash;
+    if (look) this.tint.copy(look.horizon).lerp(WHITE, 0.45 + 0.2 * lit).multiplyScalar(0.28 + 0.72 * lit);
+    else this.tint.setRGB(0.75, 0.82, 0.95);
+    this.tint.addScalar(flash * 0.55);
+    const windX = 10 * this.p.wind, windZ = 4 * this.p.wind;
+    if (visible) {
+      this.fall += dt;
+      this.drift.x += windX * dt; this.drift.z += windZ * dt;
+      // Zähler bleiben unbegrenzt (eine Stunde Dauerregen sind ~10^5 m, Float32 löst dort noch auf 1 cm auf); ein Rücksetzen würde den Regen springen lassen
+    }
+    for (const L of this.layers) {
+      L.mesh.visible = visible;
+      if (!visible) continue;
+      L.geo.instanceCount = Math.min(MAX_DROPS, Math.round(total * L.share));
+      const u = L.mat.uniforms;
+      u.uFall.value = this.fall;
       u.uTime.value = time;
+      u.uDrift.value.copy(this.drift);
       u.uCenter.value.copy(camera.position);
-      u.uWind.value.set(10 * this.p.wind, 0, 4 * this.p.wind);
-      u.uAlpha.value = 0.32 + 0.25 * this.p.rain;
+      u.uWind.value.set(windX, 0, windZ);
+      u.uAlpha.value = L.alpha * (0.75 + 0.35 * rainK) * (1 + flash * 0.8);
+      u.uColor.value.copy(this.tint);
+      if (look) { u.uSunDir.value.copy(look.sunDir); u.uSunK.value = look.sunK; }
+    }
+    // Ringe: nur solange noch welche leben
+    this.ringLive = Math.max(0, this.ringLive - dt);
+    this.ringMesh.visible = this.ringLive > 0 && rainK > 0.15;
+    if (this.ringMesh.visible) {
+      const ru = this.ringMat.uniforms;
+      ru.uTime.value = time;
+      ru.uAlpha.value = (0.5 + 0.35 * rainK) * (0.45 + 0.55 * lit);
+      ru.uColor.value.copy(this.tint);
     }
   }
 }
