@@ -14,17 +14,25 @@ import { clamp01 } from '../core/mathUtil';
  */
 
 const IRON: [number, number, number] = [0.12, 0.09, 0.07];
-const CORD: [number, number, number] = [0.42, 0.3, 0.18];
+const LEATHER: [number, number, number] = [0.2, 0.12, 0.07];
 const GLASS: [number, number, number] = [2.6, 1.55, 0.6];
 const FLAME: [number, number, number] = [5.0, 3.2, 1.2];
 const BRASS: [number, number, number] = [0.55, 0.4, 0.14];
 
-/** Laterne, Aufhängepunkt im Ursprung, hängt nach unten (Meter) */
+/** Länge des Haken-Arms nach außen (Meter vor der Skalierung): so weit hängt die Laterne neben dem Befestigungspunkt */
+export const LAMP_ARM = 0.036;
+
+/**
+ * Laterne an einer Gürtelhalterung, Ursprung = Befestigungspunkt AM Körper (Gürtelhöhe), der Körper liegt in +x, nach außen geht −x,
+ * alles hängt nach unten (Meter, vor der Skalierung): Lederschlaufe mit Messingplatte am Gürtel, ein Haken-Arm nach außen, Öse, vier Kettenglieder,
+ * dann der Henkel der Laterne. Alles hängt zusammen (vorher stand eine starre Schnur im Leeren, die Laterne schwebte neben dem Bein).
+ */
 function lampGeometry(): BufferGeometry {
   const parts: BufferGeometry[] = [];
-  const add = (g: BufferGeometry, col: [number, number, number], x = 0, y = 0, z = 0) => {
+  const add = (g: BufferGeometry, col: [number, number, number], x = 0, y = 0, z = 0, pre?: (n: BufferGeometry) => void) => {
     const n = g.index ? g.toNonIndexed() : g.clone();
     for (const k of Object.keys(n.attributes)) if (k !== 'position' && k !== 'normal') n.deleteAttribute(k);
+    if (pre) pre(n);
     n.translate(x, y, z);
     const count = n.attributes.position.count;
     const c = new Float32Array(count * 3);
@@ -32,21 +40,28 @@ function lampGeometry(): BufferGeometry {
     n.setAttribute('color', new Float32BufferAttribute(c, 3));
     parts.push(n);
   };
-  // Schnur, Henkel, Dach mit Knauf, Glaszylinder mit heller Flamme, Messingband, Streben und Fuß
-  add(new CylinderGeometry(0.006, 0.006, 0.13, 4), CORD, 0, -0.065, 0);
+  // Gürtelhalterung: Lederschlaufe am Gürtel, Messingplatte darauf, Haken-Arm nach außen (−x), Öse am Ende, vier Kettenglieder
+  const OX = -LAMP_ARM;
+  add(new BoxGeometry(0.008, 0.085, 0.026), LEATHER, 0.0, -0.035, 0);
+  add(new BoxGeometry(0.007, 0.032, 0.038), BRASS, -0.0075, -0.02, 0);
+  for (const dz of [-0.013, 0.013]) add(new SphereGeometry(0.0042, 5, 4), BRASS, -0.0115, -0.02, dz);
+  add(new CylinderGeometry(0.0055, 0.0055, LAMP_ARM - 0.006, 6), IRON, -(LAMP_ARM + 0.006) / 2, -0.02, 0, (n) => n.rotateZ(Math.PI / 2));
+  add(new TorusGeometry(0.0115, 0.0032, 5, 10), IRON, OX, -0.0325, 0, (n) => n.rotateY(Math.PI / 2));
+  for (let k = 0; k < 4; k++) add(new TorusGeometry(0.0105, 0.003, 4, 8), IRON, OX, -0.0565 - k * 0.0235, 0, (n) => n.rotateY(k % 2 ? 0 : Math.PI / 2));
+  // Henkel, Dach mit Knauf, Glaszylinder mit heller Flamme, Messingband, Streben und Fuß
   const handle = new TorusGeometry(0.036, 0.0045, 4, 10, Math.PI);
-  add(handle, IRON, 0, -0.17, 0);
-  add(new ConeGeometry(0.046, 0.04, 8), IRON, 0, -0.205, 0);
-  add(new CylinderGeometry(0.03, 0.046, 0.012, 8), IRON, 0, -0.232, 0);
-  add(new SphereGeometry(0.009, 5, 4), BRASS, 0, -0.18, 0);
-  add(new CylinderGeometry(0.029, 0.034, 0.088, 10, 1, true), GLASS, 0, -0.282, 0);
-  add(new SphereGeometry(0.016, 6, 5), FLAME, 0, -0.285, 0);
-  add(new CylinderGeometry(0.036, 0.036, 0.008, 10), BRASS, 0, -0.238, 0);
-  add(new CylinderGeometry(0.03, 0.038, 0.018, 10), IRON, 0, -0.332, 0);
-  add(new CylinderGeometry(0.02, 0.02, 0.01, 8), IRON, 0, -0.346, 0);
+  add(handle, IRON, OX, -0.17, 0);
+  add(new ConeGeometry(0.046, 0.04, 8), IRON, OX, -0.205, 0);
+  add(new CylinderGeometry(0.03, 0.046, 0.012, 8), IRON, OX, -0.232, 0);
+  add(new SphereGeometry(0.009, 5, 4), BRASS, OX, -0.18, 0);
+  add(new CylinderGeometry(0.029, 0.034, 0.088, 10, 1, true), GLASS, OX, -0.282, 0);
+  add(new SphereGeometry(0.016, 6, 5), FLAME, OX, -0.285, 0);
+  add(new CylinderGeometry(0.036, 0.036, 0.008, 10), BRASS, OX, -0.238, 0);
+  add(new CylinderGeometry(0.03, 0.038, 0.018, 10), IRON, OX, -0.332, 0);
+  add(new CylinderGeometry(0.02, 0.02, 0.01, 8), IRON, OX, -0.346, 0);
   for (let k = 0; k < 4; k++) {
     const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
-    add(new BoxGeometry(0.0075, 0.1, 0.0075), IRON, Math.cos(a) * 0.033, -0.286, Math.sin(a) * 0.033);
+    add(new BoxGeometry(0.0075, 0.1, 0.0075), IRON, OX + Math.cos(a) * 0.033, -0.286, Math.sin(a) * 0.033);
   }
   const merged = mergeGeometries(parts, false)!;
   for (const p of parts) p.dispose();

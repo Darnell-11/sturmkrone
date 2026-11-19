@@ -1,5 +1,12 @@
 # Was ist neu
 
+## 3.0.5 – Hüftlaterne hängt am Gürtel (19.11.2026)
+
+**Fehler behoben**
+- **Die Laterne an der Hüfte schwebte in der Luft.** Ihre „Schnur“ war ein starrer, heller Stab, der oben im Nichts endete, und die Laterne hing etwa 8 cm neben dem Bein. Jetzt hängt sie an einer richtigen Gürtelhalterung (`render/lamps.ts`, `lampGeometry`): eine dunkle Lederschlaufe am Gürtel mit Messingplatte und zwei Nieten, ein Haken-Arm nach außen (`LAMP_ARM`), eine Öse und vier Kettenglieder bis zum Henkel der Laterne. Der Ursprung des Netzes ist der Befestigungspunkt am Körper, die Laterne pendelt weiter um ihn.
+- Der Befestigungspunkt sitzt im Hüft-Socket jetzt an der Außenkante von Gürtel und Mantel (`LAMP_HIP_X` = 0,187 m, Messung: Körper auf Gürtelhöhe ±0,208 m, Mitte in der Tiefe), vorher 0,27 m davon entfernt. Hält die linke Hand einen Schild, wechselt die Laterne die Seite und dreht die Halterung mit (`Character.hold`; vorher blieb die Drehung stehen).
+- Geprüft im Editor von vorn, beiden Seiten und hinten sowie mit Schild; `tests/lamps.test.ts` (2 Tests: Aufbau und lückenlose Kette).
+
 ## 3.0.4 – Regen im Wasser statt auf dem Wasser (19.11.2026)
 
 Nur lokal, noch nicht veröffentlicht. **Kein neuer Spielstand.**

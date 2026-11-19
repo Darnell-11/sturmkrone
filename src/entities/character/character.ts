@@ -27,6 +27,10 @@ import { disposeMaterial } from '../../render/dispose';
 import { audio } from '../../audio/audio';
 import { WeaponTrail } from '../../render/weaponTrail';
 import { createLamp } from '../../render/lamps';
+
+/** Befestigungspunkt der Hüftlaterne im Hüft-Socket (Meter): seitlicher Abstand vom Körpermittelpunkt bis zur Außenseite von Gürtel und Mantel, Höhe über dem Becken-Knochen */
+const LAMP_HIP_X = 0.187;
+const LAMP_HIP_Y = 0.04;
 import { glowHub, makeEmitter } from '../../render/glow';
 import { Quaternion, Vector3 as V3, Vector4, type Scene } from 'three';
 import type { ColorRepresentation, Material, Mesh, MeshToonMaterial } from 'three';
@@ -313,8 +317,8 @@ export class Character {
     if (!node) { Character.lamped.delete(this); return; }
     this.sockets.normalize();
     const lamp = createLamp(1.25);
-    // Anime-Figur: wie bisher an der linken Hüfte (die rechte Hand führt die Waffe), der Halter schaut nach hinten
-    if (this.vroid) { lamp.position.set(0.27, 0.04, 0); lamp.rotation.y = Math.PI; } else lamp.position.set(-0.27, 0.04, 0);
+    // Anime-Figur: wie bisher an der linken Hüfte (die rechte Hand führt die Waffe); der Befestigungspunkt sitzt am Gürtel auf dem Körper
+    if (this.vroid) { lamp.position.set(LAMP_HIP_X, LAMP_HIP_Y, 0); lamp.rotation.y = Math.PI; } else lamp.position.set(-0.22, LAMP_HIP_Y, 0);
     lamp.userData.holder = this.holder;
     node.add(lamp);
     this.lamp = lamp;
@@ -1233,7 +1237,8 @@ export class Character {
     for (const c of [...slot.children]) { slot.remove(c); if (c !== obj) disposeObject(c); }
     if (obj) { slot.add(obj); this.stylize(obj); }
     // ein Schild links verdeckt die Laterne an der linken Hüfte: sie wechselt dann die Seite
-    if (side === 'l' && this.lamp && this.vroid) this.lamp.position.x = obj?.userData.wide ? -0.27 : 0.27;
+    // (die Halterung schaut mit dem Rücken zum Körper: beim Seitenwechsel mitdrehen)
+    if (side === 'l' && this.lamp && this.vroid) { const left = !obj?.userData.wide; this.lamp.position.x = left ? LAMP_HIP_X : -LAMP_HIP_X; this.lamp.rotation.y = left ? Math.PI : 0; }
     this.curl(side, obj ? 1 : grip);
   }
 
