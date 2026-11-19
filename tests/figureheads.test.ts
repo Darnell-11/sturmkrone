@@ -53,6 +53,15 @@ describe('Tuchflaggen', () => {
     expect(hFree).toBeLessThan(hHoist);
   });
 
+  it('Bildrichtung: die Oberkante des Tuchs zeigt die obere Bildkante (Leinwand-Textur mit flipY: v = 1 ist oben), die Mastkante die linke', () => {
+    const g = clothGeometry({ len: 2, height: 1.2 });
+    const pos = g.getAttribute('position'), uv = g.getAttribute('uv');
+    for (let i = 0; i < pos.count; i++) {
+      expect(uv.getY(i)).toBeCloseTo(pos.getY(i) / 1.2 + 0.5, 5);
+      expect(uv.getX(i)).toBeCloseTo(pos.getX(i) / 2, 5);
+    }
+  });
+
   const flag = (): ClothFlag => ({ mesh: null as never, mat: null as never, u: makeClothUniforms(2, 1.2), ang: 0, ph: 0 });
 
   it('Flaute: schlaff, Wind und Fahrt: gestreckt', () => {

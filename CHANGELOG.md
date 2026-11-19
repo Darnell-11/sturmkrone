@@ -1,5 +1,11 @@
 # Was ist neu
 
+## 3.0.2 – Flaggen standen auf dem Kopf (19.11.2026)
+
+**Fehler behoben**
+- **Alle Schiffsflaggen waren kopfüber** (Mast- und Heckflagge, jede Schiffsklasse, Titelbild und hohe See): Das Tuchnetz in `render/flagCloth.ts` bildete die Oberkante des Tuchs auf die Unterkante des Bildes ab (UV `1 − v`), obwohl Leinwand-Texturen mit `flipY` bei v = 1 oben beginnen. Totenkopf, Krone, Anker und die Wappen der Weltmächte stehen jetzt aufrecht. Das Bild wurde nie falsch gemalt, nur falsch aufgelegt, darum genügt die eine Zeile für alle Flaggenarten. `tests/figureheads.test.ts` prüft die Bildrichtung des Tuchnetzes.
+- Technik: Die Banner an Land (`world/garrison.ts`, `PlaneGeometry`) und die Segel (`sailTexture`) haben eigene UV und waren nicht betroffen.
+
 ## 3.0.1 – Titelbild als Kamerafahrt, Steg-Hänger behoben, Handy-Feinschliff (19.11.2026)
 
 Nur lokal, noch nicht veröffentlicht. **Kein neuer Spielstand** (Version bleibt 14).

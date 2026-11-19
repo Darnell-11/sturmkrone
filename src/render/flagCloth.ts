@@ -319,7 +319,8 @@ export function clothGeometry(s: ClothShape): BufferGeometry {
       const x = (i / nx) * xmax;
       const hh = s.height * (1 - taper * (x / s.len));
       pos.push(x, (v - 0.5) * hh, 0); nor.push(0, 0, 1);
-      uv.push(x / s.len, 1 - v);
+      // Leinwand-Texturen haben flipY: v = 1 ist die OBERE Bildkante, und v = 1 gehört zur Oberkante des Tuchs (y = +hh/2)
+      uv.push(x / s.len, v);
       fl.push(x / s.len);
       ed.push(Math.min(v, 1 - v) * hh / s.height, (xmax - x) / s.height);
     }
