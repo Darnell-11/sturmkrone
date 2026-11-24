@@ -82,6 +82,8 @@ export class Ship {
   canDisable = false;
   /** Auch der Gnadenstoß versenkt es nicht (Legenden, Marine-Kommandoschiffe, die zwei größten Klassen): nur Entern beendet den Kampf */
   noKill = false;
+  /** Moral der Mannschaft als Wirksamkeit 0,55 … 1 (Sold nicht gezahlt = Crew arbeitet langsamer; core/economyEngine.ts `moraleEfficiency`) */
+  moraleK = 1;
   /** Vorläufig: das eigene Schiff nimmt keinen Schaden, solange die Spielfigur nicht am Steuer steht (Landgang, Raids, Entern) */
   unsinkable = false;
   disabled = false;
@@ -145,7 +147,7 @@ export class Ship {
   get crew() { return crewFrac(this.sim.crew); }
   set crew(v: number) { setCrewFrac(this.sim.crew, clamp01(v)); }
   /** Faktor auf die Nachladezeit der Geschütze nach Crew-% */
-  get reloadScale() { return crewEffects(this.crew, this.crewFx).reloadMult; }
+  get reloadScale() { return crewEffects(this.crew * this.moraleK, this.crewFx).reloadMult; }
 
   /** Ruderausschlag −1 … 1 (für Steuerrad und Haltung des Steuermanns) */
   get steerAmount() { return this.turnInput; }
@@ -193,7 +195,7 @@ export class Ship {
     this.reloadR = Math.max(0, this.reloadR - dt);
     // Crew-% und Segelzustand bestimmen Setzen, Fahrt, Wendigkeit, Treiben und die passive Reparatur
     const sim = this.sim;
-    const fx = crewEffects(this.crew, this.crewFx);
+    const fx = crewEffects(this.crew * this.moraleK, this.crewFx);
     const perf = sailPerformance(this.sail, this.perf);
     const level = this.throttle ?? [0, 0.55, 1][this.sailLevel];
     if (this.throttle !== null) this.sailLevel = level < 0.05 ? 0 : level < 0.75 ? 1 : 2;
@@ -268,7 +270,7 @@ export class Ship {
   }
 
   /** Segel einholen (Festmachen): das gesetzte Tuch fährt auf null, auch wenn das Schiff nicht gesteuert wird */
-  furl(dt: number) { stepSailSet(this.sim, 0, dt, crewEffects(this.crew, this.crewFx)); }
+  furl(dt: number) { stepSailSet(this.sim, 0, dt, crewEffects(this.crew * this.moraleK, this.crewFx)); }
 
   /**
    * Schaden mit Munitionsart; liefert den Rumpfschaden. `zone` 'sail' = die Kugel traf das Tuch (Segel-HP sinken, Rumpf kaum),
@@ -368,7 +370,7 @@ export class Ship {
 
   /** Reparatur-Absicht (Segeltuch, Holz, Notsegel, Werft). Auf See dauert sie je nach Crew; liefert, ob sie begonnen wurde. */
   requestRepair(intent: SailRepairIntent): boolean {
-    const ok = startRepair(this.sim, intent, crewEffects(this.crew, this.crewFx));
+    const ok = startRepair(this.sim, intent, crewEffects(this.crew * this.moraleK, this.crewFx));
     if (ok && intent.material === 'hafen') { this.fire = 0; this.updateSailDamage(); }
     return ok;
   }

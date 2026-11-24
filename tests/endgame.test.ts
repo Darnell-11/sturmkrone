@@ -536,14 +536,14 @@ describe('Insel-Besatzung', () => {
 
 describe('Spielstand Version 13 (abwärtskompatibel)', () => {
   it('ältere Spielstände laden weiter und bekommen leere Besatzungs-Felder', () => {
-    expect(SAVE_VERSION).toBe(15);
+    expect(SAVE_VERSION).toBe(16);
     const old = { ...createSave('Alt', 'pirat', V), version: 12 } as Record<string, any>;
     delete old.progress.conquest;
     delete old.progress.unlocks;
     const r = migrateSave(old, V);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.data.version).toBe(15);
+    expect(r.data.version).toBe(SAVE_VERSION);
     expect(r.data.progress.conquest).toEqual({});
     expect(r.data.progress.unlocks).toEqual({ sails: [], ornaments: [], bossLoot: [], seals: {}, shards: 0 });
     expect(r.migratedFrom).toBe(12);

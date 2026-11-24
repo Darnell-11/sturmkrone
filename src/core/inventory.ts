@@ -33,10 +33,10 @@ export function itemCount(g: GearState, id: string): number {
 }
 
 /** Legt Stück ins Inventar, höchstens bis zur Obergrenze; liefert, wie viele hineinpassten */
-export function addItem(g: GearState, id: string, n = 1): number {
+export function addItem(g: GearState, id: string, n = 1, max?: number): number {
   const def = CONSUMABLE_BY_ID[id];
   if (!def) return 0;
-  const room = Math.max(0, def.max - itemCount(g, id));
+  const room = Math.max(0, (max ?? def.max) - itemCount(g, id));
   const add = Math.min(n, room);
   if (add <= 0) return 0;
   if (id === 'proviant') g.potions += add;

@@ -232,3 +232,20 @@ html[data-fx='lite'] .panel { -webkit-backdrop-filter: none; backdrop-filter: no
 .tier[data-t='4'] { --tier-c: var(--brass-300); }
 .tier[data-t='5'] { --tier-c: var(--rar-legendaer); }
 .gate { color: var(--ink-dim); font-style: italic; }
+
+/* Kontor (Handel): Preis-Pfeile, Rollen der Waren und die Preisübersicht besuchter Häfen */
+.trend { font: 700 0.8rem var(--font-num); color: var(--ink-dim); }
+.trend.down { color: var(--ok); }
+.trend.up { color: var(--brass-300); }
+.role { font: 600 0.68rem var(--font-num); letter-spacing: 0.04em; padding: 0 0.35em; border: 1px solid currentColor; border-radius: 3px; vertical-align: middle; }
+.role.produce { color: var(--ok); }
+.role.demand { color: var(--brass-300); }
+.role.war { color: var(--danger); }
+.kontor-row.war { border-left: 3px solid var(--danger); }
+.kontor-scroll { overflow-x: auto; }
+table.kontor { border-collapse: collapse; width: 100%; font: 600 0.78rem var(--font-num); color: var(--ink-dim); }
+table.kontor th, table.kontor td { padding: 0.25em 0.5em; border-bottom: 1px solid var(--glass-edge-soft); text-align: right; white-space: nowrap; }
+table.kontor th:first-child { text-align: left; color: var(--ink); font-weight: 600; }
+table.kontor thead th { color: var(--brass-100); vertical-align: bottom; }
+table.kontor thead small { display: block; font-weight: 500; color: var(--ink-faint); }
+table.kontor td.best { color: var(--ok); font-weight: 700; }

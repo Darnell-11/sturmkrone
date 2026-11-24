@@ -16,7 +16,7 @@ import { PLAYER_BASE } from '../data/combat';
 import { CombatOverlay } from '../ui/combatOverlay';
 import { BRANCHES, branchPoints, learnBlock, SK, type Branch } from '../data/skills';
 import { SkillTree } from '../ui/skillTree';
-import { SAIL_LEVELS, SHIP_CLASSES, SHIP_UPGRADES, SHIP_UPGRADE_MAX, type ShipLook, type ShipUpgradeId } from '../data/ships';
+import { AMMO, SAIL_LEVELS, SHIP_CLASSES, SHIP_UPGRADES, SHIP_UPGRADE_MAX, type AmmoId, type ShipLook, type ShipUpgradeId } from '../data/ships';
 import { FAME_THRESHOLDS } from '../data/ranks';
 import { SkillStage } from '../world/skillStage';
 import { detectWebGpu, AutoQuality, benchmarkGpu, detectTier, gatherDeviceInfo, needsBench, type DeviceInfo, type Detected } from '../render/quality';
@@ -53,7 +53,9 @@ import { TOWN_NPCS, VILLAGE_NPC_BY_ID, VILLAGE_NPCS, type QuestDef, type TownNpc
 import { BERNSTEINSEE, REGIONS, regionAt, sectorLabel, type IslandDef, type RegionDef } from '../data/regions';
 import { IDLE_MUSIC, type MusicContext } from '../audio/musicDirector';
 import type { MusicSector } from '../data/musicTracks';
-import { FACTIONS, FACTION_IDS, STANCE_LABEL, STANDING_EVENTS, clampStanding, marineStance, sectorAt, type FactionId } from '../data/factions';
+import { FACTIONS, FACTION_IDS, STANCE_LABEL, STANDING_EVENTS, borderDistance, clampStanding, marineStance, sectorAt, type FactionId } from '../data/factions';
+import { AMMO_UNLOCK, GOODS, GOOD_BY_ID, UPKEEP, bagMax, cargoCap, emptyEconomy, profileOf, type EconomyState, type GoodId } from '../data/economy';
+import { buyGood, cargoUsed, decayHeat, eqPriceOf, inspectCargo, marketAt, marketPrice, moraleEfficiency, quoteBuy, quoteSell, recordLedger, roleOf, sellGood, stepUpkeep, tariffOf, trendOf, upkeepOf, warCargo, yardRepairCost, type MarketSite, type Tariff } from './economyEngine';
 import { REP, applyOutcome, battleOutcome, blueprintDiscount, emptyReputation, harborDiscount, hasService, honorTitle, isPeaceful, repTier } from '../data/reputation';
 import type { BattleMark, BattleResult } from '../naval/naval';
 import { createRaidContext } from '../raid/raidSession';
@@ -84,7 +86,8 @@ import { CAT_LABEL, EQUIP_BY_ID, GEAR_CATS, catOf, type GearCat } from '../data/
 import { clearOld, ensureLoot, grantLoot, lootDef, rollGearByTier, rollLootGear, setLine, wearLoot, wornLoot } from './gearBag';
 import { ACHIEVEMENTS } from '../data/achievements';
 import { ABYSS_LAIR } from '../naval/seaBoss';
-import { crewFrac, crewPricePerHead, missingHeads, needsRepair, REPAIR_MATERIALS, shipTooltip, type ShipSimState } from '../naval/shipSim';
+import { crewFrac, crewPricePerHead, missingHeads, needsRepair, poolHeads, REPAIR_MATERIALS, shipTooltip, type ShipSimState } from '../naval/shipSim';
+import { fmtInt } from './format';
 import { wrapAngle } from './mathUtil';
 import type { RepairMaterial } from '../sim/intents';
 import { QUESTS, QUEST_BY_ID } from '../data/quests';
@@ -364,6 +367,8 @@ export class Game {
     // Regler über die Audio-Schnittstelle (3.0-Menü, HUD) landen in den Geräteeinstellungen; umgekehrt setzt applySettings sie
     audio.onPrefsChange((p) => this.settings.update({ volume: { ...this.settings.data.volume, master: p.masterVolume, music: p.musicVolume, sfx: p.sfxVolume, ambient: p.ambienceVolume }, muteWhenUnfocused: p.muteWhenUnfocused }));
     audio.onTrackChange((n) => this.sectorBanner.setTrack(n?.title ?? null, n?.category === 'region' || n?.category === 'harbor'));
+    this.world.ammoOk = (id) => this.eco().ammo.includes(id);
+    this.world.ammoLockText = (id) => { const v = this.ammoView(id); return v.gate || `${AMMO[id].n} ist noch nicht freigeschaltet: beim Munitionsmeister in der Werft (${v.price} Gold).`; };
     this.hud.onAmmo = (id) => this.world.selectAmmo(id);
     this.hud.onPause = () => this.pause();
     this.hud.onFaji = () => this.openSkills();
@@ -483,6 +488,7 @@ export class Game {
       this.world.update(dt, this.input);
       if (this.save) this.save.meta.playTime += dt;
       this.occupation.update(dt);
+      this.stepEconomy(dt);
       this.occT -= dt;
       if (this.occT <= 0) { this.occT = 0.4; this.refreshOccBanner(); }
       this.autosaveTimer += dt;
@@ -873,7 +879,7 @@ export class Game {
     if (!st.rankOk) return `Truppen lassen sich erst ab dem Rang „${st.rankName}“ anheuern.`;
     this.syncTroops();
     const roster = this.troopRoster();
-    const price = TROOPS[typ].price;
+    const price = this.priceAt(TROOPS[typ].price);
     const room = st.cap - rosterTotal(roster);
     if (room <= 0) return 'Die Truppen sind vollzählig.';
     const want = Math.min(Math.floor(heads), room, Math.floor(s.player.gold / price));
@@ -894,7 +900,7 @@ export class Game {
   /** Preis, den Truppen-Pool mit einem Typ ganz aufzufüllen */
   troopFillCost(typ: TroopType): number {
     const st = this.troopStatus();
-    return Math.max(0, st.cap - st.heads) * TROOPS[typ].price;
+    return Math.max(0, st.cap - st.heads) * this.priceAt(TROOPS[typ].price);
   }
 
   /** Gold-Bonus der Crew (Katze, Taucherin für Beute) */
@@ -1046,7 +1052,7 @@ export class Game {
       // ab selten oft ein besonderes Gut (Festmahl, Stärkung, Essenz) statt schlichtem Proviant
       const pool = tier >= 1 ? CONSUMABLES.filter((c) => c.rarity === d.rarity) : [];
       const def = pool.length ? pool[Math.floor(Math.random() * pool.length)] : CONSUMABLE_BY_ID.proviant;
-      if (addItem(s.gear, def.id, 1)) { this.overlay.number(above(), `${r.mark} +1 ${def.n}`, 'heal'); return; }
+      if (addItem(s.gear, def.id, 1, this.bagMax(def))) { this.overlay.number(above(), `${r.mark} +1 ${def.n}`, 'heal'); return; }
     }
     gold();
   }
@@ -1528,7 +1534,15 @@ export class Game {
 
   private openHarbor(def: IslandDef) {
     if (!this.state.is('play')) return;
-    this.harborFid = def.factionId ?? (def.marine ? 'marine' : null);
+    const fid = def.factionId ?? (def.marine ? 'marine' : null);
+    // Hafensperre: wer bei einer Macht verfemt ist (Ansehen ≤ −60), darf in ihren Häfen nicht anlegen
+    if (fid && this.tariff(fid).closed) {
+      this.hud.toast(`${FACTIONS[fid].name} hat den Hafen von ${def.name} für dich gesperrt. Mehr Ansehen oder ein Freihafen hilft.`, 5);
+      return;
+    }
+    this.harborFid = fid;
+    this.harborDef = def;
+    this.afterDocking(def);
     audio.play('bell');
     this.state.set('pause');
     this.menus.showHarbor('', def);
@@ -1923,10 +1937,11 @@ export class Game {
     if (!s || !def) return '';
     const gate = this.gateText(def.tier);
     if (gate) return gate;
-    if (itemCount(s.gear, id) >= def.max) return 'Deine Taschen sind voll.';
-    if (s.player.gold < def.price) return 'Nicht genug Gold.';
-    s.player.gold -= def.price;
-    addItem(s.gear, id, 1);
+    if (itemCount(s.gear, id) >= this.bagMax(def)) return 'Deine Taschen sind voll.';
+    const price = this.priceAt(def.price);
+    if (s.player.gold < price) return 'Nicht genug Gold.';
+    s.player.gold -= price;
+    addItem(s.gear, id, 1, this.bagMax(def));
     // erster Kauf: gleich in einen freien Platz der Schnellleiste legen
     const bar = s.gear.bar ?? [];
     if (!bar.includes(id)) { const free = bar.indexOf(null); if (free >= 0) bar[free] = id; }
@@ -2251,13 +2266,20 @@ export class Game {
 
   /** Macht des Hafens, in dem der Spieler gerade liegt (Rabatt nach Ansehen); null auf See und in Ankerglück */
   private harborFid: FactionId | null = null;
+  /** Insel des geöffneten Hafens (Markt, Kontor) */
+  harborDef: IslandDef | null = null;
 
-  /** Rabatt der Hafenmacht (0 … 0,2) */
-  private harborK() { return this.harborFid ? harborDiscount(this.save?.progress.standing?.[this.harborFid] ?? 0) : 0; }
-  /** Faktor auf Werft-Preise (Reparatur, Ausbau): Hafenrabatt plus Baupläne, höchstens halber Preis */
-  private yardK() { return 1 - Math.min(0.5, this.harborK() + blueprintDiscount(this.save?.progress.reputation?.blueprints ?? [])); }
-  /** Faktor auf Heuer und Bett */
-  private crewK() { return 1 - this.harborK(); }
+  /** Hafen-Tarif der Macht, in deren Hafen du liegst (Ansehen und Ehre: bis −25 %, feindlich: Schwarzmarkt +35 %, ab −60 gesperrt); Freihäfen: Grundpreis */
+  tariff(fid: FactionId | null = this.harborFid): Tariff {
+    const s = this.save;
+    return tariffOf(fid ? s?.progress.standing?.[fid] ?? 0 : 0, fid ? s?.progress.reputation?.honor?.[fid] ?? 0 : 0, !!fid);
+  }
+  /** Faktor auf Werft-Preise (Reparatur, Ausbau, Munition): Tarif minus Baupläne, zwischen 0,4 und 1,6 */
+  private yardK() { return Math.min(1.6, Math.max(0.4, this.tariff().factor - blueprintDiscount(this.save?.progress.reputation?.blueprints ?? []))); }
+  /** Faktor auf Heuer, Truppen, Bett und Waren */
+  private crewK() { return this.tariff().factor; }
+  /** Preis im Laden dieses Hafens: Grundpreis mal Tarif, aufgerundet */
+  priceAt(base: number) { return Math.max(base > 0 ? 1 : 0, Math.ceil(base * this.crewK())); }
   restPrice() { return Math.max(1, Math.round(REST_PRICE * this.crewK())); }
 
   /** Anzeige im Hafenmenü: Ansehen bei der Hafenmacht und was es einbringt */
@@ -2265,7 +2287,7 @@ export class Game {
     const f = this.harborFid;
     if (!f) return null;
     const st = this.save?.progress.standing?.[f] ?? 0;
-    return { name: FACTIONS[f].name, color: FACTIONS[f].color, tier: repTier(st).label, discount: this.harborK(), blueprints: blueprintDiscount(this.save?.progress.reputation?.blueprints ?? []) };
+    return { name: FACTIONS[f].name, color: FACTIONS[f].color, tier: repTier(st).label, discount: Math.max(0, this.tariff().discount), surcharge: Math.max(0, -this.tariff().discount), blueprints: blueprintDiscount(this.save?.progress.reputation?.blueprints ?? []) };
   }
 
   get inHarbor() { return !!this.harborFid; }
@@ -2338,7 +2360,7 @@ export class Game {
       const got: string[] = [];
       for (let i = 0; i < o.goods; i++) {
         const id = ['segeltuch', 'planken', 'proviant'][i % 3];
-        if (addItem(s.gear, id, 1) > 0) got.push(CONSUMABLE_BY_ID[id].n); else s.player.gold += 60;
+        if (addItem(s.gear, id, 1, this.bagMax(CONSUMABLE_BY_ID[id])) > 0) got.push(CONSUMABLE_BY_ID[id].n); else s.player.gold += 60;
       }
       if (got.length) lines.push(`Waren: ${got.join(', ')}`);
       if (o.blueprint) lines.push(`Bauplan ${name(o.blueprint.replace('bauplan_', ''))}: Werft −${Math.round(REP.blueprintDiscount * 100)} %`);
@@ -2492,12 +2514,10 @@ export class Game {
     this.shipyardLook({ ...s.ship.look, figurehead: F.ship.figurehead, stripe: F.ship.stripe });
   }
 
-  /** Reparatur kostet Gold je fehlendem Rumpfanteil */
+  /** Werft-Reparatur (100 %): wächst mit der Schiffsgröße (Länge · Breite) und dem Schadensgrad, dazu der Hafen-Tarif */
   repairCost() {
-    const sh = this.world.ship;
-    const hull = (1 - sh.hull / sh.maxHull) * sh.maxHull * 0.6;
-    const sail = (sh.sim.sail.max - sh.sim.sail.hp) * 0.9;
-    return Math.ceil((hull + sail) * this.yardK());
+    const sh = this.world.ship, c = SHIP_CLASSES[this.save?.ship.tier ?? 0];
+    return yardRepairCost({ L: c.L, W: c.W, hullMax: sh.maxHull, hullFrac: sh.hull / sh.maxHull, sailMax: sh.sim.sail.max, sailFrac: sh.sim.sail.hp / Math.max(1, sh.sim.sail.max), tariff: this.yardK() });
   }
 
   /** Preis, die fehlende Besatzung aufzufüllen */
@@ -2553,6 +2573,149 @@ export class Game {
     }
     this.hud.toast(sh.sail >= 0.999 && sh.hull >= sh.maxHull - 0.5 ? 'Nichts zu flicken.' : 'Kein Segeltuch oder Holz an Bord – kaufe welches auf dem Markt (Hafen).');
     return false;
+  }
+
+  // ---------- Ökonomie: Unterhalt, Handel, Kontor ----------
+
+  /** Der Wirtschaftszustand im Spielstand (fehlt in alten Ständen: wird angelegt) */
+  eco(): EconomyState {
+    const s = this.save!;
+    return (s.progress.economy ??= emptyEconomy(s.meta.playTime));
+  }
+
+  /** Wer wird bezahlt: Köpfe der Seeleute und Truppen, alle angeheuerten Offiziere und die Klasse des Schiffs */
+  upkeepInput() {
+    const s = this.save!;
+    const crew = this.world.ship.sim.crew;
+    return { tier: s.ship.tier, seamen: poolHeads(crew, 'matrosen'), troops: poolHeads(crew, 'truppen'), officers: s.crew.hired.length };
+  }
+
+  /** Sold und Proviant: Aufstellung für Kontor und HUD */
+  upkeepView() {
+    const eco = this.eco(), s = this.save!;
+    const u = upkeepOf(this.upkeepInput());
+    return { ...u, arrears: eco.arrears, morale: eco.morale, efficiency: moraleEfficiency(eco.morale), nextIn: Math.max(0, eco.nextPay - s.meta.playTime), gold: s.player.gold, heat: eco.heat };
+  }
+
+  private upkeepT = 0;
+  /** Je Bild: Hitze sinkt, alle halbe Sekunde werden Zahltage geprüft (Sold, Moral, Vorwarnung) und die HUD-Zeile aufgefrischt */
+  private stepEconomy(dt: number) {
+    const s = this.save;
+    if (!s) return;
+    const eco = this.eco();
+    decayHeat(eco, dt);
+    this.upkeepT -= dt;
+    if (this.upkeepT > 0) return;
+    this.upkeepT = 0.5;
+    const r = stepUpkeep(eco, s.meta.playTime, s.player.gold, this.upkeepInput());
+    if (r.spent > 0) s.player.gold -= r.spent;
+    for (const e of r.events) {
+      if (e.type === 'warn') this.hud.toast(`Sold fällig in Kürze: ${fmtInt(e.due)} Gold – dein Gold reicht nicht! Sonst sinkt die Moral.`, 6);
+      else if (e.type === 'short') this.hud.toast(`Sold nicht bezahlt (Rückstand ${fmtInt(e.arrears)} Gold): die Crew murrt, die Moral sinkt.`, 6);
+    }
+    if (r.missed > 0) for (const id of s.crew.hired) s.crew.loyalty[id] = Math.max(0, (s.crew.loyalty[id] ?? 0) - UPKEEP.loyaltyMiss * r.missed);
+    this.world.ship.moraleK = moraleEfficiency(eco.morale);
+    const up = upkeepOf(this.upkeepInput());
+    const left = Math.max(0, eco.nextPay - s.meta.playTime);
+    const low = s.player.gold < up.perPeriod + eco.arrears;
+    this.hud.setUpkeep({
+      text: `Sold ${fmtInt(Math.round(up.daily))}/Tag`,
+      level: eco.arrears > 0 || eco.morale < 0.5 ? 2 : low && left < UPKEEP.warnLead * 3 ? 1 : 0,
+      note: eco.arrears > 0 ? `Rückstand ${fmtInt(Math.round(eco.arrears))} · Moral ${Math.round(eco.morale * 100)} %` : low && left < UPKEEP.warnLead * 3 ? `Zahltag in ${Math.ceil(left / 60)} Min: ${fmtInt(Math.ceil(up.perPeriod))} Gold` : '',
+    });
+  }
+
+  /** Markt-Schlüssel und Daten der Insel, in deren Hafen man liegt (Ankerglück, wenn keiner geöffnet ist) */
+  marketSite(def: IslandDef | null = this.harborDef): MarketSite | null {
+    const d = def ?? this.world.islandDefs.find((i) => i.id === 'ankerglueck') ?? null;
+    if (!d) return null;
+    return {
+      id: d.id, name: d.name, profile: profileOf({ id: d.id, region: d.region, factionId: d.factionId }),
+      war: { borderDist: borderDistance(d.x, d.z).dist, occupied: this.occupation.occupied(d.id), fort: d.kind === 'marinefort' || d.kind === 'citadel' },
+    };
+  }
+
+  /** Beim Anlegen: Preisübersicht merken und mit Kriegsware an Bord möglicherweise kontrolliert werden */
+  private afterDocking(def: IslandDef) {
+    const s = this.save;
+    const site = this.marketSite(def);
+    if (!s || !site) return;
+    const eco = this.eco();
+    recordLedger(eco, site, s.meta.playTime, this.tariff().factor);
+    const fid = this.harborFid;
+    const r = inspectCargo(eco, { lawful: !!fid, marine: fid === 'marine' });
+    if (!r.checked || !fid) return;
+    const fine = Math.min(r.fine, s.player.gold);
+    s.player.gold -= fine;
+    this.shiftStanding(fid, -6);
+    this.overlay.showBanner('Kontrolle!', `${FACTIONS[fid].name} beschlagnahmt ${r.seized} Einheiten Kriegsware · Strafe ${fmtInt(fine)} Gold`);
+    audio.play('crack');
+    if (r.hunters) this.world.naval?.callHunters();
+    this.persist();
+  }
+
+  /** Daten des Kontors: Waren mit Vorrat, Preisen, Trend und Fracht, dazu Frachtraum, Unterhalt, Tarif und die Preisübersicht besuchter Häfen */
+  kontorView() {
+    const s = this.save, site = this.marketSite();
+    if (!s || !site) return null;
+    const eco = this.eco(), now = s.meta.playTime, tier = s.ship.tier;
+    const t = this.tariff();
+    const m = marketAt(eco, site, now);
+    const rows = GOODS.map((g) => {
+      const stock = m.stock[g.id] ?? 0;
+      const base = marketPrice(site, g.id, stock);
+      const buy = Math.ceil(quoteBuy(site, stock, g.id, 1, t.factor).total || base * 1.05 * t.factor);
+      const sell = Math.floor(quoteSell(site, stock, g.id, 1, t.factor).total);
+      const have = eco.cargo[g.id]?.n ?? 0;
+      return { def: g, stock: Math.floor(stock), buy, sell, trend: trendOf(base, g.id), role: roleOf(site.profile, g.id), eq: eqPriceOf(site.profile, g.id), have, avgCost: have ? (eco.cargo[g.id]!.cost / have) : 0, war: !!g.war };
+    });
+    const ledger = Object.entries(eco.ledger).filter(([id]) => id !== site.id).map(([id, l]) => ({ id, ...l, age: Math.max(0, now - l.t) })).sort((a, b) => a.age - b.age);
+    return { site, rows, tariff: t, cargo: { used: cargoUsed(eco), cap: cargoCap(tier), war: warCargo(eco) }, upkeep: this.upkeepView(), ledger, heat: eco.heat, gold: s.player.gold };
+  }
+
+  /** Ware im Kontor kaufen (Frachtraum, Vorrat, Gold und Tarif begrenzen die Menge) */
+  tradeBuy(good: GoodId, n: number): string {
+    const s = this.save, site = this.marketSite();
+    if (!s || !site || !GOOD_BY_ID[good]) return '';
+    const eco = this.eco();
+    const r = buyGood(eco, site, s.meta.playTime, good, n, s.player.gold, s.ship.tier, this.tariff().factor);
+    if (r.ok) { s.player.gold += r.gold; audio.play('coin'); recordLedger(eco, site, s.meta.playTime, this.tariff().factor); this.persist(); }
+    return r.message;
+  }
+
+  tradeSell(good: GoodId, n: number): string {
+    const s = this.save, site = this.marketSite();
+    if (!s || !site || !GOOD_BY_ID[good]) return '';
+    const eco = this.eco();
+    const r = sellGood(eco, site, s.meta.playTime, good, n, this.tariff().factor);
+    if (r.ok) { s.player.gold += r.gold; audio.play('coin'); recordLedger(eco, site, s.meta.playTime, this.tariff().factor); this.persist(); }
+    return r.message;
+  }
+
+  /** Höchstzahl eines Verbrauchsguts im Beutel: wächst mit der Schiffsklasse (Beutekapazität) */
+  bagMax(def: { max: number }): number { return bagMax(def.max, this.save?.ship.tier ?? 0); }
+
+  /** Spezialmunition: freigeschaltet? sonst Preis (mit Tarif) und Tor (Rang und Ansehen der Stufe) */
+  ammoView(id: AmmoId) {
+    const eco = this.eco();
+    const u = AMMO_UNLOCK[id];
+    const owned = eco.ammo.includes(id);
+    return { id, owned, price: this.priceAt(u.price), tier: u.tier, gate: owned ? '' : this.gateText(u.tier) };
+  }
+
+  buyAmmo(id: AmmoId): string {
+    const s = this.save;
+    if (!s) return '';
+    const v = this.ammoView(id);
+    if (v.owned) return 'Schon freigeschaltet.';
+    if (v.gate) return v.gate;
+    if (s.player.gold < v.price) return `Dafür fehlen ${v.price - s.player.gold} Gold.`;
+    s.player.gold -= v.price;
+    this.eco().ammo.push(id);
+    this.world.onAmmoUnlock?.();
+    audio.play('crack');
+    this.persist();
+    return `${AMMO[id].n} freigeschaltet.`;
   }
 
   upgradeCost(k: ShipUpgradeId) {

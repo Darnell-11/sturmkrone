@@ -1666,7 +1666,11 @@ export class SeaWorld {
       this.onMessage('Volle Kraft voraus!');
     }
     if (!locked && input.pressed('heavy')) {
-      this.selectAmmo(AMMO_IDS[(AMMO_IDS.indexOf(s.ammo) + 1) % AMMO_IDS.length]);
+      // nächste freigeschaltete Munition (gesperrte werden übersprungen)
+      for (let k = 1; k <= AMMO_IDS.length; k++) {
+        const next = AMMO_IDS[(AMMO_IDS.indexOf(s.ammo) + k) % AMMO_IDS.length];
+        if (!this.ammoOk || this.ammoOk(next)) { this.selectAmmo(next); break; }
+      }
     }
     const nav = this.naval;
     if (nav && s.alive && !locked) {
@@ -2584,7 +2588,12 @@ export class SeaWorld {
   }
 
   /** Munition wählen (Taste und Knopf der Schiffstafel) */
+  /** Spezialmunition ist erst nach dem Freischalten im Hafen wählbar (Game setzt die Prüfung); null = alles erlaubt */
+  ammoOk: ((id: AmmoId) => boolean) | null = null;
+  ammoLockText: ((id: AmmoId) => string) | null = null;
+  onAmmoUnlock: (() => void) | null = null;
   selectAmmo(id: AmmoId) {
+    if (this.ammoOk && !this.ammoOk(id)) { this.onMessage(this.ammoLockText?.(id) ?? 'Diese Munition ist noch nicht freigeschaltet.'); return; }
     this.ship.ammo = id;
     this.onMessage(`Munition: ${AMMO[id].n} – ${AMMO[id].d}`);
   }

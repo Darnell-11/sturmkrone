@@ -78,7 +78,7 @@ export class Hud {
   private stBar!: HTMLElement; private stFill!: HTMLElement; private stLag!: HTMLElement;
   private fjBar!: HTMLElement; private fjFill!: HTMLElement; private fjTxt!: HTMLElement;
   private xpFill!: HTMLElement;
-  private goldEl!: HTMLElement; private provEl!: HTMLElement; private crewEl!: HTMLElement; private weaponsEl!: HTMLElement;
+  private goldEl!: HTMLElement; private provEl!: HTMLElement; private crewEl!: HTMLElement; private upkeepEl!: HTMLElement; private weaponsEl!: HTMLElement;
   // Schiffstafel
   private shipEl!: HTMLElement; private shipName!: HTMLElement; private shipSail!: HTMLElement;
   private hullBar!: HTMLElement; private sailBar!: HTMLElement; private crewBar!: HTMLElement; private repBar!: HTMLElement;
@@ -120,6 +120,7 @@ export class Hud {
           <div class="cap-row"><span class="cap-gold" title="Gold">${COIN}<b></b></span><span class="cap-prov" title="Proviant"></span><span class="cap-env"></span></div>
           <div class="cap-weapons" title="Waffe wechseln: Q · Platz 1: Z · Platz 2: X"><span class="w0 on"></span><span class="w1"></span></div>
           <div class="cap-crew" hidden></div>
+          <div class="cap-upkeep" hidden></div>
           <div class="cap-fps" hidden></div>
         </section>
         <section class="hud-ship panel" aria-label="Schiff" hidden>
@@ -166,7 +167,7 @@ export class Hud {
     this.stBar = this.q('.gauge.st'); this.stFill = this.q('.fill', this.stBar); this.stLag = this.q('.lag', this.stBar);
     this.fjBar = this.q('.gauge.fj'); this.fjFill = this.q('.fill', this.fjBar); this.fjTxt = this.q('.gv', this.fjBar);
     this.xpFill = this.q('.gauge.xp .fill');
-    this.goldEl = this.q('.cap-gold b'); this.provEl = this.q('.cap-prov'); this.crewEl = this.q('.cap-crew'); this.weaponsEl = this.q('.cap-weapons');
+    this.goldEl = this.q('.cap-gold b'); this.provEl = this.q('.cap-prov'); this.crewEl = this.q('.cap-crew'); this.upkeepEl = this.q('.cap-upkeep'); this.weaponsEl = this.q('.cap-weapons');
 
     this.shipEl = this.q('.hud-ship'); this.shipName = this.q('.ship-name'); this.shipSail = this.q('.ship-sail');
     const [hull, sail, crew, rep] = Array.from(this.shipEl.querySelectorAll<HTMLElement>('.gline'));
@@ -265,6 +266,20 @@ export class Hud {
    * X = Köpfe, Y = Kapazität) und, solange Trupps im Einsatz sind, die Befehlstafel `[1] Sturmangriff · [2] Folgen · [3] Position halten`.
    * null blendet beides aus.
    */
+  /**
+   * Sold-Zeile in der Kapitänstafel: „Sold 63/Tag“; `level` 1 = Zahltag naht und das Gold reicht nicht (Vorwarnung), 2 = Rückstand
+   * oder schlechte Moral (rot). null blendet die Zeile aus.
+   */
+  setUpkeep(info: { text: string; level: 0 | 1 | 2; note: string } | null) {
+    const key = info ? `${info.text}|${info.level}|${info.note}` : '';
+    if (this.last.get(this.upkeepEl) === key) return;
+    this.last.set(this.upkeepEl, key);
+    if (!info) { this.upkeepEl.hidden = true; return; }
+    this.upkeepEl.hidden = false;
+    this.upkeepEl.dataset.level = String(info.level);
+    this.upkeepEl.innerHTML = `<span>${esc(info.text)}</span>${info.note ? `<b>${esc(info.note)}</b>` : ''}`;
+  }
+
   setCrewLine(info: CrewLine | null) {
     const key = info ? `${info.officers}/${info.slots}|${info.troops}/${info.troopMax}|${info.cmds?.join(',') ?? ''}|${info.active}` : '';
     if (this.last.get(this.crewEl) === key) return;

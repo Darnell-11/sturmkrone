@@ -4,6 +4,9 @@ import { sanitizeLook } from '../../data/characterParts';
 import { cleanConquest, cleanUnlocks } from '../../raid/occupation';
 import { cleanReputation } from '../../data/reputation';
 import { ARMOR, WEAPONS } from '../../data/items';
+import { AMMO_UNLOCK, cleanEconomy } from '../../data/economy';
+import { TIER_DEFS } from '../../data/balanceConfig';
+import { rankIndex } from '../../data/ranks';
 import { SHIP_UPGRADE_MAX } from '../../data/ships';
 import { convertLegacy10, isLegacy10, lookFromLegacy, skillsFromLegacy } from './legacy';
 import { createSave, defaultProgress, defaultShip, SAVE_VERSION, type SaveData } from './types';
@@ -103,6 +106,19 @@ export const MIGRATIONS: Record<number, Migration> = {
     const ship = d.ship && typeof d.ship === 'object' ? { ...d.ship } : d.ship;
     if (ship && ship.up && typeof ship.up === 'object') ship.up = Object.fromEntries(Object.entries(ship.up).map(([k, v]) => [k, idx(v, SHIP_UPGRADE_MAX)]));
     return { ...d, version: 15, progress, gear, ...(ship ? { ship } : {}) };
+  },
+  // 16: Ökonomie (Märkte, Fracht, Sold, Fahndungsdruck, Munitions-Freischaltung). Der erste Zahltag liegt eine Periode nach dem Laden (nichts
+  // wird rückwirkend abgerechnet); wer schon Spezialmunition benutzt hat, behält sie: sie wird nach Rang freigeschaltet, ohne Ansehens-Prüfung.
+  15: (d) => {
+    const now = typeof d.meta?.playTime === 'number' && Number.isFinite(d.meta.playTime) ? d.meta.playTime : 0;
+    const eco = cleanEconomy(d.progress?.economy, now);
+    const fame = typeof d.player?.fame === 'number' ? d.player.fame : 0;
+    const rank = rankIndex(fame);
+    for (const id of ['kette', 'kartaetsche', 'brand'] as const) {
+      const t = AMMO_UNLOCK[id].tier;
+      if (!eco.ammo.includes(id) && rank >= TIER_DEFS[t].rankMin) eco.ammo.push(id);
+    }
+    return { ...d, version: 16, progress: { ...(d.progress ?? {}), economy: eco } };
   },
 };
 

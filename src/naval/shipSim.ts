@@ -299,14 +299,19 @@ export function stepSailSet(s: ShipSimState, target: number, dt: number, fx: Cre
 /** Passive Rumpfreparatur durch die Crew (nach `sinceHit` ≥ 8 s); `bonusPerSec` in Rumpfpunkten (z. B. Schiffskoch). Liefert die Heilung. */
 export function stepPassiveRepair(s: ShipSimState, dt: number, fx: CrewEffects, bonusPerSec = 0): number {
   s.sinceHit += dt;
-  if (s.hull <= 0 || s.hull >= s.maxHull || s.sinceHit < 8) return 0;
+  // auf See stellt die Crew höchstens 75 % des Rumpfs her; die letzten Prozent gibt es nur in der Werft
+  const cap = s.maxHull * SEA_REPAIR_CAP;
+  if (s.hull <= 0 || s.hull >= cap || s.sinceHit < 8) return 0;
   // der Bonus (Koch, Zimmermann) wirkt nur, solange genug Leute da sind: skaliert mit crew^1,6, derselben Größe wie die Grundreparatur
-  const add = Math.min(s.maxHull - s.hull, (fx.repairPerSec * s.maxHull + bonusPerSec * (fx.repairPerSec / REPAIR_PER_SEC_FULL)) * dt);
+  const add = Math.min(cap - s.hull, (fx.repairPerSec * s.maxHull + bonusPerSec * (fx.repairPerSec / REPAIR_PER_SEC_FULL)) * dt);
   s.hull += add;
   return add;
 }
 
 // ---------- Reparatur ----------
+
+/** Notfall-Reparaturen auf See (Material, Crew) stellen höchstens diesen Anteil von Rumpf und Segel-HP her; 100 % gibt es nur in der Werft (`hafen`) */
+export const SEA_REPAIR_CAP = 0.75;
 
 /** Was ein Material ausbessert (Anteile von Segel-HP und Rumpf) und wie lange es dauert (s, bei voller Crew) */
 export const REPAIR_MATERIALS: Record<RepairMaterial, { label: string; sail: number; hull: number; time: number }> = {
@@ -321,15 +326,17 @@ export const REPAIR_MATERIALS: Record<RepairMaterial, { label: string; sail: num
 export function needsRepair(s: ShipSimState, material: RepairMaterial): boolean {
   const m = REPAIR_MATERIALS[material];
   if (material === 'notsegel') return s.sail.hp < s.sail.max * m.sail - 0.5;
-  return (m.sail > 0 && s.sail.hp < s.sail.max - 0.5) || (m.hull > 0 && s.hull < s.maxHull - 0.5);
+  const k = material === 'hafen' ? 1 : SEA_REPAIR_CAP;
+  return (m.sail > 0 && s.sail.hp < s.sail.max * k - 0.5) || (m.hull > 0 && s.hull < s.maxHull * k - 0.5);
 }
 
 /** Wirkt die Reparatur sofort an? (Werft) */
 export function applyRepair(s: ShipSimState, material: RepairMaterial): { sail: number; hull: number } {
   const m = REPAIR_MATERIALS[material];
   // Notsegel hebt das Tuch nur bis zu seinem Anteil an (nicht darüber hinaus)
-  const sail = material === 'notsegel' ? Math.max(0, m.sail * s.sail.max - s.sail.hp) : Math.min(s.sail.max - s.sail.hp, m.sail * s.sail.max);
-  const hull = s.hull > 0 ? Math.min(s.maxHull - s.hull, m.hull * s.maxHull) : 0;
+  const k = material === 'hafen' ? 1 : SEA_REPAIR_CAP;
+  const sail = material === 'notsegel' ? Math.max(0, m.sail * s.sail.max - s.sail.hp) : Math.max(0, Math.min(s.sail.max * k - s.sail.hp, m.sail * s.sail.max));
+  const hull = s.hull > 0 ? Math.max(0, Math.min(s.maxHull * k - s.hull, m.hull * s.maxHull)) : 0;
   s.sail.hp += sail; s.hull += hull;
   return { sail, hull };
 }

@@ -1,5 +1,37 @@
 # Was ist neu
 
+## 3.2.0 – Ökonomie: Unterhalt, Regionalhandel, Tarife (24.11.2026)
+
+**Lücke aus 3.1.0 geschlossen: Spezialmunition**
+- Kettenkugeln, Kartätschen (Stufe 2) und Brandkugeln (Stufe 3) müssen beim neuen **Munitionsmeister** in der Werft freigeschaltet werden (450 / 450 / 1 600 Gold, mit Hafen-Tarif). Es gilt dasselbe Tor wie überall (`shopGate`: Rang und bei Stufe 3 Ansehen „Freundlich“); Taste und Schiffstafel wählen nur freigeschaltete Munition und sagen sonst, was fehlt. Kugeln hat jedes Schiff. Einmal freigeschaltet, ist die Munition unbegrenzt (kein Verbrauch je Schuss). Kanonen selbst: die Ausbau-Stufen der „Schweren Kanonen“ hatten ihre Tore schon in 3.1.0 (`upgradeGate`).
+- Migration: wer schon einen Rang hat, bekommt die Munition seiner Stufe automatisch (ohne Ansehens-Prüfung).
+
+**Gold-Senken**
+- **Sold und Proviant (`UPKEEP`, `upkeepOf`):** je Seemann 1,2, je Truppenkopf 2,0, je Offizier 8 Gold und die Schiffsklasse (10 Schaluppe … 350 Leviathan) je Ingame-Tag; abgerechnet an vier Zahltagen je Tag (alle 6 Minuten Spielzeit), auf See und im Hafen. Beispiel Schaluppe: 29 Gold je Tag, Leviathan mit Truppen etwa 700.
+- **Wer nicht zahlen kann:** gezahlt wird, was da ist; der Rest bleibt als Rückstand stehen, die **Moral** sinkt (−15 % je ausgebliebenem Zahltag, Boden 20 %), die **Treue der Offiziere** sinkt (−8 je Zahltag) und die Crew arbeitet langsamer (Wirkung 55 … 100 %, `Ship.moraleK`: Nachladen, Segel, Reparatur). Gezahlte Zahltage heben die Moral wieder und zahlen den Rückstand nach. **HUD:** neue Zeile „Sold x/Tag“ in der Kapitänstafel, gelbe Vorwarnung eine Minute vor dem Zahltag, wenn das Gold nicht reicht, rot bei Rückstand; dazu Meldungen.
+- **Reparatur:** Notfall-Reparaturen und die passive Reparatur der Crew stellen auf See höchstens **75 %** von Rumpf und Segel-HP her (`SEA_REPAIR_CAP`); 100 % nur in der Werft. Segeltuch kostet jetzt 90, Planken 75 Gold. Werft-Kosten wachsen mit Länge × Breite der Klasse (Exponent 0,4) und überproportional mit dem Schadensgrad (`yardRepairCost`).
+- **Zölle und Hafen-Tarife (`tariffOf`):** Ansehen (−5 … −20 %) und Ehre (bis −5 %) senken die Preise bis höchstens −25 % auf Werft, Munition, Truppen, Heuer, Bett, Verbrauchsgüter und Waren. Feindliches Ansehen (< 0) = Schwarzmarkt +35 %; ab −60 sperrt die Macht den Hafen (Meldung statt Hafenmenü). Freihäfen: Grundpreis. Ersetzt den alten Hafenrabatt (`harborK`).
+- Verbrauchsgüter: Die Höchstzahl im Beutel wächst mit der Schiffsklasse (×1 Schaluppe … ×3 Leviathan, `bagMax`).
+
+**Regionalhandel (`data/economy.ts`, `core/economyEngine.ts`)**
+- 17 Handelswaren (Rohstoffe, Waren, Luxus, Kriegsware) mit Grundpreis und Platzbedarf. Profile: Nordwacht (Kanonenstahl, Werkzeuge), Glutring (Schwefel, Obsidian, Schmiedekohle), Niederlande (Gewürze, Stoffe, Luxusgüter), England (Tuch, Tee, Marine-Ausrüstung), Frankreich (Wein, Seide, Fechtklingen), dazu Deutschland, Kurogane und Marine; Ankerglück ist ein ehrlicher Freihafen ohne Spezialität. Eine Insel vereinigt Region und Macht.
+- **Elastizität:** Preis = Grundpreis · Gleichgewichtsfaktor (Überschuss 0,65, normal 1, Bedarf 1,45) · (Vorrat/Gleichgewichtsvorrat)^−0,55, begrenzt auf 0,45 … 2,6. Jedes gekaufte Stück verteuert, jedes verkaufte verbilligt die Ware; Händlerspanne 5 %. Die Vorräte fließen mit der Spielzeit zum Gleichgewicht zurück (τ = 30 Minuten), ohne Hintergrundrechnung (lazy in `marketAt`). Hin und Zurück im selben Hafen kostet immer Gold (auch mit Rabatt).
+- **Kriegs- und Schmuggelware** (Waffenkisten, Schießpulver, Medizin): Aufschlag nahe Sektorgrenzen (< 700 m), auf besetzten Inseln und in Festungen (höchstens ×2,5). Handel zu Kriegspreisen erhöht den **Fahndungsdruck** (sinkt mit der Zeit); beim Anlegen in einem Hafen einer Macht kann mit Kriegsware an Bord kontrolliert werden (5 % + Druck/150, Marine ×1,5): alles beschlagnahmt, Strafe ein Viertel des Werts, Ansehen −6; ab Druck 60 rücken Kopfgeldjäger aus.
+- **Frachtraum** je Klasse: 30, 60, 100, 160, 240, 340, 500 Platz; Waren haben Platzbedarf (0,5 … 2).
+
+**Oberfläche:** Neues **Kontor** im Hafenmenü (Mahagoni/Messing-Stil): Frachtraum-Balken, Hafentarif, Unterhalt mit Aufstellung und nächstem Zahltag, Waren mit Vorrat, Kauf-/Verkaufspreis, Preis-Pfeil (▼ günstig, ▲ teuer), Rolle (Überschuss, Gefragt, Kriegsware), Fracht mit Durchschnittspreis und Gewinn, Kauf-/Verkaufsknöpfe (1, 10, Max/Alles) und die **Preisübersicht** der fünf zuletzt besuchten Häfen (Kauf/Verkauf je Ware, bester Erlös grün). Markt und Truppen zeigen Preise mit Tarif, die Werft den Munitionsmeister.
+
+**Spielstand 16:** `progress.economy` (Märkte, Preisbuch, Fracht, Zahltag, Rückstand, Moral, Fahndungsdruck, Munition), Migration 15 → 16 setzt den ersten Zahltag eine Periode nach dem Laden (nichts wird rückwirkend abgerechnet).
+
+**Nicht umgesetzt / offene Punkte**
+- Die Märkte gibt es für jeden Hafen (Insel mit Hafenmenü), aber noch keine Händlerschiffe auf See, die Preise beeinflussen; Fraktionskriege (4.4) und Mehrspieler-Märkte (4.7) sind nur vorbereitet: Märkte sind reine, JSON-taugliche Daten je Insel-Schlüssel mit Spielzeit als Uhr.
+- Beutekapazität: nur die Verbrauchsgüter im Beutel wachsen mit der Klasse; Beute-Gold und Ausrüstung haben keine Platzgrenze. Waren aus Beute (Treibgut, Kisten) gibt es noch nicht.
+- Im Spiel geprüft: Zahltag, Rückstand, Moral, HUD-Zeile, Kontor-Handel, Munitionstor. Nicht per Bild geprüft: Werft-Seite mit Munitionsmeister, Markt-Seite, Handy-Ansicht des Kontors. Kein Balancing über Stunden (Gold-Fluss, Handelsgewinn gegen Sold sind nur rechnerisch getestet).
+
+**Technik (für Entwickler)**
+- `data/economy.ts` (Waren, Profile, `MARKET`, `UPKEEP`, `TARIFF`, `CONTRABAND`, `AMMO_UNLOCK`, `EconomyState`, `cleanEconomy`), `core/economyEngine.ts` (`marketAt`, `marketPrice`, `quoteBuy/Sell`, `buyGood/sellGood`, `inspectCargo`, `tariffOf`, `upkeepOf`, `stepUpkeep`, `yardRepairCost`, alles rein und mit übergebenem Würfel), `Game.eco/kontorView/tradeBuy/tradeSell/tariff/priceAt/ammoView/buyAmmo/stepEconomy`, `Hud.setUpkeep`, `Menus.showKontor`.
+- Tests: `tests/economy.test.ts` (28 Fälle: Profile, Elastizität, Erholung, Frachtraum, Kriegspreise, Kontrollen, Tarife, Unterhalt, Werft, 75-%-Grenze, Migration).
+
 ## 3.1.0 – Balance-Fundament und Ausrüstung in fünf Stufen (24.11.2026)
 
 **Alle Werte aus einer Quelle (`data/balanceConfig.ts`)**

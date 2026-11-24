@@ -6,7 +6,7 @@ import {
 import { BERNSTEINSEE, ISLAND_REACH, REGIONS, regionAt, seaLevelAt } from '../src/data/regions';
 import { factionShipLook } from '../src/data/ships';
 import { WORLD_CORE_RADIUS, WORLD_RADIUS, EDGE_WALL } from '../src/data/world';
-import { createSave } from '../src/core/save/types';
+import { createSave, SAVE_VERSION } from '../src/core/save/types';
 import { MIGRATIONS, migrateSave } from '../src/core/save/migrations';
 import { BATTLE, battleSite, borderAxes, borderCoords, compassWord, nextDelay, sideSize } from '../src/naval/battleRules';
 import {
@@ -417,7 +417,7 @@ describe('Spielstand Version 14 (Ruf und Ehre, abwärtskompatibel)', () => {
     const r = migrateSave(old, V);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.data.version).toBe(15);
+    expect(r.data.version).toBe(SAVE_VERSION);
     expect(r.migratedFrom).toBe(13);
     expect(r.data.progress.reputation).toEqual(emptyReputation());
     expect(r.data.progress.standing).toEqual({ marine: 33, england: 12 });

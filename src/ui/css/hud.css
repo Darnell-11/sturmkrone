@@ -98,6 +98,11 @@
 .cap-crew { display: flex; flex-wrap: wrap; gap: 0.2em 0.9em; margin-top: 0.45em; padding-top: 0.4em; border-top: 1px solid var(--glass-edge-soft); font: 600 0.78em var(--font-num); color: var(--ink-dim); }
 .cap-crew b { color: var(--ink); font-weight: 700; }
 .cap-crew .full b { color: var(--ok); }
+/* Sold: ruhig, solange das Gold reicht; gelbe Vorwarnung vor dem Zahltag, rot bei Rückstand oder schlechter Moral */
+.cap-upkeep { display: flex; flex-wrap: wrap; gap: 0.2em 0.9em; margin-top: 0.3em; font: 600 0.78em var(--font-num); color: var(--ink-dim); }
+.cap-upkeep b { color: var(--ink); font-weight: 700; }
+.cap-upkeep[data-level='1'] b { color: var(--brass-300); }
+.cap-upkeep[data-level='2'] span, .cap-upkeep[data-level='2'] b { color: var(--danger, #d65a4a); }
 
 /* ---------- Schiffstafel (nur auf See) ---------- */
 .hud-ship { min-width: 13.5em; max-width: min(17em, 56vw); position: relative; cursor: help; }

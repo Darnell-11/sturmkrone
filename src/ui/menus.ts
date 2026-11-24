@@ -43,6 +43,8 @@ import { TIER_DEFS } from '../data/balanceConfig';
 import { ARMOR, CONSUMABLES, GEAR, HEADS, PROVIANT, SHRINE_PRICE, SLOT_LABEL, WEAPONS, WEAPON_LINES } from '../data/items';
 import { CAT_LABEL, EQUIP_BY_ID, catOf, type GearCat } from '../data/equipment';
 import { SETS, tierOfSet } from '../data/gear';
+import { AMMO, AMMO_IDS, type AmmoId } from '../data/ships';
+import { GOODS, type GoodId } from '../data/economy';
 import { BOSS_PIECES, bossSetId } from '../raid/raidLoot';
 import { SHARD_NAME, WEAPON_RECIPE, UPGRADE_RECIPE, sealsOf } from '../data/crafting';
 import { itemCount } from '../core/inventory';
@@ -515,6 +517,7 @@ export class Menus {
         <button class="secondary" data-a="yard">Werft</button>
         <button class="secondary" data-a="smith">Schmiede</button>
         <button class="secondary" data-a="market">Markt</button>
+        <button class="secondary" data-a="kontor">Kontor (Handel)</button>
         <button class="secondary" data-a="shrine">Faji-Schrein</button>
         <button class="secondary" data-a="hire">Crew anheuern</button>
         <button class="secondary" data-a="sailors" ${g.crewRefillCost() <= 0 ? 'disabled' : ''}>${g.crewRefillCost() > 0 ? `Matrosen (${g.crewRefillCost()} Gold)` : 'Mannschaft vollzählig'}</button>
@@ -529,6 +532,7 @@ export class Menus {
         yard: () => this.showShipyard('', back),
         smith: () => this.showSmith(back),
         market: () => this.showMarket(back),
+        kontor: () => this.showKontor(back),
         shrine: () => this.showShrine(back),
         hire: () => this.showHire(back),
         sailors: () => this.showHarbor(g.refillCrew()),
@@ -547,7 +551,7 @@ export class Menus {
   private harborRepNote(): string {
     const h = this.game.harborStanding();
     if (!h) return '';
-    const parts = [h.discount > 0 ? `${Math.round(h.discount * 100)} % Rabatt auf Werft, Heuer und Bett` : 'Mit mehr Ansehen gibt es Hafenrabatt (ab „Freundlich“)'];
+    const parts = [h.surcharge > 0 ? `<b class="gate">Schwarzmarkt: ${Math.round(h.surcharge * 100)} % Aufschlag auf alles</b>` : h.discount > 0 ? `${Math.round(h.discount * 100)} % Rabatt auf Werft, Munition, Truppen, Heuer, Bett und Waren` : 'Mit mehr Ansehen und Ehre gibt es Hafenrabatt (bis −25 %)'];
     if (h.blueprints > 0) parts.push(`Baupläne: Werft −${Math.round(h.blueprints * 100)} %`);
     return `<p class="note"><b style="color:${h.color}">${esc(h.name)}</b> · ${esc(h.tier)} · ${parts.join(' · ')}</p>`;
   }
@@ -627,12 +631,13 @@ export class Menus {
       ${st.rankOk ? '' : `<p class="note">Anheuern ab dem Rang „${esc(st.rankName)}“.</p>`}
       ${TROOP_TYPES.map((t) => {
         const d = TROOPS[t], n = roster[t] ?? 0, room = st.cap - st.heads;
-        const fill = Math.min(room, Math.floor(g.playerGold / d.price));
+        const price = g.priceAt(d.price);
+        const fill = Math.min(room, Math.floor(g.playerGold / price));
         const off = !st.rankOk || room <= 0;
-        return `<div class="slot crew" style="--c:${d.cloth}"><div class="slot-head"><b>${esc(d.label)}</b><span>${d.price} Gold je Kopf</span></div>
+        return `<div class="slot crew" style="--c:${d.cloth}"><div class="slot-head"><b>${esc(d.label)}</b><span>${price} Gold je Kopf</span></div>
           <div class="meta">${esc(d.desc)}<br>An Bord: <b>${n}</b> · Lebenspunkte ${d.hp} · Schaden ${String(d.dmg).replace('.', ',')} je Kopf · ${d.ranged ? 'Fernkampf' : 'Nahkampf'}</div>
-          <div class="row"><button class="mini brass" data-a="troop" data-id="${t}|10" ${off || g.playerGold < d.price ? 'disabled' : ''}>+10 (${d.price * Math.min(10, Math.max(1, room))} Gold)</button>
-          <button class="mini" data-a="troop" data-id="${t}|all" ${off || fill <= 0 ? 'disabled' : ''}>Auffüllen${room > 0 ? ` (${fill} Mann, ${fill * d.price} Gold)` : ''}</button></div></div>`;
+          <div class="row"><button class="mini brass" data-a="troop" data-id="${t}|10" ${off || g.playerGold < price ? 'disabled' : ''}>+10 (${price * Math.min(10, Math.max(1, room))} Gold)</button>
+          <button class="mini" data-a="troop" data-id="${t}|all" ${off || fill <= 0 ? 'disabled' : ''}>Auffüllen${room > 0 ? ` (${fill} Mann, ${fill * price} Gold)` : ''}</button></div></div>`;
       }).join('')}`}
       <button class="primary" data-a="back">Zurück</button>`,
       { troop: (id) => { const [t, n] = id.split('|'); re(g.recruitTroops(t as TroopType, n === 'all' ? Infinity : +n)); }, back },
@@ -804,6 +809,58 @@ export class Menus {
     );
   }
 
+  /** Kontor: Handelswaren des Hafens mit Vorrat, Preisen, Trend und Fracht; Frachtraum, Sold und die Preisübersicht der besuchten Häfen */
+  showKontor(back: () => void, msg = '') {
+    const g = this.game;
+    const v = g.kontorView();
+    if (!v) return;
+    const re = (m = '') => this.keep(() => { this.showKontor(back, m); });
+    const ROLE: Record<string, string> = { produce: 'Überschuss', normal: '', demand: 'Gefragt' };
+    const TREND = { billig: '<b class="trend down" title="günstig: hier kaufen">▼ günstig</b>', normal: '<b class="trend">▬</b>', teuer: '<b class="trend up" title="teuer: hier verkaufen">▲ teuer</b>' } as const;
+    const full = v.cargo.used >= v.cargo.cap - 0.01;
+    const u = v.upkeep;
+    const t = v.tariff;
+    const rows = v.rows.map((r) => {
+      const d = r.def;
+      const profit = r.have ? Math.round((r.sell - r.avgCost) * r.have) : 0;
+      return `<div class="slot kontor-row${r.war ? ' war' : ''}"><div class="slot-head"><b>${d.icon} ${esc(d.n)}${ROLE[r.role] ? ` <small class="role ${r.role}">${ROLE[r.role]}</small>` : ''}${r.war ? ' <small class="role war">Kriegsware</small>' : ''}</b><span>${TREND[r.trend]}</span></div>
+        <div class="meta">Vorrat <b>${fmtInt(r.stock)}</b> · Kauf <b>${fmtInt(r.buy)}</b> · Verkauf <b>${fmtInt(r.sell)}</b> Gold · Platz je Stück ${String(d.vol).replace('.', ',')}${r.have ? ` · <b>An Bord ${r.have}</b> (Ø ${fmtInt(Math.round(r.avgCost))}, ${profit >= 0 ? 'Gewinn' : 'Verlust'} ${fmtInt(Math.abs(profit))})` : ''}</div>
+        <div class="row"><button class="mini brass" data-a="buy" data-id="${d.id}|1" ${full || r.stock < 1 ? 'disabled' : ''}>+1</button><button class="mini brass" data-a="buy" data-id="${d.id}|10" ${full || r.stock < 1 ? 'disabled' : ''}>+10</button><button class="mini brass" data-a="buy" data-id="${d.id}|9999" ${full || r.stock < 1 ? 'disabled' : ''}>Max</button>
+        <button class="mini" data-a="sell" data-id="${d.id}|1" ${r.have < 1 ? 'disabled' : ''}>−1</button><button class="mini" data-a="sell" data-id="${d.id}|10" ${r.have < 1 ? 'disabled' : ''}>−10</button><button class="mini" data-a="sell" data-id="${d.id}|9999" ${r.have < 1 ? 'disabled' : ''}>Alles</button></div></div>`;
+    }).join('');
+    // Preisübersicht: die fünf zuletzt besuchten anderen Häfen, je Ware Kaufpreis / Verkaufserlös beim letzten Besuch
+    const ports = v.ledger.slice(0, 5);
+    const ago = (sec: number) => (sec < 90 ? 'eben' : sec < 3600 ? `vor ${Math.round(sec / 60)} Min` : `vor ${Math.round(sec / 3600)} Std`);
+    const best = (g2: GoodId) => Math.max(0, ...ports.map((p) => p.sell[g2] ?? 0));
+    const ledger = ports.length
+      ? `<div class="kontor-scroll"><table class="kontor"><thead><tr><th>Ware</th><th>${esc(v.site.name)}</th>${ports.map((p) => `<th>${esc(p.name)}<small>${ago(p.age)}</small></th>`).join('')}</tr></thead><tbody>
+        ${GOODS.map((d) => `<tr><th>${d.icon} ${esc(d.n)}</th><td>${fmtInt(v.rows.find((r) => r.def.id === d.id)!.buy)} / ${fmtInt(v.rows.find((r) => r.def.id === d.id)!.sell)}</td>${ports.map((p) => `<td${(p.sell[d.id] ?? 0) > 0 && p.sell[d.id] === best(d.id) ? ' class="best"' : ''}>${p.buy[d.id] != null ? `${fmtInt(p.buy[d.id]!)} / ${fmtInt(p.sell[d.id] ?? 0)}` : '–'}</td>`).join('')}</tr>`).join('')}
+        </tbody></table></div><p class="small soft">Zahlen: Kaufpreis / Verkaufserlös je Stück beim letzten Besuch (grün = bester Erlös). Märkte erholen sich mit der Zeit, die Preise können sich seither verschoben haben.</p>`
+      : '<p class="small soft">Noch keine anderen Häfen besucht: hier erscheinen die Preise jedes Hafens, in dem du angelegt hast.</p>';
+    this.open(
+      `<h2 class="fell">Kontor von ${esc(v.site.name)}</h2>
+      ${goldLine(v.gold, msg)}
+      <div class="loy"><span>Frachtraum</span>${gaugeHtml(v.cargo.used / v.cargo.cap, { color: full ? '#C4452F' : '#C79A3A' })}<b>${fmtInt(Math.round(v.cargo.used * 10) / 10)}/${fmtInt(v.cargo.cap)}</b></div>
+      <p class="small soft">${t.kind === 'schwarzmarkt' ? `<b class="gate">Schwarzmarkt: ${Math.round(-t.discount * 100)} % Aufschlag auf alle Preise</b>` : t.discount > 0 ? `Hafentarif: ${Math.round(t.discount * 100)} % Rabatt` : 'Hafentarif: Grundpreise'} · Händlerspanne 5 % · Käufe verteuern, Verkäufe verbilligen die Ware; die Märkte erholen sich mit der Zeit.</p>
+      ${v.cargo.war.units > 0 ? `<p class="note"><b>Kriegsware an Bord:</b> ${v.cargo.war.units} Einheiten. Fahndungsdruck ${Math.round(v.heat)}/100: in Häfen der Mächte drohen Kontrollen (Beschlagnahme und Strafe), bei hohem Druck rücken Kopfgeldjäger aus.</p>` : v.heat > 5 ? `<p class="small soft">Fahndungsdruck ${Math.round(v.heat)}/100 (sinkt mit der Zeit).</p>` : ''}
+      <h3>Unterhalt der Flotte</h3>
+      <div class="slot"><div class="slot-head"><b>Sold und Proviant: ${fmtInt(Math.round(u.daily))} Gold je Ingame-Tag</b><span>${fmtInt(Math.ceil(u.perPeriod))} je Zahltag</span></div>
+        <div class="meta">Seeleute ${fmtInt(Math.round(u.seamen))} · Truppen ${fmtInt(Math.round(u.troops))} · Offiziere ${fmtInt(Math.round(u.officers))} · Schiff ${fmtInt(Math.round(u.hull))}<br>Nächster Zahltag in ${Math.ceil(u.nextIn / 60)} Min · Moral ${Math.round(u.morale * 100)} % (Crew arbeitet mit ${Math.round(u.efficiency * 100)} % Wirkung)${u.arrears > 0 ? ` · <b class="gate">Rückstand ${fmtInt(Math.round(u.arrears))} Gold</b>` : ''}</div></div>
+      <h3>Handelswaren</h3>
+      ${rows}
+      <h3>Preisübersicht besuchter Häfen</h3>
+      ${ledger}
+      <button class="primary" data-a="back">Zurück</button>`,
+      {
+        buy: (id) => { const [gd, n] = id.split('|'); re(g.tradeBuy(gd as GoodId, +n)); },
+        sell: (id) => { const [gd, n] = id.split('|'); re(g.tradeSell(gd as GoodId, +n)); },
+        back,
+      },
+      back,
+      { wide: true },
+    );
+  }
+
   showMarket(back: () => void, msg = '') {
     const g = this.game;
     const s = g.saveData;
@@ -816,9 +873,9 @@ export class Menus {
         <div class="row"><button class="mini brass" data-a="buy" data-id="1" ${s.gear.potions >= PROVIANT.max ? 'disabled' : ''}>1 kaufen</button><button class="mini brass" data-a="buy" data-id="${PROVIANT.max}" ${s.gear.potions >= PROVIANT.max ? 'disabled' : ''}>Auffüllen</button></div></div>
       <p class="small soft">Essen: Taste <kbd>${esc(g.input.keyLabel(g.input.getKeyBindings().potion?.[0] ?? 'KeyH'))}</kbd> oder der grüne Knopf am Handy. Alle Güter landen in der Schnellleiste (Tasten 1–4, Inventar: <kbd>${esc(g.input.keyLabel(g.input.getKeyBindings().inventory?.[0] ?? 'KeyI'))}</kbd>).</p>
       <h3>Tränke, Stärkungen und Schiffsbedarf</h3>
-      ${CONSUMABLES.filter((c) => c.id !== 'proviant').map((c) => { const n = itemCount(s.gear, c.id); return `<div class="slot"><div class="slot-head"><b>${c.icon} ${esc(c.n)}</b><span>${c.price} Gold</span></div>
-        <div class="meta">${tierBadge(c.tier)} ${esc(c.d)} Du trägst ${n} von ${c.max}.${g.gateText(c.tier) ? ` <span class="gate">${esc(g.gateText(c.tier))}</span>` : ''}</div>
-        <div class="row"><button class="mini brass" data-a="item" data-id="${c.id}" ${n >= c.max || g.gateText(c.tier) ? 'disabled' : ''}>Kaufen</button></div></div>`; }).join('')}
+      ${CONSUMABLES.filter((c) => c.id !== 'proviant').map((c) => { const n = itemCount(s.gear, c.id); const cap = g.bagMax(c); return `<div class="slot"><div class="slot-head"><b>${c.icon} ${esc(c.n)}</b><span>${g.priceAt(c.price)} Gold</span></div>
+        <div class="meta">${tierBadge(c.tier)} ${esc(c.d)} Du trägst ${n} von ${cap}.${g.gateText(c.tier) ? ` <span class="gate">${esc(g.gateText(c.tier))}</span>` : ''}</div>
+        <div class="row"><button class="mini brass" data-a="item" data-id="${c.id}" ${n >= cap || g.gateText(c.tier) ? 'disabled' : ''}>Kaufen</button></div></div>`; }).join('')}
       <h3>Ausrüster: Rüstungssets</h3>
       <p class="small soft">Stufe 1 und 2 kauft jeder mit dem nötigen Rang, Stufe 3 (Offiziers-Grad) nur mit Ansehen „Freundlich“ bei der Hafenmacht. Stufe 4 gibt es nur als Beute, Stufe 5 nur beim Schmied. Jedes Stück ist im Editor färbbar.</p>
       ${SETS.filter((set) => !set.raid && tierOfSet(set) <= 3).map((set) => `<div class="slot"><div class="slot-head"><b style="color:${RARITY[set.rarity].col}">${RARITY[set.rarity].mark} ${esc(set.n)}</b><span>${tierBadge(tierOfSet(set))} ab Stufe ${set.level}</span></div><div class="meta">${esc(set.d)}${g.gateText(tierOfSet(set)) ? ` <span class="gate">${esc(g.gateText(tierOfSet(set)))}</span>` : ''}</div>
@@ -930,6 +987,10 @@ export class Menus {
       <button class="secondary" data-a="repair" ${cost <= 0 ? 'disabled' : ''}>${cost > 0 ? `Rumpf und Segel reparieren (${cost} Gold)` : 'Rumpf und Segel sind in Ordnung'}</button>
       <button class="secondary" data-a="sailors" ${g.crewRefillCost() <= 0 ? 'disabled' : ''}>${g.crewRefillCost() > 0 ? `Matrosen anheuern (${g.crewRefillCost()} Gold)` : 'Mannschaft vollzählig'}</button>
       ${this.troopButton()}
+      <p class="small soft">Auf See stellen Material und Crew höchstens 75 % von Rumpf und Segeln her. Die volle Reparatur gibt es nur hier; sie kostet mehr, je größer das Schiff und je schwerer der Schaden.</p>
+      <h3>Munitionsmeister</h3>
+      <p class="small soft">Spezialmunition gilt dauerhaft für dein Schiff, sobald sie freigeschaltet ist (Kugeln hat jedes Schiff).</p>
+      ${AMMO_IDS.filter((id) => id !== 'kugel').map((id) => { const v = g.ammoView(id); const a = AMMO[id]; return `<div class="slot"><div class="slot-head"><b style="color:${a.color}">${esc(a.n)}</b><span>${v.owned ? 'freigeschaltet' : `${fmtInt(v.price)} Gold`}</span></div><div class="meta">${tierBadge(v.tier)} ${esc(a.d)}${v.gate && !v.owned ? ` · <span class="gate">${esc(v.gate)}</span>` : ''}</div>${v.owned ? '' : `<button class="mini brass" data-a="ammo" data-id="${id}" ${v.gate ? 'disabled' : ''}>Freischalten</button>`}</div>`; }).join('')}
       <h3>Ausbauten</h3>
       ${SHIP_UPGRADE_IDS.map((k) => { const lv = st.up[k]; const price = g.upgradeCost(k); const u = SHIP_UPGRADES[k]; return `<div class="slot"><div class="slot-head"><b>${u.icon} ${u.n}</b><span>Stufe ${lv}/${SHIP_UPGRADE_MAX}</span></div><div class="meta">${upgradeEffectText(k)} je Stufe · <span class="pips">${'●'.repeat(lv)}${'○'.repeat(SHIP_UPGRADE_MAX - lv)}</span></div>${lv < SHIP_UPGRADE_MAX ? `${g.upgradeGate(k) ? `<div class="meta gate">${esc(g.upgradeGate(k))}</div>` : ''}<button class="mini brass" data-a="up" data-id="${k}" ${g.upgradeGate(k) ? 'disabled' : ''}>Ausbauen (${fmtInt(price)} Gold${lv + 1 >= SHIP_UPGRADE_MAX ? ` · ${UPGRADE_RECIPE.seals} Siegel · ${UPGRADE_RECIPE.shards} ${esc(SHARD_NAME)}` : ''})</button>` : ''}</div>`; }).join('')}
       <h3>Schiffsklassen</h3>${classes}
@@ -948,6 +1009,7 @@ export class Menus {
         sailors: () => rerender(g.refillCrew()),
         troops: () => this.showTroops(() => this.showShipyard('', back)),
         up: (id) => rerender(g.shipUpgrade(id as 'can' | 'hull' | 'sail')),
+        ammo: (id) => rerender(g.buyAmmo(id as AmmoId)),
         lk: (id) => { const [k, v] = id.split('|'); g.shipyardLook({ ...look, [k]: v }); rerender(); },
         lanterns: () => { g.shipyardLook({ ...look, lanterns: !look.lanterns }); rerender(); },
         fsail: (id) => { g.applyFactionSail(id as FactionId); rerender(); },

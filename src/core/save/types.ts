@@ -2,10 +2,11 @@
 import { defaultLook, type CharacterLook } from '../../data/characterParts';
 import { DEFAULT_SHIP_LOOK, type AmmoId, type ShipLook } from '../../data/ships';
 import { START_MARINE_STANDING, type FactionId } from '../../data/factions';
+import { emptyEconomy, type EconomyState } from '../../data/economy';
 import { emptyUnlocks, type ConquestRecord, type Unlocks } from '../../raid/occupation';
 import { emptyReputation, type FactionReputationState } from '../../data/reputation';
 
-export const SAVE_VERSION = 15;
+export const SAVE_VERSION = 16;
 
 export interface QuestProgress { id: string; step: number; count: number }
 
@@ -30,6 +31,8 @@ export interface ProgressState {
   unlocks?: Unlocks;
   /** Fraktions-Ehre, Kopfgeld und Baupläne aus Seeschlachten (seit Version 14); das Ansehen steht in `standing`. Fehlt in älteren Spielständen (dann leer). */
   reputation?: FactionReputationState;
+  /** Handel, Fracht, Unterhalt, Fahndungsdruck und freigeschaltete Munition (seit Version 16, data/economy.ts); fehlt in älteren Spielständen */
+  economy?: EconomyState;
 }
 
 export interface GearState {
@@ -176,7 +179,7 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
 }
 
 export function defaultProgress(faction: Faction = 'pirat'): ProgressState {
-  return { flags: {}, quest: 0, quests: [], done: [], maps: [], stats: { kills: 0, sunk: 0, boarded: 0, treasures: 0, rescued: 0 }, standing: { marine: START_MARINE_STANDING[faction] }, conquest: {}, unlocks: emptyUnlocks(), reputation: emptyReputation() };
+  return { flags: {}, quest: 0, quests: [], done: [], maps: [], stats: { kills: 0, sunk: 0, boarded: 0, treasures: 0, rescued: 0 }, standing: { marine: START_MARINE_STANDING[faction] }, conquest: {}, unlocks: emptyUnlocks(), reputation: emptyReputation(), economy: emptyEconomy() };
 }
 
 export function defaultShip(faction: Faction, tier = 0): ShipState {

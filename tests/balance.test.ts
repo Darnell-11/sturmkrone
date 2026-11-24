@@ -13,7 +13,7 @@ import { WORLD_RADIUS } from '../src/data/world';
 import { catalog } from '../src/data/catalog';
 import { BOSS_PIECES, bossSetId } from '../src/raid/raidLoot';
 import { computeStats, type StatInput } from '../src/core/inventory';
-import { createSave } from '../src/core/save/types';
+import { createSave, SAVE_VERSION } from '../src/core/save/types';
 import type { EntityId } from '../src/sim/entityId';
 import { migrateSave } from '../src/core/save/migrations';
 import { boardingStrength, createShipSim } from '../src/naval/shipSim';
@@ -283,7 +283,7 @@ describe('Spielstand 14 → 15 und Kompendium', () => {
     const r = migrateSave(old, 'x');
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.data.version).toBe(15);
+    expect(r.data.version).toBe(SAVE_VERSION);
     expect(r.data.gear.weapon).toBe(WEAPONS.length - 1);
     expect(r.data.gear.armor).toBe(ARMOR.length - 1);
     expect(r.data.gear.weaponEq).toBeLessThanOrEqual(r.data.gear.weapon);

@@ -53,8 +53,8 @@ export const CONSUMABLES: ConsumableDef[] = [
   { id: 'kraftsaft', tier: 2, n: 'Kraftsaft', icon: '⚔', d: '+25 % Angriff für 60 Sekunden.', rarity: 'selten', buff: { atk: 0.25, dur: 60 }, cd: 20, price: 70, max: 5, color: '#E0663A' },
   { id: 'eisenhaut', tier: 2, n: 'Eisenhaut-Trank', icon: '🛡', d: '25 % weniger Schaden für 45 Sekunden.', rarity: 'selten', buff: { reduce: 0.25, dur: 45 }, cd: 20, price: 70, max: 5, color: '#8AA0B8' },
   { id: 'falkenauge', tier: 3, n: 'Falkenauge', icon: '👁', d: '+15 % Volltreffer-Chance für 60 Sekunden.', rarity: 'selten', buff: { crit: 0.15, dur: 60 }, cd: 20, price: 80, max: 5, color: '#E3B04B' },
-  { id: 'segeltuch', tier: 1, n: 'Segeltuch', icon: '🧵', d: 'Flickt auf See 40 % der Segel-HP (Taste G; die Crew braucht ein paar Sekunden).', rarity: 'gewoehnlich', repair: 'segeltuch', cd: 0, price: 45, max: 8, color: '#E8DCC0' },
-  { id: 'planken', tier: 1, n: 'Holzplanken', icon: '🪵', d: 'Flickt auf See 12 % Rumpf und 15 % Segel-HP (Taste G).', rarity: 'gewoehnlich', repair: 'planken', cd: 0, price: 35, max: 8, color: '#A57A4A' },
+  { id: 'segeltuch', tier: 1, n: 'Segeltuch', icon: '🧵', d: 'Flickt auf See 40 % der Segel-HP, höchstens bis 75 % (Taste G; die Crew braucht ein paar Sekunden).', rarity: 'gewoehnlich', repair: 'segeltuch', cd: 0, price: 90, max: 8, color: '#E8DCC0' },
+  { id: 'planken', tier: 1, n: 'Holzplanken', icon: '🪵', d: 'Flickt auf See 12 % Rumpf und 15 % Segel-HP, höchstens bis 75 % (Taste G).', rarity: 'gewoehnlich', repair: 'planken', cd: 0, price: 75, max: 8, color: '#A57A4A' },
   { id: 'fajiessenz', tier: 3, n: 'Faji-Essenz', icon: '✦', d: 'Füllt 60 % deines Faji auf.', rarity: 'episch', faji: 0.6, cd: 15, price: 110, max: 5, color: '#8A6AC0' },
 ];
 
