@@ -22,6 +22,7 @@ import { finishMat, glowMat } from './gear/kit';
 export interface WeaponLook { blade: string; glow?: boolean }
 
 const HANDLE = '#5A3A22';
+const EDGE_WHITE = new Color('#ffffff');
 const GUARD = '#E3B04B';
 
 /** Klinge als flache, leicht gebogene Form. Griff am Ursprung, Klinge entlang +Y. */
@@ -81,6 +82,11 @@ function glbWeapon(model: string, look: WeaponLook, trail: [number, number, numb
     switch (role) {
       // Klinge: polierter Stahl (4.4A: Rauheit 0,22 statt 0,34, gebürstete Riefen und Kratzer aus der PBR-Schmiede)
       case 'steel': mat = toon({ color: look.blade, surface: 'steel', forge: 'stahl', spec: 1, metalness: 0.7, roughness: 0.22, rim: 0.9, emissive: look.glow ? col.clone().multiplyScalar(0.3) : 0x000000 }); break;
+      // Schneide bis zur welligen Härtungslinie (Hamon, 4.4B): wie bei echter Härtung frostig-weiß und matt neben der dunkel polierten
+      // Klingenfläche; ein Hauch Eigenleuchten hält die Linie auch im Schatten lesbar, Leuchtklingen glühen an der Schneide stärker
+      case 'edge': mat = toon({ color: `#${col.clone().lerp(EDGE_WHITE, 0.7).getHexString()}`, surface: 'steel', spec: 0.6, metalness: 0.15, roughness: 0.42, rim: 1, emissive: look.glow ? col.clone().multiplyScalar(0.6) : col.clone().lerp(EDGE_WHITE, 0.6).multiplyScalar(0.07) }); break;
+      // Holzschaft (Muskete): geölter Nussbaum mit Maserung aus der Schmiede
+      case 'wood': mat = toon({ color: '#6A3D1E', surface: 'leather', forge: 'hafenholz', spec: 0.35, roughness: 0.5, rim: 0.9 }); break;
       case 'gold': mat = finishMat('gold', GUARD); break;
       // Griff: schräg gewickelter Lederriemen
       case 'leather': mat = finishMat('leder', HANDLE, { forge: 'griffwicklung' }); break;
@@ -160,6 +166,10 @@ const FOCUS_COLOR: Record<string, string> = { '#8C8C8C': '#B98CFF', '#C9D2DA': '
 const TIER_OF: Record<string, number> = { '#8C8C8C': 0, '#C9D2DA': 1, '#9FB4C8': 2, '#7FD6FF': 3, '#FFD166': 4, '#FF8AD8': 5 };
 
 function musket(): Group {
+  // Steinschloss-Muskete aus Blender (4.4B, tools/blender/build_waffen2.py): konischer Lauf, Messing-Mündungsring und -Bänder, Hahn mit
+  // Feuerstein, Batterie, Abzugsbügel, geschwungener Nussbaumschaft; die Eigenbau-Form bleibt als Ersatz
+  const fromModel = glbWeapon('w_muskete', { blade: '#C9CED6' }, [0.0, 0.0, 0.5]);
+  if (fromModel) return fromModel;
   const g = new Group();
   const stock = new Mesh(new BoxGeometry(0.07, 0.5, 0.11), toon('#7A4A22'));
   stock.position.y = -0.1;

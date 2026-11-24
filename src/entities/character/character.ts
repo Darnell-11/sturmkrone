@@ -22,7 +22,7 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { ROLES, type AnimRole, type ClipRef } from '../../data/animations';
 import type { CharacterLook } from '../../data/characterParts';
 import { addOutlines } from '../../render/outline';
-import { CHARACTER_INK, toon, toonChar, toonFx, type Surface, type ToonFxUniforms } from '../../render/toon';
+import { CHARACTER_INK, extendToon, toon, toonChar, toonFx, type Surface, type ToonFxUniforms } from '../../render/toon';
 import { disposeMaterial } from '../../render/dispose';
 import { audio } from '../../audio/audio';
 import { WeaponTrail } from '../../render/weaponTrail';
@@ -40,6 +40,29 @@ import { buildCharacterGeometry, LIMB_EXT } from './builder';
 import { GARMENT_LEVEL, garmentKey, slotTurn, VROID_BONES, VroidBase, type GarmentKind, type GarmentSetData } from './vroid';
 import type { AuditLayer } from './audit';
 import { maskEngine, type MaskLayer } from './bodyMask';
+
+/** Umhang: weht beim Laufen nach hinten, flattert leicht in Wellen; oben am Nacken bleibt er fest (Gewicht capeK) */
+const CAPE_GLSL = /* glsl */ `
+  {
+    float ck = capeK;
+    transformed.z -= (uCape.x + sin(uCape.w * 1.7 + transformed.y * 5.0) * uCape.z) * ck;
+    transformed.x += (uCape.y + sin(uCape.w * 2.3 + transformed.y * 6.0 + transformed.x * 9.0) * uCape.z * 0.5) * ck;
+    transformed.y += uCape.x * ck * ck * 0.3;
+  }`;
+
+/**
+ * Mantelschöße und Kilt (4.4B): mehrstufige Windwelle – Schwung nach hinten mit dem Lauftempo, darüber zwei Wellen verschiedener Länge, die
+ * vom Saum nach oben laufen, und ein leichtes seitliches Flattern. Oben an der Hüfte bleibt der Stoff fest (Gewicht tailK).
+ */
+const TAIL_GLSL = /* glsl */ `
+  {
+    float tk = tailK;
+    float w1 = sin(uCape.w * 2.1 - transformed.y * 9.0 + transformed.x * 3.0);
+    float w2 = sin(uCape.w * 3.7 - transformed.y * 17.0 + transformed.x * 11.0) * 0.45;
+    transformed.z -= (uCape.x * 0.8 + (w1 + w2) * uCape.z * 1.1) * tk;
+    transformed.x += sin(uCape.w * 2.9 + transformed.y * 7.0) * uCape.z * 0.45 * tk;
+    transformed.y += uCape.x * 0.12 * tk * tk;
+  }`;
 import { SocketRig } from './sockets';
 import { loadoutFromLook, resolveLoadout, type Finish, type Loadout, type ResolvedLoadout } from '../../data/equipment';
 import { attachHeadgear, buildBuckle, buildEpaulette, buildKnot, buildPauldron, CAPPED } from './animeHats';
@@ -592,6 +615,9 @@ export class Character {
       }
       // Streifen des Ringelhemds zeichnet der Shader (Höhe im Körpermodell; 3,5 cm in Weltmaß)
       if (set.attributes.stripe && hasRingel) geo.setAttribute('stripe', set.attributes.stripe);
+      // Mantelschöße und Kilt (4.4B): Gewicht je Punkt von der Hüfte (0) bis zum Knie (1) – sie wehen im Shader mit Lauf und Wind
+      const tails = ids.some((i) => shells[i].kind === 'mantelLang' || shells[i].kind === 'kilt') ? this.tailWeights(body, set, part, shells, ids) : null;
+      if (tails) geo.setAttribute('tailK', tails);
       let own_ = false;
       if (kinds.length > 1) {
         const l = lists.get(f)!;
@@ -599,7 +625,8 @@ export class Character {
         own_ = true;
       } else geo.setIndex(index);
       geo.boundingSphere = set.boundingSphere;
-      const mat = finishMat(f as Finish, '#ffffff', { vertexColors: true, rim: 0.8, trim: needTrim, ringel: hasRingel ? 0.035 / scale : 0 });
+      const mat = finishMat(f as Finish, '#ffffff', { vertexColors: true, rim: 0.8, trim: needTrim, ringel: hasRingel ? 0.035 / scale : 0, unique: !!tails });
+      if (tails) this.flutter(mat, 'tailK', TAIL_GLSL, '-tail');
       // kleine Tiefenverschiebung: am Saumrand liegt die untere Schicht noch darunter – ihre letzten Millimeter stechen nicht durch
       mat.polygonOffset = true; mat.polygonOffsetFactor = -1; mat.polygonOffsetUnits = -2;
       const m = new SkinnedMesh(geo, mat);
@@ -609,9 +636,46 @@ export class Character {
       m.userData.ownIndex = own_;
       m.userData.parts = ids;
       body.parent!.add(m);
-      if (this.outline) addOutlines(m, 0.7);
+      // wehende Schöße: keine Tusche-Hülle (sie folgte dem Wind nicht)
+      if (this.outline && !tails) addOutlines(m, 0.7);
       this.garments.push(m);
     }
+  }
+
+  /** Gewicht der Mantelschöße je Punkt (nur Teile der Arten mantelLang/kilt): 0 an der Hüfte, 1 ab dem Knie, im Raum des Körpermodells */
+  private tailWeights(body: SkinnedMesh, set: BufferGeometry, part: BufferAttribute, shells: ResolvedLoadout['shells'], ids: number[]): BufferAttribute | null {
+    const bones = body.skeleton.bones;
+    const bindY = (re: RegExp) => {
+      const i = bones.findIndex((b) => re.test(b.name));
+      if (i < 0) return null;
+      return new Matrix4().copy(body.skeleton.boneInverses[i]).invert().elements[13];
+    };
+    const hipsY = bindY(/J_Bip_C_Hips$/), kneeY = bindY(/J_Bip_L_LowerLeg$/);
+    if (hipsY === null || kneeY === null || hipsY - kneeY < 0.05) return null;
+    const pos = set.attributes.position as BufferAttribute;
+    const n = pos.count;
+    const out = new Float32Array(n);
+    const want = new Set(ids.filter((i) => shells[i].kind === 'mantelLang' || shells[i].kind === 'kilt'));
+    let any = false;
+    for (let i = 0; i < n; i++) {
+      if (!want.has(part.getX(i))) continue;
+      const t = Math.min(1, Math.max(0, (hipsY - 0.04 - pos.getY(i)) / (hipsY - 0.04 - kneeY)));
+      out[i] = t * t * (3 - 2 * t);
+      if (out[i] > 0) any = true;
+    }
+    return any ? new BufferAttribute(out, 1) : null;
+  }
+
+  /** Wind und Schwung für Umhang und Mantelschöße: eigener Wert je Figur (`uCape`, siehe updateCape), Code nach dem Skinning */
+  private flutter(mat: Material, attr: string, glsl: string, key: string) {
+    const U = { value: new Vector4(0, 0, 0.006, 0) };
+    extendToon(mat, key, (sh) => {
+      sh.uniforms.uCape = U;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', `#include <common>\nattribute float ${attr};\nuniform vec4 uCape;`)
+        .replace('#include <skinning_vertex>', '#include <skinning_vertex>\n' + glsl);
+    });
+    this.capeU.push(U);
   }
 
   /** Umhang als eigenes Netz am Skelett (Form und Gewichte kommen von der Grundfigur, Farbe und Borte von der Figur) */
@@ -633,26 +697,10 @@ export class Character {
     geo.setAttribute('trimC', new BufferAttribute(trimC, 3));
     geo.setAttribute('patC', new BufferAttribute(patC, 3));
     geo.setAttribute('gset', new BufferAttribute(gset, 4));
-    // eigenes Material je Umhang: Wehen und Schwingen laufen über Werte, die diese Figur setzt (siehe update)
+    // eigenes Material je Umhang: Wehen und Schwingen laufen über Werte, die diese Figur setzt (siehe update); der Zusatz überlebt die
+    // Effekt-Kopien (extendToon), sonst hörte der Umhang nach dem ersten Treffer auf zu wehen
     const mat = finishMat(c.spec.finish, '#ffffff', { vertexColors: true, rim: 0.8, trim: true, unique: true }) as MeshToonMaterial;
-    const U = { value: new Vector4(0, 0, 0.006, 0) };
-    const prev = mat.onBeforeCompile, prevKey = mat.customProgramCacheKey.bind(mat);
-    mat.onBeforeCompile = (sh, r) => {
-      prev.call(mat, sh, r);
-      sh.uniforms.uCape = U;
-      sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute float capeK;\nuniform vec4 uCape;')
-        .replace('#include <skinning_vertex>', `#include <skinning_vertex>
-        {
-          // Stoff schwingt: weht beim Laufen nach hinten, flattert leicht in Wellen; oben am Nacken bleibt er fest
-          float ck = capeK;
-          transformed.z -= (uCape.x + sin(uCape.w * 1.7 + transformed.y * 5.0) * uCape.z) * ck;
-          transformed.x += (uCape.y + sin(uCape.w * 2.3 + transformed.y * 6.0 + transformed.x * 9.0) * uCape.z * 0.5) * ck;
-          transformed.y += uCape.x * ck * ck * 0.3;
-        }`);
-    };
-    mat.customProgramCacheKey = () => prevKey() + '-cape';
-    this.capeU.push(U);
+    this.flutter(mat, 'capeK', CAPE_GLSL, '-cape');
     const m = new SkinnedMesh(geo, mat);
     m.bind(body.skeleton, body.bindMatrix);
     m.castShadow = true;
@@ -1127,11 +1175,20 @@ export class Character {
         if (!fx) return;
         v = fx.mat;
         made.set(src, v);
+        fx.u.hero.value = this.heroK;
         this.fxU.push(fx.u);
         this.fxMats.push(v);
       }
       m.material = v;
     });
+  }
+
+  /** Stärke des heroischen Kantenlichts (1 = normal): Bosse und Insel-Kommandanten heben sich damit vor jeder Kulisse ab (4.4B) */
+  private heroK = 1;
+  setHeroRim(k: number) {
+    this.heroK = k;
+    this.enableFx();
+    for (const u of this.fxU) u.hero.value = k;
   }
 
   /** Effekt-Kopien verwerfen (z. B. nach Aussehen-Wechsel, der neue Materialien setzt) */

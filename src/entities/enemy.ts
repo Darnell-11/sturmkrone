@@ -274,6 +274,9 @@ export class Enemy {
     this.char.play('idle');
     // Treffer-Randlicht und Auflösen gleich beim Erscheinen vorbereiten (kein Ruckler beim ersten Treffer)
     this.char.enableFx();
+    // Boss-Silhouette (4.4B): Raid-Bosse, Hauptmänner und Legenden tragen ein deutlich kräftigeres Kantenlicht
+    const heroK = this.def.raid === 'boss' || this.def.boss ? 1.9 : this.def.raid === 'captain' || this.def.elite ? 1.45 : 1;
+    if (heroK > 1) this.char.setHeroRim(heroK);
   }
 
   slowT = 0;

@@ -25,7 +25,7 @@ const MODELS = `${import.meta.env.BASE_URL}models/`;
 /** Alle Modelle, die das Spiel kennt (Dateiname ohne .glb) */
 export const GLB_MODELS = ['stulpenstiefel', 'stoffhose', 'stoffhose_stiefel', 'gehrock', 'dreispitz', 'frisur_mehrlagig', 'entermesser', 'parierdolch', 'sandalen',
   'helm_ritter2', 'helm_drache2', 'helm_kabuto2', 'helm_krone2', 'helm_kapuze2', 'helm_engel2', 'helm_hoerner2', 'schulter_lamellen2', 'schulter_drache3', 'schulter_fluegel3',
-  'w_saebel', 'w_katana', 'w_zweihaender', 'w_kurzklinge', 'w_faust_leder', 'w_faust_stahl', 'w_faust_dorn', 'w_fokus',
+  'w_saebel', 'w_katana', 'w_zweihaender', 'w_kurzklinge', 'w_faust_leder', 'w_faust_stahl', 'w_faust_dorn', 'w_fokus', 'w_muskete',
   // Raid-Endbosse (public/models/bosses/, tools/blender/build_bosse.py)
   'bosses/blackwood_head', 'bosses/blackwood_saebel', 'bosses/blackwood_pistole', 'bosses/vanderberg_head', 'bosses/vanderberg_hellebarde', 'bosses/eisenstein_head',
   'bosses/eisenstein_zweihaender', 'bosses/devalois_head', 'bosses/devalois_rapier', 'bosses/kurogane_head', 'bosses/kurogane_katana', 'bosses/kurogane_wakizashi',

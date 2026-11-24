@@ -151,6 +151,11 @@ export class Environment {
     this.csm = null;
   }
 
+  /** Kaskaden-Lichter sofort anlegen, wenn die Stufe sie will (sonst entstehen sie im ersten Bild, nach dem Vorübersetzen: alle Programme doppelt) */
+  prepareCsm(camera: PerspectiveCamera) {
+    if (this.csmWant && !this.csm) this.createCsm(camera);
+  }
+
   /** Jedes Bild: Kaskaden der Kamera folgen lassen, Sonnenlicht übernehmen */
   private updateCsm(camera: PerspectiveCamera, lightDir: Vector3) {
     if (this.csmWant && !this.csm) this.createCsm(camera);

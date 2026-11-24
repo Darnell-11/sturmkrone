@@ -481,6 +481,24 @@ export class Game {
     await loading.finish();
     this.state.set('menu');
     this.menus.showMain();
+    // Zweite Vorwärm-Stufe im Hintergrund (4.4B): Gegner, Rüstungssets, Schiffsklassen und Effekte übersetzt die Grafikkarte, während das
+    // Menü schon bedienbar ist (früher stand dafür der Ladebildschirm rund 4 s länger). Ein Spielstart wartet darauf (`awaitWarm`).
+    this.warmExtras = this.world.warmupExtras(this.renderer.gl, () => this.renderer.precompile(this.world.scene, this.world.camera)).catch((e) => { console.error(e); });
+  }
+
+  /** Läuft die zweite Vorwärm-Stufe noch? (null = fertig) */
+  private warmExtras: Promise<void> | null = null;
+
+  /** Vor dem Spielstart: auf die zweite Vorwärm-Stufe warten (meist längst fertig, wenn jemand Spielstand und Figur gewählt hat) */
+  private async awaitWarm() {
+    const p = this.warmExtras;
+    if (!p) return;
+    let done = false;
+    void p.then(() => { done = true; });
+    await new Promise((r) => setTimeout(r, 0));
+    if (!done) this.hud.toast('Gegner und Effekte werden vorbereitet …', 2.5);
+    await p;
+    this.warmExtras = null;
   }
 
   private useWorldView() {
@@ -3626,7 +3644,7 @@ export class Game {
       onSpin: (on) => { if (this.stage) this.stage.autoSpin = on; },
       onDone: (r) => {
         close();
-        if (isNew) this.newGame(newSlot!, r);
+        if (isNew) void this.newGame(newSlot!, r);
         else this.applyLook(r);
       },
       onCancel: () => {
@@ -3658,7 +3676,8 @@ export class Game {
 
   // ---------- Spielablauf ----------
 
-  newGame(slot: number, r: EditorResult) {
+  async newGame(slot: number, r: EditorResult) {
+    await this.awaitWarm();
     const data = createSave(r.name, r.faction, GAME_VERSION);
     data.player.style = r.style;
     data.player.blade = r.blade;
@@ -3670,7 +3689,8 @@ export class Game {
     this.hud.toast(r.faction === 'pirat' ? 'Leinen los, Schiffsjunge!' : 'Willkommen an Bord, Rekrut!', 3);
   }
 
-  continueGame(slot: number) {
+  async continueGame(slot: number) {
+    await this.awaitWarm();
     const info = this.saves.load(slot);
     if (!info.data) return;
     this.enterPlay(slot, info.data);

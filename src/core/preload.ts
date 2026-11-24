@@ -179,11 +179,19 @@ export class Preloader {
   step(task: string, done: number, phase?: string) {
     const t = this.tasks.get(task);
     if (t) t.done = Math.max(t.done, Math.min(1, done));
-    if (phase) this.phase = phase;
+    if (phase) { this.phase = phase; this.mark(phase); }
     this.emit();
   }
 
-  setPhase(phase: string) { this.phase = phase; this.emit(); }
+  setPhase(phase: string) { this.phase = phase; this.mark(phase); this.emit(); }
+
+  /** Zeitmarken der Ladephasen (ms seit Seitenstart), für die Startzeit-Messung; auch als `window.__skTimeline` (Prüfskripte) */
+  readonly timeline: { phase: string; t: number }[] = [];
+  mark(phase: string) {
+    if (this.timeline.length && this.timeline[this.timeline.length - 1].phase === phase) return;
+    this.timeline.push({ phase, t: Math.round(performance.now()) });
+    if (typeof window !== 'undefined') (window as unknown as { __skTimeline: unknown }).__skTimeline = this.timeline;
+  }
 
   private filesComplete = false;
   /** Alle Dateien sind geladen: ab jetzt zählt die tatsächliche Größe, der Dateianteil ist voll */

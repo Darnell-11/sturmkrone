@@ -22,6 +22,8 @@ import {
   SphereGeometry,
   Vector3,
 } from 'three';
+import { SeaSpray } from './seaSpray';
+import { ShipLightRig } from '../render/shipLights';
 import type { Input } from '../core/input/input';
 import type { StyleId } from '../data/animations';
 import type { CharacterLook, NpcRole } from '../data/characterParts';
@@ -107,7 +109,7 @@ import { buildTown, mergeByMaterialSteps, type TownBuild } from './town';
 import { updateBeams } from './lighthouseBeam';
 import { updateFountains } from './fountain';
 import { SeaLife } from './life';
-import { warmupShaders } from '../core/warmup';
+import { warmupExtras, warmupShaders } from '../core/warmup';
 import { clamp01 } from '../core/mathUtil';
 import type { WebGLRenderer } from 'three';
 import { TOWN_NPCS, VILLAGE_NPCS, type TownNpcDef } from '../data/quests';
@@ -192,6 +194,9 @@ const HIT_STOP = 0.035;
 
 /** Kamerablick der Werft: Gesamtansicht, Bug und Rammsporn, Segel und Takelage, Breitseite und Kanonen */
 export type YardView = 'all' | 'bow' | 'sail' | 'gun';
+
+/** Grundton der Gischtfahnen (mit dem Horizont gemischt) */
+const SPRAY_WHITE = new Color(1, 1, 1);
 
 export class SeaWorld {
   readonly scene = new Scene();
@@ -416,6 +421,8 @@ export class SeaWorld {
   /** Krabben, Schildkröten, Vögel, Glühwürmchen und springende Fische */
   readonly fauna: IslandFauna;
   private spray: ParticleSystem;
+  /** Gischtfahnen von den Wellenkämmen bei Sturm (4.4B) */
+  private seaSpray!: SeaSpray;
   private sparks: ParticleSystem;
   /** Pulverdampf, Schornsteine, Vulkane, Rauchsäulen */
   readonly smoke: SmokeSystem;
@@ -444,6 +451,7 @@ export class SeaWorld {
   private camIdle = 0;
   /** Geglättete Seekamera: Blickwinkel, Abstand, Höhe und Ankerpunkt werden einzeln nachgeführt (sonst schneidet die Kamera beim Umschwenken durchs Schiff) */
   private lampPool!: LampPool;
+  private shipLights!: ShipLightRig;
   private glow!: GlowSystem;
   private glowNight = 0;
   /** Unsichtbare feste Träger für echte Lichter an Feuern und Fackeln (LampPool wählt die nächsten) */
@@ -503,12 +511,15 @@ export class SeaWorld {
 
     this.fauna = new IslandFauna(this.scene);
     this.lampPool = new LampPool(this.scene, 6);
+    // feste Lichter des eigenen Schiffs (Laternen, Kajüte): die Lichtzahl der Szene ändert sich nie mehr mit dem Schiff (4.4B)
+    this.shipLights = new ShipLightRig(this.scene);
     glowHub.clear();
     this.glow = new GlowSystem(this.scene);
     this.ground.piers = this.piers;
     // Blueprint-Phase: alle Inseln als reine Daten (kein Netz, kein Material)
     this.prepareIslands();
     this.spray = new ParticleSystem(this.scene, false, 0.8);
+    this.seaSpray = new SeaSpray(this.scene);
     this.sparks = new ParticleSystem(this.scene, true, 0.32);
     this.dust = new ParticleSystem(this.scene, false, 0.7);
     this.fauna.spray = this.spray;
@@ -1062,10 +1073,19 @@ export class SeaWorld {
     this.seaEvents?.prewarm(true, at);
     const balls = this.naval?.prewarmProps(at) ?? null;
     if (balls) this.scene.add(balls);
-    await warmupShaders({ renderer, scene: this.scene, camera: this.camera, assets: this.assets, fx: this.fx, particles: this.sparks, renderFrame, onBlocking, precompile }, progress);
+    await warmupShaders({ renderer, scene: this.scene, camera: this.camera, renderFrame, onBlocking, precompile }, progress);
     this.spray.update(10); this.dust.update(10);
     this.seaEvents?.prewarm(false, at);
     if (balls) { balls.removeFromParent(); }
+  }
+
+  /**
+   * Zweite Vorwärm-Stufe (4.4B): Gegner-Figuren, Rüstungssets, alle Schiffsklassen und Effekte unsichtbar im Hintergrund vorübersetzen,
+   * während das Menü steht. Das Spiel startet erst danach (`Game.awaitWarm`).
+   */
+  warmupExtras(renderer: WebGLRenderer, precompile?: () => Promise<void>): Promise<void> {
+    if (!this.assets || !this.fx) return Promise.resolve();
+    return warmupExtras({ renderer, scene: this.scene, camera: this.camera, assets: this.assets, fx: this.fx, particles: this.sparks, precompile });
   }
 
   setCharacters(assets: CharacterAssets, look: CharacterLook, style: StyleId, overlay?: CombatOverlay) {
@@ -1320,7 +1340,10 @@ export class SeaWorld {
     // Sparstufen des Leistungs-Wächters kürzen die Sichtweite von Gras, Büschen und Blumen (weniger Zeichenaufrufe)
     this.vegLod = Math.max(0.4, Math.min(1.25, c.viewDistance / 800)) * (1 - 0.17 * (c.budget ?? 0));
     this.env.applyQuality(c);
+    // Kaskaden-Lichter sofort anlegen (nicht erst im ersten Bild): alles, was ab jetzt übersetzt wird, kennt die endgültige Lichtzahl (4.4B)
+    this.env.prepareCsm(this.camera);
     this.spray.scale = c.particles;
+    this.seaSpray.scale = c.particles;
     this.sparks.scale = c.particles;
     this.dust.scale = c.particles;
     this.smoke.scale = c.particles;
@@ -3308,6 +3331,7 @@ export class SeaWorld {
     const wy = env.heightAt(x, z);
     const f = this.fwd(h);
     s.render(alpha, sea, night, frameDt);
+    this.shipLights.follow(s.model, s.model.group.visible && !this.raid);
     if (this.yardShip) {
       // Vorschau-Schiff folgt dem eigenen (gleicher Ort, gleiche See)
       const ys = this.yardShip;
@@ -3363,6 +3387,27 @@ export class SeaWorld {
         const px = x - f.x * L * 0.48, pz = z - f.z * L * 0.48;
         this.spray.emit(1, px, this.env.heightAt(px, pz) + 0.1, pz, { speed: 0.6, up: 0.9, life: 1.1, color: FOAM_COL, gravity: 3, spread: W * 0.6, size: 0.55 });
       }
+    }
+    // Gischtfahnen (4.4B): bei Wind und Seegang reißt der Wind Gischt von den hohen Kämmen rund um das Schiff (nur echte Kämme: die Wasserhöhe
+    // am Ort muss nahe am Wellenberg liegen) und trägt sie als weiche Schleier in Windrichtung davon
+    {
+      const wp = env.weather.p;
+      const rough = clamp01((wp.waves - 1.05) / 1.3) * (0.45 + 0.55 * wp.wind);
+      if (rough > 0.02 && !this.raid) {
+        let n = rough * 46 * frameDt * this.seaSpray.scale;
+        const wk = 4 + 10 * wp.wind;
+        const wdx = Math.sin(env.windDir) * wk, wdz = Math.cos(env.windDir) * wk;
+        while (n > 0 && Math.random() < n) {
+          n -= 1;
+          const a = Math.random() * Math.PI * 2, r = 12 + Math.random() * 120;
+          const px = x + Math.cos(a) * r, pz = z + Math.sin(a) * r;
+          const hy = env.heightAt(px, pz);
+          if (hy < 0.45 * wp.waves) continue;
+          this.seaSpray.emit(px, hy + 0.3, pz, wdx, wdz, rough);
+        }
+      }
+      this.seaSpray.color.copy((this.scene.fog as Fog).color).lerp(SPRAY_WHITE, 0.72).multiplyScalar(0.78 + 0.3 * env.weather.p.light);
+      this.seaSpray.update(frameDt);
     }
     for (const b of this.buoys) {
       b.g.position.set(b.x, env.heightAt(b.x, b.z) - 0.3, b.z);

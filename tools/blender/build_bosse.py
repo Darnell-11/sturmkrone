@@ -46,34 +46,48 @@ def lift(ob, fn):
     ob.data.update()
     return ob
 
-def blade(name, z0, length, w0, w1, thick, curve, fuller=0.55, sections=30, role='steel', edge='both', tip=0.07):
-    bm = bmesh.new(); uv = bm.loops.layers.uv.new('UVMap')
+def blade(name, z0, length, w0, w1, thick, curve, fuller=0.55, sections=30, role='steel', edge='both', tip=0.07, hamon=0.11, hseed=0.0):
+    """Klinge: Ringe aus 8 Punkten (Rücken, Fläche, Schneide). curve = seitliche Auslenkung der Spitze (parabelförmig).
+    4.4B: Schneide und Klingenfläche sind getrennte Teile – die Schneide (Rolle 'edge', heller polierter Stahl) endet an einer welligen
+    Härtungslinie (Hamon, Stärke `hamon`); bei zweischneidigen Klingen auf beiden Seiten. Gibt eine Liste [Fläche, Schneide] zurück."""
     rings = []
     for k in range(sections + 1):
         t = k / sections
         z = z0 + length * t
         w = w0 + (w1 - w0) * t ** 0.85
         cx = curve * t * t
-        tp = 1.0 if t < 1 - tip else max(0.0, (1 - t) / tip)
+        tp = 1.0 if t < 1 - tip else max(0.0, (1 - t) / tip)       # Spitze läuft aus
         h = w * 0.5 * (tp ** 0.6 if t > 1 - tip else 1.0)
         th = thick * 0.5 * (0.45 + 0.55 * tp)
         f = fuller
+        # Hamon: die Grenze zwischen Schneide und Fläche wellt sich in unregelmäßigen Bögen (zwei Frequenzen)
+        wv = hamon * (math.sin(t * 38.0 + hseed) * 0.65 + math.sin(t * 91.0 + 1.7 + hseed) * 0.35)
         if edge == 'both':
-            pts = [(cx + h, 0.0), (cx + h * 0.55, th), (cx - h * 0.05, th * f), (cx - h * 0.55, th), (cx - h, 0.0), (cx - h * 0.55, -th), (cx - h * 0.05, -th * f), (cx + h * 0.55, -th)]
-        else:
-            pts = [(cx + h, 0.0), (cx + h * 0.45, th * 0.85), (cx - h * 0.35, th), (cx - h * 0.95, th * 0.7), (cx - h, 0.0), (cx - h * 0.95, -th * 0.7), (cx - h * 0.35, -th), (cx + h * 0.45, -th * 0.85)]
-        rings.append([bm.verts.new((px, py, z)) for px, py in pts])
+            a = 0.55 + wv
+            pts = [(cx + h, 0.0), (cx + h * a, th), (cx - h * 0.05, th * f), (cx - h * a, th), (cx - h, 0.0), (cx - h * a, -th), (cx - h * 0.05, -th * f), (cx + h * a, -th)]
+        else:  # eine Schneide (+x), dicker Rücken (-x)
+            a = 0.45 + wv
+            pts = [(cx + h, 0.0), (cx + h * a, th * 0.85), (cx - h * 0.35, th), (cx - h * 0.95, th * 0.7), (cx - h, 0.0), (cx - h * 0.95, -th * 0.7), (cx - h * 0.35, -th), (cx + h * a, -th * 0.85)]
+        rings.append([(px, py, z) for px, py in pts])
     n = len(rings[0])
-    for k in range(sections):
-        for i in range(n):
-            j = (i + 1) % n
-            f2 = bm.faces.new((rings[k][i], rings[k][j], rings[k + 1][j], rings[k + 1][i]))
-            for l, (ii, kk) in zip(f2.loops, ((i, k), (i + 1, k), (i + 1, k + 1), (i, k + 1))):
-                l[uv].uv = (ii / n, kk / sections)
-    try: bm.faces.new(rings[0])
-    except ValueError: pass
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    return solid_from_bm(name, bm, role, False)
+    edge_q = {7, 0} | ({3, 4} if edge == 'both' else set())
+    def part(nm, want_edge, rl):
+        bm = bmesh.new(); uv = bm.loops.layers.uv.new('UVMap')
+        vs = [[bm.verts.new(p) for p in ring] for ring in rings]
+        for k in range(sections):
+            for i in range(n):
+                if (i in edge_q) != want_edge: continue
+                j = (i + 1) % n
+                f2 = bm.faces.new((vs[k][i], vs[k][j], vs[k + 1][j], vs[k + 1][i]))
+                for l, (ii, kk) in zip(f2.loops, ((i, k), (i + 1, k), (i + 1, k + 1), (i, k + 1))):
+                    l[uv].uv = (ii / n, kk / sections)
+        if not want_edge:
+            try: bm.faces.new(vs[0])
+            except ValueError: pass
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-7)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        return solid_from_bm(nm, bm, rl, False)
+    return [part(name, False, role), part(name + '_schneide', True, 'edge')]
 
 def cylz(name, r, z0, z1, role, x=0.0, y=0.0, verts=14):
     bpy.ops.mesh.primitive_cylinder_add(vertices=verts, radius=r, depth=z1 - z0, location=(x, y, (z0 + z1) / 2))
@@ -177,7 +191,7 @@ def blackwood_saebel():
     P.append(sweep('S_buegel2', [(-0.055, 0, 0.11), (-0.075, 0, 0.03), (-0.066, 0, -0.05), (-0.032, 0, -0.11)], 0.005, 7, 'gold'))
     sh = cone_('S_schale', 0.044, 0.014, 0.04, (0, 0, 0.138), 'gold', verts=22); thicken(sh, 0.003); P.append(sh)
     P.append(gemstone('S_saphir', 0.0085, (-0.09, 0, 0.012), 'glow', stretch=1.2))
-    P.append(blade('S_klinge', 0.13, 0.82, 0.05, 0.04, 0.0078, 0.13, 0.5, 30, 'steel', edge='one', tip=0.1))
+    P += blade('S_klinge', 0.13, 0.82, 0.05, 0.04, 0.0078, 0.13, 0.5, 34, 'steel', edge='one', tip=0.1, hamon=0.06)
     # Blaue Quaste am Gefäß
     P.append(sweep('S_quaste', [(0.0, 0.0, -0.14), (0.01, 0.01, -0.2), (0.012, 0.016, -0.27)], [0.012, 0.014, 0.004], 7, 'cloth'))
     return P
@@ -189,9 +203,17 @@ def blackwood_pistole():
     P.append(sweep('P_griff', [(0, -0.03, -0.12), (0, -0.012, -0.05), (0, 0.0, 0.03)], [0.026, 0.021, 0.019], 10, 'leather'))
     P.append(ball('P_kolbenkappe', 0.03, (0, -0.036, -0.126), 'gold', (1, 1, 0.8)))
     P.append(box('P_schloss', (0.022, 0.05, 0.07), (0.0, 0.0, 0.07), 'gold'))
-    P.append(box('P_hahn', (0.012, 0.012, 0.045), (0.0, 0.0, 0.118), 'steel', (0.7, 0, 0)))
+    # Steinschloss (4.4B): S-förmiger Hahn mit Feuerstein in den Backen, Batterie mit Schlagfläche, Zündpfanne und Feder
+    P.append(sweep('P_hahn', [(0.014, 0.0, 0.085), (0.016, 0.022, 0.095), (0.016, 0.036, 0.112), (0.015, 0.04, 0.128)], [0.0052, 0.0045, 0.0038, 0.0034], 6, 'steel'))
+    P.append(box('P_backe', (0.009, 0.012, 0.016), (0.015, 0.042, 0.136), 'steel'))
+    P.append(box('P_stein', (0.007, 0.008, 0.011), (0.015, 0.038, 0.147), 'dark'))
+    P.append(box('P_batterie', (0.008, 0.034, 0.007), (0.014, 0.03, 0.158), 'steel', (0.35, 0, 0)))
+    P.append(box('P_pfanne', (0.014, 0.007, 0.018), (0.012, 0.012, 0.152), 'gold'))
+    P.append(cylz('P_feder', 0.003, 0.14, 0.175, 'steel', x=0.014, y=-0.012, verts=6))
     P.append(sweep('P_abzugsbuegel', [(0, 0.012, 0.045), (0, 0.045, 0.02), (0, 0.045, -0.035), (0, 0.012, -0.045)], 0.0045, 6, 'gold'))
-    P.append(cylz('P_lauf', 0.0155, 0.07, 0.42, 'steel', verts=14))
+    # konischer Lauf mit achtkantiger Kammer
+    P.append(cylz('P_kammer', 0.0172, 0.07, 0.15, 'steel', verts=8))
+    P.append(revolve('P_lauf', [(0.0158, 0.15), (0.0138, 0.42), (0.0001, 0.42)], segs=16, role='steel'))
     P.append(cylz('P_muendung', 0.026, 0.40, 0.43, 'gold', verts=14))
     for z in (0.14, 0.25, 0.34): P.append(cylz('P_ring%d' % int(z * 100), 0.019, z, z + 0.016, 'gold', verts=14))
     P.append(gemstone('P_stein', 0.009, (0.0, 0.0, -0.058), 'glow', stretch=1.1))
@@ -233,7 +255,7 @@ def vdb_hellebarde():
     # Zwinge und Kopf
     P.append(cylz('H_tuelle', 0.032, 1.30, 1.50, 'steel', verts=12))
     P.append(cylz('H_tuellering', 0.036, 1.29, 1.31, 'gold', verts=12)); P.append(cylz('H_tuellering2', 0.036, 1.49, 1.51, 'gold', verts=12))
-    P.append(blade('H_spitze', 1.5, 0.34, 0.07, 0.07, 0.014, 0.0, 0.55, 20, 'steel', 'both', 0.35))
+    P += blade('H_spitze', 1.5, 0.34, 0.07, 0.07, 0.014, 0.0, 0.55, 20, 'steel', 'both', 0.35, hamon=0.03)
     # Beilblatt (halbmondförmig, zur +X-Seite) und Haken (zur -X-Seite)
     axe = plate('H_beil', [(0.02, 1.30), (0.16, 1.26), (0.28, 1.33), (0.34, 1.46), (0.31, 1.6), (0.21, 1.67), (0.1, 1.6), (0.075, 1.5), (0.05, 1.42)], 0.013, 'steel')
     xform(axe, (0, 0, 0), (math.pi / 2, 0, 0)); xform(axe, (0, 0, 0), (0, 0, math.pi / 2)); P.append(axe)
@@ -293,8 +315,7 @@ def eisenstein_zweihaender():
         P.append(ball('Z_endkugel%d' % s, 0.022, (s * 0.2, 0, 0.1), 'gold', segs=10, rings=6))
         P.append(plate('Z_zierblech%d' % s, [(0, 0.0), (s * 0.12, 0.0), (s * 0.16, 0.04), (s * 0.06, 0.07), (0, 0.045)], 0.007, 'gold'))
         xform(P[-1], (0, 0.0, 0.07), (math.pi / 2, 0, 0))
-    bl = blade('Z_klinge', 0.145, 1.42, 0.115, 0.095, 0.0145, 0.0, 0.4, 42, 'steel', tip=0.08)
-    P.append(bl)
+    P += blade('Z_klinge', 0.145, 1.42, 0.115, 0.095, 0.0145, 0.0, 0.4, 48, 'steel', tip=0.08, hamon=0.05, hseed=0.9)
     # goldenes Kreuz und Runen in der Klinge
     P.append(plate('Z_kreuzv', [(-0.011, 0.25), (0.011, 0.25), (0.011, 0.5), (-0.011, 0.5)], 0.003, 'gold')); xform(P[-1], (0, 0.0079, 0), (math.pi / 2, 0, 0)); xform(P[-1], (0, 0, 0.0), (0, 0, 0))
     P.append(plate('Z_kreuzh', [(-0.05, 0.4), (0.05, 0.4), (0.05, 0.42), (-0.05, 0.42)], 0.003, 'gold')); xform(P[-1], (0, 0.0079, 0), (math.pi / 2, 0, 0))
@@ -348,7 +369,7 @@ def valois_rapier():
         bpy.ops.mesh.primitive_torus_add(major_radius=0.034, minor_radius=0.0042, major_segments=22, minor_segments=6, location=(0, s * 0.055, 0.125), rotation=(0, math.pi / 2, 0))
         t = bpy.context.active_object; t.name = 'R_ring%d' % s; t.data.materials.append(mat('gold')); P.append(t)
     P.append(gemstone('R_saphir', 0.0085, (0, -0.075, 0.04), 'glow', stretch=1.0))
-    P.append(blade('R_klinge', 0.145, 1.0, 0.021, 0.0095, 0.0075, 0.0, 0.72, 38, 'steel', tip=0.1))
+    P += blade('R_klinge', 0.145, 1.0, 0.021, 0.0095, 0.0075, 0.0, 0.72, 38, 'steel', tip=0.1, hamon=0.05)
     return P
 build_boss(valois_rapier(), 'devalois_rapier')
 
@@ -400,7 +421,7 @@ def kurogane_katana(name, length, curve, wrapcol):
         a = math.pi / 2 * k + math.pi / 4
         P.append(gemstone(name + '_loch%d' % k, 0.0048, (0.034 * math.cos(a), 0.031 * math.sin(a), 0.132), 'glow', stretch=0.4))
     P.append(cylz(name + '_habaki', 0.0185, 0.135, 0.165, 'gold', verts=10))
-    P.append(blade(name + '_klinge', 0.16, length, 0.036, 0.029, 0.0078, curve, 0.5, 36, 'steel', edge='one', tip=0.06))
+    P += blade(name + '_klinge', 0.16, length, 0.036, 0.029, 0.0078, curve, 0.5, 48, 'steel', edge='one', tip=0.06, hamon=0.14)
     # blutrote Schnur mit Quaste am Knauf
     P.append(sweep(name + '_schnur', [(0.0, 0.0, -0.15), (0.02, 0.0, -0.22), (0.03, 0.0, -0.3), (0.028, 0.0, -0.36)], [0.004, 0.0045, 0.0045, 0.012], 7, 'cloth'))
     return P

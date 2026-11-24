@@ -28,6 +28,7 @@ import {
   Vector3,
   Object3D,
 } from 'three';
+import { LightAnchor } from '../../render/shipLights';
 import type { FigureheadId, FlagId, ShipClass, ShipLook } from '../../data/ships';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { addOutlinesSteps } from '../../render/outline';
@@ -83,7 +84,7 @@ export interface ShipModel {
   /** Dach der Kapitänskajüte (Deck des Achterdecks): wird ausgeblendet, sobald die Figur drinnen steht */
   cabinRoof: Group;
   /** Fülllicht in der Kajüte (nur Spielerschiff), das Spiel schaltet es ein, wenn man drinnen ist */
-  cabinLight: PointLight | null;
+  cabinLight: LightAnchor | null;
   /** Vorderkastell (begehbares Vordeck bis zum Bug, Treppen an der Rückwand), null = keins */
   fore: { z0: number; z1: number; top: number; stairX: number[]; stairW: number; stairLen: number } | null;
   /** Obere Mastteile samt Rahen, Korb und Segeln je Mast (eigene Gruppe, Ursprung 0): knicken in der Enterphase an der Höhe `pivotY` um */
@@ -96,7 +97,7 @@ export interface ShipModel {
   deckMat: Mesh['material'];
   deckBase: Color;
   /** Laternen-Lichter (nur Spielerschiff): warmes Punktlicht, Stärke nach Tageszeit */
-  lights: PointLight[];
+  lights: LightAnchor[];
   /** Halbe Breite an Position z (für Treffer und Löcher) */
   halfWidth(z: number): number;
   /** Teile der Seitenreling am Hauptdeck (Holme, Docken, Pfosten) mit Lage: Gangway und Leitern öffnen sie dort, wo sie ans Deck kommen */
@@ -1295,7 +1296,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
   yield;
   // Laternen: Eisengehäuse mit Glas und Aufhängering; auf dem Spielerschiff wirft jede ein warmes Punktlicht
   const lanterns: Mesh[] = [];
-  const lights: PointLight[] = [];
+  const lights: LightAnchor[] = [];
   const lampMat = GLOW_LAMP;
   const lampIron = IRON();
   if (look.lanterns) {
@@ -1327,9 +1328,9 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
       }
       if (hero && lightSpots.has(p) && lights.length < 2) {
         // nur zwei Lichter (Heck, Mastkorb) – jedes Licht kostet jedes beleuchtete Pixel der Szene etwas
-        const pl = new PointLight(0xffa24a, 0, 60 * Math.min(1.6, 0.7 + sc * 0.4), 1.4);
+        // nur ein Anker: das echte Licht steht fest in der Szene (render/shipLights.ts, 4.4B)
+        const pl = new LightAnchor(0xffa24a, 60 * Math.min(1.6, 0.7 + sc * 0.4), 1.4);
         pl.position.set(0, p[1] + 0.3, p[2]);
-        pl.castShadow = false;
         group.add(pl);
         lights.push(pl);
       }
@@ -1340,7 +1341,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
   // ---- Kapitänskajüte einrichten: Möbel aus Blender (tools/blender/build_kajuete.py), Größe und Auswahl nach der Raumlänge.
   // Alle Teile werden mit ihren Rollenfarben und der Ambient-Occlusion zu EINEM Netz zusammengefasst (ein Zeichenaufruf, keine Kontur).
   const cabinBlockers: Blocker[] = [];
-  let cabinLight: PointLight | null = null;
+  let cabinLight: LightAnchor | null = null;
   {
     const ROLE_HEX: Record<string, string> = { wood: '#8A5A30', darkwood: '#4A2E1A', brass: '#D9B24C', iron: '#3A3C40', paper: '#E8DCB8', cloth: '#7A1F1A', bedding: '#DCD4BC', leather: '#4A2E1C', book1: '#7A1A1A', book2: '#245234', book3: '#5A3A20', book4: '#28407A', globe: '#3A7390', rug: '#7A1F1A', rugtrim: '#C9A24E', velvet: '#6A1424', paint1: '#2F6A86', paint2: '#D6A868', steel: '#C4CAD2', glass: '#8FB8C6' };
     const geos: BufferGeometry[] = [];
@@ -1608,7 +1609,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
         }
       }
       if (hero) {
-        cabinLight = new PointLight(0xffc27a, 0, 12 + R * 0.8, 1.6);
+        cabinLight = new LightAnchor(0xffc27a, 12 + R * 0.8, 1.6);
         cabinLight.position.set(0, D + castleH - 0.65, zm);
         group.add(cabinLight);
       }
@@ -2116,5 +2117,5 @@ function* mergeStaticSteps(group: Group, keep: Set<Mesh>, skip: Group[] = []): G
     yield;
   }
   // Leere Gruppen (Steuerrad, Galionsfigur) aufräumen
-  for (const c of [...group.children]) if (!(c as Mesh).isMesh && !(c as PointLight).isLight && c.children.length === 0 && !(c as LineSegments).isLineSegments) c.removeFromParent();
+  for (const c of [...group.children]) if (!(c as Mesh).isMesh && !(c as PointLight).isLight && !(c as LightAnchor).isLightAnchor && c.children.length === 0 && !(c as LineSegments).isLineSegments) c.removeFromParent();
 }

@@ -176,6 +176,8 @@ export interface ToonFxUniforms {
   hitCol: { value: Color };
   dissolve: { value: number };
   dissolveCol: { value: Color };
+  /** Stärke des heroischen Kantenlichts dieser Figur (1 = normal; Bosse und Kommandanten höher, 4.4B) */
+  hero: { value: number };
 }
 const optsOf = new WeakMap<Material, ToonOptions>();
 const fxOf = new WeakMap<Material, ToonFxUniforms>();
@@ -188,10 +190,44 @@ export function toonFx(src: Material): { mat: MeshToonMaterial; u: ToonFxUniform
   const o = optsOf.get(src);
   if (!o) return null;
   const mat = inheritState(toon({ ...o, unique: true, fx: true }), src);
+  // Zusätze (Umhang- und Mantelwind) gehen auf die Kopie über – sonst hörte ein Umhang nach dem ersten Treffer auf zu wehen (4.4B)
+  for (const e of extrasOf(src)) extendToon(mat, e.key, e.fn);
   return { mat, u: fxOf.get(mat)! };
 }
 
+type ToonExtra = { key: string; fn: (shader: { uniforms: Record<string, unknown>; vertexShader: string; fragmentShader: string }) => void };
+const extrasOf = (m: Material): ToonExtra[] => ((m.userData as { skExtra?: ToonExtra[] }).skExtra ?? []);
+
+/**
+ * Ein Toon-Material um eigenen Shader-Code erweitern (nach dem Toon-Patch), mit eigenem Schlüssel-Anteil. Der Zusatz bleibt am Material
+ * vermerkt: Effekt-Kopien (`toonFx`) und Kopien (`cloneToon`) übernehmen ihn.
+ */
+export function extendToon(mat: Material, key: string, fn: ToonExtra['fn']) {
+  const prev = mat.onBeforeCompile, prevKey = mat.customProgramCacheKey.bind(mat);
+  mat.onBeforeCompile = (sh, r) => { prev.call(mat, sh, r); fn(sh); };
+  mat.customProgramCacheKey = () => prevKey() + key;
+  const ud = mat.userData as { skExtra?: ToonExtra[] };
+  ud.skExtra = [...(ud.skExtra ?? []), { key, fn }];
+}
+
 const cache = new Map<string, MeshToonMaterial>();
+
+/** Geteilte Nullwerte des Treffer-/Auflöse-Effekts für Figuren-Materialien ohne eigene Kopie (gleiches Programm wie die Kopien) */
+const NO_FX: ToonFxUniforms = { hit: { value: 0 }, hitCol: { value: new Color(1, 1, 1) }, dissolve: { value: 0 }, dissolveCol: { value: new Color(1, 0.45, 0.12) }, hero: { value: 1 } };
+
+/** Anteil der dreistufigen Cel-Rampe an Figuren (4.4B): 0 = weicher Verlauf wie in der Welt, 1 = harte Anime-Stufen */
+export const CEL = { skin: 0.55, cloth: 0.8, hair: 0.65 };
+
+let blankTex: DataTexture | null = null;
+/** 1 × 1 neutrale ORMH-Textur für Figuren-Materialien ohne Schmiede-Satz (der Pfad ist dann über uSkForgeOn aus) */
+function blankForge(): DataTexture {
+  if (!blankTex) {
+    blankTex = new DataTexture(new Uint8Array([255, 128, 0, 128]), 1, 1);
+    blankTex.needsUpdate = true;
+    markShared(blankTex);
+  }
+  return blankTex;
+}
 
 /** PBR- und Umgebungs-Uniforms; die Karten-UV folgt der vorhandenen Textur */
 const PBR_PARS_GLSL = /* glsl */ `
@@ -218,6 +254,8 @@ const PBR_PARS_GLSL = /* glsl */ `
   #endif
   #ifdef SK_ENV
     uniform sampler2D uSkEnv;
+    /** 1 = Spiegelung an (Figuren tragen den Pfad immer und schalten ihn über diesen Wert, 4.4B) */
+    uniform float uSkEnvK;
   #endif
 `;
 
@@ -227,6 +265,7 @@ const FX_PARS_GLSL = /* glsl */ `
   uniform vec3 uHitCol;
   uniform float uDissolve;
   uniform vec3 uDissolveCol;
+  uniform float uSkHeroK;
   varying vec3 vSkFxPos;
   float skFxH(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
   float skFxN(vec3 x) {
@@ -280,9 +319,11 @@ const WET_POST_GLSL = /* glsl */ `
     vec3 skRW = inverseTransformDirection(reflect(-skV, skWN), viewMatrix);
     vec3 skSky = mix(uEnvLow, uEnvHigh, clamp(skRW.y * 0.5 + 0.5, 0.0, 1.0)) * uEnvI;
     float skFres = pow(1.0 - skNdv, 5.0);
-    #ifndef SK_ENV
-      outgoingLight += skSky * (0.025 + 0.55 * skFres) * skWetK * (1.0 - skPud);
+    float skNoEnv = 1.0;
+    #ifdef SK_ENV
+      skNoEnv = 1.0 - uSkEnvK;
     #endif
+    outgoingLight += skSky * (0.025 + 0.55 * skFres) * skWetK * (1.0 - skPud) * skNoEnv;
     // Pfütze: dunkles Wasser, das den Himmel spiegelt (die Umgebung kommt über die Bildschirm-Spiegelungen dazu)
     outgoingLight = mix(outgoingLight, outgoingLight * 0.32 + skSky * (0.26 + 0.7 * skFres), skPud * 0.92);
     #if NUM_DIR_LIGHTS > 0
@@ -322,13 +363,18 @@ void RE_Direct_Toon( const in IncidentLight directLight, const in vec3 geometryP
   float metal = skMetalL();
   // weicher Übergang von Schatten zu Licht (keine Stufen): Schattenseite auf 32 % angehoben, wie zuvor die unterste Stufe
   float lit = mix(0.32, 1.0, smoothstep(-0.3, 0.95, nl));
+  #ifdef SK_CHAR
+    // Figuren (4.4B, Anime-Fighter-Look): drei klar gezeichnete Stufen – Schatten, Halbton, Licht – mit schmalen, geglätteten Kanten
+    // statt des weichen Verlaufs. uSkCel mischt zwischen beiden (Haut etwas weicher als Stoff und Metall).
+    float skCelA = smoothstep(-0.02, 0.06, nl), skCelB = smoothstep(0.5, 0.58, nl);
+    float skCel = 0.36 + 0.36 * skCelA + 0.28 * skCelB;
+    lit = mix(lit, skCel, uSkCel);
+  #endif
   vec3 albedo = material.diffuseColor * (1.0 - metal * 0.8);
   reflectedLight.directDiffuse += directLight.color * lit * BRDF_Lambert(albedo);
-  #if defined(SK_SURF) && defined(SK_CHAR)
+  #if defined(SK_MICRO) && defined(SK_CHAR)
     // Haare und Augen haben eigenen Glanz (anisotrop bzw. Glanzpunkte)
-    #if SK_SURF == 5 || SK_SURF == 6
-      return;
-    #endif
+    if (skSurf == 5 || skSurf == 6) return;
   #endif
   float nlc = clamp(nl, 0.0, 1.0);
   if (nlc <= 0.0) return;
@@ -444,10 +490,13 @@ const MICRO_PARS_GLSL = /* glsl */ `
     return mix(mix(mix(skMH(i), skMH(i + vec3(1, 0, 0)), f.x), mix(skMH(i + vec3(0, 1, 0)), skMH(i + vec3(1, 1, 0)), f.x), f.y),
                mix(mix(skMH(i + vec3(0, 0, 1)), skMH(i + vec3(1, 0, 1)), f.x), mix(skMH(i + vec3(0, 1, 1)), skMH(i + vec3(1, 1, 1)), f.x), f.y), f.z);
   }
+  uniform float uSkCavity;
+  uniform float uSkRelief;
   #ifdef SK_FORGE
   uniform sampler2D uSkForge;
-  /** x = Kacheln je Meter, y = Relieftiefe (m), z = Grundrauheit des Satzes, w = Anteil an der Rauheit */
+  /** x = Kacheln je Meter, y = Relieftiefe (m), z = Grundrauheit des Satzes, w = Anteil an der Rauheit; uSkForgeOn 0 = kein Satz (Figuren) */
   uniform vec4 uSkForgeP;
+  uniform float uSkForgeOn;
   varying vec3 vSkObjN;
   float skForgeAO = 1.0;
   /** Dreiseitige Projektion im Objektraum: Gewichte aus der Objekt-Normale (scharf, ohne UV-Verzerrung) */
@@ -459,43 +508,43 @@ const MICRO_PARS_GLSL = /* glsl */ `
   #endif
   /** x = Höhe in Metern, y = Höhe 0 … 1 (für die Vertiefungen), z = Wellen je Meter (zum Ausblenden in der Ferne) */
   vec3 skMicroH(vec3 p) {
+    // ein Ergebnis, ein Ausgang (HLSL warnt sonst vor möglicherweise unbelegten Rückgabewerten)
+    vec3 skR = vec3(0.0);
     #ifdef SK_FORGE
-    {
+    if (uSkForgeOn > 0.5) {
       vec4 f = skForgeTri(p);
       skRoughK *= mix(1.0, f.g / max(uSkForgeP.z, 0.05), uSkForgeP.w);
       skForgeAO = f.r;
-      return vec3(f.a * uSkForgeP.y, f.a, uSkForgeP.x * 24.0);
-    }
+      skR = vec3(f.a * uSkForgeP.y, f.a, uSkForgeP.x * 24.0);
+    } else
     #endif
-    #if SK_SURF == 2
+    if (skSurf == 2) {
       // Stoff: Köperbindung aus zwei schrägen Fadenrichtungen
       float a = sin(dot(p, vec3(1.0, 1.0, 0.35)) * 1257.0), b = sin(dot(p, vec3(-1.0, 1.0, 0.6)) * 1257.0);
       float h = a * b * 0.5 + 0.5;
-      return vec3(h * 0.00042, h, 200.0);
-    #elif SK_SURF == 3
+      skR = vec3(h * 0.00042, h, 200.0);
+    } else if (skSurf == 3) {
       // Leder: Narbung aus zwei Rauschgrößen mit feinen Falten
       float n = skMN(p * 240.0) * 0.65 + skMN(p * 610.0) * 0.35;
       float h = 1.0 - abs(n - 0.5) * 2.0;
-      return vec3(h * 0.0011, h, 130.0);
-    #elif SK_SURF == 4
+      skR = vec3(h * 0.0011, h, 130.0);
+    } else if (skSurf == 4) {
       // Stahl: gebürstete Riefen längs, dazu einzelne Kratzer
       float n = skMN(vec3(p.x * 1100.0, p.y * 45.0, p.z * 1100.0));
       float sc = smoothstep(0.82, 0.9, skMN(vec3(p.x * 300.0 + p.y * 90.0, p.y * 14.0, p.z * 300.0)));
       float h = n * 0.8 + sc * 0.2;
-      return vec3(h * 0.00016, h, 520.0);
-    #elif SK_SURF == 1
+      skR = vec3(h * 0.00016, h, 520.0);
+    } else if (skSurf == 1) {
       // Haut: sehr feine Poren (wirken nur im Glanz)
       float h = skMN(p * 820.0) * 0.6 + skMN(p * 2100.0) * 0.4;
-      return vec3(h * 0.00009, h, 520.0);
-    #else
-      return vec3(0.0);
-    #endif
+      skR = vec3(h * 0.00009, h, 520.0);
+    }
+    return skR;
   }
 `;
 const MICRO_FRAG_GLSL = /* glsl */ `
   vec3 skMicroN = normal;
-  #if (SK_SURF >= 1 && SK_SURF <= 4) || SK_SURF == 7
-  {
+  if ((skSurf >= 1 && skSurf <= 4) || skSurf == 7) {
     // in der Ferne ausblenden, bevor das Muster kleiner als ein Bildpunkt wird (kein Flimmern)
     float skPx = length(dFdx(vSkObj)) + length(dFdy(vSkObj));
     vec3 skMh = skMicroH(vSkObj);
@@ -508,15 +557,14 @@ const MICRO_FRAG_GLSL = /* glsl */ `
       vec3 skMn = abs(det) * normal - g * skFade;
       skMicroN = skMn * inversesqrt(max(dot(skMn, skMn), 1e-20));
       // das Relief wirkt auch auf das diffuse Licht (Stoff, Leder und Stahl werden plastisch), nicht nur auf den Glanz
-      normal = normalize(mix(normal, skMicroN, SK_RELIEF));
+      normal = normalize(mix(normal, skMicroN, uSkRelief));
       // Vertiefungen etwas dunkler (Fäden, Narben, Riefen)
-      diffuseColor.rgb *= 1.0 - (0.5 - skMh.y) * SK_CAVITY * skFade;
+      diffuseColor.rgb *= 1.0 - (0.5 - skMh.y) * uSkCavity * skFade;
       #ifdef SK_FORGE
         diffuseColor.rgb *= mix(1.0, skForgeAO, 0.55 * skFade);
       #endif
     }
   }
-  #endif
 `;
 
 /** Oberflächen der Figuren: Glanz und Streuung je Material, Lichtband im Haar, Glanzpunkte im Auge, Randlicht aus dem Himmel */
@@ -534,7 +582,7 @@ const CHAR_GLSL = /* glsl */ `
     #endif
     vec3 skSkyC = mix(uEnvLow, uEnvHigh, clamp(skNW.y * 0.5 + 0.5, 0.0, 1.0));
     float skNH = max(dot(skN2, normalize(skL + viewDir)), 1e-4);
-    #if SK_SURF == 1
+    if (skSurf == 1) {
       // Haut: Licht streut unter der Oberfläche. Rötlicher Saum an der Schattengrenze, warme statt kühle Schatten,
       // Durchleuchten an dünnen Rändern (Ohren, Finger) im Gegenlicht, dazu ein weicher, breiter Glanz
       float skBand = skShade * skLit * 4.0;
@@ -543,18 +591,17 @@ const CHAR_GLSL = /* glsl */ `
       float skBack = pow(clamp(dot(viewDir, -skL), 0.0, 1.0), 3.0) * (1.0 - ndv) * (1.0 - ndv);
       outgoingLight += diffuseColor.rgb * vec3(1.0, 0.3, 0.18) * skLC * skBack * 0.5;
       outgoingLight += skLC * (pow(skNH, 42.0) * 0.07 + pow(skNH, 9.0) * 0.03) * skLit;
-    #elif SK_SURF == 2
+    } else if (skSurf == 2) {
       // Stoff: matter Schimmer zu den Rändern hin (Fasern stehen ab)
       float skSheen = pow(1.0 - clamp(dot(skN2, viewDir), 0.0, 1.0), 3.0);
       outgoingLight += mix(diffuseColor.rgb, vec3(1.0), 0.25) * (skLC * (0.25 + 0.75 * skLit) + skSkyC * 0.5) * skSheen * 0.16;
-    #elif SK_SURF == 3
+    } else if (skSurf == 3) {
       // Leder: weicher, mittelgroßer Glanz, an der Narbung gebrochen
       outgoingLight += skLC * mix(vec3(1.0), diffuseColor.rgb, 0.3) * pow(skNH, 46.0) * 0.3 * skLit;
-    #elif SK_SURF == 4
+    } else if (skSurf == 4) {
       // Stahl: enger Glanzkern über dem Anime-Glanzfleck
       outgoingLight += skLC * mix(vec3(1.0), diffuseColor.rgb, 0.5) * pow(skNH, 160.0) * 0.9 * skLit;
-    #elif SK_SURF == 5
-    {
+    } else if (skSurf == 5) {
       // Haar: anisotroper Glanz (Kajiya-Kay). Die Strähnen laufen am Kopf entlang nach unten; das Lichtband liegt quer dazu
       // und wandert mit Blickwinkel und Licht. Zwei Bänder: schmal und hell, darunter breiter in der Haarfarbe.
       // Kopfrundung statt Strähnen-Normale: sonst zerfällt das Band an jeder Strähne in Splitter
@@ -574,12 +621,10 @@ const CHAR_GLSL = /* glsl */ `
         float skB2 = pow(sqrt(max(1.0 - skD2 * skD2, 1e-4)), 36.0);
         float skFace = smoothstep(0.0, 0.45, clamp(dot(skHN, viewDir), 0.0, 1.0)) * smoothstep(0.003, 0.08, skTl);
         float skLum = clamp(dot(skLC, vec3(0.3, 0.6, 0.1)), 0.18, 1.2) * (0.45 + 0.55 * skLit);
-        outgoingLight += mix(diffuseColor.rgb * 1.6, vec3(1.0), 0.34) * smoothstep(0.22, 0.7, skB1) * skLum * skFace * 0.5;
+        outgoingLight += mix(diffuseColor.rgb * 1.6, vec3(1.0), 0.4) * smoothstep(0.3, 0.62, skB1) * skLum * skFace * 0.62;
         outgoingLight += diffuseColor.rgb * skB2 * skLum * skFace * 0.5;
       }
-    }
-    #elif SK_SURF == 6
-    {
+    } else if (skSurf == 6) {
       // Auge: zwei scharfe Glanzpunkte auf der Iris. Sie wandern ein Stück mit dem Licht und überstrahlen leicht (Bloom).
       #ifdef USE_MAP
         // beide Augen liegen nebeneinander in einer Textur; v läuft nach unten
@@ -592,10 +637,17 @@ const CHAR_GLSL = /* glsl */ `
         float skG = (1.0 - smoothstep(0.2 - skA, 0.2, skD1)) + (1.0 - smoothstep(0.085 - skA, 0.085, skD2)) * 0.8;
         // feuchter Schimmer: die Iris spiegelt den Himmel leicht
         outgoingLight += skSkyC * 0.1;
+        // Tiefe (4.4B): das Oberlid wirft einen weichen Schatten auf die obere Iris, unten leuchtet sie in ihrer eigenen Farbe auf
+        // (Licht fällt durch die Hornhaut) – der typische Anime-Fighter-Blick
+        float skIr = length(skE * vec2(1.0, 0.85));
+        float skIn = 1.0 - smoothstep(0.85, 1.15, skIr);
+        float skLid = smoothstep(0.05, 0.75, skE.y) * skIn;
+        outgoingLight *= 1.0 - 0.42 * skLid;
+        float skLow = (1.0 - smoothstep(-0.8, -0.05, skE.y)) * (1.0 - smoothstep(0.55, 0.95, skIr));
+        outgoingLight += diffuseColor.rgb * diffuseColor.rgb * skLow * 0.9;
         outgoingLight = mix(outgoingLight, vec3(1.9) * (0.35 + 0.65 * clamp(dot(skLC, vec3(0.3, 0.6, 0.1)) + 0.25, 0.0, 1.0)), clamp(skG, 0.0, 1.0));
       #endif
     }
-    #endif
     // Randlicht: Fresnel statt Tusche. Die Ränder nehmen das Himmelslicht ihrer Seite an, zur Sonne hin deren Farbe.
     float skFr = pow(1.0 - ndv, 3.4);
     float skSun = clamp(dot(-viewDir, skL) * 0.5 + 0.5, 0.0, 1.0);
@@ -607,7 +659,14 @@ const CHAR_GLSL = /* glsl */ `
     float skEdge2 = skEdge * skEdge;
     float skKey = clamp(dot(normal, normalize(vec3(0.62, 0.45, -0.64))) * 0.9 + 0.2, 0.0, 1.0);
     float skFill = clamp(dot(normal, normalize(vec3(-0.7, 0.25, -0.66))) * 0.9 + 0.15, 0.0, 1.0);
-    outgoingLight += mix(diffuseColor.rgb, vec3(1.0), 0.6) * (uHeroRim * skKey + uHeroFill * skFill) * skEdge2 * smoothstep(0.15, 0.6, skEdge) * uRimAmount;
+    float skHeroK = 1.0;
+    #ifdef SK_FX
+      skHeroK = uSkHeroK;
+    #endif
+    outgoingLight += mix(diffuseColor.rgb, vec3(1.0), 0.6) * (uHeroRim * skKey + uHeroFill * skFill) * skEdge2 * smoothstep(0.15, 0.6, skEdge) * uRimAmount * skHeroK;
+    // scharfe Lichtkante (4.4B): schmales, klar gezeichnetes Band an der Silhouette auf der Seite des Hauptlichts – wie im Fighter-Anime
+    float skHard = smoothstep(0.62, 0.7, skEdge) * clamp(dot(normal, skL) * 1.4 + 0.25, 0.0, 1.0);
+    outgoingLight += mix(diffuseColor.rgb, vec3(1.0), 0.7) * (skLC * 0.32 + uHeroRim * 0.5) * skHard * uRimAmount * (0.6 + 0.4 * skHeroK);
   }
 `;
 
@@ -654,7 +713,7 @@ const RIM_SPEC_GLSL = /* glsl */ `
     #endif
     outgoingLight += mix(diffuseColor.rgb, vec3(1.0), 0.35) * uRimColor * rim;
     #ifdef SK_ENV
-    {
+    if (uSkEnvK > 0.5) {
       // Bildbasierte Spiegelung (IBL): Himmel, Sonne und Abendrot aus der vorgefilterten Umgebungskarte
       vec3 rW = inverseTransformDirection(reflect(-viewDir, skN2), viewMatrix);
       vec3 envC = uEnvOn > 0.5 ? textureCubeUV(uSkEnv, rW, skRough).rgb : mix(uEnvLow, uEnvHigh, clamp(rW.y * 0.5 + 0.5, 0.0, 1.0));
@@ -902,7 +961,7 @@ const DETAIL_FRAG: Record<DetailKind, string> = {
   }`,
 };
 
-interface PbrPatch { rough: number; metal: number; roughMap: Texture | null; metalMap: Texture | null; env: boolean; fx?: ToonFxUniforms; reflect: number; puddles: number; ringel: number; trim: boolean; surf: number; char: boolean; eyeUv: [number, number, number, number] | null; hairC: [number, number, number] | null; mask: boolean; forge: ForgeKind | null; forgeScale: number; slope: ForgeKind | null; slopeColor: Color | null }
+interface PbrPatch { rough: number; metal: number; roughMap: Texture | null; metalMap: Texture | null; env: boolean; envOn: boolean; fx?: ToonFxUniforms; reflect: number; puddles: number; ringel: number; trim: boolean; surf: number; char: boolean; eyeUv: [number, number, number, number] | null; hairC: [number, number, number] | null; mask: boolean; forge: ForgeKind | null; forgeScale: number; slope: ForgeKind | null; slopeColor: Color | null }
 
 /** Steile Hänge werden zu Fels (4.4A): Neigung aus der Eckpunkt-Normale, Fels dreiseitig im Inselraum projiziert; nach dem Muster des Bodens eingemischt */
 const SLOPE_GLSL = /* glsl */ `
@@ -965,11 +1024,14 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
     shader.uniforms.uEnvLow = toonShared.envLow;
     shader.uniforms.uEnvHigh = toonShared.envHigh;
     fogUniforms(shader);
-    if (pbr.fx) {
-      shader.uniforms.uHit = pbr.fx.hit;
-      shader.uniforms.uHitCol = pbr.fx.hitCol;
-      shader.uniforms.uDissolve = pbr.fx.dissolve;
-      shader.uniforms.uDissolveCol = pbr.fx.dissolveCol;
+    // Figuren tragen den Treffer-/Auflöse-Pfad immer (4.4B): ohne eigene Werte mit den geteilten Nullwerten, dann teilen sich alle ein Programm
+    const fxU = pbr.fx ?? (pbr.char ? NO_FX : undefined);
+    if (fxU) {
+      shader.uniforms.uHit = fxU.hit;
+      shader.uniforms.uHitCol = fxU.hitCol;
+      shader.uniforms.uDissolve = fxU.dissolve;
+      shader.uniforms.uDissolveCol = fxU.dissolveCol;
+      shader.uniforms.uSkHeroK = fxU.hero;
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vSkFxPos;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSkFxPos = position;');
@@ -978,11 +1040,21 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
     }
     const cav = [0, 0.05, 0.2, 0.26, 0.12, 0, 0, 0.3][Math.max(0, pbr.surf)];
     const relief = [0, 0.35, 0.7, 0.7, 0.5, 0, 0, 0.8][Math.max(0, pbr.surf)];
-    if (pbr.forge && pbr.surf >= 0) {
-      // geteilte Schmiede-Textur (beim ersten Übersetzen geholt: dann steht der Startsatz schon bereit)
-      const R = FORGE_RECIPES[pbr.forge];
-      shader.uniforms.uSkForge = { value: forgeSet(pbr.forge).orm };
-      shader.uniforms.uSkForgeP = { value: new Vector4(1 / pbr.forgeScale, R.depth, R.rough, 1) };
+    const forgeOn = (!!pbr.forge || pbr.char) && pbr.surf >= 0;
+    if (pbr.surf >= 0) {
+      shader.uniforms.uSkSurf = { value: pbr.surf };
+      shader.uniforms.uSkCavity = { value: cav };
+      shader.uniforms.uSkRelief = { value: relief };
+    }
+    if (pbr.char) shader.uniforms.uSkCel = { value: pbr.surf === 1 ? CEL.skin : pbr.surf === 5 || pbr.surf === 6 ? CEL.hair : CEL.cloth };
+    if (pbr.env) shader.uniforms.uSkEnvK = { value: pbr.envOn ? 1 : 0 };
+    if (forgeOn) {
+      // geteilte Schmiede-Textur (beim ersten Übersetzen geholt: dann steht der Startsatz schon bereit); Figuren ohne Satz bekommen eine
+      // leere Textur und schalten den Pfad über uSkForgeOn ab (ein Programm für alle Figuren-Oberflächen, 4.4B)
+      const R = pbr.forge ? FORGE_RECIPES[pbr.forge] : null;
+      shader.uniforms.uSkForge = { value: pbr.forge ? forgeSet(pbr.forge).orm : blankForge() };
+      shader.uniforms.uSkForgeP = { value: new Vector4(1 / pbr.forgeScale, R?.depth ?? 0, R?.rough ?? 0.5, R ? 1 : 0) };
+      shader.uniforms.uSkForgeOn = { value: R ? 1 : 0 };
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vSkObjN;')
         .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nvSkObjN = objectNormal;');
@@ -997,9 +1069,10 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
         .replace('#include <common>', '#include <common>\nvarying vec3 vSkLoc;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSkLoc = position;');
     }
-    const defs = (pbr.surf >= 0 ? `#define SK_MICRO\n#define SK_SURF ${pbr.surf}\n#define SK_CAVITY ${cav.toFixed(2)}\n#define SK_RELIEF ${relief.toFixed(2)}\n` : '') + (pbr.forge && pbr.surf >= 0 ? '#define SK_FORGE\n' : '') + (pbr.slope && detail ? '#define SK_SLOPE\n' : '') + (pbr.char ? '#define SK_CHAR\n' : '') + (pbr.puddles > 0 ? '#define SK_PUDDLE\n' : '') + (pbr.roughMap ? '#define SK_ROUGHMAP\n' : '') + (pbr.metalMap ? '#define SK_METALMAP\n' : '') + (pbr.env ? '#define SK_ENV\n' + cubeUvDefines() : '') + (pbr.fx ? '#define SK_FX\n' : '');
+    // Oberfläche: Figuren als Uniform (ein Programm für Haut, Stoff, Leder, Stahl, Haar, Auge), Welt als Konstante (der Übersetzer faltet die Zweige weg)
+    const defs = (pbr.surf >= 0 ? '#define SK_MICRO\n' + (pbr.char ? 'uniform int uSkSurf;\n#define skSurf uSkSurf\n' : `const int skSurf = ${pbr.surf};\n`) : '') + (forgeOn ? '#define SK_FORGE\n' : '') + (pbr.slope && detail ? '#define SK_SLOPE\n' : '') + (pbr.char ? '#define SK_CHAR\n' : '') + (pbr.puddles > 0 ? '#define SK_PUDDLE\n' : '') + (pbr.roughMap ? '#define SK_ROUGHMAP\n' : '') + (pbr.metalMap ? '#define SK_METALMAP\n' : '') + (pbr.env ? '#define SK_ENV\n' + cubeUvDefines() : '') + (fxU ? '#define SK_FX\n' : '');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', defs + '#include <common>\nuniform vec3 uShadowTint;\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uSpec;\nuniform float uRimAmount;\nfloat skRoughK = 1.0;\n' + (pbr.char ? 'uniform vec3 uHeroRim;\nuniform vec3 uHeroFill;\n' : '') + PBR_PARS_GLSL + WET_PARS + 'float skShoreWet = 0.0;\n' + (pbr.puddles > 0 ? 'uniform float uPuddleAmt;\n' : '') + (pbr.fx ? FX_PARS_GLSL : '') + (pbr.surf >= 0 ? (pbr.char ? 'uniform vec4 uEyeUv;\n' + (pbr.surf === 5 ? 'varying vec3 vSkSph;\n' : '') + (pbr.mask && !(pbr.reflect > 0 || pbr.puddles > 0) ? 'uniform float uSkMaskOff;\n' : '') : '') + MICRO_PARS_GLSL : '') + (pbr.env ? '#include <cube_uv_reflection_fragment>\n' : ''))
+      .replace('#include <common>', defs + '#include <common>\nuniform vec3 uShadowTint;\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uSpec;\nuniform float uRimAmount;\nfloat skRoughK = 1.0;\n' + (pbr.char ? 'uniform vec3 uHeroRim;\nuniform vec3 uHeroFill;\nuniform float uSkCel;\nuniform float uSkMaskK;\n' : '') + PBR_PARS_GLSL + WET_PARS + 'float skShoreWet = 0.0;\n' + (pbr.puddles > 0 ? 'uniform float uPuddleAmt;\n' : '') + (fxU ? FX_PARS_GLSL : '') + (pbr.surf >= 0 ? (pbr.char ? 'uniform vec4 uEyeUv;\nvarying vec3 vSkSph;\n' + (!(pbr.reflect > 0 || pbr.puddles > 0) ? 'uniform float uSkMaskOff;\n' : '') : '') + MICRO_PARS_GLSL : '') + (pbr.env ? '#include <cube_uv_reflection_fragment>\n' : ''))
       .replace('#include <lights_toon_pars_fragment>', LIGHTS_GLSL)
       .replace('#include <opaque_fragment>', WET_PRE_GLSL + RIM_SPEC_GLSL + WET_POST_GLSL + '\n#include <opaque_fragment>'
         + (pbr.reflect > 0 ? '\ngl_FragColor.a = mix(1.0 - 0.4 * clamp(uReflect, 0.0, 1.0), 1.0, uSkMaskOff);' : '')
@@ -1016,20 +1089,20 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
     if (pbr.surf >= 0) {
       // Figuren-Oberfläche: Körperposition in Metern (vor dem Skinning – das Muster klebt an der Figur)
       if (pbr.char) shader.uniforms.uEyeUv = { value: new Vector4(...(pbr.eyeUv ?? [0.25, 0.5, 0.15, 0.3])) };
-      if (pbr.char && pbr.surf === 5) {
-        // Haare: Richtung von der Kopfmitte zum Punkt, mit dem Skelett mitgedreht (für das Lichtband)
+      if (pbr.char) {
+        // Haare: Richtung von der Kopfmitte zum Punkt, mit dem Skelett mitgedreht (für das Lichtband); für alle Figuren-Oberflächen gleich (ein Programm)
         shader.uniforms.uHairC = { value: new Vector3(...(pbr.hairC ?? [0, 0, 0])) };
         shader.vertexShader = shader.vertexShader
           .replace('#include <common>', '#include <common>\nuniform vec3 uHairC;\nvarying vec3 vSkSph;')
           .replace('#include <defaultnormal_vertex>', '#include <defaultnormal_vertex>\n{ vec3 skSph = position - uHairC;\n#ifdef USE_SKINNING\nskSph = (skinMatrix * vec4(skSph, 0.0)).xyz;\n#endif\nvSkSph = normalMatrix * skSph; }');
       }
-      if (pbr.mask) shader.uniforms.uSkMaskOff = WATER_ALPHA;
+      if (pbr.char) { shader.uniforms.uSkMaskOff = WATER_ALPHA; shader.uniforms.uSkMaskK = { value: pbr.mask ? 1 : 0 }; }
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vSkObj;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSkObj = position * length(modelMatrix[1].xyz);');
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + MICRO_FRAG_GLSL)
-        .replace('#include <opaque_fragment>', '#include <opaque_fragment>' + (pbr.mask ? `\ngl_FragColor.a = mix(${CHAR_ALPHA.toFixed(2)}, 1.0, uSkMaskOff);` : ''));
+        .replace('#include <opaque_fragment>', '#include <opaque_fragment>' + (pbr.char ? `\ngl_FragColor.a = mix(gl_FragColor.a, mix(${CHAR_ALPHA.toFixed(2)}, 1.0, uSkMaskOff), uSkMaskK);` : ''));
     }
     if (pbr.ringel > 0) {
       // Ringelhemd: scharfe waagrechte Streifen aus der Höhe im Modell (vor dem Skinning – kleben am Körper)
@@ -1076,8 +1149,12 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
       }
     }
   };
-  // Schmiede-Art und Hangfels sind nur Uniforms (Textur, Maße): gleicher Programmtext für alle Arten, darum nur das Merkmal im Schlüssel
-  const progKey = `sk-toon-9${pbr.forge && pbr.surf >= 0 ? '-F' : ''}${pbr.slope && detail ? '-S' : ''}${pbr.surf >= 0 ? (pbr.char ? 'c' : 'u') + pbr.surf + (pbr.mask ? 'k' : '') : ''}${detail ? '-' + detail : ''}-${pbr.env ? 'e' : ''}${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}${pbr.fx ? 'f' : ''}${pbr.reflect > 0 ? 's' : ''}${pbr.puddles > 0 ? 'p' : ''}${pbr.ringel > 0 ? 'g' : ''}${pbr.trim ? 't' : ''}-wet`;
+  // Schmiede-Art und Hangfels sind nur Uniforms (Textur, Maße): gleicher Programmtext für alle Arten, darum nur das Merkmal im Schlüssel.
+  // Figuren (4.4B): Oberfläche, Schmiede, Spiegelung, Kantenmaske und Treffer-Effekt sind Uniforms – im Schlüssel stehen nur noch Merkmale mit
+  // eigenen Attributen (Borten, Ringel) und eigene Karten. Früher ergab das rund 25 Figuren-Programme je Grundform, jetzt eines.
+  const progKey = pbr.char
+    ? `sk-toon-10c${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}${pbr.reflect > 0 ? 's' : ''}${pbr.puddles > 0 ? 'p' : ''}${pbr.ringel > 0 ? 'g' : ''}${pbr.trim ? 't' : ''}`
+    : `sk-toon-10${(!!pbr.forge && pbr.surf >= 0) ? '-F' : ''}${pbr.slope && detail ? '-S' : ''}${pbr.surf >= 0 ? 'u' + pbr.surf : ''}${detail ? '-' + detail : ''}-${pbr.env ? 'e' : ''}${pbr.roughMap ? 'r' : ''}${pbr.metalMap ? 'm' : ''}${pbr.fx ? 'f' : ''}${pbr.reflect > 0 ? 's' : ''}${pbr.puddles > 0 ? 'p' : ''}${pbr.ringel > 0 ? 'g' : ''}${pbr.trim ? 't' : ''}-wet`;
   mat.customProgramCacheKey = () => progKey + (isWind(mat) ? 'w' : '');
 }
 
@@ -1130,7 +1207,7 @@ export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial 
   const surfRough: Partial<Record<Surface, number>> = { skin: 0.55, cloth: 0.9, leather: 0.5, hair: 0.6, eye: 0.2 };
   const rough = o.roughness ?? (o.surface && metal === 0 && surfRough[o.surface] !== undefined ? surfRough[o.surface]! : metal > 0 ? (spec >= 1 ? 0.3 : 0.42) : 0.85);
   const fx: ToonFxUniforms | undefined = o.fx
-    ? { hit: { value: 0 }, hitCol: { value: new Color(1, 1, 1) }, dissolve: { value: 0 }, dissolveCol: { value: new Color(1.0, 0.45, 0.12) } }
+    ? { hit: { value: 0 }, hitCol: { value: new Color(1, 1, 1) }, dissolve: { value: 0 }, dissolveCol: { value: new Color(1.0, 0.45, 0.12) }, hero: { value: 1 } }
     : undefined;
   // PBR-Schmiede (4.4A): Figuren-Stoff und -Leder, Metall ohne eigene Reliefkarte und ausdrücklich gewählte Sätze
   const forge: ForgeKind | null = o.forge ?? (o.surface === 'cloth' || o.micro === 'cloth' ? 'stoff' : o.surface === 'leather' || o.micro === 'leather' ? 'leder' : metal > 0 && !o.normalMap && !o.surface ? 'stahl' : null);
@@ -1138,8 +1215,10 @@ export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial 
     forge, forgeScale: o.forgeScale ?? (forge ? FORGE_RECIPES[forge].tile : 1),
     slope: o.slopeRock ?? null, slopeColor: o.slopeColor !== undefined ? new Color(o.slopeColor) : null,
     rough, metal, roughMap: o.roughnessMap ?? null, metalMap: o.metalnessMap ?? null,
-    // Spiegelungen nur, wo sie sichtbar sind: Metall oder glatte Flächen (Eis, Lack)
-    env: metal > 0 || rough < 0.75 || !!o.metalnessMap,
+    // Spiegelungen nur, wo sie sichtbar sind: Metall oder glatte Flächen (Eis, Lack). Figuren tragen den Pfad immer und schalten ihn
+    // über uSkEnvK (ein Programm für alle Figuren-Oberflächen)
+    env: !!o.surface || metal > 0 || rough < 0.75 || !!o.metalnessMap,
+    envOn: metal > 0 || rough < 0.75 || !!o.metalnessMap,
     fx,
     reflect: o.reflect ?? 0,
     puddles: o.puddles ?? 0,
@@ -1173,6 +1252,8 @@ export function cloneToon<T extends Material>(src: T): T {
   const c = src.clone() as T;
   c.onBeforeCompile = src.onBeforeCompile;
   c.customProgramCacheKey = src.customProgramCacheKey;
+  // clone() kopiert userData als JSON: die Zusätze (Funktionen) ausdrücklich mitnehmen
+  if ((src.userData as { skExtra?: unknown }).skExtra) (c.userData as { skExtra?: unknown }).skExtra = (src.userData as { skExtra?: unknown }).skExtra;
   c.defines = { ...(src.defines ?? {}) };
   ensureCsm(c);
   return c;

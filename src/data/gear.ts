@@ -58,7 +58,9 @@ const held = (model: string, hand: 'r' | 'l', roles: Record<string, [Finish, Tin
 
 /** Waffen und Köpfe der Raid-Endbosse (public/models/bosses/, tools/blender/build_bosse.py): alle Rollen mit Standardfarben, `item` und `item2` kommen aus der Palette des Sets */
 const bossHeld = (model: string, hand: 'r' | 'l', o: Partial<Record<string, [Finish, Tint]>> = {}): EquipPart => held(`bosses/${model}`, hand, {
-  steel: ['stahl', '#C9D2DA'], gold: ['gold', 'item2'], leather: ['leder', '#2E1C10'], dark: ['dunkelstahl', '#33343C'], cloth: ['stoff', 'item'], glow: ['glut', '#8FD8FF'], main: ['stahl', '#C9D2DA'], ...o,
+  steel: ['stahl', '#C9D2DA'], gold: ['gold', 'item2'], leather: ['leder', '#2E1C10'], dark: ['dunkelstahl', '#33343C'], cloth: ['stoff', 'item'], glow: ['glut', '#8FD8FF'], main: ['stahl', '#C9D2DA'],
+  // Schneide bis zur Härtungslinie (4.4B): frostig heller Stahl (die Seide-Oberfläche ist matt und hell, wie gehärteter Stahl)
+  edge: ['seide', '#E9EEF2'], ...o,
 } as Record<string, [Finish, Tint]>);
 const bossHead = (model: string, roles: Record<string, [Finish, Tint]>): EquipPart => glb(`bosses/${model}`, roles, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true });
 const BOSS_LV = 42;
