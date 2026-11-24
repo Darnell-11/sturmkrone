@@ -3,6 +3,8 @@
 // kann dieselben Formeln benutzen. Nirgends sonst stehen Schadens-, Rüstungs- oder Preiskurven: Läden, Beute, Inventar und Kompendium
 // lesen alles von hier (Items leiten ihre Werte aus `slotBudget` ab, `tests/balance.test.ts` prüft die Rechnung).
 
+import { PLAYABLE_RADIUS } from './world';
+
 export type Tier = 1 | 2 | 3 | 4 | 5;
 /** Gefahrenstufe von Gegnern, Zonen und Rängen: dieselbe Skala wie die Qualitätsstufe der Ausrüstung */
 export type DangerTier = Tier;
@@ -142,17 +144,26 @@ export interface DangerDef {
   /** Gegnerstufen dieses Bandes (Enemy.level, einschließlich) */
   levelMin: number;
   levelMax: number;
-  /** Bereich als Anteil des Weltradius (vom Mittelpunkt) */
+  /** Bereich als Anteil des spielbaren Radius (vom Mittelpunkt); in Metern: `DANGER_BANDS_M` */
   zoneFrom: number;
   zoneTo: number;
 }
 
+/**
+ * Gefahrenstufen der Karte in Metern vom Mittelpunkt (seit 4.3B, vier Ringe in data/worldRings.ts): Ring 1 (Innen-See) ist ganz Stufe 1,
+ * Ring 2 (Archipel- und Handelsstraßen, 2 200 – 5 200 m) Stufe 2 und 3, Ring 3 (Riff- und Sturmgürtel, 5 200 – 8 200 m) Stufe 3 und 4,
+ * Ring 4 (Kaiser-Meere, 8 200 – 10 400 m) Stufe 4 und 5. Die Grenzfestungen der Marine (≈ 3 000 m) liegen in Stufe 2 (sie selbst sind stärker als ihr Meer), die Endgame-Festungen (9 500 m) in Stufe 5.
+ */
+export const DANGER_BANDS_M: Record<DangerTier, [number, number]> = { 1: [0, 2200], 2: [2200, 3700], 3: [3700, 6700], 4: [6700, 9200], 5: [9200, PLAYABLE_RADIUS] };
+const zf = (t: DangerTier) => DANGER_BANDS_M[t][0] / PLAYABLE_RADIUS;
+const zt = (t: DangerTier) => (t === 5 ? 1 : DANGER_BANDS_M[t][1] / PLAYABLE_RADIUS);
+
 export const DANGER: Record<DangerTier, DangerDef> = {
-  1: { tier: 1, name: 'Heimatgewässer', hp: 1.0, dmg: 1.0, armor: 20, levelMin: 1, levelMax: 4, zoneFrom: 0, zoneTo: 0.12 },
-  2: { tier: 2, name: 'Küstenmeere', hp: 1.8, dmg: 1.5, armor: 50, levelMin: 5, levelMax: 8, zoneFrom: 0.12, zoneTo: 0.32 },
-  3: { tier: 3, name: 'Offene See', hp: 3.0, dmg: 2.2, armor: 95, levelMin: 9, levelMax: 13, zoneFrom: 0.32, zoneTo: 0.56 },
-  4: { tier: 4, name: 'Kriegsgewässer', hp: 4.8, dmg: 3.2, armor: 150, levelMin: 14, levelMax: 17, zoneFrom: 0.56, zoneTo: 0.80 },
-  5: { tier: 5, name: 'Festungsgürtel', hp: 7.5, dmg: 4.5, armor: 215, levelMin: 18, levelMax: 999, zoneFrom: 0.80, zoneTo: 1.0 },
+  1: { tier: 1, name: 'Heimatgewässer', hp: 1.0, dmg: 1.0, armor: 20, levelMin: 1, levelMax: 4, zoneFrom: zf(1), zoneTo: zt(1) },
+  2: { tier: 2, name: 'Küstenmeere', hp: 1.8, dmg: 1.5, armor: 50, levelMin: 5, levelMax: 8, zoneFrom: zf(2), zoneTo: zt(2) },
+  3: { tier: 3, name: 'Offene See', hp: 3.0, dmg: 2.2, armor: 95, levelMin: 9, levelMax: 13, zoneFrom: zf(3), zoneTo: zt(3) },
+  4: { tier: 4, name: 'Kriegsgewässer', hp: 4.8, dmg: 3.2, armor: 150, levelMin: 14, levelMax: 17, zoneFrom: zf(4), zoneTo: zt(4) },
+  5: { tier: 5, name: 'Festungsgürtel', hp: 7.5, dmg: 4.5, armor: 215, levelMin: 18, levelMax: 999, zoneFrom: zf(5), zoneTo: zt(5) },
 };
 
 /** Gefahrenstufe eines Gegners nach seiner Stufe */
@@ -161,8 +172,8 @@ export function dangerOfLevel(level: number): DangerTier {
   return 5;
 }
 
-/** Gefahrenstufe eines Ortes: Abstand vom Mittelpunkt (Ankerglück ≈ 0) im Verhältnis zum Weltradius */
-export function dangerOfDistance(dist: number, worldRadius: number): DangerTier {
+/** Gefahrenstufe eines Ortes: Abstand vom Mittelpunkt (Ankerglück ≈ 0) im Verhältnis zum spielbaren Radius */
+export function dangerOfDistance(dist: number, worldRadius: number = PLAYABLE_RADIUS): DangerTier {
   const f = Math.max(0, dist) / Math.max(1, worldRadius);
   for (const t of TIERS) if (f < DANGER[t].zoneTo) return t;
   return 5;

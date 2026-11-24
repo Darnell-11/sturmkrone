@@ -78,10 +78,11 @@ export const MOBILE_AO_LIMIT = { dirs: 3, steps: 3, scale: 0.5 };
 
 /**
  * Feste Schnittebenen der Spielkamera (Meter): nah 0,1 – nichts wird direkt vor der Kamera abgeschnitten;
- * fern 1000 – alles dahinter liegt im Nebel. Himmel, Wolken und das Meer bis zum Horizont werden auf die
- * Fernebene gelegt statt abgeschnitten (sky.ts, ocean.ts). Tiefen-Effekte lesen die Werte von der Kamera.
+ * fern 4800 – alles dahinter liegt im Nebel. Seit 4.3A reicht sie über die Horizont-Stufe der Inseln (HORIZON_LOD bis 4 500 m seit 4.3B, siehe
+ * world/worldStreamer.ts): deren Silhouetten stehen nebelfrei am Horizont. Himmel (Kuppel 1000 m, Sonne 900 m, ohne Tiefe) und das Meer
+ * bis zum Horizont werden auf die Fernebene gelegt statt abgeschnitten (sky.ts, ocean.ts). Tiefen-Effekte lesen die Werte von der Kamera.
  */
-export const CAMERA_PLANES = { near: 0.1, far: 1000 };
+export const CAMERA_PLANES = { near: 0.1, far: 4800 };
 
 /** Gemeinsamer Bild-Look aller Stufen */
 export const RENDER_LOOK = {

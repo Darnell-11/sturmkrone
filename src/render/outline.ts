@@ -95,9 +95,10 @@ const smoothed = new WeakSet<BufferGeometry>();
 /**
  * Gemittelte Normalen pro Position, damit die Kontur an harten Kanten nicht aufreißt.
  * Gleiche Positionen (auf 2 mm gerundet) werden über einen Zahlenschlüssel gefunden – die frühere Textschlüssel-Fassung
- * kostete bei großen Schiffen über 140 ms je Bau.
+ * kostete bei großen Schiffen über 140 ms je Bau. Als Iterator (Streaming, Phase 4.3A) gibt es in den langen Schleifen je 16 384 Eckpunkte ab,
+ * wenn `slice` gesetzt ist.
  */
-function ensureOutlineNormals(geo: BufferGeometry) {
+function* ensureOutlineNormalsSteps(geo: BufferGeometry, slice: boolean): Generator<void> {
   if (smoothed.has(geo) || geo.getAttribute('outlineNormal')) return;
   if (!geo.getAttribute('normal')) geo.computeVertexNormals();
   const pos = geo.getAttribute('position');
@@ -105,6 +106,7 @@ function ensureOutlineNormals(geo: BufferGeometry) {
   const n = pos.count;
   const px = new Float32Array(n * 3), nx = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) {
+    if (slice && (i & 16383) === 16383) yield;
     px[i * 3] = pos.getX(i); px[i * 3 + 1] = pos.getY(i); px[i * 3 + 2] = pos.getZ(i);
     nx[i * 3] = nor.getX(i); nx[i * 3 + 1] = nor.getY(i); nx[i * 3 + 2] = nor.getZ(i);
   }
@@ -112,6 +114,7 @@ function ensureOutlineNormals(geo: BufferGeometry) {
   const ids2 = new Map<number, number>();
   let unique = 0;
   for (let i = 0; i < n; i++) {
+    if (slice && (i & 16383) === 16383) yield;
     // 3 × 17 Bit (Umlauf bei ±262 m: nur weit entfernte Punkte desselben Netzes könnten zusammenfallen)
     const ix = Math.round(px[i * 3] * 500) & 0x1ffff, iy = Math.round(px[i * 3 + 1] * 500) & 0x1ffff, iz = Math.round(px[i * 3 + 2] * 500) & 0x1ffff;
     const key = ix * 17179869184 + iy * 131072 + iz;
@@ -120,9 +123,10 @@ function ensureOutlineNormals(geo: BufferGeometry) {
     ids[i] = id;
   }
   const sum = new Float32Array(unique * 3);
-  for (let i = 0; i < n; i++) { const id = ids[i] * 3; sum[id] += nx[i * 3]; sum[id + 1] += nx[i * 3 + 1]; sum[id + 2] += nx[i * 3 + 2]; }
+  for (let i = 0; i < n; i++) { if (slice && (i & 32767) === 32767) yield; const id = ids[i] * 3; sum[id] += nx[i * 3]; sum[id + 1] += nx[i * 3 + 1]; sum[id + 2] += nx[i * 3 + 2]; }
   const out = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) {
+    if (slice && (i & 32767) === 32767) yield;
     const id = ids[i] * 3;
     const l = Math.hypot(sum[id], sum[id + 1], sum[id + 2]) || 1;
     out[i * 3] = sum[id] / l; out[i * 3 + 1] = sum[id + 1] / l; out[i * 3 + 2] = sum[id + 2] / l;
@@ -133,13 +137,22 @@ function ensureOutlineNormals(geo: BufferGeometry) {
 
 /** Fügt allen Meshes unter root eine Tusche-Kontur hinzu. width: 1 = normal */
 export function addOutlines(root: Object3D, width = 1) {
+  for (const _ of addOutlinesSteps(root, width)) { /* in einem Zug */ }
+}
+
+/** Dasselbe in Teilschritten (Streaming, Phase 4.3A): gibt nach jedem Netz ab, das viele Eckpunkte hat, sonst nach je acht Netzen */
+export function* addOutlinesSteps(root: Object3D, width = 1): Generator<void> {
   const targets: Mesh[] = [];
   root.traverse((o) => {
     const m = o as Mesh;
     if (m.isMesh && !(m.material as any).userData?.outline && !m.userData.noOutline) targets.push(m);
   });
+  let cost = 0;
   for (const m of targets) {
-    ensureOutlineNormals(m.geometry);
+    const verts = m.geometry.getAttribute('position')?.count ?? 0;
+    cost += 1 + verts / 4000;
+    if (cost >= 8) { cost = 0; yield; }
+    yield* ensureOutlineNormalsSteps(m.geometry, true);
     let mat = hullByWidth.get(width);
     if (!mat) {
       mat = hullMaterial.clone();

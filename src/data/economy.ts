@@ -55,7 +55,12 @@ export const isGoodId = (id: unknown): id is GoodId => typeof id === 'string' &&
 // ---------- Marktprofile ----------
 
 /** Was ein Markt im Überschuss herstellt (billig) und was er dringend braucht (teuer) */
-export interface MarketProfile { produce: GoodId[]; demand: GoodId[] }
+export interface MarketProfile {
+  produce: GoodId[];
+  demand: GoodId[];
+  /** Schwarzmarkt (Phase 4.3B): niemand kontrolliert die Fracht, kein Hafen-Tarif einer Macht; Kriegsware wird hier gehandelt wie jede andere */
+  blackMarket?: boolean;
+}
 
 /**
  * Profile: die Regionen Nordwacht und Glutring haben eigene Spezialitäten, sonst bestimmt die Macht des Sektors (data/factions.ts)
@@ -74,6 +79,43 @@ export const PROFILES: Record<string, MarketProfile> = {
   ankerglueck: { produce: [], demand: [] },
 };
 
+/**
+ * Eigene Märkte der Themen-Inseln (Phase 4.3B, Schlüssel = Insel-Kennung): was die Insel selbst herstellt und braucht. Sie gelten zusätzlich zum Profil
+ * der Macht (Überschuss und Bedarf werden vereinigt); so hat jede Kolonie ihre Spezialität, und dieselbe Macht handelt nicht überall dasselbe.
+ */
+export const ISLAND_PROFILES: Record<string, MarketProfile> = {
+  // England
+  kreideklippe: { produce: ['tuch', 'marineausruestung', 'hartholz'], demand: ['kanonenstahl', 'schmiedekohle', 'werkzeuge'] },
+  koenigshafen: { produce: ['tee', 'stoffe', 'luxusgueter'], demand: ['gewuerze', 'wein', 'seide'] },
+  nebelriff: { produce: ['medizin'], demand: ['schiesspulver', 'tee', 'werkzeuge', 'tuch'] },
+  georgskap: { produce: ['schiesspulver'], demand: ['kanonenstahl', 'schmiedekohle', 'medizin'] },
+  // Niederlande (Handelskompanie)
+  banda: { produce: ['gewuerze', 'tee'], demand: ['werkzeuge', 'hartholz', 'stoffe', 'medizin'] },
+  nieuwhoorn: { produce: ['stoffe', 'luxusgueter', 'werkzeuge'], demand: ['gewuerze', 'seide', 'kanonenstahl', 'wein'] },
+  sandbankatoll: { produce: ['waffenkisten', 'schiesspulver', 'luxusgueter'], demand: ['gewuerze', 'seide', 'medizin'], blackMarket: true },
+  goldkueste: { produce: ['seide', 'luxusgueter'], demand: ['tee', 'wein', 'hartholz', 'kanonenstahl'] },
+  // Deutschland (Hanse)
+  eisenfels: { produce: ['kanonenstahl', 'schmiedekohle'], demand: ['werkzeuge', 'medizin', 'tuch', 'wein'] },
+  bernsteinkueste: { produce: ['hartholz', 'werkzeuge'], demand: ['tuch', 'tee', 'gewuerze'] },
+  nordsturmklippe: { produce: ['schiesspulver'], demand: ['hartholz', 'medizin', 'wein', 'tuch'] },
+  donnergiesserei: { produce: ['waffenkisten', 'kanonenstahl'], demand: ['schmiedekohle', 'schwefel', 'werkzeuge'] },
+  // Frankreich
+  sonnenweinkap: { produce: ['wein', 'seide'], demand: ['hartholz', 'tee', 'kanonenstahl'] },
+  korallenbucht: { produce: ['luxusgueter'], demand: ['stoffe', 'werkzeuge', 'wein', 'medizin'] },
+  bastionlumiere: { produce: ['fechtklingen', 'marineausruestung'], demand: ['kanonenstahl', 'schiesspulver', 'schwefel'] },
+  fleuratoll: { produce: ['luxusgueter', 'gewuerze'], demand: ['seide', 'tuch', 'werkzeuge'] },
+  // Kurogane
+  aschezahn: { produce: ['schwefel', 'obsidian', 'schmiedekohle'], demand: ['medizin', 'werkzeuge', 'tuch'] },
+  schattenbucht: { produce: ['waffenkisten', 'schiesspulver', 'obsidian'], demand: ['luxusgueter', 'seide', 'wein'], blackMarket: true },
+  drachenwirbel: { produce: ['schwefel', 'obsidian'], demand: ['medizin', 'hartholz'] },
+  blutmondriff: { produce: ['fechtklingen', 'waffenkisten'], demand: ['schiesspulver', 'medizin', 'wein'] },
+  // Unkartierte Geheim-Inseln
+  fluesterlagune: { produce: ['waffenkisten', 'schiesspulver', 'medizin'], demand: ['luxusgueter', 'seide', 'gewuerze'], blackMarket: true },
+  versunkenekrone: { produce: ['obsidian'], demand: ['medizin', 'werkzeuge'] },
+  knochenriff: { produce: [], demand: ['medizin', 'wein'] },
+  sternenfall: { produce: ['luxusgueter'], demand: ['werkzeuge', 'tuch'] },
+};
+
 /** Schlüssel der Profile, die für eine Insel gelten (Region zuerst, dann Macht); leer = freier Hafen */
 export function profileKeys(i: { id: string; region?: string; factionId?: string | null }): string[] {
   const out: string[] = [];
@@ -83,12 +125,14 @@ export function profileKeys(i: { id: string; region?: string; factionId?: string
   return out;
 }
 
-/** Überschuss und Bedarf einer Insel */
+/** Überschuss und Bedarf einer Insel: eigenes Profil (Themen-Inseln) zuerst, dann Region und Macht */
 export function profileOf(i: { id: string; region?: string; factionId?: string | null }): MarketProfile {
   const produce = new Set<GoodId>(), demand = new Set<GoodId>();
+  const own = ISLAND_PROFILES[i.id];
+  if (own) { for (const g of own.produce) produce.add(g); for (const g of own.demand) demand.add(g); }
   for (const k of profileKeys(i)) { for (const g of PROFILES[k].produce) produce.add(g); for (const g of PROFILES[k].demand) demand.add(g); }
   for (const g of produce) demand.delete(g);
-  return { produce: [...produce], demand: [...demand] };
+  return own?.blackMarket ? { produce: [...produce], demand: [...demand], blackMarket: true } : { produce: [...produce], demand: [...demand] };
 }
 
 // ---------- Markt-Zahlen ----------

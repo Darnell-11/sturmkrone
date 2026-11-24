@@ -34,12 +34,12 @@ import { portIndices, aiEvolution, evoStats } from '../data/shipEvolution';
 import { aiMayRam, hasSwivels, ramContact, ramDamage, ramImpulse, swivelCooldown, swivelDamage, swivelTarget, type Kin } from './ramming';
 import { RAM, SWIVEL } from '../data/balanceConfig';
 import { REP, hasService, isHostile, isPeaceful, judgeBattle, newStats, type BattleStats } from '../data/reputation';
-import { WORLD_RADIUS } from '../data/world';
+import { PLAYABLE_RADIUS } from '../data/world';
 import { Ship, type SeaEnv } from '../entities/ship/ship';
 import type { SwivelMount } from '../entities/ship/shipEvoParts';
 import { cloneToon, toon } from '../render/toon';
 import type { CombatOverlay } from '../ui/combatOverlay';
-import type { IslandGround } from '../world/islandGround';
+import type { IslandGround, Pier } from '../world/islandGround';
 import type { ParticleSystem } from '../world/particles';
 import type { SmokeSystem } from '../world/smoke';
 import type { DebrisSystem } from '../world/debris';
@@ -255,12 +255,14 @@ export class NavalSystem {
   private later(sec: number, fn: () => void) { this.timers.push({ t: sec, fn }); }
   /** Vorausschauende KI-Lenkung (Fühler, Wendekreis, Gefechts-Zustandsmaschine) */
   private readonly steering: PredictiveMaritimeSteering;
+  /** Arbeitsliste der Steg-Abfrage (Broadphase) für `freeWater` */
+  private readonly nearPiers: Pier[] = [];
   /** Schiffe auf der Seite des Spielers (Flaggschiff, Begleiter, Marine-Helfer): ihre Kugeln treffen einander nie (je Schritt in `registerObstacles` gefüllt) */
   private readonly friendly = new Set<Ship>();
 
   constructor(private scene: Scene, private env: SeaEnv, private fx: CombatFx, private overlay: CombatOverlay, private spray: ParticleSystem, private sparks: ParticleSystem, private ground: IslandGround, private hooks: NavalHooks) {
     this.efx = new ElementFx(scene, fx, sparks, { shake: (a) => hooks.shake(a), hitstop: (t) => hooks.hitstop(t), speedlines: (v) => overlay.speedlines(v) });
-    this.steering = new PredictiveMaritimeSteering(ground, env, WORLD_RADIUS);
+    this.steering = new PredictiveMaritimeSteering(ground, env, PLAYABLE_RADIUS);
     this.fanGroup.renderOrder = 3;
     scene.add(this.fanGroup, ...this.rings);
   }
@@ -299,7 +301,7 @@ export class NavalSystem {
     for (let tries = 0; tries < 10; tries++) {
       const a = p.heading + (Math.random() - 0.5) * 1.2;
       const x = p.x + Math.sin(a) * 150, z = p.z + Math.cos(a) * 150;
-      if (Math.hypot(x, z) > WORLD_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
+      if (Math.hypot(x, z) > PLAYABLE_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
       const foe: 'pirat' | 'marine' = this.playerFaction === 'pirat' ? 'marine' : 'pirat';
       const ship = new Ship(this.scene, 0, DEFAULT_SHIP_LOOK(foe), foe, 0, false, aiEvolution('rookie', 1));
       ship.x = x; ship.z = z; ship.heading = Math.atan2(p.x - x, p.z - z) + Math.PI / 2;
@@ -545,7 +547,7 @@ export class NavalSystem {
       const d = 420 + Math.random() * 140;
       const x = near ? near.x - Math.sin(near.heading) * 28 + (Math.random() - 0.5) * 20 : px + Math.cos(a) * d;
       const z = near ? near.z - Math.cos(near.heading) * 28 + (Math.random() - 0.5) * 20 : pz + Math.sin(a) * d;
-      if (Math.hypot(x, z) > WORLD_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
+      if (Math.hypot(x, z) > PLAYABLE_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
       let foe: 'pirat' | 'marine' = role === 'haendler' ? (Math.random() < 0.5 ? 'pirat' : 'marine') : this.playerFaction === 'pirat' ? 'marine' : 'pirat';
       const tier = Math.max(0, Math.min(role === 'haendler' ? 3 : 5, Math.floor(lvl / 2) + Math.floor(Math.random() * 2) - (role === 'haendler' ? 0 : 1)));
       // Die Macht des Meeres (Kuchenstück, Besitzer der nächsten Insel, Marine an den Grenzlinien) bestimmt, wessen Schiff hier fährt
@@ -630,7 +632,7 @@ export class NavalSystem {
         const toward = Math.sign((p.x - fx) * Math.sin(a) + (p.z - fz) * Math.cos(a)) || 1;
         const t = f.radius + toward * (150 + Math.random() * 150 + have * 90), off = (Math.random() - 0.5) * 110;
         const x = Math.sin(a) * t + Math.cos(a) * off, z = Math.cos(a) * t - Math.sin(a) * off;
-        if (this.ground.islandAt(x, z, 40) || Math.hypot(x, z) > WORLD_RADIUS - 150) continue;
+        if (this.ground.islandAt(x, z, 40) || Math.hypot(x, z) > PLAYABLE_RADIUS - 150) continue;
         const lvl = f.level, tier = Math.max(2, Math.min(4, Math.floor(lvl / 3)));
         const ship = new Ship(this.scene, tier, factionShipLook('marine'), 'marine', Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)), false, aiEvolution('grenze', dangerOfLevel(lvl)));
         ship.x = x; ship.z = z; ship.heading = a + (Math.random() < 0.5 ? 0 : Math.PI);
@@ -703,7 +705,7 @@ export class NavalSystem {
         const spread = (i - (sizes[side] - 1) / 2) * 52 + (Math.random() - 0.5) * 16;
         const dir = side === 0 ? -1 : 1;
         const x = site.x + site.across.x * dir * BATTLE.split + site.along.x * spread, z = site.z + site.across.z * dir * BATTLE.split + site.along.z * spread;
-        if (Math.hypot(x, z) > WORLD_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
+        if (Math.hypot(x, z) > PLAYABLE_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
         const power = powers[side];
         const tier = Math.max(1, Math.min(4, Math.floor(lvl / 2) + Math.floor(Math.random() * 2)));
         const foe: 'pirat' | 'marine' = power === 'kurogane' ? 'pirat' : 'marine';
@@ -735,7 +737,7 @@ export class NavalSystem {
     const dir = Math.random() < 0.5 ? -1 : 1;
     for (let i = 0; i < n; i++) {
       const x = site.x + site.across.x * dir * 380 + site.along.x * (i - 0.5) * 70, z = site.z + site.across.z * dir * 380 + site.along.z * (i - 0.5) * 70;
-      if (Math.hypot(x, z) > WORLD_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
+      if (Math.hypot(x, z) > PLAYABLE_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
       const lvl = Math.max(2, this.zoneLevel(x, z));
       const tier = Math.max(2, Math.min(4, Math.floor(lvl / 3) + 1));
       const ship = new Ship(this.scene, tier, factionShipLook('marine'), 'marine', Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)), false, aiEvolution('grenze', dangerOfLevel(lvl)));
@@ -976,7 +978,8 @@ export class NavalSystem {
   /** Offenes Wasser für ein Schiff der Breite `W`: `clear` Meter Abstand zur Küste (samt Böschung) und zu allen Stegen */
   private freeWater(x: number, z: number, W: number, clear: number): boolean {
     if (this.ground.shipClearance(x, z, W, clear + 10) < clear) return false;
-    for (const q of this.ground.piers) if (distToSegment(x, z, q.ax, q.az, q.bx, q.bz) - q.hw - W * 0.5 < clear) return false;
+    const near = this.ground.getNearbyPiers(x, z, clear + W * 0.5, this.nearPiers);
+    for (let i = 0; i < near.length; i++) { const q = near[i]; if (distToSegment(x, z, q.ax, q.az, q.bx, q.bz) - q.hw - W * 0.5 < clear) return false; }
     return true;
   }
 

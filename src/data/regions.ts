@@ -2,11 +2,14 @@
 // Seit 2.9.90 ist der Ring in fünf Kuchenstücke zu je 72° geteilt (data/factions.ts): jedes gehört einer Macht, dazu kommen
 // die Marine-Grenzfestungen auf den Grenzlinien und im äußeren Band die Endgame-Festungen.
 import { WORLD_SCALE } from './world';
-import { BORDER_FORTS, BORDERS, CITADELS, FACTIONS, borderDistance, isExclave, islandOwner, sectorAt, sectorIndexAt, type FactionId } from './factions';
+import { BORDER_FORTS, BORDERS, CITADELS, FACTIONS, borderDistance, isExclave, islandOwner, sectorAt, sectorIndexAt, type FactionId, type PowerId } from './factions';
+import type { DangerTier } from './balanceConfig';
+import { themeIslandDefs } from './openWorld';
+import { dangerTierAt, outerSeaLevel, ringAt, type RingId } from './worldRings';
 
 export type IslandKind = 'town' | 'harbor' | 'camp' | 'ruin' | 'quiet' | 'treasure' | 'lighthouse' | 'boss' | 'marinefort' | 'citadel';
 /** Aussehen der Inseln einer Region */
-export type IslandStyle = 'tropisch' | 'nebel' | 'nord' | 'glut' | 'sturm' | 'schlund' | 'festland' | 'klippe';
+export type IslandStyle = 'tropisch' | 'nebel' | 'nord' | 'glut' | 'sturm' | 'schlund' | 'festland' | 'klippe' | 'kreide' | 'atoll' | 'weinland';
 
 export interface IslandDef {
   id: string;
@@ -42,6 +45,13 @@ export interface IslandDef {
   /** Marine-Anlage: Grenzfestung auf einer Grenzlinie (`border`, mit `borderIndex`) oder das Hauptquartier am Weltrand (`hq`) */
   marine?: 'border' | 'hq';
   borderIndex?: number;
+  /** Ring der offenen Welt (1 … 4, data/worldRings.ts) und Gefahrenstufe des Ortes (1 … 5); setzt die Weltdaten beim Laden (4.3B) */
+  ring?: RingId;
+  dangerTier?: DangerTier;
+  /** Unkartierte Geheim-Insel (4.3B): auf keiner Karte, bis sie entdeckt ist (Entdeckungs-System in 4.3D) */
+  uncharted?: boolean;
+  /** Themen-Insel (4.3B): Besitz laut data/openWorld.ts (null = herrenlos), gilt vor dem Kuchenstück */
+  themePower?: PowerId | null;
 }
 
 export interface RegionDef {
@@ -207,11 +217,15 @@ for (const c of CITADELS) {
     marine: hq ? 'hq' : undefined, info: c.info,
   });
 }
+// Die 24 Themen-Inseln der offenen Welt (Phase 4.3B, data/openWorld.ts): je Kuchenstück vier, dazu vier unkartierte; fertige Weltkoordinaten
+for (const d of themeIslandDefs()) regionOfPoint(d.x, d.z).islands.push(d);
 for (const r of REGIONS) {
   for (const i of r.islands) {
     i.region = r.id;
-    // Besitz: Marine-Anlagen gehören der Marine, alle anderen laut data/factions.ts (Ankerglück bleibt unabhängig)
-    i.factionId = i.marine ? 'marine' : CITADELS.find((c) => c.id === i.id)?.factionId ?? islandOwner(i.id, r.id);
+    // Besitz: Marine-Anlagen gehören der Marine, Themen-Inseln laut data/openWorld.ts, alle anderen laut data/factions.ts (Ankerglück bleibt unabhängig)
+    i.factionId = i.marine ? 'marine' : CITADELS.find((c) => c.id === i.id)?.factionId ?? (i.themePower !== undefined ? i.themePower : islandOwner(i.id, r.id));
+    i.ring = ringAt(i.x, i.z).ring;
+    i.dangerTier = dangerTierAt(i.x, i.z);
     i.sectorIndex = sectorIndexAt(i.x, i.z);
     i.exclave = isExclave(i.factionId, i.x, i.z);
   }
@@ -277,7 +291,8 @@ export function seaLevelAt(x: number, z: number): number {
     return Math.max(1, Math.min(4, 1 + Math.floor(Math.hypot(x - home.x, z - home.z) / (260 * WORLD_SCALE))));
   }
   const out = Math.max(0, Math.min(4, Math.floor((Math.hypot(x, z) - 1150 * WORLD_SCALE) / (280 * WORLD_SCALE))));
-  return (reg.level ?? 1) + out;
+  // Ab Ring 3 (5 200 m, seit 4.3B) wächst die Stufe mit dem Abstand weiter bis 22 am Außenrand; nie unter der Stufe des alten Meeres
+  return Math.max((reg.level ?? 1) + out, Math.hypot(x, z) >= 5200 ? outerSeaLevel(Math.hypot(x, z)) : 0);
 }
 
 /** Wo man gerade segelt, für Kompass, Steuerkompass und die Sektor-Einblendung */

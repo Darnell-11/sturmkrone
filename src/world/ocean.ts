@@ -10,7 +10,7 @@ import {
   Vector3,
   Vector4,
 } from 'three';
-import { WAVES, WORLD_RADIUS, WORLD_SCALE } from '../data/world';
+import { WAVES, WORLD_RADIUS } from '../data/world';
 import { WATER_ALPHA } from '../render/outline';
 import { fogUniforms } from '../render/atmosphere';
 import { ensureCsm } from '../render/csm';
@@ -28,8 +28,8 @@ const SOFT_RAMP = (() => {
 
 const G = 9.81;
 const SHORE_SIZE = WORLD_RADIUS * 2.1;
-// Auflösung wächst mit der Welt: eine Zelle bleibt rund 4 m groß (sonst würden Brandung und Flachwasser grob)
-const SHORE_RES = 1024 * WORLD_SCALE;
+// Auflösung wächst mit der Welt: eine Zelle bleibt rund 5,5 m groß (sonst würden Brandung und Flachwasser grob); seit 4.3B 4096 × 4096 (ein Byte je Zelle)
+const SHORE_RES = 4096;
 const MAX_WAKE = 32;
 /** Schiffe, deren Rumpfschaum und Bugwelle das Wasser zeichnet (das eigene und die nächsten) */
 const MAX_HULL = 6;

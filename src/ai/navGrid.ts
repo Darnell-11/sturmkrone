@@ -313,6 +313,12 @@ export function navForIsland(isl: WalkIsland): NavGrid {
   return n;
 }
 
+/** Begehbarkeits-Netz einer Insel freigeben (die Insel wird abgebaut: Streaming); beim nächsten Gebrauch entsteht es neu */
+export function releaseNavForIsland(isl: WalkIsland): void {
+  const i = cache.findIndex((c) => c.island === isl);
+  if (i >= 0) cache.splice(i, 1);
+}
+
 /**
  * Lenkt eine Figur zu einem Ziel: bei freier Sicht direkt, sonst über den A*-Weg (alle 0,5 s oder bei
  * deutlich verschobenem Ziel neu geplant). Ergebnis: Richtung (Einheitsvektor) in out, Restweg als Rückgabe.

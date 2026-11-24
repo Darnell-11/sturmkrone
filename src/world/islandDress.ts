@@ -27,7 +27,7 @@ import { boxBlocker, coastK, type WalkIsland } from './islandGround';
 import { plant, type StyleKit } from './islandStyle';
 import { hashId, seeded } from './waves';
 import { markWind, windify } from '../render/wind';
-import { cachedProto, envProto, floraProto, groundY, noise, type Scatter } from './vegetation';
+import { cachedProto, envProto, floraProto, groundY, noise, type Biome, type Scatter } from './vegetation';
 import { auditPlacement } from './placeAudit';
 import type { GlowPlaced } from '../render/glow';
 import { archGroup, hasArch } from './envModels';
@@ -87,18 +87,37 @@ const FLOWERS: Record<IslandStyle, string[]> = {
   schlund: ['#78D8F2', '#A886F0'],
   festland: ['#E8D44A', '#F2F0E6', '#C8443C', '#7B8FE0'],
   klippe: ['#C2CCD2', '#9AA8C8'],
+  kreide: ['#F2F0E6', '#C8443C', '#E8D44A'],
+  atoll: ['#F06A90', '#F4F0E0', '#F0A030'],
+  weinland: ['#8A5AC8', '#C84A6A', '#E8D44A'],
 };
 
 /** Bewuchs-Palette (Blender-Pflanzen) je Inselstil; null = eigene Farbwelt des Stils (Glut, Schlund, Nebel behalten die Eigenbau-Pflanzen) */
-const biomeOf = (st: IslandStyle): 'festland' | 'tropisch' | 'klippe' | null =>
-  st === 'tropisch' ? 'tropisch' : st === 'festland' || st === 'nord' ? 'festland' : st === 'klippe' || st === 'sturm' ? 'klippe' : null;
+const biomeOf = (st: IslandStyle): Biome | null =>
+  st === 'tropisch' ? 'tropisch' : st === 'festland' || st === 'nord' ? 'festland' : st === 'klippe' || st === 'sturm' ? 'klippe'
+    : st === 'kreide' || st === 'atoll' || st === 'weinland' ? st : null;
 
 /**
  * Stattet eine Insel aus: Pflanzen, Felsen, Strandgut und – je nach Art – Lager, Dorf, Wrack, Ruine oder Wehranlage.
  * Alles wird aus dem Namen der Insel ausgewürfelt: jede Insel sieht anders aus, aber bei jedem Start gleich.
  * Liefert Baum-, Busch- und Feuerplätze für Tiere und Effekte.
  */
-export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fires: Spot[]; glows: GlowPlaced[]; patrols: { x: number; z: number }[][] } {
+export type Dressed = { trees: Spot[]; bushes: Spot[]; fires: Spot[]; glows: GlowPlaced[]; patrols: { x: number; z: number }[][] };
+
+/** Ausstattung einer Insel in einem Zug (die Welt baut sie beim Laden so, siehe `dressIslandSteps`) */
+export function dressIsland(o: DressOpts): Dressed {
+  const it = dressIslandSteps(o);
+  let r = it.next();
+  while (!r.done) r = it.next();
+  return r.value;
+}
+
+/**
+ * Dieselbe Ausstattung in Teilschritten (Streaming, Phase 4.3A): der Iterator gibt zwischen den Abschnitten (Bauten je Inselart, Bäume, Büsche,
+ * Gras, Blumen, Boden, Felsen, Wege) und in den langen Schleifen ab, damit der WorldStreamer die Arbeit auf mehrere Bilder verteilen kann.
+ * Das Ergebnis ist dasselbe wie in einem Zug: gleiche Zufallsfolge, gleiche Reihenfolge.
+ */
+export function* dressIslandSteps(o: DressOpts): Generator<void, Dressed> {
   const { group, def, kit, walk, hAt, glow, style, veg } = o;
   const rnd = seeded(hashId(def.id) ^ 0x9e3779b9);
   const r = def.r;
@@ -176,6 +195,9 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     schlund: ['steinhaus', 'stelzenhuette', 'holzhuette'],
     festland: ['fachwerkhaus', 'steinhaus', 'holzhuette', 'kolonialhaus'],
     klippe: ['steinhaus'],
+    kreide: ['steinhaus', 'fachwerkhaus', 'holzhuette'],
+    atoll: ['stelzenhuette', 'rundhuette', 'stelzenhuette'],
+    weinland: ['kolonialhaus', 'steinhaus', 'fachwerkhaus'],
   };
   /** Wege (Inselkoordinaten, Breite): werden am Ende als Erdbänder auf den Boden gelegt */
   const paths: { pts: [number, number][]; w: number }[] = [];
@@ -385,10 +407,12 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       const gateHalf = 0.2;
       const cx = (a: number, d: number) => ({ x: c.x + Math.cos(a) * d, z: c.z + Math.sin(a) * d });
       const faceC = (p: { x: number; z: number }) => Math.atan2(c.x - p.x, c.z - p.z);
+      yield;
       // Erdplatz: drei breite Bänder im Sechseck durch die Mitte, dazu der Weg zum Tor und zur Hütte
       { const ex = cx(pa, R + 3), bk = cx(pa + Math.PI, R * 0.6);
         paths.push({ pts: [[ex.x, ex.z], [c.x + (ex.x - c.x) * 0.5, c.z + (ex.z - c.z) * 0.5], [c.x, c.z], [bk.x, bk.z]], w: 4.6 });
         for (let k = 0; k < 3; k++) { const a = pa + (k / 3) * Math.PI, dx = Math.cos(a) * 6.4, dz = Math.sin(a) * 6.4; paths.push({ pts: [[c.x - dx, c.z - dz], [c.x, c.z], [c.x + dx, c.z + dz]], w: 8.2 }); } }
+      yield;
       // Wachtürme links und rechts vom Tor, Laternen am Durchgang
       for (const s of [-1, 1]) {
         const p = cx(pa + s * (gateHalf + 0.17), R + 0.4);
@@ -396,6 +420,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
         const t = cx(pa + s * (gateHalf - 0.02), R - 1.6);
         if (free(t.x, t.z, 0.6)) mount('laterne', t.x, t.z, 0);
       }
+      yield;
       // Kapitänshütte gegenüber dem Tor, Vorräte, Waffenständer
       { const hp = cx(pa + Math.PI, R * 0.62);
         if (free(hp.x, hp.z, 3.6)) { mount('holzhuette', hp.x, hp.z, faceC(hp)); placedHomes.push({ x: hp.x, z: hp.z, yaw: faceC(hp) }); }
@@ -410,6 +435,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
           const bp = cx(pa + Math.PI * ba, bd);
           if (free(bp.x, bp.z, 0.8)) { put(flag(def.factionId ? FACTIONS[def.factionId].fort.cloth : '#8A1F1A', darkWood, 2.1), bp.x, bp.z); block(bp.x, bp.z, 0.4); break; }
         } }
+      yield;
       // Feuerstelle mit Sitzbalken, zweite Feuerstelle bei den Zelten
       const fire = campfire(glow);
       put(fire, c.x, c.z, 0);
@@ -426,6 +452,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
       }
       { const f2 = cx(pa - Math.PI * 0.5 + 0.25, 7.2);
         if (free(f2.x, f2.z, 1.4)) { put(campfire(glow, true), f2.x, f2.z, 0); fires.push({ x: f2.x, y: hAt(f2.x, f2.z) + 0.3, z: f2.z }); glows.push({ kind: 'fire', x: f2.x, y: hAt(f2.x, f2.z) + 0.22, z: f2.z, ground: hAt(f2.x, f2.z), size: 0.9, pool: 7 }); block(f2.x, f2.z, 0.9); } }
+      yield;
       // Zelte im Ring um die Feuerstelle (nicht vor dem Tor und nicht an der Hütte), Türen zum Feuer
       const tentCloth = [canvas, toon({ color: '#B9674A', side: DoubleSide }), toon({ color: '#7B94A4', side: DoubleSide }), toon({ color: '#C9B48E', side: DoubleSide })];
       const tentAt: [number, number][] = [[1, 0.95], [-1, 0.95], [1, 1.4], [-1, 1.4], [1, 1.85], [-1, 1.85], [1, 2.3], [-1, 2.3]];
@@ -441,6 +468,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
           break;
         }
       }
+      yield;
       // Palisade: dicht gesetzte, angespitzte Stämme; Lücke am Tor; Kollision in Abschnitten von ~2,3 m
       const postMat = toon('#5A4129'), postTop = toon('#7B5C3C');
       const nPost = Math.round((Math.PI * 2 * R) / 0.5);
@@ -460,6 +488,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
         group.add(post, tip);
         if (++run % 4 === 0) blockBox(p.x + Math.sin(a) * 0.75, p.z - Math.cos(a) * 0.75, 2.3, 0.7, -a - Math.PI / 2);
       }
+      yield;
       // Querbalken hinter den Stämmen (innen)
       for (let i = 0; i < Math.floor(nPost / 7); i++) {
         const a = pa + Math.PI * 2 * ((i * 7 + 3) / nPost);
@@ -500,6 +529,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
           home(kindOf(i), x, z, Math.atan2(c.x - x, c.z - z) + (layout === 2 ? (rnd() - 0.5) * 1.2 : 0));
         }
       }
+      yield;
       // Wege: von jeder Tür zur Dorfmitte (bei der Zeile am Strand zusätzlich entlang der Häuser)
       for (const h of placedHomes) pathFromDoor(h, c, layout === 1 ? 2.6 : 2.2);
       if (layout === 1 && placedHomes.length > 1) paths.push({ pts: placedHomes.map((h) => [h.x + Math.sin(h.yaw) * 4.4, h.z + Math.cos(h.yaw) * 4.4] as [number, number]), w: 3.0 });
@@ -508,6 +538,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
         if (rnd() < 0.65) { const pit = campfire(glow, true); put(pit, c.x, c.z, 0); fires.push({ x: c.x, y: hAt(c.x, c.z) + 0.3, z: c.z }); block(c.x, c.z, 0.9); }
         else mount('brunnen', c.x, c.z, rnd() * 6);
       }
+      yield;
       // Hausrat: was herumsteht, würfelt jede Insel selbst
       const props: StructureType[] = ['kisten', 'fass', 'faesser', 'heu', 'laterne', 'zaun', 'kisten'];
       for (let i = 0; i < 2 + Math.floor(rnd() * 4); i++) {
@@ -516,6 +547,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
         if (Math.hypot(x, z) > E(Math.atan2(z, x)) * 0.84 || !free(x, z, 2.2)) continue;
         mount(props[Math.floor(rnd() * props.length)], x, z, rnd() * 6, 5 + rnd() * 4);
       }
+      yield;
       // Netze trocknen am Strand, Ruderboote liegen im Sand
       for (let i = 0; i < 2; i++) {
         const a = rnd() * Math.PI * 2, d = E(a) * 0.84;
@@ -529,6 +561,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     case 'harbor': {
       // Außenposten: Häuser im Bogen hinter dem Steg (der Steg zeigt zur Weltmitte, siehe seaWorld)
       const facing = Math.atan2(-def.x, -def.z);
+      yield;
       // Steg und Zugang freihalten: dort liegen keine Felsen, Kisten oder Büsche
       { const pe = E(Math.atan2(Math.cos(facing), Math.sin(facing))); for (let d = pe * 0.7; d <= pe + 30; d += 2) taken.push({ x: Math.sin(facing) * d, z: Math.cos(facing) * d, r: 3 }); }
       const homes = HOMES[style];
@@ -541,6 +574,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
         const t = homes[(first + i) % homes.length];
         home(t === 'wachturm' && i !== n - 1 ? 'holzhuette' : t, x, z, a + (rnd() - 0.5) * 0.35);
       }
+      yield;
       // Hauptweg vom Steg ins Dorf, Stichwege zu den Haustüren
       {
         const root = E(Math.atan2(Math.cos(facing), Math.sin(facing)));
@@ -550,6 +584,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
         paths.push({ pts: [top, mid, end], w: 3.6 });
         for (const h of placedHomes) pathFromDoor(h, { x: mid[0] * 0.5 + end[0] * 0.5, z: mid[1] * 0.5 + end[1] * 0.5 }, 2.0);
       }
+      yield;
       // Hafenanlagen: Lagerhaus am Kai, Hebekran, Marktstände, Kapelle hinter den Häusern
       {
         const fa = facing;
@@ -565,6 +600,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
         place('marktstand', -0.3, 0.7, Math.PI + 0.3, 2.6);
         place('kapelle', 0.05, 0.28, 0, 7);
       }
+      yield;
       // Kai: Laternen, Kisten und Fässer am Fuß des Stegs
       const quay: StructureType[] = ['laterne', 'kisten', 'faesser', 'laterne', 'fass', 'netz', 'boot'];
       for (let i = 0; i < 4 + Math.floor(rnd() * 3); i++) {
@@ -627,6 +663,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     case 'boss': {
       if (style === 'glut') break; // dort steht der Vulkan
       if (def.id === 'festungnordwacht') { fortress(); break; }
+      yield;
       // Wehranlage: kleiner Burgring mit zwei Torhäusern, Rundtürmen, einem Wachhaus und gepflasterten Wegen
       const fort = curtainWall(0.46, 2);
       courtRoads(fort.gates, { x: 0, z: 0 });
@@ -640,6 +677,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     case 'lighthouse': {
       // Der Leuchtturm steht in der Inselmitte, daneben das Wärterhaus mit Weg
       mount('leuchtturm', 0, 0, rnd() * 6);
+      yield;
       // Umlaufender Lichtkegel (nachts): bleibt ungemergt (die Drehung rechnet der Shader um die Laterne)
       {
         const ly = hAt(0, 0) + 22.6;
@@ -659,6 +697,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     }
   }
 
+  yield;
   // ---------- Besitz: Banner der Macht an der Landestelle ----------
   if (def.factionId && def.kind !== 'citadel' && def.kind !== 'marinefort') {
     const seaA = Math.atan2(-def.z, -def.x); // Richtung zur Weltmitte: dort legen die meisten Schiffe an
@@ -668,6 +707,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     }
   }
 
+  yield;
   // ---------- Bäume ----------
   // Jede Insel hat ihren eigenen Bewuchs: karg, normal oder dicht bewaldet; die Bäume stehen in Hainen mit Lichtungen
   // dazwischen (nicht gleichmäßig verstreut), und in den Tropen mischt jede Insel Palmen und Laubbäume anders
@@ -677,6 +717,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   const birchK = style === 'nord' ? rnd() * 0.35 : 0;
   const nTrees = Math.round((r * 0.22 + 1) * dens * (0.55 + rnd()) * wooded);
   for (let i = 0, placed = 0; i < nTrees * 4 && placed < nTrees; i++) {
+    if ((i & 31) === 31) yield;
     const p = spot(0.1, 0.78, 1.4);
     if (!p) continue;
     if (noise(p.x / groveSize, p.z / groveSize, groveSeed) < groveThr) continue;
@@ -695,6 +736,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     trees.push({ x: p.x, y: hAt(p.x, p.z), z: p.z });
   }
 
+  yield;
   // ---------- Strandpflanzen: ein paar schiefe Palmen bzw. Sträucher auf dem Sand ----------
   if (style === 'tropisch' || style === 'nord') {
     for (let i = 0; i < Math.round(r * 0.1 * dens); i++) {
@@ -707,10 +749,12 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     }
   }
 
+  yield;
   // ---------- Büsche, Gras, Blumen ----------
   const lush = style === 'tropisch' || style === 'nord' || style === 'nebel';
   const nBush = Math.round(r * (lush ? 0.8 : 0.4) * dens * (0.55 + rnd()));
   for (let i = 0; i < nBush; i++) {
+    if ((i & 31) === 31) yield;
     const p = spot(0.08, 0.86, 0.9, 6);
     if (!p) continue;
     const v = Math.floor(rnd() * 3);
@@ -748,6 +792,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   }
   const nTuft = Math.round(r * (lush ? 9.5 : 4.2) * dens);
   for (let i = 0; i < nTuft; i++) {
+    if ((i & 31) === 31) yield;
     const a = rnd() * Math.PI * 2, d = E(a) * Math.sqrt(rnd()) * 0.86;
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
     if (!free(x, z, 0.2)) continue;
@@ -775,6 +820,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
   const flowers = FLOWERS[style];
   const nFlower = Math.round(r * (style === 'tropisch' || style === 'nord' ? 2.6 : style === 'festland' ? 2.0 : 0.6) * dens);
   for (let i = 0; i < nFlower; i++) {
+    if ((i & 31) === 31) yield;
     const a = rnd() * Math.PI * 2, d = E(a) * Math.sqrt(rnd()) * 0.8;
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
     if (!free(x, z, 0.2)) continue;
@@ -798,6 +844,7 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     put(f, x, z);
   }
 
+  yield;
   // ---------- Strand und Waldboden: Kiesel, Dünengras, Stümpfe, Stämme, Pilze – damit Sand und Wiese nirgends leer wirken ----------
   {
     const rockHex = (v: number) => () => `#${rockMats[v % 3].color.getHexString()}`;
@@ -857,9 +904,11 @@ export function dressIsland(o: DressOpts): { trees: Spot[]; bushes: Spot[]; fire
     }
   }
 
+  yield;
   // ---------- Felsen und Strandgut ----------
   const nRock = Math.round((2 + r * 0.12) * (0.6 + rnd() * 0.8));
   for (let i = 0; i < nRock; i++) {
+    if ((i & 31) === 31) yield;
     const inWater = rnd() < 0.35;
     const a = rnd() * Math.PI * 2;
     const d = E(a) * (inWater ? 1.04 + rnd() * 0.12 : 0.55 + rnd() * 0.4);

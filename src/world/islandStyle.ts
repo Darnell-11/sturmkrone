@@ -39,6 +39,12 @@ export function styleKit(style: IslandStyle): StyleKit {
     case 'festland': k = { sand: toon({ color: 0xe9dcb8, detail: 'sand', rim: 0.1, puddles: 0.75 }), grass: toon({ color: 0x4ca048, detail: 'grass', rim: 0.35, puddles: 0.45 }), rock: toon({ color: 0xaaa594, flatShading: true, detail: 'rock' }), trunk: toon(0x5e4630), leaf: toon({ color: 0x2f8c3c, flatShading: true }), extra: null, flora: 'palme', rockScale: 1 }; break;
     // Sturmklippe: dunkler Basaltkies, karges Moos, schwarzer Fels
     case 'klippe': k = { sand: toon({ color: 0x66666c, detail: 'sand', rim: 0.1, puddles: 0.8 }), grass: toon({ color: 0x5c6c52, detail: 'grass', rim: 0.35, puddles: 0.5 }), rock: toon({ color: 0x3a3c42, flatShading: true, detail: 'rock' }), trunk: toon(0x3e342c), leaf: toon({ color: 0x2e4e3e, flatShading: true }), extra: null, flora: 'kiefer', rockScale: 1.5 }; break;
+    // Kreideküste: weißer Kalkstein, heller Kiesstrand, frisches Gras (England)
+    case 'kreide': k = { sand: toon({ color: 0xeeeadc, detail: 'sand', rim: 0.1, puddles: 0.7 }), grass: toon({ color: 0x7fa860, detail: 'grass', rim: 0.35, puddles: 0.45 }), rock: toon({ color: 0xe8e4d8, flatShading: true, detail: 'rock' }), trunk: toon(0x6a5038), leaf: toon({ color: 0x4e8a46, flatShading: true }), extra: null, flora: 'palme', rockScale: 1.3 }; break;
+    // Atoll: fast weißer Korallensand, sattes Grün, rosige Korallenblöcke
+    case 'atoll': k = { sand: toon({ color: 0xfaf3e0, detail: 'sand', rim: 0.1, puddles: 0.75 }), grass: toon({ color: 0x3fb85a, detail: 'grass', rim: 0.35, puddles: 0.45 }), rock: toon({ color: 0xe8b0a0, flatShading: true, detail: 'rock' }), trunk: toon(0x9a7a4e), leaf: toon({ color: 0x2ab858, flatShading: true }), extra: null, flora: 'palme', rockScale: 0.9 }; break;
+    // Weinland: goldener Sand, sonnenverbranntes Gras, Terrakotta-Fels (Frankreich)
+    case 'weinland': k = { sand: toon({ color: 0xead2a0, detail: 'sand', rim: 0.1, puddles: 0.7 }), grass: toon({ color: 0xb4a24e, detail: 'grass', rim: 0.35, puddles: 0.4 }), rock: toon({ color: 0xc08a62, flatShading: true, detail: 'rock' }), trunk: toon(0x6a4a30), leaf: toon({ color: 0x6a8a3a, flatShading: true }), extra: null, flora: 'palme', rockScale: 1.1 }; break;
     // Karibik: heller Korallen-Elfenbeinsand, sattes Smaragd- und Palmengrün, helle Kalksteinfelsen
     default: k = { sand: toon({ color: 0xf3e5c2, detail: 'sand', rim: 0.1, puddles: 0.75 }), grass: toon({ color: 0x3fa04c, detail: 'grass', rim: 0.35, puddles: 0.45 }), rock: toon({ color: 0xc9c1ab, flatShading: true, detail: 'rock' }), trunk: toon(0x8a6a42), leaf: toon({ color: 0x1f9446, flatShading: true }), extra: null, flora: 'palme', rockScale: 1 };
   }
@@ -53,13 +59,30 @@ export function styleKit(style: IslandStyle): StyleKit {
  * Strandplateau mit unregelmäßiger Küste und 1–3 Hügeln – aus denselben Werten wie die Laufhöhe (islandGround).
  * hills: Inselkoordinaten.
  */
-export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: number; p: number }[], hills: { x: number; z: number; r: number; h: number }[], grassFrac = 0, rnd: () => number = Math.random, ragged = 0, shelf = 0.25, H: (x: number, z: number) => number = () => 1.3): { beach: Mesh; hills: Mesh[]; liftAt: (x: number, z: number) => number; refresh: (Hn: (x: number, z: number) => number, bounds: [number, number, number, number][]) => void } {
+export interface IslandTerrain { beach: Mesh; hills: Mesh[]; liftAt: (x: number, z: number) => number; refresh: (Hn: (x: number, z: number) => number, bounds: [number, number, number, number][]) => void; refreshSteps: (Hn: (x: number, z: number) => number, bounds: [number, number, number, number][]) => Generator<void> }
+
+/** Gelände einer Insel in einem Zug (die Welt baut es beim Laden so, siehe `islandTerrainSteps`) */
+export function islandTerrain(...a: Parameters<typeof islandTerrainSteps>): IslandTerrain {
+  const it = islandTerrainSteps(...a);
+  let r = it.next();
+  while (!r.done) r = it.next();
+  return r.value;
+}
+
+/**
+ * Gelände einer Insel in kleinen Teilschritten (Streaming, Phase 4.3A): der Iterator gibt nach je rund 1 500 Eckpunkten ab, damit der
+ * WorldStreamer die Arbeit auf mehrere Bilder verteilen kann; das Ergebnis ist Eckpunkt für Eckpunkt dasselbe wie in einem Zug.
+ */
+export function* islandTerrainSteps(kit: StyleKit, r: number, coast: { a: number; f: number; p: number }[], hills: { x: number; z: number; r: number; h: number }[], grassFrac = 0, rnd: () => number = Math.random, ragged = 0, shelf = 0.25, H: (x: number, z: number) => number = () => 1.3): Generator<void, IslandTerrain> {
   const k = (a: number) => coastK(coast, a);
   /** Polargitter: Ringe t (Anteile des Küstenradius, optional mit Radius je Winkel) und Winkel; Höhe aus H (Inselkoordinaten) */
-  const polar = (cx: number, cz: number, radiusAt: (a: number) => number, ringT: number[], segs: number, lift: number, flipV = false, edgeW = 0): BufferGeometry => {
+  const polar = function* (cx: number, cz: number, radiusAt: (a: number) => number, ringT: number[], segs: number, lift: number, flipV = false, edgeW = 0): Generator<void, BufferGeometry> {
     const pos: number[] = [], idx: number[] = [], edge: number[] = [], off: number[] = [];
+    let n = 0;
     for (const t of ringT) {
+      if (n > 1500) { n = 0; yield; }
       for (let i = 0; i <= segs; i++) {
+        n++;
         const a = (i / segs) * Math.PI * 2;
         const full = radiusAt(a);
         const rad = full * t;
@@ -90,10 +113,10 @@ export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: n
   const nPlateau = Math.max(10, Math.round(r / 4));
   const segsB = Math.max(160, Math.round(r * 1.5));
   const beachT = [...rings(nPlateau, 0.0001, 1), ...rings(7, 1, 1 + shelf).slice(1)];
-  let bg = polar(0, 0, (a) => r * k(a), beachT, segsB, 0, false);
+  let bg = yield* polar(0, 0, (a) => r * k(a), beachT, segsB, 0, false);
   // Winkelrichtung: Kosinus/Sinus in xz laufen gegen den Uhrzeigersinn von oben gesehen: Dreiecke so drehen, dass die Normale nach oben zeigt
   const probe = bg.attributes.normal;
-  if (probe.getY(Math.floor(probe.count / 3)) < 0) bg = polar(0, 0, (a) => r * k(a), beachT, segsB, 0, true);
+  if (probe.getY(Math.floor(probe.count / 3)) < 0) bg = yield* polar(0, 0, (a) => r * k(a), beachT, segsB, 0, true);
   const beach = new Mesh(bg, kit.sand);
   const meshes: Mesh[] = [];
   /** Wie hoch die Wiesenfläche über dem Boden liegt (für Wege, die darüber laufen) */
@@ -126,35 +149,36 @@ export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: n
     const segsG = Math.max(150, Math.round(r * 2.2));
     const edgeW = Math.min(9, Math.max(4.5, r * 0.11));
     capR = radiusAt; capEdge = edgeW;
-    let gg = polar(0, 0, radiusAt, rings(nG, 0.0001, 1), segsG, 0.15, false, edgeW);
+    let gg = yield* polar(0, 0, radiusAt, rings(nG, 0.0001, 1), segsG, 0.15, false, edgeW);
     const pn = gg.attributes.normal;
-    if (pn.getY(Math.floor(pn.count / 3)) < 0) gg = polar(0, 0, radiusAt, rings(nG, 0.0001, 1), segsG, 0.15, true, edgeW);
+    if (pn.getY(Math.floor(pn.count / 3)) < 0) gg = yield* polar(0, 0, radiusAt, rings(nG, 0.0001, 1), segsG, 0.15, true, edgeW);
     const cap = new Mesh(gg, kit.grassCap);
     cap.receiveShadow = true;
     meshes.push(cap);
   }
-  meshes.push(...hills.map((h) => {
+  for (const h of hills) {
     // gleiche Höhe wie die Laufhöhe (Hügelprofil und Relief), vom Fuß zur Kuppe
     const nH = Math.max(14, Math.round(h.r / 3));
     const hEdge = Math.min(8, h.r * 0.22); // gleiche Rechnung wie hillEdges oben
-    let hg = polar(h.x, h.z, () => h.r, rings(nH, 0.0001, 1), 72, 0.19, false, hEdge);
+    let hg = yield* polar(h.x, h.z, () => h.r, rings(nH, 0.0001, 1), 72, 0.19, false, hEdge);
     const hn = hg.attributes.normal;
-    if (hn.getY(Math.floor(hn.count / 3)) < 0) hg = polar(h.x, h.z, () => h.r, rings(nH, 0.0001, 1), 72, 0.19, true, hEdge);
+    if (hn.getY(Math.floor(hn.count / 3)) < 0) hg = yield* polar(h.x, h.z, () => h.r, rings(nH, 0.0001, 1), 72, 0.19, true, hEdge);
     const m = new Mesh(hg, kit.grassCap);
     m.receiveShadow = true;
-    return m;
-  }));
+    meshes.push(m);
+  }
   /**
    * Gelände-Mesh an eingeebnete Standflächen anpassen (nach dem Aufbau der Insel, wenn alle Bauten stehen): jeder Eckpunkt bekommt die neue
    * Bodenhöhe (ohne Wiesendecke) plus seinen alten Abstand zum Boden (Wiesendecke, Rand). Danach neue Normalen und Hüllkugeln.
    * `bounds`: nur Eckpunkte innerhalb dieser Rechtecke (Insel-Koordinaten, [x0, z0, x1, z1]) werden angefasst.
    */
-  const refresh = (Hn: (x: number, z: number) => number, bounds: [number, number, number, number][]) => {
+  const refreshSteps = function* (Hn: (x: number, z: number) => number, bounds: [number, number, number, number][]): Generator<void> {
     for (const mesh of [beach, ...meshes]) {
       const g = mesh.geometry, pa = g.attributes.position, off = g.userData.off as Float32Array | undefined;
       if (!off) continue;
       let touched = false;
       for (let i = 0; i < pa.count; i++) {
+        if ((i & 8191) === 8191) yield;
         const x = pa.getX(i), z = pa.getZ(i);
         let inB = false;
         for (const b of bounds) if (x >= b[0] && x <= b[2] && z >= b[1] && z <= b[3]) { inB = true; break; }
@@ -163,9 +187,11 @@ export function islandTerrain(kit: StyleKit, r: number, coast: { a: number; f: n
         if (Math.abs(y - pa.getY(i)) > 1e-4) { pa.setY(i, y); touched = true; }
       }
       if (touched) { pa.needsUpdate = true; g.computeVertexNormals(); g.computeBoundingSphere(); g.computeBoundingBox(); }
+      yield;
     }
   };
-  return { beach, hills: meshes, liftAt, refresh };
+  const refresh = (Hn: (x: number, z: number) => number, bounds: [number, number, number, number][]) => { for (const _ of refreshSteps(Hn, bounds)) { /* in einem Zug */ } };
+  return { beach, hills: meshes, liftAt, refresh, refreshSteps };
 }
 
 const KIND_LABEL: Record<string, string> = { town: 'Hafenstadt', harbor: 'Hafen', camp: 'Lager', ruin: 'Ruine', quiet: '', treasure: 'Schatzinsel', lighthouse: 'Leuchtturm', boss: 'Boss', marinefort: 'Marine-Festung', citadel: 'Festungsinsel' };
@@ -349,6 +375,9 @@ export const ROCK_TYPES: Record<IslandStyle, RockType[]> = {
   schlund: ['nadeln', 'bogen', 'basalt'],
   festland: ['bloecke', 'platten'],
   klippe: ['basalt', 'nadeln'],
+  kreide: ['platten', 'bloecke', 'bogen'],
+  atoll: ['bloecke', 'platten'],
+  weinland: ['bloecke', 'platten', 'bogen'],
 };
 
 /** Eckpunkte verschieben: gleiche Lage = gleiche Verschiebung (das Netz bleibt dicht), jeder Fels wird ein Einzelstück */
@@ -471,7 +500,8 @@ export function rockFormation(type: RockType, kit: StyleKit, rnd: () => number, 
 }
 
 /** Länge der Hafenstege der Außenposten: beginnt 5 m an Land, reicht gut 50 m übers Wasser (2.9.90: vorher 27; so liegen auch große Schiffe weit genug draußen, um wieder abzulegen) */
-export const OUTPOST_PIER = { from: -5, to: 60 };
+export { OUTPOST_PIER } from './islandBlueprint';
+import { OUTPOST_PIER } from './islandBlueprint';
 
 /** Kleiner Außenposten-Hafen: Steg mit Laterne (r = Küstenradius in Stegrichtung) */
 export function outpost(r: number, facing: number, lanterns: Mesh[]): Group {

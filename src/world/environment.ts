@@ -43,6 +43,9 @@ export class Environment {
   clock = 0;
   /** Windrichtung (Bogenmaß, wohin der Wind weht) – dreht langsam */
   windDir = 0.6;
+  /** Sturmsee am Weltrand (4.3A): Stärke 0 … 1 und die Richtung nach innen (Bogenmaß, wie `windDir`): der Wind dreht dorthin */
+  edgeWind = 0;
+  edgeWindDir = 0;
 
   private viewDistance = 520;
   private fogStart = 0.2;
@@ -203,6 +206,12 @@ export class Environment {
     // Nässe und Pfützen folgen dem Regen (trocknen in der Sonne schneller)
     updateWetness(dt, this.weather.p.rain, this.palette.sunVis * (1 - this.weather.p.grey * 0.6));
     this.windDir += Math.sin(this.clock * 0.004) * dt * 0.01 * (1 + this.weather.p.wind * 3);
+    // Sturmsee am Weltrand: der Wind dreht nach innen und trägt Schiffe zurück ins Spielgebiet (Gegenwind nach außen, Rückenwind nach innen)
+    if (this.edgeWind > 0.001) {
+      let d = this.edgeWindDir - this.windDir;
+      d -= Math.PI * 2 * Math.round(d / (Math.PI * 2));
+      this.windDir += d * Math.min(1, dt * 0.7 * this.edgeWind);
+    }
     // Wellenhöhe folgt dem Wetter (in der Logik, damit Schiffe und Darstellung übereinstimmen)
     this.ocean.uniforms.uWaveScale.value = this.weather.p.waves;
     this.ocean.uniforms.uTime.value = this.clock;

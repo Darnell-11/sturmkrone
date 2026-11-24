@@ -30,12 +30,16 @@ export interface DockHost {
 }
 
 const _pt = { x: 0, y: 0, z: 0 };
+const _nearIslands: WalkIsland[] = [];
 const _pt2 = { x: 0, y: 0, z: 0 };
 
 /** Wasserlinie-Abstand eines Punkts zu den Inseln (positiv = im Wasser); Unendlich ohne Insel in der Nähe */
 export function shoreGap(g: IslandGround, x: number, z: number): { gap: number; isl: WalkIsland | null } {
   let best = Infinity, bi: WalkIsland | null = null;
-  for (const i of g.islands) {
+  // Broadphase (4.3A): nur die Nachbarinseln; Suchradius deckt „Mitte näher als 2,2 · r + 60 m“ ab (Umkreis im Raster: 1,9 · r)
+  const near = g.getNearbyIslands(x, z, 60 + g.maxIslandR * 0.3, _nearIslands);
+  for (let k = 0; k < near.length; k++) {
+    const i = near[k];
     const d = Math.hypot(x - i.x, z - i.z);
     if (d > i.r * 2.2 + 60) continue;
     const gap = d - i.r * coastK(i.coast, Math.atan2(z - i.z, x - i.x)) * (1 + i.shelf * WATERLINE);

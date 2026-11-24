@@ -61,12 +61,14 @@ describe('Inselbesitz', () => {
   it('lässt Ankerglück unabhängig und gibt allen anderen Inseln einen Besitzer', () => {
     const home = ALL.find((i) => i.id === 'ankerglueck')!;
     expect(home.factionId).toBeNull();
-    for (const i of ALL) if (i.id !== 'ankerglueck') expect(i.factionId, i.id).toBeTruthy();
+    for (const i of ALL) if (i.id !== 'ankerglueck' && !i.uncharted) expect(i.factionId, i.id).toBeTruthy();
+    // unkartierte Geheim-Inseln (4.3B) sind herrenlos
+    for (const i of ALL) if (i.uncharted) expect(i.factionId, i.id).toBeNull();
   });
 
   it('gibt den Glutring ganz Kurogane und Nordwacht ganz Deutschland', () => {
-    for (const i of REGIONS.find((r) => r.id === 'glut')!.islands) expect(i.factionId, i.id).toBe(i.marine ? 'marine' : 'kurogane');
-    for (const i of REGIONS.find((r) => r.id === 'nord')!.islands) expect(i.factionId, i.id).toBe(i.marine ? 'marine' : i.kind === 'citadel' ? 'deutschland' : 'deutschland');
+    for (const i of REGIONS.find((r) => r.id === 'glut')!.islands) expect(i.factionId, i.id).toBe(i.uncharted ? null : i.marine ? 'marine' : 'kurogane');
+    for (const i of REGIONS.find((r) => r.id === 'nord')!.islands) expect(i.factionId, i.id).toBe(i.uncharted ? null : i.marine ? 'marine' : i.kind === 'citadel' ? 'deutschland' : 'deutschland');
     expect(REGIONS.find((r) => r.id === 'glut')!.islands.some((i) => i.id === 'glutberg')).toBe(true);
     expect(ALL.find((i) => i.id === 'festungnordwacht')!.factionId).toBe('deutschland');
   });
@@ -126,14 +128,15 @@ describe('Marine: Grenzfestungen und Hauptquartier', () => {
 
   it('hält alle neuen Inseln vor dem erweiterten Weltrand', () => {
     expect(WORLD_RADIUS).toBeGreaterThan(WORLD_CORE_RADIUS);
-    expect(EDGE_WALL).toBe(WORLD_RADIUS - 70);
+    expect(EDGE_WALL).toBe(WORLD_RADIUS - 80);
     for (const i of ALL) expect(Math.hypot(i.x, i.z) + i.r * ISLAND_REACH, i.id).toBeLessThan(WORLD_RADIUS - 60);
   });
 
-  it('liegt hinter den Grenzfestungen im stärksten Meer (bis +4)', () => {
+  it('liegt hinter den Grenzfestungen im stärksten Meer (seit 4.3B am Außenrand der Kaiser-Meere: Gefahrenstufe 5)', () => {
     const c = ALL.find((i) => i.id === 'albion')!;
-    expect(seaLevelAt(c.x, c.z)).toBeGreaterThan(seaLevelAt(0, 3000) - 1);
-    expect(seaLevelAt(c.x, c.z)).toBe(regionAt(c.x, c.z).level! + 4);
+    expect(seaLevelAt(c.x, c.z)).toBeGreaterThan(seaLevelAt(0, 3000));
+    expect(seaLevelAt(c.x, c.z)).toBeGreaterThanOrEqual(18);
+    expect(seaLevelAt(c.x, c.z)).toBeGreaterThanOrEqual(regionAt(c.x, c.z).level! + 4);
   });
 });
 

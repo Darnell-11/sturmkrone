@@ -29,6 +29,7 @@ import { CharacterEditor, styleIdOf, type EditorGearHost, type EditorResult } fr
 import { Hud, type SeaView } from '../ui/hud';
 import { HelmDial } from '../ui/helmDial';
 import { SectorBanner } from '../ui/sectorBanner';
+import { EdgeWarning } from '../ui/edgeWarning';
 import { Menus } from '../ui/menus';
 import { TouchControls } from '../ui/touchControls';
 import { EditorStage } from '../world/editorStage';
@@ -154,6 +155,7 @@ export class Game {
   private compass!: Compass;
   private helm!: HelmDial;
   private sectorBanner!: SectorBanner;
+  private edgeWarning!: EdgeWarning;
   private raidPanel!: RaidPanel;
   /** Besatzung eroberter Festungsinseln (Timer, Flotte, Tribut) und ihr Banner oben in der Mitte */
   occupation!: OccupationSystem;
@@ -217,6 +219,8 @@ export class Game {
     this.world = new SeaWorld(deferWorld);
     this.world.env.maxTex = caps.maxTextureSize;
     this.world.warmHook = (o) => this.renderer.warmObject(o);
+    // Streaming (4.3B): Shader einer neu gebauten Insel parallel vorübersetzen, der Tausch wartet darauf
+    this.world.warmIsland = (o) => this.renderer.warmObjectAsync(o);
     // Spiegelungen (IBL): der Himmel wird regelmäßig als vorgefilterte Umgebungskarte aufgenommen
     this.skyProbe = new SkyProbe(this.renderer.gl, this.world.env.sky.dome.material as ShaderMaterial);
     this.renderer.onQualityChange((c) => this.world.applyQuality(c));
@@ -242,6 +246,7 @@ export class Game {
     const zone = this.hud.regions;
     this.compass = new Compass(zone.tc);
     this.sectorBanner = new SectorBanner(zone.tc);
+    this.edgeWarning = new EdgeWarning(zone.tc);
     this.occBanner = new OccupationBanner(zone.tc);
     this.overlay = new CombatOverlay(uiRoot, zone.tc);
     this.overlay.setVisible(false);
@@ -452,6 +457,8 @@ export class Game {
       console.error(e);
       this.hud.toast('Figuren konnten nicht geladen werden – prüfe die Verbindung.', 5);
     }
+    // Alle Inseln standen bis hierher ganz da (damit alle Shader übersetzt sind): jetzt streamt der WorldStreamer, nur die Inseln in der Nähe behalten ihre Netze
+    this.world.settleStreaming();
     // Die Spielschleife erst jetzt starten: hinter dem deckenden Ladebildschirm kostete jedes Bild nur Zeit
     this.loop.start();
     await loading.finish();
@@ -580,6 +587,7 @@ export class Game {
         this.helm.setVisible(sailing);
         if (sailing) this.helm.update({ heading: sh.heading, windRel: this.world.env.windDir - sh.heading, wind: this.world.env.weather.p.wind, sector: where });
         this.sectorBanner.update(sailing && !this.world.raid ? where : null);
+        this.edgeWarning.update(sailing && !this.world.raid ? this.world.edgeWarning : null);
         {
           // Besatzung in einer Zeile: Offiziere A/B | Truppen X/Y (+ Befehlsknöpfe [1] [2] [3], solange Trupps im Einsatz sind)
           const ch = this.world.crewHud, tier = this.save.ship.tier;
@@ -1557,7 +1565,8 @@ export class Game {
 
   private openHarbor(def: IslandDef) {
     if (!this.state.is('play')) return;
-    const fid = def.factionId ?? (def.marine ? 'marine' : null);
+    // Schwarzmarkt (Schmugglerhäfen, 4.3B): keine Macht führt hier Aufsicht – kein Tarif, keine Kontrolle, keine Hafensperre
+    const fid = profileOf(def).blackMarket ? null : def.factionId ?? (def.marine ? 'marine' : null);
     // Hafensperre: wer bei einer Macht verfemt ist (Ansehen ≤ −60), darf in ihren Häfen nicht anlegen
     if (fid && this.tariff(fid).closed) {
       this.hud.toast(`${FACTIONS[fid].name} hat den Hafen von ${def.name} für dich gesperrt. Mehr Ansehen oder ein Freihafen hilft.`, 5);
@@ -1744,7 +1753,7 @@ export class Game {
     const s = this.save;
     if (!s) return;
     const quest = this.quests?.treasureIslands() ?? [];
-    const pool = this.world.islandDefs.filter((i) => (i.kind === 'quiet' || i.kind === 'treasure') && !s.progress.maps.includes(i.id) && !quest.includes(i.id));
+    const pool = this.world.islandDefs.filter((i) => (i.kind === 'quiet' || i.kind === 'treasure') && !i.uncharted && !s.progress.maps.includes(i.id) && !quest.includes(i.id));
     if (!pool.length) { s.player.gold += 50; this.hud.toast('Flaschenpost: ein paar Münzen (+50 Gold)', 3); return; }
     const near = pool.filter((i) => Math.hypot(i.x - BERNSTEINSEE.x, i.z - BERNSTEINSEE.z) < BERNSTEINSEE.r);
     const from = near.length && Math.random() < 0.75 ? near : pool;
@@ -2198,7 +2207,8 @@ export class Game {
   /** Daten der Weltkarte */
   private worldMapData(): WorldMapData {
     return {
-      islands: this.world.islandDefs,
+      // unkartierte Geheim-Inseln (4.3B) erscheinen erst, wenn sie entdeckt sind
+      islands: this.world.islandDefs.filter((i) => !i.uncharted || this.world.discovered.has(i.id)),
       regions: REGIONS,
       known: (id) => this.world.discovered.has(id),
       islandMarks: this.questIslandMarks(),

@@ -1,6 +1,7 @@
 import type { IslandShape } from './ocean';
 import { BRIDGE_CLEARANCE, BRIDGE_STEP, frameCoords, frameHeight, makeFrame, setFrame, spanLength, type Anchor, type BridgeDef, type BridgeFrame } from './docking';
 import { clamp01 } from '../core/mathUtil';
+import { SpatialGrid } from './worldGrid';
 
 /** Ein Hügel: Mitte (Welt), Radius und Höhenfaktor (Kuppe = Halbkugel, in der Höhe gestaucht) */
 export interface Hill { x: number; z: number; r: number; h: number }
@@ -424,6 +425,11 @@ export class DeckGround implements Ground {
   world(lx: number, lz: number) { return this.toWorld(lx, lz); }
 }
 
+/** Umkreis einer Insel im Raster: so weit reicht ihr Gelände höchstens (`islandHeight` gibt darüber −∞ zurück) */
+export const ISLAND_BOUND_K = 1.9;
+/** Prüfpunkte eines Schiffs entlang der Länge: Bug, Mitte, Heck */
+const SHIP_PROBES = [0.44, 0, -0.44];
+
 export class IslandGround implements Ground {
   readonly islands: WalkIsland[] = [];
   /** Stege (Weltkoordinaten): begehbar auch über dem Wasser, die Bohlen liegen auf pier.y */
@@ -431,10 +437,85 @@ export class IslandGround implements Ground {
   /** Feste Hindernisse nur für Schiffe (Seetor und Mauern der Raid-Instanz): gedrehte Quader in Weltkoordinaten; leer = nichts zu prüfen */
   shipBlockers: Blocker[] = [];
 
+  // ---------- Broadphase (Phase 4.3A): Raster aus 750-m-Zellen für Inseln und Stege ----------
+
+  private islandGrid = new SpatialGrid();
+  private gridN = -1;
+  private gridFirst: WalkIsland | undefined;
+  private gridLast: WalkIsland | undefined;
+  private pierGrid = new SpatialGrid();
+  private pierRef: Pier[] | null = null;
+  private pierN = -1;
+  private pierVer = 0;
+  private pierBuiltVer = -1;
+  /** Arbeitslisten je Aufrufer (verschachtelte Abfragen überschreiben einander nie) */
+  private qAt: number[] = [];
+  private qPush: number[] = [];
+  private qClr: number[] = [];
+  private qHeight: number[] = [];
+  private qPier: number[] = [];
+  private qPierExt: number[] = [];
+  private qNear: number[] = [];
+
+  /** Inselliste hat sich geändert (Raid-Wechsel, direkte Zugriffe auf `islands`): Raster beim nächsten Zugriff neu aufbauen */
+  reindex(): void { this.gridN = -1; }
+
+  /** Stegliste hat sich geändert (Inhalt ersetzt, ohne dass sich Länge oder Liste ändern) */
+  touchPiers(): void { this.pierVer++; }
+
+  private ensureGrid(): void {
+    const a = this.islands;
+    if (this.gridN === a.length && this.gridFirst === a[0] && this.gridLast === a[a.length - 1]) return;
+    const g = this.islandGrid;
+    g.clear();
+    for (const i of a) g.add(i.x, i.z, i.r * ISLAND_BOUND_K);
+    this.gridN = a.length; this.gridFirst = a[0]; this.gridLast = a[a.length - 1];
+  }
+
+  private ensurePierGrid(): void {
+    const a = this.piers;
+    if (this.pierRef === a && this.pierN === a.length && this.pierBuiltVer === this.pierVer) return;
+    const g = this.pierGrid;
+    g.clear();
+    for (const p of a) g.add((p.ax + p.bx) / 2, (p.az + p.bz) / 2, Math.hypot(p.bx - p.ax, p.bz - p.az) / 2 + p.hw);
+    this.pierRef = a; this.pierN = a.length; this.pierBuiltVer = this.pierVer;
+  }
+
+  /** Größter Küstenradius aller Inseln (für Suchradien „Mitte näher als k · r“) */
+  get maxIslandR(): number { this.ensureGrid(); return this.islandGrid.maxR / ISLAND_BOUND_K; }
+
+  /**
+   * Broadphase: die Inseln, deren Umkreis (1,9 × Küstenradius) die Suchscheibe (x, z, queryRadius) berührt, in der Reihenfolge von `islands`.
+   * Je Bild sind das 0 bis 3 Inseln statt der ganzen Karte. Mit `out` allokiert die Abfrage nichts; ohne `out` entsteht eine neue Liste.
+   */
+  getNearbyIslands(x: number, z: number, queryRadius: number, out: WalkIsland[] = []): WalkIsland[] {
+    this.ensureGrid();
+    const q = this.qNear;
+    const n = this.islandGrid.query(x, z, queryRadius, q);
+    out.length = n;
+    for (let k = 0; k < n; k++) out[k] = this.islands[q[k]];
+    return out;
+  }
+
+  /** Stege, deren Länge samt halber Breite die Suchscheibe berührt (Reihenfolge von `piers`), in `out` */
+  getNearbyPiers(x: number, z: number, queryRadius: number, out: Pier[] = []): Pier[] {
+    this.ensurePierGrid();
+    const q = this.qPierExt;
+    const n = this.pierGrid.query(x, z, queryRadius, q);
+    out.length = n;
+    for (let k = 0; k < n; k++) out[k] = this.piers[q[k]];
+    return out;
+  }
+
   /** Nächster Steg zu einem Punkt: Parameter t (0 … 1 entlang), Abstand quer zur Mitte (lat) und Länge */
   pierNear(x: number, z: number, margin: number): { p: Pier; t: number; lat: number; len: number; cx: number; cz: number } | null {
     let best: { p: Pier; t: number; lat: number; len: number; cx: number; cz: number } | null = null;
-    for (const p of this.piers) {
+    if (!this.piers.length) return null;
+    this.ensurePierGrid();
+    const q = this.qPier;
+    const nq = this.pierGrid.query(x, z, margin, q);
+    for (let qi = 0; qi < nq; qi++) {
+      const p = this.piers[q[qi]];
       const vx = p.bx - p.ax, vz = p.bz - p.az;
       const len = Math.hypot(vx, vz) || 1;
       const t = ((x - p.ax) * vx + (z - p.az) * vz) / (len * len);
@@ -455,7 +536,11 @@ export class IslandGround implements Ground {
 
   /** Insel, auf oder an der ein Punkt liegt (folgt der echten Küstenlinie) */
   islandAt(x: number, z: number, margin = 0): WalkIsland | null {
-    for (const i of this.islands) {
+    this.ensureGrid();
+    const q = this.qAt;
+    const nq = this.islandGrid.query(x, z, margin, q);
+    for (let qi = 0; qi < nq; qi++) {
+      const i = this.islands[q[qi]];
       const d = Math.hypot(x - i.x, z - i.z);
       if (d > i.r * 1.5 + margin) continue;
       if (d < this.edge(i, x, z) + margin) return i;
@@ -470,9 +555,14 @@ export class IslandGround implements Ground {
   pushShip(x: number, z: number, heading: number, L: number, W: number): { x: number; z: number; hit: boolean } {
     let hit = false;
     const fx = Math.sin(heading), fz = Math.cos(heading);
-    for (const k of [0.44, 0, -0.44]) {
+    this.ensureGrid();
+    const q = this.qPush;
+    for (let pk = 0; pk < SHIP_PROBES.length; pk++) {
+      const k = SHIP_PROBES[pk];
       const px = x + fx * L * k, pz = z + fz * L * k;
-      for (const i of this.islands) {
+      const nq = this.islandGrid.query(px, pz, W, q);
+      for (let qi = 0; qi < nq; qi++) {
+        const i = this.islands[q[qi]];
         const d = Math.hypot(px - i.x, pz - i.z);
         if (d > i.r * 1.9 + W) continue;
         const a = Math.atan2(pz - i.z, px - i.x);
@@ -509,7 +599,11 @@ export class IslandGround implements Ground {
    */
   shipClearance(x: number, z: number, W: number, reach = 400): number {
     let best = reach;
-    for (const i of this.islands) {
+    this.ensureGrid();
+    const q = this.qClr;
+    const nq = this.islandGrid.query(x, z, W + reach, q);
+    for (let qi = 0; qi < nq; qi++) {
+      const i = this.islands[q[qi]];
       const d = Math.hypot(x - i.x, z - i.z);
       if (d > i.r * 1.9 + W + reach) continue;
       const a = Math.atan2(z - i.z, x - i.x);
@@ -570,8 +664,11 @@ export class IslandGround implements Ground {
   /** Bodenhöhe an einem Punkt (−∞ wenn kein Land) – identisch mit dem sichtbaren Gelände */
   height(x: number, z: number): number {
     let best = -Infinity;
-    for (const i of this.islands) {
-      const y = this.islandHeight(i, x, z);
+    this.ensureGrid();
+    const q = this.qHeight;
+    const nq = this.islandGrid.query(x, z, 0, q);
+    for (let qi = 0; qi < nq; qi++) {
+      const y = this.islandHeight(this.islands[q[qi]], x, z);
       if (y > best) best = y;
     }
     // Stege: Bohlen auf ihrer Höhe (auch dort, wo kein Land mehr ist)

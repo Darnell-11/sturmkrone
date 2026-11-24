@@ -6,8 +6,9 @@ import { addPlinths, build, levelFootprint, PLINTHED, SETTLES, settleOnSlope, se
 import { boxBlocker, coastK, type Blocker, type WalkIsland } from './islandGround';
 import { roadMesh } from './town';
 import type { GlowPlaced } from '../render/glow';
-import { floraProto, Occupancy, scatterSite, type Biome, type Scatter, type Spot } from './vegetation';
+import { floraProto, Occupancy, scatterSiteSteps, type Biome, type Scatter, type Spot } from './vegetation';
 import { hashId, seeded } from './waves';
+import { siteFrame, stegLength, stegPlacement } from './islandBlueprint';
 import { auditPlacement } from './placeAudit';
 
 export interface SiteBuild {
@@ -46,6 +47,14 @@ const HOUSES = new Set(['holzhuette', 'steinhaus', 'gasthaus', 'scheune', 'stelz
  * und danach den Bewuchs des Bioms um alles herum.
  */
 export function buildSite(o: SiteOpts): SiteBuild {
+  const it = buildSiteSteps(o);
+  let r = it.next();
+  while (!r.done) r = it.next();
+  return r.value;
+}
+
+/** Dasselbe in Teilschritten (Streaming, Phase 4.3A): gibt nach jedem Bauwerk, jedem Weg und vor dem Bewuchs ab; das Ergebnis ist dasselbe */
+export function* buildSiteSteps(o: SiteOpts): Generator<void, SiteBuild> {
   const { group, def, site, walk, hAt, veg } = o;
   const rnd = seeded(hashId(def.id) ^ 0x51f7a3);
   const r = def.r;
@@ -55,37 +64,27 @@ export function buildSite(o: SiteOpts): SiteBuild {
   const clear: { x: number; z: number; r: number }[] = [];
   const block = (b: Blocker) => { walk.blockers.push(b); occ.add(b); };
 
-  site.clusters.forEach((c, ci) => {
-    // Mittelpunkt und Ausrichtung der Siedlung: „vorn“ zeigt von der Inselmitte weg (zur Küste)
-    let cx: number, cz: number;
-    if (c.at) [cx, cz] = c.at;
-    else {
-      const th = (c.deg ?? 0) * RAD;
-      const e = E(Math.atan2(Math.cos(th), Math.sin(th))) * (c.d ?? 0.7);
-      cx = Math.sin(th) * e; cz = Math.cos(th) * e;
-    }
-    const phi = Math.atan2(cx, cz) + (c.turn ?? 0) * RAD;
+  for (const [ci, c] of site.clusters.entries()) {
+    // Mittelpunkt und Ausrichtung der Siedlung: „vorn“ zeigt von der Inselmitte weg (zur Küste); dieselbe Rechnung wie im Blueprint (Stege)
+    const frame = siteFrame(c, r, walk.coast);
+    const { cx, cz, phi } = frame;
     const cs = Math.cos(phi), sn = Math.sin(phi);
     clear.push({ x: cx, z: cz, r: c.clear });
     if (ci === 0) out.village = { x: def.x + cx, z: def.z + cz, r: Math.max(14, c.clear * 0.8) };
 
     for (const it of c.items) {
-      // Stege sind 22 m länger als in den Daten (2.9.90): weiter draußen liegt man freier und legt leichter ab
-      const b = build(it.t, rnd, it.t === 'steg' && it.len ? it.len + 22 : it.len);
+      yield;
+      // Stege sind 22 m länger als in den Daten (2.9.90): weiter draußen liegt man freier und legt leichter ab.
+      // Themen-Inseln (4.3B): Tore, Türme, Mauern, Kräne und Lagerhäuser tragen die Farben des Besitzers
+      const b = build(it.t, rnd, it.t === 'steg' ? stegLength(it.len) : it.len, site.themed ? def.factionId ?? null : null);
       let x = cx + it.x * cs + it.z * sn, z = cz - it.x * sn + it.z * cs;
       const yaw = phi + (it.yaw ?? 0) * RAD;
       let y: number;
       if (b.pier !== undefined) {
-        // Steg: seitlich um x versetzt, beginnt 3 m vor der Wasserlinie und läuft in Blickrichtung hinaus
-        const dx = Math.sin(yaw), dz = Math.cos(yaw);
-        const px = cx + it.x * cs, pz = cz - it.x * sn;
-        let t = 0;
-        for (let k = 0; k < 8; k++) {
-          const qx = px + dx * t, qz = pz + dz * t;
-          t += E(Math.atan2(qz, qx)) - Math.hypot(qx, qz);
-        }
-        t -= 3;
-        x = px + dx * t; z = pz + dz * t;
+        // Steg: seitlich um x versetzt, beginnt 3 m vor der Wasserlinie und läuft in Blickrichtung hinaus (world/islandBlueprint.ts `stegPlacement`)
+        const sp = stegPlacement(frame, it.x, it.yaw, r, walk.coast);
+        const dx = sp.dx, dz = sp.dz;
+        x = sp.x; z = sp.z;
         y = 0;
         out.piers.push({ ax: def.x + x, az: def.z + z, bx: def.x + x + dx * (b.pier + 2.5), bz: def.z + z + dz * (b.pier + 2.5), hw: 1.5, y: 1.45 });
         // unter und neben den Bohlen wächst nichts und liegt kein Fels
@@ -148,12 +147,13 @@ export function buildSite(o: SiteOpts): SiteBuild {
         }
       }
     }
-  });
+  }
 
   // Wege: festgetretene Erde, liegt als Band auf dem Boden (Tiefenverschiebung gegen Flimmern auf der Wiese)
   if (site.roads.length) {
     const dirt = toon({ color: '#8C7450', detail: 'sand', rim: 0.1, puddles: 0.7, layer: 3, side: DoubleSide });
     for (const road of site.roads) {
+      yield;
       // Punkte, die über die Küste hinausragen, an den Strand zurückholen
       const pts = road.pts.map(([x, z]): [number, number] => {
         const d = Math.hypot(x, z), lim = E(Math.atan2(z, x)) * 0.95;
@@ -183,7 +183,8 @@ export function buildSite(o: SiteOpts): SiteBuild {
   // Grabstelle für Schatzkarten freihalten (gleiche Formel wie SeaLife.addDig)
   { const da = (def.x * 13 + def.z * 7) % (Math.PI * 2); occ.add({ x: def.x + Math.cos(da) * r * 0.55, z: def.z + Math.sin(da) * r * 0.55, r: 3 }); }
 
-  const grown = scatterSite({
+  yield;
+  const grown = yield* scatterSiteSteps({
     layers: site.scatter, biome: o.biome, r, wx: def.x, wz: def.z, edge: E, hAt, veg, occ, clear,
     blockers: walk.blockers, rnd, density: o.density, seed: hashId(def.id) & 0xffff,
   });

@@ -205,10 +205,19 @@ export class Weather {
     if (instant) Object.assign(this.p, this.goalOf());
   }
 
+  /**
+   * Sturmsee am Weltrand (Phase 4.3A), Anteil 0 … 1: zieht das Wetter zu den Werten des Sturms hin (Gewitterwolken, Seegang, Wind, Blitze,
+   * Regen, schlechte Sicht). Gilt über Wetter-Typ und gehaltenen Werten und überblendet wie jede Wetteränderung in rund zwölf Sekunden.
+   */
+  edgeStorm = 0;
+
   /** Zielwerte: Vorgabe des Wetter-Typs, darüber die gehaltenen Werte (ohne neue Objekte je Schritt) */
   private goalOf(): Params {
     const base = this.paramsOf(this.target);
-    return this.held ? Object.assign(base, this.held) : base;
+    const goal = this.held ? Object.assign(base, this.held) : base;
+    const k = this.edgeStorm;
+    if (k > 0.001) { const st = WEATHER.sturm; for (const key of PARAM_KEYS) goal[key] += (st[key] - goal[key]) * k; }
+    return goal;
   }
 
   setMaxDrops(n: number) { this.maxDrops = Math.min(MAX_DROPS, n); }

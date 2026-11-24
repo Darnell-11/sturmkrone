@@ -8,7 +8,7 @@
 import { clamp, clamp01, distToSegment, lerp, wrapAngle } from '../core/mathUtil';
 import { RAM, RAM_MIN_TIER } from '../data/balanceConfig';
 import { escortSpeed, slotSpeed } from '../data/playerFleet';
-import type { Blocker } from '../world/islandGround';
+import type { Blocker, Pier } from '../world/islandGround';
 import { heavyOf, turnRadius, windSpeedK } from './shipMotion';
 
 const D2R = Math.PI / 180;
@@ -315,6 +315,8 @@ export function resetGoal(nav: AiNavState): void {
 export interface SteerWorld {
   shipClearance(x: number, z: number, W: number, reach?: number): number;
   readonly piers: readonly { ax: number; az: number; bx: number; bz: number; hw: number }[];
+  /** Broadphase der Stege (Phase 4.3A): nur die Stege, die die Suchscheibe berühren; Länge und Breite sind schon im Umkreis eingerechnet */
+  getNearbyPiers(x: number, z: number, queryRadius: number, out: Pier[]): Pier[];
   readonly shipBlockers: readonly Blocker[];
 }
 
@@ -325,6 +327,8 @@ interface Obstacle { id: string; x: number; z: number; vx: number; vz: number; r
 export class PredictiveMaritimeSteering {
   private readonly obs: Obstacle[] = [];
   private nObs = 0;
+  /** Arbeitsliste der Steg-Abfrage (Broadphase): wird je Abfrage überschrieben, nie neu angelegt */
+  private readonly nearPiers: Pier[] = [];
   private readonly edgeR2: number;
   /** Arbeitsobjekte: nichts je Bild neu anlegen */
   private readonly ic: Point = { x: 0, z: 0, t: 0 };
@@ -353,7 +357,7 @@ export class PredictiveMaritimeSteering {
   private blocked(px: number, pz: number, t: number, self: SteerSelf, margin: number, ignoreId: string | null, ships: boolean): boolean {
     if (px * px + pz * pz > this.edgeR2) return true;
     if (this.world.shipClearance(px, pz, self.W, margin + 2) < margin) return true;
-    const piers = this.world.piers;
+    const piers = this.world.getNearbyPiers(px, pz, self.W * 0.5 + margin * 0.6, this.nearPiers);
     for (let i = 0; i < piers.length; i++) {
       const p = piers[i];
       if (distToSegment(px, pz, p.ax, p.az, p.bx, p.bz) < p.hw + self.W * 0.5 + margin * 0.6) return true;
@@ -498,7 +502,7 @@ export class PredictiveMaritimeSteering {
   /** Freiraum (m) an einem Punkt: Küste samt Böschung, Stege, andere Schiffe (jetziger Standort) und Weltrand; positiv = frei */
   private openness(px: number, pz: number, self: SteerSelf, reach: number): number {
     let c = this.world.shipClearance(px, pz, self.W, reach);
-    const piers = this.world.piers;
+    const piers = this.world.getNearbyPiers(px, pz, reach + self.W * 0.5, this.nearPiers);
     for (let i = 0; i < piers.length; i++) {
       const p = piers[i];
       c = Math.min(c, distToSegment(px, pz, p.ax, p.az, p.bx, p.bz) - p.hw - self.W * 0.5);

@@ -417,12 +417,17 @@ export class GameRenderer {
    * Schwenk zu frisch erschienenen Gegnern).
    */
   warmObject(o: Object3D) {
-    if (!this.scene || !this.camera) return;
+    void this.warmObjectAsync(o);
+  }
+
+  /** Wie `warmObject`, mit einem Versprechen, das erfüllt ist, sobald alle Programme bereitstehen (Streaming: der Tausch einer Insel wartet darauf) */
+  warmObjectAsync(o: Object3D): Promise<void> {
+    if (!this.scene || !this.camera) return Promise.resolve();
     const rt = (this.composer as unknown as { inputBuffer?: WebGLRenderTarget } | null)?.inputBuffer ?? null;
     const prev = this.gl.getRenderTarget();
     try {
       if (rt) this.gl.setRenderTarget(rt);
-      this.gl.compileAsync(o, this.camera, this.scene).catch(() => {});
+      return this.gl.compileAsync(o, this.camera, this.scene).then(() => {}, () => {});
     } finally { this.gl.setRenderTarget(prev); }
   }
 

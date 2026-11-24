@@ -9,7 +9,7 @@ import { ARMOR, CONSUMABLES, GEAR, HEADS, WEAPONS } from '../src/data/items';
 import { GEAR_CATALOG, GEAR_SET_BY_ID, SETS, tierOfSet } from '../src/data/gear';
 import { FAME_THRESHOLDS } from '../src/data/ranks';
 import { BORDER_FORTS, CITADELS } from '../src/data/factions';
-import { WORLD_RADIUS } from '../src/data/world';
+import { PLAYABLE_RADIUS, WORLD_RADIUS } from '../src/data/world';
 import { catalog } from '../src/data/catalog';
 import { BOSS_PIECES, bossSetId } from '../src/raid/raidLoot';
 import { computeStats, type StatInput } from '../src/core/inventory';
@@ -123,12 +123,16 @@ describe('Gefahrenstufen und Ränge', () => {
     expect(dangerOfLevel(14)).toBe(4); expect(dangerOfLevel(17)).toBe(4); expect(dangerOfLevel(18)).toBe(5); expect(dangerOfLevel(60)).toBe(5);
   });
 
-  it('Zonen: Ankerglück = 1, Grenzfestungen mittendrin, äußere Raid-Festungen = 5', () => {
-    expect(dangerOfDistance(0, WORLD_RADIUS)).toBe(1);
-    expect(dangerOfDistance(WORLD_RADIUS * 0.2, WORLD_RADIUS)).toBe(2);
-    for (const f of BORDER_FORTS) expect(dangerOfDistance(f.radius, WORLD_RADIUS), f.id).toBe(3);
-    for (const c of CITADELS) expect(dangerOfDistance(c.dist, WORLD_RADIUS), c.id).toBe(5);
-    expect(dangerOfDistance(WORLD_RADIUS * 3, WORLD_RADIUS)).toBe(5);
+  it('Zonen (seit 4.3B in Metern, vier Ringe): Ankerglück = 1, Grenzfestungen in Ring 2, äußere Raid-Festungen = 5', () => {
+    expect(dangerOfDistance(0)).toBe(1);
+    expect(dangerOfDistance(2199)).toBe(1);
+    expect(dangerOfDistance(2500)).toBe(2);
+    expect(dangerOfDistance(4500)).toBe(3);
+    expect(dangerOfDistance(7000)).toBe(4);
+    for (const f of BORDER_FORTS) expect(dangerOfDistance(f.radius), f.id).toBe(2);
+    for (const c of CITADELS) expect(dangerOfDistance(c.dist), c.id).toBe(5);
+    expect(dangerOfDistance(WORLD_RADIUS * 3)).toBe(5);
+    expect(dangerOfDistance(PLAYABLE_RADIUS * 0.5, PLAYABLE_RADIUS)).toBe(3);
     for (const c of CITADELS) expect(dangerOfLevel(c.level), c.id).toBeGreaterThanOrEqual(4);
   });
 

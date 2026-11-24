@@ -787,13 +787,24 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
 
 /** Statische Teile pro Material zusammenfassen (wenige Zeichenaufrufe) */
 export function mergeByMaterial(group: Group, keep: Set<Mesh>) {
+  for (const _ of mergeByMaterialSteps(group, keep)) { /* in einem Zug */ }
+}
+
+/** Dasselbe in Teilschritten (Streaming, Phase 4.3A): gibt nach je zehn Netzen und nach jedem Material ab; das Ergebnis ist dasselbe */
+export function* mergeByMaterialSteps(group: Group, keep: Set<Mesh>): Generator<void> {
   group.updateMatrixWorld(true);
   const inv = group.matrixWorld.clone().invert();
   const rel = (m: Mesh) => inv.clone().multiply(m.matrixWorld);
   const buckets = new Map<Material, { geos: BufferGeometry[]; meshes: Mesh[] }>();
+  const list: Mesh[] = [];
   group.traverse((o) => {
     const m = o as Mesh;
     if (!m.isMesh || keep.has(m) || Array.isArray(m.material)) return;
+    list.push(m);
+  });
+  let count = 0;
+  for (const m of list) {
+    if (++count % 10 === 0) yield;
     const b = buckets.get(m.material as Material) ?? { geos: [], meshes: [] };
     let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
     // Texturkoordinaten nur behalten, wenn das Material eine Textur hat (Kisten, Fässer)
@@ -805,7 +816,7 @@ export function mergeByMaterial(group: Group, keep: Set<Mesh>) {
     b.geos.push(g);
     b.meshes.push(m);
     buckets.set(m.material as Material, b);
-  });
+  }
   const kept: Mesh[] = [];
   group.traverse((o) => { if (keep.has(o as Mesh)) kept.push(o as Mesh); });
   for (const [mat, b] of buckets) {
@@ -827,6 +838,7 @@ export function mergeByMaterial(group: Group, keep: Set<Mesh>) {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     group.add(mesh);
+    yield;
   }
   // Behaltene Meshes in Weltkoordinaten direkt an die Gruppe hängen
   for (const m of kept) {

@@ -335,12 +335,23 @@ export class Scatter {
 
 // ---------- Vorlagen der neuen Biome ----------
 
-export type Biome = 'festland' | 'tropisch' | 'klippe';
+/** Bewuchs-Paletten: die drei der handgebauten Länder, seit 4.3B dazu Nordwald, Glut (Asche), Kreide, Atoll und Weinland für die Themen-Inseln */
+export type Biome = 'festland' | 'tropisch' | 'klippe' | 'nord' | 'glut' | 'kreide' | 'atoll' | 'weinland';
 interface Pal { trunk: string; leaf: string[]; bush: string[]; grass: string[]; reed: string; rock: string[]; flowers: string[] }
 const PAL: Record<Biome, Pal> = {
   festland: { trunk: '#5E4630', leaf: ['#2F8C3C', '#3E9E42', '#5AAE42', '#267A36'], bush: ['#34823A', '#459444', '#58A042'], grass: ['#4AA048', '#5CB050', '#3E9040'], reed: '#B8A85A', rock: ['#A8A392', '#B8B3A2', '#98938A'], flowers: ['#E8D44A', '#F2F0E6', '#C8443C', '#7B8FE0', '#E28AB0'] },
   tropisch: { trunk: '#8A6A42', leaf: ['#1C9446', '#2AA84A', '#12803F', '#52B83C'], bush: ['#238A48', '#2F9A44', '#4AA84A'], grass: ['#3FA84A', '#58B850', '#33963F'], reed: '#C9BB70', rock: ['#CFC6AE', '#BDB49C', '#DDD4BC'], flowers: ['#E0483C', '#F0A030', '#F4F0E0', '#C060C8', '#F06A90'] },
   klippe: { trunk: '#3E342C', leaf: ['#2E4E3E', '#38584A', '#274438', '#34503C'], bush: ['#3E5446', '#4A5E4A', '#55664E'], grass: ['#6E7E5A', '#7E8A62', '#5E6E52'], reed: '#A8A078', rock: ['#4C4F58', '#5A5D68', '#42454E'], flowers: ['#C2CCD2', '#9AA8C8', '#D8D4C4'] },
+  // Nordwald: dunkle Kiefern, kühles Gras, graue Granitbrocken (Hanse-Kolonien)
+  nord: { trunk: '#5A4030', leaf: ['#1F5A3A', '#2A6A44', '#1A4E34', '#347450'], bush: ['#2E6440', '#3A7048', '#466E4A'], grass: ['#4A8A52', '#5A9A5C', '#3E7E4A'], reed: '#A89E6A', rock: ['#8A8F96', '#9A9EA4', '#787C84'], flowers: ['#E4E0D2', '#7BA2C4', '#C8B256', '#B87A9A'] },
+  // Asche: verkohlte Stämme, dunkelrotes Laub, schwarzer Vulkanfels (Kurogane)
+  glut: { trunk: '#2A2020', leaf: ['#5A2A26', '#6E3028', '#4A2220', '#7A3A2A'], bush: ['#4E2E2A', '#5E3A30', '#3E2A28'], grass: ['#6A5A48', '#7A6650', '#5A4C40'], reed: '#8A7656', rock: ['#2E2828', '#3A3434', '#24201F'], flowers: ['#D2602E', '#E8A040', '#8C4432'] },
+  // Kreide: helles Grün über weißem Kalkstein (Kreideküste der Engländer)
+  kreide: { trunk: '#6A5038', leaf: ['#4E8A46', '#5E9A50', '#457E40', '#6AA85A'], bush: ['#558A4A', '#649650', '#4A7E44'], grass: ['#7FA860', '#8CB46A', '#729C58'], reed: '#C8BC84', rock: ['#ECE8DC', '#E0DACA', '#F4F1E8'], flowers: ['#F2F0E6', '#C8443C', '#E8D44A', '#9AA8E0'] },
+  // Atoll: grellgrüne Palmen, Korallensand, rosige Korallenblöcke
+  atoll: { trunk: '#9A7A4E', leaf: ['#2AB858', '#3CC860', '#20A04C', '#62CC48'], bush: ['#2E9E52', '#40B058', '#56B85A'], grass: ['#4ABE5A', '#62C864', '#3AA852'], reed: '#D8CC88', rock: ['#F0C8B8', '#E8B0A0', '#F6DCCC'], flowers: ['#F06A90', '#F4F0E0', '#F0A030', '#E0483C'] },
+  // Weinland: goldenes Gras, Olivengrün, Terrakotta-Fels (Weinküste der Franzosen)
+  weinland: { trunk: '#6A4A30', leaf: ['#6A8A3A', '#7A9A44', '#5E7E34', '#8AA250'], bush: ['#6E8A40', '#7E964A', '#64803A'], grass: ['#B8A650', '#C8B45E', '#A89848'], reed: '#D8C27A', rock: ['#C08A62', '#D09A70', '#B07A56'], flowers: ['#8A5AC8', '#C84A6A', '#E8D44A', '#F2F0E6'] },
 };
 
 const flat = (c: string) => toon({ color: c, flatShading: true });
@@ -736,12 +747,20 @@ export interface ScatterSiteOpts {
 
 /** Verteilt den Bewuchs eines Landes nach seinen Schichten (data/settlements.ts) */
 export function scatterSite(o: ScatterSiteOpts): { trees: Spot[]; bushes: Spot[] } {
+  const it = scatterSiteSteps(o);
+  let r = it.next();
+  while (!r.done) r = it.next();
+  return r.value;
+}
+
+/** Dasselbe in Teilschritten (Streaming, Phase 4.3A): gibt je 160 Versuche ab; gleiche Zufallsfolge, gleiches Ergebnis */
+export function* scatterSiteSteps(o: ScatterSiteOpts): Generator<void, { trees: Spot[]; bushes: Spot[] }> {
   const { rnd, hAt, veg, occ } = o;
   const trees: Spot[] = [], bushes: Spot[] = [];
   const dens = Math.max(0.4, Math.min(1.6, o.density));
   // vorherrschende Windrichtung der Insel: Windkiefern lehnen alle nach Lee
   const lee = rnd() * Math.PI * 2;
-  o.layers.forEach((L, li) => {
+  for (const [li, L] of o.layers.entries()) {
     const spec = FLORA[L.flora];
     const solid = (spec.collide ?? 0) > 0 || spec.bush;
     const area = Math.PI * o.r * o.r * (Math.min(1, L.zone[1]) ** 2 - L.zone[0] ** 2);
@@ -751,6 +770,7 @@ export function scatterSite(o: ScatterSiteOpts): { trees: Spot[]; bushes: Spot[]
     const want = Math.round((area / 10000) * L.perHa * dense * (solid ? 0.5 + dens * 0.5 : dens));
     let placed = 0;
     for (let t = 0; t < want * 8 && placed < want; t++) {
+      if ((t & 127) === 127) yield;
       const a = rnd() * Math.PI * 2;
       const f = Math.sqrt(L.zone[0] ** 2 + rnd() * (L.zone[1] ** 2 - L.zone[0] ** 2));
       const d = o.edge(a) * f;
@@ -789,6 +809,6 @@ export function scatterSite(o: ScatterSiteOpts): { trees: Spot[]; bushes: Spot[]
       else if (spec.bush) bushes.push({ x, y, z });
       placed++;
     }
-  });
+  }
   return { trees, bushes };
 }

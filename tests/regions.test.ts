@@ -19,6 +19,8 @@ describe('Stärke der Meere', () => {
       for (const i of r.islands) {
         // die Marine-Grenzfestungen und Endgame-Inseln im äußeren Band (ab 2.9.90) steigen bis +4 (siehe tests/factions.test.ts)
         if (i.marine || i.kind === 'citadel') continue;
+        // Themen-Inseln der offenen Welt (4.3B) folgen den Ringen (tests/openWorld.test.ts)
+        if (i.themePower !== undefined) continue;
         const lv = seaLevelAt(i.x, i.z);
         expect(lv, `${r.id}/${i.id}`).toBeGreaterThanOrEqual(r.level!);
         expect(lv, `${r.id}/${i.id}`).toBeLessThanOrEqual(r.level! + 2);
@@ -51,14 +53,14 @@ describe('Stärke der Meere', () => {
 });
 
 describe('Große Welt', () => {
-  it('hat die vierfache Fläche in der Kernwelt (plus äußeres Band), Ankerglück bleibt der Heimathafen am alten Platz', () => {
+  it('hat die vierfache Fläche in der Kernwelt (plus äußere Ringe bis 10 400 m seit 4.3B), Ankerglück bleibt der Heimathafen am alten Platz', () => {
     expect(WORLD_CORE_RADIUS).toBe(4000);
-    expect(WORLD_RADIUS).toBe(5800);
+    expect(WORLD_RADIUS).toBe(10680);
     expect(BERNSTEINSEE.islands[0]).toMatchObject({ id: 'ankerglueck', x: 0, z: 160 });
   });
 
   it('enthält das Festland und drei neue Inseln mit eigenem Biom, alle in der Bernsteinsee', () => {
-    const lands = REGIONS.flatMap((r) => r.islands).filter((i) => i.site);
+    const lands = REGIONS.flatMap((r) => r.islands).filter((i) => i.site && i.themePower === undefined);
     expect(lands.map((i) => i.id).sort()).toEqual(['faehrholm', 'gruenmark', 'palmenkueste', 'sturmklippe']);
     expect(new Set(lands.map((i) => i.biome))).toEqual(new Set(['festland', 'tropisch', 'klippe']));
     for (const i of lands) {

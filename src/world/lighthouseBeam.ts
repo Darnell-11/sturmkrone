@@ -10,7 +10,7 @@ import {
   ShaderMaterial,
   SphereGeometry,
 } from 'three';
-import { markShared } from '../render/dispose';
+import { markShared, onForget } from '../render/dispose';
 import { clamp01 } from '../core/mathUtil';
 
 /**
@@ -26,6 +26,8 @@ const U = {
   uBeam: { value: 0 },
 };
 const groups: Group[] = [];
+// Wird eine Insel abgebaut (Streaming), verschwindet ihr Strahl auch aus der Liste (sonst hielte sie den ganzen Baum fest)
+onForget((o) => { const i = groups.indexOf(o as Group); if (i >= 0) groups.splice(i, 1); });
 
 /** Tageszeit und Wetter: `night` 0 … 1 (Sonnenstand), `weather` 0 … 1 (Nebel, Regen, Sturm). Der Strahl blendet weich ein und aus. */
 export function updateBeams(dt: number, night: number, weather = 0) {

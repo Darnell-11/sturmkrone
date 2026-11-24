@@ -1,5 +1,6 @@
 // Handgebaute Länder: Landform, Siedlungen und Bewuchs für das Festland und die neuen Inseln.
 // Alles hier sind reine Daten – neue Dörfer, Türme oder Wälder entstehen durch Einträge, nicht durch Code.
+import { THEME_SITES } from './openWorld';
 
 /** Bauten aus world/architecture.ts */
 export type StructureType =
@@ -72,6 +73,8 @@ export interface SiteDef {
   scatter: ScatterLayer[];
   /** Bewohner, die beim Landgang um die erste Siedlung schlendern */
   villagers: number;
+  /** Bauten der Weltmächte tragen die Farben des Besitzers (Tore, Türme, Mauern, Kräne, Lagerhäuser; architecture.ts `THEMED_TYPES`) */
+  themed?: boolean;
 }
 
 const S = (t: StructureType, x: number, z: number, yaw = 0, len?: number): StructureDef => ({ t, x, z, yaw, len });
@@ -311,3 +314,6 @@ export const SITES: Record<string, SiteDef> = {
     ],
   },
 };
+
+// Die Siedlungen der 24 Themen-Inseln (Phase 4.3B) aus data/openWorld.ts: aus Bausteinen zusammengesetzt, Schlüssel = Insel-Kennung
+Object.assign(SITES, THEME_SITES);

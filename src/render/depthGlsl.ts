@@ -10,7 +10,7 @@
  *    kein `break`/`continue`: feste Durchlaufzahl, Auswahl über Gewichte.
  */
 
-/** Ab dieser Tiefe gilt ein Bildpunkt als Himmel (bei Nah 0,1 m / Fern 1000 m entspricht das etwa 990 m) */
+/** Ab dieser Tiefe gilt ein Bildpunkt als Himmel (bei Nah 0,1 m / Fern 4800 m entspricht das etwa 4 570 m; die Horizont-Silhouetten der Inseln liegen bei höchstens 4 500 m davor) */
 export const SKY_DEPTH = '0.999999';
 
 /** Braucht `#include <packing>` davor und das Define DEPTH_PACKING */

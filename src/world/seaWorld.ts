@@ -5,9 +5,10 @@ import { rosterTotal } from '../data/troops';
 import type { TroopSquad, TroopWorld } from '../entities/troops/squad';
 import type { CrewDef } from '../data/crew';
 import type { AllyWorld } from '../entities/ally';
-import { navForIsland } from '../ai/navGrid';
+import { navForIsland, releaseNavForIsland } from '../ai/navGrid';
 import {
   Color,
+  Fog,
   ConeGeometry,
   CylinderGeometry,
   Group,
@@ -25,25 +26,30 @@ import type { Input } from '../core/input/input';
 import type { StyleId } from '../data/animations';
 import type { CharacterLook, NpcRole } from '../data/characterParts';
 import { CAMERA_PLANES, type QualityConfig } from '../data/qualityTiers';
-import { EDGE_WALL, HOME_SPAWN, WORLD_SCALE } from '../data/world';
+import { HOME_SPAWN, WORLD_SCALE } from '../data/world';
 import type { CharacterAssets } from '../entities/character/assets';
 import { LampPool, lampShared } from '../render/lamps';
 import { installMatrixSkip } from '../render/matrixSkip';
-import { GlowSystem, glowHub, makeEmitter, type GlowPlaced } from '../render/glow';
+import { GlowSystem, glowHub, makeEmitter, type GlowEmitter, type GlowPlaced } from '../render/glow';
 import { Character } from '../entities/character/character';
 import { shieldFor, weaponsFor } from '../entities/character/weapons';
 import { Npc } from '../entities/npc';
 import { PlayerFoot } from '../entities/player/playerFoot';
-import { addOutlines } from '../render/outline';
+import { addOutlines, addOutlinesSteps } from '../render/outline';
 import { toon } from '../render/toon';
+import { disposeObject, markShared } from '../render/dispose';
+import { HorizonLayer } from './islandHorizon';
+import { buildBlueprints, isVolcanic, islandForm, shapeOf, walkOf, type IslandBlueprint } from './islandBlueprint';
+import { WorldStreamer, type StreamHost } from './worldStreamer';
+import { EDGE_WARNING, applyEdgeDrift, clampToHardRadius, edgeWarningLevel, newEdgeZone } from './stormEdge';
 import { Environment, type EnvState } from './environment';
-import { coastK, coastMax, fitHills, inBox, IslandGround, makeIslandShape, shelfOf, WATERLINE, type WalkIsland } from './islandGround';
+import { coastK, inBox, IslandGround, type WalkIsland } from './islandGround';
 import type { IslandShape } from './ocean';
 import { ParticleSystem } from './particles';
 import { hashId, seeded } from './waves';
-import { dressIsland, plantFactionBanners } from './islandDress';
+import { dressIslandSteps, plantFactionBanners } from './islandDress';
 import { SITES } from '../data/settlements';
-import { buildSite } from './settlement';
+import { buildSiteSteps } from './settlement';
 import { setSiteNight } from './architecture';
 import { cachedProto, floraProto, Scatter, type Biome, type VegChunk } from './vegetation';
 import { Object3D, type Material } from 'three';
@@ -83,10 +89,10 @@ import { SmokeSystem } from './smoke';
 import { setElementSmoke } from '../faji/elementFx';
 import { distToSegment, wrapAngle } from '../core/mathUtil';
 import { DebrisSystem } from './debris';
-import { islandLabel, islandTerrain, OUTPOST_PIER, outpost, plant, ROCK_TYPES, rockFormation, styleKit, volcano } from './islandStyle';
+import { islandLabel, islandTerrainSteps, OUTPOST_PIER, outpost, plant, ROCK_TYPES, rockFormation, styleKit, volcano, type StyleKit } from './islandStyle';
 import type { Sprite } from 'three';
 import { ABYSS_LAIR, SeaBoss } from '../naval/seaBoss';
-import { buildTown, mergeByMaterial, type TownBuild } from './town';
+import { buildTown, mergeByMaterialSteps, type TownBuild } from './town';
 import { updateBeams } from './lighthouseBeam';
 import { updateFountains } from './fountain';
 import { SeaLife } from './life';
@@ -117,6 +123,50 @@ const CAMP_BY_LEVEL: EnemyKind[][] = [
 /** Inselstil einer Region */
 const styleOf = (regionId?: string): IslandStyle => REGIONS.find((r) => r.id === regionId)?.style ?? 'tropisch';
 
+type V3 = { x: number; y: number; z: number };
+
+/** Was die Welt von einer Insel dauerhaft weiß: Lage, Größe, Definition und Stilbaukasten (reine Daten, JSON-tauglich bis auf den Stilbaukasten) */
+interface IslandSpec { x: number; z: number; r: number; hill: number; palms: number; tower: boolean; def: IslandDef; kit: StyleKit }
+
+/**
+ * Alles, was die Darstellung (ACTIVE_HIGH) einer Insel besitzt und beim Abbau freigibt. Lichtquellen und Listen-Einträge werden erst beim Tausch
+ * (`commitIsland`) angemeldet und beim Abbau (`disposeIsland`) wieder abgemeldet; dazwischen ist die Insel nur ein Baum ohne Verbindung zur Szene.
+ */
+interface IslandVis {
+  group: Group;
+  vegChunks: VegChunk[];
+  label: Sprite | null;
+  lamps: Mesh[];
+  /** Lichtquellen (Hof, Flamme, Bodenlicht): Beschreibung bis zum Tausch, danach `carriers` (Träger für echte Lichter) */
+  glows: { list: GlowPlaced[]; ox: number; oz: number }[];
+  objEmitters: { obj: Mesh; opts: Partial<GlowEmitter> }[];
+  carriers: Object3D[];
+  fauna: { def: IslandDef; x: number; z: number; r: number; trees: V3[]; bushes: V3[]; style: IslandStyle; edge: (a: number) => number } | null;
+  entry: { g: Group; x: number; z: number; r: number; id: string } | null;
+  committed: boolean;
+}
+
+/** Eine Insel der Hauptkarte: die dauerhaften Daten (`walk` mit Küste, Hindernissen, Einebnungen; `shape` für das Wasser) und ihre Darstellung, solange sie steht */
+interface IslandSlot {
+  index: number;
+  spec: IslandSpec;
+  /** Die reinen Daten der Insel (Phase 4.3B) */
+  bp: IslandBlueprint;
+  walk: WalkIsland;
+  shape: IslandShape;
+  vis: IslandVis | null;
+  /** Hindernisse, Einebnungen, Feuerstellen, Dorf und Wachrunden liegen in der Welt (nach dem ersten vollständigen Aufbau) */
+  detailDone: boolean;
+}
+
+const newIslandVis = (): IslandVis => ({ group: new Group(), vegChunks: [], label: null, lamps: [], glows: [], objEmitters: [], carriers: [], fauna: null, entry: null, committed: false });
+
+/** Eintrag entfernen, ohne die Liste zu verschieben (Reihenfolge ist hier gleichgültig) */
+/** Prüfpunkte der Schiffshülle entlang der Länge gegen die Stege */
+const PIER_PROBES = [-0.46, -0.3, -0.15, 0, 0.15, 0.3, 0.46];
+
+function swapRemove<T>(a: T[], v: T): void { const i = a.indexOf(v); if (i >= 0) { a[i] = a[a.length - 1]; a.pop(); } }
+
 interface WakePoint { x: number; z: number; age: number; strength: number; dx: number; dz: number; hw: number; spd: number }
 
 export type SeaMode = 'sail' | 'foot';
@@ -134,6 +184,26 @@ export type YardView = 'all' | 'bow' | 'sail' | 'gun';
 
 export class SeaWorld {
   readonly scene = new Scene();
+  /** Silhouetten der Inseln auf HORIZON_LOD */
+  readonly horizon = new HorizonLayer(this.scene);
+  /** Was der WorldStreamer von der Darstellung verlangt (die Netze kommen und gehen, die Daten bleiben) */
+  private readonly streamHost: StreamHost = {
+    showHorizon: (i) => { const sl = this.slots[i]; this.horizon.show(i, sl.walk, sl.spec.def.kind, sl.spec.x, sl.spec.z); },
+    hideHorizon: (i) => this.horizon.hide(i),
+    buildActive: (i) => this.islandStages(this.slots[i], !this.slots[i].detailDone),
+    commitActive: (i) => this.commitIsland(this.slots[i]),
+    disposeActive: (i) => this.disposeIsland(this.slots[i]),
+  };
+  /** Chunk-Streaming der Inseln (UNLOADED, HORIZON_LOD, ACTIVE_HIGH); erst nach `settleStreaming` aktiv */
+  readonly streamer = new WorldStreamer(this.streamHost);
+  private streamReady = false;
+  /** Shader einer neu gebauten Insel parallel vorübersetzen (setzt das Spiel: `Renderer.warmObjectAsync`); der Tausch wartet darauf */
+  warmIsland: ((o: Object3D) => Promise<void>) | null = null;
+  /** Messung (Entwicklung): Abschnitt → Millisekunden, solange gesetzt (siehe `islandStages`) */
+  islandProfile: Record<string, number> | null = null;
+  /** Sturm-Zone am Weltrand: Stärke 0 … 1 (für Wetter, Wind, Anzeige) und Arbeitsobjekt */
+  edgeK = 0;
+  private readonly edgeZone = newEdgeZone();
   readonly camera = new PerspectiveCamera(55, 1, CAMERA_PLANES.near, CAMERA_PLANES.far);
   readonly env: Environment;
   /** Punkt, auf den Kamera, Schatten und Tiefenunschärfe zielen */
@@ -293,15 +363,17 @@ export class SeaWorld {
   town: TownBuild | null = null;
   life: SeaLife | null = null;
   private buoys: { g: Group; x: number; z: number; lamp: Mesh }[] = [];
-  /** Inselschilder; entdeckte Inseln (IDs) setzt das Spiel */
-  private labels: { sprite: Sprite; x: number; z: number; r: number; id: string }[] = [];
+  /** Die Inseln der Hauptkarte (Daten dauerhaft, Darstellung gestreamt); entdeckte Inseln (IDs) setzt das Spiel */
+  private slots: IslandSlot[] = [];
   discovered = new Set<string>();
   /** Rauchende Vulkankrater */
   private smokeVents: { x: number; y: number; z: number }[] = [];
   /** Stege als Strecke a→b mit halber Breite (Schiffskollision) */
   private piers: Pier[] = [];
+  /** Arbeitsliste der Steg-Abfrage (Broadphase) */
+  private nearPiers: Pier[] = [];
   private lamps: Mesh[] = [];
-  /** Inselgruppen (für das Ausblenden jenseits der Sichtweite) */
+  /** Inselgruppen der aufgebauten Inseln (für das Ausblenden jenseits der Sichtweite) */
   private islandGroups: { g: Group; x: number; z: number; r: number; id: string }[] = [];
   private viewDist = 800;
   /** Lagerfeuer auf den Inseln (Rauch und Glut) */
@@ -335,7 +407,6 @@ export class SeaWorld {
   private boostCd = 0;
   private cdBow = 0;
   private shake = 0;
-  private edgeWarned = false;
 
   private camYaw = 0;
   private camPitch = 0.3;
@@ -377,8 +448,8 @@ export class SeaWorld {
   private fwdTmp = new Vector3();
   private npcTmp = new Vector3();
 
-  /** Inseln-Aufbau als Generator: je Insel ein Schritt (siehe buildSteps) */
-  private islandSteps: Generator<number, IslandShape[]>;
+  /** Reine Daten jeder Insel (Phase 4.3B), in der Reihenfolge von `islandDefs` */
+  blueprints: IslandBlueprint[] = [];
 
   /**
    * deferred = true: die Inseln werden NICHT im Konstruktor gebaut, sondern stückweise über `buildSteps()` (Ladebildschirm:
@@ -407,8 +478,8 @@ export class SeaWorld {
     glowHub.clear();
     this.glow = new GlowSystem(this.scene);
     this.ground.piers = this.piers;
-    this.islandSteps = this.buildIslands();
-    this.islandSteps.next(); // legt islandDefs an
+    // Blueprint-Phase: alle Inseln als reine Daten (kein Netz, kein Material)
+    this.prepareIslands();
     this.spray = new ParticleSystem(this.scene, false, 0.8);
     this.sparks = new ParticleSystem(this.scene, true, 0.32);
     this.dust = new ParticleSystem(this.scene, false, 0.7);
@@ -437,13 +508,44 @@ export class SeaWorld {
     if (!deferred) for (const _ of this.buildSteps()) { /* alles in einem Zug */ }
   }
 
-  /** Inseln, Städte und Bojen aufbauen: liefert nach jeder Insel den Fortschritt 0 … 1 (der Aufrufer gibt dem Browser dazwischen Luft) */
+  /**
+   * Startumgebung aufbauen (Ladebildschirm): Wasser und Brandung aus den Küstenformen, Bojen, dann holt der WorldStreamer alle Inseln im
+   * ACTIVE-Radius um den Heimatplatz (Ankerglück samt Stadt) auf ACTIVE_HIGH – erst hier entstehen Netze, und nur für diese Inseln.
+   */
   *buildSteps(): Generator<number, void> {
-    let r = this.islandSteps.next();
-    while (!r.done) { yield r.value; r = this.islandSteps.next(); }
-    this.islands = r.value;
     this.env.setIslands(this.islands);
+    yield 0.3;
     this.buildBuoys();
+    // Silhouetten: Shader werden mit dem Rest vorübersetzt (`settleStreaming` räumt die Probestücke wieder ab)
+    this.horizon.warmUp();
+    yield 0.4;
+    this.streamer.forceSyncAround(HOME_SPAWN.x, HOME_SPAWN.z);
+    yield 1;
+  }
+
+  /**
+   * Nach dem Laden (Shader sind übersetzt): ab jetzt streamt `render` je Bild. Bringt die Welt um den aktuellen Ort auf ihre Stufen
+   * (Silhouetten im Horizont-Radius); liefert die Zahl der Inseln, die gerade voll stehen.
+   */
+  settleStreaming(): number {
+    this.horizon.warmDone();
+    this.streamReady = true;
+    this.streamer.forceSyncAround(this.x, this.z);
+    return this.streamer.counts().active;
+  }
+
+  /** Interessenpunkte melden und einen Streaming-Schritt ausführen (je Bild einmal, vor dem Ausblenden jenseits der Sichtweite) */
+  private streamTick() {
+    if (!this.streamReady || this.raid) return;
+    const st = this.streamer;
+    st.beginInterest();
+    st.addInterest(this.x, this.z);
+    if (this.mode === 'foot' && this.foot) st.addInterest(this.foot.x, this.foot.z);
+    st.addInterest(this.camera.position.x, this.camera.position.z);
+    // Die aktiven Flottenschiffe (und Begleiter) halten ihre Umgebung geladen: wie später das Interest-Management der Spieler im Mehrspielerbetrieb
+    const en = this.naval?.enemies;
+    if (en) for (let i = 0; i < en.length; i++) { const e = en[i]; if (e.fleetId || e.companion) st.addInterest(e.ship.x, e.ship.z); }
+    st.update();
   }
 
   /** Wind als Vektor (m/s) für Rauch und Treibgut */
@@ -502,41 +604,74 @@ export class SeaWorld {
 
   // ---------- Aufbau ----------
 
-  private *buildIslands(): Generator<number, IslandShape[]> {
-    const rnd = seeded(2024);
-    const shapes: IslandShape[] = [];
-    // Alle Regionen sind handgemacht: Bernsteinsee in der Mitte, fünf Meere im Ring
-    const specs = REGIONS.flatMap((reg) => reg.islands.map((d) => ({
+  /**
+   * Blueprint-Phase beim Weltstart (Phase 4.3B): jede Insel nur als Daten – Küste, Hügel, Böschung, Kollisionsradius, Stege, Markt, Ring, Gefahr,
+   * Rasterzellen (world/islandBlueprint.ts). Kein Netz, kein Material: die begehbare Insel (`walk`) trägt Küste und Hügel, Hindernisse und
+   * Einebnungen kommen beim ersten Aufbau durch den WorldStreamer dazu. Die Stege liegen sofort in `ground.piers` (Liegeplätze, Schiffskollision).
+   */
+  private prepareIslands() {
+    // Alle Regionen sind handgemacht: Bernsteinsee in der Mitte, fünf Meere im Ring, dazu die Themen-Inseln der offenen Welt
+    const specs: IslandSpec[] = REGIONS.flatMap((reg) => reg.islands.map((d) => ({
       x: d.x, z: d.z, r: d.r, hill: d.hill, palms: d.palms, tower: d.kind === 'lighthouse', def: d, kit: styleKit(d.biome ?? reg.style ?? 'tropisch'),
     })));
     this.islandDefs = specs.map((s) => s.def);
-    yield 0;
-    let built = 0;
-    const stone = toon(0xe8e2d4);
-    const red = toon(0xa8322a);
+    this.blueprints = buildBlueprints(this.islandDefs, REGIONS);
+    const shapes: IslandShape[] = [];
+    for (const spec of specs) {
+      const bp = this.blueprints[this.slots.length];
+      const slot: IslandSlot = { index: this.slots.length, spec, bp, walk: walkOf(bp), shape: shapeOf(bp), vis: null, detailDone: false };
+      this.slots.push(slot);
+      shapes.push(slot.shape);
+      this.ground.add(slot.walk);
+      for (const p of bp.piers) this.piers.push(p);
+      // Ankerglück (Stadt, Bewohner, Hafenmenüs) bleibt immer stehen, sobald es einmal gebaut ist
+      this.streamer.addIsland({ id: bp.id, x: bp.x, z: bp.z, r: bp.r }, { pinned: spec.def.kind === 'town' });
+    }
+    this.islands = shapes;
+  }
 
-    for (const s of specs) {
-      const { r } = s;
+  /**
+   * Eine Insel in Teilschritten aufbauen (der WorldStreamer führt je Bild einen aus): 1 Gelände, 2 Bauten, Stege und Bewuchs, 3 Verschmelzen,
+   * Instanzen, Schilder, Konturen. Nichts davon steht in der Szene, bis `commitIsland` es tauscht; bricht der Aufbau ab (`return()`), räumt das `finally` auf.
+   *
+   * `first` = erster Aufbau beim Laden: schreibt die Daten der Insel in die Welt. Jeder spätere Aufbau rechnet dieselben Daten (alles deterministisch,
+   * je Insel aus ihrer Kennung gewürfelt) noch einmal in eine Kopie und wirft sie weg: die Welt behält ihre Daten, nur die Darstellung entsteht neu.
+   */
+  private *islandStages(slot: IslandSlot, first: boolean): Generator<void, void> {
+    const s = slot.spec;
+    const { r } = s;
+    const vis = slot.vis = newIslandVis();
+    let ok = false;
+    // Messhilfe (Entwicklung): `world.islandProfile = {}` sammelt die Zeit je Abschnitt in Millisekunden
+    let lastLap = this.islandProfile ? performance.now() : 0;
+    const lap = (label: string) => { const P = this.islandProfile; if (!P) return; const n = performance.now(); P[label] = (P[label] ?? 0) + n - lastLap; lastLap = n; };
+    try {
+      const town = s.def.kind === 'town';
+      // Form aus dem Blueprint (dieselbe Rechnung wie dort: gleiche Zufallsfolge aus der Kennung); der Aufbau würfelt danach weiter
+      const { coast, hills, shapeRnd } = islandForm(s.def);
+      const form = { coast, hills };
+      // Zufall für Felsen und Palmen: je Insel eine eigene Folge (früher eine gemeinsame für alle, dann hinge das Bild einer Insel von der Aufbau-Reihenfolge ab)
+      const rnd = seeded(hashId(s.def.id) ^ 0x2024);
+      const volcanic = isVolcanic(s.def);
+      // Handgebaute Länder (Festland, Themen-Inseln) bringen Küste und Hügel aus ihren Daten mit
+      const site = s.def.site ? SITES[s.def.site] : null;
+      let walk: WalkIsland;
+      if (first) {
+        // erster Aufbau: Hindernisse und Einebnungen entstehen in der begehbaren Insel der Welt (bricht er ab, setzt `finally` sie zurück)
+        walk = slot.walk;
+        walk.blockers.length = 0; walk.pads = undefined; walk.lift = undefined; walk.addPad = undefined;
+      } else {
+        // Kopie der Insel für den Neuaufbau: gleiche Form, leere Hindernisse und Einebnungen (die Rechnung füllt sie noch einmal, die Kopie wird verworfen)
+        walk = { ...slot.walk, blockers: [], pads: undefined, lift: undefined, addPad: undefined, walkways: undefined };
+      }
+      // Bau-Daten sammeln sich hier; nach einem vollständigen ersten Aufbau wandern sie in die Welt (Stege liefert der Blueprint)
+      const sink = { piers: [] as Pier[], campfires: [] as V3[], chimneys: [] as V3[], smokeVents: [] as V3[], villages: new Map<string, { x: number; z: number; r: number }>(), patrols: new Map<string, { x: number; z: number }[][]>() };
+
       const isl = new Group();
       isl.position.set(s.x, 0, s.z);
-      const town = s.def.kind === 'town';
-      // Jede Insel bekommt ihre eigene Form: langgezogen, gelappt, sichelförmig oder rund, mit 1–3 Hügeln.
-      // Stadt, Häfen, Leuchtturm und Vulkane bleiben schlicht (ihre Bauten stehen um die Mitte).
-      const shapeRnd = seeded(hashId(s.def.id));
-      // schlicht (rund, ein Hügel in der Mitte) nur noch dort, wo ein Bauwerk die Mitte braucht: Stadt, Leuchtturm, Vulkan
-      const volcanic = s.def.region === 'glut' && s.def.kind !== 'harbor' && s.def.kind !== 'treasure' && s.def.kind !== 'citadel' && s.def.kind !== 'marinefort';
-      const simple = town || s.tower || volcanic;
-      // Handgebaute Länder (Festland, neue Inseln) bringen Küste und Hügel aus ihren Daten mit
-      const site = s.def.site ? SITES[s.def.site] : null;
-      const form = site ? { coast: site.coast, hills: fitHills(r, site.coast, site.hills) } : makeIslandShape(r, s.hill, shapeRnd, simple);
-      const walk: WalkIsland = { x: s.x, z: s.z, r, beachY: 1.3, hillY: 1.2, coast: form.coast, hills: form.hills.map((h) => ({ ...h, x: s.x + h.x, z: s.z + h.z })), shelf: shelfOf(r), blockers: [],
-        // Relief: die Stadt bleibt fast eben, Dörfer und Wildnis rollen (Meter Ausschlag)
-        reliefAmp: town ? 0.1 : site ? 0.55 : s.def.kind === 'harbor' || s.def.kind === 'quiet' ? 0.4 : 0.5, reliefSeed: hashId(s.def.id) & 0xffff };
-      // Brandung und Flachwasser beginnen an der echten Wasserlinie (Böschung je nach Inselgröße)
-      const wl = 1 + walk.shelf * WATERLINE;
-      shapes.push({ x: s.x, z: s.z, r: r * coastMax(form.coast) * wl, coast: form.coast, base: r * wl });
+      vis.group = isl;
       const kit = s.kit;
-      const glow = new Set<Mesh>(this.lamps);
+      const glow = new Set<Mesh>();
       // Grasfläche: üppig bis fast an den Strand oder karg mit viel Sand – je nach Region und Inselart
       const style = s.def.biome ?? styleOf(s.def.region);
       const lushK = style === 'tropisch' || style === 'nord' ? 1 : style === 'nebel' ? 0.8 : style === 'schlund' ? 0.6 : 0.35;
@@ -544,7 +679,7 @@ export class SeaWorld {
       /** Bodenhöhe in Inselkoordinaten – dieselbe Rechnung wie beim Laufen */
       const solo = new IslandGround();
       solo.add(walk);
-      const terrain = islandTerrain(kit, r, form.coast, form.hills, grassFrac, shapeRnd, town || site ? 0 : 0.45 + shapeRnd() * 0.55, walk.shelf, (lx, lz) => { const v = solo.height(s.x + lx, s.z + lz); return Number.isFinite(v) ? v : -1.7; });
+      const terrain = yield* islandTerrainSteps(kit, r, form.coast, form.hills, grassFrac, shapeRnd, town || site ? 0 : 0.45 + shapeRnd() * 0.55, walk.shelf, (lx, lz) => { const v = solo.height(s.x + lx, s.z + lz); return Number.isFinite(v) ? v : -1.7; });
       isl.add(terrain.beach, ...terrain.hills);
       // ab jetzt zählt die Wiesendecke zur Laufhöhe (Figuren, Häuser, Pflanzen stehen auf ihr); das Mesh ist schon gebaut
       walk.lift = terrain.liftAt;
@@ -572,6 +707,9 @@ export class SeaWorld {
         padBounds.push([wx - s.x - R, wz - s.z - R, wx - s.x + R, wz - s.z + R]);
         return y;
       };
+      lap('1 Gelände');
+      yield; // ---- Stufe 1: Gelände und Boden der Insel
+
       // Bäume, Sträucher, Gras und Felsen der Insel: gesammelt und am Ende als InstancedMesh gebaut
       const veg = new Scatter();
       const rocks = s.def.rocks ?? (rnd() < 0.4 && !s.tower && !town ? 1 : 0);
@@ -588,6 +726,7 @@ export class SeaWorld {
         f.g.position.set(fx, hAt(fx, fz) - 0.3, fz);
         isl.add(f.g);
         for (const b of f.blocks) walk.blockers.push({ x: s.x + fx + b.x, z: s.z + fz + b.z, r: b.r });
+        yield;
       }
       for (let k = 0; k < s.palms; k++) {
         const pa = town ? (k / s.palms) * Math.PI * 2 + rnd() * 0.2 : rnd() * Math.PI * 2;
@@ -597,8 +736,12 @@ export class SeaWorld {
         const proto = style === 'tropisch' ? floraProto('tropisch', 'palme', Math.floor(rnd() * 4)) : cachedProto(`kit:${style}:plant:${Math.floor(rnd() * 4)}`, (prnd) => plant(kit, prnd), { collide: 0.45 });
         veg.add(proto, px, hAt(px, pz) - 0.1, pz, rnd() * Math.PI * 2, 1, 1, 0, (rnd() - 0.5) * (kit.flora === 'palme' ? 0.4 : 0.15));
         walk.blockers.push({ x: s.x + px, z: s.z + pz, r: 0.45 });
+        if ((k & 7) === 7) yield;
       }
+      lap('2a Felsen und Palmen');
       if (s.tower && !hasArch('leuchtturm')) {
+        const stone = toon(0xe8e2d4);
+        const red = toon(0xa8322a);
         const tower = new Mesh(new CylinderGeometry(1.6, 2.4, 16, 12), stone);
         tower.position.set(0, 9, 0);
         const band = new Mesh(new CylinderGeometry(1.95, 2.05, 2, 12), red);
@@ -606,8 +749,9 @@ export class SeaWorld {
         const lamp = new Mesh(new SphereGeometry(1.4, 16, 10), new MeshBasicMaterial({ color: new Color(6, 5, 2.5) }));
         lamp.position.set(0, 18, 0);
         lamp.userData.noOutline = true;
-        this.lamps.push(lamp);
-        glowHub.add(makeEmitter('lamp', 0, 0, 0, { obj: lamp, size: 3.2 }));
+        glow.add(lamp);
+        vis.lamps.push(lamp);
+        vis.objEmitters.push({ obj: lamp, opts: { size: 3.2 } });
         isl.add(tower, band, lamp);
         walk.blockers.push({ x: s.x, z: s.z, r: 2.5 });
       }
@@ -617,138 +761,215 @@ export class SeaWorld {
         isl.add(v.g);
         v.g.traverse((o) => { if (o.userData.noOutline) glow.add(o as Mesh); });
         walk.blockers.push({ x: s.x, z: s.z, r: v.radius * 0.95 });
-        this.smokeVents.push({ x: s.x, y: v.top + 1, z: s.z });
+        sink.smokeVents.push({ x: s.x, y: v.top + 1, z: s.z });
       }
-      // Außenposten-Hafen in den Regionen
-      if (s.def.kind === 'harbor') {
+      // Außenposten-Hafen in den Regionen (Häfen mit Siedlung bauen ihren Kai selbst)
+      if (s.def.kind === 'harbor' && !site) {
         const lanterns: Mesh[] = [];
         const facing = Math.atan2(-s.x, -s.z);
         // Hafeninseln haben jetzt eine eigene Küstenform: der Steg setzt an der echten Wasserlinie an
         const e = r * coastK(form.coast, Math.atan2(Math.cos(facing), Math.sin(facing)));
         isl.add(outpost(e, facing, lanterns));
         const fx = Math.sin(facing), fz = Math.cos(facing);
-        this.piers.push({ ax: s.x + fx * (e + OUTPOST_PIER.from), az: s.z + fz * (e + OUTPOST_PIER.from), bx: s.x + fx * (e + OUTPOST_PIER.to), bz: s.z + fz * (e + OUTPOST_PIER.to), hw: 1.5, y: 1.45 });
-        for (const l of lanterns) { glow.add(l); glowHub.add(makeEmitter('lamp', 0, 0, 0, { obj: l, size: 0.8, glint: true })); }
+        sink.piers.push({ ax: s.x + fx * (e + OUTPOST_PIER.from), az: s.z + fz * (e + OUTPOST_PIER.from), bx: s.x + fx * (e + OUTPOST_PIER.to), bz: s.z + fz * (e + OUTPOST_PIER.to), hw: 1.5, y: 1.45 });
+        for (const l of lanterns) { glow.add(l); vis.objEmitters.push({ obj: l, opts: { size: 0.8, glint: true } }); }
         // Pfähle beiderseits und Laternenmast sind fest (Positionen wie in outpost())
         for (let d = e + 2; d <= e + OUTPOST_PIER.to - 1; d += 5) for (const sd of [-1, 1]) walk.blockers.push({ x: s.x + fx * d + fz * 1.6 * sd, z: s.z + fz * d - fx * 1.6 * sd, r: 0.22 });
         walk.blockers.push({ x: s.x + fx * (e + OUTPOST_PIER.to - 3) + fz * 1.2, z: s.z + fz * (e + OUTPOST_PIER.to - 3) - fx * 1.2, r: 0.16 });
       }
+      lap('2b Turm, Vulkan, Hafen');
       // Natur, Bauten und Treibgut passend zu Region und Inselart
       if (site) {
         // Dörfer, Höfe, Türme und Ruinen mit Kollisions-Gitter, danach der Bewuchs des Bioms
-        const built = buildSite({ group: isl, def: s.def, site, biome: style as Biome, walk, hAt, veg, density: texDetail.density });
+        const built = yield* buildSiteSteps({ group: isl, def: s.def, site, biome: style as Biome, walk, hAt, veg, density: texDetail.density });
         plantFactionBanners(isl, s.def, walk, hAt);
-        this.campfires.push(...built.fires.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
-        this.addGlows(built.glows, s.x, s.z);
-        this.chimneys.push(...built.chimneys.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
-        this.piers.push(...built.piers);
-        this.villages.set(s.def.id, built.village);
-        this.fauna.addIsland(s.def, s.x, s.z, r, built.trees.map((t) => ({ x: s.x + t.x, y: t.y, z: s.z + t.z })), built.bushes.map((b) => ({ x: s.x + b.x, y: b.y, z: s.z + b.z })), style, (ang) => r * coastK(form.coast, ang));
+        sink.campfires.push(...built.fires.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
+        vis.glows.push({ list: built.glows, ox: s.x, oz: s.z });
+        sink.chimneys.push(...built.chimneys.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
+        sink.piers.push(...built.piers);
+        sink.villages.set(s.def.id, built.village);
+        vis.fauna = { def: s.def, x: s.x, z: s.z, r, trees: built.trees.map((t) => ({ x: s.x + t.x, y: t.y, z: s.z + t.z })), bushes: built.bushes.map((b) => ({ x: s.x + b.x, y: b.y, z: s.z + b.z })), style, edge: (ang) => r * coastK(form.coast, ang) };
       } else if (!town) {
-        const dressed = dressIsland({ group: isl, def: s.def, kit, walk, hAt, glow, density: texDetail.density, style, veg, liftAt: terrain.liftAt });
-        this.campfires.push(...dressed.fires.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
-        if (dressed.patrols.length) this.patrolRoutes.set(s.def.id, dressed.patrols.map((r) => r.map((p) => ({ x: s.x + p.x, z: s.z + p.z }))));
-        this.addGlows(dressed.glows, s.x, s.z);
-        this.fauna.addIsland(s.def, s.x, s.z, r, dressed.trees.map((t) => ({ x: s.x + t.x, y: t.y, z: s.z + t.z })), dressed.bushes.map((b) => ({ x: s.x + b.x, y: b.y, z: s.z + b.z })), style, (ang) => r * coastK(form.coast, ang));
+        const dressed = yield* dressIslandSteps({ group: isl, def: s.def, kit, walk, hAt, glow, density: texDetail.density, style, veg, liftAt: terrain.liftAt });
+        sink.campfires.push(...dressed.fires.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
+        if (dressed.patrols.length) sink.patrols.set(s.def.id, dressed.patrols.map((rt) => rt.map((p) => ({ x: s.x + p.x, z: s.z + p.z }))));
+        vis.glows.push({ list: dressed.glows, ox: s.x, oz: s.z });
+        vis.fauna = { def: s.def, x: s.x, z: s.z, r, trees: dressed.trees.map((t) => ({ x: s.x + t.x, y: t.y, z: s.z + t.z })), bushes: dressed.bushes.map((b) => ({ x: s.x + b.x, y: b.y, z: s.z + b.z })), style, edge: (ang) => r * coastK(form.coast, ang) };
       }
+      lap('2c Bauten (Siedlung oder Ausstattung)');
       // Gelände unter den Bauten einebnen: Mesh an die Standflächen anpassen (Laufhöhe folgt automatisch)
       if (walk.pads.length) {
         const Hn = (lx: number, lz: number) => { const v = solo.islandHeight(walk, s.x + lx, s.z + lz, false, true); return Number.isFinite(v) ? v : -1.7; };
-        terrain.refresh(Hn, padBounds);
+        yield* terrain.refreshSteps(Hn, padBounds);
         padBounds.length = 0;
       }
-      this.scene.add(isl);
-      this.islandGroups.push({ g: isl, x: s.x, z: s.z, r, id: s.def.id });
-      mergeByMaterial(isl, glow);
+      lap('2d Einebnen');
+      yield; // ---- Stufe 2: Bauten, Stege, Felsen, Palmen
+
+      yield* mergeByMaterialSteps(isl, glow);
+      lap('3a Verschmelzen');
       // Fenster und Lampen der Dörfer (ein gemeinsames Leuchtmaterial): weder Kontur noch Schatten
       isl.traverse((o) => {
         const mm = (o as Mesh).material as Material | Material[] | undefined;
         if (mm && !Array.isArray(mm) && mm.userData.glow) o.userData.noOutline = true;
       });
       // instanzierter Bewuchs erst nach dem Verschmelzen (InstancedMesh darf nicht mit verschmolzen werden)
-      this.vegChunks.push(...veg.build(isl));
+      vis.vegChunks.push(...veg.build(isl));
+      lap('3b Bewuchs-Instanzen');
       // Namensschild (wie in 1.0): erscheint, sobald die Insel entdeckt ist
       const label = islandLabel(s.def.name, s.def.kind, s.def.level, site?.label, s.def.factionId ? FACTIONS[s.def.factionId].name : undefined);
       label.position.set(s.x, 1.2 + hillTop + 22, s.z);
       label.visible = false;
-      this.scene.add(label);
-      this.labels.push({ sprite: label, x: s.x, z: s.z, r, id: s.def.id });
+      vis.label = label;
       isl.traverse((o) => {
         if ((o as Mesh).isMesh && !o.userData.noOutline) { o.castShadow = true; o.receiveShadow = true; }
       });
-      addOutlines(isl);
-      this.ground.add(walk);
-      if (town) {
-        // Steg nach Süden (siehe buildTown): ragt weit über den Inselrand hinaus
-        this.piers.push({ ax: s.x, az: s.z - r + 5, bx: s.x, bz: s.z - r - 75, hw: 2.4, y: 1.65 });
-        this.town = buildTown(s.def, walk, (x, z) => { const h = this.ground.height(x, z); return Number.isFinite(h) ? h : 1.3; });
-        this.scene.add(this.town.group);
-        walk.walkways = this.town.streets;
-        if (padBounds.length) {
-          const Hn2 = (lx: number, lz: number) => { const v = solo.islandHeight(walk, s.x + lx, s.z + lz, false, true); return Number.isFinite(v) ? v : -1.7; };
-          terrain.refresh(Hn2, padBounds);
-          padBounds.length = 0;
-        }
-        // Wiese und Strand von Ankerglück: Gras, Blumen, Büsche, Treibholz – nur abseits von Straßen und Bauten
-        {
-          const tv = new Scatter();
-          const trnd = seeded(hashId(s.def.id) ^ 0x51ed);
-          const dens = Math.max(0.4, Math.min(1.6, texDetail.density));
-          const near = (px: number, pz: number, rr: number) => {
-            const wx = s.x + px, wz = s.z + pz;
-            if (Math.hypot(px, pz) < 17.8 + rr) return true; // Marktplatz
-            for (const st of walk.walkways ?? []) {
-              for (let i = 1; i < st.pts.length; i++) {
-                const [ax, az] = st.pts[i - 1], [bx, bz] = st.pts[i];
-                const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
-                const t = clamp01(((wx - ax) * dx + (wz - az) * dz) / l2);
-                if (Math.hypot(wx - (ax + dx * t), wz - (az + dz * t)) < st.w / 2 + 0.9 + rr) return true;
-              }
-            }
-            return walk.blockers.some((b) => (b.hw !== undefined ? inBox(b, wx, wz, rr + 0.5) : Math.hypot(wx - b.x, wz - b.z) < b.r + rr + 0.3));
-          };
-          const put = (kind: 'gras' | 'blume' | 'busch' | 'halme' | 'treibholz', n: number, d0: number, d1: number, rr: number, sc: [number, number], minH: number, maxH = 99) => {
-            for (let i = 0; i < n; i++) {
-              const a = trnd() * Math.PI * 2, d = r * coastK(form.coast, a) * (d0 + trnd() * (d1 - d0));
-              const x = Math.cos(a) * d, z = Math.sin(a) * d, h = hAt(x, z);
-              if (h < minH || h > maxH || near(x, z, rr)) continue;
-              const k = sc[0] + trnd() * (sc[1] - sc[0]);
-              veg_add(floraProto('tropisch', kind, Math.floor(trnd() * 3)), x, h, z, trnd() * 6.28, k, k * (0.85 + trnd() * 0.3));
-            }
-          };
-          const veg_add = (p: ReturnType<typeof floraProto>, x: number, y: number, z: number, yaw: number, sx: number, sy: number) => tv.add(p, x, y, z, yaw, sx, sy);
-          put('gras', Math.round(r * 34 * dens), 0.1, 0.92, 0.2, [0.9, 1.7], 1.0);
-          put('blume', Math.round(r * 8 * dens), 0.15, 0.8, 0.2, [0.9, 1.5], 1.0);
-          put('busch', Math.round(r * 0.9 * dens), 0.2, 0.85, 0.9, [0.8, 1.3], 1.0);
-          put('halme', Math.round(r * 7 * dens), 0.7, 0.97, 0.3, [0.9, 1.6], 0.8, 1.6);
-          put('treibholz', 3, 0.9, 0.98, 1.2, [0.85, 1.35], 0.5, 1.4);
-          this.vegChunks.push(...tv.build(isl));
-        }
-        this.addGlows(this.town.glows.map((g2) => ({ ...g2, x: g2.x, z: g2.z })), s.x, s.z);
-        // Laternen der Hafenstadt: Lichthof und Bodenlicht (Glas-Kugeln aus town.ts; Fensterflächen leuchten selbst)
-        this.town.group.updateMatrixWorld(true);
-        const tq = new Quaternion();
-        for (const l of this.town.lights) {
-          const v = l.getWorldPosition(new Vector3());
-          if ((l.geometry as { type?: string }).type === 'SphereGeometry') {
-            const em = glowHub.add(makeEmitter('lamp', v.x, v.y, v.z, { size: 1.25, ground: v.y - 2.3, pool: 10 }));
-            // Straßenlaterne: auch ein echtes, weiches Licht (der LampPool nimmt die nächsten)
-            const c = new Object3D();
-            c.userData.seed = em.seed; c.userData.fire = false; c.userData.fixed = true; c.userData.lightK = 1.9;
-            c.position.set(v.x, v.y - 0.1, v.z);
-            this.scene.add(c);
-            c.updateMatrixWorld(true);
-            this.fireCarriers.push(c);
-            continue;
+      lap('3c Schild und Schatten');
+      yield* addOutlinesSteps(isl);
+      lap('3d Konturen');
+      if (first) {
+        if (town) {
+          // Steg nach Süden (siehe buildTown): kommt aus dem Blueprint (`townPier`)
+          this.town = buildTown(s.def, walk, (x, z) => { const h = this.ground.height(x, z); return Number.isFinite(h) ? h : 1.3; });
+          this.scene.add(this.town.group);
+          walk.walkways = this.town.streets;
+          if (padBounds.length) {
+            const Hn2 = (lx: number, lz: number) => { const v = solo.islandHeight(walk, s.x + lx, s.z + lz, false, true); return Number.isFinite(v) ? v : -1.7; };
+            terrain.refresh(Hn2, padBounds);
+            padBounds.length = 0;
           }
-          // Fensterflächen: Hof und Lichtfleck auf dem Boden vor dem Fenster (Blickrichtung aus der Drehung der Fläche)
-          const n = new Vector3(0, 0, 1).applyQuaternion(l.getWorldQuaternion(tq));
-          glowHub.add(makeEmitter('window', v.x, v.y, v.z, { size: 0.5, ground: v.y < 3.2 ? v.y - 1.9 : null, pool: 2.8, pdx: n.x * 1.3, pdz: n.z * 1.3 }));
+          // Wiese und Strand von Ankerglück: Gras, Blumen, Büsche, Treibholz – nur abseits von Straßen und Bauten
+          {
+            const tv = new Scatter();
+            const trnd = seeded(hashId(s.def.id) ^ 0x51ed);
+            const dens = Math.max(0.4, Math.min(1.6, texDetail.density));
+            const near = (px: number, pz: number, rr: number) => {
+              const wx = s.x + px, wz = s.z + pz;
+              if (Math.hypot(px, pz) < 17.8 + rr) return true; // Marktplatz
+              for (const st of walk.walkways ?? []) {
+                for (let i = 1; i < st.pts.length; i++) {
+                  const [ax, az] = st.pts[i - 1], [bx, bz] = st.pts[i];
+                  const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
+                  const t = clamp01(((wx - ax) * dx + (wz - az) * dz) / l2);
+                  if (Math.hypot(wx - (ax + dx * t), wz - (az + dz * t)) < st.w / 2 + 0.9 + rr) return true;
+                }
+              }
+              return walk.blockers.some((b) => (b.hw !== undefined ? inBox(b, wx, wz, rr + 0.5) : Math.hypot(wx - b.x, wz - b.z) < b.r + rr + 0.3));
+            };
+            const put = (kind: 'gras' | 'blume' | 'busch' | 'halme' | 'treibholz', n: number, d0: number, d1: number, rr: number, sc: [number, number], minH: number, maxH = 99) => {
+              for (let i = 0; i < n; i++) {
+                const a = trnd() * Math.PI * 2, d = r * coastK(form.coast, a) * (d0 + trnd() * (d1 - d0));
+                const x = Math.cos(a) * d, z = Math.sin(a) * d, h = hAt(x, z);
+                if (h < minH || h > maxH || near(x, z, rr)) continue;
+                const k = sc[0] + trnd() * (sc[1] - sc[0]);
+                veg_add(floraProto('tropisch', kind, Math.floor(trnd() * 3)), x, h, z, trnd() * 6.28, k, k * (0.85 + trnd() * 0.3));
+              }
+            };
+            const veg_add = (p: ReturnType<typeof floraProto>, x: number, y: number, z: number, yaw: number, sx: number, sy: number) => tv.add(p, x, y, z, yaw, sx, sy);
+            put('gras', Math.round(r * 34 * dens), 0.1, 0.92, 0.2, [0.9, 1.7], 1.0);
+            put('blume', Math.round(r * 8 * dens), 0.15, 0.8, 0.2, [0.9, 1.5], 1.0);
+            put('busch', Math.round(r * 0.9 * dens), 0.2, 0.85, 0.9, [0.8, 1.3], 1.0);
+            put('halme', Math.round(r * 7 * dens), 0.7, 0.97, 0.3, [0.9, 1.6], 0.8, 1.6);
+            put('treibholz', 3, 0.9, 0.98, 1.2, [0.85, 1.35], 0.5, 1.4);
+            vis.vegChunks.push(...tv.build(isl));
+          }
+          vis.glows.push({ list: this.town.glows.map((g2) => ({ ...g2, x: g2.x, z: g2.z })), ox: s.x, oz: s.z });
+          // Laternen der Hafenstadt: Lichthof und Bodenlicht (Glas-Kugeln aus town.ts; Fensterflächen leuchten selbst)
+          this.town.group.updateMatrixWorld(true);
+          const tq = new Quaternion();
+          for (const l of this.town.lights) {
+            const v = l.getWorldPosition(new Vector3());
+            if ((l.geometry as { type?: string }).type === 'SphereGeometry') {
+              const em = glowHub.add(makeEmitter('lamp', v.x, v.y, v.z, { size: 1.25, ground: v.y - 2.3, pool: 10 }));
+              // Straßenlaterne: auch ein echtes, weiches Licht (der LampPool nimmt die nächsten)
+              const c = new Object3D();
+              c.userData.seed = em.seed; c.userData.fire = false; c.userData.fixed = true; c.userData.lightK = 1.9;
+              c.position.set(v.x, v.y - 0.1, v.z);
+              this.scene.add(c);
+              c.updateMatrixWorld(true);
+              this.fireCarriers.push(c);
+              continue;
+            }
+            // Fensterflächen: Hof und Lichtfleck auf dem Boden vor dem Fenster (Blickrichtung aus der Drehung der Fläche)
+            const n = new Vector3(0, 0, 1).applyQuaternion(l.getWorldQuaternion(tq));
+            glowHub.add(makeEmitter('window', v.x, v.y, v.z, { size: 0.5, ground: v.y < 3.2 ? v.y - 1.9 : null, pool: 2.8, pdx: n.x * 1.3, pdz: n.z * 1.3 }));
+          }
         }
       }
-      yield ++built / specs.length;
+      // Messhilfe: die Zahlen, die ein Neuaufbau berechnet hat (müssen denen des ersten Aufbaus gleichen: der Bau ist deterministisch)
+      if (this.islandProfile) { this.islandProfile['#Hindernisse'] = walk.blockers.length; this.islandProfile['#Einebnungen'] = walk.pads?.length ?? 0; this.islandProfile['#Stege'] = sink.piers.length; }
+      // Shader der Insel parallel vorübersetzen, bevor sie getauscht wird (sonst übersetzt der erste Bildaufbau alles am Stück)
+      const warm = this.warmIsland?.(isl);
+      if (warm) {
+        let ready = false;
+        warm.then(() => { ready = true; }, () => { ready = true; });
+        for (let k = 0; k < 240 && !ready; k++) yield;
+      }
+      if (first) {
+        // Bau-Daten des ersten Aufbaus gehören ab jetzt der Welt (jeder spätere Aufbau rechnet sie identisch nach und verwirft seine Kopie)
+        for (const f of sink.campfires) this.campfires.push(f);
+        for (const f of sink.chimneys) this.chimneys.push(f);
+        for (const f of sink.smokeVents) this.smokeVents.push(f);
+        for (const [k, v] of sink.villages) this.villages.set(k, v);
+        for (const [k, v] of sink.patrols) this.patrolRoutes.set(k, v);
+        slot.detailDone = true;
+      }
+      ok = true;
+      // ---- Stufe 3 endet hier: fertig gebaut, noch nicht in der Szene (Tausch: commitIsland)
+    } finally {
+      if (!ok) {
+        this.disposeIsland(slot);
+        // abgebrochener erster Aufbau: halbe Bau-Daten nicht stehen lassen (der nächste Versuch beginnt sauber)
+        if (first) { const w = slot.walk; w.blockers.length = 0; w.pads = undefined; w.lift = undefined; w.addPad = undefined; }
+      }
     }
-    return shapes;
+  }
+
+  /**
+   * Die fertig gebaute Insel in die Welt hängen: Szene, Listen (Sichtweite, Bewuchs-Kacheln, Lampen), Lichtquellen (Hof, Flamme, Bodenlicht),
+   * Tiere, Namensschild, Banner des Spielers bei besetzten Inseln. Gegenstück: `disposeIsland`.
+   */
+  private commitIsland(slot: IslandSlot) {
+    const vis = slot.vis;
+    if (!vis || vis.committed) return;
+    const s = slot.spec;
+    vis.committed = true;
+    this.scene.add(vis.group);
+    vis.entry = { g: vis.group, x: s.x, z: s.z, r: s.r, id: s.def.id };
+    this.islandGroups.push(vis.entry);
+    for (const c of vis.vegChunks) this.vegChunks.push(c);
+    for (const l of vis.lamps) this.lamps.push(l);
+    for (const e of vis.objEmitters) glowHub.add(makeEmitter('lamp', 0, 0, 0, { ...e.opts, obj: e.obj, owner: vis }));
+    for (const g of vis.glows) this.addGlows(g.list, g.ox, g.oz, vis);
+    if (vis.label) this.scene.add(vis.label);
+    const f = vis.fauna;
+    if (f) this.fauna.addIsland(f.def, f.x, f.z, f.r, f.trees, f.bushes, f.style, f.edge);
+    const occ = this.occupied.get(s.def.id);
+    if (occ) this.swapBanners(s.def.id, occ.look);
+  }
+
+  /**
+   * Die Darstellung einer Insel abbauen (auch eine halb oder fertig gebaute, nie gezeigte): Netze und Instanz-Puffer werden freigegeben, die geteilten
+   * Materialien, Shader und Vorlagen bleiben im gemeinsamen Zwischenspeicher (Nachbarinseln behalten ihre Texturen). Die Daten der Insel bleiben.
+   */
+  private disposeIsland(slot: IslandSlot) {
+    const vis = slot.vis;
+    if (!vis) return;
+    slot.vis = null;
+    const s = slot.spec;
+    if (vis.committed) {
+      glowHub.removeOwner(vis);
+      for (const c of vis.carriers) { c.removeFromParent(); swapRemove(this.fireCarriers, c); }
+      for (const l of vis.lamps) swapRemove(this.lamps, l);
+      if (vis.vegChunks.length) { const gone = new Set(vis.vegChunks); this.vegChunks = this.vegChunks.filter((c) => !gone.has(c)); }
+      if (vis.entry) swapRemove(this.islandGroups, vis.entry);
+      this.fauna.removeIsland(s.def.id);
+      this.bannerTwins.delete(s.def.id);
+    }
+    // Konturen und Beleuchtung hängen am Baum: den ganzen Baum auf einmal freigeben (nie Kinder vorher abhängen)
+    disposeObject(vis.group);
+    if (vis.label) { markShared(vis.label.geometry); disposeObject(vis.label); }
+    releaseNavForIsland(slot.walk);
   }
 
   private buildBuoys() {
@@ -979,6 +1200,7 @@ export class SeaWorld {
     for (const e of this.combat?.enemies ?? []) set(e.char.holder);
     for (const a of this.crew?.allies ?? []) set(a.char.holder);
     // Raid: die Hauptkarte ruht (Inseln, Bewuchs, Stadt unsichtbar; matrixSkip überspringt unsichtbare Teilbäume), nur die Instanz wird gezeichnet
+    this.horizon.root.visible = !this.raid;
     if (this.raid) {
       for (const i of this.islandGroups) i.g.visible = false;
       for (const c of this.vegChunks) c.mesh.visible = false;
@@ -1043,6 +1265,8 @@ export class SeaWorld {
     sh.x = this.x; sh.z = this.z; sh.heading = this.heading; sh.speed = 0; sh.sailLevel = 1; sh.throttle = 0.5; this.seaYaw = this.heading;
     sh.prev = { x: sh.x, z: sh.z, heading: sh.heading };
     this.naval?.clear();
+    // Laden, Raid-Rückkehr, Schnellreise: alle Inseln im ACTIVE-Radius stehen sofort fertig da, bevor Physik und Kollision anlaufen
+    if (this.streamReady && !this.raid) this.streamer.forceSyncAround(this.x, this.z);
     this.docking.reset();
     if (this.boarding) this.boarding.boarded = false;
     this.boarding = null; this.preyDG = null; this.boardWon = false; this.boardRetreat = false; this.homeSent = false; this.landed = false;
@@ -1624,6 +1848,17 @@ export class SeaWorld {
     return { heightAt: (x, z) => env.heightAt(x, z), windDir: env.windDir, windStrength: env.weather.p.wind, storm, time: env.clock, sunDir: env.palette.sunDir, sunVis: env.palette.sunVis * (1 - env.weather.p.grey * 0.9) };
   }
 
+  /** Sturm-Zone am Weltrand setzen: Stärke 0 … 1 und Richtung nach innen; zieht Wetter und Wind mit (überblendet langsam, wie jede Wetteränderung) */
+  private setEdge(k: number, inX: number, inZ: number) {
+    this.edgeK = k;
+    this.env.weather.edgeStorm = k;
+    this.env.edgeWind = k;
+    if (k > 0) this.env.edgeWindDir = Math.atan2(inX, inZ);
+  }
+
+  /** Warnstufe der Anzeige (0 keine, 1 Hinweis, 2 Gefahr) und ihr Text: „Unerforschte Sturmsee – Rückkehr empfohlen“ */
+  get edgeWarning(): { level: 0 | 1 | 2; k: number; text: string } { return { level: edgeWarningLevel(this.edgeK), k: this.edgeK, text: EDGE_WARNING }; }
+
   private updateSail(dt: number, input: Input) {
     const s = this.ship;
     const mv = input.move();
@@ -1656,14 +1891,17 @@ export class SeaWorld {
       s.speed *= 0.4;
     }
     if (!locked) this.collidePiers(s);
-    const d = Math.hypot(s.x, s.z);
-    if (d > EDGE_WALL) {
-      s.x *= EDGE_WALL / d;
-      s.z *= EDGE_WALL / d;
-      s.speed *= 0.85;
-      this.shake = Math.max(this.shake, 0.3);
-      if (!this.edgeWarned) { this.edgeWarned = true; this.onMessage('Der Weltrand! Weiter trägt dich keine Strömung.'); }
-    } else if (d < EDGE_WALL - 150) this.edgeWarned = false;
+    // Natürlicher Weltrand (4.3A): Sturmsee mit Gegenströmung, Gegenwind und Gewitterwolken statt unsichtbarer Wand (Raids haben eigene Grenzen: nur die Kappe)
+    {
+      const zone = this.edgeZone;
+      if (this.raid) { clampToHardRadius(s); this.setEdge(0, 0, 0); }
+      else {
+        const hit = applyEdgeDrift(s, dt, zone);
+        this.setEdge(hit ? zone.k : 0, zone.inX, zone.inZ);
+        // Der Sturm schüttelt das Schiff, je tiefer es hineinfährt
+        if (hit && zone.k > 0.3) this.shake = Math.max(this.shake, 0.12 * zone.k);
+      }
+    }
     this.x = s.x; this.z = s.z; this.heading = s.heading; this.speed = s.speed;
 
     this.boostCd = Math.max(0, this.boostCd - dt);
@@ -1953,10 +2191,13 @@ export class SeaWorld {
     // Inseln entdecken (Sichtweite wie in 1.0, Ausguck weiter) und Schilder zeigen
     const disc = 280 * this.rangeMult;
     const px = this.mode === 'foot' && this.foot ? this.foot.x : this.x, pz = this.mode === 'foot' && this.foot ? this.foot.z : this.z;
-    for (const l of this.labels) {
-      const d = Math.hypot(l.x - px, l.z - pz);
-      if (!this.discovered.has(l.id) && d < disc + l.r) { this.discovered.add(l.id); this.onDiscover(l.id); }
-      l.sprite.visible = !this.raid && this.discovered.has(l.id) && d < 760 && d > l.r + 25;
+    // Entdecken geht über die Daten der Inseln (auch unter ACTIVE_HIGH), das Schild gehört zur Darstellung und gibt es nur, solange die Insel steht
+    for (let k = 0; k < this.slots.length; k++) {
+      const sp = this.slots[k].spec, id2 = sp.def.id;
+      const d = Math.hypot(sp.x - px, sp.z - pz);
+      if (!this.discovered.has(id2) && d < disc + sp.r) { this.discovered.add(id2); this.onDiscover(id2); }
+      const lab = this.slots[k].vis?.label;
+      if (lab) lab.visible = !this.raid && this.discovered.has(id2) && d < 760 && d > sp.r + 25;
     }
     const reg = regionAt(this.x, this.z);
     if (reg.id !== this.lastRegion) { this.lastRegion = reg.id; this.onEnterRegion(reg); }
@@ -1989,13 +2230,16 @@ export class SeaWorld {
    * ruckartig gestoppt: das Schiff gleitet daran entlang, dreht sich sanft parallel zum Steg und verliert nur wenig Fahrt.
    */
   private collidePiers(s: Ship) {
-    for (const p of this.piers) {
+    // Broadphase (4.3A): nur die Stege in Hüllennähe
+    const near = this.ground.getNearbyPiers(s.x, s.z, s.cls.W * 0.5 + 1, this.nearPiers);
+    for (let pi = 0; pi < near.length; pi++) {
+      const p = near[pi];
       const vx = p.bx - p.ax, vz = p.bz - p.az;
       const len = Math.hypot(vx, vz) || 1;
       const ux = vx / len, uz = vz / len;
       const fx = Math.sin(s.heading), fz = Math.cos(s.heading);
       let worst = 0, wnx = 0, wnz = 0;
-      for (const k of [-0.46, -0.3, -0.15, 0, 0.15, 0.3, 0.46]) {
+      for (const k of PIER_PROBES) {
         const px = s.x + fx * s.cls.L * k, pz = s.z + fz * s.cls.L * k;
         const t = clamp01(((px - p.ax) * ux + (pz - p.az) * uz) / len);
         const cx = p.ax + vx * t, cz = p.az + vz * t;
@@ -2318,10 +2562,11 @@ export class SeaWorld {
       teleportShip: (x, z, h) => this.teleport(x, z, h),
       suspendMain: (w, def) => this.suspendMain(w, def),
       resumeMain: () => this.resumeMain(),
-      setRaidPiers: (p) => { this.piers.length = 0; this.piers.push(...p); this.docking.clearBerthCache(); },
+      setRaidPiers: (p) => { this.piers.length = 0; this.piers.push(...p); this.ground.touchPiers(); this.docking.clearBerthCache(); },
       setWeather: (id) => { this.env.weather.auto = false; this.env.weather.setWeather(id, false); },
       view: (v) => this.onRaidView(v),
-      ended: (i) => { this.raid = null; this.onRaidEnd(i); },
+      // Rückkehr aus der Belagerung: das Schiff steht wieder am Ausgangsort (teleportShip lief noch mit gesetztem `raid`), jetzt die Inseln dort sofort fertig bauen
+      ended: (i) => { this.raid = null; if (this.streamReady) this.streamer.forceSyncAround(this.x, this.z); this.onRaidEnd(i); },
     };
   }
 
@@ -2332,6 +2577,7 @@ export class SeaWorld {
       vents: this.smokeVents, fires: this.campfires, chimneys: this.chimneys,
     };
     this.ground.islands.push(w.walk);
+    this.ground.reindex();
     this.islandDefs = [def];
     this.smokeVents = []; this.campfires = []; this.chimneys = [];
     this.env.setIslands([w.shape]);
@@ -2344,9 +2590,11 @@ export class SeaWorld {
     if (!m) return;
     this.ground.islands.length = 0;
     this.ground.islands.push(...m.islands);
+    this.ground.reindex();
     this.islandDefs = m.defs;
     this.piers.length = 0;
     this.piers.push(...m.piers);
+    this.ground.touchPiers();
     this.smokeVents = m.vents; this.campfires = m.fires; this.chimneys = m.chimneys;
     this.env.setIslands(m.shapes);
     this.docking.clearBerthCache();
@@ -2585,7 +2833,7 @@ export class SeaWorld {
     this.setState({ boat: null });
     this.setShip(TITLE_SHIP.tier, TITLE_SHIP.look, 'kugel', 1, 'pirat', 1, 1);
     // Inselschilder gehören zum Spiel (nach „Zurück zum Titel“ blieben die zuletzt gezeigten stehen und sähen aus der Ferne wie dunkle Striche aus)
-    for (const l of this.labels) l.sprite.visible = false;
+    for (const sl of this.slots) { const lab = sl.vis?.label; if (lab) lab.visible = false; }
     this.title.start();
   }
 
@@ -2747,6 +2995,7 @@ export class SeaWorld {
       if (!this.title.active) this.title.start();
       this.title.update(frameDt);
     }
+    this.streamTick();
     this.cullFigures();
     const s = this.ship;
     const x = MathUtils.lerp(s.prev.x, s.x, alpha);
@@ -2759,6 +3008,7 @@ export class SeaWorld {
     const sea = this.seaEnv;
     lampShared.set(night);
     this.glowNight = night;
+    this.horizon.update((this.scene.fog as Fog).color, pal.sunVis, night, env.clock);
 
     const wy = env.heightAt(x, z);
     const f = this.fwd(h);
@@ -2968,10 +3218,11 @@ export class SeaWorld {
   }
 
   /** Lichtquellen einer Insel anmelden (Inselkoordinaten + Versatz); Feuer und Fackeln bekommen zusätzlich ein echtes Licht */
-  private addGlows(list: GlowPlaced[], ox: number, oz: number) {
+  private addGlows(list: GlowPlaced[], ox: number, oz: number, vis: IslandVis) {
     for (const g of list) {
       const x = ox + g.x, z = oz + g.z;
-      const em = glowHub.add(makeEmitter(g.kind, x, g.y, z, { ground: g.ground, size: g.size, pool: g.pool, pdx: g.pdx, pdz: g.pdz, glint: g.glint }));
+      // `owner` = die Darstellung der Insel: beim Abbau meldet `glowHub.removeOwner` alle Lichter der Insel auf einmal ab
+      const em = glowHub.add(makeEmitter(g.kind, x, g.y, z, { ground: g.ground, size: g.size, pool: g.pool, pdx: g.pdx, pdz: g.pdz, glint: g.glint, owner: vis }));
       // Fenster: nur die unteren (mit Bodenlicht) und davon jedes zweite bekommen ein echtes Licht, sonst gäbe es hunderte Träger
       if (g.kind === 'window' && (g.ground === null || (this.windowCarriers++ & 1))) continue;
       const c = new Object3D();
@@ -2983,6 +3234,7 @@ export class SeaWorld {
       this.scene.add(c);
       c.updateMatrixWorld(true);
       this.fireCarriers.push(c);
+      vis.carriers.push(c);
     }
   }
 }

@@ -5,15 +5,21 @@
  * Alle Inselabstände, Regionen und Grenzen leiten sich daraus ab (siehe data/regions.ts).
  */
 export const WORLD_SCALE = 2;
-/** Radius der Kernwelt (die Scheibe bis 2.9.89): Bernsteinsee und die fünf Ringmeere. Darüber liegt das äußere Band mit den Endgame-Festungen. */
+/** Radius der Kernwelt (die Scheibe bis 2.9.89): Bernsteinsee und die fünf Ringmeere. Darüber liegen die äußeren Ringe (seit 4.3B). */
 export const WORLD_CORE_RADIUS = 2000 * WORLD_SCALE;
 /**
- * Radius der Meeresscheibe in Metern (seit 2.9.90 mit äußerem Band: Grenzfestungen der Marine bei rund 3000 m,
- * Endgame-Inseln der fünf Mächte bei 4850 m, das Marine-Hauptquartier bei 5080 m). Dahinter stürzt das Meer als Wasserfall in die Tiefe.
+ * Spielbarer Ozean seit 4.3B (Phase 4.3B, 3,7-fache Fläche gegenüber 4.3.2): bis hier liegen alle Inseln und Festungen. Dahinter beginnt die
+ * Sturmsee (world/stormEdge.ts) mit Gegenströmung; die Ringe der Gefahr stehen in data/worldRings.ts.
  */
-export const WORLD_RADIUS = 2900 * WORLD_SCALE;
-/** Unsichtbare Wand: so nah dürfen Schiffe an die Kante */
-export const EDGE_WALL = WORLD_RADIUS - 70;
+export const PLAYABLE_RADIUS = 10400;
+/**
+ * Radius der Meeresscheibe in Metern: Ring 1 (Bernsteinsee) bis 2 200 m, Ring 2 (die alten Ringmeere, Grenzfestungen bei rund 3 000 m) bis 5 200 m,
+ * Ring 3 (Riff- und Sturmgürtel) bis 8 200 m, Ring 4 (Kaiser-Meere, Endgame-Festungen bei 9 500 m, Marine-Hauptquartier bei 9 700 m) bis 10 400 m,
+ * dahinter die Sturmsee bis zur harten Grenze bei 10 600 m. Ganz außen stürzt das Meer als Wasserfall in die Tiefe.
+ */
+export const WORLD_RADIUS = 10680;
+/** Harte Grenze am Ende der Sturmsee: so weit kommt kein Schiff (die Gegenströmung hält es vorher auf) */
+export const EDGE_WALL = WORLD_RADIUS - 80;
 
 /**
  * Heimatplatz des eigenen Schiffs: Spielstart eines neuen Spiels, „Zurück in den Hafen“ und Heimschleppen nach einem Untergang.

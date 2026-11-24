@@ -196,16 +196,16 @@ export const BORDER_FORTS: BorderFortDef[] = [
   { id: 'grenzwacht_kanalwacht', name: 'Grenzfeste Kanalwacht', borderIndex: 0, radius: 3000, r: 92, level: 13, info: 'Marine-Grenzfestung zwischen Frankreich und England: der Kanal gehört der Marine.' },
 ];
 
-/** Endgame-Inseln am äußeren Rand: je Kuchenstück eine große Festungsinsel der Macht, dazu das Marine-Hauptquartier */
+/** Endgame-Inseln am Außenrand der Kaiser-Meere (Ring 4, seit 4.3B bei 9 500 m, das Marine-Hauptquartier bei 9 700 m): je Kuchenstück eine große Festungsinsel der Macht, dazu das Marine-Hauptquartier */
 export interface CitadelDef { id: string; name: string; factionId: FactionId; sectorIndex: number | null; deg: number; dist: number; r: number; level: number; boss: string; info: string }
 
 export const CITADELS: CitadelDef[] = [
-  { id: 'albion', name: 'Albion', factionId: 'england', sectorIndex: 0, deg: 0, dist: 4850, r: 330, level: 17, boss: 'Lord-Admiral Blackwood', info: 'Die Admiralitätsfestung der Royal Navy: eine gewaltige Kalkstein-Sternfestung über den Klippen des Nebelmeers.' },
-  { id: 'adlerstein', name: 'Adlerstein', factionId: 'deutschland', sectorIndex: 1, deg: 72, dist: 4850, r: 330, level: 18, boss: 'Großkomtur von Eisenstein', info: 'Der Granit-Hort der Preußischen Marine: Bastionen, Kasematten und der schwarze Adler über jedem Tor.' },
-  { id: 'yamikura', name: 'Yamikura', factionId: 'kurogane', sectorIndex: 2, deg: 144, dist: 4850, r: 330, level: 20, boss: 'Schattenfürst Kurogane', info: 'Die Burg der dunklen Klinge: geschwungene Dächer aus Pech, rote Laternen und Vulkanfels.' },
-  { id: 'oranjehaven', name: 'Oranjehaven', factionId: 'niederlande', sectorIndex: 3, deg: 216, dist: 4850, r: 330, level: 18, boss: 'Generalgouverneur Van Der Berg', info: 'Das Hauptkontor der Handelskompanie: Backsteinspeicher, Kräne und eine Flotte bauchiger Galleonen.' },
-  { id: 'soleilmont', name: 'Soleilmont', factionId: 'frankreich', sectorIndex: 4, deg: 288, dist: 4850, r: 330, level: 19, boss: 'Marquis-Amiral De Valois', info: 'Die Sonnenzitadelle der Armada Royale: Barockpavillons, Terrassengärten und goldene Kuppeln.' },
-  { id: 'weisswacht', name: 'Weißwacht', factionId: 'marine', sectorIndex: null, deg: 180, dist: 5080, r: 380, level: 22, boss: 'Großadmiral Valken, Oberster Gefängniswärter', info: 'Hafenstadt und Gefängnisfestung der Marine am Rand der Welt: weiße Zitadellen, hohe Wachtürme und tief unten die Zellen der gefährlichsten Piraten.' },
+  { id: 'albion', name: 'Albion', factionId: 'england', sectorIndex: 0, deg: 0, dist: 9500, r: 330, level: 17, boss: 'Lord-Admiral Blackwood', info: 'Die Admiralitätsfestung der Royal Navy: eine gewaltige Kalkstein-Sternfestung über den Klippen des Nebelmeers.' },
+  { id: 'adlerstein', name: 'Adlerstein', factionId: 'deutschland', sectorIndex: 1, deg: 72, dist: 9500, r: 330, level: 18, boss: 'Großkomtur von Eisenstein', info: 'Der Granit-Hort der Preußischen Marine: Bastionen, Kasematten und der schwarze Adler über jedem Tor.' },
+  { id: 'yamikura', name: 'Yamikura', factionId: 'kurogane', sectorIndex: 2, deg: 144, dist: 9500, r: 330, level: 20, boss: 'Schattenfürst Kurogane', info: 'Die Burg der dunklen Klinge: geschwungene Dächer aus Pech, rote Laternen und Vulkanfels.' },
+  { id: 'oranjehaven', name: 'Oranjehaven', factionId: 'niederlande', sectorIndex: 3, deg: 216, dist: 9500, r: 330, level: 18, boss: 'Generalgouverneur Van Der Berg', info: 'Das Hauptkontor der Handelskompanie: Backsteinspeicher, Kräne und eine Flotte bauchiger Galleonen.' },
+  { id: 'soleilmont', name: 'Soleilmont', factionId: 'frankreich', sectorIndex: 4, deg: 288, dist: 9500, r: 330, level: 19, boss: 'Marquis-Amiral De Valois', info: 'Die Sonnenzitadelle der Armada Royale: Barockpavillons, Terrassengärten und goldene Kuppeln.' },
+  { id: 'weisswacht', name: 'Weißwacht', factionId: 'marine', sectorIndex: null, deg: 180, dist: 9700, r: 380, level: 22, boss: 'Großadmiral Valken, Oberster Gefängniswärter', info: 'Hafenstadt und Gefängnisfestung der Marine am Rand der Welt: weiße Zitadellen, hohe Wachtürme und tief unten die Zellen der gefährlichsten Piraten.' },
 ];
 
 // ---------- Ansehen bei der Marine ----------

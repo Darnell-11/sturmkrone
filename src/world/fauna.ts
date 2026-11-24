@@ -24,7 +24,7 @@ const MOTE_COL = new Color(0.8, 0.72, 0.42);
 const SAND_COL = new Color(0.86, 0.76, 0.56);
 
 interface Spot { x: number; y: number; z: number }
-interface FIsland { x: number; z: number; r: number; style: IslandStyle; trees: Spot[]; bushes: Spot[]; edge: (a: number) => number }
+interface FIsland { id: string; x: number; z: number; r: number; style: IslandStyle; trees: Spot[]; bushes: Spot[]; edge: (a: number) => number }
 interface Crab { isl: FIsland; a: number; d: number; dir: number; moveT: number; waitT: number; bob: number }
 interface Turtle { isl: FIsland; a: number; t: number; speed: number }
 interface Bird { isl: FIsland; tree: Spot; ang: number; rad: number; h: number; speed: number; col: Color; glow: boolean }
@@ -95,7 +95,7 @@ export class IslandFauna {
 
   addIsland(def: IslandDef, x: number, z: number, r: number, trees: Spot[], bushes: Spot[], style: IslandStyle, edge: (a: number) => number = () => r) {
     const rnd = seeded(hashId(def.id) ^ 0x51ed27);
-    const isl: FIsland = { x, z, r, style, trees, bushes, edge };
+    const isl: FIsland = { id: def.id, x, z, r, style, trees, bushes, edge };
     this.islands.push(isl);
     const crabs = style === 'glut' || style === 'schlund' ? 0 : style === 'nord' || style === 'sturm' ? 2 : 3 + Math.floor(rnd() * 4);
     for (let i = 0; i < crabs && this.crabs.length < MAX_CRABS; i++) this.crabs.push({ isl, a: rnd() * Math.PI * 2, d: 0.9 + rnd() * 0.08, dir: rnd() < 0.5 ? 1 : -1, moveT: 0, waitT: rnd() * 3, bob: rnd() * 6 });
@@ -112,6 +112,16 @@ export class IslandFauna {
         this.birds.push({ isl, tree, ang: rnd() * Math.PI * 2, rad: 2 + rnd() * 4, h: (glow ? 2 : 6) + rnd() * 4, speed: (0.8 + rnd() * 0.8) * (rnd() < 0.5 ? 1 : -1), col, glow });
       }
     }
+  }
+
+  /** Tiere einer Insel abziehen (die Insel wird abgebaut: Streaming); `addIsland` setzt sie beim nächsten Aufbau wieder ein */
+  removeIsland(id: string) {
+    const isl = this.islands.find((i) => i.id === id);
+    if (!isl) return;
+    this.islands = this.islands.filter((i) => i !== isl);
+    this.crabs = this.crabs.filter((c) => c.isl !== isl);
+    this.turtles = this.turtles.filter((c) => c.isl !== isl);
+    this.birds = this.birds.filter((c) => c.isl !== isl);
   }
 
   update(dt: number, px: number, pz: number, night: number, ground: (x: number, z: number) => number, water: (x: number, z: number) => number) {
