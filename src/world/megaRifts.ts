@@ -1,7 +1,8 @@
 // Spalten der Mega-Inseln (4.3.6): Kanäle, Lavaspalten, Klüfte und Meeresarme quer durch eine Insel, überspannt von Brücken.
 // Der Boden sinkt entlang des Linienzugs auf die Sohle (Einebnung mit fester Höhe über `WalkIsland.addPad`): unter dem Meeresspiegel füllt das Meer die
 // Spalte von selbst, Lava liegt als glühendes Band auf einer trockenen Sohle. Hindernisse sperren die Ränder (auch für die Wegfindung der Gegner);
-// nur an den Übergängen bleibt der Boden stehen, dort spannt sich eine Brücke mit Geländer darüber. Alles in Teilschritten (Streaming).
+// nur an den Übergängen bleiben die Sperren offen: dort spannt sich eine freistehende Brücke über die durchgehend ausgehobene Spalte, getragen von einem
+// Laufdeck (`WalkIsland.decks`, 4.4A), das nur die Laufhöhe ändert. Alles in Teilschritten (Streaming).
 import { BufferGeometry, Float32BufferAttribute, Mesh, MeshBasicMaterial, Color, type Group, type Material } from 'three';
 import type { IslandDef } from '../data/regions';
 import type { RiftDef } from '../data/settlements';
@@ -24,6 +25,10 @@ export const RIFT_LOOK: Record<RiftDef['kind'], { floor: number; blend: number; 
   kluft: { floor: -4.2, blend: 1, wall: '#C8C2B4', bridge: 'stein' },
   lava: { floor: 0.2, blend: 0.8, wall: '#2A2428', bridge: 'obsidian' },
 };
+
+/** Brückendeck (architecture.ts `bruecke`): halbe Breite der begehbaren Fahrbahn zwischen den Brüstungen und Oberkante über dem Ursprung */
+export const BRIDGE_DECK_HW = 2.25;
+export const BRIDGE_DECK_TOP = 0.115;
 
 /** Höhe des glühenden Lavabands über der Sohle: sichtbar über der Geländedecke der Sohle (vorher 0,12 m, lag darunter) */
 const LAVA_LIFT = 0.42;
@@ -64,17 +69,21 @@ export function* buildRiftsSteps(o: RiftOpts): Generator<void, RiftBuild> {
   for (const rift of o.rifts) {
     const L = RIFT_LOOK[rift.kind];
     const total = polyLength(rift.pts);
-    const wallMat: Material = toon({ color: L.wall, detail: 'stone', flatShading: true });
-    // 1. Sohle und Randsperren in Abschnitten von 3 m
+    // Ränder: Kaimauern und Ruinenmauern als Mauerwerk, Lava- und Kreidekluft als nackter Fels (Basalt, Kalk) – ohne Moos und Fugen
+    const natural = rift.kind === 'lava' || rift.kind === 'kluft';
+    const wallMat: Material = natural
+      ? toon({ color: L.wall, detail: 'rock', flatShading: true, forge: rift.kind === 'lava' ? 'fels_basalt' : 'fels_kalk' })
+      : toon({ color: L.wall, detail: 'stone', flatShading: true, forge: 'mauerwerk' });
+    // 1. Sohle und Randsperren in Abschnitten von 3 m. Die Sohle läuft auch unter den Brücken durch (4.4A: kein Erddamm mehr, die Brücke
+    //    schwebt); nur die Sperren lassen die Brückenstelle frei – dort trägt das Laufdeck der Brücke (`walk.decks`)
     for (let s = 0; s < total; s += STEP) {
       const sm = Math.min(total, s + STEP / 2);
-      if (inCrossing(rift, total, sm)) continue;
       pointAt(rift.pts, sm, _p);
       const dist = Math.hypot(_p.x, _p.z);
       if (dist > E(_p.x, _p.z) * 1.04) continue;
       const yaw = Math.atan2(_p.dx, _p.dz);
       walk.addPad?.(def.x + _p.x, def.z + _p.z, 2 * riftWallOff(rift.w), STEP + 0.8, yaw, L.blend, false, L.floor);
-      o.block(boxBlocker(def.x + _p.x, def.z + _p.z, 2 * riftBlockHalf(rift.w), STEP + 0.3, yaw));
+      if (!inCrossing(rift, total, sm)) o.block(boxBlocker(def.x + _p.x, def.z + _p.z, 2 * riftBlockHalf(rift.w), STEP + 0.3, yaw));
     }
     yield;
     // 2. Ränder: Kaimauern (Kanal), Felswände (Kluft, Sund), Basalt (Lava) – von der Sohle bis zur natürlichen Bodenhöhe, oben eine Mauerkrone über der
@@ -88,7 +97,8 @@ export function* buildRiftsSteps(o: RiftOpts): Generator<void, RiftBuild> {
     for (let s = 0; s < total; s += STEP) {
       const s1 = Math.min(total, s + STEP);
       const sm = (s + s1) / 2;
-      if (inCrossing(rift, total, sm)) continue;
+      // unter einer Brücke laufen Wand und Lava weiter; nur die Mauerkrone fehlt dort (die Widerlager liegen darauf)
+      const under = inCrossing(rift, total, sm);
       pointAt(rift.pts, s, _p);
       const ax = _p.x, az = _p.z, nx = -_p.dz, nz = _p.dx;
       pointAt(rift.pts, s1, _p);
@@ -106,6 +116,7 @@ export function* buildRiftsSteps(o: RiftOpts): Generator<void, RiftBuild> {
         pos.push(p0x, L.floor - 0.6, p0z, p1x, L.floor - 0.6, p1z, p1x, y1, p1z, p0x, y0, p0z);
         if (side > 0) idx.push(v, v + 1, v + 2, v, v + 2, v + 3); else idx.push(v, v + 2, v + 1, v, v + 3, v + 2);
         // Mauerkrone nach außen über die Böschung (nach oben gewandt), außen auf natürlicher Bodenhöhe
+        if (under) continue;
         const q0x = ax + nx * offC, q0z = az + nz * offC, q1x = bx + nx * offC, q1z = bz + nz * offC;
         const o0 = o.hNat(q0x, q0z), o1 = o.hNat(q1x, q1z);
         if (!Number.isFinite(o0) || !Number.isFinite(o1)) continue;
@@ -152,21 +163,28 @@ export function* buildRiftsSteps(o: RiftOpts): Generator<void, RiftBuild> {
       }
     }
     yield;
-    // 3. Brücken an den Übergängen: quer zur Spalte, so lang, dass sie beide Böschungen überspannen
+    // 3. Brücken an den Übergängen: quer zur Spalte, so lang, dass sie beide Böschungen überspannen. Jedes Ende liegt auf der natürlichen Bodenhöhe
+    //    seiner Seite (die Brücke neigt sich, wenn die Ufer verschieden hoch sind); das Deck ist ein Laufdeck über der ausgehobenen Spalte.
     for (const t of rift.cross) {
       pointAt(rift.pts, t * total, _p);
+      const cx = _p.x, cz = _p.z;
       const yaw = Math.atan2(_p.dx, _p.dz) + Math.PI / 2;
       const len = rift.w + 2 * (L.blend + 1) + 2;
       const b = build('bruecke', o.rnd, len, null, rift.bridge ?? L.bridge);
-      const y = o.hNat(_p.x, _p.z);
-      b.g.position.set(_p.x, Number.isFinite(y) ? y : 1.3, _p.z);
-      b.g.rotation.y = yaw;
+      const ex = Math.sin(yaw) * len * 0.5, ez = Math.cos(yaw) * len * 0.5;
+      const hA = o.hNat(cx - ex, cz - ez), hB = o.hNat(cx + ex, cz + ez);
+      const yA = Number.isFinite(hA) ? hA : 1.3, yB = Number.isFinite(hB) ? hB : 1.3;
+      const yMid = (yA + yB) / 2;
+      b.g.position.set(cx, yMid, cz);
+      b.g.rotation.set(-Math.atan2(yB - yA, len), yaw, 0, 'YXZ');
       o.group.add(b.g);
+      (walk.decks ??= []).push({ x: def.x + cx, z: def.z + cz, hw: BRIDGE_DECK_HW, hl: len / 2, yaw, y0: yA + BRIDGE_DECK_TOP, y1: yB + BRIDGE_DECK_TOP, r2: (len / 2 + BRIDGE_DECK_HW + 1) ** 2 });
       const c = Math.cos(yaw), sn = Math.sin(yaw);
-      for (const [w, d, ox = 0, oz = 0] of b.boxes) o.block(boxBlocker(def.x + _p.x + ox * c + oz * sn, def.z + _p.z - ox * sn + oz * c, w, d, yaw));
+      for (const [w, d, ox = 0, oz = 0] of b.boxes) o.block(boxBlocker(def.x + cx + ox * c + oz * sn, def.z + cz - ox * sn + oz * c, w, d, yaw));
       for (const gl of b.glows ?? []) {
-        const gx = _p.x + gl.x * c + gl.z * sn, gz = _p.z - gl.x * sn + gl.z * c;
-        out.glows.push({ kind: gl.kind, x: gx, y: (Number.isFinite(y) ? y : 1.3) + gl.y, z: gz, ground: gl.gy == null ? null : (Number.isFinite(y) ? y : 1.3) + gl.gy, size: gl.size, pool: gl.pool });
+        const gx = cx + gl.x * c + gl.z * sn, gz = cz - gl.x * sn + gl.z * c;
+        const gy = yA + (yB - yA) * (gl.z / len + 0.5);
+        out.glows.push({ kind: gl.kind, x: gx, y: gy + gl.y, z: gz, ground: gl.gy == null ? null : gy + gl.gy, size: gl.size, pool: gl.pool });
       }
       yield;
     }

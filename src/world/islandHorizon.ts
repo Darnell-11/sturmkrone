@@ -7,6 +7,7 @@ import {
   type Scene,
 } from 'three';
 import { markShared } from '../render/dispose';
+import { fogUniforms } from '../render/atmosphere';
 import { coastK, WATERLINE, type WalkIsland } from './islandGround';
 
 /** Was die Silhouette von einer Insel wissen muss (die Felder von `WalkIsland`) */
@@ -113,8 +114,12 @@ let beaconTex: CanvasTexture | null = null;
 /** Gemeinsame Materialien aller Silhouetten: eine Farbe für alle, je Bild aus Nebel und Tageszeit nachgeführt (nie je Insel ein Material) */
 function materials() {
   if (!silMat) {
-    silMat = markShared(new MeshBasicMaterial({ color: 0x6a8aa0, fog: false, side: DoubleSide }));
-    foamMat = markShared(new MeshBasicMaterial({ color: 0xf2fbff, fog: false, side: DoubleSide }));
+    // Seit 4.4.1 MIT dem Nebel der Welt: Silhouetten lösen sich wie alles andere in der Luftperspektive auf und verschwinden bei Nebel ganz
+    // (früher standen sie ohne Nebel als scharfe Schatten hinter einer Nebelwand)
+    silMat = markShared(new MeshBasicMaterial({ color: 0x3a4a44, fog: true, side: DoubleSide }));
+    foamMat = markShared(new MeshBasicMaterial({ color: 0xf2fbff, fog: true, side: DoubleSide }));
+    silMat.onBeforeCompile = fogUniforms;
+    foamMat.onBeforeCompile = fogUniforms;
     const c = document.createElement('canvas');
     c.width = c.height = 64;
     const g = c.getContext('2d')!;
@@ -226,15 +231,17 @@ export class HorizonLayer {
   }
 
   /**
-   * Je Bild: Farben aus dem Himmel. `fog` ist die Nebelfarbe (Horizontfarbe), `sun` 0 … 1 (Tageslicht), `night` 0 … 1.
-   * Die Silhouette ist ein dunstiger Schatten in Nebelfarbe, am Tag leicht dunkler und bläulich, nachts fast schwarz.
+   * Je Bild: Farben aus dem Himmel. `fog` ist die Nebelfarbe (Horizontfarbe), `sun` 0 … 1 (Tageslicht), `night` 0 … 1, `fogFar` die
+   * Nebelweite (m). Die Silhouette trägt eine gedämpfte Landfarbe (Wald und Fels im Dunst); den Rest macht der Nebel der Welt.
+   * Leuchtfeuer verblassen mit dem Nebel.
    */
-  update(fog: Color, sun: number, night: number, time: number): void {
+  update(fog: Color, sun: number, night: number, time: number, fogFar = 4000): void {
     if (this.dirty) { this.dirty = false; this.rebuild(); }
     const m = materials();
-    this.tmp.copy(fog).multiplyScalar(0.46 + 0.16 * sun).lerp(HAZE_BLUE, 0.24 * sun).lerp(NIGHT_TINT, 0.15 * night);
+    this.tmp.copy(LAND).multiplyScalar(0.3 + 0.7 * sun).lerp(fog, 0.22).lerp(HAZE_BLUE, 0.12 * sun).lerp(NIGHT_TINT, 0.6 * night);
     m.sil.color.copy(this.tmp);
     m.foam.color.copy(fog).lerp(WHITE, 0.55).multiplyScalar(0.7 + 0.3 * sun);
+    const clear = Math.min(1, Math.max(0, (fogFar - 700) / 1900));
     const bp = this.beacons;
     if (!bp) return;
     const col = bp.geometry.getAttribute('color') as BufferAttribute;
@@ -242,7 +249,7 @@ export class HorizonLayer {
     const flicker = 0.9 + 0.1 * Math.sin(time * 7.3);
     for (let j = 0; j < this.beaconInfo.length; j++) {
       const info = this.beaconInfo[j];
-      const k = Math.max(info.dayK, night) * info.size * flicker * 0.32;
+      const k = Math.max(info.dayK, night) * info.size * flicker * 0.32 * clear;
       arr[j * 3] = BEACON_COL.r * k; arr[j * 3 + 1] = BEACON_COL.g * k; arr[j * 3 + 2] = BEACON_COL.b * k;
     }
     col.needsUpdate = true;
@@ -287,3 +294,5 @@ const WHITE = new Color(1, 1, 1);
 const NIGHT_TINT = new Color(0.02, 0.03, 0.06);
 /** Dunstblau der Ferne am Tag: Inseln am Horizont sind blaugraue Schatten, deutlich dunkler als der helle Dunst */
 const HAZE_BLUE = new Color(0.16, 0.3, 0.42);
+/** Landfarbe der Silhouetten bei vollem Tageslicht (vor dem Dunst) */
+const LAND = new Color(0.17, 0.24, 0.2);

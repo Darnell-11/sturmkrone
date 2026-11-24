@@ -25,6 +25,7 @@ import { SkillStage } from '../world/skillStage';
 import { detectWebGpu, AutoQuality, benchmarkGpu, detectTier, gatherDeviceInfo, needsBench, type DeviceInfo, type Detected } from '../render/quality';
 import { GameRenderer } from '../render/renderer';
 import { setTexDetail } from '../render/texDetail';
+import { forgePrewarm, forgeSizeForTier } from '../graphics/pbrMaterialForge';
 import { CharacterEditor, styleIdOf, type EditorGearHost, type EditorResult } from '../ui/editor';
 import { Hud, type SeaView } from '../ui/hud';
 import { HelmDial } from '../ui/helmDial';
@@ -130,6 +131,8 @@ export class Game {
   readonly menus: Menus;
   readonly loop: GameLoop;
   readonly deviceInfo: DeviceInfo;
+  /** Rechenzeit der PBR-Schmiede im Hauptfaden beim Start (ms; 0 = alles kam aus den Workern) */
+  forgeMs = 0;
   readonly detected: Detected;
   /** Spielsitzung: steigt bei neuem Spiel, Laden und Rückkehr ins Menü – verzögerte Anzeigen alter Sitzungen verfallen */
   private session = 0;
@@ -223,6 +226,8 @@ export class Game {
     const startTier = QUALITY_TIERS[this.settings.data.quality ?? this.detected.tier];
     const caps = this.renderer.gl.capabilities;
     setTexDetail(startTier.textureScale, Math.min(startTier.anisotropy, caps.getMaxAnisotropy()), startTier.detail, startTier.textureBoost);
+    // PBR-Schmiede (4.4A): alle Sätze stehen vor dem Bau der Welt bereit (meist schon aus den Workern), geteilt und gegen Freigabe geschützt
+    this.forgeMs = forgePrewarm(forgeSizeForTier(this.settings.data.quality ?? this.detected.tier), Math.min(startTier.anisotropy, caps.getMaxAnisotropy()));
     // Alle Modell-Texturen (Figuren, Blender-Bauten) laden mit derselben Filterung wie die gemalten
     preload.setAnisotropy(Math.min(startTier.anisotropy, caps.getMaxAnisotropy()));
     this.world = new SeaWorld(deferWorld);
@@ -3683,6 +3688,8 @@ export class Game {
     this.world.setState({ boat: data.world.boat, env: { time: data.world.time, weather: data.world.weather as WeatherId } });
     // Lebendiges Meer (Phase 4.3C): Ereignisse, Konvois und Wetterzellen aus dem Spielstand; der Zufall hängt am Spielstand (gleiche Welt nach dem Laden)
     this.world.seedSeaEvents(data.world.seaEvents ?? null, ((data.meta.created % 4294967296) ^ 0x5eaf00d) >>> 0);
+    // Mega-Inseln (4.4A): Ruhezeiten geräumter Bezirke und besiegter Kommandanten überdauern das Laden
+    this.world.setMegaState(data.world.mega ?? null);
     const p = data.player;
     this.world.playerFaction = p.faction;
     ensureGear(data.gear);
@@ -3765,7 +3772,7 @@ export class Game {
     if (!this.save || this.slot === null) return true;
     this.syncFleetState();
     const ws = this.world.getState();
-    this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather, seaEvents: this.world.seaEvents?.snapshot() ?? null, chart: chartToSave(this.world.discovered, this.world.chartZones) };
+    this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather, seaEvents: this.world.seaEvents?.snapshot() ?? null, chart: chartToSave(this.world.discovered, this.world.chartZones), mega: this.world.megaSnapshot() };
     const sh = this.world.ship;
     this.save.ship.hull = sh.maxHull > 0 ? Math.max(0.05, sh.hull / sh.maxHull) : 1;
     this.save.ship.sail = sh.sail;

@@ -24,6 +24,22 @@ import { loadFigureheads } from './entities/ship/figureheads';
 import { LoadingScreen } from './ui/loadingScreen';
 import { preload } from './core/preload';
 import { tick } from './core/yield';
+import { forgeSizeForTier, forgeStart } from './graphics/pbrMaterialForge';
+import { SETTINGS_KEY } from './core/settings';
+
+/**
+ * Größe der PBR-Sätze schon vor dem Spiel schätzen (die Grafikstufe erkennt erst `Game`): gespeicherte Stufe, sonst Desktop mit vielen Kernen → Ultra.
+ * Die Schmiede rechnet damit parallel zum Laden der Modelle in Web Workern (Phase 4.4A).
+ */
+function forgeGuess(): number {
+  try {
+    const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null') as { quality?: string; qualityAuto?: boolean } | null;
+    if (s?.quality && !s.qualityAuto) return forgeSizeForTier(s.quality);
+    if (s?.quality) return forgeSizeForTier(s.quality);
+  } catch { /* keine Einstellungen */ }
+  const mobile = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+  return forgeSizeForTier(mobile ? 'mid' : (navigator.hardwareConcurrency ?? 4) >= 8 ? 'ultra' : 'high');
+}
 
 function fail(message: string) {
   const el = document.createElement('div');
@@ -44,7 +60,7 @@ try {
   preload.plan(0.23, { world: 0.3, prepare: 0.1, shaders: 0.37 });
   preload.onProgress((p, phase) => loading.set(p, phase));
   preload.setPhase('Karten und Bauwerke werden geladen …');
-  await Promise.all([loadEnvModels(), loadArchModels(), loadWorldProps(), loadFigureheads()]).catch((e) => console.warn('Welt-Modelle konnten nicht vorab geladen werden', e));
+  await Promise.all([loadEnvModels(), loadArchModels(), loadWorldProps(), loadFigureheads(), forgeStart(forgeGuess())]).catch((e) => console.warn('Welt-Modelle konnten nicht vorab geladen werden', e));
   // Der Browser soll den Ladebildschirm einmal zeichnen, bevor der Aufbau beginnt
   await tick();
   const game = new Game(document.getElementById('game') as HTMLCanvasElement, document.getElementById('ui')!, true);

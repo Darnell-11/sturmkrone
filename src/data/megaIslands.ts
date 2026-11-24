@@ -576,6 +576,53 @@ export function commanderRoam(rt: MegaRuntime, dt: number, fighting: boolean): n
   return m.districts.findIndex((d) => d.id === m.commander.route[c.leg]);
 }
 
+// ---------- Spielstand (4.4A) ----------
+
+/**
+ * Ruhezeiten der Mega-Inseln im Spielstand: je Insel die verbleibenden Sekunden je Bezirk (0 = bereit) und des besiegten Kommandanten. Relativ
+ * gespeichert, weil die Spieluhr der Welt beim Laden neu beginnt. Fehlt das Feld (ältere Stände), ist alles bereit wie bisher.
+ */
+export type MegaSaveState = Partial<Record<MegaId, { d: number[]; c: number }>>;
+
+/** Was gespeichert wird: nur laufende Ruhezeiten (geräumte Bezirke, besiegter Kommandant) */
+export function megaToSave(rts: Iterable<MegaRuntime>, now: number): MegaSaveState {
+  const out: MegaSaveState = {};
+  for (const rt of rts) {
+    const d = rt.districts.map((x) => (x.state === 'geraeumt' ? Math.max(0, Math.round(x.until - now)) : 0));
+    const c = rt.commander.state === 'besiegt' ? Math.max(0, Math.round(rt.commander.until - now)) : 0;
+    if (c > 0 || d.some((v) => v > 0)) out[rt.id] = { d, c };
+  }
+  return out;
+}
+
+/** Gespeicherte Ruhezeiten säubern: nur bekannte Inseln, Zahlen 0 … volle Ruhezeit, Bezirksliste in der Länge der Insel */
+export function cleanMegaSave(x: unknown): MegaSaveState {
+  const out: MegaSaveState = {};
+  if (!x || typeof x !== 'object') return out;
+  for (const [k, v] of Object.entries(x as Record<string, unknown>)) {
+    if (!isMegaId(k) || !v || typeof v !== 'object') continue;
+    const r = v as { d?: unknown; c?: unknown };
+    const n = MEGA_BY_ID[k].districts.length;
+    const num = (q: unknown, max: number) => (typeof q === 'number' && Number.isFinite(q) ? Math.max(0, Math.min(max, Math.round(q))) : 0);
+    const d = Array.from({ length: n }, (_, i) => num(Array.isArray(r.d) ? r.d[i] : 0, MEGA_COMBAT.districtCooldown));
+    const c = num(r.c, MEGA_COMBAT.commanderCooldown);
+    if (c > 0 || d.some((q) => q > 0)) out[k] = { d, c };
+  }
+  return out;
+}
+
+/** Laufzeit-Zustände aus dem Spielstand (Spieluhr `now`): geräumte Bezirke und besiegte Kommandanten ruhen weiter */
+export function megaFromSave(saved: MegaSaveState | null | undefined, now: number): MegaRuntime[] {
+  const out: MegaRuntime[] = [];
+  for (const [k, v] of Object.entries(cleanMegaSave(saved))) {
+    const id = k as MegaId, rt = newMegaRuntime(id);
+    v!.d.forEach((left, i) => { if (left > 0) { rt.districts[i].state = 'geraeumt'; rt.districts[i].until = now + left; } });
+    if (v!.c > 0) { rt.commander.state = 'besiegt'; rt.commander.until = now + v!.c; }
+    out.push(rt);
+  }
+  return out;
+}
+
 // ---------- Beute ----------
 
 export interface MegaLoot { gold: number; xp: number; fame: number; goods: { good: GoodId; units: number }[]; shards: number; seals: { power: PowerId; n: number } | null; chest: boolean; warlord: boolean }

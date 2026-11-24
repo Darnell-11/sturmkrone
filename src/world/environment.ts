@@ -1,6 +1,6 @@
 import { Color, DirectionalLight, Fog, HemisphereLight, Vector3, type PerspectiveCamera, type Scene } from 'three';
 import { DAY_MINUTES, WEATHER_IDS, type WeatherId } from '../data/world';
-import type { QualityConfig } from '../data/qualityTiers';
+import { CAMERA_PLANES, type QualityConfig } from '../data/qualityTiers';
 import { forEachToon, toonShared } from '../render/toon';
 import { csmShared, ensureCsm } from '../render/csm';
 import { fogShared } from '../render/atmosphere';
@@ -48,7 +48,7 @@ export class Environment {
   edgeWindDir = 0;
 
   private viewDistance = 520;
-  private fogStart = 0.2;
+  private hazeRange = 2200;
   /** Größte Texturgröße der Grafikkarte (setzt das Spiel) */
   maxTex = 4096;
   private shadowExtent = 40;
@@ -81,7 +81,7 @@ export class Environment {
 
   applyQuality(c: QualityConfig) {
     this.viewDistance = c.viewDistance;
-    this.fogStart = c.fogStart;
+    this.hazeRange = c.hazeRange;
     this.setupCsm(c);
     const sh = this.sun.shadow;
     // mit Kaskaden übernehmen deren Lichter Licht und Schatten der Sonne
@@ -105,7 +105,8 @@ export class Environment {
     this.ocean.setDetail(c.detail, Math.round(8 + 24 * Math.min(1, c.detail)));
     this.sky.setCloudCount(Math.round(36 * c.detail + 12) + (c.detail >= 1 ? 30 : 0));
     this.weather.setMaxDrops(Math.round(2600 * c.particles));
-    this.sky.cloudU.uRange.value = Math.max(900, c.viewDistance * 1.6);
+    this.sky.cloudU.uRange.value = Math.min(2200, Math.max(1100, c.hazeRange * 0.5));
+    this.sky.skyU.uCloudQ.value = c.detail <= 0.5 ? 3 : c.detail < 1 ? 4 : 5;
   }
 
   /** Kaskaden je nach Stufe ein-, um- oder ausschalten und alle beleuchteten Materialien umstellen */
@@ -255,14 +256,29 @@ export class Environment {
     cu.uHorizon.value.copy(horizon);
     cu.uFlash.value = flash;
     cu.uWind.value.set(2 + 10 * w.wind, 1 + 3 * w.wind);
+    // Wolkendecke: 1 Rauscheinheit ≈ 3,3 km; sie zieht mit dem Wind (etwas schneller als die gemalten Wolken) und bleibt über dem Meer stehen
+    su.uCloudOff.value.set((camera.position.x + cu.uWind.value.x * this.clock * 1.6) / 3270, (camera.position.z + cu.uWind.value.y * this.clock * 1.6) / 3270);
     // Rauch wird wie die Wolken beleuchtet (Abendrot, Nacht, Sturm), Blitze hellen ihn auf
     smokeShared.uLit.value.copy(pal.cloudLit).multiplyScalar(0.55 + 0.45 * gloom).lerp(horizon, 0.15).addScalar(flash * 0.5);
     smokeShared.uShade.value.copy(pal.cloudShade).multiplyScalar(0.5 + 0.4 * gloom).addScalar(flash * 0.3);
 
     const fog = this.scene.fog as Fog;
     fog.color.copy(horizon);
-    fog.far = this.viewDistance * w.visibility;
-    fog.near = fog.far * (w.visibility < 0.5 ? 0.05 : this.fogStart);
+    {
+      // Nebel 4.4.1: bei klarem Wetter weite Luftperspektive (Dunst bis `hazeRange`, die Nähe bleibt klar), mit sinkender Sicht wechselt die
+      // Form zu echtem Nebel (dicht ab der Kamera, exponentiell). `fog.near` trägt die Form 0 … 1 (siehe render/atmosphere.ts).
+      const vis = w.visibility;
+      const shape = Math.min(1, Math.max(0, (1 - vis) / 0.55));
+      const dense = this.viewDistance * vis * 1.5;
+      const open = Math.pow(1 - shape, 1.5);
+      // große Schiffe: die Kamera steht weit hinten und hoch; ihr Abstand zählt nicht als Nebelstrecke
+      const camD = camera.position.distanceTo(focus);
+      fog.far = Math.min(CAMERA_PLANES.far * 0.97, dense + (this.hazeRange - dense) * open + camD * 0.9);
+      fog.near = shape;
+      // echter Nebel: Himmel eingrauen, gemalte Wolken verblassen
+      su.uFogK.value = shape * shape * 0.85;
+      cu.uOpacity.value = 1 - 0.75 * shape * shape;
+    }
 
     // Licht
     const light = w.light;
@@ -305,7 +321,7 @@ export class Environment {
       // Bodennebel dichter in der Dämmerung, nachts und im Unwetter; die Nebelfarbe folgt dem Horizont (golden, tiefblau, graublau)
       const hh = this.time;
       const twi = Math.max(0, 1 - Math.min(Math.abs(hh - 18.6), Math.abs(hh - 6.4)) / 1.8);
-      fogShared.skFogGround.value = Math.min(1, 0.18 + twi * 0.5 + (1 - pal.sunVis) * 0.3 + greyK * 0.5);
+      fogShared.skFogGround.value = Math.min(1, 0.08 + twi * 0.45 + (1 - pal.sunVis) * 0.25 + greyK * 0.5);
       aoShared.boost = 0.85 + 0.45 * pal.noon + greyK * 0.1;
     }
     // Spiegelungen: Ersatz-Himmelsverlauf (ohne Umgebungskarte) und Stärke nach Helligkeit
@@ -324,6 +340,12 @@ export class Environment {
     }
     toonShared.shadowTint.value.multiplyScalar(1 - 0.08 * pal.noon);
     toonShared.rimStrength.value = 0.55 * (1 - greyK * 0.6) * (0.35 + 0.65 * pal.sunVis);
+    // Heroisches Kantenlicht der Figuren (4.4A): tags zurückhaltend, nachts und im Unwetter kräftig, damit Silhouetten nie im Dunkel versinken
+    {
+      const dark = 1 - pal.sunVis;
+      toonShared.heroRim.value.copy(pal.rim).multiplyScalar(0.3 + 0.55 * dark + 0.3 * greyK);
+      toonShared.heroFill.value.setRGB(0.32, 0.44, 0.66).multiplyScalar(0.1 + 0.32 * dark + 0.18 * greyK);
+    }
 
     // Meer
     const ou = this.ocean.uniforms;

@@ -36,8 +36,9 @@ import { cachedSailTexture, plankTexture, sailTexture } from '../../render/textu
 import { sharedGeo } from '../../render/geoCache';
 import { disposeGeometry, markShared } from '../../render/dispose';
 import { toon } from '../../render/toon';
+import { forgeSet, hullForgeKind } from '../../graphics/pbrMaterialForge';
 import { toonPbr } from '../../render/pbrMaps';
-import { deckTexture, hullPlankTexture } from '../../render/shipTextures';
+import { deckTexture } from '../../render/shipTextures';
 import { makeSailUniforms, sailMaterial } from '../../render/flags';
 import { clothGeometry, clothMaterial, clothTextures, makeClothUniforms, type ClothFlag, type FlagSpec } from '../../render/flagCloth';
 import { FIGUREHEAD_DEFS, figureheadModel, figureheadScale } from '../../data/figureheads';
@@ -225,8 +226,9 @@ function figurehead(id: FigureheadId, scale: number): Group {
 
 // ---------- Bausteine für Details (geteilte Netze, werden zu je einem Netz pro Material verschmolzen) ----------
 const _up = new Vector3(0, 1, 0), _dir = new Vector3(), _q = new Quaternion();
-const IRON = () => toon({ color: '#4A3326', spec: 0.9, metalness: 0.85, roughness: 0.78 });
-const COPPER = () => toon({ color: '#B8683A', spec: 1, metalness: 1, roughness: 0.38 });
+// Metalle aus der PBR-Schmiede (4.4A): gehämmerter Kanonenstahl für Eisen und Bronze, gebürstetes Messing für Gold
+const IRON = () => toon({ color: '#4A3326', spec: 0.9, metalness: 0.85, roughness: 0.78, forge: 'kanonenstahl' });
+const COPPER = () => toon({ color: '#B8683A', spec: 1, metalness: 1, roughness: 0.38, forge: 'kanonenstahl' });
 const ROPE = () => toon({ color: '#3D2F20', roughness: 0.95 });
 /**
  * Leuchtflächen (Fenster, Laternenflamme, Glas): ein Material für alle Schiffe. Gehörte jedes Schiff sein eigenes, gab three.js
@@ -238,7 +240,7 @@ export const GLOW_WINDOW = markShared(new MeshBasicMaterial({ color: new Color(2
 export const CABIN_WINDOW = markShared(new MeshBasicMaterial({ color: new Color(0.8, 0.95, 1.2) }));
 export const GLOW_LAMP = markShared(new MeshBasicMaterial({ color: new Color(4, 2.4, 0.9) }));
 const GLOW_LAMPGLASS = markShared(new MeshBasicMaterial({ color: new Color(1.5, 0.95, 0.42) }));
-const PROP_GOLD = () => toon({ color: '#E3B04B', spec: 1, metalness: 1, roughness: 0.4 });
+const PROP_GOLD = () => toon({ color: '#E3B04B', spec: 1, metalness: 1, roughness: 0.4, forge: 'messing' });
 
 function box(w: number, h: number, d: number): BufferGeometry {
   return sharedGeo(`ship-box-${w.toFixed(3)}-${h.toFixed(3)}-${d.toFixed(3)}`, () => new BoxGeometry(w, h, d));
@@ -424,10 +426,12 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
 
   const planksTex = plankTexture();
   // beidseitig: auch die Innenseite der Bordwand (vom Deck aus) und der Heckspiegel von hinten bleiben sichtbar
-  const hullTex = hullPlankTexture();
   // Rumpf-Stufe: Holzton (1 ausgeblichen … 5 Ebenholz, die gewählte Farbe bleibt Grundton) und Rauheit des Holzes
   const hullLook: ShipLook = { ...look, hull: tierHullColor(look.hull, evo.hullTier) };
-  const hullMat = toon({ color: 0xffffff, vertexColors: true, map: hullTex, side: DoubleSide, roughness: vis.hull.roughness, ...toonPbr(hullTex, { strength: 0.5, rough: Math.min(1, 0.85 * vis.hull.roughness / 0.9), roughVar: 0.2, ao: 0.7 }) });
+  // Planken aus der PBR-Schmiede (4.4A): Albedo, Normalkarte und ORM je Güte (1–2 verwittert, 3 geölt, 4–5 seidenmatt); gleiche UV-Kachel wie zuvor (4 m × 1,8 m,
+  // acht Gänge). Die Rauheit der Stufe skaliert die Karte, die Rumpffarbe kommt weiter aus den Eckpunktfarben.
+  const hullForge = forgeSet(hullForgeKind(evo.hullTier));
+  const hullMat = toon({ color: 0xffffff, vertexColors: true, map: hullForge.albedo, side: DoubleSide, roughness: Math.min(1.6, vis.hull.roughness / hullForge.recipe.rough), normalMap: hullForge.normal, normalScale: 1, roughnessMap: hullForge.orm, aoMap: hullForge.orm, aoMapIntensity: 0.85 });
   const hull = new Mesh(hullGeometry2(c, D, hullLook, { widthAt, sheerAt, rakeAt }), hullMat);
   group.add(hull);
 
@@ -450,7 +454,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
   group.add(deck);
   const wood = toon({ color: '#7A5030', map: planksTex });
   const darkWood = toon('#4A2E1A');
-  const gold = toon({ color: '#E3B04B', spec: 0.9 });
+  const gold = toon({ color: '#E3B04B', spec: 0.9, forge: 'messing' });
   // Anbauten der Rumpf-Stufe (Flickbretter, Eisenbänder, Panzergürtel, Rammsporn): sitzen über `hullSideX` bündig auf der Bordwand, ohne Blocker und Reling zu berühren
   const evoCtx: EvoCtx = {
     c, D, group, vis,
@@ -1066,7 +1070,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
       sg.computeVertexNormals();
       const withEmblem = mi === mainMast && k === (yards > 2 ? 1 : 0);
       const sailU = makeSailUniforms(sw, sh, (y + h * 0.1) * 0.7);
-      const sailMat = sailMaterial(toon({ color: 0xffffff, side: DoubleSide, map: sailTex(withEmblem, sailSeed++, sv.tattered), unique: true, micro: 'cloth', roughness: 0.92 }), sailU);
+      const sailMat = sailMaterial(toon({ color: 0xffffff, side: DoubleSide, map: sailTex(withEmblem, sailSeed++, sv.tattered), unique: true, micro: 'cloth', forge: 'segeltuch', roughness: 0.92, normalMap: forgeSet('segeltuch').normal, normalScale: 0.55 }), sailU);
       sailMat.alphaTest = 0.5; // ausgefranste Ränder und Risse
       const sail = new Mesh(sg, sailMat);
       sail.userData.sailU = sailU;
@@ -1092,7 +1096,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
       for (let i = 0; i < tp.count; i++) { const x = tp.getX(i), yy = tp.getY(i); tp.setZ(i, Math.cos((x / (tw * 0.95)) * Math.PI) * 0.8 * sc * sv.billow * (1 - Math.abs(yy) / tsh * 0.3)); }
       tg.computeVertexNormals();
       const tU = makeSailUniforms(tw * 0.95, tsh, ty * 0.7);
-      const tMat = sailMaterial(toon({ color: 0xffffff, side: DoubleSide, map: sailTex(false, sailSeed++, false), unique: true, micro: 'cloth', roughness: 0.92 }), tU);
+      const tMat = sailMaterial(toon({ color: 0xffffff, side: DoubleSide, map: sailTex(false, sailSeed++, false), unique: true, micro: 'cloth', forge: 'segeltuch', roughness: 0.92, normalMap: forgeSet('segeltuch').normal, normalScale: 0.55 }), tU);
       tMat.alphaTest = 0.5;
       const top = new Mesh(tg, tMat);
       top.userData.sailU = tU;
@@ -1127,7 +1131,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
   // Tuch-Textur über die Dreiecksfläche legen
   const juv = jibGeo.attributes.uv;
   for (let i = 0; i < juv.count; i++) juv.setXY(i, juv.getX(i) / (c.L * 0.22), juv.getY(i) / (c.mh * 0.6));
-  const jibMat = toon({ color: 0xffffff, side: DoubleSide, map: sailTex(false, 99, sv.tattered), unique: true, micro: 'cloth', roughness: 0.92 });
+  const jibMat = toon({ color: 0xffffff, side: DoubleSide, map: sailTex(false, 99, sv.tattered), unique: true, micro: 'cloth', forge: 'segeltuch', roughness: 0.92, normalMap: forgeSet('segeltuch').normal, normalScale: 0.55 });
   jibMat.alphaTest = 0.5;
   const jib = new Mesh(jibGeo, jibMat);
   jib.rotation.y = -Math.PI / 2;
@@ -1156,7 +1160,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
       const jp = jg.attributes.position, ju = jg.attributes.uv;
       const zs0 = Math.min(head.z, tack.z, clew.z), zs1 = Math.max(head.z, tack.z, clew.z), ys0 = Math.min(head.y, tack.y, clew.y), ys1 = Math.max(head.y, tack.y, clew.y);
       for (let i = 0; i < ju.count; i++) ju.setXY(i, (jp.getX(i) - zs0) / (zs1 - zs0), (jp.getY(i) - ys0) / (ys1 - ys0));
-      const jm = toon({ color: 0xffffff, side: DoubleSide, map: sailTex(false, 99 + j, sv.tattered), unique: true, micro: 'cloth', roughness: 0.92 });
+      const jm = toon({ color: 0xffffff, side: DoubleSide, map: sailTex(false, 99 + j, sv.tattered), unique: true, micro: 'cloth', forge: 'segeltuch', roughness: 0.92, normalMap: forgeSet('segeltuch').normal, normalScale: 0.55 });
       jm.alphaTest = 0.5;
       const jb = new Mesh(jg, jm);
       jb.rotation.y = -Math.PI / 2;
@@ -1178,7 +1182,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
     const sg2 = new ShapeGeometry(shp);
     const su = sg2.attributes.uv, spp = sg2.attributes.position;
     for (let i = 0; i < su.count; i++) su.setXY(i, (spp.getX(i) - z1) / (z0 - z1), (spp.getY(i) - yb) / (yp - yb));
-    const sm = toon({ color: 0xffffff, side: DoubleSide, map: sailTex(false, 120, false), unique: true, micro: 'cloth', roughness: 0.92 });
+    const sm = toon({ color: 0xffffff, side: DoubleSide, map: sailTex(false, 120, false), unique: true, micro: 'cloth', forge: 'segeltuch', roughness: 0.92, normalMap: forgeSet('segeltuch').normal, normalScale: 0.55 });
     sm.alphaTest = 0.5;
     const sp2 = new Mesh(sg2, sm);
     sp2.rotation.y = -Math.PI / 2;
@@ -2056,8 +2060,8 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
     const iron2 = IRON(), cu2 = COPPER(), gold2 = PROP_GOLD(), dark2 = toon('#1E1410');
     // Rohrwerkstoff nach Kanonen-Stufe: 2 Eisen, 3 Bronze, 4 polierte Bronze, 5 schwarzer Gussstahl (die Goldringe setzt `addGunRing`)
     const gunMat = vis.cannon.barrel === 'eisen' ? iron2
-      : vis.cannon.barrel === 'bronzelang' ? toon({ color: '#D9963E', spec: 1, metalness: 1, roughness: 0.22 })
-      : vis.cannon.barrel === 'schwarz' ? toon({ color: '#17181C', spec: 1, metalness: 0.9, roughness: 0.3 })
+      : vis.cannon.barrel === 'bronzelang' ? toon({ color: '#D9963E', spec: 1, metalness: 1, roughness: 0.22, forge: 'messing' })
+      : vis.cannon.barrel === 'schwarz' ? toon({ color: '#17181C', spec: 1, metalness: 0.9, roughness: 0.3, forge: 'kanonenstahl' })
       : cu2;
     batch.flush(group, (id: PropId, role: string) => {
       switch (role) {

@@ -33,10 +33,13 @@ export interface QualityConfig {
   };
   /** Kantenglättung im Post-Effekt-Puffer (0 = aus) */
   multisampling: number;
-  /** Sichtweite in Metern (Nebel-Ende); muss unter der Kamera-Fernebene bleiben (CAMERA_PLANES.far) */
+  /** Bezugs-Sichtweite in Metern für dichtes Wetter (Nebel, Sturm) und für Bewuchs-Sichtweiten */
   viewDistance: number;
-  /** Anteil der Sichtweite, ab dem der Dunst bei klarem Wetter beginnt (höher = die mittlere Entfernung bleibt klarer) */
-  fogStart: number;
+  /**
+   * Dunstweite bei klarem Wetter (Meter, 4.4.1): bis hierher löst sich alles in Luftperspektive auf (Inseln, Schiffe, Silhouetten). Muss unter der
+   * Kamera-Fernebene bleiben (CAMERA_PLANES.far). Früher endete der Nebel auch bei klarem Wetter schon nach 420 – 960 m.
+   */
+  hazeRange: number;
   /** Bis zu dieser Entfernung werden Figuren (Bewohner, Gegner, Crew) gezeichnet */
   figureDistance: number;
   /** Echte Laternenlichter, die den nächsten Figuren folgen (0 = nur sichtbar leuchtende Laternen) */
@@ -106,7 +109,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     post: { enabled: true, bloom: false, outlines: false, colorGrading: true, godRays: false, depthOfField: false, ambientOcclusion: null },
     multisampling: 0,
     viewDistance: 420,
-    fogStart: 0.2,
+    hazeRange: 1500,
     figureDistance: 59,
     lamps: 0,
     particles: 0.35,
@@ -128,7 +131,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     post: { enabled: true, bloom: true, outlines: false, colorGrading: true, godRays: false, depthOfField: false, ambientOcclusion: null },
     multisampling: 2,
     viewDistance: 560,
-    fogStart: 0.2,
+    hazeRange: 2200,
     figureDistance: 78,
     lamps: 3,
     particles: 0.6,
@@ -149,7 +152,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 4, steps: 3, scale: 0.5, radius: 1.1, intensity: 0.85 }, heat: true, ssr: { steps: 14, scale: 0.5 } },
     multisampling: 4,
     viewDistance: 800,
-    fogStart: 0.2,
+    hazeRange: 3300,
     figureDistance: 112,
     lamps: 5,
     particles: 1,
@@ -170,7 +173,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 6, steps: 4, scale: 0.5, radius: 1.3, intensity: 0.95 }, heat: true, ssr: { steps: 20, scale: 0.5 } },
     multisampling: 4,
     viewDistance: 900,
-    fogStart: 0.27,
+    hazeRange: 3900,
     figureDistance: 168,
     lamps: 6,
     particles: 1.5,
@@ -191,7 +194,7 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 8, steps: 5, scale: 0.75, radius: 1.4, intensity: 1 }, heat: true, ssr: { steps: 28, scale: 0.6 } },
     multisampling: 8,
     viewDistance: 960,
-    fogStart: 0.375,
+    hazeRange: 4300,
     figureDistance: 252,
     lamps: 6,
     particles: 2,

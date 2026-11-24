@@ -5,7 +5,9 @@ import { Color, ShaderChunk, Vector3 } from 'three';
  *  - verdichtet sich exponentiell mit der Entfernung (natürlicher als eine lineare Rampe),
  *  - liegt über dem Meer dichter als in der Höhe (Berggipfel und Masten ragen heraus),
  *  - nimmt in Richtung Sonne deren Lichtfarbe auf (Dunst leuchtet im Gegenlicht, abends golden).
- * Reichweite steuern weiter Fog.near/far der Szene (Wetter und Grafikstufe).
+ * Reichweite steuert Fog.far der Szene (Wetter und Grafikstufe). Seit 4.4.1 trägt Fog.near die FORM des Nebels (0 … 1):
+ *  0 = klare Luft (Luftperspektive: die Nähe bleibt klar, zum Ende der Weite schließt sich der Dunst), 1 = echter Nebel (dicht ab der Kamera,
+ *  exponentiell). So bekommen alle Materialien mit Nebel denselben Verlauf, auch Effekte ohne eigene Uniforms.
  * Materialien ohne die Sonnen-Uniforms (Effekte) bekommen denselben Verlauf, nur ohne Sonnenleuchten.
  */
 export const fogShared = {
@@ -59,8 +61,10 @@ export function installAtmosphere() {
     float skFogT = 0.0;
     float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );
   #else
-    float skFogT = max( vFogDepth - fogNear, 0.0 ) / max( fogFar - fogNear, 1.0 );
-    float fogFactor = 1.0 - exp( - ( skFogT * skFogT * 3.2 + skFogT * 1.05 ) );
+    float skFogT = max( vFogDepth, 0.0 ) / max( fogFar, 1.0 );
+    float skShape = clamp( fogNear, 0.0, 1.0 );
+    float skT2 = skFogT * skFogT;
+    float fogFactor = 1.0 - exp( - ( skFogT * mix( 0.62, 2.5, skShape ) + skT2 * skT2 * mix( 3.8, 1.2, skShape ) ) );
   #endif
   // Höhennebel: mittlere Höhe entlang des Blickstrahls. Zum Ende der Sichtweite schließt sich der Nebel auch in der
   // Höhe ganz – Berggipfel werden an der Kamera-Fernebene sonst halb sichtbar abgeschnitten.

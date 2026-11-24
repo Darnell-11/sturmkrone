@@ -13,6 +13,22 @@ export interface Hill { x: number; z: number; r: number; h: number }
  */
 export interface Pad { x: number; z: number; hw: number; hd: number; yaw: number; blend: number; y: number; r2: number; round?: boolean }
 
+/**
+ * Laufdeck (4.4A): begehbare Fläche ÜBER dem Gelände, die nur die Laufhöhe ändert, nicht das Geländenetz – das Deck einer freistehenden Brücke
+ * über einer ausgehobenen Spalte. Rechteck (Welt) mit Drehung wie ein Bau (Länge entlang der lokalen z-Achse), Höhe von y0 (Ende −z) bis y1 (Ende +z).
+ */
+export interface Deck { x: number; z: number; hw: number; hl: number; yaw: number; y0: number; y1: number; r2: number }
+
+/** Deckhöhe an einem Punkt oder −∞ (außerhalb) */
+export function deckHeight(d: Deck, x: number, z: number): number {
+  const dx = x - d.x, dz = z - d.z;
+  if (dx * dx + dz * dz > d.r2) return -Infinity;
+  const c = Math.cos(d.yaw), s = Math.sin(d.yaw);
+  const lx = dx * c - dz * s, lz = dx * s + dz * c;
+  if (Math.abs(lx) > d.hw || Math.abs(lz) > d.hl) return -Infinity;
+  return d.y0 + (d.y1 - d.y0) * ((lz / d.hl) * 0.5 + 0.5);
+}
+
 /** Hügelform 0 … 1 (t = Abstand / Radius): weich auslaufend statt Halbkugel – keine Kante am Hügelfuß */
 export function hillProfile(t: number): number {
   return t >= 1 ? 0 : Math.pow(1 - t * t, 1.6);
@@ -47,6 +63,8 @@ export interface WalkIsland extends IslandShape {
    * des Mittels der Grundfläche (Sohle einer Spalte, 4.3.6).
    */
   addPad?: (x: number, z: number, w: number, d: number, yaw: number, blend?: number, round?: boolean, fixedY?: number) => number;
+  /** Laufdecks (Welt): Brücken über ausgehobenen Spalten; zählen nur für die Laufhöhe, nie für das Geländenetz */
+  decks?: Deck[];
 }
 
 function vnoise(x: number, z: number, seed: number): number {
@@ -219,8 +237,15 @@ interface DeckWall {
  */
 export class DeckGround implements Ground {
   private walls: DeckWall[] = [];
-  /** Wo steht die Figur: 0 Hauptdeck, 1 Achterdeck (oben), 2 Kapitänskajüte (unter dem Achterdeck, durch die Tür); −1 = noch unbekannt */
+  /**
+   * Zone für Läufer OHNE Höhenangabe (Deck-Crew bei der Arbeit): 0 Hauptdeck, 1 Achterdeck (oben), 2 Kapitänskajüte; −1 = noch unbekannt.
+   * Läufer MIT Höhenangabe (Spielfigur, Offiziere, Trupps, Gegner) bekommen ihre Zone je Aufruf aus ihrer eigenen Höhe (`zoneOf`): früher
+   * teilten sich alle Läufer diesen einen Zustand, und wer übers Hauptdeck oder durch die Kajütentür lief, ließ die Figur oben am Steuerrad in
+   * die Kajüte fallen (4.4.1).
+   */
   private zone = -1;
+  /** Zone der Spielfigur (Kamera, Kajütendach); gesetzt über `notePlayer` */
+  private playerZone = 0;
 
   constructor(private ship: { entityId?: string; x: number; z: number; heading: number; cls: { L: number }; model: { deckY: number; group: { position: { y: number }; matrixWorld: { elements: ArrayLike<number> }; updateMatrixWorld(force?: boolean): void }; halfWidth(z: number): number; quarter?: QuarterDeck; fore?: ForeDeck | null; blockers?: DeckWall[]; cabinRoof?: { visible: boolean } } }) {
     ship.model.group.updateMatrixWorld(true);
@@ -280,8 +305,38 @@ export class DeckGround implements Ground {
     return { x: this.ship.x + lx * c + lz * s, z: this.ship.z - lx * s + lz * c };
   }
 
+  /** Hauptdeckhöhe (Welt) an einer Schiffsposition, mit Nicken und Rollen */
+  private mainY(lx: number, lz: number): number {
+    const m = this.ship.model.group.matrixWorld.elements;
+    return m[1] * lx + m[5] * this.ship.model.deckY + m[9] * lz + m[13];
+  }
+
+  /**
+   * Zone eines Läufers aus seiner eigenen Höhe y (zustandslos): im Grundriss des Achterkastells steht er oben, wenn er über der halben
+   * Kastellhöhe ist, sonst in der Kajüte (bzw. ohne Kajüte oben); davor und daneben auf dem Hauptdeck. Ohne y: der Zustand der Deck-Crew.
+   */
+  private zoneOf(lx: number, lz: number, y: number | undefined): number {
+    const q = this.ship.model.quarter;
+    if (!q) return 0;
+    if (y === undefined) return this.zone < 0 ? (lz <= q.z1 ? 1 : 0) : this.zone;
+    if (lz > q.z1 + 0.04 || lz < q.z0 - 0.5) return 0;
+    if (!q.cabin) return 1;
+    return y - this.mainY(lx, lz) > q.top * 0.5 ? 1 : 2;
+  }
+
+  /** Spielfigur: Zone für Kamera und Kajütendach (einmal je Bild aus der Welt) */
+  notePlayer(x: number, z: number, y: number) {
+    const { lx, lz } = this.toLocal(x, z);
+    const zn = this.zoneOf(lx, lz, y);
+    if (zn !== this.playerZone) {
+      this.playerZone = zn;
+      const roof = this.ship.model.cabinRoof;
+      if (roof) roof.visible = zn !== 2;
+    }
+  }
+
   /** Höhe über dem Hauptdeck an einer Schiffsposition: Achterdeck und Vordeck oben, Treppen als Rampe, sonst 0 */
-  private level(lx: number, lz: number): number {
+  private level(lx: number, lz: number, zone = this.zone): number {
     const q = this.ship.model.quarter;
     const f = this.ship.model.fore;
     if (f) {
@@ -289,7 +344,7 @@ export class DeckGround implements Ground {
       if (lz > f.z0 - f.stairLen) for (const sx of f.stairX) if (Math.abs(lx - sx) <= f.stairW / 2 + 0.08) return f.top * (1 - (f.z0 - lz) / f.stairLen);
     }
     if (!q) return 0;
-    if (lz <= q.z1) return lz >= q.z0 - 0.5 ? (this.zone === 2 ? 0 : q.top) : 0;
+    if (lz <= q.z1) return lz >= q.z0 - 0.5 ? (zone === 2 ? 0 : q.top) : 0;
     if (lz < q.z1 + q.stairLen) {
       const t = 1 - (lz - q.z1) / q.stairLen;
       for (const sx of q.stairX) if (Math.abs(lx - this.stairCx(sx, t)) * this.stairN(sx, t).nx <= q.stairW / 2 + 0.08) return q.top * (1 - (lz - q.z1) / q.stairLen);
@@ -301,16 +356,16 @@ export class DeckGround implements Ground {
    * Höhe des Decks an einer Weltposition. Folgt der Neigung des Schiffs (Nicken und Rollen im Seegang), nicht nur dem Auf und Ab:
    * sonst schwebt man im Sturm über dem Deck oder steckt in den Planken, besonders auf den Treppen. Ohne Position: Höhe des Hauptdecks.
    */
-  height(x?: number, z?: number) {
+  height(x?: number, z?: number, y?: number) {
     const m = this.ship.model.group.matrixWorld.elements;
     if (x === undefined || z === undefined) return m[5] * this.ship.model.deckY + m[13];
     const { lx, lz } = this.toLocal(x, z);
-    const ly = this.ship.model.deckY + this.level(lx, lz);
+    const ly = this.ship.model.deckY + this.level(lx, lz, this.zoneOf(lx, lz, y));
     return m[1] * lx + m[5] * ly + m[9] * lz + m[13];
   }
 
-  /** In der Kapitänskajüte? (Dach und Reling oben werden dann ausgeblendet, die Kamera rückt näher) */
-  get inCabin() { return this.zone === 2; }
+  /** Ist die Spielfigur in der Kapitänskajüte? (Dach und Reling oben werden dann ausgeblendet, die Kamera rückt näher) */
+  get inCabin() { return this.playerZone === 2; }
 
   /** Zone wechseln: über die Treppe aufs Achterdeck, durch die Tür in die Kajüte, vorn wieder hinaus aufs Hauptdeck */
   private updateZone(lx: number, lz: number, q: QuarterDeck) {
@@ -319,16 +374,16 @@ export class DeckGround implements Ground {
     if (this.zone < 0) this.zone = lz <= z1 ? 1 : 0;
     else if (lz > z1 + 0.04) this.zone = 0;
     else if (this.zone === 0 && lz <= z1 - 0.02) this.zone = Math.abs(lx) < (q.doorHalf ?? 0.6) ? 2 : 1;
-    if (before !== this.zone) { const roof = this.ship.model.cabinRoof; if (roof) roof.visible = this.zone !== 2; }
+    void before;
   }
 
   /** Gilt die Wand gerade? Möbel nur in der Kajüte, Aufbauten des Achterdecks nicht darunter, die Wand über der Tür nur oben */
-  private active(w: DeckWall): boolean {
+  private active(w: DeckWall, zone: number): boolean {
     if (w.edge) return true;
-    if (w.door) return this.zone === 1;
-    if (w.cabin) return this.zone === 2;
+    if (w.door) return zone === 1;
+    if (w.cabin) return zone === 2;
     const q = this.ship.model.quarter;
-    if (this.zone === 2 && q && w.cz <= q.z1 && w.cz >= q.z0 - 0.5) return false;
+    if (zone === 2 && q && w.cz <= q.z1 && w.cz >= q.z0 - 0.5) return false;
     return true;
   }
 
@@ -346,19 +401,21 @@ export class DeckGround implements Ground {
     return { lx, lz: w.cz + Math.sign(dz || 1) * (w.hz + r) };
   }
 
-  constrain(x: number, z: number, radius = 0.35) {
+  constrain(x: number, z: number, radius = 0.35, y?: number) {
     const { lx, lz } = this.toLocal(x, z);
     const L = this.ship.cls.L;
     const q = this.ship.model.quarter;
-    if (q?.cabin) this.updateZone(lx, lz, q);
-    const cab = this.zone === 2 && !!q?.cabin;
+    // ohne Höhenangabe: Zustand der Deck-Crew fortschreiben; mit Höhenangabe: Zone allein aus der Höhe dieses Läufers
+    if (q?.cabin && y === undefined) this.updateZone(lx, lz, q);
+    const zone = this.zoneOf(lx, lz, y);
+    const cab = zone === 2 && !!q?.cabin;
     const zMin = cab ? q!.cabin!.zA + radius : q ? q.z0 + 0.35 + radius : -L / 2 + L * 0.28;
     // bis ganz nach vorn in die Bugspitze (dort wird das Deck schmal)
     const cz = Math.max(zMin, Math.min(L / 2 * 0.93, lz));
     const top = !!q && cz <= q.z1;
     const hw = Math.max(0.3, cab ? this.ship.model.halfWidth(cz) * 0.9 - 0.18 - radius : this.ship.model.halfWidth(cz) * (top ? 0.86 : 0.85) - radius);
     let px = Math.max(-hw, Math.min(hw, lx)), pz = cz;
-    for (let it = 0; it < 2; it++) for (const w of this.walls) { if (!this.active(w)) continue; const o = this.pushWall(w, px, pz, radius); px = o.lx; pz = o.lz; }
+    for (let it = 0; it < 2; it++) for (const w of this.walls) { if (!this.active(w, zone)) continue; const o = this.pushWall(w, px, pz, radius); px = o.lx; pz = o.lz; }
     // in der Kajüte nie hinter die Heckwand (auch nicht, wenn ein Möbelstück den Punkt herausschiebt)
     if (cab) pz = Math.max(pz, q!.cabin!.zA + radius);
     return this.toWorld(px, pz);
@@ -372,11 +429,11 @@ export class DeckGround implements Ground {
   }
 
   /** Auf dem Achterdeck (oben)? */
-  onQuarter(x: number, z: number) {
+  onQuarter(x: number, z: number, y?: number) {
     const q = this.ship.model.quarter;
     if (!q) return false;
-    const { lz } = this.toLocal(x, z);
-    return this.zone !== 2 && lz <= q.z1 && lz >= q.z0 - 0.5;
+    const { lx, lz } = this.toLocal(x, z);
+    return (y === undefined ? this.playerZone !== 2 : this.zoneOf(lx, lz, y) !== 2) && lz <= q.z1 && lz >= q.z0 - 0.5;
   }
 
   /** Abstand eines Weltpunkts zum Steuerplatz (Schiffskoordinate z, x = 0) in der Ebene */
@@ -625,9 +682,16 @@ export class IslandGround implements Ground {
   }
 
   /** Höhe einer einzelnen Insel (Weltkoordinaten); −∞ außerhalb. Gleiche Rechnung für Gelände-Mesh und Laufhöhe. */
-  islandHeight(i: WalkIsland, x: number, z: number, withLift = true, withPads = true): number {
+  islandHeight(i: WalkIsland, x: number, z: number, withLift = true, withPads = true, withDecks = withLift && withPads): number {
     const d = Math.hypot(x - i.x, z - i.z);
     if (d > i.r * 1.9) return -Infinity;
+    if (withDecks && i.decks) {
+      // Brückendeck über der Spalte: die Laufhöhe ist das Deck, wo es höher liegt als der Boden darunter
+      for (let k = 0; k < i.decks.length; k++) {
+        const y = deckHeight(i.decks[k], x, z);
+        if (y > -Infinity) return Math.max(y, this.islandHeight(i, x, z, withLift, withPads, false));
+      }
+    }
     const e = this.edge(i, x, z);
     if (d > e * (1 + i.shelf)) return -Infinity;
     // Plateau bis zur Küste, dann gleichmäßig 3 m über die Böschung hinab (wie das Strand-Mesh)
@@ -872,7 +936,7 @@ export class CompositeGround implements Ground {
       if (b) return this.bridgeH(b, _sl.s, x, z);
     }
     const d = this.decks.length ? this.deckAt(x, z) : null;
-    return d ? d.height(x, z) : this.island.height(x, z);
+    return d ? d.height(x, z, y) : this.island.height(x, z);
   }
 
   constrain(x: number, z: number, radius = 0.35, y?: number): { x: number; z: number } {
@@ -904,6 +968,6 @@ export class CompositeGround implements Ground {
       }
     }
     const d = this.decks.length ? this.deckAt(x, z) : null;
-    return d ? d.constrain(x, z, radius) : this.island.constrain(x, z, radius);
+    return d ? d.constrain(x, z, radius, y) : this.island.constrain(x, z, radius);
   }
 }

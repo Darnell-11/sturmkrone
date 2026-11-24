@@ -146,9 +146,19 @@ export function sailMaterial<T extends Material>(m: T, u: SailUniforms): T {
           diffuseColor.rgb *= 1.0 - 0.38 * uDmg;
           if (tr > cut) diffuseColor.a = 0.0;
         }
-        #include <alphatest_fragment>`);
+        #include <alphatest_fragment>`)
+      .replace('#include <opaque_fragment>', `
+        #if NUM_DIR_LIGHTS > 0
+        {
+          // Gegenlicht (4.4A): steht die Sonne hinter dem Segel, scheint das Tuch warm durch (dünnes Leinen)
+          float skBt = clamp(dot(-normalize(vViewPosition), directionalLights[0].direction), 0.0, 1.0);
+          skBt = skBt * skBt * skBt;
+          outgoingLight += diffuseColor.rgb * directionalLights[0].color * skBt * 0.32;
+        }
+        #endif
+        #include <opaque_fragment>`);
   };
-  m.customProgramCacheKey = () => (prevKey ? prevKey.call(m) : '') + '|sail2';
+  m.customProgramCacheKey = () => (prevKey ? prevKey.call(m) : '') + '|sail3';
   m.needsUpdate = true;
   return m;
 }

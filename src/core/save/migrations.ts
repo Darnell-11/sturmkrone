@@ -1,3 +1,4 @@
+import { cleanMegaSave } from '../../data/megaIslands';
 import { CREW_BY_ID, defaultParty } from '../../data/crew';
 import { officerSlots } from '../../data/crewTiers';
 import { sanitizeLook } from '../../data/characterParts';
@@ -182,6 +183,8 @@ export function migrateSave(raw: unknown, gameVersion: string): MigrationResult 
   filled.world.seaEvents = cleanWorldEvents(filled.world.seaEvents);
   // Weltkarte: gespeicherte Entdeckungen säubern; was der Stand schon weiß (besucht, erobert), gilt immer als entdeckt – auch bei frühen Ständen der Version 19
   filled.world.chart = chartOnLoad(filled.world.chart, filled.progress);
+  // Mega-Inseln (4.4A): Ruhezeiten säubern (fehlt das Feld in älteren Ständen, bleibt es leer: alles bereit)
+  filled.world.mega = cleanMegaSave(filled.world.mega);
   filled.fleet = cleanFleet(filled.fleet, { owned: filled.ship.owned ?? [], flagship: filled.ship.tier, evo: filled.ship.evo ?? {}, look: filled.ship.look, slots: fleetSlots(rankIndex(filled.player.fame)) });
   return { ok: true, data: filled, migratedFrom: from === SAVE_VERSION ? null : from };
 }

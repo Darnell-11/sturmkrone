@@ -229,7 +229,7 @@ export class CombatSystem implements EnemyWorld {
     if (e.hurt.stamp !== this.now) { e.hurt.fromCharacter(e.char, e.x, e.y, e.z, e.yaw, e.def.scale); e.hurt.stamp = this.now; }
     return e.hurt;
   }
-  ground(x: number, z: number) { const h = this.groundRef.height(x, z); return Number.isFinite(h) ? h : 0; }
+  ground(x: number, z: number, y?: number) { const h = this.groundRef.height(x, z, y); return Number.isFinite(h) ? h : 0; }
   constrain(x: number, z: number, r: number, self?: Enemy) {
     // Gegner untereinander und vom Spieler fernhalten (sich selbst überspringen!)
     for (const o of this.enemies) {
@@ -256,7 +256,7 @@ export class CombatSystem implements EnemyWorld {
         x = pl.x + nx * min; z = pl.z + nz * min;
       }
     }
-    return this.groundRef.constrain(x, z, r);
+    return this.groundRef.constrain(x, z, r, self?.y);
   }
 
   /** Boss beginnt eine neue Phase: Brüllen mit Schockring, Banner, Kamerawackeln */

@@ -307,16 +307,18 @@ export function buildRaidLayout(factionId: FactionId, seed: number, seaAngle: nu
   // ---------- Wachflotte vor der Küste ----------
   const guard: RaidGuardDef[] = [];
   const gx = [-190, -95, 0, 95, 190], tiers = [4, 4, 6, 5, 4];
+  // Bereitstellungsplatz der Angreifer (seewärts): die Wachschiffe stehen mit dem Bug zu ihm (4.4.1; vorher zur Inselmitte, also mit dem Heck zum Feind)
+  const [stx0, stz0] = P(0, zg + 640);
   gx.forEach((x, i) => {
     const z = zg + 230 + Math.abs(x) * 0.3 + (rnd() - 0.5) * 20;
     const [wx, wz] = P(x, z);
     guard.push({
-      guardId: `wache-${i + 1}`, tier: tiers[i], x: wx, z: wz, heading: Math.atan2(-wx, -wz),
+      guardId: `wache-${i + 1}`, tier: tiers[i], x: wx, z: wz, heading: Math.atan2(stx0 - wx, stz0 - wz),
       hull: i === 2 ? 3.4 : 2.6, sail: i === 2 ? 2.6 : 2, crew: i === 2 ? 1.8 : 1.5,
       name: i === 2 ? `${F.name}-Flaggschiff` : `${F.name}-Wachschiff ${i < 2 ? i + 1 : i}`,
     });
   });
-  const [stx, stz] = P(0, zg + 640);
+  const [stx, stz] = [stx0, stz0];
   const [gxw, gzw] = P(0, zg);
 
   return {

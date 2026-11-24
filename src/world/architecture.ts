@@ -102,27 +102,28 @@ export function setSiteNight(night: number) {
   setFactionNight(night);
 }
 
-const plank = (color: string) => toon({ color, map: plankTexture(), ...toonPbr(plankTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) });
+// Oberflächen aus der PBR-Schmiede (4.4A): Hafenholz, Fachwerkbalken, Mauerquader, Dachziegel, Eisen
+const plank = (color: string) => toon({ color, map: plankTexture(), forge: 'hafenholz', ...toonPbr(plankTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) });
 const M = {
-  get wood() { return toon('#8A6A44'); },
-  get darkWood() { return toon('#4A3220'); },
+  get wood() { return toon({ color: '#8A6A44', forge: 'fachwerk' }); },
+  get darkWood() { return toon({ color: '#4A3220', forge: 'fachwerk' }); },
   get planks() { return plank('#A07C50'); },
   get planksGrey() { return plank('#8C8474'); },
-  get deck() { return toon({ color: '#A8804E', map: plankTexture(), puddles: 0.6, ...toonPbr(plankTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) }); },
-  get stone() { return toon({ color: '#A8A092', detail: 'stone' }); },
-  get stoneDark() { return toon({ color: '#908A7E', flatShading: true, detail: 'stone' }); },
-  get stoneLight() { return toon({ color: '#D0C8B6', flatShading: true, detail: 'stone' }); },
-  get ruin() { return toon({ color: '#9C978A', flatShading: true, detail: 'stone' }); },
+  get deck() { return toon({ color: '#A8804E', map: plankTexture(), puddles: 0.6, forge: 'hafenholz', ...toonPbr(plankTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) }); },
+  get stone() { return toon({ color: '#A8A092', detail: 'stone', forge: 'mauerwerk' }); },
+  get stoneDark() { return toon({ color: '#908A7E', flatShading: true, detail: 'stone', forge: 'mauerwerk' }); },
+  get stoneLight() { return toon({ color: '#D0C8B6', flatShading: true, detail: 'stone', forge: 'mauerwerk' }); },
+  get ruin() { return toon({ color: '#9C978A', flatShading: true, detail: 'stone', forge: 'mauerwerk' }); },
   get moss() { return toon({ color: '#5E7A4A', flatShading: true }); },
   get plaster() { return toon({ color: '#E2D6BC', detail: 'plaster' }); },
   get thatch() { return toon({ color: '#A8904E', flatShading: true }); },
-  get shingle() { return toon({ color: '#6E4A2E', flatShading: true, detail: 'tile' }); },
-  get slate() { return toon({ color: '#46525E', flatShading: true, detail: 'tile' }); },
-  get tile() { return toon({ color: '#8E3A2A', flatShading: true, detail: 'tile' }); },
+  get shingle() { return toon({ color: '#6E4A2E', flatShading: true, detail: 'tile', forge: 'ziegel' }); },
+  get slate() { return toon({ color: '#46525E', flatShading: true, detail: 'tile', forge: 'ziegel' }); },
+  get tile() { return toon({ color: '#8E3A2A', flatShading: true, detail: 'tile', forge: 'ziegel' }); },
   get barnRed() { return toon('#7E2E24'); },
   get soil() { return toon({ color: '#5A4430', flatShading: true }); },
   get straw() { return toon({ color: '#C9A94E', flatShading: true }); },
-  get iron() { return toon({ color: '#3A3C40', spec: 0.6 }); },
+  get iron() { return toon({ color: '#3A3C40', spec: 0.6, forge: 'kanonenstahl' }); },
   get crate() { return toon({ color: '#9A6A3A', map: crateTexture(), ...toonPbr(crateTexture(), { strength: 1.2, rough: 0.82, roughVar: 0.2, ao: 0.7 }) }); },
   get barrel() { return plank('#7A5030'); },
   get net() { return toon({ color: '#6E7A6A', side: DoubleSide }); },
@@ -193,7 +194,7 @@ let archTheme: FactionId | null = null;
 export const THEMED_TYPES = new Set<StructureType>(['torhaus', 'zinnenturm', 'zinnenmauer', 'bergfried', 'kran', 'lagerhaus', 'kapelle']);
 
 /** Material der Blender-Bauten: Farbe und Oberfläche wie die Eigenbau-Fassung, dazu Eckpunktfarben für die Ambient-Occlusion */
-const AM = (color: string, detail?: 'stone' | 'plaster' | 'tile') => toon({ color, detail, vertexColors: true });
+const AM = (color: string, detail?: 'stone' | 'plaster' | 'tile') => toon({ color, detail, vertexColors: true, forge: detail === 'stone' ? 'mauerwerk' : detail === 'tile' ? 'ziegel' : undefined });
 type ArchSet = { wall?: string; wallDetail?: 'stone' | 'plaster' | 'tile'; roof: string; roofDetail?: 'tile'; cloth?: string };
 /** Rollen→Material eines Hauses; Dach und Wand je Haustyp */
 const houseMats = (s: ArchSet) => (role: string) => {

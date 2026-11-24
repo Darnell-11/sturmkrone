@@ -19,8 +19,26 @@ import { seeded } from './waves';
 const SKY_FRAG = /* glsl */ `
   uniform vec3 uZenith, uHorizon, uSunDir, uSunCol, uMoonDir, uGlow;
   uniform float uStars, uTime, uFlash, uSunVis, uMoonVis, uGrey;
+  uniform vec3 uCloudLit, uCloudShade;
+  uniform float uCover, uDark, uCloudQ, uFogK;
+  uniform vec2 uCloudOff;
   varying vec3 vDir;
   float h21(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+  float skVn(vec2 p) {
+    vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y);
+  }
+  // Wolkenrauschen: gedrehte Oktaven (keine Rasterkanten), Zahl der Oktaven nach Grafikstufe, auf 0 … 1 normiert
+  float skFbm(vec2 p) {
+    float s = 0.0, a = 0.5, norm = 0.0;
+    for (int i = 0; i < 5; i++) {
+      if (float(i) >= uCloudQ) break;
+      s += a * skVn(p); norm += a;
+      p = mat2(0.8, 0.6, -0.6, 0.8) * p * 2.03 + 1.7;
+      a *= 0.5;
+    }
+    return s / max(norm, 1e-3);
+  }
   void main() {
     vec3 d = normalize(vDir);
     float h = clamp(d.y, 0.0, 1.0);
@@ -69,6 +87,37 @@ const SKY_FRAG = /* glsl */ `
       float cloudN = n1 * 0.5 + n2 * 0.5;
       c += vec3(0.32, 0.36, 0.55) * band * (0.35 + cloudN) * 0.22 * uStars * smoothstep(0.05, 0.4, d.y) * (1.0 - uGrey);
     }
+    // Wolkendecke (4.4.1): eine Schicht in rund 1,8 km Höhe, in die Ebene projiziert (zum Horizont flach und dicht), mit Wind und Kamera
+    // ziehend. Beleuchtung aus einer zweiten Probe in Richtung Sonne (dichter dort = Eigenschatten), Silberrand im Gegenlicht, Dunst am Horizont.
+    // Darüber feine Zirren bei klarem Himmel. Sterne und Mond verschwinden hinter den Wolken.
+    if (d.y > 0.0 && uCloudQ > 0.5) {
+      float hy = d.y;
+      vec2 cp = d.xz / (hy + 0.06) * 0.55 + uCloudOff;
+      float thr = mix(0.68, 0.3, uCover);
+      float n = skFbm(cp);
+      float dens = smoothstep(thr, thr + 0.24, n);
+      vec2 sd = uSunDir.xz; float sl = length(sd);
+      sd = sl > 1e-3 ? sd / sl : vec2(0.0);
+      float n2 = skFbm(cp + sd * 0.07);
+      float occl = smoothstep(thr - 0.04, thr + 0.4, n2);
+      float lit = clamp(1.0 - occl * 0.72 - dens * 0.18 * uCover, 0.0, 1.0);
+      vec3 cc = mix(uCloudShade * 0.82, uCloudLit, lit);
+      // Silberrand: dünne Ränder leuchten in Sonnennähe auf (Vorwärtsstreuung)
+      cc += uCloudLit * pow(max(s, 1e-4), 10.0) * (1.0 - dens) * dens * 3.2 * uSunVis;
+      cc += uGlow * pow(max(s, 1e-4), 3.0) * 0.6;
+      cc *= mix(1.0, 0.32, uDark);
+      cc = mix(cc, uHorizon, exp(-hy * 7.0) * 0.8);
+      float ca = dens * smoothstep(0.0, 0.08, hy) * (0.55 + 0.45 * uCover);
+      // Zirren: lange, dünne Fäden hoch oben (nur bei eher klarem Himmel)
+      vec2 zp = d.xz / (hy + 0.1) * 0.3 + uCloudOff * 0.6;
+      vec2 zr = vec2(zp.x * 0.8 + zp.y * 0.6, -zp.x * 0.6 + zp.y * 0.8);
+      float ci = smoothstep(0.58, 0.85, skVn(vec2(zr.x * 0.7, zr.y * 5.0)) * 0.7 + skVn(zr * 3.0) * 0.3);
+      float cia = ci * (1.0 - uCover) * 0.35 * smoothstep(0.05, 0.3, hy) * (1.0 - dens);
+      c = mix(c, mix(uCloudLit, uHorizon, 0.35) * mix(1.0, 0.4, uDark), cia);
+      c = mix(c, cc, ca);
+    }
+    // Echter Nebel verschluckt auch den Himmel: von unten nach oben in die Nebelfarbe (die Sonne bleibt als heller Fleck)
+    c = mix(c, uHorizon, uFogK * (0.95 - 0.35 * h));
     // Unter dem Horizont: der Abgrund hinter dem Weltrand
     if (d.y < 0.0) c = mix(uHorizon, uHorizon * 0.25, clamp(-d.y * 3.0, 0.0, 1.0));
     c += vec3(0.75, 0.8, 1.0) * uFlash;
@@ -153,6 +202,8 @@ const CLOUD_VERT = /* glsl */ `
   uniform float uCover;
   void main() {
     vec3 wp = aOffset;
+    // Lage im Feld (−1400 … 1400) auf die Weite der Wolken strecken (folgt der Dunstweite der Grafikstufe)
+    wp.xz *= uRange / 1400.0;
     wp.xz += uWind * uTime * (0.6 + aData.z * 0.8);
     wp.xz = mod(wp.xz - uCenter.xz + uRange, 2.0 * uRange) - uRange + uCenter.xz;
     vec4 mv = viewMatrix * vec4(wp, 1.0);
@@ -215,6 +266,11 @@ export class Sky {
     uSunVis: { value: 1 },
     uMoonVis: { value: 0 },
     uGrey: { value: 0 },
+    /** Wolkendecke: Oktaven (0 = aus) und Versatz (Kamera und Wind, in Rausch-Einheiten) */
+    uCloudQ: { value: 5 },
+    uCloudOff: { value: new Vector2() },
+    /** Nebelform 0 … 1 (wie Fog.near): echter Nebel graut den Himmel ein */
+    uFogK: { value: 0 },
   };
   readonly cloudU = {
     uMap: { value: cloudAtlas() },
@@ -238,7 +294,8 @@ export class Sky {
         side: BackSide,
         depthWrite: false,
         fog: false,
-        uniforms: this.skyU,
+        // Wolkenfarben, Bedeckung und Dunkelheit teilt die Wolkendecke mit den gemalten Wolken
+        uniforms: { ...this.skyU, uCloudLit: this.cloudU.uLit, uCloudShade: this.cloudU.uShade, uCover: this.cloudU.uCover, uDark: this.cloudU.uDark },
         vertexShader: /* glsl */ `
           varying vec3 vDir;
           void main() {

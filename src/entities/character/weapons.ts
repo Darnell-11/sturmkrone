@@ -40,14 +40,14 @@ function sword(length: number, width: number, curve: number, look: WeaponLook, t
   const fromModel = model ? glbWeapon(model, look, [0.12 + length * 0.22, curve, 0.12 + length]) : null;
   if (fromModel) return fromModel;
   const g = new Group();
-  const bladeMat = toon({ color: look.blade, spec: 1, emissive: look.glow ? new Color(look.blade).multiplyScalar(0.35) : 0x000000 });
+  const bladeMat = toon({ color: look.blade, spec: 1, forge: 'stahl', roughness: 0.22, emissive: look.glow ? new Color(look.blade).multiplyScalar(0.35) : 0x000000 });
   const blade = new Mesh(bladeGeo(length, width, curve), bladeMat);
   blade.position.y = 0.12;
   g.add(blade);
   const guard = new Mesh(new BoxGeometry(width * 2.4, 0.04, 0.07), toon({ color: GUARD, spec: 0.8 }));
   guard.position.y = 0.11;
   g.add(guard);
-  const grip = new Mesh(new CylinderGeometry(0.025, 0.028, twoHanded ? 0.32 : 0.2, 8), toon(HANDLE));
+  const grip = new Mesh(new CylinderGeometry(0.025, 0.028, twoHanded ? 0.32 : 0.2, 8), toon({ color: HANDLE, forge: 'griffwicklung' }));
   grip.position.y = twoHanded ? -0.04 : 0;
   g.add(grip);
   const pommel = new Mesh(new SphereGeometry(0.04, 8, 6), toon({ color: GUARD, spec: 0.8 }));
@@ -79,9 +79,11 @@ function glbWeapon(model: string, look: WeaponLook, trail: [number, number, numb
   for (const [role, geo] of m.roles) {
     let mat;
     switch (role) {
-      case 'steel': mat = toon({ color: look.blade, surface: 'steel', spec: 1, metalness: 0.62, roughness: 0.34, rim: 0.9, emissive: look.glow ? col.clone().multiplyScalar(0.3) : 0x000000 }); break;
+      // Klinge: polierter Stahl (4.4A: Rauheit 0,22 statt 0,34, gebürstete Riefen und Kratzer aus der PBR-Schmiede)
+      case 'steel': mat = toon({ color: look.blade, surface: 'steel', forge: 'stahl', spec: 1, metalness: 0.7, roughness: 0.22, rim: 0.9, emissive: look.glow ? col.clone().multiplyScalar(0.3) : 0x000000 }); break;
       case 'gold': mat = finishMat('gold', GUARD); break;
-      case 'leather': mat = finishMat('leder', HANDLE); break;
+      // Griff: schräg gewickelter Lederriemen
+      case 'leather': mat = finishMat('leder', HANDLE, { forge: 'griffwicklung' }); break;
       case 'dark': mat = finishMat('dunkelstahl', '#33343C'); break;
       case 'cloth': mat = finishMat('stoff', '#7A1E22'); break;
       case 'glow': mat = glowMat(look.glow ? `#${col.getHexString()}` : '#FF6A3A', look.glow ? 2.6 : 1.8); break;

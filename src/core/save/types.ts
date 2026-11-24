@@ -1,4 +1,5 @@
 // Aufbau eines Spielstands. Bei jeder Änderung: SAVE_VERSION erhöhen und in migrations.ts eine Migration ergänzen.
+import type { MegaSaveState } from '../../data/megaIslands';
 import { defaultLook, type CharacterLook } from '../../data/characterParts';
 import { DEFAULT_SHIP_LOOK, type AmmoId, type ShipLook } from '../../data/ships';
 import { START_MARINE_STANDING, type FactionId } from '../../data/factions';
@@ -159,6 +160,11 @@ export interface SaveData {
      * oder ein früher Stand der Version 19), gelten alle bereits besuchten oder eroberten Inseln als entdeckt (`chartOnLoad`).
      */
     chart?: ChartState;
+    /**
+     * Ruhezeiten der Mega-Inseln (4.4A, ohne neue Versionsnummer: fehlt das Feld, ist alles bereit): verbleibende Sekunden je geräumtem Bezirk
+     * (15 Minuten) und besiegtem Insel-Kommandanten (25 Minuten), siehe `megaToSave`/`cleanMegaSave` in data/megaIslands.ts.
+     */
+    mega?: MegaSaveState;
   };
   progress: ProgressState;
   gear: GearState;
@@ -188,7 +194,7 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
       fame: 0,
       look: defaultLook(faction),
     },
-    world: { boat: null, time: 9, weather: 'klar', seaEvents: null, chart: emptyChart() },
+    world: { boat: null, time: 9, weather: 'klar', seaEvents: null, chart: emptyChart(), mega: {} },
     progress: defaultProgress(faction),
     gear: { weapon: 0, armor: 0, potions: 3, shrine: 0, trinkets: [], trinket: null, items: {}, heads: [], head: null, bar: ['proviant', null, null, null], owned: [], worn: {} },
     skills: { learned: {}, slots: [null, null, null], sp: 1, awakened: [] },

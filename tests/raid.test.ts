@@ -16,6 +16,15 @@ const newSession = (id: FactionId = 'england', seaAngle = 1.1) => {
 };
 
 describe('Raid-Layout', () => {
+  it('Wachschiffe starten mit dem Bug zu den Angreifern (Bereitstellungsplatz), nicht zur Insel (4.4.1)', () => {
+    for (const id of FACTION_IDS) for (const sea of [0.3, 1.1, 2.6, 4.4]) {
+      const L = layoutFor(id, sea);
+      for (const g of L.guard) {
+        const dx = L.staging.x - g.x, dz = L.staging.z - g.z, l = Math.hypot(dx, dz);
+        expect(Math.sin(g.heading) * dx / l + Math.cos(g.heading) * dz / l).toBeGreaterThan(0.95);
+      }
+    }
+  });
   it('ist deterministisch (gleicher seed, gleiche Anlage) und reine JSON-Daten', () => {
     const a = layoutFor('kurogane', 2.2), b = layoutFor('kurogane', 2.2);
     expect(a).toEqual(b);

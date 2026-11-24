@@ -47,7 +47,7 @@ export interface EnemyWorld {
   releaseToken(e: Enemy): void;
   enemyStrike(e: Enemy, atk: EnemyAttack): void;
   enemyTelegraph(e: Enemy, atk: EnemyAttack): void;
-  ground(x: number, z: number): number;
+  ground(x: number, z: number, y?: number): number;
   constrain(x: number, z: number, r: number, self?: Enemy): { x: number; z: number };
   /** Begehbarkeits-Netz der Insel (null an Deck: dort ist alles frei) */
   readonly nav: NavGrid | null;
@@ -225,7 +225,7 @@ export class Enemy {
   private sweepGround(w: EnemyWorld): SweepGround {
     if (!this.sweepG || this.sweepW !== w) {
       this.sweepW = w;
-      this.sweepG = { height: (x, z) => w.ground(x, z), constrain: (x, z, r) => w.constrain(x, z, r ?? this.radius, this) };
+      this.sweepG = { height: (x, z) => w.ground(x, z, this.y), constrain: (x, z, r) => w.constrain(x, z, r ?? this.radius, this) };
     }
     return this.sweepG;
   }
@@ -523,7 +523,7 @@ export class Enemy {
     // Softlock-Wächter: Angriff endet über das Animationsende, Flug über die Landung – beides abgesichert
     if (this.state === 'attack' && this.stateT > 5) this.endAttack(w);
     else if (this.state === 'windup' && this.stateT > 4) { this.cancelAttack(); if (this.hasToken) { w.releaseToken(this); this.hasToken = false; } this.toChase(); }
-    else if (this.state === 'air' && this.stateT > 6) { this.vy = 0; this.y = w.ground(this.x, this.z); this.state = 'down'; this.timer = 0.6; this.char.play('lie', { fade: 0.1 }); }
+    else if (this.state === 'air' && this.stateT > 6) { this.vy = 0; this.y = w.ground(this.x, this.z, this.y); this.state = 'down'; this.timer = 0.6; this.char.play('lie', { fade: 0.1 }); }
     this.timer -= dt;
     this.clock += dt;
     this.guardT = Math.max(0, this.guardT - dt);
@@ -652,7 +652,7 @@ export class Enemy {
         this.vy -= 22 * dt;
         this.y += this.vy * dt;
         {
-          const g = w.ground(this.x, this.z);
+          const g = w.ground(this.x, this.z, this.y);
           if (this.y <= g && this.vy < 0) {
             this.y = g;
             this.vy = 0;
@@ -667,7 +667,7 @@ export class Enemy {
         break;
       case 'dead':
         this.vy -= 18 * dt;
-        this.y = Math.max(w.ground(this.x, this.z), this.y + this.vy * dt);
+        this.y = Math.max(w.ground(this.x, this.z, this.y), this.y + this.vy * dt);
         // nach dem Fallen in Glut auflösen (4 s nach dem Tod wird die Figur entfernt)
         this.char.setDissolve(clamp01((2.7 - this.timer) / 1.8));
         break;
@@ -680,7 +680,7 @@ export class Enemy {
     // Rückstoß und Schritte als gesweepte Bewegung: kein Wanddurchbruch bei hohem Tempo (Teilschritte ≤ 0,15 m)
     sweepMove(this, (mvx + this.vx) * dt, (mvz + this.vz) * dt, this.sweepGround(w), false);
     if (this.state !== 'air' && this.state !== 'dead') {
-      const g = this.perch ? this.perch.y : w.ground(this.x, this.z);
+      const g = this.perch ? this.perch.y : w.ground(this.x, this.z, this.y);
       this.y += ((Number.isFinite(g) ? g : this.y) - this.y) * Math.min(1, dt * 15);
     }
     this.char.place(this.x, this.y, this.z, this.yaw);

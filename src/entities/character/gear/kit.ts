@@ -14,9 +14,10 @@ import type { Finish } from '../../../data/equipment';
 export function finishMat(finish: Finish, color: string | Color, extra: Partial<ToonOptions> = {}): Material {
   const base = { color, side: DoubleSide, rim: 0.9, ...extra } as ToonOptions;
   switch (finish) {
-    case 'stahl': return toon({ ...base, surface: 'steel', spec: 1, metalness: 0.62, roughness: 0.4 });
-    case 'dunkelstahl': return toon({ ...base, surface: 'steel', spec: 1, metalness: 0.55, roughness: 0.5 });
-    case 'gold': return toon({ ...base, surface: 'steel', spec: 1, metalness: 0.8, roughness: 0.3 });
+    // Metalle mit Oberflächen aus der PBR-Schmiede (4.4A): gebürsteter Stahl, gehämmerter Dunkelstahl, gebürstetes Messing/Gold
+    case 'stahl': return toon({ forge: 'stahl', ...base, surface: 'steel', spec: 1, metalness: 0.62, roughness: 0.4 });
+    case 'dunkelstahl': return toon({ forge: 'kanonenstahl', ...base, surface: 'steel', spec: 1, metalness: 0.55, roughness: 0.5 });
+    case 'gold': return toon({ forge: 'messing', ...base, surface: 'steel', spec: 1, metalness: 0.8, roughness: 0.3 });
     case 'leder': return toon({ ...base, surface: 'leather', spec: 0.2 });
     case 'seide': return toon({ ...base, surface: 'cloth', spec: 0.35, roughness: 0.48 });
     case 'haut': return toon({ ...base, surface: 'skin' });

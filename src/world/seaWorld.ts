@@ -28,7 +28,7 @@ import type { CharacterLook, NpcRole } from '../data/characterParts';
 import { CAMERA_PLANES, type QualityConfig } from '../data/qualityTiers';
 import { HOME_SPAWN, WORLD_SCALE } from '../data/world';
 import { chartAround, seedStartCharts, seeRange, type ChartZone } from './mapDiscovery';
-import { MEGA_BY_ID, clearDistrict, commanderRoam, commanderShouldAppear, districtWorld, districtsToWake, isMegaId, megaLevel, newMegaRuntime, type MegaId, type MegaRuntime } from '../data/megaIslands';
+import { MEGA_BY_ID, clearDistrict, commanderRoam, commanderShouldAppear, districtWorld, districtsToWake, isMegaId, megaFromSave, megaLevel, megaToSave, newMegaRuntime, type MegaId, type MegaRuntime, type MegaSaveState } from '../data/megaIslands';
 import { FAST_TRAVEL, findBerth } from './fastTravel';
 import type { CharacterAssets } from '../entities/character/assets';
 import { LampPool, lampShared } from '../render/lamps';
@@ -404,7 +404,6 @@ export class SeaWorld {
   private lamps: Mesh[] = [];
   /** Inselgruppen der aufgebauten Inseln (für das Ausblenden jenseits der Sichtweite) */
   private islandGroups: { g: Group; x: number; z: number; r: number; id: string }[] = [];
-  private viewDist = 800;
   /** Lagerfeuer auf den Inseln (Rauch und Glut) */
   private campfires: { x: number; y: number; z: number }[] = [];
   /** Schornsteine der Dörfer */
@@ -688,10 +687,10 @@ export class SeaWorld {
       if (first) {
         // erster Aufbau: Hindernisse und Einebnungen entstehen in der begehbaren Insel der Welt (bricht er ab, setzt `finally` sie zurück)
         walk = slot.walk;
-        walk.blockers.length = 0; walk.pads = undefined; walk.lift = undefined; walk.addPad = undefined;
+        walk.blockers.length = 0; walk.pads = undefined; walk.lift = undefined; walk.addPad = undefined; walk.decks = undefined;
       } else {
         // Kopie der Insel für den Neuaufbau: gleiche Form, leere Hindernisse und Einebnungen (die Rechnung füllt sie noch einmal, die Kopie wird verworfen)
-        walk = { ...slot.walk, blockers: [], pads: undefined, lift: undefined, addPad: undefined, walkways: undefined };
+        walk = { ...slot.walk, blockers: [], pads: undefined, lift: undefined, addPad: undefined, walkways: undefined, decks: undefined };
       }
       // Bau-Daten sammeln sich hier; nach einem vollständigen ersten Aufbau wandern sie in die Welt (Stege liefert der Blueprint)
       const sink = { piers: [] as Pier[], campfires: [] as V3[], chimneys: [] as V3[], smokeVents: [] as V3[], villages: new Map<string, { x: number; z: number; r: number }>(), patrols: new Map<string, { x: number; z: number }[][]>() };
@@ -719,6 +718,7 @@ export class SeaWorld {
       const hillTop = Math.max(...walk.hills.map((h) => h.r * h.h));
       // Eingeebnete Standflächen unter Bauten (siehe Pad in islandGround.ts); das Gelände-Mesh wird nach dem Aufbau nachgeführt
       walk.pads = [];
+      walk.decks = [];
       const padBounds: [number, number, number, number][] = [];
       // dieselbe Rechnung wie in der Raid-Instanz (`flattenTerrainFootprint`); Spalten der Mega-Inseln geben eine feste Sohlenhöhe vor
       walk.addPad = (wx, wz, w, d, yaw, blend = 2.4, round = false, fixedY) => flattenTerrainFootprint(walk, solo, padBounds, wx, wz, w, d, yaw, blend, round, fixedY);
@@ -971,7 +971,7 @@ export class SeaWorld {
       if (!ok) {
         this.disposeIsland(slot);
         // abgebrochener erster Aufbau: halbe Bau-Daten nicht stehen lassen (der nächste Versuch beginnt sauber)
-        if (first) { const w = slot.walk; w.blockers.length = 0; w.pads = undefined; w.lift = undefined; w.addPad = undefined; }
+        if (first) { const w = slot.walk; w.blockers.length = 0; w.pads = undefined; w.lift = undefined; w.addPad = undefined; w.decks = undefined; }
       }
     }
   }
@@ -1299,8 +1299,8 @@ export class SeaWorld {
       this.raid.world?.cull(cp.x, cp.z, this.vegLod);
       return;
     }
-    // Inseln im Nebel jenseits der Sichtweite gar nicht erst zeichnen (spart auf Handys viele Zeichenaufrufe)
-    const vd = this.viewDist * 1.05;
+    // Inseln im Nebel jenseits der Nebelweite gar nicht erst zeichnen (spart auf Handys viele Zeichenaufrufe); die Nebelweite folgt dem Wetter
+    const vd = (this.scene.fog as Fog).far * 1.02;
     for (const i of this.islandGroups) i.g.visible = Math.hypot(i.x - cp.x, i.z - cp.z) < vd + i.r * 1.2;
     // Gras, Blumen und Büsche nur in der Nähe zeichnen (Kacheln mit eigener Sichtweite)
     for (const c of this.vegChunks) {
@@ -1317,7 +1317,6 @@ export class SeaWorld {
     this.lampPool.setShadows(c.shadows.enabled && c.shadows.cascades >= 2);
     this.glow.quality = c.lamps > 0 ? 1 : 0.5;
     this.glow.heat = !!c.post.heat;
-    this.viewDist = c.viewDistance;
     // Sparstufen des Leistungs-Wächters kürzen die Sichtweite von Gras, Büschen und Blumen (weniger Zeichenaufrufe)
     this.vegLod = Math.max(0.4, Math.min(1.25, c.viewDistance / 800)) * (1 - 0.17 * (c.budget ?? 0));
     this.env.applyQuality(c);
@@ -2305,7 +2304,7 @@ export class SeaWorld {
           else { this.player.play('idle', { fade: 0.2 }); this.onFish(false); }
           this.fishing = null;
         }
-      } else if (onOwn && !this.boarding && dg!.onQuarter(f.x, f.z) && dg!.distTo(f.x, f.z, 0, ship.model.helm.z) < 1.5) {
+      } else if (onOwn && !this.boarding && dg!.onQuarter(f.x, f.z, f.y) && dg!.distTo(f.x, f.z, 0, ship.model.helm.z) < 1.5) {
         // am Steuerrad: festgemacht = Ablegen (Gangway und Taue werden eingeholt), vor Anker = Anker lichten, sonst ans Steuer
         this.contextLabel = ship.moored ? 'Ablegen' : this.docking.ladderId ? 'Anker lichten' : 'Ans Steuer';
         if (input.pressed('interact')) {
@@ -2801,6 +2800,16 @@ export class SeaWorld {
   private readonly megaWake: number[] = [];
   private readonly megaPt = { x: 0, z: 0 };
 
+  /** Ruhezeiten aller Mega-Inseln für den Spielstand (4.4A) */
+  megaSnapshot(): MegaSaveState { return megaToSave(this.megaRt.values(), this.env.clock); }
+
+  /** Ruhezeiten aus dem Spielstand übernehmen (Laden): geräumte Bezirke und besiegte Kommandanten ruhen weiter */
+  setMegaState(saved: MegaSaveState | null | undefined) {
+    this.leaveMega();
+    this.megaRt.clear();
+    for (const rt of megaFromSave(saved, this.env.clock)) this.megaRt.set(rt.id, rt);
+  }
+
   /** Landgang auf einer Mega-Insel: keine Garnison auf einmal, sondern Bezirk für Bezirk, wenn man ihm nahe kommt */
   private enterMega(isl: WalkIsland, id: MegaId) {
     const c = this.combat;
@@ -3294,7 +3303,7 @@ export class SeaWorld {
     const sea = this.seaEnv;
     lampShared.set(night);
     this.glowNight = night;
-    this.horizon.update((this.scene.fog as Fog).color, pal.sunVis, night, env.clock);
+    this.horizon.update((this.scene.fog as Fog).color, pal.sunVis, night, env.clock, (this.scene.fog as Fog).far);
 
     const wy = env.heightAt(x, z);
     const f = this.fwd(h);
@@ -3379,7 +3388,9 @@ export class SeaWorld {
       const pyaw = p.prev.yaw + (MathUtils.euclideanModulo(p.yaw - p.prev.yaw + Math.PI, Math.PI * 2) - Math.PI) * alpha;
       this.player.holder.position.set(px, py, pz);
       this.player.holder.rotation.set(0, pyaw, 0);
-      // In der Kapitänskajüte: steilere, nähere Kamera über der Figur (das Dach ist ausgeblendet), Kajütenlicht an
+      // In der Kapitänskajüte: steilere, nähere Kamera über der Figur (das Dach ist ausgeblendet), Kajütenlicht an.
+      // Die Zone der Spielfigur kommt aus ihrer eigenen Höhe (4.4.1), nicht aus dem gemeinsamen Zustand aller Läufer auf dem Deck
+      this.deckGround?.notePlayer(p.x, p.z, p.y);
       const inCab = !!this.deckGround?.inCabin;
       const cabLight = this.ship.model.cabinLight;
       if (cabLight) cabLight.intensity += ((inCab ? 4.5 : 0) - cabLight.intensity) * Math.min(1, frameDt * 6);

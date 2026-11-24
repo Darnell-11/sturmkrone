@@ -36,12 +36,21 @@ const MAX_HULL = 6;
 /** Wellen laufen mit einem Bruchteil der echten Tiefwasser-Geschwindigkeit: im Spiel wirkt das Meer sonst wie ein reißender Fluss */
 const WAVE_SPEED = 0.42;
 
-interface WaveConst { k: number; c: number; dx: number; dz: number; amp: number; h: number; len: number }
+/**
+ * Wellengruppen (4.4.1): die drei langen Wellen laufen in Sätzen – mehrere hohe Wellen hintereinander, dann ruhigeres Wasser – wie echte Dünung.
+ * Die Hüllkurve wandert mit der halben Phasengeschwindigkeit (Gruppengeschwindigkeit im Tiefwasser) und gilt gleich auf CPU und GPU.
+ * `gk`/`gw` = Wellenzahl und Kreisfrequenz der Hülle, `gp` = Phase, `ga` = Stärke (0 = keine Gruppe).
+ */
+interface WaveConst { k: number; c: number; dx: number; dz: number; amp: number; h: number; len: number; gk: number; gw: number; gp: number; ga: number }
 
-const WAVE_CONST: WaveConst[] = WAVES.map((w) => {
+const GROUP_AMP = [0.34, 0.3, 0.24];
+
+const WAVE_CONST: WaveConst[] = WAVES.map((w, i) => {
   const k = (Math.PI * 2) / w.length;
   const a = (w.dir * Math.PI) / 180;
-  return { k, c: Math.sqrt(G / k) * WAVE_SPEED, dx: Math.cos(a), dz: Math.sin(a), amp: w.amp, h: w.steep / (k * 5), len: w.length };
+  const c = Math.sqrt(G / k) * WAVE_SPEED;
+  const gk = k / (7 + i * 2);
+  return { k, c, dx: Math.cos(a), dz: Math.sin(a), amp: w.amp, h: w.steep / (k * 5), len: w.length, gk, gw: gk * c * 0.5, gp: i * 2.1, ga: GROUP_AMP[i] ?? 0 };
 });
 
 const f = (n: number) => n.toFixed(6);
@@ -59,8 +68,9 @@ export const GERSTNER_GLSL = /* glsl */ `
     float hs = min(uWaveScale, 1.0);
     ${WAVE_CONST.map((w) => `{
       float fd = 1.0 - smoothstep(${f(w.len * 7)}, ${f(w.len * 16)}, dist);
-      float A = ${f(w.amp)} * uWaveScale * fd;
-      float H = ${f(w.h)} * hs * fd;
+      ${w.ga > 0 ? `float gE = 1.0 + ${f(w.ga)} * sin(${f(w.gk)} * (${f(w.dx)} * p.x + ${f(w.dz)} * p.y) - ${f(w.gw)} * uTime + ${f(w.gp)});` : 'float gE = 1.0;'}
+      float A = ${f(w.amp)} * uWaveScale * fd * gE;
+      float H = ${f(w.h)} * hs * fd * (0.5 + 0.5 * gE);
       float ph = ${f(w.k)} * (${f(w.dx)} * p.x + ${f(w.dz)} * p.y - ${f(w.c)} * uTime);
       float cf = cos(ph); float sf = sin(ph);
       disp += vec3(${f(w.dx)} * H * cf, A * sf, ${f(w.dz)} * H * cf);
@@ -179,11 +189,13 @@ function gerstnerCPU(x: number, z: number, t: number, scale: number, out: { x: n
   const hs = Math.min(scale, 1);
   out.x = 0; out.y = 0; out.z = 0;
   for (const w of WAVE_CONST) {
+    const gE = w.ga > 0 ? 1 + w.ga * Math.sin(w.gk * (w.dx * x + w.dz * z) - w.gw * t + w.gp) : 1;
     const ph = w.k * (w.dx * x + w.dz * z - w.c * t);
     const cf = Math.cos(ph);
-    out.x += w.dx * w.h * hs * cf;
-    out.z += w.dz * w.h * hs * cf;
-    out.y += w.amp * scale * Math.sin(ph);
+    const hk = w.h * hs * (0.5 + 0.5 * gE);
+    out.x += w.dx * hk * cf;
+    out.z += w.dz * hk * cf;
+    out.y += w.amp * scale * gE * Math.sin(ph);
   }
 }
 
@@ -394,6 +406,19 @@ export class Ocean {
             float rz = skNoise((rp + vec2(0.0, e)) * 0.9 + t1);
             rn += vec2(r0 - rx, r0 - rz) * 0.25 * (1.0 - smoothstep(20.0, 120.0, camD));
             skNf = normalize(skNf + vec3(rn.x, 0.0, rn.y) * uDetail * wk);
+          }
+          // Ferne See (4.4.1): wo die Gerstner-Wellen ausgeblendet sind, tragen zwei weiche Rauschfelder die Wellenstruktur bis zum Horizont
+          // (sonst wird das Meer in der Ferne zum glatten Spiegel); sie brechen Himmelsspiegelung und Sonnenbahn in Bänder und Flecken
+          {
+            float fk = smoothstep(90.0, 700.0, camD);
+            if (fk > 0.0) {
+              vec2 fp = vSkW.xz * 0.05 + skOsc(0.05, 0.04);
+              float a0 = skNoise(fp), ax = skNoise(fp + vec2(0.5, 0.0)), az = skNoise(fp + vec2(0.0, 0.5));
+              vec2 fp2 = vSkW.xz * 0.014 - skOsc(0.03, 0.035);
+              float b0 = skNoise(fp2), bx = skNoise(fp2 + vec2(0.5, 0.0)), bz = skNoise(fp2 + vec2(0.0, 0.5));
+              vec2 fg = vec2(a0 - ax, a0 - az) * 0.6 + vec2(b0 - bx, b0 - bz) * 0.9;
+              skNf = normalize(skNf + vec3(fg.x, 0.0, fg.y) * fk * (0.45 + 0.25 * min(uWaveScale, 2.0)));
+            }
           }
           // Regen: Tropfen schlagen Ringwellen ins Wasser (drei Größen: große seltene, mittlere, feines Nieseln nah an der Kamera)
           float skRainI = 0.0;
@@ -644,7 +669,7 @@ export class Ocean {
           // die das Bild danach wieder undurchsichtig machen – sonst wäre das Wasser auf manchen Handys durchsichtig)
           gl_FragColor.a = uWaterAlpha;`);
     };
-    mat.customProgramCacheKey = () => `sk-ocean29-${wakeN}`;
+    mat.customProgramCacheKey = () => `sk-ocean30-${wakeN}`;
     // Kaskaden-Schatten: auch ein neu gebautes Wassermaterial zählt alle Kaskaden als ein Licht
     ensureCsm(mat);
     return mat;
