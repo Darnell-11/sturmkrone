@@ -308,6 +308,8 @@ export const SWIVEL_MIN_TIER = 4;
 export const RAM = {
   cone: 0.75, minSpeed: 3.5, dmgPerHp: 0.35 / 26, maxK: 0.42, crewK: 1.2,
   selfPlain: 0.6, selfRam: 0.18, glancing: 0.3, cooldown: 4, rammerSlow: 0.55, targetSlow: 0.8,
+  /** Abprall (Phase 4.2B): Rückstoß-Anteil beim Stoß, Stärke des Wegdrückens (Anteil der Annäherung, nach Massenanteil), Abklingen des Stoßes je Sekunde und Höchsttempo (m/s) */
+  bounce: 0.35, shoveK: 0.9, shoveDecay: 2.4, maxShove: 8,
   /** Stufe 5: panzerbrechend (ignoriert die Rumpf-Panzerung); Stufe 4 durchschlägt wie Stufe 3 */
   pierceTier: 5, penTier: 3,
 } as const;

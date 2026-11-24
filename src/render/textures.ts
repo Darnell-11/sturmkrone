@@ -54,7 +54,10 @@ export function plankTexture(): CanvasTexture {
 }
 
 /** Segeltuch: Bahnen mit Nähten, zwei Reffbänder mit Reffbändseln, Liektau-Rand, Ösen, Flecken, Wetterspuren – optional mit Wappen */
-export function sailTexture(color: string, emblem: HTMLCanvasElement | null, seed: number, tattered = false, heraldry: SailHeraldry | null = null): CanvasTexture {
+/** Zustand des Segeltuchs nach Ausbaustufe: Abnutzung 0 … 1 (Flicken, Fransen) und Bordüre (Gold, ab Stufe 5 doppelt mit `accent`) */
+export interface SailLook { wear?: number; border?: { double: boolean; accent?: string } | null }
+
+export function sailTexture(color: string, emblem: HTMLCanvasElement | null, seed: number, tattered = false, heraldry: SailHeraldry | null = null, look: SailLook = {}): CanvasTexture {
   const W = 512, H = 384;
   const { c, g } = detailCanvas(W, H);
   const r = rng(seed);
@@ -128,9 +131,10 @@ export function sailTexture(color: string, emblem: HTMLCanvasElement | null, see
     g.fillStyle = `rgba(255,250,235,${0.05 + r() * 0.06})`;
     g.fillRect(r() * W, 0, 6 + r() * 16, H * (0.5 + r() * 0.5));
   }
-  // Flicken: genähte Tuchstücke
-  for (let k = 0; k < 3; k++) {
-    if (r() < 0.3) continue;
+  // Flicken: genähte Tuchstücke (ohne Angabe wie bisher bis zu drei; sonst nach Abnutzung: gar keine bei 0, bis zu sieben bei 1)
+  const nPatch = look.wear === undefined ? 3 : Math.round(look.wear * 7);
+  for (let k = 0; k < nPatch; k++) {
+    if (look.wear === undefined && r() < 0.3) continue;
     const w = 44 + r() * 52, h = 36 + r() * 44, x = 40 + r() * 400, y = 100 + r() * 220;
     g.fillStyle = r() < 0.5 ? 'rgba(255,238,205,0.26)' : 'rgba(95,72,48,0.2)';
     g.fillRect(x, y, w, h);
@@ -153,6 +157,21 @@ export function sailTexture(color: string, emblem: HTMLCanvasElement | null, see
     g.strokeStyle = 'rgba(0,0,0,0.4)';
     g.lineWidth = 6;
     g.beginPath(); g.arc(W / 2, H * 0.55, 98, 0, Math.PI * 2); g.stroke();
+  }
+  // Bordüre (Stufe 4 – 5): goldene Borte innen am Rand, auf Stufe 5 dazu eine zweite Linie in der Farbe der Macht oder Flagge
+  if (look.border) {
+    g.strokeStyle = 'rgba(217,169,63,0.95)';
+    g.lineWidth = 9;
+    g.strokeRect(24, 24, W - 48, H - 48);
+    g.strokeStyle = 'rgba(90,60,12,0.55)';
+    g.lineWidth = 2;
+    g.strokeRect(19, 19, W - 38, H - 38);
+    g.strokeRect(29, 29, W - 58, H - 58);
+    if (look.border.double) {
+      g.strokeStyle = look.border.accent ?? '#A8322A';
+      g.lineWidth = 6;
+      g.strokeRect(40, 40, W - 80, H - 80);
+    }
   }
   // Liektau: kräftiger Rand aus gedrehtem Tau, Ösen in den Ecken, Zurrings am Rahen
   g.strokeStyle = 'rgba(46,32,18,0.7)';

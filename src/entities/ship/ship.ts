@@ -1,7 +1,8 @@
 import { updateClothFlag } from '../../render/flagCloth';
 import { CircleGeometry, Color, Euler, MathUtils, Mesh, MeshBasicMaterial, Vector3, type Object3D, type Scene } from 'three';
-import { hullArmorOf, mitigation, penTierOf } from '../../data/balanceConfig';
+import { RAM, hullArmorOf, mitigation, penTierOf } from '../../data/balanceConfig';
 import { RAM_AMMO } from '../../naval/ramming';
+import { visualKey } from '../../data/shipVisuals';
 import { activePorts, evoStats, neutralEvolution, type EvoStats, type ShipEvolution } from '../../data/shipEvolution';
 import { AMMO, SEA_SPEED, SHIP_CLASSES, type AmmoId, type ShipClass, type ShipLook } from '../../data/ships';
 import { troopCapacity } from '../../data/crewTiers';
@@ -85,6 +86,9 @@ export class Ship {
   canDisable = false;
   /** Auch der Gnadenstoß versenkt es nicht (Legenden, Marine-Kommandoschiffe, die zwei größten Klassen): nur Entern beendet den Kampf */
   noKill = false;
+  /** Abprall nach einem Rammstoß (m/s, Weltachsen): schiebt das Schiff weg und klingt ab (`RAM.shoveDecay`) */
+  shoveX = 0;
+  shoveZ = 0;
   /** Durchschlag der eigenen Kanonen (Stufe 1 … 5): Klasse und Kanonen-Ausbau (`penTierOf`); Game setzt ihn für das Spielerschiff neu */
   penTier = 1;
   /** Rumpf-Panzerung der Klasse (data/balanceConfig.ts `HULL_ARMOR`) */
@@ -151,12 +155,14 @@ export class Ship {
   private sm = { y: 0, p: 0, r: 0, vy: 0, vp: 0, vr: 0, init: false };
 
   /** hero: Spielerschiff – bekommt Laternenlichter und rechnet die Segel-Normalen jedes Bild neu */
-  constructor(private scene: Scene, tier: number, public look: ShipLook, readonly faction: 'pirat' | 'marine', hullBonus = 0, private hero = false) {
+  constructor(private scene: Scene, tier: number, public look: ShipLook, readonly faction: 'pirat' | 'marine', hullBonus = 0, private hero = false, evo?: ShipEvolution) {
     this.cls = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier))];
-    this.penTier = penTierOf(this.cls.rank);
+    if (evo) { this.evo = { ...evo }; this.evoS = evoStats(this.evo); }
+    this.penTier = penTierOf(this.cls.rank, this.evo.cannonTier);
     this.entityId = mintEntityId('ship');
     this.sim = createShipSim(this.entityId, this.cls.hp + hullBonus, this.cls.hp, this.cls.crew, hero ? troopCapacity(tier) : 0);
-    this.model = buildShip(this.cls, look, hero);
+    this.applyEvoSail();
+    this.model = buildShip(this.cls, look, hero, this.evo);
     scene.add(this.model.group);
     this.glowLights();
   }
@@ -192,17 +198,14 @@ export class Ship {
     const frac = this.hull / this.maxHull;
     const sailF = this.sail, crewF = this.crew;
     const troopsN = poolHeads(this.sim.crew, 'truppen');
-    glowHub.removeOwner(this);
-    disposeObject(this.model.group);
     this.cls = SHIP_CLASSES[tier];
-    this.penTier = penTierOf(this.cls.rank);
+    this.penTier = penTierOf(this.cls.rank, this.evo.cannonTier);
     this.look = look;
     // Segel-HP und Crew-Höchstwerte folgen der neuen Klasse, die Anteile bleiben erhalten
     const fresh = createShipSim(this.entityId, this.cls.hp + hullBonus, this.cls.hp, this.cls.crew, this.hero ? troopCapacity(tier) : 0);
     this.sim.maxHull = fresh.maxHull;
     this.sim.hull = Math.max(1, this.sim.maxHull * frac);
     this.sim.sail = fresh.sail;
-    this.penTier = penTierOf(this.cls.rank, this.evo.cannonTier);
     this.applyEvoSail();
     this.sim.crew = fresh.crew;
     this.sim.repair = null;
@@ -210,12 +213,26 @@ export class Ship {
     this.crew = crewF;
     // Truppen bleiben als Köpfe erhalten (die neue Klasse kappt sie auf ihre Kapazität; ohne Truppenplätze gibt es keinen Pool)
     setPoolHeads(this.sim.crew, 'truppen', troopsN);
-    this.model = buildShip(this.cls, look, this.hero);
+    this.rebuildShipMesh();
+  }
+
+  /**
+   * Schiffsmodell neu bauen (Klasse, Aussehen oder sichtbare Ausbaustufe geändert): das alte Modell wird samt Geometrien, Materialien, Leuchtstellen
+   * und Drehbassen-Haltern freigegeben, das neue entsteht rein aus (Klasse, Aussehen, `evo`); Fahne, Galionsfigur, Segel und Laternen kommen mit dem Bau neu.
+   * Lage, Tempo und Zustand des Schiffs bleiben; das Spiel (`SeaWorld.setShip`) bindet Deck, Steuerrad und Gangway danach ohne Sprung neu.
+   */
+  rebuildShipMesh() {
+    glowHub.removeOwner(this);
+    disposeObject(this.model.group);
+    this.model = buildShip(this.cls, this.look, this.hero, this.evo);
     this.scene.add(this.model.group);
     this.glowLights();
     this.holes = 0;
     this.updateSailDamage();
   }
+
+  /** Stimmt das Modell nicht mehr mit den Ausbaustufen überein? (dann muss `SeaWorld.setShip` es neu bauen) */
+  get visualStale() { return this.model.evoKey !== visualKey(this.evo); }
 
   /** Steuerung: throttle −1 … 1 ändert Fahrstufe nicht, turn −1 … 1 */
   steer(dt: number, turn: number, env: SeaEnv, speedMult = 1) {
@@ -266,6 +283,12 @@ export class Ship {
     this.course += dc * Math.min(1, dt * (3.2 - 1.6 * m));
     this.x += Math.sin(this.course) * this.speed * dt;
     this.z += Math.cos(this.course) * this.speed * dt;
+    if (this.shoveX || this.shoveZ) {
+      this.x += this.shoveX * dt; this.z += this.shoveZ * dt;
+      const k = Math.exp(-RAM.shoveDecay * dt);
+      this.shoveX *= k; this.shoveZ *= k;
+      if (Math.abs(this.shoveX) + Math.abs(this.shoveZ) < 0.02) this.shoveX = this.shoveZ = 0;
+    }
     // Ohne Segel treibt das Schiff mit dem Wind (im Sturm schneller); Bug und Ruder bleiben, wie sie sind
     if (perf.drift > 0) {
       const d = (0.35 + 1.7 * env.windStrength) * perf.drift * dt;

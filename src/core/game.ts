@@ -801,13 +801,15 @@ export class Game {
     this.world.ship.turnMult = has('helm') ? 1.6 : 1;
     this.world.rangeMult = has('look') ? 1.25 : 1;
     // Rumpf-Stufe: 75 % (Stufe 1) … 145 % (Stufe 5) der Klassenbasis (Stufe 3 = alte Grundwerte)
+    // Ausbaustufen (Rumpf-Panzerung, Segel, Kanonen, Rammsporn, Drehbassen) zuerst setzen: jeder Neubau des Modells unten baut schon mit den neuen Stufen
+    this.world.ship.setEvolution(evo);
     const hullBonus = (has('carp') ? 40 : 0) + Math.round(SHIP_CLASSES[this.save.ship.tier].hp * (evoS.hullHpK - 1));
     if (hullBonus !== this.world.hullBonus) {
       this.world.hullBonus = hullBonus;
       this.world.setShip(this.save.ship.tier, this.save.ship.look, this.world.ship.ammo, this.world.ship.hull / Math.max(1, this.world.ship.maxHull), this.save.player.faction);
     }
-    // Ausbaustufen (Rumpf-Panzerung, Segel, Kanonen, Rammsporn, Drehbassen) gelten für das Schiff: nach jedem Neubau des Schiffsobjekts neu setzen
-    this.world.ship.setEvolution(evo);
+    // Sichtbarer Ausbau (Flickbretter … Rammsporn, Segel, Pforten, Drehbassen): ändert er sich, baut `SeaWorld.setShip` das Modell neu (Deck, Steuerrad und Gangway werden ohne Sprung neu gebunden)
+    if (this.world.ship.visualStale) this.world.setShip(this.save.ship.tier, this.save.ship.look, this.world.ship.ammo, this.world.ship.hull / Math.max(1, this.world.ship.maxHull), this.save.player.faction);
     // Stilbonus der Waffenlinie: Foki laden Faji schneller nach, Kampfhandschuhe treffen öfter voll
     if (this.world.faji) this.world.faji.extraRegen = st.fajiRegen;
     if (this.world.combat) this.world.combat.critChance = st.crit;

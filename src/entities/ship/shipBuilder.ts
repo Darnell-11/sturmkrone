@@ -46,6 +46,10 @@ import { FACTIONS } from '../../data/factions';
 import { hullGeometry2, hullSideX } from './shipHull2';
 import { archParts, hasArch } from '../../world/envModels';
 import { hasProp, placeMatrix, PropBatch, propRoles, type PropId } from '../../world/worldProps';
+import { neutralEvolution, type ShipEvolution } from '../../data/shipEvolution';
+import { lowerOpenIndices, pickSwivelZ, shipVisual, tierHullColor } from '../../data/shipVisuals';
+import { addBelt, addBoardedPort, addGunRing, addIronwork, addPatches, addPortLid, addRam, addRustBarrel, addSwivels, type EvoCtx, type SwivelMount } from './shipEvoParts';
+import { deckGates } from '../../world/docking';
 
 /** Anfang des Vorderkastells als Anteil der halben Länge (t = 2·z / L) */
 const FORE_T0 = 0.46;
@@ -95,6 +99,10 @@ export interface ShipModel {
   halfWidth(z: number): number;
   /** Teile der Seitenreling am Hauptdeck (Holme, Docken, Pfosten) mit Lage: Gangway und Leitern öffnen sie dort, wo sie ans Deck kommen */
   railParts: { m: Object3D; x: number; z: number }[];
+  /** Deck-Drehbassen (Kanonen-Stufe ≥ 4) auf der Hauptdeck-Reling: je ein drehbarer Halter, das Spiel richtet sie aus und feuert von ihrer Mündung */
+  swivels: SwivelMount[];
+  /** Sichtbarer Ausbauzustand, aus dem das Modell gebaut wurde (`visualKey` aus data/shipVisuals.ts) */
+  evoKey: string;
 }
 
 /** Breite des Rumpfs entlang der Länge: vorn spitz, hinten breit */
@@ -345,7 +353,9 @@ class Occ {
 }
 
 /** Baut ein Schiff einer Klasse im eigenen Look. Bug zeigt nach +Z. */
-export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel {
+export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipEvolution = neutralEvolution()): ShipModel {
+  // Der Bau läuft rein aus (Klasse, Aussehen, Ausbaustufen): alle Anbauten kommen aus dem deterministischen Plan (data/shipVisuals.ts)
+  const vis = shipVisual(c, evo);
   // je Schiff eigene Grundrissform (die Funktion lebt in den Hüllen von halfWidth und Kollision weiter)
   const hv0 = HULL_VARIANTS[c.id] ?? HULL_DEFAULT;
   // Niederländische Galleonen sind bauchig: vollerer Bug und breiteres Heck (Rumpfform der Macht, data/factions.ts `fullness`)
@@ -385,8 +395,10 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   const planksTex = plankTexture();
   // beidseitig: auch die Innenseite der Bordwand (vom Deck aus) und der Heckspiegel von hinten bleiben sichtbar
   const hullTex = hullPlankTexture();
-  const hullMat = toon({ color: 0xffffff, vertexColors: true, map: hullTex, side: DoubleSide, roughness: 0.9, ...toonPbr(hullTex, { strength: 0.5, rough: 0.85, roughVar: 0.2, ao: 0.7 }) });
-  const hull = new Mesh(hullGeometry2(c, D, look, { widthAt, sheerAt, rakeAt }), hullMat);
+  // Rumpf-Stufe: Holzton (1 ausgeblichen … 5 Ebenholz, die gewählte Farbe bleibt Grundton) und Rauheit des Holzes
+  const hullLook: ShipLook = { ...look, hull: tierHullColor(look.hull, evo.hullTier) };
+  const hullMat = toon({ color: 0xffffff, vertexColors: true, map: hullTex, side: DoubleSide, roughness: vis.hull.roughness, ...toonPbr(hullTex, { strength: 0.5, rough: Math.min(1, 0.85 * vis.hull.roughness / 0.9), roughVar: 0.2, ao: 0.7 }) });
+  const hull = new Mesh(hullGeometry2(c, D, hullLook, { widthAt, sheerAt, rakeAt }), hullMat);
   group.add(hull);
 
   // Deck
@@ -412,6 +424,18 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   const wood = toon({ color: '#7A5030', map: planksTex });
   const darkWood = toon('#4A2E1A');
   const gold = toon({ color: '#E3B04B', spec: 0.9 });
+  // Anbauten der Rumpf-Stufe (Flickbretter, Eisenbänder, Panzergürtel, Rammsporn): sitzen über `hullSideX` bündig auf der Bordwand, ohne Blocker und Reling zu berühren
+  const evoCtx: EvoCtx = {
+    c, D, group, vis,
+    sideX: (z, ya) => hullSideX(c, D, { widthAt, sheerAt, rakeAt }, z, ya),
+    sheer: (z) => sheerAt(z / (c.L / 2), c.L),
+    mats: { iron: IRON(), copper: COPPER(), gold, darkWood, wood },
+  };
+  if (vis.hull.patches) addPatches(evoCtx);
+  if (vis.hull.bands) addIronwork(evoCtx);
+  else if (vis.hull.reinforced) addIronwork(evoCtx);
+  addBelt(evoCtx);
+  addRam(evoCtx);
   // Reling: Handlauf, Zwischenholm, Pfosten, Docken (gedrechselte Stäbe) und Handlauf-Kappen; Heckreling und Bugreling schließen sie ringsum
   const railParts: ShipModel['railParts'] = [];
   {
@@ -677,12 +701,13 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   }
   const castleMid = (castleZ0 + castleZ1) / 2;
   const winMat = GLOW_WINDOW;
+  const sternLampSpots: number[][] = [];
   /**
    * Schiffe 2: Heckgalerie. Bogenfenster in goldenen Rahmen (ein oder zwei Reihen), Zwischenpfeiler, Balkone mit Geländer
    * auf der Wölbung der Heckwand, Sockel- und Kranzleiste, kleine Bogenfenster an den Seiten des Kastells.
    */
   function buildSternGallery() {
-    const rows = castleH >= 3.3 ? 2 : 1;
+    const rows = castleH >= 3.3 || vis.hull.galleryRows === 2 ? 2 : 1;
     const ww = Math.min(0.78, 0.4 + castleH * 0.075), hh = Math.min(1.5, castleH * (rows === 2 ? 0.27 : 0.4));
     const nT = Math.round((2 * xmC * 0.8) / (ww * 1.75));
     const n = Math.max(3, nT % 2 ? nT : nT + 1);
@@ -759,6 +784,11 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
         const z = castleZ0 + sternLen * (0.12 + 0.76 * ((k + 0.5) / cnt)) * 0.9 + 0.2;
         archWindow(sd * (xOut(z) + 0.004), cy, z, sd * Math.PI / 2, w2, h2, true, false);
       }
+    }
+    // Hecklaternen (Rumpf-Stufe 4: zwei, Stufe 5: drei) über der Kranzleiste der Galerie; die Laternen-Schleife unten setzt sie
+    for (let i = 0; i < vis.hull.sternLamps; i++) {
+      const x = vis.hull.sternLamps === 2 ? (i === 0 ? -1 : 1) * xmC * 0.9 : (i - 1) * xmC * 0.9;
+      sternLampSpots.push([x, D + castleH + 0.55, rearZ(x, 0.5)]);
     }
     return { ww, hh, n, span, centers, arch };
   }
@@ -944,7 +974,11 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   let sailSeed = 1;
   const rig: number[] = [];
   const mastTops: { z: number; h: number }[] = [];
-  const mastParts: { up: Group; z: number; pivotY: number; h: number }[] = [];
+  const mastParts: { up: Group; z: number; pivotY: number; h: number; ext: number }[] = [];
+  const sv = vis.sail;
+  const shroudKs = Array.from({ length: sv.shrouds }, (_, i) => i - (sv.shrouds - 1) / 2);
+  const accent = look.power ? FACTIONS[look.power].palette.accent : look.flagColor;
+  const sailLook = { wear: sv.wear, border: sv.border ? { double: sv.border.double, accent } : null };
   c.masts.forEach((mz, mi) => {
     const z = mz * c.L;
     const h = c.mh * (mi === 0 && c.masts.length > 1 ? 0.92 : mi === c.masts.length - 1 && c.masts.length > 2 ? 0.8 : 1);
@@ -957,7 +991,10 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     // der obere Teil mit Rahen, Korb und Segeln ist eine eigene Gruppe: in der Enterphase knickt er ab
     const mUp = new Group();
     group.add(mUp);
-    mastParts.push({ up: mUp, z, pivotY: D + h * 0.64, h });
+    // Stufe 4 – 5: Mast um eine Bramstenge verlängert (trägt das Topp-/Bramsegel)
+    const ext = sv.topgallants ? h * 0.2 : 0;
+    mastParts.push({ up: mUp, z, pivotY: D + h * 0.64, h, ext });
+    if (ext) put(mUp, cyl(0.04 * ms, 0.065 * ms, ext + 0.3, 6), darkWood, 0, D + h + ext / 2 - 0.05, z);
     group.add(lower);
     mUp.add(upper);
     if (c.L < 24) block(0, z, 0.19 * ms + 0.1, 0.19 * ms + 0.1);
@@ -970,7 +1007,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       put(mUp, torus(0.5 * ns, 0.025, 14), darkWood, 0, top + 0.5, z, Math.PI / 2, 0, 0);
       put(mUp, torus(0.5 * ns, 0.02, 14), darkWood, 0, top + 0.22, z, Math.PI / 2, 0, 0);
       for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; put(mUp, cyl(0.02, 0.02, 0.55, 4), wood, Math.cos(a) * 0.5 * ns, top + 0.27, Math.sin(a) * 0.5 * ns + z); }
-      put(mUp, new SphereGeometry(0.11 * Math.min(sc, 2.4), 8, 6), gold, 0, D + h + 0.12, z);
+      put(mUp, new SphereGeometry(0.11 * Math.min(sc, 2.4), 8, 6), gold, 0, D + h + ext + 0.12, z);
     }
     const yards = c.L > 16 ? 3 : 2;
     for (let k = 0; k < yards; k++) {
@@ -980,22 +1017,24 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       yard.rotation.z = Math.PI / 2;
       yard.position.set(0, y + h * 0.2, z);
       mUp.add(yard);
-      const sh = h * 0.235;
-      const sg = new PlaneGeometry(w * 0.95, sh, 26, 16);
+      // Segel-Stufe: Stufe 1 trägt nur ~72 % der Fläche (0,85 in Breite und Höhe), höhere Stufen straffere, weniger gebauchte Tücher
+      const sw = w * 0.95 * sv.dimK;
+      const sh = h * 0.235 * sv.dimK;
+      const sg = new PlaneGeometry(sw, sh, 26, 16);
       const sp = sg.attributes.position;
       for (let i = 0; i < sp.count; i++) {
         const x = sp.getX(i), yy = sp.getY(i);
         // kräftig gebläht, unten etwas mehr Bauch
-        sp.setZ(i, Math.cos((x / (w * 0.95)) * Math.PI) * 1.05 * sc * (1 - Math.abs(yy) / sh * 0.35) * (1.1 - (yy / sh + 0.5) * 0.3));
+        sp.setZ(i, Math.cos((x / sw) * Math.PI) * 1.05 * sc * sv.billow * (1 - Math.abs(yy) / sh * 0.35) * (1.1 - (yy / sh + 0.5) * 0.3));
       }
       sg.computeVertexNormals();
       const withEmblem = mi === mainMast && k === (yards > 2 ? 1 : 0);
-      const sailU = makeSailUniforms(w * 0.95, sh, (y + h * 0.1) * 0.7);
-      const sailMat = sailMaterial(toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, withEmblem ? emblem : null, sailSeed++, true, heraldry ? { pattern: heraldry.pattern, emblem: withEmblem ? heraldry.emblem : () => {} } : null), unique: true, micro: 'cloth', roughness: 0.92 }), sailU);
+      const sailU = makeSailUniforms(sw, sh, (y + h * 0.1) * 0.7);
+      const sailMat = sailMaterial(toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, withEmblem ? emblem : null, sailSeed++, sv.tattered, heraldry ? { pattern: heraldry.pattern, emblem: withEmblem ? heraldry.emblem : () => {} } : null, sailLook), unique: true, micro: 'cloth', roughness: 0.92 }), sailU);
       sailMat.alphaTest = 0.5; // ausgefranste Ränder und Risse
       const sail = new Mesh(sg, sailMat);
       sail.userData.sailU = sailU;
-      sail.userData.sw = w * 0.95;
+      sail.userData.sw = sw;
       sail.userData.sh = sh;
       sail.position.set(0, y + h * 0.1, z + 0.15);
       sail.userData.noOutline = true;
@@ -1003,20 +1042,45 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
       mUp.add(sail);
       sails.push(sail);
       // Takelage: Rah-Enden zur Bordwand
-      for (const s of [-1, 1]) rig.push(s * w / 2, y + h * 0.2, z, s * halfWidth(z) * 0.95, D + 0.8, z - 1.5);
+      if (sv.yardLifts) for (const s of [-1, 1]) rig.push(s * w / 2, y + h * 0.2, z, s * halfWidth(z) * 0.95, D + 0.8, z - 1.5);
+    }
+    // Topp-/Bramsegel über den Hauptrahen (Segel-Stufe 4 – 5): eine eigene Rah mit schmalem Segel an der verlängerten Stenge
+    if (ext) {
+      const tw = c.W * 0.5, tsh = ext * 1.05, ty = D + h + ext * 0.78;
+      const yardT = new Mesh(new CylinderGeometry(0.045 * Math.min(sc, 3), 0.045 * Math.min(sc, 3), tw, 6), darkWood);
+      yardT.rotation.z = Math.PI / 2;
+      yardT.position.set(0, ty, z);
+      mUp.add(yardT);
+      const tg = new PlaneGeometry(tw * 0.95, tsh, 20, 10);
+      const tp = tg.attributes.position;
+      for (let i = 0; i < tp.count; i++) { const x = tp.getX(i), yy = tp.getY(i); tp.setZ(i, Math.cos((x / (tw * 0.95)) * Math.PI) * 0.8 * sc * sv.billow * (1 - Math.abs(yy) / tsh * 0.3)); }
+      tg.computeVertexNormals();
+      const tU = makeSailUniforms(tw * 0.95, tsh, ty * 0.7);
+      const tMat = sailMaterial(toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, null, sailSeed++, false, heraldry ? { pattern: heraldry.pattern, emblem: () => {} } : null, sailLook), unique: true, micro: 'cloth', roughness: 0.92 }), tU);
+      tMat.alphaTest = 0.5;
+      const top = new Mesh(tg, tMat);
+      top.userData.sailU = tU;
+      top.userData.sw = tw * 0.95;
+      top.userData.sh = tsh;
+      top.position.set(0, ty - tsh / 2 + 0.04, z + 0.3);
+      top.userData.noOutline = true;
+      top.userData.base = top.position.y;
+      mUp.add(top);
+      sails.push(top);
+      if (sv.yardLifts) for (const s of [-1, 1]) rig.push(0, D + h + ext * 0.95, z, s * tw / 2, ty, z);
     }
     mastTops.push({ z, h });
     // Wanten vom Mast zur Bordwand, dazu Webleinen (Sprossen) zwischen den Wanten zum Aufentern
     for (const s of [-1, 1]) {
-      for (let k = -1; k <= 1; k++) rig.push(0, D + h * 0.95, z, s * halfWidth(z + k) * 0.95, D + 0.8, z + k * 1.2);
+      for (const k of shroudKs) rig.push(0, D + h * 0.95, z, s * halfWidth(z + k) * 0.95, D + 0.8, z + k * 1.2);
       const bx = s * halfWidth(z) * 0.95;
-      for (let t = 0.12; t < 0.62; t += 0.075) {
+      if (sv.ratlineStep > 0) for (let t = 0.12; t < 0.62; t += sv.ratlineStep) {
         // Punkt auf der vorderen und hinteren Want in Höhe t (0 = Bordwand, 1 = Mast)
         rig.push(bx * (1 - t), D + 0.8 + (h * 0.95 - 0.8) * t, z - 1.2 * (1 - t), bx * (1 - t), D + 0.8 + (h * 0.95 - 0.8) * t, z + 1.2 * (1 - t));
       }
     }
     // Rah-Hängetaue vom Mastkopf zu den Rahnocken
-    for (let k = 0; k < yards; k++) for (const s of [-1, 1]) rig.push(0, D + h * 0.88, z, s * c.W * (1.15 - k * 0.22) / 2, D + h * (0.3 + k * 0.24) + h * 0.2, z);
+    if (sv.yardLifts) for (let k = 0; k < yards; k++) for (const s of [-1, 1]) rig.push(0, D + h * 0.88, z, s * c.W * (1.15 - k * 0.22) / 2, D + h * (0.3 + k * 0.24) + h * 0.2, z);
   });
   // Klüver (Dreieckssegel am Bug)
   const bowZ = c.L / 2 + rakeAt(1, c.L);
@@ -1027,7 +1091,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   // Tuch-Textur über die Dreiecksfläche legen
   const juv = jibGeo.attributes.uv;
   for (let i = 0; i < juv.count; i++) juv.setXY(i, juv.getX(i) / (c.L * 0.22), juv.getY(i) / (c.mh * 0.6));
-  const jibMat = toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, null, 99, true, heraldry ? { pattern: heraldry.pattern, emblem: () => {} } : null), unique: true, micro: 'cloth', roughness: 0.92 });
+  const jibMat = toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, null, 99, sv.tattered, heraldry ? { pattern: heraldry.pattern, emblem: () => {} } : null, sailLook), unique: true, micro: 'cloth', roughness: 0.92 });
   jibMat.alphaTest = 0.5;
   const jib = new Mesh(jibGeo, jibMat);
   jib.rotation.y = -Math.PI / 2;
@@ -1040,6 +1104,63 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   bowsprit.rotation.x = Math.PI / 2 - 0.25;
   bowsprit.position.set(0, bowTop - 0.15, bowZ + c.L * 0.08);
   group.add(bowsprit);
+  // Weitere Vorstagsegel (Segel-Stufe 2: 1, 3: 2, 5: 3 zusätzlich): Dreiecke zwischen Stag und Bugspriet, je eines weiter vorn
+  {
+    const f0 = mastTops[0];
+    const stayA = { z: f0 ? f0.z : 0, y: f0 ? D + f0.h * 0.94 : D + c.mh * 0.9 }, stayB = { z: bowZ + c.L * 0.18, y: bowTop + 0.3 };
+    const sprA = { z: bowZ - c.L * 0.02, y: bowTop - 0.1 }, sprB = stayB;
+    for (let j = 1; j < sv.jibs; j++) {
+      const u = 0.5 + 0.17 * j, v = 0.38 + 0.2 * j;
+      const head = { z: stayA.z + (stayB.z - stayA.z) * u, y: stayA.y + (stayB.y - stayA.y) * u };
+      const tack = { z: sprA.z + (sprB.z - sprA.z) * Math.min(1, v), y: sprA.y + (sprB.y - sprA.y) * Math.min(1, v) };
+      const clew = { z: head.z + (tack.z - head.z) * 0.18 - 0.2, y: tack.y + (head.y - tack.y) * 0.2 };
+      const shp = new Shape();
+      shp.moveTo(head.z, head.y); shp.lineTo(tack.z, tack.y); shp.lineTo(clew.z, clew.y); shp.closePath();
+      const jg = new ShapeGeometry(shp);
+      const jp = jg.attributes.position, ju = jg.attributes.uv;
+      const zs0 = Math.min(head.z, tack.z, clew.z), zs1 = Math.max(head.z, tack.z, clew.z), ys0 = Math.min(head.y, tack.y, clew.y), ys1 = Math.max(head.y, tack.y, clew.y);
+      for (let i = 0; i < ju.count; i++) ju.setXY(i, (jp.getX(i) - zs0) / (zs1 - zs0), (jp.getY(i) - ys0) / (ys1 - ys0));
+      const jm = toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, null, 99 + j, sv.tattered, heraldry ? { pattern: heraldry.pattern, emblem: () => {} } : null, sailLook), unique: true, micro: 'cloth', roughness: 0.92 });
+      jm.alphaTest = 0.5;
+      const jb = new Mesh(jg, jm);
+      jb.rotation.y = -Math.PI / 2;
+      jb.position.x = (j % 2 ? 1 : -1) * 0.03 * j;
+      jb.userData.noOutline = true;
+      jb.userData.base = 0;
+      group.add(jb);
+      sails.push(jb);
+    }
+  }
+  // Besansegel am Heck (Segel-Stufe 4 – 5): Gaffelsegel mit Baum und Gaffel hinter dem achtersten Mast, über dem Achterdeck (Kopfhöhe frei)
+  if (sv.spanker && mastParts.length) {
+    const mp = mastParts[mastParts.length - 1];
+    const span = Math.max(2.2, Math.min(13, c.L * 0.2));
+    const yb = D + Math.max(mp.h * 0.2, castleH + 2.7), yp = yb + Math.max(2.4, mp.h * 0.5);
+    const z0 = mp.z - 0.35, z1 = mp.z - span, zg = mp.z - span * 0.62;
+    const shp = new Shape();
+    shp.moveTo(z0, yb); shp.lineTo(z1, yb); shp.lineTo(zg, yp); shp.lineTo(z0, yp * 0.995 - 0.05 * yb); shp.closePath();
+    const sg2 = new ShapeGeometry(shp);
+    const su = sg2.attributes.uv, spp = sg2.attributes.position;
+    for (let i = 0; i < su.count; i++) su.setXY(i, (spp.getX(i) - z1) / (z0 - z1), (spp.getY(i) - yb) / (yp - yb));
+    const sm = toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, null, 120, false, heraldry ? { pattern: heraldry.pattern, emblem: () => {} } : null, sailLook), unique: true, micro: 'cloth', roughness: 0.92 });
+    sm.alphaTest = 0.5;
+    const sp2 = new Mesh(sg2, sm);
+    sp2.rotation.y = -Math.PI / 2;
+    sp2.userData.noOutline = true;
+    sp2.userData.base = 0;
+    group.add(sp2);
+    sails.push(sp2);
+    // Baum und Gaffel
+    const boom = new Mesh(new CylinderGeometry(0.05 * Math.min(sc, 2.4), 0.06 * Math.min(sc, 2.4), z0 - z1, 6), darkWood);
+    boom.rotation.x = Math.PI / 2;
+    boom.position.set(0, yb, (z0 + z1) / 2);
+    group.add(boom);
+    const gl = Math.hypot(z0 - zg, yp - yb);
+    const gaff = new Mesh(new CylinderGeometry(0.04 * Math.min(sc, 2.4), 0.05 * Math.min(sc, 2.4), gl, 6), darkWood);
+    gaff.position.set(0, (yb + yp) / 2, (z0 + zg) / 2);
+    gaff.rotation.x = Math.atan2(zg - z0, yp - yb);
+    group.add(gaff);
+  }
   rig.push(0, D + c.mh * 0.95, c.masts[0] * c.L, 0, bowTop + 0.3, bowZ + c.L * 0.18);
   const rigging = new LineSegments(new BufferGeometry().setAttribute('position', new Float32BufferAttribute(rig, 3)), new LineBasicMaterial({ color: '#2A1E14' }));
   group.add(rigging);
@@ -1069,22 +1190,34 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     for (const e of [-1, 1]) put(group, box(0.1, ph2 + 0.1, 0.07), iron, fx, y, z + e * (pw / 2 + 0.04));
     put(group, box(0.12, 0.09, 0.09), iron, fx, y + ph2 / 2 + 0.15, z); // Ringschraube für das Brooktau
   };
+  // Kanonen-Stufe: Pforten der Hauptreihe offen und bestückt (Stufe 1: 50 %, 2: 75 %, ab 3 alle) oder mit gekreuzten Brettern vernagelt;
+  // dieselbe Auswahl (`portIndices`) trifft `Ship.portsOf` beim Feuern, die Mündungslisten enthalten weiter alle Pforten
+  const cv = vis.cannon;
+  const openPorts = new Set(cv.open);
+  const gunScale = cs1 * (cv.barrel === 'bronzelang' ? 1.15 : cv.barrel === 'schwarz' ? 1.22 : 1);
   for (let i = 0; i < c.can; i++) {
     const z = c.can === 1 ? 0 : ((i / (c.can - 1)) - 0.5) * c.L * 0.55;
     for (const s of [-1, 1]) {
       const cy = D - 0.7;
       const x = s * (hullSideX(c, D, { widthAt, sheerAt, rakeAt }, z, cy) + 0.01);
-      if (hasProp('kanone')) {
+      if (!openPorts.has(i)) {
+        addBoardedPort(evoCtx, s, x, cy, z, 0.7, 0.6);
+      } else if (cv.barrel === 'rost') {
+        addRustBarrel(evoCtx, s, x, cy, z, cs1);
+      } else if (hasProp('kanone')) {
         // Blender-Kanone auf Holzlafette (Mündung bei +Z des Modells, 0,7 m vor dem Ursprung): Mündung bleibt 0,82 m vor der Bordwand
-        batch.add('kanone', placeMatrix(x + s * (0.82 - 0.7 * cs1), cy, z, s * Math.PI / 2, cs1));
+        batch.add('kanone', placeMatrix(x + s * (0.82 - 0.7 * gunScale), cy, z, s * Math.PI / 2, gunScale));
+        if (cv.goldRing) addGunRing(evoCtx, s, x, cy, z, gunScale);
       } else {
-        put(group, cyl(0.16 * cs1, 0.2 * cs1, 1.1, 10), copper, x + s * 0.25, cy, z, 0, 0, Math.PI / 2);
-        for (const bx of [-0.25, 0.2]) put(group, cyl(0.215 * cs1, 0.215 * cs1, 0.07, 10), iron, x + s * (0.25 + bx), cy, z, 0, 0, Math.PI / 2); // Eisenbänder
-        put(group, cyl(0.22 * cs1, 0.17 * cs1, 0.12, 10), copper, x + s * 0.82, cy, z, 0, 0, Math.PI / 2); // Mündungswulst
+        put(group, cyl(0.16 * gunScale, 0.2 * gunScale, 1.1 * cv.lengthK, 10), copper, x + s * 0.25, cy, z, 0, 0, Math.PI / 2);
+        for (const bx of [-0.25, 0.2]) put(group, cyl(0.215 * gunScale, 0.215 * gunScale, 0.07, 10), iron, x + s * (0.25 + bx), cy, z, 0, 0, Math.PI / 2); // Eisenbänder
+        put(group, cyl(0.22 * gunScale, 0.17 * gunScale, 0.12, 10), copper, x + s * 0.82, cy, z, 0, 0, Math.PI / 2); // Mündungswulst
         put(group, box(0.6, 0.16, 0.55), darkWood, x + s * 0.3, cy - 0.27, z); // Lafette
       }
       put(group, box(0.06, 0.6, 0.7), toon('#1E1410'), x + s * 0.02, cy, z);
       portFrame(x, cy, z, s);
+      // hochgeklappter Pfortendeckel ab Stufe 2 über jeder offenen Pforte
+      if (cv.lids && openPorts.has(i)) addPortLid(evoCtx, s, x, cy, z, 0.7, 0.6, look.stripe);
       (s > 0 ? muzzlesL : muzzlesR).push(new Vector3(x + s * 0.8, cy, z));
     }
   }
@@ -1092,6 +1225,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   // zweite (und dritte) Reihe Stückpforten bei mehrdeckigen Schiffen
   if (c.decks >= 2) {
     const portMat = toon('#1E1410'), lidMat = toon(look.stripe);
+    const lowerOpen = new Set(lowerOpenIndices(c, cv.lowerOpenK));
     for (let row = 1; row < c.decks; row++) {
       const y = D * (0.62 - row * 0.2);
       for (let i = 0; i < c.can + 1; i++) {
@@ -1101,6 +1235,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
           const port = new Mesh(new BoxGeometry(0.06, 0.55, 0.65), portMat);
           port.position.set(x + s * 0.02, y, z);
           portFrame(x, y, z, s, 0.65, 0.55);
+          if (!lowerOpen.has(i)) { group.add(port); addBoardedPort(evoCtx, s, x, y, z, 0.65, 0.55); continue; }
           const lid = new Mesh(new BoxGeometry(0.05, 0.12, 0.75), lidMat);
           lid.position.set(x + s * 0.05, y + 0.36, z);
           group.add(port, lid);
@@ -1124,6 +1259,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   if (look.lanterns) {
     const mainTop = mastTops[Math.min(mastTops.length - 1, c.masts.length > 1 ? 1 : 0)];
     const spots: number[][] = [[c.W * 0.35, D + castleH + 0.6, -c.L / 2 + 0.6], [-c.W * 0.35, D + castleH + 0.6, -c.L / 2 + 0.6], [0, Math.max(bowTop + 0.7, D + (fore ? fore.top : 0) + 0.8), bowZ - 1.4]];
+    for (const sl of sternLampSpots) spots.push(sl);
     if (mainTop) spots.push([0, D + mainTop.h * 0.78 + 0.75, mainTop.z + 0.9]);
     for (const dl of doorLamps) spots.push(dl);
     // Lichtquellen: Heck (mittig) und Mastkorb
@@ -1774,7 +1910,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   const topIdx = c.masts.reduce((bi, m, i) => (Math.abs(m) < Math.abs(c.masts[bi]) ? i : bi), 0);
   const topZ = c.masts[topIdx] * c.L;
   const topH = c.mh * (topIdx === 0 && c.masts.length > 1 ? 0.92 : topIdx === c.masts.length - 1 && c.masts.length > 2 ? 0.8 : 1);
-  const mastTopY = D + topH;
+  const mastTopY = D + topH + (mastParts[topIdx]?.ext ?? 0);
   const fk = Math.min(2, sc);
   const fL = 2.1 * fk, fH = 1.25 * fk;
   const flagY = mastTopY + fH / 2 + 0.2 * fk;
@@ -1847,17 +1983,43 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
   wheel.traverse((o) => { if ((o as Mesh).isMesh) keepSet.add(o as Mesh); });
   // jeder obere Mastteil wird für sich verschmolzen (wenige Zeichenaufrufe) und bleibt als Gruppe beweglich
   for (const m of mastParts) mergeStatic(m.up, keepSet);
-  const apart = [topGroup, ...mastParts.map((m) => m.up)];
+  // Deck-Drehbassen (Kanonen-Stufe ≥ 4) auf der Reling zwischen Achterdeck und Vorderkastell: die Halter stehen auf der Reling-Oberkante (über Fässern und
+  // Kisten, außerhalb der begehbaren Fläche); frei bleiben die drei Zugänge der Gangway (Stegbreite + Halterfuß = 1,25 m) und die Stellen neben festen Deck-Kanonen
+  let swivels: SwivelMount[] = [];
+  if (vis.cannon.swivels > 0) {
+    const dm = { halfWidth, blockers, quarter: { z1: castleZ1, stairLen }, fore: fore ? { z0: fore.z0, stairLen: fore.stairLen } : null };
+    const gates = deckGates(dm, c.L);
+    const avoid = [gates.mid, gates.aft, gates.fore];
+    const lo = castleZ1 + 0.8, hi = (fore ? fore.z0 : c.L * 0.4) - 0.8;
+    const gap = Math.max(2.4, c.L * 0.075);
+    const spots: { side: 1 | -1; x: number; y: number; z: number }[] = [];
+    for (const sd of [1, -1] as const) {
+      const zs = pickSwivelZ(vis.cannon.swivels, lo, hi, gap, (z) => {
+        if (avoid.some((g) => Math.abs(g - z) < 1.25)) return false;
+        const rx = sd * edge(z / (c.L / 2)).x;
+        return !blockers.some((b) => Math.abs(b.cz - z) < b.hz + 0.55 && Math.abs(b.cx - rx) < b.hx + 1.6);
+      });
+      for (const z of zs) spots.push({ side: sd, x: sd * edge(z / (c.L / 2)).x * 0.985, y: D + sheerAt(z / (c.L / 2), c.L) + 0.96, z });
+    }
+    swivels = addSwivels(evoCtx, spots);
+  }
+
+  const apart = [topGroup, ...mastParts.map((m) => m.up), ...swivels.map((sw) => sw.mount)];
   mergeStatic(topGroup, keepSet, apart.slice(1));
   mergeStatic(group, keepSet, apart);
   // Blender-Props nach dem Verschmelzen aufstellen (ein InstancedMesh darf nicht mit verschmolzen werden)
   if (batch.size) {
     const barrelCol = toon({ color: '#6F4A2B', roughness: 0.85 }), crateCol = toon({ color: '#8A6840', roughness: 0.9 });
     const iron2 = IRON(), cu2 = COPPER(), gold2 = PROP_GOLD(), dark2 = toon('#1E1410');
+    // Rohrwerkstoff nach Kanonen-Stufe: 2 Eisen, 3 Bronze, 4 polierte Bronze, 5 schwarzer Gussstahl (die Goldringe setzt `addGunRing`)
+    const gunMat = vis.cannon.barrel === 'eisen' ? iron2
+      : vis.cannon.barrel === 'bronzelang' ? toon({ color: '#D9963E', spec: 1, metalness: 1, roughness: 0.22 })
+      : vis.cannon.barrel === 'schwarz' ? toon({ color: '#17181C', spec: 1, metalness: 0.9, roughness: 0.3 })
+      : cu2;
     batch.flush(group, (id: PropId, role: string) => {
       switch (role) {
         case 'iron': return iron2;
-        case 'bronze': return cu2;
+        case 'bronze': return gunMat;
         case 'brass': return gold2;
         case 'glass': return lanternGlass;
         case 'ember': return GLOW_LAMP;
@@ -1871,7 +2033,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false): ShipModel
     if ((o as Mesh).isMesh && !o.userData.noOutline) { o.castShadow = true; o.receiveShadow = true; }
   });
   addOutlines(group);
-  return { group, sails, muzzlesL, muzzlesR, lanterns, windows, flag, flags: clothFlags, deckY: D, helm, wheel, quarter: { z0: castleZ0, z1: castleZ1, top: topY, stairX, stairW, stairLen, flare, doorHalf: doorWC / 2, cabin: { zA, zB } }, cabinRoof: topGroup, cabinLight, fore, masts: mastParts.map((m) => ({ up: m.up, z: m.z, pivotY: m.pivotY })), rigging, blockers, halfWidth, deckMat, deckBase, lights, railParts };
+  return { group, sails, muzzlesL, muzzlesR, lanterns, windows, flag, flags: clothFlags, deckY: D, helm, wheel, quarter: { z0: castleZ0, z1: castleZ1, top: topY, stairX, stairW, stairLen, flare, doorHalf: doorWC / 2, cabin: { zA, zB } }, cabinRoof: topGroup, cabinLight, fore, masts: mastParts.map((m) => ({ up: m.up, z: m.z, pivotY: m.pivotY })), rigging, blockers, halfWidth, deckMat, deckBase, lights, railParts, swivels, evoKey: vis.key };
 }
 
 /** Feste Teile pro Material zu einem Mesh zusammenfassen (weniger Zeichenaufrufe) */

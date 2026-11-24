@@ -21,6 +21,10 @@ export interface RamContact {
   /** Treffpunkt (Bugspitze) in Weltkoordinaten */
   x: number;
   z: number;
+  /** Äußere Normale der Zielhülle am Treffpunkt (Weltachsen, Länge 1) und Eindringtiefe der Bugspitze in die Hülle (m) */
+  nx: number;
+  nz: number;
+  depth: number;
 }
 
 /**
@@ -42,7 +46,16 @@ export function ramContact(a: Kin, b: Kin): RamContact {
   const vbx = Math.sin(b.course) * b.speed, vbz = Math.cos(b.course) * b.speed;
   const relSpeed = (vax - vbx) * fx + (vaz - vbz) * fz;
   const ownSpeed = vax * fx + vaz * fz;
-  return { hit: dot > RAM.cone && inside && relSpeed > RAM.minSpeed && ownSpeed > RAM.minSpeed * 0.5, dot, relSpeed, ownSpeed, x: bx, z: bz };
+  // äußere Normale der Hüllen-Ellipse am Treffpunkt (in den Achsen des Ziels, dann in Weltachsen) und Eindringtiefe
+  const A = b.L * 0.5 + 1, B = b.W * 0.5 + 1;
+  const ln = along / (A * A), wn = across / (B * B);
+  const nl = Math.hypot(ln, wn) || 1e-6;
+  const nlx = ln / nl, nwx = wn / nl;
+  const nx = nlx * tfx + nwx * tfz, nz = nlx * tfz - nwx * tfx;
+  const f = (along / A) ** 2 + (across / B) ** 2;
+  const r = Math.hypot(along, across);
+  const depth = f > 0 && f < 1 ? Math.max(0, r / Math.sqrt(f) - r) : 0;
+  return { hit: dot > RAM.cone && inside && relSpeed > RAM.minSpeed && ownSpeed > RAM.minSpeed * 0.5, dot, relSpeed, ownSpeed, x: bx, z: bz, nx, nz, depth };
 }
 
 export interface RamDamage {
@@ -69,6 +82,33 @@ export function ramDamage(relSpeed: number, attackerMaxHull: number, hullTier: n
     self: base * (ram ? RAM.selfRam : RAM.selfPlain),
     pen: ram ? (hullTier >= RAM.pierceTier ? Infinity : RAM.penTier) : 1,
     ram,
+  };
+}
+
+export interface RamImpulse {
+  /** Sofortige Trennung der überlappenden Hüllen (Meter, Weltachsen) für Angreifer und Ziel, nach Massen verteilt */
+  sepA: { x: number; z: number };
+  sepB: { x: number; z: number };
+  /** Abprallgeschwindigkeit (m/s, Weltachsen): der Angreifer federt zurück, das Ziel wird weggedrückt; klingt über `RAM.shoveDecay` ab */
+  shoveA: { x: number; z: number };
+  shoveB: { x: number; z: number };
+}
+
+/**
+ * Physischer Abprall entlang der Hüllen-Normalen: Die Hüllen werden zuerst nach Massenanteil auseinandergeschoben (Eindringtiefe), dann bekommt das Ziel
+ * einen Stoß in Stoßrichtung (−Normale), der Angreifer einen kleineren Rückstoß (+Normale). Schwere Schiffe bleiben stehen, leichte fliegen weg
+ * (Massenanteil), nichts überschreitet `RAM.maxShove`.
+ */
+export function ramImpulse(c: RamContact, massA: number, massB: number): RamImpulse {
+  const m = Math.max(1, massA + massB), shareA = massB / m, shareB = massA / m;       // wer leichter ist, bewegt sich mehr
+  const cap = (v: number) => Math.max(-RAM.maxShove, Math.min(RAM.maxShove, v));
+  const dep = Math.min(c.depth, 6);
+  const vB = cap(c.relSpeed * shareB * RAM.shoveK * (1 + RAM.bounce)), vA = cap(c.relSpeed * shareA * RAM.shoveK * RAM.bounce);
+  return {
+    sepA: { x: c.nx * dep * shareA, z: c.nz * dep * shareA },
+    sepB: { x: -c.nx * dep * shareB, z: -c.nz * dep * shareB },
+    shoveA: { x: c.nx * vA, z: c.nz * vA },
+    shoveB: { x: -c.nx * vB, z: -c.nz * vB },
   };
 }
 

@@ -28,11 +28,12 @@ import { BATTLE, battleSite, compassWord, nextDelay, sideSize, type BattleSite }
 import { cannotBeSunk } from './shipSim';
 import { aiCannon, aiHullFactor, dangerOfLevel } from '../data/balanceConfig';
 import { evolutionOfTier, portIndices } from '../data/shipEvolution';
-import { hasSwivels, ramContact, ramDamage, swivelCooldown, swivelDamage, swivelTarget, type Kin } from './ramming';
+import { hasSwivels, ramContact, ramDamage, ramImpulse, swivelCooldown, swivelDamage, swivelTarget, type Kin } from './ramming';
 import { RAM, SWIVEL } from '../data/balanceConfig';
 import { REP, hasService, isHostile, isPeaceful, judgeBattle, newStats, type BattleStats } from '../data/reputation';
 import { WORLD_RADIUS } from '../data/world';
 import { Ship, type SeaEnv } from '../entities/ship/ship';
+import type { SwivelMount } from '../entities/ship/shipEvoParts';
 import { cloneToon, toon } from '../render/toon';
 import type { CombatOverlay } from '../ui/combatOverlay';
 import type { IslandGround } from '../world/islandGround';
@@ -50,6 +51,14 @@ const BALL_SPEED = 46;
 
 /** Ab dieser Entfernung zum Spieler (Meter) bekommen Schüsse und Treffer der KI untereinander nur den kleinen Rauchfleck */
 const FAR_FX = 240;
+/** Hilfsvektoren der Drehbassen-Darstellung (nichts in der Spielschleife neu anlegen) */
+const _mz = new Vector3();
+const AXIS_UP = new Vector3(0, 1, 0);
+const SWIVEL_FLASH = new Color(4, 2, 0.5);
+const SWIVEL_TRACER = new Color(3.4, 2.2, 0.6);
+/** Schwenkzeit vor dem Schuss und Haltezeit auf dem Ziel (Sekunden) */
+const SWIVEL_AIM_T = 0.4;
+const SWIVEL_HOLD_T = 2.4;
 
 export interface EnemyShip {
   ship: Ship;
@@ -281,8 +290,7 @@ export class NavalSystem {
       const x = p.x + Math.sin(a) * 150, z = p.z + Math.cos(a) * 150;
       if (Math.hypot(x, z) > WORLD_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
       const foe: 'pirat' | 'marine' = this.playerFaction === 'pirat' ? 'marine' : 'pirat';
-      const ship = new Ship(this.scene, 0, DEFAULT_SHIP_LOOK(foe), foe);
-      ship.setEvolution(evolutionOfTier(1));
+      const ship = new Ship(this.scene, 0, DEFAULT_SHIP_LOOK(foe), foe, 0, false, evolutionOfTier(1));
       ship.x = x; ship.z = z; ship.heading = Math.atan2(p.x - x, p.z - z) + Math.PI / 2;
       ship.prev = { x, z, heading: ship.heading };
       ship.hull = ship.maxHull * (board ? 0.3 : 0.7);
@@ -409,8 +417,7 @@ export class NavalSystem {
    */
   spawnGuard(d: { guardId: string; tier: number; x: number; z: number; heading: number; hull: number; sail: number; crew: number; name: string }, look: ShipLook, level: number, power: FactionId, groupScale = 1): EnemyShip {
     const cls = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, d.tier))];
-    const ship = new Ship(this.scene, d.tier, look, power === 'marine' ? 'marine' : 'pirat', Math.round(cls.hp * (d.hull * groupScale - 1 + level * 0.03)));
-    ship.setEvolution(evolutionOfTier(dangerOfLevel(level)));
+    const ship = new Ship(this.scene, d.tier, look, power === 'marine' ? 'marine' : 'pirat', Math.round(cls.hp * (d.hull * groupScale - 1 + level * 0.03)), false, evolutionOfTier(dangerOfLevel(level)));
     ship.sim.sail.max = Math.round(ship.sim.sail.max * d.sail * groupScale);
     ship.sim.sail.hp = ship.sim.sail.max;
     const m = ship.sim.crew.pools.matrosen;
@@ -436,8 +443,7 @@ export class NavalSystem {
       const off = (i - (o.count - 1) / 2) * 70;
       const tier = tiers[i % tiers.length];
       const cls = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier))];
-      const ship = new Ship(this.scene, tier, { ...o.look }, o.power === 'marine' ? 'marine' : 'pirat', Math.round(cls.hp * (2.0 - 1 + o.level * 0.03)));
-      ship.setEvolution(evolutionOfTier(dangerOfLevel(o.level)));
+      const ship = new Ship(this.scene, tier, { ...o.look }, o.power === 'marine' ? 'marine' : 'pirat', Math.round(cls.hp * (2.0 - 1 + o.level * 0.03)), false, evolutionOfTier(dangerOfLevel(o.level)));
       ship.sim.sail.max = Math.round(ship.sim.sail.max * 1.5);
       ship.sim.sail.hp = ship.sim.sail.max;
       const m = ship.sim.crew.pools.matrosen;
@@ -537,8 +543,7 @@ export class NavalSystem {
       if (useFaction) foe = power === 'marine' ? 'marine' : power === 'kurogane' ? 'pirat' : foe;
       if (role === 'haendler' && !useFaction) { look.hull = HULL_COLORS[Math.floor(Math.random() * 3)]; look.sail = SAIL_COLORS[Math.floor(Math.random() * 3)]; look.flag = 'anker'; look.flagColor = '#2F6E4F'; look.figurehead = 'keine'; }
       // erfahrene Crews halten mehr aus (sonst wären Schiffe in hohen Meeren aus Papier)
-      const ship = new Ship(this.scene, tier, look, foe, Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)));
-      ship.setEvolution(evolutionOfTier(dangerOfLevel(lvl)));
+      const ship = new Ship(this.scene, tier, look, foe, Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)), false, evolutionOfTier(dangerOfLevel(lvl)));
       // Route: quer durch das Gebiet, am Spieler vorbei statt direkt auf ihn zu
       const toP = Math.atan2(px - x, pz - z);
       const heading = near ? near.heading : toP + (Math.random() < 0.5 ? 1 : -1) * (0.5 + Math.random() * 0.7);
@@ -613,8 +618,7 @@ export class NavalSystem {
         const x = Math.sin(a) * t + Math.cos(a) * off, z = Math.cos(a) * t - Math.sin(a) * off;
         if (this.ground.islandAt(x, z, 40) || Math.hypot(x, z) > WORLD_RADIUS - 150) continue;
         const lvl = f.level, tier = Math.max(2, Math.min(4, Math.floor(lvl / 3)));
-        const ship = new Ship(this.scene, tier, factionShipLook('marine'), 'marine', Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)));
-        ship.setEvolution(evolutionOfTier(dangerOfLevel(lvl)));
+        const ship = new Ship(this.scene, tier, factionShipLook('marine'), 'marine', Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)), false, evolutionOfTier(dangerOfLevel(lvl)));
         ship.x = x; ship.z = z; ship.heading = a + (Math.random() < 0.5 ? 0 : Math.PI);
         ship.prev = { x, z, heading: ship.heading };
         this.enemies.push({ ship, role: 'patrouille', level: lvl, state: 'patrol', wander: { x, z }, aiT: 0, power: 'marine', station: f.id, name: 'Marine-Patrouillenboot' });
@@ -689,8 +693,7 @@ export class NavalSystem {
         const power = powers[side];
         const tier = Math.max(1, Math.min(4, Math.floor(lvl / 2) + Math.floor(Math.random() * 2)));
         const foe: 'pirat' | 'marine' = power === 'kurogane' ? 'pirat' : 'marine';
-        const ship = new Ship(this.scene, tier, factionShipLook(power), foe, Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)));
-        ship.setEvolution(evolutionOfTier(dangerOfLevel(lvl)));
+        const ship = new Ship(this.scene, tier, factionShipLook(power), foe, Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)), false, evolutionOfTier(dangerOfLevel(lvl)));
         ship.x = x; ship.z = z;
         // beide Flotten fahren erst aufeinander zu, dann in Breitseitenabstand umeinander
         ship.heading = Math.atan2(-site.across.x * dir, -site.across.z * dir) + (Math.random() - 0.5) * 0.4;
@@ -721,8 +724,7 @@ export class NavalSystem {
       if (Math.hypot(x, z) > WORLD_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
       const lvl = Math.max(2, this.zoneLevel(x, z));
       const tier = Math.max(2, Math.min(4, Math.floor(lvl / 3) + 1));
-      const ship = new Ship(this.scene, tier, factionShipLook('marine'), 'marine', Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)));
-      ship.setEvolution(evolutionOfTier(dangerOfLevel(lvl)));
+      const ship = new Ship(this.scene, tier, factionShipLook('marine'), 'marine', Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)), false, evolutionOfTier(dangerOfLevel(lvl)));
       ship.x = x; ship.z = z; ship.heading = Math.atan2(site.x - x, site.z - z);
       ship.prev = { x, z, heading: ship.heading };
       this.enemies.push({ ship, role: 'patrouille', level: lvl, state: 'engage', wander: { x, z }, aiT: 0, name: 'Marine-Patrouillenboot', power: 'marine', battle: { id: b.id, side: 2 } });
@@ -870,8 +872,7 @@ export class NavalSystem {
     if (this.enemies.some((e) => e.legendId === l.id && e.ship.alive)) return null;
     const look = DEFAULT_SHIP_LOOK(l.faction);
     look.sail = l.col; look.flagColor = l.col; look.lanterns = true;
-    const ship = new Ship(this.scene, Math.min(6, l.tier + 1), look, l.faction, 300 + l.lvl * 40);
-    ship.setEvolution(evolutionOfTier(dangerOfLevel(l.lvl)));
+    const ship = new Ship(this.scene, Math.min(6, l.tier + 1), look, l.faction, 300 + l.lvl * 40, false, evolutionOfTier(dangerOfLevel(l.lvl)));
     ship.x = x; ship.z = z;
     const p = this.player;
     ship.heading = p ? Math.atan2(p.x - x, p.z - z) : 0;
@@ -889,8 +890,7 @@ export class NavalSystem {
       if (this.ground.islandAt(x, z, 40)) continue;
       const look = DEFAULT_SHIP_LOOK('pirat');
       look.hull = '#2A3A3A'; look.sail = '#BFEFE4'; look.stripe = '#7FE0C8'; look.flagColor = '#1E1A20'; look.lanterns = true;
-      const ship = new Ship(this.scene, Math.min(4, 1 + Math.floor(level / 3)), look, 'pirat', 120);
-      ship.setEvolution(evolutionOfTier(dangerOfLevel(level)));
+      const ship = new Ship(this.scene, Math.min(4, 1 + Math.floor(level / 3)), look, 'pirat', 120, false, evolutionOfTier(dangerOfLevel(level)));
       ship.model.group.traverse((o) => {
         const m = o as Mesh;
         if (!m.isMesh || Array.isArray(m.material)) return;
@@ -972,7 +972,7 @@ export class NavalSystem {
       this.overlay.setBar(e, null, -1, false, null);
       return false;
     });
-    if (p && active) { this.updateRamming(); this.updateSwivels(); }
+    if (p && active) { this.updateRamming(); this.updateSwivels(dt); }
     this.updateBalls(dt);
     this.updateCrates(dt);
     this.efx.update(dt);
@@ -1001,6 +1001,8 @@ export class NavalSystem {
 
   private ramCd = new Map<string, number>();
   private swivelCd = new Map<string, number>();
+  /** Zielzustand der Drehbassen je Schiff: Ziel, Zeitpunkt des Schusses, bis wann sie noch auf das Ziel zeigen */
+  private swivelAim = new Map<string, { t: Ship; fireAt: number; until: number; fired: boolean }>();
 
   private kin(s: Ship): Kin { return { x: s.x, z: s.z, heading: s.heading, course: s.course, speed: s.speed, L: s.cls.L, W: s.cls.W }; }
   /** Schiff, das den Spieler angreifen darf: im Gefecht, Jäger, gereizt oder Raid-Wache (friedliche Schiffe rammen und beschießen nie von selbst) */
@@ -1058,6 +1060,10 @@ export class NavalSystem {
     const self = a.ramHit(d.self, null, new Vector3(0, 0, a.cls.L * 0.5));
     a.speed *= RAM.rammerSlow;
     b.speed *= RAM.targetSlow;
+    // Abprall: Hüllen auseinanderschieben und das Zielschiff seitlich wegdrücken, der Rammer federt zurück (Massen = Rumpfpunkte)
+    const imp = ramImpulse(c, a.maxHull, b.maxHull);
+    a.x += imp.sepA.x; a.z += imp.sepA.z; b.x += imp.sepB.x; b.z += imp.sepB.z;
+    a.shoveX += imp.shoveA.x; a.shoveZ += imp.shoveA.z; b.shoveX += imp.shoveB.x; b.shoveZ += imp.shoveB.z;
     this.debris?.splinters(c.x, 1.3, c.z, fx, fz, d.ram ? 18 : 9, b.look.hull);
     this.smoke?.puff(c.x, 1.5, c.z, { n: 3, size: 1.8, grow: 6, life: 3, tone: 0.5, spread: 1.2, rise: 0.8, alpha: 0.7 });
     this.sparks.emit(d.ram ? 16 : 8, c.x, 1.4, c.z, { speed: 6, up: 4, life: 0.8, color: new Color(0.55, 0.36, 0.2), gravity: 14, spread: 0.4 });
@@ -1079,9 +1085,10 @@ export class NavalSystem {
    * Deck-Drehbassen (Kanonen-Stufe ≥ 4): feuern von selbst Kartätschen auf feindliche Schiffe im Umkreis von 45 m (Crew, etwas Tuch, wenig Rumpf),
    * mit eigener Pause je Schiff. Friedliche und kampfunfähige Schiffe sowie geenterte werden verschont.
    */
-  private updateSwivels() {
+  private updateSwivels(dt: number) {
     const p = this.player;
     if (!p) return;
+    if (this.swivelAim.size > 64) for (const [k, v] of this.swivelAim) if (v.until < this.clock) this.swivelAim.delete(k);
     const live = (s: Ship) => s.alive && s.sinking <= 0 && !s.moored;
     type Shooter = { ship: Ship; e: EnemyShip | null };
     const shooters: Shooter[] = [];
@@ -1090,6 +1097,14 @@ export class NavalSystem {
     for (const sh of shooters) {
       const s = sh.ship;
       if (!hasSwivels(s.evo.cannonTier)) continue;
+      // Zielen in jedem Bild: auf das letzte Ziel, solange es gilt, sonst zurück in die Ruhestellung; der Schuss fällt, sobald die Rohre schwenken konnten
+      const st = this.swivelAim.get(s.entityId);
+      const tgt = st && st.until > this.clock && st.t.alive && st.t.sinking <= 0 ? st.t : null;
+      this.aimSwivels(s, tgt, dt);
+      if (st && !st.fired && tgt) {
+        if (this.clock >= st.fireAt) { st.fired = true; this.fireSwivels(s, tgt, sh.e, p); }
+        continue;
+      }
       const friend = sh.e === null || sh.e.companion || sh.e.helper;
       if (!friend && !this.hostileAI(sh.e!)) continue;
       if ((this.swivelCd.get(s.entityId) ?? 0) > this.clock) continue;
@@ -1099,22 +1114,81 @@ export class NavalSystem {
       const k = swivelTarget({ x: s.x, z: s.z, L: s.cls.L }, foeShips.map((t) => ({ x: t.x, z: t.z, L: t.cls.L })));
       if (k < 0) continue;
       this.swivelCd.set(s.entityId, this.clock + swivelCooldown(s.evo.cannonTier) * (0.9 + Math.random() * 0.2));
-      const t = foeShips[k];
-      const dx = t.x - s.x, dz = t.z - s.z, dl = Math.hypot(dx, dz) || 1;
-      const mx = s.x + (dx / dl) * s.cls.W * 0.4, mz = s.z + (dz / dl) * s.cls.W * 0.4;
-      const base = swivelDamage(sh.e && !sh.e.companion ? aiCannon(sh.e.level).dmg : this.canDmg * (sh.e ? 0.6 : 1));
-      const local = new Vector3((Math.random() - 0.5) * t.cls.W * 0.8, 0, (Math.random() - 0.5) * t.cls.L * 0.6);
-      const wasT = t.disabled;
-      const dealt = t.damage(base, 'kartaetsche', local, 'hull', SWIVEL.pen);
-      this.smoke?.puff(mx, 2.2, mz, { n: 2, size: 0.9, grow: 3.5, life: 1.6, tone: 0.6, vx: (dx / dl) * 4, vz: (dz / dl) * 4, spread: 0.6, rise: 0.6, alpha: 0.6 });
-      this.sparks.emit(6, mx, 2.2, mz, { speed: 5, up: 1.5, life: 0.4, color: new Color(1.4, 0.9, 0.4), gravity: 8, spread: 0.5 });
-      audio.play('crack', 0.45, { x: mx, z: mz });
-      if (s === p || t === p) {
-        if (dealt > 0) this.overlay.number(new Vector3(t.x, 3.2, t.z), Math.round(dealt), t === p ? 'hurt' : 'hit');
-        if (t === p) this.overlay.hurt();
+      // Ziel merken: die Drehbassen schwenken sofort, der Schuss fällt nach `SWIVEL_AIM_T` Sekunden (die Pause läuft ab jetzt)
+      this.swivelAim.set(s.entityId, { t: foeShips[k], fireAt: this.clock + SWIVEL_AIM_T, until: this.clock + SWIVEL_HOLD_T, fired: false });
+    }
+  }
+
+  /** Schwenkt die Drehbassen eines Schiffs auf das Ziel (nur Rohre an der Zielseite) oder zurück nach außen; setzt nur Drehwinkel, nichts wird neu angelegt */
+  private aimSwivels(s: Ship, t: Ship | null, dt: number) {
+    const ms = s.model.swivels;
+    if (!ms.length) return;
+    let lx = 0, lz = 0;
+    if (t) {
+      // Ziel im Schiffskoordinatensystem (+x = Backbord, +z = voraus)
+      const dx = t.x - s.x, dz = t.z - s.z, c = Math.cos(s.heading), sn = Math.sin(s.heading);
+      lx = dx * c - dz * sn; lz = dx * sn + dz * c;
+    }
+    const k = 1 - Math.exp(-9 * dt);
+    for (const m of ms) {
+      let want = 0;
+      if (t && m.side * lx > 0) want = Math.max(-1.25, Math.min(1.25, Math.atan2(-m.side * (lz - m.z), m.side * (lx - m.x))));
+      const r = m.mount.rotation;
+      r.y += (want - r.y) * k;
+      m.aim = r.y;
+    }
+  }
+
+  /** Mündung einer Drehbasse in Weltkoordinaten (mit dem aktuellen Halterwinkel) */
+  private swivelMuzzle(s: Ship, m: SwivelMount, out: Vector3): Vector3 {
+    out.copy(m.muzzle).applyAxisAngle(AXIS_UP, m.mount.rotation.y).add(m.mount.position);
+    return s.model.group.localToWorld(out);
+  }
+
+  /** Der Schuss: Schaden auf das Ziel (Kartätsche auf Rumpf), Mündungsfeuer, Pulverdampf und Leuchtspuren, Meldungen und Folgen */
+  private fireSwivels(s: Ship, t: Ship, e: EnemyShip | null, p: Ship) {
+    const dx = t.x - s.x, dz = t.z - s.z, dl = Math.hypot(dx, dz) || 1;
+    const base = swivelDamage(e && !e.companion ? aiCannon(e.level).dmg : this.canDmg * (e ? 0.6 : 1));
+    const local = new Vector3((Math.random() - 0.5) * t.cls.W * 0.8, 0, (Math.random() - 0.5) * t.cls.L * 0.6);
+    const wasT = t.disabled;
+    const dealt = t.damage(base, 'kartaetsche', local, 'hull', SWIVEL.pen);
+    this.swivelFx(s, t, dx / dl, dz / dl);
+    audio.play('crack', 0.45, { x: s.x, z: s.z });
+    if (s === p || t === p) {
+      if (dealt > 0) this.overlay.number(new Vector3(t.x, 3.2, t.z), Math.round(dealt), t === p ? 'hurt' : 'hit');
+      if (t === p) this.overlay.hurt();
+    }
+    if (s === p) { this.provokeBy(t, 'Deine Drehbassen haben auf'); this.noteBattleHit(t, dealt); }
+    this.afterHit(t, wasT, s === p);
+  }
+
+  /** Darstellung eines Drehbassen-Schusses: jede Drehbasse an der Zielseite blitzt, qualmt und schickt eine Reihe glühender Kartätschenkugeln zum Ziel */
+  private swivelFx(s: Ship, t: Ship, nx: number, nz: number) {
+    const pl = this.player;
+    const far = !!pl && s !== pl && t !== pl && Math.hypot(s.x - pl.x, s.z - pl.z) > FAR_FX;
+    const lx = nx * Math.cos(s.heading) - nz * Math.sin(s.heading);       // Zielseite im Schiffssystem
+    let n = 0;
+    for (const m of s.model.swivels) {
+      if (m.side * lx <= 0) continue;
+      const w = this.swivelMuzzle(s, m, _mz);
+      n++;
+      const ox = t.x - w.x, oz = t.z - w.z, ol = Math.hypot(ox, oz) || 1, ux = ox / ol, uz = oz / ol;
+      if (far) { if (n === 1) this.smoke?.puff(w.x, w.y, w.z, { n: 1, size: 1.6, grow: 6, life: 4, tone: 0.84, vx: ux * 6, vz: uz * 6, spread: 0.6, rise: 0.3, drag: 1.4, alpha: 0.45, wind: 0.9, jitter: 0.5 }); continue; }
+      this.sparks.emit(6, w.x + ux * 0.4, w.y, w.z + uz * 0.4, { speed: 4, up: 0.8, life: 0.22, color: SWIVEL_FLASH, gravity: 0, spread: 0.25 });
+      if (n === 1) this.fx.hit(new Vector3(w.x + ux * 0.7, w.y, w.z + uz * 0.7), 'punch', '#FFB45A', true);
+      this.smoke?.puff(w.x + ux * 0.6, w.y, w.z + uz * 0.6, { n: 2, size: 0.8, grow: 3.4, life: 2.2, tone: 0.78, vx: ux * 5, vy: 0.3, vz: uz * 5, spread: 0.4, rise: 0.5, drag: 1.4, alpha: 0.5, wind: 0.9, jitter: 0.3 });
+      // Leuchtspur: fünf schnelle Funken entlang der Schusslinie bis kurz vor die Bordwand des Ziels, nach hinten breiter (Kartätschenstreuung)
+      const reach = Math.max(2, Math.min(SWIVEL.range, ol - t.cls.W * 0.45));
+      for (let i = 0; i < 5; i++) {
+        const d = reach * (i + 0.5) / 5;
+        this.sparks.emit(1, w.x + ux * d, w.y, w.z + uz * d, { speed: 0, up: 0, life: 0.2, color: SWIVEL_TRACER, gravity: 0, spread: 0.1 + d * 0.035, size: 0.55, vx: ux * 70, vz: uz * 70 });
       }
-      if (s === p) { this.provokeBy(t, 'Deine Drehbassen haben auf'); this.noteBattleHit(t, dealt); }
-      this.afterHit(t, wasT, s === p);
+    }
+    if (n === 0 && !far) {
+      // ohne sichtbare Rohre (Sicherheitsnetz): wie bisher aus Schiffsmitte in Zielrichtung
+      const mx = s.x + nx * s.cls.W * 0.4, mz = s.z + nz * s.cls.W * 0.4;
+      this.smoke?.puff(mx, 2.2, mz, { n: 2, size: 0.9, grow: 3.5, life: 1.6, tone: 0.6, vx: nx * 4, vz: nz * 4, spread: 0.6, rise: 0.6, alpha: 0.6 });
+      this.sparks.emit(6, mx, 2.2, mz, { speed: 5, up: 1.5, life: 0.4, color: SWIVEL_FLASH, gravity: 8, spread: 0.5 });
     }
   }
 
