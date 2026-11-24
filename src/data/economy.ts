@@ -41,7 +41,7 @@ export const GOODS: GoodDef[] = [
   { id: 'seide', n: 'Seide', icon: '🎀', cat: 'ware', base: 90, vol: 0.5, d: 'Schwer zu bekommen und leicht zu verstauen.' },
   { id: 'marineausruestung', n: 'Marine-Ausrüstung', icon: '⚓', cat: 'ware', base: 85, vol: 2, d: 'Uniformen, Tauwerk und Beschläge nach Marinenorm.' },
   { id: 'fechtklingen', n: 'Fechtklingen', icon: '🗡', cat: 'ware', base: 95, vol: 1, d: 'Schlanke Degen aus den Hofwerkstätten.' },
-  { id: 'luxusgueter', n: 'Luxusgüter', icon: '💎', cat: 'luxus', base: 160, vol: 0.5, d: 'Schmuck, Porzellan und Parfüm: der teuerste Platz im Laderaum.' },
+  { id: 'luxusgueter', n: 'Luxusgüter', icon: '💎', cat: 'luxus', base: 120, vol: 0.5, d: 'Schmuck, Porzellan und Parfüm: der teuerste Platz im Laderaum.' },
   { id: 'schiesspulver', n: 'Schießpulver', icon: '💥', cat: 'kriegsware', base: 65, vol: 1.5, war: true, d: 'Trocken halten! Kriegsware: an Fronten teuer, bei Kontrollen verboten.' },
   { id: 'waffenkisten', n: 'Waffenkisten', icon: '📦', cat: 'kriegsware', base: 120, vol: 2, war: true, d: 'Säbel, Musketen und Pistolen: Schmuggelware an jeder Front.' },
   { id: 'medizin', n: 'Medizin', icon: '⚕', cat: 'kriegsware', base: 75, vol: 0.5, war: true, d: 'Kräuter, Verbände und Tinkturen: dort am teuersten, wo gekämpft wird.' },
@@ -96,15 +96,15 @@ export const MARKET = {
   /** Gleichgewichts-Vorrat (Einheiten): Überschuss-Güter, normale Güter, gefragte Güter */
   eqStock: { produce: 240, normal: 100, demand: 40 },
   /** Gleichgewichts-Preisfaktor gegen den Grundpreis */
-  eqPrice: { produce: 0.65, normal: 1, demand: 1.45 },
+  eqPrice: { produce: 0.85, normal: 1, demand: 1.2 },
   /** Preis ∝ (Vorrat / Gleichgewichts-Vorrat)^−Elastizität, begrenzt auf [min, max] */
-  elasticity: 0.55,
+  elasticity: 0.7,
   minK: 0.45,
   maxK: 2.6,
   /** Aufschlag beim Kaufen und Abschlag beim Verkaufen gegenüber dem Marktpreis (Spanne des Händlers) */
   spread: 0.05,
   /** Zeit (Sekunden Spielzeit), in der ein Markt etwa 63 % des Wegs zurück zum Gleichgewicht schafft (ein Ingame-Tag ≈ 24 Spielminuten) */
-  tau: 1800,
+  tau: 2700,
   /** Kriegspreise: Aufschlag auf Kriegsware an Grenzen (Abstand in m), auf besetzten/belagerten Inseln und Festungen */
   warBorder: 0.6, warBorderDist: 700, warOccupied: 0.9, warFort: 0.4, warMax: 2.5,
 } as const;

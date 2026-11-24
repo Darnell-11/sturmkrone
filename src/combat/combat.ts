@@ -158,6 +158,8 @@ export class CombatSystem implements EnemyWorld {
   /** Basis-Angriffswert des Spielers */
   atk = 12;
   critChance = 0.1;
+  /** Waffenstufe der Spielfigur (1 … 5): Durchschlag gegen die Rüstung der Gegner (`Enemy.takeHit`) */
+  attackTier = 1;
   /** Boni aus Fähigkeiten und Synergien */
   mods = { critMult: 1.6, lifesteal: 0, burnOnHit: false, fearWeak: 0, playerLevel: 1, frostParry: false, skillMult: 1 };
   private dots = new Map<Enemy, { burn: number; poison: number; dps: number; tick: number }>();

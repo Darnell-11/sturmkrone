@@ -53,8 +53,8 @@ describe('Markt-Elastizität und Erholung', () => {
   it('Überschuss ist billig, Bedarf teuer, normale Waren zum Grundpreis', () => {
     const e = emptyEconomy(); const m = marketAt(e, S, 0);
     const price = (g: GoodId) => marketPrice(S, g, m.stock[g]!);
-    expect(price('gewuerze')).toBeLessThan(GOOD_BY_ID.gewuerze.base * 0.8);
-    expect(price('kanonenstahl')).toBeGreaterThan(GOOD_BY_ID.kanonenstahl.base * 1.3);
+    expect(price('gewuerze')).toBeLessThan(GOOD_BY_ID.gewuerze.base * 0.9);
+    expect(price('kanonenstahl')).toBeGreaterThan(GOOD_BY_ID.kanonenstahl.base * 1.15);
     expect(price('tee')).toBeCloseTo(GOOD_BY_ID.tee.base, 5);
     expect(roleOf(S.profile, 'gewuerze')).toBe('produce');
     expect(trendOf(price('gewuerze'), 'gewuerze')).toBe('billig');
@@ -104,7 +104,7 @@ describe('Markt-Elastizität und Erholung', () => {
     const e2 = emptyEconomy();
     const cost = -buyGood(e2, buyHere, 0, 'gewuerze', 20, gold, 6).gold;
     const income = sellGood(e2, sellThere, 0, 'gewuerze', 20).gold;
-    expect(income).toBeGreaterThan(cost * 1.5);
+    expect(income).toBeGreaterThan(cost * 1.05);        // lohnt sich, aber mit schmaler Spanne (siehe tests/economyBalance.test.ts)
     // wer 400 Stück auf einmal in den Bedarfsmarkt kippt, drückt den Preis weit unter den Anfangspreis
     const first = quoteSell(sellThere, 40, 'gewuerze', 1).total;
     expect(quoteSell(sellThere, 40, 'gewuerze', 400).avg).toBeLessThan(first * 0.6);

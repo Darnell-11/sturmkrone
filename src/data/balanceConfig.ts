@@ -184,3 +184,88 @@ export function craftCost(slot: keyof typeof BOSS_DROP_CHANCE): { seals: number;
   const w = SLOT_WEIGHT[slot];
   return { seals: Math.max(2, Math.round(w * 6)), shards: Math.max(2, Math.round(w * 5)), gold: Math.round((6000 * w * 2) / 100) * 100, honor: 60 };
 }
+
+// ---------- Gegner-Kalibrierung (Phase 4.1) ----------
+
+/** Haltung (Poise) wächst mit der Gefahrenstufe: stärkere Gegner lassen sich schwerer aus dem Takt bringen */
+export const DANGER_POISE: Record<DangerTier, number> = { 1: 1, 2: 1.1, 3: 1.25, 4: 1.4, 5: 1.6 };
+
+/**
+ * Leben- und Schaden-Faktor eines Gegners dieser Stufe (`Enemy.level`): stetig zwischen den Ankerpunkten der Gefahrenstufen (die erste
+ * Gegnerstufe jedes Bandes trägt genau den Richtwert aus `DANGER`); über Stufe 18 wächst er langsam weiter (bis Stufe 40).
+ */
+export function dangerScale(level: number): { hp: number; dmg: number } {
+  const lv = Math.max(1, Math.min(40, level));
+  const anchors = TIERS.map((t) => ({ lv: DANGER[t].levelMin, hp: DANGER[t].hp, dmg: DANGER[t].dmg }));
+  for (let i = 0; i < anchors.length - 1; i++) {
+    const a = anchors[i], b = anchors[i + 1];
+    if (lv <= b.lv) { const k = (lv - a.lv) / (b.lv - a.lv); return { hp: a.hp + (b.hp - a.hp) * k, dmg: a.dmg + (b.dmg - a.dmg) * k }; }
+  }
+  const last = anchors[anchors.length - 1];
+  return { hp: last.hp + 0.35 * (lv - last.lv), dmg: last.dmg + 0.1 * (lv - last.lv) };
+}
+
+/** Panzerungsfaktor je Gegnerart (mal `DANGER.armor` der Stufe): Schildträger und Legenden zäh, Schützen und Wirker kaum gepanzert */
+export const ENEMY_ARMOR_K: Record<string, number> = { matrose: 0.5, schildtraeger: 1.3, musketier: 0.3, schlaeger: 1.0, fajiwirker: 0.3, hauptmann: 1.1, legende: 1.3 };
+
+/** Rüstungswert eines Gegners (wie bei Spielern: `mitigation(Wert, Angreiferstufe)`); `kind` ohne Eintrag zählt 1,0 */
+export function enemyArmorRating(kind: string, level: number): number {
+  return DANGER[dangerOfLevel(level)].armor * (ENEMY_ARMOR_K[kind] ?? 1);
+}
+
+/** Kein einzelner Treffer nimmt einem Raid-Endboss mehr als diesen Anteil seiner Lebenspunkte (Anti-One-Shot) */
+export const RAID_BOSS_HIT_CAP = 0.08;
+/** … und der Spielfigur nie mehr als diesen Anteil ihrer Lebenspunkte: man stirbt nie durch einen einzigen Treffer */
+export const PLAYER_HIT_CAP = 0.4;
+
+// ---------- Seegefecht (Phase 4.1) ----------
+
+/** Rumpf-Panzerung je Schiffsklasse (Schaluppe … Leviathan); wirkt wie Rüstung gegen den Durchschlag des Angreifers (`penTier`) */
+export const HULL_ARMOR: readonly number[] = [8, 20, 38, 60, 85, 115, 150];
+export const hullArmorOf = (classIndex: number): number => HULL_ARMOR[Math.max(0, Math.min(HULL_ARMOR.length - 1, Math.floor(classIndex)))];
+
+/** Kanonen-Durchschlag (Stufe 1 … 5) einer Klasse: aus dem Rang der Klasse (`RANK_TIER`) plus Kanonen-Ausbau (alle zwei Stufen +1) */
+export function penTierOf(classRank: number, cannonUpgrade = 0): Tier {
+  return clampTier(tierOfRank(classRank) + Math.floor(Math.max(0, cannonUpgrade) / 2));
+}
+
+/** Kugel-Schaden eines KI-Schiffs je Kanone und Nachladezeit (s) nach Gegnerstufe (Gefahrenstufe) */
+export function aiCannon(level: number, legend = false): { dmg: number; reload: number } {
+  const sc = dangerScale(level);
+  const t = dangerOfLevel(level);
+  return { dmg: 9 * sc.dmg * (legend ? 1.5 : 1), reload: 3.6 - 0.35 * (t - 1) };
+}
+
+/** Faktor auf den Rumpf eines KI-Schiffs nach Gegnerstufe: erfahrene Crews halten mehr aus (aus dem Leben-Richtwert, gedämpft) */
+export const aiHullFactor = (level: number): number => 1 + (dangerScale(level).hp - 1) * 0.28;
+
+// ---------- Kampfmodell (Kalibrierung und Test) ----------
+
+/**
+ * Grobes Modell eines Bosskampfs, mit dem Bossleben, Rüstung und Spielerwerte abgeglichen werden (`tests/economyBalance.test.ts`):
+ * Treffer je Sekunde und Anteil der Zeit, in der wirklich getroffen wird (Ausweichen, Warnflächen, Wege), Volltreffer-Faktor, Beitrag der
+ * Offiziere (je Offizier ein Teil des Spielerschadens), Fähigkeiten, und wie viele Boss-Angriffe ein erfahrener Spieler abbekommt.
+ */
+export const FIGHT_MODEL = {
+  hitsPerSec: 1.7, uptime: 0.55, critMult: 1.6, comboMult: 1.08,
+  allyPerOfficer: 0.22, skillBonus: 0.2,
+  /** Mittlere Zeit zwischen zwei Boss-Angriffen (s) und Anteil, der einen erfahrenen / einen drauflosschlagenden Spieler trifft */
+  attackInterval: 2.2, hitSkilled: 0.4, hitMasher: 0.9,
+  /** Mittlerer Schadensfaktor der Boss-Angriffe (`EnemyAttack.dmg`) */
+  attackDmg: 1.15,
+} as const;
+
+/** Schaden je Sekunde der Spielfigur gegen ein ungepanzertes Ziel (ohne Offiziere und Fähigkeiten) */
+export const playerDps = (atk: number, crit: number): number => atk * FIGHT_MODEL.comboMult * FIGHT_MODEL.hitsPerSec * FIGHT_MODEL.uptime * (1 + crit * (FIGHT_MODEL.critMult - 1));
+
+/** Kampfdauer (s) gegen ein Ziel mit `hp` Lebenspunkten, Rüstung (Anteil, der durchkommt: `soak`) und der Crew an der Seite */
+export function fightSeconds(o: { hp: number; atk: number; crit: number; soak: number; officers: number; skills?: boolean }): number {
+  const dps = playerDps(o.atk, o.crit) * o.soak * (1 + o.officers * FIGHT_MODEL.allyPerOfficer) * (1 + (o.skills === false ? 0 : FIGHT_MODEL.skillBonus));
+  return o.hp / Math.max(1e-6, dps);
+}
+
+/** Wie lange hält die Spielfigur gegen einen Gegner, der je Treffer `hit` Schaden macht? `hitRate` = Anteil der Angriffe, die sie abbekommt */
+export function surviveSeconds(o: { hp: number; hit: number; hitRate: number; factor: number }): number {
+  const perSec = (o.hit * FIGHT_MODEL.attackDmg * o.hitRate * o.factor) / FIGHT_MODEL.attackInterval;
+  return o.hp / Math.max(1e-6, perSec);
+}

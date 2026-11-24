@@ -62,13 +62,13 @@ export const CAPTAINS: Record<FactionId, RaidCaptainDef[]> = {
   ],
 };
 
-/** Werte eines Hauptmanns: deutlich zäher als ein Hauptmann der Garnison, mit schwerer Rüstung (prallt 42 % des Schadens ab) */
+/** Werte eines Hauptmanns: deutlich zäher als ein Hauptmann der Garnison, mit schwerer Rüstung (prallt 30 % des Schadens ab, dazu die Rüstung der Gefahrenstufe) */
 export function captainDef(f: FactionId, index: number): EnemyDef {
   const c = CAPTAINS[f][index % CAPTAINS[f].length];
   const base = ENEMIES.hauptmann;
   return {
     ...base, label: c.name, hp: Math.round(base.hp * 2.8), dmg: base.dmg * 1.18, poise: 120, speed: base.speed * 0.92, scale: 1.2, radius: 0.62,
-    weapon: c.weapon, xp: 160, gold: [60, 110], raid: 'captain', armor: 0.42, aura: AURAS[c.aura],
+    weapon: c.weapon, xp: 160, gold: [60, 110], raid: 'captain', armor: 0.3, aura: AURAS[c.aura],
   };
 }
 
@@ -101,7 +101,7 @@ const FAN = (n: number, spread: number): { shape: 'line'; size: number; width: n
 
 /** 1 · England: Lord-Admiral Blackwood – Präzisions-Pistolensalven, Artillerie-Schlag-Signal und Marine-Säbelkombo */
 const BLACKWOOD = boss({
-  label: 'Lord-Admiral Blackwood', weapon: 'langklinge', kit: 'boss_england', hp: 2000, speed: 4.3,
+  label: 'Lord-Admiral Blackwood', weapon: 'langklinge', kit: 'boss_england', hp: 1870, speed: 4.3,
   attacks: [
     EA({ label: 'Pistolensalve', clip: 'Ranged_1H_Shoot', speed: 1.0, windup: 1.0, range: 22, arc: 0.4, dmg: 1.0, knock: 5, fx: 'punch', zones: FAN(3, 0.24) }),
     EA({ label: 'Säbelkombo', clip: 'Melee_1H_Attack_Slice_Diagonal', speed: 1.1, windup: 0.62, range: 6, arc: 2, dmg: 1.0, knock: 7, zones: [{ shape: 'cone', size: 5.6, arc: 1.9 }, { shape: 'cone', size: 6.6, arc: 2.6, extra: 0.95 }] }),
@@ -122,7 +122,7 @@ const BLACKWOOD = boss({
 
 /** 2 · Niederlande: Generalgouverneur Van Der Berg – schwere Hellebardenschwünge, Söldner-Schildwall und Granaten-Fässer */
 const VAN_DER_BERG = boss({
-  label: 'Generalgouverneur Van Der Berg', weapon: 'zweihaender', kit: 'boss_niederlande', hp: 2300, dmg: 24, speed: 3.7, scale: 1.3, radius: 0.78, armor: 0.28,
+  label: 'Generalgouverneur Van Der Berg', weapon: 'zweihaender', kit: 'boss_niederlande', hp: 1660, dmg: 24, speed: 3.7, scale: 1.3, radius: 0.78, armor: 0.28,
   attacks: [
     EA({ label: 'Hellebardenschwung', clip: 'Melee_2H_Attack_Slice', speed: 0.95, windup: 0.95, range: 8, arc: 3, dmg: 1.2, knock: 11, fx: 'heavy', zones: [{ shape: 'cone', size: 8, arc: 3.2 }] }),
     EA({ label: 'Hellebardenstoß', clip: 'Melee_2H_Attack_Stab', speed: 1.0, windup: 0.8, range: 11, arc: 0.8, dmg: 1.2, knock: 10, fx: 'stab', zones: [{ shape: 'line', size: 11, width: 2.4 }] }),
@@ -145,7 +145,7 @@ const VAN_DER_BERG = boss({
 
 /** 3 · Deutschland: Großkomtur von Eisenstein – massiver Zweihänder, Schockwellen-Stampfer und unverwundbare Frontal-Deckung */
 const EISENSTEIN = boss({
-  label: 'Großkomtur von Eisenstein', weapon: 'zweihaender', kit: 'boss_deutschland', hp: 2500, dmg: 25, speed: 3.5, scale: 1.34, radius: 0.82, armor: 0.34, poise: 320,
+  label: 'Großkomtur von Eisenstein', weapon: 'zweihaender', kit: 'boss_deutschland', hp: 1550, dmg: 25, speed: 3.5, scale: 1.34, radius: 0.82, armor: 0.34, poise: 320,
   attacks: [
     EA({ label: 'Zweihänderhieb', clip: 'Melee_2H_Attack_Slice', speed: 0.9, windup: 1.0, range: 8.5, arc: 3, dmg: 1.25, knock: 12, fx: 'heavy', zones: [{ shape: 'cone', size: 8.5, arc: 2.8 }] }),
     EA({ label: 'Schockwellen-Stampfer', clip: 'Melee_2H_Attack_Chop', speed: 0.9, windup: 1.05, range: 12, arc: 6.3, dmg: 1.2, knock: 12, fx: 'heavy', zones: [{ shape: 'ring', size: 6.5, inner: 2, extra: 0.4 }, { shape: 'ring', size: 12, inner: 6.5, extra: 1.05 }] }),
@@ -164,7 +164,7 @@ const EISENSTEIN = boss({
 
 /** 4 · Frankreich: Marquis-Amiral De Valois – ultraschnelle Rapier-Ausfallschritte, Parier-Konter und Königsgarde-Ruf */
 const DE_VALOIS = boss({
-  label: 'Marquis-Amiral De Valois', weapon: 'langklinge', kit: 'boss_frankreich', hp: 1900, dmg: 20, speed: 5.0, scale: 1.16, radius: 0.62, armor: 0.1, poise: 190,
+  label: 'Marquis-Amiral De Valois', weapon: 'langklinge', kit: 'boss_frankreich', hp: 1980, dmg: 20, speed: 5.0, scale: 1.16, radius: 0.62, armor: 0.1, poise: 190,
   attacks: [
     EA({ label: 'Ausfallschritt', clip: 'Melee_1H_Attack_Stab', speed: 1.5, windup: 0.5, range: 11, arc: 0.7, dmg: 1.05, knock: 7, fx: 'stab', mech: { kind: 'lunge', dist: 9, speed: 42 }, zones: [{ shape: 'line', size: 9.5, width: 1.7 }] }),
     EA({ label: 'Doppelstich', clip: 'Melee_1H_Attack_Stab', speed: 1.7, windup: 0.45, range: 10, arc: 0.7, dmg: 1.0, knock: 6, fx: 'stab', zones: [{ shape: 'line', size: 9, width: 1.5, turn: 0.28 }, { shape: 'line', size: 9, width: 1.5, turn: -0.28, extra: 0.45 }] }),
@@ -185,7 +185,7 @@ const DE_VALOIS = boss({
 
 /** 5 · Kurogane: Schattenfürst Kurogane – Doppelkatana-Schattenschnitt, dunkle Feuer-Wellen und Teleport-Dash */
 const KUROGANE = boss({
-  label: 'Schattenfürst Kurogane', weapon: 'doppel', kit: 'boss_kurogane', hp: 2000, dmg: 23, speed: 4.6, scale: 1.24, radius: 0.66, armor: 0.14, poise: 200,
+  label: 'Schattenfürst Kurogane', weapon: 'doppel', kit: 'boss_kurogane', hp: 1820, dmg: 23, speed: 4.6, scale: 1.24, radius: 0.66, armor: 0.14, poise: 200,
   attacks: [
     EA({ label: 'Schattenschnitt', clip: 'Melee_Dualwield_Attack_Slice', speed: 1.15, windup: 0.75, range: 11, arc: 0.9, dmg: 1.15, knock: 8, zones: [{ shape: 'line', size: 11, width: 1.8, turn: Math.PI / 4 }, { shape: 'line', size: 11, width: 1.8, turn: -Math.PI / 4 }] }),
     EA({ label: 'Dunkle Feuerwelle', clip: 'Ranged_Magic_Raise', speed: 1.1, windup: 1.0, range: 20, arc: 6.3, dmg: 1.15, knock: 10, fx: 'magic', zones: [{ shape: 'circle', size: 5, prop: 'rune' }, { shape: 'ring', size: 10, inner: 5, extra: 0.7 }, { shape: 'ring', size: 15, inner: 10, extra: 1.4 }] }),
@@ -206,7 +206,7 @@ const KUROGANE = boss({
 
 /** 6 · Marine: Großadmiral & Oberster Gefängniswärter Valken – Kanonenfaust, Seestein-Kettenfesseln und Elite-Verstärkung */
 const VALKEN = boss({
-  label: 'Großadmiral Valken', weapon: 'faust', kit: 'boss_marine', hp: 2900, dmg: 27, speed: 3.8, scale: 1.36, radius: 0.85, armor: 0.3, poise: 340, xp: 1400, gold: [900, 1400],
+  label: 'Großadmiral Valken', weapon: 'faust', kit: 'boss_marine', hp: 1445, dmg: 24, speed: 3.8, scale: 1.36, radius: 0.85, armor: 0.3, poise: 340, xp: 1400, gold: [900, 1400],
   attacks: [
     EA({ label: 'Gerechtigkeits-Kanonenfaust', clip: 'Melee_Unarmed_Attack_Punch_A', speed: 0.85, windup: 1.0, range: 15, arc: 0.9, dmg: 1.3, knock: 13, fx: 'heavy', zones: [{ shape: 'line', size: 15, width: 3.4 }, { shape: 'circle', size: 4, at: 'target', extra: 0.9 }] }),
     EA({ label: 'Gerechtigkeits-Hieb', clip: 'Melee_2H_Attack_Chop', speed: 0.9, windup: 0.95, range: 12, arc: 6.3, dmg: 1.25, knock: 13, fx: 'heavy', zones: [{ shape: 'ring', size: 6, inner: 1.5, extra: 0.35 }, { shape: 'ring', size: 11.5, inner: 6, extra: 1.0 }] }),

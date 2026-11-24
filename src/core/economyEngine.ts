@@ -90,10 +90,10 @@ export function quoteSell(site: MarketSite, stock: number, g: GoodId, n: number,
 }
 
 export type Trend = 'billig' | 'normal' | 'teuer';
-/** Preis-Pfeil: unter 85 % des Grundpreises „billig“ (kaufen), über 115 % „teuer“ (verkaufen) */
+/** Preis-Pfeil: unter 90 % des Grundpreises „billig“ (kaufen), über 110 % „teuer“ (verkaufen) */
 export function trendOf(price: number, g: GoodId): Trend {
   const r = price / GOOD_BY_ID[g].base;
-  return r < 0.85 ? 'billig' : r > 1.15 ? 'teuer' : 'normal';
+  return r < 0.9 ? 'billig' : r > 1.1 ? 'teuer' : 'normal';
 }
 
 // ---------- Frachtraum und Handel ----------
@@ -274,4 +274,73 @@ export function yardRepairCost(o: { L: number; W: number; hullMax: number; hullF
   const hull = hullMiss * o.hullMax * 0.6 * (1 + 0.8 * hullMiss);
   const sail = sailMiss * o.sailMax * 0.9 * (1 + 0.8 * sailMiss);
   return Math.ceil((hull + sail) * classK * (o.tariff ?? 1));
+}
+
+// ---------- Schiffsbeute (Handelswaren) ----------
+
+export interface SalvageIn {
+  role: 'haendler' | 'patrouille' | 'jaeger' | 'legende';
+  /** Weltmacht des Schiffs (data/factions.ts); fehlt bei freien Schiffen */
+  power?: string | null;
+  level: number;
+  /** Abstand zur nächsten Sektorgrenze (m): nahe der Grenze führen Kriegsschiffe seltene Kriegsware */
+  borderDist: number;
+  /** Geentert (Ladung unversehrt, +30 %) oder versenkt (nur 65 % treiben herüber) */
+  boarded: boolean;
+}
+export interface SalvageDrop { good: GoodId; units: number }
+
+const WAR_GOODS: GoodId[] = ['schiesspulver', 'waffenkisten', 'medizin'];
+const GENERIC: GoodId[] = ['stoffe', 'tuch', 'tee', 'wein', 'werkzeuge', 'gewuerze'];
+
+/**
+ * Was ein besiegtes Schiff an Handelsgütern trägt: Händler führen die Erzeugnisse ihrer Macht (2 – 3 Posten), Kriegsschiffe Marine-Ausrüstung
+ * und Kriegsware (1 – 2 Posten), Legenden Luxusgüter; nahe einer Sektorgrenze kommt mit etwas Glück ein Posten Kriegsware dazu. Menge: ein
+ * Wertbudget (30 + 12 · Stufe Gold zu Grundpreisen) je Schiff, verteilt auf die Posten.
+ */
+export function rollSalvage(i: SalvageIn, rnd: () => number = Math.random): SalvageDrop[] {
+  const profile = profileOf({ id: 'ship', factionId: i.power ?? null });
+  const pick = (list: readonly GoodId[]) => list[Math.floor(rnd() * list.length) % list.length];
+  const goods: GoodId[] = [];
+  if (i.role === 'legende') goods.push('luxusgueter', rnd() < 0.5 ? 'seide' : 'fechtklingen');
+  else if (i.role === 'haendler') {
+    const src = profile.produce.length ? profile.produce.filter((g) => !GOOD_BY_ID[g].war) : GENERIC;
+    const n = 2 + (rnd() < 0.5 ? 1 : 0);
+    for (let k = 0; k < n; k++) { const g = pick(src.length ? src : GENERIC); if (!goods.includes(g)) goods.push(g); }
+    if (i.borderDist < MARKET.warBorderDist && rnd() < 0.3) goods.push(pick(WAR_GOODS));
+  } else {
+    goods.push(rnd() < 0.55 ? pick(WAR_GOODS) : 'marineausruestung');
+    if (rnd() < 0.5) goods.push(pick(profile.produce.length ? profile.produce : GENERIC));
+    if (i.borderDist < MARKET.warBorderDist && rnd() < 0.5 && !goods.some((g) => GOOD_BY_ID[g].war)) goods.push(pick(WAR_GOODS));
+  }
+  // Wertbudget je Schiff (Gold zu Grundpreisen): 30 + 12 · Stufe, geentert ×1,3, versenkt ×0,65, Legenden ×3; verteilt auf die Posten
+  const budget = (30 + 12 * Math.max(1, i.level)) * (i.boarded ? 1.3 : 0.65) * (i.role === 'legende' ? 3 : 1);
+  const per = budget / Math.max(1, goods.length);
+  const out: SalvageDrop[] = [];
+  for (const g of goods) {
+    const units = Math.max(1, Math.round((per / GOOD_BY_ID[g].base) * (0.8 + rnd() * 0.4)));
+    out.push({ good: g, units });
+  }
+  return out;
+}
+
+export interface SalvageResult { taken: SalvageDrop[]; lost: number; heat: number }
+
+/** Beute an Bord nehmen: nur so viel, wie der freie Frachtraum fasst (der Rest geht verloren); Kriegsware erhöht den Fahndungsdruck */
+export function applySalvage(eco: EconomyState, drops: readonly SalvageDrop[], tier: number): SalvageResult {
+  const taken: SalvageDrop[] = [];
+  let lost = 0, heat = 0;
+  for (const d of drops) {
+    const def = GOOD_BY_ID[d.good];
+    const room = Math.floor(cargoFree(eco, tier) / def.vol + 1e-9);
+    const n = Math.max(0, Math.min(d.units, room));
+    lost += d.units - n;
+    if (n <= 0) continue;
+    const c = (eco.cargo[d.good] ??= { n: 0, cost: 0 });
+    c.n += n;
+    taken.push({ good: d.good, units: n });
+    if (def.war) heat += n * def.vol * CONTRABAND.heatPerUnit * 0.5;
+  }
+  eco.heat = Math.min(CONTRABAND.heatMax, eco.heat + heat);
+  return { taken, lost, heat };
 }

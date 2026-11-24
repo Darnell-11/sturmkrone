@@ -1,4 +1,5 @@
 // Kampfwerte. Alles hier ist Balancing – im Code steht nur die Logik.
+import { dangerScale } from './balanceConfig';
 import type { NpcRole } from './characterParts';
 import type { StyleId } from './animations';
 
@@ -314,4 +315,5 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
 };
 
 /** Gegnerwerte wachsen mit der Stufe */
-export const enemyScale = (lvl: number) => ({ hp: 1 + 0.28 * (lvl - 1), dmg: 1 + 0.16 * (lvl - 1) });
+/** Leben und Schaden nach Gegnerstufe: die Gefahrenskala 1 … 5 aus data/balanceConfig.ts (`dangerScale`) */
+export const enemyScale = (lvl: number) => dangerScale(lvl);

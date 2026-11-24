@@ -207,7 +207,7 @@ describe('Hauptmänner mit Aura', () => {
       for (let i = 0; i < 4; i++) {
         const d = captainDef(id, i);
         expect(d.raid).toBe('captain');
-        expect(d.armor).toBeGreaterThanOrEqual(0.4);
+        expect(d.armor).toBeGreaterThanOrEqual(0.25);
         expect(d.aura).toBeDefined();
         expect(d.hp).toBeGreaterThan(500);
       }

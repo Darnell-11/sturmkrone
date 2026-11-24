@@ -2,7 +2,8 @@
 // geteilt, nichts würfelt gegen einen Mitspieler. Der Wurf ist deterministisch aus (Instanz, Teilnehmer, Boss): derselbe Spielstand liefert
 // bei jedem Laden dieselbe Beute, und ein Server kann sie ohne Umbau erzeugen. Reine Daten und Rechnung ohne three.js.
 import { FACTIONS, type FactionId } from '../data/factions';
-import { GEAR_SET_BY_ID } from '../data/gear';
+import { GEAR_SET_BY_ID, SETS, tierOfSet } from '../data/gear';
+import { EQUIP_BY_ID } from '../data/equipment';
 import { BOSS_DROP_CHANCE, SEAL_DROP } from '../data/balanceConfig';
 import { SHARD_NAME } from '../data/crafting';
 import type { Rarity } from '../data/rarity';
@@ -10,7 +11,7 @@ import { RAID_BOSSES } from './raidBosses';
 import { hashString, mulberry32 } from './raidLayout';
 import type { RaidPartyContext } from './raidTypes';
 
-export type RaidLootKind = 'gold' | 'gear' | 'sail' | 'ornament' | 'xp' | 'seal' | 'shard';
+export type RaidLootKind = 'gold' | 'gear' | 'sail' | 'ornament' | 'xp' | 'seal' | 'shard' | 'warlord';
 
 export interface RaidLootItem {
   kind: RaidLootKind;
@@ -93,6 +94,10 @@ export function rollPersonalLoot(o: LootRollOpts): PersonalLoot {
   items.push({ kind: 'seal', id: `seal:${f}`, label: `Boss-Siegel von ${FACTIONS[f].name}`, rarity: 'episch', amount: seals, fresh: true });
   const shards = SEAL_DROP.shardsMin + Math.floor(rnd() * (SEAL_DROP.shardsMax - SEAL_DROP.shardsMin + 1));
   items.push({ kind: 'shard', id: 'shard', label: SHARD_NAME, rarity: 'selten', amount: shards, fresh: true });
+
+  // Kriegsherren-Beute (Stufe 4): jeder Sieg wirft sicher ein noch fehlendes Stück ab (fest an die Beutetabelle gebunden, nicht dem Zufall überlassen)
+  const t4 = SETS.filter((x) => !x.raid && tierOfSet(x) === 4).flatMap((x) => Object.keys(x.pieces).map((c) => `${x.id}_${c}`)).filter((id) => EQUIP_BY_ID[id] && !have.has(id));
+  if (t4.length) { const id = t4[Math.floor(rnd() * t4.length) % t4.length]; items.push({ kind: 'warlord', id, label: EQUIP_BY_ID[id].n, rarity: 'episch', fresh: true }); }
 
   // Freischaltungen: Segel (1.), Verzierung (2.), danach 25 % für noch Fehlendes
   const wantSail = !o.owned.sails.includes(sailId(f)), wantOrn = !o.owned.ornaments.includes(ornamentId(f));

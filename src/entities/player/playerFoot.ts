@@ -12,7 +12,7 @@ import type { DecalHandle } from '../../render/decals';
 import { makeDashLatch, resolveDash, sweepMove, type SweepResult } from '../../combat/sweep';
 import { mintEntityId, type EntityId } from '../../sim/entityId';
 import type { DashIntent } from '../../sim/intents';
-import { damageFactor, dangerOfLevel } from '../../data/balanceConfig';
+import { PLAYER_HIT_CAP, damageFactor, dangerOfLevel } from '../../data/balanceConfig';
 
 const WALK = 2.4;
 const RUN = 6.2;
@@ -227,6 +227,8 @@ export class PlayerFoot implements PlayerTarget {
     if (Math.random() < this.dodgeChance) return 'dodged';
     // Angreifer ohne Gegner-Objekt (Verbände, Geschütze der Festungen) zählen als Stufe 4
     dmg *= damageFactor(elemental ? this.gearResist : this.gearArmor, from ? dangerOfLevel(from.level) : 4, this.reduce + this.gearReduce);
+    // nie durch einen einzigen Treffer tot: ein Treffer nimmt höchstens 40 % der Lebenspunkte (Block und Parade zählen davon noch ab)
+    dmg = Math.min(dmg, this.maxHp * PLAYER_HIT_CAP);
     if (this.state === 'block') {
       // Von vorn? Dann Block bzw. perfekte Parade
       const facing = Math.sin(this.yaw) * -dirX + Math.cos(this.yaw) * -dirZ;

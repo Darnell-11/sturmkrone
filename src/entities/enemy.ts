@@ -10,6 +10,7 @@ import {
   SpriteMaterial,
   Vector3,
 } from 'three';
+import { DANGER_POISE, RAID_BOSS_HIT_CAP, dangerOfLevel, enemyArmorRating, mitigation } from '../data/balanceConfig';
 import { BOSS, ENEMIES, enemyScale, type EnemyAttack, type EnemyDef, type EnemyKind } from '../data/combat';
 import { randomLook, type NpcRole } from '../data/characterParts';
 import { gearForNpc, gearFromSet } from '../data/gear';
@@ -37,6 +38,8 @@ const CALM: ReadonlySet<EnemyState> = new Set(['idle', 'patrol', 'suspicious']);
 
 /** Was das Kampfsystem einem Gegner zur Verfügung stellt */
 export interface EnemyWorld {
+  /** Waffenstufe der Spielfigur (data/items.ts WEAPONS[…].tier): so gut durchschlägt sie die Rüstung der Gegner */
+  attackTier?: number;
   playerPos: Vector3 | null;
   playerActive: boolean;
   /** Darf dieser Gegner jetzt angreifen? (höchstens zwei gleichzeitig) */
@@ -70,6 +73,8 @@ export interface HitInfo {
   src?: EntityId;
   /** Fernkampf (Geschosse, Fähigkeiten): braucht 130 % Bedrohung, um das Ziel eines Bosses abzulösen */
   ranged?: boolean;
+  /** Waffenstufe des Angreifers (1 … 5) für die Rüstungskurve; fehlt sie, gilt `EnemyWorld.attackTier` */
+  tier?: number;
 }
 
 const EXCL_TEX = (() => {
@@ -226,7 +231,10 @@ export class Enemy {
   }
 
   constructor(assets: CharacterAssets, readonly kind: EnemyKind, readonly level: number, faction: Faction, x: number, z: number, outline: boolean, readonly name?: string, readonly power?: FactionId, opts: { def?: EnemyDef } = {}) {
-    this.def = opts.def ?? ENEMIES[kind];
+    // Haltung wächst mit der Gefahrenstufe (Bosse und Raid-Gegner haben eigene, schon hohe Werte)
+    const baseDef = opts.def ?? ENEMIES[kind];
+    const pf = baseDef.boss || baseDef.raid ? 1 : DANGER_POISE[dangerOfLevel(level)];
+    this.def = pf === 1 ? baseDef : { ...baseDef, poise: Math.round(baseDef.poise * pf) };
     this.threat = this.def.raid ? new ThreatTable() : null;
     const sc = enemyScale(level);
     this.maxHp = this.hp = Math.round(this.def.hp * sc.hp);
@@ -376,10 +384,14 @@ export class Enemy {
       }
     }
     // Rüstung der Raid-Gegner und Aura „Bollwerk“ eines Hauptmanns in der Nähe
-    const soak = (1 - (this.def.armor ?? 0)) * this.auraTaken;
+    // Rüstung nach Gefahrenstufe (asymptotische Kurve, data/balanceConfig.ts): die Waffenstufe des Angreifers entscheidet, wie viel durchkommt
+    const tier = h.tier ?? w?.attackTier ?? 1;
+    const soak = (1 - mitigation(enemyArmorRating(this.kind, this.level), tier)) * (1 - (this.def.armor ?? 0)) * this.auraTaken;
     if (soak !== 1) h = { ...h, dmg: h.dmg * soak };
     // Break: Schwachstelle offen, mehr Schaden
     if (this.brokenT > 0) h = { ...h, dmg: h.dmg * BOSS.breakDmg };
+    // Anti-One-Shot: ein Raid-Endboss verliert durch einen einzelnen Treffer höchstens 8 % seiner Lebenspunkte
+    if (this.def.raid === 'boss') h = { ...h, dmg: Math.min(h.dmg, this.maxHp * RAID_BOSS_HIT_CAP) };
     if (h.src && this.threat) this.threat.add(h.src, h.dmg, { ranged: !!h.ranged });
     // Schildträger: Angriffe von vorn prallen ab (außer schwere)
     if (this.def.frontBlock && !h.heavy && this.state !== 'stagger') {

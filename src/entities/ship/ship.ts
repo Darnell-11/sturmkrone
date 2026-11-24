@@ -1,5 +1,6 @@
 import { updateClothFlag } from '../../render/flagCloth';
 import { CircleGeometry, Color, Euler, MathUtils, Mesh, MeshBasicMaterial, Vector3, type Object3D, type Scene } from 'three';
+import { hullArmorOf, mitigation, penTierOf } from '../../data/balanceConfig';
 import { AMMO, SEA_SPEED, SHIP_CLASSES, type AmmoId, type ShipClass, type ShipLook } from '../../data/ships';
 import { troopCapacity } from '../../data/crewTiers';
 import { buildShip, CABIN_WINDOW, GLOW_LAMP, type ShipModel } from './shipBuilder';
@@ -82,6 +83,10 @@ export class Ship {
   canDisable = false;
   /** Auch der Gnadenstoß versenkt es nicht (Legenden, Marine-Kommandoschiffe, die zwei größten Klassen): nur Entern beendet den Kampf */
   noKill = false;
+  /** Durchschlag der eigenen Kanonen (Stufe 1 … 5): Klasse und Kanonen-Ausbau (`penTierOf`); Game setzt ihn für das Spielerschiff neu */
+  penTier = 1;
+  /** Rumpf-Panzerung der Klasse (data/balanceConfig.ts `HULL_ARMOR`) */
+  get hullArmor() { return hullArmorOf(SHIP_CLASSES.indexOf(this.cls)); }
   /** Moral der Mannschaft als Wirksamkeit 0,55 … 1 (Sold nicht gezahlt = Crew arbeitet langsamer; core/economyEngine.ts `moraleEfficiency`) */
   moraleK = 1;
   /** Vorläufig: das eigene Schiff nimmt keinen Schaden, solange die Spielfigur nicht am Steuer steht (Landgang, Raids, Entern) */
@@ -122,6 +127,7 @@ export class Ship {
   /** hero: Spielerschiff – bekommt Laternenlichter und rechnet die Segel-Normalen jedes Bild neu */
   constructor(private scene: Scene, tier: number, public look: ShipLook, readonly faction: 'pirat' | 'marine', hullBonus = 0, private hero = false) {
     this.cls = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier))];
+    this.penTier = penTierOf(this.cls.rank);
     this.entityId = mintEntityId('ship');
     this.sim = createShipSim(this.entityId, this.cls.hp + hullBonus, this.cls.hp, this.cls.crew, hero ? troopCapacity(tier) : 0);
     this.model = buildShip(this.cls, look, hero);
@@ -163,6 +169,7 @@ export class Ship {
     glowHub.removeOwner(this);
     disposeObject(this.model.group);
     this.cls = SHIP_CLASSES[tier];
+    this.penTier = penTierOf(this.cls.rank);
     this.look = look;
     // Segel-HP und Crew-Höchstwerte folgen der neuen Klasse, die Anteile bleiben erhalten
     const fresh = createShipSim(this.entityId, this.cls.hp + hullBonus, this.cls.hp, this.cls.crew, this.hero ? troopCapacity(tier) : 0);
@@ -276,12 +283,14 @@ export class Ship {
    * Schaden mit Munitionsart; liefert den Rumpfschaden. `zone` 'sail' = die Kugel traf das Tuch (Segel-HP sinken, Rumpf kaum),
    * 'hull' = Rumpf. Kettenkugeln zerfetzen Segel in beiden Zonen am stärksten.
    */
-  damage(base: number, ammo: AmmoId, hitLocal: Vector3 | null, zone: 'hull' | 'sail' = 'hull'): number {
+  damage(base: number, ammo: AmmoId, hitLocal: Vector3 | null, zone: 'hull' | 'sail' = 'hull', pen = 1): number {
     if (!this.alive || this.unsinkable) return 0;
     // Enterphase: ein weiterer Treffer ist der Gnadenstoß (bei Schiffen, die nie untergehen, wirkungslos: nur Entern)
     // (die ersten 2 s zählen nicht: Kugeln derselben Breitseite, die noch fliegen, sind kein neuer Treffer)
     if (this.disabled) return this.disabledFor < 2 ? 0 : finishingBlow(this.sim, this.noKill) ? base : 0;
     if (this.shield > 0) base *= 1 - this.shieldK;
+    // Rumpf-Panzerung: der Durchschlag des Angreifers (Klasse, Kanonen-Ausbau) entscheidet; das Tuch hat keine Panzerung (Segel zerschießen lohnt)
+    if (zone === 'hull') base *= 1 - mitigation(this.hullArmor, pen);
     const a = AMMO[ammo];
     const r = applyDamage(this.sim, base, a, zone);
     const hullDmg = r.hull;

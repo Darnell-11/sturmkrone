@@ -373,7 +373,7 @@ export class Menus {
     const rows = p.items.map((it) => {
       const r = RARITY[it.rarity];
       const what = it.kind === 'seal' || it.kind === 'shard' ? `${it.amount ?? 1} × ${it.label}` : it.kind === 'gold' ? `${fmtInt(it.amount ?? 0)} Gold` : it.kind === 'xp' ? `${fmtInt(it.amount ?? 0)} Erfahrung` : it.label;
-      const tag = it.kind === 'sail' ? 'Segel (dauerhaft)' : it.kind === 'ornament' ? 'Verzierung (dauerhaft)' : it.kind === 'gear' ? 'Ausrüstung' : it.kind === 'seal' ? 'Siegel (zum Schmieden)' : it.kind === 'shard' ? 'Material' : it.kind === 'gold' ? 'Gold' : 'Erfahrung';
+      const tag = it.kind === 'sail' ? 'Segel (dauerhaft)' : it.kind === 'ornament' ? 'Verzierung (dauerhaft)' : it.kind === 'gear' ? 'Ausrüstung' : it.kind === 'warlord' ? 'Kriegsherren-Beute (Stufe 4)' : it.kind === 'seal' ? 'Siegel (zum Schmieden)' : it.kind === 'shard' ? 'Material' : it.kind === 'gold' ? 'Gold' : 'Erfahrung';
       return `<div class="slot crew" style="--c:${r.col}"><div class="slot-head"><b style="color:${r.col}">${r.mark} ${esc(what)}</b><span>${esc(tag)}</span></div>${it.fresh ? '' : '<div class="meta soft">Schon vorhanden – in Beutemarken getauscht.</div>'}</div>`;
     }).join('');
     this.open(

@@ -55,7 +55,7 @@ import { IDLE_MUSIC, type MusicContext } from '../audio/musicDirector';
 import type { MusicSector } from '../data/musicTracks';
 import { FACTIONS, FACTION_IDS, STANCE_LABEL, STANDING_EVENTS, borderDistance, clampStanding, marineStance, sectorAt, type FactionId } from '../data/factions';
 import { AMMO_UNLOCK, GOODS, GOOD_BY_ID, UPKEEP, bagMax, cargoCap, emptyEconomy, profileOf, type EconomyState, type GoodId } from '../data/economy';
-import { buyGood, cargoUsed, decayHeat, eqPriceOf, inspectCargo, marketAt, marketPrice, moraleEfficiency, quoteBuy, quoteSell, recordLedger, roleOf, sellGood, stepUpkeep, tariffOf, trendOf, upkeepOf, warCargo, yardRepairCost, type MarketSite, type Tariff } from './economyEngine';
+import { applySalvage, buyGood, cargoUsed, rollSalvage, decayHeat, eqPriceOf, inspectCargo, marketAt, marketPrice, moraleEfficiency, quoteBuy, quoteSell, recordLedger, roleOf, sellGood, stepUpkeep, tariffOf, trendOf, upkeepOf, warCargo, yardRepairCost, type MarketSite, type Tariff } from './economyEngine';
 import { REP, applyOutcome, battleOutcome, blueprintDiscount, emptyReputation, harborDiscount, hasService, honorTitle, isPeaceful, repTier } from '../data/reputation';
 import type { BattleMark, BattleResult } from '../naval/naval';
 import { createRaidContext } from '../raid/raidSession';
@@ -66,7 +66,7 @@ import { OccupationBanner } from '../ui/occupationBanner';
 import { OccupationSystem } from './occupationSystem';
 import { emptyUnlocks } from '../raid/occupation';
 import { SHARD_NAME } from '../data/crafting';
-import { TIER_DEFS, tierOfRank, type Tier } from '../data/balanceConfig';
+import { TIER_DEFS, penTierOf, tierOfRank, type Tier } from '../data/balanceConfig';
 import { UPGRADE_RECIPE, WEAPON_RECIPE, craftCheck, paySeals, payRecipe, payWeapon, sealTotal, recipeOf, sealsOf, shopGate, weaponCraftCheck, type Recipe, type SealPurse } from '../data/crafting';
 import type { PersonalLoot } from '../raid/raidLoot';
 import { mintEntityId, type EntityId } from '../sim/entityId';
@@ -278,6 +278,7 @@ export class Game {
         if (e.hunter) this.payBountyDown(e.power, 120);
         else if (e.power !== 'marine') this.shiftStanding(e.power, REP.sinkOutside);
       }
+      if (!e.companion) this.salvageShip(e, false);
       if (e.legendId) { this.defeatLegend(e.legendId, false); return; }
       if (e.ghost && Math.random() < 0.4) this.dropTrinket('selten', 0.15);
       // Seegefechte sind seltener geworden – dafür zählt jedes einzelne mehr
@@ -302,6 +303,7 @@ export class Game {
       if (e.hunter && e.power) this.payBountyDown(e.power, 120);
       this.addLoyalty(this.save.crew.party, 4);
       this.questEvent({ type: 'board' });
+      if (!e.companion) this.salvageShip(e, true);
       // Legenden: genau ein Sieg (früher zählte Entern zusätzlich als „versenkt“ – und damit als Revanche)
       if (e.legendId) { this.defeatLegend(e.legendId, true); return; }
       if (e.ghost && Math.random() < 0.5) this.dropTrinket('selten', 0.2);
@@ -802,11 +804,13 @@ export class Game {
     // Stilbonus der Waffenlinie: Foki laden Faji schneller nach, Kampfhandschuhe treffen öfter voll
     if (this.world.faji) this.world.faji.extraRegen = st.fajiRegen;
     if (this.world.combat) this.world.combat.critChance = st.crit;
+    if (this.world.combat) this.world.combat.attackTier = WEAPONS[weaponEq(gear)]?.tier ?? 1;
     const nav = this.world.naval;
     if (nav) {
       nav.playerLevel = lvl;
       nav.playerFaction = this.save.player.faction;
       nav.playerRank = rankIndex(this.save.player.fame);
+      this.world.ship.penTier = penTierOf(SHIP_CLASSES[this.save.ship.tier].rank, up.can);
       nav.canDmg = (12 + lvl * 1.4) * (1 + this.save.ship.tier * 0.06) * (1 + up.can * SHIP_UPGRADES.can.perLevel) * (has('bruno') ? 1.2 : 1) * (1 + (tb.cannon ?? 0));
       nav.reloadMult = has('gun') ? 0.7 : 1;
     }
@@ -1638,6 +1642,7 @@ export class Game {
         case 'gold': s.player.gold += it.amount ?? 0; break;
         case 'xp': this.grantXp(it.amount ?? 0, 0); break;
         case 'gear': { const d = EQUIP_BY_ID[it.id]; if (d) { grantLoot(s.gear, d); if (!u.bossLoot.includes(it.id)) u.bossLoot.push(it.id); } break; }
+        case 'warlord': { const d = EQUIP_BY_ID[it.id]; if (d) grantLoot(s.gear, d); break; }
         case 'seal': { const f = it.id.replace('seal:', '') as FactionId; u.seals[f] = Math.min(999, (u.seals[f] ?? 0) + (it.amount ?? 0)); break; }
         case 'shard': u.shards = Math.min(9999, u.shards + (it.amount ?? 0)); break;
         case 'sail': if (!u.sails.includes(it.id)) u.sails.push(it.id); break;
@@ -1646,8 +1651,6 @@ export class Game {
     }
     this.world.updatePlayer(this.displayLook(), this.activeStyle());
     this.applyPower();
-    // jede Eroberung wirft zusätzlich ein Kriegsherren-Stück (Stufe 4) ab, das es im Laden nie gibt
-    this.dropWarlord(1, 'Beute der Belagerung');
   }
 
   /** Banner oben in der Mitte: Rückeroberung (immer, solange sie droht) oder die nächste besetzte Insel in der Nähe */
@@ -2690,6 +2693,18 @@ export class Game {
     const r = sellGood(eco, site, s.meta.playTime, good, n, this.tariff().factor);
     if (r.ok) { s.player.gold += r.gold; audio.play('coin'); recordLedger(eco, site, s.meta.playTime, this.tariff().factor); this.persist(); }
     return r.message;
+  }
+
+  /** Handelsgüter eines besiegten Schiffs an Bord nehmen (begrenzt durch den freien Frachtraum); Kriegsware erhöht den Fahndungsdruck */
+  private salvageShip(e: { role: 'haendler' | 'patrouille' | 'jaeger' | 'legende'; power?: FactionId; level: number; ship: { x: number; z: number } }, boarded: boolean) {
+    const s = this.save;
+    if (!s) return;
+    const drops = rollSalvage({ role: e.role, power: e.power ?? null, level: e.level, borderDist: borderDistance(e.ship.x, e.ship.z).dist, boarded });
+    const r = applySalvage(this.eco(), drops, s.ship.tier);
+    if (!r.taken.length && !r.lost) return;
+    const txt = r.taken.map((d) => `${d.units} × ${GOOD_BY_ID[d.good].n}`).join(', ');
+    this.hud.toast(`${boarded ? 'Ladung erbeutet' : 'Treibgut geborgen'}: ${txt || 'nichts'}${r.lost > 0 ? ` · ${r.lost} Einheiten ließen sich nicht mehr verstauen (Frachtraum voll)` : ''}${r.heat > 0.5 ? ' · Kriegsware: Fahnder werden aufmerksam' : ''}`, 6);
+    this.persist();
   }
 
   /** Höchstzahl eines Verbrauchsguts im Beutel: wächst mit der Schiffsklasse (Beutekapazität) */

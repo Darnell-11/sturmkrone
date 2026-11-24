@@ -1,5 +1,39 @@
 # Was ist neu
 
+## 4.1.0 – Phase 4.1 abgeschlossen: Gegner, Bosse und Schiffe auf der Gefahrenskala, Schiffsbeute, Stresstest (24.11.2026)
+
+**Landgegner auf `DANGER 1 … 5`**
+- **Leben und Schaden** folgen jetzt `dangerScale(level)` (statt der alten linearen Formel): die erste Gegnerstufe jedes Bandes (1, 5, 9, 14, 18) trägt genau den Richtwert aus `DANGER` (Leben ×1 / 1,8 / 3 / 4,8 / 7,5, Schaden ×1 / 1,5 / 2,2 / 3,2 / 4,5), dazwischen läuft es stetig; ab Stufe 18 wächst es langsam weiter. Unterhalb von Stufe 18 weicht es kaum vom alten Verlauf ab, oben (Raid-Festungen) ist es etwas härter.
+- **Rüstung** für alle Gegner: `Enemy.takeHit` rechnet `1 − mitigation(Rüstungswert, Waffenstufe)`; der Rüstungswert ist `DANGER[Stufe].armor × Faktor der Art` (Matrose 0,5, Schildträger 1,3, Musketier 0,3, Schläger 1,0, Faji-Wirker 0,3, Hauptmann 1,1, Legende 1,3). Die Waffenstufe der Spielfigur (`CombatSystem.attackTier`, aus `WEAPONS[…].tier`) entscheidet, wie viel durchkommt: mit Stufe-1-Klinge kommen gegen einen Stufe-5-Schildträger unter 40 % Schaden an, mit Stufe 4 fast das Doppelte. Im Spiel gemessen: gleicher Treffer (100) gegen einen Hauptmann der Stufe 14: Waffenstufe 1 → 25, Stufe 5 → 63.
+- **Haltung** wächst mit der Gefahrenstufe (×1 … ×1,6, nicht für Bosse und Raid-Gegner).
+- **Kein One-Shot für die Spielfigur:** ein einzelner Treffer nimmt höchstens 40 % der Lebenspunkte (`PLAYER_HIT_CAP`; im Spiel geprüft: Schaden 99 999 → genau 40 %).
+
+**Raid-Endbosse und Hauptmänner**
+- **Hardcore-Kalibrierung** mit dem Kampfmodell (`FIGHT_MODEL`, `fightSeconds`, `surviveSeconds`): Lord-Admiral Blackwood (1 870 Basis-Leben), Generalgouverneur Van Der Berg (1 660), Großkomtur von Eisenstein (1 550), Marquis-Amiral De Valois (1 980), Schattenfürst Kurogane (1 820), Großadmiral Valken (1 445, Schaden 27 → 24). Ergebnis im Modell (Stufe-4-Satz, Stufe 35, fünf Offiziere): 100 – 110 s je Boss; Stufe-5-Satz (Boss-Set, Stufe 45): 60 – 65 s; Stufe-3-Ausrüstung unterliegt (Boss gewinnt vorher), Stufe 1 braucht über 600 s und hält keine 25 s. Wer nur draufschlägt, verliert gegen Stufe 4 deutlich (Überlebenszeit unter der Kampfdauer); wer ausweicht und pariert, gewinnt.
+- **Anti-One-Shot:** ein einzelner Treffer nimmt einem Raid-Endboss höchstens 8 % seiner Lebenspunkte (`RAID_BOSS_HIT_CAP`, nach Rüstung und Break-Bonus; im Spiel geprüft: Treffer mit Schaden 1 000 000 → 1 384 von 17 298 Leben).
+- Hauptmänner: feste Rüstung 42 → 30 % (zusätzlich zur Rüstung der Gefahrenstufe); mit Stufe-4-Satz und Crew in unter einer Minute, allein deutlich länger.
+- **Beutetabelle fest an Stufe 4/5 gebunden:** jeder Sieg gibt sicher ein Kriegsherren-Stück der Stufe 4 (noch fehlend, `kind: 'warlord'`, vorher zufälliger Wurf in `Game`), Boss-Siegel und Relikt-Splitter; die Stücke der Stufe 5 fallen mit 8 – 15 % je Platz.
+
+**Seegefecht**
+- **Rumpf-Panzerung** je Klasse (`HULL_ARMOR`: 8, 20, 38, 60, 85, 115, 150) und **Kanonen-Durchschlag** (`penTierOf`: Stufe der Klasse plus Kanonen-Ausbau/2): `Ship.damage(…, pen)` rechnet auf den Rumpf `1 − mitigation(Panzerung, Durchschlag)`, das Tuch hat keine Panzerung. Eine Schaluppe braucht gegen den Rumpf eines Linienschiffs mehr als 70 Kugeln, aber nur etwa 9 Kettenkugeln gegen sein Tuch; das Linienschiff zerlegt die Schaluppe in unter 12 Kugeln. Im Spiel geprüft: Brigg (Panzerung 20): 100 Schaden → 73 (Durchschlag 1), 89 (3), 93 (5).
+- **KI-Schiffe:** Kugelschaden `9 · dangerScale(level).dmg` (Legenden ×1,5), Nachladezeit `3,6 − 0,35 · (Stufe − 1)` s (nie unter 2,2 s), Rumpf `aiHullFactor` (gedämpft aus dem Leben-Richtwert, auch Marine-Patrouillen, Grenzschlachten und Jäger). Segel-HP bleiben bewusst unverändert (die Schwachstelle). Raid-Wachschiffe behalten ihre eigenen Rumpfwerte.
+
+**Handelswaren als Schiffsbeute**
+- Beim Versenken (65 % der Ladung) oder Entern (130 %) von Schiffen der Mächte (nicht Begleitschiffe) fallen Güter: Händler die Erzeugnisse ihrer Macht (2 – 3 Posten), Kriegsschiffe Marine-Ausrüstung oder Kriegsware, Legenden Luxusgüter; nahe einer Sektorgrenze (< 700 m) mit Glück ein Posten Kriegsware. Wertbudget 30 + 12 · Stufe Gold je Schiff (Legenden ×3). `rollSalvage`/`applySalvage` (rein, mit Würfel); die Fracht geht automatisch an Bord, begrenzt durch den freien Frachtraum (30 … 500, der Rest geht verloren, mit Hinweis). Kriegsware erhöht beim Einsammeln den Fahndungsdruck (halbe Rate).
+
+**Wirtschaft nachjustiert (Ergebnis des Stresstests)**
+- Die Handelsspannen waren zu hoch (eine Schaluppe machte mit bester Planung über 3 000 Gold/Stunde und wuchs von 300 auf über 6 900 Gold in zwei Stunden). Neu: Überschuss-Preisfaktor 0,85 (vorher 0,65), Bedarf 1,2 (vorher 1,45), Elastizität 0,7, Erholungszeit 45 Minuten Spielzeit, Luxusgüter Grundpreis 120. Ergebnis (zwei Stunden, beste Route und Menge, 5 Minuten je Fahrt): Schaluppe ≈ 970, Brigg ≈ 880, Korvette ≈ 700 Gold/Stunde netto, Fregatte und größer ohne Gewinn (Sold): Handel trägt keine Kriegsflotte. Preis-Pfeil „billig/teuer“ ab ±10 %.
+
+**Abnahme**
+- `tests/economyBalance.test.ts` (22 Fälle): Gefahrenskala, Soldaten und Hauptleute (Kampfdauer, keine One-Shots), alle sechs Bosse gegen Stufe 1/3/4/5, Anti-One-Shot, Beutetabelle, Schiffs-Panzerung, KI-Schiffe, Schiffsbeute (Frachtraum, Kriegsware, Wertgrenzen), Sold von Rang 0 bis 9, Kauf-Tore, Munitions- und Reparaturpreise, Handel über zwei Stunden, Sättigung.
+- **Playwright** (Dev-Server, echtes Spiel, ohne Konsolenfehler und -warnungen): Munitionsmeister in der Werft (Freischalten, Tor „Ansehen“ bei Brandkugeln), Kontor auf Desktop und im 390-px-Handyformat (kein seitliches Überlaufen, Bilder in `qa_tmp/p41_*.png`), Kompendium (Stufe, Rang, Ruf, Rezept), Landgefecht an Deck (Rüstung, 40-%-Grenze, Treffer), Boss-Anti-One-Shot, Seegefecht (Breitseiten, Panzerung, Segel zerschossen, Schiffsbeute: „Treibgut geborgen: 1 × Stoffe, 1 × Luxusgüter“).
+
+**Offene Grenzen**
+- Das Kampfmodell ist ein Modell (Treffer je Sekunde, Anteil getroffener Zeit, Beitrag der Offiziere): die echte Kampfdauer muss in längeren Spielstunden gegengeprüft werden, vor allem Fähigkeiten und Truppen. Kein Handy, keine Dauerspiel-Messung. Der Seegefecht-Beuteweg wurde über den Spiel-Haken (`onShipSunk`) geprüft, nicht über einen vollständig ausgespielten Untergang. Teile der Wirtschaftswerte aus 3.2.0 (Spanne, Elastizität) sind oben neu gesetzt.
+
+**Technik (für Entwickler)**
+- `data/balanceConfig.ts`: `dangerScale`, `DANGER_POISE`, `ENEMY_ARMOR_K`, `enemyArmorRating`, `RAID_BOSS_HIT_CAP`, `PLAYER_HIT_CAP`, `HULL_ARMOR`, `penTierOf`, `aiCannon`, `aiHullFactor`, `FIGHT_MODEL`, `fightSeconds`, `surviveSeconds`. `core/economyEngine.ts`: `rollSalvage`, `applySalvage`, `sellK`. `Ship.penTier/hullArmor`, `HitInfo.tier`, `EnemyWorld.attackTier`, `Game.salvageShip`.
+
 ## 3.2.0 – Ökonomie: Unterhalt, Regionalhandel, Tarife (24.11.2026)
 
 **Lücke aus 3.1.0 geschlossen: Spezialmunition**
@@ -15,7 +49,7 @@
 
 **Regionalhandel (`data/economy.ts`, `core/economyEngine.ts`)**
 - 17 Handelswaren (Rohstoffe, Waren, Luxus, Kriegsware) mit Grundpreis und Platzbedarf. Profile: Nordwacht (Kanonenstahl, Werkzeuge), Glutring (Schwefel, Obsidian, Schmiedekohle), Niederlande (Gewürze, Stoffe, Luxusgüter), England (Tuch, Tee, Marine-Ausrüstung), Frankreich (Wein, Seide, Fechtklingen), dazu Deutschland, Kurogane und Marine; Ankerglück ist ein ehrlicher Freihafen ohne Spezialität. Eine Insel vereinigt Region und Macht.
-- **Elastizität:** Preis = Grundpreis · Gleichgewichtsfaktor (Überschuss 0,65, normal 1, Bedarf 1,45) · (Vorrat/Gleichgewichtsvorrat)^−0,55, begrenzt auf 0,45 … 2,6. Jedes gekaufte Stück verteuert, jedes verkaufte verbilligt die Ware; Händlerspanne 5 %. Die Vorräte fließen mit der Spielzeit zum Gleichgewicht zurück (τ = 30 Minuten), ohne Hintergrundrechnung (lazy in `marketAt`). Hin und Zurück im selben Hafen kostet immer Gold (auch mit Rabatt).
+- **Elastizität (Werte in 4.1.0 nachjustiert):** Preis = Grundpreis · Gleichgewichtsfaktor (Überschuss 0,65, normal 1, Bedarf 1,45) · (Vorrat/Gleichgewichtsvorrat)^−0,55, begrenzt auf 0,45 … 2,6. Jedes gekaufte Stück verteuert, jedes verkaufte verbilligt die Ware; Händlerspanne 5 %. Die Vorräte fließen mit der Spielzeit zum Gleichgewicht zurück (τ = 30 Minuten), ohne Hintergrundrechnung (lazy in `marketAt`). Hin und Zurück im selben Hafen kostet immer Gold (auch mit Rabatt).
 - **Kriegs- und Schmuggelware** (Waffenkisten, Schießpulver, Medizin): Aufschlag nahe Sektorgrenzen (< 700 m), auf besetzten Inseln und in Festungen (höchstens ×2,5). Handel zu Kriegspreisen erhöht den **Fahndungsdruck** (sinkt mit der Zeit); beim Anlegen in einem Hafen einer Macht kann mit Kriegsware an Bord kontrolliert werden (5 % + Druck/150, Marine ×1,5): alles beschlagnahmt, Strafe ein Viertel des Werts, Ansehen −6; ab Druck 60 rücken Kopfgeldjäger aus.
 - **Frachtraum** je Klasse: 30, 60, 100, 160, 240, 340, 500 Platz; Waren haben Platzbedarf (0,5 … 2).
 
