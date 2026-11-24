@@ -109,6 +109,12 @@ export const ISLAND_PROFILES: Record<string, MarketProfile> = {
   schattenbucht: { produce: ['waffenkisten', 'schiesspulver', 'obsidian'], demand: ['luxusgueter', 'seide', 'wein'], blackMarket: true },
   drachenwirbel: { produce: ['schwefel', 'obsidian'], demand: ['medizin', 'hartholz'] },
   blutmondriff: { produce: ['fechtklingen', 'waffenkisten'], demand: ['schiesspulver', 'medizin', 'wein'] },
+  // Mega-Inseln (4.3.6): große Handelsplätze ihrer Macht
+  kronenklippe: { produce: ['tuch', 'marineausruestung', 'tee'], demand: ['kanonenstahl', 'wein', 'gewuerze', 'schmiedekohle'] },
+  goudenstad: { produce: ['gewuerze', 'luxusgueter', 'stoffe', 'seide'], demand: ['hartholz', 'kanonenstahl', 'medizin', 'werkzeuge'] },
+  drachenamboss: { produce: ['kanonenstahl', 'werkzeuge', 'schmiedekohle', 'waffenkisten'], demand: ['tuch', 'tee', 'wein', 'medizin'] },
+  chateausoleil: { produce: ['wein', 'seide', 'fechtklingen', 'luxusgueter'], demand: ['hartholz', 'tee', 'schwefel', 'kanonenstahl'] },
+  kuroganeschlund: { produce: ['schwefel', 'obsidian', 'medizin'], demand: ['luxusgueter', 'werkzeuge', 'stoffe', 'wein'] },
   // Unkartierte Geheim-Inseln
   fluesterlagune: { produce: ['waffenkisten', 'schiesspulver', 'medizin'], demand: ['luxusgueter', 'seide', 'gewuerze'], blackMarket: true },
   versunkenekrone: { produce: ['obsidian'], demand: ['medizin', 'werkzeuge'] },

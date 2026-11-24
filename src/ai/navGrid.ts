@@ -44,7 +44,8 @@ export class NavGrid {
 
   constructor(readonly island: WalkIsland) {
     // große Länder (Festland) mit gröberem Raster: sonst über eine Million Zellen und ein spürbarer Ruck beim Landgang
-    this.cell = island.r > 150 ? 1 : 0.6;
+    // Mega-Inseln (über 250 m Radius): 1,6 m, sonst wären es über eine Million Zellen
+    this.cell = island.r > 250 ? 1.6 : island.r > 150 ? 1 : 0.6;
     let cmax = 0;
     for (let i = 0; i < 64; i++) cmax = Math.max(cmax, coastK(island.coast, (i / 64) * Math.PI * 2));
     const R = island.r * cmax * 1.06 + 2;

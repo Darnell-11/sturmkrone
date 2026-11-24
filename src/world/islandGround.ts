@@ -42,8 +42,11 @@ export interface WalkIsland extends IslandShape {
   lift?: (lx: number, lz: number) => number;
   /** Eingeebnete Standflächen (Welt) unter Bauten; Gelände-Mesh wird nach dem Aufbau der Insel nachgeführt */
   pads?: Pad[];
-  /** Standfläche anmelden: Mitte (Welt), Breite, Tiefe, Drehung, Übergangsbreite; gibt die Höhe der Fläche zurück (setzt die Welt) */
-  addPad?: (x: number, z: number, w: number, d: number, yaw: number, blend?: number, round?: boolean) => number;
+  /**
+   * Standfläche anmelden: Mitte (Welt), Breite, Tiefe, Drehung, Übergangsbreite; gibt die Höhe der Fläche zurück (setzt die Welt). `fixedY`: feste Höhe statt
+   * des Mittels der Grundfläche (Sohle einer Spalte, 4.3.6).
+   */
+  addPad?: (x: number, z: number, w: number, d: number, yaw: number, blend?: number, round?: boolean, fixedY?: number) => number;
 }
 
 function vnoise(x: number, z: number, seed: number): number {

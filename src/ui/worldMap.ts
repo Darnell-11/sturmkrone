@@ -7,6 +7,7 @@ import { fmtDist } from '../core/format';
 import { clampView, centerOn, dragEnd, dragMove, dragStart, fitAll, newDrag, panByPixels, screenToWorldInto, zoomAtPoint, zoomOf, LABEL_ZOOM } from './mapView';
 import { MAP_LAYERS, defaultLayers, drawWorldMap, type MapDrawState, type MapLayers } from './worldMapDraw';
 import { isTravelPort, type TravelQuote } from '../world/fastTravel';
+import { MEGA_BY_ID, isMegaId } from '../data/megaIslands';
 
 export interface WorldMapHost {
   data(): WorldMapData;
@@ -92,7 +93,9 @@ export class WorldMapScreen {
     this.zoomEl = this.root.querySelector('.wmap-zoom')!;
     this.st = { selected: null, layers: this.layers, fog: this.fog, zoom: 1 };
     const d = this.h_.data();
-    this.root.querySelector('.wmap-regions')!.innerHTML = d.regions.map((r) => `<button class="mini" data-a="region" data-v="${r.id}" style="--c:${r.color}">${esc(r.name)}</button>`).join('');
+    // Sprungziele: Ankerglück und die sechs Mega-Inseln (die Haupt-Orientierungspunkte der Karte, 4.3.6)
+    const jumps = d.islands.filter((i) => i.id === 'ankerglueck' || i.mega);
+    this.root.querySelector('.wmap-regions')!.innerHTML = jumps.map((i) => `<button class="mini" data-a="jump" data-v="${i.id}" style="--c:${i.factionId ? FACTIONS[i.factionId].color : '#E3B04B'}">${esc(i.name)}</button>`).join('');
     this.resize();
     this.fitAll();
     this.root.addEventListener('click', (e) => this.onClick(e));
@@ -113,7 +116,20 @@ export class WorldMapScreen {
     this.cv.width = this.fog.width = Math.round(this.w * this.dpr);
     this.cv.height = this.fog.height = Math.round(this.h * this.dpr);
     clampView(this.view, this.w, this.h);
+    this.measureChrome();
     this.dirty = true;
+  }
+
+  /** Flächen der Bedienelemente über der Karte merken (die Karte setzt dort keine Namen); nur bei Größenänderung, nie je Bild */
+  private measureChrome() {
+    const base = this.root.getBoundingClientRect();
+    const out: number[] = [];
+    this.root.querySelectorAll<HTMLElement>('.wmap-top h2, .wmap-top button, .wmap-layers button, .wmap-legend, .wmap-hint').forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) return;
+      out.push(r.left - base.left, r.top - base.top, r.right - base.left, r.bottom - base.top);
+    });
+    this.st.chrome = out;
   }
 
   private fitAll() { fitAll(this.view, this.w, this.h); this.dirty = true; }
@@ -154,9 +170,9 @@ export class WorldMapScreen {
         this.dirty = true;
         break;
       }
-      case 'region': {
-        const r = d.regions.find((x) => x.id === el.dataset.v);
-        if (r) { this.view.scale = Math.min(this.w, this.h) / 2 / (r.r * 1.15); centerOn(this.view, this.w, this.h, r.x, r.z); this.dirty = true; }
+      case 'jump': {
+        const i = d.islands.find((x) => x.id === el.dataset.v);
+        if (i) { centerOn(this.view, this.w, this.h, i.x, i.z, i.mega ? 2.6 : 3.2); this.sel = i.id; this.note = ''; this.showInfo(); this.dirty = true; }
         break;
       }
       case 'closeinfo': this.sel = null; this.note = ''; this.showInfo(); this.dirty = true; break;
@@ -256,13 +272,16 @@ export class WorldMapScreen {
     const ownerLine = owner
       ? `<p class="small" style="color:${owner.color}">⚑ <b>${esc(owner.name)}</b>${i.exclave ? ' · Kolonie in fremdem Gewässer' : ''}${i.marine ? ` · Haltung zu dir: <b>${STANCE_LABEL[marineStance(stand)]}</b>${marineStance(stand) === 'verbuendet' ? ' (nicht angreifbar)' : marineStance(stand) === 'feindlich' ? ' (Garnison greift an)' : ''}` : ''}</p>`
       : '<p class="small soft">⚑ Unabhängig und neutral.</p>';
+    // Mega-Inseln: Beiname, umkämpfte Bezirke und Insel-Kommandant
+    const mm = isMegaId(i.id) ? MEGA_BY_ID[i.id] : null;
+    const megaLine = mm ? `<p class="small" style="color:#E3B04B">★ <b>${esc(mm.title)}</b> · Kampf-Bezirke: ${mm.districts.map((x) => esc(x.name)).join(', ')} · Kommandant: <b>${esc(mm.commander.name)}</b></p>` : '';
     const block = d.blockaded?.(i.id) ? '<p class="small" style="color:#FF8A6A">⚓ <b>Blockade</b> vor dem Hafen: alle Preise doppelt, keine Schnellreise.</p>' : '';
     const note = this.note ? `<p class="small" style="color:#FFB070" role="status">${esc(this.note)}</p>` : '';
     this.info.innerHTML = known
       ? `<button class="icon-btn" data-a="closeinfo" aria-label="Schließen">✕</button><h3 class="fell">${esc(i.name)}</h3>
          <p class="small soft">${KIND_LABEL[i.kind]}${region ? ` · ${esc(region.name)}` : ''}${i.level ? ` · Stufe ${i.level}` : ''} · ${fmtDist(dist)} entfernt</p>
-         ${ownerLine}${occLine}${block}<p class="small">${esc(i.info)}</p>${i.boss ? `<p class="small">☠ <b>${esc(i.boss)}</b></p>` : ''}${mk ? `<p class="small">${mk === 'quest' ? '<b>!</b> Hier wartet ein Auftrag.' : '<b>?</b> Hier kannst du einen Auftrag abgeben.'}</p>` : ''}${isTravelPort(i.kind) ? this.goodsLine(i) + this.travelHtml(i) : ''}${note}`
-      : `<button class="icon-btn" data-a="closeinfo" aria-label="Schließen">✕</button><h3 class="fell">Unentdeckte Insel</h3><p class="small soft">Nur ein schemenhafter Umriss. Segle bis auf wenige Kilometer heran – oder lege in einem Hafen in der Nähe an –, um sie zu kartieren.</p>${region ? `<p class="small soft">Liegt im Meer „${esc(region.name)}“ · ${fmtDist(dist)} entfernt.</p>` : `<p class="small soft">${fmtDist(dist)} entfernt.</p>`}`;
+         ${megaLine}${ownerLine}${occLine}${block}<p class="small">${esc(i.info)}</p>${i.boss ? `<p class="small">☠ <b>${esc(i.boss)}</b></p>` : ''}${mk ? `<p class="small">${mk === 'quest' ? '<b>!</b> Hier wartet ein Auftrag.' : '<b>?</b> Hier kannst du einen Auftrag abgeben.'}</p>` : ''}${isTravelPort(i.kind) ? this.goodsLine(i) + this.travelHtml(i) : ''}${note}`
+      : `<button class="icon-btn" data-a="closeinfo" aria-label="Schließen">✕</button><h3 class="fell">${i.mega ? esc(i.name) : 'Unentdeckte Insel'}</h3><p class="small soft">Nur ein schemenhafter Umriss. Segle bis auf wenige Kilometer heran – oder lege in einem Hafen in der Nähe an –, um sie zu kartieren.</p>${region ? `<p class="small soft">Liegt im Meer „${esc(region.name)}“ · ${fmtDist(dist)} entfernt.</p>` : `<p class="small soft">${fmtDist(dist)} entfernt.</p>`}`;
   }
 
   /** Besetzte Inseln mit Countdown und Rückeroberungs-Warnung: immer sichtbar, nicht nur beim Antippen einer Insel */

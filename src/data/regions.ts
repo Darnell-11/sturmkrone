@@ -5,6 +5,7 @@ import { WORLD_SCALE } from './world';
 import { BORDER_FORTS, BORDERS, CITADELS, FACTIONS, borderDistance, isExclave, islandOwner, sectorAt, sectorIndexAt, type FactionId, type PowerId } from './factions';
 import type { DangerTier } from './balanceConfig';
 import { themeIslandDefs } from './openWorld';
+import { megaIslandDefs, skerryDefs } from './megaIslands';
 import { dangerTierAt, outerSeaLevel, ringAt, type RingId } from './worldRings';
 
 export type IslandKind = 'town' | 'harbor' | 'camp' | 'ruin' | 'quiet' | 'treasure' | 'lighthouse' | 'boss' | 'marinefort' | 'citadel';
@@ -52,6 +53,10 @@ export interface IslandDef {
   uncharted?: boolean;
   /** Themen-Insel (4.3B): Besitz laut data/openWorld.ts (null = herrenlos), gilt vor dem Kuchenstück */
   themePower?: PowerId | null;
+  /** Mega-Insel (4.3.6, data/megaIslands.ts): Kampf-Bezirke, Kommandant, Spalten mit Brücken */
+  mega?: boolean;
+  /** Vorgelagerte Schäre, Leuchtturm-Fels oder Riff-Fels einer Mega-Insel: keine Bewohner, keine Gegner */
+  skerry?: boolean;
 }
 
 export interface RegionDef {
@@ -219,6 +224,8 @@ for (const c of CITADELS) {
 }
 // Die 24 Themen-Inseln der offenen Welt (Phase 4.3B, data/openWorld.ts): je Kuchenstück vier, dazu vier unkartierte; fertige Weltkoordinaten
 for (const d of themeIslandDefs()) regionOfPoint(d.x, d.z).islands.push(d);
+// Die sechs Mega-Inseln (4.3.6, data/megaIslands.ts) und ihre vorgelagerten Schären, Leuchtturm-Felsen und Riff-Passagen
+for (const d of [...megaIslandDefs(), ...skerryDefs()]) regionOfPoint(d.x, d.z).islands.push(d);
 for (const r of REGIONS) {
   for (const i of r.islands) {
     i.region = r.id;

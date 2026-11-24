@@ -355,6 +355,15 @@ export interface WorldMapData {
   chartZones?: { x: number; z: number; r: number }[];
   /** Liegt eine Hafen-Blockade (Welt-Ereignis) vor dieser Insel? */
   blockaded?: (id: string) => boolean;
+  /** Seekarten-Topografie einer Insel (4.3.6): Hügel (Höhenlinien), Stege, Spalten mit Brücken */
+  topo?: (id: string) => MapTopo | undefined;
+}
+
+/** Topografie für die Seekarte: Hügel und Spalten in Inselkoordinaten, Stege in Weltkoordinaten */
+export interface MapTopo {
+  hills: readonly { x: number; z: number; r: number; h: number }[];
+  piers: readonly { ax: number; az: number; bx: number; bz: number }[];
+  rifts: readonly { kind: 'kanal' | 'lava' | 'kluft' | 'sund'; w: number; pts: readonly [number, number][]; cross: readonly [number, number][] }[];
 }
 
 /** Bildschirmposition ↔ Welt (x gespiegelt wie überall) */

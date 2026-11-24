@@ -13,7 +13,7 @@ import {
   EDGE_PUSH_MAX, EDGE_WARNING, HARD_WORLD_RADIUS, SOFT_WORLD_RADIUS, applyEdgeDrift, edgePush, edgeStrength, edgeWarningLevel, edgeZoneAt, newEdgeZone,
 } from '../src/world/stormEdge';
 import { CHUNK_SIZE, SpatialGrid, chunkCoord, chunkKey, chunkKeyAt, parseChunkKey } from '../src/world/worldGrid';
-import { LOD, STREAM, WorldStreamer, nextLevel, type StreamHost, type StreamLevel } from '../src/world/worldStreamer';
+import { LOD, STREAM, WorldStreamer, nextLevel, streamLead, type StreamHost, type StreamLevel } from '../src/world/worldStreamer';
 
 /** Zufall mit fester Folge */
 function lcg(seed: number) { let s = seed >>> 0; return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; }; }
@@ -577,10 +577,11 @@ describe('forceSyncAround: sofort fertig (Laden, Raid-Rückkehr, Schnellreise)',
       for (let i = 0; i < REAL.length; i++) {
         const dist = Math.max(0, Math.hypot(x - REAL[i].x, z - REAL[i].z) - REAL[i].r);
         const lvl = s.levelOf(i);
-        // innerhalb der festen Schwellen stimmt die Stufe immer; dazwischen entscheidet die Hysterese
-        if (dist <= STREAM.activeIn) expect(lvl).toBe(2);
+        // innerhalb der festen Schwellen stimmt die Stufe immer; dazwischen entscheidet die Hysterese (große Inseln mit Vorlauf, 4.3.6)
+        const lead = streamLead(REAL[i].r);
+        if (dist <= STREAM.activeIn + lead) expect(lvl).toBe(2);
         if (dist > STREAM.horizonOut) expect(lvl).toBe(0);
-        if (dist > STREAM.activeOut && dist <= STREAM.horizonIn) expect(lvl).toBe(1);
+        if (dist > STREAM.activeOut + lead && dist <= STREAM.horizonIn) expect(lvl).toBe(1);
       }
       expect(s.counts().building).toBe(0);
     }
@@ -629,6 +630,33 @@ describe('Daten bleiben, Darstellung kommt und geht', () => {
       for (let i = 0; i < 400; i++) { s.beginInterest(); s.addInterest(700, 0); s.update(); }
       expect(s.levelOf(0)).toBe(2);
     } finally { console.error = orig; }
+  });
+
+  it("ein Teilschritt mit 'gpu' (Textur hochgeladen) beendet das Bild, auch wenn Zeit übrig ist (4.3.6)", () => {
+    const clock = { t: 0 };
+    const f = fakeHost({ clock });
+    let gpuSteps = 0;
+    const perFrame: number[] = [];
+    let inFrame = 0;
+    const host: StreamHost = {
+      ...f.host,
+      buildActive(i) {
+        const inner = f.host.buildActive(i);
+        return (function* (): Generator<void | 'gpu', void> {
+          // drei Uploads, jeder kostet keine CPU-Zeit (die Uhr steht), dann der normale Aufbau
+          for (let k = 0; k < 3; k++) { gpuSteps++; inFrame++; yield 'gpu'; }
+          for (let r = inner.next(); !r.done; r = inner.next()) yield;
+        })();
+      },
+    };
+    const s = new WorldStreamer(host, () => clock.t);
+    WORLD.forEach((d) => s.addIsland(d));
+    for (let i = 0; i < 12; i++) { inFrame = 0; s.beginInterest(); s.addInterest(700, 0); s.update(); perFrame.push(inFrame); }
+    expect(gpuSteps).toBeGreaterThanOrEqual(3);
+    // nie zwei Uploads in einem Bild
+    expect(Math.max(...perFrame)).toBeLessThanOrEqual(1);
+    for (let i = 0; i < 400; i++) { s.beginInterest(); s.addInterest(700, 0); s.update(); }
+    expect(s.levelOf(0)).toBe(2);
   });
 });
 

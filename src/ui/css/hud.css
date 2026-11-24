@@ -498,6 +498,11 @@
 .cbt-banner h2 { margin: 0; font: 400 clamp(2.2rem, 10vw, 3.6rem)/1.05 var(--font-serif); letter-spacing: 0.04em; color: var(--brass-50); text-shadow: 0 3px 0 #000, 0 0 28px rgba(0, 0, 0, 0.7); }
 .cbt-banner p { max-width: 640px; margin: 0.3em auto 0; font: 700 1.05rem var(--font-text); letter-spacing: 0.04em; color: #e9dcc0; text-shadow: 0 2px 0 #000; }
 .cbt-banner.show { animation: bn 2.8s ease-out forwards; }
+/* Schmales Hochformat: die obere Mitte stapelt Kompass, Sektor, Bossleiste und Meldungen – die große Einblendung rückt ins untere Drittel (4.3.6) */
+@media (max-width: 600px) and (orientation: portrait) {
+  .cbt-banner { top: auto; bottom: 22%; }
+  .cbt-banner h2 { font-size: clamp(1.8rem, 8.5vw, 2.6rem); }
+}
 @keyframes bn { 0% { opacity: 0; transform: translateY(12px) scale(1.2); } 10% { opacity: 1; transform: none; } 80% { opacity: 1; } 100% { opacity: 0; } }
 .cbt-cutin { position: absolute; left: -10%; right: -10%; top: 38%; height: 5.2rem; display: grid; place-items: center; transform: skewY(-4deg) scaleX(0); background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--cc) 78%, #000) 18%, color-mix(in srgb, var(--cc) 78%, #000) 82%, transparent); }
 .cbt-cutin::before, .cbt-cutin::after { content: ''; position: absolute; left: 12%; right: 12%; height: 2px; background: linear-gradient(90deg, transparent, var(--brass-200), transparent); }

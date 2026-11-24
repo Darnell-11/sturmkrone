@@ -57,7 +57,7 @@ import { TOWN_NPCS, VILLAGE_NPC_BY_ID, VILLAGE_NPCS, type QuestDef, type TownNpc
 import { BERNSTEINSEE, REGIONS, regionAt, sectorLabel, type IslandDef, type RegionDef } from '../data/regions';
 import { IDLE_MUSIC, type MusicContext } from '../audio/musicDirector';
 import type { MusicSector } from '../data/musicTracks';
-import { FACTIONS, FACTION_IDS, STANCE_LABEL, STANDING_EVENTS, borderDistance, clampStanding, marineStance, sectorAt, type FactionId } from '../data/factions';
+import { FACTIONS, FACTION_IDS, STANCE_LABEL, STANDING_EVENTS, borderDistance, clampStanding, marineStance, sectorAt, type FactionId, type PowerId } from '../data/factions';
 import { AMMO_UNLOCK, GOODS, GOOD_BY_ID, UPKEEP, bagMax, cargoCap, emptyEconomy, profileOf, type EconomyState, type GoodId } from '../data/economy';
 import { applySalvage, buyGood, takeCargo, cargoUsed, rollSalvage, decayHeat, eqPriceOf, inspectCargo, marketAt, marketPrice, moraleEfficiency, quoteBuy, quoteSell, recordLedger, roleOf, sellGood, stepUpkeep, tariffOf, trendOf, upkeepOf, warCargo, yardRepairCost, type MarketSite, type Tariff } from './economyEngine';
 import { REP, applyOutcome, battleOutcome, blueprintDiscount, emptyReputation, harborDiscount, hasService, honorTitle, isPeaceful, repTier } from '../data/reputation';
@@ -98,6 +98,7 @@ import { crewFrac, crewPricePerHead, missingHeads, needsRepair, poolHeads, REPAI
 import { fmtDist, fmtInt } from './format';
 import { DIRECTOR, WEATHER_CELL_DEFS, WORLD_BOSSES } from '../data/seaEvents';
 import { chartLevel, chartOnLoad, chartToSave, chartsSurroundings } from '../world/mapDiscovery';
+import { MEGA_BY_ID, rollMegaLoot, type MegaId } from '../data/megaIslands';
 import { travelQuote, type TravelQuote } from '../world/fastTravel';
 import { convoyLoot, deliverConvoy } from '../world/tradeConvoys';
 import { rollWorldBossLoot } from '../naval/worldBosses';
@@ -366,6 +367,7 @@ export class Game {
     this.world.questWantsClear = (id) => !!this.save?.progress.quests.some((p) => { const st = QUEST_BY_ID[p.id]?.steps[p.step]; return st?.type === 'clear' && st.island === id; });
     this.world.onCrystal = (id) => this.awakenCrystal(id);
     this.world.onVillage = (id) => this.villageGift(id);
+    this.world.onMegaVictory = (id, name, level, commander) => this.megaVictory(id, name, level, commander);
     this.world.onRescue = () => {
       if (!this.save) return;
       this.save.progress.stats.rescued++;
@@ -1764,6 +1766,40 @@ export class Game {
     this.questEvent({ type: 'enter', island: def.id });
   }
 
+  /**
+   * Mega-Insel (4.3.6): ein geräumter Bezirk gibt eine Schatztruhe (Gold), Regionalware der Insel und mit Glück einen Relikt-Splitter; der Insel-Kommandant dazu
+   * Boss-Siegel der Macht der Insel (beim Kaiser-Atoll der des Sektors), Relikt-Splitter und mit 60 % ein Stück der Kriegsherren-Beute. Der erste Sieg über einen
+   * Kommandanten gibt ein Siegel mehr.
+   */
+  private megaVictory(id: MegaId, name: string, level: number, commander: boolean) {
+    const s = this.save;
+    if (!s) return;
+    const m = MEGA_BY_ID[id];
+    const def = this.world.islandDefs.find((i) => i.id === id);
+    const sector = sectorAt(def?.x ?? 0, def?.z ?? 0).factionId as PowerId;
+    const loot = rollMegaLoot(m, level, commander, sector, Math.random);
+    const gold = Math.round(loot.gold * this.goldMult(true));
+    s.player.gold += gold;
+    this.grantXp(loot.xp, loot.fame);
+    const goods = this.takeGoods(loot.goods);
+    const u = (s.progress.unlocks ??= emptyUnlocks());
+    u.shards = Math.min(9999, u.shards + loot.shards);
+    let sealText = '';
+    if (loot.seals) {
+      const first = !s.progress.flags[`megaboss_${id}`];
+      s.progress.flags[`megaboss_${id}`] = true;
+      const n = loot.seals.n + (first ? 1 : 0);
+      u.seals[loot.seals.power] = Math.min(999, (u.seals[loot.seals.power] ?? 0) + n);
+      sealText = ` · ${n} Boss-Siegel (${FACTIONS[loot.seals.power].name})${first ? ' · Erster Sieg!' : ''}`;
+    }
+    if (loot.warlord) this.dropWarlord(1, name);
+    audio.play(commander ? 'win' : 'treasure');
+    if (commander) this.after(() => this.overlay.showCutin(`${name} besiegt!`, '#E3B04B'), 300);
+    this.overlay.showBanner(commander ? `${name} besiegt!` : `Schatztruhe: ${name}`, `+${fmtInt(gold)} Gold · ${goods}${loot.shards ? ` · ${loot.shards} Relikt-Splitter` : ''}${sealText}`);
+    this.persist();
+    this.inventoryUi?.refresh();
+  }
+
   /** Flaschenpost: Schatzkarte zu einer ruhigen Insel */
   private findBottle() {
     const s = this.save;
@@ -2259,6 +2295,7 @@ export class Game {
       ...this.seaMapData(),
       chartZones: this.world.chartZones,
       blockaded: (id) => !!this.world.seaEvents?.director.blockadeOf(id),
+      topo: (id) => this.world.topoOf(id),
     };
   }
 

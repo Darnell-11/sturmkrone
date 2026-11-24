@@ -23,7 +23,8 @@ import { evoStats, evolutionOfTier } from '../src/data/shipEvolution';
 import { newMotion, stepMotion, windSpeedK, type MotionParams } from '../src/naval/shipMotion';
 
 const ALL = REGIONS.flatMap((r) => r.islands);
-const NEW = ALL.filter((i) => i.themePower !== undefined);
+// die 24 Themen-Inseln (4.3B); Mega-Inseln und ihre Schären (4.3.6) prüft tests/megaIslands.test.ts
+const NEW = ALL.filter((i) => i.themePower !== undefined && !i.mega && !i.skerry);
 const BP: IslandBlueprint[] = buildBlueprints(ALL, REGIONS);
 const bpOf = (id: string) => BP.find((b) => b.id === id)!;
 const POWERS: PowerId[] = ['england', 'niederlande', 'deutschland', 'frankreich', 'kurogane'];

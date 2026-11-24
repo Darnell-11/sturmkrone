@@ -1,6 +1,7 @@
 // Handgebaute Länder: Landform, Siedlungen und Bewuchs für das Festland und die neuen Inseln.
 // Alles hier sind reine Daten – neue Dörfer, Türme oder Wälder entstehen durch Einträge, nicht durch Code.
 import { THEME_SITES } from './openWorld';
+import { MEGA_SITES } from './megaIslands';
 
 /** Bauten aus world/architecture.ts */
 export type StructureType =
@@ -11,7 +12,9 @@ export type StructureType =
   | 'ruine' | 'ruinenbogen' | 'saeulen'
   | 'zaun' | 'mauer' | 'steg'
   | 'kisten' | 'fass' | 'faesser'
-  | 'brunnen' | 'laterne' | 'feld' | 'heu' | 'boot' | 'netz' | 'feuer';
+  | 'brunnen' | 'laterne' | 'feld' | 'heu' | 'boot' | 'netz' | 'feuer'
+  // Mega-Inseln (4.3.6): Brücke über Kanal, Lavaspalte oder Kluft (Länge = Spannweite, Art in `v`), Monumentalstatue, Dojo-Halle, Fahnenmast
+  | 'bruecke' | 'statue' | 'pagode' | 'fahne';
 
 export interface StructureDef {
   t: StructureType;
@@ -22,6 +25,24 @@ export interface StructureDef {
   yaw?: number;
   /** Länge in Metern (Zaun, Mauer, Steg) */
   len?: number;
+  /** Bauart (Brücke: 'stein', 'obsidian', 'holz', 'ruine', 'marmor'; Statue: Gestalt) */
+  v?: string;
+}
+
+/**
+ * Spalte durch eine Insel (Mega-Inseln, 4.3.6): Kanal mit Kaimauern, glühende Lavaspalte, Kluft oder Meeresarm. Der Boden sinkt entlang des Linienzugs
+ * (Inselkoordinaten) auf die Sohle (Kanal, Kluft, Sund unter den Meeresspiegel: das Meer füllt sie), Hindernisse sperren den Rand; nur an den Übergängen
+ * (`cross`: Anteile der Länge) bleibt der Boden stehen, und eine Brücke spannt sich darüber.
+ */
+export interface RiftDef {
+  kind: 'kanal' | 'lava' | 'kluft' | 'sund';
+  /** Breite der Sohle in Metern */
+  w: number;
+  pts: [number, number][];
+  cross: number[];
+  /** Bauart der Brücken (sonst nach Art: Kanal Holz, Lava Obsidian, Kluft und Sund Stein) */
+  bridge?: string;
+  name?: string;
 }
 
 /** Eine Siedlung oder ein einzelnes Bauwerk: Lage auf der Insel und alles, was dort steht */
@@ -68,8 +89,10 @@ export interface SiteDef {
   /** Anteil der Grasfläche (Rest ist Strand) */
   grass: number;
   clusters: ClusterDef[];
-  /** Wege als Linienzüge in Metern ab Inselmitte, mit Breite */
-  roads: { w: number; pts: [number, number][] }[];
+  /** Wege als Linienzüge in Metern ab Inselmitte, mit Breite (Belag: Erde, Pflaster, Marmor) */
+  roads: { w: number; pts: [number, number][]; surface?: 'erde' | 'stein' | 'marmor' }[];
+  /** Spalten, Kanäle und Meeresarme mit Brücken (Mega-Inseln) */
+  rifts?: RiftDef[];
   scatter: ScatterLayer[];
   /** Bewohner, die beim Landgang um die erste Siedlung schlendern */
   villagers: number;
@@ -316,4 +339,4 @@ export const SITES: Record<string, SiteDef> = {
 };
 
 // Die Siedlungen der 24 Themen-Inseln (Phase 4.3B) aus data/openWorld.ts: aus Bausteinen zusammengesetzt, Schlüssel = Insel-Kennung
-Object.assign(SITES, THEME_SITES);
+Object.assign(SITES, THEME_SITES, MEGA_SITES);

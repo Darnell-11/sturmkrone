@@ -57,7 +57,8 @@ function runDirector(seconds: number, seed = 1234, player = HOME) {
     d.update(1, P);
     for (const n of d.drain()) {
       notices.push(n.type);
-      if (n.type === 'eventStart') spawns.push({ t: d.state.t, ev: JSON.parse(JSON.stringify(n.event)), activeBefore: before.length, others: before });
+      // verglichen wird mit allem, was nach dem Schritt noch läuft (ein Ereignis, das im selben Schritt endet, gibt seinen Platz frei)
+      if (n.type === 'eventStart') spawns.push({ t: d.state.t, ev: JSON.parse(JSON.stringify(n.event)), activeBefore: before.length, others: before.filter((b) => d.active().some((e) => e.id === b.id)) });
       if (n.type === 'eventEnd') ends.push({ t: d.state.t, ev: JSON.parse(JSON.stringify(n.event)) });
     }
     counts.push(d.active().length);

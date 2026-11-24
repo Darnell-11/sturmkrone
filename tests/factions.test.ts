@@ -61,14 +61,16 @@ describe('Inselbesitz', () => {
   it('lässt Ankerglück unabhängig und gibt allen anderen Inseln einen Besitzer', () => {
     const home = ALL.find((i) => i.id === 'ankerglueck')!;
     expect(home.factionId).toBeNull();
-    for (const i of ALL) if (i.id !== 'ankerglueck' && !i.uncharted) expect(i.factionId, i.id).toBeTruthy();
+    // Ausnahme (4.3.6): das neutrale Kaiser-Atoll und seine Schären gehören niemandem
+    for (const i of ALL) if (i.id !== 'ankerglueck' && !i.uncharted && !((i.mega || i.skerry) && i.themePower === null)) expect(i.factionId, i.id).toBeTruthy();
     // unkartierte Geheim-Inseln (4.3B) sind herrenlos
     for (const i of ALL) if (i.uncharted) expect(i.factionId, i.id).toBeNull();
   });
 
   it('gibt den Glutring ganz Kurogane und Nordwacht ganz Deutschland', () => {
     for (const i of REGIONS.find((r) => r.id === 'glut')!.islands) expect(i.factionId, i.id).toBe(i.uncharted ? null : i.marine ? 'marine' : 'kurogane');
-    for (const i of REGIONS.find((r) => r.id === 'nord')!.islands) expect(i.factionId, i.id).toBe(i.uncharted ? null : i.marine ? 'marine' : i.kind === 'citadel' ? 'deutschland' : 'deutschland');
+    // Ausnahme (4.3.6): das neutrale Kaiser-Atoll liegt im Kuchenstück der Hanse, gehört aber niemandem
+    for (const i of REGIONS.find((r) => r.id === 'nord')!.islands) expect(i.factionId, i.id).toBe(i.uncharted || ((i.mega || i.skerry) && i.themePower === null) ? null : i.marine ? 'marine' : 'deutschland');
     expect(REGIONS.find((r) => r.id === 'glut')!.islands.some((i) => i.id === 'glutberg')).toBe(true);
     expect(ALL.find((i) => i.id === 'festungnordwacht')!.factionId).toBe('deutschland');
   });

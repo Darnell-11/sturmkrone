@@ -10,6 +10,7 @@ import { floraProto, Occupancy, scatterSiteSteps, type Biome, type Scatter, type
 import { hashId, seeded } from './waves';
 import { siteFrame, stegLength, stegPlacement } from './islandBlueprint';
 import { auditPlacement } from './placeAudit';
+import { buildRiftsSteps } from './megaRifts';
 
 export interface SiteBuild {
   trees: Spot[];
@@ -24,6 +25,8 @@ export interface SiteBuild {
   piers: { ax: number; az: number; bx: number; bz: number; hw: number; y: number }[];
   /** Hauptsiedlung: hier schlendern die Bewohner (Weltkoordinaten) */
   village: { x: number; z: number; r: number };
+  /** Dampf aus Lavaspalten (Weltkoordinaten) */
+  vents: { x: number; y: number; z: number }[];
 }
 
 export interface SiteOpts {
@@ -34,6 +37,8 @@ export interface SiteOpts {
   walk: WalkIsland;
   /** Bodenhöhe in Inselkoordinaten */
   hAt: (x: number, z: number) => number;
+  /** Bodenhöhe ohne Einebnungen (Ränder der Spalten); fehlt sie, gilt hAt */
+  hNat?: (x: number, z: number) => number;
   veg: Scatter;
   density: number;
 }
@@ -60,9 +65,16 @@ export function* buildSiteSteps(o: SiteOpts): Generator<void, SiteBuild> {
   const r = def.r;
   const E = (a: number) => r * coastK(walk.coast, a);
   const occ = new Occupancy();
-  const out: SiteBuild = { trees: [], bushes: [], fires: [], chimneys: [], glows: [], piers: [], village: { x: def.x, z: def.z, r: r * 0.5 } };
+  const out: SiteBuild = { trees: [], bushes: [], fires: [], chimneys: [], glows: [], piers: [], village: { x: def.x, z: def.z, r: r * 0.5 }, vents: [] };
   const clear: { x: number; z: number; r: number }[] = [];
   const block = (b: Blocker) => { walk.blockers.push(b); occ.add(b); };
+
+  // Spalten zuerst (Mega-Inseln): ihre Sohle gewinnt gegen spätere Einebnungen, ihre Sperren halten Bauten und Bewuchs fern
+  if (site.rifts?.length) {
+    const rb = yield* buildRiftsSteps({ group, def, walk, rifts: site.rifts, hAt, hNat: o.hNat ?? hAt, block, rnd });
+    out.glows.push(...rb.glows);
+    out.vents.push(...rb.vents);
+  }
 
   for (const [ci, c] of site.clusters.entries()) {
     // Mittelpunkt und Ausrichtung der Siedlung: „vorn“ zeigt von der Inselmitte weg (zur Küste); dieselbe Rechnung wie im Blueprint (Stege)
@@ -76,7 +88,7 @@ export function* buildSiteSteps(o: SiteOpts): Generator<void, SiteBuild> {
       yield;
       // Stege sind 22 m länger als in den Daten (2.9.90): weiter draußen liegt man freier und legt leichter ab.
       // Themen-Inseln (4.3B): Tore, Türme, Mauern, Kräne und Lagerhäuser tragen die Farben des Besitzers
-      const b = build(it.t, rnd, it.t === 'steg' ? stegLength(it.len) : it.len, site.themed ? def.factionId ?? null : null);
+      const b = build(it.t, rnd, it.t === 'steg' ? stegLength(it.len) : it.len, site.themed ? def.factionId ?? null : null, it.v);
       let x = cx + it.x * cs + it.z * sn, z = cz - it.x * sn + it.z * cs;
       const yaw = phi + (it.yaw ?? 0) * RAD;
       let y: number;
@@ -152,6 +164,8 @@ export function* buildSiteSteps(o: SiteOpts): Generator<void, SiteBuild> {
   // Wege: festgetretene Erde, liegt als Band auf dem Boden (Tiefenverschiebung gegen Flimmern auf der Wiese)
   if (site.roads.length) {
     const dirt = toon({ color: '#8C7450', detail: 'sand', rim: 0.1, puddles: 0.7, layer: 3, side: DoubleSide });
+    // Pflaster (Mega-Inseln) und Marmor (Sonnenpalast)
+    const paved = { stein: toon({ color: '#9A9488', detail: 'stone', rim: 0.1, puddles: 0.5, layer: 3, side: DoubleSide }), marmor: toon({ color: '#E6E0D4', detail: 'stone', rim: 0.12, puddles: 0.3, layer: 3, side: DoubleSide }) };
     for (const road of site.roads) {
       yield;
       // Punkte, die über die Küste hinausragen, an den Strand zurückholen
@@ -159,7 +173,7 @@ export function* buildSiteSteps(o: SiteOpts): Generator<void, SiteBuild> {
         const d = Math.hypot(x, z), lim = E(Math.atan2(z, x)) * 0.95;
         return d > lim ? [(x / d) * lim, (z / d) * lim] : [x, z];
       });
-      group.add(roadMesh(pts, road.w, 0, 0, hAt, dirt));
+      group.add(roadMesh(pts, road.w, 0, 0, hAt, road.surface === 'stein' || road.surface === 'marmor' ? paved[road.surface] : dirt));
       for (let i = 0; i < pts.length - 1; i++) {
         const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
         const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 2));

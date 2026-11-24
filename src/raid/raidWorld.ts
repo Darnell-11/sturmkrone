@@ -39,7 +39,7 @@ import { angleDiff } from '../core/mathUtil';
  */
 export function flattenTerrainFootprint(
   walk: WalkIsland, solo: IslandGround, padBounds: [number, number, number, number][],
-  wx: number, wz: number, w: number, d: number, yaw: number, blend = 2.4, round = false,
+  wx: number, wz: number, w: number, d: number, yaw: number, blend = 2.4, round = false, fixedY?: number,
 ): number {
   let sum = 0, n = 0;
   const c = Math.cos(yaw), sn = Math.sin(yaw);
@@ -48,8 +48,8 @@ export function flattenTerrainFootprint(
     const h = solo.islandHeight(walk, wx + lx * c + lz * sn, wz - lx * sn + lz * c, false, true);
     if (Number.isFinite(h)) { sum += h; n++; }
   }
-  if (!n) return 0;
-  const y = sum / n;
+  if (!n && fixedY === undefined) return 0;
+  const y = fixedY ?? sum / n;
   const hw = w / 2, hd = round ? w / 2 : d / 2;
   const R = Math.hypot(hw, hd) + blend;
   (walk.pads ??= []).push({ x: wx, z: wz, hw, hd, yaw, blend, y, r2: R * R, round });

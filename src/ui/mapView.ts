@@ -145,6 +145,15 @@ export class LabelPlacer {
     this.n++;
     return true;
   }
+  /** Ist das Rechteck frei (ohne es zu setzen)? */
+  free(x0: number, y0: number, x1: number, y1: number, pad = 2): boolean {
+    const r = this.r;
+    for (let i = 0; i < this.n; i++) {
+      const o = i * 4;
+      if (x0 < r[o + 2] + pad && x1 > r[o] - pad && y0 < r[o + 3] + pad && y1 > r[o + 1] - pad) return false;
+    }
+    return true;
+  }
   /** Rechteck für Tests: i-tes gesetztes (x0, y0, x1, y1) */
   at(i: number, out: number[]): number[] { const o = i * 4; out[0] = this.r[o]; out[1] = this.r[o + 1]; out[2] = this.r[o + 2]; out[3] = this.r[o + 3]; return out; }
 }

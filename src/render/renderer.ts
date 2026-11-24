@@ -103,6 +103,9 @@ export class GameRenderer {
       throw new WebGLUnavailableError();
     }
     installShaderLogFilter();
+    // Im veröffentlichten Spiel keine Shader-Prüfung beim ersten Gebrauch eines Programms (getProgramInfoLog wartet auf den Treiber: beim Tausch einer
+    // frisch gestreamten Insel bis 13 ms am Stück). In der Entwicklung bleibt sie an.
+    this.gl.debug.checkShaderErrors = !!import.meta.env?.DEV;
     // Atmosphärischer Nebel ersetzt den linearen Nebel, bevor der erste Shader übersetzt wird
     installAtmosphere();
     // ACES Filmic mit ausgewogener Belichtung (gilt auch für den Tonemapping-Effekt der Nachbearbeitung)

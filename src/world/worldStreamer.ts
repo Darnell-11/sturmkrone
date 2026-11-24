@@ -5,7 +5,7 @@
 //
 //   UNLOADED     Abstand > 4 500 m: nichts als Daten (der IslandBlueprint, 0 Objekte, 0 Zeichenaufrufe)
 //   HORIZON_LOD  Aktivierung ≤ 4 200 m, Abbau > 4 500 m: Silhouette mit Gischtlinie und Feuer (höchstens 4 Zeichenaufrufe, keine Physik)
-//   ACTIVE_HIGH  Aktivierung ≤ 1 100 m, Rückstufung > 1 300 m: die volle Insel, in Teilschritten über mehrere Bilder aufgebaut (Gelände → Bauten und
+//   ACTIVE_HIGH  Aktivierung ≤ 1 100 m, Rückstufung > 1 300 m (große Inseln früher: + `streamLead(r)`): die volle Insel, in Teilschritten über mehrere Bilder aufgebaut (Gelände → Bauten und
 //                Stege → Felsen, Bewuchs, Lichter, Schilder, Konturen), je Bild höchstens das Zeitbudget (2,5 ms), danach der Tausch in einem eigenen Bild
 //
 // Der Abstand einer Insel ist der Abstand ihrer Küste (Mitte minus Küstenradius `r`, nie unter 0) zum nächsten Interessenpunkt: Spielerschiff,
@@ -39,13 +39,19 @@ export const STREAM = {
 } as const;
 
 /**
- * Stufenwechsel mit Hysterese (reine Funktion). `cur` ist die zuletzt gewünschte Stufe, `dist` der Küstenabstand.
- * Aufwärts gilt die engere Schwelle, abwärts die weitere: an den Grenzen flattert nichts.
+ * Vorlauf großer Inseln (4.3.6): zusätzlich zur Küstenlinie wächst das ACTIVE-Fenster mit dem Radius über 150 m. Eine Mega-Insel (Radius 275 – 450 m) braucht
+ * für ihren Aufbau viel mehr Teilschritte als eine kleine; sie beginnt darum entsprechend früher und steht fertig da, lange bevor das Schiff die Küste erreicht.
  */
-export function nextLevel(cur: StreamLevel, dist: number): StreamLevel {
-  if (cur === 2) return dist <= STREAM.activeOut ? 2 : dist <= STREAM.horizonOut ? 1 : 0;
-  if (cur === 1) return dist <= STREAM.activeIn ? 2 : dist <= STREAM.horizonOut ? 1 : 0;
-  return dist <= STREAM.activeIn ? 2 : dist <= STREAM.horizonIn ? 1 : 0;
+export const streamLead = (r: number): number => Math.max(0, r - 150) * 1.2;
+
+/**
+ * Stufenwechsel mit Hysterese (reine Funktion). `cur` ist die zuletzt gewünschte Stufe, `dist` der Küstenabstand, `lead` der Vorlauf großer Inseln
+ * (`streamLead`, nur für ACTIVE_HIGH). Aufwärts gilt die engere Schwelle, abwärts die weitere: an den Grenzen flattert nichts.
+ */
+export function nextLevel(cur: StreamLevel, dist: number, lead = 0): StreamLevel {
+  if (cur === 2) return dist <= STREAM.activeOut + lead ? 2 : dist <= STREAM.horizonOut ? 1 : 0;
+  if (cur === 1) return dist <= STREAM.activeIn + lead ? 2 : dist <= STREAM.horizonOut ? 1 : 0;
+  return dist <= STREAM.activeIn + lead ? 2 : dist <= STREAM.horizonIn ? 1 : 0;
 }
 
 /** Reine, JSON-taugliche Beschreibung einer Insel für den Streamer */
@@ -75,7 +81,8 @@ export interface StreamHost {
   hideHorizon(i: number): void;
   /**
    * Detailaufbau als Iterator: je `next()` ein Teilschritt (Gelände, Bauten, Props …), der letzte beendet ihn (`done`). Die Insel bleibt dabei
-   * unsichtbar. Bricht der Streamer ab, ruft er `return()`: das Halbfertige gehört dem `finally` des Generators.
+   * unsichtbar. Bricht der Streamer ab, ruft er `return()`: das Halbfertige gehört dem `finally` des Generators. Ein Teilschritt, der `'gpu'` liefert,
+   * hat etwas auf die Grafikkarte geladen: für dieses Bild ist Schluss (die Uhr der CPU sieht diese Arbeit nicht).
    */
   buildActive(i: number): Iterator<unknown, unknown>;
   /** Der Aufbau ist fertig: die Insel sichtbar schalten, in die Listen der Welt aufnehmen */
@@ -103,6 +110,8 @@ export interface StreamStats {
 
 interface Slot {
   rec: StreamRecord;
+  /** Vorlauf des ACTIVE-Fensters (`streamLead` des Radius) */
+  lead: number;
   /** Gewünschte Stufe (Hysterese-Zustand) und tatsächlich bereitstehende Stufe */
   target: StreamLevel;
   level: StreamLevel;
@@ -153,7 +162,7 @@ export class WorldStreamer {
     const rec: StreamRecord = { id: def.id, x: def.x, z: def.z, r: def.r, chunk: chunkKeyAt(def.x, def.z, this.grid.size), pinned: !!opts.pinned };
     const i = this.grid.add(def.x, def.z, def.r);
     const level = opts.level ?? 0;
-    this.slots.push({ rec, target: opts.pinned ? 2 : level, level, dist: Infinity, job: null, ready: false, steps: 0, retryAt: 0, mark: 0, resPos: -1 });
+    this.slots.push({ rec, lead: streamLead(def.r), target: opts.pinned ? 2 : level, level, dist: Infinity, job: null, ready: false, steps: 0, retryAt: 0, mark: 0, resPos: -1 });
     if (level > 0) this.addResident(i);
     return i;
   }
@@ -243,7 +252,7 @@ export class WorldStreamer {
     for (let j = 0; j < cand.length; j++) {
       const s = this.slots[cand[j]];
       s.dist = this.distTo(s);
-      s.target = s.rec.pinned ? 2 : nextLevel(s.target, s.dist);
+      s.target = s.rec.pinned ? 2 : nextLevel(s.target, s.dist, s.lead);
     }
   }
 
@@ -285,6 +294,9 @@ export class WorldStreamer {
     this.stats.commits++;
   }
 
+  /** Der letzte Teilschritt hat auf die Grafikkarte geladen (`'gpu'`): das Bild ist voll */
+  private gpuHit = false;
+
   /** Teilschritt eines Aufbaus; true, wenn der Iterator damit fertig ist. Synchrone Aufbauten (`forceSyncAround`) zählen nicht gegen das Bildbudget. */
   private stepJob(i: number, sync = false): boolean {
     const s = this.slots[i];
@@ -293,6 +305,7 @@ export class WorldStreamer {
     try {
       const r = s.job!.next();
       done = !!r.done;
+      if (!done && !sync && r.value === 'gpu') this.gpuHit = true;
     } catch (e) {
       console.error('WorldStreamer: Aufbau fehlgeschlagen', s.rec.id, e);
       this.stats.failures++;
@@ -369,6 +382,7 @@ export class WorldStreamer {
       this.stepJob(i);
       steps++;
       if (!this.slots[i].job && !this.slots[i].ready) this.jobIdx = -1;
+      if (this.gpuHit) { this.gpuHit = false; break; }
       if (this.now() - t0 >= this.budgetMs) break;
     }
   }

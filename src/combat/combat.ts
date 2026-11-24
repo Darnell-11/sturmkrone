@@ -1115,7 +1115,7 @@ export class CombatSystem implements EnemyWorld {
    * Gegner zusätzlich zu den vorhandenen erscheinen lassen (Weltereignisse). at: Mittelpunkt, spread: Streuung in Metern;
    * die Gegner greifen sofort an.
    */
-  spawnWave(kinds: EnemyKind[], level: number, faction: Faction, tag: string, at: { x: number; z: number }, spread: number, opts: { power?: FactionId; name?: string; def?: import('../data/combat').EnemyDef } = {}): Enemy[] {
+  spawnWave(kinds: EnemyKind[], level: number, faction: Faction, tag: string, at: { x: number; z: number }, spread: number, opts: { power?: FactionId; name?: string; def?: import('../data/combat').EnemyDef; /** patrouillieren statt sofort anzugreifen (Mega-Inseln) */ calm?: boolean } = {}): Enemy[] {
     const nav = this.nav;
     const out: Enemy[] = [];
     const spot = { x: 0, z: 0 };
@@ -1126,7 +1126,7 @@ export class CombatSystem implements EnemyWorld {
       const e = new Enemy(this.assets, k, level, faction, spot.x, spot.z, this.outline, k === 'legende' || opts.def ? opts.name : undefined, opts.power, { def: opts.def });
       e.tag = tag;
       e.y = this.ground(e.x, e.z);
-      e.alert();
+      if (!opts.calm) e.alert();
       this.scene.add(e.char.holder);
       this.onSpawn?.(e.char.holder);
       this.enemies.push(e);

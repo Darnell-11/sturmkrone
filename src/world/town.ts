@@ -1,5 +1,6 @@
 import {
   BoxGeometry,
+  BufferAttribute,
   BufferGeometry,
   CanvasTexture,
   Color,
@@ -830,6 +831,14 @@ export function* mergeByMaterialSteps(group: Group, keep: Set<Mesh>): Generator<
     }
     if (b.geos.some((g) => g.attributes.aEdge)) {
       for (const g of b.geos) if (!g.attributes.aEdge) g.setAttribute('aEdge', new Float32BufferAttribute(new Float32Array(g.attributes.position.count), 1));
+    }
+    // Eckpunktfarben: Teile ohne Farben (eigene Netze neben Blender-Bauten mit Ambient-Occlusion) bekommen Weiß, sonst schlägt das Zusammenfassen fehl
+    const refCol = b.geos.find((g) => g.attributes.color)?.attributes.color as BufferAttribute | undefined;
+    if (refCol) {
+      // gleiche Bauart wie die vorhandenen Farben (Blender: oft normierte Ganzzahlen, RGB oder RGBA)
+      const Arr = refCol.array.constructor as new (n: number) => Float32Array | Uint8Array | Uint16Array;
+      const one = refCol.normalized ? (refCol.array instanceof Uint8Array ? 255 : refCol.array instanceof Uint16Array ? 65535 : 1) : 1;
+      for (const g of b.geos) if (!g.attributes.color) g.setAttribute('color', new BufferAttribute(new Arr(g.attributes.position.count * refCol.itemSize).fill(one), refCol.itemSize, refCol.normalized));
     }
     const merged = mergeGeometries(b.geos, false);
     if (!merged) continue;

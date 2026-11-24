@@ -6,7 +6,7 @@ import { BORDERS, FACTIONS, SECTORS } from '../data/factions';
 import { PLAYABLE_RADIUS, WORLD_RADIUS } from '../data/world';
 import { RINGS } from '../data/worldRings';
 import { GOOD_BY_ID, profileOf, type GoodId } from '../data/economy';
-import { drawPoi, outline, ownerRing, type ShapeLike, type WorldMapData, type WorldView } from './minimap';
+import { drawPoi, outline, ownerRing, type MapTopo, type ShapeLike, type WorldMapData, type WorldView } from './minimap';
 import { LABEL_ZOOM, LabelPlacer, TextWidths, fitScale, labelShown, type LabelRank } from './mapView';
 import { isTravelPort } from '../world/fastTravel';
 
@@ -27,6 +27,8 @@ export interface MapDrawState {
   fog: HTMLCanvasElement | null;
   /** Aktueller Zoom relativ zur Gesamtansicht (1× = ganze Welt) */
   zoom: number;
+  /** Bedienelemente über der Karte als flache Liste (x0, y0, x1, y1, …) in CSS-Pixeln: dort setzt die Karte keine Namen (4.3.6, neu bei jeder Größenänderung) */
+  chrome?: readonly number[];
 }
 
 // ---------- Arbeitsvariablen (kein Abschluss je Bild) ----------
@@ -41,10 +43,43 @@ const FONT_NAME = '700 12px "Alegreya Sans", sans-serif';
 const FONT_BIG = '800 13px "Alegreya Sans", sans-serif';
 const FONT_BADGE = '700 11px "Alegreya Sans", sans-serif';
 const FONT_EVENT = '800 12px "Alegreya Sans", sans-serif';
+const FONT_MEGA = '900 15px "Alegreya", serif';
+/** Zweiter und dritter Fels einer Riff-Passage (einmal angelegt, nicht je Bild) */
+const REEF_TAIL = / I{2,3}$/;
+/** Namen der Mächte und ihre Schriften je ganzzahliger Größe (einmal angelegt: kein neuer Text je Bild) */
+const SECTOR_NAME = SECTORS.map((s) => FACTIONS[s.factionId].name.toUpperCase());
+const SECTOR_FONT: string[] = [];
+const sectorFont = (px: number): string => (SECTOR_FONT[px] ??= `900 ${px}px "Alegreya", serif`);
+/** Bezugsschrift zum Messen (die Breite skaliert linear mit der Größe; so wächst der Breitenspeicher nicht mit jedem Zoom) */
+const SECTOR_REF = 34;
+const FONT_REF_SECTOR = sectorFont(SECTOR_REF);
+/** Stellen für die Machtnamen (Winkel neben der Mittellinie in Grad, Anteil am Weltradius): die erste freie gewinnt. Auf der Mittellinie liegen die
+ *  Mega-Inseln, deren Namen frei bleiben sollen (4.3.6) */
+const SECTOR_TRY: readonly (readonly [number, number])[] = [[18, 0.74], [-18, 0.74], [0, 0.88], [24, 0.6], [-24, 0.6], [28, 0.86], [-28, 0.86], [0, 0.5]];
+
+/** Liegt das Rechteck frei: im Bild, nicht unter Bedienelementen und nicht über einem Wahrzeichen (Mega-Insel, Festung) samt Namen? */
+function sectorSpotFree(ctx: CanvasRenderingContext2D, d: WorldMapData, x0: number, y0: number, x1: number, y1: number): boolean {
+  if (x0 < 10 || y0 < 10 || x1 > W - 10 || y1 > H - 10) return false;
+  if (!placer.free(x0, y0, x1, y1, 4)) return false;
+  for (let k = 0; k < d.islands.length; k++) {
+    const i = d.islands[k];
+    const fort = i.kind === 'marinefort' || i.kind === 'citadel';
+    if (!i.mega && !fort) continue;
+    const font = i.mega ? FONT_MEGA : FONT_BIG;
+    ctx.font = font;
+    const lw = widths.get(ctx, font, i.name) / 2;
+    const sx = mx(i.x), sy = my(i.z), rr = Math.max(10, i.r * S * (fort ? 1.9 : 1.3));
+    const hw = Math.max(lw, rr) + 6;
+    if (x0 < sx + hw && x1 > sx - hw && y0 < sy + rr + 6 && y1 > sy - rr - (fort ? 50 : 30)) return false;
+  }
+  return true;
+}
 
 /** Rang der Beschriftung: Städte, Festungen und das Hauptquartier immer, Häfen, Bosse und Leuchttürme ab 1,15×, der Rest ebenso */
-export function labelRank(i: Pick<IslandDef, 'kind' | 'marine'>): LabelRank {
-  if (i.kind === 'town' || i.kind === 'citadel' || i.kind === 'marinefort' || i.marine === 'hq') return 3;
+export function labelRank(i: Pick<IslandDef, 'kind' | 'marine' | 'mega' | 'skerry'>): LabelRank {
+  // Mega-Inseln (4.3.6) sind die Haupt-Orientierungspunkte: immer beschriftet; Schären nur nah herangezoomt
+  if (i.mega || i.kind === 'town' || i.kind === 'citadel' || i.kind === 'marinefort' || i.marine === 'hq') return 3;
+  if (i.skerry) return 1;
   if (i.kind === 'harbor' || i.kind === 'boss' || i.kind === 'lighthouse') return 2;
   return 1;
 }
@@ -81,11 +116,57 @@ const STORM_SEA = 'rgba(70,80,120,0.28)';
 const RING_LABEL = RINGS.map((r) => `Ring ${r.ring} · ${r.name}`);
 
 function drawOutlineIsland(ctx: CanvasRenderingContext2D, i: IslandDef, shape: ShapeLike | undefined) {
-  // schemenhaft: Umriss eines Pergament-Blatts, keine Farben, keine Ringe, keine Namen
-  ctx.fillStyle = 'rgba(226,206,160,0.13)';
+  // Seekarten-Umriss eines Pergament-Blatts: gut erkennbare Küste mit Schraffur-Saum, keine Farben, keine Ringe, keine Namen
+  ctx.fillStyle = i.mega ? 'rgba(226,206,160,0.3)' : 'rgba(226,206,160,0.22)';
   outline(ctx, mx, my, S, i, shape, 1); ctx.fill();
-  ctx.strokeStyle = 'rgba(236,218,172,0.5)'; ctx.lineWidth = 1.1; ctx.setLineDash([3, 3]);
-  ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle = 'rgba(244,228,186,0.85)'; ctx.lineWidth = i.mega ? 1.8 : 1.3;
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(244,228,186,0.28)'; ctx.lineWidth = 1; ctx.setLineDash([2, 4]);
+  outline(ctx, mx, my, S, i, shape, 1.22); ctx.stroke(); ctx.setLineDash([]);
+}
+
+const RIFT_COLOR: Record<MapTopo['rifts'][number]['kind'], string> = { kanal: '#3E86B4', sund: '#2E6F95', kluft: '#3A3530', lava: '#FF6A2A' };
+
+/** Plastische Topografie bekannter Inseln: Höhenlinien der Hügel, Spalten (Kanal, Lava, Kluft, Meeresarm) mit Brücken, Stege und Hafenbuchten */
+function drawTopo(ctx: CanvasRenderingContext2D, i: IslandDef, t: MapTopo) {
+  const cx = mx(i.x), cy = my(i.z);
+  // Höhenlinien: je Hügel bis zu vier Ringe, höhere Hügel mehr Linien (erst ab genug Maßstab sinnvoll)
+  if (S > 0.03) {
+    ctx.strokeStyle = 'rgba(110,80,44,0.42)'; ctx.lineWidth = 1;
+    for (let k = 0; k < t.hills.length; k++) {
+      const h = t.hills[k], hx = cx - h.x * S, hy = cy - h.z * S;
+      const lines = Math.min(4, 1 + Math.floor(h.r * h.h / 9));
+      for (let n = 1; n <= lines; n++) { const rr = h.r * S * (1 - n / (lines + 1)); if (rr < 1.2) continue; ctx.beginPath(); ctx.arc(hx, hy, rr, 0, Math.PI * 2); ctx.stroke(); }
+    }
+  }
+  // Spalten und Brücken
+  for (let k = 0; k < t.rifts.length; k++) {
+    const r = t.rifts[k];
+    const rw = Math.max(2.6, r.w * S);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let n = 0; n < r.pts.length; n++) { const x = cx - r.pts[n][0] * S, y = cy - r.pts[n][1] * S; if (n === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
+    // dunkler Rand (Böschung), darauf die Spalte selbst: auch bei kleinem Maßstab gut lesbar
+    ctx.strokeStyle = 'rgba(40,26,16,0.7)'; ctx.lineWidth = rw + 2; ctx.stroke();
+    ctx.strokeStyle = RIFT_COLOR[r.kind]; ctx.lineWidth = rw; ctx.stroke();
+    if (r.kind === 'lava') { ctx.strokeStyle = 'rgba(255,200,120,0.75)'; ctx.lineWidth = Math.max(0.8, r.w * S * 0.35); ctx.stroke(); }
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = '#F1E4C4'; ctx.lineWidth = Math.max(2, 4.6 * S);
+    for (let n = 0; n < r.cross.length; n++) {
+      // Brücke: kurzer heller Balken quer über die Spalte
+      const [bx, bz] = r.cross[n];
+      let dx = 0, dz = 1, best = Infinity;
+      for (let m = 1; m < r.pts.length; m++) { const ax = r.pts[m - 1][0], az = r.pts[m - 1][1], ex = r.pts[m][0], ez = r.pts[m][1]; const mx2 = (ax + ex) / 2, mz2 = (az + ez) / 2, dd = (mx2 - bx) * (mx2 - bx) + (mz2 - bz) * (mz2 - bz); if (dd < best) { best = dd; const l = Math.hypot(ex - ax, ez - az) || 1; dx = (ex - ax) / l; dz = (ez - az) / l; } }
+      const half = Math.max(4, (r.w * 0.5 + 6) * S);
+      const px = cx - bx * S, py = cy - bz * S;
+      ctx.beginPath(); ctx.moveTo(px - dz * half, py + dx * half); ctx.lineTo(px + dz * half, py - dx * half); ctx.stroke();
+    }
+  }
+  // Stege: Hafenbuchten mit Anlegern
+  if (S > 0.02) {
+    ctx.strokeStyle = '#A27A4A'; ctx.lineWidth = Math.max(1.4, 3 * S);
+    for (let k = 0; k < t.piers.length; k++) { const p = t.piers[k]; ctx.beginPath(); ctx.moveTo(mx(p.ax), my(p.az)); ctx.lineTo(mx(p.bx), my(p.bz)); ctx.stroke(); }
+  }
 }
 
 function drawKnownIsland(ctx: CanvasRenderingContext2D, i: IslandDef, shape: ShapeLike | undefined) {
@@ -141,6 +222,18 @@ function drawFog(ctx: CanvasRenderingContext2D, fog: HTMLCanvasElement, dpr: num
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
+/** Name einer Mega-Insel (entdeckt oder nicht): über der Insel, sonst darunter; am Bildrand nach innen geschoben, damit er lesbar bleibt (4.3.6) */
+function megaLabel(ctx: CanvasRenderingContext2D, i: IslandDef, known: boolean): void {
+  const sx = mx(i.x), sy = my(i.z);
+  if (sx < -40 || sx > W + 40 || sy < -40 || sy > H + 40) return;
+  ctx.font = FONT_MEGA;
+  const hw = widths.get(ctx, FONT_MEGA, i.name) / 2;
+  const lx = Math.min(W - hw - 8, Math.max(hw + 8, sx));
+  const rr = Math.max(10, i.r * S * (known ? 1.3 : 1.15));
+  const fill = known ? '#FFF3C8' : '#F4E2B8';
+  if (!label(ctx, FONT_MEGA, i.name, lx, sy - rr - 7, fill)) label(ctx, FONT_MEGA, i.name, lx, sy + rr + 17, fill);
+}
+
 /** Vollbild-Weltkarte */
 export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: number, v: WorldView, d: WorldMapData, st: MapDrawState) {
   W = w; H = h; CX = v.cx; CZ = v.cz; S = v.scale;
@@ -156,6 +249,9 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
   ctx.fillStyle = bgGrad;
   ctx.fillRect(0, 0, w, h);
   placer.clear();
+  // Bedienelemente (Leisten, Legenden, Knöpfe) halten ihre Fläche frei: Namen darunter wären verdeckt
+  const ch = st.chrome;
+  if (ch) for (let k = 0; k + 3 < ch.length; k += 4) placer.tryPlace(ch[k], ch[k + 1], ch[k + 2], ch[k + 3], 0);
 
   // Gitternetz alle 500 m (ab genug Zoom)
   ctx.strokeStyle = 'rgba(232,214,170,0.07)'; ctx.lineWidth = 1;
@@ -197,25 +293,36 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
     }
     ctx.setLineDash([]);
   }
-  // Meere (Namen)
+  // Die alten Meeresnamen (Nebelarchipel, Nordwacht, Glutring, Sturmgürtel, Schlundriff) klebten eng in der Kartenmitte und überdeckten Ringe, Sektoren und
+  // Inselnamen (4.3.6): sie entfallen; nur die Bernsteinsee bleibt als zarter Kreis um Ankerglück
   for (let k = 0; k < d.regions.length; k++) {
     const r = d.regions[k];
-    if (r.id === 'bernsteinsee') {
-      ctx.fillStyle = r.color + '1e';
-      ctx.beginPath(); ctx.arc(mx(r.x), my(r.z), r.r * S, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = r.color + '77'; ctx.lineWidth = 1.5; ctx.stroke();
-    }
-    ctx.font = `800 ${Math.max(12, Math.min(26, r.r * S * 0.16))}px "Alegreya", serif`; ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(244,226,184,0.55)';
-    ctx.fillText(r.name.toUpperCase(), mx(r.x), my(r.z) - r.r * S * 0.78);
+    if (r.id !== 'bernsteinsee') continue;
+    ctx.fillStyle = r.color + '16';
+    ctx.beginPath(); ctx.arc(mx(r.x), my(r.z), r.r * S, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = r.color + '55'; ctx.lineWidth = 1.2; ctx.stroke();
   }
   if (L.sectors) {
-    // Namen der Mächte entlang der Mittellinie jedes Kuchenstücks, nahe am Rand; die Ringe tragen ihre Namen am Nordrand
+    // Namen der Mächte im Kuchenstück: an der ersten freien Stelle neben der Mittellinie (nicht über Mega-Inseln, Festungen und Bedienelementen, 4.3.6).
+    // In der Gesamtansicht halten sie ihren Platz frei; nah herangezoomt sind sie nur noch Wasserzeichen, über die kleinere Namen laufen dürfen
+    const fs = Math.round(Math.max(13, Math.min(34, WORLD_RADIUS * S * 0.06)));
+    const font = sectorFont(fs), keep = zoom < LABEL_ZOOM;
     for (let k = 0; k < SECTORS.length; k++) {
-      const sec = SECTORS[k], f = FACTIONS[sec.factionId], a = (((sec.fromDeg + sec.toDeg) / 2) * Math.PI) / 180;
-      const px = mx(Math.sin(a) * WORLD_RADIUS * 0.7), py = my(Math.cos(a) * WORLD_RADIUS * 0.7);
-      ctx.font = `900 ${Math.max(13, Math.min(34, WORLD_RADIUS * S * 0.06))}px "Alegreya", serif`; ctx.textAlign = 'center';
-      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(8,16,28,0.7)'; ctx.strokeText(f.name.toUpperCase(), px, py); ctx.fillStyle = f.color; ctx.fillText(f.name.toUpperCase(), px, py);
+      const sec = SECTORS[k], f = FACTIONS[sec.factionId], name = SECTOR_NAME[k];
+      ctx.font = FONT_REF_SECTOR;
+      const hw = (widths.get(ctx, FONT_REF_SECTOR, name) * fs) / SECTOR_REF / 2;
+      let px = 0, py = 0, found = false;
+      for (let c = 0; c < SECTOR_TRY.length; c++) {
+        const a = (((sec.fromDeg + sec.toDeg) / 2 + SECTOR_TRY[c][0]) * Math.PI) / 180, rr = WORLD_RADIUS * SECTOR_TRY[c][1];
+        const qx = mx(Math.sin(a) * rr), qy = my(Math.cos(a) * rr);
+        if (c === 0) { px = qx; py = qy; }
+        if (sectorSpotFree(ctx, d, qx - hw, qy - fs * 0.8, qx + hw, qy + fs * 0.25)) { px = qx; py = qy; found = true; break; }
+      }
+      if (found && keep) placer.tryPlace(px - hw, py - fs * 0.8, px + hw, py + fs * 0.25, 0);
+      ctx.globalAlpha = found ? (keep ? 1 : 0.6) : 0.4;
+      ctx.font = font; ctx.textAlign = 'center';
+      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(8,16,28,0.7)'; ctx.strokeText(name, px, py); ctx.fillStyle = f.color; ctx.fillText(name, px, py);
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -236,7 +343,13 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
     const sx = mx(i.x), sy = my(i.z);
     if (sx < -120 || sx > w + 120 || sy < -120 || sy > h + 120) continue;
     const shape = d.shape?.(i.id);
-    if (d.known(i.id)) drawKnownIsland(ctx, i, shape); else drawOutlineIsland(ctx, i, shape);
+    if (d.known(i.id)) {
+      drawKnownIsland(ctx, i, shape);
+      const tp = d.topo?.(i.id);
+      if (tp) drawTopo(ctx, i, tp);
+      // Mega-Inseln: goldener Saum als Haupt-Orientierungspunkt
+      if (i.mega) { ctx.strokeStyle = 'rgba(227,176,75,0.85)'; ctx.lineWidth = 2; outline(ctx, mx, my, S, i, shape, 1.32); ctx.stroke(); }
+    } else drawOutlineIsland(ctx, i, shape);
     if (sel === i.id) {
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.setLineDash([5, 4]);
       ctx.beginPath(); ctx.arc(sx, sy, Math.max(10, i.r * S * 1.5), 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
@@ -339,6 +452,8 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
     if (evs) for (let k = 0; k < evs.length; k++) { const e = evs[k]; label(ctx, FONT_EVENT, e.name, mx(e.x), my(e.z) + 24, e.kind === 'worldboss' ? '#FF9A8A' : e.kind === 'galeone' ? '#FFE07A' : '#F4EEDC'); }
     if (bts) for (let k = 0; k < bts.length; k++) { const b = bts[k]; label(ctx, FONT_EVENT, `Seeschlacht ${FACTIONS[b.a].name} ⚔ ${FACTIONS[b.b].name}`, mx(b.x), my(b.z) + 42, '#FFB070'); }
   }
+  // Mega-Inseln vor allen anderen Namen: sie sind die Orientierungspunkte der Karte (4.3.6)
+  for (let k = 0; k < isl.length; k++) { const i = isl[k]; if (i.mega) megaLabel(ctx, i, d.known(i.id)); }
   // Ringnamen am Südrand jedes Rings (innen), wo keine Machtnamen stehen
   if (L.sectors) for (let k = 0; k < RINGS.length; k++) {
     const r = RINGS[k], rOut = (k === RINGS.length - 1 ? PLAYABLE_RADIUS : r.to) * S;
@@ -349,8 +464,9 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
   if (L.events && cells && zoom >= LABEL_ZOOM) for (let k = 0; k < cells.length; k++) { const c = cells[k]; if (c.r * S > 14) label(ctx, FONT_BADGE, c.label, mx(c.x), my(c.z) + 4, 'rgba(235,240,248,0.95)'); }
   for (let k = 0; k < isl.length; k++) {
     const i = isl[k];
+    if (i.mega) continue;
     if (!d.known(i.id)) {
-      // Wahrzeichen tragen ihren Namen auch ungekartet; sonst bleibt der schemenhafte Umriss stumm
+      // Wahrzeichen tragen ihren Namen auch ungekartet (Festungen; Mega-Inseln stehen schon); sonst bleibt der Umriss stumm
       if ((i.kind === 'marinefort' || i.kind === 'citadel') && labelShown(labelRank(i), zoom)) label(ctx, FONT_BIG, i.name, mx(i.x), my(i.z) - Math.max(14, i.r * S * 1.9) - 14, '#FFF3C8');
       continue;
     }
@@ -358,6 +474,8 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
     const sx = mx(i.x), sy = my(i.z);
     if (sx < -80 || sx > w + 80 || sy < -60 || sy > h + 60) continue;
     if (sel !== i.id && !labelShown(rank, zoom)) continue;
+    // Riff-Felsen (II, III einer Passage) tragen keinen eigenen Namen: die Passage heißt nach ihrem ersten Felsen
+    if (i.skerry && REEF_TAIL.test(i.name)) continue;
     const font = rank === 3 ? FONT_BIG : FONT_NAME;
     // über der Insel; ist dort besetzt (Spieler, Ereignis, Nachbar), darunter
     if (!label(ctx, font, i.name, sx, sy - i.r * S * 1.3 - 6 - (i.kind === 'marinefort' || i.kind === 'citadel' ? 24 : 0), '#FFF3C8')) label(ctx, font, i.name, sx, sy + i.r * S * 1.3 + 16, '#FFF3C8');

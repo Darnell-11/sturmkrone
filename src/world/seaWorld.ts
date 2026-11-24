@@ -28,6 +28,7 @@ import type { CharacterLook, NpcRole } from '../data/characterParts';
 import { CAMERA_PLANES, type QualityConfig } from '../data/qualityTiers';
 import { HOME_SPAWN, WORLD_SCALE } from '../data/world';
 import { chartAround, seedStartCharts, seeRange, type ChartZone } from './mapDiscovery';
+import { MEGA_BY_ID, clearDistrict, commanderRoam, commanderShouldAppear, districtWorld, districtsToWake, isMegaId, megaLevel, newMegaRuntime, type MegaId, type MegaRuntime } from '../data/megaIslands';
 import { FAST_TRAVEL, findBerth } from './fastTravel';
 import type { CharacterAssets } from '../entities/character/assets';
 import { LampPool, lampShared } from '../render/lamps';
@@ -54,7 +55,10 @@ import { SITES } from '../data/settlements';
 import { buildSiteSteps } from './settlement';
 import { setSiteNight } from './architecture';
 import { cachedProto, floraProto, Scatter, type Biome, type VegChunk } from './vegetation';
-import { Object3D, type Material } from 'three';
+import { Object3D, type BufferGeometry, type Material, type Texture } from 'three';
+
+/** Netz, Linie, Punkte oder Instanz-Netz mit Geometrie (für das Vorrechnen der Begrenzungskugeln) */
+type BoundsHolder = Object3D & { geometry: BufferGeometry; isInstancedMesh?: boolean; boundingSphere?: unknown; computeBoundingSphere?: () => void };
 import { IslandFauna } from './fauna';
 import { texDetail } from '../render/texDetail';
 import type { IslandStyle } from '../data/regions';
@@ -66,6 +70,8 @@ import type { EnemyKind } from '../data/combat';
 import type { Faction } from '../core/save/types';
 import type { CombatOverlay } from '../ui/combatOverlay';
 import type { Enemy } from '../entities/enemy';
+import { pointAt, polyLength } from './riftMath';
+import type { MapTopo } from '../ui/minimap';
 import { FajiController } from '../faji/fajiController';
 import type { SkillState } from '../core/save/types';
 import { Ship, type SeaEnv } from '../entities/ship/ship';
@@ -83,7 +89,7 @@ import { BERNSTEINSEE, REGIONS, regionAt, seaLevelAt, type IslandDef, type Regio
 import { FACTIONS, marineStance, type FactionId } from '../data/factions';
 import { RaidDirector, type RaidEnd, type RaidHostWorld, type RaidView } from '../raid/raidDirector';
 import { Garrison, makePlayerBanner, playerPalette } from './garrison';
-import type { RaidWorld } from '../raid/raidWorld';
+import { flattenTerrainFootprint, type RaidWorld } from '../raid/raidWorld';
 import type { RaidPartyContext } from '../raid/raidTypes';
 import type { LootOwned } from '../raid/raidLoot';
 import { MARINE_SERVICE_STANDING } from '../raid/raidRules';
@@ -202,6 +208,10 @@ export class SeaWorld {
   /** Chunk-Streaming der Inseln (UNLOADED, HORIZON_LOD, ACTIVE_HIGH); erst nach `settleStreaming` aktiv */
   readonly streamer = new WorldStreamer(this.streamHost);
   private streamReady = false;
+  /** Sammelliste der Netze einer Insel für die Begrenzungskugeln (geteilt, nach jedem Aufbau geleert) */
+  private readonly islandGeoScratch: BoundsHolder[] = [];
+  /** Sammelliste der Texturen einer Insel vor dem Hochladen (geteilt, nach jedem Aufbau geleert: hält nichts fest) */
+  private readonly islandTexScratch: Texture[] = [];
   /** Shader einer neu gebauten Insel parallel vorübersetzen (setzt das Spiel: `Renderer.warmObjectAsync`); der Tausch wartet darauf */
   warmIsland: ((o: Object3D) => Promise<void>) | null = null;
   /** Messung (Entwicklung): Abschnitt → Millisekunden, solange gesetzt (siehe `islandStages`) */
@@ -254,6 +264,8 @@ export class SeaWorld {
   questWantsClear: (id: string) => boolean = () => false;
   /** Auf einer bewohnten Insel gelandet (Geschenk der Dorfbewohner) */
   onVillage: (id: string) => void = () => {};
+  /** Mega-Insel (4.3.6): ein Kampf-Bezirk ist geräumt oder der Insel-Kommandant gefallen (Beute vergibt das Spiel) */
+  onMegaVictory: (id: MegaId, name: string, level: number, commander: boolean) => void = () => {};
   private assets: CharacterAssets | null = null;
   /** Dorfbewohner der ruhigen Inseln, nur solange man dort an Land ist */
   private visitors: Npc[] = [];
@@ -654,7 +666,7 @@ export class SeaWorld {
    * `first` = erster Aufbau beim Laden: schreibt die Daten der Insel in die Welt. Jeder spätere Aufbau rechnet dieselben Daten (alles deterministisch,
    * je Insel aus ihrer Kennung gewürfelt) noch einmal in eine Kopie und wirft sie weg: die Welt behält ihre Daten, nur die Darstellung entsteht neu.
    */
-  private *islandStages(slot: IslandSlot, first: boolean): Generator<void, void> {
+  private *islandStages(slot: IslandSlot, first: boolean): Generator<void | 'gpu', void> {
     const s = slot.spec;
     const { r } = s;
     const vis = slot.vis = newIslandVis();
@@ -708,22 +720,8 @@ export class SeaWorld {
       // Eingeebnete Standflächen unter Bauten (siehe Pad in islandGround.ts); das Gelände-Mesh wird nach dem Aufbau nachgeführt
       walk.pads = [];
       const padBounds: [number, number, number, number][] = [];
-      walk.addPad = (wx, wz, w, d, yaw, blend = 2.4, round = false) => {
-        let sum = 0, n = 0;
-        const c = Math.cos(yaw), sn = Math.sin(yaw);
-        for (let i = 0; i < 5; i++) for (let j = 0; j < 5; j++) {
-          const lx = (i / 4 - 0.5) * w, lz = (j / 4 - 0.5) * d;
-          const h = solo.islandHeight(walk, wx + lx * c + lz * sn, wz - lx * sn + lz * c, false, true);
-          if (Number.isFinite(h)) { sum += h; n++; }
-        }
-        if (!n) return 0;
-        const y = sum / n;
-        const hw = round ? w / 2 : w / 2, hd = round ? w / 2 : d / 2;
-        const R = Math.hypot(hw, hd) + blend;
-        walk.pads!.push({ x: wx, z: wz, hw, hd, yaw, blend, y, r2: R * R, round });
-        padBounds.push([wx - s.x - R, wz - s.z - R, wx - s.x + R, wz - s.z + R]);
-        return y;
-      };
+      // dieselbe Rechnung wie in der Raid-Instanz (`flattenTerrainFootprint`); Spalten der Mega-Inseln geben eine feste Sohlenhöhe vor
+      walk.addPad = (wx, wz, w, d, yaw, blend = 2.4, round = false, fixedY) => flattenTerrainFootprint(walk, solo, padBounds, wx, wz, w, d, yaw, blend, round, fixedY);
       lap('1 Gelände');
       yield; // ---- Stufe 1: Gelände und Boden der Insel
 
@@ -798,7 +796,9 @@ export class SeaWorld {
       // Natur, Bauten und Treibgut passend zu Region und Inselart
       if (site) {
         // Dörfer, Höfe, Türme und Ruinen mit Kollisions-Gitter, danach der Bewuchs des Bioms
-        const built = yield* buildSiteSteps({ group: isl, def: s.def, site, biome: style as Biome, walk, hAt, veg, density: texDetail.density });
+        const hNat = (lx: number, lz: number) => solo.islandHeight(walk, s.x + lx, s.z + lz, true, false);
+        const built = yield* buildSiteSteps({ group: isl, def: s.def, site, biome: style as Biome, walk, hAt, hNat, veg, density: texDetail.density });
+        sink.smokeVents.push(...built.vents);
         plantFactionBanners(isl, s.def, walk, hAt);
         sink.campfires.push(...built.fires.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
         vis.glows.push({ list: built.glows, ox: s.x, oz: s.z });
@@ -921,6 +921,40 @@ export class SeaWorld {
         let ready = false;
         warm.then(() => { ready = true; }, () => { ready = true; });
         for (let k = 0; k < 240 && !ready; k++) yield;
+      }
+      // Begrenzungskugeln jetzt rechnen, in Häppchen von 2 ms (4.3.6): sonst rechnet sie der erste Sichtbarkeitstest im Bild nach dem Tausch, bei einer
+      // Mega-Insel rund 15 ms am Stück
+      {
+        const list = this.islandGeoScratch;
+        list.length = 0;
+        isl.traverse((o) => { if ((o as BoundsHolder).geometry) list.push(o as BoundsHolder); });
+        let tb = performance.now();
+        for (let k = 0; k < list.length; k++) {
+          const o = list[k];
+          if (o.isInstancedMesh && o.boundingSphere === null) o.computeBoundingSphere?.();
+          if (o.geometry.boundingSphere === null) o.geometry.computeBoundingSphere();
+          if (performance.now() - tb > 2) { yield; tb = performance.now(); }
+        }
+        list.length = 0;
+      }
+      // Texturen vor dem Tausch hochladen, je Bild höchstens eine (4.3.6): beim ersten Besuch einer Mega-Insel kamen gemeinsame Texturen (Stein, Obsidian,
+      // Marmor, Flaggen, Statuen) sonst alle im ersten Bild nach dem Tausch auf die Grafikkarte (bis 390 ms). Später geladene Inseln finden sie schon vor.
+      const tu = this.texHook;
+      if (tu) {
+        const texs = this.islandTexScratch;
+        texs.length = 0;
+        isl.traverse((o) => {
+          const m = (o as { material?: Material | Material[] }).material;
+          if (!m) return;
+          for (const mat of Array.isArray(m) ? m : [m]) {
+            for (const k in mat) {
+              const v = (mat as unknown as Record<string, unknown>)[k] as Texture | null;
+              if (v && v.isTexture && v.image && !texs.includes(v)) texs.push(v);
+            }
+          }
+        });
+        for (let k = 0; k < texs.length; k++) if (!tu.ready(texs[k]) && tu.upload(texs[k])) yield 'gpu';
+        texs.length = 0;
       }
       if (first) {
         // Bau-Daten des ersten Aufbaus gehören ab jetzt der Welt (jeder spätere Aufbau rechnet sie identisch nach und verwirft seine Kopie)
@@ -1778,6 +1812,28 @@ export class SeaWorld {
     return this.chartScratch;
   }
 
+  private topoCache = new Map<string, MapTopo>();
+  private readonly topoPt = { x: 0, z: 0, dx: 0, dz: 0 };
+
+  /** Seekarten-Topografie einer Insel (4.3.6): Hügel und Spalten (Inselkoordinaten), Stege (Welt); einmal gerechnet und gemerkt */
+  topoOf(id: string): MapTopo | undefined {
+    const hit = this.topoCache.get(id);
+    if (hit) return hit;
+    const slot = this.slots.find((s) => s.spec.def.id === id);
+    if (!slot) return undefined;
+    const site = slot.spec.def.site ? SITES[slot.spec.def.site] : null;
+    const t: MapTopo = {
+      hills: slot.bp.hills,
+      piers: slot.bp.piers,
+      rifts: (site?.rifts ?? []).map((r) => {
+        const L = polyLength(r.pts);
+        return { kind: r.kind, w: r.w, pts: r.pts, cross: r.cross.map((c): [number, number] => { pointAt(r.pts, c * L, this.topoPt); return [this.topoPt.x, this.topoPt.z]; }) };
+      }),
+    };
+    this.topoCache.set(id, t);
+    return t;
+  }
+
   /** Lage des Spielers für die Schnellreise: auf See, im Kampf, im Sturm, gejagt (Werte neu berechnet, nichts gemerkt) */
   travelState(): { sailing: boolean; inCombat: boolean; inStorm: boolean; hunted: boolean } {
     const nav = this.naval;
@@ -1861,6 +1917,7 @@ export class SeaWorld {
     this.raidMsgCd -= dt;
     if (!this.raid) {
       this.updateWorldEvents();
+      this.updateMega(dt);
       this.life?.update(dt, (x, z) => this.env.heightAt(x, z), this.ship, this.mode === 'sail');
     }
     if (this.town?.crystal) { this.town.crystal.rotation.y += dt; this.town.crystal.position.y += Math.sin(this.env.clock * 2) * dt * 0.3; }
@@ -2536,6 +2593,7 @@ export class SeaWorld {
       if (c.hostilesLeft === 0) this.cleared.set(idx, this.env.clock + 300);
       c.leaveIsland();
     }
+    this.leaveMega();
     this.events.cancel();
     this.foot?.stopEffects();
     for (const n of this.visitors) { n.dispose(); n.char.holder.removeFromParent(); n.char.dispose(); }
@@ -2734,6 +2792,100 @@ export class SeaWorld {
     this.cullFigures();
   }
 
+  // ---------- Mega-Inseln (4.3.6): Kampf-Bezirke und Insel-Kommandant in der offenen Welt ----------
+
+  /** Zustand je Mega-Insel (geräumte Bezirke, Kommandant) – hält, solange das Spiel läuft */
+  private megaRt = new Map<MegaId, MegaRuntime>();
+  /** Insel, auf der die Spielfigur gerade an Land ist, und der Kommandant als Gegner (solange er steht) */
+  private megaHere: { id: MegaId; isl: WalkIsland; commander: Enemy | null } | null = null;
+  private readonly megaWake: number[] = [];
+  private readonly megaPt = { x: 0, z: 0 };
+
+  /** Landgang auf einer Mega-Insel: keine Garnison auf einmal, sondern Bezirk für Bezirk, wenn man ihm nahe kommt */
+  private enterMega(isl: WalkIsland, id: MegaId) {
+    const c = this.combat;
+    if (!c) return;
+    const m = MEGA_BY_ID[id];
+    if (!this.megaRt.has(id)) this.megaRt.set(id, newMegaRuntime(id));
+    c.beginEvent(isl);
+    this.megaHere = { id, isl, commander: null };
+    const names = m.districts.map((d) => d.name).join(', ');
+    this.onMessage(`${m.name} – ${m.title}: ${m.info.split('.')[0]}. Umkämpfte Bezirke: ${names}.`);
+  }
+
+  /** Zurück an Bord: nicht geräumte Bezirke ziehen sich zurück, der Kommandant verschwindet bis zum nächsten Landgang */
+  private leaveMega() {
+    const h = this.megaHere;
+    if (!h) return;
+    const rt = this.megaRt.get(h.id);
+    if (rt) {
+      for (const d of rt.districts) if (d.state === 'aktiv') d.state = 'ruhig';
+      if (rt.commander.state === 'unterwegs') rt.commander.state = 'fern';
+    }
+    this.megaHere = null;
+  }
+
+  /** Je Bild an Land auf einer Mega-Insel: Bezirke wecken, Kommandant erscheinen und umherziehen lassen, Siege melden */
+  private updateMega(dt: number) {
+    const h = this.megaHere, c = this.combat, f = this.foot;
+    if (!h || !c || !f || this.mode !== 'foot') return;
+    const rt = this.megaRt.get(h.id)!;
+    const m = MEGA_BY_ID[h.id];
+    const def = this.islandDefs.find((d) => d.id === h.id);
+    const tier = def?.dangerTier ?? 3;
+    const enemyFaction: Faction = this.playerFaction === 'pirat' ? 'marine' : 'pirat';
+    const now = this.env.clock;
+    // 1. Bezirke, denen man nahe kommt, ziehen auf: Elite-Trupps patrouillieren um die Bezirksmitte, bis sie die Spielfigur entdecken
+    districtsToWake(rt, f.x, f.z, now, this.megaWake);
+    for (let k = 0; k < this.megaWake.length; k++) {
+      const i = this.megaWake[k], d = m.districts[i];
+      districtWorld(m, d, this.megaPt);
+      const lv = megaLevel(tier, d.lvl);
+      c.spawnWave(d.squad, lv, enemyFaction, `mega:${h.id}:${d.id}`, this.megaPt, d.r * 0.45, { calm: true });
+      this.onMessage(`${d.name}: Elite-Trupps halten den Bezirk! (Stufe ${lv})`);
+    }
+    // 2. Der Kommandant erscheint mit dem ersten Bezirk und zieht seine Runde
+    if (commanderShouldAppear(rt, now)) {
+      const route = m.commander.route;
+      const di = Math.max(0, m.districts.findIndex((d) => d.id === route[rt.commander.leg % route.length]));
+      districtWorld(m, m.districts[di], this.megaPt);
+      const lv = megaLevel(tier, m.commander.lvl);
+      const spawned = c.spawnWave(['legende', ...m.commander.guard], lv, enemyFaction, `mega:${h.id}:kommandant`, this.megaPt, 6, { name: m.commander.name, calm: true });
+      h.commander = spawned.find((e) => e.kind === 'legende') ?? null;
+      rt.commander.state = 'unterwegs'; rt.commander.roamT = 0;
+      this.overlay?.showCutin(m.commander.name, '#A8322A');
+      this.onMessage(`${m.commander.name}, ${m.commander.title}, zieht mit seiner Leibwache durch ${m.name}! (Stufe ${lv})`);
+    }
+    const cmd = h.commander;
+    if (cmd) {
+      if (!cmd.alive) {
+        rt.commander.state = 'besiegt';
+        rt.commander.until = now + 1500;
+        h.commander = null;
+        this.onMegaVictory(h.id, m.commander.name, megaLevel(tier, m.commander.lvl), true);
+      } else {
+        const next = commanderRoam(rt, dt, cmd.aggro);
+        if (next >= 0) {
+          districtWorld(m, m.districts[next], this.megaPt);
+          // Kommandant und Leibwache ziehen zum nächsten Bezirk seiner Runde (ihr Patrouillenkreis wandert mit)
+          for (const e of c.enemies) if (e.alive && e.tag === `mega:${h.id}:kommandant` && !e.aggro) { e.homeX = this.megaPt.x + (Math.random() - 0.5) * 6; e.homeZ = this.megaPt.z + (Math.random() - 0.5) * 6; }
+        }
+      }
+    }
+    // 3. Geräumte Bezirke: Schatztruhe (Beute-Säule) in der Bezirksmitte, Lohn vergibt das Spiel
+    for (let i = 0; i < rt.districts.length; i++) {
+      const d = rt.districts[i];
+      if (d.state !== 'aktiv' || c.tagLeft(`mega:${h.id}:${d.id}`) > 0) continue;
+      clearDistrict(rt, i, now);
+      const dd = m.districts[i];
+      districtWorld(m, dd, this.megaPt);
+      const gy = this.ground.height(this.megaPt.x, this.megaPt.z);
+      c.loot.drop(this.megaPt.x, (Number.isFinite(gy) ? gy : 1.3) + 1, this.megaPt.z, { rarity: 'episch', kind: 'gold', value: 60 + megaLevel(tier, dd.lvl) * 8 }, 1.5);
+      this.overlay?.showBanner(`${dd.name} geräumt!`, 'Eine Schatztruhe öffnet sich');
+      this.onMegaVictory(h.id, dd.name, megaLevel(tier, dd.lvl), false);
+    }
+  }
+
   /**
    * Festungsinseln der Weltmächte (`citadel`) und der Marine (`marinefort`: Grenzfestungen und Hauptquartier Weißwacht).
    * Marine: bei gutem Ansehen (verbündet) oder im Lager der Marine kein Angriff, das Hauptquartier lässt sich nicht angreifen; neutral:
@@ -2773,6 +2925,8 @@ export class SeaWorld {
     const def = this.islandDefs[idx];
     if (!c || !def) return;
     const where = `${def.name}`;
+    if (def.skerry) { this.onMessage(`${where}: ${def.info}`); return; }
+    if (def.mega && isMegaId(def.id)) { this.enterMega(isl, def.id); return; }
     if (def.kind === 'town') { this.onMessage(`Willkommen in ${where}! Sprich mit den Leuten – und probier deine Kombos an den Puppen.`); return; }
     if (def.kind === 'harbor') { this.onMessage(`${where}: ${def.info}`); return; }
     if (def.kind === 'quiet' && this.assets) {

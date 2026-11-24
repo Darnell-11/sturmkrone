@@ -110,8 +110,10 @@ export function* islandTerrainSteps(kit: StyleKit, r: number, coast: { a: number
   };
   const rings = (n: number, from = 0, to = 1) => Array.from({ length: n + 1 }, (_, i) => from + (to - from) * (i / n));
   // Strand: Plateau und Böschung bis ins Wasser, Ringe etwa alle 4 m
-  const nPlateau = Math.max(10, Math.round(r / 4));
-  const segsB = Math.max(160, Math.round(r * 1.5));
+  // Mega-Inseln (Radius über 250 m, 4.3.6): etwas gröber, sonst wüchse das Netz auf weit über 100 000 Eckpunkte
+  const big = r > 250;
+  const nPlateau = Math.max(10, Math.round(r / (big ? 5 : 4)));
+  const segsB = Math.min(big ? 620 : 1e9, Math.max(160, Math.round(r * 1.5)));
   const beachT = [...rings(nPlateau, 0.0001, 1), ...rings(7, 1, 1 + shelf).slice(1)];
   let bg = yield* polar(0, 0, (a) => r * k(a), beachT, segsB, 0, false);
   // Winkelrichtung: Kosinus/Sinus in xz laufen gegen den Uhrzeigersinn von oben gesehen: Dreiecke so drehen, dass die Normale nach oben zeigt
@@ -145,8 +147,8 @@ export function* islandTerrainSteps(kit: StyleKit, r: number, coast: { a: number
         + ragged * (0.2 * Math.sin(a * lobes + seed * 1.7) + 0.13 * Math.sin(a * (lobes + 1) - seed * 0.9) + 0.07 * Math.sin(a * 7 + seed * 2.3));
       return r * k(a) * Math.min(0.95, grassFrac * wobble);
     };
-    const nG = Math.max(10, Math.round(r * grassFrac / 2.4));
-    const segsG = Math.max(150, Math.round(r * 2.2));
+    const nG = Math.max(10, Math.round(r * grassFrac / (big ? 3.4 : 2.4)));
+    const segsG = Math.min(big ? 680 : 1e9, Math.max(150, Math.round(r * 2.2)));
     const edgeW = Math.min(9, Math.max(4.5, r * 0.11));
     capR = radiusAt; capEdge = edgeW;
     let gg = yield* polar(0, 0, radiusAt, rings(nG, 0.0001, 1), segsG, 0.15, false, edgeW);

@@ -216,10 +216,10 @@ export const THEME_ISLANDS: readonly ThemeIslandSpec[] = [
 
 // ---------- Siedlungen aus Bausteinen ----------
 
-const S = (t: StructureType, x: number, z: number, yaw = 0, len?: number): StructureDef => ({ t, x, z, yaw, len });
+export const S = (t: StructureType, x: number, z: number, yaw = 0, len?: number): StructureDef => ({ t, x, z, yaw, len });
 
 /** Wohnhaus je Biom */
-const HOME: Record<SiteBiome, StructureType> = {
+export const HOME: Record<SiteBiome, StructureType> = {
   festland: 'fachwerkhaus', tropisch: 'kolonialhaus', klippe: 'steinhaus', nord: 'fachwerkhaus', glut: 'steinhaus', kreide: 'steinhaus', atoll: 'stelzenhuette', weinland: 'kolonialhaus',
 };
 
@@ -233,7 +233,7 @@ function ring(t: 'zinnenmauer' | 'mauer', cx: number, cz: number, w: number, d: 
 }
 
 /** Bauten eines Bausteins im Siedlungsraster (+z = vorn, zur Küste) und der Freiraum, den er braucht */
-function themeItems(theme: Theme, b: SiteBiome): { items: StructureDef[]; clear: number } {
+export function themeItems(theme: Theme, b: SiteBiome): { items: StructureDef[]; clear: number } {
   const H = HOME[b];
   switch (theme) {
     case 'hafen': return { clear: 30, items: [
@@ -309,7 +309,7 @@ function themeItems(theme: Theme, b: SiteBiome): { items: StructureDef[]; clear:
 }
 
 /** Gewachsenes je Biom: Bäume in Hainen, Büsche, Gras, Blumen, Felsen */
-function scatterOf(b: SiteBiome): ScatterLayer[] {
+export function scatterOf(b: SiteBiome): ScatterLayer[] {
   switch (b) {
     case 'kreide': return [
       { flora: 'laubbaum', perHa: 14, zone: [0.08, 0.8], size: [0.75, 1.2], grove: [40, 0.55], space: 2.6 },
@@ -387,7 +387,7 @@ function scatterOf(b: SiteBiome): ScatterLayer[] {
 }
 
 /** Kleine Zahl 0 … 1 aus einer Kennung (FNV), für Phasen der Küstenlinie */
-function hash01(id: string, k: number): number {
+export function hash01(id: string, k: number): number {
   let h = 2166136261 ^ k;
   for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); }
   h ^= h >>> 13; h = Math.imul(h, 0x5bd1e995); h ^= h >>> 15;

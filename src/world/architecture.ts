@@ -1177,18 +1177,179 @@ function ruinenbogen(): Built {
   return { g, boxes: [], circles: [[0.95, -2.6, 0], [0.95, 2.6, 0]] };
 }
 
-/** Bauwerk nach Art erzeugen (rnd: fester Zufall der Insel, len: Länge für Zaun, Mauer, Steg, Feld) */
-export function build(t: StructureType, rnd: () => number, len = 8, theme: FactionId | null = null): Built {
+// ---------- Mega-Inseln (4.3.6): Brücke, Statue, Dojo-Halle, Fahnenmast ----------
+
+const BRIDGE_LOOK: Record<string, { deck: string; stone: string; rail: 'stein' | 'holz' | 'ruine'; glow: boolean }> = {
+  stein: { deck: '#B8B0A0', stone: '#A8A092', rail: 'stein', glow: true },
+  marmor: { deck: '#EDE8E0', stone: '#DCD6CA', rail: 'stein', glow: true },
+  obsidian: { deck: '#2A2530', stone: '#1E1A22', rail: 'stein', glow: false },
+  holz: { deck: '#8A6A44', stone: '#8C847A', rail: 'holz', glow: true },
+  ruine: { deck: '#9C978A', stone: '#8E8A7E', rail: 'ruine', glow: false },
+};
+
+/**
+ * Brücke über eine Spalte (Länge entlang +z, Breite 4,6 m): ebene Fahrbahn knapp über dem Boden, Geländer beiderseits (Kollision), darunter zwei Bögen,
+ * die in die Spalte hinabreichen, und Widerlager an den Enden. Obsidianbrücken tragen glühende Fugen, Ruinenbrücken haben Lücken im Geländer.
+ */
+function bruecke(len: number, v: string): Built {
+  const L = BRIDGE_LOOK[v] ?? BRIDGE_LOOK.stein;
+  const g = new Group();
+  const deckMat = L.rail === 'holz' ? plank(L.deck) : AM(L.deck, 'stone');
+  const stoneMat = AM(L.stone, 'stone');
+  const W = 4.6;
+  g.add(box(W, 0.55, len, deckMat, 0, -0.16, 0));
+  const boxes: Built['boxes'] = [];
+  for (const sx of [-1, 1]) {
+    if (L.rail === 'holz') {
+      const n = Math.max(2, Math.round(len / 2.2));
+      for (let i = 0; i <= n; i++) g.add(box(0.18, 1.1, 0.18, M.darkWood, sx * (W / 2 - 0.12), 0.55, -len / 2 + (i / n) * len));
+      g.add(box(0.12, 0.12, len, M.wood, sx * (W / 2 - 0.12), 1.0, 0), box(0.1, 0.1, len, M.wood, sx * (W / 2 - 0.12), 0.55, 0));
+    } else {
+      // Brüstung in Stücken (Ruine: jedes dritte fehlt)
+      const n = Math.max(2, Math.round(len / 2.6));
+      for (let i = 0; i < n; i++) {
+        if (L.rail === 'ruine' && i % 3 === 1) continue;
+        g.add(box(0.5, 0.95, len / n - 0.08, stoneMat, sx * (W / 2 - 0.25), 0.42, -len / 2 + (i + 0.5) * (len / n)));
+      }
+    }
+    boxes.push([0.6, len, sx * (W / 2 - 0.25), 0]);
+    // Bogen unter der Fahrbahn: halber Ring in der z-y-Ebene, Scheitel knapp unter dem Deck
+    const R = len * 0.46;
+    const arch = new Mesh(new TorusGeometry(R, 0.75, 6, 18, Math.PI), stoneMat);
+    arch.rotation.y = Math.PI / 2;
+    arch.position.set(sx * 1.55, -0.45 - R, 0);
+    g.add(arch);
+  }
+  // Widerlager
+  for (const sz of [-1, 1]) g.add(box(W + 1.2, 4.2, 2.4, stoneMat, 0, -2.2, sz * (len / 2 - 0.4)));
+  // Obsidian: glühende Fugen entlang der Fahrbahn
+  if (v === 'obsidian') for (let i = 1; i < 6; i++) { const f = box(W - 0.6, 0.06, 0.12, emberMat, 0, 0.13, -len / 2 + (i / 6) * len); f.userData.noOutline = true; g.add(f); }
+  const glows: GlowSpec[] = [];
+  if (L.glow) for (const sz of [-1, 1]) for (const sx of [-1, 1]) { g.add(laterneMesh(sx * (W / 2 + 0.25), sz * (len / 2 - 0.2))); glows.push({ kind: 'lamp', x: sx * (W / 2 + 0.25), y: 2.3, z: sz * (len / 2 - 0.2), gy: 0, size: 0.5, pool: 3.5 }); }
+  else if (v === 'obsidian') for (const sz of [-1, 1]) glows.push({ kind: 'fire', x: 0, y: 0.3, z: sz * (len / 2 + 1.2), gy: 0, size: 0.6, pool: 4 });
+  return { g, boxes, circles: [], glows };
+}
+
+/** Kleine Laterne auf einem Pfosten (Brückenköpfe) */
+function laterneMesh(x: number, z: number): Group {
+  const g = new Group();
+  g.add(box(0.16, 2, 0.16, M.iron, 0, 1, 0));
+  const lamp = box(0.34, 0.42, 0.34, lampMat, 0, 2.25, 0);
+  lamp.userData.noOutline = true;
+  g.add(lamp, box(0.46, 0.08, 0.46, M.iron, 0, 2.5, 0));
+  g.position.set(x, 0, z);
+  return g;
+}
+
+const STATUE_LOOK: Record<string, { body: string; trim: string; held: 'schwert' | 'zepter' | 'speer' | 'krone' }> = {
+  koenig: { body: '#E8E2D6', trim: '#C9A24E', held: 'zepter' },
+  koenigin: { body: '#EEE8DE', trim: '#C9A24E', held: 'krone' },
+  krieger: { body: '#8A6A3A', trim: '#C9A24E', held: 'schwert' },
+  kaiser: { body: '#6E7A74', trim: '#9FE8D8', held: 'zepter' },
+  waechter: { body: '#8C8A7E', trim: '#5E7A4A', held: 'speer' },
+};
+
+/** Monumentalstatue auf einem Sockel (etwa 8 m): König, Königin, Krieger (Bronze), Kaiser (grüner Stein mit leuchtender Krone), Wächter (bemoost) */
+function statue(v: string): Built {
+  const L = STATUE_LOOK[v] ?? STATUE_LOOK.waechter;
+  const g = new Group();
+  const stone = AM('#A8A092', 'stone');
+  const body = toon({ color: L.body, detail: 'stone', flatShading: true });
+  const trim = v === 'kaiser' ? lampMat : toon({ color: L.trim, spec: 0.8, metalness: 0.6, roughness: 0.45 });
+  g.add(box(3.4, 1.6, 3.4, stone, 0, 0.3, 0), box(2.8, 0.4, 2.8, stone, 0, 1.3, 0));
+  // Beine, Gewand, Rumpf, Schultern, Kopf
+  g.add(cyl(0.32, 0.38, 2.2, 8, body, -0.45, 2.6, 0), cyl(0.32, 0.38, 2.2, 8, body, 0.45, 2.6, 0));
+  g.add(cyl(0.75, 1.15, 1.6, 10, body, 0, 3.0, 0));
+  g.add(cyl(0.9, 0.7, 2.2, 10, body, 0, 4.7, 0));
+  g.add(box(2.3, 0.55, 0.9, body, 0, 5.75, 0));
+  const head = new Mesh(new SphereGeometry(0.55, 12, 10), body);
+  head.position.set(0, 6.45, 0);
+  g.add(head);
+  // Arme: einer hängt, einer hält das Zeichen nach oben
+  const armL = cyl(0.2, 0.24, 2, 8, body, -1.25, 4.8, 0); armL.rotation.z = 0.12; g.add(armL);
+  const armR = cyl(0.2, 0.24, 1.9, 8, body, 1.3, 5.35, 0.25); armR.rotation.z = -0.5; armR.rotation.x = -0.4; g.add(armR);
+  if (L.held === 'schwert') {
+    const bl = box(0.14, 3.2, 0.45, trim, 1.95, 7.1, 0.6); bl.rotation.z = -0.25;
+    g.add(bl, box(0.9, 0.16, 0.2, trim, 1.7, 5.9, 0.55));
+  } else if (L.held === 'speer') {
+    const tip = new Mesh(new ConeGeometry(0.22, 0.9, 6), trim);
+    tip.position.set(1.6, 9.2, 0.4);
+    g.add(cyl(0.07, 0.07, 6.5, 6, M.darkWood, 1.6, 5.6, 0.4), tip);
+  } else if (L.held === 'zepter') {
+    const orb = new Mesh(new SphereGeometry(0.28, 10, 8), trim);
+    orb.position.set(1.7, 7.7, 0.5);
+    g.add(cyl(0.08, 0.08, 2.4, 6, trim, 1.7, 6.4, 0.5), orb);
+  }
+  // Krone oder Helm
+  g.add(cyl(0.5, 0.42, 0.42, 8, trim, 0, 7.05, 0));
+  if (v === 'waechter') g.add(box(0.9, 0.5, 0.9, AM('#5E7A4A'), 0, 1.75, 0.6));
+  g.traverse((o) => { if ((o as Mesh).material === lampMat) o.userData.noOutline = true; });
+  const glows: GlowSpec[] = v === 'kaiser' ? [{ kind: 'lamp', x: 0, y: 7.1, z: 0, gy: null, size: 0.9, pool: 0 }] : [];
+  return { g, boxes: [], circles: [[1.9]], glows };
+}
+
+/** Dojo-Halle der Kurogane: Steinsockel, dunkle Holzwände, rote Säulen und drei geschwungene Dachstufen */
+function pagode(): Built {
+  const g = new Group();
+  const base = AM('#5A5650', 'stone');
+  const red = toon({ color: '#8E2A24' });
+  const roof = toon({ color: '#2A2C34', flatShading: true, detail: 'tile' });
+  g.add(box(13, 0.9, 11, base, 0, 0.1, 0));
+  g.add(box(10, 3.8, 8, M.darkWood, 0, 2.45, 0));
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(cyl(0.28, 0.32, 4.4, 8, red, sx * 5.4, 2.6, sz * 4.4));
+  // Tür und Fensterbänder
+  g.add(box(2.6, 2.6, 0.12, red, 0, 1.85, 4.05), box(8.4, 0.5, 0.1, red, 0, 3.6, 4.05));
+  const tiers: [number, number, number][] = [[9.2, 2.2, 5.1], [6.6, 1.8, 7.0], [4.2, 2.2, 8.6]];
+  for (const [rr, h, y] of tiers) {
+    const t = new Mesh(new ConeGeometry(rr, h, 4, 1), roof);
+    t.rotation.y = Math.PI / 4;
+    t.scale.set(1.25, 1, 1);
+    t.position.set(0, y, 0);
+    g.add(t);
+    g.add(box(rr * 1.55, 0.18, rr * 1.25, red, 0, y - h / 2 + 0.05, 0));
+    if (y < 8) g.add(box(rr * 0.95, 1.1, rr * 0.8, M.darkWood, 0, y + h / 2 - 0.2, 0));
+  }
+  g.add(cyl(0.06, 0.12, 1.6, 6, M.iron, 0, 10.3, 0));
+  const glows: GlowSpec[] = [{ kind: 'torch', x: -1.9, y: 2.2, z: 4.6, gy: 0, size: 0.6, pool: 4.5 }, { kind: 'torch', x: 1.9, y: 2.2, z: 4.6, gy: 0, size: 0.6, pool: 4.5 }];
+  return { g, boxes: [[13.2, 11.2]], circles: [], glows };
+}
+
+const FLAG_COLOR: Record<string, [string, string]> = { krone: ['#1F4E79', '#E8E2D4'], lilie: ['#2E4FA8', '#F4EEDC'], kurogane: ['#1E1A20', '#A8322A'], korsar: ['#1A1614', '#E8E2D4'], kompanie: ['#E07A1F', '#F4EEDC'], hanse: ['#7A7E86', '#1A1614'] };
+
+/** Fahnenmast mit zweifarbiger Fahne (Exerzierplätze, Paläste, Lager) */
+function fahne(v: string): Built {
+  const [a, b] = FLAG_COLOR[v] ?? FLAG_COLOR.krone;
+  const g = new Group();
+  const knob = new Mesh(new SphereGeometry(0.18, 8, 6), toon({ color: '#C9A24E', spec: 1 }));
+  knob.position.set(0, 10.1, 0);
+  g.add(cyl(0.1, 0.14, 10, 8, M.darkWood, 0, 5, 0), knob);
+  const f = new Mesh(new PlaneGeometry(3.2, 2), toon({ color: a, side: DoubleSide }));
+  f.position.set(1.65, 8.8, 0);
+  const s2 = new Mesh(new PlaneGeometry(3.2, 0.5), toon({ color: b, side: DoubleSide }));
+  s2.position.set(1.65, 8.8, 0.03);
+  f.userData.noOutline = true; s2.userData.noOutline = true;
+  g.add(f, s2);
+  return { g, boxes: [], circles: [[0.35]] };
+}
+
+/** Bauwerk nach Art erzeugen (rnd: fester Zufall der Insel, len: Länge für Zaun, Mauer, Steg, Feld, Brücke; v: Bauart von Brücke, Statue, Fahne) */
+export function build(t: StructureType, rnd: () => number, len = 8, theme: FactionId | null = null, v = ''): Built {
   archTheme = theme && THEMED_TYPES.has(t) ? theme : null;
   let b: Built;
-  try { b = buildInner(t, rnd, len); } finally { archTheme = null; }
+  try {
+    if (t === 'bruecke') b = bruecke(len, v);
+    else if (t === 'statue') b = statue(v);
+    else if (t === 'pagode') b = pagode();
+    else if (t === 'fahne') b = fahne(v);
+    else b = buildInner(t, rnd, len);
+  } finally { archTheme = null; }
   // Fensterlichter (von windowAt am Gruppenobjekt gesammelt) gehören zu den Lichtquellen des Baus
   const wg = b.g.userData.winGlows as GlowSpec[] | undefined;
   if (wg) (b.glows ??= []).push(...wg);
   return b;
 }
 
-function buildInner(t: StructureType, rnd: () => number, len: number): Built {
+function buildInner(t: Exclude<StructureType, 'bruecke' | 'statue' | 'pagode' | 'fahne'>, rnd: () => number, len: number): Built {
   switch (t) {
     case 'holzhuette': { const b = holzhuette(rnd); return dress(b, rnd, b.boxes[0][0] - 0.3, 4); }
     case 'stelzenhuette': return stelzenhuette(rnd);
