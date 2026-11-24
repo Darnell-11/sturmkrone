@@ -1,6 +1,9 @@
 import { Color, DirectionalLight, Fog, HemisphereLight, Vector3, type PerspectiveCamera, type Scene } from 'three';
 import { DAY_MINUTES, WEATHER_IDS, type WeatherId } from '../data/world';
-import { CAMERA_PLANES, type QualityConfig } from '../data/qualityTiers';
+import { CAMERA_PLANES, RENDER_LOOK, type QualityConfig } from '../data/qualityTiers';
+import { OCEAN_TINT } from '../data/oceanLook';
+import { atmosphereAt, createAtmoState, type Rgb3 } from './regionAtmosphere';
+import { DAY_PHASES, phaseWeights, type DayPhase } from './timeOfDay';
 import { forEachToon, toonShared } from '../render/toon';
 import { csmShared, ensureCsm } from '../render/csm';
 import { fogShared } from '../render/atmosphere';
@@ -57,6 +60,22 @@ export class Environment {
   private shadowTick = 0;
   private tmpCol = new Color();
   private tmpZenith = new Color();
+  /** Regions-Atmosphäre am Fokus (4.4C, wird je Bild überschrieben) */
+  readonly atmo = createAtmoState();
+  private tmpTint = new Color();
+  /** Anteile der vier Tagesphasen (4.4C, je Bild überschrieben) */
+  readonly phases: Record<DayPhase, number> = { morgengrauen: 0, mittag: 0, goldeneStunde: 0, nacht: 0 };
+  /** Belichtung relativ zu RENDER_LOOK.exposure (Tagesphase): Mittag etwas knapper (Kreide, Segel), Nacht etwas offener */
+  exposureK = 1;
+
+  /** Farbe in Richtung einer Tönung verschieben, ohne ihre Helligkeit zu ändern (nachts bleibt dunkel, mittags hell) */
+  private tintKeepLum(c: Color, rgb: Rgb3, k: number) {
+    if (k <= 0) return;
+    const L0 = c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
+    const Lt = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+    const s = Lt > 1e-5 ? L0 / Lt : 0;
+    c.lerp(this.tmpTint.setRGB(rgb[0] * s, rgb[1] * s, rgb[2] * s), Math.min(1, k));
+  }
   private tmpGrey = new Color();
   /** Licht und Nebel für den Regen (je Bild neu gefüllt, ohne neue Objekte) */
   private rainLook: RainLook = { horizon: new Color(), lit: 1, sunK: 0, sunDir: new Vector3(0, 1, 0) };
@@ -151,11 +170,6 @@ export class Environment {
     this.csm = null;
   }
 
-  /** Kaskaden-Lichter sofort anlegen, wenn die Stufe sie will (sonst entstehen sie im ersten Bild, nach dem Vorübersetzen: alle Programme doppelt) */
-  prepareCsm(camera: PerspectiveCamera) {
-    if (this.csmWant && !this.csm) this.createCsm(camera);
-  }
-
   /** Jedes Bild: Kaskaden der Kamera folgen lassen, Sonnenlicht übernehmen */
   private updateCsm(camera: PerspectiveCamera, lightDir: Vector3) {
     if (this.csmWant && !this.csm) this.createCsm(camera);
@@ -237,6 +251,17 @@ export class Environment {
     const grey = this.tmpGrey;
     const horizon = this.tmpCol.copy(pal.horizon).lerp(grey.copy(GREY).multiplyScalar((0.4 + 0.6 * pal.ambientI) * g2), mixK);
     const zenith = this.tmpZenith.copy(pal.zenith).lerp(grey.copy(GREY).multiplyScalar((0.25 + 0.55 * pal.ambientI) * g2 * 0.75), mixK);
+    // Regions-Atmosphäre (4.4C): Stimmung des Sektors und naher Brennpunkte – nur Uniforms und Farben, keine neuen Shader
+    const at = atmosphereAt(focus.x, focus.z, this.atmo);
+    this.tintKeepLum(horizon, at.sky, at.skyK);
+    this.tintKeepLum(zenith, at.sky, at.skyK * 0.55);
+    // Tagesphasen und Belichtung (Gewichte aus der Uhrzeit, stetig)
+    phaseWeights(this.time, this.phases);
+    {
+      let e = 0;
+      for (const p of DAY_PHASES) e += this.phases[p] * RENDER_LOOK.phaseExposure[p];
+      this.exposureK = e;
+    }
 
     const su = this.sky.skyU;
     su.uZenith.value.copy(zenith);
@@ -260,6 +285,8 @@ export class Environment {
     cu.uShade.value.copy(pal.cloudShade);
     cu.uHorizon.value.copy(horizon);
     cu.uFlash.value = flash;
+    // Ascheschein von unten: nachts und in der Dämmerung kräftiger, am hellen Tag nur ein warmer Hauch
+    cu.uAshGlow.value.setRGB(at.glow[0], at.glow[1], at.glow[2]).multiplyScalar(at.glowK * (0.3 + 0.7 * (1 - pal.sunVis)) * (0.6 + 0.4 * gloom));
     cu.uWind.value.set(2 + 10 * w.wind, 1 + 3 * w.wind);
     // Wolkendecke: 1 Rauscheinheit ≈ 3,3 km; sie zieht mit dem Wind (etwas schneller als die gemalten Wolken) und bleibt über dem Meer stehen
     su.uCloudOff.value.set((camera.position.x + cu.uWind.value.x * this.clock * 1.6) / 3270, (camera.position.z + cu.uWind.value.y * this.clock * 1.6) / 3270);
@@ -269,6 +296,7 @@ export class Environment {
 
     const fog = this.scene.fog as Fog;
     fog.color.copy(horizon);
+    this.tintKeepLum(fog.color, at.fog, at.fogK);
     {
       // Nebel 4.4.1: bei klarem Wetter weite Luftperspektive (Dunst bis `hazeRange`, die Nähe bleibt klar), mit sinkender Sicht wechselt die
       // Form zu echtem Nebel (dicht ab der Kamera, exponentiell). `fog.near` trägt die Form 0 … 1 (siehe render/atmosphere.ts).
@@ -278,7 +306,7 @@ export class Environment {
       const open = Math.pow(1 - shape, 1.5);
       // große Schiffe: die Kamera steht weit hinten und hoch; ihr Abstand zählt nicht als Nebelstrecke
       const camD = camera.position.distanceTo(focus);
-      fog.far = Math.min(CAMERA_PLANES.far * 0.97, dense + (this.hazeRange - dense) * open + camD * 0.9);
+      fog.far = Math.min(CAMERA_PLANES.far * 0.97, (dense + (this.hazeRange - dense) * open) * at.haze + camD * 0.9);
       fog.near = shape;
       // echter Nebel: Himmel eingrauen, gemalte Wolken verblassen
       su.uFogK.value = shape * shape * 0.85;
@@ -288,10 +316,13 @@ export class Environment {
     // Licht
     const light = w.light;
     this.sun.color.copy(pal.light);
-    this.sun.intensity = pal.lightI * light * light * Math.max(pal.sunVis, pal.moonVis * 0.9 + 0.1) * pal.lightK + flash * 2;
+    this.tintKeepLum(this.sun.color, at.light, at.lightK);
+    this.sun.intensity = pal.lightI * light * light * Math.max(pal.sunVis, pal.moonVis * 0.9 + 0.1) * pal.lightK * at.lightMul + flash * 2;
     this.hemi.color.copy(pal.ambientSky).lerp(GREY, greyK * 0.5);
     // Streulicht vom hellen Sand und vom Gras: Wände im Schatten bleiben lesbar statt schwarz (Tag stark, Nacht gar nicht)
     this.hemi.groundColor.copy(pal.ambientGround).lerp(BOUNCE, 0.34 * light);
+    // Lavaglut färbt das Licht von unten (Kurogane-Schlund, Glutring)
+    if (at.glowK > 0) this.hemi.groundColor.lerp(this.tmpTint.setRGB(at.glow[0], at.glow[1], at.glow[2]), at.glowK * 0.3);
     this.hemi.intensity = pal.ambientI * (0.3 + 0.7 * light) + flash * 1.5;
     this.sun.position.copy(focus).addScaledVector(pal.lightDir, 200);
     this.sun.target.position.copy(focus);
@@ -360,6 +391,16 @@ export class Environment {
     ou.uDeep.value.multiplyScalar(0.55 + 0.45 * gloom);
     ou.uMid.value.multiplyScalar(0.55 + 0.45 * gloom);
     ou.uShallow.value.multiplyScalar(0.55 + 0.45 * gloom);
+    // Regions-Tönung des Meeres (tief am stärksten), dann Lagune (Smaragd) und offene See (Kobalt) aus den Tagesfarben (4.4C)
+    this.tintKeepLum(ou.uDeep.value, at.sea, at.seaK);
+    this.tintKeepLum(ou.uMid.value, at.sea, at.seaK * 0.6);
+    this.tintKeepLum(ou.uShallow.value, at.sea, at.seaK * 0.3);
+    ou.uLagoon.value.copy(ou.uShallow.value);
+    this.tintKeepLum(ou.uLagoon.value, OCEAN_TINT.lagoon.rgb as unknown as Rgb3, OCEAN_TINT.lagoon.k * (0.4 + 0.6 * pal.sunVis));
+    ou.uLagoon.value.multiplyScalar(1.06);
+    ou.uAbyss.value.copy(ou.uDeep.value);
+    this.tintKeepLum(ou.uAbyss.value, OCEAN_TINT.abyss.rgb as unknown as Rgb3, OCEAN_TINT.abyss.k);
+    ou.uAbyss.value.multiplyScalar(0.82);
     ou.uZenith.value.copy(zenith);
     ou.uHorizon.value.copy(horizon);
     ou.uSunDir.value.copy(pal.sunVis > 0.1 ? pal.sunDir : pal.moonDir);

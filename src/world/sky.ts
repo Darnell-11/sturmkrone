@@ -20,7 +20,8 @@ const SKY_FRAG = /* glsl */ `
   uniform vec3 uZenith, uHorizon, uSunDir, uSunCol, uMoonDir, uGlow;
   uniform float uStars, uTime, uFlash, uSunVis, uMoonVis, uGrey;
   uniform vec3 uCloudLit, uCloudShade;
-  uniform float uCover, uDark, uCloudQ, uFogK;
+  uniform float uCover, uDark, uCloudQ, uFogK, uSkyCap;
+  uniform vec3 uAshGlow;
   uniform vec2 uCloudOff;
   varying vec3 vDir;
   float h21(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
@@ -46,7 +47,9 @@ const SKY_FRAG = /* glsl */ `
     // Leuchten um die Sonne / Abendrot am Horizont
     float s = max(dot(d, normalize(uSunDir)), 0.0);
     c += uGlow * pow(max(s, 1e-4), 6.0) * (1.0 - h) * 0.9;
-    c += uSunCol * (pow(max(s, 1e-4), 64.0) * 0.5 + smoothstep(0.9993, 0.9996, s) * 8.0) * uSunVis;
+    c += uSunCol * pow(max(s, 1e-4), 64.0) * 0.5 * uSunVis;
+    // Sonnen- und Mondscheibe getrennt: nur sie dürfen über die Bloom-Schwelle (4.4C), der übrige Himmel bleibt darunter (siehe unten)
+    vec3 skDisc = uSunCol * smoothstep(0.9993, 0.9996, s) * 8.0 * uSunVis;
     // Atmosphäre: Vorwärtsstreuung (Mie, Henyey-Greenstein) – heller Hof in der Lichtfarbe um die Sonne,
     // bei Bewölkung schwächer; dazu ein Dunstband, das am Horizont nahtlos in den Nebel übergeht
     float mieG = 0.76;
@@ -56,7 +59,8 @@ const SKY_FRAG = /* glsl */ `
     // Mond mit Hof
     float m = max(dot(d, normalize(uMoonDir)), 0.0);
     // Mond: Scheibe, weicher Hof und weiter Schimmer (Dunst im Mondlicht)
-    c += vec3(0.85, 0.9, 1.0) * (smoothstep(0.9993, 0.99945, m) * 3.4 + pow(max(m, 1e-4), 180.0) * 0.35 + pow(max(m, 1e-4), 26.0) * 0.10) * uMoonVis;
+    c += vec3(0.85, 0.9, 1.0) * (pow(max(m, 1e-4), 180.0) * 0.35 + pow(max(m, 1e-4), 26.0) * 0.10) * uMoonVis;
+    skDisc += vec3(0.85, 0.9, 1.0) * smoothstep(0.9993, 0.99945, m) * 3.4 * uMoonVis;
     // Abendglut: breites warmes Band am Horizont in Richtung der tiefen Sonne
     c += uGlow * exp(-h * 9.0) * pow(max(s, 1e-4), 2.2) * 0.55 * uSunVis * (1.0 - h);
     // Sterne
@@ -87,6 +91,9 @@ const SKY_FRAG = /* glsl */ `
       float cloudN = n1 * 0.5 + n2 * 0.5;
       c += vec3(0.32, 0.36, 0.55) * band * (0.35 + cloudN) * 0.22 * uStars * smoothstep(0.05, 0.4, d.y) * (1.0 - uGrey);
     }
+    // Ascheschein (4.4C, Regions-Atmosphäre): Lavaglut und Glutfelder leuchten den Himmel über dem Horizont von unten an
+    c += uAshGlow * exp(-max(d.y, 0.0) * 6.5) * 0.75;
+    float skOcc = 0.0;
     // Wolkendecke (4.4.1): eine Schicht in rund 1,8 km Höhe, in die Ebene projiziert (zum Horizont flach und dicht), mit Wind und Kamera
     // ziehend. Beleuchtung aus einer zweiten Probe in Richtung Sonne (dichter dort = Eigenschatten), Silberrand im Gegenlicht, Dunst am Horizont.
     // Darüber feine Zirren bei klarem Himmel. Sterne und Mond verschwinden hinter den Wolken.
@@ -106,6 +113,8 @@ const SKY_FRAG = /* glsl */ `
       cc += uCloudLit * pow(max(s, 1e-4), 10.0) * (1.0 - dens) * dens * 3.2 * uSunVis;
       cc += uGlow * pow(max(s, 1e-4), 3.0) * 0.6;
       cc *= mix(1.0, 0.32, uDark);
+      // Wolkenunterseiten fangen den Ascheschein auf
+      cc += uAshGlow * (1.0 - lit * 0.6) * 0.8;
       cc = mix(cc, uHorizon, exp(-hy * 7.0) * 0.8);
       float ca = dens * smoothstep(0.0, 0.08, hy) * (0.55 + 0.45 * uCover);
       // Zirren: lange, dünne Fäden hoch oben (nur bei eher klarem Himmel)
@@ -115,11 +124,16 @@ const SKY_FRAG = /* glsl */ `
       float cia = ci * (1.0 - uCover) * 0.35 * smoothstep(0.05, 0.3, hy) * (1.0 - dens);
       c = mix(c, mix(uCloudLit, uHorizon, 0.35) * mix(1.0, 0.4, uDark), cia);
       c = mix(c, cc, ca);
+      skOcc = ca;
     }
     // Echter Nebel verschluckt auch den Himmel: von unten nach oben in die Nebelfarbe (die Sonne bleibt als heller Fleck)
     c = mix(c, uHorizon, uFogK * (0.95 - 0.35 * h));
     // Unter dem Horizont: der Abgrund hinter dem Weltrand
     if (d.y < 0.0) c = mix(uHorizon, uHorizon * 0.25, clamp(-d.y * 3.0, 0.0, 1.0));
+    // Der Himmel bleibt unter der Bloom-Schwelle (4.4C): nur Sonne, Mond, Blitz und echte Lichter leuchten nach
+    float skL = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    c *= min(1.0, uSkyCap / max(skL, 1e-4));
+    c += skDisc * (1.0 - skOcc) * (1.0 - uFogK * 0.85);
     c += vec3(0.75, 0.8, 1.0) * uFlash;
     gl_FragColor = vec4(c, 1.0);
     #include <tonemapping_fragment>
@@ -223,6 +237,7 @@ const CLOUD_FRAG = /* glsl */ `
   uniform sampler2D uMap;
   uniform vec3 uLit, uShade, uHorizon;
   uniform float uDark, uFlash, uOpacity;
+  uniform vec3 uAshGlow;
   varying vec2 vUv;
   varying float vAlpha;
   varying float vFar;
@@ -236,6 +251,8 @@ const CLOUD_FRAG = /* glsl */ `
     // weicher, aber noch klar gezeichneter Übergang (Anime-Wolke statt Zweifarb-Aufkleber)
     vec3 c = mix(shade, lit, smoothstep(0.22, 0.78, t.r));
     c = mix(c, uHorizon, vFar * 0.65);
+    // Unterseiten im Ascheschein (Regions-Atmosphäre)
+    c += uAshGlow * (1.0 - smoothstep(0.22, 0.78, t.r)) * 0.7;
     c += vec3(0.8, 0.85, 1.0) * uFlash * 0.8;
     gl_FragColor = vec4(c, a);
     #include <tonemapping_fragment>
@@ -271,6 +288,8 @@ export class Sky {
     uCloudOff: { value: new Vector2() },
     /** Nebelform 0 … 1 (wie Fog.near): echter Nebel graut den Himmel ein */
     uFogK: { value: 0 },
+    /** Höchste Helligkeit des Himmels (ohne Sonnen- und Mondscheibe): bleibt unter der Bloom-Schwelle (4.4C) */
+    uSkyCap: { value: 0.9 },
   };
   readonly cloudU = {
     uMap: { value: cloudAtlas() },
@@ -285,6 +304,8 @@ export class Sky {
     uDark: { value: 0 },
     uFlash: { value: 0 },
     uOpacity: { value: 1 },
+    /** Ascheschein der Regions-Atmosphäre (Lavaglut von unten), 4.4C */
+    uAshGlow: { value: new Color(0, 0, 0) },
   };
 
   constructor(scene: Scene) {
@@ -295,7 +316,7 @@ export class Sky {
         depthWrite: false,
         fog: false,
         // Wolkenfarben, Bedeckung und Dunkelheit teilt die Wolkendecke mit den gemalten Wolken
-        uniforms: { ...this.skyU, uCloudLit: this.cloudU.uLit, uCloudShade: this.cloudU.uShade, uCover: this.cloudU.uCover, uDark: this.cloudU.uDark },
+        uniforms: { ...this.skyU, uCloudLit: this.cloudU.uLit, uCloudShade: this.cloudU.uShade, uCover: this.cloudU.uCover, uDark: this.cloudU.uDark, uAshGlow: this.cloudU.uAshGlow },
         vertexShader: /* glsl */ `
           varying vec3 vDir;
           void main() {

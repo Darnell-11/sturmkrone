@@ -88,16 +88,20 @@ export interface TimeKey {
  * Abend und Nacht bleiben Abend und Nacht, aber der Abend ist golden-orange statt grau-violett.
  */
 export const TIME_KEYS: TimeKey[] = [
-  { h: 0, name: 'Nacht', zenith: 0x040d2c, horizon: 0x1c3158, light: 0x8aa6f4, lightI: 0.85, ambientSky: 0x5a72b8, ambientGround: 0x0e1a30, ambientI: 0.78, seaDeep: 0x062648, seaMid: 0x0b3a64, seaShallow: 0x1a7090, cloudLit: 0x566ba0, cloudShade: 0x1c2542, rim: 0x9db4ff, stars: 1 },
-  { h: 4.8, name: 'Nacht', zenith: 0x060f2e, horizon: 0x22385e, light: 0x8aa6f4, lightI: 0.8, ambientSky: 0x5a72b8, ambientGround: 0x0e1a30, ambientI: 0.75, seaDeep: 0x07284a, seaMid: 0x0c3c68, seaShallow: 0x1b7292, cloudLit: 0x566ba0, cloudShade: 0x1c2542, rim: 0x9db4ff, stars: 1 },
+  { h: 0, name: 'Mondnacht', zenith: 0x040d2c, horizon: 0x1c3158, light: 0xa9b9e4, lightI: 0.9, ambientSky: 0x5a72b8, ambientGround: 0x0e1a30, ambientI: 0.78, seaDeep: 0x062648, seaMid: 0x0b3a64, seaShallow: 0x1a7090, cloudLit: 0x6474a8, cloudShade: 0x1c2542, rim: 0xb4c6ff, stars: 1 },
+  { h: 4.6, name: 'Mondnacht', zenith: 0x060f2e, horizon: 0x22385e, light: 0xa9b9e4, lightI: 0.85, ambientSky: 0x5a72b8, ambientGround: 0x0e1a30, ambientI: 0.75, seaDeep: 0x07284a, seaMid: 0x0c3c68, seaShallow: 0x1b7292, cloudLit: 0x6474a8, cloudShade: 0x1c2542, rim: 0xb4c6ff, stars: 1 },
+  // Morgengrauen (4.4C): blaue Stunde vor Sonnenaufgang – kühles Lavendel am Horizont, die Sterne verblassen
+  { h: 5.5, name: 'Morgengrauen', zenith: 0x152a64, horizon: 0x8694bc, light: 0xb2c0e8, lightI: 0.95, ambientSky: 0x7888c2, ambientGround: 0x242a40, ambientI: 0.74, seaDeep: 0x0a2e5c, seaMid: 0x154c7e, seaShallow: 0x287e98, cloudLit: 0xa4a4cc, cloudShade: 0x2e365e, rim: 0xc0c8ff, stars: 0.35 },
   { h: 6.2, name: 'Morgenrot', zenith: 0x3f7fcb, horizon: 0xffc08a, light: 0xffd2a0, lightI: 1.8, ambientSky: 0xb7cde8, ambientGround: 0x8a7a62, ambientI: 0.8, seaDeep: 0x0a4f82, seaMid: 0x1a8fb8, seaShallow: 0x3cc9b4, cloudLit: 0xffd9bf, cloudShade: 0x8d90b8, rim: 0xffd0a0, stars: 0.1 },
   { h: 8.5, name: 'Tag', zenith: 0x1f86dc, horizon: 0xd9f2e4, light: 0xfff3d1, lightI: 2.55, ambientSky: 0xa8d3f5, ambientGround: 0x9ad0b4, ambientI: 1.14, seaDeep: 0x0a6aa6, seaMid: 0x0e93c9, seaShallow: 0x2dd4bf, cloudLit: 0xffffff, cloudShade: 0x9db8dc, rim: 0xfff3d1, stars: 0 },
   // Mittagssonne: hoch, goldweiß, kräftig – kurze Schatten, tiefes Azur im Zenit, türkis-heller Horizont
   { h: 12.5, name: 'Mittag', zenith: 0x1272dc, horizon: 0xc9f1e8, light: 0xfff3d1, lightI: 2.65, ambientSky: 0xa0d2f8, ambientGround: 0x9cd3b6, ambientI: 1.14, seaDeep: 0x066fae, seaMid: 0x0aa0dc, seaShallow: 0x33e0c8, cloudLit: 0xffffff, cloudShade: 0x9db8dc, rim: 0xfff6dc, stars: 0 },
   { h: 16, name: 'Tag', zenith: 0x2084dc, horizon: 0xe2f0d4, light: 0xffeccb, lightI: 2.45, ambientSky: 0xa8d3f5, ambientGround: 0x9ad0b4, ambientI: 1.12, seaDeep: 0x0a6aa6, seaMid: 0x0e93c9, seaShallow: 0x2dd4bf, cloudLit: 0xfffaf0, cloudShade: 0x9db8dc, rim: 0xfff0d0, stars: 0 },
+  // Goldene Stunde (4.4C): tiefe, warme Sonne, lange Schatten, goldener Horizont – noch ohne das Rot des Abends
+  { h: 17.3, name: 'Goldene Stunde', zenith: 0x2a70c4, horizon: 0xffd08a, light: 0xffc47a, lightI: 2.35, ambientSky: 0xc6c6d8, ambientGround: 0x8a7458, ambientI: 0.96, seaDeep: 0x0e5a90, seaMid: 0x1e88b0, seaShallow: 0x44c4ae, cloudLit: 0xffe0aa, cloudShade: 0x9a8aa8, rim: 0xffc68c, stars: 0 },
   { h: 18.4, name: 'Abendrot', zenith: 0x2f63b4, horizon: 0xff9a48, light: 0xff9a52, lightI: 2.2, ambientSky: 0xe0b0a8, ambientGround: 0x6a5248, ambientI: 0.85, seaDeep: 0x14487c, seaMid: 0x2a7ea2, seaShallow: 0x4fb4a2, cloudLit: 0xffb070, cloudShade: 0x8a5a80, rim: 0xffa862, stars: 0.06 },
   { h: 19.8, name: 'Dämmerung', zenith: 0x1a2f7a, horizon: 0xc06888, light: 0xd890b8, lightI: 1.1, ambientSky: 0x8c76a8, ambientGround: 0x201c30, ambientI: 0.7, seaDeep: 0x0c2a52, seaMid: 0x1a5a7c, seaShallow: 0x2a7088, cloudLit: 0xb87aa4, cloudShade: 0x34305c, rim: 0xd0a8ff, stars: 0.6 },
-  { h: 21.2, name: 'Nacht', zenith: 0x040d2c, horizon: 0x1c3158, light: 0x8aa6f4, lightI: 0.85, ambientSky: 0x5a72b8, ambientGround: 0x0e1a30, ambientI: 0.78, seaDeep: 0x062648, seaMid: 0x0b3a64, seaShallow: 0x1a7090, cloudLit: 0x566ba0, cloudShade: 0x1c2542, rim: 0x9db4ff, stars: 1 },
+  { h: 21.2, name: 'Mondnacht', zenith: 0x040d2c, horizon: 0x1c3158, light: 0xa9b9e4, lightI: 0.9, ambientSky: 0x5a72b8, ambientGround: 0x0e1a30, ambientI: 0.78, seaDeep: 0x062648, seaMid: 0x0b3a64, seaShallow: 0x1a7090, cloudLit: 0x6474a8, cloudShade: 0x1c2542, rim: 0xb4c6ff, stars: 1 },
 ];
 
 export const WEATHER_IDS = ['klar', 'bewoelkt', 'nebel', 'regen', 'sturm'] as const;

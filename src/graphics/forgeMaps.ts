@@ -7,11 +7,13 @@ export type ForgeKind =
   | 'kanonenstahl' | 'messing' | 'stahl' | 'segeltuch'
   | 'fels_kalk' | 'fels_basalt' | 'fels_obsidian' | 'sand' | 'boden'
   | 'mauerwerk' | 'ziegel' | 'fachwerk' | 'hafenholz'
-  | 'stoff' | 'leder' | 'griffwicklung';
+  | 'stoff' | 'leder' | 'griffwicklung'
+  | 'wasser';
 
 export const FORGE_KINDS: readonly ForgeKind[] = [
   'rumpf_alt', 'rumpf', 'rumpf_edel', 'kanonenstahl', 'messing', 'stahl', 'segeltuch',
   'fels_kalk', 'fels_basalt', 'fels_obsidian', 'sand', 'boden', 'mauerwerk', 'ziegel', 'fachwerk', 'hafenholz', 'stoff', 'leder', 'griffwicklung',
+  'wasser',
 ];
 
 /** Rezept: Grundrauheit, Metall, Reliefstärke (Normalkarte), Kachelgröße in Metern (Welt-/Körperraum), ob die Textur Farbe trägt und ob sie über UV läuft */
@@ -52,12 +54,31 @@ export const FORGE_RECIPES: Record<ForgeKind, ForgeRecipe> = {
   stoff: { rough: 0.9, metal: 0, relief: 1, tile: 0.08, depth: 0.0005, albedo: false, uvNormal: false, label: 'Köperstoff' },
   leder: { rough: 0.5, metal: 0, relief: 1, tile: 0.12, depth: 0.0009, albedo: false, uvNormal: false, label: 'Narbenleder' },
   griffwicklung: { rough: 0.6, metal: 0, relief: 1.2, tile: 0.06, depth: 0.0012, albedo: false, uvNormal: false, label: 'Griffwicklung' },
+  // Meer (4.4C): Kapillar- und Windwellen als Normalkarte, auf der Meeresfläche in zwei Größen gegeneinander verschoben (world/ocean.ts)
+  wasser: { rough: 0.06, metal: 0, relief: 16, tile: 9, depth: 0, albedo: false, uvNormal: true, label: 'Wasser-Mikrowellen' },
 };
 
 /** Kantenlänge je Grafikstufe: Ultra und Max 1024 px, Hoch und Mittel 512 px, Niedrig 256 px (Speicher am Handy) */
 export function forgeSizeForTier(tier: string): number {
   return tier === 'ultra' || tier === 'max' ? 1024 : tier === 'low' ? 256 : 512;
 }
+
+/**
+ * Kantenlänge eines Satzes bei der Grundgröße der Stufe: die Wasser-Mikrowellen liegen ab Mittel immer in 1024 px vor (die Meeresfläche füllt
+ * das halbe Bild, 4.4C), sonst die Grundgröße.
+ */
+export function forgeKindSize(kind: ForgeKind, base: number): number {
+  return kind === 'wasser' ? (base >= 512 ? 1024 : 512) : base;
+}
+
+/**
+ * Wellenzüge der Wasser-Mikrowellen: ganze Wellenzahlen je Kachel (x, y) → nahtlos, Höhe, Phase. Kurze Wellen aus allen Richtungen, damit beim
+ * Verschieben in zwei Größen kein Gitter sichtbar wird.
+ */
+const WATER_WAVES: readonly [number, number, number, number][] = [
+  [3, 1, 1.0, 0.3], [2, -3, 0.85, 1.7], [5, 2, 0.7, 4.1], [-4, 5, 0.62, 2.2], [7, -2, 0.5, 5.3], [6, 6, 0.42, 0.9],
+  [-9, 4, 0.36, 3.6], [11, 3, 0.3, 1.2], [4, -12, 0.27, 2.8], [13, -7, 0.22, 0.4], [-15, 9, 0.18, 4.7], [17, 5, 0.15, 3.1],
+];
 
 // ---------- kachelbares Rauschen (rein, ohne Zuweisungen je Pixel) ----------
 
@@ -295,6 +316,18 @@ function px(kind: ForgeKind, u: number, v: number, o: Px, seed: number) {
       const pore = smooth(0.9, 0.96, vnoise(u, v, 256, 256, seed + 3));
       o.h = 0.35 + pad * 0.4 + (wr - 0.5) * 0.3 - pore * 0.1;
       o.r = 0.5 + (1 - pad) * 0.1 + pore * 0.1 + (wr - 0.5) * 0.08;
+      return;
+    }
+    case 'wasser': {
+      // Kapillar- und Windwellen: spitze Kämme (exp(sin − 1) wie bei echtem Seegang), dazu feines Kabbelrauschen
+      let hs = 0, nrm = 0;
+      for (let k = 0; k < WATER_WAVES.length; k++) {
+        const w = WATER_WAVES[k];
+        hs += w[2] * Math.exp(Math.sin(TAU * (w[0] * u + w[1] * v) + w[3]) - 1);
+        nrm += w[2];
+      }
+      o.h = (hs / nrm) * 0.82 + fbm(u, v, 8, 8, 4, seed + 5) * 0.18;
+      o.r = 0.06;
       return;
     }
     case 'griffwicklung': {

@@ -9,9 +9,12 @@ import {
   RedFormat,
   Vector3,
   Vector4,
+  type Texture,
 } from 'three';
 import { WAVES, WORLD_RADIUS } from '../data/world';
 import { WATER_ALPHA } from '../render/outline';
+import { SEA_COLOR_GLSL } from '../data/oceanLook';
+import { forgeSet } from '../graphics/pbrMaterialForge';
 import { fogUniforms } from '../render/atmosphere';
 import { ensureCsm } from '../render/csm';
 import { markShared } from '../render/dispose';
@@ -250,6 +253,14 @@ export class Ocean {
     uMid: { value: new Color(0x0e93c9) },
     uSand: { value: new Color(0xf3e5c2) },
     uShallow: { value: new Color(0x33c4d2) },
+    /** Strandlagune (Smaragd-Türkis) und offene See (Kobalt), 4.4C: setzt Environment je Bild aus den Tageszeit-Farben */
+    uLagoon: { value: new Color(0x2ad6b4) },
+    uAbyss: { value: new Color(0x0b3d8a) },
+    /** Kleinwellen aus der Schmiede (Satz `wasser`, 1024 px): Normalkarte und Stärke nach Grafikstufe (0 aus, 0,5 eine Lage, 1 zwei Lagen) */
+    uWaterN: { value: null as Texture | null },
+    uWaterK: { value: 1 },
+    /** Lichtstreuung durch dünne Wellenkämme im Gegenlicht (ab Hoch) */
+    uSss: { value: 1 },
     uFoam: { value: new Color(0xffffff) },
     uZenith: { value: new Color(0x2a7fd6) },
     uHorizon: { value: new Color(0xbfe8ff) },
@@ -294,6 +305,8 @@ export class Ocean {
     const wakeN = this.wakeCount;
     mat.onBeforeCompile = (shader) => {
       fogUniforms(shader);
+      // Normalkarte der Kleinwellen erst beim Übersetzen holen (dann steht der Satz aus dem Start schon bereit)
+      if (!u.uWaterN.value) u.uWaterN.value = forgeSet('wasser').normal;
       Object.assign(shader.uniforms, u);
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', `#include <common>
@@ -327,8 +340,9 @@ export class Ocean {
           uniform sampler2D uShore;
           uniform float uShoreSize;
           uniform float uWorldR;
-          uniform vec3 uDeep, uMid, uSand, uShallow, uFoam, uZenith, uHorizon, uSunDir, uSunCol;
-          uniform float uSpecK, uWindDir, uWindK, uDetail, uWaterAlpha, uRain;
+          uniform vec3 uDeep, uMid, uSand, uShallow, uFoam, uZenith, uHorizon, uSunDir, uSunCol, uLagoon, uAbyss;
+          uniform float uSpecK, uWindDir, uWindK, uDetail, uWaterAlpha, uRain, uWaterK, uSss;
+          uniform sampler2D uWaterN;
           ${hullGlsl(wakeN)}
           varying vec3 vSkW;
           varying float vCrest;
@@ -383,10 +397,10 @@ export class Ocean {
             // Tiefwasser-Geschwindigkeit in Windrichtung (± 70°) – kreuzen sich wie auf offener See
             vec2 rn = vec2(0.0);
             float wk = 0.75 + 0.6 * uWindK;
-            for (int i = 0; i < 18; i++) {
+            // 4.4C: nur noch die acht längeren Windwellen werden gerechnet (Mittel sechs); alles Feinere kommt aus der Normalkarte der Schmiede
+            for (int i = 0; i < 8; i++) {
               float fi = float(i);
-              // Handy-Stufe (Mid) rechnet nur die ersten Wellen
-              if (fi > 4.0 + 28.0 * (uDetail - 0.5)) break;
+              if (fi > 3.0 + 10.0 * (uDetail - 0.5)) break;
               // Goldener Winkel: die Wellen kommen aus allen Richtungen (kein gemeinsames Fließen), Windrichtung bevorzugt
               float ang = uWindDir + fi * 2.39996;
               float wgt = 0.3 + 0.7 * (0.5 + 0.5 * cos(ang - uWindDir));
@@ -406,6 +420,18 @@ export class Ocean {
             float rz = skNoise((rp + vec2(0.0, e)) * 0.9 + t1);
             rn += vec2(r0 - rx, r0 - rz) * 0.25 * (1.0 - smoothstep(20.0, 120.0, camD));
             skNf = normalize(skNf + vec3(rn.x, 0.0, rn.y) * uDetail * wk);
+            // Kapillar- und Windwellen aus der Schmiede (4.4C): zwei Größen gegeneinander verschoben (9 m und 21 m je Kachel, die zweite gedreht),
+            // mit dem Wind laufend; in der Ferne ausgeblendet (die Mipmaps glätten vorher schon)
+            if (uWaterK > 0.0) {
+              vec2 skWd = vec2(sin(uWindDir), cos(uWindDir));
+              float skWf = 1.0 - smoothstep(60.0, 650.0, camD);
+              vec2 skG = (texture2D(uWaterN, rp / 9.0 + skWd * (uTime * 0.05)).xy * 2.0 - 1.0) * 0.6;
+              if (uWaterK > 0.6) {
+                vec2 skU2 = mat2(0.8, -0.6, 0.6, 0.8) * rp / 21.0 - skWd * (uTime * 0.022) + vec2(uTime * 0.009, 0.0);
+                skG += mat2(0.8, 0.6, -0.6, 0.8) * (texture2D(uWaterN, skU2).xy * 2.0 - 1.0) * 0.45;
+              }
+              skNf = normalize(skNf + vec3(skG.x, 0.0, skG.y) * uWaterK * (0.42 + 0.3 * uWindK) * skWf);
+            }
           }
           // Ferne See (4.4.1): wo die Gerstner-Wellen ausgeblendet sind, tragen zwei weiche Rauschfelder die Wellenstruktur bis zum Horizont
           // (sonst wird das Meer in der Ferne zum glatten Spiegel); sie brechen Himmelsspiegelung und Sonnenbahn in Bänder und Flecken
@@ -448,9 +474,8 @@ export class Ocean {
           float skBank = smoothstep(0.52, 0.74, skSb) * smoothstep(10.0, 45.0, sd) * (1.0 - smoothstep(60.0, 215.0, sd));
           float skZ = max(0.1 + sd * 0.042 + smoothstep(52.0, 235.0, sd) * 24.0 - skBank * (1.1 + sd * 0.028), 0.08);
           float shallow = 1.0 - smoothstep(0.0, 3.2, skZ);
-          // Wassersäule: leuchtendes Türkis (flach) → Azur → tiefes Saphirblau. Wellenberge sind etwas heller.
-          vec3 skWater = mix(uShallow, uMid, smoothstep(1.2, 8.0, skZ));
-          skWater = mix(skWater, uDeep, smoothstep(7.0, 30.0, skZ));
+          // Wassersäule (4.4C, data/oceanLook.ts): Smaragd-Lagune → Türkis (bis ~6 m) → Azur → Tiefblau → Kobalt der offenen See. Wellenberge etwas heller.
+${SEA_COLOR_GLSL}
           skWater *= 0.94 + 0.14 * smoothstep(-0.8, 1.6, skD.y);
           // Meeresgrund: heller Sand scheint durch das klare Wasser, Rot wird zuerst verschluckt (daher türkis);
           // Lichtnetze (Kaustiken) wandern darüber. Mit der Tiefe verschwindet der Grund.
@@ -492,13 +517,15 @@ export class Ocean {
           // Brandungsringe und Küstenlinie
           // anrollende Brandungswellen: schmale, aufgerissene Schaumlinien, die zur Küste hin dichter werden
           // (Karibik: breite Brandungszone, mehrere Wellenzüge laufen auf den Strand, dazu ein Schaumteppich, der den Sand hinauf- und herunterläuft)
-          float skSurf = sd * 0.3 - uTime * 0.55 + nz * 1.5;
-          float bands = smoothstep(0.82, 0.985, sin(skSurf * 3.14159)) * (1.0 - smoothstep(5.0, 38.0, sd));
-          float coast = 1.0 - smoothstep(0.0, 5.5, sd + (nz - 0.5) * 3.5);
+          // Seegang (4.4C): bei hohen Wellen läuft die Brandung schneller, breiter und weiter hinaus (Klippen und Schären im Sturm)
+          float skSurfK = clamp((uWaveScale - 0.9) / 1.6, 0.0, 1.0);
+          float skSurf = sd * 0.3 - uTime * (0.55 + 0.3 * skSurfK) + nz * 1.5;
+          float bands = smoothstep(0.82 - 0.1 * skSurfK, 0.985, sin(skSurf * 3.14159)) * (1.0 - smoothstep(5.0, 38.0 + 30.0 * skSurfK, sd));
+          float coast = 1.0 - smoothstep(0.0, 5.5 + 4.0 * skSurfK, sd + (nz - 0.5) * 3.5);
           // blasiger Küstenschaum: dichte Kante, nach außen zerfasernde Spitze statt glatter Fläche
           float bub = skNoise(vSkW.xz * 2.2 + skOsc(0.25, 0.18)) * 0.6 + skNoise(vSkW.xz * 5.5 - skOsc(0.31, 0.22)) * 0.4;
           float coastFoam = coast * smoothstep(0.58 - coast * 0.5, 0.72 - coast * 0.45, bub);
-          float wash = (1.0 - smoothstep(0.0, 9.0, sd + (nz - 0.5) * 6.0)) * (0.5 + 0.5 * sin(uTime * 0.85 + nz * 7.0));
+          float wash = (1.0 - smoothstep(0.0, 9.0 + 8.0 * skSurfK, sd + (nz - 0.5) * 6.0)) * (0.5 + 0.5 * sin(uTime * (0.85 + 0.4 * skSurfK) + nz * 7.0));
           float washFoam = wash * smoothstep(0.4, 0.68, bub);
           skFoam = max(skFoam, max(max(bands * smoothstep(0.32, 0.58, bub) * 0.85, coastFoam * 0.96), washFoam * 0.7));
           // Schaumstreifen in Windrichtung (je stärker der Wind, desto mehr), wie auf echter offener See
@@ -650,8 +677,10 @@ export class Ocean {
             float back = pow(clamp(dot(Vw, -uSunDir) * 0.5 + 0.5, 1e-4, 1.0), 3.0);
             float thin = clamp(skCrestF * 1.6 + 0.2, 0.0, 1.0) * smoothstep(-0.4, 1.6, skD.y);
             float face = clamp(1.0 - abs(Nw.y), 0.0, 1.0);
-            vec3 sssCol = mix(uShallow, vec3(0.2, 0.9, 0.72), 0.45);
-            outgoingLight += sssCol * back * (thin * 0.65 + face * 0.6) * 0.9 * uSpecK * (1.0 - skFoam);
+            // smaragdgrüne Lichtdurchlässigkeit hoher, dünner Kämme (4.4C: ab Hoch, uSss)
+            vec3 sssCol = mix(uShallow, vec3(0.12, 0.92, 0.62), 0.55);
+            float skHigh = smoothstep(0.2, 1.6, skD.y);
+            outgoingLight += sssCol * back * (thin * (0.6 + 0.45 * skHigh) + face * 0.45) * 0.75 * uSpecK * (1.0 - skFoam) * uSss;
             // Wasserkörper je nach Blickwinkel: steil hinabgeschaut dunkler und tiefer, mit Aufhellung durch Streulicht
             outgoingLight += mix(uDeep, uShallow, 0.35) * nl * 0.18 * uSpecK * (1.0 - skFoam) * nv;
             // Wellentäler etwas dunkler – mehr Tiefe zwischen den Wellen
@@ -669,7 +698,7 @@ export class Ocean {
           // die das Bild danach wieder undurchsichtig machen – sonst wäre das Wasser auf manchen Handys durchsichtig)
           gl_FragColor.a = uWaterAlpha;`);
     };
-    mat.customProgramCacheKey = () => `sk-ocean30-${wakeN}`;
+    mat.customProgramCacheKey = () => `sk-ocean31-${wakeN}`;
     // Kaskaden-Schatten: auch ein neu gebautes Wassermaterial zählt alle Kaskaden als ein Licht
     ensureCsm(mat);
     return mat;
@@ -678,6 +707,9 @@ export class Ocean {
   /** Auflösung und Kielwasser-Punkte je Grafikstufe */
   setDetail(detail: number, wakeCount: number) {
     this.uniforms.uDetail.value = detail <= 0.5 ? 0 : Math.min(1, detail);
+    // Kleinwellen aus der Karte: Mittel eine Lage, ab Hoch zwei; Streuung im Kamm ab Hoch (4.4C)
+    this.uniforms.uWaterK.value = detail <= 0.5 ? 0 : detail < 1 ? 0.5 : 1;
+    this.uniforms.uSss.value = detail >= 1 ? 1 : 0;
     this.hullMax = detail <= 0.5 ? 2 : detail < 1 ? 3 : MAX_HULL;
     this.mesh.geometry.dispose();
     this.mesh.geometry = buildGrid(Math.max(48, Math.round(160 * detail)));
@@ -712,11 +744,22 @@ export class Ocean {
         }
       }
     }
+    this.shoreData = data;
     const tex = new DataTexture(data, SHORE_RES, SHORE_RES, RedFormat);
     tex.magFilter = tex.minFilter = LinearFilter;
     tex.needsUpdate = true;
     this.uniforms.uShore.value?.dispose();
     this.uniforms.uShore.value = tex;
+  }
+
+  private shoreData: Uint8Array | null = null;
+  /** Abstand zur nächsten Küste in Metern (0 … 255, 255 = offene See) – dasselbe Feld, das der Shader liest (Brandungsgischt, 4.4C) */
+  shoreDist(x: number, z: number): number {
+    const d = this.shoreData;
+    if (!d) return 255;
+    const i = Math.floor(x / (SHORE_SIZE / SHORE_RES) + SHORE_RES / 2), j = Math.floor(z / (SHORE_SIZE / SHORE_RES) + SHORE_RES / 2);
+    if (i < 0 || j < 0 || i >= SHORE_RES || j >= SHORE_RES) return 255;
+    return d[j * SHORE_RES + i];
   }
 
   /** Kielwasser-Punkte: x, z, Alter in s, Stärke 0 … 1 */

@@ -96,9 +96,14 @@ export class GameRenderer {
   dofTarget: Vector3 | null = null;
   private time = 0;
 
-  constructor(private canvas: HTMLCanvasElement) {
+  /**
+   * @param antialias Kantenglättung im Bildpuffer: nur für Stufen ohne Nachbearbeitung (Niedrig, Mittel, 4.4C) – mit Nachbearbeitung glättet der
+   * Effekt-Puffer (multisampling) und ein geglätteter Bildpuffer kostete nur Speicher (bei 4K über 100 MB). Die Wahl gilt ab dem Start: der
+   * Browser legt sie beim Anlegen des Zeichenkontexts fest.
+   */
+  constructor(private canvas: HTMLCanvasElement, antialias = false) {
     try {
-      this.gl = new WebGLRenderer({ canvas, antialias: false, stencil: false, powerPreference: 'high-performance' });
+      this.gl = new WebGLRenderer({ canvas, antialias, stencil: false, powerPreference: 'high-performance' });
     } catch {
       throw new WebGLUnavailableError();
     }
@@ -360,6 +365,11 @@ export class GameRenderer {
         mat.needsUpdate = true;
       }
     });
+  }
+
+  /** Belichtung relativ zum Grundwert (Tagesphase, 4.4C): wirkt in beiden Wegen, mit und ohne Nachbearbeitung */
+  setExposure(k: number) {
+    this.gl.toneMappingExposure = RENDER_LOOK.exposure * k;
   }
 
   /** Stimmung für die Farbkorrektur: Nacht (Mondlicht-Blau) und goldene Stunde (warme Lichter), je 0 … 1 */

@@ -91,22 +91,32 @@ export const CAMERA_PLANES = { near: 0.1, far: 4800 };
 export const RENDER_LOOK = {
   /** Belichtung vor dem ACES-Filmic-Tonemapping: hellt um ~5 % auf, nichts brennt weiß aus (gemessen Mittag/Abend/Nacht/Sturm/Stadt) */
   exposure: 1.1,
-  /** Leuchten nur über Helligkeit 1: Sonne, Laternen, Magie – normale Flächen bleiben im Mittag unter 0,8 */
-  bloom: { threshold: 1.0, smoothing: 0.12, intensity: 1.3, radius: 0.78 },
+  /**
+   * Selektiver HDR-Bloom (4.4C, nur ab Hoch): Schwelle über allem, was nur beleuchtet ist – gemessen im HDR-Puffer: Segel und Kreide mittags
+   * höchstens 0,95, Schaum 1,0, der Himmel ist auf 0,9 begrenzt (sky.ts). Darüber liegen nur echte Lichtquellen: Laternenflammen ~2,6,
+   * Mündungsfeuer ~2,2, Leuchtspuren ~2,3, Brandkugeln ~2,0, Lava ~1,25, Boss-Augen und Edelsteine ~1,5, Sonnen- und Mondscheibe, Sonnenglitzern.
+   * Geringe Stärke, weicher Radius.
+   */
+  bloom: { threshold: 1.12, smoothing: 0.22, intensity: 0.95, radius: 0.85 },
   /** dezente Vignette an den Bildrändern */
   vignette: { offset: 0.4, darkness: 0.3 },
+  /**
+   * Belichtung je Tagesphase als Faktor (4.4C, weich gemischt über world/timeOfDay.ts `phaseWeights`): im Hochmittag etwas knapper, damit
+   * Kreideklippen und Segel nicht ausbrennen, nachts etwas offener für silbriges Mondlicht und tiefe, lesbare Schatten.
+   */
+  phaseExposure: { morgengrauen: 1.06, mittag: 0.94, goldeneStunde: 1.0, nacht: 1.12 },
 };
 
 export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
   low: {
     label: 'Niedrig',
-    description: 'Für schwächere Handys. Keine Schatten, aber derselbe Farblook – flüssig auch auf älteren Geräten.',
+    description: 'Für schwächere Handys. Keine Schatten, keine Nachbearbeitung – flüssig auch auf älteren Geräten.',
     pixelRatio: 0.75,
     maxPixelRatio: 0.75,
     maxPixels: 1280 * 720,
     shadows: { enabled: false, mapSize: 0, soft: false, cascades: 0, far: 0, smallRange: 0 },
-    // nur ein günstiger Durchgang für Farbkorrektur, damit der Look derselbe bleibt
-    post: { enabled: true, bloom: false, outlines: false, colorGrading: true, godRays: false, depthOfField: false, ambientOcclusion: null },
+    // 4.4C: ohne Nachbearbeitung (ein Vollbild-Durchgang weniger, 60 Bilder je Sekunde); ACES-Tonemapping rechnet dann jedes Material selbst
+    post: { enabled: false, bloom: false, outlines: false, colorGrading: false, godRays: false, depthOfField: false, ambientOcclusion: null },
     multisampling: 0,
     viewDistance: 420,
     hazeRange: 1500,
@@ -122,13 +132,13 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
   },
   mid: {
     label: 'Mittel',
-    description: 'Für normale Handys. Einfache Schatten, Leuchten und Farbkorrektur.',
+    description: 'Für normale Handys. Einfache Schatten, Wasser mit Kleinwellen, keine Nachbearbeitung – flüssige 60 Bilder je Sekunde.',
     pixelRatio: 1,
     maxPixelRatio: 1,
     maxPixels: 1920 * 1080,
     shadows: { enabled: true, mapSize: 1024, soft: false, cascades: 1, far: 0, smallRange: 32 },
-    // Farbkorrektur kostet kaum etwas (läuft im selben Durchgang) und gehört zum Look
-    post: { enabled: true, bloom: true, outlines: false, colorGrading: true, godRays: false, depthOfField: false, ambientOcclusion: null },
+    // 4.4C: ohne Nachbearbeitung (HDR-Puffer, Bloom und Farbkorrektur kosteten am Handy die meiste Füllrate); Kantenglättung übernimmt der Bildpuffer
+    post: { enabled: false, bloom: false, outlines: false, colorGrading: false, godRays: false, depthOfField: false, ambientOcclusion: null },
     multisampling: 2,
     viewDistance: 560,
     hazeRange: 2200,

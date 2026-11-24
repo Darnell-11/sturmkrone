@@ -36,7 +36,8 @@ const LAVA_LIFT = 0.42;
 const CAP_LIFT = 0.3;
 
 let lavaMat: MeshBasicMaterial | null = null;
-const lava = () => (lavaMat ??= markShared(Object.assign(new MeshBasicMaterial({ color: new Color(1.9, 0.42, 0.08), vertexColors: true, toneMapped: false }), { userData: { glow: true } })));
+// Lava leuchtet über der Bloom-Schwelle (4.4C: Helligkeit ~1,25 in der Mitte, die Ränder darunter) – sie ist eine echte Lichtquelle
+const lava = () => (lavaMat ??= markShared(Object.assign(new MeshBasicMaterial({ color: new Color(3.1, 0.74, 0.12), vertexColors: true, toneMapped: false }), { userData: { glow: true } })));
 
 /** Ruhiges Rauschen 0 … 1 aus einer Zahl (Lage entlang der Spalte): fest je Insel, ohne Zufallsfolge */
 const hash01 = (k: number): number => { const x = Math.sin(k * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };

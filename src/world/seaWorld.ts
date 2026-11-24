@@ -1341,7 +1341,7 @@ export class SeaWorld {
     this.vegLod = Math.max(0.4, Math.min(1.25, c.viewDistance / 800)) * (1 - 0.17 * (c.budget ?? 0));
     this.env.applyQuality(c);
     // Kaskaden-Lichter sofort anlegen (nicht erst im ersten Bild): alles, was ab jetzt übersetzt wird, kennt die endgültige Lichtzahl (4.4B)
-    this.env.prepareCsm(this.camera);
+    this.env.ensureCsm(this.camera);
     this.spray.scale = c.particles;
     this.seaSpray.scale = c.particles;
     this.sparks.scale = c.particles;
@@ -3404,6 +3404,22 @@ export class SeaWorld {
           const hy = env.heightAt(px, pz);
           if (hy < 0.45 * wp.waves) continue;
           this.seaSpray.emit(px, hy + 0.3, pz, wdx, wdz, rough);
+        }
+      }
+      // Brandungsgischt (4.4C): an Küsten, Schären und Mega-Klippen schlägt die Brandung bei Seegang hoch. Stichproben rund um das Schiff,
+      // getroffen wird nur die Brandungslinie (Küstenabstand ≤ 4 m aus demselben Feld wie der Meeres-Shader) – verschmilzt mit Bugwelle und Kammgischt
+      const surf = clamp01((wp.waves - 0.95) / 1.2);
+      if (surf > 0.02 && !this.raid) {
+        const oc = env.ocean;
+        const tries = Math.round(48 * this.seaSpray.scale);
+        let hits = 0;
+        for (let k = 0; k < tries && hits < 3; k++) {
+          const a = Math.random() * Math.PI * 2, r = 18 + Math.random() * 230;
+          const px = x + Math.cos(a) * r, pz = z + Math.sin(a) * r;
+          if (oc.shoreDist(px, pz) > 4) continue;
+          if (Math.random() > surf * frameDt * 9) continue;
+          hits++;
+          this.seaSpray.emit(px, env.heightAt(px, pz) + 0.4, pz, Math.sin(env.windDir) * (2 + 5 * wp.wind), Math.cos(env.windDir) * (2 + 5 * wp.wind), 0.5 + 0.5 * surf);
         }
       }
       this.seaSpray.color.copy((this.scene.fog as Fog).color).lerp(SPRAY_WHITE, 0.72).multiplyScalar(0.78 + 0.3 * env.weather.p.light);

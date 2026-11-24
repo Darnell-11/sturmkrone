@@ -9,7 +9,7 @@
 // der WorldStreamer gibt beim Abbau einer Insel nie eine Schmiede-Textur frei, `renderer.info.memory` bleibt stabil.
 import { DataTexture, LinearFilter, LinearMipmapLinearFilter, NoColorSpace, RGBAFormat, RepeatWrapping, SRGBColorSpace, UnsignedByteType, type Texture } from 'three';
 import { markShared } from '../render/dispose';
-import { FORGE_KINDS, FORGE_RECIPES, forgeMaps, type ForgeKind, type ForgeRecipe } from './forgeMaps';
+import { FORGE_KINDS, FORGE_RECIPES, forgeKindSize, forgeMaps, type ForgeKind, type ForgeRecipe } from './forgeMaps';
 
 export * from './forgeMaps';
 
@@ -23,8 +23,8 @@ export interface ForgeSet {
   albedo: Texture | null;
   /** Normalkarte (UV); bei Sätzen mit Relief aus dem Höhenkanal entsteht sie erst beim ersten Zugriff */
   readonly normal: Texture;
-  /** R Verdeckung, G Rauheit, B Metall, A Höhe */
-  orm: Texture;
+  /** R Verdeckung, G Rauheit, B Metall, A Höhe (entsteht beim ersten Zugriff: der Wasser-Satz braucht nur die Normalkarte, 4.4C) */
+  readonly orm: Texture;
 }
 
 const cache = new Map<ForgeKind, ForgeSet>();
@@ -73,6 +73,8 @@ function adopt(kind: ForgeKind, size: number, albedo: Uint8Array | null, normal:
   const R = FORGE_RECIPES[kind];
   const rep = UV_REPEAT[kind] ?? 1;
   let normalTex: Texture | null = normal ? makeTex(normal, size, false, rep) : null;
+  let ormTex: Texture | null = null;
+  let ormBytes: Uint8Array | null = orm;
   const set: ForgeSet = {
     kind, size, recipe: R,
     albedo: albedo ? makeTex(albedo, size, true, rep) : null,
@@ -81,7 +83,10 @@ function adopt(kind: ForgeKind, size: number, albedo: Uint8Array | null, normal:
       if (!normalTex) normalTex = makeTex(forgeMaps(kind, size).normal, size, false, rep);
       return normalTex;
     },
-    orm: makeTex(orm, size, false, rep),
+    get orm(): Texture {
+      if (!ormTex) { ormTex = makeTex(ormBytes!, size, false, rep); ormBytes = null; }
+      return ormTex;
+    },
   };
   cache.set(kind, set);
   forgeStats.built++;
@@ -89,7 +94,7 @@ function adopt(kind: ForgeKind, size: number, albedo: Uint8Array | null, normal:
 }
 
 /** Satz aus dem Cache (beim ersten Zugriff im Hauptfaden gebaut, falls der Start ihn nicht schon geliefert hat) */
-export function forgeSet(kind: ForgeKind, size = defaultSize): ForgeSet {
+export function forgeSet(kind: ForgeKind, size = forgeKindSize(kind, defaultSize)): ForgeSet {
   const hit = cache.get(kind);
   if (hit) return hit;
   const t0 = performance.now();
@@ -111,7 +116,7 @@ export function forgePrewarm(size: number, aniso: number, kinds: readonly ForgeK
   anisotropy = aniso;
   for (const t of made) t.anisotropy = aniso;
   const t0 = performance.now();
-  for (const k of kinds) forgeSet(k, defaultSize);
+  for (const k of kinds) forgeSet(k, forgeKindSize(k, defaultSize));
   return performance.now() - t0;
 }
 
@@ -140,7 +145,7 @@ export function forgeStart(size: number): Promise<number> {
       w.onmessage = (e: MessageEvent<{ done?: boolean; kind?: ForgeKind; size?: number; albedo?: Uint8Array | null; normal?: Uint8Array | null; orm?: Uint8Array }>) => {
         const d = e.data;
         if (d.done) { stop(); return; }
-        if (d.kind && d.orm && d.size === defaultSize && !cache.has(d.kind)) adopt(d.kind, d.size, d.albedo ?? null, d.normal ?? null, d.orm);
+        if (d.kind && d.orm && d.size === forgeKindSize(d.kind, defaultSize) && !cache.has(d.kind)) adopt(d.kind, d.size, d.albedo ?? null, d.normal ?? null, d.orm);
       };
       w.postMessage({ kinds, size });
     }

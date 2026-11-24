@@ -79,6 +79,48 @@ export function samplePalette(hour: number, out: Palette): Palette {
   return out;
 }
 
+/** Die vier Phasen des Tages (4.4C): Morgengrauen, Hochmittag, Goldene Stunde (bis Abendrot) und Sternen-/Mondnacht */
+export type DayPhase = 'morgengrauen' | 'mittag' | 'goldeneStunde' | 'nacht';
+export const DAY_PHASES: readonly DayPhase[] = ['morgengrauen', 'mittag', 'goldeneStunde', 'nacht'];
+
+/** Mitten der Phasen (Uhrzeit) – die Gewichte laufen zwischen benachbarten Mitten weich (Kosinus) über */
+export const PHASE_CENTERS: Record<DayPhase, number> = { morgengrauen: 5.8, mittag: 12.5, goldeneStunde: 17.9, nacht: 0.5 };
+
+/**
+ * Anteile der vier Phasen an einer Uhrzeit (Summe 1, stetig über den ganzen Tag). `out` wird überschrieben (keine Zuweisungen je Bild).
+ * Zwischen zwei benachbarten Phasenmitten blendet eine Kosinus-Kurve über; außerhalb der Nachbarschaft ist eine Phase 0.
+ */
+export function phaseWeights(hour: number, out: Record<DayPhase, number>): Record<DayPhase, number> {
+  const h = ((hour % 24) + 24) % 24;
+  out.morgengrauen = 0; out.mittag = 0; out.goldeneStunde = 0; out.nacht = 0;
+  const order = DAY_PHASES;
+  for (let i = 0; i < order.length; i++) {
+    const a = order[i], b = order[(i + 1) % order.length];
+    const ha = PHASE_CENTERS[a];
+    let hb = PHASE_CENTERS[b];
+    if (hb <= ha) hb += 24;
+    let x = h;
+    if (x < ha) x += 24;
+    if (x >= ha && x <= hb) {
+      const t = (x - ha) / (hb - ha);
+      const k = 0.5 - 0.5 * Math.cos(Math.PI * t);
+      out[a] = 1 - k;
+      out[b] = k;
+      return out;
+    }
+  }
+  out.mittag = 1;
+  return out;
+}
+
+/** Vorherrschende Phase */
+export function dayPhase(hour: number): DayPhase {
+  const w = phaseWeights(hour, { morgengrauen: 0, mittag: 0, goldeneStunde: 0, nacht: 0 });
+  let best: DayPhase = 'mittag';
+  for (const p of DAY_PHASES) if (w[p] > w[best]) best = p;
+  return best;
+}
+
 /** "08:30" */
 export function formatClock(hour: number): string {
   const h = ((hour % 24) + 24) % 24;

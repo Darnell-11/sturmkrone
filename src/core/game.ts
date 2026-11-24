@@ -205,7 +205,14 @@ export class Game {
     this.settings = new SettingsStore(store);
     this.saves = new SaveManager(store, GAME_VERSION);
 
-    this.renderer = new GameRenderer(canvas);
+    // Kantenglättung im Bildpuffer nur, wenn eine Stufe ohne Nachbearbeitung absehbar ist (gespeichert Niedrig/Mittel oder Handy bei
+    // automatischer Wahl) – sie muss beim Anlegen des Zeichenkontexts feststehen (4.4C)
+    {
+      const sd = this.settings.data;
+      const auto = !sd.quality || sd.qualityAuto;
+      const phone = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+      this.renderer = new GameRenderer(canvas, auto ? phone : sd.quality === 'low' || sd.quality === 'mid');
+    }
     // Grafikstufe vor dem Bau der Welt festlegen: die Texturen werden in passender Auflösung gemalt
     this.deviceInfo = gatherDeviceInfo(this.renderer.gl.getContext());
     // Verbirgt der Browser die Grafikkarte (Firefox, Brave …) oder ist sie unbekannt, misst ein kurzer Test die Leistung
@@ -572,6 +579,7 @@ export class Game {
       this.compass.setVisible(false);
       // Studio: neutrale Farbstimmung, nicht die der letzten Tageszeit
       this.renderer.setMood(0, 0);
+      this.renderer.setExposure(1);
       this.stage.update(frameDt);
       const portrait = innerHeight > innerWidth || innerWidth < 700;
       const sk = this.stage instanceof SkillStage;
@@ -595,6 +603,8 @@ export class Game {
       const nightK = clamp01((dark - 0.2) / 0.7);
       const lowSun = clamp01((0.5 - pal.sunDir.y) / 0.38);
       this.renderer.setMood(nightK, pal.sunVis * lowSun);
+      // Belichtung je Tagesphase (Environment.exposureK, 4.4C)
+      this.renderer.setExposure(this.world.env.exposureK);
     }
     // Gegner, Crew und Stadtleute zwischen den 60-Hz-Logikschritten weich darstellen
     Character.present(a);
