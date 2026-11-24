@@ -12,6 +12,7 @@ import type { DecalHandle } from '../../render/decals';
 import { makeDashLatch, resolveDash, sweepMove, type SweepResult } from '../../combat/sweep';
 import { mintEntityId, type EntityId } from '../../sim/entityId';
 import type { DashIntent } from '../../sim/intents';
+import { damageFactor, dangerOfLevel } from '../../data/balanceConfig';
 
 const WALK = 2.4;
 const RUN = 6.2;
@@ -76,8 +77,11 @@ export class PlayerFoot implements PlayerTarget {
   dmgMult = 1;
   /** Schadensreduktion 0 … 0,85, Ausweichchance, Tempo, Unverwundbarkeit (Fähigkeiten) */
   reduce = 0;
-  /** Schadensminderung durch Ausrüstung und Stärkungen (zusätzlich zu den Faji-Passiven) */
+  /** Prozentuale Schadensminderung durch Set-Boni und Stärkungen (zusätzlich zu den Faji-Passiven) */
   gearReduce = 0;
+  /** Rüstungswert und elementarer Widerstand der Ausrüstung: wirken über die asymptotische Kurve (data/balanceConfig.ts) je nach Stufe des Angreifers */
+  gearArmor = 0;
+  gearResist = 0;
   dodgeChance = 0;
   speedMult = 1;
   invuln = false;
@@ -217,11 +221,12 @@ export class PlayerFoot implements PlayerTarget {
     if (!a) this.toMove();
   }
 
-  receiveHit(dmg: number, dirX: number, dirZ: number, knock: number, _from: Enemy | null): 'hit' | 'blocked' | 'parried' | 'dodged' {
+  receiveHit(dmg: number, dirX: number, dirZ: number, knock: number, from: Enemy | null, elemental = false): 'hit' | 'blocked' | 'parried' | 'dodged' {
     if (!this.active) return 'dodged';
     if (this.iframes > 0 || this.invuln) return 'dodged';
     if (Math.random() < this.dodgeChance) return 'dodged';
-    dmg *= 1 - Math.min(0.85, this.reduce + this.gearReduce);
+    // Angreifer ohne Gegner-Objekt (Verbände, Geschütze der Festungen) zählen als Stufe 4
+    dmg *= damageFactor(elemental ? this.gearResist : this.gearArmor, from ? dangerOfLevel(from.level) : 4, this.reduce + this.gearReduce);
     if (this.state === 'block') {
       // Von vorn? Dann Block bzw. perfekte Parade
       const facing = Math.sin(this.yaw) * -dirX + Math.cos(this.yaw) * -dirZ;

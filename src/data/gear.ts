@@ -6,6 +6,7 @@ import type { EquipDef, EquipPart, GearBonus, GearCat, ShellLook, Tint } from '.
 import type { TopUnder } from '../entities/character/vroid';
 import type { Hat } from './characterParts';
 import type { Rarity } from './rarity';
+import { slotBudget, type Tier } from './balanceConfig';
 
 type Finish = NonNullable<ShellLook['finish']>;
 const L = (finish: Finish, o: Omit<ShellLook, 'finish'> = {}): ShellLook => ({ finish, ...o });
@@ -393,13 +394,20 @@ export const SETS: GearSet[] = [
 
 // ---------- Werte, Preise, Texte ----------
 
-const BASE_HP: Record<Rarity, number> = { gewoehnlich: 18, selten: 42, episch: 90, legendaer: 160 };
-const BASE_RED: Record<Rarity, number> = { gewoehnlich: 0.004, selten: 0.014, episch: 0.028, legendaer: 0.05 };
-const BASE_PRICE: Record<Rarity, number> = { gewoehnlich: 90, selten: 380, episch: 1100, legendaer: 3200 };
-/** Anteil der Grundwerte je Platz */
-const WEIGHT: Record<GearCat, number> = { chest: 1, legs: 0.75, head: 0.65, shoulder: 0.55, feet: 0.45, hands: 0.4, cloak: 0.3, mainhand: 0.7, offhand: 0.4 };
+/**
+ * Qualitätsstufe jedes Sets (data/balanceConfig.ts): 1 Arbeitskluft, 2 Hafenware, 3 Offiziers-Grad (Ausrüster mit Ansehen),
+ * 4 Kriegsherr (nur Beute), 5 Relikt (Raid-Endbosse, schmiedbar). Werte und Preise folgen allein aus Stufe und Platz.
+ */
+const SET_TIER: Record<string, Tier> = {
+  hafen: 1, kueste: 1, strand: 1,
+  kette: 2, sturmleder: 2, marine: 2, kapitaen: 2,
+  ritter: 3, schatten: 3, eisenwall: 3, seekoenig: 3,
+  schuppen: 4, nebel: 4, ronin: 4, wyrm: 4, drache: 4, sturmkrone: 4, abgrund: 4, gezeiten: 4, himmel: 4,
+};
+export const tierOfSet = (s: GearSet): Tier => (s.raid ? 5 : SET_TIER[s.id] ?? 2);
 /** Anzeigezeilen eines Bonus: Name, Wert („+40“, „6 %“) und der Satz („+40 Leben“, „6 % weniger Schaden“) */
 const BONUS_ROWS: { k: keyof GearBonus; label: string; value: (v: number) => string; text: (v: number) => string }[] = [
+  { k: 'armor', label: 'Rüstung', value: (v) => `${Math.round(v * 10) / 10}`, text: (v) => `Rüstung ${Math.round(v * 10) / 10}` },
   { k: 'hp', label: 'Leben', value: (v) => `+${Math.round(v)}`, text: (v) => `+${Math.round(v)} Leben` },
   { k: 'atk', label: 'Angriff', value: (v) => `+${Math.round(v * 100)} %`, text: (v) => `+${Math.round(v * 100)} % Angriff` },
   { k: 'crit', label: 'Volltreffer', value: (v) => `+${Math.round(v * 100)} %`, text: (v) => `+${Math.round(v * 100)} % Volltreffer` },
@@ -418,9 +426,8 @@ export function describeBonus(b: GearBonus): string {
 
 /** Grundwerte eines Stücks aus Seltenheit, Stufe und Platz; das Set gibt dem Stück seinen Schwerpunkt */
 function bonusFor(set: GearSet, cat: GearCat): GearBonus {
-  const w = WEIGHT[cat];
-  const lv = 1 + set.level / 40;
-  const b: GearBonus = { hp: Math.round(BASE_HP[set.rarity] * w * lv), reduce: Math.round(BASE_RED[set.rarity] * w * 1000) / 1000 };
+  const bud = slotBudget(tierOfSet(set), cat);
+  const b: GearBonus = { hp: bud.hp, armor: bud.armor };
   // Schwerpunkt aus dem Setbonus: Volltreffer, Angriff, Faji oder Gold fließen in Kopf, Hände, Schultern und Umhang
   const focus = set.bonusAll;
   const share = cat === 'head' || cat === 'hands' || cat === 'cloak' || cat === 'shoulder' ? 0.12 : 0.06;
@@ -442,7 +449,7 @@ export const GEAR_CATALOG: EquipDef[] = SETS.flatMap((set) =>
       id: `${set.id}_${cat}`, n: p.n, socket, cat, replace: true, set: set.id, rarity: set.rarity, level: set.level,
       // Waffen aus Modellen wirken nur beim Schwertkämpfer mit Säbel (sonst bleibt die Waffe des Kampfstils)
       d: p.d ?? (describeBonus(bonus) + (cat === 'mainhand' ? ' · ersetzt den Säbel' : cat === 'offhand' ? ' · mit Säbel in der Linken' : '')), bonus, palette: set.palette,
-      price: Math.round(BASE_PRICE[set.rarity] * WEIGHT[cat] * (1 + set.level / 30) / 10) * 10,
+      price: slotBudget(tierOfSet(set), cat).price, tier: tierOfSet(set),
       parts: p.parts, top: p.top, coat: p.coat, slimUnder: p.slimUnder,
     };
   }));

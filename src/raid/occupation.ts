@@ -5,7 +5,7 @@
 // Zeitpunkt auf dieser Uhr. Während der Besatzung: Spieler-Flagge, freundliche Wachen, Tribute, sicherer Hafen. In den letzten Minuten schickt
 // die ursprüngliche Macht eine Rückeroberungs-Flotte: wer sie versenkt, verlängert die Besatzung (und bekommt Ehre), sonst fällt die Insel
 // zurück – dann ist der ganze Raid samt Endboss wieder frisch spielbar. Dauerhaft bleiben `conquestCount` und alle Freischaltungen.
-import type { FactionId } from '../data/factions';
+import { FACTION_IDS, type FactionId } from '../data/factions';
 import { clamp01 } from '../core/mathUtil';
 import { finiteOrNull } from '../core/sanitize';
 
@@ -160,8 +160,13 @@ export function viewOf(r: ConquestRecord, name: string, now: number, fleetLeft =
 }
 
 /** Freischaltungen im Spielstand (dauerhaft): Segel, Verzierungen, erbeutete Boss-Stücke */
-export interface Unlocks { sails: string[]; ornaments: string[]; bossLoot: string[] }
-export const emptyUnlocks = (): Unlocks => ({ sails: [], ornaments: [], bossLoot: [] });
+export interface Unlocks {
+  sails: string[]; ornaments: string[]; bossLoot: string[];
+  /** Boss-Siegel je Macht und Relikt-Splitter (seit Version 15): Währung der Stufe-5-Schmiede (data/crafting.ts) */
+  seals: Partial<Record<FactionId, number>>;
+  shards: number;
+}
+export const emptyUnlocks = (): Unlocks => ({ sails: [], ornaments: [], bossLoot: [], seals: {}, shards: 0 });
 
 /** Fremdes oder altes Datenstück säubern (Migration, Import) */
 export function cleanConquest(raw: unknown): Record<string, ConquestRecord> {
@@ -182,5 +187,11 @@ export function cleanConquest(raw: unknown): Record<string, ConquestRecord> {
 export function cleanUnlocks(raw: unknown): Unlocks {
   const strs = (a: unknown) => (Array.isArray(a) ? [...new Set(a.filter((x): x is string => typeof x === 'string'))] : []);
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  return { sails: strs(o.sails), ornaments: strs(o.ornaments), bossLoot: strs(o.bossLoot) };
+  const seals: Partial<Record<FactionId, number>> = {};
+  if (o.seals && typeof o.seals === 'object') for (const [k, v] of Object.entries(o.seals as Record<string, unknown>)) {
+    const n = typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(999, Math.floor(v))) : 0;
+    if (n > 0 && (FACTION_IDS as readonly string[]).includes(k)) seals[k as FactionId] = n;
+  }
+  const shards = typeof o.shards === 'number' && Number.isFinite(o.shards) ? Math.max(0, Math.min(9999, Math.floor(o.shards))) : 0;
+  return { sails: strs(o.sails), ornaments: strs(o.ornaments), bossLoot: strs(o.bossLoot), seals, shards };
 }

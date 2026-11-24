@@ -4,6 +4,7 @@
 import type { GarmentCtx, GarmentKind, TopUnder } from '../entities/character/vroid';
 import type { CharacterLook, Hat } from './characterParts';
 import type { Rarity } from './rarity';
+import type { Tier } from './balanceConfig';
 import { GEAR_CATALOG } from './gear';
 
 export const SOCKETS = ['head', 'chest', 'legs', 'feet', 'hands', 'mainHand', 'offHand'] as const;
@@ -64,7 +65,7 @@ export const GEAR_CATS: GearCat[] = ['head', 'shoulder', 'chest', 'cloak', 'hand
 export const CAT_LABEL: Record<GearCat, string> = { head: 'Kopf', shoulder: 'Schultern', chest: 'Oberkörper', cloak: 'Umhang', hands: 'Hände', legs: 'Beine', feet: 'Füße', mainhand: 'Haupthand', offhand: 'Nebenhand' };
 
 /** Werte eines Stücks (Anteile 0 … 1 außer hp) */
-export interface GearBonus { hp?: number; reduce?: number; crit?: number; atk?: number; faji?: number; gold?: number }
+export interface GearBonus { hp?: number; armor?: number; reduce?: number; crit?: number; atk?: number; faji?: number; gold?: number }
 
 export interface EquipDef {
   id: string;
@@ -78,6 +79,8 @@ export interface EquipDef {
   /** Teil eines Sets (data/gear.ts) */
   set?: string;
   rarity?: Rarity;
+  /** Qualitätsstufe 1 … 5 (data/balanceConfig.ts) */
+  tier?: Tier;
   /** Mindeststufe */
   level?: number;
   d?: string;

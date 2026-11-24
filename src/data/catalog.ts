@@ -8,6 +8,8 @@ import { fmtInt, fmtNum, fmtPct } from '../core/format';
 import { itemCount } from '../core/inventory';
 import { AMMO, AMMO_IDS, FLAGS, FLAG_DESC, SHIP_CLASSES, SHIP_UPGRADES, SHIP_UPGRADE_IDS, SHIP_UPGRADE_MAX, upgradeEffectText, type FlagId } from './ships';
 import { ARMOR, CONSUMABLES, GEAR, HEADS, WEAPONS, WEAPON_LINES, type GearSlot } from './items';
+import { TIER_DEFS, craftCost, tierOfRank, type Tier } from './balanceConfig';
+import { SHARD_NAME, WEAPON_RECIPE, UPGRADE_RECIPE, recipeOf } from './crafting';
 import { CAT_LABEL, type GearCat } from './equipment';
 import { bonusRows, GEAR_CATALOG, GEAR_SET_BY_ID } from './gear';
 import { TRINKETS } from './trinkets';
@@ -63,6 +65,13 @@ export interface CatalogEntry {
   stats: CatalogStat[];
   /** Woher man es bekommt */
   origin: string;
+  /** Qualitätsstufe 1 … 5 (data/balanceConfig.ts); fehlt bei Dingen ohne Stufe (Flaggen, Galionsfiguren) */
+  tier?: Tier;
+  /** Benötigter Rang (Text mit beiden Lagern) und Ansehen/Ruf bei der Hafenmacht, Fundort-Stufe und Schmiede-Rezept */
+  rankReq?: string;
+  repReq?: string;
+  source?: string;
+  recipe?: string;
   /** Beute der Raid-Endbosse */
   raid?: boolean;
   faction?: FactionId;
@@ -106,13 +115,13 @@ function build(): CatalogEntry[] {
   for (const h of HEADS) out.push({
     id: `head:${h.id}`, cat: 'ruestung', group: 'Kopfbedeckungen', name: h.n, rarity: h.rarity, glyph: 'helm', color: h.color,
     desc: h.d,
-    stats: [{ label: 'Leben', value: `+${h.hp}`, good: true }, ...(h.reduce ? [{ label: 'Schadensminderung', value: fmtPct(h.reduce) }] : []), ...(h.crit ? [{ label: 'Volltreffer', value: `+${fmtPct(h.crit)}` }] : []), { label: 'Benötigter Rang', value: rank(h.rank) }, { label: 'Preis', value: price(h.price) }],
+    stats: [{ label: 'Leben', value: `+${h.hp}`, good: true }, { label: 'Rüstung', value: String(h.armor), good: true }, ...(h.crit ? [{ label: 'Volltreffer', value: `+${fmtPct(h.crit)}` }] : []), { label: 'Benötigter Rang', value: rank(h.rank) }, { label: 'Preis', value: price(h.price) }],
     origin: 'Markt von Ankerglück.', own: (s) => has(s.gear.heads, h.id),
   });
   for (const g of GEAR) out.push({
     id: `piece:${g.id}`, cat: 'ruestung', group: 'Schienen, Stiefel und Schilde', name: g.n, rarity: g.rarity, glyph: GEAR_GLYPH[g.slot], color: g.shield ?? g.shoesColor ?? '#9aa4ae',
     desc: g.d,
-    stats: [{ label: 'Leben', value: `+${g.hp}`, good: true }, ...(g.reduce ? [{ label: 'Schadensminderung', value: fmtPct(g.reduce) }] : []), ...(g.crit ? [{ label: 'Volltreffer', value: `+${fmtPct(g.crit)}` }] : []), { label: 'Benötigter Rang', value: rank(g.rank) }, { label: 'Preis', value: price(g.price) }],
+    stats: [{ label: 'Leben', value: `+${g.hp}`, good: true }, { label: 'Rüstung', value: String(g.armor), good: true }, ...(g.crit ? [{ label: 'Volltreffer', value: `+${fmtPct(g.crit)}` }] : []), { label: 'Benötigter Rang', value: rank(g.rank) }, { label: 'Preis', value: price(g.price) }],
     origin: 'Markt von Ankerglück.', own: (s) => has(s.gear.owned, g.id),
   });
 
@@ -123,7 +132,7 @@ function build(): CatalogEntry[] {
     const weapon = cat === 'mainhand' || cat === 'offhand';
     const boss = Object.values(RAID_BOSSES).find((b) => `boss_${b.factionId}` === set.id);
     const citadel = boss ? CITADELS.find((c) => c.factionId === boss.factionId) : null;
-    const sold = !set.raid && (set.rarity === 'gewoehnlich' || set.rarity === 'selten');
+    const sold = !set.raid && (d.tier ?? 1) <= 3;
     out.push({
       id: `set:${d.id}`, cat: weapon ? 'waffen' : 'ruestung', group: `${set.n} · ${CAT_LABEL[cat]}`, name: d.n, rarity: set.rarity, glyph: SLOT_GLYPH[cat],
       color: d.palette?.[0] ?? '#8a8f96', color2: d.palette?.[1],
@@ -177,7 +186,7 @@ function build(): CatalogEntry[] {
     id: `upgrade:${id}`, cat: 'schiff', group: 'Ausbauten der Werft', name: SHIP_UPGRADES[id].n, rarity: id === 'can' ? 'selten' : 'gewoehnlich', glyph: id === 'can' ? 'cannon' : id === 'hull' ? 'hull' : 'sail', color: id === 'can' ? '#6a6a72' : id === 'hull' ? '#a86a35' : '#e8dcc0',
     desc: `Bis zu ${SHIP_UPGRADE_MAX} Stufen: je Stufe ${upgradeEffectText(id)}.`,
     stats: [{ label: 'Wirkung je Stufe', value: upgradeEffectText(id), good: true }, { label: 'Höchststufe', value: String(SHIP_UPGRADE_MAX) }, { label: 'Gesamt', value: `+${Math.round(SHIP_UPGRADES[id].perLevel * SHIP_UPGRADE_MAX * 100)} %`, good: true }],
-    origin: 'Werft: Preis steigt mit Stufe und Schiffsklasse.',
+    origin: 'Werft: Preis steigt mit Stufe und Schiffsklasse. Höhere Ausbaustufen haben Tore (siehe Ruf).',
     own: (s) => ({ state: s.ship.up[id] > 0 ? 'owned' : 'locked', note: `Stufe ${s.ship.up[id]} von ${SHIP_UPGRADE_MAX}` }),
   });
 
@@ -227,8 +236,46 @@ function build(): CatalogEntry[] {
     });
   }
 
-  return out;
+  return out.map(withTier);
 }
+
+/** Beute-Seltenheit eines Talismans → Stufe */
+const TRINKET_TIER: Record<Rarity, Tier> = { gewoehnlich: 1, selten: 2, episch: 3, legendaer: 4 };
+const AMMO_TIER: Record<string, Tier> = { kugel: 1, kette: 2, kartaetsche: 2, brand: 3 };
+
+/** Stufe, Rang, Ruf, Fundort und Rezept jedes Eintrags aus den Datenquellen (eine Quelle: data/balanceConfig.ts und data/crafting.ts) */
+function withTier(e: CatalogEntry): CatalogEntry {
+  const [kind, a, b] = e.id.split(':');
+  let tier: Tier | undefined;
+  let minRank = 0;
+  if (kind === 'weapon') { const w = WEAPONS[+b]; tier = w?.tier; minRank = w?.rank ?? 0; }
+  else if (kind === 'armor') { const w = ARMOR[+a]; tier = w?.tier; minRank = w?.rank ?? 0; }
+  else if (kind === 'head') { const h = HEADS.find((x) => x.id === a); tier = h?.tier; minRank = h?.rank ?? 0; }
+  else if (kind === 'piece') { const h = GEAR.find((x) => x.id === a); tier = h?.tier; minRank = h?.rank ?? 0; }
+  else if (kind === 'set') { const d = GEAR_CATALOG.find((x) => x.id === e.id.slice(4)); tier = d?.tier; }
+  else if (kind === 'item') tier = CONSUMABLES.find((c) => c.id === a)?.tier;
+  else if (kind === 'trinket') tier = TRINKET_TIER[e.rarity];
+  else if (kind === 'ammo') tier = AMMO_TIER[a];
+  else if (kind === 'ship') { const c = SHIP_CLASSES.find((x) => x.id === a); if (c) { tier = tierOfRank(c.rank); minRank = c.rank; } }
+  else if (kind === 'sail' || kind === 'ornament') tier = 5;
+  if (!tier) return e;
+  const d = TIER_DEFS[tier];
+  const rankIdx = Math.max(minRank, tier >= 3 ? d.rankMin : 0);
+  const repReq = d.repMin === null ? (tier === 4 ? 'nur Beute, nie im Laden' : 'nie im Laden: Siegel-Schmiede') : d.repMin > 0 ? `Ansehen „Freundlich“ (${d.repMin}) bei der Hafenmacht` : 'keins';
+  let recipe: string | undefined;
+  const r = kind === 'set' ? recipeOf(e.id.slice(4)) : null;
+  if (r) recipe = `${r.seals} Boss-Siegel ${FACTIONS[r.factionId].name} · ${r.shards} ${SHARD_NAME} · ${fmtInt(r.gold)} Gold · Ehre ${r.honor} · Rang ${RANKS.pirat[r.rank]}`;
+  else if (kind === 'weapon' && tier === 5) recipe = `${WEAPON_RECIPE.seals} Boss-Siegel (beliebig) · ${WEAPON_RECIPE.shards} ${SHARD_NAME} · ${fmtInt(WEAPON_RECIPE.gold)} Gold · Rang ${RANKS.pirat[WEAPON_RECIPE.rank]}`;
+  const source = tier >= 4 ? d.sourceText : e.origin;
+  const stats = [...e.stats, { label: 'Qualität', value: `Stufe ${tier} · ${d.name} (${d.grade})` }];
+  if (!e.stats.some((x) => x.label === 'Benötigter Rang')) stats.push({ label: 'Benötigter Rang', value: rank(rankIdx) });
+  stats.push({ label: 'Ruf', value: repReq });
+  return { ...e, tier, rankReq: rank(rankIdx), repReq, source, recipe, stats: recipe ? [...stats, { label: 'Rezept', value: recipe }] : stats, origin: tier >= 4 && (kind === 'weapon' || kind === 'armor') ? `${d.sourceText}.${recipe ? ' Schmiede von Ankerglück.' : ''}` : tier >= 4 && kind !== 'sail' && kind !== 'ornament' && !e.raid ? `${e.origin} ${d.sourceText}.` : e.origin };
+}
+
+/** Rezept-Kosten eines Platzes (für Tests und Anzeige) */
+export const bossCraftCost = craftCost;
+export const UPGRADE_TEXT = `Stufe 3: Ansehen „Freundlich“; Stufe 4: Rang ${RANKS.pirat[UPGRADE_RECIPE.rank4]} und Ansehen „Verbündet“; Stufe 5: ${UPGRADE_RECIPE.seals} Boss-Siegel und ${UPGRADE_RECIPE.shards} ${SHARD_NAME}`;
 
 let cache: CatalogEntry[] | null = null;
 /** Alle Einträge (einmal gebaut) */

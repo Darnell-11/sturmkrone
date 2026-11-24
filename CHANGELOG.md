@@ -1,5 +1,34 @@
 # Was ist neu
 
+## 3.1.0 – Balance-Fundament und Ausrüstung in fünf Stufen (24.11.2026)
+
+**Alle Werte aus einer Quelle (`data/balanceConfig.ts`)**
+- **Rüstung und Widerstand:** Schadensminderung = `Rüstung / (Rüstung + 55 · Stufe des Angreifers)`. Viel Rüstung schützt spürbar, ergibt aber nie 100 % (zusätzlich bleibt mindestens 15 % Schaden). Dieselbe Kurve gilt für den elementaren Widerstand (80 % der Rüstung) gegen Magie-Angriffe. Ein voller Satz jeder Stufe fängt gegen Gegner derselben Stufe 30 / 35 / 40 / 42 / 45 % ab; Stufe-1-Rüstung hilft gegen Stufe-5-Gegner kaum (unter 10 %).
+- **Weicher Deckel für Prozent-Boni:** `softCap` (bis zum Knie linear, darüber stetig bis zur Obergrenze) deckelt gestapelte Boni auf Angriff (+75 %), Volltreffer (+60 %), Schadensminderung (+50 %), Faji-Erholung (+100 %), Gold (+60 %) und die Enterkraft (Truppen plus Offiziers-/Fraktions-Boni, `boardingStrength(…, extra)`). Zahlen unterhalb des Knies ändern sich nicht.
+- **Gefahrenstufen 1 – 5:** Gegnerstufen (`dangerOfLevel`), Zonen der Karte nach Abstand vom Mittelpunkt (`dangerOfDistance`: Ankerglück 1 … äußere Raid-Festungen 5, Grenzfestungen 3) und die zehn Ruhm-Ränge (`RANK_TIER`: 0–1, 2–3, 4–6, 7–8, 9) liegen auf derselben Skala, mit Richtwerten für Leben, Schaden und Panzerung (`DANGER`). Die Richtwerte sind Bezugsgröße für Tests und Neuentwürfe; die Werte der vorhandenen Gegner wurden NICHT umgeschrieben.
+
+**Fünf Qualitätsstufen für alle Ausrüstung**
+- Stufe 1 Verwittert (Rang 0–1), 2 Solide (2–3), 3 Meisterhaft (4–6, nur mit Ansehen „Freundlich“ beim Hafen), 4 Kriegsherr (7–8, nur Beute), 5 Relikt (Rang 9, Endbosse, nur schmiedbar).
+- **Power-Budget:** Leben, Rüstung und Preis jedes Stücks folgen allein aus Stufe und Platz (`slotBudget`; die neun Plätze teilen das Budget einer Stufe vollständig). Waffen: `WEAPON_DMG`. Betroffen: Waffen, Körperrüstung, Köpfe, Schienen, Stiefel, Schilde, alle Rüstungssets (`tierOfSet`), Verbrauchsgüter (`tier`). Vorher hatten Stücke feste Seltenheitswerte plus Stufenfaktor; Rüstung gibt es jetzt als Wert (`armor`) statt als Prozent.
+- Ein Beute-Oberteil ersetzt die gekaufte Körperrüstung (vorher zählten beide).
+- **Zufallsbeute** (Truhen, Gegner) gibt nie Ausrüstung über der Stufe des eigenen Rangs.
+- **Stufe 4** fällt als Kriegsherren-Beute: Belagerungssiege (immer), Bossinseln (30 %, ab Rang 5), Grenz-Seeschlachten (15 – 25 %).
+- **Stufe 5 und Boss-Siegel:** Die sechs Boss-Sets fallen nicht mehr sicher, sondern mit 8 – 15 % je Stück (Waffe/Kopf 8 %, Umhang 15 %). Jeder Sieg gibt sicher Boss-Siegel dieser Macht (erster Sieg 2, danach 1) und 1 – 3 Relikt-Splitter. In der Schmiede (Relikt-Schmiede) lässt sich jedes Stück gezielt schmieden: Siegel dieser Macht, Splitter, Gold, Ehre 60 und Rang 9. Die Stufe-5-Waffe (Himmelsschneide) braucht 6 Siegel beliebiger Macht. Der letzte Werft-Ausbau (Stufe 5) braucht 3 Siegel und 3 Splitter; Stufe 3 braucht Ansehen „Freundlich“, Stufe 4 Rang 7 und „Verbündet“.
+- **Ein Tor für Anzeige und Logik:** `shopGate` (`data/crafting.ts`) prüft Rang, Ansehen und „nicht käuflich“; `Game.gateText` fragt es für jeden Kauf und für die Anzeige der Läden. Stufe 4 und 5 sind in keinem Laden kaufbar (auch nicht mit Höchstrang). Der Ausrüster verkauft jetzt nach Stufe (1 – 3) statt nach Seltenheit.
+
+**Spielstand 15 und Kompendium**
+- Migration 14 → 15: Stufen-Indizes (Waffe, Rüstung, Werft-Ausbauten) werden eingegrenzt; alte Werte stecken nicht im Spielstand, sondern werden zur Laufzeit aus den Stufen berechnet. Für jede bisherige Eroberung gibt es als Ausgleich für den entfallenen sicheren Boss-Wurf ein Siegel (höchstens 5 je Insel) und zwei Splitter. Neue Felder: `progress.unlocks.seals` / `shards`. Besitz bleibt unangetastet (auch bereits gekaufte Stufe-4-Waffen).
+- Item-Kompendium: jeder Eintrag nennt Qualitätsstufe, benötigten Rang, Ruf (Ansehen beim Hafen), Fundort und bei Relikten das Schmiede-Rezept. Läden und Schmiede zeigen die Stufe als Plakette und den Grund, wenn etwas gesperrt ist.
+
+**Nicht umgesetzt / offene Punkte**
+- Die Richtwerte der Gefahrenstufen (Leben/Schaden/Panzerung) sind noch nicht auf die Gegnerdaten angewendet; als Angreiferstufe für die Rüstungskurve zählt die Gegnerstufe (`dangerOfLevel`), Verbände und Geschütze ohne Gegner-Objekt zählen als Stufe 4.
+- Munition und Kanonen tragen eine Stufe nur als Anzeige im Kompendium (kein Ladentor). Kanonenschaden hängt weiter an Spielerstufe, Schiffsklasse und Ausbau.
+- Nicht im Spiel selbst durchgespielt: Rechnung, Tore, Schmiede, Migration und Kompendium sind getestet (`tests/balance.test.ts`), die Menüs wurden in diesem Durchgang nicht per Bild geprüft.
+
+**Technik (für Entwickler)**
+- `data/balanceConfig.ts` (Formeln, Stufen, Budget, Gefahr), `data/crafting.ts` (Tore, Rezepte, Siegel-Börse, rein), `core/gearBag.ts` `rollGearByTier` und `maxTier` in `rollLootGear`, `Game.gateText/craftBossPiece/craftWeapon/upgradeGate/dropWarlord`, `PlayerFoot.gearArmor/gearResist` und `receiveHit(…, elemental)`, `ui/components.ts` `tierBadge`.
+- Tests: `tests/balance.test.ts` (25 Fälle) und angepasste Fälle in `endgame`, `factions`, `inventory`.
+
 ## 3.0.6 – Neue Schiffslaterne an der Hüfte (19.11.2026)
 
 **Hüftlaterne: neues Aussehen** (`render/lamps.ts`)

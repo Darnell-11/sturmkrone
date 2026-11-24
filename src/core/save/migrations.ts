@@ -3,6 +3,8 @@ import { officerSlots } from '../../data/crewTiers';
 import { sanitizeLook } from '../../data/characterParts';
 import { cleanConquest, cleanUnlocks } from '../../raid/occupation';
 import { cleanReputation } from '../../data/reputation';
+import { ARMOR, WEAPONS } from '../../data/items';
+import { SHIP_UPGRADE_MAX } from '../../data/ships';
 import { convertLegacy10, isLegacy10, lookFromLegacy, skillsFromLegacy } from './legacy';
 import { createSave, defaultProgress, defaultShip, SAVE_VERSION, type SaveData } from './types';
 import { countOr, isRecord } from '../sanitize';
@@ -77,6 +79,31 @@ export const MIGRATIONS: Record<number, Migration> = {
   12: (d) => ({ ...d, version: 13, progress: { ...(d.progress ?? {}), conquest: cleanConquest(d.progress?.conquest), unlocks: cleanUnlocks(d.progress?.unlocks) } }),
   // 14: Fraktions-Ehre, Kopfgeld und Baupläne (Seeschlachten); das Ansehen bei allen Mächten steckt schon in `standing` (fehlende Einträge gelten als 0)
   13: (d) => ({ ...d, version: 14, progress: { ...(d.progress ?? {}), reputation: cleanReputation(d.progress?.reputation) } }),
+  // 15: Balance-Umbau (data/balanceConfig.ts): Ausrüstungswerte folgen jetzt allein aus Stufe (Tier 1 … 5) und Platz und werden zur Laufzeit
+  // berechnet – alte, zu starke Werte stecken nirgends im Spielstand und sind damit sauber auf die neuen Definitionen abgebildet. Gespeichert
+  // sind nur Stufen-Indizes (werden eingegrenzt). Die Boss-Beute ist kein sicherer Wurf mehr: wer schon Eroberungen hat, bekommt dafür je
+  // Eroberung ein Siegel und zwei Relikt-Splitter, damit jedes Boss-Stück schmiedbar bleibt.
+  14: (d) => {
+    const progress = { ...(d.progress ?? {}) };
+    const unlocks = cleanUnlocks(progress.unlocks);
+    const conquest = cleanConquest(progress.conquest);
+    for (const r of Object.values(conquest)) {
+      if (r.conquestCount > 0 && r.factionId) {
+        unlocks.seals[r.factionId] = Math.min(999, (unlocks.seals[r.factionId] ?? 0) + Math.min(5, r.conquestCount));
+        unlocks.shards = Math.min(9999, unlocks.shards + 2 * Math.min(5, r.conquestCount));
+      }
+    }
+    progress.unlocks = unlocks;
+    const gear = { ...(d.gear ?? {}) };
+    const idx = (v: unknown, max: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(max, Math.floor(v))) : 0);
+    gear.weapon = idx(gear.weapon, WEAPONS.length - 1);
+    gear.armor = idx(gear.armor, ARMOR.length - 1);
+    if (gear.weaponEq !== undefined) gear.weaponEq = idx(gear.weaponEq, gear.weapon);
+    if (gear.armorEq !== undefined) gear.armorEq = idx(gear.armorEq, gear.armor);
+    const ship = d.ship && typeof d.ship === 'object' ? { ...d.ship } : d.ship;
+    if (ship && ship.up && typeof ship.up === 'object') ship.up = Object.fromEntries(Object.entries(ship.up).map(([k, v]) => [k, idx(v, SHIP_UPGRADE_MAX)]));
+    return { ...d, version: 15, progress, gear, ...(ship ? { ship } : {}) };
+  },
 };
 
 export type MigrationResult =

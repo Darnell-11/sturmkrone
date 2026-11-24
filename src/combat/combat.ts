@@ -50,7 +50,7 @@ export interface PlayerTarget {
   readonly yaw: number;
   readonly active: boolean;
   /** Treffer auf den Spieler; liefert, was passiert ist */
-  receiveHit(dmg: number, dirX: number, dirZ: number, knock: number, from: Enemy | null): 'hit' | 'blocked' | 'parried' | 'dodged';
+  receiveHit(dmg: number, dirX: number, dirZ: number, knock: number, from: Enemy | null, elemental?: boolean): 'hit' | 'blocked' | 'parried' | 'dodged';
 }
 
 // feste Hilfsobjekte für Treffertests (keine Speicheranforderung im Kampf)
@@ -463,17 +463,17 @@ export class CombatSystem implements EnemyWorld {
     const dx = pl.x - e.x, dz = pl.z - e.z;
     const d = Math.hypot(dx, dz);
     if (!HB_TARGET.fromUpright(pl.x, pl.y, pl.z, pl.yaw, 1).overlap(VOL)) return;
-    this.hitPlayer(e.strength * atk.dmg, dx / (d || 1), dz / (d || 1), atk.knock, e, atk.fx === 'heavy');
+    this.hitPlayer(e.strength * atk.dmg, dx / (d || 1), dz / (d || 1), atk.knock, e, atk.fx === 'heavy', atk.fx === 'magic');
   }
 
   /** Ein Verband der Verteidiger trifft die Spielfigur (Hieb oder Salve) */
   strikePlayer(dmg: number, dirX: number, dirZ: number, heavy: boolean) { this.hitPlayer(dmg, dirX, dirZ, heavy ? 8 : 4, null, heavy); }
 
-  private hitPlayer(dmg: number, dirX: number, dirZ: number, knock: number, from: Enemy | null, heavy: boolean) {
+  private hitPlayer(dmg: number, dirX: number, dirZ: number, knock: number, from: Enemy | null, heavy: boolean, elemental = false) {
     const pl = this.player;
     if (!pl || !pl.active) return;
     if (from && from.level < this.mods.playerLevel) dmg *= 1 - this.mods.fearWeak;
-    const res = pl.receiveHit(dmg, dirX, dirZ, knock, from);
+    const res = pl.receiveHit(dmg, dirX, dirZ, knock, from, elemental);
     const pos = new Vector3(pl.x, pl.y + 1.2, pl.z);
     if (res === 'parried') {
       from?.parried(this);

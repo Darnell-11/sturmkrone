@@ -7,6 +7,7 @@ import type { EntityId } from '../sim/entityId';
 import type { CrewRefillIntent, RepairMaterial, SailRepairIntent } from '../sim/intents';
 import { TROOPS, type TroopType } from '../data/troops';
 import { clamp01 } from '../core/mathUtil';
+import { BONUS_CAP, softCap } from '../data/balanceConfig';
 
 // ---------- Crew (je Schiff, in Gruppen, damit ein Zwei-Stufen-System andocken kann) ----------
 
@@ -111,12 +112,13 @@ export interface BoardingStrength {
  * Enterkraft: wächst mit dem Truppen-Pool. Ohne Truppen (andere Klassen, leerer Pool) bleibt alles bei 1. Voller Pool: +45 % Durchschlagskraft
  * und +60 % Trefferpunkte für Offiziere und Enterer. Nachladen, Segeln und Reparatur hängen NICHT daran (siehe `crewEffects`, nur Seeleute).
  */
-export function boardingStrength(c: ShipCrewState, out: BoardingStrength = { heads: 0, frac: 0, damage: 1, hp: 1 }): BoardingStrength {
+export function boardingStrength(c: ShipCrewState, out: BoardingStrength = { heads: 0, frac: 0, damage: 1, hp: 1 }, extra = 0): BoardingStrength {
   const f = poolFrac(c, 'truppen');
   out.heads = poolHeads(c, 'truppen');
   out.frac = f;
-  out.damage = 1 + 0.45 * f;
-  out.hp = 1 + 0.6 * f;
+  // Truppen, Offiziers-Perks und Fraktions-Buffs (`extra`, Anteil) stapeln sich über einen weichen Deckel (data/balanceConfig.ts): bis +80 % voll, darüber asymptotisch bis +120 %
+  out.damage = 1 + softCap(0.45 * f + extra, BONUS_CAP.boarding + 0.2, 0.8);
+  out.hp = 1 + softCap(0.6 * f + extra, BONUS_CAP.boarding + 0.2, 0.8);
   return out;
 }
 

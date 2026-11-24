@@ -1,6 +1,7 @@
 // Kleine HTML-Bausteine der Menüs (Zeichenketten): Anzeigebalken und Goldzeile, damit nicht jeder Bildschirm sein eigenes Muster baut.
 import { esc } from './dom';
 import { fmtInt } from '../core/format';
+import { TIER_DEFS, clampTier } from '../data/balanceConfig';
 
 /**
  * Anzeigebalken (Stil `.gauge`, siehe css/panels.css): frac 0 … 1; `color` setzt --c (Standard: Rot). Die Füllung kommt über --v.
@@ -25,4 +26,11 @@ export function toggleHtml(action: string, label: string, on: boolean, hint = ''
 export function sliderHtml(o: { label: string; input: string; id?: string; min: number; max: number; step: number; value: number; unit?: string }): string {
   const fill = ((o.value - o.min) / (o.max - o.min)) * 100;
   return `<label class="slider">${esc(o.label)}<input type="range" min="${o.min}" max="${o.max}" step="${o.step}" value="${o.value}" data-input="${o.input}"${o.id ? ` data-id="${o.id}"` : ''} style="--fill:${fill}%"><output>${o.value}${esc(o.unit ?? '')}</output></label>`;
+}
+
+/** Plakette der Qualitätsstufe 1 … 5 („Stufe 3 · Meisterhaft“, Stil `.tier`, siehe css/panels.css); `title` nennt Rang und Fundort */
+export function tierBadge(tier: number, o: { rank?: string; source?: string } = {}): string {
+  const d = TIER_DEFS[clampTier(tier)];
+  const tip = [o.rank ? `Rang: ${o.rank}` : '', o.source ?? d.sourceText].filter(Boolean).join(' · ');
+  return `<span class="tier" data-t="${d.tier}" title="${esc(tip)}">Stufe ${d.tier} · ${esc(d.name)}</span>`;
 }

@@ -2,7 +2,8 @@ import { PLAYER_BASE } from '../data/combat';
 import { ARMOR, BAR_SLOTS, CONSUMABLE_BY_ID, WEAPONS, GEAR_BY_ID, GEAR_SLOTS, HEAD_BY_ID, type ConsumableDef, type GearDef, type HeadDef } from '../data/items';
 import { TRINKET_BY_ID } from '../data/trinkets';
 import type { GearState } from './save/types';
-import { ensureLoot, lootBonus } from './gearBag';
+import { ensureLoot, lootBonus, wornLoot } from './gearBag';
+import { BONUS_CAP, MAX_REDUCTION, RESIST_RATIO, stackBonus } from '../data/balanceConfig';
 
 /** Fehlende Felder alter Spielstände füllen (nichts geht verloren, keine Migration nötig) */
 export function ensureGear(g: GearState): void {
@@ -61,8 +62,11 @@ export interface StatSheet {
   atk: number;
   /** Volltreffer-Chance 0 … 1 */
   crit: number;
-  /** Schadensminderung durch Ausrüstung und Stärkungen 0 … 1 (ohne Faji-Passive) */
+  /** Prozentuale Schadensminderung aus Set-Boni und Stärkungen 0 … 0,5 (weicher Deckel, ohne Faji-Passive) */
   reduce: number;
+  /** Rüstungswert der Ausrüstung (Kurve: data/balanceConfig.ts `mitigation`) und elementarer Widerstand daraus */
+  armor: number;
+  resist: number;
   /** Zusatz-Erholung des Faji (Anteil) */
   fajiRegen: number;
   /** Goldbonus (Anteil) */
@@ -87,20 +91,26 @@ export interface StatInput {
 /** Eine Stelle für alle Werte: das Inventar zeigt sie an, applyPower wendet sie an – so stimmt beides immer überein. */
 export function computeStats(i: StatInput): StatSheet {
   const g = i.gear;
-  const armor = ARMOR[armorEq(g)]?.hp ?? 0;
+  const worn = wornLoot(g);
+  // Ein Beute-Oberteil ersetzt die gekaufte Körperrüstung (sonst würden zwei Stücke auf demselben Platz zählen)
+  const bodyOn = !worn.some((d) => (d.cat ?? 'chest') === 'chest');
+  const body = bodyOn ? ARMOR[armorEq(g)] : undefined;
   const weapon = WEAPONS[weaponEq(g)]?.dmg ?? 0;
   const head = headEq(g);
   const tb = (g.trinket ? TRINKET_BY_ID[g.trinket]?.bonus : null) ?? {};
   const wi = weaponEq(g);
-  let gearHp = 0, gearCrit = 0, gearReduce = 0;
-  for (const d of wornGear(g)) { gearHp += d.hp; gearCrit += d.crit ?? 0; gearReduce += d.reduce ?? 0; }
+  let gearHp = 0, gearCrit = 0, gearArmor = 0;
+  for (const d of wornGear(g)) { gearHp += d.hp; gearCrit += d.crit ?? 0; gearArmor += d.armor; }
   const lb = lootBonus(g);
+  const armor = (body?.armor ?? 0) + (head?.armor ?? 0) + gearArmor + (lb.armor ?? 0);
   return {
-    hp: (PLAYER_BASE.hp(i.level) + armor + (head?.hp ?? 0) + gearHp + (lb.hp ?? 0)) * (1 + i.hpPassive) * (1 + (tb.hp ?? 0)),
-    atk: (PLAYER_BASE.atk(i.level) + weapon * 0.5 * i.weaponCrew) * i.atkCrew * (1 + (tb.atk ?? 0) + (lb.atk ?? 0)) * (1 + i.buff.atk),
-    crit: 0.1 + i.critPassive + (tb.crit ?? 0) + (head?.crit ?? 0) + gearCrit + (lb.crit ?? 0) + i.buff.crit + (i.style === 'faust' ? wi * 0.02 : 0),
-    reduce: Math.min(0.75, (head?.reduce ?? 0) + gearReduce + (lb.reduce ?? 0) + i.buff.reduce),
-    fajiRegen: i.fajiCrew + (tb.faji ?? 0) + (lb.faji ?? 0) + (i.style === 'effekt' ? wi * 0.05 : 0),
-    gold: (tb.gold ?? 0) + (lb.gold ?? 0),
+    hp: (PLAYER_BASE.hp(i.level) + (body?.hp ?? 0) + (head?.hp ?? 0) + gearHp + (lb.hp ?? 0)) * (1 + i.hpPassive) * (1 + (tb.hp ?? 0)),
+    atk: (PLAYER_BASE.atk(i.level) + weapon * 0.5 * i.weaponCrew) * i.atkCrew * (1 + stackBonus([tb.atk ?? 0, lb.atk ?? 0, i.buff.atk], BONUS_CAP.atk)),
+    crit: 0.1 + stackBonus([i.critPassive, tb.crit ?? 0, head?.crit ?? 0, gearCrit, lb.crit ?? 0, i.buff.crit, i.style === 'faust' ? wi * 0.02 : 0], BONUS_CAP.crit),
+    reduce: Math.min(MAX_REDUCTION, stackBonus([lb.reduce ?? 0, i.buff.reduce], BONUS_CAP.reduce)),
+    armor,
+    resist: armor * RESIST_RATIO,
+    fajiRegen: stackBonus([i.fajiCrew, tb.faji ?? 0, lb.faji ?? 0, i.style === 'effekt' ? wi * 0.05 : 0], BONUS_CAP.faji),
+    gold: stackBonus([tb.gold ?? 0, lb.gold ?? 0], BONUS_CAP.gold),
   };
 }

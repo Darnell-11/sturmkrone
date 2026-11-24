@@ -223,3 +223,12 @@ html[data-fx='lite'] .panel { -webkit-backdrop-filter: none; backdrop-filter: no
   font: 400 1.5rem/1.4 var(--font-serif); text-align: center;
   -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
 }
+
+/* Qualitätsstufe 1 … 5 der Ausrüstung (data/balanceConfig.ts): Farben folgen den Seltenheiten, Stufe 5 in Gold */
+.tier { display: inline-block; padding: 0 0.45em; border: 1px solid var(--tier-c, var(--ink-dim)); border-radius: 3px; font: 600 0.72rem var(--font-num); letter-spacing: 0.04em; color: var(--tier-c, var(--ink-dim)); white-space: nowrap; }
+.tier[data-t='1'] { --tier-c: var(--rar-gewoehnlich); }
+.tier[data-t='2'] { --tier-c: var(--rar-selten); }
+.tier[data-t='3'] { --tier-c: var(--rar-episch); }
+.tier[data-t='4'] { --tier-c: var(--brass-300); }
+.tier[data-t='5'] { --tier-c: var(--rar-legendaer); }
+.gate { color: var(--ink-dim); font-style: italic; }

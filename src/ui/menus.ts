@@ -10,7 +10,7 @@ import { formatClock } from '../world/timeOfDay';
 import { FIGUREHEAD_DEFS, FIGUREHEAD_MODELS, figureheadModel } from '../data/figureheads';
 import { FLAGS, FLAG_DESC, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, SHIP_UPGRADES, SHIP_UPGRADE_IDS, SHIP_UPGRADE_MAX, STRIPE_COLORS, upgradeEffectText, type ShipLook } from '../data/ships';
 import { downloadText, esc, formatDate, formatPlayTime, pickFile } from './dom';
-import { gaugeHtml, goldLine, sliderHtml, toggleHtml } from './components';
+import { gaugeHtml, goldLine, sliderHtml, tierBadge, toggleHtml } from './components';
 import { crestSvg } from './logoSvg';
 import { glyphSvg } from './itemArt';
 import { CATALOG_CATS, catalog, figureheadGlyph, filterCatalog, flagGlyph, type CatalogCat, type CatalogEntry, type GlyphKind } from '../data/catalog';
@@ -39,9 +39,12 @@ import { hostileLegends } from '../data/legends';
 import { TRINKETS, TRINKET_BY_ID } from '../data/trinkets';
 import { RARITIES, RARITY, type Rarity } from '../data/rarity';
 import { ACHIEVEMENTS } from '../data/achievements';
+import { TIER_DEFS } from '../data/balanceConfig';
 import { ARMOR, CONSUMABLES, GEAR, HEADS, PROVIANT, SHRINE_PRICE, SLOT_LABEL, WEAPONS, WEAPON_LINES } from '../data/items';
 import { CAT_LABEL, EQUIP_BY_ID, catOf, type GearCat } from '../data/equipment';
-import { SETS } from '../data/gear';
+import { SETS, tierOfSet } from '../data/gear';
+import { BOSS_PIECES, bossSetId } from '../raid/raidLoot';
+import { SHARD_NAME, WEAPON_RECIPE, UPGRADE_RECIPE, sealsOf } from '../data/crafting';
 import { itemCount } from '../core/inventory';
 import type { IslandDef } from '../data/regions';
 import { stepText } from '../story/questSystem';
@@ -367,8 +370,8 @@ export class Menus {
     const boss = Object.values(RAID_BOSSES).find((b) => b.id === p.boss);
     const rows = p.items.map((it) => {
       const r = RARITY[it.rarity];
-      const what = it.kind === 'gold' ? `${fmtInt(it.amount ?? 0)} Gold` : it.kind === 'xp' ? `${fmtInt(it.amount ?? 0)} Erfahrung` : it.label;
-      const tag = it.kind === 'sail' ? 'Segel (dauerhaft)' : it.kind === 'ornament' ? 'Verzierung (dauerhaft)' : it.kind === 'gear' ? 'Ausrüstung' : it.kind === 'gold' ? 'Gold' : 'Erfahrung';
+      const what = it.kind === 'seal' || it.kind === 'shard' ? `${it.amount ?? 1} × ${it.label}` : it.kind === 'gold' ? `${fmtInt(it.amount ?? 0)} Gold` : it.kind === 'xp' ? `${fmtInt(it.amount ?? 0)} Erfahrung` : it.label;
+      const tag = it.kind === 'sail' ? 'Segel (dauerhaft)' : it.kind === 'ornament' ? 'Verzierung (dauerhaft)' : it.kind === 'gear' ? 'Ausrüstung' : it.kind === 'seal' ? 'Siegel (zum Schmieden)' : it.kind === 'shard' ? 'Material' : it.kind === 'gold' ? 'Gold' : 'Erfahrung';
       return `<div class="slot crew" style="--c:${r.col}"><div class="slot-head"><b style="color:${r.col}">${r.mark} ${esc(what)}</b><span>${esc(tag)}</span></div>${it.fresh ? '' : '<div class="meta soft">Schon vorhanden – in Beutemarken getauscht.</div>'}</div>`;
     }).join('');
     this.open(
@@ -759,18 +762,43 @@ export class Menus {
     const g = this.game;
     const s = g.saveData;
     if (!s) return;
-    const rank = g.playerRank;
     const re = (m: string) => this.keep(() => { this.showSmith(back, m); });
-    const row = (n: string, stat: string, price: number, needRank: number, owned: boolean, worn: boolean, a: string, i: number) => `<div class="slot"><div class="slot-head"><b>${esc(n)}${worn ? ' ✓' : ''}</b><span>${owned ? (worn ? 'Angelegt' : 'Überholt') : `${fmtInt(price)} Gold`}</span></div>
-      <div class="meta">${stat}${needRank > rank && !owned ? ` · ab Rang „${RANKS[s.player.faction][needRank]}“` : ''}</div>
-      ${owned ? '' : `<button class="mini brass" data-a="${a}" data-id="${i}" ${needRank > rank ? 'disabled' : ''}>Kaufen</button>`}</div>`;
+    const row = (n: string, stat: string, price: number, tier: number, needRank: number, owned: boolean, worn: boolean, a: string, i: number) => {
+      const gate = owned ? '' : g.gateText(tier as 1 | 2 | 3 | 4 | 5, needRank);
+      return `<div class="slot"><div class="slot-head"><b>${esc(n)}${worn ? ' ✓' : ''}</b><span>${owned ? (worn ? 'Angelegt' : 'Überholt') : tier >= 5 ? 'schmiedbar' : tier >= 4 ? 'nur Beute' : `${fmtInt(price)} Gold`}</span></div>
+      <div class="meta">${tierBadge(tier, { rank: RANKS[s.player.faction][Math.max(needRank, TIER_DEFS[tier as 1 | 2 | 3 | 4 | 5].rankMin)] })} ${stat}${gate ? ` · <span class="gate">${esc(gate)}</span>` : ''}</div>
+      ${owned || tier >= 4 ? '' : `<button class="mini brass" data-a="${a}" data-id="${i}" ${gate ? 'disabled' : ''}>Kaufen</button>`}</div>`;
+    };
+    const wl = WEAPON_LINES[s.player.style];
+    const wv = g.craftWeaponView();
+    const wIdx = WEAPONS.length - 1;
+    const weaponForge = wv ? `<div class="slot"><div class="slot-head"><b>${esc(wl.names[wIdx] ?? WEAPONS[wIdx].n)}</b><span>${s.gear.weapon >= wIdx ? 'Angelegt' : 'Relikt'}</span></div>
+      <div class="meta">${tierBadge(5)} ${wl.stat(WEAPONS[wIdx], wIdx)}<br>Schmiedekosten: ${WEAPON_RECIPE.seals} Boss-Siegel (beliebige Macht) · ${WEAPON_RECIPE.shards} ${SHARD_NAME} · ${fmtInt(WEAPON_RECIPE.gold)} Gold · Rang „${esc(RANKS[s.player.faction][WEAPON_RECIPE.rank])}“${wv.reason && s.gear.weapon < wIdx ? ` · <span class="gate">${esc(wv.reason)}</span>` : ''}</div>
+      ${s.gear.weapon >= wIdx ? '' : `<button class="mini brass" data-a="forgew" ${wv.reason ? 'disabled' : ''}>Schmieden</button>`}</div>` : '';
+    const purse = g.sealPurse();
+    const forgeRows = (Object.keys(FACTIONS) as FactionId[]).map((f) => {
+      const set = SETS.find((x) => x.id === bossSetId(f));
+      if (!set) return '';
+      const rows = BOSS_PIECES.filter((c) => (set.pieces as Record<string, unknown>)[c]).map((c) => {
+        const id = `${set.id}_${c}`;
+        const v = g.craftView(id);
+        const d = EQUIP_BY_ID[id];
+        if (!v || !d) return '';
+        const r = v.recipe;
+        return `<div class="slot-head"><span>${esc(CAT_LABEL[c])}: ${esc(d.n)} <small class="soft">${r.seals} Siegel · ${r.shards} Splitter · ${fmtInt(r.gold)} Gold · Ehre ${r.honor}${v.reason && !v.owned ? ` · <span class="gate">${esc(v.reason)}</span>` : ''}</small></span>${v.owned ? '<span>besitzt du</span>' : `<button class="mini brass" data-a="forge" data-id="${id}" ${v.reason ? 'disabled' : ''}>Schmieden</button>`}</div>`;
+      }).join('');
+      return `<div class="slot"><div class="slot-head"><b>${esc(set.n)}</b><span>${sealsOf(purse, f)} Siegel · ${esc(FACTIONS[f].name)}</span></div>${rows}</div>`;
+    }).join('');
     this.open(
       `${this.shopHead('Schmiede', msg)}
-      <h3>${WEAPON_LINES[s.player.style].title}</h3><p class="small soft">${WEAPON_LINES[s.player.style].flavor}</p>${WEAPONS.map((w, i) => row(WEAPON_LINES[s.player.style].names[i] ?? w.n, WEAPON_LINES[s.player.style].stat(w, i), w.price, w.rank, i <= s.gear.weapon, i === s.gear.weapon, 'wpn', i)).join('')}
-      <h3>Rüstung</h3>${ARMOR.map((a, i) => row(a.n, `+${a.hp} Leben`, a.price, a.rank, i <= s.gear.armor, i === s.gear.armor, 'arm', i)).join('')}
-      <p class="small soft">Dein altes Stück nimmt Grete für den halben Preis in Zahlung.</p>
+      <h3>${wl.title}</h3><p class="small soft">${wl.flavor}</p>${WEAPONS.slice(0, -1).map((w, i) => row(wl.names[i] ?? w.n, wl.stat(w, i), w.price, w.tier, w.rank, i <= s.gear.weapon, i === s.gear.weapon, 'wpn', i)).join('')}${weaponForge}
+      <h3>Rüstung</h3>${ARMOR.map((a, i) => row(a.n, [a.hp ? `+${a.hp} Leben` : '', a.armor ? `Rüstung ${a.armor}` : ''].filter(Boolean).join(' · ') || 'Grundkleidung', a.price, a.tier, a.rank, i <= s.gear.armor, i === s.gear.armor, 'arm', i)).join('')}
+      <p class="small soft">Dein altes Stück nimmt Grete für den halben Preis in Zahlung. Stufe 4 gibt es nur als Beute, Stufe 5 nur durch Schmieden.</p>
+      <h3>Relikt-Schmiede</h3>
+      <p class="small soft">Jeder Endboss lässt sicher Boss-Siegel seiner Macht und ${SHARD_NAME} fallen. Damit schmiedet Grete gezielt ein Stück, wenn der Zufall es verweigert. Du trägst ${purse.shards} ${SHARD_NAME}.</p>
+      ${forgeRows}
       <button class="primary" data-a="back">Zurück</button>`,
-      { wpn: (id) => re(g.buyGear('weapon', +id)), arm: (id) => re(g.buyGear('armor', +id)), back },
+      { wpn: (id) => re(g.buyGear('weapon', +id)), arm: (id) => re(g.buyGear('armor', +id)), forge: (id) => re(g.craftBossPiece(id)), forgew: () => re(g.craftWeapon()), back },
       back,
       { wide: true },
     );
@@ -789,20 +817,20 @@ export class Menus {
       <p class="small soft">Essen: Taste <kbd>${esc(g.input.keyLabel(g.input.getKeyBindings().potion?.[0] ?? 'KeyH'))}</kbd> oder der grüne Knopf am Handy. Alle Güter landen in der Schnellleiste (Tasten 1–4, Inventar: <kbd>${esc(g.input.keyLabel(g.input.getKeyBindings().inventory?.[0] ?? 'KeyI'))}</kbd>).</p>
       <h3>Tränke, Stärkungen und Schiffsbedarf</h3>
       ${CONSUMABLES.filter((c) => c.id !== 'proviant').map((c) => { const n = itemCount(s.gear, c.id); return `<div class="slot"><div class="slot-head"><b>${c.icon} ${esc(c.n)}</b><span>${c.price} Gold</span></div>
-        <div class="meta">${esc(c.d)} Du trägst ${n} von ${c.max}.</div>
-        <div class="row"><button class="mini brass" data-a="item" data-id="${c.id}" ${n >= c.max ? 'disabled' : ''}>Kaufen</button></div></div>`; }).join('')}
+        <div class="meta">${tierBadge(c.tier)} ${esc(c.d)} Du trägst ${n} von ${c.max}.${g.gateText(c.tier) ? ` <span class="gate">${esc(g.gateText(c.tier))}</span>` : ''}</div>
+        <div class="row"><button class="mini brass" data-a="item" data-id="${c.id}" ${n >= c.max || g.gateText(c.tier) ? 'disabled' : ''}>Kaufen</button></div></div>`; }).join('')}
       <h3>Ausrüster: Rüstungssets</h3>
-      <p class="small soft">Epische und legendäre Sets gibt es nur als Beute. Jedes Stück ist im Editor färbbar.</p>
-      ${SETS.filter((set) => set.rarity === 'gewoehnlich' || set.rarity === 'selten').map((set) => `<div class="slot"><div class="slot-head"><b style="color:${RARITY[set.rarity].col}">${RARITY[set.rarity].mark} ${esc(set.n)}</b><span>ab Stufe ${set.level}</span></div><div class="meta">${esc(set.d)}</div>
-        ${(Object.keys(set.pieces) as GearCat[]).map((c) => { const d = EQUIP_BY_ID[`${set.id}_${c}`]; const own = s.gear.loot?.includes(d.id); return `<div class="slot-head"><span>${esc(CAT_LABEL[catOf(d)])}: ${esc(d.n)} <small class="soft">${esc(d.d ?? '')}</small></span>${own ? '<span>gekauft</span>' : `<button class="mini brass" data-a="loot" data-id="${d.id}" ${s.player.level < (d.level ?? 1) ? 'disabled' : ''}>${d.price} Gold</button>`}</div>`; }).join('')}</div>`).join('')}
+      <p class="small soft">Stufe 1 und 2 kauft jeder mit dem nötigen Rang, Stufe 3 (Offiziers-Grad) nur mit Ansehen „Freundlich“ bei der Hafenmacht. Stufe 4 gibt es nur als Beute, Stufe 5 nur beim Schmied. Jedes Stück ist im Editor färbbar.</p>
+      ${SETS.filter((set) => !set.raid && tierOfSet(set) <= 3).map((set) => `<div class="slot"><div class="slot-head"><b style="color:${RARITY[set.rarity].col}">${RARITY[set.rarity].mark} ${esc(set.n)}</b><span>${tierBadge(tierOfSet(set))} ab Stufe ${set.level}</span></div><div class="meta">${esc(set.d)}${g.gateText(tierOfSet(set)) ? ` <span class="gate">${esc(g.gateText(tierOfSet(set)))}</span>` : ''}</div>
+        ${(Object.keys(set.pieces) as GearCat[]).map((c) => { const d = EQUIP_BY_ID[`${set.id}_${c}`]; const own = s.gear.loot?.includes(d.id); return `<div class="slot-head"><span>${esc(CAT_LABEL[catOf(d)])}: ${esc(d.n)} <small class="soft">${esc(d.d ?? '')}</small></span>${own ? '<span>gekauft</span>' : `<button class="mini brass" data-a="loot" data-id="${d.id}" ${s.player.level < (d.level ?? 1) || g.gateText(d.tier ?? 1) ? 'disabled' : ''}>${d.price} Gold</button>`}</div>`; }).join('')}</div>`).join('')}
       <h3>Kopfbedeckungen</h3>
       ${HEADS.map((h) => { const own = s.gear.heads?.includes(h.id); return `<div class="slot"><div class="slot-head"><b>🎩 ${esc(h.n)}</b><span>${own ? 'gekauft' : `${h.price} Gold`}</span></div>
-        <div class="meta">${esc(h.d)}${h.rank > g.playerRank && !own ? ` · ab Rang „${RANKS[s.player.faction][h.rank]}“` : ''}</div>
-        ${own ? '' : `<div class="row"><button class="mini brass" data-a="head" data-id="${h.id}" ${h.rank > g.playerRank ? 'disabled' : ''}>Kaufen und aufsetzen</button></div>`}</div>`; }).join('')}
+        <div class="meta">${tierBadge(h.tier)} ${esc(h.d)}${g.gateText(h.tier, h.rank) && !own ? ` · <span class="gate">${esc(g.gateText(h.tier, h.rank))}</span>` : ''}</div>
+        ${own ? '' : `<div class="row"><button class="mini brass" data-a="head" data-id="${h.id}" ${g.gateText(h.tier, h.rank) ? 'disabled' : ''}>Kaufen und aufsetzen</button></div>`}</div>`; }).join('')}
       <h3>Schienen, Stiefel und Schilde</h3>
       ${GEAR.map((d) => { const own = s.gear.owned?.includes(d.id); return `<div class="slot"><div class="slot-head"><b>${d.icon} ${esc(d.n)}</b><span>${own ? 'gekauft' : `${d.price} Gold`}</span></div>
-        <div class="meta">${SLOT_LABEL[d.slot]} · ${esc(d.d)}${d.rank > g.playerRank && !own ? ` · ab Rang „${RANKS[s.player.faction][d.rank]}“` : ''}</div>
-        ${own ? '' : `<div class="row"><button class="mini brass" data-a="piece" data-id="${d.id}" ${d.rank > g.playerRank ? 'disabled' : ''}>Kaufen und anlegen</button></div>`}</div>`; }).join('')}
+        <div class="meta">${tierBadge(d.tier)} ${SLOT_LABEL[d.slot]} · ${esc(d.d)}${g.gateText(d.tier, d.rank) && !own ? ` · <span class="gate">${esc(g.gateText(d.tier, d.rank))}</span>` : ''}</div>
+        ${own ? '' : `<div class="row"><button class="mini brass" data-a="piece" data-id="${d.id}" ${g.gateText(d.tier, d.rank) ? 'disabled' : ''}>Kaufen und anlegen</button></div>`}</div>`; }).join('')}
       <button class="primary" data-a="back">Zurück</button>`,
       { buy: (id) => re(g.buyPotions(+id)), item: (id) => re(g.buyItem(id)), head: (id) => re(g.buyHead(id)), piece: (id) => re(g.buyPiece(id)), loot: (id) => re(g.buyLoot(id)), back },
       back,
@@ -903,7 +931,7 @@ export class Menus {
       <button class="secondary" data-a="sailors" ${g.crewRefillCost() <= 0 ? 'disabled' : ''}>${g.crewRefillCost() > 0 ? `Matrosen anheuern (${g.crewRefillCost()} Gold)` : 'Mannschaft vollzählig'}</button>
       ${this.troopButton()}
       <h3>Ausbauten</h3>
-      ${SHIP_UPGRADE_IDS.map((k) => { const lv = st.up[k]; const price = g.upgradeCost(k); const u = SHIP_UPGRADES[k]; return `<div class="slot"><div class="slot-head"><b>${u.icon} ${u.n}</b><span>Stufe ${lv}/${SHIP_UPGRADE_MAX}</span></div><div class="meta">${upgradeEffectText(k)} je Stufe · <span class="pips">${'●'.repeat(lv)}${'○'.repeat(SHIP_UPGRADE_MAX - lv)}</span></div>${lv < SHIP_UPGRADE_MAX ? `<button class="mini brass" data-a="up" data-id="${k}">Ausbauen (${fmtInt(price)} Gold)</button>` : ''}</div>`; }).join('')}
+      ${SHIP_UPGRADE_IDS.map((k) => { const lv = st.up[k]; const price = g.upgradeCost(k); const u = SHIP_UPGRADES[k]; return `<div class="slot"><div class="slot-head"><b>${u.icon} ${u.n}</b><span>Stufe ${lv}/${SHIP_UPGRADE_MAX}</span></div><div class="meta">${upgradeEffectText(k)} je Stufe · <span class="pips">${'●'.repeat(lv)}${'○'.repeat(SHIP_UPGRADE_MAX - lv)}</span></div>${lv < SHIP_UPGRADE_MAX ? `${g.upgradeGate(k) ? `<div class="meta gate">${esc(g.upgradeGate(k))}</div>` : ''}<button class="mini brass" data-a="up" data-id="${k}" ${g.upgradeGate(k) ? 'disabled' : ''}>Ausbauen (${fmtInt(price)} Gold${lv + 1 >= SHIP_UPGRADE_MAX ? ` · ${UPGRADE_RECIPE.seals} Siegel · ${UPGRADE_RECIPE.shards} ${esc(SHARD_NAME)}` : ''})</button>` : ''}</div>`; }).join('')}
       <h3>Schiffsklassen</h3>${classes}
       <h3>Aussehen</h3>
       ${this.optHtml('Rumpf', sw('hull', HULL_COLORS))}

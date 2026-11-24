@@ -417,7 +417,7 @@ describe('Spielstand Version 14 (Ruf und Ehre, abwärtskompatibel)', () => {
     const r = migrateSave(old, V);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.data.version).toBe(14);
+    expect(r.data.version).toBe(15);
     expect(r.migratedFrom).toBe(13);
     expect(r.data.progress.reputation).toEqual(emptyReputation());
     expect(r.data.progress.standing).toEqual({ marine: 33, england: 12 });
@@ -472,7 +472,7 @@ describe('Besatzungs-Timer und Rückeroberung (Zustandsmaschine)', () => {
     const repelled = repelFleet(r, late + 40);
     expect(repelled.rec.occupiedUntil!).toBeGreaterThan(until);
     const save = createSave('Test', 'pirat', '2.9.93');
-    save.progress.unlocks = { sails: ['sail:kurogane'], ornaments: ['orn:kurogane'], bossLoot: ['boss_kurogane_hat'] };
+    save.progress.unlocks = { sails: ['sail:kurogane'], ornaments: ['orn:kurogane'], bossLoot: ['boss_kurogane_hat'], seals: {}, shards: 0 };
     const lost = loseIsland(dispatchFleet(beginOccupation(undefined, 'glutinsel', 'kurogane', T0), late));
     save.progress.conquest = { glutinsel: lost };
     expect(isOccupied(lost, until + 10)).toBe(false);

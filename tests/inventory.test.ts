@@ -5,6 +5,7 @@ import { ARMOR_LOOK, CONSUMABLES, GEAR, HEADS } from '../src/data/items';
 import { EQUIP_BY_ID, loadoutFromLook, resolveLoadout } from '../src/data/equipment';
 import { defaultLook } from '../src/data/characterParts';
 import { ARMOR } from '../src/data/items';
+import { slotBudget } from '../src/data/balanceConfig';
 
 const base = (gear: ReturnType<typeof createSave>['gear']): StatInput => ({
   level: 5, gear, style: 'schwert', hpPassive: 0, critPassive: 0, atkCrew: 1, weaponCrew: 1, fajiCrew: 0, buff: { atk: 0, reduce: 0, crit: 0 },
@@ -36,8 +37,10 @@ describe('Inventar', () => {
     const s0 = computeStats(base(g));
     g.heads = ['eisenhelm']; g.head = 'eisenhelm';
     const s1 = computeStats(base(g));
-    expect(s1.hp).toBeCloseTo(s0.hp + 80);
-    expect(s1.reduce).toBeCloseTo(0.06);
+    const helm = slotBudget(2, 'head');
+    expect(s1.hp).toBeCloseTo(s0.hp + helm.hp);
+    expect(s1.armor).toBeCloseTo(s0.armor + helm.armor);
+    expect(s1.resist).toBeCloseTo(s1.armor * 0.8);
     g.weapon = 3; g.armor = 2;
     expect(computeStats(base(g)).atk).toBeGreaterThan(s1.atk);
     g.armorEq = 0;
@@ -67,8 +70,8 @@ describe('Inventar', () => {
     g.owned = ['armschienen_stahl', 'eisenschild'];
     g.worn = { hands: 'armschienen_stahl', offhand: 'eisenschild' };
     const after = computeStats(base(g));
-    expect(after.hp - before.hp).toBeCloseTo(110);
-    expect(after.reduce - before.reduce).toBeCloseTo(0.11);
+    expect(after.hp - before.hp).toBeCloseTo(slotBudget(2, 'hands').hp + slotBudget(2, 'offhand').hp);
+    expect(after.armor - before.armor).toBeCloseTo(slotBudget(2, 'hands').armor + slotBudget(2, 'offhand').armor);
     // ein Stück auf dem falschen Platz zählt nicht
     g.worn = { legs: 'armschienen_stahl' };
     expect(computeStats(base(g)).hp).toBeCloseTo(before.hp);

@@ -1,7 +1,8 @@
 // Beute-Ausrüstung im Spielstand: besessene Stücke, angelegte je Platz, Farben, Werte und Setbonus.
 // Die Stücke selbst stehen in data/gear.ts, ihr Aussehen in data/equipment.ts.
 import { CAT_LABEL, EQUIP_BY_ID, GEAR_CATS, catOf, type EquipDef, type GearBonus, type GearCat } from '../data/equipment';
-import { GEAR_SET_BY_ID, SETS } from '../data/gear';
+import { GEAR_SET_BY_ID, SETS, tierOfSet } from '../data/gear';
+import type { Tier } from '../data/balanceConfig';
 import { rarityRank, type Rarity } from '../data/rarity';
 import type { GearState } from './save/types';
 
@@ -85,9 +86,9 @@ export function clearOld(g: GearState, cat: GearCat): void {
 }
 
 /** Beute-Stück zufällig würfeln: genau in der Seltenheit, nur Neues; Stufe nicht weit über dem Spieler */
-export function rollLootGear(rarity: Rarity, level: number, owned: readonly string[], rnd: () => number = Math.random): EquipDef | null {
+export function rollLootGear(rarity: Rarity, level: number, owned: readonly string[], rnd: () => number = Math.random, maxTier: Tier = 5): EquipDef | null {
   const reach = level + (rarity === 'legendaer' ? 22 : rarity === 'episch' ? 14 : 8);
-  const all = SETS.filter((s) => s.rarity === rarity && !s.raid).flatMap((s) => (Object.keys(s.pieces) as GearCat[]).map((c) => EQUIP_BY_ID[`${s.id}_${c}`]));
+  const all = SETS.filter((s) => s.rarity === rarity && !s.raid && tierOfSet(s) <= maxTier).flatMap((s) => (Object.keys(s.pieces) as GearCat[]).map((c) => EQUIP_BY_ID[`${s.id}_${c}`]));
   const fresh = all.filter((d) => d && !owned.includes(d.id));
   const near = fresh.filter((d) => (d.level ?? 1) <= reach);
   const pool = near.length ? near : fresh;
@@ -97,6 +98,13 @@ export function rollLootGear(rarity: Rarity, level: number, owned: readonly stri
   let r = rnd() * w.reduce((a, b) => a + b, 0), i = 0;
   for (; i < pool.length - 1; i++) { if (r < w[i]) break; r -= w[i]; }
   return pool[i];
+}
+
+/** Beute-Stück einer Qualitätsstufe (nur Neues, nie Raid-Sets), gleichverteilt; null, wenn die Stufe komplett gesammelt ist */
+export function rollGearByTier(tier: Tier, owned: readonly string[], rnd: () => number = Math.random): EquipDef | null {
+  const all = SETS.filter((s) => !s.raid && tierOfSet(s) === tier).flatMap((s) => (Object.keys(s.pieces) as GearCat[]).map((c) => EQUIP_BY_ID[`${s.id}_${c}`]));
+  const fresh = all.filter((d) => d && !owned.includes(d.id));
+  return fresh.length ? fresh[Math.min(fresh.length - 1, Math.floor(rnd() * fresh.length))] : null;
 }
 
 /** Ins Beutel legen; legt an, wenn der Platz leer ist oder das Stück seltener ist als das getragene */

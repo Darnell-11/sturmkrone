@@ -1178,7 +1178,7 @@ export class SeaWorld {
   }
 
   /** Lebenspunkte und Angriffskraft der Spielfigur (aus Stufe und Ausrüstung) */
-  setGearReduce(r: number) { if (this.foot) this.foot.gearReduce = r; }
+  setGearDefense(d: { reduce: number; armor: number; resist: number }) { if (this.foot) { this.foot.gearReduce = d.reduce; this.foot.gearArmor = d.armor; this.foot.gearResist = d.resist; } }
 
   setPlayerPower(maxHp: number, atk: number) {
     if (this.foot) {

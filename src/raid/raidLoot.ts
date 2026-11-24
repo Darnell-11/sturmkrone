@@ -3,12 +3,14 @@
 // bei jedem Laden dieselbe Beute, und ein Server kann sie ohne Umbau erzeugen. Reine Daten und Rechnung ohne three.js.
 import { FACTIONS, type FactionId } from '../data/factions';
 import { GEAR_SET_BY_ID } from '../data/gear';
+import { BOSS_DROP_CHANCE, SEAL_DROP } from '../data/balanceConfig';
+import { SHARD_NAME } from '../data/crafting';
 import type { Rarity } from '../data/rarity';
 import { RAID_BOSSES } from './raidBosses';
 import { hashString, mulberry32 } from './raidLayout';
 import type { RaidPartyContext } from './raidTypes';
 
-export type RaidLootKind = 'gold' | 'gear' | 'sail' | 'ornament' | 'xp';
+export type RaidLootKind = 'gold' | 'gear' | 'sail' | 'ornament' | 'xp' | 'seal' | 'shard';
 
 export interface RaidLootItem {
   kind: RaidLootKind;
@@ -65,7 +67,7 @@ export interface LootRollOpts {
 /**
  * Die persönliche Beute eines Teilnehmers:
  *  • Gold und Erfahrung nach Beitrag,
- *  • ein garantiertes, neues Stück aus dem Boss-Set (erste Eroberung: zwei), danach je Sieg 55 % für ein weiteres,
+ *  • je fehlendem Stück des Boss-Sets eine kleine Chance (8 – 15 %), dazu sicher Boss-Siegel und Relikt-Splitter zum Schmieden,
  *  • Fraktions-Segel bei der ersten Eroberung, Fraktions-Verzierung bei der zweiten; weitere Eroberungen: 25 % für noch Fehlendes (nie doppelt).
  * Alles Neue wird dauerhaft im Spielstand festgehalten (`progress.unlocks`) und geht bei einer Rückeroberung nie verloren.
  */
@@ -79,15 +81,18 @@ export function rollPersonalLoot(o: LootRollOpts): PersonalLoot {
   items.push({ kind: 'gold', id: '', label: 'Beuteanteil', rarity: 'selten', amount: Math.round((1400 + o.level * 130) * k * half), fresh: true });
   items.push({ kind: 'xp', id: '', label: 'Erfahrung', rarity: 'gewoehnlich', amount: Math.round((500 + o.level * 70) * k * half), fresh: true });
 
-  // Boss-Set: garantiert ein neues Stück, bei der ersten Eroberung zwei, danach 55 % für ein weiteres
+  // Boss-Set: jedes noch fehlende Stück fällt mit seiner eigenen kleinen Chance (8 – 15 %, data/balanceConfig.ts BOSS_DROP_CHANCE).
+  // Bad-Luck-Schutz: jeder Sieg gibt sicher Siegel dieser Macht und Relikt-Splitter; damit lässt sich jedes Stück gezielt schmieden (data/crafting.ts).
   const set = bossSetId(f);
   const have = new Set(o.owned.gear);
-  const missing = BOSS_PIECES.map((c) => `${set}_${c}`).filter((id) => !have.has(id) && hasPiece(f, id));
-  const wanted = o.conquestsBefore === 0 ? 2 : rnd() < 0.55 ? 2 : 1;
-  const picks: string[] = [];
-  for (let i = 0; i < Math.min(wanted, missing.length); i++) picks.push(missing[i]);
-  for (const id of picks) items.push({ kind: 'gear', id, label: pieceLabel(f, id), rarity: id.endsWith('_mainhand') || id.endsWith('_head') ? 'legendaer' : 'episch', fresh: true });
-  if (!picks.length) items.push({ kind: 'gold', id: '', label: 'Beutemarken (Dublette)', rarity: 'episch', amount: Math.round(2200 * k), fresh: false });
+  const missing = BOSS_PIECES.map((c) => ({ c, id: `${set}_${c}` })).filter((x) => !have.has(x.id) && hasPiece(f, x.id));
+  for (const x of missing) {
+    if (rnd() < BOSS_DROP_CHANCE[x.c]) items.push({ kind: 'gear', id: x.id, label: pieceLabel(f, x.id), rarity: x.c === 'mainhand' || x.c === 'head' ? 'legendaer' : 'episch', fresh: true });
+  }
+  const seals = o.firstClear ? SEAL_DROP.first : SEAL_DROP.repeat;
+  items.push({ kind: 'seal', id: `seal:${f}`, label: `Boss-Siegel von ${FACTIONS[f].name}`, rarity: 'episch', amount: seals, fresh: true });
+  const shards = SEAL_DROP.shardsMin + Math.floor(rnd() * (SEAL_DROP.shardsMax - SEAL_DROP.shardsMin + 1));
+  items.push({ kind: 'shard', id: 'shard', label: SHARD_NAME, rarity: 'selten', amount: shards, fresh: true });
 
   // Freischaltungen: Segel (1.), Verzierung (2.), danach 25 % für noch Fehlendes
   const wantSail = !o.owned.sails.includes(sailId(f)), wantOrn = !o.owned.ornaments.includes(ornamentId(f));

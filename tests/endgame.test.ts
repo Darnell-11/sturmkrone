@@ -19,6 +19,7 @@ import {
   newRecord, payTribute, phase, remaining, repelFleet, tributeAmount, tributeDue, viewOf,
 } from '../src/raid/occupation';
 import { raidAccess } from '../src/raid/raidRules';
+import { BOSS_DROP_CHANCE, SEAL_DROP } from '../src/data/balanceConfig';
 import { TroopSquad, type TroopFoe, type TroopWorld } from '../src/entities/troops/squad';
 
 const POWERS = FACTION_IDS as readonly FactionId[];
@@ -366,7 +367,6 @@ describe('Persönliche Raid-Beute', () => {
     const mixed = rollRaidLoot(c, { level: 17, conquestsBefore: 0, owned: none, firstClear: true, ownedBy: (id) => (id === 'p2' ? { ...none, gear: [mh] } : none) });
     expect(mixed[0]).toEqual(all[0]);
     expect(mixed[1].items.some((i) => i.id === mh)).toBe(false);
-    expect(all[1].items.some((i) => i.id === mh)).toBe(true);
     // Gold und Erfahrung folgen dem Beitrag: der fleißigere Teilnehmer bekommt mehr
     const gold = (l: (typeof all)[number]) => l.items.find((i) => i.kind === 'gold' && i.fresh)!.amount!;
     expect(gold(all[0])).toBeGreaterThan(gold(all[1]));
@@ -374,26 +374,52 @@ describe('Persönliche Raid-Beute', () => {
     expect(contributionOf(c, 'nobody')).toBe(0);
   });
 
-  it('erste Eroberung: Boss-Waffe und Kopfbedeckung (zwei Stücke) plus Fraktions-Segel; zweite: Verzierung', () => {
-    const c = ctx2();
-    const first = rollPersonalLoot({ ctx: c, participantId: 'p1', level: 17, conquestsBefore: 0, owned: none, firstClear: true });
-    const gear = first.items.filter((i) => i.kind === 'gear');
-    expect(gear.length).toBe(2);
-    expect(gear.every((g) => g.fresh && EQUIP_BY_ID[g.id]?.set === 'boss_england')).toBe(true);
-    expect(first.items.some((i) => i.kind === 'sail' && i.id === sailId('england'))).toBe(true);
-    expect(first.items.some((i) => i.kind === 'ornament')).toBe(false);
-    const second = rollPersonalLoot({ ctx: c, participantId: 'p1', level: 17, conquestsBefore: 1, owned: { gear: gear.map((g) => g.id), sails: [sailId('england')], ornaments: [] }, firstClear: false });
-    expect(second.items.some((i) => i.kind === 'ornament' && i.id === ornamentId('england'))).toBe(true);
-    expect(second.items.some((i) => i.kind === 'sail')).toBe(false);                 // nie doppelt
-    expect(second.items.filter((i) => i.kind === 'gear').every((i) => !gear.some((g) => g.id === i.id))).toBe(true);
+  it('Boss-Stücke fallen nur mit kleiner Chance (8 – 15 %), jeder Sieg gibt sicher Siegel und Splitter', () => {
+    const N = 4000;
+    const hits: Record<string, number> = {};
+    let sealsFirst = 0, shardsMin = 99, shardsMax = 0;
+    for (let n = 0; n < N; n++) {
+      const c = createRaidContext({ raidInstanceId: `raid-x-${n}`, factionId: 'england', seed: n, leaderPlayerId: 'p1' });
+      const l = rollPersonalLoot({ ctx: c, participantId: 'p1', level: 17, conquestsBefore: 0, owned: none, firstClear: true });
+      for (const g of l.items.filter((i) => i.kind === 'gear')) hits[g.id] = (hits[g.id] ?? 0) + 1;
+      const seal = l.items.find((i) => i.kind === 'seal')!;
+      sealsFirst = seal.amount!;
+      expect(seal.id).toBe('seal:england');
+      const sh = l.items.find((i) => i.kind === 'shard')!.amount!;
+      shardsMin = Math.min(shardsMin, sh); shardsMax = Math.max(shardsMax, sh);
+    }
+    expect(sealsFirst).toBe(SEAL_DROP.first);
+    expect(shardsMin).toBe(SEAL_DROP.shardsMin);
+    expect(shardsMax).toBe(SEAL_DROP.shardsMax);
+    for (const p of BOSS_PIECES) {
+      const id = `${bossSetId('england')}_${p}`;
+      if (!EQUIP_BY_ID[id]) continue;
+      const rate = (hits[id] ?? 0) / N;
+      expect(rate, id).toBeGreaterThan(BOSS_DROP_CHANCE[p] - 0.025);
+      expect(rate, id).toBeLessThan(BOSS_DROP_CHANCE[p] + 0.025);
+      expect(BOSS_DROP_CHANCE[p], id).toBeGreaterThanOrEqual(0.08);
+      expect(BOSS_DROP_CHANCE[p], id).toBeLessThanOrEqual(0.15);
+    }
   });
 
-  it('sind alle Teile des Sets erbeutet, wird die Dublette zu Gold', () => {
+  it('Segel bei der ersten Eroberung, Verzierung bei der zweiten, nie doppelt; Siegel jedes Mal', () => {
+    const c = ctx2();
+    const first = rollPersonalLoot({ ctx: c, participantId: 'p1', level: 17, conquestsBefore: 0, owned: none, firstClear: true });
+    expect(first.items.some((i) => i.kind === 'sail' && i.id === sailId('england'))).toBe(true);
+    expect(first.items.some((i) => i.kind === 'ornament')).toBe(false);
+    const second = rollPersonalLoot({ ctx: c, participantId: 'p1', level: 17, conquestsBefore: 1, owned: { gear: [], sails: [sailId('england')], ornaments: [] }, firstClear: false });
+    expect(second.items.some((i) => i.kind === 'ornament' && i.id === ornamentId('england'))).toBe(true);
+    expect(second.items.some((i) => i.kind === 'sail')).toBe(false);
+    expect(second.items.find((i) => i.kind === 'seal')!.amount).toBe(SEAL_DROP.repeat);
+  });
+
+  it('sind alle Teile des Sets erbeutet, fällt kein Stück mehr, Siegel und Splitter bleiben', () => {
     const c = ctx2();
     const all = BOSS_PIECES.map((p) => `${bossSetId('england')}_${p}`).filter((id) => EQUIP_BY_ID[id]);
     const l = rollPersonalLoot({ ctx: c, participantId: 'p1', level: 17, conquestsBefore: 4, owned: { gear: all, sails: [sailId('england')], ornaments: [ornamentId('england')] }, firstClear: false });
     expect(l.items.some((i) => i.kind === 'gear')).toBe(false);
-    expect(l.items.some((i) => i.kind === 'gold' && !i.fresh)).toBe(true);
+    expect(l.items.some((i) => i.kind === 'seal')).toBe(true);
+    expect(l.items.some((i) => i.kind === 'shard')).toBe(true);
   });
 
   it('jede Macht hat ein vollständiges Boss-Set mit den vorgesehenen Teilen', () => {
@@ -501,7 +527,7 @@ describe('Insel-Besatzung', () => {
     expect(c.albion.occupiedUntil).toBeNull();
     expect(c.albion.counter).toBe('none');
     expect(c.kaputt).toBeUndefined();
-    expect(cleanUnlocks({ sails: ['sail:england', 3, 'sail:england'], ornaments: 'x' })).toEqual({ sails: ['sail:england'], ornaments: [], bossLoot: [] });
+    expect(cleanUnlocks({ sails: ['sail:england', 3, 'sail:england'], ornaments: 'x' })).toEqual({ sails: ['sail:england'], ornaments: [], bossLoot: [], seals: {}, shards: 0 });
     expect(newRecord('x', 'england').occupiedUntil).toBeNull();
   });
 });
@@ -510,23 +536,23 @@ describe('Insel-Besatzung', () => {
 
 describe('Spielstand Version 13 (abwärtskompatibel)', () => {
   it('ältere Spielstände laden weiter und bekommen leere Besatzungs-Felder', () => {
-    expect(SAVE_VERSION).toBe(14);
+    expect(SAVE_VERSION).toBe(15);
     const old = { ...createSave('Alt', 'pirat', V), version: 12 } as Record<string, any>;
     delete old.progress.conquest;
     delete old.progress.unlocks;
     const r = migrateSave(old, V);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.data.version).toBe(14);
+    expect(r.data.version).toBe(15);
     expect(r.data.progress.conquest).toEqual({});
-    expect(r.data.progress.unlocks).toEqual({ sails: [], ornaments: [], bossLoot: [] });
+    expect(r.data.progress.unlocks).toEqual({ sails: [], ornaments: [], bossLoot: [], seals: {}, shards: 0 });
     expect(r.migratedFrom).toBe(12);
   });
 
   it('Besatzungs-Timer, Eroberungen, Segel und Boss-Beute überstehen Speichern und Laden', () => {
     const s = createSave('Neu', 'pirat', V);
     s.progress.conquest = { albion: beginOccupation(undefined, 'albion', 'england', 500) };
-    s.progress.unlocks = { sails: ['sail:england'], ornaments: [], bossLoot: ['boss_england_mainhand'] };
+    s.progress.unlocks = { sails: ['sail:england'], ornaments: [], bossLoot: ['boss_england_mainhand'], seals: { england: 3 }, shards: 4 };
     const r = migrateSave(JSON.parse(JSON.stringify(s)), V);
     expect(r.ok).toBe(true);
     if (!r.ok) return;

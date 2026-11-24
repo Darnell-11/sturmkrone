@@ -63,6 +63,9 @@ import { RaidPanel } from '../ui/raidPanel';
 import { OccupationBanner } from '../ui/occupationBanner';
 import { OccupationSystem } from './occupationSystem';
 import { emptyUnlocks } from '../raid/occupation';
+import { SHARD_NAME } from '../data/crafting';
+import { TIER_DEFS, tierOfRank, type Tier } from '../data/balanceConfig';
+import { UPGRADE_RECIPE, WEAPON_RECIPE, craftCheck, paySeals, payRecipe, payWeapon, sealTotal, recipeOf, sealsOf, shopGate, weaponCraftCheck, type Recipe, type SealPurse } from '../data/crafting';
 import type { PersonalLoot } from '../raid/raidLoot';
 import { mintEntityId, type EntityId } from '../sim/entityId';
 import { PerfWatchdog } from '../render/watchdog';
@@ -78,7 +81,7 @@ import { rollTrinket, TRINKET_BY_ID } from '../data/trinkets';
 import { RARITIES, RARITY, type Rarity } from '../data/rarity';
 import { type LootDrop } from '../data/loot';
 import { CAT_LABEL, EQUIP_BY_ID, GEAR_CATS, catOf, type GearCat } from '../data/equipment';
-import { clearOld, ensureLoot, grantLoot, lootDef, rollLootGear, setLine, wearLoot, wornLoot } from './gearBag';
+import { clearOld, ensureLoot, grantLoot, lootDef, rollGearByTier, rollLootGear, setLine, wearLoot, wornLoot } from './gearBag';
 import { ACHIEVEMENTS } from '../data/achievements';
 import { ABYSS_LAIR } from '../naval/seaBoss';
 import { crewFrac, crewPricePerHead, missingHeads, needsRepair, REPAIR_MATERIALS, shipTooltip, type ShipSimState } from '../naval/shipSim';
@@ -781,7 +784,7 @@ export class Game {
     // Alle Werte aus einer Stelle (core/inventory.ts): Ausrüstung, Talisman, Crew, Stärkungen
     const st = this.playerStats();
     this.world.setPlayerPower(st.hp, st.atk);
-    this.world.setGearReduce(st.reduce);
+    this.world.setGearDefense(st);
     this.world.shipSpeedMult = (has('nav') ? 1.15 : 1) * (has('esra') ? 1.1 : 1) * (1 + up.sail * SHIP_UPGRADES.sail.perLevel) * (1 + (tb.speed ?? 0));
     this.world.ship.turnMult = has('helm') ? 1.6 : 1;
     this.world.rangeMult = has('look') ? 1.25 : 1;
@@ -954,6 +957,7 @@ export class Game {
       if (def.kind === 'boss') this.grantXp(400 + lv * 60, 150 + lv * 25);
       if (id === 'schlundkrone') this.dropTrinket('legendaer', 0, 'tiefenauge');
       else this.dropTrinket(def.kind === 'boss' ? 'episch' : 'selten', lv * 0.01);
+      if (def.kind === 'boss' && this.playerRank >= 5) this.dropWarlord(0.3, def.boss ?? 'Bossinsel');
     }
     // Ruinen: der Faji-Kristall wartet in der Inselmitte
     if (def?.kind === 'ruin' && !s.progress.flags[`crystal_${id}`]) this.world.showCrystal(id);
@@ -1052,7 +1056,8 @@ export class Game {
     const s = this.save;
     if (!s) return false;
     ensureLoot(s.gear);
-    const d = rollLootGear(rarity, s.player.level, s.gear.loot!);
+    // Zufallsbeute gibt nie Ausrüstung über der Stufe des eigenen Rangs: keine Endgame-Teile aus frühen Truhen
+    const d = rollLootGear(rarity, s.player.level, s.gear.loot!, Math.random, tierOfRank(this.playerRank));
     if (!d || !grantLoot(s.gear, d)) return false;
     const r = RARITY[rarity];
     audio.play('shard');
@@ -1619,12 +1624,16 @@ export class Game {
         case 'gold': s.player.gold += it.amount ?? 0; break;
         case 'xp': this.grantXp(it.amount ?? 0, 0); break;
         case 'gear': { const d = EQUIP_BY_ID[it.id]; if (d) { grantLoot(s.gear, d); if (!u.bossLoot.includes(it.id)) u.bossLoot.push(it.id); } break; }
+        case 'seal': { const f = it.id.replace('seal:', '') as FactionId; u.seals[f] = Math.min(999, (u.seals[f] ?? 0) + (it.amount ?? 0)); break; }
+        case 'shard': u.shards = Math.min(9999, u.shards + (it.amount ?? 0)); break;
         case 'sail': if (!u.sails.includes(it.id)) u.sails.push(it.id); break;
         case 'ornament': if (!u.ornaments.includes(it.id)) u.ornaments.push(it.id); break;
       }
     }
     this.world.updatePlayer(this.displayLook(), this.activeStyle());
     this.applyPower();
+    // jede Eroberung wirft zusätzlich ein Kriegsherren-Stück (Stufe 4) ab, das es im Laden nie gibt
+    this.dropWarlord(1, 'Beute der Belagerung');
   }
 
   /** Banner oben in der Mitte: Rückeroberung (immer, solange sie droht) oder die nächste besetzte Insel in der Nähe */
@@ -1799,10 +1808,121 @@ export class Game {
 
   // ---------- Läden ----------
 
+  /** Ansehen für die Ladentore: beim Hafen der Macht, in der du liegst; sonst das beste Ansehen bei irgendeiner Macht */
+  private shopStanding(): number {
+    const st = this.save?.progress.standing ?? {};
+    return this.harborFid ? st[this.harborFid] ?? 0 : Math.max(0, ...Object.values(st).map((v) => v ?? 0));
+  }
+
+  /**
+   * Das eine Tor für alle Läden (Anzeige UND Kauf fragen hier): leer = erlaubt, sonst der Grund als Text.
+   * Stufe 4 ist nie käuflich (Beute), Stufe 5 nur über die Siegel-Schmiede, Stufe 3 braucht Ansehen beim Hafen.
+   */
+  gateText(tier: Tier, rank = 0): string {
+    const s = this.save;
+    if (!s) return '';
+    const r = shopGate({ tier, rank, playerRank: rankIndex(s.player.fame), standing: this.shopStanding() });
+    if (r.ok) return '';
+    if (r.kind === 'rank') return `Rang „${rankName(s.player.faction, FAME_THRESHOLDS[r.needRank])}“ nötig.`;
+    if (r.kind === 'rep') return `Ansehen „${repTier(r.needStanding).label}“ bei der Hafenmacht nötig.`;
+    if (r.kind === 'beute') return 'Nicht käuflich: das gibt es nur als Beute (Grenzfestungen, Ereignisflotten, Aufträge).';
+    return 'Relikte kauft man nicht: sammle Boss-Siegel und lass sie schmieden.';
+  }
+
+  /** Siegel und Splitter des Spielers */
+  sealPurse(): SealPurse {
+    return (this.save!.progress.unlocks ??= emptyUnlocks());
+  }
+
+  /** Rezept eines Boss-Stücks samt dem, was fehlt (Anzeige in Schmiede und Kompendium) */
+  craftView(itemId: string): { recipe: Recipe; have: { seals: number; shards: number; gold: number; honor: number }; owned: boolean; reason: string } | null {
+    const s = this.save, r = recipeOf(itemId);
+    if (!s || !r) return null;
+    const purse = this.sealPurse();
+    const honor = s.progress.reputation?.honor?.[r.factionId] ?? 0;
+    const owned = (s.progress.unlocks?.bossLoot ?? []).includes(itemId) || (s.gear.loot ?? []).includes(itemId);
+    const chk = craftCheck(r, { gold: s.player.gold, playerRank: rankIndex(s.player.fame), honor, purse, owned });
+    return { recipe: r, have: { seals: sealsOf(purse, r.factionId), shards: purse.shards, gold: s.player.gold, honor }, owned, reason: chk.ok ? '' : chk.reason };
+  }
+
+  /** Boss-Stück schmieden: Rang, Ehre, Siegel, Splitter und Gold werden geprüft und erst dann bezahlt */
+  craftBossPiece(itemId: string): string {
+    const s = this.save, v = this.craftView(itemId);
+    const d = EQUIP_BY_ID[itemId];
+    if (!s || !v || !d) return '';
+    if (v.reason) return v.reason;
+    payRecipe(v.recipe, this.sealPurse());
+    s.player.gold -= v.recipe.gold;
+    ensureLoot(s.gear);
+    grantLoot(s.gear, d);
+    const u = (s.progress.unlocks ??= emptyUnlocks());
+    if (!u.bossLoot.includes(itemId)) u.bossLoot.push(itemId);
+    audio.play('crack');
+    this.world.updatePlayer(this.displayLook(), this.activeStyle());
+    this.applyPower();
+    this.persist();
+    return `${d.n} geschmiedet!`;
+  }
+
+  /** Waffe der Stufe 5 (letzter Eintrag von WEAPONS) schmieden */
+  craftWeaponView() {
+    const s = this.save;
+    if (!s) return null;
+    const idx = WEAPONS.length - 1;
+    const chk = weaponCraftCheck({ gold: s.player.gold, playerRank: rankIndex(s.player.fame), purse: this.sealPurse(), owned: s.gear.weapon >= idx });
+    return { index: idx, recipe: WEAPON_RECIPE, reason: chk.ok ? '' : chk.reason };
+  }
+
+  craftWeapon(): string {
+    const s = this.save, v = this.craftWeaponView();
+    if (!s || !v) return '';
+    if (v.reason) return v.reason;
+    payWeapon(this.sealPurse());
+    s.player.gold -= WEAPON_RECIPE.gold;
+    s.gear.weapon = v.index;
+    delete s.gear.weaponEq;
+    audio.play('crack');
+    this.applyPower();
+    this.world.healPlayer();
+    this.persist();
+    return `${WEAPON_LINES[s.player.style].names[v.index] ?? WEAPONS[v.index].n} geschmiedet!`;
+  }
+
+  /**
+   * Beute der Stufe 4 („Kriegsherr“): ein Stück, das der Laden nie verkauft. Fällt mit der übergebenen Chance bei Bossinseln,
+   * Raid-Siegen, Seeschlachten und Legenden. Wählt Waffe/Rüstung der Schmiede (falls noch nicht erreicht) oder ein Set-Stück.
+   */
+  private dropWarlord(chance: number, label: string): boolean {
+    const s = this.save;
+    if (!s || Math.random() >= chance) return false;
+    ensureLoot(s.gear);
+    const wi = WEAPONS.findIndex((w) => w.tier === 4), ai = ARMOR.findIndex((a) => a.tier === 4);
+    const choices: ('set' | 'weapon' | 'armor')[] = ['set', 'set', 'set', 'set'];
+    if (wi >= 0 && s.gear.weapon < wi) choices.push('weapon');
+    if (ai >= 0 && s.gear.armor < ai) choices.push('armor');
+    const pick = choices[Math.floor(Math.random() * choices.length)];
+    let text = '';
+    if (pick === 'weapon') { s.gear.weapon = wi; delete s.gear.weaponEq; text = WEAPON_LINES[s.player.style].names[wi] ?? WEAPONS[wi].n; }
+    else if (pick === 'armor') { s.gear.armor = ai; delete s.gear.armorEq; text = ARMOR[ai].n; }
+    else {
+      const d = rollGearByTier(4, s.gear.loot!);
+      if (!d || !grantLoot(s.gear, d)) return false;
+      text = d.n;
+    }
+    audio.play('shard');
+    this.after(() => this.overlay.showBanner(`Kriegsherren-Beute: ${text}`, `${label} · Stufe 4 (${TIER_DEFS[4].grade})`), 1400);
+    this.world.updatePlayer(this.displayLook(), this.activeStyle());
+    this.applyPower();
+    this.persist();
+    return true;
+  }
+
   /** Verbrauchsgut kaufen (Proviant gibt es weiter über buyPotions) */
   buyItem(id: string): string {
     const s = this.save, def = CONSUMABLE_BY_ID[id];
     if (!s || !def) return '';
+    const gate = this.gateText(def.tier);
+    if (gate) return gate;
     if (itemCount(s.gear, id) >= def.max) return 'Deine Taschen sind voll.';
     if (s.player.gold < def.price) return 'Nicht genug Gold.';
     s.player.gold -= def.price;
@@ -1820,7 +1940,8 @@ export class Game {
     if (!s || !d) return '';
     ensureGear(s.gear);
     if (s.gear.owned!.includes(id)) return '';
-    if (rankIndex(s.player.fame) < d.rank) return `Rang „${rankName(s.player.faction, FAME_THRESHOLDS[d.rank])}“ nötig.`;
+    const gate = this.gateText(d.tier, d.rank);
+    if (gate) return gate;
     if (s.player.gold < d.price) return `Dafür fehlen ${d.price - s.player.gold} Gold.`;
     s.player.gold -= d.price;
     s.gear.owned!.push(id);
@@ -1839,6 +1960,8 @@ export class Game {
     ensureLoot(s.gear);
     if (s.gear.loot!.includes(id)) return '';
     const price = d.price ?? 0;
+    const gate = this.gateText(d.tier ?? 1);
+    if (gate) return gate;
     if (s.player.level < (d.level ?? 1)) return `Stufe ${d.level} nötig.`;
     if (s.player.gold < price) return `Dafür fehlen ${price - s.player.gold} Gold.`;
     s.player.gold -= price;
@@ -1864,7 +1987,8 @@ export class Game {
   buyHead(id: string): string {
     const s = this.save, h = HEAD_BY_ID[id];
     if (!s || !h || s.gear.heads?.includes(id)) return '';
-    if (rankIndex(s.player.fame) < h.rank) return `Rang „${rankName(s.player.faction, FAME_THRESHOLDS[h.rank])}“ nötig.`;
+    const gate = this.gateText(h.tier, h.rank);
+    if (gate) return gate;
     if (s.player.gold < h.price) return `Dafür fehlen ${h.price - s.player.gold} Gold.`;
     s.player.gold -= h.price;
     (s.gear.heads ??= []).push(id);
@@ -1883,7 +2007,8 @@ export class Game {
     const item = list[i];
     const cur = s.gear[kind];
     if (!item || i <= cur) return '';
-    if (rankIndex(s.player.fame) < item.rank) return `Rang „${rankName(s.player.faction, FAME_THRESHOLDS[item.rank])}“ nötig.`;
+    const gate = this.gateText(item.tier, item.rank);
+    if (gate) return gate;
     const cost = Math.max(0, item.price - Math.floor(list[cur].price / 2));
     if (s.player.gold < cost) return `Dafür fehlen ${cost - s.player.gold} Gold.`;
     s.player.gold -= cost;
@@ -2224,6 +2349,7 @@ export class Game {
     this.overlay.showBanner(o.verdict.kind === 'both' ? 'Doppelspiel!' : 'Partei ergriffen!', o.verdict.kind === 'both' ? `${name(A)} und ${name(B)} jagen dich · Doppel-Loot` : o.text);
     this.hud.toast(lines.join(' · '), 8);
     audio.play(o.verdict.kind === 'both' ? 'crack' : 'win');
+    if (this.playerRank >= 5) this.dropWarlord(o.verdict.kind === 'both' ? 0.25 : 0.15, 'Seeschlacht an der Grenze');
     this.persist();
     this.inventoryUi?.refresh();
   }
@@ -2435,12 +2561,35 @@ export class Game {
     return Math.round((s.ship.up[k] + 1) * 350 * (1 + s.ship.tier * 0.4) * this.yardK());
   }
 
+  /** Tor für den nächsten Ausbau: Stufe 1 – 2 frei, 3 braucht Rang und Ansehen, 4 Rang 7 und „Verbündet“, 5 Boss-Siegel (leer = erlaubt) */
+  upgradeGate(k: ShipUpgradeId): string {
+    const s = this.save;
+    if (!s) return '';
+    const lvl = s.ship.up[k] + 1;
+    if (lvl <= 2) return '';
+    if (lvl === 3) return this.gateText(3);
+    const rank = rankIndex(s.player.fame);
+    if (lvl === 4) {
+      if (rank < UPGRADE_RECIPE.rank4) return `Rang „${rankName(s.player.faction, FAME_THRESHOLDS[UPGRADE_RECIPE.rank4])}“ nötig.`;
+      if (this.shopStanding() < UPGRADE_RECIPE.standing4) return `Ansehen „${repTier(UPGRADE_RECIPE.standing4).label}“ bei der Hafenmacht nötig.`;
+      return '';
+    }
+    const purse = this.sealPurse();
+    if (rank < UPGRADE_RECIPE.rank) return `Rang „${rankName(s.player.faction, FAME_THRESHOLDS[UPGRADE_RECIPE.rank])}“ nötig.`;
+    if (sealTotal(purse) < UPGRADE_RECIPE.seals) return `Letzte Stufe: ${UPGRADE_RECIPE.seals} Boss-Siegel nötig (du hast ${sealTotal(purse)}).`;
+    if (purse.shards < UPGRADE_RECIPE.shards) return `Letzte Stufe: ${UPGRADE_RECIPE.shards} ${SHARD_NAME} nötig (du hast ${purse.shards}).`;
+    return '';
+  }
+
   shipUpgrade(k: ShipUpgradeId): string {
     const s = this.save;
     if (!s || s.ship.up[k] >= SHIP_UPGRADE_MAX) return '';
+    const gate = this.upgradeGate(k);
+    if (gate) return gate;
     const cost = this.upgradeCost(k);
     if (s.player.gold < cost) return `Dafür fehlen ${cost - s.player.gold} Gold.`;
     s.player.gold -= cost;
+    if (s.ship.up[k] + 1 >= SHIP_UPGRADE_MAX) paySeals(this.sealPurse(), UPGRADE_RECIPE.seals, UPGRADE_RECIPE.shards);
     s.ship.up[k]++;
     audio.play('crack');
     this.applyPower();

@@ -5,7 +5,7 @@ import { START_MARINE_STANDING, type FactionId } from '../../data/factions';
 import { emptyUnlocks, type ConquestRecord, type Unlocks } from '../../raid/occupation';
 import { emptyReputation, type FactionReputationState } from '../../data/reputation';
 
-export const SAVE_VERSION = 14;
+export const SAVE_VERSION = 15;
 
 export interface QuestProgress { id: string; step: number; count: number }
 
