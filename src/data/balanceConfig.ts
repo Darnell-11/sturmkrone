@@ -222,11 +222,13 @@ export const PLAYER_HIT_CAP = 0.4;
 
 /** Rumpf-Panzerung je Schiffsklasse (Schaluppe … Leviathan); wirkt wie Rüstung gegen den Durchschlag des Angreifers (`penTier`) */
 export const HULL_ARMOR: readonly number[] = [8, 20, 38, 60, 85, 115, 150];
-export const hullArmorOf = (classIndex: number): number => HULL_ARMOR[Math.max(0, Math.min(HULL_ARMOR.length - 1, Math.floor(classIndex)))];
+/** Rumpf-Panzerung einer Klasse, mit der Panzerung der Rumpf-Ausbaustufe (`HULL_ARMOR_K`, Stufe 3 = Grundwert) */
+export const hullArmorOf = (classIndex: number, hullTier = 3): number =>
+  HULL_ARMOR[Math.max(0, Math.min(HULL_ARMOR.length - 1, Math.floor(classIndex)))] * evoK(HULL_ARMOR_K, hullTier);
 
-/** Kanonen-Durchschlag (Stufe 1 … 5) einer Klasse: aus dem Rang der Klasse (`RANK_TIER`) plus Kanonen-Ausbau (alle zwei Stufen +1) */
-export function penTierOf(classRank: number, cannonUpgrade = 0): Tier {
-  return clampTier(tierOfRank(classRank) + Math.floor(Math.max(0, cannonUpgrade) / 2));
+/** Kanonen-Durchschlag (Stufe 1 … 5) einer Klasse: Stufe des Klassen-Rangs (`RANK_TIER`) plus Versatz der Kanonen-Ausbaustufe (`CANNON_PEN`) */
+export function penTierOf(classRank: number, cannonTier = 3): Tier {
+  return clampTier(tierOfRank(classRank) + CANNON_PEN[clampTier(cannonTier) - 1]);
 }
 
 /** Kugel-Schaden eines KI-Schiffs je Kanone und Nachladezeit (s) nach Gegnerstufe (Gefahrenstufe) */
@@ -269,3 +271,62 @@ export function surviveSeconds(o: { hp: number; hit: number; hitRate: number; fa
   const perSec = (o.hit * FIGHT_MODEL.attackDmg * o.hitRate * o.factor) / FIGHT_MODEL.attackInterval;
   return o.hp / Math.max(1e-6, perSec);
 }
+
+// ---------- Schiffs-Evolution (Phase 4.2): Rumpf, Segel, Kanonen je Ausbaustufe 1 … 5 ----------
+//
+// Jedes Schiff hat drei unabhängige Zweige (Rumpf, Segel, Kanonen) mit je einer Ausbaustufe 1 … 5. Stufe 3 entspricht den alten Grundwerten der
+// Klasse; neu gekaufte Schiffe beginnen auf Stufe 1 (schwach), Stufe 4 und 5 geben Rammsporn und Deck-Drehbassen. Alle Faktoren stehen hier;
+// der Zustand (`ShipEvolution`) und seine Regeln stehen in data/shipEvolution.ts, Rammen und Drehbassen in naval/ramming.ts.
+
+/** Faktor einer Tabelle für Stufe 1 … 5 (ungültige Stufen werden eingegrenzt) */
+export const evoK = (table: readonly number[], tier: number): number => table[Math.max(1, Math.min(5, Math.round(tier))) - 1];
+
+/** Rumpf: Rumpfpunkte (Stufe 1 = 75 %, Stufe 5 = 145 % der Klassenbasis) und Rumpf-Panzerung */
+export const HULL_HP_K: readonly number[] = [0.75, 0.875, 1, 1.225, 1.45];
+export const HULL_ARMOR_K: readonly number[] = [0.7, 0.85, 1, 1.2, 1.4];
+/** Segel: Segel-HP, Höchstgeschwindigkeit (78 % … 122 %), Beschleunigung, Wendegeschwindigkeit und der Anteil des Gegenwind-Tempoverlusts, der bleibt (kleiner = besser am Wind) */
+export const SAIL_HP_K: readonly number[] = [0.7, 0.85, 1, 1.2, 1.4];
+export const SAIL_SPEED_K: readonly number[] = [0.78, 0.89, 1, 1.11, 1.22];
+export const SAIL_ACCEL_K: readonly number[] = [0.8, 0.9, 1, 1.12, 1.25];
+export const SAIL_TURN_K: readonly number[] = [0.85, 0.92, 1, 1.08, 1.16];
+export const SAIL_UPWIND_K: readonly number[] = [1, 0.85, 0.7, 0.55, 0.4];
+/** Kanonen: Anteil der bestückten Stückpforten (Stufe 1 = 50 %, 2 = 75 %, ab 3 alle), Schaden, Nachladezeit-Faktor, Versatz des Durchschlags */
+export const CANNON_PORTS_K: readonly number[] = [0.5, 0.75, 1, 1, 1];
+export const CANNON_DMG_K: readonly number[] = [0.85, 0.92, 1, 1.1, 1.2];
+export const CANNON_RELOAD_K: readonly number[] = [1.3, 1.12, 1, 0.95, 0.9];
+export const CANNON_PEN: readonly number[] = [-1, 0, 0, 1, 2];
+
+/** Ab dieser Stufe gibt es den Rammsporn (Rumpf) bzw. die Deck-Drehbassen (Kanonen) */
+export const RAM_MIN_TIER = 4;
+export const SWIVEL_MIN_TIER = 4;
+
+/**
+ * Rammsporn: Bug-Kegel (Skalarprodukt Bugrichtung/Richtung zum Ziel), Mindest-Annäherungsgeschwindigkeit (m/s), Schaden als Anteil der Rumpfpunkte
+ * des Rammers je m/s über der Mindestgeschwindigkeit (höchstens `maxK`), Crew-Schock, Eigenschaden (Anteil des verursachten Basisschadens; mit Rammsporn
+ * 30 % davon = −70 %), Streifschaden ohne Rammsporn, Pause je Paar (s) und Tempoverlust der Beteiligten.
+ */
+export const RAM = {
+  cone: 0.75, minSpeed: 3.5, dmgPerHp: 0.35 / 26, maxK: 0.42, crewK: 1.2,
+  selfPlain: 0.6, selfRam: 0.18, glancing: 0.3, cooldown: 4, rammerSlow: 0.55, targetSlow: 0.8,
+  /** Stufe 5: panzerbrechend (ignoriert die Rumpf-Panzerung); Stufe 4 durchschlägt wie Stufe 3 */
+  pierceTier: 5, penTier: 3,
+} as const;
+
+/**
+ * Deck-Drehbassen (ab Kanonen-Stufe 4): Reichweite 45 m, Pause zwischen den Salven, Schaden als Anteil des Kugelschadens der Kanonen (Kartätschen:
+ * wenig Rumpf, viel Crew und etwas Segel); ab Stufe 5 etwas schneller.
+ */
+export const SWIVEL = { range: 45, cooldown: [3.6, 2.8], dmgK: 0.2, pen: 2 } as const;
+
+/** Ausbau-Kosten (Gold) von Stufe t − 1 auf t für t = 2 … 5, mal Klassenfaktor `1 + Klasse · 0,4` und Hafen-Tarif; alle drei Zweige gleich */
+export const EVO_COST: readonly number[] = [0, 300, 550, 950, 1600];
+export const evoClassK = (classIndex: number): number => 1 + Math.max(0, classIndex) * 0.4;
+
+/** Material aus dem Frachtraum für Stufe 3, 4, 5 (Stückzahl bei Klassenfaktor 1; `evoMaterialK` skaliert mit der Klasse) */
+export const EVO_MATERIAL: readonly number[] = [0, 0, 6, 12, 20];
+export const evoMaterialK = (classIndex: number): number => 0.5 + Math.max(0, classIndex) * 0.25;
+
+/** Inzahlungnahme: so viel vom Goldwert der Ausbauten des alten Schiffs erstattet die Werft beim Kauf einer neuen Klasse */
+export const EVO_TRADE_IN = 0.5;
+/** Unterhalt: Zuschlag auf die Schiffswartung (nicht auf Sold) bei Gesamtstufe 5 (Stufe 1 = +0 %), linear dazwischen */
+export const EVO_UPKEEP_MAX = 0.35;

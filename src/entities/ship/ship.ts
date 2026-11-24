@@ -1,6 +1,8 @@
 import { updateClothFlag } from '../../render/flagCloth';
 import { CircleGeometry, Color, Euler, MathUtils, Mesh, MeshBasicMaterial, Vector3, type Object3D, type Scene } from 'three';
 import { hullArmorOf, mitigation, penTierOf } from '../../data/balanceConfig';
+import { RAM_AMMO } from '../../naval/ramming';
+import { activePorts, evoStats, neutralEvolution, type EvoStats, type ShipEvolution } from '../../data/shipEvolution';
 import { AMMO, SEA_SPEED, SHIP_CLASSES, type AmmoId, type ShipClass, type ShipLook } from '../../data/ships';
 import { troopCapacity } from '../../data/crewTiers';
 import { buildShip, CABIN_WINDOW, GLOW_LAMP, type ShipModel } from './shipBuilder';
@@ -12,7 +14,7 @@ import { mintEntityId, type EntityId } from '../../sim/entityId';
 import type { CrewRefillIntent, SailRepairIntent } from '../../sim/intents';
 import type { DockingState } from '../../world/docking';
 import {
-  applyDamage, applyStorm, boardingStrength, createShipSim, crewEffects, crewFrac, enterPhaseCheck, finishingBlow, missingHeads, poolHeads, refillCrew, sailFrac, sailPerformance,
+  applyDamage, applyStorm, boardingStrength, SAIL_HP_PER_HULL, createShipSim, crewEffects, crewFrac, enterPhaseCheck, finishingBlow, missingHeads, poolHeads, refillCrew, sailFrac, sailPerformance,
   setCrewFrac, setPoolHeads, type BoardingStrength, startRepair, stepPassiveRepair, stepRepair, stepSailSet, type CrewEffects, type SailPerformance, type ShipSimState,
 } from '../../naval/shipSim';
 import { wrapAngle } from '../../core/mathUtil';
@@ -86,7 +88,31 @@ export class Ship {
   /** Durchschlag der eigenen Kanonen (Stufe 1 … 5): Klasse und Kanonen-Ausbau (`penTierOf`); Game setzt ihn für das Spielerschiff neu */
   penTier = 1;
   /** Rumpf-Panzerung der Klasse (data/balanceConfig.ts `HULL_ARMOR`) */
-  get hullArmor() { return hullArmorOf(SHIP_CLASSES.indexOf(this.cls)); }
+  get hullArmor() { return hullArmorOf(SHIP_CLASSES.indexOf(this.cls), this.evo.hullTier); }
+
+  /**
+   * Ausbaustufen (Rumpf, Segel, Kanonen; data/shipEvolution.ts): Panzerung, Segel-HP, Tempo, Wendigkeit, Gegenwind, Stückpforten, Nachladen,
+   * Durchschlag, Rammsporn und Drehbassen. Rumpfpunkte setzt der Aufrufer über `hullBonus` (Game.applyPower). Neutral (Stufe 3) = alte Grundwerte.
+   */
+  evo: ShipEvolution = neutralEvolution();
+  evoS: EvoStats = evoStats(this.evo);
+  setEvolution(evo: ShipEvolution) {
+    this.evo = { ...evo };
+    this.evoS = evoStats(this.evo);
+    this.penTier = penTierOf(this.cls.rank, this.evo.cannonTier);
+    this.applyEvoSail();
+  }
+  /** Segel-HP-Höchstwert aus Klasse und Segel-Stufe; der Anteil bleibt erhalten */
+  private applyEvoSail() {
+    const base = Math.round(this.cls.hp * SAIL_HP_PER_HULL);
+    const max = Math.max(1, Math.round(base * this.evoS.sailHpK));
+    if (max === this.sim.sail.max) return;
+    const f = sailFrac(this.sim);
+    this.sim.sail.max = max;
+    this.sim.sail.hp = f * max;
+  }
+  /** Bestückte Stückpforten einer Seite (Kanonen-Stufe 1 = 50 %, 2 = 75 %, ab 3 alle) */
+  portsOf(total: number) { return activePorts(total, this.evo.cannonTier); }
   /** Moral der Mannschaft als Wirksamkeit 0,55 … 1 (Sold nicht gezahlt = Crew arbeitet langsamer; core/economyEngine.ts `moraleEfficiency`) */
   moraleK = 1;
   /** Vorläufig: das eigene Schiff nimmt keinen Schaden, solange die Spielfigur nicht am Steuer steht (Landgang, Raids, Entern) */
@@ -153,7 +179,7 @@ export class Ship {
   get crew() { return crewFrac(this.sim.crew); }
   set crew(v: number) { setCrewFrac(this.sim.crew, clamp01(v)); }
   /** Faktor auf die Nachladezeit der Geschütze nach Crew-% */
-  get reloadScale() { return crewEffects(this.crew * this.moraleK, this.crewFx).reloadMult; }
+  get reloadScale() { return crewEffects(this.crew * this.moraleK, this.crewFx).reloadMult * this.evoS.reloadK; }
 
   /** Ruderausschlag −1 … 1 (für Steuerrad und Haltung des Steuermanns) */
   get steerAmount() { return this.turnInput; }
@@ -176,6 +202,8 @@ export class Ship {
     this.sim.maxHull = fresh.maxHull;
     this.sim.hull = Math.max(1, this.sim.maxHull * frac);
     this.sim.sail = fresh.sail;
+    this.penTier = penTierOf(this.cls.rank, this.evo.cannonTier);
+    this.applyEvoSail();
     this.sim.crew = fresh.crew;
     this.sim.repair = null;
     this.sail = sailF;
@@ -214,17 +242,19 @@ export class Ship {
     // Wind: Rückenwind schneller, Gegenwind etwas langsamer (Tempo wie in 1.0)
     const rel = Math.cos(this.heading - env.windDir);
     // wie in 1.0: das Tempo hängt nur vom Gashebel ab (der Wind wechselte sonst in jeder Kurve das Tempo)
-    const windK = this.throttle !== null ? 1 : 0.96 + 0.24 * (rel * 0.5 + 0.5) + env.windStrength * 0.05;
+    const windK0 = this.throttle !== null ? 1 : 0.96 + 0.24 * (rel * 0.5 + 0.5) + env.windStrength * 0.05;
+    // bessere Segel (höhere Stufe) verlieren am Wind weniger Tempo
+    const windK = 1 - (1 - windK0) * this.evoS.upwindK;
     // Fläche des gesetzten Tuchs mal Leistung des Segelzustands (100 % = volle Fahrt, unter 30 % stark verlangsamt, 0 % treibt)
     const sailK = sim.sailSet * perf.speed;
-    let target = this.cls.spd * SEA_SPEED * sailK * windK * speedMult * (this.boost > 0 ? 1.7 : 1);
+    let target = this.cls.spd * SEA_SPEED * this.evoS.speedK * sailK * windK * speedMult * (this.boost > 0 ? 1.7 : 1);
     if (this.speedCap !== null) target = Math.min(target, this.speedCap);
     // Schwere Schiffe: je größer, desto träger beim Beschleunigen, Bremsen und Wenden (m: 0 Schaluppe … 1 Leviathan)
     const m = clamp01((this.cls.L - 15) / 59);
-    this.speed += (target - this.speed) * Math.min(1, dt * (target < this.speed ? 0.45 : 0.62 * perf.accel) * (1.25 - 0.7 * m));
+    this.speed += (target - this.speed) * Math.min(1, dt * (target < this.speed ? 0.45 : 0.62 * perf.accel * this.evoS.accelK) * (1.25 - 0.7 * m));
     // Wenden: Ruderausschlag baut Drehgeschwindigkeit nur langsam auf und ab; Kurven kosten Fahrt; zerfetztes Tuch lässt das Ruder ins Leere greifen
     this.turnInput += (turn - this.turnInput) * Math.min(1, dt * 4);
-    const maxRate = (0.58 - 0.33 * m) * this.turnMult * perf.turn * (0.3 + 0.7 * Math.min(1, this.speed / 8));
+    const maxRate = (0.58 - 0.33 * m) * this.turnMult * this.evoS.turnK * perf.turn * (0.3 + 0.7 * Math.min(1, this.speed / 8));
     this.yawRate += (this.turnInput * maxRate - this.yawRate) * Math.min(1, dt * (1.5 - 0.8 * m));
     this.heading -= this.yawRate * dt;
     this.speed -= this.speed * Math.min(0.5, Math.abs(this.yawRate) * 0.07 * dt);
@@ -299,6 +329,21 @@ export class Ship {
     this.updateSailDamage();
     if (enterPhaseCheck(this.sim, this.canDisable, this.disabled)) this.enterPhase();
     return hullDmg;
+  }
+
+  /**
+   * Rammstoß oder Eigenschaden bei einer Kollision: `base` Rumpfschaden samt Crew-Schock (`RAM_AMMO`). `armorPen`: Durchschlag gegen die Rumpf-Panzerung
+   * (`Infinity` = panzerbrechend, `null` = ohne Panzerung, für den Eigenschaden). Kampfunfähige und unverwundbare Schiffe nehmen keinen Rammschaden.
+   */
+  ramHit(base: number, armorPen: number | null, hitLocal: Vector3 | null): number {
+    if (!this.alive || this.unsinkable || this.disabled) return 0;
+    if (this.shield > 0) base *= 1 - this.shieldK;
+    if (armorPen !== null) base *= 1 - mitigation(this.hullArmor, armorPen);
+    const r = applyDamage(this.sim, base, RAM_AMMO, 'hull');
+    if (hitLocal && this.holes < 24) this.addHole(hitLocal);
+    this.updateSailDamage();
+    if (enterPhaseCheck(this.sim, this.canDisable, this.disabled)) this.enterPhase();
+    return r.hull;
   }
 
   /** Der Rumpf hat nichts mehr: Segel in Fetzen, ein bis zwei Masten knicken um, das Schiff brennt (Rauch und Flammen zeichnet die Seewelt) */

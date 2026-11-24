@@ -3,10 +3,11 @@ import { defaultLook, type CharacterLook } from '../../data/characterParts';
 import { DEFAULT_SHIP_LOOK, type AmmoId, type ShipLook } from '../../data/ships';
 import { START_MARINE_STANDING, type FactionId } from '../../data/factions';
 import { emptyEconomy, type EconomyState } from '../../data/economy';
+import { neutralEvolution, starterEvolution, type ShipEvolution } from '../../data/shipEvolution';
 import { emptyUnlocks, type ConquestRecord, type Unlocks } from '../../raid/occupation';
 import { emptyReputation, type FactionReputationState } from '../../data/reputation';
 
-export const SAVE_VERSION = 16;
+export const SAVE_VERSION = 17;
 
 export interface QuestProgress { id: string; step: number; count: number }
 
@@ -78,7 +79,11 @@ export interface ShipState {
    */
   crewPools?: Record<string, number>;
   /** Ausbauten der Werft (je 0 … 5): Kanonen, Rumpf, Segel */
-  up: { can: number; hull: number; sail: number };
+  /**
+   * Ausbaustufen (Evolution) je Schiffsklasse, Schlüssel = Klassenindex als Text (seit Version 17, ersetzt `up`): Rumpf, Segel und Kanonen je 1 … 5
+   * (data/shipEvolution.ts). Fehlt ein Eintrag, gilt ein neues Schiff (1/1/1).
+   */
+  evo: Record<string, ShipEvolution>;
 }
 
 export interface CrewState {
@@ -184,5 +189,8 @@ export function defaultProgress(faction: Faction = 'pirat'): ProgressState {
 
 export function defaultShip(faction: Faction, tier = 0): ShipState {
   const owned = Array.from({ length: tier + 1 }, (_, i) => i);
-  return { tier, owned, look: DEFAULT_SHIP_LOOK(faction), ammo: 'kugel', hull: 1, up: { can: 0, hull: 0, sail: 0 } };
+  // Das Startschiff beginnt auf Stufe 2/2/2; mitgelieferte höhere Klassen (alte Spielstände, Werkstatt) auf den neutralen Grundwerten (Stufe 3)
+  const evo: Record<string, ShipEvolution> = {};
+  for (const c of owned) evo[String(c)] = tier === 0 ? starterEvolution() : neutralEvolution();
+  return { tier, owned, look: DEFAULT_SHIP_LOOK(faction), ammo: 'kugel', hull: 1, evo };
 }

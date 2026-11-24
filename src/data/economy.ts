@@ -7,7 +7,7 @@ import type { AmmoId } from './ships';
 // ---------- Waren ----------
 
 export type GoodId =
-  | 'kanonenstahl' | 'werkzeuge' | 'schwefel' | 'obsidian' | 'schmiedekohle'
+  | 'kanonenstahl' | 'hartholz' | 'werkzeuge' | 'schwefel' | 'obsidian' | 'schmiedekohle'
   | 'gewuerze' | 'stoffe' | 'luxusgueter' | 'tuch' | 'tee' | 'marineausruestung' | 'wein' | 'seide' | 'fechtklingen'
   | 'schiesspulver' | 'waffenkisten' | 'medizin';
 
@@ -29,6 +29,7 @@ export interface GoodDef {
 
 export const GOODS: GoodDef[] = [
   { id: 'kanonenstahl', n: 'Kanonenstahl', icon: '⚙', cat: 'rohstoff', base: 60, vol: 2, d: 'Barren für Rohre und Beschläge; ohne ihn kein Geschütz.' },
+  { id: 'hartholz', n: 'Hartholz', icon: '🪵', cat: 'rohstoff', base: 40, vol: 2, d: 'Planken und Spanten aus Eiche und Teak: der Rohstoff jeder Werft.' },
   { id: 'werkzeuge', n: 'Werkzeuge', icon: '🔨', cat: 'rohstoff', base: 45, vol: 1, d: 'Hämmer, Zangen und Sägen für Werften und Schmieden.' },
   { id: 'schwefel', n: 'Schwefel', icon: '🜏', cat: 'rohstoff', base: 35, vol: 1, d: 'Gelb, stinkend und gefragt: Zutat für Pulver und Feuer.' },
   { id: 'obsidian', n: 'Obsidian', icon: '◆', cat: 'rohstoff', base: 55, vol: 1.5, d: 'Vulkanglas für Klingen und Zierrat.' },
@@ -61,9 +62,9 @@ export interface MarketProfile { produce: GoodId[]; demand: GoodId[] }
  * das Profil. Eine Insel nimmt Region UND Macht zusammen (Überschuss und Bedarf werden vereinigt; was erzeugt wird, wird nicht verlangt).
  */
 export const PROFILES: Record<string, MarketProfile> = {
-  nordwacht: { produce: ['kanonenstahl', 'werkzeuge'], demand: ['gewuerze', 'wein', 'tee'] },
+  nordwacht: { produce: ['kanonenstahl', 'werkzeuge', 'hartholz'], demand: ['gewuerze', 'wein', 'tee'] },
   glutring: { produce: ['schwefel', 'obsidian', 'schmiedekohle'], demand: ['medizin', 'tuch', 'wein', 'werkzeuge'] },
-  niederlande: { produce: ['gewuerze', 'stoffe', 'luxusgueter'], demand: ['kanonenstahl', 'schiesspulver', 'waffenkisten'] },
+  niederlande: { produce: ['gewuerze', 'stoffe', 'luxusgueter'], demand: ['kanonenstahl', 'schiesspulver', 'waffenkisten', 'hartholz'] },
   england: { produce: ['tuch', 'tee', 'marineausruestung'], demand: ['gewuerze', 'schmiedekohle', 'wein', 'werkzeuge'] },
   frankreich: { produce: ['wein', 'seide', 'fechtklingen'], demand: ['tee', 'kanonenstahl', 'schwefel', 'obsidian'] },
   deutschland: { produce: ['schiesspulver', 'werkzeuge', 'waffenkisten'], demand: ['seide', 'gewuerze', 'medizin', 'marineausruestung'] },

@@ -3,6 +3,7 @@ import { officerSlots } from '../../data/crewTiers';
 import { defaultLook, type CharacterLook } from '../../data/characterParts';
 import { defaultProgress, defaultShip, SAVE_VERSION, type Faction, type FightStyle, type SaveData, type SkillState } from './types';
 import { finiteOr } from '../sanitize';
+import { legacyUpToEvo } from '../../data/shipEvolution';
 
 /** localStorage-Schlüssel von Sturmkrone 1.0 */
 export const LEGACY_KEY = 'sturmkrone-saga-1';
@@ -40,6 +41,14 @@ export function lookFromLegacy(raw: unknown, faction: Faction, style: FightStyle
 }
 
 /** Wandelt einen 1.0-Spielstand in das 2.0-Format (Version 1) um. Nichts geht verloren: Alles liegt zusätzlich in legacy10. */
+/** Schiff aus 1.0: Klasse und Ausbau; die alten Ausbaustufen (0 … 5) werden auf die Evolution (1 … 5) abgebildet und gelten für alle mitgelieferten Klassen */
+function legacyShip(raw: Record<string, any>, up: (v: unknown) => number) {
+  const ship = defaultShip(raw.faction as Faction, Math.max(0, Math.min(6, Math.floor(finiteOr(raw.tier, 0)))));
+  const evo = legacyUpToEvo({ can: up(raw.up?.can), hull: up(raw.up?.hull), sail: up(raw.up?.sail) });
+  for (const c of ship.owned) ship.evo[String(c)] = { ...evo };
+  return ship;
+}
+
 export function convertLegacy10(raw: Record<string, any>, gameVersion: string, now = Date.now()): SaveData {
   const up = (v: unknown) => Math.max(0, Math.min(5, Math.floor(finiteOr(v, 0))));
   const hired: string[] = Array.isArray(raw.crew) ? raw.crew.filter((c: unknown) => typeof c === 'string' && CREW_BY_ID[c as string]) : [];
@@ -75,7 +84,7 @@ export function convertLegacy10(raw: Record<string, any>, gameVersion: string, n
       potions: Math.max(0, Math.min(10, Math.floor(finiteOr(raw.potions, 3)))), shrine: 0, trinkets: [], trinket: null,
     },
     skills: skillsFromLegacy(raw, Math.max(1, Math.floor(finiteOr(raw.lvl, 1)))),
-    ship: { ...defaultShip(raw.faction as Faction, Math.max(0, Math.min(6, Math.floor(finiteOr(raw.tier, 0))))), up: { can: up(raw.up?.can), hull: up(raw.up?.hull), sail: up(raw.up?.sail) } },
+    ship: legacyShip(raw, up),
     crew: { hired, party: defaultParty(hired, officerSlots(6)), loyalty: {} },
     legends: raw.legends && typeof raw.legends === 'object' ? Object.keys(raw.legends).filter((k) => raw.legends[k]) : [],
     legacy10: JSON.parse(JSON.stringify(raw)),

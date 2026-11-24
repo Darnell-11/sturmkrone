@@ -26,7 +26,10 @@ import { AMMO, DEFAULT_SHIP_LOOK, factionShipLook, HULL_COLORS, SAIL_COLORS, SHI
 import { BORDER_FORTS, BORDERS, FACTIONS, borderDistance, marineStance, sectorAt, type FactionId } from '../data/factions';
 import { BATTLE, battleSite, compassWord, nextDelay, sideSize, type BattleSite } from './battleRules';
 import { cannotBeSunk } from './shipSim';
-import { aiCannon, aiHullFactor } from '../data/balanceConfig';
+import { aiCannon, aiHullFactor, dangerOfLevel } from '../data/balanceConfig';
+import { evolutionOfTier, portIndices } from '../data/shipEvolution';
+import { hasSwivels, ramContact, ramDamage, swivelCooldown, swivelDamage, swivelTarget, type Kin } from './ramming';
+import { RAM, SWIVEL } from '../data/balanceConfig';
 import { REP, hasService, isHostile, isPeaceful, judgeBattle, newStats, type BattleStats } from '../data/reputation';
 import { WORLD_RADIUS } from '../data/world';
 import { Ship, type SeaEnv } from '../entities/ship/ship';
@@ -279,6 +282,7 @@ export class NavalSystem {
       if (Math.hypot(x, z) > WORLD_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
       const foe: 'pirat' | 'marine' = this.playerFaction === 'pirat' ? 'marine' : 'pirat';
       const ship = new Ship(this.scene, 0, DEFAULT_SHIP_LOOK(foe), foe);
+      ship.setEvolution(evolutionOfTier(1));
       ship.x = x; ship.z = z; ship.heading = Math.atan2(p.x - x, p.z - z) + Math.PI / 2;
       ship.prev = { x, z, heading: ship.heading };
       ship.hull = ship.maxHull * (board ? 0.3 : 0.7);
@@ -354,7 +358,9 @@ export class NavalSystem {
 
   /** Breitseite: alle Kanonen einer Seite; mit Ziel wird Vorhalt berechnet */
   broadside(ship: Ship, side: number, range: number, dmg: number, ammo: AmmoId, target: Ship | null = null) {
-    const muzzles = side > 0 ? ship.model.muzzlesL : ship.model.muzzlesR;
+    const all = side > 0 ? ship.model.muzzlesL : ship.model.muzzlesR;
+    // Stückpforten: Kanonen-Stufe 1 bestückt nur die Hälfte, Stufe 2 drei Viertel, ab Stufe 3 alle
+    const muzzles = portIndices(all.length, ship.portsOf(all.length)).map((i) => all[i]);
     audio.play('broadside', ship === this.player ? 1 : 0.8, { x: ship.x, z: ship.z });
     const left = new Vector3(Math.cos(ship.heading), 0, -Math.sin(ship.heading)).multiplyScalar(side);
     const speed = BALL_SPEED * AMMO[ammo].speed;
@@ -404,6 +410,7 @@ export class NavalSystem {
   spawnGuard(d: { guardId: string; tier: number; x: number; z: number; heading: number; hull: number; sail: number; crew: number; name: string }, look: ShipLook, level: number, power: FactionId, groupScale = 1): EnemyShip {
     const cls = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, d.tier))];
     const ship = new Ship(this.scene, d.tier, look, power === 'marine' ? 'marine' : 'pirat', Math.round(cls.hp * (d.hull * groupScale - 1 + level * 0.03)));
+    ship.setEvolution(evolutionOfTier(dangerOfLevel(level)));
     ship.sim.sail.max = Math.round(ship.sim.sail.max * d.sail * groupScale);
     ship.sim.sail.hp = ship.sim.sail.max;
     const m = ship.sim.crew.pools.matrosen;
@@ -430,6 +437,7 @@ export class NavalSystem {
       const tier = tiers[i % tiers.length];
       const cls = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier))];
       const ship = new Ship(this.scene, tier, { ...o.look }, o.power === 'marine' ? 'marine' : 'pirat', Math.round(cls.hp * (2.0 - 1 + o.level * 0.03)));
+      ship.setEvolution(evolutionOfTier(dangerOfLevel(o.level)));
       ship.sim.sail.max = Math.round(ship.sim.sail.max * 1.5);
       ship.sim.sail.hp = ship.sim.sail.max;
       const m = ship.sim.crew.pools.matrosen;
@@ -530,6 +538,7 @@ export class NavalSystem {
       if (role === 'haendler' && !useFaction) { look.hull = HULL_COLORS[Math.floor(Math.random() * 3)]; look.sail = SAIL_COLORS[Math.floor(Math.random() * 3)]; look.flag = 'anker'; look.flagColor = '#2F6E4F'; look.figurehead = 'keine'; }
       // erfahrene Crews halten mehr aus (sonst wären Schiffe in hohen Meeren aus Papier)
       const ship = new Ship(this.scene, tier, look, foe, Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)));
+      ship.setEvolution(evolutionOfTier(dangerOfLevel(lvl)));
       // Route: quer durch das Gebiet, am Spieler vorbei statt direkt auf ihn zu
       const toP = Math.atan2(px - x, pz - z);
       const heading = near ? near.heading : toP + (Math.random() < 0.5 ? 1 : -1) * (0.5 + Math.random() * 0.7);
@@ -605,6 +614,7 @@ export class NavalSystem {
         if (this.ground.islandAt(x, z, 40) || Math.hypot(x, z) > WORLD_RADIUS - 150) continue;
         const lvl = f.level, tier = Math.max(2, Math.min(4, Math.floor(lvl / 3)));
         const ship = new Ship(this.scene, tier, factionShipLook('marine'), 'marine', Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)));
+        ship.setEvolution(evolutionOfTier(dangerOfLevel(lvl)));
         ship.x = x; ship.z = z; ship.heading = a + (Math.random() < 0.5 ? 0 : Math.PI);
         ship.prev = { x, z, heading: ship.heading };
         this.enemies.push({ ship, role: 'patrouille', level: lvl, state: 'patrol', wander: { x, z }, aiT: 0, power: 'marine', station: f.id, name: 'Marine-Patrouillenboot' });
@@ -680,6 +690,7 @@ export class NavalSystem {
         const tier = Math.max(1, Math.min(4, Math.floor(lvl / 2) + Math.floor(Math.random() * 2)));
         const foe: 'pirat' | 'marine' = power === 'kurogane' ? 'pirat' : 'marine';
         const ship = new Ship(this.scene, tier, factionShipLook(power), foe, Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)));
+        ship.setEvolution(evolutionOfTier(dangerOfLevel(lvl)));
         ship.x = x; ship.z = z;
         // beide Flotten fahren erst aufeinander zu, dann in Breitseitenabstand umeinander
         ship.heading = Math.atan2(-site.across.x * dir, -site.across.z * dir) + (Math.random() - 0.5) * 0.4;
@@ -711,6 +722,7 @@ export class NavalSystem {
       const lvl = Math.max(2, this.zoneLevel(x, z));
       const tier = Math.max(2, Math.min(4, Math.floor(lvl / 3) + 1));
       const ship = new Ship(this.scene, tier, factionShipLook('marine'), 'marine', Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)));
+      ship.setEvolution(evolutionOfTier(dangerOfLevel(lvl)));
       ship.x = x; ship.z = z; ship.heading = Math.atan2(site.x - x, site.z - z);
       ship.prev = { x, z, heading: ship.heading };
       this.enemies.push({ ship, role: 'patrouille', level: lvl, state: 'engage', wander: { x, z }, aiT: 0, name: 'Marine-Patrouillenboot', power: 'marine', battle: { id: b.id, side: 2 } });
@@ -859,6 +871,7 @@ export class NavalSystem {
     const look = DEFAULT_SHIP_LOOK(l.faction);
     look.sail = l.col; look.flagColor = l.col; look.lanterns = true;
     const ship = new Ship(this.scene, Math.min(6, l.tier + 1), look, l.faction, 300 + l.lvl * 40);
+    ship.setEvolution(evolutionOfTier(dangerOfLevel(l.lvl)));
     ship.x = x; ship.z = z;
     const p = this.player;
     ship.heading = p ? Math.atan2(p.x - x, p.z - z) : 0;
@@ -877,6 +890,7 @@ export class NavalSystem {
       const look = DEFAULT_SHIP_LOOK('pirat');
       look.hull = '#2A3A3A'; look.sail = '#BFEFE4'; look.stripe = '#7FE0C8'; look.flagColor = '#1E1A20'; look.lanterns = true;
       const ship = new Ship(this.scene, Math.min(4, 1 + Math.floor(level / 3)), look, 'pirat', 120);
+      ship.setEvolution(evolutionOfTier(dangerOfLevel(level)));
       ship.model.group.traverse((o) => {
         const m = o as Mesh;
         if (!m.isMesh || Array.isArray(m.material)) return;
@@ -958,6 +972,7 @@ export class NavalSystem {
       this.overlay.setBar(e, null, -1, false, null);
       return false;
     });
+    if (p && active) { this.updateRamming(); this.updateSwivels(); }
     this.updateBalls(dt);
     this.updateCrates(dt);
     this.efx.update(dt);
@@ -980,6 +995,127 @@ export class NavalSystem {
       if (k >= 1) { w.mesh.removeFromParent(); w.mesh.geometry.dispose(); (w.mesh.material as MeshBasicMaterial).dispose(); }
     }
     keepIf(this.waves, (w) => w.t < w.max);
+  }
+
+  // ---------- Rammsporn und Deck-Drehbassen (Schiffs-Evolution, naval/ramming.ts) ----------
+
+  private ramCd = new Map<string, number>();
+  private swivelCd = new Map<string, number>();
+
+  private kin(s: Ship): Kin { return { x: s.x, z: s.z, heading: s.heading, course: s.course, speed: s.speed, L: s.cls.L, W: s.cls.W }; }
+  /** Schiff, das den Spieler angreifen darf: im Gefecht, Jäger, gereizt oder Raid-Wache (friedliche Schiffe rammen und beschießen nie von selbst) */
+  private hostileAI(e: EnemyShip) { return e.state === 'engage' || !!e.hunter || !!e.provoked || !!e.raid; }
+
+  /** Der Spieler hat ein Schiff gerammt oder mit Drehbassen beschossen: Marine und Mächte werden feindlich (wie bei Kanonenschüssen) */
+  private provokeBy(s: Ship, how: string) {
+    const en = this.enemies.find((o) => o.ship === s);
+    if (!en) return;
+    if (en.power === 'marine' && !en.provoked) { en.provoked = true; if (!en.companion) this.hooks.message(`${how} ein Schiff der Marine – sie wird dich jagen!`); }
+    else if (en.power && !en.provoked && !en.companion) en.provoked = true;
+    en.lastPlayerHit = this.clock;
+  }
+
+  /** Folgen eines Treffers ohne Kugel: Untergang oder Enterphase auslösen */
+  private afterHit(s: Ship, wasDisabled: boolean, byPlayer: boolean) {
+    if (!s.alive) { this.sink(s); return; }
+    const en = this.enemies.find((o) => o.ship === s);
+    if (en && !wasDisabled && s.disabled) this.onDisabled(en, byPlayer);
+  }
+
+  /**
+   * Rammen: Freunde (Spieler, Begleiter) gegen Gegner und kampfbereite Gegner gegen Freunde. Der Bug-Kegel prüft `ramContact`; Schaden und Eigenschaden
+   * rechnet `ramDamage` (Rumpf-Stufe ≥ 4 = Rammsporn: voller Schaden, nur 30 % Eigenschaden gegenüber einem Schiff ohne Sporn, Stufe 5 panzerbrechend).
+   */
+  private updateRamming() {
+    const p = this.player;
+    if (!p) return;
+    const live = (s: Ship) => s.alive && s.sinking <= 0 && !s.moored;
+    const friends: Ship[] = [p, ...this.enemies.filter((e) => (e.companion || e.helper) && live(e.ship)).map((e) => e.ship)].filter(live);
+    const foes = this.enemies.filter((e) => !e.companion && !e.helper && !e.battle && !e.boarded && live(e.ship));
+    for (const f of friends) for (const e of foes) {
+      this.tryRam(f, e.ship);
+      if (this.hostileAI(e) && !e.ship.disabled) this.tryRam(e.ship, f);
+    }
+    // Pausen vergangener Paare aufräumen
+    if (this.ramCd.size > 64) for (const [k, t] of this.ramCd) if (t < this.clock) this.ramCd.delete(k);
+  }
+
+  private tryRam(a: Ship, b: Ship) {
+    if (a.speed < RAM.minSpeed * 0.5 && b.speed < RAM.minSpeed * 0.5) return;
+    if (Math.hypot(a.x - b.x, a.z - b.z) > (a.cls.L + b.cls.L) * 0.6) return;
+    const key = `${a.entityId}>${b.entityId}`;
+    if ((this.ramCd.get(key) ?? -1) > this.clock) return;
+    const c = ramContact(this.kin(a), this.kin(b));
+    if (!c.hit) return;
+    this.ramCd.set(key, this.clock + RAM.cooldown);
+    const d = ramDamage(c.relSpeed, a.maxHull, a.evo.hullTier);
+    const fx = Math.sin(a.heading), fz = Math.cos(a.heading), tfx = Math.sin(b.heading), tfz = Math.cos(b.heading);
+    const ex = c.x - b.x, ez = c.z - b.z;
+    const local = new Vector3(ex * tfz - ez * tfx, 0, ex * tfx + ez * tfz);
+    const wasB = b.disabled, wasA = a.disabled;
+    const byPlayer = a === this.player;
+    const dealt = b.ramHit(d.target, d.pen, local);
+    const self = a.ramHit(d.self, null, new Vector3(0, 0, a.cls.L * 0.5));
+    a.speed *= RAM.rammerSlow;
+    b.speed *= RAM.targetSlow;
+    this.debris?.splinters(c.x, 1.3, c.z, fx, fz, d.ram ? 18 : 9, b.look.hull);
+    this.smoke?.puff(c.x, 1.5, c.z, { n: 3, size: 1.8, grow: 6, life: 3, tone: 0.5, spread: 1.2, rise: 0.8, alpha: 0.7 });
+    this.sparks.emit(d.ram ? 16 : 8, c.x, 1.4, c.z, { speed: 6, up: 4, life: 0.8, color: new Color(0.55, 0.36, 0.2), gravity: 14, spread: 0.4 });
+    audio.play('crack', 1, { x: c.x, z: c.z });
+    if (a === this.player || b === this.player) {
+      this.hooks.shake(d.ram && byPlayer ? 0.75 : 0.55);
+      this.hooks.hitstop(0.07);
+      if (b === this.player || (a === this.player && self > 0)) this.overlay.hurt();
+      if (dealt > 0) this.overlay.number(new Vector3(c.x, 3, c.z), Math.round(dealt), b === this.player ? 'hurt' : 'hit');
+      if (self > 0) this.overlay.number(new Vector3(a.x, 3.6, a.z), Math.round(self), a === this.player ? 'hurt' : 'hit');
+      if (byPlayer) this.hooks.message(d.ram ? `Rammstoß! ${Math.round(dealt)} Rumpfschaden, dein Rammsporn hält.` : `Zusammenstoß! Ohne Rammsporn leidet dein Schiff selbst (${Math.round(self)} Rumpfschaden).`);
+    }
+    if (byPlayer) { this.provokeBy(b, 'Du hast gerammt:'); this.noteBattleHit(b, dealt); }
+    this.afterHit(b, wasB, byPlayer);
+    this.afterHit(a, wasA, false);
+  }
+
+  /**
+   * Deck-Drehbassen (Kanonen-Stufe ≥ 4): feuern von selbst Kartätschen auf feindliche Schiffe im Umkreis von 45 m (Crew, etwas Tuch, wenig Rumpf),
+   * mit eigener Pause je Schiff. Friedliche und kampfunfähige Schiffe sowie geenterte werden verschont.
+   */
+  private updateSwivels() {
+    const p = this.player;
+    if (!p) return;
+    const live = (s: Ship) => s.alive && s.sinking <= 0 && !s.moored;
+    type Shooter = { ship: Ship; e: EnemyShip | null };
+    const shooters: Shooter[] = [];
+    if (live(p) && !p.disabled) shooters.push({ ship: p, e: null });
+    for (const e of this.enemies) if (live(e.ship) && !e.ship.disabled && !e.boarded) shooters.push({ ship: e.ship, e });
+    for (const sh of shooters) {
+      const s = sh.ship;
+      if (!hasSwivels(s.evo.cannonTier)) continue;
+      const friend = sh.e === null || sh.e.companion || sh.e.helper;
+      if (!friend && !this.hostileAI(sh.e!)) continue;
+      if ((this.swivelCd.get(s.entityId) ?? 0) > this.clock) continue;
+      const foeShips: Ship[] = friend
+        ? this.enemies.filter((o) => !o.companion && !o.helper && !o.battle && !o.boarded && live(o.ship) && !o.ship.disabled && this.hostileAI(o)).map((o) => o.ship)
+        : [p, ...this.enemies.filter((o) => (o.companion || o.helper) && live(o.ship)).map((o) => o.ship)].filter((x) => live(x));
+      const k = swivelTarget({ x: s.x, z: s.z, L: s.cls.L }, foeShips.map((t) => ({ x: t.x, z: t.z, L: t.cls.L })));
+      if (k < 0) continue;
+      this.swivelCd.set(s.entityId, this.clock + swivelCooldown(s.evo.cannonTier) * (0.9 + Math.random() * 0.2));
+      const t = foeShips[k];
+      const dx = t.x - s.x, dz = t.z - s.z, dl = Math.hypot(dx, dz) || 1;
+      const mx = s.x + (dx / dl) * s.cls.W * 0.4, mz = s.z + (dz / dl) * s.cls.W * 0.4;
+      const base = swivelDamage(sh.e && !sh.e.companion ? aiCannon(sh.e.level).dmg : this.canDmg * (sh.e ? 0.6 : 1));
+      const local = new Vector3((Math.random() - 0.5) * t.cls.W * 0.8, 0, (Math.random() - 0.5) * t.cls.L * 0.6);
+      const wasT = t.disabled;
+      const dealt = t.damage(base, 'kartaetsche', local, 'hull', SWIVEL.pen);
+      this.smoke?.puff(mx, 2.2, mz, { n: 2, size: 0.9, grow: 3.5, life: 1.6, tone: 0.6, vx: (dx / dl) * 4, vz: (dz / dl) * 4, spread: 0.6, rise: 0.6, alpha: 0.6 });
+      this.sparks.emit(6, mx, 2.2, mz, { speed: 5, up: 1.5, life: 0.4, color: new Color(1.4, 0.9, 0.4), gravity: 8, spread: 0.5 });
+      audio.play('crack', 0.45, { x: mx, z: mz });
+      if (s === p || t === p) {
+        if (dealt > 0) this.overlay.number(new Vector3(t.x, 3.2, t.z), Math.round(dealt), t === p ? 'hurt' : 'hit');
+        if (t === p) this.overlay.hurt();
+      }
+      if (s === p) { this.provokeBy(t, 'Deine Drehbassen haben auf'); this.noteBattleHit(t, dealt); }
+      this.afterHit(t, wasT, s === p);
+    }
   }
 
   /** Rauch und Glut über beschädigten, brennenden und sinkenden Schiffen – von weitem sichtbar */

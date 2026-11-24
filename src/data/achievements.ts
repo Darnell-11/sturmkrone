@@ -1,4 +1,5 @@
 // Erfolge: werden regelmäßig geprüft und im Spielstand (progress.flags) vermerkt.
+import { evolutionOf } from './shipEvolution';
 import type { SaveData } from '../core/save/types';
 import { REGIONS } from './regions';
 
@@ -43,7 +44,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   A('lv30', 'Unvergessen', 'Erreiche Stufe 30.', 3000, 0, (s) => s.player.level, 30),
   A('gold', 'Goldene Kiste', 'Besitze 10.000 Gold auf einmal.', 0, 50, (s) => s.player.gold, 10000),
   A('ship', 'Leviathan', 'Befehlige einen Leviathan.', 0, 200, (s) => (s.ship.owned.includes(6) ? 1 : 0), 1),
-  A('up', 'Werftliebling', 'Baue Kanonen, Rumpf und Segel voll aus.', 1000, 80, (s) => s.ship.up.can + s.ship.up.hull + s.ship.up.sail, 15),
+  A('up', 'Werftliebling', 'Baue Rumpf, Segel und Kanonen deines Schiffs auf Stufe 5 aus.', 1000, 80, (s) => { const e = evolutionOf(s.ship, s.ship.tier); return e.hullTier + e.sailTier + e.cannonTier - 3; }, 12),
   A('aw', 'Erwacht', 'Lass einen Faji-Zweig erwachen.', 500, 50, (s) => s.skills.awakened.length, 1),
   A('aw4', 'Meister aller Wege', 'Lass alle vier Faji-Zweige erwachen.', 3000, 200, (s) => s.skills.awakened.length, 4),
   A('fish', 'Petri Heil', 'Fange 20 Fische.', 300, 20, (s) => num(s, 'fish'), 20),

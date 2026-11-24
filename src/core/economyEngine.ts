@@ -6,6 +6,7 @@ import {
   type EconomyState, type GoodId, type MarketProfile, type MarketState,
 } from '../data/economy';
 import { clamp } from './mathUtil';
+import { EVO_UPKEEP_MAX } from '../data/balanceConfig';
 
 export { cargoCap, CARGO_CAP };
 
@@ -212,12 +213,13 @@ export function tariffOf(standing: number, honor: number, lawful: boolean): Tari
 
 // ---------- Unterhalt ----------
 
-export interface UpkeepInput { tier: number; seamen: number; troops: number; officers: number }
+export interface UpkeepInput { tier: number; seamen: number; troops: number; officers: number; /** Gesamtstufe der Schiffs-Evolution 1 … 5 (data/shipEvolution.ts): erhöht die Wartung des Schiffs um bis zu +35 % */ evoTier?: number }
 export interface Upkeep { seamen: number; troops: number; officers: number; hull: number; daily: number; perPeriod: number }
 
 /** Sold und Proviant: Köpfe der Seeleute und Truppen, Offiziere und Wartung der Schiffsklasse, je Ingame-Tag und je Zahltag */
 export function upkeepOf(i: UpkeepInput): Upkeep {
-  const hull = UPKEEP.hull[clamp(Math.floor(i.tier), 0, UPKEEP.hull.length - 1)];
+  const evoK = 1 + EVO_UPKEEP_MAX * (clamp(Math.round(i.evoTier ?? 1), 1, 5) - 1) / 4;
+  const hull = UPKEEP.hull[clamp(Math.floor(i.tier), 0, UPKEEP.hull.length - 1)] * evoK;
   const seamen = Math.max(0, i.seamen) * UPKEEP.seaman, troops = Math.max(0, i.troops) * UPKEEP.trooper, officers = Math.max(0, i.officers) * UPKEEP.officer;
   const daily = seamen + troops + officers + hull;
   return { seamen, troops, officers, hull, daily, perPeriod: daily / UPKEEP.periodsPerDay };
@@ -343,4 +345,15 @@ export function applySalvage(eco: EconomyState, drops: readonly SalvageDrop[], t
   }
   eco.heat = Math.min(CONTRABAND.heatMax, eco.heat + heat);
   return { taken, lost, heat };
+}
+
+/** Ware aus dem Frachtraum verbrauchen (Werft-Material): nur wenn genug da ist; der Einstandspreis sinkt anteilig. Liefert, ob es geklappt hat. */
+export function takeCargo(eco: EconomyState, good: GoodId, n: number): boolean {
+  const c = eco.cargo[good];
+  if (!c || n <= 0 || c.n < n) return false;
+  const share = c.cost * (n / c.n);
+  c.n -= n;
+  c.cost -= share;
+  if (c.n <= 0) delete eco.cargo[good];
+  return true;
 }

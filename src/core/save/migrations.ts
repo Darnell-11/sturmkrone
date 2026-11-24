@@ -7,6 +7,7 @@ import { ARMOR, WEAPONS } from '../../data/items';
 import { AMMO_UNLOCK, cleanEconomy } from '../../data/economy';
 import { TIER_DEFS } from '../../data/balanceConfig';
 import { rankIndex } from '../../data/ranks';
+import { cleanEvolution, legacyUpToEvo } from '../../data/shipEvolution';
 import { SHIP_UPGRADE_MAX } from '../../data/ships';
 import { convertLegacy10, isLegacy10, lookFromLegacy, skillsFromLegacy } from './legacy';
 import { createSave, defaultProgress, defaultShip, SAVE_VERSION, type SaveData } from './types';
@@ -119,6 +120,18 @@ export const MIGRATIONS: Record<number, Migration> = {
       if (!eco.ammo.includes(id) && rank >= TIER_DEFS[t].rankMin) eco.ammo.push(id);
     }
     return { ...d, version: 16, progress: { ...(d.progress ?? {}), economy: eco } };
+  },
+  // 17: Schiffs-Evolution (data/shipEvolution.ts). Die alten Ausbaustufen `ship.up` (0 … 5) werden auf Rumpf-, Segel- und Kanonen-Stufe 1 … 5
+  // abgebildet (`legacyUpToEvo`: die alten Grundwerte sind jetzt Stufe 3, kein Schiff wird schwächer) und gelten für alle gekauften Klassen.
+  16: (d) => {
+    const ship = isRecord(d.ship) ? { ...d.ship } : {};
+    const owned: number[] = Array.isArray(ship.owned) ? ship.owned.filter((x: unknown) => typeof x === 'number' && Number.isFinite(x)) : [typeof ship.tier === 'number' ? ship.tier : 0];
+    const evo: Record<string, unknown> = isRecord(ship.evo) ? { ...ship.evo } : {};
+    const mapped = legacyUpToEvo(ship.up);
+    for (const c of owned) { const k = String(Math.max(0, Math.min(6, Math.floor(c)))); evo[k] = cleanEvolution(evo[k], mapped); }
+    delete ship.up;
+    ship.evo = evo;
+    return { ...d, version: 17, ship };
   },
 };
 

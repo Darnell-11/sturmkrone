@@ -1,5 +1,38 @@
 # Was ist neu
 
+## 4.2.0 – Phase 4.2 (Teil 1): Schiffs-Evolution in fünf Stufen, Rammsporn, Drehbassen, Werft-Material (24.11.2026, nur lokal)
+
+**Zustand und Spielstand 17 (`data/shipEvolution.ts`)**
+- Jedes Schiff hat drei unabhängige Zweige mit je einer Stufe 1 … 5: `hullTier`, `sailTier`, `cannonTier`; die Gesamtstufe `shipEvolutionTier` = `round((Rumpf + Segel + Kanonen) / 3)` ist die eine Quelle für Anzeige, Unterhalt und Erfolge. Der Zustand liegt je Klasse im Spielstand (`ship.evo`, Schlüssel = Klassenindex), alle Zahlen in `data/balanceConfig.ts` (Abschnitt „Schiffs-Evolution“).
+- **Startregel:** jedes neu gekaufte Schiff beginnt strikt auf 1/1/1 (75 % Rumpf, 78 % Tempo, nur halb bestückte Stückpforten) und muss in der Werft ausgebaut werden. Entscheidung von mir: das **Startschiff** eines neuen Spiels (nicht gekauft) beginnt auf 2/2/2, sonst wäre der Einstieg mit nur einer Kanone je Seite unnötig zäh; Stufe 3 sind die alten Grundwerte jeder Klasse, Begleitschiffe fahren auf Stufe 3.
+- **Migration 16 → 17:** die alten Ausbaustufen `ship.up` (0 … 5) werden auf Stufen abgebildet (`legacyUpToEvo`: Rumpf 0/1/≥2 → 3/4/5, Segel 0/1–2/≥3 → 3/4/5, Kanonen 0/1/≥2 → 3/4/5) und gelten für alle gekauften Klassen. Dadurch wird kein Schiff schwächer (nur der Kanonenschaden liegt bei Stufe 4/5 bis zu 4 Punkte unter dem alten Wert, dafür kommen Durchschlag und Drehbassen dazu). Das Feld `up` entfällt.
+
+**Mechanik**
+- **Rumpf:** Rumpfpunkte 75 % → 145 % der Klassenbasis (75, 87,5, 100, 122,5, 145 %), Panzerung ×0,7 … ×1,4. **Rammsporn ab Stufe 4** (`naval/ramming.ts`, rein): Bug-Kegel `dot(Bug, Richtung zum Ziel) > 0,75`, Bugspitze in der Hüllkurve des Ziels, Annäherung über 3,5 m/s, und der Angreifer fährt selbst (ein stehendes Schiff rammt nicht, nur weil ein anderes auf es zufährt). Schaden = Rumpfpunkte des Rammers · min(0,42, 0,35/26 je m/s über der Grenze), mit Crew-Schock; Eigenschaden mit Sporn nur 30 % dessen ohne Sporn (−70 %), Stufe 5 ist **panzerbrechend** (ignoriert die Rumpf-Panzerung), Stufe 4 durchschlägt wie Durchschlag 3. Schiffe ohne Sporn (Stufe 1 – 3) richten bei Frontalkollisionen nur einen Streifstoß an (30 %) und nehmen selbst 60 % der Basis. Effekte: Splitter, Rauch, Funken, Kamera-Wackeln, Hitstop, Zahlen, Tempoverlust (Rammer ×0,55, Ziel ×0,8), Pause 4 s je Paar; auch gegnerische Kriegsschiffe mit Sporn rammen den Spieler, wenn sie im Gefecht fahren (friedliche nie).
+- **Segel:** Segel-HP ×0,7 … ×1,4, Höchstgeschwindigkeit 78 % → 122 %, Beschleunigung ×0,8 … ×1,25, Wendegeschwindigkeit ×0,85 … ×1,16, Am-Wind-Verbesserung (Anteil des Gegenwind-Tempoverlusts: 100, 85, 70, 55, 40 %).
+- **Kanonen:** bestückte Stückpforten 50 % (Stufe 1), 75 % (Stufe 2), ab Stufe 3 alle (mindestens eine; gleichmäßig verteilt, `portIndices`), Kugelschaden ×0,85 … ×1,2, Nachladen ×1,3 … ×0,9, Durchschlag −1 … +2 Stufen. **Deck-Drehbassen ab Stufe 4:** feuern von selbst Kartätschen (Crew, etwas Tuch, wenig Rumpf) auf feindliche, kampfbereite Schiffe im Umkreis von 45 m (Hüllenabstand), eigene Pause (3,6 s, Stufe 5: 2,8 s), Schaden 20 % einer Kanonenkugel; geenterte und kampfunfähige Schiffe sowie friedliche werden verschont. Auch KI-Schiffe der Gefahrenstufen 4 und 5 haben beides.
+- **KI-Schiffe** tragen die Stufe ihrer Gefahrenstufe (1 … 5) in allen Zweigen; ihre Rumpfpunkte bleiben bei `aiHullFactor` (Kalibrierung aus 4.1.0), die Stufe wirkt dort über Panzerung, Segel, Tempo, Pforten, Rammsporn und Drehbassen.
+
+**Werft-Ökonomie**
+- **Kosten** je Stufe (300, 550, 950, 1 600 Gold) mal Klassenfaktor `1 + 0,4 · Klasse` und Hafen-Tarif. Die Tore aus 3.1.0 bleiben: Stufe 3 Ansehen „Freundlich“, Stufe 4 Rang 7 und „Verbündet“, Stufe 5 Rang 9 mit 3 Boss-Siegeln und 3 Relikt-Splittern.
+- **Material aus dem Frachtraum** ab Stufe 3 (6, 12, 20 Stück, Menge wächst mit der Klasse: ×0,5 … ×2): Rumpf **Hartholz** (neue Ware, Nordwacht erzeugt, Niederlande brauchen sie), Segel **Tuch** (Stufe 5 **Seide**), Kanonen **Kanonenstahl**. Das Material wird beim Ausbau verbraucht (`takeCargo`); die Werft zeigt Bedarf und Vorrat, bei Mangel den Hinweis aufs Kontor.
+- **Sold-Skalierung:** die Schiffswartung im Unterhalt wächst mit der Gesamtstufe von +0 % (Stufe 1) bis +35 % (Stufe 5) (`upkeepOf(…, evoTier)`); der Sold der Besatzung bleibt.
+- **Inzahlungnahme:** kaufst du eine neue Klasse, erstattet die Werft 50 % des Goldwerts der Ausbauten des bisher gefahrenen Schiffs (ohne Tarif und Material); es wird dafür auf Stufe 1 zurückgebaut (sonst ließe sich das Geld mehrfach holen), das neue beginnt auf 1/1/1 (`applyShipPurchase`). Wechseln zwischen schon gekauften Schiffen kostet nichts und lässt die Ausbauten unberührt.
+
+**Oberfläche:** Werft mit drei Zweigen (Stufenpunkte, Wirkung jetzt und nächste Stufe, Material mit Vorrat, Tor, Kosten), Hinweis zu Startstufe und Sold, Inzahlungnahme-Hinweis bei jeder neuen Klasse; Kompendium beschreibt die fünf Stufen je Zweig; Erfolg „Werftliebling“ zählt jetzt Stufen (12).
+
+**Abnahme**
+- `tests/shipEvolution.test.ts` (24 Fälle): Zustand und Startregel, Werte aller 7 Klassen über Stufe 1 … 5, Stückpforten, Rammsporn (Kegel und Winkelgrenze, Geschwindigkeit, Schaden, Eigenschaden, Crew-Schock, panzerbrechend), Drehbassen (45 m, Cooldown, Schaden), Kosten, Material, Inzahlungnahme (kein Doppelholen), Sold, Migration.
+- **Playwright im echten Spiel (Dev-Server, keine Konsolenfehler):** Startschiff 2/2/2 mit Werten, Ausbau mit Tor, Material und Gold, alle Stufen bis 5 (Rammsporn, Drehbassen, Tempo ×1,22), Inzahlungnahme beim Brigg-Kauf (+5 100 Gold) mit Rückbau, Werft-Seite. Rammen in offener See über die Spiel-Schleife: Stufe 1 ohne Sporn: 9 % Eigenschaden, 2 % am Ziel; Stufe 4: 3 % Eigenschaden, 11 % am Ziel, Crew −18 %; Stufe 5 (panzerbrechend): 3 % / 13,5 % / Crew −23 %. Seitlich und unter 3,5 m/s kein Treffer. Drehbassen: bei 30 m Rumpf, Tuch und Crew getroffen, bei 150 m nichts.
+
+**Offene Grenzen**
+- Schiffe gleiten weiter durch einander (kein Zusammenschieben); der Rammstoß bremst nur. Die KI steuert nicht gezielt auf Ramm-Kurs; sie rammt nur, wenn sie zufällig mit Sporn und Fahrt den Spieler trifft.
+- Die Zahlen (Kosten, Material, Rammschaden) sind nur nach Modell und Stichproben abgestimmt, nicht über lange Spielzeit; Drehbassen-Effekt ist Rauch und Funken (kein eigenes Modell).
+- Nicht per Bild geprüft: die Werft-Seite im Handyformat, die Wirkung der Drehbassen und des Rammens im Bild (Splitter, Kamera).
+
+**Technik (für Entwickler)**
+- `data/shipEvolution.ts` (Zustand, `evoStats`, `activePorts`, `portIndices`, `evoCost`, `evoMaterial`, `evoValue`, `applyShipPurchase`, `legacyUpToEvo`), `naval/ramming.ts` (`ramContact`, `ramDamage`, `swivelTarget`, `RAM_AMMO`), `Ship.setEvolution/evo/evoS/portsOf/ramHit`, `NavalSystem.updateRamming/updateSwivels/tryRam/afterHit`, `Game.evolution/evoView/evoGate/evoUpgrade/tradeInPreview`, `core/economyEngine.ts` `takeCargo`, `upkeepOf(evoTier)`.
+
 ## 4.1.0 – Phase 4.1 abgeschlossen: Gegner, Bosse und Schiffe auf der Gefahrenskala, Schiffsbeute, Stresstest (24.11.2026)
 
 **Landgegner auf `DANGER 1 … 5`**

@@ -16,7 +16,8 @@ import { PLAYER_BASE } from '../data/combat';
 import { CombatOverlay } from '../ui/combatOverlay';
 import { BRANCHES, branchPoints, learnBlock, SK, type Branch } from '../data/skills';
 import { SkillTree } from '../ui/skillTree';
-import { AMMO, SAIL_LEVELS, SHIP_CLASSES, SHIP_UPGRADES, SHIP_UPGRADE_MAX, type AmmoId, type ShipLook, type ShipUpgradeId } from '../data/ships';
+import { AMMO, SAIL_LEVELS, SHIP_CLASSES, type AmmoId, type ShipLook } from '../data/ships';
+import { BRANCH_FIELD, EVO_MAX, applyShipPurchase, evoCost, evoEffectText, evoMaterial, evoStats, evoValue, evolutionOf, shipEvolutionTier, tierOf, tradeInRefund, type EvoBranch, type ShipEvolution } from '../data/shipEvolution';
 import { FAME_THRESHOLDS } from '../data/ranks';
 import { SkillStage } from '../world/skillStage';
 import { detectWebGpu, AutoQuality, benchmarkGpu, detectTier, gatherDeviceInfo, needsBench, type DeviceInfo, type Detected } from '../render/quality';
@@ -55,7 +56,7 @@ import { IDLE_MUSIC, type MusicContext } from '../audio/musicDirector';
 import type { MusicSector } from '../data/musicTracks';
 import { FACTIONS, FACTION_IDS, STANCE_LABEL, STANDING_EVENTS, borderDistance, clampStanding, marineStance, sectorAt, type FactionId } from '../data/factions';
 import { AMMO_UNLOCK, GOODS, GOOD_BY_ID, UPKEEP, bagMax, cargoCap, emptyEconomy, profileOf, type EconomyState, type GoodId } from '../data/economy';
-import { applySalvage, buyGood, cargoUsed, rollSalvage, decayHeat, eqPriceOf, inspectCargo, marketAt, marketPrice, moraleEfficiency, quoteBuy, quoteSell, recordLedger, roleOf, sellGood, stepUpkeep, tariffOf, trendOf, upkeepOf, warCargo, yardRepairCost, type MarketSite, type Tariff } from './economyEngine';
+import { applySalvage, buyGood, takeCargo, cargoUsed, rollSalvage, decayHeat, eqPriceOf, inspectCargo, marketAt, marketPrice, moraleEfficiency, quoteBuy, quoteSell, recordLedger, roleOf, sellGood, stepUpkeep, tariffOf, trendOf, upkeepOf, warCargo, yardRepairCost, type MarketSite, type Tariff } from './economyEngine';
 import { REP, applyOutcome, battleOutcome, blueprintDiscount, emptyReputation, harborDiscount, hasService, honorTitle, isPeaceful, repTier } from '../data/reputation';
 import type { BattleMark, BattleResult } from '../naval/naval';
 import { createRaidContext } from '../raid/raidSession';
@@ -66,7 +67,7 @@ import { OccupationBanner } from '../ui/occupationBanner';
 import { OccupationSystem } from './occupationSystem';
 import { emptyUnlocks } from '../raid/occupation';
 import { SHARD_NAME } from '../data/crafting';
-import { TIER_DEFS, penTierOf, tierOfRank, type Tier } from '../data/balanceConfig';
+import { TIER_DEFS, tierOfRank, type Tier } from '../data/balanceConfig';
 import { UPGRADE_RECIPE, WEAPON_RECIPE, craftCheck, paySeals, payRecipe, payWeapon, sealTotal, recipeOf, sealsOf, shopGate, weaponCraftCheck, type Recipe, type SealPurse } from '../data/crafting';
 import type { PersonalLoot } from '../raid/raidLoot';
 import { mintEntityId, type EntityId } from '../sim/entityId';
@@ -787,20 +788,26 @@ export class Game {
     if (wdef) this.world.setWeaponLook({ blade: wdef.col, glow: !!wdef.glow });
     this.world.setOffhand(wornGear(gear).find((d) => d.slot === 'offhand')?.shield ?? null);
     const has = (id: string) => this.save!.crew.hired.includes(id);
-    const up = this.save.ship.up;
+    const evo = evolutionOf(this.save.ship, this.save.ship.tier);
+    const evoS = evoStats(evo);
+    const up = { can: 0 };
+    void up;
     const tb = (gear.trinket ? TRINKET_BY_ID[gear.trinket]?.bonus : null) ?? {};
     // Alle Werte aus einer Stelle (core/inventory.ts): Ausrüstung, Talisman, Crew, Stärkungen
     const st = this.playerStats();
     this.world.setPlayerPower(st.hp, st.atk);
     this.world.setGearDefense(st);
-    this.world.shipSpeedMult = (has('nav') ? 1.15 : 1) * (has('esra') ? 1.1 : 1) * (1 + up.sail * SHIP_UPGRADES.sail.perLevel) * (1 + (tb.speed ?? 0));
+    this.world.shipSpeedMult = (has('nav') ? 1.15 : 1) * (has('esra') ? 1.1 : 1) * (1 + (tb.speed ?? 0));
     this.world.ship.turnMult = has('helm') ? 1.6 : 1;
     this.world.rangeMult = has('look') ? 1.25 : 1;
-    const hullBonus = (has('carp') ? 40 : 0) + Math.round(SHIP_CLASSES[this.save.ship.tier].hp * up.hull * SHIP_UPGRADES.hull.perLevel);
+    // Rumpf-Stufe: 75 % (Stufe 1) … 145 % (Stufe 5) der Klassenbasis (Stufe 3 = alte Grundwerte)
+    const hullBonus = (has('carp') ? 40 : 0) + Math.round(SHIP_CLASSES[this.save.ship.tier].hp * (evoS.hullHpK - 1));
     if (hullBonus !== this.world.hullBonus) {
       this.world.hullBonus = hullBonus;
       this.world.setShip(this.save.ship.tier, this.save.ship.look, this.world.ship.ammo, this.world.ship.hull / Math.max(1, this.world.ship.maxHull), this.save.player.faction);
     }
+    // Ausbaustufen (Rumpf-Panzerung, Segel, Kanonen, Rammsporn, Drehbassen) gelten für das Schiff: nach jedem Neubau des Schiffsobjekts neu setzen
+    this.world.ship.setEvolution(evo);
     // Stilbonus der Waffenlinie: Foki laden Faji schneller nach, Kampfhandschuhe treffen öfter voll
     if (this.world.faji) this.world.faji.extraRegen = st.fajiRegen;
     if (this.world.combat) this.world.combat.critChance = st.crit;
@@ -810,8 +817,7 @@ export class Game {
       nav.playerLevel = lvl;
       nav.playerFaction = this.save.player.faction;
       nav.playerRank = rankIndex(this.save.player.fame);
-      this.world.ship.penTier = penTierOf(SHIP_CLASSES[this.save.ship.tier].rank, up.can);
-      nav.canDmg = (12 + lvl * 1.4) * (1 + this.save.ship.tier * 0.06) * (1 + up.can * SHIP_UPGRADES.can.perLevel) * (has('bruno') ? 1.2 : 1) * (1 + (tb.cannon ?? 0));
+      nav.canDmg = (12 + lvl * 1.4) * (1 + this.save.ship.tier * 0.06) * evoS.cannonDmgK * (has('bruno') ? 1.2 : 1) * (1 + (tb.cannon ?? 0));
       nav.reloadMult = has('gun') ? 0.7 : 1;
     }
     // Schiffskoch: bessert den Rumpf zusätzlich aus, aber nur, solange genug Seeleute an Bord sind (siehe stepPassiveRepair)
@@ -2479,11 +2485,18 @@ export class Game {
     const cls = SHIP_CLASSES[tier];
     // Wechsel zwischen eigenen Schiffen repariert nicht umsonst: der Zustand bleibt, nur ein neu gekauftes Schiff ist heil
     let hull = Math.max(0.05, this.world.ship.hull / Math.max(1, this.world.ship.maxHull));
+    let tradeMsg = '';
     if (!s.ship.owned.includes(tier)) {
       if (rankIndex(s.player.fame) < cls.rank) return `Rang „${rankName(s.player.faction, FAME_THRESHOLDS[cls.rank])}“ nötig.`;
       if (s.player.gold < cls.price) return `Dafür fehlen ${cls.price - s.player.gold} Gold.`;
       s.player.gold -= cls.price;
-      s.ship.owned.push(tier);
+      // Inzahlungnahme: die Werft erstattet die Hälfte des Goldwerts der Ausbauten des bisherigen Schiffs; es wird dafür wieder auf Stufe 1 zurückgebaut
+      const oldName = SHIP_CLASSES[s.ship.tier].n;
+      const { refund } = applyShipPurchase(s.ship, tier);       // das neue Schiff beginnt auf Stufe 1 und muss in der Werft ausgebaut werden
+      if (refund > 0) {
+        s.player.gold += refund;
+        tradeMsg = ` Inzahlungnahme: ${fmtInt(refund)} Gold für die Ausbauten deiner ${oldName}.`;
+      }
       hull = 1;
     }
     s.ship.hull = hull;
@@ -2491,7 +2504,7 @@ export class Game {
     this.world.setShip(tier, s.ship.look, s.ship.ammo, s.ship.hull, s.player.faction);
     this.applyPower();
     this.persist();
-    return `${cls.n} bereit zum Auslaufen!`;
+    return `${cls.n} bereit zum Auslaufen!${tradeMsg}`;
   }
 
   shipyardLook(look: ShipLook) {
@@ -2590,7 +2603,7 @@ export class Game {
   upkeepInput() {
     const s = this.save!;
     const crew = this.world.ship.sim.crew;
-    return { tier: s.ship.tier, seamen: poolHeads(crew, 'matrosen'), troops: poolHeads(crew, 'truppen'), officers: s.crew.hired.length };
+    return { tier: s.ship.tier, seamen: poolHeads(crew, 'matrosen'), troops: poolHeads(crew, 'truppen'), officers: s.crew.hired.length, evoTier: shipEvolutionTier(evolutionOf(s.ship, s.ship.tier)) };
   }
 
   /** Sold und Proviant: Aufstellung für Kontor und HUD */
@@ -2733,46 +2746,87 @@ export class Game {
     return `${AMMO[id].n} freigeschaltet.`;
   }
 
-  upgradeCost(k: ShipUpgradeId) {
-    const s = this.save;
-    if (!s) return 0;
-    return Math.round((s.ship.up[k] + 1) * 350 * (1 + s.ship.tier * 0.4) * this.yardK());
+  // ---------- Schiffs-Evolution (Werft): Rumpf, Segel, Kanonen je Stufe 1 … 5 ----------
+
+  /** Ausbaustufen des Schiffs, das du gerade fährst */
+  evolution(): ShipEvolution {
+    const s = this.save!;
+    return evolutionOf(s.ship, s.ship.tier);
   }
 
-  /** Tor für den nächsten Ausbau: Stufe 1 – 2 frei, 3 braucht Rang und Ansehen, 4 Rang 7 und „Verbündet“, 5 Boss-Siegel (leer = erlaubt) */
-  upgradeGate(k: ShipUpgradeId): string {
+  /** Anzeige eines Zweigs in der Werft: Stufe, nächste Stufe mit Wirkung, Gold (mit Tarif), Tor, Material aus dem Frachtraum */
+  evoView(branch: EvoBranch) {
+    const s = this.save!;
+    const evo = this.evolution();
+    const tier = tierOf(evo, branch);
+    const next = tier < EVO_MAX ? tier + 1 : 0;
+    const cost = next ? Math.round(evoCost(s.ship.tier, next) * this.yardK()) : 0;
+    const mat = next ? evoMaterial(branch, s.ship.tier, next) : null;
+    const have = mat ? this.eco().cargo[mat.good]?.n ?? 0 : 0;
+    return {
+      branch, tier, next, cost,
+      now: evoEffectText(branch, tier), after: next ? evoEffectText(branch, next) : '',
+      material: mat ? { ...mat, have, name: GOOD_BY_ID[mat.good].n } : null,
+      gate: next ? this.evoGate(branch) : '',
+    };
+  }
+
+  /** Tor für den nächsten Ausbau: Stufe 2 frei, 3 braucht Rang und Ansehen, 4 Rang 7 und „Verbündet“, 5 Rang 9 und Boss-Siegel; ab Stufe 3 dazu das Material im Frachtraum (leer = erlaubt) */
+  evoGate(branch: EvoBranch): string {
     const s = this.save;
     if (!s) return '';
-    const lvl = s.ship.up[k] + 1;
-    if (lvl <= 2) return '';
-    if (lvl === 3) return this.gateText(3);
+    const evo = this.evolution();
+    const next = tierOf(evo, branch) + 1;
+    if (next > EVO_MAX) return 'Höchste Stufe erreicht.';
     const rank = rankIndex(s.player.fame);
-    if (lvl === 4) {
+    if (next === 3) { const g = this.gateText(3); if (g) return g; }
+    if (next === 4) {
       if (rank < UPGRADE_RECIPE.rank4) return `Rang „${rankName(s.player.faction, FAME_THRESHOLDS[UPGRADE_RECIPE.rank4])}“ nötig.`;
       if (this.shopStanding() < UPGRADE_RECIPE.standing4) return `Ansehen „${repTier(UPGRADE_RECIPE.standing4).label}“ bei der Hafenmacht nötig.`;
-      return '';
     }
-    const purse = this.sealPurse();
-    if (rank < UPGRADE_RECIPE.rank) return `Rang „${rankName(s.player.faction, FAME_THRESHOLDS[UPGRADE_RECIPE.rank])}“ nötig.`;
-    if (sealTotal(purse) < UPGRADE_RECIPE.seals) return `Letzte Stufe: ${UPGRADE_RECIPE.seals} Boss-Siegel nötig (du hast ${sealTotal(purse)}).`;
-    if (purse.shards < UPGRADE_RECIPE.shards) return `Letzte Stufe: ${UPGRADE_RECIPE.shards} ${SHARD_NAME} nötig (du hast ${purse.shards}).`;
+    if (next === 5) {
+      const purse = this.sealPurse();
+      if (rank < UPGRADE_RECIPE.rank) return `Rang „${rankName(s.player.faction, FAME_THRESHOLDS[UPGRADE_RECIPE.rank])}“ nötig.`;
+      if (sealTotal(purse) < UPGRADE_RECIPE.seals) return `Letzte Stufe: ${UPGRADE_RECIPE.seals} Boss-Siegel nötig (du hast ${sealTotal(purse)}).`;
+      if (purse.shards < UPGRADE_RECIPE.shards) return `Letzte Stufe: ${UPGRADE_RECIPE.shards} ${SHARD_NAME} nötig (du hast ${purse.shards}).`;
+    }
+    const mat = evoMaterial(branch, s.ship.tier, next);
+    if (mat) {
+      const have = this.eco().cargo[mat.good]?.n ?? 0;
+      if (have < mat.n) return `Material fehlt: ${mat.n} × ${GOOD_BY_ID[mat.good].n} im Frachtraum nötig (du hast ${have}). Kaufe es im Kontor.`;
+    }
     return '';
   }
 
-  shipUpgrade(k: ShipUpgradeId): string {
+  /** Einen Zweig des gefahrenen Schiffs ausbauen: Gold (Tarif), Material aus dem Frachtraum, ab Stufe 5 Siegel und Splitter */
+  evoUpgrade(branch: EvoBranch): string {
     const s = this.save;
-    if (!s || s.ship.up[k] >= SHIP_UPGRADE_MAX) return '';
-    const gate = this.upgradeGate(k);
+    if (!s) return '';
+    const evo = this.evolution();
+    const tier = tierOf(evo, branch);
+    if (tier >= EVO_MAX) return '';
+    const gate = this.evoGate(branch);
     if (gate) return gate;
-    const cost = this.upgradeCost(k);
+    const next = tier + 1;
+    const cost = Math.round(evoCost(s.ship.tier, next) * this.yardK());
     if (s.player.gold < cost) return `Dafür fehlen ${cost - s.player.gold} Gold.`;
+    const mat = evoMaterial(branch, s.ship.tier, next);
+    if (mat) takeCargo(this.eco(), mat.good, mat.n);
     s.player.gold -= cost;
-    if (s.ship.up[k] + 1 >= SHIP_UPGRADE_MAX) paySeals(this.sealPurse(), UPGRADE_RECIPE.seals, UPGRADE_RECIPE.shards);
-    s.ship.up[k]++;
+    if (next >= EVO_MAX) paySeals(this.sealPurse(), UPGRADE_RECIPE.seals, UPGRADE_RECIPE.shards);
+    (s.ship.evo ??= {})[String(s.ship.tier)] = { ...evo, [BRANCH_FIELD[branch]]: next };
     audio.play('crack');
     this.applyPower();
     this.persist();
-    return 'Ausgebaut!';
+    return `${BRANCH_FIELD[branch] === 'hullTier' ? 'Rumpf' : BRANCH_FIELD[branch] === 'sailTier' ? 'Segel' : 'Kanonen'} auf Stufe ${next} ausgebaut!`;
+  }
+
+  /** Was die Werft beim Kauf einer neuen Klasse für die Ausbauten des gefahrenen Schiffs erstattet (50 % des Goldwerts) */
+  tradeInPreview(): { refund: number; value: number } {
+    const s = this.save;
+    if (!s) return { refund: 0, value: 0 };
+    const evo = this.evolution();
+    return { refund: tradeInRefund(s.ship.tier, evo), value: evoValue(s.ship.tier, evo) };
   }
 
   shipyardRepair(): string {

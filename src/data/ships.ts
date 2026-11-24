@@ -106,7 +106,10 @@ export const TITLE_SHIP: { tier: number; look: ShipLook } = {
   look: { hull: '#5C3A1F', stripe: '#D9A441', sail: '#F4E6C6', flag: 'krone', flagColor: '#1E1A20', figurehead: 'storm_dragon', lanterns: true },
 };
 
-/** Ausbauten der Werft (höchstens SHIP_UPGRADE_MAX Stufen je Art): Name, Wirkung je Stufe und Text stehen nur hier – Werft, Katalog und applyPower lesen sie */
+/**
+ * Die drei Ausbau-Zweige der Werft (Kanonen, Rumpf, Segel): nur noch Name und Symbol. Seit 4.2.0 gibt es fünf Stufen je Zweig als Schiffs-Evolution
+ * (data/shipEvolution.ts, Zahlen in data/balanceConfig.ts); `perLevel` und `effect` sind alte Richtwerte und nur noch für die Daten-Tests da.
+ */
 export type ShipUpgradeId = 'can' | 'hull' | 'sail';
 export const SHIP_UPGRADE_MAX = 5;
 export const SHIP_UPGRADES: Record<ShipUpgradeId, { n: string; effect: string; perLevel: number; icon: string }> = {

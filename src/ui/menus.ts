@@ -8,7 +8,9 @@ import { fmtInt } from '../core/format';
 import { EDGE_WALL, WEATHER, WEATHER_IDS, type WeatherId } from '../data/world';
 import { formatClock } from '../world/timeOfDay';
 import { FIGUREHEAD_DEFS, FIGUREHEAD_MODELS, figureheadModel } from '../data/figureheads';
-import { FLAGS, FLAG_DESC, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, SHIP_UPGRADES, SHIP_UPGRADE_IDS, SHIP_UPGRADE_MAX, STRIPE_COLORS, upgradeEffectText, type ShipLook } from '../data/ships';
+import { FLAGS, FLAG_DESC, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, STRIPE_COLORS, type ShipLook } from '../data/ships';
+import { BRANCH_LABEL, EVO_BRANCHES, EVO_MAX, shipEvolutionTier, type EvoBranch } from '../data/shipEvolution';
+import { EVO_UPKEEP_MAX } from '../data/balanceConfig';
 import { downloadText, esc, formatDate, formatPlayTime, pickFile } from './dom';
 import { gaugeHtml, goldLine, sliderHtml, tierBadge, toggleHtml } from './components';
 import { crestSvg } from './logoSvg';
@@ -972,14 +974,19 @@ export class Menus {
       { id: 'keine', name: 'Keine', glyph: 'figurehead', c1: '#6a6458', rarity: 'gewoehnlich', desc: 'Ohne Galionsfigur', on: !model },
       ...FIGUREHEAD_MODELS.map((id) => ({ id, name: FIGUREHEAD_DEFS[id].name, glyph: figureheadGlyph(id), c1: '#d7ae52', c2: '#7a4a22', rarity: FIGUREHEAD_DEFS[id].rarity, desc: FIGUREHEAD_DEFS[id].desc, on: model === id })),
     ]);
+    const trade = g.tradeInPreview();
     const classes = SHIP_CLASSES.map((c, i) => {
       const owned = st.owned.includes(i);
       const locked = rank < c.rank;
       return `<div class="slot"><div class="slot-head"><b>${c.n}${st.tier === i ? ' ✓' : ''}</b><span>${owned ? 'Im Besitz' : `${fmtInt(c.price)} Gold`}</span></div>
         <div class="meta">Rumpf ${c.hp} · ${c.can} Kanonen je Seite · Tempo ${c.spd} · Crew ${c.crew} · Offiziere ${officerSlots(i)}${troopCapacity(i) > 0 ? ` · Truppen ${troopCapacity(i)}` : ''}${locked && !owned ? ` · ab Rang „${RANKS[g.saveData?.player.faction ?? 'pirat'][c.rank]}“` : ''}</div>
+        ${!owned && trade.refund > 0 ? `<div class="meta">Inzahlungnahme: +${fmtInt(trade.refund)} Gold für die Ausbauten deiner ${SHIP_CLASSES[st.tier].n} (50 % des Goldwerts; sie wird dafür auf Stufe 1 zurückgebaut). Das neue Schiff beginnt auf Stufe 1.</div>` : !owned ? '<div class="meta">Ein neues Schiff beginnt auf Stufe 1 in allen Zweigen.</div>' : ''}
         ${st.tier === i ? '' : `<button class="mini${owned ? '' : ' brass'}" data-a="cls" data-id="${i}" ${locked && !owned ? 'disabled' : ''}>${owned ? 'Wechseln' : 'Kaufen'}</button>`}</div>`;
     }).join('');
     const cost = g.repairCost();
+    const evoNow = g.evolution();
+    const evoTotal = shipEvolutionTier(evoNow);
+    const evoUpkeep = Math.round(EVO_UPKEEP_MAX * (evoTotal - 1) / 4 * 100);
     this.open(
       `<h2 class="fell">Werft</h2>
       ${goldLine(g.playerGold, msg)}
@@ -992,7 +999,11 @@ export class Menus {
       <p class="small soft">Spezialmunition gilt dauerhaft für dein Schiff, sobald sie freigeschaltet ist (Kugeln hat jedes Schiff).</p>
       ${AMMO_IDS.filter((id) => id !== 'kugel').map((id) => { const v = g.ammoView(id); const a = AMMO[id]; return `<div class="slot"><div class="slot-head"><b style="color:${a.color}">${esc(a.n)}</b><span>${v.owned ? 'freigeschaltet' : `${fmtInt(v.price)} Gold`}</span></div><div class="meta">${tierBadge(v.tier)} ${esc(a.d)}${v.gate && !v.owned ? ` · <span class="gate">${esc(v.gate)}</span>` : ''}</div>${v.owned ? '' : `<button class="mini brass" data-a="ammo" data-id="${id}" ${v.gate ? 'disabled' : ''}>Freischalten</button>`}</div>`; }).join('')}
       <h3>Ausbauten</h3>
-      ${SHIP_UPGRADE_IDS.map((k) => { const lv = st.up[k]; const price = g.upgradeCost(k); const u = SHIP_UPGRADES[k]; return `<div class="slot"><div class="slot-head"><b>${u.icon} ${u.n}</b><span>Stufe ${lv}/${SHIP_UPGRADE_MAX}</span></div><div class="meta">${upgradeEffectText(k)} je Stufe · <span class="pips">${'●'.repeat(lv)}${'○'.repeat(SHIP_UPGRADE_MAX - lv)}</span></div>${lv < SHIP_UPGRADE_MAX ? `${g.upgradeGate(k) ? `<div class="meta gate">${esc(g.upgradeGate(k))}</div>` : ''}<button class="mini brass" data-a="up" data-id="${k}" ${g.upgradeGate(k) ? 'disabled' : ''}>Ausbauen (${fmtInt(price)} Gold${lv + 1 >= SHIP_UPGRADE_MAX ? ` · ${UPGRADE_RECIPE.seals} Siegel · ${UPGRADE_RECIPE.shards} ${esc(SHARD_NAME)}` : ''})</button>` : ''}</div>`; }).join('')}
+      <p class="small soft">Jedes Schiff hat drei Zweige mit je fünf Stufen. Neu gekaufte Schiffe beginnen auf Stufe 1 (schwach: 75 % Rumpf, 78 % Tempo, nur halb bestückte Stückpforten); Stufe 3 sind die Grundwerte der Klasse, ab Stufe 4 gibt es Rammsporn (Rumpf) und Deck-Drehbassen (Kanonen). Stufe 3 – 5 verlangen Handelsware aus deinem Frachtraum. Gesamtstufe <b>${evoTotal}</b> · Schiffs-Unterhalt +${evoUpkeep} %.</p>
+      ${EVO_BRANCHES.map((br) => { const v = g.evoView(br); const L = BRANCH_LABEL[br]; const mat = v.material;
+        return `<div class="slot"><div class="slot-head"><b>${L.icon} ${L.n}</b><span>Stufe ${v.tier}/${EVO_MAX}</span></div>
+        <div class="meta"><span class="pips">${'●'.repeat(v.tier)}${'○'.repeat(EVO_MAX - v.tier)}</span> ${esc(v.now)}${v.next ? `<br>Nächste Stufe: ${esc(v.after)}` : ''}</div>
+        ${v.next ? `${mat ? `<div class="meta${mat.have < mat.n ? ' gate' : ''}">Material: ${mat.n} × ${esc(mat.name)} aus dem Frachtraum (du hast ${mat.have})</div>` : ''}${v.gate ? `<div class="meta gate">${esc(v.gate)}</div>` : ''}<button class="mini brass" data-a="up" data-id="${br}" ${v.gate ? 'disabled' : ''}>Auf Stufe ${v.next} ausbauen (${fmtInt(v.cost)} Gold${v.next >= EVO_MAX ? ` · ${UPGRADE_RECIPE.seals} Siegel · ${UPGRADE_RECIPE.shards} ${esc(SHARD_NAME)}` : ''})</button>` : ''}</div>`; }).join('')}
       <h3>Schiffsklassen</h3>${classes}
       <h3>Aussehen</h3>
       ${this.optHtml('Rumpf', sw('hull', HULL_COLORS))}
@@ -1008,7 +1019,7 @@ export class Menus {
         repair: () => rerender(g.shipyardRepair()),
         sailors: () => rerender(g.refillCrew()),
         troops: () => this.showTroops(() => this.showShipyard('', back)),
-        up: (id) => rerender(g.shipUpgrade(id as 'can' | 'hull' | 'sail')),
+        up: (id) => rerender(g.evoUpgrade(id as EvoBranch)),
         ammo: (id) => rerender(g.buyAmmo(id as AmmoId)),
         lk: (id) => { const [k, v] = id.split('|'); g.shipyardLook({ ...look, [k]: v }); rerender(); },
         lanterns: () => { g.shipyardLook({ ...look, lanterns: !look.lanterns }); rerender(); },

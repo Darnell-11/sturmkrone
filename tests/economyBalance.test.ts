@@ -200,7 +200,8 @@ describe('Seegefecht: Panzerung, Durchschlag und KI-Schiffe', () => {
     expect(HULL_ARMOR.length).toBe(SHIP_CLASSES.length);
     for (let i = 1; i < HULL_ARMOR.length; i++) expect(HULL_ARMOR[i]).toBeGreaterThan(HULL_ARMOR[i - 1]);
     for (let i = 1; i < SHIP_CLASSES.length; i++) expect(penTierOf(SHIP_CLASSES[i].rank)).toBeGreaterThanOrEqual(penTierOf(SHIP_CLASSES[i - 1].rank));
-    expect(penTierOf(SHIP_CLASSES[0].rank, 4)).toBe(3);                      // Kanonen-Ausbau hebt den Durchschlag
+    expect(penTierOf(SHIP_CLASSES[0].rank, 5)).toBe(3);                      // Kanonen-Stufe 5 hebt den Durchschlag um zwei Stufen
+    expect(penTierOf(SHIP_CLASSES[0].rank, 1)).toBe(1);                      // Stufe 1 senkt ihn (nie unter 1)
     expect(penTierOf(9, 99)).toBe(5);
     expect(hullArmorOf(-1)).toBe(HULL_ARMOR[0]);
     expect(hullArmorOf(99)).toBe(HULL_ARMOR[6]);

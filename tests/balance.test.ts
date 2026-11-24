@@ -279,6 +279,7 @@ describe('Spielstand 14 → 15 und Kompendium', () => {
     const old = { ...s, version: 14 } as Record<string, any>;
     old.gear = { ...old.gear, weapon: 99, armor: 42, weaponEq: 77, loot: ['kette_head'] };
     old.ship = { ...old.ship, up: { can: 9, hull: 2, sail: -4 } };
+    delete old.ship.evo;
     old.progress = { ...old.progress, unlocks: { sails: ['sail:england'], ornaments: [], bossLoot: ['boss_england_head'] }, conquest: { albion: { islandId: 'albion', factionId: 'england', conquestCount: 3 } } };
     const r = migrateSave(old, 'x');
     expect(r.ok).toBe(true);
@@ -287,7 +288,9 @@ describe('Spielstand 14 → 15 und Kompendium', () => {
     expect(r.data.gear.weapon).toBe(WEAPONS.length - 1);
     expect(r.data.gear.armor).toBe(ARMOR.length - 1);
     expect(r.data.gear.weaponEq).toBeLessThanOrEqual(r.data.gear.weapon);
-    expect(r.data.ship.up).toEqual({ can: 5, hull: 2, sail: 0 });
+    // die alten Ausbaustufen (can 9→5, hull 2, sail −4→0) sind jetzt Evolution: Kanonen 5, Rumpf 5, Segel 3 (data/shipEvolution.ts legacyUpToEvo)
+    expect((r.data.ship as unknown as { up?: unknown }).up).toBeUndefined();
+    expect(r.data.ship.evo['0']).toEqual({ hullTier: 5, sailTier: 3, cannonTier: 5 });
     expect(r.data.gear.loot).toEqual(['kette_head']);
     expect(r.data.progress.unlocks!.bossLoot).toEqual(['boss_england_head']);
     expect(r.data.progress.unlocks!.seals).toEqual({ england: 3 });

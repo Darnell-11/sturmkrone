@@ -6,7 +6,9 @@
 import type { SaveData } from '../core/save/types';
 import { fmtInt, fmtNum, fmtPct } from '../core/format';
 import { itemCount } from '../core/inventory';
-import { AMMO, AMMO_IDS, FLAGS, FLAG_DESC, SHIP_CLASSES, SHIP_UPGRADES, SHIP_UPGRADE_IDS, SHIP_UPGRADE_MAX, upgradeEffectText, type FlagId } from './ships';
+import { AMMO, AMMO_IDS, FLAGS, FLAG_DESC, SHIP_CLASSES, SHIP_UPGRADES, SHIP_UPGRADE_IDS, type FlagId } from './ships';
+import { BRANCH_LABEL, evoEffectText, evoMaterial, evolutionOf, tierOf, type EvoBranch } from './shipEvolution';
+import { GOOD_BY_ID } from './economy';
 import { ARMOR, CONSUMABLES, GEAR, HEADS, WEAPONS, WEAPON_LINES, type GearSlot } from './items';
 import { TIER_DEFS, craftCost, tierOfRank, type Tier } from './balanceConfig';
 import { SHARD_NAME, WEAPON_RECIPE, UPGRADE_RECIPE, recipeOf } from './crafting';
@@ -182,13 +184,18 @@ function build(): CatalogEntry[] {
     origin: 'Werft; ein gekauftes Schiff kann jederzeit gewechselt werden.',
     own: (s) => ({ state: s.ship.owned.includes(i) ? 'owned' : 'locked', note: s.ship.tier === i ? 'Flaggschiff' : undefined }),
   }));
-  for (const id of SHIP_UPGRADE_IDS) out.push({
-    id: `upgrade:${id}`, cat: 'schiff', group: 'Ausbauten der Werft', name: SHIP_UPGRADES[id].n, rarity: id === 'can' ? 'selten' : 'gewoehnlich', glyph: id === 'can' ? 'cannon' : id === 'hull' ? 'hull' : 'sail', color: id === 'can' ? '#6a6a72' : id === 'hull' ? '#a86a35' : '#e8dcc0',
-    desc: `Bis zu ${SHIP_UPGRADE_MAX} Stufen: je Stufe ${upgradeEffectText(id)}.`,
-    stats: [{ label: 'Wirkung je Stufe', value: upgradeEffectText(id), good: true }, { label: 'Höchststufe', value: String(SHIP_UPGRADE_MAX) }, { label: 'Gesamt', value: `+${Math.round(SHIP_UPGRADES[id].perLevel * SHIP_UPGRADE_MAX * 100)} %`, good: true }],
-    origin: 'Werft: Preis steigt mit Stufe und Schiffsklasse. Höhere Ausbaustufen haben Tore (siehe Ruf).',
-    own: (s) => ({ state: s.ship.up[id] > 0 ? 'owned' : 'locked', note: `Stufe ${s.ship.up[id]} von ${SHIP_UPGRADE_MAX}` }),
-  });
+  const BRANCH_OF: Record<(typeof SHIP_UPGRADE_IDS)[number], EvoBranch> = { can: 'cannon', hull: 'hull', sail: 'sail' };
+  for (const id of SHIP_UPGRADE_IDS) {
+    const br = BRANCH_OF[id];
+    const mats = [3, 4, 5].map((t) => { const m = evoMaterial(br, 3, t); return m ? `Stufe ${t}: ${GOOD_BY_ID[m.good].n}` : ''; }).filter(Boolean).join(', ');
+    out.push({
+      id: `upgrade:${id}`, cat: 'schiff', group: 'Ausbauten der Werft', name: SHIP_UPGRADES[id].n, rarity: id === 'can' ? 'selten' : 'gewoehnlich', glyph: id === 'can' ? 'cannon' : id === 'hull' ? 'hull' : 'sail', color: id === 'can' ? '#6a6a72' : id === 'hull' ? '#a86a35' : '#e8dcc0',
+      desc: `${BRANCH_LABEL[br].n}-Zweig des Schiffs in fünf Stufen: neu gekaufte Schiffe beginnen auf Stufe 1, Stufe 3 sind die Grundwerte der Klasse.`,
+      stats: [1, 2, 3, 4, 5].map((t) => ({ label: `Stufe ${t}`, value: evoEffectText(br, t), good: t >= 4 })),
+      origin: `Werft: Gold (steigt mit Stufe und Klasse), ab Stufe 3 Handelsware aus dem Frachtraum (${mats}), Stufe 3 braucht Ansehen, Stufe 4 Rang 7 und „Verbündet“, Stufe 5 Rang 9, Boss-Siegel und Relikt-Splitter. Beim Kauf einer neuen Klasse erstattet die Werft 50 % des Goldwerts der Ausbauten.`,
+      own: (s) => { const t = tierOf(evolutionOf(s.ship, s.ship.tier), br); return { state: t > 1 ? 'owned' : 'locked', note: `Stufe ${t} von 5` }; },
+    });
+  }
 
   // ---------- Galionsfiguren ----------
   for (const id of FIGUREHEAD_MODELS) {
