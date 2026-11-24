@@ -17,7 +17,7 @@ import { CombatOverlay } from '../ui/combatOverlay';
 import { BRANCHES, branchPoints, learnBlock, SK, type Branch } from '../data/skills';
 import { SkillTree } from '../ui/skillTree';
 import { AMMO, SAIL_LEVELS, SHIP_CLASSES, type AmmoId, type ShipLook } from '../data/ships';
-import { BRANCH_FIELD, EVO_MAX, applyShipPurchase, evoCost, evoEffectText, evoMaterial, evoStats, evoValue, evolutionOf, newShipEvolution, shipEvolutionTier, tierOf, tradeInRefund, type EvoBranch, type ShipEvolution } from '../data/shipEvolution';
+import { BRANCH_FIELD, EVO_BRANCHES, EVO_MAX, applyShipPurchase, evoCost, evoEffectText, evoMaterial, evoStats, evoValue, evolutionOf, newShipEvolution, shipEvolutionTier, tierOf, tradeInRefund, type EvoBranch, type ShipEvolution } from '../data/shipEvolution';
 import { classCompareRows, evoCompareRows, evoPlan, withTier, type CompareRow, type YardInfo, type YardPick } from '../data/yardPreview';
 import type { YardView } from '../world/seaWorld';
 import { FAME_THRESHOLDS } from '../data/ranks';
@@ -83,7 +83,7 @@ import { officerSlots, troopCapacity, TROOP_RANK } from '../data/crewTiers';
 import { addTroops, cleanRoster, clampRoster, COMMANDS, rosterTotal, scaleRoster, TROOPS, type CommandState, type TroopRoster, type TroopType } from '../data/troops';
 import { COMMAND_ACTIONS, PAD_CHORD_LABEL, commandOnKey, type ActionId } from '../data/actions';
 import {
-  FLEET_ORDERS, FLEET_ORDER_ACTIONS, FLEET_UNLOCK_RANKS, TOWED_HP, activateShip, activeCount, activeShips, assignShip, assignableClasses, dockShip, emptyFleet, fleetShip, fleetShipUpkeep, fleetSlots,
+  FLEET_ORDERS, FLEET_ORDER_ACTIONS, FLEET_UNLOCK_RANKS, TOWED_HP, activateShip, applyFleetEvo, activeCount, activeShips, assignShip, assignableClasses, dockShip, emptyFleet, fleetShip, fleetShipUpkeep, fleetSlots,
   fleetUpkeepDaily, fleetUpkeepList, hasFreeSlot, releaseShip, towShip, fleetIdOf, type FleetCtx, type FleetOrder, type FleetShipRecord, type FleetState,
 } from '../data/playerFleet';
 import { activeParty, ensureCrewState, savedPools } from './crewRoster';
@@ -97,6 +97,8 @@ import { ABYSS_LAIR } from '../naval/seaBoss';
 import { crewFrac, crewPricePerHead, missingHeads, needsRepair, poolHeads, REPAIR_MATERIALS, SAIL_HP_PER_HULL, shipTooltip, type ShipSimState } from '../naval/shipSim';
 import { fmtDist, fmtInt } from './format';
 import { DIRECTOR, WEATHER_CELL_DEFS, WORLD_BOSSES } from '../data/seaEvents';
+import { chartLevel, chartOnLoad, chartToSave, chartsSurroundings } from '../world/mapDiscovery';
+import { travelQuote, type TravelQuote } from '../world/fastTravel';
 import { convoyLoot, deliverConvoy } from '../world/tradeConvoys';
 import { rollWorldBossLoot } from '../naval/worldBosses';
 import { compassWord } from '../naval/battleRules';
@@ -225,6 +227,7 @@ export class Game {
     this.world = new SeaWorld(deferWorld);
     this.world.env.maxTex = caps.maxTextureSize;
     this.world.warmHook = (o) => this.renderer.warmObject(o);
+    this.world.texHook = { ready: (t) => this.renderer.textureReady(t), upload: (t) => this.renderer.uploadTexture(t) };
     // Streaming (4.3B): Shader einer neu gebauten Insel parallel vorübersetzen, der Tausch wartet darauf
     this.world.warmIsland = (o) => this.renderer.warmObjectAsync(o);
     // Spiegelungen (IBL): der Himmel wird regelmäßig als vorgefilterte Umgebungskarte aufgenommen
@@ -1583,6 +1586,7 @@ export class Game {
     }
     this.harborFid = fid;
     this.harborDef = def;
+    this.chartFrom(def, 'Anlegen');
     this.afterDocking(def);
     if (this.world.seaEvents?.director.blockadeOf(def.id)) this.hud.toast(`Blockade vor ${def.name}: alle Handelspreise sind doppelt so hoch, die Schnellreise hierher ist gesperrt – bis jemand die Blockade bricht.`, 6);
     audio.play('bell');
@@ -1750,6 +1754,8 @@ export class Game {
     if (!s) return;
     // nicht erweckter Kristall einer befreiten Ruine wartet weiter
     if (def.kind === 'ruin' && s.progress.flags[`loot_${def.id}`] && !s.progress.flags[`crystal_${def.id}`]) this.world.showCrystal(def.id);
+    // Leuchtfeuer: wer an einen Leuchtturm herankommt, entzündet ihn und kartiert die Gewässer ringsum
+    if (def.kind === 'lighthouse') this.chartFrom(def, 'Leuchtfeuer');
     const key = `seen_${def.id}`;
     if (!s.progress.flags[key]) {
       s.progress.flags[key] = true;
@@ -2234,7 +2240,8 @@ export class Game {
   private worldMapData(): WorldMapData {
     return {
       // unkartierte Geheim-Inseln (4.3B) erscheinen erst, wenn sie entdeckt sind
-      islands: this.world.islandDefs.filter((i) => !i.uncharted || this.world.discovered.has(i.id)),
+      // Geheim-Inseln (4.3B) fehlen auf der Karte, bis sie entdeckt sind; normale Inseln erscheinen bis dahin als schemenhafte Umrisse
+      islands: this.world.islandDefs.filter((i) => chartLevel(i, this.world.discovered) !== 'hidden'),
       regions: REGIONS,
       known: (id) => this.world.discovered.has(id),
       islandMarks: this.questIslandMarks(),
@@ -2250,7 +2257,59 @@ export class Game {
       }),
       conquests: Object.fromEntries(this.occupation.conquered.map((r) => [r.islandId, r.conquestCount])),
       ...this.seaMapData(),
+      chartZones: this.world.chartZones,
+      blockaded: (id) => !!this.world.seaEvents?.director.blockadeOf(id),
     };
+  }
+
+  /** Karte um einen Hafen oder Leuchtturm: alle normalen Inseln in 3 200 m werden entdeckt; meldet, wie viele neu sind */
+  private chartFrom(def: IslandDef, via: string) {
+    if (!chartsSurroundings(def) || this.world.raid) return;
+    const fresh = this.world.chartAroundIsland(def).filter((id) => id !== def.id);
+    if (fresh.length && this.state.is('play')) this.hud.toast(`${via}: ${fresh.length} ${fresh.length === 1 ? 'Insel' : 'Inseln'} ringsum auf der Seekarte eingetragen.`, 3.5);
+    if (fresh.length) this.persist();
+  }
+
+  /** Wie viel zeigt die Weltkarte von dieser Insel? */
+  chartLevelOf(def: IslandDef) { return chartLevel(def, this.world.discovered); }
+
+  /** Seekarten-Schnellreise (4.3D): Bedingungen, Kosten und Hinweise für einen Hafen (null: unbekannte Insel) */
+  fastTravelQuote(id: string): TravelQuote | null {
+    const s = this.save;
+    const def = this.world.islandDefs.find((i) => i.id === id);
+    if (!s || !def) return null;
+    const fid = profileOf(def).blackMarket ? null : def.factionId ?? (def.marine ? 'marine' : null);
+    const t = this.tariff(fid);
+    const ts = this.world.travelState();
+    const eco = this.eco();
+    return travelQuote({
+      dest: def, discovered: this.world.discovered.has(def.id), from: this.world.playerPos,
+      standing: fid ? s.progress.standing?.[fid] ?? 0 : 0, tariff: t.factor,
+      blockade: !!this.world.seaEvents?.director.blockadeOf(def.id),
+      inCombat: ts.inCombat, inStorm: ts.inStorm, heat: eco.heat, hunted: ts.hunted, cargoUnits: GOODS.reduce((n, g) => n + (eco.cargo[g.id]?.n ?? 0), 0),
+      sailing: ts.sailing, gold: s.player.gold, provisions: s.gear.potions,
+    });
+  }
+
+  /**
+   * Reise antreten: Gold und Proviant zahlen, Schiff vor den Hafen setzen (die Seewelt baut die Umgebung fertig und stellt die Begleitschiffe in Formation),
+   * Karte um den Hafen anlegen. Liefert null bei Erfolg, sonst den Grund (nichts bezahlt).
+   */
+  fastTravel(id: string): string | null {
+    const s = this.save;
+    const q = this.fastTravelQuote(id);
+    if (!s || !q) return 'Unbekanntes Ziel.';
+    if (!q.ok) return q.reasons[0] ?? 'Keine Reise möglich.';
+    const def = this.world.islandDefs.find((i) => i.id === id)!;
+    this.syncFleetState();
+    if (!this.world.travelToPort(id)) return `Vor ${def.name} ist kein freier Liegeplatz zu finden. Versuche es später.`;
+    s.player.gold -= q.gold;
+    s.gear.potions = Math.max(0, s.gear.potions - q.provisions);
+    this.chartFrom(def, 'Ankunft');
+    this.syncFleet();
+    audio.play('bell');
+    this.persist();
+    return null;
   }
 
   /** Weltkarte (Taste M): ganze Welt im Vollbild, ziehen und zoomen */
@@ -2268,6 +2327,15 @@ export class Game {
       data: () => data,
       close,
       logbook: () => { this.worldMap?.dispose(); this.worldMap = null; this.menus.showMap('logbuch', () => this.resume()); },
+      travelQuote: (id) => this.fastTravelQuote(id),
+      travel: (id) => {
+        const err = this.fastTravel(id);
+        if (err) return err;
+        const dest = this.world.islandDefs.find((i) => i.id === id);
+        close();
+        this.overlay.showBanner('Seekarten-Reise', dest ? `Du erreichst ${dest.name}` : 'Angekommen');
+        return null;
+      },
     });
   }
 
@@ -2952,6 +3020,7 @@ export class Game {
         id: fleetIdOf(shipClass), shipClass, name: SHIP_CLASSES[shipClass].n, status: (rec ? rec.status : 'free') as 'free' | 'active' | 'docked',
         evo, evoTotal: shipEvolutionTier(evo), hp: rec?.hp ?? 1, sailHp: rec?.sailHp ?? 1,
         upkeep: fleetShipUpkeep({ shipClass, evo }), repairCost: rec ? this.fleetRepairCost(rec) : 0,
+        evoRows: rec ? this.fleetEvoRows(rec) : [],
       };
     };
     const rows = [...f.ships.map((r) => row(r.shipClass, r)), ...assignableClasses(s.ship.owned, s.ship.tier, f).map((c) => row(c, null))];
@@ -3161,11 +3230,20 @@ export class Game {
     };
   }
 
-  /** Tor für den nächsten Ausbau: Stufe 2 frei, 3 braucht Rang und Ansehen, 4 Rang 7 und „Verbündet“, 5 Rang 9 und Boss-Siegel; ab Stufe 3 dazu das Material im Frachtraum (leer = erlaubt) */
+  /** Tor für den nächsten Ausbau des gefahrenen Schiffs (siehe `evoGateFor`) */
   evoGate(branch: EvoBranch, nextOverride?: number): string {
     const s = this.save;
     if (!s) return '';
-    const evo = this.evolution();
+    return this.evoGateFor(s.ship.tier, this.evolution(), branch, nextOverride);
+  }
+
+  /**
+   * Tor für den nächsten Ausbau einer Klasse (Flaggschiff oder Begleitschiff): Stufe 2 frei, 3 braucht Rang und Ansehen, 4 Rang 7 und „Verbündet“, 5 Rang 9 und
+   * Boss-Siegel; ab Stufe 3 dazu das Material im Frachtraum (leer = erlaubt)
+   */
+  evoGateFor(cls: number, evo: ShipEvolution, branch: EvoBranch, nextOverride?: number): string {
+    const s = this.save;
+    if (!s) return '';
     const next = nextOverride ?? tierOf(evo, branch) + 1;
     if (next > EVO_MAX) return 'Höchste Stufe erreicht.';
     const rank = rankIndex(s.player.fame);
@@ -3180,7 +3258,7 @@ export class Game {
       if (sealTotal(purse) < UPGRADE_RECIPE.seals) return `Letzte Stufe: ${UPGRADE_RECIPE.seals} Boss-Siegel nötig (du hast ${sealTotal(purse)}).`;
       if (purse.shards < UPGRADE_RECIPE.shards) return `Letzte Stufe: ${UPGRADE_RECIPE.shards} ${SHARD_NAME} nötig (du hast ${purse.shards}).`;
     }
-    const mat = evoMaterial(branch, s.ship.tier, next);
+    const mat = evoMaterial(branch, cls, next);
     if (mat) {
       const have = this.eco().cargo[mat.good]?.n ?? 0;
       if (have < mat.n) return `Material fehlt: ${mat.n} × ${GOOD_BY_ID[mat.good].n} im Frachtraum nötig (du hast ${have}). Kaufe es im Kontor.`;
@@ -3193,23 +3271,66 @@ export class Game {
     const s = this.save;
     if (!s) return '';
     this.world.clearShipPreview();
-    const evo = this.evolution();
+    return this.evoUpgradeFor(s.ship.tier, branch);
+  }
+
+  /** Ausbau einer Klasse (gemeinsame Rechnung für Flaggschiff und Begleitschiffe); der Zustand je Klasse liegt in `ship.evo` (die Flotte spiegelt ihn) */
+  private evoUpgradeFor(cls: number, branch: EvoBranch): string {
+    const s = this.save;
+    if (!s) return '';
+    const evo = evolutionOf(s.ship, cls);
     const tier = tierOf(evo, branch);
     if (tier >= EVO_MAX) return '';
-    const gate = this.evoGate(branch);
+    const gate = this.evoGateFor(cls, evo, branch);
     if (gate) return gate;
     const next = tier + 1;
-    const cost = Math.round(evoCost(s.ship.tier, next) * this.yardK());
+    const cost = Math.round(evoCost(cls, next) * this.yardK());
     if (s.player.gold < cost) return `Dafür fehlen ${cost - s.player.gold} Gold.`;
-    const mat = evoMaterial(branch, s.ship.tier, next);
+    const mat = evoMaterial(branch, cls, next);
     if (mat) takeCargo(this.eco(), mat.good, mat.n);
     s.player.gold -= cost;
     if (next >= EVO_MAX) paySeals(this.sealPurse(), UPGRADE_RECIPE.seals, UPGRADE_RECIPE.shards);
-    (s.ship.evo ??= {})[String(s.ship.tier)] = { ...evo, [BRANCH_FIELD[branch]]: next };
+    const rec = cls === s.ship.tier ? undefined : fleetShip(this.fleet(), fleetIdOf(cls));
+    if (rec) {
+      // Begleitschiff: Stufe in `ship.evo` und im Eintrag der Flotte (applyFleetEvo); ein ausgelaufenes Schiff läuft mit den neuen Stufen frisch aus
+      // (Rumpf und Segel bleiben, wie sie sind)
+      this.syncFleetState();
+      applyFleetEvo(s.ship, this.fleet(), rec.fleetShipId, branch);
+      this.world.naval?.removeFleetShip(rec.fleetShipId);
+    } else {
+      (s.ship.evo ??= {})[String(cls)] = { ...evo, [BRANCH_FIELD[branch]]: next } as ShipEvolution;
+      if (cls === s.ship.tier) this.applyPower();
+    }
     audio.play('crack');
-    this.applyPower();
     this.persist();
     return `${BRANCH_FIELD[branch] === 'hullTier' ? 'Rumpf' : BRANCH_FIELD[branch] === 'sailTier' ? 'Segel' : 'Kanonen'} auf Stufe ${next} ausgebaut!`;
+  }
+
+  /** Ausbau eines Begleitschiffs direkt in der Flotten-Ansicht der Werft (ohne es erst zum Flaggschiff zu machen) */
+  fleetEvoUpgrade(id: string, branch: EvoBranch): string {
+    const s = this.save;
+    if (!s) return '';
+    const rec = fleetShip(this.fleet(), id);
+    if (!rec) return 'Dieses Schiff gehört nicht zur Flotte.';
+    return this.evoUpgradeFor(rec.shipClass, branch);
+  }
+
+  /** Die drei Zweige eines Begleitschiffs: Stufe, nächste Stufe mit Wirkung, Gold (Tarif), Material, Tor und was sich am Sold ändert */
+  fleetEvoRows(rec: FleetShipRecord) {
+    const base = fleetShipUpkeep(rec).daily;
+    return EVO_BRANCHES.map((branch) => {
+      const tier = tierOf(rec.evo, branch);
+      const next = tier < EVO_MAX ? tier + 1 : 0;
+      const mat = next ? evoMaterial(branch, rec.shipClass, next) : null;
+      const have = mat ? this.eco().cargo[mat.good]?.n ?? 0 : 0;
+      const soldAfter = next ? fleetShipUpkeep({ shipClass: rec.shipClass, evo: withTier(rec.evo, branch, next) }).daily - base : 0;
+      return {
+        branch, tier, next, cost: next ? Math.round(evoCost(rec.shipClass, next) * this.yardK()) : 0,
+        now: evoEffectText(branch, tier), after: next ? evoEffectText(branch, next) : '',
+        material: mat ? { ...mat, have, name: GOOD_BY_ID[mat.good].n } : null,
+        gate: next ? this.evoGateFor(rec.shipClass, rec.evo, branch) : '', soldAfter,
+      };
+    });
   }
 
   /** Was die Werft beim Kauf einer neuen Klasse für die Ausbauten des gefahrenen Schiffs erstattet (50 % des Goldwerts) */
@@ -3544,10 +3665,9 @@ export class Game {
     });
     this.refreshDigs();
     {
-      const disc = new Set<string>((data.progress.flags.disc as string[] | undefined) ?? []);
-      for (const k of Object.keys(data.progress.flags)) if (k.startsWith('seen_')) disc.add(k.slice(5));
-      disc.add('ankerglueck');
-      this.world.discovered = disc;
+      // Weltkarte (4.3D): entdeckte Inseln und kartierte Zonen aus dem Spielstand; Ankerglück und Ring 1 sind immer kartiert, besuchte und eroberte Inseln ebenso
+      const chart = chartOnLoad(data.world.chart, data.progress);
+      this.world.setChart(chart.islands, chart.zones);
     }
     this.occupation.reset();
     this.occupation.sync();
@@ -3608,7 +3728,7 @@ export class Game {
     if (!this.save || this.slot === null) return true;
     this.syncFleetState();
     const ws = this.world.getState();
-    this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather, seaEvents: this.world.seaEvents?.snapshot() ?? null };
+    this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather, seaEvents: this.world.seaEvents?.snapshot() ?? null, chart: chartToSave(this.world.discovered, this.world.chartZones) };
     const sh = this.world.ship;
     this.save.ship.hull = sh.maxHull > 0 ? Math.max(0.05, sh.hull / sh.maxHull) : 1;
     this.save.ship.sail = sh.sail;

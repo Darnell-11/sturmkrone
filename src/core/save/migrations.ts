@@ -10,6 +10,7 @@ import { rankIndex } from '../../data/ranks';
 import { cleanEvolution, legacyUpToEvo } from '../../data/shipEvolution';
 import { cleanFleet, emptyFleet, fleetSlots } from '../../data/playerFleet';
 import { cleanWorldEvents } from '../../world/worldEventDirector';
+import { chartOnLoad } from '../../world/mapDiscovery';
 import { SHIP_UPGRADE_MAX } from '../../data/ships';
 import { convertLegacy10, isLegacy10, lookFromLegacy, skillsFromLegacy } from './legacy';
 import { createSave, defaultProgress, defaultShip, SAVE_VERSION, type SaveData } from './types';
@@ -138,8 +139,9 @@ export const MIGRATIONS: Record<number, Migration> = {
   // 18: Spieler-Flotte (data/playerFleet.ts). Die Begleitschiffe, die bisher ab Rang 5 und 8 von selbst erschienen, waren nie gespeichert; die Flotte beginnt
   // leer, die Plätze (ab Rang 4) füllt der Spieler mit besessenen Schiffen.
   17: (d) => ({ ...d, version: 18, fleet: emptyFleet() }),
-  // 19: das lebendige Meer (Phase 4.3C): Welt-Ereignisse, Konvois und Wetterzellen beginnen beim nächsten Spielstart neu
-  18: (d) => ({ ...d, version: 19, world: { ...(d.world ?? {}), seaEvents: null } }),
+  // 19: das lebendige Meer (Phase 4.3C): Welt-Ereignisse, Konvois und Wetterzellen beginnen beim nächsten Spielstart neu; dazu (Phase 4.3D) die Weltkarte:
+  // bereits besuchte oder eroberte Inseln gelten als entdeckt (world/mapDiscovery.ts `legacyDiscovered`)
+  18: (d) => ({ ...d, version: 19, world: { ...(d.world ?? {}), seaEvents: null, chart: chartOnLoad(undefined, d.progress) } }),
 };
 
 export type MigrationResult =
@@ -178,6 +180,8 @@ export function migrateSave(raw: unknown, gameVersion: string): MigrationResult 
   // Flotte: nur besessene Klassen außer dem Flaggschiff, Werte begrenzt, Ausbaustufen aus `ship.evo`, nie mehr aktive Schiffe als Plätze
   // Lebendiges Meer: fremde oder kaputte Daten fallen weg (dann beginnt es neu)
   filled.world.seaEvents = cleanWorldEvents(filled.world.seaEvents);
+  // Weltkarte: gespeicherte Entdeckungen säubern; was der Stand schon weiß (besucht, erobert), gilt immer als entdeckt – auch bei frühen Ständen der Version 19
+  filled.world.chart = chartOnLoad(filled.world.chart, filled.progress);
   filled.fleet = cleanFleet(filled.fleet, { owned: filled.ship.owned ?? [], flagship: filled.ship.tier, evo: filled.ship.evo ?? {}, look: filled.ship.look, slots: fleetSlots(rankIndex(filled.player.fame)) });
   return { ok: true, data: filled, migratedFrom: from === SAVE_VERSION ? null : from };
 }

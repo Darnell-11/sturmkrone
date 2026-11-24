@@ -3,6 +3,7 @@ import {
   ExtrudeGeometry,
   BufferGeometry,
   CanvasTexture,
+  type Texture,
   Color,
   ConeGeometry,
   CylinderGeometry,
@@ -31,7 +32,7 @@ import type { FigureheadId, FlagId, ShipClass, ShipLook } from '../../data/ships
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { addOutlinesSteps } from '../../render/outline';
 import { lanternGlass } from '../../render/lampMaterials';
-import { plankTexture, sailTexture } from '../../render/textures';
+import { cachedSailTexture, plankTexture, sailTexture } from '../../render/textures';
 import { sharedGeo } from '../../render/geoCache';
 import { disposeGeometry, markShared } from '../../render/dispose';
 import { toon } from '../../render/toon';
@@ -363,6 +364,25 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipE
  * Verschmelzen je Material und bei den Konturen ab. Ereignis-Schiffe auf See entstehen so über mehrere Bilder mit Zeitbudget statt in einem Block
  * von 50 bis 100 ms (world/worldEventsLive.ts). Das Modell hängt erst am Ende in der Szene (`Ship`), Halbfertiges ist nie sichtbar.
  */
+/**
+ * Deckplanken aller Schiffe: eine gedrehte, gekachelte Kopie der Decktextur samt passender Relief- und Rauheitskarten, einmal angelegt und geteilt (Phase 4.3D).
+ * Früher bekam jedes Schiff eigene Kopien; ein `clone()` erhöht in three.js die Version der gemeinsamen Bildquelle, und so lud jedes neue Schiff die
+ * 4096²-Decktextur erneut hoch (180 – 210 ms im ersten Bild, in dem es erschien).
+ */
+let deckKitCache: { src: Texture; tex: Texture; pbr: ReturnType<typeof toonPbr> } | null = null;
+function shipDeckKit() {
+  const src = deckTexture();
+  if (deckKitCache && deckKitCache.src === src) return deckKitCache;
+  const tex = markShared(src.clone());
+  tex.center.set(0.5, 0.5);
+  tex.rotation = Math.PI / 2;
+  tex.repeat.set(0.3, 0.3);
+  const pbr = toonPbr(tex, { strength: 0.3, rough: 0.77, roughVar: 0.1, ao: 0.8 }, src);
+  for (const v of Object.values(pbr)) if (v && (v as Texture).isTexture) markShared(v as Texture);
+  deckKitCache = { src, tex, pbr };
+  return deckKitCache;
+}
+
 export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo: ShipEvolution = neutralEvolution()): Generator<void, ShipModel> {
   // Der Bau läuft rein aus (Klasse, Aussehen, Ausbaustufen): alle Anbauten kommen aus dem deterministischen Plan (data/shipVisuals.ts)
   const vis = shipVisual(c, evo);
@@ -418,15 +438,12 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
   for (let i = 0; i <= N; i++) { const e = edge(deckT(i)); i === 0 ? deckShape.moveTo(e.x * 0.99, e.z) : deckShape.lineTo(e.x * 0.99, e.z); }
   for (let i = N; i >= 0; i--) { const e = edge(deckT(i)); deckShape.lineTo(-e.x * 0.99, e.z); }
   const deckGeo = new ShapeGeometry(deckShape).rotateX(Math.PI / 2);
-  const deckTex = deckTexture().clone();
-  deckTex.center.set(0.5, 0.5);
-  deckTex.rotation = Math.PI / 2;
-  deckTex.repeat.set(0.3, 0.3);
-  deckTex.needsUpdate = true;
+  const deckKit = shipDeckKit();
+  const deckTex = deckKit.tex;
   // Deckplanken: warmes, verwittertes Eichenholz mit dunklen Teerfugen (Textur trägt die Farbe, das Material färbt nur leicht und dunkelt bei
   // Nässe ab). Relief und Rauheit schwach (Normalkarte aus der Textur), damit nichts glitzert; Rauheit 0,68 bis 0,85. Pfützen nur sehr zurückhaltend.
   const deckBase = new Color('#F2E4CE');
-  const deckMat = toon({ color: deckBase, side: DoubleSide, map: deckTex, unique: true, puddles: 0.3, ...toonPbr(deckTex, { strength: 0.3, rough: 0.77, roughVar: 0.1, ao: 0.8 }, deckTexture()) });
+  const deckMat = toon({ color: deckBase, side: DoubleSide, map: deckTex, unique: true, puddles: 0.3, ...deckKit.pbr });
   const deck = new Mesh(deckGeo, deckMat);
   deck.position.y = D - 0.05;
   deck.userData.noOutline = true;
@@ -554,7 +571,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
     // Sturz über der Tür
     put(group, box(doorWC + 0.04, castleH - doorHC, wallT + 0.02), wood, 0, D + doorHC + (castleH - doorHC) / 2, castleZ1 - wallT / 2);
   }
-  const castleTop = new Mesh(new ExtrudeGeometry(cs, { depth: 0.14, bevelEnabled: false }).rotateX(-Math.PI / 2), toon({ color: deckBase, map: deckTex, unique: true, puddles: 0.3, ...toonPbr(deckTex, { strength: 0.3, rough: 0.77, roughVar: 0.1, ao: 0.8 }, deckTexture()) }));
+  const castleTop = new Mesh(new ExtrudeGeometry(cs, { depth: 0.14, bevelEnabled: false }).rotateX(-Math.PI / 2), toon({ color: deckBase, map: deckTex, unique: true, puddles: 0.3, ...deckKit.pbr }));
   castleTop.position.y = D + castleH;
   castleTop.scale.set(1.06, 1, 1.02);
   group.add(castleTop);
@@ -824,7 +841,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
     const foreBody = new Mesh(new ExtrudeGeometry(fs, { depth: fh, bevelEnabled: false }).rotateX(-Math.PI / 2), wood);
     foreBody.position.y = D;
     group.add(foreBody);
-    const foreTop = new Mesh(new ExtrudeGeometry(fs, { depth: 0.12, bevelEnabled: false }).rotateX(-Math.PI / 2), toon({ color: deckBase, map: deckTex, unique: true, puddles: 0.3, ...toonPbr(deckTex, { strength: 0.3, rough: 0.77, roughVar: 0.1, ao: 0.8 }, deckTexture()) }));
+    const foreTop = new Mesh(new ExtrudeGeometry(fs, { depth: 0.12, bevelEnabled: false }).rotateX(-Math.PI / 2), toon({ color: deckBase, map: deckTex, unique: true, puddles: 0.3, ...deckKit.pbr }));
     foreTop.position.y = D + fh;
     foreTop.scale.set(1.04, 1, 1.0);
     group.add(foreTop);
@@ -994,6 +1011,10 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
   const shroudKs = Array.from({ length: sv.shrouds }, (_, i) => i - (sv.shrouds - 1) / 2);
   const accent = look.power ? FACTIONS[look.power].palette.accent : look.flagColor;
   const sailLook = { wear: sv.wear, border: sv.border ? { double: sv.border.double, accent } : null };
+  // geteilte Segeltexturen: gleiches Aussehen, gleicher Zufallswert = gleiches Bild (render/textures.ts `cachedSailTexture`)
+  const sailBase = `${look.sail}|${look.power ?? '-'}|${look.flag}:${look.flagColor}|${JSON.stringify(sailLook)}`;
+  const sailTex = (withEmblem: boolean, seed: number, tattered: boolean) => cachedSailTexture(`${sailBase}|${withEmblem ? 1 : 0}|${seed}|${tattered ? 1 : 0}`,
+    () => sailTexture(look.sail, withEmblem ? emblem : null, seed, tattered, heraldry ? { pattern: heraldry.pattern, emblem: withEmblem ? heraldry.emblem : () => {} } : null, sailLook));
   c.masts.forEach((mz, mi) => {
     const z = mz * c.L;
     const h = c.mh * (mi === 0 && c.masts.length > 1 ? 0.92 : mi === c.masts.length - 1 && c.masts.length > 2 ? 0.8 : 1);
@@ -1045,7 +1066,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
       sg.computeVertexNormals();
       const withEmblem = mi === mainMast && k === (yards > 2 ? 1 : 0);
       const sailU = makeSailUniforms(sw, sh, (y + h * 0.1) * 0.7);
-      const sailMat = sailMaterial(toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, withEmblem ? emblem : null, sailSeed++, sv.tattered, heraldry ? { pattern: heraldry.pattern, emblem: withEmblem ? heraldry.emblem : () => {} } : null, sailLook), unique: true, micro: 'cloth', roughness: 0.92 }), sailU);
+      const sailMat = sailMaterial(toon({ color: 0xffffff, side: DoubleSide, map: sailTex(withEmblem, sailSeed++, sv.tattered), unique: true, micro: 'cloth', roughness: 0.92 }), sailU);
       sailMat.alphaTest = 0.5; // ausgefranste Ränder und Risse
       const sail = new Mesh(sg, sailMat);
       sail.userData.sailU = sailU;
@@ -1071,7 +1092,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
       for (let i = 0; i < tp.count; i++) { const x = tp.getX(i), yy = tp.getY(i); tp.setZ(i, Math.cos((x / (tw * 0.95)) * Math.PI) * 0.8 * sc * sv.billow * (1 - Math.abs(yy) / tsh * 0.3)); }
       tg.computeVertexNormals();
       const tU = makeSailUniforms(tw * 0.95, tsh, ty * 0.7);
-      const tMat = sailMaterial(toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, null, sailSeed++, false, heraldry ? { pattern: heraldry.pattern, emblem: () => {} } : null, sailLook), unique: true, micro: 'cloth', roughness: 0.92 }), tU);
+      const tMat = sailMaterial(toon({ color: 0xffffff, side: DoubleSide, map: sailTex(false, sailSeed++, false), unique: true, micro: 'cloth', roughness: 0.92 }), tU);
       tMat.alphaTest = 0.5;
       const top = new Mesh(tg, tMat);
       top.userData.sailU = tU;
@@ -1106,7 +1127,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
   // Tuch-Textur über die Dreiecksfläche legen
   const juv = jibGeo.attributes.uv;
   for (let i = 0; i < juv.count; i++) juv.setXY(i, juv.getX(i) / (c.L * 0.22), juv.getY(i) / (c.mh * 0.6));
-  const jibMat = toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, null, 99, sv.tattered, heraldry ? { pattern: heraldry.pattern, emblem: () => {} } : null, sailLook), unique: true, micro: 'cloth', roughness: 0.92 });
+  const jibMat = toon({ color: 0xffffff, side: DoubleSide, map: sailTex(false, 99, sv.tattered), unique: true, micro: 'cloth', roughness: 0.92 });
   jibMat.alphaTest = 0.5;
   const jib = new Mesh(jibGeo, jibMat);
   jib.rotation.y = -Math.PI / 2;
@@ -1135,7 +1156,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
       const jp = jg.attributes.position, ju = jg.attributes.uv;
       const zs0 = Math.min(head.z, tack.z, clew.z), zs1 = Math.max(head.z, tack.z, clew.z), ys0 = Math.min(head.y, tack.y, clew.y), ys1 = Math.max(head.y, tack.y, clew.y);
       for (let i = 0; i < ju.count; i++) ju.setXY(i, (jp.getX(i) - zs0) / (zs1 - zs0), (jp.getY(i) - ys0) / (ys1 - ys0));
-      const jm = toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, null, 99 + j, sv.tattered, heraldry ? { pattern: heraldry.pattern, emblem: () => {} } : null, sailLook), unique: true, micro: 'cloth', roughness: 0.92 });
+      const jm = toon({ color: 0xffffff, side: DoubleSide, map: sailTex(false, 99 + j, sv.tattered), unique: true, micro: 'cloth', roughness: 0.92 });
       jm.alphaTest = 0.5;
       const jb = new Mesh(jg, jm);
       jb.rotation.y = -Math.PI / 2;
@@ -1157,7 +1178,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
     const sg2 = new ShapeGeometry(shp);
     const su = sg2.attributes.uv, spp = sg2.attributes.position;
     for (let i = 0; i < su.count; i++) su.setXY(i, (spp.getX(i) - z1) / (z0 - z1), (spp.getY(i) - yb) / (yp - yb));
-    const sm = toon({ color: 0xffffff, side: DoubleSide, map: sailTexture(look.sail, null, 120, false, heraldry ? { pattern: heraldry.pattern, emblem: () => {} } : null, sailLook), unique: true, micro: 'cloth', roughness: 0.92 });
+    const sm = toon({ color: 0xffffff, side: DoubleSide, map: sailTex(false, 120, false), unique: true, micro: 'cloth', roughness: 0.92 });
     sm.alphaTest = 0.5;
     const sp2 = new Mesh(sg2, sm);
     sp2.rotation.y = -Math.PI / 2;

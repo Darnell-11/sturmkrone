@@ -1158,14 +1158,25 @@ export class Menus {
           ? `<button class="mini brass" data-a="activate" data-id="${r.id}" ${v.free ? '' : 'disabled'}>Aktivieren (+${fmtInt(up)} Gold/Tag)</button>`
           : `<button class="mini brass" data-a="assign" data-id="${r.shipClass}" ${v.free ? '' : 'disabled'}>Einsetzen (+${fmtInt(up)} Gold/Tag)</button>`;
       const note = r.status === 'active' ? '' : `<div class="meta${v.free ? '' : ' gate'}">${v.free ? `Dein Sold steigt dann von ${fmtInt(Math.round(v.totalDaily))} auf <b>${fmtInt(Math.round(v.totalDaily + r.upkeep.daily))}</b> Gold am Tag.` : v.slots <= 0 ? 'Noch kein Platz: Begleitschiffe gibt es ab dem ersten freigeschalteten Platz.' : 'Alle Plätze sind belegt: motte erst ein Schiff ein.'}</div>`;
+      // Direkter Ausbau: Rumpf, Segel und Kanonen jedes Begleitschiffs (Stufe 1 – 5) mit Tor, Material und Sold, ohne es zum Flaggschiff zu machen
+      const evoRows = r.evoRows.map((er) => {
+        const name = `${BRANCH_LABEL[er.branch].icon} ${BRANCH_LABEL[er.branch].n} ${ROMAN[er.tier - 1]}`;
+        if (!er.next) return `<div class="fleet-evo-row"><span>${name}</span><span class="meta">Höchststufe erreicht</span></div>`;
+        const mat = er.material ? ` + ${er.material.n} × ${esc(er.material.name)} (${er.material.have})` : '';
+        const sold = er.soldAfter > 0.5 ? ` · Sold +${fmtInt(Math.round(er.soldAfter))}/Tag` : '';
+        const poor = v.gold < er.cost;
+        const lock = er.gate || (poor ? `Dafür fehlen ${fmtInt(er.cost - v.gold)} Gold.` : '');
+        return `<div class="fleet-evo-row"><span>${name} → ${ROMAN[er.next - 1]}</span><button class="mini brass" data-a="fevo" data-id="${r.id}|${er.branch}" ${lock ? 'disabled' : ''} title="${esc(er.after)}">Ausbauen · ${fmtInt(er.cost)} Gold${mat}${sold}</button>${lock ? `<div class="meta gate">${esc(lock)}</div>` : `<div class="meta">${esc(er.after)}</div>`}</div>`;
+      }).join('');
       return `<div class="slot fleet-ship ${r.status}"><div class="slot-head"><b>${esc(r.name)}${r.status === 'active' ? ' ⚓' : ''}</b><span>${status}</span></div>
         <div class="meta">${evoLine(r.evo)} · Gesamtstufe ${r.evoTotal}</div>
+        ${r.status === 'free' ? '' : `<div class="fleet-evo" role="group" aria-label="Ausbau ${esc(r.name)}">${evoRows}</div>`}
         ${r.status === 'free' ? '' : `<div class="fleet-bars"><span>Rumpf ${Math.round(r.hp * 100)} %</span>${gaugeHtml(r.hp, { color: '#a86a35', cls: 'thin' })}<span>Segel ${Math.round(r.sailHp * 100)} %</span>${gaugeHtml(r.sailHp, { color: '#d9cfae', cls: 'thin' })}</div>`}
         <div class="meta">Sold ${fmtInt(Math.round(r.upkeep.seamen))} + Wartung ${fmtInt(Math.round(r.upkeep.hull))} = <b>${fmtInt(up)} Gold am Tag</b>${r.status === 'docked' ? ' (eingemottet: nichts)' : ''}</div>
         ${note}
         <div class="row">${main}${hurt ? `<button class="mini" data-a="repair" data-id="${r.id}" ${r.repairCost > 0 && v.gold >= r.repairCost ? '' : 'disabled'}>Reparieren (${fmtInt(r.repairCost)} Gold)</button>` : ''}${r.status === 'free' ? '' : `<button class="mini" data-a="release" data-id="${r.id}">Aus der Flotte nehmen</button>`}<button class="mini" data-a="flag" data-id="${r.shipClass}">Zum Flaggschiff</button></div></div>`;
     }).join('');
-    const empty = v.rows.length ? '' : `<p class="small soft">Du besitzt nur dein Flaggschiff (${esc(v.flagship)}). Kaufst du in der Werft eine größere Klasse, kann das bisherige Schiff als Begleiter mitfahren; es beginnt dann auf Stufe I und lässt sich über „Zum Flaggschiff“ ausbauen.</p>`;
+    const empty = v.rows.length ? '' : `<p class="small soft">Du besitzt nur dein Flaggschiff (${esc(v.flagship)}). Kaufst du in der Werft eine größere Klasse, kann das bisherige Schiff als Begleiter mitfahren; es beginnt dann auf Stufe I und lässt sich direkt hier in der Flotte ausbauen (Rumpf, Segel, Kanonen bis Stufe V).</p>`;
     this.open(
       `<h2 class="fell">Flotte</h2>
       ${this.yardTabs('fleet')}
@@ -1184,6 +1195,7 @@ export class Menus {
         dock: (id) => rerender(g.fleetDock(id)),
         release: (id) => rerender(g.fleetRelease(id)),
         repair: (id) => rerender(g.fleetRepair(id)),
+        fevo: (id) => { const [ship, branch] = id.split('|'); rerender(g.fleetEvoUpgrade(ship, branch as EvoBranch)); },
         flag: (id) => rerender(g.shipyardSelect(+id)),
         order: (id) => { g.setFleetOrder(id as FleetOrder, false); rerender(); },
         tab: (id) => { if (id === 'yard') this.showShipyard('', back); },

@@ -5,7 +5,7 @@
 // Ein Begleitschiff ist ein BESESSENES Schiff (Klasse in `ship.owned`), das nicht gerade das Flaggschiff ist: jede Klasse gibt es einmal. Seine Ausbaustufen
 // stehen weiter in `ship.evo[Klasse]` (eine Quelle); der Eintrag hier hält eine Kopie für Anzeige und Spielstand und wird beim Laden gegen sie abgeglichen.
 import { SHIP_CLASSES, type ShipLook } from './ships';
-import { cleanEvolution, newShipEvolution, shipEvolutionTier, type ShipEvolution } from './shipEvolution';
+import { BRANCH_FIELD, EVO_MAX, cleanEvolution, newShipEvolution, shipEvolutionTier, type EvoBranch, type EvoTier, type ShipEvolution } from './shipEvolution';
 import { UPKEEP } from './economy';
 import { EVO_UPKEEP_MAX } from './balanceConfig';
 import { HEADS_PER_CREW_POINT } from '../naval/shipSim';
@@ -270,3 +270,32 @@ export const FLEET_ORDER_RANGE: Record<FleetOrder, { self: number; leash: number
   attack: { self: 360, leash: 520 },
   rally: { self: 0, leash: 0 },
 };
+
+/**
+ * Startpunkt eines Begleitschiffs neben dem Flaggschiff: erst sein Platz der Formation, dann die Nachhut, dann immer weiter hinter dem Flaggschiff (bis 600 m).
+ * `free(x, z)` meldet offenes Wasser mit dem verlangten Abstand zu Küste und Stegen. Liefert false, wenn nirgends Platz war (dann steht `out` auf dem letzten
+ * Versuch). Rein: dieselbe Rechnung für Auslaufen, Schnellreise und Tests.
+ */
+export function fleetSpawnPoint(index: number, flag: FlagPose, own: Hull2, free: (x: number, z: number) => boolean, out: { x: number; z: number }): boolean {
+  let ok = false;
+  for (const slot of [formationSlotOf(index), 'rear' as const]) { formationPoint(slot, flag, own, out); ok = free(out.x, out.z); if (ok) return true; }
+  for (let back = 100; back <= 600; back += 100) { out.x = flag.x - Math.sin(flag.heading) * back; out.z = flag.z - Math.cos(flag.heading) * back; ok = free(out.x, out.z); if (ok) return true; }
+  return ok;
+}
+
+/**
+ * Direkter Ausbau eines Begleitschiffs (Werft → Flotte, Phase 4.3D): hebt einen Zweig um eine Stufe, in der einen Quelle `ship.evo[Klasse]` und im
+ * Eintrag der Flotte (beide gleich). Prüft nur Flotte und Stufe; Gold, Material, Siegel und Tore bucht und prüft das Spiel vorher.
+ */
+export function applyFleetEvo(ship: { evo?: Record<string, ShipEvolution> }, f: FleetState, id: string, branch: EvoBranch): FleetResult & { next?: number } {
+  const rec = fleetShip(f, id);
+  if (!rec) return fail('Dieses Schiff gehört nicht zur Flotte.');
+  const cur = cleanEvolution(ship.evo?.[String(rec.shipClass)] ?? rec.evo, rec.evo);
+  const field = BRANCH_FIELD[branch];
+  if (cur[field] >= EVO_MAX) return fail('Höchste Stufe erreicht.');
+  const next = (cur[field] + 1) as EvoTier;
+  const after: ShipEvolution = { ...cur, [field]: next };
+  (ship.evo ??= {})[String(rec.shipClass)] = after;
+  rec.evo = { ...after };
+  return { ok: true, next };
+}

@@ -22,6 +22,7 @@ import {
   Vector3,
   type Object3D,
 } from 'three';
+import type { Texture } from 'three';
 import {
   BloomEffect,
   DepthOfFieldEffect,
@@ -418,6 +419,21 @@ export class GameRenderer {
    */
   warmObject(o: Object3D) {
     void this.warmObjectAsync(o);
+  }
+
+  /**
+   * Eine Textur jetzt auf die Grafikkarte laden, falls sie es noch nicht ist (true = hochgeladen). Neue Schiffe laden ihre gemalten Segel und Rümpfe
+   * (bis 4096², 35 – 200 ms je Stück) so Bild für Bild hoch, statt alles im ersten Bild, in dem sie erscheinen.
+   */
+  uploadTexture(t: Texture): boolean {
+    if (!t.image || this.textureReady(t)) return false;
+    this.gl.initTexture(t);
+    return true;
+  }
+
+  /** Liegt die Textur in ihrer jetzigen Fassung schon auf der Grafikkarte? */
+  textureReady(t: Texture): boolean {
+    return (this.gl.properties.get(t) as { __version?: number }).__version === t.version;
   }
 
   /** Wie `warmObject`, mit einem Versprechen, das erfüllt ist, sobald alle Programme bereitstehen (Streaming: der Tausch einer Insel wartet darauf) */

@@ -289,6 +289,8 @@ export function clothTextures(spec: FlagSpec): ClothTextures {
   map.colorSpace = SRGBColorSpace; map.anisotropy = texDetail.aniso; map.generateMipmaps = true; map.minFilter = LinearMipmapLinearFilter;
   const bump = new CanvasTexture(weaveBump(c));
   bump.anisotropy = texDetail.aniso; bump.wrapS = bump.wrapT = RepeatWrapping;
+  // unveränderliche, geteilte Leinwände: neue Schiffe dürfen sie vor dem Hochladen in ImageBitmaps umwandeln (NavalSystem.uploadSteps)
+  map.userData.staticCanvas = true; bump.userData.staticCanvas = true;
   t = { map: markShared(map), bump: markShared(bump) };
   texCache.set(key, t);
   return t;

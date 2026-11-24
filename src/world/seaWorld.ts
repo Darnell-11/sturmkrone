@@ -27,6 +27,8 @@ import type { StyleId } from '../data/animations';
 import type { CharacterLook, NpcRole } from '../data/characterParts';
 import { CAMERA_PLANES, type QualityConfig } from '../data/qualityTiers';
 import { HOME_SPAWN, WORLD_SCALE } from '../data/world';
+import { chartAround, seedStartCharts, seeRange, type ChartZone } from './mapDiscovery';
+import { FAST_TRAVEL, findBerth } from './fastTravel';
 import type { CharacterAssets } from '../entities/character/assets';
 import { LampPool, lampShared } from '../render/lamps';
 import { installMatrixSkip } from '../render/matrixSkip';
@@ -91,6 +93,7 @@ import { distToSegment, wrapAngle } from '../core/mathUtil';
 import { DebrisSystem } from './debris';
 import { islandLabel, islandTerrainSteps, OUTPOST_PIER, outpost, plant, ROCK_TYPES, rockFormation, styleKit, volcano, type StyleKit } from './islandStyle';
 import type { Sprite } from 'three';
+import type { TexUpload } from '../naval/naval';
 import { ABYSS_LAIR, SeaBoss } from '../naval/seaBoss';
 import { WorldEventsLive } from './worldEventsLive';
 import type { WorldEventState } from './worldEventDirector';
@@ -294,6 +297,8 @@ export class SeaWorld {
   combat: CombatSystem | null = null;
   /** Neue Figuren und Objekte für das Zeichnen vorbereiten (setzt das Spiel: Shader parallel übersetzen) */
   warmHook: ((o: Object3D) => void) | null = null;
+  /** Texturen hochladen (Renderer.uploadTexture/textureReady): neue Schiffe laden ihre Texturen Bild für Bild vor dem ersten Auftritt */
+  texHook: TexUpload | null = null;
   playerFaction: Faction = 'pirat';
   /** Ansehen bei einer Weltmacht (−100 … 100); setzt das Spiel aus dem Spielstand (progress.standing). Marine: ab 20 verbündet, unter 0 feindlich. */
   standingOf: (id: FactionId) => number = () => 0;
@@ -375,6 +380,9 @@ export class SeaWorld {
   /** Die Inseln der Hauptkarte (Daten dauerhaft, Darstellung gestreamt); entdeckte Inseln (IDs) setzt das Spiel */
   private slots: IslandSlot[] = [];
   discovered = new Set<string>();
+  /** Kartierte Zonen um Häfen und Leuchttürme (Phase 4.3D, world/mapDiscovery.ts); im Spielstand unter `world.chart` */
+  chartZones: ChartZone[] = [];
+  private readonly chartScratch: string[] = [];
   /** Rauchende Vulkankrater */
   private smokeVents: { x: number; y: number; z: number }[] = [];
   /** Stege als Strecke a→b mit halber Breite (Schiffskollision) */
@@ -1056,6 +1064,7 @@ export class SeaWorld {
       this.naval.smoke = this.smoke;
       this.naval.detail = this.smoke.scale;
       this.naval.debris = this.debris;
+      this.naval.texUpload = { ready: (t) => this.texHook?.ready(t) ?? true, upload: (t) => this.texHook?.upload(t) ?? false };
       this.createSeaEvents();
       this.combat = new CombatSystem(this.scene, this.fx, this.overlay, assets, this.groundProxy, {
         heal: (n) => { if (this.foot) this.foot.hp = Math.min(this.foot.maxHp, this.foot.hp + n); },
@@ -1759,6 +1768,60 @@ export class SeaWorld {
     this.setState({ boat: { x, z, heading } });
   }
 
+  /**
+   * Karte um einen Hafen oder Leuchtturm anlegen (Anlegen, Leuchtfeuer): alle normalen Inseln im Umkreis von 3 200 m gelten als entdeckt, Geheim-Inseln
+   * nicht. Liefert die neu kartierten Kennungen (ein gemeinsames Feld: nach dem Aufruf sofort auswerten).
+   */
+  chartAroundIsland(def: IslandDef): readonly string[] {
+    if (this.raid) return [];
+    chartAround(this.islandDefs, this.discovered, this.chartZones, def, this.chartScratch);
+    return this.chartScratch;
+  }
+
+  /** Lage des Spielers für die Schnellreise: auf See, im Kampf, im Sturm, gejagt (Werte neu berechnet, nichts gemerkt) */
+  travelState(): { sailing: boolean; inCombat: boolean; inStorm: boolean; hunted: boolean } {
+    const nav = this.naval;
+    const sailing = this.mode === 'sail' && !this.raid && !this.boarding && !this.landed;
+    const foes = !!nav?.enemies.some((e) => !e.companion && !e.helper && e.ship.alive && e.ship.sinking <= 0 && !e.ship.disabled && e.state === 'engage' && e.role !== 'haendler');
+    const inCombat = this.threat >= 0.05 || this.bossNear || foes || this.battleMarks.some((m) => Math.hypot(m.x - this.x, m.z - this.z) < 900);
+    const cell = this.seaEvents?.playerCell;
+    const inStorm = regionAt(this.x, this.z).id === 'sturm' || this.edgeK > 0.001 || this.env.getState().weather === 'sturm' || (!!cell?.cell && cell.cell.kind === 'gewitter' && cell.k > 0.05);
+    const hunted = !!nav?.enemies.some((e) => e.hunter && e.ship.alive && e.ship.sinking <= 0) || (nav?.pendingHunters ?? 0) > 0;
+    return { sailing, inCombat, inStorm, hunted };
+  }
+
+  private readonly berthSpot = { x: 0, z: 0, heading: 0 };
+
+  /**
+   * Schnellreise (Phase 4.3D): das Flaggschiff kollisionsfrei auf offenes Wasser vor den Zielhafen setzen. Erst baut `forceSyncAround` alles im Umkreis des
+   * Hafens fertig (Daten, Kollision, Darstellung), dann wird ein Platz seewärts der Stegspitze gesucht, mindestens `FAST_TRAVEL.arrivalClear` von Küste und
+   * Stegen entfernt; die Begleitschiffe laufen dort mit demselben Abstand neu aus (`arrivalClear`). false = kein freier Platz, nichts bewegt sich.
+   */
+  travelToPort(id: string): boolean {
+    if (this.raid || !this.naval) return false;
+    const slot = this.slots.find((s) => s.spec.def.id === id);
+    if (!slot) return false;
+    const def = slot.spec.def, W = this.ship.cls.W, L = this.ship.cls.L;
+    this.streamer.forceSyncAround(def.x, def.z);
+    const nav = this.naval, clear = FAST_TRAVEL.arrivalClear + 5;
+    const spot = findBerth({ x: def.x, z: def.z, r: slot.bp.r }, slot.bp.piers, L * 0.7 + 30, (x, z) => nav.freeWater(x, z, W, clear), this.berthSpot);
+    if (!spot) return false;
+    // laufende Ereignis-Schiffe werden wieder zu Daten (sie entstehen am neuen Ort bei Bedarf neu)
+    this.seaEvents?.releaseAll();
+    this.naval.arrivalClear = FAST_TRAVEL.arrivalClear;
+    this.teleport(spot.x, spot.z, spot.heading);
+    return true;
+  }
+
+  /** Zustand der Karte (Spielstand laden): entdeckte Inseln und Zonen; Start-Karten (Ankerglück, Ring 1) sind immer dabei */
+  setChart(islands: readonly string[], zones: readonly ChartZone[]) {
+    const ids = new Set(this.islandDefs.map((d) => d.id));
+    this.discovered = new Set(islands.filter((id) => ids.has(id)));
+    seedStartCharts(this.islandDefs, this.discovered);
+    this.discovered.add('ankerglueck');
+    this.chartZones = zones.map((z) => ({ ...z }));
+  }
+
   /** Zurück zum Heimatplatz vor dem Steg von Ankerglück (siehe HOME_SPAWN) */
   teleportHome() {
     this.teleport(HOME_SPAWN.x, HOME_SPAWN.z, HOME_SPAWN.heading);
@@ -2256,13 +2319,13 @@ export class SeaWorld {
     if (near < 0) near = this.islandDefs.findIndex((d) => Math.hypot(d.x - this.x, d.z - this.z) < d.r + 45);
     const id = near >= 0 ? this.islandDefs[near].id : null;
     // Inseln entdecken (Sichtweite wie in 1.0, Ausguck weiter) und Schilder zeigen
-    const disc = 280 * this.rangeMult;
     const px = this.mode === 'foot' && this.foot ? this.foot.x : this.x, pz = this.mode === 'foot' && this.foot ? this.foot.z : this.z;
-    // Entdecken geht über die Daten der Inseln (auch unter ACTIVE_HIGH), das Schild gehört zur Darstellung und gibt es nur, solange die Insel steht
+    // Entdecken geht über die Daten der Inseln (auch unter ACTIVE_HIGH), das Schild gehört zur Darstellung und gibt es nur, solange die Insel steht.
+    // Reichweite (world/mapDiscovery.ts): normale Inseln ab 1 600 m Küstenabstand (Ausguck weiter), Geheim-Inseln erst ab 1 400 m
     for (let k = 0; k < this.slots.length; k++) {
       const sp = this.slots[k].spec, id2 = sp.def.id;
       const d = Math.hypot(sp.x - px, sp.z - pz);
-      if (!this.discovered.has(id2) && d < disc + sp.r) { this.discovered.add(id2); this.onDiscover(id2); }
+      if (!this.discovered.has(id2) && d - sp.r <= seeRange(sp.def, this.rangeMult)) { this.discovered.add(id2); this.onDiscover(id2); }
       const lab = this.slots[k].vis?.label;
       if (lab) lab.visible = !this.raid && this.discovered.has(id2) && d < 760 && d > sp.r + 25;
     }

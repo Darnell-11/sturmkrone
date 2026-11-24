@@ -1,6 +1,6 @@
-import { CanvasTexture, RepeatWrapping, SRGBColorSpace, type BufferAttribute, type BufferGeometry } from 'three';
+import { CanvasTexture, RepeatWrapping, SRGBColorSpace, type BufferAttribute, type BufferGeometry, type Material, type Mesh } from 'three';
 import { detailCanvas, texDetail } from './texDetail';
-import { markShared } from './dispose';
+import { markShared, onForget } from './dispose';
 import type { SailHeraldry } from './heraldry';
 
 /** Kleiner, fester Zufall, damit Texturen bei jedem Start gleich aussehen */
@@ -264,4 +264,52 @@ export function deckUV(geo: BufferGeometry, width: number, length: number) {
     else uv.setXY(i, uv.getX(i) * 2, uv.getY(i) * 0.15);
   }
   uv.needsUpdate = true;
+}
+
+// ---------- Geteilte Segeltexturen (Phase 4.3D) ----------
+// Segel werden deterministisch gemalt (Farbe, Wappen, Muster, fester Zufallswert je Segel): Schiffe gleichen Aussehens bekommen dieselben Texturen. Ein Eintrag
+// lebt, solange ein Segel ihn benutzt (Zähler je Material); `disposeObject` meldet abgebaute Netze über `onForget`, beim letzten Nutzer wird die Textur
+// freigegeben. Vorher malte und lud jedes neue Schiff zwölf eigene 2048×1536-Segel (Ultra) – 35 – 90 ms Upload je Segel und ~200 MB Grafikspeicher je Schiff.
+
+const sailCache = new Map<string, { t: CanvasTexture; n: number }>();
+const releasedMats = new WeakSet<Material>();
+
+/** Segeltextur aus dem Cache (oder neu gemalt); jeder Aufruf zählt einen Nutzer, freigegeben wird über `disposeObject` des Segelnetzes */
+export function cachedSailTexture(key: string, make: () => CanvasTexture): CanvasTexture {
+  const k = `${texDetail.scale}|${key}`;
+  let e = sailCache.get(k);
+  if (!e) {
+    const t = make();
+    t.userData.sailKey = k;
+    t.userData.staticCanvas = true;
+    e = { t: markShared(t), n: 0 };
+    sailCache.set(k, e);
+  }
+  e.n++;
+  return e.t;
+}
+
+function releaseSail(key: string) {
+  const e = sailCache.get(key);
+  if (!e || --e.n > 0) return;
+  sailCache.delete(key);
+  e.t.dispose();
+}
+
+onForget((o) => {
+  const m = (o as Mesh).material as Material | Material[] | undefined;
+  if (!m) return;
+  for (const mat of Array.isArray(m) ? m : [m]) {
+    const key = (mat as Material & { map?: { userData?: { sailKey?: string } } | null }).map?.userData?.sailKey;
+    if (!key || releasedMats.has(mat)) continue;
+    releasedMats.add(mat);
+    releaseSail(key);
+  }
+});
+
+/** Für Prüfungen: Einträge und Nutzer der geteilten Segeltexturen */
+export function sailCacheStats(): { entries: number; users: number } {
+  let users = 0;
+  for (const e of sailCache.values()) users += e.n;
+  return { entries: sailCache.size, users };
 }

@@ -8,6 +8,7 @@ import { emptyUnlocks, type ConquestRecord, type Unlocks } from '../../raid/occu
 import { emptyReputation, type FactionReputationState } from '../../data/reputation';
 import { emptyFleet, type FleetState } from '../../data/playerFleet';
 import type { WorldEventState } from '../../world/worldEventDirector';
+import { emptyChart, type ChartState } from '../../world/mapDiscovery';
 
 export const SAVE_VERSION = 19;
 
@@ -153,6 +154,11 @@ export interface SaveData {
      * null = noch keins (es entsteht beim Spielstart neu).
      */
     seaEvents?: WorldEventState | null;
+    /**
+     * Entdeckte Inseln und kartierte Zonen der Weltkarte (Phase 4.3D, in Version 19 ergänzt; world/mapDiscovery.ts). Fehlt der Eintrag (Spielstand der Version 18
+     * oder ein früher Stand der Version 19), gelten alle bereits besuchten oder eroberten Inseln als entdeckt (`chartOnLoad`).
+     */
+    chart?: ChartState;
   };
   progress: ProgressState;
   gear: GearState;
@@ -182,7 +188,7 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
       fame: 0,
       look: defaultLook(faction),
     },
-    world: { boat: null, time: 9, weather: 'klar', seaEvents: null },
+    world: { boat: null, time: 9, weather: 'klar', seaEvents: null, chart: emptyChart() },
     progress: defaultProgress(faction),
     gear: { weapon: 0, armor: 0, potions: 3, shrine: 0, trinkets: [], trinket: null, items: {}, heads: [], head: null, bar: ['proviant', null, null, null], owned: [], worn: {} },
     skills: { learned: {}, slots: [null, null, null], sp: 1, awakened: [] },

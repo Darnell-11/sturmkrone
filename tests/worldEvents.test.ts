@@ -697,7 +697,7 @@ describe('MMO-tauglicher Zustand und Leistung', () => {
     const live = readFileSync(new URL('../src/world/worldEventsLive.ts', import.meta.url), 'utf8');
     // ein Schiff zugleich, in Teilschritten mit Zeitbudget (Schiffsbau als Generator bis hinunter zu `buildShipSteps`)
     expect(live).toContain('static readonly BUILD_MS = 3;');
-    expect(live).toContain('if (performance.now() - t0 >= WorldEventsLive.BUILD_MS) return;');
+    expect(live).toContain("if (r.value === 'gpu' || r.value === 'wait' || performance.now() - t0 >= WorldEventsLive.BUILD_MS) return;");
     expect(live).toContain('this.host.warm(e.ship.model.group)');
     expect(readFileSync(new URL('../src/naval/naval.ts', import.meta.url), 'utf8')).toContain('const ship = yield* Ship.buildSteps(');
     expect(readFileSync(new URL('../src/entities/ship/ship.ts', import.meta.url), 'utf8')).toContain('const model = yield* buildShipSteps(');

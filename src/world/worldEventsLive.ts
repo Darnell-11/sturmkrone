@@ -12,7 +12,7 @@ import { aiEvolution, type ShipEvolution } from '../data/shipEvolution';
 import { capVolley, dangerOfLevel, mitigation, worldBossHull, type VolleyWindow } from '../data/balanceConfig';
 import { worldBossStats } from '../naval/worldBosses';
 import { FACTIONS, type FactionId } from '../data/factions';
-import type { NavalSystem, EnemyShip, EventShipLink } from '../naval/naval';
+import type { NavalSystem, EnemyShip, EventShipLink, SpawnYield } from '../naval/naval';
 import type { Ship } from '../entities/ship/ship';
 import { LeviathanBoss } from '../naval/leviathanBoss';
 import { CurrentField, buildCurrentLanes, currentBoost, newCurrentSample, type CurrentLane, type CurrentSample } from './oceanCurrents';
@@ -77,7 +77,7 @@ const ROLE_NAME: Record<SeaShipRec['role'], string> = {
 };
 
 interface SpawnJob { owner: string; rec: SeaShipRec }
-interface BuildJob { owner: string; rec: SeaShipRec; it: Generator<void, EnemyShip> }
+interface BuildJob { owner: string; rec: SeaShipRec; it: Generator<SpawnYield, EnemyShip> }
 
 export class WorldEventsLive {
   readonly director: WorldEventDirector;
@@ -336,7 +336,8 @@ export class WorldEventsLive {
     for (;;) {
       const r = job.it.next();
       if (r.done) { this.adopt(r.value, job); this.job = null; return; }
-      if (performance.now() - t0 >= WorldEventsLive.BUILD_MS) return;
+      // nach einem Textur-Upload oder beim Warten auf den Browser ist dieses Bild fertig (NavalSystem.uploadSteps)
+      if (r.value === 'gpu' || r.value === 'wait' || performance.now() - t0 >= WorldEventsLive.BUILD_MS) return;
     }
   }
 

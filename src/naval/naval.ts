@@ -21,6 +21,7 @@ import {
   type Camera,
   type Scene,
 } from 'three';
+import { NoColorSpace, type Texture } from 'three';
 import type { CombatFx } from '../combat/fx';
 import { AMMO, DEFAULT_SHIP_LOOK, factionShipLook, HULL_COLORS, SAIL_COLORS, SEA_SPEED, SHIP_CLASSES, type AmmoId, type NavalRole, type ShipLook } from '../data/ships';
 import { BORDER_FORTS, BORDERS, FACTIONS, borderDistance, marineStance, sectorAt, type FactionId } from '../data/factions';
@@ -28,7 +29,7 @@ import { BATTLE, battleSite, compassWord, nextDelay, sideSize, type BattleSite }
 import { cannotBeSunk } from './shipSim';
 import { PredictiveMaritimeSteering, aiSpreadK, arriveRadius, createAiNav, fireRangeOf, newSteerCommand, newSteerSelf, newSteerTarget, noteRam, resetGoal, type AiNavState, type SteerCommand, type SteerSelf, type SteerTarget } from './shipSteering';
 import { clamp, clamp01, distToSegment, wrapAngle } from '../core/mathUtil';
-import { FLEET_ANCHOR_CLEAR, FLEET_DMG_K, FLEET_ORDER_RANGE, FLEET_RECALL_DIST, formationPoint, formationSlotOf, type FleetOrder, type FleetShipRecord, type FlagMotion, type FlagPose, type FormationOffset } from '../data/playerFleet';
+import { FLEET_ANCHOR_CLEAR, FLEET_DMG_K, FLEET_ORDER_RANGE, FLEET_RECALL_DIST, fleetSpawnPoint, formationPoint, formationSlotOf, type FleetOrder, type FleetShipRecord, type FlagMotion, type FlagPose, type FormationOffset } from '../data/playerFleet';
 import { aiCannon, aiHullFactor, capVolley, dangerOfLevel, WORLD_BOSS_HIT_CAP, type VolleyWindow } from '../data/balanceConfig';
 import type { SeaShipRole } from '../world/tradeConvoys';
 import type { WorldBossId } from '../data/seaEvents';
@@ -195,6 +196,12 @@ const WAVE_TEX = (() => {
   return markShared(new CanvasTexture(c));
 })();
 
+/** Ein Gegner in Teilschritten (queueEnemy) */
+interface SpawnJob { it: Generator<SpawnYield, EnemyShip | null>; hunter: boolean; done?: (e: EnemyShip) => void }
+/** Was ein Bauschritt meldet: nichts (weiter, solange Zeit ist), `'gpu'` (Textur hochgeladen: Schluss für dieses Bild), `'wait'` (wartet auf den Browser) */
+export type SpawnYield = void | 'gpu' | 'wait';
+/** Textur-Upload der Grafikkarte (Renderer) */
+export interface TexUpload { ready(t: Texture): boolean; upload(t: Texture): boolean }
 interface Ball { mesh: Mesh; vel: Vector3; /** null: Kugel einer Küstenbatterie */ owner: Ship | null; dmg: number; ammo: AmmoId; life: number; trail: number }
 
 /** Bauwerke, die Kugeln der eigenen Flotte treffen können (Seetor, Mauern, Batterien der Raid-Insel) */
@@ -579,7 +586,7 @@ export class NavalSystem {
    * Heimatnahe Gewässer: vor allem Händler; weiter draußen mehr Patrouillen und Jäger.
    * Ab und zu fährt ein Händler mit Begleitschutz.
    */
-  private spawnEnemy(px: number, pz: number, forceRole?: NavalRole, near?: { x: number; z: number; heading: number }, forcePower?: FactionId, hunter = false) {
+  private *spawnEnemySteps(px: number, pz: number, forceRole?: NavalRole, near?: { x: number; z: number; heading: number }, forcePower?: FactionId, hunter = false): Generator<SpawnYield, EnemyShip | null> {
     // Stärke hängt am Meer, nicht an der eigenen Stufe: wer aufsteigt, wird in alten Gewässern
     // spürbar überlegen – und muss sich in neue Meere erst hineinkämpfen.
     const zone = this.zoneLevel(px, pz);
@@ -605,7 +612,9 @@ export class NavalSystem {
       if (useFaction) foe = power === 'marine' ? 'marine' : power === 'kurogane' ? 'pirat' : foe;
       if (role === 'haendler' && !useFaction) { look.hull = HULL_COLORS[Math.floor(Math.random() * 3)]; look.sail = SAIL_COLORS[Math.floor(Math.random() * 3)]; look.flag = 'anker'; look.flagColor = '#2F6E4F'; look.figurehead = 'keine'; }
       // erfahrene Crews halten mehr aus (sonst wären Schiffe in hohen Meeren aus Papier)
-      const ship = new Ship(this.scene, tier, look, foe, Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)), false, aiEvolution(near ? 'eskorte' : hunter ? 'jaeger' : role === 'legende' ? 'flaggschiff' : role, dangerOfLevel(lvl)));
+      // Das Modell entsteht über mehrere Bilder (Ship.buildSteps): ein Schiff am Stück kostet 50 – 110 ms und ruckelt; danach seine Texturen, je Bild eine
+      const ship = yield* Ship.buildSteps(this.scene, tier, look, foe, Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)), false, aiEvolution(near ? 'eskorte' : hunter ? 'jaeger' : role === 'legende' ? 'flaggschiff' : role, dangerOfLevel(lvl)));
+      yield* this.uploadSteps(ship);
       // Route: quer durch das Gebiet, am Spieler vorbei statt direkt auf ihn zu
       const toP = Math.atan2(px - x, pz - z);
       const heading = near ? near.heading : toP + (Math.random() < 0.5 ? 1 : -1) * (0.5 + Math.random() * 0.7);
@@ -618,10 +627,99 @@ export class NavalSystem {
       if (hunter) { e.hunter = true; e.provoked = true; e.state = 'engage'; }
       this.enemies.push(e);
       // Händler mit Begleitschutz
-      if (role === 'haendler' && !near && zone >= 2 && Math.random() < 0.35) this.spawnEnemy(px, pz, 'patrouille', { x, z, heading }, power ?? undefined);
+      if (role === 'haendler' && !near && zone >= 2 && Math.random() < 0.35) yield* this.spawnEnemySteps(px, pz, 'patrouille', { x, z, heading }, power ?? undefined);
       return e;
     }
     return null;
+  }
+
+  /** Texturen hochladen (die Seewelt reicht `Renderer.textureReady/uploadTexture` herein) */
+  texUpload: TexUpload | null = null;
+  /** > 0: ein Bau läuft am Stück (spawnEnemy, spawnEventShip) – dann wird nicht auf den Browser gewartet (kein ImageBitmap) */
+  private syncBuild = 0;
+
+  /**
+   * Texturen eines frisch gebauten Schiffs hochladen, solange es noch unsichtbar ist, je Bild höchstens eine (`'gpu'` beendet den Schritt dieses Bildes: der Upload
+   * kostet die Grafikkarte, nicht die Uhr der CPU, darum hielt das Zeitbudget ihn nicht auf). Gemalte Segel und Tuchflaggen (`userData.staticCanvas`) werden vorher asynchron zu ImageBitmaps (etwa viermal
+   * schneller hochzuladen, die Leinwand wird frei); solange das läuft, wartet der Schritt (`'wait'`). Wird der Aufbau verworfen, baut `finally` das Schiff ab.
+   */
+  private *uploadSteps(ship: Ship): Generator<SpawnYield, void> {
+    const tu = this.texUpload;
+    if (!tu) return;
+    const list: Texture[] = [];
+    ship.model.group.traverse((o) => {
+      const m = (o as Mesh).material;
+      if (!m) return;
+      for (const mat of Array.isArray(m) ? m : [m]) for (const k in mat) { const v = (mat as unknown as Record<string, unknown>)[k] as Texture | null; if (v && v.isTexture && v.image && !list.includes(v)) list.push(v); }
+    });
+    if (!list.some((t) => !tu.ready(t))) return;
+    let done = false;
+    ship.model.group.visible = false;
+    try {
+      for (const t of list) {
+        if (tu.ready(t)) continue;
+        const img = t.image as unknown;
+        if (this.syncBuild === 0 && t.userData?.staticCanvas && t.flipY && img instanceof HTMLCanvasElement && typeof createImageBitmap === 'function') {
+          const job = { bmp: null as ImageBitmap | null, end: false };
+          // wie three.js beim Hochladen einer Leinwand: gespiegelt, ohne Vormultiplikation, Farbraum-Umrechnung nur bei Farbtexturen
+          createImageBitmap(img, { imageOrientation: 'flipY', premultiplyAlpha: t.premultiplyAlpha ? 'premultiply' : 'none', colorSpaceConversion: t.colorSpace === NoColorSpace ? 'none' : 'default' })
+            .then((b) => { job.bmp = b; job.end = true; }, () => { job.end = true; });
+          while (!job.end) yield 'wait';
+          if (job.bmp) {
+            // ein anderes Schiff kann die geteilte Textur inzwischen umgestellt haben
+            if (t.image === img) { t.image = job.bmp; t.flipY = false; t.needsUpdate = true; } else job.bmp.close();
+          }
+        }
+        if (tu.upload(t)) yield 'gpu';
+      }
+      done = true;
+    } finally {
+      if (done) ship.model.group.visible = true; else ship.dispose();
+    }
+  }
+
+  /** Zeitbudget je Logikschritt für den Bau normaler Schiffe (ms); Ereignis-Schiffe haben ihr eigenes (WorldEventsLive.BUILD_MS) */
+  static readonly SPAWN_BUILD_MS = 2.5;
+  private spawnJobs: SpawnJob[] = [];
+  private spawnLive: SpawnJob | null = null;
+
+  /**
+   * Einen Gegner in Teilschritten anfordern (Patrouillen, Jäger, Kopfgeldjäger, Händler samt Eskorte): das Schiffsmodell entsteht über mehrere Bilder, je Logikschritt
+   * höchstens `SPAWN_BUILD_MS`, immer nur eins zugleich; das Schiff erscheint erst im letzten Schritt. `done` bekommt es dann (oder gar nichts, wenn kein Platz frei war).
+   */
+  queueEnemy(px: number, pz: number, forceRole?: NavalRole, near?: { x: number; z: number; heading: number }, forcePower?: FactionId, hunter = false, done?: (e: EnemyShip) => void) {
+    this.spawnJobs.push({ it: this.spawnEnemySteps(px, pz, forceRole, near, forcePower, hunter), hunter, done });
+  }
+
+  /** Noch nicht fertig gebaute Jäger (zählen mit, damit nicht zu viele auf einmal angefordert werden) und alle wartenden Aufträge */
+  get pendingHunters(): number { return this.spawnJobs.reduce((n, j) => n + (j.hunter ? 1 : 0), this.spawnLive?.hunter ? 1 : 0); }
+  get pendingSpawns(): number { return this.spawnJobs.length + (this.spawnLive ? 1 : 0); }
+
+  /** Sofort und am Stück (Werkzeuge, Tests, Prüfskripte): wie `queueEnemy`, aber fertig, bevor die Funktion zurückkehrt */
+  spawnEnemy(px: number, pz: number, forceRole?: NavalRole, near?: { x: number; z: number; heading: number }, forcePower?: FactionId, hunter = false): EnemyShip | null {
+    const it = this.spawnEnemySteps(px, pz, forceRole, near, forcePower, hunter);
+    this.syncBuild++;
+    try { for (;;) { const r = it.next(); if (r.done) return r.value; } } finally { this.syncBuild--; }
+  }
+
+  /** Je Logikschritt: den laufenden Bau ein Stück weiterführen (höchstens `SPAWN_BUILD_MS`), sonst den nächsten Auftrag beginnen */
+  private pumpSpawns() {
+    if (!this.spawnLive) { this.spawnLive = this.spawnJobs.shift() ?? null; if (!this.spawnLive) return; }
+    const job = this.spawnLive;
+    const t0 = performance.now();
+    for (;;) {
+      const r = job.it.next();
+      if (r.done) { this.spawnLive = null; if (r.value) job.done?.(r.value); return; }
+      if (r.value === 'gpu' || r.value === 'wait' || performance.now() - t0 >= NavalSystem.SPAWN_BUILD_MS) return;
+    }
+  }
+
+  /** Aufträge und halbe Bauten verwerfen (ein halbes Modell hing noch nicht in der Szene) */
+  private dropSpawns() {
+    for (const j of this.spawnJobs) j.it.return(null);
+    this.spawnJobs.length = 0;
+    this.spawnLive?.it.return(null);
+    this.spawnLive = null;
   }
 
   /**
@@ -885,7 +983,7 @@ export class NavalSystem {
     this.huntT -= dt;
     if (this.huntT > 0) return;
     this.huntT = 70 + Math.random() * 50;
-    if (this.enemies.filter((e) => e.hunter && e.ship.alive).length >= 2) return;
+    if (this.enemies.filter((e) => e.hunter && e.ship.alive).length + this.pendingHunters >= 2) return;
     let pick: FactionId | null = null, w = 0;
     for (const f of Object.keys(FACTIONS) as FactionId[]) {
       const b = this.bountyOf(f);
@@ -894,8 +992,7 @@ export class NavalSystem {
       if (Math.random() * w < b) pick = f;
     }
     if (!pick || Math.random() > Math.min(0.9, w / 1100)) return;
-    const e = this.spawnEnemy(p.x, p.z, 'jaeger', undefined, pick, true);
-    if (e) this.hooks.message(`${e.name ?? 'Ein Jäger'} hat deine Spur aufgenommen!`);
+    this.queueEnemy(p.x, p.z, 'jaeger', undefined, pick, true, (e) => this.hooks.message(`${e.name ?? 'Ein Jäger'} hat deine Spur aufgenommen!`));
   }
 
   /** Gegner bekommen die Enterphase; Legenden (auch Marine-Legenden) und die zwei größten Klassen sind nur durch Entern zu besiegen */
@@ -986,16 +1083,18 @@ export class NavalSystem {
    */
   spawnEventShip(o: EventShipSpec): EnemyShip {
     const it = this.spawnEventShipSteps(o);
-    for (;;) { const r = it.next(); if (r.done) return r.value; }
+    this.syncBuild++;
+    try { for (;;) { const r = it.next(); if (r.done) return r.value; } } finally { this.syncBuild--; }
   }
 
   /** Wie `spawnEventShip`, aber in Teilschritten: das Modell entsteht über mehrere Bilder (`Ship.buildSteps`), das Schiff erscheint erst im letzten */
-  *spawnEventShipSteps(o: EventShipSpec): Generator<void, EnemyShip> {
+  *spawnEventShipSteps(o: EventShipSpec): Generator<SpawnYield, EnemyShip> {
     const tier = clamp(Math.round(o.classTier), 0, SHIP_CLASSES.length - 1);
     const cls = SHIP_CLASSES[tier];
     const style: 'pirat' | 'marine' = o.link.role === 'korsar' || !o.power || o.power === 'kurogane' ? 'pirat' : 'marine';
     const bonus = o.maxHull ? Math.max(0, o.maxHull - cls.hp) : Math.round(cls.hp * (aiHullFactor(o.level) - 1));
     const ship = yield* Ship.buildSteps(this.scene, tier, o.look, style, bonus, false, o.evo);
+    yield* this.uploadSteps(ship);
     if (o.ghost) this.ghostify(ship, 0.7);
     ship.hull = Math.max(1, ship.maxHull * clamp01(o.hullFrac));
     ship.sail = clamp01(o.sailFrac);
@@ -1051,6 +1150,8 @@ export class NavalSystem {
   fleetOrder: FleetOrder = 'hold';
   /** Das Flaggschiff liegt am Steg oder vor der Küste (Bordleiter) oder der Spieler ist von Bord: die Flotte ankert auf Abstand (setzt die Seewelt je Bild) */
   fleetAnchored = false;
+  /** Abstand zu Küste und Stegen (m), den neu auslaufende Begleitschiffe nach einer Schnellreise halten; 0 = normal (die Seewelt setzt ihn, `ensureFleet` nimmt ihn zurück) */
+  arrivalClear = 0;
   private readonly fleetPt = { x: 0, z: 0 };
   /** Bewegung des Flaggschiffs für die Formation (Tempo, Drehgeschwindigkeit des Bugs, geglättet) und Arbeitsobjekte */
   private readonly flagMo: FlagMotion = { speed: 0, yawRate: 0 };
@@ -1082,11 +1183,21 @@ export class NavalSystem {
     return out;
   }
 
+  /** Ein ausgelaufenes Flottenschiff abbauen (es läuft mit den Daten seines Eintrags frisch aus, zum Beispiel nach einem Ausbau in der Werft) */
+  removeFleetShip(id: string) {
+    const i = this.enemies.findIndex((e) => e.fleetId === id);
+    if (i < 0) return;
+    const e = this.enemies[i];
+    this.enemies.splice(i, 1);
+    e.ship.dispose();
+    this.overlay.setBar(e, null, -1, false, null);
+  }
+
   /** Das Schiff einer Flotten-Kennung (falls ausgelaufen) */
   fleetShipOf(id: string): Ship | null { return this.enemies.find((e) => e.fleetId === id)?.ship ?? null; }
 
   /** Offenes Wasser für ein Schiff der Breite `W`: `clear` Meter Abstand zur Küste (samt Böschung) und zu allen Stegen */
-  private freeWater(x: number, z: number, W: number, clear: number): boolean {
+  freeWater(x: number, z: number, W: number, clear: number): boolean {
     if (this.ground.shipClearance(x, z, W, clear + 10) < clear) return false;
     const near = this.ground.getNearbyPiers(x, z, clear + W * 0.5, this.nearPiers);
     for (let i = 0; i < near.length; i++) { const q = near[i]; if (distToSegment(x, z, q.ax, q.az, q.bx, q.bz) - q.hw - W * 0.5 < clear) return false; }
@@ -1116,6 +1227,7 @@ export class NavalSystem {
       const rec = this.fleetRecords[i];
       if (!this.enemies.some((e) => e.fleetId === rec.fleetShipId)) this.spawnFleetShip(rec, i, p);
     }
+    if (this.arrivalClear > 0) this.arrivalClear = 0;
     const want = Math.max(0, (this.raidEscorts ?? 0) - this.fleetRecords.length);
     const have = this.enemies.filter((e) => e.companion && !e.fleetId && e.ship.alive).length;
     if (have >= want) return;
@@ -1138,11 +1250,9 @@ export class NavalSystem {
     ship.sail = rec.sailHp;
     // Ausfahrt auf dem eigenen Platz der Formation; liegt der an Land oder am Steg, auf der Nachhut oder weiter hinter dem Flaggschiff
     const pt = this.fleetPt, pose = this.flagPose(p);
-    let ok = false;
-    // liegt das Flaggschiff fest, laufen sie gleich mit dem Ankerabstand aus
-    const clear = this.fleetAnchored ? FLEET_ANCHOR_CLEAR : 20;
-    for (const slot of [formationSlotOf(idx), 'rear' as const]) { formationPoint(slot, pose, cls, pt); ok = this.freeWater(pt.x, pt.z, cls.W, clear); if (ok) break; }
-    for (let back = 100; !ok && back <= 600; back += 100) { pt.x = p.x - Math.sin(p.heading) * back; pt.z = p.z - Math.cos(p.heading) * back; ok = this.freeWater(pt.x, pt.z, cls.W, clear); }
+    // liegt das Flaggschiff fest oder ist es gerade per Schnellreise angekommen, laufen sie gleich mit dem Ankerabstand aus
+    const clear = Math.max(this.fleetAnchored ? FLEET_ANCHOR_CLEAR : 20, this.arrivalClear);
+    fleetSpawnPoint(idx, pose, cls, (x, z) => this.freeWater(x, z, cls.W, clear), pt);
     ship.place(pt.x, pt.z, p.heading);
     ship.speed = p.speed;
     this.enemies.push({ ship, role: 'patrouille', level: this.playerLevel, state: 'patrol', wander: { x: 0, z: 0 }, aiT: 0, companion: true, fleetId: rec.fleetShipId, name: cls.n });
@@ -1247,8 +1357,9 @@ export class NavalSystem {
       const cap = zone <= 2 ? 2 : zone <= 6 ? 3 : 4;
       if (!this.raidMode && this.spawnT <= 0 && present < cap) {
         this.spawnT = (zone <= 2 ? 30 : 25) + Math.random() * 30;
-        this.spawnEnemy(p.x, p.z);
+        if (this.pendingSpawns < 2) this.queueEnemy(p.x, p.z);
       }
+      this.pumpSpawns();
       this.ensureFleet();
       if (!this.raidMode) { this.ensureBorderPatrols(dt); this.updateHunters(dt); }
     }
@@ -2443,6 +2554,7 @@ export class NavalSystem {
   }
 
   clear() {
+    this.dropSpawns();
     // auch Lebensbalken, Beutekisten und Faji-Wellen entfernen (blieben sonst nach dem Untergang stehen)
     for (const e of this.enemies) { e.ship.dispose(); this.overlay.setBar(e, null, -1, false, null as unknown as Camera); }
     this.enemies = [];
