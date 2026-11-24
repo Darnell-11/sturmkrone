@@ -502,6 +502,24 @@ export class IslandGround implements Ground {
     return { x, z, hit };
   }
 
+  /**
+   * Abstand (m) eines Schiffspunkts zur Kontaktgrenze der nächsten Insel, genau so, wie `pushShip` sie sieht (Küste samt Strandböschung plus halbe Breite):
+   * positiv = frei, null oder negativ = Grundberührung. Es gibt keine Tiefenkarte; die Böschung der Insel ist die einzige „flache“ Zone. Inseln
+   * weiter als `reach` entfernt zählen nicht (Ergebnis höchstens `reach`), damit die KI-Fühler schnell bleiben. Keine Zuweisungen.
+   */
+  shipClearance(x: number, z: number, W: number, reach = 400): number {
+    let best = reach;
+    for (const i of this.islands) {
+      const d = Math.hypot(x - i.x, z - i.z);
+      if (d > i.r * 1.9 + W + reach) continue;
+      const a = Math.atan2(z - i.z, x - i.x);
+      const lim = i.r * coastK(i.coast, a) * (1 + i.shelf * WATERLINE) + W * 0.5 + 1.2;
+      const c = d - lim;
+      if (c < best) best = c;
+    }
+    return best;
+  }
+
   /** Punkt aus einer Insel hinausschieben (Schiffe laufen nicht auf) */
   pushOut(i: WalkIsland, x: number, z: number, margin: number): { x: number; z: number } {
     const a = Math.atan2(z - i.z, x - i.x);

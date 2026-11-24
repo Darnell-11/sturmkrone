@@ -11,6 +11,7 @@ export const ACTION_IDS = [
   'cmdSturm', 'cmdFollow', 'cmdHold',
   'swap', 'weapon1', 'weapon2',
   'repair',
+  'fleetHold', 'fleetAttack', 'fleetRally',
   'pause',
 ] as const;
 
@@ -49,6 +50,9 @@ export const ACTION_LABELS: Record<ActionId, string> = {
   weapon1: 'Waffenplatz 1',
   weapon2: 'Waffenplatz 2',
   repair: 'Segel flicken (See)',
+  fleetHold: 'Flotte: Formation halten',
+  fleetAttack: 'Flotte: Feuer frei / Angreifen',
+  fleetRally: 'Flotte: Sammeln / Rückzug',
   pause: 'Pause',
 };
 
@@ -87,6 +91,10 @@ export const DEFAULT_KEYS: Record<ActionId, string[]> = {
   weapon1: ['KeyZ'],
   weapon2: ['KeyX'],
   repair: ['KeyG'],
+  // Flottenbefehle auf See: 5, 6, 7 neben den Gütern 1–4 (die Truppenbefehle teilen sich 1–3 nur an Land)
+  fleetHold: ['Digit5'],
+  fleetAttack: ['Digit6'],
+  fleetRally: ['Digit7'],
   pause: ['Escape', 'KeyP'],
 };
 
@@ -124,8 +132,35 @@ export const DEFAULT_PAD: Record<ActionId, number[]> = {
   weapon1: [],
   weapon2: [],
   repair: [],
+  fleetHold: [],
+  fleetAttack: [],
+  fleetRally: [],
   pause: [9],
 };
+
+/**
+ * Gamepad-Kombinationen für die Flottenbefehle: Haltetaste R3 (Stick-Druck rechts, Standard-Layout 11) plus Steuerkreuz. Alle Tasten des Controllers sind
+ * schon belegt; auf See tut R3 allein nichts, und solange R3 gehalten wird, steuert das Kreuz nicht (die Kombination gehört dem Befehl).
+ * Links = Formation halten, oben = Feuer frei, rechts = Sammeln.
+ */
+export const PAD_CHORD_MOD = 11;
+export const PAD_CHORDS: Partial<Record<ActionId, number>> = { fleetHold: 14, fleetAttack: 12, fleetRally: 15 };
+const CHORD_BUTTONS = Object.values(PAD_CHORDS) as number[];
+/** Gehört die Taste zu einer Kombination (und wird bei gehaltener Haltetaste nicht als einzelne Taste gewertet)? */
+export const isChordButton = (i: number): boolean => CHORD_BUTTONS.includes(i);
+/**
+ * Ist die Gamepad-Belegung einer Aktion gerade gedrückt? `buttons` = Zustand der Tasten (Standard-Layout). Kombinationen brauchen die Haltetaste; solange sie
+ * gehalten wird, zählen die Kreuz-Tasten nicht einzeln (sonst würde das Schiff beim Befehl mitsteuern).
+ */
+export function padActionDown(a: ActionId, buttons: ArrayLike<boolean | undefined>): boolean {
+  const mod = !!buttons[PAD_CHORD_MOD];
+  const chord = PAD_CHORDS[a];
+  if (chord !== undefined) return mod && !!buttons[chord];
+  return DEFAULT_PAD[a].some((i) => !!buttons[i] && !(mod && isChordButton(i)));
+}
+
+/** Anzeige der Kombination am Gamepad, z. B. „R3 + ◀“ */
+export const PAD_CHORD_LABEL: Partial<Record<ActionId, string>> = { fleetHold: 'R3 + ◀', fleetAttack: 'R3 + ▲', fleetRally: 'R3 + ▶' };
 
 /** Aktionen, die im Menü nicht umbelegt werden dürfen (Escape bleibt immer Pause/Zurück). */
 export const FIXED_CODES = ['Escape'];
@@ -150,6 +185,7 @@ export const ACTION_GROUPS: { id: string; label: string; actions: ActionId[] }[]
   { id: 'move', label: 'Bewegung und Aktion', actions: ['up', 'down', 'left', 'right', 'dodge', 'interact', 'talk', 'lockon'] },
   { id: 'fight', label: 'Kampf', actions: ['attack', 'heavy', 'block', 'skill1', 'skill2', 'skill3', 'swap', 'weapon1', 'weapon2'] },
   { id: 'sea', label: 'See', actions: ['fireLeft', 'fireRight', 'repair'] },
+  { id: 'fleet', label: 'Flottenbefehle (See)', actions: ['fleetHold', 'fleetAttack', 'fleetRally'] },
   { id: 'troops', label: 'Truppenbefehle', actions: ['cmdSturm', 'cmdFollow', 'cmdHold'] },
   { id: 'quick', label: 'Schnellleiste', actions: ['potion', 'item1', 'item2', 'item3', 'item4'] },
   { id: 'menus', label: 'Menüs', actions: ['map', 'skills', 'quests', 'inventory', 'pause'] },

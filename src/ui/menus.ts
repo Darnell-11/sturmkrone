@@ -9,7 +9,8 @@ import { EDGE_WALL, WEATHER, WEATHER_IDS, type WeatherId } from '../data/world';
 import { formatClock } from '../world/timeOfDay';
 import { FIGUREHEAD_DEFS, FIGUREHEAD_MODELS, figureheadModel } from '../data/figureheads';
 import { FLAGS, FLAG_DESC, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, STRIPE_COLORS, type ShipLook } from '../data/ships';
-import { BRANCH_LABEL, EVO_BRANCHES, EVO_MAX, evoEffectText, shipEvolutionTier, type EvoBranch } from '../data/shipEvolution';
+import { BRANCH_LABEL, EVO_BRANCHES, EVO_MAX, evoEffectText, shipEvolutionTier, tierOf, type EvoBranch, type ShipEvolution } from '../data/shipEvolution';
+import { FLEET_ORDERS, activeCount, type FleetOrder } from '../data/playerFleet';
 import { parsePick, pickId, samePick, type YardInfo, type YardPick } from '../data/yardPreview';
 import type { YardView } from '../world/seaWorld';
 import { EVO_UPKEEP_MAX } from '../data/balanceConfig';
@@ -78,6 +79,8 @@ export class Menus {
   private settingsTab: SettingsTab = 'grafik';
   /** Werft: gewählte Vorschau (Stufe oder Klasse), ob die Werft offen ist, und Verzögerung der Hover-Vorschau */
   private yardSel: YardPick | null = null;
+  /** Selektor des Elements, das die nächste Ansicht fokussieren soll (einmalig) */
+  private nextFocus: string | null = null;
   private yardOpen = false;
   private yardTimer = 0;
   private capturing = false;
@@ -213,7 +216,10 @@ export class Menus {
     this.screen.scrollTop = 0;
     // Mit Gamepad/Tastatur direkt das erste Element auswählen
     if (this.game.input.lastDevice !== 'touch') {
-      requestAnimationFrame(() => this.card.querySelector<HTMLElement>('[data-focus], button, input')?.focus({ preventScroll: true }));
+      // `nextFocus`: eine Ansicht, die sich selbst neu zeichnet (z. B. „Vorschau zurücksetzen“), behält den Fokus auf ihrem Knopf statt zum ersten Element zu springen
+      const want = this.nextFocus;
+      this.nextFocus = null;
+      requestAnimationFrame(() => ((want ? this.card.querySelector<HTMLElement>(want) : null) ?? this.card.querySelector<HTMLElement>('[data-focus], button, input'))?.focus({ preventScroll: true }));
     }
   }
 
@@ -576,6 +582,7 @@ export class Menus {
       <h3>Läden</h3>
       <div class="grid2">
         <button class="secondary" data-a="yard">Werft</button>
+        <button class="secondary" data-a="fleet">Flotte${activeCount(g.fleet()) ? ` <b class="pip ok">${activeCount(g.fleet())}</b>` : ''}</button>
         <button class="secondary" data-a="smith">Schmiede</button>
         <button class="secondary" data-a="market">Markt</button>
         <button class="secondary" data-a="kontor">Kontor (Handel)</button>
@@ -591,6 +598,7 @@ export class Menus {
       {
         talk: (id) => { const n = TOWN_NPCS.find((x) => x.id === id); if (n) { this.dialogExit = back; g.talkInHarbor(n); } },
         yard: () => this.showShipyard('', back),
+        fleet: () => this.showFleet('', back),
         smith: () => this.showSmith(back),
         market: () => this.showMarket(back),
         kontor: () => this.showKontor(back),
@@ -906,7 +914,7 @@ export class Menus {
       ${v.cargo.war.units > 0 ? `<p class="note"><b>Kriegsware an Bord:</b> ${v.cargo.war.units} Einheiten. Fahndungsdruck ${Math.round(v.heat)}/100: in Häfen der Mächte drohen Kontrollen (Beschlagnahme und Strafe), bei hohem Druck rücken Kopfgeldjäger aus.</p>` : v.heat > 5 ? `<p class="small soft">Fahndungsdruck ${Math.round(v.heat)}/100 (sinkt mit der Zeit).</p>` : ''}
       <h3>Unterhalt der Flotte</h3>
       <div class="slot"><div class="slot-head"><b>Sold und Proviant: ${fmtInt(Math.round(u.daily))} Gold je Ingame-Tag</b><span>${fmtInt(Math.ceil(u.perPeriod))} je Zahltag</span></div>
-        <div class="meta">Seeleute ${fmtInt(Math.round(u.seamen))} · Truppen ${fmtInt(Math.round(u.troops))} · Offiziere ${fmtInt(Math.round(u.officers))} · Schiff ${fmtInt(Math.round(u.hull))}<br>Nächster Zahltag in ${Math.ceil(u.nextIn / 60)} Min · Moral ${Math.round(u.morale * 100)} % (Crew arbeitet mit ${Math.round(u.efficiency * 100)} % Wirkung)${u.arrears > 0 ? ` · <b class="gate">Rückstand ${fmtInt(Math.round(u.arrears))} Gold</b>` : ''}</div></div>
+        <div class="meta">Seeleute ${fmtInt(Math.round(u.seamen))} · Truppen ${fmtInt(Math.round(u.troops))} · Offiziere ${fmtInt(Math.round(u.officers))} · Schiff ${fmtInt(Math.round(u.hull))}${u.fleet > 0 ? ` · Flotte ${fmtInt(Math.round(u.fleet))}` : ''}<br>Nächster Zahltag in ${Math.ceil(u.nextIn / 60)} Min · Moral ${Math.round(u.morale * 100)} % (Crew arbeitet mit ${Math.round(u.efficiency * 100)} % Wirkung)${u.arrears > 0 ? ` · <b class="gate">Rückstand ${fmtInt(Math.round(u.arrears))} Gold</b>` : ''}</div></div>
       <h3>Handelswaren</h3>
       ${rows}
       <h3>Preisübersicht besuchter Häfen</h3>
@@ -1047,13 +1055,15 @@ export class Menus {
         <div class="row">${st.tier === i ? '' : `<button class="mini" data-a="pv" data-id="${pid}" data-pv="${pid}" aria-pressed="${picked}">${picked ? 'Vorschau aus' : 'Ansehen'}</button><button class="mini${owned ? '' : ' brass'}" data-a="cls" data-id="${i}" ${locked && !owned ? 'disabled' : ''}>${owned ? 'Wechseln' : 'Kaufen'}</button>`}</div></div>`;
     }).join('');
     const camBtn = (id: YardView, label: string) => `<button data-a="cam" data-id="${id}" aria-pressed="${g.yardView === id}">${label}</button>`;
-    const cams = `<div class="yard-cams chips" role="group" aria-label="Kamera">${camBtn('all', 'Gesamtansicht')}${camBtn('bow', 'Bug &amp; Rammsporn')}${camBtn('sail', 'Segel &amp; Takelage')}${camBtn('gun', 'Breitseite &amp; Kanonen')}</div>`;
+    // „Vorschau zurücksetzen“ steht immer bereit (auch ohne Maus und per Gamepad fokussierbar): die Werft zeigt wieder das echte Schiff
+    const cams = `<div class="yard-bar"><div class="yard-cams chips" role="group" aria-label="Kamera">${camBtn('all', 'Gesamtansicht')}${camBtn('bow', 'Bug &amp; Rammsporn')}${camBtn('sail', 'Segel &amp; Takelage')}${camBtn('gun', 'Breitseite &amp; Kanonen')}</div><button data-a="pvreset" class="yard-reset" aria-label="Vorschau zurücksetzen" title="Zeigt wieder dein echtes Schiff">↺ Vorschau zurücksetzen</button></div>`;
     const cost = g.repairCost();
     const evoNow = g.evolution();
     const evoTotal = shipEvolutionTier(evoNow);
     const evoUpkeep = Math.round(EVO_UPKEEP_MAX * (evoTotal - 1) / 4 * 100);
     this.open(
       `<h2 class="fell">Werft</h2>
+      ${this.yardTabs('yard')}
       ${goldLine(g.playerGold, msg)}
       ${cams}
       <p class="small soft">Rumpf ${Math.round(g.world.ship.hull / g.world.ship.maxHull * 100)} % · Segel ${Math.round(g.world.ship.sail * 100)} % · Crew ${Math.round(g.world.ship.crew * 100)} %</p>
@@ -1091,6 +1101,8 @@ export class Menus {
         cls: (id) => { this.yardSel = null; rerender(g.shipyardSelect(+id)); },
         cam: (id) => { g.setYardView(id as YardView); rerender(); },
         pv: (id) => { const p = parsePick(id); this.yardSel = samePick(this.yardSel, p) ? null : p; window.clearTimeout(this.yardTimer); g.previewEvo(this.yardSel); rerender(); },
+        pvreset: () => { this.yardSel = null; window.clearTimeout(this.yardTimer); g.previewEvo(null); this.nextFocus = '[data-a="pvreset"]'; rerender(); },
+        tab: (id) => { if (id === 'fleet') this.showFleet('', back); },
         repair: () => rerender(g.shipyardRepair()),
         sailors: () => rerender(g.refillCrew()),
         troops: () => this.showTroops(() => this.showShipyard('', back)),
@@ -1108,6 +1120,79 @@ export class Menus {
     );
     g.beginYard();
     g.previewEvo(this.yardSel);
+  }
+
+  // ---------- Flotte (Begleitschiffe) ----------
+
+  /** Reiter oben in Werft und Flotte: wechselt zwischen beiden Ansichten (gleiches Fenster, das Schiff bleibt im Bild) */
+  private yardTabs(active: 'yard' | 'fleet'): string {
+    const f = this.game.saveData?.fleet;
+    const n = f ? activeCount(f) : 0;
+    return `<div class="tabs yard-tabs" role="group" aria-label="Werft und Flotte"><button data-a="tab" data-id="yard" aria-pressed="${active === 'yard'}">Werft</button><button data-a="tab" data-id="fleet" aria-pressed="${active === 'fleet'}">Flotte${n ? ` <b class="pip ok">${n}</b>` : ''}</button></div>`;
+  }
+
+  /**
+   * Flotte verwalten (Reiter neben der Werft, auch im Hafenmenü): freie und gesperrte Plätze samt Rang, besessene Schiffe einsetzen und einmotten, reparieren, den
+   * Sold vor und nach dem Einsetzen sehen und den Flottenbefehl wählen. Gleiches Fenster wie die Werft (Mahagoni und Messing, auf dem Handy ein Blatt unten).
+   */
+  showFleet(msg = '', back: () => void = () => this.showPause()) {
+    const g = this.game;
+    if (!g.saveData) return;
+    const v = g.fleetView();
+    const rerender = (m = '') => this.keep(() => { this.showFleet(m, back); });
+    this.yardSel = null;
+    const evoLine = (e: ShipEvolution) => EVO_BRANCHES.map((b) => `${BRANCH_LABEL[b].icon} ${BRANCH_LABEL[b].n} ${ROMAN[tierOf(e, b) - 1]}`).join(' · ');
+    const slotChips = v.unlocks.map((u) => {
+      const used = u.slot <= v.used;
+      return `<span class="fleet-slot ${u.open ? (used ? 'used' : 'free') : 'locked'}">Platz ${u.slot}: ${u.open ? (used ? 'belegt' : 'frei') : `ab Rang „${esc(u.rankName)}“`}</span>`;
+    }).join('');
+    const orders = FLEET_ORDERS.map((o) => `<button data-a="order" data-id="${o.id}" aria-pressed="${v.order === o.id}" title="${esc(o.desc)}">${esc(o.label)}</button>`).join('');
+    const rows = v.rows.map((r) => {
+      const up = Math.round(r.upkeep.daily);
+      const status = r.status === 'active' ? 'Im Einsatz' : r.status === 'docked' ? 'Eingemottet' : 'Nicht in der Flotte';
+      const hurt = r.status !== 'free' && (r.hp < 0.995 || r.sailHp < 0.995);
+      const main = r.status === 'active'
+        ? `<button class="mini" data-a="dock" data-id="${r.id}">Einmotten</button>`
+        : r.status === 'docked'
+          ? `<button class="mini brass" data-a="activate" data-id="${r.id}" ${v.free ? '' : 'disabled'}>Aktivieren (+${fmtInt(up)} Gold/Tag)</button>`
+          : `<button class="mini brass" data-a="assign" data-id="${r.shipClass}" ${v.free ? '' : 'disabled'}>Einsetzen (+${fmtInt(up)} Gold/Tag)</button>`;
+      const note = r.status === 'active' ? '' : `<div class="meta${v.free ? '' : ' gate'}">${v.free ? `Dein Sold steigt dann von ${fmtInt(Math.round(v.totalDaily))} auf <b>${fmtInt(Math.round(v.totalDaily + r.upkeep.daily))}</b> Gold am Tag.` : v.slots <= 0 ? 'Noch kein Platz: Begleitschiffe gibt es ab dem ersten freigeschalteten Platz.' : 'Alle Plätze sind belegt: motte erst ein Schiff ein.'}</div>`;
+      return `<div class="slot fleet-ship ${r.status}"><div class="slot-head"><b>${esc(r.name)}${r.status === 'active' ? ' ⚓' : ''}</b><span>${status}</span></div>
+        <div class="meta">${evoLine(r.evo)} · Gesamtstufe ${r.evoTotal}</div>
+        ${r.status === 'free' ? '' : `<div class="fleet-bars"><span>Rumpf ${Math.round(r.hp * 100)} %</span>${gaugeHtml(r.hp, { color: '#a86a35', cls: 'thin' })}<span>Segel ${Math.round(r.sailHp * 100)} %</span>${gaugeHtml(r.sailHp, { color: '#d9cfae', cls: 'thin' })}</div>`}
+        <div class="meta">Sold ${fmtInt(Math.round(r.upkeep.seamen))} + Wartung ${fmtInt(Math.round(r.upkeep.hull))} = <b>${fmtInt(up)} Gold am Tag</b>${r.status === 'docked' ? ' (eingemottet: nichts)' : ''}</div>
+        ${note}
+        <div class="row">${main}${hurt ? `<button class="mini" data-a="repair" data-id="${r.id}" ${r.repairCost > 0 && v.gold >= r.repairCost ? '' : 'disabled'}>Reparieren (${fmtInt(r.repairCost)} Gold)</button>` : ''}${r.status === 'free' ? '' : `<button class="mini" data-a="release" data-id="${r.id}">Aus der Flotte nehmen</button>`}<button class="mini" data-a="flag" data-id="${r.shipClass}">Zum Flaggschiff</button></div></div>`;
+    }).join('');
+    const empty = v.rows.length ? '' : `<p class="small soft">Du besitzt nur dein Flaggschiff (${esc(v.flagship)}). Kaufst du in der Werft eine größere Klasse, kann das bisherige Schiff als Begleiter mitfahren; es beginnt dann auf Stufe I und lässt sich über „Zum Flaggschiff“ ausbauen.</p>`;
+    this.open(
+      `<h2 class="fell">Flotte</h2>
+      ${this.yardTabs('fleet')}
+      ${goldLine(v.gold, msg)}
+      <p class="small soft">Flaggschiff: <b>${esc(v.flagship)}</b>. Begleitschiffe sind besessene Schiffe, die mitfahren: Rang 4 – 5 ein Platz, Rang 6 – 7 zwei, ab Rang 8 drei (höchstens vier eigene Schiffe auf See). Sie halten Formation, ankern beim Anlegen auf Abstand und sinken nie endgültig: ein Wrack wird in den Hafen geschleppt.</p>
+      <div class="fleet-slots" role="group" aria-label="Plätze">${slotChips}</div>
+      <div class="slot fleet-sum"><div class="slot-head"><b>Sold der Flotte</b><span>+${fmtInt(Math.round(v.fleetDaily))} Gold/Tag</span></div>
+        <div class="meta">Gesamt <b>${fmtInt(Math.round(v.totalDaily))} Gold am Tag</b> (Flaggschiff und Besatzung ${fmtInt(Math.round(v.baseDaily))}, Flotte ${fmtInt(Math.round(v.fleetDaily))}). Gezahlt wird alle 6 Minuten Spielzeit; fehlt das Gold, sinkt die Moral.</div></div>
+      <div class="opt"><span class="label">Befehl auf See (Tasten 5 · 6 · 7, Gamepad R3 + Kreuz)</span><div class="chips" role="group" aria-label="Flottenbefehl">${orders}</div></div>
+      <h3>Schiffe</h3>
+      ${empty}${rows}
+      <button class="primary" data-a="back">Fertig</button>`,
+      {
+        assign: (id) => rerender(g.fleetAssign(+id)),
+        activate: (id) => rerender(g.fleetActivate(id)),
+        dock: (id) => rerender(g.fleetDock(id)),
+        release: (id) => rerender(g.fleetRelease(id)),
+        repair: (id) => rerender(g.fleetRepair(id)),
+        flag: (id) => rerender(g.shipyardSelect(+id)),
+        order: (id) => { g.setFleetOrder(id as FleetOrder, false); rerender(); },
+        tab: (id) => { if (id === 'yard') this.showShipyard('', back); },
+        back,
+      },
+      back,
+      { wide: true, yard: true, cls: 'fleet' },
+    );
+    g.beginYard();
+    g.previewEvo(null);
   }
 
   /** Erbeutete Fraktions-Segel und Verzierungen (Raid-Beute): wählbar, solange sie freigeschaltet sind – sie gehen nie verloren */

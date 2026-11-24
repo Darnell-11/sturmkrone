@@ -18,8 +18,12 @@ import {
   applyDamage, applyStorm, boardingStrength, SAIL_HP_PER_HULL, createShipSim, crewEffects, crewFrac, enterPhaseCheck, finishingBlow, missingHeads, poolHeads, refillCrew, sailFrac, sailPerformance,
   setCrewFrac, setPoolHeads, type BoardingStrength, startRepair, stepPassiveRepair, stepRepair, stepSailSet, type CrewEffects, type SailPerformance, type ShipSimState,
 } from '../../naval/shipSim';
-import { wrapAngle } from '../../core/mathUtil';
 import { clamp01 } from '../../core/mathUtil';
+import { stepMotion, windSpeedK, type Motion, type MotionParams } from '../../naval/shipMotion';
+
+/** Arbeitsobjekte für `stepMotion` (nichts je Bild neu anlegen) */
+const _motion: Motion = { x: 0, z: 0, heading: 0, speed: 0, course: 0, turnInput: 0, yawRate: 0, courseOk: true };
+const _motionP: MotionParams = { L: 0, turnMult: 1, turnK: 1, perfTurn: 1, perfAccel: 1, accelK: 1 };
 
 export interface SeaEnv {
   heightAt(x: number, z: number): number;
@@ -60,6 +64,11 @@ export class Ship {
   sailLevel = 1;
   /** Stufenloser Gashebel 0 … 1 (Spielerschiff); null = Fahrstufen der KI */
   throttle: number | null = null;
+  /**
+   * Stufenloses Segel der KI 0 … 1 (setzt `AiNavState.desiredSailFrac` um); null = Fahrstufen `sailLevel`. Anders als `throttle` wirkt der Wind
+   * weiter auf das Tempo, wie bei den Fahrstufen.
+   */
+  aiSail: number | null = null;
   /** Wendigkeit (Steuermann, Ausbauten) */
   turnMult = 1;
   /** Höchsttempo der KI-Schiffe (wie in 1.0 langsamer als der Spieler); null = frei */
@@ -249,40 +258,29 @@ export class Ship {
     const sim = this.sim;
     const fx = crewEffects(this.crew * this.moraleK, this.crewFx);
     const perf = sailPerformance(this.sail, this.perf);
-    const level = this.throttle ?? [0, 0.55, 1][this.sailLevel];
-    if (this.throttle !== null) this.sailLevel = level < 0.05 ? 0 : level < 0.75 ? 1 : 2;
+    const level = this.throttle ?? this.aiSail ?? [0, 0.55, 1][this.sailLevel];
+    if (this.throttle !== null || this.aiSail !== null) this.sailLevel = level < 0.05 ? 0 : level < 0.75 ? 1 : 2;
     stepSailSet(sim, level, dt, fx);
     stepPassiveRepair(sim, dt, fx, this.repairBonus);
     if (env.storm) applyStorm(sim, dt, env.storm);
     this.tickRepair(dt);
     if (this.frozen > 0) { this.speed *= Math.pow(0.05, dt); return; }
     // Wind: Rückenwind schneller, Gegenwind etwas langsamer (Tempo wie in 1.0)
-    const rel = Math.cos(this.heading - env.windDir);
-    // wie in 1.0: das Tempo hängt nur vom Gashebel ab (der Wind wechselte sonst in jeder Kurve das Tempo)
-    const windK0 = this.throttle !== null ? 1 : 0.96 + 0.24 * (rel * 0.5 + 0.5) + env.windStrength * 0.05;
-    // bessere Segel (höhere Stufe) verlieren am Wind weniger Tempo
-    const windK = 1 - (1 - windK0) * this.evoS.upwindK;
+    // wie in 1.0: das Tempo hängt nur vom Gashebel ab (der Wind wechselte sonst in jeder Kurve das Tempo); bessere Segel verlieren am Wind weniger
+    const windK = windSpeedK(this.heading, env.windDir, env.windStrength, this.evoS.upwindK, this.throttle !== null);
     // Fläche des gesetzten Tuchs mal Leistung des Segelzustands (100 % = volle Fahrt, unter 30 % stark verlangsamt, 0 % treibt)
     const sailK = sim.sailSet * perf.speed;
     let target = this.cls.spd * SEA_SPEED * this.evoS.speedK * sailK * windK * speedMult * (this.boost > 0 ? 1.7 : 1);
     if (this.speedCap !== null) target = Math.min(target, this.speedCap);
-    // Schwere Schiffe: je größer, desto träger beim Beschleunigen, Bremsen und Wenden (m: 0 Schaluppe … 1 Leviathan)
-    const m = clamp01((this.cls.L - 15) / 59);
-    this.speed += (target - this.speed) * Math.min(1, dt * (target < this.speed ? 0.45 : 0.62 * perf.accel * this.evoS.accelK) * (1.25 - 0.7 * m));
-    // Wenden: Ruderausschlag baut Drehgeschwindigkeit nur langsam auf und ab; Kurven kosten Fahrt; zerfetztes Tuch lässt das Ruder ins Leere greifen
-    this.turnInput += (turn - this.turnInput) * Math.min(1, dt * 4);
-    const maxRate = (0.58 - 0.33 * m) * this.turnMult * this.evoS.turnK * perf.turn * (0.3 + 0.7 * Math.min(1, this.speed / 8));
-    this.yawRate += (this.turnInput * maxRate - this.yawRate) * Math.min(1, dt * (1.5 - 0.8 * m));
-    this.heading -= this.yawRate * dt;
-    this.speed -= this.speed * Math.min(0.5, Math.abs(this.yawRate) * 0.07 * dt);
-    // Die Fahrtrichtung folgt dem Bug mit Verzögerung: das Schiff schiebt in Kurven seitlich über das Wasser
-    if (!this.courseOk) { this.course = this.heading; this.courseOk = true; }
-    let dc = this.heading - this.course;
-    dc = wrapAngle(dc);
-    if (Math.abs(dc) > 1.0) { this.course = this.heading; dc = 0; }
-    this.course += dc * Math.min(1, dt * (3.2 - 1.6 * m));
-    this.x += Math.sin(this.course) * this.speed * dt;
-    this.z += Math.cos(this.course) * this.speed * dt;
+    // Bewegung (naval/shipMotion.ts, eine Quelle für Spieler, KI und Tests): schwere Schiffe sind träger beim Beschleunigen, Bremsen und Wenden;
+    // das Ruder baut Drehgeschwindigkeit nur langsam auf, Kurven kosten Fahrt, die Fahrtrichtung folgt dem Bug mit Verzögerung
+    const mo = _motion, mp = _motionP;
+    mo.x = this.x; mo.z = this.z; mo.heading = this.heading; mo.speed = this.speed; mo.course = this.course;
+    mo.turnInput = this.turnInput; mo.yawRate = this.yawRate; mo.courseOk = this.courseOk;
+    mp.L = this.cls.L; mp.turnMult = this.turnMult; mp.turnK = this.evoS.turnK; mp.perfTurn = perf.turn; mp.perfAccel = perf.accel; mp.accelK = this.evoS.accelK;
+    stepMotion(mo, turn, target, mp, dt);
+    this.x = mo.x; this.z = mo.z; this.heading = mo.heading; this.speed = mo.speed; this.course = mo.course;
+    this.turnInput = mo.turnInput; this.yawRate = mo.yawRate; this.courseOk = mo.courseOk;
     if (this.shoveX || this.shoveZ) {
       this.x += this.shoveX * dt; this.z += this.shoveZ * dt;
       const k = Math.exp(-RAM.shoveDecay * dt);

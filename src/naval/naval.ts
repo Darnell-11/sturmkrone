@@ -22,13 +22,16 @@ import {
   type Scene,
 } from 'three';
 import type { CombatFx } from '../combat/fx';
-import { AMMO, DEFAULT_SHIP_LOOK, factionShipLook, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, type AmmoId, type NavalRole, type ShipLook } from '../data/ships';
+import { AMMO, DEFAULT_SHIP_LOOK, factionShipLook, HULL_COLORS, SAIL_COLORS, SEA_SPEED, SHIP_CLASSES, type AmmoId, type NavalRole, type ShipLook } from '../data/ships';
 import { BORDER_FORTS, BORDERS, FACTIONS, borderDistance, marineStance, sectorAt, type FactionId } from '../data/factions';
 import { BATTLE, battleSite, compassWord, nextDelay, sideSize, type BattleSite } from './battleRules';
 import { cannotBeSunk } from './shipSim';
+import { PredictiveMaritimeSteering, aiSpreadK, arriveRadius, createAiNav, fireRangeOf, newSteerCommand, newSteerSelf, newSteerTarget, noteRam, resetGoal, type AiNavState, type SteerCommand, type SteerSelf, type SteerTarget } from './shipSteering';
+import { distToSegment, wrapAngle } from '../core/mathUtil';
+import { FLEET_ANCHOR_CLEAR, FLEET_DMG_K, FLEET_ORDER_RANGE, FLEET_RECALL_DIST, formationPoint, formationSlotOf, type FleetOrder, type FleetShipRecord, type FlagMotion, type FlagPose, type FormationOffset } from '../data/playerFleet';
 import { aiCannon, aiHullFactor, dangerOfLevel } from '../data/balanceConfig';
-import { portIndices, aiEvolution } from '../data/shipEvolution';
-import { hasSwivels, ramContact, ramDamage, ramImpulse, swivelCooldown, swivelDamage, swivelTarget, type Kin } from './ramming';
+import { portIndices, aiEvolution, evoStats } from '../data/shipEvolution';
+import { aiMayRam, hasSwivels, ramContact, ramDamage, ramImpulse, swivelCooldown, swivelDamage, swivelTarget, type Kin } from './ramming';
 import { RAM, SWIVEL } from '../data/balanceConfig';
 import { REP, hasService, isHostile, isPeaceful, judgeBattle, newStats, type BattleStats } from '../data/reputation';
 import { WORLD_RADIUS } from '../data/world';
@@ -69,13 +72,14 @@ export interface EnemyShip {
   aiT: number;
   name?: string;
   companion?: boolean;
+  /** Begleitschiff der Spieler-Flotte (Kennung `fleet-<Klasse>` aus dem Spielstand, data/playerFleet.ts); Söldner-Begleiter im Raid haben keine */
+  fleetId?: string;
   /** Legende der Rangliste */
   legendId?: string;
   /** Geisterschiff (nur nachts im Nebelarchipel) */
   ghost?: boolean;
-  /** Umkreisungsrichtung und Nachladezeit (KI wie in 1.0) */
-  orbit?: number;
-  reload?: number;
+  /** Zustand der KI-Lenkung (Manöver, Haltezeit, Kurs, Segel, Ziel-Kennung): reine Daten, siehe naval/shipSteering.ts */
+  nav?: AiNavState;
   /** Hinweis „jetzt entern“ schon gezeigt */
   weakNoted?: boolean;
   /** Übungsschiff aus der Einführung (wie in 1.0): angeschlagen, schießt schwächer */
@@ -165,6 +169,8 @@ export interface NavalHooks {
   message(t: string): void;
   sunk(e: EnemyShip): void;
   loot(gold: number, shard: boolean): void;
+  /** Ein Schiff der Spieler-Flotte ist gesunken: das Spiel schleppt es in den Hafen (eingemottet, kaum Rumpf) */
+  fleetLost?(fleetShipId: string): void;
   /** Seeschlacht beginnt in der Nähe (Meldung) bzw. endet (nur wenn der Spieler eingegriffen hat: Auswertung) */
   battleStart?(m: BattleMark, where: string): void;
   battleEnd?(r: BattleResult): void;
@@ -247,9 +253,14 @@ export class NavalSystem {
   /** Verzögerte Treffer in Spielzeit (stehen in der Pause still, anders als setTimeout) */
   private timers: { t: number; fn: () => void }[] = [];
   private later(sec: number, fn: () => void) { this.timers.push({ t: sec, fn }); }
+  /** Vorausschauende KI-Lenkung (Fühler, Wendekreis, Gefechts-Zustandsmaschine) */
+  private readonly steering: PredictiveMaritimeSteering;
+  /** Schiffe auf der Seite des Spielers (Flaggschiff, Begleiter, Marine-Helfer): ihre Kugeln treffen einander nie (je Schritt in `registerObstacles` gefüllt) */
+  private readonly friendly = new Set<Ship>();
 
   constructor(private scene: Scene, private env: SeaEnv, private fx: CombatFx, private overlay: CombatOverlay, private spray: ParticleSystem, private sparks: ParticleSystem, private ground: IslandGround, private hooks: NavalHooks) {
     this.efx = new ElementFx(scene, fx, sparks, { shake: (a) => hooks.shake(a), hitstop: (t) => hooks.hitstop(t), speedlines: (v) => overlay.speedlines(v) });
+    this.steering = new PredictiveMaritimeSteering(ground, env, WORLD_RADIUS);
     this.fanGroup.renderOrder = 3;
     scene.add(this.fanGroup, ...this.rings);
   }
@@ -384,12 +395,15 @@ export class NavalSystem {
         const ex = target.x + Math.sin(target.heading) * (target.speed * T + lo);
         const ez = target.z + Math.cos(target.heading) * (target.speed * T + lo);
         dir = new Vector3(ex - w.x, 0, ez - w.z);
-        r = dir.length() * (0.97 + Math.random() * 0.06);
-        dir.normalize().applyAxisAngle(new Vector3(0, 1, 0), (Math.random() - 0.5) * 0.03);
+        // KI-Schützen streuen jenseits von 115 m immer stärker (bis ×4 bei 140 m); der Spieler zielt wie bisher
+        const sk = ship === this.player ? 1 : aiSpreadK(dir.length());
+        r = dir.length() * (1 + (Math.random() * 0.06 - 0.03) * sk);
+        dir.normalize().applyAxisAngle(new Vector3(0, 1, 0), (Math.random() - 0.5) * 0.03 * sk);
         carry = 0;
       } else {
-        dir = left.clone().applyAxisAngle(new Vector3(0, 1, 0), (Math.random() - 0.5) * 0.08);
-        r = range * AMMO[ammo].range * (0.92 + Math.random() * 0.1);
+        const sk = ship === this.player ? 1 : aiSpreadK(range);
+        dir = left.clone().applyAxisAngle(new Vector3(0, 1, 0), (Math.random() - 0.5) * 0.08 * sk);
+        r = range * AMMO[ammo].range * (0.97 + (Math.random() - 0.5) * 0.1 * sk);
       }
       const t = r / speed;
       const vel = dir.multiplyScalar(speed).add(new Vector3(Math.sin(ship.heading) * ship.speed * 0.5 * carry, 0.5 * G * t - (w.y - 0.6) / t, Math.cos(ship.heading) * ship.speed * 0.5 * carry));
@@ -918,12 +932,80 @@ export class NavalSystem {
     }
   }
 
-  /** Begleitschiffe ab höheren Rängen */
-  private ensureCompanions() {
-    const want = this.raidEscorts ?? (this.playerRank >= 8 ? 2 : this.playerRank >= 5 ? 1 : 0);
-    const have = this.enemies.filter((e) => e.companion && e.ship.alive).length;
+  // ---------- Spieler-Flotte (data/playerFleet.ts) ----------
+
+  /** Aktive Begleitschiffe des Spielers in der Reihenfolge der Formationsplätze (Einträge aus dem Spielstand) und ihr Befehl */
+  private fleetRecords: FleetShipRecord[] = [];
+  fleetOrder: FleetOrder = 'hold';
+  /** Das Flaggschiff liegt am Steg oder vor der Küste (Bordleiter) oder der Spieler ist von Bord: die Flotte ankert auf Abstand (setzt die Seewelt je Bild) */
+  fleetAnchored = false;
+  private readonly fleetPt = { x: 0, z: 0 };
+  /** Bewegung des Flaggschiffs für die Formation (Tempo, Drehgeschwindigkeit des Bugs, geglättet) und Arbeitsobjekte */
+  private readonly flagMo: FlagMotion = { speed: 0, yawRate: 0 };
+  private flagPrevH = Number.NaN;
+  private readonly slotOff: FormationOffset = { side: 0, ahead: 0 };
+  private readonly escortFlag = { heading: 0, speed: 0, yawRate: 0, side: 0 };
+  private readonly flagPoseTmp: FlagPose = { x: 0, z: 0, heading: 0, L: 0, W: 0 };
+
+  /**
+   * Die aktiven Begleitschiffe und den Befehl setzen (Spielstand, Werft, Befehlstasten). Schiffe, die nicht mehr aktiv sind, verlassen die Szene (gesunkene
+   * beenden ihren Untergang erst); neue laufen in `ensureFleet` aus. `reset`: alle Flottenschiffe entfernen (anderer Spielstand).
+   */
+  setFleet(records: readonly FleetShipRecord[], order: FleetOrder, reset = false) {
+    this.fleetRecords = records.filter((r) => r.status === 'active');
+    this.fleetOrder = order;
+    keepIf(this.enemies, (e) => {
+      if (!e.fleetId) return true;
+      if (!reset && (e.ship.sinking > 0 || this.fleetRecords.some((r) => r.fleetShipId === e.fleetId))) return true;
+      e.ship.dispose();
+      this.overlay.setBar(e, null, -1, false, null);
+      return false;
+    });
+  }
+
+  /** Zustand der ausgelaufenen Flottenschiffe (Rumpf und Segel als Anteil) für Spielstand und Anzeige */
+  fleetStatus(): { id: string; hp: number; sailHp: number; alive: boolean }[] {
+    const out: { id: string; hp: number; sailHp: number; alive: boolean }[] = [];
+    for (const e of this.enemies) if (e.fleetId) out.push({ id: e.fleetId, hp: e.ship.maxHull > 0 ? Math.max(0, e.ship.hull / e.ship.maxHull) : 0, sailHp: e.ship.sail, alive: e.ship.alive && e.ship.sinking <= 0 });
+    return out;
+  }
+
+  /** Das Schiff einer Flotten-Kennung (falls ausgelaufen) */
+  fleetShipOf(id: string): Ship | null { return this.enemies.find((e) => e.fleetId === id)?.ship ?? null; }
+
+  /** Offenes Wasser für ein Schiff der Breite `W`: `clear` Meter Abstand zur Küste (samt Böschung) und zu allen Stegen */
+  private freeWater(x: number, z: number, W: number, clear: number): boolean {
+    if (this.ground.shipClearance(x, z, W, clear + 10) < clear) return false;
+    for (const q of this.ground.piers) if (distToSegment(x, z, q.ax, q.az, q.bx, q.bz) - q.hw - W * 0.5 < clear) return false;
+    return true;
+  }
+
+  /** Drehgeschwindigkeit des Flaggschiffs aus dem Kurs der letzten Schritte (rad/s, positiv = der Bug dreht nach Backbord), über ~0,3 s geglättet */
+  private updateFlagMotion(dt: number) {
+    const p = this.player, f = this.flagMo;
+    if (!p || dt <= 1e-6) return;
+    if (Number.isFinite(this.flagPrevH)) f.yawRate += (wrapAngle(p.heading - this.flagPrevH) / dt - f.yawRate) * Math.min(1, dt * 3.5);
+    this.flagPrevH = p.heading;
+    f.speed = p.speed;
+  }
+
+  private flagPose(p: Ship): FlagPose {
+    const f = this.flagPoseTmp;
+    f.x = p.x; f.z = p.z; f.heading = p.heading; f.L = p.cls.L; f.W = p.cls.W;
+    return f;
+  }
+
+  /** Flottenschiffe auslaufen lassen (jedes fehlende, auf seinem Platz der Formation) und im Raid die bezahlten Söldner-Begleiter, die über die eigene Flotte hinausgehen */
+  private ensureFleet() {
     const p = this.player;
-    if (!p || have >= want) return;
+    if (!p) return;
+    for (let i = 0; i < this.fleetRecords.length; i++) {
+      const rec = this.fleetRecords[i];
+      if (!this.enemies.some((e) => e.fleetId === rec.fleetShipId)) this.spawnFleetShip(rec, i, p);
+    }
+    const want = Math.max(0, (this.raidEscorts ?? 0) - this.fleetRecords.length);
+    const have = this.enemies.filter((e) => e.companion && !e.fleetId && e.ship.alive).length;
+    if (have >= want) return;
     const look = { ...p.look };
     const ship = new Ship(this.scene, Math.max(0, Math.min(3, Math.floor(this.playerRank / 3))), look, this.playerFaction);
     ship.x = p.x - Math.sin(p.heading) * 40 + (have ? 20 : -20);
@@ -931,7 +1013,109 @@ export class NavalSystem {
     ship.heading = p.heading;
     ship.prev = { x: ship.x, z: ship.z, heading: ship.heading };
     this.enemies.push({ ship, role: 'patrouille', level: this.playerLevel, state: 'engage', wander: { x: 0, z: 0 }, aiT: 0, companion: true });
-    this.hooks.message('Ein Begleitschiff schließt sich deiner Flotte an!');
+    this.hooks.message('Ein Söldner-Begleitschiff schließt sich deiner Flotte an!');
+  }
+
+  private spawnFleetShip(rec: FleetShipRecord, idx: number, p: Ship) {
+    const cls = SHIP_CLASSES[rec.shipClass];
+    if (!cls) return;
+    const hullBonus = Math.round(cls.hp * (evoStats(rec.evo).hullHpK - 1));
+    const ship = new Ship(this.scene, rec.shipClass, { ...rec.look }, this.playerFaction, hullBonus, false, { ...rec.evo });
+    ship.hull = ship.maxHull * Math.max(0.05, rec.hp);
+    ship.sail = rec.sailHp;
+    // Ausfahrt auf dem eigenen Platz der Formation; liegt der an Land oder am Steg, auf der Nachhut oder weiter hinter dem Flaggschiff
+    const pt = this.fleetPt, pose = this.flagPose(p);
+    let ok = false;
+    // liegt das Flaggschiff fest, laufen sie gleich mit dem Ankerabstand aus
+    const clear = this.fleetAnchored ? FLEET_ANCHOR_CLEAR : 20;
+    for (const slot of [formationSlotOf(idx), 'rear' as const]) { formationPoint(slot, pose, cls, pt); ok = this.freeWater(pt.x, pt.z, cls.W, clear); if (ok) break; }
+    for (let back = 100; !ok && back <= 600; back += 100) { pt.x = p.x - Math.sin(p.heading) * back; pt.z = p.z - Math.cos(p.heading) * back; ok = this.freeWater(pt.x, pt.z, cls.W, clear); }
+    ship.place(pt.x, pt.z, p.heading);
+    ship.speed = p.speed;
+    this.enemies.push({ ship, role: 'patrouille', level: this.playerLevel, state: 'patrol', wander: { x: 0, z: 0 }, aiT: 0, companion: true, fleetId: rec.fleetShipId, name: cls.n });
+  }
+
+  /** Kanonenschaden eines Begleitschiffs: wie beim Flaggschiff aus Stufe, Klasse und Kanonen-Ausbau, aber `FLEET_DMG_K` schwächer (ohne Offiziers-Fähigkeiten) */
+  private fleetDamage(e: EnemyShip): number {
+    const tier = Math.max(0, SHIP_CLASSES.indexOf(e.ship.cls));
+    return (12 + this.playerLevel * 1.4) * (1 + tier * 0.06) * evoStats(e.ship.evo).cannonDmgK * FLEET_DMG_K;
+  }
+
+  /** Nächster Gegner eines Begleitschiffs je Befehl: feindlich (weder friedlich noch Händler noch kampfunfähig), in Reichweite des Schiffs und an der Leine des Flaggschiffs */
+  private fleetFoe(e: EnemyShip, p: Ship, order: FleetOrder): Ship | null {
+    const r = FLEET_ORDER_RANGE[order], s = e.ship;
+    let best = r.self, foe: Ship | null = null;
+    for (const o of this.enemies) {
+      if (o.companion || o.helper || o.boarded || o.role === 'haendler' || !o.ship.alive || o.ship.sinking > 0 || o.ship.disabled || this.peaceful(o)) continue;
+      if (Math.hypot(o.ship.x - p.x, o.ship.z - p.z) > r.leash) continue;
+      const d = Math.hypot(o.ship.x - s.x, o.ship.z - s.z);
+      if (d < best) { best = d; foe = o.ship; }
+    }
+    return foe;
+  }
+
+  /** Breitseite auf ein Ziel, wenn die Seite zeigt (quer zum Kurs, ±0,3 rad), geladen ist und es in Schussweite steht; `dmg` null = Wert der KI-Stufe */
+  private duelFire(e: EnemyShip, target: Ship, dist: number, tier: number, dmgOverride: number | null) {
+    const s = e.ship;
+    const rel = wrapAngle(Math.atan2(target.x - s.x, target.z - s.z) - s.heading);
+    const side = rel > 0 ? 1 : -1;
+    const aligned = Math.abs(Math.abs(rel) - Math.PI / 2) < 0.3;
+    const ready = side > 0 ? s.reloadL <= 0 : s.reloadR <= 0;
+    if (!aligned || !ready || dist >= fireRangeOf(tier) || s.ceasefire > 0 || s.frozen > 0) return;
+    // Vorhalt ohne Vektor: das Ziel läuft, während die Kugel fliegt
+    const lt = dist / BALL_SPEED;
+    const range = Math.hypot(target.x + Math.sin(target.heading) * target.speed * lt - s.x, target.z + Math.cos(target.heading) * target.speed * lt - s.z);
+    const cal = aiCannon(e.level, e.role === 'legende');
+    this.broadside(s, side, range, dmgOverride ?? cal.dmg, e.role === 'legende' && Math.random() < 0.3 ? 'brand' : 'kugel');
+    const reload = cal.reload * s.reloadScale;
+    if (side > 0) s.reloadL = reload; else s.reloadR = reload;
+  }
+
+  /**
+   * Ein Flottenschiff des Spielers: ankern, wenn das Flaggschiff festgemacht hat; sonst je Befehl – `hold` Formation und Selbstverteidigung, `attack` Gegner in Reichweite
+   * angreifen (Breitseite, ab Rumpf-Stufe 4 Rammsporn), `rally` mit allem Tuch zurück auf den Platz, ohne zu feuern. Nachzügler weit hinten werden auf ihren Platz gesetzt.
+   */
+  private aiFleet(e: EnemyShip, nav: AiNavState, dt: number): number {
+    const s = e.ship, p = this.player!;
+    const self = this.steerSelf, tgt = this.steerTgt, cmd = this.steerCmd, goal = this.steerGoal;
+    const idx = Math.max(0, this.fleetRecords.findIndex((r) => r.fleetShipId === e.fleetId));
+    // Platz in der Formation; in einer engen Kurve fällt die Innenseite in die Kiellinie zurück (hinter die Nachhut, wenn dort schon ein Schiff fährt)
+    const rear = this.fleetRecords[2];
+    const behindRear = rear && idx !== 2 ? 0.5 * (SHIP_CLASSES[rear.shipClass].L + s.cls.L) + 20 : 0;
+    formationPoint(formationSlotOf(idx), this.flagPose(p), s.cls, goal, this.flagMo, behindRear, this.slotOff);
+    const gx = goal.x, gz = goal.z;
+    s.speedCap = null;
+    if (Math.hypot(p.x - s.x, p.z - s.z) > FLEET_RECALL_DIST && this.freeWater(gx, gz, s.cls.W, 20)) { s.place(gx, gz, p.heading); s.speed = p.speed; }
+    this.fillSteerSelf(e, self);
+    if (this.fleetAnchored) {
+      this.steering.anchor(nav, self, gx, gz, FLEET_ANCHOR_CLEAR, dt, cmd);
+      s.aiSail = cmd.sail;
+      if (cmd.hold) { s.speedCap = 0; if (s.speed < 0.6) s.speed = 0; }
+      e.state = 'patrol';
+      return cmd.turn;
+    }
+    nav.anchorSet = false;
+    const order = this.fleetOrder;
+    const foe = order === 'rally' ? null : this.fleetFoe(e, p, order);
+    const tier = Math.max(0, SHIP_CLASSES.indexOf(s.cls));
+    if (foe && order === 'attack') {
+      this.fillSteerTarget(foe, tgt);
+      this.stagger(nav, s);
+      this.steering.fight(nav, self, tgt, dt, cmd);
+      s.aiSail = cmd.sail;
+      e.state = cmd.state === 'DISENGAGE' ? 'flee' : 'engage';
+      if (cmd.state !== 'DISENGAGE') this.duelFire(e, foe, cmd.dist, tier, this.fleetDamage(e));
+      return cmd.turn;
+    }
+    const ef = this.escortFlag;
+    ef.heading = p.heading; ef.speed = p.speed; ef.yawRate = this.flagMo.yawRate; ef.side = this.slotOff.side;
+    this.steering.escort(nav, self, gx, gz, ef, order === 'rally', dt, cmd);
+    s.aiSail = cmd.sail;
+    // Steht das Flaggschiff, steht die Flotte auf ihren Plätzen (Tempo 0)
+    if (cmd.hold) { s.speedCap = 0; if (s.speed < 0.6) s.speed = 0; }
+    e.state = 'patrol';
+    if (foe) this.duelFire(e, foe, Math.hypot(foe.x - s.x, foe.z - s.z), tier, this.fleetDamage(e));
+    return cmd.turn;
   }
 
   // ---------- Schleife ----------
@@ -952,7 +1136,7 @@ export class NavalSystem {
         this.spawnT = (zone <= 2 ? 30 : 25) + Math.random() * 30;
         this.spawnEnemy(p.x, p.z);
       }
-      this.ensureCompanions();
+      this.ensureFleet();
       if (!this.raidMode) { this.ensureBorderPatrols(dt); this.updateHunters(dt); }
     }
     this.updateBattles(dt, !!p && active);
@@ -961,6 +1145,8 @@ export class NavalSystem {
       // Wer lange ohne Spieler brennt (kein Kommandoschiff), geht nach 150 s weit weg vom Spieler von selbst unter
       if (e.ship.disabled && !e.ship.noKill && !e.boarded && e.ship.disabledFor > 150 && e.ship.sinking <= 0 && (!p || Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > 350)) { e.ship.hull = 0; this.sink(e.ship); }
     }
+    this.registerObstacles();
+    this.updateFlagMotion(dt);
     for (const e of this.enemies) this.ai(e, dt);
     for (const e of this.enemies) this.damageFx(e.ship, dt);
     if (p) this.damageFx(p, dt);
@@ -1038,6 +1224,12 @@ export class NavalSystem {
       this.tryRam(f, e.ship);
       if (this.hostileAI(e) && !e.ship.disabled) this.tryRam(e.ship, f);
     }
+    // KI gegen KI: ein Schiff einer Seeschlacht im Rammangriff (Rumpf-Stufe ≥ 4, `RAM_CHARGE`) stößt sein Kampfziel; beide Rümpfe nehmen Schaden und prallen ab (Gegenstoß)
+    for (const e of this.enemies) {
+      if (!e.battle || !live(e.ship) || e.nav?.aiState !== 'RAM_CHARGE') continue;
+      const foe = this.battleFoe(e);
+      if (foe && live(foe) && aiMayRam({ aiState: e.nav.aiState, hullTier: e.ship.evo.hullTier, disabled: e.ship.disabled }, foe)) this.tryRam(e.ship, foe);
+    }
     // Pausen vergangener Paare aufräumen
     if (this.ramCd.size > 64) for (const [k, t] of this.ramCd) if (t < this.clock) this.ramCd.delete(k);
   }
@@ -1057,6 +1249,8 @@ export class NavalSystem {
     const wasB = b.disabled, wasA = a.disabled;
     const byPlayer = a === this.player;
     const dealt = b.ramHit(d.target, d.pen, local);
+    const rammer = this.enemies.find((o) => o.ship === a);
+    if (rammer?.nav) noteRam(rammer.nav);
     const self = a.ramHit(d.self, null, new Vector3(0, 0, a.cls.L * 0.5));
     a.speed *= RAM.rammerSlow;
     b.speed *= RAM.targetSlow;
@@ -1256,19 +1450,65 @@ export class NavalSystem {
     this.spray.emit(big ? 70 : 35, t.x, 1, t.z, { speed: big ? 9 : 6, up: big ? 12 : 8, life: 1.4, color: new Color(color).lerp(new Color(1, 1, 1), 0.5), spread: t.cls.W });
   }
 
-  private ai(e: EnemyShip, dt: number) {
+  // ---------- KI-Lenkung (naval/shipSteering.ts) ----------
+
+  /** Arbeitsobjekte der Lenkung: nichts davon wird je Bild neu angelegt */
+  private readonly steerSelf = newSteerSelf();
+  private readonly steerTgt = newSteerTarget();
+  private readonly steerCmd = newSteerCommand();
+  private readonly steerGoal = { x: 0, z: 0 };
+
+  /** Das lenkende Schiff für die Lenkung beschreiben (Zahlen aus Schiff, Ausbaustufen und Segelzustand) */
+  private fillSteerSelf(e: EnemyShip, o: SteerSelf, flee = false, ramOk = !e.battle && !e.training) {
+    const s = e.ship;
+    o.id = s.entityId; o.x = s.x; o.z = s.z; o.heading = s.heading; o.speed = s.speed;
+    o.L = s.cls.L; o.W = s.cls.W; o.classTier = Math.max(0, SHIP_CLASSES.indexOf(s.cls)); o.mass = s.maxHull;
+    o.hullFrac = s.maxHull > 0 ? s.hull / s.maxHull : 0; o.sailFrac = s.sail; o.hullTier = s.evo.hullTier;
+    o.turnMult = s.turnMult; o.turnK = s.evoS.turnK; o.perfTurn = s.perf.turn;
+    o.vFull = s.cls.spd * SEA_SPEED * s.evoS.speedK * s.perf.speed;
+    o.upwindK = s.evoS.upwindK; o.speedCap = s.speedCap ?? 99;
+    o.reloadL = s.reloadL; o.reloadR = s.reloadR;
+    // Wer nie flieht: Legenden, Wachschiffe und Rückeroberungsflotten, Begleiter, Geisterschiffe, das Übungsschiff der Einführung
+    o.brave = e.role === 'legende' || !!e.raid || (!!e.companion && !e.fleetId) || !!e.ghost || !!e.training;
+    // Rammstöße wertet `updateRamming` aus: Spieler gegen Feinde, Begleiter und Helfer gegen Feinde und – seit 4.3.1 – die Schiffe einer Seeschlacht gegeneinander
+    // (Ziel = anderes Schlachtschiff). Zielt ein Schlachtschiff auf den Spieler, gilt der Stoß nicht: dort fehlt die Auswertung
+    o.canRam = ramOk;
+    o.flee = flee;
+  }
+
+  private fillSteerTarget(t: Ship, o: SteerTarget) {
+    o.id = t.entityId; o.x = t.x; o.z = t.z; o.heading = t.heading; o.speed = t.speed;
+    o.L = t.cls.L; o.W = t.cls.W; o.mass = t.maxHull; o.disabled = t.disabled;
+  }
+
+  /** Befehl der Lenkung umsetzen: stufenloses Segel, Zustand für den Rest des Spiels; liefert das Ruder */
+  private applyCmd(e: EnemyShip, cmd: SteerCommand, setState = true): number {
+    e.ship.aiSail = cmd.sail;
+    if (setState) e.state = cmd.state === 'TRANSIT' ? 'patrol' : cmd.state === 'DISENGAGE' ? 'flee' : 'engage';
+    return cmd.turn;
+  }
+
+  /** Ein Gefecht beginnt: die Seiten laden unterschiedlich weit nach, damit nicht alle Schiffe gleichzeitig feuern */
+  private stagger(nav: AiNavState, s: Ship) {
+    if (nav.aiState !== 'TRANSIT') return;
+    const w = Math.random() * 2;
+    if (s.reloadL < w) s.reloadL = w;
+    if (s.reloadR < w) s.reloadR = w;
+  }
+
+  /** Neuer Weg für Streifen und Händler: auf freier Strecke (Küsten, Stege, Mauern, Weltrand), sonst gedreht; setzt den Fortschritt zurück */
+  private setWander(e: EnemyShip, nav: AiNavState, self: SteerSelf, x: number, z: number) {
+    this.steering.reachableGoal(self, x, z, this.steerGoal);
+    e.wander.x = this.steerGoal.x; e.wander.z = this.steerGoal.z;
+    resetGoal(nav);
+  }
+
+  /** Alle Schiffe außer den Flottenschiffen des Spielers: Streifen, Händler, Feinde, Seeschlachten und Söldner-Begleiter. Liefert das Ruder. */
+  private aiGeneral(e: EnemyShip, nav: AiNavState, dt: number): number {
     const s = e.ship;
     const p = this.player;
-    if (!s.alive) return;
-    // Enterphase: das Schiff treibt brennend und wehrlos (keine Geschütze, kein Fahrtziel)
-    if (s.disabled) { e.state = 'patrol'; s.sailLevel = 0; s.throttle = 0; s.steer(dt, 0, this.env); return; }
-    e.aiT -= dt;
+    const self = this.steerSelf, tgt = this.steerTgt, cmd = this.steerCmd;
     let turn = 0;
-    const steerTo = (tx: number, tz: number) => {
-      const want = Math.atan2(tx - s.x, tz - s.z);
-      const diff = ((want - s.heading + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-      return Math.max(-1, Math.min(1, -diff * 2));
-    };
     // Ziel: Begleiter kämpfen gegen Feinde, Feinde gegen den Spieler (und Begleiter); Schiffe einer Seeschlacht gegeneinander
     let target: Ship | null = null;
     /** Schiff gegen Schiff (Seeschlacht, Marine-Hilfe): kämpft wie ein Begleiter gegen sein Ziel */
@@ -1291,97 +1531,114 @@ export class NavalSystem {
     const dist = target ? Math.hypot(target.x - s.x, target.z - s.z) : 9999;
 
     if (e.companion && !target && p) {
-      // In Formation hinter dem Spieler
+      // In Formation hinter dem Spieler (der Platz liegt oft im Wendekreis: die Lenkung refft, statt zu kreisen)
       const fx = p.x - Math.sin(p.heading) * 35 + Math.cos(p.heading) * 18, fz = p.z - Math.cos(p.heading) * 35 - Math.sin(p.heading) * 18;
-      turn = steerTo(fx, fz);
-      s.sailLevel = Math.hypot(fx - s.x, fz - s.z) > 30 ? 2 : 1;
+      this.fillSteerSelf(e, self);
+      this.steering.cruise(nav, self, fx, fz, Math.hypot(fx - s.x, fz - s.z) > 30 ? 1 : 0.55, 12, p.entityId, dt, cmd);
+      turn = this.applyCmd(e, cmd, false);
     } else if (e.role === 'haendler') {
-      const threatened = p && (Math.hypot(p.x - s.x, p.z - s.z) < 120 || s.hull < s.maxHull);
+      const threatened = !!p && (Math.hypot(p.x - s.x, p.z - s.z) < 120 || s.hull < s.maxHull);
       s.speedCap = 11 - Math.max(0, SHIP_CLASSES.indexOf(s.cls)) * 0.4;
-      if (threatened && p) { turn = steerTo(s.x * 2 - p.x, s.z * 2 - p.z); s.sailLevel = 2; e.state = 'flee'; }
-      else { if (e.aiT <= 0 || Math.hypot(e.wander.x - s.x, e.wander.z - s.z) < 30) { e.aiT = 20; e.wander = { x: s.x + (Math.random() - 0.5) * 600, z: s.z + (Math.random() - 0.5) * 600 }; } turn = steerTo(e.wander.x, e.wander.z); s.sailLevel = 1; }
+      this.fillSteerSelf(e, self, threatened);
+      if (threatened && p) {
+        // Flucht: weg vom Spieler mit allem Tuch, mindestens 4 bis 6 s lang
+        this.fillSteerTarget(p, tgt);
+        this.steering.fight(nav, self, tgt, dt, cmd);
+      } else {
+        const ar = Math.max(30, arriveRadius(self));
+        if (e.aiT <= 0 || nav.replan || Math.hypot(e.wander.x - s.x, e.wander.z - s.z) < ar) { e.aiT = 20; this.setWander(e, nav, self, s.x + (Math.random() - 0.5) * 600, s.z + (Math.random() - 0.5) * 600); }
+        this.steering.cruise(nav, self, e.wander.x, e.wander.z, 0.55, ar, null, dt, cmd);
+      }
+      turn = this.applyCmd(e, cmd);
     } else if (target && !e.companion && !duel && dist < this.sight(e)) {
-      // Wie in 1.0: in Breitseitenabstand umkreisen, feuern, sobald eine Seite zeigt
-      e.state = 'engage';
+      // Wie in 1.0: in Breitseitenabstand umkreisen, feuern, sobald eine Seite zeigt – jetzt mit Zustandsmaschine (Anmarsch, Umkreisen, Rammen, Rückzug)
       const tier = Math.max(0, SHIP_CLASSES.indexOf(s.cls));
       s.speedCap = (14.5 - tier * 0.4 + (e.role === 'legende' ? 2 : 0) + (e.ghost ? 1 : 0)) * (this.isWeak(e) ? 0.45 : 1);
       if (this.isWeak(e) && !e.weakNoted) { e.weakNoted = true; this.hooks.message(`${e.name ?? 'Das Schiff'} ist schwer angeschlagen – fahr heran und entere es!`); }
-      s.sailLevel = 2;
-      const toP = Math.atan2(target.x - s.x, target.z - s.z);
-      let des: number;
-      if (tier === 0 && dist > 80) des = toP;
-      else {
-        const od = 46 + s.cls.L * 0.5;
-        const orbit = e.orbit ?? (e.orbit = Math.random() < 0.5 ? 1 : -1);
-        const bias = Math.max(-1, Math.min(1, (dist - od) / 45));
-        des = toP + orbit * Math.PI / 2 - orbit * bias * Math.PI / 2 * 0.8;
-      }
-      turn = steerTo(s.x + Math.sin(des) * 50, s.z + Math.cos(des) * 50);
-      e.reload = (e.reload ?? Math.random() * 2) - dt;
-      const rng = 52 + tier * 6;
-      if (dist < rng && e.reload <= 0 && s.ceasefire <= 0 && s.frozen <= 0) {
-        for (const side of [-1, 1]) {
-          const d = ((s.heading + side * Math.PI / 2 - toP + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-          if (Math.abs(d) > 0.4) continue;
+      this.fillSteerSelf(e, self);
+      this.fillSteerTarget(target, tgt);
+      this.stagger(nav, s);
+      this.steering.fight(nav, self, tgt, dt, cmd);
+      turn = this.applyCmd(e, cmd);
+      if (cmd.state !== 'DISENGAGE' && dist < fireRangeOf(tier) && s.ceasefire <= 0 && s.frozen <= 0) {
+        const toP = Math.atan2(target.x - s.x, target.z - s.z);
+        for (let k = 0; k < 2; k++) {
+          const side = k === 0 ? -1 : 1;
+          if ((side > 0 ? s.reloadL : s.reloadR) > 0) continue;
+          if (Math.abs(wrapAngle(s.heading + side * Math.PI / 2 - toP)) > 0.4) continue;
           const lv = e.level;
           const dmg = (6 + tier * 2) * (1 + 0.12 * (lv - 1) + 0.004 * (lv - 1) * (lv - 1)) * (e.role === 'legende' ? 1.4 : 1);
           this.broadside(s, side, dist, dmg, e.role === 'legende' && Math.random() < 0.3 ? 'brand' : 'kugel', target);
-          e.reload = (2.4 + Math.random()) / Math.sqrt(lv * 0.5 + 0.5) * s.reloadScale;
+          const reload = (2.4 + Math.random()) / Math.sqrt(lv * 0.5 + 0.5) * s.reloadScale;
+          if (side > 0) s.reloadL = reload; else s.reloadR = reload;
           break;
         }
       }
     } else if (target && (e.companion || duel) && dist < 420) {
-      e.state = s.hull < s.maxHull * 0.2 && e.role !== 'legende' && !e.companion ? 'flee' : 'engage';
-      if (e.state === 'flee') { turn = steerTo(s.x * 2 - target.x, s.z * 2 - target.z); s.sailLevel = 2; }
-      else {
-        // Breitseite: Ziel quer zum eigenen Kurs halten
-        const bearing = Math.atan2(target.x - s.x, target.z - s.z);
-        const rel = ((bearing - s.heading + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-        const side = rel > 0 ? 1 : -1;
-        if (dist > 85) turn = steerTo(target.x, target.z);
-        else if (dist < 35) turn = steerTo(s.x * 2 - target.x, s.z * 2 - target.z);
-        else turn = Math.max(-1, Math.min(1, -(Math.abs(rel) - Math.PI / 2) * side * 1.6));
-        s.sailLevel = dist > 120 ? 2 : 1;
-        const aligned = Math.abs(Math.abs(rel) - Math.PI / 2) < 0.3;
-        const ready = side > 0 ? s.reloadL <= 0 : s.reloadR <= 0;
-        if (aligned && ready && dist < 95 && s.ceasefire <= 0 && s.frozen <= 0) {
-          const lead = target.pos.add(new Vector3(Math.sin(target.heading), 0, Math.cos(target.heading)).multiplyScalar(target.speed * dist / BALL_SPEED));
-          const range = Math.hypot(lead.x - s.x, lead.z - s.z);
-          const cal = aiCannon(e.level, e.role === 'legende');
-          const dmg = e.companion ? this.canDmg * 0.6 : cal.dmg;
-          this.broadside(s, side, range, dmg, e.role === 'legende' && Math.random() < 0.3 ? 'brand' : 'kugel');
-          const reload = cal.reload * s.reloadScale;
-          if (side > 0) s.reloadL = reload; else s.reloadR = reload;
-        }
-      }
+      const tier = Math.max(0, SHIP_CLASSES.indexOf(s.cls));
+      this.fillSteerSelf(e, self, false, !e.training);
+      this.fillSteerTarget(target, tgt);
+      this.stagger(nav, s);
+      this.steering.fight(nav, self, tgt, dt, cmd);
+      turn = this.applyCmd(e, cmd);
+      // Breitseite: Ziel quer zum eigenen Kurs, Schuss nur, wenn die Seite zeigt und geladen ist
+      if (cmd.state !== 'DISENGAGE') this.duelFire(e, target, dist, tier, e.companion ? this.canDmg * 0.6 : null);
     } else {
-      e.state = 'patrol';
       if (!e.companion) s.speedCap = 10;
-      if (e.aiT <= 0 || Math.hypot(e.wander.x - s.x, e.wander.z - s.z) < 40) {
+      this.fillSteerSelf(e, self);
+      const ar = Math.max(40, arriveRadius(self));
+      if (e.aiT <= 0 || nav.replan || Math.hypot(e.wander.x - s.x, e.wander.z - s.z) < ar) {
         e.aiT = 25;
         const st = e.station ? BORDER_FORTS.find((f) => f.id === e.station) : null;
+        let wx: number, wz: number;
         if (st) {
           // Grenzstreife: auf der Grenzlinie hin und her, 200 bis 700 m beiderseits der Festung
           const a = (BORDERS[st.borderIndex].deg * Math.PI) / 180, t = st.radius + (Math.random() < 0.5 ? -1 : 1) * (200 + Math.random() * 500), off = (Math.random() - 0.5) * 120;
-          e.wander = { x: Math.sin(a) * t + Math.cos(a) * off, z: Math.cos(a) * t - Math.sin(a) * off };
+          wx = Math.sin(a) * t + Math.cos(a) * off; wz = Math.cos(a) * t - Math.sin(a) * off;
         } else if (e.raid && e.home) {
           // Wachschiff: kreuzt vor seiner Station
           const a = Math.random() * Math.PI * 2;
-          e.wander = { x: e.home.x + Math.cos(a) * 120, z: e.home.z + Math.sin(a) * 120 };
+          wx = e.home.x + Math.cos(a) * 120; wz = e.home.z + Math.sin(a) * 120;
         } else {
           const a = Math.random() * Math.PI * 2;
-          e.wander = { x: s.x + Math.cos(a) * 400, z: s.z + Math.sin(a) * 400 };
+          wx = s.x + Math.cos(a) * 400; wz = s.z + Math.sin(a) * 400;
         }
+        this.setWander(e, nav, self, wx, wz);
       }
-      turn = steerTo(e.wander.x, e.wander.z);
-      s.sailLevel = 1;
+      this.steering.cruise(nav, self, e.wander.x, e.wander.z, 0.55, ar, null, dt, cmd);
+      turn = this.applyCmd(e, cmd);
     }
-    // Inseln und Weltrand ausweichen
-    const ahead = { x: s.x + Math.sin(s.heading) * s.cls.L * 1.6, z: s.z + Math.cos(s.heading) * s.cls.L * 1.6 };
-    if (this.ground.islandAt(ahead.x, ahead.z, 20) || Math.hypot(ahead.x, ahead.z) > WORLD_RADIUS - 120) turn = 1;
+    return turn;
+  }
+
+  private ai(e: EnemyShip, dt: number) {
+    const s = e.ship;
+    const p = this.player;
+    if (!s.alive) return;
+    // Enterphase: das Schiff treibt brennend und wehrlos (keine Geschütze, kein Fahrtziel)
+    if (s.disabled) { e.state = 'patrol'; s.sailLevel = 0; s.throttle = 0; s.aiSail = null; s.steer(dt, 0, this.env); return; }
+    e.aiT -= dt;
+    const nav = e.nav ?? (e.nav = createAiNav(s.entityId));
+    const turn = e.fleetId && p?.alive ? this.aiFleet(e, nav, dt) : this.aiGeneral(e, nav, dt);
+    // Inseln, Stege, Schiffe und Weltrand weicht die Lenkung selbst aus (Fühler); `pushShip` bleibt die letzte Sicherung gegen Grundberührung
     s.steer(dt, turn, this.env);
     const o = this.ground.pushShip(s.x, s.z, s.heading, s.cls.L, s.cls.W);
     if (o.hit) { s.x = o.x; s.z = o.z; }
+  }
+
+  /** Vor dem Durchlauf der KI: alle lebenden Schiffe (auch den Spieler) als Hindernisse für die Fühler eintragen */
+  private registerObstacles() {
+    const st = this.steering;
+    st.clearObstacles();
+    this.friendly.clear();
+    if (this.player) this.friendly.add(this.player);
+    for (const e of this.enemies) if (e.companion || e.helper) this.friendly.add(e.ship);
+    for (const e of this.enemies) {
+      const s = e.ship;
+      if (s.alive) st.addObstacle(s.entityId, s.x, s.z, Math.sin(s.course) * s.speed, Math.cos(s.course) * s.speed, Math.max(s.cls.W * 0.5, s.cls.L * 0.32));
+    }
+    const p = this.player;
+    if (p?.alive) st.addObstacle(p.entityId, p.x, p.z, Math.sin(p.course) * p.speed, Math.cos(p.course) * p.speed, Math.max(p.cls.W * 0.5, p.cls.L * 0.32));
   }
 
   private shipsForHit(): Ship[] {
@@ -1405,6 +1662,8 @@ export class NavalSystem {
       }
       for (const s of this.shipsForHit()) {
         if (s === b.owner || !s.alive) continue;
+        // Kein Beschuss unter Freunden: Begleitschiffe feuern oft quer über das Flaggschiff hinweg
+        if (b.owner && this.friendly.has(b.owner) && this.friendly.has(s)) continue;
         if (Math.hypot(p.x - s.x, p.z - s.z) > s.cls.L * 0.6 + 2) continue;
         // In Schiffskoordinaten prüfen
         const local = s.model.group.worldToLocal(p.clone());
@@ -1498,6 +1757,7 @@ export class NavalSystem {
     this.fx.shockwave(new Vector3(s.x, 0.5, s.z), s.cls.L * 0.6, '#FFB45A');
     this.spray.emit(60, s.x, 1, s.z, { speed: 6, up: 10, life: 2, color: new Color(0.95, 0.98, 1), spread: s.cls.W });
     this.sparks.emit(50, s.x, s.model.deckY + 1, s.z, { speed: 9, up: 9, life: 1.2, color: new Color(3.5, 1.4, 0.35), gravity: 6, spread: s.cls.W });
+    if (e?.fleetId) this.hooks.fleetLost?.(e.fleetId);
     if (e && !e.companion) {
       // Seeschlacht: versenkt der Spieler beide Seiten, gibt es maximalen Doppel-Loot (×2,5); was die KI versenkt, zählt nicht als Abschuss des Spielers
       const byPlayer = e.lastPlayerHit !== undefined && this.clock - e.lastPlayerHit < 10;

@@ -8,6 +8,7 @@ import { AMMO_UNLOCK, cleanEconomy } from '../../data/economy';
 import { TIER_DEFS } from '../../data/balanceConfig';
 import { rankIndex } from '../../data/ranks';
 import { cleanEvolution, legacyUpToEvo } from '../../data/shipEvolution';
+import { cleanFleet, emptyFleet, fleetSlots } from '../../data/playerFleet';
 import { SHIP_UPGRADE_MAX } from '../../data/ships';
 import { convertLegacy10, isLegacy10, lookFromLegacy, skillsFromLegacy } from './legacy';
 import { createSave, defaultProgress, defaultShip, SAVE_VERSION, type SaveData } from './types';
@@ -133,6 +134,9 @@ export const MIGRATIONS: Record<number, Migration> = {
     ship.evo = evo;
     return { ...d, version: 17, ship };
   },
+  // 18: Spieler-Flotte (data/playerFleet.ts). Die Begleitschiffe, die bisher ab Rang 5 und 8 von selbst erschienen, waren nie gespeichert; die Flotte beginnt
+  // leer, die Plätze (ab Rang 4) füllt der Spieler mit besessenen Schiffen.
+  17: (d) => ({ ...d, version: 18, fleet: emptyFleet() }),
 };
 
 export type MigrationResult =
@@ -168,5 +172,7 @@ export function migrateSave(raw: unknown, gameVersion: string): MigrationResult 
   const filled = fillDefaults(data, defaults) as SaveData;
   if (filled.player.faction !== 'pirat' && filled.player.faction !== 'marine') filled.player.faction = 'pirat';
   filled.player.look = sanitizeLook(filled.player.look, filled.player.faction);
+  // Flotte: nur besessene Klassen außer dem Flaggschiff, Werte begrenzt, Ausbaustufen aus `ship.evo`, nie mehr aktive Schiffe als Plätze
+  filled.fleet = cleanFleet(filled.fleet, { owned: filled.ship.owned ?? [], flagship: filled.ship.tier, evo: filled.ship.evo ?? {}, look: filled.ship.look, slots: fleetSlots(rankIndex(filled.player.fame)) });
   return { ok: true, data: filled, migratedFrom: from === SAVE_VERSION ? null : from };
 }

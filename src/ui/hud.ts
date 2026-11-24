@@ -2,6 +2,7 @@ import { esc } from './dom';
 import { fmtDist, fmtInt, fmtPct } from '../core/format';
 import { clamp01 } from '../core/mathUtil';
 import { COMMANDS, type CommandState } from '../data/troops';
+import { FLEET_ORDERS, type FleetOrder } from '../data/playerFleet';
 import { AMMO, AMMO_IDS, type AmmoId } from '../data/ships';
 
 /** Die Zonen des HUD-Rasters (siehe css/hud.css): jede Anzeige gehört in genau eine Zone und stapelt sich dort */
@@ -89,7 +90,7 @@ export class Hud {
   private mini!: HTMLCanvasElement; private questEl!: HTMLElement; private arrowEl!: HTMLElement; private badge!: HTMLElement;
   private questKey = '';
   // unten
-  private ctxEl!: HTMLButtonElement; private cmdsEl!: HTMLElement; private itemBar!: HTMLElement; private skillbar!: HTMLElement;
+  private ctxEl!: HTMLButtonElement; private cmdsEl!: HTMLElement; private fleetEl!: HTMLElement; private itemBar!: HTMLElement; private skillbar!: HTMLElement;
   private ctxText = ''; private itemKey = ''; private skillKey = '';
   // Meldungen
   private hintEl!: HTMLElement; private toastEl!: HTMLElement; private toastTimer = 0; private hintTimer = 0;
@@ -102,6 +103,8 @@ export class Hud {
   onCommand: (c: CommandState) => void = () => {};
   /** Munition gewählt (Knöpfe der Schiffstafel) */
   onAmmo: (id: AmmoId) => void = () => {};
+  /** Flottenbefehl (Knöpfe der Flottentafel, auch am Handy) */
+  onFleetOrder: (o: FleetOrder) => void = () => {};
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
@@ -152,6 +155,7 @@ export class Hud {
       <div class="hud-bc">
         <button class="hud-ctx" hidden></button>
         <div class="hud-cmds panel" role="group" aria-label="Truppenbefehle" hidden></div>
+        <div class="hud-fleet panel" role="group" aria-label="Flottenbefehle" hidden></div>
         <div class="itembar panel" hidden></div>
         <div class="skillbar" hidden></div>
       </div>
@@ -179,7 +183,7 @@ export class Hud {
     this.gunL = this.q('.gun.l'); this.gunR = this.q('.gun.r'); this.ammoEl = this.q('.ammo');
 
     this.mini = this.q('.hud-mini canvas'); this.questEl = this.q('.hud-quest'); this.arrowEl = this.q('.q-arrow'); this.badge = this.q('.badge');
-    this.ctxEl = this.q('.hud-ctx'); this.cmdsEl = this.q('.hud-cmds'); this.itemBar = this.q('.itembar'); this.skillbar = this.q('.skillbar');
+    this.ctxEl = this.q('.hud-ctx'); this.cmdsEl = this.q('.hud-cmds'); this.fleetEl = this.q('.hud-fleet'); this.itemBar = this.q('.itembar'); this.skillbar = this.q('.skillbar');
 
     this.q('.hud-pause').addEventListener('click', () => this.onPause());
     this.q('.hud-faji').addEventListener('click', () => this.onFaji());
@@ -194,6 +198,10 @@ export class Hud {
     this.ammoEl.addEventListener('click', (e) => {
       const b = (e.target as HTMLElement).closest<HTMLElement>('button[data-ammo]');
       if (b) this.onAmmo(b.dataset.ammo as AmmoId);
+    });
+    this.fleetEl.addEventListener('click', (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLElement>('button[data-o]');
+      if (b) this.onFleetOrder(b.dataset.o as FleetOrder);
     });
     this.cmdsEl.addEventListener('click', (e) => {
       const b = (e.target as HTMLElement).closest<HTMLElement>('button[data-c]');
@@ -292,6 +300,20 @@ export class Hud {
     if (info.cmds) {
       this.cmdsEl.innerHTML = `<span class="cmd-label">Befehle</span>${COMMANDS.map((c, i) => `<button type="button" class="cmd${info.active === c.id ? ' on' : ''}" data-c="${c.id}" aria-pressed="${info.active === c.id}"><kbd>${esc(info.cmds![i] ?? String(i + 1))}</kbd>${esc(c.label)}</button>`).join('')}`;
     }
+  }
+
+  /**
+   * Flottentafel (Begleitschiffe des Spielers): je Schiff ein Rumpfbalken, darunter die drei Befehle mit Taste (Tastatur oder Gamepad-Kombination); `anchored`
+   * zeigt, dass die Flotte beim festgemachten Flaggschiff auf Abstand ankert. null blendet sie aus.
+   */
+  setFleet(info: { ships: { name: string; hull: number; alive: boolean }[]; order: FleetOrder; keys: string[]; anchored: boolean } | null) {
+    const key = info ? `${info.order}|${info.anchored}|${info.keys.join(',')}|${info.ships.map((s) => `${s.name}:${Math.round(s.hull * 20)}:${s.alive}`).join(';')}` : '';
+    if (this.last.get(this.fleetEl) === key) return;
+    this.last.set(this.fleetEl, key);
+    this.fleetEl.hidden = !info || this.root.hidden;
+    if (!info) return;
+    const ships = info.ships.map((s) => `<i class="fs${s.alive ? '' : ' dead'}${s.hull < 0.3 ? ' low' : ''}" title="${esc(s.name)} ${Math.round(s.hull * 100)} %"><b style="--f:${Math.max(0, Math.min(1, s.hull)).toFixed(2)}"></b></i>`).join('');
+    this.fleetEl.innerHTML = `<span class="cmd-label">Flotte${info.anchored ? ' ⚓' : ''}</span><span class="fleet-ships">${ships}</span>${FLEET_ORDERS.map((o, i) => `<button type="button" class="cmd${info.order === o.id ? ' on' : ''}" data-o="${o.id}" aria-pressed="${info.order === o.id}" title="${esc(o.desc)}"><kbd>${esc(info.keys[i] ?? '')}</kbd>${esc(o.short)}</button>`).join('')}`;
   }
 
   /** Schiffstafel; null blendet sie aus */

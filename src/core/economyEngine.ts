@@ -7,6 +7,7 @@ import {
 } from '../data/economy';
 import { clamp } from './mathUtil';
 import { EVO_UPKEEP_MAX } from '../data/balanceConfig';
+import { shipUpkeepDaily } from '../data/playerFleet';
 
 export { cargoCap, CARGO_CAP };
 
@@ -213,16 +214,24 @@ export function tariffOf(standing: number, honor: number, lawful: boolean): Tari
 
 // ---------- Unterhalt ----------
 
-export interface UpkeepInput { tier: number; seamen: number; troops: number; officers: number; /** Gesamtstufe der Schiffs-Evolution 1 … 5 (data/shipEvolution.ts): erhöht die Wartung des Schiffs um bis zu +35 % */ evoTier?: number }
-export interface Upkeep { seamen: number; troops: number; officers: number; hull: number; daily: number; perPeriod: number }
+export interface UpkeepInput {
+  tier: number; seamen: number; troops: number; officers: number;
+  /** Gesamtstufe der Schiffs-Evolution 1 … 5 (data/shipEvolution.ts): erhöht die Wartung des Schiffs um bis zu +35 % */
+  evoTier?: number;
+  /** Aktive Begleitschiffe der Flotte (data/playerFleet.ts `fleetUpkeepList`): Klasse, Seeleute-Köpfe und Gesamtstufe je Schiff; eingemottete zahlen nichts */
+  fleet?: readonly { tier: number; seamen: number; evoTier: number }[];
+}
+export interface Upkeep { seamen: number; troops: number; officers: number; hull: number; /** Sold und Wartung aller aktiven Begleitschiffe */ fleet: number; daily: number; perPeriod: number }
 
 /** Sold und Proviant: Köpfe der Seeleute und Truppen, Offiziere und Wartung der Schiffsklasse, je Ingame-Tag und je Zahltag */
 export function upkeepOf(i: UpkeepInput): Upkeep {
   const evoK = 1 + EVO_UPKEEP_MAX * (clamp(Math.round(i.evoTier ?? 1), 1, 5) - 1) / 4;
   const hull = UPKEEP.hull[clamp(Math.floor(i.tier), 0, UPKEEP.hull.length - 1)] * evoK;
   const seamen = Math.max(0, i.seamen) * UPKEEP.seaman, troops = Math.max(0, i.troops) * UPKEEP.trooper, officers = Math.max(0, i.officers) * UPKEEP.officer;
-  const daily = seamen + troops + officers + hull;
-  return { seamen, troops, officers, hull, daily, perPeriod: daily / UPKEEP.periodsPerDay };
+  let fleet = 0;
+  for (const f of i.fleet ?? []) fleet += shipUpkeepDaily(f).daily;
+  const daily = seamen + troops + officers + hull + fleet;
+  return { seamen, troops, officers, hull, fleet, daily, perPeriod: daily / UPKEEP.periodsPerDay };
 }
 
 export type UpkeepEvent =

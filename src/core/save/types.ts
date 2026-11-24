@@ -6,8 +6,9 @@ import { emptyEconomy, type EconomyState } from '../../data/economy';
 import { neutralEvolution, starterEvolution, type ShipEvolution } from '../../data/shipEvolution';
 import { emptyUnlocks, type ConquestRecord, type Unlocks } from '../../raid/occupation';
 import { emptyReputation, type FactionReputationState } from '../../data/reputation';
+import { emptyFleet, type FleetState } from '../../data/playerFleet';
 
-export const SAVE_VERSION = 17;
+export const SAVE_VERSION = 18;
 
 export interface QuestProgress { id: string; step: number; count: number }
 
@@ -154,6 +155,8 @@ export interface SaveData {
   crew: CrewState;
   /** Besiegte Legenden der Rangliste */
   legends: string[];
+  /** Begleitschiffe der Spieler-Flotte (seit Version 18, data/playerFleet.ts): Klasse, Ausbaustufen, Aussehen, Rumpf und Segel, aktiv oder eingemottet; fehlt in älteren Spielständen (dann leer) */
+  fleet?: FleetState;
   /** Vollständiger Spielstand aus Sturmkrone 1.0 – bleibt erhalten, damit spätere Meilensteine Crew, Fähigkeiten usw. übernehmen können. */
   legacy10?: Record<string, unknown>;
 }
@@ -180,6 +183,7 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
     ship: defaultShip(faction),
     crew: { hired: [], party: [], loyalty: {} },
     legends: [],
+    fleet: emptyFleet(),
   };
 }
 

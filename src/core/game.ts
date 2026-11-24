@@ -63,7 +63,7 @@ import { REP, applyOutcome, battleOutcome, blueprintDiscount, emptyReputation, h
 import type { BattleMark, BattleResult } from '../naval/naval';
 import { createRaidContext } from '../raid/raidSession';
 import { newRaidInstanceId, type RaidEnd, type RaidView } from '../raid/raidDirector';
-import { ESCORT_MAX, MARINE_RAID_PENALTY, MERCENARY_ESCORT_PRICE, mercenarySlots, ownEscortsForRank, raidAccess } from '../raid/raidRules';
+import { ESCORT_MAX, MARINE_RAID_PENALTY, MERCENARY_ESCORT_PRICE, mercenarySlots, raidAccess } from '../raid/raidRules';
 import { RaidPanel } from '../ui/raidPanel';
 import { OccupationBanner } from '../ui/occupationBanner';
 import { OccupationSystem } from './occupationSystem';
@@ -80,7 +80,11 @@ import { WorldMapScreen } from '../ui/worldMap';
 import { CREW_BY_ID } from '../data/crew';
 import { officerSlots, troopCapacity, TROOP_RANK } from '../data/crewTiers';
 import { addTroops, cleanRoster, clampRoster, COMMANDS, rosterTotal, scaleRoster, TROOPS, type CommandState, type TroopRoster, type TroopType } from '../data/troops';
-import { COMMAND_ACTIONS, commandOnKey, type ActionId } from '../data/actions';
+import { COMMAND_ACTIONS, PAD_CHORD_LABEL, commandOnKey, type ActionId } from '../data/actions';
+import {
+  FLEET_ORDERS, FLEET_ORDER_ACTIONS, FLEET_UNLOCK_RANKS, TOWED_HP, activateShip, activeCount, activeShips, assignShip, assignableClasses, dockShip, emptyFleet, fleetShip, fleetShipUpkeep, fleetSlots,
+  fleetUpkeepDaily, fleetUpkeepList, hasFreeSlot, releaseShip, towShip, fleetIdOf, type FleetCtx, type FleetOrder, type FleetShipRecord, type FleetState,
+} from '../data/playerFleet';
 import { activeParty, ensureCrewState, savedPools } from './crewRoster';
 import { rollTrinket, TRINKET_BY_ID } from '../data/trinkets';
 import { RARITIES, RARITY, type Rarity } from '../data/rarity';
@@ -89,7 +93,7 @@ import { CAT_LABEL, EQUIP_BY_ID, GEAR_CATS, catOf, type GearCat } from '../data/
 import { clearOld, ensureLoot, grantLoot, lootDef, rollGearByTier, rollLootGear, setLine, wearLoot, wornLoot } from './gearBag';
 import { ACHIEVEMENTS } from '../data/achievements';
 import { ABYSS_LAIR } from '../naval/seaBoss';
-import { crewFrac, crewPricePerHead, missingHeads, needsRepair, poolHeads, REPAIR_MATERIALS, shipTooltip, type ShipSimState } from '../naval/shipSim';
+import { crewFrac, crewPricePerHead, missingHeads, needsRepair, poolHeads, REPAIR_MATERIALS, SAIL_HP_PER_HULL, shipTooltip, type ShipSimState } from '../naval/shipSim';
 import { fmtInt } from './format';
 import { wrapAngle } from './mathUtil';
 import type { RepairMaterial } from '../sim/intents';
@@ -257,6 +261,7 @@ export class Game {
     });
     this.world.onMessage = (m) => this.hud.toast(m);
     this.world.onModeChange = (m) => this.onModeChange(m);
+    this.world.onFleetLost = (id) => this.onFleetLost(id);
     this.world.onKill = (e) => this.onKill(e);
     this.world.onGold = (n) => { if (this.save) this.save.player.gold += Math.round(n * this.goldMult()); };
     this.world.onCrewLine = (who, text) => this.hud.toast(`${who.name}: „${text}“`, 4);
@@ -375,6 +380,7 @@ export class Game {
     this.world.ammoOk = (id) => this.eco().ammo.includes(id);
     this.world.ammoLockText = (id) => { const v = this.ammoView(id); return v.gate || `${AMMO[id].n} ist noch nicht freigeschaltet: beim Munitionsmeister in der Werft (${v.price} Gold).`; };
     this.hud.onAmmo = (id) => this.world.selectAmmo(id);
+    this.hud.onFleetOrder = (o) => this.setFleetOrder(o);
     this.hud.onPause = () => this.pause();
     this.hud.onFaji = () => this.openSkills();
     this.hud.onCommand = (c) => this.orderTroops(c);
@@ -487,6 +493,8 @@ export class Game {
         if (cmdKeys && commandOnKey(binds, a)) continue;
         this.useItem(this.save?.gear.bar?.[i] ?? null);
       }
+      // Flottenbefehle auf See (5 / 6 / 7, Gamepad R3 + Kreuz): nur mit mindestens einem aktiven Begleitschiff
+      if (this.world.mode === 'sail' && this.save && activeCount(this.fleet()) > 0) for (const o of FLEET_ORDERS) if (this.input.pressed(FLEET_ORDER_ACTIONS[o.id])) this.setFleetOrder(o.id);
       this.tickItems(dt);
       this.legendT -= dt;
       if (this.legendT <= 0) { this.legendT = 1; this.updateLegends(); this.checkAchievements(); }
@@ -581,6 +589,7 @@ export class Game {
           const keys = COMMANDS.map((c) => this.input.keyLabel(b[COMMAND_ACTIONS[c.id]][0] ?? ''));
           this.hud.setCrewLine(show ? { officers: ch.officers, slots, troops: ch.troops, troopMax: ch.troopMax, cmds: ch.commands ? keys : null, active: ch.command } : null);
         }
+        this.updateFleetHud(sailing);
         const fj = this.world.faji;
         this.hud.setFaji(fj ? fj.faji / fj.maxFaji : 1, this.save.skills.sp, fj?.faji, fj?.maxFaji);
         if (fj) {
@@ -1579,7 +1588,7 @@ export class Game {
   raidBriefing(def: IslandDef) {
     const s = this.save;
     if (!s) return null;
-    const own = ownEscortsForRank(this.playerRank);
+    const own = Math.min(ESCORT_MAX, activeCount(this.fleet()));
     return {
       access: raidAccess(def.factionId ?? 'marine', { marineStanding: s.progress.standing?.marine ?? 0, occupied: this.occupation.occupied(def.id) }),
       conquests: this.occupation.conquests(def.id),
@@ -2504,12 +2513,16 @@ export class Game {
       }
       hull = 1;
     }
+    // Ein Schiff der Flotte, das Flaggschiff wird, verlässt die Flotte (jede Klasse fährt nur einmal) und bringt seinen Zustand mit
+    const fl = this.fleet(), rec = fleetShip(fl, fleetIdOf(tier));
+    if (rec) { hull = Math.max(0.05, rec.hp); releaseShip(fl, rec.fleetShipId); }
     s.ship.hull = hull;
     s.ship.tier = tier;
     this.world.setShip(tier, s.ship.look, s.ship.ammo, s.ship.hull, s.player.faction);
     this.applyPower();
+    this.syncFleet();
     this.persist();
-    return `${cls.n} bereit zum Auslaufen!${tradeMsg}`;
+    return `${cls.n} bereit zum Auslaufen!${tradeMsg}${rec ? ' Sie verlässt die Flotte.' : ''}`;
   }
 
   shipyardLook(look: ShipLook) {
@@ -2597,6 +2610,162 @@ export class Game {
     return false;
   }
 
+  // ---------- Flotte: Begleitschiffe (data/playerFleet.ts) ----------
+
+  /** Die Flotte im Spielstand (fehlt in alten Ständen: wird angelegt) */
+  fleet(): FleetState {
+    const s = this.save!;
+    return (s.fleet ??= emptyFleet());
+  }
+
+  /** Freie Begleitschiff-Plätze nach Rang (0 … 3) */
+  get fleetSlotCount() { return fleetSlots(this.playerRank); }
+
+  private fleetCtx(): FleetCtx {
+    const s = this.save!;
+    return { owned: s.ship.owned, flagship: s.ship.tier, evo: s.ship.evo, look: s.ship.look, slots: this.fleetSlotCount };
+  }
+
+  /** Aktive Flotte und Befehl an die Seewelt melden; `reset` entfernt vorher alle Flottenschiffe (anderer Spielstand geladen) */
+  syncFleet(reset = false) {
+    if (!this.save) return;
+    const f = this.fleet();
+    this.world.naval?.setFleet(f.ships, f.order, reset);
+  }
+
+  /** Rumpf und Segel der ausgelaufenen Schiffe in die Einträge übernehmen (vor dem Speichern und vor jeder Anzeige) */
+  private syncFleetState() {
+    const f = this.save?.fleet, nav = this.world.naval;
+    if (!f || !nav) return;
+    for (const st of nav.fleetStatus()) {
+      const rec = fleetShip(f, st.id);
+      if (rec && rec.status === 'active' && st.alive) { rec.hp = Math.max(0.05, st.hp); rec.sailHp = st.sailHp; }
+    }
+  }
+
+  /** Ein Schiff der Flotte ist gesunken: die Besatzung rettet sich, das Wrack wird in den Hafen geschleppt (eingemottet, kaum Rumpf); ein Begleitschiff geht nie verloren */
+  private onFleetLost(id: string) {
+    const f = this.save?.fleet;
+    const rec = f ? fleetShip(f, id) : undefined;
+    if (!f || !rec) return;
+    towShip(f, id);
+    this.hud.toast(`Die ${SHIP_CLASSES[rec.shipClass].n} ist gesunken – die Besatzung wurde gerettet, das Wrack wird in den Hafen geschleppt (Rumpf ${Math.round(TOWED_HP * 100)} %).`, 6);
+    this.syncFleet();
+    this.persist();
+  }
+
+  /** Flottenbefehl geben (Tasten, Knöpfe der Tafel); meldet ihn kurz an */
+  setFleetOrder(order: FleetOrder, announce = true) {
+    if (!this.save) return;
+    const f = this.fleet();
+    if (f.order === order) { if (announce) this.hud.toast(`Flotte: ${FLEET_ORDERS.find((o) => o.id === order)!.label} (gilt schon)`, 1.6); return; }
+    f.order = order;
+    this.syncFleet();
+    if (announce) { audio.play('ui'); this.hud.toast(`Flotte: ${FLEET_ORDERS.find((o) => o.id === order)!.label}`, 2.4); }
+  }
+
+  /** Ein besessenes Schiff in die Flotte einsetzen (braucht einen freien Platz) */
+  fleetAssign(shipClass: number): string {
+    const s = this.save;
+    if (!s) return '';
+    const f = this.fleet();
+    const r = assignShip(f, shipClass, this.fleetCtx());
+    if (!r.ok) return r.reason;
+    this.syncFleet();
+    this.persist();
+    const rec = fleetShip(f, fleetIdOf(shipClass))!;
+    return `${SHIP_CLASSES[shipClass].n} fährt jetzt in deiner Flotte (Sold und Wartung ${fmtInt(Math.round(fleetShipUpkeep(rec).daily))} Gold am Tag).`;
+  }
+
+  fleetActivate(id: string): string {
+    if (!this.save) return '';
+    const r = activateShip(this.fleet(), id, this.fleetSlotCount);
+    if (!r.ok) return r.reason;
+    this.syncFleet();
+    this.persist();
+    return 'Das Schiff läuft wieder aus.';
+  }
+
+  fleetDock(id: string): string {
+    if (!this.save) return '';
+    this.syncFleetState();
+    const r = dockShip(this.fleet(), id);
+    if (!r.ok) return r.reason;
+    this.syncFleet();
+    this.persist();
+    return 'Eingemottet: das Schiff liegt im Hafen und kostet keinen Sold.';
+  }
+
+  fleetRelease(id: string): string {
+    if (!this.save) return '';
+    this.syncFleetState();
+    const r = releaseShip(this.fleet(), id);
+    if (!r.ok) return r.reason;
+    this.syncFleet();
+    this.persist();
+    return 'Aus der Flotte genommen (das Schiff bleibt in deinem Besitz).';
+  }
+
+  /** Werft-Preis, ein Begleitschiff voll zu reparieren (Rumpf und Segel, wie beim Flaggschiff) */
+  fleetRepairCost(rec: FleetShipRecord): number {
+    const c = SHIP_CLASSES[rec.shipClass], st = evoStats(rec.evo);
+    return yardRepairCost({ L: c.L, W: c.W, hullMax: c.hp * st.hullHpK, hullFrac: rec.hp, sailMax: Math.round(c.hp * SAIL_HP_PER_HULL * st.sailHpK), sailFrac: rec.sailHp, tariff: this.yardK() });
+  }
+
+  fleetRepair(id: string): string {
+    const s = this.save;
+    if (!s) return '';
+    this.syncFleetState();
+    const rec = fleetShip(this.fleet(), id);
+    if (!rec) return 'Dieses Schiff gehört nicht zur Flotte.';
+    const cost = this.fleetRepairCost(rec);
+    if (cost <= 0) return 'Das Schiff ist in bestem Zustand.';
+    if (s.player.gold < cost) return `Reparatur kostet ${fmtInt(cost)} Gold.`;
+    s.player.gold -= cost;
+    rec.hp = 1; rec.sailHp = 1;
+    this.world.naval?.fleetShipOf(id)?.repair(1);
+    this.persist();
+    return `${SHIP_CLASSES[rec.shipClass].n} repariert (${fmtInt(cost)} Gold).`;
+  }
+
+  /** Alles, was die Flotten-Ansicht der Werft und des Hafens zeigt */
+  fleetView() {
+    const s = this.save!;
+    this.syncFleetState();
+    const f = this.fleet(), slots = this.fleetSlotCount, faction = s.player.faction;
+    const row = (shipClass: number, rec: FleetShipRecord | null) => {
+      const evo = rec?.evo ?? evolutionOf(s.ship, shipClass);
+      return {
+        id: fleetIdOf(shipClass), shipClass, name: SHIP_CLASSES[shipClass].n, status: (rec ? rec.status : 'free') as 'free' | 'active' | 'docked',
+        evo, evoTotal: shipEvolutionTier(evo), hp: rec?.hp ?? 1, sailHp: rec?.sailHp ?? 1,
+        upkeep: fleetShipUpkeep({ shipClass, evo }), repairCost: rec ? this.fleetRepairCost(rec) : 0,
+      };
+    };
+    const rows = [...f.ships.map((r) => row(r.shipClass, r)), ...assignableClasses(s.ship.owned, s.ship.tier, f).map((c) => row(c, null))];
+    const total = this.upkeepView().daily;
+    const fleetDaily = fleetUpkeepDaily(f);
+    return {
+      slots, used: activeCount(f), free: hasFreeSlot(f, slots), order: f.order, rows, fleetDaily, totalDaily: total, baseDaily: total - fleetDaily, gold: s.player.gold,
+      unlocks: FLEET_UNLOCK_RANKS.map((r, i) => ({ slot: i + 1, rank: r, rankName: rankName(faction, FAME_THRESHOLDS[r]), open: i < slots })),
+      flagship: SHIP_CLASSES[s.ship.tier].n,
+    };
+  }
+
+  /** Tafel der Flottenbefehle über der Schnellleiste: Schiffe mit Rumpfbalken, aktiver Befehl, Tasten (Tastatur oder Gamepad-Kombination); nur auf See und mit aktiven Schiffen */
+  private updateFleetHud(sailing: boolean) {
+    const f = this.save?.fleet;
+    const act = f ? activeShips(f) : [];
+    if (!sailing || !f || act.length === 0) { this.hud.setFleet(null); return; }
+    const pad = this.input.lastDevice === 'gamepad';
+    const b = this.input.getKeyBindings();
+    const keys = FLEET_ORDERS.map((o) => { const a = FLEET_ORDER_ACTIONS[o.id]; return pad ? PAD_CHORD_LABEL[a] ?? '' : this.input.keyLabel(b[a][0] ?? ''); });
+    const live = this.world.naval?.fleetStatus() ?? [];
+    this.hud.setFleet({
+      ships: act.map((r) => { const st = live.find((x) => x.id === r.fleetShipId); return { name: SHIP_CLASSES[r.shipClass].n, hull: st ? st.hp : r.hp, alive: st ? st.alive : true }; }),
+      order: f.order, keys, anchored: !!this.world.naval?.fleetAnchored,
+    });
+  }
+
   // ---------- Ökonomie: Unterhalt, Handel, Kontor ----------
 
   /** Der Wirtschaftszustand im Spielstand (fehlt in alten Ständen: wird angelegt) */
@@ -2609,7 +2778,7 @@ export class Game {
   upkeepInput() {
     const s = this.save!;
     const crew = this.world.ship.sim.crew;
-    return { tier: s.ship.tier, seamen: poolHeads(crew, 'matrosen'), troops: poolHeads(crew, 'truppen'), officers: s.crew.hired.length, evoTier: shipEvolutionTier(evolutionOf(s.ship, s.ship.tier)) };
+    return { tier: s.ship.tier, seamen: poolHeads(crew, 'matrosen'), troops: poolHeads(crew, 'truppen'), officers: s.crew.hired.length, evoTier: shipEvolutionTier(evolutionOf(s.ship, s.ship.tier)), fleet: fleetUpkeepList(this.fleet()) };
   }
 
   /** Sold und Proviant: Aufstellung für Kontor und HUD */
@@ -3167,6 +3336,7 @@ export class Game {
     this.occupation.sync();
     this.after(() => this.startAutoChapters(), 2500);
     this.applyPower();
+    this.syncFleet(true);
     this.world.healPlayer();
     this.hud.setPlayer(p.name, `${FACTION_LABELS[p.faction]} · ${rankName(p.faction, p.fame)} · Stufe ${p.level}`);
     this.refreshWeaponHud();
@@ -3219,6 +3389,7 @@ export class Game {
   persist(): boolean {
     this.autosaveTimer = 0;
     if (!this.save || this.slot === null) return true;
+    this.syncFleetState();
     const ws = this.world.getState();
     this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather };
     const sh = this.world.ship;

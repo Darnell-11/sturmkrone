@@ -315,8 +315,9 @@
 @keyframes ctx-pulse { 50% { transform: scale(1.04); } }
 
 /* Befehlstafel der Truppen: [1] Sturmangriff · [2] Folgen · [3] Position halten */
-.hud-cmds { display: flex; align-items: stretch; gap: 0.3em; padding: 0.3em; }
-.hud-cmds .cmd {
+.hud-cmds, .hud-fleet { display: flex; align-items: stretch; gap: 0.3em; padding: 0.3em; }
+.hud-fleet { flex-wrap: wrap; justify-content: center; }
+.hud-cmds .cmd, .hud-fleet .cmd {
   display: flex; align-items: center; gap: 0.5em;
   padding: 0.28em 0.8em 0.28em 0.38em;
   border: 1px solid var(--glass-edge-soft); border-radius: var(--r-sm);
@@ -324,11 +325,17 @@
   font: 700 0.86em var(--font-text); letter-spacing: 0.03em; color: var(--ink-dim);
   transition: background var(--t-med), color var(--t-med), border-color var(--t-med);
 }
-.hud-cmds .cmd kbd { margin: 0; min-width: 1.7em; }
-.hud-cmds .cmd.on { color: var(--ink-engrave); background: var(--brass-plate); border-color: var(--brass-600); text-shadow: 0 1px 0 rgba(255, 238, 190, 0.5); box-shadow: var(--bevel-brass); }
-.hud-cmds .cmd.on kbd { background: linear-gradient(180deg, #3a2412, #1b0f08); }
-.hud-cmds .cmd-label { padding: 0 0.5em 0 0.3em; align-self: center; font: 700 0.62em var(--font-num); letter-spacing: 0.16em; text-transform: uppercase; color: var(--brass-300); }
-@media (max-width: 520px) { .hud-cmds .cmd { padding-right: 0.5em; } .hud-cmds .cmd-label { display: none; } }
+.hud-cmds .cmd kbd, .hud-fleet .cmd kbd { margin: 0; min-width: 1.7em; }
+.hud-fleet .cmd.on, .hud-cmds .cmd.on { color: var(--ink-engrave); background: var(--brass-plate); border-color: var(--brass-600); text-shadow: 0 1px 0 rgba(255, 238, 190, 0.5); box-shadow: var(--bevel-brass); }
+.hud-cmds .cmd.on kbd, .hud-fleet .cmd.on kbd { background: linear-gradient(180deg, #3a2412, #1b0f08); }
+/* Flottentafel: Rumpfbalken je Begleitschiff vor den drei Befehlen (Formation · Feuer frei · Sammeln) */
+.hud-fleet .fleet-ships { display: inline-flex; flex-direction: column; justify-content: center; gap: 0.22em; padding: 0 0.4em 0 0.1em; }
+.hud-fleet .fs { position: relative; display: block; width: 2.6em; height: 0.42em; border-radius: 0.2em; background: rgba(0, 0, 0, 0.5); border: 1px solid var(--glass-edge-soft); overflow: hidden; }
+.hud-fleet .fs b { position: absolute; inset: 0 auto 0 0; width: calc(var(--f, 1) * 100%); background: var(--ok); transition: width var(--t-med); }
+.hud-fleet .fs.low b { background: var(--warn); }
+.hud-fleet .fs.dead b { width: 0; }
+.hud-cmds .cmd-label, .hud-fleet .cmd-label { padding: 0 0.5em 0 0.3em; align-self: center; font: 700 0.62em var(--font-num); letter-spacing: 0.16em; text-transform: uppercase; color: var(--brass-300); }
+@media (max-width: 520px) { .hud-cmds .cmd, .hud-fleet .cmd { padding-right: 0.5em; } .hud-cmds .cmd-label, .hud-fleet .cmd-label { display: none; } }
 
 /* Fähigkeitsleiste (nur ohne Touch) */
 .skillbar { display: flex; gap: 0.5em; }

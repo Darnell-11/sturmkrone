@@ -149,6 +149,8 @@ export class SeaWorld {
 
   onMessage: (text: string) => void = () => {};
   onModeChange: (mode: SeaMode) => void = () => {};
+  /** Ein Schiff der Spieler-Flotte ist gesunken (Kennung aus dem Spielstand): das Spiel schleppt es in den Hafen */
+  onFleetLost: (fleetShipId: string) => void = () => {};
   onKill: (e: Enemy) => void = () => {};
   onGold: (n: number) => void = () => {};
   onPlayerDown: () => void = () => {};
@@ -808,6 +810,7 @@ export class SeaWorld {
         message: (t) => this.onMessage(t),
         sunk: (e) => this.onShipSunk(e),
         loot: (g, shard) => this.onLoot(g, shard),
+        fleetLost: (id) => this.onFleetLost(id),
         battleStart: (m, w) => this.onBattleStart(m, w),
         battleEnd: (r) => this.onBattleEnd(r),
       });
@@ -1544,6 +1547,8 @@ export class SeaWorld {
     }
     this.shake = Math.max(0, this.shake - dt * 1.8);
     this.updateWake(dt);
+    // Flotte: liegt das Flaggschiff am Steg oder vor der Küste (Bordleiter) oder ist der Spieler von Bord, ankern die Begleitschiffe auf Abstand
+    if (this.naval) this.naval.fleetAnchored = this.mode !== 'sail' || !!this.ship.moored || !!this.docking.ladderId;
     this.naval?.update(dt, this.mode === 'sail' && this.cinematic <= 0);
     this.raid?.update(dt);
     this.updateGarrisons(dt);

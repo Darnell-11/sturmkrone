@@ -112,6 +112,15 @@ export function ramImpulse(c: RamContact, massA: number, massB: number): RamImpu
   };
 }
 
+/**
+ * KI gegen KI (Seeschlacht): darf dieses Schiff sein Kampfziel rammen? Nur im Rammangriff (`RAM_CHARGE`), mit Rammsporn (Rumpf-Stufe ≥ 4), selbst nicht
+ * kampfunfähig und gegen ein Ziel, das noch kämpft. Der Stoß selbst (Schaden an beiden Rümpfen, Abprall, Tempoverlust) läuft wie beim Spieler durch
+ * `ramContact`/`ramDamage`/`ramImpulse`: auch der Rammer bekommt den Gegenstoß ab.
+ */
+export function aiMayRam(a: { aiState?: string; hullTier: number; disabled: boolean }, b: { disabled: boolean }): boolean {
+  return a.aiState === 'RAM_CHARGE' && a.hullTier >= RAM_MIN_TIER && !a.disabled && !b.disabled;
+}
+
 /** Tempo nach dem Stoß: der Rammer verliert viel Fahrt, das Ziel etwas */
 export const ramSlow = (ram: boolean) => ({ rammer: RAM.rammerSlow, target: RAM.targetSlow, ram });
 

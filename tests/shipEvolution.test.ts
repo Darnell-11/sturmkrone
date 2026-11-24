@@ -428,7 +428,7 @@ describe('KI-Schiffe und Spielstand 17', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.data.version).toBe(SAVE_VERSION);
-    expect(SAVE_VERSION).toBe(17);
+    expect(SAVE_VERSION).toBeGreaterThanOrEqual(17);
     expect(r.migratedFrom).toBe(16);
     expect((r.data.ship as unknown as { up?: unknown }).up).toBeUndefined();
     for (const c of ['0', '1', '2']) expect(r.data.ship.evo[c], `Klasse ${c}`).toEqual({ hullTier: 5, sailTier: 5, cannonTier: 4 });

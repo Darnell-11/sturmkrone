@@ -37,8 +37,6 @@ export function mercenarySlots(ownEscorts: number, hired: number): number {
   return Math.max(0, ESCORT_MAX - Math.max(0, ownEscorts) - Math.max(0, hired));
 }
 
-/** Eigene Begleitschiffe nach Rang (wie `NavalSystem.ensureCompanions`: ab Rang 5 eins, ab Rang 8 zwei) */
-export const ownEscortsForRank = (rank: number) => (rank >= 8 ? 2 : rank >= 5 ? 1 : 0);
 
 export interface RaidReward { gold: number; xp: number; fame: number }
 

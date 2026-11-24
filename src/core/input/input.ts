@@ -1,4 +1,4 @@
-import { ACTION_IDS, DEFAULT_KEYS, DEFAULT_PAD, type ActionId } from '../../data/actions';
+import { ACTION_IDS, DEFAULT_KEYS, padActionDown, type ActionId } from '../../data/actions';
 
 export type InputDevice = 'keyboard' | 'touch' | 'gamepad';
 
@@ -224,10 +224,10 @@ export class Input {
         for (const l of this.padButtonListeners) l(i);
       }
     }
+    // Kombinationen (Flottenbefehle): Haltetaste + Kreuz; solange die Haltetaste gehalten wird, zählen die Kreuz-Tasten nicht einzeln (`padActionDown`)
     for (const a of ACTION_IDS) {
-      const idx = DEFAULT_PAD[a];
-      const now = idx.some((i) => buttons[i]);
-      const before = idx.some((i) => this.padPrev[i]);
+      const now = padActionDown(a, buttons);
+      const before = padActionDown(a, this.padPrev);
       if (now && !before) this.press(a);
       if (now) this.padHeld.add(a); else this.padHeld.delete(a);
     }
