@@ -17,7 +17,9 @@ import { CombatOverlay } from '../ui/combatOverlay';
 import { BRANCHES, branchPoints, learnBlock, SK, type Branch } from '../data/skills';
 import { SkillTree } from '../ui/skillTree';
 import { AMMO, SAIL_LEVELS, SHIP_CLASSES, type AmmoId, type ShipLook } from '../data/ships';
-import { BRANCH_FIELD, EVO_MAX, applyShipPurchase, evoCost, evoEffectText, evoMaterial, evoStats, evoValue, evolutionOf, shipEvolutionTier, tierOf, tradeInRefund, type EvoBranch, type ShipEvolution } from '../data/shipEvolution';
+import { BRANCH_FIELD, EVO_MAX, applyShipPurchase, evoCost, evoEffectText, evoMaterial, evoStats, evoValue, evolutionOf, newShipEvolution, shipEvolutionTier, tierOf, tradeInRefund, type EvoBranch, type ShipEvolution } from '../data/shipEvolution';
+import { classCompareRows, evoCompareRows, evoPlan, withTier, type CompareRow, type YardInfo, type YardPick } from '../data/yardPreview';
+import type { YardView } from '../world/seaWorld';
 import { FAME_THRESHOLDS } from '../data/ranks';
 import { SkillStage } from '../world/skillStage';
 import { detectWebGpu, AutoQuality, benchmarkGpu, detectTier, gatherDeviceInfo, needsBench, type DeviceInfo, type Detected } from '../render/quality';
@@ -2484,6 +2486,7 @@ export class Game {
   shipyardSelect(tier: number): string {
     const s = this.save;
     if (!s) return '';
+    this.world.clearShipPreview();
     const cls = SHIP_CLASSES[tier];
     // Wechsel zwischen eigenen Schiffen repariert nicht umsonst: der Zustand bleibt, nur ein neu gekauftes Schiff ist heil
     let hull = Math.max(0.05, this.world.ship.hull / Math.max(1, this.world.ship.maxHull));
@@ -2512,6 +2515,7 @@ export class Game {
   shipyardLook(look: ShipLook) {
     const s = this.save;
     if (!s) return;
+    this.world.clearShipPreview();
     s.ship.look = look;
     this.world.setShip(s.ship.tier, look, s.ship.ammo, this.world.ship.hull / this.world.ship.maxHull, s.player.faction);
     this.persist();
@@ -2774,11 +2778,11 @@ export class Game {
   }
 
   /** Tor für den nächsten Ausbau: Stufe 2 frei, 3 braucht Rang und Ansehen, 4 Rang 7 und „Verbündet“, 5 Rang 9 und Boss-Siegel; ab Stufe 3 dazu das Material im Frachtraum (leer = erlaubt) */
-  evoGate(branch: EvoBranch): string {
+  evoGate(branch: EvoBranch, nextOverride?: number): string {
     const s = this.save;
     if (!s) return '';
     const evo = this.evolution();
-    const next = tierOf(evo, branch) + 1;
+    const next = nextOverride ?? tierOf(evo, branch) + 1;
     if (next > EVO_MAX) return 'Höchste Stufe erreicht.';
     const rank = rankIndex(s.player.fame);
     if (next === 3) { const g = this.gateText(3); if (g) return g; }
@@ -2804,6 +2808,7 @@ export class Game {
   evoUpgrade(branch: EvoBranch): string {
     const s = this.save;
     if (!s) return '';
+    this.world.clearShipPreview();
     const evo = this.evolution();
     const tier = tierOf(evo, branch);
     if (tier >= EVO_MAX) return '';
@@ -2829,6 +2834,74 @@ export class Game {
     if (!s) return { refund: 0, value: 0 };
     const evo = this.evolution();
     return { refund: tradeInRefund(s.ship.tier, evo), value: evoValue(s.ship.tier, evo) };
+  }
+
+
+  // ---------- Werft-Vorschau (Phase 4.2C): das Schiff vor dem Kauf in der 3D-Szene ----------
+
+  beginYard() { this.world.beginYard(); }
+  endYard() { this.world.endYard(); }
+  get yardView(): YardView { return this.world.yardView; }
+  setYardView(v: YardView) { this.world.setYardView(v); }
+
+  /**
+   * Zeigt in der 3D-Szene, was die Wahl bewirkt: eine Stufe eines Zweigs des gefahrenen Schiffs oder eine andere Klasse (neu gekauft: Stufe 1 in allen Zweigen,
+   * im Besitz: ihr eigener Zustand). `null` zeigt wieder das eigene Schiff. Verändert nie den Spielstand; vor jeder echten Änderung wird die Vorschau abgebaut.
+   */
+  previewEvo(pick: YardPick | null) {
+    const s = this.save;
+    if (!s) return;
+    if (!pick) { this.world.clearShipPreview(); return; }
+    if (pick.kind === 'cls') {
+      this.world.previewShip(pick.index, s.ship.owned.includes(pick.index) ? evolutionOf(s.ship, pick.index) : newShipEvolution());
+      return;
+    }
+    this.world.previewShip(s.ship.tier, withTier(this.evolution(), pick.branch, pick.tier));
+  }
+
+  /** Sold pro Tag für diese Klasse und diese Ausbauten (Mannschaft und Offiziere wie jetzt) */
+  private dailyPay(classIndex: number, evo: ShipEvolution): number {
+    return upkeepOf({ ...this.upkeepInput(), tier: classIndex, evoTier: shipEvolutionTier(evo) }).daily;
+  }
+  private payRow(a: number, b: number): CompareRow {
+    return { label: 'Täglicher Sold', from: fmtInt(Math.round(a)), to: fmtInt(Math.round(b)), better: Math.round(a) === Math.round(b) ? 0 : b < a ? 1 : -1 };
+  }
+
+  /** Vorher → Nachher, Kosten und offene Voraussetzungen, um einen Zweig des gefahrenen Schiffs auf Stufe `tier` zu bringen (alle Stufen dazwischen eingerechnet) */
+  evoPreviewInfo(branch: EvoBranch, tier: number): YardInfo {
+    const s = this.save!, ci = s.ship.tier, now = this.evolution();
+    const cur = tierOf(now, branch), to = withTier(now, branch, tier);
+    const rows = [...evoCompareRows(ci, branch, now, to), this.payRow(this.dailyPay(ci, now), this.dailyPay(ci, to))];
+    const plan = evoPlan(branch, ci, cur, tier), k = this.yardK();
+    const gold = Math.round(plan.gold * k);
+    const cargo = this.eco().cargo;
+    const purse = this.sealPurse();
+    const gates: string[] = [];
+    for (const step of plan.steps) {
+      const g = this.evoGate(branch, step);
+      if (g && !g.startsWith('Material fehlt') && !gates.includes(g)) gates.push(g);
+    }
+    return {
+      rows, gold, goldOk: s.player.gold >= gold,
+      materials: plan.materials.map((m) => ({ name: GOOD_BY_ID[m.good].n, n: m.n, have: cargo[m.good]?.n ?? 0 })),
+      seals: plan.seals, shards: plan.shards, sealsHave: sealTotal(purse), shardsHave: purse.shards,
+      gates, refund: 0,
+    };
+  }
+
+  /** Vorher → Nachher, Preis, Rang-Tor und Inzahlungnahme beim Wechsel auf eine andere Klasse */
+  classPreviewInfo(index: number): YardInfo {
+    const s = this.save!, ci = s.ship.tier, now = this.evolution(), c = SHIP_CLASSES[index];
+    const owned = s.ship.owned.includes(index);
+    const toEvo = owned ? evolutionOf(s.ship, index) : newShipEvolution();
+    const rows = [...classCompareRows(ci, now, index, toEvo), this.payRow(this.dailyPay(ci, now), this.dailyPay(index, toEvo))];
+    const gates: string[] = [];
+    if (!owned && rankIndex(s.player.fame) < c.rank) gates.push(`Rang „${rankName(s.player.faction, FAME_THRESHOLDS[c.rank])}“ nötig.`);
+    const price = owned ? 0 : c.price;
+    return {
+      rows, gold: price, goldOk: s.player.gold + (owned ? 0 : this.tradeInPreview().refund) >= price, materials: [],
+      seals: 0, shards: 0, sealsHave: 0, shardsHave: 0, gates, refund: owned || index === ci ? 0 : this.tradeInPreview().refund,
+    };
   }
 
   shipyardRepair(): string {

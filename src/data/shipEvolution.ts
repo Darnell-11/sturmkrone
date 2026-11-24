@@ -147,3 +147,37 @@ export function applyShipPurchase(ship: { tier: number; owned: number[]; evo?: R
   ship.evo[String(newTier)] = newShipEvolution();
   return { refund };
 }
+
+// ---------- KI-Flotten (Phase 4.2C) ----------
+
+/**
+ * Art eines KI-Schiffs für seine Ausbaustufen: Rookie-Piraten, Küstenpatrouillen und kleine Händler fahren geflickte Einstiegsschiffe (Stufe 1 – 2),
+ * Sektor-Kriegsschiffe, Konvoi-Eskorten und Grenz-Ereignisse (Seeschlachten, Geisterschiffe) Stufe 3 – 4, Raid-Verteidigungsflotten und
+ * Elite-Flaggschiffe (Legenden) Stufe 5: voll gepanzerte Prunkschiffe mit Rammsporn und Deck-Drehbassen.
+ */
+export type AiShipKind = 'rookie' | 'haendler' | 'patrouille' | 'jaeger' | 'eskorte' | 'grenze' | 'raid' | 'flaggschiff';
+
+const clampBand = (n: number, lo: number, hi: number): EvoTier => clampEvo(Math.max(lo, Math.min(hi, n)));
+
+/**
+ * Deterministische Ausbaustufen eines KI-Schiffs aus Art und Gefahrenstufe des Meeres (`DANGER` 1 … 5, `dangerOfLevel`). Jede Art hat ein festes
+ * Band; innerhalb des Bandes wächst die Stufe mit der Gefahr, und jede Art betont einen Zweig (Jäger Kanonen, Patrouille Rumpf, Händler Segel,
+ * Grenz-Ereignisse Rumpf), ohne das Band zu verlassen. Gleiche Eingabe, gleiches Schiff (kein Zufall).
+ */
+export function aiEvolution(kind: AiShipKind, danger: number): ShipEvolution {
+  const d = Number.isFinite(danger) ? Math.max(1, Math.min(5, Math.round(danger))) : 1;
+  switch (kind) {
+    case 'rookie': return { hullTier: 1, sailTier: 1, cannonTier: 1 };
+    case 'haendler': { const b = d >= 4 ? 2 : 1; return { hullTier: clampBand(b, 1, 2), sailTier: clampBand(b + 1, 1, 2), cannonTier: 1 }; }
+    case 'patrouille': case 'jaeger': {
+      // Küste und Anfängergewässer (Gefahr 1 – 2): Band 1 – 2; weiter draußen Sektor-Kriegsschiffe: Band 3 – 4
+      const lo = d <= 2 ? 1 : 3, hi = d <= 2 ? 2 : 4, base = d <= 2 ? d : d >= 4 ? 4 : 3;
+      return kind === 'jaeger'
+        ? { hullTier: clampBand(base, lo, hi), sailTier: clampBand(base, lo, hi), cannonTier: clampBand(base + 1, lo, hi) }
+        : { hullTier: clampBand(base + 1, lo, hi), sailTier: clampBand(base, lo, hi), cannonTier: clampBand(base, lo, hi) };
+    }
+    case 'eskorte': { const b = d >= 4 ? 4 : 3; return { hullTier: clampBand(b, 3, 4), sailTier: clampBand(b - 1, 3, 4), cannonTier: clampBand(b, 3, 4) }; }
+    case 'grenze': { const b = d >= 4 ? 4 : 3; return { hullTier: clampBand(b + 1, 3, 4), sailTier: clampBand(b, 3, 4), cannonTier: clampBand(b, 3, 4) }; }
+    case 'raid': case 'flaggschiff': return { hullTier: 5, sailTier: 5, cannonTier: 5 };
+  }
+}

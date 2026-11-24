@@ -61,6 +61,8 @@ import type { Enemy } from '../entities/enemy';
 import { FajiController } from '../faji/fajiController';
 import type { SkillState } from '../core/save/types';
 import { Ship, type SeaEnv } from '../entities/ship/ship';
+import { visualKey } from '../data/shipVisuals';
+import type { ShipEvolution } from '../data/shipEvolution';
 import { AMMO, AMMO_IDS, DEFAULT_SHIP_LOOK, factionShipLook, SHIP_CLASSES, TITLE_SHIP, type AmmoId, type ShipLook } from '../data/ships';
 import { TitleDirector } from './titleDirector';
 import { NavalSystem, type BattleMark, type BattleResult, type EnemyShip } from '../naval/naval';
@@ -126,6 +128,9 @@ export interface SeaState { boat: { x: number; z: number; heading: number } | nu
  */
 /** Standbild bei wirksamen Treffern (Sekunden) */
 const HIT_STOP = 0.035;
+
+/** Kamerablick der Werft: Gesamtansicht, Bug und Rammsporn, Segel und Takelage, Breitseite und Kanonen */
+export type YardView = 'all' | 'bow' | 'sail' | 'gun';
 
 export class SeaWorld {
   readonly scene = new Scene();
@@ -2649,6 +2654,86 @@ export class SeaWorld {
 
   private fwd(h = this.heading) { return this.fwdTmp.set(Math.sin(h), 0, Math.cos(h)); }
 
+  // ---------- Werft-Vorschau und Werft-Kamera (Phase 4.2C) ----------
+
+  private yardOn = false;
+  private yardShip: Ship | null = null;
+  private yardHid: Ship | null = null;
+  private yardKey = '';
+  private yardViewId: YardView = 'all';
+  private yardPose = { th: 0.95, e: 0.2, r: 28, tx: 0, ty: 3, tz: 0, sx: 0, sy: 0, init: false };
+
+  get yardView(): YardView { return this.yardViewId; }
+  /** Ein Vorschau-Schiff steht gerade an der Stelle des eigenen? */
+  get yardPreviewing(): boolean { return !!this.yardShip; }
+
+  /** Die Werft ist offen: eigene Kamera (Gesamtansicht, Bug, Segel, Breitseite) und Platz für das Werftfenster; das Schiff steht im freien Teil des Bildes */
+  beginYard() { if (!this.yardOn) { this.yardOn = true; this.yardPose.init = false; } }
+
+  /** Werft geschlossen: Vorschau abbauen, echtes Schiff wieder zeigen, Kamera zurück zur Segelkamera */
+  endYard() {
+    this.clearShipPreview();
+    if (!this.yardOn) return;
+    this.yardOn = false;
+    this.camera.clearViewOffset();
+    this.camera.updateProjectionMatrix();
+    this.camSailInit = false;
+  }
+
+  setYardView(v: YardView) { this.yardViewId = v; }
+
+  /**
+   * Vorschau vor dem Kauf: ein zweites Schiff (Klasse und Ausbauten frei wählbar) steht an der Stelle des eigenen, das eigene wird solange unsichtbar
+   * (`Ship.setPreviewHidden`). Gleiche Vorschau noch einmal: nichts zu tun. `clearShipPreview` baut das Vorschau-Schiff vollständig ab.
+   */
+  previewShip(tier: number, evo: ShipEvolution) {
+    const s = this.ship, l = s.look;
+    const key = `${tier}|${visualKey(evo)}|${l.hull}|${l.sail}|${l.stripe}|${l.figurehead}|${l.flag}|${l.flagColor}|${l.power ?? ''}|${l.lanterns ? 1 : 0}`;
+    if (this.yardShip && this.yardKey === key) return;
+    this.yardShip?.dispose();
+    const ps = new Ship(this.scene, tier, { ...l }, this.playerFaction, 0, false, evo);
+    this.yardShip = ps;
+    this.yardKey = key;
+    if (this.yardHid !== s) { this.yardHid?.setPreviewHidden(false); s.setPreviewHidden(true); this.yardHid = s; }
+  }
+
+  clearShipPreview() {
+    if (this.yardShip) { this.yardShip.dispose(); this.yardShip = null; this.yardKey = ''; }
+    if (this.yardHid) { this.yardHid.setPreviewHidden(false); this.yardHid = null; }
+  }
+
+  /** Werft-Kamera: weicher Schwenk auf den gewählten Schiffsbereich (Maße aus Länge und Masthöhe der gezeigten Klasse), das Schiff weicht dem Werftfenster aus */
+  private yardCamera(cam: PerspectiveCamera, frameDt: number, x: number, wy: number, z: number, h: number) {
+    const c = (this.yardShip ?? this.ship).cls, L = c.L, mh = c.mh;
+    let th = 0.95, e = 0.2, r = 0.85 * L + 0.8 * mh, ty = 0.3 * mh, tz = 0;
+    switch (this.yardViewId) {
+      case 'bow': th = 0.7; e = 0.15; r = 0.36 * L + 6; ty = 2.4 + 0.05 * L; tz = 0.42 * L; break;
+      case 'sail': th = 1.25; e = 0.1; r = 0.5 * L + 0.95 * mh; ty = 0.5 * mh; break;
+      case 'gun': th = 1.5; e = 0.05; r = 0.52 * L + 6; ty = 1.2 + 0.1 * L; break;
+    }
+    const portrait = innerHeight > innerWidth;
+    r *= portrait ? 1.85 : 1.3;
+    // rechts (Querformat) bzw. unten (Hochformat) liegt das Werftfenster: das Bild wird so verschoben, dass das Schiff im freien Teil steht
+    const sx = portrait ? 0 : Math.min(0.2, 240 / Math.max(1, innerWidth)), sy = portrait ? 0.3 : 0;
+    const p = this.yardPose;
+    const k = p.init ? 1 - Math.exp(-Math.min(frameDt, 0.1) * 3.2) : 1;
+    p.th += (th - p.th) * k; p.e += (e - p.e) * k; p.r += (r - p.r) * k;
+    p.tx += (0 - p.tx) * k; p.ty += (ty - p.ty) * k; p.tz += (tz - p.tz) * k;
+    p.sx += (sx - p.sx) * k; p.sy += (sy - p.sy) * k;
+    p.init = true;
+    const ch = Math.cos(h), sh = Math.sin(h);
+    const T = this.tmp.set(x + p.tx * ch + p.tz * sh, wy + p.ty, z - p.tx * sh + p.tz * ch);
+    const psi = h + p.th + 0.06 * Math.sin(this.env.clock * 0.4);
+    const ce = Math.cos(p.e);
+    cam.position.set(T.x + Math.sin(psi) * ce * p.r, T.y + Math.sin(p.e) * p.r, T.z + Math.cos(psi) * ce * p.r);
+    const water = this.env.heightAt(cam.position.x, cam.position.z) + 1.2;
+    if (cam.position.y < water) cam.position.y = water;
+    cam.lookAt(T);
+    this.focus.copy(T);
+    const asp = cam.aspect;
+    cam.setViewOffset(1000 * asp, 1000, p.sx * 1000 * asp, p.sy * 1000, 1000 * asp, 1000);
+  }
+
   // ---------- Darstellung ----------
 
   render(alpha: number, frameDt: number, inMenu: boolean) {
@@ -2673,6 +2758,12 @@ export class SeaWorld {
     const wy = env.heightAt(x, z);
     const f = this.fwd(h);
     s.render(alpha, sea, night, frameDt);
+    if (this.yardShip) {
+      // Vorschau-Schiff folgt dem eigenen (gleicher Ort, gleiche See)
+      const ys = this.yardShip;
+      ys.x = ys.prev.x = s.x; ys.z = ys.prev.z = s.z; ys.heading = ys.prev.heading = s.heading; ys.course = s.course; ys.speed = 0;
+      ys.render(alpha, sea, night, frameDt);
+    }
     // Steuermann lehnt sich beim Drehen des Rades in die Kurve
     if (this.mode === 'sail' && this.player && this.boat === s.model.group) {
       this.player.holder.rotation.z = -s.steerAmount * 0.12;
@@ -2733,7 +2824,10 @@ export class SeaWorld {
     if (this.town) for (const l of this.town.lights) l.visible = night > 0.2;
 
     const cam = this.camera;
-    if (this.mode === 'foot' && this.foot && this.player && !inMenu) {
+    if (this.yardOn && !inMenu) {
+      this.camSailInit = false;
+      this.yardCamera(cam, frameDt, x, wy, z, h);
+    } else if (this.mode === 'foot' && this.foot && this.player && !inMenu) {
       this.camSailInit = false;
       // Segel aus der Draufsicht wieder undurchsichtig machen (zu Fuß an Land oder im Menü sieht man sonst durch sie hindurch)
       if (this.sailFaded && !this.ownDeck) this.setSailFade(this.ship, false);

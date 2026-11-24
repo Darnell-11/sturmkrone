@@ -9,7 +9,9 @@ import { EDGE_WALL, WEATHER, WEATHER_IDS, type WeatherId } from '../data/world';
 import { formatClock } from '../world/timeOfDay';
 import { FIGUREHEAD_DEFS, FIGUREHEAD_MODELS, figureheadModel } from '../data/figureheads';
 import { FLAGS, FLAG_DESC, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, STRIPE_COLORS, type ShipLook } from '../data/ships';
-import { BRANCH_LABEL, EVO_BRANCHES, EVO_MAX, shipEvolutionTier, type EvoBranch } from '../data/shipEvolution';
+import { BRANCH_LABEL, EVO_BRANCHES, EVO_MAX, evoEffectText, shipEvolutionTier, type EvoBranch } from '../data/shipEvolution';
+import { parsePick, pickId, samePick, type YardInfo, type YardPick } from '../data/yardPreview';
+import type { YardView } from '../world/seaWorld';
 import { EVO_UPKEEP_MAX } from '../data/balanceConfig';
 import { downloadText, esc, formatDate, formatPlayTime, pickFile } from './dom';
 import { gaugeHtml, goldLine, sliderHtml, tierBadge, toggleHtml } from './components';
@@ -62,6 +64,9 @@ import { OCCUPATION } from '../raid/occupation';
 
 type Handler = (id: string, el: HTMLElement) => void;
 
+/** Stufen der Werft als römische Ziffern (I … V) */
+const ROMAN = ['I', 'II', 'III', 'IV', 'V'];
+
 /** Alle Menübildschirme: Titel, Spielstände, Neues Spiel, Einstellungen, Pause. */
 const GPU_HINT = `<p class="warn">Dein Browser benutzt gerade <b>nicht deine Grafikkarte</b> – darum läuft das Spiel nur auf der niedrigsten Stufe. So schaltest du sie ein: <b>Chrome/Edge:</b> Einstellungen → System → „Grafikbeschleunigung verwenden, wenn verfügbar“ einschalten. <b>Firefox:</b> Einstellungen → Allgemein → Leistung → „Hardwarebeschleunigung verwenden, wenn verfügbar“. Danach den Browser ganz schließen und neu öffnen.</p>`;
 
@@ -71,6 +76,10 @@ export class Menus {
   private handlers: Record<string, Handler> = {};
   private back: (() => void) | null = null;
   private settingsTab: SettingsTab = 'grafik';
+  /** Werft: gewählte Vorschau (Stufe oder Klasse), ob die Werft offen ist, und Verzögerung der Hover-Vorschau */
+  private yardSel: YardPick | null = null;
+  private yardOpen = false;
+  private yardTimer = 0;
   private capturing = false;
   /** Wappen, Name und Menü des Titels steigen nur beim ersten Zeigen auf (nicht bei jedem Zurück aus den Einstellungen) */
   private titleSeen = false;
@@ -91,6 +100,22 @@ export class Menus {
       if (!el || (el as HTMLButtonElement).disabled) return;
       audio.play(el.dataset.a === 'back' || el.dataset.a === 'bye' ? 'uiBack' : 'ui');
       this.run(this.handlers[el.dataset.a!], el.dataset.id ?? '', el);
+    });
+    // Werft: Maus darüber oder Fokus (Tastatur, Gamepad) zeigt die Stufe oder Klasse sofort in der 3D-Szene, beim Verlassen kehrt die Vorschau zur Wahl zurück
+    const pickAt = (t: EventTarget | null) => (t as HTMLElement | null)?.closest<HTMLElement>('[data-pv]') ?? null;
+    this.card.addEventListener('pointerover', (e) => {
+      if (!this.yardOpen || (e as PointerEvent).pointerType === 'touch') return;
+      const el = pickAt(e.target);
+      if (el) this.queuePreview(parsePick(el.dataset.pv!));
+    });
+    this.card.addEventListener('pointerout', (e) => {
+      if (!this.yardOpen || (e as PointerEvent).pointerType === 'touch') return;
+      if (pickAt(e.target) && !pickAt((e as PointerEvent).relatedTarget)) this.queuePreview(this.yardSel);
+    });
+    this.card.addEventListener('focusin', (e) => {
+      if (!this.yardOpen) return;
+      const el = pickAt(e.target);
+      if (el) this.queuePreview(parsePick(el.dataset.pv!));
     });
     this.card.addEventListener('input', (e) => {
       const el = e.target as HTMLInputElement;
@@ -117,8 +142,38 @@ export class Menus {
   get visible() { return !this.screen.hidden; }
 
   hide() {
+    this.leaveYard();
     this.screen.hidden = true;
     this.back = null;
+  }
+
+  /** Werft verlassen: Auswahl vergessen, Vorschau-Schiff abbauen (Grafikspeicher frei), eigenes Schiff und Segelkamera zurück */
+  private leaveYard() {
+    window.clearTimeout(this.yardTimer);
+    this.screen.classList.remove('yard');
+    if (!this.yardOpen && !this.yardSel) return;
+    this.yardOpen = false;
+    this.yardSel = null;
+    this.game.endYard();
+  }
+
+  /** Vorschau mit kurzer Verzögerung (beim Darüberfahren nicht bei jedem Pixel ein Schiff bauen) */
+  private queuePreview(p: YardPick | null) {
+    window.clearTimeout(this.yardTimer);
+    this.yardTimer = window.setTimeout(() => { if (this.yardOpen) this.game.previewEvo(p); }, 110);
+  }
+
+  /** Vergleich Vorher → Nachher und Kosten einer Vorschau (Stufe oder Klasse) als HTML */
+  private yardInfoHtml(info: YardInfo): string {
+    const rows = info.rows.map((r) => `<div class="yc-row"><span class="yc-l">${esc(r.label)}</span><span class="yc-a">${esc(r.from)}</span><span class="yc-x">→</span><span class="yc-b${r.better > 0 ? ' up' : r.better < 0 ? ' down' : ''}">${esc(r.to)}</span></div>`).join('');
+    const cost = (ok: boolean, html: string) => `<span class="${ok ? '' : 'gate'}">${html}</span>`;
+    const bits: string[] = [];
+    if (info.gold > 0) bits.push(cost(info.goldOk, `${fmtInt(info.gold)} Gold`));
+    for (const m of info.materials) bits.push(cost(m.have >= m.n, `${m.n} × ${esc(m.name)} <small>(Frachtraum ${m.have})</small>`));
+    if (info.seals) bits.push(cost(info.sealsHave >= info.seals, `${info.seals} Boss-Siegel <small>(${info.sealsHave})</small>`));
+    if (info.shards) bits.push(cost(info.shardsHave >= info.shards, `${info.shards} ${esc(SHARD_NAME)} <small>(${info.shardsHave})</small>`));
+    const trade = info.refund > 0 ? `<div class="meta">Inzahlungnahme deiner Ausbauten: <b>+${fmtInt(info.refund)} Gold</b> (50 % des Goldwerts; das alte Schiff wird auf Stufe I zurückgebaut).</div>` : '';
+    return `<div class="yc"><div class="yc-grid"><div class="yc-row yc-head"><span class="yc-l"></span><span class="yc-a">Jetzt</span><span class="yc-x"></span><span class="yc-b">Danach</span></div>${rows}</div>${bits.length ? `<div class="yc-costs">${bits.join('')}</div>` : ''}${info.gates.map((t) => `<div class="meta gate">${esc(t)}</div>`).join('')}${trade}</div>`;
   }
 
   /** Knopf-Aktion ausführen; Fehler (auch aus asynchronen Aktionen wie Teilen oder Importieren) landen nicht unbehandelt in der Konsole */
@@ -138,12 +193,16 @@ export class Menus {
 
   /** Eine Ansicht neu zeichnen und dabei die Rollposition behalten (Kaufen, Wählen und Umschalten springen nicht nach oben) */
   private keep(fn: () => void) {
-    const y = this.screen.scrollTop;
+    const y = this.screen.scrollTop, cy = this.card.scrollTop;
     fn();
     this.screen.scrollTop = y;
+    this.card.scrollTop = cy;
   }
 
-  private open(html: string, handlers: Record<string, Handler>, back: (() => void) | null, opts: { wide?: boolean; clear?: boolean; title?: boolean; cls?: string } = {}) {
+  private open(html: string, handlers: Record<string, Handler>, back: (() => void) | null, opts: { wide?: boolean; clear?: boolean; title?: boolean; cls?: string; yard?: boolean } = {}) {
+    if (!opts.yard) this.leaveYard();
+    this.yardOpen = !!opts.yard;
+    this.screen.classList.toggle('yard', !!opts.yard);
     this.card.innerHTML = html;
     this.card.className = `card${opts.wide ? ' wide' : ''}${opts.cls ? ` ${opts.cls}` : ''}`;
     this.screen.classList.toggle('clear', !!opts.clear);
@@ -975,14 +1034,20 @@ export class Menus {
       ...FIGUREHEAD_MODELS.map((id) => ({ id, name: FIGUREHEAD_DEFS[id].name, glyph: figureheadGlyph(id), c1: '#d7ae52', c2: '#7a4a22', rarity: FIGUREHEAD_DEFS[id].rarity, desc: FIGUREHEAD_DEFS[id].desc, on: model === id })),
     ]);
     const trade = g.tradeInPreview();
+    const sel = this.yardSel;
     const classes = SHIP_CLASSES.map((c, i) => {
       const owned = st.owned.includes(i);
       const locked = rank < c.rank;
-      return `<div class="slot"><div class="slot-head"><b>${c.n}${st.tier === i ? ' ✓' : ''}</b><span>${owned ? 'Im Besitz' : `${fmtInt(c.price)} Gold`}</span></div>
+      const pid = pickId({ kind: 'cls', index: i });
+      const picked = sel?.kind === 'cls' && sel.index === i;
+      return `<div class="slot yard-cls${picked ? ' picked' : ''}" data-a="pv" data-id="${pid}" data-pv="${pid}"><div class="slot-head"><b>${c.n}${st.tier === i ? ' ✓' : ''}</b><span>${owned ? 'Im Besitz' : `${fmtInt(c.price)} Gold`}</span></div>
         <div class="meta">Rumpf ${c.hp} · ${c.can} Kanonen je Seite · Tempo ${c.spd} · Crew ${c.crew} · Offiziere ${officerSlots(i)}${troopCapacity(i) > 0 ? ` · Truppen ${troopCapacity(i)}` : ''}${locked && !owned ? ` · ab Rang „${RANKS[g.saveData?.player.faction ?? 'pirat'][c.rank]}“` : ''}</div>
-        ${!owned && trade.refund > 0 ? `<div class="meta">Inzahlungnahme: +${fmtInt(trade.refund)} Gold für die Ausbauten deiner ${SHIP_CLASSES[st.tier].n} (50 % des Goldwerts; sie wird dafür auf Stufe 1 zurückgebaut). Das neue Schiff beginnt auf Stufe 1.</div>` : !owned ? '<div class="meta">Ein neues Schiff beginnt auf Stufe 1 in allen Zweigen.</div>' : ''}
-        ${st.tier === i ? '' : `<button class="mini${owned ? '' : ' brass'}" data-a="cls" data-id="${i}" ${locked && !owned ? 'disabled' : ''}>${owned ? 'Wechseln' : 'Kaufen'}</button>`}</div>`;
+        ${!owned && trade.refund > 0 ? `<div class="meta">Inzahlungnahme: +${fmtInt(trade.refund)} Gold für die Ausbauten deiner ${SHIP_CLASSES[st.tier].n} (50 % des Goldwerts; sie wird dafür auf Stufe I zurückgebaut). Das neue Schiff beginnt auf Stufe I.</div>` : !owned ? '<div class="meta">Ein neues Schiff beginnt auf Stufe I in allen Zweigen.</div>' : ''}
+        ${picked ? this.yardInfoHtml(g.classPreviewInfo(i)) : ''}
+        <div class="row">${st.tier === i ? '' : `<button class="mini" data-a="pv" data-id="${pid}" data-pv="${pid}" aria-pressed="${picked}">${picked ? 'Vorschau aus' : 'Ansehen'}</button><button class="mini${owned ? '' : ' brass'}" data-a="cls" data-id="${i}" ${locked && !owned ? 'disabled' : ''}>${owned ? 'Wechseln' : 'Kaufen'}</button>`}</div></div>`;
     }).join('');
+    const camBtn = (id: YardView, label: string) => `<button data-a="cam" data-id="${id}" aria-pressed="${g.yardView === id}">${label}</button>`;
+    const cams = `<div class="yard-cams chips" role="group" aria-label="Kamera">${camBtn('all', 'Gesamtansicht')}${camBtn('bow', 'Bug &amp; Rammsporn')}${camBtn('sail', 'Segel &amp; Takelage')}${camBtn('gun', 'Breitseite &amp; Kanonen')}</div>`;
     const cost = g.repairCost();
     const evoNow = g.evolution();
     const evoTotal = shipEvolutionTier(evoNow);
@@ -990,6 +1055,7 @@ export class Menus {
     this.open(
       `<h2 class="fell">Werft</h2>
       ${goldLine(g.playerGold, msg)}
+      ${cams}
       <p class="small soft">Rumpf ${Math.round(g.world.ship.hull / g.world.ship.maxHull * 100)} % · Segel ${Math.round(g.world.ship.sail * 100)} % · Crew ${Math.round(g.world.ship.crew * 100)} %</p>
       <button class="secondary" data-a="repair" ${cost <= 0 ? 'disabled' : ''}>${cost > 0 ? `Rumpf und Segel reparieren (${cost} Gold)` : 'Rumpf und Segel sind in Ordnung'}</button>
       <button class="secondary" data-a="sailors" ${g.crewRefillCost() <= 0 ? 'disabled' : ''}>${g.crewRefillCost() > 0 ? `Matrosen anheuern (${g.crewRefillCost()} Gold)` : 'Mannschaft vollzählig'}</button>
@@ -1001,9 +1067,16 @@ export class Menus {
       <h3>Ausbauten</h3>
       <p class="small soft">Jedes Schiff hat drei Zweige mit je fünf Stufen. Neu gekaufte Schiffe beginnen auf Stufe 1 (schwach: 75 % Rumpf, 78 % Tempo, nur halb bestückte Stückpforten); Stufe 3 sind die Grundwerte der Klasse, ab Stufe 4 gibt es Rammsporn (Rumpf) und Deck-Drehbassen (Kanonen). Stufe 3 – 5 verlangen Handelsware aus deinem Frachtraum. Gesamtstufe <b>${evoTotal}</b> · Schiffs-Unterhalt +${evoUpkeep} %.</p>
       ${EVO_BRANCHES.map((br) => { const v = g.evoView(br); const L = BRANCH_LABEL[br]; const mat = v.material;
-        return `<div class="slot"><div class="slot-head"><b>${L.icon} ${L.n}</b><span>Stufe ${v.tier}/${EVO_MAX}</span></div>
-        <div class="meta"><span class="pips">${'●'.repeat(v.tier)}${'○'.repeat(EVO_MAX - v.tier)}</span> ${esc(v.now)}${v.next ? `<br>Nächste Stufe: ${esc(v.after)}` : ''}</div>
-        ${v.next ? `${mat ? `<div class="meta${mat.have < mat.n ? ' gate' : ''}">Material: ${mat.n} × ${esc(mat.name)} aus dem Frachtraum (du hast ${mat.have})</div>` : ''}${v.gate ? `<div class="meta gate">${esc(v.gate)}</div>` : ''}<button class="mini brass" data-a="up" data-id="${br}" ${v.gate ? 'disabled' : ''}>Auf Stufe ${v.next} ausbauen (${fmtInt(v.cost)} Gold${v.next >= EVO_MAX ? ` · ${UPGRADE_RECIPE.seals} Siegel · ${UPGRADE_RECIPE.shards} ${esc(SHARD_NAME)}` : ''})</button>` : ''}</div>`; }).join('')}
+        const picked = sel?.kind === 'evo' && sel.branch === br ? sel.tier : 0;
+        const tiers = [1, 2, 3, 4, 5].map((t) => { const id = pickId({ kind: 'evo', branch: br, tier: t }); return `<button class="tier" data-a="pv" data-id="${id}" data-pv="${id}" data-state="${t <= v.tier ? 'own' : t === v.next ? 'next' : 'far'}" aria-pressed="${picked === t}" aria-label="${L.n}: Stufe ${ROMAN[t - 1]} ansehen">${ROMAN[t - 1]}</button>`; }).join('');
+        const upBtn = v.next ? `<button class="mini brass" data-a="up" data-id="${br}" ${v.gate ? 'disabled' : ''}>Auf Stufe ${ROMAN[v.next - 1]} ausbauen (${fmtInt(v.cost)} Gold${v.next >= EVO_MAX ? ` · ${UPGRADE_RECIPE.seals} Siegel · ${UPGRADE_RECIPE.shards} ${esc(SHARD_NAME)}` : ''})</button>` : '';
+        const detail = picked
+          ? `${this.yardInfoHtml(g.evoPreviewInfo(br, picked))}${picked === v.next ? upBtn : picked > v.next ? '<div class="meta">Baue zuerst die Stufen davor aus (die Gesamtkosten stehen oben).</div>' : picked <= v.tier && picked !== v.tier ? '<div class="meta">Diese Stufe hast du schon überschritten; ein Rückbau ist nicht möglich.</div>' : upBtn}`
+          : (v.next ? `${mat ? `<div class="meta${mat.have < mat.n ? ' gate' : ''}">Material: ${mat.n} × ${esc(mat.name)} aus dem Frachtraum (du hast ${mat.have})</div>` : ''}${v.gate ? `<div class="meta gate">${esc(v.gate)}</div>` : ''}${upBtn}` : '');
+        return `<div class="slot evo"><div class="slot-head"><b>${L.icon} ${L.n}</b><span>Stufe ${ROMAN[v.tier - 1]} / V</span></div>
+        <div class="tiers" role="group" aria-label="${L.n}: Stufe ansehen">${tiers}</div>
+        <div class="meta">${esc(picked ? evoEffectText(br, picked) : v.now)}${!picked && v.next ? `<br>Nächste Stufe: ${esc(v.after)}` : ''}</div>
+        ${detail}</div>`; }).join('')}
       <h3>Schiffsklassen</h3>${classes}
       <h3>Aussehen</h3>
       ${this.optHtml('Rumpf', sw('hull', HULL_COLORS))}
@@ -1015,11 +1088,13 @@ export class Menus {
       <div class="chips"><button data-a="lanterns" aria-pressed="${look.lanterns}">Laternen</button></div>
       <button class="primary" data-a="back">Fertig</button>`,
       {
-        cls: (id) => rerender(g.shipyardSelect(+id)),
+        cls: (id) => { this.yardSel = null; rerender(g.shipyardSelect(+id)); },
+        cam: (id) => { g.setYardView(id as YardView); rerender(); },
+        pv: (id) => { const p = parsePick(id); this.yardSel = samePick(this.yardSel, p) ? null : p; window.clearTimeout(this.yardTimer); g.previewEvo(this.yardSel); rerender(); },
         repair: () => rerender(g.shipyardRepair()),
         sailors: () => rerender(g.refillCrew()),
         troops: () => this.showTroops(() => this.showShipyard('', back)),
-        up: (id) => rerender(g.evoUpgrade(id as EvoBranch)),
+        up: (id) => { this.yardSel = null; rerender(g.evoUpgrade(id as EvoBranch)); },
         ammo: (id) => rerender(g.buyAmmo(id as AmmoId)),
         lk: (id) => { const [k, v] = id.split('|'); g.shipyardLook({ ...look, [k]: v }); rerender(); },
         lanterns: () => { g.shipyardLook({ ...look, lanterns: !look.lanterns }); rerender(); },
@@ -1029,8 +1104,10 @@ export class Menus {
         back,
       },
       back,
-      { wide: true },
+      { wide: true, yard: true },
     );
+    g.beginYard();
+    g.previewEvo(this.yardSel);
   }
 
   /** Erbeutete Fraktions-Segel und Verzierungen (Raid-Beute): wählbar, solange sie freigeschaltet sind – sie gehen nie verloren */

@@ -27,7 +27,7 @@ import { BORDER_FORTS, BORDERS, FACTIONS, borderDistance, marineStance, sectorAt
 import { BATTLE, battleSite, compassWord, nextDelay, sideSize, type BattleSite } from './battleRules';
 import { cannotBeSunk } from './shipSim';
 import { aiCannon, aiHullFactor, dangerOfLevel } from '../data/balanceConfig';
-import { evolutionOfTier, portIndices } from '../data/shipEvolution';
+import { portIndices, aiEvolution } from '../data/shipEvolution';
 import { hasSwivels, ramContact, ramDamage, ramImpulse, swivelCooldown, swivelDamage, swivelTarget, type Kin } from './ramming';
 import { RAM, SWIVEL } from '../data/balanceConfig';
 import { REP, hasService, isHostile, isPeaceful, judgeBattle, newStats, type BattleStats } from '../data/reputation';
@@ -290,7 +290,7 @@ export class NavalSystem {
       const x = p.x + Math.sin(a) * 150, z = p.z + Math.cos(a) * 150;
       if (Math.hypot(x, z) > WORLD_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
       const foe: 'pirat' | 'marine' = this.playerFaction === 'pirat' ? 'marine' : 'pirat';
-      const ship = new Ship(this.scene, 0, DEFAULT_SHIP_LOOK(foe), foe, 0, false, evolutionOfTier(1));
+      const ship = new Ship(this.scene, 0, DEFAULT_SHIP_LOOK(foe), foe, 0, false, aiEvolution('rookie', 1));
       ship.x = x; ship.z = z; ship.heading = Math.atan2(p.x - x, p.z - z) + Math.PI / 2;
       ship.prev = { x, z, heading: ship.heading };
       ship.hull = ship.maxHull * (board ? 0.3 : 0.7);
@@ -417,7 +417,7 @@ export class NavalSystem {
    */
   spawnGuard(d: { guardId: string; tier: number; x: number; z: number; heading: number; hull: number; sail: number; crew: number; name: string }, look: ShipLook, level: number, power: FactionId, groupScale = 1): EnemyShip {
     const cls = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, d.tier))];
-    const ship = new Ship(this.scene, d.tier, look, power === 'marine' ? 'marine' : 'pirat', Math.round(cls.hp * (d.hull * groupScale - 1 + level * 0.03)), false, evolutionOfTier(dangerOfLevel(level)));
+    const ship = new Ship(this.scene, d.tier, look, power === 'marine' ? 'marine' : 'pirat', Math.round(cls.hp * (d.hull * groupScale - 1 + level * 0.03)), false, aiEvolution('raid', dangerOfLevel(level)));
     ship.sim.sail.max = Math.round(ship.sim.sail.max * d.sail * groupScale);
     ship.sim.sail.hp = ship.sim.sail.max;
     const m = ship.sim.crew.pools.matrosen;
@@ -443,7 +443,7 @@ export class NavalSystem {
       const off = (i - (o.count - 1) / 2) * 70;
       const tier = tiers[i % tiers.length];
       const cls = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier))];
-      const ship = new Ship(this.scene, tier, { ...o.look }, o.power === 'marine' ? 'marine' : 'pirat', Math.round(cls.hp * (2.0 - 1 + o.level * 0.03)), false, evolutionOfTier(dangerOfLevel(o.level)));
+      const ship = new Ship(this.scene, tier, { ...o.look }, o.power === 'marine' ? 'marine' : 'pirat', Math.round(cls.hp * (2.0 - 1 + o.level * 0.03)), false, aiEvolution('raid', dangerOfLevel(o.level)));
       ship.sim.sail.max = Math.round(ship.sim.sail.max * 1.5);
       ship.sim.sail.hp = ship.sim.sail.max;
       const m = ship.sim.crew.pools.matrosen;
@@ -543,7 +543,7 @@ export class NavalSystem {
       if (useFaction) foe = power === 'marine' ? 'marine' : power === 'kurogane' ? 'pirat' : foe;
       if (role === 'haendler' && !useFaction) { look.hull = HULL_COLORS[Math.floor(Math.random() * 3)]; look.sail = SAIL_COLORS[Math.floor(Math.random() * 3)]; look.flag = 'anker'; look.flagColor = '#2F6E4F'; look.figurehead = 'keine'; }
       // erfahrene Crews halten mehr aus (sonst wären Schiffe in hohen Meeren aus Papier)
-      const ship = new Ship(this.scene, tier, look, foe, Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)), false, evolutionOfTier(dangerOfLevel(lvl)));
+      const ship = new Ship(this.scene, tier, look, foe, Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)), false, aiEvolution(near ? 'eskorte' : hunter ? 'jaeger' : role === 'legende' ? 'flaggschiff' : role, dangerOfLevel(lvl)));
       // Route: quer durch das Gebiet, am Spieler vorbei statt direkt auf ihn zu
       const toP = Math.atan2(px - x, pz - z);
       const heading = near ? near.heading : toP + (Math.random() < 0.5 ? 1 : -1) * (0.5 + Math.random() * 0.7);
@@ -618,7 +618,7 @@ export class NavalSystem {
         const x = Math.sin(a) * t + Math.cos(a) * off, z = Math.cos(a) * t - Math.sin(a) * off;
         if (this.ground.islandAt(x, z, 40) || Math.hypot(x, z) > WORLD_RADIUS - 150) continue;
         const lvl = f.level, tier = Math.max(2, Math.min(4, Math.floor(lvl / 3)));
-        const ship = new Ship(this.scene, tier, factionShipLook('marine'), 'marine', Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)), false, evolutionOfTier(dangerOfLevel(lvl)));
+        const ship = new Ship(this.scene, tier, factionShipLook('marine'), 'marine', Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)), false, aiEvolution('grenze', dangerOfLevel(lvl)));
         ship.x = x; ship.z = z; ship.heading = a + (Math.random() < 0.5 ? 0 : Math.PI);
         ship.prev = { x, z, heading: ship.heading };
         this.enemies.push({ ship, role: 'patrouille', level: lvl, state: 'patrol', wander: { x, z }, aiT: 0, power: 'marine', station: f.id, name: 'Marine-Patrouillenboot' });
@@ -693,7 +693,7 @@ export class NavalSystem {
         const power = powers[side];
         const tier = Math.max(1, Math.min(4, Math.floor(lvl / 2) + Math.floor(Math.random() * 2)));
         const foe: 'pirat' | 'marine' = power === 'kurogane' ? 'pirat' : 'marine';
-        const ship = new Ship(this.scene, tier, factionShipLook(power), foe, Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)), false, evolutionOfTier(dangerOfLevel(lvl)));
+        const ship = new Ship(this.scene, tier, factionShipLook(power), foe, Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)), false, aiEvolution('grenze', dangerOfLevel(lvl)));
         ship.x = x; ship.z = z;
         // beide Flotten fahren erst aufeinander zu, dann in Breitseitenabstand umeinander
         ship.heading = Math.atan2(-site.across.x * dir, -site.across.z * dir) + (Math.random() - 0.5) * 0.4;
@@ -724,7 +724,7 @@ export class NavalSystem {
       if (Math.hypot(x, z) > WORLD_RADIUS - 150 || this.ground.islandAt(x, z, 40)) continue;
       const lvl = Math.max(2, this.zoneLevel(x, z));
       const tier = Math.max(2, Math.min(4, Math.floor(lvl / 3) + 1));
-      const ship = new Ship(this.scene, tier, factionShipLook('marine'), 'marine', Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)), false, evolutionOfTier(dangerOfLevel(lvl)));
+      const ship = new Ship(this.scene, tier, factionShipLook('marine'), 'marine', Math.round(SHIP_CLASSES[tier].hp * (aiHullFactor(lvl) - 1)), false, aiEvolution('grenze', dangerOfLevel(lvl)));
       ship.x = x; ship.z = z; ship.heading = Math.atan2(site.x - x, site.z - z);
       ship.prev = { x, z, heading: ship.heading };
       this.enemies.push({ ship, role: 'patrouille', level: lvl, state: 'engage', wander: { x, z }, aiT: 0, name: 'Marine-Patrouillenboot', power: 'marine', battle: { id: b.id, side: 2 } });
@@ -872,7 +872,7 @@ export class NavalSystem {
     if (this.enemies.some((e) => e.legendId === l.id && e.ship.alive)) return null;
     const look = DEFAULT_SHIP_LOOK(l.faction);
     look.sail = l.col; look.flagColor = l.col; look.lanterns = true;
-    const ship = new Ship(this.scene, Math.min(6, l.tier + 1), look, l.faction, 300 + l.lvl * 40, false, evolutionOfTier(dangerOfLevel(l.lvl)));
+    const ship = new Ship(this.scene, Math.min(6, l.tier + 1), look, l.faction, 300 + l.lvl * 40, false, aiEvolution('flaggschiff', dangerOfLevel(l.lvl)));
     ship.x = x; ship.z = z;
     const p = this.player;
     ship.heading = p ? Math.atan2(p.x - x, p.z - z) : 0;
@@ -890,7 +890,7 @@ export class NavalSystem {
       if (this.ground.islandAt(x, z, 40)) continue;
       const look = DEFAULT_SHIP_LOOK('pirat');
       look.hull = '#2A3A3A'; look.sail = '#BFEFE4'; look.stripe = '#7FE0C8'; look.flagColor = '#1E1A20'; look.lanterns = true;
-      const ship = new Ship(this.scene, Math.min(4, 1 + Math.floor(level / 3)), look, 'pirat', 120, false, evolutionOfTier(dangerOfLevel(level)));
+      const ship = new Ship(this.scene, Math.min(4, 1 + Math.floor(level / 3)), look, 'pirat', 120, false, aiEvolution('grenze', dangerOfLevel(level)));
       ship.model.group.traverse((o) => {
         const m = o as Mesh;
         if (!m.isMesh || Array.isArray(m.material)) return;

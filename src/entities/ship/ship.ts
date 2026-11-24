@@ -1,5 +1,5 @@
 import { updateClothFlag } from '../../render/flagCloth';
-import { CircleGeometry, Color, Euler, MathUtils, Mesh, MeshBasicMaterial, Vector3, type Object3D, type Scene } from 'three';
+import { CircleGeometry, Color, Euler, MathUtils, Mesh, MeshBasicMaterial, Vector3, type Object3D, type Points, type Scene, type Sprite } from 'three';
 import { RAM, hullArmorOf, mitigation, penTierOf } from '../../data/balanceConfig';
 import { RAM_AMMO } from '../../naval/ramming';
 import { visualKey } from '../../data/shipVisuals';
@@ -584,8 +584,37 @@ export class Ship {
     CABIN_WINDOW.color.setRGB(0.8, 0.95, 1.2).multiplyScalar(1 - 0.94 * Math.min(1, night * 1.5));
     GLOW_LAMP.color.setRGB(4, 2.4, 0.9).multiplyScalar(0.28 + 0.72 * Math.min(1, night * 1.6));
     for (const w of this.model.windows) w.visible = night > 0.25;
+    if (this.previewHidden) for (const [o] of this.hiddenParts) o.visible = false;
+  }
+
+  // ---------- Werft-Vorschau (Phase 4.2C) ----------
+
+  private previewHidden = false;
+  private disposed = false;
+  private hiddenParts: [Object3D, boolean][] = [];
+
+  /**
+   * Werft-Vorschau: ein anderes Modell steht an der Stelle dieses Schiffs, darum werden alle Netze des echten Modells unsichtbar und seine Flammen abgemeldet.
+   * Die Gruppe selbst und ihre Lichter bleiben unberührt (Lichter nie ausblenden: jede Änderung der Lichtzahl übersetzt alle Materialien neu), die Matrizen
+   * laufen weiter (Gangway und Taue am Steg halten ihren Anschluss). `false` stellt alles wieder her.
+   */
+  setPreviewHidden(hide: boolean) {
+    if (this.disposed || hide === this.previewHidden) return;
+    this.previewHidden = hide;
+    if (hide) {
+      this.hiddenParts = [];
+      this.model.group.traverse((o) => {
+        const m = o as Mesh;
+        if (m.isMesh || (o as Points).isPoints || (o as Sprite).isSprite) { this.hiddenParts.push([o, o.visible]); o.visible = false; }
+      });
+      glowHub.removeOwner(this);
+    } else {
+      for (const [o, v] of this.hiddenParts) o.visible = v;
+      this.hiddenParts = [];
+      this.glowLights();
+    }
   }
 
   /** Schiff aus der Szene nehmen und seinen Grafikspeicher freigeben */
-  dispose() { glowHub.removeOwner(this); disposeObject(this.model.group); }
+  dispose() { this.disposed = true; glowHub.removeOwner(this); disposeObject(this.model.group); }
 }
