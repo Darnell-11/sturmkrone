@@ -18,8 +18,11 @@ export const roleOf = (p: MarketProfile, g: GoodId): Role => (p.produce.includes
 export const eqStockOf = (p: MarketProfile, g: GoodId): number => MARKET.eqStock[roleOf(p, g)];
 export const eqPriceOf = (p: MarketProfile, g: GoodId): number => MARKET.eqPrice[roleOf(p, g)];
 
-/** Märkte eines Orts: Schlüssel der Insel, Profil und Kriegslage (siehe `warPremium`) */
-export interface MarketSite { id: string; name: string; profile: MarketProfile; war: WarSite }
+/**
+ * Märkte eines Orts: Schlüssel der Insel, Profil und Kriegslage (siehe `warPremium`); `priceK` = Faktor auf alle Preise (Hafen-Blockade des
+ * lebendigen Meeres, Phase 4.3C: 2 = doppelte Handelspreise, solange die Blockade liegt; fehlt = 1)
+ */
+export interface MarketSite { id: string; name: string; profile: MarketProfile; war: WarSite; priceK?: number }
 export interface WarSite { borderDist: number; occupied: boolean; fort: boolean }
 
 /**
@@ -60,7 +63,7 @@ export function marketPrice(site: MarketSite, g: GoodId, stock: number): number 
   const ratio = Math.max(0.05, stock) / eq;
   const k = clamp(Math.pow(ratio, -MARKET.elasticity), MARKET.minK, MARKET.maxK);
   const war = def.war ? warPremium(site.war) : 1;
-  return def.base * eqPriceOf(site.profile, g) * k * war;
+  return def.base * eqPriceOf(site.profile, g) * k * war * (site.priceK ?? 1);
 }
 
 export interface Quote { units: number; total: number; avg: number; stockAfter: number }

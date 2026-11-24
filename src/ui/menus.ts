@@ -910,6 +910,7 @@ export class Menus {
       `<h2 class="fell">Kontor von ${esc(v.site.name)}</h2>
       ${goldLine(v.gold, msg)}
       <div class="loy"><span>Frachtraum</span>${gaugeHtml(v.cargo.used / v.cargo.cap, { color: full ? '#C4452F' : '#C79A3A' })}<b>${fmtInt(Math.round(v.cargo.used * 10) / 10)}/${fmtInt(v.cargo.cap)}</b></div>
+      ${v.blockade ? `<p class="small"><b class="gate">⚓ Blockade vor dem Hafen: alle Handelspreise ×2 und Schnellreise gesperrt, bis jemand sie durchbricht.</b></p>` : ''}
       <p class="small soft">${t.kind === 'schwarzmarkt' ? `<b class="gate">Schwarzmarkt: ${Math.round(-t.discount * 100)} % Aufschlag auf alle Preise</b>` : t.discount > 0 ? `Hafentarif: ${Math.round(t.discount * 100)} % Rabatt` : 'Hafentarif: Grundpreise'} · Händlerspanne 5 % · Käufe verteuern, Verkäufe verbilligen die Ware; die Märkte erholen sich mit der Zeit.</p>
       ${v.cargo.war.units > 0 ? `<p class="note"><b>Kriegsware an Bord:</b> ${v.cargo.war.units} Einheiten. Fahndungsdruck ${Math.round(v.heat)}/100: in Häfen der Mächte drohen Kontrollen (Beschlagnahme und Strafe), bei hohem Druck rücken Kopfgeldjäger aus.</p>` : v.heat > 5 ? `<p class="small soft">Fahndungsdruck ${Math.round(v.heat)}/100 (sinkt mit der Zeit).</p>` : ''}
       <h3>Unterhalt der Flotte</h3>

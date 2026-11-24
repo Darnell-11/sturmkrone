@@ -70,7 +70,7 @@ import { OccupationBanner } from '../ui/occupationBanner';
 import { OccupationSystem } from './occupationSystem';
 import { emptyUnlocks } from '../raid/occupation';
 import { SHARD_NAME } from '../data/crafting';
-import { TIER_DEFS, tierOfRank, type Tier } from '../data/balanceConfig';
+import { TIER_DEFS, playerCannonDmg, tierOfRank, type Tier } from '../data/balanceConfig';
 import { UPGRADE_RECIPE, WEAPON_RECIPE, craftCheck, paySeals, payRecipe, payWeapon, sealTotal, recipeOf, sealsOf, shopGate, weaponCraftCheck, type Recipe, type SealPurse } from '../data/crafting';
 import type { PersonalLoot } from '../raid/raidLoot';
 import { mintEntityId, type EntityId } from '../sim/entityId';
@@ -95,7 +95,13 @@ import { clearOld, ensureLoot, grantLoot, lootDef, rollGearByTier, rollLootGear,
 import { ACHIEVEMENTS } from '../data/achievements';
 import { ABYSS_LAIR } from '../naval/seaBoss';
 import { crewFrac, crewPricePerHead, missingHeads, needsRepair, poolHeads, REPAIR_MATERIALS, SAIL_HP_PER_HULL, shipTooltip, type ShipSimState } from '../naval/shipSim';
-import { fmtInt } from './format';
+import { fmtDist, fmtInt } from './format';
+import { DIRECTOR, WEATHER_CELL_DEFS, WORLD_BOSSES } from '../data/seaEvents';
+import { convoyLoot, deliverConvoy } from '../world/tradeConvoys';
+import { rollWorldBossLoot } from '../naval/worldBosses';
+import { compassWord } from '../naval/battleRules';
+import type { SeaEventNews } from '../world/worldEventsLive';
+import type { PoiKind } from '../ui/minimap';
 import { wrapAngle } from './mathUtil';
 import type { RepairMaterial } from '../sim/intents';
 import { QUESTS, QUEST_BY_ID } from '../data/quests';
@@ -276,6 +282,7 @@ export class Game {
     this.world.bountyOf = (id) => this.save?.progress.reputation?.bounty[id] ?? 0;
     this.world.onBattleStart = (m, where) => this.battleStarted(m, where);
     this.world.onBattleEnd = (r) => this.battleEnded(r);
+    this.world.onSeaNews = (n) => this.seaNews(n);
     this.world.onRaidRequest = (def) => this.openRaidRequest(def);
     this.world.onRaidView = (v) => { this.raidView = v; this.raidPanel.update(v); };
     this.world.onRaidEnd = (info) => this.raidEnded(info);
@@ -614,7 +621,9 @@ export class Game {
       const dyn = this.renderer.dynRes.scale;
       this.hud.setFps(s.showFps, `${this.loop.fps} fps · ${QUALITY_TIERS[this.renderer.tier].label}${this.renderer.budget ? ` · Spar ${this.renderer.budget}` : ''}${dyn < 0.999 ? ` · ${Math.round(dyn * 100)} %` : ''}`);
       const env = this.world.env;
-      this.hud.setEnv(`${formatClock(env.time)} · ${env.timeName} · ${WEATHER[env.weather.target].label}`);
+      const cell = this.world.seaEvents?.playerCell;
+      const wLabel = cell?.cell && cell.k > 0.35 ? WEATHER_CELL_DEFS[cell.cell.kind].label : WEATHER[env.weather.target].label;
+      this.hud.setEnv(`${formatClock(env.time)} · ${env.timeName} · ${wLabel}`);
       const key = this.input.lastDevice === 'keyboard' ? this.input.keyLabel(this.input.getKeyBindings().interact[0] ?? 'KeyR')
         : this.input.lastDevice === 'gamepad' ? 'X' : null;
       this.hud.setContext(this.world.contextLabel, key);
@@ -838,7 +847,7 @@ export class Game {
       nav.playerLevel = lvl;
       nav.playerFaction = this.save.player.faction;
       nav.playerRank = rankIndex(this.save.player.fame);
-      nav.canDmg = (12 + lvl * 1.4) * (1 + this.save.ship.tier * 0.06) * evoS.cannonDmgK * (has('bruno') ? 1.2 : 1) * (1 + (tb.cannon ?? 0));
+      nav.canDmg = playerCannonDmg(lvl, this.save.ship.tier, evo.cannonTier) * (has('bruno') ? 1.2 : 1) * (1 + (tb.cannon ?? 0));
       nav.reloadMult = has('gun') ? 0.7 : 1;
     }
     // Schiffskoch: bessert den Rumpf zusätzlich aus, aber nur, solange genug Seeleute an Bord sind (siehe stepPassiveRepair)
@@ -1575,6 +1584,7 @@ export class Game {
     this.harborFid = fid;
     this.harborDef = def;
     this.afterDocking(def);
+    if (this.world.seaEvents?.director.blockadeOf(def.id)) this.hud.toast(`Blockade vor ${def.name}: alle Handelspreise sind doppelt so hoch, die Schnellreise hierher ist gesperrt – bis jemand die Blockade bricht.`, 6);
     audio.play('bell');
     this.state.set('pause');
     this.menus.showHarbor('', def);
@@ -2179,6 +2189,8 @@ export class Game {
     }
     // Seeschlachten an den Grenzen (Welt-Ereignis): gekreuzte Kanonen auf Kompass, Minikarte und Seekarte
     for (const b of this.world.battleMarks) out.push({ x: b.x, z: b.z, kind: 'battle', name: `Seeschlacht ${FACTIONS[b.a].name} gegen ${FACTIONS[b.b].name}` });
+    // Lebendiges Meer: Horizont-Signale der Welt-Ereignisse (bis zur Sichtweite der Signale) und Konvois in der Nähe
+    this.seaPois(out, DIRECTOR.beaconRange, 2400);
     // Boss-Inseln und Inseln mit Auftragspersonen, nur entdeckte
     const marks = this.questIslandMarks();
     for (const d of this.world.islandDefs) {
@@ -2204,6 +2216,20 @@ export class Game {
     };
   }
 
+  /** Lebendiges Meer auf der Weltkarte: alle laufenden Ereignisse und Konvois, Strömungen und Wetterzellen */
+  private seaMapData(): Pick<WorldMapData, 'seaEvents' | 'convoys' | 'currents' | 'cells'> {
+    const live = this.world.seaEvents;
+    if (!live || this.world.raid) return {};
+    const pois: Poi[] = [];
+    this.seaPois(pois, Infinity, 0);
+    return {
+      seaEvents: pois.map((p) => ({ x: p.x, z: p.z, kind: p.kind, name: p.name ?? '' })),
+      convoys: live.convoyMarks(),
+      currents: live.lanes.map((l) => ({ name: l.name, pts: l.pts })),
+      cells: live.director.state.cells.map((c) => ({ x: c.x, z: c.z, r: c.r, kind: c.kind, label: WEATHER_CELL_DEFS[c.kind].label })),
+    };
+  }
+
   /** Daten der Weltkarte */
   private worldMapData(): WorldMapData {
     return {
@@ -2223,6 +2249,7 @@ export class Game {
         return { id: v.islandId, x: d?.x ?? 0, z: d?.z ?? 0, r: d?.r ?? 100, name: v.name, text: v.text, endgame: v.phase === 'endgame', fleet: f ? { x: f.x, z: f.z } : undefined };
       }),
       conquests: Object.fromEntries(this.occupation.conquered.map((r) => [r.islandId, r.conquestCount])),
+      ...this.seaMapData(),
     };
   }
 
@@ -2253,7 +2280,183 @@ export class Game {
       reloadL: sh.reloadL / this.world.reloadTime, reloadR: sh.reloadR / this.world.reloadTime, fire: sh.fire > 0,
       repair: sh.sim.repair ? 1 - sh.sim.repair.left / sh.sim.repair.total : null,
       sailors: pools.matrosen ?? { n: 0, max: 0 }, troops, tip: shipTooltip(sh.sim),
+      ...this.seaFlowView(sh),
     };
+  }
+
+  /** Strömung und Wetterzelle für die Schiffstafel (Phase 4.3C) */
+  private seaFlowView(sh: SeaWorld['ship']): { flow: SeaView['flow']; cell: SeaView['cell'] } {
+    const live = this.world.seaEvents;
+    if (!live || this.world.raid) return { flow: null, cell: null };
+    const c = live.playerCurrent;
+    const name = live.currentName;
+    const flow = name ? { name, boost: live.playerBoost(), rel: c.heading - sh.heading } : null;
+    const ce = live.playerCell;
+    const cell = ce.cell && ce.k > 0.05 ? { label: WEATHER_CELL_DEFS[ce.cell.kind].label, icon: WEATHER_CELL_DEFS[ce.cell.kind].icon, kind: ce.cell.kind, k: ce.k } : null;
+    return { flow, cell };
+  }
+
+  /** Ist die Schnellreise zu diesem Hafen gesperrt (Hafen-Blockade des lebendigen Meeres)? Für die kommende Schnellreise (4.3D) und die Weltkarte. */
+  travelLocked(islandId: string): boolean { return !!this.world.seaEvents?.director.travelLocked(islandId); }
+
+  // ---------- Das lebendige Meer (Phase 4.3C) ----------
+
+  /** Ehre bei einer Macht erhöhen (wie nach Seeschlachten) */
+  private addHonor(f: FactionId, n: number) {
+    const s = this.save;
+    if (!s || n <= 0) return;
+    const rep = (s.progress.reputation ??= emptyReputation());
+    rep.honor[f] = (rep.honor[f] ?? 0) + n;
+  }
+
+  /** Waren aus einem Ereignis an Bord nehmen (Frachtraum begrenzt); liefert den Text für die Meldung */
+  private takeGoods(drops: { good: GoodId; units: number }[]): string {
+    const s = this.save!;
+    const r = applySalvage(this.eco(), drops, s.ship.tier);
+    const got = r.taken.map((d) => `${d.units} × ${GOOD_BY_ID[d.good].n}`).join(', ');
+    return (got || 'nichts (Frachtraum voll)') + (r.lost > 0 ? ` · ${r.lost} Einheiten fanden keinen Platz` : '');
+  }
+
+  /**
+   * Meldungen des lebendigen Meeres: Horizont-Signale ankündigen (nur in Sichtweite), Konvois beliefern echte Märkte, Belohnungen für verteidigte
+   * Konvois, geplünderte Frachter, aufgebrachte Schatz-Galeonen, gebrochene Blockaden, geborgenes Treibgut und besiegte Weltbosse.
+   */
+  private seaNews(n: SeaEventNews) {
+    const s = this.save;
+    if (!s) return;
+    const pos = this.world.playerPos;
+    const where = (x: number, z: number) => `${compassWord(pos.x, pos.z, x, z)}, ${fmtDist(Math.hypot(x - pos.x, z - pos.z))}`;
+    const playing = this.state.is('play');
+    switch (n.type) {
+      case 'spawn': {
+        const ev = n.event;
+        if (n.dist > DIRECTOR.beaconRange || !playing) return;
+        const txt = ev.kind === 'schatzgaleone' ? `Am Horizont steigt eine goldene Leuchtrakete auf: eine Schatz-Galeone auf dem Weg nach ${ev.destName} (${where(ev.x, ev.z)}).`
+          : ev.kind === 'blockade' ? `Schwarzer Rauch vor ${ev.islandName}: eine Flotte blockiert den Hafen (${where(ev.x, ev.z)}). Dort kostet alles das Doppelte.`
+          : ev.kind === 'treibgut' ? `Möwen kreisen über treibenden Trümmern: ein Treibgut-Feld (${where(ev.x, ev.z)}).`
+          : `Ein Gewitterwirbel über der Tiefsee, ein tiefes Nebelhorn: ${ev.name} zieht seine Bahn (${where(ev.x, ev.z)}).`;
+        this.hud.toast(txt, 6);
+        return;
+      }
+      case 'convoyThreat':
+        if (n.dist < 2600 && playing) this.hud.toast(`Korsaren greifen den Konvoi ${n.convoy.fromName} → ${n.convoy.toName} an (${where(n.convoy.x, n.convoy.z)})! Hilf ihm – oder halte dich heraus.`, 7);
+        return;
+      case 'convoyDefended': {
+        const r = n.reward;
+        const gold = Math.round(r.gold * this.goldMult(true));
+        s.player.gold += gold;
+        if (r.power) { this.shiftStanding(r.power, r.standing); this.addHonor(r.power, r.honor); }
+        this.grantXp(60 + n.convoy.level * 12, 10 + n.convoy.dangerTier * 4);
+        this.overlay.showBanner('Konvoi verteidigt!', `+${fmtInt(gold)} Gold${r.power ? ` · ${FACTIONS[r.power].name} +${r.standing} Ansehen · Ehre +${r.honor}` : ''}`);
+        audio.play('win');
+        this.persist();
+        return;
+      }
+      case 'convoyPlundered': {
+        const c = n.convoy;
+        const near = Math.hypot(c.x - pos.x, c.z - pos.z) < 2600;
+        if (!n.byPlayer) { if (near && playing) this.hud.toast(`Korsaren haben den Konvoi ${c.fromName} → ${c.toName} geplündert – ${c.toName} bleibt knapp an ${GOOD_BY_ID[c.good].n}.`, 6); return; }
+        const got = this.takeGoods(convoyLoot(c, borderDistance(c.x, c.z).dist, n.boarded, Math.random));
+        this.overlay.showBanner('Konvoi geplündert!', `${got} · ${c.toName} bleibt knapp an ${GOOD_BY_ID[c.good].n}`);
+        this.hud.toast(`Beute aus dem Frachter: ${got}.`, 6);
+        this.persist();
+        return;
+      }
+      case 'convoyArrived': {
+        const c = n.convoy;
+        const def = this.world.islandDefs.find((i) => i.id === c.to);
+        const site = def ? this.marketSite(def) : null;
+        if (!def || !site) return;
+        const d = deliverConvoy(this.eco(), site, s.meta.playTime, c.good, c.units);
+        const near = Math.hypot(def.x - pos.x, def.z - pos.z) < 2200 || this.harborDef?.id === def.id;
+        if (near && d.units > 0) this.hud.toast(`Ein Konvoi aus ${c.fromName} ist in ${def.name} eingelaufen: ${GOOD_BY_ID[c.good].n} +${Math.round(d.units)} (Preis ${Math.round(d.priceBefore)} → ${Math.round(d.priceAfter)} Gold).`, 6);
+        return;
+      }
+      case 'crate': {
+        const c = n.crate;
+        if (c.kind === 'karte') {
+          const quest = this.quests?.treasureIslands() ?? [];
+          const isl = c.islandId ? this.world.islandDefs.find((i) => i.id === c.islandId) : null;
+          if (isl && !s.progress.maps.includes(isl.id) && !quest.includes(isl.id)) {
+            s.progress.maps.push(isl.id);
+            this.refreshDigs();
+            audio.play('treasure');
+            this.overlay.showBanner('Schatzkarte im Treibgut!', `Ein X auf ${isl.name}`);
+          } else { s.player.gold += 120; this.hud.toast('Eine aufgeweichte Karte – nicht mehr zu lesen. In der Kiste lagen noch 120 Gold.', 4); }
+        } else if (c.kind === 'ware' && c.good) this.hud.toast(`Geborgen: ${this.takeGoods([{ good: c.good, units: c.units }])}.`, 3);
+        else {
+          const id = c.kind === 'planken' ? 'planken' : 'segeltuch';
+          const def = CONSUMABLE_BY_ID[id];
+          const got = def ? addItem(s.gear, id, c.units, this.bagMax(def)) : 0;
+          if (got > 0) this.hud.toast(`Geborgen: ${got} × ${def!.n}.`, 3); else { s.player.gold += 40 * c.units; this.hud.toast(`Geborgen (Taschen voll, verkauft): +${40 * c.units} Gold.`, 3); }
+        }
+        this.inventoryUi?.refresh();
+        return;
+      }
+      case 'eventEnd': {
+        const ev = n.event;
+        const near = n.dist < DIRECTOR.beaconRange;
+        if (ev.outcome !== 'gesiegt' || !ev.byPlayer) {
+          if (!near || !playing) return;
+          if (ev.kind === 'blockade' && ev.outcome === 'abgelaufen') this.hud.toast(`Die Blockade vor ${ev.islandName} löst sich auf – die Preise dort sinken wieder.`, 5);
+          else if (ev.kind === 'schatzgaleone' && ev.outcome === 'entkommen') this.hud.toast(`Die Schatz-Galeone hat ${ev.destName} erreicht – die Leuchtraketen verlöschen.`, 5);
+          else if (ev.kind === 'weltboss' && ev.outcome === 'abgelaufen') this.hud.toast(`${ev.name} taucht ab in die Tiefe – der Gewitterwirbel zieht ab.`, 5);
+          else if (ev.kind === 'treibgut' && ev.outcome === 'geborgen') this.hud.toast('Das Treibgut-Feld ist geborgen.', 3);
+          return;
+        }
+        if (ev.kind === 'schatzgaleone') {
+          const gold = Math.round((2200 + 140 * ev.level) * this.goldMult(true));
+          s.player.gold += gold;
+          const u = (s.progress.unlocks ??= emptyUnlocks());
+          const shards = 2 + Math.floor(Math.random() * 3);
+          u.shards = Math.min(9999, u.shards + shards);
+          const got = this.takeGoods([{ good: 'luxusgueter', units: 6 + Math.floor(ev.level / 3) }, { good: 'seide', units: 5 + Math.floor(ev.level / 4) }]);
+          this.grantXp(400 + ev.level * 30, 40 + ev.level);
+          this.overlay.showBanner('Schatz-Galeone aufgebracht!', `+${fmtInt(gold)} Gold · ${shards} Relikt-Splitter · ${got}`);
+          audio.play('treasure');
+          if (this.playerRank >= 5) this.dropWarlord(0.35, 'Schatz-Galeone');
+        } else if (ev.kind === 'blockade') {
+          const gold = Math.round(800 * ev.dangerTier * this.goldMult(true));
+          s.player.gold += gold;
+          const isl = this.world.islandDefs.find((i) => i.id === ev.islandId);
+          const owner = isl?.factionId ?? null;
+          if (owner) { this.shiftStanding(owner, 8); this.addHonor(owner, 20); }
+          this.grantXp(300 + ev.level * 25, 30 + ev.level);
+          this.overlay.showBanner('Blockade gebrochen!', `+${fmtInt(gold)} Gold${owner ? ` · ${FACTIONS[owner].name} +8 Ansehen · Ehre +20` : ''} · ${ev.islandName}: Preise wieder normal, Schnellreise frei`);
+          audio.play('win');
+        } else if (ev.kind === 'weltboss' && ev.bossId) {
+          const bd = WORLD_BOSSES[ev.bossId];
+          const sector = sectorAt(ev.x, ev.z).factionId;
+          const loot = rollWorldBossLoot(ev.bossId, n.firstKill, sector, Math.random);
+          const gold = Math.round(loot.gold * this.goldMult(true));
+          s.player.gold += gold;
+          const u = (s.progress.unlocks ??= emptyUnlocks());
+          u.seals[loot.seals.power] = Math.min(999, (u.seals[loot.seals.power] ?? 0) + loot.seals.n);
+          u.shards = Math.min(9999, u.shards + loot.shards);
+          this.shiftStanding(loot.seals.power, 6);
+          this.addHonor(loot.seals.power, 25);
+          this.grantXp(loot.xp, loot.fame);
+          // garantiert ein Stück der Stufe 4 (Kriegsherren-Beute)
+          this.dropWarlord(1, bd.name);
+          audio.play('win');
+          this.after(() => this.overlay.showCutin(`${bd.name} besiegt!`, '#9FE8FF'), 300);
+          this.overlay.showBanner(`${bd.name} besiegt!`, `+${fmtInt(gold)} Gold · ${loot.seals.n} Boss-Siegel (${FACTIONS[loot.seals.power].name}) · ${loot.shards} Relikt-Splitter · Stufe-4-Beute${n.firstKill ? ' · Erster Sieg!' : ''}`);
+        }
+        this.persist();
+        this.inventoryUi?.refresh();
+        return;
+      }
+    }
+  }
+
+  /** Zeichen des lebendigen Meeres für Kompass und Karten: Ereignisse in Sichtweite der Signale, Konvois in der Nähe */
+  private seaPois(out: Poi[], range: number, convoyRange: number) {
+    const live = this.world.seaEvents;
+    if (!live || this.world.raid) return;
+    const pos = this.world.playerPos;
+    const KIND: Record<string, PoiKind> = { schatzgaleone: 'galeone', blockade: 'blockade', treibgut: 'flotsam', weltboss: 'worldboss' };
+    for (const m of live.marks()) if (Math.hypot(m.x - pos.x, m.z - pos.z) < range) out.push({ x: m.x, z: m.z, kind: KIND[m.kind], name: m.name });
+    for (const c of live.convoyMarks()) if (Math.hypot(c.x - pos.x, c.z - pos.z) < convoyRange) out.push({ x: c.x, z: c.z, kind: 'convoy', name: c.name, color: c.threatened ? '#FF4A3A' : undefined });
   }
 
   /** Kompassleiste: Punkte mit Peilung (Welt) und Entfernung */
@@ -2833,6 +3036,8 @@ export class Game {
     return {
       id: d.id, name: d.name, profile: profileOf({ id: d.id, region: d.region, factionId: d.factionId }),
       war: { borderDist: borderDistance(d.x, d.z).dist, occupied: this.occupation.occupied(d.id), fort: d.kind === 'marinefort' || d.kind === 'citadel' },
+      // Hafen-Blockade (lebendiges Meer): doppelte Handelspreise, solange sie liegt
+      priceK: this.world.seaEvents?.director.priceK(d.id) ?? 1,
     };
   }
 
@@ -2871,7 +3076,7 @@ export class Game {
       return { def: g, stock: Math.floor(stock), buy, sell, trend: trendOf(base, g.id), role: roleOf(site.profile, g.id), eq: eqPriceOf(site.profile, g.id), have, avgCost: have ? (eco.cargo[g.id]!.cost / have) : 0, war: !!g.war };
     });
     const ledger = Object.entries(eco.ledger).filter(([id]) => id !== site.id).map(([id, l]) => ({ id, ...l, age: Math.max(0, now - l.t) })).sort((a, b) => a.age - b.age);
-    return { site, rows, tariff: t, cargo: { used: cargoUsed(eco), cap: cargoCap(tier), war: warCargo(eco) }, upkeep: this.upkeepView(), ledger, heat: eco.heat, gold: s.player.gold };
+    return { site, rows, tariff: t, cargo: { used: cargoUsed(eco), cap: cargoCap(tier), war: warCargo(eco) }, upkeep: this.upkeepView(), ledger, heat: eco.heat, gold: s.player.gold, blockade: (site.priceK ?? 1) > 1 };
   }
 
   /** Ware im Kontor kaufen (Frachtraum, Vorrat, Gold und Tarif begrenzen die Menge) */
@@ -3318,6 +3523,8 @@ export class Game {
     this.save = data;
     this.world.leaveTitle();
     this.world.setState({ boat: data.world.boat, env: { time: data.world.time, weather: data.world.weather as WeatherId } });
+    // Lebendiges Meer (Phase 4.3C): Ereignisse, Konvois und Wetterzellen aus dem Spielstand; der Zufall hängt am Spielstand (gleiche Welt nach dem Laden)
+    this.world.seedSeaEvents(data.world.seaEvents ?? null, ((data.meta.created % 4294967296) ^ 0x5eaf00d) >>> 0);
     const p = data.player;
     this.world.playerFaction = p.faction;
     ensureGear(data.gear);
@@ -3401,7 +3608,7 @@ export class Game {
     if (!this.save || this.slot === null) return true;
     this.syncFleetState();
     const ws = this.world.getState();
-    this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather };
+    this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather, seaEvents: this.world.seaEvents?.snapshot() ?? null };
     const sh = this.world.ship;
     this.save.ship.hull = sh.maxHull > 0 ? Math.max(0.05, sh.hull / sh.maxHull) : 1;
     this.save.ship.sail = sh.sail;

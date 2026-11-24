@@ -27,9 +27,12 @@ import { BORDER_FORTS, BORDERS, FACTIONS, borderDistance, marineStance, sectorAt
 import { BATTLE, battleSite, compassWord, nextDelay, sideSize, type BattleSite } from './battleRules';
 import { cannotBeSunk } from './shipSim';
 import { PredictiveMaritimeSteering, aiSpreadK, arriveRadius, createAiNav, fireRangeOf, newSteerCommand, newSteerSelf, newSteerTarget, noteRam, resetGoal, type AiNavState, type SteerCommand, type SteerSelf, type SteerTarget } from './shipSteering';
-import { distToSegment, wrapAngle } from '../core/mathUtil';
+import { clamp, clamp01, distToSegment, wrapAngle } from '../core/mathUtil';
 import { FLEET_ANCHOR_CLEAR, FLEET_DMG_K, FLEET_ORDER_RANGE, FLEET_RECALL_DIST, formationPoint, formationSlotOf, type FleetOrder, type FleetShipRecord, type FlagMotion, type FlagPose, type FormationOffset } from '../data/playerFleet';
-import { aiCannon, aiHullFactor, dangerOfLevel } from '../data/balanceConfig';
+import { aiCannon, aiHullFactor, capVolley, dangerOfLevel, WORLD_BOSS_HIT_CAP, type VolleyWindow } from '../data/balanceConfig';
+import type { SeaShipRole } from '../world/tradeConvoys';
+import type { WorldBossId } from '../data/seaEvents';
+import type { ShipEvolution } from '../data/shipEvolution';
 import { portIndices, aiEvolution, evoStats } from '../data/shipEvolution';
 import { aiMayRam, hasSwivels, ramContact, ramDamage, ramImpulse, swivelCooldown, swivelDamage, swivelTarget, type Kin } from './ramming';
 import { RAM, SWIVEL } from '../data/balanceConfig';
@@ -61,6 +64,8 @@ const SWIVEL_FLASH = new Color(4, 2, 0.5);
 const SWIVEL_TRACER = new Color(3.4, 2.2, 0.6);
 /** Schwenkzeit vor dem Schuss und Haltezeit auf dem Ziel (Sekunden) */
 const SWIVEL_AIM_T = 0.4;
+/** Geisterfeuer der Spektral-Breitseite */
+const SPECTRAL_COL = new Color(0.6, 3.2, 2.4);
 const SWIVEL_HOLD_T = 2.4;
 
 export interface EnemyShip {
@@ -115,6 +120,39 @@ export interface EnemyShip {
   noKillHint?: number;
   /** Wird gerade vom Spieler geentert (setzt die Seewelt): Schüsse anderer Schiffe richten nichts an, eine Seeschlacht läuft weiter, bis der Enterkampf entschieden ist */
   boarded?: boolean;
+  /** Schiff eines Welt-Ereignisses oder Handelskonvois (Phase 4.3C): die Seewelt (world/worldEventsLive.ts) führt es, die KI fährt nach `aiEvent` */
+  ev?: EventShipLink;
+}
+
+/** Was ein Ereignis-Schiff beim Erscheinen braucht (Klasse, Aussehen, Stufe, Ausbau, Rumpf, Verbindung zum Ereignis) */
+export interface EventShipSpec {
+  x: number; z: number; heading: number; classTier: number; level: number; look: ShipLook; role: NavalRole; power?: FactionId; name: string;
+  evo: ShipEvolution; hullFrac: number; sailFrac: number; maxHull?: number; link: EventShipLink; ghost?: boolean;
+}
+
+/**
+ * Verbindung eines KI-Schiffs zu seinem Welt-Ereignis oder Konvoi (reine Daten): Besitzer und Eintrag im Zustand des Directors, Rolle, Route, Formation
+ * und Zone. Opt-In: ein Ereignis-Schiff greift den Spieler nur an, wenn er in die Zone fährt (Blockade, Weltboss) oder zuerst schießt (`provoked`).
+ */
+export interface EventShipLink {
+  /** Kennung des Ereignisses bzw. Konvois und des Schiffseintrags (`SeaShipRec.id`) */
+  owner: string;
+  recId: string;
+  role: SeaShipRole;
+  /** Führer der Formation (entityId des Frachters bzw. der Galeone) */
+  leadId: string | null;
+  /** Route (flach x, z, …; dieselbe Liste wie im Ereignis) und nächster Wegpunkt */
+  route: number[] | null;
+  leg: number;
+  /** Zone: wer hineinfährt, wird angegriffen */
+  zone: { x: number; z: number; r: number } | null;
+  /** Beute eines Korsaren (entityId des Frachters) */
+  preyId: string | null;
+  bossId: WorldBossId | null;
+  /** Platz in der Formation (0 = Führer) */
+  slot: number;
+  /** Laufende Salve gegen den Spieler (Anti-One-Shot der Weltbosse) */
+  volley?: VolleyWindow;
 }
 
 /** Eine laufende Seeschlacht zwischen zwei Mächten an einer Grenzlinie */
@@ -206,6 +244,14 @@ export class NavalSystem {
   raidTargets: BallTarget | null = null;
   /** Zusätzliches Ziel für Kanonenkugeln (Seeungeheuer) */
   extraTarget: { hitTest(p: Vector3): boolean; damage(n: number): void } | null = null;
+  /** Weltboss-Ungeheuer (Tiefsee-Leviathan): Kugeln des Spielers und seiner Flotte treffen seinen Körper */
+  bossTarget: { hitTest(p: Vector3): boolean; damage(n: number, pen: number): number } | null = null;
+  /** Fahrtfaktor eines Schiffs aus Meeresströmung und Wetterzelle (setzt die Seewelt; 1 = keiner) */
+  flowK: (s: Ship) => number = () => 1;
+  /** Faktor auf die Sichtweite der KI an einem Ort (Nebelbänke; setzt die Seewelt) */
+  sightK: (x: number, z: number) => number = () => 1;
+  /** Der Spieler hat ein Schiff eines Welt-Ereignisses oder Konvois getroffen, gerammt oder beschossen (setzt die Seewelt, Phase 4.3C) */
+  onEventHit: (e: EnemyShip) => void = () => {};
   /** Kanonenschaden des Spielers */
   canDmg = 14;
   reloadMult = 1;
@@ -602,6 +648,8 @@ export class NavalSystem {
 
   /** Marine-Schiffe greifen nur an, wenn das Ansehen unter 0 liegt oder man auf sie geschossen hat */
   private peaceful(e: EnemyShip): boolean {
+    // Welt-Ereignisse und Konvois (Opt-In): friedlich, bis der Spieler zuerst schießt oder sie ihn angreifen (Korsaren nie)
+    if (e.ev) return !e.provoked && e.ev.role !== 'korsar' && e.state !== 'engage';
     if (e.provoked || e.companion || e.raid || e.hunter || !e.power) return false;
     if (e.power === 'marine') return marineStance(this.standingOf('marine')) !== 'feindlich';
     // andere Mächte: friedliche Durchfahrt im Sektor ab gutem Ansehen (Ehre aus Seeschlachten)
@@ -880,7 +928,8 @@ export class NavalSystem {
   /** Sichtweite, ab der ein Schiff angreift (vorher segelt es seine Route) – einmal im Gefecht, bleibt es länger dran */
   private sight(e: EnemyShip) {
     const base = e.hunter ? 1100 : e.raid ? 520 : e.role === 'legende' ? 480 : e.role === 'jaeger' ? 300 : e.ghost ? 320 : 220;
-    return e.state === 'engage' ? Math.max(base, 420) : base;
+    // in einer Nebelbank entdeckt man einander spät (Phase 4.3C); wer schon kämpft, verliert sein Ziel nicht
+    return e.state === 'engage' ? Math.max(base, 420) : base * this.sightK(e.ship.x, e.ship.z);
   }
 
   /** Legende der Rangliste in ihrem Heimatgewässer auftauchen lassen */
@@ -907,15 +956,7 @@ export class NavalSystem {
       const look = DEFAULT_SHIP_LOOK('pirat');
       look.hull = '#2A3A3A'; look.sail = '#BFEFE4'; look.stripe = '#7FE0C8'; look.flagColor = '#1E1A20'; look.lanterns = true;
       const ship = new Ship(this.scene, Math.min(4, 1 + Math.floor(level / 3)), look, 'pirat', 120, false, aiEvolution('grenze', dangerOfLevel(level)));
-      ship.model.group.traverse((o) => {
-        const m = o as Mesh;
-        if (!m.isMesh || Array.isArray(m.material)) return;
-        // Kopie behält Anime-Shading und Schatten-Schalter (ein einfaches clone() verliert beides)
-        const mat = cloneToon(m.material) as MeshBasicMaterial;
-        mat.transparent = true; mat.opacity = 0.62; mat.depthWrite = false;
-        if ('emissive' in mat) (mat as unknown as { emissive: Color }).emissive.set('#1E5A50');
-        m.material = mat;
-      });
+      this.ghostify(ship);
       ship.x = x; ship.z = z; ship.heading = Math.atan2(px - x, pz - z);
       ship.prev = { x, z, heading: ship.heading };
       this.enemies.push({ ship, role: 'jaeger', level, state: 'engage', wander: { x, z }, aiT: 0, name: 'Geisterschiff', ghost: true });
@@ -923,6 +964,75 @@ export class NavalSystem {
       return true;
     }
     return false;
+  }
+
+  /** Schiff durchscheinend und geisterhaft leuchtend machen (Geisterschiffe, der Fliegende Klabautermann) */
+  private ghostify(ship: Ship, opacity = 0.62) {
+    ship.model.group.traverse((o) => {
+      const m = o as Mesh;
+      if (!m.isMesh || Array.isArray(m.material)) return;
+      // Kopie behält Anime-Shading und Schatten-Schalter (ein einfaches clone() verliert beides)
+      const mat = cloneToon(m.material) as MeshBasicMaterial;
+      mat.transparent = true; mat.opacity = opacity; mat.depthWrite = false;
+      if ('emissive' in mat) (mat as unknown as { emissive: Color }).emissive.set('#1E5A50');
+      m.material = mat;
+    });
+  }
+
+  /**
+   * Schiff eines Welt-Ereignisses oder Konvois auf See setzen (Phase 4.3C). Klasse, Aussehen, Stufe, Ausbaustufen, Rumpf und Segel kommen vom Gastgeber
+   * (world/worldEventsLive.ts), die KI fährt es nach `link` (Route, Formation, Zone). Weltbosse (`link.bossId`) bekommen ihren Rumpf aus `worldBossHull`
+   * (`maxHull`) und den Anti-One-Shot-Deckel `WORLD_BOSS_HIT_CAP`. Der Gastgeber setzt höchstens ein solches Schiff je Bild (gegen Ruckler).
+   */
+  spawnEventShip(o: EventShipSpec): EnemyShip {
+    const it = this.spawnEventShipSteps(o);
+    for (;;) { const r = it.next(); if (r.done) return r.value; }
+  }
+
+  /** Wie `spawnEventShip`, aber in Teilschritten: das Modell entsteht über mehrere Bilder (`Ship.buildSteps`), das Schiff erscheint erst im letzten */
+  *spawnEventShipSteps(o: EventShipSpec): Generator<void, EnemyShip> {
+    const tier = clamp(Math.round(o.classTier), 0, SHIP_CLASSES.length - 1);
+    const cls = SHIP_CLASSES[tier];
+    const style: 'pirat' | 'marine' = o.link.role === 'korsar' || !o.power || o.power === 'kurogane' ? 'pirat' : 'marine';
+    const bonus = o.maxHull ? Math.max(0, o.maxHull - cls.hp) : Math.round(cls.hp * (aiHullFactor(o.level) - 1));
+    const ship = yield* Ship.buildSteps(this.scene, tier, o.look, style, bonus, false, o.evo);
+    if (o.ghost) this.ghostify(ship, 0.7);
+    ship.hull = Math.max(1, ship.maxHull * clamp01(o.hullFrac));
+    ship.sail = clamp01(o.sailFrac);
+    ship.x = o.x; ship.z = o.z; ship.heading = o.heading;
+    ship.prev = { x: o.x, z: o.z, heading: o.heading };
+    if (o.link.bossId) ship.hitCap = ship.maxHull * WORLD_BOSS_HIT_CAP;
+    const e: EnemyShip = { ship, role: o.role, level: o.level, state: 'patrol', wander: { x: o.x, z: o.z }, aiT: 0, name: o.name, power: o.power, ev: o.link };
+    this.enemies.push(e);
+    return e;
+  }
+
+  /**
+   * Kanonenkugeln aller Munitionsarten und Beutekisten einmal zeigen (Ladebildschirm): ihre Shader werden dort übersetzt statt beim ersten Schuss
+   * auf See (Fix aus 4.3.3: Spawn- und Schuss-Ruckler). Der Aufrufer hängt die Gruppe danach wieder ab; Netze und Materialien sind geteilt.
+   */
+  prewarmProps(at: Vector3): Group {
+    const g = new Group();
+    const put = (m: Mesh) => { m.position.set(at.x, at.y - 2000, at.z); m.frustumCulled = false; g.add(m); };
+    for (const id of Object.keys(AMMO) as AmmoId[]) put(new Mesh(this.ballGeo, id === 'brand' ? this.fireMat : toon({ color: AMMO[id].color, spec: 1 })));
+    put(new Mesh(this.crateGeo, this.shardMat));
+    put(new Mesh(this.crateGeo, toon('#8A5A2B')));
+    return g;
+  }
+
+  /** Hat der Spieler dieses Schiff in den letzten `within` Sekunden getroffen? */
+  hitByPlayer(e: EnemyShip, within = 10): boolean { return e.lastPlayerHit !== undefined && this.clock - e.lastPlayerHit < within; }
+
+  /** Uhr des Seesystems (Spielzeit, s) */
+  get time(): number { return this.clock; }
+
+  /** Ein Ereignis-Schiff ohne Untergang abbauen (es wird wieder zu reinen Daten) */
+  removeEventShip(e: EnemyShip) {
+    const i = this.enemies.indexOf(e);
+    if (i < 0) return;
+    this.enemies.splice(i, 1);
+    e.ship.dispose();
+    this.overlay.setBar(e, null, -1, false, null);
   }
 
   /** Bei Tagesanbruch lösen sich Geisterschiffe auf */
@@ -1133,7 +1243,7 @@ export class NavalSystem {
       else this.spawnT = Math.max(this.spawnT, 20 + Math.random() * 10);
       const zone = this.zoneLevel(p.x, p.z);
       // nur Schiffe in der Nähe zählen (vorbeigesegelte nicht), Händler halb
-      const present = this.enemies.reduce((n, e) => n + (!e.companion && !e.battle && !e.hunter && e.ship.alive && !e.legendId && !e.station && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) < 650 ? (e.role === 'haendler' ? 0.5 : 1) : 0), 0);
+      const present = this.enemies.reduce((n, e) => n + (!e.companion && !e.battle && !e.hunter && !e.ev?.owner && e.ship.alive && !e.legendId && !e.station && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) < 650 ? (e.role === 'haendler' ? 0.5 : 1) : 0), 0);
       const cap = zone <= 2 ? 2 : zone <= 6 ? 3 : 4;
       if (!this.raidMode && this.spawnT <= 0 && present < cap) {
         this.spawnT = (zone <= 2 ? 30 : 25) + Math.random() * 30;
@@ -1154,7 +1264,8 @@ export class NavalSystem {
     for (const e of this.enemies) this.damageFx(e.ship, dt);
     if (p) this.damageFx(p, dt);
     // Weit entfernte entfernen, gesunkene aufräumen
-    const gone = (e: EnemyShip) => e.ship.sinking > 9 || (!!p && !e.companion && !e.raid && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > (e.battle ? 1900 : e.state === 'engage' || e.legendId ? 1200 : 900));
+    // Schiffe der Welt-Ereignisse und Konvois baut die Seewelt selbst ab (sie werden wieder zu Daten), hier nur, wenn sie gesunken sind
+    const gone = (e: EnemyShip) => e.ship.sinking > 9 || (!!p && !e.companion && !e.raid && !e.ev?.owner && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > (e.battle ? 1900 : e.state === 'engage' || e.legendId ? 1200 : 900));
     keepIf(this.enemies, (e) => {
       if (!gone(e)) return true;
       e.ship.dispose();
@@ -1204,6 +1315,7 @@ export class NavalSystem {
     if (en.power === 'marine' && !en.provoked) { en.provoked = true; if (!en.companion) this.hooks.message(`${how} ein Schiff der Marine – sie wird dich jagen!`); }
     else if (en.power && !en.provoked && !en.companion) en.provoked = true;
     en.lastPlayerHit = this.clock;
+    if (en.ev) { en.provoked = true; this.onEventHit(en); }
   }
 
   /** Folgen eines Treffers ohne Kugel: Untergang oder Enterphase auslösen */
@@ -1251,7 +1363,7 @@ export class NavalSystem {
     const local = new Vector3(ex * tfz - ez * tfx, 0, ex * tfx + ez * tfz);
     const wasB = b.disabled, wasA = a.disabled;
     const byPlayer = a === this.player;
-    const dealt = b.ramHit(d.target, d.pen, local);
+    const dealt = b.ramHit(b === this.player ? this.bossCap(a, d.target) : d.target, d.pen, local);
     const rammer = this.enemies.find((o) => o.ship === a);
     if (rammer?.nav) noteRam(rammer.nav);
     const self = a.ramHit(d.self, null, new Vector3(0, 0, a.cls.L * 0.5));
@@ -1348,7 +1460,7 @@ export class NavalSystem {
     const base = swivelDamage(e && !e.companion ? aiCannon(e.level).dmg : this.canDmg * (e ? 0.6 : 1));
     const local = new Vector3((Math.random() - 0.5) * t.cls.W * 0.8, 0, (Math.random() - 0.5) * t.cls.L * 0.6);
     const wasT = t.disabled;
-    const dealt = t.damage(base, 'kartaetsche', local, 'hull', SWIVEL.pen);
+    const dealt = t.damage(t === p ? this.bossCap(s, base) : base, 'kartaetsche', local, 'hull', SWIVEL.pen);
     this.swivelFx(s, t, dx / dl, dz / dl);
     audio.play('crack', 0.45, { x: s.x, z: s.z });
     if (s === p || t === p) {
@@ -1529,7 +1641,7 @@ export class NavalSystem {
       if (foe) { target = foe; duel = true; }
     } else if (e.companion) {
       let best = 260;
-      for (const o of this.enemies) if (!o.companion && o.ship.alive && !o.ship.disabled && o.role !== 'haendler') { const d = Math.hypot(o.ship.x - s.x, o.ship.z - s.z); if (d < best) { best = d; target = o.ship; } }
+      for (const o of this.enemies) if (!o.companion && o.ship.alive && !o.ship.disabled && o.role !== 'haendler' && !(o.ev && this.peaceful(o))) { const d = Math.hypot(o.ship.x - s.x, o.ship.z - s.z); if (d < best) { best = d; target = o.ship; } }
     } else if (p?.alive && e.role !== 'haendler' && !this.peaceful(e)) target = p;
     const dist = target ? Math.hypot(target.x - s.x, target.z - s.z) : 9999;
 
@@ -1554,38 +1666,9 @@ export class NavalSystem {
       }
       turn = this.applyCmd(e, cmd);
     } else if (target && !e.companion && !duel && dist < this.sight(e)) {
-      // Wie in 1.0: in Breitseitenabstand umkreisen, feuern, sobald eine Seite zeigt – jetzt mit Zustandsmaschine (Anmarsch, Umkreisen, Rammen, Rückzug)
-      const tier = Math.max(0, SHIP_CLASSES.indexOf(s.cls));
-      s.speedCap = (14.5 - tier * 0.4 + (e.role === 'legende' ? 2 : 0) + (e.ghost ? 1 : 0)) * (this.isWeak(e) ? 0.45 : 1);
-      if (this.isWeak(e) && !e.weakNoted) { e.weakNoted = true; this.hooks.message(`${e.name ?? 'Das Schiff'} ist schwer angeschlagen – fahr heran und entere es!`); }
-      this.fillSteerSelf(e, self);
-      this.fillSteerTarget(target, tgt);
-      this.stagger(nav, s);
-      this.steering.fight(nav, self, tgt, dt, cmd);
-      turn = this.applyCmd(e, cmd);
-      if (cmd.state !== 'DISENGAGE' && dist < fireRangeOf(tier) && s.ceasefire <= 0 && s.frozen <= 0) {
-        const toP = Math.atan2(target.x - s.x, target.z - s.z);
-        for (let k = 0; k < 2; k++) {
-          const side = k === 0 ? -1 : 1;
-          if ((side > 0 ? s.reloadL : s.reloadR) > 0) continue;
-          if (Math.abs(wrapAngle(s.heading + side * Math.PI / 2 - toP)) > 0.4) continue;
-          const lv = e.level;
-          const dmg = (6 + tier * 2) * (1 + 0.12 * (lv - 1) + 0.004 * (lv - 1) * (lv - 1)) * (e.role === 'legende' ? 1.4 : 1);
-          this.broadside(s, side, dist, dmg, e.role === 'legende' && Math.random() < 0.3 ? 'brand' : 'kugel', target);
-          const reload = (2.4 + Math.random()) / Math.sqrt(lv * 0.5 + 0.5) * s.reloadScale;
-          if (side > 0) s.reloadL = reload; else s.reloadR = reload;
-          break;
-        }
-      }
+      turn = this.fightHostile(e, nav, target, dist, dt);
     } else if (target && (e.companion || duel) && dist < 420) {
-      const tier = Math.max(0, SHIP_CLASSES.indexOf(s.cls));
-      this.fillSteerSelf(e, self, false, !e.training);
-      this.fillSteerTarget(target, tgt);
-      this.stagger(nav, s);
-      this.steering.fight(nav, self, tgt, dt, cmd);
-      turn = this.applyCmd(e, cmd);
-      // Breitseite: Ziel quer zum eigenen Kurs, Schuss nur, wenn die Seite zeigt und geladen ist
-      if (cmd.state !== 'DISENGAGE') this.duelFire(e, target, dist, tier, e.companion ? this.canDmg * 0.6 : null);
+      turn = this.fightDuel(e, nav, target, dist, dt);
     } else {
       if (!e.companion) s.speedCap = 10;
       this.fillSteerSelf(e, self);
@@ -1614,6 +1697,198 @@ export class NavalSystem {
     return turn;
   }
 
+  /**
+   * Gefecht gegen den Spieler (wie in 1.0: in Breitseitenabstand umkreisen, feuern, sobald eine Seite zeigt – mit der Zustandsmaschine aus Anmarsch,
+   * Umkreisen, Rammen und Rückzug). Liefert das Ruder.
+   */
+  private fightHostile(e: EnemyShip, nav: AiNavState, target: Ship, dist: number, dt: number): number {
+    const s = e.ship;
+    const self = this.steerSelf, tgt = this.steerTgt, cmd = this.steerCmd;
+    const tier = Math.max(0, SHIP_CLASSES.indexOf(s.cls));
+    s.speedCap = (14.5 - tier * 0.4 + (e.role === 'legende' ? 2 : 0) + (e.ghost ? 1 : 0)) * (this.isWeak(e) ? 0.45 : 1);
+    if (this.isWeak(e) && !e.weakNoted) { e.weakNoted = true; this.hooks.message(`${e.name ?? 'Das Schiff'} ist schwer angeschlagen – fahr heran und entere es!`); }
+    this.fillSteerSelf(e, self);
+    this.fillSteerTarget(target, tgt);
+    this.stagger(nav, s);
+    this.steering.fight(nav, self, tgt, dt, cmd);
+    const turn = this.applyCmd(e, cmd);
+    if (cmd.state !== 'DISENGAGE' && dist < fireRangeOf(tier) && s.ceasefire <= 0 && s.frozen <= 0) {
+      const toP = Math.atan2(target.x - s.x, target.z - s.z);
+      for (let k = 0; k < 2; k++) {
+        const side = k === 0 ? -1 : 1;
+        if ((side > 0 ? s.reloadL : s.reloadR) > 0) continue;
+        if (Math.abs(wrapAngle(s.heading + side * Math.PI / 2 - toP)) > 0.4) continue;
+        const lv = e.level;
+        const dmg = (6 + tier * 2) * (1 + 0.12 * (lv - 1) + 0.004 * (lv - 1) * (lv - 1)) * (e.role === 'legende' ? 1.4 : 1);
+        // Der Fliegende Klabautermann feuert Spektral-Breitseiten: abwechselnd Kartätschen gegen die Mannschaft und Kugeln, mit grünem Geisterfeuer
+        const spectral = e.ev?.bossId === 'klabautermann';
+        const ammo: AmmoId = spectral ? (Math.random() < 0.5 ? 'kartaetsche' : 'kugel') : e.role === 'legende' && Math.random() < 0.3 ? 'brand' : 'kugel';
+        this.broadside(s, side, dist, dmg, ammo, target);
+        if (spectral) this.spectralFx(s, side);
+        const reload = (2.4 + Math.random()) / Math.sqrt(lv * 0.5 + 0.5) * s.reloadScale;
+        if (side > 0) s.reloadL = reload; else s.reloadR = reload;
+        break;
+      }
+    }
+    return turn;
+  }
+
+  /** Schiff gegen Schiff (Seeschlacht, Marine-Hilfe, Konvoi-Eskorte gegen Korsaren): kämpft wie ein Begleiter gegen sein Ziel. Liefert das Ruder. */
+  private fightDuel(e: EnemyShip, nav: AiNavState, target: Ship, dist: number, dt: number): number {
+    const s = e.ship;
+    const self = this.steerSelf, tgt = this.steerTgt, cmd = this.steerCmd;
+    const tier = Math.max(0, SHIP_CLASSES.indexOf(s.cls));
+    this.fillSteerSelf(e, self, false, !e.training);
+    this.fillSteerTarget(target, tgt);
+    this.stagger(nav, s);
+    this.steering.fight(nav, self, tgt, dt, cmd);
+    const turn = this.applyCmd(e, cmd);
+    // Breitseite: Ziel quer zum eigenen Kurs, Schuss nur, wenn die Seite zeigt und geladen ist
+    if (cmd.state !== 'DISENGAGE') this.duelFire(e, target, dist, tier, e.companion ? this.canDmg * 0.6 : null);
+    return turn;
+  }
+
+  /** Grünes Geisterfeuer entlang der feuernden Seite (Spektral-Breitseite des Klabautermanns) */
+  private spectralFx(s: Ship, side: number) {
+    const lx = Math.cos(s.heading) * side, lz = -Math.sin(s.heading) * side;
+    const fx = Math.sin(s.heading), fz = Math.cos(s.heading);
+    for (let i = -2; i <= 2; i++) {
+      const x = s.x + lx * (s.cls.W * 0.6) + fx * i * s.cls.L * 0.15, z = s.z + lz * (s.cls.W * 0.6) + fz * i * s.cls.L * 0.15;
+      this.sparks.emit(6, x, s.model.deckY, z, { speed: 7, up: 2, life: 0.9, color: SPECTRAL_COL, gravity: -0.5, spread: 0.6 });
+    }
+  }
+
+  /**
+   * Anti-One-Shot gegen Weltbosse: alles, was ein Weltboss binnen `WORLD_BOSS_VOLLEY_S` gegen das Spielerschiff anrichtet (Kugeln, Rammstoß, Drehbassen),
+   * zählt als eine Salve und nimmt höchstens `WORLD_BOSS_PLAYER_HIT_CAP` des Rumpfs (data/balanceConfig.ts `capVolley`).
+   */
+  private bossCap(attacker: Ship, dmg: number): number {
+    const p = this.player;
+    if (!p) return dmg;
+    const en = this.enemies.find((o) => o.ship === attacker);
+    const L = en?.ev;
+    if (!L?.bossId) return dmg;
+    const win = (L.volley ??= { t: -99, sum: 0 });
+    return capVolley(win, this.clock, dmg, p.maxHull);
+  }
+
+  private shipByEntity(id: string | null): Ship | null {
+    if (!id) return null;
+    if (this.player?.entityId === id) return this.player;
+    for (const o of this.enemies) if (o.ship.entityId === id) return o.ship;
+    return null;
+  }
+
+  /** Nächster kampffähiger Korsar, der den Konvoi `owner` überfällt, im Umkreis `range` */
+  private corsairOf(owner: string, s: Ship, range: number): Ship | null {
+    let best = range, foe: Ship | null = null;
+    for (const o of this.enemies) {
+      if (o.ev?.role !== 'korsar' || o.ev.owner !== owner || !o.ship.alive || o.ship.disabled || o.ship.sinking > 0) continue;
+      const d = Math.hypot(o.ship.x - s.x, o.ship.z - s.z);
+      if (d < best) { best = d; foe = o.ship; }
+    }
+    return foe;
+  }
+
+  /** Einem Ereignis-Schiff seine Route entlang (Frachter, Galeone, Weltboss): Wegpunkt für Wegpunkt mit Ankunftsradius, Sackgassen überspringen */
+  private followRoute(e: EnemyShip, nav: AiNavState, dt: number, sail: number): number {
+    const s = e.ship, L = e.ev!, self = this.steerSelf, cmd = this.steerCmd;
+    this.fillSteerSelf(e, self);
+    const r = L.route;
+    if (!r || r.length < 4) { s.aiSail = 0.3; return 0; }
+    const ar = Math.max(60, arriveRadius(self));
+    const last = r.length / 2 - 1;
+    let k = Math.min(Math.max(1, L.leg), last);
+    while (k < last && Math.hypot(r[k * 2] - s.x, r[k * 2 + 1] - s.z) < ar) k++;
+    if (nav.replan && k < last) { k++; resetGoal(nav); }
+    if (k !== L.leg) resetGoal(nav);
+    L.leg = k;
+    this.steering.cruise(nav, self, r[k * 2], r[k * 2 + 1], sail, ar * 0.5, null, dt, cmd);
+    return this.applyCmd(e, cmd);
+  }
+
+  /**
+   * KI der Schiffe von Welt-Ereignissen und Konvois (Phase 4.3C). Opt-In: angegriffen wird nur, wer in die Zone fährt (Blockade, Weltboss) oder zuerst
+   * schießt. Frachter und Galeone folgen ihrer Route und fliehen vor Angreifern, Eskorten halten Formation und werfen sich Korsaren entgegen, Korsaren
+   * jagen den Frachter, Blockade-Wachen kreuzen vor dem Hafen, Weltbosse ziehen ihre Bahn. Liefert das Ruder.
+   */
+  private aiEvent(e: EnemyShip, nav: AiNavState, dt: number): number {
+    const s = e.ship, p = this.player, L = e.ev!;
+    const self = this.steerSelf, tgt = this.steerTgt, cmd = this.steerCmd;
+    const pAlive = !!p && p.alive && p.sinking <= 0;
+    const dp = pAlive ? Math.hypot(p!.x - s.x, p!.z - s.z) : 9999;
+    // die Zone einer Blockade liegt fest vor dem Hafen, die eines Weltbosses zieht mit ihm
+    const zx = L.role === 'boss' ? s.x : L.zone?.x ?? 0, zz = L.role === 'boss' ? s.z : L.zone?.z ?? 0;
+    const inZone = pAlive && !!L.zone && Math.hypot(p!.x - zx, p!.z - zz) < L.zone.r;
+    let foe: Ship | null = null, vsPlayer = false;
+    if (L.role === 'korsar') {
+      if (e.provoked && dp < 700) { foe = p; vsPlayer = true; }
+      else { const prey = this.shipByEntity(L.preyId); if (prey && prey.alive && !prey.disabled && prey.sinking <= 0) foe = prey; }
+    } else if (L.role === 'eskorte') {
+      if (e.provoked && dp < 650) { foe = p; vsPlayer = true; }
+      else foe = this.corsairOf(L.owner, s, 480);
+    } else if (L.role === 'wache' || L.role === 'boss') {
+      // in der Nebelbank des Klabautermanns sieht man ihn später kommen – und er einen selbst
+      const reach = (L.role === 'boss' ? 900 : 700) * Math.max(0.6, this.sightK(s.x, s.z));
+      if ((inZone || e.provoked) && dp < reach) { foe = p; vsPlayer = true; }
+    }
+    if (foe && vsPlayer) return this.fightHostile(e, nav, foe, dp, dt);
+    if (foe) return this.fightDuel(e, nav, foe, Math.hypot(foe.x - s.x, foe.z - s.z), dt);
+    switch (L.role) {
+      case 'frachter': case 'galeone': {
+        const threat = (pAlive && !!e.provoked && dp < 260) || !!this.corsairOf(L.owner, s, 240);
+        s.speedCap = L.role === 'galeone' ? 9.5 : 9;
+        if (threat && pAlive && e.provoked) {
+          // Flucht vor dem Spieler: mit allem Tuch weg, mindestens eine Haltezeit lang
+          this.fillSteerSelf(e, self, true);
+          this.fillSteerTarget(p!, tgt);
+          this.steering.fight(nav, self, tgt, dt, cmd);
+          return this.applyCmd(e, cmd);
+        }
+        return this.followRoute(e, nav, dt, threat ? 1 : 0.8);
+      }
+      case 'eskorte': {
+        const lead = this.shipByEntity(L.leadId);
+        if (!lead || !lead.alive || lead.sinking > 0) return this.followRoute(e, nav, dt, 0.8);
+        const side = L.slot % 2 ? 1 : -1, back = 40 + 22 * Math.floor((L.slot - 1) / 2);
+        const lx = Math.cos(lead.heading), lz = -Math.sin(lead.heading), fx = Math.sin(lead.heading), fz = Math.cos(lead.heading);
+        const px = lead.x + lx * side * 42 - fx * back, pz = lead.z + lz * side * 42 - fz * back;
+        s.speedCap = 12;
+        this.fillSteerSelf(e, self);
+        const f = this.escortFlag;
+        f.heading = lead.heading; f.speed = lead.speed; f.yawRate = 0; f.side = side;
+        this.steering.escort(nav, self, px, pz, f, false, dt, cmd);
+        return this.applyCmd(e, cmd);
+      }
+      case 'wache': {
+        const z0 = L.zone ?? { x: e.wander.x, z: e.wander.z, r: 200 };
+        s.speedCap = 8;
+        this.fillSteerSelf(e, self);
+        const ar = Math.max(40, arriveRadius(self));
+        if (e.aiT <= 0 || nav.replan || Math.hypot(e.wander.x - s.x, e.wander.z - s.z) < ar) {
+          e.aiT = 30;
+          const a = Math.random() * Math.PI * 2;
+          this.setWander(e, nav, self, z0.x + Math.cos(a) * 170, z0.z + Math.sin(a) * 170);
+        }
+        this.steering.cruise(nav, self, e.wander.x, e.wander.z, 0.4, ar, null, dt, cmd);
+        return this.applyCmd(e, cmd);
+      }
+      case 'boss': s.speedCap = 7; return this.followRoute(e, nav, dt, 0.5);
+      default: {
+        // Korsar ohne Beute: abdrehen, weg vom Spieler (die Seewelt baut ihn in der Ferne ab)
+        s.speedCap = 11;
+        this.fillSteerSelf(e, self);
+        if (e.aiT <= 0 || nav.replan) {
+          e.aiT = 40;
+          const a = pAlive ? Math.atan2(s.x - p!.x, s.z - p!.z) : s.heading;
+          this.setWander(e, nav, self, s.x + Math.sin(a) * 900, s.z + Math.cos(a) * 900);
+        }
+        this.steering.cruise(nav, self, e.wander.x, e.wander.z, 0.9, 60, null, dt, cmd);
+        return this.applyCmd(e, cmd);
+      }
+    }
+  }
+
   private ai(e: EnemyShip, dt: number) {
     const s = e.ship;
     const p = this.player;
@@ -1622,9 +1897,10 @@ export class NavalSystem {
     if (s.disabled) { e.state = 'patrol'; s.sailLevel = 0; s.throttle = 0; s.aiSail = null; s.steer(dt, 0, this.env); return; }
     e.aiT -= dt;
     const nav = e.nav ?? (e.nav = createAiNav(s.entityId));
-    const turn = e.fleetId && p?.alive ? this.aiFleet(e, nav, dt) : this.aiGeneral(e, nav, dt);
-    // Inseln, Stege, Schiffe und Weltrand weicht die Lenkung selbst aus (Fühler); `pushShip` bleibt die letzte Sicherung gegen Grundberührung
-    s.steer(dt, turn, this.env);
+    const turn = e.fleetId && p?.alive ? this.aiFleet(e, nav, dt) : e.ev ? this.aiEvent(e, nav, dt) : this.aiGeneral(e, nav, dt);
+    // Inseln, Stege, Schiffe und Weltrand weicht die Lenkung selbst aus (Fühler); `pushShip` bleibt die letzte Sicherung gegen Grundberührung.
+    // Meeresströmungen tragen KI-Schiffe genauso wie den Spieler, Flauten bremsen sie (Phase 4.3C)
+    s.steer(dt, turn, this.env, this.flowK(s));
     const o = this.ground.pushShip(s.x, s.z, s.heading, s.cls.L, s.cls.W);
     if (o.hit) { s.x = o.x; s.z = o.z; }
   }
@@ -1679,6 +1955,13 @@ export class NavalSystem {
       }
       // Raid: Kugeln der eigenen Flotte gegen Seetor, Mauern und Batterien
       if (b.life > 0 && this.raidTargets && b.owner && (b.owner === this.player || this.enemies.some((e) => e.companion && e.ship === b.owner)) && this.raidTargets.hitBall(p, b.dmg, b.ammo)) b.life = 0;
+      if (b.life > 0 && b.owner && this.bossTarget && this.friendly.has(b.owner) && this.bossTarget.hitTest(p)) {
+        b.life = 0;
+        const dealt = this.bossTarget.damage(b.dmg * AMMO[b.ammo].hull, b.owner.penTier);
+        audio.play('heavy', 1, p);
+        this.fx.hit(p.clone(), 'heavy', '#9FE8FF');
+        if (b.owner === this.player) { this.overlay.number(p.clone().setY(p.y + 1.5), Math.round(dealt), 'hit'); this.hooks.hitstop(0.03); }
+      }
       if (b.life > 0 && b.owner === this.player && this.extraTarget?.hitTest(p)) {
         b.life = 0;
         this.extraTarget.damage(b.dmg);
@@ -1708,6 +1991,8 @@ export class NavalSystem {
       // Wer auf das Schiff einer Macht schießt, hat sich ihr Wohlwollen verspielt: auch friedliche Schiffe greifen nun an
       else if (en?.power && !en.provoked && !en.companion) en.provoked = true;
       if (en) en.lastPlayerHit = this.clock;
+      // Welt-Ereignis oder Konvoi: wer zuerst schießt, hat die ganze Gruppe gegen sich (Opt-In)
+      if (en?.ev) { en.provoked = true; this.onEventHit(en); }
     }
     // Treffer im Tuch zählen als Segelzone: die Munition bleibt, was sie ist (Kettenkugeln zerfetzen am stärksten)
     // Schiffe in einer Seeschlacht zerlegen sich nicht in Sekunden: Schüsse der KI untereinander wirken gedämpft, damit der Spieler Zeit zum Eingreifen hat
@@ -1720,7 +2005,9 @@ export class NavalSystem {
       return;
     }
     const wasDisabled = s.disabled;
-    const dmg = s.damage(b.dmg * (target?.boarded ? 0 : foeBattle ? BATTLE.aiDamage : 1), b.ammo, sailHit ? null : local, sailHit ? 'sail' : 'hull', b.owner?.penTier ?? 3);
+    let base = b.dmg * (target?.boarded ? 0 : foeBattle ? BATTLE.aiDamage : 1);
+    if (s === this.player && b.owner) base = this.bossCap(b.owner, base);
+    const dmg = s.damage(base, b.ammo, sailHit ? null : local, sailHit ? 'sail' : 'hull', b.owner?.penTier ?? 3);
     const en2 = this.enemies.find((o) => o.ship === s);
     if (en2 && !wasDisabled && s.disabled) this.onDisabled(en2, b.owner === this.player);
     // Schiffe, die nie untergehen: weitere Treffer wirken nicht, der Hinweis kommt höchstens alle 8 s

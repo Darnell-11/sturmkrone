@@ -12,7 +12,7 @@ export type Sfx =
   | 'punch' | 'boom' | 'broadside' | 'splash' | 'hit' | 'heavy' | 'swing' | 'clang' | 'parry' | 'hurt' | 'roll'
   | 'coin' | 'treasure' | 'ui' | 'uiBack' | 'dig' | 'roar' | 'sink' | 'crack' | 'level' | 'win' | 'quest' | 'eat'
   | 'fanfareRare' | 'fanfareEpic' | 'fanfareLegend' | 'victory' | 'switch'
-  | 'bell' | 'horn' | 'thunder' | 'shard' | 'ko' | 'board' | 'sail' | 'whoosh' | 'crit' | 'cutin' | 'step';
+  | 'bell' | 'horn' | 'foghorn' | 'thunder' | 'shard' | 'ko' | 'board' | 'sail' | 'whoosh' | 'crit' | 'cutin' | 'step';
 
 /** Weltposition eines Klangs (y optional: sonst etwa Bodenhöhe beim Hörer) */
 export interface SoundPos { x: number; y?: number; z: number }
@@ -26,7 +26,7 @@ interface Ambience { waves: number; wind: number; rain: number; town: number; gu
 /** Effekte, die die Musik kurz absenken (Pegel, Haltezeit in s) */
 const DUCK: Partial<Record<Sfx, [number, number]>> = {
   fanfareRare: [0.55, 1.2], fanfareEpic: [0.45, 1.8], fanfareLegend: [0.4, 2.4], victory: [0.4, 2.2], level: [0.6, 1.2], quest: [0.65, 0.9], win: [0.6, 1.0],
-  ko: [0.45, 1.5], sink: [0.6, 1.2], thunder: [0.65, 0.8], horn: [0.6, 1.0], bell: [0.7, 0.8], cutin: [0.55, 1.2], roar: [0.6, 1.0], shard: [0.75, 0.5],
+  ko: [0.45, 1.5], sink: [0.6, 1.2], thunder: [0.65, 0.8], horn: [0.6, 1.0], foghorn: [0.7, 2.6], bell: [0.7, 0.8], cutin: [0.55, 1.2], roar: [0.6, 1.0], shard: [0.75, 0.5],
 };
 
 /** Reglerstand für Einstellungsmenü und HUD */
@@ -75,7 +75,7 @@ const SPATIAL_CAT: Record<'near' | 'combat' | 'loud' | 'mid', SpatialCat> = {
 const CAT_OF: Partial<Record<Sfx, keyof typeof SPATIAL_CAT>> = {
   step: 'near', swing: 'combat', hit: 'combat', punch: 'combat', heavy: 'combat', clang: 'combat', parry: 'combat', crit: 'combat',
   roll: 'combat', whoosh: 'combat', crack: 'combat', hurt: 'combat',
-  boom: 'loud', broadside: 'loud', sink: 'loud', splash: 'loud', roar: 'loud', thunder: 'loud', horn: 'loud', bell: 'loud',
+  boom: 'loud', broadside: 'loud', sink: 'loud', splash: 'loud', roar: 'loud', thunder: 'loud', horn: 'loud', foghorn: 'loud', bell: 'loud',
 };
 
 /** Untergrund für Schritte (setzt das Spiel je nach Ort) */
@@ -598,7 +598,7 @@ class AudioEngine {
     if (!this.running) { if (this.warmTries++ < 10) setTimeout(() => this.prewarm(), 500); return; }
     this.warmed = true;
     const list: Sfx[] = ['punch', 'hit', 'heavy', 'swing', 'clang', 'parry', 'hurt', 'roll', 'step', 'whoosh', 'crit', 'boom', 'broadside', 'splash', 'crack', 'coin', 'shard', 'ui', 'uiBack',
-      'level', 'win', 'quest', 'cutin', 'bell', 'horn', 'board', 'sail', 'sink', 'roar', 'thunder', 'eat', 'switch', 'fanfareRare', 'fanfareEpic', 'fanfareLegend', 'victory'];
+      'level', 'win', 'quest', 'cutin', 'bell', 'horn', 'foghorn', 'board', 'sail', 'sink', 'roar', 'thunder', 'eat', 'switch', 'fanfareRare', 'fanfareEpic', 'fanfareLegend', 'victory'];
     let i = 0;
     const next = () => {
       if (i >= list.length) return;
@@ -707,6 +707,8 @@ class AudioEngine {
       case 'thunder': this.noise(t, 2.6, 0.45 * v, 260, 'lowpass', this.ambBus, 0, 60); this.noise(t, 0.3, 0.3 * v, 2000, 'highpass', this.ambBus); break;
       case 'bell': [0, 0.5].forEach((o) => { this.tone(mtof(81), t + o, 1.6, 'sine', 0.07 * v, 0.6); this.tone(mtof(81) * 2.4, t + o, 0.9, 'sine', 0.02 * v, 0.6); }); break;
       case 'horn': this.brass(50, t, 1.4, 0.12 * v, this.sfxBus); this.brass(57, t + 0.05, 1.3, 0.08 * v, this.sfxBus); break;
+      // Tiefes Nebelhorn eines Weltbosses (Phase 4.3C): zwei sehr tiefe Blechtöne, lang gehalten, mit dumpfem Rauschen darunter
+      case 'foghorn': if (!this.ok('foghorn', 3)) return; this.brass(31, t, 3.2, 0.16 * v, this.sfxBus); this.brass(38, t + 0.08, 3.0, 0.1 * v, this.sfxBus); this.noise(t, 3.1, 0.08 * v, 140, 'lowpass', this.ambBus); break;
       case 'board': this.noise(t, 0.5, 0.3 * v, 600, 'bandpass', undefined, 0, 2500); [57, 62, 66].forEach((m, i) => this.brass(m, t + 0.2 + i * 0.09, 0.4, 0.06 * v, this.sfxBus)); break;
       case 'sail': if (this.ok('sail', 0.4)) this.noise(t, 0.5, 0.14 * v, 300, 'lowpass', undefined, 0, 900); break;
       case 'cutin': this.noise(t, 0.6, 0.3 * v, 300, 'bandpass', undefined, 0, 5000); this.tone(mtof(57), t + 0.1, 0.9, 'sawtooth', 0.06 * v, 0.6, mtof(69)); break;

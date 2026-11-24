@@ -252,6 +252,60 @@ export function aiCannon(level: number, legend = false): { dmg: number; reload: 
 /** Faktor auf den Rumpf eines KI-Schiffs nach Gegnerstufe: erfahrene Crews halten mehr aus (aus dem Leben-Richtwert, gedämpft) */
 export const aiHullFactor = (level: number): number => 1 + (dangerScale(level).hp - 1) * 0.28;
 
+/**
+ * Kugelschaden des Spielerschiffs je Kanone (vor Rüstung): wächst mit der Stufe der Spielfigur, der Schiffsklasse und der Kanonen-Ausbaustufe
+ * (`CANNON_DMG_K`). Offiziere und Talismane kommen im Spiel als Faktor dazu (`Game.applyPower`).
+ */
+export const playerCannonDmg = (level: number, classTier: number, cannonTier = 3): number =>
+  (12 + Math.max(1, level) * 1.4) * (1 + Math.max(0, classTier) * 0.06) * evoK(CANNON_DMG_K, cannonTier);
+
+// ---------- Weltbosse auf See (Phase 4.3C) ----------
+
+/**
+ * Leben-Faktor der Weltbosse über dem Rumpf eines KI-Schiffs gleicher Klasse und Stufe (`aiHullFactor`): ein Weltboss hält so viel aus wie
+ * zwei Elite-Schiffe seiner Klasse. Die drei Bosse (data/seaEvents.ts) tragen dazu ihren eigenen `hullK`.
+ */
+export const WORLD_BOSS_HULL_K = 2;
+/** Kein einzelner Treffer (Kugel, Rammstoß, Faji) nimmt einem Weltboss mehr als diesen Anteil seines Rumpfs (Anti-One-Shot) */
+export const WORLD_BOSS_HIT_CAP = 0.04;
+/** … und keine Salve eines Weltbosses (alles, was binnen `WORLD_BOSS_VOLLEY_S` trifft) nimmt dem Spielerschiff mehr als diesen Anteil seines Rumpfs */
+export const WORLD_BOSS_PLAYER_HIT_CAP = 0.18;
+export const WORLD_BOSS_VOLLEY_S = 1.5;
+
+/** Rumpf eines Weltbosses: Klassen-Rumpf × `aiHullFactor(Stufe)` × `WORLD_BOSS_HULL_K` × eigener Faktor */
+export const worldBossHull = (classHp: number, level: number, hullK: number): number => Math.round(classHp * aiHullFactor(level) * WORLD_BOSS_HULL_K * hullK);
+
+/** Ein Treffer auf einen Weltboss nach dem Anti-One-Shot-Deckel */
+export const capBossHit = (dmg: number, maxHp: number): number => Math.min(Math.max(0, Number.isFinite(dmg) ? dmg : 0), maxHp * WORLD_BOSS_HIT_CAP);
+
+/** Laufende Salve eines Weltbosses gegen ein Schiff: Beginn (Spielzeit, s) und schon angerichteter Schaden */
+export interface VolleyWindow { t: number; sum: number }
+
+/**
+ * Anti-One-Shot für das Spielerschiff: wie viel dieser Treffer noch anrichten darf. Alles, was binnen `WORLD_BOSS_VOLLEY_S` vom selben Boss kommt,
+ * zählt als eine Salve, und eine Salve nimmt nie mehr als `WORLD_BOSS_PLAYER_HIT_CAP` des Rumpfs. Schreibt das Fenster fort (`win`).
+ */
+export function capVolley(win: VolleyWindow, now: number, dmg: number, maxHull: number): number {
+  if (now - win.t > WORLD_BOSS_VOLLEY_S) { win.t = now; win.sum = 0; }
+  const allowed = Math.max(0, maxHull * WORLD_BOSS_PLAYER_HIT_CAP - win.sum);
+  const d = Math.min(Math.max(0, Number.isFinite(dmg) ? dmg : 0), allowed);
+  win.sum += d;
+  return d;
+}
+
+/**
+ * Grobes Modell eines Seegefechts des Spielers gegen einen Weltboss (Kalibrierung und `tests/worldEvents.test.ts`): Nachladezeit der Kanonen (wie
+ * `SeaWorld.reloadTime`), Anteil der Kugeln, die treffen, und Anteil der Nachladefenster, in denen die Breitseite wirklich auf das Ziel zeigt.
+ */
+export const NAVAL_FIGHT_MODEL = { reload: 1.9, hitRate: 0.55, uptime: 0.5 } as const;
+
+/** Schaden je Sekunde des Spielerschiffs gegen ein Ziel mit Rumpf-Panzerung `armor` */
+export function playerNavalDps(o: { level: number; classTier: number; rank: number; cannonTier: number; ports: number }, armor: number): number {
+  const balls = Math.max(1, Math.round(o.ports * evoK(CANNON_PORTS_K, o.cannonTier)));
+  const raw = (playerCannonDmg(o.level, o.classTier, o.cannonTier) * balls * NAVAL_FIGHT_MODEL.hitRate * NAVAL_FIGHT_MODEL.uptime) / (NAVAL_FIGHT_MODEL.reload * evoK(CANNON_RELOAD_K, o.cannonTier));
+  return raw * (1 - mitigation(armor, penTierOf(o.rank, o.cannonTier)));
+}
+
 // ---------- Kampfmodell (Kalibrierung und Test) ----------
 
 /**

@@ -6,7 +6,7 @@ import { visualKey } from '../../data/shipVisuals';
 import { activePorts, evoStats, neutralEvolution, type EvoStats, type ShipEvolution } from '../../data/shipEvolution';
 import { AMMO, SEA_SPEED, SHIP_CLASSES, type AmmoId, type ShipClass, type ShipLook } from '../../data/ships';
 import { troopCapacity } from '../../data/crewTiers';
-import { buildShip, CABIN_WINDOW, GLOW_LAMP, type ShipModel } from './shipBuilder';
+import { buildShip, buildShipSteps, CABIN_WINDOW, GLOW_LAMP, type ShipModel } from './shipBuilder';
 import { glowHub, makeEmitter } from '../../render/glow';
 import { disposeObject, markShared } from '../../render/dispose';
 import { wetShared } from '../../render/wetness';
@@ -73,6 +73,11 @@ export class Ship {
   turnMult = 1;
   /** Höchsttempo der KI-Schiffe (wie in 1.0 langsamer als der Spieler); null = frei */
   speedCap: number | null = null;
+  /**
+   * Anti-One-Shot (Weltbosse, Phase 4.3C): kein einzelner Treffer (Kugel, Rammstoß, Faji) richtet mehr als so viel Rumpfschaden an; 0 = kein Deckel.
+   * Setzt das Seesystem aus `WORLD_BOSS_HIT_CAP` (data/balanceConfig.ts).
+   */
+  hitCap = 0;
   fire = 0;
   reloadL = 0;
   reloadR = 0;
@@ -164,14 +169,24 @@ export class Ship {
   private sm = { y: 0, p: 0, r: 0, vy: 0, vp: 0, vr: 0, init: false };
 
   /** hero: Spielerschiff – bekommt Laternenlichter und rechnet die Segel-Normalen jedes Bild neu */
-  constructor(private scene: Scene, tier: number, public look: ShipLook, readonly faction: 'pirat' | 'marine', hullBonus = 0, private hero = false, evo?: ShipEvolution) {
+  /**
+   * Schiff in Teilschritten bauen (Phase 4.3C): das Modell entsteht über mehrere Bilder (`buildShipSteps`), das Schiff samt Szene erst im letzten Schritt.
+   * So kosten Ereignis-Schiffe auf See keinen Ruckler von 50 bis 100 ms.
+   */
+  static *buildSteps(scene: Scene, tier: number, look: ShipLook, faction: 'pirat' | 'marine', hullBonus = 0, hero = false, evo?: ShipEvolution): Generator<void, Ship> {
+    const cls = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier))];
+    const model = yield* buildShipSteps(cls, look, hero, evo ? { ...evo } : neutralEvolution());
+    return new Ship(scene, tier, look, faction, hullBonus, hero, evo, model);
+  }
+
+  constructor(private scene: Scene, tier: number, public look: ShipLook, readonly faction: 'pirat' | 'marine', hullBonus = 0, private hero = false, evo?: ShipEvolution, model?: ShipModel) {
     this.cls = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier))];
     if (evo) { this.evo = { ...evo }; this.evoS = evoStats(this.evo); }
     this.penTier = penTierOf(this.cls.rank, this.evo.cannonTier);
     this.entityId = mintEntityId('ship');
     this.sim = createShipSim(this.entityId, this.cls.hp + hullBonus, this.cls.hp, this.cls.crew, hero ? troopCapacity(tier) : 0);
     this.applyEvoSail();
-    this.model = buildShip(this.cls, look, hero, this.evo);
+    this.model = model ?? buildShip(this.cls, look, hero, this.evo);
     scene.add(this.model.group);
     this.glowLights();
   }
@@ -340,6 +355,7 @@ export class Ship {
     // (die ersten 2 s zählen nicht: Kugeln derselben Breitseite, die noch fliegen, sind kein neuer Treffer)
     if (this.disabled) return this.disabledFor < 2 ? 0 : finishingBlow(this.sim, this.noKill) ? base : 0;
     if (this.shield > 0) base *= 1 - this.shieldK;
+    if (this.hitCap > 0 && base > this.hitCap) base = this.hitCap;
     // Rumpf-Panzerung: der Durchschlag des Angreifers (Klasse, Kanonen-Ausbau) entscheidet; das Tuch hat keine Panzerung (Segel zerschießen lohnt)
     if (zone === 'hull') base *= 1 - mitigation(this.hullArmor, pen);
     const a = AMMO[ammo];
@@ -359,6 +375,7 @@ export class Ship {
   ramHit(base: number, armorPen: number | null, hitLocal: Vector3 | null): number {
     if (!this.alive || this.unsinkable || this.disabled) return 0;
     if (this.shield > 0) base *= 1 - this.shieldK;
+    if (this.hitCap > 0 && base > this.hitCap) base = this.hitCap;
     if (armorPen !== null) base *= 1 - mitigation(this.hullArmor, armorPen);
     const r = applyDamage(this.sim, base, RAM_AMMO, 'hull');
     if (hitLocal && this.holes < 24) this.addHole(hitLocal);

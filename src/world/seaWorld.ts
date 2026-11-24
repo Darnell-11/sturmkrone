@@ -92,6 +92,8 @@ import { DebrisSystem } from './debris';
 import { islandLabel, islandTerrainSteps, OUTPOST_PIER, outpost, plant, ROCK_TYPES, rockFormation, styleKit, volcano, type StyleKit } from './islandStyle';
 import type { Sprite } from 'three';
 import { ABYSS_LAIR, SeaBoss } from '../naval/seaBoss';
+import { WorldEventsLive } from './worldEventsLive';
+import type { WorldEventState } from './worldEventDirector';
 import { buildTown, mergeByMaterialSteps, type TownBuild } from './town';
 import { updateBeams } from './lighthouseBeam';
 import { updateFountains } from './fountain';
@@ -320,6 +322,13 @@ export class SeaWorld {
   /** Das eigene Schiff */
   ship: Ship;
   naval: NavalSystem | null = null;
+  /**
+   * Das lebendige Meer (Phase 4.3C): Welt-Ereignisse, Handelskonvois, Meeresströmungen und Wetterzellen (world/worldEventsLive.ts über dem reinen
+   * `WorldEventDirector`). Entsteht zusammen mit dem Seesystem; der Zustand kommt aus dem Spielstand (`seedSeaEvents`).
+   */
+  seaEvents: WorldEventsLive | null = null;
+  /** Zustand aus dem Spielstand, bevor das Seesystem steht (`Game` setzt ihn beim Laden) */
+  private pendingSeaEvents: { state: WorldEventState | null; seed: number } = { state: null, seed: 0x5eaf00d };
   /** Tempo-Bonus (Crew, Ausbauten) */
   shipSpeedMult = 1;
   /** Rumpf-Bonus (Zimmermann, Ausbauten) */
@@ -1007,8 +1016,14 @@ export class SeaWorld {
     this.spray.emit(24, at.x, 0.5, at.z + 8, { speed: 3, up: 5, life: 0.6, color: FOAM_COL, spread: 1 });
     this.dust.emit(12, at.x, 0.5, at.z + 8, { speed: 2, up: 3, life: 0.6, color: DIG_COL, spread: 1 });
     this.sparks.emit(12, at.x, 0.5, at.z + 8, { speed: 4, up: 4, life: 0.6, color: EMBER_COL, spread: 1 });
+    // Lebendiges Meer: Signale, Wände, Schaumlinien, Leviathan und Kanonenkugeln einmal zeigen, damit ihre Shader jetzt übersetzt werden (Fix aus 4.3.3)
+    this.seaEvents?.prewarm(true, at);
+    const balls = this.naval?.prewarmProps(at) ?? null;
+    if (balls) this.scene.add(balls);
     await warmupShaders({ renderer, scene: this.scene, camera: this.camera, assets: this.assets, fx: this.fx, particles: this.sparks, renderFrame, onBlocking, precompile }, progress);
     this.spray.update(10); this.dust.update(10);
+    this.seaEvents?.prewarm(false, at);
+    if (balls) { balls.removeFromParent(); }
   }
 
   setCharacters(assets: CharacterAssets, look: CharacterLook, style: StyleId, overlay?: CombatOverlay) {
@@ -1041,6 +1056,7 @@ export class SeaWorld {
       this.naval.smoke = this.smoke;
       this.naval.detail = this.smoke.scale;
       this.naval.debris = this.debris;
+      this.createSeaEvents();
       this.combat = new CombatSystem(this.scene, this.fx, this.overlay, assets, this.groundProxy, {
         heal: (n) => { if (this.foot) this.foot.hp = Math.min(this.foot.maxHp, this.foot.hp + n); },
         hitstop: (t, scale = 0.05) => { this.hitstop.t = Math.max(this.hitstop.t, t); this.hitstop.scale = Math.min(this.hitstop.scale, scale); },
@@ -1100,6 +1116,38 @@ export class SeaWorld {
       this.spawnFloaterSomewhere('bottle');
     }
   }
+
+  /** Das lebendige Meer anlegen (einmal, sobald das Seesystem steht): Director, Strömungen, Signale, Leviathan */
+  private createSeaEvents() {
+    if (this.seaEvents || !this.naval) return;
+    const w = this;
+    this.seaEvents = new WorldEventsLive({
+      scene: this.scene,
+      naval: this.naval,
+      weather: this.env.weather,
+      ocean: this.env.ocean.uniforms,
+      smoke: this.smoke,
+      spray: this.spray,
+      heightAt: (x, z) => this.env.heightAt(x, z),
+      get ship() { return w.ship; },
+      focus: () => this.playerPos,
+      sailing: () => this.mode === 'sail' && !this.ship.moored,
+      warm: (o) => this.warmHook?.(o),
+      shake: (a) => { this.shake = Math.max(this.shake, a); },
+      hurt: (dmg, x, z) => { if (dmg > 0) this.overlay?.number(new Vector3(x, 4, z), Math.round(dmg), 'hurt'); this.overlay?.hurt(); },
+      fog: () => { const f = this.scene.fog as Fog; return { color: f.color, far: f.far }; },
+    }, this.islandDefs, this.pendingSeaEvents.state, this.pendingSeaEvents.seed);
+    this.seaEvents.onNews = (n) => this.onSeaNews(n);
+  }
+
+  /** Zustand des lebendigen Meeres aus dem Spielstand übernehmen (vor oder nach dem Aufbau des Seesystems) */
+  seedSeaEvents(state: WorldEventState | null, seed: number) {
+    this.pendingSeaEvents = { state, seed };
+    this.seaEvents?.load(state, seed);
+  }
+
+  /** Meldungen des lebendigen Meeres an das Spiel (Belohnungen, Markt, Hinweise; setzt `Game`) */
+  onSeaNews: (n: import('./worldEventsLive').SeaEventNews) => void = () => {};
 
   /** Floß oder Flasche irgendwo in der Bernsteinsee, nicht auf Inseln */
   private spawnFloaterSomewhere(kind: 'raft' | 'bottle') {
@@ -1774,6 +1822,14 @@ export class SeaWorld {
     // Flotte: liegt das Flaggschiff am Steg oder vor der Küste (Bordleiter) oder ist der Spieler von Bord, ankern die Begleitschiffe auf Abstand
     if (this.naval) this.naval.fleetAnchored = this.mode !== 'sail' || !!this.ship.moored || !!this.docking.ladderId;
     this.naval?.update(dt, this.mode === 'sail' && this.cinematic <= 0);
+    // Das lebendige Meer ruht im Raid und im Titelbild (dort gehört das Wetter der Regie); sonst ersetzen die Wetterzellen das Globalwetter
+    if (this.seaEvents) {
+      const rest = !!this.raid || this.title.active;
+      this.seaEvents.paused = rest;
+      this.env.weather.cellsDrive = !rest;
+      if (rest) this.env.weather.cell = null;
+      this.seaEvents.update(dt);
+    }
     this.raid?.update(dt);
     this.updateGarrisons(dt);
     this.regen(dt);
@@ -1877,7 +1933,18 @@ export class SeaWorld {
     this.sailCd -= dt;
     this.faji?.tick(dt);
     if (locked) s.settle();
-    else s.steer(dt, mv.x, this.seaEnv, this.shipSpeedMult);
+    else {
+      // Meeresströmungen (bis +35 % in Strömungsrichtung) und Flauten wirken auf die Fahrt (Phase 4.3C)
+      const flow = this.seaEvents && !this.raid ? this.seaEvents.flowK(s.x, s.z, s.heading) : 1;
+      s.steer(dt, mv.x, this.seaEnv, this.shipSpeedMult * flow);
+      // Bugwellen-Boost: in der Strömung schäumt das Wasser am Bug stärker
+      const boost = flow - 1;
+      if (boost > 0.04 && s.speed > 4 && Math.random() < dt * 40 * boost) {
+        const fx = Math.sin(s.heading), fz = Math.cos(s.heading), side = Math.random() < 0.5 ? -1 : 1;
+        const bx = s.x + fx * s.cls.L * 0.5 + Math.cos(s.heading) * side * s.cls.W * 0.35, bz = s.z + fz * s.cls.L * 0.5 - Math.sin(s.heading) * side * s.cls.W * 0.35;
+        this.spray.emit(3, bx, this.env.heightAt(bx, bz) + 0.4, bz, { speed: 2.5 + s.speed * 0.15, up: 2.5, life: 0.9, color: FOAM_COL, spread: 0.6, vx: Math.cos(s.heading) * side * 3, vz: -Math.sin(s.heading) * side * 3 });
+      }
+    }
     const storm = this.env.weather.p.waves;
     if (!locked && storm > 1.5) {
       s.x += Math.sin(this.env.clock * 0.3) * (storm - 1.5) * 0.6 * dt;
@@ -2572,6 +2639,8 @@ export class SeaWorld {
 
   /** Hauptkarte pausieren: Inseln, Definitionen, Stege, Küstenformen und Dampfquellen tauschen gegen die Raid-Insel (Ausblenden besorgt `cullFigures`) */
   private suspendMain(w: RaidWorld, def: IslandDef) {
+    // Schiffe der Welt-Ereignisse und Konvois werden wieder zu Daten (die Instanz ersetzt die Hauptkarte)
+    this.seaEvents?.releaseAll();
     this.mainSaved = {
       islands: this.ground.islands.splice(0), defs: this.islandDefs, piers: this.piers.splice(0), shapes: this.islands,
       vents: this.smokeVents, fires: this.campfires, chimneys: this.chimneys,
@@ -3214,6 +3283,8 @@ export class SeaWorld {
     // nachts liegt immer ein leichter Dunst in der Luft: Lichthöfe wachsen und werden weicher, unter Laternen zeichnen sich Lichtkegel ab
     this.glow.mist = Math.min(1, Math.max(env.weather.p.rain * 0.9, (1 - env.weather.p.visibility) * 0.9, this.glowNight * 0.24));
     this.glow.update(frameDt, cam, this.glowNight, env.weather.p.rain);
+    // Lebendiges Meer: Schaumlinien der Strömungen, Horizont-Signale, Wolken- und Nebelwände (nicht im Titelbild und im Raid)
+    this.seaEvents?.render(frameDt, cam, pal.sunVis * (1 - env.weather.p.grey * 0.6), !inMenu && !this.raid);
     env.render(cam, this.focus);
   }
 

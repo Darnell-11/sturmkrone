@@ -59,6 +59,13 @@ export class Weather {
   auto = true;
   /** Blitzhelligkeit 0 … 1, klingt schnell ab */
   flash = 0;
+  /**
+   * Lokale Wetterzelle am Spieler (Phase 4.3C, world/weatherCells.ts): Stärke 0 … 1 und die Werte ihres Kerns (Gewitterfront, Nebelbank, Flaute).
+   * Sie gilt über dem Wetter-Typ und überblendet wie jede Wetteränderung in rund zwölf Sekunden.
+   */
+  cell: { k: number; params: Partial<Params> } | null = null;
+  /** Wetterzellen ersetzen den zufälligen Wetterwechsel (kein einheitliches Globalwetter mehr; setzt die Seewelt, nicht im Titelbild) */
+  cellsDrive = false;
   /** Wird bei jedem Blitz aufgerufen (Donner kommt in Meilenstein 8) */
   onLightning: (pos: Vector3) => void = () => {};
 
@@ -215,6 +222,8 @@ export class Weather {
   private goalOf(): Params {
     const base = this.paramsOf(this.target);
     const goal = this.held ? Object.assign(base, this.held) : base;
+    const c = this.held ? null : this.cell;
+    if (c && c.k > 0.001) for (const key of PARAM_KEYS) { const v = c.params[key]; if (v !== undefined) goal[key] += (v - goal[key]) * c.k; }
     const k = this.edgeStorm;
     if (k > 0.001) { const st = WEATHER.sturm; for (const key of PARAM_KEYS) goal[key] += (st[key] - goal[key]) * k; }
     return goal;
@@ -230,7 +239,7 @@ export class Weather {
     const k = Math.min(1, dt / 12); // ca. 12 s bis zum größten Teil des Übergangs
     for (const key of PARAM_KEYS) this.p[key] += (goal[key] - this.p[key]) * k;
 
-    if (this.auto) {
+    if (this.auto && !this.cellsDrive) {
       this.changeTimer -= dt;
       if (this.changeTimer <= 0) this.setWeather(this.pickNext());
     }

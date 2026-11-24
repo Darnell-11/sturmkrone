@@ -157,7 +157,7 @@ describe('Flotten-Plätze nach Ruhm-Rang', () => {
 describe('Spielstand 18: Flotte', () => {
   const V = '4.2.3';
   it('Version 18; ein Stand der Version 17 bekommt eine leere Flotte, alles andere bleibt', () => {
-    expect(SAVE_VERSION).toBe(18);
+    expect(SAVE_VERSION).toBeGreaterThanOrEqual(18);
     const old = { ...createSave('Alt', 'pirat', V), version: 17 } as Record<string, any>;
     delete old.fleet;
     old.player.gold = 777;
@@ -165,7 +165,7 @@ describe('Spielstand 18: Flotte', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.migratedFrom).toBe(17);
-    expect(r.data.version).toBe(18);
+    expect(r.data.version).toBe(SAVE_VERSION);
     expect(r.data.fleet).toEqual({ ships: [], order: 'hold' });
     expect(r.data.player.gold).toBe(777);
   });

@@ -4,7 +4,9 @@ import { BERNSTEINSEE } from '../data/regions';
 import { BORDERS, FACTIONS, SECTORS, type FactionId } from '../data/factions';
 
 /** Orientierungspunkte: Feinde (rot), Bosse (Totenkopf), Auftragspersonen (! Auftrag, ? Abgabe), Ziel des Auftrags */
-export type PoiKind = 'enemy' | 'boss' | 'quest' | 'turnin' | 'npc' | 'target' | 'fort' | 'citadel' | 'alarm' | 'battle';
+/** Zeichen auf Kompass und Karten; seit 4.3C dazu die Horizont-Signale der Welt-Ereignisse und Handelskonvois */
+export type PoiKind = 'enemy' | 'boss' | 'quest' | 'turnin' | 'npc' | 'target' | 'fort' | 'citadel' | 'alarm' | 'battle'
+  | 'galeone' | 'blockade' | 'flotsam' | 'worldboss' | 'convoy';
 export interface Poi { x: number; z: number; kind: PoiKind; name?: string; /** Farbe der Macht (Grenzfestung, Endgame-Festung) */ color?: string }
 
 /** Küstenlinie einer Insel (wie in der Welt gebaut), damit die Karte die echte Form zeigt statt eines Kreises */
@@ -176,6 +178,50 @@ export function drawPoi(ctx: CanvasRenderingContext2D, x: number, y: number, kin
       ctx.fillStyle = '#F4EEDC'; ctx.fillRect(-8, 5, 16, 2.6); ctx.strokeRect(-8, 5, 16, 2.6);
       break;
     }
+    case 'galeone': {
+      // Schatz-Galeone: goldene Leuchtrakete mit Strahlenkranz
+      const t = performance.now() / 1000, gl = 0.75 + 0.25 * Math.sin(t * 5);
+      ctx.strokeStyle = `rgba(255,214,110,${gl})`; ctx.lineWidth = 1.4;
+      for (let n = 0; n < 8; n++) { const a = (n / 8) * Math.PI * 2; ctx.beginPath(); ctx.moveTo(Math.cos(a) * 5, Math.sin(a) * 5 - 2); ctx.lineTo(Math.cos(a) * 9, Math.sin(a) * 9 - 2); ctx.stroke(); }
+      ctx.fillStyle = '#FFD24A'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.3;
+      ctx.beginPath(); ctx.arc(0, -2, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = '#E3B04B'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(0, 2); ctx.lineTo(0, 9); ctx.stroke();
+      break;
+    }
+    case 'blockade': {
+      // Hafen-Blockade: schwarze Rauchfahne über einer roten Sperrlinie
+      ctx.fillStyle = '#1E1A20'; ctx.strokeStyle = '#F4EEDC'; ctx.lineWidth = 1;
+      for (const [x, y, r] of [[0, 2, 3.6], [2.5, -2.5, 3.2], [-1.5, -6, 2.8], [1.5, -9, 2.2]]) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+      ctx.strokeStyle = cb ? '#FFD23A' : '#FF4A3A'; ctx.lineWidth = 2.2; ctx.beginPath(); ctx.moveTo(-7, 7); ctx.lineTo(7, 7); ctx.stroke();
+      break;
+    }
+    case 'flotsam': {
+      // Treibgut: Kiste auf Wellen, darüber zwei Möwen
+      ctx.fillStyle = '#8A5A2B'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.2;
+      ctx.fillRect(-4, -1, 8, 6); ctx.strokeRect(-4, -1, 8, 6);
+      ctx.strokeStyle = '#9ED8F0'; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(-8, 6); ctx.quadraticCurveTo(-4, 3.5, 0, 6); ctx.quadraticCurveTo(4, 8.5, 8, 6); ctx.stroke();
+      ctx.strokeStyle = '#F4EEDC'; ctx.lineWidth = 1.3;
+      for (const [x, y] of [[-4, -6], [3, -8]]) { ctx.beginPath(); ctx.moveTo(x - 3, y); ctx.quadraticCurveTo(x - 1.5, y - 2, x, y); ctx.quadraticCurveTo(x + 1.5, y - 2, x + 3, y); ctx.stroke(); }
+      break;
+    }
+    case 'worldboss': {
+      // Weltboss: Gewitterwirbel mit Blitz
+      const t = performance.now() / 1000;
+      ctx.save(); ctx.rotate(t * 1.5);
+      ctx.strokeStyle = '#B8C4D8'; ctx.lineWidth = 1.8;
+      for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.arc(0, 0, 4 + k * 2.6, k * 2.1, k * 2.1 + 3.6); ctx.stroke(); }
+      ctx.restore();
+      ctx.fillStyle = '#FFE066'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(1, -7); ctx.lineTo(-3, 1); ctx.lineTo(0, 1); ctx.lineTo(-1.5, 7); ctx.lineTo(3.5, -1.5); ctx.lineTo(0.5, -1.5); ctx.closePath(); ctx.fill(); ctx.stroke();
+      break;
+    }
+    case 'convoy': {
+      // Handelskonvoi: kleines Segel mit Kiste (bedroht: rot umrandet)
+      ctx.fillStyle = '#F4EEDC'; ctx.strokeStyle = col ?? '#1b1410'; ctx.lineWidth = col ? 2 : 1.2;
+      ctx.beginPath(); ctx.moveTo(0, -7); ctx.lineTo(5, 1); ctx.lineTo(0, 1); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#8A5A2B'; ctx.beginPath(); ctx.moveTo(-6, 2); ctx.lineTo(6, 2); ctx.lineTo(4, 5.5); ctx.lineTo(-4, 5.5); ctx.closePath(); ctx.fill(); ctx.stroke();
+      break;
+    }
     case 'target':
       ctx.fillStyle = '#FFD166'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -300,6 +346,11 @@ export interface WorldMapData {
   occupations?: { id: string; x: number; z: number; r: number; name: string; text: string; endgame: boolean; fleet?: { x: number; z: number } }[];
   /** Wie oft eine Festungsinsel schon erobert wurde (Insel-ID → Zahl; bleibt auch nach einer Rückeroberung) */
   conquests?: Record<string, number>;
+  /** Lebendiges Meer (Phase 4.3C): Welt-Ereignisse, Konvois, Strömungen (Mittellinie flach x, z, …) und Wetterzellen */
+  seaEvents?: { x: number; z: number; kind: PoiKind; name: string }[];
+  convoys?: { x: number; z: number; name: string; threatened: boolean }[];
+  currents?: { name: string; pts: number[] }[];
+  cells?: { x: number; z: number; r: number; kind: 'gewitter' | 'nebelbank' | 'flaute'; label: string }[];
 }
 
 /** Bildschirmposition ↔ Welt (x gespiegelt wie überall) */
@@ -400,6 +451,51 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
     ctx.fillStyle = o.endgame ? '#FF8A6A' : '#FFE3A0'; ctx.fillText(label, x, y + rr + 15);
     ctx.restore();
     if (o.fleet) { ctx.setLineDash([4, 5]); ctx.strokeStyle = 'rgba(255,90,60,0.7)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(X(o.fleet.x), Y(o.fleet.z)); ctx.lineTo(x, y); ctx.stroke(); ctx.setLineDash([]); drawPoi(ctx, X(o.fleet.x), Y(o.fleet.z), 'alarm', 1.5); }
+  }
+  // Meeresströmungen: blaue Bänder mit Pfeilen in Fließrichtung, Name in der Mitte
+  for (const c of d.currents ?? []) {
+    if (c.pts.length < 4) continue;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(140,220,255,0.55)'; ctx.lineWidth = Math.max(2, 120 * v.scale); ctx.lineCap = 'round'; ctx.setLineDash([10, 7]);
+    ctx.beginPath();
+    for (let k = 0; k < c.pts.length; k += 2) { const x = X(c.pts[k]), y = Y(c.pts[k + 1]); if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
+    ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(190,240,255,0.9)';
+    const n = c.pts.length / 2;
+    for (let k = Math.floor(n / 6); k < n - 1; k += Math.max(4, Math.floor(n / 4))) {
+      const x0 = X(c.pts[k * 2]), y0 = Y(c.pts[k * 2 + 1]), x1 = X(c.pts[k * 2 + 2]), y1 = Y(c.pts[k * 2 + 3]);
+      const a = Math.atan2(y1 - y0, x1 - x0);
+      ctx.save(); ctx.translate(x0, y0); ctx.rotate(a);
+      ctx.beginPath(); ctx.moveTo(6, 0); ctx.lineTo(-4, -4); ctx.lineTo(-4, 4); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+    if (v.scale > 0.06) {
+      const mid = Math.floor(n / 2);
+      ctx.font = '700 11px "Alegreya Sans", sans-serif'; ctx.textAlign = 'center';
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(8,16,28,0.85)'; ctx.strokeText(c.name, X(c.pts[mid * 2]), Y(c.pts[mid * 2 + 1]) - 9);
+      ctx.fillStyle = '#BFEFFF'; ctx.fillText(c.name, X(c.pts[mid * 2]), Y(c.pts[mid * 2 + 1]) - 9);
+    }
+    ctx.restore();
+  }
+  // Wetterzellen: dunkle (Gewitter), weiße (Nebel) oder helle gestrichelte (Flaute) Kreise
+  for (const c of d.cells ?? []) {
+    const x = X(c.x), y = Y(c.z), rr = Math.max(6, c.r * v.scale);
+    ctx.save();
+    ctx.fillStyle = c.kind === 'gewitter' ? 'rgba(40,46,60,0.35)' : c.kind === 'nebelbank' ? 'rgba(230,236,240,0.25)' : 'rgba(255,240,200,0.12)';
+    ctx.strokeStyle = c.kind === 'gewitter' ? 'rgba(120,130,160,0.8)' : c.kind === 'nebelbank' ? 'rgba(240,244,248,0.7)' : 'rgba(255,230,170,0.6)';
+    ctx.lineWidth = 1.5; if (c.kind === 'flaute') ctx.setLineDash([3, 4]);
+    ctx.beginPath(); ctx.arc(x, y, rr, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+    if (rr > 14) { ctx.font = '700 11px "Alegreya Sans", sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(235,240,248,0.9)'; ctx.fillText(c.label, x, y + 4); }
+    ctx.restore();
+  }
+  // Handelskonvois und Welt-Ereignisse
+  for (const c of d.convoys ?? []) drawPoi(ctx, X(c.x), Y(c.z), 'convoy', 1.1, c.threatened ? '#FF4A3A' : undefined);
+  for (const e of d.seaEvents ?? []) {
+    const x = X(e.x), y = Y(e.z);
+    drawPoi(ctx, x, y, e.kind, 1.5);
+    ctx.font = '800 12px "Alegreya Sans", sans-serif'; ctx.textAlign = 'center';
+    ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(8,16,28,0.9)'; ctx.strokeText(e.name, x, y + 22);
+    ctx.fillStyle = e.kind === 'worldboss' ? '#FF9A8A' : e.kind === 'galeone' ? '#FFE07A' : '#F4EEDC'; ctx.fillText(e.name, x, y + 22);
   }
   // Seeschlachten: gekreuzte Kanonen auf pulsierendem Ring, darunter „Macht ⚔ Macht“ in ihren Farben
   for (const b of d.battles ?? []) {

@@ -7,8 +7,9 @@ import { neutralEvolution, starterEvolution, type ShipEvolution } from '../../da
 import { emptyUnlocks, type ConquestRecord, type Unlocks } from '../../raid/occupation';
 import { emptyReputation, type FactionReputationState } from '../../data/reputation';
 import { emptyFleet, type FleetState } from '../../data/playerFleet';
+import type { WorldEventState } from '../../world/worldEventDirector';
 
-export const SAVE_VERSION = 18;
+export const SAVE_VERSION = 19;
 
 export interface QuestProgress { id: string; step: number; count: number }
 
@@ -147,6 +148,11 @@ export interface SaveData {
     time: number;
     /** Wetter-ID aus data/world.ts */
     weather: string;
+    /**
+     * Das lebendige Meer (seit Version 19, Phase 4.3C): Welt-Ereignisse, Handelskonvois und Wetterzellen als reine Daten (world/worldEventDirector.ts).
+     * null = noch keins (es entsteht beim Spielstart neu).
+     */
+    seaEvents?: WorldEventState | null;
   };
   progress: ProgressState;
   gear: GearState;
@@ -176,7 +182,7 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
       fame: 0,
       look: defaultLook(faction),
     },
-    world: { boat: null, time: 9, weather: 'klar' },
+    world: { boat: null, time: 9, weather: 'klar', seaEvents: null },
     progress: defaultProgress(faction),
     gear: { weapon: 0, armor: 0, potions: 3, shrine: 0, trinkets: [], trinket: null, items: {}, heads: [], head: null, bar: ['proviant', null, null, null], owned: [], worn: {} },
     skills: { learned: {}, slots: [null, null, null], sp: 1, awakened: [] },

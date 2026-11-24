@@ -47,7 +47,7 @@ const WAVE_CONST: WaveConst[] = WAVES.map((w) => {
 const f = (n: number) => n.toFixed(6);
 
 /** GLSL-Funktion mit fest eingesetzten Wellen – identisch mit der CPU-Version unten. */
-const GERSTNER_GLSL = /* glsl */ `
+export const GERSTNER_GLSL = /* glsl */ `
   uniform float uTime;
   uniform float uWaveScale;
   uniform vec3 uCamPos;

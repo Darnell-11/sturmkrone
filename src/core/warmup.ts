@@ -19,7 +19,8 @@ import type { ParticleSystem } from '../world/particles';
 import { cloneToon } from '../render/toon';
 import { heatShared } from '../render/heat';
 import { buildShip } from '../entities/ship/shipBuilder';
-import { DEFAULT_SHIP_LOOK, SHIP_CLASSES } from '../data/ships';
+import { DEFAULT_SHIP_LOOK, SHIP_CLASSES, factionShipLook } from '../data/ships';
+import { FACTION_IDS } from '../data/factions';
 import { disposeObject } from '../render/dispose';
 import { tick } from './yield';
 
@@ -115,6 +116,16 @@ export async function warmupShaders(d: WarmupDeps, progress: (k: number) => void
     scene.add(m.group);
     ships.push(m.group);
     progress(0.06 + 0.09 * (ships.length / SHIP_CLASSES.length));
+    await tick();
+  }
+  // ---- Schiffe der Weltmächte (Phase 4.3C): Segelmuster, Wappen und Tuchflaggen jeder Macht werden einmal gemalt und hochgeladen, damit ein Konvoi,
+  // eine Blockade oder ein Weltboss auf See keine Textur malen und keinen Shader übersetzen muss (Spawn-Ruckler aus 4.3.3) ----
+  for (const f of FACTION_IDS) {
+    const m = buildShip(SHIP_CLASSES[2], factionShipLook(f), false);
+    m.group.position.copy(at);
+    m.group.scale.setScalar(0.01);
+    scene.add(m.group);
+    ships.push(m.group);
     await tick();
   }
   progress(0.15);

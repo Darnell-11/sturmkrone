@@ -29,7 +29,7 @@ import {
 } from 'three';
 import type { FigureheadId, FlagId, ShipClass, ShipLook } from '../../data/ships';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { addOutlines } from '../../render/outline';
+import { addOutlinesSteps } from '../../render/outline';
 import { lanternGlass } from '../../render/lampMaterials';
 import { plankTexture, sailTexture } from '../../render/textures';
 import { sharedGeo } from '../../render/geoCache';
@@ -354,6 +354,16 @@ class Occ {
 
 /** Baut ein Schiff einer Klasse im eigenen Look. Bug zeigt nach +Z. */
 export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipEvolution = neutralEvolution()): ShipModel {
+  const it = buildShipSteps(c, look, hero, evo);
+  for (;;) { const r = it.next(); if (r.done) return r.value; }
+}
+
+/**
+ * Derselbe Bau in Teilschritten (Phase 4.3C): gibt nach jedem Bauabschnitt (Rumpf, Reling, Kastelle, Takelage, Kanonen, Kajüte, Ausstattung), beim
+ * Verschmelzen je Material und bei den Konturen ab. Ereignis-Schiffe auf See entstehen so über mehrere Bilder mit Zeitbudget statt in einem Block
+ * von 50 bis 100 ms (world/worldEventsLive.ts). Das Modell hängt erst am Ende in der Szene (`Ship`), Halbfertiges ist nie sichtbar.
+ */
+export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo: ShipEvolution = neutralEvolution()): Generator<void, ShipModel> {
   // Der Bau läuft rein aus (Klasse, Aussehen, Ausbaustufen): alle Anbauten kommen aus dem deterministischen Plan (data/shipVisuals.ts)
   const vis = shipVisual(c, evo);
   // je Schiff eigene Grundrissform (die Funktion lebt in den Hüllen von halfWidth und Kollision weiter)
@@ -496,6 +506,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipE
     for (let k = 1; k < 6; k++) put(group, cyl(0.025, 0.03, 0.42, 5), wood, -sternP.x + (2 * sternP.x * k) / 6, sternP.y + 0.67, sternP.z);
     void bowP;
   }
+  yield;
   // Achterkastell mit Fenstern
   const windows: Mesh[] = [];
   let transomWin: Mesh | null = null;
@@ -564,6 +575,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipE
   const trim = new Mesh(new ExtrudeGeometry(ts, { depth: 0.12, bevelEnabled: false }).rotateX(-Math.PI / 2), gold);
   trim.position.y = D + castleH * 0.86;
   group.add(trim);
+  yield;
   // ---- Treppe(n) zum Achterdeck, Kapitänskajüte und Reling rund um das Achterdeck ----
   const topY = castleH + 0.14;
   const xfront = halfWidth(castleZ1) * 0.9 * 1.04;
@@ -793,6 +805,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipE
     return { ww, hh, n, span, centers, arch };
   }
   const gal = buildSternGallery();
+  yield;
   // Vorderkastell (ab Brigg): begehbares Vordeck bis in die Bugspitze. Zwei Treppen beidseits der Doppeltür an der Rückwand führen hinauf;
   // oben Plankendeck, Reling rundum, Goldleisten, Buggeschütze (ab Korvette), Poller und Tauwerk
   let fore: { z0: number; z1: number; top: number; stairX: number[]; stairW: number; stairLen: number } | null = null;
@@ -925,6 +938,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipE
     fore = { z0: f0, z1: tipZ, top: topF, stairX: stairXF, stairW: stairWF, stairLen: stairLenF };
   }
 
+  yield;
   // Steuerrad
   const helm = new Vector3(0, D + castleH + 0.14, castleMid + sternLen * 0.15);
   const wheel = new Group();
@@ -958,6 +972,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipE
   stand.position.set(0, helm.y + 0.44, helm.z + 0.55);
   group.add(wheel, stand);
 
+  yield;
   // Masten, Rahen, Segel
   const sails: Mesh[] = [];
   // Flagge einmal malen: dieselbe Leinwand dient als Wappen auf dem Großsegel
@@ -1179,6 +1194,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipE
     for (const s of [-1, 1]) rope(group, va.set(0, D + b2.h * 0.9, b2.z), vb.set(s * c.W * 0.36, D + castleH + 0.2, -c.L / 2 + 0.8), rp, 0.3 + sc * 0.08);
   }
 
+  yield;
   // Kanonen: Kupferrohre mit Eisenbändern auf Holzlafetten, Stückpforten mit Eisenrahmen
   const muzzlesL: Vector3[] = [], muzzlesR: Vector3[] = [];
   const copper = COPPER(), iron = IRON();
@@ -1251,6 +1267,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipE
     }
   }
 
+  yield;
   // Laternen: Eisengehäuse mit Glas und Aufhängering; auf dem Spielerschiff wirft jede ein warmes Punktlicht
   const lanterns: Mesh[] = [];
   const lights: PointLight[] = [];
@@ -1294,6 +1311,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipE
     }
   }
 
+  yield;
   // ---- Kapitänskajüte einrichten: Möbel aus Blender (tools/blender/build_kajuete.py), Größe und Auswahl nach der Raumlänge.
   // Alle Teile werden mit ihren Rollenfarben und der Ambient-Occlusion zu EINEM Netz zusammengefasst (ein Zeichenaufruf, keine Kontur).
   const cabinBlockers: Blocker[] = [];
@@ -1592,6 +1610,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipE
     }
   }
 
+  yield;
   // Deck-Ausstattung: Luke, Ankerwinde, Fässer, Kisten, Ankerkette und Anker – feste Positionen, damit jedes Schiff gleich aussieht
   {
     const iron = IRON();
@@ -1709,6 +1728,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipE
     for (let i = 0; i < 4; i++) put(group, torus((0.3 - i * 0.04) * kk, 0.05 * kk, 8), iron, halfWidth(cz) * 0.55, D + 0.04 + i * 0.07, cz, Math.PI / 2, 0, 0);
   }
 
+  yield;
   // ---- Ausstattung großer Schiffe: Achterdeck, Masten, Geschütze, Beiboot, Heckgalerie ----
   if (c.L >= 24) {
     const iron = IRON(), cu = COPPER(), rp2 = ROPE();
@@ -1905,6 +1925,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipE
     }
   }
 
+  yield;
   // Eine Flagge am höchsten Mast: Flaggenstock mit vergoldeter Kugel, Messingringen am Tuch und Flaggenleine (Fall) bis zum Deck. Alles hängt am oberen
   // Mastteil (knickt der Mast, fällt die Flagge mit). Das Tuch (32 × 20 Stücke, als Wimpel verjüngt) weht im Stoff-Shader (render/flagCloth.ts).
   const topIdx = c.masts.reduce((bi, m, i) => (Math.abs(m) < Math.abs(c.masts[bi]) ? i : bi), 0);
@@ -1965,6 +1986,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipE
   }
 
   if (transomWin) windows.push(transomWin);
+  yield;
   // Alles auf dem Achterdeck (Deck, Reling, Steuerrad, Kompassrose, Truhen, Laternen) liegt über der Kajüte und bildet deren „Dach“:
   // es wird als Gruppe ausgeblendet, solange jemand in der Kajüte steht (Blick von oben in den Raum)
   const topGroup = new Group();
@@ -1982,7 +2004,7 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipE
   const keepSet = new Set<Mesh>([...sails, ...lanterns, ...windows, ...keepExtra, flag, deck]);
   wheel.traverse((o) => { if ((o as Mesh).isMesh) keepSet.add(o as Mesh); });
   // jeder obere Mastteil wird für sich verschmolzen (wenige Zeichenaufrufe) und bleibt als Gruppe beweglich
-  for (const m of mastParts) mergeStatic(m.up, keepSet);
+  for (const m of mastParts) yield* mergeStaticSteps(m.up, keepSet);
   // Deck-Drehbassen (Kanonen-Stufe ≥ 4) auf der Reling zwischen Achterdeck und Vorderkastell: die Halter stehen auf der Reling-Oberkante (über Fässern und
   // Kisten, außerhalb der begehbaren Fläche); frei bleiben die drei Zugänge der Gangway (Stegbreite + Halterfuß = 1,25 m) und die Stellen neben festen Deck-Kanonen
   let swivels: SwivelMount[] = [];
@@ -2005,8 +2027,8 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipE
   }
 
   const apart = [topGroup, ...mastParts.map((m) => m.up), ...swivels.map((sw) => sw.mount)];
-  mergeStatic(topGroup, keepSet, apart.slice(1));
-  mergeStatic(group, keepSet, apart);
+  yield* mergeStaticSteps(topGroup, keepSet, apart.slice(1));
+  yield* mergeStaticSteps(group, keepSet, apart);
   // Blender-Props nach dem Verschmelzen aufstellen (ein InstancedMesh darf nicht mit verschmolzen werden)
   if (batch.size) {
     const barrelCol = toon({ color: '#6F4A2B', roughness: 0.85 }), crateCol = toon({ color: '#8A6840', roughness: 0.9 });
@@ -2032,18 +2054,24 @@ export function buildShip(c: ShipClass, look: ShipLook, hero = false, evo: ShipE
   group.traverse((o) => {
     if ((o as Mesh).isMesh && !o.userData.noOutline) { o.castShadow = true; o.receiveShadow = true; }
   });
-  addOutlines(group);
+  yield;
+  yield* addOutlinesSteps(group);
   return { group, sails, muzzlesL, muzzlesR, lanterns, windows, flag, flags: clothFlags, deckY: D, helm, wheel, quarter: { z0: castleZ0, z1: castleZ1, top: topY, stairX, stairW, stairLen, flare, doorHalf: doorWC / 2, cabin: { zA, zB } }, cabinRoof: topGroup, cabinLight, fore, masts: mastParts.map((m) => ({ up: m.up, z: m.z, pivotY: m.pivotY })), rigging, blockers, halfWidth, deckMat, deckBase, lights, railParts, swivels, evoKey: vis.key };
 }
 
-/** Feste Teile pro Material zu einem Mesh zusammenfassen (weniger Zeichenaufrufe) */
-function mergeStatic(group: Group, keep: Set<Mesh>, skip: Group[] = []) {
+/** Feste Teile pro Material zu einem Mesh zusammenfassen (weniger Zeichenaufrufe); gibt alle 24 Teile und nach jedem Material ab */
+function* mergeStaticSteps(group: Group, keep: Set<Mesh>, skip: Group[] = []): Generator<void> {
   group.updateMatrixWorld(true);
-  const buckets = new Map<object, { mat: any; geos: BufferGeometry[]; meshes: Mesh[] }>();
+  const parts: Mesh[] = [];
   group.traverse((o) => {
     const m = o as Mesh;
     if (!m.isMesh || keep.has(m) || (m as InstancedMesh).isInstancedMesh) return;
     if (skip.length) { let p = m.parent; while (p) { if (skip.includes(p as Group)) return; p = p.parent; } }
+    parts.push(m);
+  });
+  const buckets = new Map<object, { mat: any; geos: BufferGeometry[]; meshes: Mesh[] }>();
+  let n = 0;
+  for (const m of parts) {
     const b = buckets.get(m.material as object) ?? { mat: m.material, geos: [], meshes: [] };
     let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
     for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'color') g.deleteAttribute(k);
@@ -2052,13 +2080,15 @@ function mergeStatic(group: Group, keep: Set<Mesh>, skip: Group[] = []) {
     b.geos.push(g);
     b.meshes.push(m);
     buckets.set(m.material as object, b);
-  });
+    if (++n % 24 === 0) yield;
+  }
   for (const b of buckets.values()) {
     if (b.meshes.length < 2) continue;
     const merged = mergeGeometries(b.geos, false);
     if (!merged) continue;
     for (const m of b.meshes) { m.removeFromParent(); disposeGeometry(m.geometry); }
     group.add(new Mesh(merged, b.mat));
+    yield;
   }
   // Leere Gruppen (Steuerrad, Galionsfigur) aufräumen
   for (const c of [...group.children]) if (!(c as Mesh).isMesh && !(c as PointLight).isLight && c.children.length === 0 && !(c as LineSegments).isLineSegments) c.removeFromParent();

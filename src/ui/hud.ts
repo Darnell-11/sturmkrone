@@ -43,6 +43,13 @@ export interface SeaView {
   sailors: { n: number; max: number };
   troops: { n: number; max: number } | null;
   tip: string;
+  /**
+   * Meeresströmung (Phase 4.3C): Name, Bonus auf die Fahrt (0 … 0,35, nur in Strömungsrichtung) und Richtung der Strömung relativ zum Bug (rad, 0 = mit
+   * dem Schiff); null = keine Strömung
+   */
+  flow?: { name: string; boost: number; rel: number } | null;
+  /** Wetterzelle am Schiff (Gewitterfront, Nebelbank, Flaute) mit Stärke 0 … 1; null = keine */
+  cell?: { label: string; icon: string; kind: string; k: number } | null;
 }
 
 export interface CrewLine {
@@ -85,6 +92,7 @@ export class Hud {
   private hullBar!: HTMLElement; private sailBar!: HTMLElement; private crewBar!: HTMLElement; private repBar!: HTMLElement;
   private hullVal!: HTMLElement; private sailVal!: HTMLElement; private crewVal!: HTMLElement; private repVal!: HTMLElement;
   private shipCrew!: HTMLElement; private shipFire!: HTMLElement; private shipTip!: HTMLElement;
+  private shipFlow!: HTMLElement; private shipCell!: HTMLElement;
   private gunL!: HTMLElement; private gunR!: HTMLElement; private ammoEl!: HTMLElement;
   // Rechts oben
   private mini!: HTMLCanvasElement; private questEl!: HTMLElement; private arrowEl!: HTMLElement; private badge!: HTMLElement;
@@ -133,6 +141,8 @@ export class Hud {
           <div class="gline"><span>Crew</span><div class="gauge crew"><i class="fill"></i></div><b class="num"></b></div>
           <div class="gline rep" hidden><span>Flicken</span><div class="gauge rep"><i class="fill"></i></div><b class="num"></b></div>
           <div class="ship-crew"></div>
+          <div class="ship-flow" hidden><i class="flow-arrow">➤</i><span class="flow-name"></span><b class="flow-boost"></b></div>
+          <div class="ship-cell" hidden></div>
           <div class="ship-fire" hidden>Feuer an Bord!</div>
           <div class="ship-guns">
             <div class="guns-row"><div class="gun l"><span>Backbord</span><div class="gauge"><i class="fill"></i></div></div><div class="gun r"><span>Steuerbord</span><div class="gauge"><i class="fill"></i></div></div></div>
@@ -180,6 +190,7 @@ export class Hud {
     this.crewBar = this.q('.fill', crew); this.crewVal = this.q('b', crew);
     this.repBar = this.q('.fill', rep); this.repVal = this.q('b', rep);
     this.shipCrew = this.q('.ship-crew'); this.shipFire = this.q('.ship-fire'); this.shipTip = this.q('.hud-tip');
+    this.shipFlow = this.q('.ship-flow'); this.shipCell = this.q('.ship-cell');
     this.gunL = this.q('.gun.l'); this.gunR = this.q('.gun.r'); this.ammoEl = this.q('.ammo');
 
     this.mini = this.q('.hud-mini canvas'); this.questEl = this.q('.hud-quest'); this.arrowEl = this.q('.q-arrow'); this.badge = this.q('.badge');
@@ -337,6 +348,21 @@ export class Hud {
       this.shipCrew.innerHTML = `<span>Seeleute <b>${Math.round(v.sailors.n)}/${v.sailors.max}</b></span>${v.troops ? `<span>Truppen <b>${fmtInt(v.troops.n)}/${fmtInt(v.troops.max)}</b></span>` : ''}`;
     }
     if (this.shipFire.hidden === v.fire) this.shipFire.hidden = !v.fire;
+    // Strömungs-Anzeige: Pfeil zeigt die Fließrichtung relativ zum Bug (oben = mit dem Schiff), Bonus leuchtet, solange er wirkt
+    const fl = v.flow ?? null;
+    if (this.shipFlow.hidden !== !fl) this.shipFlow.hidden = !fl;
+    if (fl) {
+      this.text(this.q('.flow-name', this.shipFlow), fl.name);
+      this.text(this.q('.flow-boost', this.shipFlow), fl.boost > 0.01 ? `+${Math.round(fl.boost * 100)} %` : 'quer');
+      this.put(this.q('.flow-arrow', this.shipFlow), '--r', `${(-fl.rel - Math.PI / 2).toFixed(2)}rad`);
+      this.shipFlow.classList.toggle('on', fl.boost > 0.01);
+    }
+    const ce = v.cell ?? null;
+    if (this.shipCell.hidden !== !ce) this.shipCell.hidden = !ce;
+    if (ce) {
+      this.text(this.shipCell, `${ce.icon} ${ce.label}${ce.k < 0.6 ? ' (Rand)' : ''}`);
+      if (this.shipCell.dataset.kind !== ce.kind) this.shipCell.dataset.kind = ce.kind;
+    }
     if (!this.shipTip.hidden) this.text(this.shipTip, v.tip);
     // Geschützdeck: Fortschritt des Nachladens (voll = bereit) und gewählte Munition
     for (const [gun, rem] of [[this.gunL, v.reloadL], [this.gunR, v.reloadR]] as const) {
