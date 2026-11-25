@@ -19,7 +19,6 @@ import { toonShared } from '../render/toon';
 import type { Enemy } from '../entities/enemy';
 import { CombatOverlay } from '../ui/combatOverlay';
 import { BRANCHES, branchPoints, learnBlock, SK, type Branch } from '../data/skills';
-import { SkillTree } from '../ui/skillTree';
 import { AMMO, SAIL_LEVELS, SHIP_CLASSES, type AmmoId, type ShipLook } from '../data/ships';
 import { BRANCH_FIELD, EVO_BRANCHES, EVO_MAX, applyShipPurchase, evoCost, evoEffectText, evoMaterial, evoStats, evoValue, evolutionOf, newShipEvolution, shipEvolutionTier, tierOf, tradeInRefund, type EvoBranch, type ShipEvolution } from '../data/shipEvolution';
 import { classCompareRows, evoCompareRows, evoPlan, withTier, type CompareRow, type YardInfo, type YardPick } from '../data/yardPreview';
@@ -89,7 +88,7 @@ import { WorldMapScreen } from '../ui/worldMap';
 import { CREW_BY_ID } from '../data/crew';
 import { officerSlots, troopCapacity, TROOP_RANK } from '../data/crewTiers';
 import { addTroops, cleanRoster, clampRoster, COMMANDS, rosterTotal, scaleRoster, TROOPS, type CommandState, type TroopRoster, type TroopType } from '../data/troops';
-import { COMMAND_ACTIONS, PAD_CHORD_LABEL, commandOnKey, artOnKey, type ActionId } from '../data/actions';
+import { ASSIST_ACTIONS, COMMAND_ACTIONS, PAD_CHORD_LABEL, commandOnKey, artOnKey, type ActionId } from '../data/actions';
 import {
   FLEET_ORDERS, FLEET_ORDER_ACTIONS, FLEET_UNLOCK_RANKS, TOWED_HP, activateShip, applyFleetEvo, activeCount, activeShips, assignShip, assignableClasses, dockShip, emptyFleet, fleetShip, fleetShipUpkeep, fleetSlots,
   fleetUpkeepDaily, fleetUpkeepList, hasFreeSlot, releaseShip, towShip, fleetIdOf, type FleetCtx, type FleetOrder, type FleetShipRecord, type FleetState,
@@ -124,15 +123,25 @@ import { QUESTS, QUEST_BY_ID } from '../data/quests';
 import { hostileLegends, LEGEND_BY_ID, rankRows } from '../data/legends';
 import { clamp01 } from './mathUtil';
 import {
-  applyXp, ascend, captainFx, chooseUltimate, claimMilestone, defenseFx, emptyTalents, equipEvo, formFloor, kaiserWinAscended, learn, respec, respecCost,
-  syncKaiser, xpNeedAt, type RespecScope, type TalentSave, type TalentWorld,
+  applyXp, ascend, captainFx, chooseUltimate, claimMilestone, defenseFx, emptyTalents, equipEvo, formFloor, freePoints, grantBonus, kaiserWinAscended, learn, respec, respecCost,
+  syncKaiser, techRespecCost, techSpentOf, xpNeedAt, type RespecScope, type TalentSave, type TalentWorld,
 } from './talentRules';
-import type { TalentView } from '../ui/talentScreen';
+import type { TalentCat, TalentView } from '../ui/talentScreen';
 import { buildTalentCombat, talentKey } from '../combat/talentCombat';
 import { MILESTONE_BY_ID, NODE_BY_ID, TALENT, COSMIC_SOURCES, isCombatTree, type TalentTreeId } from '../data/talentTrees';
 import type { TradeTalent } from './economyEngine';
 
 export const GAME_VERSION = __APP_VERSION__;
+/** 4.6H: Gründe, warum eine Faji-Technik (F1 – F3) noch nicht lernbar ist */
+const TECH_BLOCK_TEXT: Record<Exclude<ReturnType<typeof learnBlock>, null>, string> = {
+  max: 'Höchste Stufe erreicht.',
+  points: 'Keine freien Talentpunkte.',
+  branch: 'Mehr Punkte in diesem Zweig nötig.',
+  level: 'Höhere Stufe nötig.',
+  needs: 'Erst die verbundene Technik lernen.',
+  awaken: 'Erst nach dem Faji-Erwachen dieses Zweigs.',
+};
+
 const AUTOSAVE_SECONDS = 30;
 
 /** Kurzzeichen der Ausrüstungsplätze im Inventar */
@@ -369,7 +378,7 @@ export class Game {
     this.world.onLoot = (gold, shard) => {
       if (!this.save) return;
       this.save.player.gold += Math.round(gold * this.goldMult(true));
-      if (shard) { this.save.skills.sp++; this.hud.toast('Faji-Splitter: +1 Faji-Punkt!', 3); }
+      if (shard) { this.grantTalentBonus(1); this.hud.toast('Faji-Splitter: +1 Talentpunkt!', 3); }
     };
     this.world.onBoardWon = (e) => {
       if (!this.save) return;
@@ -572,7 +581,8 @@ export class Game {
     if (this.state.is('play')) {
       if (this.input.pressed('pause')) { this.pause(); return; }
       if (this.input.pressed('map')) { this.openWorldMap(); return; }
-      if (this.input.pressed('skills')) { this.openSkills(); return; }
+      // 4.6H: N und K öffnen dasselbe Talent- und Kampfkunst-Menü (K beginnt bei den Faji-Künsten)
+      if (this.input.pressed('skills')) { this.openTalents('faji'); return; }
       if (this.input.pressed('talents')) { this.openTalents(); return; }
       if (this.input.pressed('quests')) { this.openQuestLog(); return; }
       if (this.input.pressed('swap')) this.swapWeapon();
@@ -595,6 +605,8 @@ export class Game {
         if (artKeys && artOnKey(binds, a)) continue;
         this.useItem(this.save?.gear.bar?.[i] ?? null);
       }
+      // 4.6H: Kombo-Assists der Offiziere an Land (8 / 9 / 0, Gamepad R3 + LB / RB / LT, Touch-Knöpfe, Klick in der Kampfleiste)
+      if (this.world.mode === 'foot') for (let i = 0; i < ASSIST_ACTIONS.length; i++) if (this.input.pressed(ASSIST_ACTIONS[i])) this.triggerAssist(i);
       // Flottenbefehle auf See (5 / 6 / 7, Gamepad R3 + Kreuz): nur mit mindestens einem aktiven Begleitschiff
       if (this.world.mode === 'sail' && this.save && activeCount(this.fleet()) > 0) for (const o of FLEET_ORDERS) if (this.input.pressed(FLEET_ORDER_ACTIONS[o.id])) this.setFleetOrder(o.id);
       this.tickItems(dt);
@@ -611,8 +623,6 @@ export class Game {
     } else if (this.state.is('pause') && this.dialogNpc) {
       // 4.6F: im Gespräch leben Partner und Spielfigur weiter (Atem, Blinzeln, Mund, Gesten)
       this.world.dialogTick(dt);
-    } else if (this.state.is('editor') && this.skillTree && this.input.pressed('skills')) {
-      this.skillTree.close();
     } else if (this.state.is('editor') && this.inventoryUi && this.input.pressed('inventory')) {
       this.closeInventory();
     } else if (this.state.is('menu')) {
@@ -711,7 +721,7 @@ export class Game {
         }
         this.updateFleetHud(sailing);
         const fj = this.world.faji;
-        this.hud.setFaji(fj ? fj.faji / fj.maxFaji : 1, this.save.skills.sp, fj?.faji, fj?.maxFaji);
+        this.hud.setFaji(fj ? fj.faji / fj.maxFaji : 1, this.freeTalentPoints(), fj?.faji, fj?.maxFaji);
         if (fj) {
           const views = fj.slots();
           const foot = this.world.mode === 'foot';
@@ -1112,9 +1122,9 @@ export class Game {
       const gold = Math.round((def.kind === 'boss' ? 600 : 250) * (1 + lv * 0.25) * this.goldMult(true));
       const sp = def.kind === 'boss' ? 2 : 1;
       s.player.gold += gold;
-      s.skills.sp += sp;
+      this.grantTalentBonus(sp);
       audio.play('treasure');
-      this.after(() => this.overlay.showBanner(def.kind === 'boss' ? `${def.boss ?? 'Boss'} besiegt!` : 'Schatz der Ruine!', `+${gold.toLocaleString('de-DE')} Gold · +${sp} Faji-Punkt${sp > 1 ? 'e' : ''}`), 2600);
+      this.after(() => this.overlay.showBanner(def.kind === 'boss' ? `${def.boss ?? 'Boss'} besiegt!` : 'Schatz der Ruine!', `+${gold.toLocaleString('de-DE')} Gold · +${sp} Talentpunkt${sp > 1 ? 'e' : ''}`), 2600);
       if (def.kind === 'boss') this.grantXp(400 + lv * 60, 150 + lv * 25);
       if (id === 'schlundkrone') this.dropTrinket('legendaer', 0, 'tiefenauge');
       else this.dropTrinket(def.kind === 'boss' ? 'episch' : 'selten', lv * 0.01);
@@ -1147,17 +1157,19 @@ export class Game {
     const s = this.save;
     if (!s || s.progress.flags[`crystal_${id}`]) return;
     s.progress.flags[`crystal_${id}`] = true;
-    s.skills.sp += 2;
+    // 4.6H: zwei Talentpunkte in den gemeinsamen Topf, die geschenkte Technik bringt ihren Punkt gleich mit (bleibt geschenkt)
+    this.grantTalentBonus(2);
     const fresh = Object.values(SK).filter((d) => d.act && d.t === 1 && !d.lv && !d.needs?.length && !(s.skills.learned[d.id] > 0));
     const pick = fresh.length ? fresh[Math.floor(Math.random() * fresh.length)] : null;
     if (pick) {
       s.skills.learned[pick.id] = 1;
+      this.grantTalentBonus(1);
       const free = s.skills.slots.indexOf(null);
       if (free >= 0) s.skills.slots[free] = pick.id;
     }
     audio.play('level');
     this.overlay.showCutin('Faji-Kristall!', '#C77DFF');
-    this.after(() => this.overlay.showBanner('Dein Faji erwacht', `+2 Fähigkeitspunkte${pick ? ` und die Fähigkeit „${pick.n}“` : ''}`), 900);
+    this.after(() => this.overlay.showBanner('Dein Faji erwacht', `+2 Talentpunkte${pick ? ` und die Faji-Technik „${pick.n}“` : ''}`), 900);
     this.grantXp(200, 150);
     this.world.faji?.refresh(s.player.level, this.activeStyle());
     this.applyPower();
@@ -1319,10 +1331,10 @@ export class Game {
       this.milestone('legende_erste');
       const g = Math.round(l.ruhm * (boarded ? 0.9 : 0.6) * this.goldMult(true));
       s.player.gold += g;
-      s.skills.sp++;
+      this.grantTalentBonus(1);
       this.dropTrinket('episch', 0.1);
       this.after(() => this.overlay.showCutin('Legende besiegt!', '#FFD166'), 400);
-      this.overlay.showBanner(`${l.n} ist besiegt!`, `+${g.toLocaleString('de-DE')} Gold und ein Faji-Punkt – du steigst in der Rangliste auf`);
+      this.overlay.showBanner(`${l.n} ist besiegt!`, `+${g.toLocaleString('de-DE')} Gold und ein Talentpunkt – du steigst in der Rangliste auf`);
       this.grantXp(300 + l.lvl * 40, Math.round(l.ruhm * 0.5));
     }
     this.after(() => this.hud.toast(`${l.n}: „${l.bye}“`, 5), 3000);
@@ -1348,7 +1360,7 @@ export class Game {
     s.crew.hired.push(id);
     s.crew.loyalty[id] = 10;
     if (!def.cat && s.crew.party.length < officerSlots(s.ship.tier)) s.crew.party.push(id);
-    if (id === 'lehrer') s.skills.sp++;
+    if (id === 'lehrer') this.grantTalentBonus(1);
     audio.play('bell');
     this.overlay.showBanner(`${def.name} heuert an!`, def.perk);
     this.applyPower();
@@ -1417,7 +1429,7 @@ export class Game {
     if (!s) return;
     if (CREW_BY_ID[q.giver]) this.addLoyalty([q.giver], 40);
     s.player.gold += q.reward.gold;
-    if (q.reward.sp) s.skills.sp += q.reward.sp;
+    if (q.reward.sp) this.grantTalentBonus(q.reward.sp);
     if (this.justDone) this.justDone.push(q);
     else this.hud.toast(`Auftrag erfüllt: ${q.title}`, 3.5);
     // Hauptgeschichte: nächstes Kapitel startet von selbst
@@ -1494,7 +1506,7 @@ export class Game {
       offers: () => qs.available(npc.id),
       running: () => save.progress.quests.map((p) => QUEST_BY_ID[p.id]).filter((q) => q && q.giver === npc.id).map((q) => ({ q, step: qs.step(q.id)?.text ?? '' })),
       introOf: (q) => qs.introOf(q),
-      rewardText: (q) => [`${q.reward.gold} Gold`, `${q.reward.xp} EP`, `${q.reward.fame} Ruhm`, q.reward.sp ? `${q.reward.sp} Faji-Punkt${q.reward.sp > 1 ? 'e' : ''}` : ''].filter(Boolean).join(' · '),
+      rewardText: (q) => [`${q.reward.gold} Gold`, `${q.reward.xp} EP`, `${q.reward.fame} Ruhm`, q.reward.sp ? `${q.reward.sp} Talentpunkt${q.reward.sp > 1 ? 'e' : ''}` : ''].filter(Boolean).join(' · '),
       accept: (id) => this.acceptQuest(id),
     });
     this.dialogUi.show(this.dialogSession.start(), (id) => this.dialogChoose(id), () => this.endDialog());
@@ -1990,9 +2002,9 @@ export class Game {
       const gold = Math.round((120 + Math.random() * 180) * (1 + s.player.level * 0.08) * this.goldMult(true));
       s.player.gold += gold;
       const shard = Math.random() < 0.35;
-      if (shard) s.skills.sp++;
+      if (shard) this.grantTalentBonus(1);
       audio.play('treasure');
-      this.overlay.showBanner('Schatz gefunden!', `${gold} Gold${shard ? ' und ein Faji-Splitter (+1 Faji-Punkt)' : ''}`);
+      this.overlay.showBanner('Schatz gefunden!', `${gold} Gold${shard ? ' und ein Faji-Splitter (+1 Talentpunkt)' : ''}`);
       this.grantXp(40, 10);
       if (Math.random() < 0.25) this.dropTrinket('gewoehnlich', 0.1);
     } else this.hud.toast('Gefunden!', 2);
@@ -2301,10 +2313,10 @@ export class Game {
     if (s.player.gold < price) return `Der Schrein verlangt ${price} Gold.`;
     s.player.gold -= price;
     s.gear.shrine++;
-    s.skills.sp++;
+    this.grantTalentBonus(1);
     this.world.awaken('#B98CFF');
     this.persist();
-    return '+1 Faji-Punkt!';
+    return '+1 Talentpunkt!';
   }
 
   /** Taverne: übernachten, bis zum Morgen */
@@ -3221,11 +3233,11 @@ export class Game {
     const rankBefore = rankName(p.faction, p.fame);
     const famePassive = this.world.faji?.passives.fame ?? 0;
     p.fame = Math.max(0, p.fame + Math.round(fame * (fame > 0 ? 1 + famePassive : 1)));
-    // 4.6E: Stufen bis 100 (Stufe 101 nur über den Aufstieg); je Aufstieg ein Talentpunkt (aus der Stufe gerechnet) und wie bisher ein Faji-Punkt
+    // 4.6E: Stufen bis 100 (Stufe 101 nur über den Aufstieg); je Aufstieg ein Talentpunkt (aus der Stufe gerechnet). 4.6H: es gibt nur noch
+    // diesen einen Topf (Talentbäume und Faji-Techniken, Tasten N und K)
     const lv = applyXp(p.level, p.xp, xp);
     p.level = lv.level;
     p.xp = lv.xp;
-    s.skills.sp += lv.ups;
     const up = lv.ups > 0;
     const rankAfter = rankName(p.faction, p.fame);
     if (up) {
@@ -3234,7 +3246,7 @@ export class Game {
       this.world.faji?.refresh(p.level, this.activeStyle());
       audio.play('level');
       const n = lv.ups;
-      this.overlay.showBanner(`Stufe ${p.level}!`, `+${n} Talentpunkt${n > 1 ? 'e' : ''} (Taste N) · +${n} Faji-Punkt${n > 1 ? 'e' : ''} · mehr Leben und Angriffskraft${p.level >= TALENT.levelCap ? ' · Höchststufe erreicht!' : ''}`);
+      this.overlay.showBanner(`Stufe ${p.level}!`, `+${n} Talentpunkt${n > 1 ? 'e' : ''} (Taste N oder K) · mehr Leben und Angriffskraft${p.level >= TALENT.levelCap ? ' · Höchststufe erreicht!' : ''}`);
       this.checkAwakening();
       // 4.6G: Endgame-Ausrüstung ab Stufe 80 (Kriegsherren-Meilensteine, Sturmkrone-Souverän mit 100)
       this.grantEndgame(2600);
@@ -3260,11 +3272,11 @@ export class Game {
     }
     if (sk.awakened.includes(branch)) return;
     sk.awakened.push(branch);
-    sk.sp += 2;
+    this.grantTalentBonus(2);
     const info = BRANCHES[branch];
     this.world.awaken(info.col);
     this.after(() => this.overlay.showCutin('Faji-Erwachen!', info.col), 600);
-    this.after(() => this.overlay.showBanner(`${info.n} erwacht!`, '+2 Faji-Punkte · neue Meisterfähigkeit freigeschaltet'), 2200);
+    this.after(() => this.overlay.showBanner(`${info.n} erwacht!`, '+2 Talentpunkte · neue Meisterfähigkeit freigeschaltet'), 2200);
     this.persist();
   }
 
@@ -4249,7 +4261,7 @@ export class Game {
   testGrant(sp: number, levels: number) {
     const s = this.save;
     if (!s) return;
-    s.skills.sp += sp + levels;
+    this.grantTalentBonus(sp);
     s.player.level += levels;
     this.applyPower();
     this.world.faji?.refresh(s.player.level, this.activeStyle());
@@ -4426,6 +4438,18 @@ export class Game {
 
   private fighterHud: FighterHud | null = null;
   private readonly artKeys = ['', '', '', ''];
+  private readonly assistKeys = ['', '', ''];
+  private assistMsgT = 0;
+
+  /** 4.6H: Offiziers-Kombo-Assist auslösen; geht es nicht, sagt eine kurze Meldung warum (höchstens alle 1,2 s) */
+  triggerAssist(i: number) {
+    const m = this.world.triggerAssist(i);
+    if (!m) return;
+    const now = performance.now();
+    if (now - this.assistMsgT < 1200) return;
+    this.assistMsgT = now;
+    this.hud.toast(m, 1.6);
+  }
 
   /** Kombo-Zähler und Kampfkünste unten (Desktop), am Handy Zähler und Stil; Touch-Knöpfe der Kampfkünste mit Abklingzeit */
   private updateFighterHud(dt: number, b: Record<ActionId, string[]>) {
@@ -4437,6 +4461,12 @@ export class Game {
     const awk = dev === 'gamepad' ? 'R3+▼' : dev === 'touch' ? '' : this.input.keyLabel(b.awaken[0] ?? '');
     this.world.awakenKeyLabel = dev === 'touch' ? 'Erwachen' : awk;
     hud.update(v, this.artKeys, dev === 'touch', this.overlay.comboHits, this.overlay.comboFrac, dt, awk);
+    // 4.6H: Offiziers-Kombo-Assists (Leiste am Desktop, Knöpfe am Handy)
+    const av = v ? this.world.assistViews() : null;
+    for (let i = 0; i < 3; i++) this.assistKeys[i] = dev === 'gamepad' ? (PAD_CHORD_LABEL[ASSIST_ACTIONS[i]] ?? '').replace(' ', '') : this.input.keyLabel(b[ASSIST_ACTIONS[i]][0] ?? '');
+    hud.onAssist = (i) => this.triggerAssist(i);
+    hud.setAssists(av, this.assistKeys);
+    if (dev === 'touch') for (let i = 0; i < 3; i++) this.touch.setAssist(ASSIST_ACTIONS[i], av?.[i]?.officer ? av[i] : null);
     // Aura per Taste gewechselt: der Spielstand folgt der Engine
     if (v && this.save?.player.faji && this.save.player.faji.aura !== v.aura) this.save.player.faji.aura = v.aura;
     this.overlay.comboDocked = !!v;
@@ -4452,53 +4482,11 @@ export class Game {
     }
   }
 
-  private skillTree: SkillTree | null = null;
-
-  openSkills() {
-    const s = this.save;
-    if (!s || !this.assets || !this.state.is('play', 'pause')) return;
-    this.menus.hide();
-    const stage = new SkillStage();
-    this.stage = stage;
-    stage.show(this.assets, s.player.look, styleIdOf(s.player.style, s.player.blade));
-    this.renderer.setView(stage.scene, stage.camera);
-    this.renderer.setEffectSources(null, stage.focus);
-    this.state.set('editor');
-    const tree: SkillTree = this.skillTree = new SkillTree(this.uiRoot, {
-      state: s.skills,
-      level: s.player.level,
-      onLearn: (id) => {
-        const def = SK[id];
-        if (!def || learnBlock(def, s.skills.learned, s.skills.sp, s.player.level, s.skills.awakened as Branch[]) !== null) return;
-        s.skills.sp--;
-        s.skills.learned[id] = (s.skills.learned[id] ?? 0) + 1;
-        if (def.act && !s.skills.slots.includes(id)) {
-          const free = s.skills.slots.indexOf(null);
-          if (free >= 0) s.skills.slots[free] = id;
-        }
-        this.world.faji?.refresh(s.player.level, this.activeStyle());
-        this.applyPower();
-        this.persist();
-      },
-      onSlot: (id, i) => {
-        const j = s.skills.slots.indexOf(id);
-        if (j >= 0) s.skills.slots[j] = null;
-        s.skills.slots[i] = id;
-        this.persist();
-      },
-      onPreview: (def, lv) => stage.previewSkill(def, lv),
-      onClose: () => {
-        tree.dispose();
-        this.skillTree = null;
-        this.stage = null;
-        this.useWorldView();
-        this.renderer.resize();
-        this.state.set('play');
-        this.input.flush();
-        this.loop.resetClock();
-      },
-    });
-  }
+  /**
+   * 4.6H: früher eigenes Faji-Fenster (Taste K, eigene Punkte) – jetzt öffnen N und K dasselbe Talent- und Kampfkunst-Menü mit einem gemeinsamen
+   * Punktetopf; K (und ein leerer F-Platz) springt zu den Faji-Künsten.
+   */
+  openSkills() { this.openTalents('faji'); }
 
   // ---------- Talente (Phase 4.6E) ----------
 
@@ -4508,10 +4496,77 @@ export class Game {
     return (d.talents ??= emptyTalents());
   }
 
-  /** Was die Talent-Regeln über den Spielstand wissen müssen */
+  /** Was die Talent-Regeln über den Spielstand wissen müssen (4.6H: mit den in Faji-Techniken gebundenen Punkten desselben Topfs) */
   talentWorld(): TalentWorld {
     const s = this.save;
-    return { level: s?.player.level ?? 1, kaiserSeals: s?.progress.unlocks?.kaiserSeals ?? 0 };
+    return { level: s?.player.level ?? 1, kaiserSeals: s?.progress.unlocks?.kaiserSeals ?? 0, techSpent: techSpentOf(s?.skills.learned) };
+  }
+
+  /** 4.6H: freie Punkte des gemeinsamen Topfs (Talentbäume und Faji-Techniken) */
+  freeTalentPoints(): number {
+    const s = this.save;
+    if (!s) return 0;
+    return Math.max(0, freePoints(this.talentSave(), s.player.level, techSpentOf(s.skills.learned)));
+  }
+
+  /** 4.6H: Bonus-Talentpunkte (alles, was früher Faji-Punkte gab) */
+  private grantTalentBonus(n: number) {
+    if (!this.save || !(n > 0)) return;
+    grantBonus(this.talentSave(), n);
+  }
+
+  // ---------- 4.6H: Faji-Techniken (F1 – F3) im gemeinsamen Menü ----------
+
+  /** Technik lernen (ein Talentpunkt je Rang aus dem gemeinsamen Topf); Rückgabe: Meldung */
+  techniqueLearn(id: string): string {
+    const s = this.save;
+    const def = SK[id];
+    if (!s || !def) return 'Unbekannte Technik.';
+    const why = learnBlock(def, s.skills.learned, this.freeTalentPoints(), s.player.level, s.skills.awakened as Branch[]);
+    if (why) return TECH_BLOCK_TEXT[why];
+    s.skills.learned[id] = (s.skills.learned[id] ?? 0) + 1;
+    if (def.act && !s.skills.slots.includes(id)) {
+      const free = s.skills.slots.indexOf(null);
+      if (free >= 0) s.skills.slots[free] = id;
+    }
+    this.world.faji?.refresh(s.player.level, this.activeStyle());
+    this.applyPower();
+    this.persist();
+    audio.play('level', 0.7);
+    return `${def.n}: Stufe ${s.skills.learned[id]}/${def.max}`;
+  }
+
+  /** Aktive Technik auf einen F-Platz (0 … 2) legen */
+  techniqueSlot(id: string, i: number): string | null {
+    const s = this.save;
+    const def = SK[id];
+    if (!s || !def?.act || !(s.skills.learned[id] > 0) || i < 0 || i > 2) return 'Erst lernen.';
+    const j = s.skills.slots.indexOf(id);
+    if (j >= 0) s.skills.slots[j] = null;
+    s.skills.slots[i] = id;
+    this.persist();
+    return null;
+  }
+
+  /** Zweig der Faji-Techniken zurücksetzen (Gold wie ein einzelner Talentbaum); die F-Plätze der entfernten Techniken werden frei */
+  techniqueRespec(branch: Branch): string | null {
+    const s = this.save;
+    if (!s) return 'Kein Spielstand.';
+    const t = this.talentSave();
+    const ids = Object.keys(s.skills.learned).filter((id) => SK[id]?.b === branch && s.skills.learned[id] > 0);
+    const pts = ids.reduce((a, id) => a + s.skills.learned[id], 0);
+    const c = techRespecCost(t, s.player.level, pts);
+    if (c.points <= 0) return 'Hier ist nichts zurückzusetzen.';
+    if (s.player.gold < c.gold) return `Dafür fehlen ${fmtInt(c.gold - s.player.gold)} Gold.`;
+    s.player.gold -= c.gold;
+    for (const id of ids) delete s.skills.learned[id];
+    s.skills.slots = s.skills.slots.map((x) => (x && ids.includes(x) ? null : x));
+    t.respecs++;
+    this.world.faji?.refresh(s.player.level, this.activeStyle());
+    this.applyPower();
+    this.persist();
+    audio.play('coin');
+    return null;
   }
 
   /** Kapitäns- und Weltwerte der Talente (gedeckelt) */
@@ -4595,12 +4650,12 @@ export class Game {
     return null;
   }
 
-  /** Talent-Fenster öffnen (Taste N): das Spiel ruht, wie im Pausenmenü */
-  openTalents() {
+  /** Talent- und Kampfkunst-Fenster öffnen (Tasten N und K, 4.6H vereint): das Spiel ruht, wie im Pausenmenü; `cat` = Kategorie beim Öffnen */
+  openTalents(cat?: TalentCat) {
     if (!this.save || !this.state.is('play')) return;
     this.state.set('pause');
     this.persist();
-    this.menus.showTalents(() => this.resume());
+    this.menus.showTalents(() => this.resume(), undefined, cat);
   }
 
   /** Baum, mit dem das Talent-Fenster öffnet: der des laufenden Stils (Faji-Wirken: der erste Waffenbaum) */
@@ -4609,11 +4664,17 @@ export class Game {
     return isCombatTree(st) ? st : 'zweihaender';
   }
 
-  /** Daten für das Talent-Fenster */
+  /** Daten für das Talent- und Kampfkunst-Fenster (4.6H: mit Faji-Techniken, Formen der Künste und Aura) */
   talentView(): TalentView | null {
     const s = this.save;
     if (!s) return null;
-    return { t: this.talentSave(), w: this.talentWorld(), xp: s.player.xp, xpNeed: xpNeedAt(s.player.level), gold: s.player.gold };
+    const fv = this.fajiView();
+    return {
+      t: this.talentSave(), w: this.talentWorld(), xp: s.player.xp, xpNeed: xpNeedAt(s.player.level), gold: s.player.gold,
+      tech: { learned: s.skills.learned, slots: s.skills.slots, awakened: s.skills.awakened },
+      arts: fv?.arts.map((a) => ({ id: a.id, form: a.form, frac: a.frac, mastery: a.mastery, next: a.next, equipped: a.equipped })),
+      aura: fv?.aura,
+    };
   }
 
   /** Einen Rang lernen; Rückgabe: Meldung (Fehler oder Erfolg) */

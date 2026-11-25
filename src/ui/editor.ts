@@ -540,7 +540,7 @@ export class CharacterEditor {
           // 4.6G.2: die Grundfrisur gehört zum Geschlecht (oben in „Körper & Statur“); Bärte nur bei männlichen Figuren
           const female = genderOf(r.look) === 'female';
           body = this.presets('haare')
-            + this.opt('Frisur', `<div class="ed3-cards"><button class="ed3-pick" data-a="set" data-k="hairModel" data-v="" aria-pressed="${!r.look.hairModel}"><b>Grundfrisur</b><small>${female ? 'Lange Zöpfe der Heldin' : 'Wilde Stachelfrisur'}</small></button><button class="ed3-pick" data-a="set" data-k="hairModel" data-v="frisur_mehrlagig" aria-pressed="${r.look.hairModel === 'frisur_mehrlagig'}"><b>Mehrlagig</b><small>Nacken-, Seiten- und Ponysträhnen</small></button></div>`)
+            + this.opt('Frisur', `<div class="ed3-cards"><button class="ed3-pick" data-a="set" data-k="hairModel" data-v="" aria-pressed="${!r.look.hairModel}"><b>Grundfrisur</b><small>${female ? 'Lange Zöpfe der Heldin' : 'Wilde Stachelfrisur'}</small></button><button class="ed3-pick" data-a="set" data-k="hairModel" data-v="frisur_mehrlagig" aria-pressed="${r.look.hairModel === 'frisur_mehrlagig'}"><b>Mehrlagig</b><small>${female ? "Weicher Pony, Gesichtssträhnen, fließende Rückenstufen" : "Windzerzaust, voller Pony, Schläfensträhnen"}</small></button></div>`)
             + this.opt('Haarfarbe', this.swatches('hairColor', HAIR_COLORS, 'Haarfarbe'))
             + (female ? '' : this.opt('Bart', this.chips('beard', BEARD_STYLES) + '<p class="tier-desc">Weich geformte Strähnen in der Haarfarbe, die der Kiefer- und Lippenlinie folgen.</p>'));
           break;

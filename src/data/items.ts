@@ -216,7 +216,7 @@ export const ARMOR: ArmorDef[] = [
 
 // ---------- Preise der Läden ----------
 
-/** Faji-Punkt im Schrein: Preis steigt mit jedem Kauf */
+/** Talentpunkt im Faji-Schrein (4.6H: früher Faji-Punkt): Preis steigt mit jedem Kauf */
 export const SHRINE_PRICE = (bought: number) => 300 + bought * 250;
 /** Übernachten in der Taverne */
 export const REST_PRICE = 20;

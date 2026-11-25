@@ -11,6 +11,7 @@ export const ACTION_IDS = [
   'potion', 'map', 'skills', 'talents', 'quests', 'talk', 'inventory',
   'item1', 'item2', 'item3', 'item4',
   'cmdSturm', 'cmdFollow', 'cmdHold',
+  'assist1', 'assist2', 'assist3',
   'swap', 'weapon1', 'weapon2',
   'repair',
   'fleetHold', 'fleetAttack', 'fleetRally',
@@ -56,6 +57,9 @@ export const ACTION_LABELS: Record<ActionId, string> = {
   cmdSturm: 'Befehl: Sturmangriff',
   cmdFollow: 'Befehl: Folgen',
   cmdHold: 'Befehl: Position halten',
+  assist1: 'Offizier: Sperrfeuer-Salve',
+  assist2: 'Offizier: Orkan-Schildstoß',
+  assist3: 'Offizier: Sturmhorn-Sammeln',
   swap: 'Waffe wechseln',
   weapon1: 'Waffenplatz 1',
   weapon2: 'Waffenplatz 2',
@@ -108,6 +112,10 @@ export const DEFAULT_KEYS: Record<ActionId, string[]> = {
   cmdSturm: ['Digit5'],
   cmdFollow: ['Digit6'],
   cmdHold: ['Digit7'],
+  // 4.6H: Kombo-Assists der Offiziere an Land auf 8, 9, 0 (frei: 1–4 Kampfkünste, 5–7 Truppen- bzw. Flottenbefehle)
+  assist1: ['Digit8'],
+  assist2: ['Digit9'],
+  assist3: ['Digit0'],
   swap: ['KeyQ'],
   weapon1: ['KeyZ'],
   weapon2: ['KeyX'],
@@ -161,6 +169,10 @@ export const DEFAULT_PAD: Record<ActionId, number[]> = {
   cmdSturm: [],
   cmdFollow: [],
   cmdHold: [],
+  // 4.6H: Offiziers-Assists nur als Kombination (siehe PAD_CHORDS)
+  assist1: [],
+  assist2: [],
+  assist3: [],
   swap: [],
   weapon1: [],
   weapon2: [],
@@ -175,10 +187,10 @@ export const DEFAULT_PAD: Record<ActionId, number[]> = {
  * Gamepad-Kombinationen für die Flottenbefehle: Haltetaste R3 (Stick-Druck rechts, Standard-Layout 11) plus Steuerkreuz. Alle Tasten des Controllers sind
  * schon belegt; auf See tut R3 allein nichts, und solange R3 gehalten wird, steuert das Kreuz nicht (die Kombination gehört dem Befehl).
  * Links = Formation halten, oben = Feuer frei, rechts = Sammeln. Zu Fuß (4.6B): R3 + ▼ = Sturm-Erwachen / Ultimate, R3 + Y = Aura wechseln
- * (R3 allein erfasst zu Fuß weiter ein Ziel).
+ * (R3 allein erfasst zu Fuß weiter ein Ziel). 4.6H: R3 + LB / RB / LT = Offiziers-Assists (Sperrfeuer, Orkan-Schildstoß, Sturmhorn); A, B, X bleiben frei.
  */
 export const PAD_CHORD_MOD = 11;
-export const PAD_CHORDS: Partial<Record<ActionId, number>> = { fleetHold: 14, fleetAttack: 12, fleetRally: 15, awaken: 13, aura: 3 };
+export const PAD_CHORDS: Partial<Record<ActionId, number>> = { fleetHold: 14, fleetAttack: 12, fleetRally: 15, awaken: 13, aura: 3, assist1: 4, assist2: 5, assist3: 6 };
 const CHORD_BUTTONS = Object.values(PAD_CHORDS) as number[];
 /** Gehört die Taste zu einer Kombination (und wird bei gehaltener Haltetaste nicht als einzelne Taste gewertet)? */
 export const isChordButton = (i: number): boolean => CHORD_BUTTONS.includes(i);
@@ -194,7 +206,10 @@ export function padActionDown(a: ActionId, buttons: ArrayLike<boolean | undefine
 }
 
 /** Anzeige der Kombination am Gamepad, z. B. „R3 + ◀“ */
-export const PAD_CHORD_LABEL: Partial<Record<ActionId, string>> = { fleetHold: 'R3 + ◀', fleetAttack: 'R3 + ▲', fleetRally: 'R3 + ▶', awaken: 'R3 + ▼', aura: 'R3 + Y' };
+export const PAD_CHORD_LABEL: Partial<Record<ActionId, string>> = { fleetHold: 'R3 + ◀', fleetAttack: 'R3 + ▲', fleetRally: 'R3 + ▶', awaken: 'R3 + ▼', aura: 'R3 + Y', assist1: 'R3 + LB', assist2: 'R3 + RB', assist3: 'R3 + LT' };
+
+/** 4.6H: Kombo-Assists der Offiziere (Tasten zu Fuß; Reihenfolge wie `OFFICER_ASSISTS`) */
+export const ASSIST_ACTIONS: readonly ActionId[] = ['assist1', 'assist2', 'assist3'];
 
 /** Aktionen, die im Menü nicht umbelegt werden dürfen (Escape bleibt immer Pause/Zurück). */
 export const FIXED_CODES = ['Escape'];
@@ -233,6 +248,7 @@ export const ACTION_GROUPS: { id: string; label: string; actions: ActionId[] }[]
   { id: 'sea', label: 'See', actions: ['fireLeft', 'fireRight', 'repair'] },
   { id: 'fleet', label: 'Flottenbefehle (See)', actions: ['fleetHold', 'fleetAttack', 'fleetRally'] },
   { id: 'troops', label: 'Truppenbefehle', actions: ['cmdSturm', 'cmdFollow', 'cmdHold'] },
+  { id: 'assists', label: 'Offiziers-Assists (an Land)', actions: ['assist1', 'assist2', 'assist3'] },
   { id: 'quick', label: 'Schnellleiste', actions: ['potion', 'item1', 'item2', 'item3', 'item4'] },
   { id: 'menus', label: 'Menüs', actions: ['map', 'talents', 'skills', 'quests', 'inventory', 'pause'] },
 ];

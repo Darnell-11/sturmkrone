@@ -93,6 +93,8 @@ export class Ally implements AllyTarget {
   private groundSet = false;
   private readonly groundFn = (x: number, z: number, y: number) => (this.groundRef ? this.groundRef.height(x, z, y) : NaN);
   private moodShown: ExpressionId | '' = '';
+  /** 4.6H: laufender Kombo-Assist (Clip, Blickziel, optionaler Sturmlauf); solange er läuft, ruht die eigene Kampf-KI */
+  private act: { t: number; dur: number; fx: number; fz: number; ax: number; az: number; bx: number; bz: number; d0: number; d1: number } | null = null;
   /** Laufweg über Gangway, Planke oder Leiter (null = frei); `homeBound`: geht zurück an Bord und wird dort entfernt */
   route: Route | null = null;
   homeBound = false;
@@ -116,6 +118,22 @@ export class Ally implements AllyTarget {
   }
 
   get alive() { return this.koT <= 0 && !this.homeBound; }
+
+  /**
+   * 4.6H: Kombo-Assist ausführen (Sperrfeuer, Orkan-Schildstoß, Sturmhorn): Clip abspielen und zum Punkt (faceX, faceZ) blicken; mit `dash` stürmt
+   * der Offizier zwischen d0 und d1 Sekunden von (ax, az) nach (bx, bz) (am Boden entlang, Wände halten ihn auf). Läuft in Spielzeit.
+   */
+  performAssist(clip: string, dur: number, faceX: number, faceZ: number, dash: { ax: number; az: number; bx: number; bz: number; d0: number; d1: number } | null = null, speed = 1) {
+    if (!this.alive) return;
+    this.pending = null;
+    this.sweep = null;
+    this.act = { t: 0, dur, fx: faceX, fz: faceZ, ax: dash?.ax ?? this.x, az: dash?.az ?? this.z, bx: dash?.bx ?? this.x, bz: dash?.bz ?? this.z, d0: dash?.d0 ?? 0, d1: dash?.d1 ?? 0 };
+    if (dash) { this.x = dash.ax; this.z = dash.az; }
+    this.char.playClip(clip, { loop: false, fade: 0.08, restart: true, speed });
+    this.anim = 'attack';
+  }
+  /** Führt der Offizier gerade einen Kombo-Assist aus? */
+  get assisting() { return !!this.act; }
 
   /** Laufweg beginnen; der Offizier kämpft erst wieder, wenn er drüben ist (oder wird beim Heimweg an Bord entfernt) */
   startRoute(r: Route, homeBound = false) { this.route = r; this.homeBound = homeBound; this.arrivedHome = false; this.anim = ''; }
@@ -141,6 +159,7 @@ export class Ally implements AllyTarget {
     this.y = Number.isFinite(h) ? h : 0;
     this.koT = 0;
     this.hp = this.maxHp;
+    this.act = null;
     this.play('idle');
     this.sync();
   }
@@ -155,6 +174,7 @@ export class Ally implements AllyTarget {
       this.koT = 12;
       this.pending = null;
       this.sweep = null;
+      this.act = null;
       this.char.playClip('Death_A', { loop: false, fade: 0.15, restart: true });
       this.anim = 'ko';
     } else if (this.hurtT <= 0) {
@@ -194,6 +214,22 @@ export class Ally implements AllyTarget {
     if (this.koT > 0) {
       this.koT -= dt;
       if (this.koT <= 0) this.revive(0.4);
+      this.sync(); this.char.update(dt);
+      return null;
+    }
+    // 4.6H Kombo-Assist: Clip läuft, Blick zum Ziel, Sturmlauf am Boden entlang (easeOutCubic); die Kampf-KI ruht so lange
+    if (this.act) {
+      const a = this.act;
+      a.t += dt;
+      if (a.d1 > a.d0 && a.t > a.d0) {
+        const k = Math.min(1, (a.t - a.d0) / (a.d1 - a.d0)), e = 1 - (1 - k) * (1 - k) * (1 - k);
+        const c = w.ground.constrain(a.ax + (a.bx - a.ax) * e, a.az + (a.bz - a.az) * e, this.radius, this.y);
+        this.x = c.x; this.z = c.z;
+      }
+      this.face(Math.atan2(a.fx - this.x, a.fz - this.z), dt * 1.6);
+      const gh = w.ground.height(this.x, this.z, this.y);
+      if (Number.isFinite(gh)) this.y += (gh - this.y) * Math.min(1, dt * 14);
+      if (a.t >= a.dur) { this.act = null; this.anim = ''; }
       this.sync(); this.char.update(dt);
       return null;
     }

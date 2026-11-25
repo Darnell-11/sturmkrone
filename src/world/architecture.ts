@@ -26,7 +26,8 @@ import { toon } from '../render/toon';
 import { coalMaterial, lanternCoal, lanternGlass } from '../render/lampMaterials';
 import { boxBlocker, type Blocker } from './islandGround';
 import { hasProp, propGroup, type PropId } from './worldProps';
-import { archGroup, hasArch } from './envModels';
+import { archGroup, archParts, hasArch } from './envModels';
+import { buildRoofField, placeRoof, roofMinOver, type Roof, type RoofField } from './roofFields';
 import type { GlowSpec } from '../render/glow';
 import type { FactionId } from '../data/factions';
 import { factionRole, setFactionNight } from './factionMats';
@@ -1113,7 +1114,7 @@ function bergfried(): Built {
   return { g, boxes: [[14.2, 14.2]], circles: [] };
 }
 
-export function colliders(b: Built, wx: number, wz: number, yaw: number): Blocker[] {
+export function colliders(b: Built, wx: number, wz: number, yaw: number, roofs: readonly Roof[] = []): Blocker[] {
   const c = Math.cos(yaw), s = Math.sin(yaw);
   const out: Blocker[] = [];
   // Quader eng an der sichtbaren Wand: die Bau-Daten tragen 30 bis 40 cm Zugabe; mit dem Figurenradius (0,38 m) wirkte das wie eine unsichtbare Wand
@@ -1123,6 +1124,52 @@ export function colliders(b: Built, wx: number, wz: number, yaw: number): Blocke
     out.push(boxBlocker(wx + ox * c + oz * s, wz - ox * s + oz * c, shrink(w), shrink(d), yaw + (by * Math.PI) / 180));
   }
   for (const [r, ox = 0, oz = 0] of b.circles) out.push({ x: wx + ox * c + oz * s, z: wz - ox * s + oz * c, r });
+  // 4.6H: Traufe über jedem Kollider (niedrigste Dachfläche darüber) – darüber sperrt er die Spielfigur nicht mehr
+  if (roofs.length) for (const bl of out) annotateTop(bl, roofs);
+  return out;
+}
+
+/** 4.6H: Traufe (Welt-y) eines Kolliders aus den Dachfeldern seines Baus; ohne Dachfläche darüber bleibt er eine volle Wand */
+export function annotateTop(bl: Blocker, roofs: readonly Roof[]) {
+  let top = Infinity;
+  for (const r of roofs) {
+    const y = bl.hw !== undefined ? roofMinOver(r, bl.x, bl.z, bl.hw, bl.hd ?? 0, bl.yaw ?? 0) : roofMinOver(r, bl.x, bl.z, bl.r, bl.r, 0, true);
+    if (y === y && y < top) top = y;
+  }
+  if (top < Infinity) bl.top = top;
+}
+
+/** 4.6H: Dachfelder der Blender-Bauten (je Modell einmal gerechnet und geteilt) */
+const roofFieldCache = new Map<string, RoofField | null>();
+export function archRoofField(name: string): RoofField | null {
+  if (!roofFieldCache.has(name)) {
+    const parts = archParts(name);
+    roofFieldCache.set(name, parts ? buildRoofField(parts) : null);
+  }
+  return roofFieldCache.get(name) ?? null;
+}
+
+const nearZero = (v: number) => Math.abs(v) < 1e-5;
+
+/**
+ * 4.6H: Dachfelder eines aufgestellten Bauwerks (Welt): die Gruppe selbst, wenn sie ein Blender-Bau ist (Bausteine der Weltmächte), sonst ihre
+ * Blender-Teile im Ursprung (Häuser, Mauern, Türme, Tore). `wx/wy/wz` = Weltlage des Ursprungs, `yaw` = Drehung; der Maßstab kommt aus `b.g`.
+ */
+export function roofsOf(b: Built, wx: number, wy: number, wz: number, yaw: number): Roof[] {
+  const out: Roof[] = [];
+  const sc = b.g.scale;
+  const add = (name: unknown) => {
+    if (typeof name !== 'string') return;
+    const f = archRoofField(name);
+    if (f) out.push(placeRoof(f, wx, wy, wz, yaw, sc.x, sc.y, sc.z));
+  };
+  if (b.g.userData.archModel) add(b.g.userData.archModel);
+  else for (const ch of b.g.children) {
+    if (!ch.userData.archModel) continue;
+    const p = ch.position, r = ch.rotation, s = ch.scale;
+    if (!nearZero(p.x) || !nearZero(p.y) || !nearZero(p.z) || !nearZero(r.x) || !nearZero(r.y) || !nearZero(r.z) || !nearZero(s.x - 1) || !nearZero(s.y - 1) || !nearZero(s.z - 1)) continue;
+    add(ch.userData.archModel);
+  }
   return out;
 }
 

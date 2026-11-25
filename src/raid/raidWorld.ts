@@ -18,7 +18,7 @@ import type { DebrisSystem } from '../world/debris';
 import type { ParticleSystem } from '../world/particles';
 import type { IslandShape } from '../world/ocean';
 import {
-  addPlinths, build, colliders, levelFootprint, PLINTHED, SETTLES, settleOnSlope, settleYard, type Built,
+  addPlinths, build, colliders, levelFootprint, PLINTHED, roofsOf, SETTLES, settleOnSlope, settleYard, type Built,
 } from '../world/architecture';
 import { factionBanner, factionBuilt } from '../world/factionArch';
 import { factionRole } from '../world/factionMats';
@@ -156,7 +156,10 @@ export class RaidWorld implements BallTarget {
       settleYard(b, x, z, yaw, hAt);
       if (pre || PLINTHED.has(t)) addPlinths(b, x, z, yaw, hAt);
       this.statics.add(b.g);
-      for (const c of colliders(b, cx + x, cz + z, yaw)) walk.blockers.push(c);
+      // 4.6H: Burgmauern, Türme und Dächer der Belagerung begehbar (Dachschützen sind jetzt erreichbar)
+      const roofs = roofsOf(b, cx + x, this.statics.position.y + b.g.position.y, cz + z, yaw);
+      if (roofs.length) (walk.roofs ??= []).push(...roofs);
+      for (const c of colliders(b, cx + x, cz + z, yaw, roofs)) walk.blockers.push(c);
       return b;
     };
     const mod = (name: string, k = 1): Built | null => factionBuilt(factionId, name, k);
@@ -513,6 +516,7 @@ export class RaidWorld implements BallTarget {
     this.piers.length = 0;
     this.walk.blockers.length = 0;
     if (this.walk.pads) this.walk.pads.length = 0;
+    this.walk.roofs = undefined;
   }
 }
 

@@ -98,3 +98,102 @@
 .tal-req { list-style: none; padding: 0; margin: 0.4em 0; display: grid; gap: 0.2em; }
 .tal-req li.ok { color: var(--ok); }
 .tal-req li.no { color: var(--danger-hi); }
+
+/* ==========================================================================
+   4.6H: vereintes Fenster "Talente & Kampfkünste" (Tasten N und K) – fünf Reiter, gemeinsamer Punktetopf, Vorschau-Karte, Aufstiegs-Fortschritt
+   Desktop (1440 x 900): drei Spalten, Baum und Liste scrollen in sich; Handy (390 x 844): eine Spalte, wischbare Reiter und Liste, große Tipp-Flächen
+   ========================================================================== */
+
+.card.talents { max-width: min(86rem, 100%); }
+.tal3-top { display: grid; grid-template-columns: auto minmax(11em, 15em) minmax(0, 1fr) minmax(13em, 19em); align-items: center; gap: 0.5em 1em; margin-bottom: 0.45em; }
+.tal3-title h2 { margin: 0; }
+.tal3-title small { display: block; font-size: 0.78em; }
+@media (max-width: 1100px) { .tal3-top { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+@media (max-width: 640px) { .tal3-top { grid-template-columns: minmax(0, 1fr); gap: 0.35em; } .tal3-title small { display: none; } }
+button.tal-chip { cursor: pointer; font: inherit; font-size: 0.85em; }
+button.tal-chip[aria-pressed="true"] { border-color: var(--brass-300); color: var(--brass-100); }
+
+/* Fortschritt der geheimen Aufstiegs-Prüfung: fünf Kaiser-Inseln */
+.tal3-asc { display: grid; gap: 0.2em; padding: 0.35em 0.6em; border-radius: var(--r-md); border: 1px solid #6a4aa8; background: radial-gradient(ellipse at top, rgba(120, 80, 200, 0.3), rgba(8, 5, 14, 0.85)); color: #e6d6ff; cursor: pointer; }
+.tal3-asc span { font-family: var(--font-serif); font-size: 0.9em; }
+.tal3-asc small { font-size: 0.75em; color: #cbb6f0; }
+.tal3-segs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.25em; }
+.tal3-segs i { height: 0.5em; border-radius: 0.2em; background: rgba(255, 255, 255, 0.1); box-shadow: inset 0 0 0 1px rgba(176, 125, 255, 0.35); }
+.tal3-segs i.on { background: linear-gradient(90deg, #b07dff, #ffe6b0); box-shadow: 0 0 6px rgba(176, 125, 255, 0.7); }
+.tal3-asc u { display: block; height: 0.5em; border-radius: 0.2em; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+.tal3-asc u i { display: block; height: 100%; background: linear-gradient(90deg, #b07dff, #ffe6b0); }
+
+/* Reiter */
+.tal3-tabs { display: flex; gap: 0.3em; margin: 0.2em 0 0.55em; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+.tal3-tab { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 0.35em; padding: 0.45em 0.8em; border-radius: var(--r-md) var(--r-md) 0 0; border: 1px solid var(--glass-edge-soft); border-bottom-width: 2px; background: rgba(0, 0, 0, 0.32); color: var(--ink-dim); font: 600 0.92em/1.1 var(--font-text); cursor: pointer; }
+.tal3-tab[aria-selected="true"] { color: var(--brass-50); border-color: var(--brass-300); background: linear-gradient(180deg, rgba(215, 174, 82, 0.22), rgba(0, 0, 0, 0.35)); }
+.tal3-tab .sm { display: none; }
+/* Handy: alle fünf Reiter nebeneinander (gleich breit, Zeichen über dem Kurznamen), Tippfläche mindestens 44 px hoch */
+@media (max-width: 640px) {
+  .tal3-tab .lg { display: none; }
+  .tal3-tab .sm { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tal3-tab { flex: 1 1 0; min-width: 0; flex-direction: column; justify-content: center; gap: 0.1em; padding: 0.4em 0.2em; font-size: 0.82em; min-height: 2.9rem; }
+}
+
+/* Raster: Liste, Baum, Details */
+.tal3-grid { display: grid; grid-template-columns: 15em minmax(0, 1fr) 19em; gap: 0.7em; align-items: start; }
+@media (max-width: 1100px) { .tal3-grid { grid-template-columns: 13em minmax(0, 1fr); } .tal3-info { grid-column: 1 / -1; } }
+@media (max-width: 640px) { .tal3-grid { grid-template-columns: minmax(0, 1fr); } }
+.tal3-list { display: grid; gap: 0.3em; max-height: min(64vh, 40em); overflow-y: auto; overscroll-behavior: contain; padding-right: 0.15em; }
+.tal3-card { grid-template-columns: 1.4em minmax(0, 1fr) auto; position: relative; min-height: 2.35em; }
+.tal3-card .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tal3-card.tech .ic { font: 800 0.8em/1 var(--font-num); color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 60%, transparent); border-radius: 0.3em; padding: 0.1em 0; }
+.tal3-fb { position: absolute; left: 0.45em; right: 0.45em; bottom: 0.18em; height: 0.2em; border-radius: 0.1em; background: rgba(0, 0, 0, 0.45); overflow: hidden; }
+.tal3-fb i { display: block; height: 100%; background: var(--c); }
+.tal3-auras { display: flex; flex-wrap: wrap; gap: 0.25em; }
+.tal3-aura { padding: 0.3em 0.5em; font-size: 0.8em; border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); border-radius: var(--r-sm); background: rgba(0, 0, 0, 0.35); color: var(--ink-dim); cursor: pointer; }
+.tal3-aura[aria-pressed="true"] { color: #fff; background: color-mix(in srgb, var(--c) 28%, rgba(0, 0, 0, 0.4)); border-color: var(--c); }
+@media (max-width: 640px) {
+  .tal3-list { display: flex; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; max-height: none; gap: 0.35em; padding-bottom: 0.3em; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity; }
+  .tal3-list > * { flex: 0 0 auto; scroll-snap-align: start; }
+  .tal3-list .tal-group-h { align-self: center; writing-mode: vertical-rl; transform: rotate(180deg); font-size: 0.65em; }
+  .tal3-card { width: 11.5em; min-height: 2.9rem; }
+  .tal3-auras { flex-wrap: nowrap; }
+}
+
+/* Baum mit Zoom und eigenem Scrollbereich */
+.tal3-tree { position: relative; min-width: 0; font-size: calc(1em * var(--tz, 1)); }
+.tal3-zoom { position: sticky; top: 0; z-index: 2; display: flex; justify-content: flex-end; align-items: center; gap: 0.35em; margin-bottom: 0.25em; font-size: calc(0.8em / var(--tz, 1)); color: var(--ink-faint); }
+.tal3-zoom .mini { min-width: 2.2em; }
+.tal3-scroll { display: grid; gap: 0.45em; max-height: min(64vh, 40em); overflow-y: auto; overscroll-behavior: contain; padding-right: 0.2em; -webkit-overflow-scrolling: touch; }
+@media (max-width: 640px) { .tal3-scroll { max-height: none; overflow: visible; } }
+.tal-node.tech .sk-ico { width: 1.25em; height: 1.25em; }
+.tal-node.tech.ult { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 55%, transparent), 0 0 8px color-mix(in srgb, var(--c) 30%, transparent); }
+
+/* Formstufen einer Faji-Kunst */
+.tal3-forms { display: grid; gap: 0.35em; padding: 0.45em 0.55em; border-radius: var(--r-md); border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); background: color-mix(in srgb, var(--c) 9%, rgba(0, 0, 0, 0.35)); }
+.tal3-forms p { margin: 0; }
+.tal3-pips { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.25em; }
+.tal3-pip { display: grid; place-items: center; height: 1.6em; border-radius: 0.35em; font: 800 0.75em/1 var(--font-num); color: var(--ink-faint); background: rgba(0, 0, 0, 0.4); border: 1px solid var(--hairline); }
+.tal3-pip.on { color: #120a05; background: linear-gradient(180deg, color-mix(in srgb, var(--c) 85%, #fff), var(--c)); border-color: var(--c); }
+.tal3-pip.now { box-shadow: 0 0 0 2px var(--brass-100); }
+.tal3-forms .ma-sk.off { opacity: 0.45; }
+
+/* Details und Vorschau-Karte */
+.tal3-info { display: grid; gap: 0.5em; max-height: min(70vh, 44em); overflow-y: auto; overscroll-behavior: contain; }
+@media (max-width: 1100px) { .tal3-info { position: static; max-height: none; overflow: visible; } }
+.tal3-preview { padding: 0.5em 0.6em; border-radius: var(--r-md); border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); background: radial-gradient(ellipse at top left, color-mix(in srgb, var(--c) 26%, transparent), rgba(8, 5, 3, 0.85)); }
+.tal3-preview b { display: block; font-family: var(--font-serif); color: color-mix(in srgb, var(--c) 60%, var(--brass-50)); }
+.tal3-preview p { margin: 0.2em 0; }
+.tal3-pv-h { font-size: 0.72em; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 0.15em; }
+.tal3-evo { list-style: none; margin: 0.25em 0; padding: 0; display: grid; gap: 0.15em; }
+.tal3-evo li { display: flex; justify-content: space-between; align-items: center; gap: 0.4em; font-size: 0.86em; color: var(--ink-dim); }
+.tal3-evo li.done { color: var(--brass-100); }
+.tal3-link { padding: 0.15em 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; text-decoration: underline dotted color-mix(in srgb, var(--c) 60%, transparent); }
+.tal3-slots { flex-wrap: wrap; gap: 0.3em; }
+.tal3-node h3 { margin-top: 0.1em; }
+.tal3-seals { display: grid; gap: 0.4em; }
+.tal3-seals .row { justify-content: space-between; align-items: center; }
+.tal3-seals h3 { margin: 0; font-family: var(--font-serif); }
+.tal3-foot { display: grid; gap: 0.3em; margin-top: 0.5em; }
+.tal-const span.sealed { opacity: 0.55; filter: saturate(0.4); }
+
+/* Touch: große Tipp-Flächen */
+html.touch .tal-node { min-height: 2.9em; }
+html.touch .tal3-card, html.touch .tal3-aura, html.touch .tal3-zoom .mini { min-height: 2.75rem; }
+html.touch .tal3-slots .mini { min-height: 2.6rem; min-width: 3.4rem; }

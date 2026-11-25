@@ -68,6 +68,8 @@ export type EquipPart =
   | { type: 'base'; slot: 'top' | 'shoes' }
   /** starres Teil auf einem Haut-Anker (tint: Farbe, wo das Teil eine hat) */
   | { type: 'rigid'; build: RigidKind; tint?: Tint; tint2?: Tint }
+  /** 4.6H: Frisur, im Spiel um den gemessenen Schädel gebaut (`entities/character/layeredHair.ts`; ersetzt das Haar der Grundfigur) */
+  | { type: 'hairCut'; cut: 'mehrlagig' }
   /** Kopfbedeckung */
   | { type: 'hat'; hat: Hat; tint?: Tint; tint2?: Tint };
 
@@ -165,10 +167,11 @@ export const EQUIPMENT: EquipDef[] = [
   { id: 'monokel', n: 'Monokel', socket: 'head', parts: [{ type: 'glasses', kind: 'monokel' }] },
 ];
 
-// Frisur aus einem Modell (Aussehen, nicht Beute): wird über look.hairModel gewählt; ein Helm auf dem Kopf ersetzt sie
+// Frisur (Aussehen, nicht Beute): wird über look.hairModel gewählt. 4.6H: kein Blender-Modell mehr, sondern im Spiel um den Schädel der
+// Grundfigur gebaut (Mann und Frau eigene Schnitte), im selben Haar-Material wie die Grundfrisur
 EQUIPMENT.push({
   id: 'frisur_mehrlagig', n: 'Mehrlagige Frisur', socket: 'head',
-  parts: [{ type: 'glb', model: 'frisur_mehrlagig', mode: 'bone', bone: 'J_Bip_C_Head', hidesHair: true, roles: { hair: { finish: 'haar', tint: 'hair' } } }],
+  parts: [{ type: 'hairCut', cut: 'mehrlagig' }],
 });
 EQUIPMENT.push(...GEAR_CATALOG);
 export const EQUIP_BY_ID: Record<string, EquipDef> = Object.fromEntries(EQUIPMENT.map((e) => [e.id, e]));
@@ -255,6 +258,8 @@ export interface ResolvedLoadout {
   /** Farben des Helms, wenn er eigene hat (sonst die Hutfarbe der Figur) */
   hatColor: string | null;
   hatAccent: string | null;
+  /** 4.6H: Frisur aus dem Spiel (ersetzt das Haar der Grundfigur) */
+  hairCut: 'mehrlagig' | null;
 }
 
 /** Ausrüstung in Bauanweisungen auflösen (unbekannte Einträge werden übersprungen) */
@@ -283,6 +288,7 @@ export function resolveLoadout(l: Loadout): ResolvedLoadout {
   const base = { top: false, shoes: false };
   let hat: Hat = 'keiner';
   let hatColor: string | null = null, hatAccent: string | null = null;
+  let hairCut: ResolvedLoadout['hairCut'] = null;
   let under: TopUnder = 'grund';
   let coat: GarmentCtx['coat'] = 'keiner';
   let slim = false;
@@ -303,6 +309,7 @@ export function resolveLoadout(l: Loadout): ResolvedLoadout {
       else if (p.type === 'glb') glb.push({ model: p.model, mode: p.mode, bone: p.bone, look: roleLook(p.roles), maskAs: p.maskAs, hidesHair: p.hidesHair, trimsHair: p.trimsHair });
       else if (p.type === 'held') held.push({ model: p.model, hand: p.hand, look: roleLook(p.roles) });
       else if (p.type === 'rigid') rigid.push({ build: p.build, color: p.tint ? color(p.tint) : l.colors.belt, color2: p.tint2 ? color(p.tint2) : '#E3B04B' });
+      else if (p.type === 'hairCut') hairCut = p.cut;
       else { hat = p.hat; hatColor = p.tint ? color(p.tint) : null; hatAccent = p.tint2 ? color(p.tint2) : null; }
     }
   }
@@ -313,6 +320,6 @@ export function resolveLoadout(l: Loadout): ResolvedLoadout {
     shells: SHELL_ORDER.filter((k) => shells.has(k)).map((kind) => ({ kind, ...shells.get(kind)! })),
     cape, glasses, aura,
     ctx: { under, coat, boots: shells.has('stiefel') },
-    base, rigid, glb, held, hat, hatColor, hatAccent,
+    base, rigid, glb, held, hat, hatColor, hatAccent, hairCut,
   };
 }

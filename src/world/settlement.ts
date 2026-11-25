@@ -2,7 +2,7 @@ import { DoubleSide, type Group } from 'three';
 import type { IslandDef } from '../data/regions';
 import type { SiteDef } from '../data/settlements';
 import { toon } from '../render/toon';
-import { addPlinths, build, levelFootprint, PLINTHED, SETTLES, settleOnSlope, settleYard } from './architecture';
+import { addPlinths, annotateTop, build, levelFootprint, PLINTHED, roofsOf, SETTLES, settleOnSlope, settleYard } from './architecture';
 import { boxBlocker, coastK, type Blocker, type WalkIsland } from './islandGround';
 import { roadMesh } from './town';
 import type { GlowPlaced } from '../render/glow';
@@ -111,13 +111,20 @@ export function* buildSiteSteps(o: SiteOpts): Generator<void, SiteBuild> {
       group.add(b.g);
       const c0 = Math.cos(yaw), s0 = Math.sin(yaw);
       const toWorld = (ox: number, oz: number): [number, number] => [def.x + x + ox * c0 + oz * s0, def.z + z - ox * s0 + oz * c0];
+      // 4.6H: begehbare Dächer, Wehrgänge und Zinnen (Kaiser-Zitadellen, Häfen, Festungen); Kollider sperren nur unter der Traufe
+      const roofs = b.pier === undefined ? roofsOf(b, def.x + x, group.position.y + b.g.position.y, def.z + z, yaw) : [];
+      if (roofs.length) (walk.roofs ??= []).push(...roofs);
       for (const [w, d, ox = 0, oz = 0, by = 0] of b.boxes) {
         const [wx, wz] = toWorld(ox, oz);
-        block(boxBlocker(wx, wz, w, d, yaw + by * RAD));
+        const bl = boxBlocker(wx, wz, w, d, yaw + by * RAD);
+        if (roofs.length) annotateTop(bl, roofs);
+        block(bl);
       }
       for (const [cr, ox = 0, oz = 0] of b.circles) {
         const [wx, wz] = toWorld(ox, oz);
-        block({ x: wx, z: wz, r: cr });
+        const bl: Blocker = { x: wx, z: wz, r: cr };
+        if (roofs.length) annotateTop(bl, roofs);
+        block(bl);
       }
       if (HOUSES.has(it.t) && b.boxes.length) {
         // dichte Grasbüschel rund um die Wände (Tür und Weg bleiben frei) und bemooste Felsen an den Ecken

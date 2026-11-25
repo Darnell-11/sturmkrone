@@ -171,6 +171,15 @@ export class TouchControls {
     b.classList.toggle('rdy', ready);
   }
 
+  /** 4.6H: Knopf eines Offiziers-Kombo-Assists: Symbol, Kurzname, Abklingzeit (Kreisausschnitt); ohne Offizier im Landtrupp ausgeblendet */
+  setAssist(action: string, v: { icon: string; short: string; cd: number; ready: boolean; color: string } | null) {
+    const b = this.buttonsEl.querySelector<HTMLElement>(`[data-action="${action}"]`);
+    if (!b) return;
+    if (b.hidden !== !v) b.hidden = !v;
+    if (!v) return;
+    this.setArt(action, v.icon, v.short, 1 - Math.max(0, Math.min(1, v.cd)), v.ready, v.color);
+  }
+
   /** Feuerknopf hervorheben, solange ein Gegner im Fächer liegt (wie in 1.0) */
   setHot(action: string, on: boolean) {
     const b = this.buttonsEl.querySelector<HTMLElement>(`[data-action="${action}"]`);

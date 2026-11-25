@@ -10,7 +10,7 @@
 // - Waffen („held“) sind starre Gruppen im Raum der Handhalterung: Griff am Ursprung, Klinge entlang +Y.
 import { BufferAttribute, BufferGeometry, Group, Matrix4, Mesh, SkinnedMesh, Uint16BufferAttribute, Vector3, type Material } from 'three';
 import type { SkullBox } from '../vroid';
-import type { HatSeat } from '../hatFit';
+import { HAT_RELAX, fitSeatInside, skirtFromTriangles, type HatSeat } from '../hatFit';
 import { squeezePositions } from '../hairSqueeze';
 import { preload } from '../../../core/preload';
 import { markShared } from '../../../render/dispose';
@@ -26,7 +26,7 @@ export interface GlbModel { name: string; roles: Map<string, BufferGeometry> }
 const BASE = `${import.meta.env.BASE_URL}models/gear/`;
 const MODELS = `${import.meta.env.BASE_URL}models/`;
 /** Alle Modelle, die das Spiel kennt (Dateiname ohne .glb) */
-export const GLB_MODELS = ['stulpenstiefel', 'stoffhose', 'stoffhose_stiefel', 'gehrock', 'dreispitz', 'frisur_mehrlagig', 'entermesser', 'parierdolch', 'sandalen',
+export const GLB_MODELS = ['stulpenstiefel', 'stoffhose', 'stoffhose_stiefel', 'gehrock', 'dreispitz', 'entermesser', 'parierdolch', 'sandalen',
   'helm_ritter2', 'helm_drache2', 'helm_kabuto2', 'helm_krone2', 'helm_kapuze2', 'helm_engel2', 'helm_hoerner2', 'schulter_lamellen2', 'schulter_drache3', 'schulter_fluegel3',
   'w_saebel', 'w_katana', 'w_zweihaender', 'w_kurzklinge', 'w_faust_leder', 'w_faust_stahl', 'w_faust_dorn', 'w_fokus', 'w_muskete',
   // Raid-Endbosse (public/models/bosses/, tools/blender/build_bosse.py)
@@ -375,10 +375,10 @@ export const MALE_SKULL: SkullBox & { head: [number, number, number] } = { hx: 0
  * Schädelverhältnis (Breite, Höhe, Tiefe) und der Schädelmitte – statt über die stückweise Körper-Abbildung, die das Haar am Hals stauchte
  * und um 1,4 cm nach vorn schob (kahle Stelle am Hinterkopf der weiblichen Figur). Normalen werden mitgedreht.
  */
-export function adaptHead(base: object, key: string, src: BufferGeometry, body: SkinnedMesh, bone: string, box: SkullBox): BufferGeometry {
+export function adaptHead(base: object, key: string, src: BufferGeometry, body: SkinnedMesh, bone: string, box: SkullBox, relax = false): BufferGeometry {
   let m = mappedGeo.get(base);
   if (!m) { m = new Map(); mappedGeo.set(base, m); }
-  const k = `${key}|head`;
+  const k = `${key}|head${relax ? '|relax' : ''}`;
   const hit = m.get(k);
   if (hit) return hit;
   const sk = body.skeleton;
@@ -388,16 +388,19 @@ export function adaptHead(base: object, key: string, src: BufferGeometry, body: 
   const M = MALE_SKULL;
   const sx = box.hx / M.hx, sy = box.top / M.top, sz = (box.zb - box.zf) / (M.zb - M.zf);
   const mc = (M.zb + M.zf) / 2, tc = (box.zb + box.zf) / 2;
-  const same = Math.abs(sx - 1) < 0.003 && Math.abs(sy - 1) < 0.003 && Math.abs(sz - 1) < 0.003 && Math.abs(mc - tc) < 0.001 && Math.hypot(hx - M.head[0], hy - M.head[1], hz - M.head[2]) < 0.001;
+  const same = !relax && Math.abs(sx - 1) < 0.003 && Math.abs(sy - 1) < 0.003 && Math.abs(sz - 1) < 0.003 && Math.abs(mc - tc) < 0.001 && Math.hypot(hx - M.head[0], hy - M.head[1], hz - M.head[2]) < 0.001;
   let out = src;
   if (!same) {
     const p = src.attributes.position, n = src.attributes.normal;
     const pos = new Float32Array(p.count * 3), nor = n ? new Float32Array(n.count * 3) : null;
+    // 4.6H: Hüte und Helme aus Modellen sitzen wie die Standard-Hüte entspannter: 0,8 cm höher, Kranz 3,5 % weiter (um die Schädelachse)
+    const lift = relax ? HAT_RELAX.lift : 0, wid = relax ? HAT_RELAX.widen : 1;
+    const ex = sx * wid, ez = sz * wid;
     for (let v = 0; v < p.count; v++) {
       const x = p.getX(v) - M.head[0], y = p.getY(v) - M.head[1], z = p.getZ(v) - M.head[2];
-      pos[v * 3] = x * sx + hx; pos[v * 3 + 1] = y * sy + hy; pos[v * 3 + 2] = (z - mc) * sz + tc + hz;
+      pos[v * 3] = x * ex + hx; pos[v * 3 + 1] = y * sy + lift + hy; pos[v * 3 + 2] = (z - mc) * ez + tc + hz;
       if (n && nor) {
-        const nx = n.getX(v) / sx, ny = n.getY(v) / sy, nz = n.getZ(v) / sz, l = Math.hypot(nx, ny, nz) || 1;
+        const nx = n.getX(v) / ex, ny = n.getY(v) / sy, nz = n.getZ(v) / ez, l = Math.hypot(nx, ny, nz) || 1;
         nor[v * 3] = nx / l; nor[v * 3 + 1] = ny / l; nor[v * 3 + 2] = nz / l;
       }
     }
@@ -429,8 +432,44 @@ function squeezeUnder(base: object, key: string, src: BufferGeometry, body: Skin
   return out;
 }
 
-/** Zusatz für Modelle am Kopfknochen (4.6G.3): Schädel der Grundfigur und – unter einem Standard-Hut – dessen Sitz */
-export interface HeadFitOpts { box: SkullBox | null; seat: HatSeat | null; seatKey: string }
+/** Zusatz für Modelle am Kopfknochen (4.6G.3): Schädel der Grundfigur und – unter einem Standard-Hut – dessen Sitz; 4.6H: `relax` für Hut-Modelle */
+export interface HeadFitOpts { box: SkullBox | null; seat: HatSeat | null; seatKey: string; relax?: boolean }
+
+/**
+ * 4.6H: Sitz eines Hut- oder Helm-Modells am Schädel (dieselbe Passform wie die Standard-Hüte): der gemessene Sitz, eingepasst in die innerste
+ * Fläche des (entspannt aufgesetzten) Modells – das Haar darunter wird nur in diese Krone gedrückt und sticht nirgends hindurch. Je Grundfigur
+ * und Modell einmal.
+ */
+const hatSeats = new WeakMap<object, Map<string, HatSeat>>();
+export function glbHatSeat(base: object, model: GlbModel, body: SkinnedMesh, box: SkullBox, seat: HatSeat): HatSeat {
+  let m = hatSeats.get(base);
+  if (!m) { m = new Map(); hatSeats.set(base, m); }
+  const hit = m.get(model.name);
+  if (hit) return hit;
+  const sk = body.skeleton;
+  const i = Math.max(0, sk.bones.findIndex((b) => b.name === 'J_Bip_C_Head'));
+  const toHead = new Matrix4().copy(sk.boneInverses[i]).multiply(body.bindMatrix);
+  const pts: number[] = [], tris: number[] = [];
+  const v = new Vector3();
+  for (const [role, src0] of model.roles) {
+    const g = adaptHead(base, `${model.name}/${role}/boneJ_Bip_C_Head`, src0, body, 'J_Bip_C_Head', box, true);
+    const p = g.attributes.position;
+    const o = pts.length / 3;
+    for (let k = 0; k < p.count; k++) { v.fromBufferAttribute(p, k).applyMatrix4(toHead); pts.push(v.x, v.y, v.z); }
+    // Dreiecke für die Schürze (Wangen- und Nackenschutz unter dem Band)
+    const idx = g.index;
+    const nt = idx ? idx.count : p.count;
+    for (let t = 0; t + 2 < nt; t += 3) for (let c = 0; c < 3; c++) {
+      const vi = (idx ? idx.getX(t + c) : t + c) + o;
+      tris.push(pts[vi * 3], pts[vi * 3 + 1], pts[vi * 3 + 2]);
+    }
+  }
+  // 4.6H: Krone eingepasst, dazu die Schürze des Modells: Haar unter dem Band sticht nicht durch Wangen- oder Nackenschutz
+  const out: HatSeat = { ...fitSeatInside(seat, pts) };
+  out.skirt = skirtFromTriangles(out, tris);
+  m.set(model.name, out);
+  return out;
+}
 
 /** Netze eines Modells am Skelett der Figur: je Rolle ein SkinnedMesh mit eigener Oberfläche */
 export function buildSkinned(base: object, model: GlbModel, mode: 'skinned' | 'bone' | 'foot', bone: string | undefined, body: SkinnedMesh, look: Record<string, GlbRoleLook>, cutAboveY?: number, head: HeadFitOpts | null = null): SkinnedMesh[] {
@@ -440,7 +479,7 @@ export function buildSkinned(base: object, model: GlbModel, mode: 'skinned' | 'b
     if (!rl) continue;
     const key = `${model.name}/${role}/${mode}${bone ?? ''}`;
     const onHead = mode === 'bone' && (bone ?? 'J_Bip_C_Head') === 'J_Bip_C_Head';
-    const src = onHead && head?.box ? adaptHead(base, key, src0, body, 'J_Bip_C_Head', head.box) : adapt(base, key, src0, body);
+    const src = onHead && head?.box ? adaptHead(base, key, src0, body, 'J_Bip_C_Head', head.box, !!head.relax) : adapt(base, key, src0, body);
     const sq = onHead && head?.seat ? squeezeUnder(base, key, src, body, 'J_Bip_C_Head', head.seat, head.seatKey) : null;
     const fit = mode === 'bone' ? fitToBone(base, key, src, body, bone ?? 'J_Bip_C_Head') : mode === 'foot' ? fitFoot(base, key, src, body) : fitToBody(base, key, src, body);
     // Lage, Normale, UV und Dreiecksliste teilen sich alle Figuren; Gewichte hängen am Modell und der Grundfigur

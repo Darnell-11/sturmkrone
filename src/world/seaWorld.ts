@@ -87,6 +87,9 @@ import { AnimeVfxForge } from '../graphics/animeVfxForge';
 import { CataclysmDirector } from './cataclysmDirector';
 import { CUTSCENE } from '../data/cataclysms';
 import type { FighterState } from '../combat/actionCombatEngine';
+import { skyfallShift, type ShipFootprint } from '../combat/skyfallClearance';
+import { OfficerAssistDirector, type AssistHost } from './officerAssistDirector';
+import type { AssistView } from '../ui/fighterHud';
 import type { UltimateSpec } from '../data/actionKit';
 import { CombatSystem } from '../combat/combat';
 import type { LootDrop } from '../data/loot';
@@ -861,10 +864,10 @@ export class SeaWorld {
       if (first) {
         // erster Aufbau: Hindernisse und Einebnungen entstehen in der begehbaren Insel der Welt (bricht er ab, setzt `finally` sie zurück)
         walk = slot.walk;
-        walk.blockers.length = 0; walk.pads = undefined; walk.lift = undefined; walk.addPad = undefined; walk.decks = undefined;
+        walk.blockers.length = 0; walk.pads = undefined; walk.lift = undefined; walk.addPad = undefined; walk.decks = undefined; walk.roofs = undefined;
       } else {
         // Kopie der Insel für den Neuaufbau: gleiche Form, leere Hindernisse und Einebnungen (die Rechnung füllt sie noch einmal, die Kopie wird verworfen)
-        walk = { ...slot.walk, blockers: [], pads: undefined, lift: undefined, addPad: undefined, walkways: undefined, decks: undefined };
+        walk = { ...slot.walk, blockers: [], pads: undefined, lift: undefined, addPad: undefined, walkways: undefined, decks: undefined, roofs: undefined };
       }
       // Bau-Daten sammeln sich hier; nach einem vollständigen ersten Aufbau wandern sie in die Welt (Stege liefert der Blueprint)
       const sink = { piers: [] as Pier[], campfires: [] as V3[], chimneys: [] as V3[], smokeVents: [] as V3[], villages: new Map<string, { x: number; z: number; r: number }>(), patrols: new Map<string, { x: number; z: number }[][]>() };
@@ -1145,7 +1148,7 @@ export class SeaWorld {
       if (!ok) {
         this.disposeIsland(slot);
         // abgebrochener erster Aufbau: halbe Bau-Daten nicht stehen lassen (der nächste Versuch beginnt sauber)
-        if (first) { const w = slot.walk; w.blockers.length = 0; w.pads = undefined; w.lift = undefined; w.addPad = undefined; w.decks = undefined; }
+        if (first) { const w = slot.walk; w.blockers.length = 0; w.pads = undefined; w.lift = undefined; w.addPad = undefined; w.decks = undefined; w.roofs = undefined; }
       }
     }
   }
@@ -1850,8 +1853,68 @@ export class SeaWorld {
   }
 
   /** Ultimate ausgelöst: Mini-Zwischensequenz (Kamera, Zeitlupe 0,14 für 0,75 s nur lokal), Energie sammelt sich */
+  // ---------- 4.6H: Kombo-Assists der Offiziere ----------
+
+  private _assists: OfficerAssistDirector | null = null;
+  /** Kombo-Assists der Offiziere im Landkampf (Sperrfeuer, Orkan-Schildstoß, Sturmhorn) */
+  get assists(): OfficerAssistDirector { return (this._assists ??= new OfficerAssistDirector(this.assistHost())); }
+
+  private assistHost(): AssistHost {
+    const w = this;
+    return {
+      officers: () => (w.mode === 'foot' && w.crew ? w.crew.allies : NO_FOES),
+      squads: () => (w.mode === 'foot' && w.crew ? w.crew.squads : NO_FOES),
+      foes: () => w.combat?.enemies ?? NO_FOES,
+      foeSquads: () => w.combat?.mass ?? NO_FOES,
+      player: () => (w.mode === 'foot' && w.foot ? w.foot : null),
+      lock: () => { const l = w.combat?.lock; return l && l.alive ? l : null; },
+      atk: () => w.combat?.atk ?? 12,
+      hit: (t, o) => w.combat?.assistHit(t, o) ?? 0,
+      heal: (frac) => { const f = w.foot; if (!f) return 0; const before = f.hp; f.hp = Math.min(f.maxHp, f.hp + f.maxHp * frac); return f.hp - before; },
+      addWill: (n) => w.foot?.engine.addWill(n),
+      openChase: () => w.foot?.engine.openChase(),
+      groundY: (x, z) => { const h = w.groundProxy.height(x, z); return Number.isFinite(h) && h > -50 ? h : w.env.heightAt(x, z); },
+      isLand: (x, z) => !!w.ground.islandAt(x, z),
+      busy: () => w.cataclysm.active || w.animeRig.active,
+      get fx() { return w.cataclysmFx; },
+      get vfx() { return w.vfx; },
+      get combatFx() { return w.fx; },
+      get overlay() { return w.overlay; },
+      sound: (n, v, x, y, z) => audio.play(n, v, { x, y, z }),
+      shake: (k) => { w.shake = Math.max(w.shake, k); },
+    };
+  }
+
+  /** Assist auslösen (0 … 2); Rückgabe: Meldung, warum nicht (null = ausgelöst) */
+  triggerAssist(i: number): string | null { return this.assists.trigger(i); }
+  /** Anzeige der drei Assists (null = kein Landtrupp an Land) */
+  assistViews(): readonly AssistView[] | null {
+    if (this.mode !== 'foot' || !this.crew?.allies.length) return null;
+    return this.assists.viewList();
+  }
+
+  /** 4.6H: Grundrisse der eigenen Schiffe (Flaggschiff und Begleiter der Flotte) – Himmelssturz schlägt nie auf ihren Decks ein */
+  private ownShipPrints(): ShipFootprint[] {
+    const out: ShipFootprint[] = [];
+    const s = this.ship;
+    if (s && s.alive) out.push({ x: s.x, z: s.z, heading: s.heading, L: s.cls.L, W: s.cls.W });
+    for (const e of this.naval?.enemies ?? []) {
+      if (!(e.companion || e.fleetId) || !e.ship.alive || e.ship.sinking > 0) continue;
+      out.push({ x: e.ship.x, z: e.ship.z, heading: e.ship.heading, L: e.ship.cls.L, W: e.ship.cls.W });
+    }
+    return out;
+  }
+
+  /** 4.6H: Verschiebung der Himmelssturz-Einschläge (Engine und Darstellung gleich); andere Ultimates bleiben, wo sie sind */
+  private skyShiftFor(spec: UltimateSpec, f: FighterState): number {
+    const s = spec.kind === 'skyfall' ? skyfallShift(f.x, f.z, f.yaw, this.ownShipPrints()) : 0;
+    if (this.foot) this.foot.engine.ultShift = s;
+    return s;
+  }
+
   private ultimateBegins(spec: UltimateSpec, f: FighterState) {
     this.ultSX = f.x; this.ultSZ = f.z;
+    this.skyShiftFor(spec, f);
     this.rigMirror = false;
     this.rigChecked = false;
     this.rigPull = 1;
@@ -1869,7 +1932,7 @@ export class SeaWorld {
   /** Einschlag: Impact-Frames, Welt-Effekt, Stoß */
   private ultimateStrikes(spec: UltimateSpec, f: FighterState) {
     this.animeRig.impact(spec.frames);
-    this.cataclysm.strike(spec, f, this.ultSX, this.ultSZ);
+    this.cataclysm.strike(spec, f, this.ultSX, this.ultSZ, this.skyShiftFor(spec, f));
     this.focusPulse.trigger(1, 1.1);
     this.hitShake.shake(1);
     // Impact-Frame: Riss- und Donnerknall genau im Moment des Tusche-Bildes
@@ -2694,6 +2757,8 @@ export class SeaWorld {
     this.updateNpcs(dt);
     this.combat?.update(dt, this.camera);
     this.updateCrew(dt);
+    // 4.6H: Abklingzeiten und Zeitachse der Offiziers-Assists (Spielzeit)
+    this._assists?.update(dt);
     // Angeln: Warten auf den Biss, dann kurzes Zeitfenster
     if (this.fishing) {
       const f = this.fishing;

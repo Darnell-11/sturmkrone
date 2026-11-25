@@ -3,7 +3,7 @@ import { BufferGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Float32Buff
 import type { CharacterSocketId } from '../../data/characterRig';
 import type { CharacterLook } from '../../data/characterParts';
 import type { Anchors, CapShell } from './vroid';
-import { isSeatedHat, type HatSeat, type SeatedHat } from './hatFit';
+import { fromSeat, isSeatedHat, type HatSeat, type SeatedHat } from './hatFit';
 import { buildSeatedHat } from './seatedHats';
 import { fieldRadius, skinStrap, templePath, thetaAtX, type FaceField, type FaceMarks } from './beardStrands';
 import { Bag, tube } from './gear/kit';
@@ -357,9 +357,11 @@ export function attachHeadgear(head: Object3D, eyeL: Object3D | null, eyeR: Obje
   const faceZ = an?.faceZ ?? (l && rr ? (l.z + rr.z) / 2 - 0.075 : -0.1);
   // 4.6G.3: Standard-Hüte sitzen am gemessenen Schädel (Band satt um Stirn und Hinterkopf) statt auf den Haarspitzen
   const seat = isSeatedHat(look.hat) && face?.hatSeat ? face.hatSeat : null;
-  // Kappe aus der Frisurform (Helme der Ausrüstung; ohne Schädelmessung auch die Standard-Hüte wie bisher)
-  const capCfg = seat ? undefined : CAPPED[look.hat];
-  const shell = capCfg && face?.cap ? face.cap(capCfg.sink, capCfg.margin) : null;
+  // 4.6H: Bausatz-Helme der Ausrüstung sitzen genauso am Schädel (Sitz „helm“, 0,8 cm höher, Kranz 3,5 % weiter): Kappe aus dem Sitz statt aus der Frisur
+  const helmSeat = HELMS[look.hat] && face?.hatSeat ? face.hatSeat : null;
+  // Kappe aus der Frisurform (ohne Schädelmessung: Helme und Standard-Hüte wie bisher)
+  const capCfg = seat || helmSeat ? undefined : CAPPED[look.hat];
+  const shell = helmSeat ? seatShell(helmSeat) : capCfg && face?.cap ? face.cap(capCfg.sink, capCfg.margin) : null;
   const seatCfg = fit && !shell && !seat ? HAT_SEAT[look.hat] : undefined;
   // Ersatz-Hut (ohne gemessene Frisur) und Ohrring ohne Anker: um die Augenmitte
   const acc = buildHeadgear((seatCfg && fit?.(seatCfg.sink)) || shell || seat ? { ...look, hat: 'keiner' } : look, r, outline);
@@ -385,7 +387,7 @@ export function attachHeadgear(head: Object3D, eyeL: Object3D | null, eyeR: Obje
     hat.rotation.y = Math.PI;
     put(hat, 'headTop');
   }
-  if (shell) put(capHat(look, shell, outline), 'headTop');
+  if (shell) put(capHat(look, shell, outline, helmSeat), 'headTop');
   // 4.6G.3: Brillen, Monokel und Augenklappe an der gemessenen Pupillenmitte (Iris), knapp vor Hornhaut, Haut und Wimpern
   const pl = an?.pupilL ?? null, pr = an?.pupilR ?? null;
   const field = face?.field?.field ?? null;
@@ -746,8 +748,40 @@ export function goggles(pl: Vector3, pr: Vector3, z: number, f: FaceField, an: A
   return out;
 }
 
-/** Kopfbedeckung um eine gemessene Kappe (Kopfraum der Figur: Gesicht schaut nach −Z, hinten ist +Z) */
-function capHat(look: CharacterLook, sh: CapShell, outline: boolean): Group {
+/**
+ * 4.6H: Kappe eines Bausatz-Helms aus dem Sitz am Schädel (Kopfraum): Kuppel über der Krone (a, h, b) samt Neigung, Kranz auf Bandhöhe. Das Haar
+ * darunter liegt in der Krone (gedrückt, nichts abgeschnitten) – dieselbe Passform wie die Standard-Hüte.
+ */
+export function seatShell(s: HatSeat): CapShell {
+  const A = s.a + 0.002, B = s.b + 0.002, H = s.h + 0.002;
+  const NA = 32, NE = 10;
+  const pos: number[] = [], idx: number[] = [];
+  const q = { x: 0, y: 0, z: 0 };
+  for (let i = 0; i <= NE; i++) {
+    const el = (i / NE) * (Math.PI / 2) * 0.985 - 0.06;
+    for (let j = 0; j < NA; j++) {
+      const az = (j / NA) * Math.PI * 2;
+      fromSeat(s, A * Math.cos(el) * Math.sin(az), H * Math.sin(Math.max(0, el)) + Math.min(0, el) * 0.12, -B * Math.cos(el) * Math.cos(az), q);
+      pos.push(q.x, q.y, q.z);
+    }
+  }
+  const apex = pos.length / 3;
+  fromSeat(s, 0, H, 0, q);
+  pos.push(q.x, q.y, q.z);
+  for (let i = 0; i < NE; i++) for (let j = 0; j < NA; j++) {
+    const a = i * NA + j, b = i * NA + ((j + 1) % NA), c = (i + 1) * NA + ((j + 1) % NA), d = (i + 1) * NA + j;
+    idx.push(a, c, b, a, d, c);
+  }
+  for (let j = 0; j < NA; j++) idx.push(NE * NA + j, apex, NE * NA + ((j + 1) % NA));
+  const geo = new BufferGeometry();
+  geo.setAttribute('position', new Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return { geo, seatY: s.y, cx: s.cx, cz: s.cz, ringR: (A + B) / 2 };
+}
+
+/** Kopfbedeckung um eine gemessene Kappe (Kopfraum der Figur: Gesicht schaut nach −Z, hinten ist +Z); `seat` = Sitz am Schädel (4.6H, Helme) */
+function capHat(look: CharacterLook, sh: CapShell, outline: boolean, seat: HatSeat | null = null): Group {
   const g = new Group();
   const cloth = toon({ color: look.hatColor, side: DoubleSide });
   sh.geo.computeBoundingBox();
@@ -762,11 +796,12 @@ function capHat(look: CharacterLook, sh: CapShell, outline: boolean): Group {
   if (gearHelm) {
     // Ausrüstungshelm (gear/rigid.ts): Kappe um die Frisur in der gewählten Oberfläche plus Zierteile
     // enge Schädelkuppel statt der weiten Frisurkappe (das Haar darüber ist ausgeblendet) und ein Rand über der Stirn
-    const r = gearHelm({ sh, topY: sh.seatY + HELM_RISE, c: look.hatColor, c2: look.hatAccent ?? '#E3B04B' });
+    const r = gearHelm({ sh, topY: seat ? seat.y + seat.h : sh.seatY + HELM_RISE, c: look.hatColor, c2: look.hatAccent ?? '#E3B04B', R: seat ? sh.ringR : undefined });
     const cm = finishMat(r.cap.finish, r.cap.color ?? look.hatColor);
     const skull = new Mesh(new SphereGeometry(1, 28, 14, 0, Math.PI * 2, 0, Math.PI / 2), cm);
-    skull.scale.set(HEAD_R, HELM_RISE, HEAD_R * 1.04);
-    skull.position.set(sh.cx, sh.seatY, sh.cz);
+    // 4.6H: am Schädelsitz die Kuppel genau über der Krone (Halbachsen a, h, b, geneigt wie das Band), sonst der feste Kopfradius
+    if (seat) { skull.scale.set(seat.a + 0.002, seat.h + 0.002, seat.b + 0.002); skull.position.set(seat.cx, seat.y, seat.cz); skull.rotation.x = seat.tilt; }
+    else { skull.scale.set(HEAD_R, HELM_RISE, HEAD_R * 1.04); skull.position.set(sh.cx, sh.seatY, sh.cz); }
     g.add(skull, r.bag.build());
     g.traverse((o) => { (o as Mesh).castShadow = false; });
     return g;

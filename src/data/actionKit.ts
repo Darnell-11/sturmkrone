@@ -39,6 +39,18 @@ export const ACTION_TUNING = {
   /** Bodenhaftung: kleine Absätze folgt die Figur, darüber beginnt ein Fall; höchste Kante, die man in der Luft „mitnimmt“ */
   stepDown: 0.65,
   stepUp: 0.55,
+  /**
+   * 4.6H Höhen-Ebenen: Kantengriff (in der Luft an einer Dach-, Mauer- oder Felskante bis so hoch über den Füßen hochziehen; Probe so weit vor
+   * der Figur; nur beim Fallen oder langsamen Steigen) und Wandsprung (Absprung von einer berührten Wand: Steigtempo, Abstoß, höchstens so
+   * viele je Sprung, Berührung gilt so lange)
+   */
+  ledgeReach: 1.6,
+  ledgeProbe: 0.45,
+  ledgeVy: 3,
+  wallKickV: 8.4,
+  wallKickPush: 1.2,
+  wallKicks: 3,
+  wallGrace: 0.2,
   /** Laufen am Boden und Steuerung in der Luft */
   walk: 2.4,
   run: 6.2,

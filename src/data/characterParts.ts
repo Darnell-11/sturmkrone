@@ -244,6 +244,9 @@ export function sanitizeLook(raw: unknown, faction: Faction): CharacterLook {
   if (r.hat === 'brille') { out.glasses = 'flieger'; out.hat = 'keiner'; }
   if (out.glasses === 'keine') delete out.glasses;
   if (typeof r.height === 'number' && isFinite(r.height)) out.height = Math.min(1.1, Math.max(0.9, r.height));
+  // 4.6H: die Frisur-Wahl (Grundfrisur oder „Mehrlagig“) überlebt das Laden – bis 4.6G.3 fiel sie hier weg; unbekannte Kennungen übergeht die
+  // Ausrüstung (`loadoutFromLook`)
+  if (typeof r.hairModel === 'string' && /^frisur_[a-z0-9_]+$/.test(r.hairModel)) out.hairModel = r.hairModel;
   return out as CharacterLook;
 }
 

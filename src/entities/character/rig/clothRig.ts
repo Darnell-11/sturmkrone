@@ -7,9 +7,9 @@ import { Bone, BufferAttribute, BufferGeometry, Matrix4, Object3D, Quaternion, V
 import { CHAIN_LAYOUT, CLOTH, CLOTH_WIND, type ChainTuning } from '../../../data/characterRig';
 import { SpringChains, type ChainColliders } from './springChain';
 
-export type ChainKind = 'tails' | 'cape' | 'hair' | 'scarf' | 'sash' | 'sleeves';
-export const CHAIN_KINDS: ChainKind[] = ['tails', 'cape', 'hair', 'scarf', 'sash', 'sleeves'];
-const TUNE_OF: Record<ChainKind, keyof typeof CLOTH> = { tails: 'coat', cape: 'cape', hair: 'hair', scarf: 'scarf', sash: 'ribbon', sleeves: 'sleeve' };
+export type ChainKind = 'tails' | 'cape' | 'hair' | 'mane' | 'scarf' | 'sash' | 'sleeves';
+export const CHAIN_KINDS: ChainKind[] = ['tails', 'cape', 'hair', 'mane', 'scarf', 'sash', 'sleeves'];
+const TUNE_OF: Record<ChainKind, keyof typeof CLOTH> = { tails: 'coat', cape: 'cape', hair: 'hair', mane: 'mane', scarf: 'scarf', sash: 'ribbon', sleeves: 'sleeve' };
 
 /** Aufbau einer Kettengruppe in der Vorlage (geteilt von allen Figuren dieser Grundfigur) */
 export interface ChainGroupLayout {
@@ -88,7 +88,7 @@ function toLocal(anchor: Object3D, p: Vector3) { return p.applyMatrix4(mB.copy(a
  * Ketten in einer Grundfigur einrichten. template: Wurzel der Vorlage (Ruhehaltung), body: Hautnetz, hair: Haarnetze,
  * capeGrid: Umhang (längste Form) als Gitter in Körperraum, knot: Schärpenknoten in Weltlage der Vorlage.
  */
-export function buildClothLayout(template: Object3D, body: SkinnedMesh, hair: SkinnedMesh[], capeGrid: { geo: BufferGeometry; rows: number; cols: number } | null, knot: Vector3 | null): ClothLayout {
+export function buildClothLayout(template: Object3D, body: SkinnedMesh, hair: SkinnedMesh[], capeGrid: { geo: BufferGeometry; rows: number; cols: number } | null, knot: Vector3 | null, mane: Float32Array | null = null): ClothLayout {
   template.updateMatrixWorld(true);
   const find = (n: string) => template.getObjectByName(n) ?? null;
   const wp = (n: string) => find(n)?.getWorldPosition(new Vector3()) ?? new Vector3();
@@ -216,6 +216,14 @@ export function buildClothLayout(template: Object3D, body: SkinnedMesh, hair: Sk
     const hs = [...new Set(hair.map((m) => m.skeleton))];
     addChainBones(headB, g, [body.skeleton, ...hs]);
     for (const m of hair) reskinHair(m, g, headB, yRoot, cx, cz);
+    // 4.6H: eigene Ketten für die Rückensträhnen der Frisur „Mehrlagig“ (nur die Frau; Ruhelage aus den Strähnen, `maneRest`)
+    const mn = CHAIN_LAYOUT.mane;
+    if (mane && mane.length === mn.chains * (mn.links + 1) * 3) {
+      const gm: ChainGroupLayout = { kind: 'mane', anchor: headB.name, chains: mn.chains, links: mn.links, rest: mane, names: [], active: new Uint8Array(mn.chains).fill(1) };
+      for (let c = 0; c < mn.chains; c++) for (let i = 1; i <= mn.links; i++) gm.names.push(boneName('mane', c, i));
+      lay.groups.mane = gm;
+      addChainBones(headB, gm, [body.skeleton, ...hs]);
+    }
   }
 
   // ---------- Schalenden (vorn links am Hals) und Schärpenbänder (am Knoten) ----------

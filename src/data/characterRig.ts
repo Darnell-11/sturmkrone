@@ -240,11 +240,14 @@ export const LEG_CAPS = { upper: 0.084, lower: 0.074 } as const;
  * heißt also ein kleinerer Wert (Dämpfungsgrad = 1 − damping). Die Figur nimmt den Stoff mehr mit (kleinere `inertia`), jedes Glied
  * schwenkt höchstens `maxBend` aus seiner Ruherichtung. Damit Wind und Sprint ihn weiter kraftvoll treiben, greift der Wind stärker an (`drag` verdoppelt – das dämpft zugleich die Eigenbewegung).
  */
-export const CLOTH: Record<'coat' | 'kilt' | 'cape' | 'hair' | 'scarf' | 'ribbon' | 'sleeve', ChainTuning> = {
+export const CLOTH: Record<'coat' | 'kilt' | 'cape' | 'hair' | 'mane' | 'scarf' | 'ribbon' | 'sleeve', ChainTuning> = {
   coat: { stiffness: 0.1, damping: 0.84, drag: 2.7, gravity: 1, radius: 0.055, inertia: 0.55, stretch: 1.03, maxBend: 0.95 },
   kilt: { stiffness: 0.13, damping: 0.82, drag: 1.6, gravity: 1, radius: 0.04, inertia: 0.5, stretch: 1.03, maxBend: 0.75 },
   cape: { stiffness: 0.085, damping: 0.85, drag: 3, gravity: 1, radius: 0.05, inertia: 0.6, stretch: 1.03, maxBend: 1.1 },
   hair: { stiffness: 0.14, damping: 0.88, drag: 0.4, gravity: 0.45, radius: 0.016, inertia: 0.5, stretch: 1.02, maxBend: 1.2 },
+  // 4.6H: lange Rückensträhnen – sanft und gedämpft: beim Laufen etwa 10 cm Schwung an den Spitzen, nach dem Anhalten in einer halben
+  // Sekunde wieder ruhig (wenig Trägheit und Luftzug, Gelenkgrenze 0,55: nie über Schulter oder Kopf)
+  mane: { stiffness: 0.15, damping: 0.83, drag: 0.35, gravity: 1, radius: 0.02, inertia: 0.25, stretch: 1.02, maxBend: 0.55 },
   scarf: { stiffness: 0.02, damping: 0.95, drag: 1.7, gravity: 0.8, radius: 0.02, inertia: 0.9, stretch: 1.03, maxBend: 1.7 },
   ribbon: { stiffness: 0.025, damping: 0.95, drag: 1.5, gravity: 0.9, radius: 0.018, inertia: 0.85, stretch: 1.03, maxBend: 1.7 },
   // 4.6G: leere Ärmel des Schultermantels – schwerer Wollstoff; 4.6G.3: straff, schwingt beim Laufen kurz nach und steht dann still
@@ -264,6 +267,12 @@ export const CHAIN_LAYOUT = {
   cape: { columns: 5, links: 4 },
   /** Haare: Sektoren um den Kopf, zwei Glieder je Strähnenbündel */
   hair: { sectors: 8, links: 2 },
+  /**
+   * 4.6H: Rückensträhnen der Frisur „Mehrlagig“ (Frau): eigene Ketten nebeneinander von az0 bis az1 (Grad um den Kopf, 0 = Gesicht; gleiche
+   * Spanne wie die Rückensträhnen), je drei Glieder. Wurzel im Nacken (`root` m unter den Augen), die Punkte liegen auf der mittleren Bahn der
+   * Strähnen in der Nähe (`maneRest` in `layeredHair.ts`) bis zur tiefsten Spitze – die Gelenke sitzen also im Haar, nicht davor.
+   */
+  mane: { chains: 5, links: 3, az0: 126, az1: 234, root: -0.055 },
   /** Schalenden und Schärpenbänder: zwei Bänder mit je so vielen Gliedern */
   scarf: { ribbons: 2, links: 4, length: 0.3, width: 0.05 },
   sash: { ribbons: 2, links: 4, length: 0.36, width: 0.055 },

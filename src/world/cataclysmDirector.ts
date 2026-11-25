@@ -64,6 +64,8 @@ interface Cast {
   /** Meeresgraben aktiv */
   trench: boolean;
   seed: number;
+  /** 4.6H: Himmelssturz an Deck – Einschlag-Gruppe so weit nach vorn geschoben (m), dass sie 28 m vom eigenen Rumpf bleibt */
+  shift: number;
 }
 
 const V = new Vector3();
@@ -133,7 +135,7 @@ export const ULT_SHIP_PEN = 5;
 export class CataclysmDirector {
   private readonly casts: Cast[] = Array.from({ length: 3 }, () => ({
     on: false, kind: 'horizonCut' as CataclysmKind, spec: null, f: null, t: 0, x: 0, y: 0, z: 0, yaw: 0, cx: 0, cz: 0, sx: 0, sz: 0,
-    col: new Color(), acc: new Color(), step: 0, tick: 0, hit: [], trench: false, seed: 1,
+    col: new Color(), acc: new Color(), step: 0, tick: 0, hit: [], trench: false, seed: 1, shift: 0,
   }));
   /** Aufladen (Zwischensequenz) */
   private charge = { on: false, t: 0, dur: 0.75, x: 0, y: 0, z: 0, yaw: 0, col: new Color(), acc: new Color(), kind: 'horizonCut' as CataclysmKind, f: null as FighterState | null, tick: 0 };
@@ -267,12 +269,14 @@ export class CataclysmDirector {
   // ---------- Einschlag ----------
 
   /** Einschlag eines Ultimates (Ereignis `ultStrike`; beim Iaijutsu ist das zugleich das Einrasten der Klinge) */
-  strike(spec: UltimateSpec, f: FighterState, startX?: number, startZ?: number) {
+  strike(spec: UltimateSpec, f: FighterState, startX?: number, startZ?: number, shift = 0) {
     let c = this.casts.find((k) => !k.on);
     if (!c) c = this.casts[0];
     c.on = true; c.kind = spec.kind; c.spec = spec; c.f = f; c.t = 0; c.step = 0; c.tick = 0; c.hit.length = 0; c.trench = false;
     c.x = f.x; c.y = f.y; c.z = f.z; c.yaw = f.yaw;
-    c.cx = f.x + Math.sin(f.yaw) * spec.center; c.cz = f.z + Math.cos(f.yaw) * spec.center;
+    // 4.6H: nur der Himmelssturz wird verschoben (Meteoriten und Planet nie auf dem eigenen Deck); dieselbe Verschiebung gilt in der Engine
+    c.shift = spec.kind === 'skyfall' ? Math.max(0, shift) : 0;
+    c.cx = f.x + Math.sin(f.yaw) * (spec.center + c.shift); c.cz = f.z + Math.cos(f.yaw) * (spec.center + c.shift);
     c.sx = startX ?? f.x; c.sz = startZ ?? f.z;
     c.col.copy(this.color(spec.color)); c.acc.copy(this.color(spec.accent));
     c.seed = this.seed++;
@@ -707,7 +711,8 @@ export class CataclysmDirector {
   /** Ort eines Meteors zur Zeit u (0 Start hoch am Himmel, 1 Einschlag): schräge Bahn von weit vorn, über Kreuz von links und rechts */
   private meteorAt(c: Cast, k: number, u: number, out: { x: number; y: number; z: number }) {
     const fwdX = Math.sin(c.yaw), fwdZ = Math.cos(c.yaw);
-    const d = k === 0 ? 11 : 22, side = k === 0 ? -1 : 1;
+    // Einschlag 11 m bzw. 22 m vor der Figur (SKYFALL_OFFSETS), an Deck um `shift` weiter vorn
+    const d = (k === 0 ? 11 : 22) + c.shift, side = k === 0 ? -1 : 1;
     const ix = c.x + fwdX * d, iz = c.z + fwdZ * d;
     const iy = this.host.groundY(ix, iz, c.y);
     // Start: 80 m hoch, 110 m weiter vorn und 45 m seitlich – die Kamera hinter der Figur sieht die Kometenschweife über den Himmel ziehen

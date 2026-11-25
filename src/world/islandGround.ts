@@ -2,6 +2,7 @@ import type { IslandShape } from './ocean';
 import { BRIDGE_CLEARANCE, BRIDGE_STEP, frameCoords, frameHeight, makeFrame, setFrame, spanLength, type Anchor, type BridgeDef, type BridgeFrame } from './docking';
 import { clamp01 } from '../core/mathUtil';
 import { SpatialGrid } from './worldGrid';
+import { ROOF, roofHeight, roofWall, type Roof } from './roofFields';
 
 /** Ein Hügel: Mitte (Welt), Radius und Höhenfaktor (Kuppe = Halbkugel, in der Höhe gestaucht) */
 export interface Hill { x: number; z: number; r: number; h: number }
@@ -65,6 +66,11 @@ export interface WalkIsland extends IslandShape {
   addPad?: (x: number, z: number, w: number, d: number, yaw: number, blend?: number, round?: boolean, fixedY?: number) => number;
   /** Laufdecks (Welt): Brücken über ausgehobenen Spalten; zählen nur für die Laufhöhe, nie für das Geländenetz */
   decks?: Deck[];
+  /**
+   * 4.6H: begehbare Dächer, Wehrgänge und Zinnen der Bauten (Welt, `world/roofFields.ts`). Zählen nur für Läufer mit Höhenhinweis
+   * (Spielfigur): Gegner, Kamera und Effekte sehen weiter den Boden.
+   */
+  roofs?: Roof[];
 }
 
 function vnoise(x: number, z: number, seed: number): number {
@@ -97,8 +103,11 @@ export function shelfOf(r: number): number { return Math.min(0.25, 22 / r); }
 /** Die Wasserlinie liegt auf der Böschung bei diesem Anteil ihrer Breite (Plateau 1,3 m, Böschung 3 m hinab) */
 export const WATERLINE = 1.3 / 3;
 
-/** Kollider eines festen Objekts: Kreis oder gedrehtes Rechteck (Häuser, Mauern, Zäune, Stände, Karren) */
-export interface Blocker { x: number; z: number; r: number; hw?: number; hd?: number; yaw?: number }
+/**
+ * Kollider eines festen Objekts: Kreis oder gedrehtes Rechteck (Häuser, Mauern, Zäune, Stände, Karren).
+ * 4.6H: `top` = Traufe (Welt-y) eines Baus mit Dachfeld – darüber sperrt der Kollider nicht mehr (Läufer mit Höhenhinweis stehen auf dem Dach).
+ */
+export interface Blocker { x: number; z: number; r: number; hw?: number; hd?: number; yaw?: number; top?: number }
 
 /**
  * Rechteck-Kollider für ein Objekt bei (x, z) mit Drehung yaw (wie rotation.y). Breite w entlang der lokalen x-Achse,
@@ -515,6 +524,24 @@ function buildBlockerGrid(list: readonly Blocker[]): BlockerGrid {
   return { n: list.length, first: list[0], cells };
 }
 
+/** 4.6H: Raster der Dachfelder einer Insel (16-m-Zellen; Kaiser-Zitadellen tragen hunderte Mauerstücke) */
+const NO_ROOFS: readonly Roof[] = [];
+interface RoofGrid { n: number; first: Roof | undefined; cells: Map<number, Roof[]> }
+function buildRoofGrid(list: readonly Roof[]): RoofGrid {
+  const cells = new Map<number, Roof[]>();
+  for (const r of list) {
+    const rr = r.r + 1;
+    const x0 = Math.floor((r.x - rr) / BLOCKER_CELL), x1 = Math.floor((r.x + rr) / BLOCKER_CELL);
+    const z0 = Math.floor((r.z - rr) / BLOCKER_CELL), z1 = Math.floor((r.z + rr) / BLOCKER_CELL);
+    for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) {
+      const k = blockerKey(i, j);
+      const c = cells.get(k);
+      if (c) c.push(r); else cells.set(k, [r]);
+    }
+  }
+  return { n: list.length, first: list[0], cells };
+}
+
 export class IslandGround implements Ground {
   readonly islands: WalkIsland[] = [];
   /** Stege (Weltkoordinaten): begehbar auch über dem Wasser, die Bohlen liegen auf pier.y */
@@ -753,15 +780,26 @@ export class IslandGround implements Ground {
     return y;
   }
 
-  /** Bodenhöhe an einem Punkt (−∞ wenn kein Land) – identisch mit dem sichtbaren Gelände */
-  height(x: number, z: number): number {
+  /**
+   * Bodenhöhe an einem Punkt (−∞ wenn kein Land) – identisch mit dem sichtbaren Gelände. 4.6H: mit Höhenhinweis `y` (Füße des Läufers) zählen
+   * auch Dächer, Wehrgänge und Zinnen, deren Oberkante höchstens `ROOF.step` über den Füßen liegt (sonst steht er darunter).
+   */
+  height(x: number, z: number, y?: number): number {
     let best = -Infinity;
     this.ensureGrid();
     const q = this.qHeight;
     const nq = this.islandGrid.query(x, z, 0, q);
     for (let qi = 0; qi < nq; qi++) {
-      const y = this.islandHeight(this.islands[q[qi]], x, z);
-      if (y > best) best = y;
+      const isl = this.islands[q[qi]];
+      const h = this.islandHeight(isl, x, z);
+      if (h > best) best = h;
+      if (y !== undefined && isl.roofs?.length) {
+        const rs = this.roofsNear(isl, x, z);
+        for (let k = 0; k < rs.length; k++) {
+          const rh = roofHeight(rs[k], x, z);
+          if (rh === rh && rh <= y + ROOF.step && rh > best) best = rh;
+        }
+      }
     }
     // Stege: Bohlen auf ihrer Höhe (auch dort, wo kein Land mehr ist)
     if (this.piers.length) {
@@ -782,8 +820,23 @@ export class IslandGround implements Ground {
     return g.cells.get(blockerKey(Math.floor(x / BLOCKER_CELL), Math.floor(z / BLOCKER_CELL))) ?? NO_BLOCKERS;
   }
 
-  /** Bewegung auf der Insel halten und um Hindernisse herumschieben */
-  constrain(x: number, z: number, radius = 0.35): { x: number; z: number } {
+  private roofGrids = new WeakMap<WalkIsland, RoofGrid>();
+
+  /** 4.6H: Dachfelder, die bei (x, z) in Frage kommen (Raster ab 24 Stück) */
+  roofsNear(isl: WalkIsland, x: number, z: number): readonly Roof[] {
+    const rl = isl.roofs;
+    if (!rl || !rl.length) return NO_ROOFS;
+    if (rl.length < 24) return rl;
+    let g = this.roofGrids.get(isl);
+    if (!g || g.n !== rl.length || g.first !== rl[0]) { g = buildRoofGrid(rl); this.roofGrids.set(isl, g); }
+    return g.cells.get(blockerKey(Math.floor(x / BLOCKER_CELL), Math.floor(z / BLOCKER_CELL))) ?? NO_ROOFS;
+  }
+
+  /**
+   * Bewegung auf der Insel halten und um Hindernisse herumschieben. 4.6H: mit Höhenhinweis `y` sperren Bauten nur unterhalb ihrer Traufe
+   * (`Blocker.top`); wer auf einem Dach steht, stößt dort an Schornsteine, Zinnen und höhere Dachteile (`roofWall`).
+   */
+  constrain(x: number, z: number, radius = 0.35, y?: number): { x: number; z: number } {
     const isl = this.islandAt(x, z, 4);
     // Wer auf einem Steg steht, bleibt auf den Bohlen (quer begrenzt, an der Spitze gestoppt)
     const pn = this.piers.length ? this.pierNear(x, z, 1.0) : null;
@@ -797,6 +850,8 @@ export class IslandGround implements Ground {
     const near = this.blockersNear(isl, x, z);
     for (let bi = 0; bi < near.length; bi++) {
       const b = near[bi];
+      // auf Traufhöhe oder darüber: die Wand liegt unter den Füßen
+      if (y !== undefined && b.top !== undefined && y >= b.top - ROOF.step) continue;
       const dx = x - b.x, dz = z - b.z;
       if (b.hw !== undefined) {
         // Rechteck: nächsten Randpunkt suchen und um den Figurenradius herausschieben
@@ -818,6 +873,15 @@ export class IslandGround implements Ground {
       if (d < min && d > 0.0001) { x = b.x + (dx / d) * min; z = b.z + (dz / d) * min; }
     }
     if (x === x0 && z === z0) break;
+    }
+    // 4.6H: auf einem Dach (Füße mindestens auf Traufhöhe) sind höhere Teile Wände: Schornstein, Zinne, First eines Nachbarbaus
+    if (y !== undefined && isl.roofs?.length) {
+      const rs = this.roofsNear(isl, x, z);
+      for (let k = 0; k < rs.length; k++) {
+        const r = rs[k];
+        if (y < r.eave - ROOF.step) continue;
+        if (roofWall(r, x, z, y, _rw)) { x = _rw.x; z = _rw.z; }
+      }
     }
     // bis an die Wasserlinie, nicht weiter (vorher bis 102 % des Radius – dort lag der Boden schon tief unter dem Strand)
     const dx = x - isl.x, dz = z - isl.z;
@@ -858,6 +922,7 @@ export interface BridgeRt { def: BridgeDef; f: BridgeFrame; walk: boolean; ok: b
 
 const _a = { x: 0, y: 0, z: 0 };
 const _b = { x: 0, y: 0, z: 0 };
+const _rw = { x: 0, z: 0 };
 const _sl = { s: 0, l: 0 };
 
 /**
@@ -974,7 +1039,7 @@ export class CompositeGround implements Ground {
       if (b) return this.bridgeH(b, _sl.s, x, z);
     }
     const d = this.decks.length ? this.deckAt(x, z) : null;
-    return d ? d.height(x, z, y) : this.island.height(x, z);
+    return d ? d.height(x, z, y) : this.island.height(x, z, y);
   }
 
   constrain(x: number, z: number, radius = 0.35, y?: number): { x: number; z: number } {
@@ -1006,6 +1071,6 @@ export class CompositeGround implements Ground {
       }
     }
     const d = this.decks.length ? this.deckAt(x, z) : null;
-    return d ? d.constrain(x, z, radius, y) : this.island.constrain(x, z, radius);
+    return d ? d.constrain(x, z, radius, y) : this.island.constrain(x, z, radius, y);
   }
 }

@@ -11,6 +11,7 @@ import {
 import { KAISER_IDS } from '../data/kaiserIslands';
 import { TALENT_CAP, softCap } from '../data/balanceConfig';
 import { xpToNext } from '../data/combat';
+import { SK } from '../data/skills';
 
 // ---------- Spielstand ----------
 
@@ -43,10 +44,17 @@ export interface TalentSave {
   respecs: number;
   /** Stufe eines alten Stands über 100 (nur Anzeige; die Stufe selbst wird auf 100 begrenzt) */
   legacyLevel?: number;
+  /**
+   * 4.6H: Bonus-Talentpunkte über Stufen und Siegel hinaus: die umgerechneten alten Faji-Punkte (frei und in Techniken gebunden) sowie alles, was
+   * früher Faji-Punkte gab (Bossinseln, Ruinen, Faji-Kristalle, erste Legenden, Aufträge, Splitter, Schrein, Faji-Erwachen)
+   */
+  bonus: number;
+  /** 4.6H: die alten Faji-Punkte (Taste K) sind in diesen gemeinsamen Topf übernommen (einmal beim Laden, `mergeFajiPoints`) */
+  fajiMerged: boolean;
 }
 
 export function emptyTalents(): TalentSave {
-  return { v: 1, nodes: {}, seals: [], cosmic: [], ascended: false, kaiserDefeated: [], kaiserAfter: {}, relics: [], blueprints: [], bound: [], sealsSpent: 0, evo: {}, ult: 'stil', respecs: 0 };
+  return { v: 1, nodes: {}, seals: [], cosmic: [], ascended: false, kaiserDefeated: [], kaiserAfter: {}, relics: [], blueprints: [], bound: [], sealsSpent: 0, evo: {}, ult: 'stil', respecs: 0, bonus: 0, fajiMerged: true };
 }
 
 /** Was die Regeln über den übrigen Spielstand wissen müssen */
@@ -55,6 +63,8 @@ export interface TalentWorld {
   level: number;
   /** verfügbare Kaiser-Siegel (`progress.unlocks.kaiserSeals`) */
   kaiserSeals: number;
+  /** 4.6H: in Faji-Techniken (F1 – F3, früher Taste K) gebundene Punkte desselben Topfs */
+  techSpent?: number;
 }
 
 // ---------- Stufen und Erfahrung ----------
@@ -103,7 +113,44 @@ export function spentRegular(t: TalentSave): number {
   for (const [id, r] of Object.entries(t.nodes)) { const node = NODE_BY_ID[id]; if (node && node.tree !== 'kosmos') n += r * rankCost(node); }
   return n;
 }
-export const freePoints = (t: TalentSave, level: number): number => talentTotal(t, level) - spentRegular(t);
+/** 4.6H: der gemeinsame Topf – Stufen, Meisterschafts-Siegel und Bonuspunkte (umgerechnete alte Faji-Punkte) */
+export const poolTotal = (t: TalentSave, level: number): number => talentTotal(t, level) + Math.max(0, t.bonus || 0);
+/** Freie Punkte des gemeinsamen Topfs (Talentbäume und Faji-Techniken zahlen aus demselben) */
+export const freePoints = (t: TalentSave, level: number, techSpent = 0): number => poolTotal(t, level) - spentRegular(t) - Math.max(0, techSpent);
+
+/** 4.6H: in Faji-Techniken gebundene Punkte (je Rang einer; nur bekannte Techniken, höchstens ihr Höchstrang) */
+export function techSpentOf(learned: Record<string, number> | null | undefined): number {
+  let n = 0;
+  if (!learned) return 0;
+  for (const [id, r] of Object.entries(learned)) {
+    const d = SK[id];
+    if (!d || typeof r !== 'number' || !Number.isFinite(r)) continue;
+    n += Math.max(0, Math.min(d.max, Math.floor(r)));
+  }
+  return n;
+}
+
+/**
+ * 4.6H: die alten Faji-Punkte (Taste K) in den gemeinsamen Topf übernehmen – einmal je Spielstand: alle schon in Techniken gebundenen Punkte und die
+ * freien Faji-Punkte werden zu Bonus-Talentpunkten (die Techniken bleiben gelernt und zahlen ab jetzt aus demselben Topf, es geht also nichts
+ * verloren). Danach landet jeder später noch auftauchende freie Faji-Punkt ebenfalls im Topf. Rückgabe: übernommene Punkte.
+ */
+export function mergeFajiPoints(t: TalentSave, skills: { sp: number; learned: Record<string, number> }): number {
+  let add = 0;
+  if (!t.fajiMerged) { add += techSpentOf(skills.learned); t.fajiMerged = true; }
+  const sp = Number.isFinite(skills.sp) ? Math.max(0, Math.floor(skills.sp)) : 0;
+  if (sp > 0) add += sp;
+  skills.sp = 0;
+  t.bonus = Math.max(0, Math.min(9999, Math.floor((t.bonus || 0) + add)));
+  return add;
+}
+
+/** 4.6H: Bonus-Talentpunkte gutschreiben (Bossinsel, Ruine, Kristall, Legende, Auftrag, Splitter, Schrein, Erwachen) */
+export function grantBonus(t: TalentSave, n: number): number {
+  const k = Math.max(0, Math.floor(n));
+  t.bonus = Math.max(0, Math.min(9999, (t.bonus || 0) + k));
+  return k;
+}
 
 /** Kosmische Punkte (zählen erst nach dem Aufstieg) */
 export const cosmicTotal = (t: TalentSave): number => (t.ascended ? Math.min(TALENT.cosmicMax, t.cosmic.filter((c) => COSMIC_SOURCE_IDS.has(c)).length) : 0);
@@ -161,7 +208,7 @@ export function learnBlock(t: TalentSave, w: TalentWorld, id: string): string | 
   const cost = rankCost(n);
   if (n.tree === 'kosmos') {
     if (freeCosmic(t) < cost) return cost > 1 ? `${cost} kosmische Punkte nötig.` : 'Keine freien kosmischen Punkte.';
-  } else if (freePoints(t, w.level) < cost) return 'Keine freien Talentpunkte.';
+  } else if (freePoints(t, w.level, w.techSpent ?? 0) < cost) return 'Keine freien Talentpunkte.';
   const lv = levelFor(n, r);
   if (w.level < lv) return `Stufe ${lv} nötig.`;
   const gate = tree.tiers[n.tier - 1]?.gate ?? 0;
@@ -253,6 +300,14 @@ export function respecCost(t: TalentSave, level: number, scope: RespecScope): { 
   const k = Math.min(R.repeatMax, 1 + R.repeatK * t.respecs) * (scope === 'all' ? 1 : R.treeK);
   const gold = Math.round((R.goldBase + R.goldPerLevel * Math.min(level, TALENT.levelCap)) * k);
   return { gold, seals: master ? (scope === 'kosmos' ? 1 : R.masterSeals) : 0, points };
+}
+
+/** 4.6H: Preis, einen Zweig der Faji-Techniken zurückzusetzen (wie ein einzelner Baum: Gold nach Stufe und Zahl der Rücksetzungen, keine Siegel) */
+export function techRespecCost(t: TalentSave, level: number, points: number): { gold: number; seals: number; points: number } {
+  if (points <= 0) return { gold: 0, seals: 0, points: 0 };
+  const R = TALENT.respec;
+  const k = Math.min(R.repeatMax, 1 + R.repeatK * t.respecs) * R.treeK;
+  return { gold: Math.round((R.goldBase + R.goldPerLevel * Math.min(level, TALENT.levelCap)) * k), seals: 0, points };
 }
 
 /** Zurücksetzen (Preis zahlt das Spiel vorher): Ränge, Pfadwahl und ausgerüstete Evolutionen im Bereich verschwinden */
@@ -451,6 +506,8 @@ export interface TalentCleanContext {
   kaiserWins: Record<string, number>;
   relicIds: readonly string[];
   milestones: readonly string[];
+  /** 4.6H: in Faji-Techniken gebundene Punkte (zählen erst nach der Übernahme der alten Faji-Punkte zum gemeinsamen Topf) */
+  techSpent?: number;
 }
 
 const strList = (v: unknown, ok: (s: string) => boolean): string[] => (Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === 'string' && ok(x)))] : []);
@@ -487,6 +544,9 @@ export function cleanTalents(raw: unknown, ctx: TalentCleanContext): TalentSave 
   t.sealsSpent = typeof o.sealsSpent === 'number' && Number.isFinite(o.sealsSpent) ? Math.max(0, Math.min(9999, Math.floor(o.sealsSpent))) : 0;
   t.respecs = typeof o.respecs === 'number' && Number.isFinite(o.respecs) ? Math.max(0, Math.min(999, Math.floor(o.respecs))) : 0;
   if (typeof o.legacyLevel === 'number' && Number.isFinite(o.legacyLevel) && o.legacyLevel > TALENT.levelCap) t.legacyLevel = Math.floor(o.legacyLevel);
+  // 4.6H: Bonuspunkte und Übernahme der alten Faji-Punkte (fehlt der Merker, steht die Übernahme noch aus: `mergeFajiPoints` beim Laden)
+  t.bonus = typeof o.bonus === 'number' && Number.isFinite(o.bonus) ? Math.max(0, Math.min(9999, Math.floor(o.bonus))) : 0;
+  t.fajiMerged = o.fajiMerged === true;
   // Pfade eindeutig: hat ein Baum Ränge in beiden Pfaden (fremde Daten), fällt Pfad B weg
   for (const tree of COMBAT_TREES) {
     const nodes = TREE_BY_ID[tree].nodes;
@@ -495,8 +555,9 @@ export function cleanTalents(raw: unknown, ctx: TalentCleanContext): TalentSave 
   // Bindung: höchstens ein Kampfbaum mit 55 Punkten und mehr – die übrigen werden zurückgesetzt
   const big = COMBAT_TREES.filter((id) => treePoints(t, id) >= TALENT.commit);
   for (const id of big.slice(1)) for (const n of TREE_BY_ID[id].nodes) delete t.nodes[n.id];
-  // nie mehr ausgegeben als verdient
-  if (spentRegular(t) > talentTotal(t, ctx.level)) for (const id of Object.keys(t.nodes)) if (NODE_BY_ID[id]?.tree !== 'kosmos') delete t.nodes[id];
+  // nie mehr ausgegeben als verdient (nach der Übernahme zahlen die Faji-Techniken aus demselben Topf)
+  const tech = t.fajiMerged ? Math.max(0, ctx.techSpent ?? 0) : 0;
+  if (spentRegular(t) + tech > poolTotal(t, ctx.level)) for (const id of Object.keys(t.nodes)) if (NODE_BY_ID[id]?.tree !== 'kosmos') delete t.nodes[id];
   if (!t.ascended || spentCosmic(t) > cosmicTotal(t)) for (const n of TREE_BY_ID.kosmos.nodes) delete t.nodes[n.id];
   // Evolutionen: nur gelernte, höchstens zwei je Baum
   if (o.evo && typeof o.evo === 'object') {

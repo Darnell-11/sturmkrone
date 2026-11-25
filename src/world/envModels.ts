@@ -106,6 +106,8 @@ export function archGroup(name: string, material: (role: string) => Material | n
     const mat = material(p.role);
     if (mat) g.add(new Mesh(p.geo, mat));
   }
+  // 4.6H: Modellname für die Dachfelder (begehbare Dächer, Wehrgänge, Zinnen: world/roofFields.ts)
+  g.userData.archModel = name;
   return g;
 }
 

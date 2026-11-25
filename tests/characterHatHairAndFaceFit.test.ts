@@ -1,24 +1,21 @@
 // Phase 4.6G.3: Hüte am Schädel statt auf den Haarspitzen (keine kahle Stirn, Innenkappe), neu gebaute „Mehrlagig“-Frisur mit gültigen Normalen
 // und starrer Kopf-Verankerung (Mann und Frau), straffe Mantel- und Ärmelphysik mit Gelenkgrenze, Brillen/Monokel/Augenklappe an der
 // Pupillenmitte ohne Überschneidung, Drei-Tage-Bart auf der Haut.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { Bone, BufferAttribute, BufferGeometry, DoubleSide, Matrix4, Mesh, Object3D, Skeleton, SkinnedMesh, Vector3, type Material } from 'three';
 import { describe, expect, it } from 'vitest';
-import { NodeIO } from '@gltf-transform/core';
-import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
-import draco3d from 'draco3dgltf';
 import { CLOTH, CLOTH_LEGACY, type ChainTuning } from '../src/data/characterRig';
 import { defaultLook, COSMETIC_HATS, type CharacterLook } from '../src/data/characterParts';
 import { EQUIPMENT } from '../src/data/equipment';
 import { SpringChains } from '../src/entities/character/rig/springChain';
 import { measureSockets } from '../src/entities/character/rig/characterSockets';
-import { HAT_FIT, SEATED_HATS, bandYAt, isSeatedHat, seatFromSkull, squeezeUnderHat, toSeat, type HatSeat } from '../src/entities/character/hatFit';
+import { HAT_FIT, HAT_RELAX, SEATED_HATS, bandYAt, isSeatedHat, seatFromSkull, squeezeUnderHat, toSeat, type HatSeat } from '../src/entities/character/hatFit';
 import { buildSeatedHat } from '../src/entities/character/seatedHats';
 import {
   attachHeadgear, eyePatch, lensPlane, LENS_AHEAD, LENS_CLEAR, LENS_R, MONO_R, PATCH_GAP, type FaceParts,
 } from '../src/entities/character/animeHats';
 import { buildBeardGeometry, buildFaceField, fieldRadius, jawFromField, STUBBLE_LIFT, STUBBLE_UNDER_JAW, type FaceField, type FaceMarks } from '../src/entities/character/beardStrands';
-import { adaptHead, MALE_SKULL } from '../src/entities/character/gear/glbGear';
+import { adaptHead, GLB_MODELS, MALE_SKULL } from '../src/entities/character/gear/glbGear';
 import { finishMat, shade } from '../src/entities/character/gear/kit';
 import type { Anchors } from '../src/entities/character/vroid';
 
@@ -105,13 +102,14 @@ describe('4.6G.3 Hüte sitzen auf dem Kopf (Schädel) statt auf den Haarspitzen'
     const hairTop = SKULL_TOP + 0.024;
     for (const [h, s] of Object.entries(seats)) {
       const yFront = bandYAt(s, s.cz - s.b), yBack = bandYAt(s, s.cz + s.b);
-      expect(yFront, `${h}: Band vorn auf der Stirn`).toBeLessThan(EYE_Y + 0.075);
+      // 4.6H: entspannter Sitz – das Band liegt 0,8 cm höher (HAT_RELAX.lift)
+      expect(yFront, `${h}: Band vorn auf der Stirn`).toBeLessThan(EYE_Y + 0.075 + HAT_RELAX.lift);
       expect(yFront, `${h}: über den Brauen`).toBeGreaterThan(EYE_Y + 0.035);
       expect(yBack, `${h}: hinten tiefer`).toBeLessThan(yFront);
-      // satt um den Schädel: Band höchstens 1,4 cm über der Haut (Haarpolster), Krone knapp über dem Scheitel
+      // satt um den Schädel: Band höchstens 1,4 cm über der Haut (Haarpolster), seit 4.6H um 3,5 % weiter (HAT_RELAX.widen); Krone knapp über dem Scheitel
       expect(s.a - s.sa, h).toBeGreaterThan(0.006);
-      expect(s.a - s.sa, h).toBeLessThan(0.014);
-      expect(s.b - s.sb, h).toBeLessThan(0.014);
+      expect(s.a - s.sa, h).toBeLessThan(0.014 * HAT_RELAX.widen + (HAT_RELAX.widen - 1) * s.sa + 1e-6);
+      expect(s.b - s.sb, h).toBeLessThan(0.014 * HAT_RELAX.widen + (HAT_RELAX.widen - 1) * s.sb + 1e-6);
       expect(s.y + s.h, `${h}: Krone`).toBeLessThan(hairTop);
       expect(s.y + s.h, h).toBeGreaterThan(SKULL_TOP);
       // die Sitzhöhe liegt weit unter den Haarspitzen (bis 4.6G.2: Oberkante der Frisur minus 5 bis 8 cm, gemessen an den Spitzen)
@@ -188,30 +186,7 @@ describe('4.6G.3 Hüte sitzen auf dem Kopf (Schädel) statt auf den Haarspitzen'
   });
 });
 
-// ---------- 2. Mehrlagig: Normalen, Hülle, Kopf-Verankerung ----------
-
-async function loadFrisur(): Promise<{ pos: Float32Array; nor: Float32Array; idx: Uint32Array }> {
-  const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({ 'draco3d.decoder': await draco3d.createDecoderModule() });
-  const path = new URL('public/models/gear/frisur_mehrlagig.glb', ROOT).pathname.replace(/^\/([A-Za-z]:)/, '$1');
-  const doc = await io.read(path);
-  const P: number[] = [], N: number[] = [], I: number[] = [];
-  for (const node of doc.getRoot().listNodes()) {
-    const mesh = node.getMesh();
-    if (!mesh) continue;
-    const M = new Matrix4().fromArray(node.getWorldMatrix());
-    for (const prim of mesh.listPrimitives()) {
-      const base = P.length / 3;
-      const pa = prim.getAttribute('POSITION')!, na = prim.getAttribute('NORMAL')!, ia = prim.getIndices()!;
-      const v = new Vector3(), n = new Vector3(), el: number[] = [0, 0, 0];
-      for (let i = 0; i < pa.getCount(); i++) {
-        v.fromArray(pa.getElement(i, el)).applyMatrix4(M); P.push(v.x, v.y, v.z);
-        n.fromArray(na.getElement(i, el)).transformDirection(M); N.push(n.x, n.y, n.z);
-      }
-      for (let i = 0; i < ia.getCount(); i++) I.push(base + ia.getScalar(i));
-    }
-  }
-  return { pos: new Float32Array(P), nor: new Float32Array(N), idx: new Uint32Array(I) };
-}
+// ---------- 2. Mehrlagig: seit 4.6H prozedural (tests/officerAssistsTalentUiAndRoofs.test.ts), Kopf-Verankerung der Modelle ----------
 
 /** Körper mit Kopfknochen an einer Ruhelage (Netzraum) – genügt für die Kopf-Verankerung */
 function bodyWithHead(head: [number, number, number]): SkinnedMesh {
@@ -228,84 +203,12 @@ function bodyWithHead(head: [number, number, number]): SkinnedMesh {
 describe('4.6G.3 „Mehrlagig“-Frisur: neu gebaut, gültige Normalen, starr am Kopf (Mann und Frau)', () => {
   const FEMALE = { box: { hx: 0.0918, zf: -0.1043, zb: 0.1061, top: 0.2074 }, head: [0.0003, 1.3876, 0.008] as [number, number, number] };
 
-  it('Frisur ersetzt die Grundfrisur vollständig und wird doppelseitig gezeichnet', () => {
+  it('4.6H: „Mehrlagig“ entsteht im Spiel um den Schädel (kein Blender-Modell mehr), doppelseitig im Material der Grundfrisur', () => {
     const def = EQUIPMENT.find((e) => e.id === 'frisur_mehrlagig')!;
-    const part = def.parts[0] as { hidesHair?: boolean; mode?: string; bone?: string };
-    expect(part.hidesHair).toBe(true);
-    expect(part.mode).toBe('bone');
-    expect(part.bone).toBe('J_Bip_C_Head');
+    expect(def.parts).toEqual([{ type: 'hairCut', cut: 'mehrlagig' }]);
+    expect(GLB_MODELS as readonly string[]).not.toContain('frisur_mehrlagig');
+    expect(existsSync(new URL('public/models/gear/frisur_mehrlagig.glb', ROOT))).toBe(false);
     expect((finishMat('haar', '#3A2618') as Material).side).toBe(DoubleSide);
-  });
-
-  it('Modell: geschlossene Strähnen mit nach außen zeigenden Einheits-Normalen, im Dreiecks-Rahmen', async () => {
-    const { pos, nor, idx } = await loadFrisur();
-    const tris = idx.length / 3;
-    expect(tris).toBeGreaterThan(4000);
-    expect(tris).toBeLessThan(10000);
-    for (let i = 0; i < pos.length / 3; i++) {
-      const l = Math.hypot(nor[i * 3], nor[i * 3 + 1], nor[i * 3 + 2]);
-      expect(Number.isFinite(l)).toBe(true);
-      expect(Math.abs(l - 1), `Normale ${i}`).toBeLessThan(0.03);
-    }
-    // Umlaufsinn jedes Dreiecks passt zu seinen Eckpunkt-Normalen (keine nach innen gestülpten Flächen)
-    const A = new Vector3(), B = new Vector3(), Cc = new Vector3(), F = new Vector3(), Nv = new Vector3();
-    let agree = 0;
-    for (let t = 0; t < idx.length; t += 3) {
-      A.fromArray(pos, idx[t] * 3); B.fromArray(pos, idx[t + 1] * 3); Cc.fromArray(pos, idx[t + 2] * 3);
-      F.subVectors(B, A).cross(Cc.clone().sub(A));
-      Nv.set(0, 0, 0);
-      for (let k = 0; k < 3; k++) Nv.add(new Vector3().fromArray(nor, idx[t + k] * 3));
-      if (F.dot(Nv) > 0) agree++;
-    }
-    expect(agree / tris).toBeGreaterThan(0.97);
-    // geschlossene Körper: kaum offene Kanten (nur der Rand der Haube), Punkte gleicher Lage zählen als einer
-    const key = (i: number) => `${Math.round(pos[i * 3] * 2e4)},${Math.round(pos[i * 3 + 1] * 2e4)},${Math.round(pos[i * 3 + 2] * 2e4)}`;
-    const edges = new Map<string, number>();
-    for (let t = 0; t < idx.length; t += 3) for (let k = 0; k < 3; k++) {
-      const a = key(idx[t + k]), b = key(idx[t + (k + 1) % 3]);
-      const e = a < b ? `${a}|${b}` : `${b}|${a}`;
-      edges.set(e, (edges.get(e) ?? 0) + 1);
-    }
-    let open = 0;
-    for (const c of edges.values()) if (c === 1) open++;
-    expect(open / edges.size).toBeLessThan(0.02);
-    // keine entarteten Dreiecke
-    let degenerate = 0;
-    const a = new Vector3(), b = new Vector3(), c = new Vector3();
-    for (let t = 0; t < idx.length; t += 3) {
-      a.fromArray(pos, idx[t] * 3); b.fromArray(pos, idx[t + 1] * 3); c.fromArray(pos, idx[t + 2] * 3);
-      if (b.clone().sub(a).cross(c.clone().sub(a)).length() < 1e-10) degenerate++;
-    }
-    expect(degenerate / tris).toBeLessThan(0.01);
-  });
-
-  /** Schädel als Ellipsoid aus den Maßen (etwas eingezogen: die Haut ist eiförmig) */
-  const inside = (box: { hx: number; zf: number; zb: number; top: number }, h: Vector3) => {
-    const zc = (box.zb + box.zf) / 2, rz = (box.zb - box.zf) / 2, ry = box.top - 0.09;
-    return Math.hypot(h.x / (box.hx * 0.97), (h.y - 0.09) / (ry * 0.97), (h.z - zc) / (rz * 0.97));
-  };
-
-  it('Mann und Frau: Haube liegt überall über dem Schädel, auch am Hinterkopf (keine kahle Stelle)', async () => {
-    const { pos, nor, idx } = await loadFrisur();
-    const src = new BufferGeometry();
-    src.setAttribute('position', new BufferAttribute(pos, 3));
-    src.setAttribute('normal', new BufferAttribute(nor, 3));
-    src.setIndex(new BufferAttribute(idx, 1));
-    for (const [who, head, box] of [['Mann', MALE_SKULL.head, MALE_SKULL], ['Frau', FEMALE.head, FEMALE.box]] as const) {
-      const body = bodyWithHead(head as [number, number, number]);
-      const g = adaptHead({}, `t/${who}`, src, body, 'J_Bip_C_Head', box);
-      const p = g.attributes.position, nr = g.attributes.normal;
-      let backMax = -Infinity;
-      for (let i = 0; i < p.count; i++) {
-        const h = new Vector3(p.getX(i) - head[0], p.getY(i) - head[1], p.getZ(i) - head[2]);
-        if (h.y > 0.1) expect(inside(box, h), `${who}: Punkt ${i} im Schädel`).toBeGreaterThan(1);
-        if (h.y > 0.1 && h.y < 0.16 && Math.abs(h.x) < 0.03) backMax = Math.max(backMax, h.z);
-        const l = Math.hypot(nr.getX(i), nr.getY(i), nr.getZ(i));
-        expect(Math.abs(l - 1), `${who}: Normale`).toBeLessThan(0.03);
-      }
-      // Hinterkopf bedeckt: Haar reicht hinten mindestens 5 mm über die Haut hinaus (4.6G.2: Haube 1,4 cm zu weit vorn)
-      expect(backMax, who).toBeGreaterThan(box.zb + 0.005);
-    }
   });
 
   it('Kopf-Verankerung: an der männlichen Grundfigur unverändert, an der weiblichen starr am Kopfknochen', () => {

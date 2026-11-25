@@ -6,6 +6,7 @@ import {
   AnimationMixer,
   BufferAttribute,
   BufferGeometry,
+  type Bone,
   CanvasTexture,
   Group,
   Matrix3,
@@ -17,6 +18,7 @@ import {
   SkinnedMesh,
   SRGBColorSpace,
   Texture,
+  Uint16BufferAttribute,
   Vector3,
   VectorKeyframeTrack,
   type Material,
@@ -33,8 +35,10 @@ import { clamp01 } from '../../core/mathUtil';
 import { buildClothLayout, type ClothLayout } from './rig/clothRig';
 import { measureSockets, type SocketMeasures } from './rig/characterSockets';
 import { buildBeardGeometry, buildFaceField, fieldRadius, jawFromField, type BeardKind, type FaceField, type FaceMarks } from './beardStrands';
-import { seatFromSkull, type HatSeat, type SeatedHat } from './hatFit';
+import { seatFromSkull, squeezeUnderHat, type HatSeat, type SeatedHat } from './hatFit';
 import { squeezePositions } from './hairSqueeze';
+import { buildLayeredHair, hairAtlas, maneRest, type HairCutId, type HeadShape } from './layeredHair';
+import { CHAIN_LAYOUT } from '../../data/characterRig';
 
 /** Unsere Knochennamen (KayKit-Skelett) → VRoid-Knochen */
 export const VROID_BONES: Record<string, string> = {
@@ -153,7 +157,11 @@ export class VroidBase {
     const hips = this.find(this.template, 'J_Bip_C_Hips');
     this.template.updateMatrixWorld(true);
     const knot = belt && hips ? belt.knot.clone().applyMatrix4(hips.matrixWorld) : null;
-    return buildClothLayout(this.template, body, hair, cape ? { geo: cape, rows: CAPE_ROWS, cols: CAPE_COLS } : null, knot);
+    // 4.6H: Ketten der Rückensträhnen („Mehrlagig“) nur für die Frau – auf der Bahn ihrer Strähnen (Kopf einmal messen; scheitert es, bleiben
+    // die Strähnen am Kopfknochen)
+    const head = this.female ? this.headShape() : null;
+    const mane = head ? maneRest(head, CHAIN_LAYOUT.mane) : null;
+    return buildClothLayout(this.template, body, hair, cape ? { geo: cape, rows: CAPE_ROWS, cols: CAPE_COLS } : null, knot, mane);
   }
 
   /** Gemessene Lage der zwölf Sockets (4.6F), einmal je Grundfigur */
@@ -1357,6 +1365,179 @@ export class VroidBase {
     }
   }
 
+  /**
+   * 4.6H: Kopf bis in den Nacken als Radius-Feld (Kopfraum, von 20 cm unter den Augen bis zum Scheitel) und das Rückenprofil (hinterste Haut
+   * nahe der Wirbelsäule) – Grundlage der Frisur „Mehrlagig“ (`layeredHair.ts`). Einmal je Grundfigur.
+   */
+  private headCache: HeadShape | null | undefined;
+  headShape(): HeadShape | null {
+    if (this.headCache !== undefined) return this.headCache;
+    try {
+      const sk = this.skull();
+      const T = this.template;
+      const head = this.find(T, 'J_Bip_C_Head');
+      if (!sk || !head) return (this.headCache = null);
+      T.updateMatrixWorld(true);
+      const toHead = head.matrixWorld.clone().invert();
+      const y0 = sk.eyeY - 0.2, yBack = sk.eyeY - 0.62;
+      const pts: number[] = [];
+      const backN = 40, backZ = new Float32Array(backN).fill(-Infinity);
+      const A = new Vector3(), B = new Vector3(), C = new Vector3();
+      T.traverse((o) => {
+        const m = o as SkinnedMesh;
+        const part = m.isSkinnedMesh ? this.parts[m.userData.vroidPart as number] : null;
+        if (part?.slot !== 'skin' || !m.geometry.index) return;
+        const pos = m.geometry.attributes.position, idx = m.geometry.index;
+        const M = new Matrix4().multiplyMatrices(toHead, m.matrixWorld);
+        for (let t = 0; t < idx.count; t += 3) {
+          A.fromBufferAttribute(pos, idx.getX(t)).applyMatrix4(M);
+          B.fromBufferAttribute(pos, idx.getX(t + 1)).applyMatrix4(M);
+          C.fromBufferAttribute(pos, idx.getX(t + 2)).applyMatrix4(M);
+          const ymax = Math.max(A.y, B.y, C.y), ymin = Math.min(A.y, B.y, C.y);
+          // Rücken: hinterste Haut nahe der Wirbelsäule (Nacken, Schulterblätter)
+          if (ymin < sk.eyeY - 0.08 && ymax > yBack) for (const P of [A, B, C]) {
+            if (Math.abs(P.x) > 0.07 || P.z < sk.zc) continue;
+            const k = Math.floor(((sk.eyeY - 0.08 - P.y) / (sk.eyeY - 0.08 - yBack)) * backN);
+            if (k >= 0 && k < backN && P.z > backZ[k]) backZ[k] = P.z;
+          }
+          if (ymax < y0 || Math.min(Math.abs(A.x), Math.abs(B.x), Math.abs(C.x)) > 0.17) continue;
+          const e = Math.max(A.distanceTo(B), B.distanceTo(C), C.distanceTo(A));
+          const n = Math.min(12, Math.max(1, Math.ceil(e / 0.004)));
+          for (let i = 0; i <= n; i++) for (let j = 0; j <= n - i; j++) {
+            const u = i / n, v = j / n, w = 1 - u - v;
+            pts.push(A.x * w + B.x * u + C.x * v, A.y * w + B.y * u + C.y * v, A.z * w + B.z * u + C.z * v);
+          }
+        }
+      });
+      if (pts.length < 600) return (this.headCache = null);
+      const field = buildFaceField(pts, sk.zc, y0, sk.top + 0.004, -Math.PI, Math.PI, 72, Math.max(40, Math.round((sk.top + 0.004 - y0) / 0.004)));
+      // Lücken im Rückenprofil vom Nachbarn übernehmen (nie weiter vorn als der Nacken)
+      let last = sk.zc + 0.04;
+      for (let k = 0; k < backN; k++) { if (Number.isFinite(backZ[k])) last = backZ[k]; else backZ[k] = last; }
+      const back = (y: number) => {
+        const f = ((sk.eyeY - 0.08 - y) / (sk.eyeY - 0.08 - yBack)) * backN;
+        const k = Math.max(0, Math.min(backN - 1, Math.floor(f)));
+        return backZ[k];
+      };
+      return (this.headCache = { r: (th, y) => fieldRadius(field, th, y, false), zc: sk.zc, top: sk.top, eyeY: sk.eyeY, y0, back });
+    } catch (e) {
+      console.warn('Kopf für die Frisur nicht gemessen', e);
+      return (this.headCache = null);
+    }
+  }
+
+  /**
+   * 4.6H: die Frisur „Mehrlagig“ dieser Grundfigur (Mann oder Frau), im Netzraum des Körpers mit Skelett-Gewichten: alles am Kopfknochen, die
+   * Rückensträhnen der Frau an den Haar-Federketten. Unter einem Standard-Hut (`seat`) liegt das Haar über dem Band in der Krone (eigene,
+   * geteilte Lage je Hut). Je Schnitt und Hut einmal; null, wenn der Kopf nicht gemessen werden kann.
+   */
+  private layered = new Map<string, BufferGeometry | null>();
+  private hairAtlasCache: ReturnType<typeof hairAtlas> | null = null;
+  layeredHair(cut: HairCutId, seat: HatSeat | null = null, seatKey = ''): BufferGeometry | null {
+    const key = `${cut}|${seatKey}`;
+    if (this.layered.has(key)) return this.layered.get(key)!;
+    let out: BufferGeometry | null = null;
+    try {
+      const base = seatKey ? this.layeredHair(cut) : null;
+      if (seatKey && base) {
+        // unter dem Hut: nur die Lage ändert sich (Haar über dem Band in die Krone gedrückt), alles andere teilen
+        out = new BufferGeometry();
+        for (const name of Object.keys(base.attributes)) out.setAttribute(name, base.attributes[name]);
+        out.setIndex(base.index);
+        const head = base.userData.headPos as Float32Array;
+        const toMesh = base.userData.toMesh as Matrix4;
+        const pos = new Float32Array(head.length), q = { x: 0, y: 0, z: 0 }, v = new Vector3();
+        for (let i = 0; i < head.length; i += 3) {
+          q.x = head[i]; q.y = head[i + 1]; q.z = head[i + 2];
+          if (seat) squeezeUnderHat(seat, q);
+          v.set(q.x, q.y, q.z).applyMatrix4(toMesh).toArray(pos, i);
+        }
+        out.setAttribute('position', new BufferAttribute(pos, 3));
+        out.boundingSphere = base.boundingSphere;
+        out.userData = { ...base.userData, seatKey };
+        markShared(out);
+      } else if (!seatKey) {
+        const h = this.headShape();
+        const body = this.bodySkin(this.template);
+        const sk = body?.skeleton;
+        const hi = sk ? sk.bones.findIndex((b) => b.name === 'J_Bip_C_Head') : -1;
+        if (h && body && sk && hi >= 0) {
+          const lh = buildLayeredHair(cut, h, this.atlas());
+          const g = lh.geo;
+          const headPos = (g.attributes.position.array as Float32Array).slice();
+          // Kopfraum → Netzraum (Bindung): Umkehrung von „inverser Bindungs-Knochen × Bindungsmatrix“
+          const toMesh = new Matrix4().copy(sk.boneInverses[hi]).multiply(body.bindMatrix).invert();
+          g.applyMatrix4(toMesh);
+          const n = g.attributes.position.count;
+          const SI = new Uint16Array(n * 4), SW = new Float32Array(n * 4);
+          for (let i = 0; i < n; i++) { SI[i * 4] = hi; SW[i * 4] = 1; }
+          this.chainWeights(lh.chain, lh.strandAz, headPos, SI, SW, sk.bones, hi);
+          g.setAttribute('skinIndex', new Uint16BufferAttribute(SI, 4));
+          g.setAttribute('skinWeight', new BufferAttribute(SW, 4));
+          g.computeBoundingSphere();
+          if (g.boundingSphere) g.boundingSphere.radius *= 1.6;
+          g.userData = { headPos, toMesh, tris: lh.tris, strands: lh.strands, capVerts: lh.capVerts, cut, chainVerts: lh.chain.reduce((a, b) => a + b, 0) };
+          out = markShared(g);
+        }
+      }
+    } catch (e) {
+      console.warn('Frisur „Mehrlagig“ nicht gebaut – Grundfrisur bleibt', e);
+      out = null;
+    }
+    this.layered.set(key, out);
+    return out;
+  }
+
+  /** Deckende Streifen der Haartextur (für die Texturkoordinaten der neuen Frisur) */
+  private atlas() {
+    if (this.hairAtlasCache) return this.hairAtlasCache;
+    let img: { width: number; height: number; data: Uint8ClampedArray } | null = null;
+    const p = this.parts.find((q) => q.slot === 'hair' && q.gray);
+    const c = p?.gray?.image as HTMLCanvasElement | undefined;
+    try {
+      const g = c && typeof c.getContext === 'function' ? c.getContext('2d', { willReadFrequently: true }) : null;
+      if (g && c) img = g.getImageData(0, 0, c.width, c.height);
+    } catch { img = null; }
+    return (this.hairAtlasCache = hairAtlas(img));
+  }
+
+  /**
+   * Rückensträhnen der Frau an die eigenen Federketten der Frisur (`mane`, 4.6H): die beiden Ketten neben dem Wurzel-Winkel der Strähne
+   * (gemischt nach dem Abstand) und der Anteil entlang der Kette aus der Höhe; über der Wurzel der Ketten bleibt alles am Kopfknochen.
+   */
+  private chainWeights(mask: Uint8Array, strandAz: Float32Array, headPos: Float32Array, SI: Uint16Array, SW: Float32Array, bones: readonly Bone[], hi: number) {
+    const g = this.cloth?.groups.mane;
+    if (!g) return;
+    const S = g.chains, L = g.links, M = CHAIN_LAYOUT.mane;
+    const bi = (c: number, i: number) => bones.findIndex((b) => b.name === g.names[c * L + i - 1]);
+    const map: number[][] = [];
+    for (let c = 0; c < S; c++) { map.push([]); for (let i = 1; i <= L; i++) map[c].push(bi(c, i)); }
+    const D = Math.PI / 180, step = S > 1 ? ((M.az1 - M.az0) * D) / (S - 1) : 1;
+    const yRoot = g.rest[1];
+    const w = new Map<number, number>();
+    for (let i = 0; i < mask.length; i++) {
+      if (!mask[i]) continue;
+      const y = headPos[i * 3 + 1];
+      if (y >= yRoot) continue;
+      // Kette nach dem Wurzel-Winkel der Strähne (nicht nach der Lage des Punkts: auf dem Rücken verschiebt sich der Winkel)
+      const sf = S > 1 ? Math.min(S - 1, Math.max(0, (strandAz[i] - M.az0 * D) / step)) : 0;
+      const s0 = Math.min(Math.max(0, S - 2), Math.floor(sf)), s1 = Math.min(S - 1, s0 + 1), fa = s1 === s0 ? 0 : Math.min(1, sf - s0);
+      w.clear();
+      const put = (b: number, k: number) => { if (b >= 0 && k > 1e-4) w.set(b, (w.get(b) ?? 0) + k); };
+      for (const [sec, ws] of [[s0, 1 - fa], [s1, fa]] as const) {
+        if (!g.active[sec] || map[sec].some((b) => b < 0)) { put(hi, ws); continue; }
+        const top = g.rest[(sec * (L + 1)) * 3 + 1], tip = g.rest[(sec * (L + 1) + L) * 3 + 1];
+        const hh = Math.min(1, Math.max(0, (top - y) / Math.max(1e-3, top - tip))) * L;
+        const k = Math.min(L - 1, Math.floor(hh)), f = hh - k;
+        put(k === 0 ? hi : map[sec][k - 1], ws * (1 - f));
+        put(map[sec][k], ws * f);
+      }
+      const top4 = [...w.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+      const sum = top4.reduce((t, e) => t + e[1], 0) || 1;
+      for (let k = 0; k < 4; k++) { SI[i * 4 + k] = top4[k]?.[0] ?? hi; SW[i * 4 + k] = top4[k] ? top4[k][1] / sum : 0; }
+    }
+  }
+
   /** 4.6G.3: Maße des Schädels (Kopfraum) auf Stirnhöhe: halbe Breite, vorn, hinten, Scheitel – für Frisur- und Hutmodelle am Kopfknochen */
   skullBox(): SkullBox | null {
     const sk = this.skull();
@@ -1382,10 +1563,14 @@ export class VroidBase {
    */
   private hairBands = new Map<string, BufferAttribute | null>();
   hairUnderBand(part: number, hat: SeatedHat): BufferAttribute | null {
-    const key = `${part}|${hat}`;
+    return this.hairUnderSeat(part, this.hatSeat(hat), hat);
+  }
+
+  /** 4.6H: wie `hairUnderBand`, aber für einen beliebigen Sitz (Ausrüstungshelme, Hut-Modelle); `key` benennt den Sitz für den Zwischenspeicher */
+  hairUnderSeat(part: number, seat: HatSeat | null, seatKey: string): BufferAttribute | null {
+    const key = `${part}|${seatKey}`;
     if (this.hairBands.has(key)) return this.hairBands.get(key)!;
     let out: BufferAttribute | null = null;
-    const seat = this.hatSeat(hat);
     const head = this.find(this.template, 'J_Bip_C_Head');
     let mesh: SkinnedMesh | null = null;
     this.template.traverse((o) => { const m = o as SkinnedMesh; if (m.isSkinnedMesh && m.userData.vroidPart === part && m.geometry === this.partGeo[part]) mesh = m; });

@@ -1,6 +1,6 @@
-import { newTalentUi, talentScreenHtml, type TalentTab, type TalentUiState } from './talentScreen';
+import { CAT_BY_ID, catOfPick, firstOf, isTechPick, newTalentUi, respecScopeOf, talentScreenHtml, techOf, type TalentCat, type TalentPick, type TalentUiState } from './talentScreen';
 import { NODE_BY_ID, TREE_BY_ID, type TalentTreeId } from '../data/talentTrees';
-import type { RespecScope } from '../core/talentRules';
+import { SK } from '../data/skills';
 import { ACTION_GROUPS, ACTION_IDS, ACTION_LABELS, DEFAULT_KEYS, FIXED_CODES, type ActionId } from '../data/actions';
 import { QUALITY_IDS, QUALITY_TIERS, type QualityTier } from '../data/qualityTiers';
 import { FACTION_LABELS, RANKS, rankName } from '../data/ranks';
@@ -8,7 +8,7 @@ import type { Game } from '../core/game';
 import type { SaveData } from '../core/save/types';
 import type { Settings, SettingsTab } from '../core/settings';
 import { fmtDist, fmtInt } from '../core/format';
-import { FORM_NAMES, WILL_AURAS, type AuraId, type FajiArtId } from '../data/fajiArts';
+import type { AuraId, FajiArtId } from '../data/fajiArts';
 import { EDGE_WALL, WEATHER, WEATHER_IDS, type WeatherId } from '../data/world';
 import { formatClock } from '../world/timeOfDay';
 import { FIGUREHEAD_DEFS, FIGUREHEAD_MODELS, figureheadModel } from '../data/figureheads';
@@ -417,9 +417,7 @@ export class Menus {
         <button class="secondary" data-a="quests">Auftragsbuch</button>
         <button class="secondary" data-a="inv">Inventar &amp; Ausrüstung</button>
         <button class="secondary" data-a="compendium">Item-Kompendium</button>
-        <button class="secondary" data-a="talents">Talente &amp; Stufen</button>
-        <button class="secondary" data-a="faji">Faji-Fähigkeiten</button>
-        <button class="secondary" data-a="arts">Kampfkünste &amp; Auren</button>
+        <button class="secondary" data-a="talents">Talente &amp; Kampfkünste</button>
         <button class="secondary" data-a="crew">Crew</button>
         <button class="secondary" data-a="rank">Rangliste der Legenden</button>
         <button class="secondary" data-a="rep">Ruf &amp; Ehre</button>
@@ -438,8 +436,6 @@ export class Menus {
         inv: () => { g.resume(); g.openInventory(); },
         compendium: () => this.showCompendium(() => this.showPause()),
         talents: () => this.showTalents(() => this.showPause()),
-        faji: () => { g.resume(); g.openSkills(); },
-        arts: () => this.showMartialArts(() => this.showPause()),
         crew: () => this.showCrew(() => this.showPause()),
         rank: () => this.showRanking(() => this.showPause()),
         rep: () => this.showReputation(() => this.showPause()),
@@ -540,7 +536,7 @@ export class Menus {
     const offers = qs.available(npc.id);
     const running = save.progress.quests.map((p) => QUEST_BY_ID[p.id]).filter((q) => q && q.giver === npc.id);
     const line = npc.greet[Math.floor(Math.random() * npc.greet.length)];
-    const reward = (q: QuestDef) => [`${q.reward.gold} Gold`, `${q.reward.xp} EP`, `${q.reward.fame} Ruhm`, q.reward.sp ? `${q.reward.sp} Faji-Punkt${q.reward.sp > 1 ? 'e' : ''}` : ''].filter(Boolean).join(' · ');
+    const reward = (q: QuestDef) => [`${q.reward.gold} Gold`, `${q.reward.xp} EP`, `${q.reward.fame} Ruhm`, q.reward.sp ? `${q.reward.sp} Talentpunkt${q.reward.sp > 1 ? 'e' : ''}` : ''].filter(Boolean).join(' · ');
     const shopBtn: Record<ShopKind, string> = {
       smith: 'Waffen &amp; Rüstung ansehen', market: 'Proviant kaufen', shrine: 'Zum Faji-Schrein', shipyard: 'Zur Werft',
       tavern: `Rasten bis zum Morgen (${g.restPrice()} Gold)`, harbor: 'Seekarte &amp; Logbuch',
@@ -867,7 +863,7 @@ export class Menus {
     const done = msg ? [] : g.talkCrew(id);
     const offer = qs.available(id)[0];
     const line = c.lines[Math.floor(Math.random() * c.lines.length)];
-    const reward = (q: QuestDef) => [`${q.reward.gold} Gold`, `${q.reward.xp} EP`, q.reward.sp ? `${q.reward.sp} Faji-Punkt${q.reward.sp > 1 ? 'e' : ''}` : '', '+40 Treue'].filter(Boolean).join(' · ');
+    const reward = (q: QuestDef) => [`${q.reward.gold} Gold`, `${q.reward.xp} EP`, q.reward.sp ? `${q.reward.sp} Talentpunkt${q.reward.sp > 1 ? 'e' : ''}` : '', '+40 Treue'].filter(Boolean).join(' · ');
     const running = g.saveData!.progress.quests.find((p) => QUEST_BY_ID[p.id]?.giver === id);
     this.open(
       `<div class="dlg-head"><div class="dlg-face" style="background:${c.col}">${esc(c.name[0])}</div><div><b>${esc(c.name)}</b><span class="soft small">${esc(c.job)}</span></div></div>
@@ -1082,12 +1078,12 @@ export class Menus {
     this.open(
       `${this.shopHead('Faji-Schrein', msg)}
       <p class="dlg-line">„Gib dem Schrein Gold, und er gibt dir einen Funken Faji zurück. Je öfter du kommst, desto mehr verlangt er.“</p>
-      <div class="slot"><div class="slot-head"><b>Faji-Punkt</b><span>${fmtInt(price)} Gold</span></div>
-        <div class="meta">Bisher gekauft: ${s.gear.shrine} · Freie Faji-Punkte: ${s.skills.sp}</div>
+      <div class="slot"><div class="slot-head"><b>Talentpunkt</b><span>${fmtInt(price)} Gold</span></div>
+        <div class="meta">Bisher gekauft: ${s.gear.shrine} · Freie Talentpunkte: ${this.game.freeTalentPoints()}</div>
         <button class="mini brass" data-a="buy">Opfern</button></div>
-      <button class="secondary" data-a="tree">Faji-Baum öffnen</button>
+      <button class="secondary" data-a="tree">Talente &amp; Kampfkünste öffnen</button>
       <button class="primary" data-a="back">Zurück</button>`,
-      { buy: () => this.showShrine(back, g.buyShrine()), tree: () => g.openSkills(), back },
+      { buy: () => this.showShrine(back, g.buyShrine()), tree: () => this.showTalents(() => this.showShrine(back), undefined, 'faji'), back },
       back,
     );
   }
@@ -1388,71 +1384,55 @@ export class Menus {
     );
   }
 
-  // ---------- Kampfkünste & Auren (4.6B) ----------
+  // ---------- Talente & Kampfkünste (4.6H: vereint, Tasten N und K) ----------
 
-  /** Acht Faji-Künste (Form, Meisterschaft, Techniken, Ultimate), eine davon für den Q-Wechsel ausrüsten; Willenskraft-Aura wählen */
-  /** Talente & Stufen (Phase 4.6E): 18 Bäume, Meisterschafts-Siegel, Aufstiegs-Prüfung und Kosmos (`ui/talentScreen.ts`) */
-  showTalents(back: () => void, ui: TalentUiState = this.talentUi ?? newTalentUi(this.game.talentStartTree())) {
+  /**
+   * Das vereinte 3.0-Fenster (`ui/talentScreen.ts`): fünf Kategorien (Waffen-Meisterschaften, Faustkampf, Faji-Künste mit Formstufen und Aura,
+   * Kapitän & Flotte, Stufe 101: Kosmos-Pfad), die F1–F3-Techniken der alten Faji-Zweige, ein gemeinsamer Punktetopf, Vorschau-Karte der
+   * Apex-Ultimates und Evolutionen, Zurücksetzen und der Fortschritt der geheimen Aufstiegs-Prüfung. `cat` öffnet eine Kategorie (Taste K: Faji).
+   */
+  showTalents(back: () => void, ui: TalentUiState = this.talentUi ?? newTalentUi(this.game.talentStartTree()), cat?: TalentCat) {
     const g = this.game;
     const v = g.talentView();
     if (!v) { back(); return; }
+    if (cat && ui.cat !== cat) { ui.cat = cat; ui.tree = cat === 'faji' && ui.tree && catOfPick(ui.tree) === 'faji' ? ui.tree : firstOf(cat); ui.sel = null; ui.seals = false; }
     this.talentUi = ui;
-    if (!ui.sel || NODE_BY_ID[ui.sel]?.tree !== ui.tree) ui.sel = TREE_BY_ID[ui.tree].nodes[0]?.id ?? null;
+    // gültige Auswahl: Baum der Kategorie, Knoten des Baums
+    if (catOfPick(ui.tree) !== ui.cat) ui.tree = firstOf(ui.cat);
+    if (isTechPick(ui.tree)) { if (!ui.sel?.startsWith('tech:')) ui.sel = null; }
+    else if (!ui.sel || NODE_BY_ID[ui.sel]?.tree !== ui.tree) ui.sel = TREE_BY_ID[ui.tree as TalentTreeId].nodes[0]?.id ?? null;
     const re = (note = '') => { ui.note = note; this.keep(() => this.showTalents(back, ui)); };
     this.open(talentScreenHtml(v, ui), {
-      tree: (id) => { ui.tree = id as TalentTreeId; ui.sel = null; ui.tab = 'baum'; ui.confirm = null; re(); },
-      sel: (id) => { ui.sel = id; ui.confirm = null; re(); },
-      tab: (id) => { ui.tab = id as TalentTab; ui.confirm = null; re(); },
+      cat: (id) => { if (!(id in CAT_BY_ID)) return; ui.cat = id as TalentCat; ui.tree = firstOf(ui.cat); ui.sel = null; ui.confirm = null; ui.seals = false; re(); },
+      tree: (id) => { ui.tree = id as TalentPick; ui.sel = null; ui.confirm = null; re(); },
+      sel: (id) => { ui.sel = id; ui.confirm = null; if (!id.startsWith('tech:') && NODE_BY_ID[id]) ui.tree = NODE_BY_ID[id].tree; re(); },
       learn: (id) => { const m = g.talentLearn(id); re(m ?? ''); },
+      tlearn: (id) => { const m = g.techniqueLearn(id); re(m); },
+      tslot: (id) => { const [sid, i] = id.split('|'); const m = g.techniqueSlot(sid, Number(i)); re(m ?? `${SK[sid]?.n ?? 'Technik'} liegt auf F${Number(i) + 1}.`); },
       evo: (id) => { const m = g.talentEquipEvo(id); re(m ?? ''); },
       ult: (id) => { const m = g.talentChooseUlt(id === 'kosmos' ? 'kosmos' : 'stil'); re(m ?? ''); },
       respec: (id) => {
-        if (ui.confirm !== id) { ui.confirm = id as RespecScope; re(); return; }
+        const scope = respecScopeOf(id);
+        if (!scope) return;
+        if (ui.confirm !== id) { ui.confirm = id; re(); return; }
         ui.confirm = null;
-        const m = g.talentRespec(id as RespecScope);
+        const m = g.talentRespec(scope);
         re(m ?? 'Zurückgesetzt – die Punkte sind wieder frei.');
       },
-      ascend: () => { const m = g.performAscension(); if (!m) { ui.tab = 'aufstieg'; } re(m ?? 'Aufstieg vollzogen: Stufe 101, der Kosmos-Baum ist offen.'); },
-      back: () => { ui.note = ''; ui.confirm = null; back(); },
-    }, () => { ui.note = ''; ui.confirm = null; back(); }, { wide: true, cls: 'talents' });
-  }
-
-  showMartialArts(back: () => void) {
-    const g = this.game;
-    const v = g.fajiView();
-    if (!v) { back(); return; }
-    const re = () => this.keep(() => { this.showMartialArts(back); });
-    const cards = v.arts.map((a) => {
-      const pct = Math.round(a.frac * 100);
-      const skills = a.skills.map((k) => `<span class="ma-sk${a.form >= k.formMin ? '' : ' off'}" title="${esc(k.label)}">${esc(k.icon)} ${esc(k.label)}${a.form >= k.formMin ? '' : ` · ab ${k.formMin}.`}</span>`).join('');
-      return `<div class="slot ma-art${a.equipped ? ' on' : ''}" style="--c:${a.color};--a:${a.accent}">
-        <div class="slot-head"><b style="color:${a.color}">${esc(a.label)}</b><span>${esc(FORM_NAMES[a.form - 1] ?? '')}</span></div>
-        <div class="meta soft">${esc(a.title)}</div>
-        <div class="ma-bar" role="img" aria-label="Fortschritt ${pct} %"><i style="width:${a.form >= 7 ? 100 : pct}%"></i></div>
-        <div class="meta small">${a.form >= 7 ? 'Meisterform erreicht' : `Meisterschaft ${fmtInt(a.mastery)} / ${fmtInt(a.next)}`}</div>
-        <div class="ma-sks">${skills}</div>
-        <div class="meta small">Ultimate (7. Form, im Sturm-Erwachen): <b>${esc(a.ult)}</b></div>
-        <button class="${a.equipped ? 'primary' : 'secondary'} mini" data-a="equip" data-id="${a.id}" aria-pressed="${a.equipped}">${a.equipped ? 'Ausgerüstet' : 'Ausrüsten'}</button>
-      </div>`;
-    }).join('');
-    const auras = WILL_AURAS.map((a) => `<button data-a="aura" data-id="${a.id}" aria-pressed="${v.aura === a.id}" title="${esc(a.desc)}">${esc(a.icon)} ${esc(a.label)}</button>`).join('');
-    const cur = WILL_AURAS[v.aura] ?? WILL_AURAS[0];
-    this.open(
-      `<h2 class="fell">Kampfkünste &amp; Auren</h2>
-      <p class="soft small">Die acht waffenlosen Faji-Künste wachsen mit jedem Treffer (Meisterschaft) von der 1. bis zur 7. Form: neue Techniken auf den Tasten 1 – 4, in der Meisterform das Ultimate. Die ausgerüstete Kunst liegt im Stilwechsel (Q).</p>
-      <div class="opt"><span class="label">Willenskraft-Aura (Taste B)</span><div class="chips" role="group" aria-label="Aura">${auras}</div><p class="note small">${esc(cur.desc)}</p></div>
-      <p class="note small">Sturm-Erwachen: Die Willenskraft füllt sich im Kampf (Treffer, Sturm-Schritt, Konter, Haltungsbruch). Ist sie voll, löst Taste V das Erwachen aus: 18 s lang +20 % Angriffstempo und eine Energiewelle bei jedem normalen Schlag. Ein zweites V entfesselt einmal das Ultimate des Stils. Gegen Endbosse zählt ein Ultimate wie ein einziger gedeckelter Treffer und bricht sofort ihre Haltung.</p>
-      <div class="ma-grid">${cards}</div>
-      <div class="row"><button class="secondary" data-a="none">Keine Faji-Kunst ausrüsten</button><button class="primary" data-a="back">Zurück</button></div>`,
-      {
-        equip: (id) => { g.equipFaji(id as FajiArtId); re(); },
-        none: () => { g.equipFaji(null); re(); },
-        aura: (id) => { g.setFajiAura(Number(id) as AuraId); re(); },
-        back: () => back(),
+      trespec: (id) => {
+        if (!isTechPick(id)) return;
+        if (ui.confirm !== id) { ui.confirm = id; re(); return; }
+        ui.confirm = null;
+        const m = g.techniqueRespec(techOf(id));
+        re(m ?? 'Zurückgesetzt – die Punkte sind wieder im Topf, die F-Plätze frei.');
       },
-      back,
-      { wide: true },
-    );
+      equip: (id) => { g.equipFaji(id as FajiArtId); re(); },
+      aura: (id) => { g.setFajiAura(Number(id) as AuraId); re(); },
+      seals: () => { ui.seals = !ui.seals; re(); },
+      zoom: (id) => { ui.zoom = Math.max(0.8, Math.min(1.3, Math.round(((ui.zoom || 1) + (id === '+' ? 0.1 : -0.1)) * 10) / 10)); re(); },
+      ascend: () => { const m = g.performAscension(); if (!m) { ui.cat = 'kosmos'; ui.tree = 'kosmos'; ui.sel = null; } re(m ?? 'Aufstieg vollzogen: Stufe 101, der Kosmos-Pfad ist offen.'); },
+      back: () => { ui.note = ''; ui.confirm = null; ui.seals = false; back(); },
+    }, () => { ui.note = ''; ui.confirm = null; ui.seals = false; back(); }, { wide: true, cls: 'talents' });
   }
 
   // ---------- Einstellungen ----------

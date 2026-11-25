@@ -119,6 +119,11 @@ export interface FighterState {
   shockT: number;
   shockX: number;
   shockZ: number;
+  /** 4.6H Höhen-Ebenen: Zeit seit der letzten Wandberührung in der Luft, Normale der Wand (zeigt von ihr weg), Wandsprünge seit dem Absprung */
+  wallT: number;
+  wallNX: number;
+  wallNZ: number;
+  wallKicks: number;
 }
 
 export function createFighter(entityId: string, style: ActionStyleId, x = 0, y = 0, z = 0, yaw = 0): FighterState {
@@ -134,6 +139,7 @@ export function createFighter(entityId: string, style: ActionStyleId, x = 0, y =
     will: 0, awakenT: 0, ultReady: false, bufU: -1, aura: 0, kingT: AURA.kingEvery, form: 1, cineT: 0, strikeSeq: -1, waveSeq: -1, waveT: -1,
     marks: new Array<string>(MAX_MARKS).fill(''), markN: 0, marksDone: false, chaseT: 0, clashSeq: -1,
     autoChase: false, shockN: 0, shockT: 0, shockX: 0, shockZ: 0,
+    wallT: 9, wallNX: 0, wallNZ: 0, wallKicks: 0,
   };
 }
 
@@ -244,7 +250,9 @@ export type ActionEventType =
   /** 4.6C: Sturm-Verfolgung (a = Platz des Ziels, b/c = alter Ort x/z), Klingen-Clash (a = Fenster, b = Ergebnis), Schwungfenster einer Technik/Verzweigung (a = Angriff, b = Fenster) */
   | 'chase' | 'clash' | 'swing' | 'slash'
   /** 4.6E: Nachbeben des Ultimates (a = Radius, b/c = Mittelpunkt x/z), Sturm-Schritt-Entladung (a = Radius, b/c = Mittelpunkt) */
-  | 'aftershock' | 'stormBurst';
+  | 'aftershock' | 'stormBurst'
+  /** 4.6H: Wandsprung (a = Zahl der Wandsprünge, b/c = Wandnormale x/z), Kantengriff (a = Höhe des Hochziehens) */
+  | 'wallKick' | 'ledge';
 
 export interface ActionEvent { type: ActionEventType; a: number; b: number; c: number; s: string }
 
@@ -324,6 +332,11 @@ export class ActionCombatEngine {
   private tp: TalentEngineParams = NO_TALENT_PARAMS;
   /** Schadensminderung aus Talenten außerhalb der Haltung im Angriff (Rüstung, Planeten-Schild; setzt das Spiel) */
   talentArmor = 0;
+  /**
+   * 4.6H: Verschiebung (m) der Kreis-Trefferflächen eines Ultimates nach vorn (Himmelssturz an Deck: Einschläge mindestens 28 m vom eigenen
+   * Rumpf, `combat/skyfallClearance.ts`); setzt die Welt beim Auslösen, 0 = keine
+   */
+  ultShift = 0;
 
   constructor(readonly f: FighterState, poolSize = 160) {
     this.pool = makeTargetPool(poolSize);
@@ -365,6 +378,15 @@ export class ActionCombatEngine {
     if (f.awakenT > 0 || !(n > 0) || f.will >= WILL.max) return;
     f.will = Math.min(WILL.max, f.will + n * this.tp.willK);
     if (f.will >= WILL.max) this.events.push('willFull');
+  }
+  /**
+   * 4.6H: Gegner wurden von außen hochgeschleudert (Orkan-Schildstoß eines Offiziers): das Fenster der Sturm-Verfolgung öffnet sich wie nach
+   * einem eigenen Launcher (ein Dash teleportiert zum Ziel in der Luft; mit Auto-Verfolgung aus den Talenten folgt die Figur von selbst)
+   */
+  openChase() {
+    const f = this.f;
+    f.chaseT = Math.max(f.chaseT, T.chaseWindow + this.tp.chaseAdd);
+    if (this.tp.autoChase) f.autoChase = true;
   }
   /** laufender Angriff (null = keiner) */
   get move(): ActionMove | null { return this.moveAt(this.f.moveIdx); }
@@ -529,6 +551,7 @@ export class ActionCombatEngine {
     f.clock += dt;
     // Zeiten
     f.iframes = dec(f.iframes, dt); f.perfectT = dec(f.perfectT, dt); f.counterT = dec(f.counterT, dt); f.counterStance = dec(f.counterStance, dt);
+    f.wallT = Math.min(9, f.wallT + dt);
     f.hover = dec(f.hover, dt); f.chaseT = dec(f.chaseT, dt); f.comboWindow = dec(f.comboWindow, dt); f.lockFree = dec(f.lockFree, dt); f.staminaFlash = dec(f.staminaFlash, dt);
     f.hyperT = dec(f.hyperT, dt); f.critT = dec(f.critT, dt); f.poiseT = dec(f.poiseT, dt); f.speedT = dec(f.speedT, dt);
     for (let i = 0; i < 4; i++) f.skillCd[i] = dec(f.skillCd[i], dt);
@@ -733,7 +756,13 @@ export class ActionCombatEngine {
   private tryJump(inp: ActionInput, st: ActionStyleDef): boolean {
     const f = this.f;
     const fromGround = f.grounded || (f.airT < T.coyote && f.jumps === 0 && f.phase !== 'dash');
+    let wallKick = false;
     if (fromGround) { f.vy = T.jumpV; f.jumps = 1; }
+    else if (f.wallT < T.wallGrace && f.wallKicks < T.wallKicks) {
+      // 4.6H Wandsprung: von der berührten Wand (Hauswand, Mauer, Fels) wieder nach oben – der Doppelsprung bleibt erhalten
+      f.vy = T.wallKickV; f.jumps = Math.max(1, f.jumps); f.wallKicks++; f.wallT = 9;
+      wallKick = true;
+    }
     else if (f.jumps < st.jumps) { f.vy = T.doubleJumpV; f.jumps = Math.max(1, f.jumps) + 1; }
     else return false;
     if (f.phase === 'move') { this.events.push('cancel', f.moveIdx); this.clearMove(); }
@@ -743,6 +772,8 @@ export class ActionCombatEngine {
     f.dashAir = false;
     // Schwung mitnehmen: aus dem Lauf weit, aus dem Stand senkrecht
     if (inp.mag > 0.1) { const sp = T.run * 0.92 * Math.min(1, inp.mag) * f.speedK; f.vx = inp.moveX * sp; f.vz = inp.moveZ * sp; }
+    // Wandsprung: leichter Abstoß von der Wand (die Luftsteuerung führt zur Wand zurück – so klettert man von Absprung zu Absprung)
+    if (wallKick) { f.vx = f.vx * 0.35 + f.wallNX * T.wallKickPush; f.vz = f.vz * 0.35 + f.wallNZ * T.wallKickPush; this.events.push('wallKick', f.wallKicks, f.wallNX, f.wallNZ); }
     if (f.lockId) { f.lockId = ''; this.events.push('lockLost'); }
     this.events.push('jump', f.jumps);
     return true;
@@ -1176,11 +1207,13 @@ export class ActionCombatEngine {
     const memo = this.memo[tick];
     let mn = this.memoN[tick];
     const fx = Math.sin(f.yaw), fz = Math.cos(f.yaw);
+    // 4.6H: Ultimate-Einschläge (Himmelssturz) liegen an Deck weiter vorn – gleiche Verschiebung wie die Darstellung
+    const shift = f.moveKind === 'ultimate' ? this.ultShift : 0;
     // Sog: jedes Bild alle Ziele in der Form zum Mittelpunkt ziehen (auch schon getroffene)
     if (h.vortex > 0) {
-      const cx = h.shape === 'circle' ? f.x + fx * h.offset : f.x, cz = h.shape === 'circle' ? f.z + fz * h.offset : f.z;
+      const cx = h.shape === 'circle' ? f.x + fx * (h.offset + shift) : f.x, cz = h.shape === 'circle' ? f.z + fz * (h.offset + shift) : f.z;
       const step = h.vortex * (1 / 60);
-      for (let i = 0; i < this.poolN; i++) { const t = this.pool[i]; if (t.alive && inShape(f, h, t, fx, fz, rangeK)) w.drag(t, cx, cz, step); }
+      for (let i = 0; i < this.poolN; i++) { const t = this.pool[i]; if (t.alive && inShape(f, h, t, fx, fz, rangeK, shift)) w.drag(t, cx, cz, step); }
     }
     const c = this.fillCtx(f.moveKind, tick);
     let landed = 0, broke = 0;
@@ -1190,7 +1223,7 @@ export class ActionCombatEngine {
       if ((h.maxTargets > 0 && mn >= h.maxTargets) || mn >= MAX_TICK_TARGETS) break;
       let seen = false;
       for (let k = 0; k < mn; k++) if (memo[k] === t.id) { seen = true; break; }
-      if (seen || !inShape(f, h, t, fx, fz, rangeK)) continue;
+      if (seen || !inShape(f, h, t, fx, fz, rangeK, shift)) continue;
       memo[mn++] = t.id;
       // Iaijutsu: nur markieren, getroffen wird beim Einrasten der Klinge
       if (mark) { if (f.markN < MAX_MARKS) f.marks[f.markN++] = t.id; continue; }
@@ -1269,6 +1302,13 @@ export class ActionCombatEngine {
     const px = f.x, pz = f.z;
     w.move(f, dx, dz, impulse && f.grounded, id);
     if (f.grounded) return;
+    // 4.6H: an einer Wand in der Luft – Wandsprung vormerken (Normale aus dem Herausschieben), Kantengriff auf Dach, Wehrgang oder Fels
+    const ex = f.x - (px + dx), ez = f.z - (pz + dz), el = Math.hypot(ex, ez);
+    if (el > 1e-3) {
+      f.wallT = 0; f.wallNX = ex / el; f.wallNZ = ez / el;
+      const ml = Math.hypot(dx, dz);
+      if ((f.phase === 'air' || f.phase === 'dash') && f.vy <= T.ledgeVy && ml > 1e-5 && this.ledge(w, dx / ml, dz / ml)) return;
+    }
     const h = w.height(f.x, f.z, f.y);
     if (!Number.isFinite(h)) return;
     if (h > f.y + T.stepUp) { f.x = px; f.z = pz; f.vx = 0; f.vz = 0; }
@@ -1393,11 +1433,30 @@ export class ActionCombatEngine {
     return best;
   }
 
+  /**
+   * 4.6H Kantengriff: liegt vor der Figur (Probe in Bewegungsrichtung) eine Fläche höher als eine Stufe, aber höchstens `ledgeReach` über den
+   * Füßen, zieht sie sich hinauf (Dachtraufe, Wehrgang, Mauerkrone, Felsabsatz). Der Boden prüft den Platz oben wie einen Teleport.
+   */
+  private ledge(w: ActionWorld, dirX: number, dirZ: number): boolean {
+    const f = this.f;
+    const qx = f.x + dirX * T.ledgeProbe, qz = f.z + dirZ * T.ledgeProbe;
+    // Höhenhinweis so, dass Flächen bis `ledgeReach` über den Füßen zählen (der Boden nimmt eine Stufe Spielraum dazu)
+    const top = w.height(qx, qz, f.y + T.ledgeReach - T.stepUp);
+    if (!Number.isFinite(top) || top <= f.y + T.stepUp || top > f.y + T.ledgeReach + 0.05) return false;
+    const y0 = f.y;
+    f.y = top;
+    if (!w.teleport(f, qx, qz)) { f.y = y0; return false; }
+    this.events.push('ledge', top - y0);
+    this.land(top, w);
+    return true;
+  }
+
   private land(h: number, w: ActionWorld) {
     const f = this.f;
     const fall = -f.vy;
     f.y = h; f.vy = 0;
     f.grounded = true; f.airT = 0; f.jumps = 0; f.airDashes = 0; f.airIdx = 0; f.hover = 0;
+    f.wallKicks = 0; f.wallT = 9;
     f.vx = 0; f.vz = 0;
     this.events.push('land', fall);
     if (f.phase === 'air') { f.phase = 'ground'; return; }
@@ -1441,12 +1500,12 @@ export class ActionCombatEngine {
 // ---------- Trefferformen ----------
 
 /** Liegt ein Ziel (Kreis mit Radius, Höhe) in der Trefferform um die Figur? Bogen, Kreis (vor der Figur) oder Linie (Schockwelle) */
-export function inShape(f: { x: number; y: number; z: number; yaw: number }, h: ActionHit, t: Pick<ActionTarget, 'x' | 'y' | 'z' | 'radius' | 'height'>, fx = Math.sin(f.yaw), fz = Math.cos(f.yaw), rangeK = 1): boolean {
+export function inShape(f: { x: number; y: number; z: number; yaw: number }, h: ActionHit, t: Pick<ActionTarget, 'x' | 'y' | 'z' | 'radius' | 'height'>, fx = Math.sin(f.yaw), fz = Math.cos(f.yaw), rangeK = 1, shift = 0): boolean {
   if (t.y > f.y + h.up || t.y + t.height < f.y - h.down) return false;
   const dx = t.x - f.x, dz = t.z - f.z;
   const range = h.range * rangeK;
   if (h.shape === 'circle') {
-    const cx = f.x + fx * h.offset, cz = f.z + fz * h.offset;
+    const cx = f.x + fx * (h.offset + shift), cz = f.z + fz * (h.offset + shift);
     const d = Math.hypot(t.x - cx, t.z - cz);
     if (d > range + t.radius) return false;
     return h.inner <= 0 || d >= h.inner - t.radius;

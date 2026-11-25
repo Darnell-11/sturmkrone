@@ -80,7 +80,7 @@ export const CREW: CrewDef[] = [
     skill: { n: 'Enterrausch', d: 'Stürmt vor und zieht Gegner auf sich.' },
     look: { skin: '#B9805A', outfit: 'jacke', outfitColor: '#7A3346', hair: 'kurz', hairColor: '#7A4A22', hat: 'helm', hatColor: '#8C8F96', beard: 'vollbart', body: 'kraeftig' },
     lines: ['Wann entern wir endlich?', 'Mein Helm hat schon drei Kanonenkugeln überlebt.', 'Mehr Feinde! Ich bin noch nicht warm!', 'Schlafen kann ich, wenn ich tot bin.'] },
-  { id: 'lehrer', name: 'Meister Ilyas', job: 'Faji-Lehrer', perk: '+1 Faji-Punkt beim Anheuern, +20 % Faji-Regeneration.', price: 1500, rank: 4, col: '#B98CFF', quote: 'Faji folgt nicht dem Muskel, sondern dem Willen.', role: 'schaden', style: 'effekt',
+  { id: 'lehrer', name: 'Meister Ilyas', job: 'Faji-Lehrer', perk: '+1 Talentpunkt beim Anheuern, +20 % Faji-Regeneration.', price: 1500, rank: 4, col: '#B98CFF', quote: 'Faji folgt nicht dem Muskel, sondern dem Willen.', role: 'schaden', style: 'effekt',
     skill: { n: 'Geistlanze', d: 'Faji-Geschosse aus der Ferne.' },
     look: { skin: '#8D5A3B', outfit: 'tunika', outfitColor: '#4A2E6E', hair: 'glatze', hairColor: '#EDEDED', beard: 'vollbart', coat: 'lang', coatColor: '#F2EEE6' },
     lines: ['Atme. Der Wind atmet mit.', 'Faji ist überall – sogar in Kalles Pulver.', 'Geduld ist auch eine Waffe.', 'Dein Wille wird stärker. Ich spüre es.'] },

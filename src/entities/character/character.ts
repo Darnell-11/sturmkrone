@@ -65,10 +65,10 @@ const TAIL_GLSL = /* glsl */ `
 import { SocketRig } from './sockets';
 import { loadoutFromLook, resolveLoadout, type Finish, type Loadout, type ResolvedLoadout } from '../../data/equipment';
 import { attachHeadgear, buildBuckle, buildButton, buildEpaulette, buildKnot, buildPauldron, CAPPED, CAP_RIM_DEFAULT, hairSqueezeFor, PATCH_RX, PATCH_RY } from './animeHats';
-import { isSeatedHat } from './hatFit';
-import { BELT_KINDS, HELM_KINDS, SHOULDERS, buildBeltExtras } from './gear/rigid';
+import { isSeatedHat, skirtFromRings, type HatSeat } from './hatFit';
+import { BELT_KINDS, HELM_KINDS, HELM_SKIRTS, SHOULDERS, buildBeltExtras } from './gear/rigid';
 import { finishMat } from './gear/kit';
-import { buildHeld, buildSkinned, glbModel } from './gear/glbGear';
+import { buildHeld, buildSkinned, glbHatSeat, glbModel } from './gear/glbGear';
 import { registerCulled, unregisterCulled } from '../../render/matrixSkip';
 import { CharacterRig } from './rig/characterRig';
 import { chainSkin } from './rig/clothRig';
@@ -492,14 +492,32 @@ export class Character {
       const cover = g.maskAs ? vb.garmentCover(g.maskAs, R.ctx) : null;
       if (g.maskAs && cover && glbModel(g.model)) layers.push({ key: `glb.${g.model}.${g.maskAs}`, level: GARMENT_LEVEL[g.maskAs], cover });
     }
-    const hideHair = R.glb.some((g) => g.hidesHair && glbModel(g.model));
+    // 4.6H: die Frisur „Mehrlagig“ entsteht im Spiel um den Schädel (layeredHair.ts) und ersetzt das Haar der Grundfigur
+    const hairCut = R.hairCut ? (isFemale(look) ? 'female' : 'male') : null;
+    const hideHair = R.glb.some((g) => g.hidesHair && glbModel(g.model)) || !!hairCut;
     if (R.base.top) layers.push({ key: 'grund.top', level: 1, cover: vb.baseCover('top') });
     if (R.base.shoes) layers.push({ key: 'grund.shoes', level: 1, cover: vb.baseCover('shoes') });
     // Hüte aus Modellen bekommen dieselbe Haar-Ausblendung wie Helme
     const glbHat = R.glb.some((g) => g.trimsHair && glbModel(g.model));
-    // 4.6G.3: Standard-Hüte sitzen am Schädel; das Haar über dem Band wird in die Krone gedrückt, nichts abgeschnitten (keine kahle Stirn)
-    const seated = !glbHat && isSeatedHat(R.hat) ? vb.hatSeat(R.hat) : null;
-    const cap = glbHat ? { sink: 0.13, margin: 0.012 } : seated ? undefined : CAPPED[R.hat];
+    const hatModel = R.glb.find((g) => g.trimsHair && glbModel(g.model)) ?? null;
+    // 4.6G.3: Standard-Hüte sitzen am Schädel; das Haar über dem Band wird in die Krone gedrückt, nichts abgeschnitten (keine kahle Stirn).
+    // 4.6H: dieselbe Passform (0,8 cm höher, Kranz 3,5 % weiter) für die Ausrüstungshelme – Bausatz-Helme am Sitz „helm“, Helme und der Dreispitz
+    // der Sets aus Modellen am Sitz, eingepasst in die innerste Fläche des Modells
+    const helmKind = HELM_KINDS.includes(R.hat);
+    const box = vb.skullBox();
+    const body0 = vb.bodySkin(this.rig);
+    let seated: HatSeat | null = null, seatKey = '';
+    if (hatModel && box && body0) {
+      const base = vb.hatSeat(hatModel.model === 'dreispitz' ? 'dreispitz' : 'helm');
+      if (base) { seated = glbHatSeat(vb, glbModel(hatModel.model)!, body0, box, base); seatKey = `glb:${hatModel.model}`; }
+    } else if (helmKind) {
+      // Bausatz-Helme: Sitz „helm“, dazu die Schürze aus den Maßen des Helms (Nackenlamellen, Nackenschutz, Kapuze)
+      const s0 = vb.hatSeat('helm'), sk = HELM_SKIRTS[R.hat];
+      seated = s0 && sk ? { ...s0, skirt: skirtFromRings(s0, sk) } : s0;
+      seatKey = seated ? `helm:${R.hat}` : '';
+    }
+    else if (isSeatedHat(R.hat)) { seated = vb.hatSeat(R.hat); seatKey = R.hat; }
+    const cap = seated ? undefined : glbHat ? { sink: 0.13, margin: 0.012 } : CAPPED[R.hat];
     // Hüte ohne Kappe (Dreispitz, Marinemütze) ohne Schädelmessung: Haar nur stauchen, nichts abschneiden
     const hatFit = cap || seated ? null : hairSqueezeFor(R.hat);
     // 4.6G.3: unter der Augenklappe Wimpern und Lidstrich ausblenden (sie stehen bis 2 cm vor dem Auge)
@@ -519,8 +537,8 @@ export class Character {
       if (p.slot === 'shoes') m.visible = R.base.shoes;
       if (!src.index || !own) return;
       let index: BufferAttribute | null = null;
-      if (p.slot === 'hair' && seated && isSeatedHat(R.hat)) {
-        const pos = vb.hairUnderBand(i, R.hat);
+      if (p.slot === 'hair' && seated) {
+        const pos = vb.hairUnderSeat(i, seated, seatKey);
         if (pos) this.mask(m, src, src.index, false, pos);
         return;
       }
@@ -564,7 +582,9 @@ export class Character {
       rx.setWorn('tails', this.worn.includes('mantelLang') || this.worn.includes('kilt'));
       rx.setWorn('cape', !!R.cape && !!body?.parent);
       rx.setWorn('sleeves', sleeves);
+      // 4.6H: die Rückensträhnen der Frisur „Mehrlagig“ (Frau) hängen an eigenen Federketten (`mane`)
       rx.setWorn('hair', !hideHair);
+      rx.setWorn('mane', hairCut === 'female');
       const scarf = R.shells.find((s) => s.kind === 'schal');
       const knot = R.rigid.find((r) => r.build === 'knoten');
       const belt = R.shells.find((s) => s.kind === 'guertel');
@@ -578,14 +598,38 @@ export class Character {
       const model = glbModel(g.model);
       if (!model) continue;
       // Frisur unter einem Hut aus einem Modell: Haare über dem Hutrand (Höhe 1,668 der männlichen Vorlage) weglassen
-      const headFit = g.mode === 'bone' ? { box: vb.skullBox(), seat: g.hidesHair && seated ? seated : null, seatKey: R.hat } : null;
-      for (const m of buildSkinned(vb, model, g.mode, g.bone, body, g.look, g.hidesHair && glbHat ? 1.668 : undefined, headFit)) {
+      const headFit = g.mode === 'bone' ? { box: vb.skullBox(), seat: g.hidesHair && seated ? seated : null, seatKey, relax: !!g.trimsHair } : null;
+      for (const m of buildSkinned(vb, model, g.mode, g.bone, body, g.look, g.hidesHair && glbHat && !seated ? 1.668 : undefined, headFit)) {
         m.userData.parts = [];
         // fürs Prüfwerkzeug (audit.ts): Name und Ebene des Modells; Hüte und Frisuren (an einem Knochen) liegen ganz außen
         m.userData.glbModel = g.model;
         // Hosen liegen über dem Hemd (Hemd in die Hose gesteckt)
         m.userData.glbLevel = g.maskAs === 'hose' ? 3 : g.maskAs ? GARMENT_LEVEL[g.maskAs] : g.mode === 'bone' ? 9 : 2;
         m.name = `glb:${g.model}/${m.userData.glbRole}`;
+        body.parent.add(m);
+        this.garments.push(m);
+      }
+    }
+    // 4.6H: Frisur „Mehrlagig“ – im selben Material wie die Grundfrisur (gleiche Instanz, gleiches Programm), unter Hut und Helm in die Krone gedrückt
+    if (body?.parent && hairCut) {
+      const geoSrc = vb.layeredHair(hairCut, seated, seated ? seatKey : '');
+      let hairMat: Material | null = null;
+      this.rig.traverse((o) => { const m = o as SkinnedMesh; if (!hairMat && m.isSkinnedMesh && vb.parts[m.userData.vroidPart as number]?.slot === 'hair') hairMat = m.material as Material; });
+      if (geoSrc && hairMat) {
+        const geo = new BufferGeometry();
+        for (const name of Object.keys(geoSrc.attributes)) geo.setAttribute(name, geoSrc.attributes[name]);
+        geo.setIndex(geoSrc.index);
+        geo.boundingSphere = geoSrc.boundingSphere;
+        const m = new SkinnedMesh(geo, hairMat);
+        m.bind(body.skeleton, body.bindMatrix);
+        m.castShadow = true;
+        m.receiveShadow = true;
+        m.userData.parts = [];
+        m.userData.glbModel = 'frisur_mehrlagig';
+        m.userData.glbLevel = 9;
+        m.userData.ownIndex = false;
+        m.userData.layeredHair = hairCut;
+        m.name = `frisur:mehrlagig/${hairCut}`;
         body.parent.add(m);
         this.garments.push(m);
       }

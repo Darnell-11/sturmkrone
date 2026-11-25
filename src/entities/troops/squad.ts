@@ -155,6 +155,21 @@ export class TroopSquad implements AllyTarget {
   auraDmg = 1;
   auraTaken = 1;
   auraSpeed = 1;
+  /**
+   * 4.6H: Sturmhorn eines Offiziers (eigene Trupps): Restzeit der Stärkung; solange sie läuft, gelten die Faktoren `auraDmg/auraTaken/auraSpeed`
+   * (feindliche Verbände setzt `CombatSystem.applyAuras` je Bild selbst, eigene nur hier)
+   */
+  rallyT = 0;
+
+  /** 4.6H: Stärkung durch das Sturmhorn (Schaden, erlittener Schaden, Tempo) für `dur` Sekunden; heilt Verwundete um `heal` des Höchstwerts */
+  rally(dur: number, dmg: number, taken: number, speed: number, heal = 0) {
+    if (this.heads <= 0 || this.hostile) return;
+    this.rallyT = Math.max(this.rallyT, dur);
+    this.auraDmg = Math.max(this.auraDmg, dmg);
+    this.auraTaken = Math.min(this.auraTaken, taken);
+    this.auraSpeed = Math.max(this.auraSpeed, speed);
+    if (heal > 0) this.hp = Math.min(this.heads * this.hpHead, this.hp + this.heads * this.hpHead * heal);
+  }
   /** Hat der Verband gerade ein Ziel? */
   get engaged() { return !!this.target && this.target.alive; }
   /** Ziel des Verbandes (Anzeige, Prüfung) */
@@ -254,6 +269,7 @@ export class TroopSquad implements AllyTarget {
   update(dt: number, player: { x: number; z: number; yaw: number }, w: TroopWorld, soft: readonly SoftBody[], speedMult = 1) {
     this.pulse = Math.max(0, this.pulse - dt * 2.2);
     this.alertT = Math.max(0, this.alertT - dt);
+    if (this.rallyT > 0) { this.rallyT -= dt; if (this.rallyT <= 0) { this.rallyT = 0; this.auraDmg = 1; this.auraTaken = 1; this.auraSpeed = 1; } }
     if (this.heads <= 0) { this.deadT += dt; this.move = 0; return; }
     if (this.landing) {
       const L = this.landing;

@@ -220,12 +220,13 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
     world: { boat: null, time: 9, weather: 'klar', seaEvents: null, chart: emptyChart(), mega: {}, kaiser: {}, factionWar: null },
     progress: defaultProgress(faction),
     gear: { weapon: 0, armor: 0, potions: 3, shrine: 0, trinkets: [], trinket: null, items: {}, heads: [], head: null, bar: ['proviant', null, null, null], owned: [], worn: {} },
-    skills: { learned: {}, slots: [null, null, null], sp: 1, awakened: [] },
+    // 4.6H: ein gemeinsamer Punktetopf – der Startpunkt (früher ein Faji-Punkt) liegt als Bonus-Talentpunkt bereit
+    skills: { learned: {}, slots: [null, null, null], sp: 0, awakened: [] },
     ship: defaultShip(faction),
     crew: { hired: [], party: [], loyalty: {} },
     legends: [],
     fleet: emptyFleet(),
-    talents: emptyTalents(),
+    talents: { ...emptyTalents(), bonus: 1 },
   };
 }
 

@@ -18,7 +18,7 @@ import { convertLegacy10, isLegacy10, lookFromLegacy, skillsFromLegacy } from '.
 import { createSave, defaultProgress, defaultShip, SAVE_VERSION, type SaveData } from './types';
 import { countOr, isRecord } from '../sanitize';
 import { migrateWorldTo21 } from './worldMigration';
-import { cleanTalents, milestonesEarned } from '../talentRules';
+import { cleanTalents, mergeFajiPoints, milestonesEarned, techSpentOf } from '../talentRules';
 import { TALENT } from '../../data/talentTrees';
 import { endgameEarned } from '../../data/gear';
 
@@ -241,6 +241,11 @@ export function migrateSave(raw: unknown, gameVersion: string): MigrationResult 
   // 4.6G.2: Geschlecht aus dem Stand selbst, bevor die Standardwerte fehlende Felder füllen (sonst wäre jeder alte Stand „männlich“ – auch eine
   // Figur mit langer Grundfrisur, die bis 4.6G die weibliche Grundfigur trug)
   const gender = genderOf(isRecord(data.player) && isRecord(data.player.look) ? data.player.look : null);
+  // 4.6H: ob die alten Faji-Punkte schon im gemeinsamen Topf sind und welche Bonuspunkte der Stand trägt, steht nur im Stand selbst – die
+  // Standardwerte eines neuen Spiels tragen „übernommen“ und den Startpunkt (ein Stand aus 4.6G bekäme sonst seine Techniken doppelt berechnet)
+  const rawTal = isRecord(data.talents) ? data.talents : null;
+  const rawMerged = rawTal?.fajiMerged === true;
+  const rawBonus = rawTal && typeof rawTal.bonus === 'number' ? rawTal.bonus : 0;
   const filled = fillDefaults(data, defaults) as SaveData;
   if (filled.player.faction !== 'pirat' && filled.player.faction !== 'marine') filled.player.faction = 'pirat';
   filled.player.look = sanitizeLook({ ...filled.player.look, gender }, filled.player.faction);
@@ -259,7 +264,16 @@ export function migrateSave(raw: unknown, gameVersion: string): MigrationResult 
   filled.fleet = cleanFleet(filled.fleet, { owned: filled.ship.owned ?? [], flagship: filled.ship.tier, evo: filled.ship.evo ?? {}, look: filled.ship.look, slots: fleetSlots(rankIndex(filled.player.fame)) });
   // Talente (4.6E): säubern, Siegel und Kaiser-Stand ergänzen; Stufe 101 nur mit vollzogenem Aufstieg, sonst höchstens 100
   const lvl = Math.max(1, Math.min(TALENT.ascendedLevel, Math.floor(Number.isFinite(filled.player.level) ? filled.player.level : 1)));
-  filled.talents = cleanTalents(filled.talents, talentContext(filled as unknown as Record<string, any>, lvl));
+  // 4.6H: Faji-Techniken (früher Taste K) säubern: nur bekannte, Ränge begrenzt, F-Plätze nur mit gelernten Techniken
+  const learned: Record<string, number> = {};
+  for (const [id, r] of Object.entries(isRecord(filled.skills?.learned) ? filled.skills.learned : {})) {
+    if (typeof r !== 'number' || !Number.isFinite(r) || r <= 0) continue;
+    learned[id] = Math.floor(r);
+  }
+  filled.skills.learned = learned;
+  filled.talents = cleanTalents({ ...(isRecord(filled.talents) ? filled.talents : {}), fajiMerged: rawMerged, bonus: rawBonus }, { ...talentContext(filled as unknown as Record<string, any>, lvl), techSpent: techSpentOf(learned) });
+  // 4.6H: ein gemeinsamer Punktetopf für N und K – alte Faji-Punkte (frei und gebunden) werden einmalig zu Bonus-Talentpunkten (Version bleibt 23)
+  mergeFajiPoints(filled.talents, filled.skills);
   filled.player.level = filled.talents.ascended ? TALENT.ascendedLevel : Math.min(TALENT.levelCap, lvl);
   if (filled.player.level >= TALENT.levelCap) filled.player.xp = 0;
   return { ok: true, data: filled, migratedFrom: from === SAVE_VERSION ? null : from };

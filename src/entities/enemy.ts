@@ -178,6 +178,8 @@ export class Enemy {
   vx = 0;
   vz = 0;
   vy = 0;
+  /** 4.6H: Sperrfeuer eines Offiziers hält Hochgeschleuderte länger in der Luft (Restzeit, s): so lange fallen sie langsamer */
+  airHoldT = 0;
   hp: number;
   maxHp: number;
   poise: number;
@@ -787,7 +789,8 @@ export class Enemy {
         if (this.timer <= 0) this.toChase();
         break;
       case 'air':
-        this.vy -= 22 * dt;
+        // 4.6H: Sperrfeuer – im Sinkflug nur ein Viertel der Schwerkraft (längere Luft-Kombos)
+        if (this.airHoldT > 0) { this.airHoldT -= dt; this.vy -= (this.vy < 0 ? 5.5 : 22) * dt; } else this.vy -= 22 * dt;
         this.y += this.vy * dt;
         {
           const g = w.ground(this.x, this.z, this.y);

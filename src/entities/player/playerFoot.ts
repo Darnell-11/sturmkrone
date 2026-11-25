@@ -496,6 +496,22 @@ export class PlayerFoot implements PlayerTarget {
           break;
         }
         case 'fall': if (f.phase === 'air') { this.char.playClip('Jump_Idle', { loop: true, fade: FADE.air }); this.anim = 'fall'; } break;
+        case 'wallKick': {
+          // 4.6H Wandsprung: Staub und Nachbild an der Wand (hinter der Figur, entgegen der Wandnormale), Mantel schlägt nach unten
+          const at = this.tmpV.set(f.x - e.b * 0.4, f.y + 0.6, f.z - e.c * 0.4);
+          fx?.puff(at, 5);
+          afx?.afterimage(f.x - e.b * 0.25, f.y - 0.2, f.z - e.c * 0.25, st.color, 0.22, 0.8);
+          this.char.kick(e.b * 2, -CLOTH_IMPULSE.airJump, e.c * 2);
+          break;
+        }
+        case 'ledge': {
+          // 4.6H Kantengriff: kurzes Hochziehen (Landung oben), Staub an der Kante
+          fx?.puff(this.tmpV.set(f.x, f.y, f.z), 4);
+          this.char.playClip('Jump_Land', { loop: false, speed: 1.9, fade: FADE.land, restart: true });
+          this.anim = 'land';
+          this.landT = 0.2;
+          break;
+        }
         case 'dash': {
           const back = e.b === 1;
           this.char.playClip(back ? 'Dodge_Backward' : 'Dodge_Forward', { loop: false, speed: 0.38 / Math.max(0.12, f.dashDur), fade: FADE.dodge, restart: true });

@@ -703,7 +703,8 @@ describe('Flottenbefehle: Tasten und Gamepad-Kombination', () => {
   it('keine Kombination kollidiert mit der Haltetaste', () => {
     for (const b of Object.values(PAD_CHORDS) as number[]) expect(b).not.toBe(PAD_CHORD_MOD);
     // drei Flottenbefehle (See) und zwei Kombinationen zu Fuß (Sturm-Erwachen, Aura): alle verschieden
-    expect(new Set(Object.values(PAD_CHORDS)).size).toBe(5);
+    // 4.6H: dazu drei Offiziers-Assists zu Fuß (R3 + LB / RB / LT) – A, B und X bleiben frei
+    expect(new Set(Object.values(PAD_CHORDS)).size).toBe(8);
   });
 });
 

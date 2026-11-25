@@ -45,4 +45,8 @@ export const TOUCH_FOOT: TouchButtonDef[] = [
   // 4.6B: Sturm-Erwachen (füllt sich mit der Willenskraft, im Erwachen das Ultimate) und Aura reihum
   { action: 'awaken', label: 'Erwa-\nchen', size: 46, right: 228, bottom: 196, color: 'brass' },
   { action: 'aura', label: 'Aura', size: 40, right: 225, bottom: 140, color: 'teal' },
+  // 4.6H: Offiziers-Kombo-Assists (Sperrfeuer, Orkan-Schildstoß, Sturmhorn) in einer Reihe über F3, Stil und Erwachen – nur mit Landtrupp sichtbar
+  { action: 'assist1', label: 'Salve', size: 44, right: 124, bottom: 270, color: 'brass' },
+  { action: 'assist2', label: 'Orkan', size: 44, right: 176, bottom: 240, color: 'brass' },
+  { action: 'assist3', label: 'Horn', size: 44, right: 228, bottom: 250, color: 'brass' },
 ];

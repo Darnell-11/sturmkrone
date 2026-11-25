@@ -32,7 +32,7 @@ import { auditPlacement } from './placeAudit';
 import type { GlowPlaced } from '../render/glow';
 import { archGroup, hasArch } from './envModels';
 import { lighthouseBeams } from './lighthouseBeam';
-import { addPlinths, build, colliders, levelFootprint, PLINTHED, SETTLES, settleOnSlope, settleYard, type Built } from './architecture';
+import { addPlinths, build, colliders, levelFootprint, PLINTHED, roofsOf, SETTLES, settleOnSlope, settleYard, type Built } from './architecture';
 import { FACTIONS, type FactionId } from '../data/factions';
 import { factionBanner, factionBuilt } from './factionArch';
 import type { StructureType } from '../data/settlements';
@@ -186,7 +186,10 @@ export function* dressIslandSteps(o: DressOpts): Generator<void, Dressed> {
     if (pre || PLINTHED.has(t)) addPlinths(b, x, z, yaw, hAt);
     auditPlacement?.(def.id, pre ? 'faction' : t, b.g, hAt);
     group.add(b.g);
-    for (const c of colliders(b, walk.x + x, walk.z + z, yaw)) { walk.blockers.push(c); taken.push({ x: c.x - walk.x, z: c.z - walk.z, r: c.r }); }
+    // 4.6H: Dächer, Wehrgänge und Zinnen begehbar (Höhenraster des Blender-Baus); die Kollider sperren nur unter der Traufe
+    const roofs = roofsOf(b, walk.x + x, group.position.y + b.g.position.y, walk.z + z, yaw);
+    if (roofs.length) (walk.roofs ??= []).push(...roofs);
+    for (const c of colliders(b, walk.x + x, walk.z + z, yaw, roofs)) { walk.blockers.push(c); taken.push({ x: c.x - walk.x, z: c.z - walk.z, r: c.r }); }
     if (b.fire) fires.push({ x: x + b.fire[0] * Math.cos(yaw) + b.fire[2] * Math.sin(yaw), y: y + b.fire[1], z: z - b.fire[0] * Math.sin(yaw) + b.fire[2] * Math.cos(yaw) });
     for (const gl of b.glows ?? []) glows.push({ kind: gl.kind, x: x + gl.x * Math.cos(yaw) + gl.z * Math.sin(yaw), y: y + gl.y, z: z - gl.x * Math.sin(yaw) + gl.z * Math.cos(yaw), ground: gl.gy == null ? null : y + gl.gy, size: gl.size, pool: gl.pool, pdx: (gl.px ?? 0) * Math.cos(yaw) + (gl.pz ?? 0) * Math.sin(yaw), pdz: -(gl.px ?? 0) * Math.sin(yaw) + (gl.pz ?? 0) * Math.cos(yaw), glint: gl.glint });
   };

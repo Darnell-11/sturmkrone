@@ -688,12 +688,14 @@ describe('Spielstand 22: Migration aus Version 21 ohne Verlust', () => {
 });
 
 describe('Talent-Fenster (Anzeige)', () => {
-  it('zeichnet alle 18 Bäume, die Siegel und den Aufstieg; Stufe 101 bleibt geheim, bis alle fünf Kaiser gefallen sind', () => {
+  it('zeichnet alle 18 Bäume, die Siegel und den Aufstieg; der Kosmos-Pfad bleibt versiegelt, bis der Aufstieg vollzogen ist (4.6H: Fortschritt sichtbar)', () => {
     const plain = emptyTalents();
-    const hidden = talentScreenHtml({ t: plain, w: rich(100, 3), xp: 0, xpNeed: 1, gold: 500 }, newTalentUi('zweihaender'));
-    expect(hidden).not.toContain('Stufe 101');
-    expect(hidden).not.toContain('data-id="aufstieg"');
-    expect(hidden).not.toContain('data-id="kosmos"');
+    const hidden = talentScreenHtml({ t: plain, w: rich(100, 3), xp: 0, xpNeed: 1, gold: 500 }, newTalentUi('kosmos'));
+    // 4.6H: Reiter „Stufe 101: Kosmos-Pfad“ und Fortschritt 0/5 sind sichtbar, die Sternbilder aber versiegelt (keine Kosmos-Knoten, kein Lernen)
+    expect(hidden).toContain('Stufe 101: Kosmos-Pfad');
+    expect(hidden).toContain('0/5 Kaiser-Inseln besiegt');
+    expect(hidden).not.toContain(`data-id="${TREE_BY_ID.kosmos.nodes[0].id}"`);
+    expect(hidden).toContain('data-a="ascend" disabled');
     const t = loaded();
     ascend(t, rich(100, 20));
     for (const c of COSMIC_SOURCES) if (!t.cosmic.includes(c.id)) t.cosmic.push(c.id);
@@ -708,7 +710,7 @@ describe('Talent-Fenster (Anzeige)', () => {
     }
     for (const tab of ['siegel', 'aufstieg'] as const) {
       const ui = newTalentUi('kosmos');
-      ui.tab = tab;
+      ui.seals = tab === 'siegel';
       const html = talentScreenHtml(v, ui);
       expect(html).toContain(tab === 'siegel' ? 'Meisterschafts-Siegel' : 'Aufgestiegen');
     }

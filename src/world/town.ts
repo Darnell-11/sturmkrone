@@ -31,7 +31,7 @@ import { hasProp, propGroup } from './worldProps';
 import { markShared } from '../render/dispose';
 import { toonPbr } from '../render/pbrMaps';
 import { waveFlag } from '../render/flags';
-import { build as buildStruct, colliders as structColliders, lanternMats, levelFootprint, setYardCompact, settleYard } from './architecture';
+import { build as buildStruct, colliders as structColliders, lanternMats, levelFootprint, roofsOf, setYardCompact, settleYard } from './architecture';
 import type { StructureType } from '../data/settlements';
 import type { GlowPlaced } from '../render/glow';
 import { hasArch as hasArchModel, hasArch, archGroup } from './envModels';
@@ -448,7 +448,10 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
       plinth.position.set(big[2] ?? 0, 0.1 - drop / 2, big[3] ?? 0);
       b.g.add(plinth);
     }
-    for (const c of structColliders(b, wx, wz, yaw)) walk.blockers.push(c);
+    // 4.6H: Hafen-Dächer, Kaimauer-Türme und Torhaus begehbar (Höhenraster der Blender-Bauten)
+    const roofs = roofsOf(b, wx, group.position.y + baseY, wz, yaw);
+    if (roofs.length) (walk.roofs ??= []).push(...roofs);
+    for (const c of structColliders(b, wx, wz, yaw, roofs)) walk.blockers.push(c);
     if (b.smoke && smokeN++ % 3 === 0) smoke.push(new Vector3(wx + b.smoke[0] * Math.cos(yaw) + b.smoke[2] * Math.sin(yaw), baseY + b.smoke[1], wz - b.smoke[0] * Math.sin(yaw) + b.smoke[2] * Math.cos(yaw)));
     const c0 = Math.cos(yaw), s0 = Math.sin(yaw), gy0 = baseY;
     for (const gl of b.glows ?? []) {

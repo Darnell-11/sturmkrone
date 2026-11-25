@@ -7,6 +7,7 @@ import { CylinderGeometry, Group, type BufferGeometry, type Material } from 'thr
 import type { CapShell } from '../vroid';
 import type { Finish } from '../../../data/equipment';
 import { Bag, ball, box, cone, cyl, dome, finishMat, gem, glowMat, plate, ring, rng, shade, smoothOutline, tube, xf } from './kit';
+import type { SkirtRings } from '../hatFit';
 
 /** Eine Schulterseite: Hauptfarbe und Zierfarbe */
 export type ShoulderBuilder = (c: string, c2: string) => Group;
@@ -282,7 +283,8 @@ export const BELT_KINDS = ['guertel_taschen', 'guertel_ketten', 'guertel_schwert
 export const HEAD_R = 0.116;
 export const HELM_RISE = 0.12;
 
-export interface HelmCtx { sh: CapShell; topY: number; c: string; c2: string }
+/** 4.6H: `R` = Kranz-Radius aus dem gemessenen Schädel (Sitz am Schädel wie die Standard-Hüte); fehlt er, gilt der feste Kopfradius */
+export interface HelmCtx { sh: CapShell; topY: number; c: string; c2: string; R?: number }
 
 /** Zeichnet die Teile des Helms außer der Kappe selbst, die der Aufrufer aus sh.geo anlegt */
 export type HelmBuilder = (h: HelmCtx) => { bag: Bag; cap: { finish: Finish; color?: string } };
@@ -291,10 +293,10 @@ const side = (f: (s: number) => void) => { f(-1); f(1); };
 
 export const HELMS: Record<string, HelmBuilder> = {
   /** Eisenkappe mit Nasenschutz und Nackenlamellen */
-  helm_kappe({ sh, c, c2 }) {
+  helm_kappe({ sh, c, c2, R: R0 }) {
     const bag = new Bag();
     const steel = finishMat('stahl', c), gold = finishMat('gold', c2);
-    const R = HEAD_R;
+    const R = R0 ?? HEAD_R;
     bag.add(ring(R + 0.006, 0.0075, 32), steel, { p: [sh.cx, sh.seatY + 0.004, sh.cz], r: [PI / 2, 0, 0] });
     bag.add(plate([[-0.009, 0.012], [0.009, 0.012], [0.007, -0.035], [0, -0.045], [-0.007, -0.035]], 0.004, 0.001), steel, { p: [0, sh.seatY - 0.012, -0.122], r: [-0.05, 0, 0] });
     for (let i = 0; i < 3; i++) bag.add(new CylinderGeometry(R + 0.006 + i * 0.006, R + 0.014 + i * 0.006, 0.026, 24, 1, true, -1.9, 3.8), steel, { p: [sh.cx, sh.seatY - 0.016 - i * 0.022, sh.cz] });
@@ -303,10 +305,10 @@ export const HELMS: Record<string, HelmBuilder> = {
   },
 
   /** Offener Ritterhelm mit Wangenklappen, Kamm und Federbusch */
-  helm_ritter({ sh, topY, c, c2 }) {
+  helm_ritter({ sh, topY, c, c2, R: R0 }) {
     const bag = new Bag();
     const steel = finishMat('stahl', c), gold = finishMat('gold', c2), plume = finishMat('stoff', c2, { rim: 1.1 });
-    const R = HEAD_R;
+    const R = R0 ?? HEAD_R;
     bag.add(ring(R + 0.007, 0.009, 32), gold, { p: [sh.cx, sh.seatY + 0.004, sh.cz], r: [PI / 2, 0, 0] });
     bag.add(plate([[-0.01, 0.01], [0.01, 0.01], [0.008, -0.04], [-0.008, -0.04]], 0.005, 0.0012), steel, { p: [0, sh.seatY - 0.012, -0.122], r: [-0.05, 0, 0] });
     // Kamm von vorn nach hinten über die Kuppel
@@ -319,10 +321,10 @@ export const HELMS: Record<string, HelmBuilder> = {
   },
 
   /** Hörnerhelm */
-  helm_hoerner({ sh, c, c2 }) {
+  helm_hoerner({ sh, c, c2, R: R0 }) {
     const bag = new Bag();
     const steel = finishMat('dunkelstahl', c), horn = finishMat('leder', shade(c2, 0.2)), gold = finishMat('gold', c2);
-    const R = HEAD_R;
+    const R = R0 ?? HEAD_R;
     bag.add(ring(R + 0.006, 0.0085, 32), gold, { p: [sh.cx, sh.seatY + 0.004, sh.cz], r: [PI / 2, 0, 0] });
     bag.add(plate([[-0.009, 0.012], [0.009, 0.012], [0.007, -0.038], [-0.007, -0.038]], 0.004, 0.001), steel, { p: [0, sh.seatY - 0.012, -0.122], r: [-0.05, 0, 0] });
     side((s) => {
@@ -333,10 +335,10 @@ export const HELMS: Record<string, HelmBuilder> = {
   },
 
   /** Flügelhelm */
-  helm_fluegel({ sh, c, c2 }) {
+  helm_fluegel({ sh, c, c2, R: R0 }) {
     const bag = new Bag();
     const steel = finishMat('stahl', c), gold = finishMat('gold', c2);
-    const R = HEAD_R;
+    const R = R0 ?? HEAD_R;
     bag.add(ring(R + 0.006, 0.008, 32), gold, { p: [sh.cx, sh.seatY + 0.004, sh.cz], r: [PI / 2, 0, 0] });
     bag.add(plate([[-0.01, 0.012], [0.01, 0.012], [0.007, -0.07], [-0.007, -0.07]], 0.004, 0.001), steel, { p: [0, sh.seatY - 0.012, -0.122], r: [-0.05, 0, 0] });
     side((s) => {
@@ -350,10 +352,10 @@ export const HELMS: Record<string, HelmBuilder> = {
   },
 
   /** Krone mit Zacken und Edelsteinen */
-  helm_krone({ sh, c, c2 }) {
+  helm_krone({ sh, c, c2, R: R0 }) {
     const bag = new Bag();
     const gold = finishMat('gold', c), glow = glowMat(c2, 2);
-    const R = HEAD_R;
+    const R = R0 ?? HEAD_R;
     bag.add(cyl(R + 0.008, R + 0.012, 0.03, 36), gold, { p: [sh.cx, sh.seatY + 0.022, sh.cz] });
     const n = 7;
     for (let i = 0; i < n; i++) {
@@ -367,10 +369,10 @@ export const HELMS: Record<string, HelmBuilder> = {
   },
 
   /** Kapuze: weich, über die Frisur gezogen, hinten spitz, vorn offen */
-  helm_kapuze({ sh, c, c2 }) {
+  helm_kapuze({ sh, c, c2, R: R0 }) {
     const bag = new Bag();
     const cloth = finishMat('stoff', c), edge = finishMat('stoff', c2);
-    const R = HEAD_R;
+    const R = R0 ?? HEAD_R;
     // Saum über der Stirn
     bag.add(ring(R + 0.006, 0.008, 30), edge, { p: [sh.cx, sh.seatY + 0.002, sh.cz], r: [PI / 2, 0, 0] });
     // Stoffbahn über Nacken und Schläfen, nach unten weiter (Zylinderausschnitt um +Z, vorn offen)
@@ -381,10 +383,10 @@ export const HELMS: Record<string, HelmBuilder> = {
   },
 
   /** Kabuto: Kuppel, gestufter Nackenschutz, Halbmondzier */
-  helm_samurai({ sh, topY, c, c2 }) {
+  helm_samurai({ sh, topY, c, c2, R: R0 }) {
     const bag = new Bag();
     const steel = finishMat('dunkelstahl', c), gold = finishMat('gold', c2), cord = finishMat('stoff', c2);
-    const R = HEAD_R;
+    const R = R0 ?? HEAD_R;
     bag.add(ring(R + 0.008, 0.009, 32), gold, { p: [sh.cx, sh.seatY + 0.006, sh.cz], r: [PI / 2, 0, 0] });
     // gestufter Nackenschutz: nur hinten und seitlich, nach vorn offen (Zylinderausschnitt um +Z)
     for (let i = 0; i < 4; i++) {
@@ -400,10 +402,10 @@ export const HELMS: Record<string, HelmBuilder> = {
   },
 
   /** Drachenhelm: Hörner, Rückenkamm, glühende Augen */
-  helm_drache({ sh, topY, c, c2 }) {
+  helm_drache({ sh, topY, c, c2, R: R0 }) {
     const bag = new Bag();
     const steel = finishMat('dunkelstahl', c), gold = finishMat('gold', c2), glow = glowMat(c2, 2.6);
-    const R = HEAD_R;
+    const R = R0 ?? HEAD_R;
     bag.add(ring(R + 0.008, 0.009, 32), gold, { p: [sh.cx, sh.seatY + 0.005, sh.cz], r: [PI / 2, 0, 0] });
     bag.add(plate([[-0.01, 0.012], [0.01, 0.012], [0.008, -0.04], [0, -0.052], [-0.008, -0.04]], 0.005, 0.0012), steel, { p: [0, sh.seatY - 0.012, -0.122], r: [-0.05, 0, 0] });
     side((s) => {
@@ -417,10 +419,10 @@ export const HELMS: Record<string, HelmBuilder> = {
   },
 
   /** Sturmkrone: schwebende Splitter um ein Goldband */
-  helm_sturmkrone({ sh, c, c2 }) {
+  helm_sturmkrone({ sh, c, c2, R: R0 }) {
     const bag = new Bag();
     const gold = finishMat('gold', c), glow = glowMat(c2, 3);
-    const R = HEAD_R;
+    const R = R0 ?? HEAD_R;
     bag.add(ring(R + 0.01, 0.006, 36), gold, { p: [sh.cx, sh.seatY + 0.026, sh.cz], r: [PI / 2, 0, 0] });
     const n = 9;
     for (let i = 0; i < n; i++) {
@@ -434,3 +436,13 @@ export const HELMS: Record<string, HelmBuilder> = {
   },
 };
 export const HELM_KINDS = Object.keys(HELMS);
+
+/**
+ * 4.6H: Schürzen der Bausatz-Helme (Nackenlamellen, Nackenschutz, Stoffbahn) für das Haar darunter – dieselben Maße wie in den Bauplänen oben:
+ * Halbmesser `R + r0` am Band bis `R + r1` an der Unterkante `depth` unter dem Band, vorn offen bis `open` (rad, π − halbe Bogenlänge)
+ */
+export const HELM_SKIRTS: Partial<Record<string, SkirtRings>> = {
+  helm_kappe: { depth: 0.073, open: PI - 1.9, r0: 0.006, r1: 0.026 },
+  helm_samurai: { depth: 0.116, open: PI - 2.1, r0: 0.012, r1: 0.062 },
+  helm_kapuze: { depth: 0.17, open: PI - 2.2, r0: 0.012, r1: 0.075 },
+};

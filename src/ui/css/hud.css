@@ -629,10 +629,21 @@
 /* Querformat (niedrig): mittig unter dem Kompass */
 @media (max-height: 520px) { .fhud.touchmode { right: auto; left: 50%; bottom: auto; top: 22%; transform: translateX(-50%); align-items: center; } .fhud.touchmode .fh-combo { align-items: center; } }
 .fhud.touchmode .fh-arts { display: none; }
+/* 4.6H: Offiziers-Kombo-Assists rechts neben den Kampfkünsten (am Handy Touch-Knöpfe) */
+.fh-assists { display: flex; gap: 0.32em; padding-left: 0.55em; border-left: 1px solid color-mix(in srgb, var(--brass-100) 35%, transparent); }
+.fh-assist { position: relative; width: 2.75em; height: 3.15em; padding: 0; border: 1px solid color-mix(in srgb, var(--ac, #ffd27a) 60%, #000); border-radius: 0.55em; background: radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--ac, #ffd27a) 32%, #1a0f08), #120a05 76%); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55), inset 0 0 9px color-mix(in srgb, var(--ac, #ffd27a) 30%, transparent); color: #fff; overflow: hidden; pointer-events: auto; cursor: pointer; }
+.fh-assist .ic { display: block; margin-top: 0.3em; font: 700 1.1em/1 var(--font-text); font-style: normal; text-shadow: 0 0 8px var(--ac, #ffd27a), 0 1px 0 #000; }
+.fh-assist .nm { display: block; margin-top: 0.12em; font: 800 0.46em/1.1 var(--font-text); letter-spacing: 0.05em; text-transform: uppercase; color: var(--brass-100); text-shadow: 0 1px 0 #000; }
+.fh-assist .of { display: block; font: 600 0.4em/1.1 var(--font-text); color: color-mix(in srgb, var(--ac, #ffd27a) 70%, #fff); text-shadow: 0 1px 0 #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 0.2em; }
+.fh-assist kbd { position: absolute; top: 0.15em; left: 0.16em; z-index: 2; padding: 0 0.26em; font-size: 0.5em; }
+.fh-assist .cd { position: absolute; inset: 0; z-index: 1; background: conic-gradient(rgba(0, 0, 0, 0.74) calc(var(--cd, 0) * 360deg), transparent 0); pointer-events: none; text-decoration: none; }
+.fh-assist.cool .ic, .fh-assist.cool .nm, .fh-assist.off .ic, .fh-assist.off .nm { opacity: 0.45; }
+.fh-assist.ready { animation: fh-ready 0.5s ease-out; }
+.fhud.touchmode .fh-assists { display: none; }
 .fhud.touchmode .fh-combo { align-items: flex-end; }
 .fhud.touchmode .fh-style { min-width: 0; }
 .fhud.touchmode .fh-count b { font-size: 2.2em; }
-@media (prefers-reduced-motion: reduce) { .fh-art.ready, .fh-combo.pop b { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .fh-art.ready, .fh-assist.ready, .fh-combo.pop b { animation: none; } }
 /* 4.6B: Willenskraft-Leiste (füllt sich im Kampf, voll = Sturm-Erwachen, im Erwachen Restzeit), Aura-Zeichen, Faji-Form, gesperrte Künste */
 .fh-will { display: flex; align-items: center; gap: 0.45em; font: 800 0.58em/1 var(--font-text); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-dim); text-shadow: 0 1px 0 #000, 0 0 6px rgba(0, 0, 0, 0.75); white-space: nowrap; }
 .fh-will u { display: block; width: 15em; height: 0.55em; border: 1px solid color-mix(in srgb, var(--fc) 40%, #000); border-radius: 0.3em; background: rgba(0, 0, 0, 0.6); overflow: hidden; }

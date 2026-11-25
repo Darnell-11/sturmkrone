@@ -1392,6 +1392,39 @@ export class CombatSystem implements EnemyWorld {
     return t;
   }
 
+  /**
+   * 4.6H: Treffer eines Offiziers-Assists (Sperrfeuer, Orkan-Schildstoß): volle Treffer-Pipeline (Rüstung, Haltung, Hochschleudern, In-der-Luft-
+   * Halten, Endboss-Grenzen über `Enemy.takeHit`), Verbände nehmen Flächenschaden und fliegen. Effekt über `vfxHit` (AnimeVfxForge).
+   * Rückgabe: 0 = geblockt/kein Treffer, 1 = Treffer, 2 = Haltungsbruch oder K.O.
+   */
+  assistHit(t: Enemy | TroopSquad, o: { dmg: number; poise: number; knock: number; launch: number; juggle: number; airHold: number; fling: number; dirX: number; dirZ: number; color: string; element: string; srcId?: EntityId }): number {
+    if (!t.alive) return 0;
+    if (!(t instanceof Enemy)) {
+      const before = t.heads;
+      t.receive(Math.round(o.dmg * MASS_CLEAVE), o.dirX, o.dirZ);
+      if (o.fling > 0) t.fling(o.dirX, o.dirZ, o.fling);
+      HIT_P.set(t.x, t.y + 1.2, t.z);
+      this.vfxHit?.(HIT_P.x, HIT_P.y, HIT_P.z, o.dirX, o.dirZ, o.color, o.element, true, false, o.launch);
+      this.overlay.number(HIT_P, t.heads < before ? `${Math.round(o.dmg * MASS_CLEAVE)} (−${before - t.heads})` : Math.round(o.dmg * MASS_CLEAVE), 'hit');
+      if (t.heads <= 0) { this.onSquadDown(t); return 2; }
+      return 1;
+    }
+    const e = t;
+    const boss = !!(e.def.boss || e.def.raid);
+    const res = e.takeHit({
+      dmg: Math.round(o.dmg), poise: o.poise, knock: o.knock, launch: !boss && o.launch > 0 ? o.launch : undefined, juggle: o.juggle > 0 ? o.juggle : undefined,
+      dirX: o.dirX, dirZ: o.dirZ, heavy: true, src: o.srcId, ranged: o.launch <= 0,
+    } as HitInfo, this.now, this);
+    if (res === 'blocked') { this.overlay.number(e.head.setY(e.y + 1.6 * e.def.scale), 'Abgewehrt', 'info'); return 0; }
+    if (o.airHold > 0 && e.state === 'air' && !boss) e.airHoldT = Math.max(e.airHoldT, o.airHold);
+    HIT_P.set(e.x, e.y + 1.2 * e.def.scale, e.z);
+    this.vfxHit?.(HIT_P.x, HIT_P.y, HIT_P.z, o.dirX, o.dirZ, o.color, o.element, true, false, boss ? 0 : o.launch);
+    this.overlay.number(e.head.setY(e.y + 1.6 * e.def.scale), Math.round(o.dmg), 'hit');
+    if (res === 'kill') { this.onKill(e); return 2; }
+    if (res === 'stagger' && e.hasPosture) this.overlay.number(e.head.setY(e.y + 2.8 * e.def.scale), 'Haltung gebrochen!', 'crit');
+    return res === 'stagger' ? 2 : 1;
+  }
+
   /** Treffer durch die Crew */
   allyHit(e: Enemy, dmg: number, dirX: number, dirZ: number, color: string, heavy: boolean, srcId?: EntityId) {
     if (!e.alive) return;

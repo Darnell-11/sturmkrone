@@ -31,6 +31,23 @@ export interface FighterView {
   lockForm: readonly number[];
 }
 
+/** 4.6H: Anzeige eines Offiziers-Kombo-Assists (Knopf in der Kampfleiste und Touch-Knopf) */
+export interface AssistView {
+  id: string;
+  icon: string;
+  short: string;
+  label: string;
+  /** Wer ihn ausführt (Kanonier / Schütze …) und welcher Offizier gerade bereitsteht ('' = keiner) */
+  who: string;
+  officer: string;
+  color: string;
+  /** Abklingzeit: 0 = bereit … 1 = gerade benutzt */
+  cd: number;
+  ready: boolean;
+  /** Grund, warum nicht (null = bereit) */
+  blocked: string | null;
+}
+
 /** Rang des Zählers (Farbe, Größe): ab 10, 25, 50 Treffern */
 const RANKS: readonly [number, string][] = [[50, 'Legendär!'], [25, 'Brutal!'], [10, 'Stark!'], [0, 'HIT!']];
 
@@ -64,6 +81,11 @@ export class FighterHud {
   private lockK = '';
   /** Kampfkunst angetippt (Touch-Modus über die Leiste, falls die Touch-Knöpfe fehlen) */
   onArt: (slot: number) => void = () => {};
+  /** 4.6H: Offiziers-Assist angeklickt (0 … 2) */
+  onAssist: (i: number) => void = () => {};
+  private assistBox!: HTMLElement;
+  private assistEls: HTMLElement[] = [];
+  private assistK: string[] = [];
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
@@ -74,6 +96,7 @@ export class FighterHud {
       <div class="fh-strip">
         <div class="fh-style"><b></b><small></small><em class="fh-form" hidden></em></div>
         <div class="fh-arts" role="group" aria-label="Kampfkünste"></div>
+        <div class="fh-assists" role="group" aria-label="Offiziers-Assists" hidden></div>
       </div>
       <div class="fh-will" data-st="fill">
         <span class="fh-aura" title=""></span>
@@ -103,6 +126,49 @@ export class FighterHud {
       b.addEventListener('pointerdown', (e) => { e.preventDefault(); this.onArt(i + 1); });
       arts.appendChild(b);
       this.slots.push(b);
+    }
+    this.assistBox = this.root.querySelector<HTMLElement>('.fh-assists')!;
+  }
+
+  /**
+   * 4.6H: Leiste der Offiziers-Kombo-Assists (nur am Desktop; am Handy sind es Touch-Knöpfe). `views` = null blendet sie aus (kein Landtrupp),
+   * `keys` = Tastenkappen (8, 9, 0 oder R3+X …). Je Bild; baut nur bei einer Änderung neu.
+   */
+  setAssists(views: readonly AssistView[] | null, keys: readonly string[]) {
+    const show = !!views && views.some((v) => !!v.officer);
+    if (this.assistBox.hidden === show) this.assistBox.hidden = !show;
+    if (!show || !views) return;
+    if (this.assistEls.length !== views.length) {
+      this.assistBox.textContent = '';
+      this.assistEls = views.map((_v, i) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'fh-assist';
+        b.innerHTML = '<kbd></kbd><i class="ic"></i><span class="nm"></span><small class="of"></small><s class="cd"></s>';
+        b.addEventListener('pointerdown', (e) => { e.preventDefault(); this.onAssist(i); });
+        this.assistBox.appendChild(b);
+        return b;
+      });
+      this.assistK = views.map(() => '');
+    }
+    for (let i = 0; i < views.length; i++) {
+      const v = views[i], el = this.assistEls[i];
+      const cd = Math.max(0, Math.min(1, v.cd));
+      const k = `${v.icon}|${v.short}|${v.officer}|${keys[i] ?? ''}|${v.ready ? 1 : 0}|${cd.toFixed(2)}|${v.blocked ?? ''}`;
+      if (k === this.assistK[i]) continue;
+      const was = this.assistK[i];
+      this.assistK[i] = k;
+      el.style.setProperty('--ac', v.color);
+      el.style.setProperty('--cd', cd.toFixed(3));
+      el.querySelector('kbd')!.textContent = keys[i] ?? '';
+      el.querySelector('.ic')!.textContent = v.icon;
+      el.querySelector('.nm')!.textContent = v.short;
+      el.querySelector('.of')!.textContent = v.officer || '–';
+      el.title = `${v.label} (${v.who}${v.officer ? `: ${v.officer}` : ''}) – ${v.blocked ?? 'bereit'}`;
+      el.classList.toggle('cool', cd > 0);
+      el.classList.toggle('off', !v.officer || (!v.ready && cd <= 0));
+      // eben wieder bereit: kurzes Aufleuchten
+      if (v.ready && was && !was.includes('|1|')) { el.classList.remove('ready'); void el.offsetWidth; el.classList.add('ready'); }
     }
   }
 
