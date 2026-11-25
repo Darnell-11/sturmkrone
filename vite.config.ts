@@ -54,5 +54,7 @@ export default defineConfig({
   ],
   test: {
     include: ['tests/**/*.test.ts'],
+    // die Welt-Prüfungen (Routen um alle Inseln, Blueprints, Kriegssimulation) rechnen viel: auf dem GitHub-Rechner bis zu viermal langsamer als lokal
+    testTimeout: 30000,
   },
 });
