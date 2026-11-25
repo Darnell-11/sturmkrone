@@ -1,5 +1,93 @@
 # Was ist neu
 
+## 4.5.0 – Phase 4.5A: Krieg der Mächte – eigene Wirtschaft, Nutzen-KI, Diplomatie und Koalitionen, Großschlachten mit Nachschub, Belagerungen und Besitzerwechsel (25.11.2026, nur lokal)
+
+**Was du siehst**
+- **Die Welt führt ihre eigenen Kriege.** Sechs Mächte – England, Niederlande, Deutschland, Frankreich, Kurogane und die Marine – wirtschaften, rüsten, verhandeln und kämpfen, auch wenn du nicht hinsiehst. **38 von 51 bewohnten Inseln** können den Herrn wechseln: Kolonien, Häfen, die Grenzfesten an den Meerengen und **alle sechs Mega-Inseln**. Geschützt bleiben die fünf Hauptstädte, Weißwacht und die ganze Bernsteinsee mit Ankerglück.
+- **Rohstoffe:** Gold, Kanonenstahl, Hartholz, Segeltuch, Proviant, Medizin und Rekruten. Jede gehaltene Insel liefert, was ihr Markt herstellt (Stahlminen Stahl, Holzkolonien Holz, Häfen Gold und Mannschaft …). Flotten, Truppen, Reparaturen und Belagerungen kosten. Verliert eine Macht eine Rohstoff-Insel, fehlt ihr dieser Nachschub.
+- **Die Mächte denken mit:** Fehlt Holz, nimmt die KI eine Holzkolonie ins Visier, fehlt Stahl, eine Stahlmine. Mit voller Kriegskasse plant sie **Großoffensiven** auf Meerengen und Mega-Inseln. Belagerte eigene Inseln bekommen **Entsatzflotten**. Krieg erklärt eine Macht nur, wenn sie die Armada auch bezahlen kann. Die Marine erobert nichts: Sie holt nur ihre eigenen Inseln zurück und stellt sich gegen Übermächtige.
+- **Diplomatie:** Allianz, Handelspakt, Neutral, Rivalität und Offener Krieg, mit Vertrauen und Kriegsmüdigkeit.
+  - **Handelspakte** schließen Mächte, deren Überschüsse sich ergänzen: +20 % Ertrag, dazu tauschen sie Waren.
+  - Lange Kriege enden im **Waffenstillstand** (20 Minuten Frieden), der Schwächere zahlt **Reparationen**.
+  - Wird eine Macht **übermächtig** (mehr als 34 % aller Ressourcen oder mehr als drei Mega-Inseln), schließen sich die Bedrohten zur **Koalition** zusammen und greifen gemeinsam an. Fällt der Hegemon unter 28 %, löst sich die Koalition auf.
+- **Armadas:** 6 bis 10 Schiffe, nämlich ein Kommandoschiff (Klasse 4 – 5, Ausbau 4 – 5), Linienschiffe und Fregatten sowie 1 – 2 bewaffnete **Nachschub-Transporter** mit Truppen, Proviant und Medizin.
+- **Großschlachten auf See:** Treffen feindliche Armadas aufeinander, kämpfen sie, bis eine Seite abdreht: bei unter 30 % ihrer Anfangs-Feuerkraft, spätestens nach 7 Minuten.
+  - **In deiner Nähe (ab 1,5 km) werden aus den Daten echte Schiffe** in den Farben ihrer Macht. Du kannst zusehen oder eingreifen; wie bei den Grenz-Seeschlachten zählt das für Ruf & Ehre.
+  - Weiter weg rechnet die Welt die Schlacht nach festen Regeln zu Ende, ohne Zufall von außen. Ab 2,3 km werden die Schiffe wieder zu Daten, nahtlos in beide Richtungen.
+- **Belagerungen:** Die Armada legt sich als Ring vor die Zielinsel.
+  - In deiner Nähe **landen ihre Truppen per Beiboot** und kämpfen am Strand gegen die Garnison: zwei Heere in den Uniformen ihrer Mächte.
+  - Hält die Belagerung **rund 12 Minuten**, fällt die Insel, und der Sieger erbeutet die Hälfte ihrer Vorräte.
+  - **Ein versenkter Nachschub-Transporter lässt die Moral der Belagerer drastisch einbrechen.** Das gilt auch, wenn du ihn versenkst. Ohne Proviant und Medizin hungert die Belagerung aus und bricht ab.
+- **Besitzerwechsel, den man sieht:** Ein Banner meldet „X ist gefallen“.
+  - Auf der eroberten Insel wehen Flaggen und Banner des Siegers, die Laternen leuchten in seiner Farbe, und seine Wachen stehen am Hafen.
+  - Inselname auf der Karte, Hafenherr und Marktpreise wechseln mit, auch auf den Mega-Inseln: Die Bezirkswachen tragen dann die Farben der neuen Macht.
+  - An Grenzfesten, die nicht mehr der Marine gehören, patrouillieren keine Marine-Boote mehr.
+- **Kriegswirtschaft:**
+  - Belagerte und frisch eroberte Inseln zahlen **bis zum 1,9-Fachen** für Kanonenstahl, Hartholz, Medizin und Segeltuch, denn die Garnison kauft die Vorräte auf.
+  - **Embargo:** Der Herr eines Hafens kauft und verkauft keine Exportwaren seiner Kriegsgegner. Das Kontor zeigt „Embargo“ samt der verfeindeten Macht. Was die Insel selbst herstellt, bleibt frei, Schwarzmärkte sind ausgenommen.
+- **Weltlage** im Fenster „Ruf & Ehre“ (auch auf dem Handy): Inseln, Mega-Inseln, Anteil an den Ressourcen, Kriege, Pakte, Rivalen, Armadas auf See, Kriegskasse, Hegemon und Koalitionen, dazu die Bilanz aller Kriege bisher.
+- **Meldungen:** Kriegserklärungen, Waffenstillstände, Pakte und Koalitionen erscheinen immer. Armadas, Großschlachten, Belagerungen und versenkte Transporter werden in deiner Nähe gemeldet, mit Richtung und Entfernung.
+- **Weltkarte:** Armadas erscheinen als Pfeile in der Farbe ihrer Macht, Belagerungen mit Fortschrittsring, laufende Großschlachten als gekreuzte Kanonen.
+- **Kamera-Feinschliff:** Kommt die Kamera der Figur näher als 0,70 m (Rücken an der Wand), blendet die Figur weich aus, bei 0,45 m ganz, statt von innen gezeigt zu werden.
+
+**Technik (für Entwickler)**
+- **Daten** (`data/nations.ts`, rein):
+  - Rohstoffe (`RESOURCE_IDS`, Ziel-, Ober- und Unterhaltswerte)
+  - Ertrag je Inselstufe (`BASE_YIELD`) und je Marktware (`GOOD_YIELD`)
+  - Garnisonen, strategischer Wert, Schiffskosten je Klasse (`SHIP_COST`), Rollen (`ROLE_PLAN`, `TROOPS_PER_SHIP`, `TRANSPORT_SUPPLY`)
+  - Lehren der KI (`NationDoctrine`: Angriffslust, Handel, Eroberung, Gewichte), `NATION_DEFS`, `START_RELATIONS`
+  - **alle Zahlen der Simulation in `WAR`**
+- **`world/factionWarEngine.ts`** (rein, kein three.js, Zustand als JSON, eigener Zufall im Zustand):
+  - `NationRegistry`: neue Nation = ein Eintrag, Zustand, Beziehungen und Wirtschaft ergänzen sich, auch in alten Ständen.
+  - `warWorldFromDefs` übersetzt die Inseln in `WarIsland` mit Stufe, Ertrag, Schutz und Eroberbarkeit.
+  - `FactionWarEngine.update(dt)` rechnet in Schritten zu 1 s, höchstens 30 je Aufruf. Wirtschaft alle 60 s; Diplomatie und KI alle 30 s.
+  - Nutzen-KI: `utility` = Mangel × Lehre + strategischer Wert + Mega-Bonus gegen Entfernung und Garnison, Schwelle `0,95 − 0,45 · Angriffslust`. `affordPlan` hält 25 % Gold und Proviant als Reserve zurück.
+  - Armadas fahren auf Wegen um die Inseln. Schlachten laufen über Feuerkraft, Treffer auf Transporter und Rückzugsregeln; Belagerungen über Nachschub, Zermürbung, Küstenfeuer und Fortschritt; dazu Eroberung mit Beute.
+  - Meldungen (`WarNotice`) über `drain()`; `cleanFactionWar` prüft geladene Stände (eine Hauptstadt lässt sich nicht verschenken).
+- **`world/factionWarLive.ts`:**
+  - Echte Schiffe ab 1 500 m über `NavalSystem.spawnEventShipSteps`, Abbau ab 2 300 m. Je Armada höchstens 8 / 5 / 3 Schiffe nach `NavalSystem.detail`; gebaut wird gerecht, das Schiff der Armada mit den wenigsten zuerst.
+  - Lage, Rumpf, Segel und Untergang gehen über `syncArmada`/`syncShip` zurück an die Engine.
+  - Eine Schlacht übernimmt die Seewelt erst, wenn beide Seiten mindestens zwei echte Schiffe haben (`setBattleLive`); bis dahin rechnet die Engine, höchstens 25 s wartet sie auf Bauaufträge.
+  - Belagerungstruppen ab 650 m (Abbau 950 m): `SiegeTroops`, zwei Seiten mit `TroopSquad` und `TroopRenderer` in den Uniformen (`hordePalette`), Landung per Beiboot; Verluste gehen anteilig über `syncSiege` zurück.
+- **Seesystem:** `NavalSystem.openWarBattle`/`closeWarBattle` (`SeaBattle.war`, ohne Marine-Eingriff und Zeitlimit), KI-Schaden in Großschlachten `BATTLE.warDamage` 1,5 (gleiche Trefferpunkte wie in der Engine über `maxHull`), `fortOwner` (Marine-Patrouillen nur an Marine-Festen).
+- **Welt:**
+  - `WorldStreamer.restyle(i)` + `StreamHost.restyleActive` (höchstens ein Umkleiden je Bild, nur ACTIVE_HIGH). Entladene Inseln lesen den Besitzer beim nächsten Aufbau.
+  - `SeaWorld.dressOwner`: Banner-Zwillinge über `userData.bannerPose`, Laternen über `userData.factionLantern`.
+  - `ownerFaction`/`ownerName` für Festungen, Häfen, Mega-Bezirke und Namen; Wachen der Eroberer über `updateWarGarrisons`.
+- **Markt:** `WAR_DEMAND` (`data/economy.ts`), `warDemandK` und `embargoed` (`core/economyEngine.ts`); `Game.marketSite` setzt `war` und `embargo`, Kauf und Verkauf verweigern Embargo-Waren.
+- **Spielstand 20:** `world.factionWar`. Die Migration 19 → 20 setzt `null`, beim nächsten Laden entsteht das Ökosystem mit einem Startwert aus `meta.created`.
+- **Nahblende:** `cameraNearFade`, `NearFade` und `NEAR_FADE` (`graphics/cameraRig.ts`), im Figuren-Shader die Uniform `uSkNear` (gerastertes Ausblenden über die Rauschmaske, kein neues Programm).
+- **Tests:** `tests/factionWarEngine.test.ts` (25):
+  - Registry erweiterbar; Schutz und Eroberbarkeit
+  - Produktion, Kosten und Verlust einer Rohstoff-Insel
+  - Mangel-Ziele Holz/Stahl, Großoffensive auf eine Mega-Insel, nie geschützte Inseln oder Partner, Ordnungsmacht
+  - Handelspakt, Waffenstillstand mit Reparationen, Koalition über Anteil und über Mega-Inseln samt Auflösung
+  - Schlacht deterministisch; Transporter-Verlust und Aushungern
+  - Fall nach 12 Minuten mit Beute; Umkleiden über den WorldStreamer; Kriegspreise und Embargo
+  - Spielstand 20, Rundlauf, manipulierte Stände, Langlauf ohne Entgleisen
+  - `cameraNearFade`
+
+  **814 Tests**, `tsc` und `npm run build` grün.
+- **Kalibrierung:** 3 Spielstunden Simulation ergeben 7 Kriege, 15 Großschlachten, 4 Eroberungen, 6 Handelspakte und 5 Waffenstillstände; Rechenzeit 74 ms.
+- **Im Browser geprüft** (Playwright, Ultra; Desktop 1440 × 900 und Handyformat 390 × 844):
+  - **Großschlacht** vor Nebelhafen: Frankreich (8 Schiffe) gegen England (7), 15 echte Schiffe, Bildzeit 8,05 ms. Nach 208 s dreht England ab.
+  - **Belagerung von Nebelhafen:** Wachring vor der Küste, nach 1,1 s landen 21 Angreifer gegen 11 Verteidiger, die Verluste gehen zurück an die Engine.
+  - **Fall der Insel:** Besitzer Frankreich, zwei Banner-Zwillinge, Inselname „Frankreich“, ein Umkleiden, französische Wachen, Markt-Unruhe 0,99.
+  - **Kontor in Königshafen:** Embargo auf Gewürze, Wein, Seide und Fechtklingen durch Niederlande und Frankreich.
+  - **Weltkarte:** 6 Armadas, 1 Belagerung, 1 Schlacht.
+  - **Nahblende:** bei 0,2 m ganz ausgeblendet, bei 0,76 m sichtbar.
+  - **Meldungstexte** mit richtigen Artikeln („erklärt der Marine den Krieg“, „eine niederländische Armada“); keine Konsolenfehler.
+  - **Startzeit im Build:** 8,40 – 8,74 s und 168 – 169 Shader-Programme. Das Ökosystem entsteht erst beim Laden eines Spielstands und kostet keine Startzeit.
+- **Abweichungen und offene Punkte:**
+  1. Neben Ankerglück, Weißwacht und den sechs Raid-Festungen ist die **ganze Bernsteinsee (Ring 1)** geschützt; sie bleibt das neutrale Zentrum.
+  2. Eroberte Inseln behalten die **Architektur ihres Gründers** (englisches Fachwerk bleibt englisch); es wechseln Flaggen, Banner, Laternen, Wachen, Name, Hafenherr und Markt.
+  3. Der **Landkampf einer Belagerung** ist zum Zusehen: Die Spielfigur kann (noch) nicht mitkämpfen, eingreifen kann man auf See (Transporter versenken, Schlacht). Die Trupps am Strand sind ein Ausschnitt des Heeres (2 – 6 Trupps je Seite); ihre Verluste zählen anteilig. Echte Truppen gibt es nur an der nächsten belagerten Insel.
+  4. Bis eine Großschlacht in 3D vollständig steht, vergehen je nach Gerät **15 – 30 s** (Schiffe entstehen in Teilschritten), so lange rechnet die Engine weiter. Auf Niedrig und Mittel zeigen die Armadas weniger Schiffe (5 bzw. 3), gerechnet wird mit allen.
+  5. Das Embargo gilt nicht für Waren, die die Insel selbst herstellt (sonst stünden manche Märkte leer).
+  6. Die Marine bekommt einen festen Sold (`stipend`), weil sie als Ordnungsmacht kaum eigene Rohstoff-Inseln hält.
+  7. Die Allianz entsteht in dieser Fassung nur als Koalition gegen einen Hegemon; dauerhafte Bündnisse ohne Hegemon gibt es nicht.
+  8. Kein Test auf einem echten Handy (Handyformat im Desktop-Chromium).
+
 ## 4.4.4 – Phase 4.4 abgeschlossen: Kamera-Engine – nie mehr durch Fels und Wände, See-Kamera nach Schiffsklasse, Sichtfeld in Fahrt und Windstraßen, gerichtete Treffer-Stöße, weiche Übergänge (25.11.2026, nur lokal)
 
 **Phase 4.4 ist damit vollständig:** 4.4.0 (4.4A: PBR-Schmiede, Hangfels, Massentruppen, Kantenlicht, freistehende Mega-Brücken), 4.4.1 (klare Sicht, echter Nebel, Wolkenhimmel, Wellensätze), 4.4.2 (4.4B: Start in gut 8 s, Anime-Fighter-Look, Waffen mit Härtungslinie, wehende Mäntel, Sturm-Gischt), 4.4.3 (4.4C: Meer mit Tiefe, vier Tagesphasen, Regionsstimmung, selektiver Bloom) und jetzt 4.4.4 (Kamera-Engine).

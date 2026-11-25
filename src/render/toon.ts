@@ -178,6 +178,8 @@ export interface ToonFxUniforms {
   dissolveCol: { value: Color };
   /** Stärke des heroischen Kantenlichts dieser Figur (1 = normal; Bosse und Kommandanten höher, 4.4B) */
   hero: { value: number };
+  /** Nahbereichs-Ausblenden (4.5A, `cameraNearFade`): 0 = ganz sichtbar, 1 = ganz ausgeblendet (gerastertes Verwerfen, kein Durchsichtig-Pfad) */
+  near: { value: number };
 }
 const optsOf = new WeakMap<Material, ToonOptions>();
 const fxOf = new WeakMap<Material, ToonFxUniforms>();
@@ -213,7 +215,7 @@ export function extendToon(mat: Material, key: string, fn: ToonExtra['fn']) {
 const cache = new Map<string, MeshToonMaterial>();
 
 /** Geteilte Nullwerte des Treffer-/Auflöse-Effekts für Figuren-Materialien ohne eigene Kopie (gleiches Programm wie die Kopien) */
-const NO_FX: ToonFxUniforms = { hit: { value: 0 }, hitCol: { value: new Color(1, 1, 1) }, dissolve: { value: 0 }, dissolveCol: { value: new Color(1, 0.45, 0.12) }, hero: { value: 1 } };
+const NO_FX: ToonFxUniforms = { hit: { value: 0 }, hitCol: { value: new Color(1, 1, 1) }, dissolve: { value: 0 }, dissolveCol: { value: new Color(1, 0.45, 0.12) }, hero: { value: 1 }, near: { value: 0 } };
 
 /** Anteil der dreistufigen Cel-Rampe an Figuren (4.4B): 0 = weicher Verlauf wie in der Welt, 1 = harte Anime-Stufen */
 export const CEL = { skin: 0.55, cloth: 0.8, hair: 0.65 };
@@ -266,6 +268,7 @@ const FX_PARS_GLSL = /* glsl */ `
   uniform float uDissolve;
   uniform vec3 uDissolveCol;
   uniform float uSkHeroK;
+  uniform float uSkNear;
   varying vec3 vSkFxPos;
   float skFxH(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
   float skFxN(vec3 x) {
@@ -1032,11 +1035,13 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
       shader.uniforms.uDissolve = fxU.dissolve;
       shader.uniforms.uDissolveCol = fxU.dissolveCol;
       shader.uniforms.uSkHeroK = fxU.hero;
+      shader.uniforms.uSkNear = fxU.near;
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vSkFxPos;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSkFxPos = position;');
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (uDissolve > 0.0 && skFxNoise() < uDissolve) discard;');
+        // Nahbereichs-Ausblenden: gerastertes Verwerfen über ein Rauschen in Bildschirmkoordinaten (bleibt undurchsichtig, keine Sortierung, kein neues Programm)
+        .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (uDissolve > 0.0 && skFxNoise() < uDissolve) discard;\nif (uSkNear > 0.0 && fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) < uSkNear) discard;');
     }
     const cav = [0, 0.05, 0.2, 0.26, 0.12, 0, 0, 0.3][Math.max(0, pbr.surf)];
     const relief = [0, 0.35, 0.7, 0.7, 0.5, 0, 0, 0.8][Math.max(0, pbr.surf)];
@@ -1207,7 +1212,7 @@ export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial 
   const surfRough: Partial<Record<Surface, number>> = { skin: 0.55, cloth: 0.9, leather: 0.5, hair: 0.6, eye: 0.2 };
   const rough = o.roughness ?? (o.surface && metal === 0 && surfRough[o.surface] !== undefined ? surfRough[o.surface]! : metal > 0 ? (spec >= 1 ? 0.3 : 0.42) : 0.85);
   const fx: ToonFxUniforms | undefined = o.fx
-    ? { hit: { value: 0 }, hitCol: { value: new Color(1, 1, 1) }, dissolve: { value: 0 }, dissolveCol: { value: new Color(1.0, 0.45, 0.12) }, hero: { value: 1 } }
+    ? { hit: { value: 0 }, hitCol: { value: new Color(1, 1, 1) }, dissolve: { value: 0 }, dissolveCol: { value: new Color(1.0, 0.45, 0.12) }, hero: { value: 1 }, near: { value: 0 } }
     : undefined;
   // PBR-Schmiede (4.4A): Figuren-Stoff und -Leder, Metall ohne eigene Reliefkarte und ausdrücklich gewählte Sätze
   const forge: ForgeKind | null = o.forge ?? (o.surface === 'cloth' || o.micro === 'cloth' ? 'stoff' : o.surface === 'leather' || o.micro === 'leather' ? 'leder' : metal > 0 && !o.normalMap && !o.surface ? 'stahl' : null);

@@ -43,7 +43,7 @@ export function factionRole(id: FactionId, role: string): Material {
     case 'iron': return AM('#3A3C40');
     case 'gold': return AM('#D4AC42');
     case 'rope': return AM('#B8A070');
-    case 'lantern': return id === 'kurogane' ? redLantern : AM(f.lantern);
+    case 'lantern': { const m = id === 'kurogane' ? redLantern : AM(f.lantern); m.userData.factionLantern = true; return m; }
     case 'glass': return id === 'marine' ? marineGlass : AM('#9CB4D0');
     default: return AM(f.wood);
   }

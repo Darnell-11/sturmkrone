@@ -9,9 +9,10 @@ import { emptyUnlocks, type ConquestRecord, type Unlocks } from '../../raid/occu
 import { emptyReputation, type FactionReputationState } from '../../data/reputation';
 import { emptyFleet, type FleetState } from '../../data/playerFleet';
 import type { WorldEventState } from '../../world/worldEventDirector';
+import type { FactionWarState } from '../../world/factionWarEngine';
 import { emptyChart, type ChartState } from '../../world/mapDiscovery';
 
-export const SAVE_VERSION = 19;
+export const SAVE_VERSION = 20;
 
 export interface QuestProgress { id: string; step: number; count: number }
 
@@ -165,6 +166,11 @@ export interface SaveData {
      * (15 Minuten) und besiegtem Insel-Kommandanten (25 Minuten), siehe `megaToSave`/`cleanMegaSave` in data/megaIslands.ts.
      */
     mega?: MegaSaveState;
+    /**
+     * Das Ökosystem der Mächte (seit Version 20, Phase 4.5A, world/factionWarEngine.ts): Kassen, Ressourcen, Verträge, Armadas, Großschlachten,
+     * Belagerungen und der Besitz eroberbarer Inseln als reine Daten. null = noch keins (es entsteht beim Spielstart aus den Inseldaten neu).
+     */
+    factionWar?: FactionWarState | null;
   };
   progress: ProgressState;
   gear: GearState;
@@ -194,7 +200,7 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
       fame: 0,
       look: defaultLook(faction),
     },
-    world: { boat: null, time: 9, weather: 'klar', seaEvents: null, chart: emptyChart(), mega: {} },
+    world: { boat: null, time: 9, weather: 'klar', seaEvents: null, chart: emptyChart(), mega: {}, factionWar: null },
     progress: defaultProgress(faction),
     gear: { weapon: 0, armor: 0, potions: 3, shrine: 0, trinkets: [], trinket: null, items: {}, heads: [], head: null, bar: ['proviant', null, null, null], owned: [], worn: {} },
     skills: { learned: {}, slots: [null, null, null], sp: 1, awakened: [] },

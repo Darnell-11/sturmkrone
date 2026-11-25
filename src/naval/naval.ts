@@ -24,7 +24,7 @@ import {
 import { NoColorSpace, type Texture } from 'three';
 import type { CombatFx } from '../combat/fx';
 import { AMMO, DEFAULT_SHIP_LOOK, factionShipLook, HULL_COLORS, SAIL_COLORS, SEA_SPEED, SHIP_CLASSES, type AmmoId, type NavalRole, type ShipLook } from '../data/ships';
-import { BORDER_FORTS, BORDERS, FACTIONS, borderDistance, marineStance, sectorAt, type FactionId } from '../data/factions';
+import { BORDER_FORTS, BORDERS, FACTIONS, borderDistance, marineStance, sectorAt, type FactionId, type PowerId } from '../data/factions';
 import { BATTLE, battleSite, compassWord, nextDelay, sideSize, type BattleSite } from './battleRules';
 import { cannotBeSunk } from './shipSim';
 import { PredictiveMaritimeSteering, aiSpreadK, arriveRadius, createAiNav, fireRangeOf, newSteerCommand, newSteerSelf, newSteerTarget, noteRam, resetGoal, type AiNavState, type SteerCommand, type SteerSelf, type SteerTarget } from './shipSteering';
@@ -170,6 +170,8 @@ export interface SeaBattle {
   /** Gegen welche Seite die Marine kämpft (bevorzugt die der Schwarzsegel) */
   marineFoe: 0 | 1;
   ended?: boolean;
+  /** Großschlacht der FactionWarEngine (Kennung der Schlacht, Phase 4.5A): ohne Zeitlimit und ohne Marine-Eingreifen; Schiffe und Ende führt die Seewelt */
+  war?: string;
 }
 
 /** Markierung einer laufenden Seeschlacht für Kompass und Weltkarte */
@@ -257,6 +259,8 @@ export class NavalSystem {
   bossTarget: { hitTest(p: Vector3): boolean; damage(n: number, pen: number): number } | null = null;
   /** Fahrtfaktor eines Schiffs aus Meeresströmung und Wetterzelle (setzt die Seewelt; 1 = keiner) */
   flowK: (s: Ship) => number = () => 1;
+  /** Besitzer einer Grenzfeste (4.5A: eroberbar); nur Festen in Marine-Hand stellen Patrouillenboote */
+  fortOwner: (fortId: string) => FactionId | null = () => 'marine';
   /** Faktor auf die Sichtweite der KI an einem Ort (Nebelbänke; setzt die Seewelt) */
   sightK: (x: number, z: number) => number = () => 1;
   /** Der Spieler hat ein Schiff eines Welt-Ereignisses oder Konvois getroffen, gerammt oder beschossen (setzt die Seewelt, Phase 4.3C) */
@@ -777,6 +781,7 @@ export class NavalSystem {
     if (this.patrolT > 0) return;
     this.patrolT = 3;
     for (const f of BORDER_FORTS) {
+      if (this.fortOwner(f.id) !== 'marine') continue;
       const a = (BORDERS[f.borderIndex].deg * Math.PI) / 180;
       const fx = Math.sin(a) * f.radius, fz = Math.cos(a) * f.radius;
       if (Math.hypot(p.x - fx, p.z - fz) > 560) continue;
@@ -936,7 +941,7 @@ export class NavalSystem {
     for (const b of this.battles) {
       b.t += dt;
       const m = this.battleMark(b);
-      if (!b.marineDone && b.t >= BATTLE.marineAfter) { b.marineDone = true; if (Math.random() < BATTLE.marineChance) this.marineStep(b); }
+      if (!b.war && !b.marineDone && b.t >= BATTLE.marineAfter) { b.marineDone = true; if (Math.random() < BATTLE.marineChance) this.marineStep(b); }
       // Rauchsäule über der Schlacht: von weitem sichtbar, dichter, je länger sie dauert
       b.smokeT -= dt;
       if (m && b.smokeT <= 0 && this.smoke && Math.hypot(m.x - p.x, m.z - p.z) < 3200) {
@@ -944,6 +949,8 @@ export class NavalSystem {
         this.smoke.puff(m.x + (Math.random() - 0.5) * 40, 10, m.z + (Math.random() - 0.5) * 40, { n: 1, size: 3.2, grow: 18, life: 12, tone: 0.2, vy: 8, spread: 3, rise: 2.4, drag: 0.5, alpha: 0.66, wind: 1.2, jitter: 12, glow: 0.35 });
       }
       let reason: BattleResult['reason'] | null = null;
+      // Großschlachten beendet die Seewelt (die Engine entscheidet über Sieg, Rückzug und Vernichtung)
+      if (b.war) continue;
       if (!m) reason = 'verlassen';
       else if (m.left[0] === 0 || m.left[1] === 0) reason = 'besiegt';
       else if (b.t > BATTLE.duration) reason = 'zeit';
@@ -970,6 +977,28 @@ export class NavalSystem {
 
   /** Nach einem Doppelspiel: die Jäger kommen bald */
   callHunters() { this.huntT = Math.min(this.huntT, 14); }
+
+  /**
+   * Großschlacht der FactionWarEngine öffnen (Phase 4.5A): eine Seeschlacht ohne Zeitlimit und ohne Marine-Patrouille. Die Seewelt (world/factionWarLive.ts)
+   * setzt die Seiten der Schiffe (`EnemyShip.battle`) und schließt sie wieder; Kompass, Weltkarte und die Ehre-Wertung des Spielers laufen wie bei
+   * den Grenzschlachten. Liefert die Nummer der Schlacht.
+   */
+  openWarBattle(warId: string, a: FactionId, b: FactionId, x: number, z: number): number {
+    const have = this.battles.find((x2) => x2.war === warId && !x2.ended);
+    if (have) return have.id;
+    const id = ++this.battleId;
+    const site = { borderIndex: -1, x, z, a: a as PowerId, b: b as PowerId, along: { x: 1, z: 0 }, across: { x: 0, z: 1 } };
+    this.battles.push({ id, site, t: 0, stats: newStats(a, b, 400, 400), marineDone: true, smokeT: 0, announced: true, engaged: false, marineFoe: 0, war: warId });
+    return id;
+  }
+
+  /** Großschlacht schließen (die Engine hat entschieden): Überlebende lösen sich, die Wertung des Spielers läuft wie bei jeder Schlacht */
+  closeWarBattle(id: number): void {
+    const b = this.battles.find((x) => x.id === id && !x.ended);
+    if (!b) return;
+    this.finishBattle(b, 'besiegt');
+    keepIf(this.battles, (x) => !x.ended);
+  }
 
   /** Eine Schlacht ohne Wartezeit beginnen (Prüfungen, Weltwerkstatt); liefert false, wenn keine Grenze in der Nähe liegt */
   forceBattle(): boolean {
@@ -2018,7 +2047,8 @@ export class NavalSystem {
     if (s.disabled) { e.state = 'patrol'; s.sailLevel = 0; s.throttle = 0; s.aiSail = null; s.steer(dt, 0, this.env); return; }
     e.aiT -= dt;
     const nav = e.nav ?? (e.nav = createAiNav(s.entityId));
-    const turn = e.fleetId && p?.alive ? this.aiFleet(e, nav, dt) : e.ev ? this.aiEvent(e, nav, dt) : this.aiGeneral(e, nav, dt);
+    // Schiffe einer Großschlacht (Armadas der FactionWarEngine) kämpfen wie in einer Seeschlacht, auch wenn sie sonst als Ereignis-Schiffe fahren
+    const turn = e.fleetId && p?.alive ? this.aiFleet(e, nav, dt) : e.ev && !e.battle ? this.aiEvent(e, nav, dt) : this.aiGeneral(e, nav, dt);
     // Inseln, Stege, Schiffe und Weltrand weicht die Lenkung selbst aus (Fühler); `pushShip` bleibt die letzte Sicherung gegen Grundberührung.
     // Meeresströmungen tragen KI-Schiffe genauso wie den Spieler, Flauten bremsen sie (Phase 4.3C)
     s.steer(dt, turn, this.env, this.flowK(s));
@@ -2126,7 +2156,9 @@ export class NavalSystem {
       return;
     }
     const wasDisabled = s.disabled;
-    let base = b.dmg * (target?.boarded ? 0 : foeBattle ? BATTLE.aiDamage : 1);
+    // Großschlachten der Mächte (4.5A) sind entscheidend: dort wirken KI-Treffer untereinander verstärkt (sonst zöge sich eine 3D-Schlacht ewig hin)
+    const warBattle = foeBattle && !!this.battles.find((x) => x.id === target!.battle!.id)?.war;
+    let base = b.dmg * (target?.boarded ? 0 : warBattle ? BATTLE.warDamage : foeBattle ? BATTLE.aiDamage : 1);
     if (s === this.player && b.owner) base = this.bossCap(b.owner, base);
     const dmg = s.damage(base, b.ammo, sailHit ? null : local, sailHit ? 'sail' : 'hull', b.owner?.penTier ?? 3);
     const en2 = this.enemies.find((o) => o.ship === s);

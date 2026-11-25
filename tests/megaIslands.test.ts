@@ -335,7 +335,7 @@ describe('Open-World-Landkämpfe: Bezirke, Kommandant, Beute', () => {
   it('die Seewelt weckt Bezirke über die reine Regel, Gegner patrouillieren (kein sofortiger Angriff) und nach dem Landgang ziehen sie ab', () => {
     const sea = readFileSync(new URL('../src/world/seaWorld.ts', import.meta.url), 'utf8');
     expect(sea).toContain('districtsToWake(rt, f.x, f.z, now, this.megaWake);');
-    expect(sea).toContain("{ calm: true }");
+    expect(sea).toContain("{ calm: true");
     expect(sea).toContain('this.leaveMega();');
     const combat = readFileSync(new URL('../src/combat/combat.ts', import.meta.url), 'utf8');
     expect(combat).toContain('if (!opts.calm) e.alert();');

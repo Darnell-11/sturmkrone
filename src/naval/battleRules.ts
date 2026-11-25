@@ -27,6 +27,8 @@ export const BATTLE = {
   perSide: [2, 3] as [number, number],
   /** Schaden der Schüsse von KI-Schiffen untereinander (Anteil), damit eine Schlacht lange genug dauert, um einzugreifen */
   aiDamage: 0.5,
+  /** Großschlachten der Mächte (Phase 4.5A): KI-Treffer untereinander wirken verstärkt (entscheidende Schlachten in wenigen Minuten) */
+  warDamage: 1.5,
   /** Abstand zur Grenzfestung (Meter entlang der Linie), den eine Schlacht einhält: Riffe und Festungsgeschütze */
   fortClear: 320,
   /** Anzeige-Reichweite für Kompass und Karte (Meter) */

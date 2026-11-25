@@ -227,7 +227,7 @@ describe('WorldEventDirector: Lebenszyklus, Abstände, Wartezeiten', () => {
   });
 
   it('Spielstand 19: ältere Stände bekommen ein leeres Meer, ein gespeichertes Meer übersteht den Rundlauf', () => {
-    expect(SAVE_VERSION).toBe(19);
+    expect(SAVE_VERSION).toBeGreaterThanOrEqual(19);
     const old = { ...createSave('Alt', 'pirat', '4.3.3'), version: 18 } as Record<string, any>;
     delete old.world.seaEvents;
     const r = migrateSave(old, '4.3.4');

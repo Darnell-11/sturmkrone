@@ -2,7 +2,7 @@
 // und Werft-Kosten. Reine Funktionen auf `EconomyState` (data/economy.ts): ohne three.js, ohne Zufall außer über einen übergebenen
 // Würfel (`rnd`), ohne Uhr außer der Spielzeit in Sekunden. Damit sind alle Regeln testbar und ein Server kann dieselben Märkte führen.
 import {
-  CARGO_CAP, CONTRABAND, GOODS, GOOD_BY_ID, MARKET, TARIFF, UPKEEP, cargoCap, profileOf,
+  CARGO_CAP, CONTRABAND, GOODS, GOOD_BY_ID, MARKET, TARIFF, UPKEEP, WAR_DEMAND, cargoCap, profileOf,
   type EconomyState, type GoodId, type MarketProfile, type MarketState,
 } from '../data/economy';
 import { clamp } from './mathUtil';
@@ -22,8 +22,24 @@ export const eqPriceOf = (p: MarketProfile, g: GoodId): number => MARKET.eqPrice
  * Märkte eines Orts: Schlüssel der Insel, Profil und Kriegslage (siehe `warPremium`); `priceK` = Faktor auf alle Preise (Hafen-Blockade des
  * lebendigen Meeres, Phase 4.3C: 2 = doppelte Handelspreise, solange die Blockade liegt; fehlt = 1)
  */
-export interface MarketSite { id: string; name: string; profile: MarketProfile; war: WarSite; priceK?: number }
-export interface WarSite { borderDist: number; occupied: boolean; fort: boolean }
+export interface MarketSite {
+  id: string; name: string; profile: MarketProfile; war: WarSite; priceK?: number;
+  /** Embargo (4.5A): Waren der Mächte, mit denen der Hafenherr im Krieg liegt, werden hier weder gekauft noch verkauft; `embargoBy` = Namen für die Meldung */
+  embargo?: readonly GoodId[];
+  embargoBy?: string;
+}
+/** Kriegslage eines Hafens: Grenze, Besatzung, Festung; seit 4.5A Belagerung und Unruhe nach einer Eroberung (0 … 1) */
+export interface WarSite { borderDist: number; occupied: boolean; fort: boolean; siege?: boolean; unrest?: number }
+
+/** Aufschlag des Kriegsbedarfs (1 = keiner) auf Kanonenstahl, Hartholz, Medizin und Segeltuch einer belagerten oder frisch eroberten Insel */
+export function warDemandK(w: WarSite, g: GoodId): number {
+  if (!WAR_DEMAND.goods.includes(g)) return 1;
+  const k = 1 + (w.siege ? WAR_DEMAND.siege : 0) + WAR_DEMAND.unrest * Math.max(0, Math.min(1, w.unrest ?? 0));
+  return Math.min(WAR_DEMAND.max, k);
+}
+
+/** Liegt auf dieser Ware hier ein Embargo? */
+export const embargoed = (site: MarketSite, g: GoodId): boolean => !!site.embargo?.includes(g);
 
 /**
  * Preisaufschlag auf Kriegsware (1 = kein): nahe einer Sektorgrenze, auf besetzten/belagerten Inseln und in Festungen.
@@ -63,7 +79,7 @@ export function marketPrice(site: MarketSite, g: GoodId, stock: number): number 
   const ratio = Math.max(0.05, stock) / eq;
   const k = clamp(Math.pow(ratio, -MARKET.elasticity), MARKET.minK, MARKET.maxK);
   const war = def.war ? warPremium(site.war) : 1;
-  return def.base * eqPriceOf(site.profile, g) * k * war * (site.priceK ?? 1);
+  return def.base * eqPriceOf(site.profile, g) * k * war * warDemandK(site.war, g) * (site.priceK ?? 1);
 }
 
 export interface Quote { units: number; total: number; avg: number; stockAfter: number }
@@ -119,6 +135,7 @@ export interface TradeResult { ok: boolean; units: number; gold: number; message
 export function buyGood(eco: EconomyState, site: MarketSite, now: number, g: GoodId, n: number, gold: number, tier: number, tariff = 1): TradeResult {
   const def = GOOD_BY_ID[g];
   if (!def || n <= 0) return { ok: false, units: 0, gold: 0, message: '' };
+  if (embargoed(site, g)) return { ok: false, units: 0, gold: 0, message: `Embargo${site.embargoBy ? ` gegen ${site.embargoBy}` : ''}: ${def.n} wird hier weder gekauft noch verkauft.` };
   const m = marketAt(eco, site, now);
   const stock = m.stock[g] ?? 0;
   const room = Math.floor(cargoFree(eco, tier) / def.vol + 1e-9);
@@ -141,6 +158,7 @@ export function sellGood(eco: EconomyState, site: MarketSite, now: number, g: Go
   const def = GOOD_BY_ID[g];
   const have = eco.cargo[g]?.n ?? 0;
   if (!def || n <= 0 || have <= 0) return { ok: false, units: 0, gold: 0, message: `Du hast kein ${def?.n ?? 'Gut'} geladen.` };
+  if (embargoed(site, g)) return { ok: false, units: 0, gold: 0, message: `Embargo${site.embargoBy ? ` gegen ${site.embargoBy}` : ''}: ${def.n} wird hier weder gekauft noch verkauft.` };
   const m = marketAt(eco, site, now);
   const units = Math.min(Math.floor(n), have);
   const q = quoteSell(site, m.stock[g] ?? 0, g, units, tariff);

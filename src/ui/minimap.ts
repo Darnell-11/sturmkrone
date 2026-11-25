@@ -344,6 +344,12 @@ export interface WorldMapData {
   /** Laufende Seeschlachten an den Grenzen (Mitte, beteiligte Mächte, Überlebende je Seite) */
   battles?: { id: number; x: number; z: number; a: FactionId; b: FactionId; left: [number, number] }[];
   occupations?: { id: string; x: number; z: number; r: number; name: string; text: string; endgame: boolean; fleet?: { x: number; z: number } }[];
+  /** Krieg der Mächte (4.5A): Armadas unterwegs, Belagerungen mit Fortschritt, Großschlachten fern vom Spieler (die nahen stehen in `battles`) */
+  wars?: {
+    armadas: { x: number; z: number; heading: number; color: string; name: string; ships: number; relief: boolean }[];
+    sieges: { x: number; z: number; r: number; color: string; name: string; progress: number }[];
+    battles: { x: number; z: number; name: string }[];
+  };
   /** Wie oft eine Festungsinsel schon erobert wurde (Insel-ID → Zahl; bleibt auch nach einer Rückeroberung) */
   conquests?: Record<string, number>;
   /** Lebendiges Meer (Phase 4.3C): Welt-Ereignisse, Konvois, Strömungen (Mittellinie flach x, z, …) und Wetterzellen */

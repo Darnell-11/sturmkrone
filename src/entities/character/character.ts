@@ -1176,6 +1176,7 @@ export class Character {
         v = fx.mat;
         made.set(src, v);
         fx.u.hero.value = this.heroK;
+        fx.u.near.value = this.nearK;
         this.fxU.push(fx.u);
         this.fxMats.push(v);
       }
@@ -1189,6 +1190,16 @@ export class Character {
     this.heroK = k;
     this.enableFx();
     for (const u of this.fxU) u.hero.value = k;
+  }
+
+  /** Nahbereichs-Ausblenden (4.5A): 0 = sichtbar, 1 = ausgeblendet; die Kamera rückt an einer Wand an die Figur heran (`cameraNearFade`) */
+  private nearK = 0;
+  setNearFade(k: number) {
+    const v = k > 0.001 ? Math.min(1, k) : 0;
+    if (v === this.nearK) return;
+    this.nearK = v;
+    if (v > 0) this.enableFx();
+    for (const u of this.fxU) u.near.value = v;
   }
 
   /** Effekt-Kopien verwerfen (z. B. nach Aussehen-Wechsel, der neue Materialien setzt) */

@@ -372,7 +372,7 @@ describe('Spielstand: Weltkarte (Version 19)', () => {
     if (!r.ok) return;
     expect(r.migratedFrom).toBe(18);
     expect(r.data.version).toBe(SAVE_VERSION);
-    expect(SAVE_VERSION).toBe(19);
+    expect(SAVE_VERSION).toBeGreaterThanOrEqual(19);
     for (const id of ['nebelhafen', 'kraehenfels', 'koenigshafen', 'moewennest', 'eisenfels']) expect(r.data.world.chart!.islands).toContain(id);
     expect(r.data.world.chart!.islands).not.toContain('x');
     expect(r.data.world.chart!.zones).toEqual([]);

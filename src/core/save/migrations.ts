@@ -143,6 +143,9 @@ export const MIGRATIONS: Record<number, Migration> = {
   // 19: das lebendige Meer (Phase 4.3C): Welt-Ereignisse, Konvois und Wetterzellen beginnen beim nächsten Spielstart neu; dazu (Phase 4.3D) die Weltkarte:
   // bereits besuchte oder eroberte Inseln gelten als entdeckt (world/mapDiscovery.ts `legacyDiscovered`)
   18: (d) => ({ ...d, version: 19, world: { ...(d.world ?? {}), seaEvents: null, chart: chartOnLoad(undefined, d.progress) } }),
+  // 20: das Ökosystem der Mächte (Phase 4.5A): Kassen, Verträge, Armadas und Inselbesitz beginnen beim nächsten Spielstart aus den Inseldaten (alle
+  // Inseln bei ihren Gründern, Startbeziehungen aus data/nations.ts); Eroberungen des Spielers (Raids) bleiben unberührt in `progress.conquest`
+  19: (d) => ({ ...d, version: 20, world: { ...(d.world ?? {}), factionWar: null } }),
 };
 
 export type MigrationResult =
@@ -185,6 +188,9 @@ export function migrateSave(raw: unknown, gameVersion: string): MigrationResult 
   filled.world.chart = chartOnLoad(filled.world.chart, filled.progress);
   // Mega-Inseln (4.4A): Ruhezeiten säubern (fehlt das Feld in älteren Ständen, bleibt es leer: alles bereit)
   filled.world.mega = cleanMegaSave(filled.world.mega);
+  // Ökosystem der Mächte (4.5A): nur die Form prüfen; den Inhalt säubert das Spiel beim Laden mit Register und Inseldaten (`cleanFactionWar`)
+  const fw = filled.world.factionWar as unknown;
+  filled.world.factionWar = fw && typeof fw === 'object' && (fw as { v?: unknown }).v === 1 ? (fw as SaveData['world']['factionWar']) : null;
   filled.fleet = cleanFleet(filled.fleet, { owned: filled.ship.owned ?? [], flagship: filled.ship.tier, evo: filled.ship.evo ?? {}, look: filled.ship.look, slots: fleetSlots(rankIndex(filled.player.fame)) });
   return { ok: true, data: filled, migratedFrom: from === SAVE_VERSION ? null : from };
 }

@@ -43,7 +43,7 @@ import { clamp01 } from '../core/mathUtil';
  * Banner der Besitzmacht an der Landestelle einer handgebauten Insel (Festland, Palmenküste, Sturmklippe, Fährholm): `buildSite` kennt
  * den Besitz nicht, darum setzt die Welt die Banner danach. Meidet Hindernisse; liefert die Zahl der gesetzten Banner.
  */
-export function plantFactionBanners(group: Group, def: IslandDef, walk: WalkIsland, hAt: (x: number, z: number) => number): number {
+export function plantFactionBanners(group: Group, def: IslandDef, walk: WalkIsland, hAt: (x: number, z: number) => number, keep?: Set<Mesh>): number {
   if (!def.factionId) return 0;
   const seaA = Math.atan2(-def.z, -def.x);
   let n = 0;
@@ -54,6 +54,11 @@ export function plantFactionBanners(group: Group, def: IslandDef, walk: WalkIsla
     const b = factionBanner(def.factionId, 1);
     b.g.position.set(x, hAt(x, z), z);
     group.add(b.g);
+    // eigene Netze (nicht verschmolzen) mit der Lage des Banners: bei einem Besitzerwechsel tauscht die Welt sie gegen das Banner des neuen Herrn (4.5A)
+    if (keep) {
+      const pose = { x: b.g.position.x, y: b.g.position.y, z: b.g.position.z, yaw: b.g.rotation.y, k: 1, fid: def.factionId };
+      b.g.traverse((m) => { if ((m as Mesh).isMesh) { keep.add(m as Mesh); m.userData.bannerPose = pose; } });
+    }
     walk.blockers.push({ x: walk.x + x, z: walk.z + z, r: 0.5 });
     n++;
   }

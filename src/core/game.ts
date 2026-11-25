@@ -34,7 +34,8 @@ import { EdgeWarning } from '../ui/edgeWarning';
 import { Menus } from '../ui/menus';
 import { TouchControls } from '../ui/touchControls';
 import { EditorStage } from '../world/editorStage';
-import { SeaWorld, type SeaMode } from '../world/seaWorld';
+import { SeaWorld, WAR_REGISTRY, type SeaMode } from '../world/seaWorld';
+import type { WarNotice } from '../world/factionWarEngine';
 import { formatClock } from '../world/timeOfDay';
 import { Input } from './input/input';
 import { GameLoop } from './loop';
@@ -59,7 +60,7 @@ import { BERNSTEINSEE, REGIONS, regionAt, sectorLabel, type IslandDef, type Regi
 import { IDLE_MUSIC, type MusicContext } from '../audio/musicDirector';
 import type { MusicSector } from '../data/musicTracks';
 import { FACTIONS, FACTION_IDS, STANCE_LABEL, STANDING_EVENTS, borderDistance, clampStanding, marineStance, sectorAt, type FactionId, type PowerId } from '../data/factions';
-import { AMMO_UNLOCK, GOODS, GOOD_BY_ID, UPKEEP, bagMax, cargoCap, emptyEconomy, profileOf, type EconomyState, type GoodId } from '../data/economy';
+import { AMMO_UNLOCK, GOODS, GOOD_BY_ID, UPKEEP, WAR_DEMAND, bagMax, cargoCap, emptyEconomy, profileOf, type EconomyState, type GoodId } from '../data/economy';
 import { applySalvage, buyGood, takeCargo, cargoUsed, rollSalvage, decayHeat, eqPriceOf, inspectCargo, marketAt, marketPrice, moraleEfficiency, quoteBuy, quoteSell, recordLedger, roleOf, sellGood, stepUpkeep, tariffOf, trendOf, upkeepOf, warCargo, yardRepairCost, type MarketSite, type Tariff } from './economyEngine';
 import { REP, applyOutcome, battleOutcome, blueprintDiscount, emptyReputation, harborDiscount, hasService, honorTitle, isPeaceful, repTier } from '../data/reputation';
 import type { BattleMark, BattleResult } from '../naval/naval';
@@ -299,6 +300,7 @@ export class Game {
     this.world.onBattleStart = (m, where) => this.battleStarted(m, where);
     this.world.onBattleEnd = (r) => this.battleEnded(r);
     this.world.onSeaNews = (n) => this.seaNews(n);
+    this.world.onWarNews = (n) => this.warNews(n);
     this.world.onRaidRequest = (def) => this.openRaidRequest(def);
     this.world.onRaidView = (v) => { this.raidView = v; this.raidPanel.update(v); };
     this.world.onRaidEnd = (info) => this.raidEnded(info);
@@ -1612,8 +1614,9 @@ export class Game {
 
   private openHarbor(def: IslandDef) {
     if (!this.state.is('play')) return;
-    // Schwarzmarkt (Schmugglerhäfen, 4.3B): keine Macht führt hier Aufsicht – kein Tarif, keine Kontrolle, keine Hafensperre
-    const fid = profileOf(def).blackMarket ? null : def.factionId ?? (def.marine ? 'marine' : null);
+    // Schwarzmarkt (Schmugglerhäfen, 4.3B): keine Macht führt hier Aufsicht – kein Tarif, keine Kontrolle, keine Hafensperre.
+    // Herr des Hafens ist der aktuelle Besitzer (4.5A: Inseln wechseln im Krieg der Mächte den Besitzer)
+    const fid = profileOf(def).blackMarket ? null : this.world.ownerFaction(def) ?? (def.marine ? 'marine' : null);
     // Hafensperre: wer bei einer Macht verfemt ist (Ansehen ≤ −60), darf in ihren Häfen nicht anlegen
     if (fid && this.tariff(fid).closed) {
       this.hud.toast(`${FACTIONS[fid].name} hat den Hafen von ${def.name} für dich gesperrt. Mehr Ansehen oder ein Freihafen hilft.`, 5);
@@ -2310,7 +2313,8 @@ export class Game {
     return {
       // unkartierte Geheim-Inseln (4.3B) erscheinen erst, wenn sie entdeckt sind
       // Geheim-Inseln (4.3B) fehlen auf der Karte, bis sie entdeckt sind; normale Inseln erscheinen bis dahin als schemenhafte Umrisse
-      islands: this.world.islandDefs.filter((i) => chartLevel(i, this.world.discovered) !== 'hidden'),
+      // Inseln mit neuem Herrn (4.5A) tragen auf der Karte seine Farbe und seinen Namen
+      islands: this.world.islandDefs.filter((i) => chartLevel(i, this.world.discovered) !== 'hidden').map((i) => (this.world.ownerShifted(i) ? { ...i, factionId: this.world.ownerFaction(i) } : i)),
       regions: REGIONS,
       known: (id) => this.world.discovered.has(id),
       islandMarks: this.questIslandMarks(),
@@ -2325,11 +2329,45 @@ export class Game {
         return { id: v.islandId, x: d?.x ?? 0, z: d?.z ?? 0, r: d?.r ?? 100, name: v.name, text: v.text, endgame: v.phase === 'endgame', fleet: f ? { x: f.x, z: f.z } : undefined };
       }),
       conquests: Object.fromEntries(this.occupation.conquered.map((r) => [r.islandId, r.conquestCount])),
+      wars: this.warMapData(),
       ...this.seaMapData(),
       chartZones: this.world.chartZones,
       blockaded: (id) => !!this.world.seaEvents?.director.blockadeOf(id),
       topo: (id) => this.world.topoOf(id),
     };
+  }
+
+  /** Krieg der Mächte für die Weltkarte: Armadas, Belagerungen, Großschlachten (die in Spielernähe zeigt das Seesystem schon als Seeschlacht) */
+  private warMapData(): WorldMapData['wars'] {
+    const war = this.world.war;
+    if (!war) return undefined;
+    const color = (id: string) => WAR_REGISTRY.get(id)?.color ?? '#DDD';
+    const nm = (id: string) => WAR_REGISTRY.get(id)?.name ?? id;
+    const s = war.state;
+    return {
+      armadas: s.armadas.filter((a) => a.status !== 'aufgeloest' && !a.battleId).map((a) => ({ x: a.x, z: a.z, heading: a.heading, color: color(a.nation), name: `${a.purpose === 'entsatz' ? 'Entsatz' : 'Armada'} ${nm(a.nation)}`, ships: a.ships.filter((x) => !x.down).length, relief: a.purpose === 'entsatz' })),
+      sieges: s.sieges.filter((g) => !g.ended).map((g) => { const w = war.island(g.islandId)!; return { x: w.x, z: w.z, r: w.r, color: color(g.attacker), name: `Belagerung von ${w.name}`, progress: g.progress }; }),
+      battles: s.battles.filter((b) => !b.ended && !b.live).map((b) => ({ x: b.x, z: b.z, name: `Großschlacht ${nm(b.nationA)} ⚔ ${nm(b.nationB)}` })),
+    };
+  }
+
+  /** Weltlage der Mächte für das Fenster „Ruf & Ehre“: Inseln, Mega-Inseln, Anteil an den Ressourcen, Kriege, Pakte, Koalitionen */
+  worldPowerView() {
+    const war = this.world.war;
+    if (!war) return null;
+    const s = war.state;
+    const LABEL = { allianz: 'Allianz', handelspakt: 'Handelspakt', neutral: 'Neutral', rivalitaet: 'Rivalität', krieg: 'Krieg' } as const;
+    const rows = WAR_REGISTRY.list().map((d) => {
+      const n = s.nations[d.id];
+      const rel = (st: keyof typeof LABEL) => WAR_REGISTRY.list().filter((o) => o.id !== d.id && war.stateOf(d.id, o.id) === st).map((o) => o.name);
+      return {
+        id: d.id, name: d.name, color: d.color, islands: n?.islands ?? 0, megas: n?.megas ?? 0, share: n?.share ?? 0, hegemon: s.hegemon === d.id,
+        war: rel('krieg'), pacts: rel('handelspakt'), allies: rel('allianz'), rivals: rel('rivalitaet'),
+        armadas: s.armadas.filter((a) => a.nation === d.id && a.status !== 'aufgeloest').length,
+        gold: Math.round(n?.stock.gold ?? 0), steel: Math.round(n?.stock.kanonenstahl ?? 0), wood: Math.round(n?.stock.hartholz ?? 0),
+      };
+    });
+    return { rows, sieges: s.sieges.filter((g) => !g.ended).length, battles: s.battles.filter((b) => !b.ended).length, coalitions: s.coalitions.map((c) => ({ against: WAR_REGISTRY.get(c.against)?.name ?? c.against, members: c.members.map((m) => WAR_REGISTRY.get(m)?.name ?? m) })), stats: { ...s.stats } };
   }
 
   /** Karte um einen Hafen oder Leuchtturm: alle normalen Inseln in 3 200 m werden entdeckt; meldet, wie viele neu sind */
@@ -3168,15 +3206,102 @@ export class Game {
     });
   }
 
+  private readonly embargoScratch: GoodId[] = [];
+
+  /**
+   * Meldungen des Ökosystems der Mächte (Phase 4.5A): Kriege, Waffenstillstände, Pakte und Koalitionen immer, Armadas, Schlachten und Belagerungen in
+   * Spielernähe; Märkte reagieren sofort (Belagerung und Eroberung kaufen die Kriegswaren des Hafens auf).
+   */
+  private warNews(n: WarNotice) {
+    const s = this.save;
+    if (!s) return;
+    const playing = this.state.is('play');
+    const pos = this.world.playerPos;
+    const name = (id: string | null) => (id ? WAR_REGISTRY.get(id)?.name ?? id : 'Niemand');
+    // Namen mit Artikel im Satz: „die Marine“ (Nominativ/Akkusativ), „der Marine“ (Dativ); am Satzanfang bleibt „Die Marine“
+    const mid = (id: string | null) => name(id).replace(/^Die /, 'die ');
+    const dat = (id: string | null) => name(id).replace(/^Die /, 'der ');
+    const where = (x: number, z: number) => `${compassWord(pos.x, pos.z, x, z)}, ${fmtDist(Math.hypot(x - pos.x, z - pos.z))}`;
+    const near = (x: number, z: number, r = 3200) => Math.hypot(x - pos.x, z - pos.z) < r;
+    const islandName = (id: string) => this.world.islandDefs.find((d) => d.id === id)?.name ?? this.world.war?.island(id)?.name ?? id;
+    const toast = (t: string, sec = 6) => { if (playing) this.hud.toast(t, sec); };
+    // „eine niederländische Armada“, „ein Transporter der Marine“: das Adjektiv der Nation statt eines Genitivs („Niederlandes“ wäre falsch)
+    const of = (id: string, art: string, noun: string, end: string) => {
+      const adj = WAR_REGISTRY.get(id)?.adjective ?? '';
+      return adj && !adj.includes(' ') ? `${art} ${adj}${end} ${noun}` : `${art} ${noun} ${adj || `von ${name(id)}`}`;
+    };
+    switch (n.type) {
+      case 'krieg': toast(`Kriegserklärung: ${name(n.a)} erklärt ${dat(n.b)} den Krieg!`, 6); return;
+      case 'waffenstillstand': toast(`Waffenstillstand zwischen ${dat(n.a)} und ${dat(n.b)}${n.gold > 0 ? ` – ${mid(n.payer)} zahlt ${fmtInt(n.gold)} Gold Reparationen` : ''}.`, 6); return;
+      case 'handelspakt': toast(`Handelspakt: ${name(n.a)} und ${mid(n.b)} tauschen ihre Überschüsse und sichern gemeinsam ihre Konvois.`, 6); return;
+      case 'koalition': toast(`${name(n.against)} wird übermächtig – ${n.members.map(mid).join(', ')} schließen ein Verteidigungsbündnis und greifen gemeinsam an!`, 8); return;
+      case 'koalitionEnde': toast(`Die Koalition gegen ${mid(n.against)} löst sich auf: das Gleichgewicht der Mächte ist wiederhergestellt.`, 6); return;
+      case 'armada': {
+        const a = n.armada, w = this.world.war?.island(a.target);
+        if (!w || !(near(a.x, a.z) || near(w.x, w.z, 2600))) return;
+        toast(a.purpose === 'entsatz'
+          ? `${name(a.nation)} schickt eine Entsatzflotte (${a.ships.length} Schiffe) nach ${islandName(a.target)} (${where(a.x, a.z)}).`
+          : `${of(a.nation, 'Eine', 'Armada', 'e')} (${a.ships.length} Schiffe) läuft gegen ${islandName(a.target)} aus (${where(a.x, a.z)})!`, 7);
+        return;
+      }
+      case 'schlacht':
+        if (near(n.battle.x, n.battle.z, 2800)) toast(`Großschlacht: ${name(n.battle.nationA)} gegen ${mid(n.battle.nationB)} (${where(n.battle.x, n.battle.z)})!`, 7);
+        return;
+      case 'schlachtEnde': {
+        const b = n.battle;
+        if (!near(b.x, b.z, 2800)) return;
+        toast(b.winner ? `Die Großschlacht ist entschieden: ${name(b.winner)} behauptet das Feld (${b.sunkA + b.sunkB} Schiffe gesunken).` : `Die Großschlacht endet ohne Sieger – beide Flotten ziehen sich zurück.`, 6);
+        return;
+      }
+      case 'belagerung': {
+        const sg = n.siege;
+        this.warMarket(sg.islandId);
+        const w = this.world.war?.island(sg.islandId);
+        if (w && near(w.x, w.z, 3000)) toast(`${name(sg.attacker)} belagert ${islandName(sg.islandId)}! Kanonenstahl, Hartholz, Medizin und Segeltuch werden dort knapp und teuer.`, 7);
+        return;
+      }
+      case 'transport': if (near(n.armada.x, n.armada.z, 2200)) toast(`${of(n.armada.nation, 'Ein', 'Nachschub-Transporter', 'er')} ist gesunken – die Moral der Belagerer bricht ein!`, 5); return;
+      case 'belagerungEnde':
+        if (n.siege.outcome === 'abgebrochen') { const w = this.world.war?.island(n.siege.islandId); if (w && near(w.x, w.z, 3000)) toast(`Die Belagerung von ${islandName(n.siege.islandId)} ist abgebrochen.`, 5); }
+        return;
+      case 'gefallen': {
+        this.warMarket(n.islandId);
+        this.overlay.showBanner(`${islandName(n.islandId)} ist gefallen`, `${name(n.to)} erobert die Insel${n.from ? ` von ${dat(n.from)}` : ''}`);
+        toast(`${islandName(n.islandId)} gehört jetzt ${dat(n.to)}: neue Flaggen, neue Wachen, neue Hafenherren.`, 7);
+        this.persist();
+        return;
+      }
+    }
+  }
+
+  /** Belagerung oder Eroberung: die Garnison kauft die Kriegswaren des Hafens auf (Vorrat halbiert, die Preise steigen sofort) */
+  private warMarket(islandId: string) {
+    const m = this.save?.progress.economy?.markets[islandId];
+    if (!m) return;
+    for (const g of WAR_DEMAND.goods) if (m.stock[g] !== undefined) m.stock[g] = (m.stock[g] ?? 0) * WAR_DEMAND.stockLeft;
+  }
+
   /** Markt-Schlüssel und Daten der Insel, in deren Hafen man liegt (Ankerglück, wenn keiner geöffnet ist) */
   marketSite(def: IslandDef | null = this.harborDef): MarketSite | null {
     const d = def ?? this.world.islandDefs.find((i) => i.id === 'ankerglueck') ?? null;
     if (!d) return null;
+    const profile = profileOf({ id: d.id, region: d.region, factionId: d.factionId });
+    // Krieg der Mächte (4.5A): belagerte und frisch eroberte Inseln zahlen Kriegspreise für Stahl, Holz, Medizin und Segeltuch; der Herr des Hafens
+    // verhängt ein Embargo auf die Exportwaren seiner Kriegsgegner (was die Insel selbst herstellt, bleibt frei)
+    const war = this.world.war;
+    const owner = war ? war.ownerOf(d.id) ?? (war.island(d.id) ? null : d.factionId ?? null) : d.factionId ?? null;
+    const embargo: GoodId[] = [];
+    let embargoBy = '';
+    if (war && owner && !profile.blackMarket) {
+      for (const g of war.embargoGoods(owner, this.embargoScratch)) if (!profile.produce.includes(g)) embargo.push(g);
+      if (embargo.length) embargoBy = WAR_REGISTRY.list().filter((n) => war.atWar(owner, n.id)).map((n) => n.name).join(', ');
+    }
     return {
-      id: d.id, name: d.name, profile: profileOf({ id: d.id, region: d.region, factionId: d.factionId }),
-      war: { borderDist: borderDistance(d.x, d.z).dist, occupied: this.occupation.occupied(d.id), fort: d.kind === 'marinefort' || d.kind === 'citadel' },
+      id: d.id, name: d.name, profile,
+      war: { borderDist: borderDistance(d.x, d.z).dist, occupied: this.occupation.occupied(d.id), fort: d.kind === 'marinefort' || d.kind === 'citadel', siege: !!war?.besieged(d.id), unrest: war?.unrest(d.id) ?? 0 },
       // Hafen-Blockade (lebendiges Meer): doppelte Handelspreise, solange sie liegt
       priceK: this.world.seaEvents?.director.priceK(d.id) ?? 1,
+      embargo, embargoBy,
     };
   }
 
@@ -3212,7 +3337,7 @@ export class Game {
       const buy = Math.ceil(quoteBuy(site, stock, g.id, 1, t.factor).total || base * 1.05 * t.factor);
       const sell = Math.floor(quoteSell(site, stock, g.id, 1, t.factor).total);
       const have = eco.cargo[g.id]?.n ?? 0;
-      return { def: g, stock: Math.floor(stock), buy, sell, trend: trendOf(base, g.id), role: roleOf(site.profile, g.id), eq: eqPriceOf(site.profile, g.id), have, avgCost: have ? (eco.cargo[g.id]!.cost / have) : 0, war: !!g.war };
+      return { def: g, stock: Math.floor(stock), buy, sell, trend: trendOf(base, g.id), role: roleOf(site.profile, g.id), eq: eqPriceOf(site.profile, g.id), have, avgCost: have ? (eco.cargo[g.id]!.cost / have) : 0, war: !!g.war, embargo: !!site.embargo?.includes(g.id) };
     });
     const ledger = Object.entries(eco.ledger).filter(([id]) => id !== site.id).map(([id, l]) => ({ id, ...l, age: Math.max(0, now - l.t) })).sort((a, b) => a.age - b.age);
     return { site, rows, tariff: t, cargo: { used: cargoUsed(eco), cap: cargoCap(tier), war: warCargo(eco) }, upkeep: this.upkeepView(), ledger, heat: eco.heat, gold: s.player.gold, blockade: (site.priceK ?? 1) > 1 };
@@ -3720,6 +3845,8 @@ export class Game {
     this.world.seedSeaEvents(data.world.seaEvents ?? null, ((data.meta.created % 4294967296) ^ 0x5eaf00d) >>> 0);
     // Mega-Inseln (4.4A): Ruhezeiten geräumter Bezirke und besiegter Kommandanten überdauern das Laden
     this.world.setMegaState(data.world.mega ?? null);
+    // Ökosystem der Mächte (4.5A): Kassen, Verträge, Armadas und Inselbesitz; der Zufall hängt am Spielstand (gleiche Welt nach dem Laden)
+    this.world.seedFactionWar(data.world.factionWar ?? null, ((data.meta.created % 4294967296) ^ 0x4a5e5) >>> 0);
     const p = data.player;
     this.world.playerFaction = p.faction;
     ensureGear(data.gear);
@@ -3802,7 +3929,7 @@ export class Game {
     if (!this.save || this.slot === null) return true;
     this.syncFleetState();
     const ws = this.world.getState();
-    this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather, seaEvents: this.world.seaEvents?.snapshot() ?? null, chart: chartToSave(this.world.discovered, this.world.chartZones), mega: this.world.megaSnapshot() };
+    this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather, seaEvents: this.world.seaEvents?.snapshot() ?? null, chart: chartToSave(this.world.discovered, this.world.chartZones), mega: this.world.megaSnapshot(), factionWar: this.world.factionWarSnapshot() };
     const sh = this.world.ship;
     this.save.ship.hull = sh.maxHull > 0 ? Math.max(0.05, sh.hull / sh.maxHull) : 1;
     this.save.ship.sail = sh.sail;

@@ -642,6 +642,7 @@ export class Menus {
       ${goldLine(v.gold, msg)}
       <p class="small soft">Wer in einer Seeschlacht an der Grenze nur <b>eine</b> Seite beschießt, ergreift Partei und gewinnt Ehre und Ansehen. Wer <b>beide</b> Seiten angreift, erntet den größten Loot, verliert aber überall Ansehen und wird von Kopfgeldjägern und der Marine gejagt. Ab „Freundlich“ passieren dich die Schiffe einer Macht in ihrem Sektor friedlich, im Hafen gibt es Rabatt.</p>
       ${rows}
+      ${this.worldPowerHtml()}
       <h3>Seeschlachten &amp; Baupläne</h3>
       <p class="small">Miterlebt: <b>${v.battles.joined}</b> · Partei ergriffen: <b>${v.battles.sided}</b> · Beide Seiten: <b>${v.battles.both}</b></p>
       <p class="small">${v.blueprints.length ? `Baupläne: ${v.blueprints.map((b) => esc(FACTIONS[b.replace('bauplan_', '') as FactionId]?.name ?? b)).join(', ')} · Werft −${Math.round(v.blueprintDiscount * 100)} %` : 'Noch keine Baupläne erbeutet (Doppelspiel in einer Seeschlacht bringt sie).'}</p>
@@ -651,6 +652,32 @@ export class Menus {
       back,
       { wide: true },
     );
+  }
+
+  /** Weltlage der Mächte (4.5A): wer hält wie viele Inseln, wer führt Krieg, wer handelt, wer ist Hegemon */
+  private worldPowerHtml(): string {
+    const v = this.game.worldPowerView();
+    if (!v) return '';
+    const list = (a: string[]) => a.map((x) => esc(x)).join(', ');
+    const nw = (k: number, one: string, many: string) => `${fmtInt(k)} ${k === 1 ? one : many}`;
+    const rows = v.rows.map((r) => {
+      const ties: string[] = [];
+      if (r.allies.length) ties.push(`Bündnis: ${list(r.allies)}`);
+      if (r.pacts.length) ties.push(`Handelspakt: ${list(r.pacts)}`);
+      if (r.rivals.length) ties.push(`Rivalen: ${list(r.rivals)}`);
+      if (r.armadas) ties.push(`${r.armadas} Armada${r.armadas > 1 ? 's' : ''} auf See`);
+      // das Kriegs-Schild steht in eigener Zeile (sonst bleibt beim Umbruch ein einzelner Trennpunkt am Zeilenende hängen)
+      const head = r.war.length ? `<b class="warn">Krieg gegen: ${list(r.war)}</b>${ties.length ? '<br>' : ''}` : `Kein Krieg${ties.length ? ' · ' : ''}`;
+      return `<div class="slot rep" style="--c:${r.color}">
+      <div class="slot-head"><b style="color:${r.color}">${esc(r.name)}${r.hegemon ? ' · <span class="warn">Hegemon</span>' : ''}</b><span>${nw(r.islands, 'Insel', 'Inseln')}${r.megas ? ` · ${r.megas} Mega` : ''} · ${Math.round(r.share * 100)} % der Ressourcen</span></div>
+      <div class="meta">${head}${ties.join(' · ')}<br>Kriegskasse ${fmtInt(r.gold)} Gold · Kanonenstahl ${fmtInt(r.steel)} · Hartholz ${fmtInt(r.wood)}</div>
+    </div>`;
+    }).join('');
+    const co = v.coalitions.map((c) => `<p class="small"><b>Koalition</b> gegen ${esc(c.against.replace(/^Die /, 'die '))}: ${list(c.members)}</p>`).join('');
+    return `<h3>Weltlage der Mächte</h3>
+      <p class="small soft">Die Mächte führen eigene Kriege um Rohstoffe, Meerengen und Mega-Inseln. Eroberte Inseln wechseln Flagge, Wachen und Hafenherrn; wer belagert wird, zahlt Kriegspreise. ${v.battles ? `Laufende Großschlachten: ${v.battles}. ` : ''}${v.sieges ? `Belagerungen: ${v.sieges}.` : ''}</p>
+      ${co}${rows}
+      <p class="small soft">Bisher: ${nw(v.stats.wars, 'Krieg', 'Kriege')}, ${nw(v.stats.battles, 'Großschlacht', 'Großschlachten')}, ${nw(v.stats.conquests, 'Eroberung', 'Eroberungen')}, ${nw(v.stats.pacts, 'Handelspakt', 'Handelspakte')}, ${nw(v.stats.ceasefires, 'Waffenstillstand', 'Waffenstillstände')}.</p>`;
   }
 
   // ---------- Crew ----------
@@ -892,10 +919,11 @@ export class Menus {
     const rows = v.rows.map((r) => {
       const d = r.def;
       const profit = r.have ? Math.round((r.sell - r.avgCost) * r.have) : 0;
-      return `<div class="slot kontor-row${r.war ? ' war' : ''}"><div class="slot-head"><b>${d.icon} ${esc(d.n)}${ROLE[r.role] ? ` <small class="role ${r.role}">${ROLE[r.role]}</small>` : ''}${r.war ? ' <small class="role war">Kriegsware</small>' : ''}</b><span>${TREND[r.trend]}</span></div>
+      const emb = r.embargo;
+      return `<div class="slot kontor-row${r.war ? ' war' : ''}"><div class="slot-head"><b>${d.icon} ${esc(d.n)}${ROLE[r.role] ? ` <small class="role ${r.role}">${ROLE[r.role]}</small>` : ''}${r.war ? ' <small class="role war">Kriegsware</small>' : ''}${emb ? ' <small class="role war">Embargo</small>' : ''}</b><span>${TREND[r.trend]}</span></div>
         <div class="meta">Vorrat <b>${fmtInt(r.stock)}</b> · Kauf <b>${fmtInt(r.buy)}</b> · Verkauf <b>${fmtInt(r.sell)}</b> Gold · Platz je Stück ${String(d.vol).replace('.', ',')}${r.have ? ` · <b>An Bord ${r.have}</b> (Ø ${fmtInt(Math.round(r.avgCost))}, ${profit >= 0 ? 'Gewinn' : 'Verlust'} ${fmtInt(Math.abs(profit))})` : ''}</div>
-        <div class="row"><button class="mini brass" data-a="buy" data-id="${d.id}|1" ${full || r.stock < 1 ? 'disabled' : ''}>+1</button><button class="mini brass" data-a="buy" data-id="${d.id}|10" ${full || r.stock < 1 ? 'disabled' : ''}>+10</button><button class="mini brass" data-a="buy" data-id="${d.id}|9999" ${full || r.stock < 1 ? 'disabled' : ''}>Max</button>
-        <button class="mini" data-a="sell" data-id="${d.id}|1" ${r.have < 1 ? 'disabled' : ''}>−1</button><button class="mini" data-a="sell" data-id="${d.id}|10" ${r.have < 1 ? 'disabled' : ''}>−10</button><button class="mini" data-a="sell" data-id="${d.id}|9999" ${r.have < 1 ? 'disabled' : ''}>Alles</button></div></div>`;
+        <div class="row"><button class="mini brass" data-a="buy" data-id="${d.id}|1" ${emb || full || r.stock < 1 ? 'disabled' : ''}>+1</button><button class="mini brass" data-a="buy" data-id="${d.id}|10" ${emb || full || r.stock < 1 ? 'disabled' : ''}>+10</button><button class="mini brass" data-a="buy" data-id="${d.id}|9999" ${emb || full || r.stock < 1 ? 'disabled' : ''}>Max</button>
+        <button class="mini" data-a="sell" data-id="${d.id}|1" ${emb || r.have < 1 ? 'disabled' : ''}>−1</button><button class="mini" data-a="sell" data-id="${d.id}|10" ${emb || r.have < 1 ? 'disabled' : ''}>−10</button><button class="mini" data-a="sell" data-id="${d.id}|9999" ${emb || r.have < 1 ? 'disabled' : ''}>Alles</button></div></div>`;
     }).join('');
     // Preisübersicht: die fünf zuletzt besuchten anderen Häfen, je Ware Kaufpreis / Verkaufserlös beim letzten Besuch
     const ports = v.ledger.slice(0, 5);

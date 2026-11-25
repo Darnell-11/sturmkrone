@@ -160,6 +160,20 @@ export const MARKET = {
   warBorder: 0.6, warBorderDist: 700, warOccupied: 0.9, warFort: 0.4, warMax: 2.5,
 } as const;
 
+/**
+ * Kriegswirtschaft (Phase 4.5A): belagerte und frisch eroberte Inseln brauchen sofort Kanonenstahl, Hartholz, Medizin und Segeltuch (`tuch`) –
+ * Aufschlag auf diese Waren (zusätzlich zum Kriegspreis), der mit der Unruhe nach der Eroberung abklingt. Beim Beginn einer Belagerung und bei der
+ * Eroberung halbiert sich außerdem der Vorrat dieser Waren im Hafen (die Garnison kauft alles auf).
+ */
+export const WAR_DEMAND = {
+  goods: ['kanonenstahl', 'hartholz', 'medizin', 'tuch'] as readonly GoodId[],
+  siege: 0.65,
+  unrest: 0.45,
+  max: 1.9,
+  /** Anteil des Vorrats, der beim Beginn einer Belagerung bzw. bei der Eroberung im Hafen bleibt */
+  stockLeft: 0.5,
+} as const;
+
 // ---------- Frachtraum ----------
 
 /** Frachtraum (Platzeinheiten) je Schiffsklasse: Schaluppe … Leviathan (Reihenfolge von SHIP_CLASSES) */

@@ -138,7 +138,7 @@ describe('Spielstände', () => {
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.migratedFrom).toBe(1);
-      expect(r.data.world).toEqual({ boat: { x: 5, z: 6, heading: 1 }, time: 22, weather: 'klar', seaEvents: null, chart: { islands: [], zones: [] }, mega: {} });
+      expect(r.data.world).toEqual({ boat: { x: 5, z: 6, heading: 1 }, time: 22, weather: 'klar', seaEvents: null, chart: { islands: [], zones: [] }, mega: {}, factionWar: null });
     }
   });
 

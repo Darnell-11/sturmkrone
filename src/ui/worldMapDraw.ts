@@ -434,6 +434,35 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
     ctx.beginPath(); ctx.arc(x, y, rr, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
     drawPoi(ctx, x, y, 'battle', 1.5);
   }
+  // Krieg der Mächte (4.5A): Belagerungsring mit Fortschritt in der Farbe des Angreifers, Armadas als Pfeile in Fahrtrichtung, ferne Großschlachten
+  const war = d.wars;
+  if (L.events && war) {
+    for (let k = 0; k < war.sieges.length; k++) {
+      const sg = war.sieges[k], x = mx(sg.x), y = my(sg.z), rr = Math.max(12, sg.r * S * 1.6);
+      ctx.strokeStyle = 'rgba(20,16,14,0.65)'; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.arc(x, y, rr, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = sg.color; ctx.lineWidth = 3.5;
+      ctx.beginPath(); ctx.arc(x, y, rr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.max(0.02, Math.min(1, sg.progress))); ctx.stroke();
+    }
+    for (let k = 0; k < war.battles.length; k++) {
+      const b = war.battles[k], x = mx(b.x), y = my(b.z);
+      ctx.strokeStyle = 'rgba(255,138,58,0.7)'; ctx.lineWidth = 2; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+      drawPoi(ctx, x, y, 'battle', 1.2);
+    }
+    for (let k = 0; k < war.armadas.length; k++) {
+      const a = war.armadas[k], x = mx(a.x), y = my(a.z), s = 7 + Math.min(4, a.ships * 0.4);
+      const fx = Math.sin(a.heading), fy = -Math.cos(a.heading);
+      ctx.fillStyle = a.color; ctx.strokeStyle = 'rgba(16,12,10,0.85)'; ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(x + fx * s, y + fy * s);
+      ctx.lineTo(x - fx * s * 0.7 - fy * s * 0.6, y - fy * s * 0.7 + fx * s * 0.6);
+      ctx.lineTo(x - fx * s * 0.35, y - fy * s * 0.35);
+      ctx.lineTo(x - fx * s * 0.7 + fy * s * 0.6, y - fy * s * 0.7 - fx * s * 0.6);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      if (a.relief) { ctx.strokeStyle = a.color; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(x, y, s + 4, 0, Math.PI * 2); ctx.stroke(); }
+    }
+  }
   const m = d.markers;
   for (let k = 0; k < m.digs.length; k++) {
     const dg = m.digs[k];
@@ -451,6 +480,11 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
   if (L.events) {
     if (evs) for (let k = 0; k < evs.length; k++) { const e = evs[k]; label(ctx, FONT_EVENT, e.name, mx(e.x), my(e.z) + 24, e.kind === 'worldboss' ? '#FF9A8A' : e.kind === 'galeone' ? '#FFE07A' : '#F4EEDC'); }
     if (bts) for (let k = 0; k < bts.length; k++) { const b = bts[k]; label(ctx, FONT_EVENT, `Seeschlacht ${FACTIONS[b.a].name} ⚔ ${FACTIONS[b.b].name}`, mx(b.x), my(b.z) + 42, '#FFB070'); }
+    if (war) {
+      for (let k = 0; k < war.sieges.length; k++) { const sg = war.sieges[k]; label(ctx, FONT_EVENT, `${sg.name} · ${Math.round(sg.progress * 100)} %`, mx(sg.x), my(sg.z) + Math.max(12, sg.r * S * 1.6) + 16, '#FFC090'); }
+      for (let k = 0; k < war.battles.length; k++) { const b = war.battles[k]; label(ctx, FONT_EVENT, b.name, mx(b.x), my(b.z) + 34, '#FFB070'); }
+      if (zoom >= LABEL_ZOOM) for (let k = 0; k < war.armadas.length; k++) { const a = war.armadas[k]; label(ctx, FONT_BADGE, `${a.name} (${a.ships})`, mx(a.x), my(a.z) + 18, a.color); }
+    }
   }
   // Mega-Inseln vor allen anderen Namen: sie sind die Orientierungspunkte der Karte (4.3.6)
   for (let k = 0; k < isl.length; k++) { const i = isl[k]; if (i.mega) megaLabel(ctx, i, d.known(i.id)); }

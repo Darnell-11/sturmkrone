@@ -89,6 +89,11 @@ export interface StreamHost {
   commitActive(i: number): void;
   /** Die Insel abbauen (Netze, Instanz-Puffer, Lichter, Tiere, Begehbarkeits-Netz); die Daten bleiben. Gilt auch für fertig gebaute, nie gezeigte Inseln. */
   disposeActive(i: number): void;
+  /**
+   * Eine stehende Insel nach einem Besitzerwechsel neu einkleiden (Phase 4.5A): Flaggen, Banner, Laternenfarben, Garnisonstrupps – ohne die Insel neu zu
+   * bauen. Inseln, die gerade nicht ACTIVE sind, brauchen das nicht: ihr nächster Aufbau liest den neuen Besitzer ohnehin aus den Daten.
+   */
+  restyleActive?(i: number): void;
 }
 
 export interface StreamStats {
@@ -101,6 +106,8 @@ export interface StreamStats {
   maxStepMs: number;
   /** Teilschritte, die das Zeitbudget (`STREAM.budgetMs`) überschritten */
   overBudget: number;
+  /** Neu eingekleidete ACTIVE-Inseln (Besitzerwechsel) */
+  restyles: number;
   forceSyncs: number;
   /** Inseln, die `forceSyncAround` selbst fertig gebaut hat, und die Zeit (ms), die das gekostet hat */
   syncBuilt: number;
@@ -124,6 +131,8 @@ interface Slot {
   retryAt: number;
   mark: number;
   resPos: number;
+  /** Wartet auf das Neu-Einkleiden (Besitzerwechsel) */
+  restyle: boolean;
 }
 
 const MAX_INTEREST = 16;
@@ -143,7 +152,9 @@ export class WorldStreamer {
   private resident: number[] = [];
   private frame = 0;
   private jobIdx = -1;
-  readonly stats: StreamStats = { frames: 0, steps: 0, commits: 0, unloads: 0, lastStepMs: 0, maxStepMs: 0, overBudget: 0, forceSyncs: 0, syncBuilt: 0, syncMs: 0, failures: 0 };
+  readonly stats: StreamStats = { frames: 0, steps: 0, commits: 0, unloads: 0, lastStepMs: 0, maxStepMs: 0, overBudget: 0, restyles: 0, forceSyncs: 0, syncBuilt: 0, syncMs: 0, failures: 0 };
+  /** Inseln, die neu eingekleidet werden wollen (höchstens eine je Bild) */
+  private restyleQ: number[] = [];
 
   private budgetMs: number;
   private maxSteps: number;
@@ -162,7 +173,7 @@ export class WorldStreamer {
     const rec: StreamRecord = { id: def.id, x: def.x, z: def.z, r: def.r, chunk: chunkKeyAt(def.x, def.z, this.grid.size), pinned: !!opts.pinned };
     const i = this.grid.add(def.x, def.z, def.r);
     const level = opts.level ?? 0;
-    this.slots.push({ rec, lead: streamLead(def.r), target: opts.pinned ? 2 : level, level, dist: Infinity, job: null, ready: false, steps: 0, retryAt: 0, mark: 0, resPos: -1 });
+    this.slots.push({ rec, lead: streamLead(def.r), target: opts.pinned ? 2 : level, level, dist: Infinity, job: null, ready: false, steps: 0, retryAt: 0, mark: 0, resPos: -1, restyle: false });
     if (level > 0) this.addResident(i);
     return i;
   }
@@ -340,12 +351,39 @@ export class WorldStreamer {
   // ---------- Takt ----------
 
   /**
+   * Besitzerwechsel einer Insel (Phase 4.5A): steht sie gerade als ACTIVE_HIGH, wird sie im nächsten Bild neu eingekleidet (`restyleActive`, höchstens
+   * eine Insel je Bild). Wird sie gerade gebaut oder steht nur als Silhouette, ist nichts zu tun: der Aufbau liest den neuen Besitzer aus den Daten.
+   * Liefert true, wenn ein Neu-Einkleiden ansteht.
+   */
+  restyle(i: number): boolean {
+    const s = this.slots[i];
+    if (!s || s.level !== 2 || s.job || s.ready || !this.host.restyleActive) return false;
+    if (!s.restyle) { s.restyle = true; this.restyleQ.push(i); }
+    return true;
+  }
+
+  /** Eine wartende Insel neu einkleiden (vom Takt aufgerufen) */
+  private runRestyle(): void {
+    while (this.restyleQ.length) {
+      const i = this.restyleQ.shift()!;
+      const s = this.slots[i];
+      if (!s.restyle) continue;
+      s.restyle = false;
+      // inzwischen abgebaut oder neu im Bau: der nächste Aufbau übernimmt es
+      if (s.level !== 2 || s.job || s.ready) continue;
+      try { this.host.restyleActive?.(i); this.stats.restyles++; } catch (e) { console.error('WorldStreamer: Neu-Einkleiden', s.rec.id, e); }
+      return;
+    }
+  }
+
+  /**
    * Ein Bild streamen: Ziele nachführen, Silhouetten anlegen und abbauen, höchstens `maxUnloadsPerFrame` Inseln abbauen und
    * Teilschritte eines Aufbaus ausführen, bis das Zeitbudget (`budgetMs`) des Bildes verbraucht ist (oder den Tausch einer fertig gebauten Insel).
    */
   update(): void {
     this.frame++;
     this.stats.frames++;
+    if (this.restyleQ.length) this.runRestyle();
     if (this.nI === 0) return;
     this.refreshTargets();
     const cand = this.cand;

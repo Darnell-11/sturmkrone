@@ -226,6 +226,37 @@ export class SpringArm {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Nahbereichs-Ausblenden der Spielfigur (4.5A)
+// ---------------------------------------------------------------------------------------------------------------
+
+/** Ab diesem Abstand (m) zwischen Kamera und Kopf blendet die Figur aus; beim kürzesten Arm (`FOOT_ARM.hardMin`) ist sie ganz weg */
+export const NEAR_FADE = { start: 0.7, end: 0.45 } as const;
+
+/**
+ * Wie stark die Spielfigur ausgeblendet wird (0 = sichtbar, 1 = ganz weg), wenn die Kamera an einer engen Wand näher als 0,70 m an sie heranrückt:
+ * weicher Verlauf bis zum kürzesten Arm. So verdeckt der eigene Körper nie die Sicht.
+ */
+export function cameraNearFade(dist: number, start: number = NEAR_FADE.start, end: number = NEAR_FADE.end): number {
+  if (!(dist < start)) return 0;
+  if (dist <= end) return 1;
+  const x = (start - dist) / (start - end);
+  return x * x * (3 - 2 * x);
+}
+
+/** Geglättetes Ausblenden: schnell hinein (die Wand ist sofort da), etwas langsamer wieder heraus; nie NaN */
+export class NearFade {
+  private readonly d = new DampedValue(0);
+  value = 0;
+  update(dist: number, dt: number): number {
+    const target = cameraNearFade(Number.isFinite(dist) ? dist : 99);
+    this.value = MathUtils.clamp(this.d.step(target, target > this.d.value ? 22 : 9, dt), 0, 1);
+    if (this.value < 0.002) this.value = 0;
+    return this.value;
+  }
+  reset() { this.d.set(0); this.value = 0; }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // See-Kamera: Klassen- und Gefechts-Skalierung, Dünung
 // ---------------------------------------------------------------------------------------------------------------
 

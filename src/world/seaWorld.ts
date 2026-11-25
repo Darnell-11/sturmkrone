@@ -49,7 +49,12 @@ import { WorldStreamer, type StreamHost } from './worldStreamer';
 import { EDGE_WARNING, applyEdgeDrift, clampToHardRadius, edgeWarningLevel, newEdgeZone } from './stormEdge';
 import { Environment, type EnvState } from './environment';
 import { coastK, deckHeight, inBox, IslandGround, type Blocker, type WalkIsland } from './islandGround';
-import { BLEND_ARM, CameraBlend, DampedValue, dynamicFovExtra, FocusPulse, FOOT_ARM, HitShake, navalFrame, SEA_ARM, SpringArm, SwellFollow, YARD_ARM, smoothK, type CameraWorld, type NavalFrame } from '../graphics/cameraRig';
+import { BLEND_ARM, CameraBlend, DampedValue, dynamicFovExtra, FocusPulse, FOOT_ARM, HitShake, navalFrame, NearFade, SEA_ARM, SpringArm, SwellFollow, YARD_ARM, smoothK, type CameraWorld, type NavalFrame } from '../graphics/cameraRig';
+import { FactionWarEngine, NationRegistry, cleanFactionWar, warWorldFromDefs, type FactionWarState, type WarNotice } from './factionWarEngine';
+import { FactionWarLive } from './factionWarLive';
+import { factionBanner } from './factionArch';
+import { factionRole } from './factionMats';
+import { hordePalette } from '../raid/horde';
 import { baseFov } from '../render/lens';
 import type { IslandShape } from './ocean';
 import { ParticleSystem } from './particles';
@@ -159,6 +164,8 @@ interface IslandVis {
   fauna: { def: IslandDef; x: number; z: number; r: number; trees: V3[]; bushes: V3[]; style: IslandStyle; edge: (a: number) => number } | null;
   entry: { g: Group; x: number; z: number; r: number; id: string } | null;
   committed: boolean;
+  /** Herr, den das Namensschild zeigt (4.5A: wechselt mit der Insel) */
+  labelOwner?: string;
 }
 
 /** Eine Insel der Hauptkarte: die dauerhaften Daten (`walk` mit Küste, Hindernissen, Einebnungen; `shape` für das Wasser) und ihre Darstellung, solange sie steht */
@@ -175,6 +182,11 @@ interface IslandSlot {
 }
 
 const newIslandVis = (): IslandVis => ({ group: new Group(), vegChunks: [], label: null, lamps: [], glows: [], objEmitters: [], carriers: [], fauna: null, entry: null, committed: false });
+
+/** Register der Nationen des Mächte-Ökosystems (Phase 4.5A): alle Mächte aus data/nations.ts; neue Nationen kämen hier mit `register` dazu */
+export const WAR_REGISTRY = new NationRegistry();
+/** Keine Gegner: die Wachen eines neuen Inselherrn schreiten nur ihre Runden ab */
+const NO_FOES: never[] = [];
 
 /** Eintrag entfernen, ohne die Liste zu verschieben (Reihenfolge ist hier gleichgültig) */
 /** Prüfpunkte der Schiffshülle entlang der Länge gegen die Stege */
@@ -211,6 +223,7 @@ export class SeaWorld {
     buildActive: (i) => this.islandStages(this.slots[i], !this.slots[i].detailDone),
     commitActive: (i) => this.commitIsland(this.slots[i]),
     disposeActive: (i) => this.disposeIsland(this.slots[i]),
+    restyleActive: (i) => this.dressOwner(this.slots[i]),
   };
   /** Chunk-Streaming der Inseln (UNLOADED, HORIZON_LOD, ACTIVE_HIGH); erst nach `settleStreaming` aktiv */
   readonly streamer = new WorldStreamer(this.streamHost);
@@ -838,7 +851,7 @@ export class SeaWorld {
         const hNat = (lx: number, lz: number) => solo.islandHeight(walk, s.x + lx, s.z + lz, true, false);
         const built = yield* buildSiteSteps({ group: isl, def: s.def, site, biome: style as Biome, walk, hAt, hNat, veg, density: texDetail.density });
         sink.smokeVents.push(...built.vents);
-        plantFactionBanners(isl, s.def, walk, hAt);
+        plantFactionBanners(isl, s.def, walk, hAt, glow);
         sink.campfires.push(...built.fires.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
         vis.glows.push({ list: built.glows, ox: s.x, oz: s.z });
         sink.chimneys.push(...built.chimneys.map((f) => ({ x: s.x + f.x, y: f.y, z: s.z + f.z })));
@@ -873,7 +886,7 @@ export class SeaWorld {
       vis.vegChunks.push(...veg.build(isl));
       lap('3b Bewuchs-Instanzen');
       // Namensschild (wie in 1.0): erscheint, sobald die Insel entdeckt ist
-      const label = islandLabel(s.def.name, s.def.kind, s.def.level, site?.label, s.def.factionId ? FACTIONS[s.def.factionId].name : undefined);
+      const label = islandLabel(s.def.name, s.def.kind, s.def.level, site?.label, this.ownerName(s.def));
       label.position.set(s.x, 1.2 + hillTop + 22, s.z);
       label.visible = false;
       vis.label = label;
@@ -1034,8 +1047,7 @@ export class SeaWorld {
     if (vis.label) this.scene.add(vis.label);
     const f = vis.fauna;
     if (f) this.fauna.addIsland(f.def, f.x, f.z, f.r, f.trees, f.bushes, f.style, f.edge);
-    const occ = this.occupied.get(s.def.id);
-    if (occ) this.swapBanners(s.def.id, occ.look);
+    this.dressOwner(slot);
   }
 
   /**
@@ -1231,6 +1243,200 @@ export class SeaWorld {
       fog: () => { const f = this.scene.fog as Fog; return { color: f.color, far: f.far }; },
     }, this.islandDefs, this.pendingSeaEvents.state, this.pendingSeaEvents.seed);
     this.seaEvents.onNews = (n) => this.onSeaNews(n);
+    this.createWarLive();
+  }
+
+  // ---------- Ökosystem der Mächte (Phase 4.5A) ----------
+
+  /** Engine (reine Daten: Kassen, Diplomatie, Armadas, Schlachten, Belagerungen, Inselbesitz) */
+  war: FactionWarEngine | null = null;
+  /** Live-Schicht: echte Schiffe und Truppen in Spielernähe */
+  warLive: FactionWarLive | null = null;
+  /** Meldungen des Ökosystems an das Spiel (setzt `Game`) */
+  onWarNews: (n: WarNotice) => void = () => {};
+  private readonly nearFade = new NearFade();
+  /** Wachen der Inseln, die einen neuen Herrn haben (nur in Spielernähe) */
+  private readonly warGarrisons = new Map<string, Garrison>();
+  private warGarT = 0;
+
+  /** Die Definitionen der Hauptkarte (auch während eines Raids, der sie vorübergehend tauscht) */
+  private mainDefs(): IslandDef[] { return this.mainSaved?.defs ?? this.islandDefs; }
+
+  /**
+   * Ökosystem aus dem Spielstand übernehmen (oder neu beginnen, wenn es fehlt oder unbrauchbar ist): Inseldaten → Engine, danach alle stehenden Inseln
+   * nach ihrem Besitzer einkleiden.
+   */
+  seedFactionWar(raw: unknown, seed: number) {
+    this.warLive?.releaseAll();
+    for (const g of this.warGarrisons.values()) g.dispose();
+    this.warGarrisons.clear();
+    const w = warWorldFromDefs(this.mainDefs(), WAR_REGISTRY);
+    const state = cleanFactionWar(raw, WAR_REGISTRY, w.islands);
+    this.war = new FactionWarEngine(WAR_REGISTRY, w.islands, w.obstacles, state, seed);
+    this.warLive = null;
+    this.createWarLive();
+    for (const sl of this.slots) if (sl.vis?.committed) this.dressOwner(sl);
+  }
+
+  /** Live-Schicht anlegen, sobald Engine und Seesystem stehen */
+  private createWarLive() {
+    if (this.warLive || !this.war || !this.naval) return;
+    const w = this;
+    this.warLive = new FactionWarLive({
+      scene: this.scene,
+      naval: this.naval,
+      get ship() { return w.ship; },
+      focus: () => this.playerPos,
+      warm: (o) => this.warmHook?.(o),
+      islandWalk: (id) => {
+        const k = this.islandDefs.findIndex((d) => d.id === id);
+        const sl = k >= 0 ? this.slots[k] : undefined;
+        if (!sl?.vis?.committed || sl.spec.def.id !== id) return null;
+        return { walk: sl.walk, nav: navForIsland(sl.walk) };
+      },
+      troopBase: () => this.troopWorld,
+      get playerId() { return w.playerEntityId; },
+    }, this.war);
+    // Grenzfesten in fremder Hand stellen keine Marine-Patrouillen
+    this.naval.fortOwner = (id) => {
+      const o = this.war?.ownerOf(id) ?? 'marine';
+      return WAR_REGISTRY.get(o)?.heraldry ?? null;
+    };
+  }
+
+  /** Ein Logikschritt des Ökosystems: Engine (Spielzeit), Meldungen, echte Schiffe und Truppen; im Raid und im Titelbild ruht alles */
+  private updateWar(dt: number) {
+    const war = this.war;
+    if (!war) return;
+    const rest = !!this.raid || this.title.active;
+    if (!rest) {
+      war.update(dt);
+      const news = war.drain();
+      for (let i = 0; i < news.length; i++) this.onWarNotice(news[i]);
+    }
+    if (this.warLive) { this.warLive.paused = rest; this.warLive.update(dt); }
+    this.updateWarGarrisons(dt);
+  }
+
+  private onWarNotice(n: WarNotice) {
+    if (n.type === 'gefallen') {
+      // die Insel steht gerade da: neu einkleiden (Banner, Laternen, Namensschild, Wachen); sonst liest der nächste Aufbau den neuen Herrn
+      const k = this.islandDefs.findIndex((d) => d.id === n.islandId);
+      if (k >= 0) this.streamer.restyle(k);
+      const g = this.warGarrisons.get(n.islandId);
+      if (g) { g.dispose(); this.warGarrisons.delete(n.islandId); }
+    }
+    this.onWarNews(n);
+  }
+
+  /** Macht (Heraldik) des aktuellen Herrn einer Insel; Inseln außerhalb des Ökosystems behalten ihren Besitzer aus den Daten */
+  ownerFaction(def: IslandDef): FactionId | null {
+    const war = this.war;
+    if (!war || !war.island(def.id)) return def.factionId ?? null;
+    const o = war.ownerOf(def.id);
+    return o ? WAR_REGISTRY.get(o)?.heraldry ?? def.factionId ?? null : null;
+  }
+
+  /** Hat die Insel einen anderen Herrn als beim Weltstart? */
+  ownerShifted(def: IslandDef): boolean { return !!this.war?.ownerChanged(def.id); }
+
+  /** Name des Herrn für das Namensschild */
+  private ownerName(def: IslandDef): string | undefined {
+    if (this.ownerShifted(def)) { const n = WAR_REGISTRY.get(this.war!.ownerOf(def.id)); return n?.name; }
+    return def.factionId ? FACTIONS[def.factionId].name : undefined;
+  }
+
+  /**
+   * Eine stehende Insel nach ihrem Herrn einkleiden (Laden einer Insel und Besitzerwechsel): Banner (Flagge des Spielers bei einer Besatzung, sonst die
+   * Macht des neuen Herrn), Laternenfarbe, Namensschild. Die Bauten selbst bleiben die des Gründers (gleiche Kollision, deterministischer Aufbau).
+   */
+  private dressOwner(slot: IslandSlot | undefined) {
+    const vis = slot?.vis;
+    if (!slot || !vis) return;
+    const def = slot.spec.def;
+    const occ = this.occupied.get(def.id);
+    const shifted = this.ownerShifted(def);
+    const fid = shifted ? this.ownerFaction(def) : null;
+    if (occ) this.swapBanners(def.id, occ.look);
+    else if (shifted || this.bannerTwins.has(def.id)) this.swapBanners(def.id, null, fid);
+    this.swapLanterns(vis.group, fid);
+    const want = this.ownerName(def);
+    if (vis.label && vis.labelOwner !== want) {
+      if (vis.labelOwner !== undefined || shifted) {
+        const site = def.site ? SITES[def.site] : null;
+        const old = vis.label;
+        const label = islandLabel(def.name, def.kind, def.level, site?.label, want);
+        label.position.copy(old.position);
+        label.visible = old.visible;
+        if (vis.committed) { this.scene.remove(old); this.scene.add(label); }
+        markShared(old.geometry); disposeObject(old);
+        vis.label = label;
+      }
+      vis.labelOwner = want;
+    }
+  }
+
+  /** Laternen der Bauten in der Farbe des Herrn (Kurogane: glühend rot); null = zurück zur Farbe des Gründers */
+  private swapLanterns(g: Group, fid: FactionId | null) {
+    g.traverse((o) => {
+      const m = o as Mesh;
+      if (!m.isMesh || Array.isArray(m.material)) return;
+      const orig = (m.userData.lanternOrig as Material | undefined) ?? m.material;
+      if (!(orig as Material).userData?.factionLantern) return;
+      if (fid) { m.userData.lanternOrig = orig; m.material = factionRole(fid, 'lantern'); }
+      else if (m.userData.lanternOrig) { m.material = orig; delete m.userData.lanternOrig; }
+    });
+  }
+
+  /** Wachen der Inseln mit neuem Herrn: erscheinen unter 520 m, verschwinden jenseits von 780 m (nicht bei laufenden Belagerungstrupps) */
+  private updateWarGarrisons(dt: number) {
+    const war = this.war;
+    const pp = this.playerPos;
+    for (const g of this.warGarrisons.values()) g.update(dt, this.env.clock, { x: pp.x, z: pp.z, yaw: 0 });
+    this.warGarT -= dt;
+    if (this.warGarT > 0) return;
+    this.warGarT = 0.5;
+    if (!war || this.raid || !this.assets) {
+      for (const g of this.warGarrisons.values()) g.dispose();
+      this.warGarrisons.clear();
+      return;
+    }
+    const siegeIsland = this.warLive?.siegeView ? war.siegeById(this.warLive.siegeView.siegeId)?.islandId ?? null : null;
+    for (const w of war.islands) {
+      if (!war.ownerChanged(w.id)) continue;
+      const have = this.warGarrisons.get(w.id);
+      const d = Math.hypot(w.x - pp.x, w.z - pp.z) - w.r;
+      const k = this.islandDefs.findIndex((x) => x.id === w.id);
+      const sl = k >= 0 ? this.slots[k] : undefined;
+      const ok = !!sl?.vis?.committed && !this.occupied.has(w.id) && siegeIsland !== w.id && !war.besieged(w.id);
+      if (have && (!ok || d > 780)) { have.dispose(); this.warGarrisons.delete(w.id); continue; }
+      if (have || !ok || d > 520) continue;
+      const fid = this.ownerFaction(sl!.spec.def);
+      if (!fid) continue;
+      const isl = sl!.walk;
+      const nav = navForIsland(isl);
+      const routes = this.patrolRoutes.get(w.id) ?? [this.ringRoute(isl)];
+      const world = { ...this.troopWorld, enemies: () => NO_FOES, nav: () => nav };
+      this.warGarrisons.set(w.id, new Garrison(this.scene, hordePalette(fid), routes, Math.max(4, sl!.spec.def.level ?? 8), this.playerEntityId, world, nav));
+    }
+  }
+
+  /** Rundgang um die Inselmitte (Inseln ohne eigene Wachrunden) */
+  private ringRoute(isl: WalkIsland): { x: number; z: number }[] {
+    const out: { x: number; z: number }[] = [];
+    for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; out.push({ x: isl.x + Math.sin(a) * isl.r * 0.45, z: isl.z + Math.cos(a) * isl.r * 0.45 }); }
+    return out;
+  }
+
+  /** Zustand des Ökosystems für den Spielstand (echte Schiffe vorher zurückschreiben; im Spielstand ist nichts „live“) */
+  factionWarSnapshot(): FactionWarState | null {
+    if (!this.war) return null;
+    this.warLive?.flush();
+    const s = this.war.snapshot();
+    for (const a of s.armadas) a.live = false;
+    for (const b of s.battles) b.live = false;
+    for (const g of s.sieges) g.live = false;
+    return s;
   }
 
   /** Zustand des lebendigen Meeres aus dem Spielstand übernehmen (vor oder nach dem Aufbau des Seesystems) */
@@ -2003,6 +2209,7 @@ export class SeaWorld {
     }
     this.raid?.update(dt);
     this.updateGarrisons(dt);
+    this.updateWar(dt);
     this.regen(dt);
     this.checkZone();
     if (this.crystal) {
@@ -2670,7 +2877,9 @@ export class SeaWorld {
     const had = this.occupied.get(id);
     if (!look) {
       if (had) { had.garrison?.dispose(); this.occupied.delete(id); }
-      this.swapBanners(id, null);
+      // zurück an den Herrn der Insel (bei einem Besitzerwechsel dessen Banner)
+      const def = this.islandDefs.find((d) => d.id === id);
+      this.swapBanners(id, null, def && this.ownerShifted(def) ? this.ownerFaction(def) : null);
       return;
     }
     if (had) { had.look = look; had.level = level; } else this.occupied.set(id, { look, level, garrison: null });
@@ -2684,17 +2893,19 @@ export class SeaWorld {
    * Banner der Macht gegen die Flagge des Spielers tauschen (und zurück). Die Banner-Meshes sind beim Verschmelzen der Insel eigene Netze geblieben
    * und tragen die Lage ihres Banners (`userData.bannerPose`); die Zwillinge stehen am selben Platz im selben Maß.
    */
-  private swapBanners(id: string, look: ShipLook | null) {
+  private swapBanners(id: string, look: ShipLook | null, fid: FactionId | null = null) {
     const grp = this.islandGroups.find((i) => i.id === id);
     if (!grp) return;
-    for (const t of this.bannerTwins.get(id) ?? []) t.removeFromParent();
+    for (const t of this.bannerTwins.get(id) ?? []) { t.removeFromParent(); if (!t.userData.playerBanner) disposeObject(t); }
     this.bannerTwins.delete(id);
     const poses = new Set<{ x: number; y: number; z: number; yaw: number; k: number }>();
-    grp.g.traverse((o) => { const p = o.userData.bannerPose; if (p) { poses.add(p); o.visible = !look; } });
-    if (!look) return;
+    const swap = !!look || !!fid;
+    grp.g.traverse((o) => { const p = o.userData.bannerPose; if (p) { poses.add(p); o.visible = !swap; } });
+    if (!swap) return;
     const twins: Object3D[] = [];
     for (const p of poses) {
-      const t = makePlayerBanner(look, p.k);
+      // Flagge des Spielers (Besatzung) oder Banner der Macht, die die Insel erobert hat (4.5A)
+      const t = look ? makePlayerBanner(look, p.k) : factionBanner(fid!, p.k).g;
       t.position.set(p.x, p.y, p.z);
       t.rotation.y = p.yaw;
       grp.g.add(t);
@@ -2812,8 +3023,11 @@ export class SeaWorld {
 
   /** Hauptkarte pausieren: Inseln, Definitionen, Stege, Küstenformen und Dampfquellen tauschen gegen die Raid-Insel (Ausblenden besorgt `cullFigures`) */
   private suspendMain(w: RaidWorld, def: IslandDef) {
-    // Schiffe der Welt-Ereignisse und Konvois werden wieder zu Daten (die Instanz ersetzt die Hauptkarte)
+    // Schiffe der Welt-Ereignisse und Konvois werden wieder zu Daten (die Instanz ersetzt die Hauptkarte); ebenso Armadas und Truppen der Mächte
     this.seaEvents?.releaseAll();
+    this.warLive?.releaseAll();
+    for (const g of this.warGarrisons.values()) g.dispose();
+    this.warGarrisons.clear();
     this.mainSaved = {
       islands: this.ground.islands.splice(0), defs: this.islandDefs, piers: this.piers.splice(0), shapes: this.islands,
       vents: this.smokeVents, fires: this.campfires, chimneys: this.chimneys,
@@ -2897,13 +3111,15 @@ export class SeaWorld {
     const tier = def?.dangerTier ?? 3;
     const enemyFaction: Faction = this.playerFaction === 'pirat' ? 'marine' : 'pirat';
     const now = this.env.clock;
+    // eine eroberte Mega-Insel (4.5A): Bezirke und Kommandant tragen die Uniform des neuen Herrn
+    const megaPower = def && this.ownerShifted(def) ? this.ownerFaction(def) ?? undefined : undefined;
     // 1. Bezirke, denen man nahe kommt, ziehen auf: Elite-Trupps patrouillieren um die Bezirksmitte, bis sie die Spielfigur entdecken
     districtsToWake(rt, f.x, f.z, now, this.megaWake);
     for (let k = 0; k < this.megaWake.length; k++) {
       const i = this.megaWake[k], d = m.districts[i];
       districtWorld(m, d, this.megaPt);
       const lv = megaLevel(tier, d.lvl);
-      c.spawnWave(d.squad, lv, enemyFaction, `mega:${h.id}:${d.id}`, this.megaPt, d.r * 0.45, { calm: true });
+      c.spawnWave(d.squad, lv, enemyFaction, `mega:${h.id}:${d.id}`, this.megaPt, d.r * 0.45, { calm: true, power: megaPower });
       this.onMessage(`${d.name}: Elite-Trupps halten den Bezirk! (Stufe ${lv})`);
     }
     // 2. Der Kommandant erscheint mit dem ersten Bezirk und zieht seine Runde
@@ -2912,7 +3128,7 @@ export class SeaWorld {
       const di = Math.max(0, m.districts.findIndex((d) => d.id === route[rt.commander.leg % route.length]));
       districtWorld(m, m.districts[di], this.megaPt);
       const lv = megaLevel(tier, m.commander.lvl);
-      const spawned = c.spawnWave(['legende', ...m.commander.guard], lv, enemyFaction, `mega:${h.id}:kommandant`, this.megaPt, 6, { name: m.commander.name, calm: true });
+      const spawned = c.spawnWave(['legende', ...m.commander.guard], lv, enemyFaction, `mega:${h.id}:kommandant`, this.megaPt, 6, { name: m.commander.name, calm: true, power: megaPower });
       h.commander = spawned.find((e) => e.kind === 'legende') ?? null;
       rt.commander.state = 'unterwegs'; rt.commander.roamT = 0;
       this.overlay?.showCutin(m.commander.name, '#A8322A');
@@ -2957,10 +3173,10 @@ export class SeaWorld {
   private spawnFortress(isl: WalkIsland, def: IslandDef, idx: number) {
     const c = this.combat;
     if (!c) return;
-    const fid: FactionId = def.factionId ?? 'marine';
+    const fid: FactionId = this.ownerFaction(def) ?? 'marine';
     const F = FACTIONS[fid];
     const hq = def.marine === 'hq';
-    if (def.kind === 'marinefort') {
+    if (def.kind === 'marinefort' && fid === 'marine') {
       const stance = marineStance(this.standingOf('marine'));
       if (stance === 'verbuendet') {
         this.onMessage(hq ? `${def.name}: Die Marine grüßt dich. Das Hauptquartier ist für Verbündete tabu – hier wird nicht gekämpft.` : `${def.name}: Die Marine lässt dich passieren. Verbündete werden nicht angegriffen.`);
@@ -3725,6 +3941,11 @@ export class SeaWorld {
       }
     }
     cam.updateProjectionMatrix();
+    // Nahbereichs-Ausblenden (4.5A): rückt die Kamera an einer engen Wand näher als 0,70 m an den Kopf, blendet die eigene Figur weich aus
+    if (this.player) {
+      const near = this.mode === 'foot' && !inMenu && !this.yardOn && this.cinematic <= 0 ? cam.position.distanceTo(this.camAnchor) : 99;
+      this.player.setNearFade(this.nearFade.update(near, frameDt));
+    }
     // Treffer-Erschütterung (gerichteter Stoß, Schwingung, Zittern) – läuft in Echtzeit, auch im Standbild; im Menü aus
     // (auf See wächst der gerichtete Anteil mit dem Abstand der Kamera, sonst wäre ein Stoß aus 40 m kaum zu sehen; das Zittern bleibt gleich)
     if (inMenu) this.hitShake.clear();
