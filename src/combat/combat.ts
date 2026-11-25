@@ -85,6 +85,8 @@ export interface CombatHooks {
   message(t: string): void;
   /** Beute aufgehoben (Säule eingesaugt): Spielstand und Anzeige */
   loot(d: LootDrop): void;
+  /** Filmreifer Fokus (Parade, Finisher): die Kamera rückt kurz näher (0 … 1) */
+  focus?(strength: number): void;
 }
 
 interface Projectile { mesh: Mesh; vel: Vector3; life: number; radius: number; dmg: number; knock: number; team: 'player' | 'enemy'; from: Enemy | null; pierce: boolean; hit: Set<object>; color: string; poise: number; trail: number }
@@ -486,6 +488,7 @@ export class CombatSystem implements EnemyWorld {
       this.overlay.speedlines(0.8);
       this.hooks.hitstop(0.35, 0.15);
       this.hooks.shake(0.4);
+      this.hooks.focus?.(0.75);
     } else if (res === 'blocked') {
       this.fx.hit(pos.clone().addScaledVector(new Vector3(-dirX, 0, -dirZ), 0.5), 'punch', '#9FD8FF');
       this.overlay.number(pos, 'Geblockt', 'info');

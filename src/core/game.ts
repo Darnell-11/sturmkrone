@@ -3863,6 +3863,8 @@ export class Game {
     this.touch.setScale(s.hudScale);
     this.sectorBanner.enabled = s.sectorBanner;
     this.overlay.numbers = s.damageNumbers;
+    // Regler „Kamera-Erschütterung“ (0 … 100 %)
+    if (this.world) this.world.hitShake.scale = s.camShake;
     this.input.setKeyBindings(s.keyBindings);
     this.input.invertY = s.invertLookY;
     audio.setVolumes(s.volume);

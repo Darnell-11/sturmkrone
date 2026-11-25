@@ -1373,12 +1373,16 @@ export class Menus {
           ${toggleHtml('cb', 'Farbenblind-freundlich', s.colorblind, 'Orange und Blau statt Rot und Grün, dazu eindeutige Formen auf der Karte.')}</div>
         <div class="set-group"><h3>Einblendungen</h3>
           ${toggleHtml('sector', 'Sektor- und Titel-Einblendung', s.sectorBanner, 'Beim Segeln in einen neuen Sektor erscheinen der Name der Macht und das laufende Musikstück.')}
-          ${toggleHtml('numbers', 'Schadenszahlen', s.damageNumbers, 'Zahlen über den Gegnern; Hinweise wie „Parade!“ bleiben.')}</div>`;
+          ${toggleHtml('numbers', 'Schadenszahlen', s.damageNumbers, 'Zahlen über den Gegnern; Hinweise wie „Parade!“ bleiben.')}</div>
+        <div class="set-group"><h3>Kamera</h3>
+          ${sliderHtml({ label: 'Kamera-Erschütterung', input: 'camshake', min: 0, max: 100, step: 5, value: Math.round(s.camShake * 100), unit: ' %' })}
+          <p class="note">Stöße bei Treffern, Kanonensalven und Rammstößen. 0 % schaltet sie ganz ab.</p></div>`;
       handlers.text = (id) => { g.settings.update({ textScale: +id }); rerender(); };
       handlers.hudscale = (val, el) => { g.settings.update({ hudScale: +val / 100 }); this.slide(el, +val, ' %'); };
       handlers.cb = () => { g.settings.update({ colorblind: !s.colorblind }); rerender(); };
       handlers.sector = () => { g.settings.update({ sectorBanner: !s.sectorBanner }); rerender(); };
       handlers.numbers = () => { g.settings.update({ damageNumbers: !s.damageNumbers }); rerender(); };
+      handlers.camshake = (val, el) => { g.settings.update({ camShake: +val / 100 }); this.slide(el, +val, ' %'); };
     }
 
     this.open(

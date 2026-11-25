@@ -25,6 +25,8 @@ export interface Settings {
   sectorBanner: boolean;
   /** Schadenszahlen über den Gegnern */
   damageNumbers: boolean;
+  /** Stärke der Kamera-Erschütterung bei Treffern, Salven und Rammstößen (0 … 1; 0 = aus) */
+  camShake: number;
   /** Farbenblind-freundliche Farben und Formen */
   colorblind: boolean;
   touchControls: 'auto' | 'on' | 'off';
@@ -46,6 +48,7 @@ export function defaultSettings(): Settings {
     hudScale: 1,
     sectorBanner: true,
     damageNumbers: true,
+    camShake: 1,
     colorblind: false,
     touchControls: 'auto',
     invertLookY: false,
@@ -78,6 +81,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     hudScale: typeof r.hudScale === 'number' && Number.isFinite(r.hudScale) ? clamp(r.hudScale, 0.8, 1.4) : d.hudScale,
     sectorBanner: typeof r.sectorBanner === 'boolean' ? r.sectorBanner : d.sectorBanner,
     damageNumbers: typeof r.damageNumbers === 'boolean' ? r.damageNumbers : d.damageNumbers,
+    camShake: typeof r.camShake === 'number' && Number.isFinite(r.camShake) ? clamp(r.camShake, 0, 1) : d.camShake,
     colorblind: typeof r.colorblind === 'boolean' ? r.colorblind : false,
     touchControls: ['auto', 'on', 'off'].includes(r.touchControls) ? r.touchControls : 'auto',
     invertLookY: typeof r.invertLookY === 'boolean' ? r.invertLookY : false,
@@ -91,7 +95,7 @@ export const SETTINGS_TAB_KEYS: Record<SettingsTab, (keyof Settings)[]> = {
   grafik: ['quality', 'qualityAuto', 'dynamicResolution'],
   steuerung: ['touchControls', 'invertLookY', 'keyBindings'],
   ton: ['volume', 'muteWhenUnfocused'],
-  anzeige: ['textScale', 'showFps', 'colorblind', 'hudScale', 'sectorBanner', 'damageNumbers'],
+  anzeige: ['textScale', 'showFps', 'colorblind', 'hudScale', 'sectorBanner', 'damageNumbers', 'camShake'],
 };
 
 export class SettingsStore {

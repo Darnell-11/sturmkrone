@@ -48,7 +48,9 @@ import { buildBlueprints, isVolcanic, islandForm, shapeOf, walkOf, type IslandBl
 import { WorldStreamer, type StreamHost } from './worldStreamer';
 import { EDGE_WARNING, applyEdgeDrift, clampToHardRadius, edgeWarningLevel, newEdgeZone } from './stormEdge';
 import { Environment, type EnvState } from './environment';
-import { coastK, inBox, IslandGround, type WalkIsland } from './islandGround';
+import { coastK, deckHeight, inBox, IslandGround, type Blocker, type WalkIsland } from './islandGround';
+import { BLEND_ARM, CameraBlend, DampedValue, dynamicFovExtra, FocusPulse, FOOT_ARM, HitShake, navalFrame, SEA_ARM, SpringArm, SwellFollow, YARD_ARM, smoothK, type CameraWorld, type NavalFrame } from '../graphics/cameraRig';
+import { baseFov } from '../render/lens';
 import type { IslandShape } from './ocean';
 import { ParticleSystem } from './particles';
 import { hashId, seeded } from './waves';
@@ -79,7 +81,7 @@ import type { SkillState } from '../core/save/types';
 import { Ship, type SeaEnv } from '../entities/ship/ship';
 import { visualKey } from '../data/shipVisuals';
 import type { ShipEvolution } from '../data/shipEvolution';
-import { AMMO, AMMO_IDS, DEFAULT_SHIP_LOOK, factionShipLook, SHIP_CLASSES, TITLE_SHIP, type AmmoId, type ShipLook } from '../data/ships';
+import { AMMO, AMMO_IDS, DEFAULT_SHIP_LOOK, factionShipLook, SEA_SPEED, SHIP_CLASSES, TITLE_SHIP, type AmmoId, type ShipLook } from '../data/ships';
 import { TitleDirector } from './titleDirector';
 import { NavalSystem, type BattleMark, type BattleResult, type EnemyShip } from '../naval/naval';
 import { CompositeGround, DeckGround, type Ground, type Pier } from './islandGround';
@@ -305,12 +307,39 @@ export class SeaWorld {
   /** Angeforderte Trefferpause (vom Spiel in Echtzeit abgearbeitet) */
   /** Trefferpause: t = Zeitlupe (Sekunden), freeze = echtes Standbild (Sekunden, läuft in Echtzeit ab) */
   hitstop = { t: 0, scale: 0.05, freeze: 0 };
-  /** Kamerastoß: Feder-gedämpfter Versatz, angestoßen in Trefferrichtung */
-  private kick = new Vector3();
-  private kickV = new Vector3();
-  private shakeAx = new Vector3();
-  private shakeDir = 0;
-  private shakePh = 0;
+  // ---------- Kamera-Engine (graphics/cameraRig.ts, Abschluss Phase 4.4) ----------
+  /** Treffer-Erschütterung (gerichteter Stoß, Schwingung, Zittern); `scale` = Regler „Kamera-Erschütterung“ */
+  readonly hitShake = new HitShake();
+  /** Fokus-Puls für Paraden und finale Boss-Treffer */
+  readonly focusPulse = new FocusPulse();
+  private readonly camBlend = new CameraBlend();
+  private readonly armFoot = new SpringArm(FOOT_ARM);
+  /** prüft den überblendeten Weg zu Fuß (ohne eigene Glättung) */
+  private readonly armBlend = new SpringArm(BLEND_ARM);
+  private readonly armSea = new SpringArm(SEA_ARM);
+  private readonly armYard = new SpringArm(YARD_ARM);
+  private readonly swell = new SwellFollow();
+  private readonly fovExtra = new DampedValue(0);
+  private readonly naval4: NavalFrame = { back: 0, up: 0 };
+  private aimK = 0;
+  private lastFlow = 1;
+  private camKey = '';
+  private readonly camAnchor = new Vector3();
+  private readonly camWant = new Vector3();
+  private readonly footWant = new Vector3();
+  private footWantInit = false;
+  // Umgebung der Kamera, je Bild gesammelt (keine neuen Felder je Bild)
+  private camIslands: WalkIsland[] = [];
+  private camPiers: Pier[] = [];
+  private readonly camBlockers: Blocker[] = [];
+  private readonly camShips: Ship[] = [];
+  private readonly camWorld: CameraWorld = {
+    floorAt: (x, z, y) => this.camFloor(x, z, y),
+    solid: (x, y, z) => this.camSolid(x, y, z),
+  };
+  /** Ungerichtetes Zittern (0 … 1), läuft über die Kamera-Engine */
+  private get shake(): number { return this.hitShake.rumble; }
+  private set shake(v: number) { this.hitShake.rumble = v; }
   combat: CombatSystem | null = null;
   /** Neue Figuren und Objekte für das Zeichnen vorbereiten (setzt das Spiel: Shader parallel übersetzen) */
   warmHook: ((o: Object3D) => void) | null = null;
@@ -441,7 +470,6 @@ export class SeaWorld {
   private speed = 0;
   private boostCd = 0;
   private cdBow = 0;
-  private shake = 0;
 
   private camYaw = 0;
   private camPitch = 0.3;
@@ -502,7 +530,7 @@ export class SeaWorld {
       waterY: (x, z) => this.env.heightAt(x, z),
       say: (t) => this.onMessage(t),
       onBoard: (ph) => this.onBoardPhase(ph),
-      bump: (x, y, z) => { this.shake = Math.max(this.shake, 0.5); audio.play('crack', 0.7, { x, y, z }); this.spray.emit(26, x, this.env.heightAt(x, z), z, { speed: 5, up: 4.5, life: 1.1, color: new Color(0.85, 0.92, 0.95), gravity: 12, spread: 3.5 }); },
+      bump: (x, y, z) => { this.shake = Math.max(this.shake, 0.5); this.hitShake.impulse(x - this.ship.x, 0, z - this.ship.z, 0.8); audio.play('crack', 0.7, { x, y, z }); this.spray.emit(26, x, this.env.heightAt(x, z), z, { speed: 5, up: 4.5, life: 1.1, color: new Color(0.85, 0.92, 0.95), gravity: 12, spread: 3.5 }); },
     });
     this.ship.onRepaired = (r) => {
       this.onMessage(r.sail > 0.5 || r.hull > 0.5 ? `Geflickt: Segel +${Math.round(r.sail)} HP${r.hull > 0.5 ? `, Rumpf +${Math.round(r.hull)}` : ''}.` : 'Fertig geflickt.');
@@ -1104,6 +1132,7 @@ export class SeaWorld {
       this.fx.decals.ground = (x, z) => this.groundProxy.height(x, z);
       this.naval = new NavalSystem(this.scene, this.seaEnv, this.fx, this.overlay, this.spray, this.sparks, this.ground, {
         shake: (a) => { this.shake = Math.max(this.shake, a); },
+        kick: (dx, dz, k) => this.hitShake.impulse(dx, 0, dz, k),
         hitstop: (t) => { this.hitstop.t = Math.max(this.hitstop.t, t); this.hitstop.scale = 0.05; },
         message: (t) => this.onMessage(t),
         sunk: (e) => this.onShipSunk(e),
@@ -1125,7 +1154,8 @@ export class SeaWorld {
         hitstop: (t, scale = 0.05) => { this.hitstop.t = Math.max(this.hitstop.t, t); this.hitstop.scale = Math.min(this.hitstop.scale, scale); },
         shake: (a) => { this.shake = Math.max(this.shake, a); },
         impact: (dx, dz, k) => this.impact(dx, dz, k),
-        kill: (e) => this.onKill(e),
+        kill: (e) => { if (e.def.raid === 'boss' || e.def.boss) this.focusPulse.trigger(1, 1.3); this.onKill(e); },
+        focus: (k) => this.focusPulse.trigger(k, 0.9),
         gold: (n) => this.onGold(n),
         message: (t) => this.onMessage(t),
         loot: (d) => this.onLootDrop(d),
@@ -1959,7 +1989,6 @@ export class SeaWorld {
       const pp = this.playerPos;
       for (const p of this.chimneys) if (Math.hypot(p.x - pp.x, p.z - pp.z) < 420) this.smoke.puff(p.x, p.y, p.z, { size: 0.5, grow: 3.5, life: 6, tone: 0.62, vy: 1.2, spread: 0.15, rise: 0.3, alpha: 0.5, wind: 0.7 });
     }
-    this.shake = Math.max(0, this.shake - dt * 1.8);
     this.updateWake(dt);
     // Flotte: liegt das Flaggschiff am Steg oder vor der Küste (Bordleiter) oder ist der Spieler von Bord, ankern die Begleitschiffe auf Abstand
     if (this.naval) this.naval.fleetAnchored = this.mode !== 'sail' || !!this.ship.moored || !!this.docking.ladderId;
@@ -2078,6 +2107,7 @@ export class SeaWorld {
     else {
       // Meeresströmungen (bis +35 % in Strömungsrichtung) und Flauten wirken auf die Fahrt (Phase 4.3C)
       const flow = this.seaEvents && !this.raid ? this.seaEvents.flowK(s.x, s.z, s.heading) : 1;
+      this.lastFlow = flow;
       s.steer(dt, mv.x, this.seaEnv, this.shipSpeedMult * flow);
       // Bugwellen-Boost: in der Strömung schäumt das Wasser am Bug stärker
       const boost = flow - 1;
@@ -3214,16 +3244,124 @@ export class SeaWorld {
   /** Wirksamer Treffer: 30–40 ms Standbild und ein Kamerastoß in Trefferrichtung, der federnd zurückschwingt */
   impact(dirX: number, dirZ: number, strength: number) {
     this.hitstop.freeze = Math.max(this.hitstop.freeze, HIT_STOP);
-    // gerichtetes Wackeln: Schwingung entlang der Trefferachse (quer zur Blickrichtung wirkt sie am stärksten)
-    this.shakeAx.set(dirX, 0, dirZ);
-    this.shakeDir = Math.min(1.2, Math.max(this.shakeDir, strength * 0.55));
-    const k = Math.min(1.5, strength);
-    this.kickV.x += dirX * k * 2.4;
-    this.kickV.z += dirZ * k * 2.4;
-    this.kickV.y -= k * 1.1;
+    // gerichteter Stoß und Schwingung entlang der Trefferachse (Kamera-Engine, Regler „Kamera-Erschütterung“)
+    this.hitShake.impulse(dirX, 0, dirZ, strength);
   }
 
   private fwd(h = this.heading) { return this.fwdTmp.set(Math.sin(h), 0, Math.cos(h)); }
+
+  // ---------- Umgebung für den Spring-Arm der Kamera (4.4) ----------
+
+  /** Inseln, Bauten, Stege und Schiffe um einen Punkt sammeln (je Bild einmal, in feste Listen) */
+  private gatherCam(cx: number, cz: number, r: number) {
+    this.ground.getNearbyIslands(cx, cz, r, this.camIslands);
+    this.ground.getNearbyPiers(cx, cz, r, this.camPiers);
+    const bl = this.camBlockers;
+    bl.length = 0;
+    for (const isl of this.camIslands) {
+      for (const b of isl.blockers) {
+        // Kleinkram (Kisten, Fässer) verdeckt nichts; Häuser, Mauern, Türme schon
+        if (b.r < 0.9) continue;
+        const dx = b.x - cx, dz = b.z - cz;
+        if (dx * dx + dz * dz < (r + b.r) * (r + b.r)) bl.push(b);
+      }
+    }
+    const sh = this.camShips;
+    sh.length = 0;
+    if (this.ship.alive && this.ship.model.group.visible) sh.push(this.ship);
+    if (this.naval) for (const e of this.naval.enemies) {
+      const s = e.ship;
+      if (!s.alive) continue;
+      const dx = s.x - cx, dz = s.z - cz, rr = r + s.cls.L * 0.6;
+      if (dx * dx + dz * dz < rr * rr) sh.push(s);
+    }
+  }
+
+  /** Geländehöhe ohne Brückendecks (−∞ über offenem Wasser) */
+  private camTerrain(x: number, z: number): number {
+    let y = -Infinity;
+    for (const isl of this.camIslands) { const h = this.ground.islandHeight(isl, x, z, true, true, false); if (h > y) y = h; }
+    return y;
+  }
+
+  /** Boden unter einem Punkt für die Kamera: Wasser, Gelände und begehbare Flächen unter der Bezugshöhe (Brücken, Stege, Decks) */
+  private camFloor(x: number, z: number, yRef: number): number {
+    let f = this.env.heightAt(x, z);
+    const t = this.camTerrain(x, z);
+    if (t > f) f = t;
+    for (const isl of this.camIslands) {
+      if (!isl.decks) continue;
+      for (const d of isl.decks) { const y = deckHeight(d, x, z); if (y > f && y <= yRef + 0.3) f = y; }
+    }
+    for (const p of this.camPiers) { if (p.y > f && p.y <= yRef + 0.3 && this.inPier(p, x, z)) f = p.y; }
+    for (const s of this.camShips) {
+      const top = s.model.group.position.y + s.model.deckY;
+      if (top > f && top <= yRef + 0.3 && this.hullLocal(s, x, z)) f = top;
+    }
+    return f;
+  }
+
+  /** Liegt der Punkt in festem Material: Fels und Gelände, Brückendeck samt Brüstung, Steg, Bauwerk, Schiffsrumpf, Achterkastell? */
+  private camSolid(x: number, y: number, z: number): boolean {
+    const t = this.camTerrain(x, z);
+    if (y < t - 0.05) return true;
+    for (const isl of this.camIslands) {
+      if (!isl.decks) continue;
+      for (const d of isl.decks) {
+        const top = deckHeight(d, x, z);
+        if (top === -Infinity) continue;
+        if (y > top - 0.9 && y < top + 0.1) return true;
+        // Brüstung an den Längsseiten
+        const dx = x - d.x, dz = z - d.z, c = Math.cos(d.yaw), s = Math.sin(d.yaw);
+        if (Math.abs(dx * c - dz * s) > d.hw - 0.35 && y < top + 1.05 && y > top - 0.9) return true;
+      }
+    }
+    for (const p of this.camPiers) { if (y > p.y - 0.6 && y < p.y + 0.05 && this.inPier(p, x, z)) return true; }
+    for (const b of this.camBlockers) {
+      const dx = x - b.x, dz = z - b.z;
+      const base = t > -Infinity ? t : 0;
+      // Dachüberstände und Traufen ragen über den Grundriss hinaus: ab 2,2 m Höhe ein Rand von 0,8 m
+      const m = y > base + 2.2 ? 0.8 : 0.15;
+      if (dx * dx + dz * dz > (b.r + m) * (b.r + m)) continue;
+      let inside = true;
+      if (b.hw !== undefined && b.hd !== undefined) {
+        const yaw = b.yaw ?? 0, c = Math.cos(yaw), s = Math.sin(yaw);
+        inside = Math.abs(dx * c - dz * s) <= b.hw + m && Math.abs(dx * s + dz * c) <= b.hd + m;
+      }
+      if (!inside) continue;
+      // Höhe aus der Größe: Hütten und Mauern ~4,5 m, große Bauten ~9 m
+      if (y < base + (b.r < 3 ? 4.5 : 9)) return true;
+    }
+    for (const s of this.camShips) {
+      const lz = this.hullLocal(s, x, z);
+      if (lz === null) continue;
+      const deck = s.model.group.position.y + s.model.deckY;
+      if (y < deck - 0.05 && y > s.model.group.position.y - 4) return true;
+      const q = s.model.quarter;
+      if (q && lz >= q.z0 - 0.3 && lz <= q.z1 && y < deck + q.top && y > deck) return true;
+    }
+    return false;
+  }
+
+  /** Liegt (x, z) auf dem Steg? */
+  private inPier(p: Pier, x: number, z: number): boolean {
+    const ax = p.bx - p.ax, az = p.bz - p.az, l2 = ax * ax + az * az || 1;
+    const t = ((x - p.ax) * ax + (z - p.az) * az) / l2;
+    if (t < 0 || t > 1) return false;
+    const qx = p.ax + ax * t - x, qz = p.az + az * t - z;
+    return qx * qx + qz * qz <= p.hw * p.hw;
+  }
+
+  /** Längsposition im Schiff (Rumpfumriss über `halfWidth`) oder null außerhalb */
+  private hullLocal(s: Ship, x: number, z: number): number | null {
+    const dx = x - s.x, dz = z - s.z;
+    const hl = s.cls.L * 0.5;
+    if (dx * dx + dz * dz > hl * hl + s.cls.W * s.cls.W) return null;
+    const sh = Math.sin(s.heading), ch = Math.cos(s.heading);
+    const lz = dx * sh + dz * ch, lx = dx * ch - dz * sh;
+    if (Math.abs(lz) > hl * 0.97) return null;
+    return Math.abs(lx) <= s.model.halfWidth(lz) * 0.96 ? lz : null;
+  }
 
   // ---------- Werft-Vorschau und Werft-Kamera (Phase 4.2C) ----------
 
@@ -3296,9 +3434,11 @@ export class SeaWorld {
     const T = this.tmp.set(x + p.tx * ch + p.tz * sh, wy + p.ty, z - p.tx * sh + p.tz * ch);
     const psi = h + p.th + 0.06 * Math.sin(this.env.clock * 0.4);
     const ce = Math.cos(p.e);
-    cam.position.set(T.x + Math.sin(psi) * ce * p.r, T.y + Math.sin(p.e) * p.r, T.z + Math.cos(psi) * ce * p.r);
-    const water = this.env.heightAt(cam.position.x, cam.position.z) + 1.2;
-    if (cam.position.y < water) cam.position.y = water;
+    this.camWant.set(T.x + Math.sin(psi) * ce * p.r, T.y + Math.sin(p.e) * p.r, T.z + Math.cos(psi) * ce * p.r);
+    // Spring-Arm (4.4): beim Umschalten der Ansichten nie durch Stege, Nachbarschiffe oder Rumpfteile
+    this.gatherCam(T.x, T.z, p.r + 12);
+    this.camAnchor.copy(T);
+    this.armYard.solve(this.camAnchor, this.camWant, this.camWorld, frameDt, cam.position, !p.init);
     cam.lookAt(T);
     this.focus.copy(T);
     const asp = cam.aspect;
@@ -3462,11 +3602,15 @@ export class SeaWorld {
       const lk = this.lockK * (ld > 0.01 ? 1 : 0);
       const dist = Math.min(this.footDist + lk * MathUtils.clamp((ld - 5) * 0.3, 0, 3.5), inCab ? 4.8 : 99);
       const shift = ld > 0.01 ? (lk * Math.min(3.2, ld * 0.28)) / ld : 0;
-      this.tmp.set(px - Math.sin(this.footYaw) * dist * cp, py + 1.4 + Math.sin(fPitch) * dist, pz - Math.cos(this.footYaw) * dist * cp);
-      cam.position.lerp(this.tmp, Math.min(1, frameDt * 10));
-      const gy = this.ground.height(cam.position.x, cam.position.z);
-      const floor = Math.max(env.heightAt(cam.position.x, cam.position.z) + 0.8, Number.isFinite(gy) ? gy + 0.6 : -99);
-      if (cam.position.y < floor) cam.position.y = floor;
+      // Fokus-Puls (Parade, Finisher): kurz näher heran
+      const distF = dist * this.focusPulse.distK;
+      this.tmp.set(px - Math.sin(this.footYaw) * distF * cp, py + 1.4 + Math.sin(fPitch) * distF, pz - Math.cos(this.footYaw) * distF * cp);
+      // Wunschposition weich nachführen, dann Spring-Arm vom Kopf der Figur: Fels, Hänge, Bauten, Brücken (darüber und darunter), Stege und Rümpfe
+      if (!this.footWantInit) { this.footWant.copy(this.tmp); this.footWantInit = true; }
+      else this.footWant.lerp(this.tmp, smoothK(10, frameDt));
+      this.camAnchor.set(px, py + 1.4, pz);
+      this.gatherCam(px, pz, distF + 6);
+      this.armFoot.solve(this.camAnchor, this.footWant, this.camWorld, frameDt, cam.position);
       cam.lookAt(px + this.lockDX * shift, py + 1.3, pz + this.lockDZ * shift);
       this.focus.set(px, py + 1, pz);
     } else if (inMenu) {
@@ -3486,8 +3630,10 @@ export class SeaWorld {
       // Abstand und Höhe wie in 1.0 (Hochformat weiter weg), Zoom und Neigung vom Spieler. Echte Umlaufbahn: Radius R und Höhenwinkel E um den Schiffsmittelpunkt
       const wantAz = this.seaYaw + Math.PI + this.camYaw;
       const zoom = this.camDist / 22;
-      const back0 = ((portrait ? 22 : 16) + L * 1.45 + sep * 0.3 + (s.boost > 0 ? 4 : 0)) * zoom;
-      const up0 = ((portrait ? 12 : 8) + L * 0.6 + sep * (portrait ? 0.5 : 0.32)) * zoom * 0.99;
+      // Klassen- und Gefechts-Skalierung (cameraRig.navalFrame): Schaluppe nah, Leviathan weit; beim Zielen mit Breitseiten etwas höher
+      this.aimK += ((this.naval?.aiming ? 1 : 0) - this.aimK) * smoothK(2.5, frameDt);
+      const nf = navalFrame(L, portrait, sep, s.boost > 0, zoom, this.aimK, env.weather.p.waves, this.naval4);
+      const back0 = nf.back, up0 = nf.up;
       const wantR = Math.hypot(back0, up0);
       // Grundwinkel (bei Standardneigung 0,3) plus Neigung des Spielers: steil nach oben bis fast senkrecht
       const wantE = MathUtils.clamp(Math.atan2(up0, back0) + (this.camPitch - 0.3) * 1.3, 0.1, 1.32);
@@ -3508,12 +3654,14 @@ export class SeaWorld {
       // in der Draufsicht verdecken die Segel das Deck: durchsichtig
       const wantFade = tk > 0.5;
       if (wantFade !== this.sailFaded) this.setSailFade(this.ship, wantFade);
-      const pivotY = 1.5;
+      // Dünung: der Drehpunkt hebt und senkt sich langsam und begrenzt mit dem Wasser am Schiff (verträglich gegen Reisekrankheit)
+      const pivotY = 1.5 + this.swell.update(env.heightAt(x, z), frameDt) * (1 - tk);
       const ce = Math.cos(E);
       this.tmp.set(this.camAx + Math.sin(this.camAz) * ce * R, pivotY + Math.sin(E) * R, this.camAz2 + Math.cos(this.camAz) * ce * R);
-      cam.position.copy(this.tmp);
-      const camWater = env.heightAt(cam.position.x, cam.position.z) + 1.2;
-      if (cam.position.y < camWater) cam.position.y = camWater;
+      // Spring-Arm vom Schiff zur Kamera: Klippen, Inseln, Stege und andere Rümpfe ziehen die Kamera heran, Wasser bleibt unter ihr
+      this.camAnchor.set(this.camAx, pivotY + 2 + L * 0.08, this.camAz2);
+      this.gatherCam(this.camAx, this.camAz2, R + 20);
+      this.armSea.solve(this.camAnchor, this.tmp, this.camWorld, frameDt, cam.position);
       // Blick: immer in Blickrichtung der Kamera vor das Schiff (das Schiff steht im unteren Bilddrittel); mit Gegner Richtung Feind, in der Draufsicht genau auf das Schiff.
       // (Früher zeigte der Blick immer in Fahrtrichtung, auch bei seitlich gedrehter Kamera – das Schiff wanderte aus dem Bild und die Kamera „drehte ein“.)
       const vx = -Math.sin(this.camAz), vz = -Math.cos(this.camAz);
@@ -3536,27 +3684,53 @@ export class SeaWorld {
       cam.position.set(p.x + Math.sin(a) * r, p.y + 1.2 + (3.6 - this.cinematic) * 0.5, p.z + Math.cos(a) * r);
       cam.lookAt(p.x, p.y + 1.3, p.z);
     }
-    // Kamerastoß: gedämpfte Feder (läuft in Echtzeit, auch während des Standbilds)
+    // Sichtfeld (4.4): auf See wächst es mit der Fahrt, in Windstraßen (Strömung bis +35 %) und beim Rammstoß um bis zu 8°; zu Fuß zieht der
+    // Fokus-Puls es kurz zusammen. Im Titelbild führt die Regie.
+    this.focusPulse.update(frameDt);
+    if (!inMenu) {
+      const s0 = this.ship;
+      const seaMode = !this.yardOn && this.mode !== 'foot';
+      const vmax = Math.max(1, s0.cls.spd * SEA_SPEED);
+      const want = seaMode ? dynamicFovExtra(Math.abs(s0.speed) / vmax, Math.max(0, this.lastFlow - 1), s0.boost > 0 ? 1 : 0) : 0;
+      const extra = this.fovExtra.step(want, 2.2, frameDt);
+      const fov = baseFov(innerWidth, innerHeight) + extra + this.focusPulse.fovDelta;
+      if (Math.abs(cam.fov - fov) > 0.01) cam.fov = fov;
+    }
+    // Weiche Perspektivwechsel (Anlegen, Bordleiter, Entern, Landgang, Schnellreise, Werft): Wechsel der Kameraart oder Sprung des Fokus
     {
-      const dt = Math.min(frameDt, 0.05);
-      const K = 240, C = 15;
-      this.kickV.x += (-K * this.kick.x - C * this.kickV.x) * dt;
-      this.kickV.y += (-K * this.kick.y - C * this.kickV.y) * dt;
-      this.kickV.z += (-K * this.kick.z - C * this.kickV.z) * dt;
-      this.kick.addScaledVector(this.kickV, dt);
-      if (inMenu) { this.kick.set(0, 0, 0); this.kickV.set(0, 0, 0); }
-      cam.position.add(this.kick);
+      const key = inMenu ? 'menu' : this.yardOn ? 'yard' : this.cinematic > 0 ? 'cine' : this.mode === 'foot' ? 'foot' : 'sail';
+      const jump = this.camBlend.focusJump(this.focus);
+      if (key !== this.camKey || jump > 4) {
+        if (this.camKey !== '' && !(key === 'menu' && this.camKey === 'menu')) this.camBlend.start(this.focus, jump > 60 ? 1.1 : this.camKey === 'menu' ? 1.0 : 0.7);
+        this.camKey = key;
+        this.armFoot.reset(); this.armSea.reset(); this.armYard.reset(); this.armBlend.reset(); this.swell.reset();
+        this.footWantInit = false;
+      }
+      this.camBlend.apply(cam, this.focus, frameDt);
+      // auch der überblendete Weg steckt nie im Gelände, unter Wasser oder in einem Rumpf: zu Fuß wird die Sichtlinie vom Kopf geprüft
+      // (Kugelbahn um den Fokus, darum nie durch den Kopf), danach der Punkt über Boden und aus festem Material gehoben
+      if (this.camBlend.blending && key !== 'menu' && key !== 'cine') {
+        const c = cam.position;
+        if (key === 'foot') {
+          this.gatherCam(this.camAnchor.x, this.camAnchor.z, this.camAnchor.distanceTo(c) + 4);
+          this.camWant.copy(c);
+          // eigene Glättung, immer weich heran (sonst flackert die Länge, wenn die Bahn hinter einer Kante entlangläuft); Boden und Ausweg inklusive
+          this.armBlend.solve(this.camAnchor, this.camWant, this.camWorld, frameDt, c);
+        } else {
+          this.gatherCam(c.x, c.z, 8);
+          const floor = this.camFloor(c.x, c.z, Math.max(c.y, this.camAnchor.y)) + 0.45;
+          if (c.y < floor) c.y = floor;
+          for (let k = 0; k < 8 && this.camSolid(c.x, c.y, c.z); k++) c.y += 0.5;
+        }
+      }
     }
-    if (this.shakeDir > 0.001) {
-      this.shakePh += frameDt * 62;
-      const o = Math.sin(this.shakePh) * this.shakeDir * this.shakeDir * 0.22;
-      cam.position.addScaledVector(this.shakeAx, o);
-      this.shakeDir = Math.max(0, this.shakeDir - frameDt * 4.5);
-    }
-    if (this.shake > 0) {
-      const s = this.shake * this.shake * 0.6;
-      cam.position.x += (Math.random() - 0.5) * s;
-      cam.position.y += (Math.random() - 0.5) * s;
+    cam.updateProjectionMatrix();
+    // Treffer-Erschütterung (gerichteter Stoß, Schwingung, Zittern) – läuft in Echtzeit, auch im Standbild; im Menü aus
+    // (auf See wächst der gerichtete Anteil mit dem Abstand der Kamera, sonst wäre ein Stoß aus 40 m kaum zu sehen; das Zittern bleibt gleich)
+    if (inMenu) this.hitShake.clear();
+    else {
+      const far = !this.yardOn && this.mode !== 'foot' ? MathUtils.clamp(cam.position.distanceTo(this.focus) / 10, 1, 3.5) : 1;
+      cam.position.add(this.hitShake.update(frameDt, Math.random, far));
     }
     // Laternen: die nächsten Träger bekommen echtes Licht
     {

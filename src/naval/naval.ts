@@ -210,6 +210,8 @@ interface Crate { mesh: Mesh; x: number; z: number; gold: number; shard: boolean
 
 export interface NavalHooks {
   shake(a: number): void;
+  /** Gerichteter Kamerastoß (Welt-Richtung, Stärke 0 … 1,5): eigene Breitseite (Rückstoß), Kanonentreffer, Rammstoß */
+  kick?(dirX: number, dirZ: number, strength: number): void;
   hitstop(t: number): void;
   message(t: string): void;
   sunk(e: EnemyShip): void;
@@ -295,6 +297,8 @@ export class NavalSystem {
     return m;
   });
   private aimT = 0;
+  /** Steht ein Ziel im Schussfeld einer Breitseite (Zielkreis sichtbar)? Die Segelkamera hebt sich dann etwas (cameraRig.navalFrame) */
+  aiming = false;
   /** Sichtbare Faji-Wellen vom eigenen Schiff zum Ziel (wie seaWave in 1.0) */
   private waves: { mesh: Mesh; t: number; max: number }[] = [];
   private trainCd = 0;
@@ -391,11 +395,13 @@ export class NavalSystem {
     this.fanGroup.position.set(p.x, 1.15, p.z);
     this.fanGroup.rotation.y = p.heading;
     const near = this.enemies.some((e) => !e.companion && e.ship.alive && e.role !== 'haendler' && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) < range * 1.8);
+    this.aiming = false;
     [1, -1].forEach((side, i) => {
       const t = this.sideTarget(side, range);
       const m = this.fanMats[i];
       const ready = side > 0 ? readyL : readyR;
       if (t) {
+        this.aiming = true;
         m.uniforms.uColor.value.setHex(0xffc27a);
         m.uniforms.uOpacity.value = ready ? 0.32 + Math.sin(this.aimT * 5) * 0.06 : 0.12;
         const ring = this.rings[i];
@@ -426,6 +432,8 @@ export class NavalSystem {
   playerBroadside(ship: Ship, side: number, range: number, dmg: number, ammo: AmmoId) {
     this.broadside(ship, side, range, dmg, ammo, this.sideTarget(side, range));
     this.hooks.shake(0.3);
+    // Rückstoß: die Kamera weicht von der feuernden Seite weg (Feuerrichtung = (cos h, −sin h) × Seite)
+    this.hooks.kick?.(-Math.cos(ship.heading) * side, Math.sin(ship.heading) * side, 0.55);
   }
 
   // ---------- Feuern ----------
@@ -1490,6 +1498,8 @@ export class NavalSystem {
     audio.play('crack', 1, { x: c.x, z: c.z });
     if (a === this.player || b === this.player) {
       this.hooks.shake(d.ram && byPlayer ? 0.75 : 0.55);
+      // Stoß in Fahrtrichtung des Rammers: der Rammer ruckt nach vorn, der Gerammte wird weggestoßen
+      this.hooks.kick?.(fx, fz, d.ram ? 1.25 : 0.8);
       this.hooks.hitstop(0.07);
       if (b === this.player || (a === this.player && self > 0)) this.overlay.hurt();
       if (dealt > 0) this.overlay.number(new Vector3(c.x, 3, c.z), Math.round(dealt), b === this.player ? 'hurt' : 'hit');
@@ -2141,7 +2151,12 @@ export class NavalSystem {
     this.smoke?.puff(p.x, p.y, p.z, { n: 2, size: 0.9, grow: 4.5, life: 2.6, tone: b.ammo === 'brand' ? 0.25 : 0.55, vx: b.vel.x / h * 2, vz: b.vel.z / h * 2, spread: 0.8, rise: 0.8, alpha: 0.7, glow: b.ammo === 'brand' ? 0.8 : 0.3 });
     // die Zahlen der KI-Schlacht würden nur den Bildschirm füllen: sie zeigen nur, was der Spieler austeilt oder einsteckt
     if (dmg > 0 && !foeBattle) this.overlay.number(p.clone().setY(p.y + 1.5), dmg, s === this.player ? 'hurt' : 'hit');
-    if (s === this.player) { this.hooks.shake(0.45); this.overlay.hurt(); }
+    if (s === this.player) {
+      this.hooks.shake(0.45);
+      // gerichtet in Flugrichtung der Kugel; schwere Treffer (Bosse, Breitseiten großer Schiffe) stoßen stärker
+      this.hooks.kick?.(b.vel.x / h, b.vel.z / h, 0.55 + Math.min(0.75, (dmg / Math.max(1, s.maxHull)) * 6));
+      this.overlay.hurt();
+    }
     else if (b.owner === this.player) this.hooks.hitstop(0.03);
     if (!s.alive) this.sink(s);
   }
