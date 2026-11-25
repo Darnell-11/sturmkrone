@@ -29,6 +29,8 @@ import { markShared } from '../../render/dispose';
 import { preload } from '../../core/preload';
 import { smoothstep } from '../../core/mathUtil';
 import { clamp01 } from '../../core/mathUtil';
+import { buildClothLayout, type ClothLayout } from './rig/clothRig';
+import { measureSockets, type SocketMeasures } from './rig/characterSockets';
 
 /** Unsere Knochennamen (KayKit-Skelett) → VRoid-Knochen */
 export const VROID_BONES: Record<string, string> = {
@@ -118,6 +120,52 @@ export class VroidBase {
     // Waffenhalterung aus der alten Figur übernehmen (gleiche Ausrichtung in der Welt)
     this.slot = { l: this.slotFor('l', srcSlot), r: this.slotFor('r', srcSlot) };
     this.hairFit = this.computeHairFit();
+    // Federketten sind ein Zusatz: scheitert ihr Aufbau, bleibt die Anime-Figur (ohne Stoffphysik) statt auf Ersatzfiguren zu fallen
+    let cloth: ClothLayout | null = null;
+    try { cloth = this.setupCloth(); } catch (e) { console.warn('Federketten der Grundfigur nicht aufgebaut – Figuren ohne Stoffphysik', e); }
+    this.cloth = cloth;
+  }
+
+  /**
+   * Feder-Ketten (4.6F): Knochen für Mantelschöße, Umhang, Haare, Schalenden und Schärpenbänder in der Vorlage anlegen – jede Figur erbt
+   * sie beim Klonen. Haare bekommen dabei ihre Gewichte auf die Ketten (geteiltes Netz der Vorlage).
+   */
+  readonly cloth: ClothLayout | null;
+  private setupCloth(): ClothLayout | null {
+    const body = this.bodySkin(this.template);
+    if (!body) return null;
+    const hair: SkinnedMesh[] = [];
+    this.template.traverse((o) => {
+      const m = o as SkinnedMesh;
+      if (m.isSkinnedMesh && this.parts[m.userData.vroidPart as number]?.slot === 'hair') hair.push(m);
+    });
+    const cape = this.cape('schlepp');
+    const belt = this.beltAnchors(PLAIN);
+    const hips = this.find(this.template, 'J_Bip_C_Hips');
+    this.template.updateMatrixWorld(true);
+    const knot = belt && hips ? belt.knot.clone().applyMatrix4(hips.matrixWorld) : null;
+    return buildClothLayout(this.template, body, hair, cape ? { geo: cape, rows: CAPE_ROWS, cols: CAPE_COLS } : null, knot);
+  }
+
+  /** Gemessene Lage der zwölf Sockets (4.6F), einmal je Grundfigur */
+  private socketCache: SocketMeasures | null = null;
+  socketMeasures(): SocketMeasures {
+    if (this.socketCache) return this.socketCache;
+    const face: SkinnedMesh[] = [];
+    this.template.traverse((o) => {
+      const m = o as SkinnedMesh;
+      const p = m.isSkinnedMesh ? this.parts[m.userData.vroidPart as number] : null;
+      if (p?.slot === 'skin' && /^Face/.test(p.name)) face.push(m);
+    });
+    const f = this.hairFit?.(0) ?? null;
+    try {
+      this.socketCache = measureSockets(this.template, this.bodySkin(this.template), face, f ? { y: f.seat, cx: f.cx, cz: f.cz } : null);
+    } catch (e) {
+      // ohne Messung gelten die Datenwerte (SOCKET_DEFS)
+      console.warn('Sockets der Grundfigur nicht gemessen – Datenwerte', e);
+      this.socketCache = { at: {}, unit: {} };
+    }
+    return this.socketCache;
   }
 
   /** Wo ein Hut auf dieser Frisur sitzt (im Raum des Kopfknochens) */
@@ -221,29 +269,7 @@ export class VroidBase {
    * C dreht die Ruherichtung des neuen Knochens auf die des alten, damit Bewegungen gleich aussehen.
    */
   private corr = new Map<string, Quaternion>();
-  private computeCorrections() {
-    const CHILD: Record<string, [string, string]> = {
-      hips: ['spine', 'J_Bip_C_Spine'], spine: ['chest', 'J_Bip_C_Chest'], chest: ['head', 'J_Bip_C_Head'],
-      upperarml: ['lowerarml', 'J_Bip_L_LowerArm'], lowerarml: ['wristl', 'J_Bip_L_Hand'], wristl: ['handl', 'J_Bip_L_Middle1'],
-      upperarmr: ['lowerarmr', 'J_Bip_R_LowerArm'], lowerarmr: ['wristr', 'J_Bip_R_Hand'], wristr: ['handr', 'J_Bip_R_Middle1'],
-      upperlegl: ['lowerlegl', 'J_Bip_L_LowerLeg'], lowerlegl: ['footl', 'J_Bip_L_Foot'], footl: ['toesl', 'J_Bip_L_ToeBase'],
-      upperlegr: ['lowerlegr', 'J_Bip_R_LowerLeg'], lowerlegr: ['footr', 'J_Bip_R_Foot'], footr: ['toesr', 'J_Bip_R_ToeBase'],
-    };
-    this.srcRig.updateMatrixWorld(true);
-    const a = new Vector3(), b = new Vector3(), c = new Vector3(), d = new Vector3();
-    for (const [sn, dn] of Object.entries(VROID_BONES)) {
-      const ch = CHILD[sn];
-      const s = this.srcRig.getObjectByName(sn), dd = this.find(this.template, dn);
-      if (!ch || !s || !dd || sn === 'hips' || sn === 'spine' || sn === 'chest') continue;
-      const sc = this.srcRig.getObjectByName(ch[0]), dc = this.find(this.template, ch[1]);
-      if (!sc || !dc) continue;
-      s.getWorldPosition(a); sc.getWorldPosition(b);
-      dd.getWorldPosition(c); dc.getWorldPosition(d);
-      const ds = b.sub(a).normalize(), dt = d.sub(c).normalize();
-      if (ds.lengthSq() < 0.5 || dt.lengthSq() < 0.5) continue;
-      this.corr.set(dn, new Quaternion().setFromUnitVectors(dt, ds));
-    }
-  }
+  private computeCorrections() { this.corr = boneCorrections(this.srcRig, this.template); }
 
   /** Ruhe-Weltlage eines Zielknochens inklusive Ausrichtungskorrektur */
   private restWorld(d: Object3D, out: Quaternion) {
@@ -722,8 +748,8 @@ export class VroidBase {
    * dem Gesäß nach vorn zurück. Lage in Körper-Einheiten wie die Hautpunkte; Gewichte und Rand-Abstand sind mit dabei.
    */
   private capes = new Map<string, BufferGeometry | null>();
-  cape(len: 'kurz' | 'lang' | 'schlepp', overCoat = false): BufferGeometry | null {
-    const key = overCoat ? len + '+m' : len;
+  cape(len: 'kurz' | 'lang' | 'schlepp', overCoat = false, drape = false): BufferGeometry | null {
+    const key = (overCoat ? len + '+m' : len) + (drape ? '+d' : '');
     if (this.capes.has(key)) return this.capes.get(key)!;
     const body = this.bodySkin(this.template);
     if (!body) return null;
@@ -734,7 +760,7 @@ export class VroidBase {
     const neckY = wp('J_Bip_C_Neck').y, hipsY = wp('J_Bip_C_Hips').y, kneeY = wp('J_Bip_L_LowerLeg').y, ankleY = wp('J_Bip_L_Foot').y;
     const yTop = neckY - 0.012;
     const yBot = len === 'kurz' ? hipsY - 0.03 : len === 'lang' ? kneeY - 0.04 : ankleY + 0.03;
-    const rows = 28, cols = 19, dy = (yTop - yBot) / (rows - 1);
+    const rows = CAPE_ROWS, cols = CAPE_COLS, dy = (yTop - yBot) / (rows - 1);
     // Rücken der Haut je Höhe (kleinstes z in der Mitte; +z ist vorn)
     const zmin = new Float32Array(rows).fill(Infinity);
     const P = new Vector3();
@@ -743,6 +769,28 @@ export class VroidBase {
       if (Math.abs(P.x) > 0.13 || P.y > yTop + dy || P.y < yBot - dy) continue;
       const r = Math.max(0, Math.min(rows - 1, Math.round((yTop - P.y) / dy)));
       if (P.z < zmin[r]) zmin[r] = P.z;
+    }
+    // Schultermantel (4.6F): Profil über der weiten Grundkleidung (Hemd), und die Schulterkuppe je Breite (für den Bogen über die Schultern)
+    const shoulderY = new Float32Array(cols).fill(-Infinity);
+    if (drape) {
+      this.template.traverse((o) => {
+        const m = o as SkinnedMesh;
+        const part = m.isSkinnedMesh ? this.parts[m.userData.vroidPart as number] : null;
+        if (!part || (part.slot !== 'top' && !(part.slot === 'skin' && /^Body/.test(part.name)))) return;
+        const pp = m.geometry.attributes.position;
+        for (let i = 0; i < pp.count; i++) {
+          P.fromBufferAttribute(pp, i).applyMatrix4(m.matrixWorld);
+          if (part.slot === 'top' && Math.abs(P.x) <= 0.13 && P.y <= yTop + dy && P.y >= yBot - dy) {
+            const r = Math.max(0, Math.min(rows - 1, Math.round((yTop - P.y) / dy)));
+            if (P.z < zmin[r]) zmin[r] = P.z;
+          }
+          // Schulterkuppe: höchster Punkt je Spalte der Bogenbreite, nahe der Schulterlinie (Mitte zwischen Brust und Rücken)
+          if (Math.abs(P.z) < 0.07 && P.y > yTop - 0.2) {
+            const c = Math.round(((P.x / 0.24) * 0.5 + 0.5) * (cols - 1));
+            if (c >= 0 && c < cols && P.y > shoulderY[c]) shoulderY[c] = P.y;
+          }
+        }
+      });
     }
     // Lücken füllen, dann von oben nach unten nie wieder nach vorn
     let last = -0.08;
@@ -762,35 +810,52 @@ export class VroidBase {
       const coatGap = overCoat && y < hipsY + 0.05 ? Math.min(0.125, 0.082 + (hipsY - y) * 0.12) : 0;
       // um die Taille liegt der Gürtel unter dem Umhang: dort ein Stück weiter, darunter wieder eng am Gesäß
       const waist = 0.022 * Math.exp(-(((y - hipsY) / 0.12) ** 2));
-      zc[r] = run - Math.max(0.04 + 0.036 * top * top * (3 - 2 * top) + waist + flare, coatGap);
+      // Schultermantel: schwerer Stoff über Hemd und Weste – oben mehr Abstand
+      zc[r] = run - Math.max((drape ? 0.05 + 0.05 * top * top * (3 - 2 * top) : 0.04 + 0.036 * top * top * (3 - 2 * top)) + waist + flare, coatGap);
     }
-    const hemW = len === 'kurz' ? 0.2 : len === 'lang' ? 0.25 : 0.3;
+    const hemW = len === 'kurz' ? 0.2 : len === 'lang' ? (drape ? 0.3 : 0.25) : 0.3;
+    // Schultermantel (4.6F): lässig über beide Schultern gelegt – oben so breit wie die Schultern, die Seiten sinken auf die Schulterkuppen und
+    // legen sich vorn als Revers über das Schlüsselbein; darunter fällt er wie ein Umhang
+    const topW = drape ? 0.235 : 0.155;
     const n = rows * cols;
     const world = new Float32Array(n * 3), rim = new Float32Array(n), capeK = new Float32Array(n);
     const bones = body.skeleton.bones;
     const bi = (re: RegExp) => Math.max(0, bones.findIndex((b) => re.test(b.name)));
     const iUC = bi(/J_Bip_C_UpperChest$/), iCh = bi(/J_Bip_C_Chest$/), iSp = bi(/J_Bip_C_Spine$/), iHp = bi(/J_Bip_C_Hips$/), iLL = bi(/J_Bip_L_UpperLeg$/), iRL = bi(/J_Bip_R_UpperLeg$/);
+    const iSL = bi(/J_Bip_L_Shoulder$/), iSR = bi(/J_Bip_R_Shoulder$/);
     const si = new Uint16Array(n * 4), sw = new Float32Array(n * 4);
     for (let r = 0; r < rows; r++) {
-      const t = r / (rows - 1), y = yTop - r * dy;
-      const w = 0.155 + (hemW - 0.155) * Math.pow(t, 0.9);
+      const t = r / (rows - 1), y0 = yTop - r * dy;
+      const w = topW + (hemW - topW) * Math.pow(t, 0.9);
+      const lie = drape ? 1 - smoothstep(0, 0.32, t) : 0;
       // Hüfte → Beine nach unten, Brust → Wirbelsäule nach oben
-      const up = clamp01((neckY - y) / Math.max(0.01, neckY - hipsY));
-      const low = clamp01((hipsY - y) / 0.3);
+      const up = clamp01((neckY - y0) / Math.max(0.01, neckY - hipsY));
+      const low = clamp01((hipsY - y0) / 0.3);
       for (let c = 0; c < cols; c++) {
         const u = (2 * c) / (cols - 1) - 1, x = u * w, j = r * cols + c;
-        // Seiten biegen sich nach vorn um den Körper
         // Seiten biegen sich nach vorn um den Körper (oben stärker: der Umhang liegt über den Schultern), dazu Falten
-        const z = zc[r] + u * u * w * (0.85 - t * 0.35) + Math.sin(u * Math.PI * 3.2 + 0.6) * 0.011 * Math.min(1, t * 2.4);
-        world[j * 3] = x; world[j * 3 + 1] = y; world[j * 3 + 2] = z;
+        let z = zc[r] + u * u * w * (drape ? 1.0 - t * 0.55 : 0.85 - t * 0.35) + Math.sin(u * Math.PI * 3.2 + 0.6) * 0.011 * Math.min(1, t * 2.4);
+        let y = y0, xx = x;
+        if (lie > 0) {
+          // Schultermantel oben: Bogen um den Halsansatz über beide Schultern (Ellipse), die Seiten liegen auf der Schulterkuppe
+          const phi = u * 1.42, sy = shoulderY[c];
+          const ex = Math.sin(phi) * 0.225, ez = -Math.cos(phi) * (0.135 + 0.02 * (1 - lie)) - 0.005;
+          const onShoulder = Number.isFinite(sy) ? Math.max(sy + 0.03, y0 - 0.09) : y0 - 0.06 * u * u;
+          const ey = Math.abs(u) < 0.3 ? y0 : y0 + (Math.min(y0, onShoulder) - y0) * Math.min(1, (Math.abs(u) - 0.3) / 0.45);
+          xx = x + (ex - x) * lie; z = z + (ez - z) * lie; y = y0 + (ey - y0) * lie;
+        }
+        world[j * 3] = xx; world[j * 3 + 1] = y; world[j * 3 + 2] = z;
         rim[j] = Math.min(r * dy, (rows - 1 - r) * dy, (1 - Math.abs(u)) * w * 0.9);
         // Schwingung im Shader: 0 am Nacken, 1 am Saum (nach dem Gesäß erst, davor sitzt der Stoff fest)
         capeK[j] = Math.pow(Math.max(0, (t - 0.18) / 0.82), 1.4);
         const hipsW = (1 - low * 0.5) * up * up, spineW = up * (1 - up) * 2 * (1 - low * 0.5);
         const chestW = Math.max(0, 1 - up * 1.35);
         const wl: [number, number][] = [[iUC, chestW * 0.5], [iCh, chestW * 0.5 + spineW * 0.25], [iSp, spineW * 0.75], [iHp, hipsW], [x > 0 ? iLL : iRL, low * 0.5 * up]];
-        const sum = wl.reduce((a, e) => a + e[1], 0) || 1;
+        // Schultermantel: der Teil auf den Schultern hebt sich mit den Schlüsselbeinen
+        if (drape && lie > 0 && Math.abs(u) > 0.35) wl.push([u > 0 ? iSL : iSR, (Math.abs(u) - 0.35) * 1.4 * lie]);
         wl.sort((a, b) => b[1] - a[1]);
+        // Schultermantel: über die vier stärksten Knochen normieren (sonst fehlte am Saum ein Rest Gewicht)
+        const sum = (drape ? wl.slice(0, 4) : wl).reduce((a, e) => a + e[1], 0) || 1;
         for (let k = 0; k < 4; k++) { si[j * 4 + k] = wl[k][0]; sw[j * 4 + k] = wl[k][1] / sum; }
         // gleiche Knochen zusammenfassen (z. B. wenn zwei Einträge denselben Index haben)
         for (let k = 1; k < 4; k++) for (let q = 0; q < k; q++) if (si[j * 4 + k] === si[j * 4 + q] && sw[j * 4 + k] > 0) { sw[j * 4 + q] += sw[j * 4 + k]; sw[j * 4 + k] = 0; }
@@ -1352,112 +1417,164 @@ export class VroidBase {
     return c;
   }
 
-  private srcPose: { rig: Object3D; mixer: AnimationMixer } | null = null;
-  private dstPose: Object3D | null = null;
-
-  /** Bewegung jedes Knochens in Weltlage übertragen: Δ = Quelle(t) · Quelle(Ruhe)⁻¹, Ziel = Δ · Ziel(Ruhe) */
+  /** Zustand der Übertragung (Quellfigur mit Mischer, Zielfigur), einmal je Grundfigur */
+  private rctx: RetargetCtx | null = null;
   private retarget(src: AnimationClip): AnimationClip {
-    if (!this.srcPose) {
-      const rig = cloneSkinned(this.srcRig);
-      this.srcPose = { rig, mixer: new AnimationMixer(rig) };
-    }
-    if (!this.dstPose) this.dstPose = cloneSkinned(this.template);
-    const { rig, mixer } = this.srcPose;
-    const dst = this.dstPose;
-    rig.updateMatrixWorld(true);
-    // Ruhelagen merken (Quelle vor dem Abspielen, Ziel aus der Vorlage)
-    const pairs: { s: Object3D; d: Object3D; sr: Quaternion; dr: Quaternion; dl: Quaternion }[] = [];
-    const resetSrc = () => { mixer.stopAllAction(); rig.traverse((o) => { const r = o.userData.rest as { q: Quaternion; p: Vector3 } | undefined; if (r) { o.quaternion.copy(r.q); o.position.copy(r.p); } }); };
-    rig.traverse((o) => { if (!o.userData.rest) o.userData.rest = { q: o.quaternion.clone(), p: o.position.clone() }; });
-    resetSrc();
-    rig.updateMatrixWorld(true);
-    dst.traverse((o) => { if (!o.userData.rest) o.userData.rest = { q: o.quaternion.clone(), p: o.position.clone() }; else { o.quaternion.copy(o.userData.rest.q); o.position.copy(o.userData.rest.p); } });
-    dst.updateMatrixWorld(true);
-    for (const [sn, dn] of Object.entries(VROID_BONES)) {
-      // die Hand folgt dem Handknochen (hinter dem Handgelenk), den die Kampfanimationen eigens drehen –
-      // sonst ginge die Drehung der Faust verloren und die Klinge zeigte beim Zustechen schräg zur Seite
-      const s = rig.getObjectByName(SRC_HAND[sn] ?? sn), d = dst.getObjectByName(dn);
-      if (!s || !d) continue;
-      pairs.push({ s, d, sr: s.getWorldQuaternion(new Quaternion()), dr: this.restWorld(d, new Quaternion()), dl: d.quaternion.clone() });
-    }
-    // Eltern vor Kindern
-    pairs.sort((a, b) => depth(a.d) - depth(b.d));
-    const sHips = rig.getObjectByName('hips')!, dHips = dst.getObjectByName('J_Bip_C_Hips')!;
-    const sHip0 = sHips.getWorldPosition(new Vector3());
-    const dHip0 = dHips.getWorldPosition(new Vector3());
-    const ratio = this.hipH / Math.max(0.01, sHip0.y);
-    const fps = 30;
-    const n = Math.max(2, Math.ceil(src.duration * fps) + 1);
-    const times = new Float32Array(n);
-    const qv = pairs.map(() => new Float32Array(n * 4));
-    const pv = new Float32Array(n * 3);
-    // Spuren ohne Ziel in der Quellfigur (Waffenhalterungen „handslot“, die erst die Spielfigur bekommt) weglassen –
-    // sonst meldet three.js für jeden übertragenen Clip „No target node found“
-    const bound = src.clone();
-    bound.tracks = bound.tracks.filter((tr) => !!rig.getObjectByName(PropertyBinding.parseTrackName(tr.name).nodeName));
-    const action = mixer.clipAction(bound);
-    action.play();
-    // Arme näher am Körper: die Vorlagen stammen von breiten Figuren, deren Arme stets abgespreizt sind
-    const side = (name: string) => (name.includes('_L_') ? 'l' : name.includes('_R_') ? 'r' : null);
-    const armDir = new Map<string, Vector3>();
-    for (const p of pairs) {
-      if (!/UpperArm$/.test(p.d.name)) continue;
-      const child = p.d.children.find((c) => /LowerArm$/.test(c.name));
-      if (child) armDir.set(p.d.name, child.position.clone().normalize());
-    }
-    const tuck = { l: new Quaternion(), r: new Quaternion() };
-    const inPlace = /Attack|Hit_|Block|Interact|Magic|Spell/.test(src.name);
-    for (let i = 0; i < n; i++) {
-      const t = Math.min(src.duration, i / fps);
-      times[i] = t;
-      action.time = t;
-      mixer.update(0);
-      rig.updateMatrixWorld(true);
-      tuck.l.identity(); tuck.r.identity();
-      for (let k = 0; k < pairs.length; k++) {
-        const p = pairs[k];
-        p.s.getWorldQuaternion(q1);
-        q2.copy(p.sr).invert();
-        q1.multiply(q2).multiply(p.dr); // Zielweltlage
-        const sd = side(p.d.name);
-        const dir = armDir.get(p.d.name);
-        if (sd && dir) {
-          tuckArm(v1.copy(dir).applyQuaternion(q1), sd, tuck[sd]);
-          q1.premultiply(tuck[sd]);
-        } else if (sd && /LowerArm$|_Hand$/.test(p.d.name)) {
-          q1.premultiply(tuck[sd]);
-        }
-        p.d.parent!.getWorldQuaternion(q3).invert();
-        p.d.quaternion.copy(q3.multiply(q1));
-        p.d.updateMatrixWorld(true);
-        p.d.quaternion.toArray(qv[k], i * 4);
-      }
-      // Hüftbewegung maßstäblich übertragen
-      sHips.getWorldPosition(v1).sub(sHip0).multiplyScalar(ratio);
-      if (inPlace) {
-        // Angriffe der Vorlagen springen bis 1,5 m vor und am Ende zurück – das Spiel schiebt die Figur
-        // selbst nach vorn (Ausfallschritt), sonst wirkt es wie Vorspringen und Zurückschnappen
-        const h = Math.hypot(v1.x, v1.z);
-        if (h > 1e-4) { const k = Math.min(h * 0.3, 0.3) / h; v1.x *= k; v1.z *= k; }
-        if (v1.y > 0) v1.y = 0.4 * Math.tanh(v1.y / 0.4);
-      }
-      v1.add(dHip0);
-      dHips.parent!.worldToLocal(v1);
-      v1.toArray(pv, i * 3);
-      dHips.position.copy(v1);
-      dHips.updateMatrixWorld(true);
-    }
-    action.stop();
-    // Hilfs-Clip wieder freigeben (der Quell-Mixer behielte sonst eine Aktion je übertragenem Clip)
-    mixer.uncacheClip(bound);
-    resetSrc();
-    const tracks = pairs.map((p, k) => new QuaternionKeyframeTrack(`${p.d.name}.quaternion`, times, qv[k]));
-    tracks.push(new VectorKeyframeTrack(`${dHips.name}.position`, times, pv));
-    return new AnimationClip(src.name, src.duration, tracks);
+    this.rctx ??= { srcRig: this.srcRig, template: this.template, hipH: this.hipH, restWorld: (d, out) => this.restWorld(d, out), srcPose: null, dstPose: null };
+    return retargetClip(this.rctx, src);
   }
 
   static readonly HAND_ALIAS = HAND_ALIAS;
 }
+
+
+/** Übertragung einer Animation: Quellfigur (KayKit), Vorlage der Grundfigur, Ruhe-Weltlage je Zielknochen (mit Korrektur), Hüfthöhe */
+export interface RetargetCtx {
+  srcRig: Object3D;
+  template: Object3D;
+  hipH: number;
+  restWorld(d: Object3D, out: Quaternion): Quaternion;
+  srcPose: { rig: Object3D; mixer: AnimationMixer } | null;
+  dstPose: Object3D | null;
+}
+
+/**
+ * Ausrichtungskorrektur je Knochen: die alte Figur steht in Ruhe leicht im A, die neue im T.
+ * C dreht die Ruherichtung des neuen Knochens auf die des alten, damit Bewegungen gleich aussehen.
+ */
+export function boneCorrections(srcRig: Object3D, template: Object3D): Map<string, Quaternion> {
+  const corr = new Map<string, Quaternion>();
+  const CHILD: Record<string, [string, string]> = {
+    hips: ['spine', 'J_Bip_C_Spine'], spine: ['chest', 'J_Bip_C_Chest'], chest: ['head', 'J_Bip_C_Head'],
+    upperarml: ['lowerarml', 'J_Bip_L_LowerArm'], lowerarml: ['wristl', 'J_Bip_L_Hand'], wristl: ['handl', 'J_Bip_L_Middle1'],
+    upperarmr: ['lowerarmr', 'J_Bip_R_LowerArm'], lowerarmr: ['wristr', 'J_Bip_R_Hand'], wristr: ['handr', 'J_Bip_R_Middle1'],
+    upperlegl: ['lowerlegl', 'J_Bip_L_LowerLeg'], lowerlegl: ['footl', 'J_Bip_L_Foot'], footl: ['toesl', 'J_Bip_L_ToeBase'],
+    upperlegr: ['lowerlegr', 'J_Bip_R_LowerLeg'], lowerlegr: ['footr', 'J_Bip_R_Foot'], footr: ['toesr', 'J_Bip_R_ToeBase'],
+  };
+  srcRig.updateMatrixWorld(true);
+  template.updateMatrixWorld(true);
+  const a = new Vector3(), b = new Vector3(), c = new Vector3(), d = new Vector3();
+  for (const [sn, dn] of Object.entries(VROID_BONES)) {
+    const ch = CHILD[sn];
+    const s = srcRig.getObjectByName(sn), dd = template.getObjectByName(dn);
+    if (!ch || !s || !dd || sn === 'hips' || sn === 'spine' || sn === 'chest') continue;
+    const sc = srcRig.getObjectByName(ch[0]), dc = template.getObjectByName(ch[1]);
+    if (!sc || !dc) continue;
+    s.getWorldPosition(a); sc.getWorldPosition(b);
+    dd.getWorldPosition(c); dc.getWorldPosition(d);
+    const ds = b.sub(a).normalize(), dt = d.sub(c).normalize();
+    if (ds.lengthSq() < 0.5 || dt.lengthSq() < 0.5) continue;
+    corr.set(dn, new Quaternion().setFromUnitVectors(dt, ds));
+  }
+  return corr;
+}
+
+/**
+ * Bewegung jedes Knochens in Weltlage übertragen: Δ = Quelle(t) · Quelle(Ruhe)⁻¹, Ziel = Δ · Ziel(Ruhe). Eigenständig (4.6F), damit Prüfungen
+ * die echten Animationen ohne Grafikkarte auf das Skelett der Grundfigur übertragen können.
+ */
+export function retargetClip(ctx: RetargetCtx, src: AnimationClip): AnimationClip {
+  if (!ctx.srcPose) {
+    const rig = cloneSkinned(ctx.srcRig);
+    ctx.srcPose = { rig, mixer: new AnimationMixer(rig) };
+  }
+  if (!ctx.dstPose) ctx.dstPose = cloneSkinned(ctx.template);
+  const { rig, mixer } = ctx.srcPose;
+  const dst = ctx.dstPose;
+  rig.updateMatrixWorld(true);
+  // Ruhelagen merken (Quelle vor dem Abspielen, Ziel aus der Vorlage)
+  const pairs: { s: Object3D; d: Object3D; sr: Quaternion; dr: Quaternion; dl: Quaternion }[] = [];
+  const resetSrc = () => { mixer.stopAllAction(); rig.traverse((o) => { const r = o.userData.rest as { q: Quaternion; p: Vector3 } | undefined; if (r) { o.quaternion.copy(r.q); o.position.copy(r.p); } }); };
+  rig.traverse((o) => { if (!o.userData.rest) o.userData.rest = { q: o.quaternion.clone(), p: o.position.clone() }; });
+  resetSrc();
+  rig.updateMatrixWorld(true);
+  dst.traverse((o) => { if (!o.userData.rest) o.userData.rest = { q: o.quaternion.clone(), p: o.position.clone() }; else { o.quaternion.copy(o.userData.rest.q); o.position.copy(o.userData.rest.p); } });
+  dst.updateMatrixWorld(true);
+  for (const [sn, dn] of Object.entries(VROID_BONES)) {
+    // die Hand folgt dem Handknochen (hinter dem Handgelenk), den die Kampfanimationen eigens drehen –
+    // sonst ginge die Drehung der Faust verloren und die Klinge zeigte beim Zustechen schräg zur Seite
+    const s = rig.getObjectByName(SRC_HAND[sn] ?? sn), d = dst.getObjectByName(dn);
+    if (!s || !d) continue;
+    pairs.push({ s, d, sr: s.getWorldQuaternion(new Quaternion()), dr: ctx.restWorld(d, new Quaternion()), dl: d.quaternion.clone() });
+  }
+  // Eltern vor Kindern
+  pairs.sort((a, b) => depth(a.d) - depth(b.d));
+  const sHips = rig.getObjectByName('hips')!, dHips = dst.getObjectByName('J_Bip_C_Hips')!;
+  const sHip0 = sHips.getWorldPosition(new Vector3());
+  const dHip0 = dHips.getWorldPosition(new Vector3());
+  const ratio = ctx.hipH / Math.max(0.01, sHip0.y);
+  const fps = 30;
+  const n = Math.max(2, Math.ceil(src.duration * fps) + 1);
+  const times = new Float32Array(n);
+  const qv = pairs.map(() => new Float32Array(n * 4));
+  const pv = new Float32Array(n * 3);
+  // Spuren ohne Ziel in der Quellfigur (Waffenhalterungen „handslot“, die erst die Spielfigur bekommt) weglassen –
+  // sonst meldet three.js für jeden übertragenen Clip „No target node found“
+  const bound = src.clone();
+  bound.tracks = bound.tracks.filter((tr) => !!rig.getObjectByName(PropertyBinding.parseTrackName(tr.name).nodeName));
+  const action = mixer.clipAction(bound);
+  action.play();
+  // Arme näher am Körper: die Vorlagen stammen von breiten Figuren, deren Arme stets abgespreizt sind
+  const side = (name: string) => (name.includes('_L_') ? 'l' : name.includes('_R_') ? 'r' : null);
+  const armDir = new Map<string, Vector3>();
+  for (const p of pairs) {
+    if (!/UpperArm$/.test(p.d.name)) continue;
+    const child = p.d.children.find((c) => /LowerArm$/.test(c.name));
+    if (child) armDir.set(p.d.name, child.position.clone().normalize());
+  }
+  const tuck = { l: new Quaternion(), r: new Quaternion() };
+  const inPlace = /Attack|Hit_|Block|Interact|Magic|Spell/.test(src.name);
+  for (let i = 0; i < n; i++) {
+    const t = Math.min(src.duration, i / fps);
+    times[i] = t;
+    action.time = t;
+    mixer.update(0);
+    rig.updateMatrixWorld(true);
+    tuck.l.identity(); tuck.r.identity();
+    for (let k = 0; k < pairs.length; k++) {
+      const p = pairs[k];
+      p.s.getWorldQuaternion(q1);
+      q2.copy(p.sr).invert();
+      q1.multiply(q2).multiply(p.dr); // Zielweltlage
+      const sd = side(p.d.name);
+      const dir = armDir.get(p.d.name);
+      if (sd && dir) {
+        tuckArm(v1.copy(dir).applyQuaternion(q1), sd, tuck[sd]);
+        q1.premultiply(tuck[sd]);
+      } else if (sd && /LowerArm$|_Hand$/.test(p.d.name)) {
+        q1.premultiply(tuck[sd]);
+      }
+      p.d.parent!.getWorldQuaternion(q3).invert();
+      p.d.quaternion.copy(q3.multiply(q1));
+      p.d.updateMatrixWorld(true);
+      p.d.quaternion.toArray(qv[k], i * 4);
+    }
+    // Hüftbewegung maßstäblich übertragen
+    sHips.getWorldPosition(v1).sub(sHip0).multiplyScalar(ratio);
+    if (inPlace) {
+      // Angriffe der Vorlagen springen bis 1,5 m vor und am Ende zurück – das Spiel schiebt die Figur
+      // selbst nach vorn (Ausfallschritt), sonst wirkt es wie Vorspringen und Zurückschnappen
+      const h = Math.hypot(v1.x, v1.z);
+      if (h > 1e-4) { const k = Math.min(h * 0.3, 0.3) / h; v1.x *= k; v1.z *= k; }
+      if (v1.y > 0) v1.y = 0.4 * Math.tanh(v1.y / 0.4);
+    }
+    v1.add(dHip0);
+    dHips.parent!.worldToLocal(v1);
+    v1.toArray(pv, i * 3);
+    dHips.position.copy(v1);
+    dHips.updateMatrixWorld(true);
+  }
+  action.stop();
+  // Hilfs-Clip wieder freigeben (der Quell-Mixer behielte sonst eine Aktion je übertragenem Clip)
+  mixer.uncacheClip(bound);
+  resetSrc();
+  const tracks = pairs.map((p, k) => new QuaternionKeyframeTrack(`${p.d.name}.quaternion`, times, qv[k]));
+  tracks.push(new VectorKeyframeTrack(`${dHips.name}.position`, times, pv));
+  return new AnimationClip(src.name, src.duration, tracks);
+}
+
+/** Gitter des Umhangs (Zeilen vom Nacken zum Saum, Spalten über die Breite) – die Umhang-Ketten richten sich danach */
+const CAPE_ROWS = 28, CAPE_COLS = 19;
 
 /** Kleidungsstücke, die aus dem Körper erzeugt werden */
 export type GarmentKind = 'hose' | 'stiefel' | 'mantelKurz' | 'mantelLang' | 'guertel'
@@ -1866,12 +1983,32 @@ function removeParts(root: Object3D, re: RegExp) {
   for (const d of drop) d.removeFromParent();
 }
 
+/**
+ * Namen der Morph-Ziele (Gesicht) setzen: die Dateien tragen am Netz nur Nummern („0“ … „53“), die echten Namen („Fcl_EYE_Close“ …)
+ * stehen an den Primitiven. Ohne das fand die Figur kein Blinzeln und keine Mimik (4.6F).
+ */
+export function nameMorphs(gltf: { scene: Object3D; parser: { json: unknown; associations: Map<unknown, { meshes?: number; primitives?: number }> } }) {
+  const json = gltf.parser.json as { meshes?: { primitives: { extras?: { targetNames?: string[] } }[] }[] };
+  gltf.scene.traverse((o) => {
+    const m = o as SkinnedMesh;
+    if (!m.isMesh || !m.morphTargetInfluences?.length) return;
+    const a = gltf.parser.associations.get(m);
+    const prim = a?.meshes !== undefined ? json.meshes?.[a.meshes]?.primitives[a.primitives ?? 0] : undefined;
+    const names = prim?.extras?.targetNames;
+    if (!names || names.length !== m.morphTargetInfluences.length) return;
+    const dict: Record<string, number> = {};
+    names.forEach((n, i) => { const k = n.indexOf('Fcl_'); dict[k >= 0 ? n.slice(k) : n.split('.').pop() ?? n] = i; });
+    m.morphTargetDictionary = dict;
+  });
+}
+
 /** Beide Grundfiguren laden */
 export async function loadVroid(srcRig: Object3D, srcClips: Map<string, AnimationClip>, srcSlot: Vector3): Promise<{ male: VroidBase; female: VroidBase } | null> {
   const base = `${import.meta.env.BASE_URL}assets/characters/vroid/`;
   try {
     // Körper und Kleidung der Grundfiguren (Hemd, Weste), Haare der Frisur-Beispiele – über die zentrale Pipeline
     const [bm, bf, hm, hf] = await Promise.all(['base_male', 'base_female', 'male', 'female'].map((n) => preload.loadGltf(`${base}${n}.glb`)));
+    nameMorphs(bm); nameMorphs(bf);
     removeParts(bm.scene, /Tie|HairBack/i);
     removeParts(bf.scene, /Tie|HairBack/i);
     graftHair(bm.scene, hm.scene);

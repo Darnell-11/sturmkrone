@@ -4,6 +4,7 @@ import { randomLook, type NpcRole } from '../data/characterParts';
 import { inBox, type IslandGround, type WalkIsland } from '../world/islandGround';
 import type { CharacterAssets } from './character/assets';
 import { Character } from './character/character';
+import { NPC_LIFE } from '../data/characterRig';
 
 type Mood = 'wander' | 'idle' | 'sit' | 'work' | 'cheer';
 
@@ -27,6 +28,10 @@ export class Npc {
   constructor(assets: CharacterAssets, private home: WalkIsland, private ground: IslandGround, readonly role: NpcRole, private rng: () => number, outline: boolean) {
     this.char = new Character(assets, randomLook(rng, role), outline);
     this.char.walkVariant = 'Walking_B';
+    // 4.6F: Haltung, Grund-Ausdruck und Atemtempo nach Rolle; Füße folgen dem Gelände
+    const life = NPC_LIFE[role];
+    this.char.presence({ stance: life.stance, face: life.face, breath: life.breath });
+    this.char.setGround((x, z) => this.ground.height(x, z));
     // Stadtleute laufen leiser
     this.char.stepVol = 0.3;
     // Startplatz: auf einer Straße der Stadt (falls es welche gibt), sonst irgendwo frei; nie in einem Haus, Zaun oder Stapel
@@ -197,6 +202,9 @@ export class Npc {
       }
     }
     if (this.timer <= 0) this.pick();
+    // 4.6F: der Spielfigur nachschauen (Kopf und Augen zuerst, der Körper dreht sich erst nah heran)
+    if (player && pd < NPC_LIFE[this.role].watch && this.mood !== 'sit') this.char.lookAt(player.x, player.y + 1.5, player.z);
+    else this.char.lookAt(null);
 
     const y = this.ground.height(this.x, this.z);
     this.char.place(this.x, Number.isFinite(y) ? y : 0, this.z, this.yaw);

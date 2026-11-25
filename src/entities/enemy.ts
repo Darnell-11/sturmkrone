@@ -1,3 +1,4 @@
+import { BOSS_PRESENCE, BOSS_PRESENCE_DEFAULT, NPC_LIFE, type ExpressionId } from '../data/characterRig';
 import {
   AdditiveBlending,
   BufferGeometry,
@@ -296,6 +297,17 @@ export class Enemy {
     if (this.def.kit) look.extra = [...(look.extra ?? []), ...gearFromSet(this.def.kit, 'boss')];
     this.char = new Character(assets, look, outline);
     this.char.holder.scale.setScalar(this.def.scale);
+    // 4.6F: Präsenz – Königs- und Kaiser-Endbosse mit Koloss-Statur, eigener Haltung und Ausdruck; übrige Gegner mit der Haltung ihrer Rolle
+    if (this.def.raid === 'boss' || this.def.boss) {
+      const pr = (this.def.kit && BOSS_PRESENCE[this.def.kit]) || BOSS_PRESENCE_DEFAULT;
+      const kaiser = !!this.def.aura?.id?.startsWith('kaiser_');
+      this.char.presence({ ...pr, build: kaiser ? 'koloss' : pr.build, stance: kaiser ? 'thron' : pr.stance });
+      this.baseMood = pr.face;
+    } else {
+      const life = NPC_LIFE[this.def.role as NpcRole];
+      if (life) this.char.presence({ stance: life.stance });
+    }
+    this.char.setGround(this.groundFn);
     const w = enemyWeapons(this.def.weapon);
     // Boss-Waffen sind Blender-Modelle am Beute-Set (Haupt- und Nebenhand): die Standardwaffe weicht ihnen (Character.hold nimmt das Set-Modell)
     if (this.def.kit && w.right) { w.right.userData.swordSkin = true; this.char.hold('r', w.right); this.char.hold('l', null); }
@@ -617,7 +629,27 @@ export class Enemy {
   private stateT = 0;
   private stateWas: EnemyState = 'idle';
 
+  /** Rig (4.6F): Boden für die Füße (Welt des letzten Schritts), Grund-Ausdruck, zuletzt gesetzter Ausdruck */
+  private groundW: EnemyWorld | null = null;
+  private readonly groundFn = (x: number, z: number, y: number) => (this.groundW ? this.groundW.ground(x, z, y) : NaN);
+  private baseMood: ExpressionId = 'grimmig';
+  private moodShown: ExpressionId | '' = '';
+
+  /** Blick, Ausdruck, Bereitschaft und Bodenhaftung der Figur (4.6F) */
+  private rigInputs(p: { x: number; y: number; z: number } | null, dist: number) {
+    const ch = this.char;
+    ch.setGrounded(this.state !== 'air');
+    if (this.alive && p && (this.aggro || dist < 9)) ch.lookAt(p.x, p.y + 1.5, p.z); else ch.lookAt(null);
+    ch.setReady(this.aggro && this.alive ? 1 : 0);
+    const boss = !!(this.def.boss || this.def.raid === 'boss');
+    const mood: ExpressionId = !this.alive ? 'ko'
+      : this.state === 'hit' || this.state === 'stagger' || this.state === 'down' ? 'schmerz'
+        : this.aggro ? (boss && this.phase >= 2 ? 'entschlossen' : boss ? this.baseMood : 'kampf') : boss ? this.baseMood : 'hafen';
+    if (mood !== this.moodShown) { this.moodShown = mood; ch.setMood(mood); }
+  }
+
   update(dt: number, w: EnemyWorld) {
+    this.groundW = w;
     if (this.state !== this.stateWas) { this.stateWas = this.state; this.stateT = 0; } else this.stateT += dt;
     // Softlock-Wächter: Angriff endet über das Animationsende, Flug über die Landung – beides abgesichert
     if (this.state === 'attack' && this.stateT > 5) this.endAttack(w);
@@ -804,6 +836,7 @@ export class Enemy {
       const g = this.perch ? this.perch.y : w.ground(this.x, this.z, this.y);
       this.y += ((Number.isFinite(g) ? g : this.y) - this.y) * Math.min(1, dt * 15);
     }
+    this.rigInputs(p, dist);
     this.char.place(this.x, this.y, this.z, this.yaw);
     this.char.update(dt);
     this.updateFlash();

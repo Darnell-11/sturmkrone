@@ -39,6 +39,7 @@ import { LampPool, lampShared } from '../render/lamps';
 import { installMatrixSkip } from '../render/matrixSkip';
 import { GlowSystem, glowHub, makeEmitter, type GlowEmitter, type GlowPlaced } from '../render/glow';
 import { Character } from '../entities/character/character';
+import { CLOTH_WIND, NPC_LIFE } from '../data/characterRig';
 import { shieldFor, weaponsFor } from '../entities/character/weapons';
 import { Npc } from '../entities/npc';
 import { PlayerFoot } from '../entities/player/playerFoot';
@@ -550,6 +551,30 @@ export class SeaWorld {
   /** Spielfigur zu Fuß (Faji-Formen, Aura, Prüfungen) */
   get playerFoot(): PlayerFoot | null { return this.foot; }
   private npcs: Npc[] = [];
+  /** Gesprächspartner zu Fuß (4.6F): spricht und gestikuliert, solange das Dialogfenster offen ist */
+  private talkNpc: Npc | null = null;
+
+  /** Während des Gesprächs (Spiel pausiert): nur Partner und Spielfigur leben weiter – Atem, Blinzeln, Mund, Gesten, Blickkontakt */
+  dialogTick(dt: number) {
+    const n = this.talkNpc, p = this.player;
+    if (!n || !p) return;
+    const py = this.foot ? this.foot.y : p.holder.position.y;
+    n.char.lookAt(p.holder.position.x, py + 1.55, p.holder.position.z);
+    p.lookAt(n.char.holder.position.x, n.char.holder.position.y + 1.55, n.char.holder.position.z);
+    n.char.update(dt);
+    p.update(dt);
+  }
+
+  /** Neue Seite im Gespräch: der Partner spricht wieder ein paar Sekunden */
+  talkPulse() { this.talkNpc?.char.talk(3.2, NPC_LIFE[this.talkNpc.role].gesture); }
+
+  /** Gespräch beendet: Mund zu, Blick frei */
+  endTalk() {
+    const n = this.talkNpc;
+    this.talkNpc = null;
+    if (n) { n.char.talk(0); n.char.lookAt(null); n.char.setMood(NPC_LIFE[n.role].face, 0.8); }
+    this.player?.lookAt(null);
+  }
   private outlineNpcs = true;
 
   private x = 0;
@@ -1978,6 +2003,8 @@ export class SeaWorld {
 
   applyQuality(c: QualityConfig) {
     this.figureDist = c.figureDistance;
+    // 4.6F: Detailstufen des Figuren-Rigs (Stoff, Füße, Blick) folgen der Grafikstufe
+    Character.setRigDetail(c.figureDistance / 112);
     this.lampPool.setCount(c.lamps);
     this.lampPool.setShadows(c.shadows.enabled && c.shadows.cascades >= 2);
     this.glow.quality = c.lamps > 0 ? 1 : 0.5;
@@ -3060,6 +3087,10 @@ export class SeaWorld {
         if (input.pressed('interact') || input.pressed('talk')) {
           npc.yaw = Math.atan2(f.x - npc.x, f.z - npc.z);
           npc.char.play('talk', { restart: true, onDone: () => npc.char.play('idle') });
+          // 4.6F: Gesprächspartner spricht mit Mund und Händen, beide halten Blickkontakt
+          this.talkNpc = npc;
+          npc.char.setMood('gespraech');
+          npc.char.talk(4.2, NPC_LIFE[npc.role].gesture);
           this.onTalk(npc.townDef);
         }
       }
@@ -4239,6 +4270,12 @@ export class SeaWorld {
     lampShared.set(night);
     this.glowNight = night;
     this.horizon.update((this.scene.fog as Fog).color, pal.sunVis, night, env.clock, (this.scene.fog as Fog).far);
+    // 4.6F: Seewind an Mänteln, Haaren und Bändern; Kamera als Betrachter für die Detailstufen der Figuren
+    {
+      const wk = (1.5 + env.weather.p.wind * 7) * CLOTH_WIND.share;
+      Character.setWind(Math.sin(env.windDir) * wk, Math.cos(env.windDir) * wk);
+      Character.setViewer(this.camera.position);
+    }
 
     const wy = env.heightAt(x, z);
     const f = this.fwd(h);
@@ -4261,6 +4298,8 @@ export class SeaWorld {
       wheel.localToWorld(WHEEL_R.set(-0.3, 0.5, -0.07));
       this.player.reach('l', WHEEL_L);
       this.player.reach('r', WHEEL_R);
+      // 4.6F: der Blick geht in Fahrtrichtung voraus
+      this.player.lookAt(x + f.x * 40, wy + 4, z + f.z * 40);
     }
     for (const e of this.naval?.enemies ?? []) e.ship.render(alpha, sea, night, frameDt);
     // Gangway, Planken, Leitern und Taue folgen der bewegten Bordwand (Matrizen der Schiffe sind jetzt aktuell)

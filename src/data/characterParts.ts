@@ -12,7 +12,7 @@ export const HAIR_STYLES = {
 } as const;
 export const BEARD_STYLES = { keiner: 'Keiner', kinnbart: 'Kinnbart', schnurrbart: 'Schnurrbart', vollbart: 'Vollbart', koteletten: 'Koteletten' } as const;
 export const OUTFITS = { hemd: 'Hemd', weste: 'Weste', jacke: 'Jacke', matrose: 'Ringelhemd', uniform: 'Uniform', tunika: 'Tunika' } as const;
-export const COATS = { keiner: 'Keiner', kurz: 'Kurzer Mantel', lang: 'Langer Mantel', kapitaen: 'Kapitänsmantel' } as const;
+export const COATS = { keiner: 'Keiner', kurz: 'Kurzer Mantel', lang: 'Langer Mantel', kapitaen: 'Kapitänsmantel', schulter: 'Schultermantel' } as const;
 export const SHOES = { stiefel: 'Stiefel', schuhe: 'Schuhe', sandalen: 'Sandalen' } as const;
 /** Kopfbedeckungen, die jeder frei wählen kann (Editor) */
 export const COSMETIC_HATS = {
@@ -173,7 +173,8 @@ export function randomLook(rng: Rng, role: NpcRole = 'buerger'): CharacterLook {
     case 'wirt': l.body = 'kraeftig'; l.outfit = 'weste'; l.beard = 'vollbart'; break;
     case 'pirat': l.outfit = pickOf(rng, ['matrose', 'weste', 'hemd'] as Outfit[]); l.hat = pickOf(rng, ['bandana', 'bandana', 'dreispitz', 'keiner'] as Hat[]); l.hatColor = pickOf(rng, ['#A8322A', '#1E1A20', '#7A1F1A', '#2F6E4F']); l.eyepatch = rng() < 0.12; l.earring = rng() < 0.5; l.shoes = 'stiefel'; l.coat = rng() < 0.45 ? pickOf(rng, ['kurz', 'lang'] as Coat[]) : 'keiner'; break;
     case 'marine': l.outfit = 'uniform'; l.outfitColor = '#FFFFFF'; l.accentColor = '#1F4E79'; l.pantsColor = pickOf(rng, ['#14284A', '#FFFFFF']); l.hat = 'marine'; l.hatColor = '#FFFFFF'; l.beard = rng() < 0.2 ? 'schnurrbart' : 'keiner'; l.eyepatch = false; l.scar = false; l.shoes = 'stiefel'; l.shoesColor = '#1E1A20'; l.coat = rng() < 0.6 ? 'kurz' : 'keiner'; l.coatColor = '#14284A'; break;
-    case 'offizier': l.outfit = 'uniform'; l.outfitColor = '#FFFFFF'; l.accentColor = '#14284A'; l.coat = 'kapitaen'; l.coatColor = '#14284A'; l.pantsColor = '#FFFFFF'; l.hat = 'zweispitz'; l.hatColor = '#14284A'; break;
+    // Offiziere tragen den Admiralsmantel oft lässig über den Schultern (4.6F)
+    case 'offizier': l.outfit = 'uniform'; l.outfitColor = '#FFFFFF'; l.accentColor = '#14284A'; l.coat = rng() < 0.4 ? 'schulter' : 'kapitaen'; l.coatColor = '#14284A'; l.pantsColor = '#FFFFFF'; l.hat = 'zweispitz'; l.hatColor = '#14284A'; break;
     default: break;
   }
   return l;

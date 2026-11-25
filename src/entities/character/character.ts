@@ -28,8 +28,7 @@ import { audio } from '../../audio/audio';
 import { WeaponTrail } from '../../render/weaponTrail';
 import { createLamp } from '../../render/lamps';
 
-/** Befestigungspunkt der Hüftlaterne im Hüft-Socket (Meter): seitlicher Abstand vom Körpermittelpunkt bis zur Außenseite von Gürtel und Mantel, Höhe über dem Becken-Knochen */
-const LAMP_HIP_X = 0.187;
+/** Höhe der Hüftlaterne der Bausteinfigur über dem Becken-Knochen (die Anime-Figur hängt sie an den gemessenen Socket „hipLeft“) */
 const LAMP_HIP_Y = 0.04;
 import { glowHub, makeEmitter } from '../../render/glow';
 import { Quaternion, Vector3 as V3, Vector4, type Scene } from 'three';
@@ -70,8 +69,12 @@ import { BELT_KINDS, HELM_KINDS, SHOULDERS, buildBeltExtras } from './gear/rigid
 import { finishMat } from './gear/kit';
 import { buildHeld, buildSkinned, glbModel } from './gear/glbGear';
 import { registerCulled, unregisterCulled } from '../../render/matrixSkip';
+import { CharacterRig } from './rig/characterRig';
+import { chainSkin } from './rig/clothRig';
+import type { CharacterSockets } from './rig/characterSockets';
+import type { BuildId, ExpressionId, HandPoseId, PresenceDef, StanceId } from '../../data/characterRig';
+import { rigProfile } from './rig/rigProfile';
 
-const CURL_Z = new Vector3(0, 0, 1), CURL_X = new Vector3(1, 0, 0);
 
 /** Lange Frisuren nutzen die weibliche Grundfigur, kurze die männliche */
 function isFemale(l: CharacterLook) { return ['lang', 'pferdeschwanz', 'zoepfe', 'zopf', 'dutt'].includes(l.hair); }
@@ -134,6 +137,10 @@ const GAIT_ELBOW = 0.5, GAIT_UPRIGHT = -0.1;
 const GAIT_HIP = 0.848, GAIT_DAMP = 0.35, GAIT_LIFT = 0.03, GAIT_ANKLE = 0.08, GAIT_FOOT = 0.42;
 export const WALK_NATURAL: Record<string, number> = { Walking_A: 1.5, Walking_B: 1.63, Walking_C: 0.82 };
 const SLOT_SURFACE: Record<string, Surface> = { skin: 'skin', hair: 'hair', top: 'cloth', bottom: 'cloth', shoes: 'leather', iris: 'eye' };
+/** Clips ohne eigene Ganzkörper-Aktion: hier legt das Rig Atem, Blick und Gewicht voll darüber (4.6F) */
+const CALM_CLIP = /^(Idle_|Walking_|Running_|Melee_Unarmed_Idle|Melee_2H_Idle|Holding_|Sit_|Lie_Idle|Fishing_Idle|Melee_Blocking|Skeletons_Idle|Skeletons_Walking|Ranged_1H_Aiming)/;
+/** Anteil der Kette an Mantelschößen und Rocksaum (der Rest folgt Hüfte und Beinen) */
+const CHAIN_SHARE = { mantelLang: 0.82, kilt: 0.6, cape: 0.9 } as const;
 
 export class Character {
   /** In die Welt setzen und bewegen */
@@ -215,8 +222,17 @@ export class Character {
   private skeleton!: Skeleton;
   /** Anime-Grundfigur (VRoid) oder null für die Bausteinfigur */
   private vroid: VroidBase | null = null;
-  private face: { mesh: SkinnedMesh; blink: number; joy: number; mouth: number } | null = null;
-  private blinkT = 2 + Math.random() * 3;
+  /** Organisches Rig (4.6F): Anatomie, Leben, Gesicht, Hände, Stoff- und Haarphysik, Sockets */
+  rigX: CharacterRig | null = null;
+  /** Alle lebenden Figuren (Druckwellen auf Stoff und Haar) */
+  static readonly all = new Set<Character>();
+  private readonly seed = Math.random();
+  /** Statur von außen (Endbosse), sonst aus dem Körperbau */
+  private buildOverride: BuildId | null = null;
+  /** Iris-Netze (Augen-Leuchten im Erwachen) und ihre Leuchtfarbe */
+  private irises: SkinnedMesh[] = [];
+  private glowCol = new Color('#9FE8FF');
+  private glowShown = 0;
   private headgear: Group | null = null;
   /** Aus dem Körper erzeugte Kleidung (Hose, Stiefel, Mantel) */
   private garments: SkinnedMesh[] = [];
@@ -268,6 +284,8 @@ export class Character {
     });
     this.look = look;
     this.applyLook(look);
+    this.rigX = new CharacterRig({ holder: this.holder, rig: this.rig }, { seed: this.seed });
+    Character.all.add(this);
     this.mountLamp();
   }
 
@@ -298,10 +316,10 @@ export class Character {
       this.bones[`hand${s}`]?.add(slot);
       this.bones[slot.name] = slot;
       if (held[s]) slot.add(held[s]!);
-      this.curl(s, held[s] ? 1 : 0.3);
     }
     this.sockets = new SocketRig(this.rig, 'vroid', (n) => vb.restQuat(n));
-    this.face = null;
+    // Gesichtsteile mit Morph-Zielen (Lider, Wimpern, Iris, Brauen, Mund): alle teilen sich ein Gewichtsfeld im Rig
+    const faces: SkinnedMesh[] = [];
     this.rig.traverse((o) => {
       const m = o as SkinnedMesh;
       if (!m.isSkinnedMesh) return;
@@ -309,14 +327,12 @@ export class Character {
       // Anime-Gesichter bleiben schattenfrei (sonst legt sich ein dunkler Haarschatten über die Augen)
       m.receiveShadow = !/Face/i.test(m.name);
       m.frustumCulled = true;
-      const dict = m.morphTargetDictionary;
-      if (dict) {
-        const find = (re: RegExp) => { const k = Object.keys(dict).find((n) => re.test(n)); return k !== undefined ? dict[k] : -1; };
-        const blink = find(/EYE_Close$/);
-        if (blink >= 0) this.face = { mesh: m, blink, joy: find(/ALL_Joy$/), mouth: find(/MTH_A$/) };
-      }
+      if (m.morphTargetInfluences?.length) faces.push(m);
     });
     this.holder.add(this.rig);
+    this.rigX = new CharacterRig({ holder: this.holder, rig: this.rig }, { seed: this.seed, cloth: vb.cloth, measures: vb.socketMeasures(), face: faces });
+    Character.all.add(this);
+    for (const s of ['l', 'r'] as const) this.rigX.setHand(s, held[s] ? 'griff' : 'offen', true);
     this.mixer = new AnimationMixer(this.rig);
     this.mixer.addEventListener('finished', (e) => {
       if (e.action === this.current && this.doneCb) {
@@ -336,12 +352,12 @@ export class Character {
     this.lamp?.removeFromParent();
     this.lamp = null;
     glowHub.removeOwner(this);
-    const node = this.sockets.node('legs');
+    // Anime-Figur: an der linken Hüfte (Socket „hipLeft“ aus dem neuen Rig, gemessen an Gürtel und Mantel); Bausteinfigur: alter Hüft-Socket
+    const node = this.vroid ? this.rigX?.sockets.get('hipLeft') ?? null : this.sockets.node('legs');
     if (!node) { Character.lamped.delete(this); return; }
     this.sockets.normalize();
     const lamp = createLamp(1.25);
-    // Anime-Figur: wie bisher an der linken Hüfte (die rechte Hand führt die Waffe); der Befestigungspunkt sitzt am Gürtel auf dem Körper
-    if (this.vroid) { lamp.position.set(LAMP_HIP_X, LAMP_HIP_Y, 0); lamp.rotation.y = Math.PI; } else lamp.position.set(-0.22, LAMP_HIP_Y, 0);
+    if (this.vroid) { lamp.position.set(0, 0, 0); lamp.rotation.y = Math.PI; } else lamp.position.set(-0.22, LAMP_HIP_Y, 0);
     lamp.userData.holder = this.holder;
     node.add(lamp);
     this.lamp = lamp;
@@ -360,11 +376,15 @@ export class Character {
       skin: skinTint, hair: new Color(look.hairColor), brow: new Color(look.hairColor).multiplyScalar(0.8), top: new Color(look.outfitColor),
       bottom: new Color(look.pantsColor), shoes: new Color(look.shoesColor), iris: new Color(look.eyeColor), fixed: new Color(0xffffff),
     };
+    this.irises = [];
+    this.glowShown = 0;
+    { const rp = rigProfile(look); this.rigX?.setTraits(rp.eyes, rp.brows, rp.mouth); }
     this.rig.traverse((o) => {
       const m = o as SkinnedMesh;
       const i = m.userData.vroidPart as number | undefined;
       if (!m.isSkinnedMesh || i === undefined) return;
       const p = vb.parts[i];
+      if (p.slot === 'iris') this.irises.push(m);
       const mat = toon({ color: colorFor[p.slot], map: p.gray ?? p.map, side: p.doubleSided ? DoubleSide : FrontSide, transparent: p.transparent, spec: p.slot === 'hair' ? 0.7 : 0, rim: p.slot === 'fixed' ? 0.4 : 1, surface: SLOT_SURFACE[p.slot] ?? 'plain', eyeUv: p.slot === 'iris' ? vb.irisUv() : undefined, hairC: p.slot === 'hair' ? vb.hairCenter() : undefined });
       mat.alphaTest = p.alphaTest || (p.transparent ? 0 : 0.5);
       // durchscheinende Gesichtsteile (Wimpern, Augenglanz) liegen übereinander: ohne Tiefenschreiben verdecken sie
@@ -495,6 +515,20 @@ export class Character {
       this.addShells(body, set, index, R.shells);
     }
     if (body?.parent && R.cape) this.addCape(vb, body, R.cape, R.ctx.coat === 'lang' || this.worn.includes('kilt'));
+    // Federketten (4.6F): was die Figur trägt, schwingt; Schalenden und Schärpenbänder als eigene Bänder
+    const rx = this.rigX;
+    if (rx) {
+      rx.setWorn('tails', this.worn.includes('mantelLang') || this.worn.includes('kilt'));
+      rx.setWorn('cape', !!R.cape && !!body?.parent);
+      rx.setWorn('hair', !hideHair);
+      const scarf = R.shells.find((s) => s.kind === 'schal');
+      const knot = R.rigid.find((r) => r.build === 'knoten');
+      const belt = R.shells.find((s) => s.kind === 'guertel');
+      rx.setWorn('scarf', !!scarf && !!body?.parent);
+      rx.setWorn('sash', !!knot && !!body?.parent);
+      if (body?.parent && scarf) this.addRibbon(vb, body, 'scarf', scarf.color, scarf.spec.finish);
+      if (body?.parent && knot) this.addRibbon(vb, body, 'sash', knot.color ?? belt?.color ?? '#A8322A', belt?.spec.finish ?? 'stoff');
+    }
     // Modelle aus Blender: Stiefel, Hose, Gehrock (am Körper) und Hut, Frisur (an einem Knochen)
     if (body?.parent) for (const g of R.glb) {
       const model = glbModel(g.model);
@@ -557,8 +591,9 @@ export class Character {
     if (head) this.headgear = attachHeadgear(head, this.rig.getObjectByName('J_Adj_L_FaceEye') ?? null, this.rig.getObjectByName('J_Adj_R_FaceEye') ?? null, hatLook, this.outline, vb.hairFit, vb.anchors(), face);
     const h = Math.min(1.1, Math.max(0.9, look.height));
     const base = vb.template.scale.x;
-    const wide = look.body === 'kraeftig' ? 1.07 : look.body === 'schmal' ? 0.95 : 1;
-    this.rig.scale.set(base * h * wide, base * h, base * h * wide);
+    // Statur über die Glieder (4.6F) statt die ganze Figur in die Breite zu ziehen (das machte auch den Kopf breiter)
+    this.rig.scale.set(base * h, base * h, base * h);
+    this.rigX?.setBuild(this.buildOverride ?? rigProfile(look).build);
     this.sockets.normalize();
     this.fitCull();
     this.stylize(this.holder);
@@ -618,6 +653,9 @@ export class Character {
       // Mantelschöße und Kilt (4.4B): Gewicht je Punkt von der Hüfte (0) bis zum Knie (1) – sie wehen im Shader mit Lauf und Wind
       const tails = ids.some((i) => shells[i].kind === 'mantelLang' || shells[i].kind === 'kilt') ? this.tailWeights(body, set, part, shells, ids) : null;
       if (tails) geo.setAttribute('tailK', tails);
+      // Mantelschöße und Rocksaum hängen an den Federketten (4.6F): Gewichte einmal je Kleidungs-Satz, geteilt
+      const cs = this.chainSkinOf(set, part, shells);
+      if (cs) { geo.setAttribute('skinIndex', cs.skinIndex); geo.setAttribute('skinWeight', cs.skinWeight); }
       let own_ = false;
       if (kinds.length > 1) {
         const l = lists.get(f)!;
@@ -640,6 +678,45 @@ export class Character {
       if (this.outline && !tails) addOutlines(m, 0.7);
       this.garments.push(m);
     }
+  }
+
+  /** Ketten-Gewichte eines Kleidungs-Satzes (nur wenn er Mantelschöße oder einen Rock enthält); geteilt über den Satz */
+  private chainSkinOf(set: BufferGeometry, part: BufferAttribute, shells: ResolvedLoadout['shells']) {
+    const lay = this.vroid?.cloth;
+    if (!lay) return null;
+    const kinds = shells.map((s) => s.kind);
+    if (!kinds.includes('mantelLang') && !kinds.includes('kilt')) return null;
+    const ud = set.userData as GarmentSetData & { chainSkin?: ReturnType<typeof chainSkin>; chainKey?: string };
+    const key = kinds.join(',');
+    if (ud.chainKey !== key) {
+      ud.chainSkin = chainSkin(lay, 'tails', set, (i) => { const k = kinds[part.getX(i)]; return k === 'mantelLang' ? CHAIN_SHARE.mantelLang : k === 'kilt' ? CHAIN_SHARE.kilt : 0; });
+      ud.chainKey = key;
+    }
+    return ud.chainSkin ?? null;
+  }
+
+  /** Schalenden bzw. Schärpenbänder: Bänder an den Federketten, Farbe und Oberfläche der Figur */
+  private addRibbon(vb: VroidBase, body: SkinnedMesh, kind: 'scarf' | 'sash', color: string, finish: Finish) {
+    const rg = vb.cloth?.ribbons[kind];
+    if (!rg) return;
+    const src = rg.geo;
+    const geo = new BufferGeometry();
+    for (const name of ['position', 'normal', 'skinIndex', 'skinWeight'] as const) geo.setAttribute(name, src.attributes[name]);
+    geo.setIndex(src.index);
+    geo.boundingSphere = src.boundingSphere;
+    const n = src.attributes.position.count, col = new Float32Array(n * 3), c = new Color(color);
+    for (let i = 0; i < n; i++) c.toArray(col, i * 3);
+    geo.setAttribute('color', new BufferAttribute(col, 3));
+    const mat = finishMat(finish, '#ffffff', { vertexColors: true, rim: 0.8 });
+    const m = new SkinnedMesh(geo, mat);
+    m.bind(body.skeleton, body.bindMatrix);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    m.userData.ownIndex = false;
+    m.userData.parts = [];
+    m.name = `band:${kind}`;
+    body.parent!.add(m);
+    this.garments.push(m);
   }
 
   /** Gewicht der Mantelschöße je Punkt (nur Teile der Arten mantelLang/kilt): 0 an der Hüfte, 1 ab dem Knie, im Raum des Körpermodells */
@@ -680,11 +757,18 @@ export class Character {
 
   /** Umhang als eigenes Netz am Skelett (Form und Gewichte kommen von der Grundfigur, Farbe und Borte von der Figur) */
   private addCape(vb: VroidBase, body: SkinnedMesh, c: NonNullable<ResolvedLoadout['cape']>, overCoat = false) {
-    const g0 = vb.cape(c.len, overCoat);
+    const g0 = vb.cape(c.len, overCoat, !!c.drape);
     if (!g0) return;
     const n = g0.attributes.position.count;
     const geo = new BufferGeometry();
     for (const name of ['position', 'normal', 'skinIndex', 'skinWeight', 'rimD', 'capeK'] as const) geo.setAttribute(name, g0.attributes[name]);
+    // Umhang an den Federketten (4.6F): Gewichte einmal je Umhang-Form, geteilt
+    const lay = vb.cloth;
+    if (lay) {
+      const ud = g0.userData as { chainSkin?: ReturnType<typeof chainSkin> };
+      if (ud.chainSkin === undefined) ud.chainSkin = chainSkin(lay, 'cape', g0, () => CHAIN_SHARE.cape);
+      if (ud.chainSkin) { geo.setAttribute('skinIndex', ud.chainSkin.skinIndex); geo.setAttribute('skinWeight', ud.chainSkin.skinWeight); }
+    }
     geo.setIndex(g0.index);
     geo.boundingSphere = g0.boundingSphere;
     const col = new Float32Array(n * 3), trimC = new Float32Array(n * 3), patC = new Float32Array(n * 3), gset = new Float32Array(n * 4);
@@ -726,7 +810,10 @@ export class Character {
     this.capeHas = true;
     this.capeFlow += (Math.min(1, sp / 4) - this.capeFlow) * Math.min(1, dt * 5);
     const f = this.capeFlow;
-    for (const u of this.capeU) u.value.set(0.015 + f * 0.17, Math.sin(this.capeT * 1.1) * 0.01 * (1 - f * 0.5), 0.005 + f * 0.022, this.capeT * (1.3 + f * 3));
+    // Schwung und Wind kommen seit 4.6F aus den Federketten; der Shader legt nur noch feine Wellen im Stoff darüber
+    const chained = !!this.vroid?.cloth;
+    if (chained) for (const u of this.capeU) u.value.set(0, 0, 0.003 + f * 0.007, this.capeT * (1.3 + f * 3));
+    else for (const u of this.capeU) u.value.set(0.015 + f * 0.17, Math.sin(this.capeT * 1.1) * 0.01 * (1 - f * 0.5), 0.005 + f * 0.022, this.capeT * (1.3 + f * 3));
   }
 
   /** Hüllkugel aller Netze der Figur: folgt der Hüfte (siehe CULL_RADIUS) */
@@ -991,17 +1078,12 @@ export class Character {
   }
 
   // ---------- Gewicht: Neigung in Kurven und beim Beschleunigen ----------
-  private leanRoll = 0;
-  private leanPitch = 0;
   private leanYaw = NaN;
   private leanSpeed = 0;
-  private static readonly LQ = new Quaternion();
-  private static readonly AX = new V3(0, 0, 1);
-  private static readonly AXP = new V3(1, 0, 0);
 
   /**
-   * Prozedurale Neigung (einmal je Logikschritt): Oberkörper legt sich in die Kurve (nach Drehtempo × Laufgeschwindigkeit)
-   * und beim Antreten leicht nach vorn. Wird nach der Animation auf Wirbelsäule und Brust addiert.
+   * Bewegung des Logikschritts an das Rig geben (Drehtempo × Lauftempo → Kurvenneigen, Beschleunigung → Vorlage). Die Neigung selbst kippt
+   * seit 4.6F die ganze Figur um die Füße (characterRig.ts) statt nur Wirbelsäule und Brust zu biegen.
    */
   lean(yaw: number, speed: number, dt: number) {
     if (Number.isNaN(this.leanYaw)) this.leanYaw = yaw;
@@ -1010,38 +1092,7 @@ export class Character {
     const turn = dy / Math.max(dt, 1e-3);
     const accel = (speed - this.leanSpeed) / Math.max(dt, 1e-3);
     this.leanSpeed = speed;
-    const wantRoll = MathUtils.clamp(-turn * Math.min(speed, 7) * 0.008, -0.14, 0.14);
-    const wantPitch = MathUtils.clamp(speed * 0.007 + accel * 0.004, -0.05, 0.09);
-    const k = Math.min(1, dt * 8);
-    this.leanRoll += (wantRoll - this.leanRoll) * k;
-    this.leanPitch += (wantPitch - this.leanPitch) * k;
-  }
-
-  /** Zuletzt auf Wirbelsäule und Brust addierte Neigung: wird vor der Animation wieder abgezogen. Ohne das summierte sie sich Bild für Bild auf,
-   *  sobald ein Clip diese Knochen nicht jedes Mal neu setzt – der Oberkörper drehte sich dann endlos im Kreis. */
-  private leanApplied: Record<string, Quaternion> = { spine: new Quaternion(), chest: new Quaternion() };
-  private static readonly LQ2 = new Quaternion();
-
-  private undoLean() {
-    for (const name of ['spine', 'chest']) {
-      const q = this.leanApplied[name];
-      if (q.x === 0 && q.y === 0 && q.z === 0) continue;
-      const b = this.bones[name];
-      if (b) b.quaternion.multiply(Character.LQ2.copy(q).invert());
-      q.set(0, 0, 0, 1);
-    }
-  }
-
-  private applyLean() {
-    const pitch = this.leanPitch + this.gaitPitch;
-    if (Math.abs(this.leanRoll) < 0.002 && Math.abs(pitch) < 0.002) return;
-    for (const [name, share] of [['spine', 0.55], ['chest', 0.45]] as const) {
-      const b = this.bones[name];
-      if (!b) continue;
-      const q = this.leanApplied[name];
-      q.copy(Character.LQ.setFromAxisAngle(Character.AX, this.leanRoll * share)).multiply(Character.LQ2.setFromAxisAngle(Character.AXP, pitch * share));
-      b.quaternion.multiply(q);
-    }
+    this.rigX?.motion(turn, speed, accel);
   }
 
   // ---------- Arme zu einem Ziel strecken (Steuerrad) ----------
@@ -1286,13 +1337,22 @@ export class Character {
       const v = Math.max(this.tintAmt, this.hitAmp * (this.hitT / 0.16));
       for (const u of this.fxU) u.hit.value = v;
     }
-    this.undoLean();
+    const rx = this.rigX;
+    // Clip-Stand des letzten Schritts zurück (alles vom Rig Gesetzte fällt weg), Mischer, Clip-Stand sichern
+    rx?.restore();
     this.mixer.update(dt);
+    rx?.snapshot();
     this.gaitPitchWant = 0;
     if (this.currentName in WALK_NATURAL) this.softenGait();
     this.gaitPitch += (this.gaitPitchWant - this.gaitPitch) * Math.min(1, dt * 6);
+    if (rx) {
+      rx.busy = !CALM_CLIP.test(this.currentName);
+      // Gang: Oberkörper etwas aufrechter als im Clip (vorher als eigene Neigung, jetzt im Rig)
+      rx.extraPitch = this.gaitPitch;
+      rx.apply(dt);
+      this.eyeGlow(rx.glow);
+    }
     this.syncCull();
-    this.applyLean();
     this.updateCape(dt);
     if (this.lamp) {
       // die Laterne pendelt leicht, beim Gehen stärker
@@ -1301,16 +1361,62 @@ export class Character {
       this.lamp.rotation.z = Math.sin(lt * 2.6) * 0.07 * w;
       this.lamp.rotation.x = Math.sin(lt * 3.1 + 1) * 0.06 * w;
     }
-    // Mimik: blinzeln, beim Jubeln strahlen, beim Reden den Mund bewegen
-    const f = this.face;
-    if (f && f.mesh.morphTargetInfluences) {
-      const inf = f.mesh.morphTargetInfluences;
-      this.blinkT -= dt;
-      if (this.blinkT < -0.14) this.blinkT = 2 + Math.random() * 4;
-      const joy = this.currentName === 'Cheering' ? 1 : 0;
-      if (f.joy >= 0) inf[f.joy] += (joy - inf[f.joy]) * Math.min(1, dt * 8);
-      inf[f.blink] = joy ? 0 : this.blinkT < 0 ? 1 : 0;
-      if (f.mouth >= 0) inf[f.mouth] = this.currentName === 'Interact' ? 0.35 + 0.35 * Math.sin(performance.now() * 0.02) : 0;
+  }
+
+  /** Augen-Leuchten (Sturm-Erwachen, Ultimates): die Iris strahlt in der Leuchtfarbe und blüht im Bloom */
+  private eyeGlow(k: number) {
+    if (Math.abs(k - this.glowShown) < 0.01 && !(k === 0 && this.glowShown !== 0)) return;
+    const v = k < 0.01 ? 0 : k;
+    this.glowShown = v;
+    if (v > 0) this.enableFx();
+    for (const m of this.irises) {
+      const mat = m.material as MeshToonMaterial;
+      // nur eigene Kopien färben (Effekt-Kopien je Figur), nie das geteilte Material
+      // so stark, dass die Iris im Bloom aufglüht, Pupille und Glanzpunkte aber lesbar bleiben
+      if (mat?.emissive && this.fxMats.includes(mat)) mat.emissive.copy(this.glowCol).multiplyScalar(v * 0.75);
+    }
+  }
+
+  // ---------- Rig: Blick, Mimik, Bereitschaft, Stöße (4.6F) ----------
+
+  /** Blickziel in Welt (null = geradeaus) */
+  lookAt(x: number | null, y = 0, z = 0) { this.rigX?.lookAt(x, y, z); }
+  setMood(id: ExpressionId, k = 1) { this.rigX?.setMood(id, k); }
+  setReady(k: number) { this.rigX?.setReady(k); }
+  /** Aufprall nach Sprung oder Sturz (m/s) */
+  land(impact: number) { this.rigX?.land(impact); }
+  /** Sprechen: Mund und Gesten für sec Sekunden */
+  talk(sec: number, gesture = 0.6) { this.rigX?.talk(sec, gesture); }
+  kick(vx: number, vy: number, vz: number) { this.rigX?.kick(vx, vy, vz); }
+  setGround(fn: ((x: number, z: number, y: number) => number) | null) { if (this.rigX) this.rigX.ground = fn; }
+  setGrounded(on: boolean) { if (this.rigX) this.rigX.grounded = on; }
+  setHandPose(side: 'l' | 'r', id: HandPoseId) { this.rigX?.setHand(side, id); }
+  setGlowColor(color: ColorRepresentation) { this.glowCol.set(color); this.glowShown = -1; }
+  /** Die zwölf Sockets der Figur (headTop … handOff) */
+  get charSockets(): CharacterSockets | null { return this.rigX?.sockets ?? null; }
+
+  /** Präsenz (Endbosse, Stadtleute): Statur, Haltung, Ausdruck, Atemtempo */
+  presence(p: Partial<PresenceDef> & { stance?: StanceId }) {
+    const rx = this.rigX;
+    if (!rx) return;
+    if (p.build && p.build !== this.buildOverride) { this.buildOverride = p.build; rx.setBuild(p.build); this.sockets.normalize(); }
+    if (p.stance) rx.setStance(p.stance);
+    if (p.face) rx.setMood(p.face, 0.8);
+    if (p.breath) rx.setBreath(p.breath);
+  }
+
+  /** Wind an allen Figuren (Welt, m/s) und Betrachter (Kamera) für die Detailstufen */
+  static setWind(x: number, z: number) { CharacterRig.wind.set(x, 0, z); }
+  static setViewer(v: Vector3 | null) { CharacterRig.viewerOn = !!v; if (v) CharacterRig.viewer.copy(v); }
+  /** Detail-Faktor der Grafikstufe (Sichtweite der Figuren / 112 m): schwache Geräte rechnen Stoff und Füße nur ganz nah */
+  static setRigDetail(k: number) { CharacterRig.detail = Math.max(0.45, Math.min(1.3, Number.isFinite(k) ? k : 1)); }
+
+  /** Druckwelle auf Stoff und Haar aller Figuren im Umkreis (Ultimates, Königsdruck, Explosionen) */
+  static blastAll(x: number, y: number, z: number, radius: number, strength: number) {
+    for (const c of Character.all) {
+      const p = c.holder.position;
+      if (Math.abs(p.x - x) > radius + 2 || Math.abs(p.z - z) > radius + 2) continue;
+      c.rigX?.blast(x, y, z, radius, strength);
     }
   }
 
@@ -1341,38 +1447,20 @@ export class Character {
     if (obj) { slot.add(obj); this.stylize(obj); }
     // ein Schild links verdeckt die Laterne an der linken Hüfte: sie wechselt dann die Seite
     // (die Halterung schaut mit dem Rücken zum Körper: beim Seitenwechsel mitdrehen)
-    if (side === 'l' && this.lamp && this.vroid) { const left = !obj?.userData.wide; this.lamp.position.x = left ? LAMP_HIP_X : -LAMP_HIP_X; this.lamp.rotation.y = left ? Math.PI : 0; }
-    this.curl(side, obj ? 1 : grip);
-  }
-
-  /**
-   * Finger der Anime-Figur beugen: 1 = Faust um den Griff, 0.3 = locker. Die Animationen bewegen
-   * die Finger nicht, deshalb bleibt die Stellung einfach stehen.
-   * VRoid-Ruhelage: Finger links entlang −X, rechts entlang +X, Handfläche nach unten, Daumen nach vorn (−Z).
-   */
-  private curl(side: 'l' | 'r', amount: number) {
-    if (!this.vroid) return;
-    const S = side === 'l' ? 'L' : 'R';
-    const sign = side === 'l' ? 1 : -1;
-    const bend = [1.05, 1.3, 0.9];
-    for (const f of ['Index', 'Middle', 'Ring', 'Little']) {
-      for (let j = 0; j < 3; j++) {
-        const b = this.rig.getObjectByName(`J_Bip_${S}_${f}${j + 1}`);
-        // der kleine Finger etwas stärker, der Zeigefinger etwas lockerer – wirkt natürlicher
-        const k = f === 'Index' ? 0.85 : f === 'Little' ? 1.08 : 1;
-        if (b) b.quaternion.setFromAxisAngle(CURL_Z, sign * bend[j] * k * amount);
-      }
+    if (side === 'l' && this.lamp && this.vroid) {
+      const left = !obj?.userData.wide;
+      const node = this.rigX?.sockets.get(left ? 'hipLeft' : 'hipRight');
+      if (node && this.lamp.parent !== node) { node.add(this.lamp); this.lamp.position.set(0, 0, 0); }
+      this.lamp.rotation.y = left ? Math.PI : 0;
     }
-    const thumb = [0.25, 0.55, 0.5];
-    for (let j = 0; j < 3; j++) {
-      const b = this.rig.getObjectByName(`J_Bip_${S}_Thumb${j + 1}`);
-      if (b) b.quaternion.setFromAxisAngle(CURL_X, -thumb[j] * amount);
-    }
+    this.rigX?.setHand(side, obj ? 'griff' : grip >= 0.95 ? 'faust' : grip >= 0.6 ? 'steuer' : 'offen');
   }
 
   /** Figur entfernen und alles freigeben, was nur ihr gehört (Kleidung, Hut, Waffen, Skelett-Daten) */
   dispose() {
     Character.moving.delete(this);
+    Character.all.delete(this);
+    this.rigX?.sockets.clear();
     Character.lamped.delete(this);
     unregisterCulled(this.holder);
     this.lamp?.removeFromParent();

@@ -603,6 +603,9 @@ export class Game {
       if (this.occT <= 0) { this.occT = 0.4; this.refreshOccBanner(); this.warBanner.update(this.warHudView()); this.checkBlockadeDelivery(); }
       this.autosaveTimer += dt;
       if (this.autosaveTimer >= AUTOSAVE_SECONDS) this.persist();
+    } else if (this.state.is('pause') && this.dialogNpc) {
+      // 4.6F: im Gespräch leben Partner und Spielfigur weiter (Atem, Blinzeln, Mund, Gesten)
+      this.world.dialogTick(dt);
     } else if (this.state.is('editor') && this.skillTree && this.input.pressed('skills')) {
       this.skillTree.close();
     } else if (this.state.is('editor') && this.inventoryUi && this.input.pressed('inventory')) {
@@ -1501,9 +1504,11 @@ export class Game {
       return;
     }
     this.dialogUi.set(r.view);
+    this.world.talkPulse();
   }
 
   private endDialog() {
+    this.world.endTalk();
     this.dialogUi.hide();
     this.dialogSession = null;
     this.dialogNpc = null;

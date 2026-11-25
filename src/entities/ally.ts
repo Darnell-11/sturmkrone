@@ -13,6 +13,7 @@ import type { Ground } from '../world/islandGround';
 import { seeded } from '../world/waves';
 import { routeDone, stepRoute, type Route } from '../world/docking';
 import { NavAgent, unstick, type NavGrid } from '../ai/navGrid';
+import type { ExpressionId } from '../data/characterRig';
 
 const STEER = { x: 0, z: 0 };
 const STEER2 = { x: 0, z: 0 };
@@ -87,6 +88,11 @@ export class Ally implements AllyTarget {
   /** Befehl: Sturmangriff (wie bisher: nächster Gegner), Folgen (nur Gegner nahe bei dir), Position halten (Haltepunkt) */
   commandState: CommandState = 'sturm';
   holdX = 0; holdZ = 0;
+  /** Rig (4.6F): Boden des letzten Schritts, Ausdruck */
+  private groundRef: AllyWorld['ground'] | null = null;
+  private groundSet = false;
+  private readonly groundFn = (x: number, z: number, y: number) => (this.groundRef ? this.groundRef.height(x, z, y) : NaN);
+  private moodShown: ExpressionId | '' = '';
   /** Laufweg über Gangway, Planke oder Leiter (null = frei); `homeBound`: geht zurück an Bord und wird dort entfernt */
   route: Route | null = null;
   homeBound = false;
@@ -215,6 +221,7 @@ export class Ally implements AllyTarget {
     let moveTo: { x: number; z: number } | null = null;
     let speed = 4.6;
     const pd = Math.hypot(player.x - this.x, player.z - this.z);
+    let lookE: Enemy | null = null;
     if (!foes.length) {
       // Folgen in Formation hinter der Spielfigur (Plätze aus data/crewTiers.ts: bis zu 5 Offiziere)
       const { side, back } = formationSlot(this.slot);
@@ -237,6 +244,7 @@ export class Ally implements AllyTarget {
         if (d < bd) { bd = d; target = e; }
       }
       const keepNear = role === 'heiler' || role === 'unterstuetzung';
+      lookE = target;
       if (target) {
         const d = Math.hypot(target.x - this.x, target.z - this.z);
         const reach = atk.range + target.radius;
@@ -288,6 +296,16 @@ export class Ally implements AllyTarget {
     } else if (this.anim !== 'attack' && this.anim !== 'hit' && this.anim !== 'spawn' && this.hurtT <= 0) this.play(cleared && foes.length === 0 && pd < 6 && this.lineT > 12 ? 'cheer' : 'idle');
     const h = w.ground.height(this.x, this.z, this.y);
     if (Number.isFinite(h)) this.y += (h - this.y) * Math.min(1, dt * 12);
+    // 4.6F: Blick zum Gegner (sonst zur Spielfigur, wenn sie nah ist), Ausdruck, Bereitschaft, Füße auf dem Boden
+    this.groundRef = w.ground;
+    if (!this.groundSet) { this.char.setGround(this.groundFn); this.groundSet = true; }
+    const ch = this.char;
+    if (lookE) ch.lookAt(lookE.x, lookE.y + 1.5 * lookE.def.scale, lookE.z);
+    else if (pd < 7) ch.lookAt(player.x, this.y + 1.5, player.z);
+    else ch.lookAt(null);
+    ch.setReady(foes.length ? 1 : 0);
+    const mood: ExpressionId = foes.length ? 'kampf' : this.anim === 'cheer' ? 'jubel' : 'hafen';
+    if (mood !== this.moodShown) { this.moodShown = mood; ch.setMood(mood); }
     this.sync();
     this.char.update(dt);
     return say;

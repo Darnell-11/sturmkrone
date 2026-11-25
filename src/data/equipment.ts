@@ -51,7 +51,7 @@ export type EquipPart =
   /** Hülle aus dem Körper: bewegt sich mit und verdeckt, was unter ihr liegt */
   | { type: 'shell'; garment: GarmentKind; tint: Tint; look?: ShellLook }
   /** Umhang hinter dem Rücken (eigenes Netz am Skelett) */
-  | { type: 'cape'; len: 'kurz' | 'lang' | 'schlepp'; tint: Tint; look?: ShellLook }
+  | { type: 'cape'; len: 'kurz' | 'lang' | 'schlepp'; tint: Tint; look?: ShellLook; /** Schultermantel: lässig über die Schultern gelegt (4.6F) */ drape?: boolean }
   /** sichtbares Kleidungsteil der Grundfigur (Hemd, Schuhe) */
   | { type: 'base'; slot: 'top' | 'shoes' }
   /** starres Teil auf einem Haut-Anker (tint: Farbe, wo das Teil eine hat) */
@@ -120,6 +120,8 @@ export const EQUIPMENT: EquipDef[] = [
   { id: 'mantel_kurz', n: 'Kurzer Mantel', socket: 'chest', coat: 'kurz', slimUnder: true, parts: [{ type: 'shell', garment: 'mantelKurz', tint: 'coat' }] },
   { id: 'mantel_lang', n: 'Langer Mantel', socket: 'chest', coat: 'lang', slimUnder: true, parts: [{ type: 'shell', garment: 'mantelLang', tint: 'coat' }] },
   { id: 'mantel_kapitaen', n: 'Kapitänsmantel', socket: 'chest', coat: 'lang', slimUnder: true, parts: [{ type: 'shell', garment: 'mantelLang', tint: 'coat' }, { type: 'rigid', build: 'schulterstuecke' }] },
+  // 4.6F: Admiralsmantel lässig über die Schultern gelegt (keine Ärmel an): schwingt an den Federketten
+  { id: 'mantel_schulter', n: 'Schultermantel', socket: 'chest', parts: [{ type: 'cape', len: 'lang', tint: 'coat', drape: true, look: { trim: 'item2', trimW: 0.02, trimStyle: 1 } }] },
   { id: 'halstuch', n: 'Halstuch', socket: 'chest', parts: [{ type: 'shell', garment: 'schal', tint: 'accent' }] },
   { id: 'kuerass', n: 'Brustplatte', socket: 'chest', notUnderCoat: true, parts: [{ type: 'shell', garment: 'kuerass', tint: '#9AA3AD' }] },
   { id: 'schulterplatten', n: 'Schulterplatten', socket: 'chest', parts: [{ type: 'rigid', build: 'schulterplatten', tint: '#9AA3AD' }] },
@@ -165,7 +167,7 @@ export interface Loadout {
 export function loadoutFromLook(look: CharacterLook): Loadout {
   const marine = look.outfit === 'uniform' || look.hat === 'marine' || look.hat === 'zweispitz';
   const chest: string[] = [look.outfit === 'matrose' ? 'ringelhemd' : look.outfit];
-  if (look.coat !== 'keiner') chest.push(look.coat === 'kurz' ? 'mantel_kurz' : look.coat === 'lang' ? 'mantel_lang' : 'mantel_kapitaen');
+  if (look.coat !== 'keiner') chest.push(look.coat === 'kurz' ? 'mantel_kurz' : look.coat === 'lang' ? 'mantel_lang' : look.coat === 'schulter' ? 'mantel_schulter' : 'mantel_kapitaen');
   if (look.scarf) chest.push('halstuch');
   const items: Record<SocketId, string[]> = {
     head: look.hat && look.hat !== 'keiner' ? [look.hat] : [],
@@ -213,7 +215,7 @@ const PLAIN_SPEC: ShellSpec = { finish: 'stoff', trim: null, trimW: 0, trimStyle
 export interface ResolvedLoadout {
   /** Hüllen von innen nach außen mit ihrer Farbe und Verzierung */
   shells: { kind: GarmentKind; color: string; spec: ShellSpec }[];
-  cape: { len: 'kurz' | 'lang' | 'schlepp'; color: string; spec: ShellSpec } | null;
+  cape: { len: 'kurz' | 'lang' | 'schlepp'; color: string; spec: ShellSpec; drape?: boolean } | null;
   /** Zusammenhang für die Abstände (was liegt unter Gürtel, Tuch und Mantel) */
   ctx: GarmentCtx;
   /** welche Kleidung der Grundfigur sichtbar bleibt */
@@ -265,7 +267,7 @@ export function resolveLoadout(l: Loadout): ResolvedLoadout {
     pal = l.dye?.[d.id] ?? d.palette ?? ['#8A8F98', '#E3B04B'];
     for (const p of d.parts) {
       if (p.type === 'shell') shells.set(p.garment, { color: color(p.tint), spec: specOf(p.look) });
-      else if (p.type === 'cape') cape = { len: p.len, color: color(p.tint), spec: specOf(p.look) };
+      else if (p.type === 'cape') cape = { len: p.len, color: color(p.tint), spec: specOf(p.look), drape: !!p.drape };
       else if (p.type === 'base') base[p.slot] = true;
       else if (p.type === 'glb') glb.push({ model: p.model, mode: p.mode, bone: p.bone, look: roleLook(p.roles), maskAs: p.maskAs, hidesHair: p.hidesHair, trimsHair: p.trimsHair });
       else if (p.type === 'held') held.push({ model: p.model, hand: p.hand, look: roleLook(p.roles) });

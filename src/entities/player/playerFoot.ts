@@ -25,6 +25,8 @@ import {
   type ActionHit, type ActionMove, type ActionStyleId, type UltimateSpec,
 } from '../../data/actionStyles';
 import { AURA, FORM_NAMES, MASTERY, WILL_AURAS, type AuraId } from '../../data/fajiArts';
+import { CLOTH_IMPULSE, type ExpressionId } from '../../data/characterRig';
+import { Character as CharacterCls } from '../character/character';
 
 /** Zustand für Welt und HUD (wie vor 4.6A) */
 type FootState = 'move' | 'roll' | 'attack' | 'block' | 'charge' | 'hurt' | 'down';
@@ -182,6 +184,13 @@ export class PlayerFoot implements PlayerTarget {
   /** nach einem Treffer-Aufleuchten die Färbung neu setzen (das Aufleuchten überschreibt ihre Farbe) */
   private flashT = 0;
   private willNoteT = 0;
+  /** Rig (4.6F): Schmerz-Ausdruck nach einem Treffer, zuletzt gesetzter Ausdruck, Kampfnähe (alle 0,25 s geprüft), Handhaltung der Faust */
+  private hurtFaceT = 0;
+  private moodShown: ExpressionId | '' = '';
+  private engagedT = 0;
+  private engaged = false;
+  private fistShown = '';
+  private glowStyle = '';
 
   constructor(private char: Character, style: StyleId, private deps: FootDeps, action?: ActionStyleId) {
     this.style = style;
@@ -330,6 +339,9 @@ export class PlayerFoot implements PlayerTarget {
     this.hp -= r === 'armor' ? dmg * 0.75 : dmg;
     this.secondWindCheck();
     this.char.hitFlash('#FF5A3C', knock > 6 ? 1.3 : 1);
+    // 4.6F: kurzer Schmerz im Gesicht, Mantel und Haar fliegen vom Treffer weg
+    this.hurtFaceT = knock > 6 ? 0.7 : 0.4;
+    this.char.kick(dirX * Math.min(6, knock * 0.5), 0.6, dirZ * Math.min(6, knock * 0.5));
     this.flashT = 0.18;
     if (this.hp <= 0) { this.goDown(); return 'hit'; }
     if (r === 'armor') { this.engine.shove(dirX * knock * 0.15, dirZ * knock * 0.15); return 'hit'; }
@@ -409,6 +421,7 @@ export class PlayerFoot implements PlayerTarget {
     this.engine.step(inp, this.world, dt);
     this.handleEvents();
     this.animate(dt);
+    this.rigInputs(dt, lockId);
     // Tatsächliches Tempo (nicht das befohlene): an Wänden laufen die Füße sonst auf der Stelle
     const moved = dt > 0 ? Math.hypot(f.x - pv.x, f.z - pv.z) / dt : 0;
     this.speed = moved;
@@ -457,6 +470,9 @@ export class PlayerFoot implements PlayerTarget {
         case 'aftershock': this.deps.onAftershock?.(e.b, e.c, e.a, f); this.deps.shake?.(0.7); break;
         case 'stormBurst': this.deps.onStormBurst?.(e.b, e.c, e.a, f); break;
         case 'jump': {
+          // 4.6F: Stoff hinkt dem Absprung nach; beim Luftsprung schlägt der Mantel nach unten und gegen die Richtung
+          if (e.a >= 2) this.char.kick(-Math.sin(f.yaw) * 2, -CLOTH_IMPULSE.airJump, -Math.cos(f.yaw) * 2);
+          else this.char.kick(0, -CLOTH_IMPULSE.jump, 0);
           const at = this.tmpV.set(f.x, f.y, f.z);
           if (e.a >= 2) { fx?.shockwave(at, 1.8, st.color); afx?.afterimage(f.x, f.y - 0.3, f.z, st.color, 0.25, 0.9); }
           else fx?.puff(at, 6);
@@ -467,6 +483,8 @@ export class PlayerFoot implements PlayerTarget {
           break;
         }
         case 'land': {
+          // 4.6F: federndes In-die-Knie-Gehen (Aufprall in m/s)
+          this.char.land(e.a);
           if (e.a > 7) { fx?.puff(this.tmpV.set(f.x, f.y, f.z), 10); this.deps.shake?.(Math.min(0.35, e.a * 0.02)); }
           if (f.phase === 'ground' && e.a > 5) { this.char.playClip('Jump_Land', { loop: false, speed: 1.6, fade: FADE.land, restart: true }); this.anim = 'land'; this.landT = 0.25; }
           break;
@@ -480,6 +498,8 @@ export class PlayerFoot implements PlayerTarget {
           this.setTrail(false);
           ov?.speedlines(e.a ? 0.55 : 0.35);
           fx?.puff(this.tmpV.set(f.x, f.y, f.z), e.a ? 4 : 10);
+          // 4.6F: Mantel und Haar wehen gegen die Dash-Richtung
+          this.char.kick(-f.dashX * CLOTH_IMPULSE.dash, 0.4, -f.dashZ * CLOTH_IMPULSE.dash);
           // Rotations-Dash (Doppelklinge, Sturmfaust) und Luft-Dash: Nachbild am Start
           if (e.a || st.dashSpeed >= 18) afx?.afterimage(f.x, f.y, f.z, st.accent, 0.3, 0.95);
           // 4.6D: leuchtendes Nachbild-Band entlang des Dash-Wegs (Länge = Tempo × Dauer)
@@ -493,6 +513,7 @@ export class PlayerFoot implements PlayerTarget {
           const at = this.tmpV.set(f.x, f.y, f.z);
           fx?.shockwave(at, e.a * 1.3, st.accent);
           fx?.crack(at, e.a * 1.1);
+          CharacterCls.blastAll(f.x, f.y + 0.4, f.z, e.a * 1.6 + 2, CLOTH_IMPULSE.blast * 0.8);
           fx?.sigil(at, e.a, st.color, 0.9);
           ov?.impactFrame();
           this.deps.shake?.(0.7);
@@ -546,6 +567,8 @@ export class PlayerFoot implements PlayerTarget {
           this.deps.focus?.(1);
           this.deps.onAwaken?.(true);
           this.tintKey = '';
+          // 4.6F: die Druckwelle des Erwachens reißt an Mänteln und Haaren ringsum
+          CharacterCls.blastAll(f.x, f.y + 0.3, f.z, 9, CLOTH_IMPULSE.blast);
           break;
         }
         case 'awakenEnd':
@@ -564,6 +587,7 @@ export class PlayerFoot implements PlayerTarget {
           const at = this.tmpV.set(f.x, f.y + 0.1, f.z);
           fx?.shockwave(at, Math.min(9, e.a * 0.45), '#FFD27A');
           this.deps.onKingWave?.(f.x, f.y, f.z, e.a);
+          CharacterCls.blastAll(f.x, f.y + 0.3, f.z, Math.min(18, e.a * 0.6 + 3), CLOTH_IMPULSE.blast * 0.7);
           if (e.b > 0) { this.deps.shake?.(0.45); if (e.a > 16 && ov) ov.number(at.set(f.x, f.y + 2.8, f.z), 'Königsdruck!', 'crit'); }
           break;
         }
@@ -588,6 +612,7 @@ export class PlayerFoot implements PlayerTarget {
           if (mv?.ultimate) {
             this.deps.onUltStrike?.(mv, mv.ultimate, f);
             this.deps.shake?.(1.2);
+            CharacterCls.blastAll(f.x, f.y + 0.5, f.z, 22, CLOTH_IMPULSE.blast);
           }
           break;
         }
@@ -723,6 +748,48 @@ export class PlayerFoot implements PlayerTarget {
       else this.char.play(want === 'run' ? 'run' : 'walk', { fade: FADE.locomotion });
     }
     if (want !== 'idle') this.char.setLocoSpeed(this.realSpeed);
+  }
+
+  /**
+   * Rig der Spielfigur (4.6F): Boden unter den Füßen, Ausdruck (entspannt, Kampf-Blick, Schmerz, entschlossenes Grinsen mit Augen-Leuchten
+   * im Sturm-Erwachen und bei Ultimates), Kampf-Bereitschaft, Blick zum erfassten oder nächsten Gegner, Fäuste im Faustkampf.
+   */
+  private rigInputs(dt: number, lockId: string) {
+    const f = this.fighter, ch = this.char;
+    ch.setGrounded(f.grounded);
+    this.hurtFaceT = Math.max(0, this.hurtFaceT - dt);
+    // Kampfnähe: Ziel erfasst, eigener Angriff, oder ein wacher Gegner in 12 m (alle 0,25 s geprüft)
+    this.engagedT -= dt;
+    if (this.engagedT <= 0) {
+      this.engagedT = 0.25;
+      let near = false;
+      const es = this.deps.combat?.enemies;
+      if (es) for (let i = 0; i < es.length; i++) { const e = es[i]; if (e.alive && Math.abs(e.x - f.x) < 12 && Math.abs(e.z - f.z) < 12) { near = true; break; } }
+      this.engaged = near;
+    }
+    const fight = this.engaged || f.phase === 'move' || f.phase === 'block' || !!lockId;
+    const st = ACTION_STYLES[f.style];
+    const mood: ExpressionId = f.phase === 'down' ? 'ko'
+      : f.awakenT > 0 || this.inUltimate ? 'entschlossen'
+        : this.hurtFaceT > 0 ? 'schmerz'
+          : fight ? 'kampf' : 'hafen';
+    if (mood !== this.moodShown) { this.moodShown = mood; ch.setMood(mood); }
+    if (this.glowStyle !== f.style) { this.glowStyle = f.style; ch.setGlowColor(st.accent); }
+    ch.setReady(fight && f.phase !== 'move' ? 1 : 0);
+    // Blick: erfasstes Ziel, sonst der nächste Gegner in 10 m
+    const t = lockId ? this.engine.target(lockId) : null;
+    if (t) ch.lookAt(t.x, t.y + t.height * 0.85, t.z);
+    else if (this.engaged) {
+      let best: { x: number; y: number; z: number } | null = null, bd = 100;
+      const es = this.deps.combat?.enemies;
+      if (es) for (let i = 0; i < es.length; i++) { const e = es[i]; if (!e.alive) continue; const d = (e.x - f.x) ** 2 + (e.z - f.z) ** 2; if (d < bd) { bd = d; best = e; } }
+      if (best) ch.lookAt(best.x, best.y + 1.5, best.z); else ch.lookAt(null);
+    } else ch.lookAt(null);
+    // Faustkampf: geballte Fäuste im Kampf, sonst entspannt (Waffen halten ihren Griff selbst)
+    if (this.style === 'faust') {
+      const want = fight ? 'faust' : 'offen';
+      if (want !== this.fistShown) { this.fistShown = want; ch.setHandPose('l', want); ch.setHandPose('r', want); }
+    } else this.fistShown = '';
   }
 
   /** Beim Verlassen der Insel/K.O.: laufende Effekte beenden */

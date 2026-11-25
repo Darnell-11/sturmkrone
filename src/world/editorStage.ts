@@ -162,6 +162,8 @@ export class EditorStage {
     this.aura.intensity += (this.auraTarget - this.aura.intensity) * k;
     if (this.char) {
       this.char.holder.rotation.y = this.yaw;
+      // 4.6F: im Studio immer volle Detailstufe (Atem, Blick, Stoff, Haar)
+      Character.setViewer(null);
       this.char.update(dt);
     }
     toonShared.rimColor.value.set(0xffe8c8);
