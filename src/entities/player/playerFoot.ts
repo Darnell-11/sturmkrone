@@ -21,7 +21,7 @@ import {
   type ActionBody, type ActionTarget, type ActionWorld, type AttackerInfo, type FighterState, type HitContext,
 } from '../../combat/actionCombatEngine';
 import {
-  ACTION_STYLES, ACTION_TUNING, ALL_MOVES, actionStyleOf, visualStyleOf,
+  ACTION_STYLES, ACTION_TUNING, actionStyleOf, visualStyleOf,
   type ActionHit, type ActionMove, type ActionStyleId, type UltimateSpec,
 } from '../../data/actionStyles';
 import { AURA, FORM_NAMES, MASTERY, WILL_AURAS, type AuraId } from '../../data/fajiArts';
@@ -72,6 +72,9 @@ export interface FootDeps {
   /** 4.6D: Dash am Boden oder in der Luft (Weg von A nach B), Sturm-Schritt (Blitz-Silhouetten an Absprung- und Zielpunkt) */
   onDash?: (ax: number, ay: number, az: number, bx: number, by: number, bz: number, f: FighterState, air: boolean) => void;
   onStormStep?: (ox: number, oy: number, oz: number, f: FighterState) => void;
+  /** 4.6E: Talent-Entladungen – Nachbeben des Ultimates (Mittelpunkt, Radius) und Element-Entladung beim Sturm-Schritt */
+  onAftershock?: (x: number, z: number, r: number, f: FighterState) => void;
+  onStormBurst?: (x: number, z: number, r: number, f: FighterState) => void;
   trail?: (x: number, y: number, z: number, k: number) => void;
   /** Impact-Frames der Anime-Pipeline (invertiert, dann Tusche; 2 – 4 gezeichnete Bilder) */
   impactFrames?: (n: number) => void;
@@ -307,7 +310,8 @@ export class PlayerFoot implements PlayerTarget {
     // Angreifer ohne Gegner-Objekt (Verbände, Geschütze der Festungen) zählen als Stufe 4
     // Eisenwille: 10 % weniger Schaden (zählt zur gemeinsamen Minderung, die `damageFactor` bei 85 % deckelt)
     const iron = this.fighter.aura === 2 ? AURA.ironReduce : 0;
-    dmg *= damageFactor(elemental ? this.gearResist : this.gearArmor, from ? dangerOfLevel(from.level) : 4, this.reduce + this.gearReduce + iron);
+    // Talente (4.6E): Haltung im Angriff und Rüstung aus den Bäumen (gedeckelt, `TALENT_CAP.reduce`)
+    dmg *= damageFactor(elemental ? this.gearResist : this.gearArmor, from ? dangerOfLevel(from.level) : 4, this.reduce + this.gearReduce + iron + this.engine.talentReduce);
     // nie durch einen einzigen Treffer tot: ein Treffer nimmt höchstens 40 % der Lebenspunkte
     dmg = Math.min(dmg, this.maxHp * PLAYER_HIT_CAP);
     if (r === 'parry') {
@@ -431,13 +435,14 @@ export class PlayerFoot implements PlayerTarget {
   private handleEvents() {
     const ev = this.engine.events;
     const f = this.fighter;
-    const st = ACTION_STYLES[f.style];
+    const st = this.engine.style;
     const fx = this.deps.fx, afx = this.deps.actionFx, ov = this.deps.overlay;
     for (let i = 0; i < ev.n; i++) {
       const e = ev.items[i];
       switch (e.type) {
         case 'move': {
-          const mv = ALL_MOVES[e.a];
+          const mv = this.engine.moveAt(e.a);
+          if (!mv) break;
           const kind = KIND_OF_CODE[e.b];
           this.startClip(mv, kind === 'light' || kind === 'swap' || kind === 'air');
           if (mv.afterimage) afx?.afterimage(f.x, f.y, f.z, mv.color || st.accent, 0.3);
@@ -445,10 +450,12 @@ export class PlayerFoot implements PlayerTarget {
           break;
         }
         case 'skill': {
-          if (!ALL_MOVES[f.moveIdx]?.cutin && ov) ov.number(this.tmpV.set(f.x, f.y + 2.5, f.z), e.s, 'info');
+          if (!this.engine.moveAt(f.moveIdx)?.cutin && ov) ov.number(this.tmpV.set(f.x, f.y + 2.5, f.z), e.s, 'info');
           break;
         }
-        case 'cutin': ov?.showCutin(e.s, ALL_MOVES[e.a]?.color || st.accent); ov?.speedlines(0.8); break;
+        case 'cutin': ov?.showCutin(e.s, this.engine.moveAt(e.a)?.color || st.accent); ov?.speedlines(0.8); break;
+        case 'aftershock': this.deps.onAftershock?.(e.b, e.c, e.a, f); this.deps.shake?.(0.7); break;
+        case 'stormBurst': this.deps.onStormBurst?.(e.b, e.c, e.a, f); break;
         case 'jump': {
           const at = this.tmpV.set(f.x, f.y, f.z);
           if (e.a >= 2) { fx?.shockwave(at, 1.8, st.color); afx?.afterimage(f.x, f.y - 0.3, f.z, st.color, 0.25, 0.9); }
@@ -568,7 +575,7 @@ export class PlayerFoot implements PlayerTarget {
           break;
         }
         case 'ultimate': {
-          const mv = ALL_MOVES[e.a];
+          const mv = this.engine.moveAt(e.a);
           if (mv?.ultimate) {
             this.deps.onUltimate?.(mv, mv.ultimate, f);
             afx?.afterimage(f.x, f.y, f.z, mv.ultimate.accent, 0.8, 1.2);
@@ -577,7 +584,7 @@ export class PlayerFoot implements PlayerTarget {
           break;
         }
         case 'ultStrike': {
-          const mv = ALL_MOVES[e.a];
+          const mv = this.engine.moveAt(e.a);
           if (mv?.ultimate) {
             this.deps.onUltStrike?.(mv, mv.ultimate, f);
             this.deps.shake?.(1.2);
@@ -604,13 +611,13 @@ export class PlayerFoot implements PlayerTarget {
           ov?.speedlines(0.7);
           break;
         case 'swing': {
-          const mv = ALL_MOVES[e.a];
+          const mv = this.engine.moveAt(e.a);
           const h = mv?.hits[e.b];
           if (mv && h) this.deps.onSwing?.(mv, h, f);
           break;
         }
         case 'slash': {
-          const mv = ALL_MOVES[e.a];
+          const mv = this.engine.moveAt(e.a);
           const h = mv?.hits[e.b];
           if (mv && h) this.deps.onSlash?.(mv, h, f, this.slashStep++);
           break;

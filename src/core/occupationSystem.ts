@@ -20,6 +20,8 @@ export interface OccHost {
   provisions(n: number): void;
   persist(): void;
   cue(kind: 'horn' | 'win' | 'bell'): void;
+  /** Talente (4.6E, Tributordnung): Faktor auf das Tribut-Gold (fehlt er, gilt 1) */
+  tributeK?(): number;
 }
 
 /** Wo die Rückeroberungs-Flotte gerade ist (in Weltkoordinaten) */
@@ -100,6 +102,7 @@ export class OccupationSystem {
       // Tribut: Gold und Proviant in regelmäßigen Abständen
       if (tributeDue(rec, now)) {
         const t = tributeAmount(def?.level ?? 15, rec.conquestCount);
+        t.gold = Math.round(t.gold * (this.h.tributeK?.() ?? 1));
         s.player.gold += t.gold;
         this.h.provisions(t.proviant);
         recs[id] = rec = payTribute(rec, now);

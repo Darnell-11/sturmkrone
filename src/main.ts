@@ -15,6 +15,7 @@ import './ui/css/panels.css';
 import './ui/css/hud.css';
 import './ui/css/screens.css';
 import './ui/css/yard.css';
+import './ui/css/talents.css';
 import './ui/css/touch.css';
 import { Game } from './core/game';
 import { WebGLUnavailableError } from './render/renderer';

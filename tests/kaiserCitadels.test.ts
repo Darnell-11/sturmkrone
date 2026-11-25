@@ -313,7 +313,7 @@ describe('Spielstand: Ruhezeit der Kaiser überdauert das Laden, Version 21 blei
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.data.version).toBe(SAVE_VERSION);
-    expect(SAVE_VERSION).toBe(21);
+    expect(SAVE_VERSION).toBeGreaterThanOrEqual(21); // 4.6E: Talente heben auf 22, das Kaiser-Feld bleibt ohne eigene Version
     expect(r.data.world.kaiser).toEqual({});
     for (const id of KAISER_IDS) expect(r.data.world.chart?.islands ?? []).not.toContain(id);
     expect(kaiserFromSave(r.data.world.kaiser, 0)).toEqual([]);

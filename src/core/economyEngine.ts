@@ -84,11 +84,27 @@ export function marketPrice(site: MarketSite, g: GoodId, stock: number): number 
 
 export interface Quote { units: number; total: number; avg: number; stockAfter: number }
 
+/**
+ * Handels-Talente (Phase 4.6E, Baum „Handelsimperium“): Einkaufs-Rabatt, Verkaufs-Aufschlag, mehr Frachtraum, weniger Fahndungsdruck.
+ * Die Stückpreise behalten die Regel „Hin und Zurück im selben Hafen kostet immer Gold“: der Erlös bleibt unter 97 % des Hafen-Einkaufspreises,
+ * der Einkauf über 103 % des Erlöses (`talentUnitPrices`). Ohne Talente sind die Preise genau die alten.
+ */
+export interface TradeTalent { buy: number; sell: number; cargo: number; smuggle: number }
+export const NO_TRADE_TALENT: TradeTalent = { buy: 0, sell: 0, cargo: 0, smuggle: 0 };
+
+/** Stückpreise beim Kaufen und Verkaufen zum Marktpreis `p` mit Tarif und Handels-Talenten */
+export function talentUnitPrices(p: number, tariff: number, tal: TradeTalent = NO_TRADE_TALENT): { buy: number; sell: number } {
+  const buyBase = p * (1 + MARKET.spread) * tariff;
+  const sell = Math.min(p * (1 - MARKET.spread) * sellK(tariff) * (1 + Math.max(0, tal.sell)), buyBase * 0.97);
+  const buy = Math.max(buyBase * (1 - Math.max(0, tal.buy)), sell * 1.03);
+  return { buy, sell };
+}
+
 /** Kaufen: Stück für Stück, der Preis steigt mit jedem Stück (sinkender Vorrat). `tariff` ≥ 0,5 wirkt auf den Preis. */
-export function quoteBuy(site: MarketSite, stock: number, g: GoodId, n: number, tariff = 1): Quote {
+export function quoteBuy(site: MarketSite, stock: number, g: GoodId, n: number, tariff = 1, tal: TradeTalent = NO_TRADE_TALENT): Quote {
   let s = stock, total = 0, units = 0;
   for (let i = 0; i < n && s >= 1; i++) {
-    total += marketPrice(site, g, s) * (1 + MARKET.spread) * tariff;
+    total += talentUnitPrices(marketPrice(site, g, s), tariff, tal).buy;
     s -= 1; units++;
   }
   return { units, total: Math.round(total), avg: units ? total / units : 0, stockAfter: s };
@@ -101,10 +117,10 @@ export function quoteBuy(site: MarketSite, stock: number, g: GoodId, n: number, 
 export const sellK = (tariff: number): number => (tariff < 1 ? Math.max(0.5, tariff) : 1 / tariff);
 
 /** Verkaufen: der Vorrat wächst, der Preis fällt mit jedem Stück. */
-export function quoteSell(site: MarketSite, stock: number, g: GoodId, n: number, tariff = 1): Quote {
+export function quoteSell(site: MarketSite, stock: number, g: GoodId, n: number, tariff = 1, tal: TradeTalent = NO_TRADE_TALENT): Quote {
   let s = stock, total = 0, units = 0;
   for (let i = 0; i < n; i++) {
-    total += marketPrice(site, g, s) * (1 - MARKET.spread) * sellK(tariff);
+    total += talentUnitPrices(marketPrice(site, g, s), tariff, tal).sell;
     s += 1; units++;
   }
   return { units, total: Math.round(total), avg: units ? total / units : 0, stockAfter: s };
@@ -120,7 +136,9 @@ export function trendOf(price: number, g: GoodId): Trend {
 // ---------- Frachtraum und Handel ----------
 
 export const cargoUsed = (eco: EconomyState): number => GOODS.reduce((a, g) => a + (eco.cargo[g.id]?.n ?? 0) * g.vol, 0);
-export const cargoFree = (eco: EconomyState, tier: number): number => Math.max(0, cargoCap(tier) - cargoUsed(eco));
+/** Frachtraum der Klasse mit Talent-Bonus (Handelsimperium) */
+export const cargoCapOf = (tier: number, cargoBonus = 0): number => Math.round(cargoCap(tier) * (1 + Math.max(0, cargoBonus)));
+export const cargoFree = (eco: EconomyState, tier: number, cargoBonus = 0): number => Math.max(0, cargoCapOf(tier, cargoBonus) - cargoUsed(eco));
 export const cargoCount = (eco: EconomyState, g: GoodId): number => eco.cargo[g]?.n ?? 0;
 /** Kriegsware im Laderaum: Einheiten und Wert zu Grundpreisen */
 export function warCargo(eco: EconomyState): { units: number; value: number } {
@@ -132,63 +150,63 @@ export function warCargo(eco: EconomyState): { units: number; value: number } {
 export interface TradeResult { ok: boolean; units: number; gold: number; message: string }
 
 /** Ware kaufen: begrenzt durch Gold, Vorrat und freien Frachtraum; schreibt Vorrat, Fracht und (bei Kriegspreisen) die Fahndungs-Hitze */
-export function buyGood(eco: EconomyState, site: MarketSite, now: number, g: GoodId, n: number, gold: number, tier: number, tariff = 1): TradeResult {
+export function buyGood(eco: EconomyState, site: MarketSite, now: number, g: GoodId, n: number, gold: number, tier: number, tariff = 1, tal: TradeTalent = NO_TRADE_TALENT): TradeResult {
   const def = GOOD_BY_ID[g];
   if (!def || n <= 0) return { ok: false, units: 0, gold: 0, message: '' };
   if (embargoed(site, g)) return { ok: false, units: 0, gold: 0, message: `Embargo${site.embargoBy ? ` gegen ${site.embargoBy}` : ''}: ${def.n} wird hier weder gekauft noch verkauft.` };
   const m = marketAt(eco, site, now);
   const stock = m.stock[g] ?? 0;
-  const room = Math.floor(cargoFree(eco, tier) / def.vol + 1e-9);
+  const room = Math.floor(cargoFree(eco, tier, tal.cargo) / def.vol + 1e-9);
   if (room <= 0) return { ok: false, units: 0, gold: 0, message: 'Dein Frachtraum ist voll.' };
   if (stock < 1) return { ok: false, units: 0, gold: 0, message: `${def.n} ist hier ausverkauft.` };
   // so viele Stück, wie Gold, Platz und Vorrat erlauben
   let want = Math.min(Math.floor(n), room, Math.floor(stock));
-  let q = quoteBuy(site, stock, g, want, tariff);
-  while (want > 0 && q.total > gold) { want--; q = quoteBuy(site, stock, g, want, tariff); }
-  if (want <= 0) return { ok: false, units: 0, gold: 0, message: `Dafür fehlt das Gold (${def.n} kostet hier ${Math.ceil(marketPrice(site, g, stock) * (1 + MARKET.spread) * tariff)} Gold).` };
+  let q = quoteBuy(site, stock, g, want, tariff, tal);
+  while (want > 0 && q.total > gold) { want--; q = quoteBuy(site, stock, g, want, tariff, tal); }
+  if (want <= 0) return { ok: false, units: 0, gold: 0, message: `Dafür fehlt das Gold (${def.n} kostet hier ${Math.ceil(talentUnitPrices(marketPrice(site, g, stock), tariff, tal).buy)} Gold).` };
   m.stock[g] = q.stockAfter;
   const c = (eco.cargo[g] ??= { n: 0, cost: 0 });
   c.n += q.units; c.cost += q.total;
-  addHeat(eco, site, g, q.units);
+  addHeat(eco, site, g, q.units, tal.smuggle);
   return { ok: true, units: q.units, gold: -q.total, message: `${q.units} × ${def.n} gekauft (${q.total} Gold).` };
 }
 
 /** Ware verkaufen */
-export function sellGood(eco: EconomyState, site: MarketSite, now: number, g: GoodId, n: number, tariff = 1): TradeResult {
+export function sellGood(eco: EconomyState, site: MarketSite, now: number, g: GoodId, n: number, tariff = 1, tal: TradeTalent = NO_TRADE_TALENT): TradeResult {
   const def = GOOD_BY_ID[g];
   const have = eco.cargo[g]?.n ?? 0;
   if (!def || n <= 0 || have <= 0) return { ok: false, units: 0, gold: 0, message: `Du hast kein ${def?.n ?? 'Gut'} geladen.` };
   if (embargoed(site, g)) return { ok: false, units: 0, gold: 0, message: `Embargo${site.embargoBy ? ` gegen ${site.embargoBy}` : ''}: ${def.n} wird hier weder gekauft noch verkauft.` };
   const m = marketAt(eco, site, now);
   const units = Math.min(Math.floor(n), have);
-  const q = quoteSell(site, m.stock[g] ?? 0, g, units, tariff);
+  const q = quoteSell(site, m.stock[g] ?? 0, g, units, tariff, tal);
   m.stock[g] = q.stockAfter;
   const c = eco.cargo[g]!;
   const costShare = c.cost * (units / have);
   c.n -= units; c.cost -= costShare;
   if (c.n <= 0) delete eco.cargo[g];
-  addHeat(eco, site, g, units);
+  addHeat(eco, site, g, units, tal.smuggle);
   const profit = q.total - Math.round(costShare);
   return { ok: true, units, gold: q.total, message: `${units} × ${def.n} verkauft (${q.total} Gold, ${profit >= 0 ? 'Gewinn' : 'Verlust'} ${Math.abs(profit)}).` };
 }
 
 /** Kriegsware zu Kriegspreisen zu handeln zieht Fahnder an */
-function addHeat(eco: EconomyState, site: MarketSite, g: GoodId, units: number) {
+function addHeat(eco: EconomyState, site: MarketSite, g: GoodId, units: number, smuggle = 0) {
   const def = GOOD_BY_ID[g];
   if (!def.war || warPremium(site.war) < 1.3) return;
-  eco.heat = Math.min(CONTRABAND.heatMax, eco.heat + units * def.vol * CONTRABAND.heatPerUnit);
+  eco.heat = Math.min(CONTRABAND.heatMax, eco.heat + units * def.vol * CONTRABAND.heatPerUnit * (1 - Math.min(0.9, Math.max(0, smuggle))));
 }
 
 export const decayHeat = (eco: EconomyState, dt: number) => { if (eco.heat > 0) eco.heat = Math.max(0, eco.heat - dt * CONTRABAND.heatDecay); };
 
 /** Preisübersicht des besuchten Hafens im Kontor merken */
-export function recordLedger(eco: EconomyState, site: MarketSite, now: number, tariff: number): void {
+export function recordLedger(eco: EconomyState, site: MarketSite, now: number, tariff: number, tal: TradeTalent = NO_TRADE_TALENT): void {
   const m = marketAt(eco, site, now);
   const buy: Partial<Record<GoodId, number>> = {}, sell: Partial<Record<GoodId, number>> = {};
   for (const g of GOODS) {
-    const p = marketPrice(site, g.id, m.stock[g.id] ?? eqStockOf(site.profile, g.id));
-    buy[g.id] = Math.round(p * (1 + MARKET.spread) * tariff);
-    sell[g.id] = Math.round(p * (1 - MARKET.spread) * sellK(tariff));
+    const p = talentUnitPrices(marketPrice(site, g.id, m.stock[g.id] ?? eqStockOf(site.profile, g.id)), tariff, tal);
+    buy[g.id] = Math.round(p.buy);
+    sell[g.id] = Math.round(p.sell);
   }
   eco.ledger[site.id] = { name: site.name, t: now, buy, sell };
 }
@@ -241,6 +259,8 @@ export interface UpkeepInput {
   evoTier?: number;
   /** Aktive Begleitschiffe der Flotte (data/playerFleet.ts `fleetUpkeepList`): Klasse, Seeleute-Köpfe und Gesamtstufe je Schiff; eingemottete zahlen nichts */
   fleet?: readonly { tier: number; seamen: number; evoTier: number }[];
+  /** Faktor auf den gesamten Unterhalt (Talente „Kontorkette“, „Reederei“: unter 1); fehlt er, gilt 1 */
+  k?: number;
 }
 export interface Upkeep { seamen: number; troops: number; officers: number; hull: number; /** Sold und Wartung aller aktiven Begleitschiffe */ fleet: number; daily: number; perPeriod: number }
 
@@ -251,8 +271,9 @@ export function upkeepOf(i: UpkeepInput): Upkeep {
   const seamen = Math.max(0, i.seamen) * UPKEEP.seaman, troops = Math.max(0, i.troops) * UPKEEP.trooper, officers = Math.max(0, i.officers) * UPKEEP.officer;
   let fleet = 0;
   for (const f of i.fleet ?? []) fleet += shipUpkeepDaily(f).daily;
-  const daily = seamen + troops + officers + hull + fleet;
-  return { seamen, troops, officers, hull, fleet, daily, perPeriod: daily / UPKEEP.periodsPerDay };
+  const k = Math.max(0.5, Math.min(1, i.k ?? 1));
+  const daily = (seamen + troops + officers + hull + fleet) * k;
+  return { seamen: seamen * k, troops: troops * k, officers: officers * k, hull: hull * k, fleet: fleet * k, daily, perPeriod: daily / UPKEEP.periodsPerDay };
 }
 
 export type UpkeepEvent =
@@ -359,19 +380,19 @@ export function rollSalvage(i: SalvageIn, rnd: () => number = Math.random): Salv
 export interface SalvageResult { taken: SalvageDrop[]; lost: number; heat: number }
 
 /** Beute an Bord nehmen: nur so viel, wie der freie Frachtraum fasst (der Rest geht verloren); Kriegsware erhöht den Fahndungsdruck */
-export function applySalvage(eco: EconomyState, drops: readonly SalvageDrop[], tier: number): SalvageResult {
+export function applySalvage(eco: EconomyState, drops: readonly SalvageDrop[], tier: number, tal: TradeTalent = NO_TRADE_TALENT): SalvageResult {
   const taken: SalvageDrop[] = [];
   let lost = 0, heat = 0;
   for (const d of drops) {
     const def = GOOD_BY_ID[d.good];
-    const room = Math.floor(cargoFree(eco, tier) / def.vol + 1e-9);
+    const room = Math.floor(cargoFree(eco, tier, tal.cargo) / def.vol + 1e-9);
     const n = Math.max(0, Math.min(d.units, room));
     lost += d.units - n;
     if (n <= 0) continue;
     const c = (eco.cargo[d.good] ??= { n: 0, cost: 0 });
     c.n += n;
     taken.push({ good: d.good, units: n });
-    if (def.war) heat += n * def.vol * CONTRABAND.heatPerUnit * 0.5;
+    if (def.war) heat += n * def.vol * CONTRABAND.heatPerUnit * 0.5 * (1 - Math.min(0.9, Math.max(0, tal.smuggle)));
   }
   eco.heat = Math.min(CONTRABAND.heatMax, eco.heat + heat);
   return { taken, lost, heat };

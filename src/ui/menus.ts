@@ -1,3 +1,6 @@
+import { newTalentUi, talentScreenHtml, type TalentTab, type TalentUiState } from './talentScreen';
+import { NODE_BY_ID, TREE_BY_ID, type TalentTreeId } from '../data/talentTrees';
+import type { RespecScope } from '../core/talentRules';
 import { ACTION_GROUPS, ACTION_IDS, ACTION_LABELS, DEFAULT_KEYS, FIXED_CODES, type ActionId } from '../data/actions';
 import { QUALITY_IDS, QUALITY_TIERS, type QualityTier } from '../data/qualityTiers';
 import { FACTION_LABELS, RANKS, rankName } from '../data/ranks';
@@ -208,6 +211,9 @@ export class Menus {
   onError: () => void = () => {};
 
   /** Eine Ansicht neu zeichnen und dabei die Rollposition behalten (Kaufen, Wählen und Umschalten springen nicht nach oben) */
+  /** Zustand des Talent-Fensters (gewählter Baum und Knoten bleiben zwischen zwei Öffnungen) */
+  private talentUi: TalentUiState | null = null;
+
   private keep(fn: () => void) {
     const y = this.screen.scrollTop, cy = this.card.scrollTop;
     fn();
@@ -411,7 +417,8 @@ export class Menus {
         <button class="secondary" data-a="quests">Auftragsbuch</button>
         <button class="secondary" data-a="inv">Inventar &amp; Ausrüstung</button>
         <button class="secondary" data-a="compendium">Item-Kompendium</button>
-        <button class="secondary" data-a="faji">Faji-Talente</button>
+        <button class="secondary" data-a="talents">Talente &amp; Stufen</button>
+        <button class="secondary" data-a="faji">Faji-Fähigkeiten</button>
         <button class="secondary" data-a="arts">Kampfkünste &amp; Auren</button>
         <button class="secondary" data-a="crew">Crew</button>
         <button class="secondary" data-a="rank">Rangliste der Legenden</button>
@@ -430,6 +437,7 @@ export class Menus {
         quests: () => { g.resume(); g.openQuestLog(); },
         inv: () => { g.resume(); g.openInventory(); },
         compendium: () => this.showCompendium(() => this.showPause()),
+        talents: () => this.showTalents(() => this.showPause()),
         faji: () => { g.resume(); g.openSkills(); },
         arts: () => this.showMartialArts(() => this.showPause()),
         crew: () => this.showCrew(() => this.showPause()),
@@ -1383,6 +1391,32 @@ export class Menus {
   // ---------- Kampfkünste & Auren (4.6B) ----------
 
   /** Acht Faji-Künste (Form, Meisterschaft, Techniken, Ultimate), eine davon für den Q-Wechsel ausrüsten; Willenskraft-Aura wählen */
+  /** Talente & Stufen (Phase 4.6E): 18 Bäume, Meisterschafts-Siegel, Aufstiegs-Prüfung und Kosmos (`ui/talentScreen.ts`) */
+  showTalents(back: () => void, ui: TalentUiState = this.talentUi ?? newTalentUi(this.game.talentStartTree())) {
+    const g = this.game;
+    const v = g.talentView();
+    if (!v) { back(); return; }
+    this.talentUi = ui;
+    if (!ui.sel || NODE_BY_ID[ui.sel]?.tree !== ui.tree) ui.sel = TREE_BY_ID[ui.tree].nodes[0]?.id ?? null;
+    const re = (note = '') => { ui.note = note; this.keep(() => this.showTalents(back, ui)); };
+    this.open(talentScreenHtml(v, ui), {
+      tree: (id) => { ui.tree = id as TalentTreeId; ui.sel = null; ui.tab = 'baum'; ui.confirm = null; re(); },
+      sel: (id) => { ui.sel = id; ui.confirm = null; re(); },
+      tab: (id) => { ui.tab = id as TalentTab; ui.confirm = null; re(); },
+      learn: (id) => { const m = g.talentLearn(id); re(m ?? ''); },
+      evo: (id) => { const m = g.talentEquipEvo(id); re(m ?? ''); },
+      ult: (id) => { const m = g.talentChooseUlt(id === 'kosmos' ? 'kosmos' : 'stil'); re(m ?? ''); },
+      respec: (id) => {
+        if (ui.confirm !== id) { ui.confirm = id as RespecScope; re(); return; }
+        ui.confirm = null;
+        const m = g.talentRespec(id as RespecScope);
+        re(m ?? 'Zurückgesetzt – die Punkte sind wieder frei.');
+      },
+      ascend: () => { const m = g.performAscension(); if (!m) { ui.tab = 'aufstieg'; } re(m ?? 'Aufstieg vollzogen: Stufe 101, der Kosmos-Baum ist offen.'); },
+      back: () => { ui.note = ''; ui.confirm = null; back(); },
+    }, () => { ui.note = ''; ui.confirm = null; back(); }, { wide: true, cls: 'talents' });
+  }
+
   showMartialArts(back: () => void) {
     const g = this.game;
     const v = g.fajiView();

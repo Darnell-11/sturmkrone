@@ -201,12 +201,20 @@ export interface ActionMove {
   vfx: string;
   /** Kataklysmus-Ultimate (Zwischensequenz, Welt-Effekt); null bei allen anderen Angriffen */
   ultimate: UltimateSpec | null;
+  /**
+   * Talent-Mutationen (4.6E, `combat/talentCombat.ts`): Hinrichtung in der Luft (Schadensbonus gegen Ziele in der Luft) und Auto-Verfolgung
+   * (nach einem Hochschleudern teleportiert die Figur ohne Dash zum Ziel). Fehlen sie, gilt 0 bzw. aus.
+   */
+  airExec?: number;
+  autoChase?: boolean;
 }
 
 /** Welt-Effekt eines Ultimates (Darstellung und Wirkung auf Schiffe, Meer und Massen: `world/cataclysmDirector.ts`) */
 export type CataclysmKind =
   | 'horizonCut' | 'sevenSeas' | 'sawCyclone' | 'iaiWorldBreak' | 'fistStorm' | 'oceanSplit' | 'blackHole'
-  | 'fireDragons' | 'glacier' | 'floodDragon' | 'vacuumStorm' | 'thunderJudgment' | 'sunDance' | 'bloodMoon';
+  | 'fireDragons' | 'glacier' | 'floodDragon' | 'vacuumStorm' | 'thunderJudgment' | 'sunDance' | 'bloodMoon'
+  /** 4.6E: das 15. Ultimate (Kosmos, Stufe 101) – Himmelssturz: Zwillings-Meteoriten & Planeten-Kollaps */
+  | 'skyfall';
 
 /**
  * Wie ein Ultimate Schiffe zerstört: quer zerteilt (Bug/Heck), längs (Backbord/Steuerbord), schräg, radial (Sog), kentern (rollt um und

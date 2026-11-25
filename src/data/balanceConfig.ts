@@ -235,6 +235,39 @@ export const KAISER_BOSS_HIT_CAP = 0.05;
  */
 export const ULTIMATE_BOSS_CAP = 0.2;
 
+// ---------- Talente (Phase 4.6E) ----------
+
+/**
+ * Obergrenzen der Talent-Boni (data/talentTrees.ts): jede Summe läuft asymptotisch über `softCap` gegen diese Werte (Anteile; Sekunden,
+ * Meter oder Stück, wo die Einheit es sagt). `total` deckelt das Produkt aller Schadensfaktoren eines einzelnen Treffers (Grundschaden,
+ * Technik/Finisher/Meteor/Ultimate, Kosmos) – so bleibt ein voll ausgebauter Baum spürbar, aber nie ein Sieg mit einem Schlag: die
+ * Anti-One-Shot-Grenzen der Bosse (`RAID_BOSS_HIT_CAP`, `KAISER_BOSS_HIT_CAP`, `ULTIMATE_BOSS_CAP`) wirken danach unverändert.
+ */
+export const TALENT_CAP = {
+  dmg: 0.6, crit: 0.25, critDmg: 0.6, posture: 0.6, pen: 2, finisher: 0.5, skillDmg: 0.5, airDmg: 0.4, meteor: 0.6, ult: 0.5,
+  cosmicDmg: 0.25, total: 1.0,
+  /** Schadensminderung (Haltung im Angriff plus Rüstung aus Talenten) und Lebenspunkte */
+  reduce: 0.3, hp: 0.35,
+  combo: 0.3, heavy: 0.3, lunge: 2.5, reach: 0.35, arc: 0.4, launch: 0.6, fling: 0.8, knock: 0.6, cd: 0.35, dashCost: 0.5,
+  perfect: 0.12, chase: 1.2, jumps: 1, airDashes: 1, statusDur: 0.8, vortex: 0.6,
+  will: 0.8, awaken: 8, aura: 0.6, ultReach: 0.5, multiKill: 12, aftershock: 2,
+  stormBurst: 2.5, heavyWave: 1.2, gravity: 4, meteorRain: 3,
+  // Kapitän
+  cannon: 0.4, reload: 0.3, sail: 0.2, turn: 0.3, hull: 0.3, range: 0.25, boarding: 0.5, merit: 0.6, bastion: 0.6, troopPrice: 0.35,
+  tribute: 0.6, buy: 0.2, sell: 0.2, cargo: 0.4, upkeep: 0.4, loot: 0.4, smuggle: 0.5,
+} as const;
+
+/**
+ * Wachstum der Grundwerte (Leben, Angriff) mit der Stufe: bis Stufe 40 wie bisher linear, darüber asymptotisch – Stufe 100 entspricht einer
+ * „wirksamen“ Stufe von gut 64. So bleibt der Weg bis 100 spürbar, ohne die Gegner (deren Skalierung bei Stufe 40 endet) zu entwerten.
+ */
+export const LEVEL_GROWTH = { linearTo: 40, extra: 35, span: 50 } as const;
+export const effectiveLevel = (level: number): number => {
+  const l = Math.max(1, level);
+  if (l <= LEVEL_GROWTH.linearTo) return l;
+  return LEVEL_GROWTH.linearTo + LEVEL_GROWTH.extra * (1 - Math.exp(-(l - LEVEL_GROWTH.linearTo) / LEVEL_GROWTH.span));
+};
+
 // ---------- Seegefecht (Phase 4.1) ----------
 
 /** Rumpf-Panzerung je Schiffsklasse (Schaluppe … Leviathan); wirkt wie Rüstung gegen den Durchschlag des Angreifers (`penTier`) */

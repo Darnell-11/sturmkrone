@@ -1,5 +1,5 @@
 // Kampfwerte. Alles hier ist Balancing – im Code steht nur die Logik.
-import { dangerScale } from './balanceConfig';
+import { dangerScale, effectiveLevel } from './balanceConfig';
 import type { NpcRole } from './characterParts';
 import type { StyleId } from './animations';
 
@@ -115,11 +115,20 @@ export const FINISHERS: Record<StyleId, AttackDef> = {
 /** Ausdauer der Spielfigur: Rolle und schwere Hiebe kosten, danach lädt sie nach kurzer Pause wieder auf */
 export const STAMINA = { max: 100, regen: 32, regenIdle: 48, delay: 0.55, roll: 18, heavy: 14, finisher: 20, need: 6, swap: 8 };
 
-/** Grundwerte der Spielfigur (aus 1.0) */
+/**
+ * Erfahrung für den Schritt von Stufe `lvl` auf `lvl + 1` (Phase 4.6E): bis Stufe 40 wie bisher (60 + 45 · Stufe), darüber wächst der Bedarf
+ * quadratisch – Stufe 100 ist ein langes Endziel (rund 650 000 EP insgesamt). Über Stufe 100 gibt es keine regulären Aufstiege mehr.
+ */
+export const xpToNext = (lvl: number): number => {
+  const l = Math.max(1, Math.floor(lvl));
+  return 60 + l * 45 + (l > 40 ? 6 * (l - 40) * (l - 40) : 0);
+};
+
+/** Grundwerte der Spielfigur (aus 1.0); Leben und Angriff wachsen über Stufe 40 asymptotisch (`effectiveLevel`, data/balanceConfig.ts) */
 export const PLAYER_BASE = {
-  hp: (lvl: number) => 100 + (lvl - 1) * 14,
-  atk: (lvl: number) => 12 + (lvl - 1) * 2.4,
-  xpNeed: (lvl: number) => 60 + lvl * 45,
+  hp: (lvl: number) => 100 + (effectiveLevel(lvl) - 1) * 14,
+  atk: (lvl: number) => 12 + (effectiveLevel(lvl) - 1) * 2.4,
+  xpNeed: xpToNext,
   /** Unverwundbarkeit während der Rolle (s) */
   rollIframes: 0.32,
   /** Zeitfenster für die perfekte Parade nach Drücken von Blocken (s) */

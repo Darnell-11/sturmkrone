@@ -110,6 +110,24 @@ export const ULTIMATES: Partial<Record<ActionStyleId, ActionMove>> = {
     { formMin: 7 }),
 };
 
+/**
+ * 4.6E: das 15. Ultimate, transzendent und an keinen Stil gebunden (Krone des Kosmos-Baums, erst nach dem Aufstieg auf Stufe 101):
+ * „Himmelssturz: Zwillings-Meteoriten & Planeten-Kollaps“. Die Figur reißt den Sternenhimmel auf; zwei Meteoriten mit Kometenschweif
+ * schlagen vor ihr ein (nah und fern), dann kollidiert ein Planet mit der Welt – Krater an Land, Trichter und Ringwelle im Meer, Glut danach.
+ * Endbosse: wie jedes Ultimate über `UltimateBossLedger` gedeckelt (ein Wirken zählt wie ein Treffer).
+ */
+export const SKYFALL_ULTIMATE: ActionMove = ult('kosmos.u', 'Himmelssturz: Zwillings-Meteoriten & Planeten-Kollaps', 'Ranged_Magic_Raise', 3.0,
+  { kind: 'skyfall', strikeAt: 0.6, reach: 40, width: 40, center: 16, splitShips: 'radial', shot: 'sky', color: '#FFE6B0', accent: '#B07DFF', frames: 4 },
+  [
+    // Zwillings-Meteoriten: nah und fern vor der Figur (Einschlag 0,25 s und 0,45 s nach dem Aufreißen des Himmels)
+    { shape: 'circle', offset: 11, range: 10, at: [0.28, 0.31], dmg: 1.8, poise: 90, knock: 14, launch: 8, fling: 18, hitstop: 0.1, shake: 1.0, vfx: 'meteor' },
+    { shape: 'circle', offset: 22, range: 11, at: [0.35, 0.38], dmg: 1.8, poise: 90, knock: 14, launch: 8, fling: 18, hitstop: 0.1, shake: 1.0, vfx: 'meteor' },
+    // Planeten-Kollaps: wachsende Front um den Einschlagsmittelpunkt
+    { shape: 'circle', offset: 16, range: 32, grow: true, at: [0.52, 0.66], dmg: 4.6, poise: 260, knock: 20, launch: 10, fling: 24, pen: 3, hitstop: 0.2, shake: 1.6, vfx: 'meteor' },
+    // Glut der Krater
+    ...ticks(4, 0.68, 0.9, { shape: 'circle', offset: 16, range: 26, dmg: 0.2, poise: 16, knock: 3, status: 'burn', statusDur: 4, hitstop: 0.02, shake: 0.3, vfx: 'feuer' }),
+  ], { from: 0.2, to: 0.75 });
+
 /** Alle 14 Ultimates (Reihenfolge wie in der Vorgabe) */
 export const ULTIMATE_ORDER: readonly ActionStyleId[] = ['zweihaender', 'saebel', 'doppel', 'langklinge', 'sturmfaust', 'erdspalter', 'schwarzloch', 'feuer', 'eis', 'wasser', 'wind', 'blitz', 'sonne', 'mond'];
 

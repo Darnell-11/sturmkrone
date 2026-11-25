@@ -388,6 +388,8 @@ export class SeaWorld {
   awakenKeyLabel = '';
   /** Verdunkeln des Bildes durch ein Ultimate (Blutmond, Gewitter, Schwarzes Loch; Game senkt damit die Belichtung) */
   darkK = 0;
+  /** 4.6E Himmelssturz: Anteil 0 … 1, zu dem die Kamera zu Fuß zum Himmel blickt (setzt die Kataklysmus-Regie) */
+  skyLookK = 0;
   private readonly trailP = new Vector3();
   // ---------- Kamera-Engine (graphics/cameraRig.ts, Abschluss Phase 4.4) ----------
   /** Treffer-Erschütterung (gerichteter Stoß, Schwingung, Zittern); `scale` = Regler „Kamera-Erschütterung“ */
@@ -1313,6 +1315,9 @@ export class SeaWorld {
       },
       onDash: (ax, ay, az, bx, by, bz, f, air) => this.cataclysm.dashFx(ax, ay, az, bx, by, bz, ACTION_STYLES[f.style].accent, air),
       onStormStep: (ox, oy, oz, f) => this.cataclysm.stormStepFx(ox, oy, oz, f.x, f.y, f.z, f.yaw, ACTION_STYLES[f.style].accent),
+      // 4.6E: Talent-Entladungen – Nachbeben des Ultimates, Element-Entladung beim Sturm-Schritt
+      onAftershock: (x, z, r, f) => this.cataclysm.aftershockFx(x, z, r, ACTION_STYLES[f.style].accent),
+      onStormBurst: (x, z, r, f) => this.cataclysm.stormBurstFx(x, f.y, z, r, ACTION_STYLES[f.style].accent, ACTION_STYLES[f.style].element),
       trail: (x, y, z, k) => {
         const wy = this.env.heightAt(x, z);
         if (y - wy < 0.45) this.spray.emit(3, x, wy + 0.1, z, { speed: 1.2 + k * 2, up: 1.4 + k, life: 0.5, color: FOAM_COL, spread: 0.25 });
@@ -1722,6 +1727,7 @@ export class SeaWorld {
       sound: (n, v, x, y, z) => audio.play(n, v, { x, y, z }),
       impactFrames: (n) => w.animeRig.impact(n),
       darken: (k) => { w.darkK = k; },
+      skyLook: (k) => { w.skyLookK = k; },
     });
   }
 
@@ -3520,6 +3526,8 @@ export class SeaWorld {
   // ---------- Kaiser-Zitadellen (4.5D): Seesperre, Festungsringe, Kaiser ----------
 
   private kaiserLive: KaiserLive | null = null;
+  /** Talente (4.6E): Faktor auf den Schaden gegen Kaiser-Bastionen (setzt `Game.applyPower`) */
+  bastionK = 1;
   /** Stand aus dem Spielstand, bis die Kaiser-Schlacht zum ersten Mal gebraucht wird */
   private kaiserSaved: KaiserSaveState | null = null;
 
@@ -3540,6 +3548,7 @@ export class SeaWorld {
     const n = this.naval, c = this.combat;
     if (!n || !c) return null;
     this.kaiserLive = new KaiserLive({
+      bastionK: () => this.bastionK,
       scene: this.scene, ground: this.ground, naval: n, combat: c, smoke: this.smoke, sparks: this.sparks, playerShip: this.ship,
       defs: () => this.islandDefs,
       footOnIsland: () => {
@@ -4358,7 +4367,9 @@ export class SeaWorld {
       const inCab = !!this.deckGround?.inCabin;
       const cabLight = this.ship.model.cabinLight;
       if (cabLight) cabLight.intensity += ((inCab ? 4.5 : 0) - cabLight.intensity) * Math.min(1, frameDt * 6);
-      const fPitch = inCab ? Math.max(this.footPitch, 0.95) : this.footPitch;
+      // Himmelssturz: die Kamera sinkt hinter die Figur und blickt zum Himmel (stürzende Meteoriten, Planet), danach zurück
+      const sky = inCab ? 0 : this.skyLookK;
+      const fPitch = inCab ? Math.max(this.footPitch, 0.95) : this.footPitch + (0.1 - this.footPitch) * sky;
       const cp = Math.cos(fPitch);
       // Zielerfassung: Kamera rückt mit wachsendem Abstand zum Ziel zurück und blickt ein Stück zu ihm hin (Figur und Ziel im Bild)
       const ld = Math.hypot(this.lockDX, this.lockDZ);
@@ -4374,7 +4385,7 @@ export class SeaWorld {
       this.camAnchor.set(px, py + 1.4, pz);
       this.gatherCam(px, pz, distF + 6);
       this.armFoot.solve(this.camAnchor, this.footWant, this.camWorld, frameDt, cam.position);
-      cam.lookAt(px + this.lockDX * shift, py + 1.3, pz + this.lockDZ * shift);
+      cam.lookAt(px + this.lockDX * shift + Math.sin(this.footYaw) * sky * 4, py + 1.3 + sky * 3.2, pz + this.lockDZ * shift + Math.cos(this.footYaw) * sky * 4);
       this.focus.set(px, py + 1, pz);
     } else if (inMenu) {
       this.camSailInit = false;

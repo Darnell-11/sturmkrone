@@ -13,7 +13,7 @@ import {
   type ActionMove, type ActionStyleDef, type ActionStyleId,
 } from './actionKit';
 import { FAJI_STYLES } from './fajiArts';
-import { ULTIMATES } from './cataclysms';
+import { SKYFALL_ULTIMATE, ULTIMATES } from './cataclysms';
 
 export * from './actionKit';
 
@@ -335,6 +335,8 @@ export const ALL_MOVES: readonly ActionMove[] = (() => {
     out.push(...s.light, ...s.branch, s.heavy, ...s.air, s.meteor, s.finisher, ...s.skills);
     if (s.ultimate) out.push(s.ultimate);
   }
+  // 4.6E: das 15. Ultimate (Kosmos) gehört keinem Stil, braucht aber einen festen Platz in der Liste
+  out.push(SKYFALL_ULTIMATE);
   return out;
 })();
 

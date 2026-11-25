@@ -576,7 +576,8 @@ function openSea(d: number): { x: number; z: number } {
 
 describe('Spielstand 21: Migration aus Version 20 auf das 15 600-m-Raster', () => {
   it('Schiff, Seekarten-Zonen, Ereignisse und Krieg wandern mit; entdeckte Inseln, Flotte und Besitz bleiben', () => {
-    expect(SAVE_VERSION).toBe(21);
+    // seit 4.6E (Version 22) läuft danach noch die Talent-Migration – die Welt-Migration 20 → 21 bleibt dieselbe
+    expect(SAVE_VERSION).toBeGreaterThanOrEqual(21);
     const old = { ...createSave('Alt', 'pirat', '4.5.1'), version: 20 } as Record<string, any>;
     const albion = legacyIslandPos('albion')!;
     // festgemacht vor Albion (alte Lage) und auf offener See im alten Ring 3
@@ -590,7 +591,7 @@ describe('Spielstand 21: Migration aus Version 20 auf das 15 600-m-Raster', () =
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const w = r.data.world;
-    expect(r.data.version).toBe(21);
+    expect(r.data.version).toBe(SAVE_VERSION);
     const A = byId('albion');
     // relativ zu Albion gleich geblieben
     expect(w.boat!.x).toBeCloseTo(A.x + 20, 0);

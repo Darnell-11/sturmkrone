@@ -12,8 +12,9 @@ import { emptyFleet, type FleetState } from '../../data/playerFleet';
 import type { WorldEventState } from '../../world/worldEventDirector';
 import type { FactionWarState } from '../../world/factionWarEngine';
 import { emptyChart, type ChartState } from '../../world/mapDiscovery';
+import { emptyTalents, type TalentSave } from '../talentRules';
 
-export const SAVE_VERSION = 21;
+export const SAVE_VERSION = 22;
 
 export interface QuestProgress { id: string; step: number; count: number }
 
@@ -144,6 +145,7 @@ export interface SaveData {
     actionStyle?: string;
     /** Faji-Künste (4.6B): ausgerüstete Kunst, Meisterschaft je Kunst (Formstufe 1 – 7), Willenskraft-Aura – fehlt in alten Spielständen (`cleanFaji`) */
     faji?: { equipped: string | null; mastery: Record<string, number>; aura: number };
+    /** Stufe 1 … 100 aus Erfahrung; 101 nur nach der Aufstiegs-Prüfung (Phase 4.6E, `talents.ascended`) */
     level: number;
     xp: number;
     gold: number;
@@ -191,6 +193,11 @@ export interface SaveData {
   legends: string[];
   /** Begleitschiffe der Spieler-Flotte (seit Version 18, data/playerFleet.ts): Klasse, Ausbaustufen, Aussehen, Rumpf und Segel, aktiv oder eingemottet; fehlt in älteren Spielständen (dann leer) */
   fleet?: FleetState;
+  /**
+   * Talente (seit Version 22, Phase 4.6E, core/talentRules.ts): investierte Ränge in 18 Bäumen, Meisterschafts-Siegel, kosmische Punkte, Aufstieg auf
+   * Stufe 101, besiegte Kaiser-Inseln, gesammelte und gebundene Kaiser-Relikte und Mythische Baupläne, ausgerüstete Ultimate-Evolutionen.
+   */
+  talents?: TalentSave;
   /** Vollständiger Spielstand aus Sturmkrone 1.0 – bleibt erhalten, damit spätere Meilensteine Crew, Fähigkeiten usw. übernehmen können. */
   legacy10?: Record<string, unknown>;
 }
@@ -218,6 +225,7 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
     crew: { hired: [], party: [], loyalty: {} },
     legends: [],
     fleet: emptyFleet(),
+    talents: emptyTalents(),
   };
 }
 

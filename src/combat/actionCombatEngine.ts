@@ -18,6 +18,8 @@ import {
 } from '../data/actionStyles';
 import { wrapAngle } from '../core/mathUtil';
 import { AURA, KING_WAVE, WILL, formPower, type AuraId } from '../data/fajiArts';
+import { TALENT_CAP, softCap } from '../data/balanceConfig';
+import { NO_TALENT_PARAMS, type TalentCombat, type TalentEngineParams } from './talentCombat';
 
 // ---------- Zustand ----------
 
@@ -110,6 +112,13 @@ export interface FighterState {
   chaseT: number;
   /** Klingen-Clash (4.6C): Nummer des Angriffs, der schon einen Clash hatte (höchstens einer je Angriff) */
   clashSeq: number;
+  /** Talente (4.6E): Auto-Verfolgung steht an (nach einem Hochschleudern durch eine Technik mit Auto-Verfolgung oder den Stil) */
+  autoChase: boolean;
+  /** Talente (4.6E): ausstehende Nachbeben des Ultimates, Zeit bis zum nächsten, Mittelpunkt */
+  shockN: number;
+  shockT: number;
+  shockX: number;
+  shockZ: number;
 }
 
 export function createFighter(entityId: string, style: ActionStyleId, x = 0, y = 0, z = 0, yaw = 0): FighterState {
@@ -124,6 +133,7 @@ export function createFighter(entityId: string, style: ActionStyleId, x = 0, y =
     stamina: T.stamina, staminaPause: 0, staminaFlash: 0, speedK: 1, finisherId: '', moveHits: 0,
     will: 0, awakenT: 0, ultReady: false, bufU: -1, aura: 0, kingT: AURA.kingEvery, form: 1, cineT: 0, strikeSeq: -1, waveSeq: -1, waveT: -1,
     marks: new Array<string>(MAX_MARKS).fill(''), markN: 0, marksDone: false, chaseT: 0, clashSeq: -1,
+    autoChase: false, shockN: 0, shockT: 0, shockX: 0, shockZ: 0,
   };
 }
 
@@ -232,7 +242,9 @@ export type ActionEventType =
   | 'hitConfirm' | 'style' | 'lockLost' | 'staminaLow' | 'notReady' | 'buff' | 'parry' | 'blocked'
   | 'awaken' | 'awakenEnd' | 'aura' | 'ultimate' | 'ultStrike' | 'sheath' | 'chain' | 'kingWave' | 'awakenWave' | 'locked' | 'willFull'
   /** 4.6C: Sturm-Verfolgung (a = Platz des Ziels, b/c = alter Ort x/z), Klingen-Clash (a = Fenster, b = Ergebnis), Schwungfenster einer Technik/Verzweigung (a = Angriff, b = Fenster) */
-  | 'chase' | 'clash' | 'swing' | 'slash';
+  | 'chase' | 'clash' | 'swing' | 'slash'
+  /** 4.6E: Nachbeben des Ultimates (a = Radius, b/c = Mittelpunkt x/z), Sturm-Schritt-Entladung (a = Radius, b/c = Mittelpunkt) */
+  | 'aftershock' | 'stormBurst';
 
 export interface ActionEvent { type: ActionEventType; a: number; b: number; c: number; s: string }
 
@@ -285,6 +297,9 @@ const MAX_TICKS = 16;
 const MAX_TICK_TARGETS = 96;
 /** Meteor: so lange hängt die Figur vor dem Sturz */
 const METEOR_HANG = 0.12;
+/** Nachbeben eines Ultimates (Ultimate-Evolution, 4.6E): erstes nach dem Einschlag, Abstand der weiteren (s) */
+const AFTERSHOCK_FIRST = 0.65;
+const AFTERSHOCK_GAP = 0.6;
 
 const kindCode: Record<MoveKind, number> = { light: 0, branch: 1, heavy: 2, air: 3, meteor: 4, finisher: 5, skill: 6, swap: 7, ultimate: 8 };
 export const KIND_OF_CODE: readonly MoveKind[] = ['light', 'branch', 'heavy', 'air', 'meteor', 'finisher', 'skill', 'swap', 'ultimate'];
@@ -304,6 +319,11 @@ export class ActionCombatEngine {
   private readonly memo: string[][];
   private readonly memoN = new Int32Array(MAX_TICKS);
   private readonly ctx: HitContext;
+  /** Talente (4.6E): umgebaute Stile und Angriffe, Engine-Werte des laufenden Stils */
+  private tal: TalentCombat | null = null;
+  private tp: TalentEngineParams = NO_TALENT_PARAMS;
+  /** Schadensminderung aus Talenten außerhalb der Haltung im Angriff (Rüstung, Planeten-Schild; setzt das Spiel) */
+  talentArmor = 0;
 
   constructor(readonly f: FighterState, poolSize = 160) {
     this.pool = makeTargetPool(poolSize);
@@ -311,11 +331,30 @@ export class ActionCombatEngine {
     this.ctx = { formK: 1, penAdd: 0, ultimate: false, cast: 0, chained: 0, clash: false, dirX: 0, dirZ: 1, crit: 0, critAdd: 0, postureK: 1, tick: 0, kind: 'light', finisher: false, airborne: false, bonus: 1, style: ACTION_STYLES[f.style], fx: 0, fz: 0, fyaw: 0 };
   }
 
-  get style(): ActionStyleDef { return ACTION_STYLES[this.f.style]; }
+  get style(): ActionStyleDef { return this.styleOf(this.f.style); }
+  /** Stil mit Talenten (ohne Talente: die Grunddaten) */
+  styleOf(id: ActionStyleId): ActionStyleDef { return this.tal ? this.tal.styles[id] : ACTION_STYLES[id]; }
+  /** Angriff mit Talenten an seinem festen Platz (`ALL_MOVES`) */
+  moveAt(i: number): ActionMove | null { return i >= 0 ? (this.tal ? this.tal.moves[i] : ALL_MOVES[i]) ?? null : null; }
+  /** Reichweite eines Angriffs für den Suchradius */
+  private reachAt(i: number): number { return this.tal ? this.tal.reach[i] : MOVE_REACH[i]; }
+  /** Talente setzen (null = keine); gilt sofort, laufende Angriffe behalten ihren Platz */
+  setTalents(t: TalentCombat | null) {
+    this.tal = t;
+    this.tp = t ? t.params[this.f.style] : NO_TALENT_PARAMS;
+    this.ctx.style = this.style;
+  }
+  get talents(): TalentCombat | null { return this.tal; }
+  /** Engine-Werte des laufenden Stils aus den Talenten */
+  get talentParams(): TalentEngineParams { return this.tp; }
+  /** Schadensminderung aus Talenten jetzt (Haltung nur während eines eigenen Angriffs), gedeckelt */
+  get talentReduce(): number { return softCap((this.f.phase === 'move' ? this.tp.stance : 0) + this.talentArmor, TALENT_CAP.reduce); }
+  /** Ultimate des Erwachens: der Himmelssturz, wenn ausgerüstet, sonst das des Stils */
+  ultimateOf(st: ActionStyleDef): ActionMove | null { return this.tal && this.tal.useCosmic && this.tal.cosmic ? this.tal.cosmic : st.ultimate; }
   /** Im Sturm-Erwachen? */
   get awakened(): boolean { return this.f.awakenT > 0; }
   /** Steht das Ultimate jetzt bereit? (im Erwachen, noch nicht benutzt, Faji-Künste ab der 7. Form) */
-  get ultAvailable(): boolean { const st = this.style; return this.f.awakenT > 0 && this.f.ultReady && !!st.ultimate && (!st.faji || this.f.form >= st.ultimate.formMin); }
+  get ultAvailable(): boolean { const st = this.style; const u = this.ultimateOf(st); return this.f.awakenT > 0 && this.f.ultReady && !!u && (!st.faji || u !== st.ultimate || this.f.form >= u.formMin); }
   /** Willenskraft-Leiste 0 … 1 */
   get willFrac(): number { return Math.min(1, this.f.will / WILL.max); }
   /** Formstufe setzen (Faji-Kunst; Spiel aus der Meisterschaft) */
@@ -324,11 +363,11 @@ export class ActionCombatEngine {
   addWill(n: number) {
     const f = this.f;
     if (f.awakenT > 0 || !(n > 0) || f.will >= WILL.max) return;
-    f.will = Math.min(WILL.max, f.will + n);
+    f.will = Math.min(WILL.max, f.will + n * this.tp.willK);
     if (f.will >= WILL.max) this.events.push('willFull');
   }
   /** laufender Angriff (null = keiner) */
-  get move(): ActionMove | null { return this.f.moveIdx >= 0 ? ALL_MOVES[this.f.moveIdx] : null; }
+  get move(): ActionMove | null { return this.moveAt(this.f.moveIdx); }
   /** Hyper-Armor gerade aktiv? (Angriff mit Hyper-Armor oder Stärkung „Unbeugsam“) */
   get hyper(): boolean { const m = this.move; return this.f.hyperT > 0 || (!!m && m.hyper && this.f.phase === 'move'); }
   /** Abklingzeit einer Technik als Anteil 0 (bereit) … 1 */
@@ -391,11 +430,12 @@ export class ActionCombatEngine {
     if (id === f.style || f.phase === 'down' || f.phase === 'hurt') return null;
     const mid = (f.phase === 'move' && (f.moveKind === 'light' || f.moveKind === 'swap')) || (f.comboWindow > 0 && f.lightIdx > 0);
     f.style = id;
-    this.ctx.style = ACTION_STYLES[id];
-    f.airIdx = Math.min(f.airIdx, ACTION_STYLES[id].air.length);
+    this.tp = this.tal ? this.tal.params[id] : NO_TALENT_PARAMS;
+    this.ctx.style = this.styleOf(id);
+    f.airIdx = Math.min(f.airIdx, this.styleOf(id).air.length);
     this.events.push('style', mid ? 1 : 0, 0, 0, id);
     if (!mid || !f.grounded) return 'instant';
-    const st = ACTION_STYLES[id];
+    const st = this.styleOf(id);
     const i = Math.min(f.lightIdx, st.light.length - 2);
     f.swapBonus = 1.6;
     this.startMove(st.light[Math.max(0, i)], 'swap', input);
@@ -443,6 +483,8 @@ export class ActionCombatEngine {
       f.counterT = T.counterWindow;
       this.events.push('perfect', ok ? 1 : 0, f.x, f.z);
       this.addWill(WILL.perfect);
+      // Talente: Entladung des Elements hinter dem Angreifer (Sturm-Schritt-Synergie)
+      if (this.tp.stormBurst) this.burst(w, this.tp.stormBurst, f.x, f.z, 'stormBurst');
       return 'perfect';
     }
     if (f.iframes > 0) return 'dodged';
@@ -480,7 +522,8 @@ export class ActionCombatEngine {
 
   step(inp: ActionInput, w: ActionWorld, dt: number) {
     const f = this.f;
-    const st = ACTION_STYLES[f.style];
+    const st = this.styleOf(f.style);
+    this.tp = this.tal ? this.tal.params[f.style] : NO_TALENT_PARAMS;
     this.ctx.style = st;
     this.events.clear();
     f.clock += dt;
@@ -512,12 +555,20 @@ export class ActionCombatEngine {
     if (f.awakenT > 0) { f.awakenT -= dt; if (f.awakenT <= 0) { f.awakenT = 0; f.ultReady = false; this.events.push('awakenEnd'); } }
     if (inp.aura) { f.aura = ((f.aura + 1) % 4) as AuraId; f.kingT = Math.min(f.kingT, 1.2); this.events.push('aura', f.aura); }
     // Ziele in der Nähe (einmal je Bild) und Gültigkeit des weichen Ziels
-    this.poolN = w.targets(f.x, f.z, f.moveIdx >= 0 ? Math.max(QUERY_R, MOVE_REACH[f.moveIdx]) : QUERY_R, this.pool);
+    this.poolN = w.targets(f.x, f.z, f.moveIdx >= 0 ? Math.max(QUERY_R, this.reachAt(f.moveIdx)) : f.shockN > 0 ? Math.max(QUERY_R, Math.hypot(f.shockX - f.x, f.shockZ - f.z) + this.tp.aftershockHit.range + 4) : QUERY_R, this.pool);
     // Königsdruck: alle 6 s eine Willens-Druckwelle, sobald genug Gegner oder Verbände nahe sind
     if (f.aura === 3 && f.phase !== 'down') {
       f.kingT -= dt;
-      if (f.kingT <= 0) { f.kingT = AURA.kingEvery; if (this.countNear(AURA.kingR) >= AURA.kingMin) this.kingWave(w, AURA.kingR); }
+      const kr = AURA.kingR * this.tp.auraKingK;
+      if (f.kingT <= 0) { f.kingT = AURA.kingEvery; if (this.countNear(kr) >= AURA.kingMin) this.kingWave(w, kr); }
     }
+    // Talente: Nachbeben des Ultimates (Ultimate-Evolution) und Auto-Verfolgung
+    if (f.shockN > 0) {
+      f.shockT -= dt;
+      if (f.shockT <= 0) { f.shockN--; f.shockT = AFTERSHOCK_GAP; this.burst(w, this.tp.aftershockHit, f.shockX, f.shockZ, 'aftershock'); }
+    }
+    if (f.autoChase && (f.chaseT <= 0 || f.phase === 'down' || f.phase === 'hurt')) f.autoChase = false;
+    if (f.autoChase && f.cineT <= 0 && f.phase !== 'dash' && (f.phase !== 'move' || f.moveT >= (this.move?.cancel ?? 0)) && this.tryChase(w)) f.autoChase = false;
     if (inp.hardLockId) f.lockId = inp.hardLockId;
     if (f.lockId) {
       const t = this.target(f.lockId);
@@ -654,7 +705,7 @@ export class ActionCombatEngine {
     if (f.phase === 'down') return false;
     const air = !f.grounded;
     if (air && f.airDashes >= st.airDashes) return false;
-    const cost = air ? T.airDashCost : T.dashCost;
+    const cost = (air ? T.airDashCost : T.dashCost) * this.tp.dashCostK;
     if (f.stamina < cost) { f.staminaFlash = 0.35; this.events.push('staminaLow'); return true; }
     f.stamina -= cost;
     f.staminaPause = T.staminaDelay;
@@ -670,7 +721,7 @@ export class ActionCombatEngine {
     f.dashSeq++;
     f.dashAir = air;
     if (air) { f.airDashes++; f.vy = 0; f.hover = 0; }
-    const pw = st.perfectWindow + (f.aura === 1 ? AURA.sightWindow : 0);
+    const pw = st.perfectWindow + (f.aura === 1 ? AURA.sightWindow * this.tp.auraSightK : 0);
     f.iframes = Math.max(f.iframes, Math.max(T.dashIframes, pw));
     f.perfectT = pw;
     f.counterStance = 0;
@@ -703,7 +754,7 @@ export class ActionCombatEngine {
    */
   private tryChase(w: ActionWorld): boolean {
     const f = this.f;
-    let best = -1, bd: number = T.chaseRange;
+    let best = -1, bd: number = T.chaseRange + this.tp.chaseRangeAdd;
     for (let i = 0; i < this.poolN; i++) {
       const t = this.pool[i];
       if (!t.alive || !t.airborne || t.y < f.y + T.chaseMinRise) continue;
@@ -742,20 +793,20 @@ export class ActionCombatEngine {
   awaken(w: ActionWorld) {
     const f = this.f;
     f.will = 0;
-    f.awakenT = WILL.awakenDur;
+    f.awakenT = WILL.awakenDur + this.tp.awakenAdd;
     f.ultReady = true;
     f.iframes = Math.max(f.iframes, 0.35);
-    this.events.push('awaken', WILL.awakenDur);
+    this.events.push('awaken', f.awakenT);
     // Königsdruck bricht beim Erwachen gewaltig los
-    if (f.aura === 3) this.kingWave(w, AURA.kingAwakenR);
+    if (f.aura === 3) this.kingWave(w, AURA.kingAwakenR * this.tp.auraKingK);
   }
 
   /** 0 = warten, 1 = gestartet, −1 = verworfen (noch nicht frei) */
   private tryUltimate(inp: ActionInput, st: ActionStyleDef, w: ActionWorld): number {
     const f = this.f;
-    const u = st.ultimate;
+    const u = this.ultimateOf(st);
     if (!u || !u.ultimate) { this.events.push('locked', 5, 0); return -1; }
-    if (st.faji && f.form < u.formMin) { this.events.push('locked', 5, u.formMin); return -1; }
+    if (st.faji && u === st.ultimate && f.form < u.formMin) { this.events.push('locked', 5, u.formMin); return -1; }
     if (!this.canAct() && f.phase !== 'dash') return 0;
     void w;
     f.ultReady = false;
@@ -775,6 +826,32 @@ export class ActionCombatEngine {
     let n = 0;
     for (let i = 0; i < this.poolN; i++) { const t = this.pool[i]; if (t.alive && Math.hypot(t.x - f.x, t.z - f.z) <= r + t.radius) n++; }
     return n;
+  }
+
+  /**
+   * Talent-Entladung (4.6E): ein Kreis-Treffer um den Punkt (x, z) auf alle Ziele darin, einmal (Sturm-Schritt-Entladung, Nachbeben des
+   * Ultimates). Nachbeben zählen als Teil des Ultimates: der Endboss-Deckel (`UltimateBossLedger`, je Wirken) umfasst sie mit.
+   */
+  private burst(w: ActionWorld, h: ActionHit, x: number, z: number, kind: 'stormBurst' | 'aftershock') {
+    const f = this.f;
+    const c = this.fillCtx(kind === 'aftershock' ? 'ultimate' : 'skill', WAVE_TICK - 1);
+    if (kind === 'aftershock') { c.ultimate = true; c.cast = f.strikeSeq; }
+    let landed = 0, broke = 0;
+    for (let i = 0; i < this.poolN; i++) {
+      const t = this.pool[i];
+      if (!t.alive) continue;
+      let dx = t.x - x, dz = t.z - z;
+      const d = Math.hypot(dx, dz);
+      if (d > h.range + t.radius || Math.abs(t.y - f.y) > 8) continue;
+      if (d > 1e-4) { dx /= d; dz /= d; } else { dx = Math.sin(f.yaw); dz = Math.cos(f.yaw); }
+      c.dirX = dx; c.dirZ = dz;
+      const mv = this.move ?? this.style.light[0];
+      const r = w.hit(t, h, mv, c);
+      if (r > 0) landed++;
+      if (r > 1) broke++;
+    }
+    this.events.push(kind, h.range, x, z);
+    if (landed > 0) { f.hits += landed; f.hitT = T.hitReset; if (f.hits > f.maxHits) f.maxHits = f.hits; this.addWill(Math.min(landed, WILL.hitCap) * WILL.hit + broke * WILL.broke); }
   }
 
   /** Willens-Druckwelle des Königsdrucks: schleudert Verbände fort, schwache Gegner weichen zurück */
@@ -809,7 +886,7 @@ export class ActionCombatEngine {
     f.moveSeq++;
     f.moveBonus = f.swapBonus;
     f.swapBonus = 1;
-    f.magnetLeft = T.magnetMax;
+    f.magnetLeft = T.magnetMax + this.tp.magnetAdd;
     f.rushLeft = mv.dashTo;
     f.moveHits = 0;
     f.comboWindow = 0;
@@ -905,7 +982,9 @@ export class ActionCombatEngine {
       return;
     }
     const t0 = f.moveT;
-    f.moveT += dt * (f.speedT > 0 ? 1.15 : 1) * (f.awakenT > 0 && f.moveKind !== 'ultimate' ? WILL.awakenSpeed : 1);
+    const mk = f.moveKind;
+    const talentK = mk === 'light' || mk === 'air' || mk === 'swap' ? this.tp.comboK : mk === 'heavy' || mk === 'branch' || mk === 'finisher' || mk === 'meteor' ? this.tp.heavyK : 1;
+    f.moveT += dt * (f.speedT > 0 ? 1.15 : 1) * (f.awakenT > 0 && f.moveKind !== 'ultimate' ? WILL.awakenSpeed : 1) * talentK;
     // Meteor: in der Luft bleibt der Clip vor dem Einschlag stehen; der Treffer kommt beim Aufprall
     if (mv.meteor && !f.grounded) {
       const hold = mv.hits.length ? mv.hits[0].t0 - 0.02 : mv.dur * 0.5;
@@ -975,6 +1054,13 @@ export class ActionCombatEngine {
     if (mv.ultimate && f.strikeSeq !== f.moveSeq && t1 >= mv.ultimate.strikeAt) {
       f.strikeSeq = f.moveSeq;
       this.events.push('ultStrike', f.moveIdx, f.x, f.z, mv.ultimate.kind);
+      // Ultimate-Evolution „Nachbeben“: um den Mittelpunkt des Einschlags (center vor der Figur)
+      if (this.tp.aftershock > 0) {
+        f.shockN = this.tp.aftershock;
+        f.shockT = AFTERSHOCK_FIRST;
+        f.shockX = f.x + Math.sin(f.yaw) * mv.ultimate.center;
+        f.shockZ = f.z + Math.cos(f.yaw) * mv.ultimate.center;
+      }
     }
     // Trefferfenster dieses Bilds
     if (!(mv.meteor && !f.grounded)) {
@@ -1026,7 +1112,7 @@ export class ActionCombatEngine {
     c.style = st;
     c.fx = f.x; c.fz = f.z; c.fyaw = f.yaw;
     c.formK = st.faji && kind === 'skill' ? formPower(f.form).dmg : 1;
-    c.penAdd = f.aura === 2 ? AURA.ironPen : 0;
+    c.penAdd = f.aura === 2 ? Math.round(AURA.ironPen * this.tp.auraIronK) : 0;
     c.ultimate = kind === 'ultimate';
     c.cast = f.moveSeq;
     c.chained = 0;
@@ -1066,7 +1152,13 @@ export class ActionCombatEngine {
     const f = this.f;
     // Hochgeschleudert (Orkan-Launcher, Auftriebs-Techniken): ein Dash darf jetzt hinterher teleportieren (Sturm-Verfolgung)
     const lh = tick < mv.hits.length ? mv.hits[tick] : null;
-    if (lh && lh.launch >= 6 && f.moveKind !== 'ultimate') f.chaseT = T.chaseWindow;
+    if (lh && lh.launch >= 6 && f.moveKind !== 'ultimate') {
+      f.chaseT = T.chaseWindow + this.tp.chaseAdd;
+      // Talente: Auto-Verfolgung (Technik-Mutation oder Stil) – die Figur folgt ohne Dash, sobald das Ziel hoch genug ist
+      if (mv.autoChase || this.tp.autoChase) f.autoChase = true;
+    }
+    // Ultimate-Evolution „Willens-Rausch“: drei und mehr Brüche/K.O. in einem Fenster laden die Willenskraft zusätzlich
+    if (broke >= 3 && this.tp.multiKill > 0) this.addWill(this.tp.multiKill * (broke - 2));
     f.hits += landed;
     f.hitT = T.hitReset;
     f.moveHits += landed;
@@ -1107,6 +1199,9 @@ export class ActionCombatEngine {
       if (d > 1e-4) { dx /= d; dz /= d; } else { dx = fx; dz = fz; }
       c.dirX = dx; c.dirZ = dz;
       c.chained = 0;
+      // Talente: Hinrichtung in der Luft (Mutation oder Stil) – Bonus gegen Ziele in der Luft
+      const exec = t.airborne ? (mv.airExec ?? 0) + this.tp.airExec : 0;
+      c.bonus = exec > 0 ? f.moveBonus * (1 + softCap(exec, TALENT_CAP.airDmg)) : f.moveBonus;
       // Klingen-Clash: ein schwerer Schlag trifft den Schlag eines Bosses oder Elite-Gegners, der auf die Figur zielt (einmal je Angriff)
       const clash = f.clashSeq !== f.moveSeq && t.attacking && (t.boss || t.elite) && this.clashable(h)
         && Math.sin(t.yaw) * -dx + Math.cos(t.yaw) * -dz > T.clashFacing;

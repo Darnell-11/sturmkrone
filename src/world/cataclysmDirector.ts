@@ -40,6 +40,8 @@ export interface CataclysmHost {
   sound?(name: Sfx, vol: number, x: number, y: number, z: number): void;
   impactFrames?(n: number): void;
   darken?(k: number): void;
+  /** 4.6E Himmelssturz: die Spielkamera blickt zum Himmel (0 … 1; stürzende Meteoriten und der Planet sind im Bild) */
+  skyLook?(k: number): void;
 }
 
 /** Ein laufendes Ultimate */
@@ -74,6 +76,13 @@ const TMP = new Color();
 const INK = new Color();
 const INK2 = new Color();
 const CRIMSON = new Color('#FF3A2A');
+const STARGOLD = new Color('#FFE6A8');
+const STARBLUE = new Color('#BFD8FF');
+/** Ort eines Meteors (Himmelssturz), vorab angelegt; ausstehende Schiffs-Treffer je Einschlag (Meteor 1, Meteor 2, Planet) und ihr Ort */
+const SKY_P = { x: 0, y: 0, z: 0 };
+const SKY_HIT = new Uint8Array(3);
+const SKY_HX = new Float32Array(2);
+const SKY_HZ = new Float32Array(2);
 const EMBER = new Color('#FF8A3A');
 const ICE = new Color('#CFF4FF');
 const HEXC = new Map<string, Color>();
@@ -85,7 +94,7 @@ const rnd = Math.random;
 /** Dauer eines Ultimates in der Welt (s nach dem Einschlag) */
 export const CATACLYSM_DUR: Record<CataclysmKind, number> = {
   horizonCut: 1.6, sevenSeas: 2.2, sawCyclone: 2.1, iaiWorldBreak: 1.4, fistStorm: 1.9, oceanSplit: 6.2, blackHole: 2.6, fireDragons: 2.9,
-  glacier: 2.7, floodDragon: 2.7, vacuumStorm: 2.7, thunderJudgment: 2.6, sunDance: 2.5, bloodMoon: 2.7,
+  glacier: 2.7, floodDragon: 2.7, vacuumStorm: 2.7, thunderJudgment: 2.6, sunDance: 2.5, bloodMoon: 2.7, skyfall: 3.4,
 };
 
 /** Signatur-Klang je Ultimate beim Einschlag (die neun ausgebauten setzen ihre eigenen Klänge in der Zeitachse) */
@@ -137,7 +146,7 @@ export class CataclysmDirector {
   private auraCol = new Color();
   private auraAcc = new Color();
   /** Zahlen für Prüfungen */
-  readonly stats = { strikes: 0, splits: 0, disabled: 0, shipHits: 0, pulls: 0, trench: 0, waves: 0, chains: 0, swings: 0, clashes: 0, slashes: 0, impacts: 0, masts: 0, charred: 0, sections: 0 };
+  readonly stats = { strikes: 0, splits: 0, disabled: 0, shipHits: 0, pulls: 0, trench: 0, waves: 0, chains: 0, swings: 0, clashes: 0, slashes: 0, impacts: 0, masts: 0, charred: 0, sections: 0, meteors: 0, planets: 0, aftershocks: 0, bursts: 0 };
   private seed = 1;
   /** Säbel: Mündungen der Geister-Armada (x, y, z je Geschütz), beim Aufladen hinter die Figur gestellt */
   private readonly armada = new Float32Array(3 * 16);
@@ -203,6 +212,12 @@ export class CataclysmDirector {
       b.reset().at(f.x - Math.sin(f.yaw) * 6, f.y + 24, f.z - Math.cos(f.yaw) * 6).rot(rnd() * 6).size(4, 3, 4, 30, 20, 30).span(life, spec.charge * 0.6).col(TMP.setRGB(0.17, 0.15, 0.17), 1).fade(0.15, 0.25);
       b.ease = 1;
       fx.emit('cloud');
+    } else if (spec.kind === 'skyfall') {
+      // 4.6E Himmelssturz: der Himmel reißt zur Sternennacht auf – ein Kuppelfeld aus Sternen über der Figur, ein violetter Riss im Zenit
+      this.starfield(f.x, f.y, f.z, f.yaw, life, spec.charge * 0.5);
+      b.reset().at(f.x, f.y + 70, f.z).rot(f.yaw, Math.PI / 2, 0).size(2, 1, 40, 6, 1, 90).span(life, spec.charge * 0.4).col(c.acc, 1.6).fade(0.15, 0.3);
+      b.flicker = 0.2;
+      fx.emit('ribbon');
     } else if (spec.kind === 'thunderJudgment') {
       // die Gewitterwolke über dem Schlachtfeld, zu der die Figur aufsteigt (Unterseite ~19,4 m über dem Start: die Kamera folgt der Figur
       // bis gut 16 m hinauf und darf nie in die Wolke geraten); 4.6D: dunkler, damit die Blitze leuchten
@@ -287,7 +302,8 @@ export class CataclysmDirector {
     // Wirkungen beim Einschlag (Gletscher friert ein) die Schiffe dieses Wirkens treffen und nicht die Liste des vorigen
     const nav = this.host.naval;
     if (nav) {
-      nav.cataclysmShips(c.kind === 'blackHole' ? c.cx : c.x, c.kind === 'blackHole' ? c.cz : c.z, shipReach(c.kind, s), this.ships);
+      const mid = c.kind === 'blackHole' || c.kind === 'skyfall';
+      nav.cataclysmShips(mid ? c.cx : c.x, mid ? c.cz : c.z, shipReach(c.kind, s), this.ships);
       if (c.kind === 'iaiWorldBreak') this.iaiShips(c);
     } else this.ships.length = 0;
     switch (c.kind) {
@@ -341,6 +357,7 @@ export class CataclysmDirector {
       case 'thunderJudgment': case 'sunDance': case 'bloodMoon':
         this.beginUlt(c);
         break;
+      case 'skyfall': this.beginSkyfall(c); break;
       case 'iaiWorldBreak': {
         // die Klinge rastet ein: Schnitt-Linien entlang des Vorstoßes, dann zerbricht alles zugleich (Glas-Splitter)
         const dx = c.x - c.sx, dz = c.z - c.sz, len = Math.max(4, Math.hypot(dx, dz));
@@ -384,13 +401,19 @@ export class CataclysmDirector {
       if (!c.on) continue;
       const env = Math.min(1, c.t / 0.25) * Math.min(1, Math.max(0, CATACLYSM_DUR[c.kind] - c.t) / 0.6);
       // 4.6D: auch Säbel (Sturmwolke) und Sonne (Hitze-Kontrast) dunkeln leicht ab – die Energie leuchtet vor dunklem Grund
-      const k = c.kind === 'bloodMoon' ? 0.6 : c.kind === 'thunderJudgment' ? 0.42 : c.kind === 'blackHole' ? 0.28 : c.kind === 'sevenSeas' ? 0.3 : c.kind === 'sunDance' ? 0.15 : 0;
+      const k = c.kind === 'bloodMoon' ? 0.6 : c.kind === 'skyfall' ? 0.55 : c.kind === 'thunderJudgment' ? 0.42 : c.kind === 'blackHole' ? 0.28 : c.kind === 'sevenSeas' ? 0.3 : c.kind === 'sunDance' ? 0.15 : 0;
       dk = Math.max(dk, k * env);
     }
     if (this.pre.on && this.pre.kind === 'thunderJudgment') dk = Math.max(dk, 0.3);
+    // Himmelssturz: der Himmel reißt schon in der Zwischensequenz zur Sternennacht auf
+    if ((this.pre.on && this.pre.kind === 'skyfall') || (this.charge.on && this.charge.kind === 'skyfall')) dk = Math.max(dk, 0.45);
     this.dark += (dk - this.dark) * Math.min(1, realDt * 5);
     if (this.dark < 0.002) this.dark = 0;
     this.host.darken?.(this.dark);
+    // Himmelssturz: Blick zum Himmel, solange Meteoriten und Planet stürzen; zum Kollaps senkt sich die Kamera wieder auf den Einschlag
+    let sky = 0;
+    for (const c of this.casts) if (c.on && c.kind === 'skyfall') sky = Math.max(sky, smooth(c.t / 0.25) * (1 - smooth((c.t - 0.72) / 0.3)));
+    this.host.skyLook?.(sky);
     // Wolken-Teilung klingt nach dem Ultimate langsam ab
     const want = this.charge.on ? this.rift : this.casts.some((c) => c.on) ? 1 : 0;
     this.rift += (want - this.rift) * Math.min(1, realDt * (want > this.rift ? 6 : 0.9));
@@ -493,6 +516,7 @@ export class CataclysmDirector {
       case 'thunderJudgment': this.stepThunder(c, t0, t); break;
       case 'sunDance': this.stepSunDance(c, t0, t); break;
       case 'bloodMoon': this.stepBloodMoon(c, t0, t); break;
+      case 'skyfall': this.stepSkyfall(c, t0, t, dt); break;
       default: break;
     }
     if (t >= CATACLYSM_DUR[c.kind]) this.end(c);
@@ -511,6 +535,7 @@ export class CataclysmDirector {
     this.rift = 0;
     this.dark = 0;
     this.host.darken?.(0);
+    this.host.skyLook?.(0);
     this.auraF = null;
     this.host.setRift(0, 0, 0, 0, this.riftCol);
     this.host.fx.clear();
@@ -643,6 +668,204 @@ export class CataclysmDirector {
       this.vfx.burst('splinter', c.cx, cy, c.cz, 18, 16, WHITE, { up: 6, size: 0.45, spread: 4 });
       this.host.shake(1.2);
     }
+  }
+
+  // ---------- 4.6E: Himmelssturz – Zwillings-Meteoriten & Planeten-Kollaps ----------
+
+  /**
+   * Sternenhimmel: ein Band aus Sternen (leuchtende Punkte, flackernd) 150 – 260 m vor der Figur, flach über dem Horizont bis gut 45° hoch –
+   * dort, wohin die Kamera hinter der Figur blickt (eine Kuppel genau über der Figur sah sie nie)
+   */
+  private starfield(x: number, y: number, z: number, yaw: number, life: number, delay = 0) {
+    const fx = this.host.fx, b = fx.brush;
+    const n = Math.round(90 * this.detailK);
+    for (let i = 0; i < n; i++) {
+      const a = yaw + (rnd() - 0.5) * 3.4, el = 0.05 + rnd() * rnd() * 0.75, r = 150 + rnd() * 110;
+      const sx = x + Math.cos(el) * Math.sin(a) * r, sz = z + Math.cos(el) * Math.cos(a) * r, sy = y + Math.sin(el) * r;
+      const s = 0.45 + rnd() * rnd() * 1.4;
+      b.reset().at(sx, sy, sz).size(s * 0.3, s * 0.3, s * 0.3, s, s, s).span(life, delay + rnd() * 0.15).col(rnd() < 0.2 ? STARGOLD : rnd() < 0.3 ? STARBLUE : WHITE, 2.6).fade(0.1, 0.35);
+      b.flicker = 0.35;
+      fx.emit('orb');
+    }
+  }
+
+  /** Startbilder: Lichtriss vom Himmel, Sternenkuppel (falls die Sequenz kurz war), Kometenschweif-Vorboten */
+  private beginSkyfall(c: Cast) {
+    const fx = this.host.fx, b = fx.brush, s = c.spec!;
+    SKY_HIT.fill(0);
+    this.starfield(c.x, c.y, c.z, c.yaw, CATACLYSM_DUR.skyfall, 0);
+    // Riss im Himmel über dem Einschlag: drei Lichtsäulen (Kern weiß, Farbe, Akzent), darunter ein Runenring
+    b.reset().at(c.cx, c.y - 1, c.cz).size(0.6, 160, 0.6, 3, 160, 3).span(0.5).col(WHITE, 2.4).fade(0.02, 0.6);
+    fx.emit('column');
+    b.reset().at(c.cx, c.y - 1, c.cz).size(2, 160, 2, 8, 160, 8).span(0.8).col(c.acc, 1.8).fade(0.04, 0.6);
+    fx.emit('column');
+    b.reset().at(c.cx, this.host.groundY(c.cx, c.cz, c.y) + 0.1, c.cz).size(4, 1, 4, s.reach * 0.9, 1, s.reach * 0.9).span(1.0).col(c.acc, 1.6).fade(0.05, 0.6).spin(1.2);
+    fx.emit('ring');
+    this.sound('voidRumble', 1, c.cx, c.y, c.cz);
+  }
+
+  /** Ort eines Meteors zur Zeit u (0 Start hoch am Himmel, 1 Einschlag): schräge Bahn von weit vorn, über Kreuz von links und rechts */
+  private meteorAt(c: Cast, k: number, u: number, out: { x: number; y: number; z: number }) {
+    const fwdX = Math.sin(c.yaw), fwdZ = Math.cos(c.yaw);
+    const d = k === 0 ? 11 : 22, side = k === 0 ? -1 : 1;
+    const ix = c.x + fwdX * d, iz = c.z + fwdZ * d;
+    const iy = this.host.groundY(ix, iz, c.y);
+    // Start: 80 m hoch, 110 m weiter vorn und 45 m seitlich – die Kamera hinter der Figur sieht die Kometenschweife über den Himmel ziehen
+    const sx = ix + fwdX * 110 - fwdZ * side * 45, sz = iz + fwdZ * 110 + fwdX * side * 45, sy = iy + 80;
+    const e = u * u;
+    out.x = sx + (ix - sx) * e; out.y = sy + (iy - sy) * e; out.z = sz + (iz - sz) * e;
+  }
+
+  private stepSkyfall(c: Cast, t0: number, t: number, dt: number) {
+    const s = c.spec!, fx = this.host.fx, b = fx.brush;
+    const P = SKY_P;
+    // Zwillings-Meteoriten: Start 0 / 0,12 s, Einschlag 0,25 / 0,45 s; Kopf, Kometenschweif (Kern additiv), dunkler Rauchmantel, Glut
+    for (let k = 0; k < 2; k++) {
+      const ts = k === 0 ? 0 : 0.12, ti = k === 0 ? 0.25 : 0.45;
+      if (t >= ts && t0 < ti) {
+        const u = Math.min(1, (t - ts) / (ti - ts));
+        this.meteorAt(c, k, u, P);
+        // Kopf: weißglühender Kern in Farbe, je Bild ein kurzlebiges Glied des Schweifs
+        b.reset().at(P.x, P.y, P.z).size(2.6, 2.6, 2.6, 1.2, 1.2, 1.2).span(0.12).col(WHITE, 3).fade(0.01, 0.4);
+        fx.emit('orb');
+        b.reset().at(P.x, P.y, P.z).size(4.2, 4.2, 4.2, 1.4, 1.4, 1.4).span(0.35).col(k ? c.acc : c.col, 2.2).fade(0.01, 0.6);
+        fx.emit('orb');
+        b.reset().at(P.x, P.y + 1.5, P.z).size(3, 3, 3, 6, 6, 6).span(0.9).col(TMP.setRGB(0.06, 0.04, 0.08), 1).fade(0.05, 0.5);
+        fx.emit('smoke');
+        if (rnd() < 0.6) this.vfx.burst('ember', P.x, P.y, P.z, 2, 4, k ? c.acc : GOLD, { up: 1, spread: 1.5, size: 0.45 });
+      }
+      if (t0 < ti && t >= ti) {
+        this.meteorAt(c, k, 1, P);
+        this.stats.meteors++;
+        b.reset().at(P.x, P.y + 2, P.z).size(1, 1, 1, 9, 9, 9).span(0.35).col(WHITE, 2.6).fade(0.01, 0.8);
+        fx.emit('orb');
+        this.vfx.surfaceHit(P.x, P.y, P.z, 8, k ? c.acc : c.col, 1.8);
+        this.vfx.pressureRing(P.x, P.y + 1, P.z, 0, false, 16, c.col, 0.55);
+        this.vfx.burst('rock', P.x, P.y + 0.5, P.z, 10, 16, TMP.setRGB(0.3, 0.26, 0.24), { up: 12, size: 0.8, spread: 3 });
+        this.vfx.burst('spark', P.x, P.y + 1, P.z, 24, 20, k ? c.acc : GOLD, { up: 6, size: 0.45 });
+        if (this.host.isLand(P.x, P.z)) this.host.combatFx?.crack(V.set(P.x, P.y + 0.05, P.z), 7);
+        this.host.impactFrames?.(2);
+        this.host.shake(1.2);
+        this.sound('impactCrack', 1, P.x, P.y, P.z);
+        // Schiffe am Einschlag: radial zerschmettert (bis Stufe 4), sonst schwerer Schaden mit Brand – je Bild höchstens eins (Zerlegen
+        // und Verkohlen kosten Zeit: nie alle Rümpfe im selben Bild)
+        SKY_HIT[k] = 1;
+        SKY_HX[k] = P.x; SKY_HZ[k] = P.z;
+      }
+      if (SKY_HIT[k] && t0 >= ti) {
+        const e = this.nearestUnhit(c, SKY_HX[k], SKY_HZ[k], 12);
+        if (e) { e.ship.fire = Math.max(e.ship.fire, 10); this.wreck(e, 2, 0.6, 0.6); this.shipStrike(c, e, 'radial', 4, 3); }
+        else SKY_HIT[k] = 0;
+      }
+    }
+    // Planet: erscheint hoch über dem Mittelpunkt (0,2 s), stürzt bis 0,96 s herab und kollidiert
+    const gy = this.host.groundY(c.cx, c.cz, c.y);
+    const R = 9 * (1 + Math.max(0, s.reach / 40 - 1) * 0.5);
+    if (t >= 0.2 && t0 < 0.96) {
+      const u = Math.min(1, (t - 0.2) / 0.76), e = u * u;
+      // schräg von vorn oben (130 m voraus, 110 m hoch) auf den Mittelpunkt: im Bild der Kamera hinter der Figur
+      const fwX = Math.sin(c.yaw), fwZ = Math.cos(c.yaw);
+      const px = c.cx + fwX * 130 * (1 - e), pz = c.cz + fwZ * 130 * (1 - e);
+      const py = gy + R + 110 * (1 - e);
+      if (c.step === 0) { c.step = 1; this.stats.planets++; }
+      if (c.tick > 0.03) {
+        c.tick = 0;
+        // Körper (fest, dunkel violett), Lichthof (additiv), Planetenring (geneigt): je Takt neu am Ort des Sturzes
+        b.reset().at(px, py, pz).rot(t * 0.8, 0.3, 0).size(R, R, R, R, R, R).span(0.05).col(TMP.setRGB(0.22, 0.14, 0.34), 1).fade(0.01, 0.01);
+        fx.emit('void');
+        b.reset().at(px, py, pz).size(R * 1.35, R * 1.35, R * 1.35, R * 1.5, R * 1.5, R * 1.5).span(0.08).col(c.acc, 1.6).fade(0.01, 0.5);
+        fx.emit('orb');
+        b.reset().at(px, py, pz).rot(c.yaw, 0.45, 0.25).size(R * 1.6, 1, R * 1.6, R * 1.9, 1, R * 1.9).span(0.08).col(c.col, 2).fade(0.01, 0.5);
+        fx.emit('ring');
+        // Feuerschweif hinter dem Planeten (er reißt die Luft auf) und dunkler Rauch entlang der Bahn
+        b.reset().at(px + fwX * R * 1.2 + (rnd() - 0.5) * R, py + R * 0.9, pz + fwZ * R * 1.2 + (rnd() - 0.5) * R).size(R * 0.5, R * 0.5, R * 0.5, R * 1.2, R * 1.2, R * 1.2).span(0.6).col(TMP.setRGB(0.07, 0.05, 0.09), 1).fade(0.05, 0.5);
+        fx.emit('smoke');
+        this.vfx.burst('ember', px + fwX * R, py + R * 0.5, pz + fwZ * R, 3, 6, GOLD, { up: 6, spread: R * 0.8, size: 0.6 });
+      }
+    }
+    if (t0 < 0.96 && t >= 0.96) {
+      // Kollision: weißer Blitz, schwarz-weiße Tusche-Impact-Frames, Druckringe, Krater bzw. Meerestrichter, Gestein und Glut
+      this.stats.planets++;
+      b.reset().at(c.cx, gy + 3, c.cz).size(4, 4, 4, R * 2.6, R * 2.6, R * 2.6).span(0.5).col(WHITE, 3).fade(0.01, 0.8);
+      fx.emit('orb');
+      b.reset().at(c.cx, gy + 0.3, c.cz).size(4, 1, 4, s.reach * 1.25, 1, s.reach * 1.25).span(1.0).col(c.col, 2.3).fade(0.01, 0.7);
+      fx.emit('ring');
+      b.reset().at(c.cx, gy + 0.2, c.cz).size(3, 1, 3, s.reach * 0.9, 1, s.reach * 0.9).span(1.3).col(c.acc, 2).fade(0.05, 0.6);
+      fx.emit('ring');
+      this.vfx.pressureRing(c.cx, gy + 2, c.cz, 0, false, s.reach * 1.1, c.col, 0.8);
+      this.vfx.pressureRing(c.cx, gy + 4, c.cz, c.yaw, true, R * 2.2, c.acc, 0.5);
+      this.vfx.surfaceHit(c.cx, gy, c.cz, Math.min(22, R * 1.8), c.col, 2.6);
+      this.vfx.burst('rock', c.cx, gy + 1, c.cz, 26, 26, TMP.setRGB(0.28, 0.24, 0.22), { up: 18, size: 1.2, spread: R });
+      this.vfx.burst('spark', c.cx, gy + 2, c.cz, 50, 30, GOLD, { up: 8, size: 0.6, spread: R });
+      this.vfx.burst('smoke', c.cx, gy + 3, c.cz, 12, 4, TMP.setRGB(0.05, 0.04, 0.06), { up: 6, size: 6, spread: R, life: 2.4 });
+      if (this.host.isLand(c.cx, c.cz)) {
+        this.host.combatFx?.crack(V.set(c.cx, gy + 0.05, c.cz), R * 1.6);
+        this.host.combatFx?.burn(V.set(c.cx, gy + 0.05, c.cz), R * 1.2);
+      } else c.trench = true;
+      this.host.impactFrames?.(3);
+      this.host.cracks?.(4);
+      this.host.shake(1.7);
+      this.sound('quakeRumble', 1, c.cx, gy, c.cz);
+      this.sound('impactCrack', 1, c.cx, gy, c.cz);
+      SKY_HIT[2] = 1;
+    }
+    // Schiffe im Kollisionsradius: radial zerschmettert (bis Stufe 4), in Brand – je Bild eins; danach trifft die Druckwelle den Rest
+    if (SKY_HIT[2] && t0 >= 0.96) {
+      const e = this.nearestUnhit(c, c.cx, c.cz, s.reach);
+      if (e) { e.ship.fire = Math.max(e.ship.fire, 12); this.wreck(e, 3, 0.85, 0.8); this.shipStrike(c, e, 'radial', 6, 4); }
+      else { SKY_HIT[2] = 0; this.areaShips(c, c.cx, c.cz, s.reach + 30, 0.8, 'shove'); }
+    }
+    // Meerestrichter: öffnet sich nach der Kollision und schließt sich langsam (Schiffe sinken mit, `trenchCPU`)
+    if (c.trench) {
+      const open = Math.min(1, (t - 0.96) / 0.25), close = Math.min(1, Math.max(0, CATACLYSM_DUR.skyfall - t) / 1.2);
+      const fwdX = Math.sin(c.yaw), fwdZ = Math.cos(c.yaw), L = R * 0.8;
+      this.host.setTrench(c.cx - fwdX * L, c.cz - fwdZ * L, c.cx + fwdX * L, c.cz + fwdZ * L, R * 1.1, 7 * Math.min(open, close));
+      this.stats.trench++;
+    }
+    // Nachglühen: Glut regnet, Rauchsäulen steigen aus dem Krater
+    if (t > 1 && t < 2.8 && c.tick > 0.06) {
+      c.tick = 0;
+      const a = rnd() * Math.PI * 2, r = rnd() * s.reach * 0.6;
+      this.vfx.burst('ember', c.cx + Math.sin(a) * r, gy + 0.5, c.cz + Math.cos(a) * r, 3, 3, rnd() < 0.5 ? GOLD : c.acc, { up: 5, spread: 2, size: 0.4 });
+      if (rnd() < 0.3) this.vfx.burst('smoke', c.cx + Math.sin(a) * r, gy + 1, c.cz + Math.cos(a) * r, 1, 1.2, TMP.setRGB(0.05, 0.04, 0.05), { up: 4, size: 4, life: 1.8 });
+    }
+    void dt;
+  }
+
+  /** Nächstes noch nicht getroffenes, schwimmendes Schiff dieses Wirkens im Umkreis r um (x, z) – Rumpfmitte minus halbe Länge */
+  private nearestUnhit(c: Cast, x: number, z: number, r: number): EnemyShip | null {
+    let best: EnemyShip | null = null, bd = r;
+    for (const e of this.ships) {
+      if (c.hit.includes(e) || e.ship.sinking > 0) continue;
+      const d = Math.hypot(e.ship.x - x, e.ship.z - z) - e.ship.cls.L * 0.5;
+      if (d <= bd) { bd = d; best = e; }
+    }
+    return best;
+  }
+
+  /** 4.6E: Nachbeben eines Ultimates (Ultimate-Evolution): Druckring, Gestein bzw. Gischt, Risse */
+  aftershockFx(x: number, z: number, r: number, color: string) {
+    const fx = this.host.fx, b = fx.brush, col = this.color(color);
+    const y = this.host.groundY(x, z, 0);
+    this.stats.aftershocks++;
+    b.reset().at(x, y + 0.2, z).size(2, 1, 2, r * 1.15, 1, r * 1.15).span(0.6).col(col, 2.1).fade(0.01, 0.7);
+    fx.emit('ring');
+    this.vfx.pressureRing(x, y + 1, z, 0, false, r, col, 0.5);
+    this.vfx.surfaceHit(x, y, z, Math.min(10, r * 0.5), col, 1.2);
+    this.vfx.burst('rock', x, y + 0.5, z, 8, 10, TMP.setRGB(0.3, 0.27, 0.24), { up: 8, size: 0.6, spread: r * 0.4 });
+    if (this.host.isLand(x, z)) this.host.combatFx?.crack(V.set(x, y + 0.05, z), r * 0.6);
+    this.host.shake(0.8);
+    this.sound('quakeRumble', 0.7, x, y, z);
+  }
+
+  /** 4.6E: Element-Entladung beim Sturm-Schritt (Synergie): Ring und Funken in der Stilfarbe am neuen Ort der Figur */
+  stormBurstFx(x: number, y: number, z: number, r: number, color: string, element: string) {
+    const fx = this.host.fx, b = fx.brush, col = this.color(color);
+    this.stats.bursts++;
+    b.reset().at(x, y + 0.15, z).size(1, 1, 1, r * 1.1, 1, r * 1.1).span(0.35).col(col, 2.4).fade(0.01, 0.7);
+    fx.emit('ring');
+    this.vfx.pressureRing(x, y + 1, z, 0, false, r, col, 0.35);
+    this.vfx.burst(element === 'eis' ? 'ice' : element === 'feuer' || element === 'sonne' ? 'ember' : 'spark', x, y + 1, z, 16, 10, col, { up: 3, size: 0.4 });
   }
 
   // ---------- Schiffe ----------

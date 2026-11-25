@@ -18,6 +18,8 @@ import { convertLegacy10, isLegacy10, lookFromLegacy, skillsFromLegacy } from '.
 import { createSave, defaultProgress, defaultShip, SAVE_VERSION, type SaveData } from './types';
 import { countOr, isRecord } from '../sanitize';
 import { migrateWorldTo21 } from './worldMigration';
+import { cleanTalents, milestonesEarned } from '../talentRules';
+import { TALENT } from '../../data/talentTrees';
 
 type Migration = (data: Record<string, any>) => Record<string, any>;
 
@@ -151,7 +153,40 @@ export const MIGRATIONS: Record<number, Migration> = {
   // 21: die erweiterte Welt (Phase 4.5C, 15 600 m Radius, entzerrte Inseln): Schiff, Seekarten-Zonen, Ereignisse, Konvois, Wetterzellen, Armadas,
   // Großschlachten und Kontrollpunkte wandern auf das neue Raster (core/save/worldMigration.ts); entdeckte Inseln, Flotten und Kriegsstände bleiben
   20: (d) => migrateWorldTo21(d),
+  // 22: das 18-Baum-Talentsystem (Phase 4.6E). Die Stufe bleibt (über 100 wird sie auf 100 begrenzt und als `legacyLevel` vermerkt); Talentpunkte
+  // ergeben sich aus der Stufe, die Meisterschafts-Siegel rückwirkend aus den schon errungenen Erstsiegen (Kaiser, Mega-Kommandanten, Weltbosse,
+  // Raids, erste Legende), Kaiser-Relikte und Baupläne aus der Sammlung. Die alten Faji-Punkte und -Fähigkeiten bleiben unberührt.
+  21: (d) => {
+    const p = { ...(d.player ?? {}) };
+    const lv = typeof p.level === 'number' && Number.isFinite(p.level) ? Math.floor(p.level) : 1;
+    const legacyLevel = lv > TALENT.levelCap ? lv : undefined;
+    if (legacyLevel) { p.level = TALENT.levelCap; p.xp = 0; }
+    const talents = cleanTalents(legacyLevel ? { legacyLevel } : {}, talentContext(d, Math.min(lv, TALENT.levelCap)));
+    return { ...d, version: 22, player: p, talents };
+  },
 };
+
+/** Siege je Kaiser aus `world.kaiser` */
+function kaiserWinsOf(world: unknown): Record<string, number> {
+  const k = isRecord(world) && isRecord(world.kaiser) ? world.kaiser : {};
+  const out: Record<string, number> = {};
+  for (const [id, v] of Object.entries(k)) if (isRecord(v) && typeof v.wins === 'number' && Number.isFinite(v.wins)) out[id] = Math.max(0, Math.floor(v.wins));
+  return out;
+}
+
+/** Was das Säubern der Talente über den übrigen Stand wissen muss (rückwirkende Siegel, Kaiser, Relikte) */
+function talentContext(d: Record<string, any>, level: number) {
+  const kaiserWins = kaiserWinsOf(d.world);
+  const flags = isRecord(d.progress?.flags) ? d.progress.flags : {};
+  // ein Sieg steht auch in den Merkern (`kaiser_<id>`), falls die Ruhezeiten schon verfallen sind
+  for (const k of Object.keys(flags)) if (k.startsWith('kaiser_') && flags[k]) { const id = k.slice(7); kaiserWins[id] = Math.max(1, kaiserWins[id] ?? 0); }
+  const sea = isRecord(d.world?.seaEvents) ? d.world.seaEvents : {};
+  const bossKills: Record<string, number> = {};
+  if (isRecord(sea.bossKills)) for (const [k, v] of Object.entries(sea.bossKills)) if (typeof v === 'number') bossKills[k] = v;
+  const legends = Array.isArray(d.legends) ? d.legends.filter((x: unknown): x is string => typeof x === 'string') : [];
+  const relicIds = Array.isArray(d.progress?.unlocks?.kaiserRelics) ? d.progress.unlocks.kaiserRelics.filter((x: unknown): x is string => typeof x === 'string') : [];
+  return { level, kaiserWins, relicIds, milestones: milestonesEarned({ flags, kaiserWins, bossKills, legends }) };
+}
 
 export type MigrationResult =
   | { ok: true; data: SaveData; migratedFrom: number | 'legacy10' | null }
@@ -199,5 +234,10 @@ export function migrateSave(raw: unknown, gameVersion: string): MigrationResult 
   const fw = filled.world.factionWar as unknown;
   filled.world.factionWar = fw && typeof fw === 'object' && (fw as { v?: unknown }).v === 1 ? (fw as SaveData['world']['factionWar']) : null;
   filled.fleet = cleanFleet(filled.fleet, { owned: filled.ship.owned ?? [], flagship: filled.ship.tier, evo: filled.ship.evo ?? {}, look: filled.ship.look, slots: fleetSlots(rankIndex(filled.player.fame)) });
+  // Talente (4.6E): säubern, Siegel und Kaiser-Stand ergänzen; Stufe 101 nur mit vollzogenem Aufstieg, sonst höchstens 100
+  const lvl = Math.max(1, Math.min(TALENT.ascendedLevel, Math.floor(Number.isFinite(filled.player.level) ? filled.player.level : 1)));
+  filled.talents = cleanTalents(filled.talents, talentContext(filled as unknown as Record<string, any>, lvl));
+  filled.player.level = filled.talents.ascended ? TALENT.ascendedLevel : Math.min(TALENT.levelCap, lvl);
+  if (filled.player.level >= TALENT.levelCap) filled.player.xp = 0;
   return { ok: true, data: filled, migratedFrom: from === SAVE_VERSION ? null : from };
 }

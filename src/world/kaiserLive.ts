@@ -32,6 +32,8 @@ import {
 
 /** Was die Welt der Kaiser-Schlacht zur Verfügung stellt (SeaWorld baut es aus ihren Teilen) */
 export interface KaiserHost {
+  /** Talente (4.6E, Belagerung & Kriegsführung): Faktor auf den Schaden gegen die Bastionen der Seesperre (fehlt er, gilt 1) */
+  bastionK?: () => number;
   scene: Scene;
   ground: IslandGround;
   naval: NavalSystem;
@@ -333,7 +335,7 @@ export class KaiserLive implements BallTarget {
       if (b.down || p.y > 26 || p.y < -2) continue;
       const dx = p.x - b.x, dz = p.z - b.z;
       if (dx * dx + dz * dz > (b.r + 1.5) * (b.r + 1.5)) continue;
-      const res = damageBastion(st, i as 0 | 1, dmg);
+      const res = damageBastion(st, i as 0 | 1, dmg * (this.host.bastionK?.() ?? 1));
       this.host.sparks.emit(8, p.x, p.y, p.z, { speed: 6, up: 2, life: 0.6, color: _shotColor.set(1, 0.7, 0.4).multiplyScalar(2), gravity: -9, spread: 1 });
       if (Math.random() < 0.35) this.host.smoke.puff(p.x, p.y, p.z, { size: 2.2, grow: 6, life: 3, tone: 0.3, vy: 1.5, alpha: 0.5 });
       if (res.destroyed) this.bastionDown(a, i);

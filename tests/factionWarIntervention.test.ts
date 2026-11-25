@@ -12,7 +12,7 @@ import { defaultLayers, drawWorldMap, lastLabels, MAP_LAYERS } from '../src/ui/w
 import { REGIONS } from '../src/data/regions';
 import type { WorldMapData } from '../src/ui/minimap';
 import { migrateSave } from '../src/core/save/migrations';
-import { createSave } from '../src/core/save/types';
+import { createSave, SAVE_VERSION } from '../src/core/save/types';
 
 const P = 'spieler-1';
 
@@ -318,7 +318,7 @@ describe('Spielstand: 4.5.0-Stände laden ohne Verlust', () => {
     const r = migrateSave(JSON.parse(JSON.stringify(save)), '4.5.1');
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.data.version).toBe(21);
+    expect(r.data.version).toBe(SAVE_VERSION);
     expect(r.data.world.factionWar).toBeTruthy();
     const clean = cleanFactionWar(r.data.world.factionWar, reg, islands)!;
     expect(clean).toBeTruthy();

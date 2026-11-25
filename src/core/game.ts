@@ -17,7 +17,6 @@ import { LoadingScreen } from '../ui/loadingScreen';
 import { runSteps, tick } from './yield';
 import { toonShared } from '../render/toon';
 import type { Enemy } from '../entities/enemy';
-import { PLAYER_BASE } from '../data/combat';
 import { CombatOverlay } from '../ui/combatOverlay';
 import { BRANCHES, branchPoints, learnBlock, SK, type Branch } from '../data/skills';
 import { SkillTree } from '../ui/skillTree';
@@ -123,6 +122,14 @@ import type { RepairMaterial } from '../sim/intents';
 import { QUESTS, QUEST_BY_ID } from '../data/quests';
 import { hostileLegends, LEGEND_BY_ID, rankRows } from '../data/legends';
 import { clamp01 } from './mathUtil';
+import {
+  applyXp, ascend, captainFx, chooseUltimate, claimMilestone, defenseFx, emptyTalents, equipEvo, formFloor, kaiserWinAscended, learn, respec, respecCost,
+  syncKaiser, xpNeedAt, type RespecScope, type TalentSave, type TalentWorld,
+} from './talentRules';
+import type { TalentView } from '../ui/talentScreen';
+import { buildTalentCombat, talentKey } from '../combat/talentCombat';
+import { MILESTONE_BY_ID, NODE_BY_ID, TALENT, COSMIC_SOURCES, isCombatTree, type TalentTreeId } from '../data/talentTrees';
+import type { TradeTalent } from './economyEngine';
 
 export const GAME_VERSION = __APP_VERSION__;
 const AUTOSAVE_SECONDS = 30;
@@ -311,6 +318,7 @@ export class Game {
       provisions: (n) => { if (this.save) addItem(this.save.gear, 'proviant', n); },
       persist: () => this.persist(),
       cue: (k) => { audio.play(k); if (k === 'horn') audio.director?.sting('alarm'); },
+      tributeK: () => 1 + this.capFx().tribute,
     });
     this.world.onMessage = (m) => this.hud.toast(m);
     this.world.onModeChange = (m) => this.onModeChange(m);
@@ -560,6 +568,7 @@ export class Game {
       if (this.input.pressed('pause')) { this.pause(); return; }
       if (this.input.pressed('map')) { this.openWorldMap(); return; }
       if (this.input.pressed('skills')) { this.openSkills(); return; }
+      if (this.input.pressed('talents')) { this.openTalents(); return; }
       if (this.input.pressed('quests')) { this.openQuestLog(); return; }
       if (this.input.pressed('swap')) this.swapWeapon();
       if (this.input.pressed('weapon1')) this.swapWeapon(0);
@@ -668,7 +677,7 @@ export class Game {
       if (this.save) {
         const hp = this.world.playerHp;
         const p = this.save.player;
-        this.hud.setStats(hp ? hp.hp / hp.max : 1, p.xp / PLAYER_BASE.xpNeed(p.level), p.gold, hp ? { now: hp.hp, max: hp.max } : null);
+        this.hud.setStats(hp ? hp.hp / hp.max : 1, p.level >= TALENT.levelCap ? 1 : p.xp / xpNeedAt(p.level), p.gold, hp ? { now: hp.hp, max: hp.max } : null);
         const stm = this.world.playerStamina;
         this.hud.setStamina(stm ? stm.frac : null, !!stm?.flash);
         const sh = this.world.ship;
@@ -912,15 +921,19 @@ export class Game {
     const tb = (gear.trinket ? TRINKET_BY_ID[gear.trinket]?.bonus : null) ?? {};
     // Alle Werte aus einer Stelle (core/inventory.ts): Ausrüstung, Talisman, Crew, Stärkungen
     const st = this.playerStats();
-    this.world.setPlayerPower(st.hp, st.atk);
+    // 4.6E: Talente – Leben und Rüstung aus allen Bäumen, Kapitänswerte für Schiff, Truppen, Belagerung
+    const tdef = defenseFx(this.talentSave());
+    const cap = this.capFx();
+    this.world.setPlayerPower(st.hp * (1 + tdef.hp), st.atk);
+    this.world.bastionK = 1 + cap.bastion;
     this.world.setGearDefense(st);
-    this.world.shipSpeedMult = (has('nav') ? 1.15 : 1) * (has('esra') ? 1.1 : 1) * (1 + (tb.speed ?? 0));
-    this.world.ship.turnMult = has('helm') ? 1.6 : 1;
-    this.world.rangeMult = has('look') ? 1.25 : 1;
+    this.world.shipSpeedMult = (has('nav') ? 1.15 : 1) * (has('esra') ? 1.1 : 1) * (1 + (tb.speed ?? 0)) * (1 + cap.sail);
+    this.world.ship.turnMult = (has('helm') ? 1.6 : 1) * (1 + cap.turn);
+    this.world.rangeMult = (has('look') ? 1.25 : 1) * (1 + cap.range);
     // Rumpf-Stufe: 75 % (Stufe 1) … 145 % (Stufe 5) der Klassenbasis (Stufe 3 = alte Grundwerte)
     // Ausbaustufen (Rumpf-Panzerung, Segel, Kanonen, Rammsporn, Drehbassen) zuerst setzen: jeder Neubau des Modells unten baut schon mit den neuen Stufen
     this.world.ship.setEvolution(evo);
-    const hullBonus = (has('carp') ? 40 : 0) + Math.round(SHIP_CLASSES[this.save.ship.tier].hp * (evoS.hullHpK - 1));
+    const hullBonus = (has('carp') ? 40 : 0) + Math.round(SHIP_CLASSES[this.save.ship.tier].hp * (evoS.hullHpK - 1 + cap.hull));
     if (hullBonus !== this.world.hullBonus) {
       this.world.hullBonus = hullBonus;
       this.world.setShip(this.save.ship.tier, this.save.ship.look, this.world.ship.ammo, this.world.ship.hull / Math.max(1, this.world.ship.maxHull), this.save.player.faction);
@@ -936,15 +949,16 @@ export class Game {
       nav.playerLevel = lvl;
       nav.playerFaction = this.save.player.faction;
       nav.playerRank = rankIndex(this.save.player.fame);
-      nav.canDmg = playerCannonDmg(lvl, this.save.ship.tier, evo.cannonTier) * (has('bruno') ? 1.2 : 1) * (1 + (tb.cannon ?? 0));
-      nav.reloadMult = has('gun') ? 0.7 : 1;
+      nav.canDmg = playerCannonDmg(lvl, this.save.ship.tier, evo.cannonTier) * (has('bruno') ? 1.2 : 1) * (1 + (tb.cannon ?? 0)) * (1 + cap.cannon);
+      nav.reloadMult = (has('gun') ? 0.7 : 1) * (1 - cap.reload);
     }
     // Schiffskoch: bessert den Rumpf zusätzlich aus, aber nur, solange genug Seeleute an Bord sind (siehe stepPassiveRepair)
     this.world.ship.repairBonus = has('cook') ? 1.2 : 0;
     const c = this.save.crew;
     const tier = this.save.ship.tier;
     // Offiziere: so viele, wie die Schiffsklasse zulässt (Rest bleibt als Reserve im Spielstand); Truppen: Bestand je Typ
-    this.world.setCrew(c.hired, activeParty(c.party, tier), c.loyalty, lvl, (has('musik') ? 1.15 : 1) * (has('ram') ? 1.15 : 1), this.troopRoster());
+    this.world.setCrew(c.hired, activeParty(c.party, tier), c.loyalty, lvl, (has('musik') ? 1.15 : 1) * (has('ram') ? 1.15 : 1) * (1 + cap.boarding), this.troopRoster());
+    this.applyTalents();
   }
 
   // ---------- Massentruppen (Stufe 2) ----------
@@ -1008,7 +1022,7 @@ export class Game {
     if (!st.rankOk) return `Truppen lassen sich erst ab dem Rang „${st.rankName}“ anheuern.`;
     this.syncTroops();
     const roster = this.troopRoster();
-    const price = this.priceAt(TROOPS[typ].price);
+    const price = Math.max(1, Math.round(this.priceAt(TROOPS[typ].price) * (1 - this.capFx().troopPrice)));
     const room = st.cap - rosterTotal(roster);
     if (room <= 0) return 'Die Truppen sind vollzählig.';
     const want = Math.min(Math.floor(heads), room, Math.floor(s.player.gold / price));
@@ -1029,14 +1043,14 @@ export class Game {
   /** Preis, den Truppen-Pool mit einem Typ ganz aufzufüllen */
   troopFillCost(typ: TroopType): number {
     const st = this.troopStatus();
-    return Math.max(0, st.cap - st.heads) * this.priceAt(TROOPS[typ].price);
+    return Math.max(0, st.cap - st.heads) * Math.max(1, Math.round(this.priceAt(TROOPS[typ].price) * (1 - this.capFx().troopPrice)));
   }
 
   /** Gold-Bonus der Crew (Katze, Taucherin für Beute) */
   private goldMult(loot = false) {
     const h = this.save?.crew.hired ?? [];
     const t = this.save?.gear.trinket ? TRINKET_BY_ID[this.save.gear.trinket]?.bonus.gold ?? 0 : 0;
-    return (h.includes('cat') ? 1.3 : 1) * (loot && h.includes('kiko') ? 1.5 : 1) * (1 + t);
+    return (h.includes('cat') ? 1.3 : 1) * (loot && h.includes('kiko') ? 1.5 : 1) * (1 + t) * (loot ? 1 + this.capFx().loot : 1);
   }
 
   /** Angeln: Fang je nach Region, manchmal eine Flaschenpost */
@@ -1290,6 +1304,7 @@ export class Game {
     } else {
       s.legends.push(id);
       s.progress.flags[`beat_${id}`] = s.meta.playTime;
+      this.milestone('legende_erste');
       const g = Math.round(l.ruhm * (boarded ? 0.9 : 0.6) * this.goldMult(true));
       s.player.gold += g;
       s.skills.sp++;
@@ -1745,6 +1760,7 @@ export class Game {
       s.player.gold += r.gold;
       this.grantXp(r.xp, r.fame);
       s.progress.flags[`raidwon_${info.defId}`] = true;
+      this.milestone(`raid_${info.defId}`);
       // Marine-Hauptquartier erobert: die Marine ist dein erbitterter Feind
       if (info.factionId === 'marine') s.progress.standing.marine = -100;
       // Persönliche Beute dieses Spielers (jeder Teilnehmer hat seinen eigenen Wurf) und die Besatzung der Insel
@@ -1873,6 +1889,7 @@ export class Game {
     if (loot.seals) {
       const first = !s.progress.flags[`megaboss_${id}`];
       s.progress.flags[`megaboss_${id}`] = true;
+      this.milestone(`mega_${id}`);
       const n = loot.seals.n + (first ? 1 : 0);
       u.seals[loot.seals.power] = Math.min(999, (u.seals[loot.seals.power] ?? 0) + n);
       sealText = ` · ${n} Boss-Siegel (${FACTIONS[loot.seals.power].name})${first ? ' · Erster Sieg!' : ''}`;
@@ -1906,6 +1923,21 @@ export class Game {
     if (!relics.includes(loot.relic.id)) relics.push(loot.relic.id);
     s.progress.flags[`kaiser_${id}`] = true;
     if (loot.warlord) this.dropWarlord(1, k.boss.name);
+    // 4.6E: Meisterschafts-Siegel (erster Sieg), Kaiser-Stand der Talente, nach dem Aufstieg Sternenprüfung bzw. Revanche (kosmischer Punkt)
+    {
+      const t = this.talentSave();
+      const wins: Record<string, number> = {};
+      for (const kid of Object.keys(s.world.kaiser ?? {})) wins[kid] = (s.world.kaiser as Record<string, { wins: number }>)[kid]?.wins ?? 0;
+      wins[id] = Math.max(1, wins[id] ?? 0);
+      syncKaiser(t, wins, u.kaiserRelics ?? []);
+      this.milestone(`kaiser_${id}`);
+      const cosmic = kaiserWinAscended(t, id);
+      if (cosmic) {
+        const src = COSMIC_SOURCES.find((c) => c.id === cosmic);
+        this.after(() => this.overlay.showBanner('Kosmischer Punkt!', `${src?.label ?? ''} · im Kosmos-Baum einsetzen (Taste N)`), 7800);
+      }
+      if (!t.ascended && t.kaiserDefeated.length >= 5 && first) this.after(() => this.overlay.showBanner('Der Himmel antwortet …', 'Alle fünf Kaiser sind gefallen – im Talent-Fenster (Taste N) öffnet sich die Aufstiegs-Prüfung.'), 8400);
+    }
     audio.play('victory');
     this.after(() => this.overlay.showCutin(`${k.boss.name} besiegt!`, '#E3B04B'), 300);
     this.overlay.showBanner(`${k.boss.name} besiegt!`, `+${fmtInt(gold)} Gold · ${goods} · ${loot.kaiserSeals} Kaiser-Siegel · ${loot.seals.n} Boss-Siegel (${FACTIONS[loot.seals.power].name}) · ${loot.shards} Relikt-Splitter`);
@@ -2592,7 +2624,7 @@ export class Game {
   /** Waren aus einem Ereignis an Bord nehmen (Frachtraum begrenzt); liefert den Text für die Meldung */
   private takeGoods(drops: { good: GoodId; units: number }[]): string {
     const s = this.save!;
-    const r = applySalvage(this.eco(), drops, s.ship.tier);
+    const r = applySalvage(this.eco(), drops, s.ship.tier, this.tradeTalent());
     const got = r.taken.map((d) => `${d.units} × ${GOOD_BY_ID[d.good].n}`).join(', ');
     return (got || 'nichts (Frachtraum voll)') + (r.lost > 0 ? ` · ${r.lost} Einheiten fanden keinen Platz` : '');
   }
@@ -2734,6 +2766,8 @@ export class Game {
           this.grantXp(loot.xp, loot.fame);
           // garantiert ein Stück der Stufe 4 (Kriegsherren-Beute)
           this.dropWarlord(1, bd.name);
+          s.progress.flags[`weltboss_${ev.bossId}`] = true;
+          this.milestone(`weltboss_${ev.bossId}`);
           audio.play('win');
           this.after(() => this.overlay.showCutin(`${bd.name} besiegt!`, '#9FE8FF'), 300);
           this.overlay.showBanner(`${bd.name} besiegt!`, `+${fmtInt(gold)} Gold · ${loot.seals.n} Boss-Siegel (${FACTIONS[loot.seals.power].name}) · ${loot.shards} Relikt-Splitter · Stufe-4-Beute${n.firstKill ? ' · Erster Sieg!' : ''}`);
@@ -2854,7 +2888,7 @@ export class Game {
     let text = '';
     if (o.kind === 'ware' && o.good) {
       // nur bezahlen, was in den Frachtraum passt
-      const r = applySalvage(this.eco(), [{ good: o.good, units: o.units }], s.ship.tier);
+      const r = applySalvage(this.eco(), [{ good: o.good, units: o.units }], s.ship.tier, this.tradeTalent());
       const got = r.taken.reduce((a, d) => a + d.units, 0);
       if (got <= 0) { this.openEncounter(ev, 'Dein Frachtraum ist voll.'); return; }
       const price = Math.round((o.price * got) / o.units);
@@ -3168,24 +3202,23 @@ export class Game {
     const s = this.save;
     if (!s) return;
     const p = s.player;
-    p.xp += xp;
     const rankBefore = rankName(p.faction, p.fame);
     const famePassive = this.world.faji?.passives.fame ?? 0;
     p.fame = Math.max(0, p.fame + Math.round(fame * (fame > 0 ? 1 + famePassive : 1)));
-    let up = false;
-    while (p.xp >= PLAYER_BASE.xpNeed(p.level)) {
-      p.xp -= PLAYER_BASE.xpNeed(p.level);
-      p.level++;
-      s.skills.sp++;
-      up = true;
-    }
+    // 4.6E: Stufen bis 100 (Stufe 101 nur über den Aufstieg); je Aufstieg ein Talentpunkt (aus der Stufe gerechnet) und wie bisher ein Faji-Punkt
+    const lv = applyXp(p.level, p.xp, xp);
+    p.level = lv.level;
+    p.xp = lv.xp;
+    s.skills.sp += lv.ups;
+    const up = lv.ups > 0;
     const rankAfter = rankName(p.faction, p.fame);
     if (up) {
       this.applyPower();
       this.world.healPlayer();
       this.world.faji?.refresh(p.level, this.activeStyle());
       audio.play('level');
-      this.overlay.showBanner(`Stufe ${p.level}!`, '+1 Faji-Punkt · mehr Leben und Angriffskraft');
+      const n = lv.ups;
+      this.overlay.showBanner(`Stufe ${p.level}!`, `+${n} Talentpunkt${n > 1 ? 'e' : ''} (Taste N) · +${n} Faji-Punkt${n > 1 ? 'e' : ''} · mehr Leben und Angriffskraft${p.level >= TALENT.levelCap ? ' · Höchststufe erreicht!' : ''}`);
       this.checkAwakening();
     } else if (rankAfter !== rankBefore) {
       this.overlay.showBanner(rankAfter, 'Neuer Rang!');
@@ -3511,7 +3544,7 @@ export class Game {
   upkeepInput() {
     const s = this.save!;
     const crew = this.world.ship.sim.crew;
-    return { tier: s.ship.tier, seamen: poolHeads(crew, 'matrosen'), troops: poolHeads(crew, 'truppen'), officers: s.crew.hired.length, evoTier: shipEvolutionTier(evolutionOf(s.ship, s.ship.tier)), fleet: fleetUpkeepList(this.fleet()) };
+    return { tier: s.ship.tier, seamen: poolHeads(crew, 'matrosen'), troops: poolHeads(crew, 'truppen'), officers: s.crew.hired.length, evoTier: shipEvolutionTier(evolutionOf(s.ship, s.ship.tier)), fleet: fleetUpkeepList(this.fleet()), k: 1 - this.capFx().upkeep };
   }
 
   /** Sold und Proviant: Aufstellung für Kontor und HUD */
@@ -3635,7 +3668,7 @@ export class Game {
   private payMerit(nation: string, kp: number, reason: string) {
     const s = this.save;
     if (!s) return;
-    const gold = Math.round(kp * WAR.kpGold);
+    const gold = Math.round(kp * WAR.kpGold * (1 + this.capFx().merit));
     s.player.gold += gold;
     const f = this.nationFid(nation);
     if (f) this.shiftStanding(f, Math.max(1, Math.round(kp / WAR.kpStanding)));
@@ -3879,7 +3912,7 @@ export class Game {
     const site = this.marketSite(def);
     if (!s || !site) return;
     const eco = this.eco();
-    recordLedger(eco, site, s.meta.playTime, this.tariff().factor);
+    recordLedger(eco, site, s.meta.playTime, this.tariff().factor, this.tradeTalent());
     const fid = this.harborFid;
     const r = inspectCargo(eco, { lawful: !!fid, marine: fid === 'marine' });
     if (!r.checked || !fid) return;
@@ -3902,13 +3935,13 @@ export class Game {
     const rows = GOODS.map((g) => {
       const stock = m.stock[g.id] ?? 0;
       const base = marketPrice(site, g.id, stock);
-      const buy = Math.ceil(quoteBuy(site, stock, g.id, 1, t.factor).total || base * 1.05 * t.factor);
-      const sell = Math.floor(quoteSell(site, stock, g.id, 1, t.factor).total);
+      const buy = Math.ceil(quoteBuy(site, stock, g.id, 1, t.factor, this.tradeTalent()).total || base * 1.05 * t.factor);
+      const sell = Math.floor(quoteSell(site, stock, g.id, 1, t.factor, this.tradeTalent()).total);
       const have = eco.cargo[g.id]?.n ?? 0;
       return { def: g, stock: Math.floor(stock), buy, sell, trend: trendOf(base, g.id), role: roleOf(site.profile, g.id), eq: eqPriceOf(site.profile, g.id), have, avgCost: have ? (eco.cargo[g.id]!.cost / have) : 0, war: !!g.war, embargo: !!site.embargo?.includes(g.id) };
     });
     const ledger = Object.entries(eco.ledger).filter(([id]) => id !== site.id).map(([id, l]) => ({ id, ...l, age: Math.max(0, now - l.t) })).sort((a, b) => a.age - b.age);
-    return { site, rows, tariff: t, cargo: { used: cargoUsed(eco), cap: cargoCap(tier), war: warCargo(eco) }, upkeep: this.upkeepView(), ledger, heat: eco.heat, gold: s.player.gold, blockade: (site.priceK ?? 1) > 1 };
+    return { site, rows, tariff: t, cargo: { used: cargoUsed(eco), cap: Math.round(cargoCap(tier) * (1 + this.capFx().cargo)), war: warCargo(eco) }, upkeep: this.upkeepView(), ledger, heat: eco.heat, gold: s.player.gold, blockade: (site.priceK ?? 1) > 1 };
   }
 
   /** Ware im Kontor kaufen (Frachtraum, Vorrat, Gold und Tarif begrenzen die Menge) */
@@ -3916,8 +3949,8 @@ export class Game {
     const s = this.save, site = this.marketSite();
     if (!s || !site || !GOOD_BY_ID[good]) return '';
     const eco = this.eco();
-    const r = buyGood(eco, site, s.meta.playTime, good, n, s.player.gold, s.ship.tier, this.tariff().factor);
-    if (r.ok) { s.player.gold += r.gold; audio.play('coin'); recordLedger(eco, site, s.meta.playTime, this.tariff().factor); this.persist(); }
+    const r = buyGood(eco, site, s.meta.playTime, good, n, s.player.gold, s.ship.tier, this.tariff().factor, this.tradeTalent());
+    if (r.ok) { s.player.gold += r.gold; audio.play('coin'); recordLedger(eco, site, s.meta.playTime, this.tariff().factor, this.tradeTalent()); this.persist(); }
     return r.message;
   }
 
@@ -3925,8 +3958,8 @@ export class Game {
     const s = this.save, site = this.marketSite();
     if (!s || !site || !GOOD_BY_ID[good]) return '';
     const eco = this.eco();
-    const r = sellGood(eco, site, s.meta.playTime, good, n, this.tariff().factor);
-    if (r.ok) { s.player.gold += r.gold; audio.play('coin'); recordLedger(eco, site, s.meta.playTime, this.tariff().factor); this.persist(); }
+    const r = sellGood(eco, site, s.meta.playTime, good, n, this.tariff().factor, this.tradeTalent());
+    if (r.ok) { s.player.gold += r.gold; audio.play('coin'); recordLedger(eco, site, s.meta.playTime, this.tariff().factor, this.tradeTalent()); this.persist(); }
     return r.message;
   }
 
@@ -3935,7 +3968,7 @@ export class Game {
     const s = this.save;
     if (!s) return;
     const drops = rollSalvage({ role: e.role, power: e.power ?? null, level: e.level, borderDist: borderDistance(e.ship.x, e.ship.z).dist, boarded });
-    const r = applySalvage(this.eco(), drops, s.ship.tier);
+    const r = applySalvage(this.eco(), drops, s.ship.tier, this.tradeTalent());
     if (!r.taken.length && !r.lost) return;
     const txt = r.taken.map((d) => `${d.units} × ${GOOD_BY_ID[d.good].n}`).join(', ');
     this.hud.toast(`${boarded ? 'Ladung erbeutet' : 'Treibgut geborgen'}: ${txt || 'nichts'}${r.lost > 0 ? ` · ${r.lost} Einheiten ließen sich nicht mehr verstauen (Frachtraum voll)` : ''}${r.heat > 0.5 ? ' · Kriegsware: Fahnder werden aufmerksam' : ''}`, 6);
@@ -4253,16 +4286,22 @@ export class Game {
     const f = this.fajiSave(d), foot = this.world.playerFoot;
     if (!f || !foot) return;
     const st = foot.actionStyle;
-    foot.engine.setForm(isFajiArt(st) ? formOf(f.mastery[st] ?? 0) : 1);
+    foot.engine.setForm(isFajiArt(st) ? this.artForm(st, f, d) : 1);
+  }
+
+  /** Formstufe einer Kunst: aus der Meisterschaft oder den Talenten (Formsiegel, 7. Meisterform), die höhere gilt */
+  private artForm(art: FajiArtId, f: FajiSave, d: SaveData | null = this.save): number {
+    const t = d?.talents;
+    return Math.max(formOf(f.mastery[art] ?? 0), t ? formFloor(t, art) : 1);
   }
 
   /** Meisterschaft gewonnen: bei einer neuen Form Banner, Klang und neue Technik (bzw. das Ultimate in der Meisterform) */
   private gainMastery(style: ActionStyleId, pts: number) {
     const f = this.fajiSave();
     if (!f || !isFajiArt(style) || !(pts > 0)) return;
-    const before = formOf(f.mastery[style] ?? 0);
+    const before = this.artForm(style, f);
     f.mastery[style] = Math.min(MASTERY_CAP, (f.mastery[style] ?? 0) + pts);
-    const after = formOf(f.mastery[style]);
+    const after = this.artForm(style, f);
     if (after <= before) return;
     this.world.playerFoot?.engine.setForm(after);
     const st = ACTION_STYLES[style];
@@ -4278,7 +4317,7 @@ export class Game {
     const arts = FAJI_ART_IDS.map((id) => {
       const st = ACTION_STYLES[id];
       const m = f.mastery[id] ?? 0;
-      const form = formOf(m);
+      const form = this.artForm(id, f);
       return {
         id, label: st.label, title: st.title, desc: st.desc, color: st.color, accent: st.accent, form, frac: formProgress(m), mastery: m,
         next: form >= 7 ? 0 : FORM_THRESHOLDS[form], equipped: f.equipped === id, ult: st.ultimate?.label ?? '',
@@ -4301,6 +4340,7 @@ export class Game {
       this.world.setActionStyle(next);
       this.syncFajiForm();
     }
+    this.applyTalents();
     this.refreshWeaponHud();
     this.persist();
   }
@@ -4442,6 +4482,151 @@ export class Game {
     });
   }
 
+  // ---------- Talente (Phase 4.6E) ----------
+
+  /** Talent-Stand des Spielstands (fehlt er, wird er angelegt) */
+  private talentSave(d: SaveData | null = this.save): TalentSave {
+    if (!d) return emptyTalents();
+    return (d.talents ??= emptyTalents());
+  }
+
+  /** Was die Talent-Regeln über den Spielstand wissen müssen */
+  talentWorld(): TalentWorld {
+    const s = this.save;
+    return { level: s?.player.level ?? 1, kaiserSeals: s?.progress.unlocks?.kaiserSeals ?? 0 };
+  }
+
+  /** Kapitäns- und Weltwerte der Talente (gedeckelt) */
+  private capFx() { return captainFx(this.talentSave()); }
+
+  /** Handels-Talente für Kontor, Kauf und Verkauf */
+  private tradeTalent(): TradeTalent {
+    const c = this.capFx();
+    return { buy: c.buy, sell: c.sell, cargo: c.cargo, smuggle: c.smuggle };
+  }
+
+  /**
+   * Talente an die Kampf-Engine geben: umgebaute Stile und Angriffe (nur bei einer Änderung neu gebaut), Rüstung aus den Bäumen, Formstufe der
+   * Faji-Künste. Nach Laden, Lernen, Zurücksetzen, Aufstieg und Kunstwechsel.
+   */
+  applyTalents(d: SaveData | null = this.save) {
+    const foot = this.world.playerFoot;
+    if (!d || !foot) return;
+    const t = this.talentSave(d);
+    const art = (d.player.faji?.equipped ?? null) as FajiArtId | null;
+    if (foot.engine.talents?.key !== talentKey(t, art)) foot.engine.setTalents(buildTalentCombat(t, art));
+    foot.engine.talentArmor = defenseFx(t).armor;
+    this.syncFajiForm(d);
+  }
+
+  /** Meisterschafts-Siegel für einen Erstsieg (ein Talentpunkt) */
+  private milestone(id: string) {
+    const t = this.save ? this.talentSave() : null;
+    if (!t || !claimMilestone(t, id)) return;
+    const m = MILESTONE_BY_ID[id];
+    this.after(() => this.overlay.showBanner('Meisterschafts-Siegel!', `${m?.label ?? ''} · +1 Talentpunkt (${t.seals.length}/${TALENT.sealPoints})`), 2600);
+  }
+
+  /**
+   * Aufstiegs-Prüfung (Stufe 101): Baupläne und Relikte binden, Kaiser-Siegel opfern, Stufe 101, fünf kosmische Punkte; der Himmel reißt auf.
+   * Rückgabe: Fehlermeldung oder null.
+   */
+  performAscension(): string | null {
+    const s = this.save;
+    if (!s) return 'Kein Spielstand.';
+    const t = this.talentSave();
+    const r = ascend(t, this.talentWorld());
+    if (!r.ok) return r.reason;
+    const u = (s.progress.unlocks ??= emptyUnlocks());
+    u.kaiserSeals = Math.max(0, (u.kaiserSeals ?? 0) - r.seals);
+    s.player.level = TALENT.ascendedLevel;
+    s.player.xp = 0;
+    this.applyPower();
+    this.world.healPlayer();
+    audio.play('victory');
+    this.overlay.showCutin('Aufstieg!', '#B07DFF');
+    this.after(() => this.overlay.showBanner('Stufe 101 – Aufstieg', `Der Kosmos-Baum ist offen · +${r.cosmic} kosmische Punkte · das 15. Ultimate „Himmelssturz“ wartet in seiner Krone`), 900);
+    this.hud.setPlayer(s.player.name, `${FACTION_LABELS[s.player.faction]} · ${rankName(s.player.faction, s.player.fame)} · Stufe ${s.player.level}`);
+    this.persist();
+    return null;
+  }
+
+  /** Talent-Fenster öffnen (Taste N): das Spiel ruht, wie im Pausenmenü */
+  openTalents() {
+    if (!this.save || !this.state.is('play')) return;
+    this.state.set('pause');
+    this.persist();
+    this.menus.showTalents(() => this.resume());
+  }
+
+  /** Baum, mit dem das Talent-Fenster öffnet: der des laufenden Stils (Faji-Wirken: der erste Waffenbaum) */
+  talentStartTree(): TalentTreeId {
+    const st = this.save ? this.currentAction(this.save) : 'zweihaender';
+    return isCombatTree(st) ? st : 'zweihaender';
+  }
+
+  /** Daten für das Talent-Fenster */
+  talentView(): TalentView | null {
+    const s = this.save;
+    if (!s) return null;
+    return { t: this.talentSave(), w: this.talentWorld(), xp: s.player.xp, xpNeed: xpNeedAt(s.player.level), gold: s.player.gold };
+  }
+
+  /** Einen Rang lernen; Rückgabe: Meldung (Fehler oder Erfolg) */
+  talentLearn(id: string): string | null {
+    const r = learn(this.talentSave(), this.talentWorld(), id);
+    if (!r.ok) return r.reason;
+    this.talentsChanged(r.seals);
+    audio.play('level', 0.7);
+    const n = NODE_BY_ID[id];
+    return `${n?.name ?? 'Talent'}: Rang ${this.talentSave().nodes[id]}/${n?.max ?? 1}${r.seals ? ` · ${r.seals} Kaiser-Siegel gebunden` : ''}`;
+  }
+
+  /** Ultimate-Evolution aus- oder abrüsten */
+  talentEquipEvo(id: string): string | null {
+    const t = this.talentSave();
+    const on = !(t.evo[NODE_BY_ID[id]?.tree ?? ''] ?? []).includes(id);
+    const m = equipEvo(t, id, on);
+    if (m) return m;
+    this.talentsChanged();
+    return on ? 'Evolution ausgerüstet.' : 'Evolution abgelegt.';
+  }
+
+  /** Ultimate des Sturm-Erwachens: Stil oder Himmelssturz */
+  talentChooseUlt(u: 'stil' | 'kosmos'): string | null {
+    const m = chooseUltimate(this.talentSave(), u);
+    if (m) return m;
+    this.talentsChanged();
+    return u === 'kosmos' ? 'Himmelssturz ausgerüstet: dein Ultimate im Sturm-Erwachen.' : 'Wieder das Ultimate des Stils.';
+  }
+
+  /** Zurücksetzen (Gold und Kaiser-Siegel zahlen); Rückgabe: Fehlermeldung oder null */
+  talentRespec(scope: RespecScope): string | null {
+    const s = this.save;
+    if (!s) return 'Kein Spielstand.';
+    const t = this.talentSave();
+    const c = respecCost(t, s.player.level, scope);
+    if (c.points <= 0) return 'Hier ist nichts zurückzusetzen.';
+    if (s.player.gold < c.gold) return `Dafür fehlen ${fmtInt(c.gold - s.player.gold)} Gold.`;
+    const u = (s.progress.unlocks ??= emptyUnlocks());
+    if ((u.kaiserSeals ?? 0) < c.seals) return `${c.seals} Kaiser-Siegel nötig.`;
+    s.player.gold -= c.gold;
+    u.kaiserSeals = Math.max(0, (u.kaiserSeals ?? 0) - c.seals);
+    respec(t, scope);
+    this.talentsChanged();
+    audio.play('coin');
+    return null;
+  }
+
+  /** Nach einer Änderung im Talent-Fenster: Werte übernehmen, Kaiser-Siegel abziehen, speichern */
+  talentsChanged(sealsUsed = 0) {
+    const s = this.save;
+    if (!s) return;
+    if (sealsUsed > 0) { const u = (s.progress.unlocks ??= emptyUnlocks()); u.kaiserSeals = Math.max(0, (u.kaiserSeals ?? 0) - sealsUsed); }
+    this.applyPower();
+    this.persist();
+  }
+
   // ---------- Charakter-Editor ----------
 
   /** Editor öffnen: für ein neues Spiel (slot) oder um das Aussehen zu ändern */
@@ -4573,6 +4758,8 @@ export class Game {
     if (this.assets) this.world.setCharacters(this.assets, this.displayLook(data), this.activeStyle(data), this.overlay);
     data.player.faji = cleanFaji(data.player.faji);
     this.world.setActionStyle(this.currentAction(data));
+    data.talents ??= emptyTalents();
+    this.applyTalents(data);
     this.syncFajiForm(data);
     this.world.playerFoot?.setAura(data.player.faji.aura as AuraId);
     this.world.setSkills(data.skills, p.level);
