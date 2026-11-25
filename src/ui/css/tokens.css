@@ -118,6 +118,8 @@
   --z-impact: 3;
   --z-hud: 4;
   --z-fade: 5;
+  /* schräges Ultimate-Banner: über dem HUD (Auftragsfenster), unter den Menüs */
+  --z-cutin: 5;
   --z-screen: 6;
   --z-npc: 9;
   --z-overlay: 25;

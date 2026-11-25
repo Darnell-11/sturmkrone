@@ -35,7 +35,8 @@ export const ULTIMATES: Partial<Record<ActionStyleId, ActionMove>> = {
     [{ shape: 'line', range: 150, width: 180, grow: true, at: [0.25, 0.75], dmg: 7, poise: 220, knock: 16, launch: 7, fling: 20, hitstop: 0.12, shake: 1.2, vfx: 'klinge' }]),
 
   saebel: ult('saebel.u', 'Souverän-Orkan: Sieben-Meere-Zäsur', 'Melee_1H_Attack_Jump_Chop', 2.2,
-    { kind: 'sevenSeas', strikeAt: 0.95, reach: 46, width: 34, center: 20, shot: 'sky', color: '#FFD27A', accent: '#B04AFF', frames: 3 },
+    // 4.6D: Akzent golden-rot statt violett (aus großer Höhe überstrahlte das Violett das ganze Bild); Violett bleibt nur im dunklen Mantel
+    { kind: 'sevenSeas', strikeAt: 0.95, reach: 46, width: 34, center: 20, shot: 'sky', color: '#FFD27A', accent: '#FF3A2A', frames: 3 },
     [
       ...ticks(5, 0.3, 0.6, { shape: 'circle', offset: 14, range: 10, dmg: 0.55, poise: 30, knock: 6, status: 'shock', statusDur: 1.5, vfx: 'blitz' }),
       ...ticks(3, 0.62, 0.86, { shape: 'circle', offset: 20, range: 16, dmg: 1.4, poise: 60, knock: 14, fling: 16, launch: 5, vfx: 'kanone' }, { hitstop: 0.12, shake: 1.1 }),

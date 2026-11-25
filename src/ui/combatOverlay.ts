@@ -62,6 +62,7 @@ export class CombatOverlay {
   numbers = true;
   private banner: HTMLElement;
   private cutin: HTMLElement;
+  private cutinLayer: HTMLElement;
   private victoryEl: HTMLElement;
   private lootEl: HTMLElement;
   private lootTimer = 0;
@@ -103,11 +104,17 @@ export class CombatOverlay {
     this.bossBrk = this.boss.querySelector('.boss-break i')!;
     this.banner = this.root.querySelector('.cbt-banner')!;
     this.cutin = this.root.querySelector('.cbt-cutin')!;
+    // 4.6D: das schräge Ultimate-Banner liegt in einer eigenen Schicht ÜBER dem HUD (vorher verdeckte das Auftragsfenster lange Titel)
+    this.cutinLayer = document.createElement('div');
+    this.cutinLayer.className = 'cbt-cutin-layer';
+    this.cutinLayer.setAttribute('aria-hidden', 'true');
+    this.cutinLayer.appendChild(this.cutin);
+    parent.appendChild(this.cutinLayer);
     this.victoryEl = this.root.querySelector('.cbt-victory')!;
     this.lootEl = this.root.querySelector('.cbt-loot')!;
   }
 
-  setVisible(v: boolean) { this.root.hidden = !v; if (!v) this.boss.hidden = true; }
+  setVisible(v: boolean) { this.root.hidden = !v; this.cutinLayer.hidden = !v; if (!v) this.boss.hidden = true; }
 
   /** Schwebende Zahl oder kurzer Text an einer Weltposition */
   number(pos: Vector3, value: number | string, style: NumberStyle = 'hit') {
@@ -247,6 +254,8 @@ export class CombatOverlay {
   showCutin(text: string, color = '#E3B04B') {
     audio.play('cutin');
     this.cutin.style.setProperty('--cc', color);
+    // Schriftgröße folgt der Titellänge (clamp in hud.css): auch „7. Form: Blutmond-Finsternis“ passt ganz ins Bild
+    this.cutin.style.setProperty('--len', String(Math.max(8, text.length)));
     this.cutin.querySelector('b')!.innerHTML = esc(text);
     this.cutin.classList.remove('show');
     void this.cutin.offsetWidth;

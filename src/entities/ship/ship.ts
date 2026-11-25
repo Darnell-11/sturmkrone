@@ -1,5 +1,6 @@
 import { updateClothFlag } from '../../render/flagCloth';
-import { CircleGeometry, Color, Euler, MathUtils, Mesh, MeshBasicMaterial, Vector3, type Object3D, type Points, type Scene, type Sprite } from 'three';
+import { CircleGeometry, Color, Euler, MathUtils, Mesh, MeshBasicMaterial, Vector3, type Material, type Object3D, type Points, type Scene, type Sprite } from 'three';
+import { cloneToon } from '../../render/toon';
 import { RAM, hullArmorOf, mitigation, penTierOf } from '../../data/balanceConfig';
 import { RAM_AMMO } from '../../naval/ramming';
 import { visualKey } from '../../data/shipVisuals';
@@ -148,6 +149,11 @@ export class Ship {
   crashed = false;
   private fall = 0;
   private fallPlan: { up: Object3D; py: number; pz: number; roll: number; pitch: number }[] = [];
+  /** Masten abgesprengt (4.6D, Sturz ohne Enterphase) */
+  private blown = false;
+  /** Verkohlung 0 … 1 (Deck und Rumpf dunkler, 4.6D) und die eigene Rumpf-Materialkopie dafür */
+  charK = 0;
+  private charMat: (Material & { color: Color }) | null = null;
   /** Wellenberuhigung 0 … 1 (Anlegen, Heranziehen beim Entern): Nicken, Rollen und Auf und Ab klingen ab; `calmTo` ist das Ziel */
   calm = 0;
   calmTo = 0;
@@ -394,13 +400,45 @@ export class Ship {
    * In zwei Hälften zerteilen (nur über `NavalSystem.cataclysmSplit`, das Regeln, Beute und Untergang übernimmt): baut die Hälften aus dem
    * Modell (gleiche Materialien), setzt das Schiff in Brand und blendet die Takelage aus. Liefert false, wenn es schon zerteilt ist.
    */
-  splitApart(cut: Exclude<ShipCut, ''>, seed = 1, lift = 0): boolean {
+  splitApart(cut: Exclude<ShipCut, ''>, seed = 1, lift = 0, sections = 2): boolean {
     if (this.split || this.disposed) return false;
     if (cut !== 'sink' && cut !== 'capsize') this.model.rigging.visible = false;
-    this.fallPlan = [];
-    this.split = splitShipModel(this.model.group, cut, this.cls.L, this.cls.W, this.model.deckY, seed, lift);
+    if (!this.blown) this.fallPlan = [];
+    this.split = splitShipModel(this.model.group, cut, this.cls.L, this.cls.W, this.model.deckY, seed, lift, sections);
     this.fire = 1e9;
     return true;
+  }
+
+  /** Masten abgesprengt (Säbel-Sperrfeuer, Blitzsäule, Klingen-Zyklon; 4.6D): bis zu `n` Masten stürzen, die Takelage fällt weg */
+  blowMasts(n = 2) {
+    if (this.blown || this.disposed) return;
+    const masts = this.model.masts;
+    if (!masts.length) return;
+    this.blown = true;
+    const idx = masts.map((_, i) => i).sort(() => Math.random() - 0.5).slice(0, Math.min(masts.length, n));
+    this.fallPlan = idx.map((i, k) => ({ up: masts[i].up, py: masts[i].pivotY, pz: masts[i].z, roll: (k % 2 ? -1 : 1) * (Math.random() < 0.5 ? -1 : 1) * (1.1 + Math.random() * 0.5), pitch: (Math.random() - 0.5) * 0.9 }));
+    this.model.rigging.visible = false;
+    this.fall = 0;
+    this.sim.sail.hp = 0;
+    this.updateSailDamage();
+  }
+
+  /**
+   * Verkohlen (Feuerdrache, Blitzsäule; 4.6D): Deck und Rumpf dunkeln ab, `glow` lässt die Wrackteile rot glühen (Sonnen-Schneise).
+   * Der Rumpf bekommt dafür einmalig eine eigene Kopie seines Materials (gleiches Programm), sonst färbten sich alle Schiffe mit.
+   */
+  char(k: number, glow = 0) {
+    this.charK = Math.max(this.charK, Math.min(1, k));
+    const hull = this.model.hull;
+    if (!hull || this.disposed) return;
+    if (!this.charMat) {
+      const src = hull.material as unknown as Material;
+      this.charMat = cloneToon(src) as unknown as Material & { color: Color; emissive?: Color };
+      hull.material = this.charMat as unknown as Mesh['material'];
+    }
+    const m = this.charMat as unknown as { color: Color; emissive?: Color };
+    m.color.setRGB(1, 1, 1).multiplyScalar(1 - 0.78 * this.charK);
+    if (glow > 0 && m.emissive) m.emissive.setRGB(0.9 * glow, 0.28 * glow, 0.05 * glow);
   }
 
   /** Löcher in den Rumpf schlagen (Sturmfaust, Blutmond: durchlöchert, 4.6C); höchstens 24 je Schiff wie bei Kanonentreffern */
@@ -435,7 +473,7 @@ export class Ship {
 
   /** Maststurz je Bild: die oberen Teile kippen beschleunigt um (Drehpunkt an der Bruchstelle) und schlagen auf */
   private stepFall(frameDt: number) {
-    if (!this.disabled || this.fall >= 1 || !this.fallPlan.length) return;
+    if ((!this.disabled && !this.blown) || this.fall >= 1 || !this.fallPlan.length) return;
     this.fall = Math.min(1, this.fall + frameDt / 1.5);
     const e = this.fall * this.fall;
     for (const f of this.fallPlan) {
@@ -616,7 +654,7 @@ export class Ship {
     this.spray = clamp01(this.spray + frameDt * (Math.min(1, this.speed / 12) * (0.1 + env.windStrength * 0.7) - 0.06));
     const wet = Math.max(this.spray, wetShared.uWet.value * 0.9);
     const dm = this.model.deckMat as unknown as { color: Color };
-    dm.color.copy(this.model.deckBase).multiplyScalar(1 - 0.4 * wet);
+    dm.color.copy(this.model.deckBase).multiplyScalar((1 - 0.4 * wet) * (1 - 0.75 * this.charK));
     // Laternen: warmes Punktlicht bei Dämmerung und Nacht, leicht flackernd
     for (let i = 0; i < this.model.lights.length; i++) {
       const l = this.model.lights[i];

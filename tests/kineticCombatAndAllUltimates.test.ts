@@ -325,18 +325,22 @@ describe('Prozeduraler Anime-Klang (Web Audio)', () => {
 // ---------------------------------------------------------------------------------------------------------------
 
 interface FakeShip {
-  ship: { x: number; z: number; heading: number; cls: { L: number; W: number }; model: { deckY: number }; sinking: number; maxHull: number; hull: number; fire: number; frozen: number; shoveX: number; shoveZ: number; holes: number; punchHoles(n: number): void };
+  ship: {
+    x: number; z: number; heading: number; cls: { L: number; W: number }; model: { deckY: number }; sinking: number; maxHull: number; hull: number; fire: number; frozen: number;
+    shoveX: number; shoveZ: number; holes: number; masts: number; charK: number; glow: number;
+    punchHoles(n: number): void; blowMasts(n?: number): void; char(k: number, glow?: number): void;
+  };
 }
 
 /** Regie mit echtem Effekt-Pool und Attrappen für Meer, Himmel und Seesystem */
 function directorRig() {
   const fx = new CataclysmFx(new Scene());
   const ships: FakeShip[] = [];
-  const rec = { splits: [] as string[], lifts: [] as number[], hits: 0, pulls: 0, blasts: 0, trench: 0, lightning: 0, cracks: 0, impacts: 0, dark: 0, sounds: [] as string[] };
+  const rec = { splits: [] as string[], lifts: [] as number[], sections: [] as number[], hits: 0, pulls: 0, blasts: 0, trench: 0, lightning: 0, cracks: 0, impacts: 0, dark: 0, sounds: [] as string[] };
   const nav = {
     cataclysmShips(x: number, z: number, r: number, out: FakeShip[]) { out.length = 0; for (const e of ships) if (e.ship.sinking <= 0 && Math.hypot(e.ship.x - x, e.ship.z - z) - e.ship.cls.L * 0.5 <= r) out.push(e); return out.length; },
     cataclysmFriendly() { return false; },
-    cataclysmSplit(e: FakeShip, cut: string, _seed: number, lift = 0) { rec.splits.push(cut); rec.lifts.push(lift); e.ship.sinking = 0.01; return 'split'; },
+    cataclysmSplit(e: FakeShip, cut: string, _seed: number, lift = 0, sections = 2) { rec.splits.push(cut); rec.lifts.push(lift); rec.sections.push(sections); e.ship.sinking = 0.01; return 'split'; },
     cataclysmHit(_e: FakeShip, dmg: number) { rec.hits++; return dmg; },
     cataclysmPull(e: FakeShip, cx: number, cz: number, step: number) { rec.pulls++; const dx = cx - e.ship.x, dz = cz - e.ship.z, d = Math.hypot(dx, dz); if (d > 0.5) { e.ship.x += (dx / d) * Math.min(step, d - 0.5); e.ship.z += (dz / d) * Math.min(step, d - 0.5); } },
     cataclysmBlast() { rec.blasts++; return true; },
@@ -350,7 +354,10 @@ function directorRig() {
     sound: (n) => { rec.sounds.push(n); }, impactFrames: (n) => { rec.impacts += n; }, darken: (k) => { rec.dark = Math.max(rec.dark, k); },
   };
   const ship = (x: number, z: number, heading = Math.PI / 2): FakeShip => {
-    const e: FakeShip = { ship: { x, z, heading, cls: { L: 30, W: 7 }, model: { deckY: 2.5 }, sinking: 0, maxHull: 1000, hull: 1000, fire: 0, frozen: 0, shoveX: 0, shoveZ: 0, holes: 0, punchHoles(n: number) { this.holes += n; } } };
+    const e: FakeShip = { ship: {
+      x, z, heading, cls: { L: 30, W: 7 }, model: { deckY: 2.5 }, sinking: 0, maxHull: 1000, hull: 1000, fire: 0, frozen: 0, shoveX: 0, shoveZ: 0, holes: 0, masts: 0, charK: 0, glow: 0,
+      punchHoles(n: number) { this.holes += n; }, blowMasts(n = 2) { this.masts += n; }, char(k: number, glow = 0) { this.charK = Math.max(this.charK, k); this.glow = Math.max(this.glow, glow); },
+    } };
     ships.push(e);
     return e;
   };

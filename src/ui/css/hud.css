@@ -545,7 +545,10 @@
 .cbt-cutin { position: absolute; left: -10%; right: -10%; top: 38%; height: 5.2rem; display: grid; place-items: center; transform: skewY(-4deg) scaleX(0); background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--cc) 78%, #000) 18%, color-mix(in srgb, var(--cc) 78%, #000) 82%, transparent); }
 .cbt-cutin::before, .cbt-cutin::after { content: ''; position: absolute; left: 12%; right: 12%; height: 2px; background: linear-gradient(90deg, transparent, var(--brass-200), transparent); }
 .cbt-cutin::before { top: 6px; } .cbt-cutin::after { bottom: 6px; }
-.cbt-cutin b { font: 400 clamp(1.8rem, 9vw, 3.2rem) var(--font-serif); letter-spacing: 0.06em; color: #fff; text-shadow: 0 3px 0 #000; }
+/* 4.6D: eigene Schicht über dem HUD; die Schrift skaliert mit der Titellänge (--len Zeichen), damit lange Titel ganz ins Bild passen */
+.cbt-cutin-layer { position: fixed; inset: 0; z-index: var(--z-cutin); overflow: hidden; pointer-events: none !important; }
+.cbt-cutin-layer * { pointer-events: none; }
+.cbt-cutin b { font: 400 clamp(0.8rem, calc(88vw / (var(--len, 20) * 0.66)), 3.2rem) var(--font-serif); letter-spacing: 0.06em; color: #fff; text-shadow: 0 3px 0 #000; white-space: nowrap; }
 .cbt-cutin.show { animation: cut 1.1s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
 @keyframes cut { 0% { transform: skewY(-4deg) scaleX(0); } 18% { transform: skewY(-4deg) scaleX(1); } 80% { transform: skewY(-4deg) scaleX(1); opacity: 1; } 100% { transform: skewY(-4deg) scaleX(1.1); opacity: 0; } }
 .cbt-victory { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; opacity: 0; pointer-events: none; }

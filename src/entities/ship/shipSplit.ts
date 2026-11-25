@@ -31,8 +31,12 @@ export interface ShipSplit {
   partsB: number;
   /** in Dreiecken zerlegte Netze (Prüfungen) */
   sliced: number;
-  /** Anhub (m) vor dem Kentern: eine Flutwelle hebt das Schiff (4.6C) */
+  /** Anhub (m): eine Flutwelle hebt das Schiff vor dem Kentern (4.6C), eine Gletschersäule spießt es auf und hebt es an (4.6D) */
   lift: number;
+  /** Zahl der Sektionen (2 = Hälften; 3 – 4: jede Hälfte zerfällt noch einmal, 4.6D) */
+  sections: number;
+  /** Untergruppen der weiteren Sektionen: driften entlang der zweiten Schnittebene auseinander und sinken versetzt */
+  subs: { g: Group; dx: number; dz: number; sink: number; rot: number }[];
 }
 
 const _inv = new Matrix4();
@@ -55,8 +59,8 @@ export function cutPlane(cut: Exclude<ShipCut, ''>): { nx: number; ny: number; n
   }
 }
 
-/** Seite eines Punkts (Schiffsraum) zur Ebene durch den Ursprung bei Höhe y0 */
-const sideOf = (x: number, y: number, z: number, nx: number, ny: number, nz: number, y0: number) => nx * x + ny * (y - y0) + nz * z;
+/** Seite eines Punkts (Schiffsraum) zur Ebene durch (0, y0, 0) mit Versatz `off` entlang der Normalen */
+const sideOf = (x: number, y: number, z: number, nx: number, ny: number, nz: number, y0: number, off = 0) => nx * x + ny * (y - y0) + nz * z - off;
 
 function hasOutlineChild(m: Object3D): ShaderMaterial | null {
   for (const c of m.children) {
@@ -90,7 +94,7 @@ function outlineLike(src: Mesh, twin: Mesh) {
  * Geometrie in zwei Index-Puffer zerlegen (Dreiecke nach ihrem Schwerpunkt, im Schiffsraum über `rel`). Liefert null, wenn alles auf einer
  * Seite liegt oder die Geometrie nicht zerlegt werden kann (Morph-Ziele).
  */
-function sliceGeometry(g: BufferGeometry, rel: Matrix4, nx: number, ny: number, nz: number, y0: number): [BufferGeometry, BufferGeometry] | null {
+function sliceGeometry(g: BufferGeometry, rel: Matrix4, nx: number, ny: number, nz: number, y0: number, off = 0): [BufferGeometry, BufferGeometry] | null {
   const pos = g.getAttribute('position');
   // Gruppen zählen nur bei mehreren Materialien (der Aufrufer schließt die aus); die Hälften brauchen keine
   if (!pos || Object.keys(g.morphAttributes).length) return null;
@@ -111,7 +115,7 @@ function sliceGeometry(g: BufferGeometry, rel: Matrix4, nx: number, ny: number, 
     const x = e[0] * px + e[4] * py + e[8] * pz + e[12];
     const y = e[1] * px + e[5] * py + e[9] * pz + e[13];
     const z = e[2] * px + e[6] * py + e[10] * pz + e[14];
-    if (sideOf(x, y, z, nx, ny, nz, y0) >= 0) { A[na++] = i0; A[na++] = i1; A[na++] = i2; }
+    if (sideOf(x, y, z, nx, ny, nz, y0, off) >= 0) { A[na++] = i0; A[na++] = i1; A[na++] = i2; }
     else { B[nb++] = i0; B[nb++] = i1; B[nb++] = i2; }
   }
   if (!na || !nb) return null;
@@ -127,14 +131,14 @@ function sliceGeometry(g: BufferGeometry, rel: Matrix4, nx: number, ny: number, 
 }
 
 /** Instanz-Netz nach den Lagen seiner Instanzen aufteilen: A behält seine, B bekommt ein neues Netz (gleiche Geometrie, gleiches Material) */
-function sliceInstanced(m: InstancedMesh, rel: Matrix4, nx: number, ny: number, nz: number, y0: number): InstancedMesh | null {
+function sliceInstanced(m: InstancedMesh, rel: Matrix4, nx: number, ny: number, nz: number, y0: number, off = 0): InstancedMesh | null {
   const n = m.count;
   if (n < 2) return null;
   const keep: number[] = [], move: number[] = [];
   for (let i = 0; i < n; i++) {
     m.getMatrixAt(i, _m);
     _v.setFromMatrixPosition(_m).applyMatrix4(rel);
-    (sideOf(_v.x, _v.y, _v.z, nx, ny, nz, y0) >= 0 ? keep : move).push(i);
+    (sideOf(_v.x, _v.y, _v.z, nx, ny, nz, y0, off) >= 0 ? keep : move).push(i);
   }
   if (!keep.length || !move.length) return null;
   const twin = new InstancedMesh(m.geometry, m.material, move.length);
@@ -165,15 +169,13 @@ const _cTmp = new Color();
  * Modell zerteilen. `root` = Modellgruppe des Schiffs (Ursprung = Schiffsmitte auf Wasserhöhe), `L`/`W` = Maße, `seed` für den Drehsinn.
  * Gibt den Zustand zurück; die Hälften hängen danach als zwei Gruppen in `root` (alles bleibt im selben Baum, nichts wird abgehängt).
  */
-export function splitShipModel(root: Group, cut: Exclude<ShipCut, ''>, L: number, W: number, deckY: number, seed = 1, lift = 0): ShipSplit {
+export function splitShipModel(root: Group, cut: Exclude<ShipCut, ''>, L: number, W: number, deckY: number, seed = 1, lift = 0, sections = 2): ShipSplit {
   const { nx, ny, nz } = cutPlane(cut);
   // diagonale Schnitte gehen durch die Mitte des Rumpfs (halbe Deckshöhe), die anderen durch die Schiffsmitte
   const y0 = cut === 'diagonal' ? deckY * 0.5 : 0;
-  root.updateMatrixWorld(true);
-  _inv.copy(root.matrixWorld).invert();
   const a = new Group(); a.name = 'split-a';
   const b = new Group(); b.name = 'split-b';
-  const st: ShipSplit = { cut, t: 0, a, b, L, W, deckY, nx, ny, nz, spin: seed % 2 ? 1 : -1, partsA: 0, partsB: 0, sliced: 0, lift };
+  const st: ShipSplit = { cut, t: 0, a, b, L, W, deckY, nx, ny, nz, spin: seed % 2 ? 1 : -1, partsA: 0, partsB: 0, sliced: 0, lift, sections: 2, subs: [] };
   if (cut === 'capsize' || cut === 'sink') {
     // ganz: alle Teile in Gruppe A (Drehpunkt), nichts wird zerlegt
     const all = root.children.slice();
@@ -182,10 +184,41 @@ export function splitShipModel(root: Group, cut: Exclude<ShipCut, ''>, L: number
     for (const o of all) { a.attach(o); st.partsA++; }
     return st;
   }
+  const n = partition(root, nx, ny, nz, y0, 0, a, b, st);
+  st.partsA = n[0]; st.partsB = n[1];
+  // weitere Sektionen (4.6D): jede Hälfte zerfällt entlang einer zweiten Ebene (der Länge nach geschnittene Schiffe quer, quer
+  // geschnittene der Länge nach); die Teile driften auseinander und sinken versetzt
+  if (sections >= 3) {
+    const along = cut === 'length';
+    const sx = along ? 0 : 1, sz = along ? 1 : 0;
+    let s = seed;
+    const rnd = () => { s = (s * 16807 + 11) % 2147483647; return s / 2147483647; };
+    const halves = sections >= 4 ? [a, b] : [rnd() < 0.5 ? a : b];
+    for (const h of halves) {
+      const off = along ? (rnd() - 0.5) * L * 0.3 : (rnd() - 0.5) * W * 0.25;
+      const h1 = new Group(); h1.name = `${h.name}-1`;
+      const h2 = new Group(); h2.name = `${h.name}-2`;
+      partition(h, sx, 0, sz, 0, off, h1, h2, st);
+      const sp = 0.8 + rnd() * 0.5;
+      st.subs.push({ g: h1, dx: sx * sp, dz: sz * sp, sink: 0.4 + rnd() * 0.5, rot: (rnd() - 0.5) * 2 });
+      st.subs.push({ g: h2, dx: -sx * sp, dz: -sz * sp, sink: 0.2 + rnd() * 0.5, rot: (rnd() - 0.5) * 2 });
+      st.sections++;
+    }
+  }
+  return st;
+}
+
+/**
+ * Teile von `root` entlang der Ebene (nx, ny, nz) durch (0, y0, 0) mit Versatz `off` in die Gruppen `a` (vorn/oben/Backbord) und `b`
+ * zerlegen; große Netze Dreieck für Dreieck, Instanz-Netze nach Instanzen, kleine Teile ganz. Liefert die Zahl der Teile je Seite.
+ */
+function partition(root: Group, nx: number, ny: number, nz: number, y0: number, off: number, a: Group, b: Group, st: ShipSplit): [number, number] {
+  root.updateMatrixWorld(true);
+  _inv.copy(root.matrixWorld).invert();
   const moves: { o: Object3D; to: Group }[] = [];
   const twins: { m: Mesh; to: Group; src: Mesh; world: Matrix4 }[] = [];
-
-  const place = (o: Object3D, to: Group) => { moves.push({ o, to }); if (to === a) st.partsA++; else st.partsB++; };
+  let pa = 0, pb = 0;
+  const place = (o: Object3D, to: Group) => { moves.push({ o, to }); if (to === a) pa++; else pb++; };
 
   const visit = (o: Object3D) => {
     for (const c of [...o.children]) {
@@ -197,7 +230,7 @@ export function splitShipModel(root: Group, cut: Exclude<ShipCut, ''>, L: number
       if (mesh.isMesh) {
         _rel.multiplyMatrices(_inv, mesh.matrixWorld);
         if ((mesh as InstancedMesh).isInstancedMesh) {
-          const twin = sliceInstanced(mesh as InstancedMesh, _rel, nx, ny, nz, y0);
+          const twin = sliceInstanced(mesh as InstancedMesh, _rel, nx, ny, nz, y0, off);
           if (twin) { twins.push({ m: twin, to: b, src: mesh, world: mesh.matrixWorld.clone() }); place(mesh, a); st.sliced++; continue; }
           placeWhole(c);
           continue;
@@ -207,10 +240,10 @@ export function splitShipModel(root: Group, cut: Exclude<ShipCut, ''>, L: number
         _box.copy(g.boundingBox!).applyMatrix4(_rel);
         _box.getCenter(_c); _box.getSize(_s);
         const ext = Math.abs(nx) * _s.x + Math.abs(ny) * _s.y + Math.abs(nz) * _s.z;
-        const d = sideOf(_c.x, _c.y, _c.z, nx, ny, nz, y0);
+        const d = sideOf(_c.x, _c.y, _c.z, nx, ny, nz, y0, off);
         // nur Netze, die der Schnitt wirklich durchquert, Dreieck für Dreieck; alles andere wandert ganz
         if (Math.abs(d) < ext * 0.42 && !Array.isArray(mesh.material)) {
-          const halves = sliceGeometry(g, _rel, nx, ny, nz, y0);
+          const halves = sliceGeometry(g, _rel, nx, ny, nz, y0, off);
           if (halves) {
             const twin = new Mesh(halves[1], mesh.material);
             twin.castShadow = mesh.castShadow; twin.receiveShadow = mesh.receiveShadow;
@@ -235,7 +268,7 @@ export function splitShipModel(root: Group, cut: Exclude<ShipCut, ''>, L: number
         _box.applyMatrix4(_inv);
         _box.getCenter(_c); _box.getSize(_s);
         const ext = Math.abs(nx) * _s.x + Math.abs(ny) * _s.y + Math.abs(nz) * _s.z;
-        const d = sideOf(_c.x, _c.y, _c.z, nx, ny, nz, y0);
+        const d = sideOf(_c.x, _c.y, _c.z, nx, ny, nz, y0, off);
         if (Math.abs(d) < ext * 0.42 && !hasSkinned(c)) { visit(c); continue; }
         place(c, d >= 0 ? a : b);
         continue;
@@ -246,7 +279,7 @@ export function splitShipModel(root: Group, cut: Exclude<ShipCut, ''>, L: number
   // Kinder eines Netzes wandern mit ihm (Konturen, Anbauten)
   const placeWhole = (c: Object3D) => {
     c.getWorldPosition(_v).applyMatrix4(_inv);
-    place(c, sideOf(_v.x, _v.y, _v.z, nx, ny, nz, y0) >= 0 ? a : b);
+    place(c, sideOf(_v.x, _v.y, _v.z, nx, ny, nz, y0, off) >= 0 ? a : b);
   };
 
   visit(root);
@@ -261,9 +294,9 @@ export function splitShipModel(root: Group, cut: Exclude<ShipCut, ''>, L: number
     _rel.copy(to.matrixWorld).invert().multiply(world);
     _rel.decompose(m.position, m.quaternion, m.scale);
     outlineLike(src, m);
-    st.partsB++;
+    pb++;
   }
-  return st;
+  return [pa, pb];
 }
 
 function hasSkinned(o: Object3D): boolean {
@@ -288,7 +321,9 @@ export function updateShipSplit(st: ShipSplit, dt: number) {
     case 'radial': {
       // Drehpunkt an der Bruchstelle über dem Kiel; Bug (A) dreht nose-up, Heck (B) ebenso nach oben
       const th = Math.min(0.95, 0.06 + t * 0.32 + t * t * 0.05) * smooth(t / 0.4);
-      const gap = Math.min(st.L * 0.16, t * 1.6);
+      // radial: nach dem Zusammenquetschen sprengt der Kollaps die Hälften nach außen (4.6D)
+      const blast = st.cut === 'radial' && t > 1.2 ? (t - 1.2) * (t - 1.2) * 9 : 0;
+      const gap = Math.min(st.L * 0.16, t * 1.6) + blast;
       rotX(a, -th, ky, gap);
       rotX(b, th, ky, -gap);
       if (st.cut === 'radial') {
@@ -297,6 +332,8 @@ export function updateShipSplit(st: ShipSplit, dt: number) {
         const k = Math.max(0.15, 1 - t * 0.16);
         a.scale.setScalar(k); b.scale.setScalar(k);
       }
+      // Gletschersäule / Tornado (4.6D): das Schiff wird erst angehoben und bricht oben auseinander
+      if (st.lift > 0) { const up = st.lift * Math.sin(Math.min(1, t / 1.6) * Math.PI); a.position.y += up; b.position.y += up; }
       break;
     }
     case 'length': {
@@ -327,6 +364,14 @@ export function updateShipSplit(st: ShipSplit, dt: number) {
       a.rotation.set(Math.min(0.6, t * 0.18) * st.spin, 0, Math.min(0.4, t * 0.1) * st.spin);
       b.rotation.set(0, 0, 0);
       break;
+    }
+  }
+  // weitere Sektionen: driften entlang der zweiten Ebene auseinander, kippen und sinken versetzt
+  if (st.subs.length) {
+    const gap = Math.min(Math.max(st.L, st.W) * 0.22, t * 1.1);
+    for (const s of st.subs) {
+      s.g.position.set(s.dx * gap, -s.sink * t * t * 0.35, s.dz * gap);
+      s.g.rotation.set(s.rot * Math.min(0.5, t * 0.12), 0, s.rot * Math.min(0.7, t * 0.16));
     }
   }
 }

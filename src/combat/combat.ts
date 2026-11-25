@@ -739,6 +739,12 @@ export class CombatSystem implements EnemyWorld {
    * Rüstungskurve mit der Waffenstufe (+ Durchschlag des Angriffs und des Stils), Break-Bonus und die Anti-One-Shot-Grenzen der Endbosse
    * (`Enemy.takeHit`). Verbände nehmen Flächenschaden mit Schwung-Bonus und werden weggeschleudert. true = der Treffer saß.
    */
+  /**
+   * 4.6D: Darstellung jedes Treffers der Spielfigur (Funken in Schlagrichtung, Staub bzw. Gischt, Spirale beim Hochschleudern);
+   * setzt die Seewelt (Effekt-Schmiede). Ort = Trefferpunkt, Richtung = Schlagrichtung.
+   */
+  vfxHit?: (x: number, y: number, z: number, dirX: number, dirZ: number, color: string, element: string, heavy: boolean, crit: boolean, launch: number) => void;
+
   actionHit(t: ActionTarget, h: ActionHit, m: ActionMove, c: HitContext, dmgMult: number): number {
     const obj = this.actRefs[t.ref];
     if (!obj) return 0;
@@ -757,6 +763,7 @@ export class CombatSystem implements EnemyWorld {
       obj.wobble = Math.min(1.5, obj.wobble + 0.6);
       HIT_P.set(obj.x - c.dirX * 0.3, obj.group.position.y + 1.4, obj.z - c.dirZ * 0.3);
       this.fx.hit(HIT_P, h.fx, color, crit || heavy);
+      this.vfxHit?.(HIT_P.x, HIT_P.y, HIT_P.z, c.dirX, c.dirZ, color, h.vfx || st.element, heavy, crit, 0);
       this.overlay.number(HIT_P, dmg, crit ? 'crit' : 'hit');
       this.overlay.addCombo();
       this.hooks.impact(c.dirX, c.dirZ, crit || heavy ? 1 : 0.6);
@@ -773,6 +780,7 @@ export class CombatSystem implements EnemyWorld {
       if (h.fling > 0) q.fling(c.dirX, c.dirZ, h.fling);
       HIT_P.set(q.x - c.dirX * 0.8, q.y + 1.2, q.z - c.dirZ * 0.8);
       this.fx.hit(HIT_P, h.fx, color, crit || heavy);
+      this.vfxHit?.(HIT_P.x, HIT_P.y, HIT_P.z, c.dirX, c.dirZ, color, h.vfx || st.element, heavy, crit, h.launch);
       HIT_P.y += 0.5;
       this.overlay.number(HIT_P, q.heads < before ? `${dmg} (−${before - q.heads})` : dmg, crit ? 'crit' : 'hit');
       this.overlay.addCombo();
@@ -799,6 +807,10 @@ export class CombatSystem implements EnemyWorld {
     if (c.clash) { info.dmg = Math.round(info.dmg * 0.5); info.poise = h.poise * c.postureK * ACTION_TUNING.clashPosture + 20; info.knock *= 0.6; }
     const res = e.takeHit(info, this.now, this);
     if (c.clash) this.clashFx(e, res, c);
+    if (res !== 'blocked' && this.vfxHit) {
+      HIT_P.set(e.x - c.dirX * 0.3, e.y + 1.2 * e.def.scale, e.z - c.dirZ * 0.3);
+      this.vfxHit(HIT_P.x, HIT_P.y, HIT_P.z, c.dirX, c.dirZ, color, h.vfx || st.element, heavy || c.finisher, crit, e.def.boss || e.def.raid ? 0 : h.launch);
+    }
     if (c.ultimate) this.ultLedger.record(hpBefore - e.hp);
     this.enemyFeedback(e, res, dmg, crit, false, heavy, d, c.dirX, c.dirZ, color);
     if (h.status && res !== 'blocked' && res !== 'kill') this.actionStatus(e, h, c, dmg);

@@ -80,6 +80,7 @@ import { WILL } from '../data/fajiArts';
 import type { FighterView } from '../ui/fighterHud';
 import { AnimeImpactRig, type RigPose } from '../graphics/animeImpactRig';
 import { CataclysmFx } from '../combat/cataclysmFx';
+import { AnimeVfxForge } from '../graphics/animeVfxForge';
 import { CataclysmDirector } from './cataclysmDirector';
 import { CUTSCENE } from '../data/cataclysms';
 import type { FighterState } from '../combat/actionCombatEngine';
@@ -357,6 +358,8 @@ export class SeaWorld {
   readonly animeRig = new AnimeImpactRig();
   /** Effekt-Pool und Regie der Kataklysmen (Schiffe zerteilen, Meer spalten, Sog) */
   cataclysmFx!: CataclysmFx;
+  /** 4.6D: Schmiede der 3-Schicht-Effekte (Texturen, Mäntel, Partikel, Oberflächen-Reaktion) auf den Pools von `cataclysmFx` */
+  vfx!: AnimeVfxForge;
   cataclysm!: CataclysmDirector;
   private readonly rigPose: RigPose = { px: 0, py: 0, pz: 0, lx: 0, ly: 0, lz: 0, fov: 40 };
   private readonly rigLook = new Vector3();
@@ -642,6 +645,8 @@ export class SeaWorld {
       this.spray.emit(big ? 14 : 5, x, this.env.heightAt(x, z) + 0.1, z, { speed: big ? 2.5 : 1.5, up: big ? 5 : 3, life: 0.8, color: FOAM_COL, spread: 0.3 });
     };
     this.cataclysmFx = new CataclysmFx(this.scene);
+    this.cataclysmFx.setCamera(this.camera);
+    this.vfx = new AnimeVfxForge(this.cataclysmFx);
     this.cataclysm = this.makeCataclysm();
     // Meereswerte für die Fahrphysik im Titelbild: ohne Sturmschaden an den Segeln (dort reißt nichts), ein Objekt für alle Schritte
     const titleSea: SeaEnv = { heightAt: (x, z) => this.env.heightAt(x, z), windDir: 0, windStrength: 0, storm: 0, time: 0 };
@@ -1251,6 +1256,11 @@ export class SeaWorld {
       });
       this.combat.smoke = this.smoke;
       this.combat.sparks = this.sparks;
+      // 4.6D: jeder Treffer der Figur mit Funken in Schlagrichtung, Staub/Gischt; Hochschleudern mit Energiespirale
+      this.combat.vfxHit = (x, y, z, dx, dz, col, el, heavy, crit, launch) => {
+        this.cataclysm.hitImpact(x, y, z, dx, dz, col, el, heavy, crit);
+        if (launch >= 6) this.cataclysm.launchFx(x, y, z, col);
+      };
       this.combat.onSpawn = (o) => this.warmHook?.(o);
       const home = this.ground.islands[0];
       this.combat.addDummy(home.x + 6, home.z - home.r * 0.55);
@@ -1281,17 +1291,28 @@ export class SeaWorld {
       onChain: (ax, ay, az, bx, by, bz, c) => this.cataclysm.chain(ax, ay, az, bx, by, bz, c),
       onKingWave: (x, y, z, r) => this.cataclysm.kingWave(x, y, z, r),
       // 4.6C: Sturm-Verfolgung, Klingen-Clash, Schwungfenster der Kampfkünste, Momentum-Spur
-      onChase: (ox, oy, oz, f) => { this.cataclysm.chain(ox, oy + 1.1, oz, f.x, f.y + 1.1, f.z, ACTION_STYLES[f.style].accent); audio.play('chase', 0.9, { x: f.x, y: f.y, z: f.z }); },
+      onChase: (ox, oy, oz, f) => {
+        this.cataclysm.chain(ox, oy + 1.1, oz, f.x, f.y + 1.1, f.z, ACTION_STYLES[f.style].accent);
+        this.cataclysm.stormStepFx(ox, oy, oz, f.x, f.y, f.z, f.yaw, ACTION_STYLES[f.style].accent);
+        audio.play('chase', 0.9, { x: f.x, y: f.y, z: f.z });
+      },
       onClash: (x, y, z, yaw) => { this.cataclysm.clash(x, y, z, yaw); audio.play('clash', 1, { x, y, z }); },
       impactFrames: (n) => this.animeRig.impact(n),
       onSwing: (mv, h, f) => {
         const st = ACTION_STYLES[f.style];
-        this.cataclysm.swingFx(h, f, mv.color || st.color, mv.vfx || st.element);
+        this.cataclysm.swingFx(h, f, mv.color || st.color, mv.vfx || st.element, mv.meteor);
         const at = { x: f.x, y: f.y, z: f.z };
         if (h.shape === 'line') audio.play('bladeWave', 0.8, at);
         else if (h.shape === 'circle') audio.play('eruption', 0.8, at);
         if (st.faji) audio.power(st.element === 'sonne' ? 'licht' : st.element === 'schwarzloch' ? 'schatten' : st.element === 'mond' ? 'geist' : st.element, 0.6, at);
       },
+      // 4.6D: Kettenschläge als Klingen-/Faustbögen, Dash-Nachbilder, Sturm-Schritt mit Blitz-Silhouetten
+      onSlash: (mv, h, f, step) => {
+        const st = ACTION_STYLES[f.style];
+        this.cataclysm.slashFx(h, f, mv.color || st.color, mv.vfx || st.element, step, st.visual === 'faust' || st.faji, !f.grounded);
+      },
+      onDash: (ax, ay, az, bx, by, bz, f, air) => this.cataclysm.dashFx(ax, ay, az, bx, by, bz, ACTION_STYLES[f.style].accent, air),
+      onStormStep: (ox, oy, oz, f) => this.cataclysm.stormStepFx(ox, oy, oz, f.x, f.y, f.z, f.yaw, ACTION_STYLES[f.style].accent),
       trail: (x, y, z, k) => {
         const wy = this.env.heightAt(x, z);
         if (y - wy < 0.45) this.spray.emit(3, x, wy + 0.1, z, { speed: 1.2 + k * 2, up: 1.4 + k, life: 0.5, color: FOAM_COL, spread: 0.25 });
@@ -1680,6 +1701,7 @@ export class SeaWorld {
     const dir = new Vector3();
     return new CataclysmDirector({
       fx: this.cataclysmFx,
+      vfx: this.vfx,
       get combatFx() { return w.fx; },
       get naval() { return w.naval; },
       get debris() { return w.debris; },
@@ -1967,6 +1989,7 @@ export class SeaWorld {
     if (this.naval) this.naval.detail = c.particles;
     // Stürme aus hunderten Fäusten, Sicheln und Splittern werden auf schwachen Geräten dünner
     if (this.cataclysmFx) this.cataclysm.detailK = Math.max(0.35, Math.min(1, c.particles));
+    if (this.vfx) this.vfx.detail = Math.max(0.35, Math.min(1, c.particles));
     this.debris.scale = c.particles;
     if (this.fx) this.fx.scale = c.particles;
   }

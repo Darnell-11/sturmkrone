@@ -1213,7 +1213,7 @@ export class NavalSystem {
    * Boss-Schiffe unter 15 % Rumpf). Schiffe, die nie untergehen (Legenden, Klassen 5/6), werden stattdessen sofort manövrierunfähig (nur Entern).
    * Liefert 'split', 'disabled' oder ''.
    */
-  cataclysmSplit(e: EnemyShip, cut: Exclude<ShipCut, ''>, seed: number, lift = 0): 'split' | 'disabled' | '' {
+  cataclysmSplit(e: EnemyShip, cut: Exclude<ShipCut, ''>, seed: number, lift = 0, sections = 2): 'split' | 'disabled' | '' {
     const s = e.ship;
     if (!s.alive || s.sinking > 0 || this.cataclysmFriendly(e)) return '';
     const boss = !!(e.legendId || e.role === 'legende' || s.hitCap > 0 || s.noKill);
@@ -1222,7 +1222,7 @@ export class NavalSystem {
     e.lastPlayerHit = this.clock;
     if (e.power === 'marine' || e.ev) e.provoked = true;
     if (s.noKill) { if (!s.disabled) s.enterPhase(); return 'disabled'; }
-    if (!s.splitApart(cut, seed, lift)) return '';
+    if (!s.splitApart(cut, seed, lift, sections)) return '';
     s.hull = 0;
     this.sink(s);
     return 'split';

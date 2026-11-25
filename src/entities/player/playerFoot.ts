@@ -67,6 +67,11 @@ export interface FootDeps {
   onChase?: (ox: number, oy: number, oz: number, f: FighterState) => void;
   onClash?: (x: number, y: number, z: number, yaw: number) => void;
   onSwing?: (mv: ActionMove, h: ActionHit, f: FighterState) => void;
+  /** 4.6D: Kettenschlag (L1 – L5, Luft-Kette): Klingen-/Faustbogen; `step` wechselt die Schlagrichtung */
+  onSlash?: (mv: ActionMove, h: ActionHit, f: FighterState, step: number) => void;
+  /** 4.6D: Dash am Boden oder in der Luft (Weg von A nach B), Sturm-Schritt (Blitz-Silhouetten an Absprung- und Zielpunkt) */
+  onDash?: (ax: number, ay: number, az: number, bx: number, by: number, bz: number, f: FighterState, air: boolean) => void;
+  onStormStep?: (ox: number, oy: number, oz: number, f: FighterState) => void;
   trail?: (x: number, y: number, z: number, k: number) => void;
   /** Impact-Frames der Anime-Pipeline (invertiert, dann Tusche; 2 – 4 gezeichnete Bilder) */
   impactFrames?: (n: number) => void;
@@ -166,6 +171,8 @@ export class PlayerFoot implements PlayerTarget {
   /** Höhe vor dem Logikschritt (Sturm-Verfolgung: Nachbild am alten Ort), Takt der Momentum-Spur */
   private preY = 0;
   private trailT = 0;
+  /** Zähler der Kettenschläge (4.6D: die Bögen wechseln je Schlag die Richtung) */
+  private slashStep = 0;
   /** Färbung der Figur (Fesseln > Erwachen > Eisenwille): Schlüssel der gesetzten Färbung, Pulszeit */
   private tintKey = '';
   private pulseT = 0;
@@ -350,6 +357,7 @@ export class PlayerFoot implements PlayerTarget {
     at.y = this.y + 0.1;
     this.deps.fx?.shockwave(at, 2.6, st.accent);
     if (counter) this.deps.overlay?.number(at.set(this.x, this.y + 2.6, this.z), 'Mondspiegel!', 'crit');
+    this.deps.onStormStep?.(ox, oy, oz, this.fighter);
     this.moveShown = -1;
     this.anim = '';
   }
@@ -467,6 +475,11 @@ export class PlayerFoot implements PlayerTarget {
           fx?.puff(this.tmpV.set(f.x, f.y, f.z), e.a ? 4 : 10);
           // Rotations-Dash (Doppelklinge, Sturmfaust) und Luft-Dash: Nachbild am Start
           if (e.a || st.dashSpeed >= 18) afx?.afterimage(f.x, f.y, f.z, st.accent, 0.3, 0.95);
+          // 4.6D: leuchtendes Nachbild-Band entlang des Dash-Wegs (Länge = Tempo × Dauer)
+          {
+            const len = Math.max(1, f.dashSpeed * f.dashDur * 0.8);
+            this.deps.onDash?.(f.x, f.y, f.z, f.x + f.dashX * len, f.y, f.z + f.dashZ * len, f, !!e.a);
+          }
           break;
         }
         case 'impact': {
@@ -594,6 +607,12 @@ export class PlayerFoot implements PlayerTarget {
           const mv = ALL_MOVES[e.a];
           const h = mv?.hits[e.b];
           if (mv && h) this.deps.onSwing?.(mv, h, f);
+          break;
+        }
+        case 'slash': {
+          const mv = ALL_MOVES[e.a];
+          const h = mv?.hits[e.b];
+          if (mv && h) this.deps.onSlash?.(mv, h, f, this.slashStep++);
           break;
         }
         case 'sheath':

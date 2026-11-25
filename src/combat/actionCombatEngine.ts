@@ -232,7 +232,7 @@ export type ActionEventType =
   | 'hitConfirm' | 'style' | 'lockLost' | 'staminaLow' | 'notReady' | 'buff' | 'parry' | 'blocked'
   | 'awaken' | 'awakenEnd' | 'aura' | 'ultimate' | 'ultStrike' | 'sheath' | 'chain' | 'kingWave' | 'awakenWave' | 'locked' | 'willFull'
   /** 4.6C: Sturm-Verfolgung (a = Platz des Ziels, b/c = alter Ort x/z), Klingen-Clash (a = Fenster, b = Ergebnis), Schwungfenster einer Technik/Verzweigung (a = Angriff, b = Fenster) */
-  | 'chase' | 'clash' | 'swing';
+  | 'chase' | 'clash' | 'swing' | 'slash';
 
 export interface ActionEvent { type: ActionEventType; a: number; b: number; c: number; s: string }
 
@@ -981,9 +981,13 @@ export class ActionCombatEngine {
       const fk = st.faji && f.moveKind === 'skill' ? formPower(f.form).range : 1;
       // Schwungfenster von Techniken, Verzweigungen, Finishern und Meteor melden (Klingenwellen und Eruptionen der Darstellung)
       const swing = f.moveKind !== 'light' && f.moveKind !== 'air' && f.moveKind !== 'swap' && f.moveKind !== 'ultimate';
+      // 4.6D: Kettenschläge (L1 – L5), Luft-Kette und Stilwechsel-Schlag melden ihr Schwungfenster als `slash` (Klingen-/Faustbogen)
+      const slash = !swing && f.moveKind !== 'ultimate';
       for (let i = 0; i < mv.hits.length && i < MAX_TICKS; i++) {
         const h = mv.hits[i];
-        if (swing && ((t0 < h.t0 && h.t0 <= t1) || (h.t0 === 0 && t0 === 0))) this.events.push('swing', f.moveIdx, i);
+        const opens = (t0 < h.t0 && h.t0 <= t1) || (h.t0 === 0 && t0 === 0);
+        if (swing && opens) this.events.push('swing', f.moveIdx, i);
+        else if (slash && opens) this.events.push('slash', f.moveIdx, i);
         // verzögerter Treffer: zur Zeit `delayTo` treffen alle markierten Ziele zugleich (Klinge rastet ein)
         if (h.delayTo > 0 && !f.marksDone && t1 >= h.delayTo) this.fireMarks(h, i, mv, w);
         if (h.t0 > t1 || h.t1 <= t0) continue;

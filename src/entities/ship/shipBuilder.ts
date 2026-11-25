@@ -91,6 +91,8 @@ export interface ShipModel {
   masts: { up: Group; z: number; pivotY: number }[];
   /** Takelage (Linien), fällt mit geknickten Masten weg */
   rigging: LineSegments;
+  /** Rumpf (Verkohlen durch Ultimates, 4.6D: bekommt dann eine eigene Materialkopie) */
+  hull?: Mesh;
   /** Feste Aufbauten an Deck (Mitte, halbe Ausdehnung, Schiffskoordinaten): Masten, Luke, Fässer, Möbel … */
   blockers: Blocker[];
   /** Deck-Material und Grundfarbe (Nässe dunkelt das Holz ab) */
@@ -2082,7 +2084,7 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
   });
   yield;
   yield* addOutlinesSteps(group);
-  return { group, sails, muzzlesL, muzzlesR, lanterns, windows, flag, flags: clothFlags, deckY: D, helm, wheel, quarter: { z0: castleZ0, z1: castleZ1, top: topY, stairX, stairW, stairLen, flare, doorHalf: doorWC / 2, cabin: { zA, zB } }, cabinRoof: topGroup, cabinLight, fore, masts: mastParts.map((m) => ({ up: m.up, z: m.z, pivotY: m.pivotY })), rigging, blockers, halfWidth, deckMat, deckBase, lights, railParts, swivels, evoKey: vis.key };
+  return { group, hull, sails, muzzlesL, muzzlesR, lanterns, windows, flag, flags: clothFlags, deckY: D, helm, wheel, quarter: { z0: castleZ0, z1: castleZ1, top: topY, stairX, stairW, stairLen, flare, doorHalf: doorWC / 2, cabin: { zA, zB } }, cabinRoof: topGroup, cabinLight, fore, masts: mastParts.map((m) => ({ up: m.up, z: m.z, pivotY: m.pivotY })), rigging, blockers, halfWidth, deckMat, deckBase, lights, railParts, swivels, evoKey: vis.key };
 }
 
 /** Feste Teile pro Material zu einem Mesh zusammenfassen (weniger Zeichenaufrufe); gibt alle 24 Teile und nach jedem Material ab */
