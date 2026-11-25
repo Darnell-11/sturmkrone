@@ -24,7 +24,8 @@ export function finishMat(finish: Finish, color: string | Color, extra: Partial<
     // leuchtende Teile (Edelsteine, Augen, Runen): überstrahlen und blühen im Bloom
     case 'glut': return glowMat(typeof color === 'string' ? color : `#${color.getHexString()}`, 2.4);
     // Haare: anisotroper Lichtband-Shader; Kopfmitte im Raum des Modells (Körpermaße, y oben): x 0, y 1,635, z −0,03
-    case 'haar': return toon({ ...base, surface: 'hair', hairC: [0, 1.635, -0.03], rim: 0.7 });
+    // 4.6G.3: Randlicht schwächer (0,7 → 0,4): an den Kanten der Strähnen-Körper standen sonst weiße Linien
+    case 'haar': return toon({ ...base, surface: 'hair', hairC: [0, 1.635, -0.03], rim: 0.4 });
     default: return toon({ ...base, surface: 'cloth' });
   }
 }

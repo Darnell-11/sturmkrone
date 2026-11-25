@@ -64,7 +64,8 @@ const TAIL_GLSL = /* glsl */ `
   }`;
 import { SocketRig } from './sockets';
 import { loadoutFromLook, resolveLoadout, type Finish, type Loadout, type ResolvedLoadout } from '../../data/equipment';
-import { attachHeadgear, buildBuckle, buildButton, buildEpaulette, buildKnot, buildPauldron, CAPPED, CAP_RIM_DEFAULT, hairSqueezeFor } from './animeHats';
+import { attachHeadgear, buildBuckle, buildButton, buildEpaulette, buildKnot, buildPauldron, CAPPED, CAP_RIM_DEFAULT, hairSqueezeFor, PATCH_RX, PATCH_RY } from './animeHats';
+import { isSeatedHat } from './hatFit';
 import { BELT_KINDS, HELM_KINDS, SHOULDERS, buildBeltExtras } from './gear/rigid';
 import { finishMat } from './gear/kit';
 import { buildHeld, buildSkinned, glbModel } from './gear/glbGear';
@@ -458,10 +459,12 @@ export class Character {
   }
 
   /** Netz bekommt eine eigene Dreiecksliste (und unter Hüten eine eigene, geteilte Lage); alle übrigen Punktdaten teilt es mit der Vorlage */
-  private mask(m: SkinnedMesh, src: BufferGeometry, index: BufferAttribute | null, fromEngine: boolean, position: BufferAttribute | null = null) {
+  private mask(m: SkinnedMesh, src: BufferGeometry, index: BufferAttribute | null, fromEngine: boolean, position: BufferAttribute | null = null, morphs = false) {
     const geo = new BufferGeometry();
     for (const k in src.attributes) geo.setAttribute(k, src.attributes[k]);
     if (position) geo.setAttribute('position', position);
+    // 4.6G.3: Teile mit Gesichts-Morphs (Wimpern blinzeln mit) behalten ihre Morph-Ziele – sonst fiele das Netz auf ein anderes Programm
+    if (morphs) { geo.morphAttributes = src.morphAttributes; geo.morphTargetsRelative = src.morphTargetsRelative; }
     geo.setIndex(index);
     geo.boundingSphere = src.boundingSphere;
     m.geometry = geo;
@@ -494,9 +497,13 @@ export class Character {
     if (R.base.shoes) layers.push({ key: 'grund.shoes', level: 1, cover: vb.baseCover('shoes') });
     // Hüte aus Modellen bekommen dieselbe Haar-Ausblendung wie Helme
     const glbHat = R.glb.some((g) => g.trimsHair && glbModel(g.model));
-    const cap = glbHat ? { sink: 0.13, margin: 0.012 } : CAPPED[R.hat];
-    // Hüte ohne Kappe (Dreispitz, Marinemütze): Haar nur stauchen, nichts abschneiden
-    const hatFit = cap ? null : hairSqueezeFor(R.hat);
+    // 4.6G.3: Standard-Hüte sitzen am Schädel; das Haar über dem Band wird in die Krone gedrückt, nichts abgeschnitten (keine kahle Stirn)
+    const seated = !glbHat && isSeatedHat(R.hat) ? vb.hatSeat(R.hat) : null;
+    const cap = glbHat ? { sink: 0.13, margin: 0.012 } : seated ? undefined : CAPPED[R.hat];
+    // Hüte ohne Kappe (Dreispitz, Marinemütze) ohne Schädelmessung: Haar nur stauchen, nichts abschneiden
+    const hatFit = cap || seated ? null : hairSqueezeFor(R.hat);
+    // 4.6G.3: unter der Augenklappe Wimpern und Lidstrich ausblenden (sie stehen bis 2 cm vor dem Auge)
+    const an0 = look.eyepatch ? vb.anchors() : null;
     this.rig.traverse((o) => {
       const m = o as SkinnedMesh;
       const i = m.userData.vroidPart as number | undefined;
@@ -512,6 +519,16 @@ export class Character {
       if (p.slot === 'shoes') m.visible = R.base.shoes;
       if (!src.index || !own) return;
       let index: BufferAttribute | null = null;
+      if (p.slot === 'hair' && seated && isSeatedHat(R.hat)) {
+        const pos = vb.hairUnderBand(i, R.hat);
+        if (pos) this.mask(m, src, src.index, false, pos);
+        return;
+      }
+      if (p.slot === 'lash' && an0?.pupilR) {
+        const li = vb.lashUnderPatch(i, an0.pupilR, PATCH_RX * 1.08, PATCH_RY * 1.12);
+        if (li) this.mask(m, src, li, false, null, true);
+        return;
+      }
       if (p.slot === 'skin' && /^Body/.test(p.name)) index = engine.indexFor({ key: 'haut', index: src.index, src: src.index.array, level: 0 }, layers);
       // Das Hemd der Grundfigur bleibt ganz: Schärpe und Halstuch liegen stellenweise unter seinem losen Saum bzw. Kragen –
       // dort ein Loch ins Hemd zu schneiden sähe falsch aus. Nur der Schuh verschwindet unter dem Stiefelschaft.
@@ -561,7 +578,8 @@ export class Character {
       const model = glbModel(g.model);
       if (!model) continue;
       // Frisur unter einem Hut aus einem Modell: Haare über dem Hutrand (Höhe 1,668 der männlichen Vorlage) weglassen
-      for (const m of buildSkinned(vb, model, g.mode, g.bone, body, g.look, g.hidesHair && glbHat ? 1.668 : undefined)) {
+      const headFit = g.mode === 'bone' ? { box: vb.skullBox(), seat: g.hidesHair && seated ? seated : null, seatKey: R.hat } : null;
+      for (const m of buildSkinned(vb, model, g.mode, g.bone, body, g.look, g.hidesHair && glbHat ? 1.668 : undefined, headFit)) {
         m.userData.parts = [];
         // fürs Prüfwerkzeug (audit.ts): Name und Ebene des Modells; Hüte und Frisuren (an einem Knochen) liegen ganz außen
         m.userData.glbModel = g.model;
@@ -620,7 +638,14 @@ export class Character {
     const head = this.sockets.bone('head');
     // Brille aus der Ausrüstung (4.6G: eigene Kategorie, auch zusammen mit einem Hut)
     const hatLook: CharacterLook = { ...look, hat: R.hat, hatColor: R.hatColor ?? loadout.colors.hat, hatAccent: R.hatAccent ?? undefined, glasses: R.glasses?.kind ?? 'keine' };
-    const face = { beard: look.beard !== 'keiner' && !isFemale(look) ? vb.beard(look.beard) : null, scar: look.scar ? vb.scarPlacement() : null, cap: (sink: number, margin: number) => vb.capShell(sink, margin), field: look.glasses === 'rund' ? vb.faceField() : null };
+    const eyewear = hatLook.glasses !== 'keine' || look.eyepatch;
+    const face = {
+      beard: look.beard !== 'keiner' && !isFemale(look) ? vb.beard(look.beard) : null, scar: look.scar ? vb.scarPlacement() : null, cap: (sink: number, margin: number) => vb.capShell(sink, margin),
+      field: eyewear ? vb.faceField() : null,
+      // 4.6G.3: vorderste Gesichtsfläche vor den Augen (Brillen-Ebene) und Sitz der Standard-Hüte am Schädel
+      front: (x: number, y: number, R: number, solid: boolean) => vb.eyeFront(x, y, R, solid),
+      hatSeat: seated,
+    };
     if (head) this.headgear = attachHeadgear(head, this.rig.getObjectByName('J_Adj_L_FaceEye') ?? null, this.rig.getObjectByName('J_Adj_R_FaceEye') ?? null, hatLook, this.outline, vb.hairFit, vb.anchors(), face, this.rigX?.sockets ?? null);
     const h = Math.min(1.1, Math.max(0.9, look.height));
     const base = vb.template.scale.x;

@@ -227,21 +227,34 @@ export interface ChainTuning {
   inertia: number;
   /** größte Dehnung der Glieder (1,03 = 3 %) */
   stretch: number;
+  /** 4.6G.3: größte Auslenkung jedes Glieds aus seiner Ruherichtung (Bogenmaß) – schweres Tuch klappt nie um */
+  maxBend: number;
 }
 
 /** 4.6G.2: Halbmesser der Bein-Kapseln gegen Stoff-Ketten (m): Oberschenkel samt Hose, Unterschenkel samt Stiefelschaft und Stulpe */
 export const LEG_CAPS = { upper: 0.084, lower: 0.074 } as const;
 
+/**
+ * 4.6G.3: Mäntel, Umhänge und leere Ärmel als schweres, edles Tuch: rund dreimal so steif und deutlich stärker gedämpft als bis 4.6G.2
+ * (dort schwappten sie im Stand wie ein nasser Schwamm nach). `damping` ist der Erhalt der Geschwindigkeit je Schritt – stärkere Dämpfung
+ * heißt also ein kleinerer Wert (Dämpfungsgrad = 1 − damping). Die Figur nimmt den Stoff mehr mit (kleinere `inertia`), jedes Glied
+ * schwenkt höchstens `maxBend` aus seiner Ruherichtung. Damit Wind und Sprint ihn weiter kraftvoll treiben, greift der Wind stärker an (`drag` verdoppelt – das dämpft zugleich die Eigenbewegung).
+ */
 export const CLOTH: Record<'coat' | 'kilt' | 'cape' | 'hair' | 'scarf' | 'ribbon' | 'sleeve', ChainTuning> = {
-  coat: { stiffness: 0.035, damping: 0.95, drag: 1.25, gravity: 1, radius: 0.055, inertia: 0.8, stretch: 1.04 },
-  kilt: { stiffness: 0.06, damping: 0.93, drag: 0.8, gravity: 1, radius: 0.04, inertia: 0.65, stretch: 1.03 },
-  cape: { stiffness: 0.025, damping: 0.95, drag: 1.4, gravity: 1, radius: 0.05, inertia: 0.85, stretch: 1.04 },
-  hair: { stiffness: 0.14, damping: 0.88, drag: 0.4, gravity: 0.45, radius: 0.016, inertia: 0.5, stretch: 1.02 },
-  scarf: { stiffness: 0.02, damping: 0.95, drag: 1.7, gravity: 0.8, radius: 0.02, inertia: 0.9, stretch: 1.03 },
-  ribbon: { stiffness: 0.025, damping: 0.95, drag: 1.5, gravity: 0.9, radius: 0.018, inertia: 0.85, stretch: 1.03 },
-  // 4.6G: leere Ärmel des Schultermantels – schwerer Wollstoff, pendelt träge und schwingt beim Laufen nach
-  sleeve: { stiffness: 0.03, damping: 0.94, drag: 1.2, gravity: 1, radius: 0.042, inertia: 0.88, stretch: 1.03 },
+  coat: { stiffness: 0.1, damping: 0.84, drag: 2.7, gravity: 1, radius: 0.055, inertia: 0.55, stretch: 1.03, maxBend: 0.95 },
+  kilt: { stiffness: 0.13, damping: 0.82, drag: 1.6, gravity: 1, radius: 0.04, inertia: 0.5, stretch: 1.03, maxBend: 0.75 },
+  cape: { stiffness: 0.085, damping: 0.85, drag: 3, gravity: 1, radius: 0.05, inertia: 0.6, stretch: 1.03, maxBend: 1.1 },
+  hair: { stiffness: 0.14, damping: 0.88, drag: 0.4, gravity: 0.45, radius: 0.016, inertia: 0.5, stretch: 1.02, maxBend: 1.2 },
+  scarf: { stiffness: 0.02, damping: 0.95, drag: 1.7, gravity: 0.8, radius: 0.02, inertia: 0.9, stretch: 1.03, maxBend: 1.7 },
+  ribbon: { stiffness: 0.025, damping: 0.95, drag: 1.5, gravity: 0.9, radius: 0.018, inertia: 0.85, stretch: 1.03, maxBend: 1.7 },
+  // 4.6G: leere Ärmel des Schultermantels – schwerer Wollstoff; 4.6G.3: straff, schwingt beim Laufen kurz nach und steht dann still
+  sleeve: { stiffness: 0.1, damping: 0.82, drag: 2.9, gravity: 1, radius: 0.042, inertia: 0.55, stretch: 1.02, maxBend: 0.8 },
 };
+/** Werte bis 4.6G.2 (Vergleich in den Tests: der neue Stoff muss steifer und stärker gedämpft sein) */
+export const CLOTH_LEGACY = {
+  coat: { stiffness: 0.035, damping: 0.95, inertia: 0.8, drag: 1.25 }, kilt: { stiffness: 0.06, damping: 0.93, inertia: 0.65, drag: 0.8 },
+  cape: { stiffness: 0.025, damping: 0.95, inertia: 0.85, drag: 1.4 }, sleeve: { stiffness: 0.03, damping: 0.94, inertia: 0.88, drag: 1.2 },
+} as const;
 
 /** Aufbau der Ketten je Grundfigur: Sektoren um Hüfte, Kopf und Rücken, Glieder je Kette (fest: das Skelett jeder Figur hat dieselben Knochen) */
 export const CHAIN_LAYOUT = {

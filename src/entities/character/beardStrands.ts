@@ -141,20 +141,55 @@ export function templePath(f: FaceField, y: number, zFront: number, zBack: numbe
   return out;
 }
 
-/** Punkt auf der Fläche plus Abstand nach außen (Kopfraum) */
-export function fieldPoint(f: FaceField, th: number, y: number, off: number, out: Vector3): Vector3 {
-  const r = fieldRadius(f, th, y) + off;
+/** 4.6G.3: Winkel θ (Seite +X, θ ≥ 0), an dem die Haut auf Höhe y die Tiefe z erreicht – für Riemen an der Kopfseite */
+export function thetaAtDepth(f: FaceField, y: number, z: number, side = 1): number {
+  let lo = 0, hi = 1.95;
+  for (let it = 0; it < 24; it++) {
+    const mid = (lo + hi) / 2;
+    if (f.zc - fieldRadius(f, side * mid, y, false) * Math.cos(mid) < z) lo = mid; else hi = mid;
+  }
+  return side * (lo + hi) / 2;
+}
+
+/** 4.6G.3: Winkel θ, an dem die Haut auf Höhe y seitlich bei x liegt (Vorderseite des Gesichts, |θ| < 1,4) */
+export function thetaAtX(f: FaceField, y: number, x: number): number {
+  const s = x < 0 ? -1 : 1, ax = Math.abs(x);
+  let lo = 0, hi = 1.4;
+  for (let it = 0; it < 24; it++) {
+    const mid = (lo + hi) / 2;
+    if (Math.sin(mid) * fieldRadius(f, s * mid, y, false) < ax) lo = mid; else hi = mid;
+  }
+  return s * (lo + hi) / 2;
+}
+
+/**
+ * 4.6G.3: Riemen an der Haut entlang (Augenklappe, Fliegerbrille): Stützpunkte als (x, y) vorn im Gesicht bzw. (Tiefe z, y) an der Kopfseite,
+ * je Punkt auf die Haut gelegt plus `gap`. Seite +X; für −X die Punkte mit negativem x angeben. Rückgabe im Kopfraum.
+ */
+export function skinStrap(f: FaceField, pts: { x?: number; z?: number; y: number; side?: number }[], gap: number): [number, number, number][] {
+  const out: [number, number, number][] = [];
+  for (const p of pts) {
+    const th = p.z !== undefined ? thetaAtDepth(f, p.y, p.z, p.side ?? 1) : thetaAtX(f, p.y, p.x ?? 0);
+    const r = fieldRadius(f, th, p.y, false) + gap;
+    out.push([Math.sin(th) * r, p.y, f.zc - Math.cos(th) * r]);
+  }
+  return out;
+}
+
+/** Punkt auf der Fläche plus Abstand nach außen (Kopfraum); hang = Hüllkurve (Strähnen hängen unter dem Kinn), sonst die Haut selbst */
+export function fieldPoint(f: FaceField, th: number, y: number, off: number, out: Vector3, hang = true): Vector3 {
+  const r = fieldRadius(f, th, y, hang) + off;
   return out.set(Math.sin(th) * r, y, f.zc - Math.cos(th) * r);
 }
 
 const _p = new Vector3(), _q = new Vector3(), _t = new Vector3(), _s = new Vector3();
 
 /** Flächennormale an (θ, y) aus den Nachbarpunkten (nach außen) */
-export function fieldNormal(f: FaceField, th: number, y: number, out: Vector3): Vector3 {
+export function fieldNormal(f: FaceField, th: number, y: number, out: Vector3, hang = true): Vector3 {
   const e = 0.004, et = e / ARC;
-  fieldPoint(f, th + et, y, 0, _p); fieldPoint(f, th - et, y, 0, _q);
+  fieldPoint(f, th + et, y, 0, _p, hang); fieldPoint(f, th - et, y, 0, _q, hang);
   _t.subVectors(_p, _q);
-  fieldPoint(f, th, y + e, 0, _p); fieldPoint(f, th, y - e, 0, _q);
+  fieldPoint(f, th, y + e, 0, _p, hang); fieldPoint(f, th, y - e, 0, _q, hang);
   _s.subVectors(_p, _q);
   out.crossVectors(_s, _t).normalize();
   // nach außen (von der Achse weg)
@@ -250,6 +285,14 @@ export function strandLayout(kind: BeardKind, m: FaceMarks, zc: number): Strand[
   return out;
 }
 
+/**
+ * 4.6G.3: Abstand der Bartstoppeln (Drei-Tage-Bart) über der Haut (m). Sie liegen auf der echten Haut (`hang = false`), nicht auf der
+ * Hüllkurve, die unter dem Kinn nach unten hängt – dort schwebten die Stoppeln vorher in der Luft vor Kinn und Hals.
+ */
+export const STUBBLE_LIFT = 0.0015;
+/** Stoppeln unter der Kieferlinie: nur ein schmaler Streifen (m), wo die Haut noch zum Kinn gehört */
+export const STUBBLE_UNDER_JAW = 0.005;
+
 /** Querschnitt-Punkte je Ring einer Strähne (Kante, Grat, Kante, Unterseite) und Ringe entlang */
 const RING = 4, SEG = 9;
 /** Anteil der eigenen Strähnen-Normale (Rest: Gesichtsfläche) */
@@ -277,10 +320,11 @@ export function buildBeardGeometry(kind: BeardKind, f: FaceField, m: FaceMarks):
         const top = m.mouthY + 0.008 + side * (m.ear.y - m.mouthY);
         if (yj > top) continue;
         if (Math.abs(tj) * ARC < 0.026 && yj > m.mouthY - 0.012 && yj < m.mouthY + 0.007) continue;
-        if (yj < m.jawY(tj) - 0.008) continue;
+        if (yj < m.jawY(tj) - STUBBLE_UNDER_JAW) continue;
         if (R() < 0.18) continue;
-        fieldPoint(f, tj, yj, 0.0009, P);
-        fieldNormal(f, tj, yj, N);
+        // 4.6G.3: auf der Haut selbst (+1,5 mm), nicht auf der Hüllkurve
+        fieldPoint(f, tj, yj, STUBBLE_LIFT, P, false);
+        fieldNormal(f, tj, yj, N, false);
         // kurzer Strich nach unten auf der Fläche, leicht verdreht
         const a = (R() - 0.5) * 0.9;
         T.set(Math.cos(tj) * Math.sin(a), -Math.cos(a), Math.sin(tj) * Math.sin(a));
@@ -290,7 +334,12 @@ export function buildBeardGeometry(kind: BeardKind, f: FaceField, m: FaceMarks):
         const i0 = pos.length / 3;
         Q.copy(P).addScaledVector(B, -w); pos.push(Q.x, Q.y, Q.z);
         Q.copy(P).addScaledVector(B, w); pos.push(Q.x, Q.y, Q.z);
-        Q.copy(P).addScaledVector(T, len).addScaledVector(N, 0.0002); pos.push(Q.x, Q.y, Q.z);
+        // Spitze: entlang der Haut, wieder auf denselben Abstand gelegt (auf gewölbter Haut stünde sie sonst ab oder stäche hinein)
+        Q.copy(P).addScaledVector(T, len);
+        const qr = Math.hypot(Q.x, Q.z - f.zc), qth = Math.atan2(Q.x, -(Q.z - f.zc));
+        const want = fieldRadius(f, qth, Q.y, false) + STUBBLE_LIFT + 0.0002;
+        if (qr > 1e-6) { Q.x *= want / qr; Q.z = f.zc + (Q.z - f.zc) * (want / qr); }
+        pos.push(Q.x, Q.y, Q.z);
         // Umlaufsinn nach außen (B = N × T: −B, +B, Spitze zeigte sonst zur Haut und wurde weggeschnitten)
         idx.push(i0, i0 + 2, i0 + 1);
         for (let q = 0; q < 3; q++) fn.push(N.x, N.y, N.z);

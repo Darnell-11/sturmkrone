@@ -32,7 +32,9 @@ import { smoothstep } from '../../core/mathUtil';
 import { clamp01 } from '../../core/mathUtil';
 import { buildClothLayout, type ClothLayout } from './rig/clothRig';
 import { measureSockets, type SocketMeasures } from './rig/characterSockets';
-import { buildBeardGeometry, buildFaceField, jawFromField, type BeardKind, type FaceField, type FaceMarks } from './beardStrands';
+import { buildBeardGeometry, buildFaceField, fieldRadius, jawFromField, type BeardKind, type FaceField, type FaceMarks } from './beardStrands';
+import { seatFromSkull, type HatSeat, type SeatedHat } from './hatFit';
+import { squeezePositions } from './hairSqueeze';
 
 /** Unsere Knochennamen (KayKit-Skelett) → VRoid-Knochen */
 export const VROID_BONES: Record<string, string> = {
@@ -166,7 +168,8 @@ export class VroidBase {
     });
     const f = this.hairFit?.(0) ?? null;
     try {
-      this.socketCache = measureSockets(this.template, this.bodySkin(this.template), face, f ? { y: f.seat, cx: f.cx, cz: f.cz } : null);
+      const an = this.anchors();
+      this.socketCache = measureSockets(this.template, this.bodySkin(this.template), face, f ? { y: f.seat, cx: f.cx, cz: f.cz } : null, an.pupilL && an.pupilR ? { l: an.pupilL, r: an.pupilR } : null);
     } catch (e) {
       // ohne Messung gelten die Datenwerte (SOCKET_DEFS)
       console.warn('Sockets der Grundfigur nicht gemessen – Datenwerte', e);
@@ -776,8 +779,94 @@ export class VroidBase {
       const w = new Vector3(j.x * 0.92, (Number.isFinite(top) ? top : j.y + 0.04) + Math.min(c, SHIRT_CAP) + 0.026, j.z);
       return w.applyMatrix4(toChest);
     };
-    this.anchorCache = { earLobe, eyeY, shoulders: [shoulder('L'), shoulder('R')], faceZ, templeX, skullX, earTopY };
+    // 4.6G.3: Pupillen aus den Iris-Netzen (Mitte in x/y, Hornhaut = vorderster Iris-Punkt) – die Augenknochen liegen 2 cm näher an der Nase
+    // und 7 cm hinter der Haut; dazu die Punkte von Gesichtshaut, Wimpern und Brauen vor den Augen (für Brillen und Augenklappe)
+    const irisPts: Vector3[] = [];
+    const front: number[] = [];
+    T.traverse((o) => {
+      const m = o as SkinnedMesh;
+      const part = m.isSkinnedMesh ? this.parts[m.userData.vroidPart as number] : null;
+      if (!part) return;
+      const iris = part.slot === 'iris';
+      const near = (part.slot === 'skin' && /^Face/.test(part.name)) || part.slot === 'lash' || part.slot === 'brow';
+      if (!iris && !near) return;
+      const pos = m.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        P.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld).applyMatrix4(toHead);
+        if (iris) irisPts.push(P.clone());
+        else if (Math.abs(P.y - eyeY) < 0.06 && P.z < eyeZ - 0.02 && Math.abs(P.x) < 0.1) front.push(P.x, P.y, P.z, part.slot === 'lash' ? 1 : 0);
+      }
+    });
+    const pupil = (sign: number): Vector3 | undefined => {
+      const ps = irisPts.filter((v) => Math.sign(v.x) === sign);
+      if (ps.length < 4) return undefined;
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const v of ps) { x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x); y0 = Math.min(y0, v.y); y1 = Math.max(y1, v.y); }
+      const c = new Vector3((x0 + x1) / 2, (y0 + y1) / 2, 0);
+      // Hornhaut: vorderster Iris-Punkt nahe der Mitte
+      let z = Infinity;
+      for (const v of ps) if (Math.hypot(v.x - c.x, v.y - c.y) < Math.max(0.006, (x1 - x0) * 0.3)) z = Math.min(z, v.z);
+      c.z = Number.isFinite(z) ? z : Math.min(...ps.map((v) => v.z));
+      return c;
+    };
+    const sl = eyeL ? Math.sign(eyeL.position.x) || -1 : -1;
+    const pupilL = pupil(sl), pupilR = pupil(-sl);
+    this.eyeFrontPts = new Float32Array(front);
+    this.anchorCache = { earLobe, eyeY, shoulders: [shoulder('L'), shoulder('R')], faceZ, templeX, skullX, earTopY, pupilL, pupilR };
     return this.anchorCache;
+  }
+
+  /** 4.6G.3: Gesichtshaut, Wimpern und Brauen vor den Augen (Kopfraum; je Punkt x, y, z, Wimper?) – gefüllt von `anchors()` */
+  private eyeFrontPts: Float32Array | null = null;
+  /**
+   * Vorderste Gesichtsfläche (kleinstes z, das Gesicht schaut nach −Z) vor dem Auge: Haut und Brauen in der Scheibe mit Halbmesser R + 3 mm;
+   * Wimpern nur im Ring R ± 4 mm (dort liegt die Fassung, hinter dem leeren Glas stören sie nicht) – mit `solid` in der ganzen Scheibe
+   * (Brillenschalen, Klappen). Infinity = nichts gefunden.
+   */
+  eyeFront(x: number, y: number, R: number, solid = false): number {
+    if (!this.eyeFrontPts) this.anchors();
+    const a = this.eyeFrontPts!;
+    let z = Infinity;
+    for (let i = 0; i < a.length; i += 4) {
+      const d = Math.hypot(a[i] - x, a[i + 1] - y);
+      if (d > R + 0.004) continue;
+      if (a[i + 3] > 0.5 && !solid && Math.abs(d - R) > 0.004) continue;
+      z = Math.min(z, a[i + 2]);
+    }
+    return z;
+  }
+
+  /**
+   * 4.6G.3: Wimpern und Lidstrich unter der Augenklappe ausblenden (die Anime-Wimpern stehen bis 2 cm vor dem Auge und stachen durch die
+   * anliegende Klappe). Dreiecke, deren Mitte in der Ellipse um die Pupille liegt; je Teil und Seite einmal, geteilt.
+   */
+  private lashLists = new Map<string, BufferAttribute | null>();
+  lashUnderPatch(part: number, pupil: Vector3, rx: number, ry: number): BufferAttribute | null {
+    const key = `${part}|${pupil.x.toFixed(4)}|${rx}|${ry}`;
+    if (this.lashLists.has(key)) return this.lashLists.get(key)!;
+    let out: BufferAttribute | null = null;
+    const head = this.find(this.template, 'J_Bip_C_Head');
+    let mesh: SkinnedMesh | null = null;
+    this.template.traverse((o) => { const m = o as SkinnedMesh; if (m.isSkinnedMesh && m.userData.vroidPart === part && m.geometry === this.partGeo[part]) mesh = m; });
+    const m = mesh as SkinnedMesh | null;
+    if (head && m?.geometry.index) {
+      this.template.updateMatrixWorld(true);
+      const M = head.matrixWorld.clone().invert().multiply(m.matrixWorld);
+      const pos = m.geometry.attributes.position, idx = m.geometry.index;
+      const keep: number[] = [];
+      const A = new Vector3(), B = new Vector3(), C = new Vector3();
+      for (let t = 0; t < idx.count; t += 3) {
+        A.fromBufferAttribute(pos, idx.getX(t)).applyMatrix4(M);
+        B.fromBufferAttribute(pos, idx.getX(t + 1)).applyMatrix4(M);
+        C.fromBufferAttribute(pos, idx.getX(t + 2)).applyMatrix4(M);
+        const cx = (A.x + B.x + C.x) / 3 - pupil.x, cy = (A.y + B.y + C.y) / 3 - pupil.y;
+        if ((cx / rx) ** 2 + (cy / ry) ** 2 <= 1) continue;
+        keep.push(idx.getX(t), idx.getX(t + 1), idx.getX(t + 2));
+      }
+      if (keep.length < idx.count) out = markShared(new BufferAttribute(pos.count > 65535 ? Uint32Array.from(keep) : Uint16Array.from(keep), 1));
+    }
+    this.lashLists.set(key, out);
+    return out;
   }
 
   /** Welt-Ausrichtung eines Knochens in der Ruhehaltung der Vorlage (für die Halterungen der Sockets) */
@@ -1161,7 +1250,8 @@ export class VroidBase {
       if (bb.max.y < an.eyeY - 0.03 && bb.max.x - bb.min.x < 0.08) mouthY = (bb.min.y + bb.max.y) / 2;
     });
     const zc = an.earLobe.z;
-    const y0 = an.eyeY - 0.22, y1 = an.eyeY + 0.02;
+    // 4.6G.3: bis zur Stirn (Riemen der Augenklappe und der Fliegerbrille liegen dort an); gleiche Rasterweite wie zuvor (3,3 mm)
+    const y0 = an.eyeY - 0.22, y1 = an.eyeY + 0.11;
     // Hautproben auf den Dreiecken (Gesicht und Körper, Abstand ≤ 2 mm), dazu Kinn und Kieferlinie aus dem Gesicht allein
     const pts: number[] = [];
     const JAW_N = 48, JAW_T = 2.0;
@@ -1204,13 +1294,109 @@ export class VroidBase {
       const i = Math.floor(f), t = f - i;
       return jaw[i] * (1 - t) + jaw[i + 1] * t;
     };
-    const field = buildFaceField(pts, zc, y0, y1);
+    const field = buildFaceField(pts, zc, y0, y1, -2.0, 2.0, 96, Math.round(72 * ((y1 - y0) / 0.24)));
     // 4.6G.2: Kinn und Kieferlinie aus dem Feld (wo die Haut zum Hals zurückweicht), höchstens so tief wie die Unterkante des Gesichtsnetzes
     const floor = Math.min(chinY, mouthY - 0.06);
     const chin = Math.max(chinY, jawFromField(field, 0, mouthY, floor));
     const jawField = (th: number) => Math.max(jawY(th), jawFromField(field, th, mouthY, floor));
     const marks: FaceMarks = { eyeY: an.eyeY, mouthY, chinY: chin, ear: { x: an.earLobe.x, y: an.earLobe.y, z: an.earLobe.z }, jawY: jawField };
     return (this.faceCache = { field, marks });
+  }
+
+  /**
+   * 4.6G.3: Schädel als Radius-Feld der Kopfhaut (Kopfraum, Achse senkrecht durch die Schädelmitte, rundum) von Augenhöhe bis zum Scheitel –
+   * Grundlage für den Sitz der Standard-Hüte. Einmal je Grundfigur.
+   */
+  private skullCache: { field: FaceField; zc: number; top: number; eyeY: number } | null | undefined;
+  skull(): { field: FaceField; zc: number; top: number; eyeY: number } | null {
+    if (this.skullCache !== undefined) return this.skullCache;
+    try {
+      const T = this.template;
+      T.updateMatrixWorld(true);
+      const head = this.find(T, 'J_Bip_C_Head');
+      if (!head) return (this.skullCache = null);
+      const toHead = head.matrixWorld.clone().invert();
+      const an = this.anchors();
+      const y0 = an.eyeY - 0.01;
+      const pts: number[] = [];
+      const A = new Vector3(), B = new Vector3(), C = new Vector3();
+      T.traverse((o) => {
+        const m = o as SkinnedMesh;
+        const part = m.isSkinnedMesh ? this.parts[m.userData.vroidPart as number] : null;
+        // Gesicht vorn, Kopfhaut und Hinterkopf gehören zum Körpernetz – beide zählen
+        if (part?.slot !== 'skin' || !m.geometry.index) return;
+        const pos = m.geometry.attributes.position, idx = m.geometry.index;
+        const M = new Matrix4().multiplyMatrices(toHead, m.matrixWorld);
+        for (let t = 0; t < idx.count; t += 3) {
+          A.fromBufferAttribute(pos, idx.getX(t)).applyMatrix4(M);
+          B.fromBufferAttribute(pos, idx.getX(t + 1)).applyMatrix4(M);
+          C.fromBufferAttribute(pos, idx.getX(t + 2)).applyMatrix4(M);
+          if (Math.max(A.y, B.y, C.y) < y0 || Math.min(Math.abs(A.x), Math.abs(B.x), Math.abs(C.x)) > 0.16) continue;
+          const e = Math.max(A.distanceTo(B), B.distanceTo(C), C.distanceTo(A));
+          const n = Math.min(12, Math.max(1, Math.ceil(e / 0.004)));
+          for (let i = 0; i <= n; i++) for (let j = 0; j <= n - i; j++) {
+            const u = i / n, v = j / n, w = 1 - u - v;
+            pts.push(A.x * w + B.x * u + C.x * v, A.y * w + B.y * u + C.y * v, A.z * w + B.z * u + C.z * v);
+          }
+        }
+      });
+      if (pts.length < 300) return (this.skullCache = null);
+      let top = -Infinity, zMin = Infinity, zMax = -Infinity;
+      const yMid = an.eyeY + 0.08;
+      for (let i = 0; i < pts.length; i += 3) {
+        top = Math.max(top, pts[i + 1]);
+        if (Math.abs(pts[i + 1] - yMid) < 0.01 && Math.abs(pts[i]) < 0.02) { zMin = Math.min(zMin, pts[i + 2]); zMax = Math.max(zMax, pts[i + 2]); }
+      }
+      const zc = Number.isFinite(zMin) && Number.isFinite(zMax) ? (zMin + zMax) / 2 : 0;
+      const y1 = top + 0.004;
+      const field = buildFaceField(pts, zc, y0, y1, -Math.PI, Math.PI, 72, Math.max(24, Math.round((y1 - y0) / 0.003)));
+      return (this.skullCache = { field, zc, top, eyeY: an.eyeY });
+    } catch (e) {
+      console.warn('Schädel nicht gemessen – Hüte sitzen auf der Frisur', e);
+      return (this.skullCache = null);
+    }
+  }
+
+  /** 4.6G.3: Maße des Schädels (Kopfraum) auf Stirnhöhe: halbe Breite, vorn, hinten, Scheitel – für Frisur- und Hutmodelle am Kopfknochen */
+  skullBox(): SkullBox | null {
+    const sk = this.skull();
+    if (!sk) return null;
+    const y = sk.eyeY + 0.06;
+    const r = (th: number) => fieldRadius(sk.field, th, y, false);
+    return { hx: Math.max(r(Math.PI / 2), r(-Math.PI / 2)), zf: sk.zc - r(0), zb: sk.zc + r(Math.PI), top: sk.top };
+  }
+
+  /** 4.6G.3: Sitz eines Standard-Huts am Schädel (Kopfraum) */
+  private seats = new Map<string, HatSeat | null>();
+  hatSeat(hat: SeatedHat): HatSeat | null {
+    if (this.seats.has(hat)) return this.seats.get(hat)!;
+    const sk = this.skull();
+    const s = sk ? seatFromSkull((th, y) => fieldRadius(sk.field, th, y, false), sk.zc, sk.top, sk.eyeY, hat) : null;
+    this.seats.set(hat, s);
+    return s;
+  }
+
+  /**
+   * 4.6G.3: Frisur unter einem Standard-Hut: eigene, geteilte Lage – Haar über dem Band in die Krone gedrückt, unter dem Band unverändert
+   * (keine kahle Stirn mehr). Nichts wird abgeschnitten. Je Teil und Hut einmal; null = nichts zu ändern.
+   */
+  private hairBands = new Map<string, BufferAttribute | null>();
+  hairUnderBand(part: number, hat: SeatedHat): BufferAttribute | null {
+    const key = `${part}|${hat}`;
+    if (this.hairBands.has(key)) return this.hairBands.get(key)!;
+    let out: BufferAttribute | null = null;
+    const seat = this.hatSeat(hat);
+    const head = this.find(this.template, 'J_Bip_C_Head');
+    let mesh: SkinnedMesh | null = null;
+    this.template.traverse((o) => { const m = o as SkinnedMesh; if (m.isSkinnedMesh && m.userData.vroidPart === part && m.geometry === this.partGeo[part]) mesh = m; });
+    const m = mesh as SkinnedMesh | null;
+    if (seat && head && m) {
+      this.template.updateMatrixWorld(true);
+      const toHead = head.matrixWorld.clone().invert().multiply(m.matrixWorld);
+      out = squeezePositions(m.geometry.attributes.position as BufferAttribute, toHead, seat);
+    }
+    this.hairBands.set(key, out);
+    return out;
   }
 
   /** Narbe: schmaler Streifen schräg über die rechte Wange, auf der Gesichtsfläche (Kopfraum) */
@@ -1951,7 +2137,15 @@ export interface Anchors {
   earLobe: Vector3; eyeY: number; shoulders: [Vector3, Vector3]; faceZ: number; templeX: number;
   /** 4.6G.2: halbe Schädelbreite auf Augenhöhe zwischen Schläfe und Ohr (Brillenbügel laufen dort gerade nach hinten), Oberkante des Ohrs */
   skullX?: number; earTopY?: number;
+  /**
+   * 4.6G.3: Pupillenmitte je Auge (x/y aus dem Iris-Netz, z = Hornhaut) im Kopfraum – L/R wie die Augenknochen J_Adj_L/R. Brillen, Monokel
+   * und Augenklappe richten sich danach (die Augenknochen liegen 2 cm näher an der Nase).
+   */
+  pupilL?: Vector3; pupilR?: Vector3;
 }
+
+/** 4.6G.3: Schädelmaße im Kopfraum (Gesicht nach −Z): halbe Breite, Stirn (z vorn), Hinterkopf (z hinten), Scheitel */
+export interface SkullBox { hx: number; zf: number; zb: number; top: number }
 
 /** Knoten und Schnalle am Band: Lage im Hüftraum und die Knochen, die das Band dort bewegen */
 export interface BeltAnchors { knot: Vector3; knotPin: SkinPin; buckle: Vector3; bucklePin: SkinPin }

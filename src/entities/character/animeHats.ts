@@ -1,10 +1,12 @@
 // Kopfbedeckungen und Accessoires für die Anime-Figuren (am Kopfknochen befestigt).
-import { ConeGeometry, CylinderGeometry, DoubleSide, Group, MathUtils, Matrix4, Mesh, SphereGeometry, TorusGeometry, BoxGeometry, Vector3, type BufferGeometry, type Object3D } from 'three';
+import { BufferGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Float32BufferAttribute, Group, MathUtils, Matrix4, Mesh, SphereGeometry, TorusGeometry, BoxGeometry, Vector3, type Object3D } from 'three';
 import type { CharacterSocketId } from '../../data/characterRig';
 import type { CharacterLook } from '../../data/characterParts';
 import type { Anchors, CapShell } from './vroid';
-import { templePath, type FaceField, type FaceMarks } from './beardStrands';
-import { tube } from './gear/kit';
+import { isSeatedHat, type HatSeat, type SeatedHat } from './hatFit';
+import { buildSeatedHat } from './seatedHats';
+import { fieldRadius, skinStrap, templePath, thetaAtX, type FaceField, type FaceMarks } from './beardStrands';
+import { Bag, tube } from './gear/kit';
 import { toon } from '../../render/toon';
 import { addOutlines } from '../../render/outline';
 import { markShared } from '../../render/dispose';
@@ -281,6 +283,10 @@ export interface FaceParts {
   beard: BufferGeometry | null; scar: { pos: Vector3; tilt: number } | null; cap?: (sink: number, margin: number) => CapShell | null;
   /** 4.6G.2: Radius-Feld des Gesichts (Brillenbügel liegen an der Kopfseite an) */
   field?: { field: FaceField; marks: FaceMarks } | null;
+  /** 4.6G.3: vorderste Gesichtsfläche vor einem Auge (Haut, Brauen; Wimpern im Ring bzw. mit `solid` überall) – VroidBase.eyeFront */
+  front?: (x: number, y: number, R: number, solid: boolean) => number;
+  /** 4.6G.3: Sitz der Standard-Hüte am Schädel (statt auf den Haarspitzen) */
+  hatSeat?: HatSeat | null;
 }
 
 /** Kopfbedeckungen, die sich als gemessene Kappe um die Frisur legen: Sitztiefe und Abstand zum Haar */
@@ -349,17 +355,26 @@ export function attachHeadgear(head: Object3D, eyeL: Object3D | null, eyeR: Obje
   const r = Math.max(0.12, width * 2.7);
   // 4.6G: Gesichtsoberfläche vor den Augen (Kopfraum, −Z = vorn) – gemessen; die Augenknochen liegen 7 bis 8 cm dahinter
   const faceZ = an?.faceZ ?? (l && rr ? (l.z + rr.z) / 2 - 0.075 : -0.1);
-  // Kappe aus der Frisurform (Kopftuch, Mütze, Südwester, Helm) statt einer starren Halbkugel
-  const capCfg = CAPPED[look.hat];
+  // 4.6G.3: Standard-Hüte sitzen am gemessenen Schädel (Band satt um Stirn und Hinterkopf) statt auf den Haarspitzen
+  const seat = isSeatedHat(look.hat) && face?.hatSeat ? face.hatSeat : null;
+  // Kappe aus der Frisurform (Helme der Ausrüstung; ohne Schädelmessung auch die Standard-Hüte wie bisher)
+  const capCfg = seat ? undefined : CAPPED[look.hat];
   const shell = capCfg && face?.cap ? face.cap(capCfg.sink, capCfg.margin) : null;
-  const seatCfg = fit && !shell ? HAT_SEAT[look.hat] : undefined;
+  const seatCfg = fit && !shell && !seat ? HAT_SEAT[look.hat] : undefined;
   // Ersatz-Hut (ohne gemessene Frisur) und Ohrring ohne Anker: um die Augenmitte
-  const acc = buildHeadgear((seatCfg && fit?.(seatCfg.sink)) || shell ? { ...look, hat: 'keiner' } : look, r, outline);
+  const acc = buildHeadgear((seatCfg && fit?.(seatCfg.sink)) || shell || seat ? { ...look, hat: 'keiner' } : look, r, outline);
   ANCHORED.earring = false;
   acc.position.set(cx, cy, cz);
   // Der Kopfknochen der VRoid-Figur schaut nach −Z (die Figur ist um 180° gedreht)
   acc.rotation.y = Math.PI;
   if (acc.children.length) put(acc, 'headTop');
+  if (seat) {
+    const hat = buildSeatedHat(look.hat as SeatedHat, seat, { main: look.hatColor, accent: look.hatAccent ?? '#E3B04B', hair: look.hairColor });
+    hat.position.set(seat.cx, seat.y, seat.cz);
+    hat.rotation.x = seat.tilt;
+    if (outline) addOutlines(hat, 0.7);
+    put(hat, 'headTop');
+  }
   const f = seatCfg && fit ? fit(seatCfg.sink) : null;
   if (seatCfg && f) {
     // Hut passend zur Frisur: Öffnung so weit wie das Haar auf Sitzhöhe
@@ -371,35 +386,55 @@ export function attachHeadgear(head: Object3D, eyeL: Object3D | null, eyeR: Obje
     put(hat, 'headTop');
   }
   if (shell) put(capHat(look, shell, outline), 'headTop');
+  // 4.6G.3: Brillen, Monokel und Augenklappe an der gemessenen Pupillenmitte (Iris), knapp vor Hornhaut, Haut und Wimpern
+  const pl = an?.pupilL ?? null, pr = an?.pupilR ?? null;
+  const field = face?.field?.field ?? null;
+  const front = face?.front ?? null;
+  /** Glas-Ebene vor einem Auge: Ziel 1,35 cm vor der Hornhaut, mindestens LENS_CLEAR vor Haut, Brauen und Wimpern unter der Fassung */
+  const lensAt = (e: Vector3, R: number, solid = false) => {
+    const fz = front ? front(e.x, e.y, R, solid) : Infinity;
+    return lensPlane(e.z, Number.isFinite(fz) ? fz : faceZ);
+  };
+  let patchFront = Infinity;
   if (look.eyepatch && rr) {
-    // Augenklappe direkt auf dem rechten Auge (Gesichtsfläche liegt ~5 cm vor dem Augenknochen, Blick nach −Z)
-    const dark = toon('#1E1A20');
-    const g = new Group();
-    const patch = new Mesh(new SphereGeometry(0.03, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), dark);
-    patch.rotation.x = -Math.PI / 2;
-    // flache Wölbung (4.6G.2: 1 cm statt 1,2 cm – darüber hat eine Brille Platz)
-    patch.scale.set(1.05, EYEPATCH_DEPTH / 0.03, 0.9);
-    // 4.6G: auf der gemessenen Haut vor dem Auge (vorher 3 cm im Gesicht versunken), Rand leicht eingesenkt
-    patch.position.set(rr.x, rr.y, faceZ + PATCH_SINK);
-    // Band: vorn auf Höhe der Klappe, steigt nach hinten über die Ohren an und läuft um den Hinterkopf
-    const R = 0.1, tilt = 0.25;
-    const band = new Mesh(new TorusGeometry(R, 0.004, 4, 32), dark);
-    band.rotation.set(Math.PI / 2 - tilt, 0, 0);
-    band.position.set(cx, rr.y + R * Math.sin(tilt), faceZ - 0.003 + R * Math.cos(tilt));
-    g.add(patch, band);
-    g.traverse((o) => { (o as Mesh).castShadow = false; });
-    if (outline) addOutlines(patch, 0.7);
-    put(g, 'eyeRight');
+    if (pr && field && an) {
+      // anliegende Klappe: Schale auf der Gesichtshaut um die Pupille, Wimpern darunter ausgeblendet (Aufrufer), Riemen schräg über die Stirn
+      const pt = eyePatch(pr, field, an, outline);
+      patchFront = pt.front;
+      put(pt.group, 'eyeRight');
+    } else {
+      // ohne Gesichtsmessung: gewölbte Klappe vor dem Auge (wie bis 4.6G.2)
+      const dark = toon('#1E1A20');
+      const g = new Group();
+      const e = pr ?? rr;
+      const patch = new Mesh(new SphereGeometry(0.03, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), dark);
+      patch.rotation.x = -Math.PI / 2;
+      patch.scale.set(1.05, EYEPATCH_DEPTH / 0.03, 0.9);
+      patch.position.set(e.x, e.y, faceZ + PATCH_SINK);
+      patchFront = faceZ + PATCH_SINK - EYEPATCH_DEPTH;
+      const R = 0.1, tilt = 0.25;
+      const band = new Mesh(new TorusGeometry(R, 0.004, 4, 32), dark);
+      band.rotation.set(Math.PI / 2 - tilt, 0, 0);
+      band.position.set(cx, e.y + R * Math.sin(tilt), faceZ - 0.003 + R * Math.cos(tilt));
+      g.add(patch, band);
+      g.traverse((o) => { (o as Mesh).castShadow = false; });
+      if (outline) addOutlines(patch, 0.7);
+      put(g, 'eyeRight');
+    }
   }
-  if (glasses === 'flieger' && fit && an) {
-    // Fliegerbrille: Riemen um die Frisur auf Stirnhöhe, Gläser vorn auf dem Pony (vorher im Haar versunken)
+  if (glasses === 'flieger' && pl && pr && field && an) {
+    // 4.6G.3: Fliegerbrille vor den Augen: Schalen auf der Pupillenmitte, Riemen über den Ohren nach hinten
+    let z = Math.min(lensAt(pl, GOGGLE_R + 0.003, true), lensAt(pr, GOGGLE_R + 0.003, true));
+    if (look.eyepatch) z = Math.min(z, patchFront - PATCH_GAP);
+    put(goggles(pl, pr, z, field, an, outline), 'faceFront');
+  } else if (glasses === 'flieger' && fit && an) {
+    // ohne Pupillen: wie bis 4.6G.2 auf der Stirn
     const top = fit(0)?.seat ?? an.eyeY + 0.15;
     const fs = fit(Math.max(0.01, top - (an.eyeY + 0.05)));
     if (fs) {
       const dark = toon('#2A2220'), brass = toon({ color: '#C9A13B', spec: 1 });
       const glassMat = toon({ color: '#7FA8B8', spec: 1 });
       const gog = new Group();
-      // Schädelbreite statt Frisurbreite (seitlich abstehende Zöpfe machten den Riemen zum Heiligenschein)
       const rad = Math.min(fs.radius, 0.112);
       const strap = new Mesh(new TorusGeometry(rad + 0.006, 0.006, 6, 32), dark);
       strap.rotation.x = Math.PI / 2;
@@ -419,12 +454,21 @@ export function attachHeadgear(head: Object3D, eyeL: Object3D | null, eyeR: Obje
       put(gog, 'faceFront');
     }
   } else if (glasses === 'rund' && l && rr) {
-    // 4.6G.2: über einer Augenklappe sitzt die Brille ein Stück weiter vorn (die Klappe ragt sonst durch das rechte Glas)
-    put(roundGlasses(l, rr, an, faceZ, outline, look.eyepatch ? Math.max(0, EYEPATCH_DEPTH - PATCH_SINK - LENS_GAP + 0.004) : 0, face?.field?.field ?? null), 'faceFront');
+    if (pl && pr) {
+      // beide Gläser in einer Ebene; über einer Augenklappe vor deren Wölbung (PATCH_GAP Luft, kein Z-Fighting)
+      let z = Math.min(lensAt(pl, LENS_R), lensAt(pr, LENS_R));
+      if (look.eyepatch) z = Math.min(z, patchFront - PATCH_GAP);
+      put(roundGlasses(pl, pr, an, z, outline, 0, field, look.eyepatch ? 0.006 : 0.0025), 'faceFront');
+    } else {
+      // 4.6G.2: über einer Augenklappe sitzt die Brille ein Stück weiter vorn (die Klappe ragt sonst durch das rechte Glas)
+      const ahead = look.eyepatch ? Math.max(0, EYEPATCH_DEPTH - PATCH_SINK - LENS_GAP + 0.004) : 0;
+      put(roundGlasses(l, rr, an, faceZ - LENS_GAP, outline, ahead, field), 'faceFront');
+    }
   } else if (glasses === 'monokel' && l && rr) {
-    // Monokel aufs freie Auge (unter einer Augenklappe rechts wandert es nach links)
-    const e = look.eyepatch ? l : rr;
-    put(monocle(e, look.eyepatch ? 1 : -1, faceZ, outline), look.eyepatch ? 'eyeLeft' : 'eyeRight');
+    // Monokel aufs freie Auge: unter einer Augenklappe (rechts) wandert es automatisch nach links
+    const e = look.eyepatch ? (pl ?? l) : (pr ?? rr);
+    const z = (look.eyepatch ? pl : pr) ? lensAt(e, MONO_R) : faceZ - LENS_GAP + 0.002;
+    put(monocle(e, look.eyepatch ? 1 : -1, z, outline), look.eyepatch ? 'eyeLeft' : 'eyeRight');
   }
   if (look.earring && an) {
     // Ohrring hängt am gemessenen Ohrläppchen (rechtes Ohr), Ring in der Seitenebene
@@ -460,8 +504,21 @@ export function attachHeadgear(head: Object3D, eyeL: Object3D | null, eyeR: Obje
   return parts;
 }
 
-/** Abstand der Gläser vor der Gesichtshaut (m, Kopfraum): knapp vor Lidern und Wimpern */
+/** Abstand der Gläser vor der Gesichtshaut (m, Kopfraum) ohne Pupillen-Messung (Ersatzfiguren, alte Prüfungen) */
 export const LENS_GAP = 0.006;
+/** 4.6G.3: Glas-Ebene 1,35 cm vor der Hornhaut (Ziel 1,2 – 1,5 cm) … */
+export const LENS_AHEAD = 0.0135;
+/** … und mindestens so weit vor Haut, Brauen und den Wimpern unter der Fassung (Anime-Wimpern stehen bis 2 cm vor dem Auge) */
+export const LENS_CLEAR = 0.0025;
+/** Halbmesser der Fassungen: runde Brille, Monokel, Schalen der Fliegerbrille */
+export const LENS_R = 0.019, MONO_R = 0.0175, GOGGLE_R = 0.0205;
+/** 4.6G.3: Augenklappe – Halbachsen auf der Haut, Abstand zur Haut (Rand/Mitte) und Luft zu einer Brille davor */
+export const PATCH_RX = 0.026, PATCH_RY = 0.022, PATCH_LIFT = 0.0022, PATCH_BULGE = 0.0022, PATCH_GAP = 0.003;
+
+/** Glas-Ebene (Kopfraum, kleiner = weiter vorn): 1,35 cm vor der Hornhaut, aber immer LENS_CLEAR vor der vordersten Fläche darunter */
+export function lensPlane(corneaZ: number, frontZ: number): number {
+  return Math.min(corneaZ - LENS_AHEAD, frontZ - LENS_CLEAR);
+}
 /** Wölbung der Augenklappe vor der Haut (m); eine Brille darüber rückt um so viel plus 4 mm nach vorn */
 export const EYEPATCH_DEPTH = 0.0095;
 /** so weit sitzt der Rand der Augenklappe hinter der vordersten Gesichtshaut (eingesenkt) */
@@ -472,11 +529,12 @@ export const PATCH_SINK = 0.005;
  * an Schläfe und Schädel (gemessen), dort knicken die Bügel im rechten Winkel nach hinten, laufen gerade (keine abstehenden Stangen) und leicht
  * abfallend über das Ohr und enden in einem kurzen Ohrhaken. `ahead` schiebt die Brille nach vorn (über einer Augenklappe).
  */
-export function roundGlasses(l: Vector3, r: Vector3, an: Anchors | null, faceZ: number, outline: boolean, ahead = 0, field: FaceField | null = null): Group {
+export function roundGlasses(l: Vector3, r: Vector3, an: Anchors | null, lensZ: number, outline: boolean, ahead = 0, field: FaceField | null = null, templeGap = 0.0025): Group {
   const g = new Group();
   const wire = toon({ color: '#C9A13B', spec: 1 });
-  const R = Math.min(0.019, Math.abs(l.x - r.x) * 0.31);
-  const y = (l.y + r.y) / 2 - 0.002, z = faceZ - LENS_GAP - ahead;
+  const R = Math.min(LENS_R, Math.abs(l.x - r.x) * 0.31);
+  // 4.6G.3: Glasmitte genau auf der Pupillenhöhe (vorher 2 mm darunter), Ebene vom Aufrufer (gemessen vor Hornhaut, Haut und Wimpern)
+  const y = (l.y + r.y) / 2, z = lensZ - ahead;
   for (const e of [l, r]) {
     const ring = new Mesh(new TorusGeometry(R, 0.0017, 6, 28), wire);
     ring.position.set(e.x, y, z);
@@ -494,7 +552,7 @@ export function roundGlasses(l: Vector3, r: Vector3, an: Anchors | null, faceZ: 
   const yE = Math.min(yF, Math.max(yF - 0.02, (an?.earTopY ?? yF - 0.008) + 0.003));
   // Bügelweg: an der gemessenen Kopfseite entlang (Schläfe, über dem Ohr); ohne Feld gerade nach hinten am Scharnier
   const z0 = z + 0.004, z1 = earZ + 0.006;
-  const path = field ? templePath(field, yF, z0, z1, 0.0025) : null;
+  const path = field ? templePath(field, yF, z0, z1, templeGap) : null;
   const hingeX = Math.max(templeHinge(Math.abs(l.x - mid) + R, an, Math.abs(l.x - r.x)) * (path ? 0 : 1), path ? Math.max(Math.abs(l.x - mid) + R + 0.003, path[0][0]) : 0);
   for (const e of [l, r]) {
     const s = Math.sign(e.x - mid) || 1;
@@ -545,13 +603,15 @@ function glint(x: number, y: number, z: number, R: number): Group {
   return g;
 }
 
-/** Monokel: goldene Fassung vor einem Auge, eine feine Kette fällt zur Wange (s = Seite des Auges, ±1 in x) */
-function monocle(e: Vector3, s: number, faceZ: number, outline: boolean): Group {
+/** Monokel: goldene Fassung vor einem Auge (Mitte = Pupille, Ebene z), eine feine Kette fällt vom äußeren Rand zur Wange */
+function monocle(e: Vector3, _s: number, z: number, outline: boolean): Group {
   const g = new Group();
   const gold = toon({ color: '#E3B04B', spec: 1 });
-  const R = 0.0175;
+  const R = MONO_R;
+  // Kette zur Außenseite des Auges (weg von der Nase)
+  const s = Math.sign(e.x) || 1;
   const ring = new Mesh(new TorusGeometry(R, 0.0021, 6, 28), gold);
-  ring.position.set(e.x, e.y, faceZ - LENS_GAP + 0.002);
+  ring.position.set(e.x, e.y, z);
   g.add(ring, glint(e.x, e.y, ring.position.z, R));
   // Kette: drei kurze Glieder vom unteren äußeren Rand schräg nach unten zur Wange
   for (let k = 0; k < 3; k++) {
@@ -563,6 +623,127 @@ function monocle(e: Vector3, s: number, faceZ: number, outline: boolean): Group 
   g.traverse((o) => { (o as Mesh).castShadow = false; });
   if (outline) addOutlines(g, 0.7);
   return g;
+}
+
+const TAU = Math.PI * 2;
+
+/**
+ * 4.6G.3: Augenklappe, die flach auf der Haut anliegt: eine Schale über dem Radius-Feld des Gesichts um die Pupille (Rand 1,2 mm, Mitte
+ * gut 4 mm über der Haut), genähter Rand, ein Riemen über die Schläfe hinter das Ohr und einer schräg über die Stirn zur Gegenseite – über
+ * der Braue des freien Auges, nie quer über ein Monokel oder Brillenglas. Liefert die Gruppe und die vorderste Stelle (für eine Brille davor).
+ */
+export function eyePatch(p: Vector3, f: FaceField, an: Anchors, outline: boolean): { group: Group; front: number } {
+  const leather = finishMat('leder', '#1E1A20');
+  const strapMat = finishMat('leder', '#2B2328');
+  const brass = finishMat('gold', '#C9A13B');
+  const bag = new Bag();
+  const th0 = thetaAtX(f, p.y, p.x);
+  const r0 = Math.max(0.03, fieldRadius(f, th0, p.y, false));
+  const pt = (u: number, v: number, off: number, out: number[]) => {
+    const th = th0 + u / r0, y = p.y + v;
+    const r = fieldRadius(f, th, y, false) + off;
+    out.push(Math.sin(th) * r, y, f.zc - Math.cos(th) * r);
+  };
+  const NR = 7, NS = 32;
+  const pos: number[] = [];
+  pt(0, 0, PATCH_LIFT + PATCH_BULGE, pos);
+  for (let i = 1; i <= NR; i++) {
+    const rho = i / NR;
+    for (let j = 0; j < NS; j++) {
+      const a = (j / NS) * TAU;
+      pt(Math.cos(a) * PATCH_RX * rho, Math.sin(a) * PATCH_RY * rho, PATCH_LIFT * (0.55 + 0.45 * (1 - rho ** 4)) + PATCH_BULGE * (1 - rho * rho), pos);
+    }
+  }
+  // Seitenwand vom Rand bis knapp auf die Haut
+  for (let j = 0; j < NS; j++) { const a = (j / NS) * TAU; pt(Math.cos(a) * PATCH_RX, Math.sin(a) * PATCH_RY, 0.0003, pos); }
+  const idx: number[] = [];
+  for (let j = 0; j < NS; j++) idx.push(0, 1 + j, 1 + ((j + 1) % NS));
+  for (let i = 0; i < NR; i++) for (let j = 0; j < NS; j++) {
+    const a = 1 + i * NS + j, b = 1 + i * NS + ((j + 1) % NS), c = a + NS, d = b + NS;
+    idx.push(a, c, b, b, c, d);
+  }
+  const geo = new BufferGeometry();
+  geo.setAttribute('position', new Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  let front = Infinity;
+  for (let i = 2; i < pos.length - NS * 3; i += 3) front = Math.min(front, pos[i]);
+  bag.add(geo, leather);
+  // genähter Rand
+  const rim: number[] = [];
+  for (let j = 0; j <= NS; j++) { const a = (j / NS) * TAU; pt(Math.cos(a) * PATCH_RX * 0.985, Math.sin(a) * PATCH_RY * 0.985, PATCH_LIFT * 0.62, rim); }
+  const rimPts: [number, number, number][] = [];
+  for (let i = 0; i < rim.length; i += 3) rimPts.push([rim[i], rim[i + 1], rim[i + 2]]);
+  bag.add(tube(rimPts, 0.001, 96, 5), strapMat);
+  // Riemen 1: vom äußeren Rand über die Schläfe, über dem Ohr nach hinten (verschwindet im Haar)
+  const s = Math.sign(p.x) || 1;
+  const thE = Math.atan2(Math.abs(an.earLobe.x), -(an.earLobe.z - f.zc));
+  const thA = th0 + (s * PATCH_RX * 0.97) / r0, thB = s * (thE + 0.24);
+  const y0 = p.y + 0.003, y1 = Math.max(p.y + 0.012, (an.earTopY ?? p.y) + 0.009);
+  const back: [number, number, number][] = [];
+  for (let k = 0; k <= 10; k++) {
+    const t = k / 10, th = thA + (thB - thA) * t, y = y0 + (y1 - y0) * (t * t * (3 - 2 * t));
+    const r = fieldRadius(f, th, y, false) + 0.0017;
+    back.push([Math.sin(th) * r, y, f.zc - Math.cos(th) * r]);
+  }
+  bag.add(tube(back, 0.0017, 48, 5), strapMat);
+  // Riemen 2: vom inneren oberen Rand schräg über die Stirn zur Gegenseite (über der Braue des freien Auges, unter dem Pony)
+  const sx = p.x - s * PATCH_RX * 0.55, sy = p.y + PATCH_RY * 0.8;
+  const ex = -s * 0.05, ey = p.y + 0.074;
+  const fs: { x: number; y: number }[] = [];
+  for (let k = 0; k <= 8; k++) { const t = k / 8; fs.push({ x: sx + (ex - sx) * t, y: sy + (ey - sy) * t }); }
+  fs.push({ x: -s * 0.07, y: p.y + 0.09 });
+  bag.add(tube(skinStrap(f, fs, 0.0017), 0.0017, 48, 5), strapMat);
+  // Nieten an den Riemen-Ansätzen
+  bag.add(new SphereGeometry(0.0022, 8, 6), brass, { p: back[0] });
+  const f0 = skinStrap(f, [fs[0]], 0.0022)[0];
+  bag.add(new SphereGeometry(0.0022, 8, 6), brass, { p: f0 });
+  const g = bag.build();
+  g.traverse((o) => { (o as Mesh).castShadow = false; });
+  g.name = 'augenklappe';
+  if (outline) addOutlines(g, 0.7);
+  return { group: g, front };
+}
+
+/**
+ * 4.6G.3: Fliegerbrille vor den Augen: zwei Lederschalen mit Messingringen genau auf der Pupillenmitte (Rückseite knapp vor Haut und Wimpern
+ * in Ebene z), Steg über der Nase, Riemen über den Ohren nach hinten an der Kopfhaut entlang. Gläser ohne Scheibe (Augen bleiben sichtbar).
+ */
+export function goggles(pl: Vector3, pr: Vector3, z: number, f: FaceField, an: Anchors, outline: boolean): Group {
+  const cupMat = finishMat('leder', '#3A2A20');
+  const brass = finishMat('gold', '#C9A13B');
+  const strapMat = finishMat('leder', '#2A2220');
+  const bag = new Bag();
+  const out = new Group();
+  const D = 0.014, R = GOGGLE_R;
+  for (const e of [pl, pr]) {
+    const cup = new CylinderGeometry(R + 0.0045, R + 0.0025, D, 28, 1, true);
+    bag.add(cup, cupMat, { p: [e.x, e.y, z - D / 2], r: [Math.PI / 2, 0, 0] });
+    bag.add(new TorusGeometry(R + 0.0018, 0.0026, 8, 32), brass, { p: [e.x, e.y, z - D] });
+    bag.add(new TorusGeometry(R - 0.0025, 0.0011, 6, 28), brass, { p: [e.x, e.y, z - D + 0.0006] });
+    out.add(glint(e.x, e.y, z - D - 0.0004, R - 0.002));
+  }
+  // Steg über der Nase
+  const mid = (pl.x + pr.x) / 2, sL = Math.sign(pl.x - mid) || -1;
+  const yB = (pl.y + pr.y) / 2 + 0.004;
+  bag.add(tube([[pl.x - sL * (R + 0.002), yB, z - D * 0.55], [mid, yB + 0.005, z - D * 0.7], [pr.x + sL * (R + 0.002), yB, z - D * 0.55]], 0.0024, 12, 6), brass);
+  // Riemen: von der Außenseite der Schalen an der Kopfseite entlang, über das Ohr nach hinten
+  const yTop = Math.max((an.earTopY ?? pl.y) + 0.012, pl.y + 0.016);
+  const zEnd = an.earLobe.z + 0.035;
+  for (const e of [pl, pr]) {
+    const s = Math.sign(e.x - mid) || 1;
+    const pts: { z: number; y: number; side: number }[] = [];
+    const zs = z + 0.01;
+    for (let k = 0; k <= 8; k++) { const t = k / 8; pts.push({ z: zs + (zEnd - zs) * t, y: e.y + (yTop - e.y) * (t * t * (3 - 2 * t)), side: s }); }
+    const path = skinStrap(f, pts, 0.0034);
+    path.unshift([e.x + s * (R + 0.004), e.y, z - D * 0.4]);
+    bag.add(tube(path, 0.0032, 48, 6), strapMat);
+  }
+  out.add(bag.build());
+  out.traverse((o) => { (o as Mesh).castShadow = false; });
+  out.name = 'fliegerbrille';
+  if (outline) addOutlines(out, 0.7);
+  return out;
 }
 
 /** Kopfbedeckung um eine gemessene Kappe (Kopfraum der Figur: Gesicht schaut nach −Z, hinten ist +Z) */

@@ -217,7 +217,10 @@ export class SpringChains {
           const st = T.stiffness * (1 - 0.55 * ((i - 1) / Math.max(1, L - 1))) * Math.min(1, h * 60);
           P[o] += (X[o] - P[o]) * st; P[o + 1] += (X[o + 1] - P[o + 1]) * st; P[o + 2] += (X[o + 2] - P[o + 2]) * st;
         }
-        // feste Gliedlängen (von der Wurzel zur Spitze, nur das Kind wird verschoben), danach Kollision, dann noch einmal die Längen
+        // feste Gliedlängen (von der Wurzel zur Spitze, nur das Kind wird verschoben), Gelenkgrenze (4.6G.3), danach Kollision, dann noch
+        // einmal die Längen – Körper und Boden haben das letzte Wort vor der Gelenkgrenze
+        this.lengths(base, c, sc);
+        this.bend(base);
         for (let pass = 0; pass < 2; pass++) {
           this.lengths(base, c, sc);
           this.collide(base);
@@ -225,7 +228,8 @@ export class SpringChains {
         this.lengths(base, c, sc);
       }
     }
-    // Ungültige Werte (NaN) setzen die Kette zurück; größte Dehnung messen
+    // Ungültige Werte (NaN) setzen die Kette zurück; größte Dehnung und Auslenkung messen
+    let bendSeen = 0;
     for (let c = 0; c < this.chains; c++) {
       const base = c * N;
       let bad = false;
@@ -239,15 +243,24 @@ export class SpringChains {
         const l0 = this.len[c * L + i - 1] * sc;
         if (l0 < 1e-5) continue;
         const a = (base + i - 1) * 3, b = a + 3;
-        stretch = Math.max(stretch, Math.hypot(P[b] - P[a], P[b + 1] - P[a + 1], P[b + 2] - P[a + 2]) / l0);
+        const dx = P[b] - P[a], dy = P[b + 1] - P[a + 1], dz = P[b + 2] - P[a + 2], dl = Math.hypot(dx, dy, dz);
+        stretch = Math.max(stretch, dl / l0);
+        const rx = X[b] - X[a], ry = X[b + 1] - X[a + 1], rz = X[b + 2] - X[a + 2], rl = Math.hypot(rx, ry, rz);
+        if (dl > 1e-6 && rl > 1e-6) {
+          const cs = (dx * rx + dy * ry + dz * rz) / (dl * rl);
+          bendSeen = Math.max(bendSeen, Math.acos(cs > 1 ? 1 : cs < -1 ? -1 : cs));
+        }
       }
     }
     this.maxStretch = stretch;
+    this.maxBendSeen = bendSeen;
   }
 
   /** Gliedlängen halten (dehnbar bis `stretch`, zusammengeschoben höchstens auf 80 %) */
   private lengths(base: number, c: number, sc: number) {
     const P = this.pos, L = this.links, maxS = this.tune.stretch;
+    // 4.6G.3: der Boden gilt auch hier (die steiferen Ketten ziehen sonst den Saum knapp unter das Deck)
+    const floor = this.colliders.floorY + this.tune.radius;
     for (let i = 1; i < this.nodes; i++) {
       const l0 = this.len[c * L + i - 1] * sc;
       const a = (base + i - 1) * 3, b = a + 3;
@@ -258,6 +271,38 @@ export class SpringChains {
       if (want === d) continue;
       const k = want / d;
       P[b] = P[a] + dx * k; P[b + 1] = P[a + 1] + dy * k; P[b + 2] = P[a + 2] + dz * k;
+      if (P[b + 1] < floor) P[b + 1] = floor;
+    }
+  }
+
+  /** größte Abweichung eines Glieds von seiner Ruherichtung im letzten Schritt (Bogenmaß, für Prüfungen) */
+  maxBendSeen = 0;
+
+  /**
+   * 4.6G.3: Gelenkgrenze – jedes Glied schwenkt höchstens `maxBend` aus seiner Ruherichtung (Ziele der Ruheform in Welt). Länge bleibt, nur die
+   * Richtung wird auf den Kegel zurückgedreht. Keine Speicheranforderung.
+   */
+  private bend(base: number) {
+    const lim = this.tune.maxBend;
+    if (!(lim > 0) || lim >= Math.PI) return;
+    const P = this.pos, X = this.tgt, cMax = Math.cos(lim), sMax = Math.sin(lim);
+    for (let i = 1; i < this.nodes; i++) {
+      const a = (base + i - 1) * 3, b = a + 3;
+      let dx = P[b] - P[a], dy = P[b + 1] - P[a + 1], dz = P[b + 2] - P[a + 2];
+      let rx = X[b] - X[a], ry = X[b + 1] - X[a + 1], rz = X[b + 2] - X[a + 2];
+      const dl = Math.hypot(dx, dy, dz), rl = Math.hypot(rx, ry, rz);
+      if (dl < 1e-6 || rl < 1e-6) continue;
+      dx /= dl; dy /= dl; dz /= dl; rx /= rl; ry /= rl; rz /= rl;
+      const c = dx * rx + dy * ry + dz * rz;
+      if (c >= cMax) continue;
+      // Anteil quer zur Ruherichtung; bei genau entgegengesetzter Lage eine beliebige Querrichtung
+      let px = dx - rx * c, py = dy - ry * c, pz = dz - rz * c;
+      let pl = Math.hypot(px, py, pz);
+      if (pl < 1e-6) { px = -ry; py = rx; pz = 0; pl = Math.hypot(px, py) || 1; if (pl < 1e-6) { px = 1; py = 0; pz = 0; pl = 1; } }
+      px /= pl; py /= pl; pz /= pl;
+      P[b] = P[a] + (rx * cMax + px * sMax) * dl;
+      P[b + 1] = P[a + 1] + (ry * cMax + py * sMax) * dl;
+      P[b + 2] = P[a + 2] + (rz * cMax + pz * sMax) * dl;
     }
   }
 

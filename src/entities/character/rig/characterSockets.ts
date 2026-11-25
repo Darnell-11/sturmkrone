@@ -21,7 +21,7 @@ const m1 = new Matrix4();
 /**
  * Sockets an der Vorlage messen (Ruhehaltung, Weltmaß der Vorlage = Meter). body/face: Hautnetze; hairTop: Oberkante des Haars im Kopfraum.
  */
-export function measureSockets(template: Object3D, body: SkinnedMesh | null, face: SkinnedMesh[], hairTop: { y: number; cx: number; cz: number } | null): SocketMeasures {
+export function measureSockets(template: Object3D, body: SkinnedMesh | null, face: SkinnedMesh[], hairTop: { y: number; cx: number; cz: number } | null, pupils: { l: Vector3; r: Vector3 } | null = null): SocketMeasures {
   template.updateMatrixWorld(true);
   const find = (n: string) => template.getObjectByName(n) ?? null;
   const at: SocketMeasures['at'] = {};
@@ -62,8 +62,14 @@ export function measureSockets(template: Object3D, body: SkinnedMesh | null, fac
         return Number.isFinite(best) && best > 0.02 ? best : 0.075;
       };
       const dl = surf(l) + 0.003, dr = surf(r) + 0.003;
-      at.eyeLeft = { bone: head.name, pos: [l.x + fwdN.x * dl, l.y + fwdN.y * dl, l.z + fwdN.z * dl] };
-      at.eyeRight = { bone: head.name, pos: [r.x + fwdN.x * dr, r.y + fwdN.y * dr, r.z + fwdN.z * dr] };
+      // 4.6G.3: Augen-Sockets genau auf der Pupillenmitte, knapp vor der Hornhaut (die Augenknochen liegen 2 cm näher an der Nase)
+      if (pupils) {
+        at.eyeLeft = { bone: head.name, pos: [pupils.l.x + fwdN.x * 0.003, pupils.l.y + fwdN.y * 0.003, pupils.l.z + fwdN.z * 0.003] };
+        at.eyeRight = { bone: head.name, pos: [pupils.r.x + fwdN.x * 0.003, pupils.r.y + fwdN.y * 0.003, pupils.r.z + fwdN.z * 0.003] };
+      } else {
+        at.eyeLeft = { bone: head.name, pos: [l.x + fwdN.x * dl, l.y + fwdN.y * dl, l.z + fwdN.z * dl] };
+        at.eyeRight = { bone: head.name, pos: [r.x + fwdN.x * dr, r.y + fwdN.y * dr, r.z + fwdN.z * dr] };
+      }
       const d2 = Math.max(dl, dr) + 0.012;
       at.faceFront = { bone: head.name, pos: [(l.x + r.x) / 2 + fwdN.x * d2, (l.y + r.y) / 2 + fwdN.y * d2, (l.z + r.z) / 2 + fwdN.z * d2] };
     }

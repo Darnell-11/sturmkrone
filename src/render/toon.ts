@@ -675,17 +675,19 @@ const CHAR_GLSL = /* glsl */ `
         skT *= inversesqrt(skTl);
         // Licht von schräg oben, damit das Band auch im Schatten und nachts lesbar bleibt
         vec3 skHh = normalize(normalize(skL + skUpC * 0.9) + viewDir);
-        // jede Strähne verschiebt das Band etwas: gezackter Rand wie gezeichnet
-        float skJit = skMN(vec3(atan(vSkObj.x, vSkObj.z) * 22.0, vSkObj.y * 6.0, 0.5)) - 0.5;
-        vec3 skT1 = normalize(skT + skHN * (-0.42 + skJit * 0.2));
-        vec3 skT2 = normalize(skT + skHN * (-0.75 + skJit * 0.45));
+        // 4.6G.3: weicher Seidenglanz statt eines gezackten weißen Streifens – das Band wellt sich nur noch sanft über den Strähnen
+        // (Rauschen aus der Lage statt aus dem Winkel um den Kopf: keine Naht am Hinterkopf), Kern breit und weich ausgeblendet,
+        // getönt in der Haarfarbe statt fast weiß; das zweite, breite Band trägt den Schimmer
+        float skJit = skMN(vec3(vSkObj.x * 9.0, vSkObj.y * 4.0, vSkObj.z * 9.0)) - 0.5;
+        vec3 skT1 = normalize(skT + skHN * (-0.42 + skJit * 0.07));
+        vec3 skT2 = normalize(skT + skHN * (-0.7 + skJit * 0.12));
         float skD1 = dot(skT1, skHh), skD2 = dot(skT2, skHh);
-        float skB1 = pow(sqrt(max(1.0 - skD1 * skD1, 1e-4)), 260.0);
-        float skB2 = pow(sqrt(max(1.0 - skD2 * skD2, 1e-4)), 36.0);
-        float skFace = smoothstep(0.0, 0.45, clamp(dot(skHN, viewDir), 0.0, 1.0)) * smoothstep(0.003, 0.08, skTl);
+        float skB1 = pow(sqrt(max(1.0 - skD1 * skD1, 1e-4)), 70.0);
+        float skB2 = pow(sqrt(max(1.0 - skD2 * skD2, 1e-4)), 14.0);
+        float skFace = smoothstep(0.0, 0.5, clamp(dot(skHN, viewDir), 0.0, 1.0)) * smoothstep(0.003, 0.1, skTl);
         float skLum = clamp(dot(skLC, vec3(0.3, 0.6, 0.1)), 0.18, 1.2) * (0.45 + 0.55 * skLit);
-        outgoingLight += mix(diffuseColor.rgb * 1.6, vec3(1.0), 0.4) * smoothstep(0.3, 0.62, skB1) * skLum * skFace * 0.62;
-        outgoingLight += diffuseColor.rgb * skB2 * skLum * skFace * 0.5;
+        outgoingLight += mix(diffuseColor.rgb * 1.8, vec3(1.0), 0.22) * smoothstep(0.08, 0.85, skB1) * skLum * skFace * 0.42;
+        outgoingLight += diffuseColor.rgb * skB2 * skLum * skFace * 0.38;
       }
     } else if (skSurf == 6) {
       // Auge: zwei scharfe Glanzpunkte auf der Iris. Sie wandern ein Stück mit dem Licht und überstrahlen leicht (Bloom).

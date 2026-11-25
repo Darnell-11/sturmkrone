@@ -1,5 +1,39 @@
 # Was ist neu
 
+## 4.6.8 – Phase 4.6G.3: Hüte sitzen auf dem Kopf, keine Glatzen mehr, neu gebaute Mehrlagig-Frisur, straffe Mäntel und Brillen genau auf den Pupillen (25.11.2026, nur lokal)
+
+**Was du siehst**
+- **Hüte sitzen auf dem Kopf statt auf den Haarspitzen:** Alle acht Standard-Hüte greifen jetzt mit ihrem Band satt um Stirn und Hinterkopf – vorn knapp über den Brauen, hinten etwas tiefer, wie ein echter Hut. Bisher saßen sie auf den höchsten Haarspitzen und schwebten bei den Stachelfrisuren wie ein UFO über dem Kopf.
+- **Keine kahle Stirn mehr unter Hüten:** Das Haar wurde bisher schon 4 cm unter dem Hutrand nach innen gezogen – über der Stirn entstand eine Glatze. Jetzt wird nur noch das Haar *in der Hutkrone* sanft hineingedrückt; Pony, Schläfen- und Nackenhaar bleiben voll. Eine dunkle, haarfarbene **Innenkappe** im Hut sorgt dafür, dass unter Krempe und Band nie Kopfhaut durchscheint.
+- **Neu geformte Hüte** mit klaren Kanten, geschwungenen Krempen, Falten und Metall-Zier:
+  - *Dreispitz:* kantige Krone, an drei Seiten steil hochgeschlagene Krempe mit scharfen Spitzen (eine über der Stirn), goldene Borte und Kokarde.
+  - *Zweispitz:* quer getragen, zwei hohe halbmondförmige Krempen mit Goldborte, Kokarde und goldener Schlaufe.
+  - *Marinemütze:* dunkles Band, ausgestellter Deckel mit Goldpaspel, glänzender Lederschirm, goldene Kinnkordel mit Knöpfen und ein Ankerwappen.
+  - *Kochmütze:* Band und hoher, gefältelter Bausch.
+  - *Wollmütze:* gestrickte Längsrippen, umgeschlagener gerippter Bund, kleiner Knauf.
+  - *Südwester:* Kuppel aus sechs Bahnen mit Nähten, vorn schmale, hinten breite abfallende Krempe mit gerolltem Rand.
+  - *Kopftuch:* straff gebunden, Zugfalten zum Knoten, gerollter Saum über der Stirn, Knoten mit zwei Zipfeln.
+  - *Helm:* Stahlkuppel mit Kamm, vorn und hinten hochgezogene Krempe mit Rollrand, Messingnieten und Wappen.
+  - Filz, Wolle und Tuch sind jetzt matt (kein Plastikglanz mehr).
+- **Mehrlagig-Frisur neu gebaut** (für Mann und Frau): Die alte Frisur bestand aus einer zu kleinen Kugelhaube, die hinten in den Schädel schnitt (bei der Heldin eine große kahle Stelle am Hinterkopf), und aus flachen Kartenstreifen mit weißen Kanten. Jetzt liegt die Haube überall knapp über dem Schädel, und jede Strähne ist ein geschlossener, spitz zulaufender Körper: breites Deckhaar, ein voller Pony über die ganze Stirn, Seitensträhnen vor den Ohren und zwei Nackenlagen. Bei der Heldin sitzt sie starr am Kopf (vorher wurde sie mit der Körperform verzerrt und 1,4 cm nach vorn geschoben). Die Grundfrisur wird darunter vollständig ausgeblendet.
+- **Weicher Haarglanz:** Das streifige, gezackte weiße Glanzband ist jetzt ein weicher Anime-Seidenglanz in der Haarfarbe.
+- **Mäntel aus schwerem Tuch:** Lange Mäntel, Umhänge, Schultermäntel und deren leere Ärmel sind rund dreimal so steif und deutlich stärker gedämpft. Beim Anhalten schwingt der Stoff nur noch kurz nach (1,6 statt 9,5 cm, Ruhe nach 0,2 statt 1,2 Sekunden) und wabbelt im Stand nicht mehr. Wind und Sprint treiben ihn weiter kraftvoll, und kein Stoffglied klappt mehr über seine Gelenkgrenze hinaus.
+- **Brillen genau auf den Augen:** Runde Brille, Fliegerbrille und Monokel sitzen jetzt exakt auf der **Pupillenmitte** – bisher richteten sie sich nach den Augenknochen, die bei den Anime-Gesichtern 2 cm näher an der Nase liegen; dadurch saßen die Gläser zu eng, zu weit vorn und wirkten zu tief. Die Gläser stehen jetzt direkt vor Wimpern und Nasensteg (mindestens 1,35 cm vor der Hornhaut).
+  - Die **Fliegerbrille** sitzt jetzt vor den Augen: Lederschalen mit Messingringen, Steg über der Nase, Riemen über den Ohren nach hinten.
+- **Augenklappe ohne Überschneidung:** Die Klappe liegt flach auf der Haut (die Wimpern darunter werden ausgeblendet), mit genähtem Rand. Ihr Riemen läuft schräg über die Stirn über der anderen Braue und über der Schläfe hinter das Ohr – nie mehr quer über das freie Auge. Ein **Monokel** wechselt dabei automatisch aufs freie Auge, eine **Vollbrille** sitzt mit Luft vor der Klappe (kein Flackern).
+- **Drei-Tage-Bart liegt auf der Haut:** Die Stoppeln sitzen jetzt 1,5 mm über Wangen, Kiefer und Kinn – vorher schwebten einige vor dem Kinn und dem Hals in der Luft.
+- **Spielstände:** unverändert (Version 23).
+
+**Technik (für Entwickler)**
+- **Hutsitz:** `entities/character/hatFit.ts` (rein): `SEATED_HATS`, `HAT_FIT`, `HAT_SEAT_STYLE`, `seatFromSkull` (Band aus dem Schädel-Radius-Feld), `squeezeUnderHat` (Haar nur über der Bandebene in das Kronen-Ellipsoid, darunter unverändert), `toSeat`/`fromSeat`/`bandYAt`. `VroidBase.skull()` (Radius-Feld aus Körper- und Gesichtshaut), `hatSeat(hut)`, `hairUnderBand(teil, hut)` (eigene, geteilte Lage, nichts abgeschnitten), `skullBox()`. Gemeinsame Rechnung für Grundfrisur und Frisur-Modelle: `hairSqueeze.ts` (`squeezePositions`).
+- **Hüte:** `entities/character/seatedHats.ts` – `buildSeatedHat(hut, sitz, farben)` aus `hatShell` (Ringflächen mit Falten/Spitzen je Winkel), `domeRows` (Superellipse, liegt immer außerhalb der Krone), Innenkappe in Haarfarbe; alles über `finishMat` und `Bag` (geteilte Figuren-Programme). `attachHeadgear` nutzt den Sitz, sobald `FaceParts.hatSeat` gesetzt ist; Helme der Ausrüstung und Hüte aus Modellen behalten `CAPPED`.
+- **Frisur-Modelle am Kopfknochen:** `glbGear.adaptHead` überträgt Modelle mit `mode: 'bone'` am Kopf starr (relativ zum Kopfknochen, je Achse mit dem Schädelverhältnis, `MALE_SKULL`) statt über die stückweise Körper-Abbildung; unter Standard-Hüten `squeezeUnder` (`HeadFitOpts`). `tools/blender/build_frisur.py` misst den Schädel in Blender und baut geschlossene Linsen-Strähnen (9 324 Dreiecke, Draco 31 KB). Haar-Randlicht `finishMat('haar')` 0,4.
+- **Augen:** `Anchors.pupilL/R` (Iris-Mitte, Hornhaut), `VroidBase.eyeFront` (Haut, Brauen, Wimpern vor dem Auge), `lensPlane`/`LENS_AHEAD`/`LENS_CLEAR`/`LENS_R`/`MONO_R`/`GOGGLE_R`; Augen-Sockets `eyeLeft/Right` auf den Pupillen (`measureSockets(…, pupils)`). Augenklappe `eyePatch` (Schale über dem Gesichtsfeld, `PATCH_*`, Riemen über `skinStrap`/`thetaAtX`/`thetaAtDepth`), Wimpern darunter `VroidBase.lashUnderPatch` (Maske behält die Morph-Ziele). Fliegerbrille `goggles`. Gesichtsfeld reicht bis zur Stirn.
+- **Stoff:** `CLOTH` (steifer, stärker gedämpft, kleinere Trägheit, `drag` verdoppelt), neues Feld `maxBend` (Gelenkgrenze je Glied, `SpringChains.bend`, Messwert `maxBendSeen`), Boden gilt auch im Längen-Schritt; Vergleichswerte `CLOTH_LEGACY`.
+- **Bart:** Stoppeln auf der Haut (`fieldPoint(…, hang = false)`, `STUBBLE_LIFT` 1,5 mm, `STUBBLE_UNDER_JAW`).
+- **Haarglanz:** `CHAR_GLSL` Haar-Zweig (Band-Exponent 70 statt 260, Zacken 0,07 statt 0,2, Rauschen aus der Lage statt aus dem Winkel um den Kopf) – gleiches Programm.
+- **Prüfen:** `tests/characterHatHairAndFaceFit.test.ts` (20 Tests: Stirn unter Hüten, Passform, Hut um die Krone, Mehrlagig-Normalen/Hülle/Verankerung für Mann und Frau aus der echten Datei, Stoff, Brillen/Monokel/Augenklappe, Stoppeln, Haarglanz). Browser: `qa_tmp/g463_shots.js` nach `qa_tmp/g462_setup.js`, Bilder in `qa_tmp/g463/`. Gemessen: Build-Start Menü 5,1 – 5,3 s, Vorwärmen fertig 7,6 – 7,8 s, 170 Programme; alle Hut-, Brillen- und Frisur-Materialien laufen über beim Start vorgewärmte Programme; 1 147 Tests grün.
+
 ## 4.6.7 – Phase 4.6G.2: saubere Anime-Gesichter ohne Schmutzflecken, die weibliche Spielfigur, Kleidung ohne Durchstechen, Bärte aus Strähnen, richtige Brillen und eindrucksvolle Endgame-Rüstungen (25.11.2026, nur lokal)
 
 **Was du siehst**
