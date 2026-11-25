@@ -106,6 +106,10 @@ export interface FighterState {
   marks: string[];
   markN: number;
   marksDone: boolean;
+  /** Sturm-Verfolgung (4.6C): Restzeit des Fensters nach einem Hochschleudern (ein Dash teleportiert zum Ziel in der Luft) */
+  chaseT: number;
+  /** Klingen-Clash (4.6C): Nummer des Angriffs, der schon einen Clash hatte (höchstens einer je Angriff) */
+  clashSeq: number;
 }
 
 export function createFighter(entityId: string, style: ActionStyleId, x = 0, y = 0, z = 0, yaw = 0): FighterState {
@@ -119,9 +123,12 @@ export function createFighter(entityId: string, style: ActionStyleId, x = 0, y =
     hyperT: 0, critT: 0, poiseT: 0, speedT: 0, swapBonus: 1, hits: 0, hitT: 0, maxHits: 0, lastLabel: '',
     stamina: T.stamina, staminaPause: 0, staminaFlash: 0, speedK: 1, finisherId: '', moveHits: 0,
     will: 0, awakenT: 0, ultReady: false, bufU: -1, aura: 0, kingT: AURA.kingEvery, form: 1, cineT: 0, strikeSeq: -1, waveSeq: -1, waveT: -1,
-    marks: new Array<string>(MAX_MARKS).fill(''), markN: 0, marksDone: false,
+    marks: new Array<string>(MAX_MARKS).fill(''), markN: 0, marksDone: false, chaseT: 0, clashSeq: -1,
   };
 }
+
+/** Beschleunigungskurve des Vorwärts-Momentums: schnell an, weich aus (Weg-Anteil 0 … 1) */
+export const easeOutCubic = (u: number): number => { const k = u < 0 ? 0 : u > 1 ? 1 : u; const r = 1 - k; return 1 - r * r * r; };
 
 // ---------- Eingabe, Ziele, Welt ----------
 
@@ -159,12 +166,15 @@ export interface ActionTarget {
   /** Haltung gebrochen (taumelt): offen für den Finisher */
   broken: boolean;
   boss: boolean;
+  /** Elite-Gegner mit Haltungsleiste (kein Boss); holt gerade zum Schlag aus oder schlägt zu (Klingen-Clash, 4.6C) */
+  elite: boolean;
+  attacking: boolean;
   /** Platz in der eigenen Liste des Spiels */
   ref: number;
 }
 
 export function makeTargetPool(n: number): ActionTarget[] {
-  return Array.from({ length: n }, () => ({ id: '', x: 0, y: 0, z: 0, radius: 0.5, height: 1.8, yaw: 0, alive: false, airborne: false, mass: false, broken: false, boss: false, ref: -1 }));
+  return Array.from({ length: n }, () => ({ id: '', x: 0, y: 0, z: 0, radius: 0.5, height: 1.8, yaw: 0, alive: false, airborne: false, mass: false, broken: false, boss: false, elite: false, attacking: false, ref: -1 }));
 }
 
 /** Was die Engine über einen Treffer mitgibt (ein vorab angelegtes Objekt, je Treffer neu gefüllt) */
@@ -191,6 +201,8 @@ export interface HitContext {
   ultimate: boolean;
   cast: number;
   chained: number;
+  /** Klingen-Clash (4.6C): ein schwerer Schlag trifft den Schlag eines Bosses/Elite-Gegners – Funken, Haltungsschaden, sein Angriff bricht ab */
+  clash: boolean;
 }
 
 /** Körper für die Bewegung durch die Welt */
@@ -218,7 +230,9 @@ export interface ActionWorld {
 export type ActionEventType =
   | 'move' | 'skill' | 'cutin' | 'cancel' | 'jump' | 'land' | 'fall' | 'dash' | 'perfect' | 'counter' | 'impact'
   | 'hitConfirm' | 'style' | 'lockLost' | 'staminaLow' | 'notReady' | 'buff' | 'parry' | 'blocked'
-  | 'awaken' | 'awakenEnd' | 'aura' | 'ultimate' | 'ultStrike' | 'sheath' | 'chain' | 'kingWave' | 'awakenWave' | 'locked' | 'willFull';
+  | 'awaken' | 'awakenEnd' | 'aura' | 'ultimate' | 'ultStrike' | 'sheath' | 'chain' | 'kingWave' | 'awakenWave' | 'locked' | 'willFull'
+  /** 4.6C: Sturm-Verfolgung (a = Platz des Ziels, b/c = alter Ort x/z), Klingen-Clash (a = Fenster, b = Ergebnis), Schwungfenster einer Technik/Verzweigung (a = Angriff, b = Fenster) */
+  | 'chase' | 'clash' | 'swing';
 
 export interface ActionEvent { type: ActionEventType; a: number; b: number; c: number; s: string }
 
@@ -294,7 +308,7 @@ export class ActionCombatEngine {
   constructor(readonly f: FighterState, poolSize = 160) {
     this.pool = makeTargetPool(poolSize);
     this.memo = Array.from({ length: MAX_TICKS }, () => new Array<string>(MAX_TICK_TARGETS).fill(''));
-    this.ctx = { formK: 1, penAdd: 0, ultimate: false, cast: 0, chained: 0, dirX: 0, dirZ: 1, crit: 0, critAdd: 0, postureK: 1, tick: 0, kind: 'light', finisher: false, airborne: false, bonus: 1, style: ACTION_STYLES[f.style], fx: 0, fz: 0, fyaw: 0 };
+    this.ctx = { formK: 1, penAdd: 0, ultimate: false, cast: 0, chained: 0, clash: false, dirX: 0, dirZ: 1, crit: 0, critAdd: 0, postureK: 1, tick: 0, kind: 'light', finisher: false, airborne: false, bonus: 1, style: ACTION_STYLES[f.style], fx: 0, fz: 0, fyaw: 0 };
   }
 
   get style(): ActionStyleDef { return ACTION_STYLES[this.f.style]; }
@@ -472,7 +486,7 @@ export class ActionCombatEngine {
     f.clock += dt;
     // Zeiten
     f.iframes = dec(f.iframes, dt); f.perfectT = dec(f.perfectT, dt); f.counterT = dec(f.counterT, dt); f.counterStance = dec(f.counterStance, dt);
-    f.hover = dec(f.hover, dt); f.comboWindow = dec(f.comboWindow, dt); f.lockFree = dec(f.lockFree, dt); f.staminaFlash = dec(f.staminaFlash, dt);
+    f.hover = dec(f.hover, dt); f.chaseT = dec(f.chaseT, dt); f.comboWindow = dec(f.comboWindow, dt); f.lockFree = dec(f.lockFree, dt); f.staminaFlash = dec(f.staminaFlash, dt);
     f.hyperT = dec(f.hyperT, dt); f.critT = dec(f.critT, dt); f.poiseT = dec(f.poiseT, dt); f.speedT = dec(f.speedT, dt);
     for (let i = 0; i < 4; i++) f.skillCd[i] = dec(f.skillCd[i], dt);
     if (f.hitT > 0) { f.hitT -= dt; if (f.hitT <= 0) { f.hitT = 0; f.hits = 0; } }
@@ -550,7 +564,9 @@ export class ActionCombatEngine {
     }
     // Dash: aus allem außer frühem Taumeln (Animation-Cancel); ein Dash kettet nach gut der Hälfte des vorigen
     if (this.wants(f.bufD) && (f.phase !== 'hurt' || f.hurtT < 0.15) && (f.phase !== 'dash' || f.dashT < f.dashDur * 0.45)) {
-      if (this.tryDash(inp, st)) f.bufD = -1;
+      // Sturm-Verfolgung: kurz nach einem Hochschleudern bringt der Dash die Figur zum Ziel in der Luft
+      if (f.chaseT > 0 && this.tryChase(w)) f.bufD = -1;
+      else if (this.tryDash(inp, st)) f.bufD = -1;
     }
     // Sprung: bricht jeden Angriff ab
     if (this.wants(f.bufJ) && f.phase !== 'hurt' && f.phase !== 'down') {
@@ -678,6 +694,45 @@ export class ActionCombatEngine {
     if (inp.mag > 0.1) { const sp = T.run * 0.92 * Math.min(1, inp.mag) * f.speedK; f.vx = inp.moveX * sp; f.vz = inp.moveZ * sp; }
     if (f.lockId) { f.lockId = ''; this.events.push('lockLost'); }
     this.events.push('jump', f.jumps);
+    return true;
+  }
+
+  /**
+   * Sturm-Verfolgung (4.6C): Blitz-Teleport neben das nächste hochgeschleuderte Ziel, auf seine Höhe – die Luft-Kombo und der Meteor
+   * ketten nahtlos an. Liefert false, wenn kein Ziel hoch genug in Reichweite ist (dann ist es ein normaler Dash).
+   */
+  private tryChase(w: ActionWorld): boolean {
+    const f = this.f;
+    let best = -1, bd: number = T.chaseRange;
+    for (let i = 0; i < this.poolN; i++) {
+      const t = this.pool[i];
+      if (!t.alive || !t.airborne || t.y < f.y + T.chaseMinRise) continue;
+      const d = Math.hypot(t.x - f.x, t.z - f.z);
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (best < 0) return false;
+    const t = this.pool[best];
+    let dx = f.x - t.x, dz = f.z - t.z;
+    const d = Math.hypot(dx, dz);
+    if (d > 1e-3) { dx /= d; dz /= d; } else { dx = -Math.sin(f.yaw); dz = -Math.cos(f.yaw); }
+    const ox = f.x, oz = f.z;
+    const k = t.radius + T.chaseOffset;
+    // neben das Ziel (Seite der Figur), sonst direkt darunter; nie in eine Wand
+    if (!w.teleport(f, t.x + dx * k, t.z + dz * k) && !w.teleport(f, t.x, t.z)) return false;
+    if (f.phase === 'move') { this.events.push('cancel', f.moveIdx); this.clearMove(); }
+    f.y = Math.max(f.y, t.y - 0.15);
+    f.grounded = false;
+    f.phase = 'air';
+    f.vx = 0; f.vz = 0; f.kx = 0; f.kz = 0;
+    f.vy = 0.8;
+    f.hover = T.airHitHover * 1.6;
+    f.jumps = Math.max(f.jumps, 1);
+    f.airIdx = 0;
+    f.yaw = Math.atan2(t.x - f.x, t.z - f.z);
+    f.lockId = t.id;
+    f.iframes = Math.max(f.iframes, 0.25);
+    f.chaseT = 0;
+    this.events.push('chase', best, ox, oz);
     return true;
   }
 
@@ -842,6 +897,11 @@ export class ActionCombatEngine {
       f.cineT -= dt;
       if (!f.grounded) f.vy = 0;
       else this.groundFollow(dt, w);
+      // 4.6C: Aufstieg und Schweben beginnen erst nach der Zwischensequenz (vorher hielt sie die Figur fest und schluckte den Sprung)
+      if (f.cineT <= 0 && mv.rise > 0) {
+        f.vy = mv.rise; f.grounded = false; f.airT = Math.max(f.airT, T.coyote);
+        if (mv.hang > 0) f.hover = Math.max(f.hover, mv.hang);
+      }
       return;
     }
     const t0 = f.moveT;
@@ -886,6 +946,24 @@ export class ActionCombatEngine {
         impulse = true;
       }
     }
+    // Vorwärts-Momentum (4.6C): knackige Beschleunigungskurve über das erste Schwungfenster – durch Verbände hindurch,
+    // vor einem einzelnen Ziel höchstens bis kurz hinein (der Rückstoß schiebt es weg)
+    if (mv.push > 0 && (f.grounded || mv.air)) {
+      // mehrtreffrige Angriffe (Wirbel, Tänze, Schlaghagel) gleiten über alle Fenster, die übrigen über das erste
+      const endT = mv.hits.length >= 3 ? mv.hits[mv.hits.length - 1].t1 : firstT1;
+      const p0 = Math.max(0, firstT0 - T.pushLead), p1 = Math.max(p0 + 0.06, endT + T.pushTail);
+      if (t1 > p0 && t0 < p1) {
+        const u0 = Math.max(0, (t0 - p0) / (p1 - p0)), u1 = Math.min(1, (t1 - p0) / (p1 - p0));
+        let step = mv.push * (easeOutCubic(u1) - easeOutCubic(u0));
+        if (tg && !tg.mass && !mv.through) {
+          // gegen ein einzelnes Ziel zählt der Schub zum Budget des Magnet-Schritts (zusammen höchstens 3,5 m) und endet kurz davor
+          const gap = Math.hypot(tg.x - f.x - mx, tg.z - f.z - mz) - tg.radius - ActionCombatEngine.reachStop(mv) + T.pushGap;
+          step = Math.min(step, Math.max(0, gap), Math.max(0, f.magnetLeft));
+          f.magnetLeft -= step;
+        }
+        if (step > 1e-5) { mx += fx * step; mz += fz * step; impulse = true; }
+      }
+    }
     mx += f.kx * dt; mz += f.kz * dt;
     this.decayKnock(dt);
     if (mx !== 0 || mz !== 0) this.moveBody(w, mx, mz, impulse, f.moveSeq);
@@ -901,8 +979,11 @@ export class ActionCombatEngine {
     // Trefferfenster dieses Bilds
     if (!(mv.meteor && !f.grounded)) {
       const fk = st.faji && f.moveKind === 'skill' ? formPower(f.form).range : 1;
+      // Schwungfenster von Techniken, Verzweigungen, Finishern und Meteor melden (Klingenwellen und Eruptionen der Darstellung)
+      const swing = f.moveKind !== 'light' && f.moveKind !== 'air' && f.moveKind !== 'swap' && f.moveKind !== 'ultimate';
       for (let i = 0; i < mv.hits.length && i < MAX_TICKS; i++) {
         const h = mv.hits[i];
+        if (swing && ((t0 < h.t0 && h.t0 <= t1) || (h.t0 === 0 && t0 === 0))) this.events.push('swing', f.moveIdx, i);
         // verzögerter Treffer: zur Zeit `delayTo` treffen alle markierten Ziele zugleich (Klinge rastet ein)
         if (h.delayTo > 0 && !f.marksDone && t1 >= h.delayTo) this.fireMarks(h, i, mv, w);
         if (h.t0 > t1 || h.t1 <= t0) continue;
@@ -945,6 +1026,7 @@ export class ActionCombatEngine {
     c.ultimate = kind === 'ultimate';
     c.cast = f.moveSeq;
     c.chained = 0;
+    c.clash = false;
     return c;
   }
 
@@ -969,9 +1051,18 @@ export class ActionCombatEngine {
     if (landed > 0) this.afterHits(landed, broke, mv, tick);
   }
 
+  /** Schwer genug für einen Klingen-Clash? (Schwer, Finisher, Verzweigungen, Meteor und alle wuchtigen Treffer) */
+  private clashable(h: ActionHit): boolean {
+    const k = this.f.moveKind;
+    return k === 'heavy' || k === 'finisher' || k === 'branch' || k === 'meteor' || h.poise >= 30 || h.fx === 'heavy';
+  }
+
   /** Nach Treffern eines Fensters: Zähler, Willenskraft, Schweben in der Luft, Konter verbraucht */
   private afterHits(landed: number, broke: number, mv: ActionMove, tick: number) {
     const f = this.f;
+    // Hochgeschleudert (Orkan-Launcher, Auftriebs-Techniken): ein Dash darf jetzt hinterher teleportieren (Sturm-Verfolgung)
+    const lh = tick < mv.hits.length ? mv.hits[tick] : null;
+    if (lh && lh.launch >= 6 && f.moveKind !== 'ultimate') f.chaseT = T.chaseWindow;
     f.hits += landed;
     f.hitT = T.hitReset;
     f.moveHits += landed;
@@ -1012,7 +1103,17 @@ export class ActionCombatEngine {
       if (d > 1e-4) { dx /= d; dz /= d; } else { dx = fx; dz = fz; }
       c.dirX = dx; c.dirZ = dz;
       c.chained = 0;
+      // Klingen-Clash: ein schwerer Schlag trifft den Schlag eines Bosses oder Elite-Gegners, der auf die Figur zielt (einmal je Angriff)
+      const clash = f.clashSeq !== f.moveSeq && t.attacking && (t.boss || t.elite) && this.clashable(h)
+        && Math.sin(t.yaw) * -dx + Math.cos(t.yaw) * -dz > T.clashFacing;
+      c.clash = clash;
       const r = w.hit(t, h, mv, c);
+      c.clash = false;
+      if (clash) {
+        f.clashSeq = f.moveSeq;
+        f.kx -= fx * T.clashRecoil; f.kz -= fz * T.clashRecoil;
+        this.events.push('clash', i, r);
+      }
       if (r > 0) landed++;
       if (r > 1) broke++;
       // Kettenblitz: springt auf die nächsten Ziele in Reichweite (je Sprung 70 % Schaden)
@@ -1241,7 +1342,7 @@ export class ActionCombatEngine {
 // ---------- Trefferformen ----------
 
 /** Liegt ein Ziel (Kreis mit Radius, Höhe) in der Trefferform um die Figur? Bogen, Kreis (vor der Figur) oder Linie (Schockwelle) */
-export function inShape(f: { x: number; y: number; z: number; yaw: number }, h: ActionHit, t: ActionTarget, fx = Math.sin(f.yaw), fz = Math.cos(f.yaw), rangeK = 1): boolean {
+export function inShape(f: { x: number; y: number; z: number; yaw: number }, h: ActionHit, t: Pick<ActionTarget, 'x' | 'y' | 'z' | 'radius' | 'height'>, fx = Math.sin(f.yaw), fz = Math.cos(f.yaw), rangeK = 1): boolean {
   if (t.y > f.y + h.up || t.y + t.height < f.y - h.down) return false;
   const dx = t.x - f.x, dz = t.z - f.z;
   const range = h.range * rangeK;

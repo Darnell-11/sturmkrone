@@ -63,6 +63,13 @@ export interface FootDeps {
   onAwakenWave?: (f: FighterState, color: string, accent: string) => void;
   onChain?: (ax: number, ay: number, az: number, bx: number, by: number, bz: number, color: string) => void;
   onKingWave?: (x: number, y: number, z: number, r: number) => void;
+  /** 4.6C: Sturm-Verfolgung (alter Ort), Klingen-Clash (Ort der gekreuzten Klingen), Schwungfenster einer Technik, Staub-/Wasserspur des Momentums */
+  onChase?: (ox: number, oy: number, oz: number, f: FighterState) => void;
+  onClash?: (x: number, y: number, z: number, yaw: number) => void;
+  onSwing?: (mv: ActionMove, h: ActionHit, f: FighterState) => void;
+  trail?: (x: number, y: number, z: number, k: number) => void;
+  /** Impact-Frames der Anime-Pipeline (invertiert, dann Tusche; 2 – 4 gezeichnete Bilder) */
+  impactFrames?: (n: number) => void;
 }
 
 /** Anschluss der Engine an Boden und Kampfsystem (ein Objekt, je Bild nur der Boden neu gesetzt) */
@@ -156,6 +163,9 @@ export class PlayerFoot implements PlayerTarget {
   private readonly att: AttackerInfo = { id: '', x: 0, z: 0, yaw: 0, radius: 0.5 };
   private readonly finP = { x: 0, y: 0, z: 0 };
   private readonly tmpV = new Vector3();
+  /** Höhe vor dem Logikschritt (Sturm-Verfolgung: Nachbild am alten Ort), Takt der Momentum-Spur */
+  private preY = 0;
+  private trailT = 0;
   /** Färbung der Figur (Fesseln > Erwachen > Eisenwille): Schlüssel der gesetzten Färbung, Pulszeit */
   private tintKey = '';
   private pulseT = 0;
@@ -383,6 +393,7 @@ export class PlayerFoot implements PlayerTarget {
     inp.hardLockYaw = lockYaw === null ? NaN : lockYaw;
     inp.awaken = input.pressed('awaken');
     inp.aura = input.pressed('aura');
+    this.preY = f.y;
     this.engine.step(inp, this.world, dt);
     this.handleEvents();
     this.animate(dt);
@@ -391,6 +402,12 @@ export class PlayerFoot implements PlayerTarget {
     this.speed = moved;
     this.realSpeed += (Math.min(moved, 9) - this.realSpeed) * Math.min(1, dt * 18);
     this.char.lean(f.yaw, Math.min(this.speed, this.realSpeed + 0.3), dt);
+    // Momentum-Spur (4.6C): treibt ein Schlag die Figur vor, zieht sie Bodenstaub bzw. eine Wasserspur hinter sich her
+    const pm = f.phase === 'move' ? this.engine.move : null;
+    if (pm && pm.push > 0 && f.grounded && moved > 2.6) {
+      this.trailT -= dt;
+      if (this.trailT <= 0) { this.trailT = 0.045; this.deps.trail?.(f.x, f.y, f.z, Math.min(1, moved / 9)); }
+    } else this.trailT = 0;
     if (f.phase === 'ground' && this.onFoot) this.char.footsteps(f.x, f.y, f.z);
     // Haltungsbruch-Finisher: Hinweis über dem taumelnden Ziel
     const ov = this.deps.overlay;
@@ -552,6 +569,31 @@ export class PlayerFoot implements PlayerTarget {
             this.deps.onUltStrike?.(mv, mv.ultimate, f);
             this.deps.shake?.(1.2);
           }
+          break;
+        }
+        case 'chase': {
+          // Sturm-Verfolgung: Blitz-Nachbild am alten Ort, Leuchtstreifen bis zum Ziel in der Luft
+          const ox = e.b, oz = e.c, oy = this.preY;
+          afx?.afterimage(ox, oy, oz, st.accent, 0.5, 1.05);
+          afx?.streak(ox, oy + 1.1, oz, f.x, f.y + 1.1, f.z, st.accent, 0.14, 0.4);
+          ov?.number(this.tmpV.set(f.x, f.y + 2.4, f.z), 'Sturm-Verfolgung!', 'crit');
+          ov?.speedlines(0.8);
+          this.deps.onChase?.(ox, oy, oz, f);
+          this.char.playClip('Jump_Idle', { loop: true, fade: 0.05 });
+          this.anim = 'fall';
+          this.moveShown = -1;
+          break;
+        }
+        case 'clash':
+          // Klingen-Clash: Funkenfontäne zwischen den Klingen (Text, Hit-Stop und Druckring setzt das Kampfsystem)
+          this.deps.onClash?.(f.x + Math.sin(f.yaw) * 1.1, f.y + 1.35, f.z + Math.cos(f.yaw) * 1.1, f.yaw);
+          this.deps.impactFrames?.(2);
+          ov?.speedlines(0.7);
+          break;
+        case 'swing': {
+          const mv = ALL_MOVES[e.a];
+          const h = mv?.hits[e.b];
+          if (mv && h) this.deps.onSwing?.(mv, h, f);
           break;
         }
         case 'sheath':

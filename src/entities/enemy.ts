@@ -10,6 +10,7 @@ import {
   SpriteMaterial,
   Vector3,
 } from 'three';
+import { KNOCKBACK, bounceVelocity, inWater, knockOutcome, overboardLaunch } from '../combat/knockback';
 import { DANGER_POISE, RAID_BOSS_HIT_CAP, dangerOfLevel, enemyArmorRating, mitigation } from '../data/balanceConfig';
 import { BOSS, ENEMIES, enemyScale, type EnemyAttack, type EnemyDef, type EnemyKind } from '../data/combat';
 import { randomLook, type NpcRole } from '../data/characterParts';
@@ -61,7 +62,18 @@ export interface EnemyWorld {
   bossPhase(e: Enemy, phase: number): void;
   /** Haltebalken des Bosses leer: „Break“ */
   bossBreak(e: Enemy): void;
+  /**
+   * Rückstoß-Physik (4.6C, alle optional): Bremsspur beim Schlittern, Aufprall an Wand oder Reling (Tempo, Wand-Normale),
+   * über Bord gegangen (fliegt über Reling/Stegrand/Klippe), ins Meer gefallen (`ko` = dadurch besiegt)
+   */
+  skid?(e: Enemy, speed: number): void;
+  wallSlam?(e: Enemy, speed: number, nx: number, nz: number): void;
+  overboard?(e: Enemy): void;
+  splashdown?(e: Enemy, ko: boolean): void;
 }
+
+/** Rückstoß-Physik (4.6C): Zahlen und Regel in combat/knockback.ts */
+export { KNOCKBACK } from '../combat/knockback';
 
 export interface HitInfo {
   dmg: number;
@@ -122,6 +134,10 @@ const STEER = { x: 0, z: 0 };
 /** Wartezeit (s) einer Boss-Fähigkeit zwischen zwei Einsätzen, falls die Daten keine nennen */
 const MECH_CD: Record<string, number> = { summon: 26, guard: 20, counter: 15, blink: 7, lunge: 4, signal: 8 };
 
+/** Rückstoß-Physik: wiederverwendete Ergebnisse (keine Speicheranforderung je Bild) */
+const _bounce = { vx: 0, vz: 0 };
+const _launch = { vx: 0, vy: 0, vz: 0 };
+
 export class Enemy {
   readonly char: Character;
   readonly def: EnemyDef;
@@ -166,6 +182,9 @@ export class Enemy {
   poise: number;
   dmg: number;
   state: EnemyState = 'idle';
+  /** fliegt frei über eine Kante (4.6C): ohne Begrenzung, bis er landet oder ins Meer fällt */
+  overboard = false;
+  private skidT = 0;
   hasToken = false;
   /** Zuletzt getroffen (für Lebensbalken) */
   lastHit = -99;
@@ -519,6 +538,28 @@ export class Enemy {
     return 'hit';
   }
 
+  /** Holt gerade zum Nahkampf-Schlag aus oder schlägt zu (Klingen-Clash, 4.6C) */
+  get swinging(): boolean {
+    const a = this.atk;
+    if (!a || a.projectile || a.zones) return false;
+    return (this.state === 'attack' && !this.struck) || (this.state === 'windup' && this.timer <= 0.32);
+  }
+
+  /** Klingen-Clash (4.6C): sein Schlag prallt ab – der Angriff bricht ab, kurzer Rückprall (die Haltung nimmt der Clash-Treffer) */
+  clashed(w?: EnemyWorld, dirX = 0, dirZ = 0) {
+    if (this.state === 'dead' || this.state === 'transition' || this.state === 'stagger') return;
+    this.cancelAttack();
+    if (this.hasToken) { w?.releaseToken(this); this.hasToken = false; }
+    this.vx += dirX * 5; this.vz += dirZ * 5;
+    if (this.state === 'air') return;
+    this.state = 'hit';
+    this.timer = this.def.boss ? 0.55 : 0.8;
+    this.char.play('hitHeavy', { fade: 0.04, restart: true });
+  }
+
+  /** Darf über Bord gehen? (nie Bosse, Raid-Hauptmänner und -Endbosse, Dachschützen) */
+  get canGoOverboard(): boolean { return !this.def.boss && !this.def.raid && !this.perch; }
+
   /** Perfekte Parade des Spielers: Gegner taumelt */
   parried(w?: EnemyWorld) {
     if (this.state === 'transition') return;
@@ -718,7 +759,10 @@ export class Enemy {
         this.y += this.vy * dt;
         {
           const g = w.ground(this.x, this.z, this.y);
+          // über Bord: fällt er unter die Wasserlinie, ist er besiegt
+          if (this.overboard && inWater(this.y, g)) { this.splashdown(w); break; }
           if (this.y <= g && this.vy < 0) {
+            this.overboard = false;
             this.y = g;
             this.vy = 0;
             this.state = 'down';
@@ -732,7 +776,13 @@ export class Enemy {
         break;
       case 'dead':
         this.vy -= 18 * dt;
-        this.y = Math.max(w.ground(this.x, this.z, this.y), this.y + this.vy * dt);
+        {
+          const g = w.ground(this.x, this.z, this.y);
+          const ny = Math.max(g, this.y + this.vy * dt);
+          // ein Besiegter, der über eine Kante fliegt, klatscht ins Wasser
+          if (this.overboard && this.y >= KNOCKBACK.seaLevel && inWater(ny, g)) { this.overboard = false; w.splashdown?.(this, false); }
+          this.y = ny;
+        }
         // nach dem Fallen in Glut auflösen (4 s nach dem Tod wird die Figur entfernt)
         this.char.setDissolve(clamp01((2.7 - this.timer) / 1.8));
         break;
@@ -742,8 +792,14 @@ export class Enemy {
     if (this.perch && this.state !== 'dead' && this.state !== 'air') { mvx = 0; mvz = 0; this.vx = 0; this.vz = 0; }
     this.vx *= Math.pow(0.02, dt);
     this.vz *= Math.pow(0.02, dt);
-    // Rückstoß und Schritte als gesweepte Bewegung: kein Wanddurchbruch bei hohem Tempo (Teilschritte ≤ 0,15 m)
-    sweepMove(this, (mvx + this.vx) * dt, (mvz + this.vz) * dt, this.sweepGround(w), false);
+    if (this.overboard) {
+      // frei über die Kante: keine Begrenzung (Reling, Stegrand), die Schwerkraft rechnet der Zustand 'air'/'dead'
+      this.x += this.vx * dt; this.z += this.vz * dt;
+    } else {
+      // Rückstoß und Schritte als gesweepte Bewegung: kein Wanddurchbruch bei hohem Tempo (Teilschritte ≤ 0,15 m)
+      const r = sweepMove(this, (mvx + this.vx) * dt, (mvz + this.vz) * dt, this.sweepGround(w), false);
+      this.knockPhysics(w, r.hit, r.nx, r.nz, dt);
+    }
     if (this.state !== 'air' && this.state !== 'dead') {
       const g = this.perch ? this.perch.y : w.ground(this.x, this.z, this.y);
       this.y += ((Number.isFinite(g) ? g : this.y) - this.y) * Math.min(1, dt * 15);
@@ -751,6 +807,53 @@ export class Enemy {
     this.char.place(this.x, this.y, this.z, this.yaw);
     this.char.update(dt);
     this.updateFlash();
+  }
+
+  /**
+   * Rückstoß-Physik (4.6C): schlittert der Gegner schnell über den Boden, zieht er eine Bremsspur; trifft er eine Wand oder Reling,
+   * prallt er ab (kurz benommen) – oder fliegt über die Kante, wenn dahinter Tiefe liegt (Reling, Stegrand, Klippe).
+   */
+  private knockPhysics(w: EnemyWorld, hit: boolean, nx: number, nz: number, dt: number) {
+    const sp = Math.hypot(this.vx, this.vz);
+    if (sp < KNOCKBACK.skidMin) { this.skidT = 0; return; }
+    const sliding = this.state === 'hit' || this.state === 'stagger' || this.state === 'down' || this.state === 'dead' || this.state === 'recover';
+    if (sliding) {
+      this.skidT -= dt;
+      if (this.skidT <= 0) { this.skidT = KNOCKBACK.skidEvery; w.skid?.(this, sp); }
+    }
+    if (!hit || sp < KNOCKBACK.bounceMin) return;
+    // Kante oder Wand? Hinter der Berührung messen (die Regel steht rein in combat/knockback.ts)
+    const ux = this.vx / sp, uz = this.vz / sp;
+    const beyond = w.ground(this.x + ux * KNOCKBACK.probe, this.z + uz * KNOCKBACK.probe, this.y);
+    const out = knockOutcome(this.vx, this.vz, hit, nx, nz, beyond, this.y, this.canGoOverboard);
+    if (out === 'overboard') {
+      this.overboard = true;
+      overboardLaunch(this.vx, this.vz, this.vy, _launch);
+      this.vx = _launch.vx; this.vz = _launch.vz; this.vy = _launch.vy;
+      if (this.state !== 'dead') {
+        this.cancelAttack();
+        if (this.hasToken) { w.releaseToken(this); this.hasToken = false; }
+        this.state = 'air';
+        this.char.play('hitHeavy', { restart: true, fade: 0.04 });
+      }
+      w.overboard?.(this);
+      return;
+    }
+    if (out !== 'bounce') return;
+    // Abprallen: Geschwindigkeit an der Wand-Normale spiegeln, Energie geht verloren
+    bounceVelocity(this.vx, this.vz, nx, nz, _bounce);
+    this.vx = _bounce.vx; this.vz = _bounce.vz;
+    w.wallSlam?.(this, sp, nx, nz);
+    if (this.state === 'hit' || this.state === 'recover') { this.timer = Math.max(this.timer, KNOCKBACK.slamStun); }
+  }
+
+  /** Ins Meer gefallen (über Bord): besiegt, sinkt langsam */
+  private splashdown(w: EnemyWorld) {
+    this.overboard = false;
+    const ko = this.state !== 'dead' && this.hp > 0;
+    if (ko) { this.hp = 0; this.cancelAttack(); if (this.hasToken) { w.releaseToken(this); this.hasToken = false; } this.die({ dmg: 0, poise: 0, knock: 0, dirX: 0, dirZ: 0, heavy: false }); }
+    this.vx *= 0.15; this.vz *= 0.15; this.vy = -1.2;
+    w.splashdown?.(this, ko);
   }
 
   /** Angriff beginnen (Ausholen mit Warnzeichen) – ruft der Verhaltensbaum */

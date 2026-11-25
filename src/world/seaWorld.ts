@@ -18,9 +18,11 @@ import {
   MeshBasicMaterial,
   OctahedronGeometry,
   PerspectiveCamera,
+  Raycaster,
   Scene,
   SphereGeometry,
   Vector3,
+  type Intersection,
 } from 'three';
 import { SeaSpray } from './seaSpray';
 import { ShipLightRig } from '../render/shipLights';
@@ -227,6 +229,16 @@ export type YardView = 'all' | 'bow' | 'sail' | 'gun';
 
 /** Grundton der Gischtfahnen (mit dem Horizont gemischt) */
 const SPRAY_WHITE = new Color(1, 1, 1);
+/**
+ * Sichtprüfung der Mini-Zwischensequenz (4.6C): Strahl Kopf → Kamera gegen nahe Schiffe. Läuft nur einmal je Ultimate (zwei Seiten, zwei
+ * Zeitpunkte); three legt dabei Treffer-Objekte an – vertretbar, weil es nicht je Bild geschieht. Takelage (Linien) zählt nicht.
+ */
+const RIG_RAY = new Raycaster();
+const RIG_HITS: Intersection[] = [];
+const RIG_DIR = new Vector3();
+const RIG_SAMPLES = [0.15, 1] as const;
+/** Ausweich-Winkel der Einstellung (rad, um die Figur), jeweils auch gespiegelt: zuerst die geplante, dann zunehmend gedreht */
+const RIG_OFFS = [0, 0.55, -0.55, 1.1, -1.1] as const;
 
 export class SeaWorld {
   readonly scene = new Scene();
@@ -354,6 +366,12 @@ export class SeaWorld {
   private rigFov = 0;
   private rigFovK = 0;
   private rigMirror = false;
+  /** Sichtprüfung der Sequenz: erledigt, Kamera heranrücken (1 = Abstand wie geplant), Schiffe in der Nähe (dann gilt die Strahlprüfung) */
+  private rigChecked = false;
+  private rigPull = 1;
+  private rigYawOff = 0;
+  private rigShipN = 0;
+  private readonly rigShips: Group[] = [];
   private headBone: import('three').Object3D | null = null;
   private headBoneOf: unknown = null;
   /** Start des Vorstoßes beim Auslösen (Iaijutsu, Zyklon) */
@@ -365,6 +383,9 @@ export class SeaWorld {
   onFajiMastery: (style: ActionStyleId, pts: number) => void = () => {};
   /** Tastenkappe für Sturm-Erwachen (setzt Game) */
   awakenKeyLabel = '';
+  /** Verdunkeln des Bildes durch ein Ultimate (Blutmond, Gewitter, Schwarzes Loch; Game senkt damit die Belichtung) */
+  darkK = 0;
+  private readonly trailP = new Vector3();
   // ---------- Kamera-Engine (graphics/cameraRig.ts, Abschluss Phase 4.4) ----------
   /** Treffer-Erschütterung (gerichteter Stoß, Schwingung, Zittern); `scale` = Regler „Kamera-Erschütterung“ */
   readonly hitShake = new HitShake();
@@ -1225,8 +1246,11 @@ export class SeaWorld {
         gold: (n) => this.onGold(n),
         message: (t) => this.onMessage(t),
         loot: (d) => this.onLootDrop(d),
+        // Gischt (4.6C): Bremsspur im Flachwasser, Gegner fällt über Bord
+        splash: (x, _y, z, big) => this.spray.emit(big ? 28 : 4, x, this.env.heightAt(x, z) + 0.1, z, { speed: big ? 3.6 : 1.6, up: big ? 7.5 : 2.4, life: big ? 1.1 : 0.55, color: FOAM_COL, spread: big ? 0.9 : 0.3 }),
       });
       this.combat.smoke = this.smoke;
+      this.combat.sparks = this.sparks;
       this.combat.onSpawn = (o) => this.warmHook?.(o);
       const home = this.ground.islands[0];
       this.combat.addDummy(home.x + 6, home.z - home.r * 0.55);
@@ -1256,6 +1280,23 @@ export class SeaWorld {
       onAwakenWave: (f, c, a) => this.cataclysm.awakenWave(f, c, a),
       onChain: (ax, ay, az, bx, by, bz, c) => this.cataclysm.chain(ax, ay, az, bx, by, bz, c),
       onKingWave: (x, y, z, r) => this.cataclysm.kingWave(x, y, z, r),
+      // 4.6C: Sturm-Verfolgung, Klingen-Clash, Schwungfenster der Kampfkünste, Momentum-Spur
+      onChase: (ox, oy, oz, f) => { this.cataclysm.chain(ox, oy + 1.1, oz, f.x, f.y + 1.1, f.z, ACTION_STYLES[f.style].accent); audio.play('chase', 0.9, { x: f.x, y: f.y, z: f.z }); },
+      onClash: (x, y, z, yaw) => { this.cataclysm.clash(x, y, z, yaw); audio.play('clash', 1, { x, y, z }); },
+      impactFrames: (n) => this.animeRig.impact(n),
+      onSwing: (mv, h, f) => {
+        const st = ACTION_STYLES[f.style];
+        this.cataclysm.swingFx(h, f, mv.color || st.color, mv.vfx || st.element);
+        const at = { x: f.x, y: f.y, z: f.z };
+        if (h.shape === 'line') audio.play('bladeWave', 0.8, at);
+        else if (h.shape === 'circle') audio.play('eruption', 0.8, at);
+        if (st.faji) audio.power(st.element === 'sonne' ? 'licht' : st.element === 'schwarzloch' ? 'schatten' : st.element === 'mond' ? 'geist' : st.element, 0.6, at);
+      },
+      trail: (x, y, z, k) => {
+        const wy = this.env.heightAt(x, z);
+        if (y - wy < 0.45) this.spray.emit(3, x, wy + 0.1, z, { speed: 1.2 + k * 2, up: 1.4 + k, life: 0.5, color: FOAM_COL, spread: 0.25 });
+        else this.fx?.puff(this.trailP.set(x, y + 0.05, z), k > 0.6 ? 2 : 1);
+      },
     }, this.pendingAction ?? undefined);
     if (this.combat) this.combat.player = this.foot;
     this.style = style;
@@ -1656,18 +1697,102 @@ export class SeaWorld {
       shake: (k) => { w.shake = Math.max(w.shake, k); },
       lightning: (x, z) => w.env.weather.strikeAt(w.camera.position, x, z),
       cracks: (n) => w.onCracks(n),
+      sound: (n, v, x, y, z) => audio.play(n, v, { x, y, z }),
+      impactFrames: (n) => w.animeRig.impact(n),
+      darken: (k) => { w.darkK = k; },
     });
+  }
+
+  /** Steht (x, z) auf oder dicht an einem Schiff (eigenes oder fremdes)? */
+  private shipNear(x: number, z: number): boolean {
+    const near = (s: { x: number; z: number; cls: { L: number } } | null | undefined) => !!s && Math.hypot(s.x - x, s.z - z) < s.cls.L * 0.6 + 8;
+    if (near(this.ship)) return true;
+    if (this.naval) for (const e of this.naval.enemies) if (near(e.ship)) return true;
+    return false;
+  }
+
+  /** Einstellung der Sequenz auf die andere Seite der Figur spiegeln (Blickrichtung bleibt) */
+  private mirrorRig(p: RigPose, head: Vector3) {
+    const dx = p.px - head.x, dz = p.pz - head.z;
+    const fy = this.foot!.yaw, fx = Math.sin(fy), fz = Math.cos(fy);
+    const along = dx * fx + dz * fz, across = dx * fz - dz * fx;
+    p.px = head.x + fx * along - fz * across;
+    p.pz = head.z + fz * along + fx * across;
+  }
+
+  /**
+   * Sichtprüfung der Sequenz an Deck (4.6C): Strahlen Kopf → Kamera (Anfang und Ende der Fahrt) gegen die Schiffe in der Nähe, für die
+   * geplante Einstellung und gedrehte oder gespiegelte Ausweich-Winkel. Die erste freie gewinnt; ist keine frei, die freieste, und die
+   * Kamera rückt vor das Hindernis.
+   */
+  private rigCheckView(head: Vector3) {
+    this.rigPull = 1;
+    this.rigYawOff = 0;
+    const ships = this.rigShips;
+    ships.length = 0;
+    const near = (s: { x: number; z: number; cls: { L: number }; model: { group: Group } } | null | undefined) => {
+      if (s && Math.hypot(s.x - head.x, s.z - head.z) < s.cls.L * 0.6 + 8) ships.push(s.model.group);
+    };
+    near(this.ship);
+    if (this.naval) for (const e of this.naval.enemies) near(e.ship);
+    this.rigShipN = ships.length;
+    if (!ships.length || !this.foot) return;
+    const rig = this.animeRig, p = this.rigPose, yaw = this.foot.yaw;
+    let best = -1, bestOff = 0, bestMirror = false;
+    search: for (const off of RIG_OFFS) for (let m = 0; m < 2; m++) {
+      let free = 1;
+      for (const u of RIG_SAMPLES) {
+        rig.pose(head.x, head.y, head.z, yaw + off, p, u);
+        if (m) this.mirrorRig(p, head);
+        free = Math.min(free, this.rigFree(head, p));
+        if (free <= best) break;
+      }
+      if (free > best) { best = free; bestOff = off; bestMirror = m === 1; if (free >= 0.999) break search; }
+    }
+    this.rigYawOff = bestOff;
+    this.rigMirror = bestMirror;
+    if (best < 0.999) this.rigPull = Math.max(0.35, best - 0.1);
+  }
+
+  /** Anteil der Strecke Kopf → Kamera, der frei von Schiffsteilen ist (1 = frei); Linien (Takelage) und Unsichtbares zählen nicht */
+  private rigFree(head: Vector3, p: RigPose): number {
+    RIG_DIR.set(p.px - head.x, p.py - head.y, p.pz - head.z);
+    const d = RIG_DIR.length();
+    if (d < 1e-3) return 1;
+    RIG_DIR.multiplyScalar(1 / d);
+    RIG_RAY.set(head, RIG_DIR);
+    RIG_RAY.near = 0.3;
+    RIG_RAY.far = d + 0.3;
+    let first = d + 1;
+    for (const g of this.rigShips) {
+      RIG_HITS.length = 0;
+      RIG_RAY.intersectObject(g, true, RIG_HITS);
+      for (const h of RIG_HITS) {
+        const o = h.object as Mesh & { isLine?: boolean; isPoints?: boolean; isSprite?: boolean };
+        if (o.isLine || o.isPoints || o.isSprite || !o.visible) continue;
+        if (h.distance < first) first = h.distance;
+        break;
+      }
+    }
+    RIG_HITS.length = 0;
+    return first >= d ? 1 : first / d;
   }
 
   /** Ultimate ausgelöst: Mini-Zwischensequenz (Kamera, Zeitlupe 0,14 für 0,75 s nur lokal), Energie sammelt sich */
   private ultimateBegins(spec: UltimateSpec, f: FighterState) {
     this.ultSX = f.x; this.ultSZ = f.z;
     this.rigMirror = false;
-    this.animeRig.startCutscene(spec.shot, CUTSCENE.slowDur);
+    this.rigChecked = false;
+    this.rigPull = 1;
+    // an Deck hängen Untersichten (Himmel, tief) in Baum, Rahen und Reling: dort die Nahaufnahme vor dem Gesicht (Augen-Leuchten)
+    const shot = (spec.shot === 'sky' || spec.shot === 'low') && this.shipNear(f.x, f.z) ? 'face' : spec.shot;
+    this.animeRig.startCutscene(shot, CUTSCENE.slowDur);
     this.hitstop.t = Math.max(this.hitstop.t, CUTSCENE.slowDur);
     this.hitstop.scale = Math.min(this.hitstop.scale, CUTSCENE.slow);
-    this.cataclysm.beginCharge(spec, f, CUTSCENE.slowDur);
-    audio.play('cutin', 1);
+    this.cataclysm.beginCharge(spec, f, CUTSCENE.slowDur, shot);
+    // Zeitlupe: Sub-Bass-Fall mit Herzschlag, dazu der Schriftzug-Klang
+    audio.play('cineDrop', 1);
+    audio.play('cutin', 0.6);
   }
 
   /** Einschlag: Impact-Frames, Welt-Effekt, Stoß */
@@ -1676,8 +1801,9 @@ export class SeaWorld {
     this.cataclysm.strike(spec, f, this.ultSX, this.ultSZ);
     this.focusPulse.trigger(1, 1.1);
     this.hitShake.shake(1);
-    audio.play('boom', 1);
-    if (spec.kind === 'thunderJudgment' || spec.kind === 'iaiWorldBreak') audio.play('thunder', 0.9);
+    // Impact-Frame: Riss- und Donnerknall genau im Moment des Tusche-Bildes
+    audio.play('impactCrack', 1);
+    audio.play('boom', 0.7);
   }
 
   /**
@@ -1691,16 +1817,22 @@ export class SeaWorld {
     if (!this.player || !this.foot || inMenu || this.mode !== 'foot' || this.yardOn) { if (rig.active && (inMenu || this.mode !== 'foot')) rig.reset(); return; }
     const head = this.headPos(this.rigHead);
     if (k > 0.001) {
-      const p = rig.pose(head.x, head.y, head.z, this.foot.yaw, this.rigPose);
-      // steht die Einstellung in festem Material: auf die andere Seite spiegeln
+      // an Deck: einmal je Sequenz prüfen, ob Rahen, Baum, Segel oder Reling die Figur verdecken (dann spiegeln oder heranrücken)
+      if (!this.rigChecked) { this.rigChecked = true; this.rigCheckView(head); }
+      const p = rig.pose(head.x, head.y, head.z, this.foot.yaw + this.rigYawOff, this.rigPose);
+      // steht die Einstellung in festem Material: auf die andere Seite spiegeln (an Deck entscheidet die Strahlprüfung)
       this.gatherCam(head.x, head.z, 6);
-      if (!this.rigMirror && this.camSolid(p.px, p.py, p.pz)) this.rigMirror = true;
-      if (this.rigMirror) {
-        const dx = p.px - head.x, dz = p.pz - head.z;
-        const fy = this.foot.yaw, fx = Math.sin(fy), fz = Math.cos(fy);
-        const along = dx * fx + dz * fz, across = dx * fz - dz * fx;
-        p.px = head.x + fx * along - fz * across;
-        p.pz = head.z + fz * along + fx * across;
+      if (!this.rigMirror && !this.rigShipN && this.camSolid(p.px, p.py, p.pz)) this.rigMirror = true;
+      if (this.rigMirror) this.mirrorRig(p, head);
+      if (this.rigPull < 1) {
+        // heranrücken: Kamera UND Blickpunkt zum Kopf hin stauchen, damit der Bildaufbau bleibt (sonst kippt der Blick steil nach oben);
+        // nie näher als 0,85 m, sonst blendet das Nahbereichs-Ausblenden (ab 0,70 m) die Figur mitten in der Sequenz aus
+        const d = Math.hypot(p.px - head.x, p.py - head.y, p.pz - head.z);
+        const k = d > 1e-3 ? Math.min(1, Math.max(this.rigPull, 0.85 / d)) : 1;
+        p.px = head.x + (p.px - head.x) * k;
+        p.py = head.y + (p.py - head.y) * k;
+        p.pz = head.z + (p.pz - head.z) * k;
+        p.ly = head.y + (p.ly - head.y) * k;
       }
       // Blickpunkt der freien Kamera (vor dem Überblenden) und neue Lage
       cam.getWorldDirection(this.freeLook).multiplyScalar(6).add(cam.position);
@@ -1716,7 +1848,9 @@ export class SeaWorld {
     if (rig.glow > 0.02) {
       const y = this.foot.yaw, fx = Math.sin(y), fz = Math.cos(y), rx = Math.cos(y), rz = -Math.sin(y);
       const ex = head.x + fx * 0.085, ey = head.y + 0.035, ez = head.z + fz * 0.085;
-      this.cataclysm.eyeGlow(ex + rx * 0.032, ey, ez + rz * 0.032, ex - rx * 0.032, ey, ez - rz * 0.032, rig.glow, this.cataclysm.chargeColor);
+      // Lebensdauer ≈ anderthalb Bilder in Spielzeit (Zeitlupe beachten), sonst stapeln sich die Glanzpunkte zu einem weißen Fleck
+      const ts = this.hitstop.freeze > 0 ? 0 : this.hitstop.t > 0 ? this.hitstop.scale : 1;
+      this.cataclysm.eyeGlow(ex + rx * 0.032, ey, ez + rz * 0.032, ex - rx * 0.032, ey, ez - rz * 0.032, rig.glow, this.cataclysm.chargeColor, Math.max(0.003, (1.5 / 60) * ts));
     }
   }
 
@@ -1831,6 +1965,8 @@ export class SeaWorld {
     this.dust.scale = c.particles;
     this.smoke.scale = c.particles;
     if (this.naval) this.naval.detail = c.particles;
+    // Stürme aus hunderten Fäusten, Sicheln und Splittern werden auf schwachen Geräten dünner
+    if (this.cataclysmFx) this.cataclysm.detailK = Math.max(0.35, Math.min(1, c.particles));
     this.debris.scale = c.particles;
     if (this.fx) this.fx.scale = c.particles;
   }

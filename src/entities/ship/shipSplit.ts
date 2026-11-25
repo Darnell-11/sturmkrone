@@ -31,6 +31,8 @@ export interface ShipSplit {
   partsB: number;
   /** in Dreiecken zerlegte Netze (Prüfungen) */
   sliced: number;
+  /** Anhub (m) vor dem Kentern: eine Flutwelle hebt das Schiff (4.6C) */
+  lift: number;
 }
 
 const _inv = new Matrix4();
@@ -44,6 +46,8 @@ const _s = new Vector3();
 /** Schnittebene je Art (Schiffsraum: +Z Bug, +X Backbord, +Y oben) */
 export function cutPlane(cut: Exclude<ShipCut, ''>): { nx: number; ny: number; nz: number } {
   switch (cut) {
+    // Kentern und Versenken zerteilen nicht: das ganze Schiff dreht bzw. sinkt als eine Gruppe
+    case 'capsize': case 'sink': return { nx: 0, ny: 0, nz: 1 };
     case 'length': return { nx: 1, ny: 0, nz: 0 };
     // schräger Schnitt von oben-achtern nach unten-vorn: die obere Hälfte gleitet am Schnitt ab
     case 'diagonal': { const l = Math.hypot(1, 0.8); return { nx: 0, ny: 1 / l, nz: 0.8 / l }; }
@@ -161,7 +165,7 @@ const _cTmp = new Color();
  * Modell zerteilen. `root` = Modellgruppe des Schiffs (Ursprung = Schiffsmitte auf Wasserhöhe), `L`/`W` = Maße, `seed` für den Drehsinn.
  * Gibt den Zustand zurück; die Hälften hängen danach als zwei Gruppen in `root` (alles bleibt im selben Baum, nichts wird abgehängt).
  */
-export function splitShipModel(root: Group, cut: Exclude<ShipCut, ''>, L: number, W: number, deckY: number, seed = 1): ShipSplit {
+export function splitShipModel(root: Group, cut: Exclude<ShipCut, ''>, L: number, W: number, deckY: number, seed = 1, lift = 0): ShipSplit {
   const { nx, ny, nz } = cutPlane(cut);
   // diagonale Schnitte gehen durch die Mitte des Rumpfs (halbe Deckshöhe), die anderen durch die Schiffsmitte
   const y0 = cut === 'diagonal' ? deckY * 0.5 : 0;
@@ -169,7 +173,15 @@ export function splitShipModel(root: Group, cut: Exclude<ShipCut, ''>, L: number
   _inv.copy(root.matrixWorld).invert();
   const a = new Group(); a.name = 'split-a';
   const b = new Group(); b.name = 'split-b';
-  const st: ShipSplit = { cut, t: 0, a, b, L, W, deckY, nx, ny, nz, spin: seed % 2 ? 1 : -1, partsA: 0, partsB: 0, sliced: 0 };
+  const st: ShipSplit = { cut, t: 0, a, b, L, W, deckY, nx, ny, nz, spin: seed % 2 ? 1 : -1, partsA: 0, partsB: 0, sliced: 0, lift };
+  if (cut === 'capsize' || cut === 'sink') {
+    // ganz: alle Teile in Gruppe A (Drehpunkt), nichts wird zerlegt
+    const all = root.children.slice();
+    root.add(a, b);
+    a.updateMatrixWorld(true);
+    for (const o of all) { a.attach(o); st.partsA++; }
+    return st;
+  }
   const moves: { o: Object3D; to: Group }[] = [];
   const twins: { m: Mesh; to: Group; src: Mesh; world: Matrix4 }[] = [];
 
@@ -292,6 +304,19 @@ export function updateShipSplit(st: ShipSplit, dt: number) {
       const gap = Math.min(st.W * 0.9, t * 1.4);
       rotZ(a, -ph, ky, gap);
       rotZ(b, ph, ky, -gap);
+      break;
+    }
+    case 'capsize': {
+      // Kentern: (von einer Welle angehoben) rollt das Schiff um die Längsachse kieloben und sinkt
+      const ph = Math.min(2.7, t * t * 0.75 + t * 0.35) * st.spin;
+      rotZ(a, -ph, st.deckY * 0.5, 0);
+      if (st.lift > 0) a.position.y += st.lift * Math.sin(Math.min(1, t / 1.4) * Math.PI);
+      break;
+    }
+    case 'sink': {
+      // durchlöchert: Schlagseite und Bug voran, das Versinken selbst rechnet Ship.render
+      a.rotation.set(Math.min(0.3, t * 0.1) * st.spin, 0, Math.min(0.42, t * 0.16) * st.spin);
+      a.position.set(0, 0, 0);
       break;
     }
     case 'diagonal': {

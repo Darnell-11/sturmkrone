@@ -45,6 +45,9 @@ const _pv = new Vector3();
 const HOLE_MAT = markShared(new MeshBasicMaterial({ color: 0x1b1410, side: 2 }));
 
 /** Ein Schiff mit Fahrphysik, Schadenszonen und sichtbaren Schäden. */
+/** Lage eines geschlagenen Lochs (Schiffsraum), wiederverwendet */
+const _hole = new Vector3();
+
 export class Ship {
   /** Kennung dieses Schiffs (Schadens-, Reparatur- und Crew-Absichten sprechen es darüber an) */
   readonly entityId: EntityId;
@@ -391,13 +394,21 @@ export class Ship {
    * In zwei Hälften zerteilen (nur über `NavalSystem.cataclysmSplit`, das Regeln, Beute und Untergang übernimmt): baut die Hälften aus dem
    * Modell (gleiche Materialien), setzt das Schiff in Brand und blendet die Takelage aus. Liefert false, wenn es schon zerteilt ist.
    */
-  splitApart(cut: Exclude<ShipCut, ''>, seed = 1): boolean {
+  splitApart(cut: Exclude<ShipCut, ''>, seed = 1, lift = 0): boolean {
     if (this.split || this.disposed) return false;
-    this.model.rigging.visible = false;
+    if (cut !== 'sink' && cut !== 'capsize') this.model.rigging.visible = false;
     this.fallPlan = [];
-    this.split = splitShipModel(this.model.group, cut, this.cls.L, this.cls.W, this.model.deckY, seed);
+    this.split = splitShipModel(this.model.group, cut, this.cls.L, this.cls.W, this.model.deckY, seed, lift);
     this.fire = 1e9;
     return true;
+  }
+
+  /** Löcher in den Rumpf schlagen (Sturmfaust, Blutmond: durchlöchert, 4.6C); höchstens 24 je Schiff wie bei Kanonentreffern */
+  punchHoles(n: number) {
+    for (let i = 0; i < n && this.holes < 24; i++) {
+      _hole.set((Math.random() < 0.5 ? -1 : 1) * this.cls.W * 0.5, this.model.deckY * (0.3 + Math.random() * 0.4), (Math.random() - 0.5) * this.cls.L * 0.8);
+      this.addHole(_hole);
+    }
   }
 
   /** Der Rumpf hat nichts mehr: Segel in Fetzen, ein bis zwei Masten knicken um, das Schiff brennt (Rauch und Flammen zeichnet die Seewelt) */

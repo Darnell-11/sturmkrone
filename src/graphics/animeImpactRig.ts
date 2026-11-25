@@ -31,7 +31,8 @@ const SHOTS: Record<ShotKind, { dist: number; dy: number; side: number; look: nu
   face: { dist: 1.35, dy: -0.04, side: 0.22, look: -0.02, fov: 30, dolly: 0.28, orbit: 0.35 },
   low: { dist: 2.7, dy: -1.15, side: 0.5, look: 0.1, fov: 46, dolly: 0.5, orbit: 0.25 },
   side: { dist: 2.3, dy: -0.35, side: 1.45, look: -0.25, fov: 38, dolly: 0.4, orbit: 0.15 },
-  sky: { dist: 3.4, dy: -1.25, side: 2.6, look: 1.6, fov: 54, dolly: 0.6, orbit: 0.4 },
+  // 4.6C: Blickpunkt tiefer (1,6 → 0,8 m über dem Kopf): die Figur steht unten im Bild über den Kinobalken, darüber Himmel und Säule
+  sky: { dist: 3.4, dy: -1.25, side: 2.6, look: 0.8, fov: 54, dolly: 0.6, orbit: 0.4 },
 };
 
 export class AnimeImpactRig {
@@ -102,11 +103,12 @@ export class AnimeImpactRig {
 
   /**
    * Kamera der Einstellung um den Kopf (hx, hy, hz) einer Figur mit Blickrichtung `yaw`: vor dem Gesicht (leicht seitlich, fährt langsam heran),
-   * Untersicht, Profil oder Himmel. Schreibt in `out` (kein neues Objekt).
+   * Untersicht, Profil oder Himmel. Schreibt in `out` (kein neues Objekt). `uAt` (0 … 1) fragt einen festen Zeitpunkt der Sequenz ab
+   * (Sichtprüfung vorab), sonst gilt die laufende Zeit.
    */
-  pose(hx: number, hy: number, hz: number, yaw: number, out: RigPose): RigPose {
+  pose(hx: number, hy: number, hz: number, yaw: number, out: RigPose, uAt = -1): RigPose {
     const s = SHOTS[this.shot];
-    const u = this.phase === 'cine' ? Math.min(1, this.t / this.dur) : 1;
+    const u = uAt >= 0 ? Math.min(1, uAt) : this.phase === 'cine' ? Math.min(1, this.t / this.dur) : 1;
     const ang = yaw + s.side + (u - 0.5) * s.orbit;
     const dist = s.dist * (1 - s.dolly * smooth(u) * 0.5);
     out.px = hx + Math.sin(ang) * dist;

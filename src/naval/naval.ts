@@ -71,6 +71,9 @@ const SWIVEL_AIM_T = 0.4;
 const SPECTRAL_COL = new Color(0.6, 3.2, 2.4);
 const SWIVEL_HOLD_T = 2.4;
 
+/** Ort eines Ultimate-Einschlags in Festungen (wiederverwendet) */
+const _blast = new Vector3();
+
 export interface EnemyShip {
   ship: Ship;
   role: NavalRole;
@@ -1210,7 +1213,7 @@ export class NavalSystem {
    * Boss-Schiffe unter 15 % Rumpf). Schiffe, die nie untergehen (Legenden, Klassen 5/6), werden stattdessen sofort manövrierunfähig (nur Entern).
    * Liefert 'split', 'disabled' oder ''.
    */
-  cataclysmSplit(e: EnemyShip, cut: Exclude<ShipCut, ''>, seed: number): 'split' | 'disabled' | '' {
+  cataclysmSplit(e: EnemyShip, cut: Exclude<ShipCut, ''>, seed: number, lift = 0): 'split' | 'disabled' | '' {
     const s = e.ship;
     if (!s.alive || s.sinking > 0 || this.cataclysmFriendly(e)) return '';
     const boss = !!(e.legendId || e.role === 'legende' || s.hitCap > 0 || s.noKill);
@@ -1219,10 +1222,18 @@ export class NavalSystem {
     e.lastPlayerHit = this.clock;
     if (e.power === 'marine' || e.ev) e.provoked = true;
     if (s.noKill) { if (!s.disabled) s.enterPhase(); return 'disabled'; }
-    if (!s.splitApart(cut, seed)) return '';
+    if (!s.splitApart(cut, seed, lift)) return '';
     s.hull = 0;
     this.sink(s);
     return 'split';
+  }
+
+  /**
+   * Einschlag eines Ultimates in Festungen (Säbel-Sperrfeuer, Blitzsäule; 4.6C): trifft Bastionen, Batterien und Festungsmauern
+   * der laufenden Belagerung bzw. Kaiser-Zitadelle wie eine schwere Kanonenkugel. Liefert, ob ein Ziel getroffen wurde.
+   */
+  cataclysmBlast(x: number, y: number, z: number, dmg: number): boolean {
+    return !!this.raidTargets && this.raidTargets.hitBall(_blast.set(x, y, z), dmg, 'kugel');
   }
 
   /** Sog (Schwarzes Loch): Schiff um höchstens `step` m zum Punkt ziehen und leicht eindrehen */

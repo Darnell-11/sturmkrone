@@ -12,7 +12,16 @@ export type Sfx =
   | 'punch' | 'boom' | 'broadside' | 'splash' | 'hit' | 'heavy' | 'swing' | 'clang' | 'parry' | 'hurt' | 'roll'
   | 'coin' | 'treasure' | 'ui' | 'uiBack' | 'dig' | 'roar' | 'sink' | 'crack' | 'level' | 'win' | 'quest' | 'eat'
   | 'fanfareRare' | 'fanfareEpic' | 'fanfareLegend' | 'victory' | 'switch'
-  | 'bell' | 'horn' | 'foghorn' | 'thunder' | 'shard' | 'ko' | 'board' | 'sail' | 'whoosh' | 'crit' | 'cutin' | 'step';
+  | 'bell' | 'horn' | 'foghorn' | 'thunder' | 'shard' | 'ko' | 'board' | 'sail' | 'whoosh' | 'crit' | 'cutin' | 'step'
+  // 4.6C: prozeduraler Anime-Kampfklang (Zwischensequenz, Impact-Frame, Stil-Signaturen, Elemente, Klingen-Clash)
+  | 'cineDrop' | 'impactCrack' | 'sheathClick' | 'cycloneWhine' | 'quakeRumble' | 'voidRumble' | 'fireRoar' | 'iceShatter' | 'thunderClap'
+  | 'clash' | 'chase' | 'tidalRoar' | 'windHowl' | 'sunChoir' | 'moonChime' | 'fistBarrage' | 'ghostVolley' | 'bladeWave' | 'eruption';
+
+/** Die Klänge des Anime-Kampfes (4.6C) – Prüfungen spielen jeden einmal ab */
+export const ANIME_SFX: readonly Sfx[] = [
+  'cineDrop', 'impactCrack', 'sheathClick', 'cycloneWhine', 'quakeRumble', 'voidRumble', 'fireRoar', 'iceShatter', 'thunderClap',
+  'clash', 'chase', 'tidalRoar', 'windHowl', 'sunChoir', 'moonChime', 'fistBarrage', 'ghostVolley', 'bladeWave', 'eruption',
+];
 
 /** Weltposition eines Klangs (y optional: sonst etwa Bodenhöhe beim Hörer) */
 export interface SoundPos { x: number; y?: number; z: number }
@@ -27,6 +36,8 @@ interface Ambience { waves: number; wind: number; rain: number; town: number; gu
 const DUCK: Partial<Record<Sfx, [number, number]>> = {
   fanfareRare: [0.55, 1.2], fanfareEpic: [0.45, 1.8], fanfareLegend: [0.4, 2.4], victory: [0.4, 2.2], level: [0.6, 1.2], quest: [0.65, 0.9], win: [0.6, 1.0],
   ko: [0.45, 1.5], sink: [0.6, 1.2], thunder: [0.65, 0.8], horn: [0.6, 1.0], foghorn: [0.7, 2.6], bell: [0.7, 0.8], cutin: [0.55, 1.2], roar: [0.6, 1.0], shard: [0.75, 0.5],
+  cineDrop: [0.3, 1.1], impactCrack: [0.4, 1.0], thunderClap: [0.5, 1.0], voidRumble: [0.55, 1.6], quakeRumble: [0.55, 1.6], tidalRoar: [0.6, 1.4],
+  fireRoar: [0.65, 1.2], windHowl: [0.65, 1.2], sunChoir: [0.6, 1.4], moonChime: [0.6, 1.4], ghostVolley: [0.65, 0.8], fistBarrage: [0.7, 1.0],
 };
 
 /** Reglerstand für Einstellungsmenü und HUD */
@@ -74,7 +85,8 @@ const SPATIAL_CAT: Record<'near' | 'combat' | 'loud' | 'mid', SpatialCat> = {
 };
 const CAT_OF: Partial<Record<Sfx, keyof typeof SPATIAL_CAT>> = {
   step: 'near', swing: 'combat', hit: 'combat', punch: 'combat', heavy: 'combat', clang: 'combat', parry: 'combat', crit: 'combat',
-  roll: 'combat', whoosh: 'combat', crack: 'combat', hurt: 'combat',
+  roll: 'combat', whoosh: 'combat', crack: 'combat', hurt: 'combat', clash: 'combat', chase: 'combat', bladeWave: 'combat', sheathClick: 'combat',
+  eruption: 'mid', impactCrack: 'loud', thunderClap: 'loud', quakeRumble: 'loud', voidRumble: 'loud', tidalRoar: 'loud', ghostVolley: 'loud', iceShatter: 'loud',
   boom: 'loud', broadside: 'loud', sink: 'loud', splash: 'loud', roar: 'loud', thunder: 'loud', horn: 'loud', foghorn: 'loud', bell: 'loud',
 };
 
@@ -598,7 +610,8 @@ class AudioEngine {
     if (!this.running) { if (this.warmTries++ < 10) setTimeout(() => this.prewarm(), 500); return; }
     this.warmed = true;
     const list: Sfx[] = ['punch', 'hit', 'heavy', 'swing', 'clang', 'parry', 'hurt', 'roll', 'step', 'whoosh', 'crit', 'boom', 'broadside', 'splash', 'crack', 'coin', 'shard', 'ui', 'uiBack',
-      'level', 'win', 'quest', 'cutin', 'bell', 'horn', 'foghorn', 'board', 'sail', 'sink', 'roar', 'thunder', 'eat', 'switch', 'fanfareRare', 'fanfareEpic', 'fanfareLegend', 'victory'];
+      'level', 'win', 'quest', 'cutin', 'bell', 'horn', 'foghorn', 'board', 'sail', 'sink', 'roar', 'thunder', 'eat', 'switch', 'fanfareRare', 'fanfareEpic', 'fanfareLegend', 'victory',
+      ...ANIME_SFX];
     let i = 0;
     const next = () => {
       if (i >= list.length) return;
@@ -732,6 +745,144 @@ class AudioEngine {
         this.noise(t + 1.8, 1.8, 0.14 * v, 6000, 'highpass'); [100, 105, 109].forEach((m, i) => this.tone(mtof(m), t + 2 + i * 0.1, 1.4, 'sine', 0.04 * v, 1)); break;
       case 'switch': if (!this.ok('sw', 0.1)) return; this.noise(t, 0.12, 0.2 * v, 3500, 'bandpass', undefined, pan, 1200); this.tone(mtof(86), t + 0.03, 0.14, 'triangle', 0.05 * v, 0.2); break;
       case 'quest': [67, 71, 74, 79].forEach((m, i) => this.brass(m, t + i * 0.11, i === 3 ? 0.9 : 0.25, 0.07 * v, this.sfxBus)); this.tone(mtof(91), t + 0.45, 1, 'sine', 0.05 * v, 0.7); break;
+      default: this.animeVoice(name, t, v);
+    }
+  }
+
+  /**
+   * Anime-Kampfklang (4.6C), komplett live erzeugt: Sub-Bass-Fall mit Herzschlag in der Zeitlupe, Riss-Donner im Impact-Frame,
+   * Signaturen der Stile (Schwertscheide, Zyklon, Grollen) und Elemente (Knistern, Eis-Splittern, Donner), Klingen-Clash.
+   */
+  private animeVoice(name: Sfx, t: number, v: number) {
+    switch (name) {
+      case 'cineDrop': {
+        // Zwischensequenz (0,75 s Zeitdehnung): tiefer Sub-Bass-Fall, zwei Doppel-Herzschläge, ein rückwärts anschwellendes Rauschen
+        if (!this.ok('cine', 0.4)) return;
+        this.tone(92, t, 0.95, 'sine', 0.55 * v, 0.15, 26, 0.02);
+        this.tone(46, t, 1.1, 'triangle', 0.25 * v, 0.1, 22, 0.05);
+        for (const hb of [0.08, 0.26, 0.5, 0.68]) this.tone(58, t + hb, 0.14, 'sine', (hb < 0.4 ? 0.5 : 0.38) * v, 0.05, 34, 0.004);
+        this.noise(t + 0.1, 0.65, 0.12 * v, 300, 'bandpass', undefined, 0, 3200);
+        break;
+      }
+      case 'impactCrack':
+        // Impact-Frame: scharfer Riss und Donnerknall im Moment des Tusche-Bildes
+        if (!this.ok('icrack', 0.12)) return;
+        this.noise(t, 0.09, 0.55 * v, 2600, 'highpass');
+        this.noise(t, 0.22, 0.6 * v, 900, 'bandpass', undefined, 0, 220);
+        this.tone(64, t, 0.55, 'sine', 0.65 * v, 0.2, 28, 0.003);
+        this.noise(t + 0.05, 1.6, 0.32 * v, 240, 'lowpass', undefined, 0, 60);
+        break;
+      case 'sheathClick':
+        // Iaijutsu: scharfes metallisches Einrasten der Schwertscheide, lange nachklingend
+        this.tone(3600, t, 0.035, 'square', 0.09 * v, 0.3, 2400, 0.001);
+        this.tone(5200, t + 0.012, 0.03, 'triangle', 0.08 * v, 0.3, 0, 0.001);
+        this.noise(t, 0.02, 0.35 * v, 6000, 'highpass');
+        this.tone(2480, t + 0.02, 0.55, 'sine', 0.06 * v, 0.6, 2440, 0.002);
+        break;
+      case 'cycloneWhine':
+        // Doppelklinge: Hochfrequenz-Surren des Klingen-Zyklons
+        for (let i = 0; i < 24; i++) this.noise(t + i * 0.08, 0.12, 0.09 * v, 2400 + (i % 3) * 600, 'bandpass', undefined, 0, 4800);
+        this.tone(880, t, 1.9, 'sawtooth', 0.035 * v, 0.2, 1640, 0.1);
+        this.tone(1320, t + 0.05, 1.8, 'square', 0.015 * v, 0.2, 2200, 0.1);
+        break;
+      case 'quakeRumble':
+        // Erdspalter: dumpfes Grollen aus der Tiefe
+        this.noise(t, 2.6, 0.5 * v, 130, 'lowpass', undefined, 0, 60);
+        this.tone(38, t, 2.2, 'sine', 0.5 * v, 0.1, 30, 0.08);
+        this.tone(52, t + 0.1, 1.6, 'triangle', 0.2 * v, 0.1, 40, 0.1);
+        break;
+      case 'voidRumble':
+        // Schwarzes Loch: schwebendes Untergrollen (zwei eng verstimmte Bässe) und ein Sog, der nach unten wegzieht
+        this.tone(31, t, 2.6, 'sine', 0.5 * v, 0.2, 24, 0.2);
+        this.tone(33.5, t, 2.6, 'sine', 0.4 * v, 0.2, 26, 0.2);
+        this.noise(t, 2.2, 0.3 * v, 2400, 'bandpass', undefined, 0, 80);
+        break;
+      case 'fireRoar':
+        // Feuer: tiefes Fauchen und Knistern
+        this.noise(t, 2.2, 0.42 * v, 380, 'lowpass', undefined, 0, 1400);
+        for (let i = 0; i < 18; i++) this.noise(t + Math.random() * 2, 0.03, 0.18 * v, 3200 + Math.random() * 2000, 'bandpass');
+        this.tone(96, t, 1.8, 'sawtooth', 0.1 * v, 0.3, 60, 0.2);
+        break;
+      case 'iceShatter':
+        // Eis: helles Splittern, absinkende Kristalltöne
+        [96, 100, 103, 108, 91].forEach((m, i) => this.tone(mtof(m), t + i * 0.035, 0.7, 'sine', 0.07 * v, 0.7, mtof(m - 5)));
+        this.noise(t, 0.5, 0.45 * v, 5200, 'highpass');
+        this.noise(t, 0.3, 0.3 * v, 1400, 'bandpass');
+        break;
+      case 'thunderClap':
+        // Blitz: harter Knall, langes Rollen
+        this.noise(t, 0.06, 0.6 * v, 3500, 'highpass');
+        this.noise(t, 2.4, 0.5 * v, 260, 'lowpass', undefined, 0, 50);
+        this.tone(48, t, 0.9, 'sine', 0.5 * v, 0.2, 30, 0.003);
+        break;
+      case 'clash':
+        // Klingen-Clash: hell klirrender Schlag mit unharmonischem Nachklang, Funkenzischen und dumpfem Stoß
+        if (!this.ok('clash', 0.08)) return;
+        for (const [f0, g0] of [[820, 0.12], [2263, 0.08], [4428, 0.05], [1217, 0.07]] as const) this.tone(f0, t, 0.9, 'sine', g0 * v, 0.5, f0 * 0.985, 0.001);
+        this.tone(1640, t, 0.18, 'square', 0.06 * v, 0.3, 1200, 0.001);
+        this.noise(t, 0.12, 0.45 * v, 4500, 'highpass');
+        this.noise(t + 0.02, 0.5, 0.15 * v, 7000, 'highpass', undefined, 0, 3000);
+        this.tone(90, t, 0.25, 'sine', 0.35 * v, 0.1, 50, 0.002);
+        break;
+      case 'chase':
+        // Sturm-Verfolgung: Blitz-Teleport (steigender Zisch, heller Nachton)
+        if (!this.ok('chase', 0.1)) return;
+        this.tone(320, t, 0.22, 'sawtooth', 0.06 * v, 0.3, 2600, 0.004);
+        this.noise(t, 0.25, 0.2 * v, 900, 'bandpass', undefined, 0, 5200);
+        this.tone(mtof(91), t + 0.12, 0.3, 'sine', 0.05 * v, 0.5);
+        break;
+      case 'tidalRoar':
+        // Wasser: anrollende Flutwelle
+        this.noise(t, 2.4, 0.5 * v, 500, 'lowpass', undefined, 0, 2200);
+        this.noise(t + 0.4, 1.8, 0.25 * v, 2500, 'bandpass', undefined, 0, 800);
+        this.tone(58, t, 2, 'sine', 0.3 * v, 0.2, 42, 0.3);
+        break;
+      case 'windHowl':
+        // Wind: heulender Tornado
+        for (let i = 0; i < 3; i++) this.noise(t + i * 0.5, 1.4, 0.3 * v, 400 + i * 250, 'bandpass', undefined, 0, 2600 - i * 300);
+        this.tone(220, t, 2.2, 'sine', 0.05 * v, 0.6, 330, 0.4);
+        break;
+      case 'sunChoir':
+        // Sonne: strahlender Akkord, fast wie ein Chor
+        [69, 73, 76, 81, 85].forEach((m, i) => { this.tone(mtof(m), t + i * 0.06, 2, 'triangle', 0.045 * v, 0.8); this.tone(mtof(m) * 1.004, t + i * 0.06, 2, 'sine', 0.03 * v, 0.8); });
+        this.noise(t, 1.6, 0.12 * v, 6000, 'highpass');
+        break;
+      case 'moonChime':
+        // Mond: unheimliches, absinkendes Glockenspiel über tiefem Brummen
+        [74, 77, 81, 86, 89].forEach((m, i) => this.tone(mtof(m), t + i * 0.18, 1.6, 'sine', 0.05 * v, 0.9, mtof(m) * 0.97));
+        this.tone(55, t, 2.4, 'sawtooth', 0.06 * v, 0.6, 46, 0.4);
+        break;
+      case 'fistBarrage':
+        // Sturmfaust: Trommelfeuer aus Hunderten Schlägen
+        for (let i = 0; i < 28; i++) {
+          const tt = t + i * 0.052 + Math.random() * 0.012;
+          this.noise(tt, 0.06, 0.22 * v, 520 + Math.random() * 300, 'lowpass');
+          this.tone(140 + Math.random() * 40, tt, 0.05, 'sine', 0.16 * v, 0, 70, 0.002);
+        }
+        break;
+      case 'ghostVolley':
+        // Säbel: Salve der Geister-Armada mit gläsernem Nachhall
+        for (let i = 0; i < 5; i++) {
+          const tt = t + i * 0.045 + Math.random() * 0.02;
+          this.noise(tt, 0.6, 0.3 * v, 900, 'lowpass', undefined, 0, 120);
+          this.tone(120 - i * 5, tt, 0.35, 'sine', 0.3 * v, 0.15, 36, 0.004);
+        }
+        this.tone(mtof(86), t, 0.8, 'sine', 0.04 * v, 0.8, mtof(79));
+        break;
+      case 'bladeWave':
+        // Klingenwelle einer Technik
+        if (!this.ok('bwave', 0.06)) return;
+        this.noise(t, 0.7, 0.35 * v, 600, 'bandpass', undefined, 0, 4200);
+        this.tone(180, t, 0.6, 'sawtooth', 0.08 * v, 0.3, 60, 0.004);
+        break;
+      case 'eruption':
+        // Elementar-Eruption einer Technik
+        if (!this.ok('erupt', 0.06)) return;
+        this.noise(t, 0.6, 0.35 * v, 260, 'lowpass', undefined, 0, 90);
+        this.tone(70, t, 0.4, 'sine', 0.3 * v, 0.1, 40, 0.004);
+        this.noise(t, 0.12, 0.2 * v, 2200, 'bandpass');
+        break;
+      default: break;
     }
   }
 

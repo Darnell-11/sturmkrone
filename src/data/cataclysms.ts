@@ -94,8 +94,9 @@ export const ULTIMATES: Partial<Record<ActionStyleId, ActionMove>> = {
 
   blitz: ult('blitz.u', '7. Form: Donnergott-Urteil', 'Ranged_Magic_Raise', 2.3,
     { kind: 'thunderJudgment', strikeAt: 0.42, reach: 32, width: 32, shot: 'sky', color: '#FFF3A0', accent: '#7A9BFF', frames: 4 },
-    ticks(3, 0.3, 0.72, { shape: 'circle', range: 30, dmg: 1.9, poise: 80, knock: 9, chain: 6, chainRange: 9, status: 'shock', statusDur: 3, hitstop: 0.1, shake: 1, vfx: 'blitz' }),
-    { formMin: 7 }),
+    ticks(3, 0.3, 0.72, { shape: 'circle', range: 30, dmg: 1.9, poise: 80, knock: 9, chain: 6, chainRange: 9, status: 'shock', statusDur: 3, hitstop: 0.1, shake: 1, vfx: 'blitz', down: 9 }),
+    // 4.6C: die Figur steigt zur Gewitterwolke auf (~9 m), schwebt unter ihr und lenkt die Blitzsäule von oben, danach fällt sie zurück
+    { formMin: 7, rise: 9, hang: 1.8, airOk: true }),
 
   sonne: ult('sonne.u', '7. Form: Zenit-Sonnentanz', 'Ranged_Magic_Raise', 2.4,
     { kind: 'sunDance', strikeAt: 0.4, reach: 20, width: 20, shot: 'sky', color: '#FFE88A', accent: '#FF9A2A', frames: 3 },

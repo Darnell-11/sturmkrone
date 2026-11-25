@@ -39,7 +39,7 @@ import type { EntityId } from '../sim/entityId';
 import { sharedGeo } from '../render/geoCache';
 import { clamp01 } from '../core/mathUtil';
 import type { ActionTarget, HitContext } from './actionCombatEngine';
-import { POSTURE, type ActionHit, type ActionMove } from '../data/actionStyles';
+import { ACTION_TUNING, POSTURE, type ActionHit, type ActionMove } from '../data/actionStyles';
 import { UltimateBossLedger, ultimateBossCap } from '../data/cataclysms';
 import { AURA } from '../data/fajiArts';
 import { mintEntityId } from '../sim/entityId';
@@ -71,6 +71,11 @@ const SEG_A = new Vector3(), SEG_B = new Vector3(), SEG_D = new Vector3();
 /** Teststrecken je Schlag: je Klinge/Glied die echte Strecke und ihr Schwertwind */
 const MAX_SEGS = 8;
 const PL_FRAME = new LogicFrame();
+/** Klingen-Clash und Rückstoß-Physik (4.6C): feste Hilfsobjekte */
+const CLASH_P = new Vector3();
+const SKID_P = new Vector3();
+const KNOCK_WATER = 0.1;
+const CLASH_SPARKS = { speed: 11, up: 7, life: 0.7, color: new Color(4.2, 3.3, 1.6), gravity: 9, spread: 0.3 };
 /** Ziel einer Fähigkeit (Spielfigur als Ort): wird vor jeder Nutzung neu gefüllt */
 const ENT = { x: 0, y: 0, z: 0, radius: 0.35 };
 type Spot = { x: number; y: number; z: number; radius: number };
@@ -97,6 +102,8 @@ export interface CombatHooks {
   loot(d: LootDrop): void;
   /** Filmreifer Fokus (Parade, Finisher): die Kamera rückt kurz näher (0 … 1) */
   focus?(strength: number): void;
+  /** Gischt (4.6C): Bremsspur im Flachwasser (`big` false) oder ein Gegner fällt über Bord ins Meer (`big` true) */
+  splash?(x: number, y: number, z: number, big: boolean): void;
 }
 
 interface Projectile { mesh: Mesh; vel: Vector3; life: number; radius: number; dmg: number; knock: number; team: 'player' | 'enemy'; from: Enemy | null; pierce: boolean; hit: Set<object>; color: string; poise: number; trail: number }
@@ -703,6 +710,7 @@ export class CombatSystem implements EnemyWorld {
       refs[n] = e; t.ref = n; n++;
       t.id = e.entityId; t.x = e.x; t.y = e.y; t.z = e.z; t.radius = e.radius; t.height = 1.9 * e.def.scale; t.yaw = e.yaw;
       t.alive = true; t.airborne = e.state === 'air'; t.mass = false; t.broken = e.hasPosture && e.brokenT > 0; t.boss = !!e.def.boss;
+      t.elite = e.hasPosture && !e.def.boss; t.attacking = e.swinging;
     }
     for (const q of this.mass) {
       if (n >= out.length) return n;
@@ -712,7 +720,7 @@ export class CombatSystem implements EnemyWorld {
       const t = out[n];
       refs[n] = q; t.ref = n; n++;
       t.id = q.squadId; t.x = q.x; t.y = q.y; t.z = q.z; t.radius = fr; t.height = 1.8; t.yaw = q.yaw;
-      t.alive = true; t.airborne = false; t.mass = true; t.broken = false; t.boss = false;
+      t.alive = true; t.airborne = false; t.mass = true; t.broken = false; t.boss = false; t.elite = false; t.attacking = false;
     }
     for (const d of this.dummies) {
       if (n >= out.length) return n;
@@ -721,7 +729,7 @@ export class CombatSystem implements EnemyWorld {
       const t = out[n];
       refs[n] = d; t.ref = n; n++;
       t.id = d.id; t.x = d.x; t.y = d.group.position.y; t.z = d.z; t.radius = d.radius; t.height = 2; t.yaw = 0;
-      t.alive = true; t.airborne = false; t.mass = false; t.broken = false; t.boss = false;
+      t.alive = true; t.airborne = false; t.mass = false; t.broken = false; t.boss = false; t.elite = false; t.attacking = false;
     }
     return n;
   }
@@ -787,7 +795,10 @@ export class CombatSystem implements EnemyWorld {
       breakNow: c.ultimate || undefined,
     };
     if (h.pull) { const k = 0.9 + e.radius; info.pullX = c.fx + Math.sin(c.fyaw) * k; info.pullZ = c.fz + Math.cos(c.fyaw) * k; }
+    // Klingen-Clash (4.6C): halber Schaden, dafür direkter, schwerer Haltungsschaden; sein Angriff prallt ab
+    if (c.clash) { info.dmg = Math.round(info.dmg * 0.5); info.poise = h.poise * c.postureK * ACTION_TUNING.clashPosture + 20; info.knock *= 0.6; }
     const res = e.takeHit(info, this.now, this);
+    if (c.clash) this.clashFx(e, res, c);
     if (c.ultimate) this.ultLedger.record(hpBefore - e.hp);
     this.enemyFeedback(e, res, dmg, crit, false, heavy, d, c.dirX, c.dirZ, color);
     if (h.status && res !== 'blocked' && res !== 'kill') this.actionStatus(e, h, c, dmg);
@@ -808,6 +819,72 @@ export class CombatSystem implements EnemyWorld {
     }
     return res === 'blocked' ? 0 : res === 'stagger' || res === 'kill' ? 2 : 1;
   }
+
+  /**
+   * Klingen-Clash (4.6C): Funkenfontäne zwischen beiden Klingen, Druckring, kurzer Hit-Stop; umliegende Verbände werden fortgeschleudert,
+   * der Angriff des Gegners prallt ab (die Haltung hat der Treffer schon genommen)
+   */
+  private clashFx(e: Enemy, res: 'hit' | 'blocked' | 'stagger' | 'kill', c: HitContext) {
+    if (res !== 'kill' && res !== 'stagger') e.clashed(this, c.dirX, c.dirZ);
+    CLASH_P.set((e.x + c.fx) * 0.5, e.y + 1.35 * e.def.scale, (e.z + c.fz) * 0.5);
+    this.sparksBurst(CLASH_P, '#FFE7A0', 120, -c.dirX, -c.dirZ);
+    this.sparksBurst(CLASH_P, '#FFFFFF', 60, c.dirX, c.dirZ);
+    this.sparks?.emit(46, CLASH_P.x, CLASH_P.y, CLASH_P.z, CLASH_SPARKS);
+    CLASH_P.y = e.y + 0.1;
+    this.fx.shockwave(CLASH_P, 6.5, '#FFE7A0');
+    for (const q of this.mass) {
+      if (!q.alive) continue;
+      const dx = q.x - CLASH_P.x, dz = q.z - CLASH_P.z, d = Math.hypot(dx, dz);
+      if (d > 11) continue;
+      q.fling(dx / (d || 1), dz / (d || 1), 15 * (1 - d / 13));
+    }
+    this.overlay.number(e.head.setY(e.y + 2.7 * e.def.scale), 'Klingen-Clash!', 'crit');
+    this.hooks.hitstop(0.16, 0.04);
+    this.hooks.shake(0.8);
+    this.hooks.focus?.(0.7);
+    this.clashes++;
+  }
+  /** Anzahl der Klingen-Clashs (Prüfungen) */
+  clashes = 0;
+  /** Funken-Teilchen der Welt (setzt SeaWorld): Funkenfontäne des Clash */
+  sparks: { emit(n: number, x: number, y: number, z: number, o: typeof CLASH_SPARKS): void } | null = null;
+
+  // ---------- Rückstoß-Physik der Gegner (4.6C) ----------
+
+  /** Bremsspur: Staub hinter dem schlitternden Gegner (auf Deck Holzspäne, im Flachwasser Gischt) */
+  skid(e: Enemy, speed: number) {
+    SKID_P.set(e.x, e.y + 0.08, e.z);
+    if (e.y < 0.35) this.hooks.splash?.(e.x, e.y, e.z, false);
+    else this.fx.puff(SKID_P, speed > 7 ? 3 : 2);
+    this.skids++;
+  }
+  /** Aufprall an Wand oder Reling: Staubwolke, Risse in der Wand, dumpfer Schlag */
+  wallSlam(e: Enemy, speed: number, nx: number, nz: number) {
+    SKID_P.set(e.x - nx * e.radius, e.y + 1.1, e.z - nz * e.radius);
+    this.fx.puff(SKID_P, 8);
+    this.fx.hit(SKID_P, 'heavy', '#E8D8B0', speed > 8);
+    audio.play('heavy', Math.min(1, speed / 10), SKID_P);
+    this.hooks.shake(Math.min(0.5, speed * 0.04));
+    this.slams++;
+  }
+  /** Über Bord: der Gegner fliegt über die Kante */
+  overboard(e: Enemy) {
+    this.overlay.number(e.head.setY(e.y + 2.4 * e.def.scale), 'Über Bord!', 'crit');
+    audio.play('whoosh', 0.8, e.pos);
+    this.overboards++;
+  }
+  /** Ins Meer gefallen: Gischt, Klatschen; war der Gegner noch nicht besiegt, zählt es jetzt als K.O. (Beute, Lohn) */
+  splashdown(e: Enemy, ko: boolean) {
+    this.hooks.splash?.(e.x, KNOCK_WATER, e.z, true);
+    SKID_P.set(e.x, 0.1, e.z);
+    this.fx.shockwave(SKID_P, 2.6, '#DDF4FF');
+    audio.play('splash', 1, SKID_P);
+    if (ko) this.onKill(e);
+  }
+  /** Zähler für Prüfungen */
+  skids = 0;
+  slams = 0;
+  overboards = 0;
 
   /** Endboss-Deckel der Ultimates (data/cataclysms.ts): je Wirken und Gegner höchstens ein gedeckelter Treffer */
   private readonly ultLedger = new UltimateBossLedger();

@@ -159,7 +159,7 @@ const LK: ActionStyleDef = {
   finisher: move({ id: 'langklinge.f', label: 'Letzter Mondschein', clip: 'Melee_1H_Attack_Slice_Horizontal', dur: 1.1, hyper: true, iframes: 1.1, cutin: 'Letzter Mondschein!', dashTo: 3, dashTime: 0.12, afterimage: true, hits: [{ shape: 'line', range: 5, width: 2.4, dmg: 1, poise: 0, knock: 9, pen: 2, fx: 'slash', hitstop: 0.3, shake: 1.0, at: [0.35, 0.5] }] }),
   skills: [
     skill({ id: 'langklinge.k1', through: true, slot: 1, label: 'Iai: Blitzzug', short: 'Iai', icon: '⟿', cd: 8, desc: 'Ein einziger Zieh-Schnitt quer durch 6 m – Rüstung zählt kaum.', clip: 'Melee_1H_Attack_Slice_Horizontal', dur: 0.66, dashTo: 6, dashTime: 0.12, iframes: 0.3, afterimage: true, hits: [{ shape: 'line', range: 3.0, width: 2.4, dmg: 2.67, poise: 30, knock: 7, pen: 3, fx: 'slash', hitstop: 0.12, shake: 0.5, at: [0.25, 0.45] }] }),
-    skill({ id: 'langklinge.k2', slot: 2, label: 'Mondspiegel', short: 'Spiegel', icon: '◐', cd: 10, desc: 'Konterhaltung: wer jetzt zuschlägt, wird hinterrücks erwidert.', clip: 'Melee_Blocking', dur: 1.0, from: 0, to: 1, magnet: false, lunge: 0, counter: 1.0, hits: [] }),
+    skill({ id: 'langklinge.k2', slot: 2, label: 'Mondspiegel', short: 'Spiegel', icon: '◐', cd: 10, desc: 'Konterhaltung: wer jetzt zuschlägt, wird hinterrücks erwidert; am Ende entlädt sich eine Mondsichel-Welle 10 m weit.', clip: 'Melee_Blocking', dur: 1.0, from: 0, to: 1, magnet: false, lunge: 0, counter: 1.0, hits: [{ shape: 'line', range: 10, width: 2.4, grow: true, at: [0.84, 0.96], dmg: 0.7, poise: 16, knock: 6, fx: 'slash', vfx: 'mond' }] }),
     skill({ id: 'langklinge.k3', slot: 3, label: 'Kreuzwind', short: 'Kreuz', icon: '✕', cd: 11, desc: 'Zwei gekreuzte Fernschnitte, je 9 m weit.', clip: 'Melee_2H_Attack_Slice', dur: 0.85, from: 0.1, to: 0.9, hits: [{ shape: 'line', range: 9, width: 2.0, dmg: 1.77, poise: 18, knock: 5, pen: 2, at: [0.25, 0.4] }, { shape: 'line', range: 9, width: 2.0, dmg: 1.77, poise: 18, knock: 7, pen: 2, at: [0.6, 0.75] }] }),
     skill({ id: 'langklinge.k4', slot: 4, label: 'Hundert Monde', short: 'Monde', icon: '☾', cd: 16, desc: 'Gesammelter Rundumschnitt auf 5,5 m mit großem Haltungsschaden.', clip: 'Melee_2H_Attack_Spin', dur: 1.2, hyper: true, cutin: 'Hundert Monde!', hits: [{ arc: ROUND, range: 5.5, dmg: 5.05, poise: 60, knock: 10, fling: 12, pen: 2, fx: 'spin', hitstop: 0.15, shake: 0.8, at: [0.5, 0.7] }] }),
   ],
@@ -272,7 +272,7 @@ const FJ: ActionStyleDef = {
   skills: [
     skill({ id: 'effekt.k1', slot: 1, label: 'Funkenfächer', short: 'Fächer', icon: '✧', cd: 7, desc: 'Fünf Faji-Funken im Fächer.', clip: 'Ranged_Magic_Shoot', dur: 0.6, magnet: false, lunge: 0, hits: [{ range: 22, dmg: 2.16, poise: 8, knock: 3, fx: 'magic', projectile: shot('#C77DFF', 30, 0.6, false, 5, 0.22) }] }),
     skill({ id: 'effekt.k2', slot: 2, label: 'Bannkreis', short: 'Bann', icon: '◍', cd: 10, desc: 'Faji-Ring stößt alles im Umkreis von 5 m fort.', clip: 'Ranged_Magic_Raise', dur: 0.85, magnet: false, lunge: 0, hits: [{ shape: 'circle', range: 5.2, dmg: 3.07, poise: 30, knock: 12, fling: 12, fx: 'magic', hitstop: 0.09, shake: 0.5 }] }),
-    skill({ id: 'effekt.k3', slot: 3, label: 'Schwebeschritt', short: 'Schweben', icon: '☁', cd: 8, desc: 'Steigt in die Luft und sammelt Faji für Luftangriffe.', clip: 'Ranged_Magic_Spellcasting', dur: 0.5, rise: 9.5, magnet: false, lunge: 0, airOk: true, hits: [] }),
+    skill({ id: 'effekt.k3', slot: 3, label: 'Schwebeschritt', short: 'Schweben', icon: '☁', cd: 8, desc: 'Steigt mit einer Faji-Entladung in die Luft und sammelt Kraft für Luftangriffe.', clip: 'Ranged_Magic_Spellcasting', dur: 0.5, rise: 9.5, magnet: false, lunge: 0, airOk: true, hits: [{ shape: 'circle', range: 3.6, at: [0.05, 0.25], dmg: 0.5, poise: 12, knock: 5, launch: 4, fx: 'magic', down: 2 }] }),
     skill({ id: 'effekt.k4', slot: 4, label: 'Leuchtlanze', short: 'Lanze', icon: '➶', cd: 12, desc: 'Durchschlagende Lanze aus reinem Faji.', clip: 'Ranged_Magic_Shoot', dur: 0.75, magnet: false, lunge: 0, cutin: 'Leuchtlanze!', hits: [{ range: 30, dmg: 3.1, poise: 40, knock: 9, fx: 'magic', projectile: shot('#FF8AFF', 40, 1.5, true) }] }),
   ],
   jumps: 2, airDashes: 1, dashSpeed: 15, dashTime: 0.26, perfectWindow: ACTION_TUNING.perfectWindow,
@@ -284,6 +284,46 @@ export const ACTION_STYLES: Record<ActionStyleId, ActionStyleDef> = {
   zweihaender: ZW, saebel: SA, doppel: DO, langklinge: LK, sturmfaust: SF, erdspalter: ES, effekt: FJ,
   ...FAJI_STYLES,
 };
+
+// ---------- Vorwärts-Momentum (4.6C) ----------
+
+/**
+ * Schub je Schlagstufe (m, `ActionMove.push`): die Kette steigt bis zum Finisher-Schlag an, Verzweigungen und Schwer sind wuchtig,
+ * Luftschläge kurz; Techniken ohne eigenen Vorstoß gleiten beim Wirken vor (mehrtreffrige über die ganze Dauer). Der Stil-Faktor macht
+ * Zweihänder und Langklinge (Zieh-Schnitte) weiter, Doppelklinge und Sturmfaust (viele Treffer) kürzer; Faji-Künste etwas kürzer.
+ */
+export const MOMENTUM = {
+  chainFirst: 1.0,
+  chainLast: 1.5,
+  chainFinisher: 2.1,
+  branch: 1.6,
+  heavy: 1.8,
+  air: 0.7,
+  finisher: 1.2,
+  skillFlow: 2.6,
+  skillStep: 1.5,
+  styleK: { zweihaender: 1.15, saebel: 1.0, doppel: 0.9, langklinge: 1.3, sturmfaust: 0.9, erdspalter: 1.05, effekt: 0.75 } as Readonly<Partial<Record<ActionStyleId, number>>>,
+  fajiK: 0.85,
+} as const;
+
+/** Schub eintragen, wo ein Angriff noch keinen eigenen hat (Launcher und Meteor steigen bzw. stürzen und bekommen keinen) */
+function applyMomentum(s: ActionStyleDef) {
+  const k = s.faji ? MOMENTUM.fajiK : MOMENTUM.styleK[s.id] ?? 1;
+  const n = s.light.length;
+  s.light.forEach((m, i) => {
+    if (m.push) return;
+    m.push = (i === n - 1 ? MOMENTUM.chainFinisher : MOMENTUM.chainFirst + (MOMENTUM.chainLast - MOMENTUM.chainFirst) * (i / Math.max(1, n - 2))) * k;
+  });
+  for (const m of s.branch) if (!m.push && !m.rise) m.push = MOMENTUM.branch * k;
+  if (!s.heavy.push) s.heavy.push = MOMENTUM.heavy * k;
+  for (const m of s.air) if (!m.push) m.push = MOMENTUM.air * k;
+  if (!s.finisher.push) s.finisher.push = MOMENTUM.finisher * k;
+  for (const m of s.skills) {
+    if (m.push || m.dashTo > 0 || m.rise > 0 || m.counter > 0 || !m.hits.length) continue;
+    m.push = (m.hits.length >= 3 ? MOMENTUM.skillFlow : MOMENTUM.skillStep) * k;
+  }
+}
+for (const id of Object.keys(ACTION_STYLES) as ActionStyleId[]) applyMomentum(ACTION_STYLES[id]);
 
 // ---------- Nachschlagen ----------
 

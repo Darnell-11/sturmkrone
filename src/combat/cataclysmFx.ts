@@ -8,11 +8,17 @@ import {
 } from 'three';
 import { markShared } from '../render/dispose';
 
-export type FxPrim = 'arc' | 'ring' | 'column' | 'bolt' | 'shard' | 'orb' | 'blade' | 'cannon' | 'rock' | 'wall' | 'void';
-export const FX_PRIMS: readonly FxPrim[] = ['arc', 'ring', 'column', 'bolt', 'shard', 'orb', 'blade', 'cannon', 'rock', 'wall', 'void'];
+export type FxPrim = 'arc' | 'ring' | 'column' | 'bolt' | 'shard' | 'orb' | 'blade' | 'cannon' | 'rock' | 'wall' | 'void' | 'fist' | 'disc' | 'cloud';
+export const FX_PRIMS: readonly FxPrim[] = ['arc', 'ring', 'column', 'bolt', 'shard', 'orb', 'blade', 'cannon', 'rock', 'wall', 'void', 'fist', 'disc', 'cloud'];
 
-/** Plätze je Grundform */
-const CAP: Record<FxPrim, number> = { arc: 24, ring: 48, column: 40, bolt: 64, shard: 192, orb: 16, blade: 96, cannon: 14, rock: 72, wall: 48, void: 4 };
+/**
+ * Plätze je Grundform (4.6C: für die Stürme aus hunderten Fäusten, Sicheln und Splittern deutlich größer). `disc` ist eine feste Scheibe
+ * (Eisscholle), `cloud` ein Haufen bauschiger Wolkenballen (Gewitterwolke) – beide undurchsichtig.
+ */
+export const FX_CAP: Readonly<Record<FxPrim, number>> = {
+  arc: 32, ring: 120, column: 72, bolt: 128, shard: 360, orb: 260, blade: 320, cannon: 18, rock: 120, wall: 96, void: 4, fist: 280, disc: 24, cloud: 16,
+};
+const CAP = FX_CAP;
 
 // ---------- Geometrien (einmal gebaut, geteilt) ----------
 
@@ -186,6 +192,81 @@ function rockGeo(): BufferGeometry {
   return markShared(g);
 }
 
+/** Geister-Faust (Sturmfaust-Stakkato): Knöchel nach +Z (Länge ~1), hell an der Schlagfläche */
+function fistGeo(): BufferGeometry {
+  const pos: number[] = [], col: number[] = [], idx: number[] = [];
+  const box = (cx: number, cy: number, cz: number, sx: number, sy: number, sz: number, front: number, back: number) => {
+    const b = pos.length / 3;
+    for (let k = 0; k < 8; k++) {
+      const x = cx + (k & 1 ? sx : -sx) * 0.5, y = cy + (k & 2 ? sy : -sy) * 0.5, z = cz + (k & 4 ? sz : -sz) * 0.5;
+      pos.push(x, y, z);
+      const l = k & 4 ? front : back;
+      col.push(l, l, l);
+    }
+    const f = [0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5, 0, 4, 5, 0, 5, 1, 2, 3, 7, 2, 7, 6, 0, 2, 6, 0, 6, 4, 1, 5, 7, 1, 7, 3];
+    for (const i of f) idx.push(b + i);
+  };
+  // Handrücken und Handfläche, vier Knöchel, Daumen, Ansatz des Unterarms
+  box(0, 0, 0.42, 0.5, 0.36, 0.34, 1.1, 0.6);
+  for (let i = 0; i < 4; i++) box(-0.19 + i * 0.127, 0.06 - Math.abs(i - 1.5) * 0.02, 0.66, 0.12, 0.2, 0.16, 1.7, 1.0);
+  box(-0.3, -0.08, 0.5, 0.14, 0.16, 0.3, 1.2, 0.7);
+  box(0, 0, 0.1, 0.36, 0.3, 0.4, 0.5, 0.15);
+  return geo(pos, col, idx);
+}
+
+/** Flache Scheibe in der XZ-Ebene (Radius ~1) mit unregelmäßigem Rand: Eisscholle, Wolkendecke; Mitte heller */
+function discGeo(seed: number, rim: number): BufferGeometry {
+  const seg = 40;
+  const pos: number[] = [0, 0, 0], col: number[] = [1, 1, 1], idx: number[] = [];
+  let s = seed;
+  const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+  for (let i = 0; i < seg; i++) {
+    const a = (i / seg) * Math.PI * 2;
+    const r = 0.86 + rnd() * 0.18 + Math.sin(a * 3 + seed) * 0.04;
+    pos.push(Math.sin(a) * r, 0, Math.cos(a) * r);
+    col.push(rim, rim, rim);
+  }
+  for (let i = 0; i < seg; i++) idx.push(0, 1 + i, 1 + ((i + 1) % seg));
+  return geo(pos, col, idx);
+}
+
+/**
+ * Gewitterwolke (Blitz-Urteil): Haufen bauschiger Ballen (Radius ~1, flache Unterseite bei y ≈ −0,06, Kuppen bis ~0,42).
+ * Gebackene Schattierung: Unterseite dunkel, Kuppen hell – von unten bedrohlich, von oben (hohe Kamera) eine echte Wolkendecke statt Scheibe.
+ */
+function cloudGeo(): BufferGeometry {
+  const ball = new IcosahedronGeometry(1, 2);
+  const bp = ball.getAttribute('position');
+  const pos: number[] = [], col: number[] = [];
+  let s = 29;
+  const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+  // Mitte, innerer Ring, äußerer Ring kleiner Ballen
+  const puffs: [number, number, number][] = [[0, 0, 0.5]];
+  for (let i = 0; i < 7; i++) { const a = (i / 7) * Math.PI * 2 + rnd() * 0.4; const r = 0.5 + rnd() * 0.14; puffs.push([Math.sin(a) * r, Math.cos(a) * r, 0.3 + rnd() * 0.12]); }
+  for (let i = 0; i < 9; i++) { const a = (i / 9) * Math.PI * 2 + rnd() * 0.5; const r = 0.8 + rnd() * 0.1; puffs.push([Math.sin(a) * r, Math.cos(a) * r, 0.17 + rnd() * 0.08]); }
+  for (const [cx, cz, pr] of puffs) {
+    const lift = (rnd() - 0.3) * 0.05;
+    // gleiche Ecken gleich verbeulen (das Ikosaeder ist nicht indiziert)
+    const jit = new Map<string, number>();
+    for (let i = 0; i < bp.count; i++) {
+      const x = bp.getX(i), y = bp.getY(i), z = bp.getZ(i);
+      const k = `${x.toFixed(3)},${y.toFixed(3)},${z.toFixed(3)}`;
+      let j = jit.get(k);
+      if (j === undefined) { j = 0.86 + rnd() * 0.24; jit.set(k, j); }
+      const py = Math.max(y * 0.72 * pr * j + lift, -0.06);
+      pos.push(cx + x * pr * j, py, cz + z * pr * j);
+      const l = py <= -0.059 ? 0.3 : 0.42 + 1.05 * Math.min(1, Math.max(0, (py + 0.06) / 0.42)) * (0.75 + 0.25 * Math.max(0, y));
+      col.push(l * 0.96, l * 0.98, l * 1.05);
+    }
+  }
+  ball.dispose();
+  const g = new BufferGeometry();
+  g.setAttribute('position', new BufferAttribute(new Float32Array(pos), 3));
+  g.setAttribute('color', new BufferAttribute(new Float32Array(col), 3));
+  g.computeBoundingSphere();
+  return markShared(g);
+}
+
 /** Wasserwand / Gischtvorhang: senkrechte Fläche (Breite 1 entlang X, Höhe 0 … 1), oben zerfasernd */
 function wallGeo(): BufferGeometry {
   const seg = 10, rows = [0, 0.5, 0.85, 1], lum = [0.9, 1.1, 0.6, 0];
@@ -257,7 +338,7 @@ class Pool {
     this.mesh.visible = false;
     this.mesh.frustumCulled = false;
     this.mesh.userData.noOutline = true;
-    this.mesh.renderOrder = prim === 'rock' || prim === 'void' ? 0 : 6;
+    this.mesh.renderOrder = prim === 'rock' || prim === 'void' || prim === 'disc' || prim === 'cloud' ? 0 : 6;
     this.d = new Float32Array(cap * F);
     this.c = new Float32Array(cap * 4);
     this.flick = new Float32Array(cap);
@@ -286,9 +367,11 @@ export class CataclysmFx {
     const solid = markShared(new MeshBasicMaterial({ vertexColors: true, transparent: false, blending: NormalBlending, depthWrite: true, side: DoubleSide, fog: false }));
     const geos: Record<FxPrim, () => BufferGeometry> = {
       arc: arcGeo, ring: ringGeo, column: columnGeo, bolt: boltGeo, shard: shardGeo, orb: orbGeo, blade: bladeGeo, cannon: cannonGeo, rock: rockGeo, wall: wallGeo, void: orbGeo,
+      fist: fistGeo, disc: () => discGeo(17, 0.78), cloud: cloudGeo,
     };
     for (const p of FX_PRIMS) {
-      const pool = new Pool(p, geos[p](), p === 'rock' || p === 'void' ? solid : add, CAP[p]);
+      const solidPrim = p === 'rock' || p === 'void' || p === 'disc' || p === 'cloud';
+      const pool = new Pool(p, geos[p](), solidPrim ? solid : add, CAP[p]);
       this.pools[p] = pool;
       this.group.add(pool.mesh);
     }
@@ -381,7 +464,12 @@ export class CataclysmFx {
       pool.n = w;
       m.count = w;
       m.visible = w > 0;
+      // nur den belegten Teil hochladen (bei großen Pools spart das den Großteil der Übertragung)
+      m.instanceMatrix.clearUpdateRanges();
+      m.instanceMatrix.addUpdateRange(0, Math.max(1, w) * 16);
       m.instanceMatrix.needsUpdate = true;
+      m.instanceColor!.clearUpdateRanges();
+      m.instanceColor!.addUpdateRange(0, Math.max(1, w) * 3);
       m.instanceColor!.needsUpdate = true;
     }
   }

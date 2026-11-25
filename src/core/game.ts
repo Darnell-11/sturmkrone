@@ -650,7 +650,8 @@ export class Game {
       const lowSun = clamp01((0.5 - pal.sunDir.y) / 0.38);
       this.renderer.setMood(nightK, pal.sunVis * lowSun);
       // Belichtung je Tagesphase (Environment.exposureK, 4.4C)
-      this.renderer.setExposure(this.world.env.exposureK);
+      // Ultimates verdunkeln kurz das Bild (Blutmond-Finsternis, Gewitterwolke, Schwarzes Loch)
+      this.renderer.setExposure(this.world.env.exposureK * (1 - 0.55 * this.world.darkK));
     }
     // Gegner, Crew und Stadtleute zwischen den 60-Hz-Logikschritten weich darstellen
     Character.present(a);

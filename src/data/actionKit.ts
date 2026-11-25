@@ -81,6 +81,25 @@ export const ACTION_TUNING = {
   /** Laufbewegung nach dem Treffer bricht den Ausschwung ab (Stick-Auslenkung, Zeit nach dem letzten Treffer) */
   recoverCancelMag: 0.35,
   recoverCancelAfter: 0.08,
+  /**
+   * Vorwärts-Momentum (4.6C): der Schub einer Schlagstufe beginnt so lange vor ihrem ersten Schwungfenster und endet so lange danach (s);
+   * vor einem einzelnen Ziel darf die Figur höchstens so weit (m) „in“ den Gegner hineingleiten (er weicht durch den Rückstoß ohnehin).
+   */
+  pushLead: 0.08,
+  pushTail: 0.06,
+  pushGap: 0.3,
+  /**
+   * Sturm-Verfolgung (4.6C): so lange nach einem Hochschleudern bringt ein Dash die Figur per Blitz-Teleport zum Ziel in der Luft;
+   * Reichweite (m), Abstand neben dem Ziel, Mindesthöhe des Ziels über der Figur (sonst normaler Dash).
+   */
+  chaseWindow: 1.6,
+  chaseRange: 16,
+  chaseOffset: 1.1,
+  chaseMinRise: 0.9,
+  /** Klingen-Clash (4.6C): Rückstoß der Figur (m/s), Haltungsfaktor des Clash-Treffers, Ausrichtung des Gegners zur Figur (Kosinus) */
+  clashRecoil: 6.5,
+  clashPosture: 2.4,
+  clashFacing: 0.25,
 } as const;
 
 /**
@@ -155,8 +174,18 @@ export interface ActionMove {
   hits: ActionHit[];
   /** Vorwärtsschritt ohne Ziel (m/s, bis zum ersten Treffer) · Magnet-Schritt zum weichen Ziel */
   lunge: number; magnet: boolean;
+  /**
+   * Vorwärts-Momentum (4.6C, m): die Schlagstufe treibt die Figur mit einer knackigen Beschleunigungskurve (schnell an, weich aus) vor –
+   * durch Verbände hindurch, vor einem einzelnen Ziel bis kurz davor. 0 = kein Schub.
+   */
+  push: number;
   /** läuft in der Luft · Steigtempo beim Start · Hyper-Armor · Meteor (Sturz bis zum Boden, Treffer beim Aufprall) */
   air: boolean; rise: number; hyper: boolean; meteor: boolean;
+  /**
+   * Schweben nach dem Aufstieg (4.6C, s): so lange wirkt nur ein Bruchteil der Schwerkraft (`hoverGravityK`), die Figur hängt in der Luft
+   * (Blitz-Ultimate unter der Gewitterwolke). Bei Ultimates beginnen Aufstieg und Schweben erst nach der Zwischensequenz.
+   */
+  hang: number;
   /** Vorstoß zu Beginn: so weit (m) in so vielen Sekunden (Zieh-Schnitt, Sprungtritt); `through` = quer durch die Gegner statt davor stehen; Unverwundbarkeit ab Start */
   dashTo: number; dashTime: number; through: boolean; iframes: number;
   /** Konterhaltung (s): ein Treffer in dieser Zeit wird zum perfekten Konter */
@@ -179,8 +208,11 @@ export type CataclysmKind =
   | 'horizonCut' | 'sevenSeas' | 'sawCyclone' | 'iaiWorldBreak' | 'fistStorm' | 'oceanSplit' | 'blackHole'
   | 'fireDragons' | 'glacier' | 'floodDragon' | 'vacuumStorm' | 'thunderJudgment' | 'sunDance' | 'bloodMoon';
 
-/** Wie ein Ultimate Schiffe zerteilt: quer (Bug/Heck), längs (Backbord/Steuerbord), schräg, radial (Sog) oder gar nicht */
-export type ShipCut = '' | 'cross' | 'length' | 'diagonal' | 'radial';
+/**
+ * Wie ein Ultimate Schiffe zerstört: quer zerteilt (Bug/Heck), längs (Backbord/Steuerbord), schräg, radial (Sog), kentern (rollt um und
+ * versinkt, 4.6C) oder durchlöchert versenken (ganz, 4.6C); '' = gar nicht
+ */
+export type ShipCut = '' | 'cross' | 'length' | 'diagonal' | 'radial' | 'capsize' | 'sink';
 
 export interface UltimateSpec {
   kind: CataclysmKind;
@@ -322,7 +354,7 @@ export function move(o: MoveIn): ActionMove {
   void _h; void _f; void _t; void _c;
   return {
     clipFrom: from, clipTo: to, cancel,
-    lunge: 2, magnet: true, air: false, rise: 0, hyper: false, meteor: false,
+    lunge: 2, magnet: true, push: 0, air: false, rise: 0, hang: 0, hyper: false, meteor: false,
     dashTo: 0, dashTime: 0.18, through: false, iframes: 0, counter: 0, buff: null, airOk: false,
     finisher: false, cutin: '', afterimage: false, color: '', formMin: 1, vfx: '', ultimate: null,
     ...rest, hits,
