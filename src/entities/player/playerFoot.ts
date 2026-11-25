@@ -1,85 +1,121 @@
-import { MathUtils, Vector3, type AnimationAction } from 'three';
+// Steuerung und Kampf zu Fuß (seit 4.6A über die Action-Kampf-Engine). Die Simulation (Bewegung in 3D, Sprünge, Dashes, Kombo-Baum,
+// Treffer, Haltung, perfektes Ausweichen) steht rein in `combat/actionCombatEngine.ts`; diese Klasse ist ihr Anschluss an die Welt
+// (Boden, Kampfsystem) und an die Darstellung (Clips im Takt der Engine, Effekte, Klang). Öffentliche Felder bleiben wie vorher
+// (Leben, Ausdauer, Lage, Werte der Fähigkeiten), damit Welt, Faji und HUD nichts davon merken.
+import { Vector3, type AnimationAction } from 'three';
 import type { Input } from '../../core/input/input';
-import { STYLE_ANIMS, type StyleId } from '../../data/animations';
-import { FINISHERS, PLAYER_BASE, STAMINA, STYLE_ATTACKS, type AttackDef } from '../../data/combat';
-import type { CombatSystem, PlayerTarget } from '../../combat/combat';
+import type { StyleId } from '../../data/animations';
+import { PLAYER_BASE } from '../../data/combat';
+import type { CombatSystem, PlayerHitResult, PlayerTarget } from '../../combat/combat';
 import type { CombatFx } from '../../combat/fx';
+import type { ActionFx } from '../../combat/actionFx';
 import type { CombatOverlay } from '../../ui/combatOverlay';
 import type { Ground } from '../../world/islandGround';
 import type { Character } from '../character/character';
 import type { Enemy } from '../enemy';
-import type { DecalHandle } from '../../render/decals';
-import { makeDashLatch, resolveDash, sweepMove, type SweepResult } from '../../combat/sweep';
+import { makeDashLatch, makeSweepResult, sweepMove } from '../../combat/sweep';
 import { mintEntityId, type EntityId } from '../../sim/entityId';
-import type { DashIntent } from '../../sim/intents';
 import { PLAYER_HIT_CAP, damageFactor, dangerOfLevel } from '../../data/balanceConfig';
+import {
+  ActionCombatEngine, KIND_OF_CODE, createFighter, makeInput,
+  type ActionBody, type ActionTarget, type ActionWorld, type AttackerInfo, type FighterState, type HitContext,
+} from '../../combat/actionCombatEngine';
+import {
+  ACTION_STYLES, ACTION_TUNING, ALL_MOVES, actionStyleOf, visualStyleOf,
+  type ActionHit, type ActionMove, type ActionStyleId,
+} from '../../data/actionStyles';
 
-const WALK = 2.4;
-const RUN = 6.2;
-const ROLL_SPEED = 10;
-const ROLL_TIME = 0.42;
-const CHARGE_TIME = 0.85;
-/**
- * Überblendzeiten der Animationen (Sekunden): weich, aber ohne Verzögerung der Trefferzeitpunkte –
- * die Clips laufen beim Überblenden bereits, nur ihr Gewicht steigt.
- */
-const FADE = { attack: 0.15, combo: 0.12, dodge: 0.15, cast: 0.15, locomotion: 0.2, idle: 0.2, block: 0.12, hurt: 0.08 };
-/** Eingabepuffer: so lange (Sekunden) bleibt ein zu früh gedrückter Angriff/eine Rolle gültig */
-const BUFFER = 0.25;
-
+/** Zustand für Welt und HUD (wie vor 4.6A) */
 type FootState = 'move' | 'roll' | 'attack' | 'block' | 'charge' | 'hurt' | 'down';
 
-/** Farbe der Schmier-Bögen und Funken je Kampfstil */
-const STYLE_COLOR: Record<StyleId, string> = {
-  faust: '#FFB45A', saebel: '#BFE8FF', langklinge: '#D8F0FF', zweihaender: '#FFD8A8', doppel: '#C8FFE8', effekt: '#D8A8FF',
-};
+/** Überblendzeiten (s): kurz genug, dass Treffer auf dem Takt der Engine sitzen */
+const FADE = { move: 0.1, chain: 0.07, dodge: 0.08, locomotion: 0.2, idle: 0.2, block: 0.12, hurt: 0.08, air: 0.12, land: 0.08 };
+/** Weiter entfernte Angreifer (Schützen): Sturm-Schritt ohne Sprung hinter sie */
+const TELEPORT_MAX = 14;
 
 export interface FootDeps {
   combat: CombatSystem | null;
   fx: CombatFx | null;
   overlay: CombatOverlay | null;
   onDown: () => void;
-  /** Waffe gewechselt: neue Waffen in die Hände, Fähigkeiten-Werte neu rechnen */
-  onSwap?: (style: StyleId) => void;
+  /** Stil gewechselt: Waffe in die Hände, Fähigkeiten-Werte neu rechnen */
+  onSwap?: (style: StyleId, action: ActionStyleId) => void;
+  /** Nachbilder und Leuchtstreifen (Pool der Welt) */
+  actionFx?: ActionFx | null;
+  /** Kamerawackeln, Zeitlupe, Fokus-Puls (Welt) */
+  shake?: (k: number) => void;
+  slowmo?: (t: number, scale: number) => void;
+  focus?: (k: number) => void;
+  /** Tastenkappe für „Schwer“ (Finisher-Hinweis) */
+  heavyKey?: () => string;
 }
 
-/** Steuerung und Kampf zu Fuß. */
-/** Vorlauf des Klingen-Sweeps vor dem Trefferfenster (Anteil der Animation) */
-const SWEEP_LEAD = 0.2;
-/** Nachlauf: manche Hiebe (Abwärts-Chops, Tritte) treffen erst kurz nach dem Fenster */
-const SWEEP_TAIL = 0.22;
+/** Anschluss der Engine an Boden und Kampfsystem (ein Objekt, je Bild nur der Boden neu gesetzt) */
+class FootWorld implements ActionWorld {
+  ground: Ground | null = null;
+  private readonly latch = makeDashLatch();
+  private readonly res = makeSweepResult();
+  constructor(private foot: PlayerFoot) {}
+
+  height(x: number, z: number, y: number): number { return this.ground ? this.ground.height(x, z, y) : 0; }
+
+  move(b: ActionBody, dx: number, dz: number, impulse: boolean, id: number): void {
+    const g = this.ground;
+    if (!g) return;
+    if (impulse) {
+      // Vorwärts-Impuls (Dash, Magnet-Schritt, Vorstoß): Teilschritte, Wände stoppen, Stufen und Rampen hinauf (combat/sweep.ts)
+      if (this.latch.id !== id) { this.latch.id = id; this.latch.blocked = false; }
+      if (this.latch.blocked) return;
+      if (sweepMove(b, dx, dz, g, true, this.res).blocked) this.latch.blocked = true;
+      return;
+    }
+    if (Math.abs(dx) + Math.abs(dz) > 0.15) { sweepMove(b, dx, dz, g, false, this.res); return; }
+    const c = g.constrain(b.x + dx, b.z + dz, b.radius, b.y);
+    b.x = c.x; b.z = c.z;
+  }
+
+  teleport(b: ActionBody, x: number, z: number): boolean {
+    const g = this.ground;
+    if (!g) return false;
+    const h = g.height(x, z, b.y + 0.4);
+    if (!Number.isFinite(h) || Math.abs(h - b.y) > 2.6) return false;
+    const c = g.constrain(x, z, b.radius, h);
+    if (Math.hypot(c.x - x, c.z - z) > 0.7) return false;
+    b.x = c.x; b.z = c.z;
+    return true;
+  }
+
+  targets(x: number, z: number, r: number, out: ActionTarget[]): number { const c = this.foot.combat; return c ? c.actionTargets(x, z, r, out) : 0; }
+  hit(t: ActionTarget, h: ActionHit, m: ActionMove, ctx: HitContext): boolean { const c = this.foot.combat; return c ? c.actionHit(t, h, m, ctx, this.foot.dmgMult) : false; }
+  shoot(h: ActionHit, _m: ActionMove, f: FighterState): void { this.foot.combat?.actionShoot(h, f.x, f.y, f.z, f.yaw, this.foot.dmgMult, f.lockId); }
+}
 
 export class PlayerFoot implements PlayerTarget {
-  /** Kennung dieser Spielfigur: Absichten (Ausfallschritt, Rolle, Reparatur) nennen sie als Urheber */
+  /** Kennung dieser Spielfigur: Absichten und Bedrohungstabellen nennen sie */
   readonly entityId: EntityId = mintEntityId('foot');
-  /** Kapselradius für die Kollision (Grundriss: Kreis) */
+  /** Kapselradius für die Kollision */
   readonly radius = 0.35;
-  /** Blockade des laufenden Vorwärts-Impulses (frontaler Aufprall an einer Wand endet ihn) */
-  private readonly dashLatch = makeDashLatch();
-  /** Reiner Zustand des letzten Impulses: Ergebnis des Sweeps (Wand berührt, Stufe genommen, Steilhang), für Prüfungen */
-  lastSweep: SweepResult = { moved: 0, hit: false, blocked: false, nx: 0, nz: 0, climbed: false, steep: false, groundY: 0, steps: 0 };
-  private readonly dashIntent: DashIntent = { type: 'dash', entityId: '', kind: 'lunge', id: 0, dirX: 0, dirZ: 1, speed: 0 };
-  x = 0;
-  z = 0;
-  y = 0;
-  yaw = 0;
+  /** Zustand der Engine (JSON-taugliche Daten) und die Engine selbst */
+  readonly fighter: FighterState;
+  readonly engine: ActionCombatEngine;
+  private readonly inp = makeInput();
+  private readonly world: FootWorld;
   prev = { x: 0, z: 0, y: 0, yaw: 0 };
-  state: FootState = 'move';
+  /** Tempo (m/s) für Kamera und Welt */
   speed = 0;
   hp = 100;
   maxHp = 100;
+  /** Darstellungs-Stil (Waffe in der Hand, Faji-Passiven) */
+  style: StyleId;
   /** Seestein-Ketten (Boss-Fähigkeit): Restzeit und Tempoverlust (0 … 1) */
   private bindT = 0;
   private bindSlow = 0;
-  /** Fesseln: Bewegung für `dur` Sekunden um den Anteil `slow` gebremst */
   bind(dur: number, slow: number) { this.bindT = Math.max(this.bindT, dur); this.bindSlow = Math.max(this.bindSlow, Math.min(0.85, slow)); }
   /** Schadensfaktor (Waffe, Fähigkeiten, Crew) */
   dmgMult = 1;
   /** Schadensreduktion 0 … 0,85, Ausweichchance, Tempo, Unverwundbarkeit (Fähigkeiten) */
   reduce = 0;
-  /** Prozentuale Schadensminderung durch Set-Boni und Stärkungen (zusätzlich zu den Faji-Passiven) */
   gearReduce = 0;
-  /** Rüstungswert und elementarer Widerstand der Ausrüstung: wirken über die asymptotische Kurve (data/balanceConfig.ts) je nach Stufe des Angreifers */
   gearArmor = 0;
   gearResist = 0;
   dodgeChance = 0;
@@ -89,555 +125,394 @@ export class PlayerFoot implements PlayerTarget {
   secondWind = 0;
   private secondWindUsed = false;
   onFoot = false;
-  private rollT = 0;
-  private iframes = 0;
-  private rollDir = { x: 0, z: 1 };
-  private combo = 0;
-  private comboQueued = false;
-  private chaining = false;
-  /** Zeitpunkt der letzten noch nicht ausgeführten Eingaben (Logikzeit), -1 = keine */
-  private buf = { attack: -1, dodge: -1, heavy: -1 };
-  private clock = 0;
-  private comboWindow = 0;
-  private locomotion = '';
-  private attack: AttackDef | null = null;
-  private attackAction: AnimationAction | null = null;
-  /** Ziel des laufenden Angriffs (Zielhilfe ohne Erfassung) */
-  private aim: Enemy | null = null;
-  private swingId = 0;
-  private fired = false;
-  private smeared = false;
-  private chargeT = 0;
-  private hurtT = 0;
-  private blockSince = 99;
-  private flip = false;
-  private kx = 0;
-  private kz = 0;
-  /** Gemessenes, geglättetes Lauftempo (m/s) für die Schrittgeschwindigkeit */
-  private realSpeed = 0;
-  /** Ausdauer (Rolle, schwere Hiebe); staminaPause = Sekunden bis zum Aufladen, staminaFlash = Anzeige „zu wenig“ */
-  stamina = STAMINA.max;
-  readonly maxStamina = STAMINA.max;
-  private staminaPause = 0;
-  staminaFlash = 0;
-  /** Art des laufenden Hiebs: leicht (Kombo), schwer oder Kombo-Finisher */
-  private kind: 'light' | 'heavy' | 'finisher' = 'light';
-  private finFx = false;
-  /** Wechsel-Abklingzeit und Schadensfaktor des laufenden Hiebs (Wechselschlag) */
-  private swapCd = 0;
-  private swMult = 1;
+  /** Springen ruht, solange auf derselben Taste eine Handlung ansteht (Gamepad X: Sprechen, Anlegen …) */
+  jumpBlocked = false;
+  readonly maxStamina = ACTION_TUNING.stamina;
 
-  private spend(cost: number) {
-    this.stamina = Math.max(0, this.stamina - cost);
-    this.staminaPause = STAMINA.delay;
+  // Darstellung
+  private anim = '';
+  private moveAction: AnimationAction | null = null;
+  private moveShown = -1;
+  private realSpeed = 0;
+  private landT = 0;
+  private trailOn = false;
+  private noteT = 0;
+  private readonly att: AttackerInfo = { id: '', x: 0, z: 0, yaw: 0, radius: 0.5 };
+  private readonly finP = { x: 0, y: 0, z: 0 };
+  private readonly tmpV = new Vector3();
+
+  constructor(private char: Character, style: StyleId, private deps: FootDeps, action?: ActionStyleId) {
+    this.style = style;
+    this.fighter = createFighter(this.entityId, action ?? actionStyleOf(style));
+    this.engine = new ActionCombatEngine(this.fighter);
+    this.world = new FootWorld(this);
   }
 
-  constructor(private char: Character, public style: StyleId, private deps: FootDeps) {}
+  get combat(): CombatSystem | null { return this.deps.combat; }
+  /** Aktueller Action-Stil (einer der sechs physischen Stile oder Faji-Wirken) */
+  get actionStyle(): ActionStyleId { return this.fighter.style; }
+  get x() { return this.fighter.x; }
+  set x(v: number) { this.fighter.x = v; }
+  get y() { return this.fighter.y; }
+  set y(v: number) { this.fighter.y = v; }
+  get z() { return this.fighter.z; }
+  set z(v: number) { this.fighter.z = v; }
+  get yaw() { return this.fighter.yaw; }
+  set yaw(v: number) { this.fighter.yaw = v; }
+  get stamina() { return this.fighter.stamina; }
+  set stamina(v: number) { this.fighter.stamina = v; }
+  get staminaFlash() { return this.fighter.staminaFlash; }
+  /** In der Luft (Sprung, Fall, Luft-Kombo) */
+  get airborne() { return !this.fighter.grounded; }
 
-  get active() { return this.onFoot && this.state !== 'down'; }
+  get state(): FootState {
+    switch (this.fighter.phase) {
+      case 'dash': return 'roll';
+      case 'move': case 'cast': return 'attack';
+      case 'block': return 'block';
+      case 'hurt': return 'hurt';
+      case 'down': return 'down';
+      default: return 'move';
+    }
+  }
+
+  get active() { return this.onFoot && this.fighter.phase !== 'down'; }
+  /** Kann gerade eine Faji-Fähigkeit gewirkt werden? */
+  get canCast() { const p = this.fighter.phase; return this.active && this.fighter.grounded && (p === 'ground' || p === 'block'); }
 
   place(x: number, z: number, yaw: number, ground: Ground) {
-    this.x = x; this.z = z; this.yaw = yaw;
     const h = ground.height(x, z);
-    this.y = Number.isFinite(h) ? h : 0;
-    this.prev = { x, z, y: this.y, yaw };
-    this.state = 'move';
-    this.locomotion = '';
-    this.kx = this.kz = 0;
+    const y = Number.isFinite(h) ? h : 0;
+    this.world.ground = ground;
+    this.engine.place(x, y, z, yaw);
+    this.prev = { x, z, y, yaw };
+    this.anim = '';
+    this.moveShown = -1;
     this.realSpeed = 0;
-    this.stamina = STAMINA.max;
-    this.combo = 0;
   }
 
   /**
    * Skriptete Bewegung (Leiter, Reling): Lage direkt setzen, Eingabe ruht. Die Darstellung gleitet von der letzten zur neuen Lage
-   * (`prev`), die Beine laufen im Gehen-Takt, solange `moving` gilt (Klettern: Schritt für Schritt die Sprossen hinauf).
+   * (`prev`), die Beine laufen im Gehen-Takt, solange `moving` gilt.
    */
   drive(x: number, y: number, z: number, yaw: number, moving: boolean, speed = 1.3) {
     const pv = this.prev;
     pv.x = this.x; pv.z = this.z; pv.y = this.y; pv.yaw = this.yaw;
-    this.x = x; this.y = y; this.z = z; this.yaw = yaw;
-    this.state = 'move';
+    this.engine.drive(x, y, z, yaw);
     this.speed = 0;
     this.realSpeed = moving ? speed : 0;
     const want = moving ? 'walk' : 'idle';
-    if (want !== this.locomotion) {
-      this.locomotion = want;
+    if (want !== this.anim) {
+      this.anim = want;
       if (moving) this.char.play('walk', { fade: FADE.locomotion });
-      else this.char.playClip(STYLE_ANIMS[this.style].idle.clip, { loop: true, fade: FADE.idle });
+      else this.char.playClip(ACTION_STYLES[this.fighter.style].idleClip, { loop: true, fade: FADE.idle });
     }
     if (moving) this.char.setLocoSpeed(speed);
   }
 
   /**
-   * Waffenwechsel. Aus Ruhe oder Lauf: die Waffen wechseln sofort, ein Ring und Funken zeigen es an.
-   * Mitten in der Kombo (Schlag läuft oder Kombo-Fenster offen): Wechselschlag – der nächste Hieb der neuen Waffe
-   * setzt ohne Pause an (kurze Überblendung), trifft 1,6-fach und führt die Kombo mit der neuen Waffe weiter.
-   * Gibt zurück, ob gewechselt wurde.
+   * Stil wechseln – jederzeit, auch mitten in der Kette (Wechselschlag: der nächste Schlag des neuen Stils setzt sofort an und trifft
+   * 1,6-fach). Gibt zurück, ob gewechselt wurde.
    */
-  swapTo(style: StyleId, yawHint: number | null): boolean {
-    if (!this.active || this.swapCd > 0 || this.state === 'roll' || this.state === 'hurt' || this.state === 'charge') return false;
-    if (style === this.style) return false;
-    if (this.stamina < STAMINA.need) { this.staminaFlash = 0.35; return false; }
-    const mid = this.state === 'attack' || (this.comboWindow > 0 && this.combo > 0);
-    this.spend(STAMINA.swap);
-    this.swapCd = 0.4;
-    this.style = style;
-    this.deps.onSwap?.(style);
-    const at = new Vector3(this.x, this.y, this.z);
-    this.deps.fx?.puffColor(at.clone().setY(this.y + 1.1), STYLE_COLOR[style]);
-    if (!mid) {
-      this.deps.fx?.shockwave(at.clone().setY(this.y + 0.1), 1.6, STYLE_COLOR[style]);
-      this.deps.overlay?.number(new Vector3(this.x, this.y + 2.3, this.z), 'Waffe gewechselt', 'info');
-      return true;
-    }
-    const atks = STYLE_ATTACKS[style];
-    const def = atks.combo[this.combo % atks.combo.length];
-    this.buf.attack = -1;
-    this.comboQueued = false;
-    this.chaining = true;
-    this.combo = Math.min(this.combo + 1, 2);
-    this.comboWindow = 0.9;
-    this.startAttack(def, yawHint ?? this.yaw, 'light', 1.6);
-    this.deps.fx?.shockwave(at.clone().setY(this.y + 0.1), 2.4, STYLE_COLOR[style]);
-    this.deps.overlay?.number(new Vector3(this.x, this.y + 2.3, this.z), 'Wechselschlag!', 'crit');
-    this.deps.overlay?.speedlines(0.6);
+  swapTo(style: ActionStyleId, _yawHint: number | null = null): boolean {
+    if (!this.active) return false;
+    const r = this.engine.switchStyle(style, this.inp);
+    if (!r) return false;
+    this.style = visualStyleOf(style);
+    this.deps.onSwap?.(this.style, style);
+    const st = ACTION_STYLES[style];
+    const at = this.tmpV.set(this.x, this.y + 0.1, this.z);
+    this.deps.fx?.shockwave(at, r === 'swap' ? 2.4 : 1.6, st.color);
+    at.y += 1;
+    this.deps.fx?.puffColor(at, st.color);
+    at.y += 1.3;
+    this.deps.overlay?.number(at, r === 'swap' ? 'Wechselschlag!' : `${st.label} · ${st.title}`, r === 'swap' ? 'crit' : 'info');
+    if (r === 'swap') this.deps.overlay?.speedlines(0.6);
+    this.moveShown = -1;
+    if (r === 'instant' && this.fighter.phase === 'ground') this.anim = '';
     return true;
   }
 
   /** Volle Heilung (nach K.O. oder Rast) */
-  revive() { this.hp = this.maxHp; this.state = 'move'; this.locomotion = ''; this.secondWindUsed = false; }
+  revive() { this.hp = this.maxHp; this.engine.revive(); this.anim = ''; this.secondWindUsed = false; }
 
-  /** Kann gerade eine Fähigkeit gewirkt werden? */
-  get canCast() { return this.active && (this.state === 'move' || this.state === 'block'); }
-
-  /** Zauber-/Technik-Animation abspielen (Wirkung kommt aus der Fähigkeit) */
+  /** Zauber-/Technik-Animation der Faji-Fähigkeiten (Wirkung kommt aus der Fähigkeit); ein Dash bricht sie ab */
   cast(clip: string, speed: number, yaw: number | null) {
-    if (yaw !== null) this.yaw = yaw;
-    this.state = 'attack';
-    this.attack = null;
-    this.locomotion = '';
-    const a = this.char.playClip(clip, { loop: false, speed, fade: FADE.cast, restart: true, onDone: () => this.endAttack() });
-    if (!a) this.toMove();
+    const a = this.char.playClip(clip, { loop: false, speed, fade: 0.15, restart: true });
+    const dur = a ? a.getClip().duration / Math.max(0.1, speed) : 0.6;
+    this.engine.beginCast(dur * 0.9, yaw);
+    this.anim = 'cast';
+    this.moveShown = -1;
   }
 
-  receiveHit(dmg: number, dirX: number, dirZ: number, knock: number, from: Enemy | null, elemental = false): 'hit' | 'blocked' | 'parried' | 'dodged' {
-    if (!this.active) return 'dodged';
-    if (this.iframes > 0 || this.invuln) return 'dodged';
+  receiveHit(dmg: number, dirX: number, dirZ: number, knock: number, from: Enemy | null, elemental = false): PlayerHitResult {
+    if (!this.active || this.invuln) return 'dodged';
+    let att: AttackerInfo | null = null;
+    if (from && Math.hypot(from.x - this.x, from.z - this.z) < TELEPORT_MAX) {
+      att = this.att;
+      att.id = from.entityId; att.x = from.x; att.z = from.z; att.yaw = from.yaw; att.radius = from.radius;
+    }
+    const ox = this.x, oy = this.y, oz = this.z;
+    const r = this.engine.incoming(att, dirX, dirZ, this.world);
+    if (r === 'perfect' || r === 'counter') { this.stormStepFx(ox, oy, oz, r === 'counter'); return 'perfect'; }
+    if (r === 'dodged' || r === 'none') return 'dodged';
     if (Math.random() < this.dodgeChance) return 'dodged';
     // Angreifer ohne Gegner-Objekt (Verbände, Geschütze der Festungen) zählen als Stufe 4
     dmg *= damageFactor(elemental ? this.gearResist : this.gearArmor, from ? dangerOfLevel(from.level) : 4, this.reduce + this.gearReduce);
-    // nie durch einen einzigen Treffer tot: ein Treffer nimmt höchstens 40 % der Lebenspunkte (Block und Parade zählen davon noch ab)
+    // nie durch einen einzigen Treffer tot: ein Treffer nimmt höchstens 40 % der Lebenspunkte
     dmg = Math.min(dmg, this.maxHp * PLAYER_HIT_CAP);
-    if (this.state === 'block') {
-      // Von vorn? Dann Block bzw. perfekte Parade
-      const facing = Math.sin(this.yaw) * -dirX + Math.cos(this.yaw) * -dirZ;
-      if (facing > 0.2) {
-        if (this.blockSince < PLAYER_BASE.parryWindow * (1 + this.parryBonus)) {
-          this.char.play('parry', { restart: true, fade: 0.04, onDone: () => this.toMove() });
-          this.state = 'attack';
-          this.attack = null;
-          return 'parried';
-        }
-        this.hp -= dmg * (1 - PLAYER_BASE.blockReduce);
-        this.kx += dirX * knock * 0.4; this.kz += dirZ * knock * 0.4;
-        this.char.play('blockHit', { restart: true, fade: 0.04, onDone: () => { if (this.state === 'block') this.char.play('block', { fade: 0.1 }); } });
-        if (this.hp <= 0) this.goDown();
-        return 'blocked';
-      }
+    if (r === 'parry') {
+      this.char.play('parry', { restart: true, fade: 0.04 });
+      this.anim = 'parry';
+      return 'parried';
     }
-    this.hp -= dmg;
-    this.kx += dirX * knock;
-    this.kz += dirZ * knock;
+    if (r === 'block') {
+      this.hp -= dmg * (1 - PLAYER_BASE.blockReduce);
+      this.engine.shove(dirX * knock * 0.4, dirZ * knock * 0.4);
+      this.char.play('blockHit', { restart: true, fade: 0.04, onDone: () => { if (this.fighter.phase === 'block') this.char.play('block', { fade: 0.1 }); } });
+      if (this.hp <= 0) this.goDown();
+      return 'blocked';
+    }
+    // Hyper-Armor: Schaden ja (etwas weniger), Unterbrechung nein
+    this.hp -= r === 'armor' ? dmg * 0.75 : dmg;
+    this.secondWindCheck();
+    this.char.hitFlash('#FF5A3C', knock > 6 ? 1.3 : 1);
+    if (this.hp <= 0) { this.goDown(); return 'hit'; }
+    if (r === 'armor') { this.engine.shove(dirX * knock * 0.15, dirZ * knock * 0.15); return 'hit'; }
+    this.engine.hurt(knock > 6 ? 0.5 : 0.28, dirX * knock, dirZ * knock);
+    this.char.play(knock > 6 ? 'hitHeavy' : 'hit', { restart: true, fade: FADE.hurt });
+    this.anim = 'hurt';
+    this.moveShown = -1;
+    this.setTrail(false);
+    return 'hit';
+  }
+
+  private secondWindCheck() {
     if (this.secondWind > 0 && !this.secondWindUsed && this.hp > 0 && this.hp < this.maxHp * 0.25) {
       this.secondWindUsed = true;
       this.hp += this.maxHp * this.secondWind;
-      this.deps.overlay?.number(new Vector3(this.x, this.y + 2.2, this.z), 'Zweiter Atem!', 'heal');
+      this.deps.overlay?.number(this.tmpV.set(this.x, this.y + 2.2, this.z), 'Zweiter Atem!', 'heal');
     }
-    // Treffer: Ränder der Figur leuchten kurz rot auf
-    this.char.hitFlash('#FF5A3C', knock > 6 ? 1.3 : 1);
-    if (this.hp <= 0) { this.goDown(); return 'hit'; }
-    this.state = 'hurt';
-    this.hurtT = knock > 6 ? 0.55 : 0.3;
-    this.attack = null;
-    this.char.play(knock > 6 ? 'hitHeavy' : 'hit', { restart: true, fade: FADE.hurt });
-    return 'hit';
+  }
+
+  /** Sturm-Schritt: Blitz-Nachbild am alten Ort, Leuchtstreifen zum neuen, Funken (die Zeitlupe setzt das Kampfsystem) */
+  private stormStepFx(ox: number, oy: number, oz: number, counter: boolean) {
+    const st = ACTION_STYLES[this.fighter.style];
+    const fx = this.deps.actionFx;
+    fx?.afterimage(ox, oy, oz, st.accent, 0.5, 1.05);
+    fx?.afterimage((ox + this.x) / 2, (oy + this.y) / 2, (oz + this.z) / 2, st.color, 0.32, 1);
+    fx?.streak(ox, oy + 1.1, oz, this.x, this.y + 1.1, this.z, st.accent, 0.12, 0.35);
+    const at = this.tmpV.set(this.x, this.y + 1.1, this.z);
+    this.deps.fx?.hit(at, 'magic', st.accent, true);
+    at.y = this.y + 0.1;
+    this.deps.fx?.shockwave(at, 2.6, st.accent);
+    if (counter) this.deps.overlay?.number(at.set(this.x, this.y + 2.6, this.z), 'Mondspiegel!', 'crit');
+    this.moveShown = -1;
+    this.anim = '';
   }
 
   private goDown() {
     this.hp = 0;
-    this.state = 'down';
-    this.attack = null;
+    this.engine.down();
+    this.setTrail(false);
     this.char.play('deathLong', { restart: true, fade: 0.08 });
+    this.anim = 'down';
     this.deps.onDown();
   }
 
-  /** Zeit im aktuellen Zustand (Wächter gegen Zustände, die nie enden) */
-  private stateT = 0;
-  private stateWas: FootState = 'move';
-
-  update(dt: number, input: Input, camYaw: number, ground: Ground, lockYaw: number | null) {
-    // Softlock-Wächter: Parade, Fähigkeiten und Schläge enden über das „Animation fertig“-Ereignis. Geht es verloren
-    // (andere Animation dazwischen, fehlender Clip), wäre die Figur sonst dauerhaft gesperrt.
-    if (this.state !== this.stateWas) { this.stateWas = this.state; this.stateT = 0; } else this.stateT += dt;
-    if ((this.state === 'attack' && this.stateT > 4) || ((this.state === 'roll' || this.state === 'hurt') && this.stateT > 2)) this.toMove();
+  update(dt: number, input: Input, camYaw: number, ground: Ground, lockYaw: number | null, lockId = '') {
+    const f = this.fighter;
+    this.world.ground = ground;
     const pv = this.prev;
-    pv.x = this.x; pv.z = this.z; pv.y = this.y; pv.yaw = this.yaw;
-    this.iframes -= dt;
-    this.swapCd -= dt;
-    this.comboWindow -= dt;
-    this.blockSince += dt;
+    pv.x = f.x; pv.z = f.z; pv.y = f.y; pv.yaw = f.yaw;
     if (this.bindT > 0) { this.bindT -= dt; this.char.setTint('#7FA8D8', 0.55); if (this.bindT <= 0) { this.bindSlow = 0; this.char.setTint('#7FA8D8', 0); } }
-    this.clock += dt;
-    // Ausdauer: nach kurzer Pause laden, im Stand schneller
-    this.staminaFlash = Math.max(0, this.staminaFlash - dt);
-    if (this.staminaPause > 0) this.staminaPause -= dt;
-    else if (this.stamina < STAMINA.max) this.stamina = Math.min(STAMINA.max, this.stamina + dt * (this.state === 'move' && this.realSpeed < 0.5 ? STAMINA.regenIdle : STAMINA.regen));
-    // Eingaben puffern: was zu früh kommt (mitten in Rolle, Treffer oder Schlag), wird nachgeholt, sobald es geht
-    // Während einer Rolle oder Trefferreaktion zählt die Eingabe ab deren Ende (sonst verfiele sie bei langen Rollen)
-    const busy = this.state === 'roll' ? Math.max(0, this.rollT) : this.state === 'hurt' ? Math.max(0, this.hurtT) : 0;
-    if (input.pressed('attack')) this.buf.attack = this.clock + busy;
-    if (input.pressed('dodge')) this.buf.dodge = this.clock + busy;
-    if (input.pressed('heavy')) this.buf.heavy = this.clock + busy;
-    const wants = (k: 'attack' | 'dodge' | 'heavy') => this.buf[k] >= 0 && this.clock - Math.min(this.clock, this.buf[k]) <= BUFFER;
+    f.speedK = this.speedMult * (this.bindT > 0 ? 1 - this.bindSlow : 1);
+    // Eingabe: Stick relativ zur Kamera in Weltrichtung
     const mv = input.move();
     const mag = Math.min(1, Math.hypot(mv.x, mv.y));
     const fx = Math.sin(camYaw), fz = Math.cos(camYaw);
     const rx = -Math.cos(camYaw), rz = Math.sin(camYaw);
-    let dx = fx * mv.y + rx * mv.x;
-    let dz = fz * mv.y + rz * mv.x;
+    let dx = fx * mv.y + rx * mv.x, dz = fz * mv.y + rz * mv.x;
     const dl = Math.hypot(dx, dz);
-    if (dl > 0.001) { dx /= dl; dz /= dl; }
-    const wantYaw = lockYaw ?? (dl > 0.001 ? Math.atan2(dx, dz) : this.yaw);
-    // Zielhilfe: ohne Erfassung zum nächsten Gegner in Blickrichtung (ohne Stickrichtung: rundum) drehen
-    const aimAt = lockYaw === null ? this.deps.combat?.nearestInCone(this.x, this.z, wantYaw, 5.5, dl > 0.001 ? 1.2 : Math.PI) ?? null : null;
-    const attackYaw = aimAt ? Math.atan2(aimAt.x - this.x, aimAt.z - this.z) : wantYaw;
-    const atks = STYLE_ATTACKS[this.style];
-    const canAct = this.state === 'move' || this.state === 'block';
+    const inp = this.inp;
+    if (dl > 0.001) { dx /= dl; dz /= dl; inp.moveX = dx; inp.moveZ = dz; inp.mag = mag; }
+    else { inp.moveX = Math.sin(f.yaw); inp.moveZ = Math.cos(f.yaw); inp.mag = 0; }
+    inp.camYaw = camYaw;
+    inp.light = input.pressed('attack');
+    inp.heavy = input.pressed('heavy');
+    inp.jump = input.pressed('jump') && !(this.jumpBlocked && input.pressed('interact'));
+    inp.dash = input.pressed('dodge');
+    inp.skill = input.pressed('art1') ? 1 : input.pressed('art2') ? 2 : input.pressed('art3') ? 3 : input.pressed('art4') ? 4 : 0;
+    inp.blockHeld = input.down('block');
+    inp.blockPressed = input.pressed('block');
+    inp.hardLockId = lockYaw === null ? '' : lockId;
+    inp.hardLockYaw = lockYaw === null ? NaN : lockYaw;
+    this.engine.step(inp, this.world, dt);
+    this.handleEvents();
+    this.animate(dt);
+    // Tatsächliches Tempo (nicht das befohlene): an Wänden laufen die Füße sonst auf der Stelle
+    const moved = dt > 0 ? Math.hypot(f.x - pv.x, f.z - pv.z) / dt : 0;
+    this.speed = moved;
+    this.realSpeed += (Math.min(moved, 9) - this.realSpeed) * Math.min(1, dt * 18);
+    this.char.lean(f.yaw, Math.min(this.speed, this.realSpeed + 0.3), dt);
+    if (f.phase === 'ground' && this.onFoot) this.char.footsteps(f.x, f.y, f.z);
+    // Haltungsbruch-Finisher: Hinweis über dem taumelnden Ziel
+    const ov = this.deps.overlay;
+    if (ov) {
+      const ft = f.finisherId && f.phase !== 'move' ? this.engine.target(f.finisherId) : null;
+      if (ft) { this.finP.x = ft.x; this.finP.y = ft.y + ft.height + 0.55; this.finP.z = ft.z; ov.setFinisherPrompt(this.finP, this.deps.heavyKey?.() ?? ''); }
+      else ov.setFinisherPrompt(null);
+    }
+    this.noteT = Math.max(0, this.noteT - dt);
+  }
 
-    if (this.state === 'down') {
-      this.speed = 0;
-      this.applyMove(dt, 0, 0, ground);
+  /** Ereignisse der Engine: Clips, Effekte, Klang, Texte */
+  private handleEvents() {
+    const ev = this.engine.events;
+    const f = this.fighter;
+    const st = ACTION_STYLES[f.style];
+    const fx = this.deps.fx, afx = this.deps.actionFx, ov = this.deps.overlay;
+    for (let i = 0; i < ev.n; i++) {
+      const e = ev.items[i];
+      switch (e.type) {
+        case 'move': {
+          const mv = ALL_MOVES[e.a];
+          const kind = KIND_OF_CODE[e.b];
+          this.startClip(mv, kind === 'light' || kind === 'swap' || kind === 'air');
+          if (mv.afterimage) afx?.afterimage(f.x, f.y, f.z, mv.color || st.accent, 0.3);
+          if (kind === 'meteor') { ov?.speedlines(0.5); }
+          break;
+        }
+        case 'skill': {
+          if (!ALL_MOVES[f.moveIdx]?.cutin && ov) ov.number(this.tmpV.set(f.x, f.y + 2.5, f.z), e.s, 'info');
+          break;
+        }
+        case 'cutin': ov?.showCutin(e.s, ALL_MOVES[e.a]?.color || st.accent); ov?.speedlines(0.8); break;
+        case 'jump': {
+          const at = this.tmpV.set(f.x, f.y, f.z);
+          if (e.a >= 2) { fx?.shockwave(at, 1.8, st.color); afx?.afterimage(f.x, f.y - 0.3, f.z, st.color, 0.25, 0.9); }
+          else fx?.puff(at, 6);
+          this.char.playClip('Jump_Start', { loop: false, speed: e.a >= 2 ? 2.2 : 1.7, fade: FADE.air, restart: true });
+          this.anim = 'jump';
+          this.moveShown = -1;
+          this.setTrail(false);
+          break;
+        }
+        case 'land': {
+          if (e.a > 7) { fx?.puff(this.tmpV.set(f.x, f.y, f.z), 10); this.deps.shake?.(Math.min(0.35, e.a * 0.02)); }
+          if (f.phase === 'ground' && e.a > 5) { this.char.playClip('Jump_Land', { loop: false, speed: 1.6, fade: FADE.land, restart: true }); this.anim = 'land'; this.landT = 0.25; }
+          break;
+        }
+        case 'fall': if (f.phase === 'air') { this.char.playClip('Jump_Idle', { loop: true, fade: FADE.air }); this.anim = 'fall'; } break;
+        case 'dash': {
+          const back = e.b === 1;
+          this.char.playClip(back ? 'Dodge_Backward' : 'Dodge_Forward', { loop: false, speed: 0.38 / Math.max(0.12, f.dashDur), fade: FADE.dodge, restart: true });
+          this.anim = 'dash';
+          this.moveShown = -1;
+          this.setTrail(false);
+          ov?.speedlines(e.a ? 0.55 : 0.35);
+          fx?.puff(this.tmpV.set(f.x, f.y, f.z), e.a ? 4 : 10);
+          // Rotations-Dash (Doppelklinge, Sturmfaust) und Luft-Dash: Nachbild am Start
+          if (e.a || st.dashSpeed >= 18) afx?.afterimage(f.x, f.y, f.z, st.accent, 0.3, 0.95);
+          break;
+        }
+        case 'impact': {
+          const at = this.tmpV.set(f.x, f.y, f.z);
+          fx?.shockwave(at, e.a * 1.3, st.accent);
+          fx?.crack(at, e.a * 1.1);
+          fx?.sigil(at, e.a, st.color, 0.9);
+          ov?.impactFrame();
+          this.deps.shake?.(0.7);
+          break;
+        }
+        case 'hitConfirm': {
+          const mv = this.engine.move;
+          if (mv && mv.afterimage && afx) afx.afterimage(f.x + Math.sin(f.yaw) * 0.5, f.y, f.z + Math.cos(f.yaw) * 0.5, mv.color || st.accent, 0.22, 0.95);
+          if (mv && mv.finisher && e.c === mv.hits.length - 1) { ov?.finisher(); ov?.speedlines(0.9); }
+          break;
+        }
+        case 'notReady':
+          if (this.noteT <= 0 && ov) { this.noteT = 0.6; ov.number(this.tmpV.set(f.x, f.y + 2.3, f.z), 'Noch nicht bereit', 'info'); }
+          break;
+        case 'buff':
+          if (ov) ov.number(this.tmpV.set(f.x, f.y + 2.6, f.z), e.s === 'hyper' ? 'Unbeugsam! Hyper-Armor' : e.s === 'crit' ? 'Sturmkrone! Krit +25 %' : 'Stärkung!', 'crit');
+          break;
+        default: break;
+      }
+    }
+  }
+
+  /** Clip eines Angriffs starten; die Zeit hält danach `syncClip` an der Engine fest */
+  private startClip(mv: ActionMove, chain: boolean) {
+    this.moveAction = this.char.playSynced(mv.clip, chain ? FADE.chain : FADE.move);
+    this.moveShown = this.fighter.moveSeq;
+    this.anim = 'move';
+    this.syncClip(mv);
+  }
+
+  private syncClip(mv: ActionMove) {
+    const a = this.moveAction;
+    if (!a) return;
+    const d = a.getClip().duration;
+    const u = Math.max(0, Math.min(0.999, this.fighter.moveT / mv.dur));
+    a.time = Math.min(d - 0.001, (mv.clipFrom + (mv.clipTo - mv.clipFrom) * u) * d);
+    a.timeScale = 0;
+  }
+
+  private setTrail(on: boolean, color?: string) {
+    if (on === this.trailOn && !on) return;
+    this.trailOn = on;
+    this.char.setTrail(on, color);
+  }
+
+  /** Darstellung je Zustand: Angriff (Clip im Takt der Engine), Luft, Dash, Laufen */
+  private animate(dt: number) {
+    const f = this.fighter;
+    const st = ACTION_STYLES[f.style];
+    this.landT = Math.max(0, this.landT - dt);
+    if (f.phase === 'move') {
+      const mv = this.engine.move;
+      if (!mv) return;
+      if (this.moveShown !== f.moveSeq) this.startClip(mv, true);
+      else this.syncClip(mv);
+      // Lichtschweif an der Klinge: vom Ausholen bis kurz nach dem letzten Treffer
+      let swing = false;
+      for (const h of mv.hits) if (!h.projectile && f.moveT >= h.t0 - 0.1 && f.moveT <= h.t1 + 0.08) { swing = true; break; }
+      this.setTrail(swing, mv.color || st.color);
       return;
     }
-
-    // Eingaben
-    // Rolle: auch aus dem Ausschwung eines Schlags, kurz vor Ende einer Trefferreaktion oder direkt nach der letzten Rolle
-    const canRoll = canAct || this.state === 'attack' && this.char.progress > 0.45 || this.state === 'hurt' && this.hurtT < 0.15 || this.state === 'roll' && this.rollT < 0.06;
-    if (wants('dodge') && canRoll && this.stamina < STAMINA.need) this.staminaFlash = 0.35;
-    if (wants('dodge') && canRoll && this.stamina >= STAMINA.need) {
-      this.spend(STAMINA.roll);
-      this.buf.dodge = -1;
-      this.buf.attack = this.buf.attack > this.clock - 0.05 ? this.buf.attack : -1;
-      this.state = 'roll';
-      this.rollSeq++;
-      this.rollT = ROLL_TIME;
-      this.iframes = PLAYER_BASE.rollIframes;
-      this.rollDir = dl > 0.001 ? { x: dx, z: dz } : { x: -Math.sin(this.yaw), z: -Math.cos(this.yaw) };
-      this.yaw = Math.atan2(this.rollDir.x, this.rollDir.z);
-      this.char.play(dl > 0.001 ? 'roll' : 'dodgeBack', { fade: FADE.dodge, restart: true });
-      if (dl <= 0.001) this.yaw += Math.PI;
-      this.locomotion = '';
-      this.attack = null;
-      this.deps.fx?.puff(new Vector3(this.x, this.y, this.z), 10);
-      this.deps.overlay?.speedlines(0.35);
+    if (this.trailOn) this.setTrail(false);
+    if (f.phase === 'air') {
+      if (this.anim !== 'jump' && this.anim !== 'fall') { this.char.playClip('Jump_Idle', { loop: true, fade: FADE.air }); this.anim = 'fall'; }
+      else if (this.anim === 'jump' && f.vy < 0.5) { this.char.playClip('Jump_Idle', { loop: true, fade: 0.2 }); this.anim = 'fall'; }
+      return;
     }
-    if (wants('attack') && this.state !== 'roll' && this.state !== 'hurt' && this.state !== 'charge') {
-      this.buf.attack = -1;
-      if (this.state === 'attack') this.comboQueued = true;
-      else { this.aim = aimAt; this.startAttack(atks.combo[this.nextCombo(atks.combo.length)], attackYaw); }
+    if (f.phase === 'block') {
+      if (this.anim !== 'block') { this.char.play('block', { fade: FADE.block }); this.anim = 'block'; }
+      return;
     }
-    // Nach dem Treffer bricht Laufen den Ausschwung ab – man ist nie lange festgenagelt
-    if (this.state === 'attack' && this.attack && !this.comboQueued && mag > 0.35 && this.char.progress > this.attack.hitEnd + 0.15) {
-      this.toMove();
+    if (f.phase !== 'ground') return;
+    if (this.anim === 'land' && this.landT > 0 && this.realSpeed < 1.5) return;
+    if (this.anim === 'parry' && this.char.progress < 0.85) return;
+    // Laufen: Schwellen mit Hysterese, damit Gehen/Rennen/Stehen an der Grenze nicht flackern
+    const cur = this.anim;
+    const sp = this.realSpeed;
+    const want = cur === 'idle'
+      ? (sp > 0.25 ? (sp > 3.0 ? 'run' : 'walk') : 'idle')
+      : cur === 'run' ? (sp < 2.4 ? (sp < 0.15 ? 'idle' : 'walk') : 'run')
+        : cur === 'walk' ? (sp > 3.0 ? 'run' : sp < 0.15 ? 'idle' : 'walk')
+          : (sp > 3.0 ? 'run' : sp > 0.25 ? 'walk' : 'idle');
+    if (want !== this.anim) {
+      this.anim = want;
+      if (want === 'idle') this.char.playClip(st.idleClip, { loop: true, fade: FADE.idle });
+      else this.char.play(want === 'run' ? 'run' : 'walk', { fade: FADE.locomotion });
     }
-    // Leicht → Leicht → Schwer: aus dem zweiten Hieb (sobald er „sitzt“) oder kurz danach wird der schwere Hieb zum Finisher
-    const atkNow = this.attack;
-    const finisherReady = this.combo >= 2 && (
-      (this.state === 'attack' && this.kind === 'light' && !!atkNow && this.char.progress > atkNow.hitStart - 0.05)
-      || (canAct && this.comboWindow > 0));
-    if (wants('heavy') && (finisherReady || canAct)) {
-      if (this.stamina < STAMINA.need) this.staminaFlash = 0.35;
-      else if (finisherReady) {
-        this.buf.heavy = -1;
-        this.spend(STAMINA.finisher);
-        this.combo = 0;
-        this.comboWindow = 0;
-        this.comboQueued = false;
-        this.aim = aimAt;
-        this.chaining = true;
-        this.startAttack(FINISHERS[this.style], attackYaw, 'finisher');
-      } else {
-        this.buf.heavy = -1;
-        this.spend(STAMINA.heavy);
-        this.state = 'charge';
-        this.chargeT = 0;
-        this.yaw = attackYaw;
-        this.aim = aimAt;
-        this.char.playClip(atks.charge.clip, { loop: false, speed: 0.15, fade: FADE.attack, restart: true });
-        this.locomotion = '';
-      }
-    }
-    if (input.pressed('block')) this.blockSince = 0;
-    if (canAct) {
-      const blocking = input.down('block');
-      if (blocking && this.state !== 'block') { this.state = 'block'; this.char.play('block', { fade: FADE.block }); this.locomotion = ''; }
-      else if (!blocking && this.state === 'block') this.toMove();
-    }
-
-    // Zustände
-    let vx = 0, vz = 0;
-    switch (this.state) {
-      case 'roll': {
-        this.rollT -= dt;
-        const k = Math.max(0.25, this.rollT / ROLL_TIME);
-        vx = this.rollDir.x * ROLL_SPEED * k;
-        vz = this.rollDir.z * ROLL_SPEED * k;
-        if (this.rollT <= 0) this.toMove();
-        break;
-      }
-      case 'charge': {
-        this.chargeT += dt;
-        if (lockYaw !== null) this.yaw = lockYaw;
-        // Auflade-Aura: wachsendes Siegel am Boden, aufsteigende Funken, flirrende Luft
-        const fx = this.deps.fx;
-        if (fx) {
-          const k = Math.min(1, this.chargeT / CHARGE_TIME);
-          const col = STYLE_COLOR[this.style];
-          if (!this.aura) {
-            this.aura = fx.sigil(new Vector3(this.x, this.y, this.z), 1.6, col, 99);
-            fx.decals.hold(this.aura, true);
-            this.auraHeat = fx.heat(new Vector3(this.x, this.y + 1, this.z), 1.6, 0.3, 99);
-            this.auraHeat.held = true;
-          }
-          fx.decals.move(this.aura, this.x, this.y, this.z, 1.6 + k * 1.8);
-          this.auraHeat!.x = this.x; this.auraHeat!.y = this.y + 1; this.auraHeat!.z = this.z; this.auraHeat!.k = 0.3 + k * 0.5;
-          if (Math.random() < dt * (12 + k * 30)) fx.rise(new Vector3(this.x, this.y, this.z), col, 1, 0.9);
-        }
-        if (Math.random() < dt * 30) this.deps.fx?.puff(new Vector3(this.x + (Math.random() - 0.5), this.y + Math.random() * 1.8, this.z + (Math.random() - 0.5)), 2);
-        if (!input.down('heavy') || this.chargeT >= CHARGE_TIME) {
-          const full = this.chargeT >= CHARGE_TIME * 0.8;
-          this.state = 'move';
-          this.startAttack(full ? atks.charge : atks.heavy, this.yaw, 'heavy');
-          if (full) { this.deps.overlay?.speedlines(1); this.deps.overlay?.showCutin(`${STYLE_ANIMS[this.style].label}!`, STYLE_COLOR[this.style]); }
-          this.endAura();
-        }
-        break;
-      }
-      case 'attack':
-        this.processAttack(dt);
-        if (this.attack) {
-          const p = this.char.progress;
-          let lunge = this.attack.lunge ?? 2;
-          const tgt = this.aim?.alive ? this.aim : null;
-          if (tgt) {
-            // auf das Ziel zugleiten, aber davor stehen bleiben statt hindurchzulaufen
-            const gap = Math.hypot(tgt.x - this.x, tgt.z - this.z) - tgt.radius - this.attack.range * 0.55;
-            lunge = gap <= 0 ? 0 : Math.min(9, Math.max(lunge, gap * 5));
-            this.turnTo(Math.atan2(tgt.x - this.x, tgt.z - this.z), dt, 14);
-          }
-          if (p < this.attack.hitStart + 0.05) { vx = Math.sin(this.yaw) * lunge; vz = Math.cos(this.yaw) * lunge; }
-        }
-        break;
-      case 'block':
-        if (lockYaw !== null) this.yaw = lockYaw;
-        else if (dl > 0.001) this.turnTo(Math.atan2(dx, dz), dt, 6);
-        vx = dx * mag * WALK * 0.5;
-        vz = dz * mag * WALK * 0.5;
-        break;
-      case 'hurt':
-        this.hurtT -= dt;
-        if (this.hurtT <= 0) this.toMove();
-        break;
-      case 'move':
-        if (mag > 0.05) {
-          // Gehen bis 2,2 m/s (Gehclip läuft dann höchstens mit dem 1,5-Fachen), darüber Rennen: dazwischen gäbe es keinen passenden Clip
-          const sp = (mag > 0.7 ? RUN : 0.6 + 1.6 * (mag / 0.7)) * this.speedMult * (this.bindT > 0 ? 1 - this.bindSlow : 1);
-          vx = dx * sp;
-          vz = dz * sp;
-          this.turnTo(lockYaw !== null && mag < 0.7 ? lockYaw : Math.atan2(dx, dz), dt, 12);
-        } else if (lockYaw !== null) this.turnTo(lockYaw, dt, 8);
-        break;
-    }
-    this.speed = Math.hypot(vx, vz);
-    // Impulse (Ausfallschritt eines Hiebs, Rolle) laufen als Absicht durch die gesweepte Kollision, alles andere gewöhnlich
-    const impulse = this.state === 'roll' ? 'roll' : this.state === 'attack' && this.attack && (vx !== 0 || vz !== 0) ? 'lunge' : null;
-    this.applyMove(dt, vx, vz, ground, impulse);
-    // Neigung nach dem tatsächlichen Tempo: an einer Wand lehnt sich die Figur nicht ins Leere
-    this.char.lean(this.yaw, Math.min(this.speed, this.realSpeed + 0.3), dt);
-    // Lichtschweif an der Waffe: während des Hiebs (vom Ausholen bis kurz nach dem Treffer) und beim Wirken
-    {
-      const a = this.attack;
-      const p = this.char.progress;
-      const swing = this.state === 'attack' && (a ? !a.projectile && p >= a.hitStart - 0.14 && p <= a.hitEnd + 0.1 : true);
-      this.char.setTrail(swing, STYLE_COLOR[this.style]);
-    }
-    if (this.state === 'move' && this.onFoot) this.char.footsteps(this.x, this.y, this.z);
-
-    // Tatsächliches Tempo (nicht das befohlene): an Wänden oder Hängen laufen die Füße sonst auf der Stelle
-    const moved = dt > 0 ? Math.hypot(this.x - pv.x, this.z - pv.z) / dt : this.speed;
-    this.realSpeed += (Math.min(moved, this.speed * 1.5 + 0.5) - this.realSpeed) * Math.min(1, dt * 18);
-
-    if (this.state === 'move') {
-      // Schwellen mit Hysterese, damit Gehen/Rennen/Stehen an der Grenze nicht flackern
-      const cur = this.locomotion;
-      const sp = this.realSpeed;
-      const want = cur === 'idle' || cur === ''
-        ? (sp > 0.25 ? (sp > 3.0 ? 'run' : 'walk') : 'idle')
-        : cur === 'run' ? (sp < 2.4 ? (sp < 0.15 ? 'idle' : 'walk') : 'run')
-          : (sp > 3.0 ? 'run' : sp < 0.15 ? 'idle' : 'walk');
-      if (want !== this.locomotion) {
-        this.locomotion = want;
-        if (want === 'idle') this.char.playClip(STYLE_ANIMS[this.style].idle.clip, { loop: true, fade: FADE.idle });
-        else this.char.play(want === 'run' ? 'run' : 'walk', { fade: FADE.locomotion });
-      }
-      if (want !== 'idle') this.char.setLocoSpeed(this.realSpeed);
-    }
+    if (want !== 'idle') this.char.setLocoSpeed(this.realSpeed);
   }
 
-  private applyMove(dt: number, vx: number, vz: number, ground: Ground, impulse: 'roll' | 'lunge' | null = null) {
-    this.kx *= Math.pow(0.01, dt);
-    this.kz *= Math.pow(0.01, dt);
-    let targetY: number;
-    if (impulse) {
-      // Vorwärts-Impuls: Teilschritte von höchstens 0,15 m, Kapsel gegen alle Hindernisse, Stufen und Rampen hinauf, Wände stoppen
-      const sp = Math.hypot(vx, vz);
-      const it = this.dashIntent;
-      it.entityId = this.entityId;
-      it.kind = impulse;
-      it.id = impulse === 'roll' ? -this.rollSeq : this.swingId;
-      it.dirX = sp > 1e-6 ? vx / sp : 0;
-      it.dirZ = sp > 1e-6 ? vz / sp : 0;
-      it.speed = sp;
-      const r = resolveDash(this, this.dashLatch, it, ground, dt);
-      this.lastSweep = r;
-      // Rückstoß läuft getrennt, ebenfalls gesweept (ohne die strenge Steilhang-Regel)
-      if (Math.abs(this.kx) + Math.abs(this.kz) > 0.01) sweepMove(this, this.kx * dt, this.kz * dt, ground, false);
-      targetY = r.groundY;
-    } else {
-      const total = Math.hypot(vx + this.kx, vz + this.kz) * dt;
-      if (total > 0.15) sweepMove(this, (vx + this.kx) * dt, (vz + this.kz) * dt, ground, false);
-      else {
-        const c = ground.constrain(this.x + (vx + this.kx) * dt, this.z + (vz + this.kz) * dt, undefined, this.y);
-        this.x = c.x;
-        this.z = c.z;
-      }
-      const h = ground.height(this.x, this.z, this.y);
-      targetY = Number.isFinite(h) ? h : this.y;
-    }
-    if (!Number.isFinite(targetY)) targetY = this.y;
-    this.y += (targetY - this.y) * Math.min(1, dt * 15);
-  }
-  /** Zähler der Rollen (jede Rolle ist ein eigener Impuls, auch wenn die vorige an einer Wand endete) */
-  private rollSeq = 0;
-
-  private turnTo(want: number, dt: number, rate: number) {
-    const diff = MathUtils.euclideanModulo(want - this.yaw + Math.PI, Math.PI * 2) - Math.PI;
-    this.yaw += diff * Math.min(1, dt * rate);
-  }
-
-  private nextCombo(n: number) {
-    if (this.comboWindow <= 0) this.combo = 0;
-    const i = this.combo % n;
-    this.combo++;
-    return i;
-  }
-
-  private startAttack(def: AttackDef, yaw: number, kind: 'light' | 'heavy' | 'finisher' = 'light', mult = 1) {
-    this.swMult = mult;
-    this.state = 'attack';
-    this.attack = def;
-    this.kind = kind;
-    this.finFx = false;
-    // schwere Hiebe unterbrechen die Leicht-Kette (der Zähler beginnt neu)
-    if (kind === 'heavy') this.combo = 0;
-    this.yaw = yaw;
-    this.comboQueued = false;
-    this.locomotion = '';
-    this.fired = false;
-    this.smeared = false;
-    this.flip = !this.flip;
-    this.swingId++;
-    this.deps.combat?.beginSwing(this.swingId);
-    // Kombo-Folgeschlag etwas knapper überblenden als der erste Schlag aus dem Stand/Lauf
-    const fade = this.chaining ? FADE.combo : FADE.attack;
-    this.chaining = false;
-    const a = this.char.playClip(def.clip, { loop: false, speed: def.speed, fade, restart: true, onDone: () => this.endAttack() });
-    this.attackAction = a;
-    if (!a) this.endAttack();
-  }
-
-  private processAttack(_dt: number) {
-    const def = this.attack;
-    if (!def) return;
-    const p = this.char.progress;
-    const color = STYLE_COLOR[this.style];
-    // Takt wie im Film: kurz sammeln (Ausholen langsamer), dann in einer Peitschenbewegung durch das Trefferfenster (schnell), danach zügig zurück
-    if (this.attackAction) this.attackAction.timeScale = def.speed * (p < def.hitStart - 0.12 ? 1.15 : p < def.hitStart - 0.02 ? 0.72 : p <= def.hitEnd ? 1.45 : 1.15);
-    // Der Lichtbogen eines Hiebs ist der Waffenschweif an der echten Klinge (Character.setTrail). Ein fest vor die Figur gesetzter Bogen lag je nach
-    // Clip hinter oder neben der Klinge. Nur Rundumhiebe (Drehung um die Figur) bekommen einen Ring, der liegt immer richtig.
-    if (!this.smeared && p >= def.hitStart - 0.06 && !def.projectile && def.fx !== 'punch' && def.arc >= 5.5) {
-      this.smeared = true;
-      const tilt = def.smearTilt ?? 0.15;
-      this.deps.fx?.smear(new Vector3(this.x, this.y + 1.05, this.z), this.yaw, tilt, def.range, def.arc, color, false, true);
-    }
-    if (p >= def.hitStart && p <= def.hitEnd && def.projectile) {
-      if (!this.fired) { this.fired = true; this.deps.combat?.shoot(def, this.x, this.y, this.z, this.yaw, this.dmgMult * this.swMult); }
-    } else if (!def.projectile && p >= def.hitStart - SWEEP_LEAD && p <= def.hitEnd + SWEEP_TAIL) {
-      // Klingen-Sweep beginnt etwas vor dem Trefferfenster: viele Animationen ziehen die Klinge früher durch,
-      // getroffen wird dort, wo sie sichtbar die Trefferzone schneidet
-      this.deps.combat?.swing(this.swingId, def, this.x, this.y, this.z, this.yaw, this.dmgMult * this.swMult, color, this.char, p < def.hitStart || p > def.hitEnd);
-    }
-    // Finisher: Schockring, Bodenrisse, Impact-Frame und Speedlines beim Durchziehen
-    if (this.kind === 'finisher' && !this.finFx && p >= def.hitStart - 0.02) {
-      this.finFx = true;
-      const fx = this.deps.fx;
-      const at = new Vector3(this.x + Math.sin(this.yaw) * 1.2, this.y, this.z + Math.cos(this.yaw) * 1.2);
-      fx?.shockwave(at, def.range * 1.6, color);
-      fx?.crack(at, def.range * 1.3);
-      fx?.sigil(new Vector3(this.x, this.y, this.z), def.range * 1.1, color, 0.9);
-      this.deps.overlay?.impactFrame();
-      this.deps.overlay?.speedlines(1);
-      this.deps.overlay?.finisher();
-    }
-    if (p >= def.hitStart && def.fx === 'heavy' && this.kind !== 'finisher' && !this.fired && !def.projectile) {
-      this.fired = true;
-      const front = new Vector3(this.x + Math.sin(this.yaw) * 1.6, this.y, this.z + Math.cos(this.yaw) * 1.6);
-      this.deps.fx?.shockwave(front, def.range * 1.3, color);
-      this.deps.fx?.crack(front, def.range * 1.2);
-    }
-    // Kombo früh fortsetzen, sobald der Treffer raus ist
-    if (this.comboQueued && p > def.hitEnd + SWEEP_TAIL + 0.02) this.endAttack();
-  }
-
-  private endAttack() {
-    if (this.state !== 'attack') return;
-    this.attack = null;
-    this.attackAction = null;
-    this.comboWindow = 0.55;
-    this.state = 'move';
-    this.locomotion = '';
-    if (this.comboQueued) {
-      const atks = STYLE_ATTACKS[this.style];
-      this.chaining = true;
-      this.startAttack(atks.combo[this.nextCombo(atks.combo.length)], this.yaw);
-    }
-  }
-
-  private toMove() { this.state = 'move'; this.locomotion = ''; this.attack = null; this.attackAction = null; this.endAura(); }
-
-  // Auflade-Aura (Siegel + Hitze), solange der schwere Angriff aufgeladen wird
-  private aura: DecalHandle | null = null;
-  private auraHeat: { x: number; y: number; z: number; k: number; held: boolean; life: number; t: number } | null = null;
-  /** Beim Verlassen der Insel/K.O.: laufende Effekte (Aura, Schweif) beenden */
+  /** Beim Verlassen der Insel/K.O.: laufende Effekte beenden */
   stopEffects() {
-    this.endAura();
-    this.char.setTrail(false);
-    if (this.state === 'charge') this.toMove();
-  }
-
-  private endAura() {
-    if (this.aura) { this.deps.fx?.decals.hold(this.aura, false, 0.35); this.aura = null; }
-    if (this.auraHeat) { this.auraHeat.held = false; this.auraHeat.life = this.auraHeat.t + 0.3; this.auraHeat = null; }
+    this.setTrail(false);
+    this.deps.overlay?.setFinisherPrompt(null);
   }
 }

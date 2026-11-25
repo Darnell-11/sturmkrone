@@ -194,6 +194,23 @@ export class TroopSquad implements AllyTarget {
     this.thinkT = 0;
   }
 
+  /** Wegschleudern (Flächen-Finisher, 4.6A): Richtung und Wucht für die fallenden Köpfe (die Darstellung holt sie ab) */
+  flingX = 0;
+  flingZ = 0;
+  flingP = 0;
+  /** Stoß der ganzen Aufstellung (m/s, klingt ab) */
+  private shoveX = 0;
+  private shoveZ = 0;
+
+  /** Wucht eines Flächen-Finishers: die Aufstellung wird zurückgestoßen, gefallene Köpfe fliegen davon */
+  fling(dirX: number, dirZ: number, power: number) {
+    if (this.heads <= 0 || this.landing || !(power > 0)) return;
+    this.flingX = dirX; this.flingZ = dirZ; this.flingP = Math.max(this.flingP, power);
+    const k = Math.min(1, 6 / Math.max(6, this.heads));
+    this.shoveX += dirX * power * 0.55 * k;
+    this.shoveZ += dirZ * power * 0.55 * k;
+  }
+
   /** Gegner trifft den Trupp: Lebenspunkte sinken, Köpfe fallen (Schaden bleibt nicht an Köpfen hängen, sondern am Pool) */
   receive(dmg: number, dirX: number, dirZ: number) {
     void dirX; void dirZ;
@@ -303,6 +320,15 @@ export class TroopSquad implements AllyTarget {
         this.move = Math.min(1, speed / (d.speed * 1.7));
       } else this.move = 0;
     } else this.move = Math.max(0, this.move - dt * 4);
+
+    // --- Stoß eines Flächen-Finishers: die Aufstellung rutscht zurück und fängt sich ---
+    if (this.shoveX !== 0 || this.shoveZ !== 0) {
+      const c = w.ground.constrain(this.x + this.shoveX * dt, this.z + this.shoveZ * dt, this.radius, this.y);
+      this.x = c.x; this.z = c.z;
+      const k = Math.pow(0.03, dt);
+      this.shoveX *= k; this.shoveZ *= k;
+      if (Math.abs(this.shoveX) + Math.abs(this.shoveZ) < 0.05) { this.shoveX = 0; this.shoveZ = 0; }
+    }
 
     // --- Weiche Trennung (nie die Spielfigur) ---
     for (const o of soft) {

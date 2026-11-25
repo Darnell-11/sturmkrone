@@ -121,7 +121,7 @@ export class Horde {
       for (const b of this.soft) if (b.owner === q) { b.x = q.x; b.z = q.z; }
       v.heads = q.heads; v.typ = q.typ; v.seed = q.seed; v.move = q.move; v.pulse = q.pulse;
       v.x = q.x; v.y = q.y; v.z = q.z; v.yaw = q.yaw; v.compact = q.squeeze;
-      if (q.lostHeads > 0) { this.renderer.fall(v, q.lostHeads); q.lostHeads = 0; }
+      if (q.lostHeads > 0) { this.renderer.fall(v, q.lostHeads, q); q.lostHeads = 0; }
     }
     this.renderer.update(this.views, t, dt);
   }

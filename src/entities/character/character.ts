@@ -901,6 +901,35 @@ export class Character {
   get playing() { return this.currentName; }
 
   /**
+   * Clip für die Action-Kampf-Engine (4.6A): die Zeit setzt der Aufrufer jedes Logikbild selbst (`time`, `timeScale` 0), die Animation folgt
+   * also exakt der Simulation (auch in der Trefferpause). Folgt ein Angriff mit demselben Clip (Faust, Faust), blendet ein Zwilling des
+   * Clips über statt denselben Clip neu zu starten – sonst zöge die Überblendung die Figur kurz zur Grundhaltung.
+   */
+  playSynced(name: string, fade: number): AnimationAction | null {
+    let a = this.action(name);
+    if (!a) return null;
+    if (a === this.current) {
+      const twinKey = `${name}#2`;
+      let twin = this.actions.get(twinKey);
+      if (!twin) { twin = this.mixer.clipAction(a.getClip().clone()); this.actions.set(twinKey, twin); }
+      a = twin;
+    }
+    a.reset();
+    a.setLoop(LoopOnce, 1);
+    a.clampWhenFinished = true;
+    a.timeScale = 0;
+    a.enabled = true;
+    a.setEffectiveWeight(1);
+    if (this.current && this.current !== a) a.crossFadeFrom(this.current, fade, false);
+    else a.fadeIn(fade);
+    a.play();
+    this.current = a;
+    this.currentName = name;
+    this.doneCb = null;
+    return a;
+  }
+
+  /**
    * Schrittgeschwindigkeit an die echte Bewegung anpassen, damit die Füße nicht über den Boden rutschen.
    * Gemessen (Fußkontakte, Welt-Maßstab der Figur 1,085): Gehen ≈ 1,5 m/s, Rennen ≈ 5,9 m/s bei normaler Abspielgeschwindigkeit.
    * Früher stand für Rennen 3,7: bei 6,2 m/s lief der Clip mit dem 1,7-Fachen seiner Geschwindigkeit, die Beine hasteten wie im Trickfilm.

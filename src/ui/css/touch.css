@@ -35,6 +35,10 @@
   font: 800 0.82rem/1.05 var(--font-text); letter-spacing: 0.02em; white-space: pre-line; overflow: hidden; color: var(--ink);
 }
 .touch-btn[data-action^='skill'] span { font-size: 0.62rem; }
+/* Kampfkünste (4.6A): Symbol groß, Kurzname klein darunter */
+.touch-btn[data-action^='art'] span { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; letter-spacing: 0; }
+.touch-btn .art-ic { font: 700 1.35rem/1 var(--font-text); text-shadow: 0 0 8px var(--c, #fff); }
+.touch-btn .art-nm { font: 800 0.5rem/1 var(--font-text); text-transform: uppercase; color: var(--brass-100); }
 .touch-btn[data-action='repair'] span { font-size: 0.7rem; }
 .touch-btn.on { transform: scale(0.93); }
 .touch-btn.on span { background: radial-gradient(circle at 50% 28%, #6a4318, #2a1708 75%); color: #fff; }

@@ -28,6 +28,8 @@ import { sweepMove, type SweepGround } from '../combat/sweep';
 import { mintEntityId, type EntityId } from '../sim/entityId';
 import { ThreatTable } from '../combat/threat';
 import { clamp01 } from '../core/mathUtil';
+import { hasPostureBar } from '../combat/actionCombatEngine';
+import { POSTURE } from '../data/actionStyles';
 
 export type EnemyState = 'idle' | 'patrol' | 'suspicious' | 'chase' | 'strafe' | 'flank' | 'retreat' | 'windup' | 'attack' | 'recover' | 'hit' | 'stagger' | 'air' | 'down' | 'dead' | 'transition';
 
@@ -66,6 +68,12 @@ export interface HitInfo {
   poise: number;
   knock: number;
   launch?: number;
+  /** Action-Kampf (4.6A): Ziel in der Luft halten (Steigtempo), Blockhaltung/Deckung knacken, vor die Figur ziehen (Greifwurf), Haltungsbruch-Finisher */
+  juggle?: number;
+  breakGuard?: boolean;
+  pullX?: number;
+  pullZ?: number;
+  finisher?: boolean;
   dirX: number;
   dirZ: number;
   heavy: boolean;
@@ -168,8 +176,13 @@ export class Enemy {
   private strafeDir = Math.random() < 0.5 ? -1 : 1;
   /** Boss-Phase 1 … 3 (nach Lebensanteil) */
   phase = 1;
-  /** Break: Restzeit, in der der Boss taumelt und mehr Schaden nimmt */
+  /** Break: Restzeit, in der der Boss (bzw. das Elite-Ziel mit Haltungsleiste) taumelt und mehr Schaden nimmt */
   brokenT = 0;
+  /**
+   * Haltungsleiste (4.6A): Elite-Truppen, Hauptmänner/Insel-Kommandanten, Königs- und Kaiser-Endbosse. `poise` ist ihr Füllstand; bricht sie,
+   * taumeln sie (`brokenT`) und sind offen für den Haltungsbruch-Finisher. Normale Gegner behalten ihr kurzes Taumeln ohne Leiste.
+   */
+  readonly hasPosture: boolean;
   /** Nummer des laufenden Angriffs: Warnflächen verfallen, wenn er abgebrochen wird */
   atkSeq = 0;
   /** Sekunden seit dem letzten Treffer (Aufladen des Haltebalkens) */
@@ -236,6 +249,7 @@ export class Enemy {
     const pf = baseDef.boss || baseDef.raid ? 1 : DANGER_POISE[dangerOfLevel(level)];
     this.def = pf === 1 ? baseDef : { ...baseDef, poise: Math.round(baseDef.poise * pf) };
     this.threat = this.def.raid ? new ThreatTable() : null;
+    this.hasPosture = hasPostureBar(this.def);
     const sc = enemyScale(level);
     this.maxHp = this.hp = Math.round(this.def.hp * sc.hp);
     this.dmg = this.def.dmg * sc.dmg;
@@ -377,13 +391,17 @@ export class Enemy {
       if (h.src) this.threat?.add(h.src, h.dmg * 0.3);
       return 'blocked';
     }
-    // Frontale Deckung: von vorn prallt alles ab; Flanke und Rücken bleiben offen
+    // Frontale Deckung: von vorn prallt alles ab; Flanke und Rücken bleiben offen – der Schildbrecher-Stoß knackt sie
     if (this.guardT > 0) {
       const facing = Math.sin(this.yaw) * -h.dirX + Math.cos(this.yaw) * -h.dirZ;
       if (facing > Math.cos(this.guardArc / 2)) {
-        this.char.hitFlash('#9FD8FF', 0.9);
-        if (h.src) this.threat?.add(h.src, h.dmg * 0.3);
-        return 'blocked';
+        if (!h.breakGuard) {
+          this.char.hitFlash('#9FD8FF', 0.9);
+          if (h.src) this.threat?.add(h.src, h.dmg * 0.3);
+          return 'blocked';
+        }
+        this.guardT = 0;
+        h = { ...h, poise: h.poise * 1.6 };
       }
     }
     // Rüstung der Raid-Gegner und Aura „Bollwerk“ eines Hauptmanns in der Nähe
@@ -396,14 +414,14 @@ export class Enemy {
     // Anti-One-Shot: ein Raid-Endboss verliert durch einen einzelnen Treffer höchstens 8 % seiner Lebenspunkte
     if (this.def.raid === 'boss') h = { ...h, dmg: Math.min(h.dmg, this.maxHp * (this.def.hitCap ?? RAID_BOSS_HIT_CAP)) };
     if (h.src && this.threat) this.threat.add(h.src, h.dmg, { ranged: !!h.ranged });
-    // Schildträger: Angriffe von vorn prallen ab (außer schwere)
+    // Schildträger: Angriffe von vorn prallen ab (außer schwere); der Schildbrecher-Stoß reißt den Schild auf
     if (this.def.frontBlock && !h.heavy && this.state !== 'stagger') {
       const facing = Math.sin(this.yaw) * -h.dirX + Math.cos(this.yaw) * -h.dirZ;
-      if (facing > 0.4) {
+      if (facing > 0.4 && !h.breakGuard) {
         this.poise -= h.poise * 0.5;
         this.char.play('blockHit', { restart: true, fade: 0.05, onDone: () => this.toChase() });
         if (this.poise > 0) return 'blocked';
-      }
+      } else if (facing > 0.4) this.poise = 0;
     }
     this.hp -= h.dmg;
     this.flash = 0.09;
@@ -418,38 +436,66 @@ export class Enemy {
       this.die(h);
       return 'kill';
     }
-    // Boss: Haltebalken leer = Break (langes Taumeln, +50 % Schaden), dann lädt er sich neu
-    if (this.def.boss) {
-      if (this.brokenT <= 0) this.poise -= h.poise * 0.8;
-      this.vx += h.dirX * h.knock * 0.3;
-      this.vz += h.dirZ * h.knock * 0.3;
-      if (this.poise <= 0 && this.brokenT <= 0) {
+    // Haltungsbruch-Finisher: das Taumeln endet mit dem Treffer, die Leiste ist wieder voll (einfache Elite-Gegner gehen zu Boden)
+    if (h.finisher && this.brokenT > 0) {
+      this.brokenT = 0;
+      this.poise = this.def.poise;
+      this.vx += h.dirX * h.knock * 0.4; this.vz += h.dirZ * h.knock * 0.4;
+      if (!this.def.boss && this.def.poise < 140) { this.vy = 6.5; this.state = 'air'; this.char.play('hitHeavy', { restart: true, fade: 0.05 }); }
+      else { this.state = 'hit'; this.timer = 0.6; this.char.play('hitHeavy', { fade: 0.04, restart: true }); }
+      return 'hit';
+    }
+    // Greifwurf: das Ziel wird vor die Figur gezogen (Bosse und Schwergewichte bleiben stehen)
+    if (h.pullX !== undefined && h.pullZ !== undefined && !this.def.boss && this.def.poise < 140 && w) {
+      const c = w.constrain(h.pullX, h.pullZ, this.radius, this);
+      this.x = c.x; this.z = c.z; this.vx = this.vz = 0;
+    }
+    // Haltungsleiste (Elite, Kommandanten, Endbosse): leer = Bruch (langes Taumeln, mehr Schaden, Finisher), danach lädt sie sich neu
+    if (this.hasPosture && this.brokenT <= 0) {
+      this.poise -= h.poise * (this.def.boss ? 0.8 : 1);
+      if (this.poise <= 0) {
         this.poise = 0;
-        this.brokenT = BOSS.breakTime;
+        this.brokenT = this.def.boss ? BOSS.breakTime : POSTURE.staggerElite;
         this.cancelAttack();
         if (this.hasToken) { w?.releaseToken(this); this.hasToken = false; }
+        if (this.state === 'air') { this.vy = Math.min(this.vy, 0); return 'stagger'; }
         this.state = 'stagger';
-        this.timer = BOSS.breakTime;
+        this.timer = this.brokenT;
         this.char.play('stun', { fade: 0.08, restart: true });
         w?.bossBreak(this);
         return 'stagger';
       }
+    }
+    // In der Luft (Orkan-Launcher, Luft-Kombo): jongliert bleiben statt zu Boden zu springen
+    if (this.state === 'air') {
+      if (h.launch && !this.def.boss) this.vy = Math.max(this.vy, h.launch);
+      else if (h.juggle) this.vy = Math.max(this.vy * 0.3, h.juggle);
+      this.vx += h.dirX * h.knock * 0.35;
+      this.vz += h.dirZ * h.knock * 0.35;
+      this.char.play('hitHeavy', { restart: true, fade: 0.04 });
+      return 'hit';
+    }
+    if (this.def.boss) {
+      this.vx += h.dirX * h.knock * 0.3;
+      this.vz += h.dirZ * h.knock * 0.3;
       if (this.state === 'stagger' || this.state === 'attack' || this.state === 'windup') return 'hit';
       this.state = 'hit';
       this.timer = 0.25;
       this.char.play(h.heavy ? 'hitHeavy' : 'hit', { fade: 0.04, restart: true });
       return 'hit';
     }
-    this.poise -= h.poise;
-    this.vx += h.dirX * h.knock;
-    this.vz += h.dirZ * h.knock;
+    if (!this.hasPosture) this.poise -= h.poise;
+    this.vx += h.dirX * h.knock * (this.hasPosture ? 0.6 : 1);
+    this.vz += h.dirZ * h.knock * (this.hasPosture ? 0.6 : 1);
     if (h.launch && !this.def.boss && this.def.poise < 100) {
       this.vy = h.launch;
       this.state = 'air';
       this.char.play('hitHeavy', { restart: true, fade: 0.05 });
       return 'hit';
     }
-    if (this.poise <= 0) {
+    // Taumeln nach dem Bruch hält an (Finisher-Fenster); Treffer unterbrechen es nicht
+    if (this.brokenT > 0) return 'hit';
+    if (!this.hasPosture && this.poise <= 0) {
       this.poise = this.def.poise;
       this.state = 'stagger';
       this.timer = this.def.boss ? 1.6 : 1.4;
@@ -470,11 +516,11 @@ export class Enemy {
     this.cancelAttack();
     this.state = 'stagger';
     this.timer = 1.6;
-    if (this.def.boss) {
-      // Perfekte Parade nimmt dem Boss 40 % des Haltebalkens; ist er leer, folgt der Break
+    if (this.hasPosture) {
+      // Perfekte Parade nimmt 40 % der Haltungsleiste; ist sie leer, folgt der Bruch
       this.poise = Math.max(0, this.poise - this.def.poise * 0.4);
       if (this.hasToken) { w?.releaseToken(this); this.hasToken = false; }
-      if (this.poise <= 0 && this.brokenT <= 0) { this.brokenT = BOSS.breakTime; this.timer = BOSS.breakTime; w?.bossBreak(this); }
+      if (this.poise <= 0 && this.brokenT <= 0) { this.brokenT = this.def.boss ? BOSS.breakTime : POSTURE.staggerElite; this.timer = this.brokenT; w?.bossBreak(this); }
     } else this.poise = this.def.poise;
     this.char.play('stun', { fade: 0.05, restart: true });
   }
@@ -552,11 +598,15 @@ export class Enemy {
       const pa = def.phaseAt ?? BOSS.phaseAt;
       const ph = (def.phases ?? 3) >= 3 && frac < pa[1] ? 3 : frac < pa[0] ? 2 : 1;
       if (ph > this.phase && this.state !== 'air') { this.phase = ph; this.dmg *= 1.15; this.beginTransition(w); }
-      // Break läuft ab, danach ist der Haltebalken wieder voll; sonst lädt er sich nach 3 s ohne Treffer langsam auf
+    }
+    // Haltungsleiste (Elite, Kommandanten, Endbosse): Bruch läuft ab, danach ist sie wieder voll; sonst lädt sie sich nach 3 s ohne Treffer langsam auf
+    if (this.hasPosture && this.alive) {
       if (this.brokenT > 0) {
         this.brokenT -= dt;
         if (this.brokenT <= 0) { this.brokenT = 0; this.poise = this.def.poise; }
-      } else if (this.poise < this.def.poise && w.playerActive && this.sinceHit > 3) this.poise = Math.min(this.def.poise, this.poise + this.def.poise * BOSS.breakRegen * dt);
+        // nach einer Landung (gebrochen in der Luft) taumelt das Ziel den Rest des Bruchs
+        else if (FREE.has(this.state)) { this.state = 'stagger'; this.timer = this.brokenT; this.char.play('stun', { fade: 0.08, restart: true }); }
+      } else if (this.poise < this.def.poise && w.playerActive && this.sinceHit > 3) this.poise = Math.min(this.def.poise, this.poise + this.def.poise * (def.boss ? BOSS.breakRegen : POSTURE.regenRate) * dt);
     }
     const speed = def.speed * (def.boss ? 1 + (this.phase - 1) * 0.15 : 1) * (this.slowT > 0 ? 0.45 : 1) * this.auraSpeed * (this.guardT > 0 ? 0.6 : 1);
 

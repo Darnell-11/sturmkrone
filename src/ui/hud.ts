@@ -129,7 +129,7 @@ export class Hud {
             <div class="gauge xp thin" title="Erfahrung"><i class="fill"></i></div>
           </div>
           <div class="cap-row"><span class="cap-gold" title="Gold">${COIN}<b></b></span><span class="cap-prov" title="Proviant"></span><span class="cap-env"></span></div>
-          <div class="cap-weapons" title="Waffe wechseln: Q · Platz 1: Z · Platz 2: X"><span class="w0 on"></span><span class="w1"></span></div>
+          <div class="cap-weapons" title="Stil wechseln: Q (alle sechs Kampfstile) · Platz 1: Z · Platz 2: X"><span class="w0 on"></span><span class="w1"></span></div>
           <div class="cap-crew" hidden></div>
           <div class="cap-upkeep" hidden></div>
           <div class="cap-fps" hidden></div>
@@ -376,10 +376,10 @@ export class Hud {
     });
   }
 
-  /** Beide Waffenplätze mit Namen; aktiv hebt hervor */
+  /** Stil-Zeile (4.6A): aktueller Kampfstil und der nächste beim Wechsel; `active` hebt den ersten oder zweiten Eintrag hervor */
   setWeapons(a: string, b: string, active: 0 | 1) {
     const w0 = this.q('.w0', this.weaponsEl), w1 = this.q('.w1', this.weaponsEl);
-    this.text(w0, `1 ${a}`); this.text(w1, `2 ${b}`);
+    this.text(w0, a); this.text(w1, b);
     w0.classList.toggle('on', active === 0); w1.classList.toggle('on', active === 1);
   }
 

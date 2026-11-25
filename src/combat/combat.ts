@@ -38,6 +38,12 @@ import type { TroopSquad } from '../entities/troops/squad';
 import type { EntityId } from '../sim/entityId';
 import { sharedGeo } from '../render/geoCache';
 import { clamp01 } from '../core/mathUtil';
+import type { ActionTarget, HitContext } from './actionCombatEngine';
+import { POSTURE, type ActionHit, type ActionMove } from '../data/actionStyles';
+import { mintEntityId } from '../sim/entityId';
+
+/** Ergebnis eines Treffers auf die Spielfigur; `perfect` = Sturm-Schritt (perfektes Ausweichen hinter den Angreifer, 4.6A) */
+export type PlayerHitResult = 'hit' | 'blocked' | 'parried' | 'dodged' | 'perfect';
 
 export interface PlayerTarget {
   /** Kennung der Spielfigur (Schlüssel der Bedrohungstabellen) */
@@ -50,7 +56,7 @@ export interface PlayerTarget {
   readonly yaw: number;
   readonly active: boolean;
   /** Treffer auf den Spieler; liefert, was passiert ist */
-  receiveHit(dmg: number, dirX: number, dirZ: number, knock: number, from: Enemy | null, elemental?: boolean): 'hit' | 'blocked' | 'parried' | 'dodged';
+  receiveHit(dmg: number, dirX: number, dirZ: number, knock: number, from: Enemy | null, elemental?: boolean): PlayerHitResult;
 }
 
 // feste Hilfsobjekte für Treffertests (keine Speicheranforderung im Kampf)
@@ -95,6 +101,8 @@ interface Coin { mesh: Mesh; x: number; y: number; z: number; vy: number; vx: nu
 
 /** Übungspuppe: nimmt Treffer, fällt nie um */
 class Dummy {
+  /** feste Kennung (Zielliste der Action-Kampf-Engine) */
+  readonly id = mintEntityId('npc');
   readonly group = new Group();
   wobble = 0;
   readonly radius = 0.5;
@@ -489,6 +497,12 @@ export class CombatSystem implements EnemyWorld {
       this.hooks.hitstop(0.35, 0.15);
       this.hooks.shake(0.4);
       this.hooks.focus?.(0.75);
+    } else if (res === 'perfect') {
+      // Sturm-Schritt: Zeitlupe, Fokus und Schriftzug – die Figur steht schon hinter dem Angreifer (Nachbild zeichnet die Spielfigur)
+      this.overlay.number(new Vector3(pl.x, pl.y + 2.4, pl.z), 'Sturm-Schritt!', 'crit');
+      this.overlay.speedlines(1);
+      this.hooks.hitstop(0.4, 0.16);
+      this.hooks.focus?.(0.85);
     } else if (res === 'blocked') {
       this.fx.hit(pos.clone().addScaledVector(new Vector3(-dirX, 0, -dirZ), 0.5), 'punch', '#9FD8FF');
       this.overlay.number(pos, 'Geblockt', 'info');
@@ -661,6 +675,147 @@ export class CombatSystem implements EnemyWorld {
     this.fx.hit(from, 'magic', pr.color);
   }
 
+  // ---------- Action-Kampf (Phase 4.6A) ----------
+
+  /** Objekte hinter den Zielplätzen der Engine (Platz `ref`): je Bild neu gefüllt, nie neu angelegt */
+  private readonly actRefs: (Enemy | TroopSquad | Dummy)[] = [];
+  /** Hilfsangriff für die Rückmeldung (Funken, Trefferpause, Wackeln): je Treffer neu beschrieben */
+  private readonly actDef: AttackDef = { clip: '', speed: 1, hitStart: 0, hitEnd: 0, range: 2, arc: 2, dmg: 1, poise: 10, knock: 3, hitstop: 0.05, shake: 0.15, fx: 'slash' };
+
+  /**
+   * Ziele für die Action-Kampf-Engine: Gegner, Verbände (ein Ziel je Trupp, er trifft viele Köpfe) und Übungspuppen im Umkreis r um (x, z)
+   * in die vorab angelegten Plätze `out` schreiben. Keine Speicheranforderung.
+   */
+  actionTargets(x: number, z: number, r: number, out: ActionTarget[]): number {
+    let n = 0;
+    const refs = this.actRefs;
+    for (const e of this.enemies) {
+      if (n >= out.length) return n;
+      if (!e.alive) continue;
+      const dx = e.x - x, dz = e.z - z, rr = r + e.radius;
+      if (dx * dx + dz * dz > rr * rr) continue;
+      const t = out[n];
+      refs[n] = e; t.ref = n; n++;
+      t.id = e.entityId; t.x = e.x; t.y = e.y; t.z = e.z; t.radius = e.radius; t.height = 1.9 * e.def.scale; t.yaw = e.yaw;
+      t.alive = true; t.airborne = e.state === 'air'; t.mass = false; t.broken = e.hasPosture && e.brokenT > 0; t.boss = !!e.def.boss;
+    }
+    for (const q of this.mass) {
+      if (n >= out.length) return n;
+      if (!q.alive) continue;
+      const fr = q.sepRadius() * 0.7, dx = q.x - x, dz = q.z - z, rr = r + fr;
+      if (dx * dx + dz * dz > rr * rr) continue;
+      const t = out[n];
+      refs[n] = q; t.ref = n; n++;
+      t.id = q.squadId; t.x = q.x; t.y = q.y; t.z = q.z; t.radius = fr; t.height = 1.8; t.yaw = q.yaw;
+      t.alive = true; t.airborne = false; t.mass = true; t.broken = false; t.boss = false;
+    }
+    for (const d of this.dummies) {
+      if (n >= out.length) return n;
+      const dx = d.x - x, dz = d.z - z, rr = r + d.radius;
+      if (dx * dx + dz * dz > rr * rr) continue;
+      const t = out[n];
+      refs[n] = d; t.ref = n; n++;
+      t.id = d.id; t.x = d.x; t.y = d.group.position.y; t.z = d.z; t.radius = d.radius; t.height = 2; t.yaw = 0;
+      t.alive = true; t.airborne = false; t.mass = false; t.broken = false; t.boss = false;
+    }
+    return n;
+  }
+
+  /**
+   * Treffer der Action-Kampf-Engine anwenden. Schaden läuft über dieselbe Pipeline wie jeder Hieb: Krit (Stil: Faktor und Zusatzchance),
+   * Rüstungskurve mit der Waffenstufe (+ Durchschlag des Angriffs und des Stils), Break-Bonus und die Anti-One-Shot-Grenzen der Endbosse
+   * (`Enemy.takeHit`). Verbände nehmen Flächenschaden mit Schwung-Bonus und werden weggeschleudert. true = der Treffer saß.
+   */
+  actionHit(t: ActionTarget, h: ActionHit, m: ActionMove, c: HitContext, dmgMult: number): boolean {
+    const obj = this.actRefs[t.ref];
+    if (!obj) return false;
+    const st = c.style;
+    const forced = c.crit > 0;
+    const crit = forced || Math.random() < this.critChance + st.critBonus + c.critAdd;
+    const critK = forced ? Math.max(c.crit, st.critMult) : st.critMult;
+    const mult = dmgMult * c.bonus * (crit ? critK : 1) * (c.finisher ? POSTURE.finisherDmg : 1) * (0.92 + Math.random() * 0.16);
+    const color = m.color || st.color;
+    const heavy = h.fx === 'heavy' || h.poise >= 30;
+    const d = this.actDef;
+    d.fx = h.fx; d.hitstop = h.hitstop; d.shake = h.shake; d.dmg = h.dmg; d.poise = h.poise; d.knock = h.knock; d.launch = h.launch || undefined; d.clip = m.clip;
+    if (obj instanceof Dummy) {
+      const dmg = Math.round(this.atk * h.dmg * mult);
+      obj.wobble = Math.min(1.5, obj.wobble + 0.6);
+      HIT_P.set(obj.x - c.dirX * 0.3, obj.group.position.y + 1.4, obj.z - c.dirZ * 0.3);
+      this.fx.hit(HIT_P, h.fx, color, crit || heavy);
+      this.overlay.number(HIT_P, dmg, crit ? 'crit' : 'hit');
+      this.overlay.addCombo();
+      this.hooks.impact(c.dirX, c.dirZ, crit || heavy ? 1 : 0.6);
+      this.hooks.hitstop(h.hitstop);
+      this.hooks.shake(h.shake);
+      return true;
+    }
+    if (!(obj instanceof Enemy)) {
+      const q = obj;
+      const dmg = Math.round(this.atk * h.dmg * mult * MASS_CLEAVE);
+      if (this.mods.lifesteal > 0) this.hooks.heal(dmg * this.mods.lifesteal * 0.2);
+      const before = q.heads;
+      q.receive(dmg, c.dirX, c.dirZ);
+      if (h.fling > 0) q.fling(c.dirX, c.dirZ, h.fling);
+      HIT_P.set(q.x - c.dirX * 0.8, q.y + 1.2, q.z - c.dirZ * 0.8);
+      this.fx.hit(HIT_P, h.fx, color, crit || heavy);
+      HIT_P.y += 0.5;
+      this.overlay.number(HIT_P, q.heads < before ? `${dmg} (−${before - q.heads})` : dmg, crit ? 'crit' : 'hit');
+      this.overlay.addCombo();
+      this.hooks.impact(c.dirX, c.dirZ, 0.7);
+      this.hooks.hitstop(h.hitstop * 0.5);
+      this.hooks.shake(h.shake * 0.8);
+      if (q.heads <= 0) this.onSquadDown(q);
+      return true;
+    }
+    const e = obj;
+    const dmg = Math.round(this.atk * h.dmg * mult);
+    if (this.mods.lifesteal > 0) this.hooks.heal(dmg * this.mods.lifesteal);
+    const info: HitInfo = {
+      dmg, poise: h.poise * c.postureK, knock: h.knock, launch: h.launch || undefined, juggle: h.juggle || undefined, breakGuard: h.breakGuard || undefined,
+      finisher: c.finisher || undefined, dirX: c.dirX, dirZ: c.dirZ, heavy, src: this.player?.entityId, ranged: false,
+      tier: Math.max(1, Math.min(7, this.attackTier + h.pen + st.penBonus)),
+    };
+    if (h.pull) { const k = 0.9 + e.radius; info.pullX = c.fx + Math.sin(c.fyaw) * k; info.pullZ = c.fz + Math.cos(c.fyaw) * k; }
+    const res = e.takeHit(info, this.now, this);
+    this.enemyFeedback(e, res, dmg, crit, false, heavy, d, c.dirX, c.dirZ, color);
+    if (c.finisher && res !== 'blocked') {
+      // filmreifer Haltungsbruch-Finisher: Zeitlupe, Fokus, Druckwelle und Risse
+      HIT_P.set(e.x, this.ground(e.x, e.z), e.z);
+      this.fx.shockwave(HIT_P, 6.5, color);
+      this.fx.crack(HIT_P, 5);
+      this.fx.sigil(HIT_P, 4.5, color, 1.4);
+      this.overlay.impactFrame();
+      this.overlay.speedlines(1);
+      this.overlay.number(e.head.setY(e.y + 3 * e.def.scale), 'Haltungsbruch!', 'crit');
+      this.hooks.hitstop(0.5, 0.1);
+      this.hooks.shake(1.1);
+      this.hooks.focus?.(1);
+    } else if (res === 'stagger' && e.hasPosture) {
+      this.overlay.number(e.head.setY(e.y + 2.8 * e.def.scale), 'Finisher bereit!', 'info');
+    }
+    return res !== 'blocked';
+  }
+
+  /** Geschosse eines Fernangriffs der Engine (Faji-Wirken, Fächer): auf das Ziel der Engine oder das nächste im Kegel */
+  actionShoot(h: ActionHit, x: number, y: number, z: number, yaw: number, mult: number, lockId: string) {
+    const pr = h.projectile;
+    if (!pr) return;
+    audio.play('whoosh', 0.7);
+    let aim: Enemy | null = null;
+    if (lockId) for (const e of this.enemies) if (e.alive && e.entityId === lockId) { aim = e; break; }
+    aim ??= this.lock?.alive ? this.lock : this.nearestInCone(x, z, yaw, h.range, 0.6);
+    const baseYaw = aim ? Math.atan2(aim.x - x, aim.z - z) : yaw;
+    const n = Math.max(1, pr.count);
+    for (let i = 0; i < n; i++) {
+      const a = baseYaw + (n > 1 ? (i / (n - 1) - 0.5) * pr.spread * (n - 1) : 0);
+      const from = new Vector3(x + Math.sin(a) * 0.8, y + 1.3, z + Math.cos(a) * 0.8);
+      const dir = aim && n === 1 ? new Vector3(aim.x - from.x, aim.y + 1.1 - from.y, aim.z - from.z).normalize() : new Vector3(Math.sin(a), 0, Math.cos(a));
+      this.spawnProjectile(from, dir.multiplyScalar(pr.speed), pr.radius, this.atk * h.dmg * mult, h.knock, 'player', null, pr.pierce, pr.color, h.poise);
+      if (i === 0) this.fx.hit(from, 'magic', pr.color);
+    }
+  }
+
   private applyHit(obj: object, def: AttackDef, dirX: number, dirZ: number, mult: number, color: string, zone: Zone = 'rumpf', at?: Vector3) {
     const crit = Math.random() < this.critChance;
     const dmg = Math.round(this.atk * def.dmg * mult * (crit ? this.mods.critMult : 1) * (0.92 + Math.random() * 0.16));
@@ -680,6 +835,11 @@ export class CombatSystem implements EnemyWorld {
     }
     const e = obj as Enemy;
     const res = e.takeHit({ dmg, poise: def.poise, knock: def.knock, launch: def.launch, dirX, dirZ, heavy, src: this.player?.entityId, ranged: def.fx === 'magic' } as HitInfo, this.now, this);
+    this.enemyFeedback(e, res, dmg, crit, head, heavy, def, dirX, dirZ, color, at);
+  }
+
+  /** Rückmeldung eines Treffers auf einen Gegner: Funken, Zahl, Wucht je Stil, Spuren am Boden, Kamera und Trefferpause */
+  private enemyFeedback(e: Enemy, res: 'hit' | 'blocked' | 'stagger' | 'kill', dmg: number, crit: boolean, head: boolean, heavy: boolean, def: AttackDef, dirX: number, dirZ: number, color: string, at?: Vector3) {
     const pos = e.head.setY(e.y + 1.3 * e.def.scale);
     // Funken genau dort, wo die Klinge die Trefferzone schneidet
     const contact = at ? at.clone() : pos;
@@ -1363,7 +1523,7 @@ export class CombatSystem implements EnemyWorld {
     this.overlay.setBoss(boss ? this.bossView(boss) : null);
     for (const e of this.enemies) {
       const show = e.alive && !e.def.boss && (this.now - e.lastHit < 5 || e === this.lock || e.def.elite);
-      this.overlay.setBar(e, show ? e.headInto(this.barVec) : null, show ? e.hp / e.maxHp : -1, !!e.def.elite, camera, '', e.char.holder, 2.2 * e.def.scale);
+      this.overlay.setBar(e, show ? e.headInto(this.barVec) : null, show ? e.hp / e.maxHp : -1, !!e.def.elite, camera, '', e.char.holder, 2.2 * e.def.scale, e.hasPosture ? e.breakFrac : -1, e.brokenT > 0);
     }
     this.overlay.setReticle(this.lock?.alive ? this.lock.headInto(this.barVec).setY(this.lock.y + 1.2 * this.lock.def.scale) : null, camera);
   }

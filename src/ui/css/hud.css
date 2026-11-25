@@ -518,6 +518,17 @@
 .cbt-ebar i { position: absolute; left: 0; top: 0; bottom: 0; width: 100%; transform-origin: left center; will-change: transform; }
 .cbt-ebar .lag { background: var(--brass-100); transition: transform 0.4s; }
 .cbt-ebar .fill { background: linear-gradient(180deg, #e8795f, var(--danger)); }
+/* Haltungsleiste (4.6A): unter den Lebenspunkten der Elite, Kommandanten und Endbosse; gebrochen = blinkt rot (Finisher möglich) */
+.cbt-ebar.postured { height: 13px; }
+.cbt-ebar.elite.postured { height: 15px; }
+.cbt-ebar.postured .fill, .cbt-ebar.postured .lag { bottom: 42%; }
+.cbt-ebar.postured::before { content: ''; position: absolute; left: 0; right: 0; bottom: 38%; height: 1px; background: #000; z-index: 1; }
+.cbt-ebar .post { top: auto; height: 36%; bottom: 0; background: linear-gradient(180deg, #fff6d8, #e6b44c); transition: transform 0.15s; }
+.cbt-ebar.broken .post { background: linear-gradient(180deg, #ffb08a, #ff4a2a); animation: post-broken 0.35s steps(2) infinite; }
+@keyframes post-broken { 50% { opacity: 0.35; } }
+.cbt-finisher { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 0.4em; padding: 0.25em 0.6em; border: 1px solid #ffcf7a; border-radius: 3px; background: rgba(40, 10, 4, 0.78); color: #fff; font: 800 0.9rem var(--font-text); letter-spacing: 0.16em; text-transform: uppercase; text-shadow: 0 1px 0 #000; box-shadow: 0 0 14px rgba(255, 120, 60, 0.75); pointer-events: none; animation: fin-pulse 0.7s ease-in-out infinite; }
+.cbt-finisher kbd { font-size: 0.8em; }
+@keyframes fin-pulse { 50% { box-shadow: 0 0 26px rgba(255, 150, 70, 1); } }
 .cbt-ebar.board::after { content: attr(data-label); position: absolute; left: 50%; bottom: 140%; transform: translateX(-50%); font: 800 0.85rem var(--font-text); letter-spacing: 0.12em; color: var(--brass-100); text-shadow: 0 1px 0 #000, 0 0 4px #000; white-space: nowrap; animation: ctx-pulse 1s ease-in-out infinite; }
 
 /* Banner, Cut-in, Sieg */
@@ -580,3 +591,42 @@
 @keyframes npcbob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
 
 @media (prefers-reduced-motion: reduce) { .hud-ctx { animation: none; } .hud-toast, .hud-hint, .hud-sector, .hud-edge { transition: none; } .hud-edge.danger { animation: none; } }
+
+/* ---------- Fighter-HUD (4.6A): Kombo-Zähler „HIT!“ und vier Kampfkünste unten in der Mitte, nicht einengend ---------- */
+.fhud { display: flex; flex-direction: column; align-items: center; gap: 0.35em; pointer-events: none; --fc: #ffe3b0; --fa: #ff4a3a; }
+.fh-strip { display: flex; align-items: flex-end; gap: 0.65em; }
+.fh-style { display: flex; flex-direction: column; align-items: flex-end; min-width: 7.6em; padding-bottom: 0.2em; text-align: right; text-shadow: 0 1px 0 #000, 0 0 6px rgba(0, 0, 0, 0.75); }
+.fh-style b { font: 400 1.05em/1 var(--font-serif); letter-spacing: 0.03em; color: var(--fc); white-space: nowrap; }
+.fh-style small { font: 700 0.6em/1.3 var(--font-text); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-dim); white-space: nowrap; }
+.fh-arts { display: flex; gap: 0.4em; }
+.fh-art { position: relative; width: 3.15em; height: 3.15em; padding: 0; border: 1px solid color-mix(in srgb, var(--fc) 55%, #000); border-radius: 0.6em; background: radial-gradient(circle at 50% 32%, color-mix(in srgb, var(--fa) 36%, #1a0f08), #120a05 74%); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55), inset 0 0 10px color-mix(in srgb, var(--fa) 32%, transparent); color: #fff; overflow: hidden; pointer-events: auto; cursor: pointer; }
+.fh-art .ic { display: block; margin-top: 0.34em; font: 700 1.25em/1 var(--font-text); font-style: normal; text-shadow: 0 0 8px var(--fa), 0 1px 0 #000; }
+.fh-art .nm { display: block; margin-top: 0.15em; font: 800 0.5em/1.1 var(--font-text); letter-spacing: 0.05em; text-transform: uppercase; color: var(--brass-100); text-shadow: 0 1px 0 #000; }
+.fh-art kbd { position: absolute; top: 0.15em; left: 0.18em; z-index: 2; padding: 0 0.28em; font-size: 0.55em; }
+.fh-art .cd { position: absolute; inset: 0; z-index: 1; background: conic-gradient(rgba(0, 0, 0, 0.74) calc(var(--cd, 0) * 360deg), transparent 0); pointer-events: none; text-decoration: none; }
+.fh-art.cool .ic, .fh-art.cool .nm { opacity: 0.5; }
+.fh-art.ready { animation: fh-ready 0.5s ease-out; }
+@keyframes fh-ready { 0% { transform: scale(1.14); box-shadow: 0 0 18px var(--fc), inset 0 0 18px var(--fa); } 100% { transform: none; } }
+.fh-combo { display: flex; flex-direction: column; align-items: center; text-shadow: 0 2px 0 #000; }
+.fh-move { min-height: 1.1em; font: 800 0.72em var(--font-text); letter-spacing: 0.16em; text-transform: uppercase; color: var(--fc); white-space: nowrap; }
+.fh-count { display: flex; align-items: baseline; gap: 0.22em; }
+.fh-count b { font: 700 2.6em/0.9 var(--font-num); color: var(--brass-100); }
+.fh-count em { font: 900 1.05em var(--font-text); font-style: italic; letter-spacing: 0.08em; color: #fff; }
+.fh-combo u { display: block; width: 7em; height: 3px; margin-top: 0.22em; border-radius: 2px; background: rgba(0, 0, 0, 0.55); overflow: hidden; }
+.fh-combo u i { display: block; height: 100%; background: var(--fc); transform-origin: left center; will-change: transform; }
+.fh-combo.pop b { animation: cpop 0.18s ease-out; }
+.fh-combo[data-rank='1'] b { color: #f3b04a; }
+.fh-combo[data-rank='2'] b { color: #ee7a52; font-size: 3em; }
+.fh-combo[data-rank='3'] b { color: #f19be0; font-size: 3.3em; text-shadow: 0 0 14px rgba(241, 155, 224, 0.7), 0 2px 0 #000; }
+.fhud.counter .fh-arts { filter: drop-shadow(0 0 8px var(--fa)); }
+.fhud.counter .fh-style b::after { content: ' · Konter!'; color: #fff; }
+/* Handy: die Kampfkünste liegen als Knöpfe in der Touch-Gruppe; Zähler und Stil stehen am rechten Rand über den Knöpfen */
+/* Hochformat: rechts über der Knopfgruppe (sie reicht bis gut 310 px über den Rand), nie über Auftrag und Minikarte */
+.fhud.touchmode { position: fixed; right: max(12px, env(safe-area-inset-right, 0px)); top: auto; bottom: calc(min(46vh, 25.5em) + env(safe-area-inset-bottom, 0px)); align-items: flex-end; }
+/* Querformat (niedrig): mittig unter dem Kompass */
+@media (max-height: 520px) { .fhud.touchmode { right: auto; left: 50%; bottom: auto; top: 22%; transform: translateX(-50%); align-items: center; } .fhud.touchmode .fh-combo { align-items: center; } }
+.fhud.touchmode .fh-arts { display: none; }
+.fhud.touchmode .fh-combo { align-items: flex-end; }
+.fhud.touchmode .fh-style { min-width: 0; }
+.fhud.touchmode .fh-count b { font-size: 2.2em; }
+@media (prefers-reduced-motion: reduce) { .fh-art.ready, .fh-combo.pop b { animation: none; } }

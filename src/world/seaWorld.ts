@@ -72,6 +72,8 @@ import { IslandFauna } from './fauna';
 import { texDetail } from '../render/texDetail';
 import type { IslandStyle } from '../data/regions';
 import { CombatFx } from '../combat/fx';
+import { ActionFx } from '../combat/actionFx';
+import { ACTION_STYLES, actionStyleOf, type ActionStyleId } from '../data/actionStyles';
 import { CombatSystem } from '../combat/combat';
 import type { LootDrop } from '../data/loot';
 import { EVENT, WorldEvents } from './events';
@@ -384,6 +386,8 @@ export class SeaWorld {
   /** Anfrage, eine Festungsinsel zu belagern (Kontext-Taste an der Küste der Endgame-Inseln und des Marine-Hauptquartiers) */
   onRaidRequest: (def: IslandDef) => void = () => {};
   private fx: CombatFx | null = null;
+  /** Nachbilder und Leuchtstreifen der Action-Kampf-Engine (4.6A) */
+  private actionFx: ActionFx | null = null;
   private overlay: CombatOverlay | null = null;
   private dust: ParticleSystem;
   faji: FajiController | null = null;
@@ -1154,6 +1158,7 @@ export class SeaWorld {
     if (!this.combat && this.overlay) {
       this.fx = new CombatFx(this.scene, this.sparks, this.dust);
       this.fx.decals.ground = (x, z) => this.groundProxy.height(x, z);
+      this.actionFx = new ActionFx(this.scene);
       this.naval = new NavalSystem(this.scene, this.seaEnv, this.fx, this.overlay, this.spray, this.sparks, this.ground, {
         shake: (a) => { this.shake = Math.max(this.shake, a); },
         kick: (dx, dz, k) => this.hitShake.impulse(dx, 0, dz, k),
@@ -1195,8 +1200,13 @@ export class SeaWorld {
     this.foot = new PlayerFoot(this.player, style, {
       combat: this.combat, fx: this.fx, overlay: this.overlay,
       onDown: () => { this.downT = 3.2; this.onPlayerDown(); },
-      onSwap: (st) => { this.style = st; this.equip(st); this.onWeaponSwapped(st); },
-    });
+      onSwap: (st, act) => { this.style = st; this.equip(st); this.onWeaponSwapped(st, act); },
+      actionFx: this.actionFx,
+      shake: (k) => { this.shake = Math.max(this.shake, k); },
+      slowmo: (t, k) => { this.hitstop.t = Math.max(this.hitstop.t, t); this.hitstop.scale = Math.min(this.hitstop.scale, k); },
+      focus: (k) => this.focusPulse.trigger(k, 0.9),
+      heavyKey: () => this.heavyKeyLabel,
+    }, this.pendingAction ?? undefined);
     if (this.combat) this.combat.player = this.foot;
     this.style = style;
     this.faji = null;
@@ -1509,24 +1519,61 @@ export class SeaWorld {
     this.faji.onEmpty = () => this.onOpenSkills();
   }
 
-  /** Waffe wechselt (Wechselschlag oder Ruhe): Spiel rechnet Fähigkeiten-Werte neu */
-  onWeaponSwapped: (style: StyleId) => void = () => {};
+  /** Waffe/Stil wechselt (Wechselschlag oder Ruhe): Spiel rechnet Fähigkeiten-Werte neu und merkt sich den Stil */
+  onWeaponSwapped: (style: StyleId, action: ActionStyleId) => void = () => {};
+  /** Tastenkappe für „Schwer“ (Finisher-Hinweis), setzt das Spiel */
+  heavyKeyLabel = '';
+  /** Action-Stil für die nächste Spielfigur (Spielstand), solange noch keine steht */
+  private pendingAction: ActionStyleId | null = null;
 
-  /** Waffenwechsel zu Fuß; false, wenn gerade nicht möglich */
-  swapWeapon(style: StyleId): boolean {
+  /** Stilwechsel zu Fuß (jederzeit, mitten in der Kette als Wechselschlag); false, wenn gerade nicht möglich */
+  swapWeapon(style: ActionStyleId): boolean {
     if (this.mode !== 'foot' || !this.foot) return false;
     return this.foot.swapTo(style, null);
   }
 
+  /** Action-Stil setzen ohne Kampf-Effekt (Laden, an Bord, Editor) */
+  setActionStyle(id: ActionStyleId) {
+    this.pendingAction = id;
+    if (!this.foot) return;
+    if (this.foot.actionStyle !== id) this.foot.engine.switchStyle(id);
+    const vis = ACTION_STYLES[id].visual;
+    if (vis !== this.style) { this.foot.style = vis; this.style = vis; this.equip(vis); }
+  }
+
+  /** Aktueller Action-Stil der Spielfigur */
+  get actionStyle(): ActionStyleId { return this.foot?.actionStyle ?? this.pendingAction ?? actionStyleOf(this.style); }
+
+  /** Was das Fighter-HUD braucht: Stil, Abklingzeiten der vier Kampfkünste, Treffer, letzter Angriff, Luft, Finisher; null = nicht zu Fuß */
+  fighterView(): { style: ActionStyleId; cd: readonly number[]; hits: number; label: string; air: boolean; finisher: boolean; perfect: boolean; counter: boolean } | null {
+    const f = this.foot;
+    if (!f || this.mode !== 'foot' || !f.onFoot) return null;
+    const st = f.fighter;
+    const v = this.fighterTmp;
+    v.style = st.style;
+    for (let i = 0; i < 4; i++) v.cd[i] = f.engine.skillFrac(i + 1);
+    v.hits = st.hits;
+    v.label = st.lastLabel;
+    v.air = !st.grounded;
+    v.finisher = !!st.finisherId;
+    v.perfect = st.counterT > 0;
+    v.counter = st.counterStance > 0;
+    return v;
+  }
+  private readonly fighterTmp = { style: 'saebel' as ActionStyleId, cd: [0, 0, 0, 0], hits: 0, label: '', air: false, finisher: false, perfect: false, counter: false };
+
   /** Kampfstil der Spielfigur im Moment */
   get currentStyle(): StyleId { return this.style; }
 
-  /** Aussehen und Kampfstil der Spielfigur ändern */
-  updatePlayer(look: CharacterLook, style: StyleId) {
+  /** Aussehen und Kampfstil der Spielfigur ändern (`action`: Action-Stil, sonst der passende zum Kampfstil) */
+  updatePlayer(look: CharacterLook, style: StyleId, action?: ActionStyleId) {
     if (!this.player || !this.foot) return;
     this.player.setLook(look);
     this.foot.style = style;
     this.style = style;
+    const act = action ?? (ACTION_STYLES[this.foot.actionStyle].visual === style ? this.foot.actionStyle : actionStyleOf(style));
+    if (this.foot.actionStyle !== act) this.foot.engine.switchStyle(act);
+    this.pendingAction = act;
     this.equip(style);
     if (this.mode === 'sail') this.player.play('steer', { fade: 0.01 });
   }
@@ -2278,6 +2325,7 @@ export class SeaWorld {
     }
     this.updateSeaBoss(dt);
     this.fx?.update(dt);
+    this.actionFx?.update(dt);
     this.player?.update(dt);
     // Nach K.O. bringt die Crew dich an Bord
     if (this.downT > 0) {
@@ -2385,7 +2433,7 @@ export class SeaWorld {
 
     this.boostCd = Math.max(0, this.boostCd - dt);
     this.cdBow = Math.max(0, this.cdBow - dt);
-    if (!locked && input.pressed('dodge') && this.boostCd <= 0) {
+    if (!locked && (input.pressed('dodge') || input.pressed('jump')) && this.boostCd <= 0) {
       s.boost = 2.5;
       this.boostCd = 8;
       this.shake = Math.max(this.shake, 0.5);
@@ -2480,7 +2528,11 @@ export class SeaWorld {
       // Klettern (Strickleiter, Enterleiter): die Figur folgt der Leiter, Eingaben ruhen
       const cp = this.climbPose;
       if (this.docking.stepClimb(dt, cp)) f.drive(cp.x, cp.y, cp.z, cp.yaw, true);
-    } else f.update(dt, input, this.footYaw, this.groundProxy, lockYaw);
+    } else {
+      // X am Gamepad springt und handelt: steht eine Handlung an (Kontextplakette), gewinnt die Handlung
+      f.jumpBlocked = !!this.contextLabel;
+      f.update(dt, input, this.footYaw, this.groundProxy, lockYaw, lock?.entityId ?? '');
+    }
     // Entern: Deck geräumt?
     this.updateBoardVictory(dt);
     this.faji?.update(dt, input, this.style, lockYaw);

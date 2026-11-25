@@ -276,7 +276,7 @@ class SiegeTroops {
         const lp = q.landingPose();
         if (lp) { v.x = lp.x; v.y = lp.y; v.z = lp.z; } else { v.x = q.x; v.y = q.y; v.z = q.z; }
         v.yaw = q.yaw; v.compact = q.compact * q.squeeze;
-        if (q.lostHeads > 0) { this.renderers[side].fall(v, q.lostHeads); q.lostHeads = 0; }
+        if (q.lostHeads > 0) { this.renderers[side].fall(v, q.lostHeads, q); q.lostHeads = 0; }
       }
       this.renderers[side].update(views, t, dt);
     }

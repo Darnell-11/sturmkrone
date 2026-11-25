@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ACTION_GROUPS, ACTION_IDS, ACTION_LABELS, COMMAND_ACTIONS, DEFAULT_KEYS, commandOnKey, sharesKey } from '../src/data/actions';
+import { ACTION_GROUPS, ACTION_IDS, ACTION_LABELS, ART_ACTIONS, COMMAND_ACTIONS, DEFAULT_KEYS, artOnKey, commandOnKey, sharesKey } from '../src/data/actions';
 import { COMMANDS } from '../src/data/troops';
 
 describe('Tastenbelegung', () => {
@@ -13,9 +13,10 @@ describe('Tastenbelegung', () => {
     expect(DEFAULT_KEYS.heavy).not.toContain('KeyK');
   });
 
-  it('Tasten teilen sich nur Aktionen, die nie gleichzeitig gelten (See und zu Fuß; Befehle und Schnellleiste 1–3 nach festem Vorrang)', () => {
-    // Befehle: solange Trupps im Einsatz sind, gehören die Tasten den Befehlen, die Güter dort ruhen (Game.update, HUD-Befehlsmodus)
-    const allowed = new Set(['fireLeft|swap', 'fireRight|talk', 'cmdSturm|item1', 'cmdFollow|item2', 'cmdHold|item3']);
+  it('Tasten teilen sich nur Aktionen, die nie gleichzeitig gelten (See und zu Fuß; Kampfkünste und Schnellleiste 1–4 nach festem Vorrang)', () => {
+    // 4.6A: zu Fuß gehören 1–4 den Kampfkünsten (die Güter dort ruhen, Game.update), an Bord den Gütern; Truppenbefehle (nur zu Fuß) liegen
+    // auf 5–7 wie die Flottenbefehle (nur auf See)
+    const allowed = new Set(['fireLeft|swap', 'fireRight|talk', 'art1|item1', 'art2|item2', 'art3|item3', 'art4|item4', 'cmdSturm|fleetHold', 'cmdFollow|fleetAttack', 'cmdHold|fleetRally']);
     const seen = new Map<string, string>();
     for (const a of ACTION_IDS) for (const code of DEFAULT_KEYS[a]) {
       const other = seen.get(code);
@@ -36,17 +37,28 @@ describe('Tastenbelegung', () => {
   });
 
   it('Befehl oder Gut: der Befehl besitzt nur die Taste, die er wirklich teilt (auch nach dem Umbelegen)', () => {
-    expect(commandOnKey(DEFAULT_KEYS, 'item1')).toBe('sturm');
-    expect(commandOnKey(DEFAULT_KEYS, 'item2')).toBe('folgen');
-    expect(commandOnKey(DEFAULT_KEYS, 'item3')).toBe('halten');
-    expect(commandOnKey(DEFAULT_KEYS, 'item4')).toBeNull();
-    // Befehle auf eigene Tasten gelegt: die Schnellleiste 1–3 bleibt frei nutzbar
-    expect(commandOnKey({ ...DEFAULT_KEYS, cmdSturm: ['KeyZ'], cmdFollow: ['KeyX'], cmdHold: ['KeyV'] }, 'item1')).toBeNull();
+    // Standard seit 4.6A: Befehle auf 5–7, die Schnellleiste bleibt frei
+    for (const it of ['item1', 'item2', 'item3', 'item4'] as const) expect(commandOnKey(DEFAULT_KEYS, it)).toBeNull();
+    // Befehle auf die Tasten der Schnellleiste gelegt: dort gehören sie den Befehlen
+    const onBar = { ...DEFAULT_KEYS, cmdSturm: ['Digit1'], cmdFollow: ['Digit2'], cmdHold: ['Digit3'] };
+    expect(commandOnKey(onBar, 'item1')).toBe('sturm');
+    expect(commandOnKey(onBar, 'item3')).toBe('halten');
+    expect(commandOnKey(onBar, 'item4')).toBeNull();
   });
 
-  it('gemeinsame Tasten werden erkannt (Standard: Befehle 1–3 liegen auf den Schnellleisten-Tasten)', () => {
-    expect(sharesKey(DEFAULT_KEYS.item1, DEFAULT_KEYS.cmdSturm)).toBe(true);
-    expect(sharesKey(DEFAULT_KEYS.item4, DEFAULT_KEYS.cmdHold)).toBe(false);
+  it('Kampfkünste 1–4: zu Fuß ruhen die Güter auf denselben Tasten, nach dem Umbelegen nicht mehr', () => {
+    expect(ART_ACTIONS.map((a) => DEFAULT_KEYS[a])).toEqual([['Digit1'], ['Digit2'], ['Digit3'], ['Digit4']]);
+    expect([1, 2, 3, 4].map((i) => artOnKey(DEFAULT_KEYS, `item${i}` as 'item1'))).toEqual([1, 2, 3, 4]);
+    expect(artOnKey({ ...DEFAULT_KEYS, item1: ['Numpad1'] }, 'item1')).toBeNull();
+    // Springen liegt allein auf der Leertaste, Ausweichen auf Umschalt
+    expect(DEFAULT_KEYS.jump).toEqual(['Space']);
+    expect(DEFAULT_KEYS.dodge).not.toContain('Space');
+  });
+
+  it('gemeinsame Tasten werden erkannt', () => {
+    expect(sharesKey(DEFAULT_KEYS.item1, DEFAULT_KEYS.art1)).toBe(true);
+    expect(sharesKey(DEFAULT_KEYS.item1, DEFAULT_KEYS.cmdSturm)).toBe(false);
+    expect(sharesKey(DEFAULT_KEYS.cmdSturm, DEFAULT_KEYS.fleetHold)).toBe(true);
     expect(sharesKey(['KeyZ'], DEFAULT_KEYS.cmdSturm)).toBe(false);
   });
 });

@@ -140,6 +140,8 @@ export interface SaveData {
     /** Zweite Waffe (Platz 2, StyleId) und aktiver Platz 0/1 – fehlt in alten Spielständen (dann gilt der Standard) */
     alt?: string;
     slot?: 0 | 1;
+    /** Action-Stil der Spielfigur (4.6A: einer der sechs physischen Stile oder Faji-Wirken) – fehlt in alten Spielständen (dann gilt der Kampfstil) */
+    actionStyle?: string;
     level: number;
     xp: number;
     gold: number;

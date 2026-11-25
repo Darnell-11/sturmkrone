@@ -1,6 +1,8 @@
 import { lowerTier, QUALITY_TIERS, type QualityTier } from '../data/qualityTiers';
 import { FACTION_LABELS, rankIndex, rankName } from '../data/ranks';
 import { TOUCH_FOOT, TOUCH_SEA } from '../data/touchLayout';
+import { ACTION_STYLES, PHYSICAL_STYLES, actionStyleOf, isActionStyle, type ActionStyleId } from '../data/actionStyles';
+import { FighterHud } from '../ui/fighterHud';
 import { randomLook, type CharacterLook } from '../data/characterParts';
 import { WEATHER, type WeatherId } from '../data/world';
 import { CharacterAssets } from '../entities/character/assets';
@@ -50,7 +52,7 @@ import { ARMOR, ARMOR_LOOK, BAR_SLOTS, CONSUMABLE_BY_ID, CONSUMABLES, GEAR, GEAR
 import { NpcMarkers, type NpcMark } from '../ui/npcMarkers';
 import { QuestLog } from '../ui/questLog';
 import { DialogSession } from '../story/dialog';
-import { STYLE_ANIMS, type StyleId } from '../data/animations';
+import type { StyleId } from '../data/animations';
 import { SettingsStore } from './settings';
 import { StateMachine } from './state';
 import { browserStore } from './storage';
@@ -85,7 +87,7 @@ import { WorldMapScreen } from '../ui/worldMap';
 import { CREW_BY_ID } from '../data/crew';
 import { officerSlots, troopCapacity, TROOP_RANK } from '../data/crewTiers';
 import { addTroops, cleanRoster, clampRoster, COMMANDS, rosterTotal, scaleRoster, TROOPS, type CommandState, type TroopRoster, type TroopType } from '../data/troops';
-import { COMMAND_ACTIONS, PAD_CHORD_LABEL, commandOnKey, type ActionId } from '../data/actions';
+import { COMMAND_ACTIONS, PAD_CHORD_LABEL, commandOnKey, artOnKey, type ActionId } from '../data/actions';
 import {
   FLEET_ORDERS, FLEET_ORDER_ACTIONS, FLEET_UNLOCK_RANKS, TOWED_HP, activateShip, applyFleetEvo, activeCount, activeShips, assignShip, assignableClasses, dockShip, emptyFleet, fleetShip, fleetShipUpkeep, fleetSlots,
   fleetUpkeepDaily, fleetUpkeepList, hasFreeSlot, releaseShip, towShip, fleetIdOf, type FleetCtx, type FleetOrder, type FleetShipRecord, type FleetState,
@@ -557,12 +559,15 @@ export class Game {
       // Solange Trupps im Einsatz sind, gehören ihre Tasten den Befehlen (standardmäßig 1–3: Sturm, Folgen, Halten). Güter auf einer
       // Taste, die gerade ein Befehl belegt, ruhen (Schnellleiste: Platz 4 oder eigene Tasten); sonst gelten sie wie immer.
       const cmdKeys = this.world.squadsActive && this.world.mode === 'foot';
+      const artKeys = this.world.mode === 'foot';
       const binds = this.input.getKeyBindings();
       if (cmdKeys) for (const c of COMMANDS) if (this.input.pressed(COMMAND_ACTIONS[c.id])) this.orderTroops(c.id);
       for (let i = 0; i < BAR_SLOTS; i++) {
         const a = `item${i + 1}` as ActionId;
         if (!this.input.pressed(a)) continue;
         if (cmdKeys && commandOnKey(binds, a)) continue;
+        // zu Fuß gehören gemeinsame Tasten den Kampfkünsten des Stils (1–4)
+        if (artKeys && artOnKey(binds, a)) continue;
         this.useItem(this.save?.gear.bar?.[i] ?? null);
       }
       // Flottenbefehle auf See (5 / 6 / 7, Gamepad R3 + Kreuz): nur mit mindestens einem aktiven Begleitschiff
@@ -695,7 +700,11 @@ export class Game {
         const items = ['item1', 'item2', 'item3', 'item4'] as const;
         const cmdMode = this.world.squadsActive && this.world.mode === 'foot';
         const cmd = cmdMode ? items.map((a) => { const c = commandOnKey(b, a); return c ? COMMANDS.find((x) => x.id === c)!.short : null; }) : null;
-        this.hud.setItemBar(this.input.lastDevice !== 'touch', this.itemBarViews(), items.map((a) => this.input.keyLabel(b[a][0] ?? '')), cmd);
+        // zu Fuß ruhen Güter auf den Tasten der Kampfkünste: liegt die ganze Leiste darauf, bleibt sie weg (das Fighter-HUD hat den Platz)
+        const foot = this.world.mode === 'foot';
+        const allArt = foot && items.every((a) => artOnKey(b, a) !== null);
+        this.hud.setItemBar(this.input.lastDevice !== 'touch' && !allArt, this.itemBarViews(), items.map((a) => this.input.keyLabel(b[a][0] ?? '')), cmd);
+        this.updateFighterHud(frameDt, b);
       }
       // Erst die Auflösung anpassen (unsichtbarer), die ganze Grafikstufe erst senken, wenn das nicht reicht
       // Leistungs-Wächter: unter 50 fps zuerst unsichtbare Last abbauen (Schatten, AO, Vegetation), erst danach Auflösung und Grafikstufe
@@ -4189,34 +4198,82 @@ export class Game {
     return [first, alt];
   }
 
-  /** Waffe des aktiven Platzes */
+  /** Waffe in der Hand: die des aktuellen Action-Stils (4.6A), in alten Spielständen die des aktiven Platzes */
   private activeStyle(d: SaveData | null = this.save): StyleId {
+    const a = d!.player.actionStyle;
+    if (isActionStyle(a)) return ACTION_STYLES[a].visual;
     return this.weaponSlots(d)[d!.player.slot === 1 ? 1 : 0];
+  }
+
+  /** Aktueller Action-Stil (Spielstand; fehlt er, der passende zum Kampfstil des aktiven Platzes) */
+  private currentAction(d: SaveData | null = this.save): ActionStyleId {
+    const a = d!.player.actionStyle;
+    return isActionStyle(a) ? a : actionStyleOf(this.weaponSlots(d)[d!.player.slot === 1 ? 1 : 0]);
+  }
+
+  /** Stile für den Wechsel mit Q: die sechs physischen, dazu Faji-Wirken für Faji-Wirker */
+  private availableStyles(d: SaveData | null = this.save): ActionStyleId[] {
+    return d!.player.style === 'effekt' ? [...PHYSICAL_STYLES, 'effekt'] : [...PHYSICAL_STYLES];
   }
 
   private refreshWeaponHud() {
     const s = this.save;
     if (!s) return;
-    const [a, b] = this.weaponSlots();
-    this.hud.setWeapons(STYLE_ANIMS[a].label, STYLE_ANIMS[b].label, s.player.slot === 1 ? 1 : 0);
+    const list = this.availableStyles();
+    const cur = this.currentAction();
+    const next = list[(list.indexOf(cur) + 1) % list.length];
+    const b = this.input.getKeyBindings();
+    const key = this.input.lastDevice === 'gamepad' ? '' : this.input.keyLabel(b.swap[0] ?? '');
+    this.hud.setWeapons(`${ACTION_STYLES[cur].label}`, `${key ? `${key} → ` : '→ '}${ACTION_STYLES[next].label}`, 0);
   }
 
-  /** Waffe wechseln (Q: der jeweils andere Platz; Z/X: Platz 1 bzw. 2). Nur zu Fuß und im Spiel. */
+  /**
+   * Stil wechseln (4.6A, jederzeit – mitten in der Kette als Wechselschlag): Q = der nächste der sechs physischen Stile, Z/X = Stil von Platz 1
+   * bzw. 2 (Kampfstil aus dem Editor und zweite Waffe). Nur zu Fuß und im Spiel.
+   */
   swapWeapon(to?: 0 | 1) {
     const s = this.save;
     if (!s || !this.state.is('play') || this.world.mode !== 'foot') return;
-    const cur = s.player.slot === 1 ? 1 : 0;
-    const next: 0 | 1 = to ?? (cur ? 0 : 1);
-    if (next === cur) return;
-    const style = this.weaponSlots()[next];
-    if (!this.world.swapWeapon(style)) return;
-    s.player.slot = next;
-    s.player.alt = this.weaponSlots()[1];
-    this.world.faji?.refresh(s.player.level, style);
+    const cur = this.currentAction();
+    let next: ActionStyleId;
+    if (to === undefined) { const list = this.availableStyles(); next = list[(list.indexOf(cur) + 1) % list.length]; }
+    else {
+      const vis = this.weaponSlots()[to];
+      // Faust-Platz: die zuletzt gewählte Faust bleibt (Sturmfaust oder Erdspalter)
+      next = vis === 'faust' && (cur === 'sturmfaust' || cur === 'erdspalter') ? cur : vis === 'faust' && this.lastFist ? this.lastFist : actionStyleOf(vis);
+      if (next === cur) return;
+    }
+    if (!this.world.swapWeapon(next)) return;
+    if (to !== undefined) s.player.slot = to;
+    s.player.actionStyle = next;
+    if (next === 'sturmfaust' || next === 'erdspalter') this.lastFist = next;
+    this.world.faji?.refresh(s.player.level, ACTION_STYLES[next].visual);
     this.applyPower();
     audio.play('whoosh', 0.9);
     this.refreshWeaponHud();
     this.persist();
+  }
+  private lastFist: ActionStyleId | null = null;
+
+  // ---------- Fighter-HUD (4.6A) ----------
+
+  private fighterHud: FighterHud | null = null;
+  private readonly artKeys = ['', '', '', ''];
+
+  /** Kombo-Zähler und Kampfkünste unten (Desktop), am Handy Zähler und Stil; Touch-Knöpfe der Kampfkünste mit Abklingzeit */
+  private updateFighterHud(dt: number, b: Record<ActionId, string[]>) {
+    const hud = this.fighterHud ??= new FighterHud(this.hud.regions.bc);
+    const v = this.state.is('play') ? this.world.fighterView() : null;
+    const dev = this.input.lastDevice;
+    const pad = ['▲', '▶', '▼', '◀'];
+    for (let i = 0; i < 4; i++) this.artKeys[i] = dev === 'gamepad' ? pad[i] : this.input.keyLabel(b[`art${i + 1}` as ActionId][0] ?? '');
+    hud.update(v, this.artKeys, dev === 'touch', this.overlay.comboHits, this.overlay.comboFrac, dt);
+    this.overlay.comboDocked = !!v;
+    this.world.heavyKeyLabel = dev === 'gamepad' ? 'Y' : dev === 'touch' ? 'Schwer' : this.input.keyLabel(b.heavy[0] ?? '');
+    if (v && dev === 'touch') {
+      const st = ACTION_STYLES[v.style];
+      st.skills.forEach((k, i) => this.touch.setArt(`art${i + 1}`, k.icon, k.short, 1 - (v.cd[i] ?? 0), (v.cd[i] ?? 0) <= 0, st.accent));
+    }
   }
 
   private skillTree: SkillTree | null = null;
@@ -4337,8 +4394,9 @@ export class Game {
       this.save.player.blade = r.blade;
       this.save.player.slot = 0;
       this.save.player.alt = undefined;
+      this.save.player.actionStyle = actionStyleOf(styleIdOf(r.style, r.blade));
       this.refreshWeaponHud();
-      this.world.updatePlayer(this.displayLook(), styleIdOf(r.style, r.blade));
+      this.world.updatePlayer(this.displayLook(), styleIdOf(r.style, r.blade), this.save.player.actionStyle as ActionStyleId);
       // Kampfstil gewechselt: Kombos, Stilboni und Waffenname passen sich an
       this.world.faji?.refresh(this.save.player.level, styleIdOf(r.style, r.blade));
       this.applyPower();
@@ -4395,6 +4453,7 @@ export class Game {
     this.buffs = [];
     this.itemCd.clear();
     if (this.assets) this.world.setCharacters(this.assets, this.displayLook(data), this.activeStyle(data), this.overlay);
+    this.world.setActionStyle(this.currentAction(data));
     this.world.setSkills(data.skills, p.level);
     {
       // Zwei-Stufen-Crew: Seeleute-Anteil und Truppen aus dem Spielstand (ältere Spielstände haben `crewPools`/`troops` nicht: alles bleibt voll/leer)
@@ -4556,15 +4615,15 @@ export class Game {
     const dev = this.input.lastDevice;
     const foot = this.world.mode === 'foot';
     if (dev === 'touch') return foot
-      ? 'Links ziehen: Laufen · Rechts ziehen: Kamera · Angriff, Schwer, Rolle · Goldener Knopf: Aktion'
+      ? 'Links ziehen: Laufen · Rechts ziehen: Kamera · Angriff ×5 = Kombo · Schwer, Sprung, Dash · 1–4: Kampfkünste · Goldener Knopf: Aktion'
       : 'Links ziehen: Steuern · Rechts ziehen: Kamera · Feuer, Breitseiten, Schub · Goldener Knopf: Aktion';
     if (dev === 'gamepad') return foot
-      ? 'Linker Stick: Laufen · Rechter Stick: Kamera · A: Angriff · Y: Schwer · B: Rolle · X: Aktion · Start: Pause'
+      ? 'Linker Stick: Laufen · Rechter Stick: Kamera · A: Angriff · Y: Schwer · X: Sprung/Aktion · B: Dash · Steuerkreuz: Kampfkünste · Start: Pause'
       : 'Linker Stick: Steuern · Rechter Stick: Kamera · A: Feuer · LB/RB: Breitseiten · B: Schub · X: Aktion · Start: Pause';
     const b = this.input.getKeyBindings();
     const k = (a: keyof typeof b) => (b[a][0] ? this.input.keyLabel(b[a][0]) : '–');
     return foot
-      ? `${k('up')}${k('left')}${k('down')}${k('right')}: Laufen · ${k('attack')}/Klick: Angriff · ${k('heavy')}: Schwer · ${k('dodge')}: Rolle · ${k('interact')}: Aktion · Rechte Maustaste: Kamera · Esc: Pause`
+      ? `${k('up')}${k('left')}${k('down')}${k('right')}: Laufen · ${k('jump')}: Sprung · ${k('dodge')}: Dash · ${k('attack')}/Klick: Angriff (×5 Kombo, dann ${k('heavy')}) · ${k('heavy')}: Schwer · ${k('art1')}–${k('art4')}: Kampfkünste · ${k('swap')}: Stil · ${k('interact')}: Aktion · Esc: Pause`
       : `${k('up')}/${k('down')}: Fahrt · ${k('left')}/${k('right')}: Steuern · ${k('attack')}: Feuer · ${k('fireLeft')}/${k('fireRight')}: Breitseiten · ${k('dodge')}: Schub · ${k('interact')}: Aktion · Esc: Pause`;
   }
 }

@@ -660,11 +660,12 @@ describe('Flottenbefehle: Tasten und Gamepad-Kombination', () => {
     }
   });
 
-  it('Standardtasten 5, 6, 7: sie teilen keine Taste mit einer anderen Aktion', () => {
+  it('Standardtasten 5, 6, 7: sie teilen eine Taste nur mit den Truppenbefehlen (die gelten nur zu Fuß, die Flotte nur auf See)', () => {
     expect(FLEET_ORDERS.map((o) => DEFAULT_KEYS[FLEET_ORDER_ACTIONS[o.id]])).toEqual([['Digit5'], ['Digit6'], ['Digit7']]);
+    const footOnly = new Set<string>(['cmdSturm', 'cmdFollow', 'cmdHold']);
     for (const o of FLEET_ORDERS) {
       const a = FLEET_ORDER_ACTIONS[o.id];
-      for (const other of ACTION_IDS) if (other !== a) for (const c of DEFAULT_KEYS[a]) expect(DEFAULT_KEYS[other as ActionId], `${a} gegen ${other}`).not.toContain(c);
+      for (const other of ACTION_IDS) if (other !== a && !footOnly.has(other)) for (const c of DEFAULT_KEYS[a]) expect(DEFAULT_KEYS[other as ActionId], `${a} gegen ${other}`).not.toContain(c);
     }
   });
 

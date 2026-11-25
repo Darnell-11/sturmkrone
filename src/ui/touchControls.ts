@@ -151,6 +151,26 @@ export class TouchControls {
     b.classList.toggle('rdy', ready);
   }
 
+  /** Knopf einer Kampfkunst (4.6A): großes Symbol, Kurzname darunter, Abklingzeit als Kreisausschnitt (`frac` 1 = bereit) */
+  setArt(action: string, icon: string, name: string, frac: number, ready: boolean, color: string) {
+    const b = this.buttonsEl.querySelector<HTMLElement>(`[data-action="${action}"]`);
+    if (!b) return;
+    const span = b.querySelector('span')!;
+    const key = `${icon}|${name}`;
+    if (span.dataset.k !== key) {
+      span.dataset.k = key;
+      span.textContent = '';
+      const i = document.createElement('i'); i.className = 'art-ic'; i.textContent = icon;
+      const n = document.createElement('small'); n.className = 'art-nm'; n.textContent = name;
+      span.append(i, n);
+    }
+    const p = frac.toFixed(2);
+    if (b.dataset.p !== p) { b.dataset.p = p; b.style.setProperty('--p', p); }
+    if (b.style.getPropertyValue('--c') !== color) b.style.setProperty('--c', color);
+    b.classList.toggle('cd', frac < 1);
+    b.classList.toggle('rdy', ready);
+  }
+
   /** Feuerknopf hervorheben, solange ein Gegner im Fächer liegt (wie in 1.0) */
   setHot(action: string, on: boolean) {
     const b = this.buttonsEl.querySelector<HTMLElement>(`[data-action="${action}"]`);

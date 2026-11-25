@@ -24,16 +24,22 @@ export const TOUCH_SEA: TouchButtonDef[] = [
   { action: 'repair', label: 'Fli-\ncken', size: 48, right: 252, bottom: 30, color: 'ok' },
 ];
 
-// Touch-Buttons zu Fuß
+// Touch-Buttons zu Fuß (4.6A): Angriff, Schwer, Dash und Sprung unter dem Daumen, darüber im Bogen die vier Kampfkünste des Stils,
+// darüber die Faji-Fähigkeiten; Stilwechsel, Block, Ziel und Proviant am Rand. Kein Knopf überlappt einen anderen (tests/actionCombatEngine.test.ts).
 export const TOUCH_FOOT: TouchButtonDef[] = [
-  { action: 'attack', label: 'Angriff', size: 92, right: 18, bottom: 26, color: 'seal' },
-  { action: 'heavy', label: 'Schwer', size: 62, right: 28, bottom: 132, color: 'seal' },
-  { action: 'dodge', label: 'Rolle', size: 64, right: 124, bottom: 22, color: 'teal' },
-  { action: 'block', label: 'Block', size: 58, right: 118, bottom: 104, color: 'ok' },
-  { action: 'lockon', label: 'Ziel', size: 48, right: 200, bottom: 34, color: 'brass' },
-  { action: 'skill1', label: 'F1', size: 56, right: 20, bottom: 206, color: 'brass' },
-  { action: 'skill2', label: 'F2', size: 56, right: 84, bottom: 186, color: 'brass' },
-  { action: 'skill3', label: 'F3', size: 56, right: 190, bottom: 104, color: 'brass' },
-  { action: 'potion', label: 'Pro-\nviant', size: 46, right: 150, bottom: 232, color: 'ok' },
-  { action: 'swap', label: 'Waffe', size: 46, right: 250, bottom: 30, color: 'teal' },
+  { action: 'attack', label: 'Angriff', size: 90, right: 16, bottom: 24, color: 'seal' },
+  { action: 'heavy', label: 'Schwer', size: 60, right: 24, bottom: 126, color: 'seal' },
+  { action: 'dodge', label: 'Dash', size: 60, right: 116, bottom: 18, color: 'teal' },
+  { action: 'jump', label: 'Sprung', size: 58, right: 106, bottom: 92, color: 'teal' },
+  { action: 'block', label: 'Block', size: 46, right: 188, bottom: 22, color: 'ok' },
+  { action: 'lockon', label: 'Ziel', size: 42, right: 236, bottom: 74, color: 'brass' },
+  { action: 'art1', label: '1', size: 50, right: 16, bottom: 200, color: 'seal' },
+  { action: 'art2', label: '2', size: 50, right: 72, bottom: 176, color: 'seal' },
+  { action: 'art3', label: '3', size: 50, right: 124, bottom: 152, color: 'seal' },
+  { action: 'art4', label: '4', size: 50, right: 172, bottom: 118, color: 'seal' },
+  { action: 'skill1', label: 'F1', size: 46, right: 18, bottom: 264, color: 'brass' },
+  { action: 'skill2', label: 'F2', size: 46, right: 70, bottom: 240, color: 'brass' },
+  { action: 'skill3', label: 'F3', size: 46, right: 122, bottom: 214, color: 'brass' },
+  { action: 'potion', label: 'Pro-\nviant', size: 42, right: 236, bottom: 22, color: 'ok' },
+  { action: 'swap', label: 'Stil', size: 44, right: 174, bottom: 182, color: 'teal' },
 ];

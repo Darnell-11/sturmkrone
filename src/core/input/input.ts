@@ -71,6 +71,11 @@ export class Input {
   setKeyBindings(overrides: Partial<Record<ActionId, string[]>>) {
     this.bindings = { ...DEFAULT_KEYS };
     for (const a of ACTION_IDS) if (Array.isArray(overrides[a])) this.bindings[a] = overrides[a]!.slice();
+    // Eigene Belegung schlägt neue Standardtasten: hat jemand eine Taste selbst vergeben (z. B. Leertaste für „Ausweichen“ vor 4.6A), verliert
+    // eine Aktion ohne eigene Belegung (z. B. das neue „Springen“) diese Taste, statt sie doppelt auszulösen
+    const own = new Set<string>();
+    for (const a of ACTION_IDS) if (Array.isArray(overrides[a])) for (const c of overrides[a]!) own.add(c);
+    if (own.size) for (const a of ACTION_IDS) if (!Array.isArray(overrides[a])) this.bindings[a] = this.bindings[a].filter((c) => !own.has(c));
     // Esc pausiert immer
     for (const a of ACTION_IDS) this.bindings[a] = this.bindings[a].filter((c) => c !== 'Escape');
     this.bindings.pause = ['Escape', ...this.bindings.pause];

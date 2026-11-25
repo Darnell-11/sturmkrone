@@ -92,14 +92,18 @@ export function formationOffset(i: number, n: number, spacing: number, seed: num
   return out;
 }
 
-interface Corpse { on: boolean; typ: TroopType; x: number; y: number; z: number; yaw: number; t: number; spin: number }
+/** Gefallener Kopf; `vx/vy/vz` > 0 = weggeschleudert (fliegt im Bogen, überschlägt sich, landet auf `gy`) */
+interface Corpse { on: boolean; typ: TroopType; x: number; y: number; z: number; yaw: number; t: number; spin: number; vx: number; vy: number; vz: number; gy: number; fly: boolean; roll: number }
+
+/** Quelle einer Wucht (TroopSquad nach `fling`): Richtung und Stärke, wird beim Abholen geleert */
+export interface FlingSource { flingX: number; flingZ: number; flingP: number }
 
 const _m = new Matrix4(), _q = new Quaternion(), _e = new Euler(), _p = new Vector3(), _s = new Vector3();
 
 export class TroopRenderer {
   private meshes = new Map<TroopType, InstancedMesh>();
   private counts = new Map<TroopType, number>();
-  private corpses: Corpse[] = Array.from({ length: CORPSE_MAX }, () => ({ on: false, typ: 'schwert', x: 0, y: 0, z: 0, yaw: 0, t: 0, spin: 0 }));
+  private corpses: Corpse[] = Array.from({ length: CORPSE_MAX }, () => ({ on: false, typ: 'schwert' as TroopType, x: 0, y: 0, z: 0, yaw: 0, t: 0, spin: 0, vx: 0, vy: 0, vz: 0, gy: 0, fly: false, roll: 0 }));
   private corpseAt = 0;
   private boats: Mesh[] = [];
   readonly root = new Group();
@@ -135,17 +139,31 @@ export class TroopRenderer {
   /** Zeichenaufrufe dieser Darstellung (ein Netz je Typ mit Köpfen) */
   get drawCalls(): number { let n = 0; for (const m of this.meshes.values()) if (m.count > 0 && this.root.visible) n++; return n; }
 
-  /** `k` Köpfe eines Trupps sind gefallen: sie bleiben als Gefallene am Boden liegen */
-  fall(v: TroopView, k: number) {
+  /**
+   * `k` Köpfe eines Trupps sind gefallen: sie bleiben als Gefallene am Boden liegen. Mit `src` (Wucht eines Flächen-Finishers) fliegen sie
+   * vorher im Bogen davon und überschlagen sich; die Wucht der Quelle ist damit abgeholt.
+   */
+  fall(v: TroopView, k: number, src: FlingSource | null = null) {
     const d = TROOPS[v.typ];
     const n = v.heads + k;
     const cs = Math.cos(v.yaw), sn = Math.sin(v.yaw);
-    for (let j = 0; j < Math.min(k, 6); j++) {
+    const p = src ? src.flingP : 0;
+    for (let j = 0; j < Math.min(k, p > 0 ? 10 : 6); j++) {
       const o = formationOffset(v.heads + j, n, d.spacing * v.compact, v.seed);
       const c = this.corpses[this.corpseAt++ % CORPSE_MAX];
       c.on = true; c.typ = v.typ; c.t = 0; c.yaw = v.yaw; c.spin = (hash(v.seed, j) - 0.5) * 1.2;
-      c.x = v.x + o.lat * cs + o.fwd * sn; c.z = v.z - o.lat * sn + o.fwd * cs; c.y = v.y;
+      c.x = v.x + o.lat * cs + o.fwd * sn; c.z = v.z - o.lat * sn + o.fwd * cs; c.y = v.y; c.gy = v.y;
+      c.fly = p > 0; c.roll = 0;
+      if (c.fly) {
+        const h = hash(v.seed, j + 211), sp = p * (0.55 + 0.6 * h);
+        // etwas auffächern: nicht alle exakt in Stoßrichtung
+        const a = (hash(v.seed, j + 97) - 0.5) * 0.9, ca = Math.cos(a), sa = Math.sin(a);
+        c.vx = (src!.flingX * ca - src!.flingZ * sa) * sp; c.vz = (src!.flingX * sa + src!.flingZ * ca) * sp;
+        c.vy = 4 + p * 0.45 + h * 3;
+        c.yaw = Math.atan2(-c.vx, -c.vz);
+      } else { c.vx = c.vy = c.vz = 0; }
     }
+    if (src) src.flingP = 0;
   }
 
   /** Alle Köpfe schreiben. `t` = Spielzeit (s), `dt` = Bildzeit */
@@ -180,9 +198,26 @@ export class TroopRenderer {
       }
       this.counts.set(v.typ, c);
     }
-    // Gefallene: kippen, liegen, sinken weg
+    // Gefallene: kippen, liegen, sinken weg (weggeschleuderte fliegen zuerst im Bogen und überschlagen sich)
     for (const k of this.corpses) {
       if (!k.on) continue;
+      if (k.fly) {
+        k.vy -= 20 * dt;
+        k.x += k.vx * dt; k.y += k.vy * dt; k.z += k.vz * dt;
+        k.roll += dt * 11;
+        if (k.y <= k.gy && k.vy < 0) { k.y = k.gy; k.fly = false; k.t = 0.15; }
+        const mesh = this.meshes.get(k.typ)!;
+        const c = this.counts.get(k.typ)!;
+        if (c >= this.cap) continue;
+        _e.set(-k.roll, k.yaw + k.spin, k.spin * 0.6, 'YXZ');
+        _q.setFromEuler(_e);
+        _m.compose(_p.set(k.x, k.y + 0.4, k.z), _q, _s.set(1, 1, 1));
+        _m.toArray(mesh.instanceMatrix.array as Float32Array, c * 16);
+        const col = mesh.instanceColor!.array as Float32Array;
+        col[c * 3] = col[c * 3 + 1] = col[c * 3 + 2] = 0.8;
+        this.counts.set(k.typ, c + 1);
+        continue;
+      }
       k.t += dt;
       if (k.t > CORPSE_LIFE) { k.on = false; continue; }
       const mesh = this.meshes.get(k.typ)!;

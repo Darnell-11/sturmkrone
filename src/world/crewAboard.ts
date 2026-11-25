@@ -421,7 +421,7 @@ export class CrewAboard {
         // Beiboot bleibt kurz am Strand liegen und verschwindet dann
         if (this.boatHold[i] > 0) { this.boatHold[i] -= dt; if (this.boatHold[i] <= 0) R.boat(i, null); }
       }
-      if (q.lostHeads > 0) { R.fall(v, q.lostHeads); q.lostHeads = 0; }
+      if (q.lostHeads > 0) { R.fall(v, q.lostHeads, q); q.lostHeads = 0; }
     }
     R.update(this.squadViews, t, dt);
   }
