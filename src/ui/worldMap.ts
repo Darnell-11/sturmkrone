@@ -80,7 +80,7 @@ export class WorldMapScreen {
       </div>
       <div class="wmap-layers" role="group" aria-label="Ebenen">${MAP_LAYERS.map((l) => `<button class="mini wmap-layer" data-a="layer" data-v="${l.id}" aria-pressed="${this.layers[l.id]}" title="${esc(l.hint)}">${esc(l.label)}</button>`).join('')}</div>
       <div class="wmap-legend small wmap-powers">${(['england', 'deutschland', 'kurogane', 'niederlande', 'frankreich'] as const).map((id) => `<span><i class="lg" style="background:${FACTIONS[id].color}"></i>${FACTIONS[id].name}</span>`).join('')}<span><i class="lg" style="background:#F4F7FC;border:2px solid #16306A"></i>Marine (Grenzen)</span><span>◌ gestrichelt: Kolonie</span></div>
-      <div class="wmap-legend small"><span><i class="lg me"></i>Du</span><span><i class="lg q">!</i>Auftrag</span><span><i class="lg t">?</i>Abgabe</span><span><i class="lg b">☠</i>Boss</span><span><i class="lg e"></i>Feind</span><span><i class="lg s">★</i>Ziel</span><span><i class="lg x">✕</i>Schatz</span><span><i class="lg w">⚔</i>Seeschlacht</span></div>
+      <div class="wmap-legend small"><span><i class="lg me"></i>Du</span><span><i class="lg q">!</i>Auftrag</span><span><i class="lg t">?</i>Abgabe</span><span><i class="lg b">☠</i>Boss</span><span><i class="lg e"></i>Feind</span><span><i class="lg s">★</i>Ziel</span><span><i class="lg x">✕</i>Schatz</span><span><i class="lg w">⚔</i>Seeschlacht</span><span><i class="lg w">⚑</i>Belagerung</span></div>
       <div class="wmap-occ" aria-live="polite" hidden></div>
       <div class="wmap-info panel" hidden></div>
       <p class="wmap-hint small soft">Ziehen: Karte bewegen · Mausrad oder Zwei-Finger-Geste: zoomen · Hafen anklicken: Seekarten-Reise · M oder Esc: schließen</p>`;
@@ -276,11 +276,14 @@ export class WorldMapScreen {
     const mm = isMegaId(i.id) ? MEGA_BY_ID[i.id] : null;
     const megaLine = mm ? `<p class="small" style="color:#E3B04B">★ <b>${esc(mm.title)}</b> · Kampf-Bezirke: ${mm.districts.map((x) => esc(x.name)).join(', ')} · Kommandant: <b>${esc(mm.commander.name)}</b></p>` : '';
     const block = d.blockaded?.(i.id) ? '<p class="small" style="color:#FF8A6A">⚓ <b>Blockade</b> vor dem Hafen: alle Preise doppelt, keine Schnellreise.</p>' : '';
+    // Belagerung (4.5B): voller Text auch bei niedrigem Zoom, wenn man die Insel anklickt
+    const sg = d.wars?.sieges.find((s) => s.id === i.id);
+    const siegeLine = sg ? `<p class="small" style="color:#FFC090">⚑ <b>${esc(sg.name)}</b> · ${Math.round(sg.progress * 100)} %${sg.points ? ` · ${esc(sg.points)}` : ''}</p>` : '';
     const note = this.note ? `<p class="small" style="color:#FFB070" role="status">${esc(this.note)}</p>` : '';
     this.info.innerHTML = known
       ? `<button class="icon-btn" data-a="closeinfo" aria-label="Schließen">✕</button><h3 class="fell">${esc(i.name)}</h3>
          <p class="small soft">${KIND_LABEL[i.kind]}${region ? ` · ${esc(region.name)}` : ''}${i.level ? ` · Stufe ${i.level}` : ''} · ${fmtDist(dist)} entfernt</p>
-         ${megaLine}${ownerLine}${occLine}${block}<p class="small">${esc(i.info)}</p>${i.boss ? `<p class="small">☠ <b>${esc(i.boss)}</b></p>` : ''}${mk ? `<p class="small">${mk === 'quest' ? '<b>!</b> Hier wartet ein Auftrag.' : '<b>?</b> Hier kannst du einen Auftrag abgeben.'}</p>` : ''}${isTravelPort(i.kind) ? this.goodsLine(i) + this.travelHtml(i) : ''}${note}`
+         ${megaLine}${ownerLine}${occLine}${siegeLine}${block}<p class="small">${esc(i.info)}</p>${i.boss ? `<p class="small">☠ <b>${esc(i.boss)}</b></p>` : ''}${mk ? `<p class="small">${mk === 'quest' ? '<b>!</b> Hier wartet ein Auftrag.' : '<b>?</b> Hier kannst du einen Auftrag abgeben.'}</p>` : ''}${isTravelPort(i.kind) ? this.goodsLine(i) + this.travelHtml(i) : ''}${note}`
       : `<button class="icon-btn" data-a="closeinfo" aria-label="Schließen">✕</button><h3 class="fell">${i.mega ? esc(i.name) : 'Unentdeckte Insel'}</h3><p class="small soft">Nur ein schemenhafter Umriss. Segle bis auf wenige Kilometer heran – oder lege in einem Hafen in der Nähe an –, um sie zu kartieren.</p>${region ? `<p class="small soft">Liegt im Meer „${esc(region.name)}“ · ${fmtDist(dist)} entfernt.</p>` : `<p class="small soft">${fmtDist(dist)} entfernt.</p>`}`;
   }
 

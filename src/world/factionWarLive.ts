@@ -6,11 +6,12 @@
 // Ereignis-Schiffe des lebendigen Meeres), jenseits von `LIVE_OUT` (2 300 m) werden sie wieder zu Daten. Eine Großschlacht erscheint immer mit beiden
 // Seiten; erst wenn beide Armadas echt fahren, rechnet die Seewelt (die Engine wartet so lange). Wie viele Schiffe je Armada echt fahren, bestimmt die
 // Grafikstufe (`NavalSystem.detail`); die übrigen bleiben Reserve in den Daten und rücken nach, wenn eines sinkt.
-import type { Object3D, Scene } from 'three';
+import { BoxGeometry, Color, CylinderGeometry, Group, Mesh, MeshBasicMaterial, TorusGeometry, type BufferGeometry, type Object3D, type Scene } from 'three';
 import { factionShipLook, SHIP_CLASSES } from '../data/ships';
-import { ROLE_LABEL } from '../data/nations';
+import { ROLE_LABEL, WAR } from '../data/nations';
 import { seaLevelAt } from '../data/regions';
-import type { FactionId } from '../data/factions';
+import { FACTIONS, type FactionId } from '../data/factions';
+import { disposeObject, markShared } from '../render/dispose';
 import type { EnemyShip, EventShipLink, NavalSystem, SpawnYield } from '../naval/naval';
 import type { Ship } from '../entities/ship/ship';
 import type { ShipEvolution, EvoTier } from '../data/shipEvolution';
@@ -19,8 +20,9 @@ import { TroopRenderer, type TroopView } from '../entities/troops/troopRender';
 import { hordePalette } from '../raid/horde';
 import type { NavGrid } from '../ai/navGrid';
 import type { WalkIsland } from './islandGround';
-import { shipHp, type ArmadaShip, type ArmadaState, type FactionWarEngine } from './factionWarEngine';
+import { shipHp, type ArmadaShip, type ArmadaState, type FactionWarEngine, type SiegePoint, type SiegeSide } from './factionWarEngine';
 
+const NO_PTS: readonly { x: number; y: number; z: number }[] = [];
 const LIVE_IN = 1500;
 const LIVE_OUT = 2300;
 const SYNC_EVERY = 0.25;
@@ -43,11 +45,45 @@ export interface WarLiveHost {
   troopBase(): TroopWorld;
   /** Kennung der Spielfigur (Besitzer der Trupps, nie verbündet mit dem Spieler) */
   playerId: string;
+  // ---- Landkampf an den Kontrollpunkten (4.5B) ----
+  /** Die Spielfigur als Ziel der Trupps (stabiles Objekt, Werte werden frisch gelesen) */
+  playerFoe(): TroopFoe;
+  /** Offiziere und Trupps des Spielers an Land (`combat.allies`) */
+  crew(): readonly TroopFoe[];
+  /** Treffer eines feindlichen Trupps auf Spielfigur oder Crew (abgeschwächt wie im Raid) */
+  strike(t: TroopFoe, dmg: number, dirX: number, dirZ: number, heavy: boolean): void;
+  /** Steht die Spielfigur an Land (nicht an Deck, nicht auf See)? */
+  onFoot(): boolean;
+  /** Verbände, die die Spielfigur treffen kann (`combat.mass`); null = keine (wieder freigeben) */
+  setMass(list: TroopSquad[] | null): void;
 }
 
 interface BuildJob { armadaId: string; shipId: string; it: Generator<SpawnYield, EnemyShip> }
 
-/** Echte Truppen einer Belagerung: Landungskorps gegen Garnison, beide als Massentrupps (ein InstancedMesh je Typ und Seite) */
+/** Netze der Kontrollpunkt-Markierungen (einmal angelegt, geteilt, nie freigegeben) */
+let MARK_GEO: { pole: BufferGeometry; flag: BufferGeometry; ring: BufferGeometry } | null = null;
+function markGeo() {
+  if (!MARK_GEO) {
+    MARK_GEO = {
+      pole: markShared(new CylinderGeometry(0.09, 0.13, 6.6, 6).translate(0, 3.3, 0)),
+      flag: markShared(new BoxGeometry(2.4, 1.5, 0.06).translate(1.25, 5.7, 0)),
+      ring: markShared(new TorusGeometry(WAR.pointRadius, 0.16, 4, 56).rotateX(Math.PI / 2)),
+    };
+  }
+  return MARK_GEO;
+}
+const NEUTRAL = new Color('#E8E2D4');
+const POLE = new Color('#3A2A1C');
+
+/** Was die Belagerungstruppen von der Live-Schicht brauchen */
+interface SiegeCtx { engine: FactionWarEngine; host: WarLiveHost }
+
+/**
+ * Echte Truppen einer Belagerung: Landungskorps gegen Garnison, beide als Massentrupps (ein InstancedMesh je Typ und Seite), dazu die Kontrollpunkte
+ * (4.5B) mit Fahne und Fangring. Die Angreifer rücken auf die Punkte vor, die Verteidiger halten sie; wer im Fangradius die Übermacht hat, schiebt den
+ * Punkt zu sich (`FactionWarEngine.controlStep`). Ergreift der Spieler Partei, werden die Trupps der Gegenseite zu Zielen seiner Hiebe, Geschosse,
+ * Fähigkeiten und Trupps (`combat.mass`) und greifen ihrerseits Spielfigur und Crew an.
+ */
 class SiegeTroops {
   readonly sides: TroopSquad[][] = [[], []];
   private readonly views: TroopView[][] = [[], []];
@@ -57,54 +93,124 @@ class SiegeTroops {
   readonly heads0: [number, number] = [0, 0];
   readonly units0: [number, number];
   private disposed = false;
+  /** Kontrollpunkte auf begehbarem Boden (Reihenfolge wie in der Engine) */
+  readonly pts: { x: number; y: number; z: number }[] = [];
+  private readonly marks: { group: Group; flag: MeshBasicMaterial; ring: MeshBasicMaterial }[] = [];
+  private readonly colA: Color;
+  private readonly colD: Color;
+  /** Punkt je Trupp (Angreifer rücken vor, Verteidiger halten) */
+  private readonly assign: number[][] = [[], []];
+  private readonly foeBuf: TroopFoe[][] = [[], []];
+  private readonly att = new Float32Array(4);
+  private readonly def = new Float32Array(4);
+  private readonly credited = new Set<TroopSquad>();
+  /** Seite des Spielers (null: schaut zu) und die ihm feindliche Seite (−1: keine) */
+  side: SiegeSide | null = null;
+  private hostile = -1;
 
-  constructor(scene: Scene, readonly siegeId: string, attacker: FactionId, defender: FactionId, base: TroopWorld, nav: NavGrid | null, isl: WalkIsland,
-    from: { x: number; z: number }, troops: number, garrison: number, level: number, ownerId: string) {
+  constructor(private readonly ctx: SiegeCtx, scene: Scene, readonly siegeId: string, attacker: FactionId, defender: FactionId, base: TroopWorld, nav: NavGrid | null, isl: WalkIsland,
+    from: { x: number; z: number }, troops: number, garrison: number, level: number, ownerId: string, points: readonly SiegePoint[]) {
     this.renderers = [new TroopRenderer(scene, true, { palette: hordePalette(attacker), cap: 60 }), new TroopRenderer(scene, true, { palette: hordePalette(defender), cap: 60 })];
     this.units0 = [troops, garrison];
-    const foes = (side: 0 | 1): readonly TroopFoe[] => this.sides[1 - side];
+    this.colA = new Color(FACTIONS[attacker].color);
+    this.colD = new Color(FACTIONS[defender].color);
+    const host = ctx.host;
     this.worlds = [0, 1].map((side) => ({
       ...base,
-      enemies: () => foes(side as 0 | 1),
-      hit: (e: TroopFoe, dmg: number, dx: number, dz: number) => { (e as TroopSquad).receive(dmg, dx, dz); },
+      enemies: () => this.foes(side as 0 | 1),
+      hit: (e: TroopFoe, dmg: number, dx: number, dz: number, _c: string, heavy: boolean) => {
+        void _c;
+        if (this.sides[1 - side].includes(e as TroopSquad)) (e as TroopSquad).receive(dmg, dx, dz);
+        else if (this.hostile === side) host.strike(e, dmg, dx, dz, heavy);
+      },
       nav: () => nav,
     }));
-    // Landeplatz: Strand auf der Seite der Flotte, Verteidigung auf halbem Weg zur Inselmitte
+    // Kontrollpunkte: auf begehbaren Boden rücken, Fahne und Fangring aufstellen
+    const g = markGeo();
+    const snap = { x: 0, z: 0 };
+    for (const p of points) {
+      let x = p.x, z = p.z;
+      if (nav) { nav.snap(x, z, 1.4, snap); x = snap.x; z = snap.z; }
+      let y = base.ground.height(x, z);
+      if (!Number.isFinite(y)) y = 1;
+      this.pts.push({ x, y, z });
+      const grp = new Group();
+      grp.position.set(x, y, z);
+      const pole = new Mesh(g.pole, new MeshBasicMaterial({ color: POLE }));
+      const flagMat = new MeshBasicMaterial({ color: NEUTRAL.clone() });
+      const flag = new Mesh(g.flag, flagMat);
+      const ringMat = new MeshBasicMaterial({ color: NEUTRAL.clone() });
+      const ring = new Mesh(g.ring, ringMat);
+      // der Ring liegt knapp über dem höchsten Bodenpunkt seines Umfangs (kein Versinken im Hang)
+      let top = y;
+      for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; const h = base.ground.height(x + Math.sin(a) * WAR.pointRadius, z + Math.cos(a) * WAR.pointRadius); if (Number.isFinite(h) && h > top) top = h; }
+      ring.position.y = Math.min(top - y, 2.5) + 0.12;
+      grp.add(pole, flag, ring);
+      scene.add(grp);
+      this.marks.push({ group: grp, flag: flagMat, ring: ringMat });
+    }
+    const npts = Math.max(1, this.pts.length);
+    // Landeplatz: Strand auf der Seite der Flotte, Verteidigung an den Kontrollpunkten
     const ang = Math.atan2(from.x - isl.x, from.z - isl.z);
-    const beachR = isl.r * 0.82, holdR = isl.r * 0.42;
-    const spot = { x: 0, z: 0 };
-    const place = (r: number, off: number) => {
-      const a = ang + off;
-      let x = isl.x + Math.sin(a) * r, z = isl.z + Math.cos(a) * r;
-      if (nav) { nav.snap(x, z, 1.2, spot); x = spot.x; z = spot.z; }
-      return { x, z };
-    };
+    this.mk = { from, ang, beachR: isl.r * 0.82, holdR: isl.r * 0.42, level, ownerId, base, nav, isl };
+    // sichtbar ist nur die Front (höchstens sechs Trupps je Seite zu je vier Köpfen); der Rest landet als Verstärkung nach (`control`)
     const attackers = Math.max(2, Math.min(6, Math.round(troops / 22)));
     const defenders = Math.max(1, Math.min(6, Math.round(garrison / 22)));
     for (let k = 0; k < attackers; k++) {
-      const p = place(beachR, (k - (attackers - 1) / 2) * 0.12);
-      const q = new TroopSquad(k % 2 ? 'musketier' : 'schwert', 4, level, ownerId);
-      q.hostile = true; q.aggroR = 70;
-      q.place(p.x, p.z, ang + Math.PI, base.ground);
-      // vorrücken bis zur Verteidigungslinie
-      const g = place(holdR * 0.8, (k - (attackers - 1) / 2) * 0.08);
-      q.holdX = g.x; q.holdZ = g.z;
-      q.startLanding({ fromX: from.x + Math.sin(ang) * 10, fromZ: from.z + Math.cos(ang) * 10, fromY: 0.6, delay: 1 + k * 1.4, total: 9, boat: true });
-      this.sides[0].push(q);
+      // nach der Landung rückt der Trupp auf seinen Kontrollpunkt vor (der nächste Punkt, den die Angreifer noch nicht halten: `control`)
+      this.assign[0].push(k % npts);
+      this.sides[0].push(this.makeSquad(0, k, attackers, 1 + k * 1.4));
     }
     for (let k = 0; k < defenders; k++) {
-      const p = place(holdR, (k - (defenders - 1) / 2) * 0.22);
-      const q = new TroopSquad(k % 2 ? 'schwert' : 'musketier', 4, level, ownerId);
-      q.hostile = true; q.aggroR = 55;
-      q.place(p.x, p.z, ang, base.ground);
-      q.holdX = p.x; q.holdZ = p.z;
-      this.sides[1].push(q);
+      // die Garnison verteilt sich auf die Kontrollpunkte
+      this.assign[1].push(k % npts);
+      this.sides[1].push(this.makeSquad(1, k, defenders, 0));
     }
     for (const side of [0, 1] as const) {
       let h = 0;
-      for (const q of this.sides[side]) { h += q.heads; this.views[side].push({ typ: q.typ, heads: q.heads, x: q.x, y: q.y, z: q.z, yaw: q.yaw, move: 0, pulse: 0, seed: q.seed, compact: 1 }); }
+      for (const q of this.sides[side]) { h += q.heads; this.views[side].push(this.viewOf(q)); }
       this.heads0[side] = h;
     }
+  }
+
+  /** Zum Aufstellen neuer Trupps (Verstärkung) */
+  private readonly mk: { from: { x: number; z: number }; ang: number; beachR: number; holdR: number; level: number; ownerId: string; base: TroopWorld; nav: NavGrid | null; isl: WalkIsland };
+  /** Je Seite insgesamt aufgestellte Köpfe (Verluste = aufgestellt − lebend) und Wartezeit bis zur nächsten Verstärkung */
+  private readonly spawned: [number, number] = [0, 0];
+  private readonly reinforceT: [number, number] = [WAR.reinforceEvery, WAR.reinforceEvery];
+  private readonly spot = { x: 0, z: 0 };
+
+  private placeAt(r: number, off: number): { x: number; z: number } {
+    const m = this.mk, a = m.ang + off;
+    let x = m.isl.x + Math.sin(a) * r, z = m.isl.z + Math.cos(a) * r;
+    if (m.nav) { m.nav.snap(x, z, 1.2, this.spot); x = this.spot.x; z = this.spot.z; }
+    return { x, z };
+  }
+
+  private viewOf(q: TroopSquad): TroopView {
+    return { typ: q.typ, heads: q.heads, x: q.x, y: q.y, z: q.z, yaw: q.yaw, move: 0, pulse: 0, seed: q.seed, compact: 1 };
+  }
+
+  /** Trupp aufstellen: Angreifer setzen im Beiboot von der Flotte über, Verteidiger kommen aus dem Ort an ihren Kontrollpunkt */
+  private makeSquad(side: 0 | 1, k: number, n: number, delay: number): TroopSquad {
+    const m = this.mk, npts = Math.max(1, this.pts.length);
+    const q = new TroopSquad(side === 0 ? (k % 2 ? 'musketier' : 'schwert') : (k % 2 ? 'schwert' : 'musketier'), 4, m.level, m.ownerId);
+    q.hostile = true;
+    if (side === 0) {
+      q.aggroR = 70;
+      const p = this.placeAt(m.beachR, (k - (n - 1) / 2) * 0.12);
+      q.place(p.x, p.z, m.ang + Math.PI, m.base.ground);
+      q.startLanding({ fromX: m.from.x + Math.sin(m.ang) * 10, fromZ: m.from.z + Math.cos(m.ang) * 10, fromY: 0.6, delay, total: 9, boat: true });
+    } else {
+      q.aggroR = 55;
+      const pt = this.pts[k % npts];
+      const off = Math.floor(k / npts) * 5 - 2.5;
+      const p = pt ? { x: pt.x + off, z: pt.z - off } : this.placeAt(m.holdR, (k - (n - 1) / 2) * 0.22);
+      q.place(p.x, p.z, m.ang, m.base.ground);
+      q.holdX = p.x; q.holdZ = p.z;
+    }
+    this.spawned[side] += q.heads;
+    return q;
   }
 
   /** Köpfe einer Seite (lebende Trupps, auch noch im Boot) */
@@ -112,6 +218,47 @@ class SiegeTroops {
     let h = 0;
     for (const q of this.sides[side]) h += q.heads;
     return h;
+  }
+
+  /** Schon an die Engine gemeldete gefallene Köpfe je Seite */
+  private readonly reported: [number, number] = [0, 0];
+  private readonly losses: [number, number] = [0, 0];
+
+  /**
+   * Neue Verluste seit der letzten Meldung (Soldaten der Engine): jeder gefallene Kopf zählt `WAR.troopsPerHead` (die Front ist nur ein Ausschnitt des
+   * Heeres). Als Differenz gemeldet, damit Änderungen von außen (Lieferung, versenkte Transporter) erhalten bleiben. Liefert ein festes Feld.
+   */
+  takeLosses(): readonly [number, number] {
+    for (const side of [0, 1] as const) {
+      const lost = this.spawned[side] - this.heads(side);
+      this.losses[side] = Math.max(0, lost - this.reported[side]) * WAR.troopsPerHead;
+      this.reported[side] = Math.max(this.reported[side], lost);
+    }
+    return this.losses;
+  }
+
+  /**
+   * Verstärkung: ist ein Trupp gefallen und hat die Seite in der Engine noch Reserve (Soldaten jenseits der Front), landet höchstens alle
+   * `WAR.reinforceEvery` s ein neuer Trupp an seiner Stelle (Angreifer im Beiboot, Verteidiger aus dem Ort). Felder bleiben gleich lang.
+   */
+  private reinforce(dt: number, troops: number, garrison: number) {
+    for (const side of [0, 1] as const) {
+      this.reinforceT[side] -= dt;
+      if (this.reinforceT[side] > 0) continue;
+      const reserve = (side === 0 ? troops : garrison) - this.heads(side) * WAR.troopsPerHead;
+      if (reserve < 4 * WAR.troopsPerHead) continue;
+      const list = this.sides[side];
+      for (let k = 0; k < list.length; k++) {
+        const old = list[k];
+        if (old.heads > 0 || old.deadT < 2.5) continue;
+        const q = this.makeSquad(side, k, list.length, 0.3);
+        list[k] = q;
+        this.views[side][k] = this.viewOf(q);
+        this.credited.delete(old);
+        this.reinforceT[side] = WAR.reinforceEvery;
+        break;
+      }
+    }
   }
 
   update(dt: number, t: number, ref: { x: number; z: number; yaw: number }) {
@@ -133,12 +280,108 @@ class SiegeTroops {
       }
       this.renderers[side].update(views, t, dt);
     }
+    // Fahnen und Ringe in der Farbe der haltenden Seite (umkämpft: hell), ohne neue Farben je Bild
+    const sg = this.ctx.engine.siegeById(this.siegeId);
+    if (sg) for (let i = 0; i < this.marks.length && i < sg.points.length; i++) {
+      const h = sg.points[i].hold, m = this.marks[i];
+      if (h >= 0) m.flag.color.lerpColors(NEUTRAL, this.colA, h); else m.flag.color.lerpColors(NEUTRAL, this.colD, -h);
+      m.ring.color.copy(m.flag.color);
+    }
+  }
+
+  /** Ziele eines Trupps: die lebenden Trupps der Gegenseite, für die dem Spieler feindliche Seite auch Spielfigur und Crew (Liste ohne neue Felder) */
+  private foes(side: 0 | 1): readonly TroopFoe[] {
+    const b = this.foeBuf[side];
+    b.length = 0;
+    const other = this.sides[1 - side];
+    for (let i = 0; i < other.length; i++) if (other[i].alive) b.push(other[i]);
+    if (this.hostile === side && this.ctx.host.onFoot()) {
+      const pf = this.ctx.host.playerFoe();
+      if (pf.alive) b.push(pf);
+      const crew = this.ctx.host.crew();
+      for (let i = 0; i < crew.length; i++) if (crew[i].alive) b.push(crew[i]);
+    }
+    return b;
+  }
+
+  /** Partei ergreifen: die Gegenseite wird angreifbar (`combat.mass`) und greift Spielfigur und Crew an; null = wieder Zuschauer */
+  setSide(side: SiegeSide | null) {
+    if (this.disposed || side === this.side) return;
+    this.side = side;
+    this.hostile = side === 'verteidiger' ? 0 : side === 'angreifer' ? 1 : -1;
+    this.ctx.host.setMass(this.hostile >= 0 ? this.sides[this.hostile] : null);
+  }
+
+  /**
+   * Ein Schritt um die Kontrollpunkte (alle `SYNC_EVERY` s): Kampfkraft im Fangradius zählen (Köpfe; Spielfigur und Offiziere mit festen Werten für
+   * ihre Seite), an die Engine geben, Angreifer auf den nächsten Punkt schicken, den sie noch nicht halten; aufgeriebene Trupps der Gegenseite in
+   * Spielernähe bringen Kriegspunkte.
+   */
+  control(dt: number) {
+    const eng = this.ctx.engine, host = this.ctx.host;
+    const sg = eng.siegeById(this.siegeId);
+    if (!sg || sg.ended || this.disposed) return;
+    const n = Math.min(this.pts.length, sg.points.length, 4);
+    const att = this.att, def = this.def, R2 = WAR.pointRadius * WAR.pointRadius;
+    att.fill(0); def.fill(0);
+    for (let side = 0; side < 2; side++) {
+      const arr = side === 0 ? att : def;
+      for (const q of this.sides[side]) {
+        if (!q.alive) continue;
+        for (let i = 0; i < n; i++) { const dx = q.x - this.pts[i].x, dz = q.z - this.pts[i].z; if (dx * dx + dz * dz < R2) arr[i] += q.heads; }
+      }
+    }
+    let at = 0;
+    const ps = this.side;
+    const foot = host.onFoot();
+    if (ps && foot) {
+      const arr = ps === 'angreifer' ? att : def;
+      const f = host.focus();
+      for (let i = 0; i < n; i++) { const dx = f.x - this.pts[i].x, dz = f.z - this.pts[i].z; if (dx * dx + dz * dz < R2) { arr[i] += WAR.playerPresence; at |= 1 << i; } }
+      const crew = host.crew();
+      for (const c of crew) {
+        if (!c.alive) continue;
+        const k = (c as { heads?: number }).heads ?? WAR.officerPresence;
+        for (let i = 0; i < n; i++) { const dx = c.x - this.pts[i].x, dz = c.z - this.pts[i].z; if (dx * dx + dz * dz < R2) arr[i] += k; }
+      }
+    }
+    eng.controlStep(this.siegeId, att, def, dt, ps ? { playerId: host.playerId, side: ps, at } : null);
+    this.reinforce(dt, sg.troops, sg.garrison);
+    // das Betreten der Insel setzt die Verbände des Kampfsystems zurück: die Gegenseite bleibt angreifbar (eine Zuweisung, keine neue Liste)
+    if (this.hostile >= 0 && foot) host.setMass(this.sides[this.hostile]);
+    // Angreifer: auf den eigenen Punkt; hält ihn die eigene Seite schon, weiter zum nächsten, der noch umkämpft oder in Feindeshand ist
+    const list = this.sides[0];
+    for (let k = 0; k < list.length; k++) {
+      const q = list[k];
+      if (!q.alive || n === 0) continue;
+      let i = this.assign[0][k];
+      if (sg.points[i] && sg.points[i].hold >= 1) {
+        let best = -1, bd = Infinity;
+        for (let j = 0; j < n; j++) { if (sg.points[j].hold >= 1) continue; const d = Math.hypot(this.pts[j].x - q.x, this.pts[j].z - q.z); if (d < bd) { bd = d; best = j; } }
+        if (best >= 0) { i = best; this.assign[0][k] = best; }
+      }
+      const pt = this.pts[i];
+      if (pt) { const off = (k % 3) * 3 - 3; q.holdX = pt.x + off; q.holdZ = pt.z + off * 0.5; }
+    }
+    // aufgeriebene Trupps der Gegenseite in Spielernähe: Kriegspunkte für die eigene Seite
+    if (ps && this.hostile >= 0) {
+      const f = host.focus();
+      const nation = ps === 'angreifer' ? sg.attacker : sg.defender;
+      for (const q of this.sides[this.hostile]) {
+        if (q.heads > 0 || this.credited.has(q)) continue;
+        this.credited.add(q);
+        if (foot && Math.hypot(q.x - f.x, q.z - f.z) < 70) eng.awardMerit(host.playerId, nation, WAR.kp.trupp, 'Trupp aufgerieben', sg.islandId);
+      }
+    }
   }
 
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.hostile >= 0) this.ctx.host.setMass(null);
     for (const r of this.renderers) r.dispose();
+    for (const m of this.marks) { m.group.removeFromParent(); disposeObject(m.group); }
+    this.marks.length = 0;
     this.sides[0].length = 0; this.sides[1].length = 0;
   }
 }
@@ -201,7 +444,9 @@ export class FactionWarLive {
       }
       const s = e.ship;
       const down = !s.alive || s.sinking > 0 || s.disabled || !!e.captured;
-      eng.syncShip(aid, shipId, s.maxHull > 0 ? s.hull / s.maxHull : 0, s.sail, down);
+      // versenkt oder kampfunfähig geschossen vom Spieler (letzter Treffer vor höchstens 12 s): Kriegspunkte (4.5B)
+      const by = down && nav.hitByPlayer(e, 12) ? this.host.playerId : null;
+      eng.syncShip(aid, shipId, s.maxHull > 0 ? s.hull / s.maxHull : 0, s.sail, down, by);
       if (!down && !leaderSeen.has(aid)) {
         const rec = a.ships.find((x) => x.id === shipId);
         if (rec && (rec.slot === 0 || !this.leaderAlive(a))) { eng.syncArmada(aid, s.x, s.z, s.heading); leaderSeen.add(aid); }
@@ -468,10 +713,13 @@ export class FactionWarLive {
         eng.setSiegeLive(this.siege.siegeId, false);
         this.siege.dispose(); this.siege = null; cur = null;
       } else {
-        // Verluste umrechnen: Köpfe → Truppen der Engine
+        // Verluste umrechnen: jeder gefallene Kopf kostet die Engine `WAR.troopsPerHead` Soldaten (die Front ist ein Ausschnitt, Verstärkung landet nach)
         const s = this.siege;
-        const ka = s.heads0[0] > 0 ? s.heads(0) / s.heads0[0] : 1, kd = s.heads0[1] > 0 ? s.heads(1) / s.heads0[1] : 1;
-        eng.syncSiege(s.siegeId, s.units0[0] * ka, s.units0[1] * kd);
+        const lost = s.takeLosses();
+        eng.siegeLosses(s.siegeId, lost[0], lost[1]);
+        // Partei des Spielers (Auftrag oder Wahl im Schlacht-Banner) und Kampf um die Kontrollpunkte
+        s.setSide(eng.helperSide(s.siegeId, this.host.playerId));
+        s.control(SYNC_EVERY);
         return;
       }
     }
@@ -484,16 +732,34 @@ export class FactionWarLive {
       if (!ground || !a) continue;
       const atk = eng.registry.get(sg.attacker)?.heraldry ?? 'marine', def = eng.registry.get(sg.defender)?.heraldry ?? 'marine';
       const level = Math.max(4, seaLevelAt(w.x, w.z) + 1);
-      this.siege = new SiegeTroops(this.host.scene, sg.id, atk, def, this.host.troopBase(), ground.nav, ground.walk, { x: a.x, z: a.z }, sg.troops, sg.garrison, level, this.host.playerId);
+      this.siege = new SiegeTroops({ engine: eng, host: this.host }, this.host.scene, sg.id, atk, def, this.host.troopBase(), ground.nav, ground.walk, { x: a.x, z: a.z }, sg.troops, sg.garrison, level, this.host.playerId, sg.points);
+      this.siege.setSide(eng.helperSide(sg.id, this.host.playerId));
       eng.setSiegeLive(sg.id, true);
       return;
     }
   }
 
   /** Lebende Belagerungstrupps (Prüfungen, Anzeige) */
-  get siegeView(): { siegeId: string; attackers: number; defenders: number } | null {
+  get siegeView(): { siegeId: string; attackers: number; defenders: number; side: SiegeSide | null } | null {
     const s = this.siege;
-    return s ? { siegeId: s.siegeId, attackers: s.heads(0), defenders: s.heads(1) } : null;
+    return s ? { siegeId: s.siegeId, attackers: s.heads(0), defenders: s.heads(1), side: s.side } : null;
+  }
+
+  /** Kontrollpunkte der echten Belagerung auf begehbarem Boden (Kompass, Prüfungen); leer ohne Landkampf */
+  get siegePoints(): readonly { x: number; y: number; z: number }[] { return this.siege?.pts ?? NO_PTS; }
+
+  /** Trupps beider Seiten der echten Belagerung (Prüfungen) */
+  get siegeSquads(): readonly (readonly TroopSquad[])[] | null { return this.siege?.sides ?? null; }
+
+  /**
+   * Partei ergreifen an der Belagerung, deren Truppen gerade an Land stehen (Schlacht-Banner): der Spieler kämpft an der Seite der Angreifer oder der
+   * Verteidiger. false, wenn keine Belagerung in der Nähe ist.
+   */
+  join(side: SiegeSide): boolean {
+    const s = this.siege;
+    if (!s || !this.engine.joinSiege(s.siegeId, this.host.playerId, side)) return false;
+    s.setSide(side);
+    return true;
   }
 
   /** Zahl der echten Schiffe (Prüfungen, Anzeige) */

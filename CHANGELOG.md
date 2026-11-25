@@ -1,5 +1,91 @@
 # Was ist neu
 
+## 4.5.1 – Phase 4.5B: Eingreifen in den Krieg – Landkampf um Kontrollpunkte, Seekampf mit Kriegspunkten, Kriegsaufträge, Zweier-Bündnisse, Taktik-Banner und Karte „Krieg & Frontlinien“ (25.11.2026, nur lokal)
+
+**Was du siehst**
+- **Belagerungen sind eine Doppel-Front, an der du mitkämpfst:**
+  - **Auf See:** Versenkst du das **Kommandoschiff** einer Armada (oder schießt es kampfunfähig), bricht die Moral der Belagerer um 22 % ein. Ein **Nachschub-Transporter** kostet sie 38 %. Jedes Schiff bringt dir **sofort Kriegspunkte** bei der Macht, der es nützt: Kommandoschiff 40, Transporter 30, sonst 15.
+  - **An Land:** Jede Belagerung hat **taktische Kontrollpunkte**: kleine Inseln zwei, Häfen, Festungen und Mega-Inseln drei (Hafen-Barrikade, Marktplatz, Garnisons-Hof).
+    - Jeder Punkt hat eine Fahne und einen Fangring in der Farbe der haltenden Seite (weiß = umkämpft).
+    - Wer im Ring die Übermacht hat, erobert ihn. Deine Figur zählt wie zehn Soldaten, jeder Offizier wie vier.
+  - **Die Punkte bestimmen das Tempo:** Hält der Angreifer alle, fällt die Insel 2,6-mal so schnell. Hält der Verteidiger alle, **läuft der Fortschritt zurück**, und bei 0 % ist die Belagerung abgewehrt.
+  - Hast du Partei ergriffen, greifen dich die Trupps der Gegenseite an, und du kannst sie mit Hieben, Geschossen, Fähigkeiten und deinen eigenen Trupps treffen.
+  - **Kriegspunkte an Land:** Ein aufgeriebener Trupp in deiner Nähe bringt 6, ein Punkt, den deine Seite mit dir erobert, 20.
+  - **Verstärkung:** Gefallene Trupps ersetzt die Reserve per Beiboot bzw. aus dem Ort, höchstens alle 12 Sekunden. So dauert eine Landschlacht Minuten, nicht Sekunden.
+- **Partei ergreifen:** Stehst du an Land, ohne dich entschieden zu haben, zeigt das Banner zwei Knöpfe („Für Frankreich kämpfen“ / „Für England kämpfen“), auch per Fingertipp. Ein angenommener Kriegsauftrag stellt dich automatisch auf die Seite deines Auftraggebers.
+- **Taktik-Banner oben in der Mitte (3.0-Stil):** Es erscheint bis 1,5 km von einer Belagerung oder Großschlacht und zeigt:
+  - beide Mächte mit Kriegsschiffen, Transportern bzw. Garnison
+  - Belagerungsfortschritt, Moral, Kontrollpunkte und eine Uhr („≈ 7:20“, „läuft zurück“, „ruht (Seeschlacht)“, „steht“)
+  - deine Seite und deine Kriegspunkte
+- **Kriegsaufträge** im Fenster „Ruf & Ehre → Weltlage“, abgeleitet aus dem, was gerade geschieht:
+  - **Belagerung entsetzen** und **Blockadebrecher-Lieferung** (für den Belagerten)
+  - **Invasions-Armada anführen** (für den Angreifer)
+  - **Nachschubkonvoi abfangen** (für den Herrn des Ziels)
+  - **Lohn:** viel Gold (je nach Insel 700 – 2 200), Boss-Siegel der Auftragsmacht (Festungen und Mega-Inseln zwei), Ehre und Ansehen beim Auftraggeber.
+  - **Bedingungen:** Höchstens zwei Aufträge gleichzeitig, 15 Minuten Zeit, das Ziel steht auf Kompass und Karte.
+  - **Beitrag:** Entsatz und Invasion brauchen 60 Kriegspunkte. Ab der Hälfte gibt es einen anteiligen **Teil-Lohn** ohne Siegel, darunter scheitert der Auftrag.
+  - **Blockadebrecher:** Er liefert 6 Medizin (oder 8 Kanonenstahl) bis vor den Hafen. Dann bekommt die Garnison +25, die Belagerer verlieren 12 % Moral und 12 % Fortschritt.
+  - **Aufgeben** kostet etwas Ansehen. Wer der Macht verhasst ist (unter −20), bekommt keinen Auftrag.
+- **Zweier-Bündnisse:** Handelspartner mit hohem Vertrauen und einem gemeinsamen Gegner schließen ein **Militärbündnis**.
+  - Erklärt einer den Krieg, **zieht der Partner mit** (Meldung „Bündnisfall“).
+  - Wird eine Insel des Partners belagert, schickt der Verbündete eine **Entsatzflotte** und tritt dafür in den Krieg ein.
+  - Das Bündnis läuft nach 40 Minuten aus, wenn kein gemeinsamer Gegner mehr bleibt; der Handelspakt bleibt.
+  - Die Weltlage trennt „Bündnis“ und „Koalition“.
+- **Weltkarte (M), neuer Filter „Krieg & Frontlinien“:** Armadas mit gestrichelter Frontlinie zu ihrem Ziel, Belagerungsringe mit Fortschritt, Großschlachten, **Bündnislinien** zwischen den Hauptstädten (gold: Zweier-Bündnis, violett: Koalition) und **eroberte Inseln mit Rahmen** in der Farbe des neuen Herrn.
+  - **Unter 1,25× Zoom** werden Belagerungen und Schlachten zu **gebündelten Kampf-Symbolen** (Fahne bzw. gekreuzte Kanonen, „×2“ bei mehreren) ohne Text. Die Kartenmitte bleibt lesbar.
+  - Volle Texte erscheinen beim Hineinzoomen oder beim Antippen der Insel; das Inselfenster zeigt dann auch die Kontrollpunkte.
+- **Kompass:** An Land zeigen Festungszeichen die Kontrollpunkte in der Farbe ihrer Seite; laufende Kriegsaufträge setzen das Ziel, wenn kein Story-Auftrag verfolgt wird.
+
+**Technik (für Entwickler)**
+- **Engine** (`world/factionWarEngine.ts`, weiter rein und JSON):
+  - `SiegeState.points` (`siegePoints`, `pointsMean`) und `helpers` (Seite je Spieler).
+  - `controlStep(siegeId, att, def, dt, present)` (Übermacht schiebt `hold`, Wechsel bei ±1 mit Meldung `punkt`, Kriegspunkte für den anwesenden Spieler).
+  - `siegeRate`/`siegeEta`, Abwehr bei 0 % und Mittel ≤ −0,95.
+  - `syncShip(…, by)` mit `creditSink`/`beneficiaryOf`, `awardMerit`/`meritOf` (Meldung `kriegspunkte`), `siegeLosses` (Verluste an Land als Differenz).
+  - Kriegsaufträge: `contractOffers`, `acceptContract`, `abandonContract`, `deliverBlockade`, `stepContracts` (`settleByMerit` mit Teil-Lohn), `contractsOf`.
+  - Bündnisse: `RelationState.allianceUntil`, `bilateral`, `commonFoe`; `declareWar(a, b, chain, ally)` mit Bündnisfall, Entsatz für den Partner in `think` (1b).
+  - Zustand: `contracts`, `merit`, `stats.alliances/contracts`. Alle Zahlen in `WAR` (Kontrollpunkte, Kriegspunkte, Bündnis, Aufträge, Lieferung, `troopsPerHead`, `reinforceEvery`); Lohn in `CONTRACT_DEFS`/`CONTRACT_TIER_K`, Ladung `BLOCKADE_CARGO` (`data/nations.ts`).
+- **Spielstand:** bleibt Version 20. Stände aus 4.5.0 laden ohne Verlust: `cleanFactionWar` legt Kontrollpunkte aus Insel und Lage der Flotte neu an (umkämpft) und ergänzt Aufträge, Kriegspunkte und Bündnisdauer.
+- **Live-Schicht** (`world/factionWarLive.ts`):
+  - `SiegeTroops` mit Kontrollpunkt-Markierungen: Fahnenmast, Fahne, Torus als Fangring; geteilte Netze, `MeshBasicMaterial`, kein neues Shader-Programm.
+  - Truppen-Zuweisung zu den Punkten, `control` (Präsenz, Engine-Schritt, Nachrücken), `setSide` (Gegenseite in `combat.mass`, Ziele Spielfigur und Crew über `WarLiveHost.playerFoe/crew/strike/onFoot/setMass`).
+  - Verstärkung `reinforce` (gleiche Feldlänge), Verluste `takeLosses`; `join(side)`, `siegePoints`, `siegeSquads`.
+- **Seewelt/Spiel:** Belagerungsmeldung beim Landgang (`spawnCamp`). `Game`: `warHudView` + `ui/warBanner.ts` (Zone `tc`, Klick-Delegation), `joinWarSide`, `payMerit`, `contractEnded`, `warContractsView`/`acceptWarContract`/`abandonWarContract`, `warTarget`, `checkBlockadeDelivery`. Kriegsaufträge im Menü über `Menus.warOrdersHtml`.
+- **Karte:** Ebene `war` in `MapLayers`, `MarkClusters` (`ui/mapView.ts`, `WAR_LABEL_ZOOM` 1,25, `WAR_CLUSTER_PX` 46), Beschriftung unter/über dem Zeichen (`label2`), Kampf-Symbole vor allen Texten. `WorldMapData.wars` mit `alliances`, `conquered`, Armada-Ziel und Kontrollpunkt-Text.
+- **Tests:** `tests/factionWarIntervention.test.ts` (15):
+  - Kontrollpunkte: Anlage, Übermacht, 2,6-fach, Zurücklaufen und Abwehr, Kriegspunkte
+  - Kommandoschiff und Transporter
+  - Bündnis-Schluss, gemeinsame Kriegserklärung, Entsatz für den Partner, Auslaufen
+  - Angebote und Höchstzahl, Entsatz mit vollem, Teil- und keinem Lohn, Invasion, Lieferung mit Differenz-Verlusten, Ablauf und Aufgeben
+  - Stand aus 4.5.0 über `migrateSave` und Rundlauf
+  - Bündelung und Karte bei 1,00× und 2,50× ohne Überlappung
+
+  **829 Tests**, `tsc` und `npm run build` grün.
+- **Im Browser geprüft** (Playwright, Ultra; Desktop 1440 × 900 und Handyformat 390 × 844), französische Belagerung von Nebelhafen:
+  - **Annehmen:** Vier Angebote, „Belagerung entsetzen“ per Klick angenommen, Seite Verteidiger.
+  - **See:** Kommandoschiff kampfunfähig geschossen; Moral 100 → 78 %, +40 Kriegspunkte (+160 Gold, +3 Ansehen), Banner aktuell.
+  - **Land:** Französische Trupps greifen die Figur an. Fünf aufgeriebene Trupps kosten die Engine 50 Soldaten (+30 Kriegspunkte), Verstärkung landet per Beiboot. Die Barrikade wechselt mit der Figur zu England (+20), danach läuft der Fortschritt zurück, bis die Belagerung abgewehrt ist.
+  - **Blockadebrecher:** Fortschritt 50 → 38 %, Moral −12 %, Garnison 65 → 88 und bleibt; Lohn 1.200 Gold, ein Siegel, Ehre und Ansehen.
+  - **Handy:** Partei per Fingertipp gewählt, danach sechs Trupps angreifbar.
+  - **Karte:** 1,00× 51 Beschriftungen, 2,50× 79, 0 Überdeckungen (Handy 37 bzw. 55, 0).
+  - **Bildzeit** im Landkampf auf Ultra 8,1 ms (≈ 124 Bilder je Sekunde); keine Konsolenfehler.
+  - **Startzeit im Build** 8,19 – 8,56 s, 168 – 169 Shader-Programme; das Auftauchen von Truppen und Fahnen übersetzt kein neues Programm.
+- **Gefunden und behoben:**
+  - Die sichtbaren Trupps standen für das ganze Heer: Die eigene Crew rieb an Land in Sekunden die ganze Belagerung auf. Jetzt gilt 1 Kopf = 2,5 Soldaten, dazu Verstärkung.
+  - Das Betreten der Insel leerte die angreifbaren Verbände.
+  - Die Lieferung wurde vom Landkampf überschrieben.
+  - Der Lieferradius war für lange Stege zu klein.
+  - Die Belagerungsuhr zeigte bei fast stehendem Fortschritt „20688:12“.
+  - Ein Kampf-Symbol überdeckte einen Ereignistext.
+- **Abweichungen und offene Punkte:**
+  1. Die Kontrollpunkte liegen geometrisch (Küste zur Flotte hin, Ortsmitte, Inselinneres), auf begehbaren Boden gerückt – nicht an bestimmten Gebäuden. Auf zerklüfteten Mega-Inseln kann ein Punkt am Rand eines Bezirks liegen.
+  2. Verschoben werden die Punkte nur von echten Kämpfern in deiner Nähe; fern vom Spieler bleiben sie stehen (die Hintergrund-Rechnung bleibt wie in 4.5A).
+  3. Echte Landtruppen gibt es weiter nur an der nächsten belagerten Insel.
+  4. Die Seite lässt sich an einer Belagerung nicht mehr wechseln, nachdem du Partei ergriffen hast (außer über einen neuen Auftrag der Gegenseite).
+  5. Gamepad: Die Partei wählt man per Maus/Finger im Banner oder per Auftrag; eine eigene Taste gibt es nicht.
+  6. Kein Test auf einem echten Handy.
+  7. Beim Prüfen des fertigen Spiels lädt der Playwright-Browser den Spiel-Installer herunter (`Sturmkrone-Setup.exe`, schon in früheren Läufen) – mit 4.5B hat das nichts zu tun.
+
 ## 4.5.0 – Phase 4.5A: Krieg der Mächte – eigene Wirtschaft, Nutzen-KI, Diplomatie und Koalitionen, Großschlachten mit Nachschub, Belagerungen und Besitzerwechsel (25.11.2026, nur lokal)
 
 **Was du siehst**

@@ -4,7 +4,7 @@ import { FACTION_LABELS, RANKS, rankName } from '../data/ranks';
 import type { Game } from '../core/game';
 import type { SaveData } from '../core/save/types';
 import type { Settings, SettingsTab } from '../core/settings';
-import { fmtInt } from '../core/format';
+import { fmtDist, fmtInt } from '../core/format';
 import { EDGE_WALL, WEATHER, WEATHER_IDS, type WeatherId } from '../data/world';
 import { formatClock } from '../world/timeOfDay';
 import { FIGUREHEAD_DEFS, FIGUREHEAD_MODELS, figureheadModel } from '../data/figureheads';
@@ -648,10 +648,43 @@ export class Menus {
       <p class="small">${v.blueprints.length ? `Baupläne: ${v.blueprints.map((b) => esc(FACTIONS[b.replace('bauplan_', '') as FactionId]?.name ?? b)).join(', ')} · Werft −${Math.round(v.blueprintDiscount * 100)} %` : 'Noch keine Baupläne erbeutet (Doppelspiel in einer Seeschlacht bringt sie).'}</p>
       ${v.log.length ? `<h3>Letzte Taten</h3>${v.log.map((l) => `<p class="small soft">${esc(l.text)}</p>`).join('')}` : ''}
       <button class="primary" data-a="back" data-focus>Zurück</button>`,
-      { pay: (id) => this.showReputation(back, g.payBounty(id as FactionId)), back },
+      {
+        pay: (id) => this.showReputation(back, g.payBounty(id as FactionId)),
+        wacc: (id) => this.keep(() => this.showReputation(back, g.acceptWarContract(id))),
+        wdrop: (id) => this.keep(() => this.showReputation(back, g.abandonWarContract(id))),
+        back,
+      },
       back,
       { wide: true },
     );
+  }
+
+  /** Kriegsaufträge (4.5B): eigene Aufträge mit Fortschritt, darunter die Angebote der Mächte (nach Entfernung) und die eigenen Kriegspunkte */
+  private warOrdersHtml(): string {
+    const v = this.game.warContractsView();
+    if (!v) return '';
+    const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    const lohn = (r: { gold: number; seals: number; honor: number; standing: number }, client: string) =>
+      `${fmtInt(r.gold)} Gold${r.seals ? ` · ${r.seals} Boss-Siegel` : ''} · Ehre +${r.honor} · ${esc(client)} +${r.standing} Ansehen`;
+    const STATUS = { aktiv: 'läuft', erfuellt: 'erfüllt', gescheitert: 'gescheitert', aufgegeben: 'aufgegeben' } as const;
+    const progress = (c: (typeof v.mine)[number]) =>
+      c.kind === 'abfangen' ? `Transporter versenkt: ${c.done}/${c.goal}`
+        : c.kind === 'blockade' ? (c.done >= c.goal ? 'Geliefert' : 'Lieferung offen: 6 Medizin oder 8 Kanonenstahl vor den Hafen bringen')
+          : `Kriegspunkte: ${c.merit}/${c.need}`;
+    const mine = v.mine.map((c) => `<div class="slot rep war-order ${c.status}" style="--c:${c.clientColor}">
+      <div class="slot-head"><b>${esc(c.title)}</b><span>${STATUS[c.status]}${c.status === 'aktiv' ? ` · noch ${clock(c.left)} · ${fmtDist(c.dist)}` : ''}</span></div>
+      <div class="meta">Für ${esc(c.clientName)}${c.side ? ` (${c.side === 'angreifer' ? 'Angreifer' : 'Verteidiger'})` : ''} · ${esc(progress(c))}${c.note ? `<br>${esc(c.note)}` : ''}<br>Lohn: ${lohn(c.reward, c.clientName)}</div>
+      ${c.status === 'aktiv' ? `<button class="mini" data-a="wdrop" data-id="${esc(c.id)}">Aufgeben</button>` : ''}
+    </div>`).join('');
+    const offers = v.offers.map((o) => `<div class="slot rep war-order" style="--c:${o.clientColor}">
+      <div class="slot-head"><b>${esc(o.title)}</b><span>${fmtDist(o.dist)}</span></div>
+      <div class="meta">Auftraggeber: <b style="color:${o.clientColor}">${esc(o.clientName)}</b>${o.opponent ? ` · gegen ${esc(o.opponentName)}` : ''}<br>${esc(o.text)}<br>Lohn: ${lohn(o.reward, o.clientName)}</div>
+      <button class="mini brass" data-a="wacc" data-id="${esc(o.offerId)}" ${o.blocked ? 'disabled' : ''}>Annehmen</button>${o.blocked ? ` <span class="small soft">${esc(o.blocked)}</span>` : ''}
+    </div>`).join('');
+    const merit = v.merit.length ? `<p class="small">Deine Kriegspunkte: ${v.merit.map((m) => `<b style="color:${m.color}">${esc(m.name)} ${fmtInt(m.kp)}</b>`).join(' · ')}</p>` : '';
+    return `<h3>Kriegsaufträge</h3>
+      <p class="small soft">Die Mächte zahlen für Hilfe in ihren Kriegen: Kommandoschiffe und Nachschub-Transporter versenken, an Land um Hafen-Barrikade, Marktplatz und Garnisons-Hof kämpfen, Blockaden brechen. Jede Tat bringt sofort Kriegspunkte (Gold und Ansehen), ein erfüllter Auftrag den großen Lohn. Höchstens ${v.max} Aufträge zugleich.</p>
+      ${merit}${mine}${offers || (mine ? '' : '<p class="small soft">Gerade bietet keine Macht einen Auftrag an – sobald eine Armada ausläuft oder eine Insel belagert wird, gibt es Arbeit.</p>')}`;
   }
 
   /** Weltlage der Mächte (4.5A): wer hält wie viele Inseln, wer führt Krieg, wer handelt, wer ist Hegemon */
@@ -663,6 +696,7 @@ export class Menus {
     const rows = v.rows.map((r) => {
       const ties: string[] = [];
       if (r.allies.length) ties.push(`Bündnis: ${list(r.allies)}`);
+      if (r.coalition.length) ties.push(`Koalition mit ${list(r.coalition)}`);
       if (r.pacts.length) ties.push(`Handelspakt: ${list(r.pacts)}`);
       if (r.rivals.length) ties.push(`Rivalen: ${list(r.rivals)}`);
       if (r.armadas) ties.push(`${r.armadas} Armada${r.armadas > 1 ? 's' : ''} auf See`);
@@ -675,9 +709,10 @@ export class Menus {
     }).join('');
     const co = v.coalitions.map((c) => `<p class="small"><b>Koalition</b> gegen ${esc(c.against.replace(/^Die /, 'die '))}: ${list(c.members)}</p>`).join('');
     return `<h3>Weltlage der Mächte</h3>
-      <p class="small soft">Die Mächte führen eigene Kriege um Rohstoffe, Meerengen und Mega-Inseln. Eroberte Inseln wechseln Flagge, Wachen und Hafenherrn; wer belagert wird, zahlt Kriegspreise. ${v.battles ? `Laufende Großschlachten: ${v.battles}. ` : ''}${v.sieges ? `Belagerungen: ${v.sieges}.` : ''}</p>
+      <p class="small soft">Die Mächte führen eigene Kriege um Rohstoffe, Meerengen und Mega-Inseln. Eroberte Inseln wechseln Flagge, Wachen und Hafenherrn; wer belagert wird, zahlt Kriegspreise. Bündnispartner ziehen gemeinsam in den Krieg und schicken einander Entsatzflotten. ${v.battles ? `Laufende Großschlachten: ${v.battles}. ` : ''}${v.sieges ? `Belagerungen: ${v.sieges}.` : ''}</p>
+      ${this.warOrdersHtml()}
       ${co}${rows}
-      <p class="small soft">Bisher: ${nw(v.stats.wars, 'Krieg', 'Kriege')}, ${nw(v.stats.battles, 'Großschlacht', 'Großschlachten')}, ${nw(v.stats.conquests, 'Eroberung', 'Eroberungen')}, ${nw(v.stats.pacts, 'Handelspakt', 'Handelspakte')}, ${nw(v.stats.ceasefires, 'Waffenstillstand', 'Waffenstillstände')}.</p>`;
+      <p class="small soft">Bisher: ${nw(v.stats.wars, 'Krieg', 'Kriege')}, ${nw(v.stats.battles, 'Großschlacht', 'Großschlachten')}, ${nw(v.stats.conquests, 'Eroberung', 'Eroberungen')}, ${nw(v.stats.pacts, 'Handelspakt', 'Handelspakte')}, ${nw(v.stats.alliances ?? 0, 'Bündnis', 'Bündnisse')}, ${nw(v.stats.ceasefires, 'Waffenstillstand', 'Waffenstillstände')}.</p>`;
   }
 
   // ---------- Crew ----------

@@ -158,6 +158,54 @@ export class LabelPlacer {
   at(i: number, out: number[]): number[] { const o = i * 4; out[0] = this.r[o]; out[1] = this.r[o + 1]; out[2] = this.r[o + 2]; out[3] = this.r[o + 3]; return out; }
 }
 
+// ---------- Kampf-Symbole bündeln (4.5B) ----------
+
+/** Unter diesem Zoom zeigt die Weltkarte Belagerungen und Schlachten als gebündelte Kampf-Symbole, darüber mit vollem Text */
+export const WAR_LABEL_ZOOM = 1.25;
+/** Mindestabstand (Pixel) zweier Kampf-Symbole */
+export const WAR_CLUSTER_PX = 46;
+
+/**
+ * Bündelt Punkte auf dem Bildschirm, damit ihre Symbole sich nie überdecken: gierig dem nächsten Bündel zuordnen (Zentrum = Mittel der Mitglieder),
+ * danach Bündel verschmelzen, deren Zentren sich näher als `radius` kommen. Feste Felder (kein Wachstum, keine Objekte je Bild).
+ */
+export class MarkClusters {
+  readonly cx: Float32Array;
+  readonly cy: Float32Array;
+  readonly count: Int32Array;
+  /** Bündel je Eingabepunkt */
+  readonly of: Int32Array;
+  n = 0;
+  constructor(readonly cap = 64) {
+    this.cx = new Float32Array(cap); this.cy = new Float32Array(cap); this.count = new Int32Array(cap); this.of = new Int32Array(cap);
+  }
+
+  /** `n` Punkte (`xs`, `ys`) bündeln; liefert die Zahl der Bündel. Wichtige Punkte zuerst übergeben (sie setzen die ersten Zentren). */
+  build(xs: ArrayLike<number>, ys: ArrayLike<number>, n: number, radius: number): number {
+    const m = Math.min(n, this.cap), r2 = radius * radius;
+    this.n = 0;
+    for (let i = 0; i < m; i++) {
+      let best = -1, bd = r2;
+      for (let k = 0; k < this.n; k++) { const dx = this.cx[k] - xs[i], dy = this.cy[k] - ys[i], d = dx * dx + dy * dy; if (d < bd) { bd = d; best = k; } }
+      if (best < 0) { best = this.n++; this.cx[best] = xs[i]; this.cy[best] = ys[i]; this.count[best] = 1; }
+      else { const c = ++this.count[best]; this.cx[best] += (xs[i] - this.cx[best]) / c; this.cy[best] += (ys[i] - this.cy[best]) / c; }
+      this.of[i] = best;
+    }
+    // verschmelzen, bis alle Zentren weit genug auseinander liegen (wenige Bündel: einfache Schleife)
+    for (let guard = 0; guard < this.cap; guard++) {
+      let a = -1, b = -1;
+      for (let i = 0; i < this.n && a < 0; i++) for (let j = i + 1; j < this.n; j++) { const dx = this.cx[i] - this.cx[j], dy = this.cy[i] - this.cy[j]; if (dx * dx + dy * dy < r2) { a = i; b = j; break; } }
+      if (a < 0) break;
+      const ca = this.count[a], cb = this.count[b], c = ca + cb;
+      this.cx[a] = (this.cx[a] * ca + this.cx[b] * cb) / c; this.cy[a] = (this.cy[a] * ca + this.cy[b] * cb) / c; this.count[a] = c;
+      const last = --this.n;
+      for (let i = 0; i < m; i++) { if (this.of[i] === b) this.of[i] = a; else if (this.of[i] === last) this.of[i] = b; }
+      if (b !== last) { this.cx[b] = this.cx[last]; this.cy[b] = this.cy[last]; this.count[b] = this.count[last]; }
+    }
+    return this.n;
+  }
+}
+
 /** Breite eines Textes, einmal gemessen und gemerkt (kein Messobjekt und kein neuer Text je Bild): Schrift → Text → Breite */
 export class TextWidths {
   private readonly m = new Map<string, Map<string, number>>();

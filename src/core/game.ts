@@ -35,7 +35,9 @@ import { Menus } from '../ui/menus';
 import { TouchControls } from '../ui/touchControls';
 import { EditorStage } from '../world/editorStage';
 import { SeaWorld, WAR_REGISTRY, type SeaMode } from '../world/seaWorld';
-import type { WarNotice } from '../world/factionWarEngine';
+import { warshipsAlive, type ArmadaState, type SiegeSide, type WarContract, type WarNotice } from '../world/factionWarEngine';
+import { WarBanner, type WarHudView } from '../ui/warBanner';
+import { BLOCKADE_CARGO, CONTRACT_DEFS, WAR } from '../data/nations';
 import { formatClock } from '../world/timeOfDay';
 import { Input } from './input/input';
 import { GameLoop } from './loop';
@@ -173,6 +175,8 @@ export class Game {
   /** Besatzung eroberter Festungsinseln (Timer, Flotte, Tribut) und ihr Banner oben in der Mitte */
   occupation!: OccupationSystem;
   private occBanner!: OccupationBanner;
+  /** Taktik-Banner für Großschlachten und Belagerungen in Reichweite (4.5B) */
+  private warBanner!: WarBanner;
   private occT = 0;
   /** Letzte Anzeige-Daten der Belagerung (Ziele, Markierungen für Karte und Kompass) */
   private raidView: RaidView | null = null;
@@ -271,6 +275,8 @@ export class Game {
     this.sectorBanner = new SectorBanner(zone.tc);
     this.edgeWarning = new EdgeWarning(zone.tc);
     this.occBanner = new OccupationBanner(zone.tc);
+    this.warBanner = new WarBanner(zone.tc);
+    this.warBanner.onJoin = (side) => this.joinWarSide(side);
     this.overlay = new CombatOverlay(uiRoot, zone.tc);
     this.overlay.setVisible(false);
     this.dialogUi = new DialogOverlay(uiRoot);
@@ -554,7 +560,7 @@ export class Game {
       this.occupation.update(dt);
       this.stepEconomy(dt);
       this.occT -= dt;
-      if (this.occT <= 0) { this.occT = 0.4; this.refreshOccBanner(); }
+      if (this.occT <= 0) { this.occT = 0.4; this.refreshOccBanner(); this.warBanner.update(this.warHudView()); this.checkBlockadeDelivery(); }
       this.autosaveTimer += dt;
       if (this.autosaveTimer >= AUTOSAVE_SECONDS) this.persist();
     } else if (this.state.is('editor') && this.skillTree && this.input.pressed('skills')) {
@@ -2252,6 +2258,14 @@ export class Game {
     const foot = this.world.mode === 'foot';
     if (foot) {
       for (const e of this.world.footEnemies()) out.push({ x: e.x, z: e.z, kind: e.boss ? 'boss' : 'enemy' });
+      // Kontrollpunkte einer Belagerung (4.5B): Festungszeichen in der Farbe der haltenden Seite
+      const live = this.world.warLive, war = this.world.war;
+      const sv = live?.siegeView, sg = sv ? war?.siegeById(sv.siegeId) : null;
+      if (live && sg) live.siegePoints.forEach((p, i) => {
+        const h = sg.points[i]?.hold ?? 0;
+        const owner = h >= 0.999 ? sg.attacker : h <= -0.999 ? sg.defender : null;
+        out.push({ x: p.x, z: p.z, kind: 'fort', name: sg.points[i]?.name, color: owner ? WAR_REGISTRY.get(owner)?.color : '#E8E2D4' });
+      });
       const pos = this.world.playerPos;
       if (qs && s) for (const { npc } of this.world.talkables(pos.x, pos.z, 400)) {
         const id = npc.townDef!.id;
@@ -2286,7 +2300,7 @@ export class Game {
     return {
       player: pos,
       enemies: foot ? [] : this.world.enemyShips,
-      target: this.questTarget(),
+      target: this.questTarget() ?? this.warTarget(),
       digs: (this.world.life?.digs ?? []).map((d) => ({ x: d.x, z: d.z })),
       view: this.world.cameraYaw,
       range: foot ? 85 : 420,
@@ -2344,10 +2358,24 @@ export class Game {
     const color = (id: string) => WAR_REGISTRY.get(id)?.color ?? '#DDD';
     const nm = (id: string) => WAR_REGISTRY.get(id)?.name ?? id;
     const s = war.state;
+    // Bündnislinien zwischen den Hauptstädten (Zweier-Bündnis gold, Koalition violett); eroberte Inseln mit Rahmen in der Farbe des neuen Herrn
+    const capital = (id: string) => { const c = WAR_REGISTRY.get(id)?.capital; return c ? war.island(c) : undefined; };
+    const alliances: NonNullable<NonNullable<WorldMapData['wars']>['alliances']> = [];
+    for (const r of s.relations) {
+      if (r.state !== 'allianz') continue;
+      const A = capital(r.a), B = capital(r.b);
+      if (A && B) alliances.push({ ax: A.x, az: A.z, bx: B.x, bz: B.z, color: war.bilateral(r.a, r.b) ? '#E8CB7C' : '#C79BFF', coalition: !war.bilateral(r.a, r.b) });
+    }
+    const held = (pts: readonly { hold: number }[]) => `Kontrollpunkte: ${pts.filter((p) => p.hold >= 0.999).length} Angreifer, ${pts.filter((p) => p.hold <= -0.999).length} Verteidiger, ${pts.filter((p) => p.hold > -0.999 && p.hold < 0.999).length} umkämpft`;
     return {
-      armadas: s.armadas.filter((a) => a.status !== 'aufgeloest' && !a.battleId).map((a) => ({ x: a.x, z: a.z, heading: a.heading, color: color(a.nation), name: `${a.purpose === 'entsatz' ? 'Entsatz' : 'Armada'} ${nm(a.nation)}`, ships: a.ships.filter((x) => !x.down).length, relief: a.purpose === 'entsatz' })),
-      sieges: s.sieges.filter((g) => !g.ended).map((g) => { const w = war.island(g.islandId)!; return { x: w.x, z: w.z, r: w.r, color: color(g.attacker), name: `Belagerung von ${w.name}`, progress: g.progress }; }),
+      armadas: s.armadas.filter((a) => a.status !== 'aufgeloest' && !a.battleId).map((a) => {
+        const w = war.island(a.target);
+        return { x: a.x, z: a.z, heading: a.heading, color: color(a.nation), name: `${a.purpose === 'entsatz' ? 'Entsatz' : 'Armada'} ${nm(a.nation)}`, ships: a.ships.filter((x) => !x.down).length, relief: a.purpose === 'entsatz', tx: w?.x, tz: w?.z };
+      }),
+      sieges: s.sieges.filter((g) => !g.ended).map((g) => { const w = war.island(g.islandId)!; return { id: w.id, x: w.x, z: w.z, r: w.r, color: color(g.attacker), name: `Belagerung von ${w.name}`, progress: g.progress, points: held(g.points) }; }),
       battles: s.battles.filter((b) => !b.ended && !b.live).map((b) => ({ x: b.x, z: b.z, name: `Großschlacht ${nm(b.nationA)} ⚔ ${nm(b.nationB)}` })),
+      alliances,
+      conquered: war.islands.filter((w) => war.ownerChanged(w.id) && war.ownerOf(w.id)).map((w) => ({ x: w.x, z: w.z, r: w.r, color: color(war.ownerOf(w.id)!) })),
     };
   }
 
@@ -2362,7 +2390,10 @@ export class Game {
       const rel = (st: keyof typeof LABEL) => WAR_REGISTRY.list().filter((o) => o.id !== d.id && war.stateOf(d.id, o.id) === st).map((o) => o.name);
       return {
         id: d.id, name: d.name, color: d.color, islands: n?.islands ?? 0, megas: n?.megas ?? 0, share: n?.share ?? 0, hegemon: s.hegemon === d.id,
-        war: rel('krieg'), pacts: rel('handelspakt'), allies: rel('allianz'), rivals: rel('rivalitaet'),
+        // Zweier-Bündnis (4.5B) getrennt von Koalitionspartnern gegen den Hegemon
+        war: rel('krieg'), pacts: rel('handelspakt'), rivals: rel('rivalitaet'),
+        allies: WAR_REGISTRY.list().filter((o) => o.id !== d.id && war.bilateral(d.id, o.id)).map((o) => o.name),
+        coalition: WAR_REGISTRY.list().filter((o) => o.id !== d.id && war.stateOf(d.id, o.id) === 'allianz' && !war.bilateral(d.id, o.id)).map((o) => o.name),
         armadas: s.armadas.filter((a) => a.nation === d.id && a.status !== 'aufgeloest').length,
         gold: Math.round(n?.stock.gold ?? 0), steel: Math.round(n?.stock.kanonenstahl ?? 0), wood: Math.round(n?.stock.hartholz ?? 0),
       };
@@ -2649,7 +2680,7 @@ export class Game {
     const foot = this.world.mode === 'foot';
     for (const p of this.mapPois()) if (foot ? Math.hypot(p.x - pos.x, p.z - pos.z) < (p.kind === 'enemy' ? 70 : 400) : p.kind === 'fort' ? Math.hypot(p.x - pos.x, p.z - pos.z) < 2600 : true) add(p.x, p.z, p.kind, p.color);
     if (!foot) for (const e of this.world.enemyShips) if (!e.ally && Math.hypot(e.x - pos.x, e.z - pos.z) < 300) add(e.x, e.z, e.legend ? 'boss' : 'enemy');
-    const t = this.questTarget();
+    const t = this.questTarget() ?? this.warTarget();
     if (t) add(t.x, t.z, 'target');
     this.compass.update(this.world.cameraYaw, list, sectorLabel(pos.x, pos.z));
   }
@@ -3231,7 +3262,16 @@ export class Game {
       return adj && !adj.includes(' ') ? `${art} ${adj}${end} ${noun}` : `${art} ${noun} ${adj || `von ${name(id)}`}`;
     };
     switch (n.type) {
-      case 'krieg': toast(`Kriegserklärung: ${name(n.a)} erklärt ${dat(n.b)} den Krieg!`, 6); return;
+      case 'krieg': toast(n.ally ? `Bündnisfall: ${name(n.a)} steht ${dat(n.ally)} bei und erklärt ${dat(n.b)} den Krieg!` : `Kriegserklärung: ${name(n.a)} erklärt ${dat(n.b)} den Krieg!`, 6); return;
+      case 'buendnis': toast(`Militärbündnis: ${name(n.a)} und ${mid(n.b)} stehen einander bei – wer einen angreift, bekommt es mit beiden zu tun.`, 7); return;
+      case 'buendnisEnde': toast(`Das Bündnis zwischen ${dat(n.a)} und ${dat(n.b)} ist ausgelaufen; der Handelspakt bleibt.`, 5); return;
+      case 'punkt': {
+        const w = this.world.war?.island(n.islandId);
+        if (w && near(w.x, w.z, 1400)) toast(`${n.name} auf ${islandName(n.islandId)} ist jetzt in der Hand der ${n.side === 'angreifer' ? 'Angreifer' : 'Verteidiger'}${n.nation ? ` (${name(n.nation)})` : ''}.`, 4);
+        return;
+      }
+      case 'kriegspunkte': if (n.playerId === this.world.playerEntityId) this.payMerit(n.nation, n.kp, n.reason); return;
+      case 'auftrag': if (n.contract.playerId === this.world.playerEntityId) this.contractEnded(n.contract); return;
       case 'waffenstillstand': toast(`Waffenstillstand zwischen ${dat(n.a)} und ${dat(n.b)}${n.gold > 0 ? ` – ${mid(n.payer)} zahlt ${fmtInt(n.gold)} Gold Reparationen` : ''}.`, 6); return;
       case 'handelspakt': toast(`Handelspakt: ${name(n.a)} und ${mid(n.b)} tauschen ihre Überschüsse und sichern gemeinsam ihre Konvois.`, 6); return;
       case 'koalition': toast(`${name(n.against)} wird übermächtig – ${n.members.map(mid).join(', ')} schließen ein Verteidigungsbündnis und greifen gemeinsam an!`, 8); return;
@@ -3271,6 +3311,222 @@ export class Game {
         this.persist();
         return;
       }
+    }
+  }
+
+  // ---------- Eingreifen in den Krieg der Mächte (4.5B) ----------
+
+  /** Heraldik (Macht der Spielwelt) einer Nation der Engine */
+  private nationFid(id: string | null): FactionId | null { return id ? WAR_REGISTRY.get(id)?.heraldry ?? null : null; }
+
+  /** Kriegspunkte sofort auszahlen: Gold je Punkt, Ansehen bei der begünstigten Macht; kurze Meldung */
+  private payMerit(nation: string, kp: number, reason: string) {
+    const s = this.save;
+    if (!s) return;
+    const gold = Math.round(kp * WAR.kpGold);
+    s.player.gold += gold;
+    const f = this.nationFid(nation);
+    if (f) this.shiftStanding(f, Math.max(1, Math.round(kp / WAR.kpStanding)));
+    const nm = WAR_REGISTRY.get(nation)?.name ?? nation;
+    if (this.state.is('play')) this.hud.toast(`${reason}: +${kp} Kriegspunkte für ${nm.replace(/^Die /, 'die ')} · +${fmtInt(gold)} Gold`, 4);
+    audio.play('coin', 0.6);
+  }
+
+  /** Ein Kriegsauftrag ist zu Ende: Lohn (Gold, Boss-Siegel, Ehre, Ansehen) oder ein kleiner Ansehensverlust */
+  private contractEnded(c: WarContract) {
+    const s = this.save;
+    if (!s) return;
+    const def = CONTRACT_DEFS[c.kind];
+    const isl = this.world.war?.island(c.islandId)?.name ?? c.islandId;
+    const f = this.nationFid(c.client), fo = this.nationFid(c.opponent);
+    const nm = (id: FactionId | null) => (id ? FACTIONS[id].name : '');
+    if (c.status === 'erfuellt') {
+      const r = c.reward;
+      s.player.gold += r.gold;
+      s.progress.unlocks ??= emptyUnlocks();
+      const parts = [`+${fmtInt(r.gold)} Gold`];
+      if (f && r.seals > 0) { s.progress.unlocks.seals[f] = Math.min(999, (s.progress.unlocks.seals[f] ?? 0) + r.seals); parts.push(`${r.seals} Boss-Siegel (${nm(f)})`); }
+      if (f) { this.addHonor(f, r.honor); this.shiftStanding(f, r.standing); parts.push(`Ehre +${r.honor}`, `${nm(f)} +${r.standing} Ansehen`); }
+      if (fo && r.foeStanding) { this.shiftStanding(fo, r.foeStanding); parts.push(`${nm(fo)} ${r.foeStanding} Ansehen`); }
+      this.grantXp(260, 45);
+      this.overlay.showBanner('Kriegsauftrag erfüllt!', `${def.title}: ${isl}`);
+      this.hud.toast(`${c.note}. ${parts.join(' · ')}`, 8);
+      audio.play('win');
+    } else if (c.status === 'gescheitert') {
+      if (f) this.shiftStanding(f, -3);
+      this.hud.toast(`Kriegsauftrag gescheitert – ${def.title}: ${isl}. ${c.note}.`, 7);
+    }
+    this.persist();
+  }
+
+  /** Kriegsaufträge für das Fenster „Weltlage“: Angebote aus den laufenden Aktionen und die eigenen Aufträge (laufende und gerade beendete) */
+  warContractsView() {
+    const war = this.world.war, s = this.save;
+    if (!war || !s) return null;
+    const pid = this.world.playerEntityId;
+    const nm = (id: string | null) => (id ? WAR_REGISTRY.get(id)?.name ?? id : 'niemand');
+    const col = (id: string | null) => (id ? WAR_REGISTRY.get(id)?.color ?? '#ccc' : '#ccc');
+    const pos = this.world.playerPos;
+    const dist = (islandId: string) => { const w = war.island(islandId); return w ? Math.max(0, Math.hypot(w.x - pos.x, w.z - pos.z) - w.r) : 0; };
+    const gate = (client: string) => { const f = this.nationFid(client); const st = f ? s.progress.standing?.[f] ?? 0 : 0; return st < -20 ? `${nm(client)} traut dir nicht (Ansehen ${st}).` : ''; };
+    const running = war.contractsOf(pid, []).filter((c) => c.status === 'aktiv').length;
+    const offers = war.contractOffers(pid, []).map((o) => ({
+      ...o, clientName: nm(o.client), clientColor: col(o.client), opponentName: nm(o.opponent), dist: dist(o.islandId),
+      blocked: gate(o.client) || (running >= WAR.maxContracts ? `Höchstens ${WAR.maxContracts} Kriegsaufträge gleichzeitig.` : ''),
+    })).sort((a, b) => a.dist - b.dist).slice(0, 6);
+    const mine = war.contractsOf(pid, []).map((c) => ({
+      id: c.id, kind: c.kind, title: `${CONTRACT_DEFS[c.kind].title}: ${war.island(c.islandId)?.name ?? c.islandId}`, status: c.status, note: c.note,
+      clientName: nm(c.client), clientColor: col(c.client), merit: Math.round(c.merit), need: c.need, done: c.done, goal: c.goal,
+      left: Math.max(0, Math.round(c.deadline - war.state.t)), dist: dist(c.islandId), reward: c.reward, side: c.side,
+    }));
+    const merit = WAR_REGISTRY.list().map((d) => ({ name: d.name, color: d.color, kp: Math.round(war.meritOf(pid, d.id)) })).filter((m) => m.kp > 0);
+    return { offers, mine, merit, max: WAR.maxContracts };
+  }
+
+  /** Kriegsauftrag annehmen; liefert die Meldung für das Fenster */
+  acceptWarContract(offerId: string): string {
+    const war = this.world.war, s = this.save;
+    if (!war || !s) return '';
+    const o = war.contractOffers(this.world.playerEntityId, []).find((x) => x.offerId === offerId);
+    if (!o) return 'Dieser Auftrag ist nicht mehr zu haben.';
+    const f = this.nationFid(o.client);
+    const st = f ? s.progress.standing?.[f] ?? 0 : 0;
+    if (st < -20) return `${WAR_REGISTRY.get(o.client)?.name ?? o.client} traut dir nicht (Ansehen ${st}).`;
+    const c = war.acceptContract(this.world.playerEntityId, offerId);
+    if (!c) return `Höchstens ${WAR.maxContracts} Kriegsaufträge gleichzeitig.`;
+    this.persist();
+    audio.play('bell', 0.5);
+    return `Angenommen: ${o.title}. Das Ziel steht auf Kompass und Karte.`;
+  }
+
+  /** Kriegsauftrag aufgeben (kostet etwas Ansehen beim Auftraggeber) */
+  abandonWarContract(id: string): string {
+    const war = this.world.war;
+    if (!war) return '';
+    const c = war.abandonContract(this.world.playerEntityId, id);
+    if (!c) return '';
+    const f = this.nationFid(c.client);
+    if (f) this.shiftStanding(f, -4);
+    this.persist();
+    return `Auftrag aufgegeben: ${CONTRACT_DEFS[c.kind].title}.`;
+  }
+
+  /** Ziel des nächsten laufenden Kriegsauftrags (Kompass und Karte, wenn kein Story-Auftrag verfolgt wird) */
+  private warTarget(): { x: number; z: number } | null {
+    const war = this.world.war;
+    if (!war) return null;
+    const pos = this.world.playerPos;
+    let best: { x: number; z: number } | null = null, bd = Infinity;
+    for (const c of war.state.contracts) {
+      if (c.status !== 'aktiv' || c.playerId !== this.world.playerEntityId) continue;
+      // Abfangen: die Armada selbst; sonst die Insel
+      const a = c.kind === 'abfangen' ? war.armadaById(c.armadaId) : null;
+      const w = war.island(c.islandId);
+      const p = a ? { x: a.x, z: a.z } : w ? { x: w.x, z: w.z } : null;
+      if (!p) continue;
+      const d = Math.hypot(p.x - pos.x, p.z - pos.z);
+      if (d < bd) { bd = d; best = p; }
+    }
+    return best;
+  }
+
+  private blockadeHintAt = -1e9;
+
+  /** Partei ergreifen an der Belagerung vor Ort (Knopf im Taktik-Banner) */
+  private joinWarSide(side: SiegeSide) {
+    const live = this.world.warLive;
+    if (!live?.join(side)) return;
+    const war = this.world.war, sv = live.siegeView;
+    const sg = sv ? war?.siegeById(sv.siegeId) : null;
+    const nation = sg ? (side === 'angreifer' ? sg.attacker : sg.defender) : null;
+    const nm = nation ? WAR_REGISTRY.get(nation)?.name ?? nation : '';
+    this.hud.toast(`Du kämpfst jetzt für ${nm.replace(/^Die /, 'die ')} (${side === 'angreifer' ? 'Angreifer' : 'Verteidiger'}): erobere und halte die Kontrollpunkte – die Gegenseite greift dich an!`, 6);
+    this.warBanner.update(this.warHudView());
+    audio.play('bell', 0.6);
+  }
+
+  /** Taktik-Banner: die Belagerung oder Großschlacht in Reichweite (1,5 km), Belagerungen haben Vorrang, wenn sie nicht deutlich weiter weg sind */
+  private warHudView(): WarHudView | null {
+    const war = this.world.war;
+    if (!war || this.world.raid || !this.state.is('play')) return null;
+    const pos = this.world.playerPos, pid = this.world.playerEntityId;
+    const nm = (id: string | null) => (id ? WAR_REGISTRY.get(id)?.name ?? id : 'Niemand');
+    const col = (id: string | null) => (id ? WAR_REGISTRY.get(id)?.color ?? '#ccc' : '#ccc');
+    const s = war.state;
+    let sg: (typeof s.sieges)[number] | null = null, ds = 1500;
+    for (const g of s.sieges) {
+      if (g.ended) continue;
+      const w = war.island(g.islandId);
+      if (!w) continue;
+      const d = Math.max(0, Math.hypot(w.x - pos.x, w.z - pos.z) - w.r);
+      if (d < ds) { ds = d; sg = g; }
+    }
+    let bt: (typeof s.battles)[number] | null = null, db = 1500;
+    for (const b of s.battles) { if (b.ended) continue; const d = Math.hypot(b.x - pos.x, b.z - pos.z); if (d < db) { db = d; bt = b; } }
+    const clock = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+    const fleetLine = (a: ArmadaState | null) => {
+      if (!a) return 'zerschlagen';
+      let tr = 0;
+      for (const sh of a.ships) if (!sh.down && sh.role === 'transport') tr++;
+      const ws = warshipsAlive(a);
+      return `${ws} ${ws === 1 ? 'Kriegsschiff' : 'Kriegsschiffe'}${tr ? ` · ${tr} Transporter` : ''}`;
+    };
+    if (sg && (!bt || ds <= db + 300)) {
+      const w = war.island(sg.islandId)!;
+      const a = war.armadaById(sg.armadaId);
+      const eta = war.siegeEta(sg), rate = war.siegeRate(sg);
+      const side = war.helperSide(sg.id, pid);
+      const sv = this.world.warLive?.siegeView;
+      const nation = side === 'angreifer' ? sg.attacker : side === 'verteidiger' ? sg.defender : null;
+      return {
+        kind: 'belagerung', title: `Belagerung von ${w.name}`,
+        // fast stehender Fortschritt (Kontrollpunkte gleichen das Kräfteverhältnis aus): keine absurde Uhr, sondern „steht“
+        clock: sg.paused ? 'ruht (Seeschlacht)' : rate < 0 ? 'läuft zurück' : Number.isFinite(eta) && eta < 5400 ? `≈ ${clock(eta)}` : 'steht',
+        a: { name: nm(sg.attacker), color: col(sg.attacker), role: 'Angreifer', line: fleetLine(a) },
+        b: { name: nm(sg.defender), color: col(sg.defender), role: 'Verteidiger', line: `Garnison ${Math.round(sg.garrison)}` },
+        progress: sg.progress,
+        morale: [{ label: 'Moral', value: sg.morale, color: sg.morale < 0.4 ? '#e8624a' : '#e8cb7c' }],
+        points: sg.points.map((p) => ({ name: p.name, hold: p.hold, label: p.hold >= 0.999 ? 'Angreifer' : p.hold <= -0.999 ? 'Verteidiger' : 'umkämpft' })),
+        side, canJoin: !side && !!sv && sv.siegeId === sg.id && this.world.mode === 'foot',
+        kp: nation ? Math.round(war.meritOf(pid, nation)) : 0,
+      };
+    }
+    if (!bt) return null;
+    const A = war.armadaById(bt.a), B = war.armadaById(bt.b);
+    return {
+      kind: 'schlacht', title: `Großschlacht: ${nm(bt.nationA)} gegen ${nm(bt.nationB).replace(/^Die /, 'die ')}`,
+      clock: `noch ≤ ${clock(Math.max(0, WAR.battleMax - bt.t))}`,
+      a: { name: nm(bt.nationA), color: col(bt.nationA), role: '', line: fleetLine(A) },
+      b: { name: nm(bt.nationB), color: col(bt.nationB), role: '', line: fleetLine(B) },
+      progress: null,
+      morale: [
+        { label: `Moral ${nm(bt.nationA)}`, value: A?.morale ?? 0, color: col(bt.nationA) },
+        { label: `Moral ${nm(bt.nationB)}`, value: B?.morale ?? 0, color: col(bt.nationB) },
+      ],
+      points: [], side: null, canJoin: false, kp: 0,
+    };
+  }
+
+  /** Blockadebrecher: liegt das Schiff mit genug Medizin oder Kanonenstahl vor der belagerten Insel, wird abgeliefert (alle 0,4 s geprüft) */
+  private checkBlockadeDelivery() {
+    const war = this.world.war, s = this.save;
+    if (!war || !s || this.world.raid) return;
+    const pid = this.world.playerEntityId;
+    const sh = this.world.ship;
+    for (const c of war.state.contracts) {
+      if (c.status !== 'aktiv' || c.playerId !== pid || c.kind !== 'blockade') continue;
+      const w = war.island(c.islandId);
+      // „vor dem Hafen“: bis 400 m jenseits der Küste (lange Stege wie die Stelzen von Nebelhafen reichen gut 240 m hinaus)
+      if (!w || Math.hypot(sh.x - w.x, sh.z - w.z) > w.r + 400) continue;
+      const eco = this.eco();
+      const load = BLOCKADE_CARGO.find((l) => (eco.cargo[l.good]?.n ?? 0) >= l.n);
+      if (!load) {
+        const now = s.meta.playTime;
+        if (now - this.blockadeHintAt > 15) { this.blockadeHintAt = now; this.hud.toast(`Für die Lieferung fehlen ${BLOCKADE_CARGO.map((l) => `${l.n} ${GOOD_BY_ID[l.good].n}`).join(' oder ')} im Frachtraum.`, 4); }
+        continue;
+      }
+      takeCargo(eco, load.good, load.n);
+      if (war.deliverBlockade(pid, c.id)) this.hud.toast(`${load.n} × ${GOOD_BY_ID[load.good].n} in den Hafen von ${w.name} gebracht – die Garnison atmet auf, die Belagerer verlieren Moral.`, 6);
     }
   }
 

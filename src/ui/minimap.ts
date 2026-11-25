@@ -346,9 +346,15 @@ export interface WorldMapData {
   occupations?: { id: string; x: number; z: number; r: number; name: string; text: string; endgame: boolean; fleet?: { x: number; z: number } }[];
   /** Krieg der Mächte (4.5A): Armadas unterwegs, Belagerungen mit Fortschritt, Großschlachten fern vom Spieler (die nahen stehen in `battles`) */
   wars?: {
-    armadas: { x: number; z: number; heading: number; color: string; name: string; ships: number; relief: boolean }[];
-    sieges: { x: number; z: number; r: number; color: string; name: string; progress: number }[];
+    /** `tx`/`tz`: Ziel der Armada (Frontlinie, 4.5B) */
+    armadas: { x: number; z: number; heading: number; color: string; name: string; ships: number; relief: boolean; tx?: number; tz?: number }[];
+    /** `id` = Insel; `points` = Kontrollpunkte als Kurztext (4.5B) */
+    sieges: { id?: string; x: number; z: number; r: number; color: string; name: string; progress: number; points?: string }[];
     battles: { x: number; z: number; name: string }[];
+    /** Bündnislinien zwischen den Hauptstädten (4.5B): Zweier-Bündnis oder Koalition */
+    alliances?: { ax: number; az: number; bx: number; bz: number; color: string; coalition: boolean }[];
+    /** Eroberte Inseln (anderer Herr als beim Weltstart): Rahmen in der Farbe des neuen Herrn (4.5B) */
+    conquered?: { x: number; z: number; r: number; color: string }[];
   };
   /** Wie oft eine Festungsinsel schon erobert wurde (Insel-ID → Zahl; bleibt auch nach einer Rückeroberung) */
   conquests?: Record<string, number>;

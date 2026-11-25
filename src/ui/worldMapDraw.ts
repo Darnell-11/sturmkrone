@@ -7,18 +7,19 @@ import { PLAYABLE_RADIUS, WORLD_RADIUS } from '../data/world';
 import { RINGS } from '../data/worldRings';
 import { GOOD_BY_ID, profileOf, type GoodId } from '../data/economy';
 import { drawPoi, outline, ownerRing, type MapTopo, type ShapeLike, type WorldMapData, type WorldView } from './minimap';
-import { LABEL_ZOOM, LabelPlacer, TextWidths, fitScale, labelShown, type LabelRank } from './mapView';
+import { LABEL_ZOOM, LabelPlacer, MarkClusters, TextWidths, WAR_CLUSTER_PX, WAR_LABEL_ZOOM, fitScale, labelShown, type LabelRank } from './mapView';
 import { isTravelPort } from '../world/fastTravel';
 
 /** Ebenen der Karte, einzeln ein- und ausblendbar */
-export interface MapLayers { sectors: boolean; currents: boolean; events: boolean; trade: boolean }
+export interface MapLayers { sectors: boolean; currents: boolean; events: boolean; trade: boolean; war: boolean }
 export const MAP_LAYERS: readonly { id: keyof MapLayers; label: string; hint: string }[] = [
   { id: 'sectors', label: 'Sektoren & Gefahrenringe', hint: 'Die fünf Mächte und die vier Meeres-Ringe' },
+  { id: 'war', label: 'Krieg & Frontlinien', hint: 'Armadas mit Zielen, Belagerungen, Großschlachten, Bündnisse und eroberte Inseln' },
   { id: 'currents', label: 'Strömungen', hint: 'Elf Windstraßen mit Strömungsrichtung' },
   { id: 'events', label: 'Ereignisse & Konvois', hint: 'Schatz-Galeonen, Blockaden, Wrackfelder, Weltbosse, Handelskonvois' },
   { id: 'trade', label: 'Kontor-Handel', hint: 'Überschuss ▲ und Bedarf ▼ entdeckter Häfen' },
 ];
-export const defaultLayers = (): MapLayers => ({ sectors: true, currents: true, events: true, trade: true });
+export const defaultLayers = (): MapLayers => ({ sectors: true, currents: true, events: true, trade: true, war: true });
 
 export interface MapDrawState {
   selected: string | null;
@@ -39,6 +40,12 @@ const my = (z: number): number => H / 2 - (z - CZ) * S;
 
 const placer = new LabelPlacer(320);
 const widths = new TextWidths();
+/** Kampf-Symbole (4.5B): Bildschirmlage und Art je Marke (0 Belagerung, 1 Großschlacht, 2 Grenz-Seeschlacht), feste Felder */
+const WAR_MAX = 48;
+const warX = new Float32Array(WAR_MAX), warY = new Float32Array(WAR_MAX), warKind = new Uint8Array(WAR_MAX);
+const clusters = new MarkClusters(WAR_MAX);
+const COUNT_TEXT: string[] = [];
+const countText = (n: number): string => (COUNT_TEXT[n] ??= `×${n}`);
 const FONT_NAME = '700 12px "Alegreya Sans", sans-serif';
 const FONT_BIG = '800 13px "Alegreya Sans", sans-serif';
 const FONT_BADGE = '700 11px "Alegreya Sans", sans-serif';
@@ -179,6 +186,11 @@ function drawKnownIsland(ctx: CanvasRenderingContext2D, i: IslandDef, shape: Sha
   ownerRing(ctx, mx, my, S, i);
 }
 const KIND_FILL: Record<string, string> = { town: '#E3B04B', camp: '#C0503A', boss: '#8A2A3A', quiet: '#5E9450', treasure: '#5E9450', lighthouse: '#E8E2D4', ruin: '#8A8A98', harbor: '#E3B04B', marinefort: '#D8E4F4', citadel: '#8A2A3A' };
+
+/** Kriegs-Beschriftung (4.5B): unter dem Zeichen, sonst darüber */
+function label2(ctx: CanvasRenderingContext2D, text: string, x: number, yBelow: number, yAbove: number, fill: string): boolean {
+  return label(ctx, FONT_EVENT, text, x, yBelow, fill) || label(ctx, FONT_EVENT, text, x, yAbove, fill);
+}
 
 /** Beschriftung setzen, wenn kein anderes Rechteck im Weg liegt; liefert true, wenn gezeichnet */
 function label(ctx: CanvasRenderingContext2D, font: string, text: string, x: number, y: number, fill: string, stroke = 'rgba(8,16,28,0.85)'): boolean {
@@ -434,9 +446,30 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
     ctx.beginPath(); ctx.arc(x, y, rr, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
     drawPoi(ctx, x, y, 'battle', 1.5);
   }
-  // Krieg der Mächte (4.5A): Belagerungsring mit Fortschritt in der Farbe des Angreifers, Armadas als Pfeile in Fahrtrichtung, ferne Großschlachten
+  // Krieg & Frontlinien (4.5A/4.5B): Bündnislinien zwischen Hauptstädten, Rahmen eroberter Inseln, Frontlinien der Armadas zu ihren Zielen,
+  // Belagerungsring mit Fortschritt in der Farbe des Angreifers, Armadas als Pfeile in Fahrtrichtung, ferne Großschlachten
   const war = d.wars;
-  if (L.events && war) {
+  if (L.war && war) {
+    const al = war.alliances;
+    if (al) for (let k = 0; k < al.length; k++) {
+      const a = al[k];
+      ctx.strokeStyle = a.color; ctx.globalAlpha = 0.75; ctx.lineWidth = a.coalition ? 1.6 : 2.4; ctx.setLineDash(a.coalition ? [2, 5] : [10, 6]);
+      ctx.beginPath(); ctx.moveTo(mx(a.ax), my(a.az)); ctx.lineTo(mx(a.bx), my(a.bz)); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+    }
+    const cq = war.conquered;
+    if (cq) for (let k = 0; k < cq.length; k++) {
+      const c = cq[k], x = mx(c.x), y = my(c.z), rr = Math.max(9, c.r * S * 1.42);
+      ctx.strokeStyle = 'rgba(12,10,8,0.8)'; ctx.lineWidth = 5; ctx.strokeRect(x - rr, y - rr, rr * 2, rr * 2);
+      ctx.strokeStyle = c.color; ctx.lineWidth = 2.6; ctx.strokeRect(x - rr, y - rr, rr * 2, rr * 2);
+    }
+    for (let k = 0; k < war.armadas.length; k++) {
+      const a = war.armadas[k];
+      if (a.tx === undefined || a.tz === undefined) continue;
+      ctx.strokeStyle = a.color; ctx.globalAlpha = 0.55; ctx.lineWidth = 1.6; ctx.setLineDash([3, 5]);
+      ctx.beginPath(); ctx.moveTo(mx(a.x), my(a.z)); ctx.lineTo(mx(a.tx), my(a.tz)); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+    }
     for (let k = 0; k < war.sieges.length; k++) {
       const sg = war.sieges[k], x = mx(sg.x), y = my(sg.z), rr = Math.max(12, sg.r * S * 1.6);
       ctx.strokeStyle = 'rgba(20,16,14,0.65)'; ctx.lineWidth = 5;
@@ -477,14 +510,60 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
   // 1. Spieler und Ereignisse (wichtiger als Inselnamen), 2. Städte und Festungen, 3. Häfen und Bosse, 4. der Rest, 5. Markt-Abzeichen
   const px = mx(m.player.x), py = my(m.player.z);
   placer.tryPlace(px - 14, py - 14, px + 14, py + 14, 0);
+  // Belagerungen und Schlachten (4.5B): unter 1,25× gebündelte, überlappungsfreie Kampf-Symbole ohne Text (die Kartenmitte bleibt lesbar); der volle
+  // Text erst beim Hineinzoomen oder für die angeklickte Insel. Grenz-Seeschlachten gehören dazu, sobald die Kriegsebene an ist
+  const warOn = L.war && !!war, full = zoom >= WAR_LABEL_ZOOM;
+  if (warOn && war) {
+    if (full) {
+      // unter dem Zeichen, sonst darüber: nie überlappend, auch wenn Belagerungen und Schlachten dicht beieinander liegen
+      for (let k = 0; k < war.sieges.length; k++) { const sg = war.sieges[k], rr = Math.max(12, sg.r * S * 1.6); label2(ctx, `${sg.name} · ${Math.round(sg.progress * 100)} %`, mx(sg.x), my(sg.z) + rr + 16, my(sg.z) - rr - 8, '#FFC090'); }
+      for (let k = 0; k < war.battles.length; k++) { const b = war.battles[k]; label2(ctx, b.name, mx(b.x), my(b.z) + 34, my(b.z) - 22, '#FFB070'); }
+      if (bts && L.events) for (let k = 0; k < bts.length; k++) { const b = bts[k]; label2(ctx, `Seeschlacht ${FACTIONS[b.a].name} ⚔ ${FACTIONS[b.b].name}`, mx(b.x), my(b.z) + 42, my(b.z) - 30, '#FFB070'); }
+      if (zoom >= LABEL_ZOOM) for (let k = 0; k < war.armadas.length; k++) { const a = war.armadas[k]; label(ctx, FONT_BADGE, `${a.name} (${a.ships})`, mx(a.x), my(a.z) + 18, a.color); }
+    } else {
+      // Marken sammeln: Belagerungen zuerst (sie setzen die Zentren), dann Großschlachten, dann Grenz-Seeschlachten
+      let n = 0;
+      for (let k = 0; k < war.sieges.length && n < WAR_MAX; k++, n++) { warX[n] = mx(war.sieges[k].x); warY[n] = my(war.sieges[k].z); warKind[n] = 0; }
+      for (let k = 0; k < war.battles.length && n < WAR_MAX; k++, n++) { warX[n] = mx(war.battles[k].x); warY[n] = my(war.battles[k].z); warKind[n] = 1; }
+      if (bts && L.events) for (let k = 0; k < bts.length && n < WAR_MAX; k++, n++) { warX[n] = mx(bts[k].x); warY[n] = my(bts[k].z); warKind[n] = 2; }
+      const nc = clusters.build(warX, warY, n, WAR_CLUSTER_PX);
+      for (let c = 0; c < nc; c++) {
+        const x = clusters.cx[c], y = clusters.cy[c], cnt = clusters.count[c];
+        if (x < -20 || x > w + 20 || y < -20 || y > h + 20) continue;
+        let siege = false;
+        for (let i = 0; i < n; i++) if (clusters.of[i] === c && warKind[i] === 0) { siege = true; break; }
+        // Symbol: dunkle Scheibe mit Fahne (Belagerung) bzw. gekreuzten Kanonen (Schlacht), Zahl bei mehreren; der Platz bleibt für Namen frei
+        ctx.fillStyle = 'rgba(14,10,8,0.82)'; ctx.strokeStyle = siege ? '#FFC090' : '#FFB070'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        if (siege) {
+          ctx.strokeStyle = '#F4E2B8'; ctx.fillStyle = '#E8624A'; ctx.lineWidth = 1.6;
+          ctx.beginPath(); ctx.moveTo(x - 3, y + 7); ctx.lineTo(x - 3, y - 7); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(x - 3, y - 7); ctx.lineTo(x + 7, y - 4); ctx.lineTo(x - 3, y - 1); ctx.closePath(); ctx.fill();
+        } else drawPoi(ctx, x, y, 'battle', 0.9);
+        let x1 = x + 13;
+        if (cnt > 1) {
+          ctx.font = FONT_BADGE; ctx.textAlign = 'left';
+          const t = countText(cnt);
+          ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(8,16,28,0.9)'; ctx.strokeText(t, x + 11, y + 15); ctx.fillStyle = '#FFE3A0'; ctx.fillText(t, x + 11, y + 15);
+          x1 = x + 13 + widths.get(ctx, FONT_BADGE, t);
+        }
+        placer.tryPlace(x - 13, y - 13, x1, y + 17, 0);
+      }
+      // angeklickte Insel: ihr Belagerungstext trotz Bündelung
+      if (sel) for (let k = 0; k < war.sieges.length; k++) {
+        const sg = war.sieges[k];
+        if (sg.id !== sel) continue;
+        // unter, über oder neben der Insel: die erste freie Stelle (die Symbole ringsum bleiben stehen)
+        const t = `${sg.name} · ${Math.round(sg.progress * 100)} %`, x = mx(sg.x), y = my(sg.z), rr = Math.max(12, sg.r * S * 1.6);
+        ctx.font = FONT_EVENT;
+        const hw = widths.get(ctx, FONT_EVENT, t) / 2;
+        if (!label(ctx, FONT_EVENT, t, x, y + rr + 30, '#FFC090') && !label(ctx, FONT_EVENT, t, x, y - rr - 22, '#FFC090') && !label(ctx, FONT_EVENT, t, x + rr + hw + 18, y + 4, '#FFC090')) label(ctx, FONT_EVENT, t, x - rr - hw - 18, y + 4, '#FFC090');
+      }
+    }
+  }
   if (L.events) {
     if (evs) for (let k = 0; k < evs.length; k++) { const e = evs[k]; label(ctx, FONT_EVENT, e.name, mx(e.x), my(e.z) + 24, e.kind === 'worldboss' ? '#FF9A8A' : e.kind === 'galeone' ? '#FFE07A' : '#F4EEDC'); }
-    if (bts) for (let k = 0; k < bts.length; k++) { const b = bts[k]; label(ctx, FONT_EVENT, `Seeschlacht ${FACTIONS[b.a].name} ⚔ ${FACTIONS[b.b].name}`, mx(b.x), my(b.z) + 42, '#FFB070'); }
-    if (war) {
-      for (let k = 0; k < war.sieges.length; k++) { const sg = war.sieges[k]; label(ctx, FONT_EVENT, `${sg.name} · ${Math.round(sg.progress * 100)} %`, mx(sg.x), my(sg.z) + Math.max(12, sg.r * S * 1.6) + 16, '#FFC090'); }
-      for (let k = 0; k < war.battles.length; k++) { const b = war.battles[k]; label(ctx, FONT_EVENT, b.name, mx(b.x), my(b.z) + 34, '#FFB070'); }
-      if (zoom >= LABEL_ZOOM) for (let k = 0; k < war.armadas.length; k++) { const a = war.armadas[k]; label(ctx, FONT_BADGE, `${a.name} (${a.ships})`, mx(a.x), my(a.z) + 18, a.color); }
-    }
+    if (bts && !warOn && full) for (let k = 0; k < bts.length; k++) { const b = bts[k]; label(ctx, FONT_EVENT, `Seeschlacht ${FACTIONS[b.a].name} ⚔ ${FACTIONS[b.b].name}`, mx(b.x), my(b.z) + 42, '#FFB070'); }
   }
   // Mega-Inseln vor allen anderen Namen: sie sind die Orientierungspunkte der Karte (4.3.6)
   for (let k = 0; k < isl.length; k++) { const i = isl[k]; if (i.mega) megaLabel(ctx, i, d.known(i.id)); }

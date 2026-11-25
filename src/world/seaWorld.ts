@@ -2,7 +2,7 @@ import { audio } from '../audio/audio';
 import { CrewAboard, type CrossingPlan, type LandingPlan } from './crewAboard';
 import type { CommandState, TroopRoster } from '../data/troops';
 import { rosterTotal } from '../data/troops';
-import type { TroopSquad, TroopWorld } from '../entities/troops/squad';
+import type { TroopFoe, TroopSquad, TroopWorld } from '../entities/troops/squad';
 import type { CrewDef } from '../data/crew';
 import type { AllyWorld } from '../entities/ally';
 import { navForIsland, releaseNavForIsland } from '../ai/navGrid';
@@ -54,7 +54,7 @@ import { FactionWarEngine, NationRegistry, cleanFactionWar, warWorldFromDefs, ty
 import { FactionWarLive } from './factionWarLive';
 import { factionBanner } from './factionArch';
 import { factionRole } from './factionMats';
-import { hordePalette } from '../raid/horde';
+import { HORDE_DMG, hordePalette } from '../raid/horde';
 import { baseFov } from '../render/lens';
 import type { IslandShape } from './ocean';
 import { ParticleSystem } from './particles';
@@ -1258,6 +1258,11 @@ export class SeaWorld {
   /** Wachen der Inseln, die einen neuen Herrn haben (nur in Spielernähe) */
   private readonly warGarrisons = new Map<string, Garrison>();
   private warGarT = 0;
+  /** Die Spielfigur als Ziel feindlicher Belagerungstrupps (4.5B; stabiles Objekt, Werte frisch aus dem Kampfsystem) */
+  private readonly warPlayerFoe: TroopFoe = (() => {
+    const w = this;
+    return { get x() { return w.combat?.player?.x ?? 0; }, get z() { return w.combat?.player?.z ?? 0; }, radius: 0.55, get alive() { return !!w.combat?.player?.active; } };
+  })();
 
   /** Die Definitionen der Hauptkarte (auch während eines Raids, der sie vorübergehend tauscht) */
   private mainDefs(): IslandDef[] { return this.mainSaved?.defs ?? this.islandDefs; }
@@ -1296,6 +1301,17 @@ export class SeaWorld {
       },
       troopBase: () => this.troopWorld,
       get playerId() { return w.playerEntityId; },
+      // Landkampf an den Kontrollpunkten (4.5B): wie die Verbände im Raid treffen feindliche Trupps Spielfigur (abgeschwächt) und Crew
+      playerFoe: () => this.warPlayerFoe,
+      crew: () => this.combat?.allies ?? NO_FOES,
+      strike: (t, dmg, dx, dz, heavy) => {
+        const c = this.combat;
+        if (!c) return;
+        if (t === this.warPlayerFoe) c.strikePlayer(dmg * HORDE_DMG.player, dx, dz, heavy);
+        else (t as { receive?(d: number, x: number, z: number): void }).receive?.(dmg * HORDE_DMG.crew, dx, dz);
+      },
+      onFoot: () => this.mode === 'foot' && !!this.foot && this.landed && !this.raid,
+      setMass: (list) => { const c = this.combat; if (c && !this.raid) c.mass = list ?? []; },
     }, this.war);
     // Grenzfesten in fremder Hand stellen keine Marine-Patrouillen
     this.naval.fortOwner = (id) => {
@@ -3204,6 +3220,16 @@ export class SeaWorld {
     if (!c || !def) return;
     const where = `${def.name}`;
     if (def.skerry) { this.onMessage(`${where}: ${def.info}`); return; }
+    // Belagerung (4.5B): Landkampf um die Kontrollpunkte statt Ruhe oder Lager; Partei ergreift man im Schlacht-Banner oder per Kriegsauftrag
+    const siege = this.war?.siegeOf(def.id);
+    if (siege) {
+      const nm = (id: string | null) => (id ? WAR_REGISTRY.get(id)?.name ?? id : 'niemand');
+      const side = this.war!.helperSide(siege.id, this.playerEntityId);
+      const msg = `${where} wird belagert: ${nm(siege.attacker)} gegen ${nm(siege.defender).replace(/^Die /, 'die ')}! ${side ? `Du kämpfst für die ${side === 'angreifer' ? 'Angreifer' : 'Verteidiger'} – erobere und halte die Kontrollpunkte.` : 'Ergreife oben im Schlacht-Banner Partei und kämpfe um die Kontrollpunkte.'}`;
+      if (def.mega && isMegaId(def.id)) this.enterMega(isl, def.id);
+      this.onMessage(msg);
+      return;
+    }
     if (def.mega && isMegaId(def.id)) { this.enterMega(isl, def.id); return; }
     if (def.kind === 'town') { this.onMessage(`Willkommen in ${where}! Sprich mit den Leuten – und probier deine Kombos an den Puppen.`); return; }
     if (def.kind === 'harbor') { this.onMessage(`${where}: ${def.info}`); return; }

@@ -283,4 +283,58 @@ export const WAR = {
   /** Entsatz: höchstens einer je Insel in diesem Abstand (s), und nur mit Aussicht (Feuerkraft mindestens dieser Anteil der Belagerer) */
   reliefGap: 300,
   reliefOdds: 0.55,
+
+  // ---------- 4.5B: Eingreifen des Spielers, Kontrollpunkte, Bündnisse, Kriegsaufträge ----------
+
+  /** Ein versenktes Kommandoschiff (Flaggschiff der Armada) senkt die Moral der Belagerung um … */
+  flagshipMoraleLoss: 0.22,
+  /** Kontrollpunkte: Fangradius (m), Zeit (s) für einen ganzen Wechsel von −1 nach +1 bei klarer Übermacht, Wirkung auf den Fortschritt
+   *  (Faktor `1 + pointK · Mittel`: alle beim Angreifer ×2,6, alle beim Verteidiger −0,6 = der Fortschritt läuft zurück) */
+  pointRadius: 16,
+  pointSeconds: 40,
+  pointK: 1.6,
+  /** Wie viele Köpfe die Spielfigur und ein Offizier an einem Kontrollpunkt zählen */
+  playerPresence: 10,
+  officerPresence: 4,
+  /** Landkampf in Spielernähe: so viele Soldaten der Engine steht ein sichtbarer Kopf; aus der Reserve landet höchstens alle … s ein neuer Trupp je Seite */
+  troopsPerHead: 2.5,
+  reinforceEvery: 12,
+  /** Hält der Verteidiger alle Punkte und fällt der Fortschritt auf 0, ist die Belagerung abgewehrt */
+  repelAt: -0.95,
+  /** Kriegspunkte des Spielers: versenktes Kommandoschiff, Transporter, anderes Kriegsschiff; eroberter Kontrollpunkt; aufgeriebener Trupp; Blockadebrecher-Lieferung */
+  kp: { kommando: 40, transport: 30, schiff: 15, punkt: 20, trupp: 6, lieferung: 45 },
+  /** Sofort-Lohn je Kriegspunkt (Gold) und Ansehen je … Kriegspunkte bei der begünstigten Macht */
+  kpGold: 4,
+  kpStanding: 15,
+  /** Zweier-Bündnis: Vertrauen im Handelspakt, Dauer (s; verlängert sich, solange ein gemeinsamer Gegner bleibt) */
+  allianceTrust: 45,
+  allianceTime: 2400,
+  /** Kriegsaufträge: Laufzeit (s), höchstens … gleichzeitig je Spieler, nötige Kriegspunkte für Entsatz und Invasion */
+  contractTime: 900,
+  maxContracts: 2,
+  contractMerit: 60,
+  /** Blockadebrecher: Wirkung der Lieferung (Garnison +, Moral der Belagerer −, Fortschritt −) */
+  delivery: { garrison: 25, morale: 0.12, progress: 0.12 },
 } as const;
+
+// ---------- Kriegsaufträge (4.5B) ----------
+
+export type ContractKind = 'entsatz' | 'invasion' | 'abfangen' | 'blockade';
+
+/** Grundlohn je Auftragsart (Gold, Boss-Siegel, Ehre, Ansehen beim Auftraggeber, Ansehensverlust beim Gegner) und Beschreibung */
+export const CONTRACT_DEFS: Record<ContractKind, { title: string; gold: number; seals: number; honor: number; standing: number; foeStanding: number; text: string }> = {
+  entsatz: { title: 'Belagerung entsetzen', gold: 950, seals: 1, honor: 30, standing: 12, foeStanding: -6, text: 'Kämpfe an der Seite der Verteidiger: versenke Kommandoschiff und Transporter, halte die Kontrollpunkte an Land, bis die Belagerung zusammenbricht.' },
+  invasion: { title: 'Invasions-Armada anführen', gold: 1000, seals: 1, honor: 30, standing: 12, foeStanding: -8, text: 'Segle mit der Armada, erobere an Land Hafen-Barrikade, Marktplatz und Garnisons-Hof und bring die Insel zu Fall.' },
+  abfangen: { title: 'Nachschubkonvoi abfangen', gold: 700, seals: 1, honor: 20, standing: 8, foeStanding: -5, text: 'Versenke einen Nachschub-Transporter der Armada, bevor er Truppen und Proviant an Land bringt.' },
+  blockade: { title: 'Blockadebrecher-Lieferung', gold: 800, seals: 1, honor: 25, standing: 10, foeStanding: -4, text: 'Brich durch den Belagerungsring und bring 6 Medizin (oder 8 Kanonenstahl) im Frachtraum bis vor den Hafen der belagerten Insel.' },
+};
+
+/** Ladung für den Blockadebrecher: die erste Ware, von der genug an Bord ist, wird abgeliefert */
+export const BLOCKADE_CARGO: readonly { good: 'medizin' | 'kanonenstahl'; n: number }[] = [{ good: 'medizin', n: 6 }, { good: 'kanonenstahl', n: 8 }];
+
+/** Zuschlag auf den Lohn nach Größe der Zielinsel */
+export const CONTRACT_TIER_K: Record<IslandTier, number> = { aussenposten: 0, siedlung: 0.25, hafen: 0.5, festung: 0.8, mega: 1.2, hauptstadt: 1 };
+
+/** Namen der Kontrollpunkte einer Belagerung (2 bei kleinen Inseln, 3 bei Häfen, Festungen und Mega-Inseln) */
+export const SIEGE_POINT_NAMES = { barrikade: 'Hafen-Barrikade', markt: 'Marktplatz', hof: 'Garnisons-Hof' } as const;
+export type SiegePointKind = keyof typeof SIEGE_POINT_NAMES;

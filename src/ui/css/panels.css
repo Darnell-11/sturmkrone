@@ -147,6 +147,10 @@ html[data-fx='lite'] .panel { -webkit-backdrop-filter: none; backdrop-filter: no
 .slot-head span { font: 600 0.82rem var(--font-num); letter-spacing: 0.03em; color: var(--ink-dim); text-align: right; }
 .slot .meta { margin: 3px 0 8px; font-size: 0.9rem; color: var(--ink-dim); line-height: 1.4; }
 .slot .meta .warn { color: var(--danger-hi); }
+/* Kriegsaufträge (4.5B): beendete blass, erfüllte mit goldenem Rand */
+.war-order.gescheitert, .war-order.aufgegeben { opacity: 0.62; }
+.war-order.erfuellt { border-color: var(--brass-300); }
+.war-order .slot-head b { overflow-wrap: anywhere; }
 /* Warn-Schild mitten im Text (Kopfgeld, Krieg, Hegemon): kompakt statt Hinweis-Kasten, sonst überdeckt sein Rand die Nachbarzeilen */
 .slot .meta .warn, .slot-head .warn { display: inline-block; margin: 2px 0 4px; padding: 0 7px; font-size: inherit; line-height: 1.5; }
 .slot .row { margin-top: 4px; }

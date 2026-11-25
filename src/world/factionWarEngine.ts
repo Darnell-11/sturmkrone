@@ -17,7 +17,8 @@ import {
   BASE_YIELD, GARRISON_BASE, GOOD_YIELD, ISLAND_UPKEEP, NATION_DEFS, NEUTRAL_GARRISON, PROFILE_ONLY_K, RESOURCE_CAP, RESOURCE_IDS, RESOURCE_TARGET, STATE_UPKEEP,
   WAR_RESERVE, YIELD_K,
   RESOURCE_VALUE, ROLE_PLAN, SHIP_COST, START_RELATIONS, STRATEGIC_VALUE, TRANSPORT_SUPPLY, TROOPS_PER_SHIP, WAR, WAR_RESOURCES, emptyBag, pairKey,
-  type ArmadaRole, type DiplomacyState, type IslandTier, type NationDefinition, type ResourceBag, type ResourceId,
+  CONTRACT_DEFS, CONTRACT_TIER_K, SIEGE_POINT_NAMES,
+  type ArmadaRole, type ContractKind, type DiplomacyState, type IslandTier, type NationDefinition, type ResourceBag, type ResourceId, type SiegePointKind,
 } from '../data/nations';
 import { ISLAND_PROFILES, profileOf, type GoodId } from '../data/economy';
 import { SHIP_CLASSES } from '../data/ships';
@@ -256,6 +257,20 @@ export interface GrandBattleState {
 }
 
 export type SiegeOutcome = 'erobert' | 'abgebrochen';
+export type SiegeSide = 'angreifer' | 'verteidiger';
+
+/**
+ * Taktischer Kontrollpunkt einer Belagerung (4.5B): Hafen-Barrikade, Marktplatz, Garnisons-Hof. `hold` −1 (Verteidiger) … +1 (Angreifer), 0 = umkämpft.
+ * Die Lage steht in Weltkoordinaten (die Seewelt rückt sie auf begehbaren Boden); verschoben wird der Wert nur von echten Kämpfern vor Ort
+ * (`controlStep`), in der Hintergrund-Rechnung bleibt er stehen.
+ */
+export interface SiegePoint {
+  kind: SiegePointKind;
+  name: string;
+  x: number;
+  z: number;
+  hold: number;
+}
 
 export interface SiegeState {
   id: string;
@@ -278,6 +293,61 @@ export interface SiegeState {
   ended: boolean;
   endedAt: number;
   outcome: SiegeOutcome | null;
+  /** Kontrollpunkte an Land (4.5B) */
+  points: SiegePoint[];
+  /** Spieler, die an dieser Belagerung Partei ergriffen haben (Mehrspieler-tauglich: je Spieler eine Seite) */
+  helpers: { playerId: string; side: SiegeSide }[];
+}
+
+export type ContractStatus = 'aktiv' | 'erfuellt' | 'gescheitert' | 'aufgegeben';
+export interface ContractReward { gold: number; seals: number; honor: number; standing: number; foeStanding: number }
+
+/** Angebot eines Kriegsauftrags (aus den laufenden Aktionen der Engine abgeleitet, nicht gespeichert) */
+export interface ContractOffer {
+  /** Kennung des Angebots: Art und Bezug (`entsatz:bl12`, `invasion:ar7` …) */
+  offerId: string;
+  kind: ContractKind;
+  title: string;
+  text: string;
+  /** Auftraggeber und Gegner (Nationen) */
+  client: string;
+  opponent: string | null;
+  islandId: string;
+  islandName: string;
+  siegeId: string | null;
+  armadaId: string | null;
+  /** Seite an Land, auf die der Auftrag den Spieler stellt */
+  side: SiegeSide | null;
+  /** Nötige Kriegspunkte (Entsatz, Invasion) bzw. Zahl der Ziele (versenkte Transporter, Lieferung) */
+  need: number;
+  goal: number;
+  reward: ContractReward;
+}
+
+/** Angenommener Kriegsauftrag eines Spielers (im Zustand, Spielstand und Welt-Server) */
+export interface WarContract {
+  id: string;
+  offerId: string;
+  kind: ContractKind;
+  playerId: string;
+  client: string;
+  opponent: string | null;
+  islandId: string;
+  siegeId: string | null;
+  armadaId: string | null;
+  side: SiegeSide | null;
+  acceptedAt: number;
+  deadline: number;
+  /** Gesammelte Kriegspunkte für den Auftraggeber an dieser Insel, erreichte Ziele */
+  merit: number;
+  need: number;
+  done: number;
+  goal: number;
+  status: ContractStatus;
+  endedAt: number;
+  /** Warum der Auftrag endete (Anzeige) */
+  note: string;
+  reward: ContractReward;
 }
 
 export interface RelationState {
@@ -293,6 +363,8 @@ export interface RelationState {
   truceUntil: number;
   /** Koalition, zu der dieses Bündnis gehört */
   coalition: string | null;
+  /** Zweier-Militärbündnis (4.5B) gilt bis zu dieser Spielzeit (0 = keines; verlängert sich, solange ein gemeinsamer Gegner bleibt) */
+  allianceUntil: number;
 }
 
 export interface CoalitionState {
@@ -323,11 +395,21 @@ export interface FactionWarState {
   nextCycleAt: number;
   nextDiplomacyAt: number;
   hegemon: string | null;
-  stats: { wars: number; battles: number; conquests: number; ceasefires: number; pacts: number; coalitions: number; armadas: number };
+  stats: { wars: number; battles: number; conquests: number; ceasefires: number; pacts: number; coalitions: number; armadas: number; alliances: number; contracts: number };
+  /** Angenommene Kriegsaufträge aller Spieler (4.5B) */
+  contracts: WarContract[];
+  /** Kriegspunkte je Spieler und begünstigter Nation (4.5B) */
+  merit: Record<string, Record<string, number>>;
 }
 
 export type WarNotice =
-  | { type: 'krieg'; a: string; b: string }
+  /** `ally`: die Nation zieht als Verbündete von `ally` mit in den Krieg (Bündnisfall) */
+  | { type: 'krieg'; a: string; b: string; ally?: string }
+  | { type: 'buendnis'; a: string; b: string }
+  | { type: 'buendnisEnde'; a: string; b: string }
+  | { type: 'punkt'; siegeId: string; islandId: string; name: string; side: SiegeSide; nation: string | null }
+  | { type: 'kriegspunkte'; playerId: string; nation: string; kp: number; reason: string }
+  | { type: 'auftrag'; contract: WarContract }
   | { type: 'waffenstillstand'; a: string; b: string; payer: string; gold: number }
   | { type: 'handelspakt'; a: string; b: string }
   | { type: 'koalition'; against: string; members: string[] }
@@ -344,6 +426,8 @@ export type WarNotice =
 const LINGER = 120;
 /** Höchstens so viele Hintergrund-Schritte je Aufruf (nach langen Pausen wird nicht stundenlang nachgerechnet) */
 const MAX_STEPS = 30;
+/** So lange (s) bleibt ein beendeter Kriegsauftrag im Zustand (Anzeige des Ausgangs) */
+const CONTRACT_LINGER = 600;
 
 // ---------------------------------------------------------------------------------------------------------------
 // Hilfen
@@ -410,7 +494,8 @@ export function newWarState(registry: NationRegistry, islands: readonly WarIslan
   const s: FactionWarState = {
     v: 1, t: 0, seq: 0, rng: seed >>> 0, nations: {}, islands: {}, relations: [], armadas: [], battles: [], sieges: [], coalitions: [],
     nextCycleAt: WAR.cycle, nextDiplomacyAt: WAR.diplomacyEvery, hegemon: null,
-    stats: { wars: 0, battles: 0, conquests: 0, ceasefires: 0, pacts: 0, coalitions: 0, armadas: 0 },
+    stats: { wars: 0, battles: 0, conquests: 0, ceasefires: 0, pacts: 0, coalitions: 0, armadas: 0, alliances: 0, contracts: 0 },
+    contracts: [], merit: {},
   };
   for (const i of islands) s.islands[i.id] = { owner: i.founder, garrison: i.garrisonMax, store: emptyBag(), conqueredAt: -1, siegeId: null, reliefAt: -1e9 };
   ensureNations(s, registry);
@@ -434,8 +519,31 @@ export function ensureNations(s: FactionWarState, registry: NationRegistry): voi
     const lo = a < b ? a : b, hi = a < b ? b : a;
     if (s.relations.some((r) => r.a === lo && r.b === hi)) continue;
     const st = START_RELATIONS[pairKey(a, b)];
-    s.relations.push({ a: lo, b: hi, state: st?.state ?? 'neutral', trust: st?.trust ?? 0, weariness: 0, since: s.t, truceUntil: 0, coalition: null });
+    s.relations.push({ a: lo, b: hi, state: st?.state ?? 'neutral', trust: st?.trust ?? 0, weariness: 0, since: s.t, truceUntil: 0, coalition: null, allianceUntil: 0 });
   }
+}
+
+/**
+ * Kontrollpunkte einer Belagerung (4.5B), deterministisch aus Insel und Anmarschrichtung der Flotte: die Hafen-Barrikade an der Küste auf der Seite
+ * der Flotte, der Marktplatz im Ort, der Garnisons-Hof im Inneren auf der abgewandten Seite (nur Häfen, Festungen, Mega-Inseln und Hauptstädte).
+ */
+export function siegePoints(w: Pick<WarIsland, 'x' | 'z' | 'r' | 'tier'>, fromAngle: number): SiegePoint[] {
+  const three = w.tier === 'hafen' || w.tier === 'festung' || w.tier === 'mega' || w.tier === 'hauptstadt';
+  const put = (kind: SiegePointKind, ang: number, rk: number): SiegePoint => ({
+    kind, name: SIEGE_POINT_NAMES[kind], x: w.x + Math.sin(ang) * w.r * rk, z: w.z + Math.cos(ang) * w.r * rk, hold: 0,
+  });
+  const out = [put('barrikade', fromAngle, 0.6), put('markt', fromAngle + 0.95, 0.3)];
+  if (three) out.push(put('hof', fromAngle + Math.PI * 0.8, 0.32));
+  return out;
+}
+
+/** Mittel der Kontrollpunkte (−1 alle beim Verteidiger … +1 alle beim Angreifer; ohne Punkte 0) */
+export function pointsMean(sg: Pick<SiegeState, 'points'>): number {
+  const p = sg.points;
+  if (!p || !p.length) return 0;
+  let m = 0;
+  for (let i = 0; i < p.length; i++) m += p[i].hold;
+  return m / p.length;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -613,6 +721,7 @@ export class FactionWarEngine {
     this.engage();
     this.stepBattles(dt);
     this.stepSieges(dt);
+    this.stepContracts();
     this.prune();
   }
 
@@ -789,6 +898,12 @@ export class FactionWarEngine {
     // Kriegsmüdigkeit beider Seiten des Konflikts wächst mit jedem versenkten Schiff
     const foe = this.foeOf(a);
     if (foe) { const r = this.relation(a.nation, foe); if (r) r.weariness = Math.min(100, r.weariness + WAR.wearyShip); }
+    if (sh.role === 'kommando') {
+      // das Flaggschiff sinkt: die Führung fehlt, die Moral der ganzen Armada (und ihrer Belagerung) bricht ein (4.5B)
+      a.morale = Math.max(0, a.morale - WAR.flagshipMoraleLoss);
+      const sg = this.siegeById(a.siegeId);
+      if (sg) sg.morale = a.morale;
+    }
     if (sh.role === 'transport') {
       // Nachschub verloren: Moral der Belagerung sinkt drastisch, die Ladung geht mit unter
       const left = this.transportsLeft(a);
@@ -850,6 +965,7 @@ export class FactionWarEngine {
       id: `bl${++s.seq}`, islandId: w.id, attacker: a.nation, defender: st.owner, armadaId: a.id, progress: 0, morale: a.morale,
       troops: a.troops, garrison: st.owner ? st.garrison : Math.max(st.garrison, NEUTRAL_GARRISON), startedAt: s.t, t: 0, transportsLost: 0,
       paused: false, live: a.live, ended: false, endedAt: -1, outcome: null,
+      points: siegePoints(w, Math.atan2(a.x - w.x, a.z - w.z)), helpers: [],
     };
     s.sieges.push(sg);
     st.siegeId = sg.id;
@@ -889,12 +1005,28 @@ export class FactionWarEngine {
         const sh = a.ships[(Math.floor(sg.t) + a.ships.length) % a.ships.length];
         if (sh && !sh.down) { sh.hull -= WAR.coastFire * (sg.garrison / 100) * fort * dt * 6; if (sh.hull <= 0) this.sink(a, sh); }
       }
-      const ratio = clamp(0.6 + 0.4 * (sg.troops / (sg.garrison + 20)), 0.6, 1.4);
-      const moraleK = clamp(0.4 + 0.8 * sg.morale, 0.3, 1.2);
-      sg.progress = Math.min(1, sg.progress + (dt / WAR.siegeSeconds) * ratio * moraleK * (sg.garrison <= 0.5 ? 1.6 : 1));
+      sg.progress = clamp01(sg.progress + this.siegeRate(sg) * dt);
       if (sg.morale < WAR.siegeBreakMorale || sg.troops < 5) { this.endSiege(sg, 'abgebrochen'); this.goHome(a); continue; }
+      // abgewehrt: der Verteidiger hält alle Kontrollpunkte und hat den Fortschritt ganz zurückgedrängt (4.5B)
+      if (sg.progress <= 0 && pointsMean(sg) <= WAR.repelAt) { this.endSiege(sg, 'abgebrochen'); this.goHome(a); continue; }
       if (sg.progress >= 1) this.conquer(sg, a);
     }
+  }
+
+  /**
+   * Fortschritt der Belagerung je Sekunde (kann negativ sein): Kräfteverhältnis Landungskorps gegen Garnison, Moral, eine Garnison ohne Leute fällt
+   * schneller – und die Kontrollpunkte an Land: alle beim Angreifer ×2,6, umkämpft ×1, alle beim Verteidiger −0,6 (der Fortschritt läuft zurück).
+   */
+  siegeRate(sg: SiegeState): number {
+    const ratio = clamp(0.6 + 0.4 * (sg.troops / (sg.garrison + 20)), 0.6, 1.4);
+    const moraleK = clamp(0.4 + 0.8 * sg.morale, 0.3, 1.2);
+    return (1 / WAR.siegeSeconds) * ratio * moraleK * (sg.garrison <= 0.5 ? 1.6 : 1) * (1 + WAR.pointK * pointsMean(sg));
+  }
+
+  /** Geschätzte Restzeit (s) bis zum Fall der Insel; Infinity, wenn der Fortschritt steht oder zurückläuft */
+  siegeEta(sg: SiegeState): number {
+    const r = this.siegeRate(sg);
+    return r > 1e-9 && !sg.paused ? (1 - sg.progress) / r : Infinity;
   }
 
   private endSiege(sg: SiegeState, outcome: SiegeOutcome): void {
@@ -953,6 +1085,8 @@ export class FactionWarEngine {
     for (let i = s.armadas.length - 1; i >= 0; i--) { const a = s.armadas[i]; if (a.status === 'aufgeloest' && t - a.endedAt > LINGER) s.armadas.splice(i, 1); }
     for (let i = s.battles.length - 1; i >= 0; i--) { const b = s.battles[i]; if (b.ended && t - b.endedAt > LINGER) s.battles.splice(i, 1); }
     for (let i = s.sieges.length - 1; i >= 0; i--) { const g = s.sieges[i]; if (g.ended && t - g.endedAt > LINGER) s.sieges.splice(i, 1); }
+    // beendete Aufträge stehen noch zehn Minuten im Fenster (Ausgang lesen), dann gehen sie
+    for (let i = s.contracts.length - 1; i >= 0; i--) { const c = s.contracts[i]; if (c.status !== 'aktiv' && t - c.endedAt > CONTRACT_LINGER) s.contracts.splice(i, 1); }
   }
 
   // ---------- Wirtschaft ----------
@@ -1100,18 +1234,44 @@ export class FactionWarEngine {
     r.state = st;
     r.since = this.state.t;
     if (st !== 'krieg') r.weariness = 0;
-    if (st !== 'allianz') r.coalition = null;
+    if (st !== 'allianz') { r.coalition = null; r.allianceUntil = 0; }
   }
 
-  /** Krieg erklären (ohne Prüfung der Regeln; die KI ruft `mayDeclare` vorher) */
-  declareWar(a: string, b: string): boolean {
+  /**
+   * Krieg erklären (ohne Prüfung der Regeln; die KI ruft `mayDeclare` vorher). Gemeinsame Kriegserklärung (4.5B): die Partner eines Zweier-Bündnisses
+   * ziehen mit, sofern sie dürfen (kein Waffenstillstand, kein Pakt und kein Bündnis mit dem Gegner); `ally` = Bündnisfall für diese Nation.
+   */
+  declareWar(a: string, b: string, chain = true, ally: string | null = null): boolean {
     const r = this.relation(a, b);
     if (!r || r.state === 'krieg') return false;
     this.setRelation(r, 'krieg');
     r.trust = Math.min(r.trust, -40);
     this.state.stats.wars++;
-    this.notices.push({ type: 'krieg', a, b });
+    this.notices.push(ally ? { type: 'krieg', a, b, ally } : { type: 'krieg', a, b });
+    if (!chain) return true;
+    for (let i = 0; i < this.registry.count; i++) {
+      const c = this.registry.at(i).id;
+      if (c === a || c === b || !this.bilateral(a, c) || this.atWar(c, b) || !this.mayDeclare(c, b, true)) continue;
+      this.declareWar(c, b, false, a);
+    }
     return true;
+  }
+
+  /** Zweier-Militärbündnis zwischen `a` und `b` (nicht nur Koalitionspartner gegen einen Hegemon) */
+  bilateral(a: string, b: string): boolean {
+    const r = this.relation(a, b);
+    return !!r && r.state === 'allianz' && r.allianceUntil > this.state.t;
+  }
+
+  /** Haben beide einen gemeinsamen Gegner (Krieg oder Rivalität mit derselben dritten Macht)? */
+  commonFoe(a: string, b: string): string | null {
+    for (let i = 0; i < this.registry.count; i++) {
+      const c = this.registry.at(i).id;
+      if (c === a || c === b) continue;
+      const sa = this.stateOf(a, c), sb = this.stateOf(b, c);
+      if ((sa === 'krieg' || sa === 'rivalitaet') && (sb === 'krieg' || sb === 'rivalitaet')) return c;
+    }
+    return null;
   }
 
   /** Darf `a` gegen `b` in den Krieg ziehen? (kein Waffenstillstand, keine Allianz, kein Pakt; Rivalität oder Koalition) */
@@ -1150,7 +1310,19 @@ export class FactionWarEngine {
         case 'allianz': {
           r.trust = Math.min(100, r.trust + 1);
           this.exchange(A, B);
-          if (r.state === 'allianz' && !r.coalition) this.setRelation(r, 'handelspakt');
+          if (r.state === 'handelspakt') {
+            // Zweier-Bündnis (4.5B): bewährte Handelspartner mit einem gemeinsamen Gegner schließen ein Militärbündnis
+            if (r.trust >= WAR.allianceTrust && r.truceUntil <= s.t && this.commonFoe(r.a, r.b)) {
+              this.setRelation(r, 'allianz');
+              r.allianceUntil = s.t + WAR.allianceTime;
+              s.stats.alliances++;
+              this.notices.push({ type: 'buendnis', a: r.a, b: r.b });
+            }
+          } else if (!r.coalition && r.allianceUntil <= s.t) {
+            // abgelaufen: verlängern, solange der gemeinsame Gegner bleibt, sonst bleibt der Handelspakt
+            if (this.commonFoe(r.a, r.b)) r.allianceUntil = s.t + WAR.allianceTime;
+            else { this.setRelation(r, 'handelspakt'); this.notices.push({ type: 'buendnisEnde', a: r.a, b: r.b }); }
+          }
           break;
         }
         case 'neutral': {
@@ -1234,7 +1406,8 @@ export class FactionWarEngine {
       if (!calm) { c.calmSince = -1; continue; }
       if (c.calmSince < 0) c.calmSince = s.t;
       if (s.t - c.calmSince < 300) continue;
-      for (const r of s.relations) if (r.coalition === c.id) this.setRelation(r, r.trust >= 20 ? 'handelspakt' : 'neutral');
+      // Koalitionspartner gehen auseinander; ein eigenes Zweier-Bündnis bleibt bestehen
+      for (const r of s.relations) if (r.coalition === c.id) { if (r.allianceUntil > s.t) r.coalition = null; else this.setRelation(r, r.trust >= 20 ? 'handelspakt' : 'neutral'); }
       s.coalitions.splice(i, 1);
       this.notices.push({ type: 'koalitionEnde', against: c.against });
     }
@@ -1370,6 +1543,24 @@ export class FactionWarEngine {
       if (foe && fp < armadaFire(foe) * WAR.reliefOdds) continue;
       if (this.launch(i, k, 'entsatz', WAR.minShips + 1)) { st.reliefAt = s.t; return; }
     }
+    // 1b. Bündnisfall (4.5B): wird eine Insel des Zweier-Verbündeten belagert, schickt auch der Partner eine Entsatzflotte (und tritt dafür in den Krieg)
+    for (let k = 0; k < this.islands.length; k++) {
+      const st = this.isl[k];
+      const owner = st.owner;
+      if (!owner || owner === def.id || !st.siegeId || !this.bilateral(def.id, owner)) continue;
+      if (this.hasArmada(def.id, this.islands[k].id, 'entsatz') || this.reachOf(def.id, this.islands[k]) > WAR.reach) continue;
+      const sg = this.siegeById(st.siegeId);
+      const foe = sg ? this.armadaById(sg.armadaId) : null;
+      if (!sg || !foe || foe.nation === def.id) continue;
+      const atWar = this.atWar(def.id, foe.nation);
+      if (!atWar && !this.mayDeclare(def.id, foe.nation, true)) continue;
+      const plan = this.planFor(i, k, WAR.minShips + 1);
+      let fp = 0;
+      for (const p of plan) fp += SHIP_CLASSES[p.cls].can * (0.75 + 0.12 * p.cannonTier);
+      if (fp < armadaFire(foe) * WAR.reliefOdds || !this.affordPlan(n, plan)) continue;
+      if (!atWar) this.declareWar(def.id, foe.nation, false, owner);
+      if (this.launch(i, k, 'entsatz', WAR.minShips + 1)) return;
+    }
     // 2. Offensive
     let running = 0;
     for (const a of s.armadas) if (a.nation === def.id && a.purpose === 'angriff' && a.status !== 'aufgeloest' && a.status !== 'heimkehr') running++;
@@ -1391,6 +1582,17 @@ export class FactionWarEngine {
       this.declareWar(def.id, target);
     }
     this.launch(i, best, 'angriff', 0, coalitionTarget);
+  }
+
+  /** Abstand von der nächsten eigenen Insel der Nation zu `w` (m; 1e9 ohne eigene Inseln) */
+  private reachOf(nation: string, w: WarIsland): number {
+    let dmin = 1e9;
+    for (let k = 0; k < this.islands.length; k++) {
+      if (this.isl[k].owner !== nation) continue;
+      const d = Math.hypot(this.islands[k].x - w.x, this.islands[k].z - w.z);
+      if (d < dmin) dmin = d;
+    }
+    return dmin;
   }
 
   /** Hat die Nation schon eine Armada (dieses Zwecks) zu dieser Insel unterwegs? */
@@ -1522,7 +1724,7 @@ export class FactionWarEngine {
     if (bt && !bt.ended) bt.live = live;
   }
 
-  /** Echte Trupps kämpfen an Land (Verluste meldet `syncSiege`); sonst rechnet die Engine die Abnutzung */
+  /** Echte Trupps kämpfen an Land (Verluste meldet `siegeLosses`); sonst rechnet die Engine die Abnutzung */
   setSiegeLive(siegeId: string, live: boolean): void {
     const sg = this.siegeById(siegeId);
     if (sg) sg.live = live;
@@ -1539,7 +1741,8 @@ export class FactionWarEngine {
     // Wegpunkt weiterschalten, sobald die echte Flotte ihn passiert hat
     while (a.leg < a.route.length / 2 - 1 && Math.hypot(a.route[a.leg * 2] - x, a.route[a.leg * 2 + 1] - z) < 140) a.leg++;
   }
-  syncShip(armadaId: string, shipId: string, hull: number, sail: number, down: boolean): void {
+  /** `by` = Spieler, der das Schiff versenkt hat (letzter Treffer kurz davor): er bekommt Kriegspunkte bei der begünstigten Macht (4.5B) */
+  syncShip(armadaId: string, shipId: string, hull: number, sail: number, down: boolean, by: string | null = null): void {
     const a = this.armadaById(armadaId);
     if (!a) return;
     for (const sh of a.ships) {
@@ -1547,19 +1750,259 @@ export class FactionWarEngine {
       if (Number.isFinite(hull)) sh.hull = clamp01(hull);
       if (Number.isFinite(sail)) sh.sail = clamp01(sail);
       if (down && !sh.down) {
+        const beneficiary = this.beneficiaryOf(a);
         this.sink(a, sh);
         const bt = this.battleById(a.battleId);
         if (bt) { if (bt.a === a.id) bt.sunkA++; else bt.sunkB++; }
+        if (by) this.creditSink(by, a, sh, beneficiary);
       }
       return;
     }
   }
-  /** Verluste der Truppen an Land (echte Trupps in Spielernähe) */
-  syncSiege(siegeId: string, troops: number, garrison: number): void {
+
+  /** Wem nützt es, wenn diese Armada Schiffe verliert? Dem Gegner in ihrer Schlacht, sonst den Belagerten (Entsatz: dem Belagerer), sonst dem Herrn ihres Ziels */
+  beneficiaryOf(a: ArmadaState): string | null {
+    const bt = this.battleById(a.battleId);
+    let n: string | null = bt && !bt.ended ? (bt.nationA === a.nation ? bt.nationB : bt.nationA) : null;
+    if (!n && a.purpose === 'entsatz') n = this.siegeOf(a.target)?.attacker ?? null;
+    if (!n) n = this.state.islands[a.target]?.owner ?? null;
+    return n && n !== a.nation ? n : null;
+  }
+
+  /** Versenkt vom Spieler: Kriegspunkte (Kommandoschiff 40, Transporter 30, sonst 15) und Fortschritt im Auftrag „Nachschubkonvoi abfangen“ */
+  private creditSink(playerId: string, a: ArmadaState, sh: ArmadaShip, beneficiary: string | null): void {
+    const kp = sh.role === 'kommando' ? WAR.kp.kommando : sh.role === 'transport' ? WAR.kp.transport : WAR.kp.schiff;
+    const label = sh.role === 'kommando' ? 'Kommandoschiff versenkt' : sh.role === 'transport' ? 'Nachschub-Transporter versenkt' : 'Kriegsschiff versenkt';
+    if (sh.role === 'transport') {
+      for (const c of this.state.contracts) if (c.status === 'aktiv' && c.playerId === playerId && c.kind === 'abfangen' && c.armadaId === a.id) c.done++;
+    }
+    if (beneficiary) this.awardMerit(playerId, beneficiary, kp, label, a.siegeId ? this.siegeById(a.siegeId)?.islandId ?? a.target : a.target);
+  }
+
+  /**
+   * Kriegspunkte gutschreiben (4.5B): Konto des Spielers bei der begünstigten Nation, laufende Aufträge dieser Nation an dieser Insel sammeln mit; die
+   * Meldung `kriegspunkte` zahlt das Spiel sofort aus (Gold, Ansehen).
+   */
+  awardMerit(playerId: string, nation: string | null, kp: number, reason: string, islandId: string | null = null): void {
+    if (!nation || !(kp > 0) || !this.registry.has(nation)) return;
+    const acc = (this.state.merit[playerId] ??= {});
+    acc[nation] = (acc[nation] ?? 0) + kp;
+    for (const c of this.state.contracts) if (c.status === 'aktiv' && c.playerId === playerId && c.client === nation && (!islandId || c.islandId === islandId)) c.merit += kp;
+    this.notices.push({ type: 'kriegspunkte', playerId, nation, kp, reason });
+  }
+
+  /** Kriegspunkte eines Spielers bei einer Nation */
+  meritOf(playerId: string, nation: string): number { return this.state.merit[playerId]?.[nation] ?? 0; }
+
+  // ---------- Kontrollpunkte an Land (4.5B) ----------
+
+  /**
+   * Ein Schritt um die Kontrollpunkte: `att[i]`/`def[i]` = Kampfkraft (Köpfe, Spielfigur, Offiziere) der Angreifer bzw. Verteidiger im Fangradius von
+   * Punkt i. Wer die Übermacht hat, schiebt `hold` zu seiner Seite (ein ganzer Wechsel dauert `pointSeconds` bei klarer Übermacht); erreicht ein Punkt
+   * ±1, wechselt er die Hand (Meldung). `present` = Spieler und seine Seite samt Bitmaske der Punkte, an denen er steht: erobert seine Seite dort
+   * einen Punkt, bekommt er Kriegspunkte. Liefert die Bitmaske der Punkte, die gerade die Hand gewechselt haben.
+   */
+  controlStep(siegeId: string, att: ArrayLike<number>, def: ArrayLike<number>, dt: number, present: { playerId: string; side: SiegeSide; at: number } | null = null): number {
+    const sg = this.siegeById(siegeId);
+    if (!sg || sg.ended || !(dt > 0)) return 0;
+    let flips = 0;
+    for (let i = 0; i < sg.points.length; i++) {
+      const p = sg.points[i];
+      const a = Math.max(0, att[i] ?? 0), d = Math.max(0, def[i] ?? 0);
+      if (a + d <= 0) continue;
+      const push = (a - d) / (a + d);
+      const before = p.hold;
+      p.hold = clamp(p.hold + (push * dt * 2) / WAR.pointSeconds, -1, 1);
+      let side: SiegeSide | null = null;
+      if (p.hold >= 1 && before < 1) side = 'angreifer';
+      else if (p.hold <= -1 && before > -1) side = 'verteidiger';
+      if (!side) continue;
+      flips |= 1 << i;
+      const nation = side === 'angreifer' ? sg.attacker : sg.defender;
+      this.notices.push({ type: 'punkt', siegeId: sg.id, islandId: sg.islandId, name: p.name, side, nation });
+      if (present && present.side === side && present.at & (1 << i)) this.awardMerit(present.playerId, nation, WAR.kp.punkt, `${p.name} erobert`, sg.islandId);
+    }
+    return flips;
+  }
+
+  /** Spieler ergreift an einer Belagerung Partei (oder wechselt die Seite) */
+  joinSiege(siegeId: string, playerId: string, side: SiegeSide): boolean {
+    const sg = this.siegeById(siegeId);
+    if (!sg || sg.ended) return false;
+    const h = sg.helpers.find((x) => x.playerId === playerId);
+    if (h) h.side = side; else sg.helpers.push({ playerId, side });
+    return true;
+  }
+  /** Seite des Spielers an dieser Belagerung (null: hat keine Partei ergriffen) */
+  helperSide(siegeId: string, playerId: string): SiegeSide | null {
+    const sg = this.siegeById(siegeId);
+    return sg?.helpers.find((x) => x.playerId === playerId)?.side ?? null;
+  }
+
+  // ---------- Kriegsaufträge (4.5B) ----------
+
+  /** Lohn eines Auftrags nach Art und Größe der Zielinsel */
+  private rewardOf(kind: ContractKind, w: WarIsland): ContractReward {
+    const d = CONTRACT_DEFS[kind], k = CONTRACT_TIER_K[w.tier];
+    return {
+      gold: Math.round((d.gold * (1 + k)) / 10) * 10, seals: d.seals + (w.mega || w.tier === 'festung' ? 1 : 0),
+      honor: Math.round(d.honor * (1 + 0.5 * k)), standing: d.standing, foeStanding: d.foeStanding,
+    };
+  }
+
+  private offer(kind: ContractKind, ref: string, client: string, opponent: string | null, w: WarIsland, siegeId: string | null, armadaId: string | null, side: SiegeSide | null, need: number, goal: number): ContractOffer {
+    const d = CONTRACT_DEFS[kind];
+    return { offerId: `${kind}:${ref}`, kind, title: `${d.title}: ${w.name}`, text: d.text, client, opponent, islandId: w.id, islandName: w.name, siegeId, armadaId, side, need, goal, reward: this.rewardOf(kind, w) };
+  }
+
+  /**
+   * Angebote für einen Spieler, abgeleitet aus den laufenden Aktionen der Engine: je Belagerung „Belagerung entsetzen“ und „Blockadebrecher-Lieferung“
+   * für den Belagerten, je Angriffs-Armada „Invasions-Armada anführen“ für den Angreifer und – solange sie Transporter führt – „Nachschubkonvoi abfangen“
+   * für den Herrn des Ziels. Was der Spieler schon angenommen hat, fehlt. Schreibt in `out`.
+   */
+  contractOffers(playerId: string, out: ContractOffer[]): ContractOffer[] {
+    out.length = 0;
+    const s = this.state;
+    const taken = (offerId: string) => s.contracts.some((c) => c.playerId === playerId && c.offerId === offerId);
+    const push = (o: ContractOffer) => { if (!taken(o.offerId)) out.push(o); };
+    for (const sg of s.sieges) {
+      if (sg.ended || !sg.defender) continue;
+      const w = this.island(sg.islandId);
+      if (!w) continue;
+      push(this.offer('entsatz', sg.id, sg.defender, sg.attacker, w, sg.id, sg.armadaId, 'verteidiger', WAR.contractMerit, 0));
+      push(this.offer('blockade', sg.id, sg.defender, sg.attacker, w, sg.id, sg.armadaId, 'verteidiger', 0, 1));
+    }
+    for (const a of s.armadas) {
+      if (a.purpose !== 'angriff' || (a.status !== 'anmarsch' && a.status !== 'belagerung' && a.status !== 'gefecht')) continue;
+      const w = this.island(a.target);
+      if (!w) continue;
+      const owner = this.state.islands[a.target]?.owner ?? null;
+      push(this.offer('invasion', a.id, a.nation, owner, w, a.siegeId, a.id, 'angreifer', WAR.contractMerit, 0));
+      if (owner && owner !== a.nation && this.transportsLeft(a) > 0) push(this.offer('abfangen', a.id, owner, a.nation, w, a.siegeId, a.id, null, 0, 1));
+    }
+    return out;
+  }
+
+  /** Angebot annehmen (höchstens `WAR.maxContracts` laufende je Spieler); stellt den Spieler bei Entsatz und Invasion auf die Seite seines Auftraggebers */
+  acceptContract(playerId: string, offerId: string): WarContract | null {
+    const s = this.state;
+    let running = 0;
+    for (const c of s.contracts) if (c.playerId === playerId && c.status === 'aktiv') running++;
+    if (running >= WAR.maxContracts) return null;
+    const list = this.contractOffers(playerId, []);
+    const o = list.find((x) => x.offerId === offerId);
+    if (!o) return null;
+    const c: WarContract = {
+      id: `ka${++s.seq}`, offerId: o.offerId, kind: o.kind, playerId, client: o.client, opponent: o.opponent, islandId: o.islandId, siegeId: o.siegeId,
+      armadaId: o.armadaId, side: o.side, acceptedAt: s.t, deadline: s.t + WAR.contractTime, merit: 0, need: o.need, done: 0, goal: o.goal,
+      status: 'aktiv', endedAt: -1, note: '', reward: { ...o.reward },
+    };
+    s.contracts.push(c);
+    s.stats.contracts++;
+    if (c.siegeId && c.side) this.joinSiege(c.siegeId, playerId, c.side);
+    return c;
+  }
+
+  /** Auftrag aufgeben (das Spiel zieht etwas Ansehen ab) */
+  abandonContract(playerId: string, contractId: string): WarContract | null {
+    const c = this.state.contracts.find((x) => x.id === contractId && x.playerId === playerId && x.status === 'aktiv');
+    if (!c) return null;
+    this.finishContract(c, 'aufgegeben', 'Aufgegeben');
+    return c;
+  }
+
+  /**
+   * Blockadebrecher: der Spieler hat Nachschub in den Hafen der belagerten Insel gebracht. Garnison +25, Moral der Belagerer −12 %, Fortschritt −12 %;
+   * der Auftrag ist erfüllt. false, wenn kein passender Auftrag läuft oder die Belagerung schon vorbei ist.
+   */
+  deliverBlockade(playerId: string, contractId: string): boolean {
+    const c = this.state.contracts.find((x) => x.id === contractId && x.playerId === playerId && x.status === 'aktiv' && x.kind === 'blockade');
+    const sg = c ? this.siegeById(c.siegeId) : null;
+    if (!c || !sg || sg.ended) return false;
+    const D = WAR.delivery;
+    const st = this.state.islands[sg.islandId];
+    const w = this.island(sg.islandId);
+    sg.garrison += D.garrison;
+    if (st && w) st.garrison = Math.min(w.garrisonMax * 2, st.garrison + D.garrison);
+    const a = this.armadaById(sg.armadaId);
+    if (a) a.morale = Math.max(0, a.morale - D.morale);
+    sg.morale = Math.max(0, sg.morale - D.morale);
+    sg.progress = Math.max(0, sg.progress - D.progress);
+    c.done = c.goal;
+    this.awardMerit(playerId, c.client, WAR.kp.lieferung, `Nachschub nach ${w?.name ?? sg.islandId} gebracht`, sg.islandId);
+    this.finishContract(c, 'erfuellt', 'Lieferung durch die Blockade gebracht');
+    return true;
+  }
+
+  /** Laufende Aufträge eines Spielers (in `out`) */
+  contractsOf(playerId: string, out: WarContract[]): WarContract[] {
+    out.length = 0;
+    for (const c of this.state.contracts) if (c.playerId === playerId) out.push(c);
+    return out;
+  }
+
+  private finishContract(c: WarContract, status: ContractStatus, note: string): void {
+    if (c.status !== 'aktiv') return;
+    c.status = status;
+    c.endedAt = this.state.t;
+    c.note = note;
+    this.notices.push({ type: 'auftrag', contract: c });
+  }
+
+  /**
+   * Ziel erreicht (Entsatz, Invasion): voller Lohn ab den nötigen Kriegspunkten; ab der Hälfte ein Teil-Lohn im Verhältnis des Beitrags (ohne Boss-Siegel);
+   * darunter gescheitert.
+   */
+  private settleByMerit(c: WarContract, what: string): void {
+    const m = Math.round(c.merit);
+    if (c.merit >= c.need) { this.finishContract(c, 'erfuellt', what); return; }
+    if (c.merit < c.need / 2) { this.finishContract(c, 'gescheitert', `${what}, aber du hast zu wenig beigetragen (${m}/${c.need} Kriegspunkte)`); return; }
+    const k = c.merit / c.need, r = c.reward;
+    r.gold = Math.round((r.gold * k) / 10) * 10; r.honor = Math.round(r.honor * k); r.standing = Math.max(1, Math.round(r.standing * k)); r.seals = 0;
+    this.finishContract(c, 'erfuellt', `${what} – Teil-Lohn für ${m}/${c.need} Kriegspunkte`);
+  }
+
+  /** Aufträge prüfen: erfüllt, gescheitert, abgelaufen (je Takt; wenige Einträge) */
+  private stepContracts(): void {
+    const s = this.state;
+    for (let k = 0; k < s.contracts.length; k++) {
+      const c = s.contracts[k];
+      if (c.status !== 'aktiv') continue;
+      const owner = s.islands[c.islandId]?.owner ?? null;
+      const a = this.armadaById(c.armadaId);
+      // Invasion: sobald die Armada belagert, gehört der Spieler zu den Angreifern dieser Belagerung
+      if (!c.siegeId && a?.siegeId) c.siegeId = a.siegeId;
+      if (c.siegeId && c.side && !this.helperSide(c.siegeId, c.playerId)) this.joinSiege(c.siegeId, c.playerId, c.side);
+      const sg = this.siegeById(c.siegeId);
+      switch (c.kind) {
+        case 'entsatz':
+          if (owner !== c.client) { this.finishContract(c, 'gescheitert', 'Die Insel ist gefallen'); continue; }
+          if (!sg || sg.ended) { this.settleByMerit(c, 'Die Belagerung ist gebrochen'); continue; }
+          break;
+        case 'invasion':
+          if (owner === c.client) { this.settleByMerit(c, 'Die Insel ist gefallen'); continue; }
+          if (!a || a.status === 'aufgeloest' || a.status === 'heimkehr') { this.finishContract(c, 'gescheitert', 'Die Armada hat abgedreht'); continue; }
+          break;
+        case 'abfangen':
+          if (c.done >= c.goal) { this.finishContract(c, 'erfuellt', 'Nachschub-Transporter versenkt'); continue; }
+          if (!a || a.status === 'aufgeloest' || a.status === 'heimkehr' || this.transportsLeft(a) === 0) { this.finishContract(c, 'gescheitert', 'Der Nachschub ist dir entkommen'); continue; }
+          break;
+        case 'blockade':
+          if (!sg || sg.ended) { this.finishContract(c, 'gescheitert', 'Die Belagerung endete vor der Lieferung'); continue; }
+          break;
+      }
+      if (s.t > c.deadline) this.finishContract(c, 'gescheitert', 'Zeit abgelaufen');
+    }
+  }
+  /**
+   * Verluste der Truppen an Land (echte Trupps in Spielernähe) als Differenz seit der letzten Meldung: so bleiben Änderungen von außen erhalten
+   * (Blockadebrecher-Lieferung stärkt die Garnison, versenkte Transporter kosten Truppen).
+   */
+  siegeLosses(siegeId: string, troopsLost: number, garrisonLost: number): void {
     const sg = this.siegeById(siegeId);
     if (!sg || sg.ended) return;
-    if (Number.isFinite(troops)) sg.troops = Math.max(0, Math.min(sg.troops, troops));
-    if (Number.isFinite(garrison)) sg.garrison = Math.max(0, Math.min(sg.garrison, garrison));
+    if (Number.isFinite(troopsLost) && troopsLost > 0) sg.troops = Math.max(0, sg.troops - troopsLost);
+    if (Number.isFinite(garrisonLost) && garrisonLost > 0) sg.garrison = Math.max(0, sg.garrison - garrisonLost);
     const a = this.armadaById(sg.armadaId);
     if (a) a.troops = sg.troops;
   }
@@ -1635,6 +2078,8 @@ export function cleanFactionWar(raw: unknown, registry: NationRegistry, islands:
     cur.trust = num(r.trust, cur.trust, -100, 100); cur.weariness = num(r.weariness, 0, 0, 100);
     cur.since = num(r.since, 0, 0, 1e10); cur.truceUntil = num(r.truceUntil, 0, 0, 1e10);
     cur.coalition = typeof r.coalition === 'string' ? str(r.coalition) : null;
+    // 4.5B: Zweier-Bündnis (in Ständen aus 4.5.0 fehlt das Feld: keines)
+    cur.allianceUntil = cur.state === 'allianz' ? num(r.allianceUntil, 0, 0, 1e10) : 0;
   }
   if (Array.isArray(o.coalitions)) for (const c of o.coalitions.slice(0, 6)) {
     if (!c || typeof c !== 'object' || typeof c.against !== 'string' || !registry.has(c.against)) continue;
@@ -1672,12 +2117,45 @@ export function cleanFactionWar(raw: unknown, registry: NationRegistry, islands:
   }
   if (Array.isArray(o.sieges)) for (const g of o.sieges.slice(0, 16)) {
     if (!g || typeof g !== 'object' || !byId.has(g.islandId) || typeof g.attacker !== 'string' || !registry.has(g.attacker)) continue;
+    const w = byId.get(g.islandId)!;
+    // Kontrollpunkte (4.5B): gespeicherte übernehmen, in Ständen aus 4.5.0 aus Insel und Lage der Belagerungsflotte neu anlegen (umkämpft)
+    const fleet = s.armadas.find((x) => x.id === g.armadaId);
+    const fresh = siegePoints(w, fleet ? Math.atan2(fleet.x - w.x, fleet.z - w.z) : 0);
+    const points: SiegePoint[] = Array.isArray(g.points) && g.points.length
+      ? g.points.slice(0, 4).filter((p: any) => p && typeof p === 'object' && typeof p.kind === 'string' && p.kind in SIEGE_POINT_NAMES).map((p: any) => ({
+        kind: p.kind as SiegePointKind, name: SIEGE_POINT_NAMES[p.kind as SiegePointKind], x: num(p.x, w.x), z: num(p.z, w.z), hold: num(p.hold, 0, -1, 1),
+      }))
+      : fresh;
+    const helpers = Array.isArray(g.helpers) ? g.helpers.slice(0, 32).filter((h: any) => h && typeof h.playerId === 'string' && (h.side === 'angreifer' || h.side === 'verteidiger')).map((h: any) => ({ playerId: str(h.playerId), side: h.side as SiegeSide })) : [];
     s.sieges.push({
       id: str(g.id, `bl${++s.seq}`), islandId: g.islandId, attacker: g.attacker, defender: typeof g.defender === 'string' && registry.has(g.defender) ? g.defender : null,
       armadaId: str(g.armadaId), progress: num(g.progress, 0, 0, 1), morale: num(g.morale, 1, 0, 1), troops: num(g.troops, 0, 0, 5000), garrison: num(g.garrison, 0, 0, 5000),
       startedAt: num(g.startedAt, 0, 0, 1e10), t: num(g.t, 0, 0, 1e10), transportsLost: Math.round(num(g.transportsLost, 0, 0, 9)), paused: g.paused === true, live: false,
       ended: g.ended === true, endedAt: num(g.endedAt, -1, -1, 1e10), outcome: g.outcome === 'erobert' || g.outcome === 'abgebrochen' ? g.outcome : null,
+      points: points.length ? points : fresh, helpers,
     });
+  }
+  // Kriegsaufträge und Kriegspunkte (4.5B; fehlen in Ständen aus 4.5.0)
+  const KINDS: readonly ContractKind[] = ['entsatz', 'invasion', 'abfangen', 'blockade'];
+  const STATUS: readonly ContractStatus[] = ['aktiv', 'erfuellt', 'gescheitert', 'aufgegeben'];
+  if (Array.isArray(o.contracts)) for (const c of o.contracts.slice(0, 48)) {
+    if (!c || typeof c !== 'object' || !KINDS.includes(c.kind) || typeof c.playerId !== 'string' || typeof c.client !== 'string' || !registry.has(c.client) || !byId.has(c.islandId)) continue;
+    const rw = c.reward && typeof c.reward === 'object' ? c.reward : {};
+    s.contracts.push({
+      id: str(c.id, `ka${++s.seq}`), offerId: str(c.offerId, `${c.kind}:alt`), kind: c.kind, playerId: str(c.playerId), client: c.client,
+      opponent: typeof c.opponent === 'string' && registry.has(c.opponent) ? c.opponent : null, islandId: c.islandId,
+      siegeId: typeof c.siegeId === 'string' ? str(c.siegeId) : null, armadaId: typeof c.armadaId === 'string' ? str(c.armadaId) : null,
+      side: c.side === 'angreifer' || c.side === 'verteidiger' ? c.side : null, acceptedAt: num(c.acceptedAt, 0, 0, 1e10), deadline: num(c.deadline, s.t + WAR.contractTime, 0, 1e10),
+      merit: num(c.merit, 0, 0, 1e6), need: num(c.need, 0, 0, 1e4), done: Math.round(num(c.done, 0, 0, 99)), goal: Math.round(num(c.goal, 0, 0, 99)),
+      status: STATUS.includes(c.status) ? c.status : 'gescheitert', endedAt: num(c.endedAt, -1, -1, 1e10), note: typeof c.note === 'string' ? c.note.slice(0, 120) : '',
+      reward: { gold: num(rw.gold, 0, 0, 1e5), seals: Math.round(num(rw.seals, 0, 0, 9)), honor: num(rw.honor, 0, 0, 500), standing: num(rw.standing, 0, 0, 50), foeStanding: num(rw.foeStanding, 0, -50, 0) },
+    });
+  }
+  if (o.merit && typeof o.merit === 'object') for (const [pid, acc] of Object.entries(o.merit as Record<string, unknown>)) {
+    if (!acc || typeof acc !== 'object') continue;
+    const out: Record<string, number> = {};
+    for (const [nid, v] of Object.entries(acc as Record<string, unknown>)) if (registry.has(nid)) out[nid] = num(v, 0, 0, 1e7);
+    s.merit[pid.slice(0, 64)] = out;
   }
   // Verweise prüfen: Schlachten und Belagerungen ohne ihre Armada enden, Inseln zeigen nur auf laufende Belagerungen
   const armadaIds = new Set(s.armadas.map((a) => a.id));
