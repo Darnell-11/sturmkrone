@@ -9,7 +9,7 @@
 // Keine Speicheranforderung je Bild: alle Hilfswerte sind vorab angelegt. Der Clip-Stand wird nach dem Mischer gesichert und vor dem
 // nächsten Mischer-Schritt zurückgesetzt – nichts summiert sich auf, auch wenn ein Clip einen Knochen nicht jedes Mal neu setzt.
 import { Object3D, Quaternion, Vector3, type SkinnedMesh } from 'three';
-import { BUILDS, HAND_BLEND, HAND_POSES, LIFE, RIG_BONES, type BuildId, type ExpressionId, type HandPoseId, type RigBone, type StanceId } from '../../../data/characterRig';
+import { ARM_RELAX, BUILDS, HAND_BLEND, HAND_POSES, LIFE, RIG_BONES, ROT_BUDGET, type BuildId, type ExpressionId, type HandPoseId, type RigBone, type StanceId } from '../../../data/characterRig';
 import { BodyLife, type LifeInput } from './bodyLife';
 import { FaceMixer, morphMap, NCH } from './faceRig';
 import { ClothRig, type ChainKind, type ClothLayout } from './clothRig';
@@ -41,6 +41,9 @@ const AX_X = 0, AX_Y = 1, AX_Z = 2;
 const _q = new Quaternion(), _q2 = new Quaternion(), _q3 = new Quaternion(), _qd = new Quaternion(), _qi = new Quaternion();
 const _v = new Vector3(), _v2 = new Vector3(), _v3 = new Vector3(), _v4 = new Vector3(), _v5 = new Vector3();
 const _s = new Vector3();
+const _fx = new Vector3(), _fy = new Vector3();
+/** Wert auf ±m begrenzen (4.6G: Budget der Zusatz-Drehungen) */
+const cap = (x: number, m: number) => (x > m ? m : x < -m ? -m : x);
 const IDQ = new Quaternion();
 
 /** Was das Rig von der Figur braucht */
@@ -75,7 +78,7 @@ export class CharacterRig {
   readonly face: FaceMixer;
   readonly sockets: CharacterSockets;
   readonly cloth: ClothRig | null;
-  readonly colliders = makeColliders(8, 2);
+  readonly colliders = makeColliders(12, 2);
   private readonly b: (Object3D | null)[] = new Array(NB).fill(null);
   private readonly restQ: Quaternion[] = [];
   private readonly restP: Vector3[] = [];
@@ -121,6 +124,14 @@ export class CharacterRig {
   grounded = true;
   /** Ein Clip mit eigener Ganzkörperbewegung läuft (setzt die Figur) */
   busy = false;
+  /** 4.6G: ein ruhiger Stand-Clip läuft (Arme dürfen natürlich hängen; setzt die Figur) */
+  relaxClip = false;
+  /** Mantel oder Jacke: die Arme brauchen etwas Luft (setzt die Figur) */
+  coatOn = false;
+  /** Einblendung der entspannten Arme (0 … 1) */
+  private relaxK = 0;
+  /** Zähler für Prüfungen: wie oft ein Drehbudget gegriffen hat */
+  budgetHits = 0;
   /** Zusätzliche Vorlage des Oberkörpers (rad, + = nach vorn), z. B. aufrechter Gang */
   extraPitch = 0;
   /** Zähler für die Prüfungen: ungültige Werte, die das Rig abgefangen hat */
@@ -303,6 +314,15 @@ export class CharacterRig {
     this.snapped = true;
   }
 
+  /** Zusatz-Drehung auf ihr Budget begrenzen (zählt Treffer für die Prüfungen) */
+  private budget(x: number, m: number) {
+    if (x > m || x < -m) this.budgetHits++;
+    return cap(x, m);
+  }
+
+  /** Einblendung der entspannten Arme (Prüfungen) */
+  get armRelax() { return this.relaxK; }
+
   /** Drehung um eine Achse der Figur im Ruheraum des Knochens (hinten anmultipliziert) */
   private rot(i: number, axis: number, angle: number) {
     const bn = this.b[i];
@@ -371,7 +391,8 @@ export class CharacterRig {
     const o = this.life.update(dt, inp);
     if (o.saccade && Math.random() < 0.6) this.face.blink.trigger();
     // Kurvenneigen und Sprint-Vorlage: die ganze Figur kippt um die Füße (wirkt ab dem nächsten Durchlauf)
-    if (near) rig.rotation.set(o.bankPitch * (this.grounded ? 1 : 0.3), 0, -o.bankRoll);
+    // 4.6G: Kurvenneigen begrenzt (bis 17° wirkte die Figur wie umgeweht)
+    if (near) rig.rotation.set(cap(o.bankPitch, ROT_BUDGET.bankPitch) * (this.grounded ? 1 : 0.3), 0, -cap(o.bankRoll, ROT_BUDGET.bankRoll));
     else rig.rotation.set(0, 0, 0);
     // Füße für die Beinführung merken (Clip-Stand nach der Gang-Dämpfung)
     const feetOn = full && this.grounded && inp.speed < 4.5;
@@ -435,16 +456,17 @@ export class CharacterRig {
       _v.set(ax[ui * 9 + 3], ax[ui * 9 + 4], ax[ui * 9 + 5]);
       const unit = this.posUnit(uc);
       uc.position.addScaledVector(_v, o.chestLift * unit);
-      this.rot(ui, AX_X, o.chestPitch + (o.chestFwd - this.chestOut) * 0.4 + o.lookPitch * -sh.upperChest);
-      this.rot(ui, AX_Y, o.lookYaw * sh.upperChest);
+      // 4.6G: jede Summe aus Atem, Blick, Haltung und Vorlage hat ihr Budget (ROT_BUDGET) – sonst verdrehte Korkenzieher-Posen
+      this.rot(ui, AX_X, this.budget(o.chestPitch + (o.chestFwd - this.chestOut) * 0.4 + o.lookPitch * -sh.upperChest, ROT_BUDGET.upperChestPitch));
+      this.rot(ui, AX_Y, this.budget(o.lookYaw * sh.upperChest, ROT_BUDGET.upperChestYaw));
     }
     // Wirbelsäule und Brust: Blickanteil, Gegenbewegung zur Hüfte, Vorlage (Bereitschaft, Landung)
-    this.rot(I.spine, AX_Z, o.counterRoll * 0.6);
-    this.rot(I.spine, AX_X, (o.chestFwd - this.chestOut) * 0.35 + o.landLean * 0.6 - o.lookPitch * sh.spine + this.extraPitch * 0.55);
-    this.rot(I.spine, AX_Y, o.lookYaw * sh.spine);
-    this.rot(I.chest, AX_Z, o.counterRoll * 0.4);
-    this.rot(I.chest, AX_X, (o.chestFwd - this.chestOut) * 0.25 + o.landLean * 0.4 - o.lookPitch * sh.chest + this.extraPitch * 0.45);
-    this.rot(I.chest, AX_Y, o.lookYaw * sh.chest);
+    this.rot(I.spine, AX_Z, this.budget(o.counterRoll * 0.6, ROT_BUDGET.spineRoll));
+    this.rot(I.spine, AX_X, this.budget((o.chestFwd - this.chestOut) * 0.35 + o.landLean * 0.6 - o.lookPitch * sh.spine + this.extraPitch * 0.55, ROT_BUDGET.spinePitch));
+    this.rot(I.spine, AX_Y, this.budget(o.lookYaw * sh.spine, ROT_BUDGET.spineYaw));
+    this.rot(I.chest, AX_Z, this.budget(o.counterRoll * 0.4, ROT_BUDGET.chestRoll));
+    this.rot(I.chest, AX_X, this.budget((o.chestFwd - this.chestOut) * 0.25 + o.landLean * 0.4 - o.lookPitch * sh.chest + this.extraPitch * 0.45, ROT_BUDGET.chestPitch));
+    this.rot(I.chest, AX_Y, this.budget(o.lookYaw * sh.chest, ROT_BUDGET.chestYaw));
     // Kopf → Hals: Teil der Kopfdrehung im Hals (weicher Nacken statt Knick am Schädelansatz)
     const nk = b[I.neck], hd = b[I.head];
     if (nk && hd) {
@@ -454,13 +476,21 @@ export class CharacterRig {
       // Hals = N_ruhe · (H_ruhe · D^s · H_ruhe⁻¹), Kopf = H_ruhe · D^(1−s)
       nk.quaternion.copy(this.restQ[I.neck]).multiply(_q.copy(Hr).multiply(_q3).multiply(_qi.copy(Hr).invert()));
       hd.quaternion.copy(Hr).multiply(_q2.copy(IDQ).slerp(_qd, 1 - S.neck));
-      this.rot(I.neck, AX_Y, o.lookYaw * sh.neck);
-      this.rot(I.neck, AX_X, -o.lookPitch * sh.neck);
+      this.rot(I.neck, AX_Y, this.budget(o.lookYaw * sh.neck, ROT_BUDGET.neckYaw));
+      this.rot(I.neck, AX_X, this.budget(-o.lookPitch * sh.neck, ROT_BUDGET.neckPitch));
     }
     // Gesten im Gespräch: Nicken
     const g = this.gesture(dt, o.idleK);
-    this.rot(I.head, AX_Y, o.lookYaw * sh.head + o.headYaw);
-    this.rot(I.head, AX_X, -o.lookPitch * sh.head + o.headPitch + (this.chin + o.chin) + g.nod);
+    this.rot(I.head, AX_Y, this.budget(o.lookYaw * sh.head + o.headYaw, ROT_BUDGET.headYaw));
+    this.rot(I.head, AX_X, this.budget(-o.lookPitch * sh.head + o.headPitch + (this.chin + o.chin) + g.nod, ROT_BUDGET.headPitch));
+    // 4.6G: entspannte Arme im Stand – Frontalebene der Figur (Weltachsen des Halters)
+    const relaxOn = this.relaxClip && !this.busy && this.readyK < 0.5;
+    this.relaxK += ((relaxOn ? 1 : 0) - this.relaxK) * Math.min(1, dt * ARM_RELAX.speed);
+    if (this.relaxK > 0.01) {
+      const e = this.host.holder.matrixWorld.elements;
+      _fx.set(e[0], e[1], e[2]).normalize();
+      _fy.set(e[4], e[5], e[6]).normalize();
+    }
     // Schlüsselbeine: heben sich mit dem Atem und wenn der Arm über die Schulter geht; der Oberarm behält seine Richtung
     for (let s = 0; s < 2; s++) {
       const si = s ? I.shoulderR : I.shoulderL, ui = s ? I.upperArmR : I.upperArmL, li = s ? I.lowerArmR : I.lowerArmL;
@@ -484,8 +514,21 @@ export class CharacterRig {
       }
       // kleine Armbewegung, Deckung in Bereitschaft, Gesten
       const ga = g.side === s ? g.arm : g.side === 2 ? g.arm * 0.7 : 0;
+      // 4.6G: Arm aus der steifen A-Haltung des Clips natürlich herabhängen lassen (Abspreizung auf das Ziel der Statur), Ellbogen leicht
+      // gebeugt; mit einer Waffe in der Hand nur teilweise, während einer Geste gar nicht
+      let relax = 0;
+      if (this.relaxK > 0.01 && la && ga <= 0) {
+        _v2.setFromMatrixPosition(ua.matrixWorld);
+        _v3.setFromMatrixPosition(la.matrixWorld).sub(_v2);
+        const out = (s ? -1 : 1) * _v3.dot(_fx), down = -_v3.dot(_fy);
+        const abd = Math.atan2(out, Math.max(1e-4, down));
+        const target = (ARM_RELAX.target[this.build] ?? 0.16) + (this.coatOn ? ARM_RELAX.coat : 0);
+        const k = this.relaxK * (this.hand[s ? 'r' : 'l'].id === 'griff' ? ARM_RELAX.armed : 1);
+        relax = Math.min(ARM_RELAX.max, Math.max(0, abd - target)) * k;
+        if (relax > 0) this.rot(li, AX_X, -ARM_RELAX.elbow * k);
+      }
       this.rot(ui, AX_X, (s ? o.armR : o.armL) - o.guard - ga * 0.55);
-      this.rot(ui, AX_Z, (s ? 1 : -1) * (o.guard * 0.4 + ga * 0.25));
+      this.rot(ui, AX_Z, (s ? 1 : -1) * (o.guard * 0.4 + ga * 0.25 + relax));
       if (ga > 0 && la) this.rot(li, AX_X, -ga * 0.95);
     }
     // Unterarm übernimmt die halbe Drehung der Hand um die Armachse (kein verdrehtes „Bonbonpapier“ am Handgelenk)
@@ -688,6 +731,11 @@ export class CharacterRig {
     cap(I.upperLegR, I.lowerLegR, 0.072 * (G?.upperLeg ?? 1)); cap(I.lowerLegR, I.footR, 0.055 * (G?.lowerLeg ?? 1));
     cap(I.hips, b[I.upperChest] ? I.upperChest : I.chest, 0.1 * (G?.chest ?? 1));
     cap(I.neck, I.head, 0.045);
+    // 4.6G: leere Mantelärmel liegen an den Armen an (nur dann: vier Kapseln mehr kosten jede Kette Rechenzeit)
+    if (this.cloth?.isOn('sleeves')) {
+      cap(I.upperArmL, I.lowerArmL, 0.045 * (G?.upperArm ?? 1)); cap(I.lowerArmL, I.handL, 0.036 * (G?.lowerArm ?? 1));
+      cap(I.upperArmR, I.lowerArmR, 0.045 * (G?.upperArm ?? 1)); cap(I.lowerArmR, I.handR, 0.036 * (G?.lowerArm ?? 1));
+    }
     const hd = b[I.head];
     if (hd && this.headBall) {
       const hb = this.headBall;

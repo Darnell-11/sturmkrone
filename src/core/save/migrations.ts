@@ -20,6 +20,7 @@ import { countOr, isRecord } from '../sanitize';
 import { migrateWorldTo21 } from './worldMigration';
 import { cleanTalents, milestonesEarned } from '../talentRules';
 import { TALENT } from '../../data/talentTrees';
+import { endgameEarned } from '../../data/gear';
 
 type Migration = (data: Record<string, any>) => Record<string, any>;
 
@@ -163,6 +164,25 @@ export const MIGRATIONS: Record<number, Migration> = {
     if (legacyLevel) { p.level = TALENT.levelCap; p.xp = 0; }
     const talents = cleanTalents(legacyLevel ? { legacyLevel } : {}, talentContext(d, Math.min(lv, TALENT.levelCap)));
     return { ...d, version: 22, player: p, talents };
+  },
+  // 23: Charakter-Editor 4.6G. Die Fliegerbrille war ein „Hut“ – jetzt eine eigene Brillen-Kategorie (der Kopf bleibt frei für einen Hut);
+  // Figuren und Ausrüstung bleiben sonst unverändert (die Staturen heißen nur anders). Endgame-Stücke, die der Stand schon verdient hat
+  // (je besiegtem Kaiser ein Stück der Kaiser-Regalia, Kriegsherren-Meilensteine ab Stufe 80, Souverän ab 100, Kosmos nach dem Aufstieg), landen im Beutel.
+  22: (d) => {
+    const p = { ...(d.player ?? {}) };
+    if (isRecord(p.look)) {
+      const look: Record<string, unknown> = { ...p.look };
+      if (look.hat === 'brille') { look.hat = 'keiner'; look.glasses = 'flieger'; }
+      p.look = look;
+    }
+    const gear = isRecord(d.gear) ? { ...d.gear } : {};
+    const loot: string[] = Array.isArray(gear.loot) ? gear.loot.filter((x: unknown): x is string => typeof x === 'string') : [];
+    const t = isRecord(d.talents) ? d.talents : {};
+    const kaiser = Array.isArray(t.kaiserDefeated) ? t.kaiserDefeated.length : Object.values(kaiserWinsOf(d.world)).filter((w) => w > 0).length;
+    const level = typeof p.level === 'number' && Number.isFinite(p.level) ? p.level : 1;
+    for (const id of endgameEarned({ level, ascended: !!t.ascended, kaiserDefeated: kaiser })) if (!loot.includes(id)) loot.push(id);
+    if (loot.length || Array.isArray(gear.loot)) gear.loot = loot;
+    return { ...d, version: 23, player: p, gear };
   },
 };
 

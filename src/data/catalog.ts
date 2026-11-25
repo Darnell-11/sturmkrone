@@ -147,7 +147,7 @@ function build(): CatalogEntry[] {
         { label: 'Stufe', value: String(d.level ?? 1) },
         ...(sold ? [{ label: 'Preis', value: price(d.price ?? 0) }] : []),
       ],
-      origin: boss ? `Raid-Endboss ${boss.name} (${boss.title})${citadel ? ` · Festung ${citadel.name}` : ''}. Jeder Teilnehmer würfelt seine eigene Beute.` : sold ? 'Ausrüster im Markt von Ankerglück oder Beute besiegter Gegner.' : 'Nur als Beute: Eliten, Bosse und Weltereignisse lassen es fallen.',
+      origin: boss ? `Raid-Endboss ${boss.name} (${boss.title})${citadel ? ` · Festung ${citadel.name}` : ''}. Jeder Teilnehmer würfelt seine eigene Beute.` : set.source ? set.source : sold ? 'Ausrüster im Markt von Ankerglück oder Beute besiegter Gegner.' : 'Nur als Beute: Eliten, Bosse und Weltereignisse lassen es fallen.',
       raid: !!boss, faction: boss?.factionId,
       own: (s) => ({ state: (s.gear.loot ?? []).includes(d.id) || (s.progress.unlocks?.bossLoot ?? []).includes(d.id) ? 'owned' : 'locked' }),
     });

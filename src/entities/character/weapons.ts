@@ -17,6 +17,7 @@ import { addOutlines } from '../../render/outline';
 import { toon } from '../../render/toon';
 import { glbModel } from './gear/glbGear';
 import { finishMat, glowMat } from './gear/kit';
+import { SHEATH_LEN, type SheathKind } from '../../data/characterRig';
 
 /** Klingenfarben je Waffenstufe (aus 1.0: Rostiger Säbel … Himmelsschneide) */
 export interface WeaponLook { blade: string; glow?: boolean }
@@ -220,6 +221,12 @@ export function enemyWeapons(kind: StyleId | 'muskete' | 'schild'): HeldWeapons 
   return weaponsFor(kind, { blade: '#B8C0C8' });
 }
 
+/** 4.6G: Klingenlänge merken – Klingen dürfen auf den Rücken (Character.sheathe, Socket `backWeapon`) */
+function bladed(o: Object3D, kind: SheathKind): Object3D {
+  o.userData.bladeLen = SHEATH_LEN[kind];
+  return o;
+}
+
 /** Die Handhalterung ist schon so gedreht, dass +Y quer aus der Faust zeigt (Klinge nach oben/vorn). */
 function inHand(o: Object3D): Object3D {
   const g = new Group();
@@ -232,13 +239,13 @@ export function weaponsFor(style: StyleId, look: WeaponLook = { blade: '#C9D2DA'
   switch (style) {
     case 'saebel': {
       // Entermesser aus Blender (und Parierdolch links) ersetzen diesen Säbel, wenn die Figur sie trägt (Character.hold)
-      const r = inHand(sword(0.78, 0.09, 0.12, look, false, 'w_saebel'));
+      const r = bladed(inHand(sword(0.78, 0.09, 0.12, look, false, 'w_saebel')), 'saebel');
       r.userData.swordSkin = true;
       return { right: r, left: null };
     }
-    case 'langklinge': return { right: inHand(sword(1.0, 0.07, 0.075, look, true, 'w_katana')), left: null };
-    case 'zweihaender': return { right: inHand(sword(1.3, 0.16, 0.0, look, true, 'w_zweihaender')), left: null };
-    case 'doppel': return { right: inHand(sword(0.6, 0.08, 0.09, look, false, 'w_kurzklinge')), left: inHand(sword(0.6, 0.08, 0.09, look, false, 'w_kurzklinge')) };
+    case 'langklinge': return { right: bladed(inHand(sword(1.0, 0.07, 0.075, look, true, 'w_katana')), 'langklinge'), left: null };
+    case 'zweihaender': return { right: bladed(inHand(sword(1.3, 0.16, 0.0, look, true, 'w_zweihaender')), 'zweihaender'), left: null };
+    case 'doppel': return { right: bladed(inHand(sword(0.6, 0.08, 0.09, look, false, 'w_kurzklinge')), 'kurzklinge'), left: bladed(inHand(sword(0.6, 0.08, 0.09, look, false, 'w_kurzklinge')), 'kurzklinge') };
     case 'effekt': {
       const tier = TIER_OF[look.blade] ?? 0;
       return { right: orb(FOCUS_COLOR[look.blade] ?? look.blade, 1 + tier * 0.1), left: null };

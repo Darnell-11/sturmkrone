@@ -21,6 +21,8 @@ export class SkillStage extends EditorStage {
 
   constructor() {
     super();
+    // Inventar und Faji-Baum zeigen die Waffe in der Hand (4.6G: der Editor beginnt in der Hafen-Haltung mit der Klinge auf dem Rücken)
+    this.pose = 'kampf';
     this.sparks = new ParticleSystem(this.scene, true, 0.32);
     this.dust = new ParticleSystem(this.scene, false, 0.7);
     this.fx = new CombatFx(this.scene, this.sparks, this.dust);

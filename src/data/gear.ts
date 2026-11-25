@@ -44,6 +44,12 @@ export interface GearSet {
   bonusAll: GearBonus;
   /** Nur aus Raids: fällt nie aus zufälliger Beute, taucht in keinem Laden auf und wird nur von Endbossen getragen (raid/raidLoot.ts) */
   raid?: boolean;
+  /** 4.6G: Endgame-Belohnung (Kaiser, Stufe 80 bis 100): nie Beute, nie im Laden, nie an Gegnern – nur über Game.grantEndgame */
+  endgame?: boolean;
+  /** verborgen, bis ein Stück im Besitz ist (Rüstkammer, Kompendium) */
+  secret?: boolean;
+  /** Herkunft für Kompendium und Rüstkammer */
+  source?: string;
 }
 
 /** Modell aus Blender (public/models/gear/<name>.glb): Rollen im Modell → Oberfläche und Farbe */
@@ -51,6 +57,8 @@ const glb = (model: string, roles: Record<string, [Finish, Tint]>, o: { mode?: '
   type: 'glb', model, mode: o.mode ?? 'skinned', bone: o.bone, maskAs: o.maskAs, hidesHair: o.hidesHair, trimsHair: o.trimsHair,
   roles: Object.fromEntries(Object.entries(roles).map(([k, [finish, tint]]) => [k, { finish, tint }])),
 });
+/** 4.6G: Aura-Teilchen eines Stücks (Ort am Körper, Art, Farben, Teilchen je Sekunde bei voller Stärke) */
+const aura = (kind: 'glut' | 'funken' | 'sterne', at: 'schultern' | 'umhang' | 'krone' | 'waffe', tint: Tint, tint2: Tint, rate: number): EquipPart => ({ type: 'aura', kind, at, tint, tint2, rate });
 const held = (model: string, hand: 'r' | 'l', roles: Record<string, [Finish, Tint]>): EquipPart => ({
   type: 'held', model, hand, roles: Object.fromEntries(Object.entries(roles).map(([k, [finish, tint]]) => [k, { finish, tint }])),
 });
@@ -392,7 +400,65 @@ export const SETS: GearSet[] = [
     },
     bonus3: { hp: 300, atk: 0.06 }, bonusAll: { hp: 800, atk: 0.14, reduce: 0.1, gold: 0.1 },
   },
+  // =========================== ENDGAME (4.6G): Kaiser im fünften Ring und Stufe 80 bis 100 ===========================
+  // Nur als Belohnung (nie Beute, nie im Laden, nie an Gegnern): Energie-Säume (Borte 3), Runen (Muster 8), Umhang-Schnitte und Aura-Teilchen
+  // (Teil `aura`, gezeichnet über die AnimeVfxForge). Vergabe: Game.grantEndgame (Kaisersiege, Stufen, verborgene Belohnung).
+  {
+    id: 'kaiser_regalia', endgame: true, n: 'Kaiser-Regalia', rarity: 'legendaer', level: 80, palette: ['#5C1224', '#F2C24A'],
+    d: 'Purpur, Hermelin und lebendiges Gold: die Insignien der fünf Kaiser. Die Säume glühen, über den Mantel wandern Runen.',
+    source: 'Je besiegtem Kaiser ein Stück (Kaiser-Zitadellen im fünften Ring).',
+    pieces: {
+      cloak: { n: 'Hermelinmantel der Kaiser', parts: [{ type: 'cape', len: 'schlepp', tint: 'item', look: L('seide', { pattern: 'runen', patColor: 'item2', patSize: 0.05, trim: '#F8F2E6', trimW: 0.04, trimStyle: 3 }), cut: 'schwalbe' }, aura('glut', 'umhang', 'item2', '#FF9A3A', 6)] },
+      head: { n: 'Kaiserkrone', parts: [glb('helm_krone2', { gold: ['gold', 'item2'], trim: ['gold', '#FFE9A8'], glow: ['glut', '#FFD27A'], cloth: ['seide', '#F8F2E6'], main: ['seide', 'item'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true }), aura('funken', 'krone', 'item2', '#FFF4D0', 3)] },
+      chest: { n: 'Kaiserlicher Prunkrock', top: 'uniform', parts: [sh('uniform', 'item', L('seide', { pattern: 'brokat', patColor: 'item2', patSize: 0.022, trim: 'item2', trimW: 0.016, trimStyle: 3 })), sh('kragen', '#F8F2E6', L('seide', { trim: 'item2', trimW: 0.012, trimStyle: 3 })), rigid('knoepfe', 'item2')] },
+      shoulder: { n: 'Goldene Kaiserschwingen', parts: [glb('schulter_fluegel3', { steel: ['gold', 'item2'], main: ['seide', 'item'], gold: ['gold', 'item2'], cloth: ['seide', '#F8F2E6'], glow: ['glut', '#FFD27A'] }), aura('funken', 'schultern', 'item2', '#FFFFFF', 5)] },
+      legs: { n: 'Kaiserliche Beinkleider', parts: [sh('hose', '#2A0C14', L('seide', { trim: 'item2', trimW: 0.01, trimStyle: 3 })), sh('guertel', 'item2', L('gold')), rigid('schnalle')] },
+    },
+    bonus3: { atk: 0.1, hp: 400 }, bonusAll: { atk: 0.22, hp: 900, crit: 0.08, reduce: 0.1 },
+  },
+  {
+    id: 'kriegsherr', endgame: true, n: 'Mythische Kriegsherren-Rüstung', rarity: 'legendaer', level: 80, palette: ['#24242C', '#FF5A24'],
+    d: 'Schwarzer Sternenstahl mit glühenden Adern: auf jeder Platte stehen die Runen alter Kriegsherren, unter den Schultern glimmt Glut.',
+    source: 'Meilensteine ab Stufe 80: alle drei Stufen ein Stück.',
+    pieces: {
+      head: { n: 'Kriegsherrenhelm', parts: [glb('helm_drache2', { main: ['dunkelstahl', 'item'], steel: ['dunkelstahl', '#3A3A44'], gold: ['gold', '#C9A13B'], glow: ['glut', 'item2'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true })] },
+      chest: { n: 'Runenpanzer des Kriegsherrn', top: 'jacke', parts: [sh('jacke', '#16161C', L('leder', { pattern: 'steppung', patSize: 0.02 })), sh('kuerass', 'item', L('dunkelstahl', { pattern: 'runen', patColor: 'item2', patSize: 0.036, trim: 'item2', trimW: 0.014, trimStyle: 3 })), sh('kragen', 'item', L('dunkelstahl', { trim: 'item2', trimW: 0.01, trimStyle: 3 }))] },
+      shoulder: { n: 'Glutschultern', parts: [glb('schulter_drache3', { main: ['dunkelstahl', 'item'], steel: ['dunkelstahl', '#2A2A30'], gold: ['gold', '#C9A13B'], glow: ['glut', 'item2'] }), aura('glut', 'schultern', 'item2', '#FFD27A', 6)] },
+      hands: { n: 'Kriegsherrenpranken', parts: [sh('handschuhe', 'item', L('dunkelstahl', { trim: 'item2', trimW: 0.008, trimStyle: 3 })), sh('armschiene', 'item', L('dunkelstahl', { pattern: 'runen', patColor: 'item2', patSize: 0.03, trim: 'item2', trimW: 0.01, trimStyle: 3 }))] },
+      legs: { n: 'Kriegsherrenschurz', parts: [sh('hose', '#16161C'), sh('kilt', 'item', L('dunkelstahl', { pattern: 'platten', patSize: 0.034, trim: 'item2', trimW: 0.014, trimStyle: 3 })), sh('beinschiene', 'item', L('dunkelstahl', { trim: 'item2', trimW: 0.01, trimStyle: 3 })), sh('guertel', '#2A2A30', L('dunkelstahl')), rigid('schnalle')] },
+      feet: { n: 'Kriegsherrenstiefel', parts: boots(L('dunkelstahl', { trim: 'item2', trimW: 0.012, trimStyle: 3, pattern: 'platten', patSize: 0.03 }), 'item') },
+      cloak: { n: 'Zerrissenes Kriegsbanner', parts: [{ type: 'cape', len: 'lang', tint: '#1A1418', look: L('stoff', { pattern: 'runen', patColor: 'item2', patSize: 0.06, trim: 'item2', trimW: 0.03, trimStyle: 3 }), cut: 'zerrissen' }, aura('glut', 'umhang', 'item2', '#FF2A10', 5)] },
+    },
+    bonus3: { atk: 0.12, reduce: 0.05 }, bonusAll: { atk: 0.24, reduce: 0.12, hp: 800, crit: 0.06 },
+  },
+  {
+    id: 'souveraen', endgame: true, n: 'Sturmkrone-Souverän', rarity: 'legendaer', level: 100, palette: ['#EEF3FA', '#5FD0FF'],
+    d: 'Sturmweiß und Blitzblau: Blitze laufen die Säume entlang, und der Mantel endet in Zacken wie eine Gewitterfront.',
+    source: 'Belohnung für Stufe 100.',
+    pieces: {
+      head: { n: 'Krone des Souveräns', parts: [glb('helm_krone2', { gold: ['gold', '#F2C24A'], trim: ['stahl', 'item'], glow: ['glut', 'item2'], cloth: ['seide', '#F4F8FF'], main: ['seide', '#1C2A48'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: true }), aura('funken', 'krone', 'item2', '#FFFFFF', 4)] },
+      chest: { n: 'Souveränsharnisch', top: 'jacke', parts: [sh('jacke', '#1C2A48', L('seide', { pattern: 'brokat', patColor: 'item2', patSize: 0.02 })), sh('kuerass', 'item', L('stahl', { pattern: 'runen', patColor: 'item2', patSize: 0.034, trim: 'item2', trimW: 0.016, trimStyle: 3 })), sh('kragen', 'item', L('stahl', { trim: 'item2', trimW: 0.012, trimStyle: 3 }))] },
+      shoulder: { n: 'Sturmschwingen des Souveräns', parts: [glb('schulter_fluegel3', { steel: ['stahl', 'item'], main: ['gold', '#F2C24A'], gold: ['gold', '#F2C24A'], cloth: ['seide', '#F4F8FF'], glow: ['glut', 'item2'] }), aura('funken', 'schultern', 'item2', '#FFFFFF', 6)] },
+      hands: { n: 'Blitzhandschuhe', parts: [sh('handschuhe', 'item', L('stahl', { trim: 'item2', trimW: 0.008, trimStyle: 3 })), sh('armschiene', 'item', L('stahl', { pattern: 'platten', patSize: 0.03, trim: 'item2', trimW: 0.012, trimStyle: 3 }))] },
+      legs: { n: 'Souveränsbeinplatten', parts: [sh('hose', '#1C2A48', L('seide')), sh('kilt', 'item', L('stahl', { pattern: 'platten', patSize: 0.036, trim: 'item2', trimW: 0.016, trimStyle: 3 })), sh('beinschiene', 'item', L('stahl', { trim: 'item2', trimW: 0.01, trimStyle: 3 })), sh('guertel', '#F2C24A', L('gold')), rigid('schnalle')] },
+      feet: { n: 'Sturmläufer', parts: boots(L('stahl', { trim: 'item2', trimW: 0.014, trimStyle: 3, pattern: 'platten', patSize: 0.03 }), 'item') },
+      cloak: { n: 'Gewittermantel', parts: [{ type: 'cape', len: 'schlepp', tint: '#1C2A48', look: L('seide', { pattern: 'runen', patColor: 'item2', patSize: 0.055, trim: 'item2', trimW: 0.036, trimStyle: 3 }), cut: 'zacken' }, aura('funken', 'umhang', 'item2', '#FFFFFF', 7)] },
+    },
+    bonus3: { atk: 0.12, faji: 0.2 }, bonusAll: { atk: 0.24, faji: 0.3, hp: 700, crit: 0.1, reduce: 0.1 },
+  },
+  {
+    id: 'kosmos', endgame: true, secret: true, n: 'Kosmos-Umhang', rarity: 'legendaer', level: 100, palette: ['#120E2A', '#B49CFF'],
+    d: 'Ein Umhang aus Nachthimmel: Sternbilder treiben über den Stoff, und an den Spitzen des Saums glimmen ferne Sonnen.',
+    source: 'Eine verborgene Belohnung.',
+    pieces: {
+      cloak: { n: 'Kosmos-Umhang', parts: [{ type: 'cape', len: 'schlepp', tint: 'item', look: L('seide', { pattern: 'runen', patColor: 'item2', patSize: 0.045, trim: 'item2', trimW: 0.03, trimStyle: 3 }), cut: 'sterne' }, aura('sterne', 'umhang', 'item2', '#7FD8FF', 8)] },
+      head: { n: 'Sternenreif', parts: [glb('helm_engel2', { gold: ['gold', '#E8E0FF'], glow: ['glut', 'item2'], trim: ['seide', '#1C1640'], cloth: ['seide', 'item'], steel: ['stahl', '#C8C8E8'] }, { mode: 'bone', bone: 'J_Bip_C_Head', trimsHair: false }), aura('sterne', 'krone', 'item2', '#FFFFFF', 3)] },
+      shoulder: { n: 'Sternbild-Schultern', parts: [glb('schulter_fluegel3', { steel: ['dunkelstahl', 'item'], main: ['seide', 'item'], gold: ['gold', '#E8E0FF'], cloth: ['seide', '#2A2250'], glow: ['glut', 'item2'] }), aura('sterne', 'schultern', 'item2', '#FFFFFF', 4)] },
+    },
+    bonus3: { faji: 0.15, crit: 0.04 }, bonusAll: { faji: 0.25, atk: 0.1, crit: 0.06 },
+  },
 ];
+
 
 // ---------- Werte, Preise, Texte ----------
 
@@ -406,7 +472,28 @@ const SET_TIER: Record<string, Tier> = {
   ritter: 3, schatten: 3, eisenwall: 3, seekoenig: 3,
   schuppen: 4, nebel: 4, ronin: 4, wyrm: 4, drache: 4, sturmkrone: 4, abgrund: 4, gezeiten: 4, himmel: 4,
 };
-export const tierOfSet = (s: GearSet): Tier => (s.raid ? 5 : SET_TIER[s.id] ?? 2);
+export const tierOfSet = (s: GearSet): Tier => (s.raid || s.endgame ? 5 : SET_TIER[s.id] ?? 2);
+/** 4.6G: Endgame-Stücke in Vergabe-Reihenfolge je Set (Kaisersiege, Stufen-Meilensteine, Stufe 100, verborgene Belohnung) */
+export const ENDGAME_SETS = ['kaiser_regalia', 'kriegsherr', 'souveraen', 'kosmos'] as const;
+export type EndgameSetId = typeof ENDGAME_SETS[number];
+/** Stufen, an denen die Kriegsherren-Rüstung Stück für Stück kommt */
+export const WARLORD_LEVELS = [80, 83, 86, 89, 92, 95, 98] as const;
+export function endgamePieces(id: EndgameSetId): string[] { const s = GEAR_SET_BY_ID[id]; return s ? Object.keys(s.pieces).map((c) => `${id}_${c}`) : []; }
+
+/**
+ * 4.6G: Welche Endgame-Stücke ein Stand verdient hat (rein; Spiel, Migration und Tests nutzen dieselbe Regel). Kaiser-Regalia: je besiegtem
+ * Kaiser ein Stück (Reihenfolge der Stücke im Set), Kriegsherren-Rüstung: je erreichtem Meilenstein in WARLORD_LEVELS, Sturmkrone-Souverän:
+ * ganz ab Stufe 100, Kosmos-Umhang: nach dem Aufstieg.
+ */
+export function endgameEarned(ctx: { level: number; ascended: boolean; kaiserDefeated: number }): string[] {
+  const out: string[] = [];
+  out.push(...endgamePieces('kaiser_regalia').slice(0, Math.max(0, Math.min(5, Math.floor(ctx.kaiserDefeated)))));
+  const war = endgamePieces('kriegsherr');
+  WARLORD_LEVELS.forEach((lv, i) => { if (ctx.level >= lv && war[i]) out.push(war[i]); });
+  if (ctx.level >= 100) out.push(...endgamePieces('souveraen'));
+  if (ctx.ascended) out.push(...endgamePieces('kosmos'));
+  return out;
+}
 /** Anzeigezeilen eines Bonus: Name, Wert („+40“, „6 %“) und der Satz („+40 Leben“, „6 % weniger Schaden“) */
 const BONUS_ROWS: { k: keyof GearBonus; label: string; value: (v: number) => string; text: (v: number) => string }[] = [
   { k: 'armor', label: 'Rüstung', value: (v) => `${Math.round(v * 10) / 10}`, text: (v) => `Rüstung ${Math.round(v * 10) / 10}` },
@@ -479,7 +566,7 @@ export function gearFromSet(setId: string, kind: 'normal' | 'elite' | 'boss', rn
 }
 
 export function gearForNpc(level: number, kind: 'normal' | 'elite' | 'boss', marine: boolean, rnd: () => number = Math.random): string[] {
-  const pool = SETS.filter((s) => !s.raid && s.level <= level + 6 && s.level >= level - 24 && (kind === 'boss' ? s.rarity !== 'gewoehnlich' : true));
+  const pool = SETS.filter((s) => !s.raid && !s.endgame && s.level <= level + 6 && s.level >= level - 24 && (kind === 'boss' ? s.rarity !== 'gewoehnlich' : true));
   const sets = pool.length ? pool : SETS.slice(0, 2);
   const marineSet = SETS.find((s) => s.id === 'marine');
   let set = sets[Math.floor(rnd() * sets.length)];

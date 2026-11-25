@@ -186,7 +186,8 @@ describe('Power-Budget der Ausrüstung', () => {
   it('Sets: Stufe 1 – 4 normal, Raid-Sets genau Stufe 5; jede Stufe ist vertreten', () => {
     for (const s of SETS) expect(tierOfSet(s), s.id).toBe(s.raid ? 5 : tierOfSet(s));
     for (const s of SETS.filter((x) => x.raid)) expect(tierOfSet(s)).toBe(5);
-    for (const s of SETS.filter((x) => !x.raid)) expect(tierOfSet(s)).toBeLessThanOrEqual(4);
+    for (const s of SETS.filter((x) => x.endgame)) expect(tierOfSet(s)).toBe(5);
+    for (const s of SETS.filter((x) => !x.raid && !x.endgame)) expect(tierOfSet(s)).toBeLessThanOrEqual(4);
     const present = new Set([...SETS.map(tierOfSet), ...WEAPONS.map((w) => w.tier), ...ARMOR.map((a) => a.tier)]);
     for (const t of TIERS) expect(present.has(t), `Stufe ${t}`).toBe(true);
   });

@@ -1,4 +1,5 @@
 // Anime-Figuren aus VRoid Studio (CC0) – Laden, Aufbereiten und Übertragen der Animationen.
+import type { CapeCut } from '../../data/equipment';
 import {
   PropertyBinding,
   AnimationClip,
@@ -656,6 +657,33 @@ export class VroidBase {
         maxX = Math.max(maxX, P.x);
       }
     }
+    // 4.6G: vorderste Gesichtshaut (samt Lidern und Wimpern) vor beiden Augen – dort sitzen Brillengläser, Monokel und Augenklappe auf
+    let faceZ = Infinity;
+    if (eyeL && eyeR) {
+      const eyes = [eyeL.position, eyeR.position];
+      T.traverse((o) => {
+        const m = o as SkinnedMesh;
+        if (!m.isSkinnedMesh || !/^Face/i.test(m.name)) return;
+        const pos = m.geometry.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+          P.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld).applyMatrix4(toHead);
+          for (const e of eyes) if (Math.abs(P.x - e.x) < 0.016 && Math.abs(P.y - e.y) < 0.016 && P.z < faceZ) faceZ = P.z;
+        }
+      });
+    }
+    if (!Number.isFinite(faceZ)) faceZ = (eyeL && eyeR ? (eyeL.position.z + eyeR.position.z) / 2 : 0) - 0.075;
+    // Schläfen: seitlichste Gesichtshaut auf Augenhöhe im vorderen Teil des Kopfes
+    let templeX = 0;
+    T.traverse((o) => {
+      const m = o as SkinnedMesh;
+      if (!m.isSkinnedMesh || !/^Face/i.test(m.name)) return;
+      const pos = m.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        P.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld).applyMatrix4(toHead);
+        if (Math.abs(P.y - eyeY) < 0.012 && P.z < faceZ + 0.045) templeX = Math.max(templeX, Math.abs(P.x));
+      }
+    });
+    if (templeX < 0.03) templeX = 0.065;
     const ear = band.filter((v) => v.x > maxX - 0.012);
     const lobeY = ear.length ? Math.min(...ear.map((v) => v.y)) : eyeY - 0.05;
     const earZ = ear.length ? ear.reduce((s, v) => s + v.z, 0) / ear.length : 0;
@@ -677,7 +705,7 @@ export class VroidBase {
       const w = new Vector3(j.x * 0.92, (Number.isFinite(top) ? top : j.y + 0.04) + Math.min(c, SHIRT_CAP) + 0.026, j.z);
       return w.applyMatrix4(toChest);
     };
-    this.anchorCache = { earLobe, eyeY, shoulders: [shoulder('L'), shoulder('R')] };
+    this.anchorCache = { earLobe, eyeY, shoulders: [shoulder('L'), shoulder('R')], faceZ, templeX };
     return this.anchorCache;
   }
 
@@ -748,8 +776,8 @@ export class VroidBase {
    * dem Gesäß nach vorn zurück. Lage in Körper-Einheiten wie die Hautpunkte; Gewichte und Rand-Abstand sind mit dabei.
    */
   private capes = new Map<string, BufferGeometry | null>();
-  cape(len: 'kurz' | 'lang' | 'schlepp', overCoat = false, drape = false): BufferGeometry | null {
-    const key = (overCoat ? len + '+m' : len) + (drape ? '+d' : '');
+  cape(len: 'kurz' | 'lang' | 'schlepp', overCoat = false, drape = false, cut: CapeCut = 'glatt'): BufferGeometry | null {
+    const key = (overCoat ? len + '+m' : len) + (drape ? '+d' : '') + (cut !== 'glatt' ? '+' + cut : '');
     if (this.capes.has(key)) return this.capes.get(key)!;
     const body = this.bodySkin(this.template);
     if (!body) return null;
@@ -757,8 +785,25 @@ export class VroidBase {
     const mw = body.matrixWorld, inv = mw.clone().invert();
     const geo = body.geometry, bpos = geo.attributes.position;
     const wp = (n: string) => this.find(this.template, n)?.getWorldPosition(new Vector3()) ?? new Vector3();
-    const neckY = wp('J_Bip_C_Neck').y, hipsY = wp('J_Bip_C_Hips').y, kneeY = wp('J_Bip_L_LowerLeg').y, ankleY = wp('J_Bip_L_Foot').y;
-    const yTop = neckY - 0.012;
+    const neckP = wp('J_Bip_C_Neck');
+    const neckY = neckP.y, hipsY = wp('J_Bip_C_Hips').y, kneeY = wp('J_Bip_L_LowerLeg').y, ankleY = wp('J_Bip_L_Foot').y;
+    // 4.6G: Grundkleidung (Hemd) der Vorlage – ihr Kragen steht im Nacken höher als die Haut. Der Umhang beginnt über dem Kragen und liegt
+    // überall außen auf dem Hemd (vorher setzte er unter dem Kragen an und stach am Nacken durch)
+    const shirt: Vector3[] = [];
+    let collarTop = -Infinity;
+    this.template.traverse((o) => {
+      const m = o as SkinnedMesh;
+      const part = m.isSkinnedMesh ? this.parts[m.userData.vroidPart as number] : null;
+      if (!part || part.slot !== 'top') return;
+      const pp = m.geometry.attributes.position;
+      const Q = new Vector3();
+      for (let i = 0; i < pp.count; i++) {
+        Q.fromBufferAttribute(pp, i).applyMatrix4(m.matrixWorld);
+        shirt.push(Q.clone());
+        if (Math.abs(Q.x - neckP.x) < 0.07 && Q.z < neckP.z && Q.y < neckY + 0.08) collarTop = Math.max(collarTop, Q.y);
+      }
+    });
+    const yTop = Math.max(neckY - 0.012, Math.min(neckY + 0.03, collarTop + 0.006));
     const yBot = len === 'kurz' ? hipsY - 0.03 : len === 'lang' ? kneeY - 0.04 : ankleY + 0.03;
     const rows = CAPE_ROWS, cols = CAPE_COLS, dy = (yTop - yBot) / (rows - 1);
     // Rücken der Haut je Höhe (kleinstes z in der Mitte; +z ist vorn)
@@ -770,7 +815,13 @@ export class VroidBase {
       const r = Math.max(0, Math.min(rows - 1, Math.round((yTop - P.y) / dy)));
       if (P.z < zmin[r]) zmin[r] = P.z;
     }
-    // Schultermantel (4.6F): Profil über der weiten Grundkleidung (Hemd), und die Schulterkuppe je Breite (für den Bogen über die Schultern)
+    // Profil über der Grundkleidung (Hemd) für jeden Umhang (4.6G; vorher nur der Schultermantel)
+    for (const Q of shirt) {
+      if (Math.abs(Q.x) > 0.13 || Q.y > yTop + dy || Q.y < yBot - dy) continue;
+      const r = Math.max(0, Math.min(rows - 1, Math.round((yTop - Q.y) / dy)));
+      if (Q.z < zmin[r]) zmin[r] = Q.z;
+    }
+    // Schultermantel (4.6F): die Schulterkuppe je Breite (für den Bogen über die Schultern)
     const shoulderY = new Float32Array(cols).fill(-Infinity);
     if (drape) {
       this.template.traverse((o) => {
@@ -780,10 +831,6 @@ export class VroidBase {
         const pp = m.geometry.attributes.position;
         for (let i = 0; i < pp.count; i++) {
           P.fromBufferAttribute(pp, i).applyMatrix4(m.matrixWorld);
-          if (part.slot === 'top' && Math.abs(P.x) <= 0.13 && P.y <= yTop + dy && P.y >= yBot - dy) {
-            const r = Math.max(0, Math.min(rows - 1, Math.round((yTop - P.y) / dy)));
-            if (P.z < zmin[r]) zmin[r] = P.z;
-          }
           // Schulterkuppe: höchster Punkt je Spalte der Bogenbreite, nahe der Schulterlinie (Mitte zwischen Brust und Rücken)
           if (Math.abs(P.z) < 0.07 && P.y > yTop - 0.2) {
             const c = Math.round(((P.x / 0.24) * 0.5 + 0.5) * (cols - 1));
@@ -836,6 +883,8 @@ export class VroidBase {
         // Seiten biegen sich nach vorn um den Körper (oben stärker: der Umhang liegt über den Schultern), dazu Falten
         let z = zc[r] + u * u * w * (drape ? 1.0 - t * 0.55 : 0.85 - t * 0.35) + Math.sin(u * Math.PI * 3.2 + 0.6) * 0.011 * Math.min(1, t * 2.4);
         let y = y0, xx = x;
+        // 4.6G: Saum-Schnitt (Zacken, Schwalbenschwanz, zerrissen, Sternspitzen): das untere Drittel rafft sich je Spalte nach oben
+        if (cut !== 'glatt' && t > 0.62) y += capeCutLift(cut, u, c) * (yTop - yBot) * smoothstep(0.62, 1, t);
         if (lie > 0) {
           // Schultermantel oben: Bogen um den Halsansatz über beide Schultern (Ellipse), die Seiten liegen auf der Schulterkuppe
           const phi = u * 1.42, sy = shoulderY[c];
@@ -879,6 +928,65 @@ export class VroidBase {
     out.computeBoundingSphere();
     if (out.boundingSphere) out.boundingSphere.radius *= 1.6;
     this.capes.set(key, markShared(out));
+    return out;
+  }
+
+  /**
+   * 4.6G: Knopfleisten (Brustraum) samt den Gewichten des Stoffs je Knopf, gemessen am äußersten Oberteil: geschlossene Röcke (Uniform,
+   * Jacke) eine Reihe in der Mitte, die Weste neben ihrem schmalen Schlitz, offene Mäntel zwei Reihen an den Kanten der Öffnung.
+   */
+  private buttonRows = new Map<string, { pos: Vector3; pin: SkinPin }[] | null>();
+  buttonAnchors(ctx: GarmentCtx, kind: GarmentKind): { pos: Vector3; pin: SkinPin }[] | null {
+    const key = garmentKey(kind, ctx);
+    if (this.buttonRows.has(key)) return this.buttonRows.get(key)!;
+    const body = this.bodySkin(this.template), chest = this.find(this.template, 'J_Bip_C_Chest');
+    const g = this.garment(kind, ctx);
+    let out: { pos: Vector3; pin: SkinPin }[] | null = null;
+    if (g && body && chest) {
+      this.template.updateMatrixWorld(true);
+      const wp = (n: string) => this.find(this.template, n)?.getWorldPosition(new Vector3()) ?? new Vector3();
+      const neckY = wp('J_Bip_C_Neck').y, hipsY = wp('J_Bip_C_Hips').y;
+      const toChest = chest.matrixWorld.clone().invert();
+      const pos = g.attributes.position, nor = g.attributes.normal, si = g.attributes.skinIndex, sw = g.attributes.skinWeight;
+      const P = new Vector3(), N = new Vector3();
+      const coat = kind === 'mantelLang' || kind === 'mantelKurz';
+      const n = kind === 'uniform' ? 6 : coat ? 4 : 5;
+      const y0 = neckY - (coat ? 0.13 : 0.1), y1 = hipsY + (coat ? 0.1 : 0.05);
+      out = [];
+      for (let b = 0; b < n; b++) {
+        const y = y0 + (y1 - y0) * (b / (n - 1));
+        const open = 0.04 + smoothstep(hipsY + 0.22, neckY, y) * 0.025;
+        const xs = coat ? [open + 0.014, -(open + 0.014)] : kind === 'weste' ? [0.02 + Math.max(0, y - (hipsY + 0.25)) * 0.12] : [0];
+        for (const x of xs) {
+          // vorderster Punkt des Stoffs an dieser Stelle (nach vorn zeigende Fläche)
+          let best = -1, front = -Infinity;
+          for (let i = 0; i < pos.count; i++) {
+            P.fromBufferAttribute(pos, i).applyMatrix4(body.matrixWorld);
+            if (Math.abs(P.x - x) > 0.011 || Math.abs(P.y - y) > 0.012) continue;
+            N.fromBufferAttribute(nor, i);
+            if (N.z < 0.3) continue;
+            if (P.z > front) { front = P.z; best = i; }
+          }
+          if (best < 0) continue;
+          const wm = new Map<number, number>();
+          for (let i = 0; i < pos.count; i++) {
+            P.fromBufferAttribute(pos, i).applyMatrix4(body.matrixWorld);
+            if (Math.abs(P.x - x) > 0.02 || Math.abs(P.y - y) > 0.02 || P.z < front - 0.02) continue;
+            for (let k = 0; k < 4; k++) { const w = sw.getComponent(i, k); if (w > 0) wm.set(si.getComponent(i, k), (wm.get(si.getComponent(i, k)) ?? 0) + w); }
+          }
+          const w4 = [...wm.entries()].sort((a, c) => c[1] - a[1]).slice(0, 4);
+          const sum = w4.reduce((t, e) => t + e[1], 0) || 1;
+          P.fromBufferAttribute(pos, best).applyMatrix4(body.matrixWorld);
+          out.push({
+            // Knopf sitzt 3 mm vor dem Stoff
+            pos: new Vector3(x, P.y, front + 0.003).applyMatrix4(toChest),
+            pin: { index: [w4[0]?.[0] ?? 0, w4[1]?.[0] ?? 0, w4[2]?.[0] ?? 0, w4[3]?.[0] ?? 0], weight: [(w4[0]?.[1] ?? 0) / sum, (w4[1]?.[1] ?? 0) / sum, (w4[2]?.[1] ?? 0) / sum, (w4[3]?.[1] ?? 0) / sum] },
+          });
+        }
+      }
+      if (!out.length) out = null;
+    }
+    this.buttonRows.set(key, out);
     return out;
   }
 
@@ -1378,6 +1486,13 @@ export class VroidBase {
         for (let q = 0; q < 4; q++) { SI[j * 4 + q] = top[q]?.[0] ?? 0; SW[j * 4 + q] = top[q] ? top[q][1] / sum : 0; }
       }
     }
+    // Nahtpunkte zum Schluss wieder zusammenlegen (4.6G): der Hautabstand schob jede Kopie entlang ihrer eigenen Normale nach außen –
+    // an der Rückennaht der Grundfigur klaffte dadurch ein heller Schlitz im Mantel. Alle Kopien liegen jetzt auf ihrem gemeinsamen Mittel.
+    {
+      const sum = new Float32Array(m * 3), cnt = new Uint16Array(m);
+      for (let j = 0; j < m; j++) { const c = weld[j]; sum[c * 3] += p2[j * 3]; sum[c * 3 + 1] += p2[j * 3 + 1]; sum[c * 3 + 2] += p2[j * 3 + 2]; cnt[c]++; }
+      for (let j = 0; j < m; j++) { const c = weld[j], k = 1 / Math.max(1, cnt[c]); p2[j * 3] = sum[c * 3] * k; p2[j * 3 + 1] = sum[c * 3 + 1] * k; p2[j * 3 + 2] = sum[c * 3 + 2] * k; }
+    }
     const i2 = new Uint16Array(SI), w2 = new Float32Array(SW);
     // Ringelhemd: Maske für die Streifen (zeichnet der Shader), alle anderen Stücke einfarbig
     const stripe = new Float32Array(m);
@@ -1576,6 +1691,25 @@ export function retargetClip(ctx: RetargetCtx, src: AnimationClip): AnimationCli
 /** Gitter des Umhangs (Zeilen vom Nacken zum Saum, Spalten über die Breite) – die Umhang-Ketten richten sich danach */
 const CAPE_ROWS = 28, CAPE_COLS = 19;
 
+/**
+ * 4.6G: Hebung des Umhang-Saums je Spalte (Anteil der Länge) für eindrucksvolle Silhouetten: u = −1 … 1 über die Breite, c = Spalte.
+ * Rein und deterministisch (gleiche Form für jede Figur, geteilt über den Zwischenspeicher).
+ */
+export function capeCutLift(cut: CapeCut, u: number, c: number): number {
+  const a = Math.abs(u);
+  switch (cut) {
+    // V-Kerbe in der Mitte, zwei lange Schwänze außen
+    case 'schwalbe': return 0.3 * Math.max(0, 1 - a / 0.55) ** 1.2;
+    // gleichmäßige Sägezähne (vier über die Breite)
+    case 'zacken': { const f = ((u + 1) * 2) % 1; return 0.085 * (1 - Math.abs(f * 2 - 1)); }
+    // ausgefranste Fetzen: je Spalte eigene Länge (fest aus der Spalte, kein Zufall)
+    case 'zerrissen': { const h = Math.sin(c * 12.9898 + 4.1) * 43758.5453; return 0.03 + 0.12 * (h - Math.floor(h)); }
+    // Sternspitzen: schmale, lange Spitzen zwischen tiefen Buchten (Kosmos-Umhang)
+    case 'sterne': { const f = ((u + 1) * 2.5) % 1; return 0.15 * Math.pow(Math.abs(f * 2 - 1), 0.6); }
+    default: return 0;
+  }
+}
+
 /** Kleidungsstücke, die aus dem Körper erzeugt werden */
 export type GarmentKind = 'hose' | 'stiefel' | 'mantelKurz' | 'mantelLang' | 'guertel'
   | 'weste' | 'jacke' | 'tunika' | 'ringel' | 'hemd' | 'handschuhe' | 'schal'
@@ -1694,7 +1828,11 @@ export interface Clearance {
 /** Aus der Frisur gemessene Kappe (Kopfraum): Netz, Sitzhöhe, Mitte und mittlerer Randradius */
 export interface CapShell { geo: BufferGeometry; seatY: number; cx: number; cz: number; ringR: number }
 
-export interface Anchors { earLobe: Vector3; eyeY: number; shoulders: [Vector3, Vector3] }
+/**
+ * faceZ (4.6G): Gesichtsoberfläche vor den Augen im Kopfraum (z, das Gesicht schaut nach −Z) – die Augenknochen liegen 7 bis 8 cm dahinter;
+ * templeX: halbe Gesichtsbreite an den Schläfen auf Augenhöhe (dort sitzen die Scharniere einer Brille)
+ */
+export interface Anchors { earLobe: Vector3; eyeY: number; shoulders: [Vector3, Vector3]; faceZ: number; templeX: number }
 
 /** Knoten und Schnalle am Band: Lage im Hüftraum und die Knochen, die das Band dort bewegen */
 export interface BeltAnchors { knot: Vector3; knotPin: SkinPin; buckle: Vector3; bucklePin: SkinPin }

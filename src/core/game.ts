@@ -99,6 +99,7 @@ import { rollTrinket, TRINKET_BY_ID } from '../data/trinkets';
 import { RARITIES, RARITY, type Rarity } from '../data/rarity';
 import { type LootDrop } from '../data/loot';
 import { CAT_LABEL, EQUIP_BY_ID, GEAR_CATS, catOf, type GearCat } from '../data/equipment';
+import { endgameEarned, GEAR_SET_BY_ID } from '../data/gear';
 import { clearOld, ensureLoot, grantLoot, lootDef, rollGearByTier, rollLootGear, setLine, wearLoot, wornLoot } from './gearBag';
 import { ACHIEVEMENTS } from '../data/achievements';
 import { ABYSS_LAIR } from '../naval/seaBoss';
@@ -180,6 +181,8 @@ export class Game {
   private autosaveTimer = 0;
   private saveFailedShown = false;
   private stage: EditorStage | null = null;
+  /** 4.6G: Studio-Bühne gerade sichtbar (Meldungen ausgeblendet) */
+  private studioShown = false;
   private skyProbe: SkyProbe;
   private listenDir = new Vector3();
   private editor: CharacterEditor | null = null;
@@ -625,6 +628,9 @@ export class Game {
       const fade = inMenu ? Math.round(this.world.title.fade * 200) / 200 : 0;
       if (fade !== this.fadeShown) { this.fadeShown = fade; this.titleFade.style.opacity = String(fade); this.titleFade.hidden = fade === 0; }
     }
+    // 4.6G: Welt-Meldungen (Ereignisse, Krieg) nicht über die Studio-Bühne legen – Klasse nur beim Wechsel setzen
+    const inStudio = this.state.is('editor') && !!this.stage;
+    if (inStudio !== this.studioShown) { this.studioShown = inStudio; document.documentElement.classList.toggle('in-studio', inStudio); }
     if (this.state.is('editor') && this.stage) {
       // Kompassleiste gehört zum Spiel: im Editor und in den Fenstern (Inventar, Fähigkeiten) nicht darüber zeigen
       this.compass.setVisible(false);
@@ -891,7 +897,8 @@ export class Game {
     const look = structuredClone(base ?? p.look);
     const g = d!.gear;
     const head = headEq(g);
-    if (head) { look.hat = head.hat; look.hatColor = head.color; }
+    // 4.6G: eine Brille aus dem Kopf-Platz setzt nur die Brille – ein Hut der Figur bleibt
+    if (head) { if (head.glasses) look.glasses = head.glasses; else { look.hat = head.hat; look.hatColor = head.color; } }
     const al = ARMOR_LOOK[armorEq(g)];
     const extra: string[] = [];
     if (al) { const { extra: more, ...rest } = al; Object.assign(look, rest); if (more) extra.push(...more); }
@@ -1943,6 +1950,8 @@ export class Game {
       }
       if (!t.ascended && t.kaiserDefeated.length >= 5 && first) this.after(() => this.overlay.showBanner('Der Himmel antwortet …', 'Alle fünf Kaiser sind gefallen – im Talent-Fenster (Taste N) öffnet sich die Aufstiegs-Prüfung.'), 8400);
     }
+    // 4.6G: je besiegtem Kaiser ein Stück der Kaiser-Regalia
+    this.grantEndgame(6000);
     audio.play('victory');
     this.after(() => this.overlay.showCutin(`${k.boss.name} besiegt!`, '#E3B04B'), 300);
     this.overlay.showBanner(`${k.boss.name} besiegt!`, `+${fmtInt(gold)} Gold · ${goods} · ${loot.kaiserSeals} Kaiser-Siegel · ${loot.seals.n} Boss-Siegel (${FACTIONS[loot.seals.power].name}) · ${loot.shards} Relikt-Splitter`);
@@ -3225,6 +3234,8 @@ export class Game {
       const n = lv.ups;
       this.overlay.showBanner(`Stufe ${p.level}!`, `+${n} Talentpunkt${n > 1 ? 'e' : ''} (Taste N) · +${n} Faji-Punkt${n > 1 ? 'e' : ''} · mehr Leben und Angriffskraft${p.level >= TALENT.levelCap ? ' · Höchststufe erreicht!' : ''}`);
       this.checkAwakening();
+      // 4.6G: Endgame-Ausrüstung ab Stufe 80 (Kriegsherren-Meilensteine, Sturmkrone-Souverän mit 100)
+      this.grantEndgame(2600);
     } else if (rankAfter !== rankBefore) {
       this.overlay.showBanner(rankAfter, 'Neuer Rang!');
     }
@@ -4536,6 +4547,30 @@ export class Game {
    * Aufstiegs-Prüfung (Stufe 101): Baupläne und Relikte binden, Kaiser-Siegel opfern, Stufe 101, fünf kosmische Punkte; der Himmel reißt auf.
    * Rückgabe: Fehlermeldung oder null.
    */
+  /**
+   * 4.6G: Endgame-Stücke vergeben, die der Stand verdient hat (Kaisersiege, Stufen, Aufstieg) und noch nicht besitzt – mit Meldung nach
+   * `delay` ms (0 = still, etwa beim Laden). Gibt die neuen Stück-Kennungen zurück.
+   */
+  grantEndgame(delay = 0): string[] {
+    const s = this.save;
+    if (!s) return [];
+    const t = this.talentSave();
+    const earned = endgameEarned({ level: s.player.level, ascended: !!t.ascended, kaiserDefeated: t.kaiserDefeated.length });
+    ensureLoot(s.gear);
+    const fresh = earned.filter((id) => !s.gear.loot!.includes(id) && EQUIP_BY_ID[id]);
+    for (const id of fresh) s.gear.loot!.push(id);
+    if (fresh.length && delay > 0) {
+      const names = fresh.map((id) => EQUIP_BY_ID[id].n);
+      const set = GEAR_SET_BY_ID[EQUIP_BY_ID[fresh[0]].set ?? ''];
+      this.after(() => {
+        audio.play('level');
+        this.overlay.showBanner(set ? set.n : 'Endgame-Ausrüstung', `${names.join(' · ')} · im Beutel (Charakter-Editor: „Rüstung & Waffen-Optik“)`);
+      }, delay);
+      this.persist();
+    }
+    return fresh;
+  }
+
   performAscension(): string | null {
     const s = this.save;
     if (!s) return 'Kein Spielstand.';
@@ -4551,6 +4586,8 @@ export class Game {
     audio.play('victory');
     this.overlay.showCutin('Aufstieg!', '#B07DFF');
     this.after(() => this.overlay.showBanner('Stufe 101 – Aufstieg', `Der Kosmos-Baum ist offen · +${r.cosmic} kosmische Punkte · das 15. Ultimate „Himmelssturz“ wartet in seiner Krone`), 900);
+    // 4.6G: verborgene Belohnung des Aufstiegs (Kosmos-Umhang samt Sternenreif und Sternbild-Schultern)
+    this.grantEndgame(4800);
     this.hud.setPlayer(s.player.name, `${FACTION_LABELS[s.player.faction]} · ${rankName(s.player.faction, s.player.fame)} · Stufe ${s.player.level}`);
     this.persist();
     return null;
@@ -4646,8 +4683,13 @@ export class Game {
     this.stage ??= new EditorStage();
     // Vorschau mit der angelegten Ausrüstung: eigener Look aus dem Editor, darüber Beute, Schienen, Helm und die Anprobe
     const gearLook = (look: CharacterLook, tryOn: string[] | null) => (this.save ? this.displayLook(this.save, look, tryOn) : (tryOn?.length ? { ...look, extra: tryOn } : look));
+    // 4.6G: Studio beginnt in der Hafen-Haltung bei Sonne; Aura und Sturm-Erwachen nutzen die (ausgeliehenen) Effekt-Pools der Welt
+    this.stage.setPose('hafen');
+    this.stage.setLight('sonne');
+    this.stage.gearAura.level = this.settings.data.gearAura;
+    this.stage.attachVfx(this.world.lendVfx(this.stage.scene, this.stage.camera));
     this.stage.show(this.assets, gearLook(initial.look, null), styleIdOf(initial.style, initial.blade));
-    this.stage.preset('gesamt');
+    this.stage.preset('ganz');
     this.renderer.setView(this.stage.scene, this.stage.camera);
     this.renderer.setEffectSources(null, this.stage.focus);
     this.state.set('editor');
@@ -4655,6 +4697,8 @@ export class Game {
       this.editor?.dispose();
       this.editor = null;
       this.stage?.setAura(null);
+      this.stage?.attachVfx(null);
+      this.world.lendVfx(null, null);
       this.useWorldView();
       this.renderer.resize();
     };
@@ -4677,11 +4721,16 @@ export class Game {
       gear,
       onChange: (r, sid, tryOn) => { this.stage?.show(this.assets!, gearLook(r.look, tryOn), sid); },
       onPreview: (k) => this.stage?.preview(k),
-      onRotate: (dx) => this.stage?.rotate(dx),
+      onRotate: (dx, dy) => this.stage?.rotate(dx, dy),
       onZoom: (d) => this.stage?.zoomBy(d),
       onPreset: (p) => this.stage?.preset(p),
       onAura: (c) => this.stage?.setAura(c),
       onSpin: (on) => { if (this.stage) this.stage.autoSpin = on; },
+      onPose: (p) => this.stage?.setPose(p),
+      onLight: (l) => this.stage?.setLight(l),
+      onMood: (id) => this.stage?.char?.setMood(id),
+      auraLevel: this.settings.data.gearAura,
+      onAuraLevel: (v) => this.settings.update({ gearAura: v }),
       onDone: (r) => {
         close();
         if (isNew) void this.newGame(newSlot!, r);
@@ -4758,6 +4807,8 @@ export class Game {
     const p = data.player;
     this.world.playerFaction = p.faction;
     ensureGear(data.gear);
+    // 4.6G: Endgame-Stücke, die der Stand schon verdient hat (Kaisersiege, Stufe 80+, Aufstieg), still in den Beutel
+    this.grantEndgame(0);
     this.buffs = [];
     this.itemCd.clear();
     if (this.assets) this.world.setCharacters(this.assets, this.displayLook(data), this.activeStyle(data), this.overlay);
@@ -4906,6 +4957,9 @@ export class Game {
     this.overlay.numbers = s.damageNumbers;
     // Regler „Kamera-Erschütterung“ (0 … 100 %)
     if (this.world) this.world.hitShake.scale = s.camShake;
+    // Regler „Ausrüstungs-Aura“ (4.6G): Welt und Studio-Bühne
+    if (this.world) this.world.gearAura.level = s.gearAura;
+    if (this.stage) this.stage.gearAura.level = s.gearAura;
     this.input.setKeyBindings(s.keyBindings);
     this.input.invertY = s.invertLookY;
     audio.setVolumes(s.volume);

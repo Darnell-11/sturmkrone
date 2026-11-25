@@ -1,7 +1,8 @@
 // Alle Bausteine für Spielfigur und NPCs. Neue Frisuren, Hüte usw.: hier eintragen und im Builder eine Form ergänzen.
 import type { Faction } from '../core/save/types';
 
-export const BODY_TYPES = { schmal: 'Schmal', normal: 'Normal', kraeftig: 'Kräftig' } as const;
+// 4.6G: Namen der Staturen wie im Figuren-Rig (data/characterRig.ts BUILDS); die Schlüssel bleiben (Spielstände)
+export const BODY_TYPES = { schmal: 'Schlank', normal: 'Athletisch', kraeftig: 'Wuchtig' } as const;
 export const FACE_SHAPES = { rund: 'Rund', schmal: 'Schmal', kantig: 'Kantig' } as const;
 export const EYE_STYLES = { gross: 'Groß', scharf: 'Scharf', sanft: 'Sanft', muede: 'Verschlafen' } as const;
 export const BROW_STYLES = { normal: 'Normal', dick: 'Buschig', schraeg: 'Entschlossen', hoch: 'Freundlich' } as const;
@@ -14,11 +15,14 @@ export const BEARD_STYLES = { keiner: 'Keiner', kinnbart: 'Kinnbart', schnurrbar
 export const OUTFITS = { hemd: 'Hemd', weste: 'Weste', jacke: 'Jacke', matrose: 'Ringelhemd', uniform: 'Uniform', tunika: 'Tunika' } as const;
 export const COATS = { keiner: 'Keiner', kurz: 'Kurzer Mantel', lang: 'Langer Mantel', kapitaen: 'Kapitänsmantel', schulter: 'Schultermantel' } as const;
 export const SHOES = { stiefel: 'Stiefel', schuhe: 'Schuhe', sandalen: 'Sandalen' } as const;
-/** Kopfbedeckungen, die jeder frei wählen kann (Editor) */
+/** Kopfbedeckungen, die jeder frei wählen kann (Editor). Die Fliegerbrille ist seit 4.6G eine Brille (GLASSES), kein Hut mehr. */
 export const COSMETIC_HATS = {
   keiner: 'Keiner', dreispitz: 'Dreispitz', zweispitz: 'Zweispitz', bandana: 'Kopftuch', muetze: 'Wollmütze',
-  marine: 'Marinemütze', kochmuetze: 'Kochmütze', suedwester: 'Südwester', helm: 'Helm', brille: 'Fliegerbrille',
+  marine: 'Marinemütze', kochmuetze: 'Kochmütze', suedwester: 'Südwester', helm: 'Helm',
 } as const;
+/** Brillen (4.6G): eigene Kategorie – Hut und Brille lassen sich zusammen tragen */
+export const GLASSES = { keine: 'Keine', flieger: 'Fliegerbrille', rund: 'Runde Brille', monokel: 'Monokel' } as const;
+export type Glasses = keyof typeof GLASSES;
 /** Helme der Ausrüstung (gear/rigid.ts): kommen nur als Beute und aus dem Laden, nicht aus dem Editor */
 export const GEAR_HATS = {
   helm_kappe: 'Eisenkappe', helm_ritter: 'Ritterhelm', helm_hoerner: 'Hörnerhelm', helm_fluegel: 'Flügelhelm', helm_krone: 'Krone',
@@ -65,6 +69,8 @@ export interface CharacterLook {
   hairModel?: string;
   /** Zierfarbe des Helms (Gold, Federn, Edelsteine), nur für Ausrüstung */
   hatAccent?: string;
+  /** Brille (4.6G); fehlt in älteren Ständen = keine */
+  glasses?: Glasses;
   scar: boolean;
   earring: boolean;
   eyepatch: boolean;
@@ -95,7 +101,7 @@ const SEA_COATS = ['#7A1F1A', '#1E1A20', '#5A3A22', '#14284A', '#2F6E4F', '#4A2E
 
 export const LOOK_OPTIONS = {
   body: BODY_TYPES, face: FACE_SHAPES, eyes: EYE_STYLES, brows: BROW_STYLES, mouth: MOUTH_STYLES,
-  hair: HAIR_STYLES, beard: BEARD_STYLES, outfit: OUTFITS, coat: COATS, shoes: SHOES, hat: HATS,
+  hair: HAIR_STYLES, beard: BEARD_STYLES, outfit: OUTFITS, coat: COATS, shoes: SHOES, hat: HATS, glasses: GLASSES,
 } as const;
 
 export function defaultLook(faction: Faction): CharacterLook {
@@ -125,6 +131,9 @@ export function sanitizeLook(raw: unknown, faction: Faction): CharacterLook {
     if (typeof r[k] === 'string' && /^#[0-9a-f]{6}$/i.test(r[k] as string)) out[k] = r[k];
   }
   for (const k of ['scar', 'earring', 'eyepatch', 'scarf', 'gloves']) if (typeof r[k] === 'boolean') out[k] = r[k];
+  // 4.6G: die Fliegerbrille war ein „Hut“ – jetzt eine Brille, der Kopf bleibt frei für einen Hut
+  if (r.hat === 'brille') { out.glasses = 'flieger'; out.hat = 'keiner'; }
+  if (out.glasses === 'keine') delete out.glasses;
   if (typeof r.height === 'number' && isFinite(r.height)) out.height = Math.min(1.1, Math.max(0.9, r.height));
   return out as CharacterLook;
 }
@@ -169,7 +178,7 @@ export function randomLook(rng: Rng, role: NpcRole = 'buerger'): CharacterLook {
     case 'fischer': l.hat = 'suedwester'; l.hatColor = '#E8C22B'; l.outfit = 'jacke'; l.outfitColor = '#E8C22B'; l.shoes = 'stiefel'; break;
     case 'haendler': l.outfit = 'weste'; l.coat = 'kurz'; l.hat = rng() < 0.5 ? 'keiner' : 'dreispitz'; break;
     case 'koch': l.hat = 'kochmuetze'; l.hatColor = '#FFFFFF'; l.outfit = 'hemd'; l.outfitColor = '#FFFFFF'; break;
-    case 'schmied': l.body = 'kraeftig'; l.outfit = 'hemd'; l.outfitColor = '#5A4A3A'; l.hat = 'brille'; l.gloves = true; break;
+    case 'schmied': l.body = 'kraeftig'; l.outfit = 'hemd'; l.outfitColor = '#5A4A3A'; l.hat = 'keiner'; l.glasses = 'flieger'; l.gloves = true; break;
     case 'wirt': l.body = 'kraeftig'; l.outfit = 'weste'; l.beard = 'vollbart'; break;
     case 'pirat': l.outfit = pickOf(rng, ['matrose', 'weste', 'hemd'] as Outfit[]); l.hat = pickOf(rng, ['bandana', 'bandana', 'dreispitz', 'keiner'] as Hat[]); l.hatColor = pickOf(rng, ['#A8322A', '#1E1A20', '#7A1F1A', '#2F6E4F']); l.eyepatch = rng() < 0.12; l.earring = rng() < 0.5; l.shoes = 'stiefel'; l.coat = rng() < 0.45 ? pickOf(rng, ['kurz', 'lang'] as Coat[]) : 'keiner'; break;
     case 'marine': l.outfit = 'uniform'; l.outfitColor = '#FFFFFF'; l.accentColor = '#1F4E79'; l.pantsColor = pickOf(rng, ['#14284A', '#FFFFFF']); l.hat = 'marine'; l.hatColor = '#FFFFFF'; l.beard = rng() < 0.2 ? 'schnurrbart' : 'keiner'; l.eyepatch = false; l.scar = false; l.shoes = 'stiefel'; l.shoesColor = '#1E1A20'; l.coat = rng() < 0.6 ? 'kurz' : 'keiner'; l.coatColor = '#14284A'; break;

@@ -1,9 +1,11 @@
 // Kopfbedeckungen und Accessoires für die Anime-Figuren (am Kopfknochen befestigt).
-import { ConeGeometry, CylinderGeometry, DoubleSide, Group, MathUtils, Mesh, SphereGeometry, TorusGeometry, BoxGeometry, Vector3, type BufferGeometry, type Object3D } from 'three';
+import { ConeGeometry, CylinderGeometry, DoubleSide, Group, MathUtils, Matrix4, Mesh, SphereGeometry, TorusGeometry, BoxGeometry, Vector3, type BufferGeometry, type Object3D } from 'three';
+import type { CharacterSocketId } from '../../data/characterRig';
 import type { CharacterLook } from '../../data/characterParts';
 import type { Anchors, CapShell } from './vroid';
 import { toon } from '../../render/toon';
 import { addOutlines } from '../../render/outline';
+import { markShared } from '../../render/dispose';
 import { HELMS, HELM_KINDS, HEAD_R, HELM_RISE } from './gear/rigid';
 import { finishMat } from './gear/kit';
 
@@ -19,7 +21,6 @@ export function buildHeadgear(look: CharacterLook, r: number, outline: boolean, 
   const col = toon(look.hatColor);
   const dark = toon('#1E1A20');
   const gold = toon({ color: '#E3B04B', spec: 0.9 });
-  const white = toon('#F4F1E8');
   const top = r * 0.95;
   switch (look.hat) {
     case 'dreispitz': {
@@ -83,7 +84,8 @@ export function buildHeadgear(look: CharacterLook, r: number, outline: boolean, 
       break;
     }
     case 'marine': {
-      const cap = new Mesh(new CylinderGeometry(r * 1.25, r * 1.08, r * 0.55, 20), white);
+      // 4.6G: der Deckel trägt die Hutfarbe (Standard Weiß), Band und Schirm bleiben dunkel
+      const cap = new Mesh(new CylinderGeometry(r * 1.25, r * 1.08, r * 0.55, 20), col);
       cap.position.y = top * 0.88;
       const band = new Mesh(new CylinderGeometry(r * 1.1, r * 1.1, r * 0.22, 20), dark);
       band.position.y = top * 0.7;
@@ -97,9 +99,9 @@ export function buildHeadgear(look: CharacterLook, r: number, outline: boolean, 
       break;
     }
     case 'kochmuetze': {
-      const band = new Mesh(new CylinderGeometry(r * 1.05, r * 1.05, r * 0.4, 18), white);
+      const band = new Mesh(new CylinderGeometry(r * 1.05, r * 1.05, r * 0.4, 18), col);
       band.position.y = top * 0.75;
-      const puff = new Mesh(new SphereGeometry(r * 1.25, 16, 10), white);
+      const puff = new Mesh(new SphereGeometry(r * 1.25, 16, 10), col);
       puff.scale.y = 0.85;
       puff.position.y = top * 0.75 + r * 0.9;
       g.add(band, puff);
@@ -126,19 +128,6 @@ export function buildHeadgear(look: CharacterLook, r: number, outline: boolean, 
       rim.rotation.x = Math.PI / 2;
       rim.position.y = top * 0.3;
       g.add(dome, ridge, rim);
-      break;
-    }
-    case 'brille': {
-      const strap = new Mesh(new TorusGeometry(r * 1.1, r * 0.06, 6, 24), dark);
-      strap.rotation.x = Math.PI / 2;
-      strap.position.y = top * 0.55;
-      for (const s of [-1, 1]) {
-        const lens = new Mesh(new CylinderGeometry(r * 0.28, r * 0.28, r * 0.2, 14), toon({ color: '#C9A13B', spec: 1 }));
-        lens.rotation.x = Math.PI / 2;
-        lens.position.set(s * r * 0.38, top * 0.6, r * 1.02);
-        g.add(lens);
-      }
-      g.add(strap);
       break;
     }
     default: break;
@@ -204,6 +193,23 @@ export function buildPauldron(sp: Vector3, color: string, outline: boolean): Gro
   dome.add(rim);
   g.add(dome);
   return finish(g, outline);
+}
+
+/** 4.6G: ein Knopf (Brustraum, das Gesicht des Knochens schaut nach −Z): gewölbte Metallscheibe mit Rand, gemeinsame Geometrie */
+const BUTTON_GEO = new SphereGeometry(0.0075, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+const BUTTON_RIM = new TorusGeometry(0.0072, 0.0014, 4, 14);
+markShared(BUTTON_GEO); markShared(BUTTON_RIM);
+export function buildButton(pos: Vector3, color: string): Group {
+  const g = new Group();
+  const metal = toon({ color, spec: 1 });
+  const dome = new Mesh(BUTTON_GEO, metal);
+  dome.rotation.x = -Math.PI / 2;
+  dome.scale.set(1, 0.45, 1);
+  const rim = new Mesh(BUTTON_RIM, metal);
+  g.add(dome, rim);
+  g.position.copy(pos);
+  g.traverse((o) => { (o as Mesh).castShadow = false; });
+  return g;
 }
 
 /** Ein goldenes Schulterstück mit Fransen (Brustraum) */
@@ -286,10 +292,38 @@ const DOME: Partial<Record<string, { R: number; capY: number }>> = {
   bandana: { R: 1.13, capY: 0.95 * 0.2 }, muetze: { R: 1.12, capY: 0.95 * 0.35 }, suedwester: { R: 1.12, capY: 0.95 * 0.4 }, helm: { R: 1.18, capY: 0.95 * 0.25 },
 };
 
-export function attachHeadgear(head: Object3D, eyeL: Object3D | null, eyeR: Object3D | null, look: CharacterLook, outline: boolean, fit: HairFit | null = null, an: Anchors | null = null, face: FaceParts | null = null): Group | null {
+/** Was attachHeadgear von den Sockets braucht (CharacterSockets erfüllt es) */
+export interface SocketHost { get(id: CharacterSocketId): Object3D | null }
+
+const _m = new Matrix4();
+
+/**
+ * Teil (im Raum des Kopfknochens gebaut) an seinen Socket hängen (4.6G): die Lage am Kopf bleibt exakt gleich, im Socket steht danach
+ * der Versatz in Metern der Grundfigur – den prüfen `SOCKET_BOUNDS` und `CharacterSockets.audit`. Ohne Socket hängt es am Kopfknochen.
+ */
+function seatOn(part: Object3D, id: CharacterSocketId, head: Object3D, sockets: SocketHost | null) {
+  part.userData.socket = id;
+  const n = sockets?.get(id) ?? null;
+  if (!n || n.parent !== head) { head.add(part); return; }
+  part.updateMatrix();
+  n.updateMatrix();
+  _m.copy(n.matrix).invert().multiply(part.matrix);
+  _m.decompose(part.position, part.quaternion, part.scale);
+  n.add(part);
+}
+
+/**
+ * Kopfschmuck an den Kopf hängen: Hut, Brille, Augenklappe, Ohrring, Bart, Narbe. Gebaut wird im Raum des Kopfknochens (gemessene Augen,
+ * Frisurform, Ohrläppchen), danach sitzt jedes Teil an seinem Socket (Hüte am Scheitel, Brillen und Narbe vorm Gesicht, Monokel und
+ * Augenklappe am Auge, Bart und Ohrring am Kiefer). Gibt die Teile zurück (der Aufrufer gibt sie frei).
+ */
+export function attachHeadgear(head: Object3D, eyeL: Object3D | null, eyeR: Object3D | null, look: CharacterLook, outline: boolean, fit: HairFit | null = null, an: Anchors | null = null, face: FaceParts | null = null, sockets: SocketHost | null = null): Object3D[] {
   const beardOn = !!face?.beard && look.beard !== 'keiner';
   const scarOn = !!face?.scar && look.scar;
-  if ((look.hat === 'keiner' || !look.hat) && !look.eyepatch && !look.earring && !beardOn && !scarOn) return null;
+  const glasses = look.glasses && look.glasses !== 'keine' ? look.glasses : null;
+  const parts: Object3D[] = [];
+  if ((look.hat === 'keiner' || !look.hat) && !look.eyepatch && !look.earring && !beardOn && !scarOn && !glasses) return parts;
+  const put = (o: Object3D, id: CharacterSocketId) => { seatOn(o, id, head, sockets); parts.push(o); };
   ANCHORED.earring = !!an;
   // Augenmitte im Kopfraum; Kopfbreite aus dem Augenabstand
   const l = eyeL?.position, rr = eyeR?.position;
@@ -297,64 +331,82 @@ export function attachHeadgear(head: Object3D, eyeL: Object3D | null, eyeR: Obje
   const width = l && rr ? Math.abs(l.x - rr.x) : 0.065;
   // Kopf samt Haarvolumen ist deutlich breiter als der Augenabstand
   const r = Math.max(0.12, width * 2.7);
-  const all = new Group();
+  // 4.6G: Gesichtsoberfläche vor den Augen (Kopfraum, −Z = vorn) – gemessen; die Augenknochen liegen 7 bis 8 cm dahinter
+  const faceZ = an?.faceZ ?? (l && rr ? (l.z + rr.z) / 2 - 0.075 : -0.1);
   // Kappe aus der Frisurform (Kopftuch, Mütze, Südwester, Helm) statt einer starren Halbkugel
   const capCfg = CAPPED[look.hat];
   const shell = capCfg && face?.cap ? face.cap(capCfg.sink, capCfg.margin) : null;
-  const seat = fit && !shell ? HAT_SEAT[look.hat] : undefined;
-  // Augenklappe und Ohrring richten sich nach den Augen
-  const acc = buildHeadgear((seat && fit?.(seat.sink)) || shell || (look.hat === 'brille' && fit && an) ? { ...look, hat: 'keiner' } : look, r, outline);
+  const seatCfg = fit && !shell ? HAT_SEAT[look.hat] : undefined;
+  // Ersatz-Hut (ohne gemessene Frisur) und Ohrring ohne Anker: um die Augenmitte
+  const acc = buildHeadgear((seatCfg && fit?.(seatCfg.sink)) || shell ? { ...look, hat: 'keiner' } : look, r, outline);
   ANCHORED.earring = false;
   acc.position.set(cx, cy, cz);
   // Der Kopfknochen der VRoid-Figur schaut nach −Z (die Figur ist um 180° gedreht)
   acc.rotation.y = Math.PI;
-  all.add(acc);
-  const f = seat && fit ? fit(seat.sink) : null;
-  if (seat && f) {
+  if (acc.children.length) put(acc, 'headTop');
+  const f = seatCfg && fit ? fit(seatCfg.sink) : null;
+  if (seatCfg && f) {
     // Hut passend zur Frisur: Öffnung so weit wie das Haar auf Sitzhöhe
-    const hr = (f.radius * 1.04) / seat.open;
+    const hr = (f.radius * 1.04) / seatCfg.open;
     const d = DOME[look.hat];
-    const hat = buildHeadgear({ ...look, eyepatch: false, earring: false }, hr, outline, d && fit ? domeFit(fit, seat, hr, d.capY * hr, d.R * hr) : undefined);
-    hat.position.set(f.cx, f.seat - seat.base * hr, f.cz);
+    const hat = buildHeadgear({ ...look, eyepatch: false, earring: false }, hr, outline, d && fit ? domeFit(fit, seatCfg, hr, d.capY * hr, d.R * hr) : undefined);
+    hat.position.set(f.cx, f.seat - seatCfg.base * hr, f.cz);
     hat.rotation.y = Math.PI;
-    all.add(hat);
+    put(hat, 'headTop');
   }
+  if (shell) put(capHat(look, shell, outline), 'headTop');
   if (look.eyepatch && rr) {
     // Augenklappe direkt auf dem rechten Auge (Gesichtsfläche liegt ~5 cm vor dem Augenknochen, Blick nach −Z)
     const dark = toon('#1E1A20');
+    const g = new Group();
     const patch = new Mesh(new SphereGeometry(0.03, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), dark);
     patch.rotation.x = -Math.PI / 2;
     patch.scale.set(1.05, 0.4, 0.9);
-    patch.position.set(rr.x, rr.y, rr.z - 0.048);
-    const band = new Mesh(new TorusGeometry(0.108, 0.004, 4, 32), dark);
-    band.rotation.set(Math.PI / 2 + 0.35, 0, 0);
-    band.position.set(cx, rr.y + 0.035, rr.z + 0.06);
-    all.add(patch, band);
+    // 4.6G: auf der gemessenen Haut vor dem Auge (vorher 3 cm im Gesicht versunken), Rand leicht eingesenkt
+    patch.position.set(rr.x, rr.y, faceZ + 0.005);
+    // Band: vorn auf Höhe der Klappe, steigt nach hinten über die Ohren an und läuft um den Hinterkopf
+    const R = 0.1, tilt = 0.25;
+    const band = new Mesh(new TorusGeometry(R, 0.004, 4, 32), dark);
+    band.rotation.set(Math.PI / 2 - tilt, 0, 0);
+    band.position.set(cx, rr.y + R * Math.sin(tilt), faceZ - 0.003 + R * Math.cos(tilt));
+    g.add(patch, band);
+    g.traverse((o) => { (o as Mesh).castShadow = false; });
     if (outline) addOutlines(patch, 0.7);
+    put(g, 'eyeRight');
   }
-  if (shell) all.add(capHat(look, shell, outline));
-  if (look.hat === 'brille' && fit && an) {
+  if (glasses === 'flieger' && fit && an) {
     // Fliegerbrille: Riemen um die Frisur auf Stirnhöhe, Gläser vorn auf dem Pony (vorher im Haar versunken)
     const top = fit(0)?.seat ?? an.eyeY + 0.15;
-    const f = fit(Math.max(0.01, top - (an.eyeY + 0.05)));
-    if (f) {
+    const fs = fit(Math.max(0.01, top - (an.eyeY + 0.05)));
+    if (fs) {
       const dark = toon('#2A2220'), brass = toon({ color: '#C9A13B', spec: 1 });
+      const glassMat = toon({ color: '#7FA8B8', spec: 1 });
       const gog = new Group();
       // Schädelbreite statt Frisurbreite (seitlich abstehende Zöpfe machten den Riemen zum Heiligenschein)
-      const rr = Math.min(f.radius, 0.112);
-      const strap = new Mesh(new TorusGeometry(rr + 0.006, 0.006, 6, 32), dark);
+      const rad = Math.min(fs.radius, 0.112);
+      const strap = new Mesh(new TorusGeometry(rad + 0.006, 0.006, 6, 32), dark);
       strap.rotation.x = Math.PI / 2;
-      strap.position.set(f.cx, f.seat, f.cz);
+      strap.position.set(fs.cx, fs.seat, fs.cz);
       gog.add(strap);
       for (const s of [-1, 1]) {
         const lens = new Mesh(new CylinderGeometry(0.019, 0.021, 0.018, 14), brass);
         lens.rotation.x = Math.PI / 2;
-        lens.position.set(f.cx + s * 0.03, f.seat + 0.004, f.cz - rr - 0.008);
-        gog.add(lens);
+        lens.position.set(fs.cx + s * 0.03, fs.seat + 0.004, fs.cz - rad - 0.008);
+        const glass = new Mesh(new CylinderGeometry(0.0145, 0.0145, 0.004, 14), glassMat);
+        glass.rotation.x = Math.PI / 2;
+        glass.position.set(fs.cx + s * 0.03, fs.seat + 0.004, fs.cz - rad - 0.0175);
+        gog.add(lens, glass);
       }
+      gog.traverse((o) => { (o as Mesh).castShadow = false; });
       if (outline) addOutlines(gog, 0.7);
-      all.add(gog);
+      put(gog, 'faceFront');
     }
+  } else if (glasses === 'rund' && l && rr) {
+    put(roundGlasses(l, rr, an, faceZ, outline), 'faceFront');
+  } else if (glasses === 'monokel' && l && rr) {
+    // Monokel aufs freie Auge (unter einer Augenklappe rechts wandert es nach links)
+    const e = look.eyepatch ? l : rr;
+    put(monocle(e, look.eyepatch ? 1 : -1, faceZ, outline), look.eyepatch ? 'eyeLeft' : 'eyeRight');
   }
   if (look.earring && an) {
     // Ohrring hängt am gemessenen Ohrläppchen (rechtes Ohr), Ring in der Seitenebene
@@ -362,13 +414,13 @@ export function attachHeadgear(head: Object3D, eyeL: Object3D | null, eyeR: Obje
     ring.position.set(an.earLobe.x + 0.002, an.earLobe.y - 0.0065, an.earLobe.z);
     ring.rotation.y = Math.PI / 2;
     ring.castShadow = false;
-    all.add(ring);
+    put(ring, 'beardJaw');
   }
   if (beardOn) {
     const beard = new Mesh(face!.beard!, toon({ color: look.hairColor, flatShading: true, rim: 0.6 }));
     beard.castShadow = false;
-    all.add(beard);
     if (outline) addOutlines(beard, 0.5);
+    put(beard, 'beardJaw');
   }
   if (scarOn) {
     // schmaler, leicht gebogener Strich über der Wange (dunkler als die Haut)
@@ -378,10 +430,87 @@ export function attachHeadgear(head: Object3D, eyeL: Object3D | null, eyeR: Obje
     scar.rotation.z = sc.tilt;
     scar.userData.noOutline = true;
     scar.castShadow = false;
-    all.add(scar);
+    put(scar, 'faceFront');
   }
-  head.add(all);
-  return all;
+  return parts;
+}
+
+/** Abstand der Gläser vor der Gesichtshaut (m, Kopfraum): knapp vor Lidern und Wimpern */
+export const LENS_GAP = 0.006;
+
+/** Runde Drahtbrille: zwei Fassungen vor den Augen, Steg über der Nase, Bügel außen an den Schläfen vorbei bis über die Ohren */
+function roundGlasses(l: Vector3, r: Vector3, an: Anchors | null, faceZ: number, outline: boolean): Group {
+  const g = new Group();
+  const wire = toon({ color: '#C9A13B', spec: 1 });
+  const R = Math.min(0.019, Math.abs(l.x - r.x) * 0.31);
+  const y = (l.y + r.y) / 2 - 0.002, z = faceZ - LENS_GAP;
+  for (const e of [l, r]) {
+    const ring = new Mesh(new TorusGeometry(R, 0.0017, 6, 28), wire);
+    ring.position.set(e.x, y, z);
+    // Glas ohne Scheibe (die Augen bleiben sichtbar), nur ein schräger Lichtreflex wie in Anime-Zeichnungen
+    g.add(ring, glint(e.x, y, z, R));
+  }
+  // Steg: flacher Bogen zwischen den Fassungen
+  const gap = Math.abs(l.x - r.x) - 2 * R;
+  const bridge = new Mesh(new TorusGeometry(Math.max(0.004, gap / 2), 0.0015, 4, 10, Math.PI), wire);
+  bridge.position.set((l.x + r.x) / 2, y + R * 0.35, z);
+  g.add(bridge);
+  // Bügel: Endstück in der Glasebene bis knapp außen an die Schläfe (gemessen), von dort schräg nach hinten zum Ohr (gemessen) –
+  // vorher lief ein schräger Bügel mitten durch die Schläfe bzw. stand ein langes Endstück seitlich über das Gesicht hinaus
+  const mid = (l.x + r.x) / 2;
+  const hingeX = Math.max(Math.abs(l.x - mid) + R + 0.004, (an?.templeX ?? Math.abs(l.x - r.x) * 1.4) + 0.004);
+  const earX = Math.max(hingeX, an ? Math.abs(an.earLobe.x) + 0.005 : hingeX + 0.012);
+  const earZ = an ? an.earLobe.z : z + 0.09;
+  for (const e of [l, r]) {
+    const s = Math.sign(e.x - mid) || 1;
+    const ax = e.x + s * R, hx = mid + s * hingeX, bx = mid + s * earX;
+    const end = new Mesh(new BoxGeometry(Math.max(0.002, Math.abs(hx - ax)), 0.0022, 0.0022), wire);
+    end.position.set((ax + hx) / 2, y + 0.004, z);
+    const bz = earZ - 0.008;
+    const len = Math.max(0.01, Math.hypot(bx - hx, bz - z));
+    const arm = new Mesh(new BoxGeometry(0.0022, 0.0022, len), wire);
+    arm.position.set((hx + bx) / 2, y + 0.004, (z + bz) / 2);
+    arm.rotation.y = Math.atan2(bx - hx, bz - z);
+    g.add(end, arm);
+  }
+  g.traverse((o) => { (o as Mesh).castShadow = false; });
+  if (outline) addOutlines(g, 0.7);
+  return g;
+}
+
+/** Lichtreflex auf einem Brillenglas (Anime-Glanzstrich oben im Glas, schräg), ohne die Augen zu verdecken */
+const GLINT_GEO = markShared(new BoxGeometry(1, 1, 1));
+function glint(x: number, y: number, z: number, R: number): Group {
+  const g = new Group();
+  const white = toon({ color: '#FFFFFF', spec: 1 });
+  for (const [len, off] of [[R * 0.9, 0.42], [R * 0.4, 0.05]] as const) {
+    const b = new Mesh(GLINT_GEO, white);
+    b.scale.set(len, R * 0.12, 0.0005);
+    b.rotation.z = -0.75;
+    b.position.set(x - R * off * 0.6, y + R * (0.3 + off * 0.35), z - 0.0004);
+    g.add(b);
+  }
+  return g;
+}
+
+/** Monokel: goldene Fassung vor einem Auge, eine feine Kette fällt zur Wange (s = Seite des Auges, ±1 in x) */
+function monocle(e: Vector3, s: number, faceZ: number, outline: boolean): Group {
+  const g = new Group();
+  const gold = toon({ color: '#E3B04B', spec: 1 });
+  const R = 0.0175;
+  const ring = new Mesh(new TorusGeometry(R, 0.0021, 6, 28), gold);
+  ring.position.set(e.x, e.y, faceZ - LENS_GAP + 0.002);
+  g.add(ring, glint(e.x, e.y, ring.position.z, R));
+  // Kette: drei kurze Glieder vom unteren äußeren Rand schräg nach unten zur Wange
+  for (let k = 0; k < 3; k++) {
+    const link = new Mesh(new TorusGeometry(0.0028, 0.0007, 4, 8), gold);
+    link.position.set(e.x + s * (R * 0.7 + k * 0.004), e.y - R * 0.8 - k * 0.0062, ring.position.z + 0.004 + k * 0.005);
+    link.rotation.set(0, k % 2 ? Math.PI / 2 : 0, 0);
+    g.add(link);
+  }
+  g.traverse((o) => { (o as Mesh).castShadow = false; });
+  if (outline) addOutlines(g, 0.7);
+  return g;
 }
 
 /** Kopfbedeckung um eine gemessene Kappe (Kopfraum der Figur: Gesicht schaut nach −Z, hinten ist +Z) */
@@ -428,8 +557,8 @@ function capHat(look: CharacterLook, sh: CapShell, outline: boolean): Group {
       g.add(new Mesh(sh.geo, cloth), ring(sh.ringR + 0.004, 0.012, sh.seatY + 0.008));
       break;
     case 'kochmuetze': {
-      // Kochmütze: weiße Kappe um die Frisur, Band am Rand, darüber der Bausch (sitzt auf, statt zu schweben)
-      const white = toon({ color: '#F4F1E8', side: DoubleSide });
+      // Kochmütze: Kappe um die Frisur, Band am Rand, darüber der Bausch (sitzt auf, statt zu schweben); Farbe = Hutfarbe (4.6G)
+      const white = toon({ color: look.hatColor, side: DoubleSide });
       const puff = new Mesh(new SphereGeometry(sh.ringR * 0.95, 16, 10), white);
       puff.scale.y = 0.75;
       puff.position.set(sh.cx, topY + sh.ringR * 0.45, sh.cz);

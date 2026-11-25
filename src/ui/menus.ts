@@ -1557,13 +1557,17 @@ export class Menus {
           ${toggleHtml('numbers', 'Schadenszahlen', s.damageNumbers, 'Zahlen über den Gegnern; Hinweise wie „Parade!“ bleiben.')}</div>
         <div class="set-group"><h3>Kamera</h3>
           ${sliderHtml({ label: 'Kamera-Erschütterung', input: 'camshake', min: 0, max: 100, step: 5, value: Math.round(s.camShake * 100), unit: ' %' })}
-          <p class="note">Stöße bei Treffern, Kanonensalven und Rammstößen. 0 % schaltet sie ganz ab.</p></div>`;
+          <p class="note">Stöße bei Treffern, Kanonensalven und Rammstößen. 0 % schaltet sie ganz ab.</p></div>
+        <div class="set-group"><h3>Ausrüstung</h3>
+          ${sliderHtml({ label: 'Ausrüstungs-Aura', input: 'gearaura', min: 0, max: 100, step: 5, value: Math.round(s.gearAura * 100), unit: ' %' })}
+          <p class="note">Funken, Glut und Sternenstaub der Kaiser- und Endgame-Ausrüstung samt leuchtender Säume. Im Kampf werden sie stärker.</p></div>`;
       handlers.text = (id) => { g.settings.update({ textScale: +id }); rerender(); };
       handlers.hudscale = (val, el) => { g.settings.update({ hudScale: +val / 100 }); this.slide(el, +val, ' %'); };
       handlers.cb = () => { g.settings.update({ colorblind: !s.colorblind }); rerender(); };
       handlers.sector = () => { g.settings.update({ sectorBanner: !s.sectorBanner }); rerender(); };
       handlers.numbers = () => { g.settings.update({ damageNumbers: !s.damageNumbers }); rerender(); };
       handlers.camshake = (val, el) => { g.settings.update({ camShake: +val / 100 }); this.slide(el, +val, ' %'); };
+      handlers.gearaura = (val, el) => { g.settings.update({ gearAura: +val / 100 }); this.slide(el, +val, ' %'); };
     }
 
     this.open(

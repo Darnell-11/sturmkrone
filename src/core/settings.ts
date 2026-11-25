@@ -27,6 +27,8 @@ export interface Settings {
   damageNumbers: boolean;
   /** Stärke der Kamera-Erschütterung bei Treffern, Salven und Rammstößen (0 … 1; 0 = aus) */
   camShake: number;
+  /** 4.6G: Aura der Endgame-Ausrüstung (Teilchen und Leuchten der Säume, 0 … 1; im Kampf stärker) */
+  gearAura: number;
   /** Farbenblind-freundliche Farben und Formen */
   colorblind: boolean;
   touchControls: 'auto' | 'on' | 'off';
@@ -49,6 +51,7 @@ export function defaultSettings(): Settings {
     sectorBanner: true,
     damageNumbers: true,
     camShake: 1,
+    gearAura: 0.7,
     colorblind: false,
     touchControls: 'auto',
     invertLookY: false,
@@ -82,6 +85,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     sectorBanner: typeof r.sectorBanner === 'boolean' ? r.sectorBanner : d.sectorBanner,
     damageNumbers: typeof r.damageNumbers === 'boolean' ? r.damageNumbers : d.damageNumbers,
     camShake: typeof r.camShake === 'number' && Number.isFinite(r.camShake) ? clamp(r.camShake, 0, 1) : d.camShake,
+    gearAura: typeof r.gearAura === 'number' && Number.isFinite(r.gearAura) ? clamp(r.gearAura, 0, 1) : d.gearAura,
     colorblind: typeof r.colorblind === 'boolean' ? r.colorblind : false,
     touchControls: ['auto', 'on', 'off'].includes(r.touchControls) ? r.touchControls : 'auto',
     invertLookY: typeof r.invertLookY === 'boolean' ? r.invertLookY : false,
@@ -95,7 +99,7 @@ export const SETTINGS_TAB_KEYS: Record<SettingsTab, (keyof Settings)[]> = {
   grafik: ['quality', 'qualityAuto', 'dynamicResolution'],
   steuerung: ['touchControls', 'invertLookY', 'keyBindings'],
   ton: ['volume', 'muteWhenUnfocused'],
-  anzeige: ['textScale', 'showFps', 'colorblind', 'hudScale', 'sectorBanner', 'damageNumbers', 'camShake'],
+  anzeige: ['textScale', 'showFps', 'colorblind', 'hudScale', 'sectorBanner', 'damageNumbers', 'camShake', 'gearAura'],
 };
 
 export class SettingsStore {

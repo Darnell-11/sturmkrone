@@ -24,6 +24,8 @@ import { FORGE_RECIPES, forgeSet, type ForgeKind } from '../graphics/pbrMaterial
 
 /** Gemeinsame Werte für alle Toon-Materialien – die Umgebung passt sie an Tageszeit und Wetter an. */
 export const toonShared = {
+  /** 4.6G: Leuchtkraft der Energie-Säume und Runen der Endgame-Ausrüstung (Einstellung „Ausrüstungs-Aura“, im Kampf stärker) */
+  gearGlow: { value: 1 },
   rimColor: { value: new Color(1, 0.95, 0.85) },
   rimStrength: { value: 0.55 },
   /** Farbe der Schattenseiten (Anime: kühl, abends violett) */
@@ -403,8 +405,9 @@ void RE_IndirectDiffuse_Toon( const in vec3 irradiance, const in vec3 geometryPo
 
 /**
  * Muster und Borten der Ausrüstung. Muster-Nummer in vGSet.x: 1 Platten (Lamellen), 2 Kettenhemd, 3 Schuppen, 4 Brokat (Rauten),
- * 5 Nieten, 6 Steppung, 7 Streifen. vGSet.y = Maß in Metern (Größe einer Masche, Lamelle, Raute), vGSet.z = Bortenbreite in Metern,
- * vGSet.w = Bortenart (0 schlicht, 1 mit Zierlinie, 2 Zickzack).
+ * 5 Nieten, 6 Steppung, 7 Streifen, 8 Runen (4.6G: schimmernde Zeichen, leuchten). vGSet.y = Maß in Metern (Größe einer Masche, Lamelle,
+ * Raute), vGSet.z = Bortenbreite in Metern, vGSet.w = Bortenart (0 schlicht, 1 mit Zierlinie, 2 Zickzack, 3 Energie-Saum: leuchtet, Wellen
+ * laufen den Saum entlang). Leuchten über `totalEmissiveRadiance` (über der Bloom-Schwelle), Stärke `uSkGearGlow` (toonShared.gearGlow).
  */
 const GEAR_FRAG_GLSL = /* glsl */ `
   {
@@ -458,10 +461,30 @@ const GEAR_FRAG_GLSL = /* glsl */ `
         float a = abs(fract(q.x + q.y) - 0.5), b = abs(fract(q.x - q.y) - 0.5);
         float seam = 1.0 - smoothstep(0.0, 0.07, min(a, b));
         diffuseColor.rgb *= 1.0 - seam * 0.42 * skGfade;
-      } else {
+      } else if (skGpat < 7.5) {
         // Streifen: senkrechte Bahnen in der Zierfarbe
         float s = smoothstep(0.42, 0.5, abs(fract(skGuv.x * 0.5) - 0.5));
         diffuseColor.rgb = mix(diffuseColor.rgb, vGPat, s * 0.9 * skGfade);
+      } else {
+        // Runen (4.6G): je Zelle ein Zeichen aus bis zu drei Strichen, umrahmt von einem feinen Kreis; die Zeichen glimmen nacheinander auf
+        vec2 q = skGuv * 0.5;
+        vec2 cell = floor(q);
+        vec2 f = fract(q) - 0.5;
+        float h = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);
+        float h2 = fract(h * 7.31), h3 = fract(h * 3.17);
+        // nur jede dritte Zelle trägt ein Zeichen (verstreut statt Tapete), feine Striche, Zeichen kleiner als die Zelle
+        float w = 0.024;
+        float on = step(h, 0.36);
+        f *= 1.35;
+        float s1 = (1.0 - smoothstep(w, w * 1.8, abs(f.x - (h2 - 0.5) * 0.18))) * step(abs(f.y), 0.3);
+        float s2 = (1.0 - smoothstep(w, w * 1.8, abs(f.y - f.x * (h2 > 0.5 ? 0.9 : -0.9)))) * step(abs(f.x), 0.2) * step(0.3, h3);
+        float s3 = (1.0 - smoothstep(w, w * 1.8, abs(f.y + 0.16 - h3 * 0.32))) * step(abs(f.x), 0.18) * step(0.45, h2);
+        float ring = (1.0 - smoothstep(w * 0.6, w * 1.3, abs(length(f) - 0.42))) * step(0.55, h3);
+        float glyph = max(max(s1, s2), max(s3, ring)) * on * skGfade;
+        // langsames Aufglimmen nacheinander, dazwischen fast verloschen
+        float shimmer = 0.12 + 0.88 * pow(0.5 + 0.5 * sin(uSkWetTime * 1.3 + h2 * 6.2832 + skGp.y * 2.0), 4.0);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vGPat, glyph * 0.55);
+        totalEmissiveRadiance += vGPat * glyph * shimmer * 0.6 * uSkGearGlow;
       }
     }
     // Borte am Rand des Stücks
@@ -479,6 +502,13 @@ const GEAR_FRAG_GLSL = /* glsl */ `
         float li = abs(rimD - (skGw + 0.0075));
         float line = 1.0 - smoothstep(0.0012 - aa, 0.0012 + aa, li);
         diffuseColor.rgb = mix(diffuseColor.rgb, vGTrim, line);
+      }
+      if (vGSet.w > 2.5) {
+        // Energie-Saum (4.6G): heller Kern in der Borte, Lichtwellen laufen den Saum entlang, ein weicher Schein darüber
+        float run = atan(skGp.x, skGp.z) * 5.0 + skGp.y * 24.0 - uSkWetTime * 2.8;
+        float pulse = 0.55 + 0.45 * sin(run) * sin(run * 0.37 + 1.3);
+        float halo = (1.0 - smoothstep(skGw, skGw * 2.8, rimD)) * (1.0 - band);
+        totalEmissiveRadiance += vGTrim * (band * (0.35 + 0.55 * pulse) + halo * 0.18 * pulse) * uSkGearGlow;
       }
     }
   }
@@ -1125,8 +1155,9 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
         .replace('#include <common>', '#include <common>\nattribute float rimD;\nattribute vec3 trimC;\nattribute vec3 patC;\nattribute vec4 gset;\nvarying float vGRim;\nvarying vec3 vGTrim;\nvarying vec3 vGPat;\nvarying vec4 vGSet;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGRim = rimD;\nvGTrim = trimC;\nvGPat = patC;\nvGSet = gset;');
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nvarying float vGRim;\nvarying vec3 vGTrim;\nvarying vec3 vGPat;\nvarying vec4 vGSet;')
+        .replace('#include <common>', '#include <common>\nvarying float vGRim;\nvarying vec3 vGTrim;\nvarying vec3 vGPat;\nvarying vec4 vGSet;\nuniform float uSkGearGlow;')
         .replace('#include <color_fragment>', '#include <color_fragment>\n' + GEAR_FRAG_GLSL);
+      shader.uniforms.uSkGearGlow = toonShared.gearGlow;
     }
     if (detail === 'grassCap') {
       shader.vertexShader = shader.vertexShader

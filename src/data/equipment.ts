@@ -2,7 +2,7 @@
 // Neue Teile: hier eintragen. Hüllen („shell“) entstehen aus dem Körper (vroid.ts, garmentOffset), starre Teile („rigid“)
 // baut animeHats.ts, Hüte ebenfalls. Das Aussehen einer Figur (CharacterLook) wird mit loadoutFromLook übersetzt.
 import type { GarmentCtx, GarmentKind, TopUnder } from '../entities/character/vroid';
-import type { CharacterLook, Hat } from './characterParts';
+import type { CharacterLook, Glasses, Hat } from './characterParts';
 import type { Rarity } from './rarity';
 import type { Tier } from './balanceConfig';
 import { GEAR_CATALOG } from './gear';
@@ -21,9 +21,16 @@ export type RigidKind = string;
 
 /** Oberfläche eines Stücks: bestimmt Glanz, Feinrelief und wie das Licht darauf spielt */
 export type Finish = 'stoff' | 'seide' | 'leder' | 'stahl' | 'dunkelstahl' | 'gold' | 'haut' | 'haar' | 'glut';
-export type PatternId = 'platten' | 'kette' | 'schuppen' | 'brokat' | 'nieten' | 'steppung' | 'streifen';
-/** Nummern der Muster im Shader (render/toon.ts, GEAR_FRAG_GLSL) */
-export const PATTERN_NO: Record<PatternId, number> = { platten: 1, kette: 2, schuppen: 3, brokat: 4, nieten: 5, steppung: 6, streifen: 7 };
+export type PatternId = 'platten' | 'kette' | 'schuppen' | 'brokat' | 'nieten' | 'steppung' | 'streifen' | 'runen';
+/** Nummern der Muster im Shader (render/toon.ts, GEAR_FRAG_GLSL); 8 = schimmernde Runen (4.6G, leuchten im Takt der Ausrüstungs-Glut) */
+export const PATTERN_NO: Record<PatternId, number> = { platten: 1, kette: 2, schuppen: 3, brokat: 4, nieten: 5, steppung: 6, streifen: 7, runen: 8 };
+/** Bortenarten: 0 schlicht, 1 mit Zierlinie, 2 Zickzack, 3 Energie-Saum (4.6G: wandernde Glut, leuchtet im Bloom) */
+export const TRIM_STYLES = { schlicht: 0, zierlinie: 1, zickzack: 2, energie: 3 } as const;
+/** Saum-Schnitte der Umhänge (4.6G): markante Silhouetten der Endgame-Sets */
+export type CapeCut = 'glatt' | 'zacken' | 'schwalbe' | 'zerrissen' | 'sterne';
+/** Aura-Teilchen hochwertiger Ausrüstung (4.6G): Art, Ort an der Figur (Socket), Farben, Teilchen je Sekunde bei voller Stärke */
+export type AuraKind = 'glut' | 'funken' | 'sterne';
+export type AuraAt = 'schultern' | 'umhang' | 'krone' | 'waffe';
 
 /** Verzierung einer Hülle: Oberfläche, Borte am Saum, Muster */
 export interface ShellLook {
@@ -32,8 +39,8 @@ export interface ShellLook {
   trim?: Tint;
   /** Breite der Borte in Metern (Standard 0,014) */
   trimW?: number;
-  /** 0 schlicht, 1 mit feiner Zierlinie, 2 Zickzack */
-  trimStyle?: 0 | 1 | 2;
+  /** 0 schlicht, 1 mit feiner Zierlinie, 2 Zickzack, 3 Energie-Saum (4.6G: leuchtet, Wellen laufen den Saum entlang) */
+  trimStyle?: 0 | 1 | 2 | 3;
   pattern?: PatternId;
   patColor?: Tint;
   /** Größe einer Masche, Lamelle oder Raute in Metern */
@@ -51,7 +58,11 @@ export type EquipPart =
   /** Hülle aus dem Körper: bewegt sich mit und verdeckt, was unter ihr liegt */
   | { type: 'shell'; garment: GarmentKind; tint: Tint; look?: ShellLook }
   /** Umhang hinter dem Rücken (eigenes Netz am Skelett) */
-  | { type: 'cape'; len: 'kurz' | 'lang' | 'schlepp'; tint: Tint; look?: ShellLook; /** Schultermantel: lässig über die Schultern gelegt (4.6F) */ drape?: boolean }
+  | { type: 'cape'; len: 'kurz' | 'lang' | 'schlepp'; tint: Tint; look?: ShellLook; /** Schultermantel: lässig über die Schultern gelegt (4.6F) */ drape?: boolean; /** Saum-Schnitt (4.6G) */ cut?: CapeCut }
+  /** Brille (4.6G): am Socket des Gesichts bzw. des rechten Auges */
+  | { type: 'glasses'; kind: Exclude<Glasses, 'keine'>; tint?: Tint }
+  /** Aura-Teilchen (4.6G, nur Endgame-Ausrüstung): über die Effekt-Schmiede, ohne eigenes Material */
+  | { type: 'aura'; kind: AuraKind; at: AuraAt; tint: Tint; tint2?: Tint; rate: number }
   /** sichtbares Kleidungsteil der Grundfigur (Hemd, Schuhe) */
   | { type: 'base'; slot: 'top' | 'shoes' }
   /** starres Teil auf einem Haut-Anker (tint: Farbe, wo das Teil eine hat) */
@@ -105,43 +116,52 @@ const LINEN = '#EDE6D6';
 const GLOVE = '#5A3A22';
 const HAT_NAMES: Partial<Record<Exclude<Hat, 'keiner'>, string>> = {
   dreispitz: 'Dreispitz', zweispitz: 'Zweispitz', bandana: 'Kopftuch', muetze: 'Wollmütze', marine: 'Marinemütze',
-  kochmuetze: 'Kochmütze', suedwester: 'Südwester', helm: 'Helm', brille: 'Fliegerbrille',
+  kochmuetze: 'Kochmütze', suedwester: 'Südwester', helm: 'Helm',
 };
+/** Brillen des Aussehens (4.6G): Stück je Art */
+export const GLASSES_ITEM: Record<Exclude<Glasses, 'keine'>, string> = { flieger: 'brille_flieger', rund: 'brille_rund', monokel: 'monokel' };
+/** Knopfreihe (4.6G): Goldknöpfe vorn auf dem äußersten Oberteil */
+const KNOEPFE = (tint: Tint = '#E3B04B'): EquipPart => ({ type: 'rigid', build: 'knoepfe', tint });
 
 export const EQUIPMENT: EquipDef[] = [
   // ---------- Oberkörper ----------
   { id: 'hemd', n: 'Hemd', socket: 'chest', parts: [{ type: 'base', slot: 'top' }] },
-  { id: 'uniform', n: 'Uniformrock', socket: 'chest', top: 'uniform', parts: [{ type: 'shell', garment: 'uniform', tint: 'outfit' }] },
-  { id: 'ringelhemd', n: 'Ringelhemd', socket: 'chest', top: 'ringel', parts: [{ type: 'shell', garment: 'ringel', tint: 'outfit' }] },
-  { id: 'tunika', n: 'Tunika', socket: 'chest', top: 'tunika', parts: [{ type: 'shell', garment: 'tunika', tint: 'outfit' }] },
-  { id: 'jacke', n: 'Jacke', socket: 'chest', top: 'jacke', parts: [{ type: 'shell', garment: 'jacke', tint: 'outfit' }] },
-  // „Weste und Hemd“: die Weste trägt die gewählte Farbe, darunter ein helles Leinenhemd
-  { id: 'weste', n: 'Weste', socket: 'chest', top: 'eng', parts: [{ type: 'shell', garment: 'hemd', tint: LINEN }, { type: 'shell', garment: 'weste', tint: 'outfit' }] },
-  { id: 'mantel_kurz', n: 'Kurzer Mantel', socket: 'chest', coat: 'kurz', slimUnder: true, parts: [{ type: 'shell', garment: 'mantelKurz', tint: 'coat' }] },
-  { id: 'mantel_lang', n: 'Langer Mantel', socket: 'chest', coat: 'lang', slimUnder: true, parts: [{ type: 'shell', garment: 'mantelLang', tint: 'coat' }] },
-  { id: 'mantel_kapitaen', n: 'Kapitänsmantel', socket: 'chest', coat: 'lang', slimUnder: true, parts: [{ type: 'shell', garment: 'mantelLang', tint: 'coat' }, { type: 'rigid', build: 'schulterstuecke' }] },
-  // 4.6F: Admiralsmantel lässig über die Schultern gelegt (keine Ärmel an): schwingt an den Federketten
+  // 4.6G: jedes Stück mit klarer Oberfläche (Stoff, Leder, Seide), Borte am Saum und – wo es dazugehört – Goldknöpfen
+  { id: 'uniform', n: 'Uniformrock', socket: 'chest', top: 'uniform', parts: [{ type: 'shell', garment: 'uniform', tint: 'outfit', look: { finish: 'stoff', trim: 'item2', trimW: 0.012, trimStyle: 1 } }, KNOEPFE()] },
+  { id: 'ringelhemd', n: 'Ringelhemd', socket: 'chest', top: 'ringel', parts: [{ type: 'shell', garment: 'ringel', tint: 'outfit', look: { finish: 'stoff', trim: 'accent', trimW: 0.008 } }] },
+  { id: 'tunika', n: 'Tunika', socket: 'chest', top: 'tunika', parts: [{ type: 'shell', garment: 'tunika', tint: 'outfit', look: { finish: 'stoff', trim: 'accent', trimW: 0.014, trimStyle: 2 } }] },
+  { id: 'jacke', n: 'Jacke', socket: 'chest', top: 'jacke', parts: [{ type: 'shell', garment: 'jacke', tint: 'outfit', look: { finish: 'leder', trim: 'accent', trimW: 0.010 } }, KNOEPFE('#C9A13B')] },
+  // „Weste und Hemd“: die Weste trägt die gewählte Farbe (Leder mit Borte und Knöpfen), darunter ein helles Leinenhemd
+  { id: 'weste', n: 'Weste', socket: 'chest', top: 'eng', parts: [{ type: 'shell', garment: 'hemd', tint: LINEN }, { type: 'shell', garment: 'weste', tint: 'outfit', look: { finish: 'leder', trim: 'accent', trimW: 0.008 } }, KNOEPFE('#C9A13B')] },
+  { id: 'mantel_kurz', n: 'Kurzer Mantel', socket: 'chest', coat: 'kurz', slimUnder: true, parts: [{ type: 'shell', garment: 'mantelKurz', tint: 'coat', look: { finish: 'stoff', trim: 'accent', trimW: 0.012 } }] },
+  { id: 'mantel_lang', n: 'Langer Mantel', socket: 'chest', coat: 'lang', slimUnder: true, parts: [{ type: 'shell', garment: 'mantelLang', tint: 'coat', look: { finish: 'stoff', trim: 'accent', trimW: 0.014, trimStyle: 1 } }, KNOEPFE('#C9A13B')] },
+  { id: 'mantel_kapitaen', n: 'Kapitänsmantel', socket: 'chest', coat: 'lang', slimUnder: true, parts: [{ type: 'shell', garment: 'mantelLang', tint: 'coat', look: { finish: 'stoff', trim: 'item2', trimW: 0.018, trimStyle: 1 } }, { type: 'rigid', build: 'schulterstuecke' }, KNOEPFE()] },
+  // 4.6F: Admiralsmantel lässig über die Schultern gelegt; 4.6G: mit herabhängenden, leeren Ärmeln an eigenen Federketten
   { id: 'mantel_schulter', n: 'Schultermantel', socket: 'chest', parts: [{ type: 'cape', len: 'lang', tint: 'coat', drape: true, look: { trim: 'item2', trimW: 0.02, trimStyle: 1 } }] },
-  { id: 'halstuch', n: 'Halstuch', socket: 'chest', parts: [{ type: 'shell', garment: 'schal', tint: 'accent' }] },
+  { id: 'halstuch', n: 'Halstuch', socket: 'chest', parts: [{ type: 'shell', garment: 'schal', tint: 'accent', look: { finish: 'seide' } }] },
   { id: 'kuerass', n: 'Brustplatte', socket: 'chest', notUnderCoat: true, parts: [{ type: 'shell', garment: 'kuerass', tint: '#9AA3AD' }] },
   { id: 'schulterplatten', n: 'Schulterplatten', socket: 'chest', parts: [{ type: 'rigid', build: 'schulterplatten', tint: '#9AA3AD' }] },
   // ---------- Beine ----------
   { id: 'hose', n: 'Hose', socket: 'legs', parts: [{ type: 'shell', garment: 'hose', tint: 'pants' }] },
-  { id: 'schaerpe', n: 'Schärpe', socket: 'legs', parts: [{ type: 'shell', garment: 'guertel', tint: 'belt' }, { type: 'rigid', build: 'knoten' }] },
-  { id: 'koppel', n: 'Koppel', socket: 'legs', parts: [{ type: 'shell', garment: 'guertel', tint: 'belt' }, { type: 'rigid', build: 'schnalle' }] },
+  { id: 'schaerpe', n: 'Schärpe', socket: 'legs', parts: [{ type: 'shell', garment: 'guertel', tint: 'belt', look: { finish: 'seide' } }, { type: 'rigid', build: 'knoten' }] },
+  { id: 'koppel', n: 'Koppel', socket: 'legs', parts: [{ type: 'shell', garment: 'guertel', tint: 'belt', look: { finish: 'leder', trim: '#C9A13B', trimW: 0.004 } }, { type: 'rigid', build: 'schnalle' }] },
   { id: 'beinschienen_leder', n: 'Lederne Beinschienen', socket: 'legs', parts: [{ type: 'shell', garment: 'beinschiene', tint: '#6A4526' }] },
   { id: 'beinschienen_stahl', n: 'Stählerne Beinschienen', socket: 'legs', parts: [{ type: 'shell', garment: 'beinschiene', tint: '#9AA3AD' }] },
   // ---------- Füße ----------
   { id: 'schuhe', n: 'Schuhe', socket: 'feet', parts: [{ type: 'base', slot: 'shoes' }] },
   // Sandalen zeigen die Schuhe der Grundfigur: ihr Fuß ist unter dem Schuh nicht ausgearbeitet (barfuß sähe er falsch aus)
   { id: 'sandalen', n: 'Sandalen', socket: 'feet', parts: [{ type: 'base', slot: 'shoes' }] },
-  { id: 'stiefel', n: 'Stiefel', socket: 'feet', parts: [{ type: 'base', slot: 'shoes' }, { type: 'shell', garment: 'stiefel', tint: 'shoes' }] },
+  { id: 'stiefel', n: 'Stiefel', socket: 'feet', parts: [{ type: 'base', slot: 'shoes' }, { type: 'shell', garment: 'stiefel', tint: 'shoes', look: { finish: 'leder', trim: '#2A1C12', trimW: 0.012 } }] },
   // ---------- Hände ----------
   { id: 'faeustlinge', n: 'Fäustlinge', socket: 'hands', parts: [{ type: 'shell', garment: 'handschuhe', tint: GLOVE }] },
   { id: 'armschienen_leder', n: 'Lederne Armschienen', socket: 'hands', parts: [{ type: 'shell', garment: 'armschiene', tint: '#6A4526' }] },
   { id: 'armschienen_stahl', n: 'Stählerne Armschienen', socket: 'hands', parts: [{ type: 'shell', garment: 'armschiene', tint: '#9AA3AD' }] },
   // ---------- Kopf ----------
   ...(Object.keys(HAT_NAMES) as Exclude<Hat, 'keiner'>[]).map((hat): EquipDef => ({ id: hat, n: HAT_NAMES[hat]!, socket: 'head', parts: [{ type: 'hat', hat }] })),
+  // ---------- Brillen (4.6G) ----------
+  { id: 'brille_flieger', n: 'Fliegerbrille', socket: 'head', parts: [{ type: 'glasses', kind: 'flieger', tint: 'hat' }] },
+  { id: 'brille_rund', n: 'Runde Brille', socket: 'head', parts: [{ type: 'glasses', kind: 'rund' }] },
+  { id: 'monokel', n: 'Monokel', socket: 'head', parts: [{ type: 'glasses', kind: 'monokel' }] },
 ];
 
 // Frisur aus einem Modell (Aussehen, nicht Beute): wird über look.hairModel gewählt; ein Helm auf dem Kopf ersetzt sie
@@ -170,7 +190,7 @@ export function loadoutFromLook(look: CharacterLook): Loadout {
   if (look.coat !== 'keiner') chest.push(look.coat === 'kurz' ? 'mantel_kurz' : look.coat === 'lang' ? 'mantel_lang' : look.coat === 'schulter' ? 'mantel_schulter' : 'mantel_kapitaen');
   if (look.scarf) chest.push('halstuch');
   const items: Record<SocketId, string[]> = {
-    head: look.hat && look.hat !== 'keiner' ? [look.hat] : [],
+    head: look.hat && look.hat !== 'keiner' && EQUIP_BY_ID[look.hat] ? [look.hat] : [],
     chest,
     legs: ['hose', marine ? 'koppel' : 'schaerpe'],
     feet: [look.shoes],
@@ -191,6 +211,8 @@ export function loadoutFromLook(look: CharacterLook): Loadout {
   }
   // Frisur aus einem Modell (Editor, Reiter „Haare“): sitzt am Kopf und ersetzt das Haar der Grundfigur
   if (look.hairModel && EQUIP_BY_ID[look.hairModel]) items.head.unshift(look.hairModel);
+  // Brille (4.6G): eigene Kategorie, sitzt zusammen mit einem Hut
+  if (look.glasses && look.glasses !== 'keine' && GLASSES_ITEM[look.glasses]) items.head.push(GLASSES_ITEM[look.glasses]);
   return {
     items,
     dye: look.dye,
@@ -215,7 +237,11 @@ const PLAIN_SPEC: ShellSpec = { finish: 'stoff', trim: null, trimW: 0, trimStyle
 export interface ResolvedLoadout {
   /** Hüllen von innen nach außen mit ihrer Farbe und Verzierung */
   shells: { kind: GarmentKind; color: string; spec: ShellSpec }[];
-  cape: { len: 'kurz' | 'lang' | 'schlepp'; color: string; spec: ShellSpec; drape?: boolean } | null;
+  cape: { len: 'kurz' | 'lang' | 'schlepp'; color: string; spec: ShellSpec; drape?: boolean; cut?: CapeCut } | null;
+  /** Brille (4.6G) */
+  glasses: { kind: Exclude<Glasses, 'keine'>; color: string } | null;
+  /** Aura-Teilchen der Endgame-Ausrüstung (4.6G) */
+  aura: { kind: AuraKind; at: AuraAt; color: string; color2: string; rate: number }[];
   /** Zusammenhang für die Abstände (was liegt unter Gürtel, Tuch und Mantel) */
   ctx: GarmentCtx;
   /** welche Kleidung der Grundfigur sichtbar bleibt */
@@ -247,6 +273,8 @@ export function resolveLoadout(l: Loadout): ResolvedLoadout {
   } : PLAIN_SPEC);
   const shells = new Map<GarmentKind, { color: string; spec: ShellSpec }>();
   let cape: ResolvedLoadout['cape'] = null;
+  let glasses: ResolvedLoadout['glasses'] = null;
+  const aura: ResolvedLoadout['aura'] = [];
   const rigid: { build: RigidKind; color: string; color2: string }[] = [];
   const glb: ResolvedLoadout['glb'] = [];
   const held: ResolvedLoadout['held'] = [];
@@ -267,7 +295,9 @@ export function resolveLoadout(l: Loadout): ResolvedLoadout {
     pal = l.dye?.[d.id] ?? d.palette ?? ['#8A8F98', '#E3B04B'];
     for (const p of d.parts) {
       if (p.type === 'shell') shells.set(p.garment, { color: color(p.tint), spec: specOf(p.look) });
-      else if (p.type === 'cape') cape = { len: p.len, color: color(p.tint), spec: specOf(p.look), drape: !!p.drape };
+      else if (p.type === 'cape') cape = { len: p.len, color: color(p.tint), spec: specOf(p.look), drape: !!p.drape, cut: p.cut };
+      else if (p.type === 'glasses') glasses = { kind: p.kind, color: p.tint ? color(p.tint) : '#3A2A1E' };
+      else if (p.type === 'aura') aura.push({ kind: p.kind, at: p.at, color: color(p.tint), color2: color(p.tint2 ?? p.tint), rate: p.rate });
       else if (p.type === 'base') base[p.slot] = true;
       else if (p.type === 'glb') glb.push({ model: p.model, mode: p.mode, bone: p.bone, look: roleLook(p.roles), maskAs: p.maskAs, hidesHair: p.hidesHair, trimsHair: p.trimsHair });
       else if (p.type === 'held') held.push({ model: p.model, hand: p.hand, look: roleLook(p.roles) });
@@ -280,7 +310,7 @@ export function resolveLoadout(l: Loadout): ResolvedLoadout {
   if (under !== 'grund') base.top = false;
   return {
     shells: SHELL_ORDER.filter((k) => shells.has(k)).map((kind) => ({ kind, ...shells.get(kind)! })),
-    cape,
+    cape, glasses, aura,
     ctx: { under, coat, boots: shells.has('stiefel') },
     base, rigid, glb, held, hat, hatColor, hatAccent,
   };

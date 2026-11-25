@@ -663,6 +663,8 @@
 .anime-impact:not(.cine) .ai-bars { display: none; }
 /* 4.6C: in der Mini-Zwischensequenz tritt das HUD zurück (Kinobild); der Schriftzug des Ultimates liegt in `.cbt` und bleibt sichtbar */
 .hud, .hud-notice { transition: opacity 0.35s ease-out; }
+/* 4.6G: im Charakter-Editor, Inventar und Faji-Baum keine Welt-Meldungen über der Bühne */
+html.in-studio .hud-notice { opacity: 0; }
 .anime-impact.cine ~ .hud, .anime-impact.cine ~ .hud-notice { opacity: 0; transition: opacity 0.12s ease-in; }
 .ai-glow { opacity: calc(var(--ag) * 0.8); background: radial-gradient(ellipse at 50% 55%, transparent 52%, color-mix(in srgb, var(--ac) 20%, transparent) 80%, color-mix(in srgb, var(--ac) 42%, transparent) 100%); }
 /* Die Bildwirkung selbst (invertiert, Tusche) setzt `AnimeImpactOverlay` als CSS-Filter auf das Canvas; hier nur Speedlines und Balken */

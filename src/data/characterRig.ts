@@ -229,13 +229,15 @@ export interface ChainTuning {
   stretch: number;
 }
 
-export const CLOTH: Record<'coat' | 'kilt' | 'cape' | 'hair' | 'scarf' | 'ribbon', ChainTuning> = {
+export const CLOTH: Record<'coat' | 'kilt' | 'cape' | 'hair' | 'scarf' | 'ribbon' | 'sleeve', ChainTuning> = {
   coat: { stiffness: 0.035, damping: 0.95, drag: 1.25, gravity: 1, radius: 0.045, inertia: 0.8, stretch: 1.04 },
   kilt: { stiffness: 0.06, damping: 0.93, drag: 0.8, gravity: 1, radius: 0.04, inertia: 0.65, stretch: 1.03 },
   cape: { stiffness: 0.025, damping: 0.95, drag: 1.4, gravity: 1, radius: 0.05, inertia: 0.85, stretch: 1.04 },
   hair: { stiffness: 0.14, damping: 0.88, drag: 0.4, gravity: 0.45, radius: 0.016, inertia: 0.5, stretch: 1.02 },
   scarf: { stiffness: 0.02, damping: 0.95, drag: 1.7, gravity: 0.8, radius: 0.02, inertia: 0.9, stretch: 1.03 },
   ribbon: { stiffness: 0.025, damping: 0.95, drag: 1.5, gravity: 0.9, radius: 0.018, inertia: 0.85, stretch: 1.03 },
+  // 4.6G: leere Ärmel des Schultermantels – schwerer Wollstoff, pendelt träge und schwingt beim Laufen nach
+  sleeve: { stiffness: 0.03, damping: 0.94, drag: 1.2, gravity: 1, radius: 0.042, inertia: 0.88, stretch: 1.03 },
 };
 
 /** Aufbau der Ketten je Grundfigur: Sektoren um Hüfte, Kopf und Rücken, Glieder je Kette (fest: das Skelett jeder Figur hat dieselben Knochen) */
@@ -249,6 +251,8 @@ export const CHAIN_LAYOUT = {
   /** Schalenden und Schärpenbänder: zwei Bänder mit je so vielen Gliedern */
   scarf: { ribbons: 2, links: 4, length: 0.3, width: 0.05 },
   sash: { ribbons: 2, links: 4, length: 0.36, width: 0.055 },
+  /** 4.6G: leere Mantelärmel des Schultermantels – je Seite eine Kette ab der Schulternaht, Röhre mit Halbmesser oben/am Aufschlag */
+  sleeves: { links: 4, length: 0.56, radius: 0.046, cuff: 0.058, out: 0.045, back: 0.075 },
 } as const;
 
 /** Wind an Figuren: Anteil des Seewinds (m/s), Höchstwert und das Flattern (Böen) */
@@ -313,10 +317,10 @@ export type CharacterSocketId = typeof SOCKET_IDS[number];
  */
 export const SOCKET_DEFS: Record<CharacterSocketId, { label: string; bone: RigBone | 'handslotr' | 'handslotl'; at: [number, number, number]; measure?: 'hairTop' | 'face' | 'eyeL' | 'eyeR' | 'jaw' | 'neck' | 'shoulders' | 'back' | 'hipL' | 'hipR' }> = {
   headTop: { label: 'Scheitel (Hüte, Kronen)', bone: 'head', at: [0, 0.17, -0.005], measure: 'hairTop' },
-  faceFront: { label: 'Gesicht (Brillen, Masken)', bone: 'head', at: [0, 0.06, 0.1], measure: 'face' },
+  faceFront: { label: 'Gesicht (Brillen, Narben, Masken)', bone: 'head', at: [0, 0.06, 0.1], measure: 'face' },
   eyeLeft: { label: 'Linkes Auge (Monokel, Augenklappe)', bone: 'head', at: [0.032, 0.06, 0.085], measure: 'eyeL' },
   eyeRight: { label: 'Rechtes Auge (Monokel, Augenklappe)', bone: 'head', at: [-0.032, 0.06, 0.085], measure: 'eyeR' },
-  beardJaw: { label: 'Kinn und Kiefer (Bärte)', bone: 'head', at: [0, -0.035, 0.07], measure: 'jaw' },
+  beardJaw: { label: 'Kinn und Kiefer (Bärte, Ohrring)', bone: 'head', at: [0, -0.035, 0.07], measure: 'jaw' },
   neckScarf: { label: 'Hals (Schals, Kragen)', bone: 'neck', at: [0, 0.02, 0.02], measure: 'neck' },
   shouldersCoat: { label: 'Schultern (Umhänge, Schultermäntel)', bone: 'upperChest', at: [0, 0.12, -0.02], measure: 'shoulders' },
   backWeapon: { label: 'Rücken (Waffen auf dem Rücken)', bone: 'upperChest', at: [0, 0.02, -0.14], measure: 'back' },
@@ -325,3 +329,100 @@ export const SOCKET_DEFS: Record<CharacterSocketId, { label: string; bone: RigBo
   handMain: { label: 'Waffenhand (rechts)', bone: 'handslotr', at: [0, 0, 0] },
   handOff: { label: 'Zweithand (links)', bone: 'handslotl', at: [0, 0, 0] },
 };
+
+// ---------- 4.6G: Haltung, Grenzen der Zusatz-Drehungen, Rückenwaffe, Socket-Grenzen ----------
+
+/**
+ * Entspannte Arme außerhalb des Kampfs: die Ruhe-Clips stehen in einer steifen A-Haltung. Das Rig zieht den Oberarm in der Frontalebene bis
+ * auf `target` (rad von der Senkrechten, je Statur; Mäntel brauchen etwas Luft) und beugt den Ellbogen leicht. Gilt nur, solange die Figur
+ * nicht kampfbereit ist; mit einer Waffe in der Hand nur zu `armed`.
+ */
+export const ARM_RELAX = {
+  target: { schlank: 0.13, athletisch: 0.155, wuchtig: 0.2, koloss: 0.25 } as Record<BuildId, number>,
+  /** Zuschlag unter Mantel/Jacke (rad) */
+  coat: 0.035,
+  /** höchstens so weit holt das Rig den Arm heran (rad) */
+  max: 0.55,
+  /** leichte Beugung im Ellbogen (rad) und Drehung der Handfläche zum Körper (rad) */
+  elbow: 0.16, palm: 0.18,
+  /** Anteil mit Waffe in der Hand */
+  armed: 0.45,
+  /** Ein- und Ausblenden (je Sekunde) */
+  speed: 3.5,
+} as const;
+
+/**
+ * Obergrenzen der Zusatz-Drehungen aus Atem, Blick, Gewichtsverlagerung und Kurvenneigen (rad). Summen über diesen Werten wirken steif und
+ * verdreht (Kopf auf den Rücken, Oberkörper im Korkenzieher) – das Rig kappt sie je Knochen und Achse.
+ */
+export const ROT_BUDGET = {
+  bankRoll: 0.12, bankPitch: 0.085,
+  spinePitch: 0.12, chestPitch: 0.1, upperChestPitch: 0.09,
+  spineYaw: 0.13, chestYaw: 0.15, upperChestYaw: 0.13,
+  spineRoll: 0.05, chestRoll: 0.04,
+  neckYaw: 0.38, neckPitch: 0.24, headYaw: 0.55, headPitch: 0.36,
+} as const;
+
+/** Waffen, die auf dem Rücken (Socket `backWeapon`) stecken können; Länge der Klinge samt Griff (m) */
+export type SheathKind = 'saebel' | 'langklinge' | 'zweihaender' | 'kurzklinge' | 'entermesser' | 'dolch';
+export const SHEATH_LEN: Record<SheathKind, number> = { saebel: 0.78, langklinge: 1.0, zweihaender: 1.3, kurzklinge: 0.6, entermesser: 0.9, dolch: 0.45 };
+
+/**
+ * Rückenwaffen (4.6G): Raum des Sockets `backWeapon` (+Z zum Körper, +X zur linken Seite, Meter). Der Griff ragt über die rechte Schulter,
+ * die Klinge läuft schräg nach unten links; Doppelklingen kreuzen sich. Unter einem Umhang oder Schultermantel liegt die Waffe verdeckt.
+ */
+export const SHEATH = {
+  /** Griffpunkt (Mitte der Hand) über der rechten Schulter und Neigung der Klinge aus der Senkrechten (rad) */
+  hiltX: -0.115, hiltY: 0.16, tilt: 0.5,
+  /** Doppelklingen: beide Griffe über den Schultern, gekreuzt */
+  doubleX: 0.11, doubleTilt: 0.52,
+  /** Abstand der Klinge zum Rücken (m) je äußerster Kleidung (Klingendicke eingerechnet) */
+  clear: { haut: 0.014, hemd: 0.018, ringel: 0.022, tunika: 0.022, weste: 0.026, jacke: 0.032, uniform: 0.03, mantelKurz: 0.04, mantelLang: 0.042, ruestung: 0.055 } as Record<string, number>,
+  /** so viele Sekunden ohne Kampf, dann steckt die Spielfigur die Klinge weg */
+  calmAfter: 6,
+} as const;
+
+/** Wo eine Rückenwaffe sitzt (rein): Griffpunkt, Drehung um die Socket-z-Achse (rad) und Spitze, Raum des Sockets */
+export function sheathPose(len: number, side: 'r' | 'l', double: boolean, clear: number): { hx: number; hy: number; z: number; rotZ: number; tipX: number; tipY: number } {
+  // lange Klingen steiler (ein Zweihänder ragt sonst einen halben Meter zur Seite)
+  const tilt = (double ? SHEATH.doubleTilt : SHEATH.tilt) * Math.min(1, Math.max(0.6, Math.pow(0.9 / Math.max(0.3, len), 0.8)));
+  // rechte Hand (Hauptwaffe): Griff über der rechten Schulter (−X), Klinge nach unten links (+X); links gespiegelt
+  const s = side === 'r' ? 1 : -1;
+  const hx = double ? -s * SHEATH.doubleX : SHEATH.hiltX * s;
+  const hy = SHEATH.hiltY;
+  // lange Klingen tiefer, damit der Griff nicht über den Kopf ragt
+  const lift = Math.max(0, len - 0.9) * 0.18;
+  const rotZ = Math.PI + s * tilt;
+  // Klinge = lokale +Y-Achse der Waffe: nach der Drehung zeigt sie (s · sin tilt, −cos tilt)
+  return { hx, hy: hy - lift, z: -clear, rotZ, tipX: hx + s * Math.sin(tilt) * len * 0.85, tipY: hy - lift - Math.cos(tilt) * len * 0.85 };
+}
+
+/**
+ * Erlaubter Bereich angehängter Teile je Socket (Meter im Socket-Raum, Grundfigur): Teile, deren Hülle hinausragt, schweben oder stecken im
+ * Körper. Die Grenzen gelten für Hut-Krempen und Kronen (Scheitel), Brillen samt Bügeln (Gesicht), Monokel und Augenklappe samt Band (Auge),
+ * Bärte und Ohrring (Kiefer), Rückenwaffen bis 1,3 m (Rücken).
+ */
+export const SOCKET_BOUNDS: Record<CharacterSocketId, { min: [number, number, number]; max: [number, number, number] }> = {
+  headTop: { min: [-0.34, -0.24, -0.34], max: [0.34, 0.34, 0.36] },
+  faceFront: { min: [-0.16, -0.09, -0.28], max: [0.16, 0.12, 0.04] },
+  eyeLeft: { min: [-0.15, -0.09, -0.24], max: [0.12, 0.1, 0.03] },
+  eyeRight: { min: [-0.12, -0.09, -0.24], max: [0.15, 0.1, 0.03] },
+  beardJaw: { min: [-0.11, -0.09, -0.12], max: [0.11, 0.12, 0.05] },
+  neckScarf: { min: [-0.16, -0.36, -0.12], max: [0.16, 0.08, 0.1] },
+  shouldersCoat: { min: [-0.36, -1.3, -0.4], max: [0.36, 0.12, 0.25] },
+  backWeapon: { min: [-0.4, -1.3, -0.14], max: [0.42, 0.36, 0.03] },
+  hipLeft: { min: [-0.12, -0.5, -0.2], max: [0.2, 0.15, 0.2] },
+  hipRight: { min: [-0.2, -0.5, -0.2], max: [0.12, 0.15, 0.2] },
+  handMain: { min: [-1.5, -1.5, -1.5], max: [1.5, 1.5, 1.5] },
+  handOff: { min: [-1.5, -1.5, -1.5], max: [1.5, 1.5, 1.5] },
+};
+
+/** Welcher Socket trägt welches Zubehör (Editor, Prüfungen) */
+export const ACCESSORY_SOCKET = {
+  hut: 'headTop', krone: 'headTop', helm: 'headTop', stirnband: 'headTop',
+  fliegerbrille: 'faceFront', brille: 'faceFront', narbe: 'faceFront',
+  monokel: 'eyeRight', augenklappe: 'eyeRight',
+  bart: 'beardJaw', ohrring: 'beardJaw',
+  schal: 'neckScarf', umhang: 'shouldersCoat', schultermantel: 'shouldersCoat',
+  rueckenwaffe: 'backWeapon', laterne: 'hipLeft', waffe: 'handMain', zweitwaffe: 'handOff',
+} as const satisfies Record<string, CharacterSocketId>;

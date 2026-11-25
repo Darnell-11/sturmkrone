@@ -25,7 +25,7 @@ import {
   type ActionHit, type ActionMove, type ActionStyleId, type UltimateSpec,
 } from '../../data/actionStyles';
 import { AURA, FORM_NAMES, MASTERY, WILL_AURAS, type AuraId } from '../../data/fajiArts';
-import { CLOTH_IMPULSE, type ExpressionId } from '../../data/characterRig';
+import { CLOTH_IMPULSE, SHEATH, type ExpressionId } from '../../data/characterRig';
 import { Character as CharacterCls } from '../character/character';
 
 /** Zustand für Welt und HUD (wie vor 4.6A) */
@@ -189,6 +189,12 @@ export class PlayerFoot implements PlayerTarget {
   private moodShown: ExpressionId | '' = '';
   private engagedT = 0;
   private engaged = false;
+  /** 4.6G: Sekunden ohne Kampf (danach steckt die Figur die Klinge auf den Rücken) */
+  private calmT = 0;
+  /** zuletzt gezeigter Stand-Clip (wechselt mit dem Wegstecken) */
+  private idleShown = '';
+  /** 4.6G: Kampfnähe 0 … 1 (1 im Kampf, klingt nach drei ruhigen Sekunden ab) – verstärkt Aura und Energie-Säume */
+  get combatK() { return this.calmT < 0.5 ? 1 : Math.max(0, 1 - (this.calmT - 0.5) / 3); }
   private fistShown = '';
   private glowStyle = '';
 
@@ -742,9 +748,12 @@ export class PlayerFoot implements PlayerTarget {
       : cur === 'run' ? (sp < 2.4 ? (sp < 0.15 ? 'idle' : 'walk') : 'run')
         : cur === 'walk' ? (sp > 3.0 ? 'run' : sp < 0.15 ? 'idle' : 'walk')
           : (sp > 3.0 ? 'run' : sp > 0.25 ? 'walk' : 'idle');
+    // 4.6G: mit weggesteckter Klinge steht die Figur locker (Idle_A) statt in der Zweihand-Kampfhaltung mit leeren Händen
+    const idleClip = this.char.sheathed && st.idleClip === 'Melee_2H_Idle' ? 'Idle_A' : st.idleClip;
+    if (want === 'idle' && this.anim === 'idle' && idleClip !== this.idleShown) { this.idleShown = idleClip; this.char.playClip(idleClip, { loop: true, fade: 0.45 }); }
     if (want !== this.anim) {
       this.anim = want;
-      if (want === 'idle') this.char.playClip(st.idleClip, { loop: true, fade: FADE.idle });
+      if (want === 'idle') { this.idleShown = idleClip; this.char.playClip(idleClip, { loop: true, fade: FADE.idle }); }
       else this.char.play(want === 'run' ? 'run' : 'walk', { fade: FADE.locomotion });
     }
     if (want !== 'idle') this.char.setLocoSpeed(this.realSpeed);
@@ -776,6 +785,9 @@ export class PlayerFoot implements PlayerTarget {
     if (mood !== this.moodShown) { this.moodShown = mood; ch.setMood(mood); }
     if (this.glowStyle !== f.style) { this.glowStyle = f.style; ch.setGlowColor(st.accent); }
     ch.setReady(fight && f.phase !== 'move' ? 1 : 0);
+    // 4.6G: nach einigen ruhigen Sekunden wandert die Klinge auf den Rücken; jede Kampfhandlung zieht sie im selben Bild
+    if (fight || f.awakenT > 0 || this.inUltimate || f.phase === 'down') this.calmT = 0; else this.calmT += dt;
+    ch.sheathe(this.calmT > SHEATH.calmAfter);
     // Blick: erfasstes Ziel, sonst der nächste Gegner in 10 m
     const t = lockId ? this.engine.target(lockId) : null;
     if (t) ch.lookAt(t.x, t.y + t.height * 0.85, t.z);

@@ -64,7 +64,7 @@ const TAIL_GLSL = /* glsl */ `
   }`;
 import { SocketRig } from './sockets';
 import { loadoutFromLook, resolveLoadout, type Finish, type Loadout, type ResolvedLoadout } from '../../data/equipment';
-import { attachHeadgear, buildBuckle, buildEpaulette, buildKnot, buildPauldron, CAPPED } from './animeHats';
+import { attachHeadgear, buildBuckle, buildButton, buildEpaulette, buildKnot, buildPauldron, CAPPED } from './animeHats';
 import { BELT_KINDS, HELM_KINDS, SHOULDERS, buildBeltExtras } from './gear/rigid';
 import { finishMat } from './gear/kit';
 import { buildHeld, buildSkinned, glbModel } from './gear/glbGear';
@@ -72,7 +72,7 @@ import { registerCulled, unregisterCulled } from '../../render/matrixSkip';
 import { CharacterRig } from './rig/characterRig';
 import { chainSkin } from './rig/clothRig';
 import type { CharacterSockets } from './rig/characterSockets';
-import type { BuildId, ExpressionId, HandPoseId, PresenceDef, StanceId } from '../../data/characterRig';
+import { SHEATH, SHEATH_LEN, sheathPose, type BuildId, type ExpressionId, type HandPoseId, type PresenceDef, type StanceId } from '../../data/characterRig';
 import { rigProfile } from './rig/rigProfile';
 
 
@@ -139,6 +139,8 @@ export const WALK_NATURAL: Record<string, number> = { Walking_A: 1.5, Walking_B:
 const SLOT_SURFACE: Record<string, Surface> = { skin: 'skin', hair: 'hair', top: 'cloth', bottom: 'cloth', shoes: 'leather', iris: 'eye' };
 /** Clips ohne eigene Ganzkörper-Aktion: hier legt das Rig Atem, Blick und Gewicht voll darüber (4.6F) */
 const CALM_CLIP = /^(Idle_|Walking_|Running_|Melee_Unarmed_Idle|Melee_2H_Idle|Holding_|Sit_|Lie_Idle|Fishing_Idle|Melee_Blocking|Skeletons_Idle|Skeletons_Walking|Ranged_1H_Aiming)/;
+/** 4.6G: Clips, in denen die Arme entspannt hängen dürfen */
+const RELAX_CLIP = /^(Idle_[AB]$|Walking_[AB]$|Skeletons_Idle)/;
 /** Anteil der Kette an Mantelschößen und Rocksaum (der Rest folgt Hüfte und Beinen) */
 const CHAIN_SHARE = { mantelLang: 0.82, kilt: 0.6, cape: 0.9 } as const;
 
@@ -233,7 +235,10 @@ export class Character {
   private irises: SkinnedMesh[] = [];
   private glowCol = new Color('#9FE8FF');
   private glowShown = 0;
-  private headgear: Group | null = null;
+  /** 4.6G: Aura-Teile der getragenen Ausrüstung (leer = keine) */
+  auraSpecs: ResolvedLoadout['aura'] = [];
+  /** Kopfschmuck (4.6G: jedes Teil an seinem Socket: Hut, Brille, Augenklappe, Ohrring, Bart, Narbe) */
+  private headgear: Object3D[] = [];
   /** Aus dem Körper erzeugte Kleidung (Hose, Stiefel, Mantel) */
   private garments: SkinnedMesh[] = [];
   private mesh: SkinnedMesh | null = null;
@@ -429,8 +434,8 @@ export class Character {
 
   /** Kleidung, Hut, Anker und Masken abnehmen und alles freigeben, was nur dieser Figur gehört */
   private undress() {
-    disposeObject(this.headgear);
-    this.headgear = null;
+    for (const p of this.headgear) disposeObject(p);
+    this.headgear = [];
     for (const a of this.sockets?.takeAnchors() ?? []) disposeObject(a);
     const engine = this.vroid ? maskEngine(this.vroid) : null;
     // gemeinsame Dreiecksliste der Kleidung nur einmal zurückgeben (mehrere Netze können sie teilen)
@@ -465,6 +470,8 @@ export class Character {
     this.undress();
     this.loadout = loadout;
     const R = resolveLoadout(loadout);
+    // 4.6G: Aura-Teilchen der Endgame-Ausrüstung (graphics/gearAura.ts liest sie je Bild)
+    this.auraSpecs = R.aura;
     const engine = maskEngine(vb);
     // deckende Schichten: erzeugte Stücke und die sichtbare Kleidung der Grundfigur
     const layers: MaskLayer[] = [];
@@ -515,11 +522,15 @@ export class Character {
       this.addShells(body, set, index, R.shells);
     }
     if (body?.parent && R.cape) this.addCape(vb, body, R.cape, R.ctx.coat === 'lang' || this.worn.includes('kilt'));
+    // 4.6G: echter Schultermantel – leere Ärmel hängen an eigenen Federketten
+    const sleeves = !!(body?.parent && R.cape?.drape && vb.cloth?.sleeves);
+    if (sleeves) this.addSleeves(vb, body!, R.cape!);
     // Federketten (4.6F): was die Figur trägt, schwingt; Schalenden und Schärpenbänder als eigene Bänder
     const rx = this.rigX;
     if (rx) {
       rx.setWorn('tails', this.worn.includes('mantelLang') || this.worn.includes('kilt'));
       rx.setWorn('cape', !!R.cape && !!body?.parent);
+      rx.setWorn('sleeves', sleeves);
       rx.setWorn('hair', !hideHair);
       const scarf = R.shells.find((s) => s.kind === 'schal');
       const knot = R.rigid.find((r) => r.build === 'knoten');
@@ -571,6 +582,11 @@ export class Character {
         wrap.rotation.y = Math.PI;
         wrap.add(buildBeltExtras(r.build, r.color, r.color2));
         this.sockets.skinAnchor(body.skeleton, b.bucklePin, 'J_Bip_C_Hips')?.add(wrap);
+      } else if (r.build === 'knoepfe') {
+        // 4.6G: Knopfleiste auf dem äußersten Oberteil (Mantel > Rock/Jacke > Weste), jeder Knopf auf dem Stoff darunter verankert
+        const over = (['mantelLang', 'mantelKurz', 'uniform', 'jacke', 'weste'] as GarmentKind[]).find((k) => this.worn.includes(k)) ?? null;
+        if (!over) continue;
+        for (const s of vb.buttonAnchors(R.ctx, over) ?? []) this.sockets.skinAnchor(body.skeleton, s.pin, 'J_Bip_C_Chest')?.add(buildButton(s.pos, r.color));
       } else if (r.build === 'schulterstuecke' || r.build === 'schulterplatten') {
         // gemessen am äußersten Stück über der Schulter
         const over = (['mantelLang', 'mantelKurz', 'jacke', 'uniform', 'weste', 'tunika', 'ringel', 'hemd'] as GarmentKind[]).find((k) => this.worn.includes(k)) ?? null;
@@ -586,9 +602,10 @@ export class Character {
     }
     // Kopf: Hut, Schmuck, Bart und Narbe (gemessene Anker statt geschätzter Abstände)
     const head = this.sockets.bone('head');
-    const hatLook: CharacterLook = { ...look, hat: R.hat, hatColor: R.hatColor ?? loadout.colors.hat, hatAccent: R.hatAccent ?? undefined };
+    // Brille aus der Ausrüstung (4.6G: eigene Kategorie, auch zusammen mit einem Hut)
+    const hatLook: CharacterLook = { ...look, hat: R.hat, hatColor: R.hatColor ?? loadout.colors.hat, hatAccent: R.hatAccent ?? undefined, glasses: R.glasses?.kind ?? 'keine' };
     const face = { beard: look.beard !== 'keiner' ? vb.beard(look.beard) : null, scar: look.scar ? vb.scarPlacement() : null, cap: (sink: number, margin: number) => vb.capShell(sink, margin) };
-    if (head) this.headgear = attachHeadgear(head, this.rig.getObjectByName('J_Adj_L_FaceEye') ?? null, this.rig.getObjectByName('J_Adj_R_FaceEye') ?? null, hatLook, this.outline, vb.hairFit, vb.anchors(), face);
+    if (head) this.headgear = attachHeadgear(head, this.rig.getObjectByName('J_Adj_L_FaceEye') ?? null, this.rig.getObjectByName('J_Adj_R_FaceEye') ?? null, hatLook, this.outline, vb.hairFit, vb.anchors(), face, this.rigX?.sockets ?? null);
     const h = Math.min(1.1, Math.max(0.9, look.height));
     const base = vb.template.scale.x;
     // Statur über die Glieder (4.6F) statt die ganze Figur in die Breite zu ziehen (das machte auch den Kopf breiter)
@@ -755,9 +772,46 @@ export class Character {
     this.capeU.push(U);
   }
 
+  /**
+   * 4.6G: leere Ärmel des Schultermantels – Röhren an den Ketten `sleeves` (Form und Gewichte von der Grundfigur, geteilt), Farbe, Oberfläche
+   * und Borte am Aufschlag wie der Mantel; die Innenkappe am Aufschlag ist dunkel (leerer Ärmel). Gleiches Programm wie die übrige Kleidung.
+   */
+  private addSleeves(vb: VroidBase, body: SkinnedMesh, c: NonNullable<ResolvedLoadout['cape']>) {
+    const sg = vb.cloth?.sleeves;
+    if (!sg) return;
+    const src = sg.geo, n = src.attributes.position.count;
+    const geo = new BufferGeometry();
+    // Lage, Gewichte und Saum-Abstand sind geteilt (releaseGarment nimmt sie vor dem Freigeben ab)
+    for (const name of ['position', 'normal', 'skinIndex', 'skinWeight', 'rimD'] as const) geo.setAttribute(name, src.attributes[name]);
+    geo.setIndex(src.index);
+    geo.boundingSphere = src.boundingSphere;
+    const col = new Float32Array(n * 3), trimC = new Float32Array(n * 3), patC = new Float32Array(n * 3), gset = new Float32Array(n * 4);
+    const base = new Color(c.color), dark = base.clone().multiplyScalar(0.22), tc = new Color(c.spec.trim ?? c.spec.patColor), pc = new Color(c.spec.patColor);
+    for (let i = 0; i < n; i++) {
+      (i >= sg.capFrom ? dark : base).toArray(col, i * 3); tc.toArray(trimC, i * 3); pc.toArray(patC, i * 3);
+      // Muster nur auf dem Stoff, Borte am Aufschlag (rimD = Abstand zum Aufschlag)
+      gset[i * 4] = i >= sg.capFrom ? 0 : c.spec.pattern; gset[i * 4 + 1] = c.spec.patSize; gset[i * 4 + 2] = c.spec.trimW; gset[i * 4 + 3] = c.spec.trimStyle;
+    }
+    geo.setAttribute('color', new BufferAttribute(col, 3));
+    geo.setAttribute('trimC', new BufferAttribute(trimC, 3));
+    geo.setAttribute('patC', new BufferAttribute(patC, 3));
+    geo.setAttribute('gset', new BufferAttribute(gset, 4));
+    const mat = finishMat(c.spec.finish, '#ffffff', { vertexColors: true, rim: 0.8, trim: true });
+    const m = new SkinnedMesh(geo, mat);
+    m.bind(body.skeleton, body.bindMatrix);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    m.userData.ownIndex = false;
+    m.userData.parts = [];
+    m.userData.socket = 'shouldersCoat';
+    m.name = 'band:sleeves';
+    body.parent!.add(m);
+    this.garments.push(m);
+  }
+
   /** Umhang als eigenes Netz am Skelett (Form und Gewichte kommen von der Grundfigur, Farbe und Borte von der Figur) */
   private addCape(vb: VroidBase, body: SkinnedMesh, c: NonNullable<ResolvedLoadout['cape']>, overCoat = false) {
-    const g0 = vb.cape(c.len, overCoat, !!c.drape);
+    const g0 = vb.cape(c.len, overCoat, !!c.drape, c.cut ?? 'glatt');
     if (!g0) return;
     const n = g0.attributes.position.count;
     const geo = new BufferGeometry();
@@ -854,6 +908,8 @@ export class Character {
   }
 
   private worn: GarmentKind[] = [];
+  /** Mantel, Jacke oder Uniformrock über den Armen (entspannte Arme halten etwas Abstand) */
+  private get coatOn() { return this.worn.includes('mantelLang') || this.worn.includes('mantelKurz') || this.worn.includes('jacke') || this.worn.includes('uniform'); }
   private wornPart: BufferAttribute | null = null;
 
   /** Für das Prüfwerkzeug (audit.ts): alle gezeichneten Schichten von innen nach außen */
@@ -1347,6 +1403,9 @@ export class Character {
     this.gaitPitch += (this.gaitPitchWant - this.gaitPitch) * Math.min(1, dt * 6);
     if (rx) {
       rx.busy = !CALM_CLIP.test(this.currentName);
+      // 4.6G: entspannte Arme nur in ruhigen Stand- und Geh-Clips (nie am Steuer, im Sitzen oder in Kampfhaltungen)
+      rx.relaxClip = RELAX_CLIP.test(this.currentName);
+      rx.coatOn = this.coatOn;
       // Gang: Oberkörper etwas aufrechter als im Clip (vorher als eigene Neigung, jetzt im Rig)
       rx.extraPitch = this.gaitPitch;
       rx.apply(dt);
@@ -1428,6 +1487,9 @@ export class Character {
   hold(side: 'l' | 'r', obj: Object3D | null, grip = 0.3) {
     const slot = this.sockets.node(side === 'r' ? 'mainHand' : 'offHand');
     if (!slot) return;
+    // 4.6G: weggesteckte Waffen erst zurück in die Hände (dann gibt der Tausch unten sie richtig frei), danach wieder wegstecken
+    const sh = this.sheath;
+    if (sh) this.unsheatheNow();
     if (side === 'r') {
       this.sabre = !!obj?.userData.swordSkin;
       if (obj && this.sabre && this.heldSkin.r) {
@@ -1454,12 +1516,96 @@ export class Character {
       this.lamp.rotation.y = left ? Math.PI : 0;
     }
     this.rigX?.setHand(side, obj ? 'griff' : grip >= 0.95 ? 'faust' : grip >= 0.6 ? 'steuer' : 'offen');
+    // Länge der Klinge für die Rückenwaffe (Modelle aus Blender: Entermesser rechts, Parierdolch links)
+    if (obj && obj === this.heldSkin.r) obj.userData.bladeLen ??= SHEATH_LEN.entermesser;
+    if (obj && obj === this.heldSkin.l) obj.userData.bladeLen ??= SHEATH_LEN.dolch;
+    if (sh) this.sheathe(true, sh.grip, sh.all);
+  }
+
+  /** 4.6G: weggesteckte Waffen (Rücken-Socket) samt ihrer Lage in der Hand */
+  private sheath: { grip: number; all: boolean; items: { obj: Object3D; side: 'l' | 'r'; pos: V3; quat: Quaternion; scale: V3; visible: boolean }[] } | null = null;
+
+  /** Stecken die Waffen gerade weg? */
+  get sheathed() { return !!this.sheath; }
+
+  /**
+   * Waffen wegstecken (true) oder wieder in die Hände nehmen (false). Klingen (`userData.bladeLen`) wandern auf den Socket `backWeapon`:
+   * Griff über der rechten Schulter, Doppelklingen gekreuzt, Abstand zum Rücken nach der äußersten Kleidung; unter einem Umhang oder
+   * Schultermantel liegen sie verdeckt. Schilde liegen flach auf dem Rücken. `all`: auch Fäuste und Fokus-Kugeln ablegen (am Steuer).
+   * `grip`: Handhaltung ohne Waffe (0,8 = am Steuerrad). Billig, wenn sich nichts ändert (je Bild aufrufbar).
+   */
+  sheathe(on: boolean, grip = 0.3, all = false) {
+    if (!on) { if (this.sheath) this.unsheatheNow(); return; }
+    if (this.sheath && this.sheath.grip === grip && this.sheath.all === all) return;
+    if (this.sheath) this.unsheatheNow();
+    const back = this.rigX?.sockets.get('backWeapon') ?? null;
+    const slots = { r: this.sockets.node('mainHand'), l: this.sockets.node('offHand') };
+    const held = { r: slots.r?.children[0] ?? null, l: slots.l?.children[0] ?? null };
+    const blade = (o: Object3D | null) => !!o && typeof o.userData.bladeLen === 'number';
+    const double = blade(held.r) && blade(held.l);
+    const covered = !!this.rigX?.cloth?.isOn('cape');
+    const clear = this.sheathClear();
+    const items: NonNullable<Character['sheath']>['items'] = [];
+    this.dropTrails();
+    for (const side of ['r', 'l'] as const) {
+      const o = held[side];
+      if (!o) continue;
+      const wide = !!o.userData.wide;
+      if (!blade(o) && !wide && !all) continue;
+      items.push({ obj: o, side, pos: o.position.clone(), quat: o.quaternion.clone(), scale: o.scale.clone(), visible: o.visible });
+      if (back && blade(o)) {
+        const p = sheathPose(o.userData.bladeLen as number, side, double, clear);
+        back.add(o);
+        o.position.set(p.hx, p.hy, p.z);
+        o.quaternion.setFromAxisAngle(_zAxis, p.rotZ);
+        o.scale.setScalar(1);
+        o.visible = !covered;
+      } else if (back && wide) {
+        // Schild flach zwischen den Schulterblättern (Rand nach oben), unter dem Umhang verdeckt
+        back.add(o);
+        o.position.set(0, -0.06, -clear - 0.02);
+        o.quaternion.setFromAxisAngle(_yAxis, Math.PI / 2);
+        o.scale.setScalar(0.8);
+        o.visible = !covered;
+      } else o.visible = false;
+    }
+    this.sheath = { grip, all, items };
+    for (const side of ['r', 'l'] as const) {
+      const still = slots[side]?.children[0];
+      this.rigX?.setHand(side, still && still.visible ? 'griff' : grip >= 0.95 ? 'faust' : grip >= 0.6 ? 'steuer' : 'offen');
+    }
+  }
+
+  /** Weggesteckte Waffen sofort zurück in ihre Halterungen (Lage wie vorher) */
+  private unsheatheNow() {
+    const sh = this.sheath;
+    if (!sh) return;
+    this.sheath = null;
+    for (const it of sh.items) {
+      const slot = this.sockets.node(it.side === 'r' ? 'mainHand' : 'offHand');
+      if (!slot) { disposeObject(it.obj); continue; }
+      slot.add(it.obj);
+      it.obj.position.copy(it.pos);
+      it.obj.quaternion.copy(it.quat);
+      it.obj.scale.copy(it.scale);
+      it.obj.visible = it.visible;
+      this.rigX?.setHand(it.side, 'griff');
+    }
+  }
+
+  /** Abstand der Rückenwaffe zum Rücken: äußerste getragene Schicht am Oberkörper */
+  private sheathClear() {
+    let c = SHEATH.clear.haut;
+    for (const k of this.worn) c = Math.max(c, SHEATH.clear[k === 'kuerass' ? 'ruestung' : k] ?? 0);
+    return c;
   }
 
   /** Figur entfernen und alles freigeben, was nur ihr gehört (Kleidung, Hut, Waffen, Skelett-Daten) */
   dispose() {
     Character.moving.delete(this);
     Character.all.delete(this);
+    // weggesteckte Waffen hängen am Rücken-Socket: zurück in die Hände, damit sie mit der Figur freigegeben werden
+    this.unsheatheNow();
     this.rigX?.sockets.clear();
     Character.lamped.delete(this);
     unregisterCulled(this.holder);
@@ -1477,6 +1623,8 @@ export class Character {
     disposeRig(this.holder);
   }
 }
+
+const _zAxis = new V3(0, 0, 1), _yAxis = new V3(0, 1, 0);
 
 /**
  * Geometrie freigeben, die ihre Punktdaten mit der Grundfigur teilt: nur was der Figur allein gehört.

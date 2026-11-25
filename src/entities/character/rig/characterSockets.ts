@@ -47,12 +47,25 @@ export function measureSockets(template: Object3D, body: SkinnedMesh | null, fac
     if (hairTop) at.headTop = { bone: head.name, pos: [hairTop.cx, hairTop.y, hairTop.cz] };
     if (eyeL && eyeR) {
       const l = eyeL.position, r = eyeR.position;
-      // Augenoberfläche liegt rund 4,5 cm vor dem Augenknochen
-      const f = fwd.clone().multiplyScalar(0.045);
-      at.eyeLeft = { bone: head.name, pos: [l.x + f.x, l.y + f.y, l.z + f.z] };
-      at.eyeRight = { bone: head.name, pos: [r.x + f.x, r.y + f.y, r.z + f.z] };
-      const f2 = fwd.clone().multiplyScalar(0.07);
-      at.faceFront = { bone: head.name, pos: [(l.x + r.x) / 2 + f2.x, (l.y + r.y) / 2 + f2.y, (l.z + r.z) / 2 + f2.z] };
+      // 4.6G: Augen- und Gesichtsoberfläche gemessen – die Augenknochen der Anime-Gesichter liegen 7 bis 8 cm hinter der Haut (vorher
+      // geschätzt 4,5 cm: Brillen, Monokel und Augenklappe versanken im Gesicht)
+      const surf = (e: Vector3) => {
+        const e0 = e.dot(fwdN);
+        let best = -Infinity;
+        for (const m of face) {
+          const pos = m.geometry.attributes.position;
+          for (let i = 0; i < pos.count; i++) {
+            v1.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld).applyMatrix4(toHead);
+            if (Math.abs(v1.x - e.x) < 0.016 && Math.abs(v1.y - e.y) < 0.016) best = Math.max(best, v1.dot(fwdN) - e0);
+          }
+        }
+        return Number.isFinite(best) && best > 0.02 ? best : 0.075;
+      };
+      const dl = surf(l) + 0.003, dr = surf(r) + 0.003;
+      at.eyeLeft = { bone: head.name, pos: [l.x + fwdN.x * dl, l.y + fwdN.y * dl, l.z + fwdN.z * dl] };
+      at.eyeRight = { bone: head.name, pos: [r.x + fwdN.x * dr, r.y + fwdN.y * dr, r.z + fwdN.z * dr] };
+      const d2 = Math.max(dl, dr) + 0.012;
+      at.faceFront = { bone: head.name, pos: [(l.x + r.x) / 2 + fwdN.x * d2, (l.y + r.y) / 2 + fwdN.y * d2, (l.z + r.z) / 2 + fwdN.z * d2] };
     }
     // Kinn: tiefster Hautpunkt des Gesichts in der Mitte vorn
     let chin: Vector3 | null = null;

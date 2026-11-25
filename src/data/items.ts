@@ -1,7 +1,7 @@
 // Inventar: Verbrauchsgüter (Heilung, Buffs), Kopfbedeckungen und die Optik der Rüstungsstufen.
 // Alle Werte der Ausrüstung an einer Stelle: Waffen- und Rüstungsstufen (Schmied), Kopfbedeckungen, Schienen, Stiefel und Schilde, Verbrauchsgüter
 // und die Preise der Läden. Talismane stehen in data/trinkets.ts, Rüstungssets in data/gear.ts, Seltenheiten in data/rarity.ts.
-import type { Coat, Hat, Outfit } from './characterParts';
+import type { Coat, Glasses, Hat, Outfit } from './characterParts';
 import type { Rarity } from './rarity';
 import type { RepairMaterial } from '../sim/intents';
 import { WEAPON_DMG, slotBudget, type SlotKey, type Tier } from './balanceConfig';
@@ -74,6 +74,8 @@ export interface HeadDef {
   id: string;
   n: string;
   hat: Hat;
+  /** Brille statt Hut (4.6G: die Fliegerbrille ist kein Hut mehr – der Hut der Figur bleibt sichtbar) */
+  glasses?: Exclude<Glasses, 'keine'>;
   color: string;
   d: string;
   rarity: Rarity;
@@ -99,7 +101,7 @@ export const HEADS: HeadDef[] = [
   head('wollmuetze', 'Wollmütze', 'muetze', '#3A5A7A', 1, 0),
   head('kapitaenshut', 'Kapitänshut', 'dreispitz', '#1E1A20', 2, 2, 0.03),
   head('eisenhelm', 'Eisenhelm', 'helm', '#8A939C', 2, 3),
-  head('fliegerbrille', 'Fliegerbrille', 'brille', '#C79A3A', 3, 4, 0.08),
+  { ...head('fliegerbrille', 'Fliegerbrille', 'keiner', '#C79A3A', 3, 4, 0.08), glasses: 'flieger' },
   head('admiralshut', 'Admiralshut', 'zweispitz', '#14284A', 3, 6, 0.05),
 ];
 

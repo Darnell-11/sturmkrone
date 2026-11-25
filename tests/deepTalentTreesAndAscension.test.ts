@@ -648,12 +648,13 @@ describe('Spielstand 22: Migration aus Version 21 ohne Verlust', () => {
   };
 
   it('Talente entstehen: Siegel rückwirkend, besiegte Kaiser, Relikte und Baupläne; alles andere bleibt', () => {
-    expect(SAVE_VERSION).toBe(22);
+    // 4.6G hebt weiter auf 23 (Brillen-Kategorie, Endgame-Stücke); die Talente entstehen unverändert beim Schritt 21 → 22
+    expect(SAVE_VERSION).toBeGreaterThanOrEqual(22);
     const r = migrateSave(JSON.parse(JSON.stringify(v21())), '4.6.4');
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const d = r.data, t = d.talents!;
-    expect(d.version).toBe(22);
+    expect(d.version).toBe(SAVE_VERSION);
     expect(r.migratedFrom).toBe(21);
     expect(t.seals.sort()).toEqual(['kaiser_batavia', 'kaiser_britannia', 'legende_erste', 'mega_kronenklippe', 'raid_albion', 'weltboss_leviathan'].sort());
     expect(t.kaiserDefeated.sort()).toEqual(['batavia', 'britannia']);

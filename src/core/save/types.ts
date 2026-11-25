@@ -14,7 +14,7 @@ import type { FactionWarState } from '../../world/factionWarEngine';
 import { emptyChart, type ChartState } from '../../world/mapDiscovery';
 import { emptyTalents, type TalentSave } from '../talentRules';
 
-export const SAVE_VERSION = 22;
+export const SAVE_VERSION = 23;
 
 export interface QuestProgress { id: string; step: number; count: number }
 

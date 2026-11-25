@@ -23,7 +23,7 @@ export function lookFromLegacy(raw: unknown, faction: Faction, style: FightStyle
     const r = raw as Record<string, unknown>;
     const hairMap: Record<string, CharacterLook['hair']> = { kurz: 'kurz', zopf: 'zopf', lang: 'lang', igel: 'igel', glatze: 'glatze' };
     const hatMap: Record<string, CharacterLook['hat']> = {
-      dreispitz: 'dreispitz', bandana: 'bandana', kochmuetze: 'kochmuetze', muetze: 'muetze', brille: 'brille',
+      dreispitz: 'dreispitz', bandana: 'bandana', kochmuetze: 'kochmuetze', muetze: 'muetze',
       suedwester: 'suedwester', helm: 'helm', keine: 'keiner',
     };
     l.skin = hex(r.skin) ?? l.skin;

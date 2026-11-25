@@ -22,6 +22,7 @@ import {
   Scene,
   SphereGeometry,
   Vector3,
+  type Camera,
   type Intersection,
 } from 'three';
 import { SeaSpray } from './seaSpray';
@@ -44,7 +45,8 @@ import { shieldFor, weaponsFor } from '../entities/character/weapons';
 import { Npc } from '../entities/npc';
 import { PlayerFoot } from '../entities/player/playerFoot';
 import { addOutlines, addOutlinesSteps } from '../render/outline';
-import { toon } from '../render/toon';
+import { toon, toonShared } from '../render/toon';
+import { GearAura } from '../graphics/gearAura';
 import { disposeObject, markShared } from '../render/dispose';
 import { HorizonLayer } from './islandHorizon';
 import { buildBlueprints, isVolcanic, islandForm, shapeOf, walkOf, type IslandBlueprint } from './islandBlueprint';
@@ -548,6 +550,22 @@ export class SeaWorld {
 
   private player: Character | null = null;
   private foot: PlayerFoot | null = null;
+  /** 4.6G: Aura der Endgame-Ausrüstung der Spielfigur (Stärke = Einstellung „Ausrüstungs-Aura“) */
+  readonly gearAura = new GearAura();
+  /** 4.6G: die Effekt-Pools sind gerade an eine Studio-Bühne (Editor) ausgeliehen */
+  private vfxLent: Object3D | null = null;
+
+  /**
+   * Effekt-Pools (Instanz-Netze der AnimeVfxForge) an eine andere Szene ausleihen – der Charakter-Editor zeigt Aura und Sturm-Erwachen mit
+   * denselben Pools und Programmen, ohne eigene anzulegen. null gibt sie zurück.
+   */
+  lendVfx(scene: Object3D | null, cam: Camera | null) {
+    const fx = this.cataclysmFx;
+    if (!fx) return null;
+    if (scene) { scene.add(fx.group); fx.setCamera(cam); this.vfxLent = scene; }
+    else { this.scene.add(fx.group); fx.setCamera(this.camera); this.vfxLent = null; }
+    return this.vfx;
+  }
   /** Spielfigur zu Fuß (Faji-Formen, Aura, Prüfungen) */
   get playerFoot(): PlayerFoot | null { return this.foot; }
   private npcs: Npc[] = [];
@@ -1952,11 +1970,11 @@ export class SeaWorld {
 
   private equip(style: StyleId) {
     if (!this.player) return;
-    // Am Steuer sind die Hände am Rad: keine Waffe in der Hand (sie kommt beim Verlassen des Ruders wieder)
-    if (this.mode === 'sail') { this.player.hold('r', null, 0.8); this.player.hold('l', null, 0.8); return; }
     const w = weaponsFor(style, this.weaponLook);
     this.player.hold('r', w.right);
     this.player.hold('l', w.left ?? (this.offhand && style !== 'zweihaender' && style !== 'langklinge' ? shieldFor(this.offhand) : null));
+    // Am Steuer sind die Hände am Rad: Klingen und Schild stecken auf dem Rücken (4.6G), Fäuste und Fokus ruhen; beim Verlassen kommen sie wieder
+    this.player.sheathe(this.mode === 'sail', 0.8, true);
   }
 
   private attachToHelm() {
@@ -1966,8 +1984,7 @@ export class SeaWorld {
     this.player.holder.position.copy(this.ship.model.helm);
     this.player.holder.scale.setScalar(1);
     this.player.holder.rotation.set(0, 0, 0);
-    this.player.hold('r', null, 0.8);
-    this.player.hold('l', null, 0.8);
+    this.player.sheathe(true, 0.8, true);
     this.player.play('steer', { fade: 0.2 });
   }
 
@@ -4504,6 +4521,12 @@ export class SeaWorld {
       const hs = this.hitstop;
       const gameK = hs.freeze > 0 ? 0 : hs.t > 0 ? hs.scale : 1;
       this.cataclysm.update(frameDt * gameK, frameDt);
+    }
+    // 4.6G: Aura der Endgame-Ausrüstung (Teilchen über die Effekt-Schmiede, im Kampf stärker) und Glanz der Energie-Säume
+    {
+      const fightK = this.foot?.combatK ?? 0;
+      toonShared.gearGlow.value = GearAura.glowFor(this.gearAura.level, fightK);
+      if (!inMenu && this.vfxLent === null) this.gearAura.update(frameDt, this.player, this.vfx, fightK);
     }
     // Sichtfeld (4.4): auf See wächst es mit der Fahrt, in Windstraßen (Strömung bis +35 %) und beim Rammstoß um bis zu 8°; zu Fuß zieht der
     // Fokus-Puls es kurz zusammen. Im Titelbild führt die Regie.

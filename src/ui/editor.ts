@@ -1,8 +1,9 @@
 import type { StyleId } from '../data/animations';
 import {
-  BEARD_STYLES, BODY_TYPES, CLOTH_COLORS, COATS, COSMETIC_HATS, EYE_COLORS, EYE_STYLES, FACE_SHAPES, HAIR_COLORS, HAIR_STYLES, MOUTH_STYLES,
+  BEARD_STYLES, BODY_TYPES, CLOTH_COLORS, COATS, COSMETIC_HATS, EYE_COLORS, EYE_STYLES, FACE_SHAPES, GLASSES, HAIR_COLORS, HAIR_STYLES, MOUTH_STYLES,
   BROW_STYLES, OUTFITS, SKIN_TONES, defaultLook, randomLook, type CharacterLook,
 } from '../data/characterParts';
+import type { ExpressionId } from '../data/characterRig';
 import type { Faction, FightStyle } from '../core/save/types';
 import { CAT_LABEL, EQUIP_BY_ID, GEAR_CATS, catOf, type EquipDef, type GearCat } from '../data/equipment';
 import { SETS, describeBonus, type GearSet } from '../data/gear';
@@ -27,7 +28,67 @@ export interface EditorGearHost {
   dye(id: string, colors: [string, string] | null): void;
 }
 
-export type CamPreset = 'gesamt' | 'kopf' | 'oberkoerper' | 'beine' | 'ruecken';
+/** Kamera-Fokus (4.6G): Gesicht, Oberkörper samt Mantel, ganze Figur – Beine und Rücken nur für die Anprobe */
+export type CamPreset = 'gesicht' | 'kopf' | 'oberkoerper' | 'ganz' | 'beine' | 'ruecken';
+export type StagePoseId = 'hafen' | 'kampf' | 'erwachen';
+export type StageLightId = 'sonne' | 'laterne';
+
+/** Reiter des Editors (4.6G) */
+export type Tab = 'koerper' | 'gesicht' | 'haare' | 'kleidung' | 'accessoires' | 'ruestung';
+export const EDITOR_TABS: readonly { id: Tab; icon: string; label: string }[] = [
+  { id: 'koerper', icon: '🧍', label: 'Körper & Statur' },
+  { id: 'gesicht', icon: '🙂', label: 'Gesicht & Augen' },
+  { id: 'haare', icon: '💇', label: 'Haare & Bärte' },
+  { id: 'kleidung', icon: '🧥', label: 'Kleidung & Mäntel' },
+  { id: 'accessoires', icon: '🎩', label: 'Hüte & Accessoires' },
+  { id: 'ruestung', icon: '🛡', label: 'Rüstung & Waffen-Optik' },
+];
+/** Kamera-Knöpfe auf der Bühne */
+export const CAM_FOCUS: readonly { id: CamPreset; label: string }[] = [
+  { id: 'gesicht', label: 'Gesicht (Nahaufnahme)' },
+  { id: 'oberkoerper', label: 'Oberkörper & Mantel' },
+  { id: 'ganz', label: 'Ganzkörper' },
+];
+/** Haltungen auf dem Drehteller */
+export const STAGE_POSES: readonly { id: StagePoseId; label: string }[] = [
+  { id: 'hafen', label: 'Entspannte Hafen-Haltung' },
+  { id: 'kampf', label: 'Kampfbereitschaft' },
+  { id: 'erwachen', label: 'Sturm-Erwachen' },
+];
+/** Licht im Studio */
+export const STAGE_LIGHTS: readonly { id: StageLightId; label: string }[] = [
+  { id: 'sonne', label: 'Hafen-Sonne' },
+  { id: 'laterne', label: 'Nacht-Laterne' },
+];
+/** Mimik zur Vorschau (nicht gespeichert: die Figur wechselt im Spiel selbst je nach Lage) */
+export const MOOD_PREVIEW: readonly { id: ExpressionId; label: string }[] = [
+  { id: 'hafen', label: 'Gelassen' }, { id: 'jubel', label: 'Freudig' }, { id: 'entschlossen', label: 'Entschlossen' },
+  { id: 'grimmig', label: 'Grimmig' }, { id: 'erstaunt', label: 'Erstaunt' },
+];
+/** Unterbereiche des Reiters „Rüstung & Waffen-Optik“ */
+type Sub = 'waffe' | 'angelegt' | 'kammer';
+export const ARMOR_SUBS: readonly { id: Sub; label: string }[] = [
+  { id: 'waffe', label: 'Waffen-Optik' }, { id: 'angelegt', label: 'Angelegt' }, { id: 'kammer', label: 'Rüstkammer' },
+];
+/** Längste Beschriftung eines Knopfes, die ohne Kürzen in eine Zeile passt (Tests) */
+export const EDITOR_LABEL_MAX = 26;
+
+export const BLADES: Record<string, string> = { saebel: 'Säbel', langklinge: 'Langklinge', zweihaender: 'Zweihänder', doppel: 'Doppelklingen' };
+export const STYLES: Record<FightStyle, string> = { faust: 'Faustkämpfer', schwert: 'Schwertkämpfer', effekt: 'Faji-Wirker' };
+const STYLE_INFO: Record<FightStyle, string> = {
+  faust: 'Schnelle Kombos, Tritte und Luftangriffe. Stark gegen viele Gegner auf engem Raum.',
+  schwert: 'Klingenkunst mit vier Waffenarten – jede mit eigenen Kombos und Reichweite.',
+  effekt: 'Formt Faji zu Geschossen und Elementen. Kämpft lieber auf Abstand und lädt starke Angriffe auf.',
+};
+/** Kurzbeschreibung der Staturen (Schlüssel = Körperbau im Spielstand) */
+export const BODY_INFO: Record<string, string> = { schmal: 'Schlank und flink', normal: 'Ausgewogen und sportlich', kraeftig: 'Breit und kräftig' };
+const SLOT_ICON: Record<GearCat, string> = { head: '🪖', shoulder: '🛡', chest: '🦺', cloak: '🧣', hands: '🧤', legs: '👖', feet: '🥾', mainhand: '🗡', offhand: '🔪' };
+/** Farben für Metall und Stoff, die man beim Färben zusätzlich sucht */
+const DYE_COLORS = [...CLOTH_COLORS, '#9AA3AD', '#C9A13B', '#E3B04B', '#B070FF', '#7FD8FF', '#C8302A', '#F2F0EA', '#17121F'];
+/** Kopfbedeckungen ohne eigene Farbe (Stahlhelm) */
+const HAT_NO_COLOR = new Set(['keiner', 'helm']);
+/** Frisuren der weiblichen Grundfigur (Anime) */
+const LONG_HAIR = ['lang', 'pferdeschwanz', 'zoepfe', 'zopf', 'dutt'];
 
 export interface EditorOptions {
   /** Neues Spiel: Name und Fraktion wählbar */
@@ -39,29 +100,22 @@ export interface EditorOptions {
   /** tryOn: Stücke, die nur zur Anprobe gezeigt werden (nicht angelegt) */
   onChange: (r: EditorResult, styleId: StyleId, tryOn: string[] | null) => void;
   onPreview: (kind: 'cheer' | 'attack' | 'wave' | 'roll' | 'heavy') => void;
-  onRotate: (dx: number) => void;
+  /** Ziehen: dx dreht um die Figur, dy wandert auf dem Bogen nach oben/unten */
+  onRotate: (dx: number, dy: number) => void;
   onZoom: (d: number) => void;
   onPreset: (p: CamPreset) => void;
   /** Farbiger Schein hinter der Figur (Seltenheit des gezeigten Stücks), null = aus */
   onAura: (color: string | null) => void;
   onSpin: (on: boolean) => void;
+  /** 4.6G: Haltung, Licht, Mimik-Vorschau, Regler „Ausrüstungs-Aura“ (0 … 1) */
+  onPose?: (p: StagePoseId) => void;
+  onLight?: (l: StageLightId) => void;
+  onMood?: (id: ExpressionId) => void;
+  auraLevel?: number;
+  onAuraLevel?: (v: number) => void;
   onDone: (r: EditorResult) => void;
   onCancel: () => void;
 }
-
-type Tab = 'stil' | 'koerper' | 'gesicht' | 'haare' | 'kleidung' | 'ausruestung' | 'sets';
-const BLADES: Record<string, string> = { saebel: 'Säbel', langklinge: 'Langklinge', zweihaender: 'Zweihänder', doppel: 'Doppelklingen' };
-const STYLES: Record<FightStyle, string> = { faust: 'Faustkämpfer', schwert: 'Schwertkämpfer', effekt: 'Faji-Wirker' };
-const STYLE_INFO: Record<FightStyle, string> = {
-  faust: 'Schnelle Kombos, Tritte und Luftangriffe. Stark gegen viele Gegner auf engem Raum.',
-  schwert: 'Klingenkunst mit vier Waffenarten – jede mit eigenen Kombos und Reichweite.',
-  effekt: 'Formt Faji zu Geschossen und Elementen. Kämpft lieber auf Abstand und lädt starke Angriffe auf.',
-};
-const BODY_INFO: Record<string, string> = { schmal: 'Schlank und flink', normal: 'Ausgewogen', kraeftig: 'Breit und kräftig' };
-const SLOT_ICON: Record<GearCat, string> = { head: '🪖', shoulder: '🛡', chest: '🦺', cloak: '🧣', hands: '🧤', legs: '👖', feet: '🥾', mainhand: '🗡', offhand: '🔪' };
-const CAMS: [CamPreset, string][] = [['gesamt', 'Gesamt'], ['kopf', 'Kopf'], ['oberkoerper', 'Rüstung'], ['beine', 'Beine'], ['ruecken', 'Rücken']];
-/** Farben für Metall und Stoff, die man beim Färben zusätzlich sucht */
-const DYE_COLORS = [...CLOTH_COLORS, '#9AA3AD', '#C9A13B', '#E3B04B', '#B070FF', '#7FD8FF', '#C8302A', '#F2F0EA', '#17121F'];
 
 export function styleIdOf(style: FightStyle, blade: string): StyleId {
   if (style === 'faust') return 'faust';
@@ -69,27 +123,45 @@ export function styleIdOf(style: FightStyle, blade: string): StyleId {
   return (['saebel', 'langklinge', 'zweihaender', 'doppel'].includes(blade) ? blade : 'saebel') as StyleId;
 }
 
+/** Sichtbare Sets der Rüstkammer: verborgene erst, wenn ein Stück im Besitz ist */
+export function armorySets(owned: readonly string[]): GearSet[] {
+  return SETS.filter((s) => !s.secret || Object.keys(s.pieces).some((c) => owned.includes(`${s.id}_${c}`)));
+}
+
 /**
- * Charakter-Editor 3.0: Studio-Bühne mit Kamera-Voreinstellungen, Reiter für Figur, Gesicht, Haare, Kleidung, Ausrüstung (anlegen
- * und färben) und Rüstkammer (alle Sets anprobieren). Rein darstellend – Änderungen laufen über die Rückrufe in EditorOptions.
+ * Charakter-Editor 4.6G: Studio-Bühne mit Kamera-Fokus (Gesicht, Oberkörper & Mantel, Ganzkörper; frei drehbar), Haltungen (Hafen,
+ * Kampfbereitschaft, Sturm-Erwachen) und Licht (Hafen-Sonne, Nacht-Laterne); sechs Reiter für Körper, Gesicht, Haare und Bärte,
+ * Kleidung, Hüte und Zubehör, Rüstung und Waffen. Rein darstellend – Änderungen laufen über die Rückrufe in EditorOptions.
  */
 export class CharacterEditor {
   private root: HTMLElement;
   private panel: HTMLElement;
-  private tab: Tab = 'stil';
+  private tab: Tab = 'koerper';
+  private sub: Sub = 'waffe';
   private r: EditorResult;
   private slot: GearCat = 'chest';
   private tryOn: string[] | null = null;
   private tryName = '';
   private spin = true;
+  private pose: StagePoseId = 'hafen';
+  private light: StageLightId = 'sonne';
+  private mood: ExpressionId | null = null;
+  private auraLevel: number;
 
   constructor(parent: HTMLElement, private o: EditorOptions) {
     this.r = structuredClone(o.initial);
+    this.auraLevel = o.auraLevel ?? 0.7;
     this.root = document.createElement('div');
     this.root.className = 'editor ed3';
+    const grp = (cap: string, p: string, items: readonly { id: string; label: string }[], cur: string) =>
+      `<div class="ed3-grp" role="group" aria-label="${cap}"><span class="ed3-cap">${cap}</span>${items.map((b) => `<button class="mini" data-p="${p}" data-v="${b.id}" aria-pressed="${b.id === cur}">${b.label}</button>`).join('')}</div>`;
     this.root.innerHTML = `
-      <div class="editor-stage" aria-label="Vorschau – ziehen zum Drehen, Mausrad oder zwei Finger zum Zoomen">
-        <div class="ed3-cam" role="group" aria-label="Kamera">${CAMS.map(([id, l]) => `<button class="mini" data-p="cam" data-v="${id}" aria-pressed="${id === 'gesamt'}">${l}</button>`).join('')}</div>
+      <div class="editor-stage" aria-label="Vorschau – ziehen zum Drehen (auch nach oben und unten), Mausrad oder zwei Finger zum Zoomen">
+        <div class="ed3-left">
+          ${grp('Kamera', 'cam', CAM_FOCUS, 'ganz')}
+          ${grp('Haltung', 'pose', STAGE_POSES, this.pose)}
+          ${grp('Licht', 'light', STAGE_LIGHTS, this.light)}
+        </div>
         <div class="ed3-banner" hidden></div>
         <div class="editor-preview">
           <button class="mini" data-p="attack">Angriff</button><button class="mini" data-p="heavy">Schwer</button>
@@ -103,7 +175,7 @@ export class CharacterEditor {
     this.panel = this.root.querySelector('.editor-panel')!;
 
     const stage = this.root.querySelector<HTMLElement>('.editor-stage')!;
-    // Ziehen dreht, zwei Finger zoomen
+    // Ziehen dreht (waagrecht rundum, senkrecht ein Stück über und unter die Figur), zwei Finger zoomen
     const pts = new Map<number, { x: number; y: number }>();
     let pinch = 0;
     stage.addEventListener('pointerdown', (e) => {
@@ -123,7 +195,7 @@ export class CharacterEditor {
         p.x = e.clientX; p.y = e.clientY;
         return;
       }
-      this.o.onRotate(e.clientX - p.x);
+      this.o.onRotate(e.clientX - p.x, e.clientY - p.y);
       p.x = e.clientX; p.y = e.clientY;
     });
     const up = (e: PointerEvent) => { pts.delete(e.pointerId); pinch = 0; };
@@ -135,6 +207,8 @@ export class CharacterEditor {
       if (!b) return;
       if (b.dataset.z) this.o.onZoom(+b.dataset.z);
       else if (b.dataset.p === 'cam') this.setCam(b.dataset.v as CamPreset);
+      else if (b.dataset.p === 'pose') this.setPose(b.dataset.v as StagePoseId);
+      else if (b.dataset.p === 'light') this.setLight(b.dataset.v as StageLightId);
       else if (b.dataset.p === 'spin') { this.spin = !this.spin; b.setAttribute('aria-pressed', String(this.spin)); this.o.onSpin(this.spin); }
       else if (b.dataset.p) this.o.onPreview(b.dataset.p as 'attack');
       else if (b.dataset.a === 'tryoff') this.endTry();
@@ -145,6 +219,7 @@ export class CharacterEditor {
       const el = e.target as HTMLInputElement;
       if (el.id === 'ed-name') this.r.name = el.value;
       if (el.dataset.k === 'height') { this.r.look.height = +el.value / 100; this.changed(false); el.parentElement?.querySelector('output')!.replaceChildren(`${Math.round(this.r.look.height * 175)} cm`); }
+      if (el.dataset.k === 'gearaura') { this.auraLevel = +el.value / 100; this.o.onAuraLevel?.(this.auraLevel); el.parentElement?.querySelector('output')!.replaceChildren(`${Math.round(this.auraLevel * 100)} %`); }
     });
     this.panel.addEventListener('change', (e) => {
       const el = e.target as HTMLInputElement;
@@ -156,16 +231,23 @@ export class CharacterEditor {
 
   // ---------- Zustand ----------
 
-  private tabs(): [Tab, string, string][] {
-    const t: [Tab, string, string][] = [['stil', '⚔', 'Stil'], ['koerper', '🧍', 'Körper'], ['gesicht', '🙂', 'Gesicht'], ['haare', '💇', 'Haare'], ['kleidung', '👕', 'Kleidung']];
-    if (this.o.gear) t.push(['ausruestung', '🛡', 'Ausrüstung']);
-    t.push(['sets', '👑', 'Rüstkammer']);
-    return t;
-  }
-
   private setCam(p: CamPreset) {
     this.root.querySelectorAll<HTMLElement>('[data-p="cam"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === p)));
     this.o.onPreset(p);
+  }
+
+  private setPose(p: StagePoseId) {
+    this.pose = p;
+    this.mood = null;
+    this.root.querySelectorAll<HTMLElement>('[data-p="pose"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === p)));
+    this.o.onPose?.(p);
+    if (this.tab === 'gesicht') this.render();
+  }
+
+  private setLight(l: StageLightId) {
+    this.light = l;
+    this.root.querySelectorAll<HTMLElement>('[data-p="light"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === l)));
+    this.o.onLight?.(l);
   }
 
   private changed(rerender = true) {
@@ -188,7 +270,7 @@ export class CharacterEditor {
     this.tryName = name;
     const rar = ids.map((i) => EQUIP_BY_ID[i]?.rarity).find(Boolean);
     this.o.onAura(rar ? RARITY[rar].col : null);
-    if (ids.length > 2) this.setCam('gesamt'); else if (ids.length === 1) this.setCam(this.camFor(catOf(EQUIP_BY_ID[ids[0]])));
+    if (ids.length > 2) this.setCam('ganz'); else if (ids.length === 1) this.setCam(this.camFor(catOf(EQUIP_BY_ID[ids[0]])));
     this.changed();
   }
 
@@ -221,9 +303,21 @@ export class CharacterEditor {
     const v = el.dataset.v ?? '';
     const look = this.r.look as unknown as Record<string, unknown>;
     switch (a) {
-      case 'tab': this.tab = v as Tab; if (v === 'ausruestung') this.setCam(this.camFor(this.slot)); this.render(); return;
+      case 'tab': {
+        this.tab = v as Tab;
+        // passender Blick je Reiter; Rüstung und Waffen zeigt die Figur kampfbereit mit der Waffe in der Hand
+        if (v === 'gesicht') this.setCam('gesicht');
+        else if (v === 'haare' || v === 'accessoires') this.setCam('kopf');
+        else if (v === 'kleidung') this.setCam('oberkoerper');
+        else if (v === 'ruestung') { this.setCam(this.sub === 'angelegt' ? this.camFor(this.slot) : 'ganz'); if (this.pose === 'hafen') this.setPose('kampf'); }
+        else this.setCam('ganz');
+        this.render();
+        return;
+      }
+      case 'sub': this.sub = v as Sub; if (v === 'angelegt') this.setCam(this.camFor(this.slot)); this.render(); return;
       case 'set': look[k] = v; break;
       case 'toggle': look[k] = !look[k]; break;
+      case 'mood': this.mood = v as ExpressionId; this.o.onMood?.(this.mood); this.render(); return;
       case 'faction': {
         this.r.faction = v as Faction;
         const keepName = this.r.name !== 'Fynn' && this.r.name !== 'Rekrut';
@@ -236,6 +330,8 @@ export class CharacterEditor {
       case 'random': {
         const keep = { gloves: this.r.look.gloves };
         this.r.look = { ...randomLook(Math.random, this.r.faction === 'marine' ? 'marine' : 'pirat'), ...keep };
+        // Anime: die weibliche Grundfigur trägt keinen Bart (gemessene Bärte passen nur zur männlichen Gesichtsform)
+        if (this.o.anime && LONG_HAIR.includes(this.r.look.hair)) this.r.look.beard = 'keiner';
         break;
       }
       case 'slot': this.slot = v as GearCat; this.setCam(this.camFor(this.slot)); this.o.onAura(null); this.render(); return;
@@ -288,8 +384,9 @@ export class CharacterEditor {
 
   // ---------- Bausteine ----------
 
-  private chips(k: keyof CharacterLook, opts: Record<string, string>) {
-    const cur = (this.r.look as unknown as Record<string, unknown>)[k];
+  private chips(k: keyof CharacterLook, opts: Record<string, string>, fallback?: string) {
+    const raw = (this.r.look as unknown as Record<string, unknown>)[k];
+    const cur = raw ?? fallback;
     return `<div class="chips">${Object.entries(opts).map(([id, l]) => `<button data-a="set" data-k="${k}" data-v="${id}" aria-pressed="${cur === id}">${l}</button>`).join('')}</div>`;
   }
 
@@ -298,9 +395,9 @@ export class CharacterEditor {
     return `<div class="ed3-cards">${Object.entries(opts).map(([id, l]) => `<button class="ed3-pick" data-a="set" data-k="${k}" data-v="${id}" aria-pressed="${cur === id}"><b>${l}</b>${info[id] ? `<small>${info[id]}</small>` : ''}</button>`).join('')}</div>`;
   }
 
-  private swatches(k: keyof CharacterLook, colors: string[]) {
+  private swatches(k: keyof CharacterLook, colors: string[], label: string) {
     const cur = String((this.r.look as unknown as Record<string, unknown>)[k]).toUpperCase();
-    return `<div class="swatches">${colors.map((c) => `<button class="sw" style="background:${c}" data-a="set" data-k="${k}" data-v="${c}" aria-pressed="${cur === c.toUpperCase()}" aria-label="Farbe ${c}"></button>`).join('')}</div>`;
+    return `<div class="swatches">${colors.map((c) => `<button class="sw" style="background:${c}" data-a="set" data-k="${k}" data-v="${c}" aria-pressed="${cur === c.toUpperCase()}" aria-label="${label}: ${c}" title="${label}"></button>`).join('')}</div>`;
   }
 
   private toggle(k: keyof CharacterLook, label: string) {
@@ -328,25 +425,23 @@ export class CharacterEditor {
     const doll = `<div class="ed3-doll">${GEAR_CATS.map((c) => {
       const d = worn[c] ? EQUIP_BY_ID[worn[c]!] : null;
       const rc = d?.rarity ? RARITY[d.rarity].col : '#6a6458';
-      return `<button class="ed3-slot" style="--c:${rc}" data-a="slot" data-v="${c}" aria-pressed="${this.slot === c}"><span class="ic">${SLOT_ICON[c]}</span><small>${CAT_LABEL[c]}</small><em>${esc(d?.n ?? 'leer')}</em></button>`;
+      return `<button class="ed3-slot" style="--c:${rc}" data-a="slot" data-v="${c}" aria-pressed="${this.slot === c}" title="${CAT_LABEL[c]}"><span class="ic">${SLOT_ICON[c]}</span><small>${CAT_LABEL[c]}</small><em>${esc(d?.n ?? 'leer')}</em></button>`;
     }).join('')}</div>`;
     const mine = owned.map((id) => EQUIP_BY_ID[id]).filter((d): d is EquipDef => !!d && catOf(d) === this.slot);
     const list = `<h3>${CAT_LABEL[this.slot]} <small class="soft">(${mine.length} im Beutel)</small></h3>
       <div class="ed3-list">
-        <button class="ed3-item none" data-a="wear" data-v="-" aria-pressed="${!worn[this.slot]}"><span class="ic">✕</span><span class="tx"><b>Nichts anlegen</b><small>Dein eigener Look aus „Kleidung“ zeigt sich.</small></span></button>
+        <button class="ed3-item none" data-a="wear" data-v="-" aria-pressed="${!worn[this.slot]}"><span class="ic">✕</span><span class="tx"><b>Nichts anlegen</b><small>Dein eigener Look aus „Kleidung & Mäntel“ zeigt sich.</small></span></button>
         ${mine.map((d) => this.pieceCard(d, worn[this.slot] === d.id, 'wear')).join('') || '<p class="soft small">Hier liegt noch nichts. Besiege Gegner, öffne Truhen oder kaufe Sets beim Ausrüster – in der Rüstkammer siehst du, was es gibt.</p>'}
       </div>`;
     const cur = worn[this.slot] ? EQUIP_BY_ID[worn[this.slot]!] : null;
     let dye = '';
     if (cur) {
       const pal = dyes[cur.id] ?? cur.palette ?? ['#8A8F98', '#E3B04B'];
-      const row = (i: 0 | 1, label: string) => `<div class="ed3-dye"><span class="label">${label}</span><div class="swatches">${DYE_COLORS.map((c) => `<button class="sw" style="background:${c}" data-a="dyeset" data-v="${i}|${c}" aria-pressed="${pal[i].toUpperCase() === c.toUpperCase()}" aria-label="Farbe ${c}"></button>`).join('')}<label class="sw pick" style="background:${pal[i]}" title="Eigene Farbe"><input type="color" data-a="dyepick" data-i="${i}" value="${pal[i]}" aria-label="Eigene Farbe ${label}"></label></div></div>`;
+      const row = (i: 0 | 1, label: string) => `<div class="ed3-dye"><span class="label">${label}</span><div class="swatches">${DYE_COLORS.map((c) => `<button class="sw" style="background:${c}" data-a="dyeset" data-v="${i}|${c}" aria-pressed="${pal[i].toUpperCase() === c.toUpperCase()}" aria-label="${label}: ${c}"></button>`).join('')}<label class="sw pick" style="background:${pal[i]}" title="Eigene Farbe"><input type="color" data-a="dyepick" data-i="${i}" value="${pal[i]}" aria-label="Eigene Farbe ${label}"></label></div></div>`;
       dye = `<h3>Farben <small class="soft">${esc(cur.n)}</small></h3>${row(0, 'Hauptfarbe')}${row(1, 'Zierfarbe (Borten, Metall, Leuchten)')}<button class="mini" data-a="dyereset">Werksfarben</button>`;
     }
-    const act = [...new Set(GEAR_CATS.map((c) => worn[c]).filter(Boolean).map((id) => EQUIP_BY_ID[id!]).filter((d) => d?.set).map((d) => d!.set!))];
     const sb = setBonuses(GEAR_CATS.map((c) => worn[c]).filter(Boolean).map((id) => EQUIP_BY_ID[id!]));
     const bonus = sb.length ? `<h3>Setbonus</h3><ul class="ed3-bonus">${sb.map((s) => { const set = SETS.find((x) => x.id === s.set)!; return `<li><b>${esc(set.n)}</b> ${s.n}/${s.total} ${s.bonus ? `<i>${esc(describeBonus(s.bonus))}</i>` : `<span class="soft">ab 3 Teilen: ${esc(describeBonus(set.bonus3))}</span>`}</li>`; }).join('')}</ul>` : '';
-    void act;
     return doll + list + dye + bonus;
   }
 
@@ -356,70 +451,87 @@ export class CharacterEditor {
     const have = cats.filter((c) => owned.includes(`${set.id}_${c}`)).length;
     const rc = RARITY[set.rarity].col;
     const trying = this.tryOn?.length && this.tryOn.every((i) => EQUIP_BY_ID[i]?.set === set.id) && this.tryOn.length === cats.length;
-    return `<div class="ed3-set" style="--c:${rc}">
+    return `<div class="ed3-set${set.endgame ? ' endgame' : ''}" style="--c:${rc}">
       <div class="ed3-sethead"><b>${esc(set.n)}</b>${this.rarityPill(set.rarity)}<span class="soft small">ab Stufe ${set.level}</span></div>
       <p class="small">${esc(set.d)}</p>
-      <div class="ed3-pieces">${cats.map((c) => { const id = `${set.id}_${c}`, d = EQUIP_BY_ID[id], own = owned.includes(id); return `<button class="ed3-piece${own ? ' own' : ''}" data-a="trypiece" data-v="${id}" title="${esc(d.n)} – anprobieren">${SLOT_ICON[c]}<i>${own ? '✓' : '🔒'}</i></button>`; }).join('')}</div>
+      ${set.source ? `<p class="small soft">${esc(set.source)}</p>` : ''}
+      <div class="ed3-pieces">${cats.map((c) => { const id = `${set.id}_${c}`, d = EQUIP_BY_ID[id], own = owned.includes(id); return `<button class="ed3-piece${own ? ' own' : ''}" data-a="trypiece" data-v="${id}" title="${esc(d.n)} – anprobieren" aria-label="${esc(d.n)} anprobieren">${SLOT_ICON[c]}<i>${own ? '✓' : '🔒'}</i></button>`; }).join('')}</div>
       <p class="small soft">Setbonus: ab 3 Teilen ${esc(describeBonus(set.bonus3))} · komplett ${esc(describeBonus(set.bonusAll))}</p>
       <div class="row"><button class="mini ${trying ? '' : 'brass'}" data-a="${trying ? 'tryoff' : 'try'}" data-v="${set.id}">${trying ? 'Anprobe beenden' : 'Ganzes Set anprobieren'}</button>${have && this.o.gear ? `<button class="mini" data-a="wearset" data-v="${set.id}">Anlegen (${have}/${cats.length})</button>` : ''}</div>
     </div>`;
   }
 
+  /** „Rüstung & Waffen-Optik“: Kampfstil und Klinge, angelegte Ausrüstung, Rüstkammer; dazu der Regler der Ausrüstungs-Aura */
+  private armorTab(): string {
+    const r = this.r;
+    const subs = ARMOR_SUBS.filter((s) => s.id !== 'angelegt' || this.o.gear);
+    if (!subs.some((s) => s.id === this.sub)) this.sub = 'waffe';
+    const head = `<div class="chips ed3-sub" role="tablist">${subs.map((s) => `<button data-a="sub" data-v="${s.id}" aria-pressed="${this.sub === s.id}">${s.label}</button>`).join('')}</div>`;
+    if (this.sub === 'angelegt') return head + this.gearTab();
+    if (this.sub === 'kammer') {
+      const owned = this.o.gear?.owned() ?? [];
+      return head + `<p class="tier-desc">${this.o.gear ? 'Alle Rüstungssets des Spiels. Probiere jedes Stück an – auch das, was du noch nicht gefunden hast. Anprobe ändert nichts an deiner Ausrüstung.' : 'So sieht Ausrüstung später aus. Probiere die Sets an, um zu sehen, worauf du hinarbeitest.'}</p>`
+        + armorySets(owned).map((s) => this.setCard(s)).join('');
+    }
+    return head
+      + this.opt('Kampfstil', `<div class="chips">${Object.entries(STYLES).map(([id, l]) => `<button data-a="style" data-v="${id}" aria-pressed="${r.style === id}">${l}</button>`).join('')}</div><p class="tier-desc">${STYLE_INFO[r.style]}</p>`)
+      + (r.style === 'schwert' ? this.opt('Klingenform', `<div class="chips">${Object.entries(BLADES).map(([id, l]) => `<button data-a="blade" data-v="${id}" aria-pressed="${r.blade === id}">${l}</button>`).join('')}</div><p class="tier-desc">Außerhalb des Kampfs steckt die Klinge auf dem Rücken – unter einem Umhang verdeckt.</p>`) : '')
+      + this.opt('Ausrüstungs-Aura', `<label class="slider">Stärke<input type="range" min="0" max="100" step="5" value="${Math.round(this.auraLevel * 100)}" data-k="gearaura"><output>${Math.round(this.auraLevel * 100)} %</output></label><p class="tier-desc">Funken, Glut und Sternenstaub der Kaiser- und Endgame-Sets samt leuchtender Säume. Im Kampf werden sie stärker.</p>`);
+  }
+
   private render() {
     const r = this.r;
+    const anime = !!this.o.anime;
     let body = '';
     switch (this.tab) {
-      case 'stil':
-        body = (this.o.isNew ? this.opt('Name', `<input id="ed-name" class="txt" maxlength="24" value="${esc(r.name)}" autocomplete="off">`)
+      case 'koerper':
+        body = (this.o.isNew ? this.opt('Name', `<input id="ed-name" class="txt" maxlength="24" value="${esc(r.name)}" autocomplete="off" aria-label="Name">`)
           + this.opt('Fraktion', `<div class="chips"><button data-a="faction" data-v="pirat" aria-pressed="${r.faction === 'pirat'}">Pirat</button><button data-a="faction" data-v="marine" aria-pressed="${r.faction === 'marine'}">Marine</button></div>
             <p class="tier-desc">${r.faction === 'pirat' ? 'Du beginnst als Schiffsjunge – frei, laut und ohne Gesetz.' : 'Du beginnst als Rekrut der Marine – mit Befehlen, Ehre und Pflicht.'}</p>`) : '')
-          + this.opt('Kampfstil', `<div class="chips">${Object.entries(STYLES).map(([id, l]) => `<button data-a="style" data-v="${id}" aria-pressed="${r.style === id}">${l}</button>`).join('')}</div><p class="tier-desc">${STYLE_INFO[r.style]}</p>`)
-          + (r.style === 'schwert' ? this.opt('Klingenform', `<div class="chips">${Object.entries(BLADES).map(([id, l]) => `<button data-a="blade" data-v="${id}" aria-pressed="${r.blade === id}">${l}</button>`).join('')}</div>`) : '');
-        break;
-      case 'koerper':
-        body = this.opt('Körperbau', this.cards('body', BODY_TYPES, BODY_INFO))
+          + this.opt('Statur', this.cards('body', BODY_TYPES, BODY_INFO))
           + this.opt('Größe', `<label class="slider">Größe<input type="range" min="90" max="110" step="1" value="${Math.round(r.look.height * 100)}" data-k="height"><output>${Math.round(r.look.height * 175)} cm</output></label>`)
-          + this.opt('Hautton', this.swatches('skin', SKIN_TONES));
+          + this.opt('Hautton', this.swatches('skin', SKIN_TONES, 'Hautton'));
         break;
       case 'gesicht':
-        body = this.opt('Augenfarbe', this.swatches('eyeColor', EYE_COLORS))
-          + (this.o.anime ? '<p class="tier-desc">Die Anime-Figuren haben ein fein gezeichnetes Gesicht mit Mimik: Sie blinzeln, strahlen beim Jubeln und bewegen beim Reden den Mund.</p>'
+        body = this.opt('Augenfarbe', this.swatches('eyeColor', EYE_COLORS, 'Augenfarbe'))
+          + (anime ? '<p class="tier-desc">Die Anime-Figuren haben ein fein gezeichnetes Gesicht mit Mimik: Sie blinzeln, strahlen beim Jubeln und bewegen beim Reden den Mund.</p>'
             : this.opt('Gesichtsform', this.chips('face', FACE_SHAPES)) + this.opt('Augen', this.chips('eyes', EYE_STYLES)) + this.opt('Brauen', this.chips('brows', BROW_STYLES)) + this.opt('Mund', this.chips('mouth', MOUTH_STYLES)))
-          + this.opt('Bart', this.chips('beard', BEARD_STYLES))
-          + this.opt('Zeichen und Schmuck', `<div class="chips">${this.toggle('scar', 'Narbe')}${this.toggle('eyepatch', 'Augenklappe')}${this.toggle('earring', 'Ohrring')}</div>`);
+          + this.opt('Mimik ansehen', `<div class="chips">${MOOD_PREVIEW.map((m) => `<button data-a="mood" data-v="${m.id}" aria-pressed="${this.mood === m.id}">${m.label}</button>`).join('')}</div><p class="tier-desc">Nur zur Vorschau – im Spiel wechselt die Miene von selbst.</p>`)
+          + this.opt('Zeichen', `<div class="chips">${this.toggle('scar', 'Narbe')}</div>`);
         break;
       case 'haare': {
-        if (this.o.anime) {
-          const long = ['lang', 'pferdeschwanz', 'zoepfe', 'zopf', 'dutt'].includes(r.look.hair);
-          body = this.opt('Stil', `<div class="ed3-cards"><button class="ed3-pick" data-a="set" data-k="hairModel" data-v="" aria-pressed="${!r.look.hairModel}"><b>Grundfrisur</b><small>Frisur der Anime-Figur</small></button><button class="ed3-pick" data-a="set" data-k="hairModel" data-v="frisur_mehrlagig" aria-pressed="${r.look.hairModel === 'frisur_mehrlagig'}"><b>Mehrlagig</b><small>Nacken-, Seiten- und Ponysträhnen</small></button></div>`)
+        if (anime) {
+          const long = LONG_HAIR.includes(r.look.hair);
+          body = this.opt('Frisur', `<div class="ed3-cards"><button class="ed3-pick" data-a="set" data-k="hairModel" data-v="" aria-pressed="${!r.look.hairModel}"><b>Grundfrisur</b><small>Frisur der Anime-Figur</small></button><button class="ed3-pick" data-a="set" data-k="hairModel" data-v="frisur_mehrlagig" aria-pressed="${r.look.hairModel === 'frisur_mehrlagig'}"><b>Mehrlagig</b><small>Nacken-, Seiten- und Ponysträhnen</small></button></div>`)
             + this.opt('Figur', `<div class="ed3-cards"><button class="ed3-pick" data-a="set" data-k="hair" data-v="kurz" aria-pressed="${!long}"><b>Kurzhaar</b><small>Männliche Grundfigur</small></button><button class="ed3-pick" data-a="set" data-k="hair" data-v="lang" aria-pressed="${long}"><b>Langhaar</b><small>Weibliche Grundfigur</small></button></div>`)
-            + this.opt('Haarfarbe', this.swatches('hairColor', HAIR_COLORS));
+            + this.opt('Haarfarbe', this.swatches('hairColor', HAIR_COLORS, 'Haarfarbe'))
+            + (long ? '' : this.opt('Bart', this.chips('beard', BEARD_STYLES) + '<p class="tier-desc">Der Bart hat die Haarfarbe und folgt der Kieferform.</p>'));
           break;
         }
-        body = this.opt('Frisur', this.chips('hair', HAIR_STYLES)) + this.opt('Haarfarbe', this.swatches('hairColor', HAIR_COLORS));
+        body = this.opt('Frisur', this.chips('hair', HAIR_STYLES)) + this.opt('Haarfarbe', this.swatches('hairColor', HAIR_COLORS, 'Haarfarbe')) + this.opt('Bart', this.chips('beard', BEARD_STYLES));
         break;
       }
       case 'kleidung':
         body = '<p class="tier-desc">Dein eigener Look. Ausrüstung aus Beute und Laden legt sich darüber und ersetzt, was am selben Platz sitzt.</p>'
-          + this.opt('Mantel', this.chips('coat', COATS) + (r.look.coat !== 'keiner' ? this.swatches('coatColor', CLOTH_COLORS) : ''))
-          + this.opt('Oberteil', this.chips('outfit', OUTFITS) + this.swatches('outfitColor', CLOTH_COLORS))
-          + this.opt('Schärpe und Akzente', this.swatches('accentColor', CLOTH_COLORS))
-          + this.opt('Hose', this.swatches('pantsColor', CLOTH_COLORS))
-          + this.opt('Schuhe', `<div class="chips"><button data-a="set" data-k="shoes" data-v="stiefel" aria-pressed="${r.look.shoes === 'stiefel'}">Hohe Stiefel</button><button data-a="set" data-k="shoes" data-v="schuhe" aria-pressed="${r.look.shoes !== 'stiefel'}">Schuhe</button></div>` + this.swatches('shoesColor', ['#5A3A22', '#1E1A20', '#8A5A2B', '#7A1F1A', '#F3E6C8']))
-          + this.opt('Kopfbedeckung', this.chips('hat', COSMETIC_HATS as unknown as Record<string, string>) + (r.look.hat !== 'keiner' && r.look.hat !== 'helm' ? this.swatches('hatColor', CLOTH_COLORS) : ''))
-          + this.opt('Zubehör', `<div class="chips">${this.toggle('scarf', 'Halstuch')}${this.toggle('gloves', 'Handschuhe')}</div>`);
+          + this.opt('Mantel', this.chips('coat', COATS) + (r.look.coat !== 'keiner' ? this.swatches('coatColor', CLOTH_COLORS, 'Mantelfarbe') : '') + (r.look.coat === 'schulter' ? '<p class="tier-desc">Lässig über die Schultern gelegt – die leeren Ärmel schwingen frei.</p>' : ''))
+          + this.opt('Oberteil', this.chips('outfit', OUTFITS) + this.swatches('outfitColor', CLOTH_COLORS, 'Farbe des Oberteils'))
+          + this.opt('Schärpe und Borten', this.swatches('accentColor', CLOTH_COLORS, 'Zierfarbe'))
+          + this.opt('Hose', this.swatches('pantsColor', CLOTH_COLORS, 'Hosenfarbe'))
+          + this.opt('Schuhe', `<div class="chips"><button data-a="set" data-k="shoes" data-v="stiefel" aria-pressed="${r.look.shoes === 'stiefel'}">Hohe Stiefel</button><button data-a="set" data-k="shoes" data-v="schuhe" aria-pressed="${r.look.shoes !== 'stiefel'}">Schuhe</button></div>` + this.swatches('shoesColor', ['#5A3A22', '#1E1A20', '#8A5A2B', '#7A1F1A', '#F3E6C8'], 'Schuhfarbe'))
+          + this.opt('Halstuch', `<div class="chips">${this.toggle('scarf', 'Halstuch tragen')}</div>`);
         break;
-      case 'ausruestung':
-        body = this.gearTab();
+      case 'accessoires':
+        body = this.opt('Kopfbedeckung', this.chips('hat', COSMETIC_HATS as unknown as Record<string, string>) + (!HAT_NO_COLOR.has(r.look.hat) ? this.swatches('hatColor', CLOTH_COLORS, 'Hutfarbe') : ''))
+          + this.opt('Brille', this.chips('glasses', GLASSES as unknown as Record<string, string>, 'keine') + '<p class="tier-desc">Brillen sitzen vor den Augen und lassen sich mit jedem Hut kombinieren.</p>')
+          + this.opt('Schmuck und Zubehör', `<div class="chips">${this.toggle('eyepatch', 'Augenklappe')}${this.toggle('earring', 'Ohrring')}${this.toggle('gloves', 'Handschuhe')}</div>`);
         break;
-      case 'sets':
-        body = `<p class="tier-desc">${this.o.gear ? 'Alle Rüstungssets des Spiels. Probiere jedes Stück an – auch das, was du noch nicht gefunden hast. Anprobe ändert nichts an deiner Ausrüstung.' : 'So sieht Ausrüstung später aus. Probiere die Sets an, um zu sehen, worauf du hinarbeitest.'}</p>`
-          + SETS.map((s) => this.setCard(s)).join('');
+      case 'ruestung':
+        body = this.armorTab();
         break;
     }
     this.panel.innerHTML = `
       <div class="editor-head"><h2 class="fell">${this.o.isNew ? 'Deine Figur' : 'Aussehen & Ausrüstung'}</h2><button class="mini" data-a="random">🎲 Zufall</button></div>
-      <div class="tabs ed3-tabs">${this.tabs().map(([id, ic, l]) => `<button data-a="tab" data-v="${id}" aria-pressed="${id === this.tab}"><span class="ic">${ic}</span>${l}</button>`).join('')}</div>
+      <div class="tabs ed3-tabs">${EDITOR_TABS.map((t) => `<button data-a="tab" data-v="${t.id}" aria-pressed="${t.id === this.tab}"><span class="ic">${t.icon}</span><span class="tl">${t.label}</span></button>`).join('')}</div>
       <div class="editor-body">${body}</div>
       <div class="row editor-foot">
         <button class="secondary" data-a="cancel">${this.o.isNew ? 'Zurück' : 'Abbrechen'}</button>

@@ -465,12 +465,15 @@ function buildHat(M: PartList, look: CharacterLook) {
       M.add(new BoxGeometry(0.06, 0.12, 0.5), 'head', '#7A808A', mat([0, 2.08, 0]));
       break;
     }
-    case 'brille':
-      for (const s of [-1, 1]) {
-        M.add(new TorusGeometry(0.075, 0.025, 6, 14), 'head', '#8A5A2B', mat([s * 0.12, 1.83, 0.27], [-0.5, 0, 0]));
-        M.add(new CircleGeometry(0.065, 14), 'head', '#7FD6FF', mat([s * 0.12, 1.83, 0.272], [-0.5, 0, 0]));
+    // Fliegerbrille der Ersatzfigur (4.6G: Brille statt Hut; nur ohne Hut gezeichnet)
+    case 'keiner':
+      if (look.glasses === 'flieger') {
+        for (const s of [-1, 1]) {
+          M.add(new TorusGeometry(0.075, 0.025, 6, 14), 'head', '#8A5A2B', mat([s * 0.12, 1.83, 0.27], [-0.5, 0, 0]));
+          M.add(new CircleGeometry(0.065, 14), 'head', '#7FD6FF', mat([s * 0.12, 1.83, 0.272], [-0.5, 0, 0]));
+        }
+        M.add(new TorusGeometry(HEAD_R.x + 0.02, 0.018, 4, 30), 'head', '#3A2618', mat([0, 1.8, 0.02], [Math.PI / 2 - 0.35, 0, 0]));
       }
-      M.add(new TorusGeometry(HEAD_R.x + 0.02, 0.018, 4, 30), 'head', '#3A2618', mat([0, 1.8, 0.02], [Math.PI / 2 - 0.35, 0, 0]));
       break;
     default: break;
   }

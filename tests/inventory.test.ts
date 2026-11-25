@@ -87,7 +87,8 @@ describe('Inventar', () => {
     // die Brustplatte entfällt unter dem Mantel, alles andere ist da
     expect(kinds).toEqual(['hose', 'jacke', 'guertel', 'schal', 'handschuhe', 'stiefel', 'mantelKurz', 'armschiene']);
     expect(r.ctx).toEqual({ under: 'jacke', coat: 'kurz', boots: true });
-    expect(r.rigid.map((x) => x.build)).toEqual(['schulterplatten', 'knoten']);
+    // 4.6G: die Jacke trägt eine Knopfleiste (Messingknöpfe auf dem Leder)
+    expect(r.rigid.map((x) => x.build)).toEqual(['knoepfe', 'schulterplatten', 'knoten']);
     expect(r.base.top).toBe(false);
     // Hemd ohne Mantel zeigt das Hemd der Grundfigur, mit Mantel ein enges Hemd
     expect(resolveLoadout(loadoutFromLook({ ...defaultLook('pirat'), outfit: 'hemd', coat: 'keiner' })).base.top).toBe(true);

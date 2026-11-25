@@ -7,9 +7,9 @@ import { Bone, BufferAttribute, BufferGeometry, Matrix4, Object3D, Quaternion, V
 import { CHAIN_LAYOUT, CLOTH, CLOTH_WIND, type ChainTuning } from '../../../data/characterRig';
 import { SpringChains, type ChainColliders } from './springChain';
 
-export type ChainKind = 'tails' | 'cape' | 'hair' | 'scarf' | 'sash';
-export const CHAIN_KINDS: ChainKind[] = ['tails', 'cape', 'hair', 'scarf', 'sash'];
-const TUNE_OF: Record<ChainKind, keyof typeof CLOTH> = { tails: 'coat', cape: 'cape', hair: 'hair', scarf: 'scarf', sash: 'ribbon' };
+export type ChainKind = 'tails' | 'cape' | 'hair' | 'scarf' | 'sash' | 'sleeves';
+export const CHAIN_KINDS: ChainKind[] = ['tails', 'cape', 'hair', 'scarf', 'sash', 'sleeves'];
+const TUNE_OF: Record<ChainKind, keyof typeof CLOTH> = { tails: 'coat', cape: 'cape', hair: 'hair', scarf: 'scarf', sash: 'ribbon', sleeves: 'sleeve' };
 
 /** Aufbau einer Kettengruppe in der Vorlage (geteilt von allen Figuren dieser Grundfigur) */
 export interface ChainGroupLayout {
@@ -31,6 +31,8 @@ export interface ChainGroupLayout {
 interface TailMeta { cx: number; cz: number; y0: number; y1: number }
 interface CapeMeta { yTop: number; yBot: number }
 export interface RibbonGeo { geo: BufferGeometry; count: number }
+/** 4.6G: Röhren der leeren Mantelärmel (Körperraum): `capFrom` = erster Punkt der dunklen Innenkappe am Aufschlag, `rimD` = Abstand zum Aufschlag (m, für die Borte) */
+export interface SleeveGeo extends RibbonGeo { capFrom: number; rimD: Float32Array }
 
 export interface ClothLayout {
   groups: Partial<Record<ChainKind, ChainGroupLayout>>;
@@ -40,6 +42,8 @@ export interface ClothLayout {
   headBall: [number, number, number, number];
   /** Bänder für Schal und Schärpe (Lage im Raum des Körpernetzes, Gewichte auf die Ketten) */
   ribbons: Partial<Record<'scarf' | 'sash', RibbonGeo>>;
+  /** 4.6G: leere Ärmel des Schultermantels (Röhren an den Ketten `sleeves`, links = Kette 0) */
+  sleeves: SleeveGeo | null;
   /** Körpernetz-Matrix der Vorlage (Körperraum → Welt der Vorlage) */
   bodyMatrix: Matrix4;
   /** Index der Rahmen- und Ketten-Knochen im Körperskelett */
@@ -93,7 +97,7 @@ export function buildClothLayout(template: Object3D, body: SkinnedMesh, hair: Sk
   // Hautpunkte in Welt der Vorlage (einmal)
   const skin = new Float32Array(bpos.count * 3);
   for (let i = 0; i < bpos.count; i++) { v1.fromBufferAttribute(bpos, i).applyMatrix4(bmw); v1.toArray(skin, i * 3); }
-  const lay: ClothLayout = { groups: {}, tails: null, cape: null, headBall: [0, 0.05, 0, 0.08], ribbons: {}, bodyMatrix: bmw, bodyBone: new Map() };
+  const lay: ClothLayout = { groups: {}, tails: null, cape: null, headBall: [0, 0.05, 0, 0.08], ribbons: {}, sleeves: null, bodyMatrix: bmw, bodyBone: new Map() };
   const hipsB = find('J_Bip_C_Hips'), ucB = find('J_Bip_C_UpperChest') ?? find('J_Bip_C_Chest'), headB = find('J_Bip_C_Head'), neckB = find('J_Bip_C_Neck');
   const skels: Skeleton[] = [body.skeleton];
 
@@ -258,13 +262,132 @@ export function buildClothLayout(template: Object3D, body: SkinnedMesh, hair: Sk
     lay.ribbons.sash = ribbonGeo(r, hipsB, body, sa.width, null);
   }
 
+  // ---------- 4.6G: leere Ärmel des Schultermantels: je Seite eine Kette ab der Schulternaht, etwas hinter und außerhalb des Arms ----------
+  if (ucB) {
+    const sv = CHAIN_LAYOUT.sleeves;
+    const ends: [Vector3, number][] = [];
+    for (const [s, n] of [[1, 'J_Bip_L_UpperArm'], [-1, 'J_Bip_R_UpperArm']] as const) {
+      const ua = find(n);
+      if (!ua) continue;
+      const p = ua.getWorldPosition(new Vector3());
+      // Schulterkuppe: höchster Hautpunkt über dem Oberarm-Gelenk
+      let top = -Infinity;
+      for (let k = 0; k < bpos.count; k++) if (Math.abs(skin[k * 3] - p.x) < 0.035 && Math.abs(skin[k * 3 + 2] - p.z) < 0.05) top = Math.max(top, skin[k * 3 + 1]);
+      if (!Number.isFinite(top)) top = p.y + 0.04;
+      ends.push([new Vector3(s * Math.max(Math.abs(p.x) + sv.out, 0.2), top - 0.025, p.z - sv.back), s]);
+    }
+    if (ends.length === 2) {
+      const r = ribbonGroup('sleeves', ucB, 2, sv.links, sv.length, (k, t) => {
+        const [root, s] = ends[k];
+        // hängt fast senkrecht, ein wenig nach außen und hinten (so fällt leerer Stoff von einer Schulternaht)
+        return v3.set(root.x + s * 0.03 * t, root.y - sv.length * t, root.z - 0.02 * t);
+      });
+      lay.groups.sleeves = r;
+      addChainBones(ucB, r, skels);
+      lay.sleeves = sleeveGeo(r, ucB, body, sv.radius, sv.cuff);
+    }
+  }
+
   // Index aller Rahmen- und Ketten-Knochen im Körperskelett (für Kleidungs-Gewichte)
   body.skeleton.bones.forEach((b, i) => { if (/^K_|^J_Bip_C_(Hips|UpperChest|Chest|Head|Neck)$/.test(b.name)) lay.bodyBone.set(b.name, i); });
   return lay;
 }
 
+/**
+ * Röhre je Ärmel-Kette (Körperraum): Ringe aus 8 Punkten entlang der Kette (leicht oval, zum Aufschlag weiter), am Aufschlag eine nach innen
+ * versetzte, dunkle Kappe (die leere Öffnung). Gewichte wie bei den Bändern: Rahmen bzw. Kettenknochen davor und danach.
+ */
+export function sleeveGeo(g: ChainGroupLayout, anchor: Object3D, body: SkinnedMesh, rTop: number, rCuff: number): SleeveGeo {
+  const sk = body.skeleton;
+  const idx = (name: string) => Math.max(0, sk.bones.findIndex((b) => b.name === name));
+  const ai = idx(anchor.name);
+  const RS = 8, rowsPer = g.links * 2 + 1;
+  const ringN = g.chains * rowsPer * RS, capN = g.chains * (RS + 1);
+  const n = ringN + capN;
+  const pos = new Float32Array(n * 3), si = new Uint16Array(n * 4), sw = new Float32Array(n * 4), rimD = new Float32Array(n);
+  const toBody = body.matrixWorld.clone().invert();
+  const P = new Vector3(), A = new Vector3(), B = new Vector3(), T = new Vector3(), N1 = new Vector3(), N2 = new Vector3(), Q = new Vector3();
+  const tri: number[] = [];
+  const len = g.links > 0 ? (() => { let L = 0; for (let i = 0; i < g.links; i++) { const o = i * 3; L += Math.hypot(g.rest[o + 3] - g.rest[o], g.rest[o + 4] - g.rest[o + 1], g.rest[o + 5] - g.rest[o + 2]); } return L; })() : 0.5;
+  for (let c = 0; c < g.chains; c++) {
+    const side = c === 0 ? 1 : -1;
+    let last = 0, lastK = 0, lastF = 0;
+    for (let r = 0; r < rowsPer; r++) {
+      const s = (r / (rowsPer - 1)) * g.links;
+      const k = Math.min(g.links - 1, Math.floor(s)), f = s - k;
+      const o0 = (c * (g.links + 1) + k) * 3, o1 = o0 + 3;
+      A.set(g.rest[o0], g.rest[o0 + 1], g.rest[o0 + 2]).applyMatrix4(anchor.matrixWorld);
+      B.set(g.rest[o1], g.rest[o1 + 1], g.rest[o1 + 2]).applyMatrix4(anchor.matrixWorld);
+      P.copy(A).lerp(B, f);
+      T.copy(B).sub(A).normalize();
+      // Ring quer zur Kette: N1 ≈ seitlich (x der Figur), N2 = vorn/hinten
+      N1.set(1, 0, 0).addScaledVector(T, -T.x).normalize();
+      N2.crossVectors(T, N1).normalize();
+      const u = r / (rowsPer - 1);
+      const rad = rTop + (rCuff - rTop) * u * u;
+      for (let e = 0; e < RS; e++) {
+        const a = (e / RS) * Math.PI * 2;
+        const j = (c * rowsPer + r) * RS + e;
+        // leicht oval (vorn/hinten tiefer), der leere Stoff fällt oben etwas flach
+        Q.copy(P).addScaledVector(N1, Math.cos(a) * rad * (0.82 + 0.1 * u) * side).addScaledVector(N2, Math.sin(a) * rad * 1.08);
+        Q.applyMatrix4(toBody).toArray(pos, j * 3);
+        const b0 = k === 0 ? ai : idx(g.names[c * g.links + k - 1]);
+        const b1 = idx(g.names[c * g.links + k]);
+        si[j * 4] = b0; sw[j * 4] = 1 - f; si[j * 4 + 1] = b1; sw[j * 4 + 1] = f;
+        rimD[j] = (1 - u) * len;
+      }
+      if (r > 0) {
+        const a0 = (c * rowsPer + r - 1) * RS, b0 = a0 + RS;
+        for (let e = 0; e < RS; e++) {
+          const e1 = (e + 1) % RS;
+          // Umlaufsinn nach außen (Seite gespiegelt: die linke Röhre läuft andersherum)
+          if (side > 0) tri.push(a0 + e, a0 + e1, b0 + e, a0 + e1, b0 + e1, b0 + e);
+          else tri.push(a0 + e, b0 + e, a0 + e1, a0 + e1, b0 + e, b0 + e1);
+        }
+      }
+      last = r; lastK = k; lastF = f;
+    }
+    void last;
+    // Kappe 2,5 cm innen am Aufschlag: Mitte und Ring, dunkel (Character färbt sie), Normalen zum Aufschlag hin
+    const cb = ringN + c * (RS + 1);
+    const lastRing = (c * rowsPer + rowsPer - 1) * RS;
+    const o0 = (c * (g.links + 1) + lastK) * 3, o1 = o0 + 3;
+    A.set(g.rest[o0], g.rest[o0 + 1], g.rest[o0 + 2]).applyMatrix4(anchor.matrixWorld);
+    B.set(g.rest[o1], g.rest[o1 + 1], g.rest[o1 + 2]).applyMatrix4(anchor.matrixWorld);
+    T.copy(B).sub(A).normalize();
+    P.copy(A).lerp(B, lastF);
+    for (let e = 0; e <= RS; e++) {
+      const j = cb + e;
+      if (e === RS) Q.copy(P).addScaledVector(T, -0.025);
+      else {
+        Q.fromArray(pos, (lastRing + e) * 3).applyMatrix4(body.matrixWorld).addScaledVector(T, -0.025);
+        // Kappe minimal enger als die Röhre (liegt innen, nie davor)
+        Q.lerp(P.clone().addScaledVector(T, -0.025), 0.06);
+      }
+      Q.applyMatrix4(toBody).toArray(pos, j * 3);
+      const b1 = idx(g.names[c * g.links + g.links - 1]);
+      si[j * 4] = b1; sw[j * 4] = 1;
+      rimD[j] = len;
+    }
+    for (let e = 0; e < RS; e++) {
+      const e1 = (e + 1) % RS;
+      if (side > 0) tri.push(cb + RS, cb + e1, cb + e); else tri.push(cb + RS, cb + e, cb + e1);
+    }
+  }
+  const geo = new BufferGeometry();
+  geo.setAttribute('position', new BufferAttribute(pos, 3));
+  geo.setAttribute('skinIndex', new BufferAttribute(si, 4));
+  geo.setAttribute('skinWeight', new BufferAttribute(sw, 4));
+  geo.setAttribute('rimD', new BufferAttribute(rimD, 1));
+  geo.setIndex(tri);
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+  if (geo.boundingSphere) geo.boundingSphere.radius *= 1.8;
+  return { geo, count: n, capFrom: ringN, rimD };
+}
+
 /** Bänder-Gruppe: `at(k, s)` liefert die Weltlage von Band k bei Anteil s (0 = Knoten … 1 = Ende) */
-function ribbonGroup(kind: 'scarf' | 'sash', anchor: Object3D, n: number, links: number, _len: number, at: (k: number, s: number) => Vector3): ChainGroupLayout {
+function ribbonGroup(kind: 'scarf' | 'sash' | 'sleeves', anchor: Object3D, n: number, links: number, _len: number, at: (k: number, s: number) => Vector3): ChainGroupLayout {
   const rest = new Float32Array(n * (links + 1) * 3);
   const g: ChainGroupLayout = { kind, anchor: anchor.name, chains: n, links, rest, names: [], active: new Uint8Array(n).fill(1) };
   for (let k = 0; k < n; k++) for (let i = 0; i <= links; i++) {

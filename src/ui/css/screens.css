@@ -315,7 +315,7 @@
 .editor > * { pointer-events: auto; }
 .editor-stage { position: relative; flex: 1; min-height: 0; touch-action: none; }
 .editor-preview { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; width: max-content; max-width: 96vw; }
-.editor-preview .mini, .ed3-cam .mini { background: var(--glass-strong); }
+.editor-preview .mini, .ed3-left .mini { background: var(--glass-strong); }
 .editor-zoom { position: absolute; right: max(10px, env(safe-area-inset-right, 0px)); top: max(10px, env(safe-area-inset-top, 0px)); display: flex; flex-direction: column; gap: 6px; }
 .editor-zoom .icon-btn { font: 800 1.4rem var(--font-text); }
 .editor-panel { margin: 0; max-width: none; height: 48vh; display: flex; flex-direction: column; padding: 14px 14px max(12px, env(safe-area-inset-bottom)); border-radius: var(--r-lg) var(--r-lg) 0 0; }
@@ -331,12 +331,19 @@
 }
 .sk-hint { position: absolute; left: 12px; top: max(10px, env(safe-area-inset-top, 0px)); color: var(--ink); text-shadow: 0 1px 0 #000; }
 
-/* Editor 3.0: Kamera-Voreinstellungen, Ausrüstung, Rüstkammer */
-.ed3-cam { position: absolute; left: max(10px, env(safe-area-inset-left, 0px)); top: max(10px, env(safe-area-inset-top, 0px)); display: flex; flex-direction: column; gap: 6px; }
-.ed3-cam .mini[aria-pressed='true'], .ed3 .editor-preview .mini[aria-pressed='true'] { background: var(--brass-plate); color: var(--ink-engrave); }
+/* Editor 4.6G: Kamera-Fokus, Haltung und Licht links auf der Bühne; sechs Reiter in zwei Reihen (nie abgeschnitten) */
+.ed3-left { position: absolute; left: max(10px, env(safe-area-inset-left, 0px)); top: max(10px, env(safe-area-inset-top, 0px)); display: flex; flex-direction: column; gap: 10px; max-width: min(15rem, 44%); }
+.ed3-grp { display: flex; flex-direction: column; align-items: stretch; gap: 5px; }
+.ed3-cap { font: 800 0.62rem var(--font-text); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-dim); text-shadow: 0 1px 0 #000; }
+.ed3-left .mini { white-space: normal; text-align: left; line-height: 1.15; }
+.ed3-left .mini[aria-pressed='true'], .ed3 .editor-preview .mini[aria-pressed='true'] { background: var(--brass-plate); color: var(--ink-engrave); }
 .ed3-banner { position: absolute; left: 50%; top: max(10px, env(safe-area-inset-top, 0px)); transform: translateX(-50%); display: flex; gap: 10px; align-items: center; max-width: 92vw; padding: 6px 14px; border: 1px solid var(--brass-400); border-radius: var(--r-sm); background: var(--glass-strong); font-size: 0.9rem; }
-.ed3-tabs button { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
-.ed3-tabs .ic { font-size: 1.05em; }
+.ed3-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; overflow: visible; border-bottom: 0; }
+.ed3-tabs button { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; min-height: 2.7em; padding: 4px 6px; white-space: normal; text-align: center; line-height: 1.12; border-bottom: 1px solid var(--glass-edge-soft); border-radius: var(--r-sm); font-size: 0.82rem; }
+.ed3-tabs .ic { font-size: 1.05em; flex: none; }
+.ed3-tabs .tl { overflow-wrap: anywhere; hyphens: auto; }
+.ed3-sub { margin-bottom: 10px; }
+.ed3-set.endgame { box-shadow: 0 0 18px color-mix(in srgb, var(--c) 30%, transparent); }
 .ed3-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
 .ed3-pick { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--glass-edge-soft); border-radius: var(--r-sm); background: rgba(255, 226, 150, 0.04); color: inherit; font: inherit; text-align: left; }
 .ed3-pick small { color: var(--ink-dim); font-size: 0.78rem; }
@@ -364,10 +371,15 @@
 .ed3-pieces { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
 .ed3-piece { position: relative; width: 44px; height: 44px; padding: 0; border: 2px solid var(--glass-edge-soft); border-radius: var(--r-sm); background: rgba(255, 226, 150, 0.05); color: inherit; font-size: 1.3rem; opacity: 0.75; }
 .ed3-piece.own { opacity: 1; border-color: var(--c); }
-.ed3-piece i { position: absolute; right: -2px; bottom: -4px; font-size: 0.7rem; font-style: normal; }
+.ed3-piece i { position: absolute; right: 1px; bottom: 0; font-size: 0.62rem; line-height: 1; font-style: normal; }
 @media (max-width: 700px), (max-aspect-ratio: 1/1) {
-  .ed3-cam { flex-direction: row; flex-wrap: wrap; max-width: calc(100vw - 70px); }
-  .ed3-cam .mini { padding: 0.3rem 0.55rem; font-size: 0.8rem; }
+  .ed3-left { flex-direction: row; flex-wrap: wrap; gap: 6px 10px; max-width: calc(100vw - 70px); }
+  .ed3-grp { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .ed3-cap { width: 100%; }
+  .ed3-left .mini { padding: 0.26rem 0.5rem; font-size: 0.74rem; white-space: nowrap; }
+  /* Anprobe-Hinweis unten über den Vorschau-Knöpfen (oben liegen Kamera, Haltung und Licht) */
+  .ed3-banner { top: auto; bottom: 52px; max-width: calc(100vw - 20px); font-size: 0.8rem; }
+  .ed3-tabs button { font-size: 0.74rem; min-height: 2.5em; }
   .ed3 .editor-preview { gap: 4px; }
   .ed3 .editor-preview .mini { padding: 0.28rem 0.5rem; font-size: 0.76rem; }
   .ed3-doll { grid-template-columns: repeat(9, 1fr); gap: 4px; }
