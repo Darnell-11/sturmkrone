@@ -12,6 +12,7 @@ import {
   SphereGeometry,
   Vector2,
   Vector3,
+  Vector4,
   type Scene,
 } from 'three';
 import { seeded } from './waves';
@@ -23,6 +24,9 @@ const SKY_FRAG = /* glsl */ `
   uniform float uCover, uDark, uCloudQ, uFogK, uSkyCap;
   uniform vec3 uAshGlow;
   uniform vec2 uCloudOff;
+  // Wolken-Teilung über einem Ultimate (4.6B): Richtung zur Öffnung und Stärke, Farbe des Lichtsaums
+  uniform vec4 uRift;
+  uniform vec3 uRiftCol;
   varying vec3 vDir;
   float h21(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
   float skVn(vec2 p) {
@@ -116,6 +120,9 @@ const SKY_FRAG = /* glsl */ `
       // Wolkenunterseiten fangen den Ascheschein auf
       cc += uAshGlow * (1.0 - lit * 0.6) * 0.8;
       cc = mix(cc, uHorizon, exp(-hy * 7.0) * 0.8);
+      // Ultimate: die Wolkendecke reißt über der Figur auf (Loch mit leuchtendem Saum)
+      float skRd = dot(d, uRift.xyz);
+      dens *= 1.0 - uRift.w * smoothstep(0.86, 0.965, skRd);
       float ca = dens * smoothstep(0.0, 0.08, hy) * (0.55 + 0.45 * uCover);
       // Zirren: lange, dünne Fäden hoch oben (nur bei eher klarem Himmel)
       vec2 zp = d.xz / (hy + 0.1) * 0.3 + uCloudOff * 0.6;
@@ -135,6 +142,12 @@ const SKY_FRAG = /* glsl */ `
     c *= min(1.0, uSkyCap / max(skL, 1e-4));
     c += skDisc * (1.0 - skOcc) * (1.0 - uFogK * 0.85);
     c += vec3(0.75, 0.8, 1.0) * uFlash;
+    if (uRift.w > 0.0) {
+      // Saum der Öffnung und der Lichtschacht in ihrer Mitte (darf über die Bloom-Schwelle: die Aura soll leuchten)
+      float rd = dot(d, uRift.xyz);
+      c += uRiftCol * uRift.w * (smoothstep(0.84, 0.9, rd) - smoothstep(0.9, 0.95, rd)) * 1.3;
+      c += uRiftCol * uRift.w * smoothstep(0.975, 0.999, rd) * 0.9;
+    }
     gl_FragColor = vec4(c, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -290,6 +303,9 @@ export class Sky {
     uFogK: { value: 0 },
     /** Höchste Helligkeit des Himmels (ohne Sonnen- und Mondscheibe): bleibt unter der Bloom-Schwelle (4.4C) */
     uSkyCap: { value: 0.9 },
+    /** Wolken-Teilung (4.6B): Richtung zur Öffnung (xyz) und Stärke (w), Farbe des Saums */
+    uRift: { value: new Vector4(0, 1, 0, 0) },
+    uRiftCol: { value: new Color(1, 0.9, 0.6) },
   };
   readonly cloudU = {
     uMap: { value: cloudAtlas() },

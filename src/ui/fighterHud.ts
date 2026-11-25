@@ -3,6 +3,7 @@
 // Am Handy liegen die vier Kampfkünste als Knöpfe in der Touch-Gruppe (data/touchLayout.ts); das HUD zeigt dort nur Zähler und Stil.
 import { esc } from './dom';
 import { ACTION_STYLES, type ActionStyleId } from '../data/actionStyles';
+import { FORM_NAMES, WILL_AURAS, type AuraId } from '../data/fajiArts';
 
 /** Was das HUD je Bild bekommt (SeaWorld.fighterView) */
 export interface FighterView {
@@ -15,6 +16,19 @@ export interface FighterView {
   finisher: boolean;
   perfect: boolean;
   counter: boolean;
+  /** 4.6B: Willenskraft 0 … 1; Sturm-Erwachen (Rest 0 … 1 und Sekunden, 0 = nicht erwacht); Ultimate jetzt möglich und sein Name */
+  will: number;
+  awake: number;
+  awakeS: number;
+  ult: boolean;
+  ultName: string;
+  /** Willenskraft-Aura */
+  aura: AuraId;
+  /** Faji-Form 1 … 7 (0 = Waffenstil) und Fortschritt zur nächsten (0 … 1); Kampfkünste, die erst eine höhere Form freischaltet */
+  form: number;
+  formFrac: number;
+  locked: readonly boolean[];
+  lockForm: readonly number[];
 }
 
 /** Rang des Zählers (Farbe, Größe): ab 10, 25, 50 Treffern */
@@ -36,6 +50,18 @@ export class FighterHud {
   private shownLabel = '';
   private lastFrac = new Array<string>(4).fill('');
   private barK = -1;
+  // 4.6B: Willenskraft-Leiste, Aura, Form
+  private will: HTMLElement;
+  private willBar: HTMLElement;
+  private willTxt: HTMLElement;
+  private willKey: HTMLElement;
+  private auraEl: HTMLElement;
+  private formEl: HTMLElement;
+  private willK = '';
+  private willPct = -1;
+  private auraK = -1;
+  private formK = '';
+  private lockK = '';
   /** Kampfkunst angetippt (Touch-Modus über die Leiste, falls die Touch-Knöpfe fehlen) */
   onArt: (slot: number) => void = () => {};
 
@@ -46,8 +72,14 @@ export class FighterHud {
     this.root.innerHTML = `
       <div class="fh-combo" hidden><span class="fh-move"></span><div class="fh-count"><b>0</b><em>HIT!</em></div><u><i></i></u></div>
       <div class="fh-strip">
-        <div class="fh-style"><b></b><small></small></div>
+        <div class="fh-style"><b></b><small></small><em class="fh-form" hidden></em></div>
         <div class="fh-arts" role="group" aria-label="Kampfkünste"></div>
+      </div>
+      <div class="fh-will" data-st="fill">
+        <span class="fh-aura" title=""></span>
+        <span class="fh-wt">Willenskraft</span>
+        <u><i></i></u>
+        <kbd class="fh-wk" hidden></kbd>
       </div>`;
     parent.prepend(this.root);
     this.combo = this.root.querySelector('.fh-combo')!;
@@ -56,6 +88,12 @@ export class FighterHud {
     this.moveEl = this.combo.querySelector('.fh-move')!;
     this.bar = this.combo.querySelector('u i')!;
     this.styleEl = this.root.querySelector('.fh-style')!;
+    this.will = this.root.querySelector('.fh-will')!;
+    this.willBar = this.will.querySelector('u i')!;
+    this.willTxt = this.will.querySelector('.fh-wt')!;
+    this.willKey = this.will.querySelector('.fh-wk')!;
+    this.auraEl = this.will.querySelector('.fh-aura')!;
+    this.formEl = this.styleEl.querySelector('.fh-form')!;
     const arts = this.root.querySelector<HTMLElement>('.fh-arts')!;
     for (let i = 0; i < 4; i++) {
       const b = document.createElement('button');
@@ -72,7 +110,7 @@ export class FighterHud {
    * Je Bild. `v` = null blendet das HUD aus (an Bord, Menü). `keys` = Tastenkappen der Kampfkünste, `touch` = Handy-Modus (nur Zähler und Stil),
    * `comboHits`/`comboFrac` = Trefferzähler und Restzeit aus dem Kampf-Overlay (zählt auch Faji-Treffer).
    */
-  update(v: FighterView | null, keys: readonly string[], touch: boolean, comboHits: number, comboFrac: number, dt: number) {
+  update(v: FighterView | null, keys: readonly string[], touch: boolean, comboHits: number, comboFrac: number, dt: number, awakenKey = '') {
     const hide = !v;
     if (this.root.hidden !== hide) this.root.hidden = hide;
     if (!v) return;
@@ -132,5 +170,51 @@ export class FighterHud {
     if (lbl !== this.shownLabel) { this.shownLabel = lbl; this.moveEl.innerHTML = lbl; }
     const bk = hits >= 2 ? Math.round(Math.max(0, Math.min(1, comboFrac)) * 100) : 0;
     if (bk !== this.barK) { this.barK = bk; this.bar.style.transform = `scaleX(${(bk / 100).toFixed(2)})`; }
+    this.updateWill(v, awakenKey);
+  }
+
+  /** Willenskraft-Leiste: füllt sich im Kampf; voll = Sturm-Erwachen bereit, im Erwachen läuft sie als Restzeit ab (mit Ultimate-Hinweis) */
+  private updateWill(v: FighterView, key: string) {
+    const st = v.awake > 0 ? (v.ult ? 'ult' : 'awake') : v.will >= 1 ? 'full' : 'fill';
+    const txt = st === 'ult' ? `Ultimate: ${v.ultName}` : st === 'awake' ? `Sturm-Erwachen · ${Math.ceil(v.awakeS)} s` : st === 'full' ? 'Sturm-Erwachen bereit' : 'Willenskraft';
+    const k = st + '|' + txt + '|' + key;
+    if (k !== this.willK) {
+      this.willK = k;
+      this.will.dataset.st = st;
+      this.willTxt.textContent = txt;
+      const showKey = (st === 'full' || st === 'ult') && !!key;
+      this.willKey.hidden = !showKey;
+      if (showKey) this.willKey.textContent = key;
+    }
+    const pct = Math.round(Math.max(0, Math.min(1, v.awake > 0 ? v.awake : v.will)) * 200);
+    if (pct !== this.willPct) { this.willPct = pct; this.willBar.style.transform = `scaleX(${(pct / 200).toFixed(3)})`; }
+    if (v.aura !== this.auraK) {
+      this.auraK = v.aura;
+      const a = WILL_AURAS[v.aura] ?? WILL_AURAS[0];
+      this.auraEl.textContent = a.icon;
+      this.auraEl.title = `${a.label}: ${a.desc}`;
+      this.auraEl.style.setProperty('--ac', a.color);
+      this.auraEl.classList.toggle('on', v.aura > 0);
+    }
+    const fk = v.form > 0 ? `${v.form}|${Math.round(v.formFrac * 20)}` : '';
+    if (fk !== this.formK) {
+      this.formK = fk;
+      this.formEl.hidden = !fk;
+      if (fk) {
+        this.formEl.textContent = FORM_NAMES[v.form - 1] ?? '';
+        this.formEl.style.setProperty('--fp', v.form >= 7 ? '1' : v.formFrac.toFixed(2));
+      }
+    }
+    let lk = '';
+    for (let i = 0; i < 4; i++) lk += v.locked[i] ? '1' : '0';
+    if (lk !== this.lockK) {
+      this.lockK = lk;
+      for (let i = 0; i < 4; i++) {
+        const el = this.slots[i];
+        const lockedNow = !!v.locked[i];
+        el.classList.toggle('locked', lockedNow);
+        el.dataset.form = lockedNow ? String(v.lockForm[i] ?? '') : '';
+      }
+    }
   }
 }

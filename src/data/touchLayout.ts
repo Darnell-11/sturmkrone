@@ -42,4 +42,7 @@ export const TOUCH_FOOT: TouchButtonDef[] = [
   { action: 'skill3', label: 'F3', size: 46, right: 122, bottom: 214, color: 'brass' },
   { action: 'potion', label: 'Pro-\nviant', size: 42, right: 236, bottom: 22, color: 'ok' },
   { action: 'swap', label: 'Stil', size: 44, right: 174, bottom: 182, color: 'teal' },
+  // 4.6B: Sturm-Erwachen (füllt sich mit der Willenskraft, im Erwachen das Ultimate) und Aura reihum
+  { action: 'awaken', label: 'Erwa-\nchen', size: 46, right: 228, bottom: 196, color: 'brass' },
+  { action: 'aura', label: 'Aura', size: 40, right: 225, bottom: 140, color: 'teal' },
 ];

@@ -457,3 +457,14 @@
 .loading.waiting .ld-pct { visibility: hidden; }
 @keyframes ld-wait { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
 .loading .ld-tip { min-height: 2.7em; margin-top: 22px; font-size: 0.88rem; line-height: 1.35; color: var(--ink-faint); }
+
+/* 4.6B: Kampfkünste & Auren (Menus.showMartialArts) */
+.ma-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15.5em, 1fr)); gap: 0.6em; margin: 0.6em 0; }
+.ma-art { display: flex; flex-direction: column; gap: 0.3em; border-color: color-mix(in srgb, var(--c) 45%, transparent); }
+.ma-art.on { box-shadow: 0 0 0 2px var(--c), 0 0 14px color-mix(in srgb, var(--c) 45%, transparent); }
+.ma-art button { align-self: flex-start; margin-top: auto; }
+.ma-bar { height: 0.45em; overflow: hidden; border-radius: 0.25em; background: rgba(0, 0, 0, 0.45); }
+.ma-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--c), var(--a)); }
+.ma-sks { display: flex; flex-wrap: wrap; gap: 0.25em; }
+.ma-sk { padding: 0.1em 0.4em; border-radius: 0.3em; background: rgba(0, 0, 0, 0.35); font-size: 0.72em; }
+.ma-sk.off { opacity: 0.5; }

@@ -147,4 +147,19 @@ export class DebrisSystem {
   }
 
   clear() { this.pieces = []; this.planks.count = 0; this.barrels.count = 0; }
+
+  /** Sog (Schwarzes Loch, 4.6B): Trümmer im Umkreis r zum Punkt ziehen, sie heben sich dabei aus dem Wasser und trudeln */
+  pull(cx: number, cy: number, cz: number, r: number, step: number) {
+    for (const p of this.pieces) {
+      const dx = cx - p.x, dy = cy - p.y, dz = cz - p.z;
+      const d = Math.hypot(dx, dz);
+      if (d > r || d < 0.3) continue;
+      const k = Math.min(1, step / d);
+      p.floating = false;
+      p.x += dx * k; p.z += dz * k; p.y += dy * k * 0.6;
+      p.vx = dx * 0.5; p.vz = dz * 0.5; p.vy = Math.max(p.vy, 2);
+      p.wx += 0.5; p.wz += 0.3;
+      if (d < 1.5) p.life = Math.min(p.life, 0.2);
+    }
+  }
 }

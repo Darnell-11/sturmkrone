@@ -31,6 +31,8 @@ import { PredictiveMaritimeSteering, aiSpreadK, arriveRadius, createAiNav, fireR
 import { clamp, clamp01, distToSegment, wrapAngle } from '../core/mathUtil';
 import { FLEET_ANCHOR_CLEAR, FLEET_DMG_K, FLEET_ORDER_RANGE, FLEET_RECALL_DIST, fleetSpawnPoint, formationPoint, formationSlotOf, type FleetOrder, type FleetShipRecord, type FlagMotion, type FlagPose, type FormationOffset } from '../data/playerFleet';
 import { aiCannon, aiHullFactor, capVolley, dangerOfLevel, WORLD_BOSS_HIT_CAP, type VolleyWindow } from '../data/balanceConfig';
+import { canSplitShip, type ShipSplitInfo } from '../data/cataclysms';
+import type { ShipCut } from '../data/actionKit';
 import type { SeaShipRole } from '../world/tradeConvoys';
 import type { WorldBossId } from '../data/seaEvents';
 import type { ShipEvolution } from '../data/shipEvolution';
@@ -1168,6 +1170,71 @@ export class NavalSystem {
 
   /** Hat der Spieler dieses Schiff in den letzten `within` Sekunden getroffen? */
   hitByPlayer(e: EnemyShip, within = 10): boolean { return e.lastPlayerHit !== undefined && this.clock - e.lastPlayerHit < within; }
+
+  // ---------- Kataklysmus-Ultimates (4.6B): Schiffe im Wirkungsbereich, Schaden, Zweiteilung, Sog ----------
+
+  /** Gegnerschiffe im Umkreis r (Mitte bis Mitte minus halbe Länge), die ein Ultimate treffen darf: keine Begleiter, keine geenterten, keine friedlichen */
+  cataclysmShips(x: number, z: number, r: number, out: EnemyShip[]): number {
+    let n = 0;
+    out.length = 0;
+    for (const e of this.enemies) {
+      const s = e.ship;
+      if (!s.alive || s.sinking > 0 || this.cataclysmFriendly(e)) continue;
+      if (Math.hypot(s.x - x, s.z - z) - s.cls.L * 0.5 > r) continue;
+      out.push(e);
+      n++;
+    }
+    return n;
+  }
+
+  /** Nie Ziel eines Ultimates: Begleiter und Flotte, Helfer, geenterte, friedliche Schiffe */
+  cataclysmFriendly(e: EnemyShip): boolean {
+    return !!(e.companion || e.fleetId || e.helper || e.boarded || e.captured) || this.peaceful(e);
+  }
+
+  /**
+   * Schaden eines Ultimates an einem Schiff (läuft über `Ship.damage`: Panzerung, Weltboss-Deckel, Enterphase); zählt als Treffer des Spielers
+   * (Beute, Seeschlacht, Ansehen). Liefert den Rumpfschaden.
+   */
+  cataclysmHit(e: EnemyShip, dmg: number, pen: number): number {
+    if (this.cataclysmFriendly(e)) return 0;
+    e.lastPlayerHit = this.clock;
+    if (e.power === 'marine' || e.ev) e.provoked = true;
+    const d = e.ship.damage(dmg, 'kugel', null, 'hull', pen);
+    if (!e.ship.alive) this.sink(e.ship);
+    return d;
+  }
+
+  /**
+   * Schiff zerteilen und versenken (Gnadenstoß des Spielers): nur, wenn `canSplitShip` es erlaubt (Kriegsschiffe bis Gefahrenstufe 4,
+   * Boss-Schiffe unter 15 % Rumpf). Schiffe, die nie untergehen (Legenden, Klassen 5/6), werden stattdessen sofort manövrierunfähig (nur Entern).
+   * Liefert 'split', 'disabled' oder ''.
+   */
+  cataclysmSplit(e: EnemyShip, cut: Exclude<ShipCut, ''>, seed: number): 'split' | 'disabled' | '' {
+    const s = e.ship;
+    if (!s.alive || s.sinking > 0 || this.cataclysmFriendly(e)) return '';
+    const boss = !!(e.legendId || e.role === 'legende' || s.hitCap > 0 || s.noKill);
+    const info: ShipSplitInfo = { tier: dangerOfLevel(e.level), boss, hullFrac: s.maxHull > 0 ? s.hull / s.maxHull : 0, friendly: false };
+    if (!canSplitShip(info, cut)) return '';
+    e.lastPlayerHit = this.clock;
+    if (e.power === 'marine' || e.ev) e.provoked = true;
+    if (s.noKill) { if (!s.disabled) s.enterPhase(); return 'disabled'; }
+    if (!s.splitApart(cut, seed)) return '';
+    s.hull = 0;
+    this.sink(s);
+    return 'split';
+  }
+
+  /** Sog (Schwarzes Loch): Schiff um höchstens `step` m zum Punkt ziehen und leicht eindrehen */
+  cataclysmPull(e: EnemyShip, cx: number, cz: number, step: number) {
+    const s = e.ship;
+    if (this.cataclysmFriendly(e) || s.moored) return;
+    const dx = cx - s.x, dz = cz - s.z, d = Math.hypot(dx, dz);
+    if (d < 0.5) return;
+    const k = Math.min(step, d - 0.5) / d;
+    s.x += dx * k; s.z += dz * k;
+    s.speed *= 0.97;
+  }
 
   /** Uhr des Seesystems (Spielzeit, s) */
   get time(): number { return this.clock; }

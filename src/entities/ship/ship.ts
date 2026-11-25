@@ -20,6 +20,7 @@ import {
 } from '../../naval/shipSim';
 import { clamp01 } from '../../core/mathUtil';
 import { stepMotion, windSpeedK, type Motion, type MotionParams } from '../../naval/shipMotion';
+import { splitShipModel, updateShipSplit, type ShipCut, type ShipSplit } from './shipSplit';
 
 /** Arbeitsobjekte für `stepMotion` (nichts je Bild neu anlegen) */
 const _motion: Motion = { x: 0, z: 0, heading: 0, speed: 0, course: 0, turnInput: 0, yawRate: 0, courseOk: true };
@@ -100,6 +101,8 @@ export class Ship {
   canDisable = false;
   /** Auch der Gnadenstoß versenkt es nicht (Legenden, Marine-Kommandoschiffe, die zwei größten Klassen): nur Entern beendet den Kampf */
   noKill = false;
+  /** Zerteilt (Kataklysmus-Ultimate, 4.6B): zwei Hälften kippen und versinken (entities/ship/shipSplit.ts); null = ganz */
+  split: ShipSplit | null = null;
   /** Abprall nach einem Rammstoß (m/s, Weltachsen): schiebt das Schiff weg und klingt ab (`RAM.shoveDecay`) */
   shoveX = 0;
   shoveZ = 0;
@@ -384,6 +387,19 @@ export class Ship {
     return r.hull;
   }
 
+  /**
+   * In zwei Hälften zerteilen (nur über `NavalSystem.cataclysmSplit`, das Regeln, Beute und Untergang übernimmt): baut die Hälften aus dem
+   * Modell (gleiche Materialien), setzt das Schiff in Brand und blendet die Takelage aus. Liefert false, wenn es schon zerteilt ist.
+   */
+  splitApart(cut: Exclude<ShipCut, ''>, seed = 1): boolean {
+    if (this.split || this.disposed) return false;
+    this.model.rigging.visible = false;
+    this.fallPlan = [];
+    this.split = splitShipModel(this.model.group, cut, this.cls.L, this.cls.W, this.model.deckY, seed);
+    this.fire = 1e9;
+    return true;
+  }
+
   /** Der Rumpf hat nichts mehr: Segel in Fetzen, ein bis zwei Masten knicken um, das Schiff brennt (Rauch und Flammen zeichnet die Seewelt) */
   enterPhase() {
     if (this.disabled) return;
@@ -513,6 +529,8 @@ export class Ship {
         this.sinkRoll = (Math.random() < 0.5 ? -1 : 1) * (0.2 + Math.random() * 0.35);
       }
       this.sinking += frameDt;
+      // zerteilte Schiffe kippen über ihre Hälften, nicht als Ganzes
+      if (this.split) { this.sinkPitch = 0; this.sinkRoll = 0; }
     }
     const sink = this.sinking > 0 ? this.sinking : 0;
     // erst langsam vollaufen, dann immer schneller wegsacken
@@ -544,6 +562,7 @@ export class Ship {
     const pitch = sm.p + this.sinkPitch * tilt * tilt;
     const roll = sm.r - (this.yawRate * 0.22 + this.turnInput * 0.05) * Math.min(1, this.speed / 10) + this.sinkRoll * tilt - recoil;
     g.rotation.set(pitch, h, roll, 'YXZ');
+    if (this.split) updateShipSplit(this.split, frameDt);
     // Steuerrad dreht mit dem Ruder: voller Ausschlag etwa 140°, mit leichtem Nachlauf wie beim echten Rad
     this.wheelA += (this.turnInput * 2.4 - this.wheelA) * Math.min(1, frameDt * 7);
     this.model.wheel.rotation.z = this.wheelA;

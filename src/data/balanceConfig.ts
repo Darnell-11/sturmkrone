@@ -229,6 +229,11 @@ export const RAID_BOSS_HIT_CAP = 0.08;
 export const PLAYER_HIT_CAP = 0.4;
 /** Kaiser der fünf Kaiser-Zitadellen (4.5D): noch strenger als die Raid-Endbosse – ein Treffer nimmt höchstens 5 % seiner Lebenspunkte */
 export const KAISER_BOSS_HIT_CAP = 0.05;
+/**
+ * Kataklysmus-Ultimates (Phase 4.6B) zählen gegen Endbosse wie EIN Treffer: Raid-Endbosse höchstens `RAID_BOSS_HIT_CAP` (bzw. ihr `hitCap`, Kaiser
+ * `KAISER_BOSS_HIT_CAP`) für das ganze Ultimate, alle übrigen Bosse (Legenden, Insel-Kommandanten) höchstens dieser Anteil – nie ein Sieg mit einem Schlag.
+ */
+export const ULTIMATE_BOSS_CAP = 0.2;
 
 // ---------- Seegefecht (Phase 4.1) ----------
 

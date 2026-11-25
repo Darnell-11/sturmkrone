@@ -115,6 +115,7 @@
 
   /* ---------- Ebenen ---------- */
   --z-world: 2;
+  --z-impact: 3;
   --z-hud: 4;
   --z-fade: 5;
   --z-screen: 6;

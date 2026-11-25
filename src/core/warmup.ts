@@ -60,6 +60,8 @@ export interface ExtrasDeps {
   fx: CombatFx;
   particles: ParticleSystem;
   precompile?(): Promise<void>;
+  /** Kataklysmus-Effekte (4.6B): je Grundform ein Teil, damit das gemeinsame Programm vor dem ersten Ultimate steht */
+  cataclysm?: { prewarm(x: number, z: number): void; update(dt: number): void };
 }
 
 /** Ebene, die keine Kamera zeigt: die Vorwärm-Exemplare liegen dort, solange das Titelbild läuft */
@@ -233,6 +235,7 @@ export async function warmupExtras(d: ExtrasDeps): Promise<void> {
   fx.telegraph(at, 2, 1);
   fx.crack(at, 3); fx.burn(at, 2); fx.frost(at, 2); fx.sigil(at, 2, '#ffd166');
   fx.rise(at, '#ffd166', 4);
+  d.cataclysm?.prewarm(at.x, at.z);
   // ---- Einschläge aller Elemente (Flammen, Splitter, Säulen, Ringe, Blitze …) ----
   const efx = new ElementFx(scene, fx, d.particles, { shake: () => {}, hitstop: () => {}, speedlines: () => {} });
   for (const el of Object.keys(ELEMENT_COLORS) as Element[]) efx.impact(at.clone(), el, 1);
@@ -285,6 +288,7 @@ export async function warmupExtras(d: ExtrasDeps): Promise<void> {
   // ---- Aufräumen: Effekte sofort ablaufen lassen, Ebenen zurück, Schiffe weg, Figuren unsichtbar ----
   efx.update(10);
   fx.update(10);
+  d.cataclysm?.update(10);
   fx.decals.update(60);
   d.particles.update(10);
   heatShared.clear();

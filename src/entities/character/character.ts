@@ -1256,6 +1256,12 @@ export class Character {
     this.tintAmt = amount;
   }
 
+  /** Nur die Stärke der Färbung ändern (Puls einer Aura): ohne die Farbe neu zu lesen */
+  setTintAmount(amount: number) {
+    if (amount > 0) this.enableFx();
+    this.tintAmt = amount;
+  }
+
   /** Auflösen beim Besiegen: 0 = ganz, 1 = verschwunden */
   setDissolve(k: number) {
     if (k > 0) this.enableFx();

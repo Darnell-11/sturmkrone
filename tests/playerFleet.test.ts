@@ -677,8 +677,12 @@ describe('Flottenbefehle: Tasten und Gamepad-Kombination', () => {
     expect(padActionDown(hold, pad(14))).toBe(false);
     expect(padActionDown(hold, pad(PAD_CHORD_MOD))).toBe(false);
     expect(padActionDown(hold, pad(PAD_CHORD_MOD, 12))).toBe(false);          // falsche Richtung
-    // der Befehl ist nur ein Befehl: nie zwei zugleich
-    for (const btn of Object.values(PAD_CHORDS) as number[]) expect(FLEET_ORDERS.filter((o) => padActionDown(FLEET_ORDER_ACTIONS[o.id], pad(PAD_CHORD_MOD, btn)))).toHaveLength(1);
+    // der Befehl ist nur ein Befehl: nie zwei zugleich (die Kombinationen zu Fuß, 4.6B, lösen keinen Flottenbefehl aus)
+    for (const o of FLEET_ORDERS) {
+      const btn = PAD_CHORDS[FLEET_ORDER_ACTIONS[o.id]]!;
+      expect(FLEET_ORDERS.filter((q) => padActionDown(FLEET_ORDER_ACTIONS[q.id], pad(PAD_CHORD_MOD, btn)))).toHaveLength(1);
+    }
+    for (const a of ['awaken', 'aura'] as const) expect(FLEET_ORDERS.filter((q) => padActionDown(FLEET_ORDER_ACTIONS[q.id], pad(PAD_CHORD_MOD, PAD_CHORDS[a]!)))).toHaveLength(0);
   });
 
   it('solange R3 gehalten wird, steuert das Kreuz nicht mit (kein Gegenlenken beim Befehl); ohne R3 steuert es wie immer', () => {
@@ -687,7 +691,10 @@ describe('Flottenbefehle: Tasten und Gamepad-Kombination', () => {
     expect(padActionDown('left', pad(PAD_CHORD_MOD, 14))).toBe(false);
     expect(padActionDown('up', pad(PAD_CHORD_MOD, 12))).toBe(false);
     expect(padActionDown('right', pad(PAD_CHORD_MOD, 15))).toBe(false);
-    expect(padActionDown('down', pad(PAD_CHORD_MOD, 13))).toBe(true);        // unten gehört keinem Befehl
+    // unten gehört seit 4.6B dem Sturm-Erwachen (zu Fuß, R3 + ▼): auch dabei lenkt das Kreuz nicht mit
+    expect(padActionDown('down', pad(PAD_CHORD_MOD, 13))).toBe(false);
+    expect(padActionDown('awaken', pad(PAD_CHORD_MOD, 13))).toBe(true);
+    expect(padActionDown('down', pad(13))).toBe(true);
     // alle anderen Tasten bleiben unberührt (Angriff = A)
     expect(padActionDown('attack', pad(0))).toBe(true);
     expect(padActionDown('attack', pad(PAD_CHORD_MOD, 0))).toBe(true);
@@ -695,7 +702,8 @@ describe('Flottenbefehle: Tasten und Gamepad-Kombination', () => {
 
   it('keine Kombination kollidiert mit der Haltetaste', () => {
     for (const b of Object.values(PAD_CHORDS) as number[]) expect(b).not.toBe(PAD_CHORD_MOD);
-    expect(new Set(Object.values(PAD_CHORDS)).size).toBe(3);
+    // drei Flottenbefehle (See) und zwei Kombinationen zu Fuß (Sturm-Erwachen, Aura): alle verschieden
+    expect(new Set(Object.values(PAD_CHORDS)).size).toBe(5);
   });
 });
 

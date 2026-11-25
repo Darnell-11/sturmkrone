@@ -3,6 +3,9 @@ import { FACTION_LABELS, rankIndex, rankName } from '../data/ranks';
 import { TOUCH_FOOT, TOUCH_SEA } from '../data/touchLayout';
 import { ACTION_STYLES, PHYSICAL_STYLES, actionStyleOf, isActionStyle, type ActionStyleId } from '../data/actionStyles';
 import { FighterHud } from '../ui/fighterHud';
+import { AnimeImpactOverlay } from '../ui/animeImpactOverlay';
+import { FAJI_ART_IDS, FORM_NAMES, MASTERY_CAP, WILL, WILL_AURAS, cleanFaji, formOf, formProgress, isFajiArt, type AuraId, type FajiArtId, type FajiSave } from '../data/fajiArts';
+import { FORM_THRESHOLDS } from '../data/fajiArts';
 import { randomLook, type CharacterLook } from '../data/characterParts';
 import { WEATHER, type WeatherId } from '../data/world';
 import { CharacterAssets } from '../entities/character/assets';
@@ -160,6 +163,8 @@ export class Game {
   webgpu: 'pruefe' | 'ja' | 'nein' = 'pruefe';
   assets: CharacterAssets | null = null;
   readonly overlay: CombatOverlay;
+  /** Impact-Frames und Zwischensequenz der Ultimates (4.6B) */
+  private impactOverlay!: AnimeImpactOverlay;
 
   private slot: number | null = null;
   private save: SaveData | null = null;
@@ -291,6 +296,8 @@ export class Game {
     this.warBanner.onJoin = (side) => this.joinWarSide(side);
     this.overlay = new CombatOverlay(uiRoot, zone.tc);
     this.overlay.setVisible(false);
+    // 4.6B: Impact-Frames und Mini-Zwischensequenz (Vollbild über dem 3D-Bild, unter dem HUD)
+    this.impactOverlay = new AnimeImpactOverlay(uiRoot, canvas);
     this.dialogUi = new DialogOverlay(uiRoot);
     this.markers = new NpcMarkers(uiRoot);
     this.raidPanel = new RaidPanel(zone.ml);
@@ -416,6 +423,10 @@ export class Game {
       this.questEvent({ type: 'rescue' });
     };
     this.world.onBottle = () => this.findBottle();
+    // 4.6B: Glas-Risse (Iaijutsu), Meisterschaft der Faji-Künste, Fortschritt zur nächsten Form
+    this.world.onCracks = (n) => this.impactOverlay.cracks(n);
+    this.world.onFajiMastery = (style, pts) => this.gainMastery(style, pts);
+    this.world.formFracOf = (st) => { const f = this.save?.player.faji; return f && isFajiArt(st) ? formProgress(f.mastery[st] ?? 0) : 0; };
     this.world.onDig = (id) => this.dig(id);
     this.hud.onMap = () => this.openWorldMap();
     this.world.onPlayerDown = () => {
@@ -605,6 +616,8 @@ export class Game {
     if (this.state.is('editor') && this.stage) {
       // Kompassleiste gehört zum Spiel: im Editor und in den Fenstern (Inventar, Fähigkeiten) nicht darüber zeigen
       this.compass.setVisible(false);
+      // ein laufendes Impact-Bild nie im Editor stehen lassen (der Filter liegt auf dem Canvas)
+      this.impactOverlay.apply('none', 0, 0, '#fff', frameDt);
       // Studio: neutrale Farbstimmung, nicht die der letzten Tageszeit
       this.renderer.setMood(0, 0);
       this.renderer.setExposure(1);
@@ -623,6 +636,11 @@ export class Game {
     else { this.loop.timeScale = 1; hs.scale = 1; }
     const a = this.state.is('play', 'pause') ? alpha : 1;
     this.world.render(a, frameDt, inMenu);
+    {
+      // Impact-Frames zählen GEZEICHNETE Bilder (2 – 4), Kinobalken und Aura-Glühen folgen der Zwischensequenz
+      const rig = this.world.animeRig;
+      this.impactOverlay.apply(rig.frame(), inMenu ? 0 : rig.camK, inMenu ? 0 : rig.glow, this.world.cataclysm.chargeHex, frameDt);
+    }
     this.skyProbe.update(frameDt);
     {
       // Farbstimmung der Nachbearbeitung nach Tageszeit (Mondlicht-Blau nachts, Bernstein zur goldenen Stunde)
@@ -4211,9 +4229,98 @@ export class Game {
     return isActionStyle(a) ? a : actionStyleOf(this.weaponSlots(d)[d!.player.slot === 1 ? 1 : 0]);
   }
 
-  /** Stile für den Wechsel mit Q: die sechs physischen, dazu Faji-Wirken für Faji-Wirker */
+  /** Stile für den Wechsel mit Q: die sechs physischen, Faji-Wirken für Faji-Wirker und die ausgerüstete Faji-Kunst (4.6B) */
   private availableStyles(d: SaveData | null = this.save): ActionStyleId[] {
-    return d!.player.style === 'effekt' ? [...PHYSICAL_STYLES, 'effekt'] : [...PHYSICAL_STYLES];
+    const list: ActionStyleId[] = [...PHYSICAL_STYLES];
+    if (d!.player.style === 'effekt') list.push('effekt');
+    const eq = d!.player.faji?.equipped;
+    if (eq && isFajiArt(eq)) list.push(eq);
+    return list;
+  }
+
+  // ---------- Faji-Künste, Formen und Auren (4.6B) ----------
+
+  /** Faji-Eintrag des Spielstands (bereinigt beim Laden; fehlt er, wird er angelegt) */
+  private fajiSave(d: SaveData | null = this.save): FajiSave | null {
+    if (!d) return null;
+    if (!d.player.faji) d.player.faji = cleanFaji(undefined);
+    return d.player.faji as FajiSave;
+  }
+
+  /** Formstufe der laufenden Kunst an die Engine geben (Waffenstile: 1) */
+  private syncFajiForm(d: SaveData | null = this.save) {
+    const f = this.fajiSave(d), foot = this.world.playerFoot;
+    if (!f || !foot) return;
+    const st = foot.actionStyle;
+    foot.engine.setForm(isFajiArt(st) ? formOf(f.mastery[st] ?? 0) : 1);
+  }
+
+  /** Meisterschaft gewonnen: bei einer neuen Form Banner, Klang und neue Technik (bzw. das Ultimate in der Meisterform) */
+  private gainMastery(style: ActionStyleId, pts: number) {
+    const f = this.fajiSave();
+    if (!f || !isFajiArt(style) || !(pts > 0)) return;
+    const before = formOf(f.mastery[style] ?? 0);
+    f.mastery[style] = Math.min(MASTERY_CAP, (f.mastery[style] ?? 0) + pts);
+    const after = formOf(f.mastery[style]);
+    if (after <= before) return;
+    this.world.playerFoot?.engine.setForm(after);
+    const st = ACTION_STYLES[style];
+    const sk = st.skills.find((k) => k.formMin === after);
+    audio.play('level', 0.8);
+    this.overlay.showBanner(`${st.label}: ${FORM_NAMES[after - 1]}`, after >= 7 ? `Meisterform! Ultimate frei: ${st.ultimate?.label ?? ''} (im Sturm-Erwachen)` : sk ? `Neue Technik: ${sk.label}` : 'Die Techniken werden stärker.');
+  }
+
+  /** Daten für das Menü „Kampfkünste & Auren“ */
+  fajiView(): { arts: { id: FajiArtId; label: string; title: string; desc: string; color: string; accent: string; form: number; frac: number; mastery: number; next: number; equipped: boolean; ult: string; skills: { label: string; formMin: number; icon: string }[] }[]; aura: AuraId; equipped: FajiArtId | null } | null {
+    const f = this.fajiSave();
+    if (!f) return null;
+    const arts = FAJI_ART_IDS.map((id) => {
+      const st = ACTION_STYLES[id];
+      const m = f.mastery[id] ?? 0;
+      const form = formOf(m);
+      return {
+        id, label: st.label, title: st.title, desc: st.desc, color: st.color, accent: st.accent, form, frac: formProgress(m), mastery: m,
+        next: form >= 7 ? 0 : FORM_THRESHOLDS[form], equipped: f.equipped === id, ult: st.ultimate?.label ?? '',
+        skills: st.skills.map((k) => ({ label: k.label, formMin: k.formMin, icon: k.icon })),
+      };
+    });
+    return { arts, aura: f.aura, equipped: f.equipped };
+  }
+
+  /** Faji-Kunst ausrüsten (null = keine): sie kommt in den Q-Wechsel; trägt man gerade die alte, wechselt die Figur mit */
+  equipFaji(id: FajiArtId | null) {
+    const f = this.fajiSave();
+    const s = this.save;
+    if (!f || !s) return;
+    const old = f.equipped;
+    f.equipped = id;
+    if (old && s.player.actionStyle === old) {
+      const next: ActionStyleId = id ?? actionStyleOf(this.weaponSlots()[s.player.slot === 1 ? 1 : 0]);
+      s.player.actionStyle = next;
+      this.world.setActionStyle(next);
+      this.syncFajiForm();
+    }
+    this.refreshWeaponHud();
+    this.persist();
+  }
+
+  /** Willenskraft-Aura wählen (auch Taste B im Kampf) */
+  setFajiAura(a: AuraId) {
+    const f = this.fajiSave();
+    if (!f) return;
+    f.aura = a;
+    this.world.playerFoot?.setAura(a);
+    this.persist();
+  }
+
+  /** Werkstatt: Willenskraft füllen bzw. alle Formen auf die Meisterform setzen */
+  testFaji(kind: 'will' | 'forms') {
+    const foot = this.world.playerFoot;
+    if (kind === 'will') { if (foot) foot.engine.addWill(WILL.max); return; }
+    const f = this.fajiSave();
+    if (!f) return;
+    for (const id of FAJI_ART_IDS) f.mastery[id] = Math.max(f.mastery[id] ?? 0, FORM_THRESHOLDS[6]);
+    this.syncFajiForm();
   }
 
   private refreshWeaponHud() {
@@ -4246,6 +4353,7 @@ export class Game {
     if (!this.world.swapWeapon(next)) return;
     if (to !== undefined) s.player.slot = to;
     s.player.actionStyle = next;
+    this.syncFajiForm();
     if (next === 'sturmfaust' || next === 'erdspalter') this.lastFist = next;
     this.world.faji?.refresh(s.player.level, ACTION_STYLES[next].visual);
     this.applyPower();
@@ -4267,12 +4375,21 @@ export class Game {
     const dev = this.input.lastDevice;
     const pad = ['▲', '▶', '▼', '◀'];
     for (let i = 0; i < 4; i++) this.artKeys[i] = dev === 'gamepad' ? pad[i] : this.input.keyLabel(b[`art${i + 1}` as ActionId][0] ?? '');
-    hud.update(v, this.artKeys, dev === 'touch', this.overlay.comboHits, this.overlay.comboFrac, dt);
+    const awk = dev === 'gamepad' ? 'R3+▼' : dev === 'touch' ? '' : this.input.keyLabel(b.awaken[0] ?? '');
+    this.world.awakenKeyLabel = dev === 'touch' ? 'Erwachen' : awk;
+    hud.update(v, this.artKeys, dev === 'touch', this.overlay.comboHits, this.overlay.comboFrac, dt, awk);
+    // Aura per Taste gewechselt: der Spielstand folgt der Engine
+    if (v && this.save?.player.faji && this.save.player.faji.aura !== v.aura) this.save.player.faji.aura = v.aura;
     this.overlay.comboDocked = !!v;
     this.world.heavyKeyLabel = dev === 'gamepad' ? 'Y' : dev === 'touch' ? 'Schwer' : this.input.keyLabel(b.heavy[0] ?? '');
     if (v && dev === 'touch') {
       const st = ACTION_STYLES[v.style];
-      st.skills.forEach((k, i) => this.touch.setArt(`art${i + 1}`, k.icon, k.short, 1 - (v.cd[i] ?? 0), (v.cd[i] ?? 0) <= 0, st.accent));
+      st.skills.forEach((k, i) => this.touch.setArt(`art${i + 1}`, v.locked[i] ? '🔒' : k.icon, v.locked[i] ? `ab ${v.lockForm[i]}.` : k.short, v.locked[i] ? 0 : 1 - (v.cd[i] ?? 0), !v.locked[i] && (v.cd[i] ?? 0) <= 0, st.accent));
+      // Sturm-Erwachen: füllt sich mit der Willenskraft; im Erwachen läuft die Restzeit, mit Ultimate leuchtet der Knopf
+      const aw = v.awake > 0;
+      this.touch.setButton('awaken', v.ult ? 'Ulti-\nmate' : aw ? 'Erwacht' : 'Erwa-\nchen', aw ? (v.ult ? 1 : v.awake) : v.will, v.ult || (!aw && v.will >= 1), v.ult ? st.accent : '#FFD27A');
+      const au = WILL_AURAS[v.aura] ?? WILL_AURAS[0];
+      this.touch.setButton('aura', v.aura ? au.short : 'Aura', 1, v.aura > 0, au.color);
     }
   }
 
@@ -4453,7 +4570,10 @@ export class Game {
     this.buffs = [];
     this.itemCd.clear();
     if (this.assets) this.world.setCharacters(this.assets, this.displayLook(data), this.activeStyle(data), this.overlay);
+    data.player.faji = cleanFaji(data.player.faji);
     this.world.setActionStyle(this.currentAction(data));
+    this.syncFajiForm(data);
+    this.world.playerFoot?.setAura(data.player.faji.aura as AuraId);
     this.world.setSkills(data.skills, p.level);
     {
       // Zwei-Stufen-Crew: Seeleute-Anteil und Truppen aus dem Spielstand (ältere Spielstände haben `crewPools`/`troops` nicht: alles bleibt voll/leer)

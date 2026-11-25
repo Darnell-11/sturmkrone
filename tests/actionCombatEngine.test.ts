@@ -65,9 +65,15 @@ class TestWorld implements ActionWorld {
     return n;
   }
 
-  hit(t: ActionTarget, h: ActionHit, m: ActionMove, ctx: HitContext): boolean {
+  drag(t: ActionTarget, cx: number, cz: number, step: number): void {
     const f = this.foes[t.ref];
-    if (f.guard && !h.breakGuard) return false;
+    const dx = cx - f.x, dz = cz - f.z, d = Math.hypot(dx, dz);
+    if (d > 1e-3) { const k = Math.min(step, d) / d; f.x += dx * k; f.z += dz * k; }
+  }
+
+  hit(t: ActionTarget, h: ActionHit, m: ActionMove, ctx: HitContext): number {
+    const f = this.foes[t.ref];
+    if (f.guard && !h.breakGuard) return 0;
     if (f.guard && h.breakGuard) { f.guard = false; f.guardBroken = true; }
     this.log.push({ id: f.id, move: m.id, h, crit: ctx.crit, finisher: ctx.finisher });
     f.hits++;
@@ -76,7 +82,7 @@ class TestWorld implements ActionWorld {
     if (f.posture && hitPosture(f.posture, h.poise * ctx.postureK)) breakPosture(f.posture, POSTURE.staggerElite);
     if (h.launch > 0 && !f.boss) { f.vy = h.launch; f.air = true; f.launched++; }
     else if (f.air && h.juggle > 0) f.vy = Math.max(f.vy * 0.3, h.juggle);
-    return true;
+    return 1;
   }
 
   shoot(): void { this.shots++; }

@@ -7,6 +7,7 @@ export const ACTION_IDS = [
   'fireLeft', 'fireRight',
   'skill1', 'skill2', 'skill3',
   'art1', 'art2', 'art3', 'art4',
+  'awaken', 'aura',
   'potion', 'map', 'skills', 'quests', 'talk', 'inventory',
   'item1', 'item2', 'item3', 'item4',
   'cmdSturm', 'cmdFollow', 'cmdHold',
@@ -39,6 +40,8 @@ export const ACTION_LABELS: Record<ActionId, string> = {
   art2: 'Kampfkunst 2',
   art3: 'Kampfkunst 3',
   art4: 'Kampfkunst 4',
+  awaken: 'Sturm-Erwachen / Ultimate',
+  aura: 'Willenskraft-Aura wechseln',
   potion: 'Proviant essen',
   map: 'Karte & Logbuch',
   skills: 'Talentbaum (Faji)',
@@ -86,6 +89,9 @@ export const DEFAULT_KEYS: Record<ActionId, string[]> = {
   art2: ['Digit2'],
   art3: ['Digit3'],
   art4: ['Digit4'],
+  // Sturm-Erwachen bei voller Willenskraft, im Erwachen das Ultimate des Stils (seit 4.6B); Aura reihum
+  awaken: ['KeyV'],
+  aura: ['KeyB'],
   potion: ['KeyH'],
   map: ['KeyM'],
   skills: ['KeyK'],
@@ -136,6 +142,9 @@ export const DEFAULT_PAD: Record<ActionId, number[]> = {
   art2: [15],
   art3: [13],
   art4: [14],
+  // Erwachen und Aura nur als Kombination (siehe PAD_CHORDS)
+  awaken: [],
+  aura: [],
   potion: [10],
   map: [8],
   skills: [],
@@ -162,10 +171,11 @@ export const DEFAULT_PAD: Record<ActionId, number[]> = {
 /**
  * Gamepad-Kombinationen für die Flottenbefehle: Haltetaste R3 (Stick-Druck rechts, Standard-Layout 11) plus Steuerkreuz. Alle Tasten des Controllers sind
  * schon belegt; auf See tut R3 allein nichts, und solange R3 gehalten wird, steuert das Kreuz nicht (die Kombination gehört dem Befehl).
- * Links = Formation halten, oben = Feuer frei, rechts = Sammeln.
+ * Links = Formation halten, oben = Feuer frei, rechts = Sammeln. Zu Fuß (4.6B): R3 + ▼ = Sturm-Erwachen / Ultimate, R3 + Y = Aura wechseln
+ * (R3 allein erfasst zu Fuß weiter ein Ziel).
  */
 export const PAD_CHORD_MOD = 11;
-export const PAD_CHORDS: Partial<Record<ActionId, number>> = { fleetHold: 14, fleetAttack: 12, fleetRally: 15 };
+export const PAD_CHORDS: Partial<Record<ActionId, number>> = { fleetHold: 14, fleetAttack: 12, fleetRally: 15, awaken: 13, aura: 3 };
 const CHORD_BUTTONS = Object.values(PAD_CHORDS) as number[];
 /** Gehört die Taste zu einer Kombination (und wird bei gehaltener Haltetaste nicht als einzelne Taste gewertet)? */
 export const isChordButton = (i: number): boolean => CHORD_BUTTONS.includes(i);
@@ -181,7 +191,7 @@ export function padActionDown(a: ActionId, buttons: ArrayLike<boolean | undefine
 }
 
 /** Anzeige der Kombination am Gamepad, z. B. „R3 + ◀“ */
-export const PAD_CHORD_LABEL: Partial<Record<ActionId, string>> = { fleetHold: 'R3 + ◀', fleetAttack: 'R3 + ▲', fleetRally: 'R3 + ▶' };
+export const PAD_CHORD_LABEL: Partial<Record<ActionId, string>> = { fleetHold: 'R3 + ◀', fleetAttack: 'R3 + ▲', fleetRally: 'R3 + ▶', awaken: 'R3 + ▼', aura: 'R3 + Y' };
 
 /** Aktionen, die im Menü nicht umbelegt werden dürfen (Escape bleibt immer Pause/Zurück). */
 export const FIXED_CODES = ['Escape'];
@@ -216,7 +226,7 @@ export function commandOnKey(binds: Record<ActionId, string[]>, item: ActionId):
 /** Bereiche der Tastenbelegung im Einstellungsmenü; jede Aktion steht in genau einem Bereich (ein Test prüft das) */
 export const ACTION_GROUPS: { id: string; label: string; actions: ActionId[] }[] = [
   { id: 'move', label: 'Bewegung und Aktion', actions: ['up', 'down', 'left', 'right', 'jump', 'dodge', 'interact', 'talk', 'lockon'] },
-  { id: 'fight', label: 'Kampf', actions: ['attack', 'heavy', 'block', 'art1', 'art2', 'art3', 'art4', 'skill1', 'skill2', 'skill3', 'swap', 'weapon1', 'weapon2'] },
+  { id: 'fight', label: 'Kampf', actions: ['attack', 'heavy', 'block', 'art1', 'art2', 'art3', 'art4', 'awaken', 'aura', 'skill1', 'skill2', 'skill3', 'swap', 'weapon1', 'weapon2'] },
   { id: 'sea', label: 'See', actions: ['fireLeft', 'fireRight', 'repair'] },
   { id: 'fleet', label: 'Flottenbefehle (See)', actions: ['fleetHold', 'fleetAttack', 'fleetRally'] },
   { id: 'troops', label: 'Truppenbefehle', actions: ['cmdSturm', 'cmdFollow', 'cmdHold'] },

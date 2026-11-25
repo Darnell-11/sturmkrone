@@ -185,9 +185,39 @@ function hullGlsl(wakeN: number): string { return /* glsl */ `
     }
     bstr *= endK * idxK;
   }
+  // Ozean-Teilung (4.6B, Erdspalter-Ultimate): ein Graben entlang der Strecke a → b (uTrench), Halbbreite uTrenchD.x, Tiefe uTrenchD.y,
+  // weicher Rand uTrenchD.z. Das verdrängte Wasser türmt sich an den Rändern zu Wällen auf; die Enden laufen spitz zu.
+  // CPU-Zwilling: trenchCPU (gleiche Zahlen), damit Schiffe und Treibgut mit absinken.
+  uniform vec4 uTrench;
+  uniform vec4 uTrenchD;
+  float skTrench(vec2 p) {
+    if (uTrenchD.y <= 0.0) return 0.0;
+    vec2 a = uTrench.xy, ab = uTrench.zw - uTrench.xy;
+    float u = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-4), 0.0, 1.0);
+    float d = length(p - a - ab * u);
+    float endK = smoothstep(0.0, 0.1, u) * (1.0 - smoothstep(0.9, 1.0, u));
+    float hw = uTrenchD.x * (0.4 + 0.6 * endK);
+    float k = 1.0 - smoothstep(hw, hw + uTrenchD.z, d);
+    float wall = smoothstep(hw, hw + uTrenchD.z * 0.7, d) * (1.0 - smoothstep(hw + uTrenchD.z * 0.7, hw + uTrenchD.z * 2.4, d));
+    return uTrenchD.y * endK * (0.22 * wall - k);
+  }
   // Die Spur selbst verformt das Wasser nicht: an den Grenzen zwischen Spurabschnitten springt eine Höhe und erzeugt Haarlinien.
-  float skDispH(vec2 p) { return skHullH(p); }
+  float skDispH(vec2 p) { return skHullH(p) + skTrench(p); }
 `; }
+
+/** Graben der Ozean-Teilung (wie `skTrench` im Shader): negative Höhe im Graben, kleine Wälle am Rand */
+export function trenchCPU(x: number, z: number, t: { ax: number; az: number; bx: number; bz: number; hw: number; depth: number; soft: number }): number {
+  if (!(t.depth > 0)) return 0;
+  const abx = t.bx - t.ax, abz = t.bz - t.az;
+  const u = Math.min(1, Math.max(0, ((x - t.ax) * abx + (z - t.az) * abz) / Math.max(abx * abx + abz * abz, 1e-4)));
+  const d = Math.hypot(x - t.ax - abx * u, z - t.az - abz * u);
+  const ss = (e0: number, e1: number, v: number) => { const k = Math.min(1, Math.max(0, (v - e0) / (e1 - e0))); return k * k * (3 - 2 * k); };
+  const endK = ss(0, 0.1, u) * (1 - ss(0.9, 1, u));
+  const hw = t.hw * (0.4 + 0.6 * endK);
+  const k = 1 - ss(hw, hw + t.soft, d);
+  const wall = ss(hw, hw + t.soft * 0.7, d) * (1 - ss(hw + t.soft * 0.7, hw + t.soft * 2.4, d));
+  return t.depth * endK * (0.22 * wall - k);
+}
 
 function gerstnerCPU(x: number, z: number, t: number, scale: number, out: { x: number; y: number; z: number }) {
   const hs = Math.min(scale, 1);
@@ -283,7 +313,19 @@ export class Ocean {
     /** Rümpfe: x, z, Kurs, 0 und Länge, Breite, Tempo 0 … 1, Sichtbarkeit */
     uHull: { value: Array.from({ length: MAX_HULL }, () => new Vector4()) },
     uHullD: { value: Array.from({ length: MAX_HULL }, () => new Vector4()) },
+    /** Ozean-Teilung (4.6B): Strecke a (x, z) → b (z, w) und Halbbreite, Tiefe, weicher Rand (Tiefe 0 = aus) */
+    uTrench: { value: new Vector4() },
+    uTrenchD: { value: new Vector4() },
   };
+  /** Zustand der Ozean-Teilung (CPU-Zwilling der Uniforms) */
+  readonly trench = { ax: 0, az: 0, bx: 0, bz: 0, hw: 0, depth: 0, soft: 6 };
+  /** Graben setzen (Tiefe 0 = aus); wirkt im Shader und in `heightAt` */
+  setTrench(ax: number, az: number, bx: number, bz: number, hw: number, depth: number, soft = 6) {
+    const t = this.trench;
+    t.ax = ax; t.az = az; t.bx = bx; t.bz = bz; t.hw = hw; t.depth = Math.max(0, depth); t.soft = soft;
+    this.uniforms.uTrench.value.set(ax, az, bx, bz);
+    this.uniforms.uTrenchD.value.set(hw, t.depth, soft, 0);
+  }
   private material: MeshToonMaterial;
   private wakeCount = 16;
   /** Schiffe mit Wasserverdrängung je Grafikstufe (Handys rechnen weniger) */
@@ -478,6 +520,8 @@ export class Ocean {
           // Wassersäule (4.4C, data/oceanLook.ts): Smaragd-Lagune → Türkis (bis ~6 m) → Azur → Tiefblau → Kobalt der offenen See. Wellenberge etwas heller.
 ${SEA_COLOR_GLSL}
           skWater *= 0.94 + 0.14 * smoothstep(-0.8, 1.6, skD.y);
+          // Ozean-Teilung: am Grund des Grabens schimmert nasser Meeresboden durch
+          if (uTrenchD.y > 0.0) { float skTk = clamp(-skTrench(vSkW.xz) / uTrenchD.y, 0.0, 1.0); skWater = mix(skWater, vec3(0.34, 0.29, 0.21), smoothstep(0.55, 0.95, skTk) * 0.8); }
           // Meeresgrund: heller Sand scheint durch das klare Wasser, Rot wird zuerst verschluckt (daher türkis);
           // Lichtnetze (Kaustiken) wandern darüber. Mit der Tiefe verschwindet der Grund.
           vec2 skCp = vSkW.xz * 0.5;
@@ -793,7 +837,7 @@ ${SEA_COLOR_GLSL}
       pz -= pz + o.z - z;
     }
     gerstnerCPU(px, pz, t, scale, o);
-    return o.y;
+    return this.trench.depth > 0 ? o.y + trenchCPU(x, z, this.trench) : o.y;
   }
 
   /** Jeden Frame: Gitter zur Kamera mitführen */

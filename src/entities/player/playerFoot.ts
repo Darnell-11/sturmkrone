@@ -22,8 +22,9 @@ import {
 } from '../../combat/actionCombatEngine';
 import {
   ACTION_STYLES, ACTION_TUNING, ALL_MOVES, actionStyleOf, visualStyleOf,
-  type ActionHit, type ActionMove, type ActionStyleId,
+  type ActionHit, type ActionMove, type ActionStyleId, type UltimateSpec,
 } from '../../data/actionStyles';
+import { AURA, FORM_NAMES, MASTERY, WILL_AURAS, type AuraId } from '../../data/fajiArts';
 
 /** Zustand für Welt und HUD (wie vor 4.6A) */
 type FootState = 'move' | 'roll' | 'attack' | 'block' | 'charge' | 'hurt' | 'down';
@@ -48,6 +49,20 @@ export interface FootDeps {
   focus?: (k: number) => void;
   /** Tastenkappe für „Schwer“ (Finisher-Hinweis) */
   heavyKey?: () => string;
+  /** Tastenkappe für „Sturm-Erwachen“ (Hinweis bei voller Willenskraft) */
+  awakenKey?: () => string;
+  /** Ultimate ausgelöst: Mini-Zwischensequenz (Kamera, Zeitlupe nur lokal) */
+  onUltimate?: (mv: ActionMove, spec: UltimateSpec, f: FighterState) => void;
+  /** Einschlag eines Ultimates: Impact-Frames und Welt-Effekt (Schiffe zerteilen, Meer spalten, Sog …) */
+  onUltStrike?: (mv: ActionMove, spec: UltimateSpec, f: FighterState) => void;
+  /** Sturm-Erwachen beginnt (true) oder verklingt (false) */
+  onAwaken?: (on: boolean) => void;
+  /** Meisterschaft einer Faji-Kunst gewonnen (Punkte) */
+  onMastery?: (style: ActionStyleId, pts: number) => void;
+  /** Energiewelle des Erwachens, Kettenblitz, Königsdruck (Effekte der Welt) */
+  onAwakenWave?: (f: FighterState, color: string, accent: string) => void;
+  onChain?: (ax: number, ay: number, az: number, bx: number, by: number, bz: number, color: string) => void;
+  onKingWave?: (x: number, y: number, z: number, r: number) => void;
 }
 
 /** Anschluss der Engine an Boden und Kampfsystem (ein Objekt, je Bild nur der Boden neu gesetzt) */
@@ -86,7 +101,8 @@ class FootWorld implements ActionWorld {
   }
 
   targets(x: number, z: number, r: number, out: ActionTarget[]): number { const c = this.foot.combat; return c ? c.actionTargets(x, z, r, out) : 0; }
-  hit(t: ActionTarget, h: ActionHit, m: ActionMove, ctx: HitContext): boolean { const c = this.foot.combat; return c ? c.actionHit(t, h, m, ctx, this.foot.dmgMult) : false; }
+  hit(t: ActionTarget, h: ActionHit, m: ActionMove, ctx: HitContext): number { const c = this.foot.combat; return c ? c.actionHit(t, h, m, ctx, this.foot.dmgMult) : 0; }
+  drag(t: ActionTarget, cx: number, cz: number, step: number): void { this.foot.combat?.actionDrag(t, cx, cz, step); }
   shoot(h: ActionHit, _m: ActionMove, f: FighterState): void { this.foot.combat?.actionShoot(h, f.x, f.y, f.z, f.yaw, this.foot.dmgMult, f.lockId); }
 }
 
@@ -140,6 +156,12 @@ export class PlayerFoot implements PlayerTarget {
   private readonly att: AttackerInfo = { id: '', x: 0, z: 0, yaw: 0, radius: 0.5 };
   private readonly finP = { x: 0, y: 0, z: 0 };
   private readonly tmpV = new Vector3();
+  /** Färbung der Figur (Fesseln > Erwachen > Eisenwille): Schlüssel der gesetzten Färbung, Pulszeit */
+  private tintKey = '';
+  private pulseT = 0;
+  /** nach einem Treffer-Aufleuchten die Färbung neu setzen (das Aufleuchten überschreibt ihre Farbe) */
+  private flashT = 0;
+  private willNoteT = 0;
 
   constructor(private char: Character, style: StyleId, private deps: FootDeps, action?: ActionStyleId) {
     this.style = style;
@@ -164,6 +186,14 @@ export class PlayerFoot implements PlayerTarget {
   get staminaFlash() { return this.fighter.staminaFlash; }
   /** In der Luft (Sprung, Fall, Luft-Kombo) */
   get airborne() { return !this.fighter.grounded; }
+  /** Willenskraft-Aura (0 keine, 1 Sturmblick, 2 Eisenwille, 3 Königsdruck) – das Kampfsystem liest sie */
+  get aura(): AuraId { return this.fighter.aura; }
+  /** Aura von außen setzen (Spielstand, Menü) */
+  setAura(a: AuraId) { this.fighter.aura = a; this.tintKey = ''; }
+  /** Sturm-Erwachen aktiv */
+  get awakened() { return this.fighter.awakenT > 0; }
+  /** Läuft gerade ein Ultimate (Aufladen oder Einschlag)? Welt und Kamera fragen das */
+  get inUltimate() { return this.fighter.phase === 'move' && this.fighter.moveKind === 'ultimate'; }
 
   get state(): FootState {
     switch (this.fighter.phase) {
@@ -258,7 +288,9 @@ export class PlayerFoot implements PlayerTarget {
     if (r === 'dodged' || r === 'none') return 'dodged';
     if (Math.random() < this.dodgeChance) return 'dodged';
     // Angreifer ohne Gegner-Objekt (Verbände, Geschütze der Festungen) zählen als Stufe 4
-    dmg *= damageFactor(elemental ? this.gearResist : this.gearArmor, from ? dangerOfLevel(from.level) : 4, this.reduce + this.gearReduce);
+    // Eisenwille: 10 % weniger Schaden (zählt zur gemeinsamen Minderung, die `damageFactor` bei 85 % deckelt)
+    const iron = this.fighter.aura === 2 ? AURA.ironReduce : 0;
+    dmg *= damageFactor(elemental ? this.gearResist : this.gearArmor, from ? dangerOfLevel(from.level) : 4, this.reduce + this.gearReduce + iron);
     // nie durch einen einzigen Treffer tot: ein Treffer nimmt höchstens 40 % der Lebenspunkte
     dmg = Math.min(dmg, this.maxHp * PLAYER_HIT_CAP);
     if (r === 'parry') {
@@ -277,6 +309,7 @@ export class PlayerFoot implements PlayerTarget {
     this.hp -= r === 'armor' ? dmg * 0.75 : dmg;
     this.secondWindCheck();
     this.char.hitFlash('#FF5A3C', knock > 6 ? 1.3 : 1);
+    this.flashT = 0.18;
     if (this.hp <= 0) { this.goDown(); return 'hit'; }
     if (r === 'armor') { this.engine.shove(dirX * knock * 0.15, dirZ * knock * 0.15); return 'hit'; }
     this.engine.hurt(knock > 6 ? 0.5 : 0.28, dirX * knock, dirZ * knock);
@@ -325,7 +358,8 @@ export class PlayerFoot implements PlayerTarget {
     this.world.ground = ground;
     const pv = this.prev;
     pv.x = f.x; pv.z = f.z; pv.y = f.y; pv.yaw = f.yaw;
-    if (this.bindT > 0) { this.bindT -= dt; this.char.setTint('#7FA8D8', 0.55); if (this.bindT <= 0) { this.bindSlow = 0; this.char.setTint('#7FA8D8', 0); } }
+    if (this.bindT > 0) { this.bindT -= dt; if (this.bindT <= 0) this.bindSlow = 0; }
+    this.updateTint(dt);
     f.speedK = this.speedMult * (this.bindT > 0 ? 1 - this.bindSlow : 1);
     // Eingabe: Stick relativ zur Kamera in Weltrichtung
     const mv = input.move();
@@ -347,6 +381,8 @@ export class PlayerFoot implements PlayerTarget {
     inp.blockPressed = input.pressed('block');
     inp.hardLockId = lockYaw === null ? '' : lockId;
     inp.hardLockYaw = lockYaw === null ? NaN : lockYaw;
+    inp.awaken = input.pressed('awaken');
+    inp.aura = input.pressed('aura');
     this.engine.step(inp, this.world, dt);
     this.handleEvents();
     this.animate(dt);
@@ -429,10 +465,99 @@ export class PlayerFoot implements PlayerTarget {
           const mv = this.engine.move;
           if (mv && mv.afterimage && afx) afx.afterimage(f.x + Math.sin(f.yaw) * 0.5, f.y, f.z + Math.cos(f.yaw) * 0.5, mv.color || st.accent, 0.22, 0.95);
           if (mv && mv.finisher && e.c === mv.hits.length - 1) { ov?.finisher(); ov?.speedlines(0.9); }
+          // Meisterschaft der Faji-Kunst: Treffer zählen, Form-Techniken und Ultimates doppelt, Finisher extra, im Erwachen ×2
+          if (st.faji && this.deps.onMastery) {
+            const per = f.moveKind === 'skill' || f.moveKind === 'ultimate' ? MASTERY.skillHit : MASTERY.hit;
+            const pts = (e.a * per + (f.moveKind === 'finisher' ? MASTERY.finisher : 0)) * (f.awakenT > 0 ? MASTERY.awakenK : 1);
+            if (pts > 0) this.deps.onMastery(f.style, pts);
+          }
           break;
         }
         case 'notReady':
-          if (this.noteT <= 0 && ov) { this.noteT = 0.6; ov.number(this.tmpV.set(f.x, f.y + 2.3, f.z), 'Noch nicht bereit', 'info'); }
+          if (this.noteT <= 0 && ov) {
+            this.noteT = 0.6;
+            ov.number(this.tmpV.set(f.x, f.y + 2.3, f.z), e.a === 5 ? 'Willenskraft noch nicht voll' : 'Noch nicht bereit', 'info');
+          }
+          break;
+        case 'locked':
+          if (this.noteT <= 0 && ov) {
+            this.noteT = 0.8;
+            const txt = e.a === 5
+              ? (e.b > 0 ? `Ultimate erst in der ${FORM_NAMES[e.b - 1]}` : 'Dieser Stil hat kein Ultimate')
+              : `Erst ab der ${FORM_NAMES[Math.max(0, e.b - 1)]}`;
+            ov.number(this.tmpV.set(f.x, f.y + 2.3, f.z), txt, 'info');
+          }
+          break;
+        case 'willFull':
+          if (ov && this.willNoteT <= 0) {
+            this.willNoteT = 4;
+            const k = this.deps.awakenKey?.() ?? '';
+            ov.number(this.tmpV.set(f.x, f.y + 2.7, f.z), k ? `Willenskraft voll! [${k}] Sturm-Erwachen` : 'Willenskraft voll!', 'crit');
+          }
+          break;
+        case 'awaken': {
+          const at = this.tmpV.set(f.x, f.y + 0.1, f.z);
+          fx?.shockwave(at, 6, st.accent);
+          fx?.sigil(at, 3.2, st.color, 1.4);
+          at.y += 1.1;
+          fx?.puffColor(at, st.color);
+          afx?.afterimage(f.x, f.y, f.z, st.accent, 0.6, 1.15);
+          ov?.showCutin('Sturm-Erwachen', st.accent);
+          ov?.speedlines(1);
+          ov?.impactFrame();
+          this.deps.shake?.(0.9);
+          this.deps.focus?.(1);
+          this.deps.onAwaken?.(true);
+          this.tintKey = '';
+          break;
+        }
+        case 'awakenEnd':
+          ov?.number(this.tmpV.set(f.x, f.y + 2.4, f.z), 'Das Erwachen verklingt', 'info');
+          this.deps.onAwaken?.(false);
+          this.tintKey = '';
+          break;
+        case 'aura': {
+          const a = WILL_AURAS[e.a] ?? WILL_AURAS[0];
+          ov?.number(this.tmpV.set(f.x, f.y + 2.5, f.z), e.a ? `Aura: ${a.label}` : 'Aura abgelegt', e.a ? 'crit' : 'info');
+          if (e.a) fx?.shockwave(this.tmpV.set(f.x, f.y + 0.1, f.z), 2.8, a.color);
+          this.tintKey = '';
+          break;
+        }
+        case 'kingWave': {
+          const at = this.tmpV.set(f.x, f.y + 0.1, f.z);
+          fx?.shockwave(at, Math.min(9, e.a * 0.45), '#FFD27A');
+          this.deps.onKingWave?.(f.x, f.y, f.z, e.a);
+          if (e.b > 0) { this.deps.shake?.(0.45); if (e.a > 16 && ov) ov.number(at.set(f.x, f.y + 2.8, f.z), 'Königsdruck!', 'crit'); }
+          break;
+        }
+        case 'awakenWave': this.deps.onAwakenWave?.(f, st.color, st.accent); break;
+        case 'chain': {
+          const pool = this.engine.pool;
+          const b = pool[e.a], a = e.b >= 0 ? pool[e.b] : null;
+          if (b && a) this.deps.onChain?.(a.x, a.y + a.height * 0.6, a.z, b.x, b.y + b.height * 0.6, b.z, st.accent);
+          break;
+        }
+        case 'ultimate': {
+          const mv = ALL_MOVES[e.a];
+          if (mv?.ultimate) {
+            this.deps.onUltimate?.(mv, mv.ultimate, f);
+            afx?.afterimage(f.x, f.y, f.z, mv.ultimate.accent, 0.8, 1.2);
+            fx?.sigil(this.tmpV.set(f.x, f.y + 0.05, f.z), 4, mv.ultimate.color, 1.6);
+          }
+          break;
+        }
+        case 'ultStrike': {
+          const mv = ALL_MOVES[e.a];
+          if (mv?.ultimate) {
+            this.deps.onUltStrike?.(mv, mv.ultimate, f);
+            this.deps.shake?.(1.2);
+          }
+          break;
+        }
+        case 'sheath':
+          // Iaijutsu: die Klinge rastet ein – alles Durchquerte zerbricht zugleich
+          if (ov) ov.number(this.tmpV.set(f.x, f.y + 2.6, f.z), e.a > 0 ? `Klick. ${e.a}× Weltenbruch` : 'Klick.', 'crit');
+          ov?.impactFrame();
           break;
         case 'buff':
           if (ov) ov.number(this.tmpV.set(f.x, f.y + 2.6, f.z), e.s === 'hyper' ? 'Unbeugsam! Hyper-Armor' : e.s === 'crit' ? 'Sturmkrone! Krit +25 %' : 'Stärkung!', 'crit');
@@ -440,6 +565,28 @@ export class PlayerFoot implements PlayerTarget {
         default: break;
       }
     }
+  }
+
+  /**
+   * Färbung der Figur: Seestein-Fesseln (blau) vor Sturm-Erwachen (pulsierende Aura in der Stilfarbe) vor Eisenwille (dunkler Metallglanz).
+   * Setzt die Färbung nur bei einem Wechsel (der Puls des Erwachens läuft über die Stärke).
+   */
+  private updateTint(dt: number) {
+    const f = this.fighter;
+    this.willNoteT = Math.max(0, this.willNoteT - dt);
+    // Schlüssel ohne neue Zeichenketten je Bild: die Stil-Kennung selbst steht für „Erwachen in diesem Stil“
+    let key: string = '', col = '#ffffff', amt = 0, pulse = false;
+    if (this.bindT > 0) { key = 'bind'; col = '#7FA8D8'; amt = 0.55; }
+    else if (f.awakenT > 0) {
+      this.pulseT += dt;
+      key = f.style; col = ACTION_STYLES[f.style].accent; pulse = true;
+      amt = 0.32 + 0.16 * Math.sin(this.pulseT * 7.5);
+      // die letzten 3 s flackert die Aura (Ende kündigt sich an)
+      if (f.awakenT < 3 && Math.sin(this.pulseT * 26) > 0.4) amt *= 0.35;
+    } else if (f.aura === 2) { key = 'iron'; col = '#4A5A70'; amt = 0.42; }
+    if (this.flashT > 0) { this.flashT -= dt; if (this.flashT <= 0) this.tintKey = '#'; }
+    if (key !== this.tintKey) { this.tintKey = key; this.char.setTint(col, amt); }
+    else if (pulse) this.char.setTintAmount(amt);
   }
 
   /** Clip eines Angriffs starten; die Zeit hält danach `syncClip` an der Engine fest */

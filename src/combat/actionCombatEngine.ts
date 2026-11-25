@@ -17,11 +17,12 @@ import {
   type ActionHit, type ActionMove, type ActionStyleDef, type ActionStyleId,
 } from '../data/actionStyles';
 import { wrapAngle } from '../core/mathUtil';
+import { AURA, KING_WAVE, WILL, formPower, type AuraId } from '../data/fajiArts';
 
 // ---------- Zustand ----------
 
 export type FighterPhase = 'ground' | 'air' | 'move' | 'dash' | 'block' | 'cast' | 'hurt' | 'down';
-export type MoveKind = 'light' | 'branch' | 'heavy' | 'air' | 'meteor' | 'finisher' | 'skill' | 'swap';
+export type MoveKind = 'light' | 'branch' | 'heavy' | 'air' | 'meteor' | 'finisher' | 'skill' | 'swap' | 'ultimate';
 
 /** Zustand eines Kämpfers (Spielfigur, später entfernte Mitspieler): nur Zahlen, Zeichenketten und feste Listen */
 export interface FighterState {
@@ -84,6 +85,27 @@ export interface FighterState {
   finisherId: string;
   /** Treffer des laufenden Angriffs */
   moveHits: number;
+  /** Willenskraft 0 … 100: füllt sich im Kampf (Treffer, Sturm-Schritt, Konter, Haltungsbruch); voll = Sturm-Erwachen bereit */
+  will: number;
+  /** Sturm-Erwachen: Restzeit (s); Ultimate in diesem Erwachen noch bereit; gepufferter Druck der Erwachen-Taste */
+  awakenT: number;
+  ultReady: boolean;
+  bufU: number;
+  /** Willenskraft-Aura (0 keine, 1 Sturmblick, 2 Eisenwille, 3 Königsdruck) und Takt des Königsdrucks */
+  aura: AuraId;
+  kingT: number;
+  /** Formstufe der laufenden Faji-Kunst 1 … 7 (setzt das Spiel aus der Meisterschaft; Waffenstile 1) */
+  form: number;
+  /** Ultimate: Restzeit des Aufladens (Zwischensequenz, Spielzeit); Nummer des Angriffs mit gemeldetem Einschlag */
+  cineT: number;
+  strikeSeq: number;
+  /** Energiewelle des Sturm-Erwachens: Nummer des Angriffs, der sie schon ausgelöst hat, und ihre Laufzeit (−1 = keine) */
+  waveSeq: number;
+  waveT: number;
+  /** verzögerte Treffer (Iaijutsu): markierte Ziele, Anzahl, schon ausgelöst */
+  marks: string[];
+  markN: number;
+  marksDone: boolean;
 }
 
 export function createFighter(entityId: string, style: ActionStyleId, x = 0, y = 0, z = 0, yaw = 0): FighterState {
@@ -96,6 +118,8 @@ export function createFighter(entityId: string, style: ActionStyleId, x = 0, y =
     lockId: '', lockFree: 0, camYaw: 0, magnetLeft: 0, rushLeft: 0, hover: 0, skillCd: [0, 0, 0, 0],
     hyperT: 0, critT: 0, poiseT: 0, speedT: 0, swapBonus: 1, hits: 0, hitT: 0, maxHits: 0, lastLabel: '',
     stamina: T.stamina, staminaPause: 0, staminaFlash: 0, speedK: 1, finisherId: '', moveHits: 0,
+    will: 0, awakenT: 0, ultReady: false, bufU: -1, aura: 0, kingT: AURA.kingEvery, form: 1, cineT: 0, strikeSeq: -1, waveSeq: -1, waveT: -1,
+    marks: new Array<string>(MAX_MARKS).fill(''), markN: 0, marksDone: false,
   };
 }
 
@@ -114,10 +138,13 @@ export interface ActionInput {
   /** feste Zielerfassung des Spiels ('' / NaN = keine) */
   hardLockId: string;
   hardLockYaw: number;
+  /** Erwachen-Taste (voll: Sturm-Erwachen; im Erwachen: Ultimate) und Aura wechseln, gerade gedrückt */
+  awaken: boolean;
+  aura: boolean;
 }
 
 export function makeInput(): ActionInput {
-  return { moveX: 0, moveZ: 1, mag: 0, camYaw: 0, light: false, heavy: false, jump: false, dash: false, skill: 0, blockHeld: false, blockPressed: false, hardLockId: '', hardLockYaw: NaN };
+  return { moveX: 0, moveZ: 1, mag: 0, camYaw: 0, light: false, heavy: false, jump: false, dash: false, skill: 0, blockHeld: false, blockPressed: false, hardLockId: '', hardLockYaw: NaN, awaken: false, aura: false };
 }
 
 /** Ein Ziel in der Nähe (vom Spiel je Bild in vorab angelegte Plätze geschrieben) */
@@ -158,6 +185,12 @@ export interface HitContext {
   style: ActionStyleDef;
   /** Ort der Figur (für Greifwürfe: Ziel vor die Figur ziehen) */
   fx: number; fz: number; fyaw: number;
+  /** Faji-Form: Schaden der Form-Techniken; Durchschlag durch Eisenwille (Waffenstufen); Ultimate (Endboss-Deckel je Wirken `cast`); Sprung eines Kettenblitzes */
+  formK: number;
+  penAdd: number;
+  ultimate: boolean;
+  cast: number;
+  chained: number;
 }
 
 /** Körper für die Bewegung durch die Welt */
@@ -172,8 +205,10 @@ export interface ActionWorld {
   teleport(b: ActionBody, x: number, z: number): boolean;
   /** Ziele im Umkreis r: in `out` ab Platz 0 schreiben, Anzahl zurückgeben */
   targets(x: number, z: number, r: number, out: ActionTarget[]): number;
-  /** Treffer anwenden (Schaden, Haltung, Rückstoß, Hochschleudern …); true = er saß (nicht geblockt) */
-  hit(t: ActionTarget, h: ActionHit, m: ActionMove, ctx: HitContext): boolean;
+  /** Treffer anwenden (Schaden, Haltung, Rückstoß, Hochschleudern, Zustände …): 0 = geblockt/kein Treffer, 1 = Treffer, 2 = Treffer mit Haltungsbruch oder K.O. */
+  hit(t: ActionTarget, h: ActionHit, m: ActionMove, ctx: HitContext): number;
+  /** Sog (Schwarzes Loch, Strudel): Ziel um höchstens `step` m zum Punkt (cx, cz) ziehen */
+  drag(t: ActionTarget, cx: number, cz: number, step: number): void;
   /** Geschoss(e) eines Fernangriffs */
   shoot(h: ActionHit, m: ActionMove, f: FighterState): void;
 }
@@ -182,7 +217,8 @@ export interface ActionWorld {
 
 export type ActionEventType =
   | 'move' | 'skill' | 'cutin' | 'cancel' | 'jump' | 'land' | 'fall' | 'dash' | 'perfect' | 'counter' | 'impact'
-  | 'hitConfirm' | 'style' | 'lockLost' | 'staminaLow' | 'notReady' | 'buff' | 'parry' | 'blocked';
+  | 'hitConfirm' | 'style' | 'lockLost' | 'staminaLow' | 'notReady' | 'buff' | 'parry' | 'blocked'
+  | 'awaken' | 'awakenEnd' | 'aura' | 'ultimate' | 'ultStrike' | 'sheath' | 'chain' | 'kingWave' | 'awakenWave' | 'locked' | 'willFull';
 
 export interface ActionEvent { type: ActionEventType; a: number; b: number; c: number; s: string }
 
@@ -210,18 +246,34 @@ export interface AttackerInfo { id: string; x: number; z: number; yaw: number; r
 const RIPOSTE: ActionHit = {
   t0: 0, t1: 0.1, shape: 'arc', range: 3.6, arc: 6.3, width: 2, offset: 0, inner: 0, up: 2.6, down: 1, dmg: 2.4, poise: 45, knock: 8, launch: 0,
   juggle: 0, fling: 6, breakGuard: true, pull: false, pen: 2, maxTargets: 1, hitstop: 0.22, shake: 0.7, fx: 'slash', projectile: null,
+  grow: false, status: '', statusDur: 0, chain: 0, chainRange: 6, vortex: 0, delayTo: 0, vfx: '',
 };
 
-/** Suchradius der Ziele je Logikbild (größte Reichweite: Schockwellen bis 18 m) */
+/** Suchradius der Ziele je Logikbild (größte Reichweite der normalen Angriffe: Schockwellen bis 18 m); Ultimates erweitern ihn */
 const QUERY_R = 20;
+/** Plätze für markierte Ziele eines verzögerten Treffers; Platz der Trefferliste für die Erwachen-Welle */
+const MAX_MARKS = 24;
+const WAVE_TICK = 15;
+/** Laufzeit der Erwachen-Welle (s) */
+const WAVE_DUR = 0.18;
+/** Reichweite je Angriff (für den Suchradius): größte Ausdehnung der Formen plus Vorstoß */
+const MOVE_REACH: Float32Array = (() => {
+  const r = new Float32Array(ALL_MOVES.length);
+  ALL_MOVES.forEach((m, i) => {
+    let mx = 0;
+    for (const h of m.hits) mx = Math.max(mx, h.shape === 'line' ? Math.max(h.range, h.width * 0.5) : h.range + h.offset);
+    r[i] = mx + m.dashTo + 2;
+  });
+  return r;
+})();
 /** höchstens so viele Trefferfenster je Angriff und Ziele je Fenster (Trefferlisten) */
 const MAX_TICKS = 16;
 const MAX_TICK_TARGETS = 96;
 /** Meteor: so lange hängt die Figur vor dem Sturz */
 const METEOR_HANG = 0.12;
 
-const kindCode: Record<MoveKind, number> = { light: 0, branch: 1, heavy: 2, air: 3, meteor: 4, finisher: 5, skill: 6, swap: 7 };
-export const KIND_OF_CODE: readonly MoveKind[] = ['light', 'branch', 'heavy', 'air', 'meteor', 'finisher', 'skill', 'swap'];
+const kindCode: Record<MoveKind, number> = { light: 0, branch: 1, heavy: 2, air: 3, meteor: 4, finisher: 5, skill: 6, swap: 7, ultimate: 8 };
+export const KIND_OF_CODE: readonly MoveKind[] = ['light', 'branch', 'heavy', 'air', 'meteor', 'finisher', 'skill', 'swap', 'ultimate'];
 
 const dec = (v: number, dt: number) => (v > 0 ? Math.max(0, v - dt) : v);
 
@@ -242,10 +294,25 @@ export class ActionCombatEngine {
   constructor(readonly f: FighterState, poolSize = 160) {
     this.pool = makeTargetPool(poolSize);
     this.memo = Array.from({ length: MAX_TICKS }, () => new Array<string>(MAX_TICK_TARGETS).fill(''));
-    this.ctx = { dirX: 0, dirZ: 1, crit: 0, critAdd: 0, postureK: 1, tick: 0, kind: 'light', finisher: false, airborne: false, bonus: 1, style: ACTION_STYLES[f.style], fx: 0, fz: 0, fyaw: 0 };
+    this.ctx = { formK: 1, penAdd: 0, ultimate: false, cast: 0, chained: 0, dirX: 0, dirZ: 1, crit: 0, critAdd: 0, postureK: 1, tick: 0, kind: 'light', finisher: false, airborne: false, bonus: 1, style: ACTION_STYLES[f.style], fx: 0, fz: 0, fyaw: 0 };
   }
 
   get style(): ActionStyleDef { return ACTION_STYLES[this.f.style]; }
+  /** Im Sturm-Erwachen? */
+  get awakened(): boolean { return this.f.awakenT > 0; }
+  /** Steht das Ultimate jetzt bereit? (im Erwachen, noch nicht benutzt, Faji-Künste ab der 7. Form) */
+  get ultAvailable(): boolean { const st = this.style; return this.f.awakenT > 0 && this.f.ultReady && !!st.ultimate && (!st.faji || this.f.form >= st.ultimate.formMin); }
+  /** Willenskraft-Leiste 0 … 1 */
+  get willFrac(): number { return Math.min(1, this.f.will / WILL.max); }
+  /** Formstufe setzen (Faji-Kunst; Spiel aus der Meisterschaft) */
+  setForm(n: number) { this.f.form = Math.max(1, Math.min(7, Math.round(n))); }
+  /** Willenskraft gutschreiben (nicht im Erwachen); meldet einmal, wenn die Leiste voll wird */
+  addWill(n: number) {
+    const f = this.f;
+    if (f.awakenT > 0 || !(n > 0) || f.will >= WILL.max) return;
+    f.will = Math.min(WILL.max, f.will + n);
+    if (f.will >= WILL.max) this.events.push('willFull');
+  }
   /** laufender Angriff (null = keiner) */
   get move(): ActionMove | null { return this.f.moveIdx >= 0 ? ALL_MOVES[this.f.moveIdx] : null; }
   /** Hyper-Armor gerade aktiv? (Angriff mit Hyper-Armor oder Stärkung „Unbeugsam“) */
@@ -279,6 +346,7 @@ export class ActionCombatEngine {
   hurt(dur: number, kx: number, kz: number) {
     const f = this.f;
     if (f.phase === 'down') return;
+    this.addWill(WILL.hurt);
     this.clearMove();
     f.phase = 'hurt';
     f.hurtT = dur;
@@ -328,6 +396,8 @@ export class ActionCombatEngine {
   incoming(att: AttackerInfo | null, dirX: number, dirZ: number, w: ActionWorld): IncomingResult {
     const f = this.f;
     if (f.phase === 'down') return 'none';
+    // Ultimate (Aufladen und Einschlag): unverwundbar
+    if (f.cineT > 0 || (f.phase === 'move' && this.move?.ultimate)) return 'dodged';
     if (f.counterStance > 0) {
       f.counterStance = 0;
       if (att) this.behind(att, w);
@@ -344,11 +414,12 @@ export class ActionCombatEngine {
           const dx = t.x - f.x, dz = t.z - f.z, d = Math.hypot(dx, dz) || 1;
           c.dirX = dx / d; c.dirZ = dz / d; c.crit = T.counterCrit;
           const mv = this.move ?? this.style.light[0];
-          if (w.hit(t, RIPOSTE, mv, c)) { f.hits++; f.hitT = T.hitReset; }
+          if (w.hit(t, RIPOSTE, mv, c) > 0) { f.hits++; f.hitT = T.hitReset; }
           break;
         }
       }
       this.events.push('counter', att ? 1 : 0);
+      this.addWill(WILL.counter);
       return 'counter';
     }
     if (f.perfectT > 0) {
@@ -357,6 +428,7 @@ export class ActionCombatEngine {
       const ok = att ? this.behind(att, w) : false;
       f.counterT = T.counterWindow;
       this.events.push('perfect', ok ? 1 : 0, f.x, f.z);
+      this.addWill(WILL.perfect);
       return 'perfect';
     }
     if (f.iframes > 0) return 'dodged';
@@ -421,8 +493,17 @@ export class ActionCombatEngine {
     if (inp.dash) f.bufD = f.clock;
     if (inp.skill > 0) { f.bufK = f.clock; f.bufSlot = inp.skill; }
     if (inp.blockPressed) f.blockSince = 0;
+    if (inp.awaken) f.bufU = f.clock;
+    // Sturm-Erwachen läuft ab; Aura wechseln (keine → Sturmblick → Eisenwille → Königsdruck → keine)
+    if (f.awakenT > 0) { f.awakenT -= dt; if (f.awakenT <= 0) { f.awakenT = 0; f.ultReady = false; this.events.push('awakenEnd'); } }
+    if (inp.aura) { f.aura = ((f.aura + 1) % 4) as AuraId; f.kingT = Math.min(f.kingT, 1.2); this.events.push('aura', f.aura); }
     // Ziele in der Nähe (einmal je Bild) und Gültigkeit des weichen Ziels
-    this.poolN = w.targets(f.x, f.z, QUERY_R, this.pool);
+    this.poolN = w.targets(f.x, f.z, f.moveIdx >= 0 ? Math.max(QUERY_R, MOVE_REACH[f.moveIdx]) : QUERY_R, this.pool);
+    // Königsdruck: alle 6 s eine Willens-Druckwelle, sobald genug Gegner oder Verbände nahe sind
+    if (f.aura === 3 && f.phase !== 'down') {
+      f.kingT -= dt;
+      if (f.kingT <= 0) { f.kingT = AURA.kingEvery; if (this.countNear(AURA.kingR) >= AURA.kingMin) this.kingWave(w, AURA.kingR); }
+    }
     if (inp.hardLockId) f.lockId = inp.hardLockId;
     if (f.lockId) {
       const t = this.target(f.lockId);
@@ -459,6 +540,14 @@ export class ActionCombatEngine {
 
   private decide(inp: ActionInput, w: ActionWorld, st: ActionStyleDef) {
     const f = this.f;
+    // Ultimate: Aufladen und Einschlag laufen ungestört (danach brechen Dash und Sprung wieder ab)
+    const um = f.phase === 'move' ? this.move : null;
+    if (f.cineT > 0 || (um && um.ultimate && f.moveT < um.cancel)) return;
+    if (this.wants(f.bufU) && f.phase !== 'down' && f.phase !== 'hurt') {
+      if (f.awakenT > 0 && f.ultReady) { const r = this.tryUltimate(inp, st, w); if (r !== 0) f.bufU = -1; }
+      else if (f.will >= WILL.max && f.awakenT <= 0) { this.awaken(w); f.bufU = -1; }
+      else { this.events.push('notReady', 5); f.bufU = -1; }
+    }
     // Dash: aus allem außer frühem Taumeln (Animation-Cancel); ein Dash kettet nach gut der Hälfte des vorigen
     if (this.wants(f.bufD) && (f.phase !== 'hurt' || f.hurtT < 0.15) && (f.phase !== 'dash' || f.dashT < f.dashDur * 0.45)) {
       if (this.tryDash(inp, st)) f.bufD = -1;
@@ -533,6 +622,8 @@ export class ActionCombatEngine {
     const sk = st.skills[slot - 1];
     if (!sk) return -1;
     if (f.skillCd[slot - 1] > 0) { this.events.push('notReady', slot); return -1; }
+    // Faji-Kunst: die Technik wird erst mit ihrer Formstufe frei
+    if (st.faji && sk.formMin > f.form) { this.events.push('locked', slot, sk.formMin); return -1; }
     if (!this.canAct()) return 0;
     if (!f.grounded && !sk.airOk) return 0;
     this.startMove(sk, 'skill', inp);
@@ -563,8 +654,9 @@ export class ActionCombatEngine {
     f.dashSeq++;
     f.dashAir = air;
     if (air) { f.airDashes++; f.vy = 0; f.hover = 0; }
-    f.iframes = Math.max(f.iframes, Math.max(T.dashIframes, st.perfectWindow));
-    f.perfectT = st.perfectWindow;
+    const pw = st.perfectWindow + (f.aura === 1 ? AURA.sightWindow : 0);
+    f.iframes = Math.max(f.iframes, Math.max(T.dashIframes, pw));
+    f.perfectT = pw;
     f.counterStance = 0;
     if (f.lockId) { f.lockId = ''; this.events.push('lockLost'); }
     this.events.push('dash', air ? 1 : 0, back ? 1 : 0, f.dashSeq);
@@ -587,6 +679,66 @@ export class ActionCombatEngine {
     if (f.lockId) { f.lockId = ''; this.events.push('lockLost'); }
     this.events.push('jump', f.jumps);
     return true;
+  }
+
+  // ---------- Sturm-Erwachen, Ultimate, Königsdruck ----------
+
+  /** Sturm-Erwachen (volle Willenskraft): 18 s Aura, +20 % Angriffstempo, Energiewelle bei jedem normalen Schlag, einmal das Ultimate */
+  awaken(w: ActionWorld) {
+    const f = this.f;
+    f.will = 0;
+    f.awakenT = WILL.awakenDur;
+    f.ultReady = true;
+    f.iframes = Math.max(f.iframes, 0.35);
+    this.events.push('awaken', WILL.awakenDur);
+    // Königsdruck bricht beim Erwachen gewaltig los
+    if (f.aura === 3) this.kingWave(w, AURA.kingAwakenR);
+  }
+
+  /** 0 = warten, 1 = gestartet, −1 = verworfen (noch nicht frei) */
+  private tryUltimate(inp: ActionInput, st: ActionStyleDef, w: ActionWorld): number {
+    const f = this.f;
+    const u = st.ultimate;
+    if (!u || !u.ultimate) { this.events.push('locked', 5, 0); return -1; }
+    if (st.faji && f.form < u.formMin) { this.events.push('locked', 5, u.formMin); return -1; }
+    if (!this.canAct() && f.phase !== 'dash') return 0;
+    void w;
+    f.ultReady = false;
+    this.startMove(u, 'ultimate', inp);
+    f.cineT = u.ultimate.charge;
+    f.iframes = Math.max(f.iframes, u.ultimate.charge + u.dur);
+    f.markN = 0;
+    f.marksDone = false;
+    f.strikeSeq = -1;
+    this.events.push('ultimate', f.moveIdx, 0, 0, u.ultimate.kind);
+    return 1;
+  }
+
+  /** Ziele im Umkreis (lebend) */
+  private countNear(r: number): number {
+    const f = this.f;
+    let n = 0;
+    for (let i = 0; i < this.poolN; i++) { const t = this.pool[i]; if (t.alive && Math.hypot(t.x - f.x, t.z - f.z) <= r + t.radius) n++; }
+    return n;
+  }
+
+  /** Willens-Druckwelle des Königsdrucks: schleudert Verbände fort, schwache Gegner weichen zurück */
+  private kingWave(w: ActionWorld, r: number) {
+    const f = this.f;
+    const c = this.fillCtx('skill', WAVE_TICK - 1);
+    c.formK = 1;
+    let landed = 0;
+    for (let i = 0; i < this.poolN; i++) {
+      const t = this.pool[i];
+      if (!t.alive) continue;
+      let dx = t.x - f.x, dz = t.z - f.z;
+      const d = Math.hypot(dx, dz);
+      if (d > r + t.radius) continue;
+      if (d > 1e-4) { dx /= d; dz /= d; } else { dx = 0; dz = 1; }
+      c.dirX = dx; c.dirZ = dz;
+      if (w.hit(t, KING_WAVE, this.style.light[0], c) > 0) landed++;
+    }
+    this.events.push('kingWave', r, landed);
   }
 
   // ---------- Angriffe ----------
@@ -685,8 +837,15 @@ export class ActionCombatEngine {
     const f = this.f;
     const mv = this.move;
     if (!mv) { f.phase = f.grounded ? 'ground' : 'air'; return; }
+    // Ultimate: während der Zwischensequenz steht die Zeit des Angriffs, die Figur schwebt an ihrem Ort
+    if (f.cineT > 0) {
+      f.cineT -= dt;
+      if (!f.grounded) f.vy = 0;
+      else this.groundFollow(dt, w);
+      return;
+    }
     const t0 = f.moveT;
-    f.moveT += dt * (f.speedT > 0 ? 1.15 : 1);
+    f.moveT += dt * (f.speedT > 0 ? 1.15 : 1) * (f.awakenT > 0 && f.moveKind !== 'ultimate' ? WILL.awakenSpeed : 1);
     // Meteor: in der Luft bleibt der Clip vor dem Einschlag stehen; der Treffer kommt beim Aufprall
     if (mv.meteor && !f.grounded) {
       const hold = mv.hits.length ? mv.hits[0].t0 - 0.02 : mv.dur * 0.5;
@@ -696,8 +855,11 @@ export class ActionCombatEngine {
     const firstT0 = mv.hits.length ? mv.hits[0].t0 : mv.dur * 0.5;
     const firstT1 = mv.hits.length ? mv.hits[0].t1 : firstT0;
     const tg = f.lockId ? this.target(f.lockId) : null;
-    // Ausrichten zum Ziel bis zum ersten Treffer
-    if (tg && t0 <= firstT0 + 0.04) this.turnTo(Math.atan2(tg.x - f.x, tg.z - f.z), dt, 18);
+    // Ausrichten zum Ziel bis zum ersten Treffer. Durchstoß-Ultimates (Iaijutsu, Klingen-Zyklon) halten ihre Richtung, sobald das Ziel überholt
+    // ist (sonst biegen sie zum Ziel hinter sich ab); Techniken wie der Kronenblitz-Sprint drehen sich weiter zum Ziel um und schlagen zurück
+    if (tg && t0 <= firstT0 + 0.04 && !(mv.ultimate && mv.through && t0 > 0 && (tg.x - f.x) * Math.sin(f.yaw) + (tg.z - f.z) * Math.cos(f.yaw) < 0.5)) {
+      this.turnTo(Math.atan2(tg.x - f.x, tg.z - f.z), dt, 18);
+    }
     let mx = 0, mz = 0, impulse = false;
     const fx = Math.sin(f.yaw), fz = Math.cos(f.yaw);
     if (f.rushLeft > 0 && t0 < mv.dashTime + 1e-6) {
@@ -731,14 +893,35 @@ export class ActionCombatEngine {
     if (!f.grounded) this.airVertical(dt, w, mv);
     else this.groundFollow(dt, w);
     if (f.phase !== 'move' || this.move !== mv) return;
+    // Ultimate: der große Einschlag (Impact-Frames, Welt-Effekt)
+    if (mv.ultimate && f.strikeSeq !== f.moveSeq && t1 >= mv.ultimate.strikeAt) {
+      f.strikeSeq = f.moveSeq;
+      this.events.push('ultStrike', f.moveIdx, f.x, f.z, mv.ultimate.kind);
+    }
     // Trefferfenster dieses Bilds
     if (!(mv.meteor && !f.grounded)) {
+      const fk = st.faji && f.moveKind === 'skill' ? formPower(f.form).range : 1;
       for (let i = 0; i < mv.hits.length && i < MAX_TICKS; i++) {
         const h = mv.hits[i];
+        // verzögerter Treffer: zur Zeit `delayTo` treffen alle markierten Ziele zugleich (Klinge rastet ein)
+        if (h.delayTo > 0 && !f.marksDone && t1 >= h.delayTo) this.fireMarks(h, i, mv, w);
         if (h.t0 > t1 || h.t1 <= t0) continue;
         if (h.projectile) { if (h.t0 > t0 - 1e-9 && h.t0 <= t1 + 1e-9 && !(t0 > h.t0)) w.shoot(h, mv, f); continue; }
-        this.hitWindow(h, i, mv, w, st);
+        const grow = h.grow ? Math.max(0.05, Math.min(1, (t1 - h.t0) / Math.max(1e-3, h.t1 - h.t0))) : 1;
+        this.hitWindow(h, i, mv, w, st, grow * fk, h.delayTo > 0);
       }
+      // Sturm-Erwachen: eine Energiewelle begleitet jeden normalen Schlag
+      if (f.awakenT > 0 && f.waveSeq !== f.moveSeq && (f.moveKind === 'light' || f.moveKind === 'air' || f.moveKind === 'swap') && mv.hits.length && t1 >= mv.hits[0].t0) {
+        f.waveSeq = f.moveSeq;
+        f.waveT = 0;
+        this.memoN[WAVE_TICK] = 0;
+        this.events.push('awakenWave', f.moveIdx);
+      }
+    }
+    if (f.waveT >= 0) {
+      f.waveT += dt;
+      this.hitWindow(st.awakenWave, WAVE_TICK, mv, w, st, Math.min(1, f.waveT / WAVE_DUR), false);
+      if (f.waveT >= WAVE_DUR) f.waveT = -1;
     }
     if (f.moveT >= mv.dur - 1e-6) { this.endMove(); return; }
     // nach dem letzten Treffer bricht Laufen den Ausschwung ab – man ist nie lange festgenagelt
@@ -757,42 +940,111 @@ export class ActionCombatEngine {
     c.bonus = f.moveBonus;
     c.style = st;
     c.fx = f.x; c.fz = f.z; c.fyaw = f.yaw;
+    c.formK = st.faji && kind === 'skill' ? formPower(f.form).dmg : 1;
+    c.penAdd = f.aura === 2 ? AURA.ironPen : 0;
+    c.ultimate = kind === 'ultimate';
+    c.cast = f.moveSeq;
+    c.chained = 0;
     return c;
   }
 
+  /** Verzögerter Treffer: alle markierten Ziele, die noch leben, zugleich treffen */
+  private fireMarks(h: ActionHit, tick: number, mv: ActionMove, w: ActionWorld) {
+    const f = this.f;
+    f.marksDone = true;
+    const c = this.fillCtx(f.moveKind, tick);
+    let landed = 0, broke = 0;
+    for (let k = 0; k < f.markN; k++) {
+      const t = this.target(f.marks[k]);
+      if (!t || !t.alive) continue;
+      let dx = t.x - f.x, dz = t.z - f.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 1e-4) { dx /= d; dz /= d; } else { dx = Math.sin(f.yaw); dz = Math.cos(f.yaw); }
+      c.dirX = dx; c.dirZ = dz;
+      const r = w.hit(t, h, mv, c);
+      if (r > 0) landed++;
+      if (r > 1) broke++;
+    }
+    this.events.push('sheath', landed, f.markN);
+    if (landed > 0) this.afterHits(landed, broke, mv, tick);
+  }
+
+  /** Nach Treffern eines Fensters: Zähler, Willenskraft, Schweben in der Luft, Konter verbraucht */
+  private afterHits(landed: number, broke: number, mv: ActionMove, tick: number) {
+    const f = this.f;
+    f.hits += landed;
+    f.hitT = T.hitReset;
+    f.moveHits += landed;
+    if (f.hits > f.maxHits) f.maxHits = f.hits;
+    this.addWill(Math.min(landed, WILL.hitCap) * WILL.hit + broke * WILL.broke + (f.moveKind === 'finisher' ? WILL.finisher : 0));
+    // Lufttreffer: kurz schweben (verlangsamter Fall), damit die Luft-Kombo trägt
+    if (!f.grounded && (mv.air || f.moveKind === 'skill')) { f.vy = Math.max(f.vy, T.airHitVy); f.hover = T.airHitHover; }
+    if (f.counterT > 0) f.counterT = 0;
+    this.events.push('hitConfirm', landed, f.hits, tick);
+  }
+
   /** Ein Trefferfenster: alle Ziele in der Form, jedes höchstens einmal je Fenster */
-  private hitWindow(h: ActionHit, tick: number, mv: ActionMove, w: ActionWorld, st: ActionStyleDef) {
+  private hitWindow(h: ActionHit, tick: number, mv: ActionMove, w: ActionWorld, st: ActionStyleDef, rangeK = 1, mark = false) {
     const f = this.f;
     const memo = this.memo[tick];
     let mn = this.memoN[tick];
     const fx = Math.sin(f.yaw), fz = Math.cos(f.yaw);
+    // Sog: jedes Bild alle Ziele in der Form zum Mittelpunkt ziehen (auch schon getroffene)
+    if (h.vortex > 0) {
+      const cx = h.shape === 'circle' ? f.x + fx * h.offset : f.x, cz = h.shape === 'circle' ? f.z + fz * h.offset : f.z;
+      const step = h.vortex * (1 / 60);
+      for (let i = 0; i < this.poolN; i++) { const t = this.pool[i]; if (t.alive && inShape(f, h, t, fx, fz, rangeK)) w.drag(t, cx, cz, step); }
+    }
     const c = this.fillCtx(f.moveKind, tick);
-    let landed = 0;
+    let landed = 0, broke = 0;
     for (let i = 0; i < this.poolN; i++) {
       const t = this.pool[i];
       if (!t.alive) continue;
       if ((h.maxTargets > 0 && mn >= h.maxTargets) || mn >= MAX_TICK_TARGETS) break;
       let seen = false;
       for (let k = 0; k < mn; k++) if (memo[k] === t.id) { seen = true; break; }
-      if (seen || !inShape(f, h, t, fx, fz)) continue;
+      if (seen || !inShape(f, h, t, fx, fz, rangeK)) continue;
       memo[mn++] = t.id;
+      // Iaijutsu: nur markieren, getroffen wird beim Einrasten der Klinge
+      if (mark) { if (f.markN < MAX_MARKS) f.marks[f.markN++] = t.id; continue; }
       let dx = t.x - f.x, dz = t.z - f.z;
       const d = Math.hypot(dx, dz);
       if (d > 1e-4) { dx /= d; dz /= d; } else { dx = fx; dz = fz; }
       c.dirX = dx; c.dirZ = dz;
-      if (w.hit(t, h, mv, c)) landed++;
+      c.chained = 0;
+      const r = w.hit(t, h, mv, c);
+      if (r > 0) landed++;
+      if (r > 1) broke++;
+      // Kettenblitz: springt auf die nächsten Ziele in Reichweite (je Sprung 70 % Schaden)
+      if (r > 0 && h.chain > 0) {
+        let from = t;
+        for (let j = 1; j <= h.chain && mn < MAX_TICK_TARGETS; j++) {
+          let best: ActionTarget | null = null, bd = h.chainRange;
+          for (let q = 0; q < this.poolN; q++) {
+            const o = this.pool[q];
+            if (!o.alive || o === from) continue;
+            let hit = false;
+            for (let k = 0; k < mn; k++) if (memo[k] === o.id) { hit = true; break; }
+            if (hit) continue;
+            const dd = Math.hypot(o.x - from.x, o.z - from.z) - o.radius;
+            if (dd < bd) { bd = dd; best = o; }
+          }
+          if (!best) break;
+          memo[mn++] = best.id;
+          const ddx = best.x - from.x, ddz = best.z - from.z, dl = Math.hypot(ddx, ddz) || 1;
+          c.dirX = ddx / dl; c.dirZ = ddz / dl;
+          c.chained = j;
+          const rr = w.hit(best, h, mv, c);
+          if (rr > 0) landed++;
+          if (rr > 1) broke++;
+          this.events.push('chain', this.pool.indexOf(best), this.pool.indexOf(from), j);
+          from = best;
+        }
+        c.chained = 0;
+      }
     }
     this.memoN[tick] = mn;
-    if (landed > 0) {
-      f.hits += landed;
-      f.hitT = T.hitReset;
-      f.moveHits += landed;
-      if (f.hits > f.maxHits) f.maxHits = f.hits;
-      // Lufttreffer: kurz schweben (verlangsamter Fall), damit die Luft-Kombo trägt
-      if (!f.grounded && (mv.air || f.moveKind === 'skill')) { f.vy = Math.max(f.vy, T.airHitVy); f.hover = T.airHitHover; }
-      if (f.counterT > 0) f.counterT = 0;
-      this.events.push('hitConfirm', landed, f.hits, tick);
-    }
+    if (landed > 0) this.afterHits(landed, broke, mv, tick);
     void st;
   }
 
@@ -989,22 +1241,23 @@ export class ActionCombatEngine {
 // ---------- Trefferformen ----------
 
 /** Liegt ein Ziel (Kreis mit Radius, Höhe) in der Trefferform um die Figur? Bogen, Kreis (vor der Figur) oder Linie (Schockwelle) */
-export function inShape(f: { x: number; y: number; z: number; yaw: number }, h: ActionHit, t: ActionTarget, fx = Math.sin(f.yaw), fz = Math.cos(f.yaw)): boolean {
+export function inShape(f: { x: number; y: number; z: number; yaw: number }, h: ActionHit, t: ActionTarget, fx = Math.sin(f.yaw), fz = Math.cos(f.yaw), rangeK = 1): boolean {
   if (t.y > f.y + h.up || t.y + t.height < f.y - h.down) return false;
   const dx = t.x - f.x, dz = t.z - f.z;
+  const range = h.range * rangeK;
   if (h.shape === 'circle') {
     const cx = f.x + fx * h.offset, cz = f.z + fz * h.offset;
     const d = Math.hypot(t.x - cx, t.z - cz);
-    if (d > h.range + t.radius) return false;
+    if (d > range + t.radius) return false;
     return h.inner <= 0 || d >= h.inner - t.radius;
   }
   if (h.shape === 'line') {
     const along = dx * fx + dz * fz;
-    if (along < -t.radius - 0.3 || along > h.range + t.radius) return false;
+    if (along < -t.radius - 0.3 || along > range + t.radius) return false;
     return Math.abs(dx * fz - dz * fx) <= h.width * 0.5 + t.radius;
   }
   const d = Math.hypot(dx, dz);
-  if (d > h.range + t.radius) return false;
+  if (d > range + t.radius) return false;
   if (h.inner > 0 && d < h.inner - t.radius) return false;
   if (h.arc >= 6.2 || d < t.radius + 0.05) return true;
   const cos = (dx * fx + dz * fz) / d;

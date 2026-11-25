@@ -142,6 +142,8 @@ export interface SaveData {
     slot?: 0 | 1;
     /** Action-Stil der Spielfigur (4.6A: einer der sechs physischen Stile oder Faji-Wirken) – fehlt in alten Spielständen (dann gilt der Kampfstil) */
     actionStyle?: string;
+    /** Faji-Künste (4.6B): ausgerüstete Kunst, Meisterschaft je Kunst (Formstufe 1 – 7), Willenskraft-Aura – fehlt in alten Spielständen (`cleanFaji`) */
+    faji?: { equipped: string | null; mastery: Record<string, number>; aura: number };
     level: number;
     xp: number;
     gold: number;

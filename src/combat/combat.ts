@@ -40,6 +40,8 @@ import { sharedGeo } from '../render/geoCache';
 import { clamp01 } from '../core/mathUtil';
 import type { ActionTarget, HitContext } from './actionCombatEngine';
 import { POSTURE, type ActionHit, type ActionMove } from '../data/actionStyles';
+import { UltimateBossLedger, ultimateBossCap } from '../data/cataclysms';
+import { AURA } from '../data/fajiArts';
 import { mintEntityId } from '../sim/entityId';
 
 /** Ergebnis eines Treffers auf die Spielfigur; `perfect` = Sturm-Schritt (perfektes Ausweichen hinter den Angreifer, 4.6A) */
@@ -55,6 +57,8 @@ export interface PlayerTarget {
   readonly y: number;
   readonly yaw: number;
   readonly active: boolean;
+  /** Willenskraft-Aura der Spielfigur (1 = Sturmblick: Angriffe leuchten vorher auf, tiefere Zeitlupe beim Sturm-Schritt) */
+  readonly aura?: number;
   /** Treffer auf den Spieler; liefert, was passiert ist */
   receiveHit(dmg: number, dirX: number, dirZ: number, knock: number, from: Enemy | null, elemental?: boolean): PlayerHitResult;
 }
@@ -499,9 +503,10 @@ export class CombatSystem implements EnemyWorld {
       this.hooks.focus?.(0.75);
     } else if (res === 'perfect') {
       // Sturm-Schritt: Zeitlupe, Fokus und Schriftzug – die Figur steht schon hinter dem Angreifer (Nachbild zeichnet die Spielfigur)
-      this.overlay.number(new Vector3(pl.x, pl.y + 2.4, pl.z), 'Sturm-Schritt!', 'crit');
+      this.overlay.number(new Vector3(pl.x, pl.y + 2.4, pl.z), pl.aura === 1 ? 'Sturmblick!' : 'Sturm-Schritt!', 'crit');
       this.overlay.speedlines(1);
-      this.hooks.hitstop(0.4, 0.16);
+      // Sturmblick: die Zeit steht fast (Zeit-Fokus nach dem Ausweich-Teleport)
+      if (pl.aura === 1) this.hooks.hitstop(AURA.sightSlowDur, AURA.sightSlowK); else this.hooks.hitstop(0.4, 0.16);
       this.hooks.focus?.(0.85);
     } else if (res === 'blocked') {
       this.fx.hit(pos.clone().addScaledVector(new Vector3(-dirX, 0, -dirZ), 0.5), 'punch', '#9FD8FF');
@@ -726,14 +731,15 @@ export class CombatSystem implements EnemyWorld {
    * Rüstungskurve mit der Waffenstufe (+ Durchschlag des Angriffs und des Stils), Break-Bonus und die Anti-One-Shot-Grenzen der Endbosse
    * (`Enemy.takeHit`). Verbände nehmen Flächenschaden mit Schwung-Bonus und werden weggeschleudert. true = der Treffer saß.
    */
-  actionHit(t: ActionTarget, h: ActionHit, m: ActionMove, c: HitContext, dmgMult: number): boolean {
+  actionHit(t: ActionTarget, h: ActionHit, m: ActionMove, c: HitContext, dmgMult: number): number {
     const obj = this.actRefs[t.ref];
-    if (!obj) return false;
+    if (!obj) return 0;
     const st = c.style;
     const forced = c.crit > 0;
     const crit = forced || Math.random() < this.critChance + st.critBonus + c.critAdd;
     const critK = forced ? Math.max(c.crit, st.critMult) : st.critMult;
-    const mult = dmgMult * c.bonus * (crit ? critK : 1) * (c.finisher ? POSTURE.finisherDmg : 1) * (0.92 + Math.random() * 0.16);
+    // Form der Faji-Kunst, Kettenblitz (je Sprung 70 %)
+    const mult = dmgMult * c.bonus * c.formK * Math.pow(0.7, c.chained) * (crit ? critK : 1) * (c.finisher ? POSTURE.finisherDmg : 1) * (0.92 + Math.random() * 0.16);
     const color = m.color || st.color;
     const heavy = h.fx === 'heavy' || h.poise >= 30;
     const d = this.actDef;
@@ -748,7 +754,7 @@ export class CombatSystem implements EnemyWorld {
       this.hooks.impact(c.dirX, c.dirZ, crit || heavy ? 1 : 0.6);
       this.hooks.hitstop(h.hitstop);
       this.hooks.shake(h.shake);
-      return true;
+      return 1;
     }
     if (!(obj instanceof Enemy)) {
       const q = obj;
@@ -765,20 +771,26 @@ export class CombatSystem implements EnemyWorld {
       this.hooks.impact(c.dirX, c.dirZ, 0.7);
       this.hooks.hitstop(h.hitstop * 0.5);
       this.hooks.shake(h.shake * 0.8);
-      if (q.heads <= 0) this.onSquadDown(q);
-      return true;
+      if (q.heads <= 0) { this.onSquadDown(q); return 2; }
+      return 1;
     }
     const e = obj;
-    const dmg = Math.round(this.atk * h.dmg * mult);
+    let dmg = Math.round(this.atk * h.dmg * mult);
+    // Ultimate gegen Endbosse: zählt wie EIN Treffer (Summe je Wirken gedeckelt), bricht aber sofort die Haltung
+    if (c.ultimate) dmg = this.ultLedger.allow(c.cast, e.entityId, ultimateBossCap(e.def), e.maxHp, dmg);
+    const hpBefore = e.hp;
     if (this.mods.lifesteal > 0) this.hooks.heal(dmg * this.mods.lifesteal);
     const info: HitInfo = {
       dmg, poise: h.poise * c.postureK, knock: h.knock, launch: h.launch || undefined, juggle: h.juggle || undefined, breakGuard: h.breakGuard || undefined,
       finisher: c.finisher || undefined, dirX: c.dirX, dirZ: c.dirZ, heavy, src: this.player?.entityId, ranged: false,
-      tier: Math.max(1, Math.min(7, this.attackTier + h.pen + st.penBonus)),
+      tier: Math.max(1, Math.min(7, this.attackTier + h.pen + st.penBonus + c.penAdd)),
+      breakNow: c.ultimate || undefined,
     };
     if (h.pull) { const k = 0.9 + e.radius; info.pullX = c.fx + Math.sin(c.fyaw) * k; info.pullZ = c.fz + Math.cos(c.fyaw) * k; }
     const res = e.takeHit(info, this.now, this);
+    if (c.ultimate) this.ultLedger.record(hpBefore - e.hp);
     this.enemyFeedback(e, res, dmg, crit, false, heavy, d, c.dirX, c.dirZ, color);
+    if (h.status && res !== 'blocked' && res !== 'kill') this.actionStatus(e, h, c, dmg);
     if (c.finisher && res !== 'blocked') {
       // filmreifer Haltungsbruch-Finisher: Zeitlupe, Fokus, Druckwelle und Risse
       HIT_P.set(e.x, this.ground(e.x, e.z), e.z);
@@ -794,7 +806,39 @@ export class CombatSystem implements EnemyWorld {
     } else if (res === 'stagger' && e.hasPosture) {
       this.overlay.number(e.head.setY(e.y + 2.8 * e.def.scale), 'Finisher bereit!', 'info');
     }
-    return res !== 'blocked';
+    return res === 'blocked' ? 0 : res === 'stagger' || res === 'kill' ? 2 : 1;
+  }
+
+  /** Endboss-Deckel der Ultimates (data/cataclysms.ts): je Wirken und Gegner höchstens ein gedeckelter Treffer */
+  private readonly ultLedger = new UltimateBossLedger();
+
+  /** Zustand eines Treffers der Engine auf einem Gegner (Brand, Frost, Verlangsamung, Schock, Rüstungsbrand, Aura-Bann, Furcht) */
+  private actionStatus(e: Enemy, h: ActionHit, c: HitContext, dmg: number) {
+    const dur = h.statusDur * (c.formK > 1 ? c.formK : 1);
+    switch (h.status) {
+      case 'burn': this.applyStatus(e, 'burn', dur, dmg); break;
+      case 'freeze': this.applyStatus(e, 'freeze', Math.min(dur, e.def.boss ? 1.2 : dur), 0); break;
+      case 'slow': e.slowT = Math.max(e.slowT, dur); break;
+      case 'shock': if (!e.def.boss && !e.def.elite) e.stun(Math.min(0.45, dur)); break;
+      case 'sunder': e.sunderT = Math.max(e.sunderT, dur); break;
+      case 'suppress': e.suppressT = Math.max(e.suppressT, dur); break;
+      case 'fear': this.applyStatus(e, 'fear', dur, 0); break;
+      default: break;
+    }
+  }
+
+  /** Sog der Engine (Schwarzes Loch, Strudel): Gegner und Verbände zum Punkt ziehen; Bosse kaum, Elite halb */
+  actionDrag(t: ActionTarget, cx: number, cz: number, step: number) {
+    const obj = this.actRefs[t.ref];
+    if (!obj || obj instanceof Dummy) return;
+    const k = obj instanceof Enemy ? (obj.def.boss ? 0.25 : obj.def.elite ? 0.6 : 1) : 0.8;
+    const dx = cx - obj.x, dz = cz - obj.z, d = Math.hypot(dx, dz);
+    if (d < 0.6) return;
+    const sd = Math.min(step * k, d - 0.5);
+    const nx = obj.x + (dx / d) * sd, nz = obj.z + (dz / d) * sd;
+    const c2 = obj instanceof Enemy ? this.constrain(nx, nz, obj.radius, obj) : this.groundRef.constrain(nx, nz, obj.radius, obj.y);
+    obj.x = c2.x; obj.z = c2.z;
+    t.x = obj.x; t.z = obj.z;
   }
 
   /** Geschosse eines Fernangriffs der Engine (Faji-Wirken, Fächer): auf das Ziel der Engine oder das nächste im Kegel */
@@ -811,7 +855,9 @@ export class CombatSystem implements EnemyWorld {
       const a = baseYaw + (n > 1 ? (i / (n - 1) - 0.5) * pr.spread * (n - 1) : 0);
       const from = new Vector3(x + Math.sin(a) * 0.8, y + 1.3, z + Math.cos(a) * 0.8);
       const dir = aim && n === 1 ? new Vector3(aim.x - from.x, aim.y + 1.1 - from.y, aim.z - from.z).normalize() : new Vector3(Math.sin(a), 0, Math.cos(a));
-      this.spawnProjectile(from, dir.multiplyScalar(pr.speed), pr.radius, this.atk * h.dmg * mult, h.knock, 'player', null, pr.pierce, pr.color, h.poise);
+      // Mondsicheln fliegen flach (waagrecht) in ihrer Richtung, Faji-Kugeln auf das Ziel
+      if (pr.kind === 'crescent') dir.set(Math.sin(a), 0, Math.cos(a));
+      this.spawnProjectile(from, dir.multiplyScalar(pr.speed), pr.radius, this.atk * h.dmg * mult, h.knock, 'player', null, pr.pierce, pr.color, h.poise, pr.kind);
       if (i === 0) this.fx.hit(from, 'magic', pr.color);
     }
   }
@@ -951,10 +997,15 @@ export class CombatSystem implements EnemyWorld {
     if (s.bind) { pl.bind?.(s.bind.dur, s.bind.slow); this.overlay.number(new Vector3(pl.x, pl.y + 2.2, pl.z), 'Gefesselt!', 'info'); }
   }
 
-  private spawnProjectile(from: Vector3, vel: Vector3, radius: number, dmg: number, knock: number, team: 'player' | 'enemy', src: Enemy | null, pierce: boolean, color: string, poise: number) {
-    const m = new Mesh(new SphereGeometry(radius * 0.5, 12, 8), new MeshBasicMaterial({ color: new Color(color).multiplyScalar(3), transparent: true, blending: AdditiveBlending, depthWrite: false }));
-    const halo = new Mesh(new SphereGeometry(radius, 12, 8), new MeshBasicMaterial({ color: new Color(color).multiplyScalar(1.4), transparent: true, opacity: 0.35, blending: AdditiveBlending, depthWrite: false }));
-    m.add(halo);
+  private spawnProjectile(from: Vector3, vel: Vector3, radius: number, dmg: number, knock: number, team: 'player' | 'enemy', src: Enemy | null, pierce: boolean, color: string, poise: number, kind: string = 'orb') {
+    const crescentShape = kind === 'crescent';
+    // Mondsichel: flacher Ring-Ausschnitt, quer zur Flugrichtung; sonst leuchtende Kugel mit Hof
+    const m = crescentShape
+      ? new Mesh(new RingGeometry(radius * 0.7, radius * 1.15, 24, 1, -1.1, 2.2).rotateX(-Math.PI / 2), new MeshBasicMaterial({ color: new Color(color).multiplyScalar(2.6), transparent: true, blending: AdditiveBlending, depthWrite: false, side: 2 }))
+      : new Mesh(new SphereGeometry(radius * 0.5, 12, 8), new MeshBasicMaterial({ color: new Color(color).multiplyScalar(3), transparent: true, blending: AdditiveBlending, depthWrite: false }));
+    if (crescentShape) m.rotation.y = Math.atan2(vel.x, vel.z) - Math.PI / 2;
+    const halo = new Mesh(new SphereGeometry(radius, 12, 8), new MeshBasicMaterial({ color: new Color(color).multiplyScalar(1.4), transparent: true, opacity: crescentShape ? 0 : 0.35, blending: AdditiveBlending, depthWrite: false }));
+    if (!crescentShape) m.add(halo); else halo.geometry.dispose();
     m.position.copy(from);
     this.scene.add(m);
     this.projectiles.push({ mesh: m, vel, life: 2.2, radius, dmg, knock, team, from: src, pierce, hit: new Set(), color, poise, trail: 0 });
@@ -1313,10 +1364,11 @@ export class CombatSystem implements EnemyWorld {
     for (const q of this.mass) { q.auraDmg = 1; q.auraTaken = 1; q.auraSpeed = 1; }
     for (const c of this.enemies) {
       const A = c.def.aura;
-      if (!A || !c.alive) continue;
+      // Schwarzes Loch: gebannte Hauptmänner strahlen keine Aura aus
+      if (!A || !c.alive || c.suppressT > 0) continue;
       const r2 = A.radius * A.radius;
       for (const e of this.enemies) {
-        if (!e.alive || e === c) continue;
+        if (!e.alive || e === c || e.suppressT > 0) continue;
         const dx = e.x - c.x, dz = e.z - c.z;
         if (dx * dx + dz * dz > r2) continue;
         if (A.dmg) e.auraDmg = Math.max(e.auraDmg, A.dmg);
@@ -1369,7 +1421,9 @@ export class CombatSystem implements EnemyWorld {
     if (engaged.length) for (const e of this.enemies) if (!e.engaged && engaged.some((o) => Math.hypot(o.x - e.x, o.z - e.z) < 32)) e.alert();
     // Jeder Gegner wählt ein Ziel: Spielfigur oder Crew (Tanks ziehen Gegner an)
     const plPos = this.playerPos, plAct = this.playerActive;
+    const sight = pl?.aura === 1;
     for (const e of this.enemies) {
+      e.foresight = sight;
       const tg = this.pickTarget(e);
       if (tg) { this.playerPos = this.tgVec.set(tg.x, tg.y, tg.z); this.playerActive = true; this.targetYaw = NaN; }
       else { this.playerPos = plPos; this.playerActive = plAct; this.targetYaw = pl ? pl.yaw : NaN; }

@@ -74,6 +74,8 @@ export interface HitInfo {
   pullX?: number;
   pullZ?: number;
   finisher?: boolean;
+  /** Ultimate: bricht die Haltung sofort (Elite, Kommandanten, Endbosse) */
+  breakNow?: boolean;
   dirX: number;
   dirZ: number;
   heavy: boolean;
@@ -296,6 +298,11 @@ export class Enemy {
   slowT = 0;
   fearT = 0;
   frozenT = 0;
+  /** Sonnen-Faji: Rüstung und Heilung durchgebrannt (Restzeit) · Schwarzes Loch: Aura gebannt (Restzeit) */
+  sunderT = 0;
+  suppressT = 0;
+  /** Sturmblick der Spielfigur: Ausholen leuchtet hell auf (setzt das Kampfsystem je Bild) */
+  foresight = false;
   /** Dachschütze (Raid): steht fest in Höhe y auf einem Dach, bewegt sich nicht, fällt beim Tod zu Boden */
   perch: { y: number } | null = null;
 
@@ -407,7 +414,7 @@ export class Enemy {
     // Rüstung der Raid-Gegner und Aura „Bollwerk“ eines Hauptmanns in der Nähe
     // Rüstung nach Gefahrenstufe (asymptotische Kurve, data/balanceConfig.ts): die Waffenstufe des Angreifers entscheidet, wie viel durchkommt
     const tier = h.tier ?? w?.attackTier ?? 1;
-    const soak = (1 - mitigation(enemyArmorRating(this.kind, this.level), tier)) * (1 - (this.def.armor ?? 0)) * this.auraTaken;
+    const soak = (1 - mitigation(enemyArmorRating(this.kind, this.level) * (this.sunderT > 0 ? 0.5 : 1), tier)) * (1 - (this.def.armor ?? 0) * (this.sunderT > 0 ? 0.5 : 1)) * this.auraTaken;
     if (soak !== 1) h = { ...h, dmg: h.dmg * soak };
     // Break: Schwachstelle offen, mehr Schaden
     if (this.brokenT > 0) h = { ...h, dmg: h.dmg * BOSS.breakDmg };
@@ -450,6 +457,8 @@ export class Enemy {
       const c = w.constrain(h.pullX, h.pullZ, this.radius, this);
       this.x = c.x; this.z = c.z; this.vx = this.vz = 0;
     }
+    // Ultimate: die Haltung bricht sofort
+    if (h.breakNow && this.hasPosture && this.brokenT <= 0) h = { ...h, poise: Math.max(h.poise, this.poise / (this.def.boss ? 0.8 : 1) + 1) };
     // Haltungsleiste (Elite, Kommandanten, Endbosse): leer = Bruch (langes Taumeln, mehr Schaden, Finisher), danach lädt sie sich neu
     if (this.hasPosture && this.brokenT <= 0) {
       this.poise -= h.poise * (this.def.boss ? 0.8 : 1);
@@ -578,11 +587,14 @@ export class Enemy {
     this.guardT = Math.max(0, this.guardT - dt);
     this.counterT = Math.max(0, this.counterT - dt);
     this.threat?.update(dt);
-    if (this.auraRegen > 0 && this.alive && this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + this.maxHp * this.auraRegen * dt);
+    // Heilung durch Auren (Feldscher) – nicht, solange Sonnen-Faji sie durchbrennt
+    if (this.auraRegen > 0 && this.sunderT <= 0 && this.alive && this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + this.maxHp * this.auraRegen * dt);
     this.sinceHit += dt;
     this.flash -= dt;
     this.slowT -= dt;
     this.fearT -= dt;
+    this.sunderT = Math.max(0, this.sunderT - dt);
+    this.suppressT = Math.max(0, this.suppressT - dt);
     if (this.frozenT > 0) {
       this.frozenT -= dt;
       if (this.frozenT <= 0) this.char.mixer.timeScale = 1;
@@ -606,7 +618,7 @@ export class Enemy {
         if (this.brokenT <= 0) { this.brokenT = 0; this.poise = this.def.poise; }
         // nach einer Landung (gebrochen in der Luft) taumelt das Ziel den Rest des Bruchs
         else if (FREE.has(this.state)) { this.state = 'stagger'; this.timer = this.brokenT; this.char.play('stun', { fade: 0.08, restart: true }); }
-      } else if (this.poise < this.def.poise && w.playerActive && this.sinceHit > 3) this.poise = Math.min(this.def.poise, this.poise + this.def.poise * (def.boss ? BOSS.breakRegen : POSTURE.regenRate) * dt);
+      } else if (this.poise < this.def.poise && w.playerActive && this.sinceHit > 3 && this.sunderT <= 0) this.poise = Math.min(this.def.poise, this.poise + this.def.poise * (def.boss ? BOSS.breakRegen : POSTURE.regenRate) * dt);
     }
     const speed = def.speed * (def.boss ? 1 + (this.phase - 1) * 0.15 : 1) * (this.slowT > 0 ? 0.45 : 1) * this.auraSpeed * (this.guardT > 0 ? 0.6 : 1);
 
@@ -788,6 +800,10 @@ export class Enemy {
   /** Eingefroren: eisblaue Färbung über das Randlicht (der Treffer-Blitz läuft im Effekt-Shader) */
   private updateFlash() {
     if (this.frozenT > 0) this.char.setTint('#9FE6FF', 0.85);
+    // Sturmblick: das Ausholen leuchtet vorher hell auf (Angriffs-Telegraph)
+    else if (this.foresight && this.state === 'windup') this.char.setTint('#7AD8FF', 0.95);
+    else if (this.suppressT > 0) this.char.setTint('#8A5AFF', 0.55);
+    else if (this.sunderT > 0) this.char.setTint('#FFB04A', 0.5);
     else if (this.guardT > 0) this.char.setTint('#8FC8FF', 0.7);
     else if (this.counterT > 0) this.char.setTint('#FFD27A', 0.75);
     // Boss ab Phase 2: dauerhaft gerötete Ränder (entfesselt), in Phase 3 stärker

@@ -630,3 +630,44 @@
 .fhud.touchmode .fh-style { min-width: 0; }
 .fhud.touchmode .fh-count b { font-size: 2.2em; }
 @media (prefers-reduced-motion: reduce) { .fh-art.ready, .fh-combo.pop b { animation: none; } }
+/* 4.6B: Willenskraft-Leiste (füllt sich im Kampf, voll = Sturm-Erwachen, im Erwachen Restzeit), Aura-Zeichen, Faji-Form, gesperrte Künste */
+.fh-will { display: flex; align-items: center; gap: 0.45em; font: 800 0.58em/1 var(--font-text); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-dim); text-shadow: 0 1px 0 #000, 0 0 6px rgba(0, 0, 0, 0.75); white-space: nowrap; }
+.fh-will u { display: block; width: 15em; height: 0.55em; border: 1px solid color-mix(in srgb, var(--fc) 40%, #000); border-radius: 0.3em; background: rgba(0, 0, 0, 0.6); overflow: hidden; }
+.fh-will u i { display: block; height: 100%; background: linear-gradient(90deg, #7a5a22, var(--brass-100)); transform: scaleX(0); transform-origin: left center; will-change: transform; }
+.fh-will[data-st='full'] { color: var(--brass-100); }
+.fh-will[data-st='full'] u i { background: linear-gradient(90deg, var(--fc), #fff); animation: fh-willpulse 0.9s ease-in-out infinite alternate; }
+.fh-will[data-st='awake'] u i, .fh-will[data-st='ult'] u i { background: linear-gradient(90deg, var(--fa), var(--fc)); }
+.fh-will[data-st='awake'] { color: var(--fc); }
+.fh-will[data-st='ult'] { color: #fff; }
+.fh-will[data-st='ult'] .fh-wt { text-shadow: 0 0 8px var(--fa), 0 1px 0 #000; }
+.fh-wk { padding: 0 0.3em; font-size: 1.05em; letter-spacing: 0; }
+@keyframes fh-willpulse { from { filter: brightness(1); } to { filter: brightness(1.7); } }
+.fh-aura { display: inline-grid; width: 1.75em; height: 1.75em; place-items: center; border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 50%; background: rgba(0, 0, 0, 0.5); color: var(--ink-dim); font: 700 1.15em/1 var(--font-text); letter-spacing: 0; }
+.fh-aura.on { border-color: var(--ac); color: var(--ac); box-shadow: 0 0 8px var(--ac); }
+.fh-form { margin-top: 0.15em; padding: 0.05em 0.35em; border-radius: 0.2em; background: linear-gradient(90deg, color-mix(in srgb, var(--fa) 50%, transparent) calc(var(--fp, 0) * 100%), rgba(0, 0, 0, 0.35) 0); font: 800 0.56em/1.3 var(--font-text); font-style: normal; letter-spacing: 0.1em; text-transform: uppercase; color: #fff; white-space: nowrap; }
+.fh-art.locked .ic, .fh-art.locked .nm { opacity: 0.22; }
+.fh-art.locked::after { content: 'ab ' attr(data-form) '.'; position: absolute; inset: auto 0 0.3em; z-index: 2; font: 800 0.55em/1 var(--font-text); letter-spacing: 0.06em; color: var(--brass-100); text-shadow: 0 1px 0 #000; }
+.fhud.touchmode .fh-will { font-size: 0.52em; }
+.fhud.touchmode .fh-will u { width: 9em; }
+@media (prefers-reduced-motion: reduce) { .fh-will[data-st='full'] u i { animation: none; } }
+
+/* 4.6B: Anime-Impact-Frames und Mini-Zwischensequenz (ui/animeImpactOverlay.ts). Liegt über dem Bild, unter dem HUD, fängt nie Zeiger ab. */
+.anime-impact { position: fixed; inset: 0; z-index: var(--z-impact); overflow: hidden; pointer-events: none !important; --ck: 0; --ag: 0; --ac: #fff; }
+.anime-impact > * { position: absolute; inset: 0; pointer-events: none; }
+.ai-bars i { position: absolute; left: 0; right: 0; height: 11vh; background: #000; transform: scaleY(var(--ck)); transition: none; }
+.ai-bars i:first-child { top: 0; transform-origin: top center; }
+.ai-bars i:last-child { bottom: 0; transform-origin: bottom center; }
+.anime-impact:not(.cine) .ai-bars { display: none; }
+.ai-glow { opacity: calc(var(--ag) * 0.8); background: radial-gradient(ellipse at 50% 55%, transparent 52%, color-mix(in srgb, var(--ac) 20%, transparent) 80%, color-mix(in srgb, var(--ac) 42%, transparent) 100%); }
+/* Die Bildwirkung selbst (invertiert, Tusche) setzt `AnimeImpactOverlay` als CSS-Filter auf das Canvas; hier nur Speedlines und Balken */
+.ai-lines { display: none; }
+.lines .ai-lines { display: block; inset: -25%; background: repeating-conic-gradient(from 0deg at 50% 50%, transparent 0deg 2.2deg, rgba(0, 0, 0, 0.92) 2.5deg 3.1deg, transparent 3.4deg 6.5deg); -webkit-mask-image: radial-gradient(circle, transparent 18%, #000 52%); mask-image: radial-gradient(circle, transparent 18%, #000 52%); }
+.m-inv.lines .ai-lines { background: repeating-conic-gradient(from 1deg at 50% 50%, transparent 0deg 2.2deg, rgba(255, 255, 255, 0.9) 2.5deg 3.1deg, transparent 3.4deg 6.5deg); }
+.ai-cracks { width: 100%; height: 100%; opacity: 0; }
+.ai-cracks.on { opacity: 1; }
+.ai-cracks path { fill: none; stroke: #fff; stroke-width: 0.45; stroke-linecap: round; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 2px #9fd8ff); }
+.ai-cracks path { stroke-width: 2.6px; }
+.ai-cracks path.br { stroke-width: 1.4px; }
+.ai-cracks.shatter { animation: ai-shatter 0.45s ease-in forwards; }
+@keyframes ai-shatter { 0% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.18); filter: blur(1px); } }
+@media (prefers-reduced-motion: reduce) { .ai-cracks.shatter { animation: none; opacity: 0; } }

@@ -49,7 +49,7 @@ import { WorldStreamer, type StreamHost } from './worldStreamer';
 import { EDGE_WARNING, applyEdgeDrift, clampToHardRadius, edgeWarningLevel, newEdgeZone } from './stormEdge';
 import { Environment, type EnvState } from './environment';
 import { coastK, deckHeight, inBox, IslandGround, type Blocker, type WalkIsland } from './islandGround';
-import { BLEND_ARM, CameraBlend, DampedValue, dynamicFovExtra, FocusPulse, FOOT_ARM, HitShake, navalFrame, NearFade, SEA_ARM, SpringArm, SwellFollow, YARD_ARM, smoothK, type CameraWorld, type NavalFrame } from '../graphics/cameraRig';
+import { BLEND_ARM, CameraBlend, DampedValue, dynamicFovExtra, FocusPulse, FOOT_ARM, HitShake, navalFrame, NearFade, orbitBlend, SEA_ARM, SpringArm, SwellFollow, YARD_ARM, smoothK, type CameraWorld, type NavalFrame } from '../graphics/cameraRig';
 import { FactionWarEngine, NationRegistry, cleanFactionWar, warWorldFromDefs, type FactionWarState, type WarNotice } from './factionWarEngine';
 import { FactionWarLive } from './factionWarLive';
 import { factionBanner } from './factionArch';
@@ -74,6 +74,14 @@ import type { IslandStyle } from '../data/regions';
 import { CombatFx } from '../combat/fx';
 import { ActionFx } from '../combat/actionFx';
 import { ACTION_STYLES, actionStyleOf, type ActionStyleId } from '../data/actionStyles';
+import { WILL } from '../data/fajiArts';
+import type { FighterView } from '../ui/fighterHud';
+import { AnimeImpactRig, type RigPose } from '../graphics/animeImpactRig';
+import { CataclysmFx } from '../combat/cataclysmFx';
+import { CataclysmDirector } from './cataclysmDirector';
+import { CUTSCENE } from '../data/cataclysms';
+import type { FighterState } from '../combat/actionCombatEngine';
+import type { UltimateSpec } from '../data/actionKit';
 import { CombatSystem } from '../combat/combat';
 import type { LootDrop } from '../data/loot';
 import { EVENT, WorldEvents } from './events';
@@ -332,6 +340,31 @@ export class SeaWorld {
   /** Angeforderte Trefferpause (vom Spiel in Echtzeit abgearbeitet) */
   /** Trefferpause: t = Zeitlupe (Sekunden), freeze = echtes Standbild (Sekunden, läuft in Echtzeit ab) */
   hitstop = { t: 0, scale: 0.05, freeze: 0 };
+  // ---------- 4.6B: Mini-Zwischensequenz, Impact-Frames und Kataklysmus-Regie ----------
+  /** Kamera-Einstellung und Impact-Frames der Ultimates (Echtzeit, nur lokal) */
+  readonly animeRig = new AnimeImpactRig();
+  /** Effekt-Pool und Regie der Kataklysmen (Schiffe zerteilen, Meer spalten, Sog) */
+  cataclysmFx!: CataclysmFx;
+  cataclysm!: CataclysmDirector;
+  private readonly rigPose: RigPose = { px: 0, py: 0, pz: 0, lx: 0, ly: 0, lz: 0, fov: 40 };
+  private readonly rigLook = new Vector3();
+  private readonly rigCam = new Vector3();
+  private readonly rigHead = new Vector3();
+  private readonly freeLook = new Vector3();
+  private rigFov = 0;
+  private rigFovK = 0;
+  private rigMirror = false;
+  private headBone: import('three').Object3D | null = null;
+  private headBoneOf: unknown = null;
+  /** Start des Vorstoßes beim Auslösen (Iaijutsu, Zyklon) */
+  private ultSX = 0;
+  private ultSZ = 0;
+  /** Glas-Risse über dem Bild (setzt Game: Overlay) */
+  onCracks: (n: number) => void = () => {};
+  /** Meisterschaft einer Faji-Kunst gewonnen (setzt Game: Spielstand, Formstufe) */
+  onFajiMastery: (style: ActionStyleId, pts: number) => void = () => {};
+  /** Tastenkappe für Sturm-Erwachen (setzt Game) */
+  awakenKeyLabel = '';
   // ---------- Kamera-Engine (graphics/cameraRig.ts, Abschluss Phase 4.4) ----------
   /** Treffer-Erschütterung (gerichteter Stoß, Schwingung, Zittern); `scale` = Regler „Kamera-Erschütterung“ */
   readonly hitShake = new HitShake();
@@ -488,6 +521,8 @@ export class SeaWorld {
 
   private player: Character | null = null;
   private foot: PlayerFoot | null = null;
+  /** Spielfigur zu Fuß (Faji-Formen, Aura, Prüfungen) */
+  get playerFoot(): PlayerFoot | null { return this.foot; }
   private npcs: Npc[] = [];
   private outlineNpcs = true;
 
@@ -585,6 +620,8 @@ export class SeaWorld {
     this.debris.onSplash = (x, z, big) => {
       this.spray.emit(big ? 14 : 5, x, this.env.heightAt(x, z) + 0.1, z, { speed: big ? 2.5 : 1.5, up: big ? 5 : 3, life: 0.8, color: FOAM_COL, spread: 0.3 });
     };
+    this.cataclysmFx = new CataclysmFx(this.scene);
+    this.cataclysm = this.makeCataclysm();
     // Meereswerte für die Fahrphysik im Titelbild: ohne Sturmschaden an den Segeln (dort reißt nichts), ein Objekt für alle Schritte
     const titleSea: SeaEnv = { heightAt: (x, z) => this.env.heightAt(x, z), windDir: 0, windStrength: 0, storm: 0, time: 0 };
     this.title = new TitleDirector({
@@ -1141,7 +1178,7 @@ export class SeaWorld {
    */
   warmupExtras(renderer: WebGLRenderer, precompile?: () => Promise<void>): Promise<void> {
     if (!this.assets || !this.fx) return Promise.resolve();
-    return warmupExtras({ renderer, scene: this.scene, camera: this.camera, assets: this.assets, fx: this.fx, particles: this.sparks, precompile });
+    return warmupExtras({ renderer, scene: this.scene, camera: this.camera, assets: this.assets, fx: this.fx, particles: this.sparks, precompile, cataclysm: this.cataclysmFx });
   }
 
   setCharacters(assets: CharacterAssets, look: CharacterLook, style: StyleId, overlay?: CombatOverlay) {
@@ -1206,6 +1243,19 @@ export class SeaWorld {
       slowmo: (t, k) => { this.hitstop.t = Math.max(this.hitstop.t, t); this.hitstop.scale = Math.min(this.hitstop.scale, k); },
       focus: (k) => this.focusPulse.trigger(k, 0.9),
       heavyKey: () => this.heavyKeyLabel,
+      awakenKey: () => this.awakenKeyLabel,
+      onUltimate: (_mv, spec, f) => this.ultimateBegins(spec, f),
+      onUltStrike: (_mv, spec, f) => this.ultimateStrikes(spec, f),
+      onAwaken: (on) => {
+        const f = this.foot?.fighter;
+        const st = f ? ACTION_STYLES[f.style] : null;
+        this.cataclysm.setAwakenAura(on && f ? f : null, st?.color, st?.accent);
+        audio.play(on ? 'cutin' : 'whoosh', on ? 0.9 : 0.5);
+      },
+      onMastery: (style, pts) => this.onFajiMastery(style, pts),
+      onAwakenWave: (f, c, a) => this.cataclysm.awakenWave(f, c, a),
+      onChain: (ax, ay, az, bx, by, bz, c) => this.cataclysm.chain(ax, ay, az, bx, by, bz, c),
+      onKingWave: (x, y, z, r) => this.cataclysm.kingWave(x, y, z, r),
     }, this.pendingAction ?? undefined);
     if (this.combat) this.combat.player = this.foot;
     this.style = style;
@@ -1545,22 +1595,141 @@ export class SeaWorld {
   get actionStyle(): ActionStyleId { return this.foot?.actionStyle ?? this.pendingAction ?? actionStyleOf(this.style); }
 
   /** Was das Fighter-HUD braucht: Stil, Abklingzeiten der vier Kampfkünste, Treffer, letzter Angriff, Luft, Finisher; null = nicht zu Fuß */
-  fighterView(): { style: ActionStyleId; cd: readonly number[]; hits: number; label: string; air: boolean; finisher: boolean; perfect: boolean; counter: boolean } | null {
+  fighterView(): FighterView | null {
     const f = this.foot;
     if (!f || this.mode !== 'foot' || !f.onFoot) return null;
     const st = f.fighter;
     const v = this.fighterTmp;
+    const def = ACTION_STYLES[st.style];
     v.style = st.style;
-    for (let i = 0; i < 4; i++) v.cd[i] = f.engine.skillFrac(i + 1);
+    for (let i = 0; i < 4; i++) {
+      v.cd[i] = f.engine.skillFrac(i + 1);
+      const need = def.faji ? def.skills[i]?.formMin ?? 1 : 1;
+      v.locked[i] = def.faji && need > st.form;
+      v.lockForm[i] = need;
+    }
     v.hits = st.hits;
     v.label = st.lastLabel;
     v.air = !st.grounded;
     v.finisher = !!st.finisherId;
     v.perfect = st.counterT > 0;
     v.counter = st.counterStance > 0;
+    v.will = f.engine.willFrac;
+    v.awakeS = st.awakenT;
+    v.awake = st.awakenT > 0 ? st.awakenT / WILL.awakenDur : 0;
+    v.ult = f.engine.ultAvailable;
+    v.ultName = def.ultimate?.label ?? '';
+    v.aura = st.aura;
+    v.form = def.faji ? st.form : 0;
+    v.formFrac = def.faji ? this.formFracOf(st.style) : 0;
     return v;
   }
-  private readonly fighterTmp = { style: 'saebel' as ActionStyleId, cd: [0, 0, 0, 0], hits: 0, label: '', air: false, finisher: false, perfect: false, counter: false };
+  private readonly fighterTmp: FighterView & { cd: number[]; locked: boolean[]; lockForm: number[] } = {
+    style: 'saebel', cd: [0, 0, 0, 0], hits: 0, label: '', air: false, finisher: false, perfect: false, counter: false,
+    will: 0, awake: 0, awakeS: 0, ult: false, ultName: '', aura: 0, form: 0, formFrac: 0, locked: [false, false, false, false], lockForm: [1, 1, 1, 1],
+  };
+  /** Fortschritt zur nächsten Faji-Form (setzt das Spiel aus der Meisterschaft) */
+  formFracOf: (style: ActionStyleId) => number = () => 0;
+
+  // ---------- 4.6B: Ultimates in der Welt ----------
+
+  /** Regie der Kataklysmen mit ihrem Anschluss an Meer, Himmel, Boden, Schiffe und Trümmer */
+  private makeCataclysm(): CataclysmDirector {
+    const w = this;
+    const dir = new Vector3();
+    return new CataclysmDirector({
+      fx: this.cataclysmFx,
+      get combatFx() { return w.fx; },
+      get naval() { return w.naval; },
+      get debris() { return w.debris; },
+      isLand: (x, z) => { const isl = w.ground.islandAt(x, z); if (!isl) return false; const h = w.groundProxy.height(x, z); return Number.isFinite(h) && h > 0.3; },
+      groundY: (x, z, y) => { const h = w.groundProxy.height(x, z, y + 2); return Number.isFinite(h) && h > -50 ? h : w.env.heightAt(x, z); },
+      waterY: (x, z) => w.env.heightAt(x, z),
+      setTrench: (ax, az, bx, bz, hw, depth) => w.env.ocean.setTrench(ax, az, bx, bz, hw, depth),
+      setRift: (x, y, z, k, color) => {
+        const u = w.env.sky.skyU;
+        if (k <= 0) { if (u.uRift.value.w !== 0) u.uRift.value.w = 0; return; }
+        dir.set(x, y + 650, z).sub(w.camera.position).normalize();
+        u.uRift.value.set(dir.x, dir.y, dir.z, k);
+        u.uRiftCol.value.copy(color);
+      },
+      shake: (k) => { w.shake = Math.max(w.shake, k); },
+      lightning: (x, z) => w.env.weather.strikeAt(w.camera.position, x, z),
+      cracks: (n) => w.onCracks(n),
+    });
+  }
+
+  /** Ultimate ausgelöst: Mini-Zwischensequenz (Kamera, Zeitlupe 0,14 für 0,75 s nur lokal), Energie sammelt sich */
+  private ultimateBegins(spec: UltimateSpec, f: FighterState) {
+    this.ultSX = f.x; this.ultSZ = f.z;
+    this.rigMirror = false;
+    this.animeRig.startCutscene(spec.shot, CUTSCENE.slowDur);
+    this.hitstop.t = Math.max(this.hitstop.t, CUTSCENE.slowDur);
+    this.hitstop.scale = Math.min(this.hitstop.scale, CUTSCENE.slow);
+    this.cataclysm.beginCharge(spec, f, CUTSCENE.slowDur);
+    audio.play('cutin', 1);
+  }
+
+  /** Einschlag: Impact-Frames, Welt-Effekt, Stoß */
+  private ultimateStrikes(spec: UltimateSpec, f: FighterState) {
+    this.animeRig.impact(spec.frames);
+    this.cataclysm.strike(spec, f, this.ultSX, this.ultSZ);
+    this.focusPulse.trigger(1, 1.1);
+    this.hitShake.shake(1);
+    audio.play('boom', 1);
+    if (spec.kind === 'thunderJudgment' || spec.kind === 'iaiWorldBreak') audio.play('thunder', 0.9);
+  }
+
+  /**
+   * Kamera der Mini-Zwischensequenz über die freie Kamera legen (Kugelbahn um den Kopf, nie durch ihn) und das Augen-Leuchten setzen.
+   * Läuft je Bild nach der Fuß-Kamera; `camK` blendet weich hinein und zurück.
+   */
+  private applyAnimeRig(cam: PerspectiveCamera, inMenu: boolean) {
+    const rig = this.animeRig;
+    const k = rig.camK;
+    this.rigFovK = 0;
+    if (!this.player || !this.foot || inMenu || this.mode !== 'foot' || this.yardOn) { if (rig.active && (inMenu || this.mode !== 'foot')) rig.reset(); return; }
+    const head = this.headPos(this.rigHead);
+    if (k > 0.001) {
+      const p = rig.pose(head.x, head.y, head.z, this.foot.yaw, this.rigPose);
+      // steht die Einstellung in festem Material: auf die andere Seite spiegeln
+      this.gatherCam(head.x, head.z, 6);
+      if (!this.rigMirror && this.camSolid(p.px, p.py, p.pz)) this.rigMirror = true;
+      if (this.rigMirror) {
+        const dx = p.px - head.x, dz = p.pz - head.z;
+        const fy = this.foot.yaw, fx = Math.sin(fy), fz = Math.cos(fy);
+        const along = dx * fx + dz * fz, across = dx * fz - dz * fx;
+        p.px = head.x + fx * along - fz * across;
+        p.pz = head.z + fz * along + fx * across;
+      }
+      // Blickpunkt der freien Kamera (vor dem Überblenden) und neue Lage
+      cam.getWorldDirection(this.freeLook).multiplyScalar(6).add(cam.position);
+      this.rigCam.set(p.px, p.py, p.pz);
+      orbitBlend(cam.position, false, this.rigCam, head, k, cam.position);
+      this.rigLook.set(p.lx, p.ly, p.lz);
+      this.freeLook.lerp(this.rigLook, k);
+      cam.lookAt(this.freeLook);
+      this.rigFov = p.fov;
+      this.rigFovK = k;
+    }
+    // Augen-Leuchten in der Zwischensequenz
+    if (rig.glow > 0.02) {
+      const y = this.foot.yaw, fx = Math.sin(y), fz = Math.cos(y), rx = Math.cos(y), rz = -Math.sin(y);
+      const ex = head.x + fx * 0.085, ey = head.y + 0.035, ez = head.z + fz * 0.085;
+      this.cataclysm.eyeGlow(ex + rx * 0.032, ey, ez + rz * 0.032, ex - rx * 0.032, ey, ez - rz * 0.032, rig.glow, this.cataclysm.chargeColor);
+    }
+  }
+
+  /** Kopfmitte der Spielfigur (Knochen des Kopfs, sonst Höhe aus der Figur) */
+  private headPos(out: Vector3): Vector3 {
+    const pl = this.player!;
+    if (this.headBoneOf !== pl.holder) {
+      this.headBoneOf = pl.holder;
+      this.headBone = pl.holder.getObjectByName('J_Bip_C_Head') ?? null;
+    }
+    if (this.headBone) { this.headBone.getWorldPosition(out); out.y += 0.06; return out; }
+    return out.set(pl.holder.position.x, pl.holder.position.y + 1.62, pl.holder.position.z);
+  }
 
   /** Kampfstil der Spielfigur im Moment */
   get currentStyle(): StyleId { return this.style; }
@@ -4119,6 +4288,14 @@ export class SeaWorld {
       cam.position.set(p.x + Math.sin(a) * r, p.y + 1.2 + (3.6 - this.cinematic) * 0.5, p.z + Math.cos(a) * r);
       cam.lookAt(p.x, p.y + 1.3, p.z);
     }
+    // 4.6B: Mini-Zwischensequenz eines Ultimates (Echtzeit), Kataklysmus-Regie (Spielzeit für die Effekte, Echtzeit für Aufladen und Himmel)
+    this.animeRig.update(frameDt);
+    this.applyAnimeRig(cam, inMenu);
+    {
+      const hs = this.hitstop;
+      const gameK = hs.freeze > 0 ? 0 : hs.t > 0 ? hs.scale : 1;
+      this.cataclysm.update(frameDt * gameK, frameDt);
+    }
     // Sichtfeld (4.4): auf See wächst es mit der Fahrt, in Windstraßen (Strömung bis +35 %) und beim Rammstoß um bis zu 8°; zu Fuß zieht der
     // Fokus-Puls es kurz zusammen. Im Titelbild führt die Regie.
     this.focusPulse.update(frameDt);
@@ -4128,7 +4305,9 @@ export class SeaWorld {
       const vmax = Math.max(1, s0.cls.spd * SEA_SPEED);
       const want = seaMode ? dynamicFovExtra(Math.abs(s0.speed) / vmax, Math.max(0, this.lastFlow - 1), s0.boost > 0 ? 1 : 0) : 0;
       const extra = this.fovExtra.step(want, 2.2, frameDt);
-      const fov = baseFov(innerWidth, innerHeight) + extra + this.focusPulse.fovDelta;
+      let fov = baseFov(innerWidth, innerHeight) + extra + this.focusPulse.fovDelta;
+      // Zwischensequenz: Sichtfeld der Einstellung (Gesicht eng, Himmel weit)
+      if (this.rigFovK > 0) fov += (this.rigFov - fov) * this.rigFovK;
       if (Math.abs(cam.fov - fov) > 0.01) cam.fov = fov;
     }
     // Weiche Perspektivwechsel (Anlegen, Bordleiter, Entern, Landgang, Schnellreise, Werft): Wechsel der Kameraart oder Sprung des Fokus

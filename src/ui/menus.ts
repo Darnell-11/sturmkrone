@@ -5,6 +5,7 @@ import type { Game } from '../core/game';
 import type { SaveData } from '../core/save/types';
 import type { Settings, SettingsTab } from '../core/settings';
 import { fmtDist, fmtInt } from '../core/format';
+import { FORM_NAMES, WILL_AURAS, type AuraId, type FajiArtId } from '../data/fajiArts';
 import { EDGE_WALL, WEATHER, WEATHER_IDS, type WeatherId } from '../data/world';
 import { formatClock } from '../world/timeOfDay';
 import { FIGUREHEAD_DEFS, FIGUREHEAD_MODELS, figureheadModel } from '../data/figureheads';
@@ -411,6 +412,7 @@ export class Menus {
         <button class="secondary" data-a="inv">Inventar &amp; Ausrüstung</button>
         <button class="secondary" data-a="compendium">Item-Kompendium</button>
         <button class="secondary" data-a="faji">Faji-Talente</button>
+        <button class="secondary" data-a="arts">Kampfkünste &amp; Auren</button>
         <button class="secondary" data-a="crew">Crew</button>
         <button class="secondary" data-a="rank">Rangliste der Legenden</button>
         <button class="secondary" data-a="rep">Ruf &amp; Ehre</button>
@@ -429,6 +431,7 @@ export class Menus {
         inv: () => { g.resume(); g.openInventory(); },
         compendium: () => this.showCompendium(() => this.showPause()),
         faji: () => { g.resume(); g.openSkills(); },
+        arts: () => this.showMartialArts(() => this.showPause()),
         crew: () => this.showCrew(() => this.showPause()),
         rank: () => this.showRanking(() => this.showPause()),
         rep: () => this.showReputation(() => this.showPause()),
@@ -1352,6 +1355,9 @@ export class Menus {
       <div class="opt"><span class="label">Faji (Test)</span>
         <div class="row"><button class="mini" data-a="sp">+5 Faji-Punkte</button><button class="mini" data-a="lvl">+5 Stufen</button><button class="mini" data-a="awaken">Erwachen zeigen</button></div>
       </div>
+      <div class="opt"><span class="label">Kampfkünste (Test)</span>
+        <div class="row"><button class="mini" data-a="will">Willenskraft füllen</button><button class="mini" data-a="forms">Alle Faji-Formen auf 7</button></div>
+      </div>
       <button class="primary" data-a="back">Zurück</button>`,
       {
         time: (val, el) => { env.time = +val; el.parentElement!.querySelector('output')!.textContent = formatClock(+val); },
@@ -1366,9 +1372,52 @@ export class Menus {
         sp: () => { g.testGrant(5, 0); g.hud.toast('+5 Faji-Punkte'); },
         lvl: () => { g.testGrant(5, 5); g.hud.toast('+5 Stufen'); },
         awaken: () => { g.resume(); g.checkAwakening('koerper'); },
+        will: () => { g.testFaji('will'); g.resume(); g.hud.toast('Willenskraft voll – Sturm-Erwachen bereit'); },
+        forms: () => { g.testFaji('forms'); g.hud.toast('Alle Faji-Künste in der Meisterform (7. Form)'); },
         back: () => this.showPause(),
       },
       () => this.showPause(),
+    );
+  }
+
+  // ---------- Kampfkünste & Auren (4.6B) ----------
+
+  /** Acht Faji-Künste (Form, Meisterschaft, Techniken, Ultimate), eine davon für den Q-Wechsel ausrüsten; Willenskraft-Aura wählen */
+  showMartialArts(back: () => void) {
+    const g = this.game;
+    const v = g.fajiView();
+    if (!v) { back(); return; }
+    const re = () => this.keep(() => { this.showMartialArts(back); });
+    const cards = v.arts.map((a) => {
+      const pct = Math.round(a.frac * 100);
+      const skills = a.skills.map((k) => `<span class="ma-sk${a.form >= k.formMin ? '' : ' off'}" title="${esc(k.label)}">${esc(k.icon)} ${esc(k.label)}${a.form >= k.formMin ? '' : ` · ab ${k.formMin}.`}</span>`).join('');
+      return `<div class="slot ma-art${a.equipped ? ' on' : ''}" style="--c:${a.color};--a:${a.accent}">
+        <div class="slot-head"><b style="color:${a.color}">${esc(a.label)}</b><span>${esc(FORM_NAMES[a.form - 1] ?? '')}</span></div>
+        <div class="meta soft">${esc(a.title)}</div>
+        <div class="ma-bar" role="img" aria-label="Fortschritt ${pct} %"><i style="width:${a.form >= 7 ? 100 : pct}%"></i></div>
+        <div class="meta small">${a.form >= 7 ? 'Meisterform erreicht' : `Meisterschaft ${fmtInt(a.mastery)} / ${fmtInt(a.next)}`}</div>
+        <div class="ma-sks">${skills}</div>
+        <div class="meta small">Ultimate (7. Form, im Sturm-Erwachen): <b>${esc(a.ult)}</b></div>
+        <button class="${a.equipped ? 'primary' : 'secondary'} mini" data-a="equip" data-id="${a.id}" aria-pressed="${a.equipped}">${a.equipped ? 'Ausgerüstet' : 'Ausrüsten'}</button>
+      </div>`;
+    }).join('');
+    const auras = WILL_AURAS.map((a) => `<button data-a="aura" data-id="${a.id}" aria-pressed="${v.aura === a.id}" title="${esc(a.desc)}">${esc(a.icon)} ${esc(a.label)}</button>`).join('');
+    const cur = WILL_AURAS[v.aura] ?? WILL_AURAS[0];
+    this.open(
+      `<h2 class="fell">Kampfkünste &amp; Auren</h2>
+      <p class="soft small">Die acht waffenlosen Faji-Künste wachsen mit jedem Treffer (Meisterschaft) von der 1. bis zur 7. Form: neue Techniken auf den Tasten 1 – 4, in der Meisterform das Ultimate. Die ausgerüstete Kunst liegt im Stilwechsel (Q).</p>
+      <div class="opt"><span class="label">Willenskraft-Aura (Taste B)</span><div class="chips" role="group" aria-label="Aura">${auras}</div><p class="note small">${esc(cur.desc)}</p></div>
+      <p class="note small">Sturm-Erwachen: Die Willenskraft füllt sich im Kampf (Treffer, Sturm-Schritt, Konter, Haltungsbruch). Ist sie voll, löst Taste V das Erwachen aus: 18 s lang +20 % Angriffstempo und eine Energiewelle bei jedem normalen Schlag. Ein zweites V entfesselt einmal das Ultimate des Stils. Gegen Endbosse zählt ein Ultimate wie ein einziger gedeckelter Treffer und bricht sofort ihre Haltung.</p>
+      <div class="ma-grid">${cards}</div>
+      <div class="row"><button class="secondary" data-a="none">Keine Faji-Kunst ausrüsten</button><button class="primary" data-a="back">Zurück</button></div>`,
+      {
+        equip: (id) => { g.equipFaji(id as FajiArtId); re(); },
+        none: () => { g.equipFaji(null); re(); },
+        aura: (id) => { g.setFajiAura(Number(id) as AuraId); re(); },
+        back: () => back(),
+      },
+      back,
+      { wide: true },
     );
   }
 
