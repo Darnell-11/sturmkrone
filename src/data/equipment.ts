@@ -21,9 +21,10 @@ export type RigidKind = string;
 
 /** Oberfläche eines Stücks: bestimmt Glanz, Feinrelief und wie das Licht darauf spielt */
 export type Finish = 'stoff' | 'seide' | 'leder' | 'stahl' | 'dunkelstahl' | 'gold' | 'haut' | 'haar' | 'glut';
-export type PatternId = 'platten' | 'kette' | 'schuppen' | 'brokat' | 'nieten' | 'steppung' | 'streifen' | 'runen';
+export type PatternId = 'platten' | 'kette' | 'schuppen' | 'brokat' | 'nieten' | 'steppung' | 'streifen' | 'runen' | 'filigran';
 /** Nummern der Muster im Shader (render/toon.ts, GEAR_FRAG_GLSL); 8 = schimmernde Runen (4.6G, leuchten im Takt der Ausrüstungs-Glut) */
-export const PATTERN_NO: Record<PatternId, number> = { platten: 1, kette: 2, schuppen: 3, brokat: 4, nieten: 5, steppung: 6, streifen: 7, runen: 8 };
+// 4.6G.2: Runen und Filigran kommen aus der Ornament-Textur (graphics/gearOrnaments.ts)
+export const PATTERN_NO: Record<PatternId, number> = { platten: 1, kette: 2, schuppen: 3, brokat: 4, nieten: 5, steppung: 6, streifen: 7, runen: 8, filigran: 9 };
 /** Bortenarten: 0 schlicht, 1 mit Zierlinie, 2 Zickzack, 3 Energie-Saum (4.6G: wandernde Glut, leuchtet im Bloom) */
 export const TRIM_STYLES = { schlicht: 0, zierlinie: 1, zickzack: 2, energie: 3 } as const;
 /** Saum-Schnitte der Umhänge (4.6G): markante Silhouetten der Endgame-Sets */

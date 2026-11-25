@@ -2,7 +2,7 @@ import { cleanMegaSave } from '../../data/megaIslands';
 import { cleanKaiserSave } from '../../data/kaiserBattle';
 import { CREW_BY_ID, defaultParty } from '../../data/crew';
 import { officerSlots } from '../../data/crewTiers';
-import { sanitizeLook } from '../../data/characterParts';
+import { genderOf, sanitizeLook } from '../../data/characterParts';
 import { cleanConquest, cleanUnlocks } from '../../raid/occupation';
 import { cleanReputation } from '../../data/reputation';
 import { ARMOR, WEAPONS } from '../../data/items';
@@ -238,9 +238,12 @@ export function migrateSave(raw: unknown, gameVersion: string): MigrationResult 
     data = m(data);
   }
   const defaults = createSave('', isRecord(data.player) && data.player.faction === 'marine' ? 'marine' : 'pirat', gameVersion, 0);
+  // 4.6G.2: Geschlecht aus dem Stand selbst, bevor die Standardwerte fehlende Felder füllen (sonst wäre jeder alte Stand „männlich“ – auch eine
+  // Figur mit langer Grundfrisur, die bis 4.6G die weibliche Grundfigur trug)
+  const gender = genderOf(isRecord(data.player) && isRecord(data.player.look) ? data.player.look : null);
   const filled = fillDefaults(data, defaults) as SaveData;
   if (filled.player.faction !== 'pirat' && filled.player.faction !== 'marine') filled.player.faction = 'pirat';
-  filled.player.look = sanitizeLook(filled.player.look, filled.player.faction);
+  filled.player.look = sanitizeLook({ ...filled.player.look, gender }, filled.player.faction);
   // Flotte: nur besessene Klassen außer dem Flaggschiff, Werte begrenzt, Ausbaustufen aus `ship.evo`, nie mehr aktive Schiffe als Plätze
   // Lebendiges Meer: fremde oder kaputte Daten fallen weg (dann beginnt es neu)
   filled.world.seaEvents = cleanWorldEvents(filled.world.seaEvents);

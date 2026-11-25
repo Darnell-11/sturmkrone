@@ -74,7 +74,7 @@ export const CREW: CrewDef[] = [
     lines: ['Ich könnte schwören, da unten glitzert was.', 'Fische sind die besseren Zuhörer.', 'Eine Perle für jeden Tag auf See!', 'Wann tauchen wir wieder?'] },
   { id: 'schmied', name: 'Grete Amboss', job: 'Waffenschmiedin', perk: '+12 % Waffenschaden für dich.', price: 900, rank: 3, col: '#8C5A3A', quote: 'Gib mir zehn Minuten und Kohle, dann schneidet das Ding Wolken.', role: 'tank', style: 'zweihaender', big: 1.12,
     skill: { n: 'Ambossschlag', d: 'Betäubt Gegner mit wuchtigen Schlägen.' },
-    look: { skin: '#C68A5E', outfit: 'weste', outfitColor: '#5A4A3A', hair: 'kurz', hairColor: '#1E1A18', hat: 'keiner', glasses: 'flieger', hatColor: '#C9A13B', body: 'kraeftig' },
+    look: { gender: 'female', skin: '#C68A5E', outfit: 'weste', outfitColor: '#5A4A3A', hair: 'kurz', hairColor: '#1E1A18', hat: 'bandana', glasses: 'flieger', hatColor: '#8C5A3A', body: 'kraeftig' },
     lines: ['Deine Klinge braucht Liebe. Und einen Schleifstein.', 'Feuer, Eisen, Geduld.', 'Ich hör schon, dass die Kanone verzogen ist.', 'Stumpfe Klingen sind gefährlicher als scharfe – für dich.'] },
   { id: 'ram', name: 'Hagen Eisenbug', job: 'Enterkämpfer', perk: '+10 % Angriff, deine Crew kämpft härter.', price: 650, rank: 4, col: '#7A3346', quote: 'Entern? Endlich!', role: 'tank', style: 'zweihaender', big: 1.18,
     skill: { n: 'Enterrausch', d: 'Stürmt vor und zieht Gegner auf sich.' },

@@ -3,7 +3,7 @@
 //
 // Rahmen der Schulterteile: x zeigt von der Halsmitte nach außen, y nach oben, z nach vorn. Der Aufrufer stellt die
 // Gruppe an die Schulter und spiegelt sie für die andere Seite.
-import { CylinderGeometry, Group, type Material } from 'three';
+import { CylinderGeometry, Group, type BufferGeometry, type Material } from 'three';
 import type { CapShell } from '../vroid';
 import type { Finish } from '../../../data/equipment';
 import { Bag, ball, box, cone, cyl, dome, finishMat, gem, glowMat, plate, ring, rng, shade, smoothOutline, tube, xf } from './kit';
@@ -134,7 +134,117 @@ export const SHOULDERS: Record<string, ShoulderBuilder> = {
     bag.add(gem(0.012), glow, { p: [0.048, 0.034, 0], s: [1, 1.3, 1] });
     return bag.build();
   },
+
+  // ---------- 4.6G.2: geschwungene Schulterpanzer der Endgame-Sets (ersetzen die flachen Flügel-Spatel) ----------
+
+  /** Kaiser-Regalia: goldene Hauptschale mit Purpur-Unterlage, Goldkamm, Rubin und drei geschwungenen Schwingen nach hinten oben */
+  schulter_kaiser(c, c2) {
+    const bag = new Bag();
+    const gold = finishMat('gold', c2), silk = finishMat('seide', c), glow = glowMat('#FFD27A', 2.2);
+    pauldronCore(bag, gold, gold, silk, glow, 0.96);
+    // drei Schwingen: gebogene, verjüngte Klingen mit Grat, nach hinten oben ausgestellt
+    for (let i = 0; i < 3; i++) {
+      const k = i / 2;
+      const len = 0.15 - k * 0.04;
+      bag.add(wingBlade(len, 0.024 - k * 0.004, 0.006), gold, { p: [0.035 + k * 0.022, 0.05 - k * 0.012, -0.02 - k * 0.026], r: [-0.55 - k * 0.25, 0.1, -0.55 - k * 0.35] });
+    }
+    bag.add(gem(0.013), glowMat('#E0304A', 2.4), { p: [0.05, 0.03, 0.035], r: [0, 0, -0.5], s: [1, 1.25, 0.6] });
+    return bag.build();
+  },
+
+  /** Sturmkrone-Souverän: sturmweiße Stahlschale mit blauen Leucht-Einlagen und zwei Blitz-Finnen */
+  schulter_souveraen(c, c2) {
+    const bag = new Bag();
+    const steel = finishMat('stahl', c), gold = finishMat('gold', '#F2C24A'), glow = glowMat(c2, 2.6);
+    pauldronCore(bag, steel, gold, finishMat('seide', '#1C2A48'), glow, 1.06);
+    const bolt = smoothOutline([[0, 0], [0.016, 0.05], [0.006, 0.05], [0.026, 0.11], [-0.004, 0.06], [0.008, 0.06], [-0.01, 0]], 1);
+    for (let i = 0; i < 2; i++) bag.add(plate(bolt, 0.006, 0.0016), i ? glow : steel, { p: [0.04 + i * 0.022, 0.045 - i * 0.012, -0.012 - i * 0.03], r: [-0.35, Math.PI / 2, -0.4 - i * 0.25], s: 1.15 - i * 0.2 });
+    return bag.build();
+  },
+
+  /** Kosmos-Umhang: nachtvioletter Panzer mit Sternbild-Edelsteinen und einem feinen Sternenreif */
+  schulter_kosmos(c, c2) {
+    const bag = new Bag();
+    const dark = finishMat('dunkelstahl', c), silver = finishMat('gold', '#E8E0FF'), glow = glowMat(c2, 2.4);
+    pauldronCore(bag, dark, silver, finishMat('seide', '#2A2250'), glow, 1.04);
+    // Sternbild: fünf Sterne auf der Schale, verbunden durch feine Lichtlinien
+    const stars: [number, number, number][] = [[0.03, 0.05, 0.03], [0.05, 0.045, 0.0], [0.045, 0.035, -0.035], [0.07, 0.02, 0.025], [0.075, 0.012, -0.02]];
+    stars.forEach((p, i) => bag.add(gem(i === 1 ? 0.008 : 0.0055), glow, { p, s: [1, 1.3, 1] }));
+    for (let i = 0; i < stars.length - 1; i++) bag.add(tube([stars[i], stars[i + 1]], 0.0011, 4, 4), glow);
+    bag.add(ring(1, 0.0025, 24), silver, { p: [0.04, 0.085, -0.01], r: [Math.PI / 2 + 0.35, 0, -0.45], s: [0.045, 0.045, 1] });
+    return bag.build();
+  },
 };
+
+/**
+ * 4.6G.2: Kern eines geschwungenen Schulterpanzers (Rahmen wie oben: x nach außen, y oben, z vorn). Eine gewölbte Hauptschale, deren unterer
+ * Rand nach außen und oben ausgestellt ist (geschwungen statt Halbkugel), darunter zwei überlappende, ebenfalls ausgestellte Lamellen, an jeder
+ * Kante eine runde Zierleiste, oben ein Kamm von vorn nach hinten, eine Unterlage aus Stoff und Leucht-Einlagen entlang der Lamellen.
+ */
+function pauldronCore(bag: Bag, shell: Material, trim: Material, under: Material, glow: Material, S = 1) {
+  const tilt = -0.42;
+  // Stoff-Unterlage (schaut unter den Lamellen hervor)
+  bag.add(dome(0.07 * S, 0.03 * S, 0.088 * S, 0.9, 1.45, 0, PI * 2, 12), under, { p: [0.018 * S, 0.0, 0], r: [0, 0, tilt] });
+  // Hauptschale
+  bag.add(sweptShell(0.068 * S, 0.05 * S, 0.092 * S, 0, 1.18, 0.22, 18), shell, { p: [0.016 * S, 0.014 * S, 0], r: [0, 0, tilt] });
+  bag.add(xf(ring(1, 0.0058 * S, 24), { s: [0.068 * S * Math.sin(1.18) * 1.22, 0.092 * S * Math.sin(1.18) * 1.22, 1] }, { r: [PI / 2, 0, 0] }, { p: [0, 0.05 * S * Math.cos(1.18) + 0.01 * S, 0] }, { r: [0, 0, tilt] }, { p: [0.016 * S, 0.014 * S, 0] }), trim);
+  // zwei Lamellen, jede tiefer, weiter außen und stärker geneigt
+  for (let i = 0; i < 2; i++) {
+    const k = i + 1, t = tilt - 0.2 * k;
+    const rx = (0.074 + 0.006 * i) * S, ry = 0.052 * S, rz = (0.09 - 0.004 * i) * S;
+    const cx = (0.016 + 0.022 * k) * S, cy = (0.006 - 0.016 * k) * S;
+    bag.add(sweptShell(rx, ry, rz, 0.5, 1.26, 0.18, 18), shell, { p: [cx, cy, 0], r: [0, 0, t] });
+    const er = 1.26;
+    bag.add(xf(ring(1, 0.005 * S, 24), { s: [rx * Math.sin(er) * 1.18, rz * Math.sin(er) * 1.18, 1] }, { r: [PI / 2, 0, 0] }, { p: [0, ry * Math.cos(er) + 0.008 * S, 0] }, { r: [0, 0, t] }, { p: [cx, cy, 0] }), trim);
+    // Leucht-Einlage knapp über der Kante
+    bag.add(xf(ring(1, 0.0018 * S, 18), { s: [rx * Math.sin(er - 0.12) * 1.1, rz * Math.sin(er - 0.12) * 1.1, 1] }, { r: [PI / 2, 0, 0] }, { p: [0, ry * Math.cos(er - 0.12) + 0.004 * S, 0] }, { r: [0, 0, t] }, { p: [cx, cy, 0] }), glow);
+  }
+  // Kamm über die Schale (vorn → hinten), Enden verjüngt
+  // im Raum der Hauptschale gebaut (Bogen über ihren Scheitel), dann wie sie gekippt
+  const crest: [number, number, number][] = [];
+  for (let i = 0; i <= 8; i++) {
+    const a = (i / 8 - 0.5) * 2.0;
+    crest.push([0, 0.05 * S * Math.cos(a) + 0.0035 * S, 0.092 * S * Math.sin(a) * 0.97]);
+  }
+  bag.add(tube(crest, 0.0045 * S, 12, 4), trim, { p: [0.016 * S, 0.014 * S, 0], r: [0, 0, tilt] });
+}
+
+/**
+ * Gewölbte Schale (Kugelausschnitt mit Radien rx, ry, rz von th0 bis th1), deren Rand weich nach außen ausgestellt ist (`flare` × Radius zum Rand
+ * hin) – wie ein getriebener Panzer statt einer glatten Halbkugel. Doppelseitig gezeichnet (Material), Normalen neu.
+ */
+function sweptShell(rx: number, ry: number, rz: number, th0: number, th1: number, flare: number, seg = 24): BufferGeometry {
+  const g = dome(1, 1, 1, th0, th1, 0, PI * 2, seg);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const th = Math.acos(Math.max(-1, Math.min(1, y)));
+    const k = Math.max(0, (th - th0) / Math.max(1e-4, th1 - th0));
+    const f = 1 + flare * k * k * k;
+    p.setXYZ(i, x * rx * f, y * ry + flare * k * k * k * ry * 0.35, z * rz * f);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+/** Geschwungene Klinge einer Schwinge: verjüngt, gebogen (Bogen in der Ebene), mit Mittelgrat; Wurzel am Ursprung, Spitze +Y */
+function wingBlade(len: number, w: number, d: number): BufferGeometry {
+  const pts: [number, number][] = [];
+  const n = 7;
+  for (let i = 0; i <= n; i++) { const t = i / n; pts.push([w * (1 - t) ** 0.8 * 0.5 + Math.sin(t * PI) * w * 0.6, len * t]); }
+  for (let i = n - 1; i >= 1; i--) { const t = i / n; pts.push([-w * (1 - t) ** 0.8 * 0.5 + Math.sin(t * PI) * w * 0.6 - w * 0.15 * t, len * t]); }
+  // ohne Fase (spart zwei Drittel der Dreiecke), der Grat entsteht unten durch die Dickenverteilung
+  const g = plate(pts, d, 0);
+  // Biegung nach hinten (z) mit der Länge, Grat in der Mitte etwas dicker
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const y = p.getY(i), t = y / len;
+    p.setZ(i, p.getZ(i) * (1 + 0.6 * (1 - Math.abs(p.getX(i)) / (w + 1e-4))) - t * t * len * 0.35);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
 
 // ---------- Gürtel ----------
 

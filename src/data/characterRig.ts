@@ -229,8 +229,11 @@ export interface ChainTuning {
   stretch: number;
 }
 
+/** 4.6G.2: Halbmesser der Bein-Kapseln gegen Stoff-Ketten (m): Oberschenkel samt Hose, Unterschenkel samt Stiefelschaft und Stulpe */
+export const LEG_CAPS = { upper: 0.084, lower: 0.074 } as const;
+
 export const CLOTH: Record<'coat' | 'kilt' | 'cape' | 'hair' | 'scarf' | 'ribbon' | 'sleeve', ChainTuning> = {
-  coat: { stiffness: 0.035, damping: 0.95, drag: 1.25, gravity: 1, radius: 0.045, inertia: 0.8, stretch: 1.04 },
+  coat: { stiffness: 0.035, damping: 0.95, drag: 1.25, gravity: 1, radius: 0.055, inertia: 0.8, stretch: 1.04 },
   kilt: { stiffness: 0.06, damping: 0.93, drag: 0.8, gravity: 1, radius: 0.04, inertia: 0.65, stretch: 1.03 },
   cape: { stiffness: 0.025, damping: 0.95, drag: 1.4, gravity: 1, radius: 0.05, inertia: 0.85, stretch: 1.04 },
   hair: { stiffness: 0.14, damping: 0.88, drag: 0.4, gravity: 0.45, radius: 0.016, inertia: 0.5, stretch: 1.02 },
@@ -350,6 +353,27 @@ export const ARM_RELAX = {
   /** Ein- und Ausblenden (je Sekunde) */
   speed: 3.5,
 } as const;
+
+/**
+ * 4.6G.2: Haltung je Geschlecht (rad, additiv über allen Clips, mit jeder Statur kombinierbar). Weiblich: Kontrapost im Stand (Hüfte kippt zum
+ * Standbein, die Fußführung beugt das andere Knie, Oberkörper gleicht aus), Hüftschwung beim Gehen mit Gegendrehung der Brust, Arme mit
+ * Abstand zur breiteren Hüfte, Schultern etwas tiefer und zurück, Kinn leicht gehoben. Männlich: neutral (die Clips allein).
+ */
+export interface FigurePose {
+  /** Faktor auf das Pendeln der Hüfte im Stand */
+  sway: number;
+  /** Kontrapost: Hüftkippung im ruhigen Stand, Ausgleich im Oberkörper (Anteil) */
+  contra: number; contraCounter: number;
+  /** Gehen: Hüftdrehung und -kippung je Schritt, Gegendrehung der Brust */
+  walkYaw: number; walkRoll: number; walkCounter: number;
+  /** Arme näher am Körper (rad weniger Abspreizung, negativ = weiter weg), Schultern (rad, − = tiefer), Kinn (rad, − = gehoben) */
+  armIn: number; shoulders: number; chin: number;
+}
+export const FIGURE_POSE: Record<'male' | 'female', FigurePose> = {
+  male: { sway: 1, contra: 0, contraCounter: 0, walkYaw: 0, walkRoll: 0, walkCounter: 0, armIn: 0, shoulders: 0, chin: 0 },
+  // armIn negativ: die breitere Hüfte der weiblichen Grundfigur braucht mehr Abstand (sonst stachen die Finger durch Hose und Rock)
+  female: { sway: 1.3, contra: 0.05, contraCounter: 0.75, walkYaw: 0.11, walkRoll: 0.045, walkCounter: 0.07, armIn: -0.075, shoulders: -0.022, chin: -0.02 },
+};
 
 /**
  * Obergrenzen der Zusatz-Drehungen aus Atem, Blick, Gewichtsverlagerung und Kurvenneigen (rad). Summen über diesen Werten wirken steif und

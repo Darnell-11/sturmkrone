@@ -1,7 +1,7 @@
 {
   "name": "sturmkrone",
   "private": true,
-  "version": "4.6.6",
+  "version": "4.6.7",
   "description": "Sturmkrone 3.0 – Piratenabenteuer für Browser auf Handy und PC",
   "type": "module",
   "scripts": {

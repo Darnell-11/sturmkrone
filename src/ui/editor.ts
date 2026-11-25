@@ -1,7 +1,7 @@
 import type { StyleId } from '../data/animations';
 import {
-  BEARD_STYLES, BODY_TYPES, CLOTH_COLORS, COATS, COSMETIC_HATS, EYE_COLORS, EYE_STYLES, FACE_SHAPES, GLASSES, HAIR_COLORS, HAIR_STYLES, MOUTH_STYLES,
-  BROW_STYLES, OUTFITS, SKIN_TONES, defaultLook, randomLook, type CharacterLook,
+  BEARD_STYLES, BODY_TYPES, CLOTH_COLORS, COATS, COSMETIC_HATS, EYE_COLORS, EYE_STYLES, FACE_SHAPES, GENDERS, GLASSES, HAIR_COLORS, HAIR_STYLES, MOUTH_STYLES,
+  BROW_STYLES, LOOK_PRESETS, OUTFITS, SKIN_TONES, defaultLook, genderOf, randomLook, type CharacterLook, type Gender, type PresetTab,
 } from '../data/characterParts';
 import type { ExpressionId } from '../data/characterRig';
 import type { Faction, FightStyle } from '../core/save/types';
@@ -87,8 +87,22 @@ const SLOT_ICON: Record<GearCat, string> = { head: '🪖', shoulder: '🛡', che
 const DYE_COLORS = [...CLOTH_COLORS, '#9AA3AD', '#C9A13B', '#E3B04B', '#B070FF', '#7FD8FF', '#C8302A', '#F2F0EA', '#17121F'];
 /** Kopfbedeckungen ohne eigene Farbe (Stahlhelm) */
 const HAT_NO_COLOR = new Set(['keiner', 'helm']);
-/** Frisuren der weiblichen Grundfigur (Anime) */
-const LONG_HAIR = ['lang', 'pferdeschwanz', 'zoepfe', 'zopf', 'dutt'];
+/** 4.6G.2: Größe der Grundfiguren in cm (Regler „Größe“ zeigt Grundgröße × Faktor) */
+export const BASE_CM: Record<Gender, number> = { male: 175, female: 164 };
+
+/** 4.6G.2: Kurzbeschreibung der Geschlechter (Karten oben im Reiter „Körper & Statur“) */
+export const GENDER_INFO: Record<Gender, string> = { male: 'Breite Schultern, kantiges Kinn', female: 'Schmale Taille, eigene Haltung' };
+
+/**
+ * 4.6G.2: Aussehen auf ein anderes Geschlecht umstellen – Grundfrisur des Geschlechts, kein Bart bei Frauen, alles andere (Farben, Kleidung,
+ * Hüte) bleibt. Rein (Tests).
+ */
+export function lookForGender(look: CharacterLook, g: Gender): CharacterLook {
+  const out: CharacterLook = { ...look, gender: g };
+  if (g === 'female') { out.beard = 'keiner'; out.hair = 'lang'; out.height = Math.min(out.height, 1.02); }
+  else if (genderOf(look) === 'female') out.hair = 'kurz';
+  return out;
+}
 
 export interface EditorOptions {
   /** Neues Spiel: Name und Fraktion wählbar */
@@ -218,7 +232,7 @@ export class CharacterEditor {
     this.panel.addEventListener('input', (e) => {
       const el = e.target as HTMLInputElement;
       if (el.id === 'ed-name') this.r.name = el.value;
-      if (el.dataset.k === 'height') { this.r.look.height = +el.value / 100; this.changed(false); el.parentElement?.querySelector('output')!.replaceChildren(`${Math.round(this.r.look.height * 175)} cm`); }
+      if (el.dataset.k === 'height') { this.r.look.height = +el.value / 100; this.changed(false); el.parentElement?.querySelector('output')!.replaceChildren(`${Math.round(this.r.look.height * BASE_CM[genderOf(this.r.look)])} cm`); }
       if (el.dataset.k === 'gearaura') { this.auraLevel = +el.value / 100; this.o.onAuraLevel?.(this.auraLevel); el.parentElement?.querySelector('output')!.replaceChildren(`${Math.round(this.auraLevel * 100)} %`); }
     });
     this.panel.addEventListener('change', (e) => {
@@ -318,20 +332,33 @@ export class CharacterEditor {
       case 'set': look[k] = v; break;
       case 'toggle': look[k] = !look[k]; break;
       case 'mood': this.mood = v as ExpressionId; this.o.onMood?.(this.mood); this.render(); return;
+      case 'gender': {
+        // 4.6G.2: Geschlecht wechseln – Grundfigur, Haltung und Schnitte folgen, die übrigen Werte bleiben
+        this.r.look = lookForGender(this.r.look, v === 'female' ? 'female' : 'male');
+        break;
+      }
+      case 'preset': {
+        const p = LOOK_PRESETS[genderOf(this.r.look)][this.tab as PresetTab]?.find((x) => x.id === v);
+        if (!p) return;
+        this.r.look = { ...this.r.look, ...p.look };
+        if (genderOf(this.r.look) === 'female') this.r.look.beard = 'keiner';
+        break;
+      }
       case 'faction': {
         this.r.faction = v as Faction;
         const keepName = this.r.name !== 'Fynn' && this.r.name !== 'Rekrut';
-        this.r.look = { ...defaultLook(this.r.faction), gloves: this.r.style === 'faust' };
+        this.r.look = { ...defaultLook(this.r.faction, genderOf(this.r.look)), gloves: this.r.style === 'faust' };
         if (!keepName) this.r.name = this.r.faction === 'pirat' ? 'Fynn' : 'Rekrut';
         break;
       }
       case 'style': this.r.style = v as FightStyle; this.r.look.gloves = v === 'faust'; break;
       case 'blade': this.r.blade = v; break;
       case 'random': {
+        // 4.6G.2: Zufall behält das gewählte Geschlecht (Frisur und Bart passend dazu)
         const keep = { gloves: this.r.look.gloves };
-        this.r.look = { ...randomLook(Math.random, this.r.faction === 'marine' ? 'marine' : 'pirat'), ...keep };
-        // Anime: die weibliche Grundfigur trägt keinen Bart (gemessene Bärte passen nur zur männlichen Gesichtsform)
-        if (this.o.anime && LONG_HAIR.includes(this.r.look.hair)) this.r.look.beard = 'keiner';
+        const g = genderOf(this.r.look);
+        this.r.look = lookForGender({ ...randomLook(Math.random, this.r.faction === 'marine' ? 'marine' : 'pirat'), ...keep }, g);
+        if (g === 'male' && genderOf({ hair: this.r.look.hair }) === 'female') this.r.look.hair = 'stachel';
         break;
       }
       case 'slot': this.slot = v as GearCat; this.setCam(this.camFor(this.slot)); this.o.onAura(null); this.render(); return;
@@ -405,6 +432,13 @@ export class CharacterEditor {
   }
 
   private opt(label: string, html: string) { return `<div class="opt"><span class="label">${label}</span>${html}</div>`; }
+
+  /** 4.6G.2: Vorlagen des Reiters für das gewählte Geschlecht (setzen mehrere Werte auf einmal) */
+  private presets(tab: PresetTab) {
+    const list = LOOK_PRESETS[genderOf(this.r.look)][tab];
+    if (!list?.length) return '';
+    return this.opt('Vorlagen', `<div class="chips ed3-presets">${list.map((p) => `<button data-a="preset" data-v="${p.id}">${esc(p.label)}</button>`).join('')}</div>`);
+  }
 
   private rarityPill(r?: Rarity) { return r ? `<span class="ed3-rar" style="--c:${RARITY[r].col}">${RARITY[r].mark} ${RARITY[r].n}</span>` : ''; }
 
@@ -488,12 +522,14 @@ export class CharacterEditor {
         body = (this.o.isNew ? this.opt('Name', `<input id="ed-name" class="txt" maxlength="24" value="${esc(r.name)}" autocomplete="off" aria-label="Name">`)
           + this.opt('Fraktion', `<div class="chips"><button data-a="faction" data-v="pirat" aria-pressed="${r.faction === 'pirat'}">Pirat</button><button data-a="faction" data-v="marine" aria-pressed="${r.faction === 'marine'}">Marine</button></div>
             <p class="tier-desc">${r.faction === 'pirat' ? 'Du beginnst als Schiffsjunge – frei, laut und ohne Gesetz.' : 'Du beginnst als Rekrut der Marine – mit Befehlen, Ehre und Pflicht.'}</p>`) : '')
+          + this.opt('Geschlecht', `<div class="ed3-cards">${(Object.keys(GENDERS) as Gender[]).map((g) => `<button class="ed3-pick" data-a="gender" data-v="${g}" aria-pressed="${genderOf(r.look) === g}"><b>${GENDERS[g]}</b><small>${GENDER_INFO[g]}</small></button>`).join('')}</div>`)
+          + this.presets('koerper')
           + this.opt('Statur', this.cards('body', BODY_TYPES, BODY_INFO))
-          + this.opt('Größe', `<label class="slider">Größe<input type="range" min="90" max="110" step="1" value="${Math.round(r.look.height * 100)}" data-k="height"><output>${Math.round(r.look.height * 175)} cm</output></label>`)
+          + this.opt('Größe', `<label class="slider">Größe<input type="range" min="90" max="110" step="1" value="${Math.round(r.look.height * 100)}" data-k="height"><output>${Math.round(r.look.height * BASE_CM[genderOf(r.look)])} cm</output></label>`)
           + this.opt('Hautton', this.swatches('skin', SKIN_TONES, 'Hautton'));
         break;
       case 'gesicht':
-        body = this.opt('Augenfarbe', this.swatches('eyeColor', EYE_COLORS, 'Augenfarbe'))
+        body = this.presets('gesicht') + this.opt('Augenfarbe', this.swatches('eyeColor', EYE_COLORS, 'Augenfarbe'))
           + (anime ? '<p class="tier-desc">Die Anime-Figuren haben ein fein gezeichnetes Gesicht mit Mimik: Sie blinzeln, strahlen beim Jubeln und bewegen beim Reden den Mund.</p>'
             : this.opt('Gesichtsform', this.chips('face', FACE_SHAPES)) + this.opt('Augen', this.chips('eyes', EYE_STYLES)) + this.opt('Brauen', this.chips('brows', BROW_STYLES)) + this.opt('Mund', this.chips('mouth', MOUTH_STYLES)))
           + this.opt('Mimik ansehen', `<div class="chips">${MOOD_PREVIEW.map((m) => `<button data-a="mood" data-v="${m.id}" aria-pressed="${this.mood === m.id}">${m.label}</button>`).join('')}</div><p class="tier-desc">Nur zur Vorschau – im Spiel wechselt die Miene von selbst.</p>`)
@@ -501,18 +537,20 @@ export class CharacterEditor {
         break;
       case 'haare': {
         if (anime) {
-          const long = LONG_HAIR.includes(r.look.hair);
-          body = this.opt('Frisur', `<div class="ed3-cards"><button class="ed3-pick" data-a="set" data-k="hairModel" data-v="" aria-pressed="${!r.look.hairModel}"><b>Grundfrisur</b><small>Frisur der Anime-Figur</small></button><button class="ed3-pick" data-a="set" data-k="hairModel" data-v="frisur_mehrlagig" aria-pressed="${r.look.hairModel === 'frisur_mehrlagig'}"><b>Mehrlagig</b><small>Nacken-, Seiten- und Ponysträhnen</small></button></div>`)
-            + this.opt('Figur', `<div class="ed3-cards"><button class="ed3-pick" data-a="set" data-k="hair" data-v="kurz" aria-pressed="${!long}"><b>Kurzhaar</b><small>Männliche Grundfigur</small></button><button class="ed3-pick" data-a="set" data-k="hair" data-v="lang" aria-pressed="${long}"><b>Langhaar</b><small>Weibliche Grundfigur</small></button></div>`)
+          // 4.6G.2: die Grundfrisur gehört zum Geschlecht (oben in „Körper & Statur“); Bärte nur bei männlichen Figuren
+          const female = genderOf(r.look) === 'female';
+          body = this.presets('haare')
+            + this.opt('Frisur', `<div class="ed3-cards"><button class="ed3-pick" data-a="set" data-k="hairModel" data-v="" aria-pressed="${!r.look.hairModel}"><b>Grundfrisur</b><small>${female ? 'Lange Zöpfe der Heldin' : 'Wilde Stachelfrisur'}</small></button><button class="ed3-pick" data-a="set" data-k="hairModel" data-v="frisur_mehrlagig" aria-pressed="${r.look.hairModel === 'frisur_mehrlagig'}"><b>Mehrlagig</b><small>Nacken-, Seiten- und Ponysträhnen</small></button></div>`)
             + this.opt('Haarfarbe', this.swatches('hairColor', HAIR_COLORS, 'Haarfarbe'))
-            + (long ? '' : this.opt('Bart', this.chips('beard', BEARD_STYLES) + '<p class="tier-desc">Der Bart hat die Haarfarbe und folgt der Kieferform.</p>'));
+            + (female ? '' : this.opt('Bart', this.chips('beard', BEARD_STYLES) + '<p class="tier-desc">Weich geformte Strähnen in der Haarfarbe, die der Kiefer- und Lippenlinie folgen.</p>'));
           break;
         }
         body = this.opt('Frisur', this.chips('hair', HAIR_STYLES)) + this.opt('Haarfarbe', this.swatches('hairColor', HAIR_COLORS, 'Haarfarbe')) + this.opt('Bart', this.chips('beard', BEARD_STYLES));
         break;
       }
       case 'kleidung':
-        body = '<p class="tier-desc">Dein eigener Look. Ausrüstung aus Beute und Laden legt sich darüber und ersetzt, was am selben Platz sitzt.</p>'
+        body = '<p class="tier-desc">Dein eigener Look. Ausrüstung aus Beute und Laden legt sich darüber und ersetzt, was am selben Platz sitzt. Alle Schnitte passen sich der Figur an.</p>'
+          + this.presets('kleidung')
           + this.opt('Mantel', this.chips('coat', COATS) + (r.look.coat !== 'keiner' ? this.swatches('coatColor', CLOTH_COLORS, 'Mantelfarbe') : '') + (r.look.coat === 'schulter' ? '<p class="tier-desc">Lässig über die Schultern gelegt – die leeren Ärmel schwingen frei.</p>' : ''))
           + this.opt('Oberteil', this.chips('outfit', OUTFITS) + this.swatches('outfitColor', CLOTH_COLORS, 'Farbe des Oberteils'))
           + this.opt('Schärpe und Borten', this.swatches('accentColor', CLOTH_COLORS, 'Zierfarbe'))
@@ -521,7 +559,7 @@ export class CharacterEditor {
           + this.opt('Halstuch', `<div class="chips">${this.toggle('scarf', 'Halstuch tragen')}</div>`);
         break;
       case 'accessoires':
-        body = this.opt('Kopfbedeckung', this.chips('hat', COSMETIC_HATS as unknown as Record<string, string>) + (!HAT_NO_COLOR.has(r.look.hat) ? this.swatches('hatColor', CLOTH_COLORS, 'Hutfarbe') : ''))
+        body = this.presets('accessoires') + this.opt('Kopfbedeckung', this.chips('hat', COSMETIC_HATS as unknown as Record<string, string>) + (!HAT_NO_COLOR.has(r.look.hat) ? this.swatches('hatColor', CLOTH_COLORS, 'Hutfarbe') : ''))
           + this.opt('Brille', this.chips('glasses', GLASSES as unknown as Record<string, string>, 'keine') + '<p class="tier-desc">Brillen sitzen vor den Augen und lassen sich mit jedem Hut kombinieren.</p>')
           + this.opt('Schmuck und Zubehör', `<div class="chips">${this.toggle('eyepatch', 'Augenklappe')}${this.toggle('earring', 'Ohrring')}${this.toggle('gloves', 'Handschuhe')}</div>`);
         break;

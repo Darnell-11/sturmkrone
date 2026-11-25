@@ -505,6 +505,7 @@ export class Hud {
   }
 
   hint(text: string, seconds = 10) {
+    if (this.quiet) return;
     this.hintEl.textContent = text;
     this.hintEl.hidden = false;
     this.hintEl.style.opacity = '1';
@@ -515,7 +516,24 @@ export class Hud {
     }, seconds * 1000);
   }
 
+  /**
+   * 4.6G.2: Ruhe für den Charakter-Editor – solange er offen ist, verwirft das HUD jede Welt-, Handels- und Ereignismeldung (auch verzögerte
+   * über `Game.after`), und was gerade sichtbar ist, verschwindet sofort.
+   */
+  private quiet = false;
+  get isQuiet() { return this.quiet; }
+  setQuiet(on: boolean) {
+    this.quiet = on;
+    if (!on) return;
+    clearTimeout(this.toastTimer);
+    clearTimeout(this.hintTimer);
+    this.toastEl.classList.remove('on');
+    this.toastEl.textContent = '';
+    this.hintEl.hidden = true;
+  }
+
   toast(text: string, seconds = 2.4) {
+    if (this.quiet) return;
     this.toastEl.textContent = text;
     this.toastEl.classList.add('on');
     clearTimeout(this.toastTimer);

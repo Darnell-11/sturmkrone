@@ -11,7 +11,8 @@ export const HAIR_STYLES = {
   kurz: 'Kurz', stachel: 'Stachelig', igel: 'Igel', seitenscheitel: 'Seitenscheitel', wuschel: 'Wuschelig',
   lang: 'Lang', pferdeschwanz: 'Pferdeschwanz', zoepfe: 'Zwei Zöpfe', zopf: 'Zopf', dutt: 'Dutt', glatze: 'Glatze',
 } as const;
-export const BEARD_STYLES = { keiner: 'Keiner', kinnbart: 'Kinnbart', schnurrbart: 'Schnurrbart', vollbart: 'Vollbart', koteletten: 'Koteletten' } as const;
+// 4.6G.2: Drei-Tage-Bart (Stoppeln) neu; Bärte bestehen aus geformten Strähnen (vroid.ts `beard`)
+export const BEARD_STYLES = { keiner: 'Keiner', stoppeln: 'Drei-Tage-Bart', kinnbart: 'Kinnbart', schnurrbart: 'Schnurrbart', vollbart: 'Vollbart', koteletten: 'Koteletten' } as const;
 export const OUTFITS = { hemd: 'Hemd', weste: 'Weste', jacke: 'Jacke', matrose: 'Ringelhemd', uniform: 'Uniform', tunika: 'Tunika' } as const;
 export const COATS = { keiner: 'Keiner', kurz: 'Kurzer Mantel', lang: 'Langer Mantel', kapitaen: 'Kapitänsmantel', schulter: 'Schultermantel' } as const;
 export const SHOES = { stiefel: 'Stiefel', schuhe: 'Schuhe', sandalen: 'Sandalen' } as const;
@@ -30,6 +31,24 @@ export const GEAR_HATS = {
 } as const;
 export const HATS = { ...COSMETIC_HATS, ...GEAR_HATS } as const;
 
+/** 4.6G.2: Geschlecht der Figur – wählt die Grundfigur (Körper, Gesicht, Grundfrisur), Haltung und Bewegung; Kleidung passt sich an */
+export const GENDERS = { male: 'Männlich', female: 'Weiblich' } as const;
+export type Gender = keyof typeof GENDERS;
+/** Frisuren, die bis 4.6G die weibliche Grundfigur wählten (alte Spielstände ohne `gender` behalten so ihre Figur) */
+export const LEGACY_FEMALE_HAIR: readonly string[] = ['lang', 'pferdeschwanz', 'zoepfe', 'zopf', 'dutt'];
+/** Kurze und lange Frisuren (Zufallsfiguren, Wechsel des Geschlechts im Editor) */
+export const MALE_HAIR = ['kurz', 'stachel', 'igel', 'seitenscheitel', 'wuschel', 'glatze'] as const;
+export const FEMALE_HAIR = ['lang', 'pferdeschwanz', 'zoepfe', 'zopf', 'dutt'] as const;
+
+/**
+ * Geschlecht eines Aussehens. Fehlt es (Spielstände bis Version 23 und Daten ohne Angabe), gilt `male` – außer die Figur trug eine der langen
+ * Frisuren, mit denen bis 4.6G die weibliche Grundfigur gewählt wurde: dann bleibt sie weiblich und sieht nach dem Laden aus wie vorher.
+ */
+export function genderOf(l: Partial<Pick<CharacterLook, 'gender' | 'hair'>> | null | undefined): Gender {
+  if (l?.gender === 'female' || l?.gender === 'male') return l.gender;
+  return typeof l?.hair === 'string' && LEGACY_FEMALE_HAIR.includes(l.hair) ? 'female' : 'male';
+}
+
 export type BodyType = keyof typeof BODY_TYPES;
 export type FaceShape = keyof typeof FACE_SHAPES;
 export type EyeStyle = keyof typeof EYE_STYLES;
@@ -43,6 +62,8 @@ export type Shoes = keyof typeof SHOES;
 export type Hat = keyof typeof HATS;
 
 export interface CharacterLook {
+  /** 4.6G.2: Männlich oder Weiblich; fehlt es, gilt `genderOf` (Standard männlich) */
+  gender?: Gender;
   body: BodyType;
   /** 0.9 … 1.1 */
   height: number;
@@ -100,25 +121,110 @@ const SEA_SASHES = ['#A8322A', '#7A1F1A', '#E8B33A', '#2F6E4F', '#1F4E79', '#4A2
 const SEA_COATS = ['#7A1F1A', '#1E1A20', '#5A3A22', '#14284A', '#2F6E4F', '#4A2E6E', '#3A3A44'];
 
 export const LOOK_OPTIONS = {
-  body: BODY_TYPES, face: FACE_SHAPES, eyes: EYE_STYLES, brows: BROW_STYLES, mouth: MOUTH_STYLES,
+  gender: GENDERS, body: BODY_TYPES, face: FACE_SHAPES, eyes: EYE_STYLES, brows: BROW_STYLES, mouth: MOUTH_STYLES,
   hair: HAIR_STYLES, beard: BEARD_STYLES, outfit: OUTFITS, coat: COATS, shoes: SHOES, hat: HATS, glasses: GLASSES,
 } as const;
 
-export function defaultLook(faction: Faction): CharacterLook {
+export function defaultLook(faction: Faction, gender: Gender = 'male'): CharacterLook {
+  if (gender === 'female') return femaleLook(faction);
   return faction === 'pirat'
     ? {
-      body: 'normal', height: 1, skin: '#E8BE96', face: 'rund', eyes: 'gross', eyeColor: '#2F6FB5', brows: 'schraeg', mouth: 'grinsen',
+      gender: 'male', body: 'normal', height: 1, skin: '#E8BE96', face: 'rund', eyes: 'gross', eyeColor: '#2F6FB5', brows: 'schraeg', mouth: 'grinsen',
       hair: 'stachel', hairColor: '#3A2618', beard: 'keiner', outfit: 'weste', outfitColor: '#F3E6C8', accentColor: '#A8322A',
       pantsColor: '#3A3A44', shoes: 'stiefel', shoesColor: '#5A3A22', coat: 'lang', coatColor: '#7A1F1A', hat: 'dreispitz', hatColor: '#1E1A20',
       scar: false, earring: true, eyepatch: false, scarf: false, gloves: false,
     }
     : {
-      body: 'normal', height: 1, skin: '#F0C8A8', face: 'schmal', eyes: 'scharf', eyeColor: '#5A6A78', brows: 'normal', mouth: 'ernst',
+      gender: 'male', body: 'normal', height: 1, skin: '#F0C8A8', face: 'schmal', eyes: 'scharf', eyeColor: '#5A6A78', brows: 'normal', mouth: 'ernst',
       hair: 'seitenscheitel', hairColor: '#D9B25A', beard: 'keiner', outfit: 'uniform', outfitColor: '#FFFFFF', accentColor: '#1F4E79',
       pantsColor: '#FFFFFF', shoes: 'stiefel', shoesColor: '#1E1A20', coat: 'lang', coatColor: '#14284A', hat: 'marine', hatColor: '#FFFFFF',
       scar: false, earring: false, eyepatch: false, scarf: false, gloves: false,
     };
 }
+
+/** 4.6G.2: Grundaussehen der weiblichen Spielfigur je Fraktion (Freibeuterin bzw. Marine-Kadettin) */
+function femaleLook(faction: Faction): CharacterLook {
+  return faction === 'pirat'
+    ? {
+      gender: 'female', body: 'schmal', height: 0.97, skin: '#F0C8A8', face: 'rund', eyes: 'gross', eyeColor: '#3F8F4A', brows: 'hoch', mouth: 'laecheln',
+      hair: 'lang', hairColor: '#A8442A', beard: 'keiner', outfit: 'weste', outfitColor: '#F3E6C8', accentColor: '#A8322A',
+      pantsColor: '#3A3A44', shoes: 'stiefel', shoesColor: '#5A3A22', coat: 'kurz', coatColor: '#7A1F1A', hat: 'dreispitz', hatColor: '#1E1A20',
+      scar: false, earring: true, eyepatch: false, scarf: true, gloves: false,
+    }
+    : {
+      gender: 'female', body: 'schmal', height: 0.97, skin: '#F7DCC6', face: 'schmal', eyes: 'scharf', eyeColor: '#2F6FB5', brows: 'normal', mouth: 'ernst',
+      hair: 'lang', hairColor: '#1E1A18', beard: 'keiner', outfit: 'uniform', outfitColor: '#FFFFFF', accentColor: '#1F4E79',
+      pantsColor: '#14284A', shoes: 'stiefel', shoesColor: '#1E1A20', coat: 'lang', coatColor: '#14284A', hat: 'marine', hatColor: '#FFFFFF',
+      scar: false, earring: false, eyepatch: false, scarf: false, gloves: false,
+    };
+}
+
+/** Ein Vorlagen-Knopf im Editor: setzt mehrere Werte des Aussehens auf einmal */
+export interface LookPreset { id: string; label: string; look: Partial<CharacterLook> }
+export type PresetTab = 'koerper' | 'gesicht' | 'haare' | 'kleidung' | 'accessoires';
+
+/**
+ * 4.6G.2: Vorlagen je Geschlecht und Editor-Reiter (reine Daten, Beschriftungen kurz und deutsch). Sie ändern nur die Werte ihres Reiters –
+ * Kleidung, Farben, Hüte, Haare; das Geschlecht selbst wählt der Editor oben im Reiter „Körper & Statur“.
+ */
+export const LOOK_PRESETS: Record<Gender, Record<PresetTab, readonly LookPreset[]>> = {
+  male: {
+    koerper: [
+      { id: 'm_matrose', label: 'Junger Matrose', look: { body: 'schmal', height: 0.97, skin: '#E8BE96' } },
+      { id: 'm_kapitaen', label: 'Kapitän', look: { body: 'normal', height: 1.03, skin: '#DDA77F' } },
+      { id: 'm_huene', label: 'Hüne', look: { body: 'kraeftig', height: 1.08, skin: '#C68A5E' } },
+    ],
+    gesicht: [
+      { id: 'm_held', label: 'Heldenblick', look: { eyeColor: '#2F6FB5', scar: false } },
+      { id: 'm_narbe', label: 'Narbengesicht', look: { eyeColor: '#B8343A', scar: true } },
+      { id: 'm_ruhig', label: 'Ruhiger Stratege', look: { eyeColor: '#5A6A78', scar: false } },
+    ],
+    haare: [
+      { id: 'm_schwarz', label: 'Rabenschwarz', look: { hairColor: '#1E1A18', beard: 'keiner' } },
+      { id: 'm_seebaer', label: 'Seebär', look: { hairColor: '#8A5A2E', beard: 'vollbart' } },
+      { id: 'm_stoppel', label: 'Draufgänger', look: { hairColor: '#3A2618', beard: 'stoppeln' } },
+      { id: 'm_silber', label: 'Silberfuchs', look: { hairColor: '#C8CCD8', beard: 'kinnbart' } },
+    ],
+    kleidung: [
+      { id: 'm_freibeuter', label: 'Freibeuter', look: { outfit: 'weste', outfitColor: '#F3E6C8', accentColor: '#A8322A', coat: 'lang', coatColor: '#7A1F1A', pantsColor: '#3A3A44', shoes: 'stiefel', scarf: false } },
+      { id: 'm_admiral', label: 'Admiral', look: { outfit: 'uniform', outfitColor: '#FFFFFF', accentColor: '#1F4E79', coat: 'schulter', coatColor: '#14284A', pantsColor: '#FFFFFF', shoes: 'stiefel', scarf: false } },
+      { id: 'm_deck', label: 'Deckmatrose', look: { outfit: 'matrose', outfitColor: '#FFFFFF', accentColor: '#1F4E79', coat: 'keiner', pantsColor: '#3A3A44', shoes: 'schuhe', scarf: true } },
+    ],
+    accessoires: [
+      { id: 'm_dreispitz', label: 'Dreispitz & Ring', look: { hat: 'dreispitz', hatColor: '#1E1A20', glasses: 'keine', earring: true, eyepatch: false } },
+      { id: 'm_gelehrt', label: 'Gelehrter', look: { hat: 'keiner', glasses: 'rund', earring: false, eyepatch: false } },
+      { id: 'm_einauge', label: 'Einäugiger Wolf', look: { hat: 'bandana', hatColor: '#A8322A', glasses: 'keine', earring: true, eyepatch: true } },
+    ],
+  },
+  female: {
+    koerper: [
+      { id: 'f_flink', label: 'Flinke Klinge', look: { body: 'schmal', height: 0.95, skin: '#F0C8A8' } },
+      { id: 'f_kapitaenin', label: 'Kapitänin', look: { body: 'normal', height: 1.0, skin: '#E8BE96' } },
+      { id: 'f_kriegerin', label: 'Kriegerin', look: { body: 'kraeftig', height: 1.04, skin: '#A9714A' } },
+    ],
+    gesicht: [
+      { id: 'f_strahlend', label: 'Strahlend', look: { eyeColor: '#3F8F4A', scar: false } },
+      { id: 'f_kuehl', label: 'Kühler Blick', look: { eyeColor: '#1FA8A8', scar: false } },
+      { id: 'f_narbe', label: 'Kampfnarbe', look: { eyeColor: '#7A4FB8', scar: true } },
+    ],
+    haare: [
+      { id: 'f_rot', label: 'Feuerrot', look: { hairColor: '#A8442A' } },
+      { id: 'f_nacht', label: 'Nachtblau', look: { hairColor: '#2E4F8C' } },
+      { id: 'f_gold', label: 'Goldblond', look: { hairColor: '#D9B25A' } },
+      { id: 'f_silber', label: 'Silberweiß', look: { hairColor: '#F0E6C8' } },
+    ],
+    kleidung: [
+      { id: 'f_freibeuterin', label: 'Freibeuterin', look: { outfit: 'weste', outfitColor: '#F3E6C8', accentColor: '#A8322A', coat: 'kurz', coatColor: '#7A1F1A', pantsColor: '#3A3A44', shoes: 'stiefel', scarf: true } },
+      { id: 'f_offizierin', label: 'Offizierin', look: { outfit: 'uniform', outfitColor: '#FFFFFF', accentColor: '#14284A', coat: 'schulter', coatColor: '#14284A', pantsColor: '#14284A', shoes: 'stiefel', scarf: false } },
+      { id: 'f_seglerin', label: 'Seglerin', look: { outfit: 'matrose', coat: 'keiner', outfitColor: '#FFFFFF', accentColor: '#1F7A8C', pantsColor: '#5A3A22', shoes: 'schuhe', scarf: false } },
+    ],
+    accessoires: [
+      { id: 'f_hut', label: 'Dreispitz & Ring', look: { hat: 'dreispitz', hatColor: '#1E1A20', glasses: 'keine', earring: true, eyepatch: false } },
+      { id: 'f_kopftuch', label: 'Kopftuch', look: { hat: 'bandana', hatColor: '#A8322A', glasses: 'keine', earring: true, eyepatch: false } },
+      { id: 'f_navigatorin', label: 'Navigatorin', look: { hat: 'keiner', glasses: 'rund', earring: false, eyepatch: false } },
+    ],
+  },
+};
 
 /** Prüft und ergänzt einen gespeicherten Look (unbekannte Werte → Standard). */
 export function sanitizeLook(raw: unknown, faction: Faction): CharacterLook {
@@ -127,6 +233,9 @@ export function sanitizeLook(raw: unknown, faction: Faction): CharacterLook {
   const r = raw as Record<string, unknown>;
   const out: any = { ...d };
   for (const [k, opts] of Object.entries(LOOK_OPTIONS)) if (typeof r[k] === 'string' && r[k] as string in opts) out[k] = r[k];
+  // 4.6G.2: Geschlecht – fehlt es, entscheidet genderOf (männlich; alte Stände mit langer Grundfrisur bleiben weiblich)
+  out.gender = genderOf({ gender: r.gender as Gender | undefined, hair: typeof r.hair === 'string' ? r.hair as HairStyle : out.hair });
+  if (out.gender === 'female') out.beard = 'keiner';
   for (const k of ['skin', 'eyeColor', 'hairColor', 'outfitColor', 'accentColor', 'pantsColor', 'shoesColor', 'coatColor', 'hatColor']) {
     if (typeof r[k] === 'string' && /^#[0-9a-f]{6}$/i.test(r[k] as string)) out[k] = r[k];
   }
@@ -145,9 +254,15 @@ const keyOf = <T extends object>(rng: Rng, o: T): keyof T => pickOf(rng, Object.
 export type NpcRole = 'buerger' | 'fischer' | 'haendler' | 'pirat' | 'marine' | 'offizier' | 'koch' | 'schmied' | 'wirt';
 
 /** NPC-Baukasten: zufälliger, aber zur Rolle passender Look. */
+/** 4.6G.2: Anteil weiblicher Figuren je Rolle (Stadtleute, Seeleute, Marine) */
+export const FEMALE_SHARE: Record<NpcRole, number> = { buerger: 0.45, fischer: 0.25, haendler: 0.4, pirat: 0.35, marine: 0.3, offizier: 0.3, koch: 0.3, schmied: 0.2, wirt: 0.35 };
+
 export function randomLook(rng: Rng, role: NpcRole = 'buerger'): CharacterLook {
   const faction: Faction = role === 'marine' || role === 'offizier' ? 'marine' : 'pirat';
   const l = defaultLook(faction);
+  // 4.6G.2: Geschlecht zuerst (eigener Zufallswert), Frisur und Bart passend dazu
+  const female = rng() < FEMALE_SHARE[role];
+  l.gender = female ? 'female' : 'male';
   l.body = keyOf(rng, BODY_TYPES);
   l.height = 0.92 + rng() * 0.16;
   l.skin = pickOf(rng, SKIN_TONES);
@@ -156,9 +271,10 @@ export function randomLook(rng: Rng, role: NpcRole = 'buerger'): CharacterLook {
   l.eyeColor = pickOf(rng, EYE_COLORS);
   l.brows = keyOf(rng, BROW_STYLES);
   l.mouth = keyOf(rng, MOUTH_STYLES);
-  l.hair = keyOf(rng, HAIR_STYLES);
+  l.hair = female ? pickOf(rng, FEMALE_HAIR) : pickOf(rng, MALE_HAIR);
   l.hairColor = pickOf(rng, HAIR_COLORS.slice(0, 8));
-  l.beard = rng() < 0.35 ? keyOf(rng, BEARD_STYLES) : 'keiner';
+  l.beard = !female && rng() < 0.35 ? keyOf(rng, BEARD_STYLES) : 'keiner';
+  if (female) l.height = Math.min(l.height, 1.02);
   l.outfit = pickOf(rng, ['hemd', 'weste', 'jacke', 'matrose', 'tunika'] as Outfit[]);
   // gedeckte Seefahrer-Farben statt Bonbonfarben (die wirkten wie Schuluniformen)
   l.outfitColor = pickOf(rng, SEA_SHIRTS);
@@ -186,5 +302,7 @@ export function randomLook(rng: Rng, role: NpcRole = 'buerger'): CharacterLook {
     case 'offizier': l.outfit = 'uniform'; l.outfitColor = '#FFFFFF'; l.accentColor = '#14284A'; l.coat = rng() < 0.4 ? 'schulter' : 'kapitaen'; l.coatColor = '#14284A'; l.pantsColor = '#FFFFFF'; l.hat = 'zweispitz'; l.hatColor = '#14284A'; break;
     default: break;
   }
+  // Frauen tragen keinen Bart (auch nicht aus den Rollen-Vorgaben)
+  if (female) l.beard = 'keiner';
   return l;
 }

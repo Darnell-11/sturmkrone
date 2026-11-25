@@ -1,6 +1,6 @@
 import { mintEntityId, type EntityId } from '../sim/entityId';
 import { MathUtils, Vector3 } from 'three';
-import { randomLook, sanitizeLook } from '../data/characterParts';
+import { genderOf, randomLook, sanitizeLook } from '../data/characterParts';
 import type { StyleId } from '../data/animations';
 import type { CrewDef } from '../data/crew';
 import { formationSlot } from '../data/crewTiers';
@@ -99,7 +99,7 @@ export class Ally implements AllyTarget {
   arrivedHome = false;
 
   constructor(assets: CharacterAssets, readonly def: CrewDef, level: number, loyalty: number, private slot: number, outline: boolean) {
-    const look = sanitizeLook({ ...randomLook(seeded(def.id.length * 977 + def.name.charCodeAt(0)), 'pirat'), ...(def.look ?? {}) }, 'pirat');
+    const look = sanitizeLook({ ...randomLook(seeded(def.id.length * 977 + def.name.charCodeAt(0)), 'pirat'), ...(def.look ?? {}), gender: genderOf(def.look) }, 'pirat');
     look.gloves = def.style === 'faust';
     this.char = new Character(assets, look, outline);
     const big = def.big ?? 1;

@@ -1,5 +1,5 @@
 import { ConeGeometry, CylinderGeometry, Group, Mesh, SphereGeometry, Vector3, type Scene } from 'three';
-import { randomLook, sanitizeLook } from '../data/characterParts';
+import { genderOf, randomLook, sanitizeLook } from '../data/characterParts';
 import { CREW_BY_ID, type CrewDef } from '../data/crew';
 import { formationSlot, MAX_SQUADS } from '../data/crewTiers';
 import { planSquads, TROOPS, rosterTotal, type CommandState, type TroopRoster } from '../data/troops';
@@ -145,7 +145,7 @@ export class CrewAboard {
         this.deck.push({ def, char: null, cat, tail: cat.userData.tail, acc: 0, home: p, side, yaw: 0, t: 0, task: DEFAULT_TASKS[0], walking: false, goal: p.clone(), speak: 0 });
         return;
       }
-      const look = sanitizeLook({ ...randomLook(seeded(def.id.length * 977 + def.name.charCodeAt(0)), 'pirat'), ...(def.look ?? {}) }, 'pirat');
+      const look = sanitizeLook({ ...randomLook(seeded(def.id.length * 977 + def.name.charCodeAt(0)), 'pirat'), ...(def.look ?? {}), gender: genderOf(def.look) }, 'pirat');
       const c = new Character(this.assets, look, this.outline);
       c.holder.position.copy(p);
       c.holder.scale.setScalar(def.big ?? 1);

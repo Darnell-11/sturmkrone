@@ -32,6 +32,7 @@ import { smoothstep } from '../../core/mathUtil';
 import { clamp01 } from '../../core/mathUtil';
 import { buildClothLayout, type ClothLayout } from './rig/clothRig';
 import { measureSockets, type SocketMeasures } from './rig/characterSockets';
+import { buildBeardGeometry, buildFaceField, jawFromField, type BeardKind, type FaceField, type FaceMarks } from './beardStrands';
 
 /** Unsere Knochennamen (KayKit-Skelett) → VRoid-Knochen */
 export const VROID_BONES: Record<string, string> = {
@@ -47,10 +48,12 @@ const SRC_HAND: Record<string, string> = { wristl: 'handl', wristr: 'handr' };
 const HAND_ALIAS: Record<string, string> = { handl: 'J_Bip_L_Hand', handr: 'J_Bip_R_Hand' };
 
 /** Welche Materialteile wie eingefärbt werden */
-export type TintSlot = 'skin' | 'hair' | 'top' | 'bottom' | 'shoes' | 'iris' | 'brow' | 'fixed';
+export type TintSlot = 'skin' | 'hair' | 'top' | 'bottom' | 'shoes' | 'iris' | 'brow' | 'lash' | 'fixed';
 function slotOf(name: string): TintSlot {
   if (/HAIR/i.test(name)) return 'hair';
   if (/FaceBrow/i.test(name)) return 'brow';
+  // 4.6G.2: Wimpern und Lidstrich eigens (dunkel getönt, ohne Randlicht – gestochen scharf statt blassgrau)
+  if (/FaceEyelash|FaceEyeline/i.test(name)) return 'lash';
   if (/_SKIN/i.test(name)) return 'skin';
   if (/Tops/i.test(name)) return 'top';
   if (/Bottoms/i.test(name)) return 'bottom';
@@ -61,6 +64,9 @@ function slotOf(name: string): TintSlot {
 
 const q1 = new Quaternion(), q2 = new Quaternion(), q3 = new Quaternion();
 const v1 = new Vector3(), v2 = new Vector3();
+
+/** 4.6G.2: Kontrast der Haartextur (vorher 1,15: helle Streifen je Strähne) */
+export const HAIR_CONTRAST = 0.5;
 
 /** Graustufen-Fassung einer Textur, damit beliebige Farben darübergelegt werden können */
 function grayTexture(t: Texture | null, contrast = 1.15): Texture | null {
@@ -312,10 +318,19 @@ export class VroidBase {
       const map = mat.map ? markShared(mat.map) : null;
       this.parts.push({
         name: first.name, slot, map,
-        gray: slot === 'hair' || slot === 'top' || slot === 'bottom' || slot === 'shoes' || slot === 'iris' || slot === 'brow' ? grayTexture(map, slot === 'iris' ? 1.4 : 1.15) : null,
+        // 4.6G.2: Haar mit weicherem Kontrast – die eingebackenen Glanzstreifen der Vorlage zeichneten ein Zebramuster über jede Strähne; das Lichtband
+        // kommt aus dem Shader
+        gray: slot === 'hair' || slot === 'top' || slot === 'bottom' || slot === 'shoes' || slot === 'iris' || slot === 'brow' ? grayTexture(map, slot === 'iris' ? 1.4 : slot === 'hair' ? HAIR_CONTRAST : 1.15) : null,
         transparent: mat.transparent, alphaTest: mat.alphaTest, doubleSided: mat.side === 2,
       });
       first.userData.vroidPart = this.parts.length - 1;
+      // 4.6G.2: Teile mit Morph-Zielen werden nicht zusammengeführt – auch die weiteren Netze der Gruppe gehören zu diesem Teil. Vorher blieb
+      // z. B. das Ohr-Netz der Gesichtshaut beim rohen Vorlagen-Material: ohne Hautton und Anime-Licht, dafür mit AO-Schmutzflecken.
+      if (first.geometry.morphAttributes.position) for (const m of list.slice(1)) {
+        m.userData.vroidPart = this.parts.length - 1;
+        m.frustumCulled = false;
+        if (!m.geometry.attributes.normal) m.geometry.computeVertexNormals();
+      }
       this.partGeo.push(first.geometry);
       first.frustumCulled = false;
     }
@@ -541,6 +556,50 @@ export class VroidBase {
     return out;
   }
 
+  /**
+   * 4.6G.2: Frisur unter einem Hut – Dreiecksliste (Haar ganz über Sitz + Rand fällt weg, nur mit `drop`) und eigene, geteilte Lage: ab 4 cm
+   * unter dem Sitz wird das Haar weich zur Kopfmitte gezogen und über dem Sitz flach gestaucht. So bleibt jede Strähne unter Krempe, Kappe
+   * und Krone (vorher stachen Ponys und Spitzen durch). Je Teil, Sitztiefe und Rand einmal berechnet; null = nichts zu ändern.
+   */
+  private hairHats = new Map<string, { index: BufferAttribute | null; position: BufferAttribute | null }>();
+  hairUnderHat(part: number, sink: number, rim: number, drop: boolean): { index: BufferAttribute | null; position: BufferAttribute | null } {
+    const key = `${part}|${sink}|${rim}|${drop ? 1 : 0}`;
+    const hit = this.hairHats.get(key);
+    if (hit) return hit;
+    const out: { index: BufferAttribute | null; position: BufferAttribute | null } = { index: drop ? this.hairUnderCap(part, sink, rim) : null, position: null };
+    const fit = this.hairFit?.(sink);
+    const head = this.find(this.template, 'J_Bip_C_Head');
+    let mesh: SkinnedMesh | null = null;
+    this.template.traverse((o) => { const m = o as SkinnedMesh; if (m.isSkinnedMesh && m.userData.vroidPart === part) mesh = m; });
+    const m = mesh as SkinnedMesh | null;
+    if (fit && head && m) {
+      this.template.updateMatrixWorld(true);
+      const toHead = head.matrixWorld.clone().invert().multiply(m.matrixWorld);
+      const back = toHead.clone().invert();
+      const src = m.geometry.attributes.position;
+      const pos = new Float32Array(src.count * 3);
+      const lim = fit.radius * HAT_SQUEEZE.radius;
+      let moved = 0;
+      for (let i = 0; i < src.count; i++) {
+        v1.fromBufferAttribute(src, i).applyMatrix4(toHead);
+        const hy = v1.y - fit.seat;
+        if (hy > -HAT_SQUEEZE.band) {
+          const k = smoothstep(-HAT_SQUEEZE.band, 0, hy);
+          // seitlich: nie weiter als der Hutrand (weich ab der Bandhöhe)
+          const dx = v1.x - fit.cx, dz = v1.z - fit.cz, d = Math.hypot(dx, dz);
+          const R = d > 1e-5 ? Math.min(d, lim + (d - lim) * (1 - k)) : d;
+          if (d > 1e-5 && R < d) { v1.x = fit.cx + (dx * R) / d; v1.z = fit.cz + (dz * R) / d; moved++; }
+          // über dem Sitz: flach stauchen (bleibt unter Kuppel und Krone)
+          if (hy > 0) { v1.y = fit.seat + hy * HAT_SQUEEZE.flat; moved++; }
+        }
+        v1.applyMatrix4(back).toArray(pos, i * 3);
+      }
+      if (moved) out.position = markShared(new BufferAttribute(pos, 3));
+    }
+    this.hairHats.set(key, out);
+    return out;
+  }
+
   /** Weibliche Grundfigur? (Rock wird ausgeblendet, darunter trägt sie die erzeugte Hose) */
   get female() { return this.height < 1.7; }
 
@@ -672,22 +731,34 @@ export class VroidBase {
       });
     }
     if (!Number.isFinite(faceZ)) faceZ = (eyeL && eyeR ? (eyeL.position.z + eyeR.position.z) / 2 : 0) - 0.075;
-    // Schläfen: seitlichste Gesichtshaut auf Augenhöhe im vorderen Teil des Kopfes
+    // Schläfen: seitlichste Gesichtshaut auf Augenhöhe vor den Augenknochen (4.6G.2: nur Haut – Wimpern, Augenlinien und Ohr-Teile machten
+    // die Schläfe vorher so breit wie die Ohren, die Brillenbügel standen seitlich ab)
     let templeX = 0;
-    T.traverse((o) => {
-      const m = o as SkinnedMesh;
-      if (!m.isSkinnedMesh || !/^Face/i.test(m.name)) return;
+    const eyeZ = eyeL && eyeR ? (eyeL.position.z + eyeR.position.z) / 2 : faceZ + 0.07;
+    for (const { m, face } of skin) {
+      if (!face) continue;
       const pos = m.geometry.attributes.position;
       for (let i = 0; i < pos.count; i++) {
         P.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld).applyMatrix4(toHead);
-        if (Math.abs(P.y - eyeY) < 0.012 && P.z < faceZ + 0.045) templeX = Math.max(templeX, Math.abs(P.x));
+        if (Math.abs(P.y - eyeY) < 0.012 && P.z < eyeZ && Math.abs(P.x) < 0.085) templeX = Math.max(templeX, Math.abs(P.x));
       }
-    });
+    }
     if (templeX < 0.03) templeX = 0.065;
     const ear = band.filter((v) => v.x > maxX - 0.012);
     const lobeY = ear.length ? Math.min(...ear.map((v) => v.y)) : eyeY - 0.05;
     const earZ = ear.length ? ear.reduce((s, v) => s + v.z, 0) / ear.length : 0;
     const earLobe = new Vector3(maxX, lobeY, earZ);
+    // 4.6G.2: Schädelbreite auf Augenhöhe zwischen Schläfe und Ohr (dort laufen die Brillenbügel gerade nach hinten) und Oberkante des Ohrs
+    let skullX = templeX, earTopY = eyeY - 0.01;
+    for (const { m } of skin) {
+      const pos = m.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        P.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld).applyMatrix4(toHead);
+        const ax = Math.abs(P.x);
+        if (Math.abs(P.y - eyeY - 0.004) < 0.01 && P.z > faceZ + 0.01 && P.z < earZ - 0.018 && ax < maxX - 0.006) skullX = Math.max(skullX, ax);
+        if (ax > maxX - 0.014 && Math.abs(P.z - earZ) < 0.022 && P.y < eyeY + 0.03) earTopY = Math.max(earTopY, P.y);
+      }
+    }
     // Schultern: höchster Hautpunkt über dem Schultergelenk, darüber Hemd, Mantel und etwas Luft
     const body = this.bodySkin(T)!;
     const cl = this.clearance();
@@ -705,7 +776,7 @@ export class VroidBase {
       const w = new Vector3(j.x * 0.92, (Number.isFinite(top) ? top : j.y + 0.04) + Math.min(c, SHIRT_CAP) + 0.026, j.z);
       return w.applyMatrix4(toChest);
     };
-    this.anchorCache = { earLobe, eyeY, shoulders: [shoulder('L'), shoulder('R')], faceZ, templeX };
+    this.anchorCache = { earLobe, eyeY, shoulders: [shoulder('L'), shoulder('R')], faceZ, templeX, skullX, earTopY };
     return this.anchorCache;
   }
 
@@ -949,21 +1020,25 @@ export class VroidBase {
       const toChest = chest.matrixWorld.clone().invert();
       const pos = g.attributes.position, nor = g.attributes.normal, si = g.attributes.skinIndex, sw = g.attributes.skinWeight;
       const P = new Vector3(), N = new Vector3();
+      // 4.6G.2: Normalen in Weltlage (der Körper der Vorlage ist um 180° gedreht – im Netzraum zeigte „vorn“ nach hinten, die Knöpfe saßen
+      // seit 4.6G auf dem Rücken)
+      const nm = new Matrix3().getNormalMatrix(body.matrixWorld);
       const coat = kind === 'mantelLang' || kind === 'mantelKurz';
       const n = kind === 'uniform' ? 6 : coat ? 4 : 5;
       const y0 = neckY - (coat ? 0.13 : 0.1), y1 = hipsY + (coat ? 0.1 : 0.05);
+      const reg = { hipsY, neckY } as Region;
       out = [];
       for (let b = 0; b < n; b++) {
         const y = y0 + (y1 - y0) * (b / (n - 1));
-        const open = 0.04 + smoothstep(hipsY + 0.22, neckY, y) * 0.025;
-        const xs = coat ? [open + 0.014, -(open + 0.014)] : kind === 'weste' ? [0.02 + Math.max(0, y - (hipsY + 0.25)) * 0.12] : [0];
+        const open = this.female ? vNeck(y, reg, 0.012, 0.058) : 0.04 + smoothstep(hipsY + 0.22, neckY, y) * 0.025;
+        const xs = coat ? [open + 0.014, -(open + 0.014)] : kind === 'weste' ? [(this.female ? vNeck(y, reg, 0.008, 0.05) : 0.012 + Math.max(0, y - (hipsY + 0.25)) * 0.12) + 0.008] : [0];
         for (const x of xs) {
           // vorderster Punkt des Stoffs an dieser Stelle (nach vorn zeigende Fläche)
           let best = -1, front = -Infinity;
           for (let i = 0; i < pos.count; i++) {
             P.fromBufferAttribute(pos, i).applyMatrix4(body.matrixWorld);
             if (Math.abs(P.x - x) > 0.011 || Math.abs(P.y - y) > 0.012) continue;
-            N.fromBufferAttribute(nor, i);
+            N.fromBufferAttribute(nor, i).applyMatrix3(nm).normalize();
             if (N.z < 0.3) continue;
             if (P.z > front) { front = P.z; best = i; }
           }
@@ -1040,17 +1115,40 @@ export class VroidBase {
   }
 
   /**
-   * Bart aus der Gesichtsform: Hautpunkte der Bartregion werden nach außen geschoben (Kopfraum, starr am Kopf).
-   * Schnurrbart über der Oberlippe, Kinnbart unter dem Mund, Koteletten vor den Ohren, Vollbart Kiefer und Kinn.
+   * 4.6G.2: Bart aus geformten Strähnen (beardStrands.ts) statt verschobener Gesichtshaut: das Radius-Feld der Gesichtshaut (Kopfraum) trägt die
+   * Strähnen, die Gesichtsmarken (Augen, Mund, Kinn, Ohr, Kieferlinie) setzen Wurzeln und Spitzen. Einmal je Form und Grundfigur, geteilt.
    */
   private beards = new Map<string, BufferGeometry | null>();
-  beard(kind: 'kinnbart' | 'schnurrbart' | 'vollbart' | 'koteletten'): BufferGeometry | null {
+  beard(kind: BeardKind): BufferGeometry | null {
     if (this.beards.has(kind)) return this.beards.get(kind)!;
+    let geo: BufferGeometry | null = null;
+    try {
+      const ff = this.faceField();
+      if (ff) {
+        geo = buildBeardGeometry(kind, ff.field, ff.marks);
+        if (geo) {
+          // Mitte für das Lichtband im Bart (Kopfraum, wie das Haar)
+          geo.userData.hairC = [0, ff.marks.eyeY + 0.02, ff.field.zc];
+          markShared(geo);
+        }
+      }
+    } catch (e) {
+      console.warn('Bart nicht aufgebaut', e);
+      geo = null;
+    }
+    this.beards.set(kind, geo);
+    return geo;
+  }
+
+  /** Radius-Feld und Marken des Gesichts (Kopfraum), einmal je Grundfigur */
+  private faceCache: { field: FaceField; marks: FaceMarks } | null | undefined;
+  faceField(): { field: FaceField; marks: FaceMarks } | null {
+    if (this.faceCache !== undefined) return this.faceCache;
     const T = this.template;
     T.updateMatrixWorld(true);
-    const head = this.find(T, 'J_Bip_C_Head')!;
+    const head = this.find(T, 'J_Bip_C_Head');
+    if (!head) return (this.faceCache = null);
     const toHead = head.matrixWorld.clone().invert();
-    const nmHead = new Matrix3();
     const an = this.anchors();
     // Mund: Mitte der Mundteile (kleines festes Teil vor dem Gesicht unter der Nase)
     let mouthY = an.eyeY - 0.065;
@@ -1062,55 +1160,57 @@ export class VroidBase {
       const bb = m.geometry.boundingBox!.clone().applyMatrix4(m.matrixWorld).applyMatrix4(toHead);
       if (bb.max.y < an.eyeY - 0.03 && bb.max.x - bb.min.x < 0.08) mouthY = (bb.min.y + bb.max.y) / 2;
     });
-    const geos: BufferGeometry[] = [];
-    const P = new Vector3(), N = new Vector3();
+    const zc = an.earLobe.z;
+    const y0 = an.eyeY - 0.22, y1 = an.eyeY + 0.02;
+    // Hautproben auf den Dreiecken (Gesicht und Körper, Abstand ≤ 2 mm), dazu Kinn und Kieferlinie aus dem Gesicht allein
+    const pts: number[] = [];
+    const JAW_N = 48, JAW_T = 2.0;
+    const jaw = new Float32Array(JAW_N).fill(Infinity);
+    let chinY = Infinity;
+    const A = new Vector3(), B = new Vector3(), C = new Vector3(), P = new Vector3();
     T.traverse((o) => {
       const m = o as SkinnedMesh;
       const part = m.isSkinnedMesh ? this.parts[m.userData.vroidPart as number] : null;
-      if (part?.slot !== 'skin' || !/^Face/.test(part.name)) return;
-      const g = m.geometry, pos = g.attributes.position, nor = g.attributes.normal, idx = g.index;
-      if (!idx) return;
-      nmHead.getNormalMatrix(new Matrix4().multiplyMatrices(toHead, m.matrixWorld));
-      const n = pos.count;
-      const off = new Float32Array(n).fill(-1);
-      const PP = new Float32Array(n * 3), NN = new Float32Array(n * 3);
-      for (let i = 0; i < n; i++) {
-        P.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld).applyMatrix4(toHead);
-        N.fromBufferAttribute(nor, i).applyMatrix3(nmHead).normalize();
-        P.toArray(PP, i * 3); N.toArray(NN, i * 3);
-        const ax = Math.abs(P.x), y = P.y;
-        // nur die Vorderseite (Gesicht schaut nach −Z) und nicht die Lippen selbst
-        const front = N.z < 0.2 && P.z < 0.0;
-        const lips = ax < 0.026 && y > mouthY - 0.011 && y < mouthY + 0.007;
-        if (!front || lips) continue;
-        if (kind === 'schnurrbart' && ax < 0.03 && y >= mouthY + 0.007 && y < mouthY + 0.021) off[i] = 0.003;
-        else if (kind === 'kinnbart' && ax < 0.024 && y < mouthY - 0.011) off[i] = 0.004 + Math.max(0, mouthY - 0.02 - y) * 0.12;
-        else if (kind === 'koteletten' && ax > an.earLobe.x - 0.03 && y > an.earLobe.y && y < an.eyeY - 0.005 && P.z < an.earLobe.z - 0.005) off[i] = 0.0035;
-        else if (kind === 'vollbart' && (y < mouthY - 0.011 || (ax > 0.03 && y < an.eyeY - 0.03) || (ax < 0.03 && y >= mouthY + 0.007 && y < mouthY + 0.021))) off[i] = 0.004 + Math.max(0, mouthY - y) * 0.1;
-      }
-      const tris: number[] = [];
+      if (part?.slot !== 'skin' || !m.geometry.index) return;
+      const face = /^Face/.test(part.name);
+      const pos = m.geometry.attributes.position, idx = m.geometry.index;
+      const M = new Matrix4().multiplyMatrices(toHead, m.matrixWorld);
       for (let t = 0; t < idx.count; t += 3) {
-        const a = idx.getX(t), b = idx.getX(t + 1), c = idx.getX(t + 2);
-        if (off[a] >= 0 && off[b] >= 0 && off[c] >= 0) tris.push(a, b, c);
+        A.fromBufferAttribute(pos, idx.getX(t)).applyMatrix4(M);
+        B.fromBufferAttribute(pos, idx.getX(t + 1)).applyMatrix4(M);
+        C.fromBufferAttribute(pos, idx.getX(t + 2)).applyMatrix4(M);
+        if (Math.max(A.y, B.y, C.y) < y0 || Math.min(A.y, B.y, C.y) > y1) continue;
+        if (Math.min(Math.abs(A.x), Math.abs(B.x), Math.abs(C.x)) > 0.13) continue;
+        const e = Math.max(A.distanceTo(B), B.distanceTo(C), C.distanceTo(A));
+        const n = Math.min(10, Math.max(1, Math.ceil(e / 0.002)));
+        for (let i = 0; i <= n; i++) for (let j = 0; j <= n - i; j++) {
+          const u = i / n, v = j / n, w = 1 - u - v;
+          P.set(A.x * w + B.x * u + C.x * v, A.y * w + B.y * u + C.y * v, A.z * w + B.z * u + C.z * v);
+          pts.push(P.x, P.y, P.z);
+          if (!face || P.z > zc) continue;
+          if (Math.abs(P.x) < 0.012) chinY = Math.min(chinY, P.y);
+          const th = Math.atan2(P.x, -(P.z - zc));
+          const k = Math.round(((th + JAW_T) / (2 * JAW_T)) * (JAW_N - 1));
+          if (k >= 0 && k < JAW_N) jaw[k] = Math.min(jaw[k], P.y);
+        }
       }
-      if (!tris.length) return;
-      const remap = new Map<number, number>();
-      const p2: number[] = [], n2: number[] = [];
-      for (const v of tris) if (!remap.has(v)) {
-        remap.set(v, p2.length / 3);
-        p2.push(PP[v * 3] + NN[v * 3] * off[v], PP[v * 3 + 1] + NN[v * 3 + 1] * off[v], PP[v * 3 + 2] + NN[v * 3 + 2] * off[v]);
-        n2.push(NN[v * 3], NN[v * 3 + 1], NN[v * 3 + 2]);
-      }
-      const out = new BufferGeometry();
-      out.setAttribute('position', new BufferAttribute(new Float32Array(p2), 3));
-      out.setAttribute('normal', new BufferAttribute(new Float32Array(n2), 3));
-      out.setIndex(tris.map((v) => remap.get(v)!));
-      geos.push(out);
     });
-    const merged = geos.length > 1 ? mergeGeometries(geos, false) : geos[0] ?? null;
-    if (merged) markShared(merged);
-    this.beards.set(kind, merged);
-    return merged;
+    if (!pts.length) return (this.faceCache = null);
+    if (!Number.isFinite(chinY)) chinY = mouthY - 0.045;
+    // Kieferlinie: Lücken (Spalten ohne Gesicht) aus den Nachbarn, außen höchstens bis zum Ohrläppchen
+    for (let k = 0; k < JAW_N; k++) if (!Number.isFinite(jaw[k])) jaw[k] = an.earLobe.y - 0.01;
+    const jawY = (th: number) => {
+      const f = Math.min(JAW_N - 1.001, Math.max(0, ((th + JAW_T) / (2 * JAW_T)) * (JAW_N - 1)));
+      const i = Math.floor(f), t = f - i;
+      return jaw[i] * (1 - t) + jaw[i + 1] * t;
+    };
+    const field = buildFaceField(pts, zc, y0, y1);
+    // 4.6G.2: Kinn und Kieferlinie aus dem Feld (wo die Haut zum Hals zurückweicht), höchstens so tief wie die Unterkante des Gesichtsnetzes
+    const floor = Math.min(chinY, mouthY - 0.06);
+    const chin = Math.max(chinY, jawFromField(field, 0, mouthY, floor));
+    const jawField = (th: number) => Math.max(jawY(th), jawFromField(field, th, mouthY, floor));
+    const marks: FaceMarks = { eyeY: an.eyeY, mouthY, chinY: chin, ear: { x: an.earLobe.x, y: an.earLobe.y, z: an.earLobe.z }, jawY: jawField };
+    return (this.faceCache = { field, marks });
   }
 
   /** Narbe: schmaler Streifen schräg über die rechte Wange, auf der Gesichtsfläche (Kopfraum) */
@@ -1239,7 +1339,7 @@ export class VroidBase {
     const wp = (n: string) => this.find(this.template, n)?.getWorldPosition(new Vector3()) ?? new Vector3();
     const ankle = wp('J_Bip_L_Foot'), toe = wp('J_Bip_L_ToeBase'), elbow = wp('J_Bip_L_LowerArm'), wrist = wp('J_Bip_L_Hand');
     const hipsY = wp('J_Bip_C_Hips').y, kneeY = wp('J_Bip_L_LowerLeg').y, ankleY = ankle.y, neckY = wp('J_Bip_C_Neck').y;
-    const R: Region = { hipsY, kneeY, ankleY, neckY, leg: kneeY - ankleY, ankleZ: ankle.z, toeZ: toe.z, elbowX: Math.abs(elbow.x), wristX: Math.abs(wrist.x) };
+    const R: Region = { hipsY, kneeY, ankleY, neckY, leg: kneeY - ankleY, ankleZ: ankle.z, toeZ: toe.z, elbowX: Math.abs(elbow.x), wristX: Math.abs(wrist.x), female: this.female };
     const n = pos.count;
     const off = new Float32Array(n).fill(-1);
     const P = new Vector3(), N = new Vector3();
@@ -1724,7 +1824,7 @@ export interface GarmentCtx { under: TopUnder; coat: 'keiner' | 'kurz' | 'lang';
 const PLAIN: GarmentCtx = { under: 'grund', coat: 'keiner' };
 
 /** Maße der Vorlage, nach denen die Stücke zugeschnitten werden (Weltmaß, Ruhehaltung) */
-interface Region { hipsY: number; kneeY: number; ankleY: number; neckY: number; leg: number; ankleZ: number; toeZ: number; elbowX: number; wristX: number }
+export interface Region { hipsY: number; kneeY: number; ankleY: number; neckY: number; leg: number; ankleZ: number; toeZ: number; elbowX: number; wristX: number; /** 4.6G.2: weibliche Grundfigur (V-Ausschnitt statt breiter Öffnung über der Brust) */ female?: boolean }
 
 /** Körperregionen als Bits; ein Hautpunkt gehört zu einer Region, wenn ihre Knochen zusammen mehr als die Hälfte wiegen */
 const C_HAND = 0, C_ARM = 1, C_UPARM = 2, C_TORSO = 3, C_PELVIS = 4, C_FOOT = 5, C_UPLEG = 6, C_LOWLEG = 7, C_LOWARM = 8, NCLS = 9;
@@ -1734,12 +1834,22 @@ function boneClass(b: string): number {
   if (/UpperArm$|LowerArm$/.test(b)) c |= 1 << C_ARM;
   if (/UpperArm$/.test(b)) c |= 1 << C_UPARM;
   if (/LowerArm$/.test(b)) c |= 1 << C_LOWARM;
-  if (/Hips$|Spine$|Chest$|UpperChest$|Shoulder$/.test(b)) c |= 1 << C_TORSO;
+  // 4.6G.2: die Brust der weiblichen Grundfigur hängt an Zusatzknochen (J_Sec_*_Bust*) – sie gehört zum Rumpf (sonst ließ der Mantel dort ein Loch)
+  if (/Hips$|Spine$|Chest$|UpperChest$|Shoulder$|Bust\d*$/.test(b)) c |= 1 << C_TORSO;
   if (/Hips$|_Spine$/.test(b)) c |= 1 << C_PELVIS;
   if (/Foot$|Toe/.test(b)) c |= 1 << C_FOOT;
   if (/UpperLeg$/.test(b)) c |= 1 << C_UPLEG;
   if (/LowerLeg$/.test(b)) c |= 1 << C_LOWLEG;
   return c;
+}
+
+/**
+ * 4.6G.2 (Prüfungen): Regions-Gewichte eines Hautpunkts aus seinen Knochen (Name, Gewicht) – wie `buildGarment` sie für `garmentOffset` bildet.
+ */
+export function classWeights(bones: [string, number][]): Float32Array {
+  const who = new Float32Array(NCLS);
+  for (const [b, w] of bones) { const c = boneClass(b); for (let j = 0; j < NCLS; j++) if (c & (1 << j)) who[j] += w; }
+  return who;
 }
 
 /** Stücke ohne Unterteilen und Glätten (harte Teile, schmale Riemen) */
@@ -1748,8 +1858,11 @@ const HARD = new Set<GarmentKind>(['handschuhe', 'armschiene', 'beinschiene']);
 const BANDS = new Set<GarmentKind>(['schal', 'kragen', 'guertel', 'armschiene', 'beinschiene']);
 /** Säume an der Schnittlinie schneiden (statt angeschnittene Dreiecke wegzulassen) */
 const CUT_HEMS = true;
-/** Anteil, mit dem die Schöße des langen Mantels am Becken hängen (Rest folgt dem Bein) */
-const TAIL_HIPS = 0.55;
+/** Anteil, mit dem die Schöße des langen Mantels am Becken hängen (Rest folgt dem Bein); 4.6G.2: mehr am Becken (Beine stachen beim Schritt durch) */
+const TAIL_HIPS = 0.68;
+/** 4.6G.2: halbe Breite des hinteren Gehschlitzes am Saum (m) und Ausstellung der Mantelschöße (Abstand an der Hüfte + Zuwachs je m nach unten) */
+export const COAT_VENT = 0.034;
+export const COAT_FLARE = { base: 0.034, per: 0.22 } as const;
 
 /** Schlüssel eines Stücks: der Zusammenhang zählt nur bei den Stücken, deren Form von ihm abhängt */
 export function garmentKey(kind: GarmentKind, ctx: GarmentCtx) {
@@ -1779,6 +1892,8 @@ const BASE_TIGHT = 0.025;
 const BASE_RINGS = 1;
 /** Haare bleiben bis so weit über dem Hutrand stehen (m, Kopfraum) */
 const CAP_RIM = 0.035;
+/** 4.6G.2: Stauchung des Haars unter Hüten: ab `band` m unter dem Sitz nach innen bis `radius` × Frisurbreite, darüber Höhe × `flat` */
+export const HAT_SQUEEZE = { band: 0.04, radius: 0.95, flat: 0.62 } as const;
 
 /** Deckt die Textur an dieser Stelle? (Kleidung der Grundfigur hat teils durchsichtige Bereiche) */
 function alphaSampler(t: Texture | null): ((u: number, v: number) => boolean) | null {
@@ -1832,7 +1947,11 @@ export interface CapShell { geo: BufferGeometry; seatY: number; cx: number; cz: 
  * faceZ (4.6G): Gesichtsoberfläche vor den Augen im Kopfraum (z, das Gesicht schaut nach −Z) – die Augenknochen liegen 7 bis 8 cm dahinter;
  * templeX: halbe Gesichtsbreite an den Schläfen auf Augenhöhe (dort sitzen die Scharniere einer Brille)
  */
-export interface Anchors { earLobe: Vector3; eyeY: number; shoulders: [Vector3, Vector3]; faceZ: number; templeX: number }
+export interface Anchors {
+  earLobe: Vector3; eyeY: number; shoulders: [Vector3, Vector3]; faceZ: number; templeX: number;
+  /** 4.6G.2: halbe Schädelbreite auf Augenhöhe zwischen Schläfe und Ohr (Brillenbügel laufen dort gerade nach hinten), Oberkante des Ohrs */
+  skullX?: number; earTopY?: number;
+}
 
 /** Knoten und Schnalle am Band: Lage im Hüftraum und die Knochen, die das Band dort bewegen */
 export interface BeltAnchors { knot: Vector3; knotPin: SkinPin; buckle: Vector3; bucklePin: SkinPin }
@@ -1844,7 +1963,7 @@ export interface BeltAnchors { knot: Vector3; knotPin: SkinPin; buckle: Vector3;
  * cTop/cBot/cShoe: Abstand der Grundkleidung (Hemd, Hose, Schuhe) an diesem Punkt, −1 = keine.
  * Schichten von innen nach außen: Hemd → Ringelhemd/Tunika → Weste/Jacke → Gürtel/Schärpe → Schal → Mantel.
  */
-function garmentOffset(kind: GarmentKind, who: ArrayLike<number>, P: Vector3, N: Vector3, r: Region, cTop: number, cBot: number, cShoe: number, ctx: GarmentCtx): number {
+export function garmentOffset(kind: GarmentKind, who: ArrayLike<number>, P: Vector3, N: Vector3, r: Region, cTop: number, cBot: number, cShoe: number, ctx: GarmentCtx): number {
   const isPelvis = who[C_PELVIS] > 0.5;
   const arm = who[C_ARM] > 0.5;
   const hand = who[C_HAND] > 0.5;
@@ -1895,7 +2014,9 @@ function garmentOffset(kind: GarmentKind, who: ArrayLike<number>, P: Vector3, N:
       if (cTop < 0 && !(torso && P.y > r.hipsY - 0.04 && P.y < r.neckY + 0.02)) return -1;
       if (P.y < r.hipsY - 0.04 || P.y > r.neckY + 0.02) return -1;
       // schmaler als die Mantelöffnung, damit die Weste im Ausschnitt sichtbar bleibt
-      if (N.z > 0.35 && N.y < 0.45 && Math.abs(P.x) < 0.012 + Math.max(0, P.y - (r.hipsY + 0.25)) * 0.12) return -1;
+      // 4.6G.2: gerader Schnitt nach der Lage (vorn, schmaler Streifen) statt nach der Neigung der Haut – an der weiblichen Brust folgte die Öffnung
+      // sonst der Brustform (Bikini-Ausschnitt); nur nach oben zeigende Flächen (Schultern) bleiben bedeckt
+      if (N.z > 0.05 && N.y < 0.7 && Math.abs(P.x) < (r.female ? vNeck(P.y, r, 0.008, 0.05) : 0.012 + Math.max(0, P.y - (r.hipsY + 0.25)) * 0.12)) return -1;
       // immer 8 mm über dem engen Hemd darunter
       return Math.max(0.016, slim + 0.008);
     }
@@ -1944,8 +2065,10 @@ function garmentOffset(kind: GarmentKind, who: ArrayLike<number>, P: Vector3, N:
       // bis über die Schultern (die Schulterhaut liegt auf Höhe des Halsansatzes; Hals und Kopf gehören zu eigenen Knochen)
       if (torso && P.y >= r.hipsY - 0.03 && P.y < r.neckY + 0.03) {
         // offene Front: schmales V, Schultern und nach oben zeigende Flächen bleiben bedeckt
-        const open = 0.04 + smoothstep(r.hipsY + 0.22, r.neckY, P.y) * 0.025;
-        if (N.z > 0.4 && N.y < 0.45 && Math.abs(P.x) < open) return -1;
+        // weiblich: schmaler V-Ausschnitt, der unter der Brust schließt (keine Öffnung über die ganze Brust)
+        const open = r.female ? vNeck(P.y, r, 0.012, 0.058) : 0.04 + smoothstep(r.hipsY + 0.22, r.neckY, P.y) * 0.025;
+        // 4.6G.2: gerade, senkrechte Öffnung (an der weiblichen Brust folgte sie sonst der Brustform); Schultern bleiben bedeckt
+        if (N.z > 0.05 && N.y < 0.7 && Math.abs(P.x) < open) return -1;
         const band = smoothstep(r.hipsY - 0.03, r.hipsY - 0.005, P.y) * (1 - smoothstep(r.hipsY + 0.075, r.hipsY + 0.1, P.y));
         return over + band * 0.016;
       }
@@ -1953,7 +2076,10 @@ function garmentOffset(kind: GarmentKind, who: ArrayLike<number>, P: Vector3, N:
       if (kind === 'mantelLang' && who[C_TORSO] + who[C_UPLEG] > 0.5 && P.y < r.hipsY && P.y > r.kneeY + 0.02) {
         if (N.z > 0.2) return -1;
         if ((P.x > 0 && N.x < -0.35) || (P.x < 0 && N.x > 0.35)) return -1;
-        return Math.max(0.03 + (r.hipsY - P.y) * 0.16, over + 0.01);
+        // 4.6G.2: hinterer Gehschlitz – öffnet sich von einer Handbreit unter dem Gesäß bis zum Saum, das Bein schwingt hindurch statt durch den Stoff
+        if (N.z < -0.25 && Math.abs(P.x) < COAT_VENT * smoothstep(r.hipsY - 0.12, r.kneeY + 0.04, P.y)) return -1;
+        // weiter ausgestellt (Hüllkurve über Gesäß, Oberschenkel und Stiefelschaft beim Schritt)
+        return Math.max(COAT_FLARE.base + (r.hipsY - P.y) * COAT_FLARE.per, over + 0.01);
       }
       return -1;
     }
@@ -1987,10 +2113,13 @@ function garmentOffset(kind: GarmentKind, who: ArrayLike<number>, P: Vector3, N:
       // Die Innenseiten der Oberschenkel bleiben frei (sonst stechen die beiden Hälften ineinander).
       const bot = r.hipsY - (r.hipsY - r.kneeY) * 0.6;
       if (hand || arm || who[C_TORSO] + who[C_UPLEG] <= 0.5 || P.y > r.hipsY + 0.012 || P.y < bot) return -1;
-      if ((P.x > 0.005 && N.x < -0.3) || (P.x < -0.005 && N.x > 0.3)) return -1;
+      // Innenseiten der Oberschenkel frei – 4.6G.2: erst eine Handbreit unter dem Gürtel (oben bleibt der Schurz vorn geschlossen, vorher klaffte
+      // dort ein gezacktes Loch, durch das die Hose stach)
+      if (P.y < r.hipsY - 0.07 && ((P.x > 0.005 && N.x < -0.3) || (P.x < -0.005 && N.x > 0.3))) return -1;
       const k = clamp01((r.hipsY + 0.012 - P.y) / (r.hipsY + 0.012 - bot));
-      // unter dem Gürtel: knapp über dem, was darunter liegt
-      return Math.max(0.016, under + 0.008) + k * k * 0.028;
+      // unter dem Gürtel: knapp über dem, was darunter liegt – 4.6G.2: auch über dem Saum eines eigenen Oberteils (Jacke, Uniform, Tunika lagen
+      // sonst gleich weit außen und flackerten durch die Platten)
+      return Math.max(0.016, under + 0.008, own ? T + 0.008 : 0) + k * k * 0.028;
     }
     case 'kragen': {
       // Stehkragen bzw. Halsberge: höher und weiter als das Halstuch, oben nach außen aufgestellt
@@ -2008,6 +2137,11 @@ function garmentOffset(kind: GarmentKind, who: ArrayLike<number>, P: Vector3, N:
       return Math.max(0.026, topSurface() + 0.009);
     }
   }
+}
+
+/** 4.6G.2: halbe Breite eines V-Ausschnitts (m): `bottom` an der Taille, nach oben linear bis `top` am Halsansatz */
+function vNeck(y: number, r: Region, bottom: number, top: number) {
+  return bottom + (top - bottom) * clamp01((y - (r.hipsY + 0.06)) / Math.max(0.05, r.neckY - (r.hipsY + 0.06))) ** 1.6;
 }
 
 /** Borten reichen höchstens so weit vom Rand (m); weiter entfernte Punkte bekommen diesen Wert */

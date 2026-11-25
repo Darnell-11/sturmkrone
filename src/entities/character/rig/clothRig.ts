@@ -122,7 +122,8 @@ export function buildClothLayout(template: Object3D, body: SkinnedMesh, hair: Sk
           if (d < 1e-4 || (px * dx + pz * dz) / d < Math.cos(Math.PI / S + 0.15)) continue;
           r = Math.max(r, px * dx + pz * dz);
         }
-        r = Math.max(r, 0.09) + 0.036 + 0.014 * (i / L);
+        // 4.6G.2: weiter außen und nach unten stärker ausgestellt, hinten zusätzlich nach hinten (Beine und Stiefelschäfte schwingen darin frei)
+        r = Math.max(r, 0.09) + 0.046 + 0.03 * (i / L) + (dz < -0.3 ? 0.012 * (i / L) * -dz : 0);
         v1.set(hp.x + dx * r, y, hp.z + dz * r);
         toLocal(hipsB, v1).toArray(rest, (s * (L + 1) + i) * 3);
         if (i > 0) g.names.push(boneName('tails', s, i));
@@ -270,9 +271,10 @@ export function buildClothLayout(template: Object3D, body: SkinnedMesh, hair: Sk
       const ua = find(n);
       if (!ua) continue;
       const p = ua.getWorldPosition(new Vector3());
-      // Schulterkuppe: höchster Hautpunkt über dem Oberarm-Gelenk
+      // Schulterkuppe: höchster Hautpunkt über dem Oberarm-Gelenk – höchstens 9 cm darüber (4.6G.2: bei den schmalen Schultern der weiblichen
+      // Grundfigur lag sonst die Kopfhaut im Suchfenster und die Ärmel hingen auf Kopfhöhe, sie standen senkrecht nach oben)
       let top = -Infinity;
-      for (let k = 0; k < bpos.count; k++) if (Math.abs(skin[k * 3] - p.x) < 0.035 && Math.abs(skin[k * 3 + 2] - p.z) < 0.05) top = Math.max(top, skin[k * 3 + 1]);
+      for (let k = 0; k < bpos.count; k++) if (Math.abs(skin[k * 3] - p.x) < 0.035 && Math.abs(skin[k * 3 + 2] - p.z) < 0.05 && skin[k * 3 + 1] < p.y + 0.09) top = Math.max(top, skin[k * 3 + 1]);
       if (!Number.isFinite(top)) top = p.y + 0.04;
       ends.push([new Vector3(s * Math.max(Math.abs(p.x) + sv.out, 0.2), top - 0.025, p.z - sv.back), s]);
     }
@@ -294,26 +296,33 @@ export function buildClothLayout(template: Object3D, body: SkinnedMesh, hair: Sk
 }
 
 /**
- * Röhre je Ärmel-Kette (Körperraum): Ringe aus 8 Punkten entlang der Kette (leicht oval, zum Aufschlag weiter), am Aufschlag eine nach innen
- * versetzte, dunkle Kappe (die leere Öffnung). Gewichte wie bei den Bändern: Rahmen bzw. Kettenknochen davor und danach.
+ * Röhre je Ärmel-Kette (Körperraum), 4.6G.2: ein leerer, schlaff hängender Stoffärmel – oben eine runde Schulterkappe, darunter eine flach
+ * gedrückte, konisch zum Aufschlag verjüngte Röhre mit weichen Falten (quer laufende Wellen, die nach unten zunehmen), am Aufschlag ein leicht
+ * ausgestellter Saum und eine nach innen versetzte, dunkle Kappe (die leere Öffnung). Gewichte wie bei den Bändern: Rahmen bzw. Kettenknochen.
  */
 export function sleeveGeo(g: ChainGroupLayout, anchor: Object3D, body: SkinnedMesh, rTop: number, rCuff: number): SleeveGeo {
   const sk = body.skeleton;
   const idx = (name: string) => Math.max(0, sk.bones.findIndex((b) => b.name === name));
   const ai = idx(anchor.name);
-  const RS = 8, rowsPer = g.links * 2 + 1;
-  const ringN = g.chains * rowsPer * RS, capN = g.chains * (RS + 1);
+  const RS = 16, rowsPer = g.links * 3 + 1, DOME = 3;
+  // je Ärmel: Spitze der Kappe, DOME Kuppelringe, rowsPer Röhrenringe; danach die Innenkappen am Aufschlag
+  const perSleeve = 1 + (DOME + rowsPer) * RS;
+  const ringN = g.chains * perSleeve, capN = g.chains * (RS + 1);
   const n = ringN + capN;
   const pos = new Float32Array(n * 3), si = new Uint16Array(n * 4), sw = new Float32Array(n * 4), rimD = new Float32Array(n);
   const toBody = body.matrixWorld.clone().invert();
   const P = new Vector3(), A = new Vector3(), B = new Vector3(), T = new Vector3(), N1 = new Vector3(), N2 = new Vector3(), Q = new Vector3();
+  const T0 = new Vector3(), P0 = new Vector3(), N10 = new Vector3(), N20 = new Vector3();
   const tri: number[] = [];
   const len = g.links > 0 ? (() => { let L = 0; for (let i = 0; i < g.links; i++) { const o = i * 3; L += Math.hypot(g.rest[o + 3] - g.rest[o], g.rest[o + 4] - g.rest[o + 1], g.rest[o + 5] - g.rest[o + 2]); } return L; })() : 0.5;
+  // Radius entlang (u = 0 Schulter … 1 Aufschlag): oben voll, verjüngt sich konisch, am Saum leicht ausgestellt
+  const radAt = (u: number) => (rTop + (rCuff * 0.68 - rTop) * Math.pow(u, 0.85)) * (1 + 0.16 * Math.max(0, (u - 0.9) / 0.1) ** 2);
+  const ringOf = (c: number, r: number) => c * perSleeve + 1 + r * RS;
   for (let c = 0; c < g.chains; c++) {
     const side = c === 0 ? 1 : -1;
-    let last = 0, lastK = 0, lastF = 0;
-    for (let r = 0; r < rowsPer; r++) {
-      const s = (r / (rowsPer - 1)) * g.links;
+    const tip = c * perSleeve;
+    let lastK = 0, lastF = 0;
+    const frame = (s: number) => {
       const k = Math.min(g.links - 1, Math.floor(s)), f = s - k;
       const o0 = (c * (g.links + 1) + k) * 3, o1 = o0 + 3;
       A.set(g.rest[o0], g.rest[o0 + 1], g.rest[o0 + 2]).applyMatrix4(anchor.matrixWorld);
@@ -323,34 +332,63 @@ export function sleeveGeo(g: ChainGroupLayout, anchor: Object3D, body: SkinnedMe
       // Ring quer zur Kette: N1 ≈ seitlich (x der Figur), N2 = vorn/hinten
       N1.set(1, 0, 0).addScaledVector(T, -T.x).normalize();
       N2.crossVectors(T, N1).normalize();
-      const u = r / (rowsPer - 1);
-      const rad = rTop + (rCuff - rTop) * u * u;
+      return { k, f };
+    };
+    const weights = (j: number, k: number, f: number) => {
+      const b0 = k === 0 ? ai : idx(g.names[c * g.links + k - 1]);
+      const b1 = idx(g.names[c * g.links + k]);
+      si[j * 4] = b0; sw[j * 4] = 1 - f; si[j * 4 + 1] = b1; sw[j * 4 + 1] = f;
+    };
+    // Schulterkappe: Halbkugel über dem ersten Ring (Spitze oben), sitzt am Rahmen der Schulter
+    frame(0);
+    T0.copy(T); P0.copy(P); N10.copy(N1); N20.copy(N2);
+    const r0 = radAt(0);
+    Q.copy(P0).addScaledVector(T0, -r0 * 0.85).applyMatrix4(toBody).toArray(pos, tip * 3);
+    si[tip * 4] = ai; sw[tip * 4] = 1; rimD[tip] = len;
+    for (let d = 0; d < DOME; d++) {
+      const a = ((d + 1) / (DOME + 1)) * (Math.PI / 2);
+      const rr = r0 * Math.sin(a), up = r0 * 0.85 * Math.cos(a);
       for (let e = 0; e < RS; e++) {
-        const a = (e / RS) * Math.PI * 2;
-        const j = (c * rowsPer + r) * RS + e;
-        // leicht oval (vorn/hinten tiefer), der leere Stoff fällt oben etwas flach
-        Q.copy(P).addScaledVector(N1, Math.cos(a) * rad * (0.82 + 0.1 * u) * side).addScaledVector(N2, Math.sin(a) * rad * 1.08);
+        const ang = (e / RS) * Math.PI * 2;
+        const j = ringOf(c, d) + e;
+        Q.copy(P0).addScaledVector(T0, -up).addScaledVector(N10, Math.cos(ang) * rr * 0.95 * side).addScaledVector(N20, Math.sin(ang) * rr * 0.58);
         Q.applyMatrix4(toBody).toArray(pos, j * 3);
-        const b0 = k === 0 ? ai : idx(g.names[c * g.links + k - 1]);
-        const b1 = idx(g.names[c * g.links + k]);
-        si[j * 4] = b0; sw[j * 4] = 1 - f; si[j * 4 + 1] = b1; sw[j * 4 + 1] = f;
+        si[j * 4] = ai; sw[j * 4] = 1; rimD[j] = len;
+      }
+    }
+    for (let r = 0; r < rowsPer; r++) {
+      const s = (r / (rowsPer - 1)) * g.links;
+      const { k, f } = frame(s);
+      const u = r / (rowsPer - 1);
+      const rad = radAt(u);
+      // leerer Stoff liegt flach (vorn/hinten gedrückt); weiche Falten: quer laufende Wellen, nach unten stärker und gegeneinander versetzt
+      const fold = 0.08 * Math.min(1, u * 2.2);
+      const flat = 0.58 + 0.12 * u;
+      for (let e = 0; e < RS; e++) {
+        const ang = (e / RS) * Math.PI * 2;
+        const j = ringOf(c, DOME + r) + e;
+        const wob = 1 + fold * Math.sin(ang * 3 + u * 11 + c) + fold * 0.5 * Math.sin(ang * 5 - u * 17);
+        Q.copy(P).addScaledVector(N1, Math.cos(ang) * rad * 0.95 * wob * side).addScaledVector(N2, Math.sin(ang) * rad * flat * wob);
+        Q.applyMatrix4(toBody).toArray(pos, j * 3);
+        weights(j, k, f);
         rimD[j] = (1 - u) * len;
       }
-      if (r > 0) {
-        const a0 = (c * rowsPer + r - 1) * RS, b0 = a0 + RS;
-        for (let e = 0; e < RS; e++) {
-          const e1 = (e + 1) % RS;
-          // Umlaufsinn nach außen (Seite gespiegelt: die linke Röhre läuft andersherum)
-          if (side > 0) tri.push(a0 + e, a0 + e1, b0 + e, a0 + e1, b0 + e1, b0 + e);
-          else tri.push(a0 + e, b0 + e, a0 + e1, a0 + e1, b0 + e, b0 + e1);
-        }
-      }
-      last = r; lastK = k; lastF = f;
+      lastK = k; lastF = f;
     }
-    void last;
+    // Dreiecke: Spitze → erster Kuppelring, dann Ring an Ring bis zum Aufschlag (Umlaufsinn nach außen, Seite gespiegelt)
+    const f0 = ringOf(c, 0);
+    for (let e = 0; e < RS; e++) { const e1 = (e + 1) % RS; if (side > 0) tri.push(tip, f0 + e1, f0 + e); else tri.push(tip, f0 + e, f0 + e1); }
+    for (let r = 1; r < rowsPer + DOME; r++) {
+      const a0 = ringOf(c, r - 1), b0 = ringOf(c, r);
+      for (let e = 0; e < RS; e++) {
+        const e1 = (e + 1) % RS;
+        if (side > 0) tri.push(a0 + e, a0 + e1, b0 + e, a0 + e1, b0 + e1, b0 + e);
+        else tri.push(a0 + e, b0 + e, a0 + e1, a0 + e1, b0 + e, b0 + e1);
+      }
+    }
     // Kappe 2,5 cm innen am Aufschlag: Mitte und Ring, dunkel (Character färbt sie), Normalen zum Aufschlag hin
     const cb = ringN + c * (RS + 1);
-    const lastRing = (c * rowsPer + rowsPer - 1) * RS;
+    const lastRing = ringOf(c, DOME + rowsPer - 1);
     const o0 = (c * (g.links + 1) + lastK) * 3, o1 = o0 + 3;
     A.set(g.rest[o0], g.rest[o0 + 1], g.rest[o0 + 2]).applyMatrix4(anchor.matrixWorld);
     B.set(g.rest[o1], g.rest[o1 + 1], g.rest[o1 + 2]).applyMatrix4(anchor.matrixWorld);
@@ -362,7 +400,7 @@ export function sleeveGeo(g: ChainGroupLayout, anchor: Object3D, body: SkinnedMe
       else {
         Q.fromArray(pos, (lastRing + e) * 3).applyMatrix4(body.matrixWorld).addScaledVector(T, -0.025);
         // Kappe minimal enger als die Röhre (liegt innen, nie davor)
-        Q.lerp(P.clone().addScaledVector(T, -0.025), 0.06);
+        Q.lerp(P.clone().addScaledVector(T, -0.025), 0.08);
       }
       Q.applyMatrix4(toBody).toArray(pos, j * 3);
       const b1 = idx(g.names[c * g.links + g.links - 1]);

@@ -1,3 +1,4 @@
+import { gearOrnamentTexture } from '../graphics/gearOrnaments';
 import {
   Color,
   DataTexture,
@@ -104,7 +105,8 @@ export interface ToonOptions {
   ringel?: number;
   /**
    * Ausrüstungs-Verzierung (nur mit `surface`): Borte am Saum (Attribut rimD = Abstand zum Rand in Metern), Muster (Kettenhemd,
-   * Platten, Schuppen, Brokat, Nieten, Steppung) und Farben je Stück aus den Attributen trimC, patC und gset (Muster, Maß, Bortenbreite, Bortenart).
+   * Platten, Schuppen, Brokat, Nieten, Steppung, Streifen, Runen, Filigran) und Farben je Stück aus den Attributen trimC, patC und gset (Muster, Maß,
+ * Bortenbreite, Bortenart).
    */
   trim?: boolean;
   /**
@@ -136,6 +138,11 @@ export interface ToonOptions {
   forge?: ForgeKind;
   /** Meter je Kachel (Standard: aus dem Rezept) */
   forgeScale?: number;
+  /**
+   * 4.6G.2: eigene Schmiede-Textur (ORMH, kachelbar, z. B. Bart-Strähnen) statt eines Satzes aus der Schmiede – nur Figuren-Materialien.
+   * Läuft über dieselben Uniforms wie die Schmiede (kein neues Programm); `depth` = Relieftiefe in m, `rough` = Grundrauheit der Textur.
+   */
+  forgeTex?: { tex: Texture; depth: number; rough: number };
   /** Gelände: steile Hänge werden zu Fels dieser Art (Neigung aus der Eckpunkt-Normale, dreiseitig projiziert im Inselraum) */
   slopeRock?: ForgeKind;
   /** Farbe des Hangfelsens */
@@ -148,6 +155,12 @@ const SURF_ID: Record<Surface, number> = { plain: 0, skin: 1, cloth: 2, leather:
 export const CHARACTER_INK = false;
 /** Alpha, das Figuren schreiben: die Kantenerkennung (render/outline.ts) lässt diese Pixel aus; für Spiegelungen und AO zählt es als 1 */
 export const CHAR_ALPHA = 0.98;
+/**
+ * 4.6G.2: Alpha für Haut, Haar, Augen und Gesichtsteile (Oberfläche plain) der Figuren. Zählt für Kanten (outline.ts) und Spiegelungen wie CHAR_ALPHA, die Umgebungsverdeckung
+ * (gtao.ts) lässt diese Pixel aber ganz aus: die Halbauflösungs-AO legte unter Ponys und Haarsträhnen braune Schmutzflecken auf Stirn, Ohren und Hals.
+ * Auch in 8-Bit-Puffern unterscheidbar (252/255 gegen 250/255).
+ */
+export const CLEAN_ALPHA = 0.99;
 
 /**
  * Figuren-Fassung eines Toon-Materials (gleiche Optionen plus Oberfläche). Ohne Angabe: Metall wird Stahl, alles andere Stoff.
@@ -466,25 +479,32 @@ const GEAR_FRAG_GLSL = /* glsl */ `
         float s = smoothstep(0.42, 0.5, abs(fract(skGuv.x * 0.5) - 0.5));
         diffuseColor.rgb = mix(diffuseColor.rgb, vGPat, s * 0.9 * skGfade);
       } else {
-        // Runen (4.6G): je Zelle ein Zeichen aus bis zu drei Strichen, umrahmt von einem feinen Kreis; die Zeichen glimmen nacheinander auf
-        vec2 q = skGuv * 0.5;
-        vec2 cell = floor(q);
-        vec2 f = fract(q) - 0.5;
-        float h = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);
-        float h2 = fract(h * 7.31), h3 = fract(h * 3.17);
-        // nur jede dritte Zelle trägt ein Zeichen (verstreut statt Tapete), feine Striche, Zeichen kleiner als die Zelle
-        float w = 0.024;
-        float on = step(h, 0.36);
-        f *= 1.35;
-        float s1 = (1.0 - smoothstep(w, w * 1.8, abs(f.x - (h2 - 0.5) * 0.18))) * step(abs(f.y), 0.3);
-        float s2 = (1.0 - smoothstep(w, w * 1.8, abs(f.y - f.x * (h2 > 0.5 ? 0.9 : -0.9)))) * step(abs(f.x), 0.2) * step(0.3, h3);
-        float s3 = (1.0 - smoothstep(w, w * 1.8, abs(f.y + 0.16 - h3 * 0.32))) * step(abs(f.x), 0.18) * step(0.45, h2);
-        float ring = (1.0 - smoothstep(w * 0.6, w * 1.3, abs(length(f) - 0.42))) * step(0.55, h3);
-        float glyph = max(max(s1, s2), max(s3, ring)) * on * skGfade;
-        // langsames Aufglimmen nacheinander, dazwischen fast verloschen
-        float shimmer = 0.12 + 0.88 * pow(0.5 + 0.5 * sin(uSkWetTime * 1.3 + h2 * 6.2832 + skGp.y * 2.0), 4.0);
-        diffuseColor.rgb = mix(diffuseColor.rgb, vGPat, glyph * 0.55);
-        totalEmissiveRadiance += vGPat * glyph * shimmer * 0.6 * uSkGearGlow;
+        // 4.6G.2: Runen (8) und Filigran (9) aus der Ornament-Textur (graphics/gearOrnaments.ts, 512 × 512): R = Zeichen, G = Ranken, B = Hof.
+        // Ableitungen ohne den Sprung der Umfangskoordinate (atan) – sonst eine Naht aus der kleinsten Mip-Stufe am Rücken
+        bool skFil = skGpat > 8.5;
+        vec2 q = skGuv * (skFil ? 0.25 : 0.125);
+        vec2 dqx = dFdx(q), dqy = dFdy(q);
+        dqx.x -= floor(dqx.x + 0.5); dqy.x -= floor(dqy.x + 0.5);
+        vec3 orn = textureGrad(uSkOrn, q, dqx, dqy).rgb;
+        if (!skFil) {
+          // Runen: Zeichen in der Zierfarbe, dunkle Gravur außen herum, Glimmen wandert von Zeichen zu Zeichen
+          float glyph = smoothstep(0.35, 0.65, orn.r) * skGfade;
+          float halo = clamp(orn.b - orn.r, 0.0, 1.0) * skGfade;
+          vec2 cellId = floor(q * 4.0);
+          float h = fract(sin(dot(cellId, vec2(12.9898, 78.233))) * 43758.5453);
+          float shimmer = 0.2 + 0.8 * pow(0.5 + 0.5 * sin(uSkWetTime * 1.3 + h * 6.2832 + skGp.y * 2.0), 3.0);
+          diffuseColor.rgb *= 1.0 - halo * 0.45;
+          diffuseColor.rgb = mix(diffuseColor.rgb, vGPat, glyph * 0.85);
+          totalEmissiveRadiance += vGPat * (glyph * 0.95 + halo * 0.3) * shimmer * 0.75 * uSkGearGlow;
+        } else {
+          // Filigran: goldene Ranken mit feiner Kehle daneben (Prägung), glänzender als der Grund
+          float fil = smoothstep(0.3, 0.7, orn.g) * skGfade;
+          float groove = smoothstep(0.05, 0.3, orn.g) * (1.0 - fil) * skGfade;
+          diffuseColor.rgb *= 1.0 - groove * 0.3;
+          diffuseColor.rgb = mix(diffuseColor.rgb, vGPat, fil * 0.92);
+          skRoughK *= mix(1.0, 0.45, fil);
+          totalEmissiveRadiance += vGPat * fil * 0.06 * uSkGearGlow;
+        }
       }
     }
     // Borte am Rand des Stücks
@@ -492,7 +512,8 @@ const GEAR_FRAG_GLSL = /* glsl */ `
     if (skGw > 0.0005) {
       float aa = fwidth(vGRim) * 0.8 + 1e-5;
       float rimD = vGRim;
-      if (vGSet.w > 1.5) rimD += (abs(fract(skGp.x * 90.0 + skGp.z * 90.0) - 0.5) - 0.25) * skGw * 0.9;
+      // Zickzack nur bei Bortenart 2 (4.6G.2: der Energie-Saum 3 erbte es und zeichnete eine weiße Zackennaht oben am Mantelrücken)
+      if (vGSet.w > 1.5 && vGSet.w < 2.5) rimD += (abs(fract(skGp.x * 90.0 + skGp.z * 90.0) - 0.5) - 0.25) * skGw * 0.9;
       float band = 1.0 - smoothstep(skGw - aa, skGw + aa, rimD);
       diffuseColor.rgb = mix(diffuseColor.rgb, vGTrim, band);
       // dunkle Kante an der Borte und, bei Art 1, eine feine Zierlinie knapp darüber
@@ -504,11 +525,15 @@ const GEAR_FRAG_GLSL = /* glsl */ `
         diffuseColor.rgb = mix(diffuseColor.rgb, vGTrim, line);
       }
       if (vGSet.w > 2.5) {
-        // Energie-Saum (4.6G): heller Kern in der Borte, Lichtwellen laufen den Saum entlang, ein weicher Schein darüber
+        // Energie-Saum (4.6G, 4.6G.2 fließend): heller, scharfer Kern mitten in der Borte, Lichtwellen laufen den Saum entlang, darüber
+        // züngelnde Ausläufer (Flammenzungen), die mit der Welle wandern, und ein weicher Schein
         float run = atan(skGp.x, skGp.z) * 5.0 + skGp.y * 24.0 - uSkWetTime * 2.8;
         float pulse = 0.55 + 0.45 * sin(run) * sin(run * 0.37 + 1.3);
+        float core = 1.0 - smoothstep(skGw * 0.12, skGw * 0.12 + aa * 1.5, abs(rimD - skGw * 0.5));
         float halo = (1.0 - smoothstep(skGw, skGw * 2.8, rimD)) * (1.0 - band);
-        totalEmissiveRadiance += vGTrim * (band * (0.35 + 0.55 * pulse) + halo * 0.18 * pulse) * uSkGearGlow;
+        float tongue = pow(max(0.5 + 0.5 * sin(run * 3.1 + skGp.y * 40.0), 0.0), 5.0) * (1.0 - smoothstep(skGw, skGw * 2.2, rimD)) * (1.0 - band);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), core * 0.5);
+        totalEmissiveRadiance += vGTrim * (band * (0.3 + 0.5 * pulse) + core * (0.8 + 0.6 * pulse) + halo * 0.18 * pulse + tongue * 0.55) * uSkGearGlow;
       }
     }
   }
@@ -577,7 +602,12 @@ const MICRO_PARS_GLSL = /* glsl */ `
 `;
 const MICRO_FRAG_GLSL = /* glsl */ `
   vec3 skMicroN = normal;
-  if ((skSurf >= 1 && skSurf <= 4) || skSurf == 7) {
+  bool skMicroOn = (skSurf >= 1 && skSurf <= 4) || skSurf == 7;
+  #ifdef SK_FORGE
+    // 4.6G.2: Haar-Oberfläche mit eigener Textur (Bart-Strähnen): Verdeckung zwischen den Haaren aus der Textur
+    if (skSurf == 5 && uSkForgeOn > 0.5) skMicroOn = true;
+  #endif
+  if (skMicroOn) {
     // in der Ferne ausblenden, bevor das Muster kleiner als ein Bildpunkt wird (kein Flimmern)
     float skPx = length(dFdx(vSkObj)) + length(dFdy(vSkObj));
     vec3 skMh = skMicroH(vSkObj);
@@ -678,6 +708,9 @@ const CHAR_GLSL = /* glsl */ `
         outgoingLight *= 1.0 - 0.42 * skLid;
         float skLow = (1.0 - smoothstep(-0.8, -0.05, skE.y)) * (1.0 - smoothstep(0.55, 0.95, skIr));
         outgoingLight += diffuseColor.rgb * diffuseColor.rgb * skLow * 0.9;
+        // 4.6G.2: dunkler Irisrand (Limbus) und sanfter Verlauf zur Mitte – Tiefe und klare Kontur wie gezeichnet
+        outgoingLight *= 1.0 - 0.38 * smoothstep(0.7, 0.95, skIr) * skIn;
+        outgoingLight *= 1.0 - 0.18 * (1.0 - smoothstep(0.1, 0.32, skIr));
         outgoingLight = mix(outgoingLight, vec3(1.9) * (0.35 + 0.65 * clamp(dot(skLC, vec3(0.3, 0.6, 0.1)) + 0.25, 0.0, 1.0)), clamp(skG, 0.0, 1.0));
       #endif
     }
@@ -994,7 +1027,7 @@ const DETAIL_FRAG: Record<DetailKind, string> = {
   }`,
 };
 
-interface PbrPatch { rough: number; metal: number; roughMap: Texture | null; metalMap: Texture | null; env: boolean; envOn: boolean; fx?: ToonFxUniforms; reflect: number; puddles: number; ringel: number; trim: boolean; surf: number; char: boolean; eyeUv: [number, number, number, number] | null; hairC: [number, number, number] | null; mask: boolean; forge: ForgeKind | null; forgeScale: number; slope: ForgeKind | null; slopeColor: Color | null }
+interface PbrPatch { rough: number; metal: number; roughMap: Texture | null; metalMap: Texture | null; env: boolean; envOn: boolean; fx?: ToonFxUniforms; reflect: number; puddles: number; ringel: number; trim: boolean; surf: number; char: boolean; eyeUv: [number, number, number, number] | null; hairC: [number, number, number] | null; mask: boolean; forge: ForgeKind | null; forgeScale: number; forgeTex: { tex: Texture; depth: number; rough: number } | null; slope: ForgeKind | null; slopeColor: Color | null }
 
 /** Steile Hänge werden zu Fels (4.4A): Neigung aus der Eckpunkt-Normale, Fels dreiseitig im Inselraum projiziert; nach dem Muster des Bodens eingemischt */
 const SLOPE_GLSL = /* glsl */ `
@@ -1087,9 +1120,11 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
       // geteilte Schmiede-Textur (beim ersten Übersetzen geholt: dann steht der Startsatz schon bereit); Figuren ohne Satz bekommen eine
       // leere Textur und schalten den Pfad über uSkForgeOn ab (ein Programm für alle Figuren-Oberflächen, 4.4B)
       const R = pbr.forge ? FORGE_RECIPES[pbr.forge] : null;
-      shader.uniforms.uSkForge = { value: pbr.forge ? forgeSet(pbr.forge).orm : blankForge() };
-      shader.uniforms.uSkForgeP = { value: new Vector4(1 / pbr.forgeScale, R?.depth ?? 0, R?.rough ?? 0.5, R ? 1 : 0) };
-      shader.uniforms.uSkForgeOn = { value: R ? 1 : 0 };
+      // 4.6G.2: eigene Textur (Bart-Strähnen) nur an Figuren – gleiche Uniforms, gleiches Programm
+      const ft = pbr.char ? pbr.forgeTex : null;
+      shader.uniforms.uSkForge = { value: ft ? ft.tex : pbr.forge ? forgeSet(pbr.forge).orm : blankForge() };
+      shader.uniforms.uSkForgeP = { value: new Vector4(1 / pbr.forgeScale, ft ? ft.depth : R?.depth ?? 0, ft ? ft.rough : R?.rough ?? 0.5, ft || R ? 1 : 0) };
+      shader.uniforms.uSkForgeOn = { value: ft || R ? 1 : 0 };
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vSkObjN;')
         .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nvSkObjN = objectNormal;');
@@ -1137,7 +1172,8 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSkObj = position * length(modelMatrix[1].xyz);');
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + MICRO_FRAG_GLSL)
-        .replace('#include <opaque_fragment>', '#include <opaque_fragment>' + (pbr.char ? `\ngl_FragColor.a = mix(gl_FragColor.a, mix(${CHAR_ALPHA.toFixed(2)}, 1.0, uSkMaskOff), uSkMaskK);` : ''));
+        // 4.6G.2: Haut, Haar und Augen schreiben eine eigene Kennung (CLEAN_ALPHA) – die Umgebungsverdeckung lässt sie aus (keine Schmutzflecken im Gesicht)
+        .replace('#include <opaque_fragment>', '#include <opaque_fragment>' + (pbr.char ? `\ngl_FragColor.a = mix(gl_FragColor.a, mix((skSurf <= 1 || skSurf == 5 || skSurf == 6) ? ${CLEAN_ALPHA.toFixed(3)} : ${CHAR_ALPHA.toFixed(3)}, 1.0, uSkMaskOff), uSkMaskK);` : ''));
     }
     if (pbr.ringel > 0) {
       // Ringelhemd: scharfe waagrechte Streifen aus der Höhe im Modell (vor dem Skinning – kleben am Körper)
@@ -1155,9 +1191,11 @@ function patch(mat: MeshToonMaterial, spec: number, rim: number, detail: DetailK
         .replace('#include <common>', '#include <common>\nattribute float rimD;\nattribute vec3 trimC;\nattribute vec3 patC;\nattribute vec4 gset;\nvarying float vGRim;\nvarying vec3 vGTrim;\nvarying vec3 vGPat;\nvarying vec4 vGSet;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGRim = rimD;\nvGTrim = trimC;\nvGPat = patC;\nvGSet = gset;');
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nvarying float vGRim;\nvarying vec3 vGTrim;\nvarying vec3 vGPat;\nvarying vec4 vGSet;\nuniform float uSkGearGlow;')
+        .replace('#include <common>', '#include <common>\nvarying float vGRim;\nvarying vec3 vGTrim;\nvarying vec3 vGPat;\nvarying vec4 vGSet;\nuniform float uSkGearGlow;\nuniform sampler2D uSkOrn;')
         .replace('#include <color_fragment>', '#include <color_fragment>\n' + GEAR_FRAG_GLSL);
       shader.uniforms.uSkGearGlow = toonShared.gearGlow;
+      // 4.6G.2: Ornament-Textur (Runen, Filigran), geteilt; ohne Dokument die neutrale Textur
+      shader.uniforms.uSkOrn = { value: gearOrnamentTexture() ?? blankForge() };
     }
     if (detail === 'grassCap') {
       shader.vertexShader = shader.vertexShader
@@ -1216,6 +1254,7 @@ export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial 
   const key = unique ? '' : JSON.stringify({
     ...o, color: new Color(o.color).getHex(), emissive: o.emissive !== undefined ? new Color(o.emissive).getHex() : 0,
     map: tex(o.map), normalMap: tex(o.normalMap), aoMap: tex(o.aoMap), roughnessMap: tex(o.roughnessMap), metalnessMap: tex(o.metalnessMap),
+    forgeTex: o.forgeTex ? `${o.forgeTex.tex.uuid}|${o.forgeTex.depth}|${o.forgeTex.rough}` : null,
   });
   const hit = unique ? undefined : cache.get(key);
   if (hit) return hit;
@@ -1248,7 +1287,7 @@ export function toon(opts: ToonOptions | ColorRepresentation): MeshToonMaterial 
   // PBR-Schmiede (4.4A): Figuren-Stoff und -Leder, Metall ohne eigene Reliefkarte und ausdrücklich gewählte Sätze
   const forge: ForgeKind | null = o.forge ?? (o.surface === 'cloth' || o.micro === 'cloth' ? 'stoff' : o.surface === 'leather' || o.micro === 'leather' ? 'leder' : metal > 0 && !o.normalMap && !o.surface ? 'stahl' : null);
   patch(mat, spec, o.rim ?? 1, o.detail, {
-    forge, forgeScale: o.forgeScale ?? (forge ? FORGE_RECIPES[forge].tile : 1),
+    forge, forgeScale: o.forgeScale ?? (forge ? FORGE_RECIPES[forge].tile : 1), forgeTex: o.forgeTex ?? null,
     slope: o.slopeRock ?? null, slopeColor: o.slopeColor !== undefined ? new Color(o.slopeColor) : null,
     rough, metal, roughMap: o.roughnessMap ?? null, metalMap: o.metalnessMap ?? null,
     // Spiegelungen nur, wo sie sichtbar sind: Metall oder glatte Flächen (Eis, Lack). Figuren tragen den Pfad immer und schalten ihn

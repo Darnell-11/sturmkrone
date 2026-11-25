@@ -9,7 +9,7 @@
 // Keine Speicheranforderung je Bild: alle Hilfswerte sind vorab angelegt. Der Clip-Stand wird nach dem Mischer gesichert und vor dem
 // nächsten Mischer-Schritt zurückgesetzt – nichts summiert sich auf, auch wenn ein Clip einen Knochen nicht jedes Mal neu setzt.
 import { Object3D, Quaternion, Vector3, type SkinnedMesh } from 'three';
-import { ARM_RELAX, BUILDS, HAND_BLEND, HAND_POSES, LIFE, RIG_BONES, ROT_BUDGET, type BuildId, type ExpressionId, type HandPoseId, type RigBone, type StanceId } from '../../../data/characterRig';
+import { ARM_RELAX, BUILDS, FIGURE_POSE, LEG_CAPS, HAND_BLEND, HAND_POSES, LIFE, RIG_BONES, ROT_BUDGET, type BuildId, type ExpressionId, type FigurePose, type HandPoseId, type RigBone, type StanceId } from '../../../data/characterRig';
 import { BodyLife, type LifeInput } from './bodyLife';
 import { FaceMixer, morphMap, NCH } from './faceRig';
 import { ClothRig, type ChainKind, type ClothLayout } from './clothRig';
@@ -134,6 +134,13 @@ export class CharacterRig {
   budgetHits = 0;
   /** Zusätzliche Vorlage des Oberkörpers (rad, + = nach vorn), z. B. aufrechter Gang */
   extraPitch = 0;
+  /** 4.6G.2: Haltung des Geschlechts (FIGURE_POSE) */
+  private figure: FigurePose = FIGURE_POSE.male;
+  /** Einblendung des Kontraposts (0 … 1), Seite des Standbeins (±1), Gang-Anteil (0 … 1) und Schrittphase (−1 … 1) */
+  private contraK = 0;
+  private contraSide = 1;
+  private walkK = 0;
+  private swing = 0;
   /** Zähler für die Prüfungen: ungültige Werte, die das Rig abgefangen hat */
   nanGuards = 0;
   /** Augen-Leuchten (0 … 1) für die Figur (Iris-Material) */
@@ -239,6 +246,9 @@ export class CharacterRig {
   get buildId() { return this.build; }
 
   setStance(id: StanceId) { this.life.stance = id; }
+  /** 4.6G.2: Haltung je Geschlecht (Kontrapost, Hüftschwung, Arme, Schultern) */
+  setFigure(g: 'male' | 'female') { this.figure = FIGURE_POSE[g] ?? FIGURE_POSE.male; }
+  get figurePose() { return this.figure; }
   setBreath(k: number) { this.life.breathK = Math.max(0.3, Math.min(2, k)); }
   setMood(id: ExpressionId, k = 1) { this.face.setMood(id, k); }
   setTraits(eyes?: string, brows?: string, mouth?: string) { this.face.setTraits(eyes, brows, mouth); }
@@ -404,6 +414,7 @@ export class CharacterRig {
     }
     let fresh = false;
     if (near) {
+      this.figureStep(dt, inp.speed, holder);
       this.bodyLayers(dt, o);
       // Hüfte: Pendeln, Kauern, Landung, Bodenausgleich – danach die Beine zu den gemerkten Füßen führen
       const hips = this.b[I.hips];
@@ -418,7 +429,11 @@ export class CharacterRig {
         hips.position.y += (a[1] * o.hipX + a[4] * dy) * u;
         hips.position.z += (a[2] * o.hipX + a[5] * dy) * u;
       }
-      this.rot(I.hips, AX_Z, o.hipRoll);
+      // 4.6G.2: Kontrapost und Hüftschwung (weiblich) über das Pendeln der Hüfte; die Fußführung danach hält die Füße am Boden
+      const fp = this.figure;
+      const hipRoll = o.hipRoll * fp.sway + this.contraK * fp.contra * this.contraSide + this.walkK * fp.walkRoll * this.swing;
+      this.rot(I.hips, AX_Z, this.budget(hipRoll, ROT_BUDGET.spineRoll * 1.6));
+      if (this.walkK > 0.01 && fp.walkYaw) this.rot(I.hips, AX_Y, this.walkK * fp.walkYaw * this.swing);
       if (mid) { this.refreshBody(); fresh = true; }
       if (feetOn) this.legs(_q2, hs);
     }
@@ -437,6 +452,31 @@ export class CharacterRig {
       } else cl.snap();
     }
     void rig;
+  }
+
+  /**
+   * 4.6G.2: Schrittphase aus den Knien (vorderes gegen hinteres Knie entlang der Blickrichtung, −1 … 1) und Gang-Anteil aus dem Tempo; im ruhigen
+   * Stand blendet der Kontrapost ein (Standbein wechselt mit dem Pendeln der Hüfte). Ohne Speicheranforderung, nur nah an der Kamera.
+   */
+  private figureStep(dt: number, speed: number, holder: Object3D) {
+    const fp = this.figure;
+    if (!fp.contra && !fp.walkYaw) { this.contraK = 0; this.walkK = 0; return; }
+    const kl = this.b[I.lowerLegL], kr = this.b[I.lowerLegR];
+    const k = Math.min(1, dt * 6);
+    const walking = this.grounded && !this.busy ? Math.min(1, Math.max(0, (speed - 0.4) / 1.4)) * (speed < 6 ? 1 : 0.5) : 0;
+    this.walkK += (walking - this.walkK) * k;
+    if (kl && kr && this.walkK > 0.01) {
+      const e = holder.matrixWorld.elements;
+      const fl = Math.hypot(e[8], e[9], e[10]) || 1;
+      _v.setFromMatrixPosition(kl.matrixWorld).sub(_v2.setFromMatrixPosition(kr.matrixWorld));
+      const d = (_v.x * e[8] + _v.y * e[9] + _v.z * e[10]) / fl;
+      const sw = d / Math.max(1e-4, this.legLen0 * (Math.hypot(e[0], e[1], e[2]) || 1) * 0.9);
+      this.swing += ((sw > 1 ? 1 : sw < -1 ? -1 : sw) - this.swing) * Math.min(1, dt * 18);
+    } else this.swing *= 0.9;
+    const calm = this.relaxClip && !this.busy && this.readyK < 0.5 && this.walkK < 0.2 ? 1 : 0;
+    this.contraK += (calm - this.contraK) * Math.min(1, dt * 1.6);
+    // Standbein wechselt selten (mit dem langsamen Pendeln), nie mitten im Schritt
+    if (this.contraK < 0.05) this.contraSide = this.swing >= 0 ? 1 : -1;
   }
 
   /** Oberkörper, Kopf, Arme: Gelenk-Verteilung, Atem, Blick, Haltung, kleine Bewegungen, Gesten */
@@ -461,10 +501,13 @@ export class CharacterRig {
       this.rot(ui, AX_Y, this.budget(o.lookYaw * sh.upperChest, ROT_BUDGET.upperChestYaw));
     }
     // Wirbelsäule und Brust: Blickanteil, Gegenbewegung zur Hüfte, Vorlage (Bereitschaft, Landung)
-    this.rot(I.spine, AX_Z, this.budget(o.counterRoll * 0.6, ROT_BUDGET.spineRoll));
+    const fp = this.figure;
+    const contra = this.contraK * fp.contra * this.contraSide * fp.contraCounter;
+    this.rot(I.spine, AX_Z, this.budget(o.counterRoll * 0.6 * fp.sway - contra * 0.6, ROT_BUDGET.spineRoll));
     this.rot(I.spine, AX_X, this.budget((o.chestFwd - this.chestOut) * 0.35 + o.landLean * 0.6 - o.lookPitch * sh.spine + this.extraPitch * 0.55, ROT_BUDGET.spinePitch));
     this.rot(I.spine, AX_Y, this.budget(o.lookYaw * sh.spine, ROT_BUDGET.spineYaw));
-    this.rot(I.chest, AX_Z, this.budget(o.counterRoll * 0.4, ROT_BUDGET.chestRoll));
+    this.rot(I.chest, AX_Z, this.budget(o.counterRoll * 0.4 * fp.sway - contra * 0.4, ROT_BUDGET.chestRoll));
+    if (this.walkK > 0.01 && fp.walkCounter) this.rot(I.chest, AX_Y, -this.walkK * fp.walkCounter * this.swing);
     this.rot(I.chest, AX_X, this.budget((o.chestFwd - this.chestOut) * 0.25 + o.landLean * 0.4 - o.lookPitch * sh.chest + this.extraPitch * 0.45, ROT_BUDGET.chestPitch));
     this.rot(I.chest, AX_Y, this.budget(o.lookYaw * sh.chest, ROT_BUDGET.chestYaw));
     // Kopf → Hals: Teil der Kopfdrehung im Hals (weicher Nacken statt Knick am Schädelansatz)
@@ -482,7 +525,7 @@ export class CharacterRig {
     // Gesten im Gespräch: Nicken
     const g = this.gesture(dt, o.idleK);
     this.rot(I.head, AX_Y, this.budget(o.lookYaw * sh.head + o.headYaw, ROT_BUDGET.headYaw));
-    this.rot(I.head, AX_X, this.budget(-o.lookPitch * sh.head + o.headPitch + (this.chin + o.chin) + g.nod, ROT_BUDGET.headPitch));
+    this.rot(I.head, AX_X, this.budget(-o.lookPitch * sh.head + o.headPitch + (this.chin + o.chin + fp.chin) + g.nod, ROT_BUDGET.headPitch));
     // 4.6G: entspannte Arme im Stand – Frontalebene der Figur (Weltachsen des Halters)
     const relaxOn = this.relaxClip && !this.busy && this.readyK < 0.5;
     this.relaxK += ((relaxOn ? 1 : 0) - this.relaxK) * Math.min(1, dt * ARM_RELAX.speed);
@@ -496,7 +539,7 @@ export class CharacterRig {
       const si = s ? I.shoulderR : I.shoulderL, ui = s ? I.upperArmR : I.upperArmL, li = s ? I.lowerArmR : I.lowerArmL;
       const cl = b[si], ua = b[ui], la = b[li];
       if (!ua) continue;
-      let lift = o.shoulderLift + o.shoulders;
+      let lift = o.shoulderLift + o.shoulders + fp.shoulders;
       if (la) {
         _v2.setFromMatrixPosition(ua.matrixWorld);
         _v3.setFromMatrixPosition(la.matrixWorld).sub(_v2);
@@ -522,7 +565,7 @@ export class CharacterRig {
         _v3.setFromMatrixPosition(la.matrixWorld).sub(_v2);
         const out = (s ? -1 : 1) * _v3.dot(_fx), down = -_v3.dot(_fy);
         const abd = Math.atan2(out, Math.max(1e-4, down));
-        const target = (ARM_RELAX.target[this.build] ?? 0.16) + (this.coatOn ? ARM_RELAX.coat : 0);
+        const target = Math.max(0.06, (ARM_RELAX.target[this.build] ?? 0.16) + (this.coatOn ? ARM_RELAX.coat : 0) - fp.armIn);
         const k = this.relaxK * (this.hand[s ? 'r' : 'l'].id === 'griff' ? ARM_RELAX.armed : 1);
         relax = Math.min(ARM_RELAX.max, Math.max(0, abd - target)) * k;
         if (relax > 0) this.rot(li, AX_X, -ARM_RELAX.elbow * k);
@@ -727,8 +770,9 @@ export class CharacterRig {
       _v.setFromMatrixPosition(A.matrixWorld); _v2.setFromMatrixPosition(B2.matrixWorld);
       addCapsule(c, _v.x, _v.y, _v.z, _v2.x, _v2.y, _v2.z, r * k);
     };
-    cap(I.upperLegL, I.lowerLegL, 0.072 * (G?.upperLeg ?? 1)); cap(I.lowerLegL, I.footL, 0.055 * (G?.lowerLeg ?? 1));
-    cap(I.upperLegR, I.lowerLegR, 0.072 * (G?.upperLeg ?? 1)); cap(I.lowerLegR, I.footR, 0.055 * (G?.lowerLeg ?? 1));
+    // 4.6G.2: Beine samt Hose und Stiefelschaft (vorher nur die Haut: Stulpen und Knie stachen durch Mantel und Umhang)
+    cap(I.upperLegL, I.lowerLegL, LEG_CAPS.upper * (G?.upperLeg ?? 1)); cap(I.lowerLegL, I.footL, LEG_CAPS.lower * (G?.lowerLeg ?? 1));
+    cap(I.upperLegR, I.lowerLegR, LEG_CAPS.upper * (G?.upperLeg ?? 1)); cap(I.lowerLegR, I.footR, LEG_CAPS.lower * (G?.lowerLeg ?? 1));
     cap(I.hips, b[I.upperChest] ? I.upperChest : I.chest, 0.1 * (G?.chest ?? 1));
     cap(I.neck, I.head, 0.045);
     // 4.6G: leere Mantelärmel liegen an den Armen an (nur dann: vier Kapseln mehr kosten jede Kette Rechenzeit)

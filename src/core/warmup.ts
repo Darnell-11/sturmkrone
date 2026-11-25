@@ -172,8 +172,10 @@ export async function warmupExtras(d: ExtrasDeps): Promise<void> {
   for (const role of ['pirat', 'marine'] as const) {
     for (const female of [false, true]) {
       const look = randomLook(Math.random, role);
-      // Frisur bestimmt die Grundfigur (lange Haare = weibliche Figur)
+      // 4.6G.2: das Geschlecht bestimmt die Grundfigur (beide werden vorgewärmt)
+      look.gender = female ? 'female' : 'male';
       look.hair = female ? 'lang' : 'stachel';
+      if (female) look.beard = 'keiner';
       const c = new Character(d.assets, look, true);
       c.holder.position.copy(at).add(new Vector3(figs.length * 0.9 - 1.4, 0, 0));
       root.add(c.holder);

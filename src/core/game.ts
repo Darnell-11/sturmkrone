@@ -471,6 +471,8 @@ export class Game {
     this.state.onChange((next) => {
       this.input.gameplayActive = next === 'play';
       this.hud.setVisible(next === 'play');
+      // 4.6G.2: im Charakter-Editor keine Welt-, Handels- oder Ereignismeldungen über der Bühne
+      this.hud.setQuiet(next === 'editor');
       this.overlay.setVisible(next === 'play' || next === 'pause');
       this.updateTouchVisibility();
       if (next !== 'play') this.input.releaseAll();

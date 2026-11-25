@@ -20,7 +20,7 @@ import {
 } from 'three';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { ROLES, type AnimRole, type ClipRef } from '../../data/animations';
-import type { CharacterLook } from '../../data/characterParts';
+import { genderOf, type CharacterLook } from '../../data/characterParts';
 import { addOutlines } from '../../render/outline';
 import { CHARACTER_INK, extendToon, toon, toonChar, toonFx, type Surface, type ToonFxUniforms } from '../../render/toon';
 import { disposeMaterial } from '../../render/dispose';
@@ -64,7 +64,7 @@ const TAIL_GLSL = /* glsl */ `
   }`;
 import { SocketRig } from './sockets';
 import { loadoutFromLook, resolveLoadout, type Finish, type Loadout, type ResolvedLoadout } from '../../data/equipment';
-import { attachHeadgear, buildBuckle, buildButton, buildEpaulette, buildKnot, buildPauldron, CAPPED } from './animeHats';
+import { attachHeadgear, buildBuckle, buildButton, buildEpaulette, buildKnot, buildPauldron, CAPPED, CAP_RIM_DEFAULT, hairSqueezeFor } from './animeHats';
 import { BELT_KINDS, HELM_KINDS, SHOULDERS, buildBeltExtras } from './gear/rigid';
 import { finishMat } from './gear/kit';
 import { buildHeld, buildSkinned, glbModel } from './gear/glbGear';
@@ -76,8 +76,8 @@ import { SHEATH, SHEATH_LEN, sheathPose, type BuildId, type ExpressionId, type H
 import { rigProfile } from './rig/rigProfile';
 
 
-/** Lange Frisuren nutzen die weibliche Grundfigur, kurze die männliche */
-function isFemale(l: CharacterLook) { return ['lang', 'pferdeschwanz', 'zoepfe', 'zopf', 'dutt'].includes(l.hair); }
+/** 4.6G.2: das Geschlecht wählt die Grundfigur (fehlt es: männlich, alte Stände mit langer Grundfrisur bleiben weiblich – genderOf) */
+function isFemale(l: CharacterLook) { return genderOf(l) === 'female'; }
 
 /** Weltmaßstab: Skelett ist 2,2 Einheiten hoch → Figur ca. 1,75 m */
 export const CHARACTER_SCALE = 0.8;
@@ -137,6 +137,8 @@ const GAIT_ELBOW = 0.5, GAIT_UPRIGHT = -0.1;
 const GAIT_HIP = 0.848, GAIT_DAMP = 0.35, GAIT_LIFT = 0.03, GAIT_ANKLE = 0.08, GAIT_FOOT = 0.42;
 export const WALK_NATURAL: Record<string, number> = { Walking_A: 1.5, Walking_B: 1.63, Walking_C: 0.82 };
 const SLOT_SURFACE: Record<string, Surface> = { skin: 'skin', hair: 'hair', top: 'cloth', bottom: 'cloth', shoes: 'leather', iris: 'eye' };
+/** 4.6G.2: Ton der Wimpern und des Lidstrichs (fast schwarz, mit einem Hauch der Haarfarbe) */
+const LASH_TONE = new Color('#1A1214');
 /** Clips ohne eigene Ganzkörper-Aktion: hier legt das Rig Atem, Blick und Gewicht voll darüber (4.6F) */
 const CALM_CLIP = /^(Idle_|Walking_|Running_|Melee_Unarmed_Idle|Melee_2H_Idle|Holding_|Sit_|Lie_Idle|Fishing_Idle|Melee_Blocking|Skeletons_Idle|Skeletons_Walking|Ranged_1H_Aiming)/;
 /** 4.6G: Clips, in denen die Arme entspannt hängen dürfen */
@@ -380,17 +382,20 @@ export class Character {
     const colorFor: Record<string, Color> = {
       skin: skinTint, hair: new Color(look.hairColor), brow: new Color(look.hairColor).multiplyScalar(0.8), top: new Color(look.outfitColor),
       bottom: new Color(look.pantsColor), shoes: new Color(look.shoesColor), iris: new Color(look.eyeColor), fixed: new Color(0xffffff),
+      lash: new Color(look.hairColor).multiplyScalar(0.3).lerp(LASH_TONE, 0.7),
     };
     this.irises = [];
     this.glowShown = 0;
     { const rp = rigProfile(look); this.rigX?.setTraits(rp.eyes, rp.brows, rp.mouth); }
+    // 4.6G.2: Haltung und Gang des Geschlechts
+    this.rigX?.setFigure(isFemale(look) ? 'female' : 'male');
     this.rig.traverse((o) => {
       const m = o as SkinnedMesh;
       const i = m.userData.vroidPart as number | undefined;
       if (!m.isSkinnedMesh || i === undefined) return;
       const p = vb.parts[i];
       if (p.slot === 'iris') this.irises.push(m);
-      const mat = toon({ color: colorFor[p.slot], map: p.gray ?? p.map, side: p.doubleSided ? DoubleSide : FrontSide, transparent: p.transparent, spec: p.slot === 'hair' ? 0.7 : 0, rim: p.slot === 'fixed' ? 0.4 : 1, surface: SLOT_SURFACE[p.slot] ?? 'plain', eyeUv: p.slot === 'iris' ? vb.irisUv() : undefined, hairC: p.slot === 'hair' ? vb.hairCenter() : undefined });
+      const mat = toon({ color: colorFor[p.slot], map: p.gray ?? p.map, side: p.doubleSided ? DoubleSide : FrontSide, transparent: p.transparent, spec: p.slot === 'hair' ? 0.7 : 0, rim: p.slot === 'lash' ? 0 : p.slot === 'fixed' ? 0.4 : 1, surface: SLOT_SURFACE[p.slot] ?? 'plain', eyeUv: p.slot === 'iris' ? vb.irisUv() : undefined, hairC: p.slot === 'hair' ? vb.hairCenter() : undefined });
       mat.alphaTest = p.alphaTest || (p.transparent ? 0 : 0.5);
       // durchscheinende Gesichtsteile (Wimpern, Augenglanz) liegen übereinander: ohne Tiefenschreiben verdecken sie
       // sich nicht gegenseitig je nach Zeichenreihenfolge (wie MToon „Transparent“ ohne ZWrite)
@@ -452,10 +457,11 @@ export class Character {
     this.wornPart = null;
   }
 
-  /** Netz bekommt eine eigene Dreiecksliste; alle Punktdaten teilt es weiter mit der Vorlage */
-  private mask(m: SkinnedMesh, src: BufferGeometry, index: BufferAttribute, fromEngine: boolean) {
+  /** Netz bekommt eine eigene Dreiecksliste (und unter Hüten eine eigene, geteilte Lage); alle übrigen Punktdaten teilt es mit der Vorlage */
+  private mask(m: SkinnedMesh, src: BufferGeometry, index: BufferAttribute | null, fromEngine: boolean, position: BufferAttribute | null = null) {
     const geo = new BufferGeometry();
     for (const k in src.attributes) geo.setAttribute(k, src.attributes[k]);
+    if (position) geo.setAttribute('position', position);
     geo.setIndex(index);
     geo.boundingSphere = src.boundingSphere;
     m.geometry = geo;
@@ -489,18 +495,22 @@ export class Character {
     // Hüte aus Modellen bekommen dieselbe Haar-Ausblendung wie Helme
     const glbHat = R.glb.some((g) => g.trimsHair && glbModel(g.model));
     const cap = glbHat ? { sink: 0.13, margin: 0.012 } : CAPPED[R.hat];
+    // Hüte ohne Kappe (Dreispitz, Marinemütze): Haar nur stauchen, nichts abschneiden
+    const hatFit = cap ? null : hairSqueezeFor(R.hat);
     this.rig.traverse((o) => {
       const m = o as SkinnedMesh;
       const i = m.userData.vroidPart as number | undefined;
       if (!m.isSkinnedMesh || i === undefined) return;
       const p = vb.parts[i], src = vb.partGeo[i];
+      // 4.6G.2: weitere Netze eines Teils (Morph-Gruppen, z. B. das Ohr der Gesichtshaut) haben eigene Punktdaten – nie mit der Vorlage maskieren
+      const own = m.geometry === src;
       // Hose bzw. Rock der Grundfigur bleibt aus: an gebeugten Knien stach dort die Haut durch – die erzeugte Hose bewegt sich genau mit
       if (p.slot === 'bottom') { m.visible = false; return; }
       // Frisur aus einem Modell ersetzt das Haar der Grundfigur
       if (p.slot === 'hair') { m.visible = !hideHair; if (hideHair) return; }
       if (p.slot === 'top') m.visible = R.base.top;
       if (p.slot === 'shoes') m.visible = R.base.shoes;
-      if (!src.index) return;
+      if (!src.index || !own) return;
       let index: BufferAttribute | null = null;
       if (p.slot === 'skin' && /^Body/.test(p.name)) index = engine.indexFor({ key: 'haut', index: src.index, src: src.index.array, level: 0 }, layers);
       // Das Hemd der Grundfigur bleibt ganz: Schärpe und Halstuch liegen stellenweise unter seinem losen Saum bzw. Kragen –
@@ -508,7 +518,13 @@ export class Character {
       else if (p.slot === 'shoes' && m.visible) {
         const bs = vb.baseSrc(i);
         if (bs) index = engine.indexFor({ key: `grund${i}`, index: src.index, src: bs, level: 1 }, layers);
-      } else if (p.slot === 'hair' && cap) index = vb.hairUnderCap(i, cap.sink, HELM_KINDS.includes(R.hat) || glbHat ? -0.012 : undefined);
+      } else if (p.slot === 'hair' && (hatFit || (cap && (HELM_KINDS.includes(R.hat) || glbHat)))) {
+        // 4.6G.2: unter aufgesetzten Hüten (Dreispitz, Marinemütze), Helmen und Kronen wird das Haar nach innen und unten gestaucht (eigene
+        // Lage); Helme und Kronen schneiden zusätzlich ab, was ganz darüber liegt. Kappen aus der Frisurform (Kopftuch, Mütze …) umschließen
+        // das Haar schon – dort bleibt es beim Abschneiden (sonst läge die Kopfhaut zwischen Kappe und gestauchtem Haar frei).
+        const h = cap ? vb.hairUnderHat(i, cap.sink, -0.012, true) : vb.hairUnderHat(i, hatFit!.sink, hatFit!.rim, false);
+        if (h.index || h.position) { this.mask(m, src, h.index ?? src.index, false, h.position); return; }
+      } else if (p.slot === 'hair' && cap) index = vb.hairUnderCap(i, cap.sink, CAP_RIM_DEFAULT);
       if (index && index !== src.index) this.mask(m, src, index, p.slot !== 'hair');
     });
     const body = vb.bodySkin(this.rig);
@@ -604,7 +620,7 @@ export class Character {
     const head = this.sockets.bone('head');
     // Brille aus der Ausrüstung (4.6G: eigene Kategorie, auch zusammen mit einem Hut)
     const hatLook: CharacterLook = { ...look, hat: R.hat, hatColor: R.hatColor ?? loadout.colors.hat, hatAccent: R.hatAccent ?? undefined, glasses: R.glasses?.kind ?? 'keine' };
-    const face = { beard: look.beard !== 'keiner' ? vb.beard(look.beard) : null, scar: look.scar ? vb.scarPlacement() : null, cap: (sink: number, margin: number) => vb.capShell(sink, margin) };
+    const face = { beard: look.beard !== 'keiner' && !isFemale(look) ? vb.beard(look.beard) : null, scar: look.scar ? vb.scarPlacement() : null, cap: (sink: number, margin: number) => vb.capShell(sink, margin), field: look.glasses === 'rund' ? vb.faceField() : null };
     if (head) this.headgear = attachHeadgear(head, this.rig.getObjectByName('J_Adj_L_FaceEye') ?? null, this.rig.getObjectByName('J_Adj_R_FaceEye') ?? null, hatLook, this.outline, vb.hairFit, vb.anchors(), face, this.rigX?.sockets ?? null);
     const h = Math.min(1.1, Math.max(0.9, look.height));
     const base = vb.template.scale.x;

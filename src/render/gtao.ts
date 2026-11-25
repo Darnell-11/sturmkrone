@@ -186,7 +186,11 @@ const COMPOSITE_FRAG = /* glsl */ `
     aoTap(k + vec2(0.0, 1.0), (1.0 - t.x) * t.y, dist, tol, sum, wsum);
     aoTap(k + vec2(1.0, 1.0), t.x * t.y, dist, tol, sum, wsum);
     float ao = wsum > 1e-4 ? clamp(sum / wsum, 0.0, 1.0) : 1.0;
-    outputColor = vec4(inputColor.rgb * mix(1.0, ao, intensity), inputColor.a);
+    // Figuren (4.6G.2): Haut, Haar und Augen (Alpha 0,99) bleiben frei, Kleidung (0,98) bekommt nur gut die Hälfte – sonst legt die
+    // halbe Auflösung unter Haarsträhnen und Krempen schmutzige Flecken aufs Gesicht. Alpha aus dem unbearbeiteten Szenenbild.
+    float srcA = texture2D(inputBuffer, uv).a;
+    float charK = srcA > 0.9843 && srcA < 0.995 ? 0.0 : (abs(srcA - 0.98) < 0.0043 ? 0.55 : 1.0);
+    outputColor = vec4(inputColor.rgb * mix(1.0, ao, intensity * charK), inputColor.a);
   }
 `;
 
