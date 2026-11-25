@@ -2,15 +2,15 @@
 // den Zustand im Spielstand (`SaveData.world.chart`) und die Anbindung an die Seewelt besorgen SeaWorld und Game.
 //
 // Drei Stufen je Insel (`chartLevel`):
-//   • known    – voll kartiert: Form, Name, Hafen, Markt, Besatzung. Start: Ankerglück und alles bis 2 400 m um den Mittelpunkt (Ring 1).
+//   • known    – voll kartiert: Form, Name, Hafen, Markt, Besatzung. Start: Ankerglück und alles bis 3 050 m um den Mittelpunkt (Ring 1 und die innersten Häfen).
 //   • outline  – schemenhafter Pergament-Umriss ohne Einzelheiten (alle normalen, noch nicht entdeckten Inseln). Bis auf 1 600 m Küstenabstand wird sie known.
 //   • hidden   – die vier Geheim-Inseln (`uncharted`): auf der Karte unsichtbar, bis man auf 1 400 m Küstenabstand heransegelt.
 // Eine Karte (Zone) um einen Hafen oder Leuchtturm kartiert weit (3 200 m): alle normalen Inseln darin sind known, Geheim-Inseln nie.
 import type { IslandDef } from '../data/regions';
 
 export const DISCOVERY = {
-  /** Beim Start voll kartiert: Abstand der Inselmitte vom Weltmittelpunkt (Ring 1) */
-  startRadius: 2400,
+  /** Beim Start voll kartiert: Abstand der Inselmitte vom Weltmittelpunkt (Ring 1 und die innersten Häfen; seit 4.5C entzerrt, dieselben Inseln wie zuvor bei 2 400 m) */
+  startRadius: 3050,
   /** Normale Inseln: Küstenabstand, ab dem sie entdeckt sind (m) */
   near: 1600,
   /** Geheim-Inseln (`uncharted`) */

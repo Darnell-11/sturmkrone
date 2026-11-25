@@ -9,6 +9,7 @@ import type { EnemyKind } from './combat';
 import type { GoodId } from './economy';
 import type { ClusterDef, RiftDef, SiteDef, StructureDef, StructureType } from './settlements';
 import { HOME, S, scatterOf, themeItems, type SiteBiome, type Theme } from './openWorld';
+import { dangerOfDistance } from './balanceConfig';
 
 export type MegaId = 'kronenklippe' | 'goudenstad' | 'drachenamboss' | 'chateausoleil' | 'kuroganeschlund' | 'sturmkroneruinen';
 export const MEGA_IDS: readonly MegaId[] = ['kronenklippe', 'goudenstad', 'drachenamboss', 'chateausoleil', 'kuroganeschlund', 'sturmkroneruinen'];
@@ -71,7 +72,7 @@ const fine = (p: number) => [C(0.028, 7, p), C(0.013, 13, p * 1.7 + 0.4)];
 
 export const MEGA_ISLANDS: readonly MegaIslandSpec[] = [
   {
-    id: 'kronenklippe', name: 'Kronenklippe', title: 'Albion-Bastion', power: 'england', deg: 3, dist: 6200, r: 400, kind: 'harbor', biome: 'kreide',
+    id: 'kronenklippe', name: 'Kronenklippe', title: 'Albion-Bastion', power: 'england', deg: 3, dist: 7800, r: 400, kind: 'harbor', biome: 'kreide',
     coast: [...fine(1.1), C(0.08, 2, 4.4), C(0.05, 3, 0.6)],
     hills: [{ x: 0, z: 258, r: 112, h: 0.24 }, { x: -175, z: -95, r: 120, h: 0.2 }, { x: 170, z: -70, r: 100, h: 0.22 }, { x: 10, z: -215, r: 85, h: 0.12 }],
     grass: 0.86, villagers: 8, label: 'Albion-Bastion der Krone',
@@ -98,7 +99,7 @@ export const MEGA_ISLANDS: readonly MegaIslandSpec[] = [
     ],
   },
   {
-    id: 'goudenstad', name: 'Gouden Stad', title: 'Handelsmetropole der Kompanie', power: 'niederlande', deg: 196, dist: 6400, r: 380, kind: 'harbor', biome: 'festland',
+    id: 'goudenstad', name: 'Gouden Stad', title: 'Handelsmetropole der Kompanie', power: 'niederlande', deg: 196, dist: 8040, r: 380, kind: 'harbor', biome: 'festland',
     coast: [...fine(2.3), C(0.06, 2, 1.2), C(0.04, 4, 3.1)],
     hills: [{ x: -165, z: -160, r: 70, h: 0.1 }, { x: 185, z: -140, r: 60, h: 0.08 }, { x: -160, z: 230, r: 60, h: 0.08 }],
     grass: 0.9, villagers: 10, label: 'Handelsmetropole der Kompanie',
@@ -129,7 +130,7 @@ export const MEGA_ISLANDS: readonly MegaIslandSpec[] = [
     ],
   },
   {
-    id: 'drachenamboss', name: 'Drachenamboss', title: 'Hanse-Bergfestung', power: 'deutschland', deg: 66, dist: 6100, r: 360, kind: 'harbor', biome: 'klippe',
+    id: 'drachenamboss', name: 'Drachenamboss', title: 'Hanse-Bergfestung', power: 'deutschland', deg: 66, dist: 7680, r: 360, kind: 'harbor', biome: 'klippe',
     coast: [...fine(0.4), C(0.1, 3, 2.2), C(0.05, 5, 5.1)],
     hills: [{ x: 0, z: 10, r: 180, h: 0.3 }, { x: -140, z: 115, r: 80, h: 0.24 }, { x: 135, z: -120, r: 78, h: 0.2 }],
     grass: 0.5, villagers: 7, label: 'Hanse-Bergfestung',
@@ -161,7 +162,7 @@ export const MEGA_ISLANDS: readonly MegaIslandSpec[] = [
     ],
   },
   {
-    id: 'chateausoleil', name: 'Château Soleil', title: 'Sonnenpalast-Insel', power: 'frankreich', deg: 292, dist: 5900, r: 370, kind: 'harbor', biome: 'weinland',
+    id: 'chateausoleil', name: 'Château Soleil', title: 'Sonnenpalast-Insel', power: 'frankreich', deg: 292, dist: 7440, r: 370, kind: 'harbor', biome: 'weinland',
     coast: [...fine(3.3), C(0.07, 2, 0.2), C(0.04, 3, 2.6)],
     hills: [{ x: 0, z: 35, r: 120, h: 0.15 }, { x: -150, z: 150, r: 80, h: 0.12 }, { x: 140, z: -150, r: 70, h: 0.1 }],
     grass: 0.9, villagers: 9, label: 'Sonnenpalast der Armada Royale',
@@ -193,7 +194,7 @@ export const MEGA_ISLANDS: readonly MegaIslandSpec[] = [
     ],
   },
   {
-    id: 'kuroganeschlund', name: 'Kurogane-Schlund', title: 'Vulkan-Festung', power: 'kurogane', deg: 142, dist: 5800, r: 420, kind: 'harbor', biome: 'glut',
+    id: 'kuroganeschlund', name: 'Kurogane-Schlund', title: 'Vulkan-Festung', power: 'kurogane', deg: 142, dist: 7320, r: 420, kind: 'harbor', biome: 'glut',
     coast: [...fine(4.4), C(0.09, 3, 1.7), C(0.05, 5, 0.3)],
     // der Kraterrand der Caldera: sieben Hügel im Kreis, dazwischen Pässe; im Becken die Lavaspalten
     hills: [0, 52, 104, 158, 212, 264, 314].map((b) => ({ x: Math.round(Math.sin((b * Math.PI) / 180) * 205), z: Math.round(Math.cos((b * Math.PI) / 180) * 205), r: 82, h: 0.3 })),
@@ -224,7 +225,7 @@ export const MEGA_ISLANDS: readonly MegaIslandSpec[] = [
     ],
   },
   {
-    id: 'sturmkroneruinen', name: 'Sturmkrone-Ruinen', title: 'Das Verlorene Kaiser-Atoll', power: null, deg: 96, dist: 8000, r: 440, kind: 'ruin', biome: 'klippe',
+    id: 'sturmkroneruinen', name: 'Sturmkrone-Ruinen', title: 'Das Verlorene Kaiser-Atoll', power: null, deg: 96, dist: 9960, r: 440, kind: 'ruin', biome: 'klippe',
     coast: [...fine(5.5), C(0.06, 4, 2.9), C(0.04, 2, 0.9)],
     hills: [{ x: 0, z: 0, r: 105, h: 0.18 }, { x: 250, z: 250, r: 90, h: 0.2 }, { x: -250, z: 250, r: 90, h: 0.22 }, { x: -255, z: -240, r: 90, h: 0.2 }, { x: 250, z: -250, r: 90, h: 0.18 }],
     grass: 0.55, villagers: 0, label: 'Versunkenes Tempel-Archipel',
@@ -479,7 +480,7 @@ const polarWorld = (deg: number, dist: number) => ({ x: Math.round(Math.sin((deg
 export function megaIslandDefs(): IslandDef[] {
   return MEGA_ISLANDS.map((m) => ({
     id: m.id, name: m.name, ...polarWorld(m.deg, m.dist), r: m.r, hill: 0.2, kind: m.kind, palms: 0, rocks: 0, info: m.info, biome: m.biome,
-    site: m.id, placed: true, themePower: m.power, mega: true, level: megaLevel(m.dist >= 6700 ? 4 : 3, 1),
+    site: m.id, placed: true, themePower: m.power, mega: true, level: megaLevel(dangerOfDistance(m.dist), 1),
   }));
 }
 

@@ -448,15 +448,15 @@ describe('Belagerung und Besitzerwechsel', () => {
   });
 });
 
-describe('Spielstand 20 und Erhalt über Laden und Speichern', () => {
+describe('Spielstand 20 (seit 4.5C 21) und Erhalt über Laden und Speichern', () => {
   it('ältere Stände bekommen ein leeres Ökosystem (es entsteht beim Spielstart), ein gespeichertes übersteht den Rundlauf', () => {
-    expect(SAVE_VERSION).toBe(20);
+    expect(SAVE_VERSION).toBe(21);
     const old = { ...createSave('Alt', 'pirat', '4.4.4'), version: 19 } as Record<string, any>;
     delete old.world.factionWar;
     const r = migrateSave(old, '4.5.0');
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.data.version).toBe(20);
+    expect(r.data.version).toBe(21);
     expect(r.data.world.factionWar).toBeNull();
     // Rundlauf: Engine → JSON → Säubern → Engine
     const { eng, reg, w } = realWorld(12);

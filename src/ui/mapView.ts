@@ -7,16 +7,30 @@ export interface MapView { cx: number; cz: number; scale: number }
 
 /** Zoom relativ zur Gesamtansicht (1× = die ganze Welt passt ins Fenster) */
 export const MAP_ZOOM_MIN = 0.65;
-export const MAP_ZOOM_MAX = 4.5;
+/** seit 4.5C 7× (die Welt ist 1,5-mal so groß, beim Hineinzoomen bleibt die Feinheit wie zuvor) */
+export const MAP_ZOOM_MAX = 7;
 /** Ab diesem Zoom erscheinen die kleineren Inselnamen und die Markt-Abzeichen */
 export const LABEL_ZOOM = 1.15;
 /** Bis zu dieser Strecke (Pixel) vom Berührungspunkt zählt eine Geste als Klick (Inselwahl), darüber als Verschieben */
 export const CLICK_SLOP = 5;
+/** Außenabstand der Gesamtansicht (4.5C): bei 1,00× bleiben auf der kürzeren Fensterseite je 10 % frei (die Weltscheibe füllt 80 %) */
+export const MAP_MARGIN = 0.1;
 /** Halbe Kantenlänge der Karte (Meter): die Welt samt Rand */
-export const MAP_EXTENT = WORLD_RADIUS * 1.08;
+export const MAP_EXTENT = WORLD_RADIUS / (1 - 2 * MAP_MARGIN);
 
-/** Pixel je Meter bei 1× (die ganze Welt passt in die kürzere Fensterseite) */
-export const fitScale = (w: number, h: number): number => Math.min(w, h) / 2 / MAP_EXTENT;
+/**
+ * Freies Band der Karte (4.5C): Höhe der Bedienleisten oben und unten (Pixel), die über der Weltscheibe liegen. Setzt die Weltkarte nach dem Messen
+ * ihrer Leisten (`setMapSafeArea`); ohne Leisten (Tests, Minikarte) 0. So passt die Welt bei 1,00× samt 10 % Rand immer ins sichtbare Band.
+ */
+let safeTop = 0, safeBottom = 0;
+export function setMapSafeArea(top: number, bottom: number): void {
+  safeTop = Number.isFinite(top) ? Math.max(0, top) : 0;
+  safeBottom = Number.isFinite(bottom) ? Math.max(0, bottom) : 0;
+}
+export const mapSafeArea = (): { top: number; bottom: number } => ({ top: safeTop, bottom: safeBottom });
+
+/** Pixel je Meter bei 1× (die ganze Welt samt 10 % Rand passt in die kürzere Seite des freien Bands) */
+export const fitScale = (w: number, h: number): number => Math.max(80, Math.min(w, h - safeTop - safeBottom)) / 2 / MAP_EXTENT;
 export const zoomOf = (v: MapView, w: number, h: number): number => v.scale / fitScale(w, h);
 export const scaleOfZoom = (zoom: number, w: number, h: number): number => Math.max(MAP_ZOOM_MIN, Math.min(MAP_ZOOM_MAX, zoom)) * fitScale(w, h);
 
@@ -30,7 +44,8 @@ export function clampView(v: MapView, w: number, h: number): MapView {
   const lx = panLimit(w / 2 / v.scale);
   const lz = panLimit(h / 2 / v.scale);
   v.cx = Math.max(-lx, Math.min(lx, v.cx));
-  v.cz = Math.max(-lz, Math.min(lz, v.cz));
+  // die Leisten oben und unten verdecken einen Streifen: so weit darf man zusätzlich schieben, bis Nord- und Südrand (Albion, Ring 5) frei liegen (4.5C)
+  v.cz = Math.max(-lz - safeBottom / v.scale, Math.min(lz + safeTop / v.scale, v.cz));
   return v;
 }
 
@@ -78,10 +93,20 @@ export function centerOn(v: MapView, w: number, h: number, x: number, z: number,
   return clampView(v, w, h);
 }
 
-/** Gesamtansicht (1×, Mitte der Welt) */
-export function fitAll(v: MapView, w: number, h: number): MapView {
-  v.cx = 0; v.cz = 0; v.scale = fitScale(w, h);
+/**
+ * Gesamtansicht (1×, Mitte der Welt). `top`/`bottom` = Höhe der Bedienleisten oben und unten (Pixel): die Weltscheibe steht dann mittig im freien Band
+ * dazwischen, damit weder die nördlichsten Inseln (Albion, Ring 5) unter der Titelleiste noch die südlichsten unter der Legende verschwinden.
+ */
+export function fitAll(v: MapView, w: number, h: number, top = 0, bottom = 0): MapView {
+  v.cx = 0; v.scale = fitScale(w, h);
+  v.cz = (Math.max(0, top) - Math.max(0, bottom)) / 2 / v.scale;
   return clampView(v, w, h);
+}
+
+/** Bildschirm-Abstand (Pixel) der Weltscheibe vom oberen und unteren Rand in der Gesamtansicht – für Tests und die Abnahme */
+export function discMargins(v: MapView, w: number, h: number, radius: number): { top: number; bottom: number; left: number; right: number } {
+  const cy = h / 2 + v.cz * v.scale, cx = w / 2 + v.cx * v.scale, r = radius * v.scale;
+  return { top: cy - r, bottom: h - (cy + r), left: cx - r, right: w - (cx + r) };
 }
 
 // ---------- Klick oder Ziehen ----------

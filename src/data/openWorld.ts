@@ -13,7 +13,9 @@ export const SITE_BIOMES: readonly SiteBiome[] = ['festland', 'tropisch', 'klipp
 /** Bausteine einer Siedlung (je ein Platz auf der Insel) */
 export type Theme =
   | 'hafen' | 'werft' | 'kontor' | 'plantage' | 'weinberg' | 'parfum' | 'mine' | 'giesserei' | 'batterie' | 'festung'
-  | 'wachturm' | 'leuchtfeuer' | 'schwarzmarkt' | 'perlen' | 'dorf' | 'ruinen' | 'schatz';
+  | 'wachturm' | 'leuchtfeuer' | 'schwarzmarkt' | 'perlen' | 'dorf' | 'ruinen' | 'schatz'
+  // Phase 4.5C: Holzfäller-Lager mit Sägemühle (Hartholz-Forste) und Segeltuch-Manufaktur mit Flachsfeldern
+  | 'forst' | 'manufaktur';
 
 /** Ein Bauplatz: Thema und Lage (Richtung in Grad, Abstand als Anteil des Küstenradius; oder fest in Metern) */
 export interface PlotSpec { theme: Theme; deg?: number; d?: number; at?: [number, number]; turn?: number }
@@ -43,32 +45,32 @@ export interface ThemeIslandSpec {
   info: string;
 }
 
-// ---------- Die 24 Inseln ----------
+// ---------- Die 24 Inseln der Phase 4.3B ----------
 
-export const THEME_ISLANDS: readonly ThemeIslandSpec[] = [
+export const THEME_ISLANDS_43B: readonly ThemeIslandSpec[] = [
   // ----- England (Kuchenstück −36° … 36°) -----
   {
-    id: 'koenigshafen', name: 'Königshafen', power: 'england', deg: 18, dist: 4300, r: 118, kind: 'harbor', biome: 'festland', label: 'Tee- und Handelskolonie',
+    id: 'koenigshafen', name: 'Königshafen', power: 'england', deg: 18, dist: 5460, r: 118, kind: 'harbor', biome: 'festland', label: 'Tee- und Handelskolonie',
     shape: 'gelappt', grass: 0.85, villagers: 6,
     hills: [{ x: -20, z: -30, r: 48, h: 0.16 }, { x: 40, z: 20, r: 30, h: 0.12 }],
     plots: [{ theme: 'kontor', deg: 200, d: 0.74 }, { theme: 'plantage', at: [-20, -28], turn: 20 }, { theme: 'dorf', deg: 80, d: 0.62 }],
     info: 'Die reichste Teekolonie der Krone: Lagerhäuser am Kai, Teegärten auf den Hügeln und ein Kontor, das Gewürze und Wein sucht.',
   },
   {
-    id: 'kreideklippe', name: 'Kreideklippe', power: 'england', deg: -18, dist: 5900, r: 124, kind: 'harbor', biome: 'kreide', label: 'Marine-Werft und Tuch-Manufaktur',
+    id: 'kreideklippe', name: 'Kreideklippe', power: 'england', deg: -18, dist: 7440, r: 124, kind: 'harbor', biome: 'kreide', label: 'Marine-Werft und Tuch-Manufaktur',
     shape: 'lang', grass: 0.8, villagers: 5,
     hills: [{ x: 30, z: -40, r: 56, h: 0.34 }, { x: -40, z: -10, r: 36, h: 0.22 }],
     plots: [{ theme: 'werft', deg: 160, d: 0.76 }, { theme: 'hafen', deg: 230, d: 0.76 }, { theme: 'dorf', at: [-30, 20], turn: 200 }],
     info: 'Weiße Kalksteinfelsen über einer Werft der Royal Navy. In der Manufaktur weben sie Segeltuch für die halbe Flotte.',
   },
   {
-    id: 'nebelriff', name: 'Nebelriff', power: 'england', deg: 22, dist: 7300, r: 84, kind: 'quiet', biome: 'klippe', label: 'Wachturm-Atoll im Sturmgürtel',
+    id: 'nebelriff', name: 'Nebelriff', power: 'england', deg: 22, dist: 9120, r: 84, kind: 'quiet', biome: 'klippe', label: 'Wachturm-Atoll im Sturmgürtel',
     shape: 'sichel', grass: 0.5, villagers: 3,
     plots: [{ theme: 'leuchtfeuer', at: [0, 4] }, { theme: 'wachturm', deg: 120, d: 0.6 }, { theme: 'hafen', deg: 220, d: 0.78 }],
     info: 'Ein Leuchtfeuer der Krone auf einem Riff mitten im Sturmgürtel. Die Wächter tauschen Medizin gegen Pulver und Tee.',
   },
   {
-    id: 'georgskap', name: 'St.-Georgs-Kap', power: 'england', deg: -10, dist: 8500, r: 96, kind: 'camp', biome: 'kreide', label: 'Küstenbatterie',
+    id: 'georgskap', name: 'St.-Georgs-Kap', power: 'england', deg: -10, dist: 10580, r: 96, kind: 'camp', biome: 'kreide', label: 'Küstenbatterie',
     shape: 'rund', grass: 0.7, villagers: 0, level: 16,
     hills: [{ x: 0, z: -10, r: 46, h: 0.28 }],
     plots: [{ theme: 'batterie', deg: 0, d: 0.7 }, { theme: 'batterie', deg: 140, d: 0.68 }, { theme: 'festung', at: [0, -12] }, { theme: 'hafen', deg: 220, d: 0.8 }],
@@ -76,28 +78,28 @@ export const THEME_ISLANDS: readonly ThemeIslandSpec[] = [
   },
   // ----- Deutschland / Hanse (36° … 108°) -----
   {
-    id: 'bernsteinkueste', name: 'Bernsteinküste', power: 'deutschland', deg: 60, dist: 4400, r: 120, kind: 'harbor', biome: 'nord', label: 'Kiefernwald- und Werftkolonie',
+    id: 'bernsteinkueste', name: 'Bernsteinküste', power: 'deutschland', deg: 60, dist: 5590, r: 120, kind: 'harbor', biome: 'nord', label: 'Kiefernwald- und Werftkolonie',
     shape: 'lang', grass: 0.88, villagers: 6,
     hills: [{ x: 10, z: -30, r: 52, h: 0.18 }],
     plots: [{ theme: 'werft', deg: 250, d: 0.76 }, { theme: 'hafen', deg: 200, d: 0.76 }, { theme: 'dorf', at: [20, -20], turn: 160 }],
     info: 'Dunkle Kiefernwälder bis an den Strand. Die Hanse schlägt hier das Hartholz für ihre Werften und braucht Tuch und Tee.',
   },
   {
-    id: 'eisenfels', name: 'Eisenfels', power: 'deutschland', deg: 84, dist: 6100, r: 108, kind: 'harbor', biome: 'klippe', label: 'Erz- und Kanonenstahl-Mine',
+    id: 'eisenfels', name: 'Eisenfels', power: 'deutschland', deg: 84, dist: 7680, r: 108, kind: 'harbor', biome: 'klippe', label: 'Erz- und Kanonenstahl-Mine',
     shape: 'gelappt', grass: 0.45, villagers: 4,
     hills: [{ x: 10, z: 10, r: 50, h: 0.4 }, { x: -36, z: -24, r: 28, h: 0.3 }],
     plots: [{ theme: 'mine', at: [-10, -30], turn: 180 }, { theme: 'hafen', deg: 250, d: 0.78 }, { theme: 'giesserei', deg: 320, d: 0.66 }],
     info: 'Schwarzer Fels voller Erzadern. Aus den Stollen kommt Kanonenstahl, in die Stollen gehen Werkzeug und Medizin.',
   },
   {
-    id: 'nordsturmklippe', name: 'Nordsturmklippe', power: 'deutschland', deg: 54, dist: 7500, r: 92, kind: 'camp', biome: 'nord', label: 'Granit-Vorposten der Hanse',
+    id: 'nordsturmklippe', name: 'Nordsturmklippe', power: 'deutschland', deg: 54, dist: 9360, r: 92, kind: 'camp', biome: 'nord', label: 'Granit-Vorposten der Hanse',
     shape: 'rund', grass: 0.62, villagers: 0, level: 15,
     hills: [{ x: 0, z: 0, r: 44, h: 0.3 }],
     plots: [{ theme: 'festung', at: [0, -4] }, { theme: 'wachturm', deg: 60, d: 0.7 }, { theme: 'hafen', deg: 230, d: 0.8 }],
     info: 'Ein rauer Granitvorposten im Sturmgürtel. Die Garnison hält die Seewege der Hanse frei – mit allen Mitteln.',
   },
   {
-    id: 'donnergiesserei', name: 'Donnergießerei', power: 'deutschland', deg: 96, dist: 4600, r: 112, kind: 'harbor', biome: 'nord', label: 'Artillerie-Gießerei',
+    id: 'donnergiesserei', name: 'Donnergießerei', power: 'deutschland', deg: 96, dist: 5840, r: 112, kind: 'harbor', biome: 'nord', label: 'Artillerie-Gießerei',
     shape: 'sichel', grass: 0.7, villagers: 5,
     hills: [{ x: -20, z: -20, r: 44, h: 0.2 }],
     plots: [{ theme: 'giesserei', at: [-10, -20] }, { theme: 'hafen', deg: 270, d: 0.76 }, { theme: 'dorf', deg: 30, d: 0.62 }],
@@ -105,27 +107,27 @@ export const THEME_ISLANDS: readonly ThemeIslandSpec[] = [
   },
   // ----- Kurogane (108° … 180°) -----
   {
-    id: 'aschezahn', name: 'Aschezahn', power: 'kurogane', deg: 128, dist: 4500, r: 112, kind: 'harbor', biome: 'glut', label: 'Schwefel- und Obsidian-Mine',
+    id: 'aschezahn', name: 'Aschezahn', power: 'kurogane', deg: 128, dist: 5710, r: 112, kind: 'harbor', biome: 'glut', label: 'Schwefel- und Obsidian-Mine',
     shape: 'gelappt', grass: 0.4, villagers: 4,
     hills: [{ x: 14, z: -10, r: 52, h: 0.42 }],
     plots: [{ theme: 'mine', at: [10, -32], turn: 160 }, { theme: 'hafen', deg: 300, d: 0.78 }, { theme: 'dorf', deg: 220, d: 0.66 }],
     info: 'Ein Zahn aus Asche und Obsidian. In gelbem Dampf schürfen Kuroganes Bergleute Schwefel und schwarzes Glas.',
   },
   {
-    id: 'schattenbucht', name: 'Schattenbucht', power: 'kurogane', deg: 160, dist: 6000, r: 90, kind: 'harbor', biome: 'glut', label: 'Schwarzmarkt der Gesetzlosen',
+    id: 'schattenbucht', name: 'Schattenbucht', power: 'kurogane', deg: 160, dist: 7560, r: 90, kind: 'harbor', biome: 'glut', label: 'Schwarzmarkt der Gesetzlosen',
     shape: 'sichel', grass: 0.42, villagers: 5,
     plots: [{ theme: 'schwarzmarkt', deg: 330, d: 0.76 }, { theme: 'dorf', at: [0, -14] }],
     info: 'In der Bucht fragt niemand nach Flaggen. Waffen, Pulver und Obsidian wechseln den Besitzer – keine Macht kontrolliert die Fracht.',
   },
   {
-    id: 'drachenwirbel', name: 'Drachenwirbel', power: 'kurogane', deg: 132, dist: 7300, r: 100, kind: 'camp', biome: 'glut', label: 'Zerklüftete Vulkanfelsen',
+    id: 'drachenwirbel', name: 'Drachenwirbel', power: 'kurogane', deg: 132, dist: 9120, r: 100, kind: 'camp', biome: 'glut', label: 'Zerklüftete Vulkanfelsen',
     shape: 'gelappt', grass: 0.36, villagers: 0, level: 15,
     hills: [{ x: -10, z: 10, r: 46, h: 0.5 }, { x: 34, z: -30, r: 26, h: 0.4 }],
     plots: [{ theme: 'wachturm', deg: 40, d: 0.66 }, { theme: 'ruinen', at: [-20, -30], turn: 150 }, { theme: 'hafen', deg: 300, d: 0.8 }],
     info: 'Felsnadeln wie Drachenzähne, dazwischen Wirbel aus heißem Dampf. Kuroganes Wächter lauern zwischen den Graten.',
   },
   {
-    id: 'blutmondriff', name: 'Blutmond-Riff', power: 'kurogane', deg: 164, dist: 8600, r: 98, kind: 'camp', biome: 'glut', label: 'Korsaren-Bastion',
+    id: 'blutmondriff', name: 'Blutmond-Riff', power: 'kurogane', deg: 164, dist: 10710, r: 98, kind: 'camp', biome: 'glut', label: 'Korsaren-Bastion',
     shape: 'rund', grass: 0.4, villagers: 0, level: 17,
     hills: [{ x: 0, z: -6, r: 44, h: 0.26 }],
     plots: [{ theme: 'festung', at: [0, -8] }, { theme: 'batterie', deg: 30, d: 0.7 }, { theme: 'hafen', deg: 330, d: 0.8 }],
@@ -133,27 +135,27 @@ export const THEME_ISLANDS: readonly ThemeIslandSpec[] = [
   },
   // ----- Niederlande / Handelskompanie (180° … 252°) -----
   {
-    id: 'banda', name: 'Gewürzinsel Banda', power: 'niederlande', deg: 198, dist: 4400, r: 122, kind: 'harbor', biome: 'tropisch', label: 'Terrassen-Gewürzplantage',
+    id: 'banda', name: 'Gewürzinsel Banda', power: 'niederlande', deg: 198, dist: 5590, r: 122, kind: 'harbor', biome: 'tropisch', label: 'Terrassen-Gewürzplantage',
     shape: 'gelappt', grass: 0.82, villagers: 6,
     hills: [{ x: 0, z: -10, r: 60, h: 0.2 }, { x: 0, z: -10, r: 34, h: 0.36 }],
     plots: [{ theme: 'plantage', at: [0, -24] }, { theme: 'plantage', at: [-34, 10], turn: 90 }, { theme: 'hafen', deg: 20, d: 0.76 }],
     info: 'Muskat und Pfeffer wachsen auf Terrassen bis zum Gipfel. Das Kontor der Kompanie kauft Werkzeug und Medizin.',
   },
   {
-    id: 'nieuwhoorn', name: 'Grachtenstadt Nieuw-Hoorn', power: 'niederlande', deg: 232, dist: 5800, r: 128, kind: 'harbor', biome: 'festland', label: 'Kontor-Handelszentrum',
+    id: 'nieuwhoorn', name: 'Grachtenstadt Nieuw-Hoorn', power: 'niederlande', deg: 232, dist: 7320, r: 128, kind: 'harbor', biome: 'festland', label: 'Kontor-Handelszentrum',
     shape: 'rund', grass: 0.86, villagers: 7,
     hills: [{ x: 30, z: -30, r: 40, h: 0.12 }],
     plots: [{ theme: 'kontor', deg: 50, d: 0.72 }, { theme: 'hafen', deg: 100, d: 0.76 }, { theme: 'dorf', at: [-20, -20], turn: 230 }],
     info: 'Kanäle, Brücken und Backsteinspeicher: das Handelszentrum der Kompanie im Riffgürtel. Hier wird alles gekauft und alles verkauft.',
   },
   {
-    id: 'sandbankatoll', name: 'Sandbank-Atoll', power: 'niederlande', deg: 206, dist: 7300, r: 80, kind: 'harbor', biome: 'atoll', label: 'Schmugglerhafen',
+    id: 'sandbankatoll', name: 'Sandbank-Atoll', power: 'niederlande', deg: 206, dist: 9120, r: 80, kind: 'harbor', biome: 'atoll', label: 'Schmugglerhafen',
     shape: 'sichel', grass: 0.38, villagers: 4,
     plots: [{ theme: 'schwarzmarkt', deg: 30, d: 0.74 }, { theme: 'perlen', deg: 200, d: 0.7 }],
     info: 'Eine Sandbank, die bei Ebbe wächst. Die Kompanie schaut weg, solange die Schmuggler ihre Spitzel gut bezahlen.',
   },
   {
-    id: 'goldkueste', name: 'Goldküste Oranje', power: 'niederlande', deg: 238, dist: 8500, r: 116, kind: 'harbor', biome: 'tropisch', label: 'Luxus- und Seidenkontor',
+    id: 'goldkueste', name: 'Goldküste Oranje', power: 'niederlande', deg: 238, dist: 10580, r: 116, kind: 'harbor', biome: 'tropisch', label: 'Luxus- und Seidenkontor',
     shape: 'lang', grass: 0.7, villagers: 6,
     hills: [{ x: -20, z: -24, r: 46, h: 0.18 }],
     plots: [{ theme: 'kontor', deg: 60, d: 0.74 }, { theme: 'dorf', at: [-24, -24], turn: 240 }],
@@ -161,26 +163,26 @@ export const THEME_ISLANDS: readonly ThemeIslandSpec[] = [
   },
   // ----- Frankreich (252° … 324°) -----
   {
-    id: 'sonnenweinkap', name: 'Sonnenwein-Kap', power: 'frankreich', deg: 310, dist: 3400, r: 110, kind: 'harbor', biome: 'weinland', label: 'Wein- und Seidenhafen',
+    id: 'sonnenweinkap', name: 'Sonnenwein-Kap', power: 'frankreich', deg: 310, dist: 4320, r: 110, kind: 'harbor', biome: 'weinland', label: 'Wein- und Seidenhafen',
     shape: 'lang', grass: 0.84, villagers: 6,
     hills: [{ x: -10, z: -20, r: 50, h: 0.18 }],
     plots: [{ theme: 'weinberg', at: [-10, -24] }, { theme: 'hafen', deg: 150, d: 0.76 }, { theme: 'dorf', deg: 250, d: 0.6 }],
     info: 'Weinberge in der Abendsonne über einem Hafen voller Fässer und Seidenballen. Wer Hartholz und Tee bringt, wird gut bezahlt.',
   },
   {
-    id: 'korallenbucht', name: 'Korallenbucht', power: 'frankreich', deg: 276, dist: 5600, r: 88, kind: 'harbor', biome: 'atoll', label: 'Perlen- und Luxus-Atoll',
+    id: 'korallenbucht', name: 'Korallenbucht', power: 'frankreich', deg: 276, dist: 7080, r: 88, kind: 'harbor', biome: 'atoll', label: 'Perlen- und Luxus-Atoll',
     shape: 'sichel', grass: 0.4, villagers: 5,
     plots: [{ theme: 'perlen', deg: 60, d: 0.72 }, { theme: 'hafen', deg: 300, d: 0.78 }],
     info: 'Eine rosa Korallenbucht, in der Perlentaucher nach Glanz suchen. Ihr Schmuck geht in die Salons von Soleilmont.',
   },
   {
-    id: 'fleuratoll', name: 'Fleur-Atoll', power: 'frankreich', deg: 300, dist: 7400, r: 94, kind: 'harbor', biome: 'weinland', label: 'Parfüm- und Gewürzinsel',
+    id: 'fleuratoll', name: 'Fleur-Atoll', power: 'frankreich', deg: 300, dist: 9240, r: 94, kind: 'harbor', biome: 'weinland', label: 'Parfüm- und Gewürzinsel',
     shape: 'gelappt', grass: 0.78, villagers: 5,
     plots: [{ theme: 'parfum', at: [0, -16] }, { theme: 'hafen', deg: 100, d: 0.78 }],
     info: 'Lavendelfelder und Gewürzbeete, deren Duft man auf See riecht. Die Parfümeure brauchen Seide und Tuch für ihre Flakons.',
   },
   {
-    id: 'bastionlumiere', name: 'Bastion Lumière', power: 'frankreich', deg: 264, dist: 8600, r: 98, kind: 'camp', biome: 'kreide', label: 'Weiße Prunkfestung',
+    id: 'bastionlumiere', name: 'Bastion Lumière', power: 'frankreich', deg: 264, dist: 10710, r: 98, kind: 'camp', biome: 'kreide', label: 'Weiße Prunkfestung',
     shape: 'rund', grass: 0.72, villagers: 0, level: 17,
     hills: [{ x: 0, z: -8, r: 46, h: 0.24 }],
     plots: [{ theme: 'festung', at: [0, -10] }, { theme: 'batterie', deg: 90, d: 0.7 }, { theme: 'hafen', deg: 30, d: 0.8 }],
@@ -188,31 +190,267 @@ export const THEME_ISLANDS: readonly ThemeIslandSpec[] = [
   },
   // ----- Unkartiert (herrenlos, abseits der Routen in Ring 3 und 4) -----
   {
-    id: 'fluesterlagune', name: 'Flüsterlagune', power: null, deg: 44, dist: 9300, r: 74, kind: 'harbor', biome: 'atoll', label: 'Versteckter Schmugglerhafen',
+    id: 'fluesterlagune', name: 'Flüsterlagune', power: null, deg: 44, dist: 11600, r: 74, kind: 'harbor', biome: 'atoll', label: 'Versteckter Schmugglerhafen',
     shape: 'sichel', grass: 0.36, villagers: 4, uncharted: true,
     plots: [{ theme: 'schwarzmarkt', deg: 200, d: 0.74 }, { theme: 'schatz', at: [0, -10] }],
     info: 'Eine Lagune hinter einem Riffkranz, auf keiner Karte. Der Händler hier fragt nicht, woher die Ware stammt.',
   },
   {
-    id: 'versunkenekrone', name: 'Versunkene Krone', power: null, deg: -26, dist: 6800, r: 70, kind: 'ruin', biome: 'klippe', label: 'Alte Ruinen-Insel',
+    id: 'versunkenekrone', name: 'Versunkene Krone', power: null, deg: -26, dist: 8520, r: 70, kind: 'ruin', biome: 'klippe', label: 'Alte Ruinen-Insel',
     shape: 'gelappt', grass: 0.5, villagers: 0, uncharted: true, level: 14,
     plots: [{ theme: 'ruinen', at: [0, -6] }, { theme: 'schatz', deg: 120, d: 0.6 }, { theme: 'leuchtfeuer', deg: 220, d: 0.78 }],
     info: 'Säulen eines Königreichs, das das Meer verschluckt hat. Zwischen den Steinen glimmen Relikt-Splitter.',
   },
   {
-    id: 'knochenriff', name: 'Knochenriff', power: null, deg: 118, dist: 9400, r: 62, kind: 'treasure', biome: 'atoll', label: 'Schatz-Atoll',
+    id: 'knochenriff', name: 'Knochenriff', power: null, deg: 118, dist: 11730, r: 62, kind: 'treasure', biome: 'atoll', label: 'Schatz-Atoll',
     shape: 'sichel', grass: 0.3, villagers: 0, uncharted: true, level: 18,
     plots: [{ theme: 'schatz', at: [0, -6] }, { theme: 'leuchtfeuer', deg: 300, d: 0.78 }],
     info: 'Weiße Walknochen ragen aus dem Korallensand. Unter einem von ihnen liegt eine Truhe, sagen die Alten.',
   },
   {
-    id: 'sternenfall', name: 'Sternenfall', power: null, deg: 222, dist: 8000, r: 68, kind: 'ruin', biome: 'klippe', label: 'Krater der alten Warte',
+    id: 'sternenfall', name: 'Sternenfall', power: null, deg: 222, dist: 9960, r: 68, kind: 'ruin', biome: 'klippe', label: 'Krater der alten Warte',
     shape: 'rund', grass: 0.46, villagers: 0, uncharted: true, level: 16,
     hills: [{ x: 0, z: 0, r: 30, h: 0.3 }],
     plots: [{ theme: 'ruinen', at: [-14, -10], turn: 40 }, { theme: 'schatz', at: [14, 8] }, { theme: 'leuchtfeuer', deg: 40, d: 0.78 }],
     info: 'Hier soll ein Stern ins Meer gefallen sein. Die Warte, die ihn bewachte, ist eingestürzt; ihre Splitter leuchten noch.',
   },
 ];
+
+// ---------- Die 36 Inseln der Phase 4.5C (Ringe 2 bis 5) ----------
+//
+// Rohstoff-Minen für Kanonenstahl, Hartholz-Forste, Segeltuch-Manufakturen, Gewürz- und Wein-Kolonien, Leuchtturm-Atolle, Vorposten der Mächte in den
+// Königs- und Kaiser-Meeren und drei weitere unkartierte Geheim-Inseln. Die Lage ist so gewählt, dass jede Insel den Platzbedarf der Welt einhält,
+// 700 m von den Grenzlinien bleibt und die fünf Bauplätze der Kaiser-Zitadellen in Ring 5 frei lässt (tests/expandedOpenWorld.test.ts).
+
+const FORST_HILLS = (r: number) => [{ x: -10, z: -20, r: r * 0.42, h: 0.18 }];
+
+export const EXPANSION_ISLANDS: readonly ThemeIslandSpec[] = [
+  // ----- England (Kuchenstück −36° … 36°) -----
+  {
+    id: 'eichenhain', name: 'Eichenhain', power: 'england', deg: 24, dist: 4750, r: 112, kind: 'harbor', biome: 'festland', label: 'Hartholz-Forst der Krone',
+    shape: 'gelappt', grass: 0.9, villagers: 4, hills: FORST_HILLS(112),
+    plots: [{ theme: 'forst', at: [-6, -30] }, { theme: 'hafen', deg: 210, d: 0.76 }, { theme: 'dorf', deg: 90, d: 0.6 }],
+    info: 'Uralte Eichen bis an den Strand. Die Krone schlägt hier das Hartholz für ihre Fregatten und zahlt gut für Werkzeug und Tee.',
+  },
+  {
+    id: 'webersund', name: 'Webersund', power: 'england', deg: -22, dist: 5600, r: 104, kind: 'harbor', biome: 'kreide', label: 'Segeltuch-Manufaktur der Krone',
+    shape: 'lang', grass: 0.82, villagers: 5, hills: [{ x: 20, z: -34, r: 44, h: 0.2 }],
+    plots: [{ theme: 'manufaktur', at: [0, -22] }, { theme: 'hafen', deg: 160, d: 0.76 }, { theme: 'plantage', deg: 300, d: 0.6, turn: 30 }],
+    info: 'In langen Hallen weben sie das feste Segeltuch, das jede Fregatte der Krone trägt. Auf den Kreidehängen wächst der Flachs dafür.',
+  },
+  {
+    id: 'zinnfels', name: 'Zinnfels', power: 'england', deg: 28, dist: 8200, r: 100, kind: 'harbor', biome: 'klippe', label: 'Erz- und Kanonenstahl-Mine',
+    shape: 'gelappt', grass: 0.45, villagers: 4, hills: [{ x: 10, z: 6, r: 46, h: 0.38 }, { x: -34, z: -24, r: 26, h: 0.28 }],
+    plots: [{ theme: 'mine', at: [-8, -30], turn: 180 }, { theme: 'hafen', deg: 220, d: 0.78 }, { theme: 'giesserei', deg: 310, d: 0.64 }],
+    info: 'Ein Felsklotz voller Zinn- und Eisenadern. Die Stollen der Krone liefern Kanonenstahl für die Geschütze von Albion.',
+  },
+  {
+    id: 'nordlichtatoll', name: 'Nordlicht-Atoll', power: 'england', deg: -20, dist: 11200, r: 80, kind: 'harbor', biome: 'atoll', label: 'Leuchtturm-Atoll der Königs-Meere',
+    shape: 'sichel', grass: 0.36, villagers: 3,
+    plots: [{ theme: 'leuchtfeuer', at: [0, 4] }, { theme: 'perlen', deg: 200, d: 0.72 }],
+    info: 'Ein Ring aus Korallen und Sand, gekrönt von einem Leuchtfeuer, das die Einfahrt nach Albion weist. Die Wärter tauschen Perlen gegen Proviant.',
+  },
+  {
+    id: 'kronwacht', name: 'Kronwacht', power: 'england', deg: 22, dist: 12300, r: 92, kind: 'camp', biome: 'kreide', label: 'Vorposten der Admiralität',
+    shape: 'rund', grass: 0.7, villagers: 0, level: 19, hills: [{ x: 0, z: -8, r: 44, h: 0.26 }],
+    plots: [{ theme: 'festung', at: [0, -10] }, { theme: 'batterie', deg: 60, d: 0.7 }, { theme: 'hafen', deg: 220, d: 0.8 }],
+    info: 'Ein weißer Vorposten, der die Seewege nach Albion bewacht. Die Garnison hält jedes Segel für einen Feind.',
+  },
+  {
+    id: 'sturmhorn', name: 'Sturmhorn', power: 'england', deg: -16, dist: 14000, r: 84, kind: 'harbor', biome: 'klippe', label: 'Leuchtfeuer an der Sturm-Barriere',
+    shape: 'sichel', grass: 0.5, villagers: 3,
+    plots: [{ theme: 'leuchtfeuer', at: [0, 4] }, { theme: 'wachturm', deg: 120, d: 0.6 }, { theme: 'hafen', deg: 220, d: 0.78 }],
+    info: 'Das letzte Leuchtfeuer vor der Sturm-Barriere. Seine Wärter hören nachts das Donnern des Weltrands.',
+  },
+  {
+    id: 'greifenhorst', name: 'Greifenhorst', power: 'england', deg: 20, dist: 13900, r: 96, kind: 'camp', biome: 'kreide', label: 'Bastion der Kaiser-Meere',
+    shape: 'rund', grass: 0.68, villagers: 0, level: 24, hills: [{ x: 0, z: -10, r: 46, h: 0.28 }],
+    plots: [{ theme: 'festung', at: [0, -12] }, { theme: 'batterie', deg: 0, d: 0.7 }, { theme: 'hafen', deg: 220, d: 0.8 }],
+    info: 'Auf diesem Kreidefelsen hält die Krone ihre äußerste Bastion. Wer hier anlegt, hat sich mit der Elite der Royal Navy angelegt.',
+  },
+  // ----- Deutschland / Hanse (36° … 108°) -----
+  {
+    id: 'harzwald', name: 'Harzwald', power: 'deutschland', deg: 46, dist: 6200, r: 116, kind: 'harbor', biome: 'nord', label: 'Hartholz-Forst und Werft der Hanse',
+    shape: 'lang', grass: 0.9, villagers: 5, hills: FORST_HILLS(116),
+    plots: [{ theme: 'forst', at: [10, -28] }, { theme: 'werft', deg: 250, d: 0.76 }, { theme: 'hafen', deg: 190, d: 0.76 }],
+    info: 'Kiefern und Eichen, so weit das Auge reicht. Das Harz duftet bis aufs Meer, und die Werft der Hanse verbaut jeden Stamm.',
+  },
+  {
+    id: 'kohlenstieg', name: 'Kohlenstieg', power: 'deutschland', deg: 88, dist: 5000, r: 104, kind: 'harbor', biome: 'klippe', label: 'Kohle- und Stahlmine',
+    shape: 'gelappt', grass: 0.42, villagers: 4, hills: [{ x: 10, z: 8, r: 48, h: 0.4 }],
+    plots: [{ theme: 'mine', at: [-10, -30], turn: 180 }, { theme: 'giesserei', deg: 320, d: 0.64 }, { theme: 'hafen', deg: 240, d: 0.78 }],
+    info: 'Schwarze Stollen, glühende Essen: aus Kohle und Erz wird hier Kanonenstahl für die Bastionen der Hanse.',
+  },
+  {
+    id: 'seilerhafen', name: 'Seilerhafen', power: 'deutschland', deg: 46, dist: 8600, r: 108, kind: 'harbor', biome: 'nord', label: 'Seil- und Segeltuch-Manufaktur',
+    shape: 'rund', grass: 0.84, villagers: 5, hills: [{ x: 20, z: -30, r: 40, h: 0.16 }],
+    plots: [{ theme: 'manufaktur', at: [0, -20] }, { theme: 'hafen', deg: 230, d: 0.76 }, { theme: 'dorf', deg: 40, d: 0.6 }],
+    info: 'Auf den Reeperbahnen drehen sie Taue, in den Hallen weben sie Segeltuch. Ohne Seilerhafen läge die halbe Hanse-Flotte still.',
+  },
+  {
+    id: 'granitwacht', name: 'Granitwacht', power: 'deutschland', deg: 56, dist: 12200, r: 94, kind: 'camp', biome: 'klippe', label: 'Granit-Bastion vor Adlerstein',
+    shape: 'rund', grass: 0.5, villagers: 0, level: 20, hills: [{ x: 0, z: 0, r: 44, h: 0.32 }],
+    plots: [{ theme: 'festung', at: [0, -4] }, { theme: 'wachturm', deg: 60, d: 0.7 }, { theme: 'hafen', deg: 230, d: 0.8 }],
+    info: 'Ein Klotz aus Granit mit Kasematten und Geschützen. Wer nach Adlerstein will, muss an der Granitwacht vorbei.',
+  },
+  {
+    id: 'bakenriff', name: 'Bakenriff', power: 'deutschland', deg: 92, dist: 11200, r: 80, kind: 'harbor', biome: 'klippe', label: 'Leuchtfeuer der Hanse',
+    shape: 'sichel', grass: 0.46, villagers: 3,
+    plots: [{ theme: 'leuchtfeuer', at: [0, 4] }, { theme: 'hafen', deg: 220, d: 0.78 }],
+    info: 'Eine Feuerbake auf einem Riffbogen. Die Lotsen der Hanse führen von hier die Geleitzüge durch die Königs-Meere.',
+  },
+  {
+    id: 'eisgrat', name: 'Eisgrat', power: 'deutschland', deg: 52, dist: 14300, r: 98, kind: 'harbor', biome: 'nord', label: 'Erzgrat am Rand der Welt',
+    shape: 'gelappt', grass: 0.5, villagers: 4, hills: [{ x: 8, z: -10, r: 46, h: 0.42 }],
+    plots: [{ theme: 'mine', at: [8, -30], turn: 160 }, { theme: 'hafen', deg: 230, d: 0.78 }, { theme: 'wachturm', deg: 40, d: 0.7 }],
+    info: 'Ein vereister Grat voller Erz, so nah an der Sturm-Barriere, dass die Gischt auf den Halden gefriert.',
+  },
+  {
+    id: 'sturmbastei', name: 'Sturmbastei', power: 'deutschland', deg: 92, dist: 13800, r: 96, kind: 'camp', biome: 'nord', label: 'Kaiser-Bastei der Hanse',
+    shape: 'rund', grass: 0.6, villagers: 0, level: 24, hills: [{ x: 0, z: -6, r: 44, h: 0.3 }],
+    plots: [{ theme: 'festung', at: [0, -6] }, { theme: 'batterie', deg: 30, d: 0.7 }, { theme: 'hafen', deg: 330, d: 0.8 }],
+    info: 'Die äußerste Bastei der Hanse, gebaut gegen Sturm und Feind. Ihre Geschütze reichen bis an den Weltrand.',
+  },
+  // ----- Kurogane (108° … 180°) -----
+  {
+    id: 'russhafen', name: 'Rußhafen', power: 'kurogane', deg: 118, dist: 4900, r: 106, kind: 'harbor', biome: 'glut', label: 'Stahlschmiede der Schwarzsegel',
+    shape: 'gelappt', grass: 0.38, villagers: 4, hills: [{ x: 12, z: -8, r: 50, h: 0.42 }],
+    plots: [{ theme: 'mine', at: [10, -32], turn: 160 }, { theme: 'giesserei', deg: 40, d: 0.64 }, { theme: 'hafen', deg: 300, d: 0.78 }],
+    info: 'Ruß liegt auf jedem Dach. In den Essen Kuroganes wird Erz zu Kanonenstahl für die pechschwarzen Kriegsschiffe.',
+  },
+  {
+    id: 'jadeterrassen', name: 'Jadeterrassen', power: 'kurogane', deg: 168, dist: 6000, r: 112, kind: 'harbor', biome: 'tropisch', label: 'Tee- und Gewürzterrassen',
+    shape: 'gelappt', grass: 0.84, villagers: 6, hills: [{ x: 0, z: -10, r: 56, h: 0.2 }, { x: 0, z: -10, r: 32, h: 0.34 }],
+    plots: [{ theme: 'plantage', at: [0, -24] }, { theme: 'plantage', at: [-34, 8], turn: 90 }, { theme: 'hafen', deg: 20, d: 0.76 }],
+    info: 'Grüne Teeterrassen bis zum Gipfel, dazwischen Pfeffer und Ingwer. Selbst Kurogane braucht Händler – und Werkzeug.',
+  },
+  {
+    id: 'rotlaternenriff', name: 'Rotlaternen-Riff', power: 'kurogane', deg: 170, dist: 9200, r: 86, kind: 'harbor', biome: 'glut', label: 'Signalfeuer der Schwarzsegel',
+    shape: 'sichel', grass: 0.36, villagers: 3,
+    plots: [{ theme: 'leuchtfeuer', at: [0, 4] }, { theme: 'wachturm', deg: 120, d: 0.6 }, { theme: 'hafen', deg: 300, d: 0.78 }],
+    info: 'Rote Laternen auf schwarzem Fels: das Signalfeuer der Schwarzsegel. Wer es sieht, weiß, wessen Meer er befährt.',
+  },
+  {
+    id: 'schwertfels', name: 'Schwertfels', power: 'kurogane', deg: 124, dist: 11300, r: 96, kind: 'camp', biome: 'glut', label: 'Klingen-Bastion',
+    shape: 'rund', grass: 0.38, villagers: 0, level: 20, hills: [{ x: 0, z: -6, r: 44, h: 0.3 }],
+    plots: [{ theme: 'festung', at: [0, -8] }, { theme: 'batterie', deg: 30, d: 0.7 }, { theme: 'hafen', deg: 330, d: 0.8 }],
+    info: 'Ein Fels wie eine Klinge. Kuroganes Elite übt hier zwischen Lavaspalten und Geschützen.',
+  },
+  {
+    id: 'mondsichelatoll', name: 'Mondsichel-Atoll', power: 'kurogane', deg: 124, dist: 14000, r: 80, kind: 'harbor', biome: 'atoll', label: 'Leuchtturm-Atoll am Weltrand',
+    shape: 'sichel', grass: 0.34, villagers: 3,
+    plots: [{ theme: 'leuchtfeuer', at: [0, 4] }, { theme: 'perlen', deg: 200, d: 0.72 }],
+    info: 'Eine silberne Sichel im dunklen Meer. Das Leuchtfeuer brennt rot, und die Taucher holen schwarze Perlen aus der Tiefe.',
+  },
+  {
+    id: 'drachenmaul', name: 'Drachenmaul', power: 'kurogane', deg: 166, dist: 13700, r: 98, kind: 'camp', biome: 'glut', label: 'Vulkan-Bastion der Kaiser-Meere',
+    shape: 'gelappt', grass: 0.34, villagers: 0, level: 25, hills: [{ x: -10, z: 10, r: 46, h: 0.48 }],
+    plots: [{ theme: 'festung', at: [0, -8] }, { theme: 'batterie', deg: 30, d: 0.7 }, { theme: 'hafen', deg: 330, d: 0.8 }],
+    info: 'Ein feuerspeiender Krater mit einer Festung im Schlund. Hier wachen Kuroganes grimmigste Kriegsherren.',
+  },
+  // ----- Niederlande / Handelskompanie (180° … 252°) -----
+  {
+    id: 'muskatbucht', name: 'Muskatbucht', power: 'niederlande', deg: 244, dist: 5650, r: 114, kind: 'harbor', biome: 'tropisch', label: 'Gewürz-Kolonie',
+    shape: 'gelappt', grass: 0.84, villagers: 6, hills: [{ x: 0, z: -10, r: 58, h: 0.2 }, { x: 0, z: -10, r: 32, h: 0.34 }],
+    plots: [{ theme: 'plantage', at: [0, -24] }, { theme: 'plantage', at: [-34, 8], turn: 90 }, { theme: 'hafen', deg: 20, d: 0.76 }],
+    info: 'Muskatbäume in langen Reihen und ein Hafen, der nach Zimt riecht. Die Kompanie bewacht jede Nuss wie Gold.',
+  },
+  {
+    id: 'segelmacherhof', name: 'Segelmacherhof', power: 'niederlande', deg: 208, dist: 5200, r: 110, kind: 'harbor', biome: 'festland', label: 'Segeltuch-Manufaktur der Kompanie',
+    shape: 'rund', grass: 0.86, villagers: 5, hills: [{ x: 26, z: -30, r: 40, h: 0.14 }],
+    plots: [{ theme: 'manufaktur', at: [0, -20] }, { theme: 'hafen', deg: 60, d: 0.76 }, { theme: 'dorf', deg: 300, d: 0.6 }],
+    info: 'Windmühlen treiben die Webstühle, und aus den Hallen rollt Segeltuch für die bauchigen Galleonen der Kompanie.',
+  },
+  {
+    id: 'teakholm', name: 'Teakholm', power: 'niederlande', deg: 224, dist: 8600, r: 112, kind: 'harbor', biome: 'tropisch', label: 'Teakholz-Forst der Kompanie',
+    shape: 'lang', grass: 0.86, villagers: 5, hills: FORST_HILLS(112),
+    plots: [{ theme: 'forst', at: [0, -28] }, { theme: 'werft', deg: 30, d: 0.76 }, { theme: 'hafen', deg: 90, d: 0.76 }],
+    info: 'Teak und Mahagoni, schwer und unverwüstlich. Die Kompanie lässt hier Stämme für ihre Werften schlagen.',
+  },
+  {
+    id: 'zimtinsel', name: 'Zimtinsel', power: 'niederlande', deg: 246, dist: 9400, r: 100, kind: 'harbor', biome: 'tropisch', label: 'Zimt- und Pfefferkolonie',
+    shape: 'gelappt', grass: 0.8, villagers: 5, hills: [{ x: 0, z: -14, r: 46, h: 0.2 }],
+    plots: [{ theme: 'plantage', at: [0, -22] }, { theme: 'kontor', deg: 60, d: 0.74 }],
+    info: 'Zimtrinde trocknet auf jedem Dach. Das Kontor kauft Werkzeug und Kanonenstahl, um die Plantage gegen Korsaren zu halten.',
+  },
+  {
+    id: 'lotsenbake', name: 'Lotsenbake', power: 'niederlande', deg: 200, dist: 11300, r: 78, kind: 'harbor', biome: 'atoll', label: 'Leuchtturm-Atoll der Kompanie',
+    shape: 'sichel', grass: 0.36, villagers: 3,
+    plots: [{ theme: 'leuchtfeuer', at: [0, 4] }, { theme: 'perlen', deg: 200, d: 0.72 }],
+    info: 'Die Lotsen der Kompanie warten hier auf Galleonen, die den Weg nach Oranjehaven suchen.',
+  },
+  {
+    id: 'kapderstuerme', name: 'Kap der Stürme', power: 'niederlande', deg: 236, dist: 13800, r: 100, kind: 'camp', biome: 'klippe', label: 'Bollwerk der Kompanie',
+    shape: 'gelappt', grass: 0.5, villagers: 0, level: 24, hills: [{ x: 0, z: -8, r: 46, h: 0.3 }],
+    plots: [{ theme: 'festung', at: [0, -8] }, { theme: 'batterie', deg: 30, d: 0.7 }, { theme: 'hafen', deg: 330, d: 0.8 }],
+    info: 'Am Kap brechen die Wellen der Sturm-Barriere. Die Kompanie hält hier ein Bollwerk, das kein Schiff ungefragt passiert.',
+  },
+  {
+    id: 'perlenhorn', name: 'Perlenhorn', power: 'niederlande', deg: 198, dist: 14100, r: 82, kind: 'harbor', biome: 'atoll', label: 'Perlenfischer am Weltrand',
+    shape: 'sichel', grass: 0.34, villagers: 3,
+    plots: [{ theme: 'leuchtfeuer', at: [0, 4] }, { theme: 'perlen', deg: 200, d: 0.72 }],
+    info: 'Die tiefsten Perlenbänke der Welt liegen hier. Die Taucher sagen, unten leuchte das Meer.',
+  },
+  // ----- Frankreich (252° … 324°) -----
+  {
+    id: 'clairvin', name: 'Clair-Vin', power: 'frankreich', deg: 270, dist: 4750, r: 110, kind: 'harbor', biome: 'weinland', label: 'Wein-Kolonie',
+    shape: 'lang', grass: 0.84, villagers: 6, hills: [{ x: -10, z: -20, r: 50, h: 0.18 }],
+    plots: [{ theme: 'weinberg', at: [-10, -24] }, { theme: 'hafen', deg: 150, d: 0.76 }, { theme: 'dorf', deg: 250, d: 0.6 }],
+    info: 'Rebstöcke an sonnigen Hängen und Keller voller Fässer. Der Wein von Clair-Vin fließt an jeder Tafel der Armada.',
+  },
+  {
+    id: 'voileblanche', name: 'Voile Blanche', power: 'frankreich', deg: 316, dist: 5900, r: 104, kind: 'harbor', biome: 'kreide', label: 'Segeltuch-Manufaktur der Armada',
+    shape: 'rund', grass: 0.8, villagers: 5, hills: [{ x: 20, z: -30, r: 40, h: 0.18 }],
+    plots: [{ theme: 'manufaktur', at: [0, -20] }, { theme: 'hafen', deg: 160, d: 0.76 }, { theme: 'dorf', deg: 40, d: 0.6 }],
+    info: 'Weißes Tuch für königsblaue Segel: die Manufaktur färbt und webt für die ganze Armada Royale.',
+  },
+  {
+    id: 'boisroyal', name: 'Bois-Royal', power: 'frankreich', deg: 262, dist: 8600, r: 112, kind: 'harbor', biome: 'festland', label: 'Hartholz-Forst der Armada',
+    shape: 'gelappt', grass: 0.9, villagers: 5, hills: FORST_HILLS(112),
+    plots: [{ theme: 'forst', at: [0, -28] }, { theme: 'werft', deg: 200, d: 0.76 }, { theme: 'hafen', deg: 140, d: 0.76 }],
+    info: 'Der königliche Wald: jede Eiche ist gezählt und gehört der Armada. Ihre Stämme werden zu Kielen und Masten.',
+  },
+  {
+    id: 'etoiledemer', name: 'Étoile-de-Mer', power: 'frankreich', deg: 310, dist: 11200, r: 78, kind: 'harbor', biome: 'atoll', label: 'Leuchtturm-Atoll der Armada',
+    shape: 'sichel', grass: 0.36, villagers: 3,
+    plots: [{ theme: 'leuchtfeuer', at: [0, 4] }, { theme: 'perlen', deg: 200, d: 0.72 }],
+    info: 'Ein Atoll in Sternform mit einem vergoldeten Leuchtturm. Von hier aus segeln die Kuriere nach Soleilmont.',
+  },
+  {
+    id: 'ferroir', name: 'Ferroir', power: 'frankreich', deg: 268, dist: 12300, r: 100, kind: 'harbor', biome: 'klippe', label: 'Stahl- und Waffenschmiede',
+    shape: 'gelappt', grass: 0.44, villagers: 4, hills: [{ x: 10, z: 8, r: 46, h: 0.38 }],
+    plots: [{ theme: 'mine', at: [-10, -30], turn: 180 }, { theme: 'giesserei', deg: 300, d: 0.64 }, { theme: 'hafen', deg: 220, d: 0.78 }],
+    info: 'Eisen aus dem Fels, Klingen aus der Esse: Ferroir schmiedet Kanonenstahl und die feinsten Degen der Armada.',
+  },
+  {
+    id: 'fortaurore', name: 'Fort Aurore', power: 'frankreich', deg: 304, dist: 13800, r: 98, kind: 'camp', biome: 'kreide', label: 'Morgenrot-Festung',
+    shape: 'rund', grass: 0.7, villagers: 0, level: 24, hills: [{ x: 0, z: -8, r: 46, h: 0.24 }],
+    plots: [{ theme: 'festung', at: [0, -10] }, { theme: 'batterie', deg: 90, d: 0.7 }, { theme: 'hafen', deg: 30, d: 0.8 }],
+    info: 'Wenn die Sonne über der Sturm-Barriere aufgeht, glühen die Mauern von Fort Aurore golden. Seine Garnison schläft nie.',
+  },
+  // ----- Unkartiert (herrenlos, abseits der Routen in Ring 3 bis 5) -----
+  {
+    id: 'irrlichtbucht', name: 'Irrlichtbucht', power: null, deg: 314, dist: 9700, r: 72, kind: 'harbor', biome: 'atoll', label: 'Verborgene Schmugglerbucht',
+    shape: 'sichel', grass: 0.34, villagers: 4, uncharted: true,
+    plots: [{ theme: 'schwarzmarkt', deg: 200, d: 0.74 }, { theme: 'schatz', at: [0, -10] }],
+    info: 'Irrlichter tanzen über einer Lagune, die auf keiner Karte steht. Wer hierher findet, handelt ohne Fragen.',
+  },
+  {
+    id: 'ankerfriedhof', name: 'Ankerfriedhof', power: null, deg: 158, dist: 12600, r: 70, kind: 'ruin', biome: 'klippe', label: 'Friedhof der Anker',
+    shape: 'gelappt', grass: 0.46, villagers: 0, uncharted: true, level: 21,
+    plots: [{ theme: 'ruinen', at: [0, -6] }, { theme: 'schatz', deg: 120, d: 0.6 }, { theme: 'leuchtfeuer', deg: 220, d: 0.78 }],
+    info: 'Hunderte rostige Anker ragen aus dem Fels, als hätte das Meer seine Toten hier abgelegt. Darunter soll ein Schatz liegen.',
+  },
+  {
+    id: 'letzteslicht', name: 'Das Letzte Licht', power: null, deg: 200, dist: 15000, r: 68, kind: 'ruin', biome: 'klippe', label: 'Warte am Weltrand',
+    shape: 'rund', grass: 0.44, villagers: 0, uncharted: true, level: 25, hills: [{ x: 0, z: 0, r: 30, h: 0.3 }],
+    plots: [{ theme: 'ruinen', at: [-14, -10], turn: 40 }, { theme: 'schatz', at: [14, 8] }, { theme: 'leuchtfeuer', deg: 40, d: 0.78 }],
+    info: 'Eine eingestürzte Warte direkt vor der Sturm-Barriere. Ihr Feuer brannte, bevor es Kaiser gab.',
+  },
+];
+
+/** Alle Themen-Inseln (4.3B und 4.5C) */
+export const THEME_ISLANDS: readonly ThemeIslandSpec[] = [...THEME_ISLANDS_43B, ...EXPANSION_ISLANDS];
 
 // ---------- Siedlungen aus Bausteinen ----------
 
@@ -305,6 +543,18 @@ export function themeItems(theme: Theme, b: SiteBiome): { items: StructureDef[];
       S('mauer', -9, -12, 12, 9), S('mauer', 10, 10, 80, 7),
     ] };
     case 'schatz': return { clear: 12, items: [S('ruine', 0, 0, 0), S('saeulen', 7, 3, 45), S('kisten', -5, 4, 0), S('kisten', -3, 6.5, 30), S('feuer', 3, 6), S('fass', 6, -4)] };
+    // Holzfäller-Lager: Sägemühle (Scheune), Hütten der Holzfäller, Stammkran, Holzstapel (Kisten), Zaun ums Lager
+    case 'forst': return { clear: 24, items: [
+      S('scheune', 0, -9, 0), S('holzhuette', -14, -3, 30), S('holzhuette', 14, -4, -30), S('kran', 6, 4, 0),
+      S('kisten', -6, 4, 0), S('kisten', -9.5, 6, 30), S('kisten', 11, 6, -20), S('faesser', 10, -14, 0), S('feuer', -2, 6), S('laterne', 2, 8, 0),
+      S('zaun', 0, -19, 0, 20), S('heu', -16, -13),
+    ] };
+    // Segeltuch-Manufaktur: zwei Webhallen (Lagerhäuser), Färberei (Steinhaus), Flachsfelder zur Küste, Stände für die Tuchballen
+    case 'manufaktur': return { clear: 28, items: [
+      S('lagerhaus', -10, -8, 0), S('lagerhaus', 10, -8, 0), S('steinhaus', 0, -22, 0), S('feld', -10, 6, 0, 12), S('feld', 10, 6, 0, 12),
+      S('marktstand', -4, -16, 0), S('marktstand', 5, -16, 0), S('kisten', -17, -2, 10), S('faesser', 17, -2, 0), S('brunnen', 0, -13),
+      S('laterne', -4, 10, 0), S('laterne', 5, 10, 0),
+    ] };
   }
 }
 
@@ -454,7 +704,8 @@ export function themeIslandDefs(): IslandDef[] {
   return THEME_ISLANDS.map((s) => {
     const a = (s.deg * Math.PI) / 180;
     return {
-      id: s.id, name: s.name, x: Math.round(Math.sin(a) * s.dist), z: Math.round(Math.cos(a) * s.dist), r: s.r, hill: 0.15, kind: s.kind, palms: 0, rocks: 0,
+      // `+ 0` macht aus −0 eine 0 (sonst überlebt der Blueprint den JSON-Rundlauf nicht)
+      id: s.id, name: s.name, x: Math.round(Math.sin(a) * s.dist) + 0, z: Math.round(Math.cos(a) * s.dist) + 0, r: s.r, hill: 0.15, kind: s.kind, palms: 0, rocks: 0,
       level: s.level, info: s.info, biome: s.biome, site: s.id, placed: true, uncharted: s.uncharted, themePower: s.power,
     };
   });

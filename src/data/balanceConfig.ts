@@ -150,11 +150,10 @@ export interface DangerDef {
 }
 
 /**
- * Gefahrenstufen der Karte in Metern vom Mittelpunkt (seit 4.3B, vier Ringe in data/worldRings.ts): Ring 1 (Innen-See) ist ganz Stufe 1,
- * Ring 2 (Archipel- und Handelsstraßen, 2 200 – 5 200 m) Stufe 2 und 3, Ring 3 (Riff- und Sturmgürtel, 5 200 – 8 200 m) Stufe 3 und 4,
- * Ring 4 (Kaiser-Meere, 8 200 – 10 400 m) Stufe 4 und 5. Die Grenzfestungen der Marine (≈ 3 000 m) liegen in Stufe 2 (sie selbst sind stärker als ihr Meer), die Endgame-Festungen (9 500 m) in Stufe 5.
+ * Gefahrenbänder in Metern seit 4.5C: Ring 1 = Stufe 1, Ring 2 = Stufe 2, Ring 3 = Stufe 3, Ring 4 = Stufe 4 bis zu den Königsinseln (11 600 m),
+ * danach Stufe 5 (Königsinseln, Marine-Hauptquartier und Ring 5, die Kaiser-Stufe) bis zur Sturm-Barriere.
  */
-export const DANGER_BANDS_M: Record<DangerTier, [number, number]> = { 1: [0, 2200], 2: [2200, 3700], 3: [3700, 6700], 4: [6700, 9200], 5: [9200, PLAYABLE_RADIUS] };
+export const DANGER_BANDS_M: Record<DangerTier, [number, number]> = { 1: [0, 2800], 2: [2800, 6600], 3: [6600, 10200], 4: [10200, 11600], 5: [11600, PLAYABLE_RADIUS] };
 const zf = (t: DangerTier) => DANGER_BANDS_M[t][0] / PLAYABLE_RADIUS;
 const zt = (t: DangerTier) => (t === 5 ? 1 : DANGER_BANDS_M[t][1] / PLAYABLE_RADIUS);
 

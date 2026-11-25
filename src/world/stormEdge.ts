@@ -8,11 +8,11 @@
 import { clamp01 } from '../core/mathUtil';
 import { EDGE_WALL, PLAYABLE_RADIUS } from '../data/world';
 
-/** Ab hier beginnt die Sturmsee: der Rand des spielbaren Ozeans (10 400 m, seit 4.3B), hinter allen Inseln und Festungen */
+/** Ab hier beginnt die Sturm-Barriere: der Rand des spielbaren Ozeans (15 600 m, seit 4.5C), hinter allen Inseln, Festungen und Kaiser-Bauplätzen */
 export const SOFT_WORLD_RADIUS = PLAYABLE_RADIUS;
 /** Hier ist der Sturm am dichtesten; weiter hinaus kommt nichts (dieselbe Grenze wie die frühere unsichtbare Wand) */
 export const HARD_WORLD_RADIUS = EDGE_WALL;
-/** Gegenströmung bei k = 1 in m/s: über der Höchstfahrt aller Schiffe unter Segeln (rund 14 m/s); die Zone ist seit 4.3B nur 200 m breit, darum kräftiger */
+/** Gegenströmung bei k = 1 in m/s: über der Höchstfahrt aller Schiffe unter Segeln (rund 14 m/s); die Zone ist seit 4.5C 250 m breit, darum kräftig */
 export const EDGE_PUSH_MAX = 20;
 /** Zusätzlicher Widerstand der Sturmsee (1/s bei k = 1): wer hineinfährt, wird langsamer, statt an der Grenze zu kleben */
 export const EDGE_DRAG = 0.9;

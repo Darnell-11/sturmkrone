@@ -77,7 +77,7 @@ function runDirector(seconds: number, seed = 1234, player = HOME) {
 describe('WorldEventDirector: Lebenszyklus, Abstände, Wartezeiten', () => {
   const R = runDirector(3600);
 
-  it('führt gleichzeitig 4 bis 6 Ereignisse (nach dem Auffüllen nie mehr als 6, Einbrüche unter 4 nur kurz beim Nachrücken)', () => {
+  it('führt gleichzeitig 6 bis 8 Ereignisse (seit 4.5C; nach dem Auffüllen nie mehr als 8, Einbrüche unter 6 nur kurz beim Nachrücken)', () => {
     expect(Math.max(...R.counts)).toBeLessThanOrEqual(DIRECTOR.maxActive);
     const after = R.counts.slice(60);
     let run = 0, worst = 0, below = 0;
@@ -87,13 +87,14 @@ describe('WorldEventDirector: Lebenszyklus, Abstände, Wartezeiten', () => {
     expect(R.counts[20]).toBeGreaterThanOrEqual(DIRECTOR.minActive);
   });
 
-  it('alle vier Arten kommen vor, jede mit ihrem Horizont-Signal', () => {
+  it('alle Arten kommen vor, jede mit ihrem Horizont-Signal (Kriegs-Nachschub nur, wenn irgendwo belagert wird – hier ohne Krieg)', () => {
     const kinds = new Set(R.spawns.map((s) => s.ev.kind));
-    for (const k of WORLD_EVENT_KINDS) expect(kinds.has(k)).toBe(true);
+    for (const k of WORLD_EVENT_KINDS) expect(kinds.has(k), k).toBe(k !== 'nachschub');
     for (const s of R.spawns) expect(s.ev.beacon).toBe(WORLD_EVENT_DEFS[s.ev.kind].beacon);
   });
 
-  it('Mindestabstand: jedes neue Ereignis liegt mindestens 1 600 m von allen laufenden', () => {
+  it('Mindestabstand: jedes neue Ereignis liegt mindestens 2 200 m von allen laufenden (kartierte Schatzsuchen und Wrackfelder des Spielers ausgenommen)', () => {
+    expect(DIRECTOR.minSpacing).toBeGreaterThanOrEqual(2200);
     for (const s of R.spawns) for (const o of s.others) expect(Math.hypot(o.x - s.ev.x, o.z - s.ev.z)).toBeGreaterThanOrEqual(DIRECTOR.minSpacing - 1e-6);
   });
 
@@ -413,12 +414,12 @@ describe('Meeresströmungen (Windstraßen)', () => {
   const lanes = buildCurrentLanes(ALL);
   const field = new CurrentField(lanes);
 
-  it('verbinden die wichtigsten Handels-Archipele in Ring 1 – 3 und führen um alle Inseln herum', () => {
+  it('verbinden die wichtigsten Handels-Archipele in Ring 1 – 3 (Tiefsee-Strömungen seit 4.5C bis Ring 4) und führen um alle Inseln herum', () => {
     expect(lanes).toHaveLength(CURRENT_LANES.length);
     for (const l of lanes) {
       for (const id of [l.from, l.to]) expect(['town', 'harbor']).toContain(ALL.find((i) => i.id === id)!.kind);
       for (let k = 0; k < l.pts.length; k += 2) {
-        expect(ringAtDistance(Math.hypot(l.pts[k], l.pts[k + 1])).ring).toBeLessThanOrEqual(3);
+        expect(ringAtDistance(Math.hypot(l.pts[k], l.pts[k + 1])).ring).toBeLessThanOrEqual(l.deep ? 4 : 3);
         for (const isl of ALL) expect(Math.hypot(l.pts[k] - isl.x, l.pts[k + 1] - isl.z) - isl.r * ISLAND_REACH - l.width / 2).toBeGreaterThan(LANE_CLEAR - 2);
       }
       expect(l.length).toBeGreaterThan(800);

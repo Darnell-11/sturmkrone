@@ -159,19 +159,19 @@ describe('Weltkarte: Beschriftung', () => {
 describe('Entdeckung und Kartierung', () => {
   const secrets = ALL.filter((i) => i.uncharted);
 
-  it('Es gibt genau vier Geheim-Inseln; keine ist von Anfang an kartiert', () => {
-    expect(secrets).toHaveLength(4);
+  it('Es gibt genau sieben Geheim-Inseln (vier seit 4.3B, drei seit 4.5C); keine ist von Anfang an kartiert', () => {
+    expect(secrets).toHaveLength(7);
     for (const s of secrets) expect(isStartCharted(s)).toBe(false);
   });
 
-  it('Start: Ankerglück und alles bis 2 400 m sind kartiert, der Rest zeigt Umrisse, Geheim-Inseln nichts', () => {
+  it('Start: Ankerglück und alles bis 3 050 m (seit 4.5C entzerrt, dieselben Inseln wie früher bis 2 400 m) sind kartiert, der Rest zeigt Umrisse, Geheim-Inseln nichts', () => {
     const known = new Set<string>();
     seedStartCharts(ALL, known);
     expect(known.has('ankerglueck')).toBe(true);
     for (const i of ALL) {
       const lvl = chartLevel(i, known);
       if (i.uncharted) expect(lvl).toBe('hidden');
-      else if (Math.hypot(i.x, i.z) <= 2400) expect(lvl).toBe('known');
+      else if (Math.hypot(i.x, i.z) <= DISCOVERY.startRadius) expect(lvl).toBe('known');
       else expect(lvl).toBe('outline');
     }
     expect(ALL.some((i) => chartLevel(i, known) === 'outline')).toBe(true);

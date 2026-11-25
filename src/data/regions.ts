@@ -6,7 +6,7 @@ import { BORDER_FORTS, BORDERS, CITADELS, FACTIONS, borderDistance, isExclave, i
 import type { DangerTier } from './balanceConfig';
 import { themeIslandDefs } from './openWorld';
 import { megaIslandDefs, skerryDefs } from './megaIslands';
-import { dangerTierAt, outerSeaLevel, ringAt, type RingId } from './worldRings';
+import { RINGS, dangerTierAt, outerSeaLevel, ringAt, type RingId } from './worldRings';
 
 export type IslandKind = 'town' | 'harbor' | 'camp' | 'ruin' | 'quiet' | 'treasure' | 'lighthouse' | 'boss' | 'marinefort' | 'citadel';
 /** Aussehen der Inseln einer Region */
@@ -46,7 +46,7 @@ export interface IslandDef {
   /** Marine-Anlage: Grenzfestung auf einer Grenzlinie (`border`, mit `borderIndex`) oder das Hauptquartier am Weltrand (`hq`) */
   marine?: 'border' | 'hq';
   borderIndex?: number;
-  /** Ring der offenen Welt (1 … 4, data/worldRings.ts) und Gefahrenstufe des Ortes (1 … 5); setzt die Weltdaten beim Laden (4.3B) */
+  /** Ring der offenen Welt (1 … 5, data/worldRings.ts) und Gefahrenstufe des Ortes (1 … 5); setzt die Weltdaten beim Laden (4.3B) */
   ring?: RingId;
   dangerTier?: DangerTier;
   /** Unkartierte Geheim-Insel (4.3B): auf keiner Karte, bis sie entdeckt ist (Entdeckungs-System in 4.3D) */
@@ -84,20 +84,21 @@ export interface RegionDef {
 export const BERNSTEINSEE: RegionDef = {
   id: 'bernsteinsee',
   name: 'Bernsteinsee',
-  x: 0, z: 150, r: 950,
+  // seit 4.5C deckt die Bernsteinsee den ganzen Ring 1 (bis 2 800 m um den Mittelpunkt; Rohwerte ×WORLD_SCALE)
+  x: 0, z: 0, r: 1400,
   color: '#E8B33A',
   desc: 'Tropisches Startmeer mit der Hafenstadt Ankerglück.',
   style: 'tropisch', song: 'sea', level: 1,
   islands: [
     { id: 'ankerglueck', name: 'Ankerglück', x: 0, z: 160, r: 78, hill: 0.12, kind: 'town', palms: 14, info: 'Hafenstadt der Bernsteinsee: Taverne, Werft, Schmiede, Markt und Faji-Schrein.' },
-    { id: 'muschelruh', name: 'Muschelruh', x: -260, z: 40, r: 30, hill: 0.2, kind: 'treasure', palms: 5, info: 'Ruhige Muschelinsel. Man munkelt von vergrabenem Gold.' },
-    { id: 'kraehenfels', name: 'Krähenfels', x: 320, z: 260, r: 34, hill: 0.25, kind: 'camp', palms: 3, rocks: 3, level: 1, info: 'Ein Lager von Halsabschneidern hat sich hier eingenistet.' },
-    { id: 'moewennest', name: 'Möwennest', x: -160, z: 420, r: 26, hill: 0.3, kind: 'quiet', palms: 4, info: 'Hunderte Möwen nisten auf den Klippen.' },
-    { id: 'leuchtfeuer', name: 'Leuchtfeuer', x: 180, z: -160, r: 24, hill: 0.15, kind: 'lighthouse', palms: 2, info: 'Der alte Leuchtturm weist Schiffen den Weg nach Ankerglück.' },
-    { id: 'rabenriff', name: 'Rabenriff', x: -480, z: -220, r: 38, hill: 0.22, kind: 'camp', palms: 4, rocks: 2, level: 2, info: 'Schwer bewachtes Lager am Riff.' },
-    { id: 'bernsteinbucht', name: 'Bernsteinbucht', x: 520, z: -40, r: 44, hill: 0.18, kind: 'camp', palms: 6, level: 3, info: 'Ein Hauptmann hält die Bucht besetzt.' },
-    { id: 'sonnenstrand', name: 'Sonnenstrand', x: 60, z: 560, r: 32, hill: 0.12, kind: 'quiet', palms: 8, info: 'Der schönste Strand der Bernsteinsee. Schildkröten legen hier ihre Eier.' },
-    { id: 'sturmzahn', name: 'Sturmzahn', x: -620, z: 380, r: 46, hill: 0.28, kind: 'boss', palms: 3, rocks: 4, level: 5, info: 'Hier herrscht eine Legende der Bernsteinsee.', boss: 'Grimmbart, der Herr von Sturmzahn' },
+    { id: 'muschelruh', name: 'Muschelruh', x: -347, z: 53, r: 30, hill: 0.2, kind: 'treasure', palms: 5, info: 'Ruhige Muschelinsel. Man munkelt von vergrabenem Gold.' },
+    { id: 'kraehenfels', name: 'Krähenfels', x: 463, z: 376, r: 34, hill: 0.25, kind: 'camp', palms: 3, rocks: 3, level: 1, info: 'Ein Lager von Halsabschneidern hat sich hier eingenistet.' },
+    { id: 'moewennest', name: 'Möwennest', x: -234, z: 614, r: 26, hill: 0.3, kind: 'quiet', palms: 4, info: 'Hunderte Möwen nisten auf den Klippen.' },
+    { id: 'leuchtfeuer', name: 'Leuchtfeuer', x: 235, z: -209, r: 24, hill: 0.15, kind: 'lighthouse', palms: 2, info: 'Der alte Leuchtturm weist Schiffen den Weg nach Ankerglück.' },
+    { id: 'rabenriff', name: 'Rabenriff', x: -714, z: -327, r: 38, hill: 0.22, kind: 'camp', palms: 4, rocks: 2, level: 2, info: 'Schwer bewachtes Lager am Riff.' },
+    { id: 'bernsteinbucht', name: 'Bernsteinbucht', x: 773, z: -59, r: 44, hill: 0.18, kind: 'camp', palms: 6, level: 3, info: 'Ein Hauptmann hält die Bucht besetzt.' },
+    { id: 'sonnenstrand', name: 'Sonnenstrand', x: 90, z: 839, r: 32, hill: 0.12, kind: 'quiet', palms: 8, info: 'Der schönste Strand der Bernsteinsee. Schildkröten legen hier ihre Eier.' },
+    { id: 'sturmzahn', name: 'Sturmzahn', x: -949, z: 581, r: 46, hill: 0.28, kind: 'boss', palms: 3, rocks: 4, level: 5, info: 'Hier herrscht eine Legende der Bernsteinsee.', boss: 'Grimmbart, der Herr von Sturmzahn' },
   ],
 };
 
@@ -108,66 +109,66 @@ function ring(id: string, name: string, deg: number, dist: number, r: number, ki
 }
 
 export const NEBELARCHIPEL: RegionDef = {
-  id: 'nebel', name: 'Nebelarchipel', x: 0, z: 1450, r: 500, color: '#9FB4A8', arc: [-36, 36],
+  id: 'nebel', name: 'Nebelarchipel', x: 0, z: 1843, r: 640, color: '#9FB4A8', arc: [-36, 36],
   desc: 'Ewiger Nebel, versunkene Ruinen – und nachts segeln hier Geisterschiffe.',
   style: 'nebel', weather: 'nebel', song: 'night', level: 4,
   islands: [
-    ring('nebelhafen', 'Nebelhafen', -10, 1170, 40, 'harbor', 'Ein Fischerdorf auf Stelzen. Laternen gegen den Nebel.', { hill: 0.12, palms: 3 }),
-    ring('graueklippe', 'Graue Klippe', 16, 1360, 34, 'camp', 'Schmuggler verstecken sich im Nebel.', { level: 5, rocks: 3 }),
-    ring('versunkenertempel', 'Versunkener Tempel', -24, 1500, 38, 'ruin', 'Uralte Säulen ragen aus dem Wasser. Faji-Wirker hüten etwas.', { level: 6, rocks: 4 }),
-    ring('seufzerinsel', 'Seufzerinsel', 28, 1610, 28, 'quiet', 'Der Wind seufzt hier wie ein Mensch.'),
-    ring('geisterriff', 'Geisterriff', 2, 1740, 44, 'boss', 'Ein Wrack auf dem Riff. Sein Kapitän ist nie gegangen.', { level: 7, rocks: 5, boss: 'Kapitän Moderherz' }),
+    ring('nebelhafen', 'Nebelhafen', -10, 1489, 40, 'harbor', 'Ein Fischerdorf auf Stelzen. Laternen gegen den Nebel.', { hill: 0.12, palms: 3 }),
+    ring('graueklippe', 'Graue Klippe', 16, 1729, 34, 'camp', 'Schmuggler verstecken sich im Nebel.', { level: 5, rocks: 3 }),
+    ring('versunkenertempel', 'Versunkener Tempel', -24, 1907, 38, 'ruin', 'Uralte Säulen ragen aus dem Wasser. Faji-Wirker hüten etwas.', { level: 6, rocks: 4 }),
+    ring('seufzerinsel', 'Seufzerinsel', 28, 2046, 28, 'quiet', 'Der Wind seufzt hier wie ein Mensch.'),
+    ring('geisterriff', 'Geisterriff', 2, 2211, 44, 'boss', 'Ein Wrack auf dem Riff. Sein Kapitän ist nie gegangen.', { level: 7, rocks: 5, boss: 'Kapitän Moderherz' }),
   ],
 };
 
 export const NORDWACHT: RegionDef = {
-  id: 'nord', name: 'Nordwacht', x: 1380, z: 450, r: 500, color: '#7FA8C8', arc: [36, 108],
+  id: 'nord', name: 'Nordwacht', x: 1754, z: 572, r: 640, color: '#7FA8C8', arc: [36, 108],
   desc: 'Kühle Kiefernküsten unter der großen Seefestung.',
   style: 'nord', weather: 'bewoelkt', song: 'north', level: 6,
   islands: [
-    ring('kiefernhafen', 'Kiefernhafen', 62, 1170, 38, 'harbor', 'Holzfäller und Walfänger. Es riecht nach Harz.', { hill: 0.15 }),
-    ring('eulenstein', 'Eulenstein', 90, 1260, 26, 'quiet', 'Nachts rufen hier Hunderte Eulen.'),
-    ring('baerenfels', 'Bärenfels', 56, 1560, 34, 'camp', 'Ein Lager in den Felsen. Bärenfelle über den Zelten.', { level: 7, rocks: 3 }),
-    ring('wolfsklippe', 'Wolfsklippe', 74, 1730, 30, 'treasure', 'Ein Leuchtfeuer aus Knochen. Hier soll Beute vergraben sein.'),
-    ring('festungnordwacht', 'Festung Nordwacht', 84, 1470, 52, 'boss', 'Die mächtigste Seefestung der Welt.', { level: 9, rocks: 2, boss: 'Kommandant Eisenfaust' }),
+    ring('kiefernhafen', 'Kiefernhafen', 62, 1489, 38, 'harbor', 'Holzfäller und Walfänger. Es riecht nach Harz.', { hill: 0.15 }),
+    ring('eulenstein', 'Eulenstein', 90, 1603, 26, 'quiet', 'Nachts rufen hier Hunderte Eulen.'),
+    ring('baerenfels', 'Bärenfels', 56, 1983, 34, 'camp', 'Ein Lager in den Felsen. Bärenfelle über den Zelten.', { level: 7, rocks: 3 }),
+    ring('wolfsklippe', 'Wolfsklippe', 74, 2198, 30, 'treasure', 'Ein Leuchtfeuer aus Knochen. Hier soll Beute vergraben sein.'),
+    ring('festungnordwacht', 'Festung Nordwacht', 84, 1869, 52, 'boss', 'Die mächtigste Seefestung der Welt.', { level: 9, rocks: 2, boss: 'Kommandant Eisenfaust' }),
   ],
 };
 
 export const GLUTRING: RegionDef = {
-  id: 'glut', name: 'Glutring', x: 850, z: -1200, r: 500, color: '#E8643A', arc: [108, 180],
+  id: 'glut', name: 'Glutring', x: 1081, z: -1525, r: 640, color: '#E8643A', arc: [108, 180],
   desc: 'Vulkaninseln, Aschewolken und die Schmiedestadt Glutheim. Hier wohnt das Feuer-Faji.',
   style: 'glut', weather: 'bewoelkt', song: 'ember', level: 8,
   islands: [
-    ring('glutheim', 'Glutheim', 136, 1180, 42, 'harbor', 'Schmiedestadt am Fuß des Vulkans. Die Essen glühen Tag und Nacht.', { hill: 0.14 }),
-    ring('ascheinsel', 'Ascheinsel', 126, 1430, 34, 'camp', 'Unter grauer Asche liegt ein Räuberlager.', { level: 9, rocks: 3 }),
-    ring('glutberg', 'Glutberg', 152, 1500, 50, 'boss', 'Ein feuerspeiender Berg. Auf dem Gipfel wartet die Flammenwirkerin.', { level: 11, hill: 0.45, rocks: 4, boss: 'Ignara, die Flammenwirkerin' }),
-    ring('funkenriff', 'Funkenriff', 164, 1700, 32, 'camp', 'Glühende Felsen, fauchende Quellen und ein Piratennest.', { level: 10, rocks: 4 }),
-    ring('obsidianstrand', 'Obsidianstrand', 142, 1790, 26, 'treasure', 'Schwarzer Glassand. Man munkelt von Schätzen.'),
+    ring('glutheim', 'Glutheim', 136, 1501, 42, 'harbor', 'Schmiedestadt am Fuß des Vulkans. Die Essen glühen Tag und Nacht.', { hill: 0.14 }),
+    ring('ascheinsel', 'Ascheinsel', 126, 1818, 34, 'camp', 'Unter grauer Asche liegt ein Räuberlager.', { level: 9, rocks: 3 }),
+    ring('glutberg', 'Glutberg', 152, 1907, 50, 'boss', 'Ein feuerspeiender Berg. Auf dem Gipfel wartet die Flammenwirkerin.', { level: 11, hill: 0.45, rocks: 4, boss: 'Ignara, die Flammenwirkerin' }),
+    ring('funkenriff', 'Funkenriff', 164, 2160, 32, 'camp', 'Glühende Felsen, fauchende Quellen und ein Piratennest.', { level: 10, rocks: 4 }),
+    ring('obsidianstrand', 'Obsidianstrand', 142, 2274, 26, 'treasure', 'Schwarzer Glassand. Man munkelt von Schätzen.'),
   ],
 };
 
 export const STURMGUERTEL: RegionDef = {
-  id: 'sturm', name: 'Sturmgürtel', x: -850, z: -1200, r: 500, color: '#6A7AA8', arc: [180, 252],
+  id: 'sturm', name: 'Sturmgürtel', x: -1081, z: -1525, r: 640, color: '#6A7AA8', arc: [180, 252],
   desc: 'Hier tobt der Sturm ohne Ende. Nur die stärksten Legenden segeln diese Wellen.',
   style: 'sturm', weather: 'sturm', song: 'storm', level: 10,
   islands: [
-    ring('donnerbucht', 'Donnerbucht', 208, 1190, 38, 'harbor', 'Eine geschützte Bucht im Auge des Sturms.', { hill: 0.14 }),
-    ring('gischtzahn', 'Gischtzahn', 226, 1420, 36, 'camp', 'Felszähne, an denen Schiffe zerschellen. Und Plünderer warten.', { level: 11, rocks: 5 }),
-    ring('seemannsgrab', 'Seemannsgrab', 198, 1560, 32, 'ruin', 'Ein Friedhof gesunkener Schiffe. Etwas regt sich darin.', { level: 12, rocks: 3 }),
-    ring('blitzspitze', 'Blitzspitze', 216, 1660, 46, 'boss', 'Ein Felsturm, in den ständig Blitze schlagen.', { level: 13, hill: 0.4, rocks: 5, boss: 'Voltar, der Blitzrufer' }),
-    ring('kielbruch', 'Kielbruch', 236, 1780, 26, 'treasure', 'Gestrandete Kiele wie Walknochen. Und eine Truhe darunter.'),
+    ring('donnerbucht', 'Donnerbucht', 208, 1514, 38, 'harbor', 'Eine geschützte Bucht im Auge des Sturms.', { hill: 0.14 }),
+    ring('gischtzahn', 'Gischtzahn', 226, 1805, 36, 'camp', 'Felszähne, an denen Schiffe zerschellen. Und Plünderer warten.', { level: 11, rocks: 5 }),
+    ring('seemannsgrab', 'Seemannsgrab', 198, 1983, 32, 'ruin', 'Ein Friedhof gesunkener Schiffe. Etwas regt sich darin.', { level: 12, rocks: 3 }),
+    ring('blitzspitze', 'Blitzspitze', 216, 2109, 46, 'boss', 'Ein Felsturm, in den ständig Blitze schlagen.', { level: 13, hill: 0.4, rocks: 5, boss: 'Voltar, der Blitzrufer' }),
+    ring('kielbruch', 'Kielbruch', 236, 2261, 26, 'treasure', 'Gestrandete Kiele wie Walknochen. Und eine Truhe darunter.'),
   ],
 };
 
 export const SCHLUNDRIFF: RegionDef = {
-  id: 'schlund', name: 'Schlundriff am Weltrand', x: -1300, z: 450, r: 520, color: '#4A3A7A', arc: [252, 324],
+  id: 'schlund', name: 'Schlundriff am Weltrand', x: -1653, z: 572, r: 660, color: '#4A3A7A', arc: [252, 324],
   desc: 'Das letzte Meer vor dem Abgrund. Tief unten schläft der Tiefenschlund – und oben glänzt die Sturmkrone.',
   style: 'schlund', weather: 'nebel', song: 'abyss', level: 13,
   islands: [
-    ring('letzterhafen', 'Letzter Hafen', 282, 1150, 36, 'harbor', 'Der letzte Hafen vor dem Weltrand. Wer weitersegelt, kommt selten zurück.', { hill: 0.12 }),
-    ring('korallenkranz', 'Korallenkranz', 298, 1400, 34, 'camp', 'Leuchtende Korallen und finstere Gestalten.', { level: 13, rocks: 3 }),
-    ring('tiefentor', 'Tiefentor', 274, 1600, 38, 'ruin', 'Ein Tor aus Kristall. Dahinter beginnt die Tiefe.', { level: 14, rocks: 4 }),
-    ring('schlundkrone', 'Schlundkrone', 290, 1790, 48, 'boss', 'Auf dieser Insel ruht die Sturmkrone – bewacht vom Hüter der Tiefe.', { level: 15, hill: 0.35, rocks: 5, boss: 'Der Hüter der Tiefe' }),
+    ring('letzterhafen', 'Letzter Hafen', 282, 1463, 36, 'harbor', 'Der letzte Hafen vor dem Weltrand. Wer weitersegelt, kommt selten zurück.', { hill: 0.12 }),
+    ring('korallenkranz', 'Korallenkranz', 298, 1780, 34, 'camp', 'Leuchtende Korallen und finstere Gestalten.', { level: 13, rocks: 3 }),
+    ring('tiefentor', 'Tiefentor', 274, 2033, 38, 'ruin', 'Ein Tor aus Kristall. Dahinter beginnt die Tiefe.', { level: 14, rocks: 4 }),
+    ring('schlundkrone', 'Schlundkrone', 290, 2274, 48, 'boss', 'Auf dieser Insel ruht die Sturmkrone – bewacht vom Hüter der Tiefe.', { level: 15, hill: 0.35, rocks: 5, boss: 'Der Hüter der Tiefe' }),
   ],
 };
 
@@ -188,10 +189,10 @@ for (const r of REGIONS) {
  * das Festland Grünmark südlich von Ankerglück und drei Inseln mit eigenem Biom. Form, Bauten und Bewuchs: data/settlements.ts.
  */
 BERNSTEINSEE.islands.push(
-  { id: 'gruenmark', name: 'Grünmark', x: -40, z: -650, r: 270, hill: 0.1, kind: 'quiet', palms: 0, rocks: 0, biome: 'festland', site: 'gruenmark', placed: true, info: 'Das Festland der Bernsteinsee: Weiden, Laubwälder, das Dorf Weidenbrück und ein alter Wachturm auf dem Hügel.' },
-  { id: 'palmenkueste', name: 'Palmenküste', x: 720, z: -900, r: 105, hill: 0.1, kind: 'quiet', palms: 0, rocks: 0, biome: 'tropisch', site: 'palmenkueste', placed: true, info: 'Weißer Sand, schiefe Palmen und ein Fischerdorf aus Holzhütten auf Stelzen.' },
-  { id: 'sturmklippe', name: 'Sturmklippe', x: -900, z: -1060, r: 95, hill: 0.22, kind: 'quiet', palms: 0, rocks: 0, biome: 'klippe', site: 'sturmklippe', placed: true, info: 'Schwarze Basaltsäulen im Wind. Zwischen den Ruinen einer alten Warte hält ein einsamer Turm Ausschau.' },
-  { id: 'faehrholm', name: 'Fährholm', x: -520, z: -270, r: 68, hill: 0.12, kind: 'quiet', palms: 0, rocks: 0, biome: 'festland', site: 'faehrholm', placed: true, info: 'Ein Hirtenhof zwischen Steinmauern und Zäunen. Von hier setzt die Fähre zum Festland über.' },
+  { id: 'gruenmark', name: 'Grünmark', x: -56, z: -906, r: 270, hill: 0.1, kind: 'quiet', palms: 0, rocks: 0, biome: 'festland', site: 'gruenmark', placed: true, info: 'Das Festland der Bernsteinsee: Weiden, Laubwälder, das Dorf Weidenbrück und ein alter Wachturm auf dem Hügel.' },
+  { id: 'palmenkueste', name: 'Palmenküste', x: 1081, z: -1351, r: 105, hill: 0.1, kind: 'quiet', palms: 0, rocks: 0, biome: 'tropisch', site: 'palmenkueste', placed: true, info: 'Weißer Sand, schiefe Palmen und ein Fischerdorf aus Holzhütten auf Stelzen.' },
+  { id: 'sturmklippe', name: 'Sturmklippe', x: -1372, z: -1616, r: 95, hill: 0.22, kind: 'quiet', palms: 0, rocks: 0, biome: 'klippe', site: 'sturmklippe', placed: true, info: 'Schwarze Basaltsäulen im Wind. Zwischen den Ruinen einer alten Warte hält ein einsamer Turm Ausschau.' },
+  { id: 'faehrholm', name: 'Fährholm', x: -711, z: -369, r: 68, hill: 0.12, kind: 'quiet', palms: 0, rocks: 0, biome: 'festland', site: 'faehrholm', placed: true, info: 'Ein Hirtenhof zwischen Steinmauern und Zäunen. Von hier setzt die Fähre zum Festland über.' },
 );
 
 /**
@@ -297,9 +298,10 @@ export function seaLevelAt(x: number, z: number): number {
     const home = BERNSTEINSEE.islands[0];
     return Math.max(1, Math.min(4, 1 + Math.floor(Math.hypot(x - home.x, z - home.z) / (260 * WORLD_SCALE))));
   }
-  const out = Math.max(0, Math.min(4, Math.floor((Math.hypot(x, z) - 1150 * WORLD_SCALE) / (280 * WORLD_SCALE))));
-  // Ab Ring 3 (5 200 m, seit 4.3B) wächst die Stufe mit dem Abstand weiter bis 22 am Außenrand; nie unter der Stufe des alten Meeres
-  return Math.max((reg.level ?? 1) + out, Math.hypot(x, z) >= 5200 ? outerSeaLevel(Math.hypot(x, z)) : 0);
+  // die alten Ringmeere liegen seit 4.5C um den Faktor 1,267 weiter draußen (data/worldSpread.ts): Stufen-Schritte entsprechend weiter
+  const out = Math.max(0, Math.min(4, Math.floor((Math.hypot(x, z) - 2926) / 710)));
+  // Ab Ring 3 (6 600 m, seit 4.5C) wächst die Stufe mit dem Abstand weiter bis 22 am Außenrand von Ring 4 und 26 an der Sturm-Barriere; nie unter der Stufe des alten Meeres
+  return Math.max((reg.level ?? 1) + out, Math.hypot(x, z) >= RINGS[2].from ? outerSeaLevel(Math.hypot(x, z)) : 0);
 }
 
 /** Wo man gerade segelt, für Kompass, Steuerkompass und die Sektor-Einblendung */
@@ -308,7 +310,7 @@ export interface SectorLabel { key: string; name: string; color: string; epithet
 /** Sektor unter einem Punkt: Macht des Kuchenstücks, „Grenze · Marine“ an den Grenzlinien, in der Bernsteinsee neutral */
 export function sectorLabel(x: number, z: number): SectorLabel {
   if (regionAt(x, z) === BERNSTEINSEE) return { key: 'bernstein', name: 'Bernsteinsee · neutral', color: '#E8B33A', epithet: 'Das freie Meer der Händler und Schmuggler' };
-  if (borderDistance(x, z).dist < 260 && Math.hypot(x, z) > 2200) return { key: 'grenze', name: 'Grenze · Marine', color: FACTIONS.marine.color, epithet: 'Wachwasser der Marine zwischen zwei Mächten' };
+  if (borderDistance(x, z).dist < 260 && Math.hypot(x, z) > RINGS[1].from) return { key: 'grenze', name: 'Grenze · Marine', color: FACTIONS.marine.color, epithet: 'Wachwasser der Marine zwischen zwei Mächten' };
   const f = FACTIONS[sectorAt(x, z).factionId];
   return { key: f.id, name: `Sektor ${f.name}`, color: f.color, epithet: f.epithet };
 }

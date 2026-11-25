@@ -6,7 +6,9 @@ import { FACTIONS, type FactionId } from '../data/factions';
 /** Orientierungspunkte: Feinde (rot), Bosse (Totenkopf), Auftragspersonen (! Auftrag, ? Abgabe), Ziel des Auftrags */
 /** Zeichen auf Kompass und Karten; seit 4.3C dazu die Horizont-Signale der Welt-Ereignisse und Handelskonvois */
 export type PoiKind = 'enemy' | 'boss' | 'quest' | 'turnin' | 'npc' | 'target' | 'fort' | 'citadel' | 'alarm' | 'battle'
-  | 'galeone' | 'blockade' | 'flotsam' | 'worldboss' | 'convoy';
+  | 'galeone' | 'blockade' | 'flotsam' | 'worldboss' | 'convoy'
+  // Begegnungen (4.5C): Schiffbrüchige, Schmuggler-Rendezvous, Schatzsuche, Kriegs-Nachschub
+  | 'castaway' | 'smuggler' | 'hunt' | 'supply';
 export interface Poi { x: number; z: number; kind: PoiKind; name?: string; /** Farbe der Macht (Grenzfestung, Endgame-Festung) */ color?: string }
 
 /** Küstenlinie einer Insel (wie in der Welt gebaut), damit die Karte die echte Form zeigt statt eines Kreises */
@@ -215,6 +217,46 @@ export function drawPoi(ctx: CanvasRenderingContext2D, x: number, y: number, kin
       ctx.beginPath(); ctx.moveTo(1, -7); ctx.lineTo(-3, 1); ctx.lineTo(0, 1); ctx.lineTo(-1.5, 7); ctx.lineTo(3.5, -1.5); ctx.lineTo(0.5, -1.5); ctx.closePath(); ctx.fill(); ctx.stroke();
       break;
     }
+    case 'castaway': {
+      // Schiffbrüchige: Floß mit roter Notruf-Fackel (pulsierend)
+      const t = performance.now() / 1000, gl = 0.7 + 0.3 * Math.sin(t * 6);
+      ctx.fillStyle = '#8A5A2B'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.2;
+      ctx.fillRect(-6, 3, 12, 3.5); ctx.strokeRect(-6, 3, 12, 3.5);
+      ctx.strokeStyle = '#9ED8F0'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(-8, 8); ctx.quadraticCurveTo(-4, 6, 0, 8); ctx.quadraticCurveTo(4, 10, 8, 8); ctx.stroke();
+      ctx.strokeStyle = '#E8DCC4'; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.moveTo(2, 3); ctx.lineTo(2, -4); ctx.stroke();
+      ctx.fillStyle = cb ? `rgba(255,210,58,${gl})` : `rgba(255,74,58,${gl})`; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(2, -6, 3.2, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      break;
+    }
+    case 'smuggler': {
+      // Schmuggler-Rendezvous: violetter Stern über einer Kiste ohne Siegel
+      const t = performance.now() / 1000, gl = 0.75 + 0.25 * Math.sin(t * 4);
+      ctx.fillStyle = '#4A3A2A'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.2;
+      ctx.fillRect(-5, 1, 10, 6); ctx.strokeRect(-5, 1, 10, 6);
+      ctx.fillStyle = `rgba(178,120,255,${gl})`; ctx.strokeStyle = '#E3B04B'; ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      for (let n = 0; n < 10; n++) { const r = n % 2 ? 2 : 5.2; const a = (n / 10) * Math.PI * 2 - Math.PI / 2; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r - 4); }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      break;
+    }
+    case 'hunt': {
+      // Schatzsuche: rotes X auf einer Pergamentrolle, darüber ein Spaten
+      ctx.fillStyle = '#E8D6AA'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(-7, -5); ctx.lineTo(7, -5); ctx.lineTo(7, 6); ctx.lineTo(-7, 6); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = cb ? '#1F6FD0' : '#C0392B'; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-3, -2); ctx.lineTo(3, 4); ctx.moveTo(3, -2); ctx.lineTo(-3, 4); ctx.stroke();
+      break;
+    }
+    case 'supply': {
+      // Kriegs-Nachschub: Kiste mit Wimpel in der Farbe der Nation
+      ctx.fillStyle = '#8A5A2B'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.2;
+      ctx.fillRect(-6, 0, 12, 7); ctx.strokeRect(-6, 0, 12, 7);
+      ctx.beginPath(); ctx.moveTo(-6, 3.5); ctx.lineTo(6, 3.5); ctx.stroke();
+      ctx.strokeStyle = '#E8DCC4'; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.moveTo(-3, 0); ctx.lineTo(-3, -9); ctx.stroke();
+      ctx.fillStyle = col ?? '#E3B04B'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(-3, -9); ctx.lineTo(5, -6.5); ctx.lineTo(-3, -4); ctx.closePath(); ctx.fill(); ctx.stroke();
+      break;
+    }
     case 'convoy': {
       // Handelskonvoi: kleines Segel mit Kiste (bedroht: rot umrandet)
       ctx.fillStyle = '#F4EEDC'; ctx.strokeStyle = col ?? '#1b1410'; ctx.lineWidth = col ? 2 : 1.2;
@@ -359,7 +401,7 @@ export interface WorldMapData {
   /** Wie oft eine Festungsinsel schon erobert wurde (Insel-ID → Zahl; bleibt auch nach einer Rückeroberung) */
   conquests?: Record<string, number>;
   /** Lebendiges Meer (Phase 4.3C): Welt-Ereignisse, Konvois, Strömungen (Mittellinie flach x, z, …) und Wetterzellen */
-  seaEvents?: { x: number; z: number; kind: PoiKind; name: string }[];
+  seaEvents?: { x: number; z: number; kind: PoiKind; name: string; color?: string }[];
   convoys?: { x: number; z: number; name: string; threatened: boolean }[];
   currents?: { name: string; pts: number[] }[];
   cells?: { x: number; z: number; r: number; kind: 'gewitter' | 'nebelbank' | 'flaute'; label: string }[];

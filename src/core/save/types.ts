@@ -12,7 +12,7 @@ import type { WorldEventState } from '../../world/worldEventDirector';
 import type { FactionWarState } from '../../world/factionWarEngine';
 import { emptyChart, type ChartState } from '../../world/mapDiscovery';
 
-export const SAVE_VERSION = 20;
+export const SAVE_VERSION = 21;
 
 export interface QuestProgress { id: string; step: number; count: number }
 

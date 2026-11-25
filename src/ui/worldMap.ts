@@ -4,7 +4,8 @@ import { GOOD_BY_ID, profileOf } from '../data/economy';
 import type { WorldMapData, WorldView } from './minimap';
 import { esc } from './dom';
 import { fmtDist } from '../core/format';
-import { clampView, centerOn, dragEnd, dragMove, dragStart, fitAll, newDrag, panByPixels, screenToWorldInto, zoomAtPoint, zoomOf, LABEL_ZOOM } from './mapView';
+import { clampView, centerOn, dragEnd, dragMove, dragStart, fitAll, fitScale, newDrag, panByPixels, screenToWorldInto, setMapSafeArea, zoomAtPoint, zoomOf, LABEL_ZOOM } from './mapView';
+import { WORLD_RADIUS } from '../data/world';
 import { MAP_LAYERS, defaultLayers, drawWorldMap, type MapDrawState, type MapLayers } from './worldMapDraw';
 import { isTravelPort, type TravelQuote } from '../world/fastTravel';
 import { MEGA_BY_ID, isMegaId } from '../data/megaIslands';
@@ -115,24 +116,44 @@ export class WorldMapScreen {
     this.h = this.root.clientHeight || innerHeight;
     this.cv.width = this.fog.width = Math.round(this.w * this.dpr);
     this.cv.height = this.fog.height = Math.round(this.h * this.dpr);
-    clampView(this.view, this.w, this.h);
     this.measureChrome();
+    clampView(this.view, this.w, this.h);
     this.dirty = true;
   }
+
+  /** Höhe der Bedienleisten über und unter der Weltscheibe (Pixel; 4.5C): die Gesamtansicht stellt die Scheibe mittig dazwischen */
+  private bandTop = 0;
+  private bandBottom = 0;
 
   /** Flächen der Bedienelemente über der Karte merken (die Karte setzt dort keine Namen); nur bei Größenänderung, nie je Bild */
   private measureChrome() {
     const base = this.root.getBoundingClientRect();
-    const out: number[] = [];
+    const rects: number[] = [];
     this.root.querySelectorAll<HTMLElement>('.wmap-top h2, .wmap-top button, .wmap-layers button, .wmap-legend, .wmap-hint').forEach((el) => {
-      const r = el.getBoundingClientRect();
-      if (r.width < 1 || r.height < 1) return;
-      out.push(r.left - base.left, r.top - base.top, r.right - base.left, r.bottom - base.top);
+      const q = el.getBoundingClientRect();
+      if (q.width < 1 || q.height < 1) return;
+      rects.push(q.left - base.left, q.top - base.top, q.right - base.left, q.bottom - base.top);
     });
-    this.st.chrome = out;
+    this.st.chrome = rects;
+    // Spalte der Weltscheibe in der Gesamtansicht: nur Leisten, die sie überdecken, engen das freie Band oben und unten ein (zweimal: die Scheibe
+    // wird mit dem schmaleren Band kleiner und überdeckt dann vielleicht weniger Leisten)
+    setMapSafeArea(0, 0);
+    for (let pass = 0; pass < 2; pass++) {
+      const r = WORLD_RADIUS * fitScale(this.w, this.h), c0 = this.w / 2 - r, c1 = this.w / 2 + r;
+      let top = 0, bottom = 0;
+      for (let k = 0; k + 3 < rects.length; k += 4) {
+        const x0 = rects[k], y0 = rects[k + 1], x1 = rects[k + 2], y1 = rects[k + 3];
+        if (x1 < c0 || x0 > c1) continue;
+        if (y1 < this.h * 0.42) top = Math.max(top, y1);
+        else if (y0 > this.h * 0.58) bottom = Math.max(bottom, this.h - y0);
+      }
+      this.bandTop = top;
+      this.bandBottom = bottom;
+      setMapSafeArea(top, bottom);
+    }
   }
 
-  private fitAll() { fitAll(this.view, this.w, this.h); this.dirty = true; }
+  private fitAll() { fitAll(this.view, this.w, this.h, this.bandTop, this.bandBottom); this.dirty = true; }
   private zoomAt(sx: number, sy: number, f: number) { zoomAtPoint(this.view, this.w, this.h, sx, sy, f); this.dirty = true; }
 
   private onKey(e: KeyboardEvent) {
@@ -324,6 +345,7 @@ export class WorldMapScreen {
     cancelAnimationFrame(this.raf);
     removeEventListener('keydown', this.keyFn, true);
     removeEventListener('resize', this.resizeFn);
+    setMapSafeArea(0, 0);
     savedLayers = this.layers;
     this.fog.width = this.fog.height = 0;
     this.root.remove();

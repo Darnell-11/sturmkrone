@@ -1977,7 +1977,7 @@ export class NavalSystem {
     } else if (L.role === 'eskorte') {
       if (e.provoked && dp < 650) { foe = p; vsPlayer = true; }
       else foe = this.corsairOf(L.owner, s, 480);
-    } else if (L.role === 'wache' || L.role === 'boss') {
+    } else if (L.role === 'wache' || L.role === 'boss' || L.role === 'schmuggler') {
       // in der Nebelbank des Klabautermanns sieht man ihn später kommen – und er einen selbst
       const reach = (L.role === 'boss' ? 900 : 700) * Math.max(0.6, this.sightK(s.x, s.z));
       if ((inZone || e.provoked) && dp < reach) { foe = p; vsPlayer = true; }
@@ -2024,6 +2024,8 @@ export class NavalSystem {
         return this.applyCmd(e, cmd);
       }
       case 'boss': s.speedCap = 7; return this.followRoute(e, nav, dt, 0.5);
+      // Schmuggler-Rendezvous (4.5C): vor Anker, die Segel geborgen – bis jemand das Treffen hochnimmt (dann kämpft er wie eine Wache)
+      case 'schmuggler': s.speedCap = 1.2; s.aiSail = 0; return 0;
       default: {
         // Korsar ohne Beute: abdrehen, weg vom Spieler (die Seewelt baut ihn in der Ferne ab)
         s.speedCap = 11;

@@ -65,6 +65,18 @@ import { OCCUPATION } from '../raid/occupation';
 
 type Handler = (id: string, el: HTMLElement) => void;
 
+/** Eine Begegnung auf See (4.5C) für `Menus.showEncounter`: Kopf, Erzähltext, Auswahl */
+export interface EncounterView {
+  kicker: string;
+  title: string;
+  text: string;
+  info?: string;
+  msg?: string;
+  color?: string;
+  closeLabel?: string;
+  choices: { id: string; label: string; sub?: string; tag?: string; price?: number; button?: string; disabled?: string; kind?: 'normal' | 'danger' }[];
+}
+
 /** Stufen der Werft als römische Ziffern (I … V) */
 const ROMAN = ['I', 'II', 'III', 'IV', 'V'];
 
@@ -547,6 +559,29 @@ export class Menus {
         bye: exit,
       },
       exit,
+    );
+  }
+
+  /**
+   * Begegnung auf See (4.5C): Schiffbrüchige oder Schmuggler-Rendezvous – Erzähltext und Auswahl. Jede Wahl ist ein Eintrag mit Titel, Erklärung und
+   * Knopf (gesperrt mit Grund); `onPick` bekommt ihre Kennung, `onClose` gilt für „Später“ und Esc.
+   */
+  showEncounter(e: EncounterView, onPick: (id: string) => void, onClose: () => void) {
+    const rows = e.choices.map((c) => `<div class="slot crew encounter-choice" style="--c:${c.kind === 'danger' ? '#C0392B' : e.color ?? '#E3B04B'}">
+        <div class="slot-head"><b>${esc(c.label)}</b><span>${c.price !== undefined ? `${fmtInt(c.price)} Gold` : esc(c.tag ?? '')}</span></div>
+        ${c.sub ? `<div class="meta">${esc(c.sub)}</div>` : ''}
+        ${c.disabled ? `<div class="meta soft">${esc(c.disabled)}</div>` : ''}
+        <button class="mini ${c.kind === 'danger' ? 'red' : 'brass'}" data-a="pick" data-id="${esc(c.id)}" ${c.disabled ? 'disabled' : ''}>${esc(c.button ?? 'Wählen')}</button></div>`).join('');
+    this.open(
+      `<p class="kicker">${esc(e.kicker)}</p><h2 class="fell">${esc(e.title)}</h2>
+      <p class="dlg-line">${esc(e.text)}</p>
+      ${e.info ? `<p class="soft small">${esc(e.info)}</p>` : ''}
+      ${e.msg ? `<p class="note">${esc(e.msg)}</p>` : ''}
+      ${rows}
+      <button class="secondary" data-a="close" data-focus>${esc(e.closeLabel ?? 'Später')}</button>`,
+      { pick: (id) => onPick(id ?? ''), close: () => onClose() },
+      onClose,
+      { wide: true },
     );
   }
 

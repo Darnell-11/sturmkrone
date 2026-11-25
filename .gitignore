@@ -6,3 +6,7 @@ dev-dist/
 Thumbs.db
 .vscode/
 .idea/
+
+# Prüf-Ausgaben (Playwright-MCP, Prüfskripte) – nie einchecken
+.playwright-mcp/
+qa_tmp/

@@ -28,7 +28,7 @@ export interface ConvoySite {
 }
 
 /** Rolle eines Schiffs eines Ereignisses oder Konvois */
-export type SeaShipRole = 'frachter' | 'eskorte' | 'korsar' | 'galeone' | 'wache' | 'boss';
+export type SeaShipRole = 'frachter' | 'eskorte' | 'korsar' | 'galeone' | 'wache' | 'boss' | 'schmuggler';
 
 /**
  * Ein Schiff als reine Daten: so steht es im Spielstand und im Mehrspieler-Abgleich. Ist es „echt“ (`live` des Konvois bzw. Ereignisses), schreibt

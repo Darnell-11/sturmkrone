@@ -7,7 +7,7 @@ import { audio } from '../audio/audio';
 import type { IslandDef } from '../data/regions';
 import { profileOf, type GoodId } from '../data/economy';
 import { factionShipLook, SHIP_CLASSES, type NavalRole, type ShipLook } from '../data/ships';
-import { CONVOY, DIRECTOR, FLOTSAM, WORLD_BOSSES, WORLD_EVENT_DEFS, type WorldBossId } from '../data/seaEvents';
+import { CONVOY, DIRECTOR, FLOTSAM, RESCUE, SMUGGLER, WORLD_BOSSES, WORLD_EVENT_DEFS, type WorldBossId } from '../data/seaEvents';
 import { aiEvolution, type ShipEvolution } from '../data/shipEvolution';
 import { capVolley, dangerOfLevel, mitigation, worldBossHull, type VolleyWindow } from '../data/balanceConfig';
 import { worldBossStats } from '../naval/worldBosses';
@@ -17,7 +17,7 @@ import type { Ship } from '../entities/ship/ship';
 import { LeviathanBoss } from '../naval/leviathanBoss';
 import { CurrentField, buildCurrentLanes, currentBoost, newCurrentSample, type CurrentLane, type CurrentSample } from './oceanCurrents';
 import { cellSightK, cellSpeedK, newCellSample, type CellSample } from './weatherCells';
-import { WorldEventDirector, emptyWorldEvents, type DirectorIsland, type DirectorNotice, type FlotsamCrate, type Interest, type WorldEvent, type WorldEventState } from './worldEventDirector';
+import { WorldEventDirector, emptyWorldEvents, type DirectorIsland, type DirectorNotice, type FlotsamCrate, type Interest, type RescueChoice, type SupplyFront, type WorldEvent, type WorldEventState } from './worldEventDirector';
 import type { ConvoySite, ConvoyState, DefenseReward, SeaShipRec } from './tradeConvoys';
 import { WorldEventView, type OceanUniformRefs } from './worldEventView';
 import type { SmokeSystem } from './smoke';
@@ -33,7 +33,11 @@ export type SeaEventNews =
   | { type: 'convoyDefended'; convoy: ConvoyState; reward: DefenseReward }
   | { type: 'convoyPlundered'; convoy: ConvoyState; byPlayer: boolean; boarded: boolean }
   | { type: 'eventEnd'; event: WorldEvent; firstKill: boolean; dist: number }
-  | { type: 'crate'; event: WorldEvent; crate: FlotsamCrate };
+  | { type: 'crate'; event: WorldEvent; crate: FlotsamCrate }
+  /** Begegnung (4.5C): der Spieler ist langsam an Schiffbrüchige oder einen Schmuggler herangefahren – das Spiel fragt, was er tun will */
+  | { type: 'encounter'; event: WorldEvent }
+  /** Kriegs-Nachschub (4.5C): Kaperschiffe der Gegenseite greifen den Transport an */
+  | { type: 'supplyRaid'; event: WorldEvent; dist: number };
 
 /** Was die Schicht von der Seewelt braucht */
 export interface LiveHost {
@@ -55,6 +59,8 @@ export interface LiveHost {
   hurt(dmg: number, x: number, z: number): void;
   /** Dunst der Szene (Farbe, Sichtweite) */
   fog(): { color: Color; far: number };
+  /** Laufende Belagerungen für den Kriegs-Nachschub (4.5C, aus dem Krieg der Mächte); ohne Krieg leer */
+  fronts?(): readonly SupplyFront[];
 }
 
 const SYNC_EVERY = 0.25;
@@ -67,13 +73,15 @@ function lookOf(role: SeaShipRec['role'], power: FactionId | null, bossId: World
     const base = L.power ? factionShipLook(L.power) : factionShipLook('kurogane');
     return { look: { ...base, hull: L.hull, stripe: L.stripe, sail: L.sail, flagColor: L.flagColor, power: L.power, figurehead: bossId === 'ryujin' ? 'storm_dragon' : 'leviathan_skull', lanterns: true }, ghost: !!L.ghost };
   }
-  if (role === 'korsar') return { look: { hull: '#2A1E1A', stripe: '#7A1F1A', sail: '#3A3230', flag: 'totenkopf', flagColor: '#1E1A20', figurehead: 'leviathan_skull', lanterns: true }, ghost: false };
+  if (role === 'korsar') return { look: power ? factionShipLook(power) : { hull: '#2A1E1A', stripe: '#7A1F1A', sail: '#3A3230', flag: 'totenkopf', flagColor: '#1E1A20', figurehead: 'leviathan_skull', lanterns: true }, ghost: false };
+  // Schmuggler (4.5C): dunkler Rumpf, violette Zierstreifen, rauchgraue Segel, keine Flagge einer Macht
+  if (role === 'schmuggler') return { look: { hull: '#231C28', stripe: '#8E5BD6', sail: '#4A4250', flag: 'totenkopf', flagColor: '#2A1E34', figurehead: 'keine', lanterns: true }, ghost: false };
   if (role === 'galeone') return { look: { hull: '#5C3A1F', stripe: '#D9A441', sail: '#F4E6C6', flag: 'krone', flagColor: '#C89B2E', figurehead: 'royal_griffin', lanterns: true, power: power ?? undefined }, ghost: false };
   return { look: power ? factionShipLook(power) : { hull: '#8A5A2B', stripe: '#2F6E4F', sail: '#F6EAD0', flag: 'anker', flagColor: '#2F6E4F', figurehead: 'keine', lanterns: true }, ghost: false };
 }
 
 const ROLE_NAME: Record<SeaShipRec['role'], string> = {
-  frachter: 'Konvoi-Frachter', eskorte: 'Konvoi-Eskorte', korsar: 'Korsar', galeone: 'Schatz-Galeone', wache: 'Blockadeschiff', boss: 'Weltboss',
+  frachter: 'Konvoi-Frachter', eskorte: 'Konvoi-Eskorte', korsar: 'Korsar', galeone: 'Schatz-Galeone', wache: 'Blockadeschiff', boss: 'Weltboss', schmuggler: 'Schmuggler',
 };
 
 interface SpawnJob { owner: string; rec: SeaShipRec }
@@ -107,16 +115,22 @@ export class WorldEventsLive {
   private leviEngaged = false;
   private readonly leviVolley: VolleyWindow = { t: -99, sum: 0 };
   private clock = 0;
+  private readonly islandById = new Map<string, IslandDef>();
+  /** Begegnungen (4.5C): wann zuletzt gefragt (Uhr der Schicht), damit ein „Später“ nicht sofort wieder fragt */
+  private readonly askedAt = new Map<string, number>();
+  /** Gerade offene Frage (das Spiel zeigt das Fenster; bis zur Antwort keine zweite) */
+  asking: string | null = null;
 
   constructor(private readonly host: LiveHost, islands: readonly IslandDef[], state: WorldEventState | null, seed: number) {
     const dIslands: DirectorIsland[] = islands.map((i) => ({
       id: i.id, name: i.name, x: i.x, z: i.z, r: i.r, ring: i.ring ?? 1, kind: i.kind, factionId: i.factionId ?? null, uncharted: !!i.uncharted,
-      harbor: i.kind === 'harbor' || i.kind === 'town', blackMarket: !!profileOf(i).blackMarket,
+      harbor: i.kind === 'harbor' || i.kind === 'town', blackMarket: !!profileOf(i).blackMarket, mega: !!i.mega, skerry: !!i.skerry,
     }));
+    for (const i of islands) this.islandById.set(i.id, i);
     const sites: ConvoySite[] = islands.filter((i) => (i.kind === 'harbor' || i.kind === 'town') && !i.uncharted && (i.ring ?? 1) <= 3).map((i) => ({
       id: i.id, name: i.name, x: i.x, z: i.z, r: i.r, ring: i.ring ?? 1, dangerTier: i.dangerTier ?? 1, factionId: i.factionId ?? null, profile: profileOf(i),
     }));
-    this.director = new WorldEventDirector({ islands: dIslands, sites }, state, seed);
+    this.director = new WorldEventDirector({ islands: dIslands, sites, fronts: () => this.host.fronts?.() ?? [] }, state, seed);
     this.lanes = buildCurrentLanes(islands);
     this.currents = new CurrentField(this.lanes);
     this.view = new WorldEventView(host.scene, this.lanes, host.ocean, host.smoke);
@@ -180,7 +194,7 @@ export class WorldEventsLive {
       this.zones();
     }
     this.syncT -= dt;
-    if (this.syncT <= 0) { this.syncT = SYNC_EVERY; this.sync(); this.stream(); }
+    if (this.syncT <= 0) { this.syncT = SYNC_EVERY; this.sync(); this.stream(); this.encounters(); }
     this.pumpSpawn();
     this.updateLeviathan(dt);
     this.flotsam();
@@ -271,6 +285,8 @@ export class WorldEventsLive {
         ev.live = true;
         for (const r of ev.ships) if (!r.down) this.queue.push({ owner: ev.id, rec: r });
       }
+      // später hinzugekommene Schiffe (Kaperschiffe gegen den Kriegs-Nachschub, 4.5C) laufen ebenfalls vom Stapel
+      else if (ev.live && !done) for (const r of ev.ships) if (!r.down && !this.ships.has(r.id) && this.job?.rec !== r && !this.queue.some((q) => q.rec === r)) this.queue.push({ owner: ev.id, rec: r });
       if (ev.live && (d > DIRECTOR.dematerialize || done) && !this.anyEngaged(ev.id)) this.release(ev.id, done);
     }
   }
@@ -352,7 +368,9 @@ export class WorldEventsLive {
     const power = ev ? ev.power : cv ? cv.power : null;
     const level = ev ? ev.level : cv!.level;
     const bossId = ev?.bossId ?? null;
-    const { look, ghost } = lookOf(rec.role, rec.role === 'korsar' ? null : bossId ? WORLD_BOSSES[bossId].look?.power ?? null : power, bossId);
+    // Kaperschiffe gegen den Kriegs-Nachschub tragen die Farben der Gegenseite, sonst sind Korsaren Piraten ohne Macht
+    const raider = rec.role === 'korsar' && ev?.kind === 'nachschub';
+    const { look, ghost } = lookOf(rec.role, rec.role === 'korsar' ? (raider ? (ev!.foe as FactionId | null) ?? null : null) : bossId ? WORLD_BOSSES[bossId].look?.power ?? null : power, bossId);
     const danger = dangerOfLevel(level);
     const evo: ShipEvolution = bossId ? { ...WORLD_BOSSES[bossId].evo }
       : rec.role === 'galeone' ? { hullTier: danger >= 3 ? 5 : 4, sailTier: 4, cannonTier: danger >= 3 ? 4 : 3 }
@@ -360,10 +378,10 @@ export class WorldEventsLive {
       : rec.role === 'korsar' ? aiEvolution('jaeger', danger)
       : rec.role === 'wache' ? aiEvolution('grenze', danger)
       : aiEvolution('eskorte', danger);
-    const role: NavalRole = rec.role === 'frachter' || rec.role === 'galeone' ? 'haendler' : rec.role === 'korsar' ? 'jaeger' : bossId ? 'legende' : 'patrouille';
+    const role: NavalRole = rec.role === 'frachter' || rec.role === 'galeone' || rec.role === 'schmuggler' ? 'haendler' : rec.role === 'korsar' ? 'jaeger' : bossId ? 'legende' : 'patrouille';
     const lead = ev ? ev.ships.find((s) => s.slot === 0) : cv ? cv.ships.find((s) => s.role === 'frachter') : undefined;
     const leadShip = lead && lead !== rec ? this.ships.get(lead.id) : undefined;
-    const fr = cv?.ships.find((s) => s.role === 'frachter');
+    const fr = cv?.ships.find((s) => s.role === 'frachter') ?? (ev?.kind === 'nachschub' ? ev.ships.find((s) => s.role === 'frachter') : undefined);
     const zoneR = ev ? (ev.kind === 'blockade' ? WORLD_EVENT_DEFS.blockade.zone : ev.kind === 'weltboss' ? WORLD_EVENT_DEFS.weltboss.zone : 0) : 0;
     const link: EventShipLink = {
       owner: job.owner, recId: rec.id, role: rec.role,
@@ -374,9 +392,13 @@ export class WorldEventsLive {
       bossId, slot: rec.slot,
     };
     const bd = bossId ? WORLD_BOSSES[bossId] : null;
-    const name = bd ? bd.name : rec.role === 'galeone' ? 'Schatz-Galeone' : cv && rec.role !== 'korsar' ? `${ROLE_NAME[rec.role]}${cv.power ? ` (${FACTIONS[cv.power].name})` : ''}` : ROLE_NAME[rec.role];
+    const supplyName = ev?.kind === 'nachschub' ? (rec.role === 'frachter' ? 'Nachschub-Transporter' : rec.role === 'korsar' ? 'Kaperschiff' : 'Nachschub-Eskorte') : null;
+    const shipPower = raider ? (ev!.foe as FactionId | null) : ev ? ev.power : cv ? cv.power : null;
+    const name = bd ? bd.name : supplyName ? `${supplyName}${shipPower && FACTIONS[shipPower] ? ` (${FACTIONS[shipPower].name})` : ''}`
+      : rec.role === 'galeone' ? 'Schatz-Galeone' : rec.role === 'schmuggler' ? 'Schmuggler' : ev?.kind === 'schmuggler' ? 'Schmuggler-Logger'
+      : cv && rec.role !== 'korsar' ? `${ROLE_NAME[rec.role]}${cv.power ? ` (${FACTIONS[cv.power].name})` : ''}` : ROLE_NAME[rec.role];
     const it = nav.spawnEventShipSteps({
-      x: rec.x, z: rec.z, heading: rec.heading, classTier: rec.classTier, level, look, role, power: rec.role === 'korsar' ? undefined : (bd?.look?.power ?? power ?? undefined),
+      x: rec.x, z: rec.z, heading: rec.heading, classTier: rec.classTier, level, look, role, power: raider ? (ev!.foe as FactionId | null) ?? undefined : rec.role === 'korsar' || rec.role === 'schmuggler' || (ev?.kind === 'schmuggler') ? undefined : (bd?.look?.power ?? power ?? undefined),
       name, evo, hullFrac: rec.hull, sailFrac: rec.sail, link, ghost,
       maxHull: bd ? worldBossHull(SHIP_CLASSES[bd.classTier].hp, bd.level, bd.hullK) : undefined,
     });
@@ -390,7 +412,8 @@ export class WorldEventsLive {
     e.ship.x = r.x; e.ship.z = r.z; e.ship.heading = r.heading;
     e.ship.prev = { x: r.x, z: r.z, heading: r.heading };
     // Konvoi- und Ereignis-Schiffe, die schon einmal vom Spieler angegriffen wurden, bleiben feindlich
-    if ((cv?.playerHitConvoy && r.role !== 'korsar') || (ev && ev.engagedUntil > this.director.state.t && r.byPlayer)) e.provoked = true;
+    // ein hochgenommenes Schmuggler-Treffen bleibt feindlich, auch wenn seine Schiffe neu entstehen (Teleport, Abbau in der Ferne)
+    if ((cv?.playerHitConvoy && r.role !== 'korsar') || (ev && ev.engagedUntil > this.director.state.t && r.byPlayer) || (ev?.kind === 'schmuggler' && ev.busted)) e.provoked = true;
     this.ships.set(r.id, e);
     this.owners.set(r.id, job.owner);
     this.host.warm(e.ship.model.group);
@@ -519,6 +542,96 @@ export class WorldEventsLive {
     }
   }
 
+  // ---------- Begegnungen (4.5C) ----------
+
+  /**
+   * Viermal je Sekunde: wer langsam an Schiffbrüchige oder einen Schmuggler heranfährt, wird gefragt (Meldung `encounter`, das Spiel zeigt die Wahl);
+   * Schiffbrüchige an Bord ziehen mit dem Schiff, bis es vor ihrem Zielhafen liegt.
+   */
+  private encounters() {
+    const h = this.host, p = h.ship;
+    const t = this.clock;
+    for (const ev of this.director.state.events) {
+      if (ev.phase === 'beendet') continue;
+      if (ev.kind === 'schiffbruch' && ev.rescue?.choice === 'eskorte') {
+        this.director.follow(ev.id, p.x, p.z);
+        const port = ev.rescue.portId ? this.islandById.get(ev.rescue.portId) : undefined;
+        if (port && Math.hypot(port.x - p.x, port.z - p.z) - port.r < RESCUE.escortArrive) this.director.rescueArrived(ev.id);
+        continue;
+      }
+      if (!h.sailing() || !p.alive || this.asking) continue;
+      if (ev.kind === 'schiffbruch' && !ev.rescue) {
+        if (Math.hypot(ev.x - p.x, ev.z - p.z) > RESCUE.reach + p.cls.L * 0.5 || Math.abs(p.speed) > RESCUE.slow) continue;
+        if (t - (this.askedAt.get(ev.id) ?? -1e9) < RESCUE.askAgain) continue;
+        this.ask(ev);
+      } else if (ev.kind === 'schmuggler' && !ev.busted) {
+        const s = ev.ships.find((x) => x.role === 'schmuggler' && !x.down);
+        if (!s || Math.hypot(s.x - p.x, s.z - p.z) > SMUGGLER.reach + p.cls.L * 0.5 || Math.abs(p.speed) > SMUGGLER.slow) continue;
+        // wer die Schmuggler schon beschossen hat, wird nicht mehr bedient
+        if (ev.ships.some((x) => x.byPlayer)) continue;
+        if (t - (this.askedAt.get(ev.id) ?? -1e9) < SMUGGLER.askAgain) continue;
+        this.ask(ev);
+      }
+    }
+  }
+
+  private ask(ev: WorldEvent) {
+    this.asking = ev.id;
+    this.askedAt.set(ev.id, this.clock);
+    this.onNews({ type: 'encounter', event: ev });
+  }
+
+  /** Das Fenster der Begegnung ist zu (mit oder ohne Antwort): nach `askAgain` Sekunden darf wieder gefragt werden */
+  answered(evId: string) {
+    if (this.asking === evId) this.asking = null;
+    this.askedAt.set(evId, this.clock);
+  }
+
+  /** Schiffbrüchige: Antwort des Spielers weitergeben (Regeln im Director) */
+  rescue(evId: string, choice: RescueChoice): WorldEvent | null {
+    const ev = this.director.rescue(evId, choice);
+    this.answered(evId);
+    for (const n of this.director.drain()) this.news(n);
+    return ev;
+  }
+
+  /** Schmuggler hochnehmen: die Schiffe des Treffens werden feindlich (und wehren sich), das Ereignis läuft nicht ab */
+  bust(evId: string): WorldEvent | null {
+    const ev = this.director.bust(evId);
+    this.answered(evId);
+    if (!ev) return null;
+    for (const [rid, o] of this.ships) if (this.owners.get(rid) === evId) o.provoked = true;
+    return ev;
+  }
+
+  /** Laufende Schatzsuche auf einer Insel (oder null) */
+  huntOn(islandId: string): WorldEvent | null {
+    for (const ev of this.director.state.events) if (ev.kind === 'schatzjagd' && ev.phase !== 'beendet' && ev.islandId === islandId) return ev;
+    return null;
+  }
+
+  /** Schatzsuchen in der Nähe (für die Pfähle des Suchbereichs; schreibt in `out`) */
+  huntsNear(x: number, z: number, r: number, out: WorldEvent[]): WorldEvent[] {
+    out.length = 0;
+    for (const ev of this.director.state.events) if (ev.kind === 'schatzjagd' && ev.phase !== 'beendet' && ev.site && Math.hypot(ev.site.x - x, ev.site.z - z) < r) out.push(ev);
+    return out;
+  }
+
+  /** Hinterhalt und Bergen der Truhe weitergeben (Ausgang meldet der Director über `eventEnd`) */
+  huntAmbush(evId: string): WorldEvent | null { return this.director.ambush(evId); }
+  huntClaim(evId: string): WorldEvent | null {
+    const ev = this.director.claimTreasure(evId);
+    for (const n of this.director.drain()) this.news(n);
+    return ev;
+  }
+
+  /** Schatzkarte gefunden: Schatzsuche auf ihrer Insel (Meldung `spawn` wie bei jedem neuen Ereignis) */
+  treasureMap(islandId: string): WorldEvent | null {
+    const ev = this.director.startTreasureHunt(islandId);
+    for (const n of this.director.drain()) this.news(n);
+    return ev;
+  }
+
   // ---------- Meldungen ----------
 
   private news(n: DirectorNotice) {
@@ -535,18 +648,30 @@ export class WorldEventsLive {
       case 'convoyThreat': this.onNews({ type: 'convoyThreat', convoy: n.convoy, dist: Math.hypot(n.convoy.x - p.x, n.convoy.z - p.z) }); break;
       case 'convoyDefended': this.onNews({ type: 'convoyDefended', convoy: n.convoy, reward: n.reward }); break;
       case 'convoyPlundered': this.onNews({ type: 'convoyPlundered', convoy: n.convoy, byPlayer: n.byPlayer, boarded: n.boarded }); break;
+      case 'supplyRaid': this.onNews({ type: 'supplyRaid', event: n.event, dist: Math.hypot(n.event.x - p.x, n.event.z - p.z) }); break;
     }
   }
 
   // ---------- Abfragen für Karte, Kompass, Hafen ----------
 
   /** Laufende Ereignisse für Kompass und Karten */
-  marks(): { id: string; kind: WorldEvent['kind']; x: number; z: number; name: string; bossId?: WorldBossId; islandName?: string }[] {
+  marks(): { id: string; kind: WorldEvent['kind']; x: number; z: number; name: string; bossId?: WorldBossId; islandName?: string; power?: FactionId | null; escort?: boolean }[] {
     const out = [];
     for (const ev of this.director.state.events) {
       if (ev.phase === 'beendet') continue;
-      const b = ev.kind === 'weltboss' || ev.kind === 'schatzgaleone' ? ev.ships.find((s) => s.slot === 0) : null;
-      out.push({ id: ev.id, kind: ev.kind, x: b ? b.x : ev.x, z: b ? b.z : ev.z, name: ev.kind === 'blockade' ? `Blockade vor ${ev.islandName}` : ev.name, bossId: ev.bossId, islandName: ev.islandName });
+      const b = ev.kind === 'weltboss' || ev.kind === 'schatzgaleone' || ev.kind === 'nachschub' || ev.kind === 'schmuggler' ? ev.ships.find((s) => s.slot === 0) : null;
+      let x = b ? b.x : ev.x, z = b ? b.z : ev.z, name = ev.name;
+      if (ev.kind === 'blockade') name = `Blockade vor ${ev.islandName}`;
+      else if (ev.kind === 'schatzjagd') name = `Schatzsuche auf ${ev.islandName}`;
+      else if (ev.kind === 'schmuggler') name = ev.islandName ? `Schmuggler-Rendezvous vor ${ev.islandName}` : 'Schmuggler-Rendezvous';
+      else if (ev.kind === 'nachschub') name = `Kriegs-Nachschub${ev.power ? ` (${FACTIONS[ev.power].name})` : ''} → ${ev.destName}`;
+      else if (ev.kind === 'schiffbruch' && ev.rescue?.choice === 'eskorte') {
+        // Schiffbrüchige an Bord: das Zeichen steht am Zielhafen
+        const port = ev.rescue.portId ? this.islandById.get(ev.rescue.portId) : undefined;
+        if (port) { x = port.x; z = port.z; }
+        name = `Schiffbrüchige an Bord → ${ev.rescue.portName}`;
+      }
+      out.push({ id: ev.id, kind: ev.kind, x, z, name, bossId: ev.bossId, islandName: ev.islandName, power: ev.power, escort: ev.rescue?.choice === 'eskorte' });
     }
     return out;
   }

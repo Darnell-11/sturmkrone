@@ -12,26 +12,36 @@ import type { ShipEvolution } from './shipEvolution';
 
 // ---------- Director ----------
 
-export type WorldEventKind = 'schatzgaleone' | 'blockade' | 'treibgut' | 'weltboss';
-export const WORLD_EVENT_KINDS: readonly WorldEventKind[] = ['schatzgaleone', 'blockade', 'treibgut', 'weltboss'];
+export type WorldEventKind =
+  | 'schatzgaleone' | 'blockade' | 'treibgut' | 'weltboss'
+  // Phase 4.5C: interaktive Begegnungen zu Wasser und an Land
+  | 'schiffbruch' | 'schmuggler' | 'schatzjagd' | 'nachschub';
+export const WORLD_EVENT_KINDS: readonly WorldEventKind[] = ['schatzgaleone', 'blockade', 'treibgut', 'weltboss', 'schiffbruch', 'schmuggler', 'schatzjagd', 'nachschub'];
+/** Die vier interaktiven Begegnungen der Phase 4.5C (Entscheidung des Spielers, eigene Belohnungen) */
+export const ENCOUNTER_KINDS: readonly WorldEventKind[] = ['schiffbruch', 'schmuggler', 'schatzjagd', 'nachschub'];
 
-/** Signal am Horizont, an dem man ein Ereignis von weitem erkennt */
-export type BeaconKind = 'goldrakete' | 'rauchfahne' | 'moewen' | 'gewitterwirbel';
+/**
+ * Signal am Horizont, an dem man ein Ereignis von weitem erkennt. Seit 4.5C: rote Notruf-Fackeln (Schiffbrüchige), violett-goldene Leuchtraketen
+ * (Schmuggler-Rendezvous), eine dünne Rauchsäule über dem Lager der Schatzjäger (Schatzsuche) und Signalfeuer in der Farbe der Nation (Kriegs-Nachschub).
+ */
+export type BeaconKind = 'goldrakete' | 'rauchfahne' | 'moewen' | 'gewitterwirbel' | 'notfackel' | 'violettrakete' | 'schatzrauch' | 'signalfeuer';
 
 export const DIRECTOR = {
-  /** So viele Ereignisse laufen gleichzeitig auf der Weltkarte (Weltbosse zählen mit) */
-  minActive: 4,
-  maxActive: 6,
-  /** Mindestabstand zweier Ereignisse (m, Mitte zu Mitte) */
-  minSpacing: 1600,
+  /** So viele Ereignisse laufen gleichzeitig auf der Weltkarte (Weltbosse zählen mit; seit 4.5C 6 bis 8, über die Ringe 1 bis 4 verteilt) */
+  minActive: 6,
+  maxActive: 8,
+  /** Mindestabstand zweier Ereignisse (m, Mitte zu Mitte; seit 4.5C 2 200 m) */
+  minSpacing: 2200,
   /** Abstand zu jedem Spieler beim Erscheinen (m): nie näher (kein Überfall), möglichst in Sichtweite der Horizont-Signale */
   spawnMin: 1100,
-  spawnMax: 4000,
+  spawnMax: 5000,
+  /** Anteil der Ereignisse, die in Sichtweite eines Spielers entstehen (der Rest geht in den Ring mit den wenigsten Ereignissen) */
+  nearShare: 0.5,
   /** Freiraum zur Küste (m über dem Platzbedarf `r · 1,45`) */
   islandClear: 140,
-  /** Ruhe zwischen zwei neuen Ereignissen (s); fehlen noch welche zum Minimum, geht es schneller */
+  /** Ruhe zwischen zwei neuen Ereignissen (s); fehlen noch welche zum Minimum, geht es schneller (aber nie Schlag auf Schlag) */
   spawnGap: 30,
-  bootstrapGap: 2,
+  bootstrapGap: 3,
   /** Planungstakt (s) */
   tick: 1,
   /** Schiffe eines Ereignisses werden ab diesem Abstand zum Spieler echt (m) und jenseits von `dematerialize` wieder zu reinen Daten */
@@ -79,7 +89,115 @@ export const WORLD_EVENT_DEFS: Record<WorldEventKind, WorldEventDef> = {
     kind: 'weltboss', name: 'Weltboss', beacon: 'gewitterwirbel', weight: 1.6, cooldown: 900, life: [1500, 2400], rings: [4], max: 3, zone: 380,
     info: 'Ein Gewitterwirbel über der Tiefsee und ein tiefes Nebelhorn: dort zieht ein Weltboss seine Bahn.',
   },
+  schiffbruch: {
+    kind: 'schiffbruch', name: 'Schiffbrüchige', beacon: 'notfackel', weight: 2.2, cooldown: 180, life: [720, 1080], rings: [1, 2, 3, 4], max: 2, zone: 0,
+    info: 'Rote Notruf-Fackeln über einem Floß aus Wrackteilen: Schiffbrüchige treiben auf offener See. Nimm sie als Crew an Bord, bring sie in den nächsten Hafen oder lass dir die Lage ihres Wracks verraten.',
+  },
+  schmuggler: {
+    kind: 'schmuggler', name: 'Schmuggler-Rendezvous', beacon: 'violettrakete', weight: 1.6, cooldown: 300, life: [600, 900], rings: [2, 3, 4], max: 2, zone: 0,
+    info: 'Violett-goldene Leuchtraketen: ein Schmuggler wartet auf Kundschaft – auf offener See oder in einer abgelegenen Bucht. Seltene Baupläne, Relikt-Splitter und Schmuggelware. Oder du nimmst ihn für die Marine hoch.',
+  },
+  schatzjagd: {
+    kind: 'schatzjagd', name: 'Schatzsuche', beacon: 'schatzrauch', weight: 1.5, cooldown: 240, life: [1500, 2100], rings: [1, 2, 3, 4], max: 2, zone: 0,
+    info: 'Eine Schatzkarte markiert einen Suchbereich auf einer Insel. Über dem Lager der Schatzjäger steigt dünner Rauch auf: wer zuerst gräbt, gewinnt – und muss sich gegen den Hinterhalt wehren.',
+  },
+  nachschub: {
+    kind: 'nachschub', name: 'Kriegs-Nachschub', beacon: 'signalfeuer', weight: 1.8, cooldown: 240, life: [900, 1800], rings: [2, 3, 4], max: 2, zone: 0,
+    info: 'Ein schwer bewachter Transport bringt Kanonenstahl, Hartholz, Medizin und Proviant von einer Rohstoff-Insel an eine belagerte Front. Eskortiere ihn – oder fang ihn ab.',
+  },
 };
+
+// ---------- Interaktive Begegnungen (Phase 4.5C) ----------
+
+/** Schiffbrüchige: Annäherung (m) und Höchstfahrt (m/s), ab der sie um Hilfe bitten; was die drei Antworten bringen */
+export const RESCUE = {
+  reach: 70,
+  slow: 4.5,
+  /** Personen auf dem Floß */
+  survivors: [3, 6] as readonly [number, number],
+  /** Anheuern: so viele Seeleute je Person (kostenlos) */
+  headsPerSurvivor: 1,
+  /** Eskorte: Frist (s), Ankunft (m vor der Küste des Zielhafens), Gold je Gefahrenstufe und Person, Ansehen und Ehre bei der Hafenmacht */
+  escortTime: 1200,
+  escortArrive: 340,
+  escortGold: 90,
+  escortStanding: 5,
+  escortHonor: 12,
+  /** Wrack-Koordinaten: das Wrackfeld liegt so weit entfernt (m) und führt so viele Kisten (mehr Ware, immer eine Schatzkarte) */
+  wreckDist: [800, 1500] as readonly [number, number],
+  wreckCrates: [7, 10] as readonly [number, number],
+  /** Wer ablehnt, wird erst nach so vielen Sekunden wieder gefragt */
+  askAgain: 40,
+} as const;
+
+/** Schmuggler-Rendezvous: Annäherung, Angebote, Preise; Hochnehmen für die Marine */
+export const SMUGGLER = {
+  reach: 110,
+  slow: 6,
+  /** Angebote je Treffen */
+  offers: 4,
+  /** Preise (Gold): Bauplan einer Macht, Relikt-Splitter (je Stück), Schmuggelware (Aufschlag auf den Grundpreis, Anteil) */
+  blueprintPrice: 2400,
+  shardPrice: 480,
+  shardUnits: [2, 4] as readonly [number, number],
+  goodsMarkup: 0.55,
+  goodsUnits: [6, 12] as readonly [number, number],
+  /** Fahndungsdruck je Kauf (Schmuggel) */
+  heatPerDeal: 12,
+  /** Hochnehmen: Ansehen bei der Marine, Gold (je Gefahrenstufe), Ehre, beschlagnahmte Ware */
+  bustStanding: 7,
+  bustGold: 420,
+  bustHonor: 15,
+  askAgain: 40,
+} as const;
+
+/** Schatzsuche an Land: Suchbereich auf der Insel, Hinterhalt der Schatzjäger, Beute */
+export const HUNT = {
+  /** Radius des Suchbereichs (m) und Abstand seiner Mitte von der Inselmitte (Anteil des Küstenradius) */
+  searchR: 24,
+  siteK: 0.45,
+  /** Schatzjäger im Hinterhalt (Anzahl nach Gefahrenstufe 1 … 5) */
+  ambush: [3, 3, 4, 5, 5] as readonly number[],
+  /** Truhe: Gold (Grund + je Stufe), Relikt-Splitter, Chance auf Ausrüstung */
+  gold: 480,
+  goldPerLevel: 40,
+  shards: [1, 3] as readonly [number, number],
+  gearChance: 0.6,
+  /** Bergen der Truhe (m Abstand der Spielfigur) */
+  claimR: 3.2,
+} as const;
+
+/** Kriegs-Nachschub: Fahrt, Begleitschutz, Wirkung auf die Belagerung, Lohn für Eskorte und Abfangen */
+export const SUPPLY = {
+  speed: 6,
+  /** Eskorten je Gefahrenstufe (1 … 5), Klasse des Transporters und der Eskorten */
+  escorts: [2, 2, 2, 3, 3] as readonly number[],
+  freighterClass: [2, 3, 3, 4, 4] as readonly number[],
+  escortClass: [2, 2, 3, 3, 4] as readonly number[],
+  /** Eskorte: so nah (m) muss der Spieler bleiben, so viel der Fahrtzeit (Anteil) zählt als Begleitung */
+  escortRange: 950,
+  escortShare: 0.45,
+  /** Kaperschiffe der Gegenseite (je Gefahrenstufe), sobald ein Spieler den Transport so viele Sekunden begleitet hat */
+  raiders: [1, 1, 2, 2, 2] as readonly number[],
+  raidAfter: 50,
+  /** Abstand Rohstoff-Insel → Front (m) */
+  minTrip: 1500,
+  maxTrip: 7500,
+  /** Wirkung auf die Belagerung: Ankunft (Garnison bzw. Truppen, Moral, Fortschritt) und Verlust (Moral) */
+  arriveTroops: 18,
+  arriveMorale: 0.12,
+  arriveProgress: 0.06,
+  lostMorale: 0.1,
+  /** Lohn: Gold je Gefahrenstufe, Kriegspunkte (an die begünstigte Nation), Ansehen und Ehre */
+  escortGold: 520,
+  interceptGold: 380,
+  meritEscort: 40,
+  meritIntercept: 45,
+  standing: 6,
+  honor: 14,
+  /** Ladung: Einheiten je Ware, die ein abgefangener Transporter hergibt */
+  cargo: [8, 14] as readonly [number, number],
+} as const;
 
 /** Wer einen Hafen einer Macht blockiert, wenn es nicht die Kurogane-Schwarzsegler sind: ihr Rivale */
 export const BLOCKADE_RIVAL: Record<FactionId, FactionId> = {
@@ -200,9 +318,11 @@ export interface CurrentLaneDef {
   to: string;
   /** Breite des Bandes (m) */
   width: number;
+  /** Tiefsee-Strömung zwischen den äußeren Ringen (4.5C): auf der Karte als solche benannt */
+  deep?: boolean;
 }
 
-/** Windstraßen zwischen den wichtigsten Handels-Archipelen der Ringe 1 – 3 (abwechselnd hinaus und herein) */
+/** Windstraßen zwischen den wichtigsten Handels-Archipelen der Ringe 1 – 3 (abwechselnd hinaus und herein), seit 4.5C dazu fünf Tiefsee-Strömungen bis Ring 4 */
 export const CURRENT_LANES: readonly CurrentLaneDef[] = [
   { id: 'bernsteinpassat', name: 'Bernstein-Passat', from: 'ankerglueck', to: 'nebelhafen', width: 150 },
   { id: 'albionstrom', name: 'Albion-Strom', from: 'nebelhafen', to: 'koenigshafen', width: 150 },
@@ -215,6 +335,12 @@ export const CURRENT_LANES: readonly CurrentLaneDef[] = [
   { id: 'grachtenstrom', name: 'Grachten-Drift', from: 'banda', to: 'nieuwhoorn', width: 140 },
   { id: 'weinstrom', name: 'Weinstraße', from: 'ankerglueck', to: 'letzterhafen', width: 150 },
   { id: 'lilienstrom', name: 'Lilien-Drift', from: 'sonnenweinkap', to: 'letzterhafen', width: 140 },
+  // Phase 4.5C: fünf weitläufige Tiefsee-Strömungen zwischen den Ringen 2, 3 und 4 (gleiche +35 %, breiter), damit lange Überfahrten kurzweilig bleiben
+  { id: 'kronentief', name: 'Kronen-Tiefstrom', from: 'webersund', to: 'nordlichtatoll', width: 190, deep: true },
+  { id: 'hansetief', name: 'Hanse-Tiefstrom', from: 'kohlenstieg', to: 'bakenriff', width: 190, deep: true },
+  { id: 'schwarztief', name: 'Schwarzsegel-Tiefstrom', from: 'rotlaternenriff', to: 'russhafen', width: 190, deep: true },
+  { id: 'gewuerztief', name: 'Gewürz-Tiefstrom', from: 'muskatbucht', to: 'lotsenbake', width: 190, deep: true },
+  { id: 'lilientief', name: 'Lilien-Tiefstrom', from: 'etoiledemer', to: 'sonnenweinkap', width: 190, deep: true },
 ];
 
 // ---------- Wetterzellen ----------

@@ -4,7 +4,7 @@
 import type { IslandDef } from '../data/regions';
 import { BORDERS, FACTIONS, SECTORS } from '../data/factions';
 import { PLAYABLE_RADIUS, WORLD_RADIUS } from '../data/world';
-import { RINGS } from '../data/worldRings';
+import { KAISER_SITES, RINGS } from '../data/worldRings';
 import { GOOD_BY_ID, profileOf, type GoodId } from '../data/economy';
 import { drawPoi, outline, ownerRing, type MapTopo, type ShapeLike, type WorldMapData, type WorldView } from './minimap';
 import { LABEL_ZOOM, LabelPlacer, MarkClusters, TextWidths, WAR_CLUSTER_PX, WAR_LABEL_ZOOM, fitScale, labelShown, type LabelRank } from './mapView';
@@ -38,7 +38,8 @@ let W = 0, H = 0, CX = 0, CZ = 0, S = 1;
 const mx = (x: number): number => W / 2 - (x - CX) * S;
 const my = (z: number): number => H / 2 - (z - CZ) * S;
 
-const placer = new LabelPlacer(320);
+// genug Platz für alle Namen der 156 Inseln, Ereignisse, Abzeichen und Bedienelemente (4.5C: 105+ Hauptinseln)
+const placer = new LabelPlacer(720);
 const widths = new TextWidths();
 /** Kampf-Symbole (4.5B): Bildschirmlage und Art je Marke (0 Belagerung, 1 Großschlacht, 2 Grenz-Seeschlacht), feste Felder */
 const WAR_MAX = 48;
@@ -117,8 +118,8 @@ function badgeOf(i: IslandDef): string {
 let bgKey = '';
 let bgGrad: CanvasGradient | null = null;
 
-const RING_TINT = ['rgba(120,200,150,0.07)', 'rgba(230,200,110,0.07)', 'rgba(230,140,80,0.09)', 'rgba(200,70,70,0.11)'] as const;
-const RING_EDGE = ['rgba(150,220,170,0.5)', 'rgba(240,215,130,0.5)', 'rgba(240,160,100,0.55)', 'rgba(225,100,100,0.6)'] as const;
+const RING_TINT = ['rgba(120,200,150,0.07)', 'rgba(230,200,110,0.07)', 'rgba(230,140,80,0.09)', 'rgba(200,70,70,0.11)', 'rgba(150,100,220,0.12)'] as const;
+const RING_EDGE = ['rgba(150,220,170,0.5)', 'rgba(240,215,130,0.5)', 'rgba(240,160,100,0.55)', 'rgba(225,100,100,0.6)', 'rgba(200,160,255,0.65)'] as const;
 const STORM_SEA = 'rgba(70,80,120,0.28)';
 const RING_LABEL = RINGS.map((r) => `Ring ${r.ring} · ${r.name}`);
 
@@ -297,6 +298,15 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
       ctx.strokeStyle = RING_EDGE[k]; ctx.lineWidth = 1.4; ctx.setLineDash([2, 6]);
       ctx.beginPath(); ctx.arc(mx(0), my(0), rOut, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
     }
+    // Ring 5 (4.5C): die fünf freigehaltenen Bauplätze der Kaiser – „Verbotene Gewässer“, gestrichelt in Violett
+    ctx.setLineDash([4, 5]); ctx.lineWidth = 1.3;
+    for (let k = 0; k < KAISER_SITES.length; k++) {
+      const ks = KAISER_SITES[k], rr = ks.clear * S;
+      if (rr < 3) continue;
+      ctx.fillStyle = 'rgba(120,80,190,0.10)'; ctx.strokeStyle = 'rgba(205,170,255,0.55)';
+      ctx.beginPath(); ctx.arc(mx(ks.x), my(ks.z), rr, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+    ctx.setLineDash([]);
     // Grenzlinien: die Marine hält sie (weiß gestrichelt, von der Mitte bis zum Weltrand)
     ctx.strokeStyle = 'rgba(236,243,255,0.6)'; ctx.setLineDash([10, 7]); ctx.lineWidth = 2;
     for (let k = 0; k < BORDERS.length; k++) {
@@ -373,7 +383,10 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
     if (i.kind !== 'marinefort' && i.kind !== 'citadel') continue;
     const f = i.factionId ? FACTIONS[i.factionId] : null;
     const big = i.kind === 'citadel' || i.marine === 'hq';
-    drawPoi(ctx, mx(i.x), my(i.z) - Math.max(14, i.r * S * 1.9), i.marine === 'hq' || i.kind === 'citadel' ? 'citadel' : 'fort', big ? 1.5 : 1.2, i.marine === 'hq' ? '#F4F7FC' : f?.color);
+    const ix = mx(i.x), iy = my(i.z) - Math.max(14, i.r * S * 1.9), kk = big ? 1.5 : 1.2;
+    drawPoi(ctx, ix, iy, i.marine === 'hq' || i.kind === 'citadel' ? 'citadel' : 'fort', kk, i.marine === 'hq' ? '#F4F7FC' : f?.color);
+    // das Symbol hält seine Fläche frei (4.5C): Ring- und Inselnamen legen sich nicht darüber
+    placer.tryPlace(ix - 9 * kk, iy - 8 * kk, ix + 9 * kk, iy + 8 * kk, 0);
   }
   // Boss- und Auftragszeichen (nur entdeckte Inseln), Hafen-Blockaden
   for (let k = 0; k < isl.length; k++) {
@@ -438,7 +451,7 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
   const cvs = d.convoys;
   if (L.events && cvs) for (let k = 0; k < cvs.length; k++) drawPoi(ctx, mx(cvs[k].x), my(cvs[k].z), 'convoy', 1.1, cvs[k].threatened ? '#FF4A3A' : undefined);
   const evs = d.seaEvents;
-  if (L.events && evs) for (let k = 0; k < evs.length; k++) drawPoi(ctx, mx(evs[k].x), my(evs[k].z), evs[k].kind, 1.5);
+  if (L.events && evs) for (let k = 0; k < evs.length; k++) drawPoi(ctx, mx(evs[k].x), my(evs[k].z), evs[k].kind, 1.5, evs[k].color);
   const bts = d.battles;
   if (L.events && bts) for (let k = 0; k < bts.length; k++) {
     const b = bts[k], x = mx(b.x), y = my(b.z), t = performance.now() / 1000, rr = 20 + 3 * Math.sin(t * 5);
@@ -562,11 +575,15 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
     }
   }
   if (L.events) {
-    if (evs) for (let k = 0; k < evs.length; k++) { const e = evs[k]; label(ctx, FONT_EVENT, e.name, mx(e.x), my(e.z) + 24, e.kind === 'worldboss' ? '#FF9A8A' : e.kind === 'galeone' ? '#FFE07A' : '#F4EEDC'); }
+    // Ereignis-Symbole halten ihre Fläche frei (4.5C): kein Inselname liegt über einem Symbol
+    if (evs) for (let k = 0; k < evs.length; k++) { const x = mx(evs[k].x), y = my(evs[k].z); if (x > -20 && x < w + 20 && y > -20 && y < h + 20) placer.tryPlace(x - 12, y - 14, x + 12, y + 12, 0); }
+    if (evs) for (let k = 0; k < evs.length; k++) { const e = evs[k]; label(ctx, FONT_EVENT, e.name, mx(e.x), my(e.z) + 24, e.kind === 'worldboss' ? '#FF9A8A' : e.kind === 'galeone' ? '#FFE07A' : e.kind === 'castaway' ? '#FFB0A0' : e.kind === 'smuggler' ? '#D6B4FF' : e.kind === 'hunt' ? '#F4D58A' : '#F4EEDC'); }
     if (bts && !warOn && full) for (let k = 0; k < bts.length; k++) { const b = bts[k]; label(ctx, FONT_EVENT, `Seeschlacht ${FACTIONS[b.a].name} ⚔ ${FACTIONS[b.b].name}`, mx(b.x), my(b.z) + 42, '#FFB070'); }
   }
   // Mega-Inseln vor allen anderen Namen: sie sind die Orientierungspunkte der Karte (4.3.6)
   for (let k = 0; k < isl.length; k++) { const i = isl[k]; if (i.mega) megaLabel(ctx, i, d.known(i.id)); }
+  // Kaiser-Bauplätze (4.5C): Namen erst beim Hineinzoomen
+  if (L.sectors && zoom >= LABEL_ZOOM) for (let k = 0; k < KAISER_SITES.length; k++) { const ks = KAISER_SITES[k]; label(ctx, FONT_BADGE, 'Verbotene Gewässer', mx(ks.x), my(ks.z) + 4, 'rgba(215,190,255,0.9)'); }
   // Ringnamen am Südrand jedes Rings (innen), wo keine Machtnamen stehen
   if (L.sectors) for (let k = 0; k < RINGS.length; k++) {
     const r = RINGS[k], rOut = (k === RINGS.length - 1 ? PLAYABLE_RADIUS : r.to) * S;

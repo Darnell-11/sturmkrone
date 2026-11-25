@@ -16,6 +16,8 @@ export interface CurrentLane {
   from: string;
   to: string;
   width: number;
+  /** Tiefsee-Strömung zwischen den äußeren Ringen (4.5C) */
+  deep: boolean;
   pts: number[];
   /** Bogenlänge (m) bis zu jedem Punkt */
   s: number[];
@@ -62,7 +64,7 @@ export function buildLane(def: CurrentLaneDef, islands: readonly LaneIsland[]): 
     acc += segL;
   }
   if (acc - next > 1) { pts.push(xs[n], zs[n]); s.push(acc); }
-  return { id: def.id, name: def.name, from: def.from, to: def.to, width: def.width, pts, s, length: s[s.length - 1] };
+  return { id: def.id, name: def.name, from: def.from, to: def.to, width: def.width, deep: !!def.deep, pts, s, length: s[s.length - 1] };
 }
 
 /** Hindernis für Routen: Mitte und Freiraum (m) */

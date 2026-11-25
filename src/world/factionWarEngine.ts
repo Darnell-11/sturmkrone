@@ -25,6 +25,7 @@ import { SHIP_CLASSES } from '../data/ships';
 import type { IslandDef } from '../data/regions';
 import { routeAround, type RouteObstacle } from './oceanCurrents';
 import { advanceOnRoute } from './tradeConvoys';
+import type { SupplyFront as SupplyFrontData } from './worldEventDirector';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Register der Nationen
@@ -1931,6 +1932,75 @@ export class FactionWarEngine {
     c.done = c.goal;
     this.awardMerit(playerId, c.client, WAR.kp.lieferung, `Nachschub nach ${w?.name ?? sg.islandId} gebracht`, sg.islandId);
     this.finishContract(c, 'erfuellt', 'Lieferung durch die Blockade gebracht');
+    return true;
+  }
+
+  // ---------- Kriegs-Nachschub (4.5C) ----------
+
+  /**
+   * Fronten für den Kriegs-Nachschub des lebendigen Meeres (world/worldEventDirector.ts): je laufender Belagerung die Rohstoff-Inseln beider Seiten
+   * (produzierende Inseln der Nation, nicht selbst belagert), von denen ein Transport aufbrechen kann. Rein lesend; `out` wird gefüllt.
+   */
+  supplyFronts(out: SupplyFrontData[] = []): SupplyFrontData[] {
+    out.length = 0;
+    for (const sg of this.state.sieges) {
+      if (sg.ended) continue;
+      const w = this.island(sg.islandId);
+      if (!w) continue;
+      const sources: SupplyFrontData['sources'] = [];
+      const add = (nation: string | null, side: SiegeSide) => {
+        if (!nation) return;
+        let n = 0;
+        for (const isl of this.islands) {
+          if (n >= 6 || isl.id === w.id || !isl.produces || this.ownerOf(isl.id) !== nation || this.besieged(isl.id)) continue;
+          const d = Math.hypot(isl.x - w.x, isl.z - w.z);
+          if (d > WAR.reach * 1.7) continue;
+          sources.push({ side, nation, islandId: isl.id, name: isl.name, x: isl.x, z: isl.z, r: isl.r });
+          n++;
+        }
+      };
+      add(sg.attacker, 'angreifer');
+      add(sg.defender, 'verteidiger');
+      if (sources.length) out.push({ siegeId: sg.id, islandId: w.id, name: w.name, x: w.x, z: w.z, r: w.r, attacker: sg.attacker, defender: sg.defender, sources });
+    }
+    return out;
+  }
+
+  /**
+   * Ein Nachschub-Transport hat die Front erreicht: für die Angreifer frische Truppen, Moral und Fortschritt (Proviant und Medizin ins Lager der Armada),
+   * für die Verteidiger Garnison und Zeit (Fortschritt der Belagerer sinkt). Liefert false, wenn die Belagerung inzwischen vorbei ist.
+   */
+  supplyArrived(siegeId: string, side: SiegeSide, k: { troops: number; morale: number; progress: number }): boolean {
+    const sg = this.siegeById(siegeId);
+    if (!sg || sg.ended) return false;
+    const a = this.armadaById(sg.armadaId);
+    if (side === 'angreifer') {
+      sg.troops += k.troops;
+      sg.morale = clamp01(sg.morale + k.morale);
+      sg.progress = clamp01(sg.progress + k.progress);
+      if (a) { a.troops += k.troops; a.morale = clamp01(a.morale + k.morale); a.supply.proviant += TRANSPORT_SUPPLY.proviant; a.supply.medizin += TRANSPORT_SUPPLY.medizin; }
+    } else {
+      const st = this.state.islands[sg.islandId];
+      const w = this.island(sg.islandId);
+      sg.garrison += k.troops;
+      if (st && w) st.garrison = Math.min(w.garrisonMax * 2, st.garrison + k.troops);
+      sg.progress = Math.max(0, sg.progress - k.progress);
+      sg.morale = Math.max(0, sg.morale - k.morale * 0.5);
+      if (a) a.morale = sg.morale;
+    }
+    return true;
+  }
+
+  /** Ein Nachschub-Transport wurde abgefangen: die belieferte Seite verliert Moral (Angreifer) bzw. Halt (Verteidiger) */
+  supplyLost(siegeId: string, side: SiegeSide, morale: number): boolean {
+    const sg = this.siegeById(siegeId);
+    if (!sg || sg.ended) return false;
+    if (side === 'angreifer') {
+      sg.morale = Math.max(0, sg.morale - morale);
+      const a = this.armadaById(sg.armadaId);
+      if (a) a.morale = sg.morale;
+      sg.transportsLost++;
+    } else sg.progress = clamp01(sg.progress + morale * 0.5);
     return true;
   }
 

@@ -123,12 +123,14 @@ describe('Gefahrenstufen und Ränge', () => {
     expect(dangerOfLevel(14)).toBe(4); expect(dangerOfLevel(17)).toBe(4); expect(dangerOfLevel(18)).toBe(5); expect(dangerOfLevel(60)).toBe(5);
   });
 
-  it('Zonen (seit 4.3B in Metern, vier Ringe): Ankerglück = 1, Grenzfestungen in Ring 2, äußere Raid-Festungen = 5', () => {
+  it('Zonen (seit 4.5C in Metern, fünf Ringe): Ring 1 = 1, Ring 2 = 2, Ring 3 = 3, Ring 4 = 4 – 5, Ring 5 = 5; Grenzfestungen in Ring 2, Königsinseln = 5', () => {
     expect(dangerOfDistance(0)).toBe(1);
-    expect(dangerOfDistance(2199)).toBe(1);
-    expect(dangerOfDistance(2500)).toBe(2);
-    expect(dangerOfDistance(4500)).toBe(3);
-    expect(dangerOfDistance(7000)).toBe(4);
+    expect(dangerOfDistance(2799)).toBe(1);
+    expect(dangerOfDistance(3000)).toBe(2);
+    expect(dangerOfDistance(7000)).toBe(3);
+    expect(dangerOfDistance(10500)).toBe(4);
+    expect(dangerOfDistance(12000)).toBe(5);
+    expect(dangerOfDistance(15000)).toBe(5);
     for (const f of BORDER_FORTS) expect(dangerOfDistance(f.radius), f.id).toBe(2);
     for (const c of CITADELS) expect(dangerOfDistance(c.dist), c.id).toBe(5);
     expect(dangerOfDistance(WORLD_RADIUS * 3)).toBe(5);

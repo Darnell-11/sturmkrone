@@ -318,7 +318,7 @@ describe('Spielstand: 4.5.0-Stände laden ohne Verlust', () => {
     const r = migrateSave(JSON.parse(JSON.stringify(save)), '4.5.1');
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.data.version).toBe(20);
+    expect(r.data.version).toBe(21);
     expect(r.data.world.factionWar).toBeTruthy();
     const clean = cleanFactionWar(r.data.world.factionWar, reg, islands)!;
     expect(clean).toBeTruthy();
@@ -371,9 +371,10 @@ function warMap(): WorldMapData {
     islands: DEFS, regions: REGIONS, known: () => true, islandMarks: new Map(),
     markers: { player: { x: 4000, z: 4000, heading: 0 }, enemies: [], target: null, digs: [] },
     wars: {
-      armadas: [{ x: 300, z: 300, heading: 1, color: '#3F63C8', name: 'Armada Frankreich', ships: 8, relief: false, tx: near[0].x, tz: near[0].z }],
+      armadas: [{ x: 520, z: 520, heading: 1, color: '#3F63C8', name: 'Armada Frankreich', ships: 8, relief: false, tx: near[0].x, tz: near[0].z }],
       sieges: near.map((i, k) => ({ id: i.id, x: i.x, z: i.z, r: i.r, color: k % 2 ? '#E0373F' : '#3F63C8', name: `Belagerung von ${i.name}`, progress: 0.1 * (k + 1), points: 'Kontrollpunkte: 1 Angreifer, 1 Verteidiger, 1 umkämpft' })),
-      battles: [{ x: 200, z: -150, name: 'Großschlacht England ⚔ Frankreich' }, { x: 260, z: -120, name: 'Großschlacht Kurogane ⚔ Deutschland' }, { x: -400, z: 500, name: 'Großschlacht Niederlande ⚔ Kurogane' }],
+      // Lagen seit 4.5C im Maßstab der größeren Karte (Faktor 1,73 = neue / alte Kartenausdehnung), damit sie auf dem Bildschirm wie zuvor liegen
+      battles: [{ x: 346, z: -260, name: 'Großschlacht England ⚔ Frankreich' }, { x: 450, z: -208, name: 'Großschlacht Kurogane ⚔ Deutschland' }, { x: -692, z: 865, name: 'Großschlacht Niederlande ⚔ Kurogane' }],
       alliances: [{ ax: 0, az: 9000, bx: 7000, bz: 0, color: '#E8CB7C', coalition: false }],
       conquered: [{ x: near[1].x, z: near[1].z, r: near[1].r, color: '#E0373F' }],
     },

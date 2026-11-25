@@ -100,7 +100,9 @@ import { ACHIEVEMENTS } from '../data/achievements';
 import { ABYSS_LAIR } from '../naval/seaBoss';
 import { crewFrac, crewPricePerHead, missingHeads, needsRepair, poolHeads, REPAIR_MATERIALS, SAIL_HP_PER_HULL, shipTooltip, type ShipSimState } from '../naval/shipSim';
 import { fmtDist, fmtInt } from './format';
-import { DIRECTOR, WEATHER_CELL_DEFS, WORLD_BOSSES } from '../data/seaEvents';
+import { DIRECTOR, HUNT, RESCUE, SMUGGLER, SUPPLY, WEATHER_CELL_DEFS, WORLD_BOSSES } from '../data/seaEvents';
+import type { RescueChoice, WorldEvent } from '../world/worldEventDirector';
+import type { EncounterView } from '../ui/menus';
 import { chartLevel, chartOnLoad, chartToSave, chartsSurroundings } from '../world/mapDiscovery';
 import { MEGA_BY_ID, rollMegaLoot, type MegaId } from '../data/megaIslands';
 import { travelQuote, type TravelQuote } from '../world/fastTravel';
@@ -120,6 +122,12 @@ const AUTOSAVE_SECONDS = 30;
 
 /** Kurzzeichen der Ausrüstungsplätze im Inventar */
 const LOOT_ICON: Record<GearCat, string> = { head: '🪖', shoulder: '🛡', chest: '🦺', cloak: '🧣', hands: '🧤', legs: '👖', feet: '🥾', mainhand: '🗡', offhand: '🔪' };
+
+/** „englischer Kriegs-Nachschub“, „Kriegs-Nachschub der Marine“ (4.5C; Herkunft über das Adjektiv der Nation, nie als Genitiv) */
+function supplyName(power: FactionId | null | undefined): string {
+  if (!power || !FACTIONS[power]) return 'Kriegs-Nachschub';
+  return power === 'marine' ? 'Kriegs-Nachschub der Marine' : `${FACTIONS[power].adjective}er Kriegs-Nachschub`;
+}
 
 export class Game {
   readonly state = new StateMachine();
@@ -306,6 +314,10 @@ export class Game {
     this.world.onBattleStart = (m, where) => this.battleStarted(m, where);
     this.world.onBattleEnd = (r) => this.battleEnded(r);
     this.world.onSeaNews = (n) => this.seaNews(n);
+    this.world.onHuntAmbush = (ev, hunters) => {
+      audio.play('horn');
+      this.overlay.showBanner('Hinterhalt!', `${hunters} Schatzjäger auf ${ev.islandName} – vertreibe sie, dann birg die Truhe`);
+    };
     this.world.onWarNews = (n) => this.warNews(n);
     this.world.onRaidRequest = (def) => this.openRaidRequest(def);
     this.world.onRaidView = (v) => { this.raidView = v; this.raidPanel.update(v); };
@@ -2315,7 +2327,7 @@ export class Game {
     const pois: Poi[] = [];
     this.seaPois(pois, Infinity, 0);
     return {
-      seaEvents: pois.map((p) => ({ x: p.x, z: p.z, kind: p.kind, name: p.name ?? '' })),
+      seaEvents: pois.map((p) => ({ x: p.x, z: p.z, kind: p.kind, name: p.name ?? '', color: p.color })),
       convoys: live.convoyMarks(),
       currents: live.lanes.map((l) => ({ name: l.name, pts: l.pts })),
       cells: live.director.state.cells.map((c) => ({ x: c.x, z: c.z, r: c.r, kind: c.kind, label: WEATHER_CELL_DEFS[c.kind].label })),
@@ -2537,14 +2549,23 @@ export class Game {
     switch (n.type) {
       case 'spawn': {
         const ev = n.event;
-        if (n.dist > DIRECTOR.beaconRange || !playing) return;
+        // eine Schatzkarte aus einem Fund des Spielers meldet sich immer, auch fern (die Karte liegt ja an Bord)
+        if ((n.dist > DIRECTOR.beaconRange && !(ev.kind === 'schatzjagd' && ev.mapped)) || !playing) return;
         const txt = ev.kind === 'schatzgaleone' ? `Am Horizont steigt eine goldene Leuchtrakete auf: eine Schatz-Galeone auf dem Weg nach ${ev.destName} (${where(ev.x, ev.z)}).`
           : ev.kind === 'blockade' ? `Schwarzer Rauch vor ${ev.islandName}: eine Flotte blockiert den Hafen (${where(ev.x, ev.z)}). Dort kostet alles das Doppelte.`
-          : ev.kind === 'treibgut' ? `Möwen kreisen über treibenden Trümmern: ein Treibgut-Feld (${where(ev.x, ev.z)}).`
+          : ev.kind === 'treibgut' ? (ev.name === 'Wrackfeld' ? `Das Wrackfeld liegt ${where(ev.x, ev.z)}: Möwen kreisen über Fässern und Kisten der gesunkenen Ladung.` : `Möwen kreisen über treibenden Trümmern: ein Treibgut-Feld (${where(ev.x, ev.z)}).`)
+          : ev.kind === 'schiffbruch' ? `Rote Notruf-Fackeln am Horizont: Schiffbrüchige treiben auf einem Floß (${where(ev.x, ev.z)}). Fahr langsam heran, um sie anzusprechen.`
+          : ev.kind === 'schmuggler' ? `Violett-goldene Leuchtraketen: ein Schmuggler-Rendezvous${ev.islandName ? ` vor ${ev.islandName}` : ''} (${where(ev.x, ev.z)}). Langsam heranfahren, um zu handeln.`
+          : ev.kind === 'schatzjagd' ? (ev.mapped ? `Die Schatzkarte zeigt einen Suchbereich auf ${ev.islandName} (${where(ev.x, ev.z)}). Rote Wimpel markieren die Stelle – Vorsicht vor Schatzjägern.` : `Dünner Rauch über ${ev.islandName}: Schatzjäger graben dort nach einem Schatz (${where(ev.x, ev.z)}). Wer zuerst findet, gewinnt.`)
+          : ev.kind === 'nachschub' ? `Signalfeuer am Horizont: ein ${supplyName(ev.power)} läuft von ${ev.fromName} zur belagerten Insel ${ev.destName} (${where(ev.x, ev.z)}). Begleite ihn – oder fang ihn ab.`
           : `Ein Gewitterwirbel über der Tiefsee, ein tiefes Nebelhorn: ${ev.name} zieht seine Bahn (${where(ev.x, ev.z)}).`;
         this.hud.toast(txt, 6);
         return;
       }
+      case 'encounter': this.openEncounter(n.event); return;
+      case 'supplyRaid':
+        if (n.dist < 2600 && playing) this.hud.toast(`Kaperschiffe ${n.event.foe && FACTIONS[n.event.foe as FactionId] ? `(${FACTIONS[n.event.foe as FactionId].name}) ` : ''}greifen den Nachschub nach ${n.event.destName} an! Schütze den Transporter.`, 6);
+        return;
       case 'convoyThreat':
         if (n.dist < 2600 && playing) this.hud.toast(`Korsaren greifen den Konvoi ${n.convoy.fromName} → ${n.convoy.toName} an (${where(n.convoy.x, n.convoy.z)})! Hilf ihm – oder halte dich heraus.`, 7);
         return;
@@ -2584,7 +2605,12 @@ export class Game {
         if (c.kind === 'karte') {
           const quest = this.quests?.treasureIslands() ?? [];
           const isl = c.islandId ? this.world.islandDefs.find((i) => i.id === c.islandId) : null;
-          if (isl && !s.progress.maps.includes(isl.id) && !quest.includes(isl.id)) {
+          // seit 4.5C: die Karte markiert einen echten Suchbereich auf der Insel (Schatzsuche mit Hinterhalt); nur wenn schon drei Suchen laufen, wird es ein X wie früher
+          const hunt = isl && !quest.includes(isl.id) ? this.world.seaEvents?.treasureMap(isl.id) ?? null : null;
+          if (hunt) {
+            audio.play('treasure');
+            this.overlay.showBanner('Schatzkarte im Treibgut!', `Ein Suchbereich auf ${isl!.name} – rote Wimpel markieren die Stelle`);
+          } else if (isl && !s.progress.maps.includes(isl.id) && !quest.includes(isl.id)) {
             s.progress.maps.push(isl.id);
             this.refreshDigs();
             audio.play('treasure');
@@ -2603,6 +2629,8 @@ export class Game {
       case 'eventEnd': {
         const ev = n.event;
         const near = n.dist < DIRECTOR.beaconRange;
+        // die vier Begegnungen der Phase 4.5C haben eigene Ausgänge und Belohnungen (siehe encounterEnd)
+        if (ev.kind === 'schiffbruch' || ev.kind === 'schmuggler' || ev.kind === 'schatzjagd' || ev.kind === 'nachschub') { this.encounterEnd(ev, near && playing); return; }
         if (ev.outcome !== 'gesiegt' || !ev.byPlayer) {
           if (!near || !playing) return;
           if (ev.kind === 'blockade' && ev.outcome === 'abgelaufen') this.hud.toast(`Die Blockade vor ${ev.islandName} löst sich auf – die Preise dort sinken wieder.`, 5);
@@ -2656,13 +2684,236 @@ export class Game {
     }
   }
 
+  // ---------- Begegnungen auf See und an Land (4.5C) ----------
+
+  /** Schiffbrüchige oder Schmuggler-Rendezvous: Fenster mit der Wahl (das Spiel pausiert); `msg` = Rückmeldung nach einem Kauf */
+  private openEncounter(ev: WorldEvent, msg = '') {
+    const live = this.world.seaEvents, s = this.save;
+    if (!live || !s) return;
+    if (!this.state.is('play') && !this.state.is('pause')) { live.answered(ev.id); return; }
+    if (this.state.is('play')) audio.play('bell', 0.6);
+    this.state.set('pause');
+    const close = () => { live.answered(ev.id); this.resume(); };
+    if (ev.kind === 'schiffbruch') {
+      const n = ev.survivors ?? 3;
+      const port = live.director.nearestPort(ev.x, ev.z);
+      const pdef = port ? this.world.islandDefs.find((i) => i.id === port.id) : null;
+      const owner = pdef ? this.world.ownerFaction(pdef) : null;
+      const miss = Math.ceil(missingHeads(this.world.ship.sim.crew, 'matrosen'));
+      const gold = Math.round(RESCUE.escortGold * ev.dangerTier * n * this.goldMult(true));
+      this.menus.showEncounter({
+        kicker: 'Notruf-Fackeln', title: 'Schiffbrüchige!', color: '#E8624A',
+        text: `${n} Seeleute klammern sich an ein Floß aus Wrackteilen. Ihr Schiff ist vor zwei Tagen gesunken, das Trinkwasser geht zur Neige. „Nehmt uns mit, Käpt’n – wir tun alles, was Ihr sagt!“`,
+        msg,
+        choices: [
+          { id: 'crew', label: 'Als Crew anheuern', tag: 'kostenlos', button: 'Anheuern',
+            sub: miss > 0 ? `Bis zu ${Math.min(n, miss)} kommen ohne Handgeld als Seeleute an Bord (dir fehlen ${miss}). Wer keinen Platz findet, zahlt dir aus Dankbarkeit 40 Gold.` : `Deine Mannschaft ist vollzählig: sie zahlen dir aus Dankbarkeit je 40 Gold und helfen beim Flicken.` },
+          { id: 'eskorte', label: port ? `Nach ${port.name} bringen` : 'In einen Hafen bringen', tag: `${fmtInt(gold)} Gold`, button: 'An Bord nehmen',
+            sub: `Bring sie innerhalb von ${Math.round(RESCUE.escortTime / 60)} Minuten in den nächsten Hafen: ${fmtInt(gold)} Gold${owner ? `, dazu Ansehen und Ehre bei ${owner === 'marine' ? 'der Marine' : FACTIONS[owner].name}` : ''}.`,
+            disabled: port ? undefined : 'Kein freier Hafen in Reichweite.' },
+          { id: 'wrack', label: 'Wrack-Koordinaten bergen', tag: 'Wrackfeld', button: 'Zum Wrack',
+            sub: 'Der Steuermann verrät dir die Lage ihres Wracks: ein reiches Wrackfeld mit Ladung und einer sicheren Schatzkarte. Die Leute setzt dein Beiboot am nächsten Ufer ab.' },
+        ],
+      }, (id) => this.rescueChoice(ev, id as RescueChoice), close);
+      return;
+    }
+    if (ev.kind === 'schmuggler') {
+      const rep = (s.progress.reputation ??= emptyReputation());
+      const gold = Math.round(SMUGGLER.bustGold * ev.dangerTier * this.goldMult(true));
+      const choices: EncounterView['choices'] = (ev.offers ?? []).map((o) => {
+        const have = o.kind === 'bauplan' && o.power ? rep.blueprints.includes(`bauplan_${o.power}`) : false;
+        const label = o.kind === 'bauplan' ? `Bauplan der Werften (${FACTIONS[o.power!].name})` : o.kind === 'splitter' ? `${o.units} Relikt-Splitter` : `${o.units} × ${GOOD_BY_ID[o.good!].n}`;
+        const sub = o.kind === 'bauplan' ? 'Ein gestohlener Werftplan: senkt die Kosten jeder Werft dauerhaft (je Macht ein Bauplan).'
+          : o.kind === 'splitter' ? 'Leuchtende Splitter aus versunkenen Ruinen – Material für Boss-Schmiedestücke.'
+          : `${GOOD_BY_ID[o.good!].war ? 'Kriegsware' : 'Luxusware'} ohne Zollsiegel. Im Frachtraum, bis du sie verkaufst – Vorsicht vor Kontrollen.`;
+        return {
+          id: o.id, label, sub, price: o.price, button: 'Kaufen',
+          disabled: o.sold ? 'Schon verkauft.' : have ? 'Diesen Bauplan hast du schon.' : s.player.gold < o.price ? 'Dafür reicht dein Gold nicht.' : undefined,
+        };
+      });
+      choices.push({ id: 'bust', label: 'Für die Marine hochnehmen', kind: 'danger', tag: `${fmtInt(gold)} Gold`, button: 'Hochnehmen',
+        sub: `Die Schmuggler wehren sich. Versenkst oder enterst du sie: ${fmtInt(gold)} Gold, Ansehen bei der Marine +${SMUGGLER.bustStanding} und die beschlagnahmte Ware.` });
+      this.menus.showEncounter({
+        kicker: 'Violett-goldene Leuchtraketen', title: ev.islandName ? `Schmuggler-Rendezvous vor ${ev.islandName}` : 'Schmuggler-Rendezvous', color: '#8E5BD6',
+        text: '„Nur Bargeld, keine Fragen, keine Namen.“ Ein Kapitän mit violettem Halstuch winkt dich längsseits. Auf seinem Deck stapeln sich Kisten ohne Siegel.',
+        info: `Fahndungsdruck je Geschäft +${SMUGGLER.heatPerDeal} · Gold: ${fmtInt(s.player.gold)}`,
+        msg, choices,
+      }, (id) => this.smugglerPick(ev, id), close);
+      return;
+    }
+    close();
+  }
+
+  /** Antwort an die Schiffbrüchigen: anheuern, eskortieren oder Wrack-Koordinaten */
+  private rescueChoice(ev: WorldEvent, choice: RescueChoice) {
+    const live = this.world.seaEvents, s = this.save;
+    if (!live || !s) return;
+    const done = live.rescue(ev.id, choice);
+    this.resume();
+    if (!done) { this.hud.toast('Die Schiffbrüchigen sind fort.', 3); return; }
+    const n = ev.survivors ?? 3;
+    if (choice === 'crew') {
+      const sh = this.world.ship;
+      const want = Math.min(n * RESCUE.headsPerSurvivor, Math.ceil(missingHeads(sh.sim.crew, 'matrosen')));
+      const got = want > 0 ? Math.round(sh.requestCrewRefill({ type: 'crewRefill', entityId: this.world.playerEntityId, shipId: sh.entityId, heads: want, pool: 'matrosen' })) : 0;
+      const extra = Math.max(0, n - got);
+      if (extra > 0) s.player.gold += extra * 40;
+      this.grantXp(40 + ev.level * 6, 6);
+      audio.play('level', 0.6);
+      this.overlay.showBanner('Schiffbrüchige angeheuert!', `${got > 0 ? `${got} Seeleute an Bord (Crew ${Math.round(crewFrac(sh.sim.crew) * 100)} %)` : 'Die Mannschaft war voll'}${extra > 0 ? ` · +${extra * 40} Gold Dankesgeld` : ''}`);
+    } else if (choice === 'eskorte') {
+      audio.play('quest');
+      this.overlay.showBanner('Schiffbrüchige an Bord', `Bring sie nach ${done.rescue?.portName} – ${Math.round(RESCUE.escortTime / 60)} Minuten Frist`);
+    } else {
+      const r = done.rescue;
+      const pos = this.world.playerPos;
+      this.grantXp(30 + ev.level * 5, 5);
+      if (r?.wreckX !== undefined && r.wreckZ !== undefined) {
+        audio.play('quest');
+        this.overlay.showBanner('Wrack-Koordinaten', `Das Wrackfeld liegt ${compassWord(pos.x, pos.z, r.wreckX, r.wreckZ)}, ${fmtDist(Math.hypot(r.wreckX - pos.x, r.wreckZ - pos.z))} entfernt`);
+      } else { s.player.gold += 150; this.hud.toast('Die Stelle ist nicht mehr zu finden – der Steuermann drückt dir 150 Gold in die Hand.', 5); }
+    }
+    this.persist();
+  }
+
+  /** Schmuggler: Angebot kaufen oder das Treffen hochnehmen */
+  private smugglerPick(ev: WorldEvent, id: string) {
+    const live = this.world.seaEvents, s = this.save;
+    if (!live || !s) return;
+    if (id === 'bust') {
+      live.bust(ev.id);
+      this.resume();
+      audio.play('horn');
+      this.overlay.showBanner('Im Namen der Marine!', 'Die Schmuggler kappen die Leinen und greifen zu den Waffen');
+      return;
+    }
+    const o = ev.offers?.find((x) => x.id === id);
+    if (!o || o.sold) { this.openEncounter(ev, 'Schon verkauft.'); return; }
+    if (s.player.gold < o.price) { this.openEncounter(ev, 'Dafür reicht dein Gold nicht.'); return; }
+    let text = '';
+    if (o.kind === 'ware' && o.good) {
+      // nur bezahlen, was in den Frachtraum passt
+      const r = applySalvage(this.eco(), [{ good: o.good, units: o.units }], s.ship.tier);
+      const got = r.taken.reduce((a, d) => a + d.units, 0);
+      if (got <= 0) { this.openEncounter(ev, 'Dein Frachtraum ist voll.'); return; }
+      const price = Math.round((o.price * got) / o.units);
+      live.director.buyOffer(ev.id, o.id);
+      s.player.gold -= price;
+      text = `${got} × ${GOOD_BY_ID[o.good].n} für ${fmtInt(price)} Gold an Bord`;
+    } else {
+      if (!live.director.buyOffer(ev.id, o.id)) { this.openEncounter(ev, 'Schon verkauft.'); return; }
+      s.player.gold -= o.price;
+      if (o.kind === 'bauplan' && o.power) {
+        const rep = (s.progress.reputation ??= emptyReputation());
+        if (!rep.blueprints.includes(`bauplan_${o.power}`)) rep.blueprints.push(`bauplan_${o.power}`);
+        text = `Bauplan (${FACTIONS[o.power].name}) gekauft: Werften rechnen dir ${Math.round(blueprintDiscount(rep.blueprints) * 100)} % weniger`;
+      } else {
+        const u = (s.progress.unlocks ??= emptyUnlocks());
+        u.shards = Math.min(9999, u.shards + o.units);
+        text = `${o.units} Relikt-Splitter gekauft`;
+      }
+    }
+    const eco = this.eco();
+    eco.heat = Math.min(100, eco.heat + SMUGGLER.heatPerDeal);
+    audio.play('coin');
+    this.persist();
+    this.inventoryUi?.refresh();
+    this.openEncounter(ev, text);
+  }
+
+  /** Ausgang einer Begegnung (4.5C): Lohn, Meldung und – beim Kriegs-Nachschub – die Wirkung auf die Belagerung */
+  private encounterEnd(ev: WorldEvent, near: boolean) {
+    const s = this.save;
+    if (!s) return;
+    switch (ev.kind) {
+      case 'schiffbruch': {
+        if (ev.rescue?.choice !== 'eskorte') return;
+        if (ev.outcome === 'gerettet') {
+          const n = ev.survivors ?? 3;
+          const gold = Math.round(RESCUE.escortGold * ev.dangerTier * n * this.goldMult(true));
+          s.player.gold += gold;
+          const def = this.world.islandDefs.find((i) => i.id === ev.rescue!.portId);
+          const owner = def ? this.world.ownerFaction(def) : null;
+          if (owner) { this.shiftStanding(owner, RESCUE.escortStanding); this.addHonor(owner, RESCUE.escortHonor); }
+          this.grantXp(120 + ev.level * 14, 12 + ev.level);
+          audio.play('win');
+          this.overlay.showBanner('Schiffbrüchige gerettet!', `${ev.rescue.portName}: +${fmtInt(gold)} Gold${owner ? ` · ${FACTIONS[owner].name} +${RESCUE.escortStanding} Ansehen · Ehre +${RESCUE.escortHonor}` : ''}`);
+        } else this.hud.toast(`Die Frist ist um: die Schiffbrüchigen gehen am nächsten Ufer von Bord – ohne Lohn für dich.`, 5);
+        break;
+      }
+      case 'schmuggler': {
+        if (ev.outcome !== 'gesiegt' || !ev.byPlayer) { if (near && ev.outcome === 'abgelaufen') this.hud.toast('Die Schmuggler lichten die Anker – das Rendezvous ist vorbei.', 4); return; }
+        const gold = Math.round(SMUGGLER.bustGold * ev.dangerTier * this.goldMult(true));
+        s.player.gold += gold;
+        this.shiftStanding('marine', SMUGGLER.bustStanding);
+        this.addHonor('marine', SMUGGLER.bustHonor);
+        const left = (ev.offers ?? []).filter((o) => o.kind === 'ware' && !o.sold && o.good).map((o) => ({ good: o.good!, units: Math.ceil(o.units / 2) }));
+        const got = left.length ? this.takeGoods(left) : '';
+        this.grantXp(200 + ev.level * 18, 20 + ev.level);
+        audio.play('win');
+        this.overlay.showBanner('Schmuggler hochgenommen!', `+${fmtInt(gold)} Gold · Marine +${SMUGGLER.bustStanding} Ansehen${got ? ` · beschlagnahmt: ${got}` : ''}`);
+        break;
+      }
+      case 'schatzjagd': {
+        if (ev.outcome !== 'geborgen' || !ev.byPlayer) { if (near && ev.outcome === 'abgelaufen') this.hud.toast(`Die Schatzsuche auf ${ev.islandName} ist vorbei – andere waren schneller.`, 4); return; }
+        const gold = Math.round((HUNT.gold + HUNT.goldPerLevel * ev.level) * (ev.mapped ? 1.25 : 1) * this.goldMult(true));
+        s.player.gold += gold;
+        const shards = HUNT.shards[0] + Math.floor(Math.random() * (HUNT.shards[1] - HUNT.shards[0] + 1));
+        const u = (s.progress.unlocks ??= emptyUnlocks());
+        u.shards = Math.min(9999, u.shards + shards);
+        s.progress.stats.treasures++;
+        this.grantXp(160 + ev.level * 16, 14 + ev.level);
+        audio.play('treasure');
+        this.overlay.showBanner('Schatz geborgen!', `${ev.islandName}: +${fmtInt(gold)} Gold · ${shards} Relikt-Splitter`);
+        // Ausrüstung: Seltenheit nach der Gefahr der Insel (nie über dem eigenen Rang, das regelt die Beute selbst)
+        if (Math.random() < HUNT.gearChance) this.dropGear(ev.dangerTier >= 4 ? 'episch' : ev.dangerTier >= 2 ? 'selten' : 'gewoehnlich');
+        this.questEvent({ type: 'treasure', island: ev.islandId ?? '' });
+        break;
+      }
+      case 'nachschub': {
+        const war = this.world.war;
+        const side = ev.side ?? 'angreifer';
+        const foe = ev.foe && FACTIONS[ev.foe as FactionId] ? (ev.foe as FactionId) : null;
+        const me = this.world.playerEntityId;
+        if (ev.outcome === 'angekommen') {
+          if (ev.siegeId) war?.supplyArrived(ev.siegeId, side, { troops: SUPPLY.arriveTroops, morale: SUPPLY.arriveMorale, progress: SUPPLY.arriveProgress });
+          if (ev.byPlayer) {
+            const gold = Math.round(SUPPLY.escortGold * ev.dangerTier * this.goldMult(true));
+            s.player.gold += gold;
+            if (ev.power) { this.shiftStanding(ev.power, SUPPLY.standing); this.addHonor(ev.power, SUPPLY.honor); war?.awardMerit(me, ev.power, SUPPLY.meritEscort, `Nachschub nach ${ev.destName} eskortiert`, ev.islandId ?? null); }
+            this.grantXp(240 + ev.level * 20, 22 + ev.level);
+            audio.play('win');
+            this.overlay.showBanner('Nachschub eskortiert!', `${ev.destName}: +${fmtInt(gold)} Gold${ev.power ? ` · ${FACTIONS[ev.power].name} +${SUPPLY.standing} Ansehen · Kriegspunkte` : ''}`);
+          } else if (near) this.hud.toast(`Der ${supplyName(ev.power)} hat ${ev.destName} erreicht – die ${side === 'angreifer' ? 'Belagerer' : 'Verteidiger'} schöpfen neue Kraft.`, 5);
+        } else if (ev.outcome === 'gesiegt') {
+          if (ev.siegeId) war?.supplyLost(ev.siegeId, side, SUPPLY.lostMorale);
+          if (ev.byPlayer) {
+            const gold = Math.round(SUPPLY.interceptGold * ev.dangerTier * this.goldMult(true));
+            s.player.gold += gold;
+            const units = SUPPLY.cargo[0] + Math.floor(Math.random() * (SUPPLY.cargo[1] - SUPPLY.cargo[0] + 1));
+            const got = this.takeGoods([{ good: 'kanonenstahl', units: Math.ceil(units / 2) }, { good: 'hartholz', units: Math.ceil(units / 2) }, { good: 'medizin', units: Math.ceil(units / 3) }]);
+            if (ev.power) this.shiftStanding(ev.power, -SUPPLY.standing);
+            if (foe) { this.shiftStanding(foe, SUPPLY.standing); this.addHonor(foe, SUPPLY.honor); war?.awardMerit(me, foe, SUPPLY.meritIntercept, `Nachschub nach ${ev.destName} abgefangen`, ev.islandId ?? null); }
+            this.grantXp(220 + ev.level * 18, 20 + ev.level);
+            audio.play('win');
+            this.overlay.showBanner('Nachschub abgefangen!', `+${fmtInt(gold)} Gold · ${got}${foe ? ` · ${FACTIONS[foe].name} +${SUPPLY.standing} Ansehen · Kriegspunkte` : ''}`);
+          } else if (near) this.hud.toast(`Der ${supplyName(ev.power)} nach ${ev.destName} ist verloren.`, 5);
+        } else if (near) this.hud.toast(`Der ${supplyName(ev.power)} nach ${ev.destName} hat sich verspätet und kehrt um.`, 4);
+        break;
+      }
+    }
+    this.persist();
+    this.inventoryUi?.refresh();
+  }
+
   /** Zeichen des lebendigen Meeres für Kompass und Karten: Ereignisse in Sichtweite der Signale, Konvois in der Nähe */
   private seaPois(out: Poi[], range: number, convoyRange: number) {
     const live = this.world.seaEvents;
     if (!live || this.world.raid) return;
     const pos = this.world.playerPos;
-    const KIND: Record<string, PoiKind> = { schatzgaleone: 'galeone', blockade: 'blockade', treibgut: 'flotsam', weltboss: 'worldboss' };
-    for (const m of live.marks()) if (Math.hypot(m.x - pos.x, m.z - pos.z) < range) out.push({ x: m.x, z: m.z, kind: KIND[m.kind], name: m.name });
+    const KIND: Record<string, PoiKind> = { schatzgaleone: 'galeone', blockade: 'blockade', treibgut: 'flotsam', weltboss: 'worldboss', schiffbruch: 'castaway', schmuggler: 'smuggler', schatzjagd: 'hunt', nachschub: 'supply' };
+    // eine Eskorte Schiffbrüchiger zeigt ihren Zielhafen immer, eine Schatzkarte ihren Suchbereich auch fern
+    for (const m of live.marks()) if (m.escort || Math.hypot(m.x - pos.x, m.z - pos.z) < range || (m.kind === 'schatzjagd' && live.director.eventById(m.id)?.mapped)) out.push({ x: m.x, z: m.z, kind: KIND[m.kind], name: m.name, color: m.kind === 'nachschub' && m.power ? FACTIONS[m.power].color : undefined });
     for (const c of live.convoyMarks()) if (Math.hypot(c.x - pos.x, c.z - pos.z) < convoyRange) out.push({ x: c.x, z: c.z, kind: 'convoy', name: c.name, color: c.threatened ? '#FF4A3A' : undefined });
   }
 

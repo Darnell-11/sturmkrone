@@ -120,6 +120,49 @@ export const ISLAND_PROFILES: Record<string, MarketProfile> = {
   versunkenekrone: { produce: ['obsidian'], demand: ['medizin', 'werkzeuge'] },
   knochenriff: { produce: [], demand: ['medizin', 'wein'] },
   sternenfall: { produce: ['luxusgueter'], demand: ['werkzeuge', 'tuch'] },
+  // ----- Phase 4.5C: 36 neue Inseln der Ringe 2 bis 5 (Minen, Forste, Manufakturen, Kolonien, Leuchtturm-Atolle, Vorposten) -----
+  // England
+  eichenhain: { produce: ['hartholz'], demand: ['werkzeuge', 'medizin', 'wein'] },
+  webersund: { produce: ['tuch', 'stoffe'], demand: ['hartholz', 'werkzeuge', 'gewuerze'] },
+  zinnfels: { produce: ['kanonenstahl', 'schmiedekohle'], demand: ['medizin', 'werkzeuge', 'wein'] },
+  nordlichtatoll: { produce: ['luxusgueter'], demand: ['medizin', 'hartholz', 'wein'] },
+  kronwacht: { produce: ['schiesspulver'], demand: ['kanonenstahl', 'medizin'] },
+  sturmhorn: { produce: ['medizin'], demand: ['schiesspulver', 'werkzeuge', 'hartholz'] },
+  greifenhorst: { produce: ['marineausruestung'], demand: ['kanonenstahl', 'schiesspulver', 'wein'] },
+  // Deutschland (Hanse)
+  harzwald: { produce: ['hartholz', 'werkzeuge'], demand: ['tuch', 'tee', 'gewuerze'] },
+  kohlenstieg: { produce: ['kanonenstahl', 'schmiedekohle'], demand: ['medizin', 'tuch', 'wein'] },
+  seilerhafen: { produce: ['tuch', 'marineausruestung'], demand: ['hartholz', 'gewuerze', 'wein'] },
+  granitwacht: { produce: ['schiesspulver'], demand: ['hartholz', 'medizin'] },
+  bakenriff: { produce: ['werkzeuge'], demand: ['tee', 'wein', 'tuch'] },
+  eisgrat: { produce: ['kanonenstahl'], demand: ['wein', 'tuch', 'tee'] },
+  sturmbastei: { produce: ['waffenkisten'], demand: ['schmiedekohle', 'wein'] },
+  // Kurogane
+  russhafen: { produce: ['kanonenstahl', 'schwefel', 'schmiedekohle'], demand: ['tuch', 'werkzeuge', 'wein'] },
+  jadeterrassen: { produce: ['tee', 'gewuerze'], demand: ['werkzeuge', 'stoffe', 'luxusgueter'] },
+  rotlaternenriff: { produce: ['obsidian'], demand: ['hartholz', 'wein', 'tuch'] },
+  schwertfels: { produce: ['fechtklingen'], demand: ['schiesspulver', 'wein'] },
+  mondsichelatoll: { produce: ['luxusgueter', 'seide'], demand: ['werkzeuge', 'hartholz', 'tee'] },
+  drachenmaul: { produce: ['obsidian', 'waffenkisten'], demand: ['wein', 'tuch'] },
+  // Niederlande (Handelskompanie)
+  muskatbucht: { produce: ['gewuerze'], demand: ['werkzeuge', 'hartholz', 'medizin'] },
+  segelmacherhof: { produce: ['tuch', 'stoffe'], demand: ['hartholz', 'kanonenstahl', 'wein'] },
+  teakholm: { produce: ['hartholz'], demand: ['werkzeuge', 'medizin', 'tee'] },
+  zimtinsel: { produce: ['gewuerze', 'tee'], demand: ['kanonenstahl', 'werkzeuge', 'seide'] },
+  lotsenbake: { produce: ['luxusgueter'], demand: ['hartholz', 'medizin', 'tuch'] },
+  kapderstuerme: { produce: ['schiesspulver'], demand: ['kanonenstahl', 'medizin', 'tee'] },
+  perlenhorn: { produce: ['luxusgueter'], demand: ['werkzeuge', 'wein', 'medizin'] },
+  // Frankreich
+  clairvin: { produce: ['wein'], demand: ['hartholz', 'tee', 'werkzeuge'] },
+  voileblanche: { produce: ['tuch', 'seide'], demand: ['hartholz', 'kanonenstahl', 'tee'] },
+  boisroyal: { produce: ['hartholz'], demand: ['werkzeuge', 'tee', 'medizin'] },
+  etoiledemer: { produce: ['luxusgueter'], demand: ['tee', 'hartholz', 'medizin'] },
+  ferroir: { produce: ['kanonenstahl', 'fechtklingen'], demand: ['schmiedekohle', 'tee', 'medizin'] },
+  fortaurore: { produce: ['fechtklingen'], demand: ['kanonenstahl', 'schiesspulver', 'schwefel'] },
+  // Unkartiert
+  irrlichtbucht: { produce: ['waffenkisten', 'medizin'], demand: ['luxusgueter', 'seide'], blackMarket: true },
+  ankerfriedhof: { produce: [], demand: ['medizin', 'wein'] },
+  letzteslicht: { produce: ['luxusgueter'], demand: ['werkzeuge', 'tuch'] },
 };
 
 /** Schlüssel der Profile, die für eine Insel gelten (Region zuerst, dann Macht); leer = freier Hafen */

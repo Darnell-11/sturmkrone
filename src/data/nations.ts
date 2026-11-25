@@ -214,7 +214,7 @@ export const WAR = {
   brainEvery: 30,
   /** Bewegung, Gefechte und Belagerungen in Schritten von … s (Hintergrund-Simulation) */
   step: 1,
-  /** Reichweite (m) einer Offensive ab der nächsten eigenen Insel */
+  /** Reichweite (m) einer Offensive ab der nächsten eigenen Insel (bleibt seit 4.5C gleich: die 36 neuen Inseln füllen die Lücken der entzerrten Welt) */
   reach: 4400,
   /** Gleichzeitige Offensiven je Nation (Entsatz zählt nicht) */
   maxOffensives: 2,

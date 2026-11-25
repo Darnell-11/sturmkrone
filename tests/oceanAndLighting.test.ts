@@ -207,19 +207,20 @@ describe('Regions-Atmosphäre', () => {
 
   it('mitten im Sektor wirkt dessen Stimmung, an der Grenze mischen sich beide weich', () => {
     const s = createAtmoState();
-    atmosphereAt(0, 3000, s); // Norden: Nebelarchipel
+    // seit 4.5C beginnt die Sektor-Stimmung hinter der Bernsteinsee (Ring 1 bis 2 800 m): Prüfpunkte in Ring 2
+    atmosphereAt(0, 3800, s); // Norden: Nebelarchipel
     expect(s.region).toBe('nebel');
     expect(s.skyK).toBeCloseTo(REGION_ATMO.nebel.skyK, 2);
     expect(s.haze).toBeLessThan(0.9);
-    atmosphereAt(-2200, -2200, s); // Südwesten: Sturmgürtel
+    atmosphereAt(-2800, -2800, s); // Südwesten: Sturmgürtel
     expect(s.region).toBe('sturm');
     expect(s.lightMul).toBeLessThan(0.9);
     // entlang eines Kreises über die Grenze bei 36° (Nebel → Nordwacht): keine Sprünge
     const a = createAtmoState(), b = createAtmoState();
     for (let deg = 20; deg < 52; deg += 0.5) {
       const r = (x: number) => (x * Math.PI) / 180;
-      atmosphereAt(Math.sin(r(deg)) * 3000, Math.cos(r(deg)) * 3000, a);
-      atmosphereAt(Math.sin(r(deg + 0.5)) * 3000, Math.cos(r(deg + 0.5)) * 3000, b);
+      atmosphereAt(Math.sin(r(deg)) * 3800, Math.cos(r(deg)) * 3800, a);
+      atmosphereAt(Math.sin(r(deg + 0.5)) * 3800, Math.cos(r(deg + 0.5)) * 3800, b);
       expect(Math.abs(a.skyK - b.skyK)).toBeLessThan(0.03);
       expect(Math.abs(a.haze - b.haze)).toBeLessThan(0.03);
       for (let k = 0; k < 3; k++) expect(Math.abs(a.sky[k] - b.sky[k])).toBeLessThan(0.06);

@@ -1,4 +1,5 @@
-// Phase 4.3B: offene Welt mit 10 400 m Radius, vier Ringe, 24 Themen-Inseln, Blueprint-Phase ohne Netze, Sturm-Barriere am neuen Rand.
+// Phase 4.3B: offene Welt, Themen-Inseln, Blueprint-Phase ohne Netze, Sturm-Barriere am Rand. Seit 4.5C: 15 600 m Radius, fünf Ringe, 60 Themen-Inseln
+// (24 aus 4.3B, 36 aus 4.5C); die Prüfungen der Erweiterung selbst stehen in tests/expandedOpenWorld.test.ts.
 // Alles deterministisch und ohne three.js: die Blueprints entstehen hier genau so wie beim Weltstart.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -6,7 +7,7 @@ import { DANGER, dangerOfDistance, dangerOfLevel } from '../src/data/balanceConf
 import { GOODS, ISLAND_PROFILES, emptyEconomy, profileOf } from '../src/data/economy';
 import { marketAt } from '../src/core/economyEngine';
 import { BORDERS, CITADELS, FACTIONS, sectorAt, type PowerId } from '../src/data/factions';
-import { SITE_BIOMES, THEME_ISLANDS, plotCenter, coastOf } from '../src/data/openWorld';
+import { SITE_BIOMES, THEME_ISLANDS, THEME_ISLANDS_43B, plotCenter, coastOf } from '../src/data/openWorld';
 import { REGIONS, seaLevelAt } from '../src/data/regions';
 import { SITES } from '../src/data/settlements';
 import { EDGE_WALL, PLAYABLE_RADIUS, WORLD_RADIUS } from '../src/data/world';
@@ -23,7 +24,7 @@ import { evoStats, evolutionOfTier } from '../src/data/shipEvolution';
 import { newMotion, stepMotion, windSpeedK, type MotionParams } from '../src/naval/shipMotion';
 
 const ALL = REGIONS.flatMap((r) => r.islands);
-// die 24 Themen-Inseln (4.3B); Mega-Inseln und ihre Schären (4.3.6) prüft tests/megaIslands.test.ts
+// die Themen-Inseln (24 aus 4.3B, 36 aus 4.5C); Mega-Inseln und ihre Schären (4.3.6) prüft tests/megaIslands.test.ts
 const NEW = ALL.filter((i) => i.themePower !== undefined && !i.mega && !i.skerry);
 const BP: IslandBlueprint[] = buildBlueprints(ALL, REGIONS);
 const bpOf = (id: string) => BP.find((b) => b.id === id)!;
@@ -31,18 +32,17 @@ const POWERS: PowerId[] = ['england', 'niederlande', 'deutschland', 'frankreich'
 
 // ---------- 1. Welt, Ringe, Radien ----------
 
-describe('3,7-fache offene Welt: Radius 10 400 m, vier Ringe', () => {
-  it('spielbarer Radius 10 400 m (3,6- bis 3,7-fache Fläche gegenüber 5 450 m), Wasserfall dahinter', () => {
-    expect(PLAYABLE_RADIUS).toBe(10400);
-    expect((PLAYABLE_RADIUS / 5450) ** 2).toBeGreaterThan(3.6);
-    expect((PLAYABLE_RADIUS / 5450) ** 2).toBeLessThan(3.7);
+describe('Offene Welt seit 4.5C: Radius 15 600 m, fünf Ringe', () => {
+  it('spielbarer Radius 15 600 m (2,25-fache Fläche gegenüber 10 400 m), Wasserfall dahinter', () => {
+    expect(PLAYABLE_RADIUS).toBe(15600);
+    expect((PLAYABLE_RADIUS / 10400) ** 2).toBeCloseTo(2.25, 9);
     expect(WORLD_RADIUS).toBeGreaterThan(EDGE_WALL);
-    expect(EDGE_WALL).toBe(10600);
+    expect(EDGE_WALL).toBe(15850);
   });
 
-  it('vier lückenlose Ringe mit den Gefahrenstufen 1 · 2–3 · 3–4 · 4–5', () => {
-    expect(RINGS.map((r) => [r.from, r.to])).toEqual([[0, 2200], [2200, 5200], [5200, 8200], [8200, 10400]]);
-    expect(RINGS.map((r) => r.danger)).toEqual([[1, 1], [2, 3], [3, 4], [4, 5]]);
+  it('fünf lückenlose Ringe mit den Gefahrenstufen 1 · 2 · 3 · 4–5 · 5 (Kaiser-Stufe)', () => {
+    expect(RINGS.map((r) => [r.from, r.to])).toEqual([[0, 2800], [2800, 6600], [6600, 10200], [10200, 13000], [13000, 15600]]);
+    expect(RINGS.map((r) => r.danger)).toEqual([[1, 1], [2, 2], [3, 3], [4, 5], [5, 5]]);
     for (const r of RINGS) {
       for (let d = r.from; d < r.to; d += 37) {
         expect(ringAtDistance(d).ring).toBe(r.ring);
@@ -68,13 +68,13 @@ describe('3,7-fache offene Welt: Radius 10 400 m, vier Ringe', () => {
     }
   });
 
-  it('die sechs Endgame-Festungen und das Marine-Hauptquartier liegen am Außenrand von Ring 4 (Gefahrenstufe 5)', () => {
+  it('die fünf Königsinseln und das Marine-Hauptquartier liegen in Ring 4, den Königs-Meeren (Gefahrenstufe 5)', () => {
     expect(CITADELS).toHaveLength(6);
     for (const c of CITADELS) {
       const i = ALL.find((x) => x.id === c.id)!;
       expect(i.ring, c.id).toBe(4);
       expect(i.dangerTier, c.id).toBe(5);
-      expect(Math.hypot(i.x, i.z), c.id).toBeGreaterThan(9200);
+      expect(Math.hypot(i.x, i.z), c.id).toBeGreaterThan(11600);
     }
   });
 });
@@ -102,7 +102,7 @@ describe('Abstände: keine Insel berührt eine andere, auch nicht mit der Strand
     }
   });
 
-  it('alles liegt vor der Sturmsee: Wasserlinie mindestens 100 m innerhalb von 10 400 m', () => {
+  it('alles liegt vor der Sturmsee: Wasserlinie mindestens 100 m innerhalb von 15 600 m', () => {
     for (const b of BP) expect(Math.hypot(b.x, b.z) + b.waterR, b.id).toBeLessThan(PLAYABLE_RADIUS - 100);
   });
 
@@ -118,12 +118,13 @@ describe('Abstände: keine Insel berührt eine andere, auch nicht mit der Strand
 
 // ---------- 3. Die 24 Themen-Inseln ----------
 
-describe('24 Themen-Inseln: Sektor, Gefahr, Markt, Stege', () => {
-  it('genau 24, je vier in jedem Kuchenstück, vier unkartierte; eindeutige Kennungen und Namen', () => {
-    expect(THEME_ISLANDS).toHaveLength(24);
-    expect(NEW).toHaveLength(24);
-    for (const p of POWERS) expect(THEME_ISLANDS.filter((s) => s.power === p), p).toHaveLength(4);
-    expect(THEME_ISLANDS.filter((s) => s.power === null && s.uncharted)).toHaveLength(4);
+describe('Themen-Inseln (24 aus 4.3B, 36 aus 4.5C): Sektor, Gefahr, Markt, Stege', () => {
+  it('4.3B: genau 24, je vier in jedem Kuchenstück, vier unkartierte; insgesamt 60; eindeutige Kennungen und Namen', () => {
+    expect(THEME_ISLANDS_43B).toHaveLength(24);
+    expect(THEME_ISLANDS).toHaveLength(60);
+    expect(NEW).toHaveLength(60);
+    for (const p of POWERS) expect(THEME_ISLANDS_43B.filter((s) => s.power === p), p).toHaveLength(4);
+    expect(THEME_ISLANDS_43B.filter((s) => s.power === null && s.uncharted)).toHaveLength(4);
     expect(new Set(ALL.map((i) => i.id)).size).toBe(ALL.length);
     expect(new Set(ALL.map((i) => i.name)).size).toBe(ALL.length);
   });
@@ -145,9 +146,9 @@ describe('24 Themen-Inseln: Sektor, Gefahr, Markt, Stege', () => {
     }
   });
 
-  it('über vier Gefahrenzonen verteilt (Stufe 2 bis 5) und in den Ringen 2 bis 4; Lager haben eine Stufe ihres Meeres', () => {
+  it('über vier Gefahrenzonen verteilt (Stufe 2 bis 5) und in den Ringen 2 bis 5; Lager haben eine Stufe ihres Meeres', () => {
     expect(new Set(NEW.map((i) => i.dangerTier))).toEqual(new Set([2, 3, 4, 5]));
-    expect(new Set(NEW.map((i) => i.ring))).toEqual(new Set([2, 3, 4]));
+    expect(new Set(NEW.map((i) => i.ring))).toEqual(new Set([2, 3, 4, 5]));
     for (const i of NEW) {
       if (i.kind === 'camp' || i.kind === 'ruin' || i.kind === 'treasure') {
         expect(i.level, i.id).toBeDefined();
@@ -174,8 +175,8 @@ describe('24 Themen-Inseln: Sektor, Gefahr, Markt, Stege', () => {
       const state = marketAt(emptyEconomy(), { id: i.id, name: i.name, profile: p, war: { borderDist: 9999, occupied: false, fort: false } }, 0);
       for (const g of GOODS) { expect(state.stock[g.id], `${s.id}/${g.id}`).toBe(m.eqStock[g.id]); expect(m.eqStock[g.id]).toBeGreaterThan(0); }
     }
-    expect(THEME_ISLANDS.filter((s) => ISLAND_PROFILES[s.id].blackMarket).map((s) => s.id).sort()).toEqual(['fluesterlagune', 'sandbankatoll', 'schattenbucht']);
-    for (const id of ['fluesterlagune', 'sandbankatoll', 'schattenbucht']) expect(profileOf({ id }).blackMarket, id).toBe(true);
+    expect(THEME_ISLANDS.filter((s) => ISLAND_PROFILES[s.id].blackMarket).map((s) => s.id).sort()).toEqual(['fluesterlagune', 'irrlichtbucht', 'sandbankatoll', 'schattenbucht']);
+    for (const id of ['fluesterlagune', 'irrlichtbucht', 'sandbankatoll', 'schattenbucht']) expect(profileOf({ id }).blackMarket, id).toBe(true);
     // die Themen-Inseln handeln zusammen alles: jede Ware wird auf mindestens einer erzeugt oder gebraucht
     for (const g of GOODS) {
       const used = NEW.some((i) => { const p = profileOf({ id: i.id, region: i.region, factionId: i.factionId }); return p.produce.includes(g.id) || p.demand.includes(g.id); });
@@ -302,20 +303,20 @@ describe('Blueprint-Phase beim Weltstart: reine Daten, kein Netz', () => {
 
 // ---------- 5. Sturm-Barriere am neuen Rand ----------
 
-describe('Sturm-Barriere bei 10 400 – 10 600 m', () => {
-  it('beginnt bei 10 400 m, ist bei 10 600 m voll', () => {
-    expect(SOFT_WORLD_RADIUS).toBe(10400);
-    expect(HARD_WORLD_RADIUS).toBe(10600);
-    expect(edgeStrength(10399)).toBe(0);
-    expect(edgeStrength(10600)).toBe(1);
+describe('Sturm-Barriere bei 15 600 – 15 850 m (seit 4.5C)', () => {
+  it('beginnt bei 15 600 m, ist bei 15 850 m voll (voller Stopp)', () => {
+    expect(SOFT_WORLD_RADIUS).toBe(15600);
+    expect(HARD_WORLD_RADIUS).toBe(15850);
+    expect(edgeStrength(15599)).toBe(0);
+    expect(edgeStrength(15850)).toBe(1);
     expect(EDGE_PUSH_MAX).toBeGreaterThan(14.5);
   });
 
-  it('Vollfahrt nach außen bleibt vor 10 600 m stehen, ohne NaN; mit Stoßfahrt hält die harte Kappe', () => {
+  it('Vollfahrt nach außen bleibt vor 15 850 m stehen, ohne NaN; mit Stoßfahrt hält die harte Kappe', () => {
     for (const tier of [0, 3, 6]) for (const boost of [false, true]) {
       const cls = SHIP_CLASSES[tier], evo = evoStats(evolutionOfTier(3));
       const mp: MotionParams = { L: cls.L, turnMult: 1, turnK: evo.turnK, perfTurn: 1, perfAccel: 1, accelK: evo.accelK };
-      const m = newMotion(0, 10200, 0, 10);
+      const m = newMotion(0, 15400, 0, 10);
       const zone = newEdgeZone();
       let maxD = 0;
       for (let i = 0; i < 60 * 120; i++) {
@@ -325,16 +326,16 @@ describe('Sturm-Barriere bei 10 400 – 10 600 m', () => {
         maxD = Math.max(maxD, Math.hypot(m.x, m.z));
         expect(Number.isFinite(m.x + m.z + m.speed)).toBe(true);
       }
-      expect(maxD).toBeLessThanOrEqual(10600 + 1e-6);
-      if (!boost) expect(maxD, `Klasse ${tier}`).toBeLessThan(10590);
+      expect(maxD).toBeLessThanOrEqual(15850 + 1e-6);
+      if (!boost) expect(maxD, `Klasse ${tier}`).toBeLessThan(15840);
     }
   });
 
   it('treibend zurück ins Spielgebiet', () => {
-    const b = { x: 0, z: 10580, speed: 0 };
+    const b = { x: 0, z: 15830, speed: 0 };
     const zone = newEdgeZone();
     let t = 0;
-    while (t < 300 && Math.hypot(b.x, b.z) > 10410) { applyEdgeDrift(b, 1 / 60, zone); t += 1 / 60; }
-    expect(Math.hypot(b.x, b.z)).toBeLessThanOrEqual(10410);
+    while (t < 300 && Math.hypot(b.x, b.z) > 15610) { applyEdgeDrift(b, 1 / 60, zone); t += 1 / 60; }
+    expect(Math.hypot(b.x, b.z)).toBeLessThanOrEqual(15610);
   });
 });

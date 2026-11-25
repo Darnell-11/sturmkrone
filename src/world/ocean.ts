@@ -30,7 +30,8 @@ const SOFT_RAMP = (() => {
 })();
 
 const G = 9.81;
-const SHORE_SIZE = WORLD_RADIUS * 2.1;
+// deckt die ganze Meeresscheibe (seit 4.5C 15 930 m Radius: rund 8 m je Texel; Inseln liegen alle innerhalb von 15 500 m)
+const SHORE_SIZE = WORLD_RADIUS * 2.04;
 // Auflösung wächst mit der Welt: eine Zelle bleibt rund 5,5 m groß (sonst würden Brandung und Flachwasser grob); seit 4.3B 4096 × 4096 (ein Byte je Zelle)
 const SHORE_RES = 4096;
 const MAX_WAKE = 32;

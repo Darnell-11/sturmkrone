@@ -53,9 +53,9 @@ describe('Stärke der Meere', () => {
 });
 
 describe('Große Welt', () => {
-  it('hat die vierfache Fläche in der Kernwelt (plus äußere Ringe bis 10 400 m seit 4.3B), Ankerglück bleibt der Heimathafen am alten Platz', () => {
+  it('hat die vierfache Fläche in der Kernwelt (plus äußere Ringe bis 15 600 m seit 4.5C), Ankerglück bleibt der Heimathafen am alten Platz', () => {
     expect(WORLD_CORE_RADIUS).toBe(4000);
-    expect(WORLD_RADIUS).toBe(10680);
+    expect(WORLD_RADIUS).toBe(15930);
     expect(BERNSTEINSEE.islands[0]).toMatchObject({ id: 'ankerglueck', x: 0, z: 160 });
   });
 

@@ -16,6 +16,7 @@ import { SHIP_UPGRADE_MAX } from '../../data/ships';
 import { convertLegacy10, isLegacy10, lookFromLegacy, skillsFromLegacy } from './legacy';
 import { createSave, defaultProgress, defaultShip, SAVE_VERSION, type SaveData } from './types';
 import { countOr, isRecord } from '../sanitize';
+import { migrateWorldTo21 } from './worldMigration';
 
 type Migration = (data: Record<string, any>) => Record<string, any>;
 
@@ -146,6 +147,9 @@ export const MIGRATIONS: Record<number, Migration> = {
   // 20: das Ökosystem der Mächte (Phase 4.5A): Kassen, Verträge, Armadas und Inselbesitz beginnen beim nächsten Spielstart aus den Inseldaten (alle
   // Inseln bei ihren Gründern, Startbeziehungen aus data/nations.ts); Eroberungen des Spielers (Raids) bleiben unberührt in `progress.conquest`
   19: (d) => ({ ...d, version: 20, world: { ...(d.world ?? {}), factionWar: null } }),
+  // 21: die erweiterte Welt (Phase 4.5C, 15 600 m Radius, entzerrte Inseln): Schiff, Seekarten-Zonen, Ereignisse, Konvois, Wetterzellen, Armadas,
+  // Großschlachten und Kontrollpunkte wandern auf das neue Raster (core/save/worldMigration.ts); entdeckte Inseln, Flotten und Kriegsstände bleiben
+  20: (d) => migrateWorldTo21(d),
 };
 
 export type MigrationResult =

@@ -111,6 +111,9 @@ import type { Sprite } from 'three';
 import type { TexUpload } from '../naval/naval';
 import { ABYSS_LAIR, SeaBoss } from '../naval/seaBoss';
 import { WorldEventsLive } from './worldEventsLive';
+import { TreasureHuntView, MAX_SITES, type HuntSiteView } from './treasureHunt';
+import { HUNT } from '../data/seaEvents';
+import type { SupplyFront, WorldEvent } from './worldEventDirector';
 import type { WorldEventState } from './worldEventDirector';
 import { buildTown, mergeByMaterialSteps, type TownBuild } from './town';
 import { updateBeams } from './lighthouseBeam';
@@ -286,6 +289,8 @@ export class SeaWorld {
   onVillage: (id: string) => void = () => {};
   /** Mega-Insel (4.3.6): ein Kampf-Bezirk ist geräumt oder der Insel-Kommandant gefallen (Beute vergibt das Spiel) */
   onMegaVictory: (id: MegaId, name: string, level: number, commander: boolean) => void = () => {};
+  /** Schatzsuche (4.5C): die Schatzjäger schlagen zu (Meldung für das Spiel) */
+  onHuntAmbush: (ev: WorldEvent, hunters: number) => void = () => {};
   private assets: CharacterAssets | null = null;
   /** Dorfbewohner der ruhigen Inseln, nur solange man dort an Land ist */
   private visitors: Npc[] = [];
@@ -1111,11 +1116,13 @@ export class SeaWorld {
     this.sparks.emit(12, at.x, 0.5, at.z + 8, { speed: 4, up: 4, life: 0.6, color: EMBER_COL, spread: 1 });
     // Lebendiges Meer: Signale, Wände, Schaumlinien, Leviathan und Kanonenkugeln einmal zeigen, damit ihre Shader jetzt übersetzt werden (Fix aus 4.3.3)
     this.seaEvents?.prewarm(true, at);
+    this.huntView?.prewarm(true, at);
     const balls = this.naval?.prewarmProps(at) ?? null;
     if (balls) this.scene.add(balls);
     await warmupShaders({ renderer, scene: this.scene, camera: this.camera, renderFrame, onBlocking, precompile }, progress);
     this.spray.update(10); this.dust.update(10);
     this.seaEvents?.prewarm(false, at);
+    this.huntView?.prewarm(false, at);
     if (balls) { balls.removeFromParent(); }
   }
 
@@ -1241,8 +1248,11 @@ export class SeaWorld {
       shake: (a) => { this.shake = Math.max(this.shake, a); },
       hurt: (dmg, x, z) => { if (dmg > 0) this.overlay?.number(new Vector3(x, 4, z), Math.round(dmg), 'hurt'); this.overlay?.hurt(); },
       fog: () => { const f = this.scene.fog as Fog; return { color: f.color, far: f.far }; },
+      // Kriegs-Nachschub (4.5C): die laufenden Belagerungen des Kriegs der Mächte
+      fronts: () => this.war?.supplyFronts(this.frontsTmp) ?? [],
     }, this.islandDefs, this.pendingSeaEvents.state, this.pendingSeaEvents.seed);
     this.seaEvents.onNews = (n) => this.onSeaNews(n);
+    this.huntView = new TreasureHuntView(this.scene);
     this.createWarLive();
   }
 
@@ -2192,6 +2202,7 @@ export class SeaWorld {
     if (!this.raid) {
       this.updateWorldEvents();
       this.updateMega(dt);
+      this.updateHunt(dt);
       this.life?.update(dt, (x, z) => this.env.heightAt(x, z), this.ship, this.mode === 'sail');
     }
     if (this.town?.crystal) { this.town.crystal.rotation.y += dt; this.town.crystal.position.y += Math.sin(this.env.clock * 2) * dt * 0.3; }
@@ -2607,6 +2618,21 @@ export class SeaWorld {
         }
       }
     } else {
+      // Schatzsuche (4.5C): die Truhe erst bergen, wenn die Schatzjäger vertrieben sind
+      const hc = this.huntChest;
+      if (hc && Math.hypot(hc.x - f.x, hc.z - f.z) < HUNT.claimR) {
+        if ((this.combat?.tagLeft(hc.tag) ?? 0) > 0) { this.contextLabel = 'Erst die Schatzjäger vertreiben!'; return; }
+        this.contextLabel = 'Schatztruhe bergen';
+        if (input.pressed('interact')) {
+          this.player.play('pickup', { restart: true, onDone: () => this.player?.play('idle') });
+          this.fx?.shockwave(new Vector3(hc.x, f.y, hc.z), 3, '#E3B04B');
+          this.dust.emit(30, hc.x, f.y + 0.3, hc.z, { speed: 3, up: 5, life: 1, color: DIG_COL });
+          this.huntChest = null;
+          this.huntView?.hideChest();
+          this.seaEvents?.huntClaim(hc.evId);
+        }
+        return;
+      }
       const cr = this.crystal && Math.hypot(this.crystal.x - f.x, this.crystal.z - f.z) < 3.2 && !this.combat?.hostilesLeft ? this.crystal : null;
       const dig = this.life?.digs.find((dd) => Math.hypot(dd.x - f.x, dd.z - f.z) < 2.6);
       if (cr) {
@@ -3080,6 +3106,13 @@ export class SeaWorld {
   private megaRt = new Map<MegaId, MegaRuntime>();
   /** Insel, auf der die Spielfigur gerade an Land ist, und der Kommandant als Gegner (solange er steht) */
   private megaHere: { id: MegaId; isl: WalkIsland; commander: Enemy | null } | null = null;
+  // ----- Schatzsuche an Land (4.5C) -----
+  private huntView: TreasureHuntView | null = null;
+  /** Truhe der laufenden Schatzsuche (nach dem Hinterhalt): Ereignis, Lage, Kennung der Schatzjäger */
+  private huntChest: { evId: string; x: number; y: number; z: number; tag: string } | null = null;
+  private readonly huntList: WorldEvent[] = [];
+  private readonly huntSites: HuntSiteView[] = Array.from({ length: MAX_SITES }, () => ({ x: 0, z: 0, r: 0 }));
+  private readonly frontsTmp: SupplyFront[] = [];
   private readonly megaWake: number[] = [];
   private readonly megaPt = { x: 0, z: 0 };
 
@@ -3115,6 +3148,54 @@ export class SeaWorld {
       if (rt.commander.state === 'unterwegs') rt.commander.state = 'fern';
     }
     this.megaHere = null;
+  }
+
+  /** Laufhöhe für die Pfähle der Schatzsuche (einmal angelegt, kein neuer Abschluss je Bild) */
+  private readonly huntGround = (x: number, z: number) => this.ground.height(x, z);
+  private readonly huntSpot = { x: 0, z: 0 };
+
+  /**
+   * Schatzsuche an Land (4.5C): Pfähle um die Suchbereiche in Spielernähe. Betritt die Spielfigur den Suchbereich, schlagen die Schatzjäger zu (einmal je
+   * Suche) und die Truhe steht halb ausgegraben in der Mitte – zu bergen über die Kontext-Taste, sobald die Jäger vertrieben sind. Lohn: das Spiel über `eventEnd`.
+   */
+  private updateHunt(dt: number) {
+    const live = this.seaEvents, view = this.huntView;
+    if (!live || !view) return;
+    const foot = this.mode === 'foot' && this.foot;
+    const px = foot ? this.foot!.x : this.x, pz = foot ? this.foot!.z : this.z;
+    live.huntsNear(px, pz, 900, this.huntList);
+    const n = Math.min(MAX_SITES, this.huntList.length);
+    for (let k = 0; k < n; k++) { const s = this.huntList[k].site!, o = this.huntSites[k]; o.x = s.x; o.z = s.z; o.r = s.r; }
+    view.setSites(this.huntSites, n, this.huntGround, dt);
+    // die Truhe einer beendeten Suche verschwindet
+    const hc = this.huntChest;
+    if (hc) { const ev = live.director.eventById(hc.evId); if (!ev || ev.phase === 'beendet') { this.huntChest = null; view.hideChest(); } }
+    const f = this.foot, c = this.combat;
+    if (!foot || !f || !c) return;
+    for (let k = 0; k < n; k++) {
+      const ev = this.huntList[k], s = ev.site!;
+      if (Math.hypot(s.x - f.x, s.z - f.z) > s.r) continue;
+      const isl = this.ground.islandAt(f.x, f.z, 6);
+      if (!isl) continue;
+      const tag = `hunt:${ev.id}`;
+      if (!ev.ambushed) {
+        live.huntAmbush(ev.id);
+        c.beginEvent(isl);
+        const count = HUNT.ambush[Math.max(0, Math.min(4, ev.dangerTier - 1))];
+        const pool: EnemyKind[] = ['schlaeger', 'musketier', 'matrose', 'schildtraeger', 'fajiwirker'];
+        const kinds: EnemyKind[] = ev.dangerTier >= 3 ? ['hauptmann', ...pool.slice(0, count - 1)] : pool.slice(0, count);
+        // Schatzjäger sind Gesetzlose: sie greifen jeden an, der ihnen den Schatz streitig macht
+        c.spawnWave(kinds, ev.level, 'pirat', tag, s, 11);
+        this.onHuntAmbush(ev, kinds.length);
+      }
+      if (!this.huntChest || this.huntChest.evId !== ev.id) {
+        const spot = this.huntSpot;
+        if (c.nav) c.nav.snap(s.x, s.z, 1.2, spot); else { spot.x = s.x; spot.z = s.z; }
+        const y = this.ground.height(spot.x, spot.z);
+        this.huntChest = { evId: ev.id, x: spot.x, y: Number.isFinite(y) ? y : 1.3, z: spot.z, tag };
+        view.showChest(spot.x, this.huntChest.y, spot.z, Math.atan2(f.x - spot.x, f.z - spot.z));
+      }
+    }
   }
 
   /** Je Bild an Land auf einer Mega-Insel: Bezirke wecken, Kommandant erscheinen und umherziehen lassen, Siege melden */

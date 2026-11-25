@@ -8,17 +8,19 @@ export const WORLD_SCALE = 2;
 /** Radius der Kernwelt (die Scheibe bis 2.9.89): Bernsteinsee und die fünf Ringmeere. Darüber liegen die äußeren Ringe (seit 4.3B). */
 export const WORLD_CORE_RADIUS = 2000 * WORLD_SCALE;
 /**
- * Spielbarer Ozean seit 4.3B (Phase 4.3B, 3,7-fache Fläche gegenüber 4.3.2): bis hier liegen alle Inseln und Festungen. Dahinter beginnt die
- * Sturmsee (world/stormEdge.ts) mit Gegenströmung; die Ringe der Gefahr stehen in data/worldRings.ts.
+ * Spielbarer Ozean seit 4.5C (Phase 4.5C, 1,5-facher Radius und 2,25-fache Fläche gegenüber 4.5.1 mit 10 400 m): bis hier liegen alle Inseln,
+ * Festungen und die Bauplätze der Kaiser-Zitadellen. Dahinter beginnt die Sturmsee (world/stormEdge.ts) mit Gegenströmung; die fünf Meeres-Ringe
+ * stehen in data/worldRings.ts, die Entzerrung der alten Lagen in data/worldSpread.ts.
  */
-export const PLAYABLE_RADIUS = 10400;
+export const PLAYABLE_RADIUS = 15600;
 /**
- * Radius der Meeresscheibe in Metern: Ring 1 (Bernsteinsee) bis 2 200 m, Ring 2 (die alten Ringmeere, Grenzfestungen bei rund 3 000 m) bis 5 200 m,
- * Ring 3 (Riff- und Sturmgürtel) bis 8 200 m, Ring 4 (Kaiser-Meere, Endgame-Festungen bei 9 500 m, Marine-Hauptquartier bei 9 700 m) bis 10 400 m,
- * dahinter die Sturmsee bis zur harten Grenze bei 10 600 m. Ganz außen stürzt das Meer als Wasserfall in die Tiefe.
+ * Radius der Meeresscheibe in Metern: Ring 1 (Bernsteinsee) bis 2 800 m, Ring 2 (Handels-Archipele, Grenzfestungen bei rund 3 800 m) bis 6 600 m,
+ * Ring 3 (Riff- und Sturmgürtel mit den sechs Mega-Inseln) bis 10 200 m, Ring 4 (Königs-Meere, Königsinseln bei 11 855 m, Marine-Hauptquartier
+ * bei 12 100 m) bis 13 000 m, Ring 5 (Äußere Kaiser-Meere) bis 15 600 m, dahinter die Sturmsee bis zum vollen Stopp bei 15 850 m. Ganz außen stürzt
+ * das Meer als Wasserfall in die Tiefe.
  */
-export const WORLD_RADIUS = 10680;
-/** Harte Grenze am Ende der Sturmsee: so weit kommt kein Schiff (die Gegenströmung hält es vorher auf) */
+export const WORLD_RADIUS = 15930;
+/** Harte Grenze am Ende der Sturmsee (voller Stopp bei 15 850 m): so weit kommt kein Schiff (die Gegenströmung hält es vorher auf) */
 export const EDGE_WALL = WORLD_RADIUS - 80;
 
 /**

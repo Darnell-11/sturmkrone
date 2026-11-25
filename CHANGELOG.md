@@ -1,5 +1,82 @@
 # Was ist neu
 
+## 4.5.2 – Phase 4.5C: Die Welt wird 1,5-mal so groß – fünf Meeres-Ringe, 36 neue Inseln, Tiefsee-Strömungen, Schiffbrüchige, Schmuggler, Schatzsuchen an Land und Kriegs-Nachschub (25.11.2026, nur lokal)
+
+**Was du siehst**
+- **Die Welt ist gewachsen:** Der spielbare Ozean reicht jetzt bis **15 600 m** (bisher 10 400 m) – das ist die **2,25-fache Fläche**. Dahinter beginnt die Sturm-Barriere; bei **15 850 m** ist endgültig Schluss.
+- **Fünf Meeres-Ringe** statt vier, jeder mit eigener Gefahrenstufe:
+  1. **Bernsteinsee · Ruhige Innen-See** (bis 2 800 m, Stufe 1): das sichere Zentrum um Ankerglück.
+  2. **Die Handels-Archipele** (bis 6 600 m, Stufe 2): Kolonien, Kontore, Rohstoff-Inseln und die Grenzfestungen der Marine.
+  3. **Der Riff- und Sturmgürtel** (bis 10 200 m, Stufe 3): die sechs Mega-Inseln, Felsnadeln und Schmugglerbuchten.
+  4. **Die Königs-Meere** (bis 13 000 m, Stufe 4 – 5): die sechs Königsinseln Albion, Adlerstein, Soleilmont, Oranjehaven, Yamikura und das Marine-Hauptquartier Weißwacht.
+  5. **Die Äußeren Kaiser-Meere** (bis 15 600 m, Kaiser-Stufe): Vorposten, Leuchtturm-Atolle und fünf **„Verbotene Gewässer“** – freigehaltene Bauplätze, auf denen später die Kaiser-Zitadellen entstehen.
+- **Die Kartenmitte ist entzerrt:** Alle bisherigen Inseln sind harmonisch nach außen gerückt (die Bernsteinsee um gut 60 %, die äußeren Meere um etwa 25 %). Ankerglück, sein Hafen und dein Heimatplatz bleiben genau, wo sie waren.
+- **36 neue Inseln** in den Ringen 2 bis 5, je sechs bis sieben pro Macht:
+  - **Kanonenstahl-Minen** (Zinnfels, Kohlenstieg, Rußhafen, Eisgrat, Ferroir),
+  - **Hartholz-Forste** mit Sägemühle und Holzfäller-Lager (Eichenhain, Harzwald, Teakholm, Bois-Royal),
+  - **Segeltuch-Manufakturen** mit Webhallen und Flachsfeldern (Webersund, Seilerhafen, Segelmacherhof, Voile Blanche),
+  - **Gewürz- und Wein-Kolonien** (Muskatbucht, Zimtinsel, Jadeterrassen, Clair-Vin),
+  - **Leuchtturm-Atolle** (Nordlicht-Atoll, Bakenriff, Rotlaternen-Riff, Lotsenbake, Étoile-de-Mer, Mondsichel-Atoll, Perlenhorn, Sturmhorn),
+  - **Vorposten und Bastionen** der Mächte in den Königs- und Kaiser-Meeren (Kronwacht, Greifenhorst, Granitwacht, Sturmbastei, Schwertfels, Drachenmaul, Kap der Stürme, Fort Aurore),
+  - und **drei weitere unkartierte Geheim-Inseln**: Irrlichtbucht (Schmugglerbucht), Ankerfriedhof und Das Letzte Licht.
+  - Jede hat Stege, einen eigenen Markt und – wenn sie einer Macht gehört – kann im Krieg der Mächte erobert werden und liefert Rohstoffe.
+  - Auf der Hauptkarte stehen jetzt **107 Hauptinseln** (dazu 7 Geheim-Inseln, die erst nach der Entdeckung erscheinen, und 42 Schären).
+- **Fünf Tiefsee-Strömungen** zwischen den Ringen 2, 3 und 4 (Kronen-, Hanse-, Schwarzsegel-, Gewürz- und Lilien-Tiefstrom): wer mitsegelt, ist **35 % schneller**. So bleiben die längeren Überfahrten kurzweilig.
+- **Lebendiges Meer:** Jetzt laufen **6 bis 8 Ereignisse gleichzeitig**, mindestens **2,2 km** auseinander und gleichmäßig über die Ringe 1 bis 4 verteilt. Dazu kommen vier neue Begegnungen:
+  - **Schiffbrüchige (rote Notruf-Fackeln):** Ein Floß mit drei bis sechs Seeleuten. Fahr langsam heran, und du entscheidest:
+    - **Als Crew anheuern** – sie kommen ohne Handgeld an Bord (ist die Mannschaft voll, zahlen sie Dankesgeld).
+    - **Zum nächsten Hafen bringen** – 20 Minuten Zeit, dann Gold, Ansehen und Ehre bei der Hafenmacht.
+    - **Wrack-Koordinaten bergen** – ein reiches Wrackfeld mit Ladung und einer sicheren Schatzkarte.
+  - **Schmuggler-Rendezvous (violett-goldene Leuchtraketen):** Auf offener See oder in einer abgelegenen Bucht ankert ein Schmuggler. Er verkauft einen **Werft-Bauplan einer Macht**, **Relikt-Splitter** und **Schmuggelware** (jedes Geschäft erhöht deinen Fahndungsdruck). Oder du **nimmst ihn für die Marine hoch**: Die Schmuggler wehren sich; besiegst du sie, gibt es Gold, Ansehen bei der Marine und die beschlagnahmte Ware.
+  - **Schatzsuche an Land:** Gefundene Schatzkarten (aus Treibgut oder einem Wrackfeld) und Gerüchte (dünner Rauch über einer Insel) markieren einen **Suchbereich**, umgeben von roten Wimpeln. Betrittst du ihn, schlagen **Schatzjäger aus dem Hinterhalt** zu; die halb ausgegrabene Truhe kannst du erst bergen, wenn sie vertrieben sind. Beute: Gold, Relikt-Splitter und oft ein Ausrüstungsteil.
+  - **Kriegs-Nachschub (Signalfeuer in Nationsfarbe):** Schwer bewachte Transporte bringen Nachschub von einer Rohstoff-Insel an eine belagerte Front.
+    - **Begleitest** du ihn, schickt die Gegenseite Kaperschiffe; kommt er an, gibt es Gold, Ansehen und Kriegspunkte, und die Belagerung bekommt frische Truppen.
+    - **Fängst** du ihn ab, erbeutest du Kanonenstahl, Hartholz und Medizin, und die Belagerung leidet.
+  - Alle vier haben eigene Zeichen auf Kompass, Minikarte und Weltkarte.
+- **Weltkarte (M):**
+  - Bei **1,00×** steht die ganze Welt mit sauberem **10 %-Rand** mitten im freien Feld zwischen Titelleiste und Legende. Albion, die Kaiser-Meere und der Süden sind nie abgeschnitten, auch nicht am Handy.
+  - Beim Hineinzoomen lässt sich der Rand bis unter die Leisten hervorziehen; das Zoom geht jetzt bis **7×**.
+  - Namen, Ereignis- und Festungssymbole überdecken sich nie, auch mit über 150 Inseln.
+  - Ring 5 hat eine eigene violette Tönung, die Bauplätze der Kaiser sind gestrichelt eingezeichnet.
+- **Alte Spielstände** werden auf die größere Welt umgerechnet (Spielstand 21, siehe unten). Dein Schiff liegt danach am selben Ort relativ zu seiner Insel, und entdeckte Inseln, Flotte und Kriegsstand bleiben erhalten.
+
+**Technik (für Entwickler)**
+- **Welt** (`data/world.ts`): `PLAYABLE_RADIUS` 15 600, `WORLD_RADIUS` 15 930, `EDGE_WALL` 15 850 (Sturm-Barriere 15 600 – 15 850 m über `world/stormEdge.ts`). Uferfeld des Ozeans `SHORE_SIZE = WORLD_RADIUS · 2,04` (rund 8 m je Texel).
+- **Ringe** (`data/worldRings.ts`): fünf Ringe 0 / 2 800 / 6 600 / 10 200 / 13 000 / 15 600 m mit `tierName` (Ring 5: „Kaiser-Stufe“). `outerSeaLevel` steigt bis Stufe 22 am Rand von Ring 4 und bis 26 an der Sturm-Barriere. Gefahrenbänder `DANGER_BANDS_M` 0 / 2 800 / 6 600 / 10 200 / 11 600 (`data/balanceConfig.ts`). `KAISER_SITES`: fünf Bauplätze bei 14 200 m auf der Mittellinie jedes Sektors, je 1 200 m frei (`inKaiserSite`).
+- **Entzerrung** (`data/worldSpread.ts`): stückweise lineare, umkehrbare Abbildung alter auf neue Abstände (`SPREAD_KNOTS`, `spreadDist`/`unspreadDist`, `spreadPoint`/`unspreadPoint`); bis 250 m bleibt alles stehen (Ankerglück, `HOME_SPAWN`). Die Lage-Tabellen (`regions.ts`, `factions.ts` `BORDER_FORTS`/`CITADELS`, `openWorld.ts`, `megaIslands.ts`) tragen die umgerechneten Zahlen. Gefahrenstufe der Mega-Inseln jetzt aus `dangerOfDistance`; `seaLevelAt`, `sectorLabel`, Bernsteinsee-Region (Kreis 2 800 m um den Mittelpunkt) und `DISCOVERY.startRadius` (3 050 m: dieselben Startinseln) angepasst. `WAR.reach` bleibt 4 400 m.
+- **Inseln** (`data/openWorld.ts`): `THEME_ISLANDS_43B` (24) + `EXPANSION_ISLANDS` (36) = `THEME_ISLANDS`; neue Bausteine `forst` und `manufaktur` in `themeItems`; Märkte in `ISLAND_PROFILES`. Lagen per Platzsuche gegen Platzbedarf, Grenzlinien (≥ 780 m), Kaiser-Bauplätze und Ringgrenzen. `themeIslandDefs` entfernt −0 (JSON-Rundlauf).
+- **Strömungen** (`data/seaEvents.ts` `CURRENT_LANES`): fünf Bänder mit `deep: true` (Breite 190 m), `CurrentLane.deep`.
+- **Begegnungen** (`world/worldEventDirector.ts`, rein und JSON):
+  - Arten `schiffbruch`, `schmuggler`, `schatzjagd`, `nachschub` (`ENCOUNTER_KINDS`), Signale `notfackel`, `violettrakete`, `schatzrauch`, `signalfeuer`, Ausgänge `gerettet`, `angekommen`.
+  - Felder `survivors`, `rescue`, `offers` (`SmuggleOffer`), `busted`, `site`, `ambushed`, `mapped`, `siegeId`, `side`, `foe`, `fromName`, `escortT`, `tripT`, `raided`.
+  - Aktionen `rescue`, `follow`, `rescueArrived`, `createWreck`, `nearestPort`, `buyOffer`, `bust`, `ambush`, `claimTreasure`, `startTreasureHunt` (höchstens drei kartierte Suchen, ohne Mindestabstand).
+  - Kaperschiffe gegen begleiteten Nachschub (`raidSupply`, Meldung `supplyRaid`).
+  - Verteilung: `pickRing` (Ring mit den wenigsten Ereignissen, nach Fläche gewichtet), `DIRECTOR.nearShare` 0,5, `minActive` 6, `maxActive` 8, `minSpacing` 2 200, `bootstrapGap` 3. Weltbosse in Ring 4 (10 600 – 12 700 m). Zahlen in `RESCUE`, `SMUGGLER`, `HUNT`, `SUPPLY`.
+  - `DirectorWorld.fronts` liefert die Belagerungen (`SupplyFront`).
+- **Krieg** (`world/factionWarEngine.ts`): `supplyFronts` (Rohstoff-Inseln je Seite), `supplyArrived` (Truppen/Garnison, Moral, Fortschritt), `supplyLost`.
+- **Seewelt:** `worldEventsLive.ts` mit `encounters()` (Annäherung langsamer als 4,5 bzw. 6 m/s → Meldung `encounter`, `answered`, `askAgain`), Eskorte über `follow`, `bust` (Schiffe feindlich; auch nach Neubau über `adopt`), `huntOn`/`huntsNear`/`huntAmbush`/`huntClaim`/`treasureMap`. Rolle `schmuggler` (`SeaShipRole`, KI ankert in `NavalSystem.aiEvent`). Darstellung `worldEventView.ts`: farbige Leuchtraketen (`flare(x, z, …, Farbe, Periode, Höhe)`), Flöße und Schiffbrüchige als `InstancedMesh`, Rauchsäule der Schatzsuche. Land: `world/treasureHunt.ts` (`TreasureHuntView`: Pfähle mit Wimpeln als ein Instanz-Netz, eine Truhe), `SeaWorld.updateHunt` (Hinterhalt über `spawnWave`, Kennung `hunt:<ereignis>`), Kontext „Schatztruhe bergen“.
+- **Spiel** (`core/game.ts`): `openEncounter`, `rescueChoice`, `smugglerPick`, `encounterEnd` (Lohn, Kriegswirkung des Nachschubs, `awardMerit`), `supplyName`; Schatzkarten aus Treibgut werden zur Schatzsuche (früheres X als Ausweichweg). Menü `Menus.showEncounter` (`EncounterView`). Kartenzeichen `castaway`, `smuggler`, `hunt`, `supply` (`ui/minimap.ts`), Farbe der Nation auf der Weltkarte.
+- **Weltkarte** (`ui/mapView.ts`, `ui/worldMap.ts`, `ui/worldMapDraw.ts`):
+  - `MAP_MARGIN` 0,1, `MAP_EXTENT = WORLD_RADIUS / 0,8`, `MAP_ZOOM_MAX` 7.
+  - `setMapSafeArea`/`mapSafeArea` (Leistenhöhen, gemessen in `WorldMap.measureChrome` über der Spalte der Weltscheibe): `fitScale` passt die Welt ins freie Band, `fitAll` zentriert darin, `clampView` lässt um die Leistenhöhe weiter schieben; `discMargins` für Prüfungen.
+  - `LabelPlacer` mit 720 Plätzen; Ereignis- und Festungssymbole reservieren ihre Fläche. Ring 5 getönt, Kaiser-Bauplätze gestrichelt („Verbotene Gewässer“ ab 1,15×).
+- **Spielstand 21** (`core/save/worldMigration.ts`, Migration 20 → 21): `migratePoint` (nahe einer alten Insel relativ zu ihr, sonst `spreadPoint`; Wasserpunkte nie in einer Insel, `pushOutOfIslands`), angewandt auf Schiff, Seekarten-Zonen (an ihre Insel), Ereignisse, Konvois, Wetterzellen, Armadas, Großschlachten und Kontrollpunkte (Landpunkte bleiben auf ihrer Insel). Entdeckte Inseln, Flotte, Inselbesitz, Kassen, Verträge und Kriegspunkte bleiben unverändert. `cleanWorldEvents` säubert alle neuen Felder.
+- **Repo:** `.playwright-mcp/` und `qa_tmp/` stehen in `.gitignore`.
+- **Tests:** `tests/expandedOpenWorld.test.ts` (34 Tests):
+  - Radius und Sturm-Barriere, fünf Ringe, Zonen der Mega- und Königsinseln
+  - Entzerrung, 105 – 112 Hauptinseln ohne Überlappung, Märkte, Stege, Krieg, Blueprint ohne three.js
+  - Kaiser-Bauplätze, Tiefsee-Strömungen
+  - Director mit 6 – 8 Ereignissen, Abstand und Ringverteilung
+  - alle vier Begegnungen samt Entscheidungen, Engine-Kopplung, JSON-Rundlauf
+  - Kartenrand und Beschriftung auf Desktop und Handy, Migration 20 → 21
+  - Bestehende Tests auf die neuen Zahlen umgestellt. Stand: 863 Tests, `tsc`, Build.
+- **Abnahme (Playwright, Ultra):**
+  - **Weltkarte:** Desktop 1 440 × 900 und Handy 390 × 844, jeweils bei 1,00× und 2,50× (Nordrand mit Albion und Ring 5), alle 156 Inseln aufgedeckt: 0 überlappende Beschriftungen.
+  - **Begegnungen im Spiel:** Schiffbrüchige (Fenster, Anheuern), Schmuggler-Rendezvous (Kauf, Hochnehmen, Kampf, Lohn) und Schatzsuche an Land (Hinterhalt, Sperre, Bergen, Lohn).
+  - **Bildrate (Ultra, mit Begegnungen in Sicht):** 146 FPS bei 1 440 × 900 und 145 FPS bei 390 × 844, auf der Grafikkarte des Entwicklungsrechners (kein echtes Handy).
+  - **Konsole** ohne Fehler und Warnungen.
+  - **Build:** Startzeit 7,8 – 8,3 s, 168 – 170 Shader-Programme.
+
 ## 4.5.1 – Phase 4.5B: Eingreifen in den Krieg – Landkampf um Kontrollpunkte, Seekampf mit Kriegspunkten, Kriegsaufträge, Zweier-Bündnisse, Taktik-Banner und Karte „Krieg & Frontlinien“ (25.11.2026, nur lokal)
 
 **Was du siehst**
