@@ -6,6 +6,7 @@ import { BORDER_FORTS, BORDERS, CITADELS, FACTIONS, borderDistance, isExclave, i
 import type { DangerTier } from './balanceConfig';
 import { themeIslandDefs } from './openWorld';
 import { megaIslandDefs, skerryDefs } from './megaIslands';
+import { kaiserIslandDefs } from './kaiserIslands';
 import { RINGS, dangerTierAt, outerSeaLevel, ringAt, type RingId } from './worldRings';
 
 export type IslandKind = 'town' | 'harbor' | 'camp' | 'ruin' | 'quiet' | 'treasure' | 'lighthouse' | 'boss' | 'marinefort' | 'citadel';
@@ -57,6 +58,8 @@ export interface IslandDef {
   mega?: boolean;
   /** Vorgelagerte Schäre, Leuchtturm-Fels oder Riff-Fels einer Mega-Insel: keine Bewohner, keine Gegner */
   skerry?: boolean;
+  /** Kaiser-Zitadelle (4.5D, data/kaiserIslands.ts): Seesperre, doppelter Festungsring, Kaiser-Boss; nie eroberbar */
+  kaiser?: boolean;
 }
 
 export interface RegionDef {
@@ -227,13 +230,16 @@ for (const c of CITADELS) {
 for (const d of themeIslandDefs()) regionOfPoint(d.x, d.z).islands.push(d);
 // Die sechs Mega-Inseln (4.3.6, data/megaIslands.ts) und ihre vorgelagerten Schären, Leuchtturm-Felsen und Riff-Passagen
 for (const d of [...megaIslandDefs(), ...skerryDefs()]) regionOfPoint(d.x, d.z).islands.push(d);
+// Die fünf Kaiser-Zitadellen (4.5D, data/kaiserIslands.ts) auf den reservierten Bauplätzen in Ring 5
+for (const d of kaiserIslandDefs()) regionOfPoint(d.x, d.z).islands.push(d);
 for (const r of REGIONS) {
   for (const i of r.islands) {
     i.region = r.id;
     // Besitz: Marine-Anlagen gehören der Marine, Themen-Inseln laut data/openWorld.ts, alle anderen laut data/factions.ts (Ankerglück bleibt unabhängig)
     i.factionId = i.marine ? 'marine' : CITADELS.find((c) => c.id === i.id)?.factionId ?? (i.themePower !== undefined ? i.themePower : islandOwner(i.id, r.id));
     i.ring = ringAt(i.x, i.z).ring;
-    i.dangerTier = dangerTierAt(i.x, i.z);
+    // Gefahr des Ortes, außer eine Insel legt ihre eigene fest (4.5D: Sturmkrone-Ruinen Stufe 4, Kaiser-Inseln Stufe 5)
+    i.dangerTier = i.dangerTier ?? dangerTierAt(i.x, i.z);
     i.sectorIndex = sectorIndexAt(i.x, i.z);
     i.exclave = isExclave(i.factionId, i.x, i.z);
   }

@@ -214,8 +214,8 @@ export const WAR = {
   brainEvery: 30,
   /** Bewegung, Gefechte und Belagerungen in Schritten von … s (Hintergrund-Simulation) */
   step: 1,
-  /** Reichweite (m) einer Offensive ab der nächsten eigenen Insel (bleibt seit 4.5C gleich: die 36 neuen Inseln füllen die Lücken der entzerrten Welt) */
-  reach: 4400,
+  /** Reichweite (m) einer Offensive ab der nächsten eigenen Insel: seit 4.5D 6 800 m, damit die Mächte über die weite Welt (15 600 m) bis in die Königs-Meere greifen */
+  reach: 6800,
   /** Gleichzeitige Offensiven je Nation (Entsatz zählt nicht) */
   maxOffensives: 2,
   /** Armadas insgesamt (Rechenzeit, Übersicht) */

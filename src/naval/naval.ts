@@ -539,6 +539,16 @@ export class NavalSystem {
     return out;
   }
 
+  /** Wachschiffe abziehen, deren Kennung mit `prefix` beginnt (Seesperre einer Kaiser-Zitadelle, wenn man fortsegelt) */
+  clearGuards(prefix: string) {
+    keepIf(this.enemies, (e) => {
+      if (!e.guardId || !e.guardId.startsWith(prefix)) return true;
+      e.ship.dispose();
+      this.overlay.setBar(e, null, -1, false, null);
+      return false;
+    });
+  }
+
   /** Wie viele Schiffe der Rückeroberungs-Flotte einer Insel sind noch im Gefecht? */
   reconAlive(islandId: string): number {
     let n = 0;

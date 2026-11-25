@@ -8,7 +8,9 @@ import { FACTIONS, type FactionId } from '../data/factions';
 export type PoiKind = 'enemy' | 'boss' | 'quest' | 'turnin' | 'npc' | 'target' | 'fort' | 'citadel' | 'alarm' | 'battle'
   | 'galeone' | 'blockade' | 'flotsam' | 'worldboss' | 'convoy'
   // Begegnungen (4.5C): Schiffbrüchige, Schmuggler-Rendezvous, Schatzsuche, Kriegs-Nachschub
-  | 'castaway' | 'smuggler' | 'hunt' | 'supply';
+  | 'castaway' | 'smuggler' | 'hunt' | 'supply'
+  // Kaiser-Zitadelle (4.5D): Silhouette einer Festung mit drei Türmen und goldener Kaiserkrone darüber
+  | 'kaiser';
 export interface Poi { x: number; z: number; kind: PoiKind; name?: string; /** Farbe der Macht (Grenzfestung, Endgame-Festung) */ color?: string }
 
 /** Küstenlinie einer Insel (wie in der Welt gebaut), damit die Karte die echte Form zeigt statt eines Kreises */
@@ -178,6 +180,24 @@ export function drawPoi(ctx: CanvasRenderingContext2D, x: number, y: number, kin
       ctx.fillStyle = col ?? '#E3B04B'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(-8, 5); ctx.lineTo(-8, -4); ctx.lineTo(-4, 0); ctx.lineTo(0, -7); ctx.lineTo(4, 0); ctx.lineTo(8, -4); ctx.lineTo(8, 5); ctx.closePath(); ctx.fill(); ctx.stroke();
       ctx.fillStyle = '#F4EEDC'; ctx.fillRect(-8, 5, 16, 2.6); ctx.strokeRect(-8, 5, 16, 2.6);
+      break;
+    }
+    case 'kaiser': {
+      // Kaiser-Zitadelle: Mauer mit Zinnen, zwei Ecktürme und ein hoher Bergfried in der Farbe der Macht, darüber die goldene Kaiserkrone
+      ctx.fillStyle = col ?? '#B9A8E8'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(-11, 8); ctx.lineTo(-11, -2); ctx.lineTo(-12.5, -2); ctx.lineTo(-12.5, -6); ctx.lineTo(-7.5, -6); ctx.lineTo(-7.5, -2); ctx.lineTo(-9, -2); ctx.lineTo(-9, 1);
+      ctx.lineTo(-4, 1); ctx.lineTo(-4, -7); ctx.lineTo(-5.5, -7); ctx.lineTo(-5.5, -11); ctx.lineTo(5.5, -11); ctx.lineTo(5.5, -7); ctx.lineTo(4, -7); ctx.lineTo(4, 1);
+      ctx.lineTo(9, 1); ctx.lineTo(9, -2); ctx.lineTo(7.5, -2); ctx.lineTo(7.5, -6); ctx.lineTo(12.5, -6); ctx.lineTo(12.5, -2); ctx.lineTo(11, -2); ctx.lineTo(11, 8);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      // Tor und Zinnenlücken
+      ctx.fillStyle = '#1b1410';
+      ctx.beginPath(); ctx.moveTo(-2.2, 8); ctx.lineTo(-2.2, 4); ctx.arc(0, 4, 2.2, Math.PI, 0); ctx.lineTo(2.2, 8); ctx.closePath(); ctx.fill();
+      ctx.fillRect(-1.6, -10, 1.2, 1.6); ctx.fillRect(0.6, -10, 1.2, 1.6);
+      // Krone
+      ctx.fillStyle = '#FFD36A'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(-6, -13); ctx.lineTo(-6, -19); ctx.lineTo(-3, -15.5); ctx.lineTo(0, -21); ctx.lineTo(3, -15.5); ctx.lineTo(6, -19); ctx.lineTo(6, -13); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#C8322A'; ctx.beginPath(); ctx.arc(0, -15, 1.1, 0, Math.PI * 2); ctx.fill();
       break;
     }
     case 'galeone': {

@@ -11,7 +11,7 @@ import type { RaidSquadDef } from './raidTypes';
 import type { NavGrid } from '../ai/navGrid';
 
 /** Herkunft eines Verbands: Viertel, Tor, Burghof oder vom Boss gerufene Verstärkung */
-export type HordeOrigin = 'strand' | 'hafen' | 'markt' | 'aufstieg' | 'gate' | 'castle' | 'add';
+export type HordeOrigin = 'strand' | 'hafen' | 'markt' | 'aufstieg' | 'gate' | 'castle' | 'add' | 'ring1' | 'ring2' | 'thron';
 
 export interface HordeMember {
   q: TroopSquad;

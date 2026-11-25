@@ -1,4 +1,5 @@
 import { cleanMegaSave } from '../../data/megaIslands';
+import { cleanKaiserSave } from '../../data/kaiserBattle';
 import { CREW_BY_ID, defaultParty } from '../../data/crew';
 import { officerSlots } from '../../data/crewTiers';
 import { sanitizeLook } from '../../data/characterParts';
@@ -192,6 +193,8 @@ export function migrateSave(raw: unknown, gameVersion: string): MigrationResult 
   filled.world.chart = chartOnLoad(filled.world.chart, filled.progress);
   // Mega-Inseln (4.4A): Ruhezeiten säubern (fehlt das Feld in älteren Ständen, bleibt es leer: alles bereit)
   filled.world.mega = cleanMegaSave(filled.world.mega);
+  // Kaiser-Zitadellen (4.5D): Ruhezeiten und Siege säubern (fehlt das Feld, stehen alle fünf in voller Stärke)
+  filled.world.kaiser = cleanKaiserSave(filled.world.kaiser);
   // Ökosystem der Mächte (4.5A): nur die Form prüfen; den Inhalt säubert das Spiel beim Laden mit Register und Inseldaten (`cleanFactionWar`)
   const fw = filled.world.factionWar as unknown;
   filled.world.factionWar = fw && typeof fw === 'object' && (fw as { v?: unknown }).v === 1 ? (fw as SaveData['world']['factionWar']) : null;

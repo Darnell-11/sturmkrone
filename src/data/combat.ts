@@ -230,6 +230,8 @@ export interface EnemyDef {
   aura?: AuraDef;
   /** Ausrüstungsset aus data/gear.ts: Kopfbedeckung und Waffen des Bosses (Modelle aus Blender in public/models/bosses/) */
   kit?: string;
+  /** Anti-One-Shot eines Endbosses: höchstens dieser Anteil der Lebenspunkte je Treffer (sonst `RAID_BOSS_HIT_CAP`; Kaiser: `KAISER_BOSS_HIT_CAP`) */
+  hitCap?: number;
 }
 
 /** Aura eines Hauptmanns: Faktoren auf Schaden, erlittenen Schaden und Tempo der Gegner im Umkreis; `regen` = Heilung je Sekunde (Anteil der Lebenspunkte) */

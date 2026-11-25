@@ -29,6 +29,8 @@ export const RIFT_LOOK: Record<RiftDef['kind'], { floor: number; blend: number; 
 /** Brückendeck (architecture.ts `bruecke`): halbe Breite der begehbaren Fahrbahn zwischen den Brüstungen und Oberkante über dem Ursprung */
 export const BRIDGE_DECK_HW = 2.25;
 export const BRIDGE_DECK_TOP = 0.115;
+/** Breite Brücken (`RiftDef.wide`, Kaiser-Inseln): Fahrbahn 9,2 statt 4,6 m – das Laufdeck wächst mit */
+export const BRIDGE_WIDE_K = 2.02;
 
 /** Höhe des glühenden Lavabands über der Sohle: sichtbar über der Geländedecke der Sohle (vorher 0,12 m, lag darunter) */
 const LAVA_LIFT = 0.42;
@@ -171,7 +173,7 @@ export function* buildRiftsSteps(o: RiftOpts): Generator<void, RiftBuild> {
       const cx = _p.x, cz = _p.z;
       const yaw = Math.atan2(_p.dx, _p.dz) + Math.PI / 2;
       const len = rift.w + 2 * (L.blend + 1) + 2;
-      const b = build('bruecke', o.rnd, len, null, rift.bridge ?? L.bridge);
+      const b = build('bruecke', o.rnd, len, null, (rift.bridge ?? L.bridge) + (rift.wide ? ':breit' : ''));
       const ex = Math.sin(yaw) * len * 0.5, ez = Math.cos(yaw) * len * 0.5;
       const hA = o.hNat(cx - ex, cz - ez), hB = o.hNat(cx + ex, cz + ez);
       const yA = Number.isFinite(hA) ? hA : 1.3, yB = Number.isFinite(hB) ? hB : 1.3;
@@ -179,7 +181,7 @@ export function* buildRiftsSteps(o: RiftOpts): Generator<void, RiftBuild> {
       b.g.position.set(cx, yMid, cz);
       b.g.rotation.set(-Math.atan2(yB - yA, len), yaw, 0, 'YXZ');
       o.group.add(b.g);
-      (walk.decks ??= []).push({ x: def.x + cx, z: def.z + cz, hw: BRIDGE_DECK_HW, hl: len / 2, yaw, y0: yA + BRIDGE_DECK_TOP, y1: yB + BRIDGE_DECK_TOP, r2: (len / 2 + BRIDGE_DECK_HW + 1) ** 2 });
+      (walk.decks ??= []).push({ x: def.x + cx, z: def.z + cz, hw: BRIDGE_DECK_HW * (rift.wide ? BRIDGE_WIDE_K : 1), hl: len / 2, yaw, y0: yA + BRIDGE_DECK_TOP, y1: yB + BRIDGE_DECK_TOP, r2: (len / 2 + BRIDGE_DECK_HW + 1) ** 2 });
       const c = Math.cos(yaw), sn = Math.sin(yaw);
       for (const [w, d, ox = 0, oz = 0] of b.boxes) o.block(boxBlocker(def.x + cx + ox * c + oz * sn, def.z + cz - ox * sn + oz * c, w, d, yaw));
       for (const gl of b.glows ?? []) {

@@ -115,7 +115,8 @@ export function* islandTerrainSteps(kit: StyleKit, r: number, coast: { a: number
   // Strand: Plateau und Böschung bis ins Wasser, Ringe etwa alle 4 m
   // Mega-Inseln (Radius über 250 m, 4.3.6): etwas gröber, sonst wüchse das Netz auf weit über 100 000 Eckpunkte
   const big = r > 250;
-  const nPlateau = Math.max(10, Math.round(r / (big ? 5 : 4)));
+  // Kaiser-Zitadellen (über 450 m, 4.5D): Ringe alle 6,5 m, sonst wüchse das Netz auf über 75 000 Eckpunkte
+  const nPlateau = Math.max(10, Math.round(r / (r > 450 ? 6.5 : big ? 5 : 4)));
   const segsB = Math.min(big ? 620 : 1e9, Math.max(160, Math.round(r * 1.5)));
   const beachT = [...rings(nPlateau, 0.0001, 1), ...rings(7, 1, 1 + shelf).slice(1)];
   let bg = yield* polar(0, 0, (a) => r * k(a), beachT, segsB, 0, false);

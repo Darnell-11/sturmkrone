@@ -4,7 +4,7 @@
 // jedem Bauplatz, und ihr Markt steht in data/economy.ts (`ISLAND_PROFILES`). data/regions.ts trägt die Inseln in die Meere ein.
 import type { IslandDef, IslandKind, IslandStyle } from './regions';
 import type { PowerId } from './factions';
-import type { ClusterDef, ScatterLayer, SiteDef, StructureDef, StructureType } from './settlements';
+import type { ClusterDef, RiftDef, ScatterLayer, SiteDef, StructureDef, StructureType } from './settlements';
 
 /** Biome, für die es eine Bewuchs-Palette gibt (world/vegetation.ts `Biome`): nur sie taugen für Siedlungs-Inseln */
 export type SiteBiome = Extract<IslandStyle, 'festland' | 'tropisch' | 'klippe' | 'nord' | 'glut' | 'kreide' | 'atoll' | 'weinland'>;
@@ -43,6 +43,10 @@ export interface ThemeIslandSpec {
   level?: number;
   uncharted?: boolean;
   info: string;
+  /** Archipel-Form (4.5D): Doppelinsel (ein Meeresarm teilt die Insel, zwei Brücken) oder Atoll mit Lagune (ein Steg führt hinüber) */
+  archipel?: 'doppel' | 'lagune';
+  /** Spalten mit Brücken (aus `archipel` errechnet, data/settlements.ts `RiftDef`) */
+  rifts?: (Omit<RiftDef, 'cross'> & { crossAt: [number, number][] })[];
 }
 
 // ---------- Die 24 Inseln der Phase 4.3B ----------
@@ -449,8 +453,74 @@ export const EXPANSION_ISLANDS: readonly ThemeIslandSpec[] = [
   },
 ];
 
-/** Alle Themen-Inseln (4.3B und 4.5C) */
-export const THEME_ISLANDS: readonly ThemeIslandSpec[] = [...THEME_ISLANDS_43B, ...EXPANSION_ISLANDS];
+// ---------- Phase 4.5D: zwölf Inseln der Ringe 2 – 4 werden zu mittelgroßen Archipelen ----------
+//
+// Sieben Doppelinseln (ein Meeresarm teilt die Insel, zwei Holz- oder Steinbrücken verbinden die Hälften) und fünf Atolle mit Lagune (ein langer Steg
+// führt über das Wasser). 380 – 540 m Durchmesser statt 140 – 230 m. Die Bauplätze wachsen mit (Abstände ab der Mitte mal Vergrößerung), die Lage des
+// Meeresarms bzw. der Lagune wird so gedreht, dass kein Bauplatz im Wasser steht (tests/kaiserCitadels.test.ts).
+
+export interface ArchipelSpec { r: number; form: 'doppel' | 'lagune'; plots?: PlotSpec[] }
+
+export const ARCHIPELS: Record<string, ArchipelSpec> = {
+  webersund: { r: 232, form: 'doppel' },
+  harzwald: { r: 252, form: 'doppel' },
+  seilerhafen: { r: 240, form: 'doppel' },
+  jadeterrassen: { r: 246, form: 'doppel', plots: [{ theme: 'plantage', deg: 195, d: 0.55 }, { theme: 'plantage', deg: 245, d: 0.6, turn: 90 }, { theme: 'hafen', deg: 20, d: 0.76 }] },
+  teakholm: { r: 250, form: 'doppel' },
+  muskatbucht: { r: 240, form: 'doppel' },
+  boisroyal: { r: 256, form: 'doppel' },
+  nordlichtatoll: { r: 200, form: 'lagune', plots: [{ theme: 'leuchtfeuer', deg: 20, d: 0.8 }, { theme: 'perlen', deg: 200, d: 0.74 }] },
+  rotlaternenriff: { r: 212, form: 'lagune', plots: [{ theme: 'leuchtfeuer', deg: 30, d: 0.8 }, { theme: 'wachturm', deg: 120, d: 0.72 }, { theme: 'hafen', deg: 300, d: 0.8 }] },
+  lotsenbake: { r: 196, form: 'lagune', plots: [{ theme: 'leuchtfeuer', deg: 20, d: 0.8 }, { theme: 'perlen', deg: 200, d: 0.74 }] },
+  etoiledemer: { r: 196, form: 'lagune', plots: [{ theme: 'leuchtfeuer', deg: 20, d: 0.8 }, { theme: 'perlen', deg: 200, d: 0.74 }] },
+  irrlichtbucht: { r: 190, form: 'lagune', plots: [{ theme: 'schwarzmarkt', deg: 200, d: 0.76 }, { theme: 'schatz', deg: 20, d: 0.66 }] },
+};
+
+const BRIDGE_OF: Record<SiteBiome, 'holz' | 'stein'> = { festland: 'holz', tropisch: 'holz', nord: 'holz', atoll: 'holz', glut: 'stein', klippe: 'stein', kreide: 'stein', weinland: 'stein' };
+
+/** Abstand eines Punkts von einer Strecke */
+function segDist(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
+  const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / l2));
+  return Math.hypot(px - (ax + dx * t), pz - (az + dz * t));
+}
+
+/** Meeresarm bzw. Lagune einer Archipel-Insel: Richtung so gedreht, dass alle Bauplätze möglichst weit vom Wasser liegen */
+export function archipelRifts(spec: ThemeIslandSpec): NonNullable<ThemeIslandSpec['rifts']> {
+  const coast = coastOf(spec);
+  const centers = spec.plots.map((pl) => plotCenter(spec, pl, coast));
+  const r = spec.r, lag = spec.archipel === 'lagune';
+  const w = lag ? Math.round(r * 0.3) : Math.round(r * 0.12);
+  const reach = lag ? r * 0.36 : r * 1.4;
+  let best = 0, bestD = -Infinity;
+  for (let a = 0; a < 180; a += 7.5) {
+    const t = (a * Math.PI) / 180, ux = Math.sin(t), uz = Math.cos(t);
+    let m = Infinity;
+    for (const [x, z] of centers) m = Math.min(m, segDist(x, z, -ux * reach, -uz * reach, ux * reach, uz * reach));
+    if (m > bestD + 0.5) { bestD = m; best = a; }
+  }
+  const t = (best * Math.PI) / 180, ux = Math.sin(t), uz = Math.cos(t), nx = uz, nz = -ux;
+  const bend = lag ? r * 0.04 : r * 0.08 * (hash01(spec.id, 9) < 0.5 ? -1 : 1);
+  const at = (k: number): [number, number] => [Math.round(ux * reach * k + nx * bend * (1 - k * k)), Math.round(uz * reach * k + nz * bend * (1 - k * k))];
+  const pts = [-1, -0.5, 0, 0.5, 1].map(at);
+  // Lagune: ein breites, geschlossenes Wasserbecken in der Mitte, ein Holzsteg quer hinüber
+  if (lag) return [{ kind: 'sund', w, name: 'Lagune', bridge: 'holz', pts, crossAt: [at(0)] }];
+  // Doppelinsel: ein leicht geschwungener Meeresarm von Küste zu Küste, zwei Brücken
+  return [{ kind: 'sund', w, name: 'Meeresarm', bridge: BRIDGE_OF[spec.biome], pts, crossAt: [at(-0.22), at(0.22)] }];
+}
+
+/** Eine Themen-Insel zum Archipel ausbauen: größer, Bauplätze und Hügel wachsen mit, dazu Meeresarm oder Lagune */
+function toArchipel(spec: ThemeIslandSpec, A: ArchipelSpec): ThemeIslandSpec {
+  const k = A.r / spec.r;
+  const plots = A.plots ?? spec.plots.map((p) => (p.at ? { ...p, at: [Math.round(p.at[0] * k), Math.round(p.at[1] * k)] as [number, number] } : p));
+  const hills = spec.hills?.map((h) => ({ x: Math.round(h.x * k), z: Math.round(h.z * k), r: Math.round(h.r * k), h: h.h }));
+  const out: ThemeIslandSpec = { ...spec, r: A.r, plots, hills, archipel: A.form, villagers: spec.villagers + 2 };
+  out.rifts = archipelRifts(out);
+  return out;
+}
+
+/** Alle Themen-Inseln (4.3B und 4.5C; zwölf davon seit 4.5D als Archipel) */
+export const THEME_ISLANDS: readonly ThemeIslandSpec[] = [...THEME_ISLANDS_43B, ...EXPANSION_ISLANDS.map((s) => (ARCHIPELS[s.id] ? toArchipel(s, ARCHIPELS[s.id]) : s))];
 
 // ---------- Siedlungen aus Bausteinen ----------
 
@@ -656,7 +726,7 @@ export function coastOf(spec: Pick<ThemeIslandSpec, 'id' | 'shape'>): SiteDef['c
   }
 }
 
-const coastFactor = (coast: SiteDef['coast'], a: number) => { let k = 1; for (const w of coast) k += w.a * Math.sin(w.f * a + w.p); return k; };
+function coastFactor(coast: SiteDef['coast'], a: number): number { let k = 1; for (const w of coast) k += w.a * Math.sin(w.f * a + w.p); return k; }
 
 /** Mittelpunkt eines Bauplatzes in Metern ab Inselmitte (gleiche Rechnung wie world/settlement.ts) */
 export function plotCenter(spec: ThemeIslandSpec, plot: PlotSpec, coast: SiteDef['coast']): [number, number] {
@@ -681,7 +751,9 @@ export function themeSite(spec: ThemeIslandSpec): SiteDef {
   centers.forEach(([x, z], i) => {
     if (i === hub) return;
     const mx = (hx + x) * 0.35, mz = (hz + z) * 0.35;
-    roads.push({ w: i === 1 ? 3.2 : 2.6, pts: [[hx * 0.86, hz * 0.86], [mx, mz], [x * 0.92, z * 0.92]] });
+    // Archipel (4.5D): kreuzt der Weg den Meeresarm oder die Lagune, führt er über die nächste Brücke
+    const via = spec.rifts ? crossingFor([hx * 0.86, hz * 0.86], [x * 0.92, z * 0.92], spec.rifts) : null;
+    roads.push({ w: i === 1 ? 3.2 : 2.6, pts: via ? [[hx * 0.86, hz * 0.86], via, [x * 0.92, z * 0.92]] : [[hx * 0.86, hz * 0.86], [mx, mz], [x * 0.92, z * 0.92]] });
   });
   return {
     label: spec.label,
@@ -690,10 +762,46 @@ export function themeSite(spec: ThemeIslandSpec): SiteDef {
     grass: spec.grass,
     clusters,
     roads,
+    ...(spec.rifts ? { rifts: spec.rifts.map((rf) => ({ kind: rf.kind, w: rf.w, pts: rf.pts, cross: rf.crossAt.map((c) => tAlong(rf.pts, c)), bridge: rf.bridge, name: rf.name })) } : {}),
     scatter: scatterOf(spec.biome),
     villagers: spec.villagers,
     themed: true,
   };
+}
+
+/** Schneiden sich die Strecken A–B und C–D? */
+const segCross = (ax: number, az: number, bx: number, bz: number, cx: number, cz: number, dx: number, dz: number): boolean => {
+  const d1 = (dx - cx) * (az - cz) - (dz - cz) * (ax - cx), d2 = (dx - cx) * (bz - cz) - (dz - cz) * (bx - cx);
+  const d3 = (bx - ax) * (cz - az) - (bz - az) * (cx - ax), d4 = (bx - ax) * (dz - az) - (bz - az) * (dx - ax);
+  return d1 * d2 < 0 && d3 * d4 < 0;
+};
+
+/** Kreuzt die Strecke A → B eine Spalte, dann die nächste Brücke dieser Spalte (sonst null) */
+function crossingFor(a: [number, number], b: [number, number], rifts: NonNullable<ThemeIslandSpec['rifts']>): [number, number] | null {
+  let best: [number, number] | null = null, bd = Infinity;
+  for (const r of rifts) {
+    let hit = false;
+    for (let i = 1; i < r.pts.length && !hit; i++) if (segCross(a[0], a[1], b[0], b[1], r.pts[i - 1][0], r.pts[i - 1][1], r.pts[i][0], r.pts[i][1])) hit = true;
+    if (!hit) continue;
+    for (const c of r.crossAt) { const d = Math.hypot(c[0] - (a[0] + b[0]) / 2, c[1] - (a[1] + b[1]) / 2); if (d < bd) { bd = d; best = c; } }
+  }
+  return best;
+}
+
+/** Anteil der Länge eines Linienzugs am nächsten Punkt zu `c` (wie `polylineT` in data/megaIslands.ts) */
+function tAlong(pts: readonly [number, number][], c: [number, number]): number {
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  let acc = 0, best = 0, bd = Infinity;
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, az] = pts[i - 1], [bx, bz] = pts[i];
+    const dx = bx - ax, dz = bz - az, l = Math.hypot(dx, dz) || 1;
+    const t = Math.max(0, Math.min(1, ((c[0] - ax) * dx + (c[1] - az) * dz) / (l * l)));
+    const d = Math.hypot(c[0] - (ax + dx * t), c[1] - (az + dz * t));
+    if (d < bd) { bd = d; best = (acc + l * t) / (total || 1); }
+    acc += l;
+  }
+  return best;
 }
 
 /** Alle Siedlungen der Themen-Inseln (Schlüssel = Insel-Kennung) */

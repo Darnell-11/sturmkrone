@@ -12,6 +12,8 @@ import { MEGA_BY_ID, isMegaId } from '../data/megaIslands';
 
 export interface WorldMapHost {
   data(): WorldMapData;
+  /** Kaiser-Zitadelle (4.5D): Phase der Schlacht, Ruhezeit (s) und Siege für die Inselinfo */
+  kaiserInfo?(id: string): { phase: string; guardsDown: number; bastionsDown: number; cooldown: number; wins: number } | null;
   close(): void;
   /** Logbuch (Aufträge, Taten) öffnen */
   logbook(): void;
@@ -78,10 +80,12 @@ export class WorldMapScreen {
           <button class="mini" data-a="log">Logbuch</button>
         </div>
         <button class="icon-btn wmap-close" data-a="close" aria-label="Schließen">✕</button>
+        <div class="wmap-row2">
+          <div class="wmap-layers" role="group" aria-label="Ebenen">${MAP_LAYERS.map((l) => `<button class="mini wmap-layer" data-a="layer" data-v="${l.id}" aria-pressed="${this.layers[l.id]}" title="${esc(l.hint)}">${esc(l.label)}</button>`).join('')}</div>
+          <div class="wmap-legend small wmap-powers">${(['england', 'deutschland', 'kurogane', 'niederlande', 'frankreich'] as const).map((id) => `<span><i class="lg" style="background:${FACTIONS[id].color}"></i>${FACTIONS[id].name}</span>`).join('')}<span><i class="lg" style="background:#F4F7FC;border:2px solid #16306A"></i>Marine</span><span>◌ Kolonie</span></div>
+        </div>
       </div>
-      <div class="wmap-layers" role="group" aria-label="Ebenen">${MAP_LAYERS.map((l) => `<button class="mini wmap-layer" data-a="layer" data-v="${l.id}" aria-pressed="${this.layers[l.id]}" title="${esc(l.hint)}">${esc(l.label)}</button>`).join('')}</div>
-      <div class="wmap-legend small wmap-powers">${(['england', 'deutschland', 'kurogane', 'niederlande', 'frankreich'] as const).map((id) => `<span><i class="lg" style="background:${FACTIONS[id].color}"></i>${FACTIONS[id].name}</span>`).join('')}<span><i class="lg" style="background:#F4F7FC;border:2px solid #16306A"></i>Marine (Grenzen)</span><span>◌ gestrichelt: Kolonie</span></div>
-      <div class="wmap-legend small"><span><i class="lg me"></i>Du</span><span><i class="lg q">!</i>Auftrag</span><span><i class="lg t">?</i>Abgabe</span><span><i class="lg b">☠</i>Boss</span><span><i class="lg e"></i>Feind</span><span><i class="lg s">★</i>Ziel</span><span><i class="lg x">✕</i>Schatz</span><span><i class="lg w">⚔</i>Seeschlacht</span><span><i class="lg w">⚑</i>Belagerung</span></div>
+      <div class="wmap-legend small wmap-symbols"><span><i class="lg me"></i>Du</span><span><i class="lg q">!</i>Auftrag</span><span><i class="lg t">?</i>Abgabe</span><span><i class="lg b">☠</i>Boss</span><span><i class="lg e"></i>Feind</span><span><i class="lg s">★</i>Ziel</span><span><i class="lg x">✕</i>Schatz</span><span><i class="lg w">⚔</i>Seeschlacht</span><span><i class="lg w">⚑</i>Belagerung</span><span><i class="lg k">♛</i>Kaiser</span></div>
       <div class="wmap-occ" aria-live="polite" hidden></div>
       <div class="wmap-info panel" hidden></div>
       <p class="wmap-hint small soft">Ziehen: Karte bewegen · Mausrad oder Zwei-Finger-Geste: zoomen · Hafen anklicken: Seekarten-Reise · M oder Esc: schließen</p>`;
@@ -95,7 +99,7 @@ export class WorldMapScreen {
     this.st = { selected: null, layers: this.layers, fog: this.fog, zoom: 1 };
     const d = this.h_.data();
     // Sprungziele: Ankerglück und die sechs Mega-Inseln (die Haupt-Orientierungspunkte der Karte, 4.3.6)
-    const jumps = d.islands.filter((i) => i.id === 'ankerglueck' || i.mega);
+    const jumps = d.islands.filter((i) => i.id === 'ankerglueck' || (i.mega && !i.kaiser));
     this.root.querySelector('.wmap-regions')!.innerHTML = jumps.map((i) => `<button class="mini" data-a="jump" data-v="${i.id}" style="--c:${i.factionId ? FACTIONS[i.factionId].color : '#E3B04B'}">${esc(i.name)}</button>`).join('');
     this.resize();
     this.fitAll();
@@ -295,7 +299,11 @@ export class WorldMapScreen {
       : '<p class="small soft">⚑ Unabhängig und neutral.</p>';
     // Mega-Inseln: Beiname, umkämpfte Bezirke und Insel-Kommandant
     const mm = isMegaId(i.id) ? MEGA_BY_ID[i.id] : null;
-    const megaLine = mm ? `<p class="small" style="color:#E3B04B">★ <b>${esc(mm.title)}</b> · Kampf-Bezirke: ${mm.districts.map((x) => esc(x.name)).join(', ')} · Kommandant: <b>${esc(mm.commander.name)}</b></p>` : '';
+    const megaLine = mm && !i.kaiser ? `<p class="small" style="color:#E3B04B">★ <b>${esc(mm.title)}</b> · Kampf-Bezirke: ${mm.districts.map((x) => esc(x.name)).join(', ')} · Kommandant: <b>${esc(mm.commander.name)}</b></p>` : '';
+    // Kaiser-Zitadellen (4.5D): drei Phasen, Stand der Schlacht, Ruhezeit und Siege
+    const ki = i.kaiser ? this.h_.kaiserInfo?.(i.id) ?? null : null;
+    const kPhase = ki ? ({ seesperre: `Phase 1 · Kaiserliche Seesperre (${ki.bastionsDown}/2 Ketten-Bastionen, ${ki.guardsDown}/6 Wachschiffe gefallen)`, festungsringe: 'Phase 2 · Doppelter Festungsring', thron: 'Phase 3 · Der Kaiser im Thronsaal', besiegt: `Besiegt – Rückkehr in ${Math.ceil(ki.cooldown / 60)} min` } as Record<string, string>)[ki.phase] ?? '' : '';
+    const kaiserLine = mm && i.kaiser ? `<p class="small" style="color:#D6B4FF">♛ <b>${esc(mm.title)}</b> · Kaiser: <b>${esc(mm.commander.name)}</b></p><p class="small" style="color:#FFD36A">${esc(kPhase || 'Seesperre · Festungsringe · Kaiser')}${ki && ki.wins ? ` · ${ki.wins}× besiegt` : ''}</p>` : '';
     const block = d.blockaded?.(i.id) ? '<p class="small" style="color:#FF8A6A">⚓ <b>Blockade</b> vor dem Hafen: alle Preise doppelt, keine Schnellreise.</p>' : '';
     // Belagerung (4.5B): voller Text auch bei niedrigem Zoom, wenn man die Insel anklickt
     const sg = d.wars?.sieges.find((s) => s.id === i.id);
@@ -304,8 +312,8 @@ export class WorldMapScreen {
     this.info.innerHTML = known
       ? `<button class="icon-btn" data-a="closeinfo" aria-label="Schließen">✕</button><h3 class="fell">${esc(i.name)}</h3>
          <p class="small soft">${KIND_LABEL[i.kind]}${region ? ` · ${esc(region.name)}` : ''}${i.level ? ` · Stufe ${i.level}` : ''} · ${fmtDist(dist)} entfernt</p>
-         ${megaLine}${ownerLine}${occLine}${siegeLine}${block}<p class="small">${esc(i.info)}</p>${i.boss ? `<p class="small">☠ <b>${esc(i.boss)}</b></p>` : ''}${mk ? `<p class="small">${mk === 'quest' ? '<b>!</b> Hier wartet ein Auftrag.' : '<b>?</b> Hier kannst du einen Auftrag abgeben.'}</p>` : ''}${isTravelPort(i.kind) ? this.goodsLine(i) + this.travelHtml(i) : ''}${note}`
-      : `<button class="icon-btn" data-a="closeinfo" aria-label="Schließen">✕</button><h3 class="fell">${i.mega ? esc(i.name) : 'Unentdeckte Insel'}</h3><p class="small soft">Nur ein schemenhafter Umriss. Segle bis auf wenige Kilometer heran – oder lege in einem Hafen in der Nähe an –, um sie zu kartieren.</p>${region ? `<p class="small soft">Liegt im Meer „${esc(region.name)}“ · ${fmtDist(dist)} entfernt.</p>` : `<p class="small soft">${fmtDist(dist)} entfernt.</p>`}`;
+         ${megaLine}${kaiserLine}${ownerLine}${occLine}${siegeLine}${block}<p class="small">${esc(i.info)}</p>${i.boss ? `<p class="small">☠ <b>${esc(i.boss)}</b></p>` : ''}${mk ? `<p class="small">${mk === 'quest' ? '<b>!</b> Hier wartet ein Auftrag.' : '<b>?</b> Hier kannst du einen Auftrag abgeben.'}</p>` : ''}${isTravelPort(i.kind) && !i.kaiser ? this.goodsLine(i) + this.travelHtml(i) : ''}${note}`
+      : `<button class="icon-btn" data-a="closeinfo" aria-label="Schließen">✕</button><h3 class="fell">${i.mega ? esc(i.name) : 'Unentdeckte Insel'}</h3>${i.kaiser ? `<p class="small" style="color:#D6B4FF">♛ Kaiser-Zitadelle in den Äußeren Kaiser-Meeren · Stufe ${i.level ?? ''}</p>` : ''}<p class="small soft">Nur ein schemenhafter Umriss. Segle bis auf wenige Kilometer heran – oder lege in einem Hafen in der Nähe an –, um sie zu kartieren.</p>${region ? `<p class="small soft">Liegt im Meer „${esc(region.name)}“ · ${fmtDist(dist)} entfernt.</p>` : `<p class="small soft">${fmtDist(dist)} entfernt.</p>`}`;
   }
 
   /** Besetzte Inseln mit Countdown und Rückeroberungs-Warnung: immer sichtbar, nicht nur beim Antippen einer Insel */

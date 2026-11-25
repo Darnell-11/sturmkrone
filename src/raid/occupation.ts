@@ -165,6 +165,9 @@ export interface Unlocks {
   /** Boss-Siegel je Macht und Relikt-Splitter (seit Version 15): Währung der Stufe-5-Schmiede (data/crafting.ts) */
   seals: Partial<Record<FactionId, number>>;
   shards: number;
+  /** Kaiser-Siegel (4.5D, Währung der Kaiser-Stufe) und erbeutete mythische Baupläne und Kaiser-Relikte; fehlen in älteren Ständen */
+  kaiserSeals?: number;
+  kaiserRelics?: string[];
 }
 export const emptyUnlocks = (): Unlocks => ({ sails: [], ornaments: [], bossLoot: [], seals: {}, shards: 0 });
 
@@ -193,5 +196,10 @@ export function cleanUnlocks(raw: unknown): Unlocks {
     if (n > 0 && (FACTION_IDS as readonly string[]).includes(k)) seals[k as FactionId] = n;
   }
   const shards = typeof o.shards === 'number' && Number.isFinite(o.shards) ? Math.max(0, Math.min(9999, Math.floor(o.shards))) : 0;
-  return { sails: strs(o.sails), ornaments: strs(o.ornaments), bossLoot: strs(o.bossLoot), seals, shards };
+  const out: Unlocks = { sails: strs(o.sails), ornaments: strs(o.ornaments), bossLoot: strs(o.bossLoot), seals, shards };
+  const ks = typeof o.kaiserSeals === 'number' && Number.isFinite(o.kaiserSeals) ? Math.max(0, Math.min(999, Math.floor(o.kaiserSeals))) : 0;
+  if (ks > 0) out.kaiserSeals = ks;
+  const kr = strs(o.kaiserRelics);
+  if (kr.length) out.kaiserRelics = kr;
+  return out;
 }

@@ -228,11 +228,16 @@
 .wmap::after { content: ''; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 8px var(--wood-edge), inset 0 0 0 10px var(--brass-400), inset 0 0 0 12px var(--wood-edge), inset 0 0 120px rgba(0, 0, 0, 0.7); }
 .wmap-cv { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; }
 .wmap-cv:active { cursor: grabbing; }
-.wmap-top { position: absolute; left: 0; right: 0; top: 0; z-index: 2; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 22px 26px 18px; background: linear-gradient(180deg, rgba(12, 6, 3, 0.92), rgba(12, 6, 3, 0)); pointer-events: none; }
+/* Kopfleiste in zwei Zeilen (4.5D): Titel, Meere, Werkzeuge und Schließen; darunter Ebenen und Mächte – die Weltscheibe gewinnt so gut ein Drittel an Größe */
+.wmap-top { position: absolute; left: 0; right: 0; top: 0; z-index: 2; display: flex; gap: 8px 10px; align-items: center; flex-wrap: wrap; padding: 16px 26px 10px; background: linear-gradient(180deg, rgba(12, 6, 3, 0.92), rgba(12, 6, 3, 0)); pointer-events: none; }
 .wmap-top > * { pointer-events: auto; }
 .wmap-top h2 { margin: 0; font: 400 1.55rem var(--font-serif); letter-spacing: 0.04em; color: var(--brass-100); text-shadow: 0 2px 0 #000; }
 /* Sprungziele (Ankerglück und die Mega-Inseln, 4.3.6): eigene Zeile unter Titel und Werkzeugen, damit kein Ziel abgeschnitten wird */
-.wmap-regions { display: flex; gap: 6px; flex-wrap: nowrap; order: 10; flex: 1 0 100%; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.wmap-regions { display: flex; gap: 6px; flex-wrap: nowrap; flex: 1 1 0; min-width: 120px; overflow-x: auto; scrollbar-width: none; }
+.wmap-top .wmap-regions .mini { font-size: 0.8rem; padding-inline: 9px; }
+.wmap-top .wmap-long { display: none; }
+.wmap-top .wmap-short { display: inline; }
+.wmap-row2 { order: 10; flex: 1 0 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; min-width: 0; }
 .wmap-regions::-webkit-scrollbar { display: none; }
 .wmap-regions .mini { flex: none; }
 .wmap-regions .mini { border-color: var(--c); }
@@ -248,9 +253,12 @@
 .wmap-legend .lg.s { background: none; color: #ffd166; font-size: 1rem; }
 .wmap-legend .lg.x { background: none; color: #ff4a3a; font-size: 0.95rem; }
 .wmap-legend .lg.w { background: #2a1a12; color: #ff9a4a; border: 1.5px solid #ff8a3a; font-size: 0.62rem; }
-.wmap-legend.wmap-powers { bottom: auto; top: 136px; left: 26px; }
+.wmap-row2 > .wmap-legend.wmap-powers { position: static; padding: 4px 12px; gap: 10px; }
+.wmap-legend .lg.k { background: none; color: #ffd36a; font-size: 0.95rem; }
+/* Zeichen-Legende und Hinweis links neben der Weltscheibe (schmal, damit sie das freie Band der Scheibe nicht einengen) */
+.wmap-legend.wmap-symbols { max-width: 330px; gap: 4px 12px; }
 /* Besetzte Inseln: Countdown und Rückeroberungswarnung, immer sichtbar */
-.wmap-layers { position: absolute; left: 26px; top: 178px; z-index: 2; display: flex; gap: 6px; flex-wrap: wrap; max-width: min(46rem, calc(100vw - 52px)); }
+.wmap-layers { display: flex; gap: 6px; flex-wrap: wrap; }
 .wmap-layer[aria-pressed='false'] { opacity: 0.55; text-decoration: line-through; }
 .wmap-layer[aria-pressed='true'] { border-color: var(--brass-300); }
 .wmap-zoom { min-width: 3.2rem; text-align: center; color: var(--brass-100); font-family: var(--font-num); text-shadow: 0 1px 0 #000; }
@@ -258,7 +266,7 @@
 .wmap-travel .mini { width: 100%; justify-content: center; }
 .wmap-travel .mini.off { opacity: 0.55; filter: grayscale(0.6); cursor: not-allowed; }
 .wmap-why { margin: 6px 0 0; padding-left: 1.1em; color: #ffb7a4; line-height: 1.35; }
-.wmap-occ { position: absolute; right: 26px; top: 136px; z-index: 2; width: min(19rem, calc(100vw - 52px)); display: grid; gap: 6px; pointer-events: none; }
+.wmap-occ { position: absolute; right: 26px; top: 112px; z-index: 2; width: min(19rem, calc(100vw - 52px)); display: grid; gap: 6px; pointer-events: none; }
 .wmap-occ .occ-item { padding: 8px 12px; border: 1px solid var(--brass-500); border-left: 3px solid var(--brass-300); border-radius: var(--r-sm); background: var(--glass-strong); font-size: 0.86rem; line-height: 1.3; }
 .wmap-occ .occ-item b { display: block; font: 400 1.05rem var(--font-serif); color: var(--brass-100); }
 .wmap-occ .occ-item span { color: var(--ink-dim); }
@@ -269,14 +277,12 @@
 .wmap-info h3 { margin: 0 0 4px; font: 400 1.35rem var(--font-serif); color: var(--brass-100); text-transform: none; letter-spacing: 0.02em; }
 .wmap-info p { margin: 0 0 6px; line-height: 1.4; }
 .wmap-info .icon-btn { position: absolute; right: 8px; top: 8px; width: 30px; height: 30px; }
-.wmap-hint { position: absolute; left: 28px; bottom: calc(68px + env(safe-area-inset-bottom, 0px)); z-index: 2; margin: 0; color: var(--ink-dim); text-shadow: 0 1px 0 #000; pointer-events: none; }
+.wmap-hint { position: absolute; left: 28px; bottom: calc(118px + env(safe-area-inset-bottom, 0px)); z-index: 2; max-width: 330px; margin: 0; color: var(--ink-dim); text-shadow: 0 1px 0 #000; pointer-events: none; }
 @media (max-width: 860px) {
   .wmap-hint { display: none; }
   .wmap-top { padding: 14px 16px 12px; }
-  .wmap-legend { left: 12px; bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
-  .wmap-legend.wmap-powers { top: auto; bottom: calc(156px + env(safe-area-inset-bottom, 0px)); }
-  .wmap-layers { top: 120px; }
-  .wmap-occ { right: 12px; top: 120px; width: min(15rem, calc(100vw - 24px)); }
+  .wmap-legend.wmap-symbols { left: 12px; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
+  .wmap-occ { right: 12px; top: 130px; width: min(15rem, calc(100vw - 24px)); }
 }
 
 .wmap-short { display: none; }
@@ -295,7 +301,9 @@
   .wmap-regions::-webkit-scrollbar { display: none; }
   .wmap-regions .mini { flex: none; }
   .wmap-legend, .wmap-legend.wmap-powers { display: none; }
-  .wmap-layers { top: auto; left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); max-width: none; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  /* Handy: die zweite Zeile löst sich auf, die Ebenen liegen als wischbare Leiste am unteren Rand */
+  .wmap-row2 { display: contents; }
+  .wmap-layers { position: fixed; z-index: 2; top: auto; left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); max-width: none; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .wmap-layers::-webkit-scrollbar { display: none; }
   .wmap-layers .mini { flex: none; font-size: 0.8rem; padding-inline: 9px; }
   .wmap-info { left: 10px; right: 10px; width: auto; bottom: calc(58px + env(safe-area-inset-bottom, 0px)); max-height: 52vh; overflow-y: auto; }

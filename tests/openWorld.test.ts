@@ -64,7 +64,8 @@ describe('Offene Welt seit 4.5C: Radius 15 600 m, fünf Ringe', () => {
     for (const i of ALL) {
       const d = Math.hypot(i.x, i.z);
       expect(i.ring, i.id).toBe(ringAtDistance(d).ring);
-      expect(i.dangerTier, i.id).toBe(dangerOfDistance(d));
+      // Ausnahme seit 4.5D: die Sturmkrone-Ruinen (Ring 3) bleiben Gefahrenstufe 4
+      expect(i.dangerTier, i.id).toBe(i.id === 'sturmkroneruinen' ? 4 : dangerOfDistance(d));
     }
   });
 

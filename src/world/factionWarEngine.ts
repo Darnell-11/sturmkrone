@@ -88,6 +88,8 @@ const ISLAND_LOOT_KINDS = new Set(['camp', 'ruin', 'treasure', 'boss']);
 /** Größenklasse einer Insel für Ertrag, Garnison und strategischen Wert */
 export function islandTier(def: IslandDef, capital: boolean): IslandTier {
   if (capital) return 'hauptstadt';
+  // Kaiser-Zitadellen (4.5D) zählen wie Festungen, nie als Mega-Insel (sonst hätte jede Macht von Beginn an eine Mega-Insel mehr)
+  if (def.kaiser) return 'festung';
   if (def.mega) return 'mega';
   if (def.marine === 'border' || def.kind === 'marinefort' || def.kind === 'citadel') return 'festung';
   if (def.kind === 'harbor' || def.kind === 'town') return 'hafen';
@@ -107,9 +109,11 @@ export function warIslandOf(def: IslandDef, registry: NationRegistry): WarIsland
   const tier = islandTier(def, capital);
   const theme = def.themePower !== undefined && !!def.site && !def.mega;
   const adventure = ISLAND_LOOT_KINDS.has(def.kind) && !theme && !def.mega;
-  const protectedIsl = capital || def.id === 'ankerglueck' || (def.ring ?? 1) <= 1 || def.kind === 'citadel' || def.marine === 'hq';
-  const conquerable = !protectedIsl && !def.skerry && !def.uncharted && !adventure && (founder !== null || !!def.mega);
-  const produces = (founder !== null || !!def.mega) && !def.skerry && !adventure;
+  // geschützt: Hauptstädte, Ankerglück und Ring 1, Raid-Festungen, Weißwacht und die fünf Kaiser-Zitadellen (4.5D: nie eroberbar, kein Ertrag)
+  const protectedIsl = capital || def.id === 'ankerglueck' || (def.ring ?? 1) <= 1 || def.kind === 'citadel' || def.marine === 'hq' || !!def.kaiser;
+  const megaIsl = !!def.mega && !def.kaiser;
+  const conquerable = !protectedIsl && !def.skerry && !def.uncharted && !adventure && (founder !== null || megaIsl);
+  const produces = (founder !== null || megaIsl) && !def.skerry && !adventure && !def.kaiser;
   // Ertrag: Grundertrag der Größenklasse plus die Waren, die die Insel im Überschuss herstellt
   const y = emptyBag();
   const base = BASE_YIELD[tier];
@@ -126,9 +130,9 @@ export function warIslandOf(def: IslandDef, registry: NationRegistry): WarIsland
   for (const r of RESOURCE_IDS) y[r] *= YIELD_K[r];
   return {
     id: def.id, name: def.name, x: def.x, z: def.z, r: def.r, ring: def.ring ?? 1, tier, founder,
-    conquerable, protected: protectedIsl, produces, mega: !!def.mega,
+    conquerable, protected: protectedIsl, produces, mega: megaIsl,
     strategic: STRATEGIC_VALUE[tier], yield: y,
-    garrisonMax: founder === null && def.mega ? NEUTRAL_GARRISON : GARRISON_BASE[tier],
+    garrisonMax: founder === null && megaIsl ? NEUTRAL_GARRISON : GARRISON_BASE[tier],
   };
 }
 

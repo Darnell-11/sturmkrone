@@ -9,9 +9,11 @@ import type { EnemyKind } from './combat';
 import type { GoodId } from './economy';
 import type { ClusterDef, RiftDef, SiteDef, StructureDef, StructureType } from './settlements';
 import { HOME, S, scatterOf, themeItems, type SiteBiome, type Theme } from './openWorld';
-import { dangerOfDistance } from './balanceConfig';
+import { dangerOfDistance, type DangerTier } from './balanceConfig';
 
-export type MegaId = 'kronenklippe' | 'goudenstad' | 'drachenamboss' | 'chateausoleil' | 'kuroganeschlund' | 'sturmkroneruinen';
+/** Die fünf Kaiser-Inseln in Ring 5 (Phase 4.5D, data/kaiserIslands.ts): sie benutzen dieselben Daten wie die Mega-Inseln (Küste, Bauplätze, Spalten, Bezirke) */
+export type KaiserId = 'britannia' | 'batavia' | 'kaiserdom' | 'solis' | 'tenkoku';
+export type MegaId = 'kronenklippe' | 'goudenstad' | 'drachenamboss' | 'chateausoleil' | 'kuroganeschlund' | 'sturmkroneruinen' | KaiserId;
 export const MEGA_IDS: readonly MegaId[] = ['kronenklippe', 'goudenstad', 'drachenamboss', 'chateausoleil', 'kuroganeschlund', 'sturmkroneruinen'];
 
 /** Bausteine nur der Mega-Inseln (zusätzlich zu denen der Themen-Inseln) */
@@ -60,13 +62,15 @@ export interface MegaIslandSpec {
   districts: MegaDistrictDef[];
   commander: MegaCommanderDef;
   skerries: SkerrySpec[];
+  /** Gefahrenstufe der Insel, wenn sie von der ihres Ortes abweicht (4.5D: die Sturmkrone-Ruinen bleiben Stufe 4, obwohl sie in Ring 3 liegen) */
+  tier?: DangerTier;
   /** Was die Bezirke als Regionalware hergeben */
   goods: GoodId[];
 }
 
-const C = (a: number, f: number, p: number) => ({ a, f, p });
+export const C = (a: number, f: number, p: number) => ({ a, f, p });
 /** Feine Grundwellen jeder Küste (die großen Buchten kommen je Insel dazu) */
-const fine = (p: number) => [C(0.028, 7, p), C(0.013, 13, p * 1.7 + 0.4)];
+export const fine = (p: number) => [C(0.028, 7, p), C(0.013, 13, p * 1.7 + 0.4)];
 
 // ---------- Die sechs Inseln ----------
 
@@ -225,7 +229,7 @@ export const MEGA_ISLANDS: readonly MegaIslandSpec[] = [
     ],
   },
   {
-    id: 'sturmkroneruinen', name: 'Sturmkrone-Ruinen', title: 'Das Verlorene Kaiser-Atoll', power: null, deg: 96, dist: 9960, r: 440, kind: 'ruin', biome: 'klippe',
+    id: 'sturmkroneruinen', name: 'Sturmkrone-Ruinen', title: 'Das Verlorene Kaiser-Atoll', power: null, deg: 96, dist: 9960, r: 440, kind: 'ruin', biome: 'klippe', tier: 4,
     coast: [...fine(5.5), C(0.06, 4, 2.9), C(0.04, 2, 0.9)],
     hills: [{ x: 0, z: 0, r: 105, h: 0.18 }, { x: 250, z: 250, r: 90, h: 0.2 }, { x: -250, z: 250, r: 90, h: 0.22 }, { x: -255, z: -240, r: 90, h: 0.2 }, { x: 250, z: -250, r: 90, h: 0.18 }],
     grass: 0.55, villagers: 0, label: 'Versunkenes Tempel-Archipel',
@@ -262,21 +266,23 @@ function reef(name: string, deg: number, dist: number, info: string): SkerrySpec
   return [0, 1, 2].map((k) => ({ name: `${name} ${['I', 'II', 'III'][k]}`, deg: deg + k * 11, dist: dist + k * 120, r: 30, kind: 'quiet' as const, info }));
 }
 
-function polarPt(deg: number, d: number): [number, number] {
+export function polarPt(deg: number, d: number): [number, number] {
   const a = (deg * Math.PI) / 180;
   return [Math.round(Math.sin(a) * d), Math.round(Math.cos(a) * d)];
 }
-function ringPts(r: number, n: number): [number, number][] {
+export function ringPts(r: number, n: number): [number, number][] {
   return Array.from({ length: n + 1 }, (_, i) => polarPt((i / n) * 360, r));
 }
 
 export const MEGA_BY_ID: Record<MegaId, MegaIslandSpec> = Object.fromEntries(MEGA_ISLANDS.map((m) => [m.id, m])) as Record<MegaId, MegaIslandSpec>;
+/** Weitere Inseln nach dem Muster der Mega-Inseln eintragen (die Kaiser-Inseln, data/kaiserIslands.ts, beim Laden ihres Moduls) */
+export function registerMegaSpec(m: MegaIslandSpec): void { MEGA_BY_ID[m.id] = m; }
 export const isMegaId = (id: string): id is MegaId => id in MEGA_BY_ID;
 
 // ---------- Bausteine der Mega-Inseln ----------
 
 /** Mauerzug aus Zinnenmauer-Modulen (je 6 m) von (x0, z0) nach (x1, z1); Lücken um die Punkte in `gaps` (halbe Breite 5 m) */
-function wallLine(x0: number, z0: number, x1: number, z1: number, gaps: [number, number][] = []): StructureDef[] {
+export function wallLine(x0: number, z0: number, x1: number, z1: number, gaps: [number, number][] = []): StructureDef[] {
   const len = Math.hypot(x1 - x0, z1 - z0), n = Math.max(1, Math.round(len / 6.1));
   const yaw = (Math.atan2(x1 - x0, z1 - z0) * 180) / Math.PI - 90;
   const out: StructureDef[] = [];
@@ -297,7 +303,7 @@ function pen(t: 'zaun' | 'mauer', cx: number, cz: number, w: number, d: number):
   ];
 }
 
-const V = (t: StructureType, x: number, z: number, yaw: number, v: string): StructureDef => ({ t, x, z, yaw, v });
+export const V = (t: StructureType, x: number, z: number, yaw: number, v: string): StructureDef => ({ t, x, z, yaw, v });
 
 /** Bauten eines Mega-Bausteins (+z = vorn) und der Freiraum, den er braucht */
 export function megaItems(theme: Theme | MegaTheme, b: SiteBiome): { items: StructureDef[]; clear: number } {
@@ -480,7 +486,7 @@ const polarWorld = (deg: number, dist: number) => ({ x: Math.round(Math.sin((deg
 export function megaIslandDefs(): IslandDef[] {
   return MEGA_ISLANDS.map((m) => ({
     id: m.id, name: m.name, ...polarWorld(m.deg, m.dist), r: m.r, hill: 0.2, kind: m.kind, palms: 0, rocks: 0, info: m.info, biome: m.biome,
-    site: m.id, placed: true, themePower: m.power, mega: true, level: megaLevel(dangerOfDistance(m.dist), 1),
+    site: m.id, placed: true, themePower: m.power, mega: true, level: megaLevel(m.tier ?? dangerOfDistance(m.dist), 1), dangerTier: m.tier,
   }));
 }
 

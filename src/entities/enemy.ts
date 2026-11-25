@@ -394,7 +394,7 @@ export class Enemy {
     // Break: Schwachstelle offen, mehr Schaden
     if (this.brokenT > 0) h = { ...h, dmg: h.dmg * BOSS.breakDmg };
     // Anti-One-Shot: ein Raid-Endboss verliert durch einen einzelnen Treffer höchstens 8 % seiner Lebenspunkte
-    if (this.def.raid === 'boss') h = { ...h, dmg: Math.min(h.dmg, this.maxHp * RAID_BOSS_HIT_CAP) };
+    if (this.def.raid === 'boss') h = { ...h, dmg: Math.min(h.dmg, this.maxHp * (this.def.hitCap ?? RAID_BOSS_HIT_CAP)) };
     if (h.src && this.threat) this.threat.add(h.src, h.dmg, { ranged: !!h.ranged });
     // Schildträger: Angriffe von vorn prallen ab (außer schwere)
     if (this.def.frontBlock && !h.heavy && this.state !== 'stagger') {

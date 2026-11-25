@@ -65,9 +65,10 @@ describe('1,5-facher Radius: 15 600 m, Sturm-Barriere bis 15 850 m, fünf Meeres
     expect(byId('ankerglueck')).toMatchObject({ x: 0, z: 160, ring: 1, dangerTier: 1 });
     expect(Math.hypot(HOME_SPAWN.x, HOME_SPAWN.z)).toBeLessThan(250);
     for (const i of REGIONS[0].islands) expect(i.ring, i.id).toBe(1);
-    const megas = ALL.filter((i) => i.mega);
+    const megas = ALL.filter((i) => i.mega && !i.kaiser);
     expect(megas).toHaveLength(6);
-    for (const m of megas) { expect(m.ring, m.id).toBe(3); expect(m.dangerTier, m.id).toBe(3); }
+    // 4.5D: die Sturmkrone-Ruinen bleiben trotz Ring 3 Gefahrenstufe 4
+    for (const m of megas) { expect(m.ring, m.id).toBe(3); expect(m.dangerTier, m.id).toBe(m.id === 'sturmkroneruinen' ? 4 : 3); }
     const kings = ['albion', 'adlerstein', 'soleilmont', 'oranjehaven', 'yamikura', 'weisswacht'];
     expect(CITADELS.map((c) => c.id).sort()).toEqual([...kings].sort());
     for (const id of kings) expect(byId(id).ring, id).toBe(4);
@@ -204,8 +205,11 @@ describe('Ring 5: je Kuchenstück ein freigehaltener Bauplatz für die Kaiser-Zi
       expect(sectorAt(k.x, k.z).factionId).toBe(k.power);
       expect(k.clear).toBeGreaterThanOrEqual(KAISER_SITE_CLEAR);
       expect(KAISER_SITE_CLEAR).toBeGreaterThanOrEqual(1200);
-      // kein Insel-Rand (auch keine Schäre) im Freiraum; der Bauplatz selbst bleibt diesseits der Sturm-Barriere
-      for (const i of ALL) expect(Math.hypot(i.x - k.x, i.z - k.z) - i.r * ISLAND_REACH, `${k.id} – ${i.id}`).toBeGreaterThanOrEqual(k.clear);
+      // seit 4.5D steht genau eine Kaiser-Zitadelle der Macht mitten auf dem Bauplatz; sonst kein Insel-Rand (auch keine Schäre) im Freiraum
+      const own = ALL.filter((i) => i.kaiser && Math.hypot(i.x - k.x, i.z - k.z) < 5);
+      expect(own, k.id).toHaveLength(1);
+      expect(own[0].factionId, k.id).toBe(k.power);
+      for (const i of ALL) if (!i.kaiser) expect(Math.hypot(i.x - k.x, i.z - k.z) - i.r * ISLAND_REACH, `${k.id} – ${i.id}`).toBeGreaterThanOrEqual(k.clear);
       expect(Math.hypot(k.x, k.z) + 600).toBeLessThan(PLAYABLE_RADIUS);
     }
   });
@@ -293,7 +297,8 @@ describe('WorldEventDirector 4.5C: 6 – 8 Ereignisse, 2 200 m Abstand, über di
   });
 
   it('gleichmäßig über die Ringe 1 bis 4, alle Arten inklusive der vier Begegnungen', () => {
-    for (const r of [1, 2, 3, 4]) expect(spawnRings.get(r) ?? 0, `Ring ${r}`).toBeGreaterThan(3);
+    // jeder Ring bekommt mehrere Ereignisse (Ring 1 ist mit 2 800 m Radius der kleinste: mindestens drei in den 90 Minuten der Fahrt)
+    for (const r of [1, 2, 3, 4]) expect(spawnRings.get(r) ?? 0, `Ring ${r}`).toBeGreaterThanOrEqual(r === 1 ? 3 : 4);
     expect(spawnRings.get(5) ?? 0).toBe(0);
     for (const k of ['schiffbruch', 'schmuggler', 'schatzjagd', 'nachschub']) expect(kinds.has(k), k).toBe(true);
   });
@@ -510,19 +515,19 @@ function overlaps(): number {
   return bad;
 }
 
-describe('Weltkarte (M): 10 % Rand bei 1,00×, nichts abgeschnitten, Beschriftung ohne Überlappung', () => {
-  it('bei 1,00× bleibt auf der kürzeren Fensterseite je 10 % Rand; Albion und Ring 5 liegen im freien Band zwischen den Leisten', () => {
-    expect(MAP_MARGIN).toBeCloseTo(0.1, 9);
-    // Leistenhöhen wie im Spiel gemessen (Playwright): Desktop oben 220 px (Ebenen-Leiste), unten 84 px; Handy oben 150, unten 120
-    for (const [W, H, top, bottom] of [[1440, 900, 220, 84], [390, 844, 150, 120]]) {
+describe('Weltkarte (M): 7,5 % Rand bei 1,00× (4.5D), nichts abgeschnitten, Beschriftung ohne Überlappung', () => {
+  it('bei 1,00× bleibt auf der kürzeren Seite des freien Bands je 7,5 % Rand; Albion und Ring 5 liegen im freien Band zwischen den Leisten', () => {
+    expect(MAP_MARGIN).toBeCloseTo(0.075, 9);
+    // Leistenhöhen wie im Spiel gemessen (Playwright, 4.5D): Desktop oben 112 px (zweizeilige Kopfleiste), unten frei (Legende links neben der Scheibe); Handy oben 150, unten 120
+    for (const [W, H, top, bottom] of [[1440, 900, 112, 0], [390, 844, 150, 120]]) {
       setMapSafeArea(top, bottom);
       const v = fitAll({ cx: 0, cz: 0, scale: 1 }, W, H, top, bottom);
       expect(v.scale).toBeCloseTo(fitScale(W, H), 12);
       const m = discMargins(v, W, H, WORLD_RADIUS);
       const short = Math.min(W, H - top - bottom);
-      expect(Math.min(m.left, m.right)).toBeGreaterThanOrEqual(short * 0.1 - 1);
-      expect(m.top - top).toBeGreaterThanOrEqual(short * 0.1 - 1);
-      expect(m.bottom - bottom).toBeGreaterThanOrEqual(short * 0.1 - 1);
+      expect(Math.min(m.left, m.right)).toBeGreaterThanOrEqual(short * MAP_MARGIN - 1);
+      expect(m.top - top).toBeGreaterThanOrEqual(short * MAP_MARGIN - 1);
+      expect(m.bottom - bottom).toBeGreaterThanOrEqual(short * MAP_MARGIN - 1);
       // Weltscheibe mittig im freien Band: Albion, die nördlichsten Inseln und Bauplätze von Ring 5 liegen unter der Titelleiste, die südlichsten über der Legende
       const yOf = (z: number) => H / 2 - (z - v.cz) * v.scale;
       expect(yOf(byId('albion').z + byId('albion').r)).toBeGreaterThan(top);

@@ -2,6 +2,7 @@
 // Alles hier sind reine Daten – neue Dörfer, Türme oder Wälder entstehen durch Einträge, nicht durch Code.
 import { THEME_SITES } from './openWorld';
 import { MEGA_SITES } from './megaIslands';
+import { KAISER_SITE_DEFS } from './kaiserIslands';
 
 /** Bauten aus world/architecture.ts */
 export type StructureType =
@@ -43,6 +44,8 @@ export interface RiftDef {
   /** Bauart der Brücken (sonst nach Art: Kanal Holz, Lava Obsidian, Kluft und Sund Stein) */
   bridge?: string;
   name?: string;
+  /** Breite Brücken (Kaiser-Inseln, 4.5D): doppelt so breite Fahrbahn für die Verbände, weitere Öffnung in den Randsperren */
+  wide?: boolean;
 }
 
 /** Eine Siedlung oder ein einzelnes Bauwerk: Lage auf der Insel und alles, was dort steht */
@@ -339,4 +342,4 @@ export const SITES: Record<string, SiteDef> = {
 };
 
 // Die Siedlungen der 24 Themen-Inseln (Phase 4.3B) aus data/openWorld.ts: aus Bausteinen zusammengesetzt, Schlüssel = Insel-Kennung
-Object.assign(SITES, THEME_SITES, MEGA_SITES);
+Object.assign(SITES, THEME_SITES, MEGA_SITES, KAISER_SITE_DEFS);

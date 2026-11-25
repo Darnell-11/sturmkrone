@@ -4,6 +4,8 @@ import type { RiftDef } from '../data/settlements';
 
 /** Halbe Breite der stehengelassenen Brückenstelle entlang der Spalte (Brücke 4,6 m breit, etwas Luft) */
 export const RIFT_GAP = 3.4;
+/** Breite Brücken (Kaiser-Inseln): Öffnung und Fahrbahn so viel breiter */
+export const RIFT_WIDE_K = 2;
 
 /** Abstand der Spaltenwand von der Mittellinie: der Aushub (Sohle) reicht genau bis hierhin */
 export const riftWallOff = (w: number): number => w / 2 + 0.2;
@@ -36,7 +38,8 @@ export function pointAt(pts: readonly (readonly [number, number])[], s: number, 
 }
 
 /** Liegt die Bogenlänge s an einem Übergang (dort bleibt der Boden stehen)? */
-export const inCrossing = (rift: Pick<RiftDef, 'cross'>, total: number, s: number): boolean => {
-  for (let k = 0; k < rift.cross.length; k++) if (Math.abs(s - rift.cross[k] * total) < RIFT_GAP) return true;
+export const inCrossing = (rift: Pick<RiftDef, 'cross' | 'wide'>, total: number, s: number): boolean => {
+  const gap = rift.wide ? RIFT_GAP * RIFT_WIDE_K : RIFT_GAP;
+  for (let k = 0; k < rift.cross.length; k++) if (Math.abs(s - rift.cross[k] * total) < gap) return true;
   return false;
 };

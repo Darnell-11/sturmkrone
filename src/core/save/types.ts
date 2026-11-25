@@ -1,5 +1,6 @@
 // Aufbau eines Spielstands. Bei jeder Änderung: SAVE_VERSION erhöhen und in migrations.ts eine Migration ergänzen.
 import type { MegaSaveState } from '../../data/megaIslands';
+import type { KaiserSaveState } from '../../data/kaiserBattle';
 import { defaultLook, type CharacterLook } from '../../data/characterParts';
 import { DEFAULT_SHIP_LOOK, type AmmoId, type ShipLook } from '../../data/ships';
 import { START_MARINE_STANDING, type FactionId } from '../../data/factions';
@@ -167,6 +168,11 @@ export interface SaveData {
      */
     mega?: MegaSaveState;
     /**
+     * Kaiser-Zitadellen (4.5D, ohne neue Versionsnummer: fehlt das Feld, stehen alle fünf unentdeckt und in voller Stärke): verbleibende Ruhezeit des
+     * besiegten Kaisers (45 Minuten) und die Zahl der Siege je Kaiser, siehe `kaiserToSave`/`cleanKaiserSave` in data/kaiserBattle.ts.
+     */
+    kaiser?: KaiserSaveState;
+    /**
      * Das Ökosystem der Mächte (seit Version 20, Phase 4.5A, world/factionWarEngine.ts): Kassen, Ressourcen, Verträge, Armadas, Großschlachten,
      * Belagerungen und der Besitz eroberbarer Inseln als reine Daten. null = noch keins (es entsteht beim Spielstart aus den Inseldaten neu).
      */
@@ -200,7 +206,7 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
       fame: 0,
       look: defaultLook(faction),
     },
-    world: { boat: null, time: 9, weather: 'klar', seaEvents: null, chart: emptyChart(), mega: {}, factionWar: null },
+    world: { boat: null, time: 9, weather: 'klar', seaEvents: null, chart: emptyChart(), mega: {}, kaiser: {}, factionWar: null },
     progress: defaultProgress(faction),
     gear: { weapon: 0, armor: 0, potions: 3, shrine: 0, trinkets: [], trinket: null, items: {}, heads: [], head: null, bar: ['proviant', null, null, null], owned: [], worn: {} },
     skills: { learned: {}, slots: [null, null, null], sp: 1, awakened: [] },

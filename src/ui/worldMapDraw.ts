@@ -244,7 +244,10 @@ function megaLabel(ctx: CanvasRenderingContext2D, i: IslandDef, known: boolean):
   const lx = Math.min(W - hw - 8, Math.max(hw + 8, sx));
   const rr = Math.max(10, i.r * S * (known ? 1.3 : 1.15));
   const fill = known ? '#FFF3C8' : '#F4E2B8';
-  if (!label(ctx, FONT_MEGA, i.name, lx, sy - rr - 7, fill)) label(ctx, FONT_MEGA, i.name, lx, sy + rr + 17, fill);
+  if (label(ctx, FONT_MEGA, i.name, lx, sy - rr - 7, fill) || label(ctx, FONT_MEGA, i.name, lx, sy + rr + 17, fill)) return;
+  // 4.5D: über und unter der Insel belegt (Kaiser-Krone, Festungs-Symbol)? Dann rechts oder links daneben
+  if (sx + rr + 8 + hw * 2 < W - 8 && label(ctx, FONT_MEGA, i.name, sx + rr + 8 + hw, sy + 5, fill)) return;
+  if (sx - rr - 8 - hw * 2 > 8) label(ctx, FONT_MEGA, i.name, sx - rr - 8 - hw, sy + 5, fill);
 }
 
 /** Vollbild-Weltkarte */
@@ -298,12 +301,12 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
       ctx.strokeStyle = RING_EDGE[k]; ctx.lineWidth = 1.4; ctx.setLineDash([2, 6]);
       ctx.beginPath(); ctx.arc(mx(0), my(0), rOut, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
     }
-    // Ring 5 (4.5C): die fünf freigehaltenen Bauplätze der Kaiser – „Verbotene Gewässer“, gestrichelt in Violett
-    ctx.setLineDash([4, 5]); ctx.lineWidth = 1.3;
+    // Ring 5 (4.5D): Hoheitsgewässer der fünf Kaiser-Zitadellen, ein zarter violetter Hof um jede Insel
+    ctx.setLineDash([4, 5]); ctx.lineWidth = 1.2;
     for (let k = 0; k < KAISER_SITES.length; k++) {
-      const ks = KAISER_SITES[k], rr = ks.clear * S;
+      const ks = KAISER_SITES[k], rr = ks.clear * 0.8 * S;
       if (rr < 3) continue;
-      ctx.fillStyle = 'rgba(120,80,190,0.10)'; ctx.strokeStyle = 'rgba(205,170,255,0.55)';
+      ctx.fillStyle = 'rgba(120,80,190,0.08)'; ctx.strokeStyle = 'rgba(205,170,255,0.45)';
       ctx.beginPath(); ctx.arc(mx(ks.x), my(ks.z), rr, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     }
     ctx.setLineDash([]);
@@ -369,15 +372,45 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
       drawKnownIsland(ctx, i, shape);
       const tp = d.topo?.(i.id);
       if (tp) drawTopo(ctx, i, tp);
-      // Mega-Inseln: goldener Saum als Haupt-Orientierungspunkt
+      // Mega-Inseln: goldener Saum als Haupt-Orientierungspunkt; Kaiser-Zitadellen doppelt (Gold und Violett)
       if (i.mega) { ctx.strokeStyle = 'rgba(227,176,75,0.85)'; ctx.lineWidth = 2; outline(ctx, mx, my, S, i, shape, 1.32); ctx.stroke(); }
-    } else drawOutlineIsland(ctx, i, shape);
+      if (i.kaiser) { ctx.strokeStyle = 'rgba(205,170,255,0.8)'; ctx.lineWidth = 1.4; outline(ctx, mx, my, S, i, shape, 1.5); ctx.stroke(); }
+    } else {
+      drawOutlineIsland(ctx, i, shape);
+      // Doppelinseln und Lagunen (4.5D) zeigen ihre Silhouette auch unentdeckt: der Meeresarm schneidet den Umriss in zwei Hälften
+      const tp = i.r * S > 2.5 ? d.topo?.(i.id) : undefined;
+      if (tp) for (let n = 0; n < tp.rifts.length; n++) {
+        const r = tp.rifts[n];
+        if (r.kind !== 'sund') continue;
+        ctx.strokeStyle = '#173A52'; ctx.lineWidth = Math.max(2.4, r.w * S * 1.4); ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (let q = 0; q < r.pts.length; q++) { const x = sx - r.pts[q][0] * S, y = sy - r.pts[q][1] * S; if (q === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
+        ctx.stroke(); ctx.lineCap = 'butt';
+      }
+    }
+    // Kaiser-Zitadellen zeigen ihre Ringmauern schon als Umriss (auch unentdeckt): zwei Kreise um die Mitte
+    if (i.kaiser && i.r * S > 5) {
+      ctx.strokeStyle = d.known(i.id) ? 'rgba(60,40,24,0.75)' : 'rgba(244,228,186,0.55)'; ctx.lineWidth = Math.max(1, 6 * S);
+      ctx.beginPath(); ctx.arc(sx, sy, i.r * 0.5 * S, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(sx, sy, i.r * 0.25 * S, 0, Math.PI * 2); ctx.stroke();
+    }
     if (sel === i.id) {
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.setLineDash([5, 4]);
       ctx.beginPath(); ctx.arc(sx, sy, Math.max(10, i.r * S * 1.5), 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
     }
   }
-  // Wahrzeichen: Marine-Grenzfestungen und die sechs großen Außenfestungen sind immer zu sehen (auch unentdeckt)
+  // Wahrzeichen: die fünf Kaiser-Zitadellen (Festungs-Silhouette mit Kaiserkrone, 4.5D), Marine-Grenzfestungen und die sechs großen Außenfestungen sind immer
+  // zu sehen (auch unentdeckt)
+  for (let k = 0; k < isl.length; k++) {
+    const i = isl[k];
+    if (!i.kaiser) continue;
+    // rechts neben der Insel (über ihr steht der Name)
+    const kk = zoom >= LABEL_ZOOM ? 1.45 : 1.15;
+    const ix = mx(i.x) + Math.max(12, i.r * S * 1.2) + 13 * kk, iy = my(i.z) + 10 * kk;
+    if (ix < -40 || ix > w + 40 || iy < -40 || iy > h + 40) continue;
+    drawPoi(ctx, ix, iy, 'kaiser', kk, i.factionId ? FACTIONS[i.factionId].color : undefined);
+    placer.tryPlace(ix - 13 * kk, iy - 21 * kk, ix + 13 * kk, iy + 9 * kk, 0);
+  }
   for (let k = 0; k < isl.length; k++) {
     const i = isl[k];
     if (i.kind !== 'marinefort' && i.kind !== 'citadel') continue;
@@ -582,8 +615,6 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
   }
   // Mega-Inseln vor allen anderen Namen: sie sind die Orientierungspunkte der Karte (4.3.6)
   for (let k = 0; k < isl.length; k++) { const i = isl[k]; if (i.mega) megaLabel(ctx, i, d.known(i.id)); }
-  // Kaiser-Bauplätze (4.5C): Namen erst beim Hineinzoomen
-  if (L.sectors && zoom >= LABEL_ZOOM) for (let k = 0; k < KAISER_SITES.length; k++) { const ks = KAISER_SITES[k]; label(ctx, FONT_BADGE, 'Verbotene Gewässer', mx(ks.x), my(ks.z) + 4, 'rgba(215,190,255,0.9)'); }
   // Ringnamen am Südrand jedes Rings (innen), wo keine Machtnamen stehen
   if (L.sectors) for (let k = 0; k < RINGS.length; k++) {
     const r = RINGS[k], rOut = (k === RINGS.length - 1 ? PLAYABLE_RADIUS : r.to) * S;

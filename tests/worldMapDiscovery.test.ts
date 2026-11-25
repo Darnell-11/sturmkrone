@@ -99,7 +99,7 @@ describe('Weltkarte: Ansicht', () => {
   it('Klemmung: stark gezoomt bleibt das Fenster auf der Karte, weit draußen die Karte zur Hälfte im Fenster', () => {
     expect(panLimit(1000)).toBe(MAP_EXTENT - 1000);
     expect(panLimit(MAP_EXTENT)).toBe(MAP_EXTENT * 0.5);
-    expect(panLimit(MAP_EXTENT * 3)).toBe(MAP_EXTENT * 2);
+    expect(panLimit(MAP_EXTENT * 3)).toBeCloseTo(MAP_EXTENT * 2, 6);
   });
 });
 

@@ -17,7 +17,8 @@ import { LabelPlacer, centerOn, labelShown, worldToScreenInto, type MapView } fr
 import { labelRank } from '../src/ui/worldMapDraw';
 
 const ALL: IslandDef[] = REGIONS.flatMap((r) => r.islands);
-const MEGAS = ALL.filter((i) => i.mega);
+// die fünf Kaiser-Zitadellen (4.5D) nutzen das Format der Mega-Inseln, zählen hier aber nicht mit (eigene Prüfung: tests/kaiserCitadels.test.ts)
+const MEGAS = ALL.filter((i) => i.mega && !i.kaiser);
 const SKERRIES = ALL.filter((i) => i.skerry);
 const BP = buildBlueprints(ALL, REGIONS);
 const bpOf = (id: string) => BP.find((b) => b.id === id)!;
@@ -369,7 +370,7 @@ describe('Weltkarte: aufgeräumte Mitte, Mega-Inseln als Orientierungspunkte', (
         worldToScreenInto(v, W, H, i.x, i.z, s);
         if (s.x < -80 || s.x > W + 80 || s.y < -60 || s.y > H + 60) continue;
         const w = i.name.length * (i.mega ? 8.2 : 6.6), y = s.y - i.r * v.scale * 1.15 - 8;
-        if (p.tryPlace(s.x - w / 2, y - 13, s.x + w / 2, y + 3) && i.mega) placedMegas.add(i.id);
+        if (p.tryPlace(s.x - w / 2, y - 13, s.x + w / 2, y + 3) && i.mega && !i.kaiser) placedMegas.add(i.id);
       }
       const r: number[] = [], q: number[] = [];
       for (let a = 0; a < p.n; a++) for (let b = a + 1; b < p.n; b++) {

@@ -1192,12 +1192,15 @@ const BRIDGE_LOOK: Record<string, { deck: string; stone: string; rail: 'stein' |
  * Brücke über eine Spalte (Länge entlang +z, Breite 4,6 m): ebene Fahrbahn knapp über dem Boden, Geländer beiderseits (Kollision), darunter zwei Bögen,
  * die in die Spalte hinabreichen, und Widerlager an den Enden. Obsidianbrücken tragen glühende Fugen, Ruinenbrücken haben Lücken im Geländer.
  */
-function bruecke(len: number, v: string): Built {
+function bruecke(len: number, variant: string): Built {
+  // „stein:breit“: breite Brücke der Kaiser-Inseln (doppelte Fahrbahn, zwei Bögen mehr)
+  const wide = variant.endsWith(':breit');
+  const v = wide ? variant.slice(0, -6) : variant;
   const L = BRIDGE_LOOK[v] ?? BRIDGE_LOOK.stein;
   const g = new Group();
   const deckMat = L.rail === 'holz' ? plank(L.deck) : AM(L.deck, 'stone');
   const stoneMat = AM(L.stone, 'stone');
-  const W = 4.6;
+  const W = wide ? 9.2 : 4.6;
   g.add(box(W, 0.55, len, deckMat, 0, -0.16, 0));
   const boxes: Built['boxes'] = [];
   for (const sx of [-1, 1]) {
@@ -1218,8 +1221,9 @@ function bruecke(len: number, v: string): Built {
     const R = len * 0.46;
     const arch = new Mesh(new TorusGeometry(R, 0.75, 6, 18, Math.PI), stoneMat);
     arch.rotation.y = Math.PI / 2;
-    arch.position.set(sx * 1.55, -0.45 - R, 0);
+    arch.position.set(sx * (W / 2 - 0.75), -0.45 - R, 0);
     g.add(arch);
+    if (wide) { const a2 = arch.clone(); a2.position.x = sx * (W / 2 - 3.1); g.add(a2); }
   }
   // Widerlager
   for (const sz of [-1, 1]) g.add(box(W + 1.2, 4.2, 2.4, stoneMat, 0, -2.2, sz * (len / 2 - 0.4)));

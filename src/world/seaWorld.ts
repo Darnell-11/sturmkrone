@@ -97,6 +97,9 @@ import { actAt, ELEMENT_COLORS } from '../data/skills';
 import { BERNSTEINSEE, REGIONS, regionAt, seaLevelAt, type IslandDef, type RegionDef } from '../data/regions';
 import { FACTIONS, marineStance, type FactionId } from '../data/factions';
 import { RaidDirector, type RaidEnd, type RaidHostWorld, type RaidView } from '../raid/raidDirector';
+import { KaiserLive } from './kaiserLive';
+import type { KaiserSaveState } from '../data/kaiserBattle';
+import type { KaiserId } from '../data/kaiserIslands';
 import { Garrison, makePlayerBanner, playerPalette } from './garrison';
 import { flattenTerrainFootprint, type RaidWorld } from '../raid/raidWorld';
 import type { RaidPartyContext } from '../raid/raidTypes';
@@ -289,6 +292,8 @@ export class SeaWorld {
   onVillage: (id: string) => void = () => {};
   /** Mega-Insel (4.3.6): ein Kampf-Bezirk ist geräumt oder der Insel-Kommandant gefallen (Beute vergibt das Spiel) */
   onMegaVictory: (id: MegaId, name: string, level: number, commander: boolean) => void = () => {};
+  /** Kaiser-Zitadelle (4.5D): der Kaiser ist gefallen (Lohn vergibt das Spiel); `first` = erster Sieg über ihn */
+  onKaiserVictory: (id: KaiserId, first: boolean) => void = () => {};
   /** Schatzsuche (4.5C): die Schatzjäger schlagen zu (Meldung für das Spiel) */
   onHuntAmbush: (ev: WorldEvent, hunters: number) => void = () => {};
   private assets: CharacterAssets | null = null;
@@ -2202,6 +2207,7 @@ export class SeaWorld {
     if (!this.raid) {
       this.updateWorldEvents();
       this.updateMega(dt);
+      this.ensureKaiser()?.update(dt);
       this.updateHunt(dt);
       this.life?.update(dt, (x, z) => this.env.heightAt(x, z), this.ship, this.mode === 'sail');
     }
@@ -2518,7 +2524,7 @@ export class SeaWorld {
         if (dock.phase !== 'moored') return;
         const isl = this.ground.islandAt(this.x, this.z, 30 + ship.cls.W);
         const def = isl ? this.islandDefs[this.ground.islands.indexOf(isl)] : null;
-        if (def && (def.kind === 'town' || def.kind === 'harbor')) {
+        if (def && (def.kind === 'town' || def.kind === 'harbor') && !def.kaiser) {
           this.contextLabel = 'Hafen';
           if (input.pressed('interact')) this.onHarbor(def);
         } else {
@@ -2548,10 +2554,16 @@ export class SeaWorld {
       if (isl) {
         const def = this.islandDefs[this.ground.islands.indexOf(isl)];
         if (this.raidContext(def, input)) return;
+        if (def?.kaiser && this.kaiserLive && !this.kaiserLive.canLand(def)) {
+          // Kaiser-Zitadelle hinter der Seesperre: kein Anlanden, solange die Hafenkette steht
+          this.contextLabel = 'Seesperre';
+          if (input.pressed('interact')) this.onMessage(this.kaiserLive.landReason(def));
+          return;
+        }
         if (this.docking.canDropLadder()) {
           this.contextLabel = 'Ankern & Leiter auswerfen';
           if (input.pressed('interact')) this.goAshore();
-        } else if (def?.kind === 'town' || def?.kind === 'harbor') {
+        } else if ((def?.kind === 'town' || def?.kind === 'harbor') && !def?.kaiser) {
           this.contextLabel = 'Hafen';
           if (input.pressed('interact')) { ship.throttle = 0; this.onHarbor(def); }
         } else {
@@ -2821,6 +2833,8 @@ export class SeaWorld {
       const isl0 = this.ground.islandAt(this.x, this.z, 30 + this.ship.cls.W);
       const d0 = isl0 ? this.islandDefs[this.ground.islands.indexOf(isl0)] : undefined;
       if (!this.raid && d0 && this.isRaidIsland(d0) && !this.occupied.has(d0.id)) { this.onRaidRequest(d0); return; }
+      // Kaiser-Zitadelle (4.5D): anlanden erst, wenn die Hafenkette gefallen ist
+      if (!this.raid && d0?.kaiser && this.kaiserLive && !this.kaiserLive.canLand(d0)) { this.onMessage(this.kaiserLive.landReason(d0)); return; }
       if (this.raid && !this.ship.moored) {
         const l = this.raid.landing(this.x, this.z);
         if (!l.ok) { this.onMessage(l.reason); return; }
@@ -2895,6 +2909,7 @@ export class SeaWorld {
       c.leaveIsland();
     }
     this.leaveMega();
+    this.kaiserLive?.leaveIsland();
     this.events.cancel();
     this.foot?.stopEffects();
     for (const n of this.visitors) { n.dispose(); n.char.holder.removeFromParent(); n.char.dispose(); }
@@ -3022,6 +3037,9 @@ export class SeaWorld {
   startRaid(def: IslandDef, ctx: RaidPartyContext, opts: { level: number; playerId: string; firstClear: boolean; conquestsBefore?: number; owned?: () => LootOwned }): boolean {
     if (this.raid || !this.naval || !this.combat || !this.assets) return false;
     const align = def.factionId === 'marine' ? 'marine' : this.playerFaction === 'pirat' ? 'marine' : 'pirat';
+    // eine laufende Kaiser-Schlacht räumt das Feld (die Instanz ersetzt die Hauptkarte)
+    this.kaiserLive?.leaveIsland();
+    this.kaiserLive?.deactivate();
     this.raid = new RaidDirector(this.raidHost(), def, ctx, { ...opts, align });
     this.raid.begin();
     return true;
@@ -3118,6 +3136,47 @@ export class SeaWorld {
 
   /** Ruhezeiten aller Mega-Inseln für den Spielstand (4.4A) */
   megaSnapshot(): MegaSaveState { return megaToSave(this.megaRt.values(), this.env.clock); }
+
+  // ---------- Kaiser-Zitadellen (4.5D): Seesperre, Festungsringe, Kaiser ----------
+
+  private kaiserLive: KaiserLive | null = null;
+  /** Stand aus dem Spielstand, bis die Kaiser-Schlacht zum ersten Mal gebraucht wird */
+  private kaiserSaved: KaiserSaveState | null = null;
+
+  /** Ruhezeiten und Siege der Kaiser für den Spielstand */
+  kaiserSnapshot(): KaiserSaveState { return this.kaiserLive?.snapshot() ?? this.kaiserSaved ?? {}; }
+
+  /** Stand aus dem Spielstand übernehmen (Laden): besiegte Kaiser ruhen weiter */
+  setKaiserState(saved: KaiserSaveState | null | undefined) {
+    this.kaiserSaved = saved ?? null;
+    this.kaiserLive?.setState(saved);
+  }
+
+  /** Für Karte und Inselinfo */
+  kaiserInfo(id: KaiserId) { return this.ensureKaiser()?.info(id) ?? null; }
+
+  private ensureKaiser(): KaiserLive | null {
+    if (this.kaiserLive) return this.kaiserLive;
+    const n = this.naval, c = this.combat;
+    if (!n || !c) return null;
+    this.kaiserLive = new KaiserLive({
+      scene: this.scene, ground: this.ground, naval: n, combat: c, smoke: this.smoke, sparks: this.sparks, playerShip: this.ship,
+      defs: () => this.islandDefs,
+      footOnIsland: () => {
+        const f = this.foot;
+        if (this.mode !== 'foot' || !f || this.deckGround) return null;
+        return this.ground.islandAt(f.x, f.z, 6) ? { x: f.x, y: f.y, z: f.z } : null;
+      },
+      clock: () => this.env.clock,
+      align: () => (this.playerFaction === 'pirat' ? 'marine' : 'pirat'),
+      message: (t) => this.onMessage(t),
+      banner: (t, s) => this.overlay?.showBanner(t, s),
+      cutin: (t) => this.overlay?.showCutin(t, '#A8322A'),
+      victory: (id, first) => this.onKaiserVictory(id, first),
+    });
+    this.kaiserLive.setState(this.kaiserSaved);
+    return this.kaiserLive;
+  }
 
   /** Ruhezeiten aus dem Spielstand übernehmen (Laden): geräumte Bezirke und besiegte Kommandanten ruhen weiter */
   setMegaState(saved: MegaSaveState | null | undefined) {
@@ -3311,6 +3370,7 @@ export class SeaWorld {
       this.onMessage(msg);
       return;
     }
+    if (def.kaiser && this.ensureKaiser()) { this.kaiserLive!.onAshore(isl, def); return; }
     if (def.mega && isMegaId(def.id)) { this.enterMega(isl, def.id); return; }
     if (def.kind === 'town') { this.onMessage(`Willkommen in ${where}! Sprich mit den Leuten – und probier deine Kombos an den Puppen.`); return; }
     if (def.kind === 'harbor') { this.onMessage(`${where}: ${def.info}`); return; }

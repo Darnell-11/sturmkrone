@@ -31,7 +31,7 @@ export type TravelBlock =
   | 'undiscovered' | 'noPort' | 'blockade' | 'standing' | 'combat' | 'storm' | 'wanted' | 'cargo' | 'notSailing' | 'here' | 'gold' | 'provisions';
 
 export interface TravelCtx {
-  dest: { id: string; name: string; kind: IslandKind; x: number; z: number };
+  dest: { id: string; name: string; kind: IslandKind; x: number; z: number; /** Kaiser-Zitadelle (4.5D): nie ein Reiseziel */ kaiser?: boolean };
   discovered: boolean;
   from: { x: number; z: number };
   /** Ansehen bei der Macht des Zielhafens (0 für Freihäfen) */
@@ -103,7 +103,7 @@ export function travelQuote(c: TravelCtx): TravelQuote {
   const cost = travelCost(dist, c.tariff);
   const why: TravelBlock[] = [];
   if (!c.discovered) why.push('undiscovered');
-  else if (!isTravelPort(c.dest.kind)) why.push('noPort');
+  else if (!isTravelPort(c.dest.kind) || c.dest.kaiser) why.push('noPort');
   else {
     if (c.blockade) why.push('blockade');
     if (c.standing <= FAST_TRAVEL.standingAbove) why.push('standing');

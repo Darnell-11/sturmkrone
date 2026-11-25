@@ -105,6 +105,8 @@ import type { RescueChoice, WorldEvent } from '../world/worldEventDirector';
 import type { EncounterView } from '../ui/menus';
 import { chartLevel, chartOnLoad, chartToSave, chartsSurroundings } from '../world/mapDiscovery';
 import { MEGA_BY_ID, rollMegaLoot, type MegaId } from '../data/megaIslands';
+import { KAISER_SPEC_BY_ID, isKaiserId, type KaiserId } from '../data/kaiserIslands';
+import { rollKaiserLoot } from '../data/kaiserBattle';
 import { travelQuote, type TravelQuote } from '../world/fastTravel';
 import { convoyLoot, deliverConvoy } from '../world/tradeConvoys';
 import { rollWorldBossLoot } from '../naval/worldBosses';
@@ -400,6 +402,7 @@ export class Game {
     this.world.onCrystal = (id) => this.awakenCrystal(id);
     this.world.onVillage = (id) => this.villageGift(id);
     this.world.onMegaVictory = (id, name, level, commander) => this.megaVictory(id, name, level, commander);
+    this.world.onKaiserVictory = (id, first) => this.kaiserVictory(id, first);
     this.world.onRescue = () => {
       if (!this.save) return;
       this.save.progress.stats.rescued++;
@@ -1854,6 +1857,35 @@ export class Game {
     this.inventoryUi?.refresh();
   }
 
+  /**
+   * Kaiser-Zitadelle (4.5D): Sieg über den Kaiser. Gold, Erfahrung und viel Ruhm, Regionalware der Insel, Kaiser-Siegel (neue Währung) und Boss-Siegel der
+   * Macht, Relikt-Splitter, beim ersten Sieg ein mythischer Bauplan (sonst ein Kaiser-Relikt) und sicher ein Stück der Kriegsherren-Beute.
+   */
+  private kaiserVictory(id: KaiserId, first: boolean) {
+    const s = this.save;
+    if (!s) return;
+    const k = KAISER_SPEC_BY_ID[id];
+    const loot = rollKaiserLoot(id, first, Math.random);
+    const gold = Math.round(loot.gold * this.goldMult(true));
+    s.player.gold += gold;
+    this.grantXp(loot.xp, loot.fame);
+    const goods = this.takeGoods(loot.goods);
+    const u = (s.progress.unlocks ??= emptyUnlocks());
+    u.shards = Math.min(9999, u.shards + loot.shards);
+    u.seals[loot.seals.power] = Math.min(999, (u.seals[loot.seals.power] ?? 0) + loot.seals.n);
+    u.kaiserSeals = Math.min(999, (u.kaiserSeals ?? 0) + loot.kaiserSeals);
+    const relics = (u.kaiserRelics ??= []);
+    if (!relics.includes(loot.relic.id)) relics.push(loot.relic.id);
+    s.progress.flags[`kaiser_${id}`] = true;
+    if (loot.warlord) this.dropWarlord(1, k.boss.name);
+    audio.play('victory');
+    this.after(() => this.overlay.showCutin(`${k.boss.name} besiegt!`, '#E3B04B'), 300);
+    this.overlay.showBanner(`${k.boss.name} besiegt!`, `+${fmtInt(gold)} Gold · ${goods} · ${loot.kaiserSeals} Kaiser-Siegel · ${loot.seals.n} Boss-Siegel (${FACTIONS[loot.seals.power].name}) · ${loot.shards} Relikt-Splitter`);
+    this.after(() => this.overlay.showBanner(loot.relic.first ? loot.relic.name : `Kaiser-Relikt: ${loot.relic.name}`, `${loot.relic.info} · Die Zitadelle ruht 45 Minuten.`), 4200);
+    this.persist();
+    this.inventoryUi?.refresh();
+  }
+
   /** Flaschenpost: Schatzkarte zu einer ruhigen Insel */
   private findBottle() {
     const s = this.save;
@@ -2479,6 +2511,7 @@ export class Game {
       close,
       logbook: () => { this.worldMap?.dispose(); this.worldMap = null; this.menus.showMap('logbuch', () => this.resume()); },
       travelQuote: (id) => this.fastTravelQuote(id),
+      kaiserInfo: (id) => (isKaiserId(id) ? this.world.kaiserInfo(id) : null),
       travel: (id) => {
         const err = this.fastTravel(id);
         if (err) return err;
@@ -4352,6 +4385,8 @@ export class Game {
     this.world.seedSeaEvents(data.world.seaEvents ?? null, ((data.meta.created % 4294967296) ^ 0x5eaf00d) >>> 0);
     // Mega-Inseln (4.4A): Ruhezeiten geräumter Bezirke und besiegter Kommandanten überdauern das Laden
     this.world.setMegaState(data.world.mega ?? null);
+    // Kaiser-Zitadellen (4.5D): besiegte Kaiser ruhen weiter (45 Minuten Spielzeit), Siege bleiben gezählt
+    this.world.setKaiserState(data.world.kaiser ?? null);
     // Ökosystem der Mächte (4.5A): Kassen, Verträge, Armadas und Inselbesitz; der Zufall hängt am Spielstand (gleiche Welt nach dem Laden)
     this.world.seedFactionWar(data.world.factionWar ?? null, ((data.meta.created % 4294967296) ^ 0x4a5e5) >>> 0);
     const p = data.player;
@@ -4436,7 +4471,7 @@ export class Game {
     if (!this.save || this.slot === null) return true;
     this.syncFleetState();
     const ws = this.world.getState();
-    this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather, seaEvents: this.world.seaEvents?.snapshot() ?? null, chart: chartToSave(this.world.discovered, this.world.chartZones), mega: this.world.megaSnapshot(), factionWar: this.world.factionWarSnapshot() };
+    this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather, seaEvents: this.world.seaEvents?.snapshot() ?? null, chart: chartToSave(this.world.discovered, this.world.chartZones), mega: this.world.megaSnapshot(), kaiser: this.world.kaiserSnapshot(), factionWar: this.world.factionWarSnapshot() };
     const sh = this.world.ship;
     this.save.ship.hull = sh.maxHull > 0 ? Math.max(0.05, sh.hull / sh.maxHull) : 1;
     this.save.ship.sail = sh.sail;

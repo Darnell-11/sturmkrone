@@ -490,6 +490,31 @@ export const ISLAND_BOUND_K = 1.9;
 /** Prüfpunkte eines Schiffs entlang der Länge: Bug, Mitte, Heck */
 const SHIP_PROBES = [0.44, 0, -0.44];
 
+/**
+ * Raster der Hindernisse einer Insel für das Herausschieben (4.5D): Kaiser-Zitadellen haben weit über tausend Kollider (Mauerringe, Grabenränder);
+ * ab `BLOCKER_GRID_MIN` prüft `constrain` nur die Hindernisse seiner 16-m-Zelle. Jedes Hindernis steht in allen Zellen, die sein Umkreis plus Rand berührt.
+ */
+const BLOCKER_GRID_MIN = 320;
+const BLOCKER_CELL = 16;
+const BLOCKER_MARGIN = 3;
+const NO_BLOCKERS: readonly Blocker[] = [];
+const blockerKey = (ix: number, iz: number): number => (ix + 4096) * 8192 + (iz + 4096);
+interface BlockerGrid { n: number; first: Blocker | undefined; cells: Map<number, Blocker[]> }
+function buildBlockerGrid(list: readonly Blocker[]): BlockerGrid {
+  const cells = new Map<number, Blocker[]>();
+  for (const b of list) {
+    const rr = b.r + BLOCKER_MARGIN;
+    const x0 = Math.floor((b.x - rr) / BLOCKER_CELL), x1 = Math.floor((b.x + rr) / BLOCKER_CELL);
+    const z0 = Math.floor((b.z - rr) / BLOCKER_CELL), z1 = Math.floor((b.z + rr) / BLOCKER_CELL);
+    for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) {
+      const k = blockerKey(i, j);
+      const c = cells.get(k);
+      if (c) c.push(b); else cells.set(k, [b]);
+    }
+  }
+  return { n: list.length, first: list[0], cells };
+}
+
 export class IslandGround implements Ground {
   readonly islands: WalkIsland[] = [];
   /** Stege (Weltkoordinaten): begehbar auch über dem Wasser, die Bohlen liegen auf pier.y */
@@ -746,6 +771,17 @@ export class IslandGround implements Ground {
     return best;
   }
 
+  private blockerGrids = new WeakMap<WalkIsland, BlockerGrid>();
+
+  /** Hindernisse, die bei (x, z) in Frage kommen: alle (kleine Inseln) oder die der Rasterzelle (Kaiser-Zitadellen, Mega-Inseln) */
+  blockersNear(isl: WalkIsland, x: number, z: number): readonly Blocker[] {
+    const bl = isl.blockers;
+    if (bl.length < BLOCKER_GRID_MIN) return bl;
+    let g = this.blockerGrids.get(isl);
+    if (!g || g.n !== bl.length || g.first !== bl[0]) { g = buildBlockerGrid(bl); this.blockerGrids.set(isl, g); }
+    return g.cells.get(blockerKey(Math.floor(x / BLOCKER_CELL), Math.floor(z / BLOCKER_CELL))) ?? NO_BLOCKERS;
+  }
+
   /** Bewegung auf der Insel halten und um Hindernisse herumschieben */
   constrain(x: number, z: number, radius = 0.35): { x: number; z: number } {
     const isl = this.islandAt(x, z, 4);
@@ -758,7 +794,9 @@ export class IslandGround implements Ground {
     // bis zu drei Durchgänge: wer aus einem Objekt geschoben wird, kann im Nachbarobjekt landen (Haus mit Kisten davor)
     for (let pass = 0; pass < 3; pass++) {
     const x0 = x, z0 = z;
-    for (const b of isl.blockers) {
+    const near = this.blockersNear(isl, x, z);
+    for (let bi = 0; bi < near.length; bi++) {
+      const b = near[bi];
       const dx = x - b.x, dz = z - b.z;
       if (b.hw !== undefined) {
         // Rechteck: nächsten Randpunkt suchen und um den Figurenradius herausschieben

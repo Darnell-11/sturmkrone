@@ -227,6 +227,8 @@ export function enemyArmorRating(kind: string, level: number): number {
 export const RAID_BOSS_HIT_CAP = 0.08;
 /** … und der Spielfigur nie mehr als diesen Anteil ihrer Lebenspunkte: man stirbt nie durch einen einzigen Treffer */
 export const PLAYER_HIT_CAP = 0.4;
+/** Kaiser der fünf Kaiser-Zitadellen (4.5D): noch strenger als die Raid-Endbosse – ein Treffer nimmt höchstens 5 % seiner Lebenspunkte */
+export const KAISER_BOSS_HIT_CAP = 0.05;
 
 // ---------- Seegefecht (Phase 4.1) ----------
 

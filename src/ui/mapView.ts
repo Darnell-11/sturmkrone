@@ -13,8 +13,11 @@ export const MAP_ZOOM_MAX = 7;
 export const LABEL_ZOOM = 1.15;
 /** Bis zu dieser Strecke (Pixel) vom Berührungspunkt zählt eine Geste als Klick (Inselwahl), darüber als Verschieben */
 export const CLICK_SLOP = 5;
-/** Außenabstand der Gesamtansicht (4.5C): bei 1,00× bleiben auf der kürzeren Fensterseite je 10 % frei (die Weltscheibe füllt 80 %) */
-export const MAP_MARGIN = 0.1;
+/**
+ * Außenabstand der Gesamtansicht: bei 1,00× bleiben auf der kürzeren Seite des freien Bands je 7,5 % frei (die Weltscheibe füllt 85 %). Seit 4.5D zusammen
+ * mit der zweizeiligen Kopfleiste: die Scheibe ist am Desktop (1440 × 900) rund 40 % größer als in 4.5C (10 % Rand, Leisten 220 / 84 px).
+ */
+export const MAP_MARGIN = 0.075;
 /** Halbe Kantenlänge der Karte (Meter): die Welt samt Rand */
 export const MAP_EXTENT = WORLD_RADIUS / (1 - 2 * MAP_MARGIN);
 
