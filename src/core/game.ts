@@ -38,6 +38,11 @@ import { classCompareRows, evoCompareRows, evoPlan, withTier, type CompareRow, t
 import type { YardView } from '../world/seaWorld';
 import { FAME_THRESHOLDS } from '../data/ranks';
 import { SkillStage } from '../world/skillStage';
+import { FaceOffStage } from '../world/faceOffStage';
+import { ShowcaseStage } from '../world/showcaseStage';
+import { FaceOffScreen } from '../ui/faceOffScreen';
+import { ClassShowcase } from '../ui/classShowcase';
+import { CreationFlow } from '../data/creationFlow';
 import { detectWebGpu, AutoQuality, benchmarkGpu, detectTier, gatherDeviceInfo, needsBench, type DeviceInfo, type Detected } from '../render/quality';
 import { GameRenderer } from '../render/renderer';
 import { setTexDetail } from '../render/texDetail';
@@ -209,6 +214,11 @@ export class Game {
   private autosaveTimer = 0;
   private saveFailedShown = false;
   private stage: EditorStage | null = null;
+  /** 4.7D.1: dreistufiger Einstieg (Face-Off → Aussehen → Klassen-Showcase) und seine Oberflächen */
+  private creation: CreationFlow | null = null;
+  private faceOff: FaceOffScreen | null = null;
+  private showcase: ClassShowcase | null = null;
+  private creationSlot = 0;
   /** 4.6G: Studio-Bühne gerade sichtbar (Meldungen ausgeblendet) */
   private studioShown = false;
   private skyProbe: SkyProbe;
@@ -691,12 +701,15 @@ export class Game {
     if (this.state.is('editor') && this.stage) {
       // Kompassleiste gehört zum Spiel: im Editor und in den Fenstern (Inventar, Fähigkeiten) nicht darüber zeigen
       this.compass.setVisible(false);
-      // ein laufendes Impact-Bild nie im Editor stehen lassen (der Filter liegt auf dem Canvas)
-      this.impactOverlay.apply('none', 0, 0, '#fff', frameDt);
       // Studio: neutrale Farbstimmung, nicht die der letzten Tageszeit
       this.renderer.setMood(0, 0);
       this.renderer.setExposure(1);
+      this.stepCreation(frameDt);
+      if (!this.stage) return;
       this.stage.update(frameDt);
+      // ein laufendes Impact-Bild nie im Editor stehen lassen (der Filter liegt auf dem Canvas) – außer den Impact-Frames der
+      // Ultimate-Vorschau im Klassen-Showcase (4.7D.1)
+      { const sc = this.stage instanceof ShowcaseStage ? this.stage : null; this.impactOverlay.apply(sc ? sc.impactMode : 'none', 0, 0, sc?.impactColor ?? '#fff', frameDt); }
       const portrait = innerHeight > innerWidth || innerWidth < 700;
       const sk = this.stage instanceof SkillStage;
       this.stage.frame(innerWidth / innerHeight, portrait, portrait ? (sk ? 0.64 : 0.48) : Math.min(sk ? 520 : 420, innerWidth * (sk ? 0.52 : 0.44)) / innerWidth);
@@ -4990,11 +5003,11 @@ export class Game {
   // ---------- Charakter-Editor ----------
 
   /** Editor öffnen: für ein neues Spiel (slot) oder um das Aussehen zu ändern */
-  openEditor(newSlot: number | null) {
+  openEditor(newSlot: number | null, resume: EditorResult | null = null) {
     if (!this.assets) { this.hud.toast('Figuren werden noch geladen …'); return; }
     const isNew = newSlot !== null;
     const p = this.save?.player;
-    const initial: EditorResult = isNew || !p
+    const initial: EditorResult = resume ? structuredClone(resume) : isNew || !p
       ? { name: 'Fynn', faction: 'pirat', style: 'schwert', blade: 'saebel', look: createSave('Fynn', 'pirat', GAME_VERSION).player.look }
       : { name: p.name, faction: p.faction, style: p.style, blade: p.blade, look: structuredClone(p.look) };
     this.menus.hide();
@@ -5052,15 +5065,139 @@ export class Game {
       onAuraLevel: (v) => this.settings.update({ gearAura: v }),
       onDone: (r) => {
         close();
+        // 4.7D.1: im Einstieg folgt auf das Aussehen der Klassen-Showcase (Stufe C), erst „Abenteuer starten“ beginnt das Spiel
+        if (isNew && this.creation) { this.stage = null; this.openShowcase(newSlot!, r); return; }
         if (isNew) void this.newGame(newSlot!, r);
         else this.applyLook(r);
       },
       onCancel: () => {
         close();
+        if (isNew && this.creation) { this.creation.back(); this.stage = null; this.openFaceOff(); return; }
         if (isNew) { this.state.set('menu'); this.menus.showSlots(); }
         else { this.state.set('pause'); this.menus.showPause(); }
       },
     });
+  }
+
+  // ---------- 4.7D.1: Einstieg bei „Neues Spiel“ (Face-Off → Aussehen → Klassen-Showcase → Prolog) ----------
+
+  /** „Neues Spiel“: Stufe A, der VS-Face-Off Marine gegen Piraten */
+  openCreation(slot: number) {
+    if (!this.assets) { this.hud.toast('Figuren werden noch geladen …'); return; }
+    this.leaveCreationViews();
+    this.creation = new CreationFlow();
+    this.creationSlot = slot;
+    this.menus.hide();
+    this.openFaceOff();
+  }
+
+  private openFaceOff() {
+    const st = new FaceOffStage();
+    this.stage = st;
+    st.attachVfx(this.world.lendVfx(st.scene, st.camera));
+    st.build(this.assets!);
+    this.renderer.setView(st.scene, st.camera);
+    this.renderer.setEffectSources(null, st.focus);
+    this.state.set('editor');
+    this.faceOff = new FaceOffScreen(this.uiRoot, {
+      onPick: (side) => {
+        const r = this.creation?.pick(side) ?? { ok: false, message: '' };
+        if (r.ok) { st.zoomTo(side); audio.play('cineDrop', 0.8); }
+        return { ok: r.ok, message: r.message };
+      },
+      onHover: (side) => { st.hover = side; },
+      onBack: () => {
+        this.leaveCreationViews();
+        this.creation = null;
+        this.useWorldView();
+        this.renderer.resize();
+        this.state.set('menu');
+        this.menus.showSlots();
+      },
+    });
+  }
+
+  /** Je Bild im Einstieg: Meldungen des Face-Offs, Weißblende und Übergang in den Aussehens-Editor nach dem Zoom */
+  private stepCreation(frameDt: number) {
+    const st = this.stage;
+    if (!this.faceOff || !(st instanceof FaceOffStage)) return;
+    this.faceOff.update(frameDt);
+    if (st.built >= st.total && st.ready) this.faceOff.reveal();
+    const k = st.zoomK;
+    this.faceOff.flash(k <= 0.62 ? 0 : Math.min(1, (k - 0.62) / 0.38));
+    if (!st.zoomDone) return;
+    const slot = this.creationSlot;
+    this.leaveCreationViews();
+    this.flashOut();
+    this.openEditor(slot, null);
+  }
+
+  /** kurze Weißblende, die über dem nächsten Schritt ausklingt */
+  private flashOut() {
+    const f = document.createElement('div');
+    f.className = 'creation-flash';
+    this.uiRoot.appendChild(f);
+    setTimeout(() => f.remove(), 700);
+  }
+
+  /** Stufe C: Klassen-, Formen- & Ultimate-Showcase */
+  private openShowcase(slot: number, r: EditorResult) {
+    const flow = this.creation;
+    if (!flow || !this.assets) return;
+    flow.toClasses();
+    const st = new ShowcaseStage();
+    this.stage = st;
+    st.gearAura.level = this.settings.data.gearAura;
+    st.attachVfx(this.world.lendVfx(st.scene, st.camera));
+    st.showSpec(this.assets, r.look, flow.state.spec);
+    this.renderer.setView(st.scene, st.camera);
+    this.renderer.setEffectSources(null, st.focus);
+    this.state.set('editor');
+    this.showcase = new ClassShowcase(this.uiRoot, {
+      initial: flow.state.spec,
+      name: r.name,
+      onSelect: (spec) => { flow.preview(spec); st.setSpec(spec); },
+      onPlay: (kind, n) => { if (kind === 'combo') st.setSpec(flow.state.spec); else st.playPart(kind, n ?? 0); },
+      onWindow: (rect) => st.setWindow(rect),
+      onBack: () => {
+        this.leaveCreationViews();
+        flow.back();
+        this.openEditor(slot, r);
+      },
+      onStart: (spec) => {
+        flow.preview(spec);
+        const res = flow.start();
+        if (!res) return;
+        this.leaveCreationViews();
+        this.creation = null;
+        this.useWorldView();
+        this.renderer.resize();
+        const out: EditorResult = { ...r, faction: res.faction, style: res.style, blade: res.blade, look: { ...r.look, gloves: res.base === 'faust' ? true : r.look.gloves } };
+        void this.newGame(slot, out);
+      },
+    });
+    st.onPart = (phase, label, act) => this.showcase?.part(phase, label, act);
+  }
+
+  /** Oberflächen und Bühnen des Einstiegs abbauen (die geliehenen Effekt-Pools gehen an die Welt zurück, kein Impact-Filter bleibt stehen) */
+  private leaveCreationViews() {
+    this.faceOff?.dispose(); this.faceOff = null;
+    this.showcase?.dispose(); this.showcase = null;
+    const st = this.stage;
+    if (st instanceof FaceOffStage || st instanceof ShowcaseStage) { st.attachVfx(null); st.dispose(); this.stage = null; }
+    this.world.lendVfx(null, null);
+    this.impactOverlay.apply('none', 0, 0, '#fff', 0);
+  }
+
+  /** Prüfungen: Lage des Einstiegs */
+  get creationView() {
+    const st = this.stage;
+    return {
+      step: this.creation?.step ?? null,
+      faceOff: !!this.faceOff, showcase: !!this.showcase,
+      figures: st instanceof FaceOffStage ? st.built : 0,
+      preview: st instanceof ShowcaseStage ? { phase: st.phase, act: st.act, stats: { ...st.stats } } : null,
+    };
   }
 
   private applyLook(r: EditorResult) {

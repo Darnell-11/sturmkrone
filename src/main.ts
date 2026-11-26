@@ -19,6 +19,7 @@ import './ui/css/talents.css';
 import './ui/css/classes.css';
 import './ui/css/touch.css';
 import './ui/css/prologue.css';
+import './ui/css/creation.css';
 import { Game } from './core/game';
 import { WebGLUnavailableError } from './render/renderer';
 import { loadArchModels, loadEnvModels } from './world/envModels';

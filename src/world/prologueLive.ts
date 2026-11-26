@@ -27,6 +27,8 @@ import type { PlayerFoot } from '../entities/player/playerFoot';
 import type { Environment } from './environment';
 import { TroopRenderer, type TroopView } from '../entities/troops/troopRender';
 import { GruenmarktStage, buildSeabed, frameToWorld, gmCoastZ, type StageFrame } from './prologueStage';
+import { bowDeck, crownBearing, fleetFacing, type FleetPose } from './prologueGeo';
+import { CineDamp, CINE_DAMP, SHOT_ARC_DIVISIONS, punchOffset, shotEase, smoothMax, smoother } from '../graphics/cineSmooth';
 import { PrologueScorePlayer, renderScore } from '../audio/prologueScore';
 import { audio } from '../audio/audio';
 import { glowHub } from '../render/glow';
@@ -66,7 +68,8 @@ export interface PrologueHost {
   /** Flaggschiff aufstellen: eigenes Schiff an (x, z) als „Die Schwarze Krone“, Figur an Deck (Leinen) */
   stageShip(x: number, z: number, heading: number, look: CharacterLook): void;
   /** freie See (weit von Inseln); `away` = so weit weg von diesem Punkt */
-  openSea(away: { x: number; z: number } | null, minD: number): { x: number; z: number };
+  /** freie See; `dir` = bevorzugte Richtung vom Punkt `away` aus (rad, wie `atan2(dx, dz)`) */
+  openSea(away: { x: number; z: number } | null, minD: number, dir?: number): { x: number; z: number };
   setControl(on: boolean): void;
   placeFoot(x: number, z: number, yaw: number): void;
   /** Figur an eine Stelle setzen, ohne ihre Animation anzurühren (Sturz, Sinken, Liegen) */
@@ -95,6 +98,7 @@ const _v = new Vector3();
 const _w = new Vector3();
 const _p = { x: 0, y: 0, z: 0 };
 const _hd = new Vector3();
+const _bow = { x: 0, y: 0, z: 0 };
 const _q = { x: 0, y: 0, z: 0 };
 const C_WHITE = new Color(1, 1, 1);
 const C_DARK = new Color(SCHWARZBART.aura);
@@ -110,7 +114,10 @@ const C_RAY_WARM = new Color(1, 0.9, 0.62);
 const C_FRONT = new Color(0.035, 0.04, 0.06);
 const ADM_COL = ADMIRALS.map((a) => new Color(a.color));
 const smooth = (k: number) => { const x = k < 0 ? 0 : k > 1 ? 1 : k; return x * x * (3 - 2 * x); };
-const ease = (k: number, e: ShotDef['ease']) => { const x = Math.max(0, Math.min(1, k)); return e === 'linear' ? x : e === 'in' ? x * x : e === 'out' ? 1 - (1 - x) * (1 - x) : smooth(x); };
+/** 4.7D.1: Verläufe ohne Knick (Quintik, Sinus-Bögen) aus graphics/cineSmooth.ts */
+const ease = (k: number, e: ShotDef['ease']) => shotEase(k, e);
+/** Plätze der Admirale in der Schlachtreihe (−3 … 3) */
+const ADM_SLOTS = ADMIRALS.map((a) => a.slot);
 const keyed = (keys: readonly (readonly [number, number])[], t: number): number => {
   if (t <= keys[0][0]) return keys[0][1];
   for (let i = 1; i < keys.length; i++) if (t <= keys[i][0]) { const [t0, v0] = keys[i - 1], [t1, v1] = keys[i]; return v0 + (v1 - v0) * smooth((t - t0) / (t1 - t0)); }
@@ -258,7 +265,8 @@ export class PrologueLive {
     const sun = env.palette.sunDir;
     this.town.x = a.x; this.town.z = a.z;
     this.town.h = Math.atan2(sun.x, sun.z) || 0.6;
-    const b = h.openSea(a, 2600);
+    // 4.7D.1: die Krone liegt hinter der Stadt – in der Gewitterfront zeigen die Bugs der Admirale damit auf Grünmarkt UND auf sie
+    const b = h.openSea(a, 2600, crownBearing(this.town));
     this.sea.x = b.x; this.sea.z = b.z; this.sea.h = Math.atan2(a.x - b.x, a.z - b.z) + Math.PI;
     // ---- Flaggschiff, Figur an Deck ----
     h.stageShip(this.sea.x, this.sea.z, this.sea.h, linenLook(playerLook));
@@ -429,6 +437,9 @@ export class PrologueLive {
     const v = (p: V3) => new Vector3(p[0], p[1], p[2]);
     const path = new CatmullRomCurve3(def.path.map(v), false, 'centripetal');
     const look = new CatmullRomCurve3((def.look.length > 1 ? def.look : [def.look[0], def.look[0]]).map(v), false, 'centripetal');
+    // 4.7D.1: feine Bogenlängen-Tabelle (gleichmäßiges Tempo ohne Mikro-Ruckeln)
+    path.arcLengthDivisions = SHOT_ARC_DIVISIONS; look.arcLengthDivisions = SHOT_ARC_DIVISIONS;
+    path.updateArcLengths(); look.updateArcLengths();
     const d0 = def.dolly ? Math.hypot(def.path[0][0] - def.dolly[0], def.path[0][1] - def.dolly[1], def.path[0][2] - def.dolly[2]) : 0;
     return { def, path, look, d0 };
   }
@@ -527,14 +538,23 @@ export class PrologueLive {
     e.ship.place(_p.x, _p.z, f.h + yaw);
   }
 
+  /** 4.7D.1: Schiff in eine berechnete Lage setzen (Bug frontal auf das Ziel) */
+  private poseShip(e: EnemyShip, p: FleetPose) { e.ship.place(p.x, p.z, p.heading); }
+  private readonly fleetPoses: FleetPose[] = [];
+
   /** Admirals-Flaggschiffe zeigen bzw. verbergen (Programme und Texturen sind vorgewärmt; ein Schiff erscheint mit seiner Silhouette) */
   private showAdmirals(on: boolean, only = -1) {
     for (let i = 0; i < this.admirals.length; i++) if (only < 0 || only === i) this.admirals[i].ship.model.group.visible = on;
   }
 
-  /** Szene 2: weit draußen vor Grünmarkt, Bug zur Stadt */
+  /**
+   * Szene 2: weit draußen vor Grünmarkt. 4.7D.1: jeder Bug zeigt frontal auf die Schwarze Krone, die hinter der Stadt liegt (`crownBearing`) –
+   * von den Dächern aus sieht man die sieben Galionsfiguren auf sich zukommen, die äußeren Schiffe leicht eingedreht wie ein Fächer.
+   */
   private placeSilhouettes() {
-    this.admirals.forEach((e, i) => this.placeShip(e, this.town, ADMIRALS[i].slot * FLEET.silhouetteGap, FLEET.silhouetteZ + Math.abs(ADMIRALS[i].slot) * 26, Math.PI));
+    const crown = this.host.ship();
+    fleetFacing(this.town, ADM_SLOTS, FLEET.silhouetteGap, FLEET.silhouetteZ, 26, crown.x, crown.z, this.fleetPoses);
+    this.admirals.forEach((e, i) => this.poseShip(e, this.fleetPoses[i]));
     this.frigates.forEach((e, i) => this.placeShip(e, this.town, (i - 1) * 60, FLEET.silhouetteZ + 60, Math.PI));
   }
 
@@ -991,8 +1011,11 @@ export class PrologueLive {
   /** Schlachtreihe voraus (Rahmen = aktuelle Lage der Schwarzen Krone) */
   private placeAhead() {
     const ship = this.host.ship();
+    // 4.7D.1: Bug und Galionsfigur frontal auf die Schwarze Krone (vorher zeigten die Hecks zur Krone); die Reihe weicht in Szene 4 im
+    // gleichen Tempo zurück, ohne zu drehen – die Ausrichtung bleibt dabei exakt
     const f = { x: ship.x, z: ship.z, h: ship.heading };
-    this.admirals.forEach((e, i) => this.placeShip(e, f, ADMIRALS[i].slot * FLEET.aheadGap, FLEET.aheadZ + Math.abs(ADMIRALS[i].slot) * 18, 0));
+    fleetFacing(f, ADM_SLOTS, FLEET.aheadGap, FLEET.aheadZ, 18, ship.x, ship.z, this.fleetPoses);
+    this.admirals.forEach((e, i) => this.poseShip(e, this.fleetPoses[i]));
   }
 
   private startChase() {
@@ -1084,9 +1107,11 @@ export class PrologueLive {
     const k = Math.min(1, this.chargeT / SCORE_SYNC.beam);
     for (let i = 0; i < this.admirals.length; i++) {
       const e = this.admirals[i];
-      const y = h.waterY(e.ship.x, e.ship.z) + 30;
-      vfx.bolt(e.ship.x, y, e.ship.z, c.x, c.y, c.z, ADM_COL[i], 1.6 + k * 1.6, 0.14, { branches: 1 });
-      if (Math.floor(this.chargeT * 2) !== Math.floor(t0 * 2)) vfx.spiral(e.ship.x, y - 26, e.ship.z, 7, 40, ADM_COL[i], 0.6, 2, 6);
+      // 4.7D.1: jede Aura steigt vom VORDEREN Deck auf (Bug zeigt zur Krone) und strömt von dort in den Kern
+      const p = bowDeck(e.ship.x, e.ship.z, e.ship.heading, e.ship.cls.L, e.ship.model.deckY, FLEET.scale, _bow);
+      const y = h.waterY(p.x, p.z) + p.y;
+      vfx.bolt(p.x, y, p.z, c.x, c.y, c.z, ADM_COL[i], 1.6 + k * 1.6, 0.14, { branches: 1 });
+      if (Math.floor(this.chargeT * 2) !== Math.floor(t0 * 2)) vfx.spiral(p.x, y - 3, p.z, 5, 16 + k * 14, ADM_COL[i], 0.6, 2, 6);
     }
     // Kern: sieben farbige Schalen um einen kleinen weißen Kern, die gegeneinander rotieren und wachsen; dazu Farbbänder, die einströmen
     for (let i = 0; i < 7; i++) {
@@ -1109,6 +1134,17 @@ export class PrologueLive {
     this.beam.t = 0; this.beam.x = c.x; this.beam.y = c.y; this.beam.z = c.z; this.beam.dx = -fx; this.beam.dz = -fz;
     this.beam.len = Math.hypot(ship.x - c.x, ship.z - c.z) + ship.cls.L * 0.5 + 260;
     this.beam.split = false;
+    // 4.7D.1: im Schussmoment entladen sich die sieben Auren sichtbar von den Bugdecks in den Kern – der Strahl kommt von vorn aus der Reihe
+    {
+      const vfx = h.vfx();
+      for (let i = 0; i < this.admirals.length; i++) {
+        const e = this.admirals[i];
+        const p = bowDeck(e.ship.x, e.ship.z, e.ship.heading, e.ship.cls.L, e.ship.model.deckY, FLEET.scale, _bow);
+        const y = h.waterY(p.x, p.z) + p.y;
+        vfx.bolt(p.x, y, p.z, c.x, c.y, c.z, ADM_COL[i], 4.2, 0.32, { branches: 2 });
+        vfx.pressureRing(p.x, y, p.z, e.ship.heading, true, 9, ADM_COL[i], 0.4);
+      }
+    }
     h.impact(3);
     h.shake(1);
     this.fovPunch = 1;
@@ -1528,6 +1564,8 @@ export class PrologueLive {
     this.shotId = id;
     this.shotV = v;
     this.shotT = 0;
+    // 4.7D.1: jede neue Einstellung ist ein Schnitt – die Glättung übernimmt den ersten Stand ohne Übergang
+    this.damp.cut();
     // neue Kopf-Nahaufnahme: der geglättete Kopf springt an den echten (sonst gleitet die Kamera vom letzten Stand heran)
     this.headFresh = true;
   }
@@ -1562,9 +1600,15 @@ export class PrologueLive {
     this.headS.set(this.sb.x + this.headRel.x, this.sb.y + this.headRel.y, this.sb.z + this.headRel.z);
   }
   private readonly fr = { x: 0, z: 0, h: 0, y: 0 };
+  /** 4.7D.1: Glättung der Regie-Kamera (Blickrichtung, Sichtfeld) und ob sie im letzten Bild führte (sonst ist das nächste Bild ein Schnitt) */
+  private readonly damp = new CineDamp();
+  private camLive = false;
+  private camWas = false;
 
   /** Kamera setzen, solange die Regie sie führt (alles außer dem spielbaren Teil der Deck-Szene); liefert true, wenn übernommen */
   camera(cam: PerspectiveCamera, frameDt: number): boolean {
+    this.camLive = this.camWas;
+    this.camWas = false;
     if (this.ended) return false;
     if (!this.preparing && this.playable) return false;
     const sc = this.director.scene;
@@ -1572,13 +1616,22 @@ export class PrologueLive {
     if (!this.preparing && sc === 'gegenangriff' && this.director.state.play) return false;
     const id = this.shotId;
     if (!id) return false;
+    this.camWas = true;
     const shot = this.shots.get(id);
     if (shot?.def.frame === 'kopf') this.followHead(frameDt);
     if (shot) this.splineCam(shot, cam);
     else if (!this.dynamicCam(id, cam)) return false;
+    // 4.7D.1: butterweich – war die Regie-Kamera im letzten Bild nicht aktiv (Deck-Szene, Strand), ist das hier ein Schnitt; innerhalb einer
+    // Einstellung folgen Blickrichtung und Sichtfeld einer kritisch gedämpften Feder (der Ort bleibt exakt: der Strahl-Ritt fährt 210 m/s)
+    if (!this.camLive) this.damp.cut();
+    this.camLive = true;
+    const D = this.damp;
+    D.step(frameDt, this.camLook.x - this.camPos.x, this.camLook.y - this.camPos.y, this.camLook.z - this.camPos.z, this.fov);
+    const reach = Math.max(1, this.camPos.distanceTo(this.camLook));
     cam.position.copy(this.camPos);
-    cam.fov = this.fov + this.fovPunch * 9 * (this.fovPunch > 0.6 ? -1 : 1) * 0.6;
-    cam.lookAt(this.camLook);
+    // Sichtfeld-Stoß als gedämpfte Schwingung (vorher sprang er beim Umschlag in einem Bild um 6,5°)
+    cam.fov = D.fov + punchOffset(this.fovPunch);
+    cam.lookAt(this.camPos.x + D.dx * reach, this.camPos.y + D.dy * reach, this.camPos.z + D.dz * reach);
     cam.updateProjectionMatrix();
     // Licht und Schatten folgen dem Blick (Grünmarkt liegt weit weg von der Figur)
     this.focus.copy(this.camLook);
@@ -1608,7 +1661,8 @@ export class PrologueLive {
       this.camPos.x += Math.sin(t * 23.1) * k; this.camPos.y += Math.sin(t * 19.7 + 1) * k * 0.6; this.camPos.z += Math.cos(t * 21.3) * k;
     }
     // die Kamera taucht nie unter die Wellen (außer unter Wasser)
-    if (!this.sb.under) { const wy = this.host.waterY(this.camPos.x, this.camPos.z) + 0.8; if (this.camPos.y < wy) this.camPos.y = wy; }
+    // 4.7D.1: weiche Untergrenze (eine Welle hebt die Kamera ohne Knick an)
+    if (!this.sb.under) { const wy = this.host.waterY(this.camPos.x, this.camPos.z) + 0.8; this.camPos.y = smoothMax(this.camPos.y, wy, CINE_DAMP.waterSoft); }
     void cam;
   }
 
@@ -1645,7 +1699,7 @@ export class PrologueLive {
         const e = this.admirals[this.shotV];
         if (!e) return false;
         const dx = ship.x - e.ship.x, dz = ship.z - e.ship.z, d = Math.hypot(dx, dz) || 1;
-        const k = Math.min(1, this.shotT / 0.8);
+        const k = Math.sin(Math.min(1, this.shotT / 0.8) * Math.PI / 2);
         const dist = 175 - 22 * k;
         // seitlich nach AUSSEN versetzt (weg von der Mitte der Schlachtreihe): so steht nie ein Nachbarschiff zwischen Kamera und Admiral
         const mid = this.admirals[ADMIRALS.findIndex((a) => a.slot === 0)] ?? e;
@@ -1682,7 +1736,7 @@ export class PrologueLive {
       case 's7_auf': {
         // die Sicht steigt auf und zieht sich aus dem Kopf zurück in die Verfolger-Sicht
         const P = this.pov, f = h.foot();
-        const k = smooth(this.shotT / 2.4);
+        const k = smoother(this.shotT / 2.4);
         const px = f?.x ?? P.x, py = f?.y ?? P.y, pz = f?.z ?? P.z;
         const back = Math.sin(P.yaw), backz = Math.cos(P.yaw);
         const tx = px - back * 4.4, ty = py + 2.4, tz = pz - backz * 4.4;

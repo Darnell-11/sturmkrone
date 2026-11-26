@@ -349,7 +349,8 @@ export class Menus {
       <button class="secondary" data-a="back">Zurück</button>`,
       {
         continue: (id) => g.continueGame(+id),
-        new: (id) => g.openEditor(+id),
+        // 4.7D.1: dreistufiger Einstieg (VS-Face-Off → Aussehen → Klassen-Showcase)
+        new: (id) => g.openCreation(+id),
         export: (id) => {
           const d = g.saves.load(+id).data;
           if (!d) return;

@@ -1,11 +1,9 @@
 import type { StyleId } from '../data/animations';
 import {
   BEARD_STYLES, BODY_TYPES, CLOTH_COLORS, COATS, COSMETIC_HATS, EYE_COLORS, EYE_STYLES, FACE_SHAPES, GENDERS, GLASSES, HAIR_COLORS, HAIR_STYLES, MOUTH_STYLES,
-  BROW_STYLES, LOOK_PRESETS, OUTFITS, SKIN_TONES, defaultLook, genderOf, randomLook, type CharacterLook, type Gender, type PresetTab,
+  BROW_STYLES, LOOK_PRESETS, OUTFITS, SKIN_TONES, genderOf, randomLook, type CharacterLook, type Gender, type PresetTab,
 } from '../data/characterParts';
 import type { ExpressionId } from '../data/characterRig';
-import { BLADE_SPEC, CLASS_BASES, SPECS, SPECS_OF, type ClassBase } from '../data/classes';
-import { roleBadge } from './classScreen';
 import type { Faction, FightStyle } from '../core/save/types';
 import { CAT_LABEL, EQUIP_BY_ID, GEAR_CATS, catOf, type EquipDef, type GearCat } from '../data/equipment';
 import { SETS, describeBonus, type GearSet } from '../data/gear';
@@ -77,11 +75,6 @@ export const EDITOR_LABEL_MAX = 26;
 
 export const BLADES: Record<string, string> = { saebel: 'Säbel', langklinge: 'Langklinge', zweihaender: 'Zweihänder', doppel: 'Doppelklingen' };
 export const STYLES: Record<FightStyle, string> = { faust: 'Faustkämpfer', schwert: 'Schwertkämpfer', effekt: 'Faji-Wirker' };
-const STYLE_INFO: Record<FightStyle, string> = {
-  faust: 'Schnelle Kombos, Tritte und Luftangriffe. Stark gegen viele Gegner auf engem Raum.',
-  schwert: 'Klingenkunst mit vier Waffenarten – jede mit eigenen Kombos und Reichweite.',
-  effekt: 'Formt Faji zu Geschossen und Elementen. Kämpft lieber auf Abstand und lädt starke Angriffe auf.',
-};
 /** Kurzbeschreibung der Staturen (Schlüssel = Körperbau im Spielstand) */
 export const BODY_INFO: Record<string, string> = { schmal: 'Schlank und flink', normal: 'Ausgewogen und sportlich', kraeftig: 'Breit und kräftig' };
 const SLOT_ICON: Record<GearCat, string> = { head: '🪖', shoulder: '🛡', chest: '🦺', cloak: '🧣', hands: '🧤', legs: '👖', feet: '🥾', mainhand: '🗡', offhand: '🔪' };
@@ -107,7 +100,10 @@ export function lookForGender(look: CharacterLook, g: Gender): CharacterLook {
 }
 
 export interface EditorOptions {
-  /** Neues Spiel: Name und Fraktion wählbar */
+  /**
+   * Neues Spiel (4.7D.1: Stufe B des Einstiegs): reiner Aussehens-Editor mit Name – Fraktion kommt aus dem Face-Off, Klasse, Formen und
+   * Ultimate aus dem Showcase danach („Weiter zur Klassenwahl“). Keine Klassen-, Stil- oder Waffenwahl.
+   */
   isNew: boolean;
   /** Anime-Figuren (VRoid): nur die Optionen, die dort wirken */
   anime?: boolean;
@@ -181,8 +177,9 @@ export class CharacterEditor {
           ${grp('Licht', 'light', STAGE_LIGHTS, this.light)}
         </div>
         <div class="ed3-banner" hidden></div>
+        ${o.isNew ? '<div class="ed3-step">Schritt 2 von 3 · Dein Aussehen</div>' : ''}
         <div class="editor-preview">
-          <button class="mini" data-p="attack">Angriff</button><button class="mini" data-p="heavy">Schwer</button>
+          ${o.isNew ? '' : '<button class="mini" data-p="attack">Angriff</button><button class="mini" data-p="heavy">Schwer</button>'}
           <button class="mini" data-p="roll">Rolle</button><button class="mini" data-p="cheer">Jubeln</button><button class="mini" data-p="wave">Winken</button>
           <button class="mini" data-p="spin" aria-pressed="true">⟳ Drehen</button>
         </div>
@@ -268,8 +265,11 @@ export class CharacterEditor {
     this.o.onLight?.(l);
   }
 
+  /** Stil der Vorschau: in der Erschaffung unbewaffnet (die Klasse folgt erst im Showcase), sonst die Klasse der Figur */
+  private stageStyle(): StyleId { return this.o.isNew ? 'faust' : styleIdOf(this.r.style, this.r.blade); }
+
   private changed(rerender = true) {
-    this.o.onChange(this.r, styleIdOf(this.r.style, this.r.blade), this.tryOn);
+    this.o.onChange(this.r, this.stageStyle(), this.tryOn);
     const ban = this.root.querySelector<HTMLElement>('.ed3-banner');
     if (ban) {
       ban.hidden = !this.tryOn;
@@ -348,15 +348,6 @@ export class CharacterEditor {
         if (genderOf(this.r.look) === 'female') this.r.look.beard = 'keiner';
         break;
       }
-      case 'faction': {
-        this.r.faction = v as Faction;
-        const keepName = this.r.name !== 'Fynn' && this.r.name !== 'Rekrut';
-        this.r.look = { ...defaultLook(this.r.faction, genderOf(this.r.look)), gloves: this.r.style === 'faust' };
-        if (!keepName) this.r.name = this.r.faction === 'pirat' ? 'Fynn' : 'Rekrut';
-        break;
-      }
-      case 'style': this.r.style = v as FightStyle; this.r.look.gloves = v === 'faust'; break;
-      case 'blade': this.r.blade = v; break;
       case 'random': {
         // 4.6G.2: Zufall behält das gewählte Geschlecht (Frisur und Bart passend dazu)
         const keep = { gloves: this.r.look.gloves };
@@ -511,47 +502,12 @@ export class CharacterEditor {
       return head + `<p class="tier-desc">${this.o.gear ? 'Alle Rüstungssets des Spiels. Probiere jedes Stück an – auch das, was du noch nicht gefunden hast. Anprobe ändert nichts an deiner Ausrüstung.' : 'So sieht Ausrüstung später aus. Probiere die Sets an, um zu sehen, worauf du hinarbeitest.'}</p>`
         + armorySets(owned).map((s) => this.setCard(s)).join('');
     }
-    // 4.7B: die Klasse wählt man nur bei der Erschaffung (Reiter „Körper“) – hier steht sie fest
-    const fixed = true;
-    if (fixed) {
-      return head
-        + this.opt('Klasse', `<p class="tier-desc"><b>${esc(this.o.classInfo ?? `${STYLES[r.style]}${r.style === 'schwert' ? ` · ${BLADES[r.blade as keyof typeof BLADES] ?? ''}` : ''}`)}</b> – ${this.o.isNew ? 'wählbar im Reiter „Körper“' : 'gewählt zu Spielbeginn. Deine Klasse steht fest, ihr Klassenbaum wächst mit dir (Taste N)'}.</p>`)
-        + this.opt('Ausrüstungs-Aura', `<label class="slider">Stärke<input type="range" min="0" max="100" step="5" value="${Math.round(this.auraLevel * 100)}" data-k="gearaura"><output>${Math.round(this.auraLevel * 100)} %</output></label><p class="tier-desc">Funken, Glut und Sternenstaub der Kaiser- und Endgame-Sets samt leuchtender Säume. Im Kampf werden sie stärker.</p>`);
-    }
+    // 4.7B: die Klasse steht seit Spielbeginn fest; 4.7D.1: bei der Erschaffung wählt man sie erst im Showcase (Schritt 3)
     return head
-      + this.opt('Kampfstil', `<div class="chips">${Object.entries(STYLES).map(([id, l]) => `<button data-a="style" data-v="${id}" aria-pressed="${r.style === id}">${l}</button>`).join('')}</div><p class="tier-desc">${STYLE_INFO[r.style]}</p>`)
-      + (r.style === 'schwert' ? this.opt('Klingenform', `<div class="chips">${Object.entries(BLADES).map(([id, l]) => `<button data-a="blade" data-v="${id}" aria-pressed="${r.blade === id}">${l}</button>`).join('')}</div><p class="tier-desc">Außerhalb des Kampfs steckt die Klinge auf dem Rücken – unter einem Umhang verdeckt.</p>`) : '')
+      + this.opt('Klasse', this.o.isNew
+        ? '<p class="tier-desc">Klasse, Formen und Ultimate wählst du im nächsten Schritt – mit Vorschau jeder Klasse.</p>'
+        : `<p class="tier-desc"><b>${esc(this.o.classInfo ?? `${STYLES[r.style]}${r.style === 'schwert' ? ` · ${BLADES[r.blade as keyof typeof BLADES] ?? ''}` : ''}`)}</b> – gewählt zu Spielbeginn. Deine Klasse steht fest, ihr Klassenbaum wächst mit dir (Taste N).</p>`)
       + this.opt('Ausrüstungs-Aura', `<label class="slider">Stärke<input type="range" min="0" max="100" step="5" value="${Math.round(this.auraLevel * 100)}" data-k="gearaura"><output>${Math.round(this.auraLevel * 100)} %</output></label><p class="tier-desc">Funken, Glut und Sternenstaub der Kaiser- und Endgame-Sets samt leuchtender Säume. Im Kampf werden sie stärker.</p>`);
-  }
-
-  /**
-   * 4.7B: Klassenwahl der Erschaffung mit Rollen-Karten – Faustkämpfer (Pfad bei Konrad), Schwertkämpfer mit einer von vier Klingen,
-   * Faji-Wirker (Element am Kristall). Die Wahl gilt für immer.
-   */
-  private classPicker(): string {
-    const r = this.r;
-    const base: ClassBase = r.style === 'effekt' ? 'faji' : r.style === 'faust' ? 'faust' : 'schwert';
-    const styleOf: Record<ClassBase, FightStyle> = { faust: 'faust', schwert: 'schwert', faji: 'effekt' };
-    const bases = (['faust', 'schwert', 'faji'] as ClassBase[]).map((b) => {
-      const d = CLASS_BASES[b];
-      const on = b === base;
-      return `<button class="cls-card${on ? ' on' : ''}" data-a="style" data-v="${styleOf[b]}" aria-pressed="${on}" style="--cc:${on ? '#FFD27A' : '#B98D34'};--ca:#43300D">
-        <span class="cls-card-h"><span class="cls-crest">${d.icon}</span><b>${esc(d.label)}</b></span><span class="small">${esc(d.desc)}</span></button>`;
-    }).join('');
-    let sub = '';
-    if (base === 'schwert') {
-      sub = `<div class="cls-cards">${SPECS_OF.schwert.map((id) => {
-        const sp = SPECS[id];
-        const blade = Object.keys(BLADE_SPEC).find((k) => BLADE_SPEC[k] === id) ?? 'saebel';
-        const on = r.blade === blade;
-        return `<button class="cls-card${on ? ' on' : ''}" data-a="blade" data-v="${blade}" aria-pressed="${on}" style="--cc:${sp.color};--ca:${sp.accent}">
-          <span class="cls-card-h"><span class="cls-crest">${sp.crest}</span><b>${esc(sp.label)}</b>${roleBadge(sp.role)}</span><span class="small">${esc(sp.desc)}</span></button>`;
-      }).join('')}</div>`;
-    } else {
-      const ids = SPECS_OF[base];
-      sub = `<p class="tier-desc">${esc(CLASS_BASES[base].choice)}</p><div class="chips">${ids.map((id) => `<span class="cls-card" style="--cc:${SPECS[id].color};--ca:${SPECS[id].accent}">${SPECS[id].crest} ${esc(SPECS[id].label)} ${roleBadge(SPECS[id].role)}</span>`).join('')}</div>`;
-    }
-    return this.opt('Klasse (für immer)', `<div class="cls-cards">${bases}</div>${sub}<p class="tier-desc">Kein Waffen- oder Stilwechsel: deine Klasse und ihr 60-Punkte-Klassenbaum begleiten dich das ganze Spiel. Die Geistes-Faji (Q/R/T/G) erwacht für alle Klassen.</p>`);
   }
 
   private render() {
@@ -560,9 +516,8 @@ export class CharacterEditor {
     let body = '';
     switch (this.tab) {
       case 'koerper':
-        body = (this.o.isNew ? this.opt('Name', `<input id="ed-name" class="txt" maxlength="24" value="${esc(r.name)}" autocomplete="off" aria-label="Name">`) + this.classPicker()
-          + this.opt('Fraktion', `<div class="chips"><button data-a="faction" data-v="pirat" aria-pressed="${r.faction === 'pirat'}">Pirat</button><button data-a="faction" data-v="marine" aria-pressed="${r.faction === 'marine'}">Marine</button></div>
-            <p class="tier-desc">${r.faction === 'pirat' ? 'Du beginnst als Schiffsjunge – frei, laut und ohne Gesetz.' : 'Du beginnst als Rekrut der Marine – mit Befehlen, Ehre und Pflicht.'}</p>`) : '')
+        body = (this.o.isNew ? this.opt('Name', `<input id="ed-name" class="txt" maxlength="24" value="${esc(r.name)}" autocomplete="off" aria-label="Name">`)
+          + `<p class="tier-desc">${r.faction === 'pirat' ? 'Du beginnst als Schiffsjunge der Schwarzen Krone – frei, laut und ohne Gesetz.' : 'Du beginnst als Rekrut der Marine – mit Befehlen, Ehre und Pflicht.'}</p>` : '')
           + this.opt('Geschlecht', `<div class="ed3-cards">${(Object.keys(GENDERS) as Gender[]).map((g) => `<button class="ed3-pick" data-a="gender" data-v="${g}" aria-pressed="${genderOf(r.look) === g}"><b>${GENDERS[g]}</b><small>${GENDER_INFO[g]}</small></button>`).join('')}</div>`)
           + this.presets('koerper')
           + this.opt('Statur', this.cards('body', BODY_TYPES, BODY_INFO))
@@ -614,7 +569,7 @@ export class CharacterEditor {
       <div class="editor-body">${body}</div>
       <div class="row editor-foot">
         <button class="secondary" data-a="cancel">${this.o.isNew ? 'Zurück' : 'Abbrechen'}</button>
-        <button class="primary" data-a="done">${this.o.isNew ? 'Ablegen!' : 'Fertig'}</button>
+        <button class="primary" data-a="done">${this.o.isNew ? 'Weiter zur Klassenwahl ▶' : 'Fertig'}</button>
       </div>`;
   }
 

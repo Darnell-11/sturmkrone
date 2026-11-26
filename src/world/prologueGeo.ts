@@ -66,3 +66,55 @@ export function gmHeight(x: number, z: number): number {
   if (wsum <= 0) return h;
   return h + (acc / wsum - h) * Math.min(1, wsum);
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// 4.7D.1: Ausrichtung der Admirals-Flaggschiffe – Bug und Galionsfigur frontal auf die Schwarze Krone
+// ---------------------------------------------------------------------------------------------------------------
+
+/** Kurs (rad, wie `Ship.heading`: vorn = (sin h, cos h)), mit dem ein Schiff bei (x, z) mit dem Bug genau auf (tx, tz) zeigt */
+export const headingToward = (x: number, z: number, tx: number, tz: number): number => Math.atan2(tx - x, tz - z);
+
+/** Winkel zwischen der Bugrichtung eines Kurses und der Richtung zu einem Ziel (rad, 0 = Bug genau auf dem Ziel) */
+export function bowError(x: number, z: number, heading: number, tx: number, tz: number): number {
+  const fx = Math.sin(heading), fz = Math.cos(heading);
+  const dx = tx - x, dz = tz - z, l = Math.hypot(dx, dz) || 1;
+  return Math.acos(Math.max(-1, Math.min(1, (fx * dx + fz * dz) / l)));
+}
+
+/** Lage eines Schiffs (Welt) */
+export interface FleetPose { x: number; z: number; heading: number }
+
+/**
+ * Schlachtreihe vor einem Ziel: Plätze im Rahmen `f` (lokal x = Platz × Abstand quer, z = Tiefe + |Platz| × Staffel), jedes Schiff mit dem Bug
+ * frontal auf den Zielpunkt (Welt) – die Reihe „zielt“ wie ein Fächer auf die Schwarze Krone (je weiter außen, desto stärker eingedreht).
+ */
+export function fleetFacing(f: StageFrame, slots: readonly number[], gap: number, depth: number, stagger: number, tx: number, tz: number, out: FleetPose[] = []): FleetPose[] {
+  const p = { x: 0, y: 0, z: 0 };
+  out.length = slots.length;
+  for (let i = 0; i < slots.length; i++) {
+    const s = slots[i];
+    frameToWorld(f, s * gap, 0, depth + Math.abs(s) * stagger, p);
+    const o = out[i] ?? (out[i] = { x: 0, z: 0, heading: 0 });
+    o.x = p.x; o.z = p.z; o.heading = headingToward(p.x, p.z, tx, tz);
+  }
+  return out;
+}
+
+/**
+ * Bugdeck eines (maßstäblich vergrößerten) Schiffs: Punkt auf dem Vorschiff, von dem aus die Admirale ihre Aura in den Kern senden –
+ * `ahead` = Anteil der halben Länge vor der Mitte, Höhe über der Wasserlinie aus Deckshöhe und Maßstab.
+ */
+export function bowDeck(x: number, z: number, heading: number, length: number, deckY: number, scale: number, out: { x: number; y: number; z: number }, ahead = 0.82, lift = 2.5) {
+  const r = length * 0.5 * ahead * scale;
+  out.x = x + Math.sin(heading) * r;
+  out.z = z + Math.cos(heading) * r;
+  out.y = deckY * scale + lift;
+  return out;
+}
+
+/**
+ * Lage der hohen See (Sturmjagd) zu Grünmarkt: die Schwarze Krone liegt HINTER der Stadt (lokales −z des Stadt-Rahmens), die Admirale kommen
+ * von See (lokales +z) – in der Gewitterfront zeigen ihre Bugs damit zugleich auf Grünmarkt, die Kamera auf den Dächern und die Krone.
+ * Liefert den bevorzugten Winkel (rad) vom Stadt-Ursprung aus, wie `Math.atan2(dx, dz)`.
+ */
+export const crownBearing = (town: StageFrame): number => town.h + Math.PI;

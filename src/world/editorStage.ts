@@ -50,22 +50,24 @@ export class EditorStage {
   autoSpin = true;
   private style: StyleId = 'saebel';
   /** Schein hinter der Figur in der Farbe der Seltenheit des gezeigten Stücks */
-  private aura = new PointLight(0xffffff, 0, 6, 1.6);
-  private ring!: Mesh;
+  protected aura = new PointLight(0xffffff, 0, 6, 1.6);
+  protected ring!: Mesh;
+  /** 4.7D.1: Boden des Drehtellers (Face-Off und Klassen-Showcase blenden ihn aus bzw. ersetzen ihn) */
+  protected floor!: Mesh;
   /** 4.6G: Laterne für die Nachtstimmung (immer da, nur die Stärke wechselt) */
-  private lantern = new PointLight(0xffb060, 0, 7, 1.8);
-  private key!: DirectionalLight;
-  private back!: DirectionalLight;
-  private fill!: DirectionalLight;
-  private hemi!: HemisphereLight;
-  private bgU!: { top: { value: Color }; bottom: { value: Color } };
-  private floorMat!: MeshToonMaterial;
+  protected lantern = new PointLight(0xffb060, 0, 7, 1.8);
+  protected key!: DirectionalLight;
+  protected back!: DirectionalLight;
+  protected fill!: DirectionalLight;
+  protected hemi!: HemisphereLight;
+  protected bgU!: { top: { value: Color }; bottom: { value: Color } };
+  protected floorMat!: MeshToonMaterial;
   private camFocus: StageFocus = 'ganz';
   /** 4.6G: Haltung, Licht, Aura der Endgame-Ausrüstung, geliehene Effekt-Pools */
   pose: StagePose = 'hafen';
   light: StageLight = 'sonne';
   readonly gearAura = new GearAura();
-  private vfx: AnimeVfxForge | null = null;
+  protected vfx: AnimeVfxForge | null = null;
   private fxT = 0;
   private gustT = 0;
   private readonly tmpC = new Color();
@@ -91,6 +93,7 @@ export class EditorStage {
     const floor = new Mesh(new CylinderGeometry(1.6, 1.75, 0.18, 48), this.floorMat);
     floor.position.y = -0.09;
     floor.receiveShadow = true;
+    this.floor = floor;
     const rim = new Mesh(new TorusGeometry(1.6, 0.03, 8, 72), toon({ color: 0xe3b04b, spec: 0.8, unique: true }));
     rim.rotation.x = Math.PI / 2;
     rim.position.y = 0.0;

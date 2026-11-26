@@ -1,0 +1,207 @@
+/* Phase 4.7D.1 – Einstieg bei „Neues Spiel“: VS-Face-Off (Stufe A) und Klassen-, Formen- & Ultimate-Showcase (Stufe C).
+   Bildschirmfüllende Schichten lassen Zeiger durch (`#ui > *` schaltet sie sonst ein); nur Knöpfe und Tafeln fangen Klicks. */
+
+/* ---------------------------------------------------------------- Stufe A: VS-Face-Off */
+.faceoff { position: fixed; inset: 0; z-index: var(--z-screen); overflow: hidden; pointer-events: none !important; font-family: var(--font-text); color: var(--ink); }
+.faceoff > * { pointer-events: none; }
+.faceoff .fo-side, .faceoff .fo-top { pointer-events: auto; }
+.faceoff .fo-top > * { pointer-events: auto; }
+
+/* Tönung der beiden Hälften (diagonal) */
+.fo-tint { position: absolute; inset: 0; transition: opacity 0.35s; }
+.fo-tint-m { clip-path: polygon(0 0, 57% 0, 46% 100%, 0 100%); background: linear-gradient(115deg, rgba(10, 40, 80, 0.55), rgba(4, 30, 40, 0.18) 55%, transparent 80%); }
+.fo-tint-p { clip-path: polygon(57% 0, 100% 0, 100% 100%, 46% 100%); background: linear-gradient(245deg, rgba(90, 8, 14, 0.5), rgba(60, 30, 4, 0.16) 55%, transparent 80%); }
+.faceoff[data-hover='marine'] .fo-tint-m, .faceoff[data-hover='pirat'] .fo-tint-p { opacity: 0.55; }
+/* die gesperrte Marine-Seite liegt unter einem kühlen Schleier */
+.fo-tint-m::after { content: ''; position: absolute; inset: 0; background: repeating-linear-gradient(115deg, rgba(160, 200, 255, 0.05) 0 2px, transparent 2px 9px); }
+
+/* Aura-Wellen an den Rekruten */
+.fo-wave { position: absolute; bottom: 9%; width: 34vmin; height: 12vmin; }
+.fo-wave-m { left: 26%; transform: translateX(-50%); --c: var(--fo-m); }
+.fo-wave-p { left: 74%; transform: translateX(-50%); --c: var(--fo-p); }
+.fo-wave i { position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--c); box-shadow: 0 0 18px var(--c), inset 0 0 14px var(--c); opacity: 0; animation: fo-wave 2.4s ease-out infinite; }
+.fo-wave i:nth-child(2) { animation-delay: 0.8s; }
+.fo-wave i:nth-child(3) { animation-delay: 1.6s; }
+@keyframes fo-wave { 0% { transform: scale(0.35); opacity: 0.85; } 100% { transform: scale(1.5); opacity: 0; } }
+
+/* Der Riss: drei gezackte Bahnen flackern gegeneinander, darunter ein breiter Lichtschein */
+.fo-rift { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.fo-rift path { fill: none; vector-effect: non-scaling-stroke; stroke-linejoin: miter; }
+.fo-rift .glow { stroke: url(#fo-rg); stroke-width: 22px; opacity: 0.32; filter: blur(7px); animation: fo-pulse 1.1s ease-in-out infinite; }
+.fo-rift .core { stroke: #fff; stroke-width: 3px; filter: drop-shadow(0 0 6px #fff) drop-shadow(0 0 14px var(--fo-p2)); opacity: 0; animation: fo-flick 0.36s steps(1) infinite; }
+.fo-rift .c1, .fo-rift .g1 { animation-delay: 0.12s; }
+.fo-rift .c2, .fo-rift .g2 { animation-delay: 0.24s; }
+@keyframes fo-flick { 0%, 30% { opacity: 1; } 33%, 100% { opacity: 0; } }
+@keyframes fo-pulse { 0%, 100% { opacity: 0.22; } 50% { opacity: 0.5; } }
+
+/* Klickflächen (die Diagonale trennt sie genau am Riss) */
+.fo-side { position: absolute; inset: 0; border: 0; padding: 0; margin: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; display: block; text-align: left; -webkit-tap-highlight-color: transparent; }
+.fo-m { clip-path: polygon(0 0, 57% 0, 46% 100%, 0 100%); }
+.fo-p { clip-path: polygon(57% 0, 100% 0, 100% 100%, 46% 100%); text-align: right; }
+.fo-side:focus-visible { outline: none; }
+.fo-side:focus-visible .fo-head b { text-decoration: underline; }
+.fo-head { position: absolute; top: max(62px, calc(env(safe-area-inset-top, 0px) + 54px)); display: flex; flex-direction: column; gap: 2px; max-width: 40vw; }
+.fo-m .fo-head { left: max(20px, env(safe-area-inset-left, 0px)); }
+.fo-p .fo-head { right: max(20px, env(safe-area-inset-right, 0px)); align-items: flex-end; }
+.fo-head b { font: 400 clamp(2.2rem, 6.2vw, 4.8rem) / 0.95 var(--font-serif); letter-spacing: 0.06em; text-transform: uppercase; }
+.fo-m .fo-head b { color: #cfeaff; text-shadow: 0 0 18px var(--fo-m), 0 0 4px var(--fo-m2), 0 3px 0 #02060c; }
+.fo-p .fo-head b { color: #ffe1b0; text-shadow: 0 0 20px var(--fo-p), 0 0 5px var(--fo-p2), 0 3px 0 #0c0204; }
+.fo-head small { font: 700 clamp(0.7rem, 1.6vw, 0.95rem) var(--font-text); letter-spacing: 0.05em; color: var(--ink-dim); text-shadow: 0 1px 2px #000; }
+
+/* Schloss der Marine */
+.fo-lock { position: absolute; left: 25%; top: 27%; transform: translate(-50%, -50%); width: clamp(52px, 9vmin, 92px); color: #d8e8ff; filter: drop-shadow(0 0 10px var(--fo-m)) drop-shadow(0 0 2px #fff); animation: fo-lockglow 2.6s ease-in-out infinite; }
+.fo-lock svg { width: 100%; height: auto; display: block; }
+@keyframes fo-lockglow { 0%, 100% { opacity: 0.82; } 50% { opacity: 1; } }
+.fo-locktext { position: absolute; left: 25%; top: calc(27% + clamp(40px, 6.5vmin, 66px)); transform: translateX(-50%); width: min(36vw, 22rem); text-align: center; padding: 7px 12px; border: 1px solid rgba(150, 200, 255, 0.4); border-radius: 10px; background: rgba(4, 12, 24, 0.72); font: 700 clamp(0.72rem, 1.5vw, 0.95rem) var(--font-text); color: #dbeaff; box-shadow: 0 0 18px rgba(47, 184, 255, 0.25); }
+.fo-m.shake .fo-lock { animation: fo-shake 0.45s; }
+@keyframes fo-shake { 0%, 100% { transform: translate(-50%, -50%); } 20% { transform: translate(-58%, -50%) rotate(-8deg); } 40% { transform: translate(-42%, -50%) rotate(7deg); } 60% { transform: translate(-55%, -50%) rotate(-4deg); } 80% { transform: translate(-46%, -50%); } }
+
+/* Knopf der Piraten */
+.fo-cta { position: absolute; right: max(20px, env(safe-area-inset-right, 0px)); bottom: max(24px, calc(env(safe-area-inset-bottom, 0px) + 18px)); padding: 13px 22px; border-radius: 999px; font: 800 clamp(0.95rem, 2vw, 1.2rem) var(--font-text); letter-spacing: 0.04em; color: #1a0605; background: linear-gradient(180deg, #ffe08a, #ffb43a 55%, #e0782a); box-shadow: 0 0 0 2px #2a0a06, 0 0 24px var(--fo-p), 0 6px 0 #6a1808; animation: fo-cta 1.6s ease-in-out infinite; }
+.fo-cta em { font-style: normal; margin-left: 4px; }
+@keyframes fo-cta { 0%, 100% { box-shadow: 0 0 0 2px #2a0a06, 0 0 18px var(--fo-p), 0 6px 0 #6a1808; } 50% { box-shadow: 0 0 0 2px #2a0a06, 0 0 38px var(--fo-p), 0 6px 0 #6a1808; } }
+.fo-p:hover .fo-cta, .fo-p:focus-visible .fo-cta { transform: translateY(-2px) scale(1.04); }
+
+/* VS-Emblem in der Mitte */
+.fo-vs { position: absolute; left: 51.5%; top: 50%; transform: translate(-50%, -50%); width: clamp(96px, 16vmin, 170px); aspect-ratio: 1; display: grid; place-items: center; }
+.fo-ring { position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle, rgba(255, 255, 255, 0.95) 0 22%, rgba(255, 230, 170, 0.5) 34%, transparent 66%), conic-gradient(from 0deg, var(--fo-m), var(--fo-m2), #fff, var(--fo-p2), var(--fo-p), #fff, var(--fo-m)); mask: radial-gradient(circle, #000 0 62%, transparent 64%, #000 66% 70%, transparent 72%); -webkit-mask: radial-gradient(circle, #000 0 62%, transparent 64%, #000 66% 70%, transparent 72%); animation: fo-spin 3s linear infinite, fo-beat 0.9s ease-in-out infinite; }
+@keyframes fo-spin { to { rotate: 360deg; } }
+@keyframes fo-beat { 0%, 100% { scale: 1; } 50% { scale: 1.08; } }
+.fo-vs-t { position: relative; font: 400 clamp(2.6rem, 7.5vmin, 4.6rem) / 1 var(--font-serif); color: #fff; letter-spacing: -0.04em; -webkit-text-stroke: 2px #1a0d06; text-shadow: -3px 0 0 var(--fo-m), 3px 0 0 var(--fo-p), 0 0 22px #fff, 0 4px 0 #000; transform: skewX(-8deg); animation: fo-beat 0.9s ease-in-out infinite; }
+.fo-sparks { position: absolute; inset: 0; }
+.fo-sparks i { position: absolute; left: 50%; top: 50%; width: 4px; height: 14px; margin: -7px 0 0 -2px; border-radius: 2px; background: linear-gradient(#fff, var(--fo-p2)); box-shadow: 0 0 8px #fff; transform: rotate(var(--a)) translateY(0); opacity: 0; animation: fo-spark 0.9s ease-out infinite; animation-delay: var(--d); }
+.fo-sparks i:nth-child(odd) { background: linear-gradient(#fff, var(--fo-m2)); }
+@keyframes fo-spark { 0% { transform: rotate(var(--a)) translateY(-20px) scaleY(1); opacity: 1; } 100% { transform: rotate(var(--a)) translateY(calc(var(--r) * -1)) scaleY(0.3); opacity: 0; } }
+
+/* Kopfzeile, Meldung */
+.fo-top { position: absolute; left: 0; right: 0; top: max(10px, env(safe-area-inset-top, 0px)); display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 max(12px, env(safe-area-inset-left, 0px)); }
+.fo-top .mini { background: var(--glass-strong); }
+.fo-step { font: 800 0.68rem var(--font-text); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-dim); text-shadow: 0 1px 2px #000; padding-right: max(8px, env(safe-area-inset-right, 0px)); }
+.fo-msg { position: absolute; left: 50%; bottom: max(90px, 16vh); transform: translateX(-50%); width: min(92vw, 30rem); padding: 12px 16px; border-radius: 12px; border: 1px solid rgba(150, 200, 255, 0.45); background: rgba(4, 12, 24, 0.9); box-shadow: 0 0 26px rgba(47, 184, 255, 0.35); display: flex; flex-direction: column; gap: 4px; font-size: 0.95rem; }
+.fo-msg b { color: #cfeaff; }
+.fo-msg.pop { animation: fo-pop 0.35s ease-out; }
+@keyframes fo-pop { 0% { transform: translateX(-50%) scale(0.85); opacity: 0; } 100% { transform: translateX(-50%) scale(1); opacity: 1; } }
+
+/* Zoom in die Piraten-Seite: Anime-Speedlines, alles andere tritt zurück, am Ende Weißblende */
+.fo-speed { position: absolute; inset: -20%; opacity: 0; transition: opacity 0.25s; }
+.fo-speed i { position: absolute; left: 50%; top: 50%; width: 3px; height: 55%; margin-left: -1.5px; transform-origin: 50% 0; background: linear-gradient(rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.85)); transform: rotate(var(--a)) translateY(28%); animation: fo-line 0.28s linear infinite; animation-delay: var(--d); }
+@keyframes fo-line { 0% { transform: rotate(var(--a)) translateY(40%); opacity: 0; } 50% { opacity: 1; } 100% { transform: rotate(var(--a)) translateY(18%); opacity: 0; } }
+.faceoff.zoom .fo-speed { opacity: 1; }
+.faceoff.zoom-p .fo-speed { left: 10%; }
+.faceoff.zoom .fo-side, .faceoff.zoom .fo-top, .faceoff.zoom .fo-vs, .faceoff.zoom .fo-tint, .faceoff.zoom .fo-wave { opacity: 0; transition: opacity 0.3s; }
+.faceoff.zoom .fo-rift { opacity: 0; transition: opacity 0.5s; }
+.fo-flash { position: absolute; inset: 0; background: #fff; opacity: var(--fo-flash, 0); }
+.faceoff:not(.in) .fo-side, .faceoff:not(.in) .fo-vs, .faceoff:not(.in) .fo-rift, .faceoff:not(.in) .fo-top .fo-step { opacity: 0; }
+/* Eröffnungsblende: darunter entstehen die Figuren (je eine pro Bild), dann hebt sie sich */
+.fo-veil { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 55%, #0b0f1a, #020306 70%); display: grid; place-items: center; transition: opacity 0.55s ease-out; }
+.fo-veil span { font: 800 0.75rem var(--font-text); letter-spacing: 0.24em; text-transform: uppercase; color: var(--ink-dim); animation: fo-pulse 1.1s ease-in-out infinite; }
+.faceoff.in .fo-veil { opacity: 0; }
+.faceoff.in .fo-vs { animation: fo-in 0.6s 0.25s cubic-bezier(0.2, 1.6, 0.4, 1) backwards; }
+.faceoff.in .fo-rift, .faceoff.in .fo-side { transition: opacity 0.4s 0.15s; }
+@keyframes fo-in { 0% { transform: translate(-50%, -50%) scale(2.6); opacity: 0; } 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; } }
+
+/* Hochformat: Köpfe kleiner, Schloss und Knopf etwas höher */
+@media (orientation: portrait), (max-width: 700px) {
+  .fo-head { max-width: 42vw; }
+  .fo-head b { font-size: min(7.4vw, 2.6rem); letter-spacing: 0.03em; }
+  .fo-head small { display: none; }
+  .fo-lock { top: 24%; }
+  .fo-locktext { top: calc(24% + 44px); width: 40vw; padding: 6px 8px; }
+  /* im Hochformat stehen die Rekruten anders im Bild: die 3D-Ringe unter ihren Füßen genügen */
+  .fo-wave { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fo-rift .core { animation: none; opacity: 1; }
+  .fo-sparks, .fo-speed { display: none; }
+}
+
+/* ---------------------------------------------------------------- Stufe B: Schritt-Anzeige im Aussehens-Editor */
+.ed3-step { position: absolute; left: 50%; top: max(10px, env(safe-area-inset-top, 0px)); transform: translateX(-50%); font: 800 0.66rem var(--font-text); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-dim); text-shadow: 0 1px 2px #000; white-space: nowrap; pointer-events: none; }
+
+/* ---------------------------------------------------------------- Stufe C: Klassen-, Formen- & Ultimate-Showcase */
+.showcase { position: fixed; inset: 0; z-index: var(--z-screen); display: grid; grid-template-columns: minmax(13rem, 17rem) minmax(0, 1fr) minmax(19rem, 27rem); grid-template-rows: auto minmax(0, 1fr); gap: 10px;
+  padding: max(10px, env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px)) max(10px, env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
+  pointer-events: none !important; color: var(--ink); --cc: #ffd27a; --ca: #43300d; }
+.showcase > * { pointer-events: auto; }
+.showcase .sc-stage { pointer-events: none; }
+.showcase .sc-stage .sc-play { pointer-events: auto; }
+.sc-top { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sc-top .mini { background: var(--glass-strong); }
+.sc-step { font: 800 0.68rem var(--font-text); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-dim); text-shadow: 0 1px 2px #000; }
+
+.sc-list { margin: 0; max-width: none; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.sc-group h3 { margin: 0 0 6px; font: 400 1.05rem var(--font-serif); color: var(--brass-200); display: flex; gap: 6px; align-items: center; }
+.sc-group h3 .ic { width: 1.4em; text-align: center; }
+.sc-specs { display: flex; flex-direction: column; gap: 5px; }
+.sc-spec { display: flex; align-items: center; gap: 8px; width: 100%; margin: 0; padding: 6px 8px; text-align: left; border-radius: 10px; border: 1px solid var(--glass-edge-soft); background: rgba(0, 0, 0, 0.25); color: var(--ink); font: inherit; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+.sc-spec .cr { width: 1.9em; height: 1.9em; display: grid; place-items: center; border-radius: 50%; background: radial-gradient(circle, var(--cc), var(--ca)); color: #fff; text-shadow: 0 1px 2px #000; flex: none; }
+.sc-spec .tx { display: flex; flex-direction: column; min-width: 0; }
+.sc-spec b { font-size: 0.92rem; line-height: 1.1; }
+.sc-spec small { font-size: 0.7rem; color: var(--ink-dim); }
+.sc-spec:hover { border-color: var(--glass-edge); }
+.sc-spec[aria-pressed='true'] { background: linear-gradient(90deg, color-mix(in srgb, var(--cc) 30%, transparent), rgba(0, 0, 0, 0.2)); border-color: var(--cc); box-shadow: 0 0 12px color-mix(in srgb, var(--cc) 40%, transparent); }
+
+.sc-stage { position: relative; min-height: 0; }
+/* das 3D-Bild füllt das ganze Canvas: ein riesiger Schatten deckt alles außerhalb des Fensters ab (die Tafeln liegen darüber) */
+.sc-window { position: absolute; inset: 0; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--cc) 55%, transparent); box-shadow: 0 0 0 200vmax rgba(5, 7, 12, 0.97), inset 0 0 40px rgba(0, 0, 0, 0.55), 0 0 22px color-mix(in srgb, var(--cc) 25%, transparent); pointer-events: none; }
+.sc-list, .sc-info, .sc-top { position: relative; z-index: 1; }
+.sc-stage { z-index: 0; }
+.sc-part { position: absolute; left: 12px; right: 12px; top: 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; opacity: 0; transition: opacity 0.25s; pointer-events: none; }
+.sc-part.on { opacity: 1; }
+.sc-part b { font: 400 clamp(1rem, 2.1vw, 1.45rem) var(--font-serif); color: #fff; text-shadow: 0 0 12px var(--cc), 0 2px 0 #000; }
+.sc-acts { display: none; margin: 0; padding: 0; list-style: none; gap: 6px; flex-wrap: wrap; }
+.sc-part.ult .sc-acts { display: flex; }
+.sc-acts li { font: 800 0.62rem var(--font-text); letter-spacing: 0.1em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: rgba(0, 0, 0, 0.55); color: var(--ink-dim); border: 1px solid transparent; }
+.sc-acts li.on { color: #fff; border-color: var(--ca); background: color-mix(in srgb, var(--cc) 45%, #000); }
+.sc-play { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; gap: 8px; }
+.sc-play .mini:not(.brass) { background: var(--glass-strong); }
+
+.sc-info { margin: 0; max-width: none; padding: 12px 12px 10px; display: flex; flex-direction: column; min-height: 0; }
+.sc-body { flex: 1; min-height: 0; overflow-y: auto; touch-action: pan-y; padding-right: 4px; }
+.sc-foot { padding-top: 8px; }
+.sc-foot .primary { width: 100%; margin: 0; }
+.sc-head { display: flex; align-items: center; gap: 10px; }
+.sc-head small { font: 800 0.66rem var(--font-text); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-dim); }
+.sc-head h2 { margin: 0; font-size: 1.5rem; line-height: 1.05; }
+.sc-head h2::after { display: none; }
+.sc-crest { width: 2.6rem; height: 2.6rem; flex: none; display: grid; place-items: center; font-size: 1.3rem; border-radius: 50%; background: radial-gradient(circle, var(--cc), var(--ca)); box-shadow: 0 0 16px color-mix(in srgb, var(--cc) 60%, transparent); }
+.sc-role { margin: 8px 0 4px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.85rem; color: var(--ink-dim); }
+.sc-desc { margin: 4px 0 8px; font-size: 0.92rem; }
+.sc-info h3 { margin: 12px 0 6px; font: 400 1.02rem var(--font-serif); color: var(--brass-200); }
+.sc-strengths { margin: 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: 3px; font-size: 0.88rem; }
+.sc-strengths li::marker { content: '✦  '; color: var(--cc); }
+.sc-forms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.sc-form { display: grid; grid-template-columns: auto 1fr; grid-template-areas: 'rn rn' 'ic b' 'sm sm'; column-gap: 6px; align-items: center; margin: 0; padding: 6px 7px; text-align: left; border-radius: 9px; border: 1px solid var(--glass-edge-soft); background: rgba(0, 0, 0, 0.28); color: var(--ink); font: inherit; cursor: pointer; }
+.sc-form .rn { grid-area: rn; font: 800 0.58rem var(--font-text); letter-spacing: 0.14em; text-transform: uppercase; color: var(--cc); }
+.sc-form .ic { grid-area: ic; font-size: 1.15rem; }
+.sc-form b { grid-area: b; font-size: 0.8rem; line-height: 1.1; }
+.sc-form small { grid-area: sm; font-size: 0.68rem; line-height: 1.2; color: var(--ink-dim); display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.sc-form:hover, .sc-form.live { border-color: var(--cc); box-shadow: 0 0 10px color-mix(in srgb, var(--cc) 40%, transparent); }
+.sc-ult { padding: 9px 10px; border-radius: 10px; border: 1px solid var(--ua); background: linear-gradient(135deg, color-mix(in srgb, var(--uc) 22%, #000), rgba(0, 0, 0, 0.4)); }
+.sc-ult b { display: block; color: #fff; text-shadow: 0 0 10px var(--uc); margin-bottom: 4px; }
+.sc-ult ol { margin: 0 0 6px; padding-left: 1.2em; font-size: 0.78rem; display: flex; flex-direction: column; gap: 3px; }
+.sc-ult em { font-style: normal; font-weight: 800; color: var(--uc); }
+.sc-ult.live { box-shadow: 0 0 18px color-mix(in srgb, var(--uc) 55%, transparent); }
+.sc-choice { margin: 10px 0 0; }
+
+/* Hochformat / schmale Fenster: Auswahl als Leiste, Vorschau oben, Angaben darunter */
+@media (orientation: portrait), (max-width: 900px) {
+  .showcase { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(30vh, 36vh) minmax(0, 1fr); gap: 7px; }
+  .sc-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; padding: 6px; gap: 10px; touch-action: pan-x; }
+  .sc-group { flex: none; }
+  .sc-group h3 { font-size: 0.82rem; margin-bottom: 4px; }
+  .sc-specs { flex-direction: row; }
+  .sc-spec { width: auto; padding: 4px 8px 4px 5px; }
+  .sc-spec b { font-size: 0.78rem; white-space: nowrap; }
+  .sc-spec small { display: none; }
+  .sc-step { font-size: 0.58rem; letter-spacing: 0.08em; }
+  .sc-info { padding: 10px 10px 8px; }
+  .sc-play { bottom: 8px; }
+  .sc-play .mini { padding: 6px 10px; font-size: 0.8rem; }
+  .sc-top .mini { padding: 6px 10px; font-size: 0.8rem; white-space: nowrap; }
+  .sc-part b { font-size: 0.95rem; }
+}
+
+/* Weißblende nach dem Zoom in die Piraten-Seite (klingt über dem Aussehens-Editor aus) */
+.creation-flash { position: fixed; inset: 0; z-index: var(--z-overlay); background: #fff; pointer-events: none !important; animation: cr-flash 0.65s ease-out forwards; }
+@keyframes cr-flash { 0% { opacity: 1; } 100% { opacity: 0; } }

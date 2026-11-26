@@ -3091,7 +3091,7 @@ export class SeaWorld {
         // die pechschwarzen Segel bleiben im Prolog sichtbar (die Kino-Einstellungen zeigen das ganze Schiff)
         w.setSailFade(w.ship, false);
       },
-      openSea: (away, minD) => w.openSeaSpot(away, minD),
+      openSea: (away, minD, dir) => w.openSeaSpot(away, minD, dir),
       setControl: (on) => { w.prologueHold = !on; },
       placeFoot: (x, z, yaw) => { if (w.foot) { w.foot.place(x, z, yaw, w.groundProxy); w.footYaw = yaw; } },
       poseFoot: (x, y, z, yaw) => w.foot?.pose(x, y, z, yaw),
@@ -3128,7 +3128,18 @@ export class SeaWorld {
    * Freie See für die Prolog-Bühnen: keine Insel im Aufbau-Umkreis (es entsteht nichts nebenbei), immer derselbe Ort; `away` = mindestens
    * `minD` m von diesem Punkt entfernt (Grünmarkt und die Sturmjagd liegen weit auseinander).
    */
-  private openSeaSpot(away: { x: number; z: number } | null = null, minD = 0): { x: number; z: number } {
+  private openSeaSpot(away: { x: number; z: number } | null = null, minD = 0, dir?: number): { x: number; z: number } {
+    // 4.7D.1: bevorzugte Richtung (Prolog: die Schwarze Krone liegt hinter Grünmarkt) – fächerförmig um sie herum, dann wie bisher
+    // Vorrang hat die Richtung: erst weiter hinaus, dann erst seitlich ausweichen (kleinster Winkelfehler)
+    if (away && dir !== undefined && Number.isFinite(dir)) {
+      for (let k = 0; k < 37; k++) {
+        const a = dir + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.05;
+        for (let r = Math.max(minD, 1); r <= minD + 6000; r += 300) {
+          const x = away.x + Math.sin(a) * r, z = away.z + Math.cos(a) * r;
+          if (Math.hypot(x, z) < 14000 && !this.ground.islandAt(x, z, 1250)) return { x, z };
+        }
+      }
+    }
     for (let r = 2600; r < 9000; r += 450) {
       for (let i = 0; i < 16; i++) {
         const a = 0.4 + (i / 16) * Math.PI * 2;
