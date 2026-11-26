@@ -8,7 +8,8 @@
 // Grafikstufe (`NavalSystem.detail`); die übrigen bleiben Reserve in den Daten und rücken nach, wenn eines sinkt.
 import { BoxGeometry, Color, CylinderGeometry, Group, Mesh, MeshBasicMaterial, TorusGeometry, type BufferGeometry, type Object3D, type Scene } from 'three';
 import { factionShipLook, SHIP_CLASSES } from '../data/ships';
-import { ROLE_LABEL, WAR } from '../data/nations';
+import { PURPOSE_LABEL, ROLE_LABEL, WAR } from '../data/nations';
+import { flagshipName } from '../data/campaigns';
 import { seaLevelAt } from '../data/regions';
 import { FACTIONS, type FactionId } from '../data/factions';
 import { disposeObject, markShared } from '../render/dispose';
@@ -396,6 +397,9 @@ export class FactionWarLive {
   private readonly navBattle = new Map<string, number>();
   private siege: SiegeTroops | null = null;
   private syncT = 0;
+  /** 4.7E (Zero-GC): wiederverwendete Arbeitsfelder des Abgleichs (je 0,25 s) */
+  private readonly leaderSeen = new Set<string>();
+  private readonly closing: string[] = [];
   private clock = 0;
   /** Ruht (Raid, Titelbild): keine echten Schiffe, keine Truppen */
   paused = false;
@@ -433,7 +437,8 @@ export class FactionWarLive {
 
   private sync() {
     const nav = this.host.naval, eng = this.engine;
-    const leaderSeen = new Set<string>();
+    const leaderSeen = this.leaderSeen;
+    leaderSeen.clear();
     for (const [shipId, e] of this.ships) {
       const aid = this.armadaOf.get(shipId)!;
       const a = eng.armadaById(aid);
@@ -448,15 +453,16 @@ export class FactionWarLive {
       const by = down && nav.hitByPlayer(e, 12) ? this.host.playerId : null;
       eng.syncShip(aid, shipId, s.maxHull > 0 ? s.hull / s.maxHull : 0, s.sail, down, by);
       if (!down && !leaderSeen.has(aid)) {
-        const rec = a.ships.find((x) => x.id === shipId);
+        let rec: ArmadaShip | null = null;
+        for (let k = 0; k < a.ships.length; k++) if (a.ships[k].id === shipId) { rec = a.ships[k]; break; }
         if (rec && (rec.slot === 0 || !this.leaderAlive(a))) { eng.syncArmada(aid, s.x, s.z, s.heading); leaderSeen.add(aid); }
       }
     }
   }
 
   private leaderAlive(a: ArmadaState): boolean {
-    const l = a.ships.find((x) => x.slot === 0);
-    return !!l && !l.down && this.ships.has(l.id);
+    for (let k = 0; k < a.ships.length; k++) { const l = a.ships[k]; if (l.slot === 0) return !l.down && this.ships.has(l.id); }
+    return false;
   }
 
   private anyShip(armadaId: string): boolean {
@@ -593,8 +599,12 @@ export class FactionWarLive {
     const link: EventShipLink = {
       owner: a.id, recId: rec.id, role: rec.slot === 0 ? 'galeone' : 'eskorte', leadId: null, route: a.route, leg: a.leg, zone: null, preyId: null, bossId: null, slot: rec.slot,
     };
+    // 4.7E: Kommandoschiffe tragen den Namen ihres Admirals (Kampagnen-Ziel „Kommandoschiff versenken“), Logistik-Verbände ihren Zweck
+    const name = rec.role === 'kommando'
+      ? flagshipName(a.nation, a.id) ?? `${def?.name ?? 'Unbekannt'}: ${ROLE_LABEL.kommando}`
+      : a.purpose === 'angriff' || a.purpose === 'entsatz' ? `${def?.name ?? 'Unbekannt'}: ${ROLE_LABEL[rec.role]}` : `${def?.name ?? 'Unbekannt'}: ${PURPOSE_LABEL[a.purpose]} · ${ROLE_LABEL[rec.role]}`;
     const it = this.host.naval.spawnEventShipSteps({
-      x: p.x, z: p.z, heading: a.heading, classTier: rec.cls, level, look, role: 'patrouille', power, name: `${def?.name ?? 'Unbekannt'}: ${ROLE_LABEL[rec.role]}`,
+      x: p.x, z: p.z, heading: a.heading, classTier: rec.cls, level, look, role: 'patrouille', power, name,
       // dieselben Trefferpunkte wie in der Engine (`shipHp`): eine Schlacht dauert in 3D so lange wie in den Daten
       evo, hullFrac: rec.hull, sailFrac: rec.sail, link, maxHull: Math.round(shipHp(rec)),
     });
@@ -618,7 +628,8 @@ export class FactionWarLive {
   private linkRoles(a: ArmadaState) {
     let leadId: string | null = null;
     for (const sh of a.ships) { const e = this.ships.get(sh.id); if (e && !sh.down && (sh.slot === 0 || !leadId)) { leadId = e.ship.entityId; if (sh.slot === 0) break; } }
-    const siege = a.status === 'belagerung';
+    // Belagerung und (4.7E) Seeblockade: die Schiffe kreuzen als Ring vor dem Hafen
+    const siege = a.status === 'belagerung' || a.status === 'blockade';
     const w = siege ? this.engine.island(a.target) : null;
     for (const sh of a.ships) {
       const e = this.ships.get(sh.id);
@@ -629,7 +640,7 @@ export class FactionWarLive {
         L.role = 'wache';
         // Ring vor der Küste: jedes Schiff an seinem Platz auf der Seite der Flotte
         const ang = Math.atan2(a.x - w.x, a.z - w.z) + (sh.slot - a.ships.length / 2) * 0.09;
-        const r = w.r * 1.45 + 120;
+        const r = w.r * (a.status === 'blockade' ? 1.6 : 1.45) + (a.status === 'blockade' ? 200 : 120);
         e.wander.x = w.x + Math.sin(ang) * r; e.wander.z = w.z + Math.cos(ang) * r;
       } else {
         const lead = e.ship.entityId === leadId;
@@ -684,13 +695,16 @@ export class FactionWarLive {
       }
       if (!fight) this.linkRoles(a);
     }
-    // beendete Schlachten im Seesystem schließen
-    for (const [warId, id] of [...this.navBattle]) {
+    // beendete Schlachten im Seesystem schließen (Kennungen erst sammeln, dann löschen: keine Kopie der Tabelle je Takt)
+    const closing = this.closing;
+    closing.length = 0;
+    for (const [warId, id] of this.navBattle) {
       const bt = eng.battleById(warId);
       if (bt && !bt.ended && bt.live) continue;
       nav.closeWarBattle(id);
-      this.navBattle.delete(warId);
+      closing.push(warId);
     }
+    for (let k = 0; k < closing.length; k++) this.navBattle.delete(closing[k]);
   }
 
   /** Der Spieler hat ein Schiff der Armada getroffen: die ganze Armada wehrt sich */

@@ -60,6 +60,9 @@ function toyWorld(seed = 3, nationsOverride?: NationDefinition[]) {
 }
 
 const fill = (eng: FactionWarEngine, id: string, k: number) => { const n = eng.state.nations[id]; for (const r of RESOURCE_IDS) n.stock[r] = RESOURCE_TARGET[r] * k; };
+/** 4.7E: was eine Nation seit `t0` für neue Verbände (Bau und Ladung) ausgegeben hat – Patrouillen, Konvois und Blockaden laufen jetzt immer mit */
+const spentSince = (eng: FactionWarEngine, id: string, r: keyof ResourceBag, t0: number) =>
+  eng.state.armadas.filter((a) => a.nation === id && a.createdAt >= t0).reduce((sum, a) => sum + armadaCost(a.ships, emptyBag())[r] + (a.cargo?.[r] ?? 0), 0);
 const run = (eng: FactionWarEngine, seconds: number) => { for (let t = 0; t < seconds; t++) eng.update(1); };
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -126,7 +129,8 @@ describe('Ressourcen-Kreislauf: Produktion und Kriegskosten', () => {
     run(eng, WAR.cycle + 1);
     const inc = eng.state.nations.b.income.hartholz;
     expect(inc).toBeCloseTo(14 + 6, 5); // Holzkolonie + Hof
-    expect(eng.state.nations.b.stock.hartholz).toBeGreaterThan(b0 - 10);
+    // 4.7E: abzüglich dessen, was die Nation in der Zeit an Patrouillen und Konvois gebaut hat
+    expect(eng.state.nations.b.stock.hartholz).toBeGreaterThan(b0 - 10 - spentSince(eng, 'b', 'hartholz', 0));
     // Belagerung der Holzkolonie: das Holz bleibt im Insellager (Beute für den Sieger), die Kasse sieht es nicht
     eng.state.islands.holz.siegeId = 'fake';
     const store0 = eng.state.islands.holz.store.hartholz;
@@ -178,7 +182,7 @@ describe('NationBrain: Nutzen-KI', () => {
     const iA = 0;
     expect(wood.eng.utility(iA, 2)).toBeGreaterThan(wood.eng.utility(iA, 3));
     run(wood.eng, 40);
-    const tw = wood.eng.state.armadas.find((x) => x.nation === 'a');
+    const tw = wood.eng.state.armadas.find((x) => x.nation === 'a' && x.purpose === 'angriff');
     expect(tw?.target).toBe('holz');
     expect(wood.eng.atWar('a', 'b')).toBe(true);
 
@@ -187,7 +191,7 @@ describe('NationBrain: Nutzen-KI', () => {
     steel.eng.state.nations.a.stock.kanonenstahl = RESOURCE_TARGET.kanonenstahl * 0.62;
     expect(steel.eng.utility(iA, 3)).toBeGreaterThan(steel.eng.utility(iA, 2));
     run(steel.eng, 40);
-    expect(steel.eng.state.armadas.find((x) => x.nation === 'a')?.target).toBe('stahl');
+    expect(steel.eng.state.armadas.find((x) => x.nation === 'a' && x.purpose === 'angriff')?.target).toBe('stahl');
   });
 
   it('mit voller Kriegskasse und ohne Mangel plant sie die Großoffensive auf die Mega-Insel', () => {
@@ -196,7 +200,7 @@ describe('NationBrain: Nutzen-KI', () => {
     expect(eng.readiness(eng.state.nations.a)).toBeGreaterThan(0.9);
     expect(eng.utility(0, 4)).toBeGreaterThan(eng.utility(0, 2));
     run(eng, 40);
-    const a = eng.state.armadas.find((x) => x.nation === 'a');
+    const a = eng.state.armadas.find((x) => x.nation === 'a' && x.purpose === 'angriff');
     expect(a?.target).toBe('mega');
     expect(a!.ships.length).toBeGreaterThanOrEqual(8);
   });
@@ -249,6 +253,7 @@ describe('Diplomatie: Handelspakte, Waffenstillstand, Anti-Hegemon-Koalition', (
     r.since = eng.state.t - WAR.minWar - 1;
     fill(eng, 'a', 1); fill(eng, 'b', 1.5);
     const goldA = eng.state.nations.a.stock.gold, goldB = eng.state.nations.b.stock.gold;
+    const t0 = eng.state.t;
     const seen: WarNotice[] = [];
     for (let t = 0; t < WAR.diplomacyEvery + 2; t++) { eng.update(1); seen.push(...eng.drain()); }
     expect(r.state).toBe('neutral');
@@ -259,7 +264,7 @@ describe('Diplomatie: Handelspakte, Waffenstillstand, Anti-Hegemon-Koalition', (
     // der Zahler hat weniger, der Empfänger mehr (abzüglich Unterhalt)
     const payer = cf!.payer, payee = payer === 'a' ? 'b' : 'a';
     expect(eng.state.nations[payer].stock.gold).toBeLessThan((payer === 'a' ? goldA : goldB) - cf!.gold * 0.9);
-    expect(eng.state.nations[payee].stock.gold).toBeGreaterThan((payee === 'a' ? goldA : goldB) - 400);
+    expect(eng.state.nations[payee].stock.gold).toBeGreaterThan((payee === 'a' ? goldA : goldB) - 400 - spentSince(eng, payee, 'gold', t0));
   });
 
   it('überschreitet eine Macht 34 % der Gesamtressourcen, verbünden sich die Bedrohten und greifen gemeinsam an', () => {
@@ -497,7 +502,8 @@ describe('Spielstand 20 (seit 4.5C 21) und Erhalt über Laden und Speichern', ()
     for (let m = 0; m < 120; m++) {
       run(eng, 60);
       eng.drain();
-      expect(eng.state.armadas.filter((a) => a.status !== 'aufgeloest').length).toBeLessThanOrEqual(WAR.maxArmadas);
+      // 4.7E: höchstens 8 militärische Armadas; Patrouillen, Konvois und Blockaden zählen gegen die eigenen Obergrenzen
+      expect(eng.state.armadas.filter((a) => a.status !== 'aufgeloest' && (a.purpose === 'angriff' || a.purpose === 'entsatz')).length).toBeLessThanOrEqual(WAR.maxArmadas);
     }
     for (const id in eng.state.nations) for (const r of RESOURCE_IDS) {
       const v = eng.state.nations[id].stock[r];

@@ -247,6 +247,15 @@ export class NavalSystem {
   standingOf: (id: FactionId) => number = () => 0;
   /** 4.6J: Mächte, mit denen der Spieler verbündet ist (setzt das Spiel: Marine-Dienst, Kriegsaufträge); ihre Schiffe nehmen keinen Schaden vom Spieler */
   readonly allyPowers = new Set<string>();
+  /**
+   * 4.7E: Team des Spielers (einmalig geschworen): seine Schiffe sind dauerhaft verbündet – nie provozierbar, nie Ziel von Kanonen, Rammstößen oder
+   * Ultimates, sie greifen den Spieler nie an und helfen ihm gegen Feinde. Setzt nur `Game.syncAllies`.
+   */
+  teamPower: string | null = null;
+  /** 4.7E: Mächte im Krieg mit dem Team: ihre Schiffe sind Feinde (roter Zielring), auch bei gutem Ansehen */
+  readonly warFoes = new Set<string>();
+  /** 4.7E: gehört das Schiff zum Team des Spielers? */
+  isTeamShip(e: EnemyShip): boolean { return !!this.teamPower && e.power === this.teamPower; }
   /** 4.6J: angewähltes Ziel der MMO-Erfassung (setzt die Seewelt je Bild): Breitseiten und Bugkanone richten sich darauf aus */
   aimTarget: EnemyShip | null = null;
   /** Beziehungs-Kontext für `relationOf` (Ansehen prüft hier schon `peaceful`, darum ohne eigene Schwellen) */
@@ -259,8 +268,8 @@ export class NavalSystem {
   shipRelation(e: EnemyShip): TargetRelation {
     const calm = this.peaceful(e);
     return relationOf({
-      own: !!(e.companion || e.fleetId || e.captured), ally: !!(e.helper || e.peer), provoked: !!e.provoked,
-      hostile: !!(e.raid || e.hunter) || (!calm && !(e.power && this.allyPowers.has(e.power))), power: e.power, civilian: calm,
+      own: !!(e.companion || e.fleetId || e.captured), ally: !!(e.helper || e.peer) || this.isTeamShip(e), provoked: !!e.provoked,
+      hostile: !!(e.raid || e.hunter) || (!calm && !(e.power && this.allyPowers.has(e.power))) || (!!e.power && this.warFoes.has(e.power)), power: e.power, civilian: calm,
     }, this.relCtx);
   }
 
@@ -895,6 +904,10 @@ export class NavalSystem {
   /** Marine-Schiffe greifen nur an, wenn das Ansehen unter 0 liegt oder man auf sie geschossen hat */
   private peaceful(e: EnemyShip): boolean {
     if (e.peer) return true;
+    // 4.7E: das eigene Team greift den Spieler nie an; Sektor-Schiffe der Kriegsgegner des Teams sind nie friedlich (Ereignis- und Armada-Schiffe
+    // bleiben Opt-In: sie wehren sich erst, wenn man auf sie schießt)
+    if (this.isTeamShip(e)) return true;
+    if (!e.ev && e.power && this.warFoes.has(e.power)) return false;
     // Welt-Ereignisse und Konvois (Opt-In): friedlich, bis der Spieler zuerst schießt oder sie ihn angreifen (Korsaren nie)
     if (e.ev) return !e.provoked && e.ev.role !== 'korsar' && e.state !== 'engage';
     if (e.provoked || e.companion || e.raid || e.hunter || !e.power) return false;
@@ -964,7 +977,8 @@ export class NavalSystem {
     const s = e.ship;
     let best = 420, foe: Ship | null = null;
     for (const o of this.enemies) {
-      if (o === e || o.companion || o.battle || o.role === 'haendler' || o.power === 'marine' || !o.ship.alive || o.ship.sinking > 0 || o.ship.disabled) continue;
+      // nie gegen die eigene Macht (Marine-Helfer gegen Marine, 4.7E: Team-Helfer gegen das Team)
+      if (o === e || o.companion || o.battle || o.role === 'haendler' || (!!o.power && o.power === e.power) || this.isTeamShip(o) || !o.ship.alive || o.ship.sinking > 0 || o.ship.disabled) continue;
       if (this.peaceful(o)) continue;
       if (Math.hypot(o.ship.x - p.x, o.ship.z - p.z) > 380) continue;
       const d = Math.hypot(o.ship.x - s.x, o.ship.z - s.z);
@@ -1160,6 +1174,8 @@ export class NavalSystem {
     if (this.enemies.filter((e) => e.hunter && e.ship.alive).length + this.pendingHunters >= 2) return;
     let pick: FactionId | null = null, w = 0;
     for (const f of Object.keys(FACTIONS) as FactionId[]) {
+      // 4.7E: das eigene Team schickt nie Kopfgeldjäger
+      if (f === this.teamPower) continue;
       const b = this.bountyOf(f);
       if (b <= 0) continue;
       w += b;
@@ -1670,7 +1686,7 @@ export class NavalSystem {
   /** Der Spieler hat ein Schiff gerammt oder mit Drehbassen beschossen: Marine und Mächte werden feindlich (wie bei Kanonenschüssen) */
   private provokeBy(s: Ship, how: string) {
     const en = this.enemies.find((o) => o.ship === s);
-    if (!en) return;
+    if (!en || this.isTeamShip(en)) return;
     if (en.power === 'marine' && !en.provoked) { en.provoked = true; if (!en.companion) this.hooks.message(`${how} ein Schiff der Marine – sie wird dich jagen!`); }
     else if (en.power && !en.provoked && !en.companion) en.provoked = true;
     en.lastPlayerHit = this.clock;
@@ -1997,8 +2013,8 @@ export class NavalSystem {
       // wer vom Spieler beschossen wurde (oder ihm feindlich gesinnt ist), wendet sich ihm zu, sobald er nah ist
       if (p?.alive && dp < 220 && (e.provoked || (!!e.power && isHostile(this.standingOf(e.power))))) target = p;
       else if (foe) { target = foe; duel = true; }
-    } else if (!e.companion && !e.raid && !e.hunter && e.power === 'marine' && p?.alive && this.marineService() && this.peaceful(e)) {
-      // Dienststatus: die Marine hilft im Kampf gegen Schiffe, die den Spieler bedrohen
+    } else if (!e.companion && !e.raid && !e.hunter && !e.ev && p?.alive && ((e.power === 'marine' && this.marineService()) || this.isTeamShip(e)) && this.peaceful(e)) {
+      // Dienststatus: die Marine hilft im Kampf gegen Schiffe, die den Spieler bedrohen; 4.7E: die Kriegsschiffe des eigenen Teams ebenso
       const foe = this.helperFoe(e, p);
       e.helper = !!foe;
       if (foe) { target = foe; duel = true; }
@@ -2292,7 +2308,7 @@ export class NavalSystem {
     this.friendly.clear();
     if (this.player) this.friendly.add(this.player);
     // 4.6J: auch eigene Flotte, eroberte Schiffe und Schiffe verbündeter Mächte (kein Eigenbeschuss in Massenschlachten)
-    for (const e of this.enemies) if (e.companion || e.helper || e.fleetId || e.captured || e.peer || (e.power && !e.provoked && this.allyPowers.has(e.power))) this.friendly.add(e.ship);
+    for (const e of this.enemies) if (e.companion || e.helper || e.fleetId || e.captured || e.peer || this.isTeamShip(e) || (e.power && !e.provoked && this.allyPowers.has(e.power))) this.friendly.add(e.ship);
     for (const e of this.enemies) {
       const s = e.ship;
       if (s.alive) st.addObstacle(s.entityId, s.x, s.z, Math.sin(s.course) * s.speed, Math.cos(s.course) * s.speed, Math.max(s.cls.W * 0.5, s.cls.L * 0.32));

@@ -67,6 +67,8 @@
 .cap-head { display: flex; flex-direction: column; margin-bottom: 0.4em; }
 .cap-name { font: 400 1.18em/1.1 var(--font-serif); letter-spacing: 0.02em; color: var(--brass-100); text-shadow: 0 1px 0 #000, 0 0 10px rgba(0, 0, 0, 0.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cap-sub { font: 600 0.72em var(--font-num); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 4.7E: Team-Plakette (dauerhafte Treue) */
+.cap-team { align-self: flex-start; margin-top: 0.25em; padding: 0.05em 0.55em 0.1em; border: 1px solid var(--c); border-left-width: 3px; border-radius: var(--r-sm); background: rgba(0, 0, 0, 0.35); font: 700 0.66em var(--font-text); font-style: normal; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink); white-space: nowrap; }
 .cap-gauges { display: grid; gap: 0.28em; }
 .cap-gauges .gauge.hp { --c: var(--danger); height: 0.95em; }
 .cap-gauges .gauge.st { --c: #5fae6a; }
@@ -722,3 +724,17 @@ html.touch .hud-target { width: min(20em, 72vw); }
 .fhud .fh-art .ic { font-size: 1.1em; margin-top: 0.3em; }
 .fhud .fh-geist .fh-art { border-color: color-mix(in srgb, var(--fa) 70%, #000); background: radial-gradient(circle at 50% 32%, color-mix(in srgb, var(--fa) 30%, #0a0604), #060302 74%); }
 .fhud.touchmode .fh-geist { display: none; }
+
+/* 4.7E: Funkspruch-Banner der Live-Kriegs-Quests (Zone tc, unter dem Taktik-Banner) */
+.hud-radio { width: min(25em, 92vw); max-width: 100%; overflow: hidden; padding: 0.35em 0.8em 0.45em; font-size: 0.8em; line-height: 1.25; display: grid; gap: 0.1em; cursor: pointer; border-left: 3px solid var(--target-friendly); }
+.hud-radio .rb-head { display: flex; align-items: center; gap: 0.45em; min-width: 0; color: var(--c, var(--target-friendly)); }
+.hud-radio .rb-waves { display: inline-grid; width: 1.15em; height: 1.15em; flex: none; }
+.hud-radio .rb-waves svg { width: 100%; height: 100%; fill: currentColor; stroke: currentColor; }
+.hud-radio .rb-kicker { min-width: 0; font: 700 0.78em var(--font-text); letter-spacing: 0.14em; text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hud-radio .rb-title { font: 400 1.08em var(--font-serif); letter-spacing: 0.02em; color: var(--brass-100); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hud-radio .rb-line { color: var(--ink-dim); font-size: 0.88em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hud-radio.flash { border-left-color: var(--warn); animation: radio-in 0.45s ease-out; }
+.hud-radio.flash .rb-waves { animation: radio-pulse 0.9s ease-in-out infinite; }
+@keyframes radio-in { from { transform: translateY(-6px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes radio-pulse { 50% { opacity: 0.45; } }
+html.touch .hud-radio { font-size: 0.72em; }

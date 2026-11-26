@@ -1597,12 +1597,17 @@ export class SeaWorld {
     };
   }
 
-  /** Ein Logikschritt des Ökosystems: Engine (Spielzeit), Meldungen, echte Schiffe und Truppen; im Raid und im Titelbild ruht alles */
+  /**
+   * Ein Logikschritt des Ökosystems: Engine (Spielzeit), Meldungen, echte Schiffe und Truppen. 4.7E: die Welt-Simulation der fünf Mächte läuft
+   * dauerhaft auf der ganzen Karte – auch in der privaten Einführung und während eines Raids, nur mit Daten (keine Netze); nur im Titelbild und auf
+   * der Prolog-Bühne ruht sie. Echte Schiffe und Truppen (Live-Schicht) gibt es weiterhin nur in der geteilten Welt außerhalb eines Raids.
+   */
   private updateWar(dt: number) {
     const war = this.war;
     if (!war) return;
-    const rest = !!this.raid || this.title.active || !this.gates.traffic;
-    if (!rest) {
+    const halt = this.title.active || this.gates.stage;
+    const rest = halt || !!this.raid || !this.gates.traffic;
+    if (!halt) {
       war.update(dt);
       const news = war.drain();
       for (let i = 0; i < news.length; i++) this.onWarNotice(news[i]);
@@ -1611,15 +1616,44 @@ export class SeaWorld {
     this.updateWarGarrisons(dt);
   }
 
+  /** 4.7E: Inseln, die während eines Raids den Herrn gewechselt haben (die Hauptkarte ruht): nach dem Raid neu einkleiden */
+  private readonly warRestyle = new Set<string>();
+
   private onWarNotice(n: WarNotice) {
     if (n.type === 'gefallen') {
       // die Insel steht gerade da: neu einkleiden (Banner, Laternen, Namensschild, Wachen); sonst liest der nächste Aufbau den neuen Herrn
-      const k = this.islandDefs.findIndex((d) => d.id === n.islandId);
-      if (k >= 0) this.streamer.restyle(k);
+      if (this.raid) this.warRestyle.add(n.islandId);
+      else {
+        const k = this.islandDefs.findIndex((d) => d.id === n.islandId);
+        if (k >= 0) this.streamer.restyle(k);
+      }
       const g = this.warGarrisons.get(n.islandId);
       if (g) { g.dispose(); this.warGarrisons.delete(n.islandId); }
     }
     this.onWarNews(n);
+  }
+
+  // ---------- 4.7E: Team des Spielers ----------
+
+  /** Team (Macht-Kennung), dem der Spieler die Treue geschworen hat; setzt das Spiel (`Game.applyAllegiance`) */
+  team: string | null = null;
+  setTeam(team: string | null) { this.team = team; }
+
+  /** Verbündete Trupps in Spielernähe für die Ziel-Erfassung: Wachen eroberter Team-Inseln und die Team-Seite einer Belagerung (Liste wiederverwendet) */
+  private readonly alliedList: TroopSquad[] = [];
+  alliedSquads(): readonly TroopSquad[] {
+    const out = this.alliedList;
+    out.length = 0;
+    const team = this.team, war = this.war;
+    if (!team || !war) return out;
+    for (const [id, g] of this.warGarrisons) if (war.ownerOf(id) === team) for (const q of g.squads) out.push(q);
+    const sq = this.warLive?.siegeSquads, sv = this.warLive?.siegeView;
+    const sg = sv ? war.siegeById(sv.siegeId) : null;
+    if (sq && sg) {
+      const side = sg.attacker === team ? 0 : sg.defender === team ? 1 : -1;
+      if (side >= 0) for (const q of sq[side]) out.push(q);
+    }
+    return out;
   }
 
   /** Macht (Heraldik) des aktuellen Herrn einer Insel; Inseln außerhalb des Ökosystems behalten ihren Besitzer aus den Daten */
@@ -2625,7 +2659,10 @@ export class SeaWorld {
       combat: () => w.combat,
       naval: () => w.naval,
       npcs: () => w.targetNpcs(),
-      powerAt: (x, z) => { const isl = w.ground.islandAt(x, z); return (isl && w.islandDefs.find((d) => d.x === isl.x && d.z === isl.z)?.factionId) || ''; },
+      // 4.5A/4.7E: Macht nach dem aktuellen Herrn der Insel (nicht dem Gründer)
+      powerAt: (x, z) => { const isl = w.ground.islandAt(x, z); const d = isl ? w.islandDefs.find((x2) => x2.x === isl.x && x2.z === isl.z) : undefined; return (d && w.ownerFaction(d)) || ''; },
+      teamPower: () => w.team ?? '',
+      alliedSquads: () => w.alliedSquads(),
       groundY: (x, z, y) => { const h = w.groundProxy.height(x, z, y + 1.5); return Number.isFinite(h) && h > -50 ? h : w.env.heightAt(x, z); },
       waterY: (x, z) => w.env.heightAt(x, z),
       playerFaction: () => w.playerFaction,
@@ -4399,6 +4436,9 @@ export class SeaWorld {
     this.docking.clearBerthCache();
     this.mainSaved = null;
     this.cullFigures();
+    // 4.7E: was während des Raids gefallen ist, trägt jetzt die Farben des neuen Herrn
+    for (const id of this.warRestyle) { const k = this.islandDefs.findIndex((d) => d.id === id); if (k >= 0) this.streamer.restyle(k); }
+    this.warRestyle.clear();
   }
 
   // ---------- Mega-Inseln (4.3.6): Kampf-Bezirke und Insel-Kommandant in der offenen Welt ----------
@@ -4618,6 +4658,8 @@ export class SeaWorld {
     const fid: FactionId = this.ownerFaction(def) ?? 'marine';
     const F = FACTIONS[fid];
     const hq = def.marine === 'hq';
+    // 4.7E: die Festung des eigenen Teams öffnet die Tore – keine Garnison gegen den Spieler
+    if (this.team && fid === this.team) { this.onMessage(`${def.name}: Die Garnison von ${F.name} salutiert – hier bist du unter Verbündeten.`); return; }
     if (def.kind === 'marinefort' && fid === 'marine') {
       const stance = marineStance(this.standingOf('marine'));
       if (stance === 'verbuendet') {
@@ -4654,6 +4696,11 @@ export class SeaWorld {
       const msg = `${where} wird belagert: ${nm(siege.attacker)} gegen ${nm(siege.defender).replace(/^Die /, 'die ')}! ${side ? `Du kämpfst für die ${side === 'angreifer' ? 'Angreifer' : 'Verteidiger'} – erobere und halte die Kontrollpunkte.` : 'Ergreife oben im Schlacht-Banner Partei und kämpfe um die Kontrollpunkte.'}`;
       if (def.mega && isMegaId(def.id)) this.enterMega(isl, def.id);
       this.onMessage(msg);
+      return;
+    }
+    if (def.kaiser && this.team && (this.ownerFaction(def) ?? def.factionId) === this.team) {
+      // 4.7E: der Kaiser des eigenen Teams empfängt Verbündete, er kämpft nicht gegen sie
+      this.onMessage(`${def.name}: Der Kaiser deines Teams empfängt dich als Verbündeten – hier wird nicht gekämpft.`);
       return;
     }
     if (def.kaiser && this.ensureKaiser()) { this.kaiserLive!.onAshore(isl, def); return; }

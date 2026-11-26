@@ -897,9 +897,10 @@ describe('4.7A „Prolog überspringen“ und Spielstand-Migration', () => {
   });
 
   it('neue Spielstände: aktuelle Version (4.7B: 25), beginnen im Prolog', () => {
-    expect(SAVE_VERSION).toBe(25);
+    // 4.7E: seit 4.7E Version 27
+    expect(SAVE_VERSION).toBeGreaterThanOrEqual(25);
     const s = createSave('Fynn', 'pirat', '4.7.4');
-    expect(s.version).toBe(25);
+    expect(s.version).toBe(SAVE_VERSION);
     expect(s.progress.instance?.mode).toBe('prolog');
     const m = migrateSave(JSON.parse(JSON.stringify(s)), '4.7.4');
     expect(m.ok).toBe(true);
@@ -921,7 +922,7 @@ describe('4.7A „Prolog überspringen“ und Spielstand-Migration', () => {
     if (!m.ok) return;
     const d = m.data;
     expect(m.migratedFrom).toBe(23);
-    expect(d.version).toBe(25);
+    expect(d.version).toBe(SAVE_VERSION);
     expect(d.progress.instance).toEqual(legacyInstance());
     expect(isPrivate(d.progress.instance!)).toBe(false);
     expect(d.player.level).toBe(37);

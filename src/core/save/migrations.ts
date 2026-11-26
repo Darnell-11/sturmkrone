@@ -23,6 +23,8 @@ import { TALENT } from '../../data/talentTrees';
 import { endgameEarned } from '../../data/gear';
 import { cleanInstance, isPrivate, legacyInstance } from '../../story/tutorialInstance';
 import { autoFill, awakenGeist, classFromLegacy, cleanClass, fitClass } from '../../data/classes';
+import { cleanAllegiance, newAllegiance } from '../../data/allegiance';
+import { cleanWarQuests } from '../../story/warQuests';
 
 type Migration = (data: Record<string, any>) => Record<string, any>;
 
@@ -200,6 +202,20 @@ export const MIGRATIONS: Record<number, Migration> = {
     p.cls = { ...classFromLegacy(p), refill: true };
     return { ...d, version: 25, player: p };
   },
+  25: (d) => {
+    // 4.7E: Team-Treue. Bestehende Stände haben noch kein Team – der Rat der Gesandten wartet in Ankerglück (nichts geht verloren; Ansehen, Ehre und
+    // Kriegspunkte bleiben, wie sie sind)
+    const progress = isRecord(d.progress) ? { ...d.progress } : {};
+    progress.allegiance = newAllegiance();
+    return { ...d, version: 26, progress };
+  },
+  26: (d) => {
+    // 4.7E: Live-Kriegs-Quests beginnen leer (sie entstehen aus der laufenden Welt-Simulation); das Ökosystem der Mächte bleibt – Patrouillen, Konvois,
+    // Blockaden und Gegenschläge ergänzt `cleanFactionWar` beim Laden mit Standardwerten
+    const world = isRecord(d.world) ? { ...d.world } : {};
+    world.warQuests = null;
+    return { ...d, version: 27, world };
+  },
 };
 
 /** Siege je Kaiser aus `world.kaiser` */
@@ -264,8 +280,13 @@ export function migrateSave(raw: unknown, gameVersion: string): MigrationResult 
   const rawBonus = rawTal && typeof rawTal.bonus === 'number' ? rawTal.bonus : 0;
   // 4.7A: die Instanz steht nur im Stand selbst – die Standardwerte eines neuen Spiels tragen den Prolog (ein Stand ohne Feld gilt als offene Welt)
   const rawInstance = isRecord(data.progress) ? data.progress.instance : undefined;
+  // 4.7E: Treue ebenso nur aus dem Stand selbst (die Standardwerte tragen „kein Team“; ein gewähltes Team bleibt für immer)
+  const rawAllegiance = isRecord(data.progress) ? data.progress.allegiance : undefined;
   const filled = fillDefaults(data, defaults) as SaveData;
   filled.progress.instance = cleanInstance(rawInstance);
+  filled.progress.allegiance = cleanAllegiance(rawAllegiance);
+  // 4.7E: Live-Kriegs-Quests säubern (fremd oder kaputt: leer)
+  filled.world.warQuests = filled.world.warQuests ? cleanWarQuests(filled.world.warQuests) : null;
   if (filled.player.faction !== 'pirat' && filled.player.faction !== 'marine') filled.player.faction = 'pirat';
   filled.player.look = sanitizeLook({ ...filled.player.look, gender }, filled.player.faction);
   // Flotte: nur besessene Klassen außer dem Flaggschiff, Werte begrenzt, Ausbaustufen aus `ship.evo`, nie mehr aktive Schiffe als Plätze

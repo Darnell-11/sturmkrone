@@ -35,7 +35,14 @@ export interface TargetHost {
   /** Lager der Spielfigur (Gegner ohne Macht gehören zur Gegenseite) */
   playerFaction(): 'pirat' | 'marine';
   time(): number;
+  /** 4.7E: Team des Spielers ('' = keines) – Hafenwachen und Trupps des Teams sind verbündet (grün) */
+  teamPower?(): string;
+  /** 4.7E: verbündete Trupps in der Nähe (Wachen eroberter Team-Inseln, Team-Seite einer Belagerung) */
+  alliedSquads?(): readonly TroopSquad[];
 }
+
+/** 4.7E: Rollen, die auf einer Insel des eigenen Teams als Hafenwache gelten */
+const GUARD_ROLES: ReadonlySet<NpcRole> = new Set<NpcRole>(['marine', 'offizier']);
 
 /** Titel der Bewohner nach Rolle (Hafen-NPCs ohne eigenen Namen) */
 const NPC_TITLE: Record<NpcRole, string> = {
@@ -136,6 +143,9 @@ export class TargetLockLive {
         if (a instanceof Ally) this.fillOfficer(pool.next(), a);
         else if (a instanceof TroopSquad) this.fillSquad(pool.next(), a, false);
       }
+      // 4.7E: Trupps des eigenen Teams (Wachen, Belagerungs-Seite) – verbündet, grün im Zielfenster, nie Ziel eines Angriffs
+      const allied = h.alliedSquads?.();
+      if (allied) for (const q of allied) if (q.alive && Math.hypot(q.x - _me.x, q.z - _me.z) < landR) this.fillTeamSquad(pool.next(), q);
     }
     if (foot) for (const n of h.npcs()) if (Math.hypot(n.x - _me.x, n.z - _me.z) < landR) this.fillNpc(pool.next(), n);
     // 4.7A: Übungspuppen (Waffenmeister der Einführung) lassen sich anwählen wie Bewohner
@@ -183,6 +193,19 @@ export class TargetLockLive {
     this.refreshSquad(c, q);
   }
 
+  /** 4.7E: Trupp des eigenen Teams (verbündet, Wappenfarbe des Teams) */
+  private fillTeamSquad(c: TargetCandidate | null, q: TroopSquad) {
+    if (!c) return;
+    const team = this.host.teamPower?.() ?? '';
+    const n = team ? nationOf(team) : OWN;
+    c.id = q.squadId; c.kind = 'troop'; c.relation = 'friendly'; c.domain = 'land'; c.npc = false;
+    c.name = q.label; c.level = q.level; c.power = team; c.nation = n.name; c.crest = n.color;
+    c.category = `Verbündeter Trupp · ${q.maxHeads} Mann`;
+    c.prio = 0; c.radius = q.sepRadius() * 0.7; c.height = 1.8;
+    c.ref = q;
+    this.refreshSquad(c, q);
+  }
+
   private refreshSquad(c: TargetCandidate, q: TroopSquad) {
     c.alive = q.alive; c.x = q.x; c.y = q.y; c.z = q.z; c.hp = q.heads; c.maxHp = q.maxHeads; c.posture = -1; c.broken = false;
   }
@@ -213,9 +236,11 @@ export class TargetLockLive {
     if (!c) return;
     const p = this.host.powerAt(n.x, n.z);
     const nat = p ? nationOf(p) : { name: 'Freie Hafenstadt', color: '#5BA9F2' };
-    c.id = n.entityId; c.kind = 'npc'; c.relation = 'neutral'; c.domain = 'land'; c.npc = true;
-    c.name = n.townDef?.name ?? NPC_TITLE[n.role]; c.level = 0; c.power = p; c.nation = nat.name; c.crest = nat.color;
-    c.category = n.townDef?.title ?? NPC_TITLE[n.role];
+    // 4.7E: Hafenwachen auf Inseln des eigenen Teams sind Verbündete (grün), alle anderen Bewohner bleiben blau
+    const guard = !n.townDef && !!p && p === (this.host.teamPower?.() ?? '') && GUARD_ROLES.has(n.role);
+    c.id = n.entityId; c.kind = 'npc'; c.relation = guard ? 'friendly' : 'neutral'; c.domain = 'land'; c.npc = !guard;
+    c.name = n.townDef?.name ?? (guard ? 'Hafenwache' : NPC_TITLE[n.role]); c.level = 0; c.power = p; c.nation = nat.name; c.crest = nat.color;
+    c.category = n.townDef?.title ?? (guard ? `Hafenwache deines Teams · ${NPC_TITLE[n.role]}` : NPC_TITLE[n.role]);
     c.prio = n.townDef ? 0.4 : 0; c.radius = 0.45; c.height = 1.75;
     c.ref = n;
     this.refreshNpc(c, n);

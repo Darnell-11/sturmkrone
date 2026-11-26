@@ -141,6 +141,9 @@ const AMB: Readonly<Record<AmbienceId, { waves: number; wind: number; rain: numb
   strand: { waves: 0.85, wind: 0.12, rain: 0, town: 0, gulls: 0, deep: 0, sailwind: 0, bow: 0, creak: 0 },
 };
 
+/** 4.7E: Abbruch-Marke der Vorbereitung (Prolog beendet, während noch vorgewärmt wurde) */
+const PREP_ABORTED = Symbol('prolog-abgebrochen');
+
 export class PrologueLive {
   readonly director = new PrologueDirector();
   private readonly out = new PrologueOut();
@@ -247,11 +250,18 @@ export class PrologueLive {
    * zeigt den Fortschritt; erst danach beginnt Szene 1 aus dem Schwarz.
    */
   async prepare(playerLook: CharacterLook): Promise<void> {
+    // 4.7E: wird der Prolog während des Vorwärmens abgebrochen (Menü, Überspringen, Laden eines Stands), endet die Vorbereitung still –
+    // vorher lief sie auf der schon abgebauten Bühne weiter (TypeError „warmAll“ von null)
+    try { await this.prepareSteps(playerLook); } catch (e) { if (e !== PREP_ABORTED) throw e; }
+  }
+
+  private async prepareSteps(playerLook: CharacterLook): Promise<void> {
     const h = this.host, ui = this.ui;
     const slice = { t: performance.now() };
-    const yieldFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+    const yieldFrame = () => new Promise<void>((r, j) => requestAnimationFrame(() => (this.ended ? j(PREP_ABORTED) : r())));
     const maybeYield = async () => { if (performance.now() - slice.t > 10) { await yieldFrame(); slice.t = performance.now(); } };
-    const prog = (k: number) => { this.prepK = Math.max(this.prepK, k); ui.loading(this.prepK); };
+    // nach einem Abbruch keine Ladeanzeige mehr (späte Rückmeldungen des parallelen Vorübersetzens würden sie sonst wieder einblenden)
+    const prog = (k: number) => { if (this.ended) return; this.prepK = Math.max(this.prepK, k); ui.loading(this.prepK); };
     ui.loading(0);
     ui.blackout(1);
     audio.scoreActive(true);
@@ -345,6 +355,7 @@ export class PrologueLive {
     for (const e of [...this.admirals, ...this.frigates]) groups.push(e.ship.model.group);
     let done = 0;
     await Promise.all(groups.map((g) => h.warmAsync(g).then(() => { prog(0.56 + 0.16 * (++done / groups.length)); })));
+    if (this.ended) throw PREP_ABORTED;
     prog(0.72);
     // ---- Schlüssel-Einstellungen je zwei Bilder zeichnen: Schatten-, Tiefen- und Nachbearbeitungs-Programme, Kaskaden, letzte Uploads ----
     this.warmEffects();
@@ -392,10 +403,12 @@ export class PrologueLive {
     this.setGrade('aus', 0);
     // ---- die Schaluppe für den Strand von Ankerglück (Szene 7) schon jetzt bauen, übersetzen und hochladen ----
     await h.prebuildHome();
+    if (this.ended) throw PREP_ABORTED;
     prog(0.86);
     // ---- Musik fertig rendern ----
     while (audioK < 1) { prog(0.84 + 0.14 * audioK); await yieldFrame(); }
     const buffers = await scoreP;
+    if (this.ended) throw PREP_ABORTED;
     const so = audio.scoreOut();
     if (so && buffers.size) this.score = new PrologueScorePlayer(so.ctx, so.out, buffers, so.impulse);
     prog(1);

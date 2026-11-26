@@ -282,6 +282,12 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
   ctx.beginPath(); ctx.arc(mx(0), my(0), WORLD_RADIUS * S, 0, Math.PI * 2); ctx.arc(mx(0), my(0), PLAYABLE_RADIUS * S, 0, Math.PI * 2, true); ctx.fill();
   ctx.strokeStyle = 'rgba(232,214,170,0.6)'; ctx.setLineDash([8, 6]); ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(mx(0), my(0), WORLD_RADIUS * S, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+  // 4.7E: Offener Horizont – jenseits der Sturmmauer die Unbekannten Äußeren Meere (nach Kapitel VII der Hauptkampagne)
+  if (d.horizon) {
+    ctx.strokeStyle = 'rgba(160,220,255,0.55)'; ctx.lineWidth = 3; ctx.setLineDash([2, 9]);
+    ctx.beginPath(); ctx.arc(mx(0), my(0), (WORLD_RADIUS + 260) * S, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+    label(ctx, FONT_BADGE, 'Unbekannte Äußere Meere · Fortsetzung folgt', mx(0), my(-(WORLD_RADIUS + 520)), '#BFE6FF');
+  }
 
   if (L.sectors) {
     // Die fünf Kuchenstücke (je 72°) in der Farbe ihrer Macht
@@ -449,6 +455,18 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
     ctx.restore();
     if (o.fleet) { ctx.setLineDash([4, 5]); ctx.strokeStyle = 'rgba(255,90,60,0.7)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(mx(o.fleet.x), my(o.fleet.z)); ctx.lineTo(x, y); ctx.stroke(); ctx.setLineDash([]); drawPoi(ctx, mx(o.fleet.x), my(o.fleet.z), 'alarm', 1.5); }
   }
+  // 4.7E: Inseln des eigenen Teams – grüner, gestrichelter Bündnis-Ring (nur entdeckte)
+  if (d.team) {
+    ctx.strokeStyle = 'rgba(79,213,140,0.85)'; ctx.lineWidth = 2; ctx.setLineDash([3, 4]);
+    for (let k = 0; k < isl.length; k++) {
+      const i = isl[k];
+      if (i.factionId !== d.team || !d.known(i.id)) continue;
+      const sx = mx(i.x), sy = my(i.z);
+      if (sx < -60 || sx > w + 60 || sy < -60 || sy > h + 60) continue;
+      ctx.beginPath(); ctx.arc(sx, sy, Math.max(10, i.r * S * 1.25), 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
   // Meeresströmungen: blaue Bänder mit Pfeilen in Fließrichtung, Name in der Mitte
   const cur = d.currents;
   if (L.currents && cur) for (let c = 0; c < cur.length; c++) {
@@ -529,8 +547,18 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
       ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
       drawPoi(ctx, x, y, 'battle', 1.2);
     }
+    // 4.7E: Seeblockaden – gestrichelter Ring in der Farbe der Blockademacht um den gesperrten Hafen
+    const bl = war.blockades;
+    if (bl) for (let k = 0; k < bl.length; k++) {
+      const b = bl[k], x = mx(b.x), y = my(b.z), rr = Math.max(14, b.r * S * 2.1);
+      ctx.strokeStyle = b.color; ctx.lineWidth = 2.6; ctx.setLineDash([6, 4]);
+      ctx.beginPath(); ctx.arc(x, y, rr, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+    }
     for (let k = 0; k < war.armadas.length; k++) {
-      const a = war.armadas[k], x = mx(a.x), y = my(a.z), s = 7 + Math.min(4, a.ships * 0.4);
+      const a = war.armadas[k], x = mx(a.x), y = my(a.z);
+      // 4.7E: Nachschub-Konvois als Kiste mit Wimpel (Farbe der Nation), Patrouillen als kleiner Pfeil
+      if (a.kind === 'konvoi') { drawPoi(ctx, x, y, 'supply', 1.05, a.color); continue; }
+      const s = (7 + Math.min(4, a.ships * 0.4)) * (a.kind === 'patrouille' ? 0.72 : 1);
       const fx = Math.sin(a.heading), fy = -Math.cos(a.heading);
       ctx.fillStyle = a.color; ctx.strokeStyle = 'rgba(16,12,10,0.85)'; ctx.lineWidth = 1.6;
       ctx.beginPath();
@@ -541,6 +569,14 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
       ctx.closePath(); ctx.fill(); ctx.stroke();
       if (a.relief) { ctx.strokeStyle = a.color; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(x, y, s + 4, 0, Math.PI * 2); ctx.stroke(); }
     }
+  }
+  // 4.7E: Live-Kriegs-Einsätze des Teams (Wappenschild mit Funkwellen); der verfolgte etwas größer
+  const wq = d.warQuests;
+  if (wq) for (let k = 0; k < wq.length; k++) {
+    const q = wq[k], x = mx(q.x), y = my(q.z);
+    if (x < -30 || x > w + 30 || y < -30 || y > h + 30) continue;
+    drawPoi(ctx, x, y - 14, 'warquest', q.tracked ? 1.55 : 1.25, q.color);
+    placer.tryPlace(x - 11, y - 28, x + 11, y - 1, 0);
   }
   const m = d.markers;
   for (let k = 0; k < m.digs.length; k++) {

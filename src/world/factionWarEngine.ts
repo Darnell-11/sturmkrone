@@ -17,9 +17,10 @@ import {
   BASE_YIELD, GARRISON_BASE, GOOD_YIELD, ISLAND_UPKEEP, NATION_DEFS, NEUTRAL_GARRISON, PROFILE_ONLY_K, RESOURCE_CAP, RESOURCE_IDS, RESOURCE_TARGET, STATE_UPKEEP,
   WAR_RESERVE, YIELD_K,
   RESOURCE_VALUE, ROLE_PLAN, SHIP_COST, START_RELATIONS, STRATEGIC_VALUE, TRANSPORT_SUPPLY, TROOPS_PER_SHIP, WAR, WAR_RESOURCES, emptyBag, pairKey,
-  CONTRACT_DEFS, CONTRACT_TIER_K, SIEGE_POINT_NAMES,
+  CONTRACT_DEFS, CONTRACT_TIER_K, SIEGE_POINT_NAMES, WAR_LOGI,
   type ArmadaRole, type ContractKind, type DiplomacyState, type IslandTier, type NationDefinition, type ResourceBag, type ResourceId, type SiegePointKind,
 } from '../data/nations';
+import { WAR_CAPS } from '../data/balanceConfig';
 import { ISLAND_PROFILES, profileOf, type GoodId } from '../data/economy';
 import { SHIP_CLASSES } from '../data/ships';
 import type { IslandDef } from '../data/regions';
@@ -169,6 +170,14 @@ export interface NationState {
   islandsLost: number;
   islandsWon: number;
   hegemon: boolean;
+  /** 4.7E: geplanter Gegenschlag nach einem Inselverlust (Rückeroberung ab `at`), sonst null */
+  counter: { islandId: string; at: number } | null;
+  /** 4.7E: Kriegsziel aus der Kampagne (bevorzugter Gegner der Zielwahl), sonst null */
+  focus: string | null;
+  /** 4.7E: letzte Aufstellung je Logistik-Art (Spielzeit) */
+  patrolAt: number;
+  frontAt: number;
+  blockadeAt: number;
 }
 
 export interface IslandWarState {
@@ -181,6 +190,8 @@ export interface IslandWarState {
   siegeId: string | null;
   /** Letzter Entsatz für diese Insel (Spielzeit): höchstens alle `WAR.reliefGap` Sekunden */
   reliefAt: number;
+  /** 4.7E: Seeblockade vor dem Hafen (Armada-Kennung): die Insel liefert nichts an ihre Kasse, solange sie steht */
+  blockadeId: string | null;
 }
 
 export interface ArmadaShip {
@@ -199,8 +210,16 @@ export interface ArmadaShip {
   slot: number;
 }
 
-export type ArmadaPurpose = 'angriff' | 'entsatz';
-export type ArmadaStatus = 'anmarsch' | 'gefecht' | 'belagerung' | 'heimkehr' | 'aufgeloest';
+/**
+ * Zweck eines Verbands: Angriff (Invasion, auch Gegenschlag), Entsatz einer belagerten oder blockierten Insel – und seit 4.7E die Logistik:
+ * Patrouille (Seewege sichern, feindliche Konvois abfangen), Nachschub-Konvoi (Rohstoffe von Produktions-Inseln zu Belagerung oder Front-Hafen)
+ * und Seeblockade (feindlicher Hafen liefert nichts mehr an seine Kasse).
+ */
+export type ArmadaPurpose = 'angriff' | 'entsatz' | 'patrouille' | 'konvoi' | 'blockade';
+export const ARMADA_PURPOSES: readonly ArmadaPurpose[] = ['angriff', 'entsatz', 'patrouille', 'konvoi', 'blockade'];
+/** Militärische Verbände (Obergrenze `WAR.maxArmadas`); Logistik zählt gegen `WAR_CAPS` */
+export const isMilitary = (p: ArmadaPurpose): boolean => p === 'angriff' || p === 'entsatz';
+export type ArmadaStatus = 'anmarsch' | 'gefecht' | 'belagerung' | 'blockade' | 'heimkehr' | 'aufgeloest';
 
 export interface ArmadaState {
   id: string;
@@ -235,6 +254,19 @@ export interface ArmadaState {
   calmUntil: number;
   /** Echte Schiffe in der Seewelt (Lage und Rumpf kommen von dort) */
   live: boolean;
+  // ---- 4.7E: Logistik ----
+  /** Nachschub-Konvoi: Ladung aus den Vorräten der Nation (geht mit den Transportern unter), sonst null */
+  cargo: ResourceBag | null;
+  /** Nachschub-Konvoi: versorgt diese belagernde Armada (null: Front-Konvoi für die Garnison der Zielinsel) */
+  supplies: string | null;
+  /** Patrouille und Blockade: Ende des Auftrags (Spielzeit) */
+  until: number;
+  /** Gegenschlag: Rückeroberung einer verlorenen Insel */
+  counter: boolean;
+  /** Konvoi hat seine Ladung abgeliefert */
+  delivered: boolean;
+  /** Patrouille: Inseln der Streife (Wendepunkte, Kennungen) */
+  lane: string[];
 }
 
 export type BattleReason = 'sieg' | 'rueckzug' | 'vernichtet';
@@ -400,11 +432,20 @@ export interface FactionWarState {
   nextCycleAt: number;
   nextDiplomacyAt: number;
   hegemon: string | null;
-  stats: { wars: number; battles: number; conquests: number; ceasefires: number; pacts: number; coalitions: number; armadas: number; alliances: number; contracts: number };
+  stats: {
+    wars: number; battles: number; conquests: number; ceasefires: number; pacts: number; coalitions: number; armadas: number; alliances: number; contracts: number;
+    /** 4.7E: Logistik */
+    patrols: number; convoys: number; convoysLost: number; convoysDelivered: number; blockades: number; counters: number; repairs: number; scrapped: number;
+  };
   /** Angenommene Kriegsaufträge aller Spieler (4.5B) */
   contracts: WarContract[];
   /** Kriegspunkte je Spieler und begünstigter Nation (4.5B) */
   merit: Record<string, Record<string, number>>;
+  /**
+   * 4.7E: Team je Spieler (einmalig und dauerhaft gewählt, data/allegiance.ts). Mehrspieler-tauglich: der Welt-Server kennt die Treue jedes
+   * Kapitäns – Kriegspunkte gehen an sein Team, an Belagerungen seines Teams steht er automatisch auf dessen Seite.
+   */
+  allegiance: Record<string, string>;
 }
 
 export type WarNotice =
@@ -413,7 +454,7 @@ export type WarNotice =
   | { type: 'buendnis'; a: string; b: string }
   | { type: 'buendnisEnde'; a: string; b: string }
   | { type: 'punkt'; siegeId: string; islandId: string; name: string; side: SiegeSide; nation: string | null }
-  | { type: 'kriegspunkte'; playerId: string; nation: string; kp: number; reason: string }
+  | { type: 'kriegspunkte'; playerId: string; nation: string; kp: number; reason: string; islandId?: string | null }
   | { type: 'auftrag'; contract: WarContract }
   | { type: 'waffenstillstand'; a: string; b: string; payer: string; gold: number }
   | { type: 'handelspakt'; a: string; b: string }
@@ -425,7 +466,16 @@ export type WarNotice =
   | { type: 'belagerung'; siege: SiegeState }
   | { type: 'transport'; armada: ArmadaState; siegeId: string | null }
   | { type: 'gefallen'; islandId: string; from: string | null; to: string; loot: number }
-  | { type: 'belagerungEnde'; siege: SiegeState };
+  | { type: 'belagerungEnde'; siege: SiegeState }
+  // ---- 4.7E: Logistik und Gegenschläge ----
+  /** Nachschub-Konvoi: ausgelaufen, angekommen (Ladung abgeliefert) oder verloren (gekapert, versenkt) */
+  | { type: 'konvoi'; armada: ArmadaState; event: 'auslaufen' | 'angekommen' | 'verloren' }
+  /** Seeblockade vor einem Hafen beginnt bzw. endet */
+  | { type: 'blockade'; armada: ArmadaState; islandId: string; event: 'beginn' | 'ende' }
+  /** Gegenschlag: eine Nation läuft zur Rückeroberung einer verlorenen Insel aus */
+  | { type: 'gegenschlag'; nation: string; islandId: string; armada: ArmadaState }
+  /** Ein Spieler hat ein Schiff eines Verbands versenkt oder kampfunfähig geschossen (Kampagne: Kommandoschiffe) */
+  | { type: 'versenkt'; playerId: string; armada: ArmadaState; role: ArmadaRole };
 
 /** Wie lange beendete Schlachten, Belagerungen und Armadas noch in der Liste stehen (Karte, Meldungen) */
 const LINGER = 120;
@@ -447,6 +497,8 @@ function nextRandom(s: { rng: number }): number {
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 const clamp01 = (v: number) => clamp(v, 0, 1);
+/** Uhr für die Laufzeitmessung (Browser und Node) */
+const now = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 /** Trefferpunkte eines Schiffs nach Klasse und Rumpf-Stufe */
 export const shipHp = (s: ArmadaShip): number => SHIP_CLASSES[clamp(s.cls, 0, 6)].hp * (0.8 + 0.12 * s.hullTier);
@@ -499,13 +551,19 @@ export function newWarState(registry: NationRegistry, islands: readonly WarIslan
   const s: FactionWarState = {
     v: 1, t: 0, seq: 0, rng: seed >>> 0, nations: {}, islands: {}, relations: [], armadas: [], battles: [], sieges: [], coalitions: [],
     nextCycleAt: WAR.cycle, nextDiplomacyAt: WAR.diplomacyEvery, hegemon: null,
-    stats: { wars: 0, battles: 0, conquests: 0, ceasefires: 0, pacts: 0, coalitions: 0, armadas: 0, alliances: 0, contracts: 0 },
-    contracts: [], merit: {},
+    stats: {
+      wars: 0, battles: 0, conquests: 0, ceasefires: 0, pacts: 0, coalitions: 0, armadas: 0, alliances: 0, contracts: 0,
+      patrols: 0, convoys: 0, convoysLost: 0, convoysDelivered: 0, blockades: 0, counters: 0, repairs: 0, scrapped: 0,
+    },
+    contracts: [], merit: {}, allegiance: {},
   };
-  for (const i of islands) s.islands[i.id] = { owner: i.founder, garrison: i.garrisonMax, store: emptyBag(), conqueredAt: -1, siegeId: null, reliefAt: -1e9 };
+  for (const i of islands) s.islands[i.id] = newIslandState(i);
   ensureNations(s, registry);
   return s;
 }
+
+/** Zustand einer Insel beim Weltstart (beim Gründer, volle Garnison) */
+export const newIslandState = (i: WarIsland): IslandWarState => ({ owner: i.founder, garrison: i.garrisonMax, store: emptyBag(), conqueredAt: -1, siegeId: null, reliefAt: -1e9, blockadeId: null });
 
 /** Nationen ergänzen, die im Register stehen, aber noch nicht im Zustand (neue Nationen nach einem Update, ältere Spielstände) */
 export function ensureNations(s: FactionWarState, registry: NationRegistry): void {
@@ -517,6 +575,7 @@ export function ensureNations(s: FactionWarState, registry: NationRegistry): voi
     s.nations[def.id] = {
       id: def.id, stock, income: emptyBag(), strength: 0, share: 0, islands: 0, megas: 0, nextBrainAt: s.t + 20 + i * 4.5,
       shipsLost: 0, islandsLost: 0, islandsWon: 0, hegemon: false,
+      counter: null, focus: null, patrolAt: -1e9, frontAt: -1e9, blockadeAt: -1e9,
     };
   }
   for (let i = 0; i < registry.count; i++) for (let j = i + 1; j < registry.count; j++) {
@@ -591,7 +650,8 @@ export class FactionWarEngine {
   reindex(): void {
     const s = this.state;
     ensureNations(s, this.registry);
-    for (const w of this.islands) if (!s.islands[w.id]) s.islands[w.id] = { owner: w.founder, garrison: w.garrisonMax, store: emptyBag(), conqueredAt: -1, siegeId: null, reliefAt: -1e9 };
+    for (const w of this.islands) if (!s.islands[w.id]) s.islands[w.id] = newIslandState(w);
+    s.allegiance ??= {};
     this.isl = this.islands.map((w) => s.islands[w.id]);
     const N = this.registry.count;
     this.rel = new Int32Array(N * N).fill(-1);
@@ -703,6 +763,12 @@ export class FactionWarEngine {
 
   // ---------- Takt ----------
 
+  /**
+   * 4.7E: Laufzeit der Welt-Simulation je Schritt (ms, nicht im Zustand): letzter, gleitender Mittelwert, Höchstwert, Zahl der Schritte. Die ganze
+   * Karte rechnet dauerhaft mit – auch fern vom Spieler, nur mit Daten (keine Netze); Ziel unter 1 ms je Schritt.
+   */
+  readonly perf = { last: 0, avg: 0, max: 0, steps: 0 };
+
   /** Weiterrechnen um `dt` Sekunden Spielzeit; `interest` = Lage der Spieler (nur für Abfragen der Seewelt, die Regeln gelten überall gleich) */
   update(dt: number, _interest: readonly WarInterest[] = []): void {
     if (!(dt > 0)) return;
@@ -712,11 +778,14 @@ export class FactionWarEngine {
     while (this.acc >= WAR.step && n < MAX_STEPS) {
       this.acc -= WAR.step;
       n++;
+      const t0 = now();
       s.t += WAR.step;
       this.stepWorld(WAR.step);
       if (s.t >= s.nextCycleAt) { s.nextCycleAt += WAR.cycle; this.economyCycle(); }
       if (s.t >= s.nextDiplomacyAt) { s.nextDiplomacyAt += WAR.diplomacyEvery; this.diplomacy(); }
       this.brains();
+      const ms = now() - t0, p = this.perf;
+      p.last = ms; p.max = Math.max(p.max, ms); p.avg = p.steps ? p.avg * 0.98 + ms * 0.02 : ms; p.steps++;
     }
     if (n >= MAX_STEPS) this.acc = Math.min(this.acc, WAR.step);
   }
@@ -726,8 +795,37 @@ export class FactionWarEngine {
     this.engage();
     this.stepBattles(dt);
     this.stepSieges(dt);
+    this.stepBlockades(dt);
     this.stepContracts();
     this.prune();
+  }
+
+  // ---------- 4.7E: Seeblockaden ----------
+
+  /** Laufende Blockaden: Küstenfeuer der Garnison, Ende nach Ablauf, bei Frieden oder wenn der Hafen den Herrn gewechselt hat */
+  private stepBlockades(dt: number): void {
+    const s = this.state;
+    for (let k = 0; k < s.armadas.length; k++) {
+      const a = s.armadas[k];
+      if (a.status !== 'blockade') continue;
+      const st = s.islands[a.target];
+      const owner = st?.owner ?? null;
+      if (!st || s.t >= a.until || !owner || !this.atWar(a.nation, owner) || !warshipsAlive(a)) { this.endBlockade(a); this.goHome(a); continue; }
+      // die Hafenbatterien schießen auf die Blockade (schwächer als auf eine Belagerung: die Flotte liegt außer Reichweite der Festung)
+      if (!a.live && st.garrison > 0) {
+        const sh = a.ships[(Math.floor(s.t) + a.ships.length) % a.ships.length];
+        if (sh && !sh.down) { sh.hull -= WAR.coastFire * (st.garrison / 100) * dt * 2.5; if (sh.hull <= 0) this.sink(a, sh); }
+      }
+    }
+  }
+
+  /** Blockade beenden (Hafen liefert wieder); Meldung nur, wenn sie wirklich stand */
+  private endBlockade(a: ArmadaState): void {
+    const st = this.state.islands[a.target];
+    if (st && st.blockadeId === a.id) {
+      st.blockadeId = null;
+      this.notices.push({ type: 'blockade', armada: a, islandId: a.target, event: 'ende' });
+    }
   }
 
   // ---------- Armadas ----------
@@ -748,16 +846,29 @@ export class FactionWarEngine {
     }
   }
 
-  /** Ankunft am Ziel: Angriff → Belagerung beginnen, Entsatz → bleibt vor der Insel (die Schlacht beginnt über `engage`), sonst heim */
+  /**
+   * Ankunft am Ziel: Angriff → Belagerung beginnen, Entsatz → stellt Belagerer bzw. Blockade (die Schlacht beginnt über `engage`); 4.7E: Konvoi →
+   * Ladung abliefern, Patrouille → nächste Etappe der Streife (Reparatur im Heimathafen), Blockade → vor dem Hafen Stellung beziehen; sonst heim.
+   */
   private arrive(a: ArmadaState): void {
     const w = this.island(a.target);
     const st = this.state.islands[a.target];
     if (!w || !st) { this.goHome(a); return; }
+    if (a.purpose === 'konvoi') { this.deliver(a); return; }
+    if (a.purpose === 'patrouille') { this.nextLeg(a); return; }
+    if (a.purpose === 'blockade') {
+      const owner = st.owner;
+      if (!owner || !this.atWar(a.nation, owner) || st.blockadeId || st.siegeId) { this.goHome(a); return; }
+      a.status = 'blockade';
+      st.blockadeId = a.id;
+      this.notices.push({ type: 'blockade', armada: a, islandId: w.id, event: 'beginn' });
+      return;
+    }
     if (a.purpose === 'entsatz') {
-      // Entsatz vor der Insel: die Belagerungsflotte stellt sich (gleich, auf welcher Seite der Insel sie liegt)
+      // Entsatz vor der Insel: die Belagerungsflotte (oder die Blockade, 4.7E) stellt sich – gleich, auf welcher Seite der Insel sie liegt
       const sg = this.siegeOf(a.target);
-      const besieger = sg ? this.armadaById(sg.armadaId) : null;
-      if (!sg || !besieger || besieger.status === 'aufgeloest') { this.goHome(a); return; }
+      const besieger = sg ? this.armadaById(sg.armadaId) : this.armadaById(st.blockadeId);
+      if (!besieger || besieger.status === 'aufgeloest') { this.goHome(a); return; }
       if (!a.battleId && !besieger.battleId && this.atWar(a.nation, besieger.nation)) this.startBattle(a, besieger);
       else if (!this.atWar(a.nation, besieger.nation)) this.goHome(a);
       return;
@@ -769,6 +880,7 @@ export class FactionWarEngine {
 
   private goHome(a: ArmadaState): void {
     if (a.status === 'aufgeloest') return;
+    if (a.status === 'blockade' || a.resume === 'blockade') { this.endBlockade(a); a.resume = 'heimkehr'; }
     a.status = 'heimkehr';
     a.siegeId = null;
     const h = this.island(a.home);
@@ -778,9 +890,14 @@ export class FactionWarEngine {
     a.leg = 1;
   }
 
-  /** Armada auflösen: heimgekehrte Schiffe gehen in die Reserve (ein Teil der Baukosten kommt zurück), Truppen und Nachschub zurück ins Lager */
+  /**
+   * Armada auflösen: heimgekehrte Schiffe gehen in die Reserve (ein Teil der Baukosten kommt zurück), Truppen und Nachschub zurück ins Lager. 4.7E:
+   * zerschossene Schiffe werden vorher repariert – das kostet Holz, Tuch, Stahl und Gold (`WAR_LOGI.repairK`); reicht das Lager nicht, wird das Schiff
+   * abgewrackt (keine Rückgabe). Ein Konvoi, der nicht abgeliefert hat, bringt seine Ladung zurück.
+   */
   private dissolve(a: ArmadaState, home: boolean): void {
     if (a.status === 'aufgeloest') return;
+    if (a.status === 'blockade') this.endBlockade(a);
     a.status = 'aufgeloest';
     a.endedAt = this.state.t;
     a.live = false;
@@ -791,26 +908,134 @@ export class FactionWarEngine {
     for (const sh of a.ships) {
       if (sh.down) continue;
       const c = SHIP_COST[clamp(sh.cls, 0, 6)];
-      // Reparatur kostet Holz und Tuch: wer zerschossen heimkommt, bekommt weniger zurück
-      const k = WAR.refund * (0.4 + 0.6 * clamp01(sh.hull));
-      for (const r of RESOURCE_IDS) back[r] += (c[r] ?? 0) * k;
+      const dmg = 1 - clamp01(sh.hull);
+      if (dmg > 0.02 && !this.payRepair(n, c, dmg)) { this.state.stats.scrapped++; continue; }
+      for (const r of RESOURCE_IDS) back[r] += (c[r] ?? 0) * WAR.refund;
     }
     back.rekruten += a.troops * 0.8;
     back.proviant += a.supply.proviant;
     back.medizin += a.supply.medizin;
+    if (a.cargo && !a.delivered) for (const r of RESOURCE_IDS) back[r] += a.cargo[r];
     this.addStock(n, back);
   }
 
-  /** Feindliche Armadas, die einander nahe kommen, liefern sich eine Großschlacht; ein Entsatz vor der belagerten Insel stellt die Belagerer */
+  /**
+   * Reparatur eines Schiffs mit dem Schaden `dmg` (0 … 1) aus dem Lager der Nation bezahlen (Holz, Tuch, Stahl, Gold; Anteil `WAR_LOGI.repairK` der
+   * Baukosten bei voller Reparatur). false (und nichts abgezogen), wenn ein Rohstoff fehlt.
+   */
+  private payRepair(n: NationState, cost: Partial<ResourceBag>, dmg: number): boolean {
+    const k = WAR_LOGI.repairK * dmg;
+    const need = (r: ResourceId) => (cost[r] ?? 0) * k;
+    if (n.stock.hartholz < need('hartholz') || n.stock.segeltuch < need('segeltuch') || n.stock.kanonenstahl < need('kanonenstahl') || n.stock.gold < need('gold')) return false;
+    n.stock.hartholz -= need('hartholz'); n.stock.segeltuch -= need('segeltuch'); n.stock.kanonenstahl -= need('kanonenstahl'); n.stock.gold -= need('gold');
+    this.state.stats.repairs++;
+    return true;
+  }
+
+  // ---------- 4.7E: Konvois und Patrouillen ----------
+
+  /**
+   * Ein Nachschub-Konvoi ist am Ziel: Belagerungs-Nachschub geht an die belagernde Armada (Proviant, Medizin, Rekruten als Truppen, Moral), ein
+   * Front-Konvoi stärkt die Garnison der Zielinsel (bis `WAR_CAPS.garrisonK` × volle Besatzung) und bringt Kriegsrohstoffe ins Lager. Ist das Ziel
+   * inzwischen verloren oder die Belagerung vorbei, geht die Ladung zurück ins Lager der Nation. Danach löst sich der Konvoi auf (Schiffe in die Reserve).
+   */
+  private deliver(a: ArmadaState): void {
+    const s = this.state;
+    const cargo = a.cargo;
+    const n = s.nations[a.nation];
+    if (!cargo || !n || a.delivered) { this.dissolve(a, true); return; }
+    const target = this.armadaById(a.supplies);
+    const sg = target ? this.siegeById(target.siegeId) : null;
+    if (a.supplies) {
+      if (target && target.status === 'belagerung' && target.nation === a.nation && sg && !sg.ended) {
+        target.supply.proviant += cargo.proviant;
+        target.supply.medizin += cargo.medizin;
+        target.troops += cargo.rekruten;
+        sg.troops += cargo.rekruten;
+        target.morale = clamp01(target.morale + WAR_LOGI.deliverMorale);
+        sg.morale = target.morale;
+        a.delivered = true;
+      }
+    } else {
+      const st = s.islands[a.target];
+      const w = this.island(a.target);
+      if (st && w && st.owner === a.nation) {
+        const room = Math.max(0, w.garrisonMax * WAR_CAPS.garrisonK - st.garrison);
+        const add = Math.min(room, cargo.rekruten);
+        st.garrison += add;
+        cargo.rekruten -= add;
+        // Rest der Ladung (Stahl, Holz, übrige Rekruten, Proviant) ins Lager der Nation: Front-Depot
+        this.addStock(n, cargo);
+        for (const r of RESOURCE_IDS) cargo[r] = 0;
+        a.delivered = true;
+      }
+    }
+    if (a.delivered) { s.stats.convoysDelivered++; this.notices.push({ type: 'konvoi', armada: a, event: 'angekommen' }); }
+    this.dissolve(a, true);
+  }
+
+  /** Ein Konvoi geht verloren (gekapert oder alle Schiffe versenkt): Ladung weg, die versorgte Belagerung verliert Moral */
+  private convoyLost(a: ArmadaState, winner: string | null): void {
+    if (a.purpose !== 'konvoi' || a.delivered || !a.cargo) return;
+    const s = this.state;
+    if (winner && winner !== a.nation) {
+      const w = s.nations[winner];
+      if (w) { const b = this.bag2; for (const r of RESOURCE_IDS) b[r] = a.cargo[r] * WAR_LOGI.captureShare; this.addStock(w, b); }
+    }
+    a.cargo = null;
+    const target = this.armadaById(a.supplies);
+    if (target && target.status !== 'aufgeloest') {
+      target.morale = Math.max(0, target.morale - WAR_LOGI.lostMorale);
+      const sg = this.siegeById(target.siegeId);
+      if (sg) { sg.morale = target.morale; sg.transportsLost++; }
+    }
+    s.stats.convoysLost++;
+    this.notices.push({ type: 'konvoi', armada: a, event: 'verloren' });
+  }
+
+  /**
+   * Patrouille am Ende einer Etappe: im Heimathafen reparieren (wenn nötig und bezahlbar), dann zum anderen Ende der Streife; nach Ablauf heim.
+   * Wechselt zwischen den Inseln der Streife (`lane`) – bei zwei Inseln ein Pendel.
+   */
+  private nextLeg(a: ArmadaState): void {
+    const s = this.state;
+    if (s.t >= a.until || !a.lane.length) { this.goHome(a); return; }
+    const n = s.nations[a.nation];
+    if (n && a.target === a.home) {
+      for (const sh of a.ships) {
+        if (sh.down || sh.hull >= WAR_LOGI.repairBelow) continue;
+        if (this.payRepair(n, SHIP_COST[clamp(sh.cls, 0, 6)], 1 - sh.hull)) sh.hull = 1;
+      }
+    }
+    const k = a.lane.indexOf(a.target);
+    const next = a.lane[(k + 1) % a.lane.length];
+    const w = this.island(next);
+    if (!w) { this.goHome(a); return; }
+    // dieselbe Insel (Streife um nur eine Insel): auf die andere Seite – nie eine Route der Länge null (sonst stünde die Streife je Takt neu an)
+    const ang = Math.atan2(a.x - w.x, a.z - w.z) + (next === a.target ? Math.PI : 0);
+    a.target = w.id;
+    a.route = this.path(a.x, a.z, w.x + Math.sin(ang) * (w.r * 1.5 + 120), w.z + Math.cos(ang) * (w.r * 1.5 + 120));
+    a.leg = 1;
+  }
+
+  /**
+   * Feindliche Verbände, die einander nahe kommen, liefern sich eine Großschlacht; ein Entsatz vor der belagerten Insel stellt die Belagerer.
+   * 4.7E: ein Konvoi ohne kampffähige Begleiter wird gestellt (Kaperung), wenn eine kampfbereite Flotte des Gegners ihn erreicht.
+   */
   private engage(): void {
     const s = this.state;
     const L = s.armadas.length;
     for (let i = 0; i < L; i++) {
       const a = s.armadas[i];
-      if (a.battleId || a.status === 'aufgeloest' || !this.canFight(a)) continue;
+      if (a.battleId || a.status === 'aufgeloest') continue;
+      const fa = this.canFight(a);
+      if (!fa && !this.huntable(a)) continue;
       for (let j = i + 1; j < L; j++) {
         const b = s.armadas[j];
-        if (b.battleId || b.status === 'aufgeloest' || a.nation === b.nation || !this.canFight(b)) continue;
+        if (b.battleId || b.status === 'aufgeloest' || a.nation === b.nation) continue;
+        const fb = this.canFight(b);
+        if (!fb && (!fa || !this.huntable(b))) continue;
+        if (!fa && !fb) continue;
         if (!this.atWar(a.nation, b.nation)) continue;
         const dx = a.x - b.x, dz = a.z - b.z;
         const reach = WAR.engageDist;
@@ -825,6 +1050,11 @@ export class FactionWarEngine {
   private canFight(a: ArmadaState): boolean {
     if (this.state.t < a.calmUntil || !warshipsAlive(a)) return false;
     return armadaFire(a) >= a.firepower0 * WAR.retreatAt;
+  }
+
+  /** 4.7E: kann ein Konvoi ohne kampffähige Begleiter gestellt werden? (Transporter unterwegs, nicht schon geschlagen) */
+  private huntable(a: ArmadaState): boolean {
+    return a.purpose === 'konvoi' && !a.delivered && (a.status === 'anmarsch' || a.status === 'heimkehr') && shipsAlive(a) > 0;
   }
 
   private startBattle(a: ArmadaState, b: ArmadaState): GrandBattleState {
@@ -909,6 +1139,18 @@ export class FactionWarEngine {
       const sg = this.siegeById(a.siegeId);
       if (sg) sg.morale = a.morale;
     }
+    if (sh.role === 'transport' && a.purpose === 'konvoi') {
+      // 4.7E: ein Konvoi-Transporter sinkt – sein Anteil der Ladung geht mit unter; sind alle weg, ist der Nachschub verloren
+      const left = this.transportsLeft(a);
+      const share = 1 / (left + 1);
+      if (a.cargo) for (const r of RESOURCE_IDS) a.cargo[r] *= 1 - share;
+      // alle Transporter weg (außerhalb einer Schlacht, z. B. vom Spieler versenkt): Nachschub verloren, die Begleiter drehen ab
+      if (left === 0 && a.cargo && !a.battleId) {
+        this.convoyLost(a, null);
+        if (warshipsAlive(a)) this.goHome(a); else this.dissolve(a, false);
+      }
+      return true;
+    }
     if (sh.role === 'transport') {
       // Nachschub verloren: Moral der Belagerung sinkt drastisch, die Ladung geht mit unter
       const left = this.transportsLeft(a);
@@ -943,15 +1185,25 @@ export class FactionWarEngine {
     bt.endedAt = this.state.t;
     bt.winner = winner;
     bt.reason = reason;
-    for (const x of [a, b]) {
+    for (let side = 0; side < 2; side++) {
+      const x = side === 0 ? a : b;
       if (!x) continue;
       x.battleId = null;
       const won = winner === x.nation;
       if (!won || !warshipsAlive(x)) {
         x.calmUntil = this.state.t + 150;
+        // 4.7E: ein geschlagener Konvoi wird gekapert – die übrigen Transporter gehen verloren, ein Teil der Ladung an den Sieger
+        if (x.purpose === 'konvoi' && !x.delivered && winner && winner !== x.nation) {
+          this.convoyLost(x, winner);
+          for (const sh of x.ships) if (!sh.down) { this.sink(x, sh); if (bt.a === x.id) bt.sunkA++; else bt.sunkB++; }
+          this.dissolve(x, false);
+          continue;
+        }
+        // eine geschlagene Blockade gibt den Hafen frei
+        if (x.status === 'blockade' || x.resume === 'blockade') this.endBlockade(x);
         // besiegt: die Belagerung bricht ab, die Reste fahren heim
         if (x.siegeId) { const sg = this.siegeById(x.siegeId); if (sg) this.endSiege(sg, 'abgebrochen'); }
-        if (warshipsAlive(x) || shipsAlive(x)) this.goHome(x); else this.dissolve(x, false);
+        if (warshipsAlive(x) || shipsAlive(x)) this.goHome(x); else { if (x.purpose === 'konvoi') this.convoyLost(x, winner); this.dissolve(x, false); }
         continue;
       }
       x.status = x.resume === 'gefecht' ? 'anmarsch' : x.resume;
@@ -1072,10 +1324,17 @@ export class FactionWarEngine {
     a.troops = Math.max(0, sg.troops * 0.5 - 10);
     if (from) {
       const n = s.nations[from];
-      if (n) n.islandsLost++;
+      if (n) {
+        n.islandsLost++;
+        // 4.7E: Gegenschlag – der Verlierer plant die Rückeroberung (Ressourcen und Obergrenzen gelten auch hier)
+        n.counter = { islandId: w.id, at: s.t + WAR_LOGI.counterDelay };
+      }
       const r = this.relation(from, a.nation);
       if (r) { r.weariness = Math.min(100, r.weariness + WAR.wearyIsland); r.trust = Math.max(-100, r.trust - 12); }
     }
+    // wer seine Insel zurückerobert hat, braucht keinen Gegenschlag mehr
+    const wn = s.nations[a.nation];
+    if (wn?.counter?.islandId === w.id) wn.counter = null;
     s.stats.conquests++;
     sg.progress = 1;
     this.endSiege(sg, 'erobert');
@@ -1116,7 +1375,8 @@ export class FactionWarEngine {
       if (!owner || !w.produces) continue;
       const k = this.yieldK(owner.id) * (this.unrest(w.id) > 0 ? 0.5 : 1);
       for (const r of RESOURCE_IDS) st.store[r] += w.yield[r] * k;
-      if (st.siegeId) continue;
+      // belagert oder blockiert (4.7E): der Hafen liefert nicht – das Lager wächst (Beute für einen Eroberer)
+      if (st.siegeId || st.blockadeId) continue;
       for (const r of RESOURCE_IDS) { owner.income[r] += st.store[r]; owner.stock[r] = Math.min(RESOURCE_CAP[r], owner.stock[r] + st.store[r]); st.store[r] = 0; }
     }
     // Grundverbrauch: Hof, Verwaltung, Reserveflotte und je gehaltener Insel Sold und Verpflegung; festes Einkommen (Ordnungsabgabe der Marine);
@@ -1155,10 +1415,13 @@ export class FactionWarEngine {
       const n = st.owner ? s.nations[st.owner] : null;
       if (!n) continue;
       n.stock.proviant = Math.max(0, n.stock.proviant - st.garrison * 0.01);
-      if (!st.siegeId && st.garrison < w.garrisonMax && n.stock.rekruten >= WAR.reinforce) {
-        const add = Math.min(WAR.reinforce, w.garrisonMax - st.garrison);
+      // Verstärkung kostet Rekruten, Sold (Gold) und Verpflegung (4.7E); nie über die volle Besatzung
+      const add = Math.min(WAR.reinforce, w.garrisonMax - st.garrison);
+      if (!st.siegeId && add > 0 && n.stock.rekruten >= add && n.stock.gold >= add * WAR_LOGI.garrisonGold && n.stock.proviant >= add * WAR_LOGI.garrisonProviant) {
         st.garrison += add;
         n.stock.rekruten -= add;
+        n.stock.gold -= add * WAR_LOGI.garrisonGold;
+        n.stock.proviant -= add * WAR_LOGI.garrisonProviant;
       }
     }
     this.recount();
@@ -1521,27 +1784,41 @@ export class FactionWarEngine {
       - 0.35 * clamp(st.garrison / 140, 0, 2)
       - (rel ? rel.weariness / 150 : 0);
     if (!owner) u += 0.15; // herrenlose Mega-Insel
+    // 4.7E: Kriegsziel aus der Kampagne – die Inseln des Erzrivalen sind begehrter
+    if (n.focus && owner === n.focus) u += 0.35;
     return u;
   }
 
   /** Schwelle, ab der eine Nation losschlägt (aggressive Mächte früher) */
   threshold(nationIdx: number): number { return 0.95 - 0.45 * this.registry.at(nationIdx).doctrine.aggression; }
 
-  /** Entscheidung einer Nation: Entsatz für belagerte eigene Inseln, sonst die beste Offensive (wenn bezahlbar) */
+  /**
+   * Entscheidung einer Nation: zuerst die Logistik (4.7E: Patrouillen, Nachschub- und Front-Konvois, Seeblockaden, Abfangen), dann Entsatz für
+   * belagerte oder blockierte eigene Inseln, Bündnisfall, Gegenschlag nach einem Inselverlust und sonst die beste Offensive (wenn bezahlbar).
+   */
   private think(i: number): void {
+    // Reihenfolge der Mittel: zuerst der Nachschub laufender Belagerungen (sonst verhungern sie), dann Entsatz, Gegenschlag und neue Offensiven,
+    // zuletzt die übrige Logistik (Front-Konvois, Patrouillen, Blockaden) mit dem, was Lager und Obergrenzen noch hergeben
+    this.siegeSupply(i);
+    this.militaryBrain(i);
+    this.logistics(i);
+  }
+
+  /** Entsatz, Bündnisfall, Gegenschlag und Offensive (höchstens ein neuer militärischer Verband je Entscheidung) */
+  private militaryBrain(i: number): void {
     const s = this.state;
     const def = this.registry.at(i);
     const n = s.nations[def.id];
     if (!n) return;
-    if (s.armadas.length - this.countStatus('aufgeloest') >= WAR.maxArmadas) return;
-    // 1. Entsatz: eine eigene Insel wird belagert und noch kein Entsatz ist unterwegs
+    if (this.militaryCount() >= WAR.maxArmadas) return;
+    // 1. Entsatz: eine eigene Insel wird belagert oder blockiert und noch kein Entsatz ist unterwegs
     for (let k = 0; k < this.islands.length; k++) {
       const st = this.isl[k];
-      if (st.owner !== def.id || !st.siegeId) continue;
+      if (st.owner !== def.id || (!st.siegeId && !st.blockadeId)) continue;
       if (this.hasArmada(def.id, this.islands[k].id, 'entsatz') || s.t - st.reliefAt < WAR.reliefGap) continue;
       // nur mit Aussicht: die Entsatzflotte muss gut die Hälfte der Feuerkraft der Belagerer aufbringen
       const sg = this.siegeById(st.siegeId);
-      const foe = sg ? this.armadaById(sg.armadaId) : null;
+      const foe = sg ? this.armadaById(sg.armadaId) : this.armadaById(st.blockadeId);
       const plan = this.planFor(i, k, WAR.minShips + 1);
       let fp = 0;
       for (const p of plan) fp += SHIP_CLASSES[p.cls].can * (0.75 + 0.12 * p.cannonTier);
@@ -1565,6 +1842,18 @@ export class FactionWarEngine {
       if (fp < armadaFire(foe) * WAR.reliefOdds || !this.affordPlan(n, plan)) continue;
       if (!atWar) this.declareWar(def.id, foe.nation, false, owner);
       if (this.launch(i, k, 'entsatz', WAR.minShips + 1)) return;
+    }
+    // 1c. Gegenschlag (4.7E): eine verlorene Insel zurückerobern, sobald die Frist um ist (nur im Krieg, nur bezahlbar, Obergrenzen gelten)
+    const c = n.counter;
+    if (c) {
+      const k = this.islandIndexOf(c.islandId);
+      const st = k >= 0 ? this.isl[k] : null;
+      const owner = st?.owner ?? null;
+      if (!st || owner === def.id || s.t > c.at + WAR_LOGI.counterWindow) n.counter = null;
+      else if (s.t >= c.at && !st.siegeId && owner && this.atWar(def.id, owner) && !this.hasArmada(def.id, c.islandId, 'angriff')) {
+        // `commission` erkennt den Gegenschlag am Ziel (Markierung, Meldung, Zähler)
+        if (this.launch(i, k, 'angriff')) return;
+      }
     }
     // 2. Offensive
     let running = 0;
@@ -1610,12 +1899,6 @@ export class FactionWarEngine {
     return false;
   }
 
-  private countStatus(st: ArmadaStatus): number {
-    let n = 0;
-    for (const a of this.state.armadas) if (a.status === st) n++;
-    return n;
-  }
-
   /** Größe einer Armada für dieses Ziel (6 – 10 Schiffe): Bereitschaft, Mega-Inseln und Festungen brauchen mehr */
   private planSize(n: NationState, w: WarIsland): number {
     const ready = this.readiness(n);
@@ -1656,7 +1939,7 @@ export class FactionWarEngine {
     return true;
   }
 
-  /** Armada aufstellen und auslaufen lassen; false, wenn nicht bezahlbar oder kein Hafen in Reichweite */
+  /** Armada aufstellen und auslaufen lassen; false, wenn nicht bezahlbar, über den Obergrenzen (`WAR_CAPS`) oder kein Hafen in Reichweite */
   launch(nationIdx: number, islandIdx: number, purpose: ArmadaPurpose, size = 0, coalition = false): ArmadaState | null {
     const s = this.state;
     const def = this.registry.at(nationIdx);
@@ -1664,9 +1947,9 @@ export class FactionWarEngine {
     const w = this.islands[islandIdx];
     if (!n || !w) return null;
     let plan = this.planFor(nationIdx, islandIdx, size);
-    if (!this.affordPlan(n, plan)) {
+    if (!this.affordPlan(n, plan) || !this.withinCaps(def.id, plan, 0)) {
       plan = this.planFor(nationIdx, islandIdx, WAR.minShips);
-      if (!this.affordPlan(n, plan)) return null;
+      if (!this.affordPlan(n, plan) || !this.withinCaps(def.id, plan, 0)) return null;
     }
     // Heimathafen: die nächste eigene Insel (bevorzugt Häfen)
     let home = -1, hd = 1e9;
@@ -1677,26 +1960,337 @@ export class FactionWarEngine {
       if (d < hd) { hd = d; home = k; }
     }
     if (home < 0) return null;
-    const cost = armadaCost(plan, this.bag2);
-    for (const r of RESOURCE_IDS) n.stock[r] -= cost[r];
     const hw = this.islands[home];
     const ang = Math.atan2(w.x - hw.x, w.z - hw.z);
     const sx = hw.x + Math.sin(ang) * (hw.r * 1.6 + 80), sz = hw.z + Math.cos(ang) * (hw.r * 1.6 + 80);
     const tAng = Math.atan2(sx - w.x, sz - w.z);
     const tx = w.x + Math.sin(tAng) * (w.r * 1.45 + 140), tz = w.z + Math.cos(tAng) * (w.r * 1.45 + 140);
+    return this.commission(def.id, purpose, plan, hw, w, this.path(sx, sz, tx, tz), sx, sz, ang, coalition, null);
+  }
+
+  /**
+   * Gemeinsamer Stapellauf aller Verbände (4.7E): Baukosten (und Ladung) aus dem Lager abziehen, Schiffe anlegen, Truppen, Nachschub, Meldung.
+   * Prüft Bezahlbarkeit und Obergrenzen nicht selbst (das tun die Aufrufer vorher); `cargo` wird kopiert.
+   */
+  private commission(nation: string, purpose: ArmadaPurpose, plan: readonly { role: ArmadaRole; cls: number; hullTier: number; sailTier: number; cannonTier: number }[],
+    home: WarIsland, target: WarIsland, route: number[], sx: number, sz: number, heading: number, coalition: boolean, cargo: Partial<ResourceBag> | null): ArmadaState {
+    const s = this.state;
+    const n = s.nations[nation];
+    const cost = armadaCost(plan, this.bag2);
+    for (const r of RESOURCE_IDS) n.stock[r] = Math.max(0, n.stock[r] - cost[r]);
+    let bag: ResourceBag | null = null;
+    if (cargo) {
+      bag = emptyBag();
+      for (const r of RESOURCE_IDS) { const q = Math.min(cargo[r] ?? 0, n.stock[r]); bag[r] = q; n.stock[r] -= q; }
+    }
     const id = `ar${++s.seq}`;
     const ships: ArmadaShip[] = plan.map((p, k) => ({ id: `${id}-${k}`, role: p.role, cls: p.cls, hullTier: p.hullTier, sailTier: p.sailTier, cannonTier: p.cannonTier, hull: 1, sail: 1, down: false, slot: k }));
     let troops = 0, transports = 0;
-    for (const p of plan) { troops += TROOPS_PER_SHIP[p.role]; if (p.role === 'transport') transports++; }
+    // Landungskorps nur für Angriffe und Entsatz; Konvoi-Transporter tragen ihre Ladung, Patrouillen und Blockaden nur Bordtruppen
+    for (const p of plan) { if (isMilitary(purpose)) troops += TROOPS_PER_SHIP[p.role]; else troops += p.role === 'transport' ? 0 : 4; if (p.role === 'transport') transports++; }
+    const logi = !isMilitary(purpose);
     const a: ArmadaState = {
-      id, nation: def.id, purpose, target: w.id, home: hw.id, x: sx, z: sz, heading: ang, route: this.path(sx, sz, tx, tz), leg: 1,
-      status: 'anmarsch', resume: 'anmarsch', ships, troops, supply: { proviant: TRANSPORT_SUPPLY.proviant * transports, medizin: TRANSPORT_SUPPLY.medizin * transports },
+      id, nation, purpose, target: target.id, home: home.id, x: sx, z: sz, heading, route, leg: 1,
+      status: 'anmarsch', resume: 'anmarsch', ships, troops,
+      supply: logi ? { proviant: 0, medizin: 0 } : { proviant: TRANSPORT_SUPPLY.proviant * transports, medizin: TRANSPORT_SUPPLY.medizin * transports },
       morale: 1, firepower0: 0, createdAt: s.t, endedAt: -1, battleId: null, siegeId: null, coalition, calmUntil: 0, live: false,
+      cargo: bag, supplies: null, until: 0, counter: false, delivered: false, lane: [],
     };
     a.firepower0 = armadaFire(a);
     s.armadas.push(a);
     s.stats.armadas++;
+    // Gegenschlag: ein Angriff auf die zuletzt verlorene Insel – gleich, ob aus der Frist oder schon vorher aus der Nutzen-Wahl (Rückeroberung)
+    if (purpose === 'angriff' && n.counter && n.counter.islandId === target.id) {
+      a.counter = true;
+      n.counter = null;
+      s.stats.counters++;
+      this.notices.push({ type: 'gegenschlag', nation, islandId: target.id, armada: a });
+    }
+    if (purpose === 'patrouille') s.stats.patrols++;
+    else if (purpose === 'konvoi') s.stats.convoys++;
+    else if (purpose === 'blockade') s.stats.blockades++;
     this.notices.push({ type: 'armada', armada: a });
+    if (purpose === 'konvoi') this.notices.push({ type: 'konvoi', armada: a, event: 'auslaufen' });
+    return a;
+  }
+
+  // ---------- 4.7E: Obergrenzen und Logistik ----------
+
+  /** Belegung einer Nation auf See (Arbeitsfeld, je Aufruf neu gezählt) */
+  private readonly loadScratch = { ships: 0, troops: 0, patrols: 0, convoys: 0, blockades: 0, military: 0 };
+
+  /** Schiffe, Truppen und Verbände einer Nation auf See (ohne Zuweisung; schreibt in ein Arbeitsfeld) */
+  loadOf(nation: string): Readonly<typeof this.loadScratch> {
+    const L = this.loadScratch;
+    L.ships = 0; L.troops = 0; L.patrols = 0; L.convoys = 0; L.blockades = 0; L.military = 0;
+    const list = this.state.armadas;
+    for (let k = 0; k < list.length; k++) {
+      const a = list[k];
+      if (a.nation !== nation || a.status === 'aufgeloest') continue;
+      L.ships += shipsAlive(a);
+      L.troops += a.troops + (a.cargo ? a.cargo.rekruten : 0);
+      if (a.purpose === 'patrouille') L.patrols++;
+      else if (a.purpose === 'konvoi') L.convoys++;
+      else if (a.purpose === 'blockade') L.blockades++;
+      else L.military++;
+    }
+    return L;
+  }
+
+  /** Militärische Armadas (Angriff, Entsatz) aller Nationen, die noch nicht aufgelöst sind */
+  private militaryCount(): number {
+    let n = 0;
+    for (const a of this.state.armadas) if (a.status !== 'aufgeloest' && isMilitary(a.purpose)) n++;
+    return n;
+  }
+
+  /** Verbände aller Nationen auf See */
+  private fleetCount(): number {
+    let n = 0;
+    for (const a of this.state.armadas) if (a.status !== 'aufgeloest') n++;
+    return n;
+  }
+
+  /**
+   * Passt ein neuer Verband (Bauplan, zusätzliche Rekruten als Ladung) noch unter die Obergrenzen der Nation (`WAR_CAPS.shipsAtSea`, `troopsAtSea`)
+   * und aller Verbände (`WAR_CAPS.fleets`)?
+   */
+  private withinCaps(nation: string, plan: readonly { role: ArmadaRole }[], extraTroops: number, purpose: ArmadaPurpose = 'angriff'): boolean {
+    if (this.fleetCount() >= WAR_CAPS.fleets) return false;
+    const L = this.loadOf(nation);
+    let troops = extraTroops;
+    for (const p of plan) troops += isMilitary(purpose) ? TROOPS_PER_SHIP[p.role] : p.role === 'transport' ? 0 : 4;
+    // Militärische Verbände lassen Platz für einen Nachschub-Konvoi (zwei Transporter): eine laufende Belagerung verhungert nie am Limit
+    const mil = isMilitary(purpose);
+    const resTroops = mil ? (WAR_LOGI.siegeCargo.rekruten ?? 0) * 2 + 8 : 0, resShips = mil ? 3 : 0;
+    return L.ships + plan.length + resShips <= WAR_CAPS.shipsAtSea && L.troops + troops + resTroops <= WAR_CAPS.troopsAtSea;
+  }
+
+  /** Bauplan eines Logistik-Verbands in den Arbeitsfeldern: Patrouille (Linie/Fregatten), Konvoi (Begleiter + Transporter), Blockade (Linie) */
+  private planLogi(kind: 'patrouille' | 'konvoi' | 'blockade', nationIdx: number, islandIdx: number, transports = 1): typeof this.planScratch {
+    const plan = this.planScratch;
+    plan.length = 0;
+    if (kind === 'konvoi') {
+      this.planShip(plan, 'fregatte', nationIdx, islandIdx, 31);
+      for (let k = 0; k < transports; k++) this.planShip(plan, 'transport', nationIdx, islandIdx, 32 + k);
+      return plan;
+    }
+    const n = kind === 'patrouille' ? WAR_LOGI.patrolShips : WAR_LOGI.blockadeShips;
+    for (let k = 0; k < n; k++) this.planShip(plan, k === 0 || (kind === 'blockade' && k % 2 === 1) ? 'linie' : 'fregatte', nationIdx, islandIdx, 40 + k);
+    return plan;
+  }
+
+  /** Lager reicht für Bau plus Ladung, und die Kriegsreserve bleibt (wie bei Armadas) */
+  private affordCargo(n: NationState, plan: readonly { role: ArmadaRole; cls: number; hullTier: number; sailTier: number; cannonTier: number }[], cargo: Partial<ResourceBag>, k = 1): boolean {
+    const c = armadaCost(plan, this.bag2);
+    for (const r of RESOURCE_IDS) if (n.stock[r] - c[r] - (cargo[r] ?? 0) * k < (WAR_RESERVE[r] ?? 0) * RESOURCE_TARGET[r]) return false;
+    return true;
+  }
+
+  /** Läuft schon ein Konvoi für diese Armada? */
+  private convoyFor(armadaId: string): boolean {
+    for (const a of this.state.armadas) if (a.purpose === 'konvoi' && a.supplies === armadaId && a.status !== 'aufgeloest') return true;
+    return false;
+  }
+
+  /**
+   * Produktions-Insel für einen Konvoi: eigene, liefernde Insel (nicht belagert, nicht blockiert, nicht das Ziel), möglichst nah am Ziel, in Reichweite
+   * (`WAR.reach` × 1,7); −1, wenn keine.
+   */
+  private sourceIsland(nation: string, x: number, z: number, exclude: number): number {
+    let best = -1, bd = WAR.reach * 1.7;
+    for (let k = 0; k < this.islands.length; k++) {
+      const st = this.isl[k], w = this.islands[k];
+      if (k === exclude || st.owner !== nation || !w.produces || st.siegeId || st.blockadeId) continue;
+      const d = Math.hypot(w.x - x, w.z - z);
+      if (d < bd) { bd = d; best = k; }
+    }
+    return best;
+  }
+
+  /** Nächste Entfernung einer Insel zu Inseln von Nationen, mit denen `nation` im Krieg liegt (bzw. Rivalen, wenn `rivals`) */
+  private frontDist(nation: string, k: number, rivals: boolean): number {
+    const w = this.islands[k];
+    let d = 1e9;
+    for (let j = 0; j < this.islands.length; j++) {
+      const o = this.isl[j].owner;
+      if (!o || o === nation) continue;
+      const st = this.stateOf(nation, o);
+      if (st !== 'krieg' && !(rivals && st === 'rivalitaet')) continue;
+      const dd = Math.hypot(this.islands[j].x - w.x, this.islands[j].z - w.z);
+      if (dd < d) d = dd;
+    }
+    return d;
+  }
+
+  /** Liegt die Nation mit irgendwem im Krieg? */
+  private inWar(nation: string): boolean {
+    for (const r of this.state.relations) if (r.state === 'krieg' && (r.a === nation || r.b === nation)) return true;
+    return false;
+  }
+
+  /** Nachschub für eigene Belagerungen, deren Proviant zur Neige geht (vor allen anderen Ausgaben: eine Belagerung ohne Nachschub bricht zusammen) */
+  private siegeSupply(i: number): void {
+    const s = this.state;
+    const def = this.registry.at(i);
+    const n = s.nations[def.id];
+    if (!n) return;
+    for (let k = 0; k < s.armadas.length; k++) {
+      const a = s.armadas[k];
+      if (a.nation !== def.id || a.status !== 'belagerung' || a.purpose !== 'angriff') continue;
+      if (a.supply.proviant >= TRANSPORT_SUPPLY.proviant * 1.5 * WAR_LOGI.siegeLow || this.convoyFor(a.id)) continue;
+      if (this.loadOf(def.id).convoys >= WAR_CAPS.convoys) break;
+      const ti = this.islandIndexOf(a.target);
+      const src = this.sourceIsland(def.id, a.x, a.z, ti);
+      if (src < 0 || ti < 0) continue;
+      const tr = a.troops < 60 ? 2 : 1;
+      const plan = this.planLogi('konvoi', i, ti, tr);
+      if (!this.affordCargo(n, plan, WAR_LOGI.siegeCargo, tr) || !this.withinCaps(def.id, plan, (WAR_LOGI.siegeCargo.rekruten ?? 0) * tr, 'konvoi')) continue;
+      const c = this.launchConvoy(src, ti, plan, WAR_LOGI.siegeCargo, tr, a);
+      if (c) break;
+    }
+  }
+
+  /**
+   * Logistik einer Nation (4.7E, je Entscheidung): Belagerungs-Nachschub, Front-Konvoi zur bedrohtesten Insel, Patrouillen auf den Seewegen,
+   * Seeblockade eines feindlichen Hafens, Abfangen feindlicher Konvois und Blockaden durch die eigenen Patrouillen. Alles nur mit echten Mitteln
+   * und unter den Obergrenzen; keine Zuweisung, solange nichts ausläuft.
+   */
+  private logistics(i: number): void {
+    const s = this.state;
+    const def = this.registry.at(i);
+    const n = s.nations[def.id];
+    if (!n) return;
+    const war = this.inWar(def.id);
+    // b) Front-Konvoi (nur im Krieg): die eigene Insel, die einem Kriegsgegner am nächsten liegt, bekommt Rekruten und Kriegsrohstoffe
+    if (war && s.t - n.frontAt >= WAR_LOGI.frontGap && this.loadOf(def.id).convoys < WAR_CAPS.convoys) {
+      let front = -1, fd = 1e9;
+      for (let k = 0; k < this.islands.length; k++) {
+        const st = this.isl[k], w = this.islands[k];
+        if (st.owner !== def.id || st.siegeId || st.blockadeId || w.tier === 'hauptstadt') continue;
+        if (st.garrison >= w.garrisonMax * WAR_CAPS.garrisonK - 10) continue;
+        const d = this.frontDist(def.id, k, false);
+        if (d < fd) { fd = d; front = k; }
+      }
+      if (front >= 0 && fd < WAR.reach) {
+        const fw = this.islands[front];
+        // Quelle: eine Produktions-Insel weiter weg von der Front (Hinterland); notfalls die nächste
+        const src = this.sourceIsland(def.id, fw.x, fw.z, front);
+        const tr = n.stock.rekruten > RESOURCE_TARGET.rekruten * 0.9 ? 2 : 1;
+        const plan = this.planLogi('konvoi', i, front, tr);
+        if (src >= 0 && this.affordCargo(n, plan, WAR_LOGI.frontCargo, tr) && this.withinCaps(def.id, plan, (WAR_LOGI.frontCargo.rekruten ?? 0) * tr, 'konvoi')) {
+          if (this.launchConvoy(src, front, plan, WAR_LOGI.frontCargo, tr, null)) n.frontAt = s.t;
+        }
+      }
+    }
+    // c) Patrouillen bis zur Obergrenze: Streife zwischen den beiden eigenen Inseln, die Kriegsgegnern (sonst Rivalen) am nächsten liegen
+    if (s.t - n.patrolAt >= WAR_LOGI.patrolGap && this.loadOf(def.id).patrols < (war ? WAR_CAPS.patrols : 1)) {
+      let a1 = -1, a2 = -1, d1 = 1e9, d2 = 1e9;
+      for (let k = 0; k < this.islands.length; k++) {
+        if (this.isl[k].owner !== def.id || this.isl[k].siegeId) continue;
+        const d = this.frontDist(def.id, k, true);
+        if (d < d1) { a2 = a1; d2 = d1; a1 = k; d1 = d; } else if (d < d2) { a2 = k; d2 = d; }
+      }
+      if (a1 >= 0) {
+        if (a2 < 0) a2 = a1;
+        const plan = this.planLogi('patrouille', i, a1);
+        if (this.affordPlan(n, plan) && this.withinCaps(def.id, plan, 0, 'patrouille')) {
+          const w1 = this.islands[a1], w2 = this.islands[a2];
+          const ang = Math.atan2(w2.x - w1.x, w2.z - w1.z) || 0.7;
+          const sx = w1.x + Math.sin(ang) * (w1.r * 1.5 + 120), sz = w1.z + Math.cos(ang) * (w1.r * 1.5 + 120);
+          const tx = w2.x - Math.sin(ang) * (w2.r * 1.5 + 120), tz = w2.z - Math.cos(ang) * (w2.r * 1.5 + 120);
+          const p = this.commission(def.id, 'patrouille', plan, w1, w2, this.path(sx, sz, tx, tz), sx, sz, ang, false, null);
+          p.until = s.t + WAR_LOGI.patrolTime;
+          p.lane = a1 === a2 ? [w1.id] : [w1.id, w2.id];
+          n.patrolAt = s.t;
+        }
+      }
+    }
+    // d) Seeblockade (nur im Krieg, mit Bereitschaft): der feindliche Hafen mit dem höchsten Ertrag in Reichweite, nicht belagert, nicht geschützt
+    if (war && s.t - n.blockadeAt >= WAR_LOGI.blockadeGap && this.readiness(n) >= WAR_LOGI.blockadeReady && this.loadOf(def.id).blockades < WAR_CAPS.blockades) {
+      let best = -1, bv = 0;
+      for (let k = 0; k < this.islands.length; k++) {
+        const st = this.isl[k], w = this.islands[k];
+        const o = st.owner;
+        if (!o || o === def.id || w.protected || !w.conquerable || st.siegeId || st.blockadeId || !this.atWar(def.id, o)) continue;
+        if (w.tier !== 'hafen' && w.tier !== 'mega' && w.tier !== 'siedlung') continue;
+        if (this.reachOf(def.id, w) > WAR.reach || this.hasArmada(def.id, w.id, null)) continue;
+        const v = w.yield.gold + 4 * (w.yield.kanonenstahl + w.yield.hartholz + w.yield.segeltuch) + (n.focus === o ? 40 : 0);
+        if (v > bv) { bv = v; best = k; }
+      }
+      if (best >= 0) {
+        const plan = this.planLogi('blockade', i, best);
+        if (this.affordPlan(n, plan) && this.withinCaps(def.id, plan, 0, 'blockade')) {
+          const a = this.launchTo(i, best, 'blockade', plan);
+          if (a) { a.until = s.t + WAR_LOGI.blockadeTime + this.pathTime(a); n.blockadeAt = s.t; }
+        }
+      }
+    }
+    // e) Abfangen: eigene Patrouillen nehmen Kurs auf feindliche Konvois und Blockaden in Sichtweite
+    for (let k = 0; k < s.armadas.length; k++) {
+      const p = s.armadas[k];
+      if (p.nation !== def.id || p.purpose !== 'patrouille' || p.status !== 'anmarsch' || p.battleId || !this.canFight(p)) continue;
+      let prey: ArmadaState | null = null, pd: number = WAR_LOGI.patrolSight;
+      for (let j = 0; j < s.armadas.length; j++) {
+        const e = s.armadas[j];
+        if (e.nation === def.id || e.status === 'aufgeloest' || (e.purpose !== 'konvoi' && e.purpose !== 'blockade') || !this.atWar(def.id, e.nation)) continue;
+        const d = Math.hypot(e.x - p.x, e.z - p.z);
+        if (d < pd) { pd = d; prey = e; }
+      }
+      if (!prey || pd < WAR.engageDist) continue;
+      const last = p.route.length;
+      // schon auf Abfangkurs (Ziel liegt nah an der Beute)? sonst neuen Kurs setzen
+      if (last >= 2 && Math.hypot(p.route[last - 2] - prey.x, p.route[last - 1] - prey.z) < 300) continue;
+      p.route = this.path(p.x, p.z, prey.x, prey.z);
+      p.leg = 1;
+    }
+  }
+
+  /** Grobe Fahrzeit (s) eines Verbands bis zum Ende seiner Route */
+  private pathTime(a: ArmadaState): number {
+    let d = 0;
+    for (let k = a.leg; k < a.route.length / 2; k++) d += Math.hypot(a.route[k * 2] - a.route[k * 2 - 2], a.route[k * 2 + 1] - a.route[k * 2 - 1]);
+    return d / WAR.speed;
+  }
+
+  /** Verband von der nächsten eigenen Insel zu einer Zielinsel (Blockade: Stellung vor dem Hafen) */
+  private launchTo(nationIdx: number, islandIdx: number, purpose: ArmadaPurpose, plan: readonly { role: ArmadaRole; cls: number; hullTier: number; sailTier: number; cannonTier: number }[]): ArmadaState | null {
+    const def = this.registry.at(nationIdx);
+    const w = this.islands[islandIdx];
+    let home = -1, hd = 1e9;
+    for (let k = 0; k < this.islands.length; k++) {
+      if (this.isl[k].owner !== def.id) continue;
+      const iw = this.islands[k];
+      const d = Math.hypot(iw.x - w.x, iw.z - w.z) - (iw.tier === 'hafen' || iw.tier === 'hauptstadt' || iw.tier === 'mega' ? 400 : 0);
+      if (d < hd) { hd = d; home = k; }
+    }
+    if (home < 0) return null;
+    const hw = this.islands[home];
+    const ang = Math.atan2(w.x - hw.x, w.z - hw.z);
+    const sx = hw.x + Math.sin(ang) * (hw.r * 1.6 + 80), sz = hw.z + Math.cos(ang) * (hw.r * 1.6 + 80);
+    const tAng = Math.atan2(sx - w.x, sz - w.z);
+    const stand = purpose === 'blockade' ? w.r * 1.6 + 200 : w.r * 1.45 + 140;
+    const tx = w.x + Math.sin(tAng) * stand, tz = w.z + Math.cos(tAng) * stand;
+    return this.commission(def.id, purpose, plan, hw, w, this.path(sx, sz, tx, tz), sx, sz, ang, false, null);
+  }
+
+  /**
+   * Nachschub-Konvoi von der Produktions-Insel `src` zur Zielinsel `ti`: zur belagernden Armada `supplies` (an ihre Lage vor der Küste) oder als
+   * Front-Konvoi an den Hafen der eigenen Insel. Ladung je Transporter aus dem Lager der Nation.
+   */
+  private launchConvoy(src: number, ti: number, plan: readonly { role: ArmadaRole; cls: number; hullTier: number; sailTier: number; cannonTier: number }[], cargo: Partial<ResourceBag>, transports: number, supplies: ArmadaState | null): ArmadaState | null {
+    const hw = this.islands[src], w = this.islands[ti];
+    const owner = this.isl[src].owner;
+    if (!owner) return null;
+    const ang = Math.atan2(w.x - hw.x, w.z - hw.z);
+    const sx = hw.x + Math.sin(ang) * (hw.r * 1.5 + 80), sz = hw.z + Math.cos(ang) * (hw.r * 1.5 + 80);
+    let tx: number, tz: number;
+    if (supplies) { tx = supplies.x; tz = supplies.z; }
+    else { const tAng = Math.atan2(sx - w.x, sz - w.z); tx = w.x + Math.sin(tAng) * (w.r * 1.4 + 110); tz = w.z + Math.cos(tAng) * (w.r * 1.4 + 110); }
+    const load = this.bag;
+    for (const r of RESOURCE_IDS) load[r] = (cargo[r] ?? 0) * transports;
+    const a = this.commission(owner, 'konvoi', plan, hw, w, this.path(sx, sz, tx, tz), sx, sz, ang, false, load);
+    a.supplies = supplies?.id ?? null;
     return a;
   }
 
@@ -1755,23 +2349,61 @@ export class FactionWarEngine {
       if (Number.isFinite(hull)) sh.hull = clamp01(hull);
       if (Number.isFinite(sail)) sh.sail = clamp01(sail);
       if (down && !sh.down) {
-        const beneficiary = this.beneficiaryOf(a);
+        const beneficiary = this.beneficiaryOf(a, by);
+        const role = sh.role;
         this.sink(a, sh);
         const bt = this.battleById(a.battleId);
         if (bt) { if (bt.a === a.id) bt.sunkA++; else bt.sunkB++; }
-        if (by) this.creditSink(by, a, sh, beneficiary);
+        if (by) { this.creditSink(by, a, sh, beneficiary); this.notices.push({ type: 'versenkt', playerId: by, armada: a, role }); }
       }
       return;
     }
   }
 
-  /** Wem nützt es, wenn diese Armada Schiffe verliert? Dem Gegner in ihrer Schlacht, sonst den Belagerten (Entsatz: dem Belagerer), sonst dem Herrn ihres Ziels */
-  beneficiaryOf(a: ArmadaState): string | null {
+  /**
+   * Wem nützt es, wenn diese Armada Schiffe verliert? 4.7E: hat der Spieler ein Team, das mit der Nation der Armada im Krieg liegt, seinem Team;
+   * sonst dem Gegner in ihrer Schlacht, den Belagerten (Entsatz: dem Belagerer), sonst dem Herrn ihres Ziels.
+   */
+  beneficiaryOf(a: ArmadaState, playerId: string | null = null): string | null {
+    const team = playerId ? this.state.allegiance[playerId] : undefined;
+    if (team && team !== a.nation && this.atWar(team, a.nation)) return team;
     const bt = this.battleById(a.battleId);
     let n: string | null = bt && !bt.ended ? (bt.nationA === a.nation ? bt.nationB : bt.nationA) : null;
     if (!n && a.purpose === 'entsatz') n = this.siegeOf(a.target)?.attacker ?? null;
     if (!n) n = this.state.islands[a.target]?.owner ?? null;
     return n && n !== a.nation ? n : null;
+  }
+
+  // ---------- 4.7E: Team der Spieler, Kriegsziele ----------
+
+  /**
+   * Team eines Spielers eintragen (einmalig und dauerhaft: ein schon gesetztes Team bleibt – der Wechsel ist gesperrt). Liefert false, wenn die
+   * Nation unbekannt ist oder der Spieler schon einem anderen Team angehört.
+   */
+  setAllegiance(playerId: string, nation: string): boolean {
+    if (!this.registry.has(nation)) return false;
+    const cur = this.state.allegiance[playerId];
+    if (cur && cur !== nation) return false;
+    this.state.allegiance[playerId] = nation;
+    return true;
+  }
+  teamOf(playerId: string): string | null { return this.state.allegiance[playerId] ?? null; }
+
+  /** Kriegsziel einer Nation aus der Kampagne (bevorzugter Gegner; null = keines) */
+  setFocus(nation: string, target: string | null): void {
+    const n = this.state.nations[nation];
+    if (n) n.focus = target && this.registry.has(target) && target !== nation ? target : null;
+  }
+
+  /** Nationen im Krieg mit `nation` (in `out`) */
+  foesOf(nation: string | null, out: string[]): string[] {
+    out.length = 0;
+    if (!nation) return out;
+    for (const r of this.state.relations) {
+      if (r.state !== 'krieg') continue;
+      if (r.a === nation) out.push(r.b); else if (r.b === nation) out.push(r.a);
+    }
+    return out;
   }
 
   /** Versenkt vom Spieler: Kriegspunkte (Kommandoschiff 40, Transporter 30, sonst 15) und Fortschritt im Auftrag „Nachschubkonvoi abfangen“ */
@@ -1793,7 +2425,7 @@ export class FactionWarEngine {
     const acc = (this.state.merit[playerId] ??= {});
     acc[nation] = (acc[nation] ?? 0) + kp;
     for (const c of this.state.contracts) if (c.status === 'aktiv' && c.playerId === playerId && c.client === nation && (!islandId || c.islandId === islandId)) c.merit += kp;
-    this.notices.push({ type: 'kriegspunkte', playerId, nation, kp, reason });
+    this.notices.push({ type: 'kriegspunkte', playerId, nation, kp, reason, islandId });
   }
 
   /** Kriegspunkte eines Spielers bei einer Nation */
@@ -1830,18 +2462,28 @@ export class FactionWarEngine {
     return flips;
   }
 
-  /** Spieler ergreift an einer Belagerung Partei (oder wechselt die Seite) */
+  /** Spieler ergreift an einer Belagerung Partei (oder wechselt die Seite); 4.7E: nie gegen das eigene Team */
   joinSiege(siegeId: string, playerId: string, side: SiegeSide): boolean {
     const sg = this.siegeById(siegeId);
     if (!sg || sg.ended) return false;
+    const team = this.state.allegiance[playerId];
+    if (team && ((sg.attacker === team && side !== 'angreifer') || (sg.defender === team && side !== 'verteidiger'))) return false;
     const h = sg.helpers.find((x) => x.playerId === playerId);
     if (h) h.side = side; else sg.helpers.push({ playerId, side });
     return true;
   }
-  /** Seite des Spielers an dieser Belagerung (null: hat keine Partei ergriffen) */
+  /**
+   * Seite des Spielers an dieser Belagerung (null: hat keine Partei ergriffen). 4.7E: ist sein Team Angreifer oder Verteidiger, steht er automatisch
+   * auf dessen Seite (dauerhafte Treue: kein Seitenwechsel).
+   */
   helperSide(siegeId: string, playerId: string): SiegeSide | null {
     const sg = this.siegeById(siegeId);
-    return sg?.helpers.find((x) => x.playerId === playerId)?.side ?? null;
+    if (!sg) return null;
+    const team = this.state.allegiance[playerId];
+    if (team && sg.attacker === team) return 'angreifer';
+    if (team && sg.defender === team) return 'verteidiger';
+    for (let k = 0; k < sg.helpers.length; k++) if (sg.helpers[k].playerId === playerId) return sg.helpers[k].side;
+    return null;
   }
 
   // ---------- Kriegsaufträge (4.5B) ----------
@@ -1869,7 +2511,13 @@ export class FactionWarEngine {
     out.length = 0;
     const s = this.state;
     const taken = (offerId: string) => s.contracts.some((c) => c.playerId === playerId && c.offerId === offerId);
-    const push = (o: ContractOffer) => { if (!taken(o.offerId)) out.push(o); };
+    // 4.7E: wer einem Team die Treue geschworen hat, arbeitet nur für sein Team (oder dessen Zweier-Bündnispartner), nie gegen es
+    const team = s.allegiance[playerId];
+    const push = (o: ContractOffer) => {
+      if (taken(o.offerId)) return;
+      if (team && ((o.client !== team && !this.bilateral(team, o.client)) || o.opponent === team)) return;
+      out.push(o);
+    };
     for (const sg of s.sieges) {
       if (sg.ended || !sg.defender) continue;
       const w = this.island(sg.islandId);
@@ -2101,7 +2749,7 @@ const num = (v: unknown, d: number, lo = -1e12, hi = 1e12) => (typeof v === 'num
 const str = (v: unknown, d = '') => (typeof v === 'string' ? v.slice(0, 64) : d);
 const DIPLO: readonly DiplomacyState[] = ['allianz', 'handelspakt', 'neutral', 'rivalitaet', 'krieg'];
 const ROLES: readonly ArmadaRole[] = ['kommando', 'linie', 'fregatte', 'transport'];
-const ASTATUS: readonly ArmadaStatus[] = ['anmarsch', 'gefecht', 'belagerung', 'heimkehr', 'aufgeloest'];
+const ASTATUS: readonly ArmadaStatus[] = ['anmarsch', 'gefecht', 'belagerung', 'blockade', 'heimkehr', 'aufgeloest'];
 
 function cleanBag(raw: unknown, d: ResourceBag): ResourceBag {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
@@ -2130,6 +2778,11 @@ export function cleanFactionWar(raw: unknown, registry: NationRegistry, islands:
     cur.income = cleanBag(n.income, emptyBag());
     cur.nextBrainAt = num(n.nextBrainAt, cur.nextBrainAt, 0, 1e10);
     cur.shipsLost = Math.round(num(n.shipsLost, 0, 0, 1e7)); cur.islandsLost = Math.round(num(n.islandsLost, 0, 0, 1e7)); cur.islandsWon = Math.round(num(n.islandsWon, 0, 0, 1e7));
+    // 4.7E (fehlt in älteren Ständen: kein Gegenschlag, kein Kriegsziel, Logistik sofort bereit)
+    cur.counter = n.counter && typeof n.counter === 'object' && typeof n.counter.islandId === 'string' && islands.some((w) => w.id === n.counter.islandId)
+      ? { islandId: n.counter.islandId, at: num(n.counter.at, s.t, 0, 1e10) } : null;
+    cur.focus = typeof n.focus === 'string' && registry.has(n.focus) && n.focus !== id ? n.focus : null;
+    cur.patrolAt = num(n.patrolAt, -1e9, -1e9, 1e10); cur.frontAt = num(n.frontAt, -1e9, -1e9, 1e10); cur.blockadeAt = num(n.blockadeAt, -1e9, -1e9, 1e10);
   }
   const byId = new Map(islands.map((w) => [w.id, w]));
   if (o.islands && typeof o.islands === 'object') for (const [id, v] of Object.entries(o.islands as Record<string, any>)) {
@@ -2143,6 +2796,7 @@ export function cleanFactionWar(raw: unknown, registry: NationRegistry, islands:
     cur.conqueredAt = num(v.conqueredAt, -1, -1, 1e10);
     cur.siegeId = typeof v.siegeId === 'string' ? str(v.siegeId) : null;
     cur.reliefAt = num(v.reliefAt, -1e9, -1e9, 1e10);
+    cur.blockadeId = typeof v.blockadeId === 'string' ? str(v.blockadeId) : null;
   }
   if (Array.isArray(o.relations)) for (const r of o.relations) {
     if (!r || typeof r !== 'object') continue;
@@ -2161,7 +2815,7 @@ export function cleanFactionWar(raw: unknown, registry: NationRegistry, islands:
     if (members.length < 2) continue;
     s.coalitions.push({ id: str(c.id, `ko${++s.seq}`), against: c.against, members, formedAt: num(c.formedAt, 0, 0, 1e10), strikeAt: num(c.strikeAt, 0, 0, 1e10), calmSince: num(c.calmSince, -1, -1, 1e10) });
   }
-  if (Array.isArray(o.armadas)) for (const a of o.armadas.slice(0, WAR.maxArmadas * 2)) {
+  if (Array.isArray(o.armadas)) for (const a of o.armadas.slice(0, WAR_CAPS.fleets * 2)) {
     if (!a || typeof a !== 'object' || typeof a.nation !== 'string' || !registry.has(a.nation) || !byId.has(a.target) || !byId.has(a.home)) continue;
     if (!Array.isArray(a.route) || a.route.length < 4 || !Array.isArray(a.ships)) continue;
     const ships: ArmadaShip[] = a.ships.slice(0, WAR.maxShips).filter((x: any) => x && ROLES.includes(x.role)).map((x: any, k: number) => ({
@@ -2170,14 +2824,21 @@ export function cleanFactionWar(raw: unknown, registry: NationRegistry, islands:
     }));
     if (!ships.length) continue;
     const status: ArmadaStatus = ASTATUS.includes(a.status) ? a.status : 'heimkehr';
+    // 4.7E: Zweck und Logistik-Felder (Stände vor 4.7E kennen nur Angriff und Entsatz)
+    const purpose: ArmadaPurpose = ARMADA_PURPOSES.includes(a.purpose) ? a.purpose : 'angriff';
+    const cargo = purpose === 'konvoi' && a.cargo && typeof a.cargo === 'object' ? cleanBag(a.cargo, emptyBag()) : null;
+    const lane = Array.isArray(a.lane) ? a.lane.filter((x: unknown): x is string => typeof x === 'string' && byId.has(x)).slice(0, 4) : [];
+    if (purpose === 'patrouille' && !lane.length) continue;
     s.armadas.push({
-      id: str(a.id, `ar${++s.seq}`), nation: a.nation, purpose: a.purpose === 'entsatz' ? 'entsatz' : 'angriff', target: a.target, home: a.home,
+      id: str(a.id, `ar${++s.seq}`), nation: a.nation, purpose, target: a.target, home: a.home,
       x: num(a.x, 0), z: num(a.z, 0), heading: num(a.heading, 0), route: a.route.slice(0, 4000).map((v: unknown) => num(v, 0)), leg: Math.round(num(a.leg, 1, 1, 4000)),
       status, resume: ASTATUS.includes(a.resume) ? a.resume : 'anmarsch', ships, troops: num(a.troops, 0, 0, 5000),
       supply: { proviant: num(a.supply?.proviant, 0, 0, 5000), medizin: num(a.supply?.medizin, 0, 0, 5000) }, morale: num(a.morale, 1, 0, 1),
       firepower0: num(a.firepower0, 1, 0, 1e6), createdAt: num(a.createdAt, 0, 0, 1e10), endedAt: num(a.endedAt, -1, -1, 1e10),
       battleId: typeof a.battleId === 'string' ? a.battleId : null, siegeId: typeof a.siegeId === 'string' ? a.siegeId : null, coalition: a.coalition === true,
       calmUntil: num(a.calmUntil, 0, 0, 1e10), live: false,
+      cargo, supplies: typeof a.supplies === 'string' ? str(a.supplies) : null, until: num(a.until, 0, 0, 1e10), counter: a.counter === true,
+      delivered: a.delivered === true, lane,
     });
   }
   if (Array.isArray(o.battles)) for (const b of o.battles.slice(0, 16)) {
@@ -2237,6 +2898,14 @@ export function cleanFactionWar(raw: unknown, registry: NationRegistry, islands:
   for (const g of s.sieges) if (!g.ended && !armadaIds.has(g.armadaId)) { g.ended = true; g.endedAt = s.t; g.outcome = 'abgebrochen'; }
   const openSieges = new Set(s.sieges.filter((g) => !g.ended).map((g) => g.id));
   for (const id in s.islands) { const st = s.islands[id]; if (st.siegeId && !openSieges.has(st.siegeId)) st.siegeId = null; }
+  // 4.7E: Blockaden – die Insel zeigt nur auf eine stehende Blockade, eine stehende Blockade sperrt ihren Hafen
+  const blockading = new Map(s.armadas.filter((a) => a.status === 'blockade').map((a) => [a.id, a]));
+  for (const id in s.islands) { const st = s.islands[id]; if (st.blockadeId && !blockading.has(st.blockadeId)) st.blockadeId = null; }
+  for (const a of blockading.values()) { const st = s.islands[a.target]; if (st && !st.blockadeId) st.blockadeId = a.id; else if (!st || st.blockadeId !== a.id) a.status = 'heimkehr'; }
+  // 4.7E: Team je Spieler (dauerhaft; nur bekannte Nationen)
+  if (o.allegiance && typeof o.allegiance === 'object') for (const [pid, nid] of Object.entries(o.allegiance as Record<string, unknown>)) {
+    if (typeof nid === 'string' && registry.has(nid)) s.allegiance[pid.slice(0, 64)] = nid;
+  }
   const openBattles = new Set(s.battles.filter((b) => !b.ended).map((b) => b.id));
   for (const a of s.armadas) {
     if (a.battleId && !openBattles.has(a.battleId)) { a.battleId = null; if (a.status === 'gefecht') a.status = a.resume === 'gefecht' ? 'anmarsch' : a.resume; }

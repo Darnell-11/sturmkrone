@@ -15,8 +15,10 @@ import type { WorldEventState } from '../../world/worldEventDirector';
 import type { FactionWarState } from '../../world/factionWarEngine';
 import { emptyChart, type ChartState } from '../../world/mapDiscovery';
 import { emptyTalents, type TalentSave } from '../talentRules';
+import { newAllegiance, type AllegianceSave } from '../../data/allegiance';
+import type { WarQuestState } from '../../story/warQuests';
 
-export const SAVE_VERSION = 25;
+export const SAVE_VERSION = 27;
 
 export interface QuestProgress { id: string; step: number; count: number }
 
@@ -48,6 +50,11 @@ export interface ProgressState {
    * Neue Spiele beginnen im Prolog; Stände der Version 23 und älter stehen in der geteilten Welt (`legacyInstance`).
    */
   instance?: InstanceSave;
+  /**
+   * 4.7E (seit Version 26): einmalige, dauerhafte Team-Wahl vor dem Rat der Gesandten und Fortschritt der Hauptkampagne (data/allegiance.ts).
+   * Ältere Stände: kein Team – der Rat wartet in Ankerglück.
+   */
+  allegiance?: AllegianceSave;
 }
 
 export interface GearState {
@@ -195,6 +202,11 @@ export interface SaveData {
      * Belagerungen und der Besitz eroberbarer Inseln als reine Daten. null = noch keins (es entsteht beim Spielstart aus den Inseldaten neu).
      */
     factionWar?: FactionWarState | null;
+    /**
+     * 4.7E (seit Version 27): Live-Kriegs-Quests aus der laufenden Welt-Simulation (story/warQuests.ts) – Zustand, gemeinsame Fortschrittszähler und
+     * Beiträge je Spieler, getrennt vom Rendering (Gruppen in Phase 4.8A).
+     */
+    warQuests?: WarQuestState | null;
   };
   progress: ProgressState;
   gear: GearState;
@@ -231,9 +243,9 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
       // 4.7B: feste Klasse (das Spiel setzt sie bei der Erschaffung aus Kampfstil und Klinge)
       cls: classOfCreation('schwert', 'saebel'),
     },
-    world: { boat: null, time: 9, weather: 'klar', seaEvents: null, chart: emptyChart(), mega: {}, kaiser: {}, factionWar: null },
-    // 4.7A: neue Spiele beginnen im Gewitter-Prolog (danach die private Einführung „Ankerglück“)
-    progress: { ...defaultProgress(faction), instance: newInstance() },
+    world: { boat: null, time: 9, weather: 'klar', seaEvents: null, chart: emptyChart(), mega: {}, kaiser: {}, factionWar: null, warQuests: null },
+    // 4.7A: neue Spiele beginnen im Gewitter-Prolog (danach die private Einführung „Ankerglück“); 4.7E: der Rat der Gesandten wartet
+    progress: { ...defaultProgress(faction), instance: newInstance(), allegiance: newAllegiance() },
     gear: { weapon: 0, armor: 0, potions: 3, shrine: 0, trinkets: [], trinket: null, items: {}, heads: [], head: null, bar: ['proviant', null, null, null], owned: [], worn: {} },
     // 4.6H: ein gemeinsamer Punktetopf – der Startpunkt (früher ein Faji-Punkt) liegt als Bonus-Talentpunkt bereit
     skills: { learned: {}, slots: [null, null, null], sp: 0, awakened: [] },

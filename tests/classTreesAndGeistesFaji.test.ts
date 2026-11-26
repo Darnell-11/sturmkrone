@@ -474,7 +474,8 @@ function legacySave(version: number, p: Record<string, unknown>, extra: Record<s
 
 describe('4.7B Spielstand 25: alte Stände (23/24) laden ohne Fehler und tragen Stufen und Punkte in den Klassenbaum', () => {
   it('Version 25; neue Stände tragen eine Klasse', () => {
-    expect(SAVE_VERSION).toBe(25);
+    // 4.7E: seit 4.7E Version 27 (26: Team-Treue, 27: Live-Kriegs-Quests) – 25 bleibt die Klassen-Migration
+    expect(SAVE_VERSION).toBeGreaterThanOrEqual(25);
     const s = createSave('Neu', 'pirat', '4.7.2');
     expect(s.player.cls?.slots).toHaveLength(1);
   });
@@ -484,7 +485,7 @@ describe('4.7B Spielstand 25: alte Stände (23/24) laden ohne Fehler und tragen 
     expect(m.ok).toBe(true);
     if (!m.ok) return;
     const d = m.data;
-    expect(d.version).toBe(25);
+    expect(d.version).toBe(SAVE_VERSION);
     expect(d.player.level).toBe(30);
     const c = d.player.cls!;
     expect(c.slots).toEqual([{ base: 'faust', spec: 'kraeftig' }]);

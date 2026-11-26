@@ -12,6 +12,7 @@ import {
   WebGLRenderTarget,
   type DepthPackingStrategies,
   type PerspectiveCamera,
+  type Camera,
   type Texture,
   type WebGLRenderer,
 } from 'three';
@@ -168,6 +169,9 @@ export class SsrPass extends Pass {
     });
     this.fullscreenMaterial = this.mat;
   }
+
+  /** 4.7E: Kamera umhängen (Bühnenwechsel ohne neue Pipeline) */
+  override set mainCamera(c: Camera) { if ((c as PerspectiveCamera).isPerspectiveCamera) this.cam = c as PerspectiveCamera; }
 
   override setDepthTexture(depthTexture: Texture, depthPacking: DepthPackingStrategies = BasicDepthPacking) {
     this.mat.uniforms.tDepth.value = depthTexture;

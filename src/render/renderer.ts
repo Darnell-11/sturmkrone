@@ -13,9 +13,11 @@ import {
   WebGLRenderer,
   MathUtils,
   ZeroFactor,
+  Mesh,
+  MeshBasicMaterial,
+  SphereGeometry,
   type Camera,
   type Material,
-  type Mesh,
   type PerspectiveCamera,
   type Scene,
   type SkinnedMesh,
@@ -50,6 +52,8 @@ import { SsrEffect, SsrPass } from './ssr';
 import { DynamicResolution } from './dynamicResolution';
 import { installShaderLogFilter } from './shaderLog';
 import { clamp01 } from '../core/mathUtil';
+import { PostChainCache } from './postChainCache';
+import { markShared } from './dispose';
 
 export class WebGLUnavailableError extends Error {}
 
@@ -82,6 +86,10 @@ export class GameRenderer {
   config: QualityConfig = QUALITY_TIERS.mid;
 
   private composer: EffectComposer | null = null;
+  /** 4.7E: eine Pipeline je Grafikstufe – Bühnenwechsel hängen nur Szene, Kamera, Lichtquelle und Fokus um (keine neuen Shader) */
+  readonly postCache = new PostChainCache<EffectComposer>();
+  /** Ersatz-Lichtquelle der Lichtstrahlen für Bühnen ohne Sonne (Strahlen-Gewicht 0) */
+  private stageSun: Mesh | null = null;
   private scene: Scene | null = null;
   private camera: Camera | null = null;
   private listeners: ((c: QualityConfig, tier: QualityTier) => void)[] = [];
@@ -123,6 +131,7 @@ export class GameRenderer {
     screen.orientation?.addEventListener?.('change', () => setTimeout(() => this.resize(), 120));
   }
 
+  /** Szene und Kamera setzen (Bühnenwechsel): die Nachbearbeitung wird umgehängt, nicht neu gebaut (4.7E) */
   setView(scene: Scene, camera: Camera) {
     this.scene = scene;
     this.camera = camera;
@@ -165,11 +174,22 @@ export class GameRenderer {
     for (const l of this.listeners) l(c, tier);
   }
 
-  /** Lichtquelle für Sonnenstrahlen und Fokuspunkt für Tiefenunschärfe */
+  /** Lichtquelle für Sonnenstrahlen und Fokuspunkt für Tiefenunschärfe – 4.7E: nur umhängen (keine neue Pipeline, keine neuen Shader) */
   setEffectSources(sun: Mesh | null, focus: Vector3 | null) {
     this.sun = sun;
     this.focus = focus;
-    this.rebuildComposer();
+    if (this.godRays) this.godRays.lightSource = sun ?? this.stageSunMesh();
+    if (focus) this.dofFocus.copy(focus);
+  }
+
+  /** Ersatz-Lichtquelle (Bühnen ohne Sonne): klein, weit unter dem Meer; die Strahlen haben dort das Gewicht 0 */
+  private stageSunMesh(): Mesh {
+    if (!this.stageSun) {
+      this.stageSun = new Mesh(markShared(new SphereGeometry(1, 6, 4)), markShared(new MeshBasicMaterial({ color: 0x000000, transparent: true, depthWrite: false })));
+      this.stageSun.position.set(0, -5000, 0);
+      this.stageSun.name = 'buehnen-sonne';
+    }
+    return this.stageSun;
   }
 
   /**
@@ -183,27 +203,45 @@ export class GameRenderer {
    * Alle eigenen Shader folgen den Regeln in depthGlsl.ts (feste Schleifen, keine Ableitungen in Schleifen).
    */
   private rebuildComposer() {
-    this.composer?.dispose();
-    this.composer = null;
-    this.heat = null;
-    this.godRays = null;
-    this.dof = null;
-    this.grade = null;
-    this.bloom = null;
     const c = this.config;
     // Niedrig/Mittel: Konturen als Inverted Hull, Hoch/Maximal: Kantenerkennung als Post-Effekt
     setHullsVisible(!c.post.outlines);
     // Wasser-Markierung im Alpha nur mit Post-Effekten, die das Bild am Ende wieder undurchsichtig machen
     WATER_ALPHA.value = 1;
-    if (!c.post.enabled || !this.scene || !this.camera) return;
-    WATER_ALPHA.value = 0;
-    const cam = this.camera as PerspectiveCamera;
-
     const samples = Math.min(c.multisampling, this.gl.capabilities.maxSamples ?? 0);
+    const ready = c.post.enabled && !!this.scene && !!this.camera;
+    if (ready) WATER_ALPHA.value = 0;
+    // 4.7E: eine Pipeline je Grafikstufe; ein Bühnenwechsel hängt nur Szene, Kamera, Lichtquelle und Fokus um
+    this.composer = this.postCache.use(
+      { enabled: ready, tier: this.tier, budget: this.budget, mobile: this.mobile, samples },
+      () => this.buildComposer(samples),
+      (comp) => this.retargetComposer(comp),
+      (comp) => { comp.dispose(); this.heat = null; this.godRays = null; this.dof = null; this.grade = null; this.bloom = null; },
+    );
+  }
+
+  /** Bestehende Pipeline auf die aktuelle Szene und Kamera umhängen (alle Durchgänge und Effekte; die Programme bleiben dieselben) */
+  private retargetComposer(comp: EffectComposer) {
+    if (!this.scene || !this.camera) return;
+    comp.setMainScene(this.scene);
+    comp.setMainCamera(this.camera);
+    if (this.godRays) this.godRays.lightSource = this.sun ?? this.stageSunMesh();
+    if (this.focus) this.dofFocus.copy(this.focus);
+  }
+
+  /** Neue Pipeline (nur beim Wechsel der Grafikstufe oder Sparstufe) */
+  private buildComposer(samples: number): EffectComposer {
+    const c = this.config;
+    this.heat = null;
+    this.godRays = null;
+    this.dof = null;
+    this.grade = null;
+    this.bloom = null;
+    const cam = this.camera as PerspectiveCamera;
     const composer = new EffectComposer(this.gl, { frameBufferType: HalfFloatType, multisampling: samples });
 
     // 1. Szene
-    composer.addPass(new RenderPass(this.scene, cam));
+    composer.addPass(new RenderPass(this.scene!, cam));
 
     // 2. Hilfsbilder in reduzierter Auflösung (lesen Tiefe und Wasser-Markierung, verändern das Bild selbst nicht)
     const aoBase = c.post.ambientOcclusion;
@@ -216,14 +254,14 @@ export class GameRenderer {
     const ssrPass = c.post.ssr && !this.mobile ? new SsrPass(cam, c.post.ssr) : null;
     if (ssrPass) composer.addPass(ssrPass);
 
-    // 3. Tiefenunschärfe (braucht als Weichzeichner einen eigenen Durchgang)
-    if (c.post.depthOfField && this.focus && !(this.mobile && this.tier === 'high')) {
+    // 3. Tiefenunschärfe (braucht als Weichzeichner einen eigenen Durchgang); 4.7E: unabhängig vom Fokus der Bühne (sonst eine zweite Pipeline je Bühne)
+    if (c.post.depthOfField && !(this.mobile && this.tier === 'high')) {
       // Nur der ferne Hintergrund wird weich: Vordergrund und alles bis zur Figur bleiben scharf.
       // (Vorher wurde in beide Richtungen unscharf gezeichnet, mit festem Bereich von 40 m – das traf Wellen,
       // Schiffsteile und Rauch vor der Figur.)
       const dof = new DepthOfFieldEffect(cam, { focusDistance: 25, focusRange: 120, bokehScale: 1.3, resolutionScale: c.detail > 1.4 ? 1 : 0.5 });
       // Fokus gleitet weich zum Ziel (Spielfigur oder erfasster Gegner)
-      this.dofFocus.copy(this.focus);
+      if (this.focus) this.dofFocus.copy(this.focus);
       dof.target = this.dofFocus;
       const coc = dof.cocMaterial;
       coc.fragmentShader = coc.fragmentShader.replace('magnitude*vec2(step(signedDistance,0.0),step(0.0,signedDistance))', 'magnitude*vec2(0.0,step(0.0,signedDistance))');
@@ -241,9 +279,10 @@ export class GameRenderer {
     }
     if (aoPass && aoCfg) effects.push(new AoEffect(aoPass, aoCfg.intensity));
     if (ssrPass) effects.push(new SsrEffect(ssrPass));
-    if (c.post.godRays && this.sun) {
-      // Lichtstreuung (Crepuscular Rays): Strahlen entstehen nur, wo die Sonne zwischen Kronen, Masten und Häusern hindurchscheint
-      this.godRays = new GodRaysEffect(cam, this.sun, { density: 0.96, decay: 0.935, weight: GOD_WEIGHT, exposure: 0.5, samples: c.detail > 1.4 ? 120 : c.detail > 1 ? 90 : 60, clampMax: 1, resolutionScale: 0.5, blur: true });
+    if (c.post.godRays) {
+      // Lichtstreuung (Crepuscular Rays): Strahlen entstehen nur, wo die Sonne zwischen Kronen, Masten und Häusern hindurchscheint;
+      // 4.7E: auch auf Bühnen ohne Sonne im selben Abschluss-Durchgang (Ersatz-Lichtquelle, Gewicht 0) – derselbe Shader auf jeder Bühne
+      this.godRays = new GodRaysEffect(cam, this.sun ?? this.stageSunMesh(), { density: 0.96, decay: 0.935, weight: GOD_WEIGHT, exposure: 0.5, samples: c.detail > 1.4 ? 120 : c.detail > 1 ? 90 : 60, clampMax: 1, resolutionScale: 0.5, blur: true });
       effects.push(this.godRays);
     }
     if (c.post.bloom) {
@@ -266,7 +305,7 @@ export class GameRenderer {
     // Immer zuletzt: fertiges Bild undurchsichtig (sonst schwarze Flächen auf Samsung-Handys)
     effects.push(new OpaqueEffect());
     composer.addPass(new EffectPass(cam, ...effects));
-    this.composer = composer;
+    return composer;
   }
 
   /** Pixelverhältnis inklusive dynamischer Auflösung (Untergrenze 0,75 bzw. das der Stufe, falls kleiner) */
@@ -402,11 +441,15 @@ export class GameRenderer {
   render(dt: number) {
     if (!this.scene || !this.camera) return;
     // Sonnenstrahlen nur bei höherer Sonne: tief stehend werfen Schiffe sonst riesige Streifen übers Meer
-    if (this.godRays && this.sun) {
-      const cp = this.camera.position, sp = this.sun.position;
-      const elev = (sp.y - cp.y) / (Math.hypot(sp.x - cp.x, sp.y - cp.y, sp.z - cp.z) || 1);
-      // ab etwa 6° Sonnenhöhe einblenden (auch Abendlicht), sehr tief wären es Streifen übers ganze Meer
-      const k = clamp01((elev - 0.1) / 0.25);
+    if (this.godRays) {
+      let k = 0;
+      if (this.sun) {
+        const cp = this.camera.position, sp = this.sun.position;
+        const elev = (sp.y - cp.y) / (Math.hypot(sp.x - cp.x, sp.y - cp.y, sp.z - cp.z) || 1);
+        // ab etwa 6° Sonnenhöhe einblenden (auch Abendlicht), sehr tief wären es Streifen übers ganze Meer
+        k = clamp01((elev - 0.1) / 0.25);
+      }
+      // Bühnen ohne Sonne (Face-Off, Editor, Showcase): Strahlen aus, ohne den Durchgang zu wechseln
       this.godRays.godRaysMaterial.uniforms.weight.value = GOD_WEIGHT * k;
     }
     // Schärfebereich wächst mit dem Kameraabstand: zu Fuß ist die Stadt dahinter leicht weich, auf See erst der Horizont

@@ -10,7 +10,9 @@ export type PoiKind = 'enemy' | 'boss' | 'quest' | 'turnin' | 'npc' | 'target' |
   // Begegnungen (4.5C): Schiffbrüchige, Schmuggler-Rendezvous, Schatzsuche, Kriegs-Nachschub
   | 'castaway' | 'smuggler' | 'hunt' | 'supply'
   // Kaiser-Zitadelle (4.5D): Silhouette einer Festung mit drei Türmen und goldener Kaiserkrone darüber
-  | 'kaiser';
+  | 'kaiser'
+  // 4.7E: Live-Kriegs-Einsatz des eigenen Teams (Wappenschild mit Funkwellen)
+  | 'warquest';
 export interface Poi { x: number; z: number; kind: PoiKind; name?: string; /** Farbe der Macht (Grenzfestung, Endgame-Festung) */ color?: string }
 
 /** Küstenlinie einer Insel (wie in der Welt gebaut), damit die Karte die echte Form zeigt statt eines Kreises */
@@ -284,6 +286,18 @@ export function drawPoi(ctx: CanvasRenderingContext2D, x: number, y: number, kin
       ctx.fillStyle = '#8A5A2B'; ctx.beginPath(); ctx.moveTo(-6, 2); ctx.lineTo(6, 2); ctx.lineTo(4, 5.5); ctx.lineTo(-4, 5.5); ctx.closePath(); ctx.fill(); ctx.stroke();
       break;
     }
+    case 'warquest': {
+      // 4.7E: Live-Kriegs-Einsatz: Wappenschild in der Farbe des Teams mit Funkwellen, sanft pulsierend
+      const pl = 1 + 0.08 * Math.sin(performance.now() / 200);
+      ctx.scale(pl, pl);
+      ctx.fillStyle = col ?? '#4FD58C'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.moveTo(-6.5, -7); ctx.lineTo(6.5, -7); ctx.lineTo(6.5, 0); ctx.quadraticCurveTo(6.5, 6, 0, 9.5); ctx.quadraticCurveTo(-6.5, 6, -6.5, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = '#F4EEDC'; ctx.fillStyle = '#F4EEDC'; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.arc(0, 3, 1.3, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 3, 4, -Math.PI * 0.82, -Math.PI * 0.18); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 3, 7, -Math.PI * 0.72, -Math.PI * 0.28); ctx.stroke();
+      break;
+    }
     case 'target':
       ctx.fillStyle = '#FFD166'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -409,7 +423,7 @@ export interface WorldMapData {
   /** Krieg der Mächte (4.5A): Armadas unterwegs, Belagerungen mit Fortschritt, Großschlachten fern vom Spieler (die nahen stehen in `battles`) */
   wars?: {
     /** `tx`/`tz`: Ziel der Armada (Frontlinie, 4.5B) */
-    armadas: { x: number; z: number; heading: number; color: string; name: string; ships: number; relief: boolean; tx?: number; tz?: number }[];
+    armadas: { x: number; z: number; heading: number; color: string; name: string; ships: number; relief: boolean; tx?: number; tz?: number; kind?: 'angriff' | 'entsatz' | 'patrouille' | 'konvoi' | 'blockade' }[];
     /** `id` = Insel; `points` = Kontrollpunkte als Kurztext (4.5B) */
     sieges: { id?: string; x: number; z: number; r: number; color: string; name: string; progress: number; points?: string }[];
     battles: { x: number; z: number; name: string }[];
@@ -417,7 +431,15 @@ export interface WorldMapData {
     alliances?: { ax: number; az: number; bx: number; bz: number; color: string; coalition: boolean }[];
     /** Eroberte Inseln (anderer Herr als beim Weltstart): Rahmen in der Farbe des neuen Herrn (4.5B) */
     conquered?: { x: number; z: number; r: number; color: string }[];
+    /** 4.7E: Seeblockaden vor Häfen (gestrichelter Ring in der Farbe der Blockademacht) */
+    blockades?: { x: number; z: number; r: number; color: string; name: string }[];
   };
+  /** 4.7E: Team des Spielers (Macht-Kennung): seine Inseln tragen auf der Karte einen grünen Bündnis-Ring */
+  team?: FactionId | null;
+  /** 4.7E: laufende Live-Kriegs-Einsätze des Teams (Marker folgen den Einheiten) */
+  warQuests?: { x: number; z: number; name: string; color: string; tracked: boolean }[];
+  /** 4.7E: Offener Horizont – die Unbekannten Äußeren Meere sind gesichtet (Beschriftung jenseits der Sturmmauer) */
+  horizon?: boolean;
   /** Wie oft eine Festungsinsel schon erobert wurde (Insel-ID → Zahl; bleibt auch nach einer Rückeroberung) */
   conquests?: Record<string, number>;
   /** Lebendiges Meer (Phase 4.3C): Welt-Ereignisse, Konvois, Strömungen (Mittellinie flach x, z, …) und Wetterzellen */

@@ -1,4 +1,5 @@
 import { CREW_QUESTS } from './crew';
+import { CAMPAIGN_QUESTS } from './campaigns';
 // Aufträge: Hauptgeschichte und Nebenaufträge. Neue Aufträge = neuer Eintrag, keine Codeänderung nötig.
 import type { Faction } from '../core/save/types';
 import type { EnemyKind } from './combat';
@@ -15,7 +16,22 @@ export type QuestStep =
   | { type: 'treasure'; island: string; text: string }
   | { type: 'rescue'; count: number; text: string }
   /** 4.7A: Handlung der Einführung (Schlagkette, Sturm-Schritt, Ziel erfassen, Talentpunkt, Crew, Steuer, Faji-Kunst …) */
-  | { type: 'act'; act: TutorialAct; text: string; count?: number };
+  | { type: 'act'; act: TutorialAct; text: string; count?: number }
+  // ---- 4.7E: Rat der Gesandten und Hauptkampagnen der Teams (an die Welt-Simulation gekoppelt) ----
+  /** vor dem Rat der Gesandten einem Team die Treue schwören (einmalig, data/allegiance.ts) */
+  | { type: 'pledge'; text: string }
+  /** Live-Kriegs-Quests des eigenen Teams mit eigenem Beitrag abschließen (optional nur einer Art, story/warQuests.ts) */
+  | { type: 'war'; count: number; kind?: string; text: string }
+  /** Kommandoschiffe (Flaggschiffe) feindlicher Verbände versenken */
+  | { type: 'flagship'; count: number; text: string }
+  /** mit dem Team Inseln erobern oder zurückerobern (Invasion, Gegenangriff) */
+  | { type: 'liberate'; count: number; text: string }
+  /** Stufe erreichen (Story-Schranke der Kampagne; zählt sofort, wenn sie schon erreicht ist) */
+  | { type: 'level'; level: number; text: string }
+  /** einen Kaiser im fünften Ring besiegen (`kaiser`: eine bestimmte Zitadelle) */
+  | { type: 'kaiser'; kaiser?: string; text: string }
+  /** so weit hinaus segeln (m vom Weltzentrum): die Unbekannten Äußeren Meere sichten */
+  | { type: 'horizon'; dist: number; text: string };
 
 export interface QuestDef {
   id: string;
@@ -31,6 +47,10 @@ export interface QuestDef {
   auto?: boolean;
   /** Wird nie im Gespräch angeboten (Prolog startet mit dem neuen Spiel) */
   noOffer?: boolean;
+  /** 4.7E: nur für dieses Team (Hauptkampagne, data/campaigns.ts) */
+  team?: string;
+  /** 4.7E: Kapitelnummer der Hauptkampagne (1 … 7) */
+  campaign?: number;
   intro: Record<Faction, string> | string;
   outro: string;
   steps: QuestStep[];
@@ -100,6 +120,17 @@ export const QUESTS: QuestDef[] = [
       { type: 'talk', npc: 'ilse', text: 'Leg im Hafen an und sprich mit Hafenmeisterin Ilse' },
     ],
     reward: { gold: 100, xp: 60, fame: 5 },
+  },
+  {
+    // 4.7E: nach „Leinen los“ der Rat der Gesandten – einmalige, dauerhafte Team-Wahl; danach beginnt die Hauptkampagne des Teams
+    id: 'rat', title: 'Der Rat der Gesandten', giver: 'gerstenkorn', main: true, auto: true, after: 'k0', noOffer: true,
+    intro: 'Die Kunde von deinem Sieg über den Kurogane-Stoßtrupp ist bis in die Hauptstädte gedrungen. Im Ratssaal von Ankerglück warten die Gesandten der fünf Mächte – jede will dich in ihren Reihen. Doch Treue schwört man nur einmal.',
+    outro: 'Der Rat erhebt sich. Dein Schwur ist gesprochen, deine Flagge gesetzt – von heute an segelst du für dein Team, und dein Team segelt mit dir.',
+    steps: [
+      { type: 'talk', npc: 'gerstenkorn', text: 'Sprich mit Bürgermeister Gerstenkorn – er führt dich in den Ratssaal' },
+      { type: 'pledge', text: 'Tritt vor den Rat der Gesandten und schwöre einem der fünf Teams die Treue (einmalig)' },
+    ],
+    reward: { gold: 250, xp: 300, fame: 30, sp: 1 },
   },
   {
     id: 'k1', title: 'Kapitel 1: Salz im Blut', giver: 'ilse', main: true,
@@ -258,6 +289,8 @@ QUESTS.push(
 );
 
 QUESTS.push(...CREW_QUESTS);
+// 4.7E: die sieben Kapitel jeder der fünf Hauptkampagnen (nur für das eigene Team sichtbar und startbar)
+QUESTS.push(...CAMPAIGN_QUESTS);
 
 /** Dorfbewohner der handgebauten Länder (Schlüssel = Insel-ID): sprechen, Aufträge vergeben; Plätze wählt die Welt */
 export const VILLAGE_NPCS: Record<string, TownNpcDef[]> = {

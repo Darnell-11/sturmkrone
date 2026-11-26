@@ -317,6 +317,48 @@ export const WAR = {
   delivery: { garrison: 25, morale: 0.12, progress: 0.12 },
 } as const;
 
+// ---------- 4.7E: Logistik der Mächte (Patrouillen, Nachschub-Konvois, Seeblockaden, Gegenschläge, Reparaturen) ----------
+
+/**
+ * Zahlen der dauerhaft laufenden Welt-Simulation (4.7E). Alles, was hier aufgestellt wird, kostet echte Vorräte der Nation (Bau wie eine Armada,
+ * dazu die Ladung) und zählt gegen die Obergrenzen `WAR_CAPS` (data/balanceConfig.ts).
+ */
+export const WAR_LOGI = {
+  /** Patrouille: Schiffe, Dauer einer Streife (s), Sichtweite für das Abfangen feindlicher Konvois und Blockaden (m), Abstand zwischen zwei Aufstellungen je Nation (s) */
+  patrolShips: 3,
+  patrolTime: 780,
+  patrolSight: 1500,
+  patrolGap: 75,
+  /** Nachschub-Konvoi zur Belagerung: aufgebrochen, wenn der Proviant der Belagerer unter diesen Anteil ihres Startvorrats fällt; höchstens einer je Armada */
+  siegeLow: 0.55,
+  /** Ladung je Transporter (Belagerungs-Nachschub bzw. Front-Konvoi zur Garnison einer bedrohten Insel) */
+  siegeCargo: { proviant: 80, medizin: 22, rekruten: 34 } as Partial<ResourceBag>,
+  frontCargo: { rekruten: 36, proviant: 50, kanonenstahl: 10, hartholz: 8 } as Partial<ResourceBag>,
+  /** Front-Konvois je Nation höchstens alle … s (nur im Krieg) */
+  frontGap: 240,
+  /** Moral der Belagerer: + bei Ankunft eines Konvois, − bei seinem Verlust */
+  deliverMorale: 0.12,
+  lostMorale: 0.14,
+  /** Anteil der Ladung, den der Sieger beim Kapern eines Konvois erbeutet */
+  captureShare: 0.3,
+  /** Seeblockade: Schiffe, Dauer (s), Abstand zwischen zwei Blockaden je Nation (s), nötige Bereitschaft (0 … 1) */
+  blockadeShips: 4,
+  blockadeTime: 600,
+  blockadeGap: 420,
+  blockadeReady: 0.5,
+  /** Gegenschlag nach einem Inselverlust: frühestens nach … s, verfällt nach … s */
+  counterDelay: 75,
+  counterWindow: 1500,
+  /** Reparatur: volle Reparatur eines Schiffs kostet diesen Anteil seiner Baukosten (Holz, Tuch, Stahl, Gold); Patrouillen reparieren ab diesem Rumpf im Heimathafen */
+  repairK: 0.5,
+  repairBelow: 0.7,
+  /** Garnisons-Verstärkung: Gold und Proviant je Mann (dazu der Rekrut) */
+  garrisonGold: 2,
+  garrisonProviant: 1,
+} as const;
+
+export const PURPOSE_LABEL = { angriff: 'Armada', entsatz: 'Entsatzflotte', patrouille: 'Patrouille', konvoi: 'Nachschub-Konvoi', blockade: 'Blockadeflotte' } as const;
+
 // ---------- Kriegsaufträge (4.5B) ----------
 
 export type ContractKind = 'entsatz' | 'invasion' | 'abfangen' | 'blockade';

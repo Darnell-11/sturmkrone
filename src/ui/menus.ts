@@ -1,4 +1,5 @@
 import { RESOLUTION_HINT, RESOLUTION_LABEL, RESOLUTION_MODES, isResolutionMode } from '../render/resolution';
+import { PLEDGE_TEXT, type CouncilCard } from '../data/allegiance';
 import { classScreenHtml, newClassUi, type ClassUiState } from './classScreen';
 import type { SpecId } from '../data/classes';
 import { ACTION_GROUPS, ACTION_IDS, ACTION_LABELS, DEFAULT_KEYS, FIXED_CODES, type ActionId } from '../data/actions';
@@ -610,6 +611,52 @@ export class Menus {
     );
   }
 
+  /**
+   * 4.7E: Rat der Gesandten – fünf Teams (Gesandter, Leitspruch, Lage im Krieg der Mächte) und der versiegelte Marine-Pfad. Die Wahl führt zuerst in
+   * den Bestätigungs-Dialog (`showPledgeConfirm`); „Bedenkzeit“ schließt den Rat, der Auftrag bleibt offen.
+   */
+  showCouncil(cards: CouncilCard[], onPick: (id: string) => void, onLater: () => void, msg = '') {
+    const rows = cards.map((c) => `<div class="slot council-card${c.locked ? ' locked' : ''}" style="--c:${c.color}">
+        <div class="slot-head"><b style="color:${c.color}">${esc(c.name)}</b><span>${esc(c.epithet)}</span></div>
+        <div class="meta council-envoy">${esc(c.envoy)}</div>
+        <p class="council-motto">„${esc(c.motto)}“</p>
+        <div class="meta">${esc(c.pitch)}</div>
+        ${c.strengths ? `<div class="meta council-strengths">${esc(c.strengths)}</div>` : ''}
+        ${c.situation ? `<div class="meta soft">Lage: ${esc(c.situation)}</div>` : ''}
+        ${c.locked ? `<div class="meta council-lock"><b>Versiegelt:</b> ${esc(c.lockText)}</div>` : `<button class="mini brass" data-a="pick" data-id="${esc(c.id)}">${esc(c.name)} die Treue schwören …</button>`}
+      </div>`).join('');
+    this.open(
+      `<p class="kicker">Ratssaal von Ankerglück</p><h2 class="fell">Der Rat der Gesandten</h2>
+      <p class="dlg-line">Fünf Gesandte, fünf Banner, ein Schwur: Wähle das Team, für das du von nun an segelst. Die Wahl gilt für immer.</p>
+      ${msg ? `<p class="note">${esc(msg)}</p>` : ''}
+      <div class="council-grid">${rows}</div>
+      <button class="secondary" data-a="later" data-focus>Bedenkzeit erbitten</button>`,
+      { pick: (id) => onPick(id ?? ''), later: () => onLater() },
+      onLater,
+      { wide: true, cls: 'council' },
+    );
+  }
+
+  /** 4.7E: Bestätigung des Schwurs – einmalige, dauerhafte Entscheidung (Text `PLEDGE_TEXT`) mit den Folgen in Klartext */
+  showPledgeConfirm(c: CouncilCard, campaign: string, onYes: () => void, onNo: () => void) {
+    const [head, rest] = PLEDGE_TEXT.split(' — ');
+    this.open(
+      `<p class="kicker">Rat der Gesandten · Schwur</p><h2 class="fell" style="color:${c.color}">Treue zu ${esc(c.name)}?</h2>
+      <div class="pledge-warn" style="--c:${c.color}" role="alert"><b>${esc(head)}</b> — ${esc(rest)}</div>
+      <ul class="pledge-list">
+        <li>Kriegsschiffe, Hafenwachen, Trupps und Inseln von ${esc(c.name)} sind deine Verbündeten (grün im Zielfenster) – deine Kanonen, Kombos, Formen, Geistes-Faji und Ultimates fügen ihnen keinen Schaden zu.</li>
+        <li>Wer mit ${esc(c.name)} im Krieg liegt, ist dein Feind.</li>
+        <li>Funksprüche rufen dich zu Live-Kriegs-Einsätzen: Insel-Verteidigung, Invasion, Konvoi-Geleitschutz, Nachschub-Sabotage.</li>
+        <li>Die Hauptkampagne „${esc(campaign)}“ beginnt.</li>
+        <li>Ein Teamwechsel ist danach nicht mehr möglich.</li>
+      </ul>
+      <div class="row"><button class="secondary" data-a="no" data-focus>Zurück zum Rat</button><button class="danger" data-a="yes">Ich schwöre ${esc(c.name)} die Treue</button></div>`,
+      { yes: () => onYes(), no: () => onNo() },
+      onNo,
+      { cls: 'pledge' },
+    );
+  }
+
   /** Erzähltafel für Kapitelanfänge und das Ende */
   showStory(title: string, text: string, done: () => void) {
     this.open(
@@ -632,6 +679,9 @@ export class Menus {
     const town = !def || def.kind === 'town';
     const back = () => this.showHarbor();
     const mark = (id: string) => qs.available(id).length ? ' <b class="pip">!</b>' : s.progress.quests.some((p) => { const st = qs.step(p.id); return st?.type === 'talk' && st.npc === id; }) ? ' <b class="pip ok">?</b>' : '';
+    // 4.7E: nach dem Gespräch mit dem Bürgermeister öffnet sich der Rat der Gesandten von selbst
+    if (g.takeCouncilDue()) { g.openCouncil(back); return; }
+    const council = g.councilPending() && (!def || def.id === 'ankerglueck' || def.kind === 'town');
     this.open(
       `<h2 class="fell">Hafen von ${esc(def?.name ?? 'Ankerglück')}</h2>
       ${goldLine(g.playerGold, msg)}
@@ -652,6 +702,7 @@ export class Menus {
         ${this.troopButton()}
         <button class="secondary" data-a="rest">Rasten (${g.restPrice()} Gold)</button>
       </div>
+      ${council ? '<button class="primary" data-a="council">Rat der Gesandten – Team wählen (einmalig)</button>' : ''}
       <button class="secondary" data-a="rep">Ruf &amp; Ehre</button>
       <button class="secondary" data-a="ashore">An Land gehen und durch die Stadt laufen</button>
       <button class="primary" data-a="leave" data-focus>Ablegen</button>`,
@@ -668,6 +719,7 @@ export class Menus {
         troops: () => this.showTroops(back),
         rest: () => this.showHarbor(g.rest()),
         rep: () => this.showReputation(back),
+        council: () => g.openCouncil(back),
         ashore: () => { g.resume(); g.world.goAshore(); },
         leave: () => { g.resume(); g.world.castOff(); },
       },

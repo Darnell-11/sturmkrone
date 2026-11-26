@@ -58,7 +58,7 @@ import { EditorStage } from '../world/editorStage';
 import { SeaWorld, WAR_REGISTRY, type SeaMode } from '../world/seaWorld';
 import { warshipsAlive, type ArmadaState, type SiegeSide, type WarContract, type WarNotice } from '../world/factionWarEngine';
 import { WarBanner, type WarHudView } from '../ui/warBanner';
-import { BLOCKADE_CARGO, CONTRACT_DEFS, WAR } from '../data/nations';
+import { BLOCKADE_CARGO, CONTRACT_DEFS, PURPOSE_LABEL, WAR } from '../data/nations';
 import { formatClock } from '../world/timeOfDay';
 import { Input } from './input/input';
 import { GameLoop } from './loop';
@@ -133,6 +133,10 @@ import { travelQuote, type TravelQuote } from '../world/fastTravel';
 import { convoyLoot, deliverConvoy } from '../world/tradeConvoys';
 import { rollWorldBossLoot } from '../naval/worldBosses';
 import { compassWord } from '../naval/battleRules';
+import { CAMPAIGNS, COMMANDER_BY_ID, OPEN_HORIZON, flagshipName } from '../data/campaigns';
+import { PLEDGE_STANDING, TEAM_PITCH, councilCards, newAllegiance, pledge, type AllegianceSave } from '../data/allegiance';
+import { WAR_QUEST, WAR_QUEST_LABEL, WarQuestDirector, cleanWarQuests, newWarQuestState, type WarQuest, type WarQuestEvent, type WarQuestKind, type WarQuestReward } from '../story/warQuests';
+import { RadioBanner } from '../ui/radioBanner';
 import type { SeaEventNews } from '../world/worldEventsLive';
 import type { PoiKind } from '../ui/minimap';
 import { wrapAngle } from './mathUtil';
@@ -255,6 +259,16 @@ export class Game {
   private occBanner!: OccupationBanner;
   /** Taktik-Banner für Großschlachten und Belagerungen in Reichweite (4.5B) */
   private warBanner!: WarBanner;
+  /** 4.7E: Funkspruch-Banner der Live-Kriegs-Quests (Zone `tc`) */
+  private radio!: RadioBanner;
+  /** 4.7E: Live-Kriegs-Quests aus der Welt-Simulation (Zustand im Spielstand `world.warQuests`, getrennt vom Rendering) */
+  readonly warQuestDir = new WarQuestDirector();
+  private readonly warQuestEvents: WarQuestEvent[] = [];
+  private readonly warQuestScratch: WarQuest[] = [];
+  private readonly foeScratch: string[] = [];
+  private warQuestT = 0;
+  /** 4.7E: nach dem Gespräch mit dem Bürgermeister öffnet sich der Rat der Gesandten */
+  private councilDue = false;
   private occT = 0;
   /** Letzte Anzeige-Daten der Belagerung (Ziele, Markierungen für Karte und Kompass) */
   private raidView: RaidView | null = null;
@@ -360,6 +374,8 @@ export class Game {
     this.occBanner = new OccupationBanner(zone.tc);
     this.warBanner = new WarBanner(zone.tc);
     this.warBanner.onJoin = (side) => this.joinWarSide(side);
+    this.radio = new RadioBanner(zone.tc);
+    this.radio.onOpen = () => this.openQuestLog('krieg');
     this.overlay = new CombatOverlay(uiRoot, zone.tc);
     this.overlay.setVisible(false);
     // 4.6B: Impact-Frames und Mini-Zwischensequenz (Vollbild über dem 3D-Bild, unter dem HUD)
@@ -670,6 +686,7 @@ export class Game {
       if (this.save) this.save.meta.playTime += dt;
       this.occupation.update(dt);
       this.stepEconomy(dt);
+      this.stepWarQuests(dt);
       this.occT -= dt;
       if (this.occT <= 0) { this.occT = 0.4; this.refreshOccBanner(); this.warBanner.update(this.warHudView()); this.checkBlockadeDelivery(); }
       this.autosaveTimer += dt;
@@ -1526,6 +1543,8 @@ export class Game {
     this.after(() => this.startAutoChapters(q), 3200);
     if (q.id === 'k5') this.after(() => this.storyAwakening(), 2400);
     if (q.id === 'k7') { s.progress.flags.krone = true; this.after(() => this.ending(), 3500); }
+    // 4.7E: letztes Kapitel der Hauptkampagne – kein Abspann, sondern der offene Horizont
+    if (q.campaign === 7) this.after(() => this.openHorizon(), 3600);
     audio.play('quest');
     this.overlay.showBanner(q.main ? 'Kapitel abgeschlossen!' : 'Auftrag erfüllt!', q.title);
     this.grantXp(q.reward.xp, q.reward.fame);
@@ -1536,8 +1555,14 @@ export class Game {
     const s = this.save;
     const qs = this.quests;
     if (!s || !qs) return;
+    // 4.7E: Stände ohne Kapitel 0 (vor 4.7A) bekommen den Rat der Gesandten direkt, sobald sie in der geteilten Welt sind
+    if (!after && !this.teamId() && !qs.isActive('rat') && !qs.isDone('rat') && !qs.isActive('k0') && !qs.isDone('k0') && !isPrivate(s.progress.instance ?? legacyInstance())) {
+      s.progress.done.push('k0');
+    }
     for (const n of QUESTS) {
       if (!n.auto || !n.after || (after && n.after !== after.id)) continue;
+      // 4.7E: Kapitel anderer Teams beginnen nie
+      if (n.team && n.team !== this.teamId()) continue;
       if (!s.progress.done.includes(n.after) || qs.isActive(n.id) || qs.isDone(n.id)) continue;
       qs.accept(n.id);
       this.refreshDigs();
@@ -1624,6 +1649,8 @@ export class Game {
     this.dialogSession = null;
     this.dialogNpc = null;
     this.menus.hide();
+    // 4.7E: der Bürgermeister hat in den Ratssaal geführt – der Rat der Gesandten tagt
+    if (this.takeCouncilDue()) { this.openCouncil(); return; }
     this.resume();
   }
 
@@ -1743,8 +1770,8 @@ export class Game {
     this.inventoryUi = new InventoryScreen(this.uiRoot, host);
   }
 
-  /** Auftragsbuch (Taste L) */
-  openQuestLog() {
+  /** Auftragsbuch (Taste L); 4.7E: mit Reiter „Krieg“ (Live-Einsätze des Teams) und der Hauptkampagne */
+  openQuestLog(tab: 'laufend' | 'erledigt' | 'krieg' = 'laufend') {
     const s = this.save, qs = this.quests;
     if (!s || !qs || !this.state.is('play') || this.questLog) return;
     this.state.set('pause');
@@ -1755,9 +1782,13 @@ export class Game {
     };
     this.questLog = new QuestLog(this.uiRoot, {
       qs, progress: s.progress,
-      giverName: (id) => TOWN_NPCS.find((n) => n.id === id)?.name ?? VILLAGE_NPC_BY_ID[id]?.name ?? CREW_BY_ID[id]?.name ?? id,
-      onTrack: (id) => { qs.setTracked(id); this.persist(); this.hud.toast('Auftrag wird verfolgt.', 1.6); },
+      giverName: (id) => TOWN_NPCS.find((n) => n.id === id)?.name ?? VILLAGE_NPC_BY_ID[id]?.name ?? CREW_BY_ID[id]?.name ?? COMMANDER_BY_ID[id]?.name ?? id,
+      onTrack: (id) => { qs.setTracked(id); delete s.progress.flags.trackWar; this.persist(); this.hud.toast('Auftrag wird verfolgt.', 1.6); },
       onClose: close,
+      tab,
+      war: () => this.warQuestViews(),
+      onTrackWar: (id) => { s.progress.flags.trackedWar = id; s.progress.flags.trackWar = true; this.persist(); this.updateRadioTrack(); this.hud.toast('Live-Einsatz wird verfolgt – der Kompass zeigt hin.', 2); },
+      campaign: this.campaignView(),
     });
   }
 
@@ -1818,6 +1849,13 @@ export class Game {
   private openRaidRequest(def: IslandDef) {
     const s = this.save;
     if (!s || !this.state.is('play') || this.world.raid) return;
+    // 4.7E: die Festungen des eigenen Teams sind sichere Häfen – nie ein Raid gegen das eigene Team
+    const team = this.teamId();
+    if (team && (def.factionId === team || this.world.ownerFaction(def) === team)) {
+      this.hud.toast(`${def.name} ist eine Festung deines Teams (${FACTIONS[team].name}) – hier wird nicht gekämpft. Werft, Rast und Truppen stehen dir offen.`, 5);
+      this.openHarbor(def);
+      return;
+    }
     const access = raidAccess(def.factionId ?? 'marine', { marineStanding: s.progress.standing?.marine ?? 0, occupied: this.occupation.occupied(def.id) });
     if (access.safeBase) { this.hud.toast(access.reason, 4); this.openHarbor(def); return; }
     audio.play('bell');
@@ -2038,6 +2076,8 @@ export class Game {
     const relics = (u.kaiserRelics ??= []);
     if (!relics.includes(loot.relic.id)) relics.push(loot.relic.id);
     s.progress.flags[`kaiser_${id}`] = true;
+    // 4.7E: Kapitel VI der Hauptkampagne (Kaiser des Erzrivalen)
+    this.questEvent({ type: 'kaiser', kaiser: id });
     if (loot.warlord) this.dropWarlord(1, k.boss.name);
     // 4.6E: Meisterschafts-Siegel (erster Sieg), Kaiser-Stand der Talente, nach dem Aufstieg Sternenprüfung bzw. Revanche (kosmischer Punkt)
     {
@@ -2445,6 +2485,14 @@ export class Game {
       case 'kill': return nearest(this.world.islandDefs.filter((i) => i.kind === 'camp' && Math.hypot(i.x - BERNSTEINSEE.x, i.z - BERNSTEINSEE.z) < BERNSTEINSEE.r));
       // 4.7A: Handlungen der Einführung zeigen auf ihren Ort (Übungspuppen, Hafenmeisterin, Schiff, Angreifer)
       case 'act': return this.world.tutorialTarget(t.step.act);
+      // 4.7E: Rat der Gesandten, Live-Einsätze, Kommandoschiffe, Kaiser und Horizont
+      case 'pledge': return this.world.npcPos('gerstenkorn') ?? isl('ankerglueck');
+      case 'war': { const q = this.trackedWarQuest() ?? this.nearestWarQuest(null); return q ? { x: q.x, z: q.z } : null; }
+      case 'liberate': { const q = this.nearestWarQuest(['invasion', 'gegenangriff']); return q ? { x: q.x, z: q.z } : null; }
+      case 'flagship': return this.nearestFlagship();
+      case 'kaiser': return t.step.kaiser ? isl(t.step.kaiser) : null;
+      case 'horizon': { const d = Math.hypot(pos.x, pos.z) || 1; const k = (t.step.dist + 300) / d; return { x: pos.x * k, z: pos.z * k }; }
+      default: return null;
     }
   }
 
@@ -2506,6 +2554,8 @@ export class Game {
       if (d.kind === 'marinefort' && d.marine === 'border') out.push({ x: d.x, z: d.z, kind: 'fort', name: d.name, color: FACTIONS.marine.color });
       else if (d.kind === 'citadel' || d.marine === 'hq') out.push({ x: d.x, z: d.z, kind: 'citadel', name: d.name, color: d.marine === 'hq' ? '#F4F7FC' : d.factionId ? FACTIONS[d.factionId].color : undefined });
     }
+    // 4.7E: Live-Kriegs-Einsätze des Teams (Wappenschild mit Funkwellen)
+    this.warQuestPois(out);
     // Seeschlachten an den Grenzen (Welt-Ereignis): gekreuzte Kanonen auf Kompass, Minikarte und Seekarte
     for (const b of this.world.battleMarks) out.push({ x: b.x, z: b.z, kind: 'battle', name: `Seeschlacht ${FACTIONS[b.a].name} gegen ${FACTIONS[b.b].name}` });
     // Lebendiges Meer: Horizont-Signale der Welt-Ereignisse (bis zur Sichtweite der Signale) und Konvois in der Nähe
@@ -2571,6 +2621,10 @@ export class Game {
       }),
       conquests: Object.fromEntries(this.occupation.conquered.map((r) => [r.islandId, r.conquestCount])),
       wars: this.warMapData(),
+      // 4.7E: Team-Inseln (grüner Ring), Live-Einsätze, offener Horizont
+      team: this.teamId(),
+      warQuests: this.warQuestMapData(),
+      horizon: !!this.save?.progress.allegiance?.horizon,
       ...this.seaMapData(),
       chartZones: this.world.chartZones,
       blockaded: (id) => !!this.world.seaEvents?.director.blockadeOf(id),
@@ -2597,8 +2651,11 @@ export class Game {
     return {
       armadas: s.armadas.filter((a) => a.status !== 'aufgeloest' && !a.battleId).map((a) => {
         const w = war.island(a.target);
-        return { x: a.x, z: a.z, heading: a.heading, color: color(a.nation), name: `${a.purpose === 'entsatz' ? 'Entsatz' : 'Armada'} ${nm(a.nation)}`, ships: a.ships.filter((x) => !x.down).length, relief: a.purpose === 'entsatz', tx: w?.x, tz: w?.z };
+        // 4.7E: Patrouillen und Blockaden ohne Frontlinie (Konvois mit Linie zu ihrem Ziel)
+        const line = a.purpose !== 'patrouille' && a.purpose !== 'blockade';
+        return { x: a.x, z: a.z, heading: a.heading, color: color(a.nation), name: `${PURPOSE_LABEL[a.purpose]} ${nm(a.nation)}`, ships: a.ships.filter((x) => !x.down).length, relief: a.purpose === 'entsatz', tx: line ? w?.x : undefined, tz: line ? w?.z : undefined, kind: a.purpose };
       }),
+      blockades: s.armadas.filter((a) => a.status === 'blockade').map((a) => { const w = war.island(a.target)!; return { x: w.x, z: w.z, r: w.r, color: color(a.nation), name: `Blockade von ${w.name}` }; }),
       sieges: s.sieges.filter((g) => !g.ended).map((g) => { const w = war.island(g.islandId)!; return { id: w.id, x: w.x, z: w.z, r: w.r, color: color(g.attacker), name: `Belagerung von ${w.name}`, progress: g.progress, points: held(g.points) }; }),
       battles: s.battles.filter((b) => !b.ended && !b.live).map((b) => ({ x: b.x, z: b.z, name: `Großschlacht ${nm(b.nationA)} ⚔ ${nm(b.nationB)}` })),
       alliances,
@@ -3731,7 +3788,9 @@ export class Game {
     const where = (x: number, z: number) => `${compassWord(pos.x, pos.z, x, z)}, ${fmtDist(Math.hypot(x - pos.x, z - pos.z))}`;
     const near = (x: number, z: number, r = 3200) => Math.hypot(x - pos.x, z - pos.z) < r;
     const islandName = (id: string) => this.world.islandDefs.find((d) => d.id === id)?.name ?? this.world.war?.island(id)?.name ?? id;
-    const toast = (t: string, sec = 6) => { if (playing) this.hud.toast(t, sec); };
+    // 4.7E: die Welt rechnet auch in der Einführung und während eines Raids weiter – Meldungen erst in der geteilten Welt und außerhalb des Raids
+    const quiet = isPrivate(s.progress.instance ?? legacyInstance()) || !!this.world.raid;
+    const toast = (t: string, sec = 6) => { if (playing && !quiet) this.hud.toast(t, sec); };
     // „eine niederländische Armada“, „ein Transporter der Marine“: das Adjektiv der Nation statt eines Genitivs („Niederlandes“ wäre falsch)
     const of = (id: string, art: string, noun: string, end: string) => {
       const adj = WAR_REGISTRY.get(id)?.adjective ?? '';
@@ -3746,7 +3805,12 @@ export class Game {
         if (w && near(w.x, w.z, 1400)) toast(`${n.name} auf ${islandName(n.islandId)} ist jetzt in der Hand der ${n.side === 'angreifer' ? 'Angreifer' : 'Verteidiger'}${n.nation ? ` (${name(n.nation)})` : ''}.`, 4);
         return;
       }
-      case 'kriegspunkte': if (n.playerId === this.world.playerEntityId) this.payMerit(n.nation, n.kp, n.reason); return;
+      case 'kriegspunkte':
+        if (n.playerId !== this.world.playerEntityId) return;
+        this.payMerit(n.nation, n.kp, n.reason);
+        // 4.7E: Kriegspunkte für das eigene Team zählen als Beitrag zu den Live-Einsätzen dieser Insel bzw. ringsum
+        if (n.nation === this.teamId()) this.warQuestDir.merit(n.nation, n.playerId, n.kp, pos.x, pos.z, n.islandId ?? null);
+        return;
       case 'auftrag': if (n.contract.playerId === this.world.playerEntityId) this.contractEnded(n.contract); return;
       case 'waffenstillstand': toast(`Waffenstillstand zwischen ${dat(n.a)} und ${dat(n.b)}${n.gold > 0 ? ` – ${mid(n.payer)} zahlt ${fmtInt(n.gold)} Gold Reparationen` : ''}.`, 6); return;
       case 'handelspakt': toast(`Handelspakt: ${name(n.a)} und ${mid(n.b)} tauschen ihre Überschüsse und sichern gemeinsam ihre Konvois.`, 6); return;
@@ -3754,6 +3818,8 @@ export class Game {
       case 'koalitionEnde': toast(`Die Koalition gegen ${mid(n.against)} löst sich auf: das Gleichgewicht der Mächte ist wiederhergestellt.`, 6); return;
       case 'armada': {
         const a = n.armada, w = this.world.war?.island(a.target);
+        // 4.7E: Patrouillen, Konvois und Blockaden melden sich über eigene Meldungen
+        if (a.purpose !== 'angriff' && a.purpose !== 'entsatz') return;
         if (!w || !(near(a.x, a.z) || near(w.x, w.z, 2600))) return;
         toast(a.purpose === 'entsatz'
           ? `${name(a.nation)} schickt eine Entsatzflotte (${a.ships.length} Schiffe) nach ${islandName(a.target)} (${where(a.x, a.z)}).`
@@ -3780,9 +3846,41 @@ export class Game {
       case 'belagerungEnde':
         if (n.siege.outcome === 'abgebrochen') { const w = this.world.war?.island(n.siege.islandId); if (w && near(w.x, w.z, 3000)) toast(`Die Belagerung von ${islandName(n.siege.islandId)} ist abgebrochen.`, 5); }
         return;
+      // ---- 4.7E: Logistik, Gegenschläge, versenkte Kommandoschiffe ----
+      case 'konvoi': {
+        const a = n.armada, team = this.teamId();
+        if (n.event !== 'verloren') return;
+        if (team && a.nation === team) toast(`Ein Nachschub-Konvoi deines Teams nach ${islandName(a.target)} ist verloren – die Front muss ohne ihn auskommen.`, 5);
+        else if (near(a.x, a.z, 2400)) toast(`${of(a.nation, 'Ein', 'Nachschub-Konvoi', 'er')} ist gekapert worden (${where(a.x, a.z)}).`, 5);
+        return;
+      }
+      case 'blockade': {
+        const w = this.world.war?.island(n.islandId);
+        if (!w) return;
+        const own = this.world.war?.ownerOf(n.islandId) === this.teamId();
+        if (n.event === 'beginn' && (own || near(w.x, w.z, 3000))) toast(`Seeblockade: ${of(n.armada.nation, 'Eine', 'Flotte', 'e')} sperrt den Hafen von ${islandName(n.islandId)} – die Insel liefert nichts mehr an ihre Kasse.`, 6);
+        else if (n.event === 'ende' && (own || near(w.x, w.z, 3000))) toast(`Die Blockade vor ${islandName(n.islandId)} ist aufgehoben.`, 4);
+        return;
+      }
+      case 'gegenschlag': {
+        const w = this.world.war?.island(n.islandId);
+        if (w && (near(w.x, w.z, 3200) || n.nation === this.teamId())) toast(`Gegenschlag: ${name(n.nation)} läuft aus, um ${islandName(n.islandId)} zurückzuerobern!`, 6);
+        return;
+      }
+      case 'versenkt': {
+        if (n.playerId !== this.world.playerEntityId) return;
+        const team = this.teamId(), war = this.world.war;
+        if (n.role === 'kommando' && team && war && n.armada.nation !== team && war.atWar(team, n.armada.nation)) {
+          const al = s.progress.allegiance;
+          if (al) al.stats.flagships++;
+          this.questEvent({ type: 'flagship' });
+          toast(`${flagshipName(n.armada.nation, n.armada.id) ?? 'Ein feindliches Kommandoschiff'} ist gesunken!`, 5);
+        }
+        return;
+      }
       case 'gefallen': {
         this.warMarket(n.islandId);
-        this.overlay.showBanner(`${islandName(n.islandId)} ist gefallen`, `${name(n.to)} erobert die Insel${n.from ? ` von ${dat(n.from)}` : ''}`);
+        if (!quiet) this.overlay.showBanner(`${islandName(n.islandId)} ist gefallen`, `${name(n.to)} erobert die Insel${n.from ? ` von ${dat(n.from)}` : ''}`);
         toast(`${islandName(n.islandId)} gehört jetzt ${dat(n.to)}: neue Flaggen, neue Wachen, neue Hafenherren.`, 7);
         this.persist();
         return;
@@ -3806,8 +3904,14 @@ export class Game {
     const set = nav.allyPowers;
     set.clear();
     const st = s.progress.standing ?? {};
-    for (const id of Object.keys(st) as FactionId[]) if ((st[id] ?? 0) >= REP.serviceAt) set.add(id);
+    for (const id of FACTION_IDS) if ((st[id] ?? 0) >= REP.serviceAt) set.add(id);
     const war = this.world.war;
+    // 4.7E: das eigene Team ist dauerhaft verbündet (nie provozierbar), seine Kriegsgegner sind Feinde – auch bei gutem Ansehen
+    const team = this.teamId();
+    if (team) set.add(team);
+    nav.teamPower = team;
+    nav.warFoes.clear();
+    if (team && war) for (const f of war.foesOf(team, this.foeScratch)) { const fid = this.nationFid(f); if (fid && fid !== team) nav.warFoes.add(fid); }
     if (war) for (const c of war.contractsOf(this.world.playerEntityId, ALLY_CONTRACTS)) { if (c.status !== 'aktiv') continue; const f = this.nationFid(c.client); if (f) set.add(f); }
     ALLY_CONTRACTS.length = 0;
   }
@@ -3848,6 +3952,289 @@ export class Game {
     } else if (c.status === 'gescheitert') {
       if (f) this.shiftStanding(f, -3);
       this.hud.toast(`Kriegsauftrag gescheitert – ${def.title}: ${isl}. ${c.note}.`, 7);
+    }
+    this.persist();
+  }
+
+  // ---------- 4.7E: Team-Treue, Rat der Gesandten, Live-Kriegs-Quests, Hauptkampagne ----------
+
+  /** Gewähltes Team (Kennung der Macht) oder null, solange der Rat wartet */
+  teamId(): PowerId | null { return this.save?.progress.allegiance?.team ?? null; }
+
+  /** Team-Plakette in der Kapitänstafel (nach dem Laden und nach dem Schwur) */
+  private refreshTeamBadge() { const t = this.teamId(); this.hud.setTeam(t ? FACTIONS[t].name : null, t ? FACTIONS[t].color : ''); }
+
+  /** Treue an Engine (Spieler → Team), Seesystem (verbündet, Feinde), Kampagnen-Kriegsziel und Freund/Feind-Regeln weitergeben */
+  private applyAllegiance() {
+    const s = this.save;
+    if (!s) return;
+    const al: AllegianceSave = (s.progress.allegiance ??= newAllegiance());
+    const war = this.world.war;
+    if (war && al.team) {
+      war.setAllegiance(this.world.playerEntityId, al.team);
+      // Kriegsziel der Kampagne: das Team bevorzugt die Inseln seines Erzrivalen – bis der Horizont offen ist
+      war.setFocus(al.team, al.horizon ? null : CAMPAIGNS[al.team].rival);
+    }
+    this.world.setTeam(al.team);
+    this.syncAllies();
+    this.refreshTeamBadge();
+  }
+
+  /** Wartet der Rat der Gesandten auf den Schwur? (geteilte Welt, noch kein Team, Auftrag „Der Rat der Gesandten“ läuft) */
+  councilPending(): boolean {
+    const s = this.save;
+    if (!s || this.teamId() || isPrivate(s.progress.instance ?? legacyInstance())) return false;
+    return !!this.quests?.isActive('rat');
+  }
+
+  /** Steht der Rat nach einem Gespräch an? (wird beim Abholen zurückgesetzt) */
+  takeCouncilDue(): boolean {
+    const d = this.councilDue;
+    this.councilDue = false;
+    return d && this.councilPending();
+  }
+
+  /** Rat der Gesandten öffnen (Spiel pausiert); `back` = zurück ins Hafenmenü, sonst weiter spielen */
+  openCouncil(back?: () => void, msg = '') {
+    const s = this.save, war = this.world.war;
+    if (!s || !this.councilPending()) { if (back) back(); else this.resume(); return; }
+    if (!this.state.is('pause')) this.state.set('pause');
+    const name = (id: string) => WAR_REGISTRY.get(id)?.name ?? id;
+    const cards = councilCards((id) => {
+      if (!war) return null;
+      const n = war.state.nations[id];
+      return {
+        islands: n?.islands ?? 0, megas: n?.megas ?? 0,
+        wars: war.foesOf(id, []).map(name),
+        allies: WAR_REGISTRY.list().filter((o) => o.id !== id && war.bilateral(id, o.id)).map((o) => o.name),
+        fleets: war.state.armadas.filter((a) => a.nation === id && a.status !== 'aufgeloest').length,
+      };
+    });
+    const close = back ?? (() => this.resume());
+    this.menus.showCouncil(cards, (id) => {
+      const c = cards.find((x) => x.id === id);
+      if (!c || c.locked) { this.openCouncil(back, c?.lockText ?? ''); return; }
+      audio.play('bell');
+      this.menus.showPledgeConfirm(c, CAMPAIGNS[c.id as PowerId]?.title ?? '', () => this.pledgeTeam(c.id, back), () => this.openCouncil(back));
+    }, close, msg);
+  }
+
+  /** Der Schwur: einmalig und dauerhaft – Treue im Spielstand und in der Engine, Ansehen beim Team, Verbündete, Hauptkampagne */
+  pledgeTeam(id: string, back?: () => void): boolean {
+    const s = this.save;
+    if (!s) return false;
+    const al = (s.progress.allegiance ??= newAllegiance());
+    const r = pledge(al, id, s.meta.playTime);
+    if (!r.ok) { this.hud.toast(r.reason, 5); if (back) back(); else this.resume(); return false; }
+    const team = r.team;
+    // Ansehen beim Team auf Dienststatus; ein Kopfgeld, das das Team ausgesetzt hatte, ist vergeben
+    const st = (s.progress.standing ??= {});
+    st[team] = Math.max(st[team] ?? 0, PLEDGE_STANDING);
+    const rep = s.progress.reputation;
+    if (rep?.bounty?.[team]) rep.bounty[team] = 0;
+    this.applyAllegiance();
+    this.questEvent({ type: 'pledge' });
+    audio.play('horn');
+    this.overlay.showBanner(`Treue geschworen: ${FACTIONS[team].name}`, `„${TEAM_PITCH[team].motto}“ · Hauptkampagne „${CAMPAIGNS[team].title}“`);
+    this.hud.setPlayer(s.player.name, `${FACTION_LABELS[s.player.faction]} · ${rankName(s.player.faction, s.player.fame)} · Stufe ${s.player.level}`);
+    this.persist();
+    if (back) back(); else this.resume();
+    return true;
+  }
+
+  /**
+   * Live-Kriegs-Quests (alle 0,5 s): aus der Welt nachführen, Anwesenheit im Einsatzgebiet zählen, Funksprüche und Ausgänge melden; dazu die
+   * Abfrage-Schritte der Kampagne (Stufe, Entfernung vom Weltzentrum).
+   */
+  private stepWarQuests(dt: number) {
+    this.radio.update(dt);
+    this.warQuestT -= dt;
+    if (this.warQuestT > 0) return;
+    const step = 0.5 - this.warQuestT;
+    this.warQuestT = 0.5;
+    const s = this.save, war = this.world.war;
+    if (!s || !war) return;
+    const shared = !isPrivate(s.progress.instance ?? legacyInstance());
+    const team = shared ? this.teamId() : null;
+    const ev = this.warQuestDir.update(war, team, war.state.t, this.warQuestEvents);
+    const pos = this.world.playerPos;
+    if (team && !this.world.raid) this.warQuestDir.presence(team, this.world.playerEntityId, pos.x, pos.z, step);
+    for (let i = 0; i < ev.length; i++) this.warQuestEvent(ev[i]);
+    if (this.quests && shared) this.quests.poll({ level: s.player.level, dist: this.world.raid ? 0 : Math.hypot(pos.x, pos.z) });
+    this.updateRadioTrack();
+  }
+
+  /** Neuer Einsatz (Funkspruch), Umschlag („Gegenangriff“) oder Ausgang (Lohn, Kampagnen-Fortschritt) */
+  private warQuestEvent(e: WarQuestEvent) {
+    const s = this.save;
+    if (!s) return;
+    const q = e.quest;
+    const team = this.teamId();
+    const color = team ? FACTIONS[team].color : '#E3B04B';
+    const sender = team ? `Funkspruch · Admiralität ${FACTIONS[team].name}` : 'Funkspruch';
+    const playing = this.state.is('play') && !this.world.raid;
+    if (e.type !== 'ende') {
+      if (playing) {
+        this.radio.flash({ kicker: e.type === 'stufe' ? `${sender} · Lage geändert` : sender, title: q.title, line: `${this.warQuestLine(q)} · ${this.whereWord(q.x, q.z)}`, color, kind: q.kind }, 10);
+        audio.play(e.type === 'stufe' ? 'horn' : 'bell', 0.7);
+      }
+      // verfolgen, solange kein anderer Einsatz verfolgt wird (Kompass und Banner zeigen hin)
+      if (!this.trackedWarQuest() || (e.type === 'stufe' && s.progress.flags.trackedWar === q.id)) s.progress.flags.trackedWar = q.id;
+      return;
+    }
+    if (s.progress.flags.trackedWar === q.id) delete s.progress.flags.trackedWar;
+    const pid = this.world.playerEntityId;
+    const mine = (q.contrib[pid] ?? 0) >= WAR_QUEST.minContrib;
+    if (q.status === 'erfolg') {
+      const rw = this.warQuestDir.rewardFor(q, pid);
+      if (rw) {
+        this.warQuestDir.markPaid(q, pid);
+        this.payWarQuest(q, rw);
+        const al = s.progress.allegiance;
+        if (al) {
+          al.stats.quests++;
+          if (q.kind === 'verteidigung' || q.kind === 'blockade') al.stats.defended++;
+          if (q.kind === 'geleit' || q.kind === 'sabotage') al.stats.convoys++;
+          if (q.kind === 'invasion' || q.kind === 'gegenangriff') al.stats.liberated++;
+        }
+        this.questEvent({ type: 'war', kind: q.kind });
+        if (q.kind === 'invasion' || q.kind === 'gegenangriff') this.questEvent({ type: 'liberate' });
+      } else if (playing && !mine) this.hud.toast(`${q.title}: ${q.note}. Dein Team hat es ohne dich geschafft.`, 5);
+    } else if (playing) this.hud.toast(`Einsatz gescheitert – ${q.title}: ${q.note}.`, mine ? 7 : 4);
+    this.persist();
+  }
+
+  /** Lohn eines gewonnenen Einsatzes: Gold, Erfahrung, Ehre und Ansehen beim Team, ein Ausrüstungsstück */
+  private payWarQuest(q: WarQuest, rw: WarQuestReward) {
+    const s = this.save!;
+    const team = this.teamId();
+    s.player.gold += rw.gold;
+    const parts = [`+${fmtInt(rw.gold)} Gold`];
+    if (team) { this.addHonor(team, rw.honor); this.shiftStanding(team, rw.standing); parts.push(`Ehre +${rw.honor}`, `${FACTIONS[team].name} +${rw.standing} Ansehen`); }
+    if (rw.gear) {
+      ensureLoot(s.gear);
+      const d = rollLootGear(rw.gear, s.player.level, s.gear.loot!);
+      if (d && grantLoot(s.gear, d)) { parts.push(`Ausrüstung: ${d.n}`); this.world.updatePlayer(this.displayLook(), this.activeStyle()); this.applyPower(); }
+    }
+    this.grantXp(rw.xp, Math.round(rw.honor * 1.5));
+    this.overlay.showBanner('Einsatz erfolgreich!', q.title);
+    this.hud.toast(`${q.note}. ${parts.join(' · ')}`, 8);
+    audio.play('win');
+  }
+
+  /** Ziel eines Einsatzes in Worten (aus den Zahlen des Auftrags; die Welt entscheidet, nie ein Zähler) */
+  warQuestLine(q: WarQuest): string {
+    const o = q.obj, pct = Math.round(o.progress * 100), left = Math.round(o.left);
+    switch (q.kind) {
+      case 'verteidigung': return `Angreifer: ${left} von ${o.total} Schiffen${pct > 0 ? ` · Belagerung ${pct} %` : ''}`;
+      case 'gegenangriff': return `Besatzer: ${left} Mann${pct > 0 ? ` · Rückeroberung ${pct} %` : ' · die Gegenflotte sammelt sich'}`;
+      case 'invasion': return `Garnison: ${left} Mann${pct > 0 ? ` · Belagerung ${pct} %` : ' · Armada auf Kurs'}`;
+      case 'geleit': return `Transporter: ${left} von ${o.total} · Strecke ${pct} %`;
+      case 'sabotage': return `Feindliche Transporter: ${left} von ${o.total} · Strecke ${pct} %`;
+      case 'blockade': return `Blockadeschiffe: ${left} von ${o.total} · Blockade ${pct} %`;
+    }
+    return '';
+  }
+
+  private whereWord(x: number, z: number): string {
+    const p = this.world.playerPos;
+    return `${compassWord(p.x, p.z, x, z)}, ${fmtDist(Math.hypot(x - p.x, z - p.z))}`;
+  }
+
+  /** Verfolgter Live-Einsatz (läuft noch) */
+  private trackedWarQuest(): WarQuest | null {
+    const id = this.save?.progress.flags.trackedWar;
+    const q = typeof id === 'string' ? this.warQuestDir.byId(id) : null;
+    return q && q.status === 'aktiv' && q.team === this.teamId() ? q : null;
+  }
+
+  /** Nächster laufender Einsatz des Teams (optional nur bestimmter Arten) */
+  private nearestWarQuest(kinds: readonly WarQuestKind[] | null): WarQuest | null {
+    const pos = this.world.playerPos;
+    let best: WarQuest | null = null, bd = Infinity;
+    for (const q of this.warQuestDir.active(this.teamId(), this.warQuestScratch)) {
+      if (kinds && !kinds.includes(q.kind)) continue;
+      const d = Math.hypot(q.x - pos.x, q.z - pos.z);
+      if (d < bd) { bd = d; best = q; }
+    }
+    return best;
+  }
+
+  /** Nächstes Kommandoschiff eines Kriegsgegners des Teams (Kampagne „Kommandoschiff versenken“) */
+  private nearestFlagship(): { x: number; z: number } | null {
+    const war = this.world.war, team = this.teamId();
+    if (!war || !team) return null;
+    const pos = this.world.playerPos;
+    let best: { x: number; z: number } | null = null, bd = Infinity;
+    for (const a of war.state.armadas) {
+      if (a.status === 'aufgeloest' || a.nation === team || !war.atWar(team, a.nation) || !a.ships.some((x) => x.role === 'kommando' && !x.down)) continue;
+      const d = Math.hypot(a.x - pos.x, a.z - pos.z);
+      if (d < bd) { bd = d; best = { x: a.x, z: a.z }; }
+    }
+    return best;
+  }
+
+  /** Verfolgungs-Zeile im Funkspruch-Banner (nur, solange kein Taktik-Banner einer Schlacht steht) */
+  private updateRadioTrack() {
+    const q = this.trackedWarQuest();
+    const team = this.teamId();
+    if (!q || !team || this.world.raid || !this.state.is('play') || !this.warBanner.el.hidden) { this.radio.track(null); return; }
+    this.radio.track({ kicker: `Live-Einsatz · ${WAR_QUEST_LABEL[q.kind]}`, title: q.islandName, line: `${this.warQuestLine(q)} · ${this.whereWord(q.x, q.z)}`, color: FACTIONS[team].color, kind: q.kind });
+  }
+
+  /** Kompass und Minikarte: Marker der laufenden Live-Einsätze */
+  private warQuestPois(out: Poi[]) {
+    const team = this.teamId();
+    if (!team || this.world.raid) return;
+    for (const q of this.warQuestDir.active(team, this.warQuestScratch)) out.push({ x: q.x, z: q.z, kind: 'warquest', name: q.title, color: FACTIONS[team].color });
+  }
+
+  /** Weltkarte: Marker der laufenden Live-Einsätze (der verfolgte größer) */
+  private warQuestMapData(): WorldMapData['warQuests'] {
+    const team = this.teamId();
+    if (!team) return undefined;
+    const tr = this.trackedWarQuest()?.id;
+    return this.warQuestDir.active(team, []).map((q) => ({ x: q.x, z: q.z, name: q.title, color: FACTIONS[team].color, tracked: q.id === tr }));
+  }
+
+  /** Einträge für den Reiter „Krieg“ im Auftragsbuch: laufende und gerade beendete Einsätze des Teams */
+  private warQuestViews() {
+    const team = this.teamId();
+    if (!team) return [];
+    const pid = this.world.playerEntityId, tr = this.trackedWarQuest()?.id;
+    return this.warQuestDir.state.quests.filter((q) => q.team === team).map((q) => ({
+      id: q.id, title: q.title, kind: WAR_QUEST_LABEL[q.kind], text: q.text, line: q.status === 'aktiv' ? this.warQuestLine(q) : q.note,
+      where: q.status === 'aktiv' ? this.whereWord(q.x, q.z) : '', status: q.status, tracked: q.id === tr, color: FACTIONS[team].color,
+      contrib: Math.round(q.contrib[pid] ?? 0), need: WAR_QUEST.minContrib, members: q.members.length,
+      reward: `${fmtInt(q.reward.gold)} Gold · ${fmtInt(q.reward.xp)} EP · Ehre +${q.reward.honor} · Ansehen +${q.reward.standing}${q.reward.gear ? ` · Ausrüstung (${RARITY[q.reward.gear].n})` : ''}`,
+    }));
+  }
+
+  /** Kopf des Auftragsbuchs: Team, Kampagne, Bilanz, offener Horizont */
+  private campaignView() {
+    const al = this.save?.progress.allegiance;
+    if (!al?.team) return null;
+    const c = CAMPAIGNS[al.team], st = al.stats;
+    return {
+      team: FACTIONS[al.team].name, color: FACTIONS[al.team].color, title: c.title,
+      stats: `${st.quests} Einsätze · ${st.defended} Verteidigungen · ${st.liberated} Inseln befreit · ${st.flagships} Kommandoschiffe · ${st.convoys} Konvoi-Einsätze`,
+      horizon: al.horizon, horizonTitle: OPEN_HORIZON.title, horizonText: OPEN_HORIZON.text,
+    };
+  }
+
+  /** Kapitel VII erfüllt: der offene Horizont – kein Ende, die Kriege laufen weiter, die Unbekannten Äußeren Meere sind gesichtet */
+  private openHorizon() {
+    const s = this.save;
+    if (!s) return;
+    const al = (s.progress.allegiance ??= newAllegiance());
+    if (al.horizon) return;
+    al.horizon = true;
+    if (al.team) this.world.war?.setFocus(al.team, null);
+    audio.play('victory');
+    this.overlay.showBanner(OPEN_HORIZON.title, 'Die Sturmmauer reißt auf – die Geschichte geht weiter');
+    if (this.state.is('play')) {
+      this.state.set('pause');
+      this.menus.showStory(OPEN_HORIZON.title, OPEN_HORIZON.text, () => this.resume());
     }
     this.persist();
   }
@@ -5292,8 +5679,14 @@ export class Game {
     }
     this.quests = new QuestSystem(data.progress, p.faction, {
       completed: (q) => this.onQuestDone(q),
-      advanced: (_q, next) => this.hud.toast(`Neues Ziel: ${next.text}`, 3.5),
-    });
+      // 4.7E: der Schwur-Schritt öffnet den Rat der Gesandten, sobald das Gespräch vorbei ist
+      advanced: (_q, next) => { this.hud.toast(`Neues Ziel: ${next.text}`, 3.5); if (next.type === 'pledge') this.councilDue = true; },
+    }, () => this.teamId());
+    // 4.7E: Live-Kriegs-Quests und Team-Treue aus dem Spielstand (Engine, Seesystem, Kampagnen-Kriegsziel)
+    this.warQuestDir.state = data.world.warQuests ? cleanWarQuests(data.world.warQuests) : newWarQuestState();
+    data.progress.allegiance ??= newAllegiance();
+    this.councilDue = false;
+    this.applyAllegiance();
     this.refreshDigs();
     {
       // Weltkarte (4.3D): entdeckte Inseln und kartierte Zonen aus dem Spielstand; Ankerglück und Ring 1 sind immer kartiert, besuchte und eroberte Inseln ebenso
@@ -5729,7 +6122,7 @@ export class Game {
     if (this.world.prologueRunning) return this.saves.save(this.slot, this.save);
     this.syncFleetState();
     const ws = this.world.getState();
-    this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather, seaEvents: this.world.seaEvents?.snapshot() ?? null, chart: chartToSave(this.world.discovered, this.world.chartZones), mega: this.world.megaSnapshot(), kaiser: this.world.kaiserSnapshot(), factionWar: this.world.factionWarSnapshot() };
+    this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather, seaEvents: this.world.seaEvents?.snapshot() ?? null, chart: chartToSave(this.world.discovered, this.world.chartZones), mega: this.world.megaSnapshot(), kaiser: this.world.kaiserSnapshot(), factionWar: this.world.factionWarSnapshot(), warQuests: this.warQuestDir.state };
     const sh = this.world.ship;
     this.save.ship.hull = sh.maxHull > 0 ? Math.max(0.05, sh.hull / sh.maxHull) : 1;
     this.save.ship.sail = sh.sail;

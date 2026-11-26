@@ -436,3 +436,25 @@ export const evoMaterialK = (classIndex: number): number => 0.5 + Math.max(0, cl
 export const EVO_TRADE_IN = 0.5;
 /** Unterhalt: Zuschlag auf die Schiffswartung (nicht auf Sold) bei Gesamtstufe 5 (Stufe 1 = +0 %), linear dazwischen */
 export const EVO_UPKEEP_MAX = 0.35;
+
+// ---------- 4.7E: Obergrenzen der Kriegsflotten (Welt-Simulation der fünf Mächte, world/factionWarEngine.ts) ----------
+
+/**
+ * Feste Obergrenzen der KI-Nationen: keine Macht stellt mehr Schiffe, Truppen oder Verbände auf, als hier steht – auch mit voller Kasse. Jede
+ * Aufstellung (Armada, Patrouille, Konvoi, Blockade), Reparatur und Garnisons-Verstärkung bezahlt die Nation zusätzlich aus ihren Vorräten
+ * (Gold, Kanonenstahl, Hartholz, Segeltuch, Proviant, Rekruten); ohne Mittel läuft nichts aus.
+ */
+export const WAR_CAPS = {
+  /** Schiffe einer Nation gleichzeitig auf See (alle Armadas, Patrouillen, Konvois und Blockaden zusammen) */
+  shipsAtSea: 30,
+  /** Truppen (Landungskorps und Konvoi-Rekruten) einer Nation gleichzeitig auf See */
+  troopsAtSea: 260,
+  /** Gleichzeitige Patrouillen, Nachschub-Konvois und Seeblockaden je Nation */
+  patrols: 2,
+  convoys: 3,
+  blockades: 1,
+  /** Verbände aller Nationen zusammen (Rechenzeit, Übersicht auf der Karte) */
+  fleets: 36,
+  /** Eine Garnison wächst durch Front-Konvois höchstens auf dieses Vielfache ihrer vollen Besatzung */
+  garrisonK: 1.35,
+} as const;

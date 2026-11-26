@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { COMMANDER_BY_ID } from '../src/data/campaigns';
 import { defaultProgress } from '../src/core/save/types';
 import { CREW_BY_ID } from '../src/data/crew';
 import { LEGENDS } from '../src/data/legends';
@@ -11,8 +12,10 @@ const islands = new Set(REGIONS.flatMap((r) => r.islands.map((i) => i.id)));
 describe('Aufträge', () => {
   it('verweisen nur auf vorhandene Inseln und Bewohner', () => {
     const npcs = new Set([...TOWN_NPCS.map((n) => n.id), ...Object.keys(VILLAGE_NPC_BY_ID), ...Object.keys(CREW_BY_ID)]);
+    // 4.7E: Auftraggeber der Hauptkampagnen sind die Kommandanten der Teams (Gespräch-Schritte zeigen weiter nur auf echte Bewohner)
+    const givers = new Set([...npcs, ...Object.keys(COMMANDER_BY_ID)]);
     for (const q of QUESTS) {
-      expect(npcs.has(q.giver), `${q.id}: Auftraggeber ${q.giver}`).toBe(true);
+      expect(givers.has(q.giver), `${q.id}: Auftraggeber ${q.giver}`).toBe(true);
       for (const s of q.steps) {
         if ('island' in s) expect(islands.has(s.island), `${q.id}: ${s.island}`).toBe(true);
         if (s.type === 'talk') expect(npcs.has(s.npc), `${q.id}: ${s.npc}`).toBe(true);

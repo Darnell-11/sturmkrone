@@ -81,7 +81,7 @@ export class Hud {
   private q = <T extends HTMLElement>(sel: string, from: ParentNode = this.root) => from.querySelector(sel) as T;
 
   // Kapitänstafel
-  private nameEl!: HTMLElement; private subEl!: HTMLElement; private envEl!: HTMLElement; private fpsEl!: HTMLElement;
+  private nameEl!: HTMLElement; private subEl!: HTMLElement; private teamEl!: HTMLElement; private envEl!: HTMLElement; private fpsEl!: HTMLElement;
   private hpBar!: HTMLElement; private hpFill!: HTMLElement; private hpLag!: HTMLElement; private hpTxt!: HTMLElement;
   private stBar!: HTMLElement; private stFill!: HTMLElement; private stLag!: HTMLElement;
   private fjBar!: HTMLElement; private fjFill!: HTMLElement; private fjTxt!: HTMLElement;
@@ -121,7 +121,7 @@ export class Hud {
     this.root.innerHTML = `
       <div class="hud-tl">
         <section class="hud-cap panel" aria-label="Kapitän">
-          <header class="cap-head"><b class="cap-name"></b><span class="cap-sub"></span></header>
+          <header class="cap-head"><b class="cap-name"></b><span class="cap-sub"></span><i class="cap-team" hidden></i></header>
           <div class="cap-gauges">
             <div class="gauge hp" title="Leben"><i class="lag"></i><i class="fill"></i><em class="gv"></em></div>
             <div class="gauge st" title="Ausdauer" hidden><i class="lag"></i><i class="fill"></i></div>
@@ -176,7 +176,7 @@ export class Hud {
       bl: this.q('.hud-bl'), bc: this.q('.hud-bc'), br: this.q('.hud-br'),
     };
 
-    this.nameEl = this.q('.cap-name'); this.subEl = this.q('.cap-sub'); this.envEl = this.q('.cap-env'); this.fpsEl = this.q('.cap-fps');
+    this.nameEl = this.q('.cap-name'); this.subEl = this.q('.cap-sub'); this.teamEl = this.q('.cap-team'); this.envEl = this.q('.cap-env'); this.fpsEl = this.q('.cap-fps');
     this.hpBar = this.q('.gauge.hp'); this.hpFill = this.q('.fill', this.hpBar); this.hpLag = this.q('.lag', this.hpBar); this.hpTxt = this.q('.gv', this.hpBar);
     this.stBar = this.q('.gauge.st'); this.stFill = this.q('.fill', this.stBar); this.stLag = this.q('.lag', this.stBar);
     this.fjBar = this.q('.gauge.fj'); this.fjFill = this.q('.fill', this.fjBar); this.fjTxt = this.q('.gv', this.fjBar);
@@ -268,6 +268,15 @@ export class Hud {
   setPlayer(name: string, sub: string) {
     this.nameEl.textContent = name;
     this.subEl.textContent = sub;
+  }
+
+  /** 4.7E: Plakette des Teams (einmalig geschworen) unter dem Namen; null = noch kein Team */
+  setTeam(name: string | null, color = '') {
+    const text = name ? `Team ${name}` : '';
+    if (this.teamEl.textContent === text && this.teamEl.hidden === !name) return;
+    this.teamEl.textContent = text;
+    this.teamEl.hidden = !name;
+    this.teamEl.style.setProperty('--c', color || 'var(--target-friendly)');
   }
 
   /** Kontextplakette (z. B. „An Land gehen“). key = Tastenname für die Tastenkappe */
