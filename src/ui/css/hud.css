@@ -536,6 +536,8 @@
 .cbt-banner h2 { margin: 0; font: 400 clamp(2.2rem, 10vw, 3.6rem)/1.05 var(--font-serif); letter-spacing: 0.04em; color: var(--brass-50); text-shadow: 0 3px 0 #000, 0 0 28px rgba(0, 0, 0, 0.7); }
 .cbt-banner p { max-width: 640px; margin: 0.3em auto 0; font: 700 1.05rem var(--font-text); letter-spacing: 0.04em; color: #e9dcc0; text-shadow: 0 2px 0 #000; }
 .cbt-banner.show { animation: bn 2.8s ease-out forwards; }
+/* 4.6I: während der Kino-Regie eines Ultimates tritt ein laufendes Banner zurück (neue warten bis danach) */
+.cbt-banner.hush { visibility: hidden; }
 /* Schmales Hochformat: die obere Mitte stapelt Kompass, Sektor, Bossleiste und Meldungen – die große Einblendung rückt ins untere Drittel (4.3.6) */
 @media (max-width: 600px) and (orientation: portrait) {
   .cbt-banner { top: auto; bottom: 22%; }

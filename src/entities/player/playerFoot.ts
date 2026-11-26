@@ -229,6 +229,11 @@ export class PlayerFoot implements PlayerTarget {
   get awakened() { return this.fighter.awakenT > 0; }
   /** Läuft gerade ein Ultimate (Aufladen oder Einschlag)? Welt und Kamera fragen das */
   get inUltimate() { return this.fighter.phase === 'move' && this.fighter.moveKind === 'ultimate'; }
+  /**
+   * 4.6I: Stand des Ultimate-Clips in Akt 1 der Kino-Regie (Anteil des ganzen Clips; −1 = Engine). Solange die Engine das Aufladen hält,
+   * zeigt die Figur damit die Aushol-Pose desselben Clips (Anziehen, Ausfallschritt, Hand zum Himmel), die nahtlos in den Angriff übergeht.
+   */
+  cineClip = -1;
 
   get state(): FootState {
     switch (this.fighter.phase) {
@@ -716,6 +721,11 @@ export class PlayerFoot implements PlayerTarget {
     const a = this.moveAction;
     if (!a) return;
     const d = a.getClip().duration;
+    if (this.cineClip >= 0 && this.fighter.cineT > 0 && mv.ultimate) {
+      a.time = Math.min(d - 0.001, Math.max(0, this.cineClip) * d);
+      a.timeScale = 0;
+      return;
+    }
     const u = Math.max(0, Math.min(0.999, this.fighter.moveT / mv.dur));
     a.time = Math.min(d - 0.001, (mv.clipFrom + (mv.clipTo - mv.clipFrom) * u) * d);
     a.timeScale = 0;

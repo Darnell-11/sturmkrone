@@ -240,8 +240,14 @@ export interface UltimateSpec {
   charge: number;
   shot: 'face' | 'low' | 'side' | 'sky';
   frames: number;
-  /** großer Einschlag (s im Angriff nach dem Aufladen): Impact-Frames, Welt-Effekt, Schiffe */
+  /** großer Einschlag (s im Angriff nach dem Aufladen): Welt-Effekt beginnt, Schiffe; bei `lag` 0 zugleich der Treffermoment (Impact-Frames) */
   strikeAt: number;
+  /**
+   * 4.6I: Spielzeit vom Einschlag bis zum ENTSCHEIDENDEN Treffer (Beginn von Akt 3 der Kino-Regie: Doppel-Impact-Frame, Zerstörung). 0 = der
+   * Einschlag selbst ist der Treffermoment (Blitz-Zäsur, Klick der Scheide, Hauptblitz); > 0 = der Einschlag setzt die Gefahr in Gang (Welle,
+   * Säge, Sog, Meteoriten), die nach `lag` trifft – in Akt 2 sieht man sie entstehen.
+   */
+  lag: number;
   /** Welt-Effekt: Reichweite nach vorn bzw. Radius, Breite der Welle/des Pfads, Mittelpunkt vor der Figur (m) */
   reach: number; width: number; center: number;
   /** Schiffe zerteilen und wie */

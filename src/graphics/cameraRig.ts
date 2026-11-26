@@ -81,6 +81,13 @@ export const YARD_ARM: SpringArmOptions = { clearance: 1.0, minLength: 4, hardMi
  */
 export const BLEND_ARM: SpringArmOptions = { clearance: 0.45, minLength: 1.4, hardMin: 1.0, samples: 18, easeOut: 3.2, pullIn: 16, jumpIn: Infinity, escape: 'in', raise: 0 };
 
+/**
+ * 4.6I: Spring-Arm der Ultimate-Kino-Regie (`graphics/ultimateCinematics.ts`): vom Drehpunkt der Einstellung (Hand, Kopf, Einschlag) zur
+ * Kamera. Gelände, Mauern, Stege, Brückendecks und Rümpfe ziehen sie heran oder heben sie an; Nahaufnahmen dürfen bis 0,32 m an die Hand
+ * (der Drehpunkt ist dann die Hand selbst, nicht der Kopf); große Hindernisse werden sofort genommen, sonst gleitet der Arm.
+ */
+export const CINE_ARM: SpringArmOptions = { clearance: 0.35, minLength: 0.5, hardMin: 0.32, samples: 16, easeOut: 7, pullIn: 40, jumpIn: 0.7, escape: 'in', raise: 0.6 };
+
 /** Stufen des Ausweichens nach oben (Anteil von `raise`), die der Arm je Bild prüft */
 const RAISE_LEVELS = [0, 0.5, 1] as const;
 /** steilster Blick von oben (Bogenmaß) */

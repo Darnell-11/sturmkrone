@@ -692,6 +692,73 @@ export class AnimeVfxForge {
     this.stats.glass++;
   }
 
+  // ---------- 4.6I: Bausteine der Ultimate-Kino-Regie ----------
+
+  /**
+   * Pfeilförmiger Luftdruck-Kegel (Mach-Konus) vor einem stürzenden Körper: Spitze an (x, y, z), Öffnung entgegen der Flugrichtung (dx, dy, dz),
+   * zwei Schichten (heller Stoß-Kern, weiter Kegel in Farbe) und ein Druckring am Kegelrand. Lebensdauer kurz – je Bild neu ausgestoßen, folgt
+   * er dem Körper.
+   */
+  machCone(x: number, y: number, z: number, dx: number, dy: number, dz: number, length: number, radius: number, core: Color, life = 0.06) {
+    const fx = this.fx, b = fx.brush;
+    const l = Math.hypot(dx, dy, dz) || 1;
+    const ux = dx / l, uy = dy / l, uz = dz / l;
+    const yaw = Math.atan2(ux, uz), pitch = Math.acos(Math.max(-1, Math.min(1, uy)));
+    // Grundfläche liegt `length` hinter der Spitze (Spitze = y 1 der Grundform)
+    b.reset().at(x - ux * length, y - uy * length, z - uz * length).rot(yaw, pitch, 0).size(radius, length, radius).span(life).col(WHITE, 1.7).fade(0.01, 0.6);
+    fx.emit('cone');
+    const L2 = length * 1.5;
+    b.reset().at(x - ux * L2, y - uy * L2, z - uz * L2).rot(yaw, pitch, 0).size(radius * 1.6, L2, radius * 1.6).span(life * 1.2).col(core, 1.2).fade(0.01, 0.6);
+    fx.emit('cone');
+    b.reset().at(x - ux * length * 0.98, y - uy * length * 0.98, z - uz * length * 0.98).rot(yaw, pitch, 0).size(radius * 0.9, 1, radius * 0.9, radius * 1.25, 1, radius * 1.25).span(life * 1.5).col(core, 1.4).fade(0.01, 0.6);
+    fx.emit('shock');
+  }
+
+  /**
+   * Spiralförmig aufreißende Wolkendecke über (x, y, z): drei dunkle Wolkenarme (Tusche-Sicheln in mehreren Radien, zur Spirale versetzt) mit
+   * leuchtenden Rändern, die sich drehen und nach außen öffnen; dazu dunkle Ballen am Rand. Die Öffnung selbst zeigt der Himmel (`uRift`).
+   */
+  skyVortex(x: number, y: number, z: number, radius: number, core: Color, ink: Color, life: number, spin = 0.5, delay = 0) {
+    const fx = this.fx, b = fx.brush;
+    for (let arm = 0; arm < 3; arm++) {
+      for (let k = 0; k < 3; k++) {
+        const r = radius * (0.45 + k * 0.32);
+        const a = (arm / 3) * Math.PI * 2 + k * 0.85;
+        // flache Sichel in der Waagrechten, von unten gesehen ein gekrümmter Wolkenarm; wächst und öffnet sich
+        b.reset().at(x, y + k * 3, z).rot(a, 0, 0).spin(spin * (1 + k * 0.3)).size(r * 0.55, 1, r * 0.55, r, 1, r).span(life, delay + k * 0.02).col(ink, 1).fade(0.12, 0.35);
+        b.ease = 1;
+        fx.emit('sickleInk');
+        if (k > 0) {
+          b.reset().at(x, y + k * 3 - 0.5, z).rot(a + 0.12, 0, 0).spin(spin * (1 + k * 0.3)).size(r * 0.5, 1, r * 0.5, r * 0.96, 1, r * 0.96).span(life * 0.9, delay + k * 0.02).col(core, 0.9).fade(0.12, 0.4);
+          fx.emit('sickle');
+        }
+      }
+    }
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2, r = radius * (1.15 + 0.2 * (i % 2));
+      b.reset().at(x + Math.sin(a) * r, y + 2 + (i % 3), z + Math.cos(a) * r).rot(0, 0, i).spin(0, 0, 0.3).size(radius * 0.25, radius * 0.25, 1, radius * 0.45, radius * 0.45, 1).span(life, delay).col(ink, 1).fade(0.15, 0.35);
+      fx.emit('smoke');
+    }
+  }
+
+  /**
+   * Lokale Aura der Vorbereitung um eine Figur (Füße bei y): aufsteigende Glut und Funken auf Spiralbahnen, ein enger Lichtring am Boden –
+   * klein und kurzlebig, damit die Nahaufnahme das Gesicht nicht überstrahlt (Ring außerhalb 0,9 m).
+   */
+  auraSwirl(x: number, y: number, z: number, core: Color, accent: Color, k = 1, life = 0.12) {
+    const fx = this.fx, b = fx.brush;
+    const n = this.n(3 * k);
+    for (let i = 0; i < n; i++) {
+      const a = rnd() * Math.PI * 2, r = 0.9 + rnd() * 0.9, h = rnd() * 1.6;
+      const ta = a + Math.PI / 2, sp = 2.5 + rnd() * 2;
+      b.reset().at(x + Math.sin(a) * r, y + h, z + Math.cos(a) * r).vel(Math.sin(ta) * sp, 2.4 + rnd() * 2.6, Math.cos(ta) * sp).size(0.12, 0.12, 1, 0.04, 0.04, 1).span(life * (0.7 + rnd() * 0.6)).col(i % 2 ? core : accent, 2.4).fade(0.05, 0.5);
+      b.grav = -2; b.drag = 1;
+      fx.emit('ember');
+    }
+    b.reset().at(x, y + 0.04, z).rot(rnd() * 6).spin(3).size(0.9, 1, 0.9, 1.5, 1, 1.5).span(life).col(accent, 1.2 * k).fade(0.05, 0.5);
+    fx.emit('ring');
+  }
+
   /** Senkrechter oder liegender Druckring mit dunklem Saum (Clash, Überschall, Kollaps) */
   pressureRing(x: number, y: number, z: number, yaw: number, vertical: boolean, radius: number, core: Color, life = 0.4, vx = 0, vz = 0) {
     const fx = this.fx, b = fx.brush;

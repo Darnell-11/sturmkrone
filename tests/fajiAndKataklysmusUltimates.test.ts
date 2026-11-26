@@ -1,5 +1,6 @@
-// Phase 4.6B: acht Faji-Künste (Formen 1 – 7), Sturm-Erwachen, drei Willenskraft-Auren, Impact-Frames und Mini-Zwischensequenzen,
-// alle 14 Kataklysmus-Ultimates samt Schiffs-Zweiteilung, Iaijutsu-Schnitt, Ozean-Teilung, Schwarzem-Loch-Sog und Endboss-Deckel.
+// Phase 4.6B: acht Faji-Künste (Formen 1 – 7), Sturm-Erwachen, drei Willenskraft-Auren, Impact-Frames (seit 4.6I: Doppel-Impact-Frame der
+// 3-Akt-Kino-Regie, siehe tests/ultimateCinematics.test.ts), alle 14 Kataklysmus-Ultimates samt Schiffs-Zweiteilung, Iaijutsu-Schnitt,
+// Ozean-Teilung, Schwarzem-Loch-Sog und Endboss-Deckel.
 import { describe, expect, it } from 'vitest';
 import { BoxGeometry, CylinderGeometry, Group, Mesh, MeshBasicMaterial } from 'three';
 import {
@@ -11,10 +12,11 @@ import {
   AURA, FAJI_ART_IDS, FORM_THRESHOLDS, FORM_UNLOCK, KING_WAVE, MASTER_FORM, WILL, WILL_AURAS, cleanFaji, formOf, formPower, formProgress,
 } from '../src/data/fajiArts';
 import {
-  BOSS_SHIP_SPLIT, CUTSCENE, ULTIMATES, ULTIMATE_ORDER, ULT_CHARGE, UltimateBossLedger, canSplitShip, ultimateBossCap,
+  BOSS_SHIP_SPLIT, ULTIMATES, ULTIMATE_ORDER, ULT_CHARGE, UltimateBossLedger, canSplitShip, ultimateBossCap,
 } from '../src/data/cataclysms';
 import { FIGHT_MODEL, KAISER_BOSS_HIT_CAP, RAID_BOSS_HIT_CAP, ULTIMATE_BOSS_CAP } from '../src/data/balanceConfig';
-import { AnimeImpactRig, IMPACT, type RigPose } from '../src/graphics/animeImpactRig';
+import { AnimeImpactRig, IMPACT } from '../src/graphics/animeImpactRig';
+import { ULTIMATE_CINEMATICS, cineTiming } from '../src/graphics/ultimateCinematics';
 import { cutPlane, splitShipModel, updateShipSplit } from '../src/entities/ship/shipSplit';
 import { trenchCPU } from '../src/world/ocean';
 
@@ -324,29 +326,25 @@ describe('Sturm-Erwachen und die drei Willenskraft-Auren', () => {
 
 // ---------------------------------------------------------------------------------------------------------------
 
-describe('Mini-Zwischensequenz und Anime-Impact-Frames', () => {
-  it('Zeitlupe 0,14 für 0,75 s (nur lokal): Aufladen in Spielzeit = 0,105 s; Dauer der Zwischensequenz 0,65 – 0,85 s', () => {
-    expect(CUTSCENE.slow).toBe(0.14);
-    expect(CUTSCENE.slowDur).toBe(0.75);
+describe('Aufladen und Anime-Impact-Frames (4.6I: Akt 1 und Treffermoment der Kino-Regie)', () => {
+  it('Aufladen in Spielzeit 0,105 s füllt Akt 1 (0,30 – 0,35 s echt) in einer Zeitlupe um 0,3', () => {
     expect(ULT_CHARGE).toBeCloseTo(0.105, 6);
-    expect(IMPACT.cineMin).toBe(0.65);
-    expect(IMPACT.cineMax).toBe(0.85);
-    const rig = new AnimeImpactRig();
-    rig.startCutscene('face', 2);
-    expect(rig.dur).toBe(0.85);
-    rig.startCutscene('face', 0.1);
-    expect(rig.dur).toBe(0.65);
+    for (const id of ULTIMATE_ORDER) {
+      const spec = ULTIMATES[id]!.ultimate!;
+      const tm = cineTiming(ULTIMATE_CINEMATICS[spec.kind], spec);
+      expect(tm.s1 * ULTIMATE_CINEMATICS[spec.kind].dur[0], id).toBeCloseTo(ULT_CHARGE, 6);
+      expect(tm.s1, id).toBeGreaterThan(0.28);
+      expect(tm.s1, id).toBeLessThan(0.36);
+    }
   });
 
-  it('Kamera fährt heran, Augen leuchten; im Treffermoment 2 – 4 Bilder: erst invertiert, dann Tusche; danach weich zurück', () => {
+  it('Doppel-Impact-Frame im Treffermoment: 2 – 4 Bilder, erst invertiert, dann Tusche; solange welche ausstehen, steht die Zeit', () => {
     const rig = new AnimeImpactRig();
-    rig.startCutscene('face', CUTSCENE.slowDur);
-    for (let i = 0; i < 12; i++) rig.update(1 / 60);
-    expect(rig.camK).toBeGreaterThan(0.95);
-    for (let i = 0; i < 30; i++) rig.update(1 / 60);
-    expect(rig.glow).toBeGreaterThan(0.5);
+    expect(rig.active).toBe(false);
     rig.impact(3);
+    expect(rig.framesLeft).toBe(3);
     expect([rig.frame(), rig.frame(), rig.frame(), rig.frame()]).toEqual(['invert', 'ink', 'ink', 'none']);
+    expect(rig.framesLeft).toBe(0);
     rig.impact(9);
     let n = 0;
     while (rig.frame() !== 'none') n++;
@@ -355,27 +353,11 @@ describe('Mini-Zwischensequenz und Anime-Impact-Frames', () => {
     n = 0;
     while (rig.frame() !== 'none') n++;
     expect(n).toBe(IMPACT.framesMin);
-    for (let i = 0; i < 60; i++) rig.update(1 / 60);
-    expect(rig.phase).toBe('idle');
-    expect(rig.camK).toBe(0);
+    rig.impact(Number.NaN);
+    expect(rig.framesLeft).toBe(IMPACT.framesMin);
+    rig.reset();
     expect(rig.active).toBe(false);
-  });
-
-  it('Einstellungen: Gesicht nah vor dem Kopf, Untersicht tief, Himmel weit; ohne neue Objekte je Bild', () => {
-    const rig = new AnimeImpactRig();
-    const out: RigPose = { px: 0, py: 0, pz: 0, lx: 0, ly: 0, lz: 0, fov: 0 };
-    rig.startCutscene('face');
-    const p = rig.pose(0, 1.6, 0, 0, out);
-    expect(p).toBe(out);
-    expect(Math.hypot(p.px, p.pz)).toBeLessThan(1.5);
-    expect(p.pz).toBeGreaterThan(0); // vor dem Gesicht (Blick +Z)
-    expect(p.fov).toBeLessThan(35);
-    rig.startCutscene('low');
-    expect(rig.pose(0, 1.6, 0, 0, out).py).toBeLessThan(1);
-    rig.startCutscene('sky');
-    const s = rig.pose(0, 1.6, 0, 0, out);
-    expect(s.ly).toBeGreaterThan(2);
-    expect(s.fov).toBeGreaterThan(45);
+    expect(rig.impacts).toBe(4);
   });
 
   it('Ultimate: während des Aufladens steht der Angriff still (Figur unverwundbar), danach kommt der Einschlag zur festen Zeit', () => {

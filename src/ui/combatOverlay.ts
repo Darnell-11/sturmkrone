@@ -145,8 +145,22 @@ export class CombatOverlay {
     this.speed.classList.add('on');
   }
 
+  /**
+   * 4.6I: still während der Kino-Regie eines Ultimates – dort zeigt der Doppel-Impact-Frame (`ui/animeImpactOverlay.ts`) den Treffer; der
+   * weiße Blitz dieser Schicht erreicht das WebGL-Bild nur als milchiger Schleier und würde ihn überdecken. Große Banner („Schiff versenkt!“,
+   * Stufenaufstieg) warten bis nach der Sequenz, ein laufendes tritt zurück (setzt das Spiel je Bild).
+   */
+  private quietOn = false;
+  get quiet() { return this.quietOn; }
+  set quiet(v: boolean) {
+    if (v === this.quietOn) return;
+    this.quietOn = v;
+    this.banner.classList.toggle('hush', v);
+  }
+
   /** Impact-Frame: kurzes Negativbild bei sehr starken Treffern */
   impactFrame() {
+    if (this.quietOn) return;
     audio.play('heavy', 1.2);
     this.impact.classList.remove('on');
     void this.impact.offsetWidth;
@@ -207,7 +221,7 @@ export class CombatOverlay {
   private bannerQ: [string, string][] = [];
   showBanner(title: string, sub = '') {
     const now = performance.now();
-    if (now < this.bannerUntil) { if (this.bannerQ.length < 4) this.bannerQ.push([title, sub]); return; }
+    if (this.quietOn || now < this.bannerUntil) { if (this.bannerQ.length < 4) this.bannerQ.push([title, sub]); return; }
     this.bannerUntil = now + 2400;
     this.banner.querySelector('h2')!.textContent = title;
     this.banner.querySelector('p')!.textContent = sub;
@@ -363,7 +377,7 @@ export class CombatOverlay {
   update(dt: number, camera: Camera) {
     if (this.victoryTimer > 0 && (this.victoryTimer -= dt) <= 0) this.victoryEl.hidden = true;
     if (this.lootTimer > 0 && (this.lootTimer -= dt) <= 0) this.lootEl.hidden = true;
-    if (this.bannerQ.length && performance.now() >= this.bannerUntil) { const [a, b] = this.bannerQ.shift()!; this.showBanner(a, b); }
+    if (!this.quietOn && this.bannerQ.length && performance.now() >= this.bannerUntil) { const [a, b] = this.bannerQ.shift()!; this.showBanner(a, b); }
     for (const t of this.texts) {
       t.life -= dt;
       t.pos.y += t.vy * dt;

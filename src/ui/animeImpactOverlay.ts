@@ -46,7 +46,9 @@ export class AnimeImpactOverlay {
       this.root.classList.toggle('m-ink', m === 'ink');
       this.root.classList.toggle('m-inv', m === 'invert');
       this.root.classList.toggle('lines', m !== 'none' && !this.reduce);
-      if (this.canvas) this.canvas.style.filter = m === 'invert' ? 'invert(1) contrast(1.4)' : m === 'ink' ? 'grayscale(1) contrast(6) brightness(1.15)' : '';
+      // 4.6I: Tusche dunkler gestimmt (helles Meer, Himmel und Effekte wurden sonst fast ganz weiß): Schiffe, Figuren und Meer werden zu
+      // schwarzer Tusche, Himmel und Energie zu Weiß
+      if (this.canvas) this.canvas.style.filter = m === 'invert' ? 'invert(1) contrast(1.4)' : m === 'ink' ? 'grayscale(1) brightness(0.8) contrast(6.5)' : '';
       this.mode = m;
     }
     if (m !== 'none') { this.framesShown++; if (m === 'ink') this.inkShown++; else this.invertShown++; }

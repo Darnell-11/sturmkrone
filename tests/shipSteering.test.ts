@@ -6,7 +6,7 @@ import { clamp01, distToSegment, wrapAngle } from '../src/core/mathUtil';
 import { RAM_MIN_TIER } from '../src/data/balanceConfig';
 import { evoStats, evolutionOfTier } from '../src/data/shipEvolution';
 import { SEA_SPEED, SHIP_CLASSES } from '../src/data/ships';
-import { newMotion, stepMotion, turnRadius, windSpeedK, maxYawRate, type Motion, type MotionParams } from '../src/naval/shipMotion';
+import { TURN_RADIUS_MAX, newMotion, stepMotion, turnRadius, windSpeedK, maxYawRate, type Motion, type MotionParams } from '../src/naval/shipMotion';
 import { createShipSim, crewEffects, stepSailSet } from '../src/naval/shipSim';
 import {
   PredictiveMaritimeSteering, STEER, arriveRadius, createAiNav, fireRangeOf, hash01, interceptPoint, newSteerCommand, newSteerSelf, newSteerTarget, noteRam, radiusAt,
@@ -151,6 +151,25 @@ describe('Fahrphysik (shipMotion): eine Quelle für Spieler, KI und Tests', () =
     for (let t = 1; t < 7; t++) expect(turnRadius(SHIP_CLASSES[t].L, 1, 1, 1, 10)).toBeGreaterThan(turnRadius(SHIP_CLASSES[t - 1].L, 1, 1, 1, 10));
     // zerfetzte Segel (perfTurn) und schlechtere Segelstufe machen den Kreis weiter
     expect(turnRadius(40, 1, 1, 0.5, 10)).toBeGreaterThan(turnRadius(40, 1, 1, 1, 10));
+    // gesunde Schiffe bleiben weit unter dem Planungsdeckel
+    for (const tier of TIERS) expect(turnRadius(SHIP_CLASSES[tier].L, 1, 0.8, 1, SHIP_CLASSES[tier].spd * SEA_SPEED * 1.2)).toBeLessThan(TURN_RADIUS_MAX / 2);
+  });
+
+  it('lahmgelegtes Schiff (Segel zerschossen, perfTurn 0): Wendekreis gedeckelt, Fühler und Ausweg-Suche bleiben in der Nähe', () => {
+    expect(turnRadius(30, 1, 1, 0, 6)).toBe(TURN_RADIUS_MAX);
+    const r = rig(2, { speed: 6 });
+    r.self.perfTurn = 0;
+    r.mp.perfTurn = 0;
+    let maxR = 0, maxD = 0;
+    const g = r.ground as unknown as Record<'getNearbyIslands' | 'getNearbyPiers', (x: number, z: number, rad: number, out: unknown) => unknown>;
+    for (const k of ['getNearbyIslands', 'getNearbyPiers'] as const) {
+      const orig = g[k].bind(r.ground);
+      g[k] = (x, z, rad, out) => { maxR = Math.max(maxR, rad); maxD = Math.max(maxD, Math.hypot(x - r.m.x, z - r.m.z)); return orig(x, z, rad, out); };
+    }
+    for (let i = 0; i < 600; i++) tick(r, cruiseTo(r.m.x + 400, r.m.z + 900));
+    // ungedeckelt: Fühler über 90 km, Abfragen mit über 50 km Radius (140 – 180 ms je Schritt)
+    expect(maxR).toBeLessThan(2000);
+    expect(maxD).toBeLessThan(2500);
   });
 
   it('Der vorhergesagte Wendekreis stimmt mit dem gefahrenen überein (Vollruder, Schaluppe, Fregatte, Leviathan)', () => {

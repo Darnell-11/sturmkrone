@@ -94,6 +94,8 @@ export class GameRenderer {
   private dofFocus = new Vector3();
   private dofRange = 60;
   dofTarget: Vector3 | null = null;
+  /** 4.6I: Schärfe springt sofort auf das Ziel (Kino-Regie der Ultimates: Hand, Welle, Einschlag wechseln in Zehntelsekunden) */
+  dofSnap = false;
   private time = 0;
 
   /**
@@ -394,7 +396,7 @@ export class GameRenderer {
     if (this.dof && this.focus) {
       // Ziel: erfasster Gegner (Lock-on) oder die Spielfigur; Fokus und Schärfebereich gleiten weich nach
       const want = this.dofTarget ?? this.focus;
-      const k = Math.min(1, dt * 6);
+      const k = this.dofSnap ? 1 : Math.min(1, dt * 6);
       this.dofFocus.lerp(want, k);
       const d = this.camera.position.distanceTo(this.dofFocus);
       // Nahaufnahme (Kamera nah an der Figur, z. B. zu Fuß oder beim Lock-on): Hintergrund deutlich weicher;

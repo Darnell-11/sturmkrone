@@ -134,6 +134,11 @@ export class CharacterRig {
   budgetHits = 0;
   /** Zusätzliche Vorlage des Oberkörpers (rad, + = nach vorn), z. B. aufrechter Gang */
   extraPitch = 0;
+  /**
+   * 4.6I: Kino-Pose der Ultimate-Regie (`graphics/ultimateCinematics.ts`, Akt 1): Einblendung k (0 … 1), Kauern (m), Vorlage (rad, + vorn),
+   * Blick nach oben (rad), Drehung der Brust (rad, + links). Liegt über Clip und Leben, eigene Grenzen (nicht im Budget des Alltags).
+   */
+  readonly cine = { k: 0, crouch: 0, lean: 0, look: 0, twist: 0 };
   /** 4.6G.2: Haltung des Geschlechts (FIGURE_POSE) */
   private figure: FigurePose = FIGURE_POSE.male;
   /** Einblendung des Kontraposts (0 … 1), Seite des Standbeins (±1), Gang-Anteil (0 … 1) und Schrittphase (−1 … 1) */
@@ -416,12 +421,13 @@ export class CharacterRig {
     if (near) {
       this.figureStep(dt, inp.speed, holder);
       this.bodyLayers(dt, o);
+      this.cineLayer();
       // Hüfte: Pendeln, Kauern, Landung, Bodenausgleich – danach die Beine zu den gemerkten Füßen führen
       const hips = this.b[I.hips];
       let drop = 0;
       if (feetOn && this.ground) drop = this.sampleFeet(dt);
       else { this.footOff[0] *= 0.8; this.footOff[1] *= 0.8; this.footPitch[0] *= 0.8; this.footPitch[1] *= 0.8; }
-      const dy = -o.crouch + o.landDip + drop;
+      const dy = -o.crouch - this.cine.k * this.cine.crouch + o.landDip + drop;
       if (hips && hips.parent && (Math.abs(o.hipX) > 1e-4 || Math.abs(dy) > 1e-4)) {
         // im Raum des Hüft-Elternknotens (Achsen der Figur aus der Ruhelage): ohne Weltmatrizen, nichts summiert sich auf
         const a = this.hipAx, u = this.posUnit(hips);
@@ -598,6 +604,19 @@ export class CharacterRig {
       if (!e) continue;
       e.quaternion.copy(this.restQ[ei]).multiply(this.axisQ(ei, AX_Y, o.eyeYaw, _q)).multiply(this.axisQ(ei, AX_X, -o.eyePitch, _q2));
     }
+  }
+
+  /**
+   * 4.6I: Kino-Pose (Akt 1 der Ultimate-Regie) über Clip und Leben: Vorlage verteilt auf Wirbelsäule und Brust, Drehung der Brust, Blick zum
+   * Himmel über den Kopf. Eigene Grenzen (0,6 / 0,7 / 0,8 rad) – die Pose ist kurz und bewusst ausdrucksstärker als der Alltag.
+   */
+  private cineLayer() {
+    const c = this.cine;
+    if (!(c.k > 0.001)) return;
+    const k = Math.min(1, c.k);
+    if (c.lean) { this.rot(I.spine, AX_X, cap(k * c.lean * 0.5, 0.6)); this.rot(I.chest, AX_X, cap(k * c.lean * 0.45, 0.6)); }
+    if (c.twist) this.rot(I.chest, AX_Y, cap(k * c.twist, 0.7));
+    if (c.look) this.rot(I.head, AX_X, cap(-k * c.look, 0.8));
   }
 
   /** Knocheneinheiten je Meter der Figur am Ort eines Knochens (Weltmaß des Elternknochens gegen die Figur) */

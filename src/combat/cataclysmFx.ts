@@ -15,11 +15,15 @@ import { markShared } from '../render/dispose';
 export type FxPrim =
   | 'arc' | 'ring' | 'column' | 'bolt' | 'shard' | 'orb' | 'blade' | 'cannon' | 'rock' | 'wall' | 'void' | 'fist' | 'disc' | 'cloud'
   | 'sickle' | 'sickleInk' | 'ribbon' | 'ribbonInk' | 'jag' | 'jagInk' | 'shock' | 'crater' | 'foam' | 'splash'
-  | 'spark' | 'ember' | 'ice' | 'drop' | 'smoke' | 'funnel' | 'funnelInk' | 'glass';
+  | 'spark' | 'ember' | 'ice' | 'drop' | 'smoke' | 'funnel' | 'funnelInk' | 'glass'
+  /** 4.6I: pfeilförmiger Luftdruck-Kegel (Mach-Konus) vor stürzenden Meteoriten und Überschall-Vorstößen */
+  | 'cone'
+  /** 4.6I: dunkler Mantel einer gebogenen Wasserwand (Flutdrache; 3-Schicht-Regel: vor hellem Himmel blieb die additive Wand unsichtbar) */
+  | 'arcInk';
 export const FX_PRIMS: readonly FxPrim[] = [
   'arc', 'ring', 'column', 'bolt', 'shard', 'orb', 'blade', 'cannon', 'rock', 'wall', 'void', 'fist', 'disc', 'cloud',
   'sickle', 'sickleInk', 'ribbon', 'ribbonInk', 'jag', 'jagInk', 'shock', 'crater', 'foam', 'splash',
-  'spark', 'ember', 'ice', 'drop', 'smoke', 'funnel', 'funnelInk', 'glass',
+  'spark', 'ember', 'ice', 'drop', 'smoke', 'funnel', 'funnelInk', 'glass', 'cone', 'arcInk',
 ];
 
 /**
@@ -29,7 +33,7 @@ export const FX_PRIMS: readonly FxPrim[] = [
 export const FX_CAP: Readonly<Record<FxPrim, number>> = {
   arc: 32, ring: 140, column: 72, bolt: 128, shard: 360, orb: 260, blade: 320, cannon: 18, rock: 160, wall: 96, void: 4, fist: 280, disc: 24, cloud: 16,
   sickle: 260, sickleInk: 160, ribbon: 160, ribbonInk: 100, jag: 480, jagInk: 360, shock: 120, crater: 80, foam: 100, splash: 70,
-  spark: 700, ember: 360, ice: 320, drop: 420, smoke: 260, funnel: 12, funnelInk: 8, glass: 80,
+  spark: 700, ember: 360, ice: 320, drop: 420, smoke: 260, funnel: 12, funnelInk: 8, glass: 80, cone: 48, arcInk: 16,
 };
 const CAP = FX_CAP;
 
@@ -71,6 +75,9 @@ export const PRIM_LOOK: Readonly<Record<FxPrim, PrimLook>> = {
   funnel: { tex: 'flameBrush', blend: 'add', scroll: 1.8, bb: 0 },
   funnelInk: { tex: 'flameBrush', blend: 'ink', scroll: 1.1, bb: 0 },
   glass: { tex: 'runeCrack', blend: 'add', scroll: 0, bb: 0 },
+  // gestauchte Luft strömt von der Spitze nach hinten ab (Gischt-Textur: weiß-bläuliche Schlieren), additiv: dasselbe Programm wie alle Kerne
+  cone: { tex: 'waterFoam', blend: 'add', scroll: -2.6, bb: 0 },
+  arcInk: { tex: 'waterFoam', blend: 'ink', scroll: 0.5, bb: 0 },
 };
 
 // ---------- Geometrien (einmal gebaut, geteilt; Position, Eckpunktfarbe und UV – nie Normalen: gleiche Programme) ----------
@@ -475,13 +482,35 @@ function glassGeo(): BufferGeometry {
   return geo(pos, col, uv, idx);
 }
 
+/**
+ * 4.6I – Mach-Kegel: offener Kegel entlang +Y, Spitze bei y = 1 (zeigt in Flugrichtung), Rand bei y = 0 mit Radius 1; die Spitze glüht hell,
+ * der Rand läuft dunkel aus (additiv: Schwarz = unsichtbar), dazu drei feine Druckringe als hellere Bänder
+ */
+function coneGeo(): BufferGeometry {
+  const seg = 24, rows = [0, 0.18, 0.4, 0.62, 0.84, 1];
+  const pos: number[] = [], col: number[] = [], uv: number[] = [], idx: number[] = [];
+  for (let i = 0; i <= seg; i++) {
+    const a = (i / seg) * Math.PI * 2;
+    for (let r = 0; r < rows.length; r++) {
+      const y = rows[r], rr = (1 - y) ** 1.25;
+      pos.push(Math.sin(a) * rr, y, Math.cos(a) * rr);
+      const band = r === 2 || r === 4 ? 0.35 : 0;
+      const l = Math.min(1.5, 0.06 + 1.2 * y * y + band * y);
+      col.push(l, l, l);
+      uv.push((i / seg) * 2, y * 1.6);
+    }
+  }
+  stripIndex(seg, rows.length, idx);
+  return geo(pos, col, uv, idx);
+}
+
 const GEOS: Record<FxPrim, () => BufferGeometry> = {
   arc: arcGeo, ring: ringGeo, column: columnGeo, bolt: boltGeo, shard: shardGeo, orb: orbGeo, blade: bladeGeo, cannon: cannonGeo, rock: rockGeo,
   wall: wallGeo, void: orbGeo, fist: fistGeo, disc: () => discGeo(17, 0.78), cloud: cloudGeo,
   sickle: sickleGeo, sickleInk: sickleGeo, ribbon: ribbonGeo, ribbonInk: ribbonGeo, jag: jagGeo, jagInk: jagGeo,
   shock: () => planarRingGeo(0.3, 1, [0.9, 1.1, 1]), crater: craterGeo, foam: () => planarRingGeo(0.45, 1.6, [0.55, 1, 0.3]), splash: splashGeo,
   spark: () => quadGeo(0), ember: () => quadGeo(1), ice: () => quadGeo(2), drop: () => quadGeo(3), smoke: () => quadGeo(1),
-  funnel: funnelGeo, funnelInk: funnelGeo, glass: glassGeo,
+  funnel: funnelGeo, funnelInk: funnelGeo, glass: glassGeo, cone: coneGeo, arcInk: arcGeo,
 };
 
 // ---------- Pinsel und Pool ----------
@@ -533,9 +562,12 @@ class Pool {
   readonly flick: Float32Array;
   readonly bb: 0 | 1 | 2 | 3;
   readonly ink: boolean;
+  /** additiv (leuchtender Kern): blendet nah vor der Linse aus (`CataclysmFx.lensNear`) */
+  readonly add: boolean;
   constructor(readonly prim: FxPrim, geo: BufferGeometry, mats: MeshBasicMaterial[], readonly cap: number, look: PrimLook) {
     this.bb = look.bb;
     this.ink = look.blend === 'ink';
+    this.add = look.blend === 'add';
     for (const mat of mats) {
       const m = new InstancedMesh(geo, mat, cap);
       m.instanceMatrix.setUsage(DynamicDrawUsage);
@@ -580,6 +612,11 @@ export class CataclysmFx {
   emitted = 0;
   /** Teilchen-Faktor der Grafikstufe (wie NavalSystem.detail): weniger Kleinkram auf schwachen Geräten */
   detail = 1;
+  /**
+   * 4.6I: Leuchtende Teile (additiv, bis 3 m groß), die näher als so viele Meter vor der Kamera schweben, blenden weich aus – in den
+   * Nahaufnahmen der Kino-Regie (Hand, Gesicht) überstrahlten Glut, Aura-Bänder und Funken direkt vor der Linse sonst das ganze Bild.
+   */
+  lensNear = 1.6;
   private cam: FxCamera | null = null;
 
   constructor(scene: Scene) {
@@ -728,6 +765,15 @@ export class CataclysmFx {
         m.setMatrixAt(slot, _mx);
         const fl = pool.flick[w - 1];
         if (fl > 0 && !pool.ink) f *= 1 - fl + fl * (0.5 + 0.5 * Math.sin((d[ow + T] + w * 0.37) * 47));
+        // vor der Linse: kleine leuchtende Teile blenden aus (Abstand zur Kamera minus halbe Größe)
+        if (pool.add && this.cam && this.lensNear > 0) {
+          const sz = Math.max(_s.x, _s.y, _s.z);
+          if (sz < 3) {
+            const cp = this.cam.position;
+            const dn = Math.hypot(_p.x - cp.x, _p.y - cp.y, _p.z - cp.z) - sz * 0.5;
+            if (dn < this.lensNear) { const k = Math.max(0, (dn - 0.3) / (this.lensNear - 0.3)); f *= k * k * (3 - 2 * k); }
+          }
+        }
         const col = m.instanceColor!.array as Float32Array;
         col[slot * 3] = c[(w - 1) * 4] * f; col[slot * 3 + 1] = c[(w - 1) * 4 + 1] * f; col[slot * 3 + 2] = c[(w - 1) * 4 + 2] * f;
       }

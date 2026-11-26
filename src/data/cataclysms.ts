@@ -1,133 +1,169 @@
 // Phase 4.6B – die 14 Kataklysmus-Ultimates (sechs Waffenstile + die 7. Form der acht Faji-Künste) als reine Daten.
-// Jedes Ultimate ist ein `ActionMove` mit `ultimate`-Angabe: Aufladen unter der Zeitlupe (Mini-Zwischensequenz, `graphics/animeImpactRig.ts`),
-// großer Einschlag mit Impact-Frames, Treffer der Engine auf Kämpfer und Verbände und ein Welt-Effekt (`world/cataclysmDirector.ts`):
-// Schiffe zerteilen, Meer spalten, Schiffe ansaugen. Ultimates gibt es nur im Sturm-Erwachen, einmal je Erwachen.
+// Jedes Ultimate ist ein `ActionMove` mit `ultimate`-Angabe: Aufladen (Akt 1 der Kino-Regie, `graphics/ultimateCinematics.ts`), großer
+// Einschlag, Treffer der Engine auf Kämpfer und Verbände und ein Welt-Effekt (`world/cataclysmDirector.ts`): Schiffe zerteilen, Meer
+// spalten, Schiffe ansaugen. Ultimates gibt es nur im Sturm-Erwachen, einmal je Erwachen.
+// 4.6I: die Zeiten folgen der 3-Akt-Choreografie (~1 s): Aufladen = Akt 1 (Zeitlupe), Einschlag `strikeAt` und entscheidender Treffer
+// `strikeAt + lag` = Ende von Akt 2 (Gefahr entsteht), danach Akt 3 (Doppel-Impact-Frame, Zerstörung). Die Clips laufen darum knapper
+// (Klinge fällt in Akt 2, nicht danach), Treffer und Ende des Angriffs rücken mit – die Figur ist direkt nach der Sequenz wieder frei.
 // Endboss-Schutz: ein Ultimate zählt gegen Endbosse wie EIN Treffer (Summe gedeckelt, `ultimateBossCap`), bricht aber sofort die Haltung.
 import { ROUND, move, ticks, type ActionMove, type ActionStyleId, type HitIn, type UltimateSpec } from './actionKit';
 import { KAISER_BOSS_HIT_CAP, RAID_BOSS_HIT_CAP, ULTIMATE_BOSS_CAP, type DangerTier } from './balanceConfig';
 
-/** Zeitlupe der Zwischensequenz (Anteil der Spielzeit) und ihre Dauer in echten Sekunden; Aufladen in Spielzeit = beides multipliziert */
-export const CUTSCENE = { slow: 0.14, slowDur: 0.75, minDur: 0.65, maxDur: 0.85 } as const;
-/** Aufladen eines Ultimates in Spielzeit: so lange dauert die Zeitlupe der Zwischensequenz */
-export const ULT_CHARGE = CUTSCENE.slow * CUTSCENE.slowDur;
+/**
+ * Aufladen eines Ultimates in Spielzeit (Akt 1 „Vorbereitung & Aufladung“: die Engine hält den Angriff an, die Figur nimmt ihre Pose ein).
+ * Die Kino-Regie spielt diese 0,105 s Spielzeit in ihren 0,30 – 0,35 s Echtzeit ab (Zeitlupe ≈ 0,32).
+ */
+export const ULT_CHARGE = 0.105;
+/** 4.6I: so viel Spielzeit nach dem entscheidenden Treffer sind Dash und Sprung wieder frei (Akt 3 läuft in Zeitlupe; danach Rückkehr) */
+export const ULT_FREE_AFTER = 0.15;
 
-type UltIn = Omit<UltimateSpec, 'charge' | 'shot' | 'frames' | 'center' | 'splitShips' | 'trench' | 'shipPull'> & Partial<Pick<UltimateSpec, 'shot' | 'frames' | 'center' | 'splitShips' | 'trench' | 'shipPull'>>;
+type UltIn = Omit<UltimateSpec, 'charge' | 'shot' | 'frames' | 'center' | 'splitShips' | 'trench' | 'shipPull' | 'lag'> & Partial<Pick<UltimateSpec, 'shot' | 'frames' | 'center' | 'splitShips' | 'trench' | 'shipPull' | 'lag'>>;
 
 /** Grundform aller Treffer eines Ultimates: groß, wuchtig, immer mit Haltungsschaden, nie geblockt */
 const U: HitIn = { breakGuard: true, poise: 60, knock: 10, hitstop: 0.06, shake: 0.5, fx: 'heavy', up: 6, down: 3 };
 
 function ult(id: string, label: string, clip: string, dur: number, u: UltIn, hits: HitIn[], extra: Partial<ActionMove> & { from?: number; to?: number } = {}): ActionMove {
-  const spec: UltimateSpec = { charge: ULT_CHARGE, shot: 'face', frames: 3, center: 0, splitShips: '', trench: 0, shipPull: 0, ...u };
+  const spec: UltimateSpec = { charge: ULT_CHARGE, shot: 'face', frames: 3, center: 0, splitShips: '', trench: 0, shipPull: 0, lag: 0, ...u };
   const m = move({
     id, label, clip, dur, magnet: false, lunge: 0, hyper: true, iframes: dur + 0.3, cutin: label, color: u.color, vfx: u.kind,
     hits: hits.map((h) => ({ ...U, ...h })), ...extra,
   });
   m.ultimate = spec;
-  // Ultimates setzen die Kette nie fort: der Ansatzpunkt liegt am Ende (Dash und Sprung brechen nach dem Einschlag ab)
-  m.cancel = Math.max(m.cancel, Math.min(dur, spec.strikeAt + 0.25));
+  // Ultimates setzen die Kette nie fort: der Ansatzpunkt liegt nach dem entscheidenden Treffer und nach dem Beginn des letzten Treffers
+  // (während der Kino-Sequenz keine Eingabe; mit ihrem Ende brechen Dash und Sprung wieder ab – 4.6I: die Treffer liegen darum alle davor)
+  const lastT0 = m.hits.reduce((a, h) => Math.max(a, h.t0), 0);
+  m.cancel = Math.min(dur, Math.max(lastT0 + 0.02, spec.strikeAt + spec.lag + ULT_FREE_AFTER));
   return m;
 }
 
-/** Ultimate je Stil (Faji-Künste: ihre 7. Form, `formMin` 7) */
+/**
+ * Ultimate je Stil (Faji-Künste: ihre 7. Form, `formMin` 7). 4.6I: Zeiten auf die 3-Akt-Choreografie gezogen – `strikeAt` (Einschlag) und
+ * `strikeAt + lag` (entscheidender Treffer = Ende von Akt 2) liegen in den ersten ~0,4 s Spielzeit, die Treffer der Engine im selben Fenster,
+ * Clip-Abschnitte so, dass Hieb, Schlag oder Geste genau dorthin fallen (Akt 1 zeigt davor die Aushol-Pose desselben Clips).
+ */
 export const ULTIMATES: Partial<Record<ActionStyleId, ActionMove>> = {
-  zweihaender: ult('zweihaender.u', 'Himmelsspalter: Horizont-Zäsur', 'Melee_2H_Attack_Chop', 1.7,
-    { kind: 'horizonCut', strikeAt: 0.42, reach: 150, width: 180, splitShips: 'cross', color: '#FFE2B0', accent: '#FF8A3A', frames: 3 },
-    [{ shape: 'line', range: 150, width: 180, grow: true, at: [0.25, 0.75], dmg: 7, poise: 220, knock: 16, launch: 7, fling: 20, hitstop: 0.12, shake: 1.2, vfx: 'klinge' }]),
+  // Zweihänder: die Klinge fällt in Akt 2 (Schwung 0,04 – 0,33 s), die Energiewand löst sich bei 0,12 s und erreicht die Schiffe; bei 0,32 s
+  // kippen Bug und Heck auseinander (Doppel-Impact-Frame)
+  zweihaender: ult('zweihaender.u', 'Himmelsspalter: Horizont-Zäsur', 'Melee_2H_Attack_Chop', 0.9,
+    { kind: 'horizonCut', strikeAt: 0.12, lag: 0.2, reach: 150, width: 180, splitShips: 'cross', color: '#FFE2B0', accent: '#FF8A3A', frames: 3 },
+    [{ shape: 'line', range: 150, width: 180, grow: true, at: [0.13, 0.75], dmg: 7, poise: 220, knock: 16, launch: 7, fling: 20, hitstop: 0.12, shake: 1.2, vfx: 'klinge' }],
+    { from: 0.38, to: 0.9 }),
 
-  saebel: ult('saebel.u', 'Souverän-Orkan: Sieben-Meere-Zäsur', 'Melee_1H_Attack_Jump_Chop', 2.2,
-    // 4.6D: Akzent golden-rot statt violett (aus großer Höhe überstrahlte das Violett das ganze Bild); Violett bleibt nur im dunklen Mantel
-    { kind: 'sevenSeas', strikeAt: 0.95, reach: 46, width: 34, center: 20, shot: 'sky', color: '#FFD27A', accent: '#FF3A2A', frames: 3 },
+  saebel: ult('saebel.u', 'Souverän-Orkan: Sieben-Meere-Zäsur', 'Melee_1H_Attack_Jump_Chop', 0.95,
+    // 4.6D: Akzent golden-rot statt violett (aus großer Höhe überstrahlte das Violett das ganze Bild); Violett bleibt nur im dunklen Mantel.
+    // 4.6I: Sprung in Akt 2, der Hieb (Clip-Fenster 0,45) fällt genau auf den Einschlag 0,38 s – Blitz-Zäsur und erste Salve im Impact-Frame
+    { kind: 'sevenSeas', strikeAt: 0.38, reach: 46, width: 34, center: 20, shot: 'sky', color: '#FFD27A', accent: '#FF3A2A', frames: 3 },
     [
-      ...ticks(5, 0.3, 0.6, { shape: 'circle', offset: 14, range: 10, dmg: 0.55, poise: 30, knock: 6, status: 'shock', statusDur: 1.5, vfx: 'blitz' }),
-      ...ticks(3, 0.62, 0.86, { shape: 'circle', offset: 20, range: 16, dmg: 1.4, poise: 60, knock: 14, fling: 16, launch: 5, vfx: 'kanone' }, { hitstop: 0.12, shake: 1.1 }),
-    ], { rise: 13, airOk: true, from: 0.05, to: 0.95 }),
+      ...ticks(5, 0.4, 0.55, { shape: 'circle', offset: 14, range: 10, dmg: 0.55, poise: 30, knock: 6, status: 'shock', statusDur: 1.5, vfx: 'blitz' }),
+      // drei Salven der Geister-Armada (Welt: 0 / 0,08 / 0,16 s nach dem Einschlag)
+      ...ticks(3, 0.41, 0.62, { shape: 'circle', offset: 20, range: 16, dmg: 1.4, poise: 60, knock: 14, fling: 16, launch: 5, vfx: 'kanone' }, { hitstop: 0.12, shake: 1.1 }),
+    ], { rise: 13, airOk: true, from: 0.15, to: 0.9 }),
 
-  doppel: ult('doppel.u', 'Klingen-Zyklon: Tausend-Schnitt-Wirbel', 'Melee_2H_Attack_Spinning', 2.3,
-    { kind: 'sawCyclone', strikeAt: 0.3, reach: 42, width: 9, splitShips: 'length', color: '#C8FFE8', accent: '#3AE0A8', frames: 2 },
-    ticks(14, 0.08, 0.86, { shape: 'arc', arc: ROUND, range: 3.8, dmg: 0.48, poise: 22, knock: 5, fling: 9, hitstop: 0.02, shake: 0.3, vfx: 'wind' }, { dmg: 1.2, knock: 14, fling: 18, hitstop: 0.1, shake: 0.8 }),
-    { dashTo: 40, dashTime: 1.7, through: true, from: 0, to: 1, afterimage: true }),
+  // Doppelklinge: Überschall-Vorstoß (40 m in 0,34 s) direkt hinter der Kreissäge; was sie durchfräst, bricht im Impact-Frame in vier Teile
+  doppel: ult('doppel.u', 'Klingen-Zyklon: Tausend-Schnitt-Wirbel', 'Melee_2H_Attack_Spinning', 0.8,
+    { kind: 'sawCyclone', strikeAt: 0.06, lag: 0.3, reach: 42, width: 9, splitShips: 'length', color: '#C8FFE8', accent: '#3AE0A8', frames: 2 },
+    ticks(14, 0.05, 0.5, { shape: 'arc', arc: ROUND, range: 3.8, dmg: 0.48, poise: 22, knock: 5, fling: 9, hitstop: 0.02, shake: 0.3, vfx: 'wind' }, { dmg: 1.2, knock: 14, fling: 18, hitstop: 0.1, shake: 0.8 }),
+    { dashTo: 40, dashTime: 0.34, through: true, from: 0, to: 1, afterimage: true }),
 
-  langklinge: ult('langklinge.u', 'Lautloser Blitz: Iaijutsu-Weltenbruch', 'Crouching', 2.4,
-    { kind: 'iaiWorldBreak', strikeAt: 1.75, reach: 34, width: 7, splitShips: 'diagonal', shot: 'side', color: '#E6F4FF', accent: '#8AC8FF', frames: 4 },
-    // im Vorstoß nur markieren, beim Einrasten der Klinge (1,75 s) zerbricht alles Durchquerte zugleich
-    [{ shape: 'line', range: 4.5, width: 4, at: [0.0, 0.2], delayTo: 1.75, dmg: 9, poise: 260, pen: 3, knock: 12, fling: 16, hitstop: 0.2, shake: 1.2, vfx: 'mond' }],
+  langklinge: ult('langklinge.u', 'Lautloser Blitz: Iaijutsu-Weltenbruch', 'Crouching', 1.0,
+    { kind: 'iaiWorldBreak', strikeAt: 0.36, reach: 34, width: 7, splitShips: 'diagonal', shot: 'side', color: '#E6F4FF', accent: '#8AC8FF', frames: 4 },
+    // im Vorstoß (0,2 s) nur markieren, beim Einrasten der Klinge (0,36 s, tiefe Landepose) zerbricht alles Durchquerte zugleich
+    [{ shape: 'line', range: 4.5, width: 4, at: [0.0, 0.2], delayTo: 0.36, dmg: 9, poise: 260, pen: 3, knock: 12, fling: 16, hitstop: 0.2, shake: 1.2, vfx: 'mond' }],
     { dashTo: 32, dashTime: 0.2, through: true, from: 0.1, to: 0.6, afterimage: true }),
 
-  sturmfaust: ult('sturmfaust.u', 'Sturmfaust-Stakkato: Zehntausend-Hiebe-Orkan', 'Melee_Unarmed_Attack_Punch_A', 2.0,
-    { kind: 'fistStorm', strikeAt: 0.2, reach: 28, width: 16, color: '#FFB45A', accent: '#FFE07A', frames: 2 },
-    ticks(22, 0.06, 0.82, { shape: 'arc', arc: 1.3, range: 16, dmg: 0.3, poise: 14, knock: 3, fling: 6, hitstop: 0.01, shake: 0.25, vfx: 'blitz' }, { dmg: 1.4, knock: 16, fling: 20, launch: 6, hitstop: 0.14, shake: 1.1 }),
+  // Sturmfaust: die Faust-Flut läuft ab 0,1 s, der große Schlag (Clip-Fenster) landet mit dem Zerbersten bei 0,36 s
+  sturmfaust: ult('sturmfaust.u', 'Sturmfaust-Stakkato: Zehntausend-Hiebe-Orkan', 'Melee_Unarmed_Attack_Punch_A', 1.2,
+    { kind: 'fistStorm', strikeAt: 0.1, lag: 0.26, reach: 28, width: 16, color: '#FFB45A', accent: '#FFE07A', frames: 2 },
+    ticks(22, 0.08, 0.31, { shape: 'arc', arc: 1.3, range: 16, dmg: 0.3, poise: 14, knock: 3, fling: 6, hitstop: 0.01, shake: 0.25, vfx: 'blitz' }, { dmg: 1.4, knock: 16, fling: 20, launch: 6, hitstop: 0.14, shake: 1.1 }),
     { from: 0.1, to: 0.7, afterimage: true }),
 
-  erdspalter: ult('erdspalter.u', 'Erdspalter-Beben: Ozean-Teilung', 'Melee_2H_Attack_Chop', 2.0,
-    { kind: 'oceanSplit', strikeAt: 0.45, reach: 110, width: 16, trench: 9, color: '#E0B88A', accent: '#C8783A', frames: 3 },
-    [{ shape: 'line', range: 110, width: 16, grow: true, at: [0.28, 0.8], dmg: 6.5, poise: 220, knock: 14, launch: 9, fling: 22, hitstop: 0.12, shake: 1.3, vfx: 'erde' }]),
+  // Erdspalter: der Hieb spaltet bei 0,12 s das Meer (Graben öffnet sich in Akt 2), bei 0,38 s prallen die Schiffe im Graben zusammen
+  erdspalter: ult('erdspalter.u', 'Erdspalter-Beben: Ozean-Teilung', 'Melee_2H_Attack_Chop', 0.9,
+    { kind: 'oceanSplit', strikeAt: 0.12, lag: 0.26, reach: 110, width: 16, trench: 9, color: '#E0B88A', accent: '#C8783A', frames: 3 },
+    [{ shape: 'line', range: 110, width: 16, grow: true, at: [0.13, 0.75], dmg: 6.5, poise: 220, knock: 14, launch: 9, fling: 22, hitstop: 0.12, shake: 1.3, vfx: 'erde' }],
+    { from: 0.38, to: 0.9 }),
 
-  schwarzloch: ult('schwarzloch.u', '7. Form: Ereignishorizont – Schwarzer Abgrund', 'Ranged_Magic_Raise', 3.1,
-    { kind: 'blackHole', strikeAt: 0.3, reach: 60, width: 60, center: 12, splitShips: 'radial', shipPull: 9, color: '#B07DFF', accent: '#1A0A2A', shot: 'sky', frames: 4 },
+  schwarzloch: ult('schwarzloch.u', '7. Form: Ereignishorizont – Schwarzer Abgrund', 'Ranged_Magic_Raise', 1.4,
+    { kind: 'blackHole', strikeAt: 0.06, lag: 0.32, reach: 60, width: 60, center: 12, splitShips: 'radial', shipPull: 9, color: '#B07DFF', accent: '#1A0A2A', shot: 'sky', frames: 4 },
     [
-      ...ticks(8, 0.12, 0.72, { shape: 'circle', offset: 12, range: 20, dmg: 0.32, poise: 24, knock: 0, vortex: 7, status: 'suppress', statusDur: 6, hitstop: 0.01, shake: 0.3, vfx: 'void' }),
-      { shape: 'circle', offset: 12, range: 22, at: [0.76, 0.82], dmg: 4.2, poise: 200, knock: 16, fling: 22, launch: 6, hitstop: 0.18, shake: 1.4, vfx: 'void' },
+      // 4.6I: der Sog läuft nur noch durch Akt 2 (~0,35 s) – dafür stärker (gleiche Strecke wie zuvor in 1,5 s)
+      ...ticks(8, 0.0, 0.27, { shape: 'circle', offset: 12, range: 20, dmg: 0.32, poise: 24, knock: 0, vortex: 32, status: 'suppress', statusDur: 6, hitstop: 0.01, shake: 0.3, vfx: 'void' }),
+      // Implosion und Explosion nach außen (entscheidender Treffer bei 0,38 s)
+      { shape: 'circle', offset: 12, range: 22, at: [0.27, 0.31], dmg: 4.2, poise: 200, knock: 16, fling: 22, launch: 6, hitstop: 0.18, shake: 1.4, vfx: 'void' },
     ], { from: 0.2, to: 0.75, formMin: 7 }),
 
-  feuer: ult('feuer.u', '7. Form: Purpur-Sonneninferno', 'Ranged_Magic_Raise', 2.6,
-    { kind: 'fireDragons', strikeAt: 0.35, reach: 36, width: 22, color: '#FF6A2A', accent: '#C83AFF', frames: 3 },
-    ticks(9, 0.18, 0.8, { shape: 'arc', arc: 1.4, range: 34, grow: true, dmg: 0.75, poise: 26, knock: 7, fling: 10, status: 'burn', statusDur: 5, hitstop: 0.03, shake: 0.4, vfx: 'feuer' }, { dmg: 1.6, knock: 14, fling: 18, hitstop: 0.12, shake: 1 }),
+  feuer: ult('feuer.u', '7. Form: Purpur-Sonneninferno', 'Ranged_Magic_Raise', 1.4,
+    { kind: 'fireDragons', strikeAt: 0.08, lag: 0.3, reach: 36, width: 22, color: '#FF6A2A', accent: '#C83AFF', frames: 3 },
+    ticks(9, 0.05, 0.3, { shape: 'arc', arc: 1.4, range: 34, grow: true, dmg: 0.75, poise: 26, knock: 7, fling: 10, status: 'burn', statusDur: 5, hitstop: 0.03, shake: 0.4, vfx: 'feuer' }, { dmg: 1.6, knock: 14, fling: 18, hitstop: 0.12, shake: 1 }),
     { from: 0.2, to: 0.75, formMin: 7 }),
 
-  eis: ult('eis.u', '7. Form: Ewiger Gletscher-Kataklysmus', 'Melee_2H_Attack_Chop', 2.4,
-    { kind: 'glacier', strikeAt: 0.42, reach: 26, width: 26, color: '#BFEFFF', accent: '#5AB8FF', frames: 3 },
+  // Eis: der Handflächen-Aufschlag fällt ans Ende von Akt 1 (Clip-Abschnitt beginnt nach dem Schlag), die Eiswelle friert sofort; Säulen in
+  // Akt 2, Zersplittern im Impact-Frame bei 0,38 s
+  eis: ult('eis.u', '7. Form: Ewiger Gletscher-Kataklysmus', 'Melee_2H_Attack_Chop', 0.9,
+    { kind: 'glacier', strikeAt: 0.04, lag: 0.34, reach: 26, width: 26, color: '#BFEFFF', accent: '#5AB8FF', frames: 3 },
     [
-      ...ticks(3, 0.28, 0.6, { shape: 'circle', range: 24, grow: true, dmg: 1.2, poise: 70, knock: 4, launch: 7, status: 'freeze', statusDur: 3, hitstop: 0.06, shake: 0.6, vfx: 'eis' }),
-      { shape: 'circle', range: 25, at: [0.68, 0.74], dmg: 2.6, poise: 120, knock: 16, fling: 18, hitstop: 0.16, shake: 1.2, vfx: 'eis' },
+      ...ticks(3, 0.05, 0.3, { shape: 'circle', range: 24, grow: true, dmg: 1.2, poise: 70, knock: 4, launch: 7, status: 'freeze', statusDur: 3, hitstop: 0.06, shake: 0.6, vfx: 'eis' }),
+      { shape: 'circle', range: 25, at: [0.42, 0.48], dmg: 2.6, poise: 120, knock: 16, fling: 18, hitstop: 0.16, shake: 1.2, vfx: 'eis' },
+    ], { from: 0.55, to: 0.95, formMin: 7 }),
+
+  wasser: ult('wasser.u', '7. Form: Tiefsee-Sintflutdrache', 'Ranged_Magic_Raise', 1.5,
+    { kind: 'floodDragon', strikeAt: 0.1, lag: 0.28, reach: 56, width: 28, color: '#5AC8FF', accent: '#1A6AFF', frames: 3 },
+    [
+      { shape: 'line', range: 56, width: 28, grow: true, at: [0.07, 0.5], dmg: 5.2, poise: 160, knock: 20, fling: 22, status: 'slow', statusDur: 4, hitstop: 0.1, shake: 1.1, vfx: 'wasser' },
+      ...ticks(4, 0.15, 0.4, { shape: 'circle', offset: 22, range: 12, dmg: 0.6, poise: 30, knock: 8, launch: 4, hitstop: 0.03, shake: 0.4, vfx: 'wasser' }),
     ], { formMin: 7 }),
 
-  wasser: ult('wasser.u', '7. Form: Tiefsee-Sintflutdrache', 'Ranged_Magic_Raise', 2.6,
-    { kind: 'floodDragon', strikeAt: 0.38, reach: 56, width: 28, color: '#5AC8FF', accent: '#1A6AFF', frames: 3 },
-    [
-      { shape: 'line', range: 56, width: 28, grow: true, at: [0.3, 0.72], dmg: 5.2, poise: 160, knock: 20, fling: 22, status: 'slow', statusDur: 4, hitstop: 0.1, shake: 1.1, vfx: 'wasser' },
-      ...ticks(4, 0.4, 0.8, { shape: 'circle', offset: 22, range: 12, dmg: 0.6, poise: 30, knock: 8, launch: 4, hitstop: 0.03, shake: 0.4, vfx: 'wasser' }),
-    ], { formMin: 7 }),
-
-  wind: ult('wind.u', '7. Form: Vakuum-Himmelssturm', 'Ranged_Magic_Raise', 2.6,
-    { kind: 'vacuumStorm', strikeAt: 0.3, reach: 24, width: 24, color: '#E8FFF4', accent: '#7AE8C8', frames: 2 },
-    ticks(12, 0.14, 0.84, { shape: 'circle', range: 22, dmg: 0.5, poise: 20, knock: 3, launch: 4, juggle: 4, vortex: 2.5, hitstop: 0.01, shake: 0.3, vfx: 'wind' }, { dmg: 1.4, knock: 18, fling: 20, launch: 8, hitstop: 0.12, shake: 1 }),
+  wind: ult('wind.u', '7. Form: Vakuum-Himmelssturm', 'Ranged_Magic_Raise', 1.5,
+    { kind: 'vacuumStorm', strikeAt: 0.06, lag: 0.32, reach: 24, width: 24, color: '#E8FFF4', accent: '#7AE8C8', frames: 2 },
+    ticks(12, 0.03, 0.26, { shape: 'circle', range: 22, dmg: 0.5, poise: 20, knock: 3, launch: 4, juggle: 4, vortex: 2.5, hitstop: 0.01, shake: 0.3, vfx: 'wind' }, { dmg: 1.4, knock: 18, fling: 20, launch: 8, hitstop: 0.12, shake: 1 }),
     { formMin: 7 }),
 
   blitz: ult('blitz.u', '7. Form: Donnergott-Urteil', 'Ranged_Magic_Raise', 2.3,
-    { kind: 'thunderJudgment', strikeAt: 0.42, reach: 32, width: 32, shot: 'sky', color: '#FFF3A0', accent: '#7A9BFF', frames: 4 },
-    ticks(3, 0.3, 0.72, { shape: 'circle', range: 30, dmg: 1.9, poise: 80, knock: 9, chain: 6, chainRange: 9, status: 'shock', statusDur: 3, hitstop: 0.1, shake: 1, vfx: 'blitz', down: 9 }),
+    // 4.6I: der Hauptblitz stürzt in Akt 2 aus der Wolke herab und schlägt bei 0,4 s ein (die Figur steht dann gut 3 m hoch unter der Wolke)
+    { kind: 'thunderJudgment', strikeAt: 0.4, reach: 32, width: 32, shot: 'sky', color: '#FFF3A0', accent: '#7A9BFF', frames: 4 },
+    // drei Kettenblitz-Wellen (Welt: 0 / 0,08 / 0,16 s nach dem Einschlag)
+    ticks(3, 0.175, 0.28, { shape: 'circle', range: 30, dmg: 1.9, poise: 80, knock: 9, chain: 6, chainRange: 9, status: 'shock', statusDur: 3, hitstop: 0.1, shake: 1, vfx: 'blitz', down: 9 }),
     // 4.6C: die Figur steigt zur Gewitterwolke auf (~9 m), schwebt unter ihr und lenkt die Blitzsäule von oben, danach fällt sie zurück
     { formMin: 7, rise: 9, hang: 1.8, airOk: true }),
 
-  sonne: ult('sonne.u', '7. Form: Zenit-Sonnentanz', 'Ranged_Magic_Raise', 2.4,
-    { kind: 'sunDance', strikeAt: 0.4, reach: 20, width: 20, shot: 'sky', color: '#FFE88A', accent: '#FF9A2A', frames: 3 },
-    ticks(5, 0.22, 0.8, { shape: 'circle', range: 19, dmg: 1.1, poise: 50, knock: 8, pen: 3, status: 'sunder', statusDur: 10, hitstop: 0.05, shake: 0.6, vfx: 'sonne' }, { dmg: 2, knock: 16, fling: 18, hitstop: 0.14, shake: 1.1 }),
+  sonne: ult('sonne.u', '7. Form: Zenit-Sonnentanz', 'Ranged_Magic_Raise', 1.4,
+    { kind: 'sunDance', strikeAt: 0.06, lag: 0.32, reach: 20, width: 20, shot: 'sky', color: '#FFE88A', accent: '#FF9A2A', frames: 3 },
+    ticks(5, 0.05, 0.3, { shape: 'circle', range: 19, dmg: 1.1, poise: 50, knock: 8, pen: 3, status: 'sunder', statusDur: 10, hitstop: 0.05, shake: 0.6, vfx: 'sonne' }, { dmg: 2, knock: 16, fling: 18, hitstop: 0.14, shake: 1.1 }),
     { formMin: 7 }),
 
-  mond: ult('mond.u', '7. Form: Blutmond-Finsternis', 'Ranged_Magic_Raise', 2.6,
-    { kind: 'bloodMoon', strikeAt: 0.3, reach: 26, width: 26, color: '#FF3A6A', accent: '#8A2AFF', shot: 'sky', frames: 3 },
-    ticks(12, 0.14, 0.84, { shape: 'circle', range: 25, grow: true, dmg: 0.55, poise: 22, knock: 6, fling: 8, hitstop: 0.015, shake: 0.3, vfx: 'mond' }, { dmg: 1.5, knock: 16, fling: 20, hitstop: 0.12, shake: 1 }),
+  mond: ult('mond.u', '7. Form: Blutmond-Finsternis', 'Ranged_Magic_Raise', 1.4,
+    { kind: 'bloodMoon', strikeAt: 0.06, lag: 0.32, reach: 26, width: 26, color: '#FF3A6A', accent: '#8A2AFF', shot: 'sky', frames: 3 },
+    ticks(12, 0.03, 0.29, { shape: 'circle', range: 25, grow: true, dmg: 0.55, poise: 22, knock: 6, fling: 8, hitstop: 0.015, shake: 0.3, vfx: 'mond' }, { dmg: 1.5, knock: 16, fling: 20, hitstop: 0.12, shake: 1 }),
     { formMin: 7 }),
 };
+
+/** 4.6I: Welt-Zeitachse eines Himmelssturzes (s nach dem Einschlag): Meteoriten, Planet – Engine-Treffer und Darstellung teilen sie */
+export const SKYFALL_TIMES = { meteor1: 0.3, meteor2: 0.36, planet: 0.44 } as const;
+const SKY_STRIKE = 0.08, SKY_DUR = 1.5;
+/** Anteil der Dauer für einen Zeitpunkt der Welt-Zeitachse (nach dem Einschlag) */
+const skyAt = (t: number, w = 0.02): [number, number] => [(SKY_STRIKE + t) / SKY_DUR, (SKY_STRIKE + t + w) / SKY_DUR];
 
 /**
  * 4.6E: das 15. Ultimate, transzendent und an keinen Stil gebunden (Krone des Kosmos-Baums, erst nach dem Aufstieg auf Stufe 101):
  * „Himmelssturz: Zwillings-Meteoriten & Planeten-Kollaps“. Die Figur reißt den Sternenhimmel auf; zwei Meteoriten mit Kometenschweif
  * schlagen vor ihr ein (nah und fern), dann kollidiert ein Planet mit der Welt – Krater an Land, Trichter und Ringwelle im Meer, Glut danach.
  * Endbosse: wie jedes Ultimate über `UltimateBossLedger` gedeckelt (ein Wirken zählt wie ein Treffer).
+ * 4.6I: der Himmel reißt beim Einschlag (0,08 s) auf, die Meteoriten stürzen in Akt 2 herab und schlagen bei 0,38 / 0,44 s ein (Treffer
+ * und Welt gleich), der Planet bei 0,52 s – alles noch in der Sequenz.
  */
-export const SKYFALL_ULTIMATE: ActionMove = ult('kosmos.u', 'Himmelssturz: Zwillings-Meteoriten & Planeten-Kollaps', 'Ranged_Magic_Raise', 3.0,
-  { kind: 'skyfall', strikeAt: 0.6, reach: 40, width: 40, center: 16, splitShips: 'radial', shot: 'sky', color: '#FFE6B0', accent: '#B07DFF', frames: 4 },
+export const SKYFALL_ULTIMATE: ActionMove = ult('kosmos.u', 'Himmelssturz: Zwillings-Meteoriten & Planeten-Kollaps', 'Ranged_Magic_Raise', SKY_DUR,
+  { kind: 'skyfall', strikeAt: SKY_STRIKE, lag: SKYFALL_TIMES.meteor1, reach: 40, width: 40, center: 16, splitShips: 'radial', shot: 'sky', color: '#FFE6B0', accent: '#B07DFF', frames: 4 },
   [
-    // Zwillings-Meteoriten: nah und fern vor der Figur (Einschlag 0,25 s und 0,45 s nach dem Aufreißen des Himmels)
-    { shape: 'circle', offset: 11, range: 10, at: [0.28, 0.31], dmg: 1.8, poise: 90, knock: 14, launch: 8, fling: 18, hitstop: 0.1, shake: 1.0, vfx: 'meteor' },
-    { shape: 'circle', offset: 22, range: 11, at: [0.35, 0.38], dmg: 1.8, poise: 90, knock: 14, launch: 8, fling: 18, hitstop: 0.1, shake: 1.0, vfx: 'meteor' },
-    // Planeten-Kollaps: wachsende Front um den Einschlagsmittelpunkt
-    { shape: 'circle', offset: 16, range: 32, grow: true, at: [0.52, 0.66], dmg: 4.6, poise: 260, knock: 20, launch: 10, fling: 24, pen: 3, hitstop: 0.2, shake: 1.6, vfx: 'meteor' },
-    // Glut der Krater
-    ...ticks(4, 0.68, 0.9, { shape: 'circle', offset: 16, range: 26, dmg: 0.2, poise: 16, knock: 3, status: 'burn', statusDur: 4, hitstop: 0.02, shake: 0.3, vfx: 'feuer' }),
-  ], { from: 0.2, to: 0.75 });
+    // Zwillings-Meteoriten: nah und fern vor der Figur (Einschlag 0,3 s und 0,36 s nach dem Aufreißen des Himmels)
+    { shape: 'circle', offset: 11, range: 10, at: skyAt(SKYFALL_TIMES.meteor1), dmg: 1.8, poise: 90, knock: 14, launch: 8, fling: 18, hitstop: 0.1, shake: 1.0, vfx: 'meteor' },
+    { shape: 'circle', offset: 22, range: 11, at: skyAt(SKYFALL_TIMES.meteor2), dmg: 1.8, poise: 90, knock: 14, launch: 8, fling: 18, hitstop: 0.1, shake: 1.0, vfx: 'meteor' },
+    // Planeten-Kollaps: wachsende Front um den Einschlagsmittelpunkt; die Glut der Krater brennt als Zustand nach (4.6I: keine späten
+    // Einzeltreffer mehr nach der Sequenz – die Steuerung ist mit ihrem Ende frei)
+    { shape: 'circle', offset: 16, range: 32, grow: true, at: skyAt(SKYFALL_TIMES.planet, 0.1), dmg: 5.4, poise: 260, knock: 20, launch: 10, fling: 24, pen: 3, status: 'burn', statusDur: 5, hitstop: 0.2, shake: 1.6, vfx: 'meteor' },
+  ], { from: 0.45, to: 0.8 });
 
+/** 4.6I: Spielzeit vom Start der Bewegung (nach dem Aufladen) bis zum entscheidenden Treffer = Ende von Akt 2 der Kino-Regie */
+export const decisiveAt = (s: Pick<UltimateSpec, 'strikeAt' | 'lag'>) => s.strikeAt + s.lag;
 /** Alle 14 Ultimates (Reihenfolge wie in der Vorgabe) */
 export const ULTIMATE_ORDER: readonly ActionStyleId[] = ['zweihaender', 'saebel', 'doppel', 'langklinge', 'sturmfaust', 'erdspalter', 'schwarzloch', 'feuer', 'eis', 'wasser', 'wind', 'blitz', 'sonne', 'mond'];
 

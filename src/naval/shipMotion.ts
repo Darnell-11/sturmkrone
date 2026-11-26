@@ -15,9 +15,16 @@ export function maxYawRate(L: number, turnMult: number, turnK: number, perfTurn:
   return (0.58 - 0.33 * m) * turnMult * turnK * perfTurn * (0.3 + 0.7 * Math.min(1, speed / 8));
 }
 
+/**
+ * Größter Wendekreis für die Planung (m). Ein Schiff ohne Steuerwirkung (Segel zerschossen, `perfTurn` 0) hat physikalisch einen unendlichen
+ * Kreis; ungedeckelt wuchsen Fühler und Ausweg-Suche der KI damit auf über 50 km und fragten das Insel-Raster über 150 km ab (140 – 180 ms je
+ * Logikschritt, sichtbar nach Ultimates, die Schiffe lahmlegen). Gesunde Schiffe liegen weit darunter (Leviathan bei voller Fahrt rund 250 m).
+ */
+export const TURN_RADIUS_MAX = 600;
+
 /** Wendekreis-Radius (m) im Beharrungszustand: Fahrt geteilt durch die höchste Drehrate. Je langsamer das Schiff, desto enger der Kreis. */
 export function turnRadius(L: number, turnMult: number, turnK: number, perfTurn: number, speed: number): number {
-  return Math.max(0, speed) / Math.max(1e-4, maxYawRate(L, turnMult, turnK, perfTurn, speed));
+  return Math.min(TURN_RADIUS_MAX, Math.max(0, speed) / Math.max(1e-4, maxYawRate(L, turnMult, turnK, perfTurn, speed)));
 }
 
 /**

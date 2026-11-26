@@ -660,16 +660,23 @@ export class Game {
     }
     // Trefferpause: Spielzeit kurz fast anhalten (läuft in Echtzeit ab)
     const hs = this.world.hitstop;
+    const cine = this.world.cine;
+    // 4.6I: während der Kino-Regie eines Ultimates bestimmt allein sie das Zeitmaß (Zeitlupe, Standbild im Treffermoment) – Trefferpausen
+    // einzelner Treffer würden den entscheidenden Treffer gegen die Akte verschieben
+    if (cine.active) { hs.freeze = 0; hs.t = 0; hs.scale = 1; this.loop.timeScale = cine.timeScale; }
     // Standbild (30–40 ms) bei wirksamen Treffern, danach die etwas längere Zeitlupe schwerer Treffer
-    if (hs.freeze > 0) { this.loop.timeScale = 0; hs.freeze -= frameDt; }
+    else if (hs.freeze > 0) { this.loop.timeScale = 0; hs.freeze -= frameDt; }
     else if (hs.t > 0) { this.loop.timeScale = hs.scale; hs.t -= frameDt; }
     else { this.loop.timeScale = 1; hs.scale = 1; }
     const a = this.state.is('play', 'pause') ? alpha : 1;
     this.world.render(a, frameDt, inMenu);
+    // das eben neu berechnete Zeitmaß der Kino-Regie gilt schon für die nächsten Logikschritte; ihr Impact-Frame ersetzt den weißen Blitz
+    if (cine.active) this.loop.timeScale = cine.timeScale;
+    this.overlay.quiet = cine.active;
     {
-      // Impact-Frames zählen GEZEICHNETE Bilder (2 – 4), Kinobalken und Aura-Glühen folgen der Zwischensequenz
+      // Impact-Frames zählen GEZEICHNETE Bilder (2 – 4), Kinobalken, HUD-Ausblendung und Aura-Glühen folgen der Kino-Regie
       const rig = this.world.animeRig;
-      this.impactOverlay.apply(rig.frame(), inMenu ? 0 : rig.camK, inMenu ? 0 : rig.glow, this.world.cataclysm.chargeHex, frameDt);
+      this.impactOverlay.apply(rig.frame(), inMenu ? 0 : cine.barsK, inMenu ? 0 : cine.glow, this.world.cataclysm.chargeHex, frameDt);
     }
     this.skyProbe.update(frameDt);
     {
@@ -686,7 +693,9 @@ export class Game {
     // Gegner, Crew und Stadtleute zwischen den 60-Hz-Logikschritten weich darstellen
     Character.present(a);
     // Tiefenunschärfe: beim Erfassen eines Gegners auf ihn scharfstellen
-    this.renderer.dofTarget = this.state.is('play') ? this.world.lockFocus : null;
+    // 4.6I: in der Kino-Regie eines Ultimates liegt die Schärfe auf dem Motiv der Einstellung (Hand, Gefahr, Einschlag)
+    this.renderer.dofTarget = this.state.is('play') ? this.world.cineFocus ?? this.world.lockFocus : null;
+    this.renderer.dofSnap = this.state.is('play') && !!this.world.cineFocus;
     // Waffenschweife nach dem Ausrichten aller Figuren abtasten (Echtzeit, bei jedem Bild glatt)
     Character.renderTrails(frameDt);
     this.renderer.render(frameDt);

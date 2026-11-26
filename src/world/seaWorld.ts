@@ -13,6 +13,8 @@ import {
   CylinderGeometry,
   Group,
   MathUtils,
+  Matrix3,
+  Matrix4,
   Quaternion,
   Mesh,
   MeshBasicMaterial,
@@ -20,10 +22,12 @@ import {
   PerspectiveCamera,
   Raycaster,
   Scene,
+  Sphere,
   SphereGeometry,
   Vector3,
   type Camera,
   type Intersection,
+  type Line,
 } from 'three';
 import { SeaSpray } from './seaSpray';
 import { ShipLightRig } from '../render/shipLights';
@@ -40,7 +44,7 @@ import { LampPool, lampShared } from '../render/lamps';
 import { installMatrixSkip } from '../render/matrixSkip';
 import { GlowSystem, glowHub, makeEmitter, type GlowEmitter, type GlowPlaced } from '../render/glow';
 import { Character } from '../entities/character/character';
-import { CLOTH_WIND, NPC_LIFE } from '../data/characterRig';
+import { CLOTH_WIND, NPC_LIFE, type HandPoseId } from '../data/characterRig';
 import { shieldFor, weaponsFor } from '../entities/character/weapons';
 import { Npc } from '../entities/npc';
 import { PlayerFoot } from '../entities/player/playerFoot';
@@ -54,7 +58,7 @@ import { WorldStreamer, type StreamHost } from './worldStreamer';
 import { EDGE_WARNING, applyEdgeDrift, clampToHardRadius, edgeWarningLevel, newEdgeZone } from './stormEdge';
 import { Environment, type EnvState } from './environment';
 import { coastK, deckHeight, inBox, IslandGround, type Blocker, type WalkIsland } from './islandGround';
-import { BLEND_ARM, CameraBlend, DampedValue, dynamicFovExtra, FocusPulse, FOOT_ARM, HitShake, navalFrame, NearFade, orbitBlend, SEA_ARM, SpringArm, SwellFollow, YARD_ARM, smoothK, type CameraWorld, type NavalFrame } from '../graphics/cameraRig';
+import { BLEND_ARM, CINE_ARM, CameraBlend, DampedValue, dynamicFovExtra, FocusPulse, FOOT_ARM, HitShake, navalFrame, NearFade, orbitBlend, SEA_ARM, SpringArm, SwellFollow, YARD_ARM, smoothK, type CameraWorld, type NavalFrame } from '../graphics/cameraRig';
 import { FactionWarEngine, NationRegistry, cleanFactionWar, warWorldFromDefs, type FactionWarState, type WarNotice } from './factionWarEngine';
 import { FactionWarLive } from './factionWarLive';
 import { factionBanner } from './factionArch';
@@ -81,11 +85,12 @@ import { ActionFx } from '../combat/actionFx';
 import { ACTION_STYLES, actionStyleOf, type ActionStyleId } from '../data/actionStyles';
 import { WILL } from '../data/fajiArts';
 import type { FighterView } from '../ui/fighterHud';
-import { AnimeImpactRig, type RigPose } from '../graphics/animeImpactRig';
+import { AnimeImpactRig } from '../graphics/animeImpactRig';
+import { UltimateCinematics, kickDirection, makeAnchors, makeCam, reachTarget, type CineSight, type UltimateCinematic } from '../graphics/ultimateCinematics';
+import { sightGridHit, sightGridOf } from '../graphics/sightGrid';
 import { CataclysmFx } from '../combat/cataclysmFx';
 import { AnimeVfxForge } from '../graphics/animeVfxForge';
 import { CataclysmDirector } from './cataclysmDirector';
-import { CUTSCENE } from '../data/cataclysms';
 import type { FighterState } from '../combat/actionCombatEngine';
 import { skyfallShift, type ShipFootprint } from '../combat/skyfallClearance';
 import { OfficerAssistDirector, type AssistHost } from './officerAssistDirector';
@@ -237,15 +242,29 @@ export type YardView = 'all' | 'bow' | 'sail' | 'gun';
 /** Grundton der Gischtfahnen (mit dem Horizont gemischt) */
 const SPRAY_WHITE = new Color(1, 1, 1);
 /**
- * Sichtprüfung der Mini-Zwischensequenz (4.6C): Strahl Kopf → Kamera gegen nahe Schiffe. Läuft nur einmal je Ultimate (zwei Seiten, zwei
- * Zeitpunkte); three legt dabei Treffer-Objekte an – vertretbar, weil es nicht je Bild geschieht. Takelage (Linien) zählt nicht.
+ * Sichtprüfung der Kino-Kamera (4.6I): Strecke Kamera → Motiv gegen nahe Schiffe. Netze über das Sicht-Raster (`graphics/sightGrid.ts`,
+ * je Geometrie einmal gebaut), die Takelage als Linie über den Raycaster (6 cm Toleranz, Standard wäre 1 m). Läuft nur beim Akt-Wechsel;
+ * three legt bei Linien Treffer-Objekte an – vertretbar, weil es nicht je Bild geschieht.
  */
 const RIG_RAY = new Raycaster();
 const RIG_HITS: Intersection[] = [];
 const RIG_DIR = new Vector3();
-const RIG_SAMPLES = [0.15, 1] as const;
-/** Ausweich-Winkel der Einstellung (rad, um die Figur), jeweils auch gespiegelt: zuerst die geplante, dann zunehmend gedreht */
-const RIG_OFFS = [0, 0.55, -0.55, 1.1, -1.1] as const;
+RIG_RAY.params.Line = { threshold: 0.06 };
+const RIG_ORIGIN = new Vector3();
+const RIG_INV = new Matrix4();
+const RIG_M3 = new Matrix3();
+const RIG_LO = new Vector3();
+const RIG_LD = new Vector3();
+const RIG_SPHERE = new Sphere();
+/** Ist ein Objekt bis hinauf zur Wurzel sichtbar (ausgeblendete Kajütendächer, gefallene Masten, Takelage nach dem Zerbrechen)? */
+function visibleIn(o: Object3D, root: Object3D): boolean {
+  for (let p: Object3D | null = o; p; p = p.parent) { if (!p.visible) return false; if (p === root) return true; }
+  return false;
+}
+const CINE_TMP = new Vector3();
+const CINE_TMP2 = new Vector3();
+const CINE_P = { x: 0, y: 0, z: 0 };
+const CINE_KICK = { x: 0, y: 0, z: 0 };
 
 export class SeaWorld {
   readonly scene = new Scene();
@@ -367,20 +386,37 @@ export class SeaWorld {
   /** 4.6D: Schmiede der 3-Schicht-Effekte (Texturen, Mäntel, Partikel, Oberflächen-Reaktion) auf den Pools von `cataclysmFx` */
   vfx!: AnimeVfxForge;
   cataclysm!: CataclysmDirector;
-  private readonly rigPose: RigPose = { px: 0, py: 0, pz: 0, lx: 0, ly: 0, lz: 0, fov: 40 };
+  /** 4.6I: Kino-Regie der Ultimates (3-Akt-Choreografie, Echtzeit, nur lokal), ihre Bezugspunkte, Kamera und ihr Spring-Arm */
+  readonly cine = new UltimateCinematics();
+  private readonly cineAnchors = makeAnchors();
+  private readonly cineCam = makeCam();
+  private readonly armCine = new SpringArm(CINE_ARM);
+  private readonly cinePivot = new Vector3();
+  private readonly cineWant = new Vector3();
+  private cineAct = -1;
+  /** Handhaltungen vor der Pose (zurück nach Akt 1/2) und sichtbares Abheben der Figur (m) */
+  private cineHandR: HandPoseId | null = null;
+  private cineHandL: HandPoseId | null = null;
+  private cineLiftY = 0;
+  /** Schärfepunkt der Kino-Regie (Blickpunkt der Einstellung) für die Tiefenunschärfe; null außerhalb der Sequenz */
+  cineFocus: Vector3 | null = null;
   private readonly rigLook = new Vector3();
   private readonly rigCam = new Vector3();
   private readonly rigHead = new Vector3();
   private readonly freeLook = new Vector3();
   private rigFov = 0;
   private rigFovK = 0;
-  private rigMirror = false;
-  /** Sichtprüfung der Sequenz: erledigt, Kamera heranrücken (1 = Abstand wie geplant), Schiffe in der Nähe (dann gilt die Strahlprüfung) */
-  private rigChecked = false;
-  private rigPull = 1;
-  private rigYawOff = 0;
-  private rigShipN = 0;
   private readonly rigShips: Group[] = [];
+  /** halbe Länge der Schiffe in `rigShips` (Sichtprüfung: das Motiv-Schiff verdeckt sich nicht selbst) */
+  private readonly rigShipR: number[] = [];
+  /** Hindernis-Netze und -Linien der Schiffe in `rigShips` (gleiche Reihenfolge) */
+  private readonly rigOcc: Object3D[][] = [];
+  /** Hindernis-Listen je Schiffsbaum, gepuffert mit der Zahl der Nachfahren (eine Zweiteilung hängt neue Netze ein) */
+  private readonly cineOcc = new WeakMap<Object3D, { n: number; list: Object3D[] }>();
+  /** Vorbauen der Sicht-Raster des eigenen Schiffs: für welchen Baum, welche Liste, wie weit */
+  private sightWarmFor: Object3D | null = null;
+  private sightWarmList: Object3D[] = [];
+  private sightWarmI = 0;
   private headBone: import('three').Object3D | null = null;
   private headBoneOf: unknown = null;
   /** Start des Vorstoßes beim Auslösen (Iaijutsu, Zyklon) */
@@ -1774,85 +1810,310 @@ export class SeaWorld {
       impactFrames: (n) => w.animeRig.impact(n),
       darken: (k) => { w.darkK = k; },
       skyLook: (k) => { w.skyLookK = k; },
+      decisive: () => w.cineDecisive(),
+      trenchStart: (x, z, dx, dz) => w.ownTrenchStart(x, z, dx, dz),
     });
   }
 
-  /** Steht (x, z) auf oder dicht an einem Schiff (eigenes oder fremdes)? */
-  private shipNear(x: number, z: number): boolean {
-    const near = (s: { x: number; z: number; cls: { L: number } } | null | undefined) => !!s && Math.hypot(s.x - x, s.z - z) < s.cls.L * 0.6 + 8;
-    if (near(this.ship)) return true;
-    if (this.naval) for (const e of this.naval.enemies) if (near(e.ship)) return true;
-    return false;
-  }
+  // ---------- 4.6I: Kino-Regie der Ultimates (3-Akt-Choreografie) ----------
 
-  /** Einstellung der Sequenz auf die andere Seite der Figur spiegeln (Blickrichtung bleibt) */
-  private mirrorRig(p: RigPose, head: Vector3) {
-    const dx = p.px - head.x, dz = p.pz - head.z;
-    const fy = this.foot!.yaw, fx = Math.sin(fy), fz = Math.cos(fy);
-    const along = dx * fx + dz * fz, across = dx * fz - dz * fx;
-    p.px = head.x + fx * along - fz * across;
-    p.pz = head.z + fz * along + fx * across;
-  }
-
-  /**
-   * Sichtprüfung der Sequenz an Deck (4.6C): Strahlen Kopf → Kamera (Anfang und Ende der Fahrt) gegen die Schiffe in der Nähe, für die
-   * geplante Einstellung und gedrehte oder gespiegelte Ausweich-Winkel. Die erste freie gewinnt; ist keine frei, die freieste, und die
-   * Kamera rückt vor das Hindernis.
-   */
-  private rigCheckView(head: Vector3) {
-    this.rigPull = 1;
-    this.rigYawOff = 0;
+  /** Schiffe für die Sichtprüfung der Kino-Kamera: eigenes Schiff und alle Rümpfe nahe der Figur oder dem Treffer-/Gefahrenpunkt */
+  private cineGather() {
     const ships = this.rigShips;
     ships.length = 0;
+    this.rigShipR.length = 0;
+    this.rigOcc.length = 0;
+    const A = this.cineAnchors;
     const near = (s: { x: number; z: number; cls: { L: number }; model: { group: Group } } | null | undefined) => {
-      if (s && Math.hypot(s.x - head.x, s.z - head.z) < s.cls.L * 0.6 + 8) ships.push(s.model.group);
+      if (!s) return;
+      const r = s.cls.L * 0.6;
+      if (Math.hypot(s.x - A.feet.x, s.z - A.feet.z) < r + 60 || Math.hypot(s.x - A.impact.x, s.z - A.impact.z) < r + 40 || Math.hypot(s.x - A.threat.x, s.z - A.threat.z) < r + 30) {
+        ships.push(s.model.group); this.rigShipR.push(s.cls.L * 0.5); this.rigOcc.push(this.occludersOf(s.model.group));
+      }
     };
     near(this.ship);
     if (this.naval) for (const e of this.naval.enemies) near(e.ship);
-    this.rigShipN = ships.length;
-    if (!ships.length || !this.foot) return;
-    const rig = this.animeRig, p = this.rigPose, yaw = this.foot.yaw;
-    let best = -1, bestOff = 0, bestMirror = false;
-    search: for (const off of RIG_OFFS) for (let m = 0; m < 2; m++) {
-      let free = 1;
-      for (const u of RIG_SAMPLES) {
-        rig.pose(head.x, head.y, head.z, yaw + off, p, u);
-        if (m) this.mirrorRig(p, head);
-        free = Math.min(free, this.rigFree(head, p));
-        if (free <= best) break;
-      }
-      if (free > best) { best = free; bestOff = off; bestMirror = m === 1; if (free >= 0.999) break search; }
-    }
-    this.rigYawOff = bestOff;
-    this.rigMirror = bestMirror;
-    if (best < 0.999) this.rigPull = Math.max(0.35, best - 0.1);
   }
 
-  /** Anteil der Strecke Kopf → Kamera, der frei von Schiffsteilen ist (1 = frei); Linien (Takelage) und Unsichtbares zählen nicht */
-  private rigFree(head: Vector3, p: RigPose): number {
-    RIG_DIR.set(p.px - head.x, p.py - head.y, p.pz - head.z);
-    const d = RIG_DIR.length();
-    if (d < 1e-3) return 1;
-    RIG_DIR.multiplyScalar(1 / d);
-    RIG_RAY.set(head, RIG_DIR);
-    RIG_RAY.near = 0.3;
-    RIG_RAY.far = d + 0.3;
-    let first = d + 1;
-    for (const g of this.rigShips) {
-      RIG_HITS.length = 0;
-      RIG_RAY.intersectObject(g, true, RIG_HITS);
-      for (const h of RIG_HITS) {
-        const o = h.object as Mesh & { isLine?: boolean; isPoints?: boolean; isSprite?: boolean };
-        if (o.isLine || o.isPoints || o.isSprite || !o.visible) continue;
-        if (h.distance < first) first = h.distance;
-        break;
-      }
-    }
-    RIG_HITS.length = 0;
-    return first >= d ? 1 : first / d;
+  /**
+   * Hindernisse eines Schiffs für die Sichtprüfung: alle festen Netze (Rumpf, Deck, Aufbauten, Masten, Segel) und die Takelage – ohne
+   * Instanz-Kleinkram (Kanonen, Fässer, Laternen), Konturen und Figuren. Neu gesammelt, wenn sich die Zahl der Nachfahren ändert.
+   */
+  private occludersOf(g: Object3D): Object3D[] {
+    let n = 0;
+    g.traverse(() => { n++; });
+    const had = this.cineOcc.get(g);
+    if (had && had.n === n) return had.list;
+    const list: Object3D[] = [];
+    g.traverse((o) => {
+      const m = o as Mesh & { isLine?: boolean; isInstancedMesh?: boolean; isSkinnedMesh?: boolean; isPoints?: boolean; isSprite?: boolean };
+      if (m.isLine) { list.push(o); return; }
+      if (!m.isMesh || m.isInstancedMesh || m.isSkinnedMesh) return;
+      const mat = m.material as Material | Material[];
+      if (!Array.isArray(mat) && (mat.userData as { outline?: boolean }).outline) return;
+      list.push(o);
+    });
+    this.cineOcc.set(g, { n, list });
+    return list;
   }
 
-  /** Ultimate ausgelöst: Mini-Zwischensequenz (Kamera, Zeitlupe 0,14 für 0,75 s nur lokal), Energie sammelt sich */
+  /**
+   * Sichtprüfung der Kino-Kamera (`CineSight`): Anteil der Strecke A → B ohne Hindernis. Schiffe per Strahl (Rümpfe, Aufbauten, Masten und
+   * die Takelage als Linien mit 6 cm Toleranz), Mauern, Bauten, Brücken und Gelände über die Kamera-Welt (`camSolid`/`camFloor`) abgetastet.
+   */
+  private readonly cineSight: CineSight = {
+    free: (ax, ay, az, bx, by, bz, margin = 0.25) => {
+      // A = Motiv (Blickpunkt), B = Kamera. Geprüft wird vom Objektiv aus zum Motiv hin, höchstens 26 m weit und bis `margin` vor das Motiv
+      // (Standard 0,25 m; die Brust der Figur 6 cm): was nah vor der Linse liegt (Mast, Segel, Takelage, Reling, Fels), füllt das Bild; ein
+      // fernes Hindernis vor einem fernen Motiv bleibt klein – und das Motiv selbst steht oft mitten in Rauch, Trümmern und seinem eigenen Rumpf
+      const dx = ax - bx, dy = ay - by, dz = az - bz;
+      const d = Math.hypot(dx, dy, dz);
+      if (!(d > 1e-3)) return 1;
+      const L = Math.min(d - margin, 26);
+      if (!(L > 0.05)) return 1;
+      let first = L + 1;
+      if (this.rigShips.length) {
+        const ux = dx / d, uy = dy / d, uz = dz / d;
+        RIG_DIR.set(ux, uy, uz);
+        RIG_ORIGIN.set(bx, by, bz);
+        RIG_RAY.set(RIG_ORIGIN, RIG_DIR);
+        RIG_RAY.near = 0.05;
+        const fe = this.cineAnchors.feet;
+        const subjectAway = Math.hypot(ax - fe.x, az - fe.z) > 5;
+        for (let i = 0; i < this.rigShips.length; i++) {
+          const g = this.rigShips[i];
+          // das Motiv selbst (getroffenes Schiff, Einschlag an Deck) verdeckt sich nicht: sein Rumpf zählt nicht als Hindernis
+          if (subjectAway && Math.hypot(g.position.x - ax, g.position.z - az) < this.rigShipR[i]) continue;
+          // nur Rümpfe nahe der geprüften Strecke (Abstand Punkt–Strecke)
+          const px = g.position.x - bx, pz = g.position.z - bz, ex = ux * L, ez = uz * L;
+          const u = Math.max(0, Math.min(1, (px * ex + pz * ez) / Math.max(1e-6, ex * ex + ez * ez)));
+          if (Math.hypot(px - ex * u, pz - ez * u) > this.rigShipR[i] + 8) continue;
+          for (const o of this.rigOcc[i]) {
+            if (!visibleIn(o, g)) continue;
+            const far = Math.min(first, L);
+            if ((o as Line).isLine) {
+              // Takelage: Linien mit 6 cm Toleranz (wenige Abschnitte, three genügt)
+              RIG_RAY.far = far;
+              RIG_HITS.length = 0;
+              o.raycast(RIG_RAY, RIG_HITS);
+              for (const h of RIG_HITS) if (h.distance < first) first = h.distance;
+              continue;
+            }
+            const m = o as Mesh;
+            const geo = m.geometry;
+            if (!geo.boundingSphere) geo.computeBoundingSphere();
+            // Hüllkugel in Weltlage gegen die Strecke, dann das Sicht-Raster der Geometrie in Netzlage (Richtung nicht normiert: gleiches t)
+            RIG_SPHERE.copy(geo.boundingSphere!).applyMatrix4(m.matrixWorld);
+            const cx = RIG_SPHERE.center.x - bx, cy = RIG_SPHERE.center.y - by, cz = RIG_SPHERE.center.z - bz;
+            const tc = Math.max(0, Math.min(far, cx * ux + cy * uy + cz * uz));
+            const qx = cx - ux * tc, qy = cy - uy * tc, qz = cz - uz * tc;
+            if (qx * qx + qy * qy + qz * qz > RIG_SPHERE.radius * RIG_SPHERE.radius) continue;
+            const grid = sightGridOf(geo);
+            if (!grid) continue;
+            RIG_INV.copy(m.matrixWorld).invert();
+            RIG_LO.set(bx, by, bz).applyMatrix4(RIG_INV);
+            RIG_LD.set(ux, uy, uz).applyMatrix3(RIG_M3.setFromMatrix4(RIG_INV));
+            const t = sightGridHit(grid, RIG_LO.x, RIG_LO.y, RIG_LO.z, RIG_LD.x, RIG_LD.y, RIG_LD.z, 0.05, far);
+            if (t < first) first = t;
+          }
+        }
+        RIG_HITS.length = 0;
+      }
+      // Mauern, Bauten, Fels, Brückendecks und Gelände: Abtastung von der Kamera aus (steht sie selbst im Material, ist nichts frei)
+      const ux = dx / d, uy = dy / d, uz = dz / d;
+      this.gatherCam(bx + ux * L * 0.5, bz + uz * L * 0.5, L / 2 + 4);
+      const n = Math.min(16, Math.max(4, Math.round(L / 1.2)));
+      for (let i = 0; i <= n; i++) {
+        const s = (L * i) / n, x = bx + ux * s, y = by + uy * s, z = bz + uz * s;
+        if (this.camSolid(x, y, z) || y < this.camFloor(x, z, Math.max(ay, by)) - 0.25) { first = Math.min(first, s); break; }
+      }
+      return first >= L ? 1 : first / L;
+    },
+  };
+
+  /**
+   * Sicht-Raster des eigenen Schiffs im Leerlauf vorbauen – ein Netz je Bild (je höchstens rund 0,5 ms), nach einem Schiffswechsel neu –,
+   * damit der erste Akt-Wechsel eines Ultimates nicht erst bauen muss. Fremde Schiffe bauen ihr Raster beim ersten Strahl (rund 4 ms je Schiff).
+   */
+  private warmSight() {
+    const g = this.ship?.model.group;
+    if (!g) return;
+    if (g !== this.sightWarmFor) { this.sightWarmFor = g; this.sightWarmList = this.occludersOf(g); this.sightWarmI = 0; }
+    const list = this.sightWarmList;
+    while (this.sightWarmI < list.length) {
+      const o = list[this.sightWarmI++] as Mesh;
+      if (!o.isMesh) continue;
+      sightGridOf(o.geometry);
+      break;
+    }
+  }
+
+  /** Bezugspunkte der Kino-Regie aus Figur, Kataklysmus-Regie und Ausgangsort füllen */
+  private fillCineAnchors() {
+    const A = this.cineAnchors, pl = this.player!, f = this.foot!;
+    const hp = pl.holder.position;
+    A.yaw = pl.holder.rotation.y;
+    A.feet.x = hp.x; A.feet.y = hp.y; A.feet.z = hp.z;
+    const head = this.headPos(this.rigHead);
+    A.head.x = head.x; A.head.y = head.y; A.head.z = head.z;
+    A.chest.x = head.x; A.chest.y = head.y - 0.42; A.chest.z = head.z;
+    const so = pl.charSockets;
+    const hand = so?.get('handMain') ?? null;
+    if (hand) { hand.getWorldPosition(CINE_TMP); A.hand.x = CINE_TMP.x; A.hand.y = CINE_TMP.y; A.hand.z = CINE_TMP.z; }
+    else { A.hand.x = head.x + Math.sin(A.yaw) * 0.35; A.hand.y = head.y - 0.55; A.hand.z = head.z + Math.cos(A.yaw) * 0.35; }
+    const hip = so?.get('hipLeft') ?? null;
+    if (hip) { hip.getWorldPosition(CINE_TMP); A.hip.x = CINE_TMP.x; A.hip.y = CINE_TMP.y; A.hip.z = CINE_TMP.z; }
+    else { A.hip.x = hp.x + Math.cos(A.yaw) * 0.18; A.hip.y = hp.y + 0.95; A.hip.z = hp.z - Math.sin(A.yaw) * 0.18; }
+    this.cataclysm.cineThreat(A.threat);
+    this.cataclysm.cineImpact(A.impact);
+    // Mitte des Wegs: vom Start des Vorstoßes bis zur Figur (Iaijutsu, Zyklon), sonst zwischen Figur und Treffer
+    const dashed = Math.hypot(f.x - this.ultSX, f.z - this.ultSZ) > 4;
+    A.path.x = dashed ? (this.ultSX + f.x) / 2 : (hp.x + A.impact.x) / 2;
+    A.path.z = dashed ? (this.ultSZ + f.z) / 2 : (hp.z + A.impact.z) / 2;
+    A.path.y = hp.y + 1.2;
+    A.sky.x = hp.x + Math.sin(A.yaw) * 18; A.sky.y = hp.y + 30; A.sky.z = hp.z + Math.cos(A.yaw) * 18;
+    // Hände für die Pose-Effekte der Kataklysmus-Regie (Faust-Glut, Sphäre in der Handfläche, Flammen um die Arme)
+    const pa = this.cataclysm.poseAt;
+    const off = so?.get('handOff') ?? null;
+    pa.on = true;
+    pa.rx = A.hand.x; pa.ry = A.hand.y; pa.rz = A.hand.z;
+    if (off) { off.getWorldPosition(CINE_TMP); pa.lx = CINE_TMP.x; pa.ly = CINE_TMP.y; pa.lz = CINE_TMP.z; }
+    else { pa.lx = head.x + Math.cos(A.yaw) * 0.3; pa.ly = head.y - 0.55; pa.lz = head.z - Math.sin(A.yaw) * 0.3; }
+    pa.hx = head.x; pa.hy = head.y; pa.hz = head.z;
+  }
+
+  /**
+   * 4.6I: Beginn der Ozean-Teilung vor der Figur (m entlang der Blickrichtung): 3 m hinter der äußersten Ecke des eigenen Rumpfs in dieser
+   * Richtung (Bug, Heck oder Bordwand). Der Graben senkt das Wasser – und alles, was darauf schwimmt; begann er unter dem eigenen Bug, versank
+   * das Schiff samt Figur und Kino-Kamera darin, bis er sich nach 6 s schloss.
+   */
+  private ownTrenchStart(x: number, z: number, dx: number, dz: number): number {
+    const s = this.ship;
+    if (!s || !s.alive || s.sinking > 0 || Math.hypot(s.x - x, s.z - z) > s.cls.L * 0.5 + 25) return 4;
+    const hx = Math.sin(s.heading), hz = Math.cos(s.heading), hl = s.cls.L * 0.5, hw = s.cls.W * 0.5;
+    let far = -Infinity;
+    for (let a = -1; a <= 1; a += 2) for (let b = -1; b <= 1; b += 2) {
+      const cx = s.x + hx * hl * a + hz * hw * b, cz = s.z + hz * hl * a - hx * hw * b;
+      far = Math.max(far, (cx - x) * dx + (cz - z) * dz);
+    }
+    return Math.max(4, far + 3);
+  }
+
+  /** Der entscheidende Treffer (Haken der Kataklysmus-Regie): Akt 3 – Doppel-Impact-Frame, Stoß, Fokus, Klang */
+  private cineDecisive(): boolean {
+    if (this.cine.active && this.cine.impacted) return true;
+    const def = this.cine.def;
+    this.cine.impact();
+    this.cineImpactFx(def);
+    return true;
+  }
+
+  /** Bildwirkung des Treffermoments: Impact-Bilder (invertiert → Tusche, Standbild), gerichteter Kamera-Stoß, Fokus-Puls, Riss und Donner */
+  private cineImpactFx(def: UltimateCinematic | null) {
+    this.animeRig.impact(def ? def.frames : 3);
+    this.focusPulse.trigger(1, 1.1);
+    if (def && this.foot) {
+      kickDirection(def, this.foot.yaw, CINE_KICK);
+      this.hitShake.impulse(CINE_KICK.x, CINE_KICK.y, CINE_KICK.z, def.kick);
+    }
+    this.hitShake.shake(1);
+    audio.play('impactCrack', 1);
+    audio.play('boom', 0.7);
+  }
+
+  /** Kino-Regie beendet oder abgebrochen: Pose, Hände, Clip und Abheben zurück */
+  private cineRelease() {
+    const pl = this.player;
+    if (this.foot) this.foot.cineClip = -1;
+    if (pl?.rigX) pl.rigX.cine.k = 0;
+    if (pl && this.cineHandR !== null) { pl.setHandPose('r', this.cineHandR); this.cineHandR = null; }
+    if (pl && this.cineHandL !== null) { pl.setHandPose('l', this.cineHandL); this.cineHandL = null; }
+    this.cineLiftY = 0;
+    this.cineAct = -1;
+    this.cineFocus = null;
+    this.cataclysm.poseAt.on = false;
+  }
+
+  /**
+   * Kamera, Pose und Leuchten der Kino-Regie über die freie Kamera legen (je Bild nach der Fuß-Kamera). Die Einstellung kommt aus
+   * `UltimateCinematics.pose`, ein Spring-Arm vom Blickpunkt hält sie aus Fels, Mauern und Rümpfen, `camK` blendet auf einer Kugelbahn um
+   * den Kopf hinein und in der Rückkehr weich in die freie Kamera zurück.
+   */
+  private applyCinematic(cam: PerspectiveCamera, inMenu: boolean, frameDt: number) {
+    const cine = this.cine;
+    this.rigFovK = 0;
+    if (!cine.active) { if (this.cineAct !== -1 || this.cineHandR !== null || this.cineLiftY !== 0) this.cineRelease(); if (!inMenu) this.warmSight(); return; }
+    if (!this.player || !this.foot || inMenu || this.mode !== 'foot' || this.yardOn) { cine.reset(); this.cineRelease(); return; }
+    const pl = this.player, f = this.foot, def = cine.def!, pose = def.pose, A = this.cineAnchors;
+    this.fillCineAnchors();
+    // Sichtlinien einmal je Akt prüfen (Masten, Takelage, Mauern, Gelände) und die freieste Variante wählen
+    if (cine.resolvePending && cine.inActs) { this.cineGather(); cine.resolve(cine.actIndex, A, this.cineSight); }
+    const k = cine.camK;
+    if (k > 0.001) {
+      const p = cine.pose(A, this.cineCam);
+      this.cinePivot.set(p.lx, p.ly, p.lz);
+      this.cineWant.set(p.px, p.py, p.pz);
+      // nahe Blickpunkte (Hand, Kopf) sind zugleich Drehpunkt des Arms; bei fernen (Welle, Einschlag 30 m voraus) hält der Arm nur die Kamera
+      // selbst aus Fels, Mauern, Rümpfen und dem Wasser (Drehpunkt 5 m vor ihr) – die Sichtlinie zum Motiv prüft die Regie je Akt
+      const dl = this.cinePivot.distanceTo(this.cineWant);
+      if (dl > 6) this.cinePivot.lerp(this.cineWant, 1 - 5 / dl);
+      this.gatherCam((this.cinePivot.x + p.px) / 2, (this.cinePivot.z + p.pz) / 2, Math.min(dl, 6) / 2 + 6);
+      if (cine.actIndex !== this.cineAct) { this.cineAct = cine.actIndex; this.armCine.reset(); }
+      this.armCine.solve(this.cinePivot, this.cineWant, this.camWorld, frameDt, this.rigCam);
+      // Kugelbahn von der freien Kamera in die Einstellung (nie gerade durch den Kopf)
+      cam.getWorldDirection(this.freeLook).multiplyScalar(6).add(cam.position);
+      orbitBlend(cam.position, false, this.rigCam, this.rigHead, k, cam.position);
+      this.rigLook.set(p.lx, p.ly, p.lz);
+      this.freeLook.lerp(this.rigLook, k);
+      cam.lookAt(this.freeLook);
+      if (p.roll) cam.rotateZ(p.roll * k);
+      this.rigFov = p.fov;
+      this.rigFovK = k;
+    }
+    this.cineFocus = k > 0.5 ? this.rigLook : null;
+    // Pose der Figur (Akt 1, teils bis Akt 2): Clip-Stand, Kauern, Vorlage, Blick, Hände, Arm-Ziele, Wirbelwind an Mantel und Haar
+    const pk = cine.poseK;
+    f.cineClip = cine.clipU;
+    const rx = pl.rigX;
+    if (rx) { rx.cine.k = pk; rx.cine.crouch = pose.crouch; rx.cine.lean = pose.lean; rx.cine.look = pose.look; rx.cine.twist = pose.twist; }
+    if (pk > 0.25 && this.cineHandR === null) {
+      this.cineHandR = rx?.handPose('r') ?? 'offen';
+      this.cineHandL = rx?.handPose('l') ?? 'offen';
+      pl.setHandPose('r', pose.handR);
+      pl.setHandPose('l', pose.handL);
+    } else if (pk < 0.15 && this.cineHandR !== null && cine.phase !== 'prep') {
+      pl.setHandPose('r', this.cineHandR); pl.setHandPose('l', this.cineHandL ?? 'offen');
+      this.cineHandR = null; this.cineHandL = null;
+    }
+    if (pk > 0.01) {
+      const ku = cine.phase === 'prep' ? cine.u : 1;
+      for (let s = 0; s < 2; s++) {
+        const r = s ? pose.reachL : pose.reachR;
+        if (!r) continue;
+        reachTarget(r, ku, A.feet.x, A.feet.y, A.feet.z, A.yaw, CINE_P);
+        const node = pl.charSockets?.get(s ? 'handOff' : 'handMain') ?? null;
+        if (node) { node.getWorldPosition(CINE_TMP); CINE_TMP.lerp(CINE_TMP2.set(CINE_P.x, CINE_P.y, CINE_P.z), pk); }
+        else CINE_TMP.set(CINE_P.x, CINE_P.y, CINE_P.z);
+        pl.reach(s ? 'l' : 'r', CINE_TMP);
+      }
+      // Wirbelwind: Stoff und Haar wirbeln um die Figur
+      if (pose.whirl > 0) {
+        const w = pose.whirl * pk * Math.min(0.05, frameDt) * 6, ph = cine.clock * 9;
+        pl.kick(Math.cos(ph) * w, w * 0.5, Math.sin(ph) * w);
+      }
+    }
+    // sichtbares Abheben (Sprung, Raketen-Aufstieg): nur so weit, wie die Engine die Figur noch nicht selbst gehoben hat
+    this.cineLiftY = Math.max(0, cine.lift - Math.max(0, f.y - A.origin.y));
+    // Augen-Leuchten
+    if (cine.glow > 0.02) {
+      const y = A.yaw, fx = Math.sin(y), fz = Math.cos(y), rx2 = Math.cos(y), rz = -Math.sin(y);
+      const ex = A.head.x + fx * 0.085, ey = A.head.y + 0.035, ez = A.head.z + fz * 0.085;
+      // Lebensdauer ≈ anderthalb Bilder in Spielzeit (Zeitlupe beachten), sonst stapeln sich die Glanzpunkte zu einem weißen Fleck
+      const ts = cine.timeScale;
+      this.cataclysm.eyeGlow(ex + rx2 * 0.032, ey, ez + rz * 0.032, ex - rx2 * 0.032, ey, ez - rz * 0.032, cine.glow, this.cataclysm.chargeColor, Math.max(0.003, (1.5 / 60) * ts));
+    }
+  }
+
   // ---------- 4.6H: Kombo-Assists der Offiziere ----------
 
   private _assists: OfficerAssistDirector | null = null;
@@ -1875,7 +2136,7 @@ export class SeaWorld {
       openChase: () => w.foot?.engine.openChase(),
       groundY: (x, z) => { const h = w.groundProxy.height(x, z); return Number.isFinite(h) && h > -50 ? h : w.env.heightAt(x, z); },
       isLand: (x, z) => !!w.ground.islandAt(x, z),
-      busy: () => w.cataclysm.active || w.animeRig.active,
+      busy: () => w.cataclysm.active || w.animeRig.active || w.cine.active,
       get fx() { return w.cataclysmFx; },
       get vfx() { return w.vfx; },
       get combatFx() { return w.fx; },
@@ -1912,80 +2173,35 @@ export class SeaWorld {
     return s;
   }
 
+  /**
+   * Ultimate ausgelöst (4.6I): die maßgeschneiderte 3-Akt-Choreografie beginnt – Akt 1 (Pose, Fokus-Kamera, Aura) in Zeitlupe, die Welt
+   * sammelt Energie. Die Kino-Regie setzt ab jetzt das Zeitmaß (nur lokal) und prüft die Sichtlinie der ersten Einstellung sofort.
+   */
   private ultimateBegins(spec: UltimateSpec, f: FighterState) {
     this.ultSX = f.x; this.ultSZ = f.z;
     this.skyShiftFor(spec, f);
-    this.rigMirror = false;
-    this.rigChecked = false;
-    this.rigPull = 1;
-    // an Deck hängen Untersichten (Himmel, tief) in Baum, Rahen und Reling: dort die Nahaufnahme vor dem Gesicht (Augen-Leuchten)
-    const shot = (spec.shot === 'sky' || spec.shot === 'low') && this.shipNear(f.x, f.z) ? 'face' : spec.shot;
-    this.animeRig.startCutscene(shot, CUTSCENE.slowDur);
-    this.hitstop.t = Math.max(this.hitstop.t, CUTSCENE.slowDur);
-    this.hitstop.scale = Math.min(this.hitstop.scale, CUTSCENE.slow);
-    this.cataclysm.beginCharge(spec, f, CUTSCENE.slowDur, shot);
+    const def = this.cine.start(spec.kind, spec);
+    this.cineAct = -1;
+    const A = this.cineAnchors;
+    A.origin.x = f.x; A.origin.y = f.y; A.origin.z = f.z;
+    this.cataclysm.beginCharge(spec, f, def.dur[0], spec.shot);
+    if (this.player && this.mode === 'foot') {
+      this.fillCineAnchors();
+      this.cineGather();
+      this.cine.resolve(0, A, this.cineSight);
+    }
     // Zeitlupe: Sub-Bass-Fall mit Herzschlag, dazu der Schriftzug-Klang
     audio.play('cineDrop', 1);
     audio.play('cutin', 0.6);
   }
 
-  /** Einschlag: Impact-Frames, Welt-Effekt, Stoß */
-  private ultimateStrikes(spec: UltimateSpec, f: FighterState) {
-    this.animeRig.impact(spec.frames);
-    this.cataclysm.strike(spec, f, this.ultSX, this.ultSZ, this.skyShiftFor(spec, f));
-    this.focusPulse.trigger(1, 1.1);
-    this.hitShake.shake(1);
-    // Impact-Frame: Riss- und Donnerknall genau im Moment des Tusche-Bildes
-    audio.play('impactCrack', 1);
-    audio.play('boom', 0.7);
-  }
-
   /**
-   * Kamera der Mini-Zwischensequenz über die freie Kamera legen (Kugelbahn um den Kopf, nie durch ihn) und das Augen-Leuchten setzen.
-   * Läuft je Bild nach der Fuß-Kamera; `camK` blendet weich hinein und zurück.
+   * Einschlag der Engine: der Welt-Effekt beginnt. Den Treffermoment (Doppel-Impact-Frame, Akt 3) meldet die Kataklysmus-Regie über
+   * `decisive` – sofort (Blitz-Zäsur, Klick, Hauptblitz) oder `lag` später (Welle, Säge, Sog, Meteoriten erreichen ihr Ziel).
    */
-  private applyAnimeRig(cam: PerspectiveCamera, inMenu: boolean) {
-    const rig = this.animeRig;
-    const k = rig.camK;
-    this.rigFovK = 0;
-    if (!this.player || !this.foot || inMenu || this.mode !== 'foot' || this.yardOn) { if (rig.active && (inMenu || this.mode !== 'foot')) rig.reset(); return; }
-    const head = this.headPos(this.rigHead);
-    if (k > 0.001) {
-      // an Deck: einmal je Sequenz prüfen, ob Rahen, Baum, Segel oder Reling die Figur verdecken (dann spiegeln oder heranrücken)
-      if (!this.rigChecked) { this.rigChecked = true; this.rigCheckView(head); }
-      const p = rig.pose(head.x, head.y, head.z, this.foot.yaw + this.rigYawOff, this.rigPose);
-      // steht die Einstellung in festem Material: auf die andere Seite spiegeln (an Deck entscheidet die Strahlprüfung)
-      this.gatherCam(head.x, head.z, 6);
-      if (!this.rigMirror && !this.rigShipN && this.camSolid(p.px, p.py, p.pz)) this.rigMirror = true;
-      if (this.rigMirror) this.mirrorRig(p, head);
-      if (this.rigPull < 1) {
-        // heranrücken: Kamera UND Blickpunkt zum Kopf hin stauchen, damit der Bildaufbau bleibt (sonst kippt der Blick steil nach oben);
-        // nie näher als 0,85 m, sonst blendet das Nahbereichs-Ausblenden (ab 0,70 m) die Figur mitten in der Sequenz aus
-        const d = Math.hypot(p.px - head.x, p.py - head.y, p.pz - head.z);
-        const k = d > 1e-3 ? Math.min(1, Math.max(this.rigPull, 0.85 / d)) : 1;
-        p.px = head.x + (p.px - head.x) * k;
-        p.py = head.y + (p.py - head.y) * k;
-        p.pz = head.z + (p.pz - head.z) * k;
-        p.ly = head.y + (p.ly - head.y) * k;
-      }
-      // Blickpunkt der freien Kamera (vor dem Überblenden) und neue Lage
-      cam.getWorldDirection(this.freeLook).multiplyScalar(6).add(cam.position);
-      this.rigCam.set(p.px, p.py, p.pz);
-      orbitBlend(cam.position, false, this.rigCam, head, k, cam.position);
-      this.rigLook.set(p.lx, p.ly, p.lz);
-      this.freeLook.lerp(this.rigLook, k);
-      cam.lookAt(this.freeLook);
-      this.rigFov = p.fov;
-      this.rigFovK = k;
-    }
-    // Augen-Leuchten in der Zwischensequenz
-    if (rig.glow > 0.02) {
-      const y = this.foot.yaw, fx = Math.sin(y), fz = Math.cos(y), rx = Math.cos(y), rz = -Math.sin(y);
-      const ex = head.x + fx * 0.085, ey = head.y + 0.035, ez = head.z + fz * 0.085;
-      // Lebensdauer ≈ anderthalb Bilder in Spielzeit (Zeitlupe beachten), sonst stapeln sich die Glanzpunkte zu einem weißen Fleck
-      const ts = this.hitstop.freeze > 0 ? 0 : this.hitstop.t > 0 ? this.hitstop.scale : 1;
-      this.cataclysm.eyeGlow(ex + rx * 0.032, ey, ez + rz * 0.032, ex - rx * 0.032, ey, ez - rz * 0.032, rig.glow, this.cataclysm.chargeColor, Math.max(0.003, (1.5 / 60) * ts));
-    }
+  private ultimateStrikes(spec: UltimateSpec, f: FighterState) {
+    this.cataclysm.strike(spec, f, this.ultSX, this.ultSZ, this.skyShiftFor(spec, f));
+    this.hitShake.shake(0.55);
   }
 
   /** Kopfmitte der Spielfigur (Knochen des Kopfs, sonst Höhe aus der Figur) */
@@ -4480,7 +4696,7 @@ export class SeaWorld {
       const pz = MathUtils.lerp(p.prev.z, p.z, alpha);
       const py = MathUtils.lerp(p.prev.y, p.y, alpha);
       const pyaw = p.prev.yaw + (MathUtils.euclideanModulo(p.yaw - p.prev.yaw + Math.PI, Math.PI * 2) - Math.PI) * alpha;
-      this.player.holder.position.set(px, py, pz);
+      this.player.holder.position.set(px, py + this.cineLiftY, pz);
       this.player.holder.rotation.set(0, pyaw, 0);
       // In der Kapitänskajüte: steilere, nähere Kamera über der Figur (das Dach ist ausgeblendet), Kajütenlicht an.
       // Die Zone der Spielfigur kommt aus ihrer eigenen Höhe (4.4.1), nicht aus dem gemeinsamen Zustand aller Läufer auf dem Deck
@@ -4579,12 +4795,14 @@ export class SeaWorld {
       cam.position.set(p.x + Math.sin(a) * r, p.y + 1.2 + (3.6 - this.cinematic) * 0.5, p.z + Math.cos(a) * r);
       cam.lookAt(p.x, p.y + 1.3, p.z);
     }
-    // 4.6B: Mini-Zwischensequenz eines Ultimates (Echtzeit), Kataklysmus-Regie (Spielzeit für die Effekte, Echtzeit für Aufladen und Himmel)
-    this.animeRig.update(frameDt);
-    this.applyAnimeRig(cam, inMenu);
+    // 4.6I: Kino-Regie der Ultimates (Echtzeit: Akte, Zeitmaß, Kamera, Pose), Kataklysmus-Regie (Spielzeit für die Effekte, Echtzeit für
+    // Aufladen und Himmel). Bleibt der Treffer der Welt aus, setzt die Regie ihn selbst – dann zeigt die Welt die Impact-Bilder hier.
+    this.cine.update(frameDt, this.animeRig.framesLeft);
+    if (this.cine.forced) { this.cine.forced = false; this.cineImpactFx(this.cine.def); }
+    this.applyCinematic(cam, inMenu, frameDt);
     {
       const hs = this.hitstop;
-      const gameK = hs.freeze > 0 ? 0 : hs.t > 0 ? hs.scale : 1;
+      const gameK = this.cine.active ? this.cine.timeScale : hs.freeze > 0 ? 0 : hs.t > 0 ? hs.scale : 1;
       this.cataclysm.update(frameDt * gameK, frameDt);
     }
     // 4.6G: Aura der Endgame-Ausrüstung (Teilchen über die Effekt-Schmiede, im Kampf stärker) und Glanz der Energie-Säume
@@ -4638,7 +4856,7 @@ export class SeaWorld {
     cam.updateProjectionMatrix();
     // Nahbereichs-Ausblenden (4.5A): rückt die Kamera an einer engen Wand näher als 0,70 m an den Kopf, blendet die eigene Figur weich aus
     if (this.player) {
-      const near = this.mode === 'foot' && !inMenu && !this.yardOn && this.cinematic <= 0 ? cam.position.distanceTo(this.camAnchor) : 99;
+      const near = this.mode === 'foot' && !inMenu && !this.yardOn && this.cinematic <= 0 && this.cine.camK < 0.02 ? cam.position.distanceTo(this.camAnchor) : 99;
       this.player.setNearFade(this.nearFade.update(near, frameDt));
     }
     // Treffer-Erschütterung (gerichteter Stoß, Schwingung, Zittern) – läuft in Echtzeit, auch im Standbild; im Menü aus
