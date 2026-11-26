@@ -501,8 +501,8 @@ describe('Spielstand 23: Figuren und Ausrüstung aus Version 22 laden fehlerfrei
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const d = r.data;
-    expect(SAVE_VERSION).toBe(23);
-    expect(d.version).toBe(23);
+    expect(SAVE_VERSION).toBeGreaterThanOrEqual(23);
+    expect(d.version).toBe(SAVE_VERSION);
     expect(r.migratedFrom).toBe(22);
     expect(d.player.look.hat).toBe('keiner');
     expect(d.player.look.glasses).toBe('flieger');

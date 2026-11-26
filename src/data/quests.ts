@@ -2,6 +2,7 @@ import { CREW_QUESTS } from './crew';
 // Aufträge: Hauptgeschichte und Nebenaufträge. Neue Aufträge = neuer Eintrag, keine Codeänderung nötig.
 import type { Faction } from '../core/save/types';
 import type { EnemyKind } from './combat';
+import type { TutorialAct } from './prologue';
 
 export type QuestStep =
   | { type: 'talk'; npc: string; text: string }
@@ -12,7 +13,9 @@ export type QuestStep =
   | { type: 'board'; count: number; text: string }
   | { type: 'slay'; target: string; text: string }
   | { type: 'treasure'; island: string; text: string }
-  | { type: 'rescue'; count: number; text: string };
+  | { type: 'rescue'; count: number; text: string }
+  /** 4.7A: Handlung der Einführung (Schlagkette, Sturm-Schritt, Ziel erfassen, Talentpunkt, Crew, Steuer, Faji-Kunst …) */
+  | { type: 'act'; act: TutorialAct; text: string; count?: number };
 
 export interface QuestDef {
   id: string;
@@ -35,8 +38,61 @@ export interface QuestDef {
 }
 
 export const QUESTS: QuestDef[] = [
+  // ---------- 4.7A: Einführung „Ankerglück“ (private Instanz, Stufe 1 → 3) – startet nach dem Gewitter-Prolog ----------
   {
-    id: 'k0', title: 'Prolog: Leinen los', giver: 'ilse', main: true, noOffer: true,
+    id: 't1', title: 'Einführung: Gestrandet', giver: 'hinnerk', main: true, noOffer: true,
+    intro: 'Du wachst im nassen Sand auf. Das Flaggschiff, Schwarzbart, die Admirale – alles fort. Am Pier winkt ein alter Fischer.',
+    outro: 'Bei allen Fischen, du lebst! Die See hat dich ausgespuckt wie Treibholz. Ohne Waffe kommst du hier nicht weit – geh ins Dorf zu Bodo, dem Hammerschmied. Sag ihm, Hinnerk schickt dich.',
+    steps: [{ type: 'talk', npc: 'hinnerk', text: 'Sprich mit dem Fischer Hinnerk am Pier' }],
+    reward: { gold: 0, xp: 0, fame: 0 },
+  },
+  {
+    id: 't2', title: 'Einführung: Die erste Klinge', giver: 'bodo', main: true, auto: true, after: 't1',
+    intro: 'Hinnerk schickt dich zum Hammerschmied ins Dorf.',
+    outro: 'Ein Schiffbrüchiger von der Schwarzen Krone? Dann brauchst du Stahl. Hier – frisch vom Amboss, noch warm. Keine Meisterklinge, aber sie hält. Jetzt lern, sie zu führen: Waffenmeister Konrad wartet bei den Übungspuppen.',
+    steps: [{ type: 'talk', npc: 'bodo', text: 'Geh ins Dorf zum Hammerschmied Bodo' }],
+    reward: { gold: 0, xp: 0, fame: 0 },
+  },
+  {
+    id: 't3', title: 'Einführung: Grundlagen des Kampfes', giver: 'konrad', main: true, auto: true, after: 't2',
+    intro: 'Bodo hat dir deine erste Klinge geschmiedet. Waffenmeister Konrad soll dir zeigen, wie man sie führt.',
+    outro: 'Nicht schlecht für einen, der gestern noch Deckplanken geschrubbt hat. Du hast das Zeug zum Kämpfer. Jetzt brauchst du ein Schiff – Hafenmeisterin Ilse hat da etwas … sagen wir: Erfahrenes.',
+    steps: [
+      { type: 'talk', npc: 'konrad', text: 'Melde dich bei Waffenmeister Konrad an den Übungspuppen' },
+      { type: 'act', act: 'combo', text: 'Schlage eine Kette aus 5 Treffern (Linksklick / J)' },
+      { type: 'act', act: 'dash', text: 'Weiche mit dem Sturm-Schritt aus (Umschalt)' },
+      { type: 'act', act: 'target', text: 'Erfasse ein Ziel mit Tab oder Mausklick' },
+      { type: 'act', act: 'talent', text: 'Du bist Stufe 2: verteile deinen ersten Talentpunkt (Taste N)' },
+    ],
+    reward: { gold: 0, xp: 0, fame: 5 },
+  },
+  {
+    id: 't4', title: 'Einführung: Die ranzige Schaluppe', giver: 'ilse', main: true, auto: true, after: 't3',
+    intro: 'Der Waffenmeister schickt dich zur Hafenmeisterin: Ohne Schiff bleibt man in Ankerglück ein Landratte.',
+    outro: 'Das Spähboot ist versenkt? Dann taugt die alte Schaluppe noch was – und du auch. Der Bürgermeister will dich sehen. Und beeil dich: Seit heute früh treiben sich Kurogane-Segel vor der Bucht herum.',
+    steps: [
+      { type: 'talk', npc: 'ilse', text: 'Hol dir bei Hafenmeisterin Ilse dein erstes Schiff' },
+      { type: 'act', act: 'hire', text: 'Heuere deine erste Crew an' },
+      { type: 'act', act: 'helm', text: 'Geh an Bord deiner Schaluppe und übernimm das Steuer' },
+      { type: 'sink', count: 1, text: 'Versenke das Kurogane-Spähboot vor der Küste' },
+    ],
+    reward: { gold: 0, xp: 0, fame: 10 },
+  },
+  {
+    id: 't5', title: 'Einführung: Der Kurogane-Überfall', giver: 'gerstenkorn', main: true, auto: true, after: 't4',
+    intro: 'Die Hafenmeisterin schickt dich zum Bürgermeister von Ankerglück.',
+    outro: 'Du hast Ankerglück gerettet – mit einer Kunst, die du heute Morgen noch nicht kanntest. Ankerglück steht in deiner Schuld, Kapitän. Nimm dieses Gold und ordentliche Seemannskleidung. Und dann: Die Bernsteinsee wartet. Andere Kapitäne laufen schon aus – zeig ihnen, wer von der Schwarzen Krone übrig ist.',
+    steps: [
+      { type: 'talk', npc: 'gerstenkorn', text: 'Melde dich bei Bürgermeister Gerstenkorn' },
+      { type: 'act', act: 'faji', text: 'Der Faji-Kristall erwacht: wähle deine erste Faji-Kunst' },
+      { type: 'act', act: 'art', text: 'Setze deine Faji-Kunst im Kampf ein (Q wechselt, dann 1 – 4)' },
+      { type: 'act', act: 'raid', text: 'Wehre den Kurogane-Stoßtrupp im Hafen ab' },
+      { type: 'talk', npc: 'gerstenkorn', text: 'Kehre zum Bürgermeister zurück' },
+    ],
+    reward: { gold: 150, xp: 0, fame: 25 },
+  },
+  {
+    id: 'k0', title: 'Kapitel 0: Leinen los', giver: 'ilse', main: true, noOffer: true,
     intro: 'Dein erstes eigenes Schiff! Segle nach Ankerglück und melde dich bei der Hafenmeisterin.',
     outro: 'Da bist du ja! Ich habe schon von dir gehört. Und ich habe Arbeit für dich.',
     steps: [
@@ -247,5 +303,10 @@ export const TOWN_NPCS: TownNpcDef[] = [
   { id: 'mara', name: 'Mara Pfeffer', role: 'haendler', title: 'Händlerin am Markt', shop: 'market', x: 4, z: 26, yaw: 0, greet: ['Frischer Proviant! Getrockneter Fisch, Zwieback, Bernsteinhonig!', 'Wer satt ist, kämpft besser.'] },
   { id: 'ilyas', name: 'Meister Ilyas', role: 'buerger', title: 'Hüter des Faji-Schreins', shop: 'shrine', x: 0, z: 52, yaw: 0, greet: ['Faji folgt nicht dem Muskel, sondern dem Willen.', 'Der Schrein spürt, was in dir schläft.'] },
   { id: 'jasper', name: 'Jasper Zahnrad', role: 'schmied', title: 'Schiffbaumeister der Werft', shop: 'shipyard', x: 40, z: -26, yaw: -Math.PI / 2, greet: ['Jedes Loch stopf ich – auch die im Plan.', 'Ein gutes Schiff ist wie ein guter Freund: Es lässt dich nicht absaufen.'] },
+  // 4.7A: Bewohner der Einführung (bleiben danach in Ankerglück)
+  { id: 'hinnerk', name: 'Hinnerk Treibholz', role: 'fischer', title: 'Fischer am Pier', x: 4, z: -58, yaw: Math.PI, greet: ['Die See nimmt, die See gibt. Heute hat sie dich gegeben.', 'Treibholz und Netze – mehr braucht ein alter Mann nicht.'] },
+  { id: 'bodo', name: 'Bodo Hammerschlag', role: 'schmied', title: 'Hammerschmied', x: 30, z: 22, yaw: -Math.PI / 2, greet: ['Klong! Klong! – Was? Ach, du bist es. Gute Klinge, die du da trägst.', 'Feuer, Hammer, Geduld. Mehr Geheimnisse hat das Schmieden nicht.'] },
+  { id: 'konrad', name: 'Konrad Klingenstein', role: 'buerger', title: 'Waffenmeister', x: 0, z: -36, yaw: Math.PI, greet: ['Schultern locker, Füße fest. Und nie den Gegner aus den Augen lassen.', 'Die Puppen schlagen nicht zurück. Die Kurogane schon.'] },
+  { id: 'gerstenkorn', name: 'Theodor Gerstenkorn', role: 'buerger', title: 'Bürgermeister von Ankerglück', x: -8, z: 12, yaw: 0, greet: ['Ankerglück grüßt dich, Kapitän! Na ja – fast Kapitän.', 'Eine friedliche Stadt braucht wache Augen. Und gelegentlich eine scharfe Klinge.'] },
   { id: 'ole', name: 'Ole Kiemer', role: 'fischer', title: 'Fischer', x: 14, z: -60, yaw: Math.PI, greet: ['Die Möwen fliegen tief. Das heißt Fisch – oder Regen.', 'Früher war die See ruhiger. Glaub ich.'] },
 ];

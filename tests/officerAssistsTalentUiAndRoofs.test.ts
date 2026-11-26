@@ -429,7 +429,7 @@ describe('4.6H gemeinsames Talent-Menü: ein Punktetopf für Talente und Faji-Te
   });
 
   it('Spielstand 23 aus 4.6G lädt ohne Verlust: Talentränge, Faji-Formen, Techniken, Frisur und Hut bleiben; Version bleibt 23', () => {
-    expect(SAVE_VERSION).toBe(23);
+    expect(SAVE_VERSION).toBeGreaterThanOrEqual(23);
     const s = createSave('Alt', 'pirat', '4.6.8') as Record<string, any>;
     expect(s.talents.bonus).toBe(1);
     expect(s.talents.fajiMerged).toBe(true);
@@ -446,7 +446,7 @@ describe('4.6H gemeinsames Talent-Menü: ein Punktetopf für Talente und Faji-Te
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const d = r.data, t = d.talents!;
-    expect(d.version).toBe(23);
+    expect(d.version).toBe(SAVE_VERSION);
     expect(t.bonus).toBe(4 + 3);
     expect(t.fajiMerged).toBe(true);
     expect(d.skills.sp).toBe(0);

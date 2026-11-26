@@ -5,7 +5,13 @@ import { TOUCH_FOOT, TOUCH_SEA } from '../data/touchLayout';
 import { ACTION_STYLES, PHYSICAL_STYLES, actionStyleOf, isActionStyle, type ActionStyleId } from '../data/actionStyles';
 import { FighterHud } from '../ui/fighterHud';
 import { AnimeImpactOverlay } from '../ui/animeImpactOverlay';
-import { FAJI_ART_IDS, FORM_NAMES, MASTERY_CAP, WILL, WILL_AURAS, cleanFaji, formOf, formProgress, isFajiArt, type AuraId, type FajiArtId, type FajiSave } from '../data/fajiArts';
+import { PrologueOverlay } from '../ui/prologueOverlay';
+import { TutorialFlow, type TutorialHost } from './tutorialFlow';
+import { BEACH_START, SHIP_COACH, TUTORIAL, TUTORIAL_QUESTS, linenLook } from '../data/prologue';
+import { TUTORIAL_END, dissolve, enterTutorial, isPrivate, legacyInstance, skipIntro, worldGates } from '../story/tutorialInstance';
+import { spentRegular } from './talentRules';
+import { HOME_SPAWN } from '../data/world';
+import { DEFAULT_FAJI_ART, FAJI_ART_IDS, FORM_NAMES, MASTERY_CAP, WILL, WILL_AURAS, cleanFaji, formOf, formProgress, isFajiArt, type AuraId, type FajiArtId, type FajiSave } from '../data/fajiArts';
 import { FORM_THRESHOLDS } from '../data/fajiArts';
 import { randomLook, type CharacterLook } from '../data/characterParts';
 import { WEATHER, type WeatherId } from '../data/world';
@@ -203,6 +209,16 @@ export class Game {
   /** Schwarzblende zwischen den Einstellungen des Titelbilds (liegt unter den Menüs, über der 3D-Welt) */
   private titleFade!: HTMLElement;
   private fadeShown = -1;
+  /** 4.7A: Anzeige des Gewitter-Prologs und der Einführung (Titelkarte, Untertitel, Banner, Schwarzblende, Überspringen, Lehrtafel) */
+  private prologueUi!: PrologueOverlay;
+  /** 4.7A: Ablauf der privaten Einführung „Ankerglück“ (nur solange die Instanz privat ist) */
+  private tutorial: TutorialFlow | null = null;
+  /** „Prolog und Einführung überspringen“ wartet auf das Ende des Prologs */
+  private introSkipAll = false;
+  /** Erste Faji-Kunst gewählt, die Engine hat den Wechsel aber verweigert (Figur gerade getroffen): bis zu 2 s erneut versuchen */
+  private artRetry: { id: ActionStyleId; t: number } | null = null;
+  /** Kino-Phase des Prologs gerade gezeigt (Klasse `pro-cine` am Dokument: Schadenszahlen und Leisten ruhen) */
+  private proCineShown = false;
   private dialogUi!: DialogOverlay;
   private markers!: NpcMarkers;
   private questLog: QuestLog | null = null;
@@ -308,6 +324,8 @@ export class Game {
     this.titleFade = document.createElement('div');
     this.titleFade.className = 'title-fade';
     uiRoot.appendChild(this.titleFade);
+    this.prologueUi = new PrologueOverlay(uiRoot);
+    this.prologueUi.onSkip = (all) => this.skipIntroClicked(all);
     this.menus = new Menus(uiRoot, this);
     this.menus.onError = () => this.hud.toast('Das hat leider nicht geklappt – bitte noch einmal versuchen.', 3);
 
@@ -620,6 +638,14 @@ export class Game {
       this.legendT -= dt;
       if (this.legendT <= 0) { this.legendT = 1; this.updateLegends(); this.checkAchievements(); }
       this.world.update(dt, this.input);
+      // 4.7A: Einführung „Ankerglück“ (beobachtet Aufträge und Welt, meldet Handlungen)
+      if (this.tutorial && this.state.is('play')) this.tutorial.update(dt);
+      if (this.artRetry) {
+        const r = this.artRetry;
+        r.t -= dt;
+        if (this.world.actionStyle === r.id || r.t <= 0 || this.save?.player.actionStyle !== r.id) this.artRetry = null;
+        else { this.world.setActionStyle(r.id); this.syncFajiForm(); }
+      }
       if (this.save) this.save.meta.playTime += dt;
       this.occupation.update(dt);
       this.stepEconomy(dt);
@@ -641,6 +667,7 @@ export class Game {
     // Grafikstufe wird gerade angewendet (Shader werden parallel übersetzt): nicht zeichnen, sonst übersetzt das Zeichnen sie am Stück und der Browser hängt
     if (this.qualitySwitching) return;
     this.updateAudio(frameDt);
+    this.prologueUi.update(frameDt);
     // Titelbild: Blende der Regie (nur im Menü; in allen anderen Zuständen sofort klar, auch im Editor)
     const inMenu = this.state.is('menu', 'boot');
     {
@@ -683,7 +710,13 @@ export class Game {
     {
       // Impact-Frames zählen GEZEICHNETE Bilder (2 – 4), Kinobalken, HUD-Ausblendung und Aura-Glühen folgen der Kino-Regie
       const rig = this.world.animeRig;
-      this.impactOverlay.apply(rig.frame(), inMenu ? 0 : cine.barsK, inMenu ? 0 : cine.glow, this.world.cataclysm.chargeHex, frameDt);
+      // 4.7A: Kinobalken des Gewitter-Prologs (Einleitung, Finale) wie die der Ultimates – das HUD blendet dabei aus
+      const proBars = inMenu ? 0 : this.world.prologueBars;
+      this.impactOverlay.apply(rig.frame(), inMenu ? 0 : Math.max(cine.barsK, proBars), inMenu ? 0 : cine.glow, this.world.cataclysm.chargeHex, frameDt);
+      // in den Kino-Phasen des Prologs keine Schadenszahlen, Lebensleisten und Kombo-Zähler der Deckkämpfe über dem Bild
+      const proCine = proBars > 0.5;
+      if (proCine !== this.proCineShown) { this.proCineShown = proCine; document.documentElement.classList.toggle('pro-cine', proCine); }
+      this.prologueUi.setPlay(!inMenu && this.world.prologueRunning && !proCine);
     }
     this.skyProbe.update(frameDt);
     {
@@ -735,7 +768,8 @@ export class Game {
           // Besatzung in einer Zeile: Offiziere A/B | Truppen X/Y (+ Befehlsknöpfe [1] [2] [3], solange Trupps im Einsatz sind)
           const ch = this.world.crewHud, tier = this.save.ship.tier;
           const slots = officerSlots(tier);
-          const show = this.save.crew.hired.length > 0 || ch.troopMax > 0;
+          // 4.7A: im Prolog kämpfen Schwarzbarts Piraten, nicht die eigene Crew – keine Truppenzeile, keine Befehle
+          const show = (this.save.crew.hired.length > 0 || ch.troopMax > 0) && !this.world.prologueRunning;
           const b = this.input.getKeyBindings();
           const keys = COMMANDS.map((c) => this.input.keyLabel(b[COMMAND_ACTIONS[c.id]][0] ?? ''));
           this.hud.setCrewLine(show ? { officers: ch.officers, slots, troops: ch.troops, troopMax: ch.troopMax, cmds: ch.commands ? keys : null, active: ch.command } : null);
@@ -2359,6 +2393,9 @@ export class Game {
 
   /** Wohin führt der verfolgte Auftrag? */
   private questTarget(): { x: number; z: number } | null {
+    // 4.7A: auf dem Deck des Flaggschiffs zeigt der Pfeil zur Treppe auf das Achterdeck
+    const pg = this.world.prologueGoal;
+    if (pg) return pg;
     const t = this.quests?.tracked();
     if (!t) return null;
     const pos = this.world.playerPos;
@@ -2371,6 +2408,8 @@ export class Game {
       case 'rescue': return this.world.nearestFloater('raft');
       case 'slay': return ABYSS_LAIR;
       case 'kill': return nearest(this.world.islandDefs.filter((i) => i.kind === 'camp' && Math.hypot(i.x - BERNSTEINSEE.x, i.z - BERNSTEINSEE.z) < BERNSTEINSEE.r));
+      // 4.7A: Handlungen der Einführung zeigen auf ihren Ort (Übungspuppen, Hafenmeisterin, Schiff, Angreifer)
+      case 'act': return this.world.tutorialTarget(t.step.act);
     }
   }
 
@@ -3234,7 +3273,8 @@ export class Game {
         const rel = this.world.cameraYaw - Math.atan2(dx, dz);
         angle = wrapAngle(rel);
       }
-      const frac = 'count' in t.step && t.step.count > 1 ? Math.min(1, t.count / t.step.count) : null;
+      const need = 'count' in t.step ? t.step.count ?? 1 : 1;
+      const frac = need > 1 ? Math.min(1, t.count / need) : null;
       this.hud.setQuest({ title: t.q.title, step: stepText(t.step, t.count), angle, dist, frac, main: !!t.q.main });
     }
     // Minikarte etwa 10× pro Sekunde
@@ -3253,6 +3293,8 @@ export class Game {
     const p = s.player;
     const rankBefore = rankName(p.faction, p.fame);
     const famePassive = this.world.faji?.passives.fame ?? 0;
+    // 4.7A: in Prolog und Einführung kommen die Stufen nur aus der Geschichte (Waffenmeister: 2, Faji-Kristall: 3)
+    if (isPrivate(s.progress.instance ?? legacyInstance())) xp = 0;
     p.fame = Math.max(0, p.fame + Math.round(fame * (fame > 0 ? 1 + famePassive : 1)));
     // 4.6E: Stufen bis 100 (Stufe 101 nur über den Aufstieg); je Aufstieg ein Talentpunkt (aus der Stufe gerechnet). 4.6H: es gibt nur noch
     // diesen einen Topf (Talentbäume und Faji-Techniken, Tasten N und K)
@@ -3612,6 +3654,8 @@ export class Game {
     if (!s) return;
     const eco = this.eco();
     decayHeat(eco, dt);
+    // 4.7A: in Prolog und Einführung ist man noch kein Kapitän mit eigener Crew – kein Sold; der erste Zahltag liegt eine volle Frist nach dem Übergang
+    if (isPrivate(s.progress.instance ?? legacyInstance())) { eco.nextPay = Math.max(eco.nextPay, s.meta.playTime + UPKEEP.period); eco.warned = false; return; }
     this.upkeepT -= dt;
     if (this.upkeepT > 0) return;
     this.upkeepT = 0.5;
@@ -4874,11 +4918,15 @@ export class Game {
     data.player.style = r.style;
     data.player.blade = r.blade;
     data.player.look = r.look;
+    // 4.7A: man beginnt als Schiffsjunge ohne Gold und mit bloßen Fäusten – die erste Klinge schmiedet Bodo in der Einführung
+    data.player.gold = 0;
+    data.player.actionStyle = 'sturmfaust';
+    // die erste Faji-Kunst erwacht erst am Kristall des Bürgermeisters (Einführung, Stufe 3)
+    data.player.faji = { ...cleanFaji(undefined), equipped: null };
     if (!this.saves.save(slot, data)) this.hud.toast('Speichern nicht möglich – Speicher voll?');
+    // enterPlay startet den Gewitter-Prolog (Instanz `prolog`); Kapitel 0 beginnt erst in der geteilten Welt
     this.enterPlay(slot, data);
-    this.quests?.accept('k0');
     this.persist();
-    this.hud.toast(r.faction === 'pirat' ? 'Leinen los, Schiffsjunge!' : 'Willkommen an Bord, Rekrut!', 3);
   }
 
   async continueGame(slot: number) {
@@ -4953,8 +5001,285 @@ export class Game {
     this.state.set('play');
     this.loop.resetClock();
     this.touch.setLayout(TOUCH_SEA);
-    this.hud.hint(this.controlsHint(), 12);
+    // 4.7A: Instanz – Gewitter-Prolog, private Einführung „Ankerglück“ oder geteilte Welt
+    this.applyInstance();
+    if (!isPrivate(data.progress.instance ?? legacyInstance())) this.hud.hint(this.controlsHint(), 12);
+  }
 
+  // ---------- 4.7A: Gewitter-Prolog, private Einführung „Ankerglück“, Übergang in die geteilte Welt ----------
+
+  /** Instanz des Spielstands anwenden (nach jedem Laden) */
+  private applyInstance() {
+    const s = this.save;
+    if (!s) return;
+    const inst = (s.progress.instance ??= legacyInstance());
+    this.tutorial = null;
+    this.introSkipAll = false;
+    this.prologueUi.show(false);
+    this.world.setGates(worldGates(inst));
+    if (inst.mode === 'prolog') this.beginPrologue();
+    else if (inst.mode === 'tutorial') this.beginTutorial(false);
+  }
+
+  /** Gewitter-Prolog auf Schwarzbarts Flaggschiff */
+  private beginPrologue() {
+    const s = this.save!;
+    this.prologueUi.show(true);
+    this.prologueUi.skip(true);
+    this.world.startPrologue(this.displayLook(), {
+      line: (who, text, title) => this.prologueUi.line(who, text, title),
+      banner: (t, sub) => this.prologueUi.banner(t, sub),
+      blackout: (k) => this.prologueUi.blackout(k),
+      finished: (skipped) => this.prologueFinished(skipped),
+    }, ((s.meta.created % 4294967296) ^ 0x51a7) >>> 0);
+    this.sceneChanged(8);
+  }
+
+  /** Der Prolog ist vorbei (Herzschlag, Schwarzblende) oder übersprungen: Erwachen am Strand von Ankerglück */
+  private prologueFinished(_skipped: boolean) {
+    const s = this.save;
+    if (!s) return;
+    this.prologueUi.show(false);
+    if (this.introSkipAll) { this.introSkipAll = false; this.finishIntroSkip(); return; }
+    enterTutorial(s.progress.instance ??= legacyInstance());
+    this.beginTutorial(true);
+    this.persist();
+  }
+
+  /** Private Einführung „Ankerglück“ (Stufe 1 → 3) beginnen bzw. nach dem Laden fortsetzen */
+  private beginTutorial(fresh: boolean) {
+    const s = this.save!;
+    const inst = (s.progress.instance ??= legacyInstance());
+    this.world.setGates(worldGates(inst));
+    // Ankerglück am Morgen nach dem Gewitter; die Schaluppe aus dem Spielstand – bis zur Übergabe verstaut (man hat noch kein Schiff)
+    if (fresh || !inst.ship) this.world.setState({ boat: { x: HOME_SPAWN.x, z: HOME_SPAWN.z, heading: HOME_SPAWN.heading }, env: { time: fresh ? 8 : s.world.time, weather: fresh ? 'klar' : (s.world.weather as WeatherId) } });
+    this.restoreShip();
+    if (!inst.ship) this.world.stowShip(true);
+    // nur Leinen am Leib, bis der Bürgermeister ordentliche Seemannskleidung schenkt; was die Brandung nicht genommen hat, ist nichts (kein Gold)
+    if (fresh) s.player.gold = 0;
+    this.world.updatePlayer(linenLook(this.displayLook()), this.activeStyle(), this.currentAction());
+    if (!inst.ship) {
+      const p = this.world.shoreSpot(BEACH_START.x, BEACH_START.z);
+      this.world.landPlayer(p.x, p.z, BEACH_START.yaw);
+      this.touch.setLayout(TOUCH_FOOT);
+    }
+    const qs = this.quests;
+    if (qs && !qs.isActive('t1') && !qs.isDone('t1')) qs.accept('t1');
+    this.tutorial = new TutorialFlow(this.tutorialHost());
+    if (fresh) {
+      const t1 = QUEST_BY_ID.t1;
+      audio.play('bell');
+      this.state.set('pause');
+      this.menus.showStory('Gestrandet', qs && t1 ? qs.introOf(t1) : '', () => this.resume());
+    } else this.hud.toast('Einführung: Ankerglück', 3);
+  }
+
+  /** Schiff aus dem Spielstand in die Welt (nach Prolog oder Überspringen) */
+  private restoreShip() {
+    const data = this.save!;
+    const roster = ensureCrewState(data.crew, data.ship.tier);
+    const pools = savedPools(data.ship, roster, data.ship.tier);
+    this.world.setShip(data.ship.tier, data.ship.look, data.ship.ammo, data.ship.hull, data.player.faction, data.ship.sail ?? 1, pools.matrosen, rosterTotal(roster));
+    this.applyPower();
+  }
+
+  /** Schaltfläche „Prolog überspringen“: nur den Prolog (Erwachen am Strand) oder Prolog und Einführung (gleich in die offene Welt) */
+  private skipIntroClicked(all: boolean) {
+    if (!this.save) return;
+    if (all) this.introSkipAll = true;
+    if (this.world.prologueRunning) this.world.skipPrologue();
+    else if (all) { this.introSkipAll = false; this.finishIntroSkip(); }
+  }
+
+  /** Prolog und Einführung überspringen (Schnelltest): Endstand der Einführung, dann die geteilte Welt */
+  private finishIntroSkip() {
+    const s = this.save;
+    if (!s) return;
+    const inst = (s.progress.instance ??= legacyInstance());
+    skipIntro(inst, s.meta.playTime);
+    this.prologueUi.show(false);
+    if (s.player.level < TUTORIAL_END.level) { s.player.level = TUTORIAL_END.level; s.player.xp = 0; }
+    s.player.actionStyle = actionStyleOf(styleIdOf(s.player.style, s.player.blade));
+    // im Prolog aufgelesene Münzen zählen nicht (am Strand hätte man nichts): genau der Dank des Bürgermeisters
+    s.player.gold = TUTORIAL_END.gold;
+    // Endstand der Einführung: eine Faji-Kunst ist erwacht (ohne Wahl die Standard-Kunst)
+    { const fs = this.fajiSave(); if (fs && !fs.equipped) fs.equipped = DEFAULT_FAJI_ART; }
+    const id = TUTORIAL_END.crew;
+    if (!s.crew.hired.includes(id)) {
+      s.crew.hired.push(id);
+      s.crew.loyalty[id] = 10;
+      if (!CREW_BY_ID[id]?.cat && s.crew.party.length < officerSlots(s.ship.tier)) s.crew.party.push(id);
+    }
+    s.progress.quests = s.progress.quests.filter((q) => !(TUTORIAL_QUESTS as readonly string[]).includes(q.id));
+    for (const q of TUTORIAL_QUESTS) if (!s.progress.done.includes(q)) s.progress.done.push(q);
+    this.tutorial = null;
+    this.world.setState({ boat: { x: HOME_SPAWN.x, z: HOME_SPAWN.z, heading: HOME_SPAWN.heading }, env: { time: 9, weather: 'klar' } });
+    this.restoreShip();
+    this.world.setActionStyle(s.player.actionStyle as ActionStyleId);
+    this.world.updatePlayer(this.displayLook(), this.activeStyle(), this.currentAction());
+    this.world.setGates(worldGates(inst));
+    this.quests?.accept('k0');
+    this.world.healPlayer();
+    this.refreshWeaponHud();
+    this.hud.setPlayer(s.player.name, `${FACTION_LABELS[s.player.faction]} · ${rankName(s.player.faction, s.player.fame)} · Stufe ${s.player.level}`);
+    this.touch.setLayout(TOUCH_SEA);
+    this.persist();
+    this.hud.toast('Prolog und Einführung übersprungen – die Bernsteinsee steht dir offen.', 4);
+    this.hud.hint(this.controlsHint(), 10);
+  }
+
+  /** Was der Ablauf der Einführung vom Spiel braucht */
+  private tutorialHost(): TutorialHost {
+    const g = this;
+    return {
+      step: (id) => g.quests?.step(id) ?? null,
+      isDone: (id) => !!g.quests?.isDone(id),
+      act: (a) => g.questEvent({ type: 'act', act: a }),
+      probe: () => g.world.tutorialProbe(),
+      spent: () => { const s = g.save; return s?.talents ? spentRegular(s.talents) + techSpentOf(s.skills.learned) : 0; },
+      level: () => g.save?.player.level ?? 1,
+      setLevel: (n) => g.tutorialLevel(n),
+      giveWeapon: () => g.tutorialWeapon(),
+      grantShip: () => g.tutorialShip(),
+      offerHire: () => g.tutorialHireCard(),
+      crewHired: () => !!g.save?.crew.hired.includes(TUTORIAL.starterCrew),
+      coachShip: () => g.prologueUi.coach([...SHIP_COACH]),
+      spawnScout: () => g.world.spawnScout(TUTORIAL.scoutLevel),
+      scoutLive: (h) => { const e = h as { ship: { alive: boolean; sinking: number } }; return !!g.world.naval?.enemies.includes(h as never) && e.ship.alive && e.ship.sinking <= 0; },
+      offerFaji: () => g.tutorialFajiCard(),
+      fajiEquipped: () => !!g.save?.player.faji?.equipped,
+      spawnRaid: (extra) => {
+        // der Trupp kommt vom Hafen her (Hafenmeisterin Ilse) und landet ein Stück vor der Figur
+        const home = g.world.homeIsland, p = g.world.playerPos;
+        const lx = p.x - home.x, lz = p.z - home.z, dx = -10 - lx, dz = -52 - lz, d = Math.hypot(dx, dz) || 1, k = Math.min(14, d) / d;
+        return g.world.spawnRaid([...(extra ? TUTORIAL.raidExtra : TUTORIAL.raid)], TUTORIAL.raidLevel, lx + dx * k, lz + dz * k);
+      },
+      raidLeft: () => g.world.raidLeft(),
+      dissolve: () => g.dissolveInstance(),
+      shared: () => (g.save?.progress.instance?.mode ?? 'shared') === 'shared',
+      flag: (k) => !!g.save?.progress.flags[k],
+      setFlag: (k) => { if (g.save) g.save.progress.flags[k] = true; },
+      say: (t) => g.hud.toast(t, 4.5),
+    };
+  }
+
+  /** Einführung: auf Stufe `n` heben (Waffenmeister, Faji-Kristall) – Talentpunkte kommen aus der Stufe */
+  private tutorialLevel(n: number) {
+    const s = this.save;
+    if (!s || s.player.level >= n) return;
+    s.player.level = n;
+    s.player.xp = 0;
+    this.applyPower();
+    this.world.healPlayer();
+    this.world.faji?.refresh(n, this.activeStyle());
+    audio.play('level');
+    this.overlay.showBanner(`Stufe ${n}!`, '+1 Talentpunkt (Taste N oder K) · mehr Leben und Angriffskraft');
+    this.hud.setPlayer(s.player.name, `${FACTION_LABELS[s.player.faction]} · ${rankName(s.player.faction, s.player.fame)} · Stufe ${n}`);
+    this.persist();
+  }
+
+  /** Einführung: Bodo hat die erste Waffe geschmiedet (der Kampfstil aus dem Editor ersetzt die Fäuste) */
+  private tutorialWeapon() {
+    const s = this.save;
+    if (!s) return;
+    const act = actionStyleOf(styleIdOf(s.player.style, s.player.blade));
+    s.player.actionStyle = act;
+    this.world.setActionStyle(act);
+    this.world.updatePlayer(linenLook(this.displayLook()), this.activeStyle(), act);
+    this.refreshWeaponHud();
+    audio.play('bell');
+    this.overlay.showBanner('Erste Waffe!', `${ACTION_STYLES[act].label} · geschmiedet von Bodo Hammerschlag`);
+    this.persist();
+  }
+
+  /** Einführung: Ilse übergibt die ranzige Schaluppe (am Steg festgemacht) */
+  private tutorialShip() {
+    const s = this.save;
+    if (!s) return;
+    const inst = (s.progress.instance ??= legacyInstance());
+    inst.ship = true;
+    if (!this.world.stowShip(false)) this.hud.toast('Die Schaluppe liegt vor dem Steg – geh über die Gangway an Bord.', 4);
+    this.overlay.showBanner('Die ranzige Schaluppe', 'Dein erstes Schiff liegt am Steg von Ankerglück');
+    this.persist();
+  }
+
+  /** Einführung: die erste Crew (Mira Windblatt) – die Hafenmeisterin zahlt das Handgeld */
+  private tutorialHireCard() {
+    const def = CREW_BY_ID[TUTORIAL.starterCrew];
+    if (!def || !this.state.is('play')) return;
+    this.state.set('pause');
+    this.menus.showChoice({
+      kicker: 'Hafenmeisterin Ilse', title: 'Deine erste Crew',
+      text: '„Ohne Leute segelt dir die Schaluppe im Kreis. Mira kennt jede Strömung der Bucht – das Handgeld übernehme ich, du zahlst es mir zurück, wenn du berühmt bist.“',
+      choices: [{ id: def.id, label: def.name, sub: `${def.job} · ${def.perk}`, tag: 'Handgeld bezahlt', color: def.col, button: 'Anheuern' }],
+    }, () => this.tutorialHire());
+  }
+
+  private tutorialHire() {
+    const s = this.save;
+    const id = TUTORIAL.starterCrew, def = CREW_BY_ID[id];
+    if (!s || !def) { this.resume(); return; }
+    if (!s.crew.hired.includes(id)) {
+      s.crew.hired.push(id);
+      s.crew.loyalty[id] = 10;
+      if (!def.cat && s.crew.party.length < officerSlots(s.ship.tier)) s.crew.party.push(id);
+    }
+    audio.play('bell');
+    this.overlay.showBanner(`${def.name} heuert an!`, def.perk);
+    this.applyPower();
+    this.resume();
+    this.questEvent({ type: 'act', act: 'hire' });
+    this.hud.toast('Geh über die Gangway an Bord und übernimm am Steuerrad das Ruder.', 4.5);
+  }
+
+  /** Einführung: der Faji-Kristall des Bürgermeisters erwacht – erste Faji-Kunst wählen */
+  private tutorialFajiCard() {
+    const v = this.fajiView();
+    if (!v || !this.state.is('play')) return;
+    this.state.set('pause');
+    this.menus.showChoice({
+      kicker: 'Bürgermeister Gerstenkorn', title: 'Der Faji-Kristall erwacht',
+      text: '„Nimm ihn – schnell! Der Kristall antwortet nur einmal. Wähle die Kraft, die zu dir passt, und wirf die Kurogane aus meinem Hafen!“',
+      choices: v.arts.map((a) => ({ id: a.id, label: `${a.label} · ${a.title}`, sub: a.desc, tag: a.skills[0]?.label ?? '', color: a.color, button: 'Erwecken' })),
+    }, (id) => this.tutorialPickFaji(id));
+  }
+
+  private tutorialPickFaji(id: string) {
+    const s = this.save;
+    if (!s || !isFajiArt(id)) { this.resume(); return; }
+    this.equipFaji(id);
+    // gleich in der Hand: Taste 1 wirkt die erste Technik (Q wechselt zurück zur Klinge)
+    s.player.actionStyle = id;
+    this.world.setActionStyle(id);
+    if (this.world.actionStyle !== id) this.artRetry = { id, t: 2 };
+    this.syncFajiForm();
+    this.refreshWeaponHud();
+    audio.play('cutin');
+    this.overlay.showBanner(`${ACTION_STYLES[id].label} erwacht!`, 'Taste 1: erste Technik · Q wechselt zurück zur Klinge');
+    this.resume();
+    this.questEvent({ type: 'act', act: 'faji' });
+    this.persist();
+  }
+
+  /** Dank des Bürgermeisters: die private Instanz löst sich in die geteilte Welt auf (andere Kapitäne sichtbar, Kampagne und Gruppen offen) */
+  private dissolveInstance() {
+    const s = this.save;
+    if (!s) return;
+    const inst = (s.progress.instance ??= legacyInstance());
+    if (inst.mode === 'shared') return;
+    dissolve(inst, s.meta.playTime);
+    this.tutorial = null;
+    this.world.setGates(worldGates(inst));
+    // ordentliche Seemannskleidung: das Aussehen aus dem Editor (samt angelegter Ausrüstung)
+    this.world.updatePlayer(this.displayLook(), this.activeStyle(), this.currentAction());
+    this.quests?.accept('k0');
+    // man steht schon in Ankerglück: „Segle nach Ankerglück“ ist erledigt, Kapitel 0 führt gleich zur Hafenmeisterin
+    this.questEvent({ type: 'enter', island: 'ankerglueck' });
+    audio.play('horn');
+    this.overlay.showBanner('Die Welt öffnet sich', 'Andere Kapitäne sind jetzt in Ankerglück, im Hafen und auf See unterwegs');
+    const k0 = QUEST_BY_ID.k0;
+    if (k0) this.after(() => this.hud.toast(`Neuer Hauptauftrag: ${k0.title}`, 4), 3400);
+    this.persist();
   }
 
   pause() {
@@ -4975,6 +5300,11 @@ export class Game {
   }
 
   quitToMenu() {
+    this.world.abortPrologue();
+    this.tutorial = null;
+    this.introSkipAll = false;
+    this.prologueUi.show(false);
+    this.world.setGates(worldGates(legacyInstance()));
     this.world.abortRaid();
     this.occupation.reset();
     this.occBanner.update(null);
@@ -4994,6 +5324,8 @@ export class Game {
   persist(): boolean {
     this.autosaveTimer = 0;
     if (!this.save || this.slot === null) return true;
+    // 4.7A: während des Prologs steht die Welt auf der Bühne (Flaggschiff, offene See, Nacht) – nichts davon in den Spielstand
+    if (this.world.prologueRunning) return this.saves.save(this.slot, this.save);
     this.syncFleetState();
     const ws = this.world.getState();
     this.save.world = { boat: ws.boat, time: ws.env.time, weather: ws.env.weather, seaEvents: this.world.seaEvents?.snapshot() ?? null, chart: chartToSave(this.world.discovered, this.world.chartZones), mega: this.world.megaSnapshot(), kaiser: this.world.kaiserSnapshot(), factionWar: this.world.factionWarSnapshot() };

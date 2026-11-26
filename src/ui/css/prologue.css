@@ -1,0 +1,84 @@
+/* Phase 4.7A – Gewitter-Prolog und Einführung: Titelkarte, Untertitel, Admirals-Banner, Schwarzblende, „Prolog überspringen“, Lehrtafel.
+   Die Wurzel deckt den Bildschirm ab und muss Zeiger durchlassen (`#ui > *` schaltet sie sonst ein, siehe tests/cssRules.test.ts);
+   nur Knöpfe und die Lehrtafel nehmen Klicks an. */
+.prologue { position: fixed; inset: 0; z-index: var(--z-fade); pointer-events: none !important; }
+.prologue[hidden] { display: none; }
+.prologue .pro-fade { position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none !important; }
+
+.prologue .pro-title {
+  position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%) scale(0.97); text-align: center;
+  opacity: 0; transition: opacity 1.1s ease, transform 4.6s ease-out; color: var(--brass-100);
+  text-shadow: 0 0 28px rgba(0, 0, 0, 0.9), 0 2px 4px rgba(0, 0, 0, 0.9); pointer-events: none;
+}
+.prologue .pro-title.on { opacity: 1; transform: translate(-50%, -50%) scale(1.03); }
+.prologue .pro-title h1 { font-family: var(--font-serif); font-size: clamp(2.6rem, 8vw, 5.6rem); letter-spacing: 0.12em; margin: 0.1em 0; color: var(--brass-200); }
+.prologue .pro-kicker { font-family: var(--font-serif); letter-spacing: 0.4em; text-transform: uppercase; font-size: clamp(0.8rem, 2.2vw, 1.05rem); color: var(--ink-dim); margin: 0; }
+.prologue .pro-tag { font-family: var(--font-text); font-size: clamp(0.95rem, 2.6vw, 1.3rem); color: var(--ink); margin: 0; font-style: italic; }
+
+.prologue .pro-sub {
+  position: absolute; left: 50%; bottom: 12%; transform: translate(-50%, 0.6rem); width: min(46rem, 90vw); text-align: center;
+  font-family: var(--font-text); font-size: clamp(0.95rem, 2.5vw, 1.2rem); line-height: 1.4; color: var(--ink);
+  padding: 0.55em 1em; border-radius: 0.6em; background: linear-gradient(180deg, rgba(8, 6, 10, 0.25), rgba(8, 6, 10, 0.62));
+  opacity: 0; transition: opacity 0.35s ease, transform 0.35s ease; pointer-events: none; text-shadow: 0 1px 3px #000;
+}
+.prologue .pro-sub.on { opacity: 1; transform: translate(-50%, 0); }
+/* auf dem Deck (spielbar) stehen unten Fähigkeiten- und Befehlsleisten: Untertitel dann unter dem Kompass */
+.prologue.play .pro-sub { bottom: auto; top: 15%; }
+.prologue .pro-sub b { display: block; font-family: var(--font-serif); color: var(--brass-200); letter-spacing: 0.06em; font-size: 0.86em; margin-bottom: 0.1em; }
+.prologue .pro-sub.narr b { display: none; }
+.prologue .pro-sub.narr span { font-style: italic; color: var(--ink-dim); }
+
+.prologue .pro-banner {
+  position: absolute; left: 0; top: 18%; padding: 0.7em 2.6em 0.7em 1.6em; min-width: min(26rem, 80vw);
+  background: linear-gradient(90deg, rgba(10, 14, 30, 0.92), rgba(10, 14, 30, 0.55) 72%, transparent); border-left: 4px solid var(--brass-300);
+  transform: translateX(-104%); opacity: 0; transition: transform 0.45s cubic-bezier(0.2, 0.9, 0.25, 1.15), opacity 0.3s ease; pointer-events: none;
+}
+.prologue .pro-banner.on { transform: translateX(0); opacity: 1; }
+.prologue .pro-banner b { display: block; font-family: var(--font-serif); font-size: clamp(1.1rem, 3vw, 1.7rem); color: var(--brass-100); letter-spacing: 0.04em; }
+.prologue .pro-banner span { display: block; font-family: var(--font-text); font-size: clamp(0.8rem, 2vw, 1rem); color: var(--ink-dim); }
+
+.prologue .pro-skip { position: absolute; right: max(1rem, env(safe-area-inset-right)); bottom: max(1rem, env(safe-area-inset-bottom)); text-align: right; }
+.prologue .pro-skip[hidden] { display: none; }
+.prologue .pro-skip button { pointer-events: auto; }
+.prologue .pro-skip-btn {
+  font-family: var(--font-text); font-size: 0.82rem; color: var(--ink-dim); background: rgba(0, 0, 0, 0.32); border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px; padding: 0.38em 0.95em; opacity: 0.62; cursor: pointer; transition: opacity 0.2s ease;
+}
+.prologue .pro-skip-btn:hover, .prologue .pro-skip-btn:focus-visible { opacity: 1; }
+.prologue .pro-skip-btn[hidden] { display: none; }
+.prologue .pro-skip-ask {
+  display: flex; flex-direction: column; gap: 0.35em; align-items: stretch; padding: 0.7em; border-radius: 0.7em; min-width: 12.5rem;
+  background: rgba(10, 8, 12, 0.86); border: 1px solid rgba(255, 255, 255, 0.14); pointer-events: auto;
+}
+.prologue .pro-skip-ask[hidden] { display: none; }
+.prologue .pro-skip-ask p { margin: 0 0 0.2em; font-family: var(--font-serif); color: var(--brass-100); text-align: center; }
+
+.prologue .pro-coach {
+  position: absolute; right: max(1rem, env(safe-area-inset-right)); top: 40%; width: min(21rem, 86vw); padding: 0.85em 1em 0.75em;
+  border-radius: 0.8em; background: rgba(12, 10, 8, 0.88); border: 1px solid var(--brass-500); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  pointer-events: auto; color: var(--ink);
+}
+.prologue .pro-coach[hidden] { display: none; }
+.prologue .pro-coach h3 { margin: 0.1em 0 0.25em; font-family: var(--font-serif); color: var(--brass-100); font-size: 1.2rem; }
+.prologue .pro-coach-k { margin: 0; font-size: 0.72rem; letter-spacing: 0.3em; text-transform: uppercase; color: var(--ink-faint); }
+.prologue .pro-coach-t { margin: 0 0 0.6em; font-family: var(--font-text); font-size: 0.95rem; line-height: 1.38; color: var(--ink); }
+.prologue .pro-coach-row { display: flex; align-items: center; justify-content: space-between; gap: 0.6em; }
+.prologue .pro-dots { display: flex; gap: 0.3em; }
+.prologue .pro-dots i { width: 0.45em; height: 0.45em; border-radius: 50%; background: rgba(255, 255, 255, 0.25); }
+.prologue .pro-dots i.on { background: var(--brass-300); }
+
+/* Schmale Hochformat-Bildschirme: Untertitel über den Touch-Knöpfen, Banner kompakter; auf dem Deck unter Spielerkarte und Karte,
+   „Prolog überspringen“ dann links neben dem Bild (unten rechts liegt der Angriff-Knopf) */
+@media (max-width: 560px) {
+  .prologue .pro-sub { bottom: 24%; }
+  .prologue.play .pro-sub { top: 34%; font-size: 0.92rem; }
+  .prologue.play .pro-skip { bottom: auto; top: 47%; right: auto; left: max(0.6rem, env(safe-area-inset-left)); text-align: left; }
+  .prologue .pro-banner { top: 13%; padding-right: 1.4em; }
+  .prologue .pro-coach { top: auto; bottom: 34%; right: 50%; transform: translateX(50%); }
+}
+
+/* Kino-Phasen des Prologs: Kampfanzeige der Deckkämpfe (Zahlen, Leisten, Kombo) ruht, solange die Regie die Kamera führt */
+html.pro-cine .cbt { opacity: 0; transition: opacity 0.2s ease; }
+
+/* Kino-Phasen: die Touch-Knöpfe ruhen (sie lägen über Titelkarte und Untertiteln) */
+html.pro-cine .touch { visibility: hidden; }

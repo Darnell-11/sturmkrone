@@ -114,6 +114,8 @@ class AudioEngine {
   // Musik: mehrere Spuren gleichzeitig, damit Stücke weich ineinander überblenden
   private mood: Mood = 'menu';
   private players: MusicPlayer[] = [];
+  /** 4.7A: Prolog-Partitur (eigene Spur über dem Musik-Bus): an, Spannung 0 … 1, nächster Schritt (Audiozeit), Schrittzähler, eigener Bus */
+  private pro = { on: false, k: 0, next: 0, step: 0, bus: null as GainNode | null, rumble: 0 };
   private wantSong: SongId = 'menu';
   private songSince = 0;
   private layerTension = 0;
@@ -1410,7 +1412,13 @@ class AudioEngine {
   update(dt: number) {
     if (!this.running) return;
     this.updateAmbience(dt);
-    // Dateimusik hat Vorrang; die prozedurale Musik überblendet leise und ruht, solange jene läuft (und springt sofort wieder ein, wenn sie ausfällt)
+    // 4.7A: die Prolog-Partitur verdrängt Datei- und Stimmungsmusik, solange sie läuft
+    if (this.pro.on) {
+      if (this.director) this.director.enabled = false;
+      this.musicMix.gain.setTargetAtTime(0, this.ctx!.currentTime, 0.35);
+      this.scheduleProlog(dt);
+      return;
+    }
     const d = this.director;
     if (d && this.musicCtx) d.update(this.musicCtx, dt);
     const files = !!d && d.active;
@@ -1423,6 +1431,97 @@ class AudioEngine {
   }
 
   get currentMood() { return this.mood; }
+
+  // ---------- 4.7A: Prolog-Partitur und Herzschlag ----------
+
+  /**
+   * Prolog-Musik an (Spannung 0 … 1) oder aus (`null` bzw. < 0). Eine eigene, dunkle Partitur in d-Moll (Dm – B – Gm – A): Kriegstrommeln,
+   * Pauken und tiefe Celli tragen von Anfang an; mit der Spannung kommen Posaunen-Stöße, Streicher-Tremolo, Hörner, Chor, Trompeten-Ostinato,
+   * Trommelwirbel, Becken und fernes Donnergrollen dazu. Sie zieht synchron zum Geschehen an (die Prolog-Regie setzt die Spannung je Schritt).
+   */
+  prologue(k: number | null) {
+    const on = k !== null && k >= 0;
+    const p = this.pro;
+    if (on && !p.on) { p.step = 0; p.next = this.ctx ? this.ctx.currentTime + 0.12 : 0; p.rumble = 4; }
+    if (!on && p.on) {
+      if (p.bus && this.ctx) { const t = this.ctx.currentTime; p.bus.gain.cancelScheduledValues(t); p.bus.gain.setTargetAtTime(0, t, 0.6); const old = p.bus; setTimeout(() => { try { old.disconnect(); } catch { /* weg */ } }, 3000); }
+      p.bus = null;
+      if (this.director) this.director.enabled = true;
+    }
+    p.on = on;
+    p.k = on ? Math.max(0, Math.min(1, k!)) : 0;
+  }
+
+  /** Läuft gerade die Prolog-Partitur? (Prüfungen) */
+  get prologueOn(): boolean { return this.pro.on; }
+
+  /** Herzschlag (Schwarzblende nach dem Sturz über Bord): dumpfes „Lub-Dub“ */
+  heartbeat(vol = 1) {
+    if (!this.running) return;
+    const c = this.ctx!, t = c.currentTime + 0.02;
+    for (const [dt, g, f0] of [[0, 0.55, 62], [0.26, 0.38, 54]] as [number, number, number][]) {
+      const o = c.createOscillator(), v = c.createGain(), lp = c.createBiquadFilter();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(f0, t + dt); o.frequency.exponentialRampToValueAtTime(34, t + dt + 0.22);
+      lp.type = 'lowpass'; lp.frequency.value = 180;
+      v.gain.setValueAtTime(0.0001, t + dt); v.gain.exponentialRampToValueAtTime(g * vol * this.vols.sfx, t + dt + 0.012); v.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.3);
+      o.connect(lp); lp.connect(v); v.connect(this.sfxBus);
+      o.start(t + dt); o.stop(t + dt + 0.34);
+    }
+  }
+
+  /** Fernes Donnergrollen (Rauschen durch tiefen Filter, langes Ausrollen) */
+  private rumble(t: number, g: number, out: AudioNode) {
+    const c = this.ctx!;
+    const s = c.createBufferSource(), f = c.createBiquadFilter(), v = c.createGain();
+    s.buffer = this.noiseBuf; s.loop = true;
+    f.type = 'lowpass'; f.frequency.setValueAtTime(260, t); f.frequency.exponentialRampToValueAtTime(70, t + 3.2);
+    v.gain.setValueAtTime(0.0001, t); v.gain.exponentialRampToValueAtTime(g, t + 0.25); v.gain.exponentialRampToValueAtTime(0.0001, t + 3.6);
+    s.connect(f); f.connect(v); v.connect(out); this.toVerb(v, 0.5);
+    s.start(t, Math.random()); s.stop(t + 3.7);
+  }
+
+  /** Schritte der Partitur bis 0,25 s voraus planen (Achtel zu 0,16 s ≈ 94 Schläge je Minute, acht Achtel je Takt) */
+  private scheduleProlog(dt: number) {
+    const c = this.ctx!, p = this.pro;
+    if (!p.bus) {
+      p.bus = c.createGain();
+      p.bus.gain.setValueAtTime(0.0001, c.currentTime);
+      p.bus.gain.linearRampToValueAtTime(1.15, c.currentTime + 1.2);
+      p.bus.connect(this.musicBus);
+      p.next = Math.max(p.next, c.currentTime + 0.05);
+    }
+    const out = p.bus, k = p.k, st = 0.16, barLen = st * 8;
+    // d-Moll: Dm – B – Gm – A (Grundtöne tief, Akkorde in der Mittellage)
+    const ROOTS = [38, 34, 31, 33];
+    const CHORDS = [[62, 65, 69], [58, 62, 65], [55, 58, 62], [57, 61, 64]];
+    while (p.next < c.currentTime + 0.25) {
+      const t = p.next, s = p.step % 8, bar = Math.floor(p.step / 8), b4 = bar % 4;
+      const root = ROOTS[b4], chord = CHORDS[b4];
+      if (s === 0) {
+        this.timpani(root + 12, t, 0.22 + 0.2 * k, out);
+        this.cello(root, t, barLen * 0.95, 0.05 + 0.05 * k, out);
+        if (k > 0.4) this.lowBrass(root + 12, t, st * (k > 0.8 ? 3.5 : 2.5), 0.045 + 0.035 * k, out);
+        if (k > 0.6 && bar % 2 === 0) for (const n of chord) this.horn(n - 12, t, barLen * 1.9, 0.016 + 0.01 * k, out);
+        if (k > 0.8 && bar % 2 === 0) this.choir(chord, t, barLen * 2, 0.06 * k, out);
+      }
+      // Kriegstrommeln: Grundschlag auf 1 und 5, mit der Spannung dichter, am Ende jedes vierten Takts ein Wirbel
+      if (s === 0 || s === 4) this.taiko(t, 0.34 + 0.26 * k, out, s ? 1.05 : 0.8);
+      if (k > 0.55 && s === 6) this.taiko(t, 0.2 + 0.1 * k, out, 1.25);
+      if (k > 0.75 && (s === 2 || s === 7)) this.taiko(t, 0.14 + 0.08 * k, out, 1.4);
+      if (k > 0.85 && b4 === 3 && s >= 6) for (let r = 0; r < 4; r++) this.taiko(t + r * st * 0.25, 0.1 + r * 0.04, out, 1.3);
+      if (k > 0.5 && (s === 2 || s === 6)) this.frame(t, 0.05 + 0.04 * k, out);
+      // Streicher-Tremolo (kurze Celli auf den Akkordtönen) und Trompeten-Ostinato
+      if (k > 0.65) this.cello(chord[s % 3] - 24, t, st * 0.9, 0.012 + 0.012 * k, out, true);
+      if (k > 0.9 && (s === 0 || s === 3 || s === 6)) this.trumpet(chord[2] + (s === 6 ? 2 : 0), t, st * (s === 6 ? 1.8 : 0.9), 0.03, out);
+      if (k > 0.7 && b4 === 3 && s === 4) this.cymbal(t, st * 4, 0.05, out, true);
+      p.next += st;
+      p.step++;
+    }
+    // fernes Donnergrollen in unregelmäßigen Abständen
+    p.rumble -= dt;
+    if (p.rumble <= 0) { p.rumble = 5 + Math.random() * 6; this.rumble(c.currentTime + 0.05, 0.12 + 0.08 * k, out); }
+  }
 }
 
 export const audio = new AudioEngine();

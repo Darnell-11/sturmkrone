@@ -6,6 +6,7 @@ import { DEFAULT_SHIP_LOOK, type AmmoId, type ShipLook } from '../../data/ships'
 import { START_MARINE_STANDING, type FactionId } from '../../data/factions';
 import { emptyEconomy, type EconomyState } from '../../data/economy';
 import { neutralEvolution, starterEvolution, type ShipEvolution } from '../../data/shipEvolution';
+import { newInstance, type InstanceSave } from '../../story/tutorialInstance';
 import { emptyUnlocks, type ConquestRecord, type Unlocks } from '../../raid/occupation';
 import { emptyReputation, type FactionReputationState } from '../../data/reputation';
 import { emptyFleet, type FleetState } from '../../data/playerFleet';
@@ -14,7 +15,7 @@ import type { FactionWarState } from '../../world/factionWarEngine';
 import { emptyChart, type ChartState } from '../../world/mapDiscovery';
 import { emptyTalents, type TalentSave } from '../talentRules';
 
-export const SAVE_VERSION = 23;
+export const SAVE_VERSION = 24;
 
 export interface QuestProgress { id: string; step: number; count: number }
 
@@ -41,6 +42,11 @@ export interface ProgressState {
   reputation?: FactionReputationState;
   /** Handel, Fracht, Unterhalt, Fahndungsdruck und freigeschaltete Munition (seit Version 16, data/economy.ts); fehlt in älteren Spielständen */
   economy?: EconomyState;
+  /**
+   * 4.7A (seit Version 24): Instanz – Gewitter-Prolog, private Einführung „Ankerglück“ oder geteilte Welt (story/tutorialInstance.ts).
+   * Neue Spiele beginnen im Prolog; Stände der Version 23 und älter stehen in der geteilten Welt (`legacyInstance`).
+   */
+  instance?: InstanceSave;
 }
 
 export interface GearState {
@@ -218,7 +224,8 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
       look: defaultLook(faction),
     },
     world: { boat: null, time: 9, weather: 'klar', seaEvents: null, chart: emptyChart(), mega: {}, kaiser: {}, factionWar: null },
-    progress: defaultProgress(faction),
+    // 4.7A: neue Spiele beginnen im Gewitter-Prolog (danach die private Einführung „Ankerglück“)
+    progress: { ...defaultProgress(faction), instance: newInstance() },
     gear: { weapon: 0, armor: 0, potions: 3, shrine: 0, trinkets: [], trinket: null, items: {}, heads: [], head: null, bar: ['proviant', null, null, null], owned: [], worn: {} },
     // 4.6H: ein gemeinsamer Punktetopf – der Startpunkt (früher ein Faji-Punkt) liegt als Bonus-Talentpunkt bereit
     skills: { learned: {}, slots: [null, null, null], sp: 0, awakened: [] },

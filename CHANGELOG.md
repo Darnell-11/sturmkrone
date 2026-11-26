@@ -1,5 +1,73 @@
 # Was ist neu
 
+## 4.7.0 – Phase 4.7A: spielbarer Gewitter-Prolog auf Kapitän Schwarzbarts brennendem Flaggschiff gegen die sieben Marine-Admirale, private Einführung „Ankerglück“ (Stufe 1 → 3) und nahtloser Übergang in die geteilte Welt (26.11.2026, nur lokal)
+
+**Was du siehst**
+- **Neue Spiele beginnen mit einem Gewitter-Prolog:**
+  - **Titelkarte und Einleitung:** Nacht, Sturm, peitschender Regen, Blitze und hohe Wellen. Die Kamera fährt aus dem Unwetter an die **„Schwarze Krone“** heran, Kapitän Schwarzbarts riesiges schwarzes Flaggschiff (ein Leviathan) mit brennenden Kanonendecks, Rauch und Glut.
+  - **Spielbares Deck:** Du bist ein Schiffsjunge in Leinenhemd, Leinenhose und einfachen Schuhen, noch mit bloßen Fäusten. Um dich herum kämpfen Schwarzbarts Piraten gegen enternde Marinesoldaten. Lauf zum Achterdeck (der Pfeil zeigt die Treppe) und weich dabei Kanoneneinschlägen und brennenden Rahen aus – rote Warnringe zeigen, wo es gleich einschlägt.
+  - **Kapitän Schwarzbart** (1,65 × so groß, dunkler Kapitänsmantel, Vollbart, violette Aura) zerschmettert unterwegs mit dunklen Schockwellen drei Marine-Kriegsschiffe. Wer früh oben ist, sieht die übrigen Schockwellen kurz hintereinander.
+  - **Finale in drei Akten:**
+    - Die **sieben Admirale** formieren sich nacheinander mit ihren Flaggschiffen am Horizont, jeder mit Banner und einer Lichtsäule in seiner Farbe: Großadmiral Eisenhart von Sturmwall, Admiralin Isolde Frostklinge, Admiral Bastian Flammensold, Admiralin Maren Tiefwasser, Admiral Konrad Windbrecher, Admiralin Selene Mondsichel und Admiral Aurel Sonnenspeer.
+    - Sieben farbige Blitzstrahlen bündeln sich über dem Flaggschiff zum **„Vereinten Admirals-Urteil“**.
+    - Der Einschlag kommt mit **Doppel-Impact-Frame**. Schwarzbart fällt im Feuersturm, die Druckwelle schleudert dich über die Reling in die See – Schwarzblende mit Herzschlag.
+  - **Eigene Musik dazu:** Kriegstrommeln, Pauken, drohende Posaunen-, Horn- und Streicher-Akkorde in d-Moll, ein Chor beim Urteil, fernes Donnergrollen und Kanoneneinschläge. Die Musik zieht synchron zum Geschehen an und verstummt bis auf den Herzschlag.
+  - **„Prolog überspringen“** (dezent unten rechts, am Handy auf dem Deck links): *Nur den Prolog* (weiter am Strand) oder *Prolog und Einführung* (gleich in die offene Welt mit dem Endstand der Einführung).
+- **Erwachen in Ankerglück – deine private Einführung (Stufe 1 → 3):** Du liegst am Morgen nach dem Gewitter im Sand südwestlich des Piers, ohne Schiff, ohne Gold, nur in Leinen. Bis zum Ende der Einführung bist du allein in Ankerglück: keine fremden Schiffe, keine Welt-Ereignisse, kein Krieg der Mächte, kein Sold – und dein Schiff bleibt in der Bucht. Die Hauptquest-Kette:
+  1. **Fischer Hinnerk Treibholz** am Pier schickt dich ins Dorf.
+  2. **Hammerschmied Bodo Hammerschlag** schmiedet deine erste Waffe (deinen Kampfstil aus dem Editor).
+  3. **Waffenmeister Konrad Klingenstein** zeigt dir an den Übungspuppen die Grundlagen: eine Kette aus 5 Treffern, den Sturm-Schritt (Umschalt) und das Erfassen eines Ziels mit Tab oder Klick (die Puppen lassen sich jetzt anwählen). Dann hebt er dich auf **Stufe 2** und führt dich durch den ersten Talentpunkt (Taste N).
+  4. **Hafenmeisterin Ilse** übergibt dir die **ranzige Schaluppe** (sie liegt danach am Steg, die Gangway fährt aus). Du heuerst **Mira Windblatt** als erste Crew an (Ilse zahlt das Handgeld) und übernimmst das Steuer. Eine **Lehrtafel** erklärt die Schiffstafel (Segel, Rumpf, Breitseiten, Crew-Moral). Danach versenkst du ein **Kurogane-Spähboot** vor der Küste.
+  5. **Bürgermeister Theodor Gerstenkorn:** Ein **Kurogane-Stoßtrupp** greift den Hafen an. Der Bürgermeister überreicht dir einen **Faji-Kristall** (**Stufe 3**), du wählst deine erste Faji-Kunst aus allen acht und setzt sie gegen die Angreifer ein (Taste 1). Fallen sie, bevor du die Kunst benutzt hast, kommen zwei Nachzügler über den Steg.
+- **Die Welt öffnet sich:** Hat der Bürgermeister gedankt (150 Gold und ordentliche Seemannskleidung – dein Aussehen aus dem Editor), löst sich die private Instanz auf. Andere Kapitäne sind jetzt sichtbar: fünf schlendern durch Ankerglück (anwählbar, ansprechbar, mit Namen, Stufe und eigenem Gruß), zwei kreuzen mit ihren Schiffen vor dem Hafen. Die offene Welt läuft wieder ganz (Verkehr, Ereignisse, Krieg der Mächte), Kapitel 0 der Hauptgeschichte beginnt (jetzt „Kapitel 0: Leinen los“). Die Kampagne (4.7B) und Gruppen (4.8) bauen darauf auf.
+- **Bestehende Spielstände** (Version 23 und älter) starten direkt in der offenen Welt – kein Prolog, keine Einführung, nichts geht verloren.
+- **Kleinere Verbesserungen unterwegs:** Die Fußkamera rückt an Schiffsmasten vorbei heran, statt in ihnen zu stecken. Die Übungspuppen lassen sich anwählen.
+
+**Technik (für Entwickler)**
+- **Prolog-Regie, rein:** `story/prologueDirector.ts` (kein three.js, kein `Math.random`; Zustand JSON, vorab angelegte Ereignisse `PrologueOut`):
+  - Phasen `intro` → `deck` → `assemble` → `charge` → `impact` → `overboard` → `blackout` → `done`.
+  - Gefahren mit Warnzeit vor der Figur; Schockwellen nach Zeitplan, wer früh am Ziel ist, bekommt sie im Abstand `shockGap`.
+  - Zeitgrenze `autoAfter`. Eine HP-Untergrenze von 0,55 sorgt dafür, dass ein Treffer mit höchstens 40 % Schaden nie das K.o. bringt.
+  - `prologueBars` (Kinobalken), `prologueIntensity` (Musik), `skipPrologue`.
+  - Alle Zahlen, Admirale, Zeilen und Wetter stehen in `data/prologue.ts`.
+- **Prolog-Welt:** `world/prologueLive.ts` (`PrologueLive` über `PrologueHost`/`PrologueUi`):
+  - Bühne auf freier See (`SeaWorld.openSeaSpot`), Flaggschiff über `setShip(6, FLAGSHIP.look)`, Nacht und Sturm über `Weather.hold`.
+  - Flammen über `glowHub`, Marine-Enterer über `combat.enterDeck`, Piraten als `TroopSquad`.
+  - Bühnen-Schiffe über `NavalSystem.spawnStage` (`EnemyShip.stage`: sinken sichtbar, zählen nie als Abschuss), Schwarzbart als `Character` (1,65 ×).
+  - Alle Effekte aus `CataclysmFx`/`AnimeVfxForge` – kein neues Shader-Programm.
+  - Die Texturen der Bühnen-Schiffe laden unter der Schwarzblende einzeln hoch (`NavalSystem.pendingTextures/uploadTexture`); die Admirals-Schiffe werden vorgewärmt (`PrologueHost.warm`).
+  - Eigene Kamera der Kino-Phasen (`camera()`), auf dem Deck gilt die Fußkamera.
+- **Seewelt:**
+  - `SeaWorld.startPrologue/skipPrologue/abortPrologue/prologueBars/prologueGoal`. Eingabe-Stellvertreter `HELD_INPUT`, solange die Regie führt.
+  - Instanz-Sperren `setGates(WorldGates)`: `NavalSystem.quiet` (keine Begegnungen, Grenzpatrouillen, Kopfgeldjäger, Seeschlachten), Welt-Ereignisse und Krieg ruhen, `keepOnLeash` (900 m um Ankerglück).
+  - Einführungs-Helfer: `shoreSpot`, `landPlayer`, `stowShip` (verstaut bzw. am Steg festgemacht), `spawnScout`, `spawnRaid`/`raidLeft` (`TUTORIAL_RAID_TAG`), `tutorialTarget`, `tutorialProbe`.
+  - Masten zählen in `camSolid`; während des Prologs keine Entdeckungen und Regionswechsel (`updateWorldEvents`).
+- **Instanz-Regeln, rein:** `story/tutorialInstance.ts` (`InstanceSave` in `progress.instance`, Modi `prolog`/`tutorial`/`shared`, `enterTutorial`, `dissolve`, `skipIntro`, `worldGates`, `cleanInstance`, `TUTORIAL_END`).
+- **Ablauf der Einführung:** `core/tutorialFlow.ts` (`TutorialFlow` über `TutorialHost`, ohne three.js prüfbar):
+  - Beobachtet die Aufträge `t1`–`t5` (`data/quests.ts`, neue Schrittart `act` mit `TutorialAct`, Auftragsereignis `act`) und meldet Handlungen über Zustandsabfragen (Trefferkette, Dash-Phase, Zielwahl, ausgegebene Talentpunkte, Steuer, eingesetzte Faji-Techniken `PlayerFoot.tally`, lebende Angreifer).
+  - Story-Momente einmalig über `progress.flags` (`TUT_FLAGS`): Laden mitten in der Einführung setzt an derselben Stelle fort.
+  - In der privaten Instanz gibt es weder Erfahrung (Stufen nur aus der Geschichte) noch Sold.
+- **Geteilte Welt:** `world/sharedPresence.ts` (`PresenceFeed` mit `LocalPresenceFeed`/`localRoster` – in Phase 4.8 durch einen Server-Feed ersetzbar).
+  - Kapitäne in der Stadt als `Npc` mit `townDef`.
+  - Schiffe über die Warteschlange `NavalSystem.queuePeer`, auch zu Fuß über `pumpIdle` (`EnemyShip.peer`: fährt seine Runde `peerLoop`, friedlich, unverwundbar für den Spieler).
+  - Auf- und Abbau nach Abstand zu Ankerglück (`PRESENCE_IN`/`PRESENCE_OUT`), eine Figur je 0,25 s.
+- **Anzeige:** `ui/prologueOverlay.ts` + `ui/css/prologue.css`:
+  - Titelkarte, Untertitel (auf dem Deck oben, am Handy unter den Karten), Admirals-Banner, Schwarzblende, Überspringen mit Rückfrage, Lehrtafel.
+  - Die Wurzel lässt Zeiger durch (`pointer-events: none !important`).
+  - Klasse `pro-cine` blendet in Kino-Phasen Kampfanzeige und Touch-Knöpfe aus.
+  - Wahlkarten über `Menus.showChoice` (erste Crew, erste Faji-Kunst).
+- **Musik:** `AudioEngine.prologue(k | null)` (eigene Partitur-Spur über dem Musik-Bus, verdrängt Datei- und Stimmungsmusik, Schichten nach Spannung), `heartbeat()`.
+- **Spielstand 24:** `progress.instance`. Die Migration 23 → 24 setzt `legacyInstance()` (offene Welt); `migrateSave` liest das Feld vor `fillDefaults`, ein fehlendes Feld gilt als offene Welt. Neue Spiele: `newInstance()` (Prolog), 0 Gold, Sturmfaust, keine ausgerüstete Faji-Kunst.
+- **Messungen (Playwright, echte Grafikkarte):**
+  - Prolog live bei 1440 × 900 Ultra 60 Bilder/s in allen Phasen; Bildzeiten 5 – 10 ms.
+  - Der frühere Einbruch beim ersten Admiral (2 Bilder mit 360 + 258 ms Textur-Upload) ist behoben, das schlimmste Bild hat 30 ms.
+  - Handy 390 × 844 60 Bilder/s.
+  - Start im Build 6,4 – 6,6 s bis zum Menü, 170 Programme; keine Konsolenfehler.
+- **Prüfen:**
+  - `tests/prologueAndAnkergluckInstance.test.ts` (24 Tests): Prolog-Ablauf samt Sieben-Admirale-Schlag, frühe Ankunft, Zeitgrenze, Determinismus, Kinobalken/Musik, Überspringen, Daten, private Instanz, die ganze Auftragskette mit dem echten Auftragssystem, Nachzügler, Fortsetzen nach dem Laden, Mitspieler, Spielstand 24.
+  - Insgesamt 1 257 Tests grün.
+  - Browser: `qa_tmp/k47_start.js`, `k47_deck.js`, `k47_deck2.js`, `k47_finale.js`, `k47_tutorial.js`, `k47_mobile.js`, `k47_perf.js`, `k47_startup.js` (Build auf 4173).
+
 ## 4.6.11 – Phase 4.6J: Abschluss von Phase 4.6 – MMO-Ziel-Erfassung mit Ziel-Fenster, kein Eigenbeschuss, gestochen scharfe Auflösung auf jeder Grafikstufe, ruckelfreie Schiffs-Zerlegung, klarere Ultimates und ein Meer ohne Kachelmuster (26.11.2026, nur lokal)
 
 **Was du siehst**

@@ -11,7 +11,9 @@ export type QuestEvent =
   | { type: 'board' }
   | { type: 'treasure'; island: string }
   | { type: 'rescue' }
-  | { type: 'slay'; target: string };
+  | { type: 'slay'; target: string }
+  /** 4.7A: Handlung der Einführung (data/prologue.ts `TutorialAct`) */
+  | { type: 'act'; act: string };
 
 export interface QuestHooks {
   completed(q: QuestDef): void;
@@ -95,6 +97,7 @@ export class QuestSystem {
         case 'sink': if (e.type === 'sink') hit = ++prog.count >= s.count; break;
         case 'board': if (e.type === 'board') hit = ++prog.count >= s.count; break;
         case 'rescue': if (e.type === 'rescue') hit = ++prog.count >= s.count; break;
+        case 'act': if (e.type === 'act' && e.act === s.act) hit = ++prog.count >= (s.count ?? 1); break;
       }
       if ((s.type === 'kill' || s.type === 'sink' || s.type === 'board' || s.type === 'rescue') && !hit && this.matches(s, e)) changed = true;
       if (!hit) continue;
@@ -119,6 +122,7 @@ export class QuestSystem {
 
 /** Fortschrittstext eines Schritts, z. B. „Versenke 2 feindliche Schiffe (1/2)“ */
 export function stepText(step: QuestStep, count: number): string {
-  if ('count' in step && step.count > 1) return `${step.text} (${count}/${step.count})`;
+  const need = 'count' in step ? step.count ?? 1 : 1;
+  if (need > 1) return `${step.text} (${count}/${need})`;
   return step.text;
 }

@@ -21,6 +21,7 @@ import { migrateWorldTo21 } from './worldMigration';
 import { cleanTalents, mergeFajiPoints, milestonesEarned, techSpentOf } from '../talentRules';
 import { TALENT } from '../../data/talentTrees';
 import { endgameEarned } from '../../data/gear';
+import { cleanInstance, legacyInstance } from '../../story/tutorialInstance';
 
 type Migration = (data: Record<string, any>) => Record<string, any>;
 
@@ -184,6 +185,12 @@ export const MIGRATIONS: Record<number, Migration> = {
     if (loot.length || Array.isArray(gear.loot)) gear.loot = loot;
     return { ...d, version: 23, player: p, gear };
   },
+  23: (d) => {
+    // 4.7A: Instanz-Zustand. Bestehende Spielstände starten direkt in der offenen MMO-Welt – kein Prolog, keine Einführung, nichts geht verloren
+    const progress = isRecord(d.progress) ? { ...d.progress } : {};
+    progress.instance = legacyInstance();
+    return { ...d, version: 24, progress };
+  },
 };
 
 /** Siege je Kaiser aus `world.kaiser` */
@@ -246,7 +253,10 @@ export function migrateSave(raw: unknown, gameVersion: string): MigrationResult 
   const rawTal = isRecord(data.talents) ? data.talents : null;
   const rawMerged = rawTal?.fajiMerged === true;
   const rawBonus = rawTal && typeof rawTal.bonus === 'number' ? rawTal.bonus : 0;
+  // 4.7A: die Instanz steht nur im Stand selbst – die Standardwerte eines neuen Spiels tragen den Prolog (ein Stand ohne Feld gilt als offene Welt)
+  const rawInstance = isRecord(data.progress) ? data.progress.instance : undefined;
   const filled = fillDefaults(data, defaults) as SaveData;
+  filled.progress.instance = cleanInstance(rawInstance);
   if (filled.player.faction !== 'pirat' && filled.player.faction !== 'marine') filled.player.faction = 'pirat';
   filled.player.look = sanitizeLook({ ...filled.player.look, gender }, filled.player.faction);
   // Flotte: nur besessene Klassen außer dem Flaggschiff, Werte begrenzt, Ausbaustufen aus `ship.evo`, nie mehr aktive Schiffe als Plätze

@@ -138,6 +138,8 @@ export class TargetLockLive {
       }
     }
     if (foot) for (const n of h.npcs()) if (Math.hypot(n.x - _me.x, n.z - _me.z) < landR) this.fillNpc(pool.next(), n);
+    // 4.7A: Übungspuppen (Waffenmeister der Einführung) lassen sich anwählen wie Bewohner
+    if (foot && c) for (const d of c.trainingDummies) if (Math.hypot(d.x - _me.x, d.z - _me.z) < landR) this.fillDummy(pool.next(), d);
     const nav = h.naval();
     if (nav) for (const e of nav.enemies) {
       const s = e.ship;
@@ -198,6 +200,15 @@ export class TargetLockLive {
     c.alive = a.alive; c.x = a.x; c.y = a.y; c.z = a.z; c.hp = a.hp; c.maxHp = a.maxHp; c.posture = -1; c.broken = false;
   }
 
+  private fillDummy(c: TargetCandidate | null, d: { readonly id: string; readonly x: number; readonly z: number; readonly group: { position: { y: number } } }) {
+    if (!c) return;
+    c.id = d.id; c.kind = 'npc'; c.relation = 'neutral'; c.domain = 'land'; c.npc = true;
+    c.name = 'Übungspuppe'; c.level = 0; c.power = ''; c.nation = 'Ankerglück'; c.crest = '#C9A15A';
+    c.category = 'Übungsplatz des Waffenmeisters'; c.prio = 0.2; c.radius = 0.5; c.height = 2;
+    c.ref = d;
+    c.alive = true; c.x = d.x; c.z = d.z; c.y = d.group.position.y; c.hp = 0; c.maxHp = 0; c.posture = -1; c.broken = false;
+  }
+
   private fillNpc(c: TargetCandidate | null, n: Npc) {
     if (!c) return;
     const p = this.host.powerAt(n.x, n.z);
@@ -245,6 +256,7 @@ export class TargetLockLive {
     else if (r instanceof Ally) this.refreshOfficer(c, r);
     else if (r instanceof Npc) this.refreshNpc(c, r);
     else if (c.kind === 'ship' && r) { const nav = this.host.naval(); if (nav && nav.enemies.includes(r as EnemyShip)) this.refreshShip(c, r as EnemyShip, nav); else c.alive = false; }
+    else if (c.kind === 'npc' && r && this.host.combat()?.trainingDummies.includes(r as never)) c.alive = true;
     else c.alive = false;
   }
 

@@ -475,7 +475,7 @@ describe('4.6G.2 Editor: keine Welt-Toasts', () => {
 
 describe('4.6G.2 Spielstände (Version 23)', () => {
   it('Version bleibt 23; Stände ohne Geschlecht laden als männlich, mit langer Grundfrisur weiter weiblich', () => {
-    expect(SAVE_VERSION).toBe(23);
+    expect(SAVE_VERSION).toBeGreaterThanOrEqual(23);
     const old = (hair: string) => {
       const s = createSave('Alt', 'pirat', '4.6.6', 1) as unknown as Record<string, any>;
       s.player.look = { ...s.player.look, hair, beard: 'vollbart' };
@@ -484,7 +484,7 @@ describe('4.6G.2 Spielstände (Version 23)', () => {
     };
     const m = migrateSave(old('stachel'), '4.6.7');
     expect(m.ok).toBe(true);
-    if (m.ok) { expect(m.data.version).toBe(23); expect(m.data.player.look.gender).toBe('male'); expect(m.data.player.look.beard).toBe('vollbart'); }
+    if (m.ok) { expect(m.data.version).toBe(SAVE_VERSION); expect(m.data.player.look.gender).toBe('male'); expect(m.data.player.look.beard).toBe('vollbart'); }
     const f = migrateSave(old('lang'), '4.6.7');
     expect(f.ok).toBe(true);
     if (f.ok) { expect(f.data.player.look.gender).toBe('female'); expect(f.data.player.look.beard).toBe('keiner'); }

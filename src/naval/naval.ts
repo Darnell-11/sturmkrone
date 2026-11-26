@@ -109,6 +109,10 @@ export interface EnemyShip {
   /** Rückeroberungs-Flotte (Besatzung): Kennung der Insel, die sie zurückholen will */
   reconId?: string;
   home?: { x: number; z: number };
+  /** 4.7A: Bühnen-Schiff einer Inszenierung (Prolog): sinkt sichtbar, zählt aber nie als Abschuss (keine Beute, keine Erfahrung, kein Auftrag) */
+  stage?: boolean;
+  /** 4.7A: Schiff eines anderen Kapitäns (geteilte Welt; bis zum Netz in 4.8 ein lokaler Stellvertreter): fährt seine Runde, kämpft nie, ist unverwundbar für den Spieler */
+  peer?: { pts: number[]; leg: number };
   /** Kennung in der Raid-Sitzung (RaidGuardDef.guardId) */
   guardId?: string;
   /** Teilnehmer einer Seeschlacht an der Grenze (KI gegen KI): Nummer der Schlacht und Seite (0, 1; 2 = Marine-Patrouille, die eingreift) */
@@ -255,7 +259,7 @@ export class NavalSystem {
   shipRelation(e: EnemyShip): TargetRelation {
     const calm = this.peaceful(e);
     return relationOf({
-      own: !!(e.companion || e.fleetId || e.captured), ally: !!e.helper, provoked: !!e.provoked,
+      own: !!(e.companion || e.fleetId || e.captured), ally: !!(e.helper || e.peer), provoked: !!e.provoked,
       hostile: !!(e.raid || e.hunter) || (!calm && !(e.power && this.allyPowers.has(e.power))), power: e.power, civilian: calm,
     }, this.relCtx);
   }
@@ -264,6 +268,11 @@ export class NavalSystem {
   playerMayHarm(e: EnemyShip): boolean { return canHarm('friendly', this.shipRelation(e)); }
   /** Raid-Instanz aktiv: keine natürlichen Begegnungen, keine Grenzpatrouillen, Wachschiffe bleiben bestehen */
   raidMode = false;
+  /**
+   * 4.7A: private Instanz (Gewitter-Prolog, Einführung „Ankerglück“): keine natürlichen Begegnungen, keine Grenzpatrouillen, keine
+   * Kopfgeldjäger und keine Seeschlachten – nur, was die Einführung selbst aufstellt (Spähboot, Bühnen-Schiffe)
+   */
+  quiet = false;
   /** Anzahl Begleitschiffe im Raid (eigene plus Söldner); null = nach Rang wie sonst */
   raidEscorts: number | null = null;
   /** Laufende Seeschlachten an den Grenzlinien (höchstens eine zugleich) */
@@ -550,6 +559,22 @@ export class NavalSystem {
   }
 
   /**
+   * 4.7A: Bühnen-Schiff einer Inszenierung (Prolog: Marine-Kriegsschiffe und die sieben Admirals-Flaggschiffe; Einführung: Spähboot).
+   * Feste Klasse und Macht, sofort gebaut (nur beim Aufbau einer Szene rufen, nie mitten im Spiel), steht still, bis man ihm Fahrt gibt.
+   */
+  spawnStage(x: number, z: number, heading: number, tier: number, power: FactionId, name: string, level = 1, role: NavalRole = 'patrouille', scripted = true): EnemyShip {
+    const t = Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier));
+    const foe = power === 'marine' ? 'marine' : 'pirat';
+    const ship = new Ship(this.scene, t, factionShipLook(power), foe, 0, false, aiEvolution(role === 'legende' ? 'flaggschiff' : role, dangerOfLevel(level)));
+    ship.x = x; ship.z = z; ship.heading = heading;
+    ship.prev = { x, z, heading };
+    ship.speed = 0;
+    const e: EnemyShip = { ship, role, level, state: 'patrol', wander: { x, z }, aiT: 0, name, power, stage: scripted || undefined };
+    this.enemies.push(e);
+    return e;
+  }
+
+  /**
    * Rückeroberungs-Flotte der ursprünglichen Macht (Besatzung einer Festungsinsel): `count` Kriegsschiffe laufen in Linie vor die Insel,
    * halten dort Station und greifen alles in 520 m an. Die Schiffe bleiben bestehen, bis sie versenkt sind (`reconAlive`). Stärke je Schiff:
    * Rumpf etwa ×1,5 und Mannschaft ×1,3 über der Klasse (Wachschiffe der Belagerung: ×2,1).
@@ -773,6 +798,57 @@ export class NavalSystem {
     try { for (;;) { const r = it.next(); if (r.done) return r.value; } } finally { this.syncBuild--; }
   }
 
+  /**
+   * 4.7A: Schiff eines anderen Kapitäns (geteilte Welt) über die Warteschlange bauen – Bild für Bild wie jedes neue Schiff (kein Ruckeln).
+   * `pts` = Wegpunkte seiner Runde (x, z, x, z, …).
+   */
+  queuePeer(x: number, z: number, heading: number, tier: number, look: ShipLook, name: string, pts: number[], done?: (e: EnemyShip) => void) {
+    const self = this;
+    function* steps(): Generator<SpawnYield, EnemyShip | null> {
+      const ship = yield* Ship.buildSteps(self.scene, Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier)), look, 'pirat', 0, false, aiEvolution('patrouille', 1));
+      yield* self.uploadSteps(ship);
+      ship.x = x; ship.z = z; ship.heading = heading;
+      ship.prev = { x, z, heading };
+      const e: EnemyShip = { ship, role: 'patrouille', level: 1, state: 'patrol', wander: { x, z }, aiT: 0, name, stage: true, peer: { pts, leg: 0 } };
+      self.enemies.push(e);
+      return e;
+    }
+    this.spawnJobs.push({ it: steps(), done, hunter: false });
+  }
+
+  /**
+   * 4.7A: noch nicht hochgeladene Texturen eines Schiffs (gemalte Segel, Rumpf, Flaggen) – eine Inszenierung lädt sie einzeln unter einer
+   * Schwarzblende hoch, statt im ersten Bild, in dem das Schiff erscheint (bis 4096², 35 – 360 ms je Stück)
+   */
+  pendingTextures(ship: Ship, out: Texture[]): Texture[] {
+    const tu = this.texUpload;
+    if (!tu) return out;
+    ship.model.group.traverse((o) => {
+      const m = (o as Mesh).material;
+      if (!m) return;
+      for (const mat of Array.isArray(m) ? m : [m]) for (const k in mat) { const v = (mat as unknown as Record<string, unknown>)[k] as Texture | null; if (v && v.isTexture && v.image && !tu.ready(v) && !out.includes(v)) out.push(v); }
+    });
+    return out;
+  }
+  /** Eine Textur jetzt hochladen (true = hochgeladen) */
+  uploadTexture(t: Texture): boolean { return !!this.texUpload?.upload(t); }
+
+  /** Warteschlange auch ohne Fahrt abarbeiten (Mitspieler-Schiffe der geteilten Welt, während man zu Fuß ist) */
+  pumpIdle() { if (this.spawnLive || this.spawnJobs.length) this.pumpSpawns(); }
+
+  /** Warteschlange sofort am Stück abarbeiten (nur bei einem Übergang mit Banner, z. B. wenn sich die private Instanz auflöst) */
+  flushSpawns() {
+    this.syncBuild++;
+    try {
+      for (let guard = 0; guard < 32 && (this.spawnLive || this.spawnJobs.length); guard++) {
+        const job = this.spawnLive ?? this.spawnJobs.shift() ?? null;
+        this.spawnLive = job;
+        if (!job) break;
+        for (;;) { const r = job.it.next(); if (r.done) { this.spawnLive = null; if (r.value) job.done?.(r.value); break; } }
+      }
+    } finally { this.syncBuild--; }
+  }
+
   /** Je Logikschritt: den laufenden Bau ein Stück weiterführen (höchstens `SPAWN_BUILD_MS`), sonst den nächsten Auftrag beginnen */
   private pumpSpawns() {
     if (!this.spawnLive) { this.spawnLive = this.spawnJobs.shift() ?? null; if (!this.spawnLive) return; }
@@ -817,6 +893,7 @@ export class NavalSystem {
 
   /** Marine-Schiffe greifen nur an, wenn das Ansehen unter 0 liegt oder man auf sie geschossen hat */
   private peaceful(e: EnemyShip): boolean {
+    if (e.peer) return true;
     // Welt-Ereignisse und Konvois (Opt-In): friedlich, bis der Spieler zuerst schießt oder sie ihn angreifen (Korsaren nie)
     if (e.ev) return !e.provoked && e.ev.role !== 'korsar' && e.state !== 'engage';
     if (e.provoked || e.companion || e.raid || e.hunter || !e.power) return false;
@@ -989,7 +1066,7 @@ export class NavalSystem {
     this.clock += dt;
     const p = this.player;
     if (!p) return;
-    if (active && this.battlesOn && !this.raidMode && !this.battles.length) {
+    if (active && this.battlesOn && !this.raidMode && !this.quiet && !this.battles.length) {
       this.battleT -= dt;
       if (this.battleT <= 0) {
         const site = battleSite(p.x, p.z);
@@ -1524,13 +1601,13 @@ export class NavalSystem {
       // nur Schiffe in der Nähe zählen (vorbeigesegelte nicht), Händler halb
       const present = this.enemies.reduce((n, e) => n + (!e.companion && !e.battle && !e.hunter && !e.ev?.owner && e.ship.alive && !e.legendId && !e.station && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) < 650 ? (e.role === 'haendler' ? 0.5 : 1) : 0), 0);
       const cap = zone <= 2 ? 2 : zone <= 6 ? 3 : 4;
-      if (!this.raidMode && this.spawnT <= 0 && present < cap) {
+      if (!this.raidMode && !this.quiet && this.spawnT <= 0 && present < cap) {
         this.spawnT = (zone <= 2 ? 30 : 25) + Math.random() * 30;
         if (this.pendingSpawns < 2) this.queueEnemy(p.x, p.z);
       }
       this.pumpSpawns();
       this.ensureFleet();
-      if (!this.raidMode) { this.ensureBorderPatrols(dt); this.updateHunters(dt); }
+      if (!this.raidMode && !this.quiet) { this.ensureBorderPatrols(dt); this.updateHunters(dt); }
     }
     this.updateBattles(dt, !!p && active);
     for (const e of this.enemies) {
@@ -2075,6 +2152,20 @@ export class NavalSystem {
   }
 
   /** Einem Ereignis-Schiff seine Route entlang (Frachter, Galeone, Weltboss): Wegpunkt für Wegpunkt mit Ankunftsradius, Sackgassen überspringen */
+  /** 4.7A: Schiff eines anderen Kapitäns: fährt gemächlich seine Runde um die Insel (Wegpunkte im Kreis), kämpft nie */
+  private aiPeer(e: EnemyShip, nav: AiNavState, dt: number): number {
+    const s = e.ship, P = e.peer!, self = this.steerSelf, cmd = this.steerCmd;
+    this.fillSteerSelf(e, self);
+    const n = P.pts.length >> 1;
+    if (n < 2) { s.aiSail = 0.2; return 0; }
+    const ar = Math.max(50, arriveRadius(self));
+    if (nav.replan || Math.hypot(P.pts[P.leg * 2] - s.x, P.pts[P.leg * 2 + 1] - s.z) < ar) { P.leg = (P.leg + 1) % n; resetGoal(nav); }
+    s.speedCap = 7;
+    e.state = 'patrol';
+    this.steering.cruise(nav, self, P.pts[P.leg * 2], P.pts[P.leg * 2 + 1], 0.55, ar * 0.5, null, dt, cmd);
+    return this.applyCmd(e, cmd);
+  }
+
   private followRoute(e: EnemyShip, nav: AiNavState, dt: number, sail: number): number {
     const s = e.ship, L = e.ev!, self = this.steerSelf, cmd = this.steerCmd;
     this.fillSteerSelf(e, self);
@@ -2184,7 +2275,7 @@ export class NavalSystem {
     e.aiT -= dt;
     const nav = e.nav ?? (e.nav = createAiNav(s.entityId));
     // Schiffe einer Großschlacht (Armadas der FactionWarEngine) kämpfen wie in einer Seeschlacht, auch wenn sie sonst als Ereignis-Schiffe fahren
-    const turn = e.fleetId && p?.alive ? this.aiFleet(e, nav, dt) : e.ev && !e.battle ? this.aiEvent(e, nav, dt) : this.aiGeneral(e, nav, dt);
+    const turn = e.peer ? this.aiPeer(e, nav, dt) : e.fleetId && p?.alive ? this.aiFleet(e, nav, dt) : e.ev && !e.battle ? this.aiEvent(e, nav, dt) : this.aiGeneral(e, nav, dt);
     // Inseln, Stege, Schiffe und Weltrand weicht die Lenkung selbst aus (Fühler); `pushShip` bleibt die letzte Sicherung gegen Grundberührung.
     // Meeresströmungen tragen KI-Schiffe genauso wie den Spieler, Flauten bremsen sie (Phase 4.3C)
     s.steer(dt, turn, this.env, this.flowK(s));
@@ -2199,7 +2290,7 @@ export class NavalSystem {
     this.friendly.clear();
     if (this.player) this.friendly.add(this.player);
     // 4.6J: auch eigene Flotte, eroberte Schiffe und Schiffe verbündeter Mächte (kein Eigenbeschuss in Massenschlachten)
-    for (const e of this.enemies) if (e.companion || e.helper || e.fleetId || e.captured || (e.power && !e.provoked && this.allyPowers.has(e.power))) this.friendly.add(e.ship);
+    for (const e of this.enemies) if (e.companion || e.helper || e.fleetId || e.captured || e.peer || (e.power && !e.provoked && this.allyPowers.has(e.power))) this.friendly.add(e.ship);
     for (const e of this.enemies) {
       const s = e.ship;
       if (s.alive) st.addObstacle(s.entityId, s.x, s.z, Math.sin(s.course) * s.speed, Math.cos(s.course) * s.speed, Math.max(s.cls.W * 0.5, s.cls.L * 0.32));
@@ -2345,7 +2436,7 @@ export class NavalSystem {
     this.spray.emit(60, s.x, 1, s.z, { speed: 6, up: 10, life: 2, color: new Color(0.95, 0.98, 1), spread: s.cls.W });
     this.sparks.emit(50, s.x, s.model.deckY + 1, s.z, { speed: 9, up: 9, life: 1.2, color: new Color(3.5, 1.4, 0.35), gravity: 6, spread: s.cls.W });
     if (e?.fleetId) this.hooks.fleetLost?.(e.fleetId);
-    if (e && !e.companion) {
+    if (e && !e.companion && !e.stage) {
       // Seeschlacht: versenkt der Spieler beide Seiten, gibt es maximalen Doppel-Loot (×2,5); was die KI versenkt, zählt nicht als Abschuss des Spielers
       const byPlayer = e.lastPlayerHit !== undefined && this.clock - e.lastPlayerHit < 10;
       let lootK = 1;

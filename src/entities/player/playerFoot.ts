@@ -246,6 +246,9 @@ export class PlayerFoot implements PlayerTarget {
     }
   }
 
+  /** 4.7A: Zähler für die Einführung (Kampfkünste insgesamt, davon Techniken einer Faji-Kunst) */
+  readonly tally = { skills: 0, artSkills: 0 };
+
   get active() { return this.onFoot && this.fighter.phase !== 'down'; }
   /** Kann gerade eine Faji-Fähigkeit gewirkt werden? */
   get canCast() { const p = this.fighter.phase; return this.active && this.fighter.grounded && (p === 'ground' || p === 'block'); }
@@ -476,6 +479,8 @@ export class PlayerFoot implements PlayerTarget {
           break;
         }
         case 'skill': {
+          this.tally.skills++;
+          if (st.faji) this.tally.artSkills++;
           if (!this.engine.moveAt(f.moveIdx)?.cutin && ov) ov.number(this.tmpV.set(f.x, f.y + 2.5, f.z), e.s, 'info');
           break;
         }

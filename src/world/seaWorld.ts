@@ -36,6 +36,10 @@ import type { StyleId } from '../data/animations';
 import type { CharacterLook, NpcRole } from '../data/characterParts';
 import { CAMERA_PLANES, type QualityConfig } from '../data/qualityTiers';
 import { HOME_SPAWN, WORLD_SCALE } from '../data/world';
+import { FLAGSHIP, PROLOGUE_TIME, TUTORIAL } from '../data/prologue';
+import { PrologueLive, type PrologueHost, type PrologueUi } from './prologueLive';
+import type { WorldGates } from '../story/tutorialInstance';
+import { SharedPresence, type PresenceHost } from './sharedPresence';
 import { chartAround, seedStartCharts, seeRange, type ChartZone } from './mapDiscovery';
 import { MEGA_BY_ID, clearDistrict, commanderRoam, commanderShouldAppear, districtWorld, districtsToWake, isMegaId, megaFromSave, megaLevel, megaToSave, newMegaRuntime, type MegaId, type MegaRuntime, type MegaSaveState } from '../data/megaIslands';
 import { FAST_TRAVEL, findBerth } from './fastTravel';
@@ -155,6 +159,14 @@ import type { WebGLRenderer } from 'three';
 import { TOWN_NPCS, VILLAGE_NPCS, type TownNpcDef } from '../data/quests';
 
 // Feste Partikelfarben (die Partikel kopieren die Farbe – so entsteht pro Bild kein neues Objekt)
+/** 4.7A: Eingabe, solange der Prolog Regie führt (die Figur steht, die Kamera gehört der Regie) */
+const HELD_ZERO = { x: 0, y: 0 };
+const HELD_INPUT = {
+  pressed: () => false, down: () => false, move: () => HELD_ZERO, lookDelta: () => HELD_ZERO, lookAxis: () => HELD_ZERO,
+  zoomDelta: () => 0, click: () => null, consumeAttack: () => false,
+} as unknown as Input;
+/** 4.7A: Kennung des Kurogane-Stoßtrupps der Einführung */
+export const TUTORIAL_RAID_TAG = 'einfuehrung:kurogane';
 const FOAM_COL = new Color(0.95, 0.98, 1);
 const SPLASH_COL = new Color(0.78, 0.84, 0.9);
 const WHEEL_L = new Vector3();
@@ -1558,7 +1570,7 @@ export class SeaWorld {
   private updateWar(dt: number) {
     const war = this.war;
     if (!war) return;
-    const rest = !!this.raid || this.title.active;
+    const rest = !!this.raid || this.title.active || !this.gates.traffic;
     if (!rest) {
       war.update(dt);
       const news = war.drain();
@@ -2966,6 +2978,285 @@ export class SeaWorld {
     this.teleport(HOME_SPAWN.x, HOME_SPAWN.z, HOME_SPAWN.heading);
   }
 
+  // ---------- 4.7A: Gewitter-Prolog, private Instanz „Ankerglück“, geteilte Welt ----------
+
+  /** Gewitter-Prolog (nur zwischen „Neues Spiel“ und dem Erwachen am Strand) */
+  private prologue: PrologueLive | null = null;
+  /** der Prolog führt Regie: Figur und Kamera folgen ihm (nur auf dem Deck frei) */
+  private prologueHold = false;
+  /** Was die Instanz gerade erlaubt (Game setzt es aus `progress.instance`): offener Verkehr, Mitspieler, Leine um Ankerglück */
+  private gates: WorldGates = { traffic: true, presence: true, leash: false, stage: false };
+  /** andere Kapitäne der geteilten Welt (bis zum Netz in Phase 4.8 lokale Stellvertreter) */
+  private presence: SharedPresence | null = null;
+  private leashMsgT = 0;
+  /** die Schaluppe ist in der Einführung noch nicht übergeben: unsichtbar am Heimatplatz geparkt */
+  private stowed = false;
+
+  /** Prolog starten (Neues Spiel): Bühne auf hoher See, das brennende Flaggschiff, Nacht und Gewitter */
+  startPrologue(look: CharacterLook, ui: PrologueUi, seed = 0x51a7) {
+    this.prologue?.skip();
+    this.prologueHold = true;
+    this.prologue = new PrologueLive(this.prologueHost(ui), seed);
+    this.prologue.begin(look);
+  }
+
+  /** Prolog überspringen (Schaltfläche „Prolog überspringen“) */
+  skipPrologue() { this.prologue?.skip(); }
+  /** Prolog ohne Meldung abbauen (zurück ins Hauptmenü) */
+  abortPrologue() { this.prologue?.abort(); this.prologue = null; this.prologueHold = false; }
+  get prologueRunning(): boolean { return !!this.prologue?.active; }
+  /** Kinobalken des Prologs (0 … 1) */
+  get prologueBars(): number { return this.prologue?.active ? this.prologue.bars : 0; }
+  get prologuePhase(): string { return this.prologue?.active ? this.prologue.phase : ''; }
+  /** Regie-Zustand (Prüfungen) */
+  get prologueState() { return this.prologue?.active ? this.prologue.state : null; }
+  /** Ziel des Laufs auf dem Deck (Fuß der nächsten Treppe zum Achterdeck) für Kompass und Auftragspfeil; null außerhalb der Deck-Phase */
+  get prologueGoal(): { x: number; z: number } | null {
+    const dg = this.deckGround, f = this.foot;
+    if (!this.prologue?.playable || !dg || !f) return null;
+    const q = this.ship.model.quarter;
+    if (!q) return { x: this.ship.x, z: this.ship.z };
+    let bx = this.ship.x, bz = this.ship.z, bd = Infinity;
+    for (const sx of q.stairX) {
+      // Fuß der Treppe auf dem Hauptdeck (große Schiffe: die Treppe läuft unten nach außen auseinander, `flare`)
+      const p = dg.world(sx + Math.sign(sx) * (q.flare ?? 0), q.z1 + q.stairLen + 0.8);
+      const d = Math.hypot(p.x - f.x, p.z - f.z);
+      if (d < bd) { bd = d; bx = p.x; bz = p.z; }
+    }
+    return { x: bx, z: bz };
+  }
+
+  private prologueHost(ui: PrologueUi): PrologueHost {
+    const w = this;
+    return {
+      scene: w.scene,
+      ship: () => w.ship,
+      naval: () => w.naval,
+      combat: () => w.combat,
+      crew: () => w.crew,
+      fx: () => w.cataclysmFx,
+      vfx: () => w.vfx,
+      weather: () => w.env.weather,
+      assets: () => w.assets,
+      foot: () => w.foot,
+      deck: () => w.deckGround,
+      stage: (x, z, heading, look) => {
+        w.teleport(x, z, heading);
+        w.setShip(FLAGSHIP.tier, FLAGSHIP.look, 'kugel', 1, w.playerFaction, 1, 1, 0);
+        w.env.setState({ time: PROLOGUE_TIME, weather: 'sturm' });
+        w.player?.setLook(look);
+        w.goDeck();
+      },
+      openSea: () => w.openSeaSpot(),
+      setControl: (on) => { w.prologueHold = !on; },
+      placeFoot: (x, z, yaw) => { if (w.foot) { w.foot.place(x, z, yaw, w.groundProxy); w.footYaw = yaw; } },
+      driveFoot: (x, y, z, yaw) => w.foot?.drive(x, y, z, yaw, false),
+      groundY: (x, z, y) => w.groundProxy.height(x, z, y),
+      ground: () => w.groundProxy,
+      waterY: (x, z) => w.env.heightAt(x, z),
+      impact: (n) => w.animeRig.impact(n),
+      shake: (k) => w.hitShake.shake(k),
+      warm: (o) => w.warmHook?.(o),
+      line: (who, text, title) => ui.line(who, text, title),
+      banner: (t, sub) => ui.banner(t, sub),
+      blackout: (k) => ui.blackout(k),
+      playerId: () => w.playerEntityId,
+      // erst nach dem laufenden Bild melden: das Spiel baut dann Strand, Schiff und Einführung auf (nie mitten im Weltschritt)
+      finished: (skipped) => { w.prologueHold = false; queueMicrotask(() => ui.finished(skipped)); },
+    };
+  }
+
+  /** Freie See für die Prolog-Bühne: keine Insel im Aufbau-Umkreis (es entsteht nichts nebenbei), immer derselbe Ort */
+  private openSeaSpot(): { x: number; z: number } {
+    for (let r = 2600; r < 9000; r += 450) {
+      for (let i = 0; i < 16; i++) {
+        const a = 0.4 + (i / 16) * Math.PI * 2;
+        const x = Math.sin(a) * r, z = Math.cos(a) * r;
+        if (!this.ground.islandAt(x, z, 1250)) return { x, z };
+      }
+    }
+    return { x: HOME_SPAWN.x, z: HOME_SPAWN.z - 2400 };
+  }
+
+  /** Instanz-Regeln anwenden (nach dem Laden und bei jedem Übergang Prolog → Einführung → geteilte Welt) */
+  setGates(g: WorldGates) {
+    this.gates = { ...g };
+    if (this.naval) this.naval.quiet = !g.traffic;
+    if (!g.presence) { this.presence?.dispose(); this.presence = null; }
+  }
+  get worldGates(): Readonly<WorldGates> { return this.gates; }
+  /** Mitspieler in Sicht (Prüfungen) */
+  get presenceCounts() { return this.presence?.counts() ?? { town: 0, sea: 0, pending: 0 }; }
+
+  /** Einführung: das Schiff bleibt in der Bucht von Ankerglück (sanft an den Rand der Leine zurück) */
+  private keepOnLeash(dt: number) {
+    this.leashMsgT -= dt;
+    const home = this.ground.islands[0], s = this.ship;
+    const dx = s.x - home.x, dz = s.z - home.z, d = Math.hypot(dx, dz);
+    if (d <= TUTORIAL.leash) return;
+    const k = TUTORIAL.leash / d;
+    s.x = home.x + dx * k; s.z = home.z + dz * k;
+    this.x = s.x; this.z = s.z;
+    s.speed *= 0.6;
+    if (this.leashMsgT <= 0) { this.leashMsgT = 6; this.onMessage('Noch nicht hinaus auf die offene See – Ankerglück braucht dich. Erst die Einführung, dann die Bernsteinsee.'); }
+  }
+
+  private presenceHost(): PresenceHost {
+    const w = this;
+    return {
+      home: () => w.homeIsland,
+      playerDist: () => { const h = w.ground.islands[0], p = w.playerPos; return Math.hypot(p.x - h.x, p.z - h.z) - h.r; },
+      addTownCaptain: (c) => {
+        if (!w.assets) return null;
+        const home = w.ground.islands[0];
+        let hsh = 2166136261;
+        for (let i = 0; i < c.id.length; i++) hsh = Math.imul(hsh ^ c.id.charCodeAt(i), 16777619);
+        const n = new Npc(w.assets, home, w.ground, 'pirat', seeded(hsh >>> 0), w.outlineNpcs);
+        n.townDef = { id: c.id, name: c.name, role: 'buerger', title: c.title, x: n.x - home.x, z: n.z - home.z, yaw: n.yaw, greet: c.greet };
+        w.scene.add(n.char.holder);
+        w.npcs.push(n);
+        w.warmHook?.(n.char.holder);
+        return n;
+      },
+      removeTownCaptain: (h) => {
+        const n = h as Npc;
+        const i = w.npcs.indexOf(n);
+        if (i >= 0) w.npcs.splice(i, 1);
+        if (w.talkNpc === n) w.talkNpc = null;
+        n.dispose(); n.char.holder.removeFromParent(); n.char.dispose();
+      },
+      queueShip: (c, x, z, heading, look, pts, done) => w.naval?.queuePeer(x, z, heading, c.tier, look, c.name, pts, (e) => done(e)),
+      shipLive: (sh) => !!w.naval?.enemies.includes(sh as EnemyShip) && (sh as EnemyShip).ship.alive,
+      removeShip: (sh) => { const e = sh as EnemyShip; if (w.naval?.enemies.includes(e)) w.naval.removeEventShip(e); },
+    };
+  }
+
+  /** Ankerglück: Mitte und Radius (die Plätze der Bewohner gelten relativ dazu) */
+  get homeIsland(): { x: number; z: number; r: number } { const h = this.ground.islands[0]; return { x: h.x, z: h.z, r: h.r }; }
+
+  /** Begehbarer Punkt auf Ankerglück nahe (lx, lz) relativ zur Inselmitte (Welt), z. B. für das Erwachen am Strand */
+  shoreSpot(lx: number, lz: number): { x: number; z: number } {
+    const home = this.ground.islands[0];
+    const cx = home.x + lx, cz = home.z + lz;
+    for (let ring = 0; ring < 14; ring++) {
+      const n = ring === 0 ? 1 : 8;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2, r = ring * 2.5;
+        const x = cx + Math.sin(a) * r, z = cz + Math.cos(a) * r;
+        const h = this.ground.height(x, z);
+        if (!Number.isFinite(h) || h < 0.35) continue;
+        const c = this.groundProxy.constrain(x, z, 0.45, h);
+        if (Math.hypot(c.x - x, c.z - z) > 0.6) continue;
+        return { x, z };
+      }
+    }
+    return { x: home.x, z: home.z };
+  }
+
+  /** Spielfigur an Land setzen (Erwachen am Strand von Ankerglück) */
+  landPlayer(x: number, z: number, yaw: number) {
+    if (!this.foot || !this.player) return;
+    if (this.mode !== 'foot') this.goDeck();
+    this.deckGround = null;
+    this.ownDeck = false;
+    this.foot.place(x, z, yaw, this.groundProxy);
+    this.footYaw = yaw;
+    this.footWantInit = false;
+    this.arriveAshore();
+  }
+
+  /**
+   * Einführung: die Schaluppe verstauen (unsichtbar am Heimatplatz – man hat noch kein Schiff) oder übergeben (sie liegt am Steg von
+   * Ankerglück fest, die Gangway fährt aus). Liefert, ob ein Liegeplatz gefunden wurde.
+   */
+  stowShip(on: boolean): boolean {
+    const sh = this.ship;
+    if (on) {
+      this.stowed = true;
+      this.docking.reset();
+      sh.moored = null;
+      sh.x = HOME_SPAWN.x; sh.z = HOME_SPAWN.z; sh.heading = HOME_SPAWN.heading; sh.speed = 0; sh.throttle = 0;
+      sh.prev = { x: sh.x, z: sh.z, heading: sh.heading };
+      sh.model.group.visible = false;
+      return true;
+    }
+    this.stowed = false;
+    sh.model.group.visible = true;
+    const slot = this.slots.find((q) => q.spec.def.id === 'ankerglueck');
+    const nav = this.naval;
+    if (!slot || !nav) return false;
+    const def = slot.spec.def;
+    const spot = findBerth({ x: def.x, z: def.z, r: slot.bp.r }, slot.bp.piers, sh.cls.L * 0.7 + 30, (x, z) => nav.freeWater(x, z, sh.cls.W, 12), this.berthSpot);
+    if (spot) { sh.x = spot.x; sh.z = spot.z; sh.heading = spot.heading; }
+    sh.speed = 0; sh.throttle = 0;
+    sh.prev = { x: sh.x, z: sh.z, heading: sh.heading };
+    const b = this.docking.findBerth();
+    if (!b) return false;
+    this.docking.moor(b);
+    // gleich am Liegeplatz (kein langes Gleiten): Taue und Gangway folgen in den nächsten Sekunden
+    sh.x = b.x; sh.z = b.z; sh.heading = b.heading;
+    sh.prev = { x: b.x, z: b.z, heading: b.heading };
+    return true;
+  }
+  get shipStowed(): boolean { return this.stowed; }
+
+  /** Einführung: Kurogane-Spähboot vor der Küste (greift an; zählt als Abschuss für den Auftrag) */
+  spawnScout(level: number): EnemyShip | null {
+    const nav = this.naval;
+    if (!nav) return null;
+    const home = this.ground.islands[0];
+    const base = Math.atan2(this.ship.x - home.x, this.ship.z - home.z);
+    for (let k = 0; k < 14; k++) {
+      const a = base + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.3;
+      const r = home.r + TUTORIAL.scoutDist;
+      const x = home.x + Math.sin(a) * r, z = home.z + Math.cos(a) * r;
+      if (!nav.freeWater(x, z, 8, 30)) continue;
+      const e = nav.spawnStage(x, z, a + Math.PI, 0, 'kurogane', 'Kurogane-Spähboot', level, 'jaeger', false);
+      e.provoked = true;
+      e.state = 'engage';
+      return e;
+    }
+    return null;
+  }
+
+  /** Einführung: Kurogane-Stoßtrupp landet im Hafen (Gegner mit `TUTORIAL_RAID_TAG`) */
+  spawnRaid(kinds: EnemyKind[], level: number, lx: number, lz: number): number {
+    const c = this.combat;
+    if (!c) return 0;
+    const at = this.shoreSpot(lx, lz);
+    c.spawnWave(kinds, level, 'pirat', TUTORIAL_RAID_TAG, at, 4.5, { power: 'kurogane' });
+    return kinds.length;
+  }
+  /** lebende Angreifer des Stoßtrupps */
+  raidLeft(): number { return this.combat?.tagLeft(TUTORIAL_RAID_TAG) ?? 0; }
+
+  /** Auftragspfeil der Einführung: Übungspuppen, Schiff, Angreifer */
+  tutorialTarget(act: string): { x: number; z: number } | null {
+    const home = this.ground.islands[0];
+    switch (act) {
+      case 'combo': case 'dash': case 'target': return { x: home.x, z: home.z - home.r * 0.55 };
+      case 'hire': return this.npcPos('ilse');
+      case 'helm': return this.stowed ? null : { x: this.ship.x, z: this.ship.z };
+      case 'art': case 'raid': {
+        const e = this.combat?.enemies.find((q) => q.alive && q.tag === TUTORIAL_RAID_TAG);
+        return e ? { x: e.x, z: e.z } : null;
+      }
+      default: return null;
+    }
+  }
+
+  /** Zähler für die Handlungen der Einführung (Schlagkette, Sturm-Schritt, Ziel erfasst, eingesetzte Faji-Künste, Steuer) */
+  tutorialProbe(): { hits: number; dashing: boolean; targeted: boolean; artSkills: number; atHelm: boolean } {
+    const f = this.foot;
+    return {
+      hits: f?.fighter.hits ?? 0,
+      dashing: !!f && f.fighter.phase === 'dash',
+      targeted: !!this._targets?.state.id,
+      artSkills: f?.tally.artSkills ?? 0,
+      atHelm: this.mode === 'sail' && !this.stowed,
+    };
+  }
+
   private setMode(m: SeaMode) {
     this.mode = m;
     if (m === 'sail') this.attachToHelm();
@@ -2982,9 +3273,15 @@ export class SeaWorld {
     this.ship.unsinkable = this.mode !== 'sail';
     if (this.cinematic > 0) this.cinematic -= dt;
     else {
-      this.updateTargets(input);
-      if (this.mode === 'sail') this.updateSail(dt, input);
-      else this.updateFoot(dt, input);
+      // 4.7A: führt der Prolog Regie, stehen Figur und Kamera still (auf dem Deck läuft man frei); fliegt die Figur über Bord, setzt er sie selbst
+      const held = !!this.prologue && this.prologueHold;
+      if (!held) this.updateTargets(input);
+      if (this.mode === 'sail') this.updateSail(dt, held ? HELD_INPUT : input);
+      else if (!this.prologue?.scriptedFoot) this.updateFoot(dt, held ? HELD_INPUT : input);
+    }
+    if (this.prologue) {
+      this.prologue.update(dt);
+      if (!this.prologue.active) { this.prologue = null; this.prologueHold = false; }
     }
 
     // Anlegen, Gangway, Enterhaken und Brücken vorrücken; danach feststellen, wo die Spielfigur steht (Deck, Brücke, Land)
@@ -3029,9 +3326,17 @@ export class SeaWorld {
     // Flotte: liegt das Flaggschiff am Steg oder vor der Küste (Bordleiter) oder ist der Spieler von Bord, ankern die Begleitschiffe auf Abstand
     if (this.naval) this.naval.fleetAnchored = this.mode !== 'sail' || !!this.ship.moored || !!this.docking.ladderId;
     this.naval?.update(dt, this.mode === 'sail' && this.cinematic <= 0);
-    // Das lebendige Meer ruht im Raid und im Titelbild (dort gehört das Wetter der Regie); sonst ersetzen die Wetterzellen das Globalwetter
+    // 4.7A: private Einführung – das Schiff bleibt in der Bucht; geteilte Welt – andere Kapitäne in Ankerglück und auf See
+    if (this.gates.leash && this.mode === 'sail') this.keepOnLeash(dt);
+    if (this.gates.presence && !this.raid && !this.title.active) {
+      if (!this.presence && this.assets && this.naval) this.presence = new SharedPresence(this.presenceHost());
+      this.presence?.update(dt);
+      // Mitspieler-Schiffe entstehen auch, während man zu Fuß in Ankerglück ist (sonst baut die Warteschlange nur auf See)
+      if (this.mode !== 'sail') this.naval?.pumpIdle();
+    }
+    // Das lebendige Meer ruht im Raid, im Titelbild (dort gehört das Wetter der Regie) und in der privaten Instanz; sonst ersetzen die Wetterzellen das Globalwetter
     if (this.seaEvents) {
-      const rest = !!this.raid || this.title.active;
+      const rest = !!this.raid || this.title.active || !this.gates.traffic;
       this.seaEvents.paused = rest;
       this.env.weather.cellsDrive = !rest;
       if (rest) this.env.weather.cell = null;
@@ -3320,7 +3625,7 @@ export class SeaWorld {
 
   private updateContext(input: Input) {
     this.contextLabel = null;
-    if (!this.player || !this.foot) return;
+    if (!this.player || !this.foot || this.prologue) return;
     const ship = this.ship;
     if (this.mode === 'sail') {
       // Enterhaken, Heranziehen und Gleiten an den Liegeplatz laufen von selbst
@@ -3493,6 +3798,8 @@ export class SeaWorld {
 
   /** Inseln in der Nähe und geräumte Lager melden (für Aufträge) */
   private updateWorldEvents() {
+    // 4.7A: die Prolog-Bühne auf hoher See entdeckt nichts und betritt keine Region (Seekarte, Musik und Wetter gehören dem Spielstand)
+    if (this.prologue) return;
     // Ankunft an der echten Küstenlinie messen (wie das Hafenmenü), nicht an einem Kreis – sonst ließ sich bei
     // langgestreckten Inseln der Hafen öffnen, bevor die Ankunft zählte
     const isl = this.ground.islandAt(this.x, this.z, 45);
@@ -4536,6 +4843,12 @@ export class SeaWorld {
       if (y < deck - 0.05 && y > s.model.group.position.y - 4) return true;
       const q = s.model.quarter;
       if (q && lz >= q.z0 - 0.3 && lz <= q.z1 && y < deck + q.top && y > deck) return true;
+      // Masten (4.7A): die Fußkamera rückt an ihnen vorbei heran, statt in ihnen zu stecken (Lauf über das Deck des Flaggschiffs)
+      if (y > deck && s.model.masts.length) {
+        const dx = x - s.x, dz = z - s.z, lx = dx * Math.cos(s.heading) - dz * Math.sin(s.heading);
+        const mr = Math.max(0.35, s.cls.W * 0.045) + 0.3;
+        if (Math.abs(lx) < mr) for (const m of s.model.masts) if (Math.abs(lz - m.z) < mr) return true;
+      }
     }
     return false;
   }
@@ -4706,7 +5019,7 @@ export class SeaWorld {
     {
       const hulls = this.hullList;
       hulls.length = 0;
-      const add = (sh: Ship) => { if (sh.alive) hulls.push({ x: sh.hullFx.x, z: sh.hullFx.z, h: sh.hullFx.h, L: sh.cls.L, W: sh.cls.W, speed: sh.hullFx.speed, vis: 1 - clamp01((Math.hypot(sh.hullFx.x - x, sh.hullFx.z - z) - 220) / 140) }); };
+      const add = (sh: Ship) => { if (sh.alive && sh.model.group.visible) hulls.push({ x: sh.hullFx.x, z: sh.hullFx.z, h: sh.hullFx.h, L: sh.cls.L, W: sh.cls.W, speed: sh.hullFx.speed, vis: 1 - clamp01((Math.hypot(sh.hullFx.x - x, sh.hullFx.z - z) - 220) / 140) }); };
       add(s);
       if (hulls.length && this.wake.length > 1) hulls[0].trail = true;
       const near = (this.naval?.enemies ?? []).map((e) => e.ship).filter((sh) => sh !== s && sh.alive && Math.hypot(sh.hullFx.x - x, sh.hullFx.z - z) < 360);
@@ -4900,6 +5213,8 @@ export class SeaWorld {
     this.cine.update(frameDt, this.animeRig.framesLeft);
     if (this.cine.forced) { this.cine.forced = false; this.cineImpactFx(this.cine.def); }
     this.applyCinematic(cam, inMenu, frameDt);
+    // 4.7A: der Gewitter-Prolog führt in seinen Kino-Phasen selbst die Kamera (auf dem Deck gilt die Fußkamera)
+    const proCam = !inMenu && !!this.prologue && this.prologue.camera(cam, frameDt);
     {
       const hs = this.hitstop;
       const gameK = this.cine.active ? this.cine.timeScale : hs.freeze > 0 ? 0 : hs.t > 0 ? hs.scale : 1;
@@ -4914,7 +5229,7 @@ export class SeaWorld {
     // Sichtfeld (4.4): auf See wächst es mit der Fahrt, in Windstraßen (Strömung bis +35 %) und beim Rammstoß um bis zu 8°; zu Fuß zieht der
     // Fokus-Puls es kurz zusammen. Im Titelbild führt die Regie.
     this.focusPulse.update(frameDt);
-    if (!inMenu) {
+    if (!inMenu && !proCam) {
       const s0 = this.ship;
       const seaMode = !this.yardOn && this.mode !== 'foot';
       const vmax = Math.max(1, s0.cls.spd * SEA_SPEED);
@@ -4927,7 +5242,7 @@ export class SeaWorld {
     }
     // Weiche Perspektivwechsel (Anlegen, Bordleiter, Entern, Landgang, Schnellreise, Werft): Wechsel der Kameraart oder Sprung des Fokus
     {
-      const key = inMenu ? 'menu' : this.yardOn ? 'yard' : this.cinematic > 0 ? 'cine' : this.mode === 'foot' ? 'foot' : 'sail';
+      const key = inMenu ? 'menu' : proCam ? 'cine' : this.yardOn ? 'yard' : this.cinematic > 0 ? 'cine' : this.mode === 'foot' ? 'foot' : 'sail';
       const jump = this.camBlend.focusJump(this.focus);
       if (key !== this.camKey || jump > 4) {
         if (this.camKey !== '' && !(key === 'menu' && this.camKey === 'menu')) this.camBlend.start(this.focus, jump > 60 ? 1.1 : this.camKey === 'menu' ? 1.0 : 0.7);
@@ -4956,7 +5271,7 @@ export class SeaWorld {
     cam.updateProjectionMatrix();
     // Nahbereichs-Ausblenden (4.5A): rückt die Kamera an einer engen Wand näher als 0,70 m an den Kopf, blendet die eigene Figur weich aus
     if (this.player) {
-      const near = this.mode === 'foot' && !inMenu && !this.yardOn && this.cinematic <= 0 && this.cine.camK < 0.02 ? cam.position.distanceTo(this.camAnchor) : 99;
+      const near = this.mode === 'foot' && !inMenu && !proCam && !this.yardOn && this.cinematic <= 0 && this.cine.camK < 0.02 ? cam.position.distanceTo(this.camAnchor) : 99;
       this.player.setNearFade(this.nearFade.update(near, frameDt));
     }
     // Treffer-Erschütterung (gerichteter Stoß, Schwingung, Zittern) – läuft in Echtzeit, auch im Standbild; im Menü aus

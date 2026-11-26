@@ -593,6 +593,22 @@ export class Menus {
     );
   }
 
+  /** 4.7A: Wahl ohne Ausweg (Einführung: erste Crew, erste Faji-Kunst) */
+  showChoice(v: { kicker: string; title: string; text: string; choices: { id: string; label: string; sub: string; tag?: string; color: string; button: string }[] }, onPick: (id: string) => void) {
+    const rows = v.choices.map((c) => `<div class="slot crew encounter-choice" style="--c:${c.color}">
+        <div class="slot-head"><b>${esc(c.label)}</b><span>${esc(c.tag ?? '')}</span></div>
+        <div class="meta">${esc(c.sub)}</div>
+        <button class="mini brass" data-a="pick" data-id="${esc(c.id)}">${esc(c.button)}</button></div>`).join('');
+    this.open(
+      `<p class="kicker">${esc(v.kicker)}</p><h2 class="fell">${esc(v.title)}</h2>
+      <p class="dlg-line">${esc(v.text)}</p>
+      ${rows}`,
+      { pick: (id) => onPick(id ?? '') },
+      null,
+      { wide: true },
+    );
+  }
+
   /** Erzähltafel für Kapitelanfänge und das Ende */
   showStory(title: string, text: string, done: () => void) {
     this.open(

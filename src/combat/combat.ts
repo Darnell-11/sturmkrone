@@ -186,6 +186,8 @@ export class CombatSystem implements EnemyWorld {
   mods = { critMult: 1.6, lifesteal: 0, burnOnHit: false, fearWeak: 0, playerLevel: 1, frostParry: false, skillMult: 1 };
   private dots = new Map<Enemy, { burn: number; poison: number; dps: number; tick: number }>();
   private dummies: Dummy[] = [];
+  /** 4.7A: Übungspuppen als anwählbare Ziele (Einführung: „Erfasse ein Ziel mit Tab oder Mausklick“) */
+  get trainingDummies(): readonly { readonly id: string; readonly x: number; readonly z: number; readonly group: Group }[] { return this.dummies; }
   private projectiles: Projectile[] = [];
   /** Rauch für Einschläge und Geschossspuren (setzt die Welt) */
   smoke: SmokeSystem | null = null;
