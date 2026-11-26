@@ -49,7 +49,15 @@ export interface TalentEngineParams {
   formFloor: number;
   /** Apex-Form des Ultimates erreicht */
   apex: boolean;
+  /** 4.7B Klassenbaum: Faktor auf die Ausdauer-Regeneration */
+  regenK: number;
 }
+
+/**
+ * 4.7B: Stärkungen des Klassenbaums als Talent-Wirkungen (Krit, Krit-Schaden, Angriffskraft, Tempo, Abklingzeit); sie laufen durch dieselben
+ * Obergrenzen. Leben, Rüstung und Heilkraft rechnet das Spiel selbst (`Game.classDefense`), die Regeneration geht als `regenK` an die Engine.
+ */
+export interface ClassCombatFx { key: string; sums: FxSums; regen: number }
 
 /** Ein fertiger Talent-Satz für die Engine */
 export interface TalentCombat {
@@ -69,7 +77,7 @@ export interface TalentCombat {
 /** Grundwerte ohne Talente */
 export const NO_TALENT_PARAMS: TalentEngineParams = {
   comboK: 1, heavyK: 1, magnetAdd: 0, willK: 1, multiKill: 0, autoChase: false, chaseAdd: 0, chaseRangeAdd: 0, dashCostK: 1, airExec: 0,
-  stance: 0, stormBurst: null, awakenAdd: 0, aftershock: 0, aftershockHit: { ...H0 }, auraSightK: 1, auraIronK: 1, auraKingK: 1, formFloor: 1, apex: false,
+  stance: 0, stormBurst: null, awakenAdd: 0, aftershock: 0, aftershockHit: { ...H0 }, auraSightK: 1, auraIronK: 1, auraKingK: 1, formFloor: 1, apex: false, regenK: 1,
 };
 
 /** Zustand, den das Element einer Faji-Kunst einem Finisher gibt (Dauer in s) */
@@ -217,7 +225,7 @@ function ctxOf(sums: FxSums, element: Ctx['element']): Ctx {
 }
 
 /** Engine-Werte eines Stils */
-function paramsOf(t: TalentSave, style: ActionStyleId, x: Ctx, st: ActionStyleDef): TalentEngineParams {
+function paramsOf(t: TalentSave, style: ActionStyleId, x: Ctx, st: ActionStyleDef, regen = 0): TalentEngineParams {
   const c = x.c;
   const burst = c('stormBurst');
   return {
@@ -232,6 +240,7 @@ function paramsOf(t: TalentSave, style: ActionStyleId, x: Ctx, st: ActionStyleDe
     auraSightK: 1 + c('auraSight'), auraIronK: 1 + c('auraIron'), auraKingK: 1 + c('auraKing'),
     formFloor: isCombatTree(style) && st.faji ? formFloor(t, style) : 1,
     apex: c('apex') > 0,
+    regenK: 1 + regen,
   };
 }
 
@@ -246,7 +255,7 @@ function reachOfMove(m: ActionMove): number {
  * Den Talent-Satz für die Engine bauen: alle Stile und Angriffe umgebaut, Engine-Werte je Stil, Himmelssturz. `fajiArt` = ausgerüstete
  * Faji-Kunst der Figur (Element der Finisher in den Waffenstilen); Faji-Künste nutzen ihr eigenes Element.
  */
-export function buildTalentCombat(t: TalentSave, fajiArt: FajiArtId | null): TalentCombat {
+export function buildTalentCombat(t: TalentSave, fajiArt: FajiArtId | null, cls: ClassCombatFx | null = null): TalentCombat {
   const moves = ALL_MOVES.slice() as ActionMove[];
   const styles = {} as Record<ActionStyleId, ActionStyleDef>;
   const params = {} as Record<ActionStyleId, TalentEngineParams>;
@@ -254,6 +263,7 @@ export function buildTalentCombat(t: TalentSave, fajiArt: FajiArtId | null): Tal
   for (const id of ACTION_STYLE_IDS) {
     const base = ACTION_STYLES[id];
     const sums = fxSums(t, treesOf(id));
+    if (cls) for (const [k, v] of Object.entries(cls.sums) as [FxKey, number][]) sums[k] = (sums[k] ?? 0) + v;
     const ownArt = (base.faji ? id : fajiArt) as FajiArtId | null;
     const x = ctxOf(sums, ownArt && ELEMENT_STATUS[ownArt] ? ELEMENT_STATUS[ownArt] : null);
     const c = x.c;
@@ -261,7 +271,7 @@ export function buildTalentCombat(t: TalentSave, fajiArt: FajiArtId | null): Tal
     // Mutationen der Techniken aus dem eigenen Kampfbaum
     const skills = base.skills.map((sk) => {
       const extra = { dmg: 0, cd: 0 };
-      const copy: ActionSkill = { ...sk, hits: sk.hits.map((h) => ({ ...h, projectile: h.projectile ? { ...h.projectile } : null })) };
+      const copy: ActionSkill = { ...sk, buff: sk.buff ? { ...sk.buff } : null, hits: sk.hits.map((h) => ({ ...h, projectile: h.projectile ? { ...h.projectile } : null })) };
       if (isCombatTree(id)) {
         for (const n of TREE_BY_ID[id].nodes) {
           const r = t.nodes[n.id] ?? 0;
@@ -274,7 +284,7 @@ export function buildTalentCombat(t: TalentSave, fajiArt: FajiArtId | null): Tal
       m.slot = sk.slot; m.short = sk.short; m.desc = sk.desc; m.icon = sk.icon;
       m.cd = sk.cd * (1 - softCap(c('cd') + extra.cd, TALENT_CAP.cd));
       return set(m) as ActionSkill;
-    }) as [ActionSkill, ActionSkill, ActionSkill, ActionSkill];
+    });
     const st: ActionStyleDef = {
       ...base,
       light: base.light.map((m, i) => set(moveOf(m, x, i === nL - 1 ? 'lightLast' : 'light'))),
@@ -295,7 +305,7 @@ export function buildTalentCombat(t: TalentSave, fajiArt: FajiArtId | null): Tal
       awakenWave: { ...base.awakenWave, dmg: base.awakenWave.dmg * talentDamageK([c('dmg'), c('cosmicDmg')]), range: base.awakenWave.range * (1 + c('reach')) },
     };
     styles[id] = st;
-    params[id] = paramsOf(t, id, x, st);
+    params[id] = paramsOf(t, id, x, st, cls?.regen ?? 0);
   }
   // Himmelssturz: nur Kosmos-Wirkungen
   const learned = (t.nodes['kosmos.himmelssturz'] ?? 0) > 0 && t.ascended;
@@ -303,7 +313,7 @@ export function buildTalentCombat(t: TalentSave, fajiArt: FajiArtId | null): Tal
   const cosmic = learned ? set(moveOf(SKYFALL_ULTIMATE, cx, 'ultimate')) : null;
   const reach = new Float32Array(moves.length);
   moves.forEach((m, i) => { reach[i] = reachOfMove(m); });
-  return { key: talentKey(t, fajiArt), styles, moves, reach, params, cosmic, useCosmic: !!cosmic && t.ult === 'kosmos' };
+  return { key: `${talentKey(t, fajiArt)}|${cls?.key ?? '-'}`, styles, moves, reach, params, cosmic, useCosmic: !!cosmic && t.ult === 'kosmos' };
 }
 
 /** Kurzbeschreibung der Mutation einer Technik (Anzeige): welche Bausteine wirken */

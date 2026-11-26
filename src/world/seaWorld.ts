@@ -86,6 +86,7 @@ import { texDetail } from '../render/texDetail';
 import type { IslandStyle } from '../data/regions';
 import { CombatFx } from '../combat/fx';
 import { ActionFx } from '../combat/actionFx';
+import { FORM_NODES } from '../data/classes';
 import { ACTION_STYLES, actionStyleOf, type ActionStyleId } from '../data/actionStyles';
 import { WILL } from '../data/fajiArts';
 import type { FighterView } from '../ui/fighterHud';
@@ -173,6 +174,8 @@ const WHEEL_L = new Vector3();
 const WHEEL_R = new Vector3();
 const EMBER_COL = new Color(3.2, 1.3, 0.3);
 const CRYSTAL_COL = new Color(1.4, 0.8, 2.4);
+/** 4.7B: Lebenslicht der Heilung (Priester, Lebensstrom-Fokus) */
+const HEAL_COL = new Color(0.6, 3, 1.2);
 const DIG_COL = new Color(0.9, 0.8, 0.6);
 
 /** Gegnerlager je Inselstufe */
@@ -1396,6 +1399,17 @@ export class SeaWorld {
       onAwakenWave: (f, c, a) => this.cataclysm.awakenWave(f, c, a),
       onChain: (ax, ay, az, bx, by, bz, c) => this.cataclysm.chain(ax, ay, az, bx, by, bz, c),
       onKingWave: (x, y, z, r) => this.cataclysm.kingWave(x, y, z, r),
+      // 4.7B: Heilung (Priester, Lebensstrom) – Funken, Verbündete im Radius; Geistes-Faji – Darstellung und Klang
+      onHeal: (k, r, f) => {
+        this.sparks.emit(20, f.x, f.y + 1, f.z, { speed: 1.4, up: 3, life: 0.9, color: HEAL_COL, gravity: -1, spread: 0.6 });
+        if (r > 0) this.healAllies(f.x, f.z, r, k);
+        audio.play('moonChime', 0.6, { x: f.x, y: f.y, z: f.z });
+      },
+      onGeist: (kind, b, _c, f) => {
+        this.cataclysm.geistFx(kind, f, kind >= 3 ? b : 0);
+        audio.play(kind === 4 ? 'quakeRumble' : kind === 3 ? 'thunderClap' : kind === 2 ? 'moonChime' : 'cutin', kind === 4 ? 1 : 0.7, { x: f.x, y: f.y, z: f.z });
+        if (kind === 4) this.shake = Math.max(this.shake, 1);
+      },
       // 4.6C: Sturm-Verfolgung, Klingen-Clash, Schwungfenster der Kampfkünste, Momentum-Spur
       onChase: (ox, oy, oz, f) => {
         this.cataclysm.chain(ox, oy + 1.1, oz, f.x, f.y + 1.1, f.z, ACTION_STYLES[f.style].accent);
@@ -1773,12 +1787,15 @@ export class SeaWorld {
     const v = this.fighterTmp;
     const def = ACTION_STYLES[st.style];
     v.style = st.style;
-    for (let i = 0; i < 4; i++) {
+    // 4.7B: zehn Formen – frei über den Klassenbaum (Form k an Knoten 1, 6, 12 … 54)
+    for (let i = 0; i < 10; i++) {
       v.cd[i] = f.engine.skillFrac(i + 1);
-      const need = def.faji ? def.skills[i]?.formMin ?? 1 : 1;
-      v.locked[i] = def.faji && need > st.form;
-      v.lockForm[i] = need;
+      v.locked[i] = i + 1 > st.formsOpen;
+      v.lockForm[i] = FORM_NODES[i];
     }
+    for (let i = 0; i < 4; i++) { v.geistRank[i] = st.geistRank[i]; v.geist[i] = f.engine.geistFrac(i); }
+    v.classLabel = this.classLabel;
+    v.role = this.classRole;
     v.hits = st.hits;
     v.label = st.lastLabel;
     v.air = !st.grounded;
@@ -1795,9 +1812,13 @@ export class SeaWorld {
     v.formFrac = def.faji ? this.formFracOf(st.style) : 0;
     return v;
   }
-  private readonly fighterTmp: FighterView & { cd: number[]; locked: boolean[]; lockForm: number[] } = {
-    style: 'saebel', cd: [0, 0, 0, 0], hits: 0, label: '', air: false, finisher: false, perfect: false, counter: false,
-    will: 0, awake: 0, awakeS: 0, ult: false, ultName: '', aura: 0, form: 0, formFrac: 0, locked: [false, false, false, false], lockForm: [1, 1, 1, 1],
+  /** 4.7B: Klasse und Rolle für das Fighter-HUD (setzt das Spiel) */
+  classLabel = '';
+  classRole = '';
+  private readonly fighterTmp: FighterView & { cd: number[]; locked: boolean[]; lockForm: number[]; geistRank: number[]; geist: number[] } = {
+    style: 'saebel', cd: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], hits: 0, label: '', air: false, finisher: false, perfect: false, counter: false,
+    will: 0, awake: 0, awakeS: 0, ult: false, ultName: '', aura: 0, form: 0, formFrac: 0, locked: new Array<boolean>(10).fill(false), lockForm: new Array<number>(10).fill(1),
+    geistRank: [0, 0, 0, 0], geist: [0, 0, 0, 0], classLabel: '', role: '',
   };
   /** Fortschritt zur nächsten Faji-Form (setzt das Spiel aus der Meisterschaft) */
   formFracOf: (style: ActionStyleId) => number = () => 0;
@@ -2555,6 +2576,13 @@ export class SeaWorld {
   /** Ausdauer zu Fuß (null auf See): Anteil 0 … 1 und ob „zu wenig“ gerade blinkt */
   get playerStamina() { return this.foot && this.foot.onFoot ? { frac: this.foot.stamina / this.foot.maxStamina, flash: this.foot.staminaFlash > 0 } : null; }
 
+  /** 4.7B: Verbündete (Offiziere, Trupps) im Radius heilen (Priester-Formen, Himmelsgericht) */
+  private healAllies(x: number, z: number, r: number, k: number) {
+    const list = this.combat?.allies;
+    if (!list) return;
+    for (const a of list) if (a.alive && Math.hypot(a.x - x, a.z - z) <= r + a.radius) a.heal?.(k);
+  }
+
   /** Heilt um einen Anteil der Lebenspunkte (Proviant) */
   healFrac(f: number) {
     if (!this.foot) return;
@@ -3246,13 +3274,14 @@ export class SeaWorld {
   }
 
   /** Zähler für die Handlungen der Einführung (Schlagkette, Sturm-Schritt, Ziel erfasst, eingesetzte Faji-Künste, Steuer) */
-  tutorialProbe(): { hits: number; dashing: boolean; targeted: boolean; artSkills: number; atHelm: boolean } {
+  tutorialProbe(): { hits: number; dashing: boolean; targeted: boolean; artSkills: number; geistUses: number; atHelm: boolean } {
     const f = this.foot;
     return {
       hits: f?.fighter.hits ?? 0,
       dashing: !!f && f.fighter.phase === 'dash',
       targeted: !!this._targets?.state.id,
       artSkills: f?.tally.artSkills ?? 0,
+      geistUses: f?.tally.geist ?? 0,
       atHelm: this.mode === 'sail' && !this.stowed,
     };
   }

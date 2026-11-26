@@ -662,7 +662,7 @@
 .fh-aura.on { border-color: var(--ac); color: var(--ac); box-shadow: 0 0 8px var(--ac); }
 .fh-form { margin-top: 0.15em; padding: 0.05em 0.35em; border-radius: 0.2em; background: linear-gradient(90deg, color-mix(in srgb, var(--fa) 50%, transparent) calc(var(--fp, 0) * 100%), rgba(0, 0, 0, 0.35) 0); font: 800 0.56em/1.3 var(--font-text); font-style: normal; letter-spacing: 0.1em; text-transform: uppercase; color: #fff; white-space: nowrap; }
 .fh-art.locked .ic, .fh-art.locked .nm { opacity: 0.22; }
-.fh-art.locked::after { content: 'ab ' attr(data-form) '.'; position: absolute; inset: auto 0 0.3em; z-index: 2; font: 800 0.55em/1 var(--font-text); letter-spacing: 0.06em; color: var(--brass-100); text-shadow: 0 1px 0 #000; }
+.fh-art.locked::after { content: 'Kn. ' attr(data-form); position: absolute; inset: auto 0 0.3em; z-index: 2; font: 800 0.55em/1 var(--font-text); letter-spacing: 0.06em; color: var(--brass-100); text-shadow: 0 1px 0 #000; }
 .fhud.touchmode .fh-will { font-size: 0.52em; }
 .fhud.touchmode .fh-will u { width: 9em; }
 @media (prefers-reduced-motion: reduce) { .fh-will[data-st='full'] u i { animation: none; } }
@@ -715,3 +715,10 @@ html.in-studio .hud-notice { opacity: 0; }
 .tf-post.broken > i { background: linear-gradient(90deg, var(--danger), var(--danger-hi)); animation: fire-pulse 0.7s ease-in-out infinite; }
 .hud-target[data-kind='boss'] .tf-name { color: #ffd9c8; }
 html.touch .hud-target { width: min(20em, 72vw); }
+
+/* 4.7B: zehn Formen und die Geistes-Faji in einer Leiste – etwas kleinere Knöpfe */
+.fhud .fh-arts { gap: 0.28em; }
+.fhud .fh-art { width: 2.75em; height: 2.75em; }
+.fhud .fh-art .ic { font-size: 1.1em; margin-top: 0.3em; }
+.fhud .fh-geist .fh-art { border-color: color-mix(in srgb, var(--fa) 70%, #000); background: radial-gradient(circle at 50% 32%, color-mix(in srgb, var(--fa) 30%, #0a0604), #060302 74%); }
+.fhud.touchmode .fh-geist { display: none; }

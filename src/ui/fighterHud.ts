@@ -4,6 +4,7 @@
 import { esc } from './dom';
 import { ACTION_STYLES, type ActionStyleId } from '../data/actionStyles';
 import { FORM_NAMES, WILL_AURAS, type AuraId } from '../data/fajiArts';
+import { GEIST } from '../data/classes';
 
 /** Was das HUD je Bild bekommt (SeaWorld.fighterView) */
 export interface FighterView {
@@ -28,7 +29,14 @@ export interface FighterView {
   form: number;
   formFrac: number;
   locked: readonly boolean[];
+  /** 4.7B: Knoten des Klassenbaums, der die gesperrte Form freigibt */
   lockForm: readonly number[];
+  /** 4.7B Geistes-Faji: Ränge (0 = noch nicht erwacht) und Abklingzeit 0 … 1 */
+  geistRank: readonly number[];
+  geist: readonly number[];
+  /** 4.7B: Klasse und Rolle (Anzeige im Stil-Feld) */
+  classLabel: string;
+  role: string;
 }
 
 /** 4.6H: Anzeige eines Offiziers-Kombo-Assists (Knopf in der Kampfleiste und Touch-Knopf) */
@@ -65,7 +73,12 @@ export class FighterHud {
   private lastHits = 0;
   private comboT = 0;
   private shownLabel = '';
-  private lastFrac = new Array<string>(4).fill('');
+  private lastFrac = new Array<string>(10).fill('');
+  private geistEls: HTMLElement[] = [];
+  private geistK = new Array<string>(4).fill('');
+  private classK = '';
+  /** 4.7B: Geistes-Kraft angeklickt (0 … 3) */
+  onGeist: (i: number) => void = () => {};
   private barK = -1;
   // 4.6B: Willenskraft-Leiste, Aura, Form
   private will: HTMLElement;
@@ -95,7 +108,8 @@ export class FighterHud {
       <div class="fh-combo" hidden><span class="fh-move"></span><div class="fh-count"><b>0</b><em>HIT!</em></div><u><i></i></u></div>
       <div class="fh-strip">
         <div class="fh-style"><b></b><small></small><em class="fh-form" hidden></em></div>
-        <div class="fh-arts" role="group" aria-label="Kampfkünste"></div>
+        <div class="fh-arts" role="group" aria-label="Formen 1 – 10"></div>
+        <div class="fh-geist" role="group" aria-label="Geistes-Faji" hidden></div>
         <div class="fh-assists" role="group" aria-label="Offiziers-Assists" hidden></div>
       </div>
       <div class="fh-will" data-st="fill">
@@ -118,7 +132,7 @@ export class FighterHud {
     this.auraEl = this.will.querySelector('.fh-aura')!;
     this.formEl = this.styleEl.querySelector('.fh-form')!;
     const arts = this.root.querySelector<HTMLElement>('.fh-arts')!;
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 10; i++) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'fh-art';
@@ -128,6 +142,39 @@ export class FighterHud {
       this.slots.push(b);
     }
     this.assistBox = this.root.querySelector<HTMLElement>('.fh-assists')!;
+    const gbox = this.root.querySelector<HTMLElement>('.fh-geist')!;
+    for (let i = 0; i < 4; i++) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'fh-art geist';
+      b.style.setProperty('--fa', GEIST[i].color);
+      b.title = GEIST[i].label;
+      b.innerHTML = `<kbd>${GEIST[i].key}</kbd><i class="ic">${GEIST[i].icon}</i><span class="nm">${GEIST[i].short}</span><s class="cd"></s>`;
+      b.addEventListener('pointerdown', (e) => { e.preventDefault(); this.onGeist(i); });
+      gbox.appendChild(b);
+      this.geistEls.push(b);
+    }
+  }
+
+  /** 4.7B: Geistes-Faji-Leiste (Q/R/T/G) mit Tastenkappen und Abklingzeit; ausgeblendet, solange sie nicht erwacht ist */
+  private updateGeist(v: FighterView, keys: readonly string[]) {
+    const box = this.geistEls[0].parentElement!;
+    const on = v.geistRank.some((r) => r > 0);
+    if (box.hidden === on) box.hidden = !on;
+    if (!on) return;
+    for (let i = 0; i < 4; i++) {
+      const f = Math.max(0, Math.min(1, v.geist[i] ?? 0));
+      const k = `${f <= 0 ? 'r' : f.toFixed(2)}|${keys[i] ?? ''}|${v.geistRank[i]}`;
+      if (k === this.geistK[i]) continue;
+      const was = this.geistK[i];
+      this.geistK[i] = k;
+      const el = this.geistEls[i];
+      el.style.setProperty('--cd', f.toFixed(3));
+      el.classList.toggle('cool', f > 0);
+      el.querySelector('kbd')!.textContent = keys[i] ?? GEIST[i].key;
+      el.title = `${GEIST[i].label} · Rang ${v.geistRank[i]} – ${GEIST[i].desc(Math.max(1, v.geistRank[i]))}`;
+      if (f <= 0 && was && !was.startsWith('r')) { el.classList.remove('ready'); void el.offsetWidth; el.classList.add('ready'); }
+    }
   }
 
   /**
@@ -176,7 +223,7 @@ export class FighterHud {
    * Je Bild. `v` = null blendet das HUD aus (an Bord, Menü). `keys` = Tastenkappen der Kampfkünste, `touch` = Handy-Modus (nur Zähler und Stil),
    * `comboHits`/`comboFrac` = Trefferzähler und Restzeit aus dem Kampf-Overlay (zählt auch Faji-Treffer).
    */
-  update(v: FighterView | null, keys: readonly string[], touch: boolean, comboHits: number, comboFrac: number, dt: number, awakenKey = '') {
+  update(v: FighterView | null, keys: readonly string[], touch: boolean, comboHits: number, comboFrac: number, dt: number, awakenKey = '', geistKeys: readonly string[] = []) {
     const hide = !v;
     if (this.root.hidden !== hide) this.root.hidden = hide;
     if (!v) return;
@@ -188,8 +235,7 @@ export class FighterHud {
       this.styleKey = v.style;
       this.root.style.setProperty('--fc', st.color);
       this.root.style.setProperty('--fa', st.accent);
-      this.styleEl.querySelector('b')!.textContent = st.label;
-      this.styleEl.querySelector('small')!.textContent = st.title;
+      this.classK = '';
       st.skills.forEach((k, i) => {
         const el = this.slots[i];
         el.title = `${k.label} – ${k.desc} (Abklingzeit ${k.cd} s)`;
@@ -198,9 +244,17 @@ export class FighterHud {
       });
       this.lastFrac.fill('');
     }
+    // 4.7B: Klasse und Rolle statt Stilname (kein Wechsel mehr)
+    const ck = `${v.classLabel}|${v.role}`;
+    if (ck !== this.classK) {
+      this.classK = ck;
+      this.styleEl.querySelector('b')!.textContent = v.classLabel || st.label;
+      this.styleEl.querySelector('small')!.textContent = v.role ? `Rolle: ${v.role}` : st.title;
+    }
+    this.updateGeist(v, geistKeys);
     const ks = keys.join('|');
     if (ks !== this.keyStr) { this.keyStr = ks; this.slots.forEach((el, i) => { el.querySelector('kbd')!.textContent = keys[i] ?? ''; }); }
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 10; i++) {
       const f = Math.max(0, Math.min(1, v.cd[i] ?? 0));
       const k = f <= 0 ? 'r' : f.toFixed(2);
       if (k === this.lastFrac[i]) continue;
@@ -272,10 +326,10 @@ export class FighterHud {
       }
     }
     let lk = '';
-    for (let i = 0; i < 4; i++) lk += v.locked[i] ? '1' : '0';
+    for (let i = 0; i < 10; i++) lk += v.locked[i] ? '1' : '0';
     if (lk !== this.lockK) {
       this.lockK = lk;
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 10; i++) {
         const el = this.slots[i];
         const lockedNow = !!v.locked[i];
         el.classList.toggle('locked', lockedNow);

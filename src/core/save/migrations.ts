@@ -18,10 +18,11 @@ import { convertLegacy10, isLegacy10, lookFromLegacy, skillsFromLegacy } from '.
 import { createSave, defaultProgress, defaultShip, SAVE_VERSION, type SaveData } from './types';
 import { countOr, isRecord } from '../sanitize';
 import { migrateWorldTo21 } from './worldMigration';
-import { cleanTalents, mergeFajiPoints, milestonesEarned, techSpentOf } from '../talentRules';
+import { cleanTalents, mergeFajiPoints, milestonesEarned, poolTotal, techSpentOf } from '../talentRules';
 import { TALENT } from '../../data/talentTrees';
 import { endgameEarned } from '../../data/gear';
-import { cleanInstance, legacyInstance } from '../../story/tutorialInstance';
+import { cleanInstance, isPrivate, legacyInstance } from '../../story/tutorialInstance';
+import { autoFill, awakenGeist, classFromLegacy, cleanClass, fitClass } from '../../data/classes';
 
 type Migration = (data: Record<string, any>) => Record<string, any>;
 
@@ -191,6 +192,14 @@ export const MIGRATIONS: Record<number, Migration> = {
     progress.instance = legacyInstance();
     return { ...d, version: 24, progress };
   },
+  24: (d) => {
+    // 4.7B: feste Klasse. Sie folgt dem zuletzt geführten Kampfstil bzw. der Erschaffung und der ausgerüsteten Faji-Kunst (classFromLegacy).
+    // Die alten Talentbäume und Faji-Techniken werden beim Laden vollständig erstattet; Stufen, Siegel und Bonuspunkte bleiben im Topf und
+    // fließen in den neuen Klassenbaum (bis 60, `refill`), der Rest bleibt frei für die Geistes-Faji.
+    const p = isRecord(d.player) ? { ...d.player } : {};
+    p.cls = { ...classFromLegacy(p), refill: true };
+    return { ...d, version: 25, player: p };
+  },
 };
 
 /** Siege je Kaiser aus `world.kaiser` */
@@ -284,6 +293,26 @@ export function migrateSave(raw: unknown, gameVersion: string): MigrationResult 
   filled.talents = cleanTalents({ ...(isRecord(filled.talents) ? filled.talents : {}), fajiMerged: rawMerged, bonus: rawBonus }, { ...talentContext(filled as unknown as Record<string, any>, lvl), techSpent: techSpentOf(learned) });
   // 4.6H: ein gemeinsamer Punktetopf für N und K – alte Faji-Punkte (frei und gebunden) werden einmalig zu Bonus-Talentpunkten (Version bleibt 23)
   mergeFajiPoints(filled.talents, filled.skills);
+  // 4.7B: Klasse säubern; ein Stand aus Version 24 oder älter bekommt seine alten Bäume und Techniken erstattet und den Klassenbaum gefüllt
+  {
+    const rawCls = (filled.player as unknown as Record<string, unknown>).cls;
+    const refill = isRecord(rawCls) && rawCls.refill === true;
+    const cls = cleanClass(rawCls, classFromLegacy(filled.player));
+    if (refill) {
+      filled.talents.nodes = {};
+      filled.talents.evo = {};
+      filled.talents.ult = 'stil';
+      filled.skills.learned = {};
+      filled.skills.slots = [null, null, null];
+      // wer die Einführung hinter sich hat, hat die Geistes-Faji am Kristall erweckt
+      if (!isPrivate(filled.progress.instance)) awakenGeist(cls);
+    }
+    const lvl2 = Math.max(1, Math.min(TALENT.ascendedLevel, Math.floor(Number.isFinite(filled.player.level) ? filled.player.level : 1)));
+    const pool = poolTotal(filled.talents, lvl2);
+    if (refill) autoFill(cls, pool);
+    fitClass(cls, pool);
+    filled.player.cls = cls;
+  }
   filled.player.level = filled.talents.ascended ? TALENT.ascendedLevel : Math.min(TALENT.levelCap, lvl);
   if (filled.player.level >= TALENT.levelCap) filled.player.xp = 0;
   return { ok: true, data: filled, migratedFrom: from === SAVE_VERSION ? null : from };

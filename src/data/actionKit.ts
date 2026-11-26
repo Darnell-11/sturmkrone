@@ -6,12 +6,14 @@ import type { FxKind } from './combat';
 
 export type ActionStyleId =
   | 'zweihaender' | 'saebel' | 'doppel' | 'langklinge' | 'sturmfaust' | 'erdspalter' | 'effekt'
-  | 'schwarzloch' | 'feuer' | 'eis' | 'wasser' | 'wind' | 'blitz' | 'sonne' | 'mond';
+  | 'schwarzloch' | 'feuer' | 'eis' | 'wasser' | 'wind' | 'blitz' | 'sonne' | 'mond'
+  /** 4.7B: Priester (Licht- & Lebens-Faji) – Spezialisierung der Faji-Wirker, Schaden und Heilung */
+  | 'priester';
 /** Die sechs physischen Stile in der Reihenfolge des Stilwechsels (Taste Q) */
 export const PHYSICAL_STYLES: readonly ActionStyleId[] = ['zweihaender', 'saebel', 'doppel', 'langklinge', 'sturmfaust', 'erdspalter'];
 /** Die acht waffenlosen Faji-Künste (Phase 4.6B): Elementar- und Gravitationsformen mit sieben Formstufen */
 export const FAJI_ARTS: readonly ActionStyleId[] = ['schwarzloch', 'feuer', 'eis', 'wasser', 'wind', 'blitz', 'sonne', 'mond'];
-export const ACTION_STYLE_IDS: readonly ActionStyleId[] = [...PHYSICAL_STYLES, 'effekt', ...FAJI_ARTS];
+export const ACTION_STYLE_IDS: readonly ActionStyleId[] = [...PHYSICAL_STYLES, 'effekt', ...FAJI_ARTS, 'priester'];
 
 // ---------- Engine-Konstanten ----------
 
@@ -138,7 +140,9 @@ export interface ActionProjectile { speed: number; radius: number; color: string
 
 /** Zustand, den ein Treffer hinterlässt: Brand, Frost (einfrieren), Verlangsamung, Schock, Rüstungsbrand (Sonne: Rüstung und Heilung
  *  durchgebrannt), Aura-Bann (Schwarzes Loch: gegnerische Auren erlöschen), Furcht */
-export type HitStatus = '' | 'burn' | 'freeze' | 'slow' | 'shock' | 'sunder' | 'suppress' | 'fear';
+export type HitStatus = '' | 'burn' | 'freeze' | 'slow' | 'shock' | 'sunder' | 'suppress' | 'fear'
+  /** 4.7B: Betäubung ohne Eis (Erwachter Wille der Geistes-Faji): Bosse nur kurz */
+  | 'stun';
 
 /** Ein Trefferfenster eines Angriffs (Sekunden ab Beginn des Angriffs) */
 export interface ActionHit {
@@ -219,6 +223,12 @@ export interface ActionMove {
    */
   airExec?: number;
   autoChase?: boolean;
+  /**
+   * 4.7B Priester: Heilung beim Wirken als Anteil der eigenen Höchst-LP (0 = keine) und Radius (m), in dem auch Verbündete geheilt werden
+   * (0 = nur selbst). Die Engine meldet sie als Ereignis 'heal'; das Spiel heilt (mit der Heilkraft der Talente).
+   */
+  heal?: number;
+  healR?: number;
 }
 
 /** Welt-Effekt eines Ultimates (Darstellung und Wirkung auf Schiffe, Meer und Massen: `world/cataclysmDirector.ts`) */
@@ -226,7 +236,9 @@ export type CataclysmKind =
   | 'horizonCut' | 'sevenSeas' | 'sawCyclone' | 'iaiWorldBreak' | 'fistStorm' | 'oceanSplit' | 'blackHole'
   | 'fireDragons' | 'glacier' | 'floodDragon' | 'vacuumStorm' | 'thunderJudgment' | 'sunDance' | 'bloodMoon'
   /** 4.6E: das 15. Ultimate (Kosmos, Stufe 101) – Himmelssturz: Zwillings-Meteoriten & Planeten-Kollaps */
-  | 'skyfall';
+  | 'skyfall'
+  /** 4.7B: Ultimate des Priesters – Erzengel-Himmelsgericht (Lichtgericht vom Himmel, heilt die Verbündeten) */
+  | 'himmelsgericht';
 
 /**
  * Wie ein Ultimate Schiffe zerstört: quer zerteilt (Bug/Heck), längs (Backbord/Steuerbord), schräg, radial (Sog), kentern (rollt um und
@@ -261,7 +273,8 @@ export interface UltimateSpec {
 }
 
 export interface ActionSkill extends ActionMove {
-  slot: 1 | 2 | 3 | 4;
+  /** Platz der Form 1 … 10 (4.7B: zehn Formen je Klassenbaum; Formen 1 – 4 sind die alten vier Kampfkünste) */
+  slot: number;
   /** Kurzname für Knopf und Leiste, Beschreibung, Abklingzeit (s), Symbol (Zeichen) */
   short: string; desc: string; cd: number; icon: string;
 }
@@ -286,7 +299,8 @@ export interface ActionStyleDef {
   meteor: ActionMove;
   /** Haltungsbruch-Finisher (Schwer nahe einem taumelnden Elite-Gegner oder Boss) */
   finisher: ActionMove;
-  skills: [ActionSkill, ActionSkill, ActionSkill, ActionSkill];
+  /** 4.7B: die zehn Formen des Klassenbaums (Plätze 1 … 10; frei werden sie über die Knoten 1, 6, 12 … 54) */
+  skills: ActionSkill[];
   /** Sprünge (2 = Doppelsprung) und Luft-Dashes je Flug, Dash-Tempo und -Dauer */
   jumps: number; airDashes: number; dashSpeed: number; dashTime: number;
   /** Fenster des perfekten Ausweichens (Langklinge länger) */

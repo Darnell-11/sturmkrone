@@ -526,7 +526,7 @@ describe('Action-Kampf: die sechs physischen Stile', () => {
       expect(s.air.length).toBeGreaterThanOrEqual(3);
       expect(s.air.length).toBeLessThanOrEqual(4);
       expect(s.meteor.meteor).toBe(true);
-      expect(s.skills.map((k) => k.slot)).toEqual([1, 2, 3, 4]);
+      expect(s.skills.map((k) => k.slot)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
       for (const k of s.skills) { expect(k.cd).toBeGreaterThan(0); expect(k.label.length).toBeGreaterThan(2); }
       expect(s.branch[1].hits[0].launch).toBeGreaterThan(9);
       expect(s.branch[1].hits[0].maxTargets).toBe(12);

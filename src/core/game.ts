@@ -1,17 +1,23 @@
 import { TargetFrame } from '../ui/targetFrame';
 import { lowerTier, QUALITY_TIERS, type QualityTier } from '../data/qualityTiers';
 import { FACTION_LABELS, rankIndex, rankName } from '../data/ranks';
-import { TOUCH_FOOT, TOUCH_SEA } from '../data/touchLayout';
-import { ACTION_STYLES, PHYSICAL_STYLES, actionStyleOf, isActionStyle, type ActionStyleId } from '../data/actionStyles';
+import { TOUCH_FOOT, TOUCH_FOOT_PAGE2, TOUCH_SEA } from '../data/touchLayout';
+import { ACTION_STYLES, actionStyleOf, isActionStyle, type ActionStyleId } from '../data/actionStyles';
+import {
+  CLASS_BASES, SPECS, SPECS_OF, autoFill, formsGained, awakenGeist, chooseSpec, classBase, classBuffs, classElement, classFree, classFromLegacy, classOfCreation,
+  classRole, classSpec, classSpent, classStyle, classTitle, cleanClass, fitClass, formsOpen, learnGeist, learnNext, lockElement, ultOpen,
+  GEIST, SPEC_BLADE, type ClassSave, type SpecId,
+} from '../data/classes';
+import { TALENT_CAP, softCap } from '../data/balanceConfig';
 import { FighterHud } from '../ui/fighterHud';
 import { AnimeImpactOverlay } from '../ui/animeImpactOverlay';
 import { PrologueOverlay } from '../ui/prologueOverlay';
-import { TutorialFlow, type TutorialHost } from './tutorialFlow';
+import { TUT_FLAGS, TutorialFlow, type TutorialHost } from './tutorialFlow';
+import type { ClassView } from '../ui/classScreen';
 import { BEACH_START, SHIP_COACH, TUTORIAL, TUTORIAL_QUESTS, linenLook } from '../data/prologue';
 import { TUTORIAL_END, dissolve, enterTutorial, isPrivate, legacyInstance, skipIntro, worldGates } from '../story/tutorialInstance';
-import { spentRegular } from './talentRules';
 import { HOME_SPAWN } from '../data/world';
-import { DEFAULT_FAJI_ART, FAJI_ART_IDS, FORM_NAMES, MASTERY_CAP, WILL, WILL_AURAS, cleanFaji, formOf, formProgress, isFajiArt, type AuraId, type FajiArtId, type FajiSave } from '../data/fajiArts';
+import { FAJI_ART_IDS, FORM_NAMES, MASTERY_CAP, WILL, WILL_AURAS, cleanFaji, formOf, formProgress, isFajiArt, type AuraId, type FajiArtId, type FajiSave } from '../data/fajiArts';
 import { FORM_THRESHOLDS } from '../data/fajiArts';
 import { randomLook, type CharacterLook } from '../data/characterParts';
 import { WEATHER, type WeatherId } from '../data/world';
@@ -95,7 +101,7 @@ import { WorldMapScreen } from '../ui/worldMap';
 import { CREW_BY_ID } from '../data/crew';
 import { officerSlots, troopCapacity, TROOP_RANK } from '../data/crewTiers';
 import { addTroops, cleanRoster, clampRoster, COMMANDS, rosterTotal, scaleRoster, TROOPS, type CommandState, type TroopRoster, type TroopType } from '../data/troops';
-import { ASSIST_ACTIONS, COMMAND_ACTIONS, PAD_CHORD_LABEL, commandOnKey, artOnKey, type ActionId } from '../data/actions';
+import { ART_ACTIONS, ASSIST_ACTIONS, COMMAND_ACTIONS, GEIST_ACTIONS, PAD_CHORD_LABEL, commandOnKey, artOnKey, type ActionId } from '../data/actions';
 import {
   FLEET_ORDERS, FLEET_ORDER_ACTIONS, FLEET_UNLOCK_RANKS, TOWED_HP, activateShip, applyFleetEvo, activeCount, activeShips, assignShip, assignableClasses, dockShip, emptyFleet, fleetShip, fleetShipUpkeep, fleetSlots,
   fleetUpkeepDaily, fleetUpkeepList, hasFreeSlot, releaseShip, towShip, fleetIdOf, type FleetCtx, type FleetOrder, type FleetShipRecord, type FleetState,
@@ -131,7 +137,7 @@ import { hostileLegends, LEGEND_BY_ID, rankRows } from '../data/legends';
 import { clamp01 } from './mathUtil';
 import {
   applyXp, ascend, captainFx, chooseUltimate, claimMilestone, defenseFx, emptyTalents, equipEvo, formFloor, freePoints, grantBonus, kaiserWinAscended, learn, respec, respecCost,
-  syncKaiser, techRespecCost, techSpentOf, xpNeedAt, type RespecScope, type TalentSave, type TalentWorld,
+  poolTotal, syncKaiser, techRespecCost, techSpentOf, xpNeedAt, type RespecScope, type TalentSave, type TalentWorld,
 } from './talentRules';
 import type { TalentCat, TalentView } from '../ui/talentScreen';
 import { buildTalentCombat, talentKey } from '../combat/talentCombat';
@@ -148,6 +154,9 @@ const TECH_BLOCK_TEXT: Record<Exclude<ReturnType<typeof learnBlock>, null>, stri
   needs: 'Erst die verbundene Technik lernen.',
   awaken: 'Erst nach dem Faji-Erwachen dieses Zweigs.',
 };
+
+/** 4.7B: Touch-Knöpfe zu Fuß samt zweiter Seite der Formen (6 – 10 auf den Plätzen von 1 – 5) */
+const FOOT_TOUCH = [...TOUCH_FOOT, ...TOUCH_FOOT_PAGE2];
 
 const AUTOSAVE_SECONDS = 30;
 
@@ -216,7 +225,8 @@ export class Game {
   /** „Prolog und Einführung überspringen“ wartet auf das Ende des Prologs */
   private introSkipAll = false;
   /** Erste Faji-Kunst gewählt, die Engine hat den Wechsel aber verweigert (Figur gerade getroffen): bis zu 2 s erneut versuchen */
-  private artRetry: { id: ActionStyleId; t: number } | null = null;
+  /** 4.7B: Stilwechsel der Engine während eines Treffers verweigert (Bodo, Klassenwahl): noch einmal versuchen */
+  private styleRetry: { id: ActionStyleId; t: number } | null = null;
   /** Kino-Phase des Prologs gerade gezeigt (Klasse `pro-cine` am Dokument: Schadenszahlen und Leisten ruhen) */
   private proCineShown = false;
   private dialogUi!: DialogOverlay;
@@ -610,9 +620,8 @@ export class Game {
       if (this.input.pressed('skills')) { this.openTalents('faji'); return; }
       if (this.input.pressed('talents')) { this.openTalents(); return; }
       if (this.input.pressed('quests')) { this.openQuestLog(); return; }
-      if (this.input.pressed('swap')) this.swapWeapon();
-      if (this.input.pressed('weapon1')) this.swapWeapon(0);
-      if (this.input.pressed('weapon2')) this.swapWeapon(1);
+      // 4.7B: Touch/Gamepad – die Form-Knöpfe 1 – 5 zeigen die Formen 6 – 10
+      if (this.input.pressed('formPage')) this.toggleFormPage();
       if (this.input.pressed('potion')) this.usePotion();
       if (this.input.pressed('repair')) this.repairAtSea();
       if (this.input.pressed('inventory')) { this.openInventory(); return; }
@@ -640,10 +649,10 @@ export class Game {
       this.world.update(dt, this.input);
       // 4.7A: Einführung „Ankerglück“ (beobachtet Aufträge und Welt, meldet Handlungen)
       if (this.tutorial && this.state.is('play')) this.tutorial.update(dt);
-      if (this.artRetry) {
-        const r = this.artRetry;
+      if (this.styleRetry) {
+        const r = this.styleRetry;
         r.t -= dt;
-        if (this.world.actionStyle === r.id || r.t <= 0 || this.save?.player.actionStyle !== r.id) this.artRetry = null;
+        if (this.world.actionStyle === r.id || r.t <= 0 || this.save?.player.actionStyle !== r.id) this.styleRetry = null;
         else { this.world.setActionStyle(r.id); this.syncFajiForm(); }
       }
       if (this.save) this.save.meta.playTime += dt;
@@ -783,7 +792,8 @@ export class Game {
           const b = this.input.getKeyBindings();
           const keys = this.input.lastDevice === 'gamepad' ? ['LT', 'RT', 'RB'] : (['skill1', 'skill2', 'skill3'] as const).map((a) => this.input.keyLabel(b[a][0] ?? ''));
           // auch auf See sichtbar (wie in 1.0): Fähigkeiten ohne Seewirkung sind abgeblendet
-          this.hud.setSkillBar(this.input.lastDevice !== 'touch', views, keys, !foot);
+          // 4.7B: die alten Faji-Techniken (F1 – F3) lernt man nicht mehr – leere Plätze bleiben unsichtbar
+          this.hud.setSkillBar(this.input.lastDevice !== 'touch' && views.some((v) => !!v.id), views, keys, !foot);
           views.forEach((v, i) => this.touch.setButton(`skill${i + 1}`, v.short, v.cdFrac, v.ready && (foot || v.sea), v.color, !foot && !!v.id && !v.sea, !v.id));
           if (!foot) for (const [act, side] of [['fireLeft', 1], ['fireRight', -1]] as const) this.touch.setHot(act, this.world.fanHot(side));
         }
@@ -853,7 +863,7 @@ export class Game {
 
   private onModeChange(m: SeaMode) {
     this.sceneChanged();
-    this.touch.setLayout(m === 'foot' ? TOUCH_FOOT : TOUCH_SEA);
+    this.touch.setLayout(m === 'foot' ? FOOT_TOUCH : TOUCH_SEA);
     if (this.state.is('play')) this.hud.hint(this.controlsHint(), 8);
   }
 
@@ -1001,7 +1011,9 @@ export class Game {
     // 4.6E: Talente – Leben und Rüstung aus allen Bäumen, Kapitänswerte für Schiff, Truppen, Belagerung
     const tdef = defenseFx(this.talentSave());
     const cap = this.capFx();
-    this.world.setPlayerPower(st.hp * (1 + tdef.hp), st.atk);
+    // 4.7B: Max-LP aus dem Klassenbaum (mit den Talenten gedeckelt)
+    const ccls = this.classSave();
+    this.world.setPlayerPower(st.hp * (1 + softCap(tdef.hp + (ccls ? classBuffs(ccls).hp : 0), TALENT_CAP.hp)), st.atk);
     this.world.bastionK = 1 + cap.bastion;
     this.world.setGearDefense(st);
     this.world.shipSpeedMult = (has('nav') ? 1.15 : 1) * (has('esra') ? 1.1 : 1) * (1 + (tb.speed ?? 0)) * (1 + cap.sail);
@@ -4372,17 +4384,151 @@ export class Game {
 
   /** Aktueller Action-Stil (Spielstand; fehlt er, der passende zum Kampfstil des aktiven Platzes) */
   private currentAction(d: SaveData | null = this.save): ActionStyleId {
+    // 4.7B: eine feste Klasse – der Stil folgt ihr (vor Bodos Ausrüstung die Fäuste)
+    if (d) return this.classAction(d);
     const a = d!.player.actionStyle;
-    return isActionStyle(a) ? a : actionStyleOf(this.weaponSlots(d)[d!.player.slot === 1 ? 1 : 0]);
+    return isActionStyle(a) ? a : 'sturmfaust';
   }
 
-  /** Stile für den Wechsel mit Q: die sechs physischen, Faji-Wirken für Faji-Wirker und die ausgerüstete Faji-Kunst (4.6B) */
-  private availableStyles(d: SaveData | null = this.save): ActionStyleId[] {
-    const list: ActionStyleId[] = [...PHYSICAL_STYLES];
-    if (d!.player.style === 'effekt') list.push('effekt');
-    const eq = d!.player.faji?.equipped;
-    if (eq && isFajiArt(eq)) list.push(eq);
-    return list;
+  // ---------- Klasse (4.7B) ----------
+
+  /** Klasse des Spielstands (beim Laden gesäubert; fehlt sie, aus dem alten Stand abgeleitet) */
+  classSave(d: SaveData | null = this.save): ClassSave | null {
+    if (!d) return null;
+    if (!d.player.cls) d.player.cls = classFromLegacy(d.player);
+    return d.player.cls;
+  }
+
+  /** Verdiente Punkte des Klassenbaums und der Geistes-Faji (Stufen, Meisterschafts-Siegel, Bonus) */
+  classPool(d: SaveData | null = this.save): number {
+    if (!d) return 0;
+    return poolTotal(this.talentSave(d), d.player.level);
+  }
+
+  /** Kampfstil der Figur: vor Bodos Klassen-Ausrüstung (Einführung) die bloßen Fäuste, sonst der Stil der Klasse */
+  private classAction(d: SaveData | null = this.save): ActionStyleId {
+    const c = this.classSave(d);
+    if (!d || !c) return 'sturmfaust';
+    const inst = d.progress.instance ?? legacyInstance();
+    if (isPrivate(inst) && !d.progress.flags[TUT_FLAGS.weapon]) return 'sturmfaust';
+    return classStyle(c);
+  }
+
+  /** Klasse geändert (Ausrüstung, Spezialisierung, Element): Stil der Engine, Waffe, Werte und Anzeige nachziehen */
+  private syncClassStyle(d: SaveData | null = this.save) {
+    if (!d) return;
+    const c = this.classSave(d)!;
+    const act = this.classAction(d);
+    d.player.actionStyle = act;
+    // Faji-Wirker: das Element ist die ausgerüstete Kunst (Meisterschaft, Element-Finisher); alle anderen tragen keine
+    const fs = this.fajiSave(d);
+    if (fs) fs.equipped = classElement(c);
+    // die Klinge der Erschaffung folgt der Schwert-Spezialisierung (Aussehen, Editor)
+    const sp = classSpec(c);
+    if (sp && SPEC_BLADE[sp]) { d.player.style = 'schwert'; d.player.blade = SPEC_BLADE[sp]!; }
+    if (d !== this.save) return;
+    if (this.world.actionStyle !== act) { this.world.setActionStyle(act); if (this.world.actionStyle !== act) this.styleRetry = { id: act, t: 2 }; }
+    this.world.updatePlayer(isPrivate(d.progress.instance ?? legacyInstance()) ? linenLook(this.displayLook()) : this.displayLook(), this.activeStyle(), act);
+    this.world.faji?.refresh(d.player.level, this.activeStyle());
+    this.applyTalents();
+    this.applyPower();
+    this.refreshWeaponHud();
+  }
+
+  /** Daten für das Klassen-Fenster (Tasten N und K) */
+  classView(): ClassView | null {
+    const s = this.save;
+    const c = this.classSave();
+    if (!s || !c) return null;
+    const pool = this.classPool();
+    const b = this.input.getKeyBindings();
+    const dev = this.input.lastDevice;
+    const key = (a: ActionId) => (dev === 'gamepad' ? (PAD_CHORD_LABEL[a] ?? '') : this.input.keyLabel(b[a][0] ?? ''));
+    const inst = s.progress.instance ?? legacyInstance();
+    return {
+      cls: c, level: s.player.level, xp: s.player.xp, xpNeed: xpNeedAt(s.player.level), pool, free: classFree(c, pool),
+      keys: { forms: ART_ACTIONS.map(key), ult: key('awaken'), geist: GEIST_ACTIONS.map(key) },
+      // Faustkämpfer wählen ihren Pfad in der Einführung bei Konrad (ab dem Talent-Schritt), sonst jederzeit einmal
+      canChoose: classBase(c) === 'faji' || !isPrivate(inst) || !!this.quests?.isDone('t2'),
+    };
+  }
+
+  /** Nächsten Knoten des Klassenbaums lernen; Rückgabe: Meldung */
+  classLearn(): string {
+    const c = this.classSave();
+    if (!c) return '';
+    const e = learnNext(c, this.classPool());
+    if (e) return e;
+    this.classChanged();
+    audio.play('level', 0.7);
+    return this.classNodeMsg(c.nodes);
+  }
+
+  /** Alle freien Punkte in den Klassenbaum */
+  classFill(): string {
+    const c = this.classSave();
+    if (!c) return '';
+    const before = c.nodes;
+    const n = autoFill(c, this.classPool());
+    if (n <= 0) return 'Kein freier Talentpunkt.';
+    this.classChanged();
+    audio.play('level', 0.7);
+    const forms = formsGained(before, c.nodes).join(', ');
+    return `${n} Knoten gelernt (bis Knoten ${c.nodes})${forms ? ` · neue Formen: ${forms}` : ''}`;
+  }
+
+  private classNodeMsg(n: number): string {
+    const c = this.classSave()!;
+    const sp = classSpec(c);
+    if (!sp) return '';
+    const st = ACTION_STYLES[SPECS[sp].style];
+    const fi = [1, 6, 12, 18, 24, 30, 36, 42, 48, 54].indexOf(n);
+    if (fi >= 0) { this.overlay.showBanner(`Form ${fi + 1} frei!`, `${st.skills[fi].label} · ${this.classView()?.keys.forms[fi] ?? ''}`); return `Neue Form: ${st.skills[fi].label}`; }
+    if (n === 60) { this.overlay.showBanner('Ultimate frei!', `${st.ultimate?.label ?? ''} · im Sturm-Erwachen`); return `Ultimate gelernt: ${st.ultimate?.label ?? ''}`; }
+    return `Knoten ${n} gelernt`;
+  }
+
+  /**
+   * Spezialisierung wählen (Faustkämpfer: Pfad; Faji-Wirker: Element, der erste Punkt legt es fest; `force` = Kristall der Einführung ohne
+   * freien Punkt). Rückgabe: Fehler oder null.
+   */
+  classPick(spec: SpecId, force = false): string | null {
+    const c = this.classSave();
+    if (!c) return 'Kein Spielstand.';
+    const e = classBase(c) === 'faji' ? lockElement(c, spec, this.classPool(), force) : chooseSpec(c, spec);
+    if (e) return e;
+    if (classBase(c) === 'faust' && c.nodes === 0 && classFree(c, this.classPool()) > 0) c.nodes = 1;
+    this.syncClassStyle();
+    this.classChanged();
+    audio.play('cutin');
+    this.overlay.showBanner(`${SPECS[spec].label}!`, `${SPECS[spec].role} · dein Klassenbaum ist offen (Taste N)`);
+    return null;
+  }
+
+  /** Rang einer Geistes-Kraft erhöhen */
+  classGeist(i: number): string {
+    const c = this.classSave();
+    if (!c) return '';
+    const e = learnGeist(c, i, this.classPool());
+    if (e) return e;
+    this.classChanged();
+    audio.play('level', 0.7);
+    return `${GEIST[i].label}: Rang ${c.geist[i]}`;
+  }
+
+  /** Nach jeder Änderung der Klasse: Engine, Werte, Anzeige, Spielstand */
+  private classChanged() {
+    this.applyTalents();
+    this.applyPower();
+    this.refreshWeaponHud();
+    this.persist();
+  }
+
+  /** Touch/Gamepad: Seite der Form-Knöpfe (0 = Formen 1 – 5, 1 = Formen 6 – 10) */
+  private formPage = 0;
+  private toggleFormPage() {
+    this.formPage = this.formPage ? 0 : 1;
+    audio.play('ui', 0.5);
   }
 
   // ---------- Faji-Künste, Formen und Auren (4.6B) ----------
@@ -4477,50 +4623,22 @@ export class Game {
     this.syncFajiForm();
   }
 
+  /** 4.7B: Klasse und Rolle in der Stil-Anzeige (kein Wechsel mehr) */
   private refreshWeaponHud() {
     const s = this.save;
-    if (!s) return;
-    const list = this.availableStyles();
-    const cur = this.currentAction();
-    const next = list[(list.indexOf(cur) + 1) % list.length];
-    const b = this.input.getKeyBindings();
-    const key = this.input.lastDevice === 'gamepad' ? '' : this.input.keyLabel(b.swap[0] ?? '');
-    this.hud.setWeapons(`${ACTION_STYLES[cur].label}`, `${key ? `${key} → ` : '→ '}${ACTION_STYLES[next].label}`, 0);
+    const c = this.classSave();
+    if (!s || !c) return;
+    const role = classRole(c);
+    const act = this.currentAction();
+    const pre = act === 'sturmfaust' && classStyle(c) !== 'sturmfaust' ? 'Bloße Fäuste · ' : '';
+    this.hud.setWeapons(`${pre}${classTitle(c)}`, role ? `Rolle: ${role}` : classBase(c) === 'faji' ? 'Element noch offen' : classBase(c) === 'faust' ? 'Pfad noch offen' : '', 0);
   }
-
-  /**
-   * Stil wechseln (4.6A, jederzeit – mitten in der Kette als Wechselschlag): Q = der nächste der sechs physischen Stile, Z/X = Stil von Platz 1
-   * bzw. 2 (Kampfstil aus dem Editor und zweite Waffe). Nur zu Fuß und im Spiel.
-   */
-  swapWeapon(to?: 0 | 1) {
-    const s = this.save;
-    if (!s || !this.state.is('play') || this.world.mode !== 'foot') return;
-    const cur = this.currentAction();
-    let next: ActionStyleId;
-    if (to === undefined) { const list = this.availableStyles(); next = list[(list.indexOf(cur) + 1) % list.length]; }
-    else {
-      const vis = this.weaponSlots()[to];
-      // Faust-Platz: die zuletzt gewählte Faust bleibt (Sturmfaust oder Erdspalter)
-      next = vis === 'faust' && (cur === 'sturmfaust' || cur === 'erdspalter') ? cur : vis === 'faust' && this.lastFist ? this.lastFist : actionStyleOf(vis);
-      if (next === cur) return;
-    }
-    if (!this.world.swapWeapon(next)) return;
-    if (to !== undefined) s.player.slot = to;
-    s.player.actionStyle = next;
-    this.syncFajiForm();
-    if (next === 'sturmfaust' || next === 'erdspalter') this.lastFist = next;
-    this.world.faji?.refresh(s.player.level, ACTION_STYLES[next].visual);
-    this.applyPower();
-    audio.play('whoosh', 0.9);
-    this.refreshWeaponHud();
-    this.persist();
-  }
-  private lastFist: ActionStyleId | null = null;
 
   // ---------- Fighter-HUD (4.6A) ----------
 
   private fighterHud: FighterHud | null = null;
-  private readonly artKeys = ['', '', '', ''];
+  private readonly artKeys = new Array<string>(10).fill('');
+  private readonly geistKeys = ['', '', '', ''];
   private readonly assistKeys = ['', '', ''];
   private assistMsgT = 0;
 
@@ -4540,10 +4658,15 @@ export class Game {
     const v = this.state.is('play') ? this.world.fighterView() : null;
     const dev = this.input.lastDevice;
     const pad = ['▲', '▶', '▼', '◀'];
-    for (let i = 0; i < 4; i++) this.artKeys[i] = dev === 'gamepad' ? pad[i] : this.input.keyLabel(b[`art${i + 1}` as ActionId][0] ?? '');
+    for (let i = 0; i < 10; i++) this.artKeys[i] = dev === 'gamepad' ? (pad[i] ?? '') : this.input.keyLabel(b[`art${i + 1}` as ActionId][0] ?? '');
+    for (let i = 0; i < 4; i++) this.geistKeys[i] = dev === 'gamepad' ? (PAD_CHORD_LABEL[GEIST_ACTIONS[i]] ?? '').replace(' ', '') : this.input.keyLabel(b[GEIST_ACTIONS[i]][0] ?? '');
+    // 4.7B: Klasse und Rolle im Stil-Feld; Klick auf eine Form bzw. Geistes-Kraft in der Leiste
+    { const c = this.classSave(); this.world.classLabel = c ? classTitle(c) : ''; this.world.classRole = c ? classRole(c) : ''; }
+    hud.onArt = (slot) => { const f = this.world.playerFoot; if (f) f.formQueued = slot; };
+    hud.onGeist = (i) => { const f = this.world.playerFoot; if (f) f.geistQueued = i + 1; };
     const awk = dev === 'gamepad' ? 'R3+▼' : dev === 'touch' ? '' : this.input.keyLabel(b.awaken[0] ?? '');
     this.world.awakenKeyLabel = dev === 'touch' ? 'Erwachen' : awk;
-    hud.update(v, this.artKeys, dev === 'touch', this.overlay.comboHits, this.overlay.comboFrac, dt, awk);
+    hud.update(v, this.artKeys, dev === 'touch', this.overlay.comboHits, this.overlay.comboFrac, dt, awk, this.geistKeys);
     // 4.6H: Offiziers-Kombo-Assists (Leiste am Desktop, Knöpfe am Handy)
     const av = v ? this.world.assistViews() : null;
     for (let i = 0; i < 3; i++) this.assistKeys[i] = dev === 'gamepad' ? (PAD_CHORD_LABEL[ASSIST_ACTIONS[i]] ?? '').replace(' ', '') : this.input.keyLabel(b[ASSIST_ACTIONS[i]][0] ?? '');
@@ -4556,7 +4679,24 @@ export class Game {
     this.world.heavyKeyLabel = dev === 'gamepad' ? 'Y' : dev === 'touch' ? 'Schwer' : this.input.keyLabel(b.heavy[0] ?? '');
     if (v && dev === 'touch') {
       const st = ACTION_STYLES[v.style];
-      st.skills.forEach((k, i) => this.touch.setArt(`art${i + 1}`, v.locked[i] ? '🔒' : k.icon, v.locked[i] ? `ab ${v.lockForm[i]}.` : k.short, v.locked[i] ? 0 : 1 - (v.cd[i] ?? 0), !v.locked[i] && (v.cd[i] ?? 0) <= 0, st.accent));
+      // 4.7B: fünf Form-Knöpfe, auf Seite 2 die Formen 6 – 10 (die Knöpfe der anderen Seite ruhen unsichtbar)
+      const page = this.formPage;
+      for (let i = 0; i < 10; i++) {
+        const k = st.skills[i];
+        const a = `art${i + 1}`;
+        const shown = !!k && (page ? i >= 5 : i < 5);
+        this.touch.show(a, shown);
+        if (!shown) continue;
+        const lock = v.locked[i];
+        this.touch.setArt(a, lock ? '🔒' : k.icon, lock ? `Kn. ${v.lockForm[i]}` : k.short, lock ? 0 : 1 - (v.cd[i] ?? 0), !lock && (v.cd[i] ?? 0) <= 0, st.accent);
+      }
+      this.touch.setButton('formPage', page ? '1–5' : '6–10', 1, true, '#FFD27A');
+      // Geistes-Faji: erst nach dem Erwachen am Kristall
+      for (let i = 0; i < 4; i++) {
+        const on = (v.geistRank[i] ?? 0) > 0;
+        this.touch.show(`geist${i + 1}`, on);
+        if (on) this.touch.setArt(`geist${i + 1}`, GEIST[i].icon, GEIST[i].short, 1 - (v.geist[i] ?? 0), (v.geist[i] ?? 0) <= 0, GEIST[i].color);
+      }
       // Sturm-Erwachen: füllt sich mit der Willenskraft; im Erwachen läuft die Restzeit, mit Ultimate leuchtet der Knopf
       const aw = v.awake > 0;
       this.touch.setButton('awaken', v.ult ? 'Ulti-\nmate' : aw ? 'Erwacht' : 'Erwa-\nchen', aw ? (v.ult ? 1 : v.awake) : v.will, v.ult || (!aw && v.will >= 1), v.ult ? st.accent : '#FFD27A');
@@ -4589,7 +4729,9 @@ export class Game {
   freeTalentPoints(): number {
     const s = this.save;
     if (!s) return 0;
-    return Math.max(0, freePoints(this.talentSave(), s.player.level, techSpentOf(s.skills.learned)));
+    // 4.7B: freie Punkte des Klassenbaums und der Geistes-Faji
+    const c = this.classSave();
+    return c ? classFree(c, this.classPool()) : Math.max(0, freePoints(this.talentSave(), s.player.level, techSpentOf(s.skills.learned)));
   }
 
   /** 4.6H: Bonus-Talentpunkte (alles, was früher Faji-Punkte gab) */
@@ -4669,9 +4811,18 @@ export class Game {
     const foot = this.world.playerFoot;
     if (!d || !foot) return;
     const t = this.talentSave(d);
-    const art = (d.player.faji?.equipped ?? null) as FajiArtId | null;
-    if (foot.engine.talents?.key !== talentKey(t, art)) foot.engine.setTalents(buildTalentCombat(t, art));
-    foot.engine.talentArmor = defenseFx(t).armor;
+    const c = this.classSave(d)!;
+    fitClass(c, this.classPool(d));
+    const art = classElement(c);
+    // 4.7B: Stärkungen des Klassenbaums laufen durch dieselben Obergrenzen wie die Talente
+    const cb = classBuffs(c);
+    const cfx = { key: `${classSpec(c) ?? '-'}:${c.nodes}`, sums: { crit: cb.crit, critDmg: cb.critDmg, dmg: cb.atk, combo: cb.tempo, heavy: cb.tempo, cd: cb.cd }, regen: cb.regen };
+    const key = `${talentKey(t, art)}|${cfx.key}`;
+    if (foot.engine.talents?.key !== key) foot.engine.setTalents(buildTalentCombat(t, art, cfx));
+    foot.engine.talentArmor = softCap(defenseFx(t).armor + cb.armor, TALENT_CAP.reduce);
+    foot.engine.setClass(formsOpen(c), ultOpen(c));
+    foot.engine.setGeist(c.awake ? c.geist : [0, 0, 0, 0]);
+    foot.healK = 1 + cb.heal;
     this.syncFajiForm(d);
   }
 
@@ -4757,6 +4908,7 @@ export class Game {
       tech: { learned: s.skills.learned, slots: s.skills.slots, awakened: s.skills.awakened },
       arts: fv?.arts.map((a) => ({ id: a.id, form: a.form, frac: a.frac, mastery: a.mastery, next: a.next, equipped: a.equipped })),
       aura: fv?.aura,
+      weapon: this.currentAction(s),
     };
   }
 
@@ -4862,6 +5014,7 @@ export class Game {
     })() : undefined;
     this.editor = new CharacterEditor(this.uiRoot, {
       isNew,
+      classInfo: !isNew && this.classSave() ? `${classTitle(this.classSave()!)}${classRole(this.classSave()!) ? ` · ${classRole(this.classSave()!)}` : ''}` : undefined,
       anime: !!this.assets.vroid,
       initial,
       gear,
@@ -4891,19 +5044,19 @@ export class Game {
   }
 
   private applyLook(r: EditorResult) {
+    // 4.7B: die Klasse steht seit Spielbeginn fest – der Editor ändert im Spiel nur das Aussehen
     if (this.save) {
-      this.save.player.look = r.look;
-      this.save.player.style = r.style;
-      this.save.player.blade = r.blade;
-      this.save.player.slot = 0;
-      this.save.player.alt = undefined;
-      this.save.player.actionStyle = actionStyleOf(styleIdOf(r.style, r.blade));
-      this.refreshWeaponHud();
-      this.world.updatePlayer(this.displayLook(), styleIdOf(r.style, r.blade), this.save.player.actionStyle as ActionStyleId);
-      // Kampfstil gewechselt: Kombos, Stilboni und Waffenname passen sich an
-      this.world.faji?.refresh(this.save.player.level, styleIdOf(r.style, r.blade));
+      const s = this.save;
+      s.player.look = r.look;
+      // in der privaten Einführung trägt man weiter Leinen (bis zum Dank des Bürgermeisters)
+      const look = isPrivate(s.progress.instance ?? legacyInstance()) ? linenLook(this.displayLook()) : this.displayLook();
+      this.world.updatePlayer(look, this.activeStyle(), this.currentAction());
       this.applyPower();
       this.persist();
+      this.state.set('pause');
+      this.menus.showPause();
+      this.hud.toast('Neuer Look gespeichert.');
+      return;
     }
     this.state.set('pause');
     this.menus.showPause();
@@ -4923,6 +5076,8 @@ export class Game {
     data.player.actionStyle = 'sturmfaust';
     // die erste Faji-Kunst erwacht erst am Kristall des Bürgermeisters (Einführung, Stufe 3)
     data.player.faji = { ...cleanFaji(undefined), equipped: null };
+    // 4.7B: feste Klasse aus der Erschaffung (Faustkämpfer, Schwertkämpfer mit Klinge, Faji-Wirker)
+    data.player.cls = classOfCreation(r.style, r.blade);
     if (!this.saves.save(slot, data)) this.hud.toast('Speichern nicht möglich – Speicher voll?');
     // enterPlay startet den Gewitter-Prolog (Instanz `prolog`); Kapitel 0 beginnt erst in der geteilten Welt
     this.enterPlay(slot, data);
@@ -4963,6 +5118,9 @@ export class Game {
     this.itemCd.clear();
     if (this.assets) this.world.setCharacters(this.assets, this.displayLook(data), this.activeStyle(data), this.overlay);
     data.player.faji = cleanFaji(data.player.faji);
+    data.player.cls = cleanClass(data.player.cls, classFromLegacy(data.player));
+    data.player.actionStyle = this.classAction(data);
+    { const fs = data.player.faji; fs.equipped = classElement(data.player.cls); }
     this.world.setActionStyle(this.currentAction(data));
     data.talents ??= emptyTalents();
     this.applyTalents(data);
@@ -5061,7 +5219,7 @@ export class Game {
     if (!inst.ship) {
       const p = this.world.shoreSpot(BEACH_START.x, BEACH_START.z);
       this.world.landPlayer(p.x, p.z, BEACH_START.yaw);
-      this.touch.setLayout(TOUCH_FOOT);
+      this.touch.setLayout(FOOT_TOUCH);
     }
     const qs = this.quests;
     if (qs && !qs.isActive('t1') && !qs.isDone('t1')) qs.accept('t1');
@@ -5099,11 +5257,13 @@ export class Game {
     skipIntro(inst, s.meta.playTime);
     this.prologueUi.show(false);
     if (s.player.level < TUTORIAL_END.level) { s.player.level = TUTORIAL_END.level; s.player.xp = 0; }
-    s.player.actionStyle = actionStyleOf(styleIdOf(s.player.style, s.player.blade));
     // im Prolog aufgelesene Münzen zählen nicht (am Strand hätte man nichts): genau der Dank des Bürgermeisters
     s.player.gold = TUTORIAL_END.gold;
-    // Endstand der Einführung: eine Faji-Kunst ist erwacht (ohne Wahl die Standard-Kunst)
-    { const fs = this.fajiSave(); if (fs && !fs.equipped) fs.equipped = DEFAULT_FAJI_ART; }
+    // 4.7B Endstand der Einführung: Klassen-Ausrüstung, Geistes-Faji erwacht; Faust-Pfad bzw. Element wählt man im Klassenbaum (N)
+    s.progress.flags[TUT_FLAGS.weapon] = true;
+    { const c = this.classSave()!; awakenGeist(c); }
+    s.player.actionStyle = this.classAction();
+    { const fs = this.fajiSave(); if (fs) fs.equipped = classElement(this.classSave()!); }
     const id = TUTORIAL_END.crew;
     if (!s.crew.hired.includes(id)) {
       s.crew.hired.push(id);
@@ -5136,7 +5296,7 @@ export class Game {
       isDone: (id) => !!g.quests?.isDone(id),
       act: (a) => g.questEvent({ type: 'act', act: a }),
       probe: () => g.world.tutorialProbe(),
-      spent: () => { const s = g.save; return s?.talents ? spentRegular(s.talents) + techSpentOf(s.skills.learned) : 0; },
+      spent: () => { const c = g.classSave(); return c ? classSpent(c) : 0; },
       level: () => g.save?.player.level ?? 1,
       setLevel: (n) => g.tutorialLevel(n),
       giveWeapon: () => g.tutorialWeapon(),
@@ -5147,7 +5307,10 @@ export class Game {
       spawnScout: () => g.world.spawnScout(TUTORIAL.scoutLevel),
       scoutLive: (h) => { const e = h as { ship: { alive: boolean; sinking: number } }; return !!g.world.naval?.enemies.includes(h as never) && e.ship.alive && e.ship.sinking <= 0; },
       offerFaji: () => g.tutorialFajiCard(),
-      fajiEquipped: () => !!g.save?.player.faji?.equipped,
+      fajiEquipped: () => !!g.classSave()?.awake,
+      needsPath: () => { const c = g.classSave(); return !!c && classBase(c) === 'faust' && !classSpec(c); },
+      offerPath: () => g.tutorialPathCard(),
+      geistUses: () => g.world.playerFoot?.tally.geist ?? 0,
       spawnRaid: (extra) => {
         // der Trupp kommt vom Hafen her (Hafenmeisterin Ilse) und landet ein Stück vor der Figur
         const home = g.world.homeIsland, p = g.world.playerPos;
@@ -5178,18 +5341,34 @@ export class Game {
     this.persist();
   }
 
-  /** Einführung: Bodo hat die erste Waffe geschmiedet (der Kampfstil aus dem Editor ersetzt die Fäuste) */
+  /** Einführung: Bodo übergibt die Klassen-Ausrüstung (Kampfhandschuhe, die gewählte Klinge bzw. einen Faji-Fokus) */
   private tutorialWeapon() {
     const s = this.save;
-    if (!s) return;
-    const act = actionStyleOf(styleIdOf(s.player.style, s.player.blade));
-    s.player.actionStyle = act;
-    this.world.setActionStyle(act);
-    this.world.updatePlayer(linenLook(this.displayLook()), this.activeStyle(), act);
-    this.refreshWeaponHud();
+    const c = this.classSave();
+    if (!s || !c) return;
+    this.syncClassStyle();
     audio.play('bell');
-    this.overlay.showBanner('Erste Waffe!', `${ACTION_STYLES[act].label} · geschmiedet von Bodo Hammerschlag`);
+    const b = CLASS_BASES[classBase(c)];
+    const sp = classSpec(c);
+    const what = classBase(c) === 'schwert' && sp ? `${SPECS[sp].label}` : b.gear.replace(/^einen /, '');
+    this.overlay.showBanner(classBase(c) === 'faust' ? 'Kampfhandschuhe!' : classBase(c) === 'faji' ? 'Faji-Fokus!' : 'Erste Klinge!', `${what} · von Bodo Hammerschlag – ${b.label}`);
     this.persist();
+  }
+
+  /** Einführung (Konrad): Faustkämpfer wählen ihren Pfad – Schnell oder Kräftig, für immer; danach öffnet sich der Klassenbaum */
+  private tutorialPathCard() {
+    if (!this.state.is('play')) return;
+    this.state.set('pause');
+    this.menus.showChoice({
+      kicker: 'Waffenmeister Konrad', title: 'Dein Weg der Faust',
+      text: '„Zwei Wege hat die Faust, Junge: der Blitz oder der Berg. Wähl mit Bedacht – zurück gibt es keinen.“',
+      choices: SPECS_OF.faust.map((id) => ({ id, label: SPECS[id].label, sub: SPECS[id].desc, tag: SPECS[id].role, color: SPECS[id].color, button: 'Für immer wählen' })),
+    }, (id) => {
+      const e = this.classPick(id as SpecId);
+      if (e) { this.hud.toast(e, 3); this.resume(); return; }
+      this.resume();
+      this.after(() => this.openTalents(), 600);
+    });
   }
 
   /** Einführung: Ilse übergibt die ranzige Schaluppe (am Steg festgemacht) */
@@ -5232,31 +5411,35 @@ export class Game {
     this.hud.toast('Geh über die Gangway an Bord und übernimm am Steuerrad das Ruder.', 4.5);
   }
 
-  /** Einführung: der Faji-Kristall des Bürgermeisters erwacht – erste Faji-Kunst wählen */
+  /**
+   * Einführung (Gerstenkorn, Stufe 3): der Faji-Kristall. Faji-Wirker ohne Element wählen es hier (für immer, samt Priester); alle Klassen
+   * erwecken ihre Geistes-Faji (Q/R/T/G) und setzen sie gleich gegen den Kurogane-Stoßtrupp ein.
+   */
   private tutorialFajiCard() {
-    const v = this.fajiView();
-    if (!v || !this.state.is('play')) return;
-    this.state.set('pause');
-    this.menus.showChoice({
-      kicker: 'Bürgermeister Gerstenkorn', title: 'Der Faji-Kristall erwacht',
-      text: '„Nimm ihn – schnell! Der Kristall antwortet nur einmal. Wähle die Kraft, die zu dir passt, und wirf die Kurogane aus meinem Hafen!“',
-      choices: v.arts.map((a) => ({ id: a.id, label: `${a.label} · ${a.title}`, sub: a.desc, tag: a.skills[0]?.label ?? '', color: a.color, button: 'Erwecken' })),
-    }, (id) => this.tutorialPickFaji(id));
+    const c = this.classSave();
+    if (!c || !this.state.is('play')) return;
+    if (classBase(c) === 'faji' && !classSpec(c)) {
+      this.state.set('pause');
+      this.menus.showChoice({
+        kicker: 'Bürgermeister Gerstenkorn', title: 'Der Faji-Kristall erwacht',
+        text: '„Nimm ihn – schnell! Der Kristall antwortet nur einmal. Wähle dein Element – es bleibt für immer deins – und wirf die Kurogane aus meinem Hafen!“',
+        choices: SPECS_OF.faji.map((id) => ({ id, label: SPECS[id].label, sub: SPECS[id].desc, tag: SPECS[id].role, color: SPECS[id].color, button: 'Für immer erwecken' })),
+      }, (id) => this.tutorialCrystal(id as SpecId));
+      return;
+    }
+    this.tutorialCrystal(null);
   }
 
-  private tutorialPickFaji(id: string) {
-    const s = this.save;
-    if (!s || !isFajiArt(id)) { this.resume(); return; }
-    this.equipFaji(id);
-    // gleich in der Hand: Taste 1 wirkt die erste Technik (Q wechselt zurück zur Klinge)
-    s.player.actionStyle = id;
-    this.world.setActionStyle(id);
-    if (this.world.actionStyle !== id) this.artRetry = { id, t: 2 };
-    this.syncFajiForm();
-    this.refreshWeaponHud();
+  private tutorialCrystal(spec: SpecId | null) {
+    const c = this.classSave();
+    if (!c) { this.resume(); return; }
+    if (spec) { const e = this.classPick(spec, true); if (e) this.hud.toast(e, 3); }
+    awakenGeist(c);
+    this.classChanged();
     audio.play('cutin');
-    this.overlay.showBanner(`${ACTION_STYLES[id].label} erwacht!`, 'Taste 1: erste Technik · Q wechselt zurück zur Klinge');
-    this.resume();
+    const k = this.classView()?.keys.geist ?? ['Q', 'R', 'T', 'G'];
+    this.overlay.showBanner('Geistes-Faji erwacht!', `${k[0]} Willens-Entfesselung · ${k[1]} Lebensstrom · ${k[2]} Erwachter Wille · ${k[3]} Königsdruck`);
+    if (!this.state.is('play')) this.resume();
     this.questEvent({ type: 'act', act: 'faji' });
     this.persist();
   }
@@ -5418,7 +5601,7 @@ export class Game {
     const dev = this.input.lastDevice;
     const foot = this.world.mode === 'foot';
     if (dev === 'touch') return foot
-      ? 'Links ziehen: Laufen · Rechts ziehen: Kamera · Angriff ×5 = Kombo · Schwer, Sprung, Dash · 1–4: Kampfkünste · Goldener Knopf: Aktion'
+      ? 'Links ziehen: Laufen · Rechts ziehen: Kamera · Angriff ×5 = Kombo · Schwer, Sprung, Dash · 1–5 (6–10 umschalten): Formen · Wille, Leben, Erwacht, König: Geistes-Faji · Goldener Knopf: Aktion'
       : 'Links ziehen: Steuern · Rechts ziehen: Kamera · Feuer, Breitseiten, Schub · Goldener Knopf: Aktion';
     if (dev === 'gamepad') return foot
       ? 'Linker Stick: Laufen · Rechter Stick: Kamera · A: Angriff · Y: Schwer · X: Sprung/Aktion · B: Dash · Steuerkreuz: Kampfkünste · Start: Pause'
@@ -5426,7 +5609,7 @@ export class Game {
     const b = this.input.getKeyBindings();
     const k = (a: keyof typeof b) => (b[a][0] ? this.input.keyLabel(b[a][0]) : '–');
     return foot
-      ? `${k('up')}${k('left')}${k('down')}${k('right')}: Laufen · ${k('jump')}: Sprung · ${k('dodge')}: Dash · ${k('attack')}/Klick: Angriff (×5 Kombo, dann ${k('heavy')}) · ${k('heavy')}: Schwer · ${k('art1')}–${k('art4')}: Kampfkünste · ${k('swap')}: Stil · ${k('interact')}: Aktion · Esc: Pause`
+      ? `${k('up')}${k('left')}${k('down')}${k('right')}: Laufen · ${k('jump')}: Sprung · ${k('dodge')}: Dash · ${k('attack')}/Klick: Angriff (×5 Kombo, dann ${k('heavy')}) · ${k('heavy')}: Schwer · ${k('art1')}–${k('art5')} / ${k('art6')}–${k('art10')}: Formen · ${k('geist1')}/${k('geist2')}/${k('geist3')}/${k('geist4')}: Geistes-Faji · ${k('interact')}: Aktion · Esc: Pause`
       : `${k('up')}/${k('down')}: Fahrt · ${k('left')}/${k('right')}: Steuern · ${k('attack')}: Feuer · ${k('fireLeft')}/${k('fireRight')}: Breitseiten · ${k('dodge')}: Schub · ${k('interact')}: Aktion · Esc: Pause`;
   }
 }

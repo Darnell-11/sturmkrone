@@ -915,6 +915,8 @@ export class CombatSystem implements EnemyWorld {
       case 'sunder': e.sunderT = Math.max(e.sunderT, dur); break;
       case 'suppress': e.suppressT = Math.max(e.suppressT, dur); break;
       case 'fear': this.applyStatus(e, 'fear', dur, 0); break;
+      // 4.7B: Betäubung ohne Eis (Erwachter Wille, Himmelsgericht); Bosse nur kurz, Elite halb
+      case 'stun': e.stun(e.def.boss ? Math.min(0.5, dur) : e.def.elite ? dur * 0.5 : dur); break;
       default: break;
     }
   }

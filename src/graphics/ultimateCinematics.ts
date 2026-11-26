@@ -404,6 +404,25 @@ export const ULTIMATE_CINEMATICS: Readonly<Record<CataclysmKind, UltimateCinemat
     ],
     frames: 3, kick: 1.0, kickDir: 'fwd', slow3: [0.3, 1],
   },
+  // 4.7B Priester: Erzengel-Himmelsgericht – Akt 1 Lichtschwingen hinter den Schultern (Untersicht), Akt 2 die Kamera steigt mit den
+  // Lichtsäulen in den aufreißenden Himmel, Akt 3 Gericht von oben: weiter Blick auf den Kreis der Säulen und das smaragdene Lebenslicht
+  himmelsgericht: {
+    kind: 'himmelsgericht', title: 'Erzengel-Himmelsgericht',
+    beats: [
+      'Lichtschwingen entfalten sich hinter den Schultern, die Hände öffnen sich zum Himmel',
+      'Die Kamera steigt mit den Lichtsäulen auf, die Wolkendecke reißt golden auf',
+      'Gericht von oben: der Säulenkreis schlägt ein, smaragdenes Lebenslicht steigt auf',
+    ],
+    dur: [0.34, 0.4, 0.38],
+    pose: P('sunCrown', 'Erzengel-Schwingen', { clip: [0.1, 0.24], lean: -0.2, look: 0.35, handR: 'offen', handL: 'offen', reachR: [-0.5, 1.5, 0.1, -0.75, 1.95, 0.05], reachL: [0.5, 1.5, 0.1, 0.75, 1.95, 0.05], whirl: 2 }),
+    sky: 'sunburst', threat: 'sunRing',
+    shots: [
+      S(K('chest', 2.4, -0.4, -0.2, 'head', 0.5, 44), K('chest', 2.0, -0.55, -0.35, 'head', 0.8, 42), 'inOut'),
+      S(K('feet', 8, 1.2, 2, 'chest', 2, 56), K('feet', 10, 6.5, 4, 'head', 6, 60), 'inOut'),
+      S(K('impact', 20, 9, 5, 'impact', 0, 56), K('impact', 26, 12, 8, 'impact', 0, 60), 'out'),
+    ],
+    frames: 3, kick: 1.0, kickDir: 'down', slow3: [0.3, 1],
+  },
   bloodMoon: {
     kind: 'bloodMoon', title: '7. Form: Blutmond-Finsternis',
     beats: [
@@ -427,6 +446,8 @@ export const ULTIMATE_CINEMATICS: Readonly<Record<CataclysmKind, UltimateCinemat
 export const CINEMATIC_ORDER: readonly CataclysmKind[] = [
   'skyfall', 'horizonCut', 'iaiWorldBreak', 'sawCyclone', 'sevenSeas', 'fistStorm', 'oceanSplit', 'blackHole',
   'fireDragons', 'glacier', 'floodDragon', 'vacuumStorm', 'thunderJudgment', 'sunDance', 'bloodMoon',
+  // 4.7B: Ultimate des Priesters
+  'himmelsgericht',
 ];
 
 // ---------------------------------------------------------------------------------------------------------------

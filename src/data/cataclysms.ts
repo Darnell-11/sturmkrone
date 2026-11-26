@@ -131,6 +131,13 @@ export const ULTIMATES: Partial<Record<ActionStyleId, ActionMove>> = {
     ticks(5, 0.05, 0.3, { shape: 'circle', range: 19, dmg: 1.1, poise: 50, knock: 8, pen: 3, status: 'sunder', statusDur: 10, hitstop: 0.05, shake: 0.6, vfx: 'sonne' }, { dmg: 2, knock: 16, fling: 18, hitstop: 0.14, shake: 1.1 }),
     { formMin: 7 }),
 
+  // 4.7B Priester: Erzengel-Himmelsgericht – Lichtsäulen fallen im Kreis um die Figur, betäuben und strafen; der Segen heilt dich und alle
+  // Verbündeten in 20 m um 35 % (`heal`). Welt-Effekt wie der Sonnentanz, aber weiß-gold mit smaragdenem Lebenslicht (cataclysmDirector).
+  priester: ult('priester.u', 'Erzengel-Himmelsgericht', 'Ranged_Magic_Raise', 1.4,
+    { kind: 'himmelsgericht', strikeAt: 0.06, lag: 0.32, reach: 22, width: 22, shot: 'sky', color: '#FFF4C8', accent: '#6AF0B0', frames: 3 },
+    ticks(6, 0.05, 0.3, { shape: 'circle', range: 21, dmg: 1.0, poise: 50, knock: 8, pen: 3, status: 'stun', statusDur: 1.2, hitstop: 0.05, shake: 0.6, vfx: 'sonne' }, { dmg: 2, knock: 16, fling: 18, hitstop: 0.14, shake: 1.1 }),
+    { heal: 0.35, healR: 20, formMin: 7 }),
+
   mond: ult('mond.u', '7. Form: Blutmond-Finsternis', 'Ranged_Magic_Raise', 1.4,
     { kind: 'bloodMoon', strikeAt: 0.06, lag: 0.32, reach: 26, width: 26, color: '#FF3A6A', accent: '#8A2AFF', shot: 'sky', frames: 3 },
     ticks(12, 0.03, 0.29, { shape: 'circle', range: 25, grow: true, dmg: 0.55, poise: 22, knock: 6, fling: 8, hitstop: 0.015, shake: 0.3, vfx: 'mond' }, { dmg: 1.5, knock: 16, fling: 20, hitstop: 0.12, shake: 1 }),
@@ -165,7 +172,7 @@ export const SKYFALL_ULTIMATE: ActionMove = ult('kosmos.u', 'Himmelssturz: Zwill
 /** 4.6I: Spielzeit vom Start der Bewegung (nach dem Aufladen) bis zum entscheidenden Treffer = Ende von Akt 2 der Kino-Regie */
 export const decisiveAt = (s: Pick<UltimateSpec, 'strikeAt' | 'lag'>) => s.strikeAt + s.lag;
 /** Alle 14 Ultimates (Reihenfolge wie in der Vorgabe) */
-export const ULTIMATE_ORDER: readonly ActionStyleId[] = ['zweihaender', 'saebel', 'doppel', 'langklinge', 'sturmfaust', 'erdspalter', 'schwarzloch', 'feuer', 'eis', 'wasser', 'wind', 'blitz', 'sonne', 'mond'];
+export const ULTIMATE_ORDER: readonly ActionStyleId[] = ['zweihaender', 'saebel', 'doppel', 'langklinge', 'sturmfaust', 'erdspalter', 'schwarzloch', 'feuer', 'eis', 'wasser', 'wind', 'blitz', 'sonne', 'mond', 'priester'];
 
 // ---------- Regeln für Schiffe und Endbosse (rein, getestet) ----------
 

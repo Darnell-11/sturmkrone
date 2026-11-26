@@ -440,7 +440,7 @@ describe('4.7A Geteilte Welt: andere Kapitäne (lokale Stellvertreter hinter dem
     expect(new Set(r.map((c) => c.name)).size).toBe(r.length);
     expect(new Set(r.map((c) => c.id)).size).toBe(r.length);
     expect(localRoster(5)).toEqual(r);
-    for (const c of r) { expect(c.title).toMatch(/^Kapitän · Stufe \d+$/); expect(c.greet.length).toBeGreaterThan(0); }
+    for (const c of r) { expect(c.title).toMatch(/^Kapitän · .+ \((DPS|Tank-DPS|Assassinen-DPS|Kombo-DPS|Midrange-DPS|Elementar-DPS|DPS\/Heal)\) · Stufe \d+$/); expect(c.greet.length).toBeGreaterThan(0); }
   });
 
   it('Runde der Schiffe: Wegpunkte im Kreis um die Insel', () => {
@@ -491,10 +491,10 @@ describe('4.7A „Prolog überspringen“ und Spielstand-Migration (Version 24)'
     expect(TUTORIAL_END).toEqual({ level: TUTORIAL.level3, crew: TUTORIAL.starterCrew, gold: TUTORIAL.thanksGold });
   });
 
-  it('neue Spielstände: Version 24, beginnen im Prolog', () => {
-    expect(SAVE_VERSION).toBe(24);
+  it('neue Spielstände: aktuelle Version (4.7B: 25), beginnen im Prolog', () => {
+    expect(SAVE_VERSION).toBe(25);
     const s = createSave('Fynn', 'pirat', '4.7.0');
-    expect(s.version).toBe(24);
+    expect(s.version).toBe(25);
     expect(s.progress.instance?.mode).toBe('prolog');
     const m = migrateSave(JSON.parse(JSON.stringify(s)), '4.7.0');
     expect(m.ok).toBe(true);
@@ -516,7 +516,7 @@ describe('4.7A „Prolog überspringen“ und Spielstand-Migration (Version 24)'
     if (!m.ok) return;
     const d = m.data;
     expect(m.migratedFrom).toBe(23);
-    expect(d.version).toBe(24);
+    expect(d.version).toBe(25);
     expect(d.progress.instance).toEqual(legacyInstance());
     expect(isPrivate(d.progress.instance!)).toBe(false);
     expect(d.player.level).toBe(37);

@@ -169,6 +169,12 @@ export class TouchControls {
     b.classList.toggle('rdy', ready);
   }
 
+  /** 4.7B: Knopf ein- oder ausblenden (zweite Seite der Formen, Geistes-Faji vor dem Erwachen) */
+  show(action: string, on: boolean) {
+    const b = this.buttonsEl.querySelector<HTMLElement>(`[data-action="${action}"]`);
+    if (b && b.hidden === on) b.hidden = !on;
+  }
+
   /** Knopf einer Kampfkunst (4.6A): großes Symbol, Kurzname darunter, Abklingzeit als Kreisausschnitt (`frac` 1 = bereit) */
   setArt(action: string, icon: string, name: string, frac: number, ready: boolean, color: string) {
     const b = this.buttonsEl.querySelector<HTMLElement>(`[data-action="${action}"]`);

@@ -21,6 +21,11 @@ import { wrapAngle } from '../core/mathUtil';
 import { AURA, KING_WAVE, WILL, formPower, type AuraId } from '../data/fajiArts';
 import { TALENT_CAP, softCap } from '../data/balanceConfig';
 import { NO_TALENT_PARAMS, type TalentCombat, type TalentEngineParams } from './talentCombat';
+import { FORM_NODES, GEIST_VALUES, ULT_NODE } from '../data/classes';
+import { H0 } from '../data/actionKit';
+
+/** 4.7B: Abklingzeiten der vier Geistes-Kräfte je Rang (gleich `GEIST[i].cd` in data/classes.ts) */
+const GEIST_CD: readonly ((r: number) => number)[] = [(r) => 32 - r, (r) => 26 - r, (r) => Math.round(20 - 0.8 * r), (r) => 75 - 3 * r];
 
 // ---------- Zustand ----------
 
@@ -73,8 +78,21 @@ export interface FighterState {
   rushLeft: number;
   /** verlangsamter Fall nach einem Lufttreffer (Restzeit) */
   hover: number;
-  /** Abklingzeiten der vier Techniken */
+  /** Abklingzeiten der zehn Formen (4.7B; Formen 1 – 4 = die alten Kampfkünste) */
   skillCd: number[];
+  /**
+   * 4.7B Klassenbaum: so viele Formen sind frei (0 … 10; Form k ab Knoten 1, 6, 12 … 54) und ob das Ultimate gelernt ist (Knoten 60).
+   * Ohne Klasse (Gegner, Prüfungen): alle zehn und das Ultimate.
+   */
+  formsOpen: number;
+  ultOpen: boolean;
+  /** 4.7B Geistes-Faji (Q/R/T/G): Ränge 0 … 5 (0 = gesperrt), Abklingzeiten, gepufferte Kraft, Willens-Entfesselung (Rest, Schadensbonus) */
+  geistRank: number[];
+  geistCd: number[];
+  bufG: number;
+  geistSlot: number;
+  willT: number;
+  willDmg: number;
   /** Stärkungen: Hyper-Armor, Krit, Haltungsschaden, Tempo (Restzeit) */
   hyperT: number; critT: number; poiseT: number; speedT: number;
   /** Wechselschlag-Bonus für den nächsten Angriff */
@@ -134,7 +152,8 @@ export function createFighter(entityId: string, style: ActionStyleId, x = 0, y =
     bufL: -1, bufS: -1, bufJ: -1, bufD: -1, bufK: -1, bufSlot: 0, clock: 0,
     dashT: 0, dashDur: 0, dashX: 0, dashZ: 1, dashSpeed: 0, dashSeq: 0, dashAir: false,
     iframes: 0, perfectT: 0, counterT: 0, counterStance: 0, hurtT: 0, castT: 0, blockSince: 99,
-    lockId: '', lockFree: 0, camYaw: 0, magnetLeft: 0, rushLeft: 0, hover: 0, skillCd: [0, 0, 0, 0],
+    lockId: '', lockFree: 0, camYaw: 0, magnetLeft: 0, rushLeft: 0, hover: 0, skillCd: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    formsOpen: 10, ultOpen: true, geistRank: [0, 0, 0, 0], geistCd: [0, 0, 0, 0], bufG: -1, geistSlot: 0, willT: 0, willDmg: 0,
     hyperT: 0, critT: 0, poiseT: 0, speedT: 0, swapBonus: 1, hits: 0, hitT: 0, maxHits: 0, lastLabel: '',
     stamina: T.stamina, staminaPause: 0, staminaFlash: 0, speedK: 1, finisherId: '', moveHits: 0,
     will: 0, awakenT: 0, ultReady: false, bufU: -1, aura: 0, kingT: AURA.kingEvery, form: 1, cineT: 0, strikeSeq: -1, waveSeq: -1, waveT: -1,
@@ -156,8 +175,10 @@ export interface ActionInput {
   camYaw: number;
   /** Knöpfe, gerade gedrückt */
   light: boolean; heavy: boolean; jump: boolean; dash: boolean;
-  /** Technik 1 … 4, gerade gedrückt (0 = keine) */
+  /** Form 1 … 10, gerade gedrückt (0 = keine) */
   skill: number;
+  /** 4.7B Geistes-Faji 1 … 4 (Q Willens-Entfesselung, R Lebensstrom-Fokus, T Erwachter Wille, G Königsdruck), gerade gedrückt (0 = keine) */
+  geist: number;
   blockHeld: boolean; blockPressed: boolean;
   /** feste Zielerfassung des Spiels ('' / NaN = keine) */
   hardLockId: string;
@@ -173,7 +194,7 @@ export interface ActionInput {
 }
 
 export function makeInput(): ActionInput {
-  return { moveX: 0, moveZ: 1, mag: 0, camYaw: 0, light: false, heavy: false, jump: false, dash: false, skill: 0, blockHeld: false, blockPressed: false, hardLockId: '', hardLockYaw: NaN, softLockId: '', awaken: false, aura: false };
+  return { moveX: 0, moveZ: 1, mag: 0, camYaw: 0, light: false, heavy: false, jump: false, dash: false, skill: 0, geist: 0, blockHeld: false, blockPressed: false, hardLockId: '', hardLockYaw: NaN, softLockId: '', awaken: false, aura: false };
 }
 
 /** Ein Ziel in der Nähe (vom Spiel je Bild in vorab angelegte Plätze geschrieben) */
@@ -258,7 +279,12 @@ export type ActionEventType =
   /** 4.6E: Nachbeben des Ultimates (a = Radius, b/c = Mittelpunkt x/z), Sturm-Schritt-Entladung (a = Radius, b/c = Mittelpunkt) */
   | 'aftershock' | 'stormBurst'
   /** 4.6H: Wandsprung (a = Zahl der Wandsprünge, b/c = Wandnormale x/z), Kantengriff (a = Höhe des Hochziehens) */
-  | 'wallKick' | 'ledge';
+  | 'wallKick' | 'ledge'
+  /**
+   * 4.7B: Heilung (a = Anteil der Höchst-LP, b = Radius für Verbündete, 0 = nur selbst; Priester-Formen, Ultimate, Lebensstrom-Fokus) und
+   * Geistes-Faji (a = Kraft 1 … 4, b = Radius bzw. Dauer/Heilung, c = getroffene Ziele; b = −1 gesperrt, −2 noch nicht bereit)
+   */
+  | 'heal' | 'geist';
 
 export interface ActionEvent { type: ActionEventType; a: number; b: number; c: number; s: string }
 
@@ -373,7 +399,7 @@ export class ActionCombatEngine {
   /** Im Sturm-Erwachen? */
   get awakened(): boolean { return this.f.awakenT > 0; }
   /** Steht das Ultimate jetzt bereit? (im Erwachen, noch nicht benutzt, Faji-Künste ab der 7. Form) */
-  get ultAvailable(): boolean { const st = this.style; const u = this.ultimateOf(st); return this.f.awakenT > 0 && this.f.ultReady && !!u && (!st.faji || u !== st.ultimate || this.f.form >= u.formMin); }
+  get ultAvailable(): boolean { const st = this.style; const u = this.ultimateOf(st); return this.f.awakenT > 0 && this.f.ultReady && !!u && (this.f.ultOpen || u !== st.ultimate); }
   /** Willenskraft-Leiste 0 … 1 */
   get willFrac(): number { return Math.min(1, this.f.will / WILL.max); }
   /** Formstufe setzen (Faji-Kunst; Spiel aus der Meisterschaft) */
@@ -400,6 +426,12 @@ export class ActionCombatEngine {
   get hyper(): boolean { const m = this.move; return this.f.hyperT > 0 || (!!m && m.hyper && this.f.phase === 'move'); }
   /** Abklingzeit einer Technik als Anteil 0 (bereit) … 1 */
   skillFrac(slot: number): number { const s = this.style.skills[slot - 1]; return s ? Math.min(1, this.f.skillCd[slot - 1] / s.cd) : 0; }
+  /** 4.7B Klassenbaum: freie Formen und Ultimate setzen (Spiel aus dem Spielstand) */
+  setClass(forms: number, ult: boolean) { this.f.formsOpen = Math.max(0, Math.min(10, Math.floor(forms))); this.f.ultOpen = ult; }
+  /** 4.7B Geistes-Faji: Ränge 0 … 5 der vier Kräfte */
+  setGeist(ranks: readonly number[]) { for (let i = 0; i < 4; i++) this.f.geistRank[i] = Math.max(0, Math.min(5, Math.floor(ranks[i] ?? 0))); }
+  /** Abklingzeit einer Geistes-Kraft als Anteil 0 (bereit) … 1 */
+  geistFrac(i: number): number { const r = this.f.geistRank[i]; if (r <= 0) return 0; const cd = GEIST_CD[i](r); return cd > 0 ? Math.min(1, this.f.geistCd[i] / cd) : 0; }
 
   // ---------- Steuerung von außen ----------
 
@@ -560,11 +592,13 @@ export class ActionCombatEngine {
     f.wallT = Math.min(9, f.wallT + dt);
     f.hover = dec(f.hover, dt); f.chaseT = dec(f.chaseT, dt); f.comboWindow = dec(f.comboWindow, dt); f.lockFree = dec(f.lockFree, dt); f.staminaFlash = dec(f.staminaFlash, dt);
     f.hyperT = dec(f.hyperT, dt); f.critT = dec(f.critT, dt); f.poiseT = dec(f.poiseT, dt); f.speedT = dec(f.speedT, dt);
-    for (let i = 0; i < 4; i++) f.skillCd[i] = dec(f.skillCd[i], dt);
+    for (let i = 0; i < f.skillCd.length; i++) f.skillCd[i] = dec(f.skillCd[i], dt);
+    for (let i = 0; i < 4; i++) f.geistCd[i] = dec(f.geistCd[i], dt);
+    if (f.willT > 0) { f.willT -= dt; if (f.willT <= 0) { f.willT = 0; f.willDmg = 0; } }
     if (f.hitT > 0) { f.hitT -= dt; if (f.hitT <= 0) { f.hitT = 0; f.hits = 0; } }
     f.blockSince += dt;
     if (f.staminaPause > 0) f.staminaPause -= dt;
-    else if (f.stamina < T.stamina) f.stamina = Math.min(T.stamina, f.stamina + dt * (f.phase === 'ground' && inp.mag < 0.1 ? T.staminaRegenIdle : T.staminaRegen));
+    else if (f.stamina < T.stamina) f.stamina = Math.min(T.stamina, f.stamina + dt * this.tp.regenK * (f.phase === 'ground' && inp.mag < 0.1 ? T.staminaRegenIdle : T.staminaRegen));
     // Kamera schnell gedreht: weiches Ziel sofort lösen (die feste Erfassung bleibt)
     const turn = Math.abs(wrapAngle(inp.camYaw - f.camYaw)) / Math.max(dt, 1e-4);
     f.camYaw = inp.camYaw;
@@ -578,6 +612,7 @@ export class ActionCombatEngine {
     if (inp.jump) f.bufJ = f.clock;
     if (inp.dash) f.bufD = f.clock;
     if (inp.skill > 0) { f.bufK = f.clock; f.bufSlot = inp.skill; }
+    if (inp.geist > 0) { f.bufG = f.clock; f.geistSlot = inp.geist; }
     if (inp.blockPressed) f.blockSince = 0;
     if (inp.awaken) f.bufU = f.clock;
     // Sturm-Erwachen läuft ab; Aura wechseln (keine → Sturmblick → Eisenwille → Königsdruck → keine)
@@ -652,6 +687,11 @@ export class ActionCombatEngine {
     if (this.wants(f.bufJ) && f.phase !== 'hurt' && f.phase !== 'down') {
       if (this.tryJump(inp, st)) f.bufJ = -1;
     }
+    // 4.7B Geistes-Faji: wirkt sofort (auch mitten in einem Angriff), nur nicht am Boden liegend oder taumelnd
+    if (this.wants(f.bufG) && f.geistSlot > 0 && f.phase !== 'down' && f.phase !== 'hurt') {
+      this.tryGeist(f.geistSlot - 1, w);
+      f.bufG = -1; f.geistSlot = 0;
+    }
     if (this.wants(f.bufK) && f.bufSlot > 0) {
       const r = this.trySkill(f.bufSlot, inp, st);
       if (r !== 0) { f.bufK = -1; f.bufSlot = 0; }
@@ -717,15 +757,16 @@ export class ActionCombatEngine {
     const f = this.f;
     const sk = st.skills[slot - 1];
     if (!sk) return -1;
+    // 4.7B: die Form wird erst über den Klassenbaum frei (Form k am Knoten 1, 6, 12 … 54)
+    if (slot > f.formsOpen) { this.events.push('locked', slot, FORM_NODES[slot - 1] ?? 0); return -1; }
     if (f.skillCd[slot - 1] > 0) { this.events.push('notReady', slot); return -1; }
-    // Faji-Kunst: die Technik wird erst mit ihrer Formstufe frei
-    if (st.faji && sk.formMin > f.form) { this.events.push('locked', slot, sk.formMin); return -1; }
     if (!this.canAct()) return 0;
     if (!f.grounded && !sk.airOk) return 0;
     this.startMove(sk, 'skill', inp);
     f.skillCd[slot - 1] = sk.cd;
     f.lightIdx = 0;
     this.events.push('skill', slot, 0, 0, sk.label);
+    if (sk.heal) this.events.push('heal', sk.heal, sk.healR ?? 0);
     return 1;
   }
 
@@ -842,8 +883,9 @@ export class ActionCombatEngine {
   private tryUltimate(inp: ActionInput, st: ActionStyleDef, w: ActionWorld): number {
     const f = this.f;
     const u = this.ultimateOf(st);
-    if (!u || !u.ultimate) { this.events.push('locked', 5, 0); return -1; }
-    if (st.faji && u === st.ultimate && f.form < u.formMin) { this.events.push('locked', 5, u.formMin); return -1; }
+    if (!u || !u.ultimate) { this.events.push('locked', 11, 0); return -1; }
+    // 4.7B: das Ultimate der Klasse erst mit Knoten 60 (Himmelssturz des Kosmos ausgenommen)
+    if (!f.ultOpen && u === st.ultimate) { this.events.push('locked', 11, ULT_NODE); return -1; }
     if (!this.canAct() && f.phase !== 'dash') return 0;
     void w;
     f.ultReady = false;
@@ -854,6 +896,7 @@ export class ActionCombatEngine {
     f.marksDone = false;
     f.strikeSeq = -1;
     this.events.push('ultimate', f.moveIdx, 0, 0, u.ultimate.kind);
+    if (u.heal) this.events.push('heal', u.heal, u.healR ?? 0);
     return 1;
   }
 
@@ -908,6 +951,56 @@ export class ActionCombatEngine {
       if (w.hit(t, KING_WAVE, this.style.light[0], c) > 0) landed++;
     }
     this.events.push('kingWave', r, landed);
+  }
+
+  // ---------- Geistes-Faji (4.7B) ----------
+
+  /** Treffer der Wellen Erwachter Wille (T) und Königsdruck (G): einmal angelegt, je Wirken neu gefüllt (keine Speicheranforderung) */
+  private readonly geistHit: ActionHit = { ...H0, t0: 0, t1: 0.1, shape: 'circle', arc: 6.3 };
+
+  /** Geistes-Kraft `i` (0 Q, 1 R, 2 T, 3 G) wirken */
+  private tryGeist(i: number, w: ActionWorld) {
+    const f = this.f;
+    const r = f.geistRank[i] ?? 0;
+    if (r <= 0) { this.events.push('geist', i + 1, -1); return; }
+    if (f.geistCd[i] > 0) { this.events.push('geist', i + 1, -2); return; }
+    f.geistCd[i] = GEIST_CD[i](r);
+    const V = GEIST_VALUES;
+    if (i === 0) {
+      f.willT = V.willeDur(r); f.willDmg = V.willeDmg(r);
+      this.events.push('geist', 1, f.willT);
+    } else if (i === 1) {
+      const heal = V.lebenHeal(r);
+      this.events.push('heal', heal, 0);
+      this.events.push('geist', 2, heal);
+    } else {
+      const h = this.geistHit;
+      const king = i === 3;
+      const rad = king ? V.koenigR(r) : V.erwachtR(r);
+      h.range = rad; h.up = king ? 6 : 3; h.down = 3;
+      h.dmg = king ? V.koenigDmg(r) : V.erwachtDmg(r);
+      h.poise = king ? 160 : 90; h.knock = king ? 14 : 6; h.fling = king ? 16 : 4; h.launch = king ? 3 : 0;
+      h.breakGuard = true; h.status = king ? 'fear' : 'stun'; h.statusDur = king ? V.koenigFear : V.erwachtStun(r);
+      h.hitstop = king ? 0.1 : 0.06; h.shake = king ? 1.0 : 0.55; h.fx = king ? 'heavy' : 'magic'; h.vfx = king ? 'koenig' : 'schwarzloch';
+      f.iframes = Math.max(f.iframes, king ? 0.45 : 0.25);
+      const c = this.fillCtx('skill', WAVE_TICK - 1);
+      c.formK = 1;
+      let landed = 0, broke = 0;
+      for (let k = 0; k < this.poolN; k++) {
+        const t = this.pool[k];
+        if (!t.alive) continue;
+        let dx = t.x - f.x, dz = t.z - f.z;
+        const d = Math.hypot(dx, dz);
+        if (d > rad + t.radius || Math.abs(t.y - f.y) > h.up + 2) continue;
+        if (d > 1e-4) { dx /= d; dz /= d; } else { dx = Math.sin(f.yaw); dz = Math.cos(f.yaw); }
+        c.dirX = dx; c.dirZ = dz;
+        const res = w.hit(t, h, this.style.light[0], c);
+        if (res > 0) landed++;
+        if (res > 1) broke++;
+      }
+      this.events.push('geist', i + 1, rad, landed);
+      if (landed > 0) { f.hits += landed; f.hitT = T.hitReset; if (f.hits > f.maxHits) f.maxHits = f.hits; this.addWill(Math.min(landed, WILL.hitCap) * WILL.hit + broke * WILL.broke); }
+    }
   }
 
   // ---------- Angriffe ----------
@@ -1156,11 +1249,11 @@ export class ActionCombatEngine {
     c.kind = kind;
     c.finisher = kind === 'finisher';
     c.airborne = !f.grounded;
-    c.bonus = f.moveBonus;
+    c.bonus = f.moveBonus * (f.willT > 0 ? 1 + f.willDmg : 1);
     c.style = st;
     c.fx = f.x; c.fz = f.z; c.fyaw = f.yaw;
     c.formK = st.faji && kind === 'skill' ? formPower(f.form).dmg : 1;
-    c.penAdd = f.aura === 2 ? Math.round(AURA.ironPen * this.tp.auraIronK) : 0;
+    c.penAdd = (f.aura === 2 ? Math.round(AURA.ironPen * this.tp.auraIronK) : 0) + (f.willT > 0 ? GEIST_VALUES.willePen : 0);
     c.ultimate = kind === 'ultimate';
     c.cast = f.moveSeq;
     c.chained = 0;
@@ -1251,7 +1344,7 @@ export class ActionCombatEngine {
       c.chained = 0;
       // Talente: Hinrichtung in der Luft (Mutation oder Stil) – Bonus gegen Ziele in der Luft
       const exec = t.airborne ? (mv.airExec ?? 0) + this.tp.airExec : 0;
-      c.bonus = exec > 0 ? f.moveBonus * (1 + softCap(exec, TALENT_CAP.airDmg)) : f.moveBonus;
+      c.bonus = (exec > 0 ? f.moveBonus * (1 + softCap(exec, TALENT_CAP.airDmg)) : f.moveBonus) * (f.willT > 0 ? 1 + f.willDmg : 1);
       // Klingen-Clash: ein schwerer Schlag trifft den Schlag eines Bosses oder Elite-Gegners, der auf die Figur zielt (einmal je Angriff)
       const clash = f.clashSeq !== f.moveSeq && t.attacking && (t.boss || t.elite) && this.clashable(h)
         && Math.sin(t.yaw) * -dx + Math.cos(t.yaw) * -dz > T.clashFacing;

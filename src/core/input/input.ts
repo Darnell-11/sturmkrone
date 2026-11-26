@@ -48,6 +48,8 @@ export class Input {
    * Laufrichtung (oder sobald eine dazukommt) bleibt der Dash sofort.
    */
   private shiftDefer = '';
+  /** 4.7B: Umschalt beim Umbelegen gedrückt (wartet auf die zweite Taste einer Kombination) */
+  private captureShift = '';
   /** 4.6J: Mausklick bzw. Antippen auf die Spielwelt (Bildschirm-Pixel) – gesammelt bis zum nächsten Logikschritt */
   private clickAcc = { x: 0, y: 0, n: 0, touch: false };
   private clickStep = { x: 0, y: 0, on: false, touch: false };
@@ -104,6 +106,8 @@ export class Input {
   }
 
   keyLabel(code: string): string {
+    // 4.7B: Umschalt-Kombinationen („Shift+Digit1“ → „⇧1“)
+    if (code.startsWith('Shift+')) return `⇧${this.keyLabel(code.slice(6))}`;
     const fixed: Record<string, string> = {
       Space: 'Leertaste', ShiftLeft: 'Umschalt', ShiftRight: 'Umschalt rechts', ControlLeft: 'Strg', ControlRight: 'Strg rechts',
       AltLeft: 'Alt', AltRight: 'Alt Gr', Enter: 'Eingabe', Escape: 'Esc', Tab: 'Tab', Backspace: 'Rück',
@@ -165,14 +169,28 @@ export class Input {
     // Nur eine echte Tastatur schaltet die Bedienung um – nicht die Zurück-Taste der Android-App, die Esc nachahmt
     if (e.isTrusted) this.setDevice('keyboard');
     if (this.captureNext) {
+      // Umschalt allein abwarten: gehalten und dann eine Taste = Umschalt-Kombination (4.7B, Formen 6 – 10)
+      if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') { e.preventDefault(); this.captureShift = e.code; return; }
       e.preventDefault();
       const cb = this.captureNext;
       this.captureNext = null;
-      cb(e.code);
+      this.captureShift = '';
+      cb(e.shiftKey ? `Shift+${e.code}` : e.code);
       return;
     }
     if (e.repeat) return;
     if (this.gameplayActive && this.keyMap.has(e.code)) e.preventDefault();
+    // 4.7B: Umschalt + Taste mit eigener Belegung (Formen 6 – 10 auf Umschalt + 1 – 5): die Kombination gewinnt, das wartende Ausweichen verfällt
+    if (e.shiftKey && !this.held.has(e.code)) {
+      const combo = this.keyMap.get(`Shift+${e.code}`);
+      if (combo) {
+        if (this.gameplayActive) e.preventDefault();
+        this.flushShift(false);
+        for (const a of combo) this.press(a);
+        this.held.add(e.code);
+        return;
+      }
+    }
     // 4.6J: Umschalt + Tab (bzw. die Taste von „Nächstes Ziel“) = voriges Ziel; das wartende Umschalt-Ausweichen verfällt
     if (e.shiftKey && !this.held.has(e.code) && this.keyMap.get(e.code)?.includes('targetNext')) {
       this.flushShift(false);
@@ -185,6 +203,14 @@ export class Input {
 
   private onKeyUp = (e: KeyboardEvent) => {
     this.held.delete(e.code);
+    // Umschalt allein beim Umbelegen losgelassen: Umschalt selbst ist die Taste
+    if (this.captureNext && e.code === this.captureShift) {
+      const cb = this.captureNext;
+      this.captureNext = null;
+      this.captureShift = '';
+      cb(e.code);
+      return;
+    }
     if (e.code === this.shiftDefer) this.flushShift(true);
   };
 

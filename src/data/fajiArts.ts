@@ -50,7 +50,10 @@ export const MASTERY = { hit: 1, skillHit: 2, finisher: 6, awakenK: 2 } as const
 // ---------- Baukasten der Künste ----------
 
 interface ArtSpec {
-  id: FajiArtId;
+  /** Kunst (oder 4.7B: der Priester, eine Faji-Spezialisierung ohne Meisterschaft) */
+  id: FajiArtId | 'priester';
+  /** Element der Darstellung, wenn es nicht die Kennung ist (Priester: Sonnenlicht) */
+  vfx?: string;
   label: string;
   title: string;
   desc: string;
@@ -82,7 +85,7 @@ type SkillSpec = Omit<MoveIn, 'id' | 'label'> & { name: string; short: string; i
 
 /** Treffer mit Element der Kunst */
 function el(a: ArtSpec, h: HitIn, withStatus = true): HitIn {
-  const o: HitIn = { vfx: a.id, ...h };
+  const o: HitIn = { vfx: a.vfx ?? a.id, ...h };
   if (withStatus && a.status && !h.status) { o.status = a.status; o.statusDur = h.statusDur ?? a.statusDur; }
   if (a.chain && h.chain === undefined) o.chain = a.chain;
   if (a.pen && h.pen === undefined) o.pen = a.pen;
@@ -92,50 +95,51 @@ function el(a: ArtSpec, h: HitIn, withStatus = true): HitIn {
 
 /** Mondsichel als Begleitgeschoss eines Schlags (Größe nach Kettenschritt) */
 function crescent(a: ArtSpec, size: number, at: readonly [number, number]): HitIn {
-  return { at, range: 16, dmg: 0.08 * size, poise: 4, knock: 2, fx: 'magic', vfx: a.id, projectile: shot(a.color, 26, 0.45 * size, true, 1, 0, 'crescent') };
+  return { at, range: 16, dmg: 0.08 * size, poise: 4, knock: 2, fx: 'magic', vfx: a.vfx ?? a.id, projectile: shot(a.color, 26, 0.45 * size, true, 1, 0, 'crescent') };
 }
 
 function artStyle(a: ArtSpec): ActionStyleDef {
   const id = a.id;
+  const vx = a.vfx ?? id;
   const N = a.names;
   const cres = (size: number, at: readonly [number, number]) => (a.crescents ? [crescent(a, size, at)] : []);
   // Kette kalibriert auf das Kampfmodell (Mondsicheln fliegen zusätzlich mit: darum etwas leichtere Schläge)
   const lk = a.crescents ? 0.7 : 0.82;
   const light = [
-    move({ id: `${id}.l1`, label: N[0], clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.34, vfx: id, hits: [el(a, { range: 2.5, arc: 1.9, dmg: 0.44 * lk, poise: 8, knock: 2, fx: 'punch' }, false), ...cres(0.6, [0.42, 0.5])] }),
-    move({ id: `${id}.l2`, label: N[1], clip: 'Melee_Unarmed_Attack_Kick', dur: 0.36, vfx: id, hits: [el(a, { range: 2.7, arc: 2.1, dmg: 0.47 * lk, poise: 9, knock: 3, fx: 'heavy' }, false), ...cres(0.8, [0.45, 0.52])] }),
-    move({ id: `${id}.l3`, label: N[2], clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.4, vfx: id, hits: [el(a, { shape: 'circle', offset: 1.5, range: 2.4, dmg: 0.55 * lk, poise: 11, knock: 4, fx: 'magic' }), ...cres(1, [0.45, 0.52])] }),
-    move({ id: `${id}.l4`, label: N[3], clip: 'Ranged_Magic_Shoot', dur: 0.46, lunge: 0, vfx: id, hits: [el(a, { shape: 'line', range: 7.5, width: 2, grow: true, dmg: 0.62 * lk, poise: 13, knock: 5, fx: 'magic' }), ...cres(1.3, [0.4, 0.48])] }),
-    move({ id: `${id}.l5`, label: N[4], clip: 'Ranged_Magic_Raise', dur: 0.86, lunge: 0, finisher: true, vfx: id, hits: [el(a, { shape: 'circle', range: 4.8, dmg: 1.3 * lk, poise: 26, knock: 9, fling: 12, vortex: a.vortex ?? 0, fx: 'magic', hitstop: 0.12, shake: 0.55 }), ...cres(1.8, [0.5, 0.58])] }),
+    move({ id: `${id}.l1`, label: N[0], clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.34, vfx: vx, hits: [el(a, { range: 2.5, arc: 1.9, dmg: 0.44 * lk, poise: 8, knock: 2, fx: 'punch' }, false), ...cres(0.6, [0.42, 0.5])] }),
+    move({ id: `${id}.l2`, label: N[1], clip: 'Melee_Unarmed_Attack_Kick', dur: 0.36, vfx: vx, hits: [el(a, { range: 2.7, arc: 2.1, dmg: 0.47 * lk, poise: 9, knock: 3, fx: 'heavy' }, false), ...cres(0.8, [0.45, 0.52])] }),
+    move({ id: `${id}.l3`, label: N[2], clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.4, vfx: vx, hits: [el(a, { shape: 'circle', offset: 1.5, range: 2.4, dmg: 0.55 * lk, poise: 11, knock: 4, fx: 'magic' }), ...cres(1, [0.45, 0.52])] }),
+    move({ id: `${id}.l4`, label: N[3], clip: 'Ranged_Magic_Shoot', dur: 0.46, lunge: 0, vfx: vx, hits: [el(a, { shape: 'line', range: 7.5, width: 2, grow: true, dmg: 0.62 * lk, poise: 13, knock: 5, fx: 'magic' }), ...cres(1.3, [0.4, 0.48])] }),
+    move({ id: `${id}.l5`, label: N[4], clip: 'Ranged_Magic_Raise', dur: 0.86, lunge: 0, finisher: true, vfx: vx, hits: [el(a, { shape: 'circle', range: 4.8, dmg: 1.3 * lk, poise: 26, knock: 9, fling: 12, vortex: a.vortex ?? 0, fx: 'magic', hitstop: 0.12, shake: 0.55 }), ...cres(1.8, [0.5, 0.58])] }),
   ];
   const branch: ActionStyleDef['branch'] = [
-    move({ id: `${id}.b1`, label: 'Schildbrecher-Stoß', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.42, lunge: 6, vfx: id, hits: [el(a, { range: 2.6, arc: 1.3, dmg: 0.78, poise: 38, knock: 7, breakGuard: true, fx: 'punch', hitstop: 0.1, shake: 0.4 })] }),
-    move({ id: `${id}.b2`, label: 'Orkan-Launcher', clip: 'Melee_Unarmed_Attack_Kick', dur: 0.46, rise: 10.6, vfx: id, hits: [el(a, { shape: 'circle', offset: 1.1, range: 3, dmg: 0.66, poise: 20, knock: 1, launch: 10.8, maxTargets: 12, fx: 'heavy', hitstop: 0.08, shake: 0.35 }, false)] }),
-    move({ id: `${id}.b3`, label: '360°-Massenschlacht-Feger', clip: 'Melee_2H_Attack_Spinning', dur: 0.66, from: 0, to: 1, vfx: id, hits: ticks(3, 0.1, 0.85, el(a, { arc: ROUND, range: 4.4, dmg: 0.34, poise: 10, knock: 7, fling: 8, fx: 'spin', hitstop: 0.04 })) }),
-    move({ id: `${id}.b4`, label: 'Langstrecken-Schockwelle', clip: 'Ranged_Magic_Shoot', dur: 0.62, lunge: 0, vfx: id, hits: [el(a, { shape: 'line', range: 15, width: 3, grow: true, dmg: 1.0, poise: 24, knock: 7, fling: 9, fx: 'magic', hitstop: 0.08, shake: 0.45 })] }),
+    move({ id: `${id}.b1`, label: 'Schildbrecher-Stoß', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.42, lunge: 6, vfx: vx, hits: [el(a, { range: 2.6, arc: 1.3, dmg: 0.78, poise: 38, knock: 7, breakGuard: true, fx: 'punch', hitstop: 0.1, shake: 0.4 })] }),
+    move({ id: `${id}.b2`, label: 'Orkan-Launcher', clip: 'Melee_Unarmed_Attack_Kick', dur: 0.46, rise: 10.6, vfx: vx, hits: [el(a, { shape: 'circle', offset: 1.1, range: 3, dmg: 0.66, poise: 20, knock: 1, launch: 10.8, maxTargets: 12, fx: 'heavy', hitstop: 0.08, shake: 0.35 }, false)] }),
+    move({ id: `${id}.b3`, label: '360°-Massenschlacht-Feger', clip: 'Melee_2H_Attack_Spinning', dur: 0.66, from: 0, to: 1, vfx: vx, hits: ticks(3, 0.1, 0.85, el(a, { arc: ROUND, range: 4.4, dmg: 0.34, poise: 10, knock: 7, fling: 8, fx: 'spin', hitstop: 0.04 })) }),
+    move({ id: `${id}.b4`, label: 'Langstrecken-Schockwelle', clip: 'Ranged_Magic_Shoot', dur: 0.62, lunge: 0, vfx: vx, hits: [el(a, { shape: 'line', range: 15, width: 3, grow: true, dmg: 1.0, poise: 24, knock: 7, fling: 9, fx: 'magic', hitstop: 0.08, shake: 0.45 })] }),
   ];
   const sk = a.skills.map((s, i): ActionSkill => {
     const { name, short, icon, desc, cd, hits, ...rest } = s;
-    return skill({ id: `${id}.k${i + 1}`, slot: (i + 1) as 1 | 2 | 3 | 4, label: name, short, icon, desc, cd, formMin: FORM_UNLOCK[i], vfx: id, ...rest, hits: (hits ?? []).map((h) => el(a, h)) } as Parameters<typeof skill>[0]);
+    return skill({ id: `${id}.k${i + 1}`, slot: i + 1, label: name, short, icon, desc, cd, formMin: FORM_UNLOCK[i], vfx: vx, ...rest, hits: (hits ?? []).map((h) => el(a, h)) } as Parameters<typeof skill>[0]);
   }) as ActionStyleDef['skills'];
   const ultimate = ULTIMATES[id] ?? null;
   return {
     id, label: a.label, title: a.title, desc: a.desc, color: a.color, accent: a.accent, visual: 'effekt', idleClip: 'Melee_Unarmed_Idle',
     light, branch,
-    heavy: move({ id: `${id}.s`, label: `${a.label.split('-')[0]}-Hammer`, clip: 'Melee_1H_Attack_Jump_Chop', dur: 0.7, lunge: 4, vfx: id, hits: [el(a, { shape: 'circle', offset: 1.4, range: 3, dmg: 1.1, poise: 32, knock: 8, fx: 'heavy', hitstop: 0.11, shake: 0.5 })] }),
+    heavy: move({ id: `${id}.s`, label: `${a.label.split('-')[0]}-Hammer`, clip: 'Melee_1H_Attack_Jump_Chop', dur: 0.7, lunge: 4, vfx: vx, hits: [el(a, { shape: 'circle', offset: 1.4, range: 3, dmg: 1.1, poise: 32, knock: 8, fx: 'heavy', hitstop: 0.11, shake: 0.5 })] }),
     air: [
-      move({ id: `${id}.a1`, label: 'Luft-Handstoß', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.3, air: true, vfx: id, hits: [el(a, { ...AIR, range: 2.5, arc: 1.9, dmg: 0.38, poise: 8, fx: 'punch' }, false), ...cres(0.7, [0.4, 0.48])] }),
-      move({ id: `${id}.a2`, label: 'Luft-Wirbeltritt', clip: 'Melee_Unarmed_Attack_Kick', dur: 0.34, air: true, vfx: id, hits: [el(a, { ...AIR, range: 2.6, arc: 2, dmg: 0.42, poise: 9, fx: 'heavy' }, false), ...cres(0.9, [0.42, 0.5])] }),
-      move({ id: `${id}.a3`, label: 'Luft-Entladung', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.36, air: true, vfx: id, hits: [el(a, { ...AIR, shape: 'circle', range: 3, dmg: 0.5, poise: 12, juggle: 4.4, fx: 'magic' }), ...cres(1.2, [0.42, 0.5])] }),
+      move({ id: `${id}.a1`, label: 'Luft-Handstoß', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.3, air: true, vfx: vx, hits: [el(a, { ...AIR, range: 2.5, arc: 1.9, dmg: 0.38, poise: 8, fx: 'punch' }, false), ...cres(0.7, [0.4, 0.48])] }),
+      move({ id: `${id}.a2`, label: 'Luft-Wirbeltritt', clip: 'Melee_Unarmed_Attack_Kick', dur: 0.34, air: true, vfx: vx, hits: [el(a, { ...AIR, range: 2.6, arc: 2, dmg: 0.42, poise: 9, fx: 'heavy' }, false), ...cres(0.9, [0.42, 0.5])] }),
+      move({ id: `${id}.a3`, label: 'Luft-Entladung', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.36, air: true, vfx: vx, hits: [el(a, { ...AIR, shape: 'circle', range: 3, dmg: 0.5, poise: 12, juggle: 4.4, fx: 'magic' }), ...cres(1.2, [0.42, 0.5])] }),
     ],
-    meteor: move({ id: `${id}.m`, label: 'Meteor-Sturzangriff', clip: 'Melee_Unarmed_Attack_Kick', dur: 1.0, meteor: true, air: true, vfx: id, hits: [el(a, { shape: 'circle', range: 4.2, dmg: 1.1, poise: 26, knock: 8, launch: 4, fling: 10, fx: 'magic', hitstop: 0.1, shake: 0.6 })] }),
-    finisher: move({ id: `${id}.f`, label: a.finisher, clip: 'Ranged_Magic_Raise', dur: 1.15, hyper: true, iframes: 1.15, cutin: `${a.finisher}!`, magnet: true, vfx: id, hits: [el(a, { shape: 'circle', offset: 1.5, range: 3.4, dmg: 1, poise: 0, knock: 10, fx: 'magic', hitstop: 0.3, shake: 1.0 })] }),
+    meteor: move({ id: `${id}.m`, label: 'Meteor-Sturzangriff', clip: 'Melee_Unarmed_Attack_Kick', dur: 1.0, meteor: true, air: true, vfx: vx, hits: [el(a, { shape: 'circle', range: 4.2, dmg: 1.1, poise: 26, knock: 8, launch: 4, fling: 10, fx: 'magic', hitstop: 0.1, shake: 0.6 })] }),
+    finisher: move({ id: `${id}.f`, label: a.finisher, clip: 'Ranged_Magic_Raise', dur: 1.15, hyper: true, iframes: 1.15, cutin: `${a.finisher}!`, magnet: true, vfx: vx, hits: [el(a, { shape: 'circle', offset: 1.5, range: 3.4, dmg: 1, poise: 0, knock: 10, fx: 'magic', hitstop: 0.3, shake: 1.0 })] }),
     skills: sk,
     jumps: a.jumps ?? 2, airDashes: a.airDashes ?? 1, dashSpeed: a.dashSpeed ?? 15, dashTime: 0.26,
     perfectWindow: a.perfectWindow ?? ACTION_TUNING.perfectWindow,
     critMult: 1.6, critBonus: 0.02, penBonus: a.penBonus ?? 0, postureK: 0.95, physical: false,
-    faji: true, element: id,
-    awakenWave: awakenWave({ range: 11 * (a.reachK ?? 1), width: 2.4, vfx: id, status: a.status, statusDur: Math.min(2, a.statusDur), chain: a.chain ?? 0 }),
+    faji: true, element: vx,
+    awakenWave: awakenWave({ range: 11 * (a.reachK ?? 1), width: 2.4, vfx: vx, status: a.status, statusDur: Math.min(2, a.statusDur), chain: a.chain ?? 0 }),
     ultimate,
   };
 }
@@ -232,6 +236,25 @@ const ARTS: ArtSpec[] = [
     ],
   },
 ];
+
+/**
+ * 4.7B: der Priester – Licht- & Lebens-Faji (DPS/Heilung). Lichtstrahlen und Urteile strafen, Segen und Heilung tragen die Figur und ihre
+ * Verbündeten (`ActionMove.heal`). Er ist eine Spezialisierung der Faji-Wirker, aber keine Meisterschafts-Kunst (kein Q-Wechsel, keine Formstufen).
+ */
+const PRIEST: ArtSpec = {
+  id: 'priester', vfx: 'sonne', label: 'Priester', title: 'Licht- & Lebens-Faji', color: '#FFF1B8', accent: '#5AE8A0', status: '', statusDur: 0, proj: 'sun', pen: 1,
+  desc: 'Lichtstrahlen und Urteile strafen die Feinde; Segen und Heilung tragen dich und deine Verbündeten.',
+  names: ['Lichtfunke', 'Segenstritt', 'Strahlenhand', 'Urteilswelle', 'Gnaden-Entladung'], finisher: 'Gnadenbann',
+  skills: [
+    { name: 'Heilende Hand', short: 'Heilen', icon: '✚', cd: 9, desc: 'Heilt dich um 16 % deiner Lebenspunkte; ein Lichtstoß trifft die Gegner vor dir.', clip: 'Ranged_Magic_Spellcasting', dur: 0.6, magnet: false, lunge: 0, heal: 0.16, healR: 0, hits: [{ shape: 'arc', arc: 1.6, range: 3.5, dmg: 0.5, poise: 8, knock: 3, fx: 'magic' }] },
+    { name: 'Lichtstrahl', short: 'Strahl', icon: '✦', cd: 6, desc: 'Ein gebündelter Lichtstrahl, 16 m weit, durchschlägt Rüstung.', clip: 'Ranged_Magic_Shoot', dur: 0.7, magnet: false, lunge: 0, hits: [{ shape: 'line', range: 16, width: 1.8, grow: true, dmg: 1.2, poise: 18, knock: 4, pen: 2, fx: 'magic' }] },
+    { name: 'Urteilsspruch', short: 'Urteil', icon: '⚖', cd: 10, desc: 'Ein Lichturteil schlägt 6 m vor dir ein und bricht die Haltung.', clip: 'Ranged_Magic_Raise', dur: 0.9, magnet: false, lunge: 0, hits: [{ shape: 'circle', offset: 6, range: 4.5, at: [0.55, 0.62], dmg: 1.7, poise: 50, knock: 8, launch: 5, fx: 'heavy', hitstop: 0.1, shake: 0.6 }] },
+    { name: 'Segenskreis', short: 'Segen', icon: '❂', cd: 15, desc: 'Ein Kreis aus Licht heilt dich und alle Verbündeten in 10 m um 14 % und versengt Gegner in 6 m.', clip: 'Ranged_Magic_Raise', dur: 1.1, magnet: false, lunge: 0, heal: 0.14, healR: 10, hits: ticks(3, 0.3, 0.8, { shape: 'circle', range: 6, dmg: 0.45, poise: 12, knock: 5, fx: 'magic' }) },
+  ],
+};
+
+/** 4.7B: der Priester als Action-Stil */
+export const PRIEST_STYLE: ActionStyleDef = artStyle(PRIEST);
 
 /** Die acht Faji-Künste als Action-Stile */
 export const FAJI_STYLES: Record<FajiArtId, ActionStyleDef> = Object.fromEntries(ARTS.map((a) => [a.id, artStyle(a)])) as Record<FajiArtId, ActionStyleDef>;

@@ -29,6 +29,8 @@ export interface AllyTarget {
   /** Zieht Gegner besonders an (Tanks) */
   readonly taunt: boolean;
   receive(dmg: number, dirX: number, dirZ: number): void;
+  /** 4.7B: Heilung durch einen Priester (Anteil der Höchst-LP); fehlt sie, heilt nichts */
+  heal?(frac: number): void;
 }
 
 /** Was eine Verbündete/ein Verbündeter vom Kampfsystem braucht */
@@ -99,6 +101,9 @@ export class Ally implements AllyTarget {
   route: Route | null = null;
   homeBound = false;
   arrivedHome = false;
+
+  /** 4.7B: Heilung (Priester-Formen, Himmelsgericht) */
+  heal(frac: number) { if (this.alive && this.hp > 0) this.hp = Math.min(this.maxHp, this.hp + this.maxHp * Math.max(0, frac)); }
 
   constructor(assets: CharacterAssets, readonly def: CrewDef, readonly level: number, loyalty: number, private slot: number, outline: boolean) {
     const look = sanitizeLook({ ...randomLook(seeded(def.id.length * 977 + def.name.charCodeAt(0)), 'pirat'), ...(def.look ?? {}), gender: genderOf(def.look) }, 'pirat');

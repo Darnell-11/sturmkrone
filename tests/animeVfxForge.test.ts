@@ -322,7 +322,7 @@ describe('Ketten, Techniken, Meteor, Ausweichen und Clash in drei Schichten', ()
     let skills = 0;
     for (const id of ALL_STYLES) {
       const st = ACTION_STYLES[id];
-      expect(st.skills.length, id).toBe(4);
+      expect(st.skills.length, id).toBe(10);
       for (const k of st.skills) {
         const { fx, d } = directorRig(true);
         const f = createFighter('skill', id);
@@ -333,7 +333,7 @@ describe('Ketten, Techniken, Meteor, Ausweichen und Clash in drei Schichten', ()
         expect(has(m, [...PARTICLES, ...SURFACE]), `${k.id}: Partikel/Oberfläche`).toBe(true);
       }
     }
-    expect(skills).toBe(ALL_STYLES.length * 4);
+    expect(skills).toBe(ALL_STYLES.length * 10);
     expect(skills).toBeGreaterThanOrEqual(56);
   });
 

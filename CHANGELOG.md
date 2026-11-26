@@ -1,5 +1,66 @@
 # Was ist neu
 
+## 4.7.2 – Phase 4.7B: feste Klassen mit Rollen, Priester (Schaden & Heilung), 15 Klassenbäume mit je 60 Punkten (10 Formen, Stärkungen, Ultimate) und die Geistes-Faji für alle (26.11.2026, nur lokal)
+
+**Was du siehst**
+- **Eine feste Klasse statt Waffenwechsel:** Jede Figur hat genau eine Klasse und eine Spezialisierung. Q wechselt nichts mehr, Z und X gibt es nicht mehr.
+  - **Faustkämpfer:** *Schneller Faustkämpfer* (DPS) oder *Kräftiger Faustkämpfer* (Tank-DPS) – die Wahl triffst du in der Einführung bei Waffenmeister Konrad, für immer.
+  - **Schwertkämpfer:** die Klinge wählst du bei der Erschaffung – *Doppelklinge* (Assassinen-DPS), *Säbel* (Kombo-DPS), *Langschwert* (Midrange-DPS) oder *Großschwert* (Tank-DPS).
+  - **Faji-Wirker:** acht Elemente (Feuer, Eis, Wasser, Wind, Blitz, Sonne, Mond, Schwarzes Loch – Elementar-DPS) oder der neue **Priester** (Licht- & Lebens-Faji, DPS/Heilung). Das Element legt der erste Punkt fest – oder der Faji-Kristall in der Einführung.
+  - Die **Rolle** steht bei der Erschaffung auf Karten, im Klassenbaum, oben links in der Anzeige und im Zielfenster anderer Kapitäne.
+- **Der Priester:** Heilende Hand (heilt dich), Lichtstrahl, Urteilsspruch, Segenskreis (heilt dich und Verbündete in 10 m), Schutzgebet (Hyper-Armor und Gruppenheilung), Gnadenkranz, Engelsurteil. Sein Ultimate ist das **Erzengel-Himmelsgericht**: Lichtsäulen fallen im Kreis, Gegner werden betäubt, du und deine Verbündeten in 20 m werden um 35 % geheilt – mit eigener Kino-Regie in drei Akten (Lichtschwingen, aufsteigende Kamera, Gericht von oben).
+- **Klassenbaum (Tasten N und K):** Das Fenster zeigt nur noch deinen eigenen Baum und den Reiter „Geistes-Faji“ – keine fremden Klassen, Klingen, Faust-Pfade oder Elemente.
+  - 60 Knoten in einer leuchtenden Schlangenlinie: an den Knoten 1, 6, 12, 18, 24, 30, 36, 42, 48 und 54 wird je eine **Form** frei, an Knoten 60 das **Ultimate** deiner Klasse. Die 49 Knoten dazwischen sind Stärkungen (Krit-Chance, Krit-Schaden, Max-LP, Angriffskraft, Tempo, Abklingzeit, Rüstung, Ausdauer-Regeneration; beim Priester auch Heilkraft), passend zur Rolle verteilt.
+  - Jede Form hat eine Detail-Vorschau: Emblem mit animierter Vorschau (Vorstoß, Welle, Heber, Konter, Wirbel, Heilung …), Rolle, Wirkung, Taste, Abklingzeit und Kosten.
+  - Eigene Gestaltung je Klasse: Rune als Wasserzeichen, Wappen, Knotenrahmen (Faust achteckig, Schwert als Raute, Faji rund), Farben der Spezialisierung.
+  - „Alle freien Punkte verteilen“ füllt den Baum in einem Zug.
+- **Zehn Formen je Klasse:** Die vier bekannten Kampfkünste sind Form 1 – 4; dazu kommen sechs neue je Spezialisierung (insgesamt 90 neue, jede mit eigenem Namen): Vorstoß, Heber, Konter, Flächenschlag, Kontrolle mit dem Element der Klasse und ein aufgeladenes Finale.
+- **Aktionsleiste:** Formen auf **1 – 5** und **Umschalt + 1 – 5** (frei umbelegbar, auch als Umschalt-Kombination), anklickbar. Am Handy fünf Form-Knöpfe mit einem Knopf „6–10“ für die zweite Seite. Gesperrte Formen zeigen ihren Knoten („Kn. 12“).
+- **Geistes-Faji für alle Klassen** (Q, R, T, G – am Handy eigene Knöpfe, am Gamepad R3 + RT / L3 / B / X):
+  - **Q Willens-Entfesselung:** schwarz-goldene Aura, mehr Schaden und Durchschlag.
+  - **R Lebensstrom-Fokus:** smaragd-goldene Lebensströme, mäßige Selbstheilung (steht eine Handlung an, gewinnt die Handlung).
+  - **T Erwachter Wille:** mehrschichtige Schockwelle mit schwarzen Blitzen, betäubt Gegner in der Nähe und bricht ihre Haltung.
+  - **G Königsdruck:** gewaltige Druckkuppel – der Himmel verdunkelt sich, der Boden reißt, Splitter schweben; schwerer Schaden und Furcht, eine Stufe unter einem Ultimate (kein Boss fällt mit einem Schlag, lange Abklingzeit).
+  - Rang 1 kommt mit dem Erwachen am Faji-Kristall, Ränge 2 – 5 kosten je einen Punkt aus demselben Topf.
+- **Einführung:** Bodo übergibt deine Klassen-Ausrüstung (Kampfhandschuhe, deine Klinge oder einen Faji-Fokus). Faustkämpfer wählen bei Konrad Schnell oder Kräftig, dann öffnet sich ihr Klassenbaum. Am Faji-Kristall legen Faji-Wirker ihr Element fest (auch Priester), und alle Klassen erwecken ihre Geistes-Faji und setzen sie gleich gegen den Kurogane-Stoßtrupp ein.
+- **Truppenbefehle** liegen jetzt auf 6, 7 und Z (5 gehört der Form 5); T erfasst kein Ziel mehr (F und mittlere Maustaste bleiben).
+- **Alte Spielstände:** Sie laden ohne Fehler. Die Klasse ergibt sich aus dem zuletzt geführten Kampfstil (bzw. der Faji-Kunst in der Hand). Alte Talentbäume und Faji-Techniken werden vollständig erstattet; Stufen, Siegel und Bonuspunkte fließen in den neuen Klassenbaum (bis 60), der Rest bleibt frei für die Geistes-Faji. Wer die Einführung hinter sich hat, hat die Geistes-Faji schon erweckt.
+
+**Technik (für Entwickler)**
+- **Daten:** `data/classes.ts` – Klassen, 15 Spezialisierungen mit Rolle/Stil/Rune/Wappen, `classTree` (60 Knoten), Stärkungen `BUFF_INFO`, Geistes-Faji `GEIST`/`GEIST_VALUES`, Spielstand `ClassSave` (erweiterbare `slots`, streng einer), Regeln `learnNext`/`autoFill`/`lockElement`/`chooseSpec`/`learnGeist`/`fitClass`/`cleanClass`/`classFromLegacy`.
+- **Formen 5 – 10:** `data/classForms.ts` (`extraForms`, sechs taktische Muster mit den Clips des eigenen Stils); `actionStyles.ts` hängt sie an jeden Stil. `ActionSkill.slot` 1 … 10, `ActionStyleDef.skills` hat zehn Einträge.
+- **Priester:** neuer Stil `priester` (`fajiArts.ts`, `PRIEST_STYLE`, Darstellung über das Sonnen-Element), `ActionMove.heal`/`healR`, Ultimate-Art `himmelsgericht` (`cataclysms.ts`, `ULTIMATE_CINEMATICS`, `cataclysmDirector` wie der Sonnentanz), neuer Zustand `stun`.
+- **Engine:** `FighterState.formsOpen`/`ultOpen` (`setClass`), Sperre meldet den Knoten; Geistes-Faji `geistRank`/`geistCd`/`willT` (`setGeist`, `ActionInput.geist`, Ereignisse `geist` und `heal`); Stärkungen über `buildTalentCombat(…, ClassCombatFx)` mit den Talent-Obergrenzen, `regenK`.
+- **Darstellung:** `CataclysmDirector.geistFx` nur aus vorhandenen AnimeVfxForge-Bausteinen (Ringe, Tusche, Säulen, Splitter, Funken), Verdunkelung über `darken` – keine neuen Shader.
+- **Bedienung:** Aktionen `art5 … art10`, `formPage`, `geist1 … geist4`; `swap`, `weapon1`, `weapon2` und `WEAPON_SWAP` sind entfernt. `Input` kennt Umschalt-Kombinationen (`Shift+Digit1`, auch beim Umbelegen). Touch: `TOUCH_FOOT_PAGE2`, `TouchControls.show`.
+- **UI:** `ui/classScreen.ts` + `ui/css/classes.css` (ersetzt das alte Talent-Fenster in `Menus.showTalents`), Fighter-HUD mit zehn Formen und Geistes-Leiste, Klassenkarten im Editor.
+- **Spielstand 25:** Migration 24 → 25 (`refill`): alte Bäume/Techniken erstattet, Klassenbaum gefüllt, Geistes-Faji außerhalb der privaten Einführung erweckt.
+- **Prüfen:** `tests/classTreesAndGeistesFaji.test.ts` (28 Tests); insgesamt 1 285 Tests grün; Browser: `qa_tmp/k47b_classes.js`, `qa_tmp/k47b_mobile.js`. Start bis zum Menü 6,7 – 7,2 s mit 162 – 163 Shader-Programmen.
+
+## 4.7.1 – Ein Kampfstil statt Waffenwechsel: du entscheidest dich zu Beginn und gehst seinen Talentbaum (26.11.2026, nur lokal; mit 4.7.2 abgelöst – der Schalter `WEAPON_SWAP` und der Q-Wechsel zur Faji-Kunst sind dort entfernt)
+
+**Was du siehst**
+- **Kein Waffenwechsel mehr per Tastendruck:** Q schaltet nicht mehr durch alle sechs Kampfstile, die Waffenplätze Z und X ruhen. Du kämpfst mit dem Kampfstil, den du beim Erstellen der Figur gewählt hast (in der Einführung bis zu Bodos erster Klinge mit den Fäusten).
+- **Die Faji-Kunst bleibt erreichbar:** Sobald am Kristall des Bürgermeisters eine Faji-Kunst erwacht ist, wechselt Q zwischen deinem Kampfstil und der Kunst hin und her (sie ist keine Waffe). Die Anzeige oben links zeigt nur noch dieses Ziel („Säbel · Q → Feuer-Faji“). Am Handy zeigt der Knopf, wohin er wechselt, und erscheint erst mit einer Faji-Kunst. Drückt man Q ohne Kunst, erklärt ein kurzer Hinweis, warum nichts passiert.
+- **Talent-Fenster:** Unter „Waffen-Meisterschaften“ bzw. „Faustkampf“ steht nur noch der Baum deines Kampfstils. Bäume, in denen schon Punkte stecken, bleiben sichtbar – ältere Spielstände verlieren nichts und können wie gewohnt zurücksetzen. Faji-Künste, Kapitän & Flotte und der Kosmos-Pfad bleiben unverändert.
+- **Aussehens-Editor im Spiel:** Der Kampfstil ist dort nur noch angezeigt („gewählt zu Spielbeginn“), Aussehen, Kleidung und Ausrüstung änderst du wie bisher. Beim Erstellen einer neuen Figur wählst du den Kampfstil wie gewohnt.
+- **Nichts ist gelöscht:** Der Waffenwechsel ist nur ausgeschaltet und lässt sich mit einem Schalter vollständig zurückholen.
+
+**Technik (für Entwickler)**
+- **Schalter:** `WEAPON_SWAP` in `data/actionStyles.ts` (aus).
+  - Der Wechsel-Kreis steht rein in `swapCycle(main, effekt, faji)`, der nächste Stil in `nextInCycle`.
+  - `Game.mainStyle`: der Waffenstil in der Hand, sonst der zuletzt gehaltene (`lastWeapon`), sonst der Stil aus dem Editor.
+  - `Game.availableStyles` nutzt `swapCycle`, `swapWeapon` ignoriert Waffenplätze, `refreshWeaponHud` und `controlsHint` zeigen nur das Wechselziel.
+  - Der Touch-Knopf `swap` wird beschriftet bzw. ausgeblendet.
+- **Tastenbelegung:** Die Waffenplätze stehen in `RESTING_ACTIONS` (behalten Namen und Tasten, fehlen nur in `ACTION_GROUPS`). `swap` heißt „Faji-Kunst ↔ Kampfstil“.
+- **Talent-Fenster:** `TalentView.weapon`; `treeShown` (eigener Waffenbaum und Bäume mit Punkten) und `firstShown` in `ui/talentScreen.ts`. `Menus.showTalents` wählt nur sichtbare Bäume, `talentStartTree` beginnt beim eigenen Waffenbaum.
+- **Editor:** `armorTab` zeigt im Spiel den Kampfstil fest an, `Game.applyLook` ändert dann nur das Aussehen (in der privaten Einführung bleibt das Leinenhemd).
+- **Prüfen:**
+  - `tests/singleWeaponStyle.test.ts` (Wechsel-Kreis an/aus, ruhende Tasten, Talent-Fenster).
+  - `tests/actions.test.ts` kennt ruhende Aktionen.
+  - Insgesamt 1 266 Tests grün.
+  - Browser: `qa_tmp/k47_swap.js` (Q, Z/X, Anzeige, Talent-Fenster, Editor).
+
 ## 4.7.0 – Phase 4.7A: spielbarer Gewitter-Prolog auf Kapitän Schwarzbarts brennendem Flaggschiff gegen die sieben Marine-Admirale, private Einführung „Ankerglück“ (Stufe 1 → 3) und nahtloser Übergang in die geteilte Welt (26.11.2026, nur lokal)
 
 **Was du siehst**

@@ -660,9 +660,9 @@ describe('Flottenbefehle: Tasten und Gamepad-Kombination', () => {
     }
   });
 
-  it('Standardtasten 5, 6, 7: sie teilen eine Taste nur mit den Truppenbefehlen (die gelten nur zu Fuß, die Flotte nur auf See)', () => {
+  it('Standardtasten 5, 6, 7: sie teilen eine Taste nur mit Form 5 und den Truppenbefehlen (die gelten nur zu Fuß, die Flotte nur auf See)', () => {
     expect(FLEET_ORDERS.map((o) => DEFAULT_KEYS[FLEET_ORDER_ACTIONS[o.id]])).toEqual([['Digit5'], ['Digit6'], ['Digit7']]);
-    const footOnly = new Set<string>(['cmdSturm', 'cmdFollow', 'cmdHold']);
+    const footOnly = new Set<string>(['cmdSturm', 'cmdFollow', 'cmdHold', 'art5']);
     for (const o of FLEET_ORDERS) {
       const a = FLEET_ORDER_ACTIONS[o.id];
       for (const other of ACTION_IDS) if (other !== a && !footOnly.has(other)) for (const c of DEFAULT_KEYS[a]) expect(DEFAULT_KEYS[other as ActionId], `${a} gegen ${other}`).not.toContain(c);
@@ -703,8 +703,8 @@ describe('Flottenbefehle: Tasten und Gamepad-Kombination', () => {
   it('keine Kombination kollidiert mit der Haltetaste', () => {
     for (const b of Object.values(PAD_CHORDS) as number[]) expect(b).not.toBe(PAD_CHORD_MOD);
     // drei Flottenbefehle (See) und zwei Kombinationen zu Fuß (Sturm-Erwachen, Aura): alle verschieden
-    // 4.6H: dazu drei Offiziers-Assists zu Fuß (R3 + LB / RB / LT) – A, B und X bleiben frei
-    expect(new Set(Object.values(PAD_CHORDS)).size).toBe(8);
+    // 4.6H: dazu drei Offiziers-Assists zu Fuß (R3 + LB / RB / LT); 4.7B: vier Geistes-Faji-Kräfte (R3 + RT / L3 / B / X) – A bleibt Angriff
+    expect(new Set(Object.values(PAD_CHORDS)).size).toBe(12);
   });
 });
 

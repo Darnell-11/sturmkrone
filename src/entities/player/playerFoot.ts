@@ -24,7 +24,8 @@ import {
   ACTION_STYLES, ACTION_TUNING, actionStyleOf, visualStyleOf,
   type ActionHit, type ActionMove, type ActionStyleId, type UltimateSpec,
 } from '../../data/actionStyles';
-import { AURA, FORM_NAMES, MASTERY, WILL_AURAS, type AuraId } from '../../data/fajiArts';
+import { AURA, MASTERY, WILL_AURAS, type AuraId } from '../../data/fajiArts';
+import { ART_ACTIONS, GEIST_ACTIONS } from '../../data/actions';
 import { CLOTH_IMPULSE, SHEATH, type ExpressionId } from '../../data/characterRig';
 import { Character as CharacterCls } from '../character/character';
 
@@ -65,6 +66,9 @@ export interface FootDeps {
   onAwakenWave?: (f: FighterState, color: string, accent: string) => void;
   onChain?: (ax: number, ay: number, az: number, bx: number, by: number, bz: number, color: string) => void;
   onKingWave?: (x: number, y: number, z: number, r: number) => void;
+  /** 4.7B: Heilung (Anteil der Höchst-LP, Radius für Verbündete) und Geistes-Faji (Kraft 1 … 4, Radius/Wert, Treffer) */
+  onHeal?: (frac: number, radius: number, f: FighterState) => void;
+  onGeist?: (kind: number, b: number, c: number, f: FighterState) => void;
   /** 4.6C: Sturm-Verfolgung (alter Ort), Klingen-Clash (Ort der gekreuzten Klingen), Schwungfenster einer Technik, Staub-/Wasserspur des Momentums */
   onChase?: (ox: number, oy: number, oz: number, f: FighterState) => void;
   onClash?: (x: number, y: number, z: number, yaw: number) => void;
@@ -160,6 +164,11 @@ export class PlayerFoot implements PlayerTarget {
   onFoot = false;
   /** Springen ruht, solange auf derselben Taste eine Handlung ansteht (Gamepad X: Sprechen, Anlegen …) */
   jumpBlocked = false;
+  /** 4.7B: Form bzw. Geistes-Kraft aus der Aktionsleiste (Klick, Antippen) für den nächsten Logikschritt (0 = keine) */
+  formQueued = 0;
+  geistQueued = 0;
+  /** 4.7B: Heilkraft aus dem Klassenbaum (Faktor auf jede eigene Heilung) */
+  healK = 1;
   readonly maxStamina = ACTION_TUNING.stamina;
 
   // Darstellung
@@ -247,7 +256,7 @@ export class PlayerFoot implements PlayerTarget {
   }
 
   /** 4.7A: Zähler für die Einführung (Kampfkünste insgesamt, davon Techniken einer Faji-Kunst) */
-  readonly tally = { skills: 0, artSkills: 0 };
+  readonly tally = { skills: 0, artSkills: 0, geist: 0 };
 
   get active() { return this.onFoot && this.fighter.phase !== 'down'; }
   /** Kann gerade eine Faji-Fähigkeit gewirkt werden? */
@@ -424,7 +433,20 @@ export class PlayerFoot implements PlayerTarget {
     inp.heavy = input.pressed('heavy');
     inp.jump = input.pressed('jump') && !(this.jumpBlocked && input.pressed('interact'));
     inp.dash = input.pressed('dodge');
-    inp.skill = input.pressed('art1') ? 1 : input.pressed('art2') ? 2 : input.pressed('art3') ? 3 : input.pressed('art4') ? 4 : 0;
+    // 4.7B: zehn Formen (1 – 5, Umschalt + 1 – 5, Touch-Seiten, Klick in der Leiste über `queueForm`)
+    inp.skill = 0;
+    for (let i = 0; i < 10; i++) if (input.pressed(ART_ACTIONS[i])) { inp.skill = i + 1; break; }
+    if (!inp.skill && this.formQueued) inp.skill = this.formQueued;
+    this.formQueued = 0;
+    // 4.7B Geistes-Faji Q/R/T/G – R nur, wenn gerade keine Handlung (Kontextplakette) auf derselben Taste ansteht
+    inp.geist = 0;
+    for (let i = 0; i < 4; i++) {
+      if (!input.pressed(GEIST_ACTIONS[i])) continue;
+      if (i === 1 && this.jumpBlocked && input.pressed('interact')) continue;
+      inp.geist = i + 1; break;
+    }
+    if (!inp.geist && this.geistQueued) inp.geist = this.geistQueued;
+    this.geistQueued = 0;
     inp.blockHeld = input.down('block');
     inp.blockPressed = input.pressed('block');
     inp.hardLockId = lockYaw === null ? '' : lockId;
@@ -574,12 +596,41 @@ export class PlayerFoot implements PlayerTarget {
         case 'locked':
           if (this.noteT <= 0 && ov) {
             this.noteT = 0.8;
-            const txt = e.a === 5
-              ? (e.b > 0 ? `Ultimate erst in der ${FORM_NAMES[e.b - 1]}` : 'Dieser Stil hat kein Ultimate')
-              : `Erst ab der ${FORM_NAMES[Math.max(0, e.b - 1)]}`;
+            // 4.7B: Formen und Ultimate werden im Klassenbaum frei (Form k an Knoten 1, 6, 12 … 54; Ultimate an Knoten 60)
+            const txt = e.a === 11
+              ? (e.b > 0 ? `Ultimate erst mit Knoten ${e.b} des Klassenbaums` : 'Kein Ultimate')
+              : `Form ${e.a}: erst mit Knoten ${e.b} des Klassenbaums`;
             ov.number(this.tmpV.set(f.x, f.y + 2.3, f.z), txt, 'info');
           }
           break;
+        case 'heal': {
+          // 4.7B: Heilung (Priester-Formen, Himmelsgericht, Lebensstrom-Fokus): selbst und Verbündete im Radius, mit der Heilkraft des Baums
+          const k = e.a * this.healK;
+          const before = this.hp;
+          this.hp = Math.min(this.maxHp, this.hp + this.maxHp * k);
+          if (ov && this.hp > before) ov.number(this.tmpV.set(f.x, f.y + 2.2, f.z), `+${Math.round(this.hp - before)}`, 'heal');
+          this.deps.onHeal?.(k, e.b, f);
+          break;
+        }
+        case 'geist': {
+          // 4.7B Geistes-Faji: b = −1 gesperrt, −2 noch nicht bereit; sonst Darstellung
+          if (e.b < 0) {
+            if (this.noteT <= 0 && ov) { this.noteT = 0.7; ov.number(this.tmpV.set(f.x, f.y + 2.3, f.z), e.b === -1 ? 'Geistes-Faji noch nicht erwacht' : 'Noch nicht bereit', 'info'); }
+            break;
+          }
+          this.tally.geist++;
+          this.deps.onGeist?.(e.a, e.b, e.c, f);
+          const at = this.tmpV.set(f.x, f.y + 0.1, f.z);
+          if (e.a === 3) { fx?.shockwave(at, e.b * 0.7, '#9A6AFF'); fx?.crack(at, e.b * 0.35); this.deps.shake?.(0.55); CharacterCls.blastAll(f.x, f.y + 0.3, f.z, e.b + 2, CLOTH_IMPULSE.blast * 0.8); }
+          if (e.a === 4) {
+            fx?.shockwave(at, Math.min(12, e.b * 0.6), '#FFD27A'); fx?.crack(at, e.b * 0.5); fx?.sigil(at, 4, '#FFD27A', 1.6);
+            ov?.showCutin('Königsdruck', '#FFD27A'); ov?.impactFrame(); this.deps.shake?.(1.0);
+            CharacterCls.blastAll(f.x, f.y + 0.3, f.z, e.b + 4, CLOTH_IMPULSE.blast);
+          }
+          if (e.a === 1) { ov?.number(this.tmpV.set(f.x, f.y + 2.6, f.z), 'Willens-Entfesselung!', 'crit'); afx?.afterimage(f.x, f.y, f.z, '#FFD27A', 0.5, 1.1); }
+          if (e.a === 2) ov?.number(this.tmpV.set(f.x, f.y + 2.6, f.z), 'Lebensstrom-Fokus', 'info');
+          break;
+        }
         case 'willFull':
           if (ov && this.willNoteT <= 0) {
             this.willNoteT = 4;

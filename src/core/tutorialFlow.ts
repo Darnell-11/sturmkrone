@@ -18,6 +18,8 @@ export interface TutorialProbe {
   targeted: boolean;
   /** eingesetzte Techniken einer Faji-Kunst (Zähler) */
   artSkills: number;
+  /** 4.7B: eingesetzte Geistes-Faji-Kräfte (Zähler) */
+  geistUses?: number;
   /** steht am Steuer des eigenen (übergebenen) Schiffs */
   atHelm: boolean;
 }
@@ -46,9 +48,17 @@ export interface TutorialHost {
   /** Spähboot vor der Küste; liefert einen Griff (null = kein Platz) */
   spawnScout(): object | null;
   scoutLive(h: object): boolean;
-  /** Karte „Faji-Kristall“: erste Faji-Kunst wählen; das Spiel meldet danach `act('faji')` */
+  /**
+   * Faji-Kristall (4.7B): Faji-Wirker ohne Element wählen es (für immer), alle Klassen erwecken die Geistes-Faji; das Spiel meldet danach
+   * `act('faji')`. `fajiEquipped` = die Geistes-Faji ist erwacht.
+   */
   offerFaji(): void;
   fajiEquipped(): boolean;
+  /** 4.7B (Konrad): Faustkämpfer ohne Pfad – Karte „Schnell oder Kräftig“ (für immer), danach öffnet sich der Klassenbaum */
+  needsPath?(): boolean;
+  offerPath?(): void;
+  /** 4.7B: eingesetzte Geistes-Faji-Kräfte (Zähler) */
+  geistUses?(): number;
   /** Kurogane-Stoßtrupp (Haupttrupp bzw. Nachzügler); liefert die Zahl der Angreifer */
   spawnRaid(extra: boolean): number;
   raidLeft(): number;
@@ -67,6 +77,7 @@ export class TutorialFlow {
   private stepKey = '';
   private baseSpent = -1;
   private baseArt = 0;
+  private baseGeist = 0;
   private scout: object | null = null;
   private scoutT = 0;
   private raid = false;
@@ -108,8 +119,10 @@ export class TutorialFlow {
     switch (st.act) {
       case 'talent':
         // der Waffenmeister hebt auf Stufe 2: ein Talentpunkt mehr im Topf
-        if (!h.flag(TUT_FLAGS.level2)) { h.setFlag(TUT_FLAGS.level2); h.setLevel(TUTORIAL.level2); h.say('Stufe 2! Drücke N und verteile deinen ersten Talentpunkt.'); }
+        if (!h.flag(TUT_FLAGS.level2)) { h.setFlag(TUT_FLAGS.level2); h.setLevel(TUTORIAL.level2); h.say('Stufe 2! Drücke N und verteile deinen ersten Talentpunkt in deinem Klassenbaum.'); }
         this.baseSpent = h.spent();
+        // 4.7B: Faustkämpfer wählen hier bei Konrad ihren Pfad (Schnell oder Kräftig) – der erste Punkt folgt gleich im Klassenbaum
+        if (h.needsPath?.()) h.offerPath?.();
         break;
       case 'hire':
         // Ilse übergibt die Schaluppe; die erste Crew heuert man bei ihr an
@@ -122,6 +135,7 @@ export class TutorialFlow {
         break;
       case 'art':
         this.baseArt = h.probe().artSkills;
+        this.baseGeist = h.geistUses?.() ?? 0;
         if (!this.raid) { this.raid = true; h.spawnRaid(false); }
         break;
       case 'raid':
@@ -153,9 +167,10 @@ export class TutorialFlow {
         if (this.offered !== 'faji') { this.offered = 'faji'; h.offerFaji(); }
         break;
       case 'art':
-        if (h.probe().artSkills > this.baseArt) { h.act('art'); break; }
+        // 4.7B: die neue Kraft im Kampf – eine Geistes-Faji (alle Klassen) oder die Elementar-Form der Faji-Wirker
+        if (h.probe().artSkills > this.baseArt || (h.geistUses?.() ?? 0) > this.baseGeist) { h.act('art'); break; }
         // der Trupp ist schon gefallen, bevor die neue Kunst zum Einsatz kam: zwei Nachzügler kommen über den Steg
-        if (h.raidLeft() === 0 && !this.extra) { this.extra = true; h.spawnRaid(true); h.say('Noch zwei Kurogane kommen über den Steg – zeig ihnen deine neue Kunst (Taste 1)!'); }
+        if (h.raidLeft() === 0 && !this.extra) { this.extra = true; h.spawnRaid(true); h.say('Noch zwei Kurogane kommen über den Steg – zeig ihnen deine Geistes-Faji (Q, R, T oder G)!'); }
         break;
       case 'raid': if (h.raidLeft() === 0) h.act('raid'); break;
       default: break;

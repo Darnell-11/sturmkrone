@@ -129,7 +129,7 @@ export class Hud {
             <div class="gauge xp thin" title="Erfahrung"><i class="fill"></i></div>
           </div>
           <div class="cap-row"><span class="cap-gold" title="Gold">${COIN}<b></b></span><span class="cap-prov" title="Proviant"></span><span class="cap-env"></span></div>
-          <div class="cap-weapons" title="Stil wechseln: Q (alle sechs Kampfstile) · Platz 1: Z · Platz 2: X"><span class="w0 on"></span><span class="w1"></span></div>
+          <div class="cap-weapons" title="Deine Klasse und Rolle (fest seit der Erschaffung) · Klassenbaum: Taste N"><span class="w0 on"></span><span class="w1"></span></div>
           <div class="cap-crew" hidden></div>
           <div class="cap-upkeep" hidden></div>
           <div class="cap-fps" hidden></div>

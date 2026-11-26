@@ -1,7 +1,6 @@
 import { RESOLUTION_HINT, RESOLUTION_LABEL, RESOLUTION_MODES, isResolutionMode } from '../render/resolution';
-import { CAT_BY_ID, catOfPick, firstOf, isTechPick, newTalentUi, respecScopeOf, talentScreenHtml, techOf, type TalentCat, type TalentPick, type TalentUiState } from './talentScreen';
-import { NODE_BY_ID, TREE_BY_ID, type TalentTreeId } from '../data/talentTrees';
-import { SK } from '../data/skills';
+import { classScreenHtml, newClassUi, type ClassUiState } from './classScreen';
+import type { SpecId } from '../data/classes';
 import { ACTION_GROUPS, ACTION_IDS, ACTION_LABELS, DEFAULT_KEYS, FIXED_CODES, type ActionId } from '../data/actions';
 import { QUALITY_IDS, QUALITY_TIERS, type QualityTier } from '../data/qualityTiers';
 import { FACTION_LABELS, RANKS, rankName } from '../data/ranks';
@@ -9,7 +8,6 @@ import type { Game } from '../core/game';
 import type { SaveData } from '../core/save/types';
 import type { Settings, SettingsTab } from '../core/settings';
 import { fmtDist, fmtInt } from '../core/format';
-import type { AuraId, FajiArtId } from '../data/fajiArts';
 import { EDGE_WALL, WEATHER, WEATHER_IDS, type WeatherId } from '../data/world';
 import { formatClock } from '../world/timeOfDay';
 import { FIGUREHEAD_DEFS, FIGUREHEAD_MODELS, figureheadModel } from '../data/figureheads';
@@ -213,7 +211,6 @@ export class Menus {
 
   /** Eine Ansicht neu zeichnen und dabei die Rollposition behalten (Kaufen, Wählen und Umschalten springen nicht nach oben) */
   /** Zustand des Talent-Fensters (gewählter Baum und Knoten bleiben zwischen zwei Öffnungen) */
-  private talentUi: TalentUiState | null = null;
 
   private keep(fn: () => void) {
     const y = this.screen.scrollTop, cy = this.card.scrollTop;
@@ -1408,49 +1405,39 @@ export class Menus {
    * Kapitän & Flotte, Stufe 101: Kosmos-Pfad), die F1–F3-Techniken der alten Faji-Zweige, ein gemeinsamer Punktetopf, Vorschau-Karte der
    * Apex-Ultimates und Evolutionen, Zurücksetzen und der Fortschritt der geheimen Aufstiegs-Prüfung. `cat` öffnet eine Kategorie (Taste K: Faji).
    */
-  showTalents(back: () => void, ui: TalentUiState = this.talentUi ?? newTalentUi(this.game.talentStartTree()), cat?: TalentCat) {
+  /**
+   * 4.7B: Talent-Fenster (Tasten N und K) = der eigene 60-Knoten-Klassenbaum und die Geistes-Faji; alle anderen Klassen, Klingen, Faust-Pfade
+   * und Elemente sind verborgen. `cat` 'faji' (Taste K, Schrein) öffnet den Reiter „Geistes-Faji“.
+   */
+  showTalents(back: () => void, ui: ClassUiState = this.classUi ?? newClassUi(), cat?: string) {
     const g = this.game;
-    const v = g.talentView();
+    const v = g.classView();
     if (!v) { back(); return; }
-    if (cat && ui.cat !== cat) { ui.cat = cat; ui.tree = cat === 'faji' && ui.tree && catOfPick(ui.tree) === 'faji' ? ui.tree : firstOf(cat); ui.sel = null; ui.seals = false; }
-    this.talentUi = ui;
-    // gültige Auswahl: Baum der Kategorie, Knoten des Baums
-    if (catOfPick(ui.tree) !== ui.cat) ui.tree = firstOf(ui.cat);
-    if (isTechPick(ui.tree)) { if (!ui.sel?.startsWith('tech:')) ui.sel = null; }
-    else if (!ui.sel || NODE_BY_ID[ui.sel]?.tree !== ui.tree) ui.sel = TREE_BY_ID[ui.tree as TalentTreeId].nodes[0]?.id ?? null;
+    if (cat === 'faji' && v.cls.awake) ui.tab = 'geist';
+    this.classUi = ui;
+    if (v.cls.nodes > 0 && (ui.sel < 1 || ui.sel > 60)) ui.sel = Math.min(60, v.cls.nodes + 1);
     const re = (note = '') => { ui.note = note; this.keep(() => this.showTalents(back, ui)); };
-    this.open(talentScreenHtml(v, ui), {
-      cat: (id) => { if (!(id in CAT_BY_ID)) return; ui.cat = id as TalentCat; ui.tree = firstOf(ui.cat); ui.sel = null; ui.confirm = null; ui.seals = false; re(); },
-      tree: (id) => { ui.tree = id as TalentPick; ui.sel = null; ui.confirm = null; re(); },
-      sel: (id) => { ui.sel = id; ui.confirm = null; if (!id.startsWith('tech:') && NODE_BY_ID[id]) ui.tree = NODE_BY_ID[id].tree; re(); },
-      learn: (id) => { const m = g.talentLearn(id); re(m ?? ''); },
-      tlearn: (id) => { const m = g.techniqueLearn(id); re(m); },
-      tslot: (id) => { const [sid, i] = id.split('|'); const m = g.techniqueSlot(sid, Number(i)); re(m ?? `${SK[sid]?.n ?? 'Technik'} liegt auf F${Number(i) + 1}.`); },
-      evo: (id) => { const m = g.talentEquipEvo(id); re(m ?? ''); },
-      ult: (id) => { const m = g.talentChooseUlt(id === 'kosmos' ? 'kosmos' : 'stil'); re(m ?? ''); },
-      respec: (id) => {
-        const scope = respecScopeOf(id);
-        if (!scope) return;
-        if (ui.confirm !== id) { ui.confirm = id; re(); return; }
-        ui.confirm = null;
-        const m = g.talentRespec(scope);
-        re(m ?? 'Zurückgesetzt – die Punkte sind wieder frei.');
+    const done = () => { ui.note = ''; ui.pick = null; back(); };
+    this.open(classScreenHtml(v, ui), {
+      tab: (id) => { ui.tab = id === 'geist' ? 'geist' : 'baum'; re(); },
+      sel: (id) => { ui.sel = Number(id) || 1; re(); },
+      learn: () => { const m = g.classLearn(); ui.sel = Math.min(60, (g.classView()?.cls.nodes ?? 0) + 1); re(m); },
+      fill: () => { const m = g.classFill(); ui.sel = Math.min(60, (g.classView()?.cls.nodes ?? 0) + 1); re(m); },
+      pick: (id) => {
+        // zweistufig: erst auswählen, dann „Für immer festlegen“
+        if (ui.pick !== id) { ui.pick = id as SpecId; re(); return; }
+        ui.pick = null;
+        const e = g.classPick(id as SpecId);
+        ui.sel = 1;
+        re(e ?? 'Festgelegt – dein Klassenbaum ist offen.');
       },
-      trespec: (id) => {
-        if (!isTechPick(id)) return;
-        if (ui.confirm !== id) { ui.confirm = id; re(); return; }
-        ui.confirm = null;
-        const m = g.techniqueRespec(techOf(id));
-        re(m ?? 'Zurückgesetzt – die Punkte sind wieder im Topf, die F-Plätze frei.');
-      },
-      equip: (id) => { g.equipFaji(id as FajiArtId); re(); },
-      aura: (id) => { g.setFajiAura(Number(id) as AuraId); re(); },
-      seals: () => { ui.seals = !ui.seals; re(); },
-      zoom: (id) => { ui.zoom = Math.max(0.8, Math.min(1.3, Math.round(((ui.zoom || 1) + (id === '+' ? 0.1 : -0.1)) * 10) / 10)); re(); },
-      ascend: () => { const m = g.performAscension(); if (!m) { ui.cat = 'kosmos'; ui.tree = 'kosmos'; ui.sel = null; } re(m ?? 'Aufstieg vollzogen: Stufe 101, der Kosmos-Pfad ist offen.'); },
-      back: () => { ui.note = ''; ui.confirm = null; ui.seals = false; back(); },
-    }, () => { ui.note = ''; ui.confirm = null; ui.seals = false; back(); }, { wide: true, cls: 'talents' });
+      geist: (id) => { re(g.classGeist(Number(id))); },
+      back: done,
+    }, done, { wide: true, cls: 'talents' });
   }
+
+  /** Zustand des Klassen-Fensters (Reiter, gewählter Knoten) über das Schließen hinaus */
+  private classUi: ClassUiState | null = null;
 
   // ---------- Einstellungen ----------
 

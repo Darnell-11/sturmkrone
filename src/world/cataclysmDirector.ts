@@ -94,6 +94,13 @@ interface Cast {
 const V = new Vector3();
 const WHITE = new Color(1, 1, 1);
 const GOLD = new Color('#FFD27A');
+/** 4.7B Geistes-Faji: Tusche-Schwarz der Willens-Aura, dunkles Glutgold, Smaragd des Lebensstroms, Violett und Schwarz der Blitze, Stein */
+const WILL_INK = new Color(0.05, 0.035, 0.01);
+const WILL_EMBER = new Color(0.45, 0.24, 0.02);
+const EMERALD = new Color('#3AE89A');
+const VIOLET = new Color('#9A6AFF');
+const BLACK_BOLT = new Color(0.32, 0.12, 0.5);
+const STONE = new Color(0.55, 0.48, 0.4);
 const DARK = new Color(0, 0, 0);
 const FROST = new Color('#BFEFFF');
 const SPRAY = new Color('#DDF4FF');
@@ -120,7 +127,7 @@ const rnd = Math.random;
 export const CATACLYSM_DUR: Record<CataclysmKind, number> = {
   // 4.6I: kürzer – der Höhepunkt liegt jetzt im Treffermoment der Kino-Regie (~0,3 s nach dem Einschlag), danach klingt die Welt aus
   horizonCut: 1.6, sevenSeas: 1.4, sawCyclone: 1.2, iaiWorldBreak: 1.4, fistStorm: 1.1, oceanSplit: 6.2, blackHole: 1.3, fireDragons: 2.2,
-  glacier: 1.8, floodDragon: 1.6, vacuumStorm: 1.9, thunderJudgment: 2.0, sunDance: 1.8, bloodMoon: 1.6, skyfall: 2.6,
+  glacier: 1.8, floodDragon: 1.6, vacuumStorm: 1.9, thunderJudgment: 2.0, sunDance: 1.8, bloodMoon: 1.6, skyfall: 2.6, himmelsgericht: 1.8,
 };
 
 /** Signatur-Klang je Ultimate beim Einschlag (die neun ausgebauten setzen ihre eigenen Klänge in der Zeitachse) */
@@ -145,7 +152,7 @@ function shipReach(kind: CataclysmKind, s: UltimateSpec): number {
     case 'floodDragon': return s.reach + 40;
     case 'vacuumStorm': return s.reach + 60;
     case 'thunderJudgment': return s.reach + 70;
-    case 'sunDance': return s.reach + 80;
+    case 'sunDance': case 'himmelsgericht': return s.reach + 80;
     case 'bloodMoon': return s.reach + 40;
     default: return s.reach + 30;
   }
@@ -479,7 +486,7 @@ export class CataclysmDirector {
         vf.burst('spark', c.x, c.y + 0.3, c.z, 3, 6, c.col, { dirX: 0, dirY: -1, dirZ: 0, focus: 0.7, up: 0, size: 0.18, life: 0.2 * g });
         break;
       }
-      case 'sunDance': {
+      case 'sunDance': case 'himmelsgericht': {
         // blendender Sonnen-Kranz entzündet sich hinter den Schultern (dunkler Hitze-Kontrastring, kein Weiß)
         if (!c.once) { c.once = true; vf.corona(c.x - fwX * 0.45, c.y + 1.55, c.z - fwZ * 0.45, c.yaw, 0.75, c.col, c.acc, c.dur * g * 1.4); }
         vf.burst('ember', c.x - fwX * 0.4 + (rnd() - 0.5) * 1.2, c.y + 1.3 + rnd() * 0.8, c.z - fwZ * 0.4 + (rnd() - 0.5) * 1.2, 1, 1.2, c.acc, { up: 1.5, size: 0.14, life: 0.3 * g });
@@ -668,7 +675,7 @@ export class CataclysmDirector {
         break;
       }
       case 'sevenSeas': case 'fistStorm': case 'fireDragons': case 'glacier': case 'floodDragon': case 'vacuumStorm':
-      case 'thunderJudgment': case 'sunDance': case 'bloodMoon':
+      case 'thunderJudgment': case 'sunDance': case 'himmelsgericht': case 'bloodMoon':
         this.beginUlt(c);
         break;
       case 'skyfall': this.beginSkyfall(c); break;
@@ -721,10 +728,12 @@ export class CataclysmDirector {
       // 4.6I: auch Flutdrache, Tornado, Feuerdrache und Klingenwand dunkeln den Himmel ab (Sturmwolken): ihre durchscheinenden Kerne
       // blichen vor dem hellen Taghimmel aus, die Tusche-Bilder wurden fast ganz weiß
       const k = c.kind === 'bloodMoon' ? 0.6 : c.kind === 'skyfall' ? 0.55 : c.kind === 'thunderJudgment' ? 0.42 : c.kind === 'blackHole' ? 0.28 : c.kind === 'sevenSeas' ? 0.3
-        : c.kind === 'floodDragon' ? 0.5 : c.kind === 'vacuumStorm' ? 0.3 : c.kind === 'fireDragons' ? 0.26 : c.kind === 'horizonCut' ? 0.22 : c.kind === 'sunDance' ? 0.15 : 0;
+        : c.kind === 'floodDragon' ? 0.5 : c.kind === 'vacuumStorm' ? 0.3 : c.kind === 'fireDragons' ? 0.26 : c.kind === 'horizonCut' ? 0.22 : c.kind === 'sunDance' || c.kind === 'himmelsgericht' ? 0.15 : 0;
       dk = Math.max(dk, k * env);
     }
     if (this.pre.on && this.pre.kind === 'thunderJudgment') dk = Math.max(dk, 0.3);
+    // 4.7B Königsdruck: der Himmel verdunkelt sich kurz
+    if (this.kingDarkT > 0) dk = Math.max(dk, 0.42 * Math.min(1, this.kingDarkT / 0.5));
     // 4.6I: Himmelsreaktion der Vorbereitung – die Blutmond-Finsternis und die aufreißenden Sturmspiralen dunkeln schon in Akt 1 ab
     if (this.charge.on) { const cine = ULTIMATE_CINEMATICS[this.charge.kind]; if (cine?.sky === 'eclipse') dk = Math.max(dk, this.charge.kind === 'bloodMoon' ? 0.45 : 0.25); else if (cine?.sky === 'stormSpiral' || cine?.sky === 'gale') dk = Math.max(dk, 0.2); }
     // Himmelssturz: der Himmel reißt schon in der Zwischensequenz zur Sternennacht auf
@@ -849,7 +858,7 @@ export class CataclysmDirector {
       case 'floodDragon': this.stepFloodDragon(c, t0, t); break;
       case 'vacuumStorm': this.stepVacuumStorm(c, t0, t); break;
       case 'thunderJudgment': this.stepThunder(c, t0, t); break;
-      case 'sunDance': this.stepSunDance(c, t0, t); break;
+      case 'sunDance': case 'himmelsgericht': this.stepSunDance(c, t0, t); break;
       case 'bloodMoon': this.stepBloodMoon(c, t0, t); break;
       case 'skyfall': this.stepSkyfall(c, t0, t, dt); break;
       default: break;
@@ -875,6 +884,8 @@ export class CataclysmDirector {
     this.host.darken?.(0);
     this.host.skyLook?.(0);
     this.auraF = null;
+    this.willF = null;
+    this.kingDarkT = 0;
     this.host.setRift(0, 0, 0, 0, this.riftCol);
     this.host.fx.clear();
   }
@@ -1437,7 +1448,7 @@ export class CataclysmDirector {
         this.sound('thunderClap', 1, c.x, c.y + 10, c.z);
         break;
       }
-      case 'sunDance': {
+      case 'sunDance': case 'himmelsgericht': {
         // Sonne im Zenit über der Figur, mehrschichtige Korona mit dunklem Hitze-Kontrastring (4.6D: ohne weiße Überstrahlung)
         b.reset().at(c.x, c.y + 16, c.z).size(0.5, 0.5, 0.5, 4.6, 4.6, 4.6).span(2.4).col(c.col, 2.3).fade(0.08, 0.3);
         b.flicker = 0.12;
@@ -2330,6 +2341,73 @@ export class CataclysmDirector {
     this.stats.chains++;
   }
 
+  // ---------- 4.7B Geistes-Faji (nur vorhandene Bausteine: Ringe, Säulen, Splitter, Tusche, Funken – keine neuen Shader) ----------
+
+  /** Figur mit Willens-Entfesselung (schwarz-goldene Aura läuft in `stepAura`, solange `willT` > 0) */
+  private willF: FighterState | null = null;
+  private willT = 0;
+  /** Königsdruck: Restzeit der Himmelsverdunkelung (s) */
+  private kingDarkT = 0;
+
+  /**
+   * Geistes-Kraft darstellen: 1 Willens-Entfesselung (schwarz-goldene Aura), 2 Lebensstrom-Fokus (smaragd-goldene Ströme), 3 Erwachter Wille
+   * (mehrschichtige Schockwelle mit schwarzen Blitzen), 4 Königsdruck (Druckkuppel, dunkler Himmel, Bodenrisse, schwebende Splitter)
+   */
+  geistFx(kind: number, f: FighterState, r: number) {
+    const fx = this.host.fx, b = fx.brush, vf = this.vfx;
+    const x = f.x, y = f.y, z = f.z;
+    if (kind === 1) {
+      this.willF = f; this.willT = 0;
+      vf.corona(x, y + 1.25, z, f.yaw, 1.1, GOLD, WILL_INK, 0.7);
+      b.reset().at(x, y + 0.12, z).size(1, 1, 1, 4.2, 1, 4.2).span(0.55).col(GOLD, 1.6).fade(0.02, 0.6);
+      fx.emit('ring');
+      b.reset().at(x, y + 0.1, z).spin(3).size(1.2, 1.4, 1.2, 3.4, 2.2, 3.4).span(0.6).col(WILL_INK, 1).fade(0.05, 0.4);
+      fx.emit('ribbonInk');
+      vf.burst('ember', x, y + 1, z, 18, 3.5, GOLD, { up: 3, size: 0.2, life: 0.7, spread: 0.6 });
+      this.stats.waves++;
+    } else if (kind === 2) {
+      // smaragd-goldene Lebensströme steigen spiralförmig auf
+      for (let i = 0; i < 3; i++) {
+        b.reset().at(x, y + 0.1, z).rot((i / 3) * Math.PI * 2, 0).spin(4).size(0.6, 0.6, 0.6, 1.6, 2.6, 1.6).span(0.9).col(i === 1 ? GOLD : EMERALD, 1.8).fade(0.1, 0.5);
+        fx.emit('ribbon');
+      }
+      vf.burst('spark', x, y + 0.5, z, 28, 2.6, EMERALD, { up: 4.5, size: 0.22, life: 1.0, spread: 0.7 });
+      vf.burst('ember', x, y + 0.4, z, 14, 2, GOLD, { up: 3.5, size: 0.18, life: 0.9, spread: 0.5 });
+      b.reset().at(x, y + 0.1, z).size(1, 1, 1, 2.6, 1, 2.6).span(0.7).col(EMERALD, 1.6).fade(0.02, 0.7);
+      fx.emit('ring');
+    } else if (kind === 3) {
+      // drei Schichten Schockwelle, dazu schwarze Blitze rundum
+      for (let i = 0; i < 3; i++) vf.pressureRing(x, y + 0.6 + i * 0.35, z, 0, false, r * (0.45 + i * 0.28), i === 1 ? VIOLET : GOLD, 0.35 + i * 0.12);
+      b.reset().at(x, y + 0.12, z).size(1, 1, 1, r, 1, r).span(0.5).col(VIOLET, 1.8).fade(0.02, 0.6);
+      fx.emit('ring');
+      b.reset().at(x, y + 0.1, z).size(1, 1, 1, r * 0.9, 1, r * 0.9).span(0.45).col(WILL_INK, 1).fade(0.02, 0.5);
+      fx.emit('shock');
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 2 + rnd() * 0.5, d = r * (0.6 + rnd() * 0.4);
+        vf.bolt(x, y + 1.2, z, x + Math.sin(a) * d, y + 0.2, z + Math.cos(a) * d, BLACK_BOLT, 0.12, 0.3, { depth: 3, jitter: 0.2, branches: 2 });
+      }
+      vf.burst('dust', x, y + 0.3, z, 6, r * 0.5, TMP.setRGB(0.5, 0.45, 0.4), { up: 0.6, size: 1, life: 0.6, spread: r * 0.3 });
+      this.stats.waves++;
+    } else if (kind === 4) {
+      // Druckkuppel: liegende und stehende Ringe, Säule, dunkler Himmel, schwebende Splitter
+      this.kingDarkT = 1.8;
+      this.kingWave(x, y, z, r);
+      for (let i = 0; i < 4; i++) vf.pressureRing(x, y + 2 + i * 0.2, z, (i / 4) * Math.PI, true, r * 0.55, i % 2 ? GOLD : WILL_INK, 0.6);
+      vf.pressureRing(x, y + 0.8, z, 0, false, r, GOLD, 0.7);
+      b.reset().at(x, y + 0.1, z).size(1, 1, 1, r * 1.05, 1, r * 1.05).span(0.8).col(WILL_INK, 1).fade(0.02, 0.6);
+      fx.emit('shock');
+      b.reset().at(x, y - 1, z).size(0.5, 40, 0.5, 2.4, 40, 2.4).span(0.7).col(GOLD, 1.6).fade(0.04, 0.5);
+      fx.emit('column');
+      for (let i = 0; i < 18; i++) {
+        const a = rnd() * Math.PI * 2, d = 2 + rnd() * r * 0.7;
+        b.reset().at(x + Math.sin(a) * d, y + 0.2, z + Math.cos(a) * d).vel(0, 1.5 + rnd() * 2.5, 0).spin(rnd() * 3, rnd() * 3).size(0.3, 0.6, 0.3, 0.2, 0.4, 0.2).span(1.4 + rnd() * 0.6).col(i % 3 ? STONE : GOLD, 1.3).fade(0.1, 0.5);
+        b.grav = -0.5;
+        fx.emit('shard');
+      }
+      this.stats.waves++;
+    }
+  }
+
   /** Willens-Druckwelle des Königsdrucks */
   kingWave(x: number, y: number, z: number, r: number) {
     const fx = this.host.fx, b = fx.brush;
@@ -2346,6 +2424,22 @@ export class CataclysmDirector {
   }
 
   private stepAura(dt: number) {
+    // 4.7B Willens-Entfesselung: schwarz-goldene Funken, solange die Kraft wirkt
+    const w = this.willF;
+    if (w) {
+      if (w.willT <= 0) this.willF = null;
+      else {
+        this.willT += dt;
+        const fx = this.host.fx, b = fx.brush;
+        while (this.willT > 0.06) {
+          this.willT -= 0.06;
+          const a = rnd() * Math.PI * 2, r = 0.3 + rnd() * 0.3;
+          b.reset().at(w.x + Math.sin(a) * r, w.y + rnd() * 1.7, w.z + Math.cos(a) * r).vel(0, 1.6 + rnd(), 0).size(0.22, 0.22, 1, 0.05, 0.05, 1).span(0.5).col(rnd() < 0.55 ? GOLD : WILL_EMBER, 2).fade(0.1, 0.6);
+          fx.emit('ember');
+        }
+      }
+    }
+    if (this.kingDarkT > 0) this.kingDarkT = Math.max(0, this.kingDarkT - dt);
     const f = this.auraF;
     if (!f) return;
     if (f.awakenT <= 0) { this.auraF = null; return; }

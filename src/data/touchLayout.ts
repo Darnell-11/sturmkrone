@@ -36,20 +36,30 @@ export const TOUCH_FOOT: TouchButtonDef[] = [
   { action: 'block', label: 'Block', size: 46, right: 188, bottom: 22, color: 'ok' },
   // 4.6J: der Ziel-Knopf schaltet durch die Ziele im Sichtfeld (antippen der Welt wählt direkt)
   { action: 'targetNext', label: 'Ziel', size: 42, right: 236, bottom: 74, color: 'brass' },
+  // 4.7B: fünf Form-Knöpfe im Bogen; der Seiten-Knopf zeigt auf denselben Plätzen die Formen 6 – 10 (TOUCH_FOOT_PAGE2)
   { action: 'art1', label: '1', size: 50, right: 16, bottom: 200, color: 'seal' },
   { action: 'art2', label: '2', size: 50, right: 72, bottom: 176, color: 'seal' },
   { action: 'art3', label: '3', size: 50, right: 124, bottom: 152, color: 'seal' },
   { action: 'art4', label: '4', size: 50, right: 172, bottom: 118, color: 'seal' },
-  { action: 'skill1', label: 'F1', size: 46, right: 18, bottom: 264, color: 'brass' },
-  { action: 'skill2', label: 'F2', size: 46, right: 70, bottom: 240, color: 'brass' },
-  { action: 'skill3', label: 'F3', size: 46, right: 122, bottom: 214, color: 'brass' },
+  { action: 'art5', label: '5', size: 46, right: 18, bottom: 264, color: 'seal' },
+  { action: 'formPage', label: '6–10', size: 40, right: 70, bottom: 300, color: 'brass' },
+  // 4.7B Geistes-Faji: Willens-Entfesselung, Lebensstrom, Erwachter Wille, Königsdruck
+  { action: 'geist1', label: 'Wille', size: 44, right: 122, bottom: 214, color: 'brass' },
+  { action: 'geist2', label: 'Leben', size: 44, right: 174, bottom: 182, color: 'ok' },
+  { action: 'geist3', label: 'Erwacht', size: 40, right: 175, bottom: 75, color: 'teal' },
+  { action: 'geist4', label: 'König', size: 42, right: 70, bottom: 240, color: 'brass' },
   { action: 'potion', label: 'Pro-\nviant', size: 42, right: 236, bottom: 22, color: 'ok' },
-  { action: 'swap', label: 'Stil', size: 44, right: 174, bottom: 182, color: 'teal' },
   // 4.6B: Sturm-Erwachen (füllt sich mit der Willenskraft, im Erwachen das Ultimate) und Aura reihum
   { action: 'awaken', label: 'Erwa-\nchen', size: 46, right: 228, bottom: 196, color: 'brass' },
   { action: 'aura', label: 'Aura', size: 40, right: 225, bottom: 140, color: 'teal' },
-  // 4.6H: Offiziers-Kombo-Assists (Sperrfeuer, Orkan-Schildstoß, Sturmhorn) in einer Reihe über F3, Stil und Erwachen – nur mit Landtrupp sichtbar
+  // 4.6H: Offiziers-Kombo-Assists (Sperrfeuer, Orkan-Schildstoß, Sturmhorn) in einer Reihe – nur mit Landtrupp sichtbar
   { action: 'assist1', label: 'Salve', size: 44, right: 124, bottom: 270, color: 'brass' },
   { action: 'assist2', label: 'Orkan', size: 44, right: 176, bottom: 240, color: 'brass' },
   { action: 'assist3', label: 'Horn', size: 44, right: 228, bottom: 250, color: 'brass' },
 ];
+
+/**
+ * 4.7B: zweite Seite der Form-Knöpfe – auf denselben Plätzen wie Form 1 – 5; sichtbar ist immer nur eine Seite (`TouchControls.setButton`
+ * mit `empty`), darum prüft der Überlappungs-Test nur `TOUCH_FOOT`.
+ */
+export const TOUCH_FOOT_PAGE2: TouchButtonDef[] = TOUCH_FOOT.filter((b) => /^art[1-5]$/.test(b.action)).map((b) => ({ ...b, action: `art${Number(b.action.slice(3)) + 5}` as ActionId, label: String(Number(b.action.slice(3)) + 5) }));

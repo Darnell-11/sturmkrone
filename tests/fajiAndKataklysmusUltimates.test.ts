@@ -119,7 +119,9 @@ describe('Faji-Künste: acht waffenlose Künste mit Formen 1 – 7', () => {
       expect(s.air).toHaveLength(3);
       expect(s.meteor.meteor).toBe(true);
       expect(s.finisher.hits.length).toBeGreaterThan(0);
-      expect(s.skills.map((k) => k.formMin), id).toEqual([...FORM_UNLOCK]);
+      // 4.7B: zehn Formen; die ersten vier tragen noch ihre alte Formstufe (nur Anzeige), frei werden alle über den Klassenbaum
+      expect(s.skills).toHaveLength(10);
+      expect(s.skills.slice(0, 4).map((k) => k.formMin), id).toEqual([...FORM_UNLOCK]);
       for (const k of s.skills) { expect(k.label.length).toBeGreaterThan(3); expect(k.desc.length).toBeGreaterThan(10); expect(k.cd).toBeGreaterThan(0); }
       // rein energetisch: kein Schwert in der Hand
       expect(s.visual, id).toBe('effekt');
@@ -142,13 +144,15 @@ describe('Faji-Künste: acht waffenlose Künste mit Formen 1 – 7', () => {
     expect(formPower(7).dmg).toBeLessThanOrEqual(1.6);
   });
 
-  it('gesperrte Techniken melden „erst ab Form X“, freie wirken mit dem Schaden ihrer Form', () => {
+  it('4.7B: gesperrte Formen melden den Knoten des Klassenbaums, freie wirken mit dem Schaden ihrer Meisterschafts-Form', () => {
     const { w, eng, inp } = setup('feuer');
     w.foe(0, 3);
     eng.setForm(1);
+    eng.setClass(1, false);
     let seen = run(eng, w, inp, 2, { skill: 2 });
     expect(seen).toContain('locked');
     expect(eng.f.skillCd[1]).toBe(0);
+    eng.setClass(2, false);
     eng.setForm(2);
     seen = run(eng, w, inp, 90, { skill: 2 });
     expect(seen).toContain('skill');
@@ -380,10 +384,10 @@ describe('Aufladen und Anime-Impact-Frames (4.6I: Akt 1 und Treffermoment der Ki
 
 // ---------------------------------------------------------------------------------------------------------------
 
-describe('Alle 14 Kataklysmus-Ultimates', () => {
-  it('14 Ultimates mit deutschem Namen, eigener Art, Einschlag innerhalb des Angriffs, 2 – 4 Impact-Frames', () => {
-    expect(ULTIMATE_ORDER).toHaveLength(14);
-    expect(new Set(ULTIMATE_ORDER).size).toBe(14);
+describe('Alle 15 Kataklysmus-Ultimates (4.7B: mit dem Erzengel-Himmelsgericht des Priesters)', () => {
+  it('15 Ultimates mit deutschem Namen, eigener Art, Einschlag innerhalb des Angriffs, 2 – 4 Impact-Frames', () => {
+    expect(ULTIMATE_ORDER).toHaveLength(15);
+    expect(new Set(ULTIMATE_ORDER).size).toBe(15);
     const kinds = new Set<string>();
     for (const id of ULTIMATE_ORDER) {
       const u = ULTIMATES[id]!;
@@ -401,25 +405,24 @@ describe('Alle 14 Kataklysmus-Ultimates', () => {
       expect(['face', 'low', 'side', 'sky']).toContain(spec.shot);
       expect(u.hits.length).toBeGreaterThan(0);
       // Faji-Ultimates erst in der 7. Form
-      expect(u.formMin).toBe(FAJI_ARTS.includes(id) ? 7 : 1);
+      expect(u.formMin).toBe(FAJI_ARTS.includes(id) || id === 'priester' ? 7 : 1);
     }
-    expect(kinds.size).toBe(14);
+    expect(kinds.size).toBe(15);
     expect(ULTIMATES.zweihaender!.label).toBe('Himmelsspalter: Horizont-Zäsur');
     expect(ULTIMATES.mond!.label).toContain('Blutmond-Finsternis');
   });
 
-  it('jedes Ultimate nur im Sturm-Erwachen und einmal je Erwachen; Faji-Künste erst in der Meisterform', () => {
+  it('jedes Ultimate nur im Sturm-Erwachen und einmal je Erwachen; 4.7B: erst mit Knoten 60 des Klassenbaums', () => {
     for (const id of ULTIMATE_ORDER) {
       const { w, eng, inp } = setup(id);
       w.foe(0, 5);
       eng.setForm(FAJI_ARTS.includes(id) ? 6 : 1);
+      eng.setClass(10, false);
       awaken(eng, w, inp);
       let seen = run(eng, w, inp, 2, { awaken: true });
-      if (FAJI_ARTS.includes(id)) {
-        expect(seen, id).toContain('locked');
-        eng.setForm(7);
-        seen = run(eng, w, inp, 2, { awaken: true });
-      }
+      expect(seen, id).toContain('locked');
+      eng.setClass(10, true);
+      seen = run(eng, w, inp, 2, { awaken: true });
       expect(seen, id).toContain('ultimate');
       const rest = run(eng, w, inp, 240);
       expect(rest, id).toContain('ultStrike');

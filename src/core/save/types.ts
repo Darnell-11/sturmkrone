@@ -1,4 +1,5 @@
 // Aufbau eines Spielstands. Bei jeder Änderung: SAVE_VERSION erhöhen und in migrations.ts eine Migration ergänzen.
+import { classOfCreation, type ClassSave } from '../../data/classes';
 import type { MegaSaveState } from '../../data/megaIslands';
 import type { KaiserSaveState } from '../../data/kaiserBattle';
 import { defaultLook, type CharacterLook } from '../../data/characterParts';
@@ -15,7 +16,7 @@ import type { FactionWarState } from '../../world/factionWarEngine';
 import { emptyChart, type ChartState } from '../../world/mapDiscovery';
 import { emptyTalents, type TalentSave } from '../talentRules';
 
-export const SAVE_VERSION = 24;
+export const SAVE_VERSION = 25;
 
 export interface QuestProgress { id: string; step: number; count: number }
 
@@ -151,6 +152,11 @@ export interface SaveData {
     actionStyle?: string;
     /** Faji-Künste (4.6B): ausgerüstete Kunst, Meisterschaft je Kunst (Formstufe 1 – 7), Willenskraft-Aura – fehlt in alten Spielständen (`cleanFaji`) */
     faji?: { equipped: string | null; mastery: Record<string, number>; aura: number };
+    /**
+     * 4.7B (seit Version 25): feste Klasse – Faustkämpfer, Schwertkämpfer oder Faji-Wirker mit genau einer Spezialisierung, gelernte Knoten des
+     * 60-Punkte-Klassenbaums, Ränge der Geistes-Faji (data/classes.ts). Fehlt der Eintrag (alter Stand), leitet ihn die Migration ab.
+     */
+    cls?: ClassSave;
     /** Stufe 1 … 100 aus Erfahrung; 101 nur nach der Aufstiegs-Prüfung (Phase 4.6E, `talents.ascended`) */
     level: number;
     xp: number;
@@ -222,6 +228,8 @@ export function createSave(name: string, faction: Faction, gameVersion: string, 
       gold: 200,
       fame: 0,
       look: defaultLook(faction),
+      // 4.7B: feste Klasse (das Spiel setzt sie bei der Erschaffung aus Kampfstil und Klinge)
+      cls: classOfCreation('schwert', 'saebel'),
     },
     world: { boat: null, time: 9, weather: 'klar', seaEvents: null, chart: emptyChart(), mega: {}, kaiser: {}, factionWar: null },
     // 4.7A: neue Spiele beginnen im Gewitter-Prolog (danach die private Einführung „Ankerglück“)

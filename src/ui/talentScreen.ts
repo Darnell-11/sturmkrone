@@ -9,7 +9,7 @@
 // Fortschrittsbalken der geheimen Aufstiegs-Prüfung (0/5 bis 5/5 besiegte Kaiser-Inseln).
 // Reine Darstellung: baut HTML aus dem Spielstand und den Regeln; die Aktionen ruft `Menus.showTalents` im Spiel auf.
 import {
-  CAPTAIN_TREES, CONSTELLATIONS, COSMIC_SOURCES, FAJI_TREES, MILESTONES, NODE_BY_ID, TALENT, TREE_BY_ID, rankCost,
+  CAPTAIN_TREES, CONSTELLATIONS, COSMIC_SOURCES, FAJI_TREES, MILESTONES, NODE_BY_ID, TALENT, TREE_BY_ID, WEAPON_TREES, rankCost,
   type FxKey, type TalentNodeDef, type TalentTreeDef, type TalentTreeId,
 } from '../data/talentTrees';
 import {
@@ -56,6 +56,20 @@ export function catOfPick(p: TalentPick): TalentCat {
 /** Erste Auswahl einer Kategorie */
 export const firstOf = (cat: TalentCat): TalentPick => CAT_BY_ID[cat].trees[0] ?? (`tech.${CAT_BY_ID[cat].tech[0]}` as TalentPick);
 
+/**
+ * 4.7.1: ohne Waffenwechsel zeigt das Fenster nur den eigenen Waffenbaum (`TalentView.weapon`); andere Waffenbäume erscheinen nur, wenn schon
+ * Punkte darin stecken (alte Stände verlieren nichts und können zurücksetzen). Kapitän-, Faji- und Kosmos-Bäume bleiben immer sichtbar.
+ */
+export const treeShown = (v: Pick<TalentView, 't' | 'weapon'>, id: TalentTreeId): boolean =>
+  !v.weapon || !(WEAPON_TREES as readonly string[]).includes(id) || id === v.weapon || treePoints(v.t, id) > 0;
+
+/** Erste sichtbare Auswahl einer Kategorie */
+export function firstShown(v: Pick<TalentView, 't' | 'weapon'>, cat: TalentCat): TalentPick {
+  const c = CAT_BY_ID[cat];
+  const t = c.trees.find((id) => treeShown(v, id));
+  return t ?? (c.tech[0] ? (`tech.${c.tech[0]}` as TalentPick) : firstOf(cat));
+}
+
 /** Zustand des Fensters (bleibt beim Neuzeichnen erhalten) */
 export interface TalentUiState {
   cat: TalentCat;
@@ -89,6 +103,8 @@ export interface TalentView {
   /** 4.6H: die acht Faji-Künste: Form 1 … 7, Fortschritt, Meisterschaft (bis zur nächsten Form), ausgerüstet */
   arts?: readonly { id: FajiArtId; form: number; frac: number; mastery: number; next: number; equipped: boolean }[];
   aura?: AuraId;
+  /** 4.7.1: eigener Waffenbaum, solange der Waffenwechsel aus ist (`effekt` = Faji-Wirker ohne Waffenbaum); fehlt = alle Waffenbäume zeigen */
+  weapon?: string;
 }
 
 const rankOf = (t: TalentSave, id: string): number => t.nodes[id] ?? 0;
@@ -146,7 +162,9 @@ function techCard(v: TalentView, ui: TalentUiState, b: TechBranch): string {
 
 function catList(v: TalentView, ui: TalentUiState): string {
   const c = CAT_BY_ID[ui.cat];
-  const trees = c.trees.map((id) => treeCard(v, ui, id)).join('');
+  const shown = c.trees.filter((id) => treeShown(v, id));
+  const hidden = shown.length < c.trees.length ? `<p class="tier-desc">Dein Kampfstil steht fest – weitere Waffenbäume sind ausgeblendet.</p>` : '';
+  const trees = shown.map((id) => treeCard(v, ui, id)).join('') + hidden;
   const tech = c.tech.length ? `<div class="tal-group-h">Faji-Techniken (F1 – F3)</div>${c.tech.map((b) => techCard(v, ui, b)).join('')}` : '';
   let extra = '';
   if (ui.cat === 'faji' && v.aura !== undefined) {

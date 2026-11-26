@@ -89,8 +89,9 @@ function simulate(kind: CataclysmKind, worldReports = true, frameDt = DT): SimLo
 
 describe('15 maßgeschneiderte 3-Akt-Choreografien', () => {
   it('jedes Ultimate hat seine eigene Choreografie: Titel wie das Ultimate, drei deutsche Akt-Beschreibungen, eigene Pose, Gefahr und Kamera', () => {
-    expect(CINEMATIC_ORDER).toHaveLength(15);
-    expect(new Set(CINEMATIC_ORDER).size).toBe(15);
+    // 4.7B: 16 Choreografien – das Erzengel-Himmelsgericht des Priesters kam dazu
+    expect(CINEMATIC_ORDER).toHaveLength(16);
+    expect(new Set(CINEMATIC_ORDER).size).toBe(16);
     expect(new Set(ALL.map((m) => m.ultimate!.kind))).toEqual(new Set(CINEMATIC_ORDER));
     const poses = new Set<string>(), shots = new Set<string>(), threats = new Set<string>();
     for (const kind of CINEMATIC_ORDER) {
@@ -110,9 +111,10 @@ describe('15 maßgeschneiderte 3-Akt-Choreografien', () => {
       expect(d.frames, kind).toBeGreaterThanOrEqual(2);
       expect(d.frames, kind).toBeLessThanOrEqual(4);
     }
+    // der Priester nutzt die Kranz-Pose und den Sonnenring des Sonnentanzes (eigene Bezeichnung und eigene Kamera)
     expect(poses.size).toBe(15);
     expect(threats.size).toBe(15);
-    expect(shots.size).toBe(15);
+    expect(shots.size).toBe(16);
     expect(ACT_LABEL.prep).toBe('Vorbereitung & Aufladung');
     expect(ACT_LABEL.build).toBe('Bedrohlicher Aufbau & Perspektiv-Schwenk');
     expect(ACT_LABEL.impact).toBe('Einschlag, Doppel-Impact-Frame & Zerstörungs-Follow');

@@ -6,6 +6,7 @@
 // Gruß) und Schiffe, die ihre Runde vor dem Hafen fahren. Reine Daten und Rechnung oben (getestet), die Welt-Seite unten über `PresenceHost`.
 import { SHARED_PRESENCE } from '../data/prologue';
 import { DEFAULT_SHIP_LOOK, HULL_COLORS, SAIL_COLORS, type ShipLook } from '../data/ships';
+import { SPECS, SPEC_IDS, type RoleTag, type SpecId } from '../data/classes';
 
 /** Ein anderer Kapitän (Stellvertreter oder später ein echter Mitspieler aus dem Netz) */
 export interface PresenceCaptain {
@@ -20,6 +21,9 @@ export interface PresenceCaptain {
   tier: number;
   /** Gruß, wenn man ihn anspricht */
   greet: string[];
+  /** 4.7B: feste Klasse und Rolle (Zielfenster: „Kapitän · Säbel (Kombo-DPS) · Stufe 12“) */
+  spec?: SpecId;
+  role?: RoleTag;
 }
 
 /** Quelle der Mitspieler: lokal (bis 4.8) oder Server-Feed */
@@ -52,9 +56,11 @@ export function localRoster(seed = 0x7a11): PresenceCaptain[] {
     const name = names.splice(k, 1)[0];
     const atSea = i >= SHARED_PRESENCE.townCaptains;
     const level = 3 + Math.floor(rnd() * 22);
+    // 4.7B: Klasse fest aus Platz und Stufe (ohne den Zufall weiterzudrehen – Namen und Stufen bleiben wie in 4.7A)
+    const spec = SPEC_IDS[(i * 7 + level) % SPEC_IDS.length];
     out.push({
-      id: `kapitaen-${i}`, name, level, atSea,
-      title: `Kapitän · Stufe ${level}`,
+      id: `kapitaen-${i}`, name, level, atSea, spec, role: SPECS[spec].role,
+      title: `Kapitän · ${SPECS[spec].label} (${SPECS[spec].role}) · Stufe ${level}`,
       tier: atSea ? 1 + Math.floor(rnd() * 2) : 0,
       greet: GREETS[i % GREETS.length],
     });

@@ -12,7 +12,8 @@ import {
   ACTION_STYLE_IDS, ACTION_TUNING, AIR, ROUND, awakenWave, move, shot, skill, ticks,
   type ActionMove, type ActionStyleDef, type ActionStyleId,
 } from './actionKit';
-import { FAJI_STYLES } from './fajiArts';
+import { FAJI_STYLES, PRIEST_STYLE } from './fajiArts';
+import { extraForms } from './classForms';
 import { SKYFALL_ULTIMATE, ULTIMATES } from './cataclysms';
 
 export * from './actionKit';
@@ -283,7 +284,14 @@ const FJ: ActionStyleDef = {
 export const ACTION_STYLES: Record<ActionStyleId, ActionStyleDef> = {
   zweihaender: ZW, saebel: SA, doppel: DO, langklinge: LK, sturmfaust: SF, erdspalter: ES, effekt: FJ,
   ...FAJI_STYLES,
+  priester: PRIEST_STYLE,
 };
+
+// 4.7B: jeder Stil trägt zehn Formen – die vier alten Kampfkünste (Formen 1 – 4) und sechs weitere nach taktischen Mustern (data/classForms.ts)
+for (const id of Object.keys(ACTION_STYLES) as ActionStyleId[]) {
+  const st = ACTION_STYLES[id];
+  if (st.skills.length === 4) st.skills = [...st.skills, ...extraForms(st)];
+}
 
 // ---------- Vorwärts-Momentum (4.6C) ----------
 
