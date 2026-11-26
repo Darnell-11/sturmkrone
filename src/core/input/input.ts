@@ -43,6 +43,14 @@ export class Input {
   private zoomAcc = 0;
   private zoomStep = 0;
   private padPrev: boolean[] = [];
+  /**
+   * 4.6J: Umschalt ohne Laufrichtung löst „Ausweichen“ erst beim Loslassen aus – so wird Umschalt + Tab (voriges Ziel) kein Dash. Mit gehaltener
+   * Laufrichtung (oder sobald eine dazukommt) bleibt der Dash sofort.
+   */
+  private shiftDefer = '';
+  /** 4.6J: Mausklick bzw. Antippen auf die Spielwelt (Bildschirm-Pixel) – gesammelt bis zum nächsten Logikschritt */
+  private clickAcc = { x: 0, y: 0, n: 0, touch: false };
+  private clickStep = { x: 0, y: 0, on: false, touch: false };
   private stickDir = 0;
   private deviceListeners: ((d: InputDevice) => void)[] = [];
   private padButtonListeners: ((button: number) => void)[] = [];
@@ -127,8 +135,28 @@ export class Input {
 
   private codeDown(code: string) {
     const acts = this.keyMap.get(code);
-    if (!this.held.has(code) && acts) for (const a of acts) this.press(a);
+    if (!this.held.has(code) && acts) {
+      // Umschalt (Ausweichen) ohne Laufrichtung: erst beim Loslassen, falls nicht Umschalt + Tab daraus wird
+      const shift = code === 'ShiftLeft' || code === 'ShiftRight';
+      const defer = shift && acts.includes('dodge') && !this.moving();
+      for (const a of acts) if (!(defer && a === 'dodge')) this.press(a);
+      if (defer) this.shiftDefer = code;
+      // Laufrichtung kommt zu einem wartenden Umschalt dazu: jetzt ausweichen (Dash in Laufrichtung)
+      else if (this.shiftDefer && acts.some((a) => a === 'up' || a === 'down' || a === 'left' || a === 'right')) this.flushShift(true);
+    }
     this.held.add(code);
+  }
+
+  /** Wartendes Umschalt-Ausweichen auslösen (`fire`) oder verwerfen */
+  private flushShift(fire: boolean) {
+    if (!this.shiftDefer) return;
+    if (fire) this.press('dodge');
+    this.shiftDefer = '';
+  }
+
+  private moving(): boolean {
+    for (const a of ['up', 'down', 'left', 'right'] as const) for (const c of this.bindings[a]) if (this.held.has(c)) return true;
+    return Math.hypot(this.touchStick.x, this.touchStick.y) > 0.1 || Math.hypot(this.padStick.x, this.padStick.y) > 0.1;
   }
 
   private onKeyDown = (e: KeyboardEvent) => {
@@ -145,10 +173,20 @@ export class Input {
     }
     if (e.repeat) return;
     if (this.gameplayActive && this.keyMap.has(e.code)) e.preventDefault();
+    // 4.6J: Umschalt + Tab (bzw. die Taste von „Nächstes Ziel“) = voriges Ziel; das wartende Umschalt-Ausweichen verfällt
+    if (e.shiftKey && !this.held.has(e.code) && this.keyMap.get(e.code)?.includes('targetNext')) {
+      this.flushShift(false);
+      this.press('targetPrev');
+      this.held.add(e.code);
+      return;
+    }
     this.codeDown(e.code);
   };
 
-  private onKeyUp = (e: KeyboardEvent) => { this.held.delete(e.code); };
+  private onKeyUp = (e: KeyboardEvent) => {
+    this.held.delete(e.code);
+    if (e.code === this.shiftDefer) this.flushShift(true);
+  };
 
   private onPointerDown = (e: PointerEvent) => {
     // Ein Fingertipp auf die Spielwelt macht das Gerät zum Touch-Gerät (Laptops und Tablets mit feinem Zeiger melden beim Start nicht „coarse“;
@@ -163,8 +201,27 @@ export class Input {
       cb(code);
       return;
     }
+    // 4.6J: Linksklick auf die Spielwelt merken (Ziel anklicken); die Welt entscheidet im nächsten Schritt, ob ein Ziel getroffen wurde
+    if (e.button === 0) this.noteClick(e.clientX, e.clientY, false);
     this.codeDown(code);
   };
+
+  private noteClick(x: number, y: number, touch: boolean) {
+    const c = this.clickAcc;
+    c.x = x; c.y = y; c.n++; c.touch = touch;
+  }
+
+  /** 4.6J: Antippen der Spielwelt (Touch-Steuerung: kurzer Tipp ohne Wischen auf die Kamera-Fläche) */
+  tap(x: number, y: number) {
+    this.setDevice('touch');
+    this.noteClick(x, y, true);
+  }
+
+  /** Klick bzw. Tipp dieses Logikschritts (Bildschirm-Pixel) oder null; das Objekt wird wiederverwendet */
+  click(): { readonly x: number; readonly y: number; readonly touch: boolean } | null { return this.clickStep.on ? this.clickStep : null; }
+
+  /** Der Klick dieses Schritts hat ein friedliches Ziel gewählt: den Angriff, den derselbe Klick auslöste, verwerfen */
+  consumeAttack() { this.pressedNow.delete('attack'); }
 
   private onPointerUp = (e: PointerEvent) => {
     if (e.pointerType === 'mouse') this.held.delete('Mouse' + e.button);
@@ -177,6 +234,7 @@ export class Input {
 
   releaseAll() {
     this.held.clear();
+    this.shiftDefer = '';
     this.virtualHeld.clear();
     this.touchStick = { x: 0, y: 0 };
   }
@@ -261,6 +319,9 @@ export class Input {
     this.pressedNow.clear();
     for (const [a, n] of this.pressCount) if (n > 0) this.pressedNow.add(a);
     this.pressCount.clear();
+    const ca = this.clickAcc, cs = this.clickStep;
+    cs.on = ca.n > 0; cs.x = ca.x; cs.y = ca.y; cs.touch = ca.touch;
+    ca.n = 0;
     this.lookStep = this.lookAcc;
     this.lookAcc = { x: 0, y: 0 };
     this.zoomStep = this.zoomAcc;
@@ -271,6 +332,9 @@ export class Input {
   flush() {
     this.pressCount.clear();
     this.pressedNow.clear();
+    this.clickAcc.n = 0;
+    this.clickStep.on = false;
+    this.shiftDefer = '';
     this.lookAcc = { x: 0, y: 0 };
     this.zoomAcc = 0;
   }

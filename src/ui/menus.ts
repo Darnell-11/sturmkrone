@@ -1,3 +1,4 @@
+import { RESOLUTION_HINT, RESOLUTION_LABEL, RESOLUTION_MODES, isResolutionMode } from '../render/resolution';
 import { CAT_BY_ID, catOfPick, firstOf, isTechPick, newTalentUi, respecScopeOf, talentScreenHtml, techOf, type TalentCat, type TalentPick, type TalentUiState } from './talentScreen';
 import { NODE_BY_ID, TREE_BY_ID, type TalentTreeId } from '../data/talentTrees';
 import { SK } from '../data/skills';
@@ -1477,8 +1478,14 @@ export class Menus {
           </div>
           <p class="tier-desc"><b>${QUALITY_TIERS[cur].label}:</b> ${esc(QUALITY_TIERS[cur].description)}</p>
           <p class="soft small">Bei „Automatisch“ senkt das Spiel die Stufe selbst, wenn es ruckelt.</p></div>
+        <div class="set-group"><h3>Auflösung / Bildschärfe</h3>
+          <div class="chips">
+            ${RESOLUTION_MODES.map((m) => `<button data-a="res" data-id="${m}" aria-pressed="${s.resolution === m}">${esc(RESOLUTION_LABEL[m])}</button>`).join('')}
+          </div>
+          <p class="tier-desc"><b>${esc(RESOLUTION_LABEL[s.resolution])}:</b> ${esc(RESOLUTION_HINT[s.resolution])}</p>
+          <p class="soft small">Die Grafikstufe ändert die Schärfe nicht mehr: sie steuert Schatten, Bloom und Umgebungsverdeckung, Wasser-Spiegelungen, die Sichtweite von Bewuchs und Figuren und wie weit Stoff und Haare simuliert werden.</p></div>
         <div class="set-group"><h3>Leistung</h3>
-          ${toggleHtml('dynres', 'Dynamische Auflösung', s.dynamicResolution, 'Fällt die Bildrate unter 50, rechnet das Spiel kurz mit weniger Pixeln (nie unschärfer als „Niedrig“) und geht zurück, sobald es wieder flüssig läuft.')}
+          ${toggleHtml('dynres', 'Dynamische Auflösung', s.dynamicResolution, 'Fällt die Bildrate unter 50, rechnet das Spiel kurz mit weniger Pixeln (höchstens bis 75 % der Bildschärfe) und geht zurück, sobald es wieder flüssig läuft.')}
           ${toggleHtml('fps', 'Bildrate anzeigen', s.showFps, 'Bilder pro Sekunde und Grafikstufe in der Kapitänstafel.')}</div>
         <div class="set-group"><h3>Dein Gerät</h3><div class="facts">
           <div>Aktuelle Stufe<b>${QUALITY_TIERS[cur].label}${s.qualityAuto ? ' (automatisch)' : ''}</b></div>
@@ -1489,6 +1496,7 @@ export class Menus {
         </div>${g.detected.software ? GPU_HINT : ''}</div>`;
       handlers.q = (id) => { g.setQuality(id === 'auto' ? 'auto' : (id as QualityTier)); rerender(); };
       handlers.dynres = () => { g.settings.update({ dynamicResolution: !s.dynamicResolution }); rerender(); };
+      handlers.res = (id) => { if (isResolutionMode(id)) { g.settings.update({ resolution: id }); rerender(); } };
       handlers.fps = () => { g.settings.update({ showFps: !s.showFps }); rerender(); };
     }
 

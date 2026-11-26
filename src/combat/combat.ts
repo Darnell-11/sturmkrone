@@ -1,3 +1,4 @@
+import { canHarm } from './targetLock';
 import type { SmokeSystem } from '../world/smoke';
 import { audio } from '../audio/audio';
 import type { AllyTarget } from '../entities/ally';
@@ -621,7 +622,7 @@ export class CombatSystem implements EnemyWorld {
     // Verbände der Verteidiger: jeder Schwung trifft jeden Verband in Reichweite einmal (er trifft viele Köpfe)
     if (this.mass.length && !early) {
       for (const q of this.mass) {
-        if (!q.alive || done.has(q)) continue;
+        if (!this.massOk(q) || done.has(q)) continue;
         const dx = q.x - x, dz = q.z - z, d = Math.hypot(dx, dz), fr = q.sepRadius() * 0.7;
         if (d > def.range + fr + 0.8) continue;
         const ang = Math.abs(((Math.atan2(dx, dz) - yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
@@ -714,7 +715,7 @@ export class CombatSystem implements EnemyWorld {
     }
     for (const q of this.mass) {
       if (n >= out.length) return n;
-      if (!q.alive) continue;
+      if (!this.massOk(q)) continue;
       const fr = q.sepRadius() * 0.7, dx = q.x - x, dz = q.z - z, rr = r + fr;
       if (dx * dx + dz * dz > rr * rr) continue;
       const t = out[n];
@@ -845,7 +846,7 @@ export class CombatSystem implements EnemyWorld {
     CLASH_P.y = e.y + 0.1;
     this.fx.shockwave(CLASH_P, 6.5, '#FFE7A0');
     for (const q of this.mass) {
-      if (!q.alive) continue;
+      if (!this.massOk(q)) continue;
       const dx = q.x - CLASH_P.x, dz = q.z - CLASH_P.z, d = Math.hypot(dx, dz);
       if (d > 11) continue;
       q.fling(dx / (d || 1), dz / (d || 1), 15 * (1 - d / 13));
@@ -1122,7 +1123,7 @@ export class CombatSystem implements EnemyWorld {
       });
     }
     for (const q of this.mass) {
-      if (!q.alive) continue;
+      if (!this.massOk(q)) continue;
       list.push({
         x: q.x, y: q.y, z: q.z, radius: q.sepRadius() * 0.7, alive: true,
         hit: (dmg, _status, _dur, dx, dz) => this.massAbility(q, dmg * this.mods.skillMult, dx, dz),
@@ -1216,6 +1217,9 @@ export class CombatSystem implements EnemyWorld {
     }
     return best;
   }
+
+  /** 4.6J: Verband lebt und darf vom Spieler getroffen werden (Treffer-Prüfung `canHarm`: nur feindliche Verbände, nie eigene oder verbündete) */
+  private massOk(q: TroopSquad): boolean { return q.alive && canHarm('friendly', q.hostile ? 'hostile' : 'friendly'); }
 
   /** Auswahlwert eines Gegners für die Erfassung: nah und in Blickrichtung der Kamera ist besser */
   private lockScore(e: Enemy, x: number, z: number, camYaw: number) {
@@ -1593,7 +1597,7 @@ export class CombatSystem implements EnemyWorld {
           }
         }
         for (const q of this.mass) {
-          if (!q.alive || p.hit.has(q)) continue;
+          if (!this.massOk(q) || p.hit.has(q)) continue;
           const fr = q.sepRadius() * 0.7;
           if (Math.hypot(pos.x - q.x, pos.z - q.z) < p.radius + fr + 0.4) {
             p.hit.add(q);

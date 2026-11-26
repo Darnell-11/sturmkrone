@@ -1,3 +1,4 @@
+import { renderPixelRatio, type ResolutionMode } from './resolution';
 import {
   ACESFilmicToneMapping,
   AdditiveBlending,
@@ -188,6 +189,7 @@ export class GameRenderer {
     this.godRays = null;
     this.dof = null;
     this.grade = null;
+    this.bloom = null;
     const c = this.config;
     // Niedrig/Mittel: Konturen als Inverted Hull, Hoch/Maximal: Kantenerkennung als Post-Effekt
     setHullsVisible(!c.post.outlines);
@@ -249,6 +251,8 @@ export class GameRenderer {
       const b = RENDER_LOOK.bloom;
       const bloom = new BloomEffect({ intensity: b.intensity, luminanceThreshold: b.threshold, luminanceSmoothing: b.smoothing, mipmapBlur: true, radius: b.radius });
       guardBloom(bloom);
+      bloom.intensity = b.intensity * this.bloomK;
+      this.bloom = bloom;
       effects.push(bloom);
     }
     effects.push(new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC }));
@@ -278,19 +282,22 @@ export class GameRenderer {
     this.resize();
   }
 
-  /** Pixelverhältnis nach Stufe, begrenzt auf die maximale Pixelzahl (4K bei Max). */
+  /**
+   * 4.6J: Einstellung „Auflösung / Bildschärfe“ – unabhängig von der Grafikstufe (render/resolution.ts). Ändern über `setResolution`, das die
+   * Zeichenfläche sofort neu anlegt.
+   */
+  resolution: ResolutionMode = 'auto';
+
+  setResolution(mode: ResolutionMode) {
+    if (mode === this.resolution) return;
+    this.resolution = mode;
+    this.dynRes.reset(this.basePixelRatio());
+    this.resize();
+  }
+
+  /** Pixelverhältnis aus der Auflösungs-Einstellung (4.6J: die Grafikstufe hat keinen Einfluss mehr), höchstens 4K-Pixel */
   basePixelRatio(): number {
-    const c = this.config;
-    const dpr = window.devicePixelRatio || 1;
-    let r = c.pixelRatio ?? dpr;
-    if (c.pixelRatio === null || c.pixelRatio > 1) r = Math.min(r, dpr);
-    // Ultra: mehr Pixel als der Bildschirm (Supersampling) – gestochen scharfe Kanten und Details
-    r *= c.supersample;
-    r = Math.min(r, c.maxPixelRatio);
-    const w = Math.max(1, innerWidth);
-    const h = Math.max(1, innerHeight);
-    if (w * h * r * r > c.maxPixels) r = Math.sqrt(c.maxPixels / (w * h));
-    return r;
+    return renderPixelRatio(this.resolution, innerWidth, innerHeight, window.devicePixelRatio || 1);
   }
 
   resize() {
@@ -367,6 +374,16 @@ export class GameRenderer {
         mat.needsUpdate = true;
       }
     });
+  }
+
+  /** 4.6J: Bloom-Effekt (nur mit Nachbearbeitung) und sein Faktor (Akt-2-Bildregelung der Ultimates) */
+  private bloom: BloomEffect | null = null;
+  private bloomK = 1;
+  /** Bloom-Stärke relativ zum Grundwert (`RENDER_LOOK.bloom.intensity`); nur ein Uniform, kein neues Programm */
+  setBloomK(k: number) {
+    if (k === this.bloomK) return;
+    this.bloomK = k;
+    if (this.bloom) this.bloom.intensity = RENDER_LOOK.bloom.intensity * k;
   }
 
   /** Belichtung relativ zum Grundwert (Tagesphase, 4.4C): wirkt in beiden Wegen, mit und ohne Nachbearbeitung */

@@ -4,6 +4,7 @@ import type { CommandState } from './troops';
 export const ACTION_IDS = [
   'up', 'down', 'left', 'right',
   'attack', 'heavy', 'dodge', 'jump', 'interact', 'block', 'lockon',
+  'targetNext', 'targetPrev',
   'fireLeft', 'fireRight',
   'skill1', 'skill2', 'skill3',
   'art1', 'art2', 'art3', 'art4',
@@ -31,7 +32,9 @@ export const ACTION_LABELS: Record<ActionId, string> = {
   jump: 'Springen (Doppelsprung)',
   interact: 'Aktion',
   block: 'Blocken / Parade',
-  lockon: 'Ziel erfassen',
+  lockon: 'Ziel erfassen / lösen (Kamera)',
+  targetNext: 'Nächstes Ziel (Tab)',
+  targetPrev: 'Voriges Ziel (Umschalt + Tab)',
   fireLeft: 'Breitseite links',
   fireRight: 'Breitseite rechts',
   skill1: 'Fähigkeit 1',
@@ -83,7 +86,10 @@ export const DEFAULT_KEYS: Record<ActionId, string[]> = {
   jump: ['Space'],
   interact: ['KeyR', 'Enter'],
   block: ['KeyC'],
-  lockon: ['KeyF', 'Mouse1', 'KeyT', 'Tab'],
+  lockon: ['KeyF', 'Mouse1', 'KeyT'],
+  // 4.6J: MMO-Ziel-Erfassung – Tab schaltet durch die Ziele im Sichtfeld, Umschalt + Tab zurück (Input erkennt die Umschalttaste selbst)
+  targetNext: ['Tab'],
+  targetPrev: [],
   fireLeft: ['KeyQ'],
   fireRight: ['KeyE'],
   skill1: ['F1'],
@@ -142,7 +148,10 @@ export const DEFAULT_PAD: Record<ActionId, number[]> = {
   jump: [2],
   interact: [2],
   block: [4],
-  lockon: [11],
+  // 4.6J: der rechte Stick-Klick schaltet durch die Ziele (allein gedrückt; mit Kreuz/Schultertasten bleibt er Haltetaste der Kombinationen)
+  lockon: [],
+  targetNext: [11],
+  targetPrev: [],
   fireLeft: [4],
   fireRight: [5],
   skill1: [6],
@@ -243,7 +252,8 @@ export function commandOnKey(binds: Record<ActionId, string[]>, item: ActionId):
 
 /** Bereiche der Tastenbelegung im Einstellungsmenü; jede Aktion steht in genau einem Bereich (ein Test prüft das) */
 export const ACTION_GROUPS: { id: string; label: string; actions: ActionId[] }[] = [
-  { id: 'move', label: 'Bewegung und Aktion', actions: ['up', 'down', 'left', 'right', 'jump', 'dodge', 'interact', 'talk', 'lockon'] },
+  { id: 'move', label: 'Bewegung und Aktion', actions: ['up', 'down', 'left', 'right', 'jump', 'dodge', 'interact', 'talk'] },
+  { id: 'target', label: 'Ziel-Erfassung', actions: ['targetNext', 'targetPrev', 'lockon'] },
   { id: 'fight', label: 'Kampf', actions: ['attack', 'heavy', 'block', 'art1', 'art2', 'art3', 'art4', 'awaken', 'aura', 'skill1', 'skill2', 'skill3', 'swap', 'weapon1', 'weapon2'] },
   { id: 'sea', label: 'See', actions: ['fireLeft', 'fireRight', 'repair'] },
   { id: 'fleet', label: 'Flottenbefehle (See)', actions: ['fleetHold', 'fleetAttack', 'fleetRally'] },

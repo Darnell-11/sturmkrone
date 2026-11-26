@@ -63,6 +63,11 @@
   --warn: #e2a63f;
   --sea: #5aa7b8;
   --violet: #9a7ad6;
+  /* 4.6J: Ziel-Erfassung – Ring und Ziel-Fenster (gleiche Werte wie RELATION_RING in combat/targetLock.ts) */
+  --target-hostile: #e5483a;
+  --target-neutral: #eac54c;
+  --target-friendly: #4fd58c;
+  --target-npc: #5ba9f2;
 
   /* ---------- Seltenheit (gleiche Farben wie data/rarity.ts) ---------- */
   --rar-gewoehnlich: #9a9a9a;

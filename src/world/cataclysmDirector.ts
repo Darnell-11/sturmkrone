@@ -615,19 +615,23 @@ export class CataclysmDirector {
     switch (c.kind) {
       case 'horizonCut': {
         // 180 m breite Energiewand rast über den Horizont (drei Schichten: weißer Kern, Farbe, Saum)
-        b.reset().at(c.x, c.y - 2, c.z).rot(c.yaw).size(6, 8, 6, s.reach, 30, s.reach).span(0.95).col(WHITE, 2.6).fade(0.03, 0.45);
+        // 4.6J: gedämpft, niedriger und mit dunklem Smaragd-Mantel – die hohen, hellen Wände legten in Akt 2 einen weißen Schleier über das
+        // ganze Bild, die Klingenwelle selbst war nicht mehr zu erkennen; jetzt hebt sich ihre Kante als scharfe Linie vor dem Mantel ab
+        b.reset().at(c.x, c.y - 2.2, c.z).rot(c.yaw).size(6.2, 8, 6.2, s.reach * 1.01, 24, s.reach * 1.01).span(0.95).col(this.ink(c.acc), 0.85).fade(0.03, 0.45);
+        fx.emit('arcInk');
+        b.reset().at(c.x, c.y - 2, c.z).rot(c.yaw).size(6, 8, 6, s.reach, 22, s.reach).span(0.95).col(WHITE, 1.15).fade(0.03, 0.45);
         fx.emit('arc');
-        b.reset().at(c.x, c.y - 4, c.z).rot(c.yaw).size(5, 12, 5, s.reach * 0.97, 44, s.reach * 0.97).span(1.1).col(c.col, 2).fade(0.03, 0.5);
+        b.reset().at(c.x, c.y - 4, c.z).rot(c.yaw).size(5, 12, 5, s.reach * 0.97, 30, s.reach * 0.97).span(1.1).col(c.col, 1.05).fade(0.03, 0.5);
         fx.emit('arc');
-        b.reset().at(c.x, c.y - 1, c.z).rot(c.yaw).size(4, 4, 4, s.reach * 1.02, 16, s.reach * 1.02).span(1.2).col(c.acc, 2.2).fade(0.03, 0.55);
+        b.reset().at(c.x, c.y - 1, c.z).rot(c.yaw).size(4, 4, 4, s.reach * 1.02, 12, s.reach * 1.02).span(1.2).col(c.acc, 1.3).fade(0.03, 0.55);
         fx.emit('arc');
-        // Horizontlinie: flache Sichel bis zum Rand
-        b.reset().at(c.x, c.y + 1.4, c.z).rot(c.yaw).size(6, 1, 6, s.reach * 1.05, 1, s.reach * 1.05).span(0.9).col(WHITE, 3).fade(0.02, 0.5);
+        // Horizontlinie: flache Sichel bis zum Rand – die eigentliche Klingenkante, hell und schmal
+        b.reset().at(c.x, c.y + 1.4, c.z).rot(c.yaw).size(6, 1, 6, s.reach * 1.05, 1, s.reach * 1.05).span(0.9).col(WHITE, 2.2).fade(0.02, 0.5);
         fx.emit('blade');
         // 4.6D: 3-Schicht-Energiesichel mit dunklem Tusche-Schweif
         b.reset().at(c.x, c.y + 1.2, c.z).rot(c.yaw).size(5, 1, 5, s.reach * 1.1, 1, s.reach * 1.1).span(1.15).col(this.ink(c.acc), 1).fade(0.02, 0.5);
         fx.emit('sickleInk');
-        b.reset().at(c.x, c.y + 1.3, c.z).rot(c.yaw).size(5, 1, 5, s.reach * 1.04, 1, s.reach * 1.04).span(0.95).col(c.col, 2.6).fade(0.02, 0.5);
+        b.reset().at(c.x, c.y + 1.3, c.z).rot(c.yaw).size(5, 1, 5, s.reach * 1.04, 1, s.reach * 1.04).span(0.95).col(c.col, 1.6).fade(0.02, 0.5);
         fx.emit('sickle');
         break;
       }
@@ -771,10 +775,12 @@ export class CataclysmDirector {
           c.tick = 0;
           // Gischt und Funken an der Front
           const fr = front;
-          for (let i = 0; i < 3; i++) {
+          // 4.6J: in Akt 2 weniger und niedrigere Gischtwände (sie standen als weiße Säulen vor der Klingenwelle)
+          const nSpray = before ? 1 : 3;
+          for (let i = 0; i < nSpray; i++) {
             const a = c.yaw + (rnd() - 0.5) * 2.4;
             const px = c.x + Math.sin(a) * fr, pz = c.z + Math.cos(a) * fr;
-            b.reset().at(px, this.host.waterY(px, pz), pz).rot(a).size(4, 2, 1, 10, 7 + rnd() * 5, 1).span(0.6).col(SPRAY, 0.5).fade(0.05, 0.6);
+            b.reset().at(px, this.host.waterY(px, pz), pz).rot(a).size(4, 2, 1, 10, (before ? 4 : 7) + rnd() * (before ? 3 : 5), 1).span(0.6).col(SPRAY, before ? 0.3 : 0.5).fade(0.05, 0.6);
             fx.emit('wall');
             this.vfx.burst('spark', px, this.host.groundY(px, pz, c.y) + 1, pz, 3, 9, c.col, { up: 4 });
           }
@@ -1718,14 +1724,15 @@ export class CataclysmDirector {
     const d = t < L ? 6 : 6 + Math.min(s.reach + 2, (t - L) * 95);
     if (t0 === 0 && t > 0) {
       // die Welle selbst: drei Schichten einer gebogenen Wasserwand, die sich aufbäumt
+      // 4.6J: leiser (0,7 statt 1,4 bzw. 0,4 statt 0,9): die drei additiven Schichten deckten die Untersicht in Akt 2 weiß zu
       for (let k = 0; k < 3; k++) {
-        b.reset().at(c.x + fwdX * 4, c.y - 1.5 + k * 0.4, c.z + fwdZ * 4).rot(c.yaw).size(4, 2, 4, s.width * 0.55 + k * 2, 13 - k * 3, s.width * 0.55 + k * 2).span(Math.max(0.2, L + 0.06)).col(k === 1 ? WHITE : c.col, k === 1 ? 0.9 : 1.4).fade(0.08, 0.2);
+        b.reset().at(c.x + fwdX * 4, c.y - 1.5 + k * 0.4, c.z + fwdZ * 4).rot(c.yaw).size(4, 2, 4, s.width * 0.55 + k * 2, 13 - k * 3, s.width * 0.55 + k * 2).span(Math.max(0.2, L + 0.06)).col(k === 1 ? WHITE : c.col, k === 1 ? 0.4 : 0.7).fade(0.08, 0.2);
         b.ease = 0;
         fx.emit('arc');
       }
       // 4.6I: dunkler Tiefsee-Mantel hinter den leuchtenden Schichten (3-Schicht-Regel): vor dem hellen Taghimmel blieb die Wand sonst unsichtbar
       for (let k = 0; k < 2; k++) {
-        b.reset().at(c.x + fwdX * 4.5, c.y - 1.7, c.z + fwdZ * 4.5).rot(c.yaw).size(4.2, 2, 4.2, s.width * 0.57 + k * 2.5, 12.5 - k * 3, s.width * 0.57 + k * 2.5).span(Math.max(0.2, L + 0.06)).col(this.ink(c.col), 1 - k * 0.3).fade(0.08, 0.2);
+        b.reset().at(c.x + fwdX * 4.5, c.y - 1.7, c.z + fwdZ * 4.5).rot(c.yaw).size(4.2, 2, 4.2, s.width * 0.57 + k * 2.5, 12.5 - k * 3, s.width * 0.57 + k * 2.5).span(Math.max(0.2, L + 0.06)).col(this.ink(c.col), 1 - k * 0.15).fade(0.08, 0.2);
         b.ease = 0;
         fx.emit('arcInk');
       }
@@ -1758,13 +1765,22 @@ export class CataclysmDirector {
       const sw = Math.sin(t * 8) * 3.5;
       const hx = c.x + fwdX * d + fwdZ * sw, hz = c.z + fwdZ * d - fwdX * sw, hy = c.y + 2 + 7 * rise + Math.sin(t * 6) * 1.5;
       if (t < L) this.threat(hx, hy, hz);
-      b.reset().at(hx, hy, hz).size(2.8, 2.8, 2.8, 0.8, 0.8, 0.8).span(0.8).col(c.col, 1.8).fade(0.02, 0.7);
+      // 4.6J: in Akt 2 deutlich gedämpfter Drachenkopf (die übereinanderliegenden Kugeln wurden zu einer weißen Scheibe); jedes zweite Mal
+      // ein dunkler Tiefsee-Wirbel statt des weißen Kerns – Kopf und Leib bekommen so eine lesbare Silhouette
+      const dim = t < L ? 0.5 : 1;
+      b.reset().at(hx, hy, hz).size(2.8, 2.8, 2.8, 0.8, 0.8, 0.8).span(0.8).col(c.col, 1.8 * dim).fade(0.02, 0.7);
       fx.emit('orb');
-      b.reset().at(hx, hy, hz).size(1.4, 1.4, 1.4, 0.4, 0.4, 0.4).span(0.5).col(WHITE, 1.6).fade(0.02, 0.7);
-      fx.emit('orb');
+      c.step++;
+      if (t >= L || (c.step & 1) === 0) {
+        b.reset().at(hx, hy, hz).size(1.4, 1.4, 1.4, 0.4, 0.4, 0.4).span(0.5).col(WHITE, 1.6 * dim).fade(0.02, 0.7);
+        fx.emit('orb');
+      } else {
+        b.reset().at(hx - fwdX * 0.6, hy - 0.4, hz - fwdZ * 0.6).rot(c.yaw + t * 3).spin(5).size(2.2, 3.2, 2.2, 2.6, 4, 2.6).span(0.45).col(TMP.setRGB(0.005, 0.03, 0.08), 1).fade(0.04, 0.5);
+        fx.emit('ribbonInk');
+      }
       if (rnd() < 0.3) for (const side of [-1, 1]) { b.reset().at(hx + fwdZ * side * 1.4, hy + 1.6, hz - fwdX * side * 1.4).rot(c.yaw, -0.6, side * 0.4).size(0.6, 2.6, 0.6).span(0.25).col(WHITE, 1.4).fade(0.02, 0.6); fx.emit('shard'); }
       // 4.6D: Drachenleib aus gewundenen Wasserbändern hinter dem Kopf, schäumende Gischtkrone auf dem Kamm, Tropfenschauer
-      b.reset().at(hx - fwdX * 4, hy - 7, hz - fwdZ * 4).rot(c.yaw + t * 3).spin(4).size(2.5, 5, 2.5, 4.5, 9, 4.5).span(0.55).col(c.col, 1.9).fade(0.05, 0.5);
+      b.reset().at(hx - fwdX * 4, hy - 7, hz - fwdZ * 4).rot(c.yaw + t * 3).spin(4).size(2.5, 5, 2.5, 4.5, 9, 4.5).span(0.55).col(c.col, 1.9 * (t < L ? 0.6 : 1)).fade(0.05, 0.5);
       fx.emit('ribbon');
       b.reset().at(hx - fwdX * 4.5, hy - 7.5, hz - fwdZ * 4.5).rot(c.yaw + t * 3).spin(4).size(3, 5, 3, 5.4, 10, 5.4).span(0.6).col(TMP.setRGB(0.01, 0.04, 0.1), 1).fade(0.05, 0.5);
       fx.emit('ribbonInk');

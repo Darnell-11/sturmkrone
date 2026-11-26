@@ -3,9 +3,18 @@
 // beide Hälften), kleine Teile und Instanz-Netze wandern ganz auf ihre Seite. Die Hälften hängen an zwei Drehpunkt-Gruppen im Modell; das
 // Schiff versinkt wie gewohnt (Ship.render), die Hälften kippen dabei nach innen weg (Bug und Heck), rollen auseinander (der Länge nach),
 // gleiten am Schnitt ab (diagonal) oder trudeln in den Abgrund (radial). Materialien bleiben dieselben (gleiche Programme).
+//
+// 4.6J: Die Zerlegung eines Schiffs kostete 6 – 20 ms in einem Bild plus bis zu 8 ms Hochladen im nächsten (zusammen 20 – 35 ms). Jetzt ist sie
+// ein Auftrag (`beginShipSplit`), den `pumpShipSplits` je gezeichnetem Bild mit festem Zeitbudget (`SPLIT_FRAME_MS`) weiterführt – meist 2 – 3
+// Bilder, mitten im Standbild der Impact-Frames. Jeder Zwischenstand sieht aus wie das ganze Schiff (Umhängen mit gleicher Weltlage, beide
+// Hälften an derselben Stelle); die Hälften bewegen sich erst, wenn der Auftrag fertig ist (`ShipSplit.ready`). Zusätzlich billiger:
+// - die Hälften übernehmen die Hüllkugel des Originals (bisher je Hälfte eine Rechnung über ALLE Eckpunkte des geteilten Puffers),
+// - die Dreiecks-Einteilung schreibt in Puffer, die der Auftrag für alle Netze wiederverwendet (nur das Ergebnis wird angelegt),
+// - das Original gibt nur seinen Index-Puffer frei (`releaseIndexOnly`): bisher löschte `dispose()` die geteilten Eckpunkt-Puffer auf der
+//   Grafikkarte, und beide Hälften luden sie im nächsten Bild neu hoch.
 import { Box3, BufferAttribute, BufferGeometry, Color, Group, InstancedMesh, Matrix4, Mesh, Vector3, type Object3D, type ShaderMaterial } from 'three';
 import { addOutlines } from '../../render/outline';
-import { disposeGeometry } from '../../render/dispose';
+import { releaseIndexOnly } from '../../render/dispose';
 import type { ShipCut } from '../../data/actionKit';
 
 export type { ShipCut };
@@ -37,15 +46,40 @@ export interface ShipSplit {
   sections: number;
   /** Untergruppen der weiteren Sektionen: driften entlang der zweiten Schnittebene auseinander und sinken versetzt */
   subs: { g: Group; dx: number; dz: number; sink: number; rot: number }[];
+  /** 4.6J: Zerlegung abgeschlossen (erst dann bewegen sich die Hälften) */
+  ready: boolean;
+  /** 4.6J: Bilder, über die der Auftrag lief, und sein längster Schritt in ms (Prüfungen) */
+  frames: number;
+  maxStepMs: number;
 }
 
-const _inv = new Matrix4();
-const _rel = new Matrix4();
+/** 4.6J: Zeitbudget je gezeichnetem Bild für alle laufenden Zerlegungen zusammen (ms) */
+export const SPLIT_FRAME_MS = 3;
+/** Dreiecke zwischen zwei Blicken auf die Uhr */
+const TRI_CHUNK = 2048;
+
 const _m = new Matrix4();
 const _v = new Vector3();
 const _box = new Box3();
 const _c = new Vector3();
 const _s = new Vector3();
+const _cTmp = new Color();
+
+const clock = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+/** Arbeitskontext eines Auftrags: Zeitgrenze, eigene Matrizen (Aufträge wechseln sich zwischen zwei Bildern ab) und Einteilungs-Puffer */
+interface SplitCtx {
+  /** Uhrzeit (ms), ab der der Auftrag abgibt; Infinity = in einem Zug */
+  until: number;
+  inv: Matrix4;
+  rel: Matrix4;
+  /** wiederverwendete Einteilungs-Puffer für alle Netze des Auftrags (wachsen nur) */
+  bufA: Uint32Array;
+  bufB: Uint32Array;
+}
+
+const newCtx = (until: number): SplitCtx => ({ until, inv: new Matrix4(), rel: new Matrix4(), bufA: new Uint32Array(0), bufB: new Uint32Array(0) });
+const over = (ctx: SplitCtx) => ctx.until !== Infinity && clock() > ctx.until;
 
 /** Schnittebene je Art (Schiffsraum: +Z Bug, +X Backbord, +Y oben) */
 export function cutPlane(cut: Exclude<ShipCut, ''>): { nx: number; ny: number; nz: number } {
@@ -90,44 +124,75 @@ function outlineLike(src: Mesh, twin: Mesh) {
   addOutlines(twin, w);
 }
 
+/** Einteilungs-Puffer des Auftrags auf mindestens `n` Einträge bringen */
+function ensureBuf(ctx: SplitCtx, n: number) {
+  if (ctx.bufA.length >= n) return;
+  const len = Math.max(n, ctx.bufA.length * 2, 4096);
+  ctx.bufA = new Uint32Array(len);
+  ctx.bufB = new Uint32Array(len);
+}
+
+/** Hälfte als eigene Geometrie: gleiche Eckpunkt-Attribute, eigener Index; Hüllkugel des Originals (umschließt jede Teilmenge) */
+function makeHalf(g: BufferGeometry, src: Uint32Array, n: number, big: boolean): BufferGeometry {
+  const h = new BufferGeometry();
+  for (const name in g.attributes) h.setAttribute(name, g.attributes[name]);
+  const arr = big ? new Uint32Array(n) : new Uint16Array(n);
+  arr.set(src.subarray(0, n));
+  h.setIndex(new BufferAttribute(arr, 1));
+  h.boundingBox = null;
+  if (!g.boundingSphere) g.computeBoundingSphere();
+  h.boundingSphere = g.boundingSphere!.clone();
+  return h;
+}
+
+/** Ergebnis einer Einteilung (ein Objekt je Zerlegung, kein neues je Netz) */
+interface SliceOut { halves: [BufferGeometry, BufferGeometry] | null }
+
 /**
- * Geometrie in zwei Index-Puffer zerlegen (Dreiecke nach ihrem Schwerpunkt, im Schiffsraum über `rel`). Liefert null, wenn alles auf einer
- * Seite liegt oder die Geometrie nicht zerlegt werden kann (Morph-Ziele).
+ * Geometrie in zwei Index-Puffer zerlegen (Dreiecke nach ihrem Schwerpunkt, im Schiffsraum über `ctx.rel`). Ergebnis in `out`; null, wenn alles
+ * auf einer Seite liegt oder die Geometrie nicht zerlegt werden kann (Morph-Ziele). Gibt nach je `TRI_CHUNK` Dreiecken ab, wenn das Budget
+ * erschöpft ist (die Matrix wird vorher in lokale Zahlen kopiert und bleibt so über die Abgabe gültig).
  */
-function sliceGeometry(g: BufferGeometry, rel: Matrix4, nx: number, ny: number, nz: number, y0: number, off = 0): [BufferGeometry, BufferGeometry] | null {
+function* sliceGeometrySteps(g: BufferGeometry, ctx: SplitCtx, nx: number, ny: number, nz: number, y0: number, off: number, out: SliceOut): Generator<void, void, void> {
+  out.halves = null;
   const pos = g.getAttribute('position');
   // Gruppen zählen nur bei mehreren Materialien (der Aufrufer schließt die aus); die Hälften brauchen keine
-  if (!pos || Object.keys(g.morphAttributes).length) return null;
+  if (!pos || Object.keys(g.morphAttributes).length) return;
   const idx = g.getIndex();
   const tri = idx ? idx.count / 3 : pos.count / 3;
-  if (tri < 2) return null;
+  if (tri < 2) return;
   const big = pos.count > 65535;
-  const A = big ? new Uint32Array(tri * 3) : new Uint16Array(tri * 3);
-  const B = big ? new Uint32Array(tri * 3) : new Uint16Array(tri * 3);
+  ensureBuf(ctx, tri * 3);
+  const A = ctx.bufA, B = ctx.bufB;
+  const ia = idx ? idx.array : null;
+  // Positionen direkt aus dem Feld lesen, wo möglich (getX prüft je Aufruf Normalisierung und Versatz)
+  const flat = !(pos as { isInterleavedBufferAttribute?: boolean }).isInterleavedBufferAttribute && !pos.normalized && pos.itemSize === 3
+    ? (pos.array as ArrayLike<number>) : null;
+  const e = ctx.rel.elements;
+  const e0 = e[0], e1 = e[1], e2 = e[2], e4 = e[4], e5 = e[5], e6 = e[6], e8 = e[8], e9 = e[9], e10 = e[10], e12 = e[12], e13 = e[13], e14 = e[14];
   let na = 0, nb = 0;
-  const e = rel.elements;
   for (let t = 0; t < tri; t++) {
-    const i0 = idx ? idx.getX(t * 3) : t * 3, i1 = idx ? idx.getX(t * 3 + 1) : t * 3 + 1, i2 = idx ? idx.getX(t * 3 + 2) : t * 3 + 2;
+    if ((t & (TRI_CHUNK - 1)) === TRI_CHUNK - 1 && over(ctx)) yield;
+    const i0 = ia ? ia[t * 3] : t * 3, i1 = ia ? ia[t * 3 + 1] : t * 3 + 1, i2 = ia ? ia[t * 3 + 2] : t * 3 + 2;
+    let px: number, py: number, pz: number;
+    if (flat) {
+      px = (flat[i0 * 3] + flat[i1 * 3] + flat[i2 * 3]) / 3;
+      py = (flat[i0 * 3 + 1] + flat[i1 * 3 + 1] + flat[i2 * 3 + 1]) / 3;
+      pz = (flat[i0 * 3 + 2] + flat[i1 * 3 + 2] + flat[i2 * 3 + 2]) / 3;
+    } else {
+      px = (pos.getX(i0) + pos.getX(i1) + pos.getX(i2)) / 3;
+      py = (pos.getY(i0) + pos.getY(i1) + pos.getY(i2)) / 3;
+      pz = (pos.getZ(i0) + pos.getZ(i1) + pos.getZ(i2)) / 3;
+    }
     // Schwerpunkt im Objektraum, dann in den Schiffsraum (affine Matrix, ohne neue Objekte)
-    const px = (pos.getX(i0) + pos.getX(i1) + pos.getX(i2)) / 3;
-    const py = (pos.getY(i0) + pos.getY(i1) + pos.getY(i2)) / 3;
-    const pz = (pos.getZ(i0) + pos.getZ(i1) + pos.getZ(i2)) / 3;
-    const x = e[0] * px + e[4] * py + e[8] * pz + e[12];
-    const y = e[1] * px + e[5] * py + e[9] * pz + e[13];
-    const z = e[2] * px + e[6] * py + e[10] * pz + e[14];
+    const x = e0 * px + e4 * py + e8 * pz + e12;
+    const y = e1 * px + e5 * py + e9 * pz + e13;
+    const z = e2 * px + e6 * py + e10 * pz + e14;
     if (sideOf(x, y, z, nx, ny, nz, y0, off) >= 0) { A[na++] = i0; A[na++] = i1; A[na++] = i2; }
     else { B[nb++] = i0; B[nb++] = i1; B[nb++] = i2; }
   }
-  if (!na || !nb) return null;
-  const make = (arr: Uint16Array | Uint32Array, n: number) => {
-    const h = new BufferGeometry();
-    for (const name in g.attributes) h.setAttribute(name, g.attributes[name]);
-    h.setIndex(new BufferAttribute(arr.slice(0, n), 1));
-    h.boundingBox = null;
-    h.computeBoundingSphere();
-    return h;
-  };
-  return [make(A, na), make(B, nb)];
+  if (!na || !nb) return;
+  out.halves = [makeHalf(g, A, na, big), makeHalf(g, B, nb, big)];
 }
 
 /** Instanz-Netz nach den Lagen seiner Instanzen aufteilen: A behält seine, B bekommt ein neues Netz (gleiche Geometrie, gleiches Material) */
@@ -163,28 +228,29 @@ function sliceInstanced(m: InstancedMesh, rel: Matrix4, nx: number, ny: number, 
   retargetOutline(m, m.geometry, m.count);
   return twin;
 }
-const _cTmp = new Color();
 
-/**
- * Modell zerteilen. `root` = Modellgruppe des Schiffs (Ursprung = Schiffsmitte auf Wasserhöhe), `L`/`W` = Maße, `seed` für den Drehsinn.
- * Gibt den Zustand zurück; die Hälften hängen danach als zwei Gruppen in `root` (alles bleibt im selben Baum, nichts wird abgehängt).
- */
-export function splitShipModel(root: Group, cut: Exclude<ShipCut, ''>, L: number, W: number, deckY: number, seed = 1, lift = 0, sections = 2): ShipSplit {
+/** Neuer Zustand (noch ohne Teile) */
+function newSplit(cut: Exclude<ShipCut, ''>, L: number, W: number, deckY: number, seed: number, lift: number): ShipSplit {
   const { nx, ny, nz } = cutPlane(cut);
-  // diagonale Schnitte gehen durch die Mitte des Rumpfs (halbe Deckshöhe), die anderen durch die Schiffsmitte
-  const y0 = cut === 'diagonal' ? deckY * 0.5 : 0;
   const a = new Group(); a.name = 'split-a';
   const b = new Group(); b.name = 'split-b';
-  const st: ShipSplit = { cut, t: 0, a, b, L, W, deckY, nx, ny, nz, spin: seed % 2 ? 1 : -1, partsA: 0, partsB: 0, sliced: 0, lift, sections: 2, subs: [] };
+  return { cut, t: 0, a, b, L, W, deckY, nx, ny, nz, spin: seed % 2 ? 1 : -1, partsA: 0, partsB: 0, sliced: 0, lift, sections: 2, subs: [], ready: false, frames: 0, maxStepMs: 0 };
+}
+
+/** Der eigentliche Ablauf: Hälften, dann weitere Sektionen; gibt ab, sobald das Budget von `ctx` erschöpft ist */
+function* splitSteps(root: Group, st: ShipSplit, seed: number, sections: number, ctx: SplitCtx): Generator<void, void, void> {
+  const { cut, nx, ny, nz, a, b, L, W } = st;
+  root.add(a, b);
   if (cut === 'capsize' || cut === 'sink') {
     // ganz: alle Teile in Gruppe A (Drehpunkt), nichts wird zerlegt
-    const all = root.children.slice();
-    root.add(a, b);
-    a.updateMatrixWorld(true);
-    for (const o of all) { a.attach(o); st.partsA++; }
-    return st;
+    root.updateMatrixWorld(true);
+    for (const o of root.children.slice()) { if (o === a || o === b) continue; a.attach(o); st.partsA++; }
+    return;
   }
-  const n = partition(root, nx, ny, nz, y0, 0, a, b, st);
+  // diagonale Schnitte gehen durch die Mitte des Rumpfs (halbe Deckshöhe), die anderen durch die Schiffsmitte
+  const y0 = cut === 'diagonal' ? st.deckY * 0.5 : 0;
+  const n = [0, 0];
+  yield* partitionSteps(root, nx, ny, nz, y0, 0, a, b, st, ctx, n);
   st.partsA = n[0]; st.partsB = n[1];
   // weitere Sektionen (4.6D): jede Hälfte zerfällt entlang einer zweiten Ebene (der Länge nach geschnittene Schiffe quer, quer
   // geschnittene der Länge nach); die Teile driften auseinander und sinken versetzt
@@ -198,52 +264,144 @@ export function splitShipModel(root: Group, cut: Exclude<ShipCut, ''>, L: number
       const off = along ? (rnd() - 0.5) * L * 0.3 : (rnd() - 0.5) * W * 0.25;
       const h1 = new Group(); h1.name = `${h.name}-1`;
       const h2 = new Group(); h2.name = `${h.name}-2`;
-      partition(h, sx, 0, sz, 0, off, h1, h2, st);
+      yield* partitionSteps(h, sx, 0, sz, 0, off, h1, h2, st, ctx, [0, 0]);
       const sp = 0.8 + rnd() * 0.5;
       st.subs.push({ g: h1, dx: sx * sp, dz: sz * sp, sink: 0.4 + rnd() * 0.5, rot: (rnd() - 0.5) * 2 });
       st.subs.push({ g: h2, dx: -sx * sp, dz: -sz * sp, sink: 0.2 + rnd() * 0.5, rot: (rnd() - 0.5) * 2 });
       st.sections++;
     }
   }
+}
+
+/**
+ * Modell zerteilen – in einem Zug (Prüfungen, Werkzeuge). `root` = Modellgruppe des Schiffs (Ursprung = Schiffsmitte auf Wasserhöhe), `L`/`W` =
+ * Maße, `seed` für den Drehsinn. Die Hälften hängen danach als zwei Gruppen in `root` (alles bleibt im selben Baum, nichts wird abgehängt).
+ * Im Spiel läuft dasselbe als Auftrag über mehrere Bilder (`beginShipSplit`).
+ */
+export function splitShipModel(root: Group, cut: Exclude<ShipCut, ''>, L: number, W: number, deckY: number, seed = 1, lift = 0, sections = 2): ShipSplit {
+  const st = newSplit(cut, L, W, deckY, seed, lift);
+  const it = splitSteps(root, st, seed, sections, newCtx(Infinity));
+  while (!it.next().done) { /* in einem Zug */ }
+  st.ready = true;
+  st.frames = 1;
+  return st;
+}
+
+// ---------- Aufträge über mehrere Bilder (4.6J) ----------
+
+interface SplitJob { st: ShipSplit; it: Generator<void, void, void>; ctx: SplitCtx; cancelled: boolean }
+const jobs: SplitJob[] = [];
+
+/**
+ * Zerlegung als Auftrag anlegen (im Spiel über `Ship.splitApart`): der Zustand gilt sofort, die Hälften bewegen sich erst, wenn
+ * `pumpShipSplits` ihn abgeschlossen hat (`ready`).
+ */
+export function beginShipSplit(root: Group, cut: Exclude<ShipCut, ''>, L: number, W: number, deckY: number, seed = 1, lift = 0, sections = 2): ShipSplit {
+  const st = newSplit(cut, L, W, deckY, seed, lift);
+  const ctx = newCtx(0);
+  jobs.push({ st, it: splitSteps(root, st, seed, sections, ctx), ctx, cancelled: false });
   return st;
 }
 
 /**
- * Teile von `root` entlang der Ebene (nx, ny, nz) durch (0, y0, 0) mit Versatz `off` in die Gruppen `a` (vorn/oben/Backbord) und `b`
- * zerlegen; große Netze Dreieck für Dreieck, Instanz-Netze nach Instanzen, kleine Teile ganz. Liefert die Zahl der Teile je Seite.
+ * Je gezeichnetem Bild einmal (`SeaWorld.render`): laufende Zerlegungen der Reihe nach weiterführen, bis das Budget `ms` verbraucht ist.
+ * `ms` = Infinity schließt alle sofort ab. Liefert die Zahl der in diesem Aufruf fertig gewordenen Zerlegungen.
  */
-function partition(root: Group, nx: number, ny: number, nz: number, y0: number, off: number, a: Group, b: Group, st: ShipSplit): [number, number] {
-  root.updateMatrixWorld(true);
-  _inv.copy(root.matrixWorld).invert();
-  const moves: { o: Object3D; to: Group }[] = [];
-  const twins: { m: Mesh; to: Group; src: Mesh; world: Matrix4 }[] = [];
-  let pa = 0, pb = 0;
-  const place = (o: Object3D, to: Group) => { moves.push({ o, to }); if (to === a) pa++; else pb++; };
+export function pumpShipSplits(ms = SPLIT_FRAME_MS): number {
+  if (!jobs.length) return 0;
+  const until = ms === Infinity ? Infinity : clock() + ms;
+  let done = 0;
+  while (jobs.length) {
+    const j = jobs[0];
+    if (j.cancelled) { jobs.shift(); continue; }
+    j.ctx.until = until;
+    const s0 = clock();
+    const r = j.it.next();
+    const stepMs = clock() - s0;
+    j.st.frames++;
+    if (stepMs > j.st.maxStepMs) j.st.maxStepMs = stepMs;
+    if (!r.done) break;
+    j.st.ready = true;
+    jobs.shift();
+    done++;
+    if (until !== Infinity && clock() >= until) break;
+  }
+  return done;
+}
 
-  const visit = (o: Object3D) => {
-    for (const c of [...o.children]) {
+/** Laufenden Auftrag verwerfen (das Schiff wird abgebaut) */
+export function cancelShipSplit(st: ShipSplit) {
+  for (const j of jobs) if (j.st === st) j.cancelled = true;
+}
+
+/** Zahl der laufenden Zerlegungen (Prüfungen) */
+export function pendingShipSplits(): number {
+  let n = 0;
+  for (const j of jobs) if (!j.cancelled) n++;
+  return n;
+}
+
+/**
+ * Teile von `root` entlang der Ebene (nx, ny, nz) durch (0, y0, 0) mit Versatz `off` in die Gruppen `a` (vorn/oben/Backbord) und `b`
+ * zerlegen; große Netze Dreieck für Dreieck, Instanz-Netze nach Instanzen, kleine Teile ganz. Zählt die Teile je Seite in `n`.
+ * Jedes Teil wird sofort mit gleicher Weltlage umgehängt – jeder Zwischenstand sieht aus wie vorher. Nach jeder Abgabe werden die
+ * Matrizen neu gelesen (das Schiff bewegt sich zwischen zwei Bildern).
+ */
+function* partitionSteps(root: Group, nx: number, ny: number, nz: number, y0: number, off: number, a: Group, b: Group, st: ShipSplit,
+  ctx: SplitCtx, n: number[]): Generator<void, void, void> {
+  if (a.parent !== root) root.add(a, b);
+  const sync = () => { root.updateMatrixWorld(true); ctx.inv.copy(root.matrixWorld).invert(); };
+  sync();
+  const place = (o: Object3D, to: Group) => { to.attach(o); if (to === a) n[0]++; else n[1]++; };
+  // Kinder eines Netzes wandern mit ihm (Konturen, Anbauten)
+  const placeWhole = (c: Object3D) => {
+    c.getWorldPosition(_v).applyMatrix4(ctx.inv);
+    place(c, sideOf(_v.x, _v.y, _v.z, nx, ny, nz, y0, off) >= 0 ? a : b);
+  };
+  /** Zwilling (zweite Hälfte) genau dort einhängen, wo sein Original liegt; Kontur wie beim Original */
+  const addTwin = (m: Mesh, src: Mesh, to: Group) => {
+    to.add(m);
+    to.updateMatrixWorld(true);
+    src.updateWorldMatrix(true, false);
+    _m.copy(to.matrixWorld).invert().multiply(src.matrixWorld);
+    _m.decompose(m.position, m.quaternion, m.scale);
+    outlineLike(src, m);
+    n[1]++;
+  };
+  const out: SliceOut = { halves: null };
+
+  function* visit(o: Object3D): Generator<void, void, void> {
+    for (const c of o.children.slice()) {
       if (c === a || c === b) continue;
+      // zwischen zwei Bildern abgebaut oder umgehängt
+      if (c.parent !== o) continue;
+      if (over(ctx)) { yield; sync(); if (c.parent !== o) continue; }
       const mesh = c as Mesh;
       const mat = mesh.material as { userData?: { outline?: boolean } } | undefined;
       if (mat && !Array.isArray(mat) && mat.userData?.outline) continue; // Konturen bleiben an ihrem Netz
       if ((c as Mesh & { isSkinnedMesh?: boolean }).isSkinnedMesh) { placeWhole(c); continue; }
       if (mesh.isMesh) {
-        _rel.multiplyMatrices(_inv, mesh.matrixWorld);
+        ctx.rel.multiplyMatrices(ctx.inv, mesh.matrixWorld);
         if ((mesh as InstancedMesh).isInstancedMesh) {
-          const twin = sliceInstanced(mesh as InstancedMesh, _rel, nx, ny, nz, y0, off);
-          if (twin) { twins.push({ m: twin, to: b, src: mesh, world: mesh.matrixWorld.clone() }); place(mesh, a); st.sliced++; continue; }
+          const twin = sliceInstanced(mesh as InstancedMesh, ctx.rel, nx, ny, nz, y0, off);
+          if (twin) { place(mesh, a); addTwin(twin, mesh, b); st.sliced++; continue; }
           placeWhole(c);
           continue;
         }
         const g = mesh.geometry;
         if (!g.boundingBox) g.computeBoundingBox();
-        _box.copy(g.boundingBox!).applyMatrix4(_rel);
+        _box.copy(g.boundingBox!).applyMatrix4(ctx.rel);
         _box.getCenter(_c); _box.getSize(_s);
         const ext = Math.abs(nx) * _s.x + Math.abs(ny) * _s.y + Math.abs(nz) * _s.z;
         const d = sideOf(_c.x, _c.y, _c.z, nx, ny, nz, y0, off);
         // nur Netze, die der Schnitt wirklich durchquert, Dreieck für Dreieck; alles andere wandert ganz
         if (Math.abs(d) < ext * 0.42 && !Array.isArray(mesh.material)) {
-          const halves = sliceGeometry(g, _rel, nx, ny, nz, y0, off);
+          yield* sliceGeometrySteps(g, ctx, nx, ny, nz, y0, off, out);
+          const halves = out.halves;
+          out.halves = null;
+          // nach einer Abgabe stehen die Weltmatrizen auf einem neuen Bild; während der Einteilung abgebaut: nichts mehr anfassen
+          sync();
+          if (c.parent !== o) continue;
           if (halves) {
             const twin = new Mesh(halves[1], mesh.material);
             twin.castShadow = mesh.castShadow; twin.receiveShadow = mesh.receiveShadow;
@@ -251,9 +409,10 @@ function partition(root: Group, nx: number, ny: number, nz: number, y0: number, 
             twin.userData = { ...mesh.userData, noOutline: true };
             mesh.geometry = halves[0];
             retargetOutline(mesh, halves[0]);
-            disposeGeometry(g);
-            twins.push({ m: twin, to: b, src: mesh, world: mesh.matrixWorld.clone() });
+            // nur den Index des Originals freigeben: die Eckpunkt-Puffer teilen sich die Hälften (bleiben auf der Grafikkarte)
+            releaseIndexOnly(g);
             place(mesh, a);
+            addTwin(twin, mesh, b);
             st.sliced++;
             continue;
           }
@@ -265,38 +424,19 @@ function partition(root: Group, nx: number, ny: number, nz: number, y0: number, 
       if (c.children.length) {
         _box.setFromObject(c);
         if (_box.isEmpty()) { place(c, a); continue; }
-        _box.applyMatrix4(_inv);
+        _box.applyMatrix4(ctx.inv);
         _box.getCenter(_c); _box.getSize(_s);
         const ext = Math.abs(nx) * _s.x + Math.abs(ny) * _s.y + Math.abs(nz) * _s.z;
         const d = sideOf(_c.x, _c.y, _c.z, nx, ny, nz, y0, off);
-        if (Math.abs(d) < ext * 0.42 && !hasSkinned(c)) { visit(c); continue; }
+        if (Math.abs(d) < ext * 0.42 && !hasSkinned(c)) { yield* visit(c); continue; }
         place(c, d >= 0 ? a : b);
         continue;
       }
       placeWhole(c);
     }
-  };
-  // Kinder eines Netzes wandern mit ihm (Konturen, Anbauten)
-  const placeWhole = (c: Object3D) => {
-    c.getWorldPosition(_v).applyMatrix4(_inv);
-    place(c, sideOf(_v.x, _v.y, _v.z, nx, ny, nz, y0, off) >= 0 ? a : b);
-  };
-
-  visit(root);
-  root.add(a, b);
-  a.updateMatrixWorld(true);
-  b.updateMatrixWorld(true);
-  // umhängen mit gleicher Weltlage (attach rechnet die lokale Matrix um)
-  for (const { o, to } of moves) to.attach(o);
-  for (const { m, to, src, world } of twins) {
-    // der Zwilling liegt genau wie sein Original vor dem Schnitt
-    to.add(m);
-    _rel.copy(to.matrixWorld).invert().multiply(world);
-    _rel.decompose(m.position, m.quaternion, m.scale);
-    outlineLike(src, m);
-    pb++;
   }
-  return [pa, pb];
+
+  yield* visit(root);
 }
 
 function hasSkinned(o: Object3D): boolean {
@@ -312,6 +452,8 @@ const smooth = (k: number) => { const v = k < 0 ? 0 : k > 1 ? 1 : k; return v * 
  * auseinander, diagonal gleitet die obere Hälfte am Schnitt ab, radial trudeln beide und schrumpfen in den Abgrund.
  */
 export function updateShipSplit(st: ShipSplit, dt: number) {
+  // 4.6J: solange der Auftrag läuft, bleibt alles am Platz (jeder Zwischenstand sieht aus wie das ganze Schiff)
+  if (!st.ready) return;
   st.t += Math.max(0, Math.min(0.1, dt));
   const t = st.t;
   const a = st.a, b = st.b;

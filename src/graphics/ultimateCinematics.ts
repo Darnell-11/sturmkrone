@@ -137,7 +137,15 @@ export interface UltimateCinematic {
   slow3: readonly [number, number];
   /** Aura der Vorbereitung, wenn sie von den Farben des Ultimates abweicht (Zweihänder: schwarz-smaragdgrün) */
   aura?: string; auraInk?: string;
+  /**
+   * 4.6J: Bildregelung in Akt 2 – Belichtung und Bloom als Faktoren (1 = unverändert). Große leuchtende Wände (Klingenwelle, Drachenwelle)
+   * überstrahlten sonst das Bild; gedämpft bleiben Klingenwelle, Wasserdrache und Tusche-Konturen gestochen scharf.
+   */
+  grade2?: { exposure: number; bloom: number };
 }
+
+/** 4.6J: Akt-2-Bildregelung blendet so schnell ein und am Beginn von Akt 3 aus (echte s) */
+export const GRADE_BLEND = 0.08;
 
 // ---------------------------------------------------------------------------------------------------------------
 // Die 15 Choreografien
@@ -187,6 +195,7 @@ export const ULTIMATE_CINEMATICS: Readonly<Record<CataclysmKind, UltimateCinemat
     ],
     frames: 3, kick: 1.1, kickDir: 'side', slow3: [0.3, 1],
     aura: '#2AE0A0', auraInk: '#03140C',
+    grade2: { exposure: 0.8, bloom: 0.35 },
   },
   iaiWorldBreak: {
     kind: 'iaiWorldBreak', title: 'Lautloser Blitz: Iaijutsu-Weltenbruch',
@@ -342,6 +351,7 @@ export const ULTIMATE_CINEMATICS: Readonly<Record<CataclysmKind, UltimateCinemat
       S(K('impact', 18, 1.8, 6, 'impact', 1, 54), K('impact', 24, 2.1, 9, 'impact', 1, 58), 'out'),
     ],
     frames: 3, kick: 1.1, kickDir: 'fwd', slow3: [0.3, 1],
+    grade2: { exposure: 0.78, bloom: 0.3 },
   },
   vacuumStorm: {
     kind: 'vacuumStorm', title: '7. Form: Vakuum-Himmelssturm',
@@ -532,6 +542,9 @@ export class UltimateCinematics {
   barsK = 0;
   glow = 0;
   poseK = 0;
+  /** 4.6J: Faktoren für Belichtung und Bloom (Akt-2-Bildregelung `grade2`; 1 = unverändert) */
+  exposureK = 1;
+  bloomK = 1;
   /** Clip-Stand der Pose (Anteil des Clips; −1 = Engine) und sichtbares Abheben (m) */
   clipU = -1;
   lift = 0;
@@ -618,7 +631,7 @@ export class UltimateCinematics {
    */
   update(realDt: number, framesLeft = 0) {
     const d = this.def;
-    if (this.phase === 'idle' || !d) { this.timeScale = 1; this.camK = 0; this.barsK = 0; this.glow = 0; this.poseK = 0; this.clipU = -1; this.lift = 0; return; }
+    if (this.phase === 'idle' || !d) { this.timeScale = 1; this.camK = 0; this.barsK = 0; this.glow = 0; this.poseK = 0; this.clipU = -1; this.lift = 0; this.exposureK = 1; this.bloomK = 1; return; }
     const dt = Math.max(0, Math.min(0.1, Number.isFinite(realDt) ? realDt : 0));
     this.t += dt;
     this.clock += dt;
@@ -690,6 +703,15 @@ export class UltimateCinematics {
     }
     // Kinobalken und HUD: rasch hinein, in der Rückkehr heraus
     this.barsK = this.phase === 'return' ? 1 - smooth(this.t / CINE.barsOut) : smooth(this.clock / CINE.barsIn);
+    // 4.6J: Akt-2-Bildregelung – blendet mit Akt 2 ein und im Treffermoment (unter dem invertierten Bild) wieder aus
+    const g2 = d.grade2;
+    let gk = 0;
+    if (g2) {
+      if (this.phase === 'build') gk = smooth(this.t / GRADE_BLEND);
+      else if (this.phase === 'impact') gk = 1 - smooth(this.t / GRADE_BLEND);
+    }
+    this.exposureK = g2 ? 1 + (g2.exposure - 1) * gk : 1;
+    this.bloomK = g2 ? 1 + (g2.bloom - 1) * gk : 1;
   }
 
   /**
@@ -803,7 +825,7 @@ export class UltimateCinematics {
     this.t = 0;
     this.clock = 0;
     this.timeScale = 1;
-    this.camK = 0; this.barsK = 0; this.glow = 0; this.poseK = 0; this.clipU = -1; this.lift = 0;
+    this.camK = 0; this.barsK = 0; this.glow = 0; this.poseK = 0; this.clipU = -1; this.lift = 0; this.exposureK = 1; this.bloomK = 1;
     this.impacted = false; this.forced = false; this.holdEnd = -1; this.seamOn = false; this.resolvePending = false;
   }
 }

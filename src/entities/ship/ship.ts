@@ -21,7 +21,7 @@ import {
 } from '../../naval/shipSim';
 import { clamp01 } from '../../core/mathUtil';
 import { stepMotion, windSpeedK, type Motion, type MotionParams } from '../../naval/shipMotion';
-import { splitShipModel, updateShipSplit, type ShipCut, type ShipSplit } from './shipSplit';
+import { beginShipSplit, cancelShipSplit, updateShipSplit, type ShipCut, type ShipSplit } from './shipSplit';
 
 /** Arbeitsobjekte für `stepMotion` (nichts je Bild neu anlegen) */
 const _motion: Motion = { x: 0, z: 0, heading: 0, speed: 0, course: 0, turnInput: 0, yawRate: 0, courseOk: true };
@@ -404,7 +404,8 @@ export class Ship {
     if (this.split || this.disposed) return false;
     if (cut !== 'sink' && cut !== 'capsize') this.model.rigging.visible = false;
     if (!this.blown) this.fallPlan = [];
-    this.split = splitShipModel(this.model.group, cut, this.cls.L, this.cls.W, this.model.deckY, seed, lift, sections);
+    // 4.6J: als Auftrag über 2 – 3 Bilder (pumpShipSplits in SeaWorld.render); bis dahin sinkt das Schiff ganz
+    this.split = beginShipSplit(this.model.group, cut, this.cls.L, this.cls.W, this.model.deckY, seed, lift, sections);
     this.fire = 1e9;
     return true;
   }
@@ -699,5 +700,5 @@ export class Ship {
   }
 
   /** Schiff aus der Szene nehmen und seinen Grafikspeicher freigeben */
-  dispose() { this.disposed = true; glowHub.removeOwner(this); disposeObject(this.model.group); }
+  dispose() { this.disposed = true; if (this.split && !this.split.ready) cancelShipSplit(this.split); glowHub.removeOwner(this); disposeObject(this.model.group); }
 }

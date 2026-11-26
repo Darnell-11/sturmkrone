@@ -13,6 +13,10 @@ export class TouchControls {
   private origin = { x: 0, y: 0 };
   private lookId: number | null = null;
   private lookLast = { x: 0, y: 0 };
+  /** 4.6J: Beginn des Fingers auf der Lauf-Fläche (Zeit, weiteste Auslenkung) – ein kurzer Tipp ohne Ziehen wählt ein Ziel */
+  private stickStart = { t: 0, max: 0 };
+  /** 4.6J: Beginn des Fingers auf der Kamera-Fläche (Ort, Zeit, Weg) – ein kurzer Tipp ohne Wischen wählt ein Ziel */
+  private lookStart = { x: 0, y: 0, t: 0, path: 0 };
   private layout: TouchButtonDef[] = [];
   /** Größe der Knöpfe und Abstände (Einstellung „HUD-Größe“) */
   private scale = 1;
@@ -39,6 +43,7 @@ export class TouchControls {
       moveZone.setPointerCapture(e.pointerId);
       this.stickId = e.pointerId;
       this.origin = { x: e.clientX, y: e.clientY };
+      this.stickStart.t = performance.now(); this.stickStart.max = 0;
       this.base.hidden = false;
       this.base.style.left = e.clientX + 'px';
       this.base.style.top = e.clientY + 'px';
@@ -50,6 +55,7 @@ export class TouchControls {
       let dx = e.clientX - this.origin.x;
       let dy = e.clientY - this.origin.y;
       const d = Math.hypot(dx, dy);
+      if (d > this.stickStart.max) this.stickStart.max = d;
       if (d > STICK_RADIUS) { dx = (dx / d) * STICK_RADIUS; dy = (dy / d) * STICK_RADIUS; }
       this.knob.style.transform = `translate(${dx}px, ${dy}px)`;
       this.input.setTouchStick(dx / STICK_RADIUS, -dy / STICK_RADIUS);
@@ -60,7 +66,11 @@ export class TouchControls {
       this.base.hidden = true;
       this.input.setTouchStick(0, 0);
     };
-    moveZone.addEventListener('pointerup', endStick);
+    moveZone.addEventListener('pointerup', (e) => {
+      // 4.6J: ein kurzer Tipp ohne Ziehen wählt auch auf der Lauf-Fläche ein Ziel (die linke Bildhälfte gehört sonst ganz dem Stick)
+      if (e.pointerId === this.stickId && this.stickStart.max < 14 && performance.now() - this.stickStart.t < 300) this.input.tap(e.clientX, e.clientY);
+      endStick(e);
+    });
     moveZone.addEventListener('pointercancel', endStick);
 
     const lookZone = this.root.querySelector<HTMLElement>('.touch-look')!;
@@ -69,14 +79,22 @@ export class TouchControls {
       lookZone.setPointerCapture(e.pointerId);
       this.lookId = e.pointerId;
       this.lookLast = { x: e.clientX, y: e.clientY };
+      const st = this.lookStart;
+      st.x = e.clientX; st.y = e.clientY; st.t = performance.now(); st.path = 0;
     });
     lookZone.addEventListener('pointermove', (e) => {
       if (e.pointerId !== this.lookId) return;
+      this.lookStart.path += Math.hypot(e.clientX - this.lookLast.x, e.clientY - this.lookLast.y);
       this.input.addLook(e.clientX - this.lookLast.x, e.clientY - this.lookLast.y);
       this.lookLast = { x: e.clientX, y: e.clientY };
     });
     const endLook = (e: PointerEvent) => { if (e.pointerId === this.lookId) this.lookId = null; };
-    lookZone.addEventListener('pointerup', endLook);
+    lookZone.addEventListener('pointerup', (e) => {
+      // 4.6J: kurzer Tipp (unter 0,3 s, kaum bewegt) auf die Welt = Ziel antippen
+      const st = this.lookStart;
+      if (e.pointerId === this.lookId && st.path < 14 && performance.now() - st.t < 300) this.input.tap(e.clientX, e.clientY);
+      endLook(e);
+    });
     lookZone.addEventListener('pointercancel', endLook);
     // Drehen des Geräts oder neue Fenstergröße: Knöpfe passend neu aufbauen
     addEventListener('resize', () => { if (this.layout.length && this.heightFit() !== this.fitShown) this.setLayout(this.layout); });

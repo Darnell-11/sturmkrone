@@ -108,6 +108,9 @@ import type { MapTopo } from '../ui/minimap';
 import { FajiController } from '../faji/fajiController';
 import type { SkillState } from '../core/save/types';
 import { Ship, type SeaEnv } from '../entities/ship/ship';
+import { pumpShipSplits } from '../entities/ship/shipSplit';
+import { TargetLockLive, type TargetHost } from './targetLockLive';
+import { TARGET, aimYaw } from '../combat/targetLock';
 import { visualKey } from '../data/shipVisuals';
 import type { ShipEvolution } from '../data/shipEvolution';
 import { AMMO, AMMO_IDS, DEFAULT_SHIP_LOOK, factionShipLook, SEA_SPEED, SHIP_CLASSES, TITLE_SHIP, type AmmoId, type ShipLook } from '../data/ships';
@@ -265,6 +268,13 @@ const CINE_TMP = new Vector3();
 const CINE_TMP2 = new Vector3();
 const CINE_P = { x: 0, y: 0, z: 0 };
 const CINE_KICK = { x: 0, y: 0, z: 0 };
+
+/** 4.6J: lebender Land-Gegner hinter einem Ziel (Kämpfer, Elite, Boss) oder null – nur diese kann das Kampfsystem fest erfassen */
+function landFoe(c: { kind: string; ref: unknown }): Enemy | null {
+  if (c.kind !== 'fighter' && c.kind !== 'elite' && c.kind !== 'boss') return null;
+  const e = c.ref as Enemy | null;
+  return e && e.alive ? e : null;
+}
 
 export class SeaWorld {
   readonly scene = new Scene();
@@ -2128,7 +2138,13 @@ export class SeaWorld {
       foes: () => w.combat?.enemies ?? NO_FOES,
       foeSquads: () => w.combat?.mass ?? NO_FOES,
       player: () => (w.mode === 'foot' && w.foot ? w.foot : null),
-      lock: () => { const l = w.combat?.lock; return l && l.alive ? l : null; },
+      lock: () => {
+        const l = w.combat?.lock;
+        if (l && l.alive) return l;
+        // 4.6J: das angewählte Feind-Ziel (Tab, Klick) gibt die Mitte der Offiziers-Assists vor, wenn es in Reichweite liegt
+        const t = w._targets;
+        return t && t.active && t.sel.domain === 'land' && t.sel.relation === 'hostile' ? t.sel : null;
+      },
       atk: () => w.combat?.atk ?? 12,
       hit: (t, o) => w.combat?.assistHit(t, o) ?? 0,
       heal: (frac) => { const f = w.foot; if (!f) return 0; const before = f.hp; f.hp = Math.min(f.maxHp, f.hp + f.maxHp * frac); return f.hp - before; },
@@ -2535,6 +2551,80 @@ export class SeaWorld {
     if (this.mode === 'foot') this.sparks.emit(24, p.x, p.y, p.z, { speed: 1.5, up: 3, life: 1, color: new Color(0.6, 3, 0.8), gravity: -1, spread: 0.6 });
   }
 
+  /** 4.6J: MMO-Ziel-Erfassung (Tab, Umschalt+Tab, rechter Stick, Ziel-Knopf, Klick, Antippen; Zielring, Ziel-Fenster, Zielhilfe) */
+  private _targets: TargetLockLive | null = null;
+  get targets(): TargetLockLive { return (this._targets ??= new TargetLockLive(this.scene, this.targetHost())); }
+
+  private targetHost(): TargetHost {
+    const w = this;
+    return {
+      mode: () => (w.mode === 'foot' && w.foot ? 'foot' : 'sail'),
+      camera: () => w.camera,
+      viewer: (o) => {
+        const f = w.foot;
+        if (w.mode === 'foot' && f) { o.x = f.x; o.y = f.y; o.z = f.z; o.yaw = w.footYaw; }
+        else { o.x = w.ship.x; o.y = 0; o.z = w.ship.z; o.yaw = w.cameraYaw; }
+      },
+      combat: () => w.combat,
+      naval: () => w.naval,
+      npcs: () => w.targetNpcs(),
+      powerAt: (x, z) => { const isl = w.ground.islandAt(x, z); return (isl && w.islandDefs.find((d) => d.x === isl.x && d.z === isl.z)?.factionId) || ''; },
+      groundY: (x, z, y) => { const h = w.groundProxy.height(x, z, y + 1.5); return Number.isFinite(h) && h > -50 ? h : w.env.heightAt(x, z); },
+      waterY: (x, z) => w.env.heightAt(x, z),
+      playerFaction: () => w.playerFaction,
+      time: () => w.env.clock,
+    };
+  }
+
+  /** Bewohner und Besucher für die Ziel-Erfassung (eine wiederverwendete Liste) */
+  private readonly npcList: Npc[] = [];
+  private targetNpcs(): readonly Npc[] {
+    const l = this.npcList;
+    l.length = 0;
+    for (const n of this.npcs) l.push(n);
+    for (const n of this.visitors) l.push(n);
+    return l;
+  }
+
+  /**
+   * 4.6J: Ziel-Erfassung je Logikschritt – Klick/Tipp, Durchschalten, Lock-on (feste Kamera-Erfassung des angewählten Feindes),
+   * Abgleich mit der festen Erfassung des Kampfsystems und Zielhilfe für Breitseiten und Bugkanone.
+   */
+  private updateTargets(input: Input) {
+    const T = this.targets;
+    const f = this.mode === 'foot' ? this.foot : null;
+    const c = f ? this.combat : null;
+    const ck = input.click();
+    if (ck) {
+      const hit = T.pickAt(ck.x, ck.y, innerWidth, innerHeight);
+      // ein Klick auf Bewohner oder Verbündete wählt nur – er schlägt bzw. feuert nicht
+      if (hit && hit.relation !== 'hostile') input.consumeAttack();
+      if (hit && c?.lock) c.lock = landFoe(hit);
+    }
+    const prev = input.pressed('targetPrev');
+    if (prev || input.pressed('targetNext')) {
+      const sel = T.cycle(prev ? -1 : 1);
+      // eine feste Erfassung wandert mit (Tab schaltet weiter wie früher); andere Ziele lösen sie
+      if (c?.lock) c.lock = sel ? landFoe(sel) : null;
+    }
+    if (c && f && input.pressed('lockon')) {
+      const foe = T.active ? landFoe(T.sel) : null;
+      if (c.lock) c.lock = null;
+      else if (foe) c.lock = foe;
+      else { c.toggleLock(f.x, f.z, this.footYaw); const nl = c.lock as Enemy | null; if (nl) T.selectId(nl.entityId, 'lock'); }
+    }
+    // die feste Erfassung wechselte selbst (Retarget nach dem Tod des Ziels): die Auswahl folgt
+    if (c?.lock && c.lock.alive && c.lock.entityId !== T.state.id) T.selectId(c.lock.entityId, 'lock');
+    T.update();
+    if (this.naval) this.naval.aimTarget = T.active && T.sel.kind === 'ship' && T.sel.relation !== 'friendly' ? (T.sel.ref as EnemyShip) : null;
+  }
+
+  /** 4.6J: angewähltes Feind-Ziel an Land (Kennung für die Zielhilfe der Kampfkünste) oder '' */
+  private softTargetId(): string {
+    const T = this._targets;
+    return T && T.active && T.sel.domain === 'land' && T.sel.relation === 'hostile' ? T.sel.id : '';
+  }
+
   /** Position der Spielfigur (an Land) oder des Schiffs, dazu die Blickrichtung */
   private lockVec = new Vector3();
   /** Brustposition des erfassten Gegners (für die Tiefenunschärfe); null = kein Lock-on */
@@ -2891,8 +2981,11 @@ export class SeaWorld {
     // Vorläufig: das eigene Schiff geht nicht unter, solange die Spielfigur nicht am Steuer steht
     this.ship.unsinkable = this.mode !== 'sail';
     if (this.cinematic > 0) this.cinematic -= dt;
-    else if (this.mode === 'sail') this.updateSail(dt, input);
-    else this.updateFoot(dt, input);
+    else {
+      this.updateTargets(input);
+      if (this.mode === 'sail') this.updateSail(dt, input);
+      else this.updateFoot(dt, input);
+    }
 
     // Anlegen, Gangway, Enterhaken und Brücken vorrücken; danach feststellen, wo die Spielfigur steht (Deck, Brücke, Land)
     // Entern: verschwindet oder sinkt das Feindschiff mitten im Heranziehen oder Kampf (Weltwechsel, Raid-Start, Absturz anderer Systeme),
@@ -3174,7 +3267,7 @@ export class SeaWorld {
     this.footPitch = MathUtils.clamp(this.footPitch + ld.y * 0.004 + la.y * 1.5 * dt, 0.05, 1.2);
     this.footDist = MathUtils.clamp(this.footDist + input.zoomDelta() * 0.8, 3.5, 14);
     const c = this.combat;
-    if (c && input.pressed('lockon')) c.toggleLock(f.x, f.z, this.footYaw);
+    // Lock-on (F, T, mittlere Maustaste) und Durchschalten laufen seit 4.6J über `updateTargets`
     // Ziel gefallen: zum nächsten Gegner in Reichweite wechseln statt die Erfassung zu verlieren
     if (c && !c.lock && this.prevLock && !this.prevLock.alive) c.retarget(f.x, f.z, this.footYaw);
     this.prevLock = c?.lock ?? null;
@@ -3190,11 +3283,14 @@ export class SeaWorld {
     } else {
       // X am Gamepad springt und handelt: steht eine Handlung an (Kontextplakette), gewinnt die Handlung
       f.jumpBlocked = !!this.contextLabel;
-      f.update(dt, input, this.footYaw, this.groundProxy, lockYaw, lock?.entityId ?? '');
+      f.update(dt, input, this.footYaw, this.groundProxy, lockYaw, lock?.entityId ?? '', this.softTargetId());
     }
     // Entern: Deck geräumt?
     this.updateBoardVictory(dt);
-    this.faji?.update(dt, input, this.style, lockYaw);
+    // 4.6J: Faji-Fähigkeiten zielen auf die feste Erfassung, sonst auf das angewählte Feind-Ziel in Reichweite
+    let fajiYaw = lockYaw;
+    if (fajiYaw === null && this.softTargetId()) { const a = aimYaw(f.x, f.z, this.targets.sel, TARGET.artAim); if (!Number.isNaN(a)) fajiYaw = a; }
+    this.faji?.update(dt, input, this.style, fajiYaw);
     if (lockYaw !== null && !(ld.x || la.x)) {
       // Erfasstes Ziel: Kamera hinter die Figur, Blick aufs Ziel
       const diff = MathUtils.euclideanModulo(lockYaw - this.footYaw + Math.PI, Math.PI * 2) - Math.PI;
@@ -4556,6 +4652,10 @@ export class SeaWorld {
     }
     this.streamTick();
     this.cullFigures();
+    // 4.6J: laufende Schiffs-Zerlegungen mit festem Budget je Bild weiterführen (statt eines 20 – 35-ms-Bilds)
+    pumpShipSplits();
+    // 4.6J: Zielring (im Menü und während der Kino-Regie eines Ultimates verborgen)
+    this._targets?.render(frameDt, inMenu || this.cine.active);
     const s = this.ship;
     const x = MathUtils.lerp(s.prev.x, s.x, alpha);
     const z = MathUtils.lerp(s.prev.z, s.z, alpha);

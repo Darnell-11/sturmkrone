@@ -3,6 +3,7 @@ import { QUALITY_IDS, type QualityTier } from '../data/qualityTiers';
 import type { KeyValueStore } from './storage';
 import { unitOr } from './sanitize';
 import { clamp } from './mathUtil';
+import { isResolutionMode, type ResolutionMode } from '../render/resolution';
 
 // Einstellungen gehören zum Gerät, nicht zum Spielstand.
 export const SETTINGS_KEY = 'sturmkrone2-settings';
@@ -14,6 +15,8 @@ export interface Settings {
   qualityAuto: boolean;
   /** Dynamische Auflösung: bei Rucklern kurzzeitig mit weniger Pixeln rechnen */
   dynamicResolution: boolean;
+  /** 4.6J: Auflösung / Bildschärfe – unabhängig von der Grafikstufe (render/resolution.ts) */
+  resolution: ResolutionMode;
   volume: { master: number; music: number; sfx: number; ambient: number; voice: number };
   /** Klang anhalten, wenn Tab oder Fenster den Fokus verlieren */
   muteWhenUnfocused: boolean;
@@ -43,6 +46,7 @@ export function defaultSettings(): Settings {
     quality: null,
     qualityAuto: true,
     dynamicResolution: true,
+    resolution: 'auto',
     volume: { master: 0.8, music: 0.7, sfx: 0.8, ambient: 0.6, voice: 0.8 },
     muteWhenUnfocused: true,
     textScale: 1,
@@ -71,6 +75,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     quality: QUALITY_IDS.includes(r.quality) ? r.quality : null,
     qualityAuto: typeof r.qualityAuto === 'boolean' ? r.qualityAuto : d.qualityAuto,
     dynamicResolution: typeof r.dynamicResolution === 'boolean' ? r.dynamicResolution : d.dynamicResolution,
+    resolution: isResolutionMode(r.resolution) ? r.resolution : d.resolution,
     volume: {
       master: unitOr(vol.master, d.volume.master),
       music: unitOr(vol.music, d.volume.music),
@@ -96,7 +101,7 @@ export function sanitizeSettings(raw: unknown): Settings {
 /** Welche Einstellungen zu welchem Reiter des Einstellungsmenüs gehören (für „Zurücksetzen“) */
 export type SettingsTab = 'grafik' | 'steuerung' | 'ton' | 'anzeige';
 export const SETTINGS_TAB_KEYS: Record<SettingsTab, (keyof Settings)[]> = {
-  grafik: ['quality', 'qualityAuto', 'dynamicResolution'],
+  grafik: ['quality', 'qualityAuto', 'dynamicResolution', 'resolution'],
   steuerung: ['touchControls', 'invertLookY', 'keyBindings'],
   ton: ['volume', 'muteWhenUnfocused'],
   anzeige: ['textScale', 'showFps', 'colorblind', 'hudScale', 'sectorBanner', 'damageNumbers', 'camShake', 'gearAura'],

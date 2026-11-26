@@ -467,26 +467,52 @@ export class Ocean {
             // mit dem Wind laufend; in der Ferne ausgeblendet (die Mipmaps glätten vorher schon)
             if (uWaterK > 0.0) {
               vec2 skWd = vec2(sin(uWindDir), cos(uWindDir));
-              float skWf = 1.0 - smoothstep(60.0, 650.0, camD);
-              vec2 skG = (texture2D(uWaterN, rp / 9.0 + skWd * (uTime * 0.05)).xy * 2.0 - 1.0) * 0.6;
+              // 4.6J: Kachel-Brechung – eine langsame, gedrehte Verwirbelung verschiebt die Lesestelle (die Kacheln stehen nie mehr im Raster
+              // nebeneinander), die kleinen Lagen blenden früher aus, eine dritte große Lage (61,7 m, gedreht) trägt die Mitte
+              vec2 skWarp = vec2(sin(dot(rp, vec2(0.0213, 0.0137)) + uTime * 0.07), sin(dot(rp, vec2(-0.0151, 0.0197)) - uTime * 0.06)) * 2.6;
+              vec2 rq = rp + skWarp;
+              float skWf = 1.0 - smoothstep(40.0, 330.0, camD);
+              vec2 skG = (texture2D(uWaterN, rq / 9.0 + skWd * (uTime * 0.05)).xy * 2.0 - 1.0) * 0.6 * (1.0 - smoothstep(30.0, 220.0, camD));
               if (uWaterK > 0.6) {
-                vec2 skU2 = mat2(0.8, -0.6, 0.6, 0.8) * rp / 21.0 - skWd * (uTime * 0.022) + vec2(uTime * 0.009, 0.0);
+                vec2 skU2 = mat2(0.8, -0.6, 0.6, 0.8) * rq / 21.0 - skWd * (uTime * 0.022) + vec2(uTime * 0.009, 0.0);
                 skG += mat2(0.8, 0.6, -0.6, 0.8) * (texture2D(uWaterN, skU2).xy * 2.0 - 1.0) * 0.45;
+                vec2 skU3 = mat2(0.921, -0.391, 0.391, 0.921) * rq / 61.7 - skWd * (uTime * 0.011) + vec2(0.0, uTime * 0.004);
+                skG += mat2(0.921, 0.391, -0.391, 0.921) * (texture2D(uWaterN, skU3).xy * 2.0 - 1.0) * 0.35 * smoothstep(20.0, 160.0, camD);
               }
-              skNf = normalize(skNf + vec3(skG.x, 0.0, skG.y) * uWaterK * (0.42 + 0.3 * uWindK) * skWf);
+              skNf = normalize(skNf + vec3(skG.x, 0.0, skG.y) * uWaterK * (0.42 + 0.3 * uWindK) * mix(skWf, 1.0 - smoothstep(160.0, 700.0, camD), 0.45));
             }
           }
-          // Ferne See (4.4.1): wo die Gerstner-Wellen ausgeblendet sind, tragen zwei weiche Rauschfelder die Wellenstruktur bis zum Horizont
-          // (sonst wird das Meer in der Ferne zum glatten Spiegel); sie brechen Himmelsspiegelung und Sonnenbahn in Bänder und Flecken
+          // Ferne See (4.4.1, 4.6J): wo die Gerstner-Wellen ausgeblendet sind, trägt ein Spektrum langer Windwellen die Wellenstruktur bis zum
+          // Horizont. Bis 4.6I waren es zwei Wertrauschen-Felder auf einem Quadratraster (Zellen 20 m und 71 m): von oben und aus der Höhe lag
+          // darüber ein regelmäßiges Kästchenmuster wie auf einem Rechenblock. Jetzt: bis zu 12 gerichtete Wellenzüge (goldener Winkel,
+          // Wellenlängen 190 … 16 m ohne gemeinsames Raster) mit spitzen Kämmen, verwirbelten Phasen und großflächigen Wellengruppen; Züge,
+          // die kürzer als gut vier Bildpunkte wären, blenden aus (kein Flimmern und kein Moiré am Horizont).
           {
-            float fk = smoothstep(90.0, 700.0, camD);
+            float fk = smoothstep(60.0, 560.0, camD);
             if (fk > 0.0) {
-              vec2 fp = vSkW.xz * 0.05 + skOsc(0.05, 0.04);
-              float a0 = skNoise(fp), ax = skNoise(fp + vec2(0.5, 0.0)), az = skNoise(fp + vec2(0.0, 0.5));
-              vec2 fp2 = vSkW.xz * 0.014 - skOsc(0.03, 0.035);
-              float b0 = skNoise(fp2), bx = skNoise(fp2 + vec2(0.5, 0.0)), bz = skNoise(fp2 + vec2(0.0, 0.5));
-              vec2 fg = vec2(a0 - ax, a0 - az) * 0.6 + vec2(b0 - bx, b0 - bz) * 0.9;
-              skNf = normalize(skNf + vec3(fg.x, 0.0, fg.y) * fk * (0.45 + 0.25 * min(uWaveScale, 2.0)));
+              vec2 fp = vSkW.xz;
+              vec2 fwarp = vec2(sin(dot(fp, vec2(0.0061, 0.0043)) + uTime * 0.05), sin(dot(fp, vec2(-0.0039, 0.0057)) - uTime * 0.04)) * 21.0;
+              // Fußabdruck eines Bildpunkts auf dem Wasser (m): wächst mit Abstand und flachem Blick
+              float graze = max(abs(cameraPosition.y - vSkW.y) / max(camD, 1.0), 0.035);
+              float foot = camD * 0.0011 / graze;
+              vec2 fg = vec2(0.0);
+              float nW = 7.0 + 5.0 * clamp(uDetail, 0.0, 1.0);
+              for (int i = 0; i < 12; i++) {
+                float fi = float(i);
+                if (fi >= nW) break;
+                float ang = uWindDir + fi * 2.39996 + 0.37;
+                vec2 d = vec2(sin(ang), cos(ang));
+                float len = 190.0 * pow(0.8, fi) * (1.0 + 0.09 * sin(fi * 2.3));
+                float k = 6.2831853 / len;
+                float wgt = 0.4 + 0.6 * (0.5 + 0.5 * cos(ang - uWindDir));
+                float ph = k * dot(d, fp + fwarp * (0.35 + 0.65 * fract(fi * 0.618))) - sqrt(9.81 * k) * uTime * 0.32 + fi * 2.1;
+                float sh = exp(0.65 * (sin(ph) - 1.0));
+                float aa = smoothstep(2.5, 5.0, len / max(foot, 1e-3));
+                fg -= d * (sh * cos(ph) * wgt * aa * (0.13 + 0.05 * fi / nW));
+              }
+              // Wellengruppen: großflächig, gedreht, langsam (heben und senken die Struktur, ohne Raster)
+              float fgrp = 0.62 + 0.38 * sin(dot(fp, vec2(0.0021, -0.0033)) + uTime * 0.03) * sin(dot(fp, vec2(0.0029, 0.0017)) - uTime * 0.021);
+              skNf = normalize(skNf + vec3(fg.x, 0.0, fg.y) * fk * fgrp * (0.5 + 0.22 * min(uWaveScale, 2.0)));
             }
           }
           // Regen: Tropfen schlagen Ringwellen ins Wasser (drei Größen: große seltene, mittlere, feines Nieseln nah an der Kamera)
@@ -519,7 +545,10 @@ export class Ocean {
           float shallow = 1.0 - smoothstep(0.0, 3.2, skZ);
           // Wassersäule (4.4C, data/oceanLook.ts): Smaragd-Lagune → Türkis (bis ~6 m) → Azur → Tiefblau → Kobalt der offenen See. Wellenberge etwas heller.
 ${SEA_COLOR_GLSL}
-          skWater *= 0.94 + 0.14 * smoothstep(-0.8, 1.6, skD.y);
+          // 4.6J: Höhen-Aufhellung der Wellenberge nur in der Nähe – aus der Höhe gesehen zeichneten die drei sich kreuzenden langen
+          // Dünungen (170, 110, 64 m) sonst ein regelmäßiges Rautenraster heller und dunkler Flecken ins Meer
+          float skHgtK = 1.0 - smoothstep(140.0, 520.0, camD);
+          skWater *= mix(1.0, 0.94 + 0.14 * smoothstep(-0.8, 1.6, skD.y), skHgtK);
           // Ozean-Teilung: am Grund des Grabens schimmert nasser Meeresboden durch
           if (uTrenchD.y > 0.0) { float skTk = clamp(-skTrench(vSkW.xz) / uTrenchD.y, 0.0, 1.0); skWater = mix(skWater, vec3(0.34, 0.29, 0.21), smoothstep(0.55, 0.95, skTk) * 0.8); }
           // Meeresgrund: heller Sand scheint durch das klare Wasser, Rot wird zuerst verschluckt (daher türkis);
@@ -535,7 +564,10 @@ ${SEA_COLOR_GLSL}
           vec3 skBase = mix(skWater, skBed * 0.95 + skWater * 0.2, clamp(skVis * 1.05, 0.0, 1.0));
           // Großflächige Farbfelder: Strömungen und Plankton färben das Meer mal türkisgrün, mal tiefblau (langsam, ohne Wandern)
           {
-            float pt = skNoise(vSkW.xz * 0.0035 + skOsc(0.01, 0.013) * 0.3) * 0.65 + skNoise(vSkW.xz * 0.012 - skOsc(0.02, 0.017) * 0.3) * 0.35;
+            // 4.6J: gedrehte Bereiche (achsparalleles Wertrauschen zeichnete aus der Höhe ein Raster ins Meer)
+            vec2 skPq = mat2(0.866, -0.5, 0.5, 0.866) * vSkW.xz;
+            vec2 skPr = mat2(0.6, 0.8, -0.8, 0.6) * vSkW.xz;
+            float pt = skNoise(skPq * 0.0035 + skOsc(0.01, 0.013) * 0.3) * 0.65 + skNoise(skPr * 0.012 - skOsc(0.02, 0.017) * 0.3) * 0.35;
             skBase = mix(skBase, skBase * vec3(0.8, 1.1, 1.12) + vec3(0.0, 0.015, 0.02), smoothstep(0.4, 0.78, pt) * 0.55 * (1.0 - shallow));
             skBase = mix(skBase, skBase * vec3(0.88, 0.94, 1.12), (1.0 - smoothstep(0.15, 0.55, pt)) * 0.35 * (1.0 - shallow));
           }
@@ -543,7 +575,7 @@ ${SEA_COLOR_GLSL}
           float nz = skNoise(vSkW.xz * 0.35 + skOsc(0.17, 0.13)) * 0.6 + skNoise(vSkW.xz * 1.3 - skOsc(0.2, 0.23)) * 0.4;
           float crestT = 0.57 - 0.06 * clamp(uWaveScale - 1.0, 0.0, 2.0) - 0.04 * uWindK - 0.06;
           // Wellengruppen: Kämme türmen sich in langen Böen auf und fallen wieder zusammen (Schaumneigung schwankt mit)
-          float grp = skNoise(vSkW.xz * 0.011 + vec2(uTime * 0.035, -uTime * 0.02)) * 0.65 + skNoise(vSkW.xz * 0.03 - uTime * 0.05) * 0.35;
+          float grp = skNoise(mat2(0.8, -0.6, 0.6, 0.8) * vSkW.xz * 0.011 + vec2(uTime * 0.035, -uTime * 0.02)) * 0.65 + skNoise(mat2(0.28, 0.96, -0.96, 0.28) * vSkW.xz * 0.03 - uTime * 0.05) * 0.35;
           crestT -= (grp - 0.5) * 0.22;
           float crestAll = skCrestF;
           // Schaumschleppe hinter dem Kamm: dort, wo eben noch ein Kamm lief (in Laufrichtung der Hauptwelle)
@@ -729,7 +761,7 @@ ${SEA_COLOR_GLSL}
             // Wasserkörper je nach Blickwinkel: steil hinabgeschaut dunkler und tiefer, mit Aufhellung durch Streulicht
             outgoingLight += mix(uDeep, uShallow, 0.35) * nl * 0.18 * uSpecK * (1.0 - skFoam) * nv;
             // Wellentäler etwas dunkler – mehr Tiefe zwischen den Wellen
-            outgoingLight *= mix(0.84, 1.06, smoothstep(-1.4, 1.2, skD.y));
+            outgoingLight *= mix(1.0, mix(0.84, 1.06, smoothstep(-1.4, 1.2, skD.y)), skHgtK);
             // Ferne Wasserflächen gehen in die Horizontfarbe über
             float far = smoothstep(180.0, 1600.0, camD);
             outgoingLight = mix(outgoingLight, uHorizon * 0.82, far * 0.3);
@@ -743,7 +775,7 @@ ${SEA_COLOR_GLSL}
           // die das Bild danach wieder undurchsichtig machen – sonst wäre das Wasser auf manchen Handys durchsichtig)
           gl_FragColor.a = uWaterAlpha;`);
     };
-    mat.customProgramCacheKey = () => `sk-ocean31-${wakeN}`;
+    mat.customProgramCacheKey = () => `sk-ocean32-${wakeN}`;
     // Kaskaden-Schatten: auch ein neu gebautes Wassermaterial zählt alle Kaskaden als ein Licht
     ensureCsm(mat);
     return mat;

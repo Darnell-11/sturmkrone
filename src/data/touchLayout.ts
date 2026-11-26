@@ -21,6 +21,8 @@ export const TOUCH_SEA: TouchButtonDef[] = [
   { action: 'skill1', label: 'F1', size: 52, right: 30, bottom: 206, color: 'brass' },
   { action: 'skill2', label: 'F2', size: 52, right: 96, bottom: 180, color: 'brass' },
   { action: 'skill3', label: 'F3', size: 52, right: 180, bottom: 96, color: 'brass' },
+  // 4.6J: Ziel durchschalten (Breitseiten richten sich auf das angewählte Feindschiff aus)
+  { action: 'targetNext', label: 'Ziel', size: 44, right: 178, bottom: 164, color: 'brass' },
   { action: 'repair', label: 'Fli-\ncken', size: 48, right: 252, bottom: 30, color: 'ok' },
 ];
 
@@ -32,7 +34,8 @@ export const TOUCH_FOOT: TouchButtonDef[] = [
   { action: 'dodge', label: 'Dash', size: 60, right: 116, bottom: 18, color: 'teal' },
   { action: 'jump', label: 'Sprung', size: 58, right: 106, bottom: 92, color: 'teal' },
   { action: 'block', label: 'Block', size: 46, right: 188, bottom: 22, color: 'ok' },
-  { action: 'lockon', label: 'Ziel', size: 42, right: 236, bottom: 74, color: 'brass' },
+  // 4.6J: der Ziel-Knopf schaltet durch die Ziele im Sichtfeld (antippen der Welt wählt direkt)
+  { action: 'targetNext', label: 'Ziel', size: 42, right: 236, bottom: 74, color: 'brass' },
   { action: 'art1', label: '1', size: 50, right: 16, bottom: 200, color: 'seal' },
   { action: 'art2', label: '2', size: 50, right: 72, bottom: 176, color: 'seal' },
   { action: 'art3', label: '3', size: 50, right: 124, bottom: 152, color: 'seal' },

@@ -564,10 +564,13 @@ class Pool {
   readonly ink: boolean;
   /** additiv (leuchtender Kern): blendet nah vor der Linse aus (`CataclysmFx.lensNear`) */
   readonly add: boolean;
+  /** 4.6J: weiche Rauch-, Nebel- und Staub-Sprites (Normal-Mischung über Deckkraft-Stufen): blenden ebenfalls vor der Linse aus */
+  readonly soft: boolean;
   constructor(readonly prim: FxPrim, geo: BufferGeometry, mats: MeshBasicMaterial[], readonly cap: number, look: PrimLook) {
     this.bb = look.bb;
     this.ink = look.blend === 'ink';
     this.add = look.blend === 'add';
+    this.soft = prim === 'smoke';
     for (const mat of mats) {
       const m = new InstancedMesh(geo, mat, cap);
       m.instanceMatrix.setUsage(DynamicDrawUsage);
@@ -740,6 +743,19 @@ export class CataclysmFx {
         const sk = d[ow + DELAY] > 0 ? 0 : 1;
         const fin = d[ow + FIN], fout = d[ow + FOUT];
         let f = (fin > 0 ? Math.min(1, u / fin) : 1) * (fout > 0 ? Math.min(1, (1 - u) / fout) : 1) * sk;
+        // 4.6J: weiche Sprites (Staub, Nebel, Rauch) direkt vor der Linse ausblenden wie die leuchtenden Teile – über die Deckkraft-Stufen,
+        // darum vor der Stufen-Wahl (ein Staubfleck 0,5 m vor der Kamera deckte in Nahaufnahmen sonst einen großen Bildteil grau zu)
+        if (pool.soft && this.cam) {
+          const near = this.lensNear;
+          if (near > 0) {
+            const sz = Math.max(d[ow + S1], d[ow + S1 + 1]);
+            if (sz < 3) {
+              const cp = this.cam.position;
+              const dn = Math.hypot(d[ow + PX] - cp.x, d[ow + PY] - cp.y, d[ow + PZ] - cp.z) - sz * 0.5;
+              if (dn < near) { const k = Math.max(0, (dn - 0.3) / (near - 0.3)); f *= k * k * (3 - 2 * k); }
+            }
+          }
+        }
         // Ziel-Netz: dunkle Mäntel blenden über Deckkraft-Stufen aus, alles andere über die Farbe
         let mi = 0;
         if (pool.ink) {
@@ -768,10 +784,11 @@ export class CataclysmFx {
         // vor der Linse: kleine leuchtende Teile blenden aus (Abstand zur Kamera minus halbe Größe)
         if (pool.add && this.cam && this.lensNear > 0) {
           const sz = Math.max(_s.x, _s.y, _s.z);
+          const near = this.lensNear;
           if (sz < 3) {
             const cp = this.cam.position;
             const dn = Math.hypot(_p.x - cp.x, _p.y - cp.y, _p.z - cp.z) - sz * 0.5;
-            if (dn < this.lensNear) { const k = Math.max(0, (dn - 0.3) / (this.lensNear - 0.3)); f *= k * k * (3 - 2 * k); }
+            if (dn < near) { const k = Math.max(0, (dn - 0.3) / (near - 0.3)); f *= k * k * (3 - 2 * k); }
           }
         }
         const col = m.instanceColor!.array as Float32Array;

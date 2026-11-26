@@ -100,7 +100,7 @@ export class Ally implements AllyTarget {
   homeBound = false;
   arrivedHome = false;
 
-  constructor(assets: CharacterAssets, readonly def: CrewDef, level: number, loyalty: number, private slot: number, outline: boolean) {
+  constructor(assets: CharacterAssets, readonly def: CrewDef, readonly level: number, loyalty: number, private slot: number, outline: boolean) {
     const look = sanitizeLook({ ...randomLook(seeded(def.id.length * 977 + def.name.charCodeAt(0)), 'pirat'), ...(def.look ?? {}), gender: genderOf(def.look) }, 'pirat');
     look.gloves = def.style === 'faust';
     this.char = new Character(assets, look, outline);

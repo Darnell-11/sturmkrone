@@ -12,6 +12,7 @@
 //  - Jeder Angriff lässt sich jederzeit per Dash oder Sprung abbrechen (Animation-Cancel). Eingaben bleiben 160 ms gepuffert.
 //  - Weiches Ziel (Soft-Lock) mit Magnet-Schritt bis 3,5 m; Kameradrehung, Sprung und Dash lösen es sofort.
 //  - Perfektes Ausweichen (≤ 180 ms vor dem Treffer) = Sturm-Schritt: Blitz-Nachbild, die Figur steht hinter dem Angreifer, Konterfenster.
+import { TARGET } from './targetLock';
 import {
   ACTION_STYLES, ACTION_TUNING as T, ALL_MOVES, POSTURE, lastHitEnd, moveIndex,
   type ActionHit, type ActionMove, type ActionStyleDef, type ActionStyleId,
@@ -161,13 +162,18 @@ export interface ActionInput {
   /** feste Zielerfassung des Spiels ('' / NaN = keine) */
   hardLockId: string;
   hardLockYaw: number;
+  /**
+   * 4.6J: angewähltes Ziel der MMO-Erfassung (Tab, Klick, Antippen; '' = keins): Kampfkünste und Ultimate richten sich darauf aus, wenn es
+   * lebt und in Reichweite liegt (`TARGET.artAim`) – ohne die Kamera festzuhalten
+   */
+  softLockId: string;
   /** Erwachen-Taste (voll: Sturm-Erwachen; im Erwachen: Ultimate) und Aura wechseln, gerade gedrückt */
   awaken: boolean;
   aura: boolean;
 }
 
 export function makeInput(): ActionInput {
-  return { moveX: 0, moveZ: 1, mag: 0, camYaw: 0, light: false, heavy: false, jump: false, dash: false, skill: 0, blockHeld: false, blockPressed: false, hardLockId: '', hardLockYaw: NaN, awaken: false, aura: false };
+  return { moveX: 0, moveZ: 1, mag: 0, camYaw: 0, light: false, heavy: false, jump: false, dash: false, skill: 0, blockHeld: false, blockPressed: false, hardLockId: '', hardLockYaw: NaN, softLockId: '', awaken: false, aura: false };
 }
 
 /** Ein Ziel in der Nähe (vom Spiel je Bild in vorab angelegte Plätze geschrieben) */
@@ -922,9 +928,11 @@ export class ActionCombatEngine {
     f.moveHits = 0;
     f.comboWindow = 0;
     this.memoN.fill(0);
-    // Ziel: feste Erfassung > Vorgabe (Finisher) > bestehendes weiches Ziel > nächstes im Kegel
+    // Ziel: feste Erfassung > Vorgabe (Finisher) > angewähltes Ziel für Kampfkünste/Ultimate (4.6J) > bestehendes weiches Ziel > nächstes im Kegel
+    let aimed = false;
     if (inp && inp.hardLockId) f.lockId = inp.hardLockId;
     else if (lockOverride) f.lockId = lockOverride;
+    else if (inp && inp.softLockId && (kind === 'skill' || kind === 'ultimate') && this.inAim(inp.softLockId)) { f.lockId = inp.softLockId; aimed = true; }
     else if (f.lockFree <= 0 && (mv.magnet || mv.dashTo > 0)) {
       const cur = f.lockId ? this.target(f.lockId) : null;
       if (!cur || Math.hypot(cur.x - f.x, cur.z - f.z) > T.magnetRange + cur.radius) f.lockId = this.acquire(inp);
@@ -933,7 +941,8 @@ export class ActionCombatEngine {
     if (tg) {
       // sanft, aber sofort spürbar: bis 100° Unterschied gleich zum Ziel, sonst dreht der Angriff in den ersten Bildern
       const want = Math.atan2(tg.x - f.x, tg.z - f.z);
-      if (Math.abs(wrapAngle(want - f.yaw)) < 1.75) f.yaw = want;
+      // 4.6J: eine Kampfkunst auf das angewählte Ziel richtet sich sofort aus (Zielhilfe), sonst nur bis 100°
+      if (aimed || Math.abs(wrapAngle(want - f.yaw)) < 1.75) f.yaw = want;
     } else if (inp && inp.mag > 0.15) f.yaw = Math.atan2(inp.moveX, inp.moveZ);
     if (mv.rise > 0) { f.vy = mv.rise; f.grounded = false; f.airT = Math.max(f.airT, T.coyote); }
     else if (mv.meteor) { f.vy = Math.max(f.vy, 1.5); f.vx *= 0.3; f.vz *= 0.3; }
@@ -968,6 +977,14 @@ export class ActionCombatEngine {
   }
 
   /** Weiches Ziel wählen: nächster lebender Gegner im Kegel um die Stickrichtung (ohne Stick: rundum), ähnliche Höhe bevorzugt */
+  /** 4.6J: liegt das angewählte Ziel lebend in Reichweite der Zielhilfe? */
+  private inAim(id: string): boolean {
+    const t = this.target(id);
+    if (!t || !t.alive) return false;
+    const f = this.f;
+    return Math.hypot(t.x - f.x, t.z - f.z) <= TARGET.artAim + t.radius;
+  }
+
   private acquire(inp: ActionInput | null): string {
     const f = this.f;
     const hasDir = !!inp && inp.mag > 0.15;

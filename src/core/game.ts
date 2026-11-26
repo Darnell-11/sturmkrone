@@ -1,3 +1,4 @@
+import { TargetFrame } from '../ui/targetFrame';
 import { lowerTier, QUALITY_TIERS, type QualityTier } from '../data/qualityTiers';
 import { FACTION_LABELS, rankIndex, rankName } from '../data/ranks';
 import { TOUCH_FOOT, TOUCH_SEA } from '../data/touchLayout';
@@ -153,6 +154,9 @@ function supplyName(power: FactionId | null | undefined): string {
   return power === 'marine' ? 'Kriegs-Nachschub der Marine' : `${FACTIONS[power].adjective}er Kriegs-Nachschub`;
 }
 
+/** 4.6J: wiederverwendete Liste für `syncAllies` */
+const ALLY_CONTRACTS: WarContract[] = [];
+
 export class Game {
   readonly state = new StateMachine();
   readonly settings: SettingsStore;
@@ -204,6 +208,8 @@ export class Game {
   private questLog: QuestLog | null = null;
   private inventoryUi: InventoryScreen | null = null;
   private compass!: Compass;
+  /** 4.6J: Ziel-Fenster (Target Frame) unter dem Kompass */
+  private targetFrame!: TargetFrame;
   private helm!: HelmDial;
   private sectorBanner!: SectorBanner;
   private edgeWarning!: EdgeWarning;
@@ -308,6 +314,7 @@ export class Game {
     // Zonen des HUD: oben Mitte stapeln sich Kompass, Sektor, Besatzungsbanner und Boss-Leiste (in dieser Reihenfolge angelegt)
     const zone = this.hud.regions;
     this.compass = new Compass(zone.tc);
+    this.targetFrame = new TargetFrame(zone.tc);
     this.sectorBanner = new SectorBanner(zone.tc);
     this.edgeWarning = new EdgeWarning(zone.tc);
     this.occBanner = new OccupationBanner(zone.tc);
@@ -688,7 +695,10 @@ export class Game {
       this.renderer.setMood(nightK, pal.sunVis * lowSun);
       // Belichtung je Tagesphase (Environment.exposureK, 4.4C)
       // Ultimates verdunkeln kurz das Bild (Blutmond-Finsternis, Gewitterwolke, Schwarzes Loch)
-      this.renderer.setExposure(this.world.env.exposureK * (1 - 0.55 * this.world.darkK));
+      // 4.6J: Akt-2-Bildregelung der Kino-Regie (Himmelsspalter, Sintflutdrache: weniger Überstrahlung, schärfere Konturen)
+      const cine = this.world.cine;
+      this.renderer.setExposure(this.world.env.exposureK * (1 - 0.55 * this.world.darkK) * cine.exposureK);
+      this.renderer.setBloomK(cine.bloomK);
     }
     // Gegner, Crew und Stadtleute zwischen den 60-Hz-Logikschritten weich darstellen
     Character.present(a);
@@ -702,6 +712,8 @@ export class Game {
     this.overlay.update(this.state.is('play') ? frameDt * this.loop.timeScale : 0, this.world.camera);
     this.updateNpcMarkers();
     this.updateCompass();
+    // 4.6J: Ziel-Fenster (nur im Spiel; während der Kino-Regie blendet das HUD ohnehin aus)
+    this.targetFrame.update(this.state.is('play') ? this.world.targets.view : null);
     if (this.state.is('play')) {
       const s = this.settings.data;
       if (this.save) {
@@ -3603,6 +3615,7 @@ export class Game {
     this.upkeepT -= dt;
     if (this.upkeepT > 0) return;
     this.upkeepT = 0.5;
+    this.syncAllies();
     const r = stepUpkeep(eco, s.meta.playTime, s.player.gold, this.upkeepInput());
     if (r.spent > 0) s.player.gold -= r.spent;
     for (const e of r.events) {
@@ -3702,6 +3715,23 @@ export class Game {
 
   /** Heraldik (Macht der Spielwelt) einer Nation der Engine */
   private nationFid(id: string | null): FactionId | null { return id ? WAR_REGISTRY.get(id)?.heraldry ?? null : null; }
+
+  /**
+   * 4.6J: verbündete Mächte für die Freund/Feind-Regeln der Ziel-Erfassung (alle 0,5 s): Mächte, bei denen der Spieler im Dienst steht
+   * (Ansehen ab `REP.serviceAt`), und Auftraggeber laufender Kriegsaufträge. Ihre Schiffe tragen grüne Zielringe und nehmen keinen Schaden
+   * von Breitseiten, Rammstößen und Ultimates des Spielers (bis man sie provoziert).
+   */
+  private syncAllies() {
+    const nav = this.world.naval, s = this.save;
+    if (!nav || !s) return;
+    const set = nav.allyPowers;
+    set.clear();
+    const st = s.progress.standing ?? {};
+    for (const id of Object.keys(st) as FactionId[]) if ((st[id] ?? 0) >= REP.serviceAt) set.add(id);
+    const war = this.world.war;
+    if (war) for (const c of war.contractsOf(this.world.playerEntityId, ALLY_CONTRACTS)) { if (c.status !== 'aktiv') continue; const f = this.nationFid(c.client); if (f) set.add(f); }
+    ALLY_CONTRACTS.length = 0;
+  }
 
   /** Kriegspunkte sofort auszahlen: Gold je Punkt, Ansehen bei der begünstigten Macht; kurze Meldung */
   private payMerit(nation: string, kp: number, reason: string) {
@@ -5039,6 +5069,8 @@ export class Game {
     document.documentElement.classList.toggle('cb', s.colorblind);
     mapPalette.colorblind = s.colorblind;
     if (!s.dynamicResolution) this.renderer?.resetDynamicResolution();
+    // 4.6J: Auflösung / Bildschärfe (unabhängig von der Grafikstufe)
+    this.renderer?.setResolution(s.resolution);
     this.updateTouchVisibility();
   }
 

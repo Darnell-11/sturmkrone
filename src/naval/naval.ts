@@ -40,6 +40,7 @@ import { portIndices, aiEvolution, evoStats } from '../data/shipEvolution';
 import { aiMayRam, hasSwivels, ramContact, ramDamage, ramImpulse, swivelCooldown, swivelDamage, swivelTarget, type Kin } from './ramming';
 import { RAM, SWIVEL } from '../data/balanceConfig';
 import { REP, hasService, isHostile, isPeaceful, judgeBattle, newStats, type BattleStats } from '../data/reputation';
+import { broadsideSide, canHarm, relationOf, type RelationContext, type TargetRelation } from '../combat/targetLock';
 import { PLAYABLE_RADIUS } from '../data/world';
 import { Ship, type SeaEnv } from '../entities/ship/ship';
 import type { SwivelMount } from '../entities/ship/shipEvoParts';
@@ -240,6 +241,27 @@ export class NavalSystem {
   playerRank = 0;
   /** Ansehen bei einer Weltmacht (setzt die Welt aus dem Spielstand); Marine: ab 20 verbündet, unter 0 feindlich */
   standingOf: (id: FactionId) => number = () => 0;
+  /** 4.6J: Mächte, mit denen der Spieler verbündet ist (setzt das Spiel: Marine-Dienst, Kriegsaufträge); ihre Schiffe nehmen keinen Schaden vom Spieler */
+  readonly allyPowers = new Set<string>();
+  /** 4.6J: angewähltes Ziel der MMO-Erfassung (setzt die Seewelt je Bild): Breitseiten und Bugkanone richten sich darauf aus */
+  aimTarget: EnemyShip | null = null;
+  /** Beziehungs-Kontext für `relationOf` (Ansehen prüft hier schon `peaceful`, darum ohne eigene Schwellen) */
+  private readonly relCtx: RelationContext = { standing: () => 0, allies: this.allyPowers, peaceAt: Number.POSITIVE_INFINITY, allyAt: Number.POSITIVE_INFINITY };
+
+  /**
+   * 4.6J: Beziehung eines Schiffs zum Spieler (reine Regel `relationOf`): eigene Flotte und Marine-Helfer verbündet, verbündete Mächte ebenfalls
+   * (solange nicht provoziert), friedliche Durchfahrt neutral, sonst Feind.
+   */
+  shipRelation(e: EnemyShip): TargetRelation {
+    const calm = this.peaceful(e);
+    return relationOf({
+      own: !!(e.companion || e.fleetId || e.captured), ally: !!e.helper, provoked: !!e.provoked,
+      hostile: !!(e.raid || e.hunter) || (!calm && !(e.power && this.allyPowers.has(e.power))), power: e.power, civilian: calm,
+    }, this.relCtx);
+  }
+
+  /** 4.6J: darf der Spieler (bzw. seine Flotte) dieses Schiff beschädigen? (Treffer-Prüfung `canHarm`) */
+  playerMayHarm(e: EnemyShip): boolean { return canHarm('friendly', this.shipRelation(e)); }
   /** Raid-Instanz aktiv: keine natürlichen Begegnungen, keine Grenzpatrouillen, Wachschiffe bleiben bestehen */
   raidMode = false;
   /** Anzahl Begleitschiffe im Raid (eigene plus Söldner); null = nach Rang wie sonst */
@@ -339,11 +361,17 @@ export class NavalSystem {
   sideTarget(side: number, range: number): Ship | null {
     const p = this.player;
     if (!p) return null;
+    // 4.6J: das angewählte Ziel gewinnt, wenn es auf dieser Seite in Reichweite liegt (erweiterter Fächer)
+    const at = this.aimTarget;
+    if (at && at.ship.alive && !at.ship.sinking && this.playerMayHarm(at) && broadsideSide(p.heading, p.x, p.z, at.ship.x, at.ship.z, range) === side) return at.ship;
     const dir = p.heading + side * Math.PI / 2;
     let best: Ship | null = null, bd = range * 1.08;
     for (const e of this.enemies) {
       const s = e.ship;
       if (e.companion || !s.alive || s.sinking) continue;
+      // 4.6J: Verbündete nie automatisch anvisieren; Neutrale nur, wenn angewählt
+      const rel = this.shipRelation(e);
+      if (rel !== 'hostile') continue;
       const d = Math.hypot(s.x - p.x, s.z - p.z);
       if (d < 6 || d > bd) continue;
       const a = ((Math.atan2(s.x - p.x, s.z - p.z) - dir + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
@@ -351,6 +379,12 @@ export class NavalSystem {
       bd = d; best = s;
     }
     return best;
+  }
+
+  /** 4.6J: darf ein Schuss des Spielers dieses Schiff beschädigen? (fremde Schiffe ohne Eintrag: ja) */
+  private harmableByPlayer(s: Ship): boolean {
+    for (const e of this.enemies) if (e.ship === s) return this.playerMayHarm(e);
+    return true;
   }
 
   /** Liegt gerade ein Gegner im Feuerfächer dieser Seite? (für die Knöpfe „Links“/„Rechts“) */
@@ -573,7 +607,17 @@ export class NavalSystem {
 
   /** Bugkanone nach vorn */
   bowShot(ship: Ship, dmg: number, ammo: AmmoId) {
-    const f = new Vector3(Math.sin(ship.heading), 0, Math.cos(ship.heading));
+    let yaw = ship.heading;
+    // 4.6J: angewähltes Ziel im Bugkegel (±26°, bis 260 m): die Bugkanone richtet sich mit Vorhalt darauf aus
+    const at = ship === this.player ? this.aimTarget : null;
+    if (at && at.ship.alive && !at.ship.sinking && this.playerMayHarm(at)) {
+      const t = at.ship, T = Math.hypot(t.x - ship.x, t.z - ship.z) / BALL_SPEED;
+      const ex = t.x + Math.sin(t.heading) * t.speed * T, ez = t.z + Math.cos(t.heading) * t.speed * T;
+      const want = Math.atan2(ex - ship.x, ez - ship.z);
+      const off = Math.atan2(Math.sin(want - ship.heading), Math.cos(want - ship.heading));
+      if (Math.abs(off) < 0.45 && Math.hypot(ex - ship.x, ez - ship.z) < 260) yaw = want;
+    }
+    const f = new Vector3(Math.sin(yaw), 0, Math.cos(yaw));
     audio.play('boom', 1, { x: ship.x, z: ship.z });
     const from = new Vector3(ship.x, ship.model.deckY + 0.6, ship.z).addScaledVector(f, ship.cls.L / 2);
     this.spawnBall(from, f.multiplyScalar(BALL_SPEED + ship.speed).setY(6), ship, dmg * 0.8, ammo);
@@ -1192,7 +1236,7 @@ export class NavalSystem {
 
   /** Nie Ziel eines Ultimates: Begleiter und Flotte, Helfer, geenterte, friedliche Schiffe */
   cataclysmFriendly(e: EnemyShip): boolean {
-    return !!(e.companion || e.fleetId || e.helper || e.boarded || e.captured) || this.peaceful(e);
+    return !!(e.companion || e.fleetId || e.helper || e.boarded || e.captured) || this.peaceful(e) || !this.playerMayHarm(e);
   }
 
   /**
@@ -1572,6 +1616,8 @@ export class NavalSystem {
     const friends: Ship[] = [p, ...this.enemies.filter((e) => (e.companion || e.helper) && live(e.ship)).map((e) => e.ship)].filter(live);
     const foes = this.enemies.filter((e) => !e.companion && !e.helper && !e.battle && !e.boarded && live(e.ship));
     for (const f of friends) for (const e of foes) {
+      // 4.6J: verbündete Mächte werden nicht gerammt (Treffer-Prüfung); sie berühren sich nur über die normale Kollision
+      if (f === p && !this.playerMayHarm(e)) continue;
       this.tryRam(f, e.ship);
       if (this.hostileAI(e) && !e.ship.disabled) this.tryRam(e.ship, f);
     }
@@ -2152,7 +2198,8 @@ export class NavalSystem {
     st.clearObstacles();
     this.friendly.clear();
     if (this.player) this.friendly.add(this.player);
-    for (const e of this.enemies) if (e.companion || e.helper) this.friendly.add(e.ship);
+    // 4.6J: auch eigene Flotte, eroberte Schiffe und Schiffe verbündeter Mächte (kein Eigenbeschuss in Massenschlachten)
+    for (const e of this.enemies) if (e.companion || e.helper || e.fleetId || e.captured || (e.power && !e.provoked && this.allyPowers.has(e.power))) this.friendly.add(e.ship);
     for (const e of this.enemies) {
       const s = e.ship;
       if (s.alive) st.addObstacle(s.entityId, s.x, s.z, Math.sin(s.course) * s.speed, Math.cos(s.course) * s.speed, Math.max(s.cls.W * 0.5, s.cls.L * 0.32));
@@ -2189,6 +2236,8 @@ export class NavalSystem {
         const local = s.model.group.worldToLocal(p.clone());
         if (Math.abs(local.z) > s.cls.L / 2 || Math.abs(local.x) > s.model.halfWidth(local.z) + 0.4) continue;
         if (local.y < -1.2 || local.y > s.model.deckY + s.cls.mh) continue;
+        // 4.6J: Kugeln des Spielers durchfliegen verbündete Schiffe (Treffer-Prüfung `canHarm`; erst nach dem Treffertest, die Suche ist linear)
+        if (b.owner === this.player && !this.harmableByPlayer(s)) continue;
         const sailHit = local.y > s.model.deckY + 2.5;
         this.hitShip(s, b, local, sailHit);
         b.life = 0;

@@ -40,6 +40,18 @@ export function disposeGeometry(g: BufferGeometry | null | undefined) {
   if (g && !shared.has(g)) g.dispose();
 }
 
+/**
+ * Nur den Index-Puffer einer Geometrie freigeben, deren Eckpunkt-Attribute andere Geometrien weiter nutzen (Schiffs-Zerlegung, 4.6J):
+ * `dispose()` löscht sonst auch die geteilten Puffer auf der Grafikkarte, und jede Nutzerin lädt sie im nächsten Bild neu hoch.
+ */
+export function releaseIndexOnly(g: BufferGeometry | null | undefined) {
+  if (!g || shared.has(g)) return;
+  for (const name of Object.keys(g.attributes)) g.deleteAttribute(name);
+  const morph = g.morphAttributes as Record<string, unknown>;
+  for (const name of Object.keys(morph)) delete morph[name];
+  g.dispose();
+}
+
 /** Objekt aus der Szene nehmen und alles freigeben, was nur ihm gehört. */
 export function disposeObject(root: Object3D | null | undefined) {
   if (!root) return;

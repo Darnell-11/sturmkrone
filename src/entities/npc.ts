@@ -5,12 +5,15 @@ import { inBox, type IslandGround, type WalkIsland } from '../world/islandGround
 import type { CharacterAssets } from './character/assets';
 import { Character } from './character/character';
 import { NPC_LIFE } from '../data/characterRig';
+import { mintEntityId, type EntityId } from '../sim/entityId';
 
 type Mood = 'wander' | 'idle' | 'sit' | 'work' | 'cheer';
 
 /** Einfacher Inselbewohner mit Tagesablauf-Ansatz: schlendern, stehen, sitzen, arbeiten, grüßen. */
 export class Npc {
   readonly char: Character;
+  /** 4.6J: Kennung für die Ziel-Erfassung (Hafen-Bewohner sind anwählbar) */
+  readonly entityId: EntityId = mintEntityId('npc');
   x = 0;
   z = 0;
   yaw = 0;

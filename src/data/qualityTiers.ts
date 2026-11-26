@@ -5,12 +5,7 @@ export type QualityTier = (typeof QUALITY_IDS)[number];
 export interface QualityConfig {
   label: string;
   description: string;
-  /** Renderauflösung relativ zu CSS-Pixeln; null = native Geräteauflösung */
-  pixelRatio: number | null;
-  /** Obergrenze für das Pixelverhältnis */
-  maxPixelRatio: number;
-  /** Höchstzahl gerenderter Pixel (Breite × Höhe), 4K = 3840 × 2160 */
-  maxPixels: number;
+  // 4.6J: keine Renderauflösung mehr je Stufe – die wählt allein „Auflösung / Bildschärfe“ (render/resolution.ts)
   /**
    * Schatten. cascades ≥ 2: Kaskadierte Schattenkarten (CSM) – mehrere Karten hintereinander,
    * nah gestochen scharf, in der Ferne weich auslaufend bis `far` Meter. 1 = eine Karte um die Figur.
@@ -56,8 +51,6 @@ export interface QualityConfig {
    * Ultra in 2048 px (Basis 256 × textureScale × textureBoost). Große Basen (Deck 1024 px) bleiben bei Basis × textureScale.
    */
   textureBoost: number;
-  /** Supersampling: mehr Pixel rendern als der Bildschirm hat (Ultra, begrenzt durch maxPixels) */
-  supersample: number;
   /** Spiegelungen (IBL): Sekunden zwischen zwei Aufnahmen des Himmels; 0 = aus (einfacher Himmelsverlauf) */
   ibl: number;
   /** Sparstufe des Leistungs-Wächters (0 = keine), siehe render/watchdog.ts */
@@ -110,10 +103,7 @@ export const RENDER_LOOK = {
 export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
   low: {
     label: 'Niedrig',
-    description: 'Für schwächere Handys. Keine Schatten, keine Nachbearbeitung – flüssig auch auf älteren Geräten.',
-    pixelRatio: 0.75,
-    maxPixelRatio: 0.75,
-    maxPixels: 1280 * 720,
+    description: 'Für schwächere Handys. Keine Schatten, keine Nachbearbeitung, kurze Sichtweite für Bewuchs und Figuren, Stoff nur in der Nähe – flüssig auch auf älteren Geräten. Die Bildschärfe bleibt die gewählte Auflösung.',
     shadows: { enabled: false, mapSize: 0, soft: false, cascades: 0, far: 0, smallRange: 0 },
     // 4.4C: ohne Nachbearbeitung (ein Vollbild-Durchgang weniger, 60 Bilder je Sekunde); ACES-Tonemapping rechnet dann jedes Material selbst
     post: { enabled: false, bloom: false, outlines: false, colorGrading: false, godRays: false, depthOfField: false, ambientOcclusion: null },
@@ -127,15 +117,11 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     textureScale: 1,
     anisotropy: 2,
     textureBoost: 1,
-    supersample: 1,
     ibl: 0,
   },
   mid: {
     label: 'Mittel',
-    description: 'Für normale Handys. Einfache Schatten, Wasser mit Kleinwellen, keine Nachbearbeitung – flüssige 60 Bilder je Sekunde.',
-    pixelRatio: 1,
-    maxPixelRatio: 1,
-    maxPixels: 1920 * 1080,
+    description: 'Für normale Handys. Einfache Schatten, Wasser mit Kleinwellen, keine Nachbearbeitung, mittlere Sichtweite – flüssige 60 Bilder je Sekunde.',
     shadows: { enabled: true, mapSize: 1024, soft: false, cascades: 1, far: 0, smallRange: 32 },
     // 4.4C: ohne Nachbearbeitung (HDR-Puffer, Bloom und Farbkorrektur kosteten am Handy die meiste Füllrate); Kantenglättung übernimmt der Bildpuffer
     post: { enabled: false, bloom: false, outlines: false, colorGrading: false, godRays: false, depthOfField: false, ambientOcclusion: null },
@@ -149,15 +135,11 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     textureScale: 1,
     anisotropy: 4,
     textureBoost: 1,
-    supersample: 1,
     ibl: 20,
   },
   high: {
     label: 'Hoch',
-    description: 'Für gute Handys und PCs. Gestaffelte weiche Schatten, Kontaktschatten, Konturen, Farbkorrektur, Sonnenstrahlen.',
-    pixelRatio: 1.5,
-    maxPixelRatio: 1.5,
-    maxPixels: 2560 * 1440,
+    description: 'Für gute Handys und PCs. Gestaffelte weiche Schatten, Bloom und Kontaktschatten, Wasser-Spiegelungen, Konturen, Farbkorrektur, Sonnenstrahlen.',
     shadows: { enabled: true, mapSize: 2048, soft: true, cascades: 2, far: 180, smallRange: 45 },
     post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 4, steps: 3, scale: 0.5, radius: 1.1, intensity: 0.85 }, heat: true, ssr: { steps: 14, scale: 0.5 } },
     multisampling: 4,
@@ -170,15 +152,11 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     textureScale: 2,
     anisotropy: 8,
     textureBoost: 1,
-    supersample: 1,
     ibl: 8,
   },
   max: {
     label: 'Maximal',
-    description: 'Für starke PCs. Native Auflösung bis 4K, alle Effekte, größte Sichtweite.',
-    pixelRatio: null,
-    maxPixelRatio: 3,
-    maxPixels: 3840 * 2160,
+    description: 'Für starke PCs. Drei Schattenkaskaden, alle Effekte, weite Sicht für Bewuchs und Figuren, Stoff und Haare weit hinaus simuliert.',
     shadows: { enabled: true, mapSize: 2048, soft: true, cascades: 3, far: 320, smallRange: 70 },
     post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 6, steps: 4, scale: 0.5, radius: 1.3, intensity: 0.95 }, heat: true, ssr: { steps: 20, scale: 0.5 } },
     multisampling: 4,
@@ -191,15 +169,11 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     textureScale: 2,
     anisotropy: 16,
     textureBoost: 2,
-    supersample: 1,
     ibl: 6,
   },
   ultra: {
     label: 'Ultra',
-    description: 'Für sehr starke PCs. Bis 4K mit Supersampling, hochauflösende Texturen, Schatten in höchster Schärfe und Reichweite, weiteste Sicht.',
-    pixelRatio: null,
-    maxPixelRatio: 4,
-    maxPixels: 3840 * 2160,
+    description: 'Für sehr starke PCs. Hochauflösende Texturen, Schatten in höchster Schärfe und Reichweite, feinste Spiegelungen und Umgebungsverdeckung, weiteste Sicht.',
     shadows: { enabled: true, mapSize: 4096, soft: true, cascades: 4, far: 520, smallRange: 110 },
     post: { enabled: true, bloom: true, outlines: true, colorGrading: true, godRays: true, depthOfField: true, ambientOcclusion: { dirs: 8, steps: 5, scale: 0.75, radius: 1.4, intensity: 1 }, heat: true, ssr: { steps: 28, scale: 0.6 } },
     multisampling: 8,
@@ -212,7 +186,6 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
     textureScale: 4,
     anisotropy: 16,
     textureBoost: 2,
-    supersample: 1.5,
     ibl: 4,
   },
 };
@@ -220,4 +193,28 @@ export const QUALITY_TIERS: Record<QualityTier, QualityConfig> = {
 export function lowerTier(t: QualityTier): QualityTier | null {
   const i = QUALITY_IDS.indexOf(t);
   return i > 0 ? QUALITY_IDS[i - 1] : null;
+}
+
+/**
+ * 4.6J: Was eine Grafikstufe steuert (rein, für Anzeige und Prüfung) – nie die Auflösung. Schatten (Kartengröße × Kaskaden, Reichweite), Bloom
+ * und Umgebungsverdeckung, Wasser-Spiegelungen (0 keine, 1 Himmel und Kleinwellen, 2 zusätzlich Bildschirm-Spiegelungen), Sichtweite von
+ * Bewuchs und Figuren (m) und die Entfernung, bis zu der Stoff, Haare und Ketten jedes Bild simuliert werden (m; Rig-Detailstufe „voll“).
+ */
+export interface TierFeatures { shadowTexels: number; shadowFar: number; bloom: boolean; ao: number; waterReflections: 0 | 1 | 2; vegetation: number; figures: number; cloth: number }
+
+export function tierFeatures(tier: QualityTier): TierFeatures {
+  const c = QUALITY_TIERS[tier];
+  const ao = c.post.ambientOcclusion;
+  // Rig: volle Stoff-Simulation bis 22 m × Detailfaktor (Figuren-Sichtweite / 112, gedeckelt wie Character.setRigDetail)
+  const rig = Math.max(0.45, Math.min(1.3, c.figureDistance / 112));
+  return {
+    shadowTexels: c.shadows.enabled ? c.shadows.mapSize * Math.max(1, c.shadows.cascades) : 0,
+    shadowFar: c.shadows.enabled ? c.shadows.far || c.shadows.smallRange : 0,
+    bloom: c.post.enabled && c.post.bloom,
+    ao: ao ? ao.dirs * ao.steps * ao.scale : 0,
+    waterReflections: c.post.enabled && c.post.ssr ? 2 : c.detail > 0.5 ? 1 : 0,
+    vegetation: c.viewDistance,
+    figures: c.figureDistance,
+    cloth: Math.round(22 * rig * 10) / 10,
+  };
 }

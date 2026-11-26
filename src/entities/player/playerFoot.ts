@@ -398,7 +398,7 @@ export class PlayerFoot implements PlayerTarget {
     this.deps.onDown();
   }
 
-  update(dt: number, input: Input, camYaw: number, ground: Ground, lockYaw: number | null, lockId = '') {
+  update(dt: number, input: Input, camYaw: number, ground: Ground, lockYaw: number | null, lockId = '', softId = '') {
     const f = this.fighter;
     this.world.ground = ground;
     const pv = this.prev;
@@ -426,6 +426,8 @@ export class PlayerFoot implements PlayerTarget {
     inp.blockPressed = input.pressed('block');
     inp.hardLockId = lockYaw === null ? '' : lockId;
     inp.hardLockYaw = lockYaw === null ? NaN : lockYaw;
+    // 4.6J: angewähltes Ziel (Tab, Klick): Kampfkünste und Ultimate richten sich darauf aus
+    inp.softLockId = softId;
     inp.awaken = input.pressed('awaken');
     inp.aura = input.pressed('aura');
     this.preY = f.y;
