@@ -2084,7 +2084,7 @@ export class CataclysmDirector {
    * Sichtbare Wucht jedes Schwungfensters einer Technik, Verzweigung, eines Finishers oder Meteors: Linien werden zu Klingenwellen mit
    * Elementen am Boden entlang (Felsen, Eis-Stacheln, Flammen, Wasser, Blitze), Kreise zu Eruptionen, Bögen zu sichtbaren Sichelschnitten.
    */
-  swingFx(h: ActionHit, f: FighterState, colorHex: string, element: string, meteor = false) {
+  swingFx(h: ActionHit, f: FighterState, colorHex: string, element: string, meteor = false, soft = false) {
     const fx = this.host.fx, b = fx.brush, vf = this.vfx;
     const col = this.color(colorHex);
     const el = h.vfx || element;
@@ -2123,7 +2123,8 @@ export class CataclysmDirector {
       // Eruption: Flammen-/Energiekranz, Krater bzw. Gischt mit Partikeln; Meteor = mehrstufiger Krater mit Schockwellen
       b.reset().at(cx, gy + 0.12, cz).size(0.6, 1, 0.6, h.range * 1.05, 1, h.range * 1.05).span(0.45).col(ec, 2).fade(0.01, 0.6);
       fx.emit('ring');
-      vf.surfaceHit(cx, gy, cz, h.range * (meteor ? 0.9 : 0.6), ec, meteor ? 1.8 : 1);
+      // 4.7C: heilende Wellen (Priester) reißen den Boden nicht auf – nur Lichtring und Funken
+      if (!soft) vf.surfaceHit(cx, gy, cz, h.range * (meteor ? 0.9 : 0.6), ec, meteor ? 1.8 : 1);
       if (meteor) {
         for (let k = 1; k <= 3; k++) { b.reset().at(cx, gy + 0.1, cz).rot(rnd() * 6).size(1, 1, 1, h.range * (0.8 + k * 0.55), 1, h.range * (0.8 + k * 0.55)).span(0.35 + k * 0.12, k * 0.05).col(k === 2 ? WHITE : ec, 2).fade(0.01, 0.6); fx.emit('shock'); }
         vf.burst(this.host.isLand(cx, cz) ? 'rock' : 'drop', cx, gy + 0.3, cz, 16, 8, this.host.isLand(cx, cz) ? TMP.setRGB(0.55, 0.5, 0.46) : SPRAY, { up: 9, size: 0.28 });
@@ -2405,6 +2406,26 @@ export class CataclysmDirector {
         fx.emit('shard');
       }
       this.stats.waves++;
+    }
+  }
+
+  /**
+   * 4.7C Wasserlauf: konzentrische Anime-Kräuselringe und Fontänen unter den Füßen (nur vorhandene Bausteine: Schaumring, Gischt, Tropfen).
+   * `kind` 0 Stehen (ein ruhiger Ring), 1 Gehen, 2 Laufen (Fontäne höher, Tropfen), 3 Schwimmen (flache Ringe), 4 Eintauchen/Auftauchen.
+   */
+  waterStepFx(x: number, y: number, z: number, kind: number) {
+    const fx = this.host.fx, b = fx.brush;
+    const rings = kind === 4 ? 3 : kind === 0 || kind === 3 ? 1 : 2;
+    for (let k = 0; k < rings; k++) {
+      const r = (kind === 2 ? 1.9 : kind === 4 ? 2.4 : 1.4) + k * 1.2;
+      b.reset().at(x, y + 0.05, z).rot(rnd() * 6).size(0.3, 1, 0.3, r, 1, r).span(0.75 + k * 0.25, k * 0.09).col(SPRAY, 0.95 - k * 0.22).fade(0.02, 0.62);
+      fx.emit('foam');
+    }
+    if (kind === 1 || kind === 2 || kind === 4) {
+      const h = kind === 4 ? 2.6 : kind === 2 ? 1.5 : 0.9;
+      b.reset().at(x, y - 0.05, z).rot(rnd() * 6).size(0.2, 0.3, 0.2, kind === 4 ? 1.5 : 0.7, h, kind === 4 ? 1.5 : 0.7).span(kind === 4 ? 0.7 : 0.42).col(SPRAY, 1).fade(0.03, 0.5);
+      fx.emit('splash');
+      this.vfx.burst('drop', x, y + 0.2, z, kind === 4 ? 12 : kind === 2 ? 7 : 3, kind === 4 ? 4 : 2.6, SPRAY, { up: kind === 4 ? 4.5 : 3, size: 0.12, life: 0.55, spread: 0.3 });
     }
   }
 

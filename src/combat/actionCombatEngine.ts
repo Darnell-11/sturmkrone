@@ -766,7 +766,6 @@ export class ActionCombatEngine {
     f.skillCd[slot - 1] = sk.cd;
     f.lightIdx = 0;
     this.events.push('skill', slot, 0, 0, sk.label);
-    if (sk.heal) this.events.push('heal', sk.heal, sk.healR ?? 0);
     return 1;
   }
 
@@ -896,7 +895,6 @@ export class ActionCombatEngine {
     f.marksDone = false;
     f.strikeSeq = -1;
     this.events.push('ultimate', f.moveIdx, 0, 0, u.ultimate.kind);
-    if (u.heal) this.events.push('heal', u.heal, u.healR ?? 0);
     return 1;
   }
 
@@ -1006,6 +1004,8 @@ export class ActionCombatEngine {
   // ---------- Angriffe ----------
 
   private startMove(mv: ActionMove, kind: MoveKind, inp: ActionInput | null, lockOverride = '') {
+    // 4.7B/4.7C: Heilung beim Wirken (Priester-Formen, Gnadenwelle der Kette, Himmelsgericht): für die Figur und Verbündete im Radius
+    if (mv.heal) this.events.push('heal', mv.heal, mv.healR ?? 0);
     const f = this.f;
     const idx = moveIndex(mv.id);
     f.phase = 'move';

@@ -17,35 +17,96 @@
 .cls-role { justify-self: start; display: inline-block; margin-left: 0.35em; padding: 0.05em 0.45em; border-radius: var(--r-xs); font-size: 0.72em; font-weight: 600; letter-spacing: 0.02em;
   color: #120c06; background: color-mix(in srgb, var(--cc, #e8cb7c) 75%, #fff2cc); vertical-align: middle; white-space: nowrap; }
 
-.cls-grid { display: grid; grid-template-columns: minmax(0, 1fr) 19em; gap: 0.8em; align-items: start; }
-@media (max-width: 860px) { .cls-grid { grid-template-columns: minmax(0, 1fr); } }
+/* ---------- 4.7C: festes Fenster – Kopf und Fuß stehen, nur der Inhalt rollt (nichts wird unten abgeschnitten) ---------- */
+.card.classtree { max-width: min(78rem, 100%); width: 100%; display: flex; flex-direction: column; padding-bottom: 14px;
+  height: min(58rem, calc(100dvh - max(18px, env(safe-area-inset-top, 0px)) - max(18px, env(safe-area-inset-bottom, 0px)))); }
+.card.classtree .cls-screen { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.card.classtree .cls-screen::before { display: none; }
+.ct-top { flex: none; }
+.ct-top h2 { margin-bottom: 0.3em; }
+.ct-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ct-scroll-y { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 0.2em; }
+.ct-foot { flex: none; display: flex; justify-content: flex-end; gap: 0.6em; padding-top: 0.7em; margin-top: 0.4em; border-top: 1px solid var(--hairline); }
+.ct-foot .primary { min-width: 9em; }
+.ct-foot .warn { color: #ffd0c0; box-shadow: 0 0 0 1px #c8503a inset; }
 
-/* Pfad aus 60 Knoten: Schlangenlinie, 10 je Reihe; Linien leuchten bis zum letzten gelernten Knoten */
-.cls-tree { display: grid; gap: 0.55em; padding: 0.6em; border-radius: var(--r-md); background:
-  radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--cc) 12%, transparent), transparent 70%), rgba(0, 0, 0, 0.32);
-  border: 1px solid color-mix(in srgb, var(--cc) 30%, var(--hairline)); }
-.cls-row { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 0.3em; position: relative; }
-.cls-node { position: relative; aspect-ratio: 1; min-width: 0; padding: 0; display: grid; place-items: center; font-size: 0.95em;
-  background: rgba(10, 6, 4, 0.7); border: 1px solid color-mix(in srgb, var(--cc) 30%, transparent); color: var(--ink-faint); transition: transform 0.12s; }
-.cls-node::after { content: ''; position: absolute; top: 50%; left: 100%; width: 0.3em; height: 2px; background: color-mix(in srgb, var(--cc) 25%, transparent); }
-.cls-row.rev .cls-node::after { left: auto; right: 100%; }
-.cls-row .cls-node:last-child::after { display: none; }
-.cls-node.on::after { background: var(--cc); box-shadow: 0 0 6px var(--cc); }
-.cls-node i { font-style: normal; }
-.cls-node em { position: absolute; right: 0.15em; bottom: 0.05em; font-style: normal; font-size: 0.6em; font-family: var(--font-num); color: var(--ink-dim); }
-.cls-node.on { color: #fff6dc; background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--cc) 55%, #1a1208), #0d0805 80%);
-  border-color: var(--cc); box-shadow: 0 0 0.55em color-mix(in srgb, var(--cc) 45%, transparent); }
-.cls-node.next { border-color: var(--brass-200); animation: clsPulse 1.4s ease-in-out infinite; color: var(--brass-100); }
-.cls-node.form { font-size: 1.15em; border-width: 2px; }
-.cls-node.ult { font-size: 1.35em; border-width: 2px; border-color: var(--ca); }
-.cls-node.ult.on { box-shadow: 0 0 1em var(--cc), 0 0 0.3em var(--ca) inset; }
-.cls-node.sel { outline: 2px solid var(--brass-100); outline-offset: 1px; transform: scale(1.06); z-index: 1; }
-/* Knotenrahmen je Klasse */
-.cls-screen[data-base="faust"] .cls-node { clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%); }
-.cls-screen[data-base="schwert"] .cls-node.form, .cls-screen[data-base="schwert"] .cls-node.ult { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
-.cls-screen[data-base="schwert"] .cls-node.buff { border-radius: 2px; }
-.cls-screen[data-base="faji"] .cls-node { border-radius: 50%; }
-@keyframes clsPulse { 50% { box-shadow: 0 0 0.7em var(--brass-200); } }
+.cls-grid { display: grid; grid-template-columns: minmax(0, 1fr) 19em; gap: 0.8em; align-items: stretch; flex: 1; min-height: 0; }
+.cls-side { min-height: 0; overflow-y: auto; overscroll-behavior: contain; align-content: start; }
+
+/* Sternbild: Wasserzeichen hinten, darüber der rollende Baum */
+.ct-panel { position: relative; min-height: 0; border-radius: var(--r-md); overflow: hidden; isolation: isolate;
+  background: radial-gradient(ellipse at 50% 18%, color-mix(in srgb, var(--cc) 16%, transparent), transparent 62%),
+    radial-gradient(ellipse at 50% 100%, color-mix(in srgb, var(--ca) 18%, transparent), transparent 60%), #07050a;
+  border: 1px solid color-mix(in srgb, var(--cc) 32%, var(--hairline)); box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.75); }
+.ct-wm { position: absolute; inset: 6% 4%; width: 92%; height: 88%; z-index: -1; pointer-events: none; fill: none;
+  stroke: color-mix(in srgb, var(--cc) 70%, #fff); opacity: 0.09; }
+.ct-wm circle[r="3"], .ct-wm ellipse { fill: none; }
+.ct-scroll { position: absolute; inset: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+/* gestochen scharf in voller Größe: Sockel 32 px, Medaillons 58 px, Apex 76 px – schmale Fenster rollen auch seitlich */
+.ct-svg { display: block; width: 100%; min-width: 600px; height: auto; max-width: 720px; margin: 0 auto; }
+
+/* Energie-Leitlinien: gesperrt dunkel, frei pulsierend in Klassenfarbe */
+.ce { stroke-width: 2.4; stroke-linecap: round; }
+.ce.off { stroke: #2c2620; stroke-dasharray: 2 6; }
+.ce.next { stroke: color-mix(in srgb, var(--brass-200) 60%, #2c2620); stroke-dasharray: 6 6; animation: ceFlow 1.2s linear infinite; }
+.ce.on { stroke: color-mix(in srgb, var(--cc) 85%, #fff); stroke-width: 2.8; stroke-dasharray: 14 6; animation: ceFlow 2.4s linear infinite; }
+.ce-glow line { stroke: var(--cc); stroke-width: 9; stroke-linecap: round; opacity: 0.22; }
+@keyframes ceFlow { to { stroke-dashoffset: -40; } }
+
+/* Knoten */
+.cn { cursor: pointer; outline: none; }
+.cn text { font-family: var(--font-num, sans-serif); text-anchor: middle; dominant-baseline: middle; paint-order: stroke; stroke: #000; stroke-width: 3px; }
+.cn-rank { font-size: 10px; font-weight: 700; fill: var(--ink-faint); }
+.cn.on .cn-rank { fill: var(--brass-100); }
+.cn-num { font-size: 13px; font-weight: 800; letter-spacing: 0.08em; fill: var(--brass-100); }
+.cn.off .cn-num { fill: var(--ink-faint); }
+.cn-sock { fill: #18120c; stroke: #5b4a33; stroke-width: 2; }
+.cn.on .cn-sock { fill: #24180c; stroke: url(#ctA-gold); stroke-width: 2.6; }
+.cn.next .cn-sock { stroke: var(--brass-200); animation: cnPulse 1.4s ease-in-out infinite; }
+.cn-gem { stroke: rgba(0, 0, 0, 0.6); stroke-width: 1; }
+.cn-ic { fill: #8a7c66; stroke: #8a7c66; }
+.cn.on .cn-ic { fill: #fffaf0; stroke: #fffaf0; filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.9)); }
+.cn.form .cn-glow { fill: none; stroke: transparent; stroke-width: 3; }
+.cn.form.on .cn-glow { stroke: var(--cc); filter: drop-shadow(0 0 6px var(--cc)); }
+.cn.form.next .cn-glow { stroke: var(--brass-200); animation: cnPulse 1.4s ease-in-out infinite; }
+.cn.form.off .cn-frame { fill: #3a3126; }
+.cn-frame { stroke: #000; stroke-width: 1.2; }
+.em-motif { stroke-width: 0; }
+.em-motif [fill="none"], .em-motif path[stroke-width] { fill: none; }
+.em-motif .em-hi { fill: #fff6da; }
+.em-badge circle { fill: #0b0806; stroke: var(--brass-300); stroke-width: 1.2; }
+.em-pat { fill: #fff6da; stroke: #fff6da; }
+.cn.off .em-badge circle { stroke: #5b4a33; }
+.cn.off .em-pat { fill: #8a7c66; stroke: #8a7c66; }
+.cn-aura { fill: none; stroke: color-mix(in srgb, var(--cc) 70%, transparent); stroke-width: 2.5; stroke-dasharray: 10 8; transform-origin: center; transform-box: fill-box; animation: cnSpin 9s linear infinite; }
+.cn-aura2 { fill: none; stroke: color-mix(in srgb, var(--ca) 55%, transparent); stroke-width: 1.5; stroke-dasharray: 3 9; transform-origin: center; transform-box: fill-box; animation: cnSpin 14s linear infinite reverse; }
+.cn.ult.off .cn-aura, .cn.ult.off .cn-aura2 { stroke: #3a3126; animation-duration: 30s; }
+.cn.ult.on .cn-crest { filter: drop-shadow(0 0 10px var(--cc)); }
+.cn-crest, .cn-crown { stroke: #000; stroke-width: 1.4; }
+.cn.ult.off .cn-crest, .cn.ult.off .cn-crown { fill: #3a3126; }
+.cn.sel .cn-sock, .cn.sel .cn-frame, .cn.sel .cn-crest { stroke: #fff6da; stroke-width: 3; }
+.cn:hover .cn-sock, .cn:hover .cn-frame { stroke: var(--brass-100); }
+@keyframes cnPulse { 50% { stroke-opacity: 0.35; } }
+@keyframes cnSpin { to { transform: rotate(360deg); } }
+
+/* Detail: großes Emblem */
+.em-big { position: relative; z-index: 1; width: 78%; height: 78%; overflow: visible; }
+.em-big .st-big { fill: #fffaf0; stroke: #fffaf0; }
+
+@media (max-width: 860px) {
+  .cls-grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1.5fr) minmax(0, 1fr); }
+  .cls-side { min-height: 0; }
+  .cls-side .cls-emblem { width: 4.6em; height: 4.6em; float: left; margin: 0 0.6em 0.2em 0; }
+  .card.classtree { padding: 16px 12px 10px; }
+  .card.classtree .cls-head { gap: 0.3em 0.6em; margin-bottom: 0.3em; }
+  .card.classtree .cls-head .cls-crest.big { width: 2em; height: 2em; font-size: 1.1em; }
+  .card.classtree .tal-chips { font-size: 0.85em; }
+  .ct-foot { justify-content: space-between; }
+}
+@media (prefers-reduced-motion: reduce) { .ce.on, .ce.next, .cn-aura, .cn-aura2, .cn.next .cn-sock { animation: none; } }
+
+/* 4.7C: offene Menüs blenden Welt-Hinweise aus (Sprechen-Plakette, Aktionsleiste der Welt) */
+.menu-open .npcm, .menu-open .hud-ctx { visibility: hidden !important; }
 
 /* Seite: Detail und Lernen */
 .cls-side { display: grid; gap: 0.6em; }

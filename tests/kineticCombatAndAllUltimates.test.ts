@@ -90,8 +90,10 @@ const ALL_STYLES = Object.keys(ACTION_STYLES) as ActionStyleId[];
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('Vorwärts-Momentum: jede Schlagstufe treibt die Figur vor', () => {
-  it('alle 14 Stile: jede Kettenstufe hat Schub, der letzte Kettenschlag den größten; die Kurve ist vorn knackig', () => {
-    for (const id of [...PHYSICAL_STYLES, ...FAJI_ARTS]) {
+  it('alle Nahkampf-Stile: jede Kettenstufe hat Schub, der letzte Kettenschlag den größten; die Kurve ist vorn knackig', () => {
+    // 4.7C: Faji-Wirker kämpfen auf Abstand (Elementar-Geschosse) – ihre Kette bleibt stehen, siehe unten
+    for (const id of FAJI_ARTS) for (const m of [...ACTION_STYLES[id].light, ...ACTION_STYLES[id].air]) expect(m.push, m.id).toBeLessThan(0.05);
+    for (const id of [...PHYSICAL_STYLES]) {
       const s = ACTION_STYLES[id];
       for (const m of s.light) expect(m.push, m.id).toBeGreaterThan(0.5);
       expect(s.light[s.light.length - 1].push, id).toBeGreaterThanOrEqual(Math.max(...s.light.map((m) => m.push)));
@@ -121,12 +123,18 @@ describe('Vorwärts-Momentum: jede Schlagstufe treibt die Figur vor', () => {
     expect(b.f.z).toBeGreaterThan(c.f.z + 0.5);
   });
 
-  it('eine Fünfer-Kette ohne Ziel legt sichtbar Strecke zurück (kein Rumstehen)', () => {
-    for (const id of ['saebel', 'sturmfaust', 'feuer', 'mond'] as ActionStyleId[]) {
+  it('eine Fünfer-Kette ohne Ziel legt sichtbar Strecke zurück (kein Rumstehen); Faji-Wirker halten ihren Abstand (4.7C)', () => {
+    for (const id of ['saebel', 'sturmfaust'] as ActionStyleId[]) {
       const { w, eng, inp, f } = setup(id);
       for (let i = 0; i < 5; i++) { tick(eng, w, inp, { light: true }); untilCancel(eng, w, inp); }
       run(eng, w, inp, 30);
       expect(Math.hypot(f.x, f.z), id).toBeGreaterThan(4);
+    }
+    for (const id of ['feuer', 'mond'] as ActionStyleId[]) {
+      const { w, eng, inp, f } = setup(id);
+      for (let i = 0; i < 5; i++) { tick(eng, w, inp, { light: true }); untilCancel(eng, w, inp); }
+      run(eng, w, inp, 30);
+      expect(Math.hypot(f.x, f.z), id).toBeLessThan(0.5);
     }
   });
 

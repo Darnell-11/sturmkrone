@@ -35,7 +35,7 @@ export interface SweepGround {
   /** `y` = Höhenhinweis des Läufers (wo mehrere Flächen übereinanderliegen: Gangway über dem Steg) */
   height(x: number, z: number, y?: number): number;
   /** Position außerhalb aller Hindernisse und innerhalb des begehbaren Gebiets (schiebt entlang der Kontakt-Normale heraus) */
-  constrain(x: number, z: number, radius?: number, y?: number): { x: number; z: number };
+  constrain(x: number, z: number, radius?: number, y?: number, free?: boolean): { x: number; z: number };
 }
 
 /** Körper, der bewegt wird: Lage am Boden und Kapselradius (die Kapsel ist senkrecht, im Grundriss ein Kreis) */

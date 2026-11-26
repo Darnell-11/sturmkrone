@@ -162,6 +162,7 @@ export class Menus {
   hide() {
     this.leaveYard();
     this.screen.hidden = true;
+    document.documentElement.classList.remove('menu-open');
     this.back = null;
   }
 
@@ -231,6 +232,8 @@ export class Menus {
     this.back = back;
     this.screen.hidden = false;
     this.screen.scrollTop = 0;
+    // 4.7C: solange ein Menü offen ist, ruhen die Welt-Hinweise (Sprechen-Plakette, Aktionsleiste der Welt)
+    document.documentElement.classList.add('menu-open');
     // Mit Gamepad/Tastatur direkt das erste Element auswählen
     if (this.game.input.lastDevice !== 'touch') {
       // `nextFocus`: eine Ansicht, die sich selbst neu zeichnet (z. B. „Vorschau zurücksetzen“), behält den Fokus auf ihrem Knopf statt zum ersten Element zu springen
@@ -1409,18 +1412,22 @@ export class Menus {
    * 4.7B: Talent-Fenster (Tasten N und K) = der eigene 60-Knoten-Klassenbaum und die Geistes-Faji; alle anderen Klassen, Klingen, Faust-Pfade
    * und Elemente sind verborgen. `cat` 'faji' (Taste K, Schrein) öffnet den Reiter „Geistes-Faji“.
    */
-  showTalents(back: () => void, ui: ClassUiState = this.classUi ?? newClassUi(), cat?: string) {
+  showTalents(back: () => void, uiIn?: ClassUiState, cat?: string) {
     const g = this.game;
     const v = g.classView();
     if (!v) { back(); return; }
+    // 4.7C: frisch geöffnet steht der nächste zu lernende Knoten im Blick
+    const ui = uiIn ?? this.classUi ?? newClassUi();
+    if (!uiIn) ui.sel = Math.max(1, Math.min(60, v.cls.nodes + 1));
     if (cat === 'faji' && v.cls.awake) ui.tab = 'geist';
+    if (ui.confirm === undefined) ui.confirm = false;
     this.classUi = ui;
     if (v.cls.nodes > 0 && (ui.sel < 1 || ui.sel > 60)) ui.sel = Math.min(60, v.cls.nodes + 1);
     const re = (note = '') => { ui.note = note; this.keep(() => this.showTalents(back, ui)); };
-    const done = () => { ui.note = ''; ui.pick = null; back(); };
+    const done = () => { ui.note = ''; ui.pick = null; ui.confirm = false; back(); };
     this.open(classScreenHtml(v, ui), {
-      tab: (id) => { ui.tab = id === 'geist' ? 'geist' : 'baum'; re(); },
-      sel: (id) => { ui.sel = Number(id) || 1; re(); },
+      tab: (id) => { ui.tab = id === 'geist' ? 'geist' : 'baum'; ui.confirm = false; re(); },
+      sel: (id) => { ui.sel = Number(id) || 1; ui.confirm = false; re(); },
       learn: () => { const m = g.classLearn(); ui.sel = Math.min(60, (g.classView()?.cls.nodes ?? 0) + 1); re(m); },
       fill: () => { const m = g.classFill(); ui.sel = Math.min(60, (g.classView()?.cls.nodes ?? 0) + 1); re(m); },
       pick: (id) => {
@@ -1432,8 +1439,23 @@ export class Menus {
         re(e ?? 'Festgelegt – dein Klassenbaum ist offen.');
       },
       geist: (id) => { re(g.classGeist(Number(id))); },
+      // 4.7C: Zurücksetzen in zwei Schritten (Spezialisierung und Element bleiben, alle Punkte kommen zurück)
+      reset: () => {
+        if (!ui.confirm) { ui.confirm = true; re('Noch einmal klicken: alle Knoten und Geistes-Ränge über Rang 1 werden erstattet. Spezialisierung und Element bleiben.'); return; }
+        ui.confirm = false; ui.sel = 1;
+        re(g.classReset());
+      },
       back: done,
-    }, done, { wide: true, cls: 'talents' });
+    }, done, { wide: true, cls: 'talents classtree' });
+    // 4.7C: den gewählten (bzw. nächsten) Knoten in die Mitte des Sternbilds rollen
+    requestAnimationFrame(() => {
+      const box = this.card.querySelector<HTMLElement>('.ct-scroll');
+      const node = this.card.querySelector<SVGGElement>(`.cn[data-id="${ui.sel}"]`) ?? this.card.querySelector<SVGGElement>('.cn.next');
+      if (!box || !node) return;
+      const r = node.getBoundingClientRect(), c = box.getBoundingClientRect();
+      box.scrollTop += r.top + r.height / 2 - (c.top + c.height / 2);
+      box.scrollLeft += r.left + r.width / 2 - (c.left + c.width / 2);
+    });
   }
 
   /** Zustand des Klassen-Fensters (Reiter, gewählter Knoten) über das Schließen hinaus */

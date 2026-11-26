@@ -743,7 +743,7 @@ export function buildTown(def: IslandDef, walk: WalkIsland, groundAt: (x: number
       const barrel = new Mesh(new CylinderGeometry(0.45, 0.4, 1, 10), toon('#8A5A2B'));
       barrel.position.set(cx + x, groundAt(cx + x, cz + z) + 0.5, cz + z);
       group.add(barrel);
-      walk.blockers.push({ x: cx + x, z: cz + z, r: 0.5 });
+      walk.blockers.push({ x: cx + x, z: cz + z, r: 0.5, low: 1.0 });
     } else if (i % 3 === 1) place(crateStack(i), x, z, i, [2.7, 1.7, 0.55, 0]);
     else place(bush(i), x, z, i, 0);
     taken.push([x, z, 1.2]);

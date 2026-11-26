@@ -1,13 +1,15 @@
 // Phase 4.6B – die acht waffenlosen Faji-Künste (Elementar- und Gravitationsformen) als reine Daten.
-// Jede Kunst ist ein vollwertiger Action-Stil (Kette, Verzweigungen, Luft-Kombo, Meteor, Finisher) aus Handflächen-, Tritt- und Energieformen
+// Jede Kunst ist ein vollwertiger Action-Stil (Kette, Verzweigungen, Luft-Kombo, Meteor, Finisher); seit 4.7C reiner Elementarkampf aus
+// Geschossen, Strahlen und Flächen (`data/elementCombos.ts`)
 // und steigert sich über sieben Formstufen (1. Form … 7. Meisterform): die vier Form-Techniken werden mit den Stufen 1, 2, 4 und 6 frei, jede
 // Stufe macht sie stärker (`formPower`), die 7. Form schaltet das Kataklysmus-Ultimate der Kunst frei. Die Meisterschaft (Punkte je Kunst)
 // wächst mit jedem Treffer der Kunst (im Sturm-Erwachen doppelt) und steht im Spielstand (`player.faji`).
 import {
-  ACTION_TUNING, AIR, ROUND, awakenWave, move, shot, skill, ticks,
+  ACTION_TUNING, ROUND, awakenWave, move, shot, skill, ticks,
   type ActionHit, type ActionSkill, type ActionStyleDef, type ActionStyleId, type HitIn, type HitStatus, type MoveIn, type ProjectileKind,
 } from './actionKit';
 import { ULTIMATES } from './cataclysms';
+import { elementBranch, elementExtras, elementLight, type ComboElement } from './elementCombos';
 
 export type FajiArtId = 'schwarzloch' | 'feuer' | 'eis' | 'wasser' | 'wind' | 'blitz' | 'sonne' | 'mond';
 export const FAJI_ART_IDS: readonly FajiArtId[] = ['schwarzloch', 'feuer', 'eis', 'wasser', 'wind', 'blitz', 'sonne', 'mond'];
@@ -93,31 +95,16 @@ function el(a: ArtSpec, h: HitIn, withStatus = true): HitIn {
   return o;
 }
 
-/** Mondsichel als Begleitgeschoss eines Schlags (Größe nach Kettenschritt) */
-function crescent(a: ArtSpec, size: number, at: readonly [number, number]): HitIn {
-  return { at, range: 16, dmg: 0.08 * size, poise: 4, knock: 2, fx: 'magic', vfx: a.vfx ?? a.id, projectile: shot(a.color, 26, 0.45 * size, true, 1, 0, 'crescent') };
-}
 
 function artStyle(a: ArtSpec): ActionStyleDef {
   const id = a.id;
   const vx = a.vfx ?? id;
-  const N = a.names;
-  const cres = (size: number, at: readonly [number, number]) => (a.crescents ? [crescent(a, size, at)] : []);
-  // Kette kalibriert auf das Kampfmodell (Mondsicheln fliegen zusätzlich mit: darum etwas leichtere Schläge)
-  const lk = a.crescents ? 0.7 : 0.82;
-  const light = [
-    move({ id: `${id}.l1`, label: N[0], clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.34, vfx: vx, hits: [el(a, { range: 2.5, arc: 1.9, dmg: 0.44 * lk, poise: 8, knock: 2, fx: 'punch' }, false), ...cres(0.6, [0.42, 0.5])] }),
-    move({ id: `${id}.l2`, label: N[1], clip: 'Melee_Unarmed_Attack_Kick', dur: 0.36, vfx: vx, hits: [el(a, { range: 2.7, arc: 2.1, dmg: 0.47 * lk, poise: 9, knock: 3, fx: 'heavy' }, false), ...cres(0.8, [0.45, 0.52])] }),
-    move({ id: `${id}.l3`, label: N[2], clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.4, vfx: vx, hits: [el(a, { shape: 'circle', offset: 1.5, range: 2.4, dmg: 0.55 * lk, poise: 11, knock: 4, fx: 'magic' }), ...cres(1, [0.45, 0.52])] }),
-    move({ id: `${id}.l4`, label: N[3], clip: 'Ranged_Magic_Shoot', dur: 0.46, lunge: 0, vfx: vx, hits: [el(a, { shape: 'line', range: 7.5, width: 2, grow: true, dmg: 0.62 * lk, poise: 13, knock: 5, fx: 'magic' }), ...cres(1.3, [0.4, 0.48])] }),
-    move({ id: `${id}.l5`, label: N[4], clip: 'Ranged_Magic_Raise', dur: 0.86, lunge: 0, finisher: true, vfx: vx, hits: [el(a, { shape: 'circle', range: 4.8, dmg: 1.3 * lk, poise: 26, knock: 9, fling: 12, vortex: a.vortex ?? 0, fx: 'magic', hitstop: 0.12, shake: 0.55 }), ...cres(1.8, [0.5, 0.58])] }),
-  ];
-  const branch: ActionStyleDef['branch'] = [
-    move({ id: `${id}.b1`, label: 'Schildbrecher-Stoß', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.42, lunge: 6, vfx: vx, hits: [el(a, { range: 2.6, arc: 1.3, dmg: 0.78, poise: 38, knock: 7, breakGuard: true, fx: 'punch', hitstop: 0.1, shake: 0.4 })] }),
-    move({ id: `${id}.b2`, label: 'Orkan-Launcher', clip: 'Melee_Unarmed_Attack_Kick', dur: 0.46, rise: 10.6, vfx: vx, hits: [el(a, { shape: 'circle', offset: 1.1, range: 3, dmg: 0.66, poise: 20, knock: 1, launch: 10.8, maxTargets: 12, fx: 'heavy', hitstop: 0.08, shake: 0.35 }, false)] }),
-    move({ id: `${id}.b3`, label: '360°-Massenschlacht-Feger', clip: 'Melee_2H_Attack_Spinning', dur: 0.66, from: 0, to: 1, vfx: vx, hits: ticks(3, 0.1, 0.85, el(a, { arc: ROUND, range: 4.4, dmg: 0.34, poise: 10, knock: 7, fling: 8, fx: 'spin', hitstop: 0.04 })) }),
-    move({ id: `${id}.b4`, label: 'Langstrecken-Schockwelle', clip: 'Ranged_Magic_Shoot', dur: 0.62, lunge: 0, vfx: vx, hits: [el(a, { shape: 'line', range: 15, width: 3, grow: true, dmg: 1.0, poise: 24, knock: 7, fling: 9, fx: 'magic', hitstop: 0.08, shake: 0.45 })] }),
-  ];
+  // 4.7C: eigene Elementar-Kombos (data/elementCombos.ts) – Geschosse, Strahlen und Flächen statt Faust und Tritt
+  const ce: ComboElement = { id, vfx: vx, color: a.color, accent: a.accent, status: a.status, statusDur: a.statusDur, proj: a.proj };
+  const E = (h: HitIn, withStatus = true) => el(a, h, withStatus);
+  const light = elementLight(ce, E);
+  const branch = elementBranch(ce, E);
+  const extra = elementExtras(ce, E);
   const sk = a.skills.map((s, i): ActionSkill => {
     const { name, short, icon, desc, cd, hits, ...rest } = s;
     return skill({ id: `${id}.k${i + 1}`, slot: i + 1, label: name, short, icon, desc, cd, formMin: FORM_UNLOCK[i], vfx: vx, ...rest, hits: (hits ?? []).map((h) => el(a, h)) } as Parameters<typeof skill>[0]);
@@ -126,13 +113,9 @@ function artStyle(a: ArtSpec): ActionStyleDef {
   return {
     id, label: a.label, title: a.title, desc: a.desc, color: a.color, accent: a.accent, visual: 'effekt', idleClip: 'Melee_Unarmed_Idle',
     light, branch,
-    heavy: move({ id: `${id}.s`, label: `${a.label.split('-')[0]}-Hammer`, clip: 'Melee_1H_Attack_Jump_Chop', dur: 0.7, lunge: 4, vfx: vx, hits: [el(a, { shape: 'circle', offset: 1.4, range: 3, dmg: 1.1, poise: 32, knock: 8, fx: 'heavy', hitstop: 0.11, shake: 0.5 })] }),
-    air: [
-      move({ id: `${id}.a1`, label: 'Luft-Handstoß', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.3, air: true, vfx: vx, hits: [el(a, { ...AIR, range: 2.5, arc: 1.9, dmg: 0.38, poise: 8, fx: 'punch' }, false), ...cres(0.7, [0.4, 0.48])] }),
-      move({ id: `${id}.a2`, label: 'Luft-Wirbeltritt', clip: 'Melee_Unarmed_Attack_Kick', dur: 0.34, air: true, vfx: vx, hits: [el(a, { ...AIR, range: 2.6, arc: 2, dmg: 0.42, poise: 9, fx: 'heavy' }, false), ...cres(0.9, [0.42, 0.5])] }),
-      move({ id: `${id}.a3`, label: 'Luft-Entladung', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.36, air: true, vfx: vx, hits: [el(a, { ...AIR, shape: 'circle', range: 3, dmg: 0.5, poise: 12, juggle: 4.4, fx: 'magic' }), ...cres(1.2, [0.42, 0.5])] }),
-    ],
-    meteor: move({ id: `${id}.m`, label: 'Meteor-Sturzangriff', clip: 'Melee_Unarmed_Attack_Kick', dur: 1.0, meteor: true, air: true, vfx: vx, hits: [el(a, { shape: 'circle', range: 4.2, dmg: 1.1, poise: 26, knock: 8, launch: 4, fling: 10, fx: 'magic', hitstop: 0.1, shake: 0.6 })] }),
+    heavy: extra.heavy,
+    air: extra.air,
+    meteor: extra.meteor,
     finisher: move({ id: `${id}.f`, label: a.finisher, clip: 'Ranged_Magic_Raise', dur: 1.15, hyper: true, iframes: 1.15, cutin: `${a.finisher}!`, magnet: true, vfx: vx, hits: [el(a, { shape: 'circle', offset: 1.5, range: 3.4, dmg: 1, poise: 0, knock: 10, fx: 'magic', hitstop: 0.3, shake: 1.0 })] }),
     skills: sk,
     jumps: a.jumps ?? 2, airDashes: a.airDashes ?? 1, dashSpeed: a.dashSpeed ?? 15, dashTime: 0.26,

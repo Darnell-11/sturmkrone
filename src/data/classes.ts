@@ -361,6 +361,17 @@ export function learnGeist(c: ClassSave, i: number, pool: number): string | null
   return null;
 }
 
+/**
+ * 4.7C: Klassenbaum zurücksetzen – alle Knoten und die Geistes-Ränge über Rang 1 kommen in den Topf zurück. Spezialisierung und Element bleiben
+ * (sie gelten für immer). Liefert die Zahl der erstatteten Punkte.
+ */
+export function resetClass(c: ClassSave): number {
+  const back = classSpent(c);
+  c.nodes = 0;
+  for (let i = 0; i < 4; i++) c.geist[i] = c.awake ? 1 : 0;
+  return back;
+}
+
 /** Spielstand-Eintrag säubern (unbekannt → Standard der Erschaffung) */
 export function cleanClass(raw: unknown, fallback: ClassSave): ClassSave {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Partial<Record<keyof ClassSave, unknown>>;

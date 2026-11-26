@@ -1,4 +1,5 @@
 import { ACTION_IDS, DEFAULT_KEYS, padActionDown, type ActionId } from '../../data/actions';
+import { shiftVerdict } from './shiftGate';
 
 export type InputDevice = 'keyboard' | 'touch' | 'gamepad';
 
@@ -50,6 +51,9 @@ export class Input {
   private shiftDefer = '';
   /** 4.7B: Umschalt beim Umbelegen gedrückt (wartet auf die zweite Taste einer Kombination) */
   private captureShift = '';
+  /** 4.7C: Zeitpunkt des wartenden Umschalt (ms) und ob überhaupt Umschalt-Kombinationen belegt sind */
+  private shiftAt = 0;
+  private hasShiftCombos = false;
   /** 4.6J: Mausklick bzw. Antippen auf die Spielwelt (Bildschirm-Pixel) – gesammelt bis zum nächsten Logikschritt */
   private clickAcc = { x: 0, y: 0, n: 0, touch: false };
   private clickStep = { x: 0, y: 0, on: false, touch: false };
@@ -96,11 +100,13 @@ export class Input {
 
   private rebuildKeyMap() {
     this.keyMap.clear();
+    this.hasShiftCombos = false;
     for (const a of ACTION_IDS) {
       for (const code of this.bindings[a]) {
         const list = this.keyMap.get(code) ?? [];
         list.push(a);
         this.keyMap.set(code, list);
+        if (code.startsWith('Shift+')) this.hasShiftCombos = true;
       }
     }
   }
@@ -140,13 +146,14 @@ export class Input {
   private codeDown(code: string) {
     const acts = this.keyMap.get(code);
     if (!this.held.has(code) && acts) {
-      // Umschalt (Ausweichen) ohne Laufrichtung: erst beim Loslassen, falls nicht Umschalt + Tab daraus wird
+      // Umschalt (Ausweichen) wartet kurz (4.7C, `shiftGate.ts`): im Stand bis zum Loslassen (Umschalt + Tab), im Laufen höchstens
+      // `SHIFT_COMBO_MS` – kommt in der Zeit Umschalt + 1 … 5 (Form 6 – 10), verfällt der Dash. Ohne Umschalt-Kombinationen wie bisher sofort.
       const shift = code === 'ShiftLeft' || code === 'ShiftRight';
-      const defer = shift && acts.includes('dodge') && !this.moving();
+      const defer = shift && acts.includes('dodge') && (this.hasShiftCombos || !this.moving());
       for (const a of acts) if (!(defer && a === 'dodge')) this.press(a);
-      if (defer) this.shiftDefer = code;
-      // Laufrichtung kommt zu einem wartenden Umschalt dazu: jetzt ausweichen (Dash in Laufrichtung)
-      else if (this.shiftDefer && acts.some((a) => a === 'up' || a === 'down' || a === 'left' || a === 'right')) this.flushShift(true);
+      if (defer) { this.shiftDefer = code; this.shiftAt = performance.now(); }
+      // Laufrichtung kommt zu einem wartenden Umschalt dazu: ausweichen, sobald die Wartezeit um ist (beginStep)
+      else if (this.shiftDefer && !this.hasShiftCombos && acts.some((a) => a === 'up' || a === 'down' || a === 'left' || a === 'right')) this.flushShift(true);
     }
     this.held.add(code);
   }
@@ -342,6 +349,8 @@ export class Input {
   // ---------- Abfragen im Logikschritt ----------
 
   beginStep() {
+    // 4.7C: wartendes Umschalt – im Laufen nach der kurzen Wartezeit ausweichen (es sei denn, eine Kombination kam dazwischen)
+    if (this.shiftDefer && shiftVerdict({ heldMs: performance.now() - this.shiftAt, moving: this.moving(), released: false, combo: false, hasCombos: this.hasShiftCombos }) === 'dash') this.flushShift(true);
     this.pressedNow.clear();
     for (const [a, n] of this.pressCount) if (n > 0) this.pressedNow.add(a);
     this.pressCount.clear();

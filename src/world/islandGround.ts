@@ -107,7 +107,14 @@ export const WATERLINE = 1.3 / 3;
  * Kollider eines festen Objekts: Kreis oder gedrehtes Rechteck (Häuser, Mauern, Zäune, Stände, Karren).
  * 4.6H: `top` = Traufe (Welt-y) eines Baus mit Dachfeld – darüber sperrt der Kollider nicht mehr (Läufer mit Höhenhinweis stehen auf dem Dach).
  */
-export interface Blocker { x: number; z: number; r: number; hw?: number; hd?: number; yaw?: number; top?: number }
+export interface Blocker {
+  x: number; z: number; r: number; hw?: number; hd?: number; yaw?: number; top?: number;
+  /**
+   * 4.7C: niedriges Hindernis (Zaun, Trockenmauer, Fass, Kiste, Heu): Höhe über seinem Boden (m). Beim ersten Gebrauch wird daraus `top`
+   * (Weltkoordinate) – wer im Sprung darüber ist, kommt hinüber.
+   */
+  low?: number;
+}
 
 /**
  * Rechteck-Kollider für ein Objekt bei (x, z) mit Drehung yaw (wie rotation.y). Breite w entlang der lokalen x-Achse,
@@ -210,7 +217,11 @@ export interface Pier { ax: number; az: number; bx: number; bz: number; hw: numb
  */
 export interface Ground {
   height(x: number, z: number, y?: number): number;
-  constrain(x: number, z: number, radius?: number, y?: number): { x: number; z: number };
+  /**
+   * Position außerhalb aller Hindernisse. 4.7C: `free` = freier Läufer (die Spielfigur): keine unsichtbaren Grenzen – Strand, Kaimauer,
+   * Stegkante und (im Sprung über der Reling) das Schiffsdeck halten ihn nicht; Wände, Häuser, Felsen und hohe Mauern schon.
+   */
+  constrain(x: number, z: number, radius?: number, y?: number, free?: boolean): { x: number; z: number };
   /** Nur im Verbund: Lage auf einer Leiter (Anteil t, 0 = Fuß) und ihre Raumlänge, für Läufer, die klettern */
   ladderAt?(id: string, t: number, out: { x: number; y: number; z: number }): boolean;
   ladderLength?(id: string): number;
@@ -410,8 +421,10 @@ export class DeckGround implements Ground {
     return { lx, lz: w.cz + Math.sign(dz || 1) * (w.hz + r) };
   }
 
-  constrain(x: number, z: number, radius = 0.35, y?: number) {
+  constrain(x: number, z: number, radius = 0.35, y?: number, free = false) {
     const { lx, lz } = this.toLocal(x, z);
+    // 4.7C: die Spielfigur springt über die Reling – über Relingshöhe hält das Deck sie nicht mehr (draußen fällt sie ins Wasser)
+    if (free && y !== undefined && y > this.height(x, z, y) + RAIL_HOP) return { x, z };
     const L = this.ship.cls.L;
     const q = this.ship.model.quarter;
     // ohne Höhenangabe: Zustand der Deck-Crew fortschreiben; mit Höhenangabe: Zone allein aus der Höhe dieses Läufers
@@ -836,10 +849,10 @@ export class IslandGround implements Ground {
    * Bewegung auf der Insel halten und um Hindernisse herumschieben. 4.6H: mit Höhenhinweis `y` sperren Bauten nur unterhalb ihrer Traufe
    * (`Blocker.top`); wer auf einem Dach steht, stößt dort an Schornsteine, Zinnen und höhere Dachteile (`roofWall`).
    */
-  constrain(x: number, z: number, radius = 0.35, y?: number): { x: number; z: number } {
+  constrain(x: number, z: number, radius = 0.35, y?: number, free = false): { x: number; z: number } {
     const isl = this.islandAt(x, z, 4);
-    // Wer auf einem Steg steht, bleibt auf den Bohlen (quer begrenzt, an der Spitze gestoppt)
-    const pn = this.piers.length ? this.pierNear(x, z, 1.0) : null;
+    // Wer auf einem Steg steht, bleibt auf den Bohlen (quer begrenzt, an der Spitze gestoppt) – 4.7C: außer der Spielfigur (sie läuft ins Wasser)
+    const pn = this.piers.length && !free ? this.pierNear(x, z, 1.0) : null;
     if (!isl) {
       if (!pn) return { x, z };
       return this.clampToPier(pn, x, z, radius);
@@ -850,6 +863,8 @@ export class IslandGround implements Ground {
     const near = this.blockersNear(isl, x, z);
     for (let bi = 0; bi < near.length; bi++) {
       const b = near[bi];
+      // 4.7C: niedrige Hindernisse bekommen beim ersten Gebrauch ihre Oberkante (Boden + Höhe)
+      if (b.top === undefined && b.low !== undefined) b.top = this.islandHeight(isl, b.x, b.z) + b.low;
       // auf Traufhöhe oder darüber: die Wand liegt unter den Füßen
       if (y !== undefined && b.top !== undefined && y >= b.top - ROOF.step) continue;
       const dx = x - b.x, dz = z - b.z;
@@ -888,6 +903,8 @@ export class IslandGround implements Ground {
     const d = Math.hypot(dx, dz);
     const max = this.edge(isl, x, z) * (1 + isl.shelf * 0.16);
     if (d > max) {
+      // 4.7C: keine unsichtbare Wand am Strand – die Spielfigur läuft ins Meer (Wasserlauf, `PlayerFoot`)
+      if (free) return { x, z };
       // jenseits der Wasserlinie nur auf einem Steg weitergehen
       const pn2 = this.piers.length ? this.pierNear(x, z, 1.0) : null;
       if (pn2) return this.clampToPier(pn2, x, z, radius);
@@ -916,6 +933,9 @@ export class IslandGround implements Ground {
     return { x: isl.x + Math.cos(a) * e, z: isl.z + Math.sin(a) * e, angle: a };
   }
 }
+
+/** 4.7C: so hoch über Deck bzw. Planke (m) sind die Füße über der Reling – darüber hält das Deck die Spielfigur nicht mehr */
+export const RAIL_HOP = 0.6;
 
 /** Laufende Brücke im Verbund: Beschreibung (Daten), aktuelle Lage und ob man darauf geht (Leitern: nur Klettern) */
 export interface BridgeRt { def: BridgeDef; f: BridgeFrame; walk: boolean; ok: boolean }
@@ -1042,15 +1062,15 @@ export class CompositeGround implements Ground {
     return d ? d.height(x, z, y) : this.island.height(x, z, y);
   }
 
-  constrain(x: number, z: number, radius = 0.35, y?: number): { x: number; z: number } {
+  constrain(x: number, z: number, radius = 0.35, y?: number, free = false): { x: number; z: number } {
     if (y !== undefined && this.bridges.length) {
       const b = this.pickBridge(x, z, y);
       if (b) {
         const s = _sl.s;
         let l = _sl.l;
         const f = b.f, def = b.def;
-        // Geländer nur zwischen den freien Enden; Enden über Deck/Steg lassen seitlich frei
-        if (s >= def.freeA && s <= f.len - def.freeB) {
+        // Geländer nur zwischen den freien Enden; Enden über Deck/Steg lassen seitlich frei. 4.7C: im Sprung über das Geländer hinweg frei
+        if (s >= def.freeA && s <= f.len - def.freeB && !(free && y > this.bridgeH(b, s, x, z) + RAIL_HOP)) {
           const lim = Math.max(0.25, def.hw - Math.min(radius, 0.45) * 0.7);
           l = Math.max(-lim, Math.min(lim, l));
         }
@@ -1071,6 +1091,6 @@ export class CompositeGround implements Ground {
       }
     }
     const d = this.decks.length ? this.deckAt(x, z) : null;
-    return d ? d.constrain(x, z, radius, y) : this.island.constrain(x, z, radius, y);
+    return d ? d.constrain(x, z, radius, y, free) : this.island.constrain(x, z, radius, y, free);
   }
 }

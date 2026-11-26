@@ -26,6 +26,7 @@ import {
 } from '../../data/actionStyles';
 import { AURA, MASTERY, WILL_AURAS, type AuraId } from '../../data/fajiArts';
 import { ART_ACTIONS, GEIST_ACTIONS } from '../../data/actions';
+import { WATER_WALK, isWater, newWaterWalk, stepWaterWalk } from '../../data/waterWalk';
 import { CLOTH_IMPULSE, SHEATH, type ExpressionId } from '../../data/characterRig';
 import { Character as CharacterCls } from '../character/character';
 
@@ -69,6 +70,8 @@ export interface FootDeps {
   /** 4.7B: Heilung (Anteil der Höchst-LP, Radius für Verbündete) und Geistes-Faji (Kraft 1 … 4, Radius/Wert, Treffer) */
   onHeal?: (frac: number, radius: number, f: FighterState) => void;
   onGeist?: (kind: number, b: number, c: number, f: FighterState) => void;
+  /** 4.7C: Wasserlauf – Kräuselringe und Fontänen (0 Stehen, 1 Gehen, 2 Laufen, 3 Schwimmen, 4 Eintauchen/Auftauchen) */
+  onWater?: (x: number, y: number, z: number, kind: number) => void;
   /** 4.6C: Sturm-Verfolgung (alter Ort), Klingen-Clash (Ort der gekreuzten Klingen), Schwungfenster einer Technik, Staub-/Wasserspur des Momentums */
   onChase?: (ox: number, oy: number, oz: number, f: FighterState) => void;
   onClash?: (x: number, y: number, z: number, yaw: number) => void;
@@ -93,11 +96,34 @@ class FootWorld implements ActionWorld {
   private readonly res = makeSweepResult();
   constructor(private foot: PlayerFoot) {}
 
-  height(x: number, z: number, y: number): number { return this.ground ? this.ground.height(x, z, y) : 0; }
+  /**
+   * 4.7C: Boden mit Wasseroberfläche – über dem Meer läuft die Spielfigur auf dem Wasser (beim Schwimmen um `swimDepth` tiefer, im
+   * Flachwasser nie unter den Grund).
+   */
+  height(x: number, z: number, y: number): number {
+    const h = this.ground ? this.ground.height(x, z, y) : 0;
+    const wy = this.foot.waterY;
+    if (isWater(h, wy)) return this.foot.water.swimming ? Math.max(h, wy - WATER_WALK.swimDepth) : wy;
+    return h;
+  }
+
+  /** Fester Boden ohne Wasser (Land, Steg, Deck, Brücke; −∞ über dem Meer) */
+  solidHeight(x: number, z: number, y: number): number { return this.ground ? this.ground.height(x, z, y) : 0; }
+
+  /**
+   * 4.7C: die Spielfigur ist ein freier Läufer – keine unsichtbaren Grenzen an Strand, Kai, Steg und Reling. Höhenhinweis sind ihre Füße
+   * (im Sprung über Zaun und niedriger Mauer zählt die Sprunghöhe), der Boden kennt das Wasser.
+   */
+  private feetY = 0;
+  private readonly freeG = {
+    height: (x: number, z: number, y?: number) => this.height(x, z, y ?? this.feetY),
+    constrain: (x: number, z: number, r?: number, y?: number) => this.ground!.constrain(x, z, r, Math.max(y ?? -Infinity, this.feetY), true),
+  };
 
   move(b: ActionBody, dx: number, dz: number, impulse: boolean, id: number): void {
-    const g = this.ground;
-    if (!g) return;
+    if (!this.ground) return;
+    this.feetY = b.y;
+    const g = this.freeG;
     if (impulse) {
       // Vorwärts-Impuls (Dash, Magnet-Schritt, Vorstoß): Teilschritte, Wände stoppen, Stufen und Rampen hinauf (combat/sweep.ts)
       if (this.latch.id !== id) { this.latch.id = id; this.latch.blocked = false; }
@@ -113,9 +139,9 @@ class FootWorld implements ActionWorld {
   teleport(b: ActionBody, x: number, z: number): boolean {
     const g = this.ground;
     if (!g) return false;
-    const h = g.height(x, z, b.y + 0.4);
+    const h = this.height(x, z, b.y + 0.4);
     if (!Number.isFinite(h) || Math.abs(h - b.y) > 2.6) return false;
-    const c = g.constrain(x, z, b.radius, h);
+    const c = g.constrain(x, z, b.radius, h, true);
     if (Math.hypot(c.x - x, c.z - z) > 0.7) return false;
     b.x = c.x; b.z = c.z;
     return true;
@@ -169,6 +195,14 @@ export class PlayerFoot implements PlayerTarget {
   geistQueued = 0;
   /** 4.7B: Heilkraft aus dem Klassenbaum (Faktor auf jede eigene Heilung) */
   healK = 1;
+  /** 4.7C: Wasseroberfläche unter der Figur (setzt die Welt je Bild; NaN = kein Meer) und Zustand des Wasserlaufs */
+  waterY = Number.NaN;
+  readonly water = newWaterWalk();
+  private waterStepT = 0;
+  private waterNoteT = 0;
+  /** Steht bzw. schwimmt die Figur gerade im Meer? */
+  get onWater(): boolean { return this.water.onWater; }
+  get swimming(): boolean { return this.water.swimming; }
   readonly maxStamina = ACTION_TUNING.stamina;
 
   // Darstellung
@@ -268,6 +302,7 @@ export class PlayerFoot implements PlayerTarget {
     this.world.ground = ground;
     this.engine.place(x, y, z, yaw);
     this.prev = { x, z, y, yaw };
+    this.water.onWater = false; this.water.swimming = false; this.water.fatigue = 0;
     this.anim = '';
     this.moveShown = -1;
     this.realSpeed = 0;
@@ -401,6 +436,42 @@ export class PlayerFoot implements PlayerTarget {
     this.anim = '';
   }
 
+  /**
+   * 4.7C: Wasserlauf – Ausdauer zieht ab (Stehen < Gehen < Laufen), bei 0 schwimmt die Figur, erholt sich langsam und steigt wieder aufs
+   * Wasser; Seemüdigkeit senkt die Höchst-Ausdauer bis zum nächsten festen Boden. Dazu Kräuselringe und Fontänen unter den Füßen.
+   */
+  private stepWater(dt: number, mag: number) {
+    const f = this.fighter, W = this.water, wy = this.waterY;
+    const over = isWater(this.world.solidHeight(f.x, f.z, f.y), wy);
+    if (!over) { if (W.onWater) this.waterStepT = 0; stepWaterWalk(W, false, f.stamina, this.maxStamina, mag, dt); return; }
+    // in der Luft über dem Meer: nichts zieht ab, nichts setzt sich zurück
+    if (!f.grounded) return;
+    const was = W.onWater;
+    const r = stepWaterWalk(W, true, f.stamina, this.maxStamina, mag, dt);
+    f.stamina = r.stamina;
+    // keine Erholung der Engine auf dem Wasser (sie gilt nur an Land); beim Schwimmen erholt sich die Ausdauer langsam (Regel oben)
+    f.staminaPause = Math.max(f.staminaPause, 0.2);
+    const ov = this.deps.overlay;
+    this.waterNoteT -= dt;
+    if (!was) {
+      this.deps.onWater?.(f.x, wy, f.z, 4);
+      if (ov && this.waterNoteT <= 0) { this.waterNoteT = 20; ov.number(this.tmpV.set(f.x, f.y + 2.4, f.z), 'Wasserlauf – kostet Ausdauer', 'info'); }
+    }
+    if (r.ev === 'sink') {
+      this.deps.onWater?.(f.x, wy, f.z, 4);
+      ov?.number(this.tmpV.set(f.x, f.y + 2.2, f.z), 'Erschöpft – du schwimmst', 'hurt');
+    } else if (r.ev === 'rise') {
+      this.deps.onWater?.(f.x, wy, f.z, 4);
+      ov?.number(this.tmpV.set(f.x, f.y + 2.4, f.z), 'Wieder auf dem Wasser', 'info');
+    }
+    this.waterStepT -= dt;
+    if (this.waterStepT <= 0) {
+      const kind = W.swimming ? 3 : mag > 0.7 ? 2 : mag > 0.05 ? 1 : 0;
+      this.waterStepT = kind === 3 ? WATER_WALK.stepSwim : kind === 2 ? WATER_WALK.stepRun : kind === 1 ? WATER_WALK.stepWalk : WATER_WALK.stepStand;
+      this.deps.onWater?.(f.x, wy, f.z, kind);
+    }
+  }
+
   private goDown() {
     this.hp = 0;
     this.engine.down();
@@ -455,8 +526,16 @@ export class PlayerFoot implements PlayerTarget {
     inp.softLockId = softId;
     inp.awaken = input.pressed('awaken');
     inp.aura = input.pressed('aura');
+    // 4.7C: schwimmend kein Kampf und kein Dash, langsamer; ein Sprung aus dem Wasser kostet Ausdauer (zum Hinaufklettern an Steg und Bordwand)
+    if (this.water.swimming) {
+      inp.light = inp.heavy = inp.dash = inp.awaken = false;
+      inp.skill = 0; inp.geist = 0;
+      if (inp.jump) { if (f.stamina >= WATER_WALK.jumpCost) f.stamina -= WATER_WALK.jumpCost; else inp.jump = false; }
+      f.speedK *= WATER_WALK.swimSpeedK;
+    }
     this.preY = f.y;
     this.engine.step(inp, this.world, dt);
+    this.stepWater(dt, inp.mag);
     this.handleEvents();
     this.animate(dt);
     this.rigInputs(dt, lockId);

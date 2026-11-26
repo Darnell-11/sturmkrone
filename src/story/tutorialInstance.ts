@@ -80,7 +80,7 @@ export interface WorldGates {
   traffic: boolean;
   /** andere Kapitäne sichtbar */
   presence: boolean;
-  /** das Schiff darf sich höchstens `TUTORIAL.leash` m von Ankerglück entfernen */
+  /** jenseits von `TUTORIAL.leash` m um Ankerglück erinnert die Einführung ans Zurückkehren (4.7C: keine Wand mehr, nur ein Hinweis) */
   leash: boolean;
   /** Prolog-Bühne (eigenes Wetter, eigenes Schiff, keine Speicherung des Schiffs) */
   stage: boolean;

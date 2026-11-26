@@ -159,12 +159,15 @@ describe('Faji-Künste: acht waffenlose Künste mit Formen 1 – 7', () => {
     const hit = w.log.find((l) => l.move === 'feuer.k2');
     expect(hit).toBeTruthy();
     expect(hit!.formK).toBeCloseTo(formPower(2).dmg, 5);
-    // die Kette selbst hängt nicht an der Form
+    // die Kette selbst hängt nicht an der Form (4.7C: L1 ist eine Feuerlanze – ein Geschoss; der Finisher trifft mit Faktor 1)
     const g = setup('feuer');
-    g.w.foe(0, 1.6);
+    g.w.foe(0, 6.5);
     g.eng.setForm(7);
     run(g.eng, g.w, g.inp, 30, { light: true });
-    expect(g.w.log.find((l) => l.move === 'feuer.l1')?.formK).toBe(1);
+    expect(g.w.shots.length).toBeGreaterThan(0);
+    for (let i = 0; i < 6; i++) run(g.eng, g.w, g.inp, 12, { light: true });
+    run(g.eng, g.w, g.inp, 40);
+    expect(g.w.log.find((l) => l.move === 'feuer.l5')?.formK).toBe(1);
   });
 
   it('Balance: Ketten-DPS nahe dem Kampfmodell, Form-Techniken in der 1. Form höchstens +30 %, in der Meisterform höchstens +50 %', () => {

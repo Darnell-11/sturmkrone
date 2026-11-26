@@ -44,6 +44,8 @@ export interface Built {
   boxes: [w: number, d: number, ox?: number, oz?: number, yaw?: number][];
   /** Kreis-Kollider: Radius, Versatz x/z */
   circles: [r: number, ox?: number, oz?: number][];
+  /** 4.7C: niedriges Bauwerk (Zaun, Trockenmauer, Fass, Kisten, Heu): Höhe in m – im Sprung lässt es sich überwinden */
+  low?: number;
   /** Rauch (Schornstein) bzw. Feuer mit Glut: Punkt im Objektraum */
   smoke?: [number, number, number];
   fire?: [number, number, number];
@@ -507,7 +509,8 @@ function zaun(len: number): Built {
     for (const y of [0.45, 0.85]) { const r = add(box(x1 - x0 + 0.02, 0.1, 0.08, M.wood, (x0 + x1) / 2, y, 0)); r.userData.seg = [x0, x1]; }
   }
   g.userData.yard = yard;
-  return { g, boxes: [[len, 0.3]], circles: [] };
+  // 4.7C: Lattenzaun (Latten bis 0,9 m) – im Sprung überwindbar
+  return { g, boxes: [[len, 0.3]], circles: [], low: 1.0 };
 }
 
 /** Trockenmauer aus Feldsteinen */
@@ -531,7 +534,7 @@ function mauer(len: number, rnd: () => number): Built {
   }
   // jedes Mauerstück folgt dem Boden (Trockenmauer auf dem Hang stuft sich ab); die Steine reichen 1,4 m in den Boden
   g.userData.yard = yard;
-  return { g, boxes: [[len, 0.8]], circles: [] };
+  return { g, boxes: [[len, 0.8]], circles: [], low: 1.35 };
 }
 
 /** Steg: Bohlen auf Pfählen, Poller und Laterne am Ende. Ursprung an der Wasserlinie, verläuft nach +z. */
@@ -612,7 +615,7 @@ function kisten(rnd: () => number): Built {
     c.rotation.y = (rnd() - 0.5) * 0.5;
     g.add(c);
   }
-  return { g, boxes: [[2.2, n > 4 ? 2.3 : 1.3, 0, n > 4 ? 0.5 : 0.05]], circles: [] };
+  return { g, boxes: [[2.2, n > 4 ? 2.3 : 1.3, 0, n > 4 ? 0.5 : 0.05]], circles: [], low: n > 4 ? 1.9 : 1.1 };
 }
 
 /** Blender-Prop mit den Materialien der Hafenbauten (ohne Textur: die gepackten UV-Inseln taugen nicht für Kachel-Holz) */
@@ -644,7 +647,7 @@ const barrelMesh = (x: number, z: number, s = 1) => {
 function fass(): Built {
   const g = new Group();
   g.add(barrelMesh(0, 0));
-  return { g, boxes: [], circles: [[0.5]] };
+  return { g, boxes: [], circles: [[0.5]], low: 1.0 };
 }
 function faesser(rnd: () => number): Built {
   const g = new Group();
@@ -653,7 +656,7 @@ function faesser(rnd: () => number): Built {
   lying.rotation.set(Math.PI / 2, 0, rnd() * 0.6);
   lying.position.set(0.1, 0.38, 1);
   g.add(lying);
-  return { g, boxes: [[2, 1.8, 0, 0.45]], circles: [] };
+  return { g, boxes: [[2, 1.8, 0, 0.45]], circles: [], low: 1.05 };
 }
 
 function brunnen(): Built {
@@ -708,7 +711,7 @@ function heu(rnd: () => number): Built {
   const bale = cyl(0.9, 0.9, 1.4, 12, M.straw, 0, 0.9, 0);
   bale.rotation.set(0, rnd() * 3, Math.PI / 2);
   g.add(bale);
-  return { g, boxes: [], circles: [[1.05]] };
+  return { g, boxes: [], circles: [[1.05]], low: 1.2 };
 }
 
 function boot(): Built {
@@ -1124,6 +1127,8 @@ export function colliders(b: Built, wx: number, wz: number, yaw: number, roofs: 
     out.push(boxBlocker(wx + ox * c + oz * s, wz - ox * s + oz * c, shrink(w), shrink(d), yaw + (by * Math.PI) / 180));
   }
   for (const [r, ox = 0, oz = 0] of b.circles) out.push({ x: wx + ox * c + oz * s, z: wz - ox * s + oz * c, r });
+  // 4.7C: niedrige Bauwerke (Zaun, Mauer, Fass, Kisten, Heu) – im Sprung überwindbar
+  if (b.low !== undefined) for (const bl of out) bl.low = b.low;
   // 4.6H: Traufe über jedem Kollider (niedrigste Dachfläche darüber) – darüber sperrt er die Spielfigur nicht mehr
   if (roofs.length) for (const bl of out) annotateTop(bl, roofs);
   return out;

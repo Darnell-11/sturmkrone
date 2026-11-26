@@ -1,5 +1,81 @@
 # Was ist neu
 
+## 4.7.3 – Phase 4.7C: Klassenbaum als leuchtendes Sternbild, eigene Kombos für alle 15 Klassen, eine Welt ohne unsichtbare Grenzen und Wasserlaufen zu Fuß (26.11.2026, nur lokal)
+
+**Was du siehst**
+- **Der Klassenbaum ist ein Sternbild** (Tasten N und K) statt des Kastenrasters:
+  - Die 60 Knoten steigen als Klassen-Pfad von unten nach oben; zwischen den Meilensteinen schwingt jeweils ein kurzer Seitenzweig abwechselnd nach links und rechts aus.
+  - **Energie-Leitlinien** verbinden alle Knoten: gesperrt dunkel gestrichelt, freigeschaltet pulsierend in der Farbe deiner Klasse, der nächste Schritt golden.
+  - **Stärkungen** sind kompakte sechseckige Edelstein-Sockel mit eigenem Stat-Symbol und Rang-Zähler („Krit-Schaden 4/7“).
+  - **Die zehn Formen** sind Rauten-Medaillons mit goldener Fassung, einem mehrfarbigen Emblem deiner Klasse (Klinge, Doppelklinge, Faust, Flamme, Eiskristall, Welle, Wirbel, Blitz, Sonne, Mondsichel, Schwarzes Loch, Heiligenschein), einem Abzeichen für die Art der Form und der Nummer I – X.
+  - **Knoten 60** krönt den Baum als gekröntes Apex-Wappen mit kreisendem Aura-Ring.
+  - Hinter dem Baum liegt ein dezentes **Wasserzeichen deiner Klasse**: gekreuzte Säbel mit Kompassrose, goldene Kathedralen-Rosette (Priester), lodernde Drachen-Runen (Feuer), eiserne Bastions-Schilde (Großschwert und Kräftiger Faustkämpfer) und so weiter für jede Klasse.
+  - Beim Öffnen steht der nächste Knoten in der Mitte; jeder Knoten ist anklickbar und zeigt rechts seine Vorschau.
+  - **Kopf und Fußzeile stehen fest**, nur der Baum rollt: „Zurück“ und das neue **„Zurücksetzen“** (zwei Klicks, alle Punkte kommen zurück, Klasse und Element bleiben) sind auf 1440 × 900 und am Handy (390 × 844) immer ganz sichtbar.
+- **Keine Welt-Hinweise mehr hinter Menüs:** „Sprechen“-Plaketten und die Aktionsleiste der Welt verschwinden, solange ein Menü offen ist.
+- **Umschalt + 1 – 5 löst im Laufen keinen Dash mehr aus:** Umschalt wartet einen Wimpernschlag (90 ms) – kommt eine Zahl, gilt die Form 6 – 10.
+- **Eigene Standardangriffe und Kombos für alle 15 Klassen:**
+  - **Faji-Wirker kämpfen rein elementar, ohne Fäuste und Tritte:**
+    - Feuer: Feuerlanzen, Glutfächer, Flammenspeer und Inferno-Ausbruch.
+    - Eis: Eissplitter-Salven, Eislanze und Gletscherbruch.
+    - Wasser: Wasserpeitschen, Druckstrahl und Gezeitenbruch.
+    - Wind: Windklingen, Klingenfächer, Vakuumschnitt und Zyklon-Ausbruch.
+    - Blitz: Blitzbögen, Gabelblitz, Donnerkeil und Gewitter-Ausbruch.
+    - Sonne: Sonnenstrahlen, Strahlenfächer, Zenitlanze und Korona-Ausbruch.
+    - Mond: wachsende Mondsicheln bis zum Neumond-Ausbruch.
+    - Schwarzes Loch: Gravitationssphären, Ereignislanze und Kollaps-Ausbruch.
+    - Auch Verzweigungen, der schwere Angriff, die Luft-Kette und der Meteor sind elementar und tragen eigene Namen.
+    - Faji-Wirker halten dabei ihren Abstand, statt nach vorn zu rutschen.
+  - **Priester:** goldene Lichtlanzen und eine heilige Glyphen-Salve. Der Kombo-Finisher **Gnadenwelle** heilt dich und deine Crew bzw. Truppen in 12 m.
+  - **Waffen und Fäuste:**
+    - Doppelklinge endet im Kreuzschnitt-Dash quer durchs Ziel.
+    - Säbel endet im Luft-Wirbel, der die Luft-Kette eröffnet.
+    - Langschwert endet im weitreichenden Iai-Fernschnitt (10 m).
+    - Großschwert endet im wuchtigen Überkopf-Spalter mit Schockwelle.
+    - Der Schnelle Faustkämpfer schlägt mit Nachbildern.
+    - Der Kräftige Faustkämpfer schlägt Erdhaken und endet in der Schockwellen-Faust.
+- **Keine unsichtbaren Grenzen mehr:**
+  - Vom Strand, von der Kaimauer und von jedem Steg läufst du direkt ins Meer.
+  - Über die Reling eines Schiffs springst du ins Wasser.
+  - Zäune, Trockenmauern, Fässer, Kisten und Heuballen überspringst du; Häuser, Felsen und hohe Mauern bleiben fest.
+  - In der Einführung hält dich keine Wand mehr in der Bucht von Ankerglück, es gibt nur noch eine Erinnerung.
+  - Der Sturm am Weltrand bleibt als sichtbare Naturgrenze.
+- **Wasserlaufen zu Fuß:**
+  - Du läufst und gleitest über das Meer, mit Kräuselringen und Fontänen unter den Füßen.
+  - Das kostet Ausdauer: beim Stehen wenig, beim Gehen mehr, beim Laufen am meisten; Dashes kosten wie gewohnt.
+  - Bei 0 Ausdauer schwimmst du langsam und ohne Kampf, bis die Kraft zurück ist. Dann steigst du wieder aufs Wasser oder kletterst an Land bzw. an Bord; ein Sprung aus dem Wasser kostet Ausdauer.
+  - Jedes Absinken bringt **Seemüdigkeit**, die deine Kraft auf dem Wasser senkt, bis du wieder festen Boden hast. Rund 75 m Laufen reichen für Küstenkämpfe, Hafen-Überquerungen und nahe Schiffe, aber nicht von Insel zu Insel.
+  - Erreichst du zu Fuß eine andere Insel, beginnt dort das Inselleben wie nach einer Landung.
+
+**Technik (für Entwickler)**
+- **Klassenbaum:**
+  - `ui/classTreeGraph.ts` (rein): `treeLayout` (Bögen gleicher Bogenlänge, kein Knoten näher als 46 Einheiten), `buffRanks`, `roman`, Stat-Symbole, Form-Embleme `emblemSvg`/`motifOf`/`patternOf`, `watermarkSvg`.
+  - `ui/classScreen.ts` zeichnet das SVG; `ui/css/classes.css` mit `.card.classtree` (Flex-Spalte, feste `.ct-foot`).
+  - `Menus.showTalents` rollt zum gewählten Knoten.
+  - Neu: `resetClass` und `Game.classReset`.
+- **Menüs:** setzen `menu-open` auf `<html>`; CSS blendet `.npcm` und `.hud-ctx` aus.
+- **Umschalt:** `core/input/shiftGate.ts` (`shiftVerdict`, `SHIFT_COMBO_MS`); `Input` wertet die Wartezeit in `beginStep` aus.
+- **Kombos:**
+  - `data/elementCombos.ts` (`elementLight`/`elementBranch`/`elementExtras`, `COMBO_NAMES`, `PRIEST_CHAIN_HEAL`) ersetzt die Faust-Ketten in `artStyle`.
+  - `applyMomentum` gibt Faji-Ketten keinen Schub mehr.
+  - Physische Finisher sind in `actionStyles.ts` geändert.
+  - Heilung meldet die Engine jetzt in `startMove` für jeden Angriff mit `heal`.
+  - `swingFx(…, soft)` reißt bei Heilwellen den Boden nicht auf.
+- **Grenzen:**
+  - `Ground.constrain(…, free)`: freier Läufer ohne Wasserlinien-, Steg- und Relingsklemme (`RAIL_HOP`).
+  - `Blocker.low` mit `Built.low`: Zaun 1,0, Mauer 1,35, Kisten 1,1/1,9, Fass 1,0, Fässer 1,05, Heu 1,2. Die Oberkante wird beim ersten Gebrauch gesetzt.
+  - `FootWorld` übergibt die Fußhöhe der Spielfigur.
+  - `keepOnLeash` erinnert nur noch.
+- **Wasserlauf:**
+  - Regeln in `data/waterWalk.ts` (`WATER_WALK`, `stepWaterWalk`, `waterRange`, `isWater`).
+  - `PlayerFoot.waterY`/`water`/`stepWater`; `FootWorld.height` kennt die Wasseroberfläche bzw. die Schwimmtiefe.
+  - `SeaWorld` setzt `waterY` je Bild und erkennt in `updateWhere` den Absprung über Bord und das Ankommen an einer anderen Insel (`leaveIslandOnFoot`).
+  - Darstellung über `CataclysmDirector.waterStepFx` (Schaumringe, Gischt, Tropfen; keine neuen Shader).
+- **Prüfen:**
+  - `tests/classCombosAndOpenWorldWaterWalk.test.ts` (21 Tests); angepasst: Momentum- und Form-Tests der Faji-Künste. Insgesamt 1 306 Tests grün.
+  - Browser: `qa_tmp/k47c_tree.js`, `k47c_combos.js`, `k47c_water.js`, `k47c_water_mobile.js`.
+  - Start bis zum Menü 6,4 – 7,2 s mit 171 – 172 Shader-Programmen, im Spiel nach drei Testfiguren 185.
+
 ## 4.7.2 – Phase 4.7B: feste Klassen mit Rollen, Priester (Schaden & Heilung), 15 Klassenbäume mit je 60 Punkten (10 Formen, Stärkungen, Ultimate) und die Geistes-Faji für alle (26.11.2026, nur lokal)
 
 **Was du siehst**

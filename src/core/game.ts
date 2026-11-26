@@ -4,7 +4,7 @@ import { FACTION_LABELS, rankIndex, rankName } from '../data/ranks';
 import { TOUCH_FOOT, TOUCH_FOOT_PAGE2, TOUCH_SEA } from '../data/touchLayout';
 import { ACTION_STYLES, actionStyleOf, isActionStyle, type ActionStyleId } from '../data/actionStyles';
 import {
-  CLASS_BASES, SPECS, SPECS_OF, autoFill, formsGained, awakenGeist, chooseSpec, classBase, classBuffs, classElement, classFree, classFromLegacy, classOfCreation,
+  CLASS_BASES, SPECS, SPECS_OF, autoFill, formsGained, resetClass, awakenGeist, chooseSpec, classBase, classBuffs, classElement, classFree, classFromLegacy, classOfCreation,
   classRole, classSpec, classSpent, classStyle, classTitle, cleanClass, fitClass, formsOpen, learnGeist, learnNext, lockElement, ultOpen,
   GEIST, SPEC_BLADE, type ClassSave, type SpecId,
 } from '../data/classes';
@@ -4503,6 +4503,16 @@ export class Game {
     audio.play('cutin');
     this.overlay.showBanner(`${SPECS[spec].label}!`, `${SPECS[spec].role} · dein Klassenbaum ist offen (Taste N)`);
     return null;
+  }
+
+  /** 4.7C: Klassenbaum zurücksetzen (Spezialisierung und Element bleiben) */
+  classReset(): string {
+    const c = this.classSave();
+    if (!c) return '';
+    const n = resetClass(c);
+    this.classChanged();
+    audio.play('whoosh', 0.7);
+    return n > 0 ? `Zurückgesetzt: ${n} Punkt${n === 1 ? '' : 'e'} wieder frei.` : 'Nichts zurückzusetzen.';
   }
 
   /** Rang einer Geistes-Kraft erhöhen */

@@ -394,9 +394,11 @@ export class SeaWorld {
   private lastIsland: string | null = null;
   private hostilesBefore = 0;
   /** Der Boden der Welt für alle Läufer: `CompositeGround` (Insel, Stege, Decks und Brücken in einer Pipeline) */
+  /** 4.7C: Insel, auf der die Spielfigur zuletzt festen Boden hatte (zu Fuß übers Wasser zu einer anderen Insel) */
+  private footIsland: WalkIsland | null = null;
   private readonly groundProxy: Ground = {
     height: (x, z, y) => this.composite.height(x, z, y),
-    constrain: (x, z, r, y) => this.composite.constrain(x, z, r, y),
+    constrain: (x, z, r, y, free) => this.composite.constrain(x, z, r, y, free),
     ladderAt: (id, t, o) => this.composite.ladderAt(id, t, o),
     ladderLength: (id) => this.composite.ladderLength(id),
   };
@@ -1399,6 +1401,8 @@ export class SeaWorld {
       onAwakenWave: (f, c, a) => this.cataclysm.awakenWave(f, c, a),
       onChain: (ax, ay, az, bx, by, bz, c) => this.cataclysm.chain(ax, ay, az, bx, by, bz, c),
       onKingWave: (x, y, z, r) => this.cataclysm.kingWave(x, y, z, r),
+      // 4.7C: Wasserlauf – Kräuselringe und Fontänen
+      onWater: (x, y, z, kind) => { this.cataclysm.waterStepFx(x, y, z, kind); if (kind === 4) audio.play('splash', 0.6, { x, y, z }); },
       // 4.7B: Heilung (Priester, Lebensstrom) – Funken, Verbündete im Radius; Geistes-Faji – Darstellung und Klang
       onHeal: (k, r, f) => {
         this.sparks.emit(20, f.x, f.y + 1, f.z, { speed: 1.4, up: 3, life: 0.9, color: HEAL_COL, gravity: -1, spread: 0.6 });
@@ -1420,7 +1424,7 @@ export class SeaWorld {
       impactFrames: (n) => this.animeRig.impact(n),
       onSwing: (mv, h, f) => {
         const st = ACTION_STYLES[f.style];
-        this.cataclysm.swingFx(h, f, mv.color || st.color, mv.vfx || st.element, mv.meteor);
+        this.cataclysm.swingFx(h, f, mv.color || st.color, mv.vfx || st.element, mv.meteor, !!mv.heal);
         const at = { x: f.x, y: f.y, z: f.z };
         if (h.shape === 'line') audio.play('bladeWave', 0.8, at);
         else if (h.shape === 'circle') audio.play('eruption', 0.8, at);
@@ -3116,17 +3120,16 @@ export class SeaWorld {
   /** Mitspieler in Sicht (Prüfungen) */
   get presenceCounts() { return this.presence?.counts() ?? { town: 0, sea: 0, pending: 0 }; }
 
-  /** Einführung: das Schiff bleibt in der Bucht von Ankerglück (sanft an den Rand der Leine zurück) */
+  /**
+   * Einführung: Ankerglück braucht dich – 4.7C ohne unsichtbare Wand: wer die Bucht verlässt, bekommt nur eine Erinnerung (die See ist frei,
+   * aber in der privaten Instanz noch leer: kein Verkehr, keine Ereignisse).
+   */
   private keepOnLeash(dt: number) {
     this.leashMsgT -= dt;
     const home = this.ground.islands[0], s = this.ship;
-    const dx = s.x - home.x, dz = s.z - home.z, d = Math.hypot(dx, dz);
-    if (d <= TUTORIAL.leash) return;
-    const k = TUTORIAL.leash / d;
-    s.x = home.x + dx * k; s.z = home.z + dz * k;
-    this.x = s.x; this.z = s.z;
-    s.speed *= 0.6;
-    if (this.leashMsgT <= 0) { this.leashMsgT = 6; this.onMessage('Noch nicht hinaus auf die offene See – Ankerglück braucht dich. Erst die Einführung, dann die Bernsteinsee.'); }
+    if (Math.hypot(s.x - home.x, s.z - home.z) <= TUTORIAL.leash || this.leashMsgT > 0) return;
+    this.leashMsgT = 20;
+    this.onMessage('Die offene See ruft – doch Ankerglück braucht dich noch. Die Bernsteinsee füllt sich erst nach der Einführung mit Leben.');
   }
 
   private presenceHost(): PresenceHost {
@@ -3185,6 +3188,8 @@ export class SeaWorld {
   landPlayer(x: number, z: number, yaw: number) {
     if (!this.foot || !this.player) return;
     if (this.mode !== 'foot') this.goDeck();
+    // 4.7C: das eigene Deck gehört immer zum Boden (vom Wasser aus kann man an Bord springen)
+    this.ownDeckGround();
     this.deckGround = null;
     this.ownDeck = false;
     this.foot.place(x, z, yaw, this.groundProxy);
@@ -3617,6 +3622,8 @@ export class SeaWorld {
     } else {
       // X am Gamepad springt und handelt: steht eine Handlung an (Kontextplakette), gewinnt die Handlung
       f.jumpBlocked = !!this.contextLabel;
+      // 4.7C: Wasseroberfläche unter der Figur (Wasserlauf); im Prolog trägt das Meer nicht (Schwarzbarts Flaggschiff setzt die Figur selbst)
+      f.waterY = this.prologue ? Number.NaN : this.env.heightAt(f.x, f.z);
       f.update(dt, input, this.footYaw, this.groundProxy, lockYaw, lock?.entityId ?? '', this.softTargetId());
     }
     // Entern: Deck geräumt?
@@ -4007,6 +4014,7 @@ export class SeaWorld {
     const f = this.foot;
     if (!f) return;
     const isl = this.ground.islandAt(f.x, f.z, 8) ?? this.ground.islandAt(this.x, this.z, 60);
+    this.footIsland = isl;
     this.ownDeck = false;
     this.landed = true;
     this.fishing = null;
@@ -4049,6 +4057,7 @@ export class SeaWorld {
   private returnedToShip() {
     this.landed = false;
     this.ownDeck = true;
+    this.footIsland = null;
     const c = this.combat;
     if (c?.activeIsland) {
       const idx = this.ground.islands.indexOf(c.activeIsland);
@@ -4694,9 +4703,34 @@ export class SeaWorld {
     this.deckGround = this.composite.deckAtPoint(f.x, f.z);
     if (this.docking.isClimbing || this.cinematic > 0 || this.downT > 0 || this.boarding) return;
     const onOwn = !!this.ownDG && this.deckGround === this.ownDG;
-    if (this.ownDeck && !onOwn && !this.composite.onBridge(f.x, f.z, f.y) && (this.ship.moored || this.docking.ladderId)) {
-      if (Number.isFinite(this.ground.height(f.x, f.z))) this.arriveAshore();
+    if (this.ownDeck && !onOwn && !this.composite.onBridge(f.x, f.z, f.y)) {
+      if (this.ship.moored || this.docking.ladderId) { if (Number.isFinite(this.ground.height(f.x, f.z))) this.arriveAshore(); }
+      // 4.7C: über die Reling ins Meer gesprungen (auf See, ohne Gangway): das Schiff ist verlassen, zurück geht es übers Deck
+      else if (f.onWater) { this.ownDeck = false; this.landed = true; this.footIsland = null; this.setSailFade(this.ship, false); }
     } else if (this.landed && onOwn) this.returnedToShip();
+    // 4.7C: zu Fuß übers Wasser an einer (anderen) Insel angekommen – dort beginnt das Leben der Insel wie nach einer Landung
+    if (this.landed && !this.deckGround && !f.onWater && !this.raid && f.fighter.grounded) {
+      const isl = this.ground.islandAt(f.x, f.z, 0);
+      if (isl && isl !== this.footIsland) {
+        this.footIsland = isl;
+        if (this.combat?.activeIsland !== isl) { this.leaveIslandOnFoot(); this.spawnCamp(isl); }
+      }
+    }
+  }
+
+  /** 4.7C: die Insel zu Fuß verlassen (übers Wasser): Lager, Ereignisse und Besucher der alten Insel enden */
+  private leaveIslandOnFoot() {
+    const c = this.combat;
+    if (c?.activeIsland) {
+      const idx = this.ground.islands.indexOf(c.activeIsland);
+      if (c.hostilesLeft === 0) this.cleared.set(idx, this.env.clock + 300);
+      c.leaveIsland();
+    }
+    this.leaveMega();
+    this.kaiserLive?.leaveIsland();
+    this.events.cancel();
+    for (const n of this.visitors) { n.dispose(); n.char.holder.removeFromParent(); n.char.dispose(); }
+    this.visitors = [];
   }
 
   private updateNpcs(dt: number) {

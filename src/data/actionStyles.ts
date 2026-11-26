@@ -28,7 +28,8 @@ const ZW: ActionStyleDef = {
     move({ id: 'zweihaender.l2', label: 'Scheitelhieb', clip: 'Melee_2H_Attack_Chop', dur: 0.66, hits: [{ range: 3.4, arc: 1.9, dmg: 0.59, poise: 26, knock: 5, fx: 'heavy', hitstop: 0.08, shake: 0.32 }] }),
     move({ id: 'zweihaender.l3', label: 'Wirbelhieb', clip: 'Melee_2H_Attack_Spinning', dur: 0.56, hits: [{ shape: 'arc', arc: ROUND, range: 3.3, dmg: 0.52, poise: 18, knock: 5, fx: 'spin' }] }),
     move({ id: 'zweihaender.l4', label: 'Klingenramme', clip: 'Melee_2H_Attack_Stab', dur: 0.6, lunge: 4, hits: [{ range: 3.9, arc: 0.9, dmg: 0.64, poise: 30, knock: 6, fx: 'stab', hitstop: 0.08 }] }),
-    move({ id: 'zweihaender.l5', label: 'Bergsturz', clip: 'Melee_2H_Attack_Chop', dur: 0.95, hyper: true, finisher: true, hits: [{ shape: 'circle', offset: 1.8, range: 4.6, dmg: 1.26, poise: 60, knock: 10, fling: 13, fx: 'heavy', hitstop: 0.14, shake: 0.8 }] }),
+    // 4.7C: wuchtiger Überkopf-Spalter – der Hieb fällt senkrecht, eine Schockwelle läuft 8 m weiter
+    move({ id: 'zweihaender.l5', label: 'Überkopf-Spalter', clip: 'Melee_2H_Attack_Chop', dur: 0.95, hyper: true, finisher: true, hits: [{ shape: 'circle', offset: 1.8, range: 4.4, dmg: 0.92, poise: 60, knock: 10, fling: 13, fx: 'heavy', hitstop: 0.14, shake: 0.8 }, { shape: 'line', range: 8, width: 2.4, grow: true, dmg: 0.36, poise: 20, knock: 6, fx: 'heavy', vfx: 'klinge', at: [0.52, 0.66] }] }),
   ],
   branch: [
     move({ id: 'zweihaender.b1', label: 'Schildbrecher-Stoß', clip: 'Melee_2H_Attack_Stab', dur: 0.62, lunge: 5, hits: [{ range: 3.8, arc: 1.2, dmg: 0.87, poise: 55, knock: 7, breakGuard: true, fx: 'stab', hitstop: 0.11, shake: 0.45 }] }),
@@ -65,7 +66,8 @@ const SA: ActionStyleDef = {
     move({ id: 'saebel.l2', label: 'Querhieb', clip: 'Melee_1H_Attack_Slice_Horizontal', dur: 0.42, hits: [{ range: 2.7, arc: 2.8, dmg: 0.46, poise: 9 }] }),
     move({ id: 'saebel.l3', label: 'Rückhandschnitt', clip: 'Melee_1H_Attack_Chop', dur: 0.4, hits: [{ range: 2.6, arc: 2.0, dmg: 0.49, poise: 10 }] }),
     move({ id: 'saebel.l4', label: 'Degenstoß', clip: 'Melee_1H_Attack_Stab', dur: 0.46, lunge: 4, hits: [{ range: 3.1, arc: 0.9, dmg: 0.6, poise: 14, knock: 5, fx: 'stab', hitstop: 0.07 }] }),
-    move({ id: 'saebel.l5', label: 'Sturmkronen-Wirbel', clip: 'Melee_2H_Attack_Spin', dur: 0.82, finisher: true, color: '#FF5A3A', hits: ticks(2, 0.2, 0.72, { shape: 'arc', arc: ROUND, range: 3.7, dmg: 0.53, poise: 18, knock: 8, fling: 9, fx: 'spin', hitstop: 0.08, shake: 0.4 }, { fling: 11, hitstop: 0.12, shake: 0.55 }) }),
+    // 4.7C: Luft-Wirbel – der Säbel reißt die Figur kreiselnd in die Luft (die Luft-Kette schließt an)
+    move({ id: 'saebel.l5', label: 'Sturmkronen-Luftwirbel', clip: 'Melee_2H_Attack_Spin', dur: 0.82, finisher: true, rise: 6.5, airOk: true, color: '#FF5A3A', hits: ticks(3, 0.18, 0.72, { shape: 'arc', arc: ROUND, range: 3.7, up: 3.2, down: 1.6, dmg: 0.36, poise: 14, knock: 6, launch: 5, fling: 7, fx: 'spin', hitstop: 0.06, shake: 0.35 }, { launch: 7, fling: 10, hitstop: 0.12, shake: 0.55 }) }),
   ],
   branch: [
     move({ id: 'saebel.b1', label: 'Schildbrecher-Stoß', clip: 'Melee_1H_Attack_Stab', dur: 0.5, lunge: 5.5, hits: [{ range: 3.2, arc: 1.1, dmg: 0.75, poise: 42, knock: 6, breakGuard: true, fx: 'stab', hitstop: 0.1, shake: 0.4 }] }),
@@ -104,7 +106,8 @@ const DO: ActionStyleDef = {
     move({ id: 'doppel.l4', label: 'Drehschnitt', clip: 'Melee_2H_Attack_Spinning', dur: 0.36, hits: [{ arc: ROUND, range: 2.8, dmg: 0.4, poise: 7, knock: 4, fx: 'spin' }] }),
     move({ id: 'doppel.l5', label: 'Zwillingsstich', clip: 'Melee_Dualwield_Attack_Stab', dur: 0.38, lunge: 4, hits: [{ range: 2.9, arc: 1.0, dmg: 0.47, poise: 9, knock: 4, fx: 'stab' }] }),
     move({ id: 'doppel.l6', label: 'Wirbelkreuz', clip: 'Melee_Dualwield_Attack_Chop', dur: 0.34, hits: [{ range: 2.6, arc: 2.4, dmg: 0.4, poise: 8 }] }),
-    move({ id: 'doppel.l7', label: 'Klingenorkan', clip: 'Melee_2H_Attack_Spinning', dur: 0.95, from: 0, to: 1, finisher: true, hits: ticks(5, 0.08, 0.9, { arc: ROUND, range: 3.4, dmg: 0.23, poise: 6, knock: 3, fling: 5, fx: 'spin', hitstop: 0.03 }, { dmg: 0.53, knock: 9, fling: 10, hitstop: 0.1, shake: 0.45 }) }),
+    // 4.7C: Kreuzschnitt-Dash – quer durch das Ziel, zwei sich kreuzende Schnitte
+    move({ id: 'doppel.l7', label: 'Kreuzschnitt-Dash', clip: 'Melee_Dualwield_Attack_Slice', dur: 0.72, from: 0, to: 1, finisher: true, dashTo: 6.5, dashTime: 0.16, through: true, iframes: 0.25, afterimage: true, hits: ticks(2, 0.18, 0.56, { shape: 'circle', range: 2.9, dmg: 0.5, poise: 14, knock: 6, fling: 8, fx: 'slash', hitstop: 0.06 }, { dmg: 0.62, knock: 10, fling: 11, hitstop: 0.12, shake: 0.5 }) }),
   ],
   branch: [
     move({ id: 'doppel.b1', label: 'Schildbrecher-Stoß', clip: 'Melee_Dualwield_Attack_Stab', dur: 0.46, lunge: 6, hits: [{ range: 3.0, arc: 1.2, dmg: 0.8, poise: 36, knock: 6, breakGuard: true, fx: 'stab', hitstop: 0.09, shake: 0.35 }] }),
@@ -142,7 +145,8 @@ const LK: ActionStyleDef = {
     move({ id: 'langklinge.l2', label: 'Fallender Mond', clip: 'Melee_1H_Attack_Chop', dur: 0.44, hits: [{ range: 3.3, arc: 1.7, dmg: 0.47, poise: 13, pen: 1 }] }),
     move({ id: 'langklinge.l3', label: 'Weiter Bogen', clip: 'Melee_2H_Attack_Slice', dur: 0.48, hits: [{ range: 3.5, arc: 2.8, dmg: 0.5, poise: 13, pen: 1 }] }),
     move({ id: 'langklinge.l4', label: 'Nadelstich', clip: 'Melee_2H_Attack_Stab', dur: 0.5, lunge: 5, hits: [{ shape: 'line', range: 4.2, width: 1.2, dmg: 0.6, poise: 18, knock: 6, pen: 2, fx: 'stab', hitstop: 0.08 }] }),
-    move({ id: 'langklinge.l5', through: true, label: 'Mondsichel-Schnitt', clip: 'Melee_1H_Attack_Slice_Horizontal', dur: 0.8, dashTo: 5, dashTime: 0.14, iframes: 0.2, afterimage: true, finisher: true, hits: [{ shape: 'arc', arc: ROUND, range: 4.4, dmg: 1.08, poise: 30, knock: 9, fling: 11, pen: 2, fx: 'spin', hitstop: 0.13, shake: 0.6, at: [0.38, 0.55] }] }),
+    // 4.7C: weitreichender Iai-Schnitt – Zieh-Schnitt durch die Reihe, die Klingenwelle trägt 10 m weit
+    move({ id: 'langklinge.l5', through: true, label: 'Iai-Fernschnitt', clip: 'Melee_1H_Attack_Slice_Horizontal', dur: 0.8, dashTo: 5, dashTime: 0.14, iframes: 0.2, afterimage: true, finisher: true, hits: [{ shape: 'arc', arc: ROUND, range: 4.2, dmg: 0.66, poise: 24, knock: 8, fling: 10, pen: 2, fx: 'spin', hitstop: 0.13, shake: 0.6, at: [0.38, 0.55] }, { shape: 'line', range: 10, width: 1.4, grow: true, dmg: 0.46, poise: 16, knock: 6, pen: 2, fx: 'slash', vfx: 'mond', at: [0.46, 0.62] }] }),
   ],
   branch: [
     move({ id: 'langklinge.b1', label: 'Schildbrecher-Stoß', clip: 'Melee_2H_Attack_Stab', dur: 0.52, lunge: 6, hits: [{ shape: 'line', range: 4.2, width: 1.4, dmg: 0.72, poise: 42, knock: 7, breakGuard: true, pen: 2, fx: 'stab', hitstop: 0.1, shake: 0.4 }] }),
@@ -179,7 +183,8 @@ const SF: ActionStyleDef = {
     move({ id: 'sturmfaust.l2', label: 'Rechte Gerade', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.28, hits: [{ range: 2.1, arc: 1.7, dmg: 0.39, poise: 7, knock: 1.5, fx: 'punch', hitstop: 0.04 }] }),
     move({ id: 'sturmfaust.l3', label: 'Wirbeltritt', clip: 'Melee_Unarmed_Attack_Kick', dur: 0.32, hits: [{ range: 2.4, arc: 2.0, dmg: 0.48, poise: 10, knock: 3, fx: 'heavy', hitstop: 0.05 }] }),
     move({ id: 'sturmfaust.l4', label: 'Nachbild-Hagel', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.6, from: 0.05, to: 0.75, afterimage: true, hits: ticks(4, 0.15, 0.85, { range: 2.3, arc: 1.8, dmg: 0.2, poise: 4, knock: 0.8, fx: 'punch', hitstop: 0.02 }) }),
-    move({ id: 'sturmfaust.l5', label: 'Sturmfaust-Wirbeltritt', clip: 'Melee_2H_Attack_Spinning', dur: 0.66, finisher: true, hits: [{ arc: ROUND, range: 3.3, dmg: 1.21, poise: 26, knock: 9, launch: 3, fling: 11, fx: 'spin', hitstop: 0.12, shake: 0.5 }] }),
+    // 4.7C: Nachbild-Wirbeltritt – Blitz-Nachbilder rund um die Figur
+    move({ id: 'sturmfaust.l5', label: 'Nachbild-Wirbeltritt', clip: 'Melee_2H_Attack_Spinning', dur: 0.66, finisher: true, afterimage: true, hits: [{ arc: ROUND, range: 3.3, dmg: 1.21, poise: 26, knock: 9, launch: 3, fling: 11, fx: 'spin', hitstop: 0.12, shake: 0.5 }] }),
   ],
   branch: [
     move({ id: 'sturmfaust.b1', label: 'Schildbrecher-Stoß', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.4, lunge: 6, hits: [{ range: 2.5, arc: 1.3, dmg: 0.81, poise: 36, knock: 7, breakGuard: true, fx: 'punch', hitstop: 0.1, shake: 0.4 }] }),
@@ -213,11 +218,12 @@ const ES: ActionStyleDef = {
   id: 'erdspalter', label: 'Erdspalter', title: 'Starker Faustkämpfer', color: '#E0B88A', accent: '#C8783A', visual: 'faust', idleClip: 'Melee_Unarmed_Idle',
   desc: 'Waffenloser Schwergewichts-Stil: seismische Bodenstöße, Greifwürfe und gewaltige Druckwellen.',
   light: [
-    move({ id: 'erdspalter.l1', label: 'Hammerfaust', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.48, hits: [{ range: 2.3, arc: 1.7, dmg: 0.51, poise: 16, knock: 4, fx: 'punch', hitstop: 0.07, shake: 0.25 }] }),
+    move({ id: 'erdspalter.l1', label: 'Erdhaken', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.48, hits: [{ range: 2.3, arc: 1.7, dmg: 0.51, poise: 16, knock: 4, fx: 'punch', hitstop: 0.07, shake: 0.25 }] }),
     move({ id: 'erdspalter.l2', label: 'Rammtritt', clip: 'Melee_Unarmed_Attack_Kick', dur: 0.5, hits: [{ range: 2.5, arc: 1.9, dmg: 0.56, poise: 18, knock: 6, fx: 'heavy', hitstop: 0.08, shake: 0.3 }] }),
     move({ id: 'erdspalter.l3', label: 'Felsschmetterer', clip: 'Melee_1H_Attack_Jump_Chop', dur: 0.6, hits: [{ shape: 'circle', offset: 1.4, range: 2.6, dmg: 0.66, poise: 24, knock: 5, fx: 'heavy', hitstop: 0.09, shake: 0.4 }] }),
     move({ id: 'erdspalter.l4', label: 'Schulterramme', clip: 'Melee_Block_Attack', dur: 0.5, lunge: 6, hits: [{ range: 2.6, arc: 1.6, dmg: 0.6, poise: 26, knock: 9, fx: 'heavy', hitstop: 0.08, shake: 0.35 }] }),
-    move({ id: 'erdspalter.l5', label: 'Erdspalter', clip: 'Melee_2H_Attack_Chop', dur: 0.95, hyper: true, finisher: true, hits: [{ shape: 'circle', offset: 1.2, range: 5.0, dmg: 1.24, poise: 55, knock: 10, launch: 6, fling: 14, fx: 'heavy', hitstop: 0.15, shake: 0.9 }] }),
+    // 4.7C: Schockwellen-Faust – der Faustschlag in den Boden schickt eine Schockwelle 9 m voraus
+    move({ id: 'erdspalter.l5', label: 'Schockwellen-Faust', clip: 'Melee_2H_Attack_Chop', dur: 0.95, hyper: true, finisher: true, hits: [{ shape: 'circle', offset: 1.2, range: 4.6, dmg: 0.86, poise: 55, knock: 10, launch: 6, fling: 14, fx: 'heavy', hitstop: 0.15, shake: 0.9 }, { shape: 'line', range: 9, width: 2.6, grow: true, dmg: 0.4, poise: 20, knock: 7, fx: 'heavy', vfx: 'erde', at: [0.5, 0.58] }] }),
   ],
   branch: [
     move({ id: 'erdspalter.b1', label: 'Schildbrecher-Stoß', clip: 'Melee_Block_Attack', dur: 0.52, lunge: 6, hits: [{ range: 2.7, arc: 1.4, dmg: 0.85, poise: 60, knock: 9, breakGuard: true, fx: 'heavy', hitstop: 0.12, shake: 0.5 }] }),
@@ -317,6 +323,15 @@ export const MOMENTUM = {
 /** Schub eintragen, wo ein Angriff noch keinen eigenen hat (Launcher und Meteor steigen bzw. stürzen und bekommen keinen) */
 function applyMomentum(s: ActionStyleDef) {
   const k = s.faji ? MOMENTUM.fajiK : MOMENTUM.styleK[s.id] ?? 1;
+  // 4.7C: Faji-Wirker kämpfen auf Abstand (Geschosse, Strahlen, Flächen) – Kette, Verzweigungen, Schwer und Luft schieben sie nicht nach vorn
+  if (s.faji) {
+    for (const m of [...s.light, ...s.branch, s.heavy, ...s.air]) if (!m.push) m.push = 0.001;
+    for (const m of s.skills) {
+      if (m.push || m.dashTo > 0 || m.rise > 0 || m.counter > 0 || !m.hits.length) continue;
+      m.push = (m.hits.length >= 3 ? MOMENTUM.skillFlow : MOMENTUM.skillStep) * k;
+    }
+    return;
+  }
   const n = s.light.length;
   s.light.forEach((m, i) => {
     if (m.push) return;
