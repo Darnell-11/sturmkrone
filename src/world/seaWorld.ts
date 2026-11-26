@@ -36,7 +36,7 @@ import type { StyleId } from '../data/animations';
 import type { CharacterLook, NpcRole } from '../data/characterParts';
 import { CAMERA_PLANES, type QualityConfig } from '../data/qualityTiers';
 import { HOME_SPAWN, WORLD_SCALE } from '../data/world';
-import { FLAGSHIP, PROLOGUE_TIME, TUTORIAL } from '../data/prologue';
+import { FLAGSHIP, TUTORIAL } from '../data/prologue';
 import { PrologueLive, type PrologueHost, type PrologueUi } from './prologueLive';
 import type { WorldGates } from '../story/tutorialInstance';
 import { SharedPresence, type PresenceHost } from './sharedPresence';
@@ -113,6 +113,7 @@ import type { MapTopo } from '../ui/minimap';
 import { FajiController } from '../faji/fajiController';
 import type { SkillState } from '../core/save/types';
 import { Ship, type SeaEnv } from '../entities/ship/ship';
+import { buildShip } from '../entities/ship/shipBuilder';
 import { pumpShipSplits } from '../entities/ship/shipSplit';
 import { TargetLockLive, type TargetHost } from './targetLockLive';
 import { TARGET, aimYaw } from '../combat/targetLock';
@@ -169,6 +170,11 @@ const HELD_INPUT = {
 /** 4.7A: Kennung des Kurogane-Stoßtrupps der Einführung */
 export const TUTORIAL_RAID_TAG = 'einfuehrung:kurogane';
 const FOAM_COL = new Color(0.95, 0.98, 1);
+/** 4.7D: Funken an Bodos Amboss, Mündungsfeuer und Rauch des Kurogane-Überfalls */
+const FORGE_SPARK = new Color(3.2, 1.7, 0.5);
+const FORGE_GLOW = new Color(3.4, 1.2, 0.3);
+const ASSAULT_FIRE = new Color(3, 1.1, 0.3);
+const ASSAULT_SMOKE = new Color(0.16, 0.14, 0.14);
 const SPLASH_COL = new Color(0.78, 0.84, 0.9);
 const WHEEL_L = new Vector3();
 const WHEEL_R = new Vector3();
@@ -496,6 +502,10 @@ export class SeaWorld {
   combat: CombatSystem | null = null;
   /** Neue Figuren und Objekte für das Zeichnen vorbereiten (setzt das Spiel: Shader parallel übersetzen) */
   warmHook: ((o: Object3D) => void) | null = null;
+  /** 4.7D: Schiff des Spielstands (Schaluppe der Einführung): der Prolog baut es im Ladescreen vor, damit der Strand ruckelfrei beginnt */
+  homeShipSpec: { tier: number; look: ShipLook } | null = null;
+  /** 4.7D: wie `warmHook`, mit Versprechen (Pre-Warm-Ladescreen des Prologs wartet, bis alle Programme bereitstehen) */
+  warmAsyncHook: ((o: Object3D) => Promise<void>) | null = null;
   /** Texturen hochladen (Renderer.uploadTexture/textureReady): neue Schiffe laden ihre Texturen Bild für Bild vor dem ersten Auftritt */
   texHook: TexUpload | null = null;
   playerFaction: Faction = 'pirat';
@@ -807,6 +817,9 @@ export class SeaWorld {
     if (!this.streamReady || this.raid) return;
     const st = this.streamer;
     st.beginInterest();
+    // 4.7D: während des Prologs zählt nur Ankerglück (das Erwachen am Strand braucht dann keinen Aufbau). Die Bühnen auf offener See
+    // (Grünmarkt, die Sturmjagd) brauchen keine Inseln – Kamera und Schiff dort würden sonst mitten in einer Szene Inseln bauen lassen.
+    if (this.prologue) { st.addInterest(HOME_SPAWN.x, HOME_SPAWN.z); st.update(); return; }
     st.addInterest(this.x, this.z);
     if (this.mode === 'foot' && this.foot) st.addInterest(this.foot.x, this.foot.z);
     st.addInterest(this.camera.position.x, this.camera.position.z);
@@ -2850,7 +2863,8 @@ export class SeaWorld {
   private updateBeacon(dt: number) {
     const t = this.beaconTarget;
     const pos = this.playerPos;
-    const show = !!t && Math.hypot(t.x - pos.x, t.z - pos.z) > t.r + 40;
+    // 4.7D: keine Lichtsäule, solange der Prolog läuft (Ego-Sicht am Strand) – sie erscheint mit der Steuerung
+    const show = !!t && !this.prologueRunning && Math.hypot(t.x - pos.x, t.z - pos.z) > t.r + 40;
     if (!show) { if (this.beacon) this.beacon.visible = false; return; }
     if (!this.beacon) {
       const g = new Group();
@@ -3024,12 +3038,15 @@ export class SeaWorld {
   /** die Schaluppe ist in der Einführung noch nicht übergeben: unsichtbar am Heimatplatz geparkt */
   private stowed = false;
 
-  /** Prolog starten (Neues Spiel): Bühne auf hoher See, das brennende Flaggschiff, Nacht und Gewitter */
+  /**
+   * 4.7D: Prolog starten (Neues Spiel): die 7-Szenen-Kino-Inszenierung. Erst bereitet der Pre-Warm-Ladescreen alles vor (Grünmarkt, die
+   * Schwarze Krone, Schwarzbart, die Admirals-Flotte, Texturen, Programme, Musik), dann beginnt Szene 1 aus dem Schwarz.
+   */
   startPrologue(look: CharacterLook, ui: PrologueUi, seed = 0x51a7) {
-    this.prologue?.skip();
+    this.prologue?.abort();
     this.prologueHold = true;
-    this.prologue = new PrologueLive(this.prologueHost(ui), seed);
-    this.prologue.begin(look);
+    this.prologue = new PrologueLive(this.prologueHost(ui), ui, seed);
+    void this.prologue.prepare(look);
   }
 
   /** Prolog überspringen (Schaltfläche „Prolog überspringen“) */
@@ -3037,77 +3054,90 @@ export class SeaWorld {
   /** Prolog ohne Meldung abbauen (zurück ins Hauptmenü) */
   abortPrologue() { this.prologue?.abort(); this.prologue = null; this.prologueHold = false; }
   get prologueRunning(): boolean { return !!this.prologue?.active; }
-  /** Kinobalken des Prologs (0 … 1) */
+  /** Der Prolog bereitet noch vor (Ladescreen) */
+  get prologueLoading(): boolean { return !!this.prologue?.active && this.prologue.preparing; }
+  /** 21:9-Kinobalken des Prologs (0 … 1) */
   get prologueBars(): number { return this.prologue?.active ? this.prologue.bars : 0; }
+  /** Zeitmaß der Prolog-Regie (Zeitlupe in Szene 5); 1 außerhalb */
+  get prologueTimeScale(): number { return this.prologue?.active ? this.prologue.timeScale : 1; }
   get prologuePhase(): string { return this.prologue?.active ? this.prologue.phase : ''; }
-  /** Regie-Zustand (Prüfungen) */
+  /** Regie-Zustand und Zahlen (Prüfungen) */
   get prologueState() { return this.prologue?.active ? this.prologue.state : null; }
-  /** Ziel des Laufs auf dem Deck (Fuß der nächsten Treppe zum Achterdeck) für Kompass und Auftragspfeil; null außerhalb der Deck-Phase */
-  get prologueGoal(): { x: number; z: number } | null {
-    const dg = this.deckGround, f = this.foot;
-    if (!this.prologue?.playable || !dg || !f) return null;
-    const q = this.ship.model.quarter;
-    if (!q) return { x: this.ship.x, z: this.ship.z };
-    let bx = this.ship.x, bz = this.ship.z, bd = Infinity;
-    for (const sx of q.stairX) {
-      // Fuß der Treppe auf dem Hauptdeck (große Schiffe: die Treppe läuft unten nach außen auseinander, `flare`)
-      const p = dg.world(sx + Math.sign(sx) * (q.flare ?? 0), q.z1 + q.stairLen + 0.8);
-      const d = Math.hypot(p.x - f.x, p.z - f.z);
-      if (d < bd) { bd = d; bx = p.x; bz = p.z; }
-    }
-    return { x: bx, z: bz };
-  }
+  get prologueLive(): PrologueLive | null { return this.prologue?.active ? this.prologue : null; }
+  /** Pausenmenü: Regie und Musik des Prologs halten an */
+  set prologuePaused(on: boolean) { this.prologue?.pause(on); }
+  /** Ziel des Laufs auf dem Deck (die freie Kanone) für Kompass und Auftragspfeil; null außerhalb der Deck-Phase */
+  get prologueGoal(): { x: number; z: number } | null { return this.prologue?.active ? this.prologue.goal : null; }
 
   private prologueHost(ui: PrologueUi): PrologueHost {
     const w = this;
+    void ui;
     return {
       scene: w.scene,
       ship: () => w.ship,
       naval: () => w.naval,
-      combat: () => w.combat,
-      crew: () => w.crew,
       fx: () => w.cataclysmFx,
       vfx: () => w.vfx,
-      weather: () => w.env.weather,
+      env: () => w.env,
       assets: () => w.assets,
       foot: () => w.foot,
+      player: () => w.player,
       deck: () => w.deckGround,
-      stage: (x, z, heading, look) => {
+      stageShip: (x, z, heading, look) => {
         w.teleport(x, z, heading);
         w.setShip(FLAGSHIP.tier, FLAGSHIP.look, 'kugel', 1, w.playerFaction, 1, 1, 0);
-        w.env.setState({ time: PROLOGUE_TIME, weather: 'sturm' });
         w.player?.setLook(look);
         w.goDeck();
+        // die pechschwarzen Segel bleiben im Prolog sichtbar (die Kino-Einstellungen zeigen das ganze Schiff)
+        w.setSailFade(w.ship, false);
       },
-      openSea: () => w.openSeaSpot(),
+      openSea: (away, minD) => w.openSeaSpot(away, minD),
       setControl: (on) => { w.prologueHold = !on; },
       placeFoot: (x, z, yaw) => { if (w.foot) { w.foot.place(x, z, yaw, w.groundProxy); w.footYaw = yaw; } },
-      driveFoot: (x, y, z, yaw) => w.foot?.drive(x, y, z, yaw, false),
+      poseFoot: (x, y, z, yaw) => w.foot?.pose(x, y, z, yaw),
+      shiftFoot: (dx, dz, fresh) => w.foot?.carry(dx, dz, fresh),
       groundY: (x, z, y) => w.groundProxy.height(x, z, y),
-      ground: () => w.groundProxy,
       waterY: (x, z) => w.env.heightAt(x, z),
       impact: (n) => w.animeRig.impact(n),
       shake: (k) => w.hitShake.shake(k),
-      warm: (o) => w.warmHook?.(o),
-      line: (who, text, title) => ui.line(who, text, title),
-      banner: (t, sub) => ui.banner(t, sub),
-      blackout: (k) => ui.blackout(k),
+      warmAsync: (o) => w.warmAsyncHook?.(o) ?? Promise.resolve(),
+      uploadTexture: (t) => w.naval?.uploadTexture(t) ?? false,
+      setTrench: (ax, az, bx, bz, hw, depth) => w.env.ocean.setTrench(ax, az, bx, bz, hw, depth),
+      lightCarriers: (list, on) => {
+        for (const c of list) { if (on) { if (!w.fireCarriers.includes(c)) w.fireCarriers.push(c); } else swapRemove(w.fireCarriers, c); }
+      },
       playerId: () => w.playerEntityId,
+      prebuildHome: async () => {
+        const spec = w.homeShipSpec;
+        if (!spec) return;
+        const cls = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, spec.tier))];
+        const model = buildShip(cls, spec.look, w.ship.heroModel, w.ship.evo);
+        Ship.keepSpare(Ship.modelKey(cls.id, spec.look, w.ship.heroModel, w.ship.evo), model);
+        await (w.warmAsyncHook?.(model.group) ?? Promise.resolve());
+        // Texturen (gemalte Segel und Rumpf) Stück für Stück hochladen
+        const list: Texture[] = [];
+        model.group.traverse((o) => { const m = (o as Mesh).material; if (!m) return; for (const mat of Array.isArray(m) ? m : [m]) for (const k in mat) { const v = (mat as unknown as Record<string, unknown>)[k] as Texture | null; if (v && (v as Texture).isTexture && (v as Texture).image && !list.includes(v)) list.push(v); } });
+        for (const t of list) { if (w.texHook?.upload(t)) await new Promise<void>((r) => requestAnimationFrame(() => r())); }
+      },
       // erst nach dem laufenden Bild melden: das Spiel baut dann Strand, Schiff und Einführung auf (nie mitten im Weltschritt)
       finished: (skipped) => { w.prologueHold = false; queueMicrotask(() => ui.finished(skipped)); },
     };
   }
 
-  /** Freie See für die Prolog-Bühne: keine Insel im Aufbau-Umkreis (es entsteht nichts nebenbei), immer derselbe Ort */
-  private openSeaSpot(): { x: number; z: number } {
+  /**
+   * Freie See für die Prolog-Bühnen: keine Insel im Aufbau-Umkreis (es entsteht nichts nebenbei), immer derselbe Ort; `away` = mindestens
+   * `minD` m von diesem Punkt entfernt (Grünmarkt und die Sturmjagd liegen weit auseinander).
+   */
+  private openSeaSpot(away: { x: number; z: number } | null = null, minD = 0): { x: number; z: number } {
     for (let r = 2600; r < 9000; r += 450) {
       for (let i = 0; i < 16; i++) {
         const a = 0.4 + (i / 16) * Math.PI * 2;
         const x = Math.sin(a) * r, z = Math.cos(a) * r;
+        if (away && Math.hypot(x - away.x, z - away.z) < minD) continue;
         if (!this.ground.islandAt(x, z, 1250)) return { x, z };
       }
     }
-    return { x: HOME_SPAWN.x, z: HOME_SPAWN.z - 2400 };
+    return { x: HOME_SPAWN.x + (away ? minD : 0), z: HOME_SPAWN.z - 2400 };
   }
 
   /** Instanz-Regeln anwenden (nach dem Laden und bei jedem Übergang Prolog → Einführung → geteilte Welt) */
@@ -3250,6 +3280,91 @@ export class SeaWorld {
       return e;
     }
     return null;
+  }
+
+  /**
+   * 4.7D – Einführung: Bodos Schmiedestück. Der Hammerschmied hämmert am Amboss, bei jedem Schlag stieben Funken, zum Schluss glüht das fertige
+   * Stück auf; danach `done` (die Ausrüstung wechselt in die Hand). Fehlt Bodo, sofort `done`.
+   */
+  forgeShow(id: string, blows: number, dur: number, done: () => void) {
+    const n = this.npcs.find((q) => q.townDef?.id === id);
+    if (!n) { done(); return; }
+    n.char.playClip('Hammering', { loop: true, fade: 0.15 });
+    const fx = Math.sin(n.yaw), fz = Math.cos(n.yaw);
+    const ax = n.x + fx * 0.85, az = n.z + fz * 0.85;
+    const gy = this.ground.height(ax, az);
+    const ay = (Number.isFinite(gy) ? gy : 1.6) + 0.95;
+    for (let i = 0; i < blows; i++) {
+      this.later(0.3 + (i * (dur - 0.7)) / Math.max(1, blows - 1), () => {
+        this.vfx.burst('spark', ax, ay, az, 28, 7.5, FORGE_SPARK, { up: 3.2, size: 0.24, life: 0.45 });
+        this.vfx.burst('ember', ax, ay + 0.15, az, 5, 1.6, FORGE_GLOW, { up: 1.4, size: 0.32, life: 0.8 });
+        audio.play('clang', 0.95, { x: ax, z: az });
+      });
+    }
+    this.later(dur, () => {
+      this.vfx.burst('spark', ax, ay + 0.3, az, 46, 9, FORGE_SPARK, { up: 5, size: 0.28, life: 0.6 });
+      this.vfx.burst('ember', ax, ay + 0.5, az, 10, 2.4, FORGE_GLOW, { up: 2.4, size: 0.5, life: 1.1 });
+      audio.play('fanfareRare', 0.7);
+      done();
+    });
+  }
+
+  /** Das Kurogane-Kriegsschiff des inszenierten Überfalls (bis die private Instanz sich auflöst) */
+  private assaultShip: EnemyShip | null = null;
+
+  /**
+   * 4.7D – Einführung: inszenierter Kurogane-Angriff. Ein Kriegsschiff läuft vor den Hafen von Ankerglück und feuert `salvos` Breitseiten in
+   * `lead` Sekunden auf Steg und Hafenkante (Einschläge mit Gischt, Splittern und kleinen Bränden – sie verletzen niemanden), die Glocke läutet
+   * Alarm. Danach landet der Stoßtrupp (TutorialFlow).
+   */
+  tutorialAssault(lead: number, salvos: number) {
+    const nav = this.naval;
+    if (!nav) return;
+    const home = this.ground.islands[0];
+    const hx = home.x - 10, hz = home.z - 52;
+    const dx = hx - home.x, dz = hz - home.z, d = Math.hypot(dx, dz) || 1;
+    let sx = hx + (dx / d) * 175, sz = hz + (dz / d) * 175;
+    for (let k = 0; k < 10 && !nav.freeWater(sx, sz, 9, 20); k++) { sx += (dx / d) * 25; sz += (dz / d) * 25; }
+    // Breitseite zur Stadt: Bug quer zur Linie Schiff → Hafen
+    const e = nav.spawnStage(sx, sz, Math.atan2(dx, dz) + Math.PI / 2, 2, 'kurogane', 'Kurogane-Kriegsschiff', 3, 'jaeger');
+    e.ship.frozen = 1e9; e.ship.ceasefire = 1e9; e.ship.unsinkable = true;
+    this.assaultShip = e;
+    audio.play('bell', 1);
+    audio.play('horn', 0.8);
+    this.onMessage('Alarm! Ein Kurogane-Kriegsschiff liegt vor dem Hafen und eröffnet das Feuer!');
+    for (let k = 0; k < salvos; k++) {
+      this.later(0.5 + (k * lead) / salvos, () => {
+        const s = e.ship;
+        if (!s.alive) return;
+        const tx0 = hx - s.x, tz0 = hz - s.z, td = Math.hypot(tx0, tz0) || 1;
+        for (let g = 0; g < 3; g++) {
+          const mx = s.x + (tx0 / td) * s.cls.W * 0.6 + (tz0 / td) * (g - 1) * 4, mz = s.z + (tz0 / td) * s.cls.W * 0.6 - (tx0 / td) * (g - 1) * 4;
+          const my = this.env.heightAt(s.x, s.z) + s.model.deckY + 0.8;
+          this.vfx.burst('spark', mx, my, mz, 10, 10, ASSAULT_FIRE, { up: 1, size: 0.5, life: 0.25, dirX: tx0 / td, dirZ: tz0 / td, focus: 0.7 });
+          this.vfx.burst('smoke', mx, my, mz, 4, 3, ASSAULT_SMOKE, { up: 1, size: 3.4, life: 2.6 });
+          // Einschlag ein Stück vor bzw. auf der Hafenkante
+          const ix = hx + (Math.random() - 0.5) * 30 - (tx0 / td) * (8 + Math.random() * 22), iz = hz + (Math.random() - 0.5) * 30 - (tz0 / td) * (8 + Math.random() * 22);
+          this.later(0.45 + g * 0.12, () => {
+            const land = this.ground.height(ix, iz);
+            const iy = Number.isFinite(land) && land > 0.4 ? land : this.env.heightAt(ix, iz);
+            if (Number.isFinite(land) && land > 0.4) { this.vfx.burst('ember', ix, iy + 0.4, iz, 18, 7, ASSAULT_FIRE, { up: 5, size: 0.4 }); this.vfx.burst('splinter', ix, iy + 0.3, iz, 10, 6, ASSAULT_SMOKE, { up: 5, size: 0.35 }); }
+            else this.vfx.burst('drop', ix, iy + 0.4, iz, 22, 8, FOAM_COL, { up: 8, size: 0.4 });
+            this.vfx.burst('smoke', ix, iy + 0.8, iz, 4, 2, ASSAULT_SMOKE, { up: 2, size: 3, life: 2.4 });
+            audio.play('boom', 0.8, { x: ix, z: iz });
+          });
+        }
+        s.kick(0.12);
+        audio.play('broadside', 0.9, { x: s.x, z: s.z });
+        this.hitShake.shake(0.25);
+      });
+    }
+  }
+
+  /** Kurogane-Kriegsschiff des Überfalls abbauen (die Instanz löst sich auf, Rückkehr ins Menü) */
+  endAssault() {
+    const e = this.assaultShip;
+    this.assaultShip = null;
+    if (e && this.naval?.enemies.includes(e)) this.naval.removeEventShip(e);
   }
 
   /** Einführung: Kurogane-Stoßtrupp landet im Hafen (Gegner mit `TUTORIAL_RAID_TAG`) */
@@ -3428,7 +3543,8 @@ export class SeaWorld {
       }
     }
     // Eigenes Schiff gesunken: Crew flickt es notdürftig am Start
-    if (this.ship.sinking > 4) {
+    // 4.7D: nicht im Prolog – dort teilt der Sieben-Farben-Strahl die Schwarze Krone, und ihre Hälften versinken (die Regie baut ab)
+    if (this.ship.sinking > 4 && !this.prologue) {
       this.ship.sinking = 0;
       this.ship.repair(0.5);
       this.ship.ensureCrew(0.6);
@@ -5276,8 +5392,10 @@ export class SeaWorld {
     this.cine.update(frameDt, this.animeRig.framesLeft);
     if (this.cine.forced) { this.cine.forced = false; this.cineImpactFx(this.cine.def); }
     this.applyCinematic(cam, inMenu, frameDt);
-    // 4.7A: der Gewitter-Prolog führt in seinen Kino-Phasen selbst die Kamera (auf dem Deck gilt die Fußkamera)
+    // 4.7D: die Prolog-Regie (Echtzeit) und ihre Kamera; Licht und Schatten folgen dann ihrem Blick (Grünmarkt liegt weit von der Figur)
+    if (!inMenu && this.prologue) this.prologue.frame(frameDt);
     const proCam = !inMenu && !!this.prologue && this.prologue.camera(cam, frameDt);
+    if (proCam && this.prologue) this.focus.copy(this.prologue.focus);
     {
       const hs = this.hitstop;
       const gameK = this.cine.active ? this.cine.timeScale : hs.freeze > 0 ? 0 : hs.t > 0 ? hs.scale : 1;
@@ -5307,7 +5425,17 @@ export class SeaWorld {
     {
       const key = inMenu ? 'menu' : proCam ? 'cine' : this.yardOn ? 'yard' : this.cinematic > 0 ? 'cine' : this.mode === 'foot' ? 'foot' : 'sail';
       const jump = this.camBlend.focusJump(this.focus);
-      if (key !== this.camKey || jump > 4) {
+      if (proCam) {
+        // 4.7D: die Prolog-Regie schneidet hart – jede neue Einstellung ist ein Schnitt. Weder Fokus-Sprünge noch der Wechsel IN die
+        // Regie-Kamera blenden über (sonst flog die Kamera nach jedem Schnitt eine halbe Sekunde lang quer über die Flotte, gemessen mit
+        // 1 900 zusätzlich gezeichneten Schiffsteilen). Zurück zur Spielerkamera (Deck, Strand) blendet es weiter weich über.
+        if (this.camBlend.blending) this.camBlend.cancel();
+        if (key !== this.camKey) {
+          this.camKey = key;
+          this.armFoot.reset(); this.armSea.reset(); this.armYard.reset(); this.armBlend.reset(); this.swell.reset();
+          this.footWantInit = false;
+        }
+      } else if (key !== this.camKey || jump > 4) {
         if (this.camKey !== '' && !(key === 'menu' && this.camKey === 'menu')) this.camBlend.start(this.focus, jump > 60 ? 1.1 : this.camKey === 'menu' ? 1.0 : 0.7);
         this.camKey = key;
         this.armFoot.reset(); this.armSea.reset(); this.armYard.reset(); this.armBlend.reset(); this.swell.reset();

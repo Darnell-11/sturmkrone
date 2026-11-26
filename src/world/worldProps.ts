@@ -12,7 +12,7 @@ import { markShared } from '../render/dispose';
  */
 export const WORLD_PROPS = ['kanone', 'anker', 'laterne', 'fass', 'kiste'] as const;
 /** Details für die bestehenden Schiffe: detailliertes Steuerrad und geschnitzte Drachen-Galionsfigur */
-export const SHIP_PROPS = ['steuerrad', 'galionsfigur_drache'] as const;
+export const SHIP_PROPS = ['steuerrad', 'galionsfigur_drache', 'steuerrad_krone'] as const;
 export type PropId = (typeof WORLD_PROPS)[number] | (typeof SHIP_PROPS)[number];
 
 const BASE = `${import.meta.env.BASE_URL}models/world/`;
@@ -22,8 +22,8 @@ const SHIP_BASE = `${import.meta.env.BASE_URL}models/ships/`;
  * Welche Rollen eines Modells Kontur und Schatten bekommen: nur die großen Körper. Eisenbänder, Messing und Glas sind
  * klein; Kontur und Schattenpass (je Kaskade) kosteten dort mehr Zeichenaufrufe, als sie dem Bild bringen.
  */
-const OUTLINE: Record<PropId, readonly string[]> = { kanone: ['bronze', 'darkwood'], steuerrad: ['wood'], galionsfigur_drache: ['paint'], anker: ['iron'], laterne: [], fass: ['wood'], kiste: ['wood'] };
-const SHADOW: Record<PropId, readonly string[]> = { kanone: ['bronze', 'darkwood'], steuerrad: ['wood'], galionsfigur_drache: ['paint'], anker: [], laterne: [], fass: ['wood'], kiste: ['wood'] };
+const OUTLINE: Record<PropId, readonly string[]> = { kanone: ['bronze', 'darkwood'], steuerrad: ['wood'], galionsfigur_drache: ['paint'], steuerrad_krone: ['ebony'], anker: ['iron'], laterne: [], fass: ['wood'], kiste: ['wood'] };
+const SHADOW: Record<PropId, readonly string[]> = { kanone: ['bronze', 'darkwood'], steuerrad: ['wood'], galionsfigur_drache: ['paint'], steuerrad_krone: ['ebony'], anker: [], laterne: [], fass: ['wood'], kiste: ['wood'] };
 const models = new Map<PropId, Map<string, BufferGeometry>>();
 
 export async function loadWorldProps(names: readonly PropId[] = [...WORLD_PROPS, ...SHIP_PROPS]): Promise<void> {

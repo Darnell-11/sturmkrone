@@ -16,7 +16,7 @@ import { CAT_LABEL, type GearCat } from './equipment';
 import { bonusRows, GEAR_CATALOG, GEAR_SET_BY_ID } from './gear';
 import { TRINKETS } from './trinkets';
 import { RARITIES, RARITY, type Rarity } from './rarity';
-import { FIGUREHEAD_DEFS, FIGUREHEAD_MODELS, type FigureheadModelId } from './figureheads';
+import { FIGUREHEAD_DEFS, FIGUREHEAD_MODELS, STORY_FIGUREHEADS, type FigureheadModelId } from './figureheads';
 import { CITADELS, FACTIONS, FACTION_IDS, type FactionId } from './factions';
 import { officerSlots, troopCapacity } from './crewTiers';
 import { RANKS } from './ranks';
@@ -43,7 +43,7 @@ export type GlyphKind =
   | 'sail' | 'cannonball' | 'cannon' | 'hull';
 
 /** Vorschau-Zeichen einer Galionsfigur und einer Flagge (Katalog und Werft nutzen dieselben) */
-export const figureheadGlyph = (id: FigureheadModelId): GlyphKind => ({ storm_dragon: 'fig_dragon', valkyrie: 'fig_valkyrie', leviathan_skull: 'fig_skull', royal_griffin: 'fig_griffin' } as const)[id];
+export const figureheadGlyph = (id: FigureheadModelId): GlyphKind => ({ storm_dragon: 'fig_dragon', valkyrie: 'fig_valkyrie', leviathan_skull: 'fig_skull', royal_griffin: 'fig_griffin', crowned_kraken: 'fig_skull' } as const)[id];
 export const flagGlyph = (id: FlagId): GlyphKind => `flag_${id}`;
 
 export interface CatalogStat { label: string; value: string; good?: boolean }
@@ -199,6 +199,8 @@ function build(): CatalogEntry[] {
 
   // ---------- Galionsfiguren ----------
   for (const id of FIGUREHEAD_MODELS) {
+    // 4.7D: Story-Figuren (Schwarzbarts Seeungeheuer) gibt es nur im Prolog
+    if (STORY_FIGUREHEADS.includes(id)) continue;
     const d = FIGUREHEAD_DEFS[id];
     out.push({
       id: `figurehead:${id}`, cat: 'galion', group: 'Galionsfiguren', name: d.name, rarity: d.rarity, glyph: figureheadGlyph(id), color: '#d7ae52', color2: '#7a4a22',

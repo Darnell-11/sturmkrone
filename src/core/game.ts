@@ -14,7 +14,7 @@ import { AnimeImpactOverlay } from '../ui/animeImpactOverlay';
 import { PrologueOverlay } from '../ui/prologueOverlay';
 import { TUT_FLAGS, TutorialFlow, type TutorialHost } from './tutorialFlow';
 import type { ClassView } from '../ui/classScreen';
-import { BEACH_START, SHIP_COACH, TUTORIAL, TUTORIAL_QUESTS, linenLook } from '../data/prologue';
+import { BEACH_START, SHIP_COACH, TUTORIAL, TUTORIAL_QUESTS, combatCoach, linenLook } from '../data/prologue';
 import { TUTORIAL_END, dissolve, enterTutorial, isPrivate, legacyInstance, skipIntro, worldGates } from '../story/tutorialInstance';
 import { HOME_SPAWN } from '../data/world';
 import { FAJI_ART_IDS, FORM_NAMES, MASTERY_CAP, WILL, WILL_AURAS, cleanFaji, formOf, formProgress, isFajiArt, type AuraId, type FajiArtId, type FajiSave } from '../data/fajiArts';
@@ -313,6 +313,8 @@ export class Game {
     this.world = new SeaWorld(deferWorld);
     this.world.env.maxTex = caps.maxTextureSize;
     this.world.warmHook = (o) => this.renderer.warmObject(o);
+    // 4.7D: der Pre-Warm-Ladescreen des Prologs wartet, bis alle Programme seiner Bühnen bereitstehen
+    this.world.warmAsyncHook = (o) => this.renderer.warmObjectAsync(o);
     this.world.texHook = { ready: (t) => this.renderer.textureReady(t), upload: (t) => this.renderer.uploadTexture(t) };
     // Streaming (4.3B): Shader einer neu gebauten Insel parallel vorübersetzen, der Tausch wartet darauf
     this.world.warmIsland = (o) => this.renderer.warmObjectAsync(o);
@@ -334,7 +336,7 @@ export class Game {
     this.titleFade = document.createElement('div');
     this.titleFade.className = 'title-fade';
     uiRoot.appendChild(this.titleFade);
-    this.prologueUi = new PrologueOverlay(uiRoot);
+    this.prologueUi = new PrologueOverlay(uiRoot, canvas);
     this.prologueUi.onSkip = (all) => this.skipIntroClicked(all);
     this.menus = new Menus(uiRoot, this);
     this.menus.onError = () => this.hud.toast('Das hat leider nicht geklappt – bitte noch einmal versuchen.', 3);
@@ -711,6 +713,12 @@ export class Game {
     else if (hs.freeze > 0) { this.loop.timeScale = 0; hs.freeze -= frameDt; }
     else if (hs.t > 0) { this.loop.timeScale = hs.scale; hs.t -= frameDt; }
     else { this.loop.timeScale = 1; hs.scale = 1; }
+    // 4.7D: Zeitlupe der Prolog-Regie (Szene 5: Sturz ins Meer); im Pausenmenü halten Regie und Musik an
+    {
+      const pts = this.world.prologueTimeScale;
+      if (pts < 0.999 && !cine.active) this.loop.timeScale = Math.min(this.loop.timeScale, pts);
+      this.world.prologuePaused = this.state.is('pause');
+    }
     const a = this.state.is('play', 'pause') ? alpha : 1;
     this.world.render(a, frameDt, inMenu);
     // das eben neu berechnete Zeitmaß der Kino-Regie gilt schon für die nächsten Logikschritte; ihr Impact-Frame ersetzt den weißen Blitz
@@ -719,11 +727,11 @@ export class Game {
     {
       // Impact-Frames zählen GEZEICHNETE Bilder (2 – 4), Kinobalken, HUD-Ausblendung und Aura-Glühen folgen der Kino-Regie
       const rig = this.world.animeRig;
-      // 4.7A: Kinobalken des Gewitter-Prologs (Einleitung, Finale) wie die der Ultimates – das HUD blendet dabei aus
+      // 4.7D: der Prolog zeichnet seine eigenen 21:9-Kinobalken (PrologueOverlay); das HUD blendet in den Film-Szenen und im Ladescreen aus
       const proBars = inMenu ? 0 : this.world.prologueBars;
-      this.impactOverlay.apply(rig.frame(), inMenu ? 0 : Math.max(cine.barsK, proBars), inMenu ? 0 : cine.glow, this.world.cataclysm.chargeHex, frameDt);
+      this.impactOverlay.apply(rig.frame(), inMenu ? 0 : cine.barsK, inMenu ? 0 : cine.glow, this.world.cataclysm.chargeHex, frameDt);
       // in den Kino-Phasen des Prologs keine Schadenszahlen, Lebensleisten und Kombo-Zähler der Deckkämpfe über dem Bild
-      const proCine = proBars > 0.5;
+      const proCine = proBars > 0.5 || this.world.prologueLoading;
       if (proCine !== this.proCineShown) { this.proCineShown = proCine; document.documentElement.classList.toggle('pro-cine', proCine); }
       this.prologueUi.setPlay(!inMenu && this.world.prologueRunning && !proCine);
     }
@@ -1429,7 +1437,9 @@ export class Game {
     if (!def.cat && s.crew.party.length < officerSlots(s.ship.tier)) s.crew.party.push(id);
     if (id === 'lehrer') this.grantTalentBonus(1);
     audio.play('bell');
-    this.overlay.showBanner(`${def.name} heuert an!`, def.perk);
+    // die Deckmatrosen füllen die Schaluppe ganz auf
+    this.world.ship.ensureCrew(1);
+    this.overlay.showBanner(`${def.name} und ${TUTORIAL.starterHands} Deckmatrosen heuern an!`, def.perk);
     this.applyPower();
     this.persist();
     return `„${def.quote}“`;
@@ -5189,33 +5199,72 @@ export class Game {
     else if (inst.mode === 'tutorial') this.beginTutorial(false);
   }
 
-  /** Gewitter-Prolog auf Schwarzbarts Flaggschiff */
+  /**
+   * 4.7D: die 7-Szenen-Kino-Inszenierung – erst der Pre-Warm-Ladescreen (alles wird vorbereitet), dann Grünmarkt, die Sturmfront, die
+   * Vernichtung, der Gegenangriff (spielbar), der Sieben-Farben-Strahl, Schwarzbarts Schwur und das Erwachen am Strand von Ankerglück.
+   */
   private beginPrologue() {
     const s = this.save!;
     this.prologueUi.show(true);
-    this.prologueUi.skip(true);
+    this.prologueUi.skip(false);
+    const ui = this.prologueUi;
+    // die Schaluppe des Spielstands baut der Ladescreen vor (Erwachen am Strand ohne Ruckler)
+    this.world.homeShipSpec = { tier: s.ship.tier, look: s.ship.look };
     this.world.startPrologue(this.displayLook(), {
-      line: (who, text, title) => this.prologueUi.line(who, text, title),
-      banner: (t, sub) => this.prologueUi.banner(t, sub),
-      blackout: (k) => this.prologueUi.blackout(k),
+      loading: (k) => ui.loading(k),
+      line: (l) => ui.line(l),
+      banner: (t, sub) => ui.banner(t, sub),
+      goal: (t) => ui.goal(t),
+      blackout: (k) => ui.blackout(k),
+      letterbox: (k) => ui.letterbox(k),
+      eyelids: (k) => ui.eyelids(k),
+      blur: (px) => ui.blur(px),
+      skip: (on) => ui.skip(on),
+      beach: () => this.prologueBeach(),
       finished: (skipped) => this.prologueFinished(skipped),
     }, ((s.meta.created % 4294967296) ^ 0x51a7) >>> 0);
     this.sceneChanged(8);
   }
 
-  /** Der Prolog ist vorbei (Herzschlag, Schwarzblende) oder übersprungen: Erwachen am Strand von Ankerglück */
-  private prologueFinished(_skipped: boolean) {
+  /** Szene 7 beginnt: die private Einführung „Ankerglück“ steht schon – die Figur liegt im Sand, die Regie zeigt das Erwachen aus ihren Augen */
+  private prologueBeach() {
+    const s = this.save;
+    if (!s) return;
+    const inst = (s.progress.instance ??= legacyInstance());
+    if (inst.mode === 'prolog') enterTutorial(inst);
+    this.beginTutorial(true, true);
+    this.persist();
+  }
+
+  /** Der Prolog ist vorbei (Erwachen am Strand) oder übersprungen: die Einführung „Ankerglück“ beginnt bzw. läuft schon */
+  private prologueFinished(skipped: boolean) {
     const s = this.save;
     if (!s) return;
     this.prologueUi.show(false);
     if (this.introSkipAll) { this.introSkipAll = false; this.finishIntroSkip(); return; }
-    enterTutorial(s.progress.instance ??= legacyInstance());
-    this.beginTutorial(true);
+    const inst = (s.progress.instance ??= legacyInstance());
+    if (inst.mode === 'prolog') {
+      // übersprungen, bevor Szene 7 begann: Erwachen am Strand wie gewohnt (mit Story-Karte)
+      enterTutorial(inst);
+      this.beginTutorial(true);
+      this.persist();
+      return;
+    }
+    // natürliches Ende: man steht am Strand, die Steuerung beginnt; Hinnerk winkt am Pier
+    this.touch.setLayout(FOOT_TOUCH);
+    this.input.flush();
+    this.overlay.showBanner('Ankerglück', 'Der Morgen nach dem Sturm – du lebst.');
+    const t1 = QUEST_BY_ID.t1;
+    if (t1) this.after(() => this.hud.toast(`Hauptauftrag: ${t1.steps[0]?.text ?? t1.title}`, 5), 1800);
+    void skipped;
     this.persist();
   }
 
-  /** Private Einführung „Ankerglück“ (Stufe 1 → 3) beginnen bzw. nach dem Laden fortsetzen */
-  private beginTutorial(fresh: boolean) {
+  /**
+   * Private Einführung „Ankerglück“ (Stufe 1 → 3) beginnen bzw. nach dem Laden fortsetzen. `fromPrologue`: Szene 7 der Kino-Inszenierung
+   * zeigt das Erwachen – keine Story-Karte, die Regie führt Figur und Kamera noch einige Sekunden.
+   */
+  private beginTutorial(fresh: boolean, fromPrologue = false) {
     const s = this.save!;
     const inst = (s.progress.instance ??= legacyInstance());
     this.world.setGates(worldGates(inst));
@@ -5234,6 +5283,7 @@ export class Game {
     const qs = this.quests;
     if (qs && !qs.isActive('t1') && !qs.isDone('t1')) qs.accept('t1');
     this.tutorial = new TutorialFlow(this.tutorialHost());
+    if (fromPrologue) return;
     if (fresh) {
       const t1 = QUEST_BY_ID.t1;
       audio.play('bell');
@@ -5310,6 +5360,11 @@ export class Game {
       level: () => g.save?.player.level ?? 1,
       setLevel: (n) => g.tutorialLevel(n),
       giveWeapon: () => g.tutorialWeapon(),
+      // 4.7D: Bodo schmiedet mit Funkenflug, Konrads Lehrtafel zur eigenen Klasse, Sternbild sofort offen, Kurogane-Kriegsschiff vor dem Hafen
+      forge: (done) => g.world.forgeShow('bodo', TUTORIAL.forgeBlows, TUTORIAL.forgeTime, done),
+      coachCombat: () => g.tutorialCombatCoach(),
+      openTree: () => g.after(() => { if (g.state.is('play')) g.openTalents(); }, 1400),
+      assault: () => g.world.tutorialAssault(TUTORIAL.raidShipLead, TUTORIAL.raidSalvos),
       grantShip: () => g.tutorialShip(),
       offerHire: () => g.tutorialHireCard(),
       crewHired: () => !!g.save?.crew.hired.includes(TUTORIAL.starterCrew),
@@ -5365,6 +5420,18 @@ export class Game {
     this.persist();
   }
 
+  /**
+   * 4.7D – Lehrtafel des Waffenmeisters: die eigene Kombo der Klasse (4.7C, Namen der Leicht-Kette), Sturm-Schritt, Zielerfassung mit Tab oder
+   * Klick und der erste Punkt im Sternbild-Klassenbaum.
+   */
+  private tutorialCombatCoach() {
+    const c = this.classSave();
+    const st = ACTION_STYLES[this.classAction()];
+    const sp = c ? classSpec(c) : null;
+    const label = c ? (sp ? SPECS[sp].label : CLASS_BASES[classBase(c)].label) : st.label;
+    this.prologueUi.coach(combatCoach(label, st.light.map((m) => m.label), !st.physical), 'Waffenmeister Konrad');
+  }
+
   /** Einführung (Konrad): Faustkämpfer wählen ihren Pfad – Schnell oder Kräftig, für immer; danach öffnet sich der Klassenbaum */
   private tutorialPathCard() {
     if (!this.state.is('play')) return;
@@ -5398,9 +5465,9 @@ export class Game {
     if (!def || !this.state.is('play')) return;
     this.state.set('pause');
     this.menus.showChoice({
-      kicker: 'Hafenmeisterin Ilse', title: 'Deine erste Crew',
-      text: '„Ohne Leute segelt dir die Schaluppe im Kreis. Mira kennt jede Strömung der Bucht – das Handgeld übernehme ich, du zahlst es mir zurück, wenn du berühmt bist.“',
-      choices: [{ id: def.id, label: def.name, sub: `${def.job} · ${def.perk}`, tag: 'Handgeld bezahlt', color: def.col, button: 'Anheuern' }],
+      kicker: 'Hafenmeisterin Ilse', title: 'Deine erste kleine Crew',
+      text: `„Ohne Leute segelt dir die Schaluppe im Kreis. Mira kennt jede Strömung der Bucht, und ${TUTORIAL.starterHands} Deckmatrosen aus dem Hafen ziehen die Taue – das Handgeld übernehme ich, du zahlst es mir zurück, wenn du berühmt bist.“`,
+      choices: [{ id: def.id, label: def.name, sub: `${def.job} · ${def.perk} · dazu ${TUTORIAL.starterHands} Deckmatrosen`, tag: 'Handgeld bezahlt', color: def.col, button: 'Crew anheuern' }],
     }, () => this.tutorialHire());
   }
 
@@ -5462,6 +5529,8 @@ export class Game {
     if (inst.mode === 'shared') return;
     dissolve(inst, s.meta.playTime);
     this.tutorial = null;
+    // das Kurogane-Kriegsschiff des Überfalls dreht ab
+    this.world.endAssault();
     this.world.setGates(worldGates(inst));
     // ordentliche Seemannskleidung: das Aussehen aus dem Editor (samt angelegter Ausrüstung)
     this.world.updatePlayer(this.displayLook(), this.activeStyle(), this.currentAction());
@@ -5495,6 +5564,8 @@ export class Game {
   quitToMenu() {
     this.world.abortPrologue();
     this.tutorial = null;
+    // 4.7D: das Kurogane-Kriegsschiff des Einführungs-Überfalls bleibt nicht im Titelbild liegen
+    this.world.endAssault();
     this.introSkipAll = false;
     this.prologueUi.show(false);
     this.world.setGates(worldGates(legacyInstance()));

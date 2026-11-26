@@ -155,6 +155,24 @@ export function forgeStart(size: number): Promise<number> {
 /** Größe, mit der neue Sätze gebaut werden */
 export const forgeSize = (): number => defaultSize;
 
+// ---------- 4.7D: Oberflächen der „Schwarzen Krone“ (Kapitän Schwarzbarts Flaggschiff) ----------
+
+/** Rezept einer veredelten Oberfläche: Grundfarbe, PBR-Werte und der Schmiede-Satz, dessen Relief und Rauheit sie trägt */
+export interface FinishRecipe { color: string; roughness: number; metalness: number; spec: number; forge: ForgeKind; emissive?: string }
+
+/**
+ * Die Oberflächen der Schwarzen Krone – rabenschwarzer Lack (Rumpfholz-Relief, glänzend), dunkles Schmiedeeisen (gehämmerter Kanonenstahl),
+ * Blattgold (gebürstetes Messing) und glimmende Amethyst-Augen. Galionsfigur (Rollen ebony, iron, gold, gem), Kronen-Steuerrad und
+ * die schwarzen Gussstahl-Geschütze bauen ihre Toon-Materialien daraus (gleiche Programme wie alle Schmiede-Oberflächen).
+ */
+export const FLAGSHIP_FINISH: Readonly<Record<'ebony' | 'iron' | 'gold' | 'gem' | 'gun', FinishRecipe>> = {
+  ebony: { color: '#0F0C0E', roughness: 0.3, metalness: 0.06, spec: 0.95, forge: 'rumpf_edel' },
+  iron: { color: '#25262B', roughness: 0.46, metalness: 0.78, spec: 0.85, forge: 'kanonenstahl' },
+  gold: { color: '#D9A441', roughness: 0.24, metalness: 0.92, spec: 1, forge: 'messing' },
+  gem: { color: '#B24DFF', roughness: 0.06, metalness: 0.2, spec: 1, forge: 'messing', emissive: '#9B3BFF' },
+  gun: { color: '#141518', roughness: 0.3, metalness: 0.9, spec: 1, forge: 'kanonenstahl' },
+};
+
 /**
  * Alle Sätze wirklich freigeben (nur beim endgültigen Beenden, Tests). Doppelter Aufruf ist harmlos: jede Textur wird höchstens einmal freigegeben.
  */

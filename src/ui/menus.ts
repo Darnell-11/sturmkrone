@@ -10,7 +10,7 @@ import type { Settings, SettingsTab } from '../core/settings';
 import { fmtDist, fmtInt } from '../core/format';
 import { EDGE_WALL, WEATHER, WEATHER_IDS, type WeatherId } from '../data/world';
 import { formatClock } from '../world/timeOfDay';
-import { FIGUREHEAD_DEFS, FIGUREHEAD_MODELS, figureheadModel } from '../data/figureheads';
+import { FIGUREHEAD_DEFS, FIGUREHEAD_MODELS, STORY_FIGUREHEADS, figureheadModel } from '../data/figureheads';
 import { FLAGS, FLAG_DESC, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, STRIPE_COLORS, type ShipLook } from '../data/ships';
 import { BRANCH_LABEL, EVO_BRANCHES, EVO_MAX, evoEffectText, shipEvolutionTier, tierOf, type EvoBranch, type ShipEvolution } from '../data/shipEvolution';
 import { FLEET_ORDERS, activeCount, type FleetOrder } from '../data/playerFleet';
@@ -1162,7 +1162,7 @@ export class Menus {
     const flagCards = cards('flag', (Object.keys(FLAGS) as (keyof typeof FLAGS)[]).map((id) => ({ id, name: FLAGS[id], glyph: flagGlyph(id), c1: look.flagColor, c2: '#F3E6C8', rarity: 'gewoehnlich' as const, desc: FLAG_DESC[id], on: look.flag === id })));
     const headCards = cards('figurehead', [
       { id: 'keine', name: 'Keine', glyph: 'figurehead', c1: '#6a6458', rarity: 'gewoehnlich', desc: 'Ohne Galionsfigur', on: !model },
-      ...FIGUREHEAD_MODELS.map((id) => ({ id, name: FIGUREHEAD_DEFS[id].name, glyph: figureheadGlyph(id), c1: '#d7ae52', c2: '#7a4a22', rarity: FIGUREHEAD_DEFS[id].rarity, desc: FIGUREHEAD_DEFS[id].desc, on: model === id })),
+      ...FIGUREHEAD_MODELS.filter((id) => !STORY_FIGUREHEADS.includes(id)).map((id) => ({ id, name: FIGUREHEAD_DEFS[id].name, glyph: figureheadGlyph(id), c1: '#d7ae52', c2: '#7a4a22', rarity: FIGUREHEAD_DEFS[id].rarity, desc: FIGUREHEAD_DEFS[id].desc, on: model === id })),
     ]);
     const trade = g.tradeInPreview();
     const sel = this.yardSel;

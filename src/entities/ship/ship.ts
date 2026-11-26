@@ -180,6 +180,18 @@ export class Ship {
   /** Gedämpfte Lage auf dem Wasser (Höhe, Neigung, Rollen) mit Geschwindigkeit: das Schiff folgt den Wellen mit Masse, statt jeder Welle sofort */
   private sm = { y: 0, p: 0, r: 0, vy: 0, vp: 0, vr: 0, init: false };
 
+  /** 4.7D: vorab gebautes Schiffsmodell (Schlüssel aus Klasse, Aussehen, Spielerschiff, Ausbaustufen) – der nächste passende Umbau nimmt es */
+  private static spare: { key: string; model: ShipModel } | null = null;
+  static modelKey(clsId: string, look: ShipLook, hero: boolean, evo: ShipEvolution): string { return `${clsId}|${hero ? 1 : 0}|${JSON.stringify(look)}|${JSON.stringify(evo)}`; }
+  /** Modell für einen späteren Umbau bereitlegen (ein älteres wird freigegeben) */
+  static keepSpare(key: string, model: ShipModel) { if (Ship.spare && Ship.spare.model !== model) disposeObject(Ship.spare.model.group); Ship.spare = { key, model }; }
+  /** Bereitgelegtes Modell verwerfen */
+  static dropSpare() { if (Ship.spare) { disposeObject(Ship.spare.model.group); Ship.spare = null; } }
+  /** Liegt ein Modell bereit? (Prüfungen) */
+  static get spareKey(): string { return Ship.spare?.key ?? ''; }
+  /** Ausbaustufen und Spielerschiff-Merker (für vorab gebaute Modelle) */
+  get heroModel(): boolean { return this.hero; }
+
   /** hero: Spielerschiff – bekommt Laternenlichter und rechnet die Segel-Normalen jedes Bild neu */
   /**
    * Schiff in Teilschritten bauen (Phase 4.3C): das Modell entsteht über mehrere Bilder (`buildShipSteps`), das Schiff samt Szene erst im letzten Schritt.
@@ -260,7 +272,11 @@ export class Ship {
   rebuildShipMesh() {
     glowHub.removeOwner(this);
     disposeObject(this.model.group);
-    this.model = buildShip(this.cls, this.look, this.hero, this.evo);
+    // 4.7D: ein vorab gebautes Modell (Prolog-Ladescreen: die Schaluppe für den Strand von Ankerglück) ersetzt den Bau – kein Ruckler
+    const key = Ship.modelKey(this.cls.id, this.look, this.hero, this.evo);
+    const spare = Ship.spare;
+    if (spare && spare.key === key) { this.model = spare.model; Ship.spare = null; }
+    else this.model = buildShip(this.cls, this.look, this.hero, this.evo);
     this.scene.add(this.model.group);
     this.glowLights();
     this.holes = 0;
@@ -269,6 +285,20 @@ export class Ship {
 
   /** Stimmt das Modell nicht mehr mit den Ausbaustufen überein? (dann muss `SeaWorld.setShip` es neu bauen) */
   get visualStale() { return this.model.evoKey !== visualKey(this.evo); }
+
+  /**
+   * 4.7D: Wrack-Zustand löschen (nach dem Prolog: die geteilte Schwarze Krone wird wieder zum Schiff des Spielstands) – kein Sinken, keine
+   * Zerteilung, kein Feuer; das Modell baut `rebuild` danach neu.
+   */
+  clearWreck() {
+    if (this.split && !this.split.ready) cancelShipSplit(this.split);
+    this.split = null;
+    this.sinking = 0;
+    this.sinkPitch = 0;
+    this.sinkRoll = 0;
+    this.fire = 0;
+    this.hull = this.maxHull;
+  }
 
   /** Steuerung: throttle −1 … 1 ändert Fahrstufe nicht, turn −1 … 1 */
   steer(dt: number, turn: number, env: SeaEnv, speedMult = 1) {

@@ -549,8 +549,9 @@ ${SEA_COLOR_GLSL}
           // Dünungen (170, 110, 64 m) sonst ein regelmäßiges Rautenraster heller und dunkler Flecken ins Meer
           float skHgtK = 1.0 - smoothstep(140.0, 520.0, camD);
           skWater *= mix(1.0, 0.94 + 0.14 * smoothstep(-0.8, 1.6, skD.y), skHgtK);
-          // Ozean-Teilung: am Grund des Grabens schimmert nasser Meeresboden durch
-          if (uTrenchD.y > 0.0) { float skTk = clamp(-skTrench(vSkW.xz) / uTrenchD.y, 0.0, 1.0); skWater = mix(skWater, vec3(0.34, 0.29, 0.21), smoothstep(0.55, 0.95, skTk) * 0.8); }
+          // Ozean-Teilung: nur am Grund des Grabens schimmert nasser Meeresboden durch – die steilen Wände bleiben Wasser (4.7D)
+          float skTw = uTrenchD.y > 0.0 ? clamp(-skTrench(vSkW.xz) / uTrenchD.y, 0.0, 1.0) : 0.0;
+          if (skTw > 0.0) skWater = mix(skWater, vec3(0.34, 0.29, 0.21), smoothstep(0.86, 0.98, skTw) * 0.85);
           // Meeresgrund: heller Sand scheint durch das klare Wasser, Rot wird zuerst verschluckt (daher türkis);
           // Lichtnetze (Kaustiken) wandern darüber. Mit der Tiefe verschwindet der Grund.
           vec2 skCp = vSkW.xz * 0.5;
@@ -682,11 +683,21 @@ ${SEA_COLOR_GLSL}
             skAer = max(skAer, aer * skPch * hd.w);
           }
           {
-            // brechender Schaum auf den steilen Verdrängungskämmen, in Fäden aufgerissen
-            float brk = smoothstep(0.5, 1.15, skHg);
+            // brechender Schaum auf den steilen Verdrängungskämmen, in Fäden aufgerissen – nicht auf den Wänden der Ozean-Teilung (4.7D: dort
+            // wurde die ganze, 38 m hohe Wand zu Schaum und wirkte im Spektrum-Licht wie eine Sandklippe)
+            float skWall = smoothstep(0.03, 0.2, skTw) * (1.0 - smoothstep(0.86, 0.98, skTw));
+            float brk = smoothstep(0.5, 1.15, skHg) * (1.0 - smoothstep(0.03, 0.2, skTw));
             float lc = skNoise(vSkW.xz * 2.4 + skOsc(0.33, 0.2)) * 0.55 + skNoise(vSkW.xz * 6.5 - skOsc(0.25, 0.29)) * 0.45;
             skFoam = max(skFoam, smoothstep(0.5, 0.78, lc + brk * 0.4) * brk * 0.8);
             skAer = max(skAer, brk * 0.6);
+            if (skWall > 0.0) {
+              // die Wasserwände: dunkles, glattes Wasser, an dem Schaumfäden herabrinnen (Rauschen längs des Grabens und über die Höhe)
+              vec2 tdir = normalize(uTrench.zw - uTrench.xy + vec2(1e-4, 0.0));
+              float along = dot(vSkW.xz, tdir);
+              float rill = smoothstep(0.64, 0.9, skNoise(vec2(along * 0.85, vSkW.y * 0.06 + uTime * 1.4)) * 0.7 + skNoise(vec2(along * 2.6, vSkW.y * 0.2 + uTime * 2.2)) * 0.3);
+              skFoam = max(skFoam, rill * 0.5 * skWall);
+              skBase = mix(skBase, skBase * 0.7, skWall * 0.5);
+            }
           }
           skBase = mix(skBase, skBase * 1.5 + vec3(0.03, 0.1, 0.11), clamp(skAer, 0.0, 1.0) * 0.55);
           skFoam = clamp(skFoam, 0.0, 1.0);

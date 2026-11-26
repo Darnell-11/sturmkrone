@@ -37,7 +37,7 @@ import { cachedSailTexture, plankTexture, sailTexture } from '../../render/textu
 import { sharedGeo } from '../../render/geoCache';
 import { disposeGeometry, markShared } from '../../render/dispose';
 import { toon } from '../../render/toon';
-import { forgeSet, hullForgeKind } from '../../graphics/pbrMaterialForge';
+import { FLAGSHIP_FINISH, forgeSet, hullForgeKind } from '../../graphics/pbrMaterialForge';
 import { toonPbr } from '../../render/pbrMaps';
 import { deckTexture } from '../../render/shipTextures';
 import { makeSailUniforms, sailMaterial } from '../../render/flags';
@@ -231,6 +231,8 @@ function figurehead(id: FigureheadId, scale: number): Group {
 const _up = new Vector3(0, 1, 0), _dir = new Vector3(), _q = new Quaternion();
 // Metalle aus der PBR-Schmiede (4.4A): gehämmerter Kanonenstahl für Eisen und Bronze, gebürstetes Messing für Gold
 const IRON = () => toon({ color: '#4A3326', spec: 0.9, metalness: 0.85, roughness: 0.78, forge: 'kanonenstahl' });
+/** 4.7D: veredelte Oberflächen der Schwarzen Krone (Rezepte aus graphics/pbrMaterialForge.ts) */
+const finishMat = (k: keyof typeof FLAGSHIP_FINISH) => { const f = FLAGSHIP_FINISH[k]; return toon({ color: f.color, spec: f.spec, metalness: f.metalness, roughness: f.roughness, forge: f.forge, ...(f.emissive ? { emissive: f.emissive } : {}) }); };
 const COPPER = () => toon({ color: '#B8683A', spec: 1, metalness: 1, roughness: 0.38, forge: 'kanonenstahl' });
 const ROPE = () => toon({ color: '#3D2F20', roughness: 0.95 });
 /**
@@ -966,7 +968,14 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
   // Steuerrad
   const helm = new Vector3(0, D + castleH + 0.14, castleMid + sternLen * 0.15);
   const wheel = new Group();
-  if (hasProp('steuerrad')) {
+  if (look.regal === 'krone' && hasProp('steuerrad_krone')) {
+    // 4.7D: verziertes Kronen-Steuerrad der Schwarzen Krone (schwarzer Lack, Eisen, Blattgold, Amethyst in der Krone der Nabe)
+    for (const [role, geo] of propRoles('steuerrad_krone')) {
+      const wm = new Mesh(geo, finishMat(role === 'ebony' || role === 'iron' || role === 'gold' || role === 'gem' ? role : 'ebony'));
+      wm.userData.wheelMesh = true;
+      wheel.add(wm);
+    }
+  } else if (hasProp('steuerrad')) {
     // Blender-Steuerrad (Felge, acht Speichen mit gedrehten Griffen, Messingnabe): Netze bleiben getrennt, damit sich das Rad dreht
     for (const [role, geo] of propRoles('steuerrad')) {
       const wm = new Mesh(geo, role === 'brass' ? PROP_GOLD() : wood);
@@ -2062,13 +2071,15 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
     const barrelCol = toon({ color: '#6F4A2B', roughness: 0.85 }), crateCol = toon({ color: '#8A6840', roughness: 0.9 });
     const iron2 = IRON(), cu2 = COPPER(), gold2 = PROP_GOLD(), dark2 = toon('#1E1410');
     // Rohrwerkstoff nach Kanonen-Stufe: 2 Eisen, 3 Bronze, 4 polierte Bronze, 5 schwarzer Gussstahl (die Goldringe setzt `addGunRing`)
-    const gunMat = vis.cannon.barrel === 'eisen' ? iron2
+    // 4.7D: die Schwarze Krone trägt wuchtige Geschütze aus schwarzem Gussstahl, ihre Beschläge sind dunkles Schmiedeeisen
+    const regal = look.regal === 'krone';
+    const gunMat = regal ? finishMat('gun') : vis.cannon.barrel === 'eisen' ? iron2
       : vis.cannon.barrel === 'bronzelang' ? toon({ color: '#D9963E', spec: 1, metalness: 1, roughness: 0.22, forge: 'messing' })
       : vis.cannon.barrel === 'schwarz' ? toon({ color: '#17181C', spec: 1, metalness: 0.9, roughness: 0.3, forge: 'kanonenstahl' })
       : cu2;
     batch.flush(group, (id: PropId, role: string) => {
       switch (role) {
-        case 'iron': return iron2;
+        case 'iron': return regal ? finishMat('iron') : iron2;
         case 'bronze': return gunMat;
         case 'brass': return gold2;
         case 'glass': return lanternGlass;

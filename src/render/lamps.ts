@@ -302,13 +302,16 @@ export class LampPool {
         }
       }
     }
+    // 4.7D: blendet das Schattenlicht gerade aus (sein Träger ist außer Reichweite, etwa nach einem Kamera-Schnitt), rechnet es keine
+    // Würfel-Schattenkarte mehr – sechs Pässe für ein Licht, das niemand mehr sieht (gemessen: 0,2 s mit 700 Zeichenaufrufen je Bild)
+    let fade0 = false;
     for (let i = 0; i < n; i++) {
       const l = this.lights[i];
       let tg = this.target[i];
       // Träger weg (außer Reichweite, entfernt, ausgeblendet)? Licht ausblenden, danach neu zuteilen
       const gone = tg !== null && (!inBest(tg) || !tg.parent);
       if (tg === null || gone) {
-        if (l.intensity > 0.05) { l.intensity += (0 - l.intensity) * Math.min(1, dt * 9); if (tg !== null) { this.place(l, tg); continue; } }
+        if (l.intensity > 0.05) { if (i === 0) fade0 = true; l.intensity += (0 - l.intensity) * Math.min(1, dt * 9); if (tg !== null) { this.place(l, tg); continue; } }
         tg = null;
         for (let k = 0; k < count; k++) { const c = this.bestO[k]!; if (!taken(c)) { tg = c; break; } }
         this.target[i] = tg;
@@ -329,7 +332,7 @@ export class LampPool {
       l.intensity += (want - l.intensity) * Math.min(1, dt * 10);
     }
     // Schattenkarte nur rechnen, solange das Licht leuchtet
-    if (this.shadowOn) this.lights[0].shadow.autoUpdate = this.lights[0].intensity > 0.25 || !this.lights[0].shadow.map;
+    if (this.shadowOn) this.lights[0].shadow.autoUpdate = (this.lights[0].intensity > 0.25 && !fade0) || !this.lights[0].shadow.map;
   }
 
   /** Licht an die Laterne setzen, etwas von der Figur weg nach außen (sonst blendet es Haut und Kleidung des Trägers aus) */

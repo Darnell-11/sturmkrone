@@ -4,6 +4,7 @@ import { preload } from '../../core/preload';
 import { FIGUREHEAD_DEFS, FIGUREHEAD_MODELS, type FigureheadModelId } from '../../data/figureheads';
 import { markShared } from '../../render/dispose';
 import { toon } from '../../render/toon';
+import { FLAGSHIP_FINISH } from '../../graphics/pbrMaterialForge';
 
 /**
  * Galionsfiguren aus Blender: laden (Rollen → Geometrie, mit Ambient-Occlusion als Eckpunktfarbe) und mit hochwertigen PBR-Oberflächen
@@ -51,7 +52,7 @@ export async function loadFigureheads(ids: readonly FigureheadModelId[] = FIGURE
 }
 
 // ---------- PBR-Oberflächen (geteilt) ----------
-let mats: Record<'wood' | 'gold' | 'bronze' | 'bone' | 'dark' | 'gem' | 'gemGlow', Material> | null = null;
+let mats: Record<'wood' | 'gold' | 'bronze' | 'bone' | 'dark' | 'gem' | 'gemGlow' | 'ebony' | 'iron', Material> | null = null;
 function materials() {
   if (mats) return mats;
   const ao = { vertexColors: true as const };
@@ -67,8 +68,18 @@ function materials() {
     // Edelstein-Augen: glatt, leicht selbstleuchtend; große Schiffe tragen die glimmende Fassung
     gem: markShared(toon({ color: '#B3161C', emissive: '#4A0508', roughness: 0.08, metalness: 0.2, spec: 1 })),
     gemGlow: markShared(toon({ color: '#E0222A', emissive: '#FF3A2A', roughness: 0.06, metalness: 0.2, spec: 1 })),
+    // 4.7D: rabenschwarzer Lack und dunkles Schmiedeeisen (gekröntes Seeungeheuer der Schwarzen Krone, graphics/pbrMaterialForge.ts)
+    ebony: markShared(toon({ color: FLAGSHIP_FINISH.ebony.color, roughness: FLAGSHIP_FINISH.ebony.roughness, metalness: FLAGSHIP_FINISH.ebony.metalness, spec: FLAGSHIP_FINISH.ebony.spec, forge: FLAGSHIP_FINISH.ebony.forge, ...ao })),
+    iron: markShared(toon({ color: FLAGSHIP_FINISH.iron.color, roughness: FLAGSHIP_FINISH.iron.roughness, metalness: FLAGSHIP_FINISH.iron.metalness, spec: FLAGSHIP_FINISH.iron.spec, forge: FLAGSHIP_FINISH.iron.forge, ...ao })),
   };
   return mats;
+}
+
+/** 4.7D: glimmende Amethyst-Augen des gekrönten Seeungeheuers (Schwarzbarts Willenskraft) */
+let kronGemMat: Material | null = null;
+function kronGem(): Material {
+  const f = FLAGSHIP_FINISH.gem;
+  return (kronGemMat ??= markShared(toon({ color: f.color, emissive: f.emissive, roughness: f.roughness, metalness: f.metalness, spec: f.spec })));
 }
 
 /**
@@ -81,7 +92,7 @@ export function buildFigurehead(id: FigureheadModelId, scale: number, L: number)
   const m = materials();
   const g = new Group();
   for (const [role, geo] of roles) {
-    const mat = role === 'gem' ? (L >= FIGUREHEAD_DEFS[id].gemGlowFrom ? m.gemGlow : m.gem) : (m as Record<string, Material>)[role] ?? m.gold;
+    const mat = role === 'gem' ? (id === 'crowned_kraken' ? kronGem() : L >= FIGUREHEAD_DEFS[id].gemGlowFrom ? m.gemGlow : m.gem) : (m as Record<string, Material>)[role] ?? m.gold;
     const mesh = new Mesh(geo, mat);
     mesh.castShadow = role !== 'gem';
     mesh.userData.figurehead = id;

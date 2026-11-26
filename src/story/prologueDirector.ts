@@ -1,270 +1,277 @@
-// Phase 4.7A – Ablauf des Gewitter-Prologs als reine Zustandsmaschine (kein three.js, kein DOM, kein Math.random, nichts Neues je Schritt).
+// Phase 4.7D – PrologueDirector: die filmreife 7-Szenen-Kino-Inszenierung als reine Zustandsmaschine (kein three.js, kein DOM, kein
+// Math.random, nichts Neues je Schritt). Das Drehbuch steht als Daten in data/prologue.ts (`PROLOGUE_SCRIPT`): Taktschläge je Szene mit
+// Untertiteln, Musik-Einsätzen, Kamera-Einstellungen, Lichtstimmungen, Effekten, Kinobalken, Zeitlupe und Schwarzblenden.
 //
-//   intro     Kamerafahrt über das brennende Flaggschiff, Titel, Schwarzbarts Ruf (Spielfigur steht am Bug)
-//   deck      spielbar: der Schiffsjunge läuft vom Bug zum Achterdeck; Kanoneneinschläge und brennende Trümmer mit Warnringen vor ihm,
-//             Schwarzbarts Schockwellen zerschmettern Marine-Schiffe, Blitze schlagen neben dem Schiff ein
-//   assemble  Akt 1 des Finales: die sieben Admirale formieren sich auf ihren Flaggschiffen
-//   charge    Akt 2: sieben Strahlen bündeln sich zum Vereinten Admirals-Urteil, Schwarzbart stellt sich ihm
-//   impact    Akt 3: Einschlag mit Doppel-Impact-Frame, Schwarzbart fällt im Feuersturm
-//   overboard die Druckwelle schleudert die Figur über Bord
-//   blackout  Schwarzblende mit Herzschlag → done (die Einführung „Ankerglück“ beginnt)
+// Die Regie läuft in ECHTZEIT (die Musik spielt in Echtzeit; die Zeitlupe der Welt verlangsamt nur die Spielzeit). Szene 4 ist ab
+// `DECK_PLAY.from` spielbar: sie endet, sobald die Welt meldet, dass der Schiffsjunge an seiner Kanone steht (`reached`), plus kurzes
+// Gefechtsbereit-Halten – oder nach `DECK_PLAY.autoAfter` von selbst (der Prolog lässt sich nicht verlieren). Szene 7 endet mit `done`.
 //
-// Die Welt (world/prologueLive.ts) liefert je Schritt die Lage der Figur im Schiffsraum (`PrologueGeo`) und setzt die Ereignisse um.
-import { ADMIRALS, DECK_LINES, PROLOGUE, type ProloguePhase } from '../data/prologue';
+// Die Welt (world/prologueLive.ts) setzt die Ereignisse um; Anzeige, Musik und Kamera fragen den Zustand ab (Balken, Zeitmaß, Musiklage).
+import {
+  DECK_HINT_AFTER, DECK_PLAY, PROLOGUE_SCENES, PROLOGUE_SCENE_IDS, PROLOGUE_SCRIPT, SCORE_CUE_IDS,
+  type Beat, type BeatKind, type PrologueSceneId, type ScoreCue,
+} from '../data/prologue';
 
-export type PrologueEventType =
-  | 'phase' | 'line' | 'hazard' | 'detonate' | 'shock' | 'strike' | 'admiral' | 'charge' | 'judgment' | 'fall' | 'thrown' | 'heartbeat' | 'done';
+export type PrologueEventType = BeatKind | 'scene' | 'play' | 'ready' | 'hint' | 'auto' | 'done';
 
-/** Ein Ereignis (vorab angelegt, je Schritt überschrieben): Felder je nach Art */
+/** Ein Ereignis (vorab angelegt, je Schritt überschrieben) */
 export interface PrologueEvent {
   type: PrologueEventType;
-  /** Phase, Zeilen-ID */
-  text: string;
-  /** Gefahren-Nummer, Schiff, Admiral, Herzschlag */
-  id: number;
-  kind: 'cannon' | 'debris' | '';
-  /** Lage im Schiffsraum (m): quer (+ Backbord) und längs (+ Bug) */
-  lx: number; lz: number;
-  r: number; warn: number; dmg: number; knock: number;
+  /** Szene, Zeile, Stück, Einstellung, Stimmung, Effekt */
+  id: string;
+  /** Wert (Ziel-Lautstärke, Balken, Zeitmaß, Schwarz, Nummer) und Dauer (s) */
+  v: number;
+  d: number;
+  /** Szene (Nummer 1 … 7) und Szenenzeit beim Auslösen */
+  scene: number;
+  at: number;
 }
 
-const ev = (): PrologueEvent => ({ type: 'phase', text: '', id: 0, kind: '', lx: 0, lz: 0, r: 0, warn: 0, dmg: 0, knock: 0 });
+const ev = (): PrologueEvent => ({ type: 'scene', id: '', v: 0, d: 0, scene: 0, at: 0 });
 
 /** Ausgabe eines Schritts: feste Plätze, `n` = belegt */
 export class PrologueOut {
-  readonly events: PrologueEvent[] = Array.from({ length: 24 }, ev);
+  readonly events: PrologueEvent[] = Array.from({ length: 48 }, ev);
   n = 0;
   push(type: PrologueEventType): PrologueEvent {
     const e = this.events[Math.min(this.n, this.events.length - 1)];
     if (this.n < this.events.length) this.n++;
-    e.type = type; e.text = ''; e.id = 0; e.kind = ''; e.lx = 0; e.lz = 0; e.r = 0; e.warn = 0; e.dmg = 0; e.knock = 0;
+    e.type = type; e.id = ''; e.v = 0; e.d = 0; e.scene = 0; e.at = 0;
     return e;
   }
 }
 
-/** Lage der Spielfigur und des Decks im Schiffsraum (m): `lz` längs (+ Bug), `startLz` Bug-Startpunkt, `goalLz` Steuerrad, `halfW` halbe Deckbreite */
+/** Lage der Spielfigur in Szene 4 (die Welt meldet sie je Schritt) */
 export interface PrologueGeo {
-  lx: number; lz: number; startLz: number; goalLz: number; halfW: number;
-  /** die Welt meldet das Achterdeck selbst (Höhe und Treppe zählen); ohne Angabe gilt der Abstand längs zum Ziel */
-  reached?: boolean;
+  /** steht an der freien Kanone */
+  reached: boolean;
 }
 
-interface Pending { id: number; kind: 'cannon' | 'debris'; lx: number; lz: number; r: number; at: number; dmg: number; knock: number; live: boolean }
+/** Eine weich überblendete Größe (Kinobalken, Zeitmaß, Schwarzblende) */
+interface Ramp { from: number; to: number; t: number; d: number }
+
+/** Lautstärke-Lage eines Stücks (für Prüfungen und die Synchronisierung der Musik) */
+export interface CueState { on: boolean; gain: number; from: number; to: number; t: number; d: number; /** Echtzeit seit dem Start (s) */ pos: number }
 
 /** Zustand (JSON-tauglich) */
 export interface PrologueState {
-  phase: ProloguePhase;
-  /** Zeit seit Beginn und in der Phase (s) */
+  /** Szene 0 … 6 (Index in PROLOGUE_SCENES); 7 = fertig */
+  scene: number;
+  /** Zeit seit Prologbeginn und in der Szene (s, Echtzeit) */
   t: number;
-  phaseT: number;
-  /** eigener Zufall (LCG) */
-  seed: number;
-  nextCannon: number;
-  nextDebris: number;
-  nextStrike: number;
-  hazardSeq: number;
-  pending: Pending[];
-  shocks: number;
-  /** Phasenzeit der letzten Schockwelle (−1 = noch keine) */
-  lastShock: number;
-  lines: number;
-  admirals: number;
+  sceneT: number;
+  /** nächster Taktschlag der Szene */
+  beat: number;
+  /** Szene 4: Steuerung frei, Ziel erreicht (Szenenzeit), Hinweis gegeben, Zeit abgelaufen */
+  play: boolean;
+  readyAt: number;
   hint: boolean;
-  reached: boolean;
-  /** das Ziel wurde nicht erreicht, die Zeit lief ab (die Welt setzt die Figur ans Achterdeck) */
   auto: boolean;
-  /** Merker der Finale-Schritte */
-  marks: number;
-  heartbeats: number;
-  /** Treffer, die die Figur abbekommen hat (Prüfungen) */
-  hits: number;
+  bars: Ramp;
+  time: Ramp;
+  black: Ramp;
+  cues: Record<ScoreCue, CueState>;
+  /** absolute Stille (nach dem Stopp in Szene 1) */
+  silent: boolean;
+  done: boolean;
+  /** Abfolge der gezeigten Zeilen (Prüfungen) */
+  lines: number;
 }
 
-export function newPrologueState(seed = 0x5c4a7b): PrologueState {
+const ramp = (v: number): Ramp => ({ from: v, to: v, t: 0, d: 0 });
+const smooth = (k: number) => { const x = k < 0 ? 0 : k > 1 ? 1 : k; return x * x * (3 - 2 * x); };
+const rampValue = (r: Ramp): number => (r.d <= 0 || r.t >= r.d ? r.to : r.from + (r.to - r.from) * smooth(r.t / r.d));
+const setRamp = (r: Ramp, to: number, d: number) => { r.from = rampValue(r); r.to = to; r.t = 0; r.d = Math.max(0, d); };
+const stepRamp = (r: Ramp, dt: number) => { if (r.t < r.d) r.t = Math.min(r.d, r.t + dt); };
+
+export function newPrologueState(): PrologueState {
+  const cues = {} as Record<ScoreCue, CueState>;
+  for (const c of SCORE_CUE_IDS) cues[c] = { on: false, gain: 0, from: 0, to: 0, t: 0, d: 0, pos: 0 };
   return {
-    phase: 'intro', t: 0, phaseT: 0, seed: seed >>> 0 || 1, nextCannon: 1.2, nextDebris: 2.4, nextStrike: 0.8, hazardSeq: 0,
-    pending: Array.from({ length: 12 }, () => ({ id: 0, kind: 'cannon' as const, lx: 0, lz: 0, r: 0, at: 0, dmg: 0, knock: 0, live: false })),
-    shocks: 0, lastShock: -1, lines: 0, admirals: 0, hint: false, reached: false, auto: false, marks: 0, heartbeats: 0, hits: 0,
+    scene: 0, t: 0, sceneT: 0, beat: 0, play: false, readyAt: -1, hint: false, auto: false,
+    bars: ramp(1), time: ramp(1), black: ramp(1), cues, silent: false, done: false, lines: 0,
   };
 }
 
-/** Zufall 0 … 1 aus dem Zustand */
-function rnd(st: PrologueState): number {
-  st.seed = (Math.imul(st.seed, 1664525) + 1013904223) >>> 0;
-  return st.seed / 4294967296;
-}
+export const sceneOf = (st: PrologueState): PrologueSceneId | 'fertig' => PROLOGUE_SCENE_IDS[st.scene] ?? 'fertig';
 
-/** Dauer einer Phase (s); Deck und Fertig sind offen */
-export function phaseDuration(p: ProloguePhase): number {
-  switch (p) {
-    case 'intro': return PROLOGUE.intro;
-    case 'assemble': return PROLOGUE.assemble;
-    case 'charge': return PROLOGUE.charge;
-    case 'impact': return PROLOGUE.impact;
-    case 'overboard': return PROLOGUE.overboard;
-    case 'blackout': return PROLOGUE.blackout;
-    default: return Number.POSITIVE_INFINITY;
-  }
-}
-
-const NEXT: Readonly<Record<ProloguePhase, ProloguePhase>> = {
-  intro: 'deck', deck: 'assemble', assemble: 'charge', charge: 'impact', impact: 'overboard', overboard: 'blackout', blackout: 'done', done: 'done',
-};
-
-function setPhase(st: PrologueState, p: ProloguePhase, out: PrologueOut) {
-  st.phase = p;
-  st.phaseT = 0;
-  st.marks = 0;
-  out.push('phase').text = p;
-  if (p === 'done') out.push('done');
-}
-
-/** Einmal-Auslöser: Merker `bit` setzen, wenn die Phasenzeit `at` überschritten ist */
-function once(st: PrologueState, bit: number, at: number): boolean {
-  if ((st.marks & (1 << bit)) || st.phaseT < at) return false;
-  st.marks |= 1 << bit;
-  return true;
-}
-
-/** Ist das Achterdeck erreicht? (nah genug am Steuerrad, längs gemessen) */
-export const reachedGoal = (g: PrologueGeo): boolean => g.reached ?? g.lz <= g.goalLz + PROLOGUE.goalReach;
+/** Gesamtdauer aller reinen Film-Szenen (ohne den spielbaren Teil von Szene 4) – für Anzeige und Prüfungen */
+export const FILM_SECONDS = PROLOGUE_SCENES.reduce((s, d) => s + (d.film ? d.dur : DECK_PLAY.from), 0);
 
 /**
- * Einen Schritt rechnen (`dt` in s, Spielzeit). Ereignisse landen in `out` (vorher geleert). Gefahren erscheinen VOR der Figur (Richtung
- * Achterdeck) und seitlich verstreut, damit man ihnen ausweichen muss; zünden nach ihrer Warnzeit. Liefert die Zahl der Ereignisse.
+ * Die Regie. `step(dt, geo, out)` rechnet einen Echtzeit-Schritt (die Welt ruft ihn je gezeichnetem Bild, nicht im Pausenmenü) und schreibt
+ * die fälligen Ereignisse nach `out`. Alles andere sind Abfragen.
  */
-export function stepPrologue(st: PrologueState, dt: number, g: PrologueGeo, out: PrologueOut): number {
-  out.n = 0;
-  if (st.phase === 'done') return 0;
-  if (st.t === 0 && st.phaseT === 0 && st.marks === 0) { out.push('phase').text = st.phase; }
-  st.t += dt;
-  st.phaseT += dt;
-  switch (st.phase) {
-    case 'intro':
-      if (once(st, 0, 0.3)) out.push('line').text = 'title';
-      if (once(st, 1, 2.4)) out.push('line').text = 'call';
-      break;
-    case 'deck': stepDeck(st, g, out); break;
-    case 'assemble':
-      if (once(st, 0, 0)) out.push('line').text = 'admirals';
-      // die Admirale erscheinen nacheinander (Banner, Aura-Säule auf ihrem Schiff)
-      while (st.admirals < ADMIRALS.length && st.phaseT >= 0.35 + st.admirals * 0.45) { const e = out.push('admiral'); e.id = st.admirals++; }
-      break;
-    case 'charge':
-      if (once(st, 0, 0)) { out.push('charge'); out.push('line').text = 'charge'; }
-      if (once(st, 1, 1.7)) out.push('line').text = 'defiance';
-      break;
-    case 'impact':
-      if (once(st, 0, 0)) out.push('judgment');
-      if (once(st, 1, 0.9)) { out.push('fall'); out.push('line').text = 'fall'; }
-      break;
-    case 'overboard':
-      if (once(st, 0, 0.2)) out.push('thrown');
-      break;
-    case 'blackout':
-      if (once(st, 0, 0.8)) out.push('line').text = 'dark';
-      for (let i = 0; i < 3; i++) if (once(st, 1 + i, 0.5 + i * 0.9)) { const e = out.push('heartbeat'); e.id = ++st.heartbeats; }
-      break;
-    default: break;
-  }
-  // Phase zu Ende?
-  if (st.phase !== 'deck' && st.phaseT >= phaseDuration(st.phase)) setPhase(st, NEXT[st.phase], out);
-  return out.n;
-}
+export class PrologueDirector {
+  readonly state: PrologueState;
 
-function stepDeck(st: PrologueState, g: PrologueGeo, out: PrologueOut) {
-  const t = st.phaseT;
-  // Zeilen
-  while (st.lines < DECK_LINES.length && t >= DECK_LINES[st.lines].at) out.push('line').text = DECK_LINES[st.lines++].id;
-  // Ziel erreicht: am Achterdeck stehen bleiben und zusehen (keine neuen Gefahren mehr)
-  if (!st.reached && reachedGoal(g)) { st.reached = true; out.push('line').text = 'arrive'; clearPending(st); }
-  // Schwarzbarts Schockwellen zerschmettern Marine-Schiffe – nach Zeitplan; wer früh am Achterdeck ist, sieht die übrigen kurz hintereinander
-  const allShocks = PROLOGUE.shocks.length;
-  if (st.shocks < allShocks) {
-    const due = st.reached ? Math.min(PROLOGUE.shocks[st.shocks], st.lastShock < 0 ? t : st.lastShock + PROLOGUE.shockGap) : PROLOGUE.shocks[st.shocks];
-    if (t >= due) {
-      const e = out.push('shock'); e.id = st.shocks;
-      out.push('line').text = `shock${++st.shocks}`;
-      st.lastShock = t;
+  constructor(state?: PrologueState) { this.state = state ?? newPrologueState(); }
+
+  get scene(): PrologueSceneId | 'fertig' { return sceneOf(this.state); }
+  get sceneNr(): number { return this.state.scene + 1; }
+  get done(): boolean { return this.state.done; }
+  /** Spielbar: Szene 4 ab `DECK_PLAY.from`, bis das Ziel erreicht ist */
+  get playable(): boolean { return this.state.play && this.state.readyAt < 0 && !this.state.done; }
+  /** 21:9-Kinobalken (0 … 1) */
+  get bars(): number { return this.state.done ? 0 : rampValue(this.state.bars); }
+  /** Zeitmaß der Welt (Zeitlupe in Szene 5) */
+  get timeScale(): number { return this.state.done ? 1 : rampValue(this.state.time); }
+  /** Schwarzblende (0 … 1) */
+  get blackout(): number { return this.state.done ? 0 : rampValue(this.state.black); }
+  /** Lautstärke eines Stücks (0 … 1) */
+  cueGain(c: ScoreCue): number { const s = this.state.cues[c]; return s.on ? (s.d <= 0 || s.t >= s.d ? s.to : s.from + (s.to - s.from) * (s.t / s.d)) : 0; }
+  /** Abspielposition eines Stücks in Echtzeit (s seit dem Start) */
+  cuePos(c: ScoreCue): number { return this.state.cues[c].pos; }
+  /** Läuft irgendein Stück hörbar? (die 1,2-s-Stille nach Szene 1 ist hörbar still) */
+  get musicAudible(): boolean { for (const c of SCORE_CUE_IDS) if (this.cueGain(c) > 0.001) return true; return false; }
+
+  /** Ein Echtzeit-Schritt */
+  step(dt: number, geo: PrologueGeo, out: PrologueOut): number {
+    out.n = 0;
+    const st = this.state;
+    if (st.done) return 0;
+    if (st.t === 0 && st.sceneT === 0 && st.beat === 0) this.enterScene(out);
+    st.t += dt;
+    st.sceneT += dt;
+    stepRamp(st.bars, dt); stepRamp(st.time, dt); stepRamp(st.black, dt);
+    for (const c of SCORE_CUE_IDS) {
+      const s = st.cues[c];
+      if (!s.on) continue;
+      s.pos += dt;
+      if (s.t < s.d) s.t = Math.min(s.d, s.t + dt);
+      // ausgeblendet: aus
+      if (s.to <= 0 && s.t >= s.d) { s.on = false; s.gain = 0; } else s.gain = this.cueGain(c);
     }
+    this.fireBeats(out);
+    const def = PROLOGUE_SCENES[st.scene];
+    if (def.id === 'gegenangriff') this.stepDeck(geo, out);
+    else if (st.sceneT >= def.dur) this.nextScene(out);
+    return out.n;
   }
-  // Blitze neben dem Schiff
-  if (t >= st.nextStrike) {
-    st.nextStrike = t + PROLOGUE.strikeEvery * (0.6 + rnd(st) * 0.8);
-    const e = out.push('strike');
-    const side = rnd(st) < 0.5 ? -1 : 1;
-    e.lx = side * (g.halfW + 10 + rnd(st) * 40);
-    e.lz = g.goalLz + (g.startLz - g.goalLz) * rnd(st) + (rnd(st) - 0.5) * 30;
+
+  /** Fällige Taktschläge der Szene auslösen (in Reihenfolge) */
+  private fireBeats(out: PrologueOut) {
+    const st = this.state;
+    const script = PROLOGUE_SCRIPT[PROLOGUE_SCENES[st.scene].id];
+    while (st.beat < script.length && script[st.beat].at <= st.sceneT) this.fire(script[st.beat++], out);
   }
-  // Gefahren vor der Figur: Kanoneneinschläge und brennende Trümmer (nur unterwegs)
-  if (!st.reached && t >= st.nextCannon) {
-    st.nextCannon = t + PROLOGUE.cannon.every + (rnd(st) - 0.5) * 2 * PROLOGUE.cannon.jitter;
-    spawnHazard(st, 'cannon', g, out);
+
+  private fire(bt: Beat, out: PrologueOut) {
+    const st = this.state;
+    switch (bt.kind) {
+      case 'music': this.music(bt.id, bt.v ?? 1, bt.d ?? 0); break;
+      case 'bars': setRamp(st.bars, bt.v ?? 0, bt.d ?? 0); break;
+      case 'time': setRamp(st.time, bt.v ?? 1, bt.d ?? 0); break;
+      case 'black': setRamp(st.black, bt.v ?? 0, bt.d ?? 0); break;
+      case 'amb': st.silent = bt.id === 'stille'; break;
+      case 'line': st.lines++; break;
+      default: break;
+    }
+    const e = out.push(bt.kind);
+    e.id = bt.id; e.v = bt.v ?? 0; e.d = bt.d ?? 0; e.scene = st.scene + 1; e.at = bt.at;
   }
-  if (!st.reached && t >= st.nextDebris) {
-    st.nextDebris = t + PROLOGUE.debris.every + (rnd(st) - 0.5) * 2 * PROLOGUE.debris.jitter;
-    spawnHazard(st, 'debris', g, out);
+
+  /** Musik: `stop` schneidet alles hart ab; sonst ein Stück auf Ziel-Lautstärke `v` (Start bei 0 aus dem Stand) */
+  private music(id: string, v: number, d: number) {
+    const st = this.state;
+    if (id === 'stop') {
+      for (const c of SCORE_CUE_IDS) { const s = st.cues[c]; s.on = false; s.gain = 0; s.to = 0; s.from = 0; s.t = s.d = 0; }
+      return;
+    }
+    const s = st.cues[id as ScoreCue];
+    if (!s) return;
+    if (!s.on) {
+      if (v <= 0) return;
+      s.on = true; s.pos = 0; s.from = d > 0 ? 0 : v; s.to = v; s.t = 0; s.d = d;
+      s.gain = this.cueGain(id as ScoreCue);
+      return;
+    }
+    s.from = this.cueGain(id as ScoreCue); s.to = v; s.t = 0; s.d = d;
   }
-  for (const p of st.pending) {
-    if (!p.live || t < p.at) continue;
-    p.live = false;
-    const e = out.push('detonate');
-    e.id = p.id; e.kind = p.kind; e.lx = p.lx; e.lz = p.lz; e.r = p.r; e.dmg = p.dmg; e.knock = p.knock;
-    // trifft die Figur? (die Welt setzt den Treffer um; hier nur gezählt)
-    if (Math.hypot(g.lx - p.lx, g.lz - p.lz) <= p.r) st.hits++;
+
+  /** Szene 4: Steuerung ab `DECK_PLAY.from`, Ziel → gefechtsbereit halten → Szene 5; Hinweis und Zeitgrenze */
+  private stepDeck(geo: PrologueGeo, out: PrologueOut) {
+    const st = this.state;
+    if (!st.play && st.sceneT >= DECK_PLAY.from) { st.play = true; const e = out.push('play'); e.scene = 4; e.at = st.sceneT; }
+    if (!st.play) return;
+    if (st.readyAt < 0) {
+      if (geo.reached) {
+        st.readyAt = st.sceneT;
+        const e = out.push('ready'); e.scene = 4; e.at = st.sceneT;
+        return;
+      }
+      const playT = st.sceneT - DECK_PLAY.from;
+      if (!st.hint && playT >= DECK_HINT_AFTER) { st.hint = true; const e = out.push('hint'); e.id = 'hinweis'; e.scene = 4; e.at = st.sceneT; }
+      if (playT >= DECK_PLAY.autoAfter) {
+        // die Zeit lief ab: die Welt setzt die Figur an ihre Kanone (kein Festhängen)
+        st.auto = true;
+        st.readyAt = st.sceneT;
+        const a = out.push('auto'); a.scene = 4; a.at = st.sceneT;
+        const r = out.push('ready'); r.scene = 4; r.at = st.sceneT;
+      }
+      return;
+    }
+    if (st.sceneT >= st.readyAt + DECK_PLAY.hold) this.nextScene(out);
   }
-  // Ziel erreicht oder Zeit abgelaufen
-  if (!st.hint && t >= PROLOGUE.hintAfter && !reachedGoal(g)) { st.hint = true; out.push('line').text = 'hint'; }
-  // weiter zum Finale, sobald alle Schockwellen gefallen sind und die letzte kurz nachwirken durfte
-  if (st.reached && st.shocks >= allShocks && t >= st.lastShock + PROLOGUE.shockGap) { setPhase(st, 'assemble', out); return; }
-  if (t >= PROLOGUE.autoAfter) { st.auto = true; clearPending(st); setPhase(st, 'assemble', out); }
+
+  private nextScene(out: PrologueOut) {
+    const st = this.state;
+    // nicht ausgelöste Taktschläge der Szene noch nachholen (Zeitsprung, sehr langes Bild): kein Untertitel und kein Einsatz geht verloren
+    this.fireBeats(out);
+    st.scene++;
+    st.sceneT = 0;
+    st.beat = 0;
+    st.play = false;
+    if (st.scene >= PROLOGUE_SCENES.length) { this.finish(out); return; }
+    this.enterScene(out);
+  }
+
+  private enterScene(out: PrologueOut) {
+    const st = this.state;
+    const e = out.push('scene');
+    e.id = PROLOGUE_SCENES[st.scene].id; e.v = st.scene + 1; e.scene = st.scene + 1;
+    // Taktschläge zum Zeitpunkt 0 sofort
+    this.fireBeats(out);
+  }
+
+  private finish(out: PrologueOut) {
+    const st = this.state;
+    if (st.done) return;
+    st.done = true;
+    st.scene = PROLOGUE_SCENES.length;
+    for (const c of SCORE_CUE_IDS) { st.cues[c].on = false; st.cues[c].gain = 0; }
+    out.push('done');
+  }
+
+  /** Prolog überspringen: sofort fertig (die Welt räumt die Bühne ab und blendet die Musik aus) */
+  skip(out: PrologueOut) {
+    out.n = 0;
+    if (this.state.done) return;
+    this.finish(out);
+  }
+
+  /** Zu einer Szene springen (Prüfungen, Entwicklung): alle Taktschläge davor gelten als ausgelöst, Musik und Rampen wie am Szenenbeginn */
+  jumpTo(id: PrologueSceneId, out: PrologueOut) {
+    const st = this.state;
+    const idx = PROLOGUE_SCENE_IDS.indexOf(id);
+    if (idx < 0) return;
+    out.n = 0;
+    for (const c of SCORE_CUE_IDS) { st.cues[c].on = false; st.cues[c].gain = 0; }
+    st.scene = idx; st.sceneT = 0; st.beat = 0; st.play = false; st.readyAt = -1; st.hint = false; st.auto = false; st.silent = false;
+    this.enterScene(out);
+  }
 }
 
-function clearPending(st: PrologueState) { for (const p of st.pending) p.live = false; }
-
-function spawnHazard(st: PrologueState, kind: 'cannon' | 'debris', g: PrologueGeo, out: PrologueOut) {
-  const slot = st.pending.find((p) => !p.live);
-  if (!slot) return;
-  const c = kind === 'cannon' ? PROLOGUE.cannon : PROLOGUE.debris;
-  const [a0, a1] = PROLOGUE.ahead;
-  // vor der Figur in Laufrichtung (zum Achterdeck = kleineres lz); Trümmer näher an ihr
-  const ahead = kind === 'cannon' ? a0 + (a1 - a0) * rnd(st) : 1 + 4 * rnd(st);
-  const lz = Math.max(g.goalLz + 1.5, Math.min(g.startLz + 2, g.lz - ahead));
-  const lx = (rnd(st) * 2 - 1) * PROLOGUE.side * g.halfW;
-  slot.live = true; slot.id = ++st.hazardSeq; slot.kind = kind; slot.lx = lx; slot.lz = lz; slot.r = c.radius; slot.at = st.phaseT + c.warn; slot.dmg = c.dmg; slot.knock = c.knock;
-  const e = out.push('hazard');
-  e.id = slot.id; e.kind = kind; e.lx = lx; e.lz = lz; e.r = c.radius; e.warn = c.warn; e.dmg = c.dmg; e.knock = c.knock;
-}
-
-/** Spielbar? (nur auf dem Deck steuert man die Figur selbst) */
-export const prologuePlayable = (st: PrologueState): boolean => st.phase === 'deck';
-
-/** Kinobalken und HUD-Ausblendung (0 … 1): außer auf dem Deck immer im Kino-Format */
-export function prologueBars(st: PrologueState): number {
-  if (st.phase === 'deck') return st.phaseT < 0.5 ? 1 - st.phaseT / 0.5 : 0;
-  if (st.phase === 'done') return 0;
-  return 1;
-}
-
-/**
- * Spannung der Musik (0 … 1), −1 = Musik aus (Schwarzblende: nur Herzschlag). Zieht mit dem Geschehen an: Einstieg mittel, Deck steigend,
- * Admirale und Urteil voll, nach dem Einschlag leiser, über Bord fast still.
- */
-export function prologueIntensity(st: PrologueState): number {
-  switch (st.phase) {
-    case 'intro': return 0.45 + 0.15 * Math.min(1, st.phaseT / PROLOGUE.intro);
-    case 'deck': return Math.min(0.88, 0.6 + st.phaseT / 60);
-    case 'assemble': return 0.9;
-    case 'charge': return 1;
-    case 'impact': return st.phaseT < 1.2 ? 1 : 0.55;
-    case 'overboard': return 0.25;
-    default: return -1;
+/** Alle Ereignisse eines vollständigen Durchlaufs (Prüfungen und Werkzeuge): `reachAt` = Szenenzeit, zu der die Figur die Kanone erreicht */
+export function simulatePrologue(dt = 1 / 60, reachAt = 16, maxT = 400): { t: number; scene: number; sceneT: number; type: PrologueEventType; id: string; v: number; d: number }[] {
+  const d = new PrologueDirector();
+  const out = new PrologueOut();
+  const geo: PrologueGeo = { reached: false };
+  const list: { t: number; scene: number; sceneT: number; type: PrologueEventType; id: string; v: number; d: number }[] = [];
+  for (let i = 0; i < maxT / dt && !d.done; i++) {
+    geo.reached = d.scene === 'gegenangriff' && d.state.play && d.state.sceneT >= reachAt;
+    const n = d.step(dt, geo, out);
+    for (let k = 0; k < n; k++) { const e = out.events[k]; list.push({ t: d.state.t, scene: e.scene || d.sceneNr, sceneT: e.at, type: e.type, id: e.id, v: e.v, d: e.d }); }
   }
-}
-
-/** Prolog überspringen (Schnelltests): sofort fertig */
-export function skipPrologue(st: PrologueState, out: PrologueOut) {
-  if (st.phase === 'done') return;
-  clearPending(st);
-  setPhase(st, 'done', out);
+  return list;
 }

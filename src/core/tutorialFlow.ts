@@ -38,6 +38,14 @@ export interface TutorialHost {
   setLevel(n: number): void;
   /** Bodo hat geschmiedet: die erste Klinge in die Hand */
   giveWeapon(): void;
+  /** 4.7D: Bodos Schmiedestück (Hammerschläge mit Funkenflug), danach `done` (ohne: sofort) */
+  forge?(done: () => void): void;
+  /** 4.7D: Lehrtafel des Waffenmeisters (klassenbezogene Kombo, Sturm-Schritt, Zielerfassung, Klassenbaum) */
+  coachCombat?(): void;
+  /** 4.7D: den Sternbild-Klassenbaum öffnen (erster Talentpunkt) */
+  openTree?(): void;
+  /** 4.7D: inszenierter Kurogane-Angriff – ein Kriegsschiff beschießt den Hafen, bevor der Stoßtrupp landet */
+  assault?(): void;
   /** Ilse übergibt die ranzige Schaluppe (liegt danach am Steg) */
   grantShip(): void;
   /** Karte „Crew anheuern“ (Mira Windblatt); das Spiel meldet danach `act('hire')` */
@@ -71,7 +79,7 @@ export interface TutorialHost {
 }
 
 /** Merker im Spielstand (`progress.flags`) */
-export const TUT_FLAGS = { weapon: 'tut_weapon', level2: 'tut_level2', ship: 'tut_ship', coach: 'tut_coach', level3: 'tut_level3' } as const;
+export const TUT_FLAGS = { weapon: 'tut_weapon', level2: 'tut_level2', ship: 'tut_ship', coach: 'tut_coach', level3: 'tut_level3', fight: 'tut_fight' } as const;
 
 export class TutorialFlow {
   private stepKey = '';
@@ -81,6 +89,9 @@ export class TutorialFlow {
   private scout: object | null = null;
   private scoutT = 0;
   private raid = false;
+  /** 4.7D: der Stoßtrupp landet erst nach dem Beschuss des Kriegsschiffs (Restzeit in s; ≤ 0 = gelandet) */
+  private raidT = 0;
+  private raidLanded = false;
   private extra = false;
   private offered = '';
 
@@ -98,8 +109,10 @@ export class TutorialFlow {
   /** Ein Logikschritt (nur im laufenden Spiel; im Menü und im Gespräch ruht der Ablauf) */
   update(dt: number) {
     const h = this.h;
-    // Bodo hat geschmiedet (Auftrag t2 erfüllt): erste Klinge
-    if (h.isDone('t2') && !h.flag(TUT_FLAGS.weapon)) { h.setFlag(TUT_FLAGS.weapon); h.giveWeapon(); }
+    // Bodo hat geschmiedet (Auftrag t2 erfüllt): Hammerschläge mit Funkenflug, dann die erste Klinge bzw. der Faji-Fokus
+    if (h.isDone('t2') && !h.flag(TUT_FLAGS.weapon)) { h.setFlag(TUT_FLAGS.weapon); if (h.forge) h.forge(() => h.giveWeapon()); else h.giveWeapon(); }
+    // Kurogane-Überfall: der Stoßtrupp landet, sobald das Kriegsschiff den Hafen sturmreif geschossen hat
+    if (this.raid && !this.raidLanded) { this.raidT -= dt; if (this.raidT <= 0) { this.raidLanded = true; h.spawnRaid(false); } }
     // Dank des Bürgermeisters (t5 erfüllt): die private Instanz löst sich in die geteilte Welt auf
     if (h.isDone('t5')) { if (!h.shared()) h.dissolve(); return; }
     const cur = this.current();
@@ -117,29 +130,36 @@ export class TutorialFlow {
     if (st.type === 'sink') { this.scoutT = 0.5; return; }
     if (st.type !== 'act') return;
     switch (st.act) {
+      case 'combo':
+        // Waffenmeister Konrad erklärt die eigene Kombo, den Sturm-Schritt, die Zielerfassung und den Klassenbaum
+        if (!h.flag(TUT_FLAGS.fight)) { h.setFlag(TUT_FLAGS.fight); h.coachCombat?.(); }
+        break;
       case 'talent':
         // der Waffenmeister hebt auf Stufe 2: ein Talentpunkt mehr im Topf
         if (!h.flag(TUT_FLAGS.level2)) { h.setFlag(TUT_FLAGS.level2); h.setLevel(TUTORIAL.level2); h.say('Stufe 2! Drücke N und verteile deinen ersten Talentpunkt in deinem Klassenbaum.'); }
         this.baseSpent = h.spent();
-        // 4.7B: Faustkämpfer wählen hier bei Konrad ihren Pfad (Schnell oder Kräftig) – der erste Punkt folgt gleich im Klassenbaum
+        // 4.7B: Faustkämpfer wählen hier bei Konrad ihren Pfad (Schnell oder Kräftig) – der erste Punkt folgt gleich im Klassenbaum;
+        // 4.7D: alle anderen sehen ihr Sternbild sofort (der goldene Knoten ist der nächste Schritt)
         if (h.needsPath?.()) h.offerPath?.();
+        else if (h.spent() === this.baseSpent) h.openTree?.();
         break;
       case 'hire':
         // Ilse übergibt die Schaluppe; die erste Crew heuert man bei ihr an
         if (!h.flag(TUT_FLAGS.ship)) { h.setFlag(TUT_FLAGS.ship); h.grantShip(); }
         break;
       case 'faji':
-        // Gerstenkorn: die Kurogane greifen an – der Faji-Kristall erwacht (Stufe 3)
-        if (!this.raid) { this.raid = true; h.spawnRaid(false); }
+        // Gerstenkorn: die Kurogane greifen an (4.7D: erst beschießt ein Kriegsschiff den Hafen, dann landet der Stoßtrupp) –
+        // der Faji-Kristall erwacht (Stufe 3)
+        this.startRaid();
         if (!h.flag(TUT_FLAGS.level3)) { h.setFlag(TUT_FLAGS.level3); h.setLevel(TUTORIAL.level3); }
         break;
       case 'art':
         this.baseArt = h.probe().artSkills;
         this.baseGeist = h.geistUses?.() ?? 0;
-        if (!this.raid) { this.raid = true; h.spawnRaid(false); }
+        this.startRaid();
         break;
       case 'raid':
-        if (!this.raid) { this.raid = true; h.spawnRaid(false); }
+        this.startRaid();
         break;
       default: break;
     }
@@ -170,9 +190,9 @@ export class TutorialFlow {
         // 4.7B: die neue Kraft im Kampf – eine Geistes-Faji (alle Klassen) oder die Elementar-Form der Faji-Wirker
         if (h.probe().artSkills > this.baseArt || (h.geistUses?.() ?? 0) > this.baseGeist) { h.act('art'); break; }
         // der Trupp ist schon gefallen, bevor die neue Kunst zum Einsatz kam: zwei Nachzügler kommen über den Steg
-        if (h.raidLeft() === 0 && !this.extra) { this.extra = true; h.spawnRaid(true); h.say('Noch zwei Kurogane kommen über den Steg – zeig ihnen deine Geistes-Faji (Q, R, T oder G)!'); }
+        if (this.raidLanded && h.raidLeft() === 0 && !this.extra) { this.extra = true; h.spawnRaid(true); h.say('Noch zwei Kurogane kommen über den Steg – zeig ihnen deine Geistes-Faji (Q)!'); }
         break;
-      case 'raid': if (h.raidLeft() === 0) h.act('raid'); break;
+      case 'raid': if (this.raidLanded && h.raidLeft() === 0) h.act('raid'); break;
       default: break;
     }
   }
@@ -187,6 +207,14 @@ export class TutorialFlow {
     this.scout = h.spawnScout();
     this.scoutT = TUTORIAL.scoutRespawn;
     if (this.scout) h.say('Ein Kurogane-Spähboot kreuzt vor der Küste – versenke es mit deinen Breitseiten!');
+  }
+
+  /** Überfall beginnen (einmal): mit Kriegsschiff-Beschuss und Vorlauf, sonst landet der Trupp sofort */
+  private startRaid() {
+    if (this.raid) return;
+    this.raid = true;
+    if (this.h.assault) { this.h.assault(); this.raidT = TUTORIAL.raidShipLead; this.raidLanded = false; }
+    else { this.raidT = 0; this.raidLanded = true; this.h.spawnRaid(false); }
   }
 
   /** Karte geschlossen, ohne zu wählen: beim nächsten Schritt erneut anbieten */

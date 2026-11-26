@@ -81,7 +81,7 @@ export const FACE_MORPH: Record<FaceChannel, string> = {
   fang: 'Fcl_HA_Fung1',
 };
 
-export type ExpressionId = 'hafen' | 'kampf' | 'entschlossen' | 'schmerz' | 'jubel' | 'gespraech' | 'erschoepft' | 'erstaunt' | 'grimmig' | 'hochmut' | 'ko';
+export type ExpressionId = 'hafen' | 'kampf' | 'entschlossen' | 'schmerz' | 'jubel' | 'gespraech' | 'erschoepft' | 'erstaunt' | 'grimmig' | 'hochmut' | 'ko' | 'schrei' | 'schwur';
 type Expr = Partial<Record<FaceChannel, number>>;
 
 /**
@@ -100,6 +100,9 @@ export const EXPRESSIONS: Record<ExpressionId, { label: string; w: Expr; glow: n
   grimmig: { label: 'Grimmig', glow: 0, w: { browAngry: 0.48, eyeAngry: 0.42, mouthDown: 0.26, mouthAngry: 0.08 } },
   hochmut: { label: 'Hochmut', glow: 0, w: { browAngry: 0.32, eyeAngry: 0.26, mouthFun: 0.36, mouthUp: 0.08 } },
   ko: { label: 'Bewusstlos', glow: 0, w: { eyeClose: 0.92, browSorrow: 0.3, mouthA: 0.12 } },
+  // 4.7D: Schwarzbarts Nahaufnahmen im Prolog – Kampfschrei (weit offener Mund, glühende Willenskraft-Augen) und letzter Schwur
+  schrei: { label: 'Kampfschrei', glow: 1, w: { browAngry: 0.95, eyeAngry: 0.5, eyeSpread: 0.22, mouthA: 0.9, mouthAngry: 0.35, fang: 0.6 } },
+  schwur: { label: 'Schwur', glow: 1, w: { browAngry: 0.7, browSorrow: 0.25, eyeSpread: 0.3, eyeAngry: 0.18, mouthA: 0.62, mouthO: 0.15, mouthAngry: 0.2 } },
 };
 
 /** Grundzüge aus dem Editor (Augen, Brauen, Mund): ein leiser Dauer-Anteil, über dem die Ausdrücke liegen */

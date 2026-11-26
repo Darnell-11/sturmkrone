@@ -25,17 +25,21 @@ export const FIGUREHEAD_DEFS = {
   valkyrie: { name: 'Meeres-Walküre', rarity: 'episch', desc: 'Die Meeres-Walküre breitet ihre Schwingen über den Bug und führt die Gefallenen sicher in den Hafen.', halfW: 1.15, gemGlowFrom: 46, fallback: 'meerfrau' },
   leviathan_skull: { name: 'Leviathan-Schädel', rarity: 'selten', desc: 'Der Schädel eines erlegten Seeungeheuers: wer ihn am Bug trägt, hat dem Meer schon einmal getrotzt.', halfW: 0.62, gemGlowFrom: 30, fallback: 'kraken' },
   royal_griffin: { name: 'Vergoldeter Greif', rarity: 'legendaer', desc: 'Ein vergoldeter Greif in Fürstengestalt: das Wappentier von Admiralen und Hofkapitänen.', halfW: 1.1, gemGlowFrom: 46, fallback: 'adler' },
+  // 4.7D: nur am Bug der „Schwarzen Krone“ (Prolog) – nicht in der Werft (`STORY_FIGUREHEADS`)
+  crowned_kraken: { name: 'Gekröntes Seeungeheuer', rarity: 'legendaer', desc: 'Ein rabenschwarzes Seeungeheuer mit eiserner Krone und Goldzähnen: Kapitän Schwarzbarts Zeichen.', halfW: 1.05, gemGlowFrom: 30, fallback: 'kraken' },
 } as const satisfies Record<string, FigureheadDef>;
 
 export type FigureheadModelId = keyof typeof FIGUREHEAD_DEFS;
 export const FIGUREHEAD_MODELS = Object.keys(FIGUREHEAD_DEFS) as FigureheadModelId[];
+/** Figuren, die nur Story-Schiffe tragen (nie in Werft und Katalog) */
+export const STORY_FIGUREHEADS: readonly FigureheadModelId[] = ['crowned_kraken'];
 
 /** Kennungen aus der Zeit vor den Skulpturen */
 export const LEGACY_FIGUREHEAD = { loewe: 'royal_griffin', drache: 'storm_dragon', adler: 'royal_griffin', meerfrau: 'valkyrie', kraken: 'leviathan_skull' } as const satisfies Record<string, FigureheadModelId>;
 export type LegacyFigureheadId = keyof typeof LEGACY_FIGUREHEAD;
 
 /** Auswahl in der Werft (Schlüssel = Kennung im Spielstand) */
-export const FIGUREHEADS = { keine: 'Keine', ...Object.fromEntries(FIGUREHEAD_MODELS.map((id) => [id, FIGUREHEAD_DEFS[id].name])) } as { keine: string } & Record<FigureheadModelId, string>;
+export const FIGUREHEADS = { keine: 'Keine', ...Object.fromEntries(FIGUREHEAD_MODELS.filter((id) => !STORY_FIGUREHEADS.includes(id)).map((id) => [id, FIGUREHEAD_DEFS[id].name])) } as { keine: string } & Record<FigureheadModelId, string>;
 export type FigureheadId = 'keine' | FigureheadModelId | LegacyFigureheadId;
 
 /** Modell zu einer Kennung (null = keine Figur oder unbekannt) */

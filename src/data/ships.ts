@@ -82,6 +82,11 @@ export interface ShipLook {
   lanterns: boolean;
   /** Schiff einer Weltmacht (data/factions.ts): Segelmuster, Wappen und Flagge kommen aus render/heraldry.ts, Rumpf und Segel aus den Farben oben */
   power?: FactionId;
+  /**
+   * 4.7D: Prunk-Ausstattung eines Story-Schiffs. `krone` = Schwarzbarts „Schwarze Krone“: verziertes Kronen-Steuerrad aus Blender, dunkle Eisen-
+   * und Goldbeschläge (PBR-Oberflächen aus `graphics/pbrMaterialForge.ts`, `FLAGSHIP_FINISH`). Nie in der Werft wählbar.
+   */
+  regal?: 'krone';
 }
 
 export const DEFAULT_SHIP_LOOK = (faction: 'pirat' | 'marine'): ShipLook => faction === 'pirat'

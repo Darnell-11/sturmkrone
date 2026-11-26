@@ -4,7 +4,7 @@ import { ARMOR, CONSUMABLES, GEAR, HEADS, WEAPONS } from '../src/data/items';
 import { GEAR_CATALOG, SETS } from '../src/data/gear';
 import { TRINKETS } from '../src/data/trinkets';
 import { AMMO_IDS, FLAGS, SHIP_CLASSES, SHIP_UPGRADE_IDS } from '../src/data/ships';
-import { FIGUREHEAD_MODELS } from '../src/data/figureheads';
+import { FIGUREHEAD_MODELS, STORY_FIGUREHEADS } from '../src/data/figureheads';
 import { FACTION_IDS } from '../src/data/factions';
 import { RAID_BOSSES } from '../src/raid/raidBosses';
 import { RARITIES } from '../src/data/rarity';
@@ -52,7 +52,8 @@ describe('Item-Kompendium', () => {
     for (const c of CONSUMABLES) expect(ids).toContain(`item:${c.id}`);
     for (const c of SHIP_CLASSES) expect(ids).toContain(`ship:${c.id}`);
     for (const u of SHIP_UPGRADE_IDS) expect(ids).toContain(`upgrade:${u}`);
-    for (const f of FIGUREHEAD_MODELS) expect(ids).toContain(`figurehead:${f}`);
+    // 4.7D: Story-Figuren (Schwarzbarts Seeungeheuer) stehen nicht im Katalog
+    for (const f of FIGUREHEAD_MODELS) if (STORY_FIGUREHEADS.includes(f)) expect(ids).not.toContain(`figurehead:${f}`); else expect(ids).toContain(`figurehead:${f}`);
     for (const f of Object.keys(FLAGS)) expect(ids).toContain(`flag:${f}`);
     for (const a of AMMO_IDS) expect(ids).toContain(`ammo:${a}`);
     // Beute der sechs Endbosse: alle Teile der Boss-Sets plus Segel und Zier

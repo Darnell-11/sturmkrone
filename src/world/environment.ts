@@ -67,6 +67,15 @@ export class Environment {
   readonly phases: Record<DayPhase, number> = { morgengrauen: 0, mittag: 0, goldeneStunde: 0, nacht: 0 };
   /** Belichtung relativ zu RENDER_LOOK.exposure (Tagesphase): Mittag etwas knapper (Kreide, Segel), Nacht etwas offener */
   exposureK = 1;
+  /**
+   * 4.7D: Regie-Licht des Prologs (Licht-Dramaturgie): zieht Himmel, Nebel, Sonnen- und Himmelslicht, Meer und Belichtung zur Stimmung der
+   * Szene (goldene Abendstunde, eiskaltes Gewitterblau, Sieben-Farben-Spektrum, Unterwasser-Licht). Nur Farben und Uniforms – kein neues
+   * Programm. `k` = 0 schaltet es ab.
+   */
+  readonly grade = {
+    k: 0, horizon: new Color(), zenith: new Color(), fog: new Color(), light: new Color(1, 1, 1), lightK: 1, amb: new Color(1, 1, 1), ambK: 1,
+    sea: new Color(), seaK: 0, fogFar: 0, fogShape: -1, exposure: 1,
+  };
 
   /** Farbe in Richtung einer Tönung verschieben, ohne ihre Helligkeit zu ändern (nachts bleibt dunkel, mittags hell) */
   private tintKeepLum(c: Color, rgb: Rgb3, k: number) {
@@ -263,6 +272,8 @@ export class Environment {
       this.exposureK = e;
     }
 
+    const gr = this.grade;
+    if (gr.k > 0) { horizon.lerp(gr.horizon, gr.k); zenith.lerp(gr.zenith, gr.k); }
     const su = this.sky.skyU;
     su.uZenith.value.copy(zenith);
     su.uHorizon.value.copy(horizon);
@@ -283,6 +294,8 @@ export class Environment {
     cu.uDark.value = w.cloudDark;
     cu.uLit.value.copy(pal.cloudLit);
     cu.uShade.value.copy(pal.cloudShade);
+    // 4.7D: Regie-Licht färbt auch die gemalten Wolken (das Abendrot verschwindet hinter der Sturmfront)
+    if (gr.k > 0) { cu.uLit.value.lerp(gr.horizon, gr.k * 0.85); cu.uShade.value.lerp(gr.zenith, gr.k * 0.85); }
     cu.uHorizon.value.copy(horizon);
     cu.uFlash.value = flash;
     // Ascheschein von unten: nachts und in der Dämmerung kräftiger, am hellen Tag nur ein warmer Hauch
@@ -308,9 +321,16 @@ export class Environment {
       const camD = camera.position.distanceTo(focus);
       fog.far = Math.min(CAMERA_PLANES.far * 0.97, (dense + (this.hazeRange - dense) * open) * at.haze + camD * 0.9);
       fog.near = shape;
+      // 4.7D: Regie-Licht – Nebelfarbe, Sichtweite und Nebelform der Szene (Unterwasser: dichtes Tiefblau)
+      if (gr.k > 0) {
+        fog.color.lerp(gr.fog, gr.k);
+        if (gr.fogFar > 0) fog.far += (gr.fogFar - fog.far) * gr.k;
+        if (gr.fogShape >= 0) fog.near += (gr.fogShape - fog.near) * gr.k;
+      }
       // echter Nebel: Himmel eingrauen, gemalte Wolken verblassen
-      su.uFogK.value = shape * shape * 0.85;
-      cu.uOpacity.value = 1 - 0.75 * shape * shape;
+      const sh = fog.near;
+      su.uFogK.value = sh * sh * 0.85;
+      cu.uOpacity.value = 1 - 0.75 * sh * sh;
     }
 
     // Licht
@@ -324,6 +344,13 @@ export class Environment {
     // Lavaglut färbt das Licht von unten (Kurogane-Schlund, Glutring)
     if (at.glowK > 0) this.hemi.groundColor.lerp(this.tmpTint.setRGB(at.glow[0], at.glow[1], at.glow[2]), at.glowK * 0.3);
     this.hemi.intensity = pal.ambientI * (0.3 + 0.7 * light) + flash * 1.5;
+    if (gr.k > 0) {
+      this.sun.color.lerp(gr.light, gr.k);
+      this.sun.intensity *= 1 + (gr.lightK - 1) * gr.k;
+      this.hemi.color.lerp(gr.amb, gr.k);
+      this.hemi.intensity *= 1 + (gr.ambK - 1) * gr.k;
+      this.exposureK *= 1 + (gr.exposure - 1) * gr.k;
+    }
     this.sun.position.copy(focus).addScaledVector(pal.lightDir, 200);
     this.sun.target.position.copy(focus);
     // Schattenkarte am Texel-Raster ausrichten, damit Schatten beim Fahren nicht flimmern
@@ -401,6 +428,11 @@ export class Environment {
     ou.uAbyss.value.copy(ou.uDeep.value);
     this.tintKeepLum(ou.uAbyss.value, OCEAN_TINT.abyss.rgb as unknown as Rgb3, OCEAN_TINT.abyss.k);
     ou.uAbyss.value.multiplyScalar(0.82);
+    if (gr.k > 0 && gr.seaK > 0) {
+      const sk = gr.k * gr.seaK;
+      ou.uDeep.value.lerp(gr.sea, sk); ou.uMid.value.lerp(gr.sea, sk * 0.8); ou.uShallow.value.lerp(gr.sea, sk * 0.6);
+      ou.uLagoon.value.lerp(gr.sea, sk * 0.6); ou.uAbyss.value.lerp(gr.sea, sk);
+    }
     ou.uZenith.value.copy(zenith);
     ou.uHorizon.value.copy(horizon);
     ou.uSunDir.value.copy(pal.sunVis > 0.1 ? pal.sunDir : pal.moonDir);

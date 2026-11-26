@@ -562,10 +562,11 @@ export class NavalSystem {
    * 4.7A: Bühnen-Schiff einer Inszenierung (Prolog: Marine-Kriegsschiffe und die sieben Admirals-Flaggschiffe; Einführung: Spähboot).
    * Feste Klasse und Macht, sofort gebaut (nur beim Aufbau einer Szene rufen, nie mitten im Spiel), steht still, bis man ihm Fahrt gibt.
    */
-  spawnStage(x: number, z: number, heading: number, tier: number, power: FactionId, name: string, level = 1, role: NavalRole = 'patrouille', scripted = true): EnemyShip {
+  spawnStage(x: number, z: number, heading: number, tier: number, power: FactionId, name: string, level = 1, role: NavalRole = 'patrouille', scripted = true, look?: ShipLook): EnemyShip {
     const t = Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier));
     const foe = power === 'marine' ? 'marine' : 'pirat';
-    const ship = new Ship(this.scene, t, factionShipLook(power), foe, 0, false, aiEvolution(role === 'legende' ? 'flaggschiff' : role, dangerOfLevel(level)));
+    // 4.7D: eigenes Aussehen einer Inszenierung (die dunklen Schattenhüllen der sieben Admirals-Flaggschiffe)
+    const ship = new Ship(this.scene, t, look ?? factionShipLook(power), foe, 0, false, aiEvolution(role === 'legende' ? 'flaggschiff' : role, dangerOfLevel(level)));
     ship.x = x; ship.z = z; ship.heading = heading;
     ship.prev = { x, z, heading };
     ship.speed = 0;
@@ -1622,7 +1623,8 @@ export class NavalSystem {
     if (p) this.damageFx(p, dt);
     // Weit entfernte entfernen, gesunkene aufräumen
     // Schiffe der Welt-Ereignisse und Konvois baut die Seewelt selbst ab (sie werden wieder zu Daten), hier nur, wenn sie gesunken sind
-    const gone = (e: EnemyShip) => e.ship.sinking > 9 || (!!p && !e.companion && !e.raid && !e.ev?.owner && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > (e.battle ? 1900 : e.state === 'engage' || e.legendId ? 1200 : 900));
+    // 4.7D: Bühnen-Schiffe einer Inszenierung (Prolog-Flotten vor Grünmarkt, kilometerweit vom eigenen Schiff) baut ihre Regie selbst ab
+    const gone = (e: EnemyShip) => (e.ship.sinking > 9 && !e.stage) || (!!p && !e.companion && !e.raid && !e.ev?.owner && !e.stage && Math.hypot(e.ship.x - p.x, e.ship.z - p.z) > (e.battle ? 1900 : e.state === 'engage' || e.legendId ? 1200 : 900));
     keepIf(this.enemies, (e) => {
       if (!gone(e)) return true;
       e.ship.dispose();

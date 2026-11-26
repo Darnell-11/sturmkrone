@@ -328,6 +328,29 @@ export class PlayerFoot implements PlayerTarget {
   }
 
   /**
+   * 4.7D: Lage setzen, ohne die Animation anzurühren – die Regie spielt eigene Clips (Sturz ins Wasser, Sinken, Liegen am Strand).
+   * Die Darstellung gleitet von der letzten zur neuen Lage.
+   */
+  pose(x: number, y: number, z: number, yaw: number) {
+    const pv = this.prev;
+    pv.x = this.x; pv.z = this.z; pv.y = this.y; pv.yaw = this.yaw;
+    this.engine.drive(x, y, z, yaw);
+    this.speed = 0;
+    this.realSpeed = 0;
+    this.anim = 'script';
+  }
+
+  /**
+   * 4.7D: mit einem fahrenden Deck mitnehmen (Welt-Versatz in m). Laufen, Sprünge und Ketten laufen ungestört weiter. `fresh` = die Figur
+   * hat sich in diesem Schritt nicht selbst bewegt (dann beginnt das Gleiten der Darstellung hier).
+   */
+  carry(dx: number, dz: number, fresh: boolean) {
+    if (fresh) { const pv = this.prev; pv.x = this.x; pv.z = this.z; pv.y = this.y; pv.yaw = this.yaw; }
+    this.fighter.x += dx;
+    this.fighter.z += dz;
+  }
+
+  /**
    * Stil wechseln – jederzeit, auch mitten in der Kette (Wechselschlag: der nächste Schlag des neuen Stils setzt sofort an und trifft
    * 1,6-fach). Gibt zurück, ob gewechselt wurde.
    */
