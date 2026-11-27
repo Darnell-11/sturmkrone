@@ -1,0 +1,16 @@
+node_modules
+dist
+dist-*
+backups
+qa_tmp
+.playwright-mcp
+.git
+.github
+public
+referenz
+tools
+docs
+android
+desktop
+*.log
+.env

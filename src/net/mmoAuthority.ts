@@ -13,10 +13,12 @@
 // - **Heilung, Sturmhorn, geteilter Fortschritt, Mitfahrt, Spieler gegen Spieler:** geprüft nach Gruppe, Diplomatie, Reichweite und Schutzzonen.
 import {
   MMO, aoiRadius, copyState, newPlayerState, sayRadius, shareRadius,
-  type ChatChannel, type ChatMessage, type ClientIntent, type PartyEvent, type PartyView, type PlayerProfile, type PlayerState, type ServerMsg, type ShareKind,
+  type ChatChannel, type ChatMessage, type ClientIntent, type LootItemNet, type RollChoice, type PartyEvent, type PartyView, type PlayerProfile, type PlayerState, type ServerMsg, type ShareKind,
   type SnapEntry, type VitalEntry,
 } from './mmoProtocol';
 import { alliedStance, groupAllowed, partyConflicts, pvpBlock, rideValid, type PartyStance } from './partyRules';
+import { botChoice, chooseRoll, createRoll, lootRadius, needBlock, passOpen, resolveRoll, rollReady, rollsFor, splitEven, type RollEntry, type RollSession } from './groupLoot';
+import { pvpLandDamage } from '../data/balanceConfig';
 
 /** Haltung zweier Teams nach der Welt-KI ('' = ungebunden) */
 export interface DiplomacyOracle { stance(teamA: string, teamB: string): PartyStance }
@@ -36,7 +38,11 @@ export interface AuthorityHooks {
 }
 
 interface WarnRec { since: number; until: number; ids: string[]; a: string; b: string; fight: boolean; sent: number }
-interface PartyRec { id: string; leader: string; members: string[]; warn: WarnRec | null; vitals: VitalEntry[]; vpool: VitalEntry[]; vmsg: { k: 'vitals'; list: VitalEntry[] } }
+interface PartyRec {
+  id: string; leader: string; members: string[]; warn: WarnRec | null; vitals: VitalEntry[]; vpool: VitalEntry[]; vmsg: { k: 'vitals'; list: VitalEntry[] };
+  /** 4.8B: nächster Empfänger für gewöhnliche Stücke (reihum) */
+  rr: number;
+}
 interface InviteRec { party: string; from: string; to: string; until: number }
 
 interface Peer {
@@ -80,7 +86,15 @@ export class MmoAuthority {
   private readonly drop: string[] = [];
   hooks: AuthorityHooks = {};
   /** Zahlen für Prüfungen */
-  readonly stats = { snaps: 0, chats: 0, invites: 0, parties: 0, removedByWar: 0 };
+  readonly stats = { snaps: 0, chats: 0, invites: 0, parties: 0, removedByWar: 0, loot: 0, rolls: 0, rollsDone: 0, landHits: 0 };
+  /** 4.8B: offene Würfel-Sitzungen (autoritativ: nur hier wird gewürfelt) */
+  readonly rolls: RollSession[] = [];
+  private rollSeq = 0;
+  /** Würfel des Shards (Prüfungen setzen einen festen Zufall) */
+  rng: () => number = Math.random;
+  private readonly shares: number[] = [];
+  private readonly repShares: number[] = [];
+  private readonly near: Peer[] = [];
 
   private readonly diplo: DiplomacyOracle;
   private readonly zones: ZoneOracle;
@@ -119,6 +133,7 @@ export class MmoAuthority {
   leave(id: string, t: number): void {
     const p = this.peers.get(id);
     if (!p) return;
+    for (const s of this.rolls) passOpen(s, id);
     if (p.party) this.removeMember(p, '', t, true);
     for (let k = this.invites.length - 1; k >= 0; k--) {
       const iv = this.invites[k];
@@ -157,7 +172,9 @@ export class MmoAuthority {
       case 'share': this.share(p, i.what, i.ref, i.amount); break;
       case 'ride': this.ride(p, i.ship, i.rx, i.ry, i.rz); break;
       case 'unride': p.rideOk = ''; p.state.ride = ''; break;
-      case 'hit': this.hit(p, i.to, i.dmg, t); break;
+      case 'hit': this.hit(p, i.to, i.dmg, i.land, t); break;
+      case 'loot': this.loot(p, i.gold, i.rep, i.power, i.items, t); break;
+      case 'roll': this.roll(p, i.id, i.choice, t); break;
       case 'ping': if (!p.bot) this.out(p.id, { k: 'pong', t: i.t, st: t }); break;
       case 'bye': this.leave(p.id, t); break;
       // nur für den Relay-Server (Startbildschirm-Wächter, Diplomatie-Bericht): hier nichts zu tun
@@ -201,6 +218,7 @@ export class MmoAuthority {
     for (const id of this.drop) this.leave(id, t);
     this.warAcc += dt;
     if (this.warAcc >= 0.5) { this.warAcc = 0; this.checkWars(t); }
+    for (let k = this.rolls.length - 1; k >= 0; k--) if (rollReady(this.rolls[k], t)) this.finishRoll(this.rolls[k], t);
     this.snapAcc += dt;
     if (this.snapAcc >= 1 / MMO.snapshotHz) { this.snapAcc = Math.min(this.snapAcc - 1 / MMO.snapshotHz, 1 / MMO.snapshotHz); this.snapshots(t); }
     this.vitalsAcc += dt;
@@ -227,7 +245,8 @@ export class MmoAuthority {
         e.id = o.id; e.pv = o.pv;
         list.push(e);
       }
-      if (fresh) this.out(r.id, { k: 'profiles', list: fresh });
+      // 4.8B: Steckbriefe tragen das Aussehen – in Teilpaketen, damit kein Paket die 64 KB überschreitet
+      if (fresh) for (let a = 0; a < fresh.length; a += MMO.profilesPerPacket) this.out(r.id, { k: 'profiles', list: fresh.length <= MMO.profilesPerPacket ? fresh : fresh.slice(a, a + MMO.profilesPerPacket) });
       r.snap.t = t; r.snap.seq = this.seq;
       this.out(r.id, r.snap);
       this.stats.snaps++;
@@ -386,7 +405,7 @@ export class MmoAuthority {
     const block = this.warBlock(inviter, p);
     if (block) { this.notice(p, block, 'error'); this.partyEvent(inviter, { e: 'declined', by: p.id, name: p.profile.name, why: block }); return; }
     if (!g) {
-      g = { id: party, leader: inviter.id, members: [inviter.id], warn: null, vitals: [], vpool: [], vmsg: { k: 'vitals', list: [] } };
+      g = { id: party, leader: inviter.id, members: [inviter.id], warn: null, vitals: [], vpool: [], vmsg: { k: 'vitals', list: [] }, rr: 0 };
       g.vmsg.list = g.vitals;
       this.parties.set(g.id, g);
       inviter.party = g;
@@ -553,14 +572,120 @@ export class MmoAuthority {
   }
 
   /** Spieler gegen Spieler: nur bei Krieg, nie in der Gruppe, nie in einer Schutzzone */
-  private hit(p: Peer, to: string, dmg: number, t: number) {
+  /**
+   * Treffer gegen einen Mitspieler: auf See Kanonen (bis `MMO.hitRange`), zu Fuß (4.8B) nur, wenn beide an Land stehen (nicht an Deck),
+   * bis `MMO.hitRangeLand`, und mit der PvP-Skalierung `pvpLandDamage` (Deckel je Treffer nach dem Leben des Ziels). Gruppe, Verbündete und
+   * Schutzzonen sperren immer (`pvpBlock`).
+   */
+  private hit(p: Peer, to: string, dmg: number, land: boolean, t: number) {
     const o = this.peers.get(to);
     if (!o || o === p || dmg <= 0) return;
+    const range = land ? MMO.hitRangeLand : MMO.hitRange;
     const block = pvpBlock({ stance: this.stanceOf(p, o), sameParty: !!p.party && p.party === o.party, safeA: this.zones.safeAt(p.state.x, p.state.z), safeB: this.zones.safeAt(o.state.x, o.state.z) })
-      || (dist(p.state, o.state) > MMO.hitRange ? 'Ziel außer Reichweite' : '');
+      || (land && (p.state.dom !== 'land' || o.state.dom !== 'land' || p.state.ride || o.state.ride) ? 'Kampf zu Fuß nur an Land' : '')
+      || (dist(p.state, o.state) > range ? 'Ziel außer Reichweite' : '');
     if (block) { if (t - p.hitNoteT > 3) { p.hitNoteT = t; this.notice(p, block, 'warn'); } return; }
-    if (o.bot) this.hooks.hit?.(o.id, p.id, dmg);
-    else this.out(o.id, { k: 'hit', from: p.id, name: p.profile.name, dmg });
+    const final = land ? pvpLandDamage(dmg, o.state.mhp) : dmg;
+    if (land) this.stats.landHits++;
+    if (o.bot) this.hooks.hit?.(o.id, p.id, final);
+    else this.out(o.id, { k: 'hit', from: p.id, name: p.profile.name, dmg: final, land });
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // 4.8B: Gruppen-Beute und Würfel-Sitzungen
+  // ---------------------------------------------------------------------------------------------------------------
+
+  /** Gruppenmitglieder im Einsatzgebiet des Finders (er selbst zuerst, dann in Gruppen-Reihenfolge); ohne Gruppe nur er */
+  private lootCrew(p: Peer): Peer[] {
+    const out = this.near;
+    out.length = 0;
+    out.push(p);
+    const g = p.party;
+    if (!g) return out;
+    const r = lootRadius(p.state.dom);
+    for (const id of g.members) {
+      const o = this.peers.get(id);
+      if (!o || o === p) continue;
+      if (dist(o.state, p.state) <= r) out.push(o);
+    }
+    return out;
+  }
+
+  private lootChat(to: readonly Peer[], text: string, t: number) {
+    const msg: ChatMessage = { ch: 'system', from: '', name: '', to: '', toName: '', text, t };
+    for (const o of to) if (!o.bot) this.out(o.id, { k: 'chat', msg });
+  }
+
+  /**
+   * Fund in der Gruppe: Gold und Ruf gleichmäßig an alle im Einsatzgebiet, gewöhnliche Stücke reihum, ab Blau eine Würfel-Sitzung.
+   * Ohne Gruppe (oder allein im Gebiet) bekommt der Finder alles zurück.
+   */
+  private loot(p: Peer, gold: number, rep: number, power: string, items: readonly LootItemNet[], t: number) {
+    this.stats.loot++;
+    const crew = this.lootCrew(p).slice();
+    const n = crew.length;
+    if (gold > 0 || rep !== 0) {
+      splitEven(gold, n, this.shares);
+      splitEven(rep, n, this.repShares);
+      for (let i = 0; i < n; i++) {
+        const o = crew[i];
+        if (!o.bot) this.out(o.id, { k: 'lootShare', from: p.id, name: p.profile.name, gold: this.shares[i], rep: this.repShares[i], power, n });
+      }
+    }
+    const g = p.party;
+    for (const item of items) {
+      if (!g || n < 2) { if (!p.bot) this.out(p.id, { k: 'lootGet', item, how: 'allein', from: p.id, name: p.profile.name }); continue; }
+      if (!rollsFor(item.grade)) {
+        const o = crew[g.rr % n];
+        g.rr = (g.rr + 1) % 1e6;
+        if (!o.bot) this.out(o.id, { k: 'lootGet', item, how: 'reihum', from: p.id, name: p.profile.name });
+        this.lootChat(crew, `[Beute]: ${o.profile.name} erhält [${item.name}] (reihum).`, t);
+        continue;
+      }
+      if (this.rolls.filter((s) => s.party === g.id).length >= MMO.rollMaxPerParty) {
+        if (!p.bot) this.out(p.id, { k: 'lootGet', item, how: 'allein', from: p.id, name: p.profile.name });
+        continue;
+      }
+      this.startRoll(p, g, crew, item, t);
+    }
+  }
+
+  private startRoll(p: Peer, g: PartyRec, crew: readonly Peer[], item: LootItemNet, t: number) {
+    const entries: RollEntry[] = crew.map((o) => {
+      const why = needBlock(item, { base: o.profile.base, role: o.profile.role, shipTier: o.profile.shipTier });
+      return { id: o.id, name: o.profile.name, needOk: !why, needWhy: why, choice: '', roll: 0, bot: o.bot };
+    });
+    const s = createRoll(`w${++this.rollSeq}`, item, p.id, p.profile.name, g.id, t, entries);
+    this.rolls.push(s);
+    this.stats.rolls++;
+    for (const e of entries) {
+      if (e.bot) { e.choice = botChoice(e, item, this.rng); continue; }
+      this.out(e.id, { k: 'rollStart', roll: { id: s.id, item, left: MMO.rollTime, total: MMO.rollTime, needOk: e.needOk, needWhy: e.needWhy, from: p.profile.name, n: entries.length } });
+    }
+  }
+
+  /** Wahl eines Teilnehmers (doppelte, verspätete oder unerlaubte Wahl weist der Shard ab) */
+  private roll(p: Peer, id: string, choice: RollChoice, t: number) {
+    const s = this.rolls.find((x) => x.id === id);
+    if (!s) { this.notice(p, 'Diese Würfel-Runde ist schon vorbei.'); return; }
+    const err = chooseRoll(s, p.id, choice, t);
+    if (err) { this.notice(p, err, 'warn'); return; }
+    if (rollReady(s, t)) this.finishRoll(s, t);
+  }
+
+  private finishRoll(s: RollSession, t: number) {
+    const k = this.rolls.indexOf(s);
+    if (k >= 0) this.rolls.splice(k, 1);
+    const res = resolveRoll(s, this.rng);
+    this.stats.rollsDone++;
+    const crew: Peer[] = [];
+    for (const e of s.entries) { const o = this.peers.get(e.id); if (o) crew.push(o); }
+    for (const line of res.lines) this.lootChat(crew, line, t);
+    const text = res.lines.join(' ');
+    for (const o of crew) if (!o.bot) this.out(o.id, { k: 'rollEnd', id: s.id, winner: res.winner, name: res.winnerName, choice: res.choice, text });
+    // Gewinner (oder bei „alle passen“ der Finder) bekommt das Stück; ist er nicht mehr da, der Finder
+    const winner = (res.winner && this.peers.get(res.winner)) || this.peers.get(s.from);
+    if (winner && !winner.bot) this.out(winner.id, { k: 'lootGet', item: s.item, how: res.winner && winner.id === res.winner ? 'wurf' : 'verzicht', from: s.from, name: s.fromName });
   }
 
   // ---------------------------------------------------------------------------------------------------------------

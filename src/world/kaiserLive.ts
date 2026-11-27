@@ -14,7 +14,8 @@ import { FACTIONS } from '../data/factions';
 import type { Ship } from '../entities/ship/ship';
 import type { Enemy } from '../entities/enemy';
 import type { TroopFoe } from '../entities/troops/squad';
-import type { BossMech } from '../data/combat';
+import type { BossMech, EnemyDef } from '../data/combat';
+import { groupElites, groupScale } from '../data/balanceConfig';
 import type { ParticleSystem } from './particles';
 import type { SmokeSystem } from './smoke';
 import { boxBlocker, type Blocker, type IslandGround, type WalkIsland } from './islandGround';
@@ -52,6 +53,8 @@ export interface KaiserHost {
   cutin(text: string): void;
   /** Der Kaiser ist gefallen: Lohn vergibt das Spiel */
   victory(id: KaiserId, first: boolean): void;
+  /** 4.8B: anwesende Gruppenmitglieder samt Spieler (1 … 5) – Leben, Haltung und Elite-Wellen wachsen mit (fehlt es, gilt 1) */
+  groupSize?(): number;
 }
 
 interface BastionLive { x: number; z: number; r: number; tower: Group; ruin: Mesh; reload: number; blocker: Blocker; down: boolean }
@@ -82,6 +85,14 @@ interface LandKaiser {
   boss: Enemy | null;
   sealedMsgT: number;
   time: number;
+  /** 4.8B: Gruppengröße beim Auftritt des Kaisers (Verstärkung der zweiten Phase) */
+  group: number;
+}
+
+/** 4.8B: Gegner-Werte für eine Gruppe – Leben und Haltungsleiste mal Faktor (immer eine eigene Kopie, nie die gemeinsamen Daten) */
+export function scaleDef(d: EnemyDef, k: number): EnemyDef {
+  if (k === 1) return d;
+  return { ...d, hp: Math.round(d.hp * k), poise: Math.round(d.poise * k) };
 }
 
 const CHAIN_LINK = 1.25;
@@ -434,7 +445,7 @@ export class KaiserLive implements BallTarget {
         },
         text: () => {},
       }, KAISER_LEVEL, `kaiser-${id}`);
-      this.land = { id, isl, horde, posts: [kaiserRingPosts(spec, 0), kaiserRingPosts(spec, 1)], ringMembers: [[], []], boss: null, sealedMsgT: 0, time: 0 };
+      this.land = { id, isl, horde, posts: [kaiserRingPosts(spec, 0), kaiserRingPosts(spec, 1)], ringMembers: [[], []], boss: null, sealedMsgT: 0, time: 0, group: 1 };
     }
     h.combat.mass = this.land.horde.squads;
     h.combat.onBossPhase = (e, phase) => this.onBossPhase(e, phase);
@@ -495,9 +506,13 @@ export class KaiserLive implements BallTarget {
       l.ringMembers[r].length = 0;
       P.squads.forEach((q, i) => l.ringMembers[r].push(l.horde.spawn({ squadId: `${l.id}-r${r}-${i}`, typ: q.typ, heads: q.heads, x: 0, z: 0, yaw: q.yaw }, ox + q.x, oz + q.z, origin, 1, 26)));
       const lv = KAISER_LEVEL + KAISER.lvl.officer + r;
-      P.officers.forEach((o, i) => {
-        const d = kaiserOfficerDef(l.id, r * 2 + i);
-        h.combat.spawnWave(['hauptmann'], lv, align, `kaiser:${l.id}:ring${r}`, { x: ox + o.x, z: oz + o.z }, 0, { power: spec.power, name: d.label, def: d });
+      // 4.8B: in der Gruppe sind die Offiziere zäher, ab drei Kapitänen kommen weitere Elite-Offiziere dazu
+      const grp = h.groupSize?.() ?? 1, gk = groupScale(grp);
+      const officers = P.officers.length ? [...P.officers, ...Array.from({ length: groupElites(grp) }, (_, i) => P.officers[i % P.officers.length])] : [];
+      officers.forEach((o, i) => {
+        const d = scaleDef(kaiserOfficerDef(l.id, (r * 2 + i) % 4), gk);
+        const off = i >= P.officers.length ? 5 : 0;
+        h.combat.spawnWave(['hauptmann'], lv, align, `kaiser:${l.id}:ring${r}`, { x: ox + o.x + off, z: oz + o.z + off }, 0, { power: spec.power, name: d.label, def: d });
       });
       const heads = P.squads.reduce((n, q) => n + q.heads, 0);
       h.banner(r === 0 ? 'Äußerer Festungsring' : 'Innerer Festungsring', `${heads} Gardisten und ${P.officers.length} Elite-Offiziere halten die Tore (Stufe ${KAISER_LEVEL + (r === 0 ? KAISER.lvl.ring1 : KAISER.lvl.ring2)})`);
@@ -519,7 +534,11 @@ export class KaiserLive implements BallTarget {
     l.sealedMsgT -= dt;
     if (inThrone && st.phase === 'festungsringe' && l.sealedMsgT <= 0) { l.sealedMsgT = 12; h.message('Der Thronsaal ist versiegelt: Erst wenn beide Festungsringe gefallen sind, stellt sich der Kaiser.'); }
     if (inThrone && bossShouldAppear(st)) {
-      const d = kaiserBossDef(l.id);
+      // 4.8B: Leben und Haltungsleiste wachsen mit der Gruppe (1,0× solo bis 3,6× bei fünf Kapitänen)
+      const grp = h.groupSize?.() ?? 1;
+      const d = scaleDef(kaiserBossDef(l.id), groupScale(grp));
+      l.group = grp;
+      if (grp > 1) h.message(`Gruppen-Stärke: ${spec.boss.name} stellt sich ${grp} Kapitänen (×${groupScale(grp).toFixed(2).replace('.', ',')} Leben und Haltung)`);
       const list = h.combat.spawnWave(['legende'], KAISER_LEVEL + KAISER.lvl.boss, align, `kaiser:${l.id}:thron`, { x: ox + T.x, z: oz + T.z }, 0, { power: spec.power, name: d.label, def: d });
       l.boss = list[0] ?? null;
       bossAppeared(st);
@@ -551,9 +570,12 @@ export class KaiserLive implements BallTarget {
       const m = l.horde.spawn({ squadId: `${l.id}-ruf-${i}`, typ: i < 2 ? 'schwert' : 'musketier', heads: 10, x: 0, z: 0, yaw: toT }, g.x, g.z, 'thron', 1, 45);
       m.q.alertT = 10;
     }
-    for (let i = 0; i < 2; i++) {
-      const d = kaiserOfficerDef(l.id, 2 + i);
-      h.combat.spawnWave(['hauptmann'], KAISER_LEVEL + KAISER.lvl.officer + 1, h.align(), `kaiser:${l.id}:garde`, { x: e.x + (i ? 6 : -6), z: e.z }, 0, { power: spec.power, name: d.label, def: d });
+    // 4.8B: die Garde der zweiten Phase wächst mit der Gruppe wie die Ringe
+    const grp = l.group, gk = groupScale(grp), guards = 2 + groupElites(grp);
+    for (let i = 0; i < guards; i++) {
+      const d = scaleDef(kaiserOfficerDef(l.id, 2 + (i % 2)), gk);
+      const side = i % 2 ? 6 : -6, row = Math.floor(i / 2) * 4;
+      h.combat.spawnWave(['hauptmann'], KAISER_LEVEL + KAISER.lvl.officer + 1, h.align(), `kaiser:${l.id}:garde`, { x: e.x + side, z: e.z + row }, 0, { power: spec.power, name: d.label, def: d });
     }
     h.message(`Verstärkungswelle: Die Kaisergarde stürmt in den Hof!`);
   }

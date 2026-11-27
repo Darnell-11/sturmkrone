@@ -33,7 +33,7 @@ import { SeaSpray } from './seaSpray';
 import { ShipLightRig } from '../render/shipLights';
 import type { Input } from '../core/input/input';
 import type { StyleId } from '../data/animations';
-import { randomLook, type CharacterLook, type NpcRole } from '../data/characterParts';
+import { randomLook, sanitizeLook, type CharacterLook, type NpcRole } from '../data/characterParts';
 import { CAMERA_PLANES, type QualityConfig } from '../data/qualityTiers';
 import { HOME_SPAWN, WORLD_SCALE } from '../data/world';
 import { FLAGSHIP, TUTORIAL } from '../data/prologue';
@@ -56,6 +56,9 @@ import { GlowSystem, glowHub, makeEmitter, type GlowEmitter, type GlowPlaced } f
 import { Character } from '../entities/character/character';
 import { CLOTH_WIND, NPC_LIFE, type HandPoseId } from '../data/characterRig';
 import { shieldFor, weaponsFor } from '../entities/character/weapons';
+
+/** 4.8B: Darstellungsstile, deren Waffe ein Mitspieler sichtbar tragen kann */
+const REMOTE_STYLES: readonly StyleId[] = ['faust', 'saebel', 'langklinge', 'zweihaender', 'doppel', 'effekt'];
 import { Npc } from '../entities/npc';
 import { PlayerFoot } from '../entities/player/playerFoot';
 import { addOutlines, addOutlinesSteps } from '../render/outline';
@@ -1362,7 +1365,7 @@ export class SeaWorld {
         fleetLost: (id) => this.onFleetLost(id),
         battleStart: (m, w) => this.onBattleStart(m, w),
         battleEnd: (r) => this.onBattleEnd(r),
-        peerHit: (e, dmg) => { if (e.peer?.mmo) this.onPeerHit?.(e.peer.mmo, dmg); },
+        peerHit: (e, dmg) => { if (e.peer?.mmo) this.onPeerHit?.(e.peer.mmo, dmg, false); },
       });
       this.naval.player = this.ship;
       this.naval.bountyOf = (id) => this.bountyOf(id);
@@ -1388,6 +1391,8 @@ export class SeaWorld {
       this.combat.smoke = this.smoke;
       this.combat.sparks = this.sparks;
       // 4.6D: jeder Treffer der Figur mit Funken in Schlagrichtung, Staub/Gischt; Hochschleudern mit Energiespirale
+      // 4.8B: Treffer gegen Kapitäne verfeindeter Nationen zu Fuß gehen an den Shard
+      this.combat.onPeerHit = (id, raw) => this.onPeerHit?.(id, raw, true);
       this.combat.vfxHit = (x, y, z, dx, dz, col, el, heavy, crit, launch) => {
         this.cataclysm.hitImpact(x, y, z, dx, dz, col, el, heavy, crit);
         if (launch >= 6) this.cataclysm.launchFx(x, y, z, col);
@@ -1510,6 +1515,7 @@ export class SeaWorld {
     if (this.seaEvents || !this.naval) return;
     const w = this;
     this.seaEvents = new WorldEventsLive({
+      groupSize: () => this.groupSize(),
       scene: this.scene,
       naval: this.naval,
       weather: this.env.weather,
@@ -2332,6 +2338,7 @@ export class SeaWorld {
   updatePlayer(look: CharacterLook, style: StyleId, action?: ActionStyleId) {
     if (!this.player || !this.foot) return;
     this.player.setLook(look);
+    this.lookVersion++;
     this.foot.style = style;
     this.style = style;
     const act = action ?? (ACTION_STYLES[this.foot.actionStyle].visual === style ? this.foot.actionStyle : actionStyleOf(style));
@@ -2341,11 +2348,16 @@ export class SeaWorld {
     if (this.mode === 'sail') this.player.play('steer', { fade: 0.01 });
   }
 
+  /** 4.8B: anwesende Gruppenmitglieder samt Spieler (1 … 5) für die Skalierung von Kaisern und Weltbossen (setzt das Spiel) */
+  groupSize: () => number = () => 1;
+  /** 4.8B: zählt jede Änderung an Aussehen, Ausrüstung oder Klinge der Spielfigur (der MMO-Steckbrief folgt) */
+  lookVersion = 0;
   /** Aussehen der gekauften Klinge */
   weaponLook: { blade: string; glow?: boolean } = { blade: '#C9D2DA' };
   setWeaponLook(look: { blade: string; glow?: boolean }) {
     if (look.blade === this.weaponLook.blade && look.glow === this.weaponLook.glow) return;
     this.weaponLook = look;
+    this.lookVersion++;
     this.equip(this.style);
   }
 
@@ -3280,7 +3292,7 @@ export class SeaWorld {
   /** Sturmhorn-Sammeln: Heilung und Willenskraft für Mitspieler im Umkreis */
   onPartyHorn: ((x: number, z: number, heal: number, will: number) => void) | null = null;
   /** Treffer auf ein Mitspieler-Schiff (Spieler gegen Spieler, der Shard prüft) */
-  onPeerHit: ((id: string, dmg: number) => void) | null = null;
+  onPeerHit: ((id: string, dmg: number, land: boolean) => void) | null = null;
   /** Taste „Zurück an Bord deines Schiffs“ während einer Mitfahrt */
   onRideEnd: (() => void) | null = null;
   private rideE: EnemyShip | null = null;
@@ -3299,6 +3311,37 @@ export class SeaWorld {
     this.endRide(false);
     this.mmoLive?.dispose();
     this.mmoLive = null;
+    if (this.combat) this.combat.peerCount = 0;
+  }
+
+  /** 4.8B: treffbare Mitspieler (zu Fuß, Krieg, keine Schutzzone) als Ziele der Action-Kampf-Engine – vorab angelegte Einträge */
+  private syncPeerFoes() {
+    const c = this.combat, live = this.mmoLive;
+    if (!c) return;
+    let n = 0;
+    if (live && this.mode === 'foot') {
+      for (const t of live.targets) {
+        if (!t.harm || !t.alive || n >= c.peerFoes.length) continue;
+        const p = c.peerFoes[n++];
+        p.id = t.id; p.x = t.x; p.y = t.y; p.z = t.z; p.mhp = Math.max(1, t.mhp);
+        const r = live.client.remotes.get(t.id);
+        p.yaw = r ? r.view.yaw : 0;
+      }
+    }
+    c.peerCount = n;
+  }
+
+  /**
+   * 4.8B: Treffer eines verfeindeten Kapitäns zu Fuß (schon vom Shard geprüft und skaliert): Parade, Ausweichen und Rüstung der Spielfigur
+   * greifen wie bei jedem Gegner. Richtung vom Angreifer zur Figur.
+   */
+  pvpStrike(fromId: string, dmg: number) {
+    const c = this.combat, f = this.foot;
+    if (!c || !f || this.mode !== 'foot') return;
+    const r = this.mmoLive?.client.remotes.get(fromId);
+    let dx = 0, dz = 1;
+    if (r) { dx = f.x - r.view.x; dz = f.z - r.view.z; const d = Math.hypot(dx, dz) || 1; dx /= d; dz /= d; }
+    c.strikePlayer(dmg, dx, dz, dmg >= f.maxHp * 0.08);
   }
 
   private mmoLiveHost(): MmoLiveHost {
@@ -3324,6 +3367,24 @@ export class SeaWorld {
       stance: (team) => w.mmoStance?.(team) ?? 'neutral',
       safeAt: (x, z) => safeZoneAt(safeZones(), x, z)?.name ?? '',
       warm: (o) => w.warmHook?.(o),
+      // 4.8B: echtes Aussehen eines Kapitäns (geprüft gegen die bekannten Werte) samt sichtbarer Ausrüstung und Klassen-Waffe auf dem Rücken
+      dress: (char, app, base) => {
+        let look: CharacterLook = base;
+        if (app) {
+          look = sanitizeLook({ ...app.look }, 'pirat');
+          if (app.extra.length) look.extra = app.extra.slice();
+          if (app.dye.length) { const dye: Record<string, [string, string]> = {}; for (const [id, a, b] of app.dye) dye[id] = [a, b]; look.dye = dye; }
+        }
+        char.setLook(look);
+        const style = app && (REMOTE_STYLES as readonly string[]).includes(app.style) ? (app.style as StyleId) : null;
+        if (style) {
+          const wpn = weaponsFor(style, { blade: app!.blade, glow: app!.glow });
+          char.hold('r', wpn.right);
+          char.hold('l', wpn.left);
+          char.sheathe(true, 0.3, false);
+        } else { char.hold('r', null); char.hold('l', null); }
+        w.warmHook?.(char.holder);
+      },
     };
   }
 
@@ -3764,7 +3825,7 @@ export class SeaWorld {
     if (this.gates.leash && this.mode === 'sail') this.keepOnLeash(dt);
     if (this.gates.presence && !this.raid && !this.title.active) {
       // 4.8A: Mitspieler kommen über die MMO-Schicht (lokaler Shard oder Server); ohne sie bleiben die Stellvertreter aus 4.7A
-      if (this.mmoLive) { this.mmoLive.update(dt); this.carryRider(); }
+      if (this.mmoLive) { this.mmoLive.update(dt); this.carryRider(); this.syncPeerFoes(); }
       else {
         if (!this.presence && this.assets && this.naval) this.presence = new SharedPresence(this.presenceHost());
         this.presence?.update(dt);
@@ -4733,6 +4794,7 @@ export class SeaWorld {
     if (!n || !c) return null;
     this.kaiserLive = new KaiserLive({
       bastionK: () => this.bastionK,
+      groupSize: () => this.groupSize(),
       scene: this.scene, ground: this.ground, naval: n, combat: c, smoke: this.smoke, sparks: this.sparks, playerShip: this.ship,
       defs: () => this.islandDefs,
       footOnIsland: () => {

@@ -9,10 +9,14 @@
 //   `/p` Gruppe, `/w` Flüstern, `/welt` alle), Heilung, Sturmhorn, Mitfahrt und Treffer;
 // - zählt alle verbundenen Kapitäne – auch die, die nur im Hauptmenü stehen (`watch`) – und schickt bei jeder Änderung sofort `online`
 //   an alle Clients;
-// - übernimmt die Diplomatie der fünf Mächte von dem am längsten verbundenen Kapitän (`diplo`; vorher gelten die Startbeziehungen).
+// - hält die Diplomatie der fünf Mächte im eigenen Speicher: der am längsten verbundene Kapitän meldet die Haltung seiner Welt-KI
+//   (`diplo`), geht er, bleibt der Stand erhalten und der nächste Kapitän übernimmt die Meldung (vorher gelten die Startbeziehungen);
+// - 4.8B: verwaltet Gruppen-Beute und Würfel-Sitzungen autoritativ (in `MmoAuthority`: nur der Server würfelt, doppelte, verspätete oder
+//   unerlaubte Wahl wird abgewiesen, Verbindungsabbruch = Passen) und Land-PvP mit PvP-Skalierung;
+// - beantwortet `GET /health` mit JSON (status, onlineCount, activeParties, activeRolls, uptime) für Hoster-Gesundheitsprüfungen.
 //
-// Umgebung: PORT (Standard 8787), HOST (0.0.0.0), MMO_SHARD (Name der See), MMO_ORIGINS (erlaubte Seiten, durch Komma getrennt; leer = alle),
-// MMO_MAX_CLIENTS (300). Für GitHub Pages (https) braucht der Server eine wss://-Adresse – z. B. hinter einem Hoster mit TLS (Render, Fly.io,
+// Umgebung (siehe `.env.example`): PORT (Standard 8787), HOST (0.0.0.0), ALLOWED_ORIGINS (erlaubte Seiten, durch Komma getrennt; `*` oder
+// leer = alle; alter Name MMO_ORIGINS), MMO_SHARD (Name der See), MMO_MAX_CLIENTS (300), MMO_MAX_PER_IP (16 Verbindungen je Adresse). Für GitHub Pages (https) braucht der Server eine wss://-Adresse – z. B. hinter einem Hoster mit TLS (Render, Fly.io,
 // Railway) oder einem Tunnel (`cloudflared tunnel --url http://localhost:8787`). Mitspieler öffnen dann `…/sturmkrone/?server=wss://…`.
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -168,7 +172,9 @@ export function startRelay(opts = {}) {
   const host = opts.host ?? (env.HOST || '0.0.0.0');
   const shard = (opts.shard ?? env.MMO_SHARD ?? 'Bernsteinsee 1').slice(0, 40);
   const maxClients = opts.maxClients ?? (Number(env.MMO_MAX_CLIENTS) || 300);
-  const origins = (opts.origins ?? env.MMO_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const origins = String(opts.origins ?? env.ALLOWED_ORIGINS ?? env.MMO_ORIGINS ?? '').split(',').map((s) => s.trim()).filter((s) => s && s !== '*');
+  const maxPerIp = opts.maxPerIp ?? (Number(env.MMO_MAX_PER_IP) || 16);
+  const started = clockStart();
   const log = opts.log ?? ((...a) => console.log(...a));
   const clock = () => performance.now() / 1000;
 
@@ -176,14 +182,19 @@ export function startRelay(opts = {}) {
   const conns = new Set();
   /** Kapitäne in der Welt: Kennung → Verbindung */
   const players = new Map();
-  const stats = { accepted: 0, rejected: 0, packets: 0, dropped: 0, broadcasts: 0 };
+  const stats = { accepted: 0, rejected: 0, packets: 0, dropped: 0, broadcasts: 0, diploReports: 0, diploIgnored: 0, diploHandovers: 0 };
 
-  // Diplomatie: der am längsten verbundene Kapitän mit Bericht gilt, sonst die Startbeziehungen
-  const diploState = (x, y) => {
+  // Diplomatie im Server-Speicher: nur der Leiter (am längsten verbundener Kapitän) meldet; der Stand überlebt jeden Wechsel der Leitung
+  const diplo = new Map();
+  const diploInfo = { leader: '', updated: 0 };
+  const diploLeader = () => {
     let best = null;
-    for (const c of players.values()) if (c.diplo && (!best || c.since < best.since)) best = c;
+    for (const c of players.values()) if (!best || c.joinedAt < best.joinedAt) best = c;
+    return best;
+  };
+  const diploState = (x, y) => {
     const k = pairKey(x, y);
-    return best?.diplo.get(k) ?? START_RELATIONS[k]?.state ?? 'neutral';
+    return diplo.get(k) ?? START_RELATIONS[k]?.state ?? 'neutral';
   };
   const zones = safeZones();
   const authority = new MmoAuthority(
@@ -212,8 +223,11 @@ export function startRelay(opts = {}) {
 
   const dropPlayer = (c, t) => {
     if (!c.playerId) return;
-    if (players.get(c.playerId) === c) { players.delete(c.playerId); authority.leave(c.playerId, t); }
+    const was = c.playerId;
+    if (players.get(was) === c) { players.delete(was); authority.leave(was, t); }
     c.playerId = '';
+    // Übergabe der Diplomatie-Meldung: der Stand bleibt, der nächste Kapitän meldet ab jetzt
+    if (diploInfo.leader === was) { diploInfo.leader = diploLeader()?.playerId ?? ''; stats.diploHandovers++; }
   };
 
   function onPacket(c, text) {
@@ -233,9 +247,15 @@ export function startRelay(opts = {}) {
         // ohne Änderung der Zahl (Tab war schon als Kapitän da) bekommt nur der neue Wächter den Stand
         if (!recount()) c.ws.send(onlineMsg());
         return;
-      case 'diplo':
-        c.diplo = new Map(i.pairs.map((p) => [pairKey(p.a, p.b), p.s]));
+      case 'diplo': {
+        // nur der Leiter darf den Stand ändern (sonst würden sich die Welten der Kapitäne gegenseitig überschreiben)
+        const lead = diploLeader();
+        if (!c.playerId || lead !== c) { stats.diploIgnored++; return; }
+        for (const p of i.pairs) diplo.set(pairKey(p.a, p.b), p.s);
+        diploInfo.leader = c.playerId; diploInfo.updated = t;
+        stats.diploReports++;
         return;
+      }
       case 'hello': {
         if (i.v !== MMO_PROTOCOL) {
           c.ws.send(encodePacket({ k: 'notice', text: 'Dein Spiel ist veraltet – bitte die Seite neu laden.', tone: 'error' }));
@@ -248,7 +268,9 @@ export function startRelay(opts = {}) {
         if (other && other !== c) { players.delete(id); other.playerId = ''; other.ws.close(4001, 'An anderer Stelle angemeldet'); }
         if (c.playerId && c.playerId !== id) dropPlayer(c, t);
         c.playerId = id;
+        if (!c.joinedAt) c.joinedAt = t;
         players.set(id, c);
+        if (!diploInfo.leader) diploInfo.leader = diploLeader()?.playerId ?? '';
         // Stellvertreter (Bots) gibt es nur im lokalen Shard: nie einem Client glauben
         authority.handle(id, { ...i, profile: { ...i.profile, id, bot: false } }, t);
         recount();
@@ -265,11 +287,32 @@ export function startRelay(opts = {}) {
     if (c.playerId) authority.handle(c.playerId, i, t);
   }
 
-  const http = createServer((req, res) => {
-    const body = JSON.stringify({ name: 'Sturmkrone MMO-Relay', ok: true, protocol: MMO_PROTOCOL, shard, online: online.n, world: online.world });
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
-    res.end(req.method === 'HEAD' ? undefined : body);
+  /** Zustand für `GET /health` (keine Spieler-Kennungen nach außen) */
+  const health = () => ({
+    status: 'ok',
+    onlineCount: online.n,
+    world: online.world,
+    activeParties: authority.parties.size,
+    activeRolls: authority.rolls.length,
+    uptime: Math.round(clockStart() - started),
+    shard,
+    protocol: MMO_PROTOCOL,
+    diplomacy: { source: diplo.size ? 'kapitaen' : 'start', pairs: diplo.size, age: diplo.size ? Math.round(clock() - diploInfo.updated) : null },
   });
+
+  const http = createServer((req, res) => {
+    const path = String(req.url ?? '/').split('?')[0];
+    const head = { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
+    if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { ...head, allow: 'GET, HEAD' }); res.end(); return; }
+    let body;
+    if (path === '/health' || path === '/healthz') body = health();
+    else if (path === '/') body = { name: 'Sturmkrone MMO-Relay', ok: true, protocol: MMO_PROTOCOL, shard, online: online.n, world: online.world };
+    else { res.writeHead(404, head); res.end(req.method === 'HEAD' ? undefined : JSON.stringify({ status: 'not_found' })); return; }
+    res.writeHead(200, head);
+    res.end(req.method === 'HEAD' ? undefined : JSON.stringify(body));
+  });
+  http.headersTimeout = 10000;
+  http.requestTimeout = 15000;
 
   http.on('upgrade', (req, socket, head) => {
     const reject = (code, text) => { stats.rejected++; socket.end(`HTTP/1.1 ${code} ${text}\r\nConnection: close\r\n\r\n`); };
@@ -277,9 +320,14 @@ export function startRelay(opts = {}) {
     if (String(req.headers.upgrade).toLowerCase() !== 'websocket' || typeof key !== 'string' || req.headers['sec-websocket-version'] !== '13') { reject(400, 'Bad Request'); return; }
     if (origins.length && !origins.includes(String(req.headers.origin ?? ''))) { reject(403, 'Forbidden'); return; }
     if (conns.size >= maxClients) { reject(503, 'Service Unavailable'); return; }
+    // höchstens `maxPerIp` Verbindungen je Adresse (hinter einem Hoster-Proxy zählt die erste Adresse aus X-Forwarded-For)
+    const ip = String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim() || socket.remoteAddress || '';
+    let same = 0;
+    for (const o of conns) if (o.ip === ip) same++;
+    if (same >= maxPerIp) { reject(429, 'Too Many Requests'); return; }
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acceptKey(key)}\r\n\r\n`);
     const t = clock();
-    const c = { ws: null, watchId: '', playerId: '', diplo: null, since: t, lastRx: t, budget: 180, budgetT: t, bad: 0, flood: 0 };
+    const c = { ws: null, watchId: '', playerId: '', ip, since: t, joinedAt: 0, lastRx: t, budget: 180, budgetT: t, bad: 0, flood: 0 };
     c.ws = new WsConn(socket, (text) => onPacket(c, text), () => {
       conns.delete(c);
       dropPlayer(c, clock());
@@ -314,8 +362,11 @@ export function startRelay(opts = {}) {
     setTimeout(resolve, 1500).unref();
   });
 
-  return { ready, close, stats, authority, online, conns };
+  return { ready, close, stats, authority, online, conns, diplo, diploInfo, health };
 }
+
+/** Wanduhr in Sekunden (Laufzeit des Servers) */
+function clockStart() { return Date.now() / 1000; }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Direkt gestartet (`npm run mmo-server` bzw. `node server/mmoRelayServer.mjs`)

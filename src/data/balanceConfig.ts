@@ -458,3 +458,55 @@ export const WAR_CAPS = {
   /** Eine Garnison wächst durch Front-Konvois höchstens auf dieses Vielfache ihrer vollen Besatzung */
   garrisonK: 1.35,
 } as const;
+
+// ---------------------------------------------------------------------------------------------------------------
+// 4.8B: Spieler gegen Spieler zu Fuß und Gruppen-Skalierung von Kaisern und Weltbossen
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Landkampf zwischen Kapitänen verfeindeter Nationen: ein Spieler-Hieb ist auf Gegner abgestimmt (dort fallen Matrosen mit wenigen Treffern),
+ * gegen Mitspieler zählt nur ein Bruchteil – und kein einzelner Treffer nimmt mehr als `hitCap` des Lebens (taktische Kämpfe statt Ein-Schlag).
+ * Gruppenmitglieder und Verbündete nehmen nie Schaden (`partyRules.pvpBlock`).
+ */
+export const PVP_LAND = { scale: 0.32, hitCap: 0.11, minDmg: 1 } as const;
+
+/** Schaden eines Spieler-Treffers gegen einen Mitspieler zu Fuß (der Shard rechnet ihn, der Angreifer zeigt dieselbe Zahl) */
+export function pvpLandDamage(raw: number, victimMaxHp: number): number {
+  if (!(raw > 0)) return 0;
+  const cap = Math.max(PVP_LAND.minDmg, victimMaxHp * PVP_LAND.hitCap);
+  return Math.max(PVP_LAND.minDmg, Math.round(Math.min(raw * PVP_LAND.scale, cap)));
+}
+
+/**
+ * Ring-5-Kaiser und Weltbosse wachsen mit der Zahl anwesender Gruppenmitglieder (1 – 5): Leben und Haltungsleiste (`scale`), zusätzliche
+ * Elite-Offiziere je Welle (`elites`) und die Chance auf zusätzliche epische/legendäre Würfel-Beute (`bonusDrops`, `lootK`). Solo bleibt alles
+ * wie bisher (1,0×), fünf Kapitäne stehen vor 3,6×.
+ */
+export const GROUP_RAID = {
+  scale: [1, 1.65, 2.3, 2.95, 3.6],
+  elites: [0, 0, 1, 1, 2],
+  /** Faktor auf die epische/legendäre Gewichtung der Bonus-Beute */
+  lootK: [1, 1.15, 1.35, 1.6, 1.9],
+  /** zusätzliche Beutestücke (Würfel-Sitzungen) je Sieg */
+  bonusDrops: [0, 1, 1, 2, 3],
+  /** Gewichte der Bonus-Beute [selten, episch, legendär] vor `lootK` */
+  bonusWeights: [0.55, 0.37, 0.08],
+} as const;
+
+const groupIdx = (n: number): number => Math.max(0, Math.min(4, Math.round(n) - 1));
+/** Faktor für Leben und Haltungsleiste bei n anwesenden Kapitänen (1 … 5) */
+export const groupScale = (n: number): number => GROUP_RAID.scale[groupIdx(n)];
+export const groupElites = (n: number): number => GROUP_RAID.elites[groupIdx(n)];
+export const groupLootK = (n: number): number => GROUP_RAID.lootK[groupIdx(n)];
+
+/** Seltenheiten der Bonus-Beute einer Gruppe (leer bei Solo): mehr Kapitäne = mehr Stücke und höhere Chance auf Episch/Legendär */
+export function groupBonusRarities(n: number, rnd: () => number): ('selten' | 'episch' | 'legendaer')[] {
+  const k = groupLootK(n), [s, e, l] = GROUP_RAID.bonusWeights;
+  const we = e * k, wl = l * k, ws = Math.max(0.05, s - (we - e) - (wl - l));
+  const out: ('selten' | 'episch' | 'legendaer')[] = [];
+  for (let i = 0; i < GROUP_RAID.bonusDrops[groupIdx(n)]; i++) {
+    const r = rnd() * (ws + we + wl);
+    out.push(r < wl ? 'legendaer' : r < wl + we ? 'episch' : 'selten');
+  }
+  return out;
+}

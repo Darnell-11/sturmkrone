@@ -9,7 +9,7 @@ import { profileOf, type GoodId } from '../data/economy';
 import { factionShipLook, SHIP_CLASSES, type NavalRole, type ShipLook } from '../data/ships';
 import { CONVOY, DIRECTOR, FLOTSAM, RESCUE, SMUGGLER, WORLD_BOSSES, WORLD_EVENT_DEFS, type WorldBossId } from '../data/seaEvents';
 import { aiEvolution, type ShipEvolution } from '../data/shipEvolution';
-import { capVolley, dangerOfLevel, mitigation, worldBossHull, type VolleyWindow } from '../data/balanceConfig';
+import { capVolley, dangerOfLevel, groupScale, mitigation, worldBossHull, type VolleyWindow } from '../data/balanceConfig';
 import { worldBossStats } from '../naval/worldBosses';
 import { FACTIONS, type FactionId } from '../data/factions';
 import type { NavalSystem, EnemyShip, EventShipLink, SpawnYield } from '../naval/naval';
@@ -41,6 +41,8 @@ export type SeaEventNews =
 
 /** Was die Schicht von der Seewelt braucht */
 export interface LiveHost {
+  /** 4.8B: anwesende Gruppenmitglieder samt Spieler (1 … 5): der Rumpf eines Weltbosses wächst mit (fehlt es, gilt 1) */
+  groupSize?: () => number;
   scene: Scene;
   naval: NavalSystem;
   weather: Weather;
@@ -400,7 +402,7 @@ export class WorldEventsLive {
     const it = nav.spawnEventShipSteps({
       x: rec.x, z: rec.z, heading: rec.heading, classTier: rec.classTier, level, look, role, power: raider ? (ev!.foe as FactionId | null) ?? undefined : rec.role === 'korsar' || rec.role === 'schmuggler' || (ev?.kind === 'schmuggler') ? undefined : (bd?.look?.power ?? power ?? undefined),
       name, evo, hullFrac: rec.hull, sailFrac: rec.sail, link, ghost,
-      maxHull: bd ? worldBossHull(SHIP_CLASSES[bd.classTier].hp, bd.level, bd.hullK) : undefined,
+      maxHull: bd ? Math.round(worldBossHull(SHIP_CLASSES[bd.classTier].hp, bd.level, bd.hullK) * groupScale(this.host.groupSize?.() ?? 1)) : undefined,
     });
     return { owner: job.owner, rec, it };
   }
@@ -458,7 +460,7 @@ export class WorldEventsLive {
     const d = Math.hypot(ev.x - p.x, ev.z - p.z);
     if (!L.active && d < DIRECTOR.materialize) {
       const bd = WORLD_BOSSES.leviathan;
-      L.activate(ev.x, ev.z, worldBossHull(SHIP_CLASSES[bd.classTier].hp, bd.level, bd.hullK), ev.bossHp ?? 1, bd.level);
+      L.activate(ev.x, ev.z, Math.round(worldBossHull(SHIP_CLASSES[bd.classTier].hp, bd.level, bd.hullK) * groupScale(this.host.groupSize?.() ?? 1)), ev.bossHp ?? 1, bd.level);
       const levArmor = worldBossStats('leviathan').armor;
       this.leviEngaged = false;
       ev.live = true;

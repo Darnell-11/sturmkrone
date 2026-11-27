@@ -10,3 +10,6 @@ Thumbs.db
 # Prüf-Ausgaben (Playwright-MCP, Prüfskripte) – nie einchecken
 .playwright-mcp/
 qa_tmp/
+
+# Server-Umgebung (Vorlage: .env.example)
+.env

@@ -43,6 +43,13 @@ export const MMO = {
   nameMax: 32,
   /** Relay-Server (`npm run mmo-server`): Standard-Port, Lebenszeichen der Startbildschirm-Wächter (s) */
   relayPort: 8787, watchPing: 10,
+  /** 4.8B: Spieler gegen Spieler zu Fuß – Reichweite eines Treffers (m, auch Faji-Geschosse) */
+  hitRangeLand: 34,
+  /** 4.8B: höchstens so viele Steckbriefe je Paket (ein Steckbrief mit Aussehen ist rund 0,8 KB, ein Paket höchstens 64 KB) */
+  profilesPerPacket: 24,
+  /** 4.8B: Gruppen-Beute – Einsatzgebiet an Land / auf See (m), Würfel-Frist (s), höchstens so viele Würfel-Karten gleichzeitig im Fenster,
+   *  höchstens so viele offene Würfel-Sitzungen je Gruppe (darüber bekommt der Finder das Stück) */
+  lootLand: 250, lootSea: 1200, rollTime: 30, rollCards: 3, rollMaxPerParty: 12,
 } as const;
 
 export type MmoDomain = 'land' | 'sea';
@@ -71,6 +78,76 @@ export interface PlayerProfile {
   look: number;
   /** Stellvertreter des lokalen Shards */
   bot: boolean;
+  /** 4.8B: echtes Aussehen der Figur (null = Figur aus dem Pool, z. B. Kapitäne des lokalen Shards) */
+  app: AppearanceNet | null;
+}
+
+/**
+ * 4.8B: Aussehen eines Kapitäns über das Netz – die Felder von `CharacterLook` (data/characterParts.ts), dazu die sichtbare Ausrüstung
+ * (`extra`, `dye`) und die Klassen-Waffe (`style` = Darstellungsstil, `blade` = Klingenfarbe). Das Protokoll prüft nur die Form (Kennungen,
+ * Farben, Zahlen); welche Werte es gibt, entscheidet der Empfänger mit `sanitizeLook`.
+ */
+export interface AppearanceNet {
+  look: Record<string, string | number | boolean>;
+  extra: string[];
+  dye: [string, string, string][];
+  style: string;
+  blade: string;
+  glow: boolean;
+}
+
+/** Felder von `CharacterLook` mit Auswahl-Kennung, Farbe bzw. Schalter (neue Felder hier ergänzen) */
+export const APP_ENUM_KEYS: readonly string[] = ['gender', 'body', 'face', 'eyes', 'brows', 'mouth', 'hair', 'beard', 'outfit', 'shoes', 'coat', 'hat', 'glasses', 'hairModel'];
+export const APP_COLOR_KEYS: readonly string[] = ['skin', 'eyeColor', 'hairColor', 'outfitColor', 'accentColor', 'pantsColor', 'shoesColor', 'coatColor', 'hatColor', 'hatAccent'];
+export const APP_BOOL_KEYS: readonly string[] = ['scar', 'earring', 'eyepatch', 'scarf', 'gloves'];
+
+// ---------------------------------------------------------------------------------------------------------------
+// 4.8B: Gruppen-Beute (Würfel „Bedarf / Gier / Passen“)
+// ---------------------------------------------------------------------------------------------------------------
+
+/** Güte eines Beutestücks: Grau/Weiß/Grün werden verteilt, ab Blau wird gewürfelt */
+export type LootGrade = 'grau' | 'weiss' | 'gruen' | 'blau' | 'violett' | 'gold' | 'kosmos';
+export const LOOT_GRADES: readonly LootGrade[] = ['grau', 'weiss', 'gruen', 'blau', 'violett', 'gold', 'kosmos'];
+/** Für wen ein Stück „Bedarf“ ist: alle, Nahkämpfer (Faust und Schwert), nur Schwertkämpfer, Faji-Wirker, Schiff (nach Schiffsstufe) */
+export type LootAffinity = 'alle' | 'nahkampf' | 'schwert' | 'faji' | 'schiff';
+export const LOOT_AFFINITIES: readonly LootAffinity[] = ['alle', 'nahkampf', 'schwert', 'faji', 'schiff'];
+export type LootKindNet = 'gear' | 'trinket' | 'consumable';
+export type RollChoice = 'bedarf' | 'gier' | 'passen';
+export const ROLL_CHOICES: readonly RollChoice[] = ['bedarf', 'gier', 'passen'];
+
+/** Ein Beutestück über das Netz: Kennung im Spiel (`ref`), Anzeige und alles, was der Shard für Eignung und Ersatz braucht */
+export interface LootItemNet {
+  /** eindeutig je Fund (Würfel-Sitzung) */
+  uid: string;
+  /** Kennung in den Spieldaten (Rüstungsteil, Talisman, Gut) */
+  ref: string;
+  kind: LootKindNet;
+  grade: LootGrade;
+  name: string;
+  /** Platz („Brust“, „Talisman“ …) */
+  cat: string;
+  aff: LootAffinity;
+  /** Schiffsstufe, ab der ein Schiffs-Stück „Bedarf“ ist */
+  ship: number;
+  /** Goldwert (wer das Stück schon besitzt, bekommt ihn) */
+  value: number;
+  /** Qualitätsstufe 1 … 5 (Anzeige) */
+  tier: number;
+}
+
+/** Würfel-Karte für einen Teilnehmer */
+export interface RollView {
+  id: string;
+  item: LootItemNet;
+  /** Sekunden bis zum automatischen Passen, Gesamtdauer */
+  left: number;
+  total: number;
+  /** darf dieser Teilnehmer „Bedarf“ wählen? sonst der Grund */
+  needOk: boolean;
+  needWhy: string;
+  /** Finder des Stücks, Zahl der Teilnehmer */
+  from: string;
+  n: number;
 }
 
 /** Zustand eines Spielers (15 Hz vom Client) */
@@ -126,13 +203,18 @@ export type ClientIntent =
   | { k: 'share'; what: ShareKind; ref: string; amount: number; x: number; z: number }
   | { k: 'ride'; ship: string; rx: number; ry: number; rz: number }
   | { k: 'unride' }
-  | { k: 'hit'; to: string; dmg: number }
+  /** Treffer gegen einen Mitspieler; `land` = zu Fuß (4.8B), sonst Kanonen auf See */
+  | { k: 'hit'; to: string; dmg: number; land: boolean }
   | { k: 'ping'; t: number }
   | { k: 'bye' }
   /** Startbildschirm: nur die Zahl der Kapitäne hören (Kennung des Tabs, ohne Figur in der Welt) */
   | { k: 'watch'; id: string }
   /** Relay-Server: Diplomatie der Welt-KI dieses Clients (der am längsten verbundene Kapitän gilt) */
-  | { k: 'diplo'; pairs: DiploPair[] };
+  | { k: 'diplo'; pairs: DiploPair[] }
+  /** 4.8B: Beute in der Gruppe – Gold und Ruf werden geteilt, gewöhnliche Stücke reihum, ab Blau gewürfelt */
+  | { k: 'loot'; gold: number; rep: number; power: string; items: LootItemNet[] }
+  /** 4.8B: Wahl in einer Würfel-Sitzung */
+  | { k: 'roll'; id: string; choice: RollChoice };
 
 /** Haltung zweier Nationen nach der Welt-KI eines Clients */
 export interface DiploPair { a: string; b: string; s: DiplomacyState }
@@ -151,12 +233,19 @@ export type ServerMsg =
   | { k: 'heal'; from: string; name: string; frac: number }
   | { k: 'horn'; from: string; name: string; heal: number; will: number }
   | { k: 'share'; from: string; name: string; what: ShareKind; ref: string; amount: number }
-  | { k: 'hit'; from: string; name: string; dmg: number }
+  | { k: 'hit'; from: string; name: string; dmg: number; land: boolean }
   | { k: 'ride'; ok: boolean; ship: string; text: string }
   | { k: 'notice'; text: string; tone: 'info' | 'warn' | 'error' }
   | { k: 'pong'; t: number; st: number }
   /** Zahl der verbundenen Kapitäne (Startbildschirm und Spiel); `world` = davon in der geteilten See */
-  | { k: 'online'; n: number; world: number; shard: string };
+  | { k: 'online'; n: number; world: number; shard: string }
+  /** 4.8B: eigener Anteil an Gold und Ruf eines Gruppen-Funds (n = Zahl der Empfänger) */
+  | { k: 'lootShare'; from: string; name: string; gold: number; rep: number; power: string; n: number }
+  /** 4.8B: ein Stück wandert ins Inventar (reihum, gewonnen, allein, alle haben gepasst) */
+  | { k: 'lootGet'; item: LootItemNet; how: 'reihum' | 'wurf' | 'allein' | 'verzicht'; from: string; name: string }
+  /** 4.8B: neue Würfel-Sitzung, Ende einer Sitzung */
+  | { k: 'rollStart'; roll: RollView }
+  | { k: 'rollEnd'; id: string; winner: string; name: string; choice: RollChoice | ''; text: string };
 
 // ---------------------------------------------------------------------------------------------------------------
 // Interessenbereich und Reichweiten
@@ -178,7 +267,7 @@ export function newPlayerState(): PlayerState {
 }
 
 export function newProfile(id = ''): PlayerProfile {
-  return { id, name: 'Kapitän', level: 1, base: '', spec: '', role: '', classLabel: '', team: '', gearTier: 1, shipTier: 0, shipName: '', gender: 'm', look: 0, bot: false };
+  return { id, name: 'Kapitän', level: 1, base: '', spec: '', role: '', classLabel: '', team: '', gearTier: 1, shipTier: 0, shipName: '', gender: 'm', look: 0, bot: false, app: null };
 }
 
 export function copyState(src: PlayerState, dst: PlayerState): PlayerState {
@@ -227,7 +316,60 @@ export function cleanProfile(raw: unknown): PlayerProfile | null {
     gender: raw.gender === 'w' ? 'w' : 'm',
     look: Math.round(num(raw.look, 0, 0, 2 ** 31)),
     bot: bool(raw.bot),
+    app: cleanAppearance(raw.app),
   };
+}
+
+const ENUM_RE = /^[a-z0-9_]{1,40}$/;
+const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+const ITEM_RE = /^[a-z0-9_]{1,48}$/;
+
+/** 4.8B: Aussehen säubern (nur bekannte Felder, Kennungen, Farben, Zahlen); null = keins */
+export function cleanAppearance(raw: unknown): AppearanceNet | null {
+  if (!isRec(raw) || !isRec(raw.look)) return null;
+  const src = raw.look, look: Record<string, string | number | boolean> = {};
+  for (const k of APP_ENUM_KEYS) { const v = src[k]; if (typeof v === 'string' && ENUM_RE.test(v)) look[k] = v; }
+  for (const k of APP_COLOR_KEYS) { const v = src[k]; if (typeof v === 'string' && COLOR_RE.test(v)) look[k] = v.toLowerCase(); }
+  for (const k of APP_BOOL_KEYS) if (typeof src[k] === 'boolean') look[k] = src[k] as boolean;
+  if (typeof src.height === 'number' && Number.isFinite(src.height)) look.height = Math.min(1.1, Math.max(0.9, src.height));
+  const extra = Array.isArray(raw.extra) ? raw.extra.filter((e): e is string => typeof e === 'string' && ITEM_RE.test(e)).slice(0, 16) : [];
+  const dye: [string, string, string][] = [];
+  if (Array.isArray(raw.dye)) for (const d of raw.dye.slice(0, 16)) {
+    if (Array.isArray(d) && typeof d[0] === 'string' && ITEM_RE.test(d[0]) && typeof d[1] === 'string' && COLOR_RE.test(d[1]) && typeof d[2] === 'string' && COLOR_RE.test(d[2])) dye.push([d[0], d[1].toLowerCase(), d[2].toLowerCase()]);
+  }
+  return {
+    look, extra, dye,
+    style: typeof raw.style === 'string' && ENUM_RE.test(raw.style) ? raw.style : '',
+    blade: typeof raw.blade === 'string' && COLOR_RE.test(raw.blade) ? raw.blade.toLowerCase() : '#c9d2da',
+    glow: bool(raw.glow),
+  };
+}
+
+/** 4.8B: Beutestück säubern; null = verwerfen */
+export function cleanLootItem(raw: unknown): LootItemNet | null {
+  if (!isRec(raw)) return null;
+  const uid = cleanId(raw.uid), ref = typeof raw.ref === 'string' && ITEM_RE.test(raw.ref) ? raw.ref : '';
+  if (!uid || !ref) return null;
+  const kind = raw.kind === 'gear' || raw.kind === 'trinket' || raw.kind === 'consumable' ? raw.kind : null;
+  const grade = LOOT_GRADES.includes(raw.grade as LootGrade) ? (raw.grade as LootGrade) : null;
+  if (!kind || !grade) return null;
+  return {
+    uid, ref, kind, grade,
+    name: cleanText(raw.name, 48) || 'Beutestück',
+    cat: cleanText(raw.cat, 24),
+    aff: LOOT_AFFINITIES.includes(raw.aff as LootAffinity) ? (raw.aff as LootAffinity) : 'alle',
+    ship: Math.round(num(raw.ship, 0, 0, 6)),
+    value: Math.round(num(raw.value, 0, 0, 1e6)),
+    tier: Math.round(num(raw.tier, 1, 1, 6)),
+  };
+}
+
+function cleanRollView(raw: unknown): RollView | null {
+  if (!isRec(raw)) return null;
+  const id = cleanId(raw.id), item = cleanLootItem(raw.item);
+  if (!id || !item) return null;
+  const total = num(raw.total, 30, 1, 120);
+  return { id, item, total, left: num(raw.left, total, 0, total), needOk: bool(raw.needOk), needWhy: cleanText(raw.needWhy, 80), from: cleanText(raw.from, MMO.nameMax), n: Math.round(num(raw.n, 1, 1, MMO.partyMax)) };
 }
 
 export function cleanState(raw: unknown, out: PlayerState = newPlayerState()): PlayerState | null {
@@ -283,11 +425,18 @@ export function cleanIntent(raw: unknown): ClientIntent | null {
       ? { k: 'share', what: raw.what as ShareKind, ref: cleanText(raw.ref, 32), amount: num(raw.amount, 1, 0, 1000), x: num(raw.x, 0, -W, W), z: num(raw.z, 0, -W, W) } : null;
     case 'ride': { const ship = cleanId(raw.ship); return ship ? { k: 'ride', ship, rx: num(raw.rx, 0, -40, 40), ry: num(raw.ry, 0, -10, 20), rz: num(raw.rz, 0, -40, 40) } : null; }
     case 'unride': return { k: 'unride' };
-    case 'hit': { const to = cleanId(raw.to); return to ? { k: 'hit', to, dmg: num(raw.dmg, 0, 0, 5000) } : null; }
+    case 'hit': { const to = cleanId(raw.to); return to ? { k: 'hit', to, dmg: num(raw.dmg, 0, 0, 5000), land: bool(raw.land) } : null; }
     case 'ping': return { k: 'ping', t: num(raw.t, 0, 0, 1e13) };
     case 'bye': return { k: 'bye' };
     case 'watch': { const id = cleanId(raw.id); return id ? { k: 'watch', id } : null; }
     case 'diplo': return { k: 'diplo', pairs: cleanDiploPairs(raw.pairs) };
+    case 'loot': {
+      const items = Array.isArray(raw.items) ? raw.items.slice(0, 8).map(cleanLootItem).filter((x): x is LootItemNet => !!x) : [];
+      const gold = Math.round(num(raw.gold, 0, 0, 1e6)), rep = Math.round(num(raw.rep, 0, -100, 100));
+      const power = typeof raw.power === 'string' && /^[a-z]{0,16}$/.test(raw.power) ? raw.power : '';
+      return gold > 0 || rep !== 0 || items.length ? { k: 'loot', gold, rep, power, items } : null;
+    }
+    case 'roll': { const id = cleanId(raw.id); return id && ROLL_CHOICES.includes(raw.choice as RollChoice) ? { k: 'roll', id, choice: raw.choice as RollChoice } : null; }
     default: return null;
   }
 }
@@ -373,11 +522,26 @@ export function cleanServerMsg(raw: unknown): ServerMsg | null {
     case 'heal': return { k: 'heal', from: cleanId(raw.from), name: cleanText(raw.name, MMO.nameMax), frac: num(raw.frac, 0, 0, 0.6) };
     case 'horn': return { k: 'horn', from: cleanId(raw.from), name: cleanText(raw.name, MMO.nameMax), heal: num(raw.heal, 0, 0, 0.5), will: num(raw.will, 0, 0, 100) };
     case 'share': return SHARES.includes(raw.what as string) ? { k: 'share', from: cleanId(raw.from), name: cleanText(raw.name, MMO.nameMax), what: raw.what as ShareKind, ref: cleanText(raw.ref, 32), amount: num(raw.amount, 1, 0, 1000) } : null;
-    case 'hit': return { k: 'hit', from: cleanId(raw.from), name: cleanText(raw.name, MMO.nameMax), dmg: num(raw.dmg, 0, 0, 5000) };
+    case 'hit': return { k: 'hit', from: cleanId(raw.from), name: cleanText(raw.name, MMO.nameMax), dmg: num(raw.dmg, 0, 0, 5000), land: bool(raw.land) };
     case 'ride': return { k: 'ride', ok: bool(raw.ok), ship: cleanId(raw.ship), text: cleanText(raw.text, 160) };
     case 'notice': return { k: 'notice', text: cleanText(raw.text, 200), tone: raw.tone === 'warn' || raw.tone === 'error' ? raw.tone : 'info' };
     case 'pong': return { k: 'pong', t: num(raw.t, 0, 0, 1e13), st: num(raw.st, 0, 0, 1e13) };
     case 'online': return { k: 'online', n: Math.round(num(raw.n, 0, 0, 1e6)), world: Math.round(num(raw.world, 0, 0, 1e6)), shard: cleanText(raw.shard, 40) };
+    case 'lootShare': {
+      const power = typeof raw.power === 'string' && /^[a-z]{0,16}$/.test(raw.power) ? raw.power : '';
+      return { k: 'lootShare', from: cleanId(raw.from), name: cleanText(raw.name, MMO.nameMax), gold: Math.round(num(raw.gold, 0, 0, 1e6)), rep: Math.round(num(raw.rep, 0, -100, 100)), power, n: Math.round(num(raw.n, 1, 1, MMO.partyMax)) };
+    }
+    case 'lootGet': {
+      const item = cleanLootItem(raw.item);
+      const how = raw.how === 'reihum' || raw.how === 'wurf' || raw.how === 'allein' || raw.how === 'verzicht' ? raw.how : 'allein';
+      return item ? { k: 'lootGet', item, how, from: cleanId(raw.from), name: cleanText(raw.name, MMO.nameMax) } : null;
+    }
+    case 'rollStart': { const roll = cleanRollView(raw.roll); return roll ? { k: 'rollStart', roll } : null; }
+    case 'rollEnd': {
+      const id = cleanId(raw.id);
+      const choice = ROLL_CHOICES.includes(raw.choice as RollChoice) ? (raw.choice as RollChoice) : '';
+      return id ? { k: 'rollEnd', id, winner: cleanId(raw.winner), name: cleanText(raw.name, MMO.nameMax), choice, text: cleanText(raw.text, MMO.chatMax) } : null;
+    }
     default: return null;
   }
 }

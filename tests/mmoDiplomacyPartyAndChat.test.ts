@@ -627,9 +627,9 @@ describe('4.8A Starter-Schutzzonen: Ankerglück und die Hauptstadt-Häfen ohne S
     s.join('p:fr', 'Aurélie', 'frankreich', 3200, 3000, { dom: 'sea' });
     s.join('p:fr2', 'Gaspard', 'frankreich', 0, 200, { dom: 'sea' });
     s.join('p:en2', 'Archie', 'england', 100, 200, { dom: 'sea' });
-    s.auth.handle('p:en', { k: 'hit', to: 'p:fr', dmg: 40 }, 1);
+    s.auth.handle('p:en', { k: 'hit', to: 'p:fr', dmg: 40, land: false }, 1);
     expect(s.box('p:fr').some((m) => m.k === 'hit' && m.dmg === 40)).toBe(true);
-    s.auth.handle('p:en2', { k: 'hit', to: 'p:fr2', dmg: 40 }, 1);
+    s.auth.handle('p:en2', { k: 'hit', to: 'p:fr2', dmg: 40, land: false }, 1);
     expect(s.box('p:fr2').some((m) => m.k === 'hit')).toBe(false);
     expect(s.notices('p:en2').some((t) => t.includes('Schutzzone Ankerglück'))).toBe(true);
   });
@@ -1000,7 +1000,7 @@ describe('4.8A Einbindung: Mitspieler ohne neue Shader, Peer-Schiffe nach Schnap
     expect(sea2).toMatch(/let swap = this\.mmoLive\?\.stats\.shown \?\? 0;/);
     expect(live).not.toMatch(/new (MeshStandardMaterial|ShaderMaterial|MeshBasicMaterial)\(/);
     const sea = readFileSync('src/world/seaWorld.ts', 'utf8');
-    expect(sea).toMatch(/if \(this\.mmoLive\) \{ this\.mmoLive\.update\(dt\); this\.carryRider\(\); \}/);
+    expect(sea).toMatch(/if \(this\.mmoLive\) \{ this\.mmoLive\.update\(dt\); this\.carryRider\(\); this\.syncPeerFoes\(\); \}/);
     const game = readFileSync('src/core/game.ts', 'utf8');
     // 4.8.1: die Adresse kommt aus `serverChoice` (?server= > gemerkt > VITE_MMO_SERVER_URL)
     expect(game).toMatch(/serverChoice\(\)\.url/);

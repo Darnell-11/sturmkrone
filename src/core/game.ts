@@ -3,7 +3,11 @@ import { MmoClient, type PartyWarn, type PendingInvite } from '../net/mmoClient'
 import { createMmoTransport, type MmoTransport } from '../net/mmoTransport';
 import { OnlineStatus, mmoTabId } from '../net/onlineStatus';
 import { serverChoice } from '../net/serverUrl';
-import type { DiploPair } from '../net/mmoProtocol';
+import { APP_BOOL_KEYS, APP_COLOR_KEYS, APP_ENUM_KEYS, type AppearanceNet, type DiploPair, type LootItemNet } from '../net/mmoProtocol';
+import { affinityOf, gradeOf, gradeRank, rollsFor, shipNeedOf, GRADE_LABEL } from '../net/groupLoot';
+import { LootRollWindow, type RollCardInfo } from '../ui/lootRollWindow';
+import { glyphSvg } from '../ui/itemArt';
+import type { GlyphKind } from '../data/catalog';
 import { MMO, newProfile, type InspectInfo, type PartyView, type PlayerProfile, type PlayerState, type ShareKind } from '../net/mmoProtocol';
 import { groupAllowed, rideSlot, safeZoneAt } from '../net/partyRules';
 import { safeZones } from '../social/safeZones';
@@ -110,7 +114,7 @@ import { OccupationBanner } from '../ui/occupationBanner';
 import { OccupationSystem } from './occupationSystem';
 import { emptyUnlocks } from '../raid/occupation';
 import { SHARD_NAME } from '../data/crafting';
-import { TIER_DEFS, playerCannonDmg, tierOfRank, type Tier } from '../data/balanceConfig';
+import { TIER_DEFS, groupBonusRarities, playerCannonDmg, tierOfRank, type Tier } from '../data/balanceConfig';
 import { UPGRADE_RECIPE, WEAPON_RECIPE, craftCheck, paySeals, payRecipe, payWeapon, sealTotal, recipeOf, sealsOf, shopGate, weaponCraftCheck, type Recipe, type SealPurse } from '../data/crafting';
 import type { PersonalLoot } from '../raid/raidLoot';
 import { mintEntityId, type EntityId } from '../sim/entityId';
@@ -282,7 +286,10 @@ export class Game {
   /** 4.8.1: Live-Zähler für den Startbildschirm (Server- oder Lokal-Shard), läuft die ganze Seite über */
   readonly online = new OnlineStatus(serverChoice(), mmoTabId());
   /** zuletzt gemeldeter Steckbrief (Vergleich ohne neue Zeichenketten) */
-  private readonly mmoKey = { level: -1, team: '', spec: '', ship: -1, gear: -1, name: '' };
+  private readonly mmoKey = { level: -1, team: '', spec: '', ship: -1, gear: -1, name: '', look: -1 };
+  /** 4.8B: Beutewürfel-Fenster und laufende Nummer eigener Funde (Kennung je Würfel-Sitzung) */
+  private lootUi!: LootRollWindow;
+  private lootSeq = 0;
   private readonly partyRows: PartyFrameView[] = [];
   private pendingRide: { e: EnemyShip; rx: number; rz: number } | null = null;
   private shareNoteT = 0;
@@ -439,6 +446,8 @@ export class Game {
       onOpenChange: (open) => { if (open) this.input.releaseAll(); },
     });
     this.chatUi.setVisible(false);
+    // 4.8B: Beutewürfel (rechts unter Karte und Auftrag, endet über den unteren Leisten; am Handy einklappbar)
+    this.lootUi = new LootRollWindow(zone.tr, (id, choice) => this.mmo?.roll(id, choice), (it) => this.describeLoot(it), () => [zone.bc, zone.br, zone.bl, document.querySelector<HTMLElement>('div.touch') ?? zone.br]);
     this.playerMenuUi = new PlayerMenuUi(uiRoot);
     this.inspectUi = new InspectPanel(uiRoot);
     // Rechtsklick auf die Spielwelt (ohne Ziehen: Ziehen mit gedrückter rechter Taste dreht die Kamera) und auf das Zielfenster
@@ -568,6 +577,7 @@ export class Game {
     this.world.onVillage = (id) => this.villageGift(id);
     this.world.onMegaVictory = (id, name, level, commander) => this.megaVictory(id, name, level, commander);
     this.world.onKaiserVictory = (id, first) => this.kaiserVictory(id, first);
+    this.world.groupSize = () => this.partyPresent();
     this.world.onRescue = () => {
       if (!this.save) return;
       this.save.progress.stats.rescued++;
@@ -1382,6 +1392,8 @@ export class Game {
   private onLootPickup(d: LootDrop) {
     const s = this.save;
     if (!s) return;
+    // 4.8B: in einer Gruppe wird geteilt bzw. gewürfelt
+    if (this.partyLoot(d)) return;
     const r = RARITY[d.rarity];
     const pp = this.world.playerPos;
     const h = this.world.ground.height(pp.x, pp.z);
@@ -2174,6 +2186,8 @@ export class Game {
     }
     // 4.6G: je besiegtem Kaiser ein Stück der Kaiser-Regalia
     this.grantEndgame(6000);
+    // 4.8B: Gruppen-Bonus (zusätzliche Würfel-Beute, mehr Kapitäne = höhere Chance auf Episch/Legendär)
+    this.groupBonusLoot(k.boss.name);
     audio.play('victory');
     this.after(() => this.overlay.showCutin(`${k.boss.name} besiegt!`, '#E3B04B'), 300);
     this.overlay.showBanner(`${k.boss.name} besiegt!`, `+${fmtInt(gold)} Gold · ${goods} · ${loot.kaiserSeals} Kaiser-Siegel · ${loot.seals.n} Boss-Siegel (${FACTIONS[loot.seals.power].name}) · ${loot.shards} Relikt-Splitter`);
@@ -3024,6 +3038,8 @@ export class Game {
           this.grantXp(loot.xp, loot.fame);
           // garantiert ein Stück der Stufe 4 (Kriegsherren-Beute)
           this.dropWarlord(1, bd.name);
+          // 4.8B: Gruppen-Bonus
+          this.groupBonusLoot(bd.name);
           s.progress.flags[`weltboss_${ev.bossId}`] = true;
           this.milestone(`weltboss_${ev.bossId}`);
           audio.play('win');
@@ -6184,6 +6200,8 @@ export class Game {
   private dockSocial(m: SeaMode) {
     const sea = m === 'sail' && !document.documentElement.classList.contains('touch');
     this.chatUi.dock(sea ? this.hud.regions.bl : this.hud.regions.ml);
+    // 4.8B: Beutewürfel am PC rechts unter Karte und Auftrag, am Handy unter der oberen Mitte (rechtsbündig neben dem Gruppenfenster)
+    this.lootUi.dock(document.documentElement.classList.contains('touch') ? this.hud.regions.tc : this.hud.regions.tr);
     // die Touch-Belegung wechselt mit der Bedienart: das ausgeklappte Fenster neu über die Knöpfe legen (nach dem Neuaufbau der Knöpfe)
     requestAnimationFrame(() => this.chatUi.refit());
     this.partyUi.el.classList.toggle('compact', m === 'sail');
@@ -6219,7 +6237,10 @@ export class Game {
       onHeal: (name, frac) => this.partyHealed(name, frac),
       onHorn: (name, heal, will) => this.partyHorn(name, heal, will),
       onShare: (_from, name, what, ref, amount) => this.partyShare(name, what, ref, amount),
-      onHit: (_from, name, dmg) => this.pvpHit(name, dmg),
+      onHit: (from, name, dmg, land) => this.pvpHit(from, name, dmg, land),
+      onLootShare: (m) => this.lootShared(m.name, m.gold, m.rep, m.power, m.n),
+      onLootGet: (m) => this.grantNetItem(m.item, m.how, m.name),
+      onRolls: () => this.lootUi.sync(this.mmo?.rolls ?? []),
       onRide: (ok, _ship, text) => this.rideAnswer(ok, text),
       onRideRequest: () => this.requestRide(),
       onUnrideRequest: () => this.endRideNow(),
@@ -6230,7 +6251,7 @@ export class Game {
     this.world.mmoStance = (team) => war()?.partyStance(this.teamId(), team || null) ?? 'neutral';
     this.world.onPartyHeal = (x, z, r, k) => this.healPartyAround(x, z, r, k);
     this.world.onPartyHorn = (x, z, heal, will) => this.mmo?.horn(x, z, heal, will);
-    this.world.onPeerHit = (pid, dmg) => this.mmo?.hit(pid, dmg);
+    this.world.onPeerHit = (pid, dmg, land) => this.mmo?.hit(pid, dmg, land);
     this.world.onRideEnd = () => this.endRideNow();
     this.mmoKey.level = -1;
     this.dockSocial(this.world.mode);
@@ -6254,6 +6275,7 @@ export class Game {
     this.playerMenuUi.close();
     this.inspectUi.hide();
     this.pendingRide = null;
+    this.lootUi.sync([]);
   }
 
   /** Je Logikschritt: MMO starten/stoppen, Client und Anzeigen führen */
@@ -6264,6 +6286,7 @@ export class Game {
     if (!shared) { this.stopMmo(); return; }
     if (!live) return;
     this.mmo.update(dt);
+    this.lootUi.tick(this.mmo.time());
     this.reportDiplomacy(dt);
     this.mmoUiT -= dt;
     if (this.mmoUiT > 0) return;
@@ -6273,9 +6296,11 @@ export class Game {
     const c = this.classSave();
     const k = this.mmoKey;
     const team = this.teamId() ?? '', spec = (c && classSpec(c)) ?? '', gear = WEAPONS[weaponEq(sv.gear)]?.tier ?? 1;
-    if (k.level !== sv.player.level || k.team !== team || k.spec !== spec || k.ship !== sv.ship.tier || k.gear !== gear || k.name !== sv.player.name) {
+    // 4.8B: auch Aussehen, Ausrüstung und Klassen-Waffe (jede Änderung an der Spielfigur zählt `lookVersion` hoch)
+    const lookV = this.world.lookVersion;
+    if (k.level !== sv.player.level || k.team !== team || k.spec !== spec || k.ship !== sv.ship.tier || k.gear !== gear || k.name !== sv.player.name || k.look !== lookV) {
       const first = k.level < 0;
-      k.level = sv.player.level; k.team = team; k.spec = spec; k.ship = sv.ship.tier; k.gear = gear; k.name = sv.player.name;
+      k.level = sv.player.level; k.team = team; k.spec = spec; k.ship = sv.ship.tier; k.gear = gear; k.name = sv.player.name; k.look = lookV;
       if (!first) this.mmo.pushProfile();
     }
     this.refreshPartyUi();
@@ -6327,7 +6352,175 @@ export class Game {
     let h = 2166136261;
     for (let i = 0; i < p.name.length; i++) h = Math.imul(h ^ p.name.charCodeAt(i), 16777619);
     prof.look = (h >>> 0) % 100000;
+    prof.app = this.mmoAppearance();
     return prof;
+  }
+
+  /** 4.8B: eigenes Aussehen für Mitspieler – Figur, sichtbare Ausrüstung samt Farben und Klassen-Waffe */
+  private mmoAppearance(): AppearanceNet {
+    const look = this.displayLook() as unknown as Record<string, unknown>;
+    const rec: Record<string, string | number | boolean> = {};
+    for (const key of [...APP_ENUM_KEYS, ...APP_COLOR_KEYS, ...APP_BOOL_KEYS, 'height']) {
+      const v = look[key];
+      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') rec[key] = v;
+    }
+    const extra = Array.isArray(look.extra) ? (look.extra as string[]).slice(0, 16) : [];
+    const dyeSrc = (look.dye ?? {}) as Record<string, [string, string]>;
+    const dye: [string, string, string][] = Object.entries(dyeSrc).slice(0, 16).map(([id, [a, b]]) => [id, a, b]);
+    const wl = this.world.weaponLook;
+    return { look: rec, extra, dye, style: this.activeStyle(), blade: wl.blade, glow: !!wl.glow };
+  }
+
+  // ---------- 4.8B: Gruppen-Beute (Würfel „Bedarf / Gier / Passen“) ----------
+
+  /** Ist eine Gruppe mit Mitstreitern da, über die Beute verteilt wird? */
+  private groupLootLive(): boolean {
+    return !!this.mmo && this.mmo.partySize >= 2 && this.mmoTransport?.status === 'online';
+  }
+
+  /**
+   * Fund in der Gruppe: Gold geht geteilt an alle im Einsatzgebiet, Stücke werden hier schon bestimmt (Name im Würfel-Fenster und im Chat)
+   * und an den Shard geschickt – gewöhnliche wandern reihum, ab Selten wird gewürfelt. false = keine Gruppe (alles bleibt beim Finder).
+   */
+  private partyLoot(d: LootDrop): boolean {
+    const m = this.mmo;
+    if (!m || !this.save || !this.groupLootLive()) return false;
+    if (d.kind === 'gold') { m.loot(Math.max(1, Math.round(d.value)), 0, '', []); return true; }
+    const item = this.lootItemFor(d);
+    if (!item) { m.loot(Math.max(1, Math.round(d.value)), 0, '', []); return true; }
+    m.loot(0, 0, '', [item]);
+    if (rollsFor(item.grade)) {
+      const r = RARITY[d.rarity];
+      this.overlay.lootCard(`${r.mark} Gruppen-Fund: [${item.name}]`, 'Würfeln: Bedarf · Gier · Passen (30 s)', r.col, RARITIES.indexOf(d.rarity));
+    }
+    return true;
+  }
+
+  /** Beutestück fürs Netz bestimmen (Ausrüstung, Talisman oder Gut in der Seltenheit der Säule) */
+  private lootItemFor(d: LootDrop): LootItemNet | null {
+    const s = this.save!;
+    const uid = `${this.mmoTabId()}-${++this.lootSeq}`.slice(0, 48);
+    const tierOfR = RARITIES.indexOf(d.rarity) + 1;
+    if (d.kind === 'trinket') {
+      const t = rollTrinket(d.rarity, 0, [], true);
+      if (!t) return null;
+      const grade = gradeOf(t.rarity, 'trinket'), aff = affinityOf(t.bonus, '');
+      return { uid, ref: t.id, kind: 'trinket', grade, name: t.n, cat: 'Talisman', aff, ship: aff === 'schiff' ? shipNeedOf(grade) : 0, value: Math.round(d.value), tier: tierOfR };
+    }
+    if (d.kind === 'gear') {
+      const g = rollLootGear(d.rarity, s.player.level, [], Math.random, tierOfRank(this.playerRank));
+      if (!g) return null;
+      const cat = catOf(g), grade = gradeOf(g.rarity ?? d.rarity, 'gear'), aff = affinityOf(g.bonus ?? {}, cat);
+      return { uid, ref: g.id, kind: 'gear', grade, name: g.n, cat: CAT_LABEL[cat], aff, ship: aff === 'schiff' ? shipNeedOf(grade) : 0, value: Math.round(d.value), tier: g.tier ?? tierOfR };
+    }
+    const pool = d.rarity !== 'gewoehnlich' ? CONSUMABLES.filter((c) => c.rarity === d.rarity) : [];
+    const def = pool.length ? pool[Math.floor(Math.random() * pool.length)] : CONSUMABLE_BY_ID.proviant;
+    return { uid, ref: def.id, kind: 'consumable', grade: gradeOf(def.rarity ?? d.rarity, 'consumable'), name: def.n, cat: 'Proviant', aff: 'alle', ship: 0, value: Math.round(d.value), tier: tierOfR };
+  }
+
+  /** Eigener Anteil an Gold und Ruf eines Gruppen-Funds */
+  private lootShared(from: string, gold: number, rep: number, power: string, n: number) {
+    const s = this.save;
+    if (!s) return;
+    const g = Math.round(gold * this.goldMult(true));
+    if (g > 0) {
+      s.player.gold += g;
+      const pp = this.world.playerPos, h = this.world.ground.height(pp.x, pp.z);
+      this.overlay.number(new Vector3(pp.x, (Number.isFinite(h) ? h : 0) + 2.4, pp.z), `+${g} Gold${n > 1 ? ` (÷${n})` : ''}`, 'gold');
+    }
+    if (rep && power && FACTIONS[power as FactionId]) this.shiftStanding(power as FactionId, rep);
+    if (n > 1 && g > 0) this.hud.toast(`Gruppen-Beute von ${from}: +${g} Gold (geteilt durch ${n})`, 2.2);
+  }
+
+  /** Stück aus der Gruppen-Beute ins Inventar (wer es schon hat, bekommt den Goldwert) */
+  private grantNetItem(it: LootItemNet, how: 'reihum' | 'wurf' | 'allein' | 'verzicht', from: string) {
+    const s = this.save;
+    if (!s) return;
+    let ok = false;
+    if (it.kind === 'gear') {
+      const d = EQUIP_BY_ID[it.ref];
+      if (d?.set) { ensureLoot(s.gear); ok = grantLoot(s.gear, d); if (ok) { this.world.updatePlayer(this.displayLook(), this.activeStyle()); this.applyPower(); } }
+    } else if (it.kind === 'trinket') {
+      const t = TRINKET_BY_ID[it.ref];
+      ok = !!t && this.dropTrinket(t.rarity, 0, t.id, true);
+    } else {
+      const def = CONSUMABLE_BY_ID[it.ref];
+      ok = !!def && addItem(s.gear, def.id, 1, this.bagMax(def)) > 0;
+    }
+    const why = how === 'wurf' ? 'gewonnen' : how === 'reihum' ? `reihum von ${from}` : how === 'verzicht' ? 'alle haben gepasst' : 'gefunden';
+    if (!ok) {
+      const g = Math.round(it.value * this.goldMult(true));
+      s.player.gold += g;
+      this.hud.toast(`[${it.name}] (${why}) – schon im Besitz: +${g} Gold`, 3);
+    } else if (rollsFor(it.grade)) {
+      audio.play(gradeRank(it.grade) >= gradeRank('gold') ? 'fanfareLegend' : gradeRank(it.grade) >= gradeRank('violett') ? 'fanfareEpic' : 'fanfareRare');
+      this.after(() => this.overlay.showBanner(`[${it.name}]`, `${GRADE_LABEL[it.grade]} · ${it.cat} · ${why}`), 400);
+    } else this.hud.toast(`Beute: [${it.name}] (${why})`, 2.2);
+    this.persist();
+    this.inventoryUi?.refresh();
+  }
+
+  /** Würfel-Karte: Zeichen, Platz und Werte-Vergleich zum angelegten Stück */
+  private describeLoot(it: LootItemNet): RollCardInfo {
+    const s = this.save;
+    const col = getComputedStyle(document.documentElement).getPropertyValue(`--grade-${it.grade}`).trim() || '#3a8fe0';
+    const out: RollCardInfo = { glyph: '', cat: it.cat, lines: [], owned: false };
+    const LBL: Record<string, string> = { hp: 'Leben', armor: 'Rüstung', atk: 'Angriff', crit: 'Krit', faji: 'Faji', reduce: 'Minderung', gold: 'Gold', cannon: 'Kanonen', speed: 'Tempo' };
+    const fmt = (v: number) => (v === 0 ? '–' : Math.abs(v) < 1 ? `${Math.round(v * 100)} %` : String(Math.round(v)));
+    const compare = (next: Record<string, number | undefined>, cur: Record<string, number | undefined>) => {
+      for (const key of Object.keys(LBL)) {
+        const a = cur[key] ?? 0, b = next[key] ?? 0;
+        if (!a && !b) continue;
+        out.lines.push({ label: LBL[key], cur: fmt(a), next: fmt(b), better: b > a ? true : b < a ? false : null });
+      }
+    };
+    if (it.kind === 'gear') {
+      const d = EQUIP_BY_ID[it.ref];
+      const cat = d ? catOf(d) : null;
+      const GLYPH: Record<string, GlyphKind> = { head: 'helm', shoulder: 'shoulder', chest: 'chest', cloak: 'cloak', hands: 'glove', legs: 'greave', feet: 'boot', mainhand: 'sword', offhand: 'dagger' };
+      out.glyph = glyphSvg(cat ? GLYPH[cat] ?? 'chest' : 'chest', col);
+      if (d && s) {
+        const cur = lootDef(s.gear.outfit?.[cat!]);
+        compare((d.bonus ?? {}) as Record<string, number>, ((cur?.bonus) ?? {}) as Record<string, number>);
+        out.owned = !!s.gear.loot?.includes(d.id);
+      }
+    } else if (it.kind === 'trinket') {
+      out.glyph = glyphSvg('amulet', col);
+      const t = TRINKET_BY_ID[it.ref];
+      if (t && s) {
+        const cur = s.gear.trinket ? TRINKET_BY_ID[s.gear.trinket] : null;
+        compare(t.bonus as Record<string, number>, (cur?.bonus ?? {}) as Record<string, number>);
+        out.owned = s.gear.trinkets.includes(t.id);
+      }
+    } else out.glyph = glyphSvg('flask', col);
+    return out;
+  }
+
+  /**
+   * 4.8B: Anwesende Gruppenmitglieder (einschließlich dir) im Einsatzgebiet – an Land 250 m, auf See 1 200 m. Grundlage der Skalierung von
+   * Kaisern und Weltbossen (1 … 5).
+   */
+  partyPresent(): number {
+    const m = this.mmo;
+    if (!m || m.partySize < 2) return 1;
+    const pp = this.world.playerPos, sea = this.world.mode === 'sail';
+    const r = sea ? MMO.lootSea : MMO.lootLand;
+    let n = 1;
+    for (const v of m.vitals.values()) {
+      if (v.id === m.id || (v.dom === 'sea') !== sea) continue;
+      if (Math.hypot(v.x - pp.x, v.z - pp.z) <= r) n++;
+    }
+    return Math.min(MMO.partyMax, n);
+  }
+
+  /** 4.8B: Bonus-Beute einer Gruppe nach einem Kaiser- oder Weltboss-Sieg (Würfel-Sitzungen; Solo gibt es keine) */
+  private groupBonusLoot(label: string) {
+    const n = this.partyPresent();
+    const list = groupBonusRarities(n, Math.random);
+    if (!list.length || !this.save) return;
+    const lvl = this.save.player.level;
+    for (const r of list) this.onLootPickup({ rarity: r, kind: Math.random() < 0.75 ? 'gear' : 'trinket', value: 240 + lvl * 22 });
+    this.after(() => this.hud.toast(`Gruppen-Bonus (${n} Kapitäne): ${list.length} zusätzliche Beute von ${label} – es wird gewürfelt!`, 3.5), 1600);
   }
 
   /** Eigener Zustand für den Shard (15 Hz) */
@@ -6581,7 +6774,13 @@ export class Game {
   }
 
   /** Beschuss durch einen Mitspieler (Spieler gegen Spieler: der Shard hat Krieg, keine Gruppe und keine Schutzzone geprüft) */
-  private pvpHit(name: string, dmg: number) {
+  private pvpHit(from: string, name: string, dmg: number, land: boolean) {
+    // 4.8B: zu Fuß trifft der Hieb die Figur (Parade, Ausweichen, Rüstung greifen); auf See den Rumpf
+    if (land) {
+      this.world.pvpStrike(from, dmg);
+      this.hud.toast(`Angriff von ${name}!`, 1.6);
+      return;
+    }
     const s = this.world.ship;
     if (!s.alive) return;
     const d = s.damage(dmg, 'kugel', null);

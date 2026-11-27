@@ -74,6 +74,14 @@
   --rar-selten: #3a8fe0;
   --rar-episch: #a05ae0;
   --rar-legendaer: #e8a82a;
+  /* 4.8B: Güte der Gruppen-Beute (Grau/Weiß/Grün verteilt, ab Blau gewürfelt; Kosmos = Mythisch) */
+  --grade-grau: #8a8a8a;
+  --grade-weiss: #e8e4da;
+  --grade-gruen: #5fbf4a;
+  --grade-blau: #3a8fe0;
+  --grade-violett: #a05ae0;
+  --grade-gold: #e8a82a;
+  --grade-kosmos: #8f7bff;
 
   /* ---------- Flächen ---------- */
   /* Rauchglas: warm getönt, nie reines Schwarz */

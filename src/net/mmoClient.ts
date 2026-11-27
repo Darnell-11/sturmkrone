@@ -4,7 +4,7 @@
 // nur bei Ereignissen (neuer Mitspieler, Chatzeile, Gruppenwechsel).
 import {
   MMO, MMO_PROTOCOL, copyState, newPlayerState, newProfile,
-  type ClientIntent, type InspectInfo, type PartyView, type PlayerProfile, type PlayerState, type ServerMsg, type ShareKind, type VitalEntry,
+  type ClientIntent, type InspectInfo, type LootItemNet, type PartyView, type RollChoice, type RollView, type PlayerProfile, type PlayerState, type ServerMsg, type ShareKind, type VitalEntry,
 } from './mmoProtocol';
 import type { MmoTransport } from './mmoTransport';
 import { SnapshotBuffer, newInterpOut, type InterpOut } from './snapshotBuffer';
@@ -39,7 +39,13 @@ export interface MmoClientHooks {
   onHeal?(name: string, frac: number): void;
   onHorn?(name: string, heal: number, will: number): void;
   onShare?(from: string, name: string, what: ShareKind, ref: string, amount: number): void;
-  onHit?(from: string, name: string, dmg: number): void;
+  onHit?(from: string, name: string, dmg: number, land: boolean): void;
+  /** 4.8B: Anteil an Gold und Ruf eines Gruppen-Funds */
+  onLootShare?(m: Extract<ServerMsg, { k: 'lootShare' }>): void;
+  /** 4.8B: Stück fürs eigene Inventar (reihum, gewonnen, allein, alle passten) */
+  onLootGet?(m: Extract<ServerMsg, { k: 'lootGet' }>): void;
+  /** 4.8B: Würfel-Karten haben sich geändert (neue Sitzung, Ende) */
+  onRolls?(): void;
   onRide?(ok: boolean, ship: string, text: string): void;
   /** /anbord bzw. /vonbord: die Welt entscheidet, ob und wo (Deck-Platz) */
   onRideRequest?(): void;
@@ -72,6 +78,8 @@ export class MmoClient {
   private welcomed = false;
   /** Zahl der verbundenen Kapitäne laut Relay-Server (0 = unbekannt bzw. lokaler Shard) */
   onlineCount = 0;
+  /** 4.8B: offene Würfel-Karten (Uhr des Clients; `choice` = eigene Wahl, '' = noch offen) */
+  readonly rolls: (RollView & { until: number; choice: RollChoice | '' })[] = [];
   /** Zahlen für Prüfungen */
   readonly stats = { snaps: 0, chat: 0, states: 0 };
 
@@ -95,7 +103,7 @@ export class MmoClient {
   stop() {
     this.transport.onMessage = null;
     this.transport.close();
-    this.remotes.clear(); this.list.length = 0; this.party = null; this.vitals.clear(); this.invite = null; this.warn = null; this.welcomed = false;
+    this.remotes.clear(); this.list.length = 0; this.party = null; this.vitals.clear(); this.invite = null; this.warn = null; this.welcomed = false; this.rolls.length = 0;
   }
 
   /** Je Logikschritt: eigenen Zustand senden (15 Hz), Einladung ablaufen lassen, verschwundene Mitspieler vergessen */
@@ -110,6 +118,8 @@ export class MmoClient {
       }
     }
     const now = this.clock();
+    // 4.8B: Würfel-Karten, deren Ende nie ankam (Verbindung weg), räumen sich 5 s nach der Frist selbst ab
+    for (let k = this.rolls.length - 1; k >= 0; k--) if (now > this.rolls[k].until + 5) { this.rolls.splice(k, 1); this.hooks.onRolls?.(); }
     if (this.online) {
       if (!Number.isFinite(this.lastSnapAt)) this.lastSnapAt = now;
       else if (now - this.lastSnapAt > 8 && now >= this.rejoinAt) {
@@ -172,7 +182,21 @@ export class MmoClient {
       case 'heal': this.hooks.onHeal?.(m.name, m.frac); break;
       case 'horn': this.hooks.onHorn?.(m.name, m.heal, m.will); break;
       case 'share': this.hooks.onShare?.(m.from, m.name, m.what, m.ref, m.amount); break;
-      case 'hit': this.hooks.onHit?.(m.from, m.name, m.dmg); break;
+      case 'hit': this.hooks.onHit?.(m.from, m.name, m.dmg, m.land); break;
+      case 'lootShare': this.hooks.onLootShare?.(m); break;
+      case 'lootGet': this.hooks.onLootGet?.(m); break;
+      case 'rollStart': {
+        const now = this.clock();
+        this.rolls.push({ ...m.roll, until: now + m.roll.left, choice: '' });
+        this.hooks.onRolls?.();
+        break;
+      }
+      case 'rollEnd': {
+        const k = this.rolls.findIndex((r) => r.id === m.id);
+        if (k >= 0) this.rolls.splice(k, 1);
+        this.hooks.onRolls?.();
+        break;
+      }
       case 'ride': this.hooks.onRide?.(m.ok, m.ship, m.text); break;
       case 'notice': this.system(m.text); this.hooks.onNotice?.(m.text, m.tone); break;
       case 'pong': break;
@@ -326,9 +350,22 @@ export class MmoClient {
   share(what: ShareKind, ref: string, amount: number, x: number, z: number) { if (this.party) this.transport.send({ k: 'share', what, ref, amount, x, z }); }
   ride(ship: string, rx: number, ry: number, rz: number) { this.transport.send({ k: 'ride', ship, rx, ry, rz }); }
   unride() { this.transport.send({ k: 'unride' }); }
-  hit(to: string, dmg: number) { this.transport.send({ k: 'hit', to, dmg }); }
+  hit(to: string, dmg: number, land = false) { this.transport.send({ k: 'hit', to, dmg, land }); }
+  /** 4.8B: Fund an den Shard (nur in einer Gruppe sinnvoll; ohne Gruppe kommt alles zurück) */
+  loot(gold: number, rep: number, power: string, items: LootItemNet[]) { this.transport.send({ k: 'loot', gold, rep, power, items }); }
+  /** 4.8B: Wahl in einer Würfel-Sitzung (die Karte merkt sie sich, der Shard entscheidet) */
+  roll(id: string, choice: RollChoice) {
+    const r = this.rolls.find((x) => x.id === id);
+    if (!r || r.choice) return;
+    if (choice === 'bedarf' && !r.needOk) { this.system(r.needWhy); return; }
+    r.choice = choice;
+    this.transport.send({ k: 'roll', id, choice });
+    this.hooks.onRolls?.();
+  }
 
   inParty(id: string): boolean { return !!this.party?.members.some((m) => m.id === id); }
+  /** Uhr des Clients (s) – Grundlage der Würfel-Fristen */
+  time(): number { return this.clock(); }
   get leader(): boolean { return this.party?.leader === this.id; }
   get partySize(): number { return this.party?.members.length ?? 0; }
 

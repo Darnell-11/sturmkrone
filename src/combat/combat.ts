@@ -44,6 +44,7 @@ import { ACTION_TUNING, POSTURE, type ActionHit, type ActionMove } from '../data
 import { UltimateBossLedger, ultimateBossCap } from '../data/cataclysms';
 import { AURA } from '../data/fajiArts';
 import { mintEntityId } from '../sim/entityId';
+import { pvpLandDamage } from '../data/balanceConfig';
 
 /** Ergebnis eines Treffers auf die Spielfigur; `perfect` = Sturm-Schritt (perfektes Ausweichen hinter den Angreifer, 4.6A) */
 export type PlayerHitResult = 'hit' | 'blocked' | 'parried' | 'dodged' | 'perfect';
@@ -112,6 +113,18 @@ interface Aoe { x: number; z: number; y: number; r: number; t: number; dmg: numb
 interface Coin { mesh: Mesh; x: number; y: number; z: number; vy: number; vx: number; vz: number; value: number; t: number }
 
 /** Übungspuppe: nimmt Treffer, fällt nie um */
+/**
+ * 4.8B: Kapitän einer verfeindeten Nation zu Fuß (Krieg laut Welt-KI, außerhalb der Schutzzonen) – ein Ziel der Action-Kampf-Engine wie ein
+ * Gegner, aber ohne Leben in dieser Welt: der Treffer geht als Absicht an den Shard (`onPeerHit`), der ihn prüft und skaliert.
+ * Die Seewelt füllt vorab angelegte Einträge je Logikschritt aus den Ziel-Ansichten der MMO-Schicht.
+ */
+export class PeerFoe {
+  id = '';
+  x = 0; y = 0; z = 0; yaw = 0;
+  /** Leben des Ziels (für die angezeigte PvP-Zahl) */
+  mhp = 1;
+}
+
 class Dummy {
   /** feste Kennung (Zielliste der Action-Kampf-Engine) */
   readonly id = mintEntityId('npc');
@@ -693,7 +706,12 @@ export class CombatSystem implements EnemyWorld {
   // ---------- Action-Kampf (Phase 4.6A) ----------
 
   /** Objekte hinter den Zielplätzen der Engine (Platz `ref`): je Bild neu gefüllt, nie neu angelegt */
-  private readonly actRefs: (Enemy | TroopSquad | Dummy)[] = [];
+  private readonly actRefs: (Enemy | TroopSquad | Dummy | PeerFoe)[] = [];
+  /** 4.8B: treffbare Mitspieler (Krieg, keine Schutzzone, nicht in der Gruppe); die ersten `peerCount` Einträge gelten */
+  readonly peerFoes: PeerFoe[] = Array.from({ length: 8 }, () => new PeerFoe());
+  peerCount = 0;
+  /** 4.8B: Treffer gegen einen Mitspieler (roh = Schaden wie gegen einen Gegner; der Shard skaliert) */
+  onPeerHit: ((id: string, raw: number) => void) | null = null;
   /** Hilfsangriff für die Rückmeldung (Funken, Trefferpause, Wackeln): je Treffer neu beschrieben */
   private readonly actDef: AttackDef = { clip: '', speed: 1, hitStart: 0, hitEnd: 0, range: 2, arc: 2, dmg: 1, poise: 10, knock: 3, hitstop: 0.05, shake: 0.15, fx: 'slash' };
 
@@ -734,6 +752,16 @@ export class CombatSystem implements EnemyWorld {
       t.id = d.id; t.x = d.x; t.y = d.group.position.y; t.z = d.z; t.radius = d.radius; t.height = 2; t.yaw = 0;
       t.alive = true; t.airborne = false; t.mass = false; t.broken = false; t.boss = false; t.elite = false; t.attacking = false;
     }
+    for (let i = 0; i < this.peerCount; i++) {
+      if (n >= out.length) return n;
+      const p = this.peerFoes[i];
+      const dx = p.x - x, dz = p.z - z, rr = r + 0.45;
+      if (dx * dx + dz * dz > rr * rr) continue;
+      const t = out[n];
+      refs[n] = p; t.ref = n; n++;
+      t.id = p.id; t.x = p.x; t.y = p.y; t.z = p.z; t.radius = 0.45; t.height = 1.8; t.yaw = p.yaw;
+      t.alive = true; t.airborne = false; t.mass = false; t.broken = false; t.boss = false; t.elite = false; t.attacking = false;
+    }
     return n;
   }
 
@@ -772,6 +800,21 @@ export class CombatSystem implements EnemyWorld {
       this.hooks.impact(c.dirX, c.dirZ, crit || heavy ? 1 : 0.6);
       this.hooks.hitstop(h.hitstop);
       this.hooks.shake(h.shake);
+      return 1;
+    }
+    if (obj instanceof PeerFoe) {
+      // 4.8B: Landkampf gegen einen Mitspieler – angezeigt wird die Zahl, die der Shard nach der PvP-Skalierung zufügt
+      const raw = Math.round(this.atk * h.dmg * mult);
+      const shown = pvpLandDamage(raw, obj.mhp);
+      HIT_P.set(obj.x - c.dirX * 0.3, obj.y + 1.3, obj.z - c.dirZ * 0.3);
+      this.fx.hit(HIT_P, h.fx, color, crit || heavy);
+      this.vfxHit?.(HIT_P.x, HIT_P.y, HIT_P.z, c.dirX, c.dirZ, color, h.vfx || st.element, heavy, crit, 0);
+      this.overlay.number(HIT_P, shown, crit ? 'crit' : 'hit');
+      this.overlay.addCombo();
+      this.hooks.impact(c.dirX, c.dirZ, crit || heavy ? 0.9 : 0.55);
+      this.hooks.hitstop(h.hitstop * 0.6);
+      this.hooks.shake(h.shake * 0.7);
+      this.onPeerHit?.(obj.id, raw);
       return 1;
     }
     if (!(obj instanceof Enemy)) {
@@ -924,7 +967,7 @@ export class CombatSystem implements EnemyWorld {
   /** Sog der Engine (Schwarzes Loch, Strudel): Gegner und Verbände zum Punkt ziehen; Bosse kaum, Elite halb */
   actionDrag(t: ActionTarget, cx: number, cz: number, step: number) {
     const obj = this.actRefs[t.ref];
-    if (!obj || obj instanceof Dummy) return;
+    if (!obj || obj instanceof Dummy || obj instanceof PeerFoe) return;
     const k = obj instanceof Enemy ? (obj.def.boss ? 0.25 : obj.def.elite ? 0.6 : 1) : 0.8;
     const dx = cx - obj.x, dz = cz - obj.z, d = Math.hypot(dx, dz);
     if (d < 0.6) return;
@@ -1621,6 +1664,19 @@ export class CombatSystem implements EnemyWorld {
             this.applyHit(d, { dmg: p.dmg / this.atk, poise: 0, knock: 0, fx: 'magic', hitstop: 0.04, shake: 0.1 } as AttackDef, 0, 0, 1, p.color);
             if (!p.pierce) { p.life = 0; break; }
           }
+        }
+        // 4.8B: Faji-Geschosse treffen auch verfeindete Kapitäne zu Fuß (Schaden über den Shard)
+        for (let i = 0; i < this.peerCount && p.life > 0; i++) {
+          const pf = this.peerFoes[i];
+          if (p.hit.has(pf)) continue;
+          if (Math.hypot(pos.x - pf.x, pos.z - pf.z) > p.radius + 0.5 || Math.abs(pos.y - (pf.y + 1)) > 1.6) continue;
+          p.hit.add(pf);
+          const raw = Math.round(p.dmg);
+          HIT_P.set(pf.x, pf.y + 1.3, pf.z);
+          this.fx.hit(HIT_P, 'magic', p.color);
+          this.overlay.number(HIT_P, pvpLandDamage(raw, pf.mhp), 'hit');
+          this.onPeerHit?.(pf.id, raw);
+          if (!p.pierce) p.life = 0;
         }
       }
       if (p.life <= 0) {

@@ -6,11 +6,15 @@
 // - **Mitfahrer:** Figuren an Deck des Schiffs, auf dem sie mitfahren (relative Deck-Lage, auch auf dem eigenen Schiff).
 // Für Zielring, Zielfenster, Rechtsklick-Menü und Eigenbeschuss liefert sie je Mitspieler Beziehung und Schadens-Erlaubnis
 // (`partyRules.playerRelation`/`pvpBlock`). Je Logikschritt entsteht nichts Neues (Pool, Ziel-Ansichten, Hilfsobjekte vorab).
+// 4.8B: Pool-Figuren tragen das echte Aussehen ihres Kapitäns (`PlayerProfile.app`: Geschlecht, Statur, Frisur, Farben, Hut, Kleidung,
+// Mantel, sichtbare Ausrüstung, Klassen-Waffe) – umgekleidet höchstens eine Figur je `APPLY_GAP` Sekunden, damit kein Bild stockt; zu Fuß
+// sind Kapitäne verfeindeter Nationen außerhalb der Schutzzonen treffbar (`RemoteTarget.harm`).
 import type { Object3D, Scene } from 'three';
 import type { Character } from '../entities/character/character';
 import type { Ship } from '../entities/ship/ship';
 import type { EnemyShip, NavalSystem } from '../naval/naval';
-import { MMO, type PlayerProfile } from '../net/mmoProtocol';
+import { MMO, type AppearanceNet, type PlayerProfile } from '../net/mmoProtocol';
+import type { CharacterLook } from '../data/characterParts';
 import type { MmoClient, RemotePlayer } from '../net/mmoClient';
 import { playerRelation, pvpBlock, rideToWorld, type PartyStance } from '../net/partyRules';
 import { DEFAULT_SHIP_LOOK, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, type ShipLook } from '../data/ships';
@@ -36,7 +40,12 @@ export interface MmoLiveHost {
   safeAt(x: number, z: number): string;
   /** Figur bzw. Schiff unsichtbar vorübersetzen (keine neuen Programme im Bild) */
   warm?(o: Object3D): void;
+  /** 4.8B: Aussehen eines Kapitäns auf eine Pool-Figur legen (null = zurück zum Pool-Aussehen `base`) */
+  dress?(char: Character, app: AppearanceNet | null, base: CharacterLook): void;
 }
+
+/** 4.8B: höchstens eine Pool-Figur je so viele Sekunden umkleiden (ein Umkleiden kostet einige Millisekunden) */
+export const APPLY_GAP = 0.2;
 
 /** Ansicht eines Mitspielers für die Ziel-Erfassung (vorab angelegt, je Schritt aufgefrischt) */
 export interface RemoteTarget {
@@ -62,6 +71,9 @@ interface RigSlot {
   id: string;
   anim: AnimRole | '';
   acc: number;
+  /** 4.8B: Aussehen aus dem Pool (zum Zurückkleiden) und das angelegte (Kennung + Steckbrief-Version; '' = Pool) */
+  base: CharacterLook;
+  dressed: string;
 }
 
 interface ShipSlot { id: string; e: EnemyShip | null; pending: boolean; gone: number; tier: number; team: string }
@@ -95,7 +107,8 @@ export class MmoLive {
   readonly targets: RemoteTarget[] = [];
   private readonly targetPool: RemoteTarget[] = [];
   /** Zahlen für Prüfungen */
-  readonly stats = { rigs: 0, shown: 0, ships: 0, riders: 0, built: 0 };
+  readonly stats = { rigs: 0, shown: 0, ships: 0, riders: 0, built: 0, dressed: 0 };
+  private dressT = 0;
 
   constructor(private readonly host: MmoLiveHost, readonly client: MmoClient) {}
 
@@ -142,7 +155,7 @@ export class MmoLive {
     char.holder.visible = false;
     this.host.scene.add(char.holder);
     this.host.warm?.(char.holder);
-    this.rigs.push({ char, female, id: '', anim: '', acc: 0 });
+    this.rigs.push({ char, female, id: '', anim: '', acc: 0, base: char.look, dressed: '' });
     this.stats.rigs = this.rigs.length;
   }
 
@@ -217,6 +230,7 @@ export class MmoLive {
   }
 
   private updateRigs(dt: number) {
+    this.dressT -= dt;
     const list = this.client.list;
     this.host.viewer(_v);
     const show = Math.min(MMO.rigShow, this.host.figureDist());
@@ -252,6 +266,7 @@ export class MmoLive {
       if (!slot) slot = this.freeRig(r.profile.gender === 'w', r.profile.look);
       if (!slot) continue;
       slot.id = r.id;
+      this.dress(slot, r);
       const onDeck = !!r.last.ride;
       let x = r.view.x, y = r.view.y, z = r.view.z;
       if (onDeck) { this.riderWorld(r); x = _w.x; y = _w.y; z = _w.z; riders++; }
@@ -273,12 +288,30 @@ export class MmoLive {
       });
       const rel = this.relationOf(r);
       t.id = r.id; t.x = x; t.y = y; t.z = z; t.name = r.profile.name; t.level = r.profile.level; t.team = r.profile.team; t.classLabel = r.profile.classLabel;
-      t.role = r.profile.role; t.hp = r.last.hp; t.mhp = r.last.mhp; t.relation = rel.relation; t.harm = false; t.alive = true; t.onDeck = onDeck;
+      // 4.8B: zu Fuß an Land (nicht an Deck) treffbar, wenn Krieg herrscht und keine Schutzzone greift (der Shard prüft noch einmal)
+      t.role = r.profile.role; t.hp = r.last.hp; t.mhp = r.last.mhp; t.relation = rel.relation; t.harm = rel.harm && !onDeck && r.last.dom === 'land'; t.alive = true; t.onDeck = onDeck;
       this.targets.push(t);
     }
     this.stats.shown = shown;
     this.stats.riders = riders;
   }
+
+  /** 4.8B: Aussehen anlegen, wenn sich Kapitän oder Steckbrief geändert haben (höchstens eine Figur je `APPLY_GAP`) */
+  private dress(slot: RigSlot, r: RemotePlayer) {
+    const want = r.profile.app ? `${r.id}:${r.pv}` : '';
+    if (want === slot.dressed || !this.host.dress) return;
+    if (this.dressT > 0) return;
+    this.dressT = APPLY_GAP;
+    slot.dressed = want;
+    this.host.dress(slot.char, r.profile.app, slot.base);
+    slot.anim = '';
+    this.stats.dressed++;
+  }
+
+  /** Aussehen eines Mitspielers auf seiner Figur (Prüfungen): Kennung + Steckbrief-Version oder '' */
+  dressedOf(id: string): string { for (const s of this.rigs) if (s.id === id) return s.dressed; return ''; }
+  /** Figur eines Mitspielers (Prüfungen) */
+  rigOf(id: string): Character | null { for (const s of this.rigs) if (s.id === id) return s.char; return null; }
 
   private freeRig(female: boolean, look: number): RigSlot | null {
     let any: RigSlot | null = null;
