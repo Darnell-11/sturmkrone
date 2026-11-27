@@ -441,6 +441,8 @@ describe('Alle 15 Kataklysmus-Ultimates (4.7B: mit dem Erzengel-Himmelsgericht d
     expect(spec.splitShips).toBe('cross');
     for (const tier of [1, 2, 3, 4] as const) expect(canSplitShip({ tier, boss: false, hullFrac: 1, friendly: false }, 'cross')).toBe(true);
     expect(canSplitShip({ tier: 5, boss: false, hullFrac: 1, friendly: false }, 'cross')).toBe(false);
+    // 4.92: Stufe 5 ab halbem Rumpf
+    expect(canSplitShip({ tier: 5, boss: false, hullFrac: 0.5, friendly: false }, 'cross')).toBe(true);
     expect(BOSS_SHIP_SPLIT).toBe(0.15);
     expect(canSplitShip({ tier: 5, boss: true, hullFrac: 0.14, friendly: false }, 'cross')).toBe(true);
     expect(canSplitShip({ tier: 5, boss: true, hullFrac: 0.2, friendly: false }, 'cross')).toBe(false);

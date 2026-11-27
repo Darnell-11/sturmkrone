@@ -8,6 +8,9 @@
 // Hier stehen Maße, Kamera und Vorführung; den Ablauf führt `SeaWorld` (`startArena`, `arenaPlay`, `stepArena`, `arenaCamera`).
 import { ROMAN } from './classShowcase';
 
+/** 4.92: Anzeige des legendären Ultimates (Kosmos-Krone der Stufe 101, für jede Klasse) */
+export const LEGEND_LABEL = 'Himmelssturz – Meteoriten-Kataklysmus';
+
 export const ARENA = {
   /** Zielschiff in Peilung querab (Steuerbord) in `targetDist` m, Begleiter in Kiellinie vor und hinter ihm, etwas weiter weg (m) */
   targetDist: 140, escortAlong: 52, escortOut: 16,
@@ -41,9 +44,10 @@ export function freeWindowHeight(top: number, height: number, playTop: number): 
   return covered > height * ARENA.coverMax && free >= ARENA.freeMin ? free : height;
 }
 
-export type ArenaKind = 'attack' | 'form' | 'ult' | 'geist';
+/** 4.92: `legend` = das legendäre Ultimate der Stufe 101 (Himmelssturz: Meteoriten-Kataklysmus) – in der Vorschau für jede Klasse */
+export type ArenaKind = 'attack' | 'form' | 'ult' | 'geist' | 'legend';
 /** Anzeige im Vorschaufenster: läuft gerade nichts, die Kombo (Standardangriff), eine Form bzw. ein Geistes-Faji oder das Ultimate */
-export type ArenaPhase = 'idle' | 'combo' | 'form' | 'ult' | 'rest';
+export type ArenaPhase = 'idle' | 'combo' | 'form' | 'ult' | 'legend' | 'rest';
 export interface ArenaPart { kind: ArenaKind; slot: number }
 
 /** Vorführung ohne Klick: Standardangriff, Formen I, V und X, Ultimate */
@@ -105,6 +109,7 @@ export function arenaLabel(p: ArenaPart, formName = '', ultName = '', sea = fals
     case 'attack': return sea ? 'Standardangriff: Breitseite' : 'Standardangriff: Kampf-Kombo';
     case 'form': return `Form ${ROMAN[Math.max(0, Math.min(9, p.slot - 1))]}${formName ? `: ${formName}` : ''}${sea ? ' (auf See)' : ''}`;
     case 'geist': return `Geistes-Faji ${p.slot}${sea ? ' (am Steuer)' : ''}`;
+    case 'legend': return `Legendär · Stufe 101: ${LEGEND_LABEL}${sea ? ' (vom Steuer)' : ''}`;
     default: return `Level-60-Ultimate${ultName ? `: ${ultName}` : ''}${sea ? ' (vom Steuer)' : ''}`;
   }
 }

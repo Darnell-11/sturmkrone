@@ -28,7 +28,7 @@ import {
 } from '../data/kaiserIslands';
 import {
   KAISER, bossAppeared, bossDefeated, bossPhase, bossShouldAppear, canLand, clearRing, damageBastion, enterRing, guardDown, kaiserBossDef, kaiserCooldownLeft,
-  kaiserFromSave, kaiserOfficerDef, kaiserToSave, newKaiserBattle, retreatRings, tickKaiser, type KaiserBattleState, type KaiserSaveState,
+  kaiserFromSave, kaiserGuardKey, kaiserGuardSlot, guardSlotsOpen, kaiserOfficerDef, kaiserToSave, newKaiserBattle, retreatRings, tickKaiser, type KaiserBattleState, type KaiserSaveState,
 } from '../data/kaiserBattle';
 
 /** Was die Welt der Kaiser-Schlacht zur Verfügung stellt (SeaWorld baut es aus ihren Teilen) */
@@ -214,10 +214,11 @@ export class KaiserLive implements BallTarget {
     if (st.phase === 'seesperre') {
       const look = factionShipLook(spec.power);
       const tiers = [5, 4, 6, 4, 5, 6];
-      const n = Math.max(0, KAISER.guards - st.guardsDown);
-      for (let i = 0; i < n; i++) {
+      // 4.92: feste Plätze – nur die Plätze, deren Wachschiff noch nicht gefallen ist (gleicher Schlüssel bei allen Spielern)
+      const open = guardSlotsOpen(st), n = open.length;
+      for (const i of open) {
         const g = bl.guards[i % bl.guards.length];
-        const gid = `kaiser:${id}:${i}`;
+        const gid = kaiserGuardKey(id, i);
         h.naval.spawnGuard({ guardId: gid, tier: tiers[i % tiers.length], x: g.x, z: g.z, heading: g.heading, hull: 2.2, sail: 1.5, crew: 1.4, name: spec.fleet[i % spec.fleet.length] }, { ...look }, KAISER_LEVEL, spec.power);
         a.guardIds.push(gid);
       }
@@ -230,6 +231,21 @@ export class KaiserLive implements BallTarget {
       h.message(`${spec.name} liegt still – der Kaiser ist besiegt. In etwa ${min} Minuten stehen Flotte und Garde wieder.`);
     }
     this.active = a;
+  }
+
+  /**
+   * 4.92: ein Wachschiff mit festem Platz hat ein Mitspieler schon versenkt (der Shard sperrt seinen Schlüssel): es zählt hier als gefallen,
+   * das eigene Schiff dieses Platzes verschwindet (SharedEntities baut es ab)
+   */
+  guardSunkElsewhere(gid: string): boolean {
+    const a = this.active, slot = kaiserGuardSlot(gid);
+    if (!a || slot < 0 || !gid.startsWith(`kaiser:${a.id}:`)) return false;
+    const st = this.state(a.id);
+    if (a.counted.has(gid)) return false;
+    a.counted.add(gid);
+    guardDown(st, slot);
+    this.host.message(`Ein Wachschiff des Kaisers liegt schon auf dem Grund (${st.guardsDown}/${KAISER.guards}).`);
+    return true;
   }
 
   /** Seesperre abbauen (fortgesegelt, Raid, Laden): Wachschiffe, Bastionen, Kette und Kollider verschwinden; der Zustand bleibt */
@@ -413,7 +429,7 @@ export class KaiserLive implements BallTarget {
       a.guardIds[n++] = gid;
       if (!down || a.counted.has(gid)) continue;
       a.counted.add(gid);
-      guardDown(st);
+      guardDown(st, kaiserGuardSlot(gid));
       this.host.message(`Ein Wachschiff des Kaisers ist gefallen (${st.guardsDown}/${KAISER.guards}).`);
     }
     a.guardIds.length = n;

@@ -40,6 +40,11 @@ export interface KaiserBattleState {
   phase: KaiserPhase;
   /** Gefallene Wachschiffe (von `KAISER.guards`) */
   guardsDown: number;
+  /**
+   * 4.92: Plätze der gefallenen Wachschiffe (0 … `KAISER.guards` − 1). Die Seesperre stellt nur die übrigen Plätze auf – so meint „Wachschiff 3“
+   * bei allen Spielern dasselbe Schiff (fester Schlüssel „kaiser:<Zitadelle>:wache:<Platz>“ im geteilten Register)
+   */
+  fallen: number[];
   /** Lebenspunkte der beiden Ketten-Bastionen */
   bastions: [number, number];
   /** Die Hafenkette sperrt die Bucht, solange eine Bastion steht */
@@ -53,7 +58,7 @@ export interface KaiserBattleState {
 }
 
 export function newKaiserBattle(id: KaiserId, wins = 0): KaiserBattleState {
-  return { id, phase: 'seesperre', guardsDown: 0, bastions: [KAISER.bastionHp, KAISER.bastionHp], chainUp: true, rings: ['ruhig', 'ruhig'], boss: { state: 'fern', phase: 1, reinforced: false }, until: 0, wins };
+  return { id, phase: 'seesperre', guardsDown: 0, fallen: [], bastions: [KAISER.bastionHp, KAISER.bastionHp], chainUp: true, rings: ['ruhig', 'ruhig'], boss: { state: 'fern', phase: 1, reinforced: false }, until: 0, wins };
 }
 
 /** Uhr weiterdrehen: nach Ablauf der Ruhezeit steht die Zitadelle wieder in voller Stärke (Seesperre, Ringe, Kaiser) */
@@ -64,9 +69,27 @@ export function tickKaiser(st: KaiserBattleState, now: number): boolean {
 }
 
 /** Ein Wachschiff ist gesunken oder erobert */
-export function guardDown(st: KaiserBattleState): void {
+export function guardDown(st: KaiserBattleState, slot = -1): void {
   if (st.phase === 'besiegt') return;
+  // 4.92: jeder Platz zählt nur einmal (auch wenn ihn ein Mitspieler versenkt hat und das eigene Wachschiff dann nie erschien)
+  if (slot >= 0) { if (st.fallen.includes(slot)) return; st.fallen.push(slot); }
   st.guardsDown = Math.min(KAISER.guards, st.guardsDown + 1);
+}
+
+/** 4.92: fester Schlüssel eines Wachschiffs der Seesperre (gleich für alle Spieler) */
+export const kaiserGuardKey = (id: KaiserId, slot: number): string => `kaiser:${id}:wache:${slot}`;
+
+/** 4.92: Platz aus dem Schlüssel eines Wachschiffs (−1 = keiner) */
+export function kaiserGuardSlot(key: string): number {
+  const m = /^kaiser:[a-z]+:wache:(\d+)$/.exec(key);
+  return m ? Number(m[1]) : -1;
+}
+
+/** 4.92: Plätze der Wachflotte, die noch aufziehen (nicht gefallen) */
+export function guardSlotsOpen(st: KaiserBattleState): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < KAISER.guards; i++) if (!st.fallen.includes(i)) out.push(i);
+  return out;
 }
 
 export interface BastionHit { destroyed: boolean; opened: boolean }

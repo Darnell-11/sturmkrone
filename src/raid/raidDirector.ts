@@ -29,6 +29,8 @@ import { RaidWorld } from './raidWorld';
 import type {
   CaptainPost, DistrictId, EnemyKindId, RaidEvent, RaidLayout, RaidOutcome, RaidPartyContext, RaidRoute, RaidSlotState, RaidSquadDef, RaidWaveDef, StructureState,
 } from './raidTypes';
+import { SIEGE_DAMAGE_MULT, STRUCTURE_AMMO_MULT } from './raidTypes';
+import { raidEntityKey, raidScope } from './raidShare';
 import { clamp01 } from '../core/mathUtil';
 
 /** Was die Welt dem Raid zur Verfügung stellt (SeaWorld baut diese Schnittstelle aus ihren privaten Teilen) */
@@ -97,7 +99,10 @@ const LEAVE_RADIUS = 1400;
 
 type Origin = DistrictId | 'gate' | 'castle' | 'keep';
 
-interface SpawnItem { kind: EnemyKindId; level: number; district: Origin; x: number; z: number; perchY?: number; name?: string; def?: EnemyDef }
+/** 4.92: `key` = Platz in der Festung (gleich für alle Teilnehmer einer gemeinsamen Belagerung: Welle, Dach, Hauptmann, Endboss) */
+interface SpawnItem { kind: EnemyKindId; level: number; district: Origin; x: number; z: number; perchY?: number; name?: string; def?: EnemyDef; key?: string }
+
+
 
 export class RaidDirector {
   readonly session: RaidInstanceSession;
@@ -105,8 +110,8 @@ export class RaidDirector {
   world: RaidWorld | null = null;
   /** Die Verbände der Verteidiger (dichte Formationen, instanziert gezeichnet) */
   horde: Horde | null = null;
-  private tracked: { e: Enemy; district: Origin; counted: boolean }[] = [];
-  private queue: { wave: RaidWaveDef; level: number; district: DistrictId | 'gate' | 'castle' }[] = [];
+  private tracked: { e: Enemy; district: Origin; counted: boolean; key?: string }[] = [];
+  private queue: { wave: RaidWaveDef; level: number; district: DistrictId | 'gate' | 'castle'; idx: number }[] = [];
   /** Einzelne Gegner warten auf ihr Erscheinen: höchstens einer je 0,14 s (jede Figur kostet beim Erzeugen; so gibt es keine Ruckler bei großen Wellen) */
   private spawnQ: SpawnItem[] = [];
   private spawnT = 0;
@@ -140,6 +145,13 @@ export class RaidDirector {
   }
 
   get playerId() { return this.opts.playerId; }
+  /**
+   * 4.92: Bereich der geteilten Gegner – in einer gemeinsamen Belagerung die Instanz der Gruppe (Spieler außerhalb sehen ihre Gegner nicht),
+   * sonst '' (die Belagerung läuft dann nur hier)
+   */
+  get netScope(): string { const c = this.session.state.ctx; return c.shared ? raidScope(c.raidInstanceId) : ''; }
+  /** 4.92: Bauwerk beschädigt oder eingestürzt (Lebensanteil) – an die Mitspieler der Instanz */
+  onStructure: ((id: string, frac: number) => void) | null = null;
   /** Ort des Flaggschiffs vor dem Raid (dorthin kehrt es zurück; beim Speichern gilt er als Lage des Schiffs) */
   get originPos() { return this.origin; }
   get center() { return { x: this.def.x, z: this.def.z }; }
@@ -211,6 +223,7 @@ export class RaidDirector {
 
   private damage(id: string, dmg: number, ammo: AmmoId) {
     const r = this.session.damageStructure(id, dmg, ammo, this.opts.playerId);
+    if (r && this.netScope) this.onStructure?.(id, this.structureFrac(id));
     if (r?.changed) {
       const label = this.layout.structures.find((s) => s.structureId === id)?.label ?? id;
       if (r.state === 'DAMAGED') this.host.message(`${label} ist schwer getroffen!`);
@@ -376,7 +389,7 @@ export class RaidDirector {
       this.spawnedCastle = true;
       this.spawnSquads(L.castle.squads, 'castle');
       this.spawnBoss();
-      for (const w of L.castle.waves) this.enqueue(w, 'castle', 1);
+      L.castle.waves.forEach((w, wi) => this.enqueue(w, 'castle', 1, wi));
       this.queueCaptain('burg1');
       if (s.route !== 'B') this.queueCaptain('burg2');
     }
@@ -384,8 +397,35 @@ export class RaidDirector {
     this.countFallen();
   }
 
-  private enqueue(wave: RaidWaveDef, district: DistrictId | 'gate' | 'castle', levelOffset: number) {
-    this.queue.push({ wave, district, level: this.opts.level + levelOffset });
+  private enqueue(wave: RaidWaveDef, district: DistrictId | 'gate' | 'castle', levelOffset: number, idx = 0) {
+    this.queue.push({ wave, district, level: this.opts.level + levelOffset, idx });
+  }
+
+  /** 4.92: Lebensanteil eines Bauwerks (1 = heil, 0 = eingestürzt) */
+  structureFrac(id: string): number {
+    const st = this.session.state.structures[id];
+    return st && st.maxHp > 0 ? Math.max(0, Math.min(1, st.hp / st.maxHp)) : 1;
+  }
+
+  /**
+   * 4.92: Bauwerk aus einer gemeinsamen Belagerung übernehmen – ein Mitspieler hat es weiter beschädigt; der Schaden wird nachgezogen (nie
+   * geheilt), Einsturz und Folgen (Burghafen frei, Seetor offen) laufen wie bei eigenen Treffern
+   */
+  applyRemoteStructure(id: string, frac: number) {
+    const st = this.session.state.structures[id];
+    if (!st || !(st.maxHp > 0)) return;
+    const want = Math.max(0, Math.min(1, frac)) * st.maxHp;
+    if (st.hp <= want + 0.5) return;
+    // Rohschaden so, dass nach den Faktoren der Sitzung genau der gemeldete Stand bleibt (ohne Gutschrift: den Schaden setzte der Mitspieler)
+    this.session.damageStructure(id, (st.hp - want) / ((STRUCTURE_AMMO_MULT.kugel ?? 1) * SIEGE_DAMAGE_MULT), 'kugel', null);
+  }
+
+  /**
+   * 4.92: ein eigener Gegner ist beim Shard gesperrt (in der gemeinsamen Belagerung hat ein Mitspieler ihn schon besiegt): er zählt als gefallen
+   * und tritt nicht wieder an
+   */
+  foeTakenElsewhere(e: Enemy) {
+    for (const t of this.tracked) if (t.e === e && !t.counted) { e.mirrorDie(); return; }
   }
 
   /** Verbände aufstellen: instanziert (kein Einzelobjekt je Soldat), Größe wächst mit den Mitspielern */
@@ -404,7 +444,7 @@ export class RaidDirector {
     const district: Origin = post === 'tor' ? 'gate' : post === 'burg1' || post === 'burg2' ? 'castle' : post;
     const def = captainDef(fid, cap.index);
     const c = this.center;
-    this.spawnQ.push({ kind: 'hauptmann', level: this.opts.level + 1, district, x: c.x + cap.x, z: c.z + cap.z, name: def.label, def });
+    this.spawnQ.push({ kind: 'hauptmann', level: this.opts.level + 1, district, x: c.x + cap.x, z: c.z + cap.z, name: def.label, def, key: `hm.${post}` });
   }
 
   /** Viertel betreten: Dachschützen sofort, Wellen der Reihe nach, der Hauptmann des Viertels tritt vor */
@@ -414,14 +454,14 @@ export class RaidDirector {
     if (!d || !w) return;
     const lvl = this.opts.level - 2 + d.order;
     this.host.banner(d.label, `Viertel ${d.order} von 4`);
-    for (const wave of d.waves) this.enqueue(wave, id, lvl - this.opts.level);
+    d.waves.forEach((wave, wi) => this.enqueue(wave, id, lvl - this.opts.level, wi));
     // Dachschützen: Musketiere stehen fest auf den flachen Dächern der Schützenhäuser
     const c = this.center;
-    for (const p of d.perches) {
+    d.perches.forEach((p, pi) => {
       const gy = w.solo.height(c.x + p.x, c.z + p.z);
       const roofY = (Number.isFinite(gy) ? gy : 1.3) + p.h + 0.55;
-      this.spawnQ.push({ kind: 'musketier', level: lvl, district: id, x: c.x + p.x, z: c.z + p.z, perchY: roofY });
-    }
+      this.spawnQ.push({ kind: 'musketier', level: lvl, district: id, x: c.x + p.x, z: c.z + p.z, perchY: roofY, key: `dach.${id}.${pi}` });
+    });
     if (id === 'hafen' || id === 'markt' || id === 'aufstieg') this.queueCaptain(id);
   }
 
@@ -436,7 +476,7 @@ export class RaidDirector {
     // Ring um die Mitte der Welle: erst kommen die Frontkämpfer, dann die Schützen (Reihenfolge der Daten)
     kinds.forEach((kind, i) => {
       const a = (i / kinds.length) * Math.PI * 2, rr = next.wave.spread * (0.4 + (i % 2) * 0.5);
-      this.spawnQ.push({ kind, level: Math.max(1, next.level), district: next.district, x: c.x + next.wave.x + Math.cos(a) * rr, z: c.z + next.wave.z + Math.sin(a) * rr });
+      this.spawnQ.push({ kind, level: Math.max(1, next.level), district: next.district, x: c.x + next.wave.x + Math.cos(a) * rr, z: c.z + next.wave.z + Math.sin(a) * rr, key: `w.${next.district}.${next.idx}.${i}` });
     });
   }
 
@@ -446,10 +486,13 @@ export class RaidDirector {
     if (this.spawnT > 0 || !this.spawnQ.length) return;
     this.spawnT = 0.14;
     const r = this.spawnQ.shift()!;
-    const list = this.host.combat.spawnWave([r.kind], r.level, this.opts.align, `raid:${r.district}`, { x: r.x, z: r.z }, 0, { power: this.def.factionId ?? undefined, name: r.name, def: r.def });
+    // 4.92: in einer gemeinsamen Belagerung trägt jeder Gegner seinen Platz als festen Schlüssel – der Shard führt die Gegner aller Teilnehmer zusammen
+    const sc = this.netScope;
+    const netKey = sc && r.key ? raidEntityKey(sc, r.key) : undefined;
+    const list = this.host.combat.spawnWave([r.kind], r.level, this.opts.align, `raid:${r.district}`, { x: r.x, z: r.z }, 0, { power: this.def.factionId ?? undefined, name: r.name, def: r.def, netKey });
     for (const e of list) {
       if (r.perchY !== undefined) { e.x = r.x; e.z = r.z; e.homeX = e.x; e.homeZ = e.z; e.y = r.perchY; e.perch = { y: r.perchY }; }
-      this.tracked.push({ e, district: r.district, counted: false });
+      this.tracked.push({ e, district: r.district, counted: false, key: r.key });
     }
   }
 
@@ -458,8 +501,9 @@ export class RaidDirector {
   private spawnBoss() {
     const c = this.center, a = this.layout.castle.arena;
     const B = RAID_BOSSES[this.fid];
-    const list = this.host.combat.spawnWave(['legende'], this.opts.level + 3, this.opts.align, 'raid:keep', { x: c.x + a.x, z: c.z + a.z }, 0, { power: this.def.factionId ?? undefined, name: B.name, def: B.def });
-    for (const e of list) { this.tracked.push({ e, district: 'keep', counted: false }); this.boss = e; }
+    const sc = this.netScope;
+    const list = this.host.combat.spawnWave(['legende'], this.opts.level + 3, this.opts.align, 'raid:keep', { x: c.x + a.x, z: c.z + a.z }, 0, { power: this.def.factionId ?? undefined, name: B.name, def: B.def, netKey: sc ? raidEntityKey(sc, 'boss') : undefined });
+    for (const e of list) { this.tracked.push({ e, district: 'keep', counted: false, key: 'boss' }); this.boss = e; }
     this.session.bossAppeared(B.id);
     this.host.cutin(B.name);
     this.host.banner(B.name, `${B.title} – ${B.intro}`);
@@ -512,7 +556,7 @@ export class RaidDirector {
       const e = t.e;
       if (t.counted || !e.alive || present.includes(e)) { this.tracked[n++] = t; continue; }
       if (e === this.boss) this.boss = null;
-      this.spawnQ.push({ kind: e.kind, level: e.level, district: t.district, x: e.homeX, z: e.homeZ, perchY: e.perch?.y, name: e.name, def: e.def.raid ? e.def : undefined });
+      this.spawnQ.push({ kind: e.kind, level: e.level, district: t.district, x: e.homeX, z: e.homeZ, perchY: e.perch?.y, name: e.name, def: e.def.raid ? e.def : undefined, key: t.key });
     }
     this.tracked.length = n;
     // der Boss erscheint nach dem Wiederaufstellen neu (er setzt seine Phase zurück)

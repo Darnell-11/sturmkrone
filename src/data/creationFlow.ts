@@ -86,9 +86,19 @@ export interface CreationState {
   message: string;
   /** Klicks auf gesperrte Seiten (Prüfungen) */
   lockedClicks: number;
+  /**
+   * 4.92: Klassenvorschau vom Startbildschirm – dieselbe Bühne, aber kein Spielbeginn: `start` legt nie eine Klasse fest, „Zurück“ führt
+   * zum Hauptmenü (kein Aussehens-Editor), kein Spielstand entsteht oder ändert sich.
+   */
+  preview?: boolean;
 }
 
 export const newCreation = (): CreationState => ({ step: 'faceoff', faction: null, spec: 'saebel', message: '', lockedClicks: 0 });
+
+/** 4.92: Ablauf der Klassenvorschau vom Startbildschirm – gleich in der Klassenwahl, ohne Spielbeginn */
+export function previewCreation(spec: SpecId = 'saebel'): CreationState {
+  return { step: 'klasse', faction: 'pirat', spec: SPECS[spec] ? spec : 'saebel', message: '', lockedClicks: 0, preview: true };
+}
 
 /**
  * Zustandsmaschine des Einstiegs. Jede Aktion liefert, ob sie gilt (false = nichts passiert). Nur die Piraten-Seite führt weiter; der
@@ -126,9 +136,10 @@ export class CreationFlow {
     return true;
   }
 
-  /** zurück: C → B, B → A (A → abgebrochen: false) */
+  /** zurück: C → B, B → A (A → abgebrochen: false); 4.92: die Klassenvorschau endet (zurück zum Hauptmenü) */
   back(): boolean {
     const st = this.state;
+    if (st.preview) { st.step = 'start'; return false; }
     if (st.step === 'klasse') { st.step = 'aussehen'; return true; }
     if (st.step === 'aussehen') { st.step = 'faceoff'; st.faction = null; return true; }
     return false;
@@ -137,7 +148,8 @@ export class CreationFlow {
   /** Stufe C: „Abenteuer starten“ – Kampfstil und Klinge der gewählten Klasse */
   start(): { faction: Faction; style: FightStyle; blade: string; base: ClassBase; spec: SpecId } | null {
     const st = this.state;
-    if (st.step !== 'klasse' || !st.faction) return null;
+    // 4.92: in der Klassenvorschau beginnt nie ein Spiel und keine Klasse wird festgelegt
+    if (st.preview || st.step !== 'klasse' || !st.faction) return null;
     st.step = 'start';
     return { faction: st.faction, spec: st.spec, ...creationOfSpec(st.spec) };
   }

@@ -38,8 +38,11 @@ export interface SharedEnt extends EntNet {
 /** 4.91: Ergebnis einer Anmeldung – neuer Gegner (`fresh`), vorhandener mit demselben Schlüssel, gesperrt (`wait` s) oder abgelehnt */
 export type ClaimResult = { e: SharedEnt; fresh: boolean; wait: 0 } | { e: null; fresh: false; wait: number };
 
-/** Was das Register über einen Spieler wissen muss (liefert der Shard) */
-export interface EntPeer { id: string; x: number; z: number; dom: string; bot: boolean; party: string }
+/** Was das Register über einen Spieler wissen muss (liefert der Shard); 4.92: `scope` = Bereich ('' offene Welt, sonst Raid-Instanz) */
+export interface EntPeer { id: string; x: number; z: number; dom: string; bot: boolean; party: string; scope?: string }
+
+/** 4.92: gehören Gegner und Spieler zum selben Bereich der Welt (offene Welt bzw. dieselbe Raid-Instanz)? */
+export const sameScope = (e: { scope?: string }, p: { scope?: string }): boolean => (e.scope ?? '') === (p.scope ?? '');
 
 const d2 = (ax: number, az: number, bx: number, bz: number) => (ax - bx) * (ax - bx) + (az - bz) * (az - bz);
 
@@ -91,7 +94,7 @@ export class SharedEntityRegistry {
       id: `e${++this.seq}`, key: s.key, owner, cat: s.cat, tier: s.tier, role: s.role, level: s.level, name: s.name, look: copyLook(s.look),
       x: s.x, z: s.z, hdg: s.hdg, spd: 0, hp: s.hp, mhp: s.mhp, dis: false, aggro: '', dead: false, boss: s.boss, scale: s.scale,
       y: s.y, an: 0, clip: '', pose: 1, brk: false, phase: 1,
-      born: t, seen: t, deadT: Number.NaN, threat: new Map(), last: '', skip: '', skipUntil: 0, respawn: world ? s.respawn : 0,
+      born: t, seen: t, deadT: Number.NaN, threat: new Map(), last: '', skip: '', skipUntil: 0, respawn: world ? s.respawn : 0, scope: s.scope ?? '',
     };
     this.ents.set(e.id, e);
     this.list.push(e);
@@ -164,7 +167,8 @@ export class SharedEntityRegistry {
       add(p.id);
       if (p.party && !parties.includes(p.party)) parties.push(p.party);
     }
-    for (const p of peers) if (!p.bot && p.party && parties.includes(p.party) && d2(p.x, p.z, e.x, e.z) <= r2) add(p.id);
+    // 4.92: Gruppenmitglieder nur im selben Bereich (wer nicht in der Raid-Instanz ist, bekommt den Raid-Boss nicht gutgeschrieben)
+    for (const p of peers) if (!p.bot && p.party && parties.includes(p.party) && sameScope(e, p) && d2(p.x, p.z, e.x, e.z) <= r2) add(p.id);
     return out;
   }
 
@@ -196,7 +200,8 @@ export class SharedEntityRegistry {
       const mig = e.cat === 'foe' ? MMO.foeShow * 1.5 : MMO.entMigrate, drp = e.cat === 'foe' ? MMO.foeShow * 3 : MMO.entDrop;
       let best: EntPeer | null = null, bd = mig * mig, any = false;
       for (const p of peers) {
-        if (p.bot) continue;
+        // 4.92: nur an Spieler im selben Bereich (Raid-Gegner nie an jemanden in der offenen Welt)
+        if (p.bot || !sameScope(e, p)) continue;
         const dd = d2(p.x, p.z, e.x, e.z);
         if (dd <= drp * drp) any = true;
         // nicht an den (schweigenden) Besitzer selbst und nicht gleich wieder an den, der ihn abgegeben hat

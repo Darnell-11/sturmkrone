@@ -144,7 +144,8 @@ describe('Online-Badge des Startbildschirms', () => {
 
   it('das Hauptmenü zeigt das Badge über „Spielen“ und führt es live nach', () => {
     const menus = readFileSync('src/ui/menus.ts', 'utf8');
-    expect(menus).toMatch(/\$\{this\.onlineHtml\(\)\}\s*\n\s*<button class="primary" data-a="play"/);
+    // 4.92: „Spielen“ steht mit der „Klassenvorschau“ in einer Reihe direkt unter dem Badge
+    expect(menus).toMatch(/\$\{this\.onlineHtml\(\)\}\s*\n\s*<div class="title-play-row">\s*\n\s*<button class="primary" data-a="play"/);
     expect(menus).toMatch(/online\.subscribe\(\(\) => this\.paintOnline\(\)\)/);
     const css = readFileSync('src/ui/css/screens.css', 'utf8');
     // der Hinweis liegt über dem Badge und fängt keine Klicks (verdeckt keine Knöpfe)

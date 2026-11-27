@@ -160,6 +160,9 @@
 .sc-play .sc-fb, .sc-play .sc-gb { min-width: 2.1em; padding: 5px 6px; font: 800 0.74rem var(--font-text); letter-spacing: 0.02em; }
 .sc-play .sc-fb.live { border-color: var(--ca); color: #fff; background: color-mix(in srgb, var(--cc) 55%, #000); }
 .sc-play .sc-gb { color: var(--ink-dim); }
+/* 4.92: legendäres Ultimate der Stufe 101 (Himmelssturz) – sternviolett neben dem Messing des Level-60-Ultimates */
+.sc-play .sc-legend { background: linear-gradient(180deg, #4a2f7a, #1c1033); border-color: #b07dff; color: #f3e8ff; text-shadow: 0 0 8px rgba(176, 125, 255, 0.7); }
+.sc-legend-card .mini { margin-top: 2px; }
 /* 4.9: Vorschau an Land / auf See */
 .sc-play .sc-sea[aria-pressed='true'] { background: linear-gradient(180deg, color-mix(in srgb, var(--sea) 70%, #0b2230), color-mix(in srgb, var(--sea) 40%, #06141c)); border-color: var(--sea); color: #effbff; }
 
@@ -216,6 +219,7 @@
   .sc-play [data-a='ult'] { order: 3; }
   .sc-play .sc-forms-bar { order: 4; flex: 1 1 100%; display: flex; }
   .sc-play .sc-geist-bar { order: 5; }
+  .sc-play [data-a='legend'] { order: 6; }
   .sc-play .sc-fb { flex: 1 1 0; min-width: 0; padding: 8px 0; font-size: 0.72rem; }
   .sc-play .sc-gb { min-width: 2.7em; padding: 7px 4px; }
 }

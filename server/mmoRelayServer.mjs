@@ -15,6 +15,8 @@
 //   unerlaubte Wahl wird abgewiesen, Verbindungsabbruch = Passen) und Land-PvP mit PvP-Skalierung;
 // - beantwortet `GET /health` mit JSON (status, onlineCount, activeParties, activeRolls, sharedEntities, lockedKeys, uptime) für Hoster-Gesundheitsprüfungen.
 // - 4.91: alle Kampf-Entitäten der Welt laufen über den Shard (Schiffe, Landgegner, Bosse samt Phase, Haltung, Aggro, Warnflächen, Sperrzeiten).
+// - 4.92: Bereiche (offene Welt bzw. gemeinsame Raid-Instanz einer Gruppe): Gegner, Treffer, Aktionen, Übergaben und Gutschriften nur im selben
+//   Bereich; Wachschiffe der Kaiser-Seesperre mit festen Plätzen, der Tiefsee-Leviathan als Ungeheuer (`beast`) für alle.
 //
 // Umgebung (siehe `.env.example`): PORT (Standard 8787), HOST (0.0.0.0), ALLOWED_ORIGINS (erlaubte Seiten, durch Komma getrennt; `*` oder
 // leer = alle; alter Name MMO_ORIGINS), MMO_SHARD (Name der See), MMO_MAX_CLIENTS (300), MMO_MAX_PER_IP (16 Verbindungen je Adresse). Für GitHub Pages (https) braucht der Server eine wss://-Adresse – z. B. hinter einem Hoster mit TLS (Render, Fly.io,

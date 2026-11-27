@@ -7,7 +7,7 @@ import type { SpecId } from '../data/classes';
 import { ACT_LABEL, CINE_ACTS } from '../graphics/ultimateCinematics';
 import { roleBadge } from './classScreen';
 import { esc } from './dom';
-import { freeWindowHeight, type ArenaKind, type ArenaPhase } from '../data/showcaseArena';
+import { LEGEND_LABEL, freeWindowHeight, type ArenaKind, type ArenaPhase } from '../data/showcaseArena';
 
 /** Kurznamen der drei Akte für die Leiste im Vorschaufenster */
 const ACT_SHORT = ['Aufladung', 'Aufbau', 'Einschlag'] as const;
@@ -24,6 +24,11 @@ export interface ShowcaseOptions {
   onStart: (spec: SpecId) => void;
   /** 4.9: Vorschau an Land bzw. auf See */
   onSea?: (sea: boolean) => void;
+  /**
+   * 4.92: Klassenvorschau vom Startbildschirm – kein Spielbeginn: oben und unten führt „Zurück zum Hauptmenü“ (`onBack`) zurück, es entsteht
+   * kein Spielstand und keine Klasse wird festgelegt
+   */
+  preview?: boolean;
 }
 
 export class ClassShowcase {
@@ -38,7 +43,7 @@ export class ClassShowcase {
     this.root = document.createElement('div');
     this.root.className = 'showcase';
     this.root.innerHTML = `
-      <div class="sc-top"><button class="mini" data-a="back">◀ Zurück zum Aussehen</button><span class="sc-step">Schritt 3 von 3 · Klasse, Formen &amp; Ultimate</span></div>
+      <div class="sc-top"><button class="mini" data-a="back">${o.preview ? '◀ Zurück zum Hauptmenü' : '◀ Zurück zum Aussehen'}</button><span class="sc-step">${o.preview ? 'Klassenvorschau · alle 15 Spezialisierungen · nichts wird gespeichert' : 'Schritt 3 von 3 · Klasse, Formen &amp; Ultimate'}</span></div>
       <nav class="sc-list card" aria-label="Klassen und Pfade">${SHOWCASE_GROUPS.map((g) => `
         <div class="sc-group"><h3><span class="ic">${g.icon}</span>${esc(g.label)}</h3>
           <div class="sc-specs">${g.specs.map((id) => { const e = showcaseOf(id); return `<button class="sc-spec" data-spec="${id}" style="--cc:${e.color};--ca:${e.accent}" aria-pressed="${id === this.spec}"><span class="cr">${esc(e.crest)}</span><span class="tx"><b>${esc(e.label)}</b><small>${esc(e.role)}</small></span></button>`; }).join('')}</div>
@@ -47,10 +52,10 @@ export class ClassShowcase {
       <section class="sc-stage" aria-label="Vorschau">
         <div class="sc-window"></div>
         <div class="sc-part" aria-live="polite"><b></b><ol class="sc-acts">${CINE_ACTS.map((a, i) => `<li data-act="${i}" title="${esc(ACT_LABEL[a])}">Akt ${i + 1} · ${ACT_SHORT[i]}</li>`).join('')}</ol></div>
-        <div class="sc-play"><button class="mini sc-sea" data-a="sea" aria-pressed="false" title="Vorschau an Land (Übungsplatz) oder auf See (am Steuer gegen ein Zielschiff)">Vorschau: An Land</button><button class="mini" data-a="attack" title="Standardangriff: an Land die Kampf-Kombo, auf See eine Breitseite">⚔ Standardangriff</button><span class="sc-forms-bar" role="group" aria-label="Formen I bis X">${ROMAN.map((r, i) => `<button class="mini sc-fb" data-form="${i + 1}" data-roman="${r}" title="Form ${r} abspielen">${r}</button>`).join('')}</span><span class="sc-geist-bar" role="group" aria-label="Geistes-Faji">${[1, 2, 3, 4].map((g) => `<button class="mini sc-gb" data-geist="${g}" title="Geistes-Faji ${g} abspielen">G${g}</button>`).join('')}</span><button class="mini brass" data-a="ult" title="Level-60-Ultimate in drei Akten">✪ Ultimate</button></div>
+        <div class="sc-play"><button class="mini sc-sea" data-a="sea" aria-pressed="false" title="Vorschau an Land (Übungsplatz) oder auf See (am Steuer gegen ein Zielschiff)">Vorschau: An Land</button><button class="mini" data-a="attack" title="Standardangriff: an Land die Kampf-Kombo, auf See eine Breitseite">⚔ Standardangriff</button><span class="sc-forms-bar" role="group" aria-label="Formen I bis X">${ROMAN.map((r, i) => `<button class="mini sc-fb" data-form="${i + 1}" data-roman="${r}" title="Form ${r} abspielen">${r}</button>`).join('')}</span><span class="sc-geist-bar" role="group" aria-label="Geistes-Faji">${[1, 2, 3, 4].map((g) => `<button class="mini sc-gb" data-geist="${g}" title="Geistes-Faji ${g} abspielen">G${g}</button>`).join('')}</span><button class="mini brass" data-a="ult" title="Level-60-Ultimate in drei Akten">✪ Ultimate</button><button class="mini sc-legend" data-a="legend" title="Legendäres Ultimate der Stufe 101 (${LEGEND_LABEL}) – für jede Klasse">✦ Legendär</button></div>
       </section>
       <aside class="sc-info card"><div class="sc-body"></div>
-        <div class="sc-foot"><button class="primary sc-start" data-a="start">Abenteuer starten ▶</button></div>
+        <div class="sc-foot"><button class="primary sc-start" data-a="${o.preview ? 'menu' : 'start'}">${o.preview ? '◀ Zurück zum Hauptmenü' : 'Abenteuer starten ▶'}</button></div>
       </aside>`;
     parent.appendChild(this.root);
     this.root.addEventListener('click', (e) => {
@@ -62,9 +67,10 @@ export class ClassShowcase {
       const g = t.closest<HTMLElement>('[data-geist]');
       if (g) { this.o.onPlay('geist', +g.dataset.geist!); return; }
       const a = t.closest<HTMLElement>('[data-a]')?.dataset.a;
-      if (a === 'back') this.o.onBack();
+      if (a === 'back' || a === 'menu') this.o.onBack();
       else if (a === 'start') this.o.onStart(this.spec);
       else if (a === 'ult') this.o.onPlay('ult');
+      else if (a === 'legend') this.o.onPlay('legend');
       else if (a === 'attack') this.o.onPlay('attack');
       else if (a === 'sea') this.toggleSea();
     });
@@ -100,11 +106,13 @@ export class ClassShowcase {
   part(phase: ArenaPhase, label: string, act: number) {
     const p = this.root.querySelector<HTMLElement>('.sc-part')!;
     p.querySelector('b')!.textContent = label;
-    p.classList.toggle('ult', phase === 'ult');
+    const cine = phase === 'ult' || phase === 'legend';
+    p.classList.toggle('ult', cine);
     p.classList.toggle('on', !!label);
-    for (const li of p.querySelectorAll<HTMLElement>('[data-act]')) li.classList.toggle('on', phase === 'ult' && +li.dataset.act! === act);
+    for (const li of p.querySelectorAll<HTMLElement>('[data-act]')) li.classList.toggle('on', cine && +li.dataset.act! === act);
     for (const f of this.root.querySelectorAll<HTMLElement>('[data-form]')) f.classList.toggle('live', phase === 'form' && label.startsWith(`Form ${f.dataset.roman}:`));
     this.root.querySelector('.sc-ult')?.classList.toggle('live', phase === 'ult');
+    this.root.querySelector('.sc-legend-card')?.classList.toggle('live', phase === 'legend');
   }
 
   private measure() {
@@ -137,9 +145,16 @@ export class ClassShowcase {
         <ol>${e.ultimate.beats.map((b, i) => `<li><em>${esc(ACT_LABEL[CINE_ACTS[i]])}</em> ${esc(b)}</li>`).join('')}</ol>
         <button class="mini brass" data-a="ult">▶ Vorschau abspielen</button>
       </div>
+      <h3>Legendäres Ultimate <small class="soft">(Stufe 101, für jede Klasse)</small></h3>
+      <div class="sc-ult sc-legend-card" style="--uc:#FFE6B0;--ua:#B07DFF">
+        <b>✦ ${esc(LEGEND_LABEL)}</b>
+        <ol><li><em>Aufladung</em> Der Himmel reißt zur Sternennacht auf, Lichtsäulen und ein violetter Riss</li><li><em>Aufbau</em> Zwei glühende Meteoriten mit Feuerschweif stürzen über Kreuz herab</li><li><em>Einschlag</em> Krater bzw. Gischtfontänen, Schockwellen, ein dunkler Planet kollidiert – Kriegsschiffe zerbrechen</li></ol>
+        <button class="mini" data-a="legend">▶ Legendär abspielen</button>
+      </div>
       <p class="sc-choice small soft">${esc(e.choice)} Kein Waffen- oder Stilwechsel: deine Klasse und ihr 60-Punkte-Klassenbaum begleiten dich das ganze Spiel.</p>`;
     body.scrollTop = 0;
-    this.root.querySelector<HTMLElement>('.sc-start')!.textContent = `Abenteuer starten als ${e.baseLabel} ▶`;
+    // 4.92: in der Klassenvorschau vom Startbildschirm führt der Knopf zurück zum Hauptmenü (kein Spielbeginn)
+    this.root.querySelector<HTMLElement>('.sc-start')!.textContent = this.o.preview ? '◀ Zurück zum Hauptmenü' : `Abenteuer starten als ${e.baseLabel} ▶`;
   }
 
   dispose() {

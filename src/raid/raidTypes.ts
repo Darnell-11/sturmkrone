@@ -54,6 +54,11 @@ export interface RaidPartyContext {
   sharedObjectives: RaidObjective[];
   /** Persönliche Beute je Teilnehmer (`participantId` → eigener Wurf, nach dem Sieg gefüllt; nichts wird geteilt) */
   personalLoot?: Record<string, PersonalLoot>;
+  /**
+   * 4.92: gemeinsame Belagerung der Gruppe – alle Teilnehmer nutzen dieselbe Instanz (gleicher Startwert = gleiche Festung); Gegner, Wachflotte,
+   * Endboss und Bauwerke laufen über das geteilte Register (Bereich = `raidScope(raidInstanceId)`)
+   */
+  shared?: boolean;
 }
 
 /** Ein zerstörbares Bauwerk (Seetor, Mauerflügel, Turm, Küstenbatterie) mit eigener Kennung und eigenen Lebenspunkten */

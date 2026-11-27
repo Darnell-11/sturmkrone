@@ -290,7 +290,7 @@ export class MmoClient {
       e.x = n.x; e.z = n.z; e.hdg = n.hdg; e.spd = n.spd; e.hp = n.hp; e.mhp = n.mhp; e.dis = n.dis;
       e.owner = n.owner; e.aggro = n.aggro; e.dead = n.dead; e.tier = n.tier; e.role = n.role; e.level = n.level; e.name = n.name;
       // 4.91: Landgegner (Höhe, Bewegung, Angriffs-Clip, Haltung, Bruch, Boss-Phase)
-      e.cat = n.cat; e.y = n.y; e.an = n.an; e.clip = n.clip; e.pose = n.pose; e.brk = n.brk; e.phase = n.phase; e.boss = n.boss; e.scale = n.scale;
+      e.cat = n.cat; e.y = n.y; e.an = n.an; e.clip = n.clip; e.pose = n.pose; e.brk = n.brk; e.phase = n.phase; e.boss = n.boss; e.scale = n.scale; e.scope = n.scope ?? '';
       e.seenAt = now;
     }
   }

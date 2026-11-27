@@ -723,8 +723,8 @@ export class MmoAuthority {
     let n = 0;
     for (const p of this.list) {
       let e = out[n];
-      if (!e) { e = { id: '', x: 0, z: 0, dom: 'land', bot: false, party: '' }; out.push(e); }
-      e.id = p.id; e.x = p.state.x; e.z = p.state.z; e.dom = p.state.dom; e.bot = p.bot; e.party = p.party?.id ?? '';
+      if (!e) { e = { id: '', x: 0, z: 0, dom: 'land', bot: false, party: '', scope: '' }; out.push(e); }
+      e.id = p.id; e.x = p.state.x; e.z = p.state.z; e.dom = p.state.dom; e.bot = p.bot; e.party = p.party?.id ?? ''; e.scope = p.state.sc ?? '';
       n++;
     }
     out.length = n;
@@ -735,13 +735,13 @@ export class MmoAuthority {
   private static entCopy(e: SharedEnt, o: EntNet): EntNet {
     o.id = e.id; o.owner = e.owner; o.cat = e.cat; o.tier = e.tier; o.role = e.role; o.level = e.level; o.name = e.name; o.look = e.look;
     o.x = e.x; o.z = e.z; o.hdg = e.hdg; o.spd = e.spd; o.hp = e.hp; o.mhp = e.mhp; o.dis = e.dis; o.aggro = e.aggro; o.dead = e.dead;
-    o.boss = e.boss; o.scale = e.scale; o.y = e.y; o.an = e.an; o.clip = e.clip; o.pose = e.pose; o.brk = e.brk; o.phase = e.phase;
+    o.boss = e.boss; o.scale = e.scale; o.y = e.y; o.an = e.an; o.clip = e.clip; o.pose = e.pose; o.brk = e.brk; o.phase = e.phase; o.scope = e.scope ?? '';
     return o;
   }
 
   /** 4.91: leerer Schnappschuss-Eintrag (vorab angelegt, wiederverwendet) */
   private static entBlank(look: SharedEnt['look']): EntNet {
-    return { id: '', owner: '', cat: 'ship', tier: 0, role: '', level: 1, name: '', look, x: 0, z: 0, hdg: 0, spd: 0, hp: 0, mhp: 1, dis: false, aggro: '', dead: false, boss: false, scale: 1, y: 0, an: 0, clip: '', pose: 1, brk: false, phase: 1 };
+    return { id: '', owner: '', cat: 'ship', tier: 0, role: '', level: 1, name: '', look, x: 0, z: 0, hdg: 0, spd: 0, hp: 0, mhp: 1, dis: false, aggro: '', dead: false, boss: false, scale: 1, y: 0, an: 0, clip: '', pose: 1, brk: false, phase: 1, scope: '' };
   }
 
   /**
@@ -758,6 +758,9 @@ export class MmoAuthority {
 
   /** Treffer auf einen geteilten Gegner: Bedrohung zählen; nicht verrechnete Treffer gehen an den Besitzer */
   private entHit(p: Peer, id: string, dmg: number, ammo: string, zone: 'hull' | 'sail', pen: number, applied: boolean, foe?: FoeHitNet) {
+    // 4.92: nur aus demselben Bereich (wer nicht in der Raid-Instanz ist, trifft ihre Gegner nicht – und umgekehrt)
+    const e0 = this.entities.ents.get(id);
+    if (e0 && (e0.scope ?? '') !== (p.state.sc ?? '')) return;
     const e = this.entities.hit(p.id, id, dmg);
     if (!e || applied || !e.owner || e.owner === p.id) return;
     // nur in Schussweite (Schutz gegen erfundene Treffer aus der Ferne; Landgegner: Faji-Geschosse und Kräfte bis `hitRangeLand` + 40 m)
@@ -802,8 +805,11 @@ export class MmoAuthority {
     if (a.ent) { const e = this.entities.ents.get(a.ent); if (!e || e.owner !== p.id) return; }
     const r = a.sea ? MMO.aoiSea : MMO.aoiLand;
     const msg: ServerMsg = { k: 'act', from: p.id, a };
+    const sc = p.state.sc ?? '';
     for (const o of this.list) {
       if (o === p || o.bot) continue;
+      // 4.92: Aktionen einer Raid-Instanz sehen nur ihre Teilnehmer (und umgekehrt)
+      if ((o.state.sc ?? '') !== sc) continue;
       if (Math.hypot(o.state.x - a.x, o.state.z - a.z) > r) continue;
       this.out(o.id, msg);
     }
@@ -824,7 +830,10 @@ export class MmoAuthority {
       const near = this.entities.near(r.state.x, r.state.z, MMO.aoiSea, this.entNear);
       const list = r.ents.list;
       list.length = 0;
+      const sc = r.state.sc ?? '';
       for (let k = 0; k < near.length && list.length < MMO.entPerPacket; k++) {
+        // 4.92: nur Gegner aus dem eigenen Bereich (offene Welt bzw. dieselbe Raid-Instanz)
+        if ((near[k].scope ?? '') !== sc) continue;
         let o = r.entPool[list.length];
         if (!o) { o = MmoAuthority.entBlank(near[k].look); r.entPool.push(o); }
         list.push(MmoAuthority.entCopy(near[k], o));

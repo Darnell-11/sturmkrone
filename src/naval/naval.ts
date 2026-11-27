@@ -62,6 +62,8 @@ const BALL_SPEED = 46;
 
 /** Ab dieser Entfernung zum Spieler (Meter) bekommen Schüsse und Treffer der KI untereinander nur den kleinen Rauchfleck */
 const FAR_FX = 240;
+/** 4.92: Stufe der Zielschiffe der Klassen-Vorschau (Gefahrenstufe 3: Klingen-Ultimates zerteilen sie wie im Spiel) */
+export const SHOWCASE_LEVEL = 12;
 /** Hilfsvektoren der Drehbassen-Darstellung (nichts in der Spielschleife neu anlegen) */
 const _mz = new Vector3();
 const AXIS_UP = new Vector3(0, 1, 0);
@@ -1688,6 +1690,7 @@ export class NavalSystem {
    * 4.91: Zielschiff der Klassen-Vorschau in Teilschritten (Texturen unsichtbar Bild für Bild): liegt still, schießt nie, zählt nie als
    * Abschuss (`stage`), ist immer treffbar (`showcase`).
    */
+  /** 4.91: passives Zielschiff der Klassen-Vorschau auf See (Bühne: keine KI, kein Abschuss) */
   queueShowcase(x: number, z: number, heading: number, tier: number, power: FactionId, name: string, done: (e: EnemyShip) => void) {
     const self = this;
     function* steps(): Generator<SpawnYield, EnemyShip | null> {
@@ -1698,7 +1701,8 @@ export class NavalSystem {
       ship.prev = { x, z, heading };
       ship.speed = 0;
       ship.canDisable = false;
-      const e: EnemyShip = { ship, role: 'patrouille', level: 30, state: 'patrol', wander: { x, z }, aiT: 0, name, power, stage: true, showcase: true, provoked: true };
+      // 4.92: Stufe 12 = Gefahrenstufe 3 – Klingen-Ultimates zerteilen das Zielschiff wie im Spiel (Stufe 30 lag in Stufe 5: nie zerteilt)
+      const e: EnemyShip = { ship, role: 'patrouille', level: SHOWCASE_LEVEL, state: 'patrol', wander: { x, z }, aiT: 0, name, power, stage: true, showcase: true, provoked: true };
       self.enemies.push(e);
       return e;
     }

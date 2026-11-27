@@ -39,7 +39,7 @@ import { TUTORIAL_END, dissolve, enterTutorial, isPrivate, legacyInstance, skipI
 import { HOME_SPAWN } from '../data/world';
 import { FAJI_ART_IDS, FORM_NAMES, MASTERY_CAP, WILL, WILL_AURAS, cleanFaji, formOf, formProgress, isFajiArt, type AuraId, type FajiArtId, type FajiSave } from '../data/fajiArts';
 import { FORM_THRESHOLDS } from '../data/fajiArts';
-import { randomLook, type CharacterLook } from '../data/characterParts';
+import { defaultLook, randomLook, type CharacterLook } from '../data/characterParts';
 import { WEATHER, type WeatherId } from '../data/world';
 import { CharacterAssets } from '../entities/character/assets';
 import { Character } from '../entities/character/character';
@@ -63,7 +63,7 @@ import { showcaseOf } from '../data/classShowcase';
 import { arenaLabel, type ArenaPhase } from '../data/showcaseArena';
 import { FaceOffScreen } from '../ui/faceOffScreen';
 import { ClassShowcase } from '../ui/classShowcase';
-import { CreationFlow } from '../data/creationFlow';
+import { CreationFlow, previewCreation } from '../data/creationFlow';
 import { detectWebGpu, AutoQuality, benchmarkGpu, detectTier, gatherDeviceInfo, needsBench, type DeviceInfo, type Detected } from '../render/quality';
 import { GameRenderer } from '../render/renderer';
 import { setTexDetail } from '../render/texDetail';
@@ -111,6 +111,7 @@ import type { BattleMark, BattleResult, EnemyShip } from '../naval/naval';
 import { ENEMIES, type EnemyKind } from '../data/combat';
 import { createRaidContext } from '../raid/raidSession';
 import { newRaidInstanceId, type RaidEnd, type RaidView } from '../raid/raidDirector';
+import { RAID_SHARE_TTL, parseRaidShare, raidInstanceOf, raidShareFits, raidShareRef } from '../raid/raidShare';
 import { ESCORT_MAX, MARINE_RAID_PENALTY, MERCENARY_ESCORT_PRICE, mercenarySlots, raidAccess } from '../raid/raidRules';
 import { RaidPanel } from '../ui/raidPanel';
 import { OccupationBanner } from '../ui/occupationBanner';
@@ -2005,13 +2006,23 @@ export class Game {
     const cost = m * b.price;
     if (s.player.gold < cost) return 'Nicht genug Gold für die Söldner.';
     const fid = def.factionId ?? 'marine';
-    const { raidInstanceId, seed } = newRaidInstanceId(def.id, s.meta.created + Math.floor(s.meta.playTime));
+    // 4.92: gemeinsame Belagerung – hat ein Gruppenmitglied eben dieselbe Festung belagert, dieselbe Instanz (gleicher Startwert, gleiche Festung,
+    // dieselben Gegner über das geteilte Register); sonst eine neue, die in einer Gruppe gleich an alle geht
+    const offer = this.raidOffer && raidShareFits(def.id, this.raidOffer.defHash) && performance.now() / 1000 - this.raidOffer.t < RAID_SHARE_TTL ? this.raidOffer : null;
+    const fresh = newRaidInstanceId(def.id, s.meta.created + Math.floor(s.meta.playTime));
+    const seed = offer ? offer.seed : fresh.seed;
+    const raidInstanceId = offer ? raidInstanceOf(def.id, offer.seed) : fresh.raidInstanceId;
     const ctx = createRaidContext({ raidInstanceId, factionId: fid, seed, leaderPlayerId: this.localPlayerId, escorts: b.own, mercenaries: m, flagshipId: this.world.ship.entityId });
+    const party = (this.mmo?.partySize ?? 0) > 1;
+    if (party || offer) ctx.shared = true;
     s.player.gold -= cost;
     this.menus.hide();
     this.resume();
     const owned = () => ({ gear: [...(s.gear.loot ?? []), ...(s.progress.unlocks?.bossLoot ?? [])], sails: s.progress.unlocks?.sails ?? [], ornaments: s.progress.unlocks?.ornaments ?? [] });
     if (!this.world.startRaid(def, ctx, { level: b.level, playerId: this.localPlayerId, firstClear: b.firstClear, conquestsBefore: this.occupation.conquests(def.id), owned })) { s.player.gold += cost; return 'Die Belagerung kann gerade nicht beginnen.'; }
+    // 4.92: die Gruppe einladen (Startwert und Insel); wer folgt, kämpft in derselben Instanz
+    if (ctx.shared && !offer) { const p = this.world.playerPos; this.mmo?.share('raid', raidShareRef(def.id, seed), 1, p.x, p.z); }
+    if (offer) this.hud.toast(`Gemeinsame Belagerung mit ${offer.name}: dieselbe Festung, dieselben Gegner.`, 4);
     // Ein Angriff auf das Marine-Hauptquartier macht die Marine zum Feind
     if (fid === 'marine') this.shiftStanding('marine', -MARINE_RAID_PENALTY);
     this.persist();
@@ -5711,8 +5722,8 @@ export class Game {
    * Stufe C: Klassen-, Formen- & Ultimate-Showcase. 4.91: läuft in der echten Welt – die eigene Figur mit der echten Kampf-Engine, der
    * Effekt-Schmiede und der 3-Akt-Kino-Regie an Land auf dem Übungsplatz bzw. auf See am Steuer gegen ein Zielschiff mit zwei Begleitern.
    */
-  private openShowcase(slot: number, r: EditorResult) {
-    const flow = this.creation;
+  private openShowcase(slot: number, r: EditorResult, preview: CreationFlow | null = null) {
+    const flow = preview ?? this.creation;
     if (!flow || !this.assets) return;
     flow.toClasses();
     this.stage = null;
@@ -5726,7 +5737,7 @@ export class Game {
     this.state.set('editor');
     this.world.onArenaPart = (p, act) => {
       const e = showcaseOf(this.creation?.state.spec ?? flow.state.spec);
-      const phase: ArenaPhase = !p ? 'idle' : p.kind === 'ult' ? 'ult' : p.kind === 'attack' ? 'combo' : 'form';
+      const phase: ArenaPhase = !p ? 'idle' : p.kind === 'ult' ? 'ult' : p.kind === 'legend' ? 'legend' : p.kind === 'attack' ? 'combo' : 'form';
       const form = p && p.kind === 'form' ? e.forms.find((x) => x.nr === p.slot)?.label ?? '' : '';
       this.showcase?.part(phase, p ? arenaLabel(p, form, e.ultimate.label, this.world.arena.sea) : '', act);
     };
@@ -5738,15 +5749,18 @@ export class Game {
       onWindow: (rect) => this.world.arenaWindow(rect),
       // 4.9 / 4.91: Vorschau an Land bzw. auf See (Seegefecht am Steuer gegen ein Zielschiff)
       onSea: (sea) => this.world.setArenaSea(sea),
+      // 4.92: Klassenvorschau vom Startbildschirm – kein Spielbeginn, zurück führt zum Hauptmenü
+      preview: !!preview,
       onBack: () => {
         this.leaveCreationViews(true);
+        if (preview) { flow.back(); this.closeClassPreview(); return; }
         flow.back();
         this.openEditor(slot, r);
       },
       onStart: (spec) => {
         flow.preview(spec);
         const res = flow.start();
-        if (!res) return;
+        if (!res || preview) return;
         this.leaveCreationViews();
         this.creation = null;
         this.useWorldView();
@@ -5759,6 +5773,33 @@ export class Game {
 
   /** 4.91: die Klassen-Vorschau läuft in der Welt (Game ruft dann `world.update` auch im Zustand `editor`) */
   private arenaOn = false;
+
+  /**
+   * 4.92: „Klassenvorschau“ auf dem Startbildschirm – dieselbe interaktive Bühne wie beim neuen Spiel (alle 15 Spezialisierungen, An Land / Auf
+   * See, Standardangriff, Form I – X, Geistes-Faji, Level-60- und legendäres Ultimate), aber ohne Spielstand: kein Spiel beginnt, keine Klasse
+   * wird festgelegt, nichts wird gespeichert; „Zurück zum Hauptmenü“ führt auf den Startbildschirm.
+   */
+  openClassPreview() {
+    if (!this.assets) { this.hud.toast('Figuren werden noch geladen …'); return; }
+    if (this.save || this.creation || this.showcase) return;
+    this.leaveCreationViews();
+    this.menus.hide();
+    this.classPreviewOn = true;
+    const look = this.world.playerLook ?? defaultLook('pirat');
+    this.openShowcase(-1, { name: 'Kapitän', faction: 'pirat', style: 'schwert', blade: 'saebel', look }, new CreationFlow(previewCreation()));
+  }
+
+  /** 4.92: Klassenvorschau beenden – zurück auf den Startbildschirm (die Welt kehrt zum Titelbild zurück) */
+  private closeClassPreview() {
+    this.classPreviewOn = false;
+    this.useWorldView();
+    this.renderer.resize();
+    this.state.set('menu');
+    this.menus.showMain();
+  }
+
+  /** 4.92: läuft die Klassenvorschau vom Startbildschirm (Prüfungen) */
+  classPreviewOn = false;
 
   /**
    * Oberflächen und Bühnen des Einstiegs abbauen (die geliehenen Effekt-Pools gehen an die Welt zurück, kein Impact-Filter bleibt stehen);
@@ -6649,6 +6690,8 @@ export class Game {
     out.hp = f ? f.hp : 1; out.mhp = f ? Math.max(1, f.maxHp) : 1;
     out.will = this.world.playerFoot?.fighter.will ?? 0; out.mwill = 100;
     out.zone = this.world.mmoZone(out.x, out.z, out.dom === 'sea');
+    // 4.92: Bereich der Welt – in einer gemeinsamen Belagerung die Kennung der Raid-Instanz, sonst die offene Welt
+    out.sc = this.world.netScope;
     return out;
   }
 
@@ -6879,8 +6922,20 @@ export class Game {
     audio.play('horn', 0.5);
   }
 
+  /** 4.92: letzte Einladung zur gemeinsamen Belagerung (Startwert, Prüfsumme der Insel, Name, Zeit) */
+  private raidOffer: { seed: number; defHash: string; name: string; t: number } | null = null;
+
   private partyShare(name: string, what: ShareKind, ref: string, amount: number) {
     if (!this.save) return;
+    if (what === 'raid') {
+      const r = parseRaidShare(ref);
+      if (!r) return;
+      this.raidOffer = { seed: r.seed, defHash: r.defHash, name, t: performance.now() / 1000 };
+      const def = this.world.islandDefs.find((d) => raidShareFits(d.id, r.defHash));
+      this.hud.toast(`${name} belagert ${def ? def.name : 'eine Festung'} – starte dort die Belagerung, um gemeinsam zu kämpfen.`, 5);
+      audio.play('horn', 0.5);
+      return;
+    }
     if (what === 'kill') this.questEvent({ type: 'kill', kind: ref as EnemyKind });
     else if (what === 'sink') this.questEvent({ type: 'sink' });
     else if (what === 'merit') {
@@ -6902,6 +6957,7 @@ export class Game {
     if (!s) return;
     const me = this.mmo?.id ?? '';
     if (k.cat === 'foe') { this.sharedFoeKill(k, owner, me); return; }
+    if (k.cat === 'beast') { this.sharedBeastKill(k, owner, me); return; }
     if (!owner) {
       s.progress.stats.sunk++;
       this.questEvent({ type: 'sink' });
@@ -6914,6 +6970,25 @@ export class Game {
       const rarity: Rarity = k.role === 'legende' ? 'legendaer' : k.level >= 30 ? 'episch' : 'selten';
       this.onLootPickup({ rarity, kind: Math.random() < 0.7 ? 'gear' : 'trinket', value: 120 + k.level * 18 });
     }
+    this.persist();
+  }
+
+  /**
+   * 4.92: der geteilte Tiefsee-Leviathan ist gefallen. Wer ihn mit eigenem Ereignis gesteuert hat, bekommt den Weltboss-Lohn über das Ereignis;
+   * alle anderen Beteiligten (und wer ihn ohne eigenes Ereignis übernommen hat) bekommen hier Erfahrung und das Banner, der Finder die Beute
+   * (in der Gruppe das Würfel-Fenster, Seltenheit Legendär).
+   */
+  private sharedBeastKill(k: EntKillNet, owner: boolean, me: string) {
+    const s = this.save;
+    if (!s) return;
+    const viaEvent = owner && !!this.world.sharedEnts?.beastLocalReward;
+    if (!viaEvent) {
+      this.grantXp(Math.round(900 + k.level * 40), 300);
+      const by = k.by === me ? '' : k.byName;
+      this.overlay.showBanner('Gemeinsam besiegt!', by ? `${k.name} · den letzten Treffer setzte ${by}` : k.name);
+      audio.play('treasure');
+    }
+    if (k.finder === me && !viaEvent) this.onLootPickup({ rarity: 'legendaer', kind: Math.random() < 0.7 ? 'gear' : 'trinket', value: 400 + k.level * 30 });
     this.persist();
   }
 

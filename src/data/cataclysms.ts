@@ -191,11 +191,17 @@ export interface ShipSplitInfo {
 /** Bis zu diesem Rumpf-Anteil werden Boss-Schiffe von Klingen-Ultimates zerteilt (darüber nur schwerer Schaden) */
 export const BOSS_SHIP_SPLIT = 0.15;
 
-/** Wird das Schiff zerteilt? Kriegsschiffe der Gefahrenstufen 1 – 4 immer, Boss-Schiffe erst unter 15 % Rumpf, Freunde nie */
+/**
+ * 4.92: Kriegsschiffe der Gefahrenstufe 5 (Festungsgürtel, Stufe 18+ – dort kämpft man im Endgame fast immer) zerbrechen, sobald ihr Rumpf
+ * höchstens zur Hälfte steht (vorher nur schwerer Schaden). Ohne diese Schwelle sah ein Kapitän mit Stufe 60 die Schiffsteilung nie.
+ */
+export const T5_SHIP_SPLIT = 0.5;
+
+/** Wird das Schiff zerteilt? Kriegsschiffe der Gefahrenstufen 1 – 4 immer, Stufe 5 ab halbem Rumpf, Boss-Schiffe erst unter 15 % Rumpf, Freunde nie */
 export function canSplitShip(s: ShipSplitInfo, cut: UltimateSpec['splitShips']): boolean {
   if (!cut || s.friendly) return false;
   if (s.boss) return s.hullFrac < BOSS_SHIP_SPLIT;
-  return s.tier <= 4;
+  return s.tier <= 4 || s.hullFrac <= T5_SHIP_SPLIT;
 }
 
 /**

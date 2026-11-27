@@ -23,6 +23,8 @@ export interface LeviathanHooks {
   /** Schaden am Spielerschiff (der Gastgeber deckelt die Salve) und optional ein Stoß (m/s, Weltachsen) */
   hitShip(dmg: number, pushX: number, pushZ: number): void;
   roar(): void;
+  /** 4.92: ein Tentakel-Schlag beginnt (Warnring) – für die Mitspieler (geteilter Leviathan) */
+  slam?(x: number, z: number): void;
 }
 
 /** Körperglieder im Bogen, Schuppen je Glied, Tentakel und Glieder je Tentakel, Leuchtpunkte je Tentakel, gleichzeitige Warnringe */
@@ -110,6 +112,11 @@ export class LeviathanBoss {
   private flash = 0;
   private dmgBase = 40;
   active = false;
+  /**
+   * 4.92: Kopie eines geteilten Leviathans (Besitzer ist ein Mitspieler): Lage aus dem Netz (`follow`), aufgetaucht nach `mirrorUp` (0 … 1),
+   * keine eigene Bahn und keine eigenen Angriffe; −1 = selbst gesteuert
+   */
+  mirrorUp = -1;
 
   constructor(scene: Scene) {
     const k = levKit();
@@ -172,6 +179,27 @@ export class LeviathanBoss {
 
   get alive() { return this.hp > 0; }
   get frac() { return this.hp / Math.max(1, this.maxHp); }
+  /** 4.92: wie weit aufgetaucht (0 … 1) und Phase (2 = Raserei unter 40 % Leben) – für den Bericht an den Shard */
+  get up() { return this.sub; }
+  get phase() { return this.frac < 0.4 ? 2 : 1; }
+  /** Blickrichtung (rad) */
+  get heading() { return this.ang; }
+
+  /** 4.92: Kopie – Lage, Leben und Auftauchen aus dem Netz (Bewegung glättet der Aufrufer über die Schnappschüsse) */
+  follow(x: number, z: number, hp: number, maxHp: number, up: number) {
+    this.x = x; this.z = z;
+    this.maxHp = Math.max(1, maxHp);
+    this.hp = Math.max(0, Math.min(this.maxHp, hp));
+    this.mirrorUp = Math.max(0, Math.min(1, up));
+  }
+
+  /** 4.92: Warnring eines Tentakel-Schlags des Besitzers (nur Darstellung – den Schaden rechnet der Besitzer) */
+  remoteSlam(x: number, z: number) {
+    const sl = this.takeSlam();
+    if (!sl) return;
+    sl.x = x; sl.z = z; sl.t = 0; sl.tent = this.slams.length % TENT; sl.hit = false; sl.on = true; sl.ring.visible = true;
+    this.slams.push(sl);
+  }
   get headPos() { return this.head.position; }
   /** Aufgetaucht genug, um getroffen zu werden und anzugreifen */
   get surfaced() { return this.sub > 0.5; }
@@ -200,6 +228,7 @@ export class LeviathanBoss {
   /** Erscheinen lassen (Lage, Leben, Stufe für den Schaden) */
   activate(x: number, z: number, maxHp: number, frac: number, level: number) {
     this.active = true;
+    this.mirrorUp = -1;
     this.x = x; this.z = z;
     this.maxHp = Math.max(1, maxHp);
     this.hp = this.maxHp * Math.max(0, Math.min(1, frac));
@@ -214,6 +243,7 @@ export class LeviathanBoss {
   /** Abtauchen ohne Kampf (die Seewelt baut das Ereignis zu Daten ab) */
   deactivate() {
     this.active = false;
+    this.mirrorUp = -1;
     this.group.visible = false;
     this.clearSlams();
     this.wave.visible = false;
@@ -260,12 +290,13 @@ export class LeviathanBoss {
       const a = Math.atan2(this.x - ship.x, this.z - ship.z) + 0.35;
       tx = ship.x + Math.sin(a) * 90; tz = ship.z + Math.cos(a) * 90; speed = 7;
     }
-    if (live) {
+    const mirror = this.mirrorUp >= 0;
+    if (live && !mirror) {
       const dx = tx - this.x, dz = tz - this.z, d = Math.hypot(dx, dz);
       if (d > 2) { const k = Math.min(d, speed * dt) / d; this.x += dx * k; this.z += dz * k; }
     }
-    // Auf- und Abtauchen
-    const wantUp = live && (fight || dShip < 500) && this.diving <= 0 ? 1 : 0;
+    // Auf- und Abtauchen (4.92: eine Kopie taucht auf, wenn der Besitzer es meldet)
+    const wantUp = mirror ? (live && this.mirrorUp > 0.5 ? 1 : 0) : live && (fight || dShip < 500) && this.diving <= 0 ? 1 : 0;
     const before = this.sub;
     this.sub += ((live ? wantUp : 0) - this.sub) * Math.min(1, dt * (live ? 0.8 : 0.35));
     if (before < 0.3 && this.sub >= 0.3) { h.roar(); h.splash(this.x, this.z, true); h.shake(0.7); }
@@ -290,6 +321,7 @@ export class LeviathanBoss {
           sl.z = ship.z + Math.cos(ship.heading) * ship.speed * lead + (Math.random() - 0.5) * 8;
           sl.t = 0; sl.tent = this.slams.length % TENT; sl.hit = false; sl.on = true; sl.ring.visible = true;
           this.slams.push(sl);
+          h.slam?.(sl.x, sl.z);
         }
       }
       this.waveT -= dt;

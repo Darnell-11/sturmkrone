@@ -277,7 +277,10 @@ export class Menus {
           ${g.persistent ? '' : '<p class="warn">Dein Browser erlaubt kein dauerhaftes Speichern (z. B. privater Modus). Spielstände gehen beim Schließen verloren – nutze „Exportieren“.</p>'}
           ${g.detected.software ? GPU_HINT : ''}
           ${this.onlineHtml()}
-          <button class="primary" data-a="play" data-focus>Spielen</button>
+          <div class="title-play-row">
+            <button class="primary" data-a="play" data-focus>Spielen</button>
+            <button class="secondary title-preview" data-a="preview" title="Alle 15 Klassen mit Formen, Geistes-Faji und Ultimates an Land und auf See ansehen – ohne Spielstand">⚔ Klassenvorschau</button>
+          </div>
           <button class="secondary" data-a="compendium">Item-Kompendium</button>
           <button class="secondary" data-a="settings">Einstellungen</button>
           <div class="row share-row">
@@ -291,6 +294,8 @@ export class Menus {
       </div>`,
       {
         play: () => this.showSlots(),
+        // 4.92: die Klassen- und Ultimate-Bühne direkt vom Startbildschirm (kein Spielstand, keine Klassenwahl)
+        preview: () => g.openClassPreview(),
         compendium: () => this.showCompendium(() => this.showMain()),
         settings: () => this.showSettings(() => this.showMain()),
         install: async () => {

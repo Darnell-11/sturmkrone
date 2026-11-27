@@ -401,7 +401,12 @@ export class ActionCombatEngine {
   /** Schadensminderung aus Talenten jetzt (Haltung nur während eines eigenen Angriffs), gedeckelt */
   get talentReduce(): number { return softCap((this.f.phase === 'move' ? this.tp.stance : 0) + this.talentArmor, TALENT_CAP.reduce); }
   /** Ultimate des Erwachens: der Himmelssturz, wenn ausgerüstet, sonst das des Stils */
-  ultimateOf(st: ActionStyleDef): ActionMove | null { return this.tal && this.tal.useCosmic && this.tal.cosmic ? this.tal.cosmic : st.ultimate; }
+  /**
+   * 4.92: Vorschau – dieses Ultimate statt des eigenen (das legendäre Ultimate der Stufe 101 in der Klassen-Vorschau). Nur die Vorschau setzt
+   * es und räumt es beim Verlassen wieder ab (`SeaWorld.endArena`); null = wie immer.
+   */
+  forceUlt: ActionMove | null = null;
+  ultimateOf(st: ActionStyleDef): ActionMove | null { if (this.forceUlt) return this.forceUlt; return this.tal && this.tal.useCosmic && this.tal.cosmic ? this.tal.cosmic : st.ultimate; }
   /** Im Sturm-Erwachen? */
   get awakened(): boolean { return this.f.awakenT > 0; }
   /** Steht das Ultimate jetzt bereit? (im Erwachen, noch nicht benutzt, Faji-Künste ab der 7. Form) */

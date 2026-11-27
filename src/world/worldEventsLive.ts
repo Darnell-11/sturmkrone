@@ -14,7 +14,7 @@ import { worldBossStats } from '../naval/worldBosses';
 import { FACTIONS, type FactionId } from '../data/factions';
 import type { NavalSystem, EnemyShip, EventShipLink, SpawnYield } from '../naval/naval';
 import type { Ship } from '../entities/ship/ship';
-import { LeviathanBoss } from '../naval/leviathanBoss';
+import { LeviathanBoss, type LeviathanHooks } from '../naval/leviathanBoss';
 import { CurrentField, buildCurrentLanes, currentBoost, newCurrentSample, type CurrentLane, type CurrentSample } from './oceanCurrents';
 import { cellSightK, cellSpeedK, newCellSample, type CellSample } from './weatherCells';
 import { WorldEventDirector, emptyWorldEvents, type DirectorIsland, type DirectorNotice, type FlotsamCrate, type Interest, type RescueChoice, type SupplyFront, type WorldEvent, type WorldEventState } from './worldEventDirector';
@@ -116,6 +116,35 @@ export class WorldEventsLive {
   private readonly tmpCur: CurrentSample = newCurrentSample();
   private leviEngaged = false;
   private readonly leviVolley: VolleyWindow = { t: -99, sum: 0 };
+  // ---------- 4.92: geteilter Leviathan (Besitzer simuliert, alle anderen zeigen eine Kopie) ----------
+  /**
+   * Kopie: Lage, Leben, Auftauchen und Tod aus dem Netz (setzt `SharedEntities` je Schritt; null = selbst gesteuert bzw. keiner). Solange eine
+   * Kopie läuft, rechnet diese Welt den Leviathan nicht selbst: keine Bahn, keine Angriffe, Treffer gehen roh an den Besitzer (`onLevHitOut`).
+   */
+  levMirror: { x: number; z: number; hp: number; mhp: number; up: number; dead: boolean } | null = null;
+  /** Besitzer: Ziel der Aggro-Tabelle, wenn es ein Mitspieler ist (sein Schiff; null = das eigene) */
+  levAggro: Ship | null = null;
+  /** Besitzer ohne eigenes Ereignis (übernommen): der Leviathan kämpft weiter, wo er ist */
+  levAdopted = false;
+  /** Treffer auf die Kopie (roher Schaden, Durchschlag) – liefert die angezeigte Schätzung */
+  onLevHitOut: ((dmg: number, pen: number) => number) | null = null;
+  /** Besitzer: ein Schlag trifft das Schiff eines Mitspielers (Aggro-Ziel) bzw. ein Tentakel-Schlag beginnt (Warnring für alle) */
+  onLevPeerHit: ((dmg: number) => void) | null = null;
+  onLevSlam: ((x: number, z: number) => void) | null = null;
+  /** läuft gerade ein Leviathan aus dem eigenen Ereignis (oder übernommen) – dann meldet diese Welt ihn an */
+  get levOwnActive(): boolean { return this.leviathan.active && !this.levMirror && (this.levEventId !== '' || this.levAdopted); }
+  /** hat diese Welt ein eigenes Leviathan-Ereignis (Belohnung über den Director) */
+  get levOwnEvent(): boolean { return this.levEventId !== ''; }
+  private levEventId = '';
+  /** Treffer eines Mitspielers auf den eigenen geteilten Leviathan (Rüstung wie bei eigenen Kugeln) */
+  levApplyHit(dmg: number, pen: number): number {
+    const L = this.leviathan;
+    if (!L.active || !L.alive) return 0;
+    const dealt = L.damage(dmg * (1 - mitigation(worldBossStats('leviathan').armor, pen)));
+    this.leviEngaged = true;
+    if (this.levEventId) { this.director.engage(this.levEventId); this.director.setBossHp(this.levEventId, L.frac); }
+    return dealt;
+  }
   private clock = 0;
   private readonly islandById = new Map<string, IslandDef>();
   /** Begegnungen (4.5C): wann zuletzt gefragt (Uhr der Schicht), damit ein „Später“ nicht sofort wieder fragt */
@@ -453,6 +482,10 @@ export class WorldEventsLive {
     const ev = this.director.state.events.find((e) => e.bossId === 'leviathan' && e.phase !== 'beendet') ?? null;
     const L = this.leviathan, h = this.host, p = h.ship;
     const nav = h.naval;
+    this.levEventId = ev ? ev.id : '';
+    // 4.92: Kopie eines geteilten Leviathans (ein Mitspieler steuert ihn) – auch ohne eigenes Ereignis
+    if (this.levMirror) { this.mirrorLeviathan(dt, ev); return; }
+    if (this.levAdopted && !ev) { this.freeLeviathan(dt); return; }
     if (!ev) {
       if (L.active) { L.deactivate(); nav.bossTarget = null; }
       return;
@@ -475,10 +508,28 @@ export class WorldEventsLive {
     const goal = { x: r[k * 2], z: r[k * 2 + 1] };
     if (Math.hypot(goal.x - L.x, goal.z - L.z) < 60 && (ev.leg ?? 1) < r.length / 2 - 1) ev.leg = (ev.leg ?? 1) + 1;
     const engage = h.sailing() && (this.leviEngaged || Math.hypot(p.x - L.x, p.z - L.z) < ev.zone);
-    L.update(dt, (x, z) => h.heightAt(x, z), p.alive ? p : null, goal, engage, {
+    // 4.92: die Aggro-Tabelle des Shards kann einen Mitspieler zum Ziel machen – dann schlägt der Leviathan dessen Schiff
+    const tgt = this.levAggro && this.levAggro.alive ? this.levAggro : p.alive ? p : null;
+    L.update(dt, (x, z) => h.heightAt(x, z), tgt, goal, engage || (!!tgt && tgt !== p), this.levHooks(tgt));
+    ev.x = L.x; ev.z = L.z;
+    const b = ev.ships[0];
+    if (b) { b.x = L.x; b.z = L.z; b.byPlayer = true; }
+    this.director.setBossHp(ev.id, L.frac);
+    if (!L.alive && this.leviEngaged) this.leviEngaged = false;
+  }
+
+  /** 4.92: Rückrufe des Leviathans – Schläge treffen das eigene Schiff oder (Aggro-Ziel) das Schiff eines Mitspielers über den Shard */
+  private levHooks(tgt: Ship | null): LeviathanHooks {
+    const hk = this.levHookObj;
+    hk.tgt = tgt;
+    if (hk.api) return hk.api;
+    const h = this.host, p = h.ship, L = this.leviathan;
+    hk.api = {
       shake: (a) => h.shake(a),
       splash: (x, z, big) => h.spray.emit(big ? 70 : 30, x, 1, z, { speed: big ? 7 : 4, up: big ? 14 : 8, life: 2, color: SPLASH, spread: big ? 10 : 4 }),
       hitShip: (dmg, px, pz) => {
+        const t = hk.tgt;
+        if (t && t !== p) { this.onLevPeerHit?.(dmg); return; }
         if (!p.alive) return;
         const capped = capVolley(this.leviVolley, this.clock, dmg, p.maxHull);
         const dealt = p.damage(capped, 'kugel', null);
@@ -486,13 +537,47 @@ export class WorldEventsLive {
         h.hurt(dealt, p.x, p.z);
       },
       roar: () => audio.play('roar', 1, { x: L.x, z: L.z }),
-    });
-    ev.x = L.x; ev.z = L.z;
-    const b = ev.ships[0];
-    if (b) { b.x = L.x; b.z = L.z; b.byPlayer = true; }
-    this.director.setBossHp(ev.id, L.frac);
-    if (!L.alive && this.leviEngaged) this.leviEngaged = false;
+      slam: (x, z) => this.onLevSlam?.(x, z),
+    };
+    return hk.api;
   }
+  private readonly levHookObj: { tgt: Ship | null; api: LeviathanHooks | null } = { tgt: null, api: null };
+
+  /**
+   * 4.92: Kopie eines geteilten Leviathans – die Lage, das Leben und das Auftauchen kommen vom Besitzer; diese Welt zeichnet ihn nur, zeigt die
+   * Warnringe seiner Schläge (`remoteSlam`) und schickt eigene Treffer roh an den Besitzer. Fällt er, endet ein eigenes Ereignis ohne eigene
+   * Belohnung (den Abschuss schreibt der Shard allen Beteiligten gut).
+   */
+  private mirrorLeviathan(dt: number, ev: WorldEvent | null) {
+    const m = this.levMirror!, L = this.leviathan, h = this.host, nav = h.naval;
+    if (!L.active) {
+      L.activate(m.x, m.z, m.mhp, m.mhp > 0 ? m.hp / m.mhp : 1, WORLD_BOSSES.leviathan.level);
+      if (ev) ev.live = true;
+    }
+    L.follow(m.x, m.z, m.dead ? 0 : Math.max(1, m.hp), m.mhp, m.dead ? 0 : m.up);
+    nav.bossTarget = this.mirrorTarget;
+    L.update(dt, (x, z) => h.heightAt(x, z), null, null, false, this.levHooks(null));
+    if (ev) { ev.x = L.x; ev.z = L.z; const b = ev.ships[0]; if (b) { b.x = L.x; b.z = L.z; } }
+    if (m.dead && ev && ev.phase !== 'beendet') this.director.end(ev, 'gesiegt', false);
+  }
+  private readonly mirrorTarget = {
+    hitTest: (q: Vector3) => this.leviathan.hitTest(q),
+    damage: (n: number, pen: number) => this.onLevHitOut?.(n, pen) ?? 0,
+  };
+
+  /** 4.92: übernommener Leviathan ohne eigenes Ereignis (der bisherige Besitzer ist fort): er kämpft weiter, wo er ist */
+  private freeLeviathan(dt: number) {
+    const L = this.leviathan, h = this.host, p = h.ship, nav = h.naval;
+    if (!L.active) { this.levAdopted = false; return; }
+    nav.bossTarget = this.ownTarget;
+    const tgt = this.levAggro && this.levAggro.alive ? this.levAggro : p.alive ? p : null;
+    L.update(dt, (x, z) => h.heightAt(x, z), tgt, null, h.sailing() || (!!tgt && tgt !== p), this.levHooks(tgt));
+    if (!L.alive && L.up < 0.05) { L.deactivate(); nav.bossTarget = null; this.levAdopted = false; }
+  }
+  private readonly ownTarget = {
+    hitTest: (q: Vector3) => this.leviathan.hitTest(q),
+    damage: (n: number, pen: number) => this.levApplyHit(n, pen),
+  };
 
   // ---------- Treibgut ----------
 

@@ -15,6 +15,9 @@
 //   daraus EINEN Gegner – beim Zweiten wird der eigene zur Kopie (keine KI, Lage, Bewegung, Leben, Haltung und Boss-Phase aus dem
 //   Schnappschuss). Treffer auf Kopien gehen roh an den Besitzer (`FoeHitNet`), Warnflächen der Bosse zeigt jeder (`tele`), Hiebe und Flächen
 //   treffen auch Mitspieler (über den Shard). Ein geräumtes Lager bleibt gesperrt, bis der Shard es wieder freigibt (`edenied`).
+// - **4.92 Bereiche:** in einer gemeinsamen Belagerung (Raid-Instanz der Gruppe) tragen alle geteilten Gegner die Kennung der Instanz
+//   (`scope`); Spieler außerhalb sehen sie nie, nur Teilnehmer übernehmen sie. Wachschiffe der Kaiser-Seesperre und des Raids haben feste
+//   Schlüssel (Platz der Wachflotte), der Tiefsee-Leviathan den Schlüssel „wb:leviathan“ (Art `beast`: ein Ungeheuer für alle).
 // Je Logikschritt entsteht nichts Neues außer bei Ereignissen (neuer Gegner, Abschuss); Berichte nutzen vorab angelegte Einträge.
 import type { Ship } from '../entities/ship/ship';
 import type { Enemy, FoeLink, HitInfo } from '../entities/enemy';
@@ -24,6 +27,7 @@ import type { MmoClient, ClientEnt } from '../net/mmoClient';
 import { MMO, netKey, type ActNet, type EntKillNet, type EntLookNet, type EntNet, type EntSpawnNet, type EntStateNet, type FoeHitNet } from '../net/mmoProtocol';
 import { SHIP_CLASSES, type AmmoId, type NavalRole, type ShipLook } from '../data/ships';
 import type { ShipEvolution, EvoTier } from '../data/shipEvolution';
+import { raidEntityKey } from '../raid/raidShare';
 
 /** Was die geteilten Gegner von der Seewelt und dem Spiel brauchen */
 export interface SharedHost {
@@ -55,7 +59,32 @@ export interface SharedHost {
   foeHitMe(name: string, dmg: number, x: number, z: number): void;
   /** 4.91: dieser Gegner ist beim Shard gesperrt (Lager geräumt, Boss besiegt): `wait` s bis zur Wiederkehr */
   foeDenied(e: Enemy, wait: number): void;
+  /** 4.92: Bereich der Welt ('' = offene Welt, sonst die Kennung der gemeinsamen Raid-Instanz) */
+  scope?(): string;
+  /** 4.92: ein Wachschiff mit festem Schlüssel ist beim Shard gesperrt (schon versenkt) – es zählt als gefallen */
+  shipDenied?(e: EnemyShip): void;
+  /** 4.92: Leviathan der Welt-Ereignisse (geteilt als Ungeheuer `beast`) */
+  beast?(): BeastLive | null;
+  /** 4.92: Bauwerk einer gemeinsamen Belagerung (Lebensanteil 0 … 1) von einem Mitspieler gemeldet */
+  raidStructure?(id: string, frac: number): void;
 }
+
+/** 4.92: was SharedEntities vom Leviathan der Welt-Ereignisse braucht (`WorldEventsLive`) */
+export interface BeastLive {
+  readonly leviathan: { active: boolean; alive: boolean; x: number; z: number; hp: number; maxHp: number; up: number; phase: number; heading: number; remoteSlam(x: number, z: number): void };
+  readonly levOwnActive: boolean;
+  readonly levOwnEvent: boolean;
+  levMirror: { x: number; z: number; hp: number; mhp: number; up: number; dead: boolean } | null;
+  levAggro: Ship | null;
+  levAdopted: boolean;
+  onLevHitOut: ((dmg: number, pen: number) => number) | null;
+  onLevPeerHit: ((dmg: number) => void) | null;
+  onLevSlam: ((x: number, z: number) => void) | null;
+  levApplyHit(dmg: number, pen: number): number;
+}
+
+/** 4.92: fester Schlüssel des Tiefsee-Leviathans (ein Ungeheuer für alle in der offenen Welt) */
+export const BEAST_KEY = 'wb:leviathan';
 
 interface OwnRec { id: string; e: EnemyShip; lastHp: number; fwd: number; lastBy: string }
 interface MirrorRec { id: string; e: EnemyShip; predicted: number }
@@ -85,15 +114,26 @@ export class SharedEntities {
   private readonly states: EntStateNet[] = [];
   /** Zahlen für Prüfungen */
   readonly stats = { claimed: 0, owned: 0, mirrors: 0, built: 0, forwarded: 0, applied: 0, kills: 0, credited: 0, actsSent: 0, actsShown: 0, released: 0, adopted: 0, hitsMe: 0, demoted: 0,
-    foeClaimed: 0, foesOwned: 0, foeMirrors: 0, foeBuilt: 0, foeMerged: 0, foeDenied: 0, foeHits: 0, foeApplied: 0, foeDemoted: 0, foeAdopted: 0, teleSent: 0, teleShown: 0, peerStrikes: 0, foeHitsMe: 0, phaseShown: 0 };
+    foeClaimed: 0, foesOwned: 0, foeMirrors: 0, foeBuilt: 0, foeMerged: 0, foeDenied: 0, foeHits: 0, foeApplied: 0, foeDemoted: 0, foeAdopted: 0, teleSent: 0, teleShown: 0, peerStrikes: 0, foeHitsMe: 0, phaseShown: 0,
+    shipDenied: 0, beastClaims: 0, beastMerged: 0, beastMirror: 0, beastApplied: 0, beastHits: 0, beastAdopted: 0, beastKills: 0, bauSent: 0, bauShown: 0 };
   /** 4.91: Landgegner – Anmeldungen (Schlüssel → Gegner), eigene, Kopien */
   private readonly pendingFoes = new Map<string, Enemy>();
   private readonly ownFoes = new Map<string, OwnFoe>();
   private readonly ownFoeList: OwnFoe[] = [];
   private readonly mirrorFoes = new Map<string, MirrorFoe>();
   private readonly mirrorFoeList: MirrorFoe[] = [];
+  /** 4.92: der geteilte Leviathan (Kennung, Besitz, Treffer-Schätzung) – höchstens einer */
+  private readonly beastRec = { id: '', key: '', pending: false, owner: false, dead: false, lastHp: 0, fwd: 0, lastBy: '', hooked: false };
+  private readonly beastOut = { x: 0, z: 0, hp: 0, mhp: 1, up: 0, dead: false };
+  /** 4.92: der eigene geteilte Leviathan fiel mit eigenem Ereignis (Lohn über das Ereignis, nicht noch einmal über den Abschuss) */
+  beastLocalReward = false;
 
   constructor(private readonly host: SharedHost) {}
+
+  /** 4.92: eigener Bereich ('' = offene Welt) */
+  private get scope(): string { return this.host.scope?.() ?? ''; }
+  /** 4.92: gehört ein Eintrag des Schnappschusses zum eigenen Bereich? */
+  private mine(ce: { scope?: string }): boolean { return (ce.scope ?? '') === this.scope; }
 
   /** Kennung des eigenen Clients ('' ohne Verbindung) */
   private get me(): string { return this.host.client()?.id ?? ''; }
@@ -115,11 +155,13 @@ export class SharedEntities {
 
   update(dt: number) {
     const nav = this.host.naval(), c = this.host.client();
-    if (!nav || !c || !c.online || !this.host.active()) { if (this.ownList.length || this.mirrorList.length || this.ownFoeList.length || this.mirrorFoeList.length || this.pendingFoes.size) this.clear(); return; }
+    if (!nav || !c || !c.online || !this.host.active()) { if (this.ownList.length || this.mirrorList.length || this.ownFoeList.length || this.mirrorFoeList.length || this.pendingFoes.size || this.beastRec.key) this.clear(); return; }
     this.host.me(_me);
     this.claimNew(nav, c);
     this.stepOwned(nav, c);
     this.stepMirrors(nav, c);
+    // 4.92: Tiefsee-Leviathan (offene Welt)
+    this.stepBeast(c);
     // 4.91: Landgegner
     const cb = this.host.combat();
     if (cb && this.host.foesShared()) {
@@ -137,29 +179,45 @@ export class SharedEntities {
    */
   private eligible(e: EnemyShip, nav: NavalSystem): boolean {
     if (e.shared || !e.ship.alive || e.ship.sinking > 0 || e.ship.disabled) return false;
+    // 4.92: Wachschiffe mit festem Platz – die Seesperre einer Kaiser-Zitadelle (offene Welt) und die Wachflotte einer gemeinsamen Belagerung
+    if (e.raid === 'guard' && e.guardId) return this.worldKeyOf(e) !== '';
     if (e.companion || e.fleetId || e.raid || e.station || e.stage || e.peer || e.legendId || e.training || e.hunter || e.captured || e.helper || e.ghost || e.showcase) return false;
     if (nav.isTeamShip(e)) return false;
     return !!e.ev || !!e.battle || e.role === 'patrouille' || e.role === 'jaeger' || e.role === 'haendler';
+  }
+
+  /**
+   * 4.92: fester Schlüssel eines Wachschiffs ('' = keiner): Kaiser-Seesperre „kaiser:<Zitadelle>:wache:<Platz>“ (offene Welt), Wachflotte einer
+   * gemeinsamen Belagerung „raid:<Instanz>:<Platz>“ (nur in der Instanz)
+   */
+  worldKeyOf(e: EnemyShip): string {
+    const g = e.guardId;
+    if (!g || e.raid !== 'guard') return '';
+    const sc = this.scope;
+    if (g.startsWith('kaiser:')) return sc ? '' : netKey(g);
+    return sc ? netKey(raidEntityKey(sc, g)) : '';
   }
 
   private claimNew(nav: NavalSystem, c: MmoClient) {
     for (const e of nav.enemies) {
       if (!this.eligible(e, nav)) continue;
       if (Math.hypot(e.ship.x - _me.x, e.ship.z - _me.z) > 900) continue;
-      const key = `${c.id}.${++this.seq}`.slice(-48);
+      const wk = this.worldKeyOf(e);
+      const key = wk || `${c.id}.${++this.seq}`.slice(-48);
       const link: SharedLink = { id: '', key, owner: true, aggro: null, dead: false };
       e.shared = link;
       this.pending.set(key, e);
-      c.claimEnt(this.spawnNet(e, key));
+      c.claimEnt(this.spawnNet(e, key, wk !== ''));
       this.stats.claimed++;
     }
   }
 
-  private spawnNet(e: EnemyShip, key: string): EntSpawnNet {
+  private spawnNet(e: EnemyShip, key: string, world = false): EntSpawnNet {
     const s = e.ship, l = s.look;
     return {
       key, cat: 'ship', tier: Math.max(0, SHIP_CLASSES.indexOf(s.cls)), role: e.role, level: e.level, name: e.name ?? 'Kriegsschiff', x: s.x, z: s.z, y: 0, hdg: s.heading, hp: s.hull, mhp: s.maxHull,
-      boss: e.role === 'legende', scale: 1, respawn: 0,
+      // 4.92: ein versenktes Wachschiff mit festem Platz bleibt für alle versenkt, bis die Seesperre neu aufzieht
+      boss: e.role === 'legende', scale: 1, respawn: world ? MMO.entRespawnBoss : 0, scope: this.scope,
       look: { hull: l.hull, stripe: l.stripe, sail: l.sail, flag: l.flag, flagColor: l.flagColor, figurehead: l.figurehead ?? 'keine', power: l.power ?? '', evo: [s.evo.hullTier, s.evo.sailTier, s.evo.cannonTier] },
     };
   }
@@ -197,7 +255,7 @@ export class SharedEntities {
   /** Berichte der eigenen geteilten Gegner (Schiffe und Landgegner), 8× je Sekunde, vorab angelegte Einträge */
   private report(c: MmoClient, dt: number) {
     this.reportT -= dt;
-    if (this.reportT > 0 || (!this.ownList.length && !this.ownFoeList.length)) return;
+    if (this.reportT > 0 || (!this.ownList.length && !this.ownFoeList.length && !(this.beastRec.id && this.beastRec.owner))) return;
     this.reportT = 1 / MMO.entHz;
     let n = 0;
     for (const r of this.ownList) {
@@ -213,6 +271,13 @@ export class SharedEntities {
       const o = this.stateAt(n++);
       o.id = r.id; o.x = e.x; o.z = e.z; o.hdg = e.yaw; o.spd = Math.hypot(e.vx, e.vz); o.hp = Math.max(0, e.hp); o.mhp = Math.max(1, e.maxHp); o.dis = false;
       o.y = e.y; o.an = e.netAnim; o.clip = e.netClip; o.pose = e.hasPosture ? e.breakFrac : 1; o.brk = e.brokenT > 0; o.phase = e.phase;
+    }
+    // 4.92: der eigene geteilte Leviathan
+    const B = this.beastRec, bl = this.host.beast?.();
+    if (B.id && B.owner && !B.dead && bl && bl.leviathan.active) {
+      const L = bl.leviathan, o = this.stateAt(n++);
+      o.id = B.id; o.x = L.x; o.z = L.z; o.hdg = L.heading; o.spd = 0; o.hp = Math.max(0, L.hp); o.mhp = Math.max(1, L.maxHp); o.dis = false;
+      o.y = 0; o.an = 0; o.clip = ''; o.pose = L.up; o.brk = false; o.phase = L.phase;
     }
     this.states.length = n;
     if (n) c.reportEnts(this.states);
@@ -262,8 +327,8 @@ export class SharedEntities {
   private stepMirrors(nav: NavalSystem, c: MmoClient) {
     const now = c.transport.now();
     for (const ce of c.entList) {
-      // Landgegner führt `stepMirrorFoes`
-      if (ce.cat === 'foe' || ce.owner === c.id || this.own.has(ce.id)) continue;
+      // Landgegner führt `stepMirrorFoes`, den Leviathan `stepBeast`; 4.92: nur aus dem eigenen Bereich
+      if (ce.cat !== 'ship' || ce.owner === c.id || this.own.has(ce.id) || !this.mine(ce)) continue;
       const m = this.mirrors.get(ce.id);
       const d = Math.hypot(ce.x - _me.x, ce.z - _me.z);
       if (!m) {
@@ -336,6 +401,7 @@ export class SharedEntities {
     this.adoptOnBuild.clear();
     this.stats.owned = 0;
     this.clearFoes();
+    this.clearBeast();
   }
 
 
@@ -348,7 +414,7 @@ export class SharedEntities {
     const boss = !!(e.def.boss || e.def.raid === 'boss');
     return {
       key, cat: 'foe', tier: 0, role: e.kind, level: e.level, name: e.name ?? e.def.label, x: e.x, z: e.z, y: e.y, hdg: e.yaw, hp: e.hp, mhp: e.maxHp,
-      boss, scale: e.def.scale, respawn: boss ? MMO.entRespawnBoss : MMO.entRespawn,
+      boss, scale: e.def.scale, respawn: boss ? MMO.entRespawnBoss : MMO.entRespawn, scope: this.scope,
       look: { hull: '#000000', stripe: '#000000', sail: '#000000', flag: 'totenkopf', flagColor: '#000000', figurehead: 'keine', power: e.power ?? '', evo: [3, 3, 3] },
     };
   }
@@ -451,7 +517,7 @@ export class SharedEntities {
   private stepMirrorFoes(cb: CombatSystem, c: MmoClient) {
     const now = c.transport.now();
     for (const ce of c.entList) {
-      if (ce.cat !== 'foe' || ce.owner === c.id || this.ownFoes.has(ce.id)) continue;
+      if (ce.cat !== 'foe' || ce.owner === c.id || this.ownFoes.has(ce.id) || !this.mine(ce)) continue;
       let m = this.mirrorFoes.get(ce.id);
       const d = Math.hypot(ce.x - _me.x, ce.z - _me.z);
       if (!m) {
@@ -523,6 +589,17 @@ export class SharedEntities {
 
   /** Kennung vergeben: der Gegner gehört ab jetzt zu den geteilten */
   claimed(key: string, id: string, owner = '') {
+    // 4.92: Leviathan – neu (eigener) oder schon von einem Mitspieler gesteuert (diese Welt zeigt eine Kopie)
+    const B = this.beastRec;
+    if (B.pending && key === B.key) {
+      B.pending = false; B.id = id; B.dead = false;
+      B.owner = !owner || owner === this.me;
+      const bl = this.host.beast?.();
+      if (bl) { B.lastHp = bl.leviathan.hp; B.fwd = 0; }
+      this.stats.beastClaims++;
+      if (!B.owner) this.stats.beastMerged++;
+      return;
+    }
     // 4.91: Landgegner – neu (eigener) oder zusammengeführt mit dem Gegner eines Mitspielers (Kopie)
     const f = this.pendingFoes.get(key);
     if (f) {
@@ -553,6 +630,13 @@ export class SharedEntities {
 
   /** Treffer eines Mitspielers auf einen eigenen Gegner verrechnen */
   netHit(id: string, from: string, dmg: number, ammo: string, zone: 'hull' | 'sail', pen: number, foe: FoeHitNet | null = null) {
+    // 4.92: Treffer eines Mitspielers auf den eigenen geteilten Leviathan (Rüstung rechnet der Besitzer)
+    const B = this.beastRec;
+    if (B.id === id && B.owner) {
+      const bl = this.host.beast?.();
+      if (bl) { B.fwd += bl.levApplyHit(dmg, pen); B.lastBy = from; this.stats.beastApplied++; }
+      return;
+    }
     if (foe) {
       // 4.91: Treffer eines Mitspielers auf einen eigenen Landgegner – Rüstung, Haltung, Zustand und Tod wie bei jedem Treffer
       const rf = this.ownFoes.get(id), cb = this.host.combat();
@@ -582,6 +666,7 @@ export class SharedEntities {
   owned(e: EntNet) {
     // schon unser (eine wiederholte Übergabe): nichts Neues aufstellen
     if (this.ownFoes.has(e.id) || this.own.has(e.id)) return;
+    if (e.cat === 'beast') { this.adoptBeast(e); return; }
     const mf = this.mirrorFoes.get(e.id);
     if (mf) {
       // 4.91: Landgegner übernehmen – aus der Kopie wird ein Gegner mit KI (Leben aus dem Schnappschuss)
@@ -641,6 +726,7 @@ export class SharedEntities {
 
   /** Gegner verschwunden */
   gone(id: string) {
+    if (this.beastRec.id === id && !this.beastRec.owner) this.clearBeast();
     // nur Kopien: eigene Gegner verwirft der Shard nie, solange man verbunden ist (ohne Verbindung räumt `clear` auf)
     const m = this.mirrors.get(id);
     if (m && m.e.ship.sinking <= 0) this.dropMirror(id);
@@ -658,10 +744,18 @@ export class SharedEntities {
       this.stats.foeDenied++;
       return;
     }
+    if (this.beastRec.pending && key === this.beastRec.key) {
+      // 4.92: der Leviathan ist gerade gefallen (gesperrt) – diese Welt zeigt ihn nicht noch einmal
+      this.beastRec.pending = false;
+      return;
+    }
     const e = this.pending.get(key);
     if (!e) return;
     this.pending.delete(key);
     e.shared = undefined;
+    // 4.92: ein schon versenktes Wachschiff mit festem Platz zählt als gefallen
+    this.host.shipDenied?.(e);
+    this.stats.shipDenied++;
     const nav = this.host.naval();
     if (nav && nav.enemies.includes(e)) nav.removeEventShip(e);
   }
@@ -679,6 +773,123 @@ export class SharedEntities {
     const c = this.host.client(), id = e.shared?.id;
     if (!c || !id) return;
     c.entPlayerHit(id, playerId, dmg, e.ship.penTier ?? 3);
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // 4.92: Tiefsee-Leviathan (ein Ungeheuer für alle in der offenen Welt)
+  // ---------------------------------------------------------------------------------------------------------------
+
+  /**
+   * Läuft in dieser Welt ein eigener Leviathan, meldet sie ihn mit festem Schlüssel an (`wb:leviathan`); steuert ihn schon ein Mitspieler,
+   * zeigt sie eine Kopie (Lage, Leben, Auftauchen, Tod) – auch ohne eigenes Ereignis, sobald er in Sicht ist. Als Besitzer folgen Ziel und
+   * Schläge der Aggro-Tabelle; Treffer der Kopie gehen roh an den Besitzer, der Abschuss über den Shard an alle Beteiligten.
+   */
+  private stepBeast(c: MmoClient) {
+    const bl = this.host.beast?.();
+    const B = this.beastRec;
+    if (!bl || this.scope) { if (B.key) this.clearBeast(); return; }
+    this.hookBeast(bl);
+    const L = bl.leviathan;
+    // Kopie eines fremden Leviathans: der Schnappschuss mit Art `beast` (offene Welt)
+    let ce: ClientEnt | null = null;
+    for (const x of c.entList) if (x.cat === 'beast' && this.mine(x) && (B.id ? x.id === B.id : true)) { ce = x; break; }
+    if (B.id && !B.owner) {
+      if (!ce) { if (!B.pending) this.clearBeast(); return; }
+      const now = c.transport.now(), v = c.sampleEnt(ce, now), o = this.beastOut;
+      o.x = v.x; o.z = v.z; o.hp = ce.hp; o.mhp = Math.max(1, ce.mhp); o.up = ce.pose; o.dead = ce.dead;
+      bl.levMirror = o;
+      this.stats.beastMirror++;
+      return;
+    }
+    if (!B.id && !B.pending && ce && !ce.dead && ce.owner !== c.id && Math.hypot(ce.x - _me.x, ce.z - _me.z) <= MMO.shipShow) {
+      // ohne eigenes Ereignis (bzw. vor der eigenen Anmeldung): gleich als Kopie
+      B.id = ce.id; B.key = BEAST_KEY; B.owner = false; B.dead = false;
+      this.stats.beastMirror++;
+      return;
+    }
+    // eigener Leviathan: anmelden, berichten, Tod melden, Aggro-Ziel
+    if (!B.id && !B.pending && bl.levOwnActive && L.alive) {
+      B.key = BEAST_KEY; B.pending = true; B.owner = true; B.dead = false;
+      c.claimEnt({
+        key: BEAST_KEY, cat: 'beast', tier: 6, role: 'leviathan', level: 60, name: 'Tiefsee-Leviathan', x: L.x, z: L.z, y: 0, hdg: L.heading, hp: L.hp, mhp: L.maxHp,
+        boss: true, scale: 1, respawn: MMO.entRespawnBoss, scope: '',
+        look: { hull: '#3a6680', stripe: '#2c5468', sail: '#8cc0c8', flag: 'totenkopf', flagColor: '#10222c', figurehead: 'keine', power: '', evo: [5, 5, 5] },
+      });
+      return;
+    }
+    if (!B.id || !B.owner) return;
+    if (!L.active) { if (!B.dead) c.releaseEnt(B.id); this.clearBeast(); return; }
+    const own = c.ents.get(B.id);
+    if (own && own.owner && own.owner !== c.id && !B.dead) {
+      // Besitz verloren (zu lange kein Bericht): ab jetzt Kopie
+      B.owner = false; bl.levAggro = null;
+      this.stats.demoted++;
+      return;
+    }
+    // eigener Schaden = Rückgang des Lebens minus der Treffer von Mitspielern
+    const drop = B.lastHp - L.hp;
+    if (drop > 0.5) { const mine = drop - B.fwd; if (mine > 0.5) { c.hitEnt(B.id, mine, true); B.lastBy = c.id; } }
+    B.fwd = 0; B.lastHp = L.hp;
+    if (!B.dead && !L.alive) { B.dead = true; this.beastLocalReward = bl.levOwnEvent; c.entDead(B.id, B.lastBy || c.id); this.stats.beastKills++; }
+    const ag = own?.aggro ?? '';
+    bl.levAggro = ag && ag !== c.id ? this.host.peerShip(ag) : null;
+  }
+
+  /** Rückrufe der Seewelt einmal verbinden (Treffer der Kopie, Schläge gegen Mitspieler, Warnringe) */
+  private hookBeast(bl: BeastLive) {
+    const B = this.beastRec;
+    if (B.hooked) return;
+    B.hooked = true;
+    bl.onLevHitOut = (dmg, pen) => {
+      const cl = this.host.client();
+      if (!cl || !B.id || B.owner) return 0;
+      cl.hitEnt(B.id, dmg, false, 'kugel', 'hull', pen);
+      this.stats.beastHits++;
+      return dmg * 0.7;
+    };
+    bl.onLevPeerHit = (dmg) => {
+      const cl = this.host.client(), own = cl && B.id ? cl.ents.get(B.id) : null;
+      if (!cl || !own || !own.aggro || own.aggro === cl.id) return;
+      cl.entPlayerHit(B.id, own.aggro, dmg, 4);
+      this.stats.peerStrikes++;
+    };
+    bl.onLevSlam = (x, z) => {
+      const cl = this.host.client();
+      if (!cl || !cl.online || !B.id || !B.owner) return;
+      const a = this.act;
+      a.t = 'tele'; a.ent = B.id; a.x = x; a.y = 0; a.z = z; a.yaw = 0; a.side = 0; a.n = 18; a.style = ''; a.el = ''; a.slot = 9; a.tx = 16; a.ty = 0; a.tz = 0; a.sea = true;
+      cl.act(a);
+      this.stats.teleSent++;
+    };
+  }
+
+  /** Übernahme: der bisherige Besitzer ist fort – diese Welt steuert den Leviathan weiter (auch ohne eigenes Ereignis) */
+  private adoptBeast(e: EntNet) {
+    const bl = this.host.beast?.(), cl = this.host.client();
+    if (!bl || !cl || this.scope) { cl?.releaseEnt(e.id); return; }
+    const B = this.beastRec;
+    const L = bl.leviathan;
+    if (!L.active) { cl.releaseEnt(e.id); return; }
+    bl.levMirror = null;
+    if (!bl.levOwnEvent) bl.levAdopted = true;
+    B.id = e.id; B.key = BEAST_KEY; B.owner = true; B.pending = false; B.dead = false; B.lastHp = L.hp; B.fwd = 0;
+    this.stats.beastAdopted++;
+  }
+
+  private clearBeast() {
+    const B = this.beastRec, bl = this.host.beast?.();
+    if (bl) { bl.levMirror = null; bl.levAggro = null; }
+    B.id = ''; B.key = ''; B.pending = false; B.owner = false; B.dead = false; B.lastHp = 0; B.fwd = 0; B.lastBy = '';
+  }
+
+  /** 4.92: Bauwerk einer gemeinsamen Belagerung beschädigt bzw. zerstört (Lebensanteil) – an die Teilnehmer der Instanz */
+  sendBau(id: string, frac: number) {
+    const c = this.host.client();
+    if (!c || !c.online || !this.scope) return;
+    const a = this.act;
+    a.t = 'bau'; a.ent = ''; a.x = _me.x; a.y = 0; a.z = _me.z; a.yaw = 0; a.side = 0; a.n = 0; a.style = ''; a.el = id; a.slot = 0; a.tx = Math.max(0, Math.min(1, frac)); a.ty = 0; a.tz = 0; a.sea = true;
+    c.act(a);
+    this.stats.bauSent++;
   }
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -716,6 +927,14 @@ export class SharedEntities {
 
   /** Kampf-Aktion eines Mitspielers bzw. seines Gegners darstellen */
   remoteAct(from: string, a: ActNet) {
+    // 4.92: Bauwerk einer gemeinsamen Belagerung (Seetor, Mauer, Turm, Batterie) – Lebensanteil des Mitspielers übernehmen
+    if (a.t === 'bau') { if (a.el) { this.host.raidStructure?.(a.el, a.tx); this.stats.bauShown++; } return; }
+    // 4.92: Tentakel-Schlag des geteilten Leviathans (Warnring; den Schaden rechnet der Besitzer)
+    if (a.t === 'tele' && a.slot === 9) {
+      const bl = this.host.beast?.();
+      if (bl && bl.leviathan.active && a.ent && a.ent === this.beastRec.id) { bl.leviathan.remoteSlam(a.x, a.z); this.stats.teleShown++; }
+      return;
+    }
     if (a.t === 'tele') {
       // 4.91: Warnfläche eines Boss-Angriffs (Kopie zeigt sie, den Schaden rechnet der Besitzer)
       const m = this.mirrorFoes.get(a.ent), cb = this.host.combat();

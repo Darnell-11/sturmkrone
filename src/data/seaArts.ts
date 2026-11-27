@@ -90,6 +90,12 @@ export function seaUltAnchor(kind: string, s: { reach: number; center: number },
   return { x: cx - ux * ahead, z: cz - uz * ahead, yaw: Math.atan2(dx, dz), cx, cz };
 }
 
+/**
+ * 4.92: Flotten-Segen des Priesters – das Erzengel-Himmelsgericht auf See heilt das eigene Schiff und jedes Schiff der eigenen Flotte im Umkreis
+ * (`radius` m) um `heal` des Rumpfs (so viel wie die Figuren an Land), über jedem eine Lichtsäule
+ */
+export const PRIEST_FLEET_BLESS = { heal: 0.35, radius: 420 } as const;
+
 export type SeaGeistEffect = (typeof SEA_GEIST)[number]['effect'];
 
 /** Familie eines Kampfstils auf See */

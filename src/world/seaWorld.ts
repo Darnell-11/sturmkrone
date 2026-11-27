@@ -47,7 +47,7 @@ import { SharedEntities } from './sharedEntities';
 import { RemoteActionFx } from './remoteActionFx';
 import type { EntKillNet } from '../net/mmoProtocol';
 import { elementVoice, formVoiceLayer } from '../audio/classVoices';
-import { SEA_ART, SEA_GEIST, SEA_ULT, helmTravel, seaArtCd, seaArtDamage, seaFamily, seaGeistDamage, seaUltAnchor } from '../data/seaArts';
+import { SEA_ART, SEA_GEIST, SEA_ULT, helmTravel, seaArtCd, seaArtDamage, seaFamily, seaGeistDamage, seaUltAnchor, PRIEST_FLEET_BLESS } from '../data/seaArts';
 import { SEA_CINE_SCALE } from '../graphics/formCinema';
 import { ART_ACTIONS, GEIST_ACTIONS, HELM_GEIST_ACTIONS, type ActionId } from '../data/actions';
 import { ARENA, ARENA_DEMO, arenaTargets, landCameraPose, seaCameraPose, type ArenaCam, type ArenaKind, type ArenaPart } from '../data/showcaseArena';
@@ -115,11 +115,11 @@ import { sightGridHit, sightGridOf } from '../graphics/sightGrid';
 import { CataclysmFx } from '../combat/cataclysmFx';
 import { AnimeVfxForge } from '../graphics/animeVfxForge';
 import { CataclysmDirector } from './cataclysmDirector';
-import type { FighterState } from '../combat/actionCombatEngine';
+import { createFighter, type FighterState } from '../combat/actionCombatEngine';
 import { skyfallShift, type ShipFootprint } from '../combat/skyfallClearance';
 import { OfficerAssistDirector, type AssistHost } from './officerAssistDirector';
 import type { AssistView } from '../ui/fighterHud';
-import type { ActionHit, ActionMove, UltimateSpec } from '../data/actionKit';
+import type { ActionHit, ActionMove, ActionSkill, UltimateSpec } from '../data/actionKit';
 import { formCinema, geistCinema, hitReach, projectileTime, type FormCinema } from '../graphics/formCinema';
 import { CombatSystem } from '../combat/combat';
 import type { LootDrop } from '../data/loot';
@@ -179,6 +179,7 @@ import { warmupExtras, warmupShaders } from '../core/warmup';
 import { clamp01 } from '../core/mathUtil';
 import type { WebGLRenderer } from 'three';
 import { TOWN_NPCS, VILLAGE_NPCS, type TownNpcDef } from '../data/quests';
+import { SKYFALL_ULTIMATE } from '../data/cataclysms';
 
 // Feste Partikelfarben (die Partikel kopieren die Farbe – so entsteht pro Bild kein neues Objekt)
 /** 4.7A: Eingabe, solange der Prolog Regie führt (die Figur steht, die Kamera gehört der Regie) */
@@ -645,6 +646,10 @@ export class SeaWorld {
   private wake: WakePoint[] = [];
 
   private player: Character | null = null;
+  /** 4.92: Bereich der Welt für das Netz – in einer gemeinsamen Belagerung die Raid-Instanz der Gruppe, sonst die offene Welt ('') */
+  get netScope(): string { return this.raid?.netScope ?? ''; }
+  /** 4.92: Aussehen der Titelfigur (Klassenvorschau vom Startbildschirm ohne Spielstand) */
+  get playerLook(): CharacterLook | null { return this.player?.look ?? null; }
   private foot: PlayerFoot | null = null;
   /** 4.6G: Aura der Endgame-Ausrüstung der Spielfigur (Stärke = Einstellung „Ausrüstungs-Aura“) */
   readonly gearAura = new GearAura();
@@ -2429,6 +2434,28 @@ export class SeaWorld {
     const anchor = this.seaUltAnchorFor(spec, f);
     this.cataclysm.strike(spec, f, this.ultSX, this.ultSZ, anchor ? 0 : this.skyShiftFor(spec, f), anchor);
     this.hitShake.shake(0.55);
+    // 4.92: Flotten-Segen des Priesters – auf See (am Steuer, an Deck) heilt das Erzengel-Himmelsgericht auch das eigene Schiff und jedes
+    // Schiff der eigenen Flotte im Umkreis; über jedem gesegneten Schiff steht eine Lichtsäule mit smaragdenem Lebenslicht
+    if (spec.kind === 'himmelsgericht' && (this.mode === 'sail' || this.ownDeck || this.helmUlt.live)) this.fleetBlessing(PRIEST_FLEET_BLESS.heal, PRIEST_FLEET_BLESS.radius);
+  }
+
+  /** 4.92: Flotten-Segen – eigenes Schiff und Flotte im Umkreis (m) um `k` des Rumpfs heilen, Lichtsäule über jedem Schiff */
+  fleetBlessing(k: number, r: number): number {
+    const s = this.ship, nav = this.naval;
+    let n = 0;
+    const bless = (sh: Ship) => {
+      if (!sh.alive || sh.sinking > 0) return;
+      sh.hull = Math.min(sh.maxHull, sh.hull + sh.maxHull * k);
+      const y = sh.model.group.position.y + sh.model.deckY;
+      this.cataclysm.vfx.spiral(sh.x, y, sh.z, sh.cls.W * 0.6, 9, HEAL_COL, 1.3, 3, 7);
+      this.cataclysm.lightPillar(sh.x, y, sh.z, '#FFF4C8', '#6AF0B0', sh.cls.W * 0.4);
+      n++;
+    };
+    bless(s);
+    if (nav) for (const e of nav.enemies) if ((e.fleetId || e.companion) && Math.hypot(e.ship.x - s.x, e.ship.z - s.z) <= r) bless(e.ship);
+    this.cataclysm.stats.fleetBlessings += n;
+    audio.play('choirBell', 0.9, { x: s.x, y: 2, z: s.z });
+    return n;
   }
 
   /** Kopfmitte der Spielfigur (Knochen des Kopfs, sonst Höhe aus der Figur) */
@@ -3429,7 +3456,12 @@ export class SeaWorld {
     this.sharedEnts = new SharedEntities({
       naval: () => this.naval,
       client: () => this.mmoLive?.client ?? null,
-      active: () => this.gates.presence && !this.raid && !this.prologue && !this.title.active,
+      // 4.92: auch in einer gemeinsamen Belagerung (Bereich = Raid-Instanz der Gruppe); eine Belagerung allein bleibt ungeteilt
+      active: () => this.gates.presence && (!this.raid || this.netScope !== '') && !this.prologue && !this.title.active,
+      scope: () => this.netScope,
+      shipDenied: (e) => { if (e.guardId?.startsWith('kaiser:')) this.kaiserLive?.guardSunkElsewhere(e.guardId); },
+      beast: () => (this.raid ? null : this.seaEvents ?? null),
+      raidStructure: (id, frac) => this.raid?.applyRemoteStructure(id, frac),
       ownShip: () => this.ship,
       me: (o) => { const p = this.playerPos; o.x = p.x; o.z = p.z; },
       peerShip: (id) => { const e = this.mmoLive?.shipOf(id); return e && e.ship.alive ? e.ship : null; },
@@ -3566,15 +3598,46 @@ export class SeaWorld {
     const layer = formVoiceLayer(slot);
     if (layer) audio.play(layer, 0.5, { x: s.x, y: sy, z: s.z });
     this.sharedEnts?.sendAct('art', s.x, sy, s.z, yaw, f.style, el, slot, tx, ty, tz, true);
+    // 4.92: Geschoss-Formen zeigen ihre Mündung (Kern-Glut, Rauchkranz, Funkengarbe) am eigenen Schiff – wie zu Fuß, im Maßstab des Meeres
+    this.helmFormMirror(sk, st.id, el, ox, oy - 1.3, oz, yaw, true);
     const dmg = seaArtDamage(this.combat?.atk ?? 14, nav.playerLevel, slot);
     nav.schedule(travel, () => {
       // 4.91 Akt 2 + 3 am Ziel: Hit-Stop, Impact-Bilder, Druckwellen, Gischt-Risse im Wasser, Element-Eruption, Nachbeben
       const hx = t && t.ship.alive ? t.ship.x : tx, hz = t && t.ship.alive ? t.ship.z : tz;
+      // 4.92: dieselbe Form wie zu Fuß – ihre echten Treffer (Klingenwelle, Eruption, Sichel, Wirbel, Meteor-Krater, Heilwelle) am Ziel
+      this.helmFormMirror(sk, st.id, el, hx, this.env.heightAt(hx, hz), hz, yaw, false);
       this.cataclysm.formImpact(cc, hx, ty, hz, yaw, st.color, st.accent, el, SEA_CINE_SCALE);
       v.burst(el === 'eis' ? 'ice' : el === 'feuer' || el === 'sonne' ? 'ember' : 'spark', hx, ty + 1, hz, 16, 8 * k, acc, { up: 5, life: 0.8 });
       if (t && t.ship.alive && t.ship.sinking <= 0) { nav.artHit(t, dmg); this.helmStats.hits++; }
     });
     return true;
+  }
+
+  /** 4.92: Stellvertreter der Figur für die Formen am Steuer und eine vorab angelegte, maßstäblich vergrößerte Kopie je Treffer */
+  private readonly helmProxy = createFighter('steuer-form', 'saebel');
+  /** eigener Stellvertreter der Geistes-Faji (die Willens-Aura folgt ihm, die Formen verschieben ihren) */
+  private readonly helmGeistProxy = createFighter('steuer-geist', 'saebel');
+  private readonly helmHitCopy = {} as ActionHit;
+
+  /**
+   * 4.92: Form am Steuer = dieselbe Form wie zu Fuß. Ihre echten Treffer laufen über `CataclysmDirector.swingFx` (dieselbe Regie wie an Land,
+   * im Maßstab des Meeres `SEA_CINE_SCALE`): `muzzle` = beim Abfeuern die Mündung der Geschoss-Treffer am eigenen Schiff, sonst am Ziel die
+   * Treffer ohne Geschoss – Klingenwellen laufen eine Länge vor dem Schiff an und durch es hindurch, Kreise und Bögen umschließen es.
+   */
+  private helmFormMirror(sk: ActionSkill, style: ActionStyleId, el: string, x: number, y: number, z: number, yaw: number, muzzle: boolean) {
+    const p = this.helmProxy, h = this.helmHitCopy, K = SEA_CINE_SCALE;
+    const st = ACTION_STYLES[style];
+    let n = 0;
+    for (const src of sk.hits) {
+      if (!!src.projectile !== muzzle) continue;
+      Object.assign(h, src);
+      h.range = src.range * K; h.width = src.width * K; h.offset = 0;
+      const back = src.shape === 'line' ? h.range * 0.6 : 0;
+      p.x = x - Math.sin(yaw) * back; p.y = y; p.z = z - Math.cos(yaw) * back; p.yaw = yaw; p.style = style;
+      this.cataclysm.swingFx(h, p, sk.color || st.color, sk.vfx || el, !!sk.meteor, !!sk.heal);
+      n++;
+    }
+    if (n) this.cataclysm.stats.helmMirrors++;
   }
 
   /** Geistes-Faji am Steuer: Willensdruck (Feinde stellen das Feuer ein, Geschütze sofort geladen), Heilung, Donnerlanze, Beben */
@@ -3598,6 +3661,11 @@ export class SeaWorld {
     const st = ACTION_STYLES[f.style];
     this.cataclysm.formCharge(gc, s.x - Math.sin(s.heading) * s.cls.L * 0.3, sy, s.z - Math.cos(s.heading) * s.cls.L * 0.3, gcol, st.accent, 1.6);
     if (g.effect !== 'thunder') this.cataclysm.formImpact(gc, s.x, sy, s.z, s.heading, gcol, slot === 2 ? '#FFE9A8' : st.accent, slot === 2 ? 'sonne' : slot === 4 ? 'koenig' : st.element, g.effect === 'quake' ? 2 : 1.6);
+    // 4.92: dieselbe Geistes-Regie wie zu Fuß (Willens-Korona, Lebensstrom, Erwachter Donner, Königsdruck-Kuppel) – am Schiff bzw. am Ziel der
+    // Donnerlanze, im Maßstab des Meeres
+    const gp = this.helmGeistProxy;
+    gp.x = s.x; gp.y = sy; gp.z = s.z; gp.yaw = s.heading; gp.style = f.style;
+    if (g.effect !== 'thunder') { this.cataclysm.geistFx(slot, gp, slot === 4 ? g.range * 0.5 : slot === 3 ? 6 * SEA_CINE_SCALE : 0); this.cataclysm.stats.helmMirrors++; }
     this.formStats.sea++;
     switch (g.effect) {
       case 'will': {
@@ -3620,6 +3688,10 @@ export class SeaWorld {
         const t = lance;
         if (t) { tx = t.ship.x; tz = t.ship.z; }
         const wy = this.env.heightAt(tx, tz);
+        const tp = this.helmProxy;
+        tp.x = tx; tp.y = wy; tp.z = tz; tp.yaw = s.heading; tp.style = f.style;
+        this.cataclysm.geistFx(3, tp, 6 * SEA_CINE_SCALE);
+        this.cataclysm.stats.helmMirrors++;
         this.cataclysm.formImpact(gc, tx, wy, tz, s.heading, gcol, st.accent, 'blitz', SEA_CINE_SCALE);
         v.bolt(tx, wy + 44, tz, tx, wy + 2, tz, this.helmWhite, 0.9, 0.35, { depth: 5, branches: 3, jitter: 0.12 });
         v.bolt(tx + 2, wy + 40, tz - 1, tx, wy + 2, tz, col, 0.5, 0.3, { depth: 4, branches: 2, jitter: 0.1 });
@@ -3737,6 +3809,8 @@ export class SeaWorld {
   private foeDeniedHere(e: Enemy, wait: number) {
     const c = this.combat;
     if (!c) return;
+    // 4.92: gemeinsame Belagerung – den Gegner hat ein Mitspieler schon besiegt: er zählt als gefallen und tritt nicht wieder an
+    if (this.raid) { this.raid.foeTakenElsewhere(e); return; }
     c.removeEnemy(e);
     this.campQuiet = 3;
     this.hostilesBefore = 0;
@@ -5141,6 +5215,8 @@ export class SeaWorld {
     this.kaiserLive?.leaveIsland();
     this.kaiserLive?.deactivate();
     this.raid = new RaidDirector(this.raidHost(), def, ctx, { ...opts, align });
+    // 4.92: Bauwerke einer gemeinsamen Belagerung an die Mitspieler der Instanz
+    this.raid.onStructure = (id, frac) => this.sharedEnts?.sendBau(id, frac);
     this.raid.begin();
     return true;
   }
@@ -5811,7 +5887,7 @@ export class SeaWorld {
     queue: [] as { t: number; a: ActionId; ult?: boolean }[],
     part: null as ArenaPart | null, act: -1,
     spot: { x: 0, z: 0, yaw: 0, dx: 0, dz: 0 },
-    stats: { plays: 0, attacks: 0, forms: 0, geist: 0, ults: 0, demo: 0, targets: 0, respawns: 0, sea: 0, land: 0 },
+    stats: { plays: 0, attacks: 0, forms: 0, geist: 0, ults: 0, legends: 0, demo: 0, targets: 0, respawns: 0, sea: 0, land: 0 },
   };
   private readonly arenaCamPose: ArenaCam = { px: 0, py: 0, pz: 0, lx: 0, ly: 0, lz: 0, fov: 50 };
   /** Rückruf beim Wechsel des Vorschau-Teils bzw. Ultimate-Akts (Anzeige im Fenster der Charaktererstellung) */
@@ -5862,6 +5938,7 @@ export class SeaWorld {
 
   private arenaReset() {
     const a = this.arena;
+    if (this.foot) this.foot.engine.forceUlt = null;
     a.queue.length = 0; a.idleT = 0; a.demoI = 0; a.demoT = 0; a.part = null; a.act = -1;
     for (let i = 0; i < 10; i++) this.helmCd[i] = 0;
     for (let i = 0; i < 4; i++) this.helmGeistCd[i] = 0;
@@ -5963,6 +6040,9 @@ export class SeaWorld {
     }
     // Ultimate: volle Willenskraft, Erwachen, kurz darauf das Ultimate (auf See vom Steuer gegen das Zielschiff). In der Vorschau darf man es
     // immer wieder abspielen: ein schon genutztes Erwachen klingt im nächsten Schritt aus (Aura aus), dann beginnt alles von vorn
+    // 4.92: `legend` = das legendäre Ultimate der Stufe 101 (Himmelssturz: Meteoriten-Kataklysmus) – für jede Klasse
+    foot.engine.forceUlt = kind === 'legend' ? SKYFALL_ULTIMATE : null;
+    if (kind === 'legend') a.stats.legends++;
     a.stats.ults++;
     if (f.awakenT > 0 && !f.ultReady) f.awakenT = 0.001;
     f.will = WILL.max;

@@ -10,7 +10,7 @@ import type { CombatFx } from '../combat/fx';
 import type { EnemyShip, NavalSystem } from '../naval/naval';
 import type { ActionHit, CataclysmKind, ShipCut, UltimateSpec } from '../data/actionKit';
 import type { Sfx } from '../audio/audio';
-import type { FighterState } from '../combat/actionCombatEngine';
+import { createFighter, type FighterState } from '../combat/actionCombatEngine';
 import type { DebrisSystem } from './debris';
 import { AnimeVfxForge } from '../graphics/animeVfxForge';
 import { SKYFALL_TIMES } from '../data/cataclysms';
@@ -100,6 +100,12 @@ interface Cast {
   marked: EnemyShip[];
   /** Ort der laufenden Gefahr (Wellenfront, Säge, Wirbel, Drachenkopf) für die Kino-Kamera */
   tx: number; ty: number; tz: number;
+  /**
+   * 4.92: Stellvertreter der Figur am Anker eines Ultimates vom Steuer (Lage, Höhe = Wasser, Blickrichtung zum Ziel). Die Zeitachsen lesen
+   * Ort und Richtung aus `f` – bei einem verankerten Wirken zeigt `f` auf ihn, damit Sturmfaust, Sonnentanz, Blutmond, Klingen-Zyklon & Co.
+   * am Ziel wirken (und dort treffen) statt am eigenen Deck. Vorab angelegt, je Wirken nur überschrieben.
+   */
+  proxy: FighterState;
 }
 
 const V = new Vector3();
@@ -178,7 +184,7 @@ export class CataclysmDirector {
   private readonly casts: Cast[] = Array.from({ length: 3 }, () => ({
     on: false, kind: 'horizonCut' as CataclysmKind, spec: null, f: null, t: 0, x: 0, y: 0, z: 0, yaw: 0, cx: 0, cz: 0, sx: 0, sz: 0,
     col: new Color(), acc: new Color(), step: 0, tick: 0, hit: [], trench: false, from: 4, seed: 1, shift: 0,
-    lag: 0, decided: false, marked: [], tx: 0, ty: 0, tz: 0,
+    lag: 0, decided: false, marked: [], tx: 0, ty: 0, tz: 0, proxy: createFighter('ult-anker', 'saebel'),
   }));
   /**
    * Aufladen (Akt 1 der Kino-Regie). `gk` = Spielzeit je Echtzeit-Sekunde in Akt 1 (Zeitlupe): Effekte der Vorbereitung leben in Spielzeit,
@@ -202,7 +208,7 @@ export class CataclysmDirector {
   private auraCol = new Color();
   private auraAcc = new Color();
   /** Zahlen für Prüfungen */
-  readonly stats = { strikes: 0, splits: 0, disabled: 0, shipHits: 0, pulls: 0, trench: 0, waves: 0, chains: 0, swings: 0, clashes: 0, slashes: 0, impacts: 0, masts: 0, charred: 0, sections: 0, meteors: 0, planets: 0, aftershocks: 0, bursts: 0, decisive: 0, marked: 0, cones: 0, vortices: 0, poseFx: 0, threats: 0, queued: 0, trails: 0, landSpectacles: 0, formCharges: 0, formImpacts: 0, formQueued: 0, anchored: 0, bridges: 0 };
+  readonly stats = { strikes: 0, splits: 0, disabled: 0, shipHits: 0, pulls: 0, trench: 0, waves: 0, chains: 0, swings: 0, clashes: 0, slashes: 0, impacts: 0, masts: 0, charred: 0, sections: 0, meteors: 0, planets: 0, aftershocks: 0, bursts: 0, decisive: 0, marked: 0, cones: 0, vortices: 0, poseFx: 0, threats: 0, queued: 0, trails: 0, landSpectacles: 0, formCharges: 0, formImpacts: 0, formQueued: 0, anchored: 0, bridges: 0, proxied: 0, helmMirrors: 0, fleetBlessings: 0 };
   /**
    * 4.6I: höchstens ein Schiffs-Schnitt je gezeichnetem Bild. Zerlegen, Konturen und Hochladen kosten je Schiff 10 – 20 ms; brachen mehrere Schiffe
    * im selben Bild (Blutmond, Schwarzes Loch, Gletscher im Treffermoment), stand das Bild 40 – 60 ms. Weitere Schnitte warten in diesem Ring und
@@ -235,6 +241,16 @@ export class CataclysmDirector {
 
   /** Tusche-Farbe zu einer Energiefarbe (dunkler Mantel) */
   private ink(c: Color, out = INK): Color { return this.vfx.inkOf(c, out); }
+
+  /** 4.92: Lichtsäule aus dem Himmel (Flotten-Segen des Priesters): Säule, Ring am Fuß, aufsteigende Funken – nur Bausteine der Pools */
+  lightPillar(x: number, y: number, z: number, colHex: string, accHex: string, r: number) {
+    const fx = this.host.fx, b = fx.brush, col = this.color(colHex), acc = this.color(accHex), w = Math.max(1.6, r);
+    b.reset().at(x, y - 1, z).size(0.4, 60, 0.4, w, 60, w).span(1.1).col(col, 2.2).fade(0.04, 0.5);
+    fx.emit('column');
+    b.reset().at(x, y + 0.15, z).size(1, 1, 1, w * 2.4, 1, w * 2.4).span(0.8).col(acc, 1.8).fade(0.02, 0.6);
+    fx.emit('ring');
+    this.vfx.burst('spark', x, y + 1, z, 18, 3, acc, { up: 6, life: 1.2, grav: -1 });
+  }
 
   private color(hex: string): Color { let c = HEXC.get(hex); if (!c) { c = new Color(hex); HEXC.set(hex, c); } return c; }
   get active(): boolean { return this.charge.on || this.casts.some((c) => c.on); }
@@ -648,10 +664,16 @@ export class CataclysmDirector {
     if (anchor) {
       // 4.91 Ultimate am Steuer: die Wirkung entsteht am angewählten Ziel (bis 650 m) – eine Energiebahn trägt sie von der Figur dorthin
       this.bridge(f, anchor.x, anchor.z, spec);
-      c.x = anchor.x; c.z = anchor.z; c.yaw = anchor.yaw; c.cx = anchor.cx; c.cz = anchor.cz;
+      const wy = this.host.waterY(anchor.x, anchor.z);
+      c.x = anchor.x; c.z = anchor.z; c.y = wy; c.yaw = anchor.yaw; c.cx = anchor.cx; c.cz = anchor.cz;
       c.sx = anchor.x - Math.sin(anchor.yaw) * 8; c.sz = anchor.z - Math.cos(anchor.yaw) * 8;
-      c.tx = anchor.x; c.tz = anchor.z;
+      c.tx = anchor.x; c.ty = wy + 2; c.tz = anchor.z;
+      // 4.92: alle Zeitachsen rechnen vom Anker aus (Stellvertreter der Figur auf dem Wasser, Blick zum Ziel)
+      const p = c.proxy;
+      p.x = anchor.x; p.y = wy; p.z = anchor.z; p.yaw = anchor.yaw; p.style = f.style; p.grounded = true;
+      c.f = p;
       this.stats.anchored++;
+      this.stats.proxied++;
     }
     c.col.copy(this.color(spec.color)); c.acc.copy(this.color(spec.accent));
     c.seed = this.seed++;

@@ -229,8 +229,8 @@ describe('WorldEntitySync: kanonische Gegner (Kennung, Besitzer, Lage, Leben, Ag
     expect(cleanIntent({ k: 'ehit', id: 'e1', dmg: 1e9, ammo: '<x>', zone: 'deck', pen: 99, applied: 'ja' })).toEqual({ k: 'ehit', id: 'e1', dmg: 1e6, ammo: 'kugel', zone: 'hull', pen: 12, applied: false });
     expect(cleanIntent({ k: 'act', a: { t: 'zauber' } })).toBeNull();
     expect(cleanAct({ t: 'ult', x: 1e9, side: 5, style: 'sturmfaust', el: 'feuer!' })).toMatchObject({ t: 'ult', x: 40000, side: 0, style: 'sturmfaust', el: '' });
-    // 4.91: dazu `tele` (Warnfläche eines Boss-Angriffs)
-    expect(ACT_KINDS).toEqual(['broadside', 'bow', 'swing', 'art', 'geist', 'heal', 'ult', 'tele']);
+    // 4.91: dazu `tele` (Warnfläche eines Boss-Angriffs), 4.92: `bau` (Bauwerk einer gemeinsamen Belagerung)
+    expect(ACT_KINDS).toEqual(['broadside', 'bow', 'swing', 'art', 'geist', 'heal', 'ult', 'tele', 'bau']);
     const ent = cleanEnt({ id: 'e7', owner: 'p:anna', x: 5, z: 6, hdg: 1, spd: 3, hp: 900, mhp: 400, dis: true, tier: 9, role: 'jaeger', level: 500, name: 'A', aggro: 'p:bodo', dead: 'x' });
     expect(ent).toMatchObject({ id: 'e7', hp: 400, tier: 6, level: 101, dis: true, dead: false, aggro: 'p:bodo' });
     expect(cleanServerMsg({ k: 'ents', t: 5, list: Array.from({ length: 80 }, (_, i) => ({ id: `e${i}`, mhp: 10 })) })).toMatchObject({ k: 'ents' });

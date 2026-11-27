@@ -1588,7 +1588,7 @@ export class CombatSystem implements EnemyWorld {
    * Gegner zusätzlich zu den vorhandenen erscheinen lassen (Weltereignisse). at: Mittelpunkt, spread: Streuung in Metern;
    * die Gegner greifen sofort an.
    */
-  spawnWave(kinds: EnemyKind[], level: number, faction: Faction, tag: string, at: { x: number; z: number }, spread: number, opts: { power?: FactionId; name?: string; def?: import('../data/combat').EnemyDef; /** patrouillieren statt sofort anzugreifen (Mega-Inseln) */ calm?: boolean } = {}): Enemy[] {
+  spawnWave(kinds: EnemyKind[], level: number, faction: Faction, tag: string, at: { x: number; z: number }, spread: number, opts: { power?: FactionId; name?: string; def?: import('../data/combat').EnemyDef; /** patrouillieren statt sofort anzugreifen (Mega-Inseln) */ calm?: boolean; /** 4.92: fester Schlüssel (gemeinsame Belagerung: „raid:<Instanz>:<Platz>“) */ netKey?: string } = {}): Enemy[] {
     const nav = this.nav;
     const out: Enemy[] = [];
     const spot = { x: 0, z: 0 };
@@ -1599,7 +1599,8 @@ export class CombatSystem implements EnemyWorld {
       const e = new Enemy(this.assets, k, level, faction, spot.x, spot.z, this.outline, k === 'legende' || opts.def ? opts.name : undefined, opts.power, { def: opts.def });
       e.tag = tag;
       // 4.91: feste Schlüssel für Bezirke der Mega-Inseln, Kommandanten und Kaiser-Garden (gleich für alle Spieler: Ort des Aufstellens + Platz)
-      if (/^(mega|kaiser):/.test(tag)) e.netKey = `${tag}.${Math.round(at.x)}.${Math.round(at.z)}.${i}`;
+      if (opts.netKey) e.netKey = kinds.length > 1 ? `${opts.netKey}.${i}` : opts.netKey;
+      else if (/^(mega|kaiser):/.test(tag)) e.netKey = `${tag}.${Math.round(at.x)}.${Math.round(at.z)}.${i}`;
       e.y = this.ground(e.x, e.z);
       if (!opts.calm) e.alert();
       this.scene.add(e.char.holder);

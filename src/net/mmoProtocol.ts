@@ -63,7 +63,8 @@ export const MMO = {
 export type MmoDomain = 'land' | 'sea';
 export type ChatChannel = 'sagen' | 'gruppe' | 'fluestern' | 'welt' | 'system';
 export const CHAT_CHANNELS: readonly ChatChannel[] = ['sagen', 'gruppe', 'fluestern', 'welt', 'system'];
-export type ShareKind = 'kill' | 'sink' | 'merit';
+/** 4.92: `raid` = gemeinsame Belagerung (Startwert und Insel der Instanz an die Gruppe, damit alle dieselbe Festung belagern) */
+export type ShareKind = 'kill' | 'sink' | 'merit' | 'raid';
 
 /** Steckbrief eines Spielers (ändert sich selten: Stufe, Team, Ausrüstung) */
 export interface PlayerProfile {
@@ -173,6 +174,11 @@ export interface PlayerState {
   combat: boolean;
   /** Ort für das Gruppenfenster („Ankerglück“, „Bernsteinsee“) */
   zone: string;
+  /**
+   * 4.92: Bereich der Welt ('' = offene Welt, sonst die Kennung einer gemeinsamen Raid-Instanz). Geteilte Gegner gibt der Shard nur an Spieler im
+   * selben Bereich weiter, übergibt sie nur an sie und schreibt nur ihnen Abschüsse gut.
+   */
+  sc: string;
 }
 
 /** Eintrag eines Schnappschusses: Zustand plus Kennung und Version des Steckbriefs */
@@ -199,14 +205,18 @@ export type PartyEvent =
 
 /** Aussehen eines geteilten Schiffs (Farben, Flagge, Galionsfigur, Macht, Ausbaustufen) – jeder sieht dasselbe Schiff */
 export interface EntLookNet { hull: string; stripe: string; sail: string; flag: string; flagColor: string; figurehead: string; power: string; evo: [number, number, number] }
-/** 4.91: Art eines geteilten Gegners – Schiff (See) oder Kämpfer an Land (Lager, Bezirke, Kommandanten, Bosse, Kaiser, Raids) */
-export type EntCat = 'ship' | 'foe';
+/**
+ * 4.91: Art eines geteilten Gegners – Schiff (See) oder Kämpfer an Land (Lager, Bezirke, Kommandanten, Bosse, Kaiser, Raids). 4.92: `beast` =
+ * Seeungeheuer (Tiefsee-Leviathan): Lage, Leben, Phase und aufgetaucht (`pose` 0 … 1) kommen vom Besitzer
+ */
+export type EntCat = 'ship' | 'foe' | 'beast';
+const catOf = (v: unknown): EntCat => (v === 'foe' ? 'foe' : v === 'beast' ? 'beast' : 'ship');
 /**
  * Erscheinen eines geteilten Gegners (vom Client, der ihn erzeugt hat und ihn von da an steuert). 4.91: `cat`, Bodenhöhe `y`, Boss, Maßstab,
  * Sperrzeit nach dem Tod (`respawn` s, 0 = keine); bei Landgegnern ist `role` die Gegnerart. Feste Schlüssel (ohne Kennung des Clients davor)
  * führt der Shard zusammen: wer später dasselbe Lager aufstellt, bekommt den vorhandenen Gegner (und steuert ihn nicht).
  */
-export interface EntSpawnNet { key: string; cat: EntCat; tier: number; role: string; level: number; name: string; x: number; z: number; y: number; hdg: number; hp: number; mhp: number; boss: boolean; scale: number; respawn: number; look: EntLookNet }
+export interface EntSpawnNet { key: string; cat: EntCat; tier: number; role: string; level: number; name: string; x: number; z: number; y: number; hdg: number; hp: number; mhp: number; boss: boolean; scale: number; respawn: number; look: EntLookNet; /** 4.92: Bereich ('' = offene Welt, sonst gemeinsame Raid-Instanz) */ scope?: string }
 /**
  * Lage und Leben eines geteilten Gegners (Besitzer an den Shard, 8 Hz); `dis` = kampfunfähig (Enterphase). 4.91 für Landgegner: Höhe, Bewegung
  * (`an`: 0 steht, 1 geht, 2 rennt, 3 holt aus, 4 greift an, 5 getroffen/taumelt, 6 liegt, 7 Phasenwechsel), Clip des Angriffs, Haltung 0 … 1,
@@ -214,7 +224,7 @@ export interface EntSpawnNet { key: string; cat: EntCat; tier: number; role: str
  */
 export interface EntStateNet { id: string; x: number; z: number; hdg: number; spd: number; hp: number; mhp: number; dis: boolean; y: number; an: number; clip: string; pose: number; brk: boolean; phase: number }
 /** Ein geteilter Gegner im Schnappschuss (Shard an Client): Besitzer, Aussehen, Lage, Leben, Ziel der Aggro-Tabelle, tot */
-export interface EntNet extends EntStateNet { owner: string; cat: EntCat; tier: number; role: string; level: number; name: string; look: EntLookNet; aggro: string; dead: boolean; boss: boolean; scale: number }
+export interface EntNet extends EntStateNet { owner: string; cat: EntCat; tier: number; role: string; level: number; name: string; look: EntLookNet; aggro: string; dead: boolean; boss: boolean; scale: number; scope?: string }
 /** Abschuss eines geteilten Gegners: versenkt bzw. besiegt von `by`, gewürfelt wird beim `finder`, gutgeschrieben allen in `credit` */
 export interface EntKillNet { id: string; cat: EntCat; name: string; role: string; level: number; tier: number; x: number; z: number; by: string; byName: string; finder: string; owner: string; credit: string[]; boss: boolean }
 
@@ -235,17 +245,21 @@ export function cleanFoeHit(raw: unknown): FoeHitNet | null {
 }
 
 export function netKey(s: string): string {
-  if (s.length <= 48) return s;
+  // 4.92: nur Zeichen, die `cleanId` durchlässt (vorher trennte „~“ die Prüfsumme ab – der Shard verwarf solche Schlüssel still)
+  const safe = s.replace(/[^\w:.-]/g, '_');
+  if (safe.length <= 48) return safe;
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return `${s.slice(0, 36)}~${(h >>> 0).toString(36)}`;
+  return `${safe.slice(0, 36)}.${(h >>> 0).toString(36)}`;
 }
 /** 4.91: fester Schlüssel (gleich für alle Spieler) oder Schlüssel eines Clients (`<Spieler-Kennung>.<Zähler>`, nie zusammengeführt) */
 export const isWorldKey = (key: string): boolean => /^(isl|mega|kaiser|raid|evt|wb):/.test(key);
 
 /** Kampf-Aktionen, die die Mitspieler sehen (Schaden läuft getrennt über Treffer-Pakete) */
-export type ActKind = 'broadside' | 'bow' | 'swing' | 'art' | 'geist' | 'heal' | 'ult' | 'tele';
-export const ACT_KINDS: readonly ActKind[] = ['broadside', 'bow', 'swing', 'art', 'geist', 'heal', 'ult', 'tele'];
+export type ActKind = 'broadside' | 'bow' | 'swing' | 'art' | 'geist' | 'heal' | 'ult' | 'tele' | 'bau';
+export const ACT_KINDS: readonly ActKind[] = ['broadside', 'bow', 'swing', 'art', 'geist', 'heal', 'ult', 'tele', 'bau'];
+/** 4.92 `bau` (Bauwerk einer gemeinsamen Belagerung): `el` = Kennung des Bauwerks (Seetor, Mauerflügel, Turm, Batterie), `tx` = Lebensanteil 0 … 1;
+ *  4.92 `tele` mit `slot` 9 = Tentakel-Schlag des Leviathans (Warnring am Ort) */
 /** 4.91 `tele` (Warnfläche eines Boss-Angriffs): `slot` = Form (1 Kreis, 2 Kegel, 3 Linie, 4 Ring), `tx` = Reichweite (m), `ty` = Breite bzw.
  *  Öffnung, `n` = Vorwarnzeit in Zehntelsekunden; Ort und Richtung wie sonst */
 /**
@@ -365,7 +379,7 @@ export const shareRadius = (dom: MmoDomain): number => (dom === 'sea' ? MMO.shar
 // ---------------------------------------------------------------------------------------------------------------
 
 export function newPlayerState(): PlayerState {
-  return { x: 0, y: 0, z: 0, yaw: 0, dom: 'land', spd: 0, hdg: 0, hull: 0, mhull: 0, hp: 1, mhp: 1, will: 0, mwill: 100, ride: '', rx: 0, ry: 0, rz: 0, combat: false, zone: '' };
+  return { x: 0, y: 0, z: 0, yaw: 0, dom: 'land', spd: 0, hdg: 0, hull: 0, mhull: 0, hp: 1, mhp: 1, will: 0, mwill: 100, ride: '', rx: 0, ry: 0, rz: 0, combat: false, zone: '', sc: '' };
 }
 
 export function newProfile(id = ''): PlayerProfile {
@@ -375,7 +389,7 @@ export function newProfile(id = ''): PlayerProfile {
 export function copyState(src: PlayerState, dst: PlayerState): PlayerState {
   dst.x = src.x; dst.y = src.y; dst.z = src.z; dst.yaw = src.yaw; dst.dom = src.dom; dst.spd = src.spd;
   dst.hdg = src.hdg; dst.hull = src.hull; dst.mhull = src.mhull; dst.hp = src.hp; dst.mhp = src.mhp; dst.will = src.will; dst.mwill = src.mwill;
-  dst.ride = src.ride; dst.rx = src.rx; dst.ry = src.ry; dst.rz = src.rz; dst.combat = src.combat; dst.zone = src.zone;
+  dst.ride = src.ride; dst.rx = src.rx; dst.ry = src.ry; dst.rz = src.rz; dst.combat = src.combat; dst.zone = src.zone; dst.sc = src.sc ?? '';
   return dst;
 }
 
@@ -481,7 +495,7 @@ export function cleanState(raw: unknown, out: PlayerState = newPlayerState()): P
   out.hdg = num(raw.hdg, 0, -100, 100); out.hull = num(raw.hull, 0, 0, 1e6); out.mhull = num(raw.mhull, 0, 0, 1e6);
   out.mhp = num(raw.mhp, 1, 1, 1e7); out.hp = num(raw.hp, out.mhp, 0, out.mhp); out.mwill = num(raw.mwill, 100, 1, 1000); out.will = num(raw.will, 0, 0, out.mwill);
   out.ride = cleanId(raw.ride); out.rx = num(raw.rx, 0, -40, 40); out.ry = num(raw.ry, 0, -10, 20); out.rz = num(raw.rz, 0, -40, 40);
-  out.combat = bool(raw.combat); out.zone = cleanText(raw.zone, 40);
+  out.combat = bool(raw.combat); out.zone = cleanText(raw.zone, 40); out.sc = cleanId(raw.sc);
   return out;
 }
 
@@ -500,7 +514,7 @@ export function cleanDiploPairs(raw: unknown): DiploPair[] {
   }
   return out;
 }
-const SHARES: readonly string[] = ['kill', 'sink', 'merit'];
+const SHARES: readonly string[] = ['kill', 'sink', 'merit', 'raid'];
 const POWER_RE = /^[a-z]{0,16}$/;
 const ROLE_RE = /^[a-z_]{0,16}$/;
 const AMMO_RE = /^[a-z]{1,12}$/;
@@ -540,12 +554,13 @@ export function cleanEntSpawn(raw: unknown): EntSpawnNet | null {
   const key = cleanId(raw.key);
   if (!key) return null;
   const mhp = num(raw.mhp, 1, 1, 1e7);
-  const cat: EntCat = raw.cat === 'foe' ? 'foe' : 'ship';
+  const cat = catOf(raw.cat);
   const rs = num(raw.respawn, 0, 0, MMO.entRespawnMax);
   return {
     key, cat, tier: Math.round(num(raw.tier, 0, 0, 6)), role: typeof raw.role === 'string' && ROLE_RE.test(raw.role) ? raw.role : 'patrouille', level: Math.round(num(raw.level, 1, 1, 101)),
     name: cleanText(raw.name, 48) || (cat === 'foe' ? 'Gegner' : 'Kriegsschiff'), x: num(raw.x, 0, -W, W), z: num(raw.z, 0, -W, W), y: num(raw.y, 0, -200, 600), hdg: num(raw.hdg, 0, -100, 100),
     mhp, hp: num(raw.hp, mhp, 0, mhp), boss: bool(raw.boss), scale: num(raw.scale, 1, 0.3, 4), respawn: rs > 0 ? Math.max(MMO.entRespawnMin, rs) : 0, look: cleanEntLook(raw.look),
+    scope: cleanId(raw.scope),
   };
 }
 
@@ -553,11 +568,11 @@ export function cleanEntSpawn(raw: unknown): EntSpawnNet | null {
 export function cleanEnt(raw: unknown): EntNet | null {
   const st = cleanEntState(raw);
   if (!st || !isRec(raw)) return null;
-  const cat: EntCat = raw.cat === 'foe' ? 'foe' : 'ship';
+  const cat = catOf(raw.cat);
   return Object.assign(st, {
     owner: cleanId(raw.owner), cat, tier: Math.round(num(raw.tier, 0, 0, 6)), role: typeof raw.role === 'string' && ROLE_RE.test(raw.role) ? raw.role : 'patrouille',
     level: Math.round(num(raw.level, 1, 1, 101)), name: cleanText(raw.name, 48) || (cat === 'foe' ? 'Gegner' : 'Kriegsschiff'), look: cleanEntLook(raw.look), aggro: cleanId(raw.aggro), dead: bool(raw.dead),
-    boss: bool(raw.boss), scale: num(raw.scale, 1, 0.3, 4),
+    boss: bool(raw.boss), scale: num(raw.scale, 1, 0.3, 4), scope: cleanId(raw.scope),
   });
 }
 
@@ -578,7 +593,7 @@ function cleanKill(raw: unknown): EntKillNet | null {
   const id = cleanId(raw.id);
   if (!id) return null;
   return {
-    id, cat: raw.cat === 'foe' ? 'foe' : 'ship', name: cleanText(raw.name, 48) || 'Kriegsschiff', role: typeof raw.role === 'string' && ROLE_RE.test(raw.role) ? raw.role : 'patrouille', level: Math.round(num(raw.level, 1, 1, 101)),
+    id, cat: catOf(raw.cat), name: cleanText(raw.name, 48) || 'Kriegsschiff', role: typeof raw.role === 'string' && ROLE_RE.test(raw.role) ? raw.role : 'patrouille', level: Math.round(num(raw.level, 1, 1, 101)),
     tier: Math.round(num(raw.tier, 0, 0, 6)), x: num(raw.x, 0, -W, W), z: num(raw.z, 0, -W, W), by: cleanId(raw.by), byName: cleanText(raw.byName, MMO.nameMax), finder: cleanId(raw.finder),
     owner: cleanId(raw.owner), credit: Array.isArray(raw.credit) ? raw.credit.map(cleanId).filter(Boolean).slice(0, 32) : [], boss: bool(raw.boss),
   };
