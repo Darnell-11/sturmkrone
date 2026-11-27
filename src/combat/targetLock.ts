@@ -13,13 +13,13 @@
 // - **Zielhilfe:** `aimYaw` und `broadsideSide` richten Kampfkünste, Offiziers-Assists und Breitseiten auf das Ziel aus, wenn es in Reichweite ist.
 
 /** Was ein Ziel ist (bestimmt Ring-Größe, Kategorie und welche Zielhilfe greift) */
-export type TargetKind = 'fighter' | 'elite' | 'boss' | 'ship' | 'officer' | 'troop' | 'npc';
+export type TargetKind = 'fighter' | 'elite' | 'boss' | 'ship' | 'officer' | 'troop' | 'npc' | 'player';
 /** Beziehung zur Spielfigur */
 export type TargetRelation = 'hostile' | 'neutral' | 'friendly';
 /** Bereich: an Land (Figuren, Trupps) oder auf See (Schiffe) */
 export type TargetDomain = 'land' | 'sea';
 
-export const TARGET_KINDS: readonly TargetKind[] = ['fighter', 'elite', 'boss', 'ship', 'officer', 'troop', 'npc'];
+export const TARGET_KINDS: readonly TargetKind[] = ['fighter', 'elite', 'boss', 'ship', 'officer', 'troop', 'npc', 'player'];
 
 /** Farbe des Zielrings je Beziehung; Bewohner und Händler (neutral, aber friedlich) bekommen Blau */
 export const RELATION_RING = { hostile: '#E5483A', neutral: '#EAC54C', friendly: '#4FD58C', npc: '#5BA9F2' } as const;

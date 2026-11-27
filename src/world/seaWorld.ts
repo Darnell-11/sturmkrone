@@ -33,13 +33,19 @@ import { SeaSpray } from './seaSpray';
 import { ShipLightRig } from '../render/shipLights';
 import type { Input } from '../core/input/input';
 import type { StyleId } from '../data/animations';
-import type { CharacterLook, NpcRole } from '../data/characterParts';
+import { randomLook, type CharacterLook, type NpcRole } from '../data/characterParts';
 import { CAMERA_PLANES, type QualityConfig } from '../data/qualityTiers';
 import { HOME_SPAWN, WORLD_SCALE } from '../data/world';
 import { FLAGSHIP, TUTORIAL } from '../data/prologue';
 import { PrologueLive, type PrologueHost, type PrologueUi } from './prologueLive';
 import type { WorldGates } from '../story/tutorialInstance';
 import { SharedPresence, type PresenceHost } from './sharedPresence';
+import { MmoLive, type MmoLiveHost } from './mmoLive';
+import type { MmoClient } from '../net/mmoClient';
+import type { PlayerState } from '../net/mmoProtocol';
+import { rideToWorld, safeZoneAt, worldToRide, type PartyStance } from '../net/partyRules';
+import { safeZones } from '../social/safeZones';
+import type { BotWorld } from '../net/shardBots';
 import { chartAround, seedStartCharts, seeRange, type ChartZone } from './mapDiscovery';
 import { MEGA_BY_ID, clearDistrict, commanderRoam, commanderShouldAppear, districtWorld, districtsToWake, isMegaId, megaFromSave, megaLevel, megaToSave, newMegaRuntime, type MegaId, type MegaRuntime, type MegaSaveState } from '../data/megaIslands';
 import { FAST_TRAVEL, findBerth } from './fastTravel';
@@ -1356,6 +1362,7 @@ export class SeaWorld {
         fleetLost: (id) => this.onFleetLost(id),
         battleStart: (m, w) => this.onBattleStart(m, w),
         battleEnd: (r) => this.onBattleEnd(r),
+        peerHit: (e, dmg) => { if (e.peer?.mmo) this.onPeerHit?.(e.peer.mmo, dmg); },
       });
       this.naval.player = this.ship;
       this.naval.bountyOf = (id) => this.bountyOf(id);
@@ -1420,6 +1427,8 @@ export class SeaWorld {
       onHeal: (k, r, f) => {
         this.sparks.emit(20, f.x, f.y + 1, f.z, { speed: 1.4, up: 3, life: 0.9, color: HEAL_COL, gravity: -1, spread: 0.6 });
         if (r > 0) this.healAllies(f.x, f.z, r, k);
+        // 4.8A: Gruppe und Verbündete im Radius, dazu ein angewählter verbündeter Mitspieler (gezielte Heilung über das Gruppenfenster)
+        this.onPartyHeal?.(f.x, f.z, r, k);
         audio.play('moonChime', 0.6, { x: f.x, y: f.y, z: f.z });
       },
       onGeist: (kind, b, _c, f) => {
@@ -2234,6 +2243,7 @@ export class SeaWorld {
       heal: (frac) => { const f = w.foot; if (!f) return 0; const before = f.hp; f.hp = Math.min(f.maxHp, f.hp + f.maxHp * frac); return f.hp - before; },
       addWill: (n) => w.foot?.engine.addWill(n),
       openChase: () => w.foot?.engine.openChase(),
+      rallyPlayers: (x, z, heal, will) => w.onPartyHorn?.(x, z, heal, will),
       groundY: (x, z) => { const h = w.groundProxy.height(x, z); return Number.isFinite(h) && h > -50 ? h : w.env.heightAt(x, z); },
       isLand: (x, z) => !!w.ground.islandAt(x, z),
       busy: () => w.cataclysm.active || w.animeRig.active || w.cine.active,
@@ -2374,6 +2384,20 @@ export class SeaWorld {
     const lim = this.figureDist * this.figureDist;
     const set = (h: { position: Vector3; visible: boolean } | undefined) => { if (h) h.visible = (h.position.x - cp.x) ** 2 + (h.position.z - cp.z) ** 2 < lim; };
     for (const n of this.npcs) set(n.char.holder);
+    // 4.8A: Figuren-Budget – sichtbare MMO-Kapitäne ersetzen ebenso viele anonyme Stadtbewohner (die fernsten ohne Namen und ohne festen Platz):
+    // die Stadt wird nicht voller, die Bildzeit bleibt wie vor der MMO-Schicht
+    let swap = this.mmoLive?.stats.shown ?? 0;
+    while (swap > 0) {
+      let far: Npc | null = null, fd = -1;
+      for (const n of this.npcs) {
+        if (n.townDef || n.station || !n.char.holder.visible) continue;
+        const d = (n.x - cp.x) ** 2 + (n.z - cp.z) ** 2;
+        if (d > fd) { fd = d; far = n; }
+      }
+      if (!far) break;
+      far.char.holder.visible = false;
+      swap--;
+    }
     for (const e of this.combat?.enemies ?? []) set(e.char.holder);
     for (const a of this.crew?.allies ?? []) set(a.char.holder);
     // Raid: die Hauptkarte ruht (Inseln, Bewuchs, Stadt unsichtbar; matrixSkip überspringt unsichtbare Teilbäume), nur die Instanz wird gezeichnet
@@ -2663,6 +2687,8 @@ export class SeaWorld {
       powerAt: (x, z) => { const isl = w.ground.islandAt(x, z); const d = isl ? w.islandDefs.find((x2) => x2.x === isl.x && x2.z === isl.z) : undefined; return (d && w.ownerFaction(d)) || ''; },
       teamPower: () => w.team ?? '',
       alliedSquads: () => w.alliedSquads(),
+      players: () => w.mmoLive?.targets ?? [],
+      peerInfo: (e) => w.mmoPeerInfo(e),
       groundY: (x, z, y) => { const h = w.groundProxy.height(x, z, y + 1.5); return Number.isFinite(h) && h > -50 ? h : w.env.heightAt(x, z); },
       waterY: (x, z) => w.env.heightAt(x, z),
       playerFaction: () => w.playerFaction,
@@ -2956,8 +2982,11 @@ export class SeaWorld {
   /** Nächstes feindliches Schiff (für die Kampfkamera) */
   private nearestFoe(x: number, z: number, range: number) {
     let best: { x: number; z: number } | null = null, bd = range;
-    for (const e of this.naval?.enemies ?? []) {
+    const nav = this.naval;
+    for (const e of nav?.enemies ?? []) {
       if (e.companion || !e.ship.alive || e.ship.sinking || (e.role === 'haendler' && e.state !== 'engage')) continue;
+      // 4.8A: Mitspieler-Schiffe, Helfer, eigene Flotte, Prisen und Schiffe des eigenen Teams sind keine Gegner (Kampfmusik, „im Gefecht“ für den Shard)
+      if (e.peer || e.helper || e.fleetId || e.captured || nav?.isTeamShip(e)) continue;
       const d = Math.hypot(e.ship.x - x, e.ship.z - z);
       if (d < bd) { bd = d; best = e.ship; }
     }
@@ -3238,6 +3267,214 @@ export class SeaWorld {
       shipLive: (sh) => !!w.naval?.enemies.includes(sh as EnemyShip) && (sh as EnemyShip).ship.alive,
       removeShip: (sh) => { const e = sh as EnemyShip; if (w.naval?.enemies.includes(e)) w.naval.removeEventShip(e); },
     };
+  }
+
+  // ---------- 4.8A: MMO-Mitspieler, Gruppen, Mitfahrt an Deck ----------
+
+  /** Mitspieler der MMO-Schicht (Figuren aus dem Pool, Schiffe, Mitfahrer) – null ohne Verbindung */
+  mmoLive: MmoLive | null = null;
+  /** Haltung zu einem Team (setzt das Spiel aus der Welt-KI: `FactionWarEngine.partyStance`) */
+  mmoStance: ((team: string) => PartyStance) | null = null;
+  /** Heilung der Spielfigur mit Radius (Priester, Lebensstrom): das Spiel reicht sie an Gruppe und Verbündete weiter */
+  onPartyHeal: ((x: number, z: number, r: number, k: number) => void) | null = null;
+  /** Sturmhorn-Sammeln: Heilung und Willenskraft für Mitspieler im Umkreis */
+  onPartyHorn: ((x: number, z: number, heal: number, will: number) => void) | null = null;
+  /** Treffer auf ein Mitspieler-Schiff (Spieler gegen Spieler, der Shard prüft) */
+  onPeerHit: ((id: string, dmg: number) => void) | null = null;
+  /** Taste „Zurück an Bord deines Schiffs“ während einer Mitfahrt */
+  onRideEnd: (() => void) | null = null;
+  private rideE: EnemyShip | null = null;
+  private readonly rideLast = { x: 0, z: 0, heading: 0 };
+  private readonly rideTmp = { x: 0, z: 0 };
+  private readonly rideW = { x: 0, y: 0, z: 0 };
+
+  /** MMO-Client anschließen (geteilte Welt): ersetzt die Stellvertreter aus 4.7A */
+  attachMmo(client: MmoClient) {
+    this.detachMmo();
+    this.presence?.dispose(); this.presence = null;
+    this.mmoLive = new MmoLive(this.mmoLiveHost(), client);
+  }
+
+  detachMmo() {
+    this.endRide(false);
+    this.mmoLive?.dispose();
+    this.mmoLive = null;
+  }
+
+  private mmoLiveHost(): MmoLiveHost {
+    const w = this;
+    return {
+      scene: w.scene,
+      makeRig: (i, female) => {
+        if (!w.assets) return null;
+        let look: CharacterLook | null = null;
+        for (let k = 0; k < 32 && !look; k++) { const l = randomLook(seeded(0x6d6d1 + i * 7919 + k * 104729), 'pirat'); if ((l.gender === 'female') === female) look = l; }
+        const c = new Character(w.assets, look ?? randomLook(seeded(0x6d6d1 + i), 'pirat'), w.outlineNpcs);
+        c.walkVariant = 'Walking_B';
+        c.setGround((x, z, y) => w.groundProxy.height(x, z, y));
+        c.stepVol = 0.3;
+        return c;
+      },
+      groundY: (x, z, y) => { const h = w.groundProxy.height(x, z, y); return Number.isFinite(h) ? h : y; },
+      naval: () => w.naval,
+      ownShip: () => w.ship,
+      viewer: (o) => { const p = w.playerPos; o.x = p.x; o.z = p.z; },
+      me: (o) => { const p = w.playerPos; o.x = p.x; o.z = p.z; },
+      figureDist: () => w.figureDist,
+      stance: (team) => w.mmoStance?.(team) ?? 'neutral',
+      safeAt: (x, z) => safeZoneAt(safeZones(), x, z)?.name ?? '',
+      warm: (o) => w.warmHook?.(o),
+    };
+  }
+
+  /** Welt für die MMO-Kapitäne des lokalen Shards (Straßen von Ankerglück, freies Wasser, Orte) */
+  mmoBotWorld(): BotWorld {
+    const w = this;
+    let pts: { x: number; z: number }[] | null = null;
+    return {
+      home: () => w.homeIsland,
+      townPoints: () => {
+        if (pts) return pts;
+        const home = w.ground.islands[0];
+        const list: { x: number; z: number }[] = [];
+        for (const st of home?.walkways ?? []) for (let i = 0; i < st.pts.length - 1; i++) {
+          const [ax, az] = st.pts[i], [bx, bz] = st.pts[i + 1];
+          list.push({ x: (ax + bx) / 2, z: (az + bz) / 2 });
+        }
+        // nur Punkte auf der Insel (die Straßen von Ankerglück), höchstens 24
+        pts = home ? list.filter((p) => Math.hypot(p.x - home.x, p.z - home.z) < home.r * 0.85).slice(0, 24) : [];
+        return pts;
+      },
+      constrain: (x, z, out) => { const c = w.ground.constrain(x, z); out.x = c.x; out.z = c.z; },
+      seaFree: (x, z) => !w.ground.islandAt(x, z, 30),
+      zoneAt: (x, z, sea) => w.mmoZone(x, z, sea),
+    };
+  }
+
+  /** Ort für Gruppenfenster und Betrachten: Insel (an Land oder dicht davor), sonst das Meer der Region */
+  mmoZone(x: number, z: number, sea: boolean): string {
+    const isl = this.ground.islandAt(x, z, sea ? 60 : 30);
+    const def = isl ? this.islandDefs[this.ground.islands.indexOf(isl)] : null;
+    if (def) return def.name;
+    return regionAt(x, z).name;
+  }
+
+  /** Lage der Spielfigur für den Shard (ohne Leben, Willenskraft und Ort – die ergänzt das Spiel) */
+  mmoPose(out: PlayerState): PlayerState {
+    const foot = this.mode === 'foot' && !!this.foot;
+    out.ride = '';
+    if (this.rideE && foot) {
+      const e = this.rideE, f = this.foot!;
+      out.x = f.x; out.y = f.y; out.z = f.z; out.yaw = f.yaw; out.dom = 'sea'; out.spd = 0;
+      out.ride = e.peer?.mmo ?? '';
+      worldToRide(e.ship, f.x, f.z, this.rideTmp);
+      out.rx = this.rideTmp.x; out.rz = this.rideTmp.z; out.ry = Math.max(-1.5, f.y - (e.ship.model.group.position.y + e.ship.model.deckY));
+    } else if (foot && (this.landed || !this.ownDeck)) {
+      const f = this.foot!;
+      out.x = f.x; out.y = f.y; out.z = f.z; out.yaw = f.yaw; out.dom = 'land'; out.spd = f.speed;
+    } else {
+      // am Steuer oder an Deck des eigenen Schiffs: das Schiff ist der Spieler
+      const s = this.ship;
+      out.x = s.x; out.y = 0; out.z = s.z; out.yaw = s.heading; out.dom = 'sea'; out.spd = Math.abs(s.speed);
+    }
+    out.hdg = this.ship.heading;
+    out.hull = this.ship.hull; out.mhull = this.ship.maxHull;
+    out.combat = this.threat >= 0.05 || this.bossNear || (this.mode === 'foot' && !!this.combat?.hostilesLeft);
+    return out;
+  }
+
+  get riding(): string { return this.rideE?.peer?.mmo ?? ''; }
+  get ridingShip(): EnemyShip | null { return this.rideE; }
+
+  /** Anzeige eines Mitspieler-Schiffs im Zielfenster: Name des Kapitäns, Schiff, Klasse, Team */
+  mmoPeerInfo(e: EnemyShip): { name: string; category: string; nation: string; crest: string; level: number } | null {
+    const id = e.peer?.mmo, live = this.mmoLive;
+    if (!id || !live) return null;
+    const r = live.client.remotes.get(id);
+    if (!r) return null;
+    const p = r.profile;
+    const f = p.team ? FACTIONS[p.team as FactionId] : null;
+    return { name: p.name, category: `${e.ship.cls.n} · Kapitän${p.classLabel ? ` · ${p.classLabel}` : ''}`, nation: f ? `Team ${f.name}` : 'Ungebunden', crest: f?.color ?? '#9AA3AE', level: p.level };
+  }
+
+  /** Kann die Spielfigur gerade zum Anführer an Bord gehen? (auf See, eigenes Schiff, kein Entern, kein Raid) */
+  canRide(): boolean { return !!this.player && !!this.foot && !this.rideE && !this.boarding && !this.raid && !this.docking.session && !this.prologue && (this.mode === 'sail' || this.ownDeck); }
+
+  /** An Bord des Anführer-Schiffs gehen (der Shard hat zugestimmt): zu Fuß an Deck, Platz relativ zum Schiff; das eigene Schiff ankert */
+  rideOn(e: EnemyShip, rx: number, rz: number): boolean {
+    if (!this.canRide() || !this.player || !this.foot) return false;
+    this.ship.throttle = 0; this.ship.speed = 0; this.ship.sailLevel = 0;
+    this.rideE = e;
+    this.preyDG = new DeckGround(e.ship);
+    this.composite.setDecks(this.ownDeckGround(), this.preyDG);
+    this.ownDeck = false;
+    this.landed = false;
+    this.scene.add(this.player.holder);
+    const p = this.preyDG.world(rx, rz);
+    this.footDist = 6.5;
+    this.footPitch = 0.55;
+    this.foot.place(p.x, p.z, e.ship.heading, this.groundProxy);
+    this.foot.onFoot = true;
+    this.footYaw = e.ship.heading;
+    this.setSailFade(e.ship, true);
+    this.setMode('foot');
+    this.deckGround = this.preyDG;
+    this.rideLast.x = e.ship.x; this.rideLast.z = e.ship.z; this.rideLast.heading = e.ship.heading;
+    this.onMessage('An Bord des Anführers – du fährst mit. [R] bringt dich zurück auf dein Schiff.');
+    return true;
+  }
+
+  /**
+   * Mitfahrt beenden: ein Beiboot bringt dich zurück ans Steuer. `alongside` = dein Schiff kommt längsseits neben das Schiff des Anführers
+   * (sonst liegt es, wo du es verlassen hast).
+   */
+  endRide(alongside = true) {
+    const e = this.rideE;
+    if (!e) return;
+    this.rideE = null;
+    this.setSailFade(e.ship, false);
+    this.preyDG = null;
+    this.composite.setDecks(this.ownDeckGround(), null);
+    if (alongside && this.naval?.enemies.includes(e)) {
+      const s = this.ship, es = e.ship;
+      for (const side of [1, -1]) {
+        const off = es.cls.W * 0.5 + s.cls.W * 0.5 + 34;
+        const a = es.heading + side * Math.PI / 2;
+        const x = es.x + Math.sin(a) * off, z = es.z + Math.cos(a) * off;
+        if (this.ground.islandAt(x, z, 25)) continue;
+        s.x = x; s.z = z; s.heading = es.heading; s.speed = 0;
+        s.prev = { x, z, heading: es.heading };
+        break;
+      }
+    }
+    this.toHelm();
+  }
+
+  /** Je Schritt: die Figur fährt mit dem Schiff des Anführers mit (Lage und Drehung); ist es fort oder fällt sie über Bord, endet die Mitfahrt */
+  private carryRider() {
+    const e = this.rideE, f = this.foot;
+    if (!e || !f) return;
+    if (!this.naval?.enemies.includes(e) || !e.ship.alive || !Number.isFinite(e.ship.x + e.ship.z)) {
+      this.onMessage('Das Schiff des Anführers ist außer Sicht – ein Beiboot bringt dich zurück an Bord.');
+      this.onRideEnd?.();
+      if (this.rideE) this.endRide(false);
+      return;
+    }
+    if (this.mode === 'foot' && this.deckGround !== this.preyDG && f.onWater) {
+      this.onMessage('Über Bord! Die Crew fischt dich heraus und rudert dich zurück zu deinem Schiff.');
+      this.onRideEnd?.();
+      if (this.rideE) this.endRide(true);
+      return;
+    }
+    const s = e.ship, L = this.rideLast;
+    if (s.x !== L.x || s.z !== L.z || s.heading !== L.heading) {
+      worldToRide(L, f.x, f.z, this.rideTmp);
+      rideToWorld(s, 0, this.rideTmp.x, 0, this.rideTmp.z, this.rideW);
+      f.carry(this.rideW.x - f.x, this.rideW.z - f.z, false);
+      const dh = s.heading - L.heading;
+      if (Number.isFinite(dh)) this.footYaw += dh;
+      L.x = s.x; L.z = s.z; L.heading = s.heading;
+    }
   }
 
   /** Ankerglück: Mitte und Radius (die Plätze der Bewohner gelten relativ dazu) */
@@ -3526,8 +3763,12 @@ export class SeaWorld {
     // 4.7A: private Einführung – das Schiff bleibt in der Bucht; geteilte Welt – andere Kapitäne in Ankerglück und auf See
     if (this.gates.leash && this.mode === 'sail') this.keepOnLeash(dt);
     if (this.gates.presence && !this.raid && !this.title.active) {
-      if (!this.presence && this.assets && this.naval) this.presence = new SharedPresence(this.presenceHost());
-      this.presence?.update(dt);
+      // 4.8A: Mitspieler kommen über die MMO-Schicht (lokaler Shard oder Server); ohne sie bleiben die Stellvertreter aus 4.7A
+      if (this.mmoLive) { this.mmoLive.update(dt); this.carryRider(); }
+      else {
+        if (!this.presence && this.assets && this.naval) this.presence = new SharedPresence(this.presenceHost());
+        this.presence?.update(dt);
+      }
       // Mitspieler-Schiffe entstehen auch, während man zu Fuß in Ankerglück ist (sonst baut die Warteschlange nur auf See)
       if (this.mode !== 'sail') this.naval?.pumpIdle();
     }
@@ -3891,6 +4132,12 @@ export class SeaWorld {
     }
     const f = this.foot;
     if (this.docking.isClimbing) return;
+    // 4.8A: an Bord des Anführers – zurück aufs eigene Schiff
+    if (this.rideE) {
+      this.contextLabel = 'Zurück an Bord deines Schiffs';
+      if (input.pressed('interact')) this.onRideEnd?.();
+      return;
+    }
     // Leiter in Reichweite (Strickleiter am Ufer, Enterleitern): hinauf oder hinab klettern
     const lad = this.fishing ? null : this.docking.ladderNear(f.x, f.y, f.z);
     if (lad) {

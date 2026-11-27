@@ -42,6 +42,8 @@ export interface AssistHost {
   heal(frac: number): number;
   addWill(n: number): void;
   openChase(): void;
+  /** 4.8A: Sturmhorn – Mitspieler (Gruppe, Verbündete) im Umkreis bekommen Heilung und Willenskraft */
+  rallyPlayers?(x: number, z: number, heal: number, will: number): void;
   groundY(x: number, z: number): number;
   isLand(x: number, z: number): boolean;
   /** darf jetzt ein Assist starten (keine Zwischensequenz, kein Menü)? */
@@ -316,6 +318,7 @@ export class OfficerAssistDirector {
       a.hp = Math.min(a.maxHp, a.hp + a.maxHp * def.allyHeal);
       a.buff = Math.max(a.buff, def.allyBuff);
     }
+    this.host.rallyPlayers?.(p.x, p.z, def.heal, def.will);
     this.stats.rallied += n;
     if (n > 0) ov?.number(V.set(p.x, this.host.groundY(p.x, p.z) + 3, p.z), `${n} Trupp${n > 1 ? 's' : ''} gestärkt!`, 'info');
   }

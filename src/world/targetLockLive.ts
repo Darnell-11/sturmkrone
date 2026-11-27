@@ -18,6 +18,8 @@ import { FACTIONS, type FactionId } from '../data/factions';
 import { SHIP_CLASSES } from '../data/ships';
 import type { NpcRole } from '../data/characterParts';
 import { markShared } from '../render/dispose';
+import { MMO } from '../net/mmoProtocol';
+import type { RemoteTarget } from './mmoLive';
 
 /** Was die Ziel-Erfassung von der Welt braucht */
 export interface TargetHost {
@@ -39,6 +41,10 @@ export interface TargetHost {
   teamPower?(): string;
   /** 4.7E: verbündete Trupps in der Nähe (Wachen eroberter Team-Inseln, Team-Seite einer Belagerung) */
   alliedSquads?(): readonly TroopSquad[];
+  /** 4.8A: Mitspieler zu Fuß und an Deck (MMO-Schicht) */
+  players?(): readonly RemoteTarget[];
+  /** 4.8A: Anzeige eines Mitspieler-Schiffs (Name, Kategorie, Team) */
+  peerInfo?(e: EnemyShip): { name: string; category: string; nation: string; crest: string; level: number } | null;
 }
 
 /** 4.7E: Rollen, die auf einer Insel des eigenen Teams als Hafenwache gelten */
@@ -148,6 +154,9 @@ export class TargetLockLive {
       if (allied) for (const q of allied) if (q.alive && Math.hypot(q.x - _me.x, q.z - _me.z) < landR) this.fillTeamSquad(pool.next(), q);
     }
     if (foot) for (const n of h.npcs()) if (Math.hypot(n.x - _me.x, n.z - _me.z) < landR) this.fillNpc(pool.next(), n);
+    // 4.8A: Mitspieler (zu Fuß und an Deck) – auch weiter weg anwählbar (Gruppenfenster, Rechtsklick), solange ihre Figur steht
+    const pl = h.players?.();
+    if (pl) for (const t of pl) if (t.alive && Math.hypot(t.x - _me.x, t.z - _me.z) < MMO.rigShow) this.fillPlayer(pool.next(), t);
     // 4.7A: Übungspuppen (Waffenmeister der Einführung) lassen sich anwählen wie Bewohner
     if (foot && c) for (const d of c.trainingDummies) if (Math.hypot(d.x - _me.x, d.z - _me.z) < landR) this.fillDummy(pool.next(), d);
     const nav = h.naval();
@@ -250,6 +259,26 @@ export class TargetLockLive {
     c.alive = !!n.char.holder.parent; c.x = n.x; c.z = n.z; c.y = n.char.holder.position.y; c.hp = 0; c.maxHp = 0; c.posture = -1; c.broken = false;
   }
 
+  /** 4.8A: Mitspieler (Kapitän eines anderen Spielers) */
+  private fillPlayer(c: TargetCandidate | null, t: RemoteTarget) {
+    if (!c) return;
+    const n = t.team ? nationOf(t.team) : { name: 'Ungebunden', color: '#9AA3AE' };
+    c.id = t.id; c.kind = 'player'; c.relation = t.relation; c.domain = 'land'; c.npc = false;
+    c.name = t.name; c.level = t.level; c.power = t.team; c.nation = t.team ? `Team ${n.name}` : n.name; c.crest = n.color;
+    c.category = t.classLabel ? `Kapitän · ${t.classLabel}${t.role ? ` (${t.role})` : ''}` : 'Kapitän';
+    c.prio = t.relation === 'hostile' ? 1.4 : 0.5; c.radius = 0.5; c.height = 1.8;
+    c.ref = t;
+    this.refreshPlayer(c);
+  }
+
+  private refreshPlayer(c: TargetCandidate) {
+    const pl = this.host.players?.();
+    let t: RemoteTarget | null = null;
+    if (pl) for (const o of pl) if (o.id === c.id) { t = o; break; }
+    if (!t) { c.alive = false; return; }
+    c.alive = t.alive; c.x = t.x; c.y = t.y; c.z = t.z; c.hp = t.hp; c.maxHp = t.mhp; c.posture = -1; c.broken = false; c.relation = t.relation;
+  }
+
   private fillShip(c: TargetCandidate | null, e: EnemyShip, nav: NavalSystem) {
     if (!c) return;
     const s = e.ship;
@@ -263,6 +292,9 @@ export class TargetLockLive {
     c.prio = e.role === 'legende' || e.legendId ? 3 : e.role === 'jaeger' ? 1.5 : 1;
     c.radius = s.cls.L * 0.5; c.height = s.model.deckY + s.cls.mh * 0.5;
     c.ref = e;
+    // 4.8A: Schiff eines Mitspielers – Name des Kapitäns, sein Team und seine Klasse
+    const pi = e.peer?.mmo ? this.host.peerInfo?.(e) : null;
+    if (pi) { c.name = pi.name; c.category = pi.category; c.nation = pi.nation; c.crest = pi.crest; c.level = pi.level; c.prio = c.relation === 'hostile' ? 1.4 : 0.6; }
     this.refreshShip(c, e, nav);
   }
 
@@ -280,6 +312,7 @@ export class TargetLockLive {
     else if (r instanceof TroopSquad) this.refreshSquad(c, r);
     else if (r instanceof Ally) this.refreshOfficer(c, r);
     else if (r instanceof Npc) this.refreshNpc(c, r);
+    else if (c.kind === 'player') this.refreshPlayer(c);
     else if (c.kind === 'ship' && r) { const nav = this.host.naval(); if (nav && nav.enemies.includes(r as EnemyShip)) this.refreshShip(c, r as EnemyShip, nav); else c.alive = false; }
     else if (c.kind === 'npc' && r && this.host.combat()?.trainingDummies.includes(r as never)) c.alive = true;
     else c.alive = false;
@@ -315,6 +348,33 @@ export class TargetLockLive {
 
   /** Mausklick / Antippen bei Bildschirm-Pixel (x, y): Ziel unter dem Zeiger wählen; null = nichts getroffen (die Auswahl bleibt) */
   pickAt(px: number, py: number, w: number, h: number): TargetCandidate | null {
+    const i = this.pickIndex(px, py, w, h);
+    if (i < 0) return null;
+    this.stats.picks++;
+    this.select(this.pool.items[i], 'click');
+    return this.sel;
+  }
+
+  /**
+   * 4.8A: Ziel unter dem Zeiger nur nachsehen, ohne es zu wählen (Rechtsklick-Menü); der Kandidat gilt bis zum nächsten Sammeln. Mit `prefer`
+   * gewinnt ein passender Kandidat unter dem Zeiger, auch wenn ein anderer davor steht (Kapitän hinter einem Stadtbewohner).
+   */
+  peekAt(px: number, py: number, w: number, h: number, prefer?: (c: TargetCandidate) => boolean): TargetCandidate | null {
+    const i = this.pickIndex(px, py, w, h);
+    const first = i < 0 ? null : this.pool.items[i];
+    if (!prefer || (first && prefer(first))) return first;
+    let best: TargetCandidate | null = null, bd = Infinity;
+    for (let k = 0; k < this.pool.n; k++) {
+      const c = this.pool.items[k];
+      if (!c.alive || !(this.sd[k] > 0) || !prefer(c)) continue;
+      const r = Math.max(TARGET.pickMinPx, this.sr[k]) + TARGET.pickSlopPx;
+      const d = Math.hypot(this.sx[k] - px, this.sy[k] - py);
+      if (d <= r && d / r < bd) { bd = d / r; best = c; }
+    }
+    return best ?? first;
+  }
+
+  private pickIndex(px: number, py: number, w: number, h: number): number {
     const n = this.gather();
     const cam = this.host.camera();
     const tanH = Math.tan(((cam.fov * Math.PI) / 180) * 0.5);
@@ -331,11 +391,7 @@ export class TargetLockLive {
       this.sr[i] = (ext / (depth * tanH)) * (h * 0.5);
       this.sd[i] = depth;
     }
-    const i = pickTarget(this.pool, this.sx, this.sy, this.sr, this.sd, px, py);
-    if (i < 0) return null;
-    this.stats.picks++;
-    this.select(this.pool.items[i], 'click');
-    return this.sel;
+    return pickTarget(this.pool, this.sx, this.sy, this.sr, this.sd, px, py);
   }
 
   /** Ziel nach Kennung wählen (Lock-on, Rückeroberung des Ziels nach dem Tod) */
@@ -358,7 +414,7 @@ export class TargetLockLive {
     const c = this.sel;
     this.refresh(c);
     this.host.viewer(_me);
-    const keep = c.domain === 'sea' ? TARGET.keepSea : TARGET.keepLand;
+    const keep = c.domain === 'sea' ? TARGET.keepSea : c.kind === 'player' ? MMO.rigShow : TARGET.keepLand;
     if (!c.alive || Math.hypot(c.x - _me.x, c.z - _me.z) > keep + c.radius) { this.clear(); return false; }
     this.state.relation = c.relation;
     frameView(c, this.view);

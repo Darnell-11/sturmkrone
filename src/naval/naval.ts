@@ -112,7 +112,11 @@ export interface EnemyShip {
   /** 4.7A: Bühnen-Schiff einer Inszenierung (Prolog): sinkt sichtbar, zählt aber nie als Abschuss (keine Beute, keine Erfahrung, kein Auftrag) */
   stage?: boolean;
   /** 4.7A: Schiff eines anderen Kapitäns (geteilte Welt; bis zum Netz in 4.8 ein lokaler Stellvertreter): fährt seine Runde, kämpft nie, ist unverwundbar für den Spieler */
-  peer?: { pts: number[]; leg: number };
+  /**
+   * 4.7A/4.8A: Schiff eines anderen Kapitäns. `mmo` = Kennung des Mitspielers (MMO-Schicht: bewegt über Schnappschüsse statt über die KI,
+   * Beziehung `rel` und Schadens-Erlaubnis `harm` setzt `world/mmoLive.ts` nach Gruppe, Diplomatie und Schutzzonen)
+   */
+  peer?: { pts: number[]; leg: number; mmo?: string; rel?: TargetRelation; harm?: boolean };
   /** Kennung in der Raid-Sitzung (RaidGuardDef.guardId) */
   guardId?: string;
   /** Teilnehmer einer Seeschlacht an der Grenze (KI gegen KI): Nummer der Schlacht und Seite (0, 1; 2 = Marine-Patrouille, die eingreift) */
@@ -233,6 +237,8 @@ export interface NavalHooks {
   /** Seeschlacht beginnt in der Nähe (Meldung) bzw. endet (nur wenn der Spieler eingegriffen hat: Auswertung) */
   battleStart?(m: BattleMark, where: string): void;
   battleEnd?(r: BattleResult): void;
+  /** 4.8A: Treffer des Spielers auf das Schiff eines Mitspielers (Spieler gegen Spieler): der Shard prüft und rechnet, nicht die eigene Welt */
+  peerHit?(e: EnemyShip, dmg: number): void;
 }
 
 
@@ -266,6 +272,7 @@ export class NavalSystem {
    * (solange nicht provoziert), friedliche Durchfahrt neutral, sonst Feind.
    */
   shipRelation(e: EnemyShip): TargetRelation {
+    if (e.peer?.mmo) return e.peer.rel ?? 'neutral';
     const calm = this.peaceful(e);
     return relationOf({
       own: !!(e.companion || e.fleetId || e.captured), ally: !!(e.helper || e.peer) || this.isTeamShip(e), provoked: !!e.provoked,
@@ -274,7 +281,7 @@ export class NavalSystem {
   }
 
   /** 4.6J: darf der Spieler (bzw. seine Flotte) dieses Schiff beschädigen? (Treffer-Prüfung `canHarm`) */
-  playerMayHarm(e: EnemyShip): boolean { return canHarm('friendly', this.shipRelation(e)); }
+  playerMayHarm(e: EnemyShip): boolean { return e.peer?.mmo ? !!e.peer.harm : canHarm('friendly', this.shipRelation(e)); }
   /** Raid-Instanz aktiv: keine natürlichen Begegnungen, keine Grenzpatrouillen, Wachschiffe bleiben bestehen */
   raidMode = false;
   /**
@@ -812,14 +819,14 @@ export class NavalSystem {
    * 4.7A: Schiff eines anderen Kapitäns (geteilte Welt) über die Warteschlange bauen – Bild für Bild wie jedes neue Schiff (kein Ruckeln).
    * `pts` = Wegpunkte seiner Runde (x, z, x, z, …).
    */
-  queuePeer(x: number, z: number, heading: number, tier: number, look: ShipLook, name: string, pts: number[], done?: (e: EnemyShip) => void) {
+  queuePeer(x: number, z: number, heading: number, tier: number, look: ShipLook, name: string, pts: number[], done?: (e: EnemyShip) => void, mmo?: string) {
     const self = this;
     function* steps(): Generator<SpawnYield, EnemyShip | null> {
       const ship = yield* Ship.buildSteps(self.scene, Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier)), look, 'pirat', 0, false, aiEvolution('patrouille', 1));
       yield* self.uploadSteps(ship);
       ship.x = x; ship.z = z; ship.heading = heading;
       ship.prev = { x, z, heading };
-      const e: EnemyShip = { ship, role: 'patrouille', level: 1, state: 'patrol', wander: { x, z }, aiT: 0, name, stage: true, peer: { pts, leg: 0 } };
+      const e: EnemyShip = { ship, role: 'patrouille', level: 1, state: 'patrol', wander: { x, z }, aiT: 0, name, stage: true, peer: mmo ? { pts, leg: 0, mmo, rel: 'neutral', harm: false } : { pts, leg: 0 } };
       self.enemies.push(e);
       return e;
     }
@@ -1339,6 +1346,7 @@ export class NavalSystem {
    */
   cataclysmHit(e: EnemyShip, dmg: number, pen: number): number {
     if (this.cataclysmFriendly(e)) return 0;
+    if (e.peer?.mmo) { this.hooks.peerHit?.(e, dmg); return dmg; }
     e.lastPlayerHit = this.clock;
     if (e.power === 'marine' || e.ev) e.provoked = true;
     const d = e.ship.damage(dmg, 'kugel', null, 'hull', pen);
@@ -1353,7 +1361,7 @@ export class NavalSystem {
    */
   cataclysmSplit(e: EnemyShip, cut: Exclude<ShipCut, ''>, seed: number, lift = 0, sections = 2): 'split' | 'disabled' | '' {
     const s = e.ship;
-    if (!s.alive || s.sinking > 0 || this.cataclysmFriendly(e)) return '';
+    if (!s.alive || s.sinking > 0 || this.cataclysmFriendly(e) || e.peer?.mmo) return '';
     const boss = !!(e.legendId || e.role === 'legende' || s.hitCap > 0 || s.noKill);
     const info: ShipSplitInfo = { tier: dangerOfLevel(e.level), boss, hullFrac: s.maxHull > 0 ? s.hull / s.maxHull : 0, friendly: false };
     if (!canSplitShip(info, cut)) return '';
@@ -2290,6 +2298,8 @@ export class NavalSystem {
     if (!s.alive) return;
     // Enterphase: das Schiff treibt brennend und wehrlos (keine Geschütze, kein Fahrtziel)
     if (s.disabled) { e.state = 'patrol'; s.sailLevel = 0; s.throttle = 0; s.aiSail = null; s.steer(dt, 0, this.env); return; }
+    // 4.8A: Mitspieler-Schiffe fahren nach den Schnappschüssen des Shards (world/mmoLive.ts), nicht nach der KI
+    if (e.peer?.mmo) { e.state = 'patrol'; return; }
     e.aiT -= dt;
     const nav = e.nav ?? (e.nav = createAiNav(s.entityId));
     // Schiffe einer Großschlacht (Armadas der FactionWarEngine) kämpfen wie in einer Seeschlacht, auch wenn sie sonst als Ereignis-Schiffe fahren
@@ -2408,8 +2418,11 @@ export class NavalSystem {
     const warBattle = foeBattle && !!this.battles.find((x) => x.id === target!.battle!.id)?.war;
     let base = b.dmg * (target?.boarded ? 0 : warBattle ? BATTLE.warDamage : foeBattle ? BATTLE.aiDamage : 1);
     if (s === this.player && b.owner) base = this.bossCap(b.owner, base);
-    const dmg = s.damage(base, b.ammo, sailHit ? null : local, sailHit ? 'sail' : 'hull', b.owner?.penTier ?? 3);
-    const en2 = this.enemies.find((o) => o.ship === s);
+    // 4.8A: Treffer auf ein Mitspieler-Schiff rechnet der Shard (Spieler gegen Spieler); hier nur Rückmeldung und Darstellung
+    const peerEn = b.owner === this.player ? this.enemies.find((o) => o.ship === s && !!o.peer?.mmo) : undefined;
+    if (peerEn) this.hooks.peerHit?.(peerEn, base);
+    const dmg = peerEn ? Math.round(base) : s.damage(base, b.ammo, sailHit ? null : local, sailHit ? 'sail' : 'hull', b.owner?.penTier ?? 3);
+    const en2 = peerEn ? undefined : this.enemies.find((o) => o.ship === s);
     if (en2 && !wasDisabled && s.disabled) this.onDisabled(en2, b.owner === this.player);
     // Schiffe, die nie untergehen: weitere Treffer wirken nicht, der Hinweis kommt höchstens alle 8 s
     else if (en2 && wasDisabled && s.noKill && s.disabledFor >= 2 && b.owner === this.player && this.clock - (en2.noKillHint ?? -99) > 8) { en2.noKillHint = this.clock; this.hooks.message('Dieses Schiff geht durch Kanonen nie unter – nur Entern besiegt es!'); }
@@ -2613,6 +2626,7 @@ export class NavalSystem {
     const big = a.ult ? 1.35 : 1;
     const hit = (e: EnemyShip, d: number) => {
       if (!e.ship.alive) return;
+      if (e.peer?.mmo) { if (e.peer.harm) this.hooks.peerHit?.(e, d); return; }
       const was = e.ship.disabled;
       const real = e.ship.damage(d, 'kugel', null);
       this.overlay.number(new Vector3(e.ship.x, e.ship.model.deckY + 6, e.ship.z), real, 'crit');

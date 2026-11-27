@@ -27,6 +27,7 @@ import type { IslandDef } from '../data/regions';
 import { routeAround, type RouteObstacle } from './oceanCurrents';
 import { advanceOnRoute } from './tradeConvoys';
 import type { SupplyFront as SupplyFrontData } from './worldEventDirector';
+import { stanceOf, type PartyStance } from '../net/partyRules';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Register der Nationen
@@ -695,6 +696,11 @@ export class FactionWarEngine {
     return this.relation(a, b)?.state ?? 'neutral';
   }
   atWar(a: string | null, b: string | null): boolean { return !!a && !!b && a !== b && this.stateOf(a, b) === 'krieg'; }
+  /**
+   * 4.8A: Haltung zweier Spieler-Teams nach dem aktuellen Zustand der Welt-KI – Grundlage der Gruppen-Zulassung (alles außer Krieg) und von
+   * Spieler gegen Spieler. Ungebundene Neulinge ('' / null, vor dem Rat der Gesandten) sind zu allen neutral.
+   */
+  partyStance(a: string | null, b: string | null): PartyStance { return stanceOf(a, b, (x, y) => this.stateOf(x, y)); }
 
   siegeOf(islandId: string): SiegeState | null {
     const id = this.state.islands[islandId]?.siegeId;

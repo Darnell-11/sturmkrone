@@ -1,0 +1,126 @@
+/* ==========================================================================
+   4.8A – MMO-Schicht: Chat (unten links), Gruppenfenster (links), Gruppeneinladung und Kriegsausbruch (oben Mitte), Rechtsklick-Menü,
+   Betrachten. Farben aus den Tokens, Kanal-Farben als --c an jeder Zeile. Alles in em (HUD-Größe skaliert mit).
+   ========================================================================== */
+
+/* ---------- Chat ----------
+   Am Fuß der linken Mittelzone (`ml`): über Steuerkompass und Kampfleiste, unter dem Gruppenfenster. Die Spalte kann schmal sein (breite
+   Kampfleiste in der Mitte) – der Chat behält seine Breite und schrumpft nur in der Höhe (Verlauf scrollt). */
+.hud-chat { margin-top: auto; flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; position: relative; width: min(26em, 40vw); font-size: 0.8em; pointer-events: none; }
+.hud-chat .chat-box { min-height: 0; }
+/* auf See (PC): neben dem Steuerkompass am unteren Rand, Kompass links */
+.hud-bl.with-chat { flex-direction: row; align-items: flex-end; justify-content: flex-start; gap: 0.6em; }
+.hud-bl.with-chat .hud-chat { order: 2; margin-top: 0; width: min(24em, 30vw); flex: none; }
+/* linke Mitte: Inhalt nie über die obere Kante schieben (Gruppenfenster oben, Chat unten) */
+.hud-ml { justify-content: safe center; }
+.hud-ml .hud-party { margin-bottom: auto; }
+.hud-chat .chat-pill { display: none; }
+.hud-chat .chat-box { display: flex; flex-direction: column; gap: 0.25em; padding: 0.35em 0.45em 0.4em; border-radius: var(--r-md); background: rgba(10, 8, 7, 0.28); border: 1px solid transparent; transition: background var(--t-med, 0.25s), border-color var(--t-med, 0.25s); }
+.hud-chat:hover .chat-box, .hud-chat[data-open='1'] .chat-box, .hud-chat.fresh .chat-box { background: rgba(10, 8, 7, 0.55); border-color: var(--glass-edge-soft); }
+.hud-chat .chat-head { display: none; align-items: center; justify-content: space-between; font: 700 0.78em var(--font-text); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-dim); }
+.hud-chat .chat-close { pointer-events: auto; border: 0; background: none; color: var(--ink-dim); font-size: 1.2em; padding: 0 0.3em; }
+.hud-chat .chat-log { max-height: 9.4em; min-height: 2.7em; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; display: flex; flex-direction: column; gap: 0.05em; pointer-events: none; overscroll-behavior: contain; }
+.hud-chat:hover .chat-log, .hud-chat[data-open='1'] .chat-log { pointer-events: auto; }
+.hud-chat .cl { margin: 0; color: var(--c, var(--ink)); line-height: 1.32; text-shadow: 0 1px 2px #000, 0 0 6px rgba(0, 0, 0, 0.85); overflow-wrap: anywhere; }
+.hud-chat .cl.ch-system { font-style: italic; opacity: 0.92; }
+.hud-chat .cn { pointer-events: auto; cursor: pointer; font-weight: 700; color: inherit; text-decoration: none; border-bottom: 1px dotted currentColor; }
+.hud-chat .cn:hover { filter: brightness(1.25); }
+.hud-chat .chat-form { display: none; align-items: center; gap: 0.35em; pointer-events: auto; padding: 0.2em 0.3em; border-radius: var(--r-sm); background: rgba(0, 0, 0, 0.6); border: 1px solid var(--glass-edge); }
+.hud-chat[data-open='1'] .chat-form { display: flex; }
+.hud-chat .chat-chan { flex: none; font: 700 0.92em var(--font-text); white-space: nowrap; max-width: 46%; overflow: hidden; text-overflow: ellipsis; }
+.hud-chat .chat-in { flex: 1 1 auto; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; padding: 0.2em 0; }
+.hud-chat .chat-send { flex: none; border: 0; background: none; color: var(--brass-200); padding: 0 0.2em; }
+
+/* Handy: eingeklappt als kleiner Knopf, ausgeklappt als Fenster über dem Steuerkompass (nie über den Touch-Knöpfen) */
+html.touch .hud-chat { width: auto; font-size: 0.82em; align-self: flex-start; }
+html.touch .hud-chat .chat-pill { display: inline-flex; align-items: center; gap: 0.35em; pointer-events: auto; padding: 0.3em 0.7em; border-radius: 999px; border: 1px solid var(--glass-edge); background: rgba(10, 8, 7, 0.62); color: var(--ink); font: 700 0.9em var(--font-text); }
+html.touch .hud-chat .chat-unread { min-width: 1.4em; padding: 0 0.35em; border-radius: 999px; background: var(--danger); color: #fff; font: 700 0.8em var(--font-num); text-align: center; }
+html.touch .hud-chat .chat-box { display: none; }
+html.touch .hud-chat[data-expanded='1'] .chat-pill { display: none; }
+html.touch .hud-chat[data-expanded='1'] .chat-box { display: flex; position: absolute; left: 0; bottom: 0; width: min(92vw, 24em); background: rgba(10, 8, 7, 0.8); border-color: var(--glass-edge); pointer-events: auto; z-index: 2; }
+html.touch .hud-chat[data-expanded='1'] .chat-head { display: flex; }
+html.touch .hud-chat[data-expanded='1'] .chat-log { pointer-events: auto; max-height: 30vh; }
+html.touch .hud-chat[data-expanded='1'] .chat-form { display: flex; }
+html.touch .hud-chat .chat-in { font-size: 16px; } /* iOS zoomt sonst beim Fokus */
+
+/* ---------- Gruppenfenster ---------- */
+.hud-party { width: min(15.5em, 44vw); padding: 0.4em 0.5em 0.45em; font-size: 0.82em; pointer-events: auto; }
+.hud-party .pf-head { display: flex; align-items: baseline; gap: 0.5em; margin-bottom: 0.3em; font: 700 0.78em var(--font-text); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-dim); }
+.hud-party .pf-head b { color: var(--brass-100); }
+.hud-party .pf-count { font-family: var(--font-num); }
+.hud-party .pf-more { margin-left: auto; border: 0; background: none; color: var(--brass-200); font-size: 1.25em; line-height: 1; padding: 0 0.25em; }
+.hud-party .pf-warn { margin: 0 0 0.35em; padding: 0.25em 0.45em; border-left: 3px solid var(--danger-hi); background: rgba(168, 50, 42, 0.25); color: #ffd2c4; font-weight: 700; font-size: 0.9em; }
+.hud-party .pf-list { display: grid; gap: 0.3em; }
+.hud-party .pf-row { --crest: #8a8a8a; display: grid; grid-template-columns: 0.3em 1.5em minmax(0, 1fr); gap: 0.4em; align-items: center; width: 100%; padding: 0.25em 0.35em 0.3em 0.25em; border: 1px solid var(--glass-edge-soft); border-radius: var(--r-sm); background: rgba(0, 0, 0, 0.32); text-align: left; color: var(--ink); }
+.hud-party .pf-row:hover { border-color: var(--brass-300); }
+.hud-party .pf-row.targeted { border-color: var(--target-friendly); box-shadow: 0 0 0 1px var(--target-friendly) inset; }
+.hud-party .pf-row.far { opacity: 0.72; }
+.hud-party .pf-crest { align-self: stretch; border-radius: 2px; background: var(--crest); }
+.hud-party .pf-icon { display: grid; place-items: center; width: 1.5em; height: 1.5em; border-radius: 50%; background: rgba(255, 255, 255, 0.08); font-size: 0.95em; }
+.hud-party .pf-main { display: grid; gap: 0.12em; min-width: 0; }
+.hud-party .pf-top { display: flex; gap: 0.4em; align-items: baseline; min-width: 0; }
+.hud-party .pf-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.hud-party .pf-lvl { margin-left: auto; font: 700 0.85em var(--font-num); font-style: normal; color: var(--brass-200); }
+.hud-party .pf-bar { position: relative; height: 0.42em; border-radius: 2px; background: rgba(0, 0, 0, 0.55); overflow: hidden; }
+.hud-party .pf-bar s { position: absolute; inset: 0; transform-origin: left; background: var(--danger); text-decoration: none; }
+.hud-party .pf-bar.wl { height: 0.28em; }
+.hud-party .pf-bar.wl s { background: var(--violet); }
+.hud-party .pf-row.low .pf-bar.hp s { background: var(--danger-hi); animation: pfLow 1s ease-in-out infinite alternate; }
+@keyframes pfLow { to { filter: brightness(1.5); } }
+.hud-party .pf-where { color: var(--ink-faint); font-size: 0.82em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html.touch .hud-party { width: min(13.5em, 46vw); }
+/* auf See kompakt: ohne Ortszeile (die Schiffstafel braucht die Höhe) */
+.hud-party.compact .pf-where { display: none; }
+.hud-party.compact .pf-row { padding-top: 0.18em; padding-bottom: 0.2em; }
+
+/* ---------- Einladung und Kriegsausbruch (oben Mitte) ---------- */
+.hud-invite, .hud-partywarn { width: min(24em, 92vw); max-width: 100%; font-size: 0.82em; pointer-events: auto; }
+.hud-invite { border-left: 3px solid var(--target-friendly); display: grid; gap: 0.35em; }
+.hud-invite .pi-kicker { font: 700 0.78em var(--font-text); letter-spacing: 0.14em; text-transform: uppercase; color: var(--target-friendly); }
+.hud-invite .pi-text b { color: var(--brass-100); }
+.hud-invite .pi-team { padding: 0 0.35em; border-left: 3px solid var(--crest, #888); background: rgba(0, 0, 0, 0.35); border-radius: 2px; white-space: nowrap; }
+.hud-invite .pi-bar { position: relative; display: block; height: 0.3em; background: rgba(0, 0, 0, 0.5); border-radius: 2px; overflow: hidden; }
+.hud-invite .pi-bar s { position: absolute; inset: 0; transform-origin: left; background: var(--brass-300); text-decoration: none; }
+.hud-invite .pi-btns { display: flex; gap: 0.5em; }
+.hud-invite .pi-btns button { flex: 1 1 0; padding: 0.4em 0.6em; border-radius: var(--r-sm); border: 1px solid var(--glass-edge); background: var(--wood-panel); color: var(--ink); font-weight: 700; }
+.hud-invite .pi-yes { border-color: var(--target-friendly) !important; color: #c8f5d9 !important; }
+.hud-partywarn { border-left: 3px solid var(--danger-hi); display: grid; gap: 0.15em; background: linear-gradient(180deg, rgba(90, 20, 14, 0.75), rgba(30, 10, 8, 0.8)); }
+.hud-partywarn .pw-title { font: 400 1.05em var(--font-serif); color: #ffc6b4; }
+.hud-partywarn .pw-time { font: 700 0.85em var(--font-num); color: var(--brass-100); }
+
+/* ---------- Rechtsklick-Menü ---------- */
+.pmenu { position: fixed; z-index: var(--z-overlay); min-width: 14em; max-width: min(22em, 92vw); padding: 0.3em; border-radius: var(--r-md); border: 1px solid var(--glass-edge); background: linear-gradient(180deg, rgba(34, 20, 12, 0.96), rgba(12, 8, 6, 0.97)); box-shadow: var(--shadow-2); font-size: calc(0.9rem * var(--hud-scale)); color: var(--ink); }
+.pmenu header { display: grid; padding: 0.3em 0.6em 0.35em; border-bottom: 1px solid var(--hairline); margin-bottom: 0.2em; }
+.pmenu header b { font: 400 1.05em var(--font-serif); color: var(--brass-100); }
+.pmenu header small { color: var(--ink-dim); font-size: 0.8em; }
+.pmenu button { display: grid; width: 100%; padding: 0.38em 0.6em; border: 0; border-radius: var(--r-sm); background: none; text-align: left; color: var(--ink); }
+.pmenu button small { color: var(--ink-faint); font-size: 0.78em; }
+.pmenu button:not(:disabled):hover, .pmenu button:not(:disabled):focus-visible { background: rgba(215, 174, 82, 0.16); color: var(--brass-50); }
+.pmenu button:disabled { color: var(--ink-faint); cursor: not-allowed; }
+.pmenu button:disabled span { text-decoration: none; }
+.pmenu button.pm-danger:not(:disabled) span { color: #ffb4a0; }
+html.touch .pmenu button { padding: 0.6em 0.7em; }
+
+/* ---------- Betrachten ---------- */
+.inspect { position: fixed; z-index: var(--z-overlay); left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(22em, 92vw); --crest: #8a8a8a; font-size: calc(0.92rem * var(--hud-scale)); color: var(--ink); border-top: 3px solid var(--crest); }
+.inspect .ins-head { display: flex; align-items: center; gap: 0.6em; margin-bottom: 0.2em; }
+.inspect .ins-crest { width: 2.1em; height: 2.4em; flex: none; clip-path: polygon(0 0, 100% 0, 100% 62%, 50% 100%, 0 62%); background: linear-gradient(180deg, var(--crest), rgba(0, 0, 0, 0.6)); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2); }
+.inspect .ins-title { display: grid; }
+.inspect .ins-name { font: 400 1.25em var(--font-serif); color: var(--brass-100); }
+.inspect .ins-lvl { font: 700 0.85em var(--font-num); color: var(--ink-dim); letter-spacing: 0.08em; }
+.inspect .ins-team { margin: 0.1em 0 0.5em; padding: 0.15em 0.5em; border-left: 3px solid var(--crest); background: rgba(0, 0, 0, 0.35); font-weight: 700; font-size: 0.88em; }
+.inspect .ins-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.25em 0.8em; margin: 0 0 0.7em; }
+.inspect .ins-grid dt { color: var(--ink-dim); font-size: 0.85em; }
+.inspect .ins-grid dd { margin: 0; overflow-wrap: anywhere; }
+.inspect .ins-role { font-weight: 700; color: var(--brass-200); }
+.inspect .ins-stance.friendly { color: var(--target-friendly); font-weight: 700; }
+.inspect .ins-stance.neutral { color: var(--target-neutral); font-weight: 700; }
+.inspect .ins-stance.hostile { color: var(--target-hostile); font-weight: 700; }
+.inspect .ins-btns { display: flex; gap: 0.5em; flex-wrap: wrap; }
+.inspect .ins-btns button { flex: 1 1 0; padding: 0.45em 0.6em; border-radius: var(--r-sm); min-width: 0; }
+.inspect .ins-btns button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ---------- Zielfenster: Mitspieler ---------- */
+.hud-target[data-kind='player'] .tf-crest { border-radius: 50%; }
+/* Rechtsklick / langer Druck auf das Zielfenster öffnet das Spielermenü */
+.hud .hud-target { pointer-events: auto; }

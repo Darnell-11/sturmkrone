@@ -1,4 +1,15 @@
 import { TargetFrame } from '../ui/targetFrame';
+import { MmoClient, type PartyWarn, type PendingInvite } from '../net/mmoClient';
+import { createMmoTransport, type MmoTransport } from '../net/mmoTransport';
+import { MMO, newProfile, type InspectInfo, type PartyView, type PlayerProfile, type PlayerState, type ShareKind } from '../net/mmoProtocol';
+import { groupAllowed, rideSlot, safeZoneAt } from '../net/partyRules';
+import { safeZones } from '../social/safeZones';
+import { buildPlayerMenu, inspectView, type PlayerMenuAction } from '../social/playerMenu';
+import { CHAT_DEF, stickyLabel } from '../social/chat';
+import { ChatWindow } from '../ui/chatWindow';
+import { PartyFrames, type PartyFrameView } from '../ui/partyFrames';
+import { PartyPrompt } from '../ui/partyPrompt';
+import { InspectPanel, PlayerMenuUi } from '../ui/playerMenuUi';
 import { lowerTier, QUALITY_TIERS, type QualityTier } from '../data/qualityTiers';
 import { FACTION_LABELS, rankIndex, rankName } from '../data/ranks';
 import { TOUCH_FOOT, TOUCH_FOOT_PAGE2, TOUCH_SEA } from '../data/touchLayout';
@@ -86,7 +97,8 @@ import { FACTIONS, FACTION_IDS, STANCE_LABEL, STANDING_EVENTS, borderDistance, c
 import { AMMO_UNLOCK, GOODS, GOOD_BY_ID, UPKEEP, WAR_DEMAND, bagMax, cargoCap, emptyEconomy, profileOf, type EconomyState, type GoodId } from '../data/economy';
 import { applySalvage, buyGood, takeCargo, cargoUsed, rollSalvage, decayHeat, eqPriceOf, inspectCargo, marketAt, marketPrice, moraleEfficiency, quoteBuy, quoteSell, recordLedger, roleOf, sellGood, stepUpkeep, tariffOf, trendOf, upkeepOf, warCargo, yardRepairCost, type MarketSite, type Tariff } from './economyEngine';
 import { REP, applyOutcome, battleOutcome, blueprintDiscount, emptyReputation, harborDiscount, hasService, honorTitle, isPeaceful, repTier } from '../data/reputation';
-import type { BattleMark, BattleResult } from '../naval/naval';
+import type { BattleMark, BattleResult, EnemyShip } from '../naval/naval';
+import type { EnemyKind } from '../data/combat';
 import { createRaidContext } from '../raid/raidSession';
 import { newRaidInstanceId, type RaidEnd, type RaidView } from '../raid/raidDirector';
 import { ESCORT_MAX, MARINE_RAID_PENALTY, MERCENARY_ESCORT_PRICE, mercenarySlots, raidAccess } from '../raid/raidRules';
@@ -251,6 +263,21 @@ export class Game {
   /** 4.6J: Ziel-Fenster (Target Frame) unter dem Kompass */
   private targetFrame!: TargetFrame;
   private helm!: HelmDial;
+  /** 4.8A: MMO-Schicht – Client, Transport (lokaler Shard oder Server) und ihre Anzeigen */
+  private mmo: MmoClient | null = null;
+  private mmoTransport: MmoTransport | null = null;
+  private chatUi!: ChatWindow;
+  private partyUi!: PartyFrames;
+  private promptUi!: PartyPrompt;
+  private playerMenuUi!: PlayerMenuUi;
+  private inspectUi!: InspectPanel;
+  private mmoUiT = 0;
+  /** zuletzt gemeldeter Steckbrief (Vergleich ohne neue Zeichenketten) */
+  private readonly mmoKey = { level: -1, team: '', spec: '', ship: -1, gear: -1, name: '' };
+  private readonly partyRows: PartyFrameView[] = [];
+  private pendingRide: { e: EnemyShip; rx: number; rz: number } | null = null;
+  private shareNoteT = 0;
+  private rightDown: { x: number; y: number; t: number } | null = null;
   private sectorBanner!: SectorBanner;
   private edgeWarning!: EdgeWarning;
   private raidPanel!: RaidPanel;
@@ -384,6 +411,42 @@ export class Game {
     this.markers = new NpcMarkers(uiRoot);
     this.raidPanel = new RaidPanel(zone.ml);
     this.helm = new HelmDial(zone.bl);
+    // 4.8A: Gruppenfenster (links), Einladung und Kriegsausbruch (oben Mitte), Chat (unten links), Rechtsklick-Menü und Betrachten
+    this.partyUi = new PartyFrames(zone.ml);
+    this.partyUi.onPick = (id) => { this.targetPlayer(id); };
+    this.partyUi.onMenu = (id, x, y) => this.openPlayerMenu(id, x, y);
+    this.partyUi.onHeaderMenu = (x, y) => this.openSelfMenu(x, y);
+    this.promptUi = new PartyPrompt(zone.tc);
+    this.promptUi.onAccept = () => this.mmo?.accept();
+    this.promptUi.onDecline = () => this.mmo?.decline();
+    this.chatUi = new ChatWindow(zone.ml, {
+      onSubmit: (line) => this.mmo?.submit(line),
+      onName: (id, name, x, y, menu) => { if (menu) this.openPlayerMenu(id, x, y); else this.chatUi.open(`/w ${name} `); },
+      canOpen: () => !!this.mmo && this.state.is('play') && !this.menus.visible && !this.dialogUi.isOpen,
+      busyKey: () => !!this.world.contextLabel,
+      quickReply: () => (this.mmo?.canQuickReply() ? this.mmo.lastWhisper?.name ?? '' : ''),
+      channel: () => { const st = this.mmo?.sticky ?? { ch: 'sagen' as const }; return { text: stickyLabel(st), color: CHAT_DEF[st.ch].color }; },
+      onOpenChange: (open) => { if (open) this.input.releaseAll(); },
+    });
+    this.chatUi.setVisible(false);
+    this.playerMenuUi = new PlayerMenuUi(uiRoot);
+    this.inspectUi = new InspectPanel(uiRoot);
+    // Rechtsklick auf die Spielwelt (ohne Ziehen: Ziehen mit gedrückter rechter Taste dreht die Kamera) und auf das Zielfenster
+    canvas.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button === 2) this.rightDown = { x: e.clientX, y: e.clientY, t: performance.now() }; });
+    addEventListener('pointerup', (e) => {
+      const d = this.rightDown;
+      if (e.button !== 2 || !d) return;
+      this.rightDown = null;
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) <= 6 && performance.now() - d.t < 450) this.rightClickWorld(e.clientX, e.clientY);
+    });
+    this.targetFrame.el.addEventListener('contextmenu', (e) => { e.preventDefault(); this.targetFrameMenu(e.clientX, e.clientY); });
+    {
+      let press = 0;
+      this.targetFrame.el.addEventListener('pointerdown', (e) => { if (e.pointerType !== 'touch') return; const x = e.clientX, y = e.clientY; press = window.setTimeout(() => this.targetFrameMenu(x, y), 450); });
+      const stop = () => window.clearTimeout(press);
+      this.targetFrame.el.addEventListener('pointerup', stop);
+      this.targetFrame.el.addEventListener('pointercancel', stop);
+    }
     this.occupation = new OccupationSystem({
       save: () => this.save,
       world: this.world,
@@ -419,7 +482,7 @@ export class Game {
     this.world.onShipSunk = (e) => {
       if (!this.save || e.captured) return;
       const p = this.save.player;
-      if (!e.companion) { this.save.progress.stats.sunk++; this.questEvent({ type: 'sink' }); }
+      if (!e.companion) { this.save.progress.stats.sunk++; this.questEvent({ type: 'sink' }); this.mmo?.share('sink', e.role, 1, e.ship.x, e.ship.z); }
       // Ansehen: die Marine merkt sich versenkte Schiffe, Kurogane-Schwarzsegler zu versenken gefällt ihr
       if (!e.companion && e.power === 'marine') this.shiftStanding('marine', STANDING_EVENTS.marineShipSunk);
       else if (!e.companion && e.power === 'kurogane') this.shiftStanding('marine', STANDING_EVENTS.kuroganeShipSunk);
@@ -641,6 +704,8 @@ export class Game {
     Character.beginStep();
     this.input.poll();
     this.input.beginStep();
+    // 4.8A: MMO-Schicht (Mitspieler, Gruppe, Chat) – startet in der geteilten Welt von selbst, ruht im Menü
+    this.mmoTick(dt);
     if (this.state.is('play')) {
       if (this.input.pressed('pause')) { this.pause(); return; }
       if (this.input.pressed('map')) { this.openWorldMap(); return; }
@@ -902,6 +967,7 @@ export class Game {
   private onModeChange(m: SeaMode) {
     this.sceneChanged();
     this.touch.setLayout(m === 'foot' ? FOOT_TOUCH : TOUCH_SEA);
+    this.dockSocial(m);
     if (this.state.is('play')) this.hud.hint(this.controlsHint(), 8);
   }
 
@@ -1520,6 +1586,8 @@ export class Game {
     this.grantXp(xp, e.def.boss ? 200 : e.def.elite ? 15 : 3);
     if (this.save) this.save.progress.stats.kills++;
     this.questEvent({ type: 'kill', kind: e.kind });
+    // 4.8A: geteilter Fortschritt – die Gruppe in der Nähe zählt den Abschuss mit
+    this.mmo?.share('kill', e.kind, 1, e.x, e.z);
   }
 
   // ---------- Aufträge und Welt ----------
@@ -3810,6 +3878,8 @@ export class Game {
         this.payMerit(n.nation, n.kp, n.reason);
         // 4.7E: Kriegspunkte für das eigene Team zählen als Beitrag zu den Live-Einsätzen dieser Insel bzw. ringsum
         if (n.nation === this.teamId()) this.warQuestDir.merit(n.nation, n.playerId, n.kp, pos.x, pos.z, n.islandId ?? null);
+        // 4.8A: Kriegspunkte zählen für die Gruppe in der Nähe mit (Live-Kriegs-Einsätze)
+        this.mmo?.share('merit', n.islandId ?? '', n.kp, pos.x, pos.z);
         return;
       case 'auftrag': if (n.contract.playerId === this.world.playerEntityId) this.contractEnded(n.contract); return;
       case 'waffenstillstand': toast(`Waffenstillstand zwischen ${dat(n.a)} und ${dat(n.b)}${n.gold > 0 ? ` – ${mid(n.payer)} zahlt ${fmtInt(n.gold)} Gold Reparationen` : ''}.`, 6); return;
@@ -5637,6 +5707,7 @@ export class Game {
   }
 
   private enterPlay(slot: number, data: SaveData) {
+    this.stopMmo();
     this.world.abortRaid();
     this.raidPanel.update(null);
     this.raidView = null;
@@ -6091,7 +6162,412 @@ export class Game {
     this.loop.resetClock();
   }
 
+  // ---------- 4.8A: MMO-Schicht (Mitspieler, Gruppen, Chat, Rechtsklick-Menü) ----------
+
+  /** Kennung dieses Tabs im Shard (bleibt beim Neuladen gleich) */
+  private mmoTabId(): string {
+    try {
+      const k = 'sk-mmo-id';
+      let id = sessionStorage.getItem(k) ?? '';
+      if (!/^p:[a-z0-9]{6,16}$/.test(id)) {
+        const a = new Uint32Array(2);
+        crypto.getRandomValues(a);
+        id = `p:${a[0].toString(36)}${a[1].toString(36)}`.slice(0, 14);
+        sessionStorage.setItem(k, id);
+      }
+      return id;
+    } catch { return `p:${Math.floor(Math.random() * 1e9).toString(36)}`; }
+  }
+
+  /**
+   * 4.8A: Chat und Gruppenfenster nach Bedienart legen – zu Fuß am Fuß der linken Mitte (über der Kampfleiste), auf See neben dem Steuerkompass
+   * (die Schiffstafel nimmt dort die linke Spalte ein) und das Gruppenfenster kompakt; am Handy bleibt der Chat ein Knopf in der linken Mitte.
+   */
+  private dockSocial(m: SeaMode) {
+    const sea = m === 'sail' && !document.documentElement.classList.contains('touch');
+    this.chatUi.dock(sea ? this.hud.regions.bl : this.hud.regions.ml);
+    // die Touch-Belegung wechselt mit der Bedienart: das ausgeklappte Fenster neu über die Knöpfe legen (nach dem Neuaufbau der Knöpfe)
+    requestAnimationFrame(() => this.chatUi.refit());
+    this.partyUi.el.classList.toggle('compact', m === 'sail');
+  }
+
+  /** Lebt die MMO-Schicht? (Prüfungen) */
+  get mmoClient(): MmoClient | null { return this.mmo; }
+
+  /** Geteilte Welt betreten: Transport (lokaler Shard oder Server) und Client starten, Mitspieler in die Seewelt */
+  private startMmo() {
+    if (this.mmo || !this.save) return;
+    const id = this.mmoTabId();
+    const war = () => this.world.war;
+    const nation = (t: string) => (t && FACTIONS[t as FactionId] ? FACTIONS[t as FactionId].name : 'Ungebunden');
+    const url = (import.meta.env.VITE_MMO_SERVER_URL as string | undefined) ?? '';
+    this.mmoTransport = createMmoTransport(url, {
+      id,
+      diplomacy: { stance: (a, b) => war()?.partyStance(a || null, b || null) ?? (a && a === b ? 'gleich' : 'neutral') },
+      zones: { safeAt: (x, z) => safeZoneAt(safeZones(), x, z)?.name ?? '' },
+      nationName: nation,
+      botWorld: this.world.mmoBotWorld(),
+      seed: ((this.save.meta.created % 4294967296) ^ 0x6d6d6f) >>> 0,
+    });
+    const mmo = new MmoClient(this.mmoTransport, id, () => this.mmoProfile(), (out) => this.mmoState(out), {
+      onChat: (l) => this.chatUi.add(l),
+      onNotice: (text, tone) => { if (tone !== 'info') this.hud.toast(text, 3.5); },
+      onParty: (p, prev) => this.onPartyChanged(p, prev),
+      onInvite: (inv) => this.showInvite(inv),
+      onWarn: (w) => this.showPartyWarn(w),
+      onInspect: (info) => this.showInspect(info),
+      onHeal: (name, frac) => this.partyHealed(name, frac),
+      onHorn: (name, heal, will) => this.partyHorn(name, heal, will),
+      onShare: (_from, name, what, ref, amount) => this.partyShare(name, what, ref, amount),
+      onHit: (_from, name, dmg) => this.pvpHit(name, dmg),
+      onRide: (ok, _ship, text) => this.rideAnswer(ok, text),
+      onRideRequest: () => this.requestRide(),
+      onUnrideRequest: () => this.endRideNow(),
+    });
+    this.mmo = mmo;
+    mmo.start();
+    this.world.attachMmo(mmo);
+    this.world.mmoStance = (team) => war()?.partyStance(this.teamId(), team || null) ?? 'neutral';
+    this.world.onPartyHeal = (x, z, r, k) => this.healPartyAround(x, z, r, k);
+    this.world.onPartyHorn = (x, z, heal, will) => this.mmo?.horn(x, z, heal, will);
+    this.world.onPeerHit = (pid, dmg) => this.mmo?.hit(pid, dmg);
+    this.world.onRideEnd = () => this.endRideNow();
+    this.mmoKey.level = -1;
+    this.dockSocial(this.world.mode);
+    this.chatUi.setVisible(true);
+  }
+
+  /** Geteilte Welt verlassen (Hauptmenü, anderer Spielstand, private Instanz) */
+  private stopMmo() {
+    if (!this.mmo) return;
+    this.world.detachMmo();
+    this.mmo.stop();
+    this.mmo = null;
+    this.mmoTransport = null;
+    this.world.mmoStance = null;
+    this.world.onPartyHeal = null; this.world.onPartyHorn = null; this.world.onPeerHit = null; this.world.onRideEnd = null;
+    this.chatUi.close();
+    this.chatUi.setVisible(false);
+    this.partyUi.update(0, MMO.partyMax, [], '');
+    this.promptUi.showInvite(null);
+    this.promptUi.showWarn(null);
+    this.playerMenuUi.close();
+    this.inspectUi.hide();
+    this.pendingRide = null;
+  }
+
+  /** Je Logikschritt: MMO starten/stoppen, Client und Anzeigen führen */
+  private mmoTick(dt: number) {
+    const shared = !!this.save && this.world.worldGates.presence && !this.world.prologueRunning;
+    const live = this.state.is('play', 'pause');
+    if (!this.mmo) { if (shared && this.state.is('play')) this.startMmo(); return; }
+    if (!shared) { this.stopMmo(); return; }
+    if (!live) return;
+    this.mmo.update(dt);
+    this.mmoUiT -= dt;
+    if (this.mmoUiT > 0) return;
+    this.mmoUiT = 0.125;
+    // Steckbrief geändert (Stufe, Team, Klasse, Schiff, Ausrüstung)? Dann neu an den Shard
+    const sv = this.save!;
+    const c = this.classSave();
+    const k = this.mmoKey;
+    const team = this.teamId() ?? '', spec = (c && classSpec(c)) ?? '', gear = WEAPONS[weaponEq(sv.gear)]?.tier ?? 1;
+    if (k.level !== sv.player.level || k.team !== team || k.spec !== spec || k.ship !== sv.ship.tier || k.gear !== gear || k.name !== sv.player.name) {
+      const first = k.level < 0;
+      k.level = sv.player.level; k.team = team; k.spec = spec; k.ship = sv.ship.tier; k.gear = gear; k.name = sv.player.name;
+      if (!first) this.mmo.pushProfile();
+    }
+    this.refreshPartyUi();
+    const inv = this.mmo.invite;
+    if (inv) this.promptUi.tickInvite((inv.until - performance.now() / 1000) / Math.max(1, inv.total));
+    const w = this.mmo.warn;
+    if (w) this.promptUi.showWarn(this.warnText(w), w.until - performance.now() / 1000, w.fight);
+  }
+
+  /** Steckbrief des eigenen Kapitäns für den Shard */
+  private mmoProfile(): PlayerProfile {
+    const s = this.save!;
+    const p = s.player;
+    const c = this.classSave();
+    const sp = c ? classSpec(c) : null;
+    const prof = newProfile();
+    prof.name = p.name;
+    prof.level = p.level;
+    prof.base = c ? classBase(c) : '';
+    prof.spec = sp ?? '';
+    prof.role = c ? classRole(c) : '';
+    prof.classLabel = c ? classTitle(c) : '';
+    prof.team = this.teamId() ?? '';
+    prof.gearTier = Math.max(1, Math.min(5, WEAPONS[weaponEq(s.gear)]?.tier ?? 1));
+    prof.shipTier = s.ship.tier;
+    prof.shipName = SHIP_CLASSES[Math.max(0, Math.min(SHIP_CLASSES.length - 1, s.ship.tier))].n;
+    prof.gender = p.look.gender === 'female' ? 'w' : 'm';
+    let h = 2166136261;
+    for (let i = 0; i < p.name.length; i++) h = Math.imul(h ^ p.name.charCodeAt(i), 16777619);
+    prof.look = (h >>> 0) % 100000;
+    return prof;
+  }
+
+  /** Eigener Zustand für den Shard (15 Hz) */
+  private mmoState(out: PlayerState): PlayerState {
+    this.world.mmoPose(out);
+    const f = this.world.playerFoot;
+    out.hp = f ? f.hp : 1; out.mhp = f ? Math.max(1, f.maxHp) : 1;
+    out.will = this.world.playerFoot?.fighter.will ?? 0; out.mwill = 100;
+    out.zone = this.world.mmoZone(out.x, out.z, out.dom === 'sea');
+    return out;
+  }
+
+  // ---------- Gruppe ----------
+
+  private onPartyChanged(p: PartyView | null, prev: PartyView | null) {
+    const mmo = this.mmo;
+    if (!mmo) return;
+    if (p && !prev) { this.hud.toast(`Gruppe gebildet (${p.members.length}/${MMO.partyMax}) – /p schreibt an die Gruppe.`, 3.5); audio.play('coin', 0.5); }
+    if (!p && prev) { this.hud.toast('Du bist nicht mehr in einer Gruppe.', 3); if (this.world.riding) this.endRideNow(); }
+    // Live-Kriegs-Einsätze: die Gruppe zählt gemeinsam (bis zu fünf Teilnehmer je Einsatz)
+    const team = this.teamId();
+    if (p && team) {
+      const ids = p.members.map((m) => (m.id === mmo.id ? this.world.playerEntityId : m.id)).slice(0, MMO.partyMax);
+      for (const q of this.warQuestDir.active(team, this.warQuestScratch)) this.warQuestDir.join(q.id, ids);
+    }
+    this.refreshPartyUi();
+  }
+
+
+  private warnText(w: PartyWarn): string {
+    const n = (t: string) => (t && FACTIONS[t as FactionId] ? FACTIONS[t as FactionId].name : 'Ungebunden');
+    return `${n(w.a)} und ${n(w.b)} liegen im Krieg – verfeindete Mitglieder verlassen die Gruppe.`;
+  }
+
+  private showPartyWarn(w: PartyWarn | null) {
+    if (!w) { this.promptUi.showWarn(null); return; }
+    this.promptUi.showWarn(this.warnText(w), w.until - performance.now() / 1000, w.fight);
+    audio.play('horn', 0.6);
+  }
+
+  private showInvite(inv: PendingInvite | null) {
+    if (!inv) { this.promptUi.showInvite(null); return; }
+    const f = inv.team ? FACTIONS[inv.team as FactionId] : null;
+    this.promptUi.showInvite({ name: inv.name, level: inv.level, team: f ? `Team ${f.name}` : 'Ungebunden', teamColor: f?.color ?? '#9AA3AE', total: inv.total });
+    audio.play('cutin', 0.4);
+  }
+
+  private refreshPartyUi() {
+    const mmo = this.mmo;
+    const party = mmo?.party;
+    if (!mmo || !party) { this.partyUi.update(0, MMO.partyMax, [], ''); return; }
+    const me = this.world.playerPos;
+    const rows = this.partyRows;
+    let n = 0;
+    const sel = this.world.targets.state.id;
+    for (const m of party.members) {
+      if (m.id === mmo.id) continue;
+      const v = mmo.vitals.get(m.id), r = mmo.remotes.get(m.id);
+      const x = v ? v.x : r ? r.view.x : me.x, z = v ? v.z : r ? r.view.z : me.z;
+      const d = Math.hypot(x - me.x, z - me.z);
+      const spec = SPECS[m.spec as SpecId];
+      const f = m.team ? FACTIONS[m.team as FactionId] : null;
+      const row = rows[n] ?? (rows[n] = { id: '', name: '', level: 0, icon: '', role: '', crest: '', leader: false, hpFrac: 1, willFrac: 0, where: '', near: false, targeted: false });
+      row.id = m.id; row.name = m.name; row.level = mmo.profiles.get(m.id)?.level ?? m.level;
+      row.icon = spec?.crest ?? '•'; row.role = m.role || 'Rolle offen'; row.crest = f?.color ?? '#9AA3AE'; row.leader = party.leader === m.id;
+      row.hpFrac = v ? v.hp / Math.max(1, v.mhp) : r ? r.last.hp / Math.max(1, r.last.mhp) : 1;
+      row.willFrac = v ? v.will / Math.max(1, v.mwill) : 0;
+      row.where = v?.ride ? `an Bord bei ${mmo.nameOf(v.ride)}` : `${v?.zone || r?.last.zone || 'unterwegs'} · ${d < 15 ? 'in der Nähe' : fmtDist(d)}`;
+      row.near = !!r?.live;
+      const ship = this.world.mmoLive?.shipOf(m.id);
+      row.targeted = sel === m.id || (!!ship && sel === ship.ship.entityId);
+      n++;
+    }
+    rows.length = n;
+    const w = mmo.warn;
+    this.partyUi.update(party.members.length, MMO.partyMax, rows, w ? `Kriegsausbruch – Trennung in ${Math.max(0, Math.ceil(w.until - performance.now() / 1000))} s` : '');
+  }
+
+  /** Mitspieler anvisieren (Gruppenfenster, Menü): Figur oder Schiff */
+  private targetPlayer(id: string): boolean {
+    const live = this.world.mmoLive;
+    if (!live) return false;
+    if (live.target(id) && this.world.targets.selectId(id, 'click')) return true;
+    const e = live.shipOf(id);
+    if (e && this.world.targets.selectId(e.ship.entityId, 'click')) return true;
+    const r = this.mmo?.remotes.get(id), v = this.mmo?.vitals.get(id);
+    const x = r?.view.x ?? v?.x, z = r?.view.z ?? v?.z;
+    const me = this.world.playerPos;
+    this.hud.toast(x !== undefined && z !== undefined ? `${this.mmo?.nameOf(id)} ist zu weit entfernt (${fmtDist(Math.hypot(x - me.x, z - me.z))}).` : `${this.mmo?.nameOf(id)} ist außer Sicht.`, 2.5);
+    return false;
+  }
+
+  private canTargetPlayer(id: string): boolean {
+    const live = this.world.mmoLive;
+    return !!live && (!!live.target(id) || !!live.shipOf(id));
+  }
+
+  /** Schiff des Anführers in Mitfahr-Reichweite (null = keins) */
+  private rideTargetShip(id: string): EnemyShip | null {
+    const mmo = this.mmo;
+    if (!mmo?.party || mmo.party.leader !== id || id === mmo.id) return null;
+    const e = this.world.mmoLive?.shipOf(id) ?? null;
+    if (!e) return null;
+    const s = this.world.ship;
+    return Math.hypot(e.ship.x - s.x, e.ship.z - s.z) <= MMO.rideRange ? e : null;
+  }
+
+  /** /anbord, Menü „An Bord gehen“: beim Shard anfragen (Platz an Deck nach Platz in der Gruppe) */
+  private requestRide() {
+    const mmo = this.mmo;
+    if (!mmo?.party) { mmo?.system('Mitfahren geht nur in einer Gruppe.'); return; }
+    const leader = mmo.party.leader;
+    if (leader === mmo.id) { mmo.system('Du führst die Gruppe selbst – deine Mitstreiter können bei dir an Bord kommen.'); return; }
+    if (!this.world.canRide()) { mmo.system('Mitfahren geht nur von deinem Schiff aus (am Steuer oder an Deck).'); return; }
+    const e = this.rideTargetShip(leader);
+    if (!e) { mmo.system(`Das Schiff von ${mmo.nameOf(leader)} ist zu weit weg – höchstens ${MMO.rideRange} m.`); return; }
+    const k = Math.max(0, mmo.party.members.findIndex((m) => m.id === mmo.id) - 1);
+    const slot = rideSlot(k, e.ship.cls.L, e.ship.cls.W, { x: 0, z: 0 });
+    this.pendingRide = { e, rx: slot.x, rz: slot.z };
+    mmo.ride(leader, slot.x, 0, slot.z);
+  }
+
+  private rideAnswer(ok: boolean, text: string) {
+    const p = this.pendingRide;
+    this.pendingRide = null;
+    if (ok && p && this.world.rideOn(p.e, p.rx, p.rz)) { this.mmo?.system(text); return; }
+    if (ok && !p) return;
+    if (!ok && this.world.riding) { this.world.endRide(true); this.hud.toast(text || 'Du gehst von Bord.', 3); return; }
+    if (!ok) this.hud.toast(text, 3);
+    else this.mmo?.unride();
+  }
+
+  private endRideNow() {
+    if (!this.world.riding) return;
+    this.mmo?.unride();
+    this.world.endRide(true);
+    this.hud.toast('Ein Beiboot bringt dich zurück an Bord deines Schiffs.', 3);
+  }
+
+  // ---------- Rechtsklick-Menü und Betrachten ----------
+
+  /** Rechtsklick auf die Spielwelt: Mitspieler (Figur oder Schiff) unter dem Zeiger? */
+  private rightClickWorld(x: number, y: number) {
+    if (!this.mmo || !this.state.is('play')) return;
+    const c = this.world.targets.peekAt(x, y, innerWidth, innerHeight, (t) => t.kind === 'player' || (t.kind === 'ship' && !!(t.ref as EnemyShip | null)?.peer?.mmo));
+    if (!c) return;
+    const id = c.kind === 'player' ? c.id : c.kind === 'ship' ? ((c.ref as EnemyShip | null)?.peer?.mmo ?? '') : '';
+    if (id) this.openPlayerMenu(id, x, y);
+  }
+
+  /** Rechtsklick (bzw. langer Druck) auf das Zielfenster */
+  private targetFrameMenu(x: number, y: number) {
+    const t = this.world.targets;
+    if (!this.mmo || !t.state.id || !t.sel.alive) return;
+    const sel = t.sel;
+    const id = sel.kind === 'player' ? sel.id : sel.kind === 'ship' ? ((sel.ref as EnemyShip | null)?.peer?.mmo ?? '') : '';
+    if (id) this.openPlayerMenu(id, x, y);
+  }
+
+  private openPlayerMenu(id: string, x: number, y: number) {
+    const mmo = this.mmo;
+    if (!mmo) return;
+    if (id === mmo.id) { this.openSelfMenu(x, y); return; }
+    const prof = mmo.remotes.get(id)?.profile ?? mmo.profiles.get(id);
+    if (!prof) return;
+    const stance = this.world.war?.partyStance(this.teamId(), prof.team || null) ?? 'neutral';
+    const items = buildPlayerMenu({
+      self: false, targetName: prof.name, stance, partySize: mmo.partySize, leader: mmo.leader, member: mmo.inParty(id), canTarget: this.canTargetPlayer(id),
+      rideable: !!this.rideTargetShip(id) && this.world.canRide(), riding: !!this.world.riding,
+    });
+    const f = prof.team ? FACTIONS[prof.team as FactionId] : null;
+    this.playerMenuUi.open(prof.name, `Stufe ${prof.level} · ${f ? `Team ${f.name}` : 'Ungebunden'}`, items, x, y, (a) => this.playerMenuAction(a, id, prof.name));
+  }
+
+  private openSelfMenu(x: number, y: number) {
+    const mmo = this.mmo;
+    if (!mmo || !this.save) return;
+    const items = buildPlayerMenu({ self: true, targetName: this.save.player.name, stance: 'gleich', partySize: mmo.partySize, leader: mmo.leader, member: false, canTarget: false, rideable: false, riding: !!this.world.riding });
+    this.playerMenuUi.open(this.save.player.name, 'Du', items, x, y, (a) => this.playerMenuAction(a, mmo.id, this.save?.player.name ?? ''));
+  }
+
+  private playerMenuAction(a: PlayerMenuAction, id: string, name: string) {
+    const mmo = this.mmo;
+    if (!mmo) return;
+    switch (a) {
+      case 'invite': mmo.inviteKey(id); break;
+      case 'whisper': this.chatUi.open(`/w ${name} `); break;
+      case 'inspect': mmo.inspect(id); break;
+      case 'target': this.targetPlayer(id); break;
+      case 'ride': this.requestRide(); break;
+      case 'promote': mmo.promote(id); break;
+      case 'kick': mmo.kick(id); break;
+      case 'leave': mmo.leave(); break;
+      case 'unride': this.endRideNow(); break;
+    }
+  }
+
+  private showInspect(info: InspectInfo) {
+    const mmo = this.mmo;
+    if (!mmo) return;
+    const id = info.profile.id;
+    const v = inspectView(info, (t) => { const f = FACTIONS[t as FactionId]; return f ? { name: f.name, color: f.color } : { name: 'Ungebunden', color: '#9AA3AE' }; });
+    const member = mmo.inParty(id);
+    const can = !member && groupAllowed(info.stance) && (mmo.partySize === 0 || (mmo.leader && mmo.partySize < MMO.partyMax));
+    const invite = member ? null : { enabled: can, label: groupAllowed(info.stance) ? 'In Gruppe einladen' : 'Einladen — Gesperrt (Kriegszustand)' };
+    this.inspectUi.show(v, invite, () => this.chatUi.open(`/w ${info.profile.name} `), () => mmo.inviteKey(id));
+  }
+
+  // ---------- Heilung, Sturmhorn, geteilter Fortschritt, Spieler gegen Spieler ----------
+
+  /** Eigene Heilung mit Radius (Priester, Lebensstrom): Gruppe und Verbündete in Reichweite; ein angewählter verbündeter Mitspieler immer (gezielt) */
+  private healPartyAround(x: number, z: number, r: number, k: number) {
+    const mmo = this.mmo, live = this.world.mmoLive;
+    if (!mmo || !live || k <= 0) return;
+    const sel = this.world.targets.state.id;
+    for (const rp of mmo.list) {
+      if (!rp.live) continue;
+      const rel = live.relationOf(rp);
+      if (rel.relation !== 'friendly') continue;
+      const d = Math.hypot(rp.view.x - x, rp.view.z - z);
+      const aimed = sel === rp.id && d <= MMO.healRange;
+      if ((r > 0 && d <= r + 1) || aimed) mmo.heal(rp.id, k);
+    }
+  }
+
+  private partyHealed(name: string, frac: number) {
+    const hp = this.world.playerHp;
+    if (!hp) return;
+    this.world.healFrac(frac);
+    this.hud.toast(`${name} heilt dich (+${Math.round(frac * 100)} %).`, 2);
+  }
+
+  private partyHorn(name: string, heal: number, will: number) {
+    this.world.healFrac(heal);
+    this.world.playerFoot?.engine.addWill(will);
+    this.hud.toast(`Sturmhorn von ${name}: Heilung und Willenskraft +${Math.round(will)}!`, 2.5);
+    audio.play('horn', 0.5);
+  }
+
+  private partyShare(name: string, what: ShareKind, ref: string, amount: number) {
+    if (!this.save) return;
+    if (what === 'kill') this.questEvent({ type: 'kill', kind: ref as EnemyKind });
+    else if (what === 'sink') this.questEvent({ type: 'sink' });
+    else if (what === 'merit') {
+      const team = this.teamId();
+      const pos = this.world.playerPos;
+      if (team) this.warQuestDir.merit(team, this.world.playerEntityId, amount, pos.x, pos.z, ref || null);
+    }
+    this.shareNoteT -= 1;
+    if (this.shareNoteT <= 0) { this.shareNoteT = 6; this.hud.toast(`Gruppenfortschritt: ${name} zählt für dich mit.`, 2); }
+  }
+
+  /** Beschuss durch einen Mitspieler (Spieler gegen Spieler: der Shard hat Krieg, keine Gruppe und keine Schutzzone geprüft) */
+  private pvpHit(name: string, dmg: number) {
+    const s = this.world.ship;
+    if (!s.alive) return;
+    const d = s.damage(dmg, 'kugel', null);
+    if (d > 0) this.hud.toast(`Beschuss durch ${name}! (−${Math.round(d)} Rumpf)`, 2);
+  }
+
   quitToMenu() {
+    this.stopMmo();
     this.world.abortPrologue();
     this.tutorial = null;
     // 4.7D: das Kurogane-Kriegsschiff des Einführungs-Überfalls bleibt nicht im Titelbild liegen
