@@ -27,10 +27,15 @@ export class AnimeImpactRig {
   /** 4.6I: noch zu zeichnende Impact-Bilder – solange > 0, steht die Spielzeit (Hit-Stop im Treffermoment) */
   get framesLeft(): number { return this.frames; }
 
-  /** Treffermoment: 2 – 4 Impact-Bilder (das erste invertiert, dann Tusche mit radialen Speedlines) */
-  impact(frames: number) {
-    this.frames = Math.min(IMPACT.framesMax, Math.max(IMPACT.framesMin, Math.round(Number.isFinite(frames) ? frames : IMPACT.framesMin)));
-    this.frameIdx = 0;
+  /**
+   * Treffermoment: 2 – 4 Impact-Bilder (das erste invertiert, dann Tusche mit radialen Speedlines). 4.91: `soft` = nur Tusche (Formen I – VII
+   * kommen alle paar Sekunden – ohne das grelle invertierte Bild); ein laufendes stärkeres Impact wird nie von einem schwächeren abgelöst.
+   */
+  impact(frames: number, soft = false) {
+    const n = Math.min(IMPACT.framesMax, Math.max(IMPACT.framesMin, Math.round(Number.isFinite(frames) ? frames : IMPACT.framesMin)));
+    if (this.frames > 0 && (soft || n < this.frames)) return;
+    this.frames = n;
+    this.frameIdx = soft ? 1 : 0;
     this.impacts++;
   }
 

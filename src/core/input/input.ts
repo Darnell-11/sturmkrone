@@ -279,6 +279,12 @@ export class Input {
     this.touchStick = { x: 0, y: 0 };
   }
 
+  /**
+   * 4.91: einen Tastendruck von außen einspeisen (Knöpfe der Klassen-Vorschau): zählt im nächsten Logikschritt wie ein echter Druck, ohne
+   * das Eingabegerät (und damit die Tastenanzeige) zu wechseln.
+   */
+  inject(a: ActionId) { this.press(a); }
+
   // ---------- Touch (von der Touch-Steuerung aufgerufen) ----------
 
   setVirtual(a: ActionId, down: boolean) {

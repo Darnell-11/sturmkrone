@@ -3,7 +3,7 @@
 //   A  VS-Face-Off   Marine (gesperrt, kommt mit einem späteren Story-Update) gegen Piraten (spielbar) – diagonal geteilter Bildschirm
 //   B  Aussehen      reiner Aussehens-Editor: Körperbau, Geschlecht, Gesicht, Frisur, Bart, Hut, Kleidung, Mantel – KEINE Klassen- oder Waffenwahl
 //   C  Klassenwahl   Vollbild-Showcase aller Klassen und Pfade mit Rolle, Stärken, zehn Formen und animierter Ultimate-Vorschau → „Abenteuer starten“
-// Die Darstellung steht in `world/faceOffStage.ts`, `ui/faceOffScreen.ts`, `ui/editor.ts`, `world/showcaseStage.ts`, `ui/classShowcase.ts`; den
+// Die Darstellung steht in `world/faceOffStage.ts`, `ui/faceOffScreen.ts`, `ui/editor.ts`, `ui/classShowcase.ts` mit der Vorschau in der Welt (`SeaWorld.startArena`, 4.91); den
 // Ablauf führt `Game.openCreation`.
 import type { CharacterLook } from './characterParts';
 import { ADMIRALS, SCHWARZBART } from './prologue';

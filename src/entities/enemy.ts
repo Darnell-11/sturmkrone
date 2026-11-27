@@ -139,8 +139,35 @@ const MECH_CD: Record<string, number> = { summon: 26, guard: 20, counter: 15, bl
 const _bounce = { vx: 0, vz: 0 };
 const _launch = { vx: 0, vy: 0, vz: 0 };
 
+/**
+ * 4.91: geteilter Landgegner (`world/sharedEntities.ts`). Beim Besitzer läuft die KI wie immer (`owner`), sein Ziel kann ein Mitspieler sein
+ * (`peer` samt Ort: Ziel der Aggro-Tabelle im Shard). Bei allen anderen ist er eine Kopie ohne KI: Lage, Bewegung, Leben, Haltung und Phase
+ * kommen aus dem Schnappschuss, Treffer gehen als Rohwerte über `hit` an den Shard (der Besitzer rechnet Rüstung, Haltung und Tod).
+ */
+export interface FoeLink {
+  id: string; key: string; owner: boolean; dead: boolean;
+  hit: ((h: HitInfo) => void) | null;
+  peer: string; px: number; py: number; pz: number;
+  /** wer zuletzt traf ('' = die eigene Figur): bestimmt, wer die Beute würfelt */
+  lastBy: string;
+}
+
 export class Enemy {
   readonly char: Character;
+  /** 4.91: Anschluss an die geteilte Welt (null = nur in dieser Welt) und fester Schlüssel des Aufstellens ('' = keiner) */
+  shared: FoeLink | null = null;
+  netKey = '';
+  /** 4.91 Besitzer: Ziel ist ein Mitspieler (Aggro-Tabelle im Shard) – dann jagt und trifft der Gegner dessen Figur, sonst die eigene */
+  private readonly peerV = new Vector3();
+  private targetPos(w: EnemyWorld): Vector3 | null {
+    const L = this.shared;
+    return L && L.owner && L.peer ? this.peerV.set(L.px, L.py, L.pz) : w.playerPos;
+  }
+  /** 4.91 Kopie: Bewegung (0 steht … 7 Phasenwechsel), Angriffs-Clip und gezeigte Boss-Phase aus dem Schnappschuss */
+  mirrorAn = 0;
+  mirrorClip = '';
+  private mirrorShown = -1;
+  private mirrorClipShown = '';
   readonly def: EnemyDef;
   /** Bedrohungstabelle (Hauptmänner und Endbosse): wer zuletzt wie viel Schaden gemacht hat, bestimmt das Ziel; null bei normalen Gegnern */
   readonly threat: ThreatTable | null;
@@ -345,6 +372,11 @@ export class Enemy {
   /** Schaden ohne Reaktion (Brand, Gift) */
   dot(dmg: number): 'hit' | 'kill' {
     if (!this.alive) return 'hit';
+    // 4.91: Kopie – auch Brand und Gift gehen an den Shard (der Besitzer rechnet den Tod)
+    if (this.shared && !this.shared.owner) {
+      if (!this.shared.dead) { this.shared.hit?.({ dmg, poise: 0, knock: 0, dirX: 0, dirZ: 0, heavy: false }); this.hp = Math.max(1, this.hp - dmg); }
+      return 'hit';
+    }
     this.hp -= dmg;
     this.aggro = true;
     if (this.hp <= 0) { this.hp = 0; this.die({ dmg, poise: 0, knock: 0, dirX: 0, dirZ: 0, heavy: false }); return 'kill'; }
@@ -418,6 +450,18 @@ export class Enemy {
   /** Treffer durch den Spieler. Rückgabe: ob geblockt wurde */
   takeHit(h: HitInfo, now: number, w?: EnemyWorld): 'hit' | 'blocked' | 'stagger' | 'kill' {
     if (!this.alive) return 'hit';
+    // 4.91: Kopie eines geteilten Landgegners – der Treffer geht roh an den Shard; hier nur Aufblitzen und eine Schätzung fürs Leben
+    if (this.shared && !this.shared.owner) {
+      if (this.shared.dead) return 'hit';
+      this.lastHit = now;
+      this.flash = 0.09;
+      this.char.hitFlash(h.heavy ? '#FFD9A0' : '#FFFFFF', h.heavy ? 1.3 : 1);
+      const tier = h.tier ?? w?.attackTier ?? 1;
+      const est = h.dmg * (1 - mitigation(enemyArmorRating(this.kind, this.level), tier)) * (1 - (this.def.armor ?? 0)) * (this.brokenT > 0 ? BOSS.breakDmg : 1);
+      this.shared.hit?.(h);
+      this.hp = Math.max(1, this.hp - est);
+      return 'hit';
+    }
     this.aggro = true;
     this.lastHit = now;
     this.sinceHit = 0;
@@ -651,6 +695,8 @@ export class Enemy {
   }
 
   update(dt: number, w: EnemyWorld) {
+    // 4.91: Kopie eines geteilten Landgegners – keine KI, keine Physik
+    if (this.shared && !this.shared.owner) { this.updateMirror(dt, w); return; }
     this.groundW = w;
     if (this.state !== this.stateWas) { this.stateWas = this.state; this.stateT = 0; } else this.stateT += dt;
     // Softlock-Wächter: Angriff endet über das Animationsende, Flug über die Landung – beides abgesichert
@@ -674,7 +720,7 @@ export class Enemy {
       this.frozenT -= dt;
       if (this.frozenT <= 0) this.char.mixer.timeScale = 1;
     }
-    const p = w.playerPos;
+    const p = this.targetPos(w);
     const dx = p ? p.x - this.x : 0, dz = p ? p.z - this.z : 0;
     const dist = Math.hypot(dx, dz);
     const toPlayer = Math.atan2(dx, dz);
@@ -846,6 +892,60 @@ export class Enemy {
   }
 
   /**
+   * 4.91: Kopie eines geteilten Landgegners je Logikschritt – Lage setzt `world/sharedEntities.ts` aus dem Schnappschuss; hier Bewegung und
+   * Angriffe als Clips, Blick, Ausdruck, Aufblitzen. Stirbt der Gegner beim Besitzer, fällt die Kopie (`mirrorDie`) ohne Beute und Lohn.
+   */
+  private updateMirror(dt: number, w: EnemyWorld) {
+    this.groundW = w;
+    this.timer -= dt;
+    this.flash -= dt;
+    const p = this.targetPos(w);
+    const dist = p ? Math.hypot(p.x - this.x, p.z - this.z) : 99;
+    if (this.state === 'dead') {
+      this.char.setDissolve(clamp01((2.7 - this.timer) / 1.8));
+    } else {
+      const an = this.mirrorAn;
+      if (an !== this.mirrorShown || ((an === 3 || an === 4) && this.mirrorClip !== this.mirrorClipShown)) {
+        this.mirrorShown = an;
+        this.mirrorClipShown = this.mirrorClip;
+        if ((an === 3 || an === 4) && this.mirrorClip && this.char.playClip(this.mirrorClip, { loop: false, fade: 0.08, restart: true })) { /* Angriffs-Clip des Besitzers */ }
+        else this.char.play(an === 1 ? 'walk' : an === 2 ? 'run' : an === 3 || an === 4 ? 'throw' : an === 5 ? 'hit' : an === 6 ? 'lie' : an === 7 ? 'cheer' : 'idle', { fade: 0.15, restart: an >= 3 });
+      }
+      if (an === 1 || an === 2) this.char.setLocoSpeed((an === 2 ? 4 : 1.8) / Math.max(0.6, this.def.scale));
+      this.state = an === 5 ? 'hit' : an === 6 ? 'down' : an === 7 ? 'transition' : an >= 3 ? 'attack' : an > 0 ? 'chase' : 'idle';
+      this.aggro = an > 0;
+    }
+    this.rigInputs(p, dist);
+    this.char.place(this.x, this.y, this.z, this.yaw);
+    this.char.update(dt);
+    this.updateFlash();
+  }
+
+  /** 4.91: die Kopie fällt (beim Besitzer besiegt): Todes-Clip, Auflösen, Entfernen nach 4 s – ohne Beute und Lohn */
+  mirrorDie() {
+    if (this.state === 'dead') return;
+    this.state = 'dead';
+    this.hp = 0;
+    this.marker.visible = false;
+    this.char.play(Math.random() < 0.5 ? 'death' : 'deathLong', { fade: 0.05, restart: true });
+    this.timer = 4;
+  }
+
+  /** 4.91 Besitzer: Bewegungs-Code für den Schnappschuss (0 steht, 1 geht, 2 rennt, 3 holt aus, 4 greift an, 5 getroffen, 6 liegt, 7 Phasenwechsel) */
+  get netAnim(): number {
+    switch (this.state) {
+      case 'windup': return 3;
+      case 'attack': return 4;
+      case 'hit': case 'stagger': return 5;
+      case 'down': case 'air': return 6;
+      case 'transition': return 7;
+      default: { const sp = Math.hypot(this.vx, this.vz); const pl = this.char.playing; return pl === 'Running_A' ? 2 : pl === 'Walking_A' || sp > 0.5 ? 1 : 0; }
+    }
+  }
+  /** 4.91 Besitzer: Clip des laufenden Angriffs ('' = keiner) */
+  get netClip(): string { return this.atk && (this.state === 'windup' || this.state === 'attack') ? this.char.playing || '' : ''; }
+
+  /**
    * Rückstoß-Physik (4.6C): schlittert der Gegner schnell über den Boden, zieht er eine Bremsspur; trifft er eine Wand oder Reling,
    * prallt er ab (kurz benommen) – oder fliegt über die Kante, wenn dahinter Tiefe liegt (Reling, Stegrand, Klippe).
    */
@@ -898,7 +998,7 @@ export class Enemy {
     (this.marker.material as SpriteMaterial).map = EXCL_TEX;
     // Bosse: eigene Angriffe je Phase
     const opts = (this.def.boss && this.def.phaseAttacks?.[this.phase as 2 | 3]) || this.def.attacks;
-    const p = w.playerPos;
+    const p = this.targetPos(w);
     const dist = p ? Math.hypot(p.x - this.x, p.z - this.z) : 99;
     // Passenden Angriff wählen: Fernkampf auf Distanz, sonst zufällig (Bosse wiederholen sich nicht)
     let usable = opts.filter((a) => a.range >= dist - 0.5 || a.projectile || a.aoe || a.zones);

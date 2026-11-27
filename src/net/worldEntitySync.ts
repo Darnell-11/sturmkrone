@@ -10,7 +10,11 @@
 // - Verschwindet der Besitzer oder meldet er sich nicht mehr, übernimmt der nächste Spieler in Reichweite (`tick` → `migrate`); ohne Spieler in
 //   der Nähe verschwindet der Gegner (`drop`).
 // - Beim Untergang (`dead`) bekommen alle Beteiligten und ihre Gruppenmitglieder im Einsatzgebiet die Gutschrift (`credit`).
-import { MMO, type EntLookNet, type EntNet, type EntSpawnNet, type EntStateNet } from './mmoProtocol';
+// - 4.91: auch Landgegner (Lager, Bezirke der Mega-Inseln, Kommandanten, Bosse, Kaiser-Garden, Raids). Feste Schlüssel (`isWorldKey`: gleich
+//   für alle Spieler, z. B. „isl:<Insel>:<Platz>“) führt das Register zusammen – wer dasselbe Lager später aufstellt, bekommt den vorhandenen
+//   Gegner zurück (`claim` → `{ e, fresh: false }`) und zeigt eine Kopie. Nach dem Tod bleibt der Schlüssel `respawn` s gesperrt (`deny`):
+//   so entscheidet allein der Shard, wann ein geräumtes Lager oder ein besiegter Boss wiederkehrt.
+import { MMO, isWorldKey, type EntLookNet, type EntNet, type EntSpawnNet, type EntStateNet } from './mmoProtocol';
 
 /** Ein geteilter Gegner im Shard */
 export interface SharedEnt extends EntNet {
@@ -27,7 +31,12 @@ export interface SharedEnt extends EntNet {
   /** hat ihn zuletzt abgegeben (zu weit weg) – bekommt ihn bis `skipUntil` nicht zurück (sonst Hin und Her) */
   skip: string;
   skipUntil: number;
+  /** 4.91: Sperrzeit des Schlüssels nach dem Tod (s, 0 = keine) */
+  respawn: number;
 }
+
+/** 4.91: Ergebnis einer Anmeldung – neuer Gegner (`fresh`), vorhandener mit demselben Schlüssel, gesperrt (`wait` s) oder abgelehnt */
+export type ClaimResult = { e: SharedEnt; fresh: boolean; wait: 0 } | { e: null; fresh: false; wait: number };
 
 /** Was das Register über einen Spieler wissen muss (liefert der Shard) */
 export interface EntPeer { id: string; x: number; z: number; dom: string; bot: boolean; party: string }
@@ -44,7 +53,10 @@ export class SharedEntityRegistry {
   readonly list: SharedEnt[] = [];
   private seq = 0;
   /** Zahlen für Prüfungen */
-  readonly stats = { claimed: 0, rejected: 0, hits: 0, forwarded: 0, kills: 0, migrated: 0, dropped: 0 };
+  readonly stats = { claimed: 0, rejected: 0, hits: 0, forwarded: 0, kills: 0, migrated: 0, dropped: 0, merged: 0, denied: 0 };
+  /** 4.91: lebende Gegner mit festem Schlüssel und gesperrte Schlüssel (Schlüssel → Shard-Zeit der Wiederkehr) */
+  readonly byKey = new Map<string, SharedEnt>();
+  readonly locked = new Map<string, number>();
 
   /** Gegner eines Besitzers (lebend) */
   countOf(owner: string): number {
@@ -53,18 +65,39 @@ export class SharedEntityRegistry {
     return n;
   }
 
-  /** Anmeldung eines selbst erzeugten Gegners; null = abgelehnt (Grenzen je Shard und je Besitzer) */
+  /** Anmeldung eines selbst erzeugten Gegners; null = abgelehnt (Grenzen je Shard und je Besitzer, gesperrter Schlüssel) */
   claim(owner: string, s: EntSpawnNet, t: number): SharedEnt | null {
-    if (this.list.length >= MMO.entMax || this.countOf(owner) >= MMO.entPerOwner) { this.stats.rejected++; return null; }
+    const r = this.claimKeyed(owner, s, t);
+    return r.e && r.fresh ? r.e : null;
+  }
+
+  /**
+   * 4.91: Anmeldung mit Zusammenführung – fester Schlüssel schon vorhanden: der vorhandene Gegner (nicht neu, der Client zeigt eine Kopie);
+   * Schlüssel nach dem Tod noch gesperrt: `wait` s; sonst ein neuer Gegner, gesteuert vom Anmeldenden.
+   */
+  claimKeyed(owner: string, s: EntSpawnNet, t: number): ClaimResult {
+    const world = isWorldKey(s.key);
+    if (world) {
+      const live = this.byKey.get(s.key);
+      if (live && !live.dead) { this.stats.merged++; return { e: live, fresh: false, wait: 0 }; }
+      const until = this.locked.get(s.key);
+      if (until !== undefined) {
+        if (t < until) { this.stats.denied++; return { e: null, fresh: false, wait: Math.max(1, Math.ceil(until - t)) }; }
+        this.locked.delete(s.key);
+      }
+    }
+    if (this.list.length >= MMO.entMax || this.countOf(owner) >= MMO.entPerOwner) { this.stats.rejected++; return { e: null, fresh: false, wait: 0 }; }
     const e: SharedEnt = {
-      id: `e${++this.seq}`, key: s.key, owner, tier: s.tier, role: s.role, level: s.level, name: s.name, look: copyLook(s.look),
-      x: s.x, z: s.z, hdg: s.hdg, spd: 0, hp: s.hp, mhp: s.mhp, dis: false, aggro: '', dead: false,
-      born: t, seen: t, deadT: Number.NaN, threat: new Map(), last: '', skip: '', skipUntil: 0,
+      id: `e${++this.seq}`, key: s.key, owner, cat: s.cat, tier: s.tier, role: s.role, level: s.level, name: s.name, look: copyLook(s.look),
+      x: s.x, z: s.z, hdg: s.hdg, spd: 0, hp: s.hp, mhp: s.mhp, dis: false, aggro: '', dead: false, boss: s.boss, scale: s.scale,
+      y: s.y, an: 0, clip: '', pose: 1, brk: false, phase: 1,
+      born: t, seen: t, deadT: Number.NaN, threat: new Map(), last: '', skip: '', skipUntil: 0, respawn: world ? s.respawn : 0,
     };
     this.ents.set(e.id, e);
     this.list.push(e);
+    if (world) this.byKey.set(s.key, e);
     this.stats.claimed++;
-    return e;
+    return { e, fresh: true, wait: 0 };
   }
 
   /** Bericht des Besitzers (Fremde dürfen nichts melden); false = verworfen */
@@ -72,6 +105,7 @@ export class SharedEntityRegistry {
     const e = this.ents.get(s.id);
     if (!e || e.owner !== owner || e.dead) return false;
     e.x = s.x; e.z = s.z; e.hdg = s.hdg; e.spd = s.spd; e.mhp = s.mhp; e.hp = Math.min(s.hp, s.mhp); e.dis = s.dis;
+    e.y = s.y; e.an = s.an; e.clip = s.clip; e.pose = s.pose; e.brk = s.brk; e.phase = Math.max(e.phase, s.phase);
     e.seen = t;
     return true;
   }
@@ -100,6 +134,8 @@ export class SharedEntityRegistry {
     if (!e || e.owner !== owner || e.dead) return null;
     e.dead = true; e.deadT = t; e.hp = 0;
     this.stats.kills++;
+    // 4.91: fester Schlüssel bleibt bis zur Wiederkehr gesperrt
+    if (isWorldKey(e.key)) { if (this.byKey.get(e.key) === e) this.byKey.delete(e.key); if (e.respawn > 0) this.locked.set(e.key, t + e.respawn); }
     return e;
   }
 
@@ -145,6 +181,8 @@ export class SharedEntityRegistry {
    * Spieler übergeben (höchstens `entMigrate` m, nie an Bots), sonst – ohne Spieler in `entDrop` m – verwerfen.
    */
   tick(t: number, peers: readonly EntPeer[], migrate: (e: SharedEnt, to: string) => void, drop: (e: SharedEnt) => void): void {
+    // 4.91: abgelaufene Sperren freigeben
+    if (this.locked.size) for (const [k, until] of this.locked) if (t >= until) this.locked.delete(k);
     for (let i = this.list.length - 1; i >= 0; i--) {
       const e = this.list[i];
       if (e.dead) {
@@ -154,17 +192,19 @@ export class SharedEntityRegistry {
       const owner = e.owner ? peers.find((p) => p.id === e.owner) : undefined;
       const stale = !owner || t - e.seen > MMO.entStale;
       if (!stale) continue;
-      let best: EntPeer | null = null, bd = MMO.entMigrate * MMO.entMigrate, any = false;
+      // 4.91: Landgegner wandern nur zu Spielern auf derselben Insel (in Sicht), sonst verschwinden sie (das Lager stellt der Nächste neu auf)
+      const mig = e.cat === 'foe' ? MMO.foeShow * 1.5 : MMO.entMigrate, drp = e.cat === 'foe' ? MMO.foeShow * 3 : MMO.entDrop;
+      let best: EntPeer | null = null, bd = mig * mig, any = false;
       for (const p of peers) {
         if (p.bot) continue;
         const dd = d2(p.x, p.z, e.x, e.z);
-        if (dd <= MMO.entDrop * MMO.entDrop) any = true;
+        if (dd <= drp * drp) any = true;
         // nicht an den (schweigenden) Besitzer selbst und nicht gleich wieder an den, der ihn abgegeben hat
         if (p.id === e.owner || (p.id === e.skip && t < e.skipUntil)) continue;
         if (dd < bd) { bd = dd; best = p; }
       }
       if (best) { e.owner = best.id; e.seen = t; this.stats.migrated++; migrate(e, best.id); continue; }
-      if (!any || !owner) { this.list.splice(i, 1); this.ents.delete(e.id); this.stats.dropped++; drop(e); }
+      if (!any || !owner) { this.list.splice(i, 1); this.ents.delete(e.id); if (this.byKey.get(e.key) === e) this.byKey.delete(e.key); this.stats.dropped++; drop(e); }
     }
   }
 

@@ -15,6 +15,7 @@ import type { DebrisSystem } from './debris';
 import { AnimeVfxForge } from '../graphics/animeVfxForge';
 import { SKYFALL_TIMES } from '../data/cataclysms';
 import { ULTIMATE_CINEMATICS, type CinePoint } from '../graphics/ultimateCinematics';
+import type { FormCinema } from '../graphics/formCinema';
 
 /** Was die Regie von der Welt braucht (SeaWorld baut es) */
 export interface CataclysmHost {
@@ -55,6 +56,16 @@ export interface CataclysmHost {
    * Ohne Haken 4 m.
    */
   trenchStart?(x: number, z: number, dirX: number, dirZ: number): number;
+  /** 4.91: Kamera-Annäherung der Formen und Geistes-Faji (Fokus-Puls auf das Sichtfeld, Stärke 0 … 1, Dauer in s) */
+  focus?(k: number, dur: number): void;
+  /** 4.91: Akt 2 einer Form bzw. eines Geistes-Faji – die Welt hält die Zeit an (Hit-Stop) und zeigt die Impact-Bilder */
+  formStop?(c: FormCinema): void;
+}
+
+/** 4.91: ein ausstehender Treffermoment einer Form (Geschoss im Flug) – vorab angelegt, nichts Neues je Bild */
+interface FormHit {
+  on: boolean; t: number; c: FormCinema | null;
+  x: number; y: number; z: number; yaw: number; col: string; acc: string; el: string; scale: number;
 }
 
 /** Ein laufendes Ultimate */
@@ -191,7 +202,7 @@ export class CataclysmDirector {
   private auraCol = new Color();
   private auraAcc = new Color();
   /** Zahlen für Prüfungen */
-  readonly stats = { strikes: 0, splits: 0, disabled: 0, shipHits: 0, pulls: 0, trench: 0, waves: 0, chains: 0, swings: 0, clashes: 0, slashes: 0, impacts: 0, masts: 0, charred: 0, sections: 0, meteors: 0, planets: 0, aftershocks: 0, bursts: 0, decisive: 0, marked: 0, cones: 0, vortices: 0, poseFx: 0, threats: 0, queued: 0, trails: 0, landSpectacles: 0 };
+  readonly stats = { strikes: 0, splits: 0, disabled: 0, shipHits: 0, pulls: 0, trench: 0, waves: 0, chains: 0, swings: 0, clashes: 0, slashes: 0, impacts: 0, masts: 0, charred: 0, sections: 0, meteors: 0, planets: 0, aftershocks: 0, bursts: 0, decisive: 0, marked: 0, cones: 0, vortices: 0, poseFx: 0, threats: 0, queued: 0, trails: 0, landSpectacles: 0, formCharges: 0, formImpacts: 0, formQueued: 0, anchored: 0, bridges: 0 };
   /**
    * 4.6I: höchstens ein Schiffs-Schnitt je gezeichnetem Bild. Zerlegen, Konturen und Hochladen kosten je Schiff 10 – 20 ms; brachen mehrere Schiffe
    * im selben Bild (Blutmond, Schwarzes Loch, Gletscher im Treffermoment), stand das Bild 40 – 60 ms. Weitere Schnitte warten in diesem Ring und
@@ -622,7 +633,7 @@ export class CataclysmDirector {
   // ---------- Einschlag ----------
 
   /** Einschlag eines Ultimates (Ereignis `ultStrike`; beim Iaijutsu ist das zugleich das Einrasten der Klinge) */
-  strike(spec: UltimateSpec, f: FighterState, startX?: number, startZ?: number, shift = 0) {
+  strike(spec: UltimateSpec, f: FighterState, startX?: number, startZ?: number, shift = 0, anchor: { x: number; z: number; yaw: number; cx: number; cz: number } | null = null) {
     let c = this.casts.find((k) => !k.on);
     if (!c) c = this.casts[0];
     c.on = true; c.kind = spec.kind; c.spec = spec; c.f = f; c.t = 0; c.step = 0; c.tick = 0; c.hit.length = 0; c.trench = false; c.from = 4;
@@ -631,9 +642,17 @@ export class CataclysmDirector {
     c.lag = Math.max(0, spec.lag || 0); c.decided = false; c.marked.length = 0;
     c.tx = f.x; c.ty = f.y + 2; c.tz = f.z;
     // 4.6H: nur der Himmelssturz wird verschoben (Meteoriten und Planet nie auf dem eigenen Deck); dieselbe Verschiebung gilt in der Engine
-    c.shift = spec.kind === 'skyfall' ? Math.max(0, shift) : 0;
+    c.shift = spec.kind === 'skyfall' && !anchor ? Math.max(0, shift) : 0;
     c.cx = f.x + Math.sin(f.yaw) * (spec.center + c.shift); c.cz = f.z + Math.cos(f.yaw) * (spec.center + c.shift);
     c.sx = startX ?? f.x; c.sz = startZ ?? f.z;
+    if (anchor) {
+      // 4.91 Ultimate am Steuer: die Wirkung entsteht am angewählten Ziel (bis 650 m) – eine Energiebahn trägt sie von der Figur dorthin
+      this.bridge(f, anchor.x, anchor.z, spec);
+      c.x = anchor.x; c.z = anchor.z; c.yaw = anchor.yaw; c.cx = anchor.cx; c.cz = anchor.cz;
+      c.sx = anchor.x - Math.sin(anchor.yaw) * 8; c.sz = anchor.z - Math.cos(anchor.yaw) * 8;
+      c.tx = anchor.x; c.tz = anchor.z;
+      this.stats.anchored++;
+    }
     c.col.copy(this.color(spec.color)); c.acc.copy(this.color(spec.accent));
     c.seed = this.seed++;
     this.charge.on = false;
@@ -655,6 +674,25 @@ export class CataclysmDirector {
     this.pickImpactShip(c);
     // Einschlag = Treffermoment (Blitz-Zäsur, Klick der Scheide, Hauptblitz): Akt 3 beginnt sofort
     if (c.lag <= 0) this.decide(c);
+  }
+
+  /**
+   * 4.91: Energiebahn eines Ultimates am Steuer von der Figur zum Ziel – drei Schichten (Tusche-Mantel, leuchtender Kern, weißer Faden),
+   * aufspritzende Gischt entlang der Bahn und ein Druckring am Ziel. Nur Bausteine aus den Pools.
+   */
+  private bridge(f: FighterState, ax: number, az: number, spec: UltimateSpec) {
+    const vf = this.vfx, col = this.color(spec.color), acc = this.color(spec.accent);
+    const ay = this.host.waterY(ax, az) + 2.5, oy = f.y + 1.3;
+    vf.bolt(f.x, oy, f.z, ax, ay, az, this.ink(col), 1.6, 0.55, { depth: 4, branches: 1, jitter: 0.03 });
+    vf.bolt(f.x, oy, f.z, ax, ay, az, col, 0.9, 0.5, { depth: 4, branches: 2, jitter: 0.05 });
+    vf.bolt(f.x, oy, f.z, ax, ay, az, WHITE, 0.32, 0.42, { depth: 3, branches: 0, jitter: 0.02 });
+    const d = Math.hypot(ax - f.x, az - f.z), n = Math.min(10, Math.max(3, Math.round(d / 60)));
+    for (let i = 1; i <= n; i++) {
+      const k = i / n, px = f.x + (ax - f.x) * k, pz = f.z + (az - f.z) * k;
+      vf.burst('drop', px, this.host.waterY(px, pz) + 0.3, pz, 5, 6, SPRAY, { up: 7, size: 0.5, life: 0.8, delay: k * 0.25 });
+    }
+    vf.pressureRing(ax, ay, az, 0, false, 16, acc, 0.5);
+    this.stats.bridges++;
   }
 
   /** Startbilder je Ultimate */
@@ -784,6 +822,8 @@ export class CataclysmDirector {
     if (this.pre.on && this.pre.kind === 'thunderJudgment') dk = Math.max(dk, 0.3);
     // 4.7B Königsdruck: der Himmel verdunkelt sich kurz
     if (this.kingDarkT > 0) dk = Math.max(dk, 0.42 * Math.min(1, this.kingDarkT / 0.5));
+    // 4.91: Akt 1 der Formen und Geistes-Faji (Aufladung) dunkelt den Himmel je nach Stufe ab
+    if (this.formDarkT > 0) dk = Math.max(dk, this.formDarkK * Math.min(1, this.formDarkT / 0.35));
     // 4.6I: Himmelsreaktion der Vorbereitung – die Blutmond-Finsternis und die aufreißenden Sturmspiralen dunkeln schon in Akt 1 ab
     if (this.charge.on) { const cine = ULTIMATE_CINEMATICS[this.charge.kind]; if (cine?.sky === 'eclipse') dk = Math.max(dk, this.charge.kind === 'bloodMoon' ? 0.45 : 0.25); else if (cine?.sky === 'stormSpiral' || cine?.sky === 'gale') dk = Math.max(dk, 0.2); }
     // Himmelssturz: der Himmel reißt schon in der Zwischensequenz zur Sternennacht auf
@@ -936,6 +976,8 @@ export class CataclysmDirector {
     this.auraF = null;
     this.willF = null;
     this.kingDarkT = 0;
+    this.formDarkT = 0;
+    for (const q of this.formQ) q.on = false;
     this.host.setRift(0, 0, 0, 0, this.riftCol);
     this.host.fx.clear();
   }
@@ -2414,6 +2456,96 @@ export class CataclysmDirector {
   private willT = 0;
   /** Königsdruck: Restzeit der Himmelsverdunkelung (s) */
   private kingDarkT = 0;
+  /** 4.91: Abdunkeln der Form-Aufladung (Restzeit, Stärke) und ausstehende Treffermomente von Form-Geschossen */
+  private formDarkT = 0;
+  private formDarkK = 0;
+  private readonly formQ: FormHit[] = Array.from({ length: 6 }, () => ({ on: false, t: 0, c: null, x: 0, y: 0, z: 0, yaw: 0, col: '#fff', acc: '#fff', el: '', scale: 1 }));
+
+  /**
+   * 4.91 – Akt 1 einer Form bzw. eines Geistes-Faji (beim Start): der Himmel verdunkelt sich, eine Energiesäule mit weißem Kern steigt auf,
+   * Aura-Wirbel und eine Spirale umkreisen die Figur, Funken steigen; die Kamera rückt über den Fokus-Puls heran. `scale` > 1 auf See.
+   */
+  formCharge(c: FormCinema, x: number, y: number, z: number, colorHex: string, accentHex: string, scale = 1) {
+    const fx = this.host.fx, b = fx.brush, vf = this.vfx;
+    const col = this.color(colorHex), acc = this.color(accentHex);
+    if (c.darken > 0) { this.formDarkK = Math.max(this.formDarkT > 0 ? this.formDarkK : 0, c.darken); this.formDarkT = 0.55 + c.tier * 0.2; }
+    if (c.pillar > 0) {
+      const h = c.pillar * (scale > 1 ? 1.4 : 1), w = (0.8 + c.tier * 0.35) * scale;
+      b.reset().at(x, y - 0.5, z).size(w * 0.3, h, w * 0.3, w, h, w).span(0.45 + c.tier * 0.12).col(col, 1.6).fade(0.06, 0.5);
+      fx.emit('column');
+      b.reset().at(x, y - 0.5, z).size(w * 0.12, h * 1.05, w * 0.12, w * 0.36, h * 1.05, w * 0.36).span(0.4 + c.tier * 0.1).col(WHITE, 2.2).fade(0.06, 0.45);
+      fx.emit('column');
+    }
+    for (let i = 0; i < c.swirls; i++) vf.auraSwirl(x, y, z, col, acc, (0.8 + i * 0.35) * scale, 0.35 + i * 0.1);
+    vf.spiral(x, y, z, 0.9 * scale, Math.max(2.4, c.pillar * 0.35) * scale, col, 0.5 + c.tier * 0.1, 1 + c.tier, 8);
+    vf.burst('spark', x, y + 0.6, z, 6 + c.tier * 6, 2.4 * scale, acc, { up: 4 * scale, size: 0.12 * scale, life: 0.7, spread: 0.6 * scale });
+    b.reset().at(x, y + 0.08, z).size(1, 1, 1, (1.6 + c.tier) * scale, 1, (1.6 + c.tier) * scale).span(0.4).col(acc, 1.7).fade(0.02, 0.6);
+    fx.emit('ring');
+    this.host.focus?.(c.focus, 0.35 + c.tier * 0.15);
+    this.stats.formCharges++;
+  }
+
+  /**
+   * 4.91 – Akt 2 und 3 einer Form bzw. eines Geistes-Faji (im Treffermoment): die Welt hält die Zeit an und zeigt die Impact-Bilder
+   * (`formStop`), danach Kernblitz, gestaffelte radiale Druckwellen, Risse im Boden bzw. Gischt-Risse im Wasser, Element-Eruption und
+   * zwei Wellen Nachbeben-Funken. Boden bzw. Wasser bestimmt die Oberfläche der Effekte (`surfaceHit`).
+   */
+  formImpact(c: FormCinema, x: number, y: number, z: number, yaw: number, colorHex: string, accentHex: string, element: string, scale = 1) {
+    const fx = this.host.fx, b = fx.brush, vf = this.vfx;
+    const col = this.color(colorHex), acc = this.color(accentHex);
+    const land = this.host.isLand(x, z);
+    const gy = land ? this.host.groundY(x, z, y) : this.host.waterY(x, z);
+    const R = c.shock * scale;
+    this.host.formStop?.(c);
+    // Kernblitz mit weißer Mitte
+    b.reset().at(x, gy + 1.1 * scale, z).size(0.3, 0.3, 0.3, (1.2 + c.tier * 0.6) * scale, (1.2 + c.tier * 0.6) * scale, (1.2 + c.tier * 0.6) * scale).span(0.2).col(WHITE, 2.4).fade(0.01, 0.7);
+    fx.emit('orb');
+    // gestaffelte radiale Druckwellen (abwechselnd Akzent und Weiß), dazu ein stehender Ring in Schlagrichtung
+    for (let k = 1; k <= c.rings; k++) {
+      const r = R * (0.35 + k * (0.65 / c.rings));
+      b.reset().at(x, gy + 0.15, z).rot(rnd() * 6).size(1, 1, 1, r, 1, r).span(0.32 + k * 0.1, (k - 1) * 0.06).col(k % 2 ? acc : WHITE, 2).fade(0.01, 0.6);
+      fx.emit('shock');
+    }
+    vf.pressureRing(x, gy + 0.4 * scale, z, 0, false, R, acc, 0.45);
+    vf.pressureRing(x, gy + 1.1 * scale, z, yaw, true, R * 0.45, col, 0.32);
+    // Risse: Krater/Runen und Gestein an Land, Gischtkronen im Wasser – sternförmig nach außen
+    for (let i = 0; i < c.cracks; i++) {
+      const a = yaw + (i / Math.max(1, c.cracks)) * Math.PI * 2 + (rnd() - 0.5) * 0.4, d = R * (0.3 + rnd() * 0.45);
+      const px = x + Math.sin(a) * d, pz = z + Math.cos(a) * d;
+      const py = land ? this.host.groundY(px, pz, gy) : this.host.waterY(px, pz);
+      vf.surfaceHit(px, py, pz, (0.9 + c.tier * 0.3) * scale, col, 0.9, 0.03 * i);
+    }
+    vf.surfaceHit(x, gy, z, R * 0.32, col, 1 + c.tier * 0.2);
+    this.elementBurst(element, x, gy + 0.6, z, col, (0.7 + c.tier * 0.3) * scale, 0);
+    // Nachbeben: zwei verzögerte Wellen aus Funken bzw. Glut, an Land Staub, auf See Tropfen
+    const kind = element === 'eis' ? 'ice' : element === 'feuer' || element === 'sonne' ? 'ember' : 'spark';
+    vf.burst(kind, x, gy + 0.4, z, c.after, 5 * scale, acc, { up: 4.5 * scale, size: 0.14 * scale, life: 1, delay: 0.18, spread: R * 0.25 });
+    vf.burst(land ? 'dust' : 'drop', x, gy + 0.3, z, Math.max(2, c.after >> 2), 2.6 * scale, land ? TMP.setRGB(0.6, 0.54, 0.46) : SPRAY, { up: land ? 1 : 5 * scale, size: land ? 1 * scale : 0.3 * scale, life: 0.9, delay: 0.42, spread: R * 0.3 });
+    if (c.tier === 3) {
+      // Stufe 3: ein Blitz fährt aus dem verdunkelten Himmel in den Einschlag
+      vf.bolt(x + (rnd() - 0.5) * 2, gy + 26 * scale, z + (rnd() - 0.5) * 2, x, gy + 0.3, z, WHITE, 0.3 * scale, 0.22, { depth: 5, branches: 3, jitter: 0.12 });
+    }
+    this.host.shake(c.shake);
+    this.stats.formImpacts++;
+  }
+
+  /** 4.91: Treffermoment eines Form-Geschosses vormerken (fällt nach `delay` s Spielzeit am Einschlagsort) */
+  queueFormImpact(delay: number, c: FormCinema, x: number, y: number, z: number, yaw: number, colorHex: string, accentHex: string, element: string, scale = 1) {
+    let q = this.formQ.find((k) => !k.on);
+    if (!q) q = this.formQ.reduce((a, k) => (k.t < a.t ? k : a), this.formQ[0]);
+    q.on = true; q.t = Math.max(0, delay); q.c = c; q.x = x; q.y = y; q.z = z; q.yaw = yaw; q.col = colorHex; q.acc = accentHex; q.el = element; q.scale = scale;
+    this.stats.formQueued++;
+  }
+
+  private stepFormQueue(dt: number) {
+    for (const q of this.formQ) {
+      if (!q.on) continue;
+      q.t -= dt;
+      if (q.t > 0 || !q.c) continue;
+      q.on = false;
+      this.formImpact(q.c, q.x, q.y, q.z, q.yaw, q.col, q.acc, q.el, q.scale);
+    }
+  }
 
   /**
    * Geistes-Kraft darstellen: 1 Willens-Entfesselung (schwarz-goldene Aura), 2 Lebensstrom-Fokus (smaragd-goldene Ströme), 3 Erwachter Wille
@@ -2526,6 +2658,8 @@ export class CataclysmDirector {
       }
     }
     if (this.kingDarkT > 0) this.kingDarkT = Math.max(0, this.kingDarkT - dt);
+    if (this.formDarkT > 0) this.formDarkT = Math.max(0, this.formDarkT - dt);
+    this.stepFormQueue(dt);
     const f = this.auraF;
     if (!f) return;
     if (f.awakenT <= 0) { this.auraF = null; return; }

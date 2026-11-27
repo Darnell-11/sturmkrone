@@ -12,18 +12,26 @@ export interface TouchButtonDef {
 }
 
 // Touch-Buttons auf See
+// 4.91: volle Klassen-Leiste am Steuer – fünf Plätze im Bogen über den Kanonen; der Seiten-Knopf wechselt auf ihnen zwischen Formen
+// 1 – 5, Formen 6 – 10 (`TOUCH_SEA_PAGE2`) und den vier Geistes-Faji (`TOUCH_SEA_PAGE3`, `helmGeist1–4`), daneben der Ultimate-Knopf. Die
+// alten Faji-Techniken F1 – F3 lernt man seit 4.7B nicht mehr (zu Fuß gab es für sie schon keinen Knopf). Die Gruppe bleibt unter der
+// Kontextplakette („Ruder verlassen“, Hochformat ab 264 px) und rechts vom Steuerkompass; kein Knopf überlappt (tests/phase491…).
 export const TOUCH_SEA: TouchButtonDef[] = [
   { action: 'attack', label: 'Feuer', size: 88, right: 18, bottom: 26, color: 'seal' },
   { action: 'fireLeft', label: 'Links', size: 62, right: 118, bottom: 22, color: 'seal' },
   { action: 'fireRight', label: 'Rechts', size: 62, right: 26, bottom: 128, color: 'seal' },
   { action: 'dodge', label: 'Schub', size: 58, right: 112, bottom: 104, color: 'teal' },
   { action: 'heavy', label: 'Muni-\ntion', size: 50, right: 196, bottom: 26, color: 'brass' },
-  { action: 'skill1', label: 'F1', size: 52, right: 30, bottom: 206, color: 'brass' },
-  { action: 'skill2', label: 'F2', size: 52, right: 96, bottom: 180, color: 'brass' },
-  { action: 'skill3', label: 'F3', size: 52, right: 180, bottom: 96, color: 'brass' },
-  // 4.6J: Ziel durchschalten (Breitseiten richten sich auf das angewählte Feindschiff aus)
-  { action: 'targetNext', label: 'Ziel', size: 44, right: 178, bottom: 164, color: 'brass' },
   { action: 'repair', label: 'Fli-\ncken', size: 48, right: 252, bottom: 30, color: 'ok' },
+  // 4.6J: Ziel durchschalten (Breitseiten und Kräfte am Steuer richten sich auf das angewählte Feindschiff aus)
+  { action: 'targetNext', label: 'Ziel', size: 40, right: 166, bottom: 80, color: 'brass' },
+  { action: 'art1', label: '1', size: 48, right: 14, bottom: 200, color: 'seal' },
+  { action: 'art2', label: '2', size: 48, right: 72, bottom: 188, color: 'seal' },
+  { action: 'art3', label: '3', size: 48, right: 128, bottom: 170, color: 'seal' },
+  { action: 'art4', label: '4', size: 48, right: 176, bottom: 134, color: 'seal' },
+  { action: 'art5', label: '5', size: 46, right: 211, bottom: 87, color: 'seal' },
+  { action: 'formPage', label: '6–10', size: 40, right: 10, bottom: 262, color: 'brass' },
+  { action: 'awaken', label: 'Ulti-\nmate', size: 48, right: 56, bottom: 250, color: 'brass' },
 ];
 
 // Touch-Buttons zu Fuß (4.6A): Angriff, Schwer, Dash und Sprung unter dem Daumen, darüber im Bogen die vier Kampfkünste des Stils,
@@ -62,4 +70,21 @@ export const TOUCH_FOOT: TouchButtonDef[] = [
  * 4.7B: zweite Seite der Form-Knöpfe – auf denselben Plätzen wie Form 1 – 5; sichtbar ist immer nur eine Seite (`TouchControls.setButton`
  * mit `empty`), darum prüft der Überlappungs-Test nur `TOUCH_FOOT`.
  */
-export const TOUCH_FOOT_PAGE2: TouchButtonDef[] = TOUCH_FOOT.filter((b) => /^art[1-5]$/.test(b.action)).map((b) => ({ ...b, action: `art${Number(b.action.slice(3)) + 5}` as ActionId, label: String(Number(b.action.slice(3)) + 5) }));
+export const TOUCH_FOOT_PAGE2: TouchButtonDef[] = page2Of(TOUCH_FOOT);
+
+/** 4.91: zweite Seite der Form-Knöpfe am Steuer (Formen 6 – 10 auf den Plätzen von 1 – 5) */
+export const TOUCH_SEA_PAGE2: TouchButtonDef[] = page2Of(TOUCH_SEA);
+
+/** 4.91: dritte Seite am Steuer – die vier Geistes-Faji auf den Plätzen der Formen 1 – 4 */
+const HELM_GEIST_TOUCH = [
+  { action: 'helmGeist1', label: 'Wille', color: 'brass' }, { action: 'helmGeist2', label: 'Leben', color: 'ok' },
+  { action: 'helmGeist3', label: 'Erwacht', color: 'teal' }, { action: 'helmGeist4', label: 'König', color: 'brass' },
+] as const;
+export const TOUCH_SEA_PAGE3: TouchButtonDef[] = HELM_GEIST_TOUCH.map((g, i) => {
+  const base = TOUCH_SEA.find((b) => b.action === `art${i + 1}`)!;
+  return { ...base, action: g.action, label: g.label, color: g.color };
+});
+
+function page2Of(list: readonly TouchButtonDef[]): TouchButtonDef[] {
+  return list.filter((b) => /^art[1-5]$/.test(b.action)).map((b) => ({ ...b, action: `art${Number(b.action.slice(3)) + 5}` as ActionId, label: String(Number(b.action.slice(3)) + 5) }));
+}

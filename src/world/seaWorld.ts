@@ -47,8 +47,10 @@ import { SharedEntities } from './sharedEntities';
 import { RemoteActionFx } from './remoteActionFx';
 import type { EntKillNet } from '../net/mmoProtocol';
 import { elementVoice, formVoiceLayer } from '../audio/classVoices';
-import { SEA_ART, SEA_GEIST, seaArtCd, seaArtDamage, seaFamily, seaGeistDamage } from '../data/seaArts';
-import { ART_ACTIONS, HELM_GEIST_ACTIONS } from '../data/actions';
+import { SEA_ART, SEA_GEIST, SEA_ULT, helmTravel, seaArtCd, seaArtDamage, seaFamily, seaGeistDamage, seaUltAnchor } from '../data/seaArts';
+import { SEA_CINE_SCALE } from '../graphics/formCinema';
+import { ART_ACTIONS, GEIST_ACTIONS, HELM_GEIST_ACTIONS, type ActionId } from '../data/actions';
+import { ARENA, ARENA_DEMO, arenaTargets, landCameraPose, seaCameraPose, type ArenaCam, type ArenaKind, type ArenaPart } from '../data/showcaseArena';
 import type { MmoClient } from '../net/mmoClient';
 import type { PlayerState } from '../net/mmoProtocol';
 import { rideToWorld, safeZoneAt, worldToRide, type PartyStance } from '../net/partyRules';
@@ -117,11 +119,12 @@ import type { FighterState } from '../combat/actionCombatEngine';
 import { skyfallShift, type ShipFootprint } from '../combat/skyfallClearance';
 import { OfficerAssistDirector, type AssistHost } from './officerAssistDirector';
 import type { AssistView } from '../ui/fighterHud';
-import type { UltimateSpec } from '../data/actionKit';
+import type { ActionHit, ActionMove, UltimateSpec } from '../data/actionKit';
+import { formCinema, geistCinema, hitReach, projectileTime, type FormCinema } from '../graphics/formCinema';
 import { CombatSystem } from '../combat/combat';
 import type { LootDrop } from '../data/loot';
 import { EVENT, WorldEvents } from './events';
-import type { EnemyKind } from '../data/combat';
+import { ENEMIES, type EnemyKind } from '../data/combat';
 import type { Faction } from '../core/save/types';
 import type { CombatOverlay } from '../ui/combatOverlay';
 import type { Enemy } from '../entities/enemy';
@@ -1410,6 +1413,9 @@ export class SeaWorld {
         if (launch >= 6) this.cataclysm.launchFx(x, y, z, col);
       };
       this.combat.onSpawn = (o) => this.warmHook?.(o);
+      // 4.91: geteilte Landgegner – Hiebe und Flächen auf Mitspieler, Warnflächen der Bosse für alle
+      this.combat.onPeerStrike = (e, peer, dmg) => this.sharedEnts?.peerHitFoe(e, peer, dmg);
+      this.combat.onTelegraph = (e, shape, x, z, yaw, size, width, delay) => this.sharedEnts?.sendTele(e, shape, x, z, yaw, size, width, delay);
       const home = this.ground.islands[0];
       this.combat.addDummy(home.x + 6, home.z - home.r * 0.55);
       this.combat.addDummy(home.x - 6, home.z - home.r * 0.55);
@@ -1457,6 +1463,8 @@ export class SeaWorld {
       onGeist: (kind, b, _c, f) => {
         this.sharedEnts?.sendAct('geist', f.x, f.y, f.z, f.yaw, f.style, ACTION_STYLES[f.style].element, kind, f.x + Math.sin(f.yaw) * 12, f.y, f.z + Math.cos(f.yaw) * 12, this.mode === 'sail' || this.ownDeck);
         this.cataclysm.geistFx(kind, f, kind >= 3 ? b : 0);
+        // 4.91: 3-Akt-Regie (Aufladung, Hit-Stop mit Impact-Bildern, Druckwellen und Nachbeben)
+        this.geistCine(kind, f);
         audio.play(kind === 4 ? 'quakeRumble' : kind === 3 ? 'thunderClap' : kind === 2 ? 'moonChime' : 'cutin', kind === 4 ? 1 : 0.7, { x: f.x, y: f.y, z: f.z });
         if (kind === 4) this.shake = Math.max(this.shake, 1);
       },
@@ -1468,6 +1476,9 @@ export class SeaWorld {
       },
       onClash: (x, y, z, yaw) => { this.cataclysm.clash(x, y, z, yaw); audio.play('clash', 1, { x, y, z }); },
       impactFrames: (n) => this.animeRig.impact(n),
+      // 4.91: 3-Akt-Regie der Formen I – X (Aufladung beim Start, Treffermoment beim stärksten Treffer)
+      onSkill: (slot, mv, f) => this.formAct1(slot, mv, f),
+      onFormHit: (slot, mv, h, f) => this.formAct2(slot, mv, h, f),
       onSwing: (mv, h, f) => {
         const st = ACTION_STYLES[f.style];
         this.cataclysm.swingFx(h, f, mv.color || st.color, mv.vfx || st.element, mv.meteor, !!mv.heal);
@@ -1948,7 +1959,78 @@ export class SeaWorld {
       skyLook: (k) => { w.skyLookK = k; },
       decisive: () => w.cineDecisive(),
       trenchStart: (x, z, dx, dz) => w.ownTrenchStart(x, z, dx, dz),
+      // 4.91: Formen und Geistes-Faji – Kamera-Annäherung (Akt 1), Hit-Stop und Impact-Bilder im Treffermoment (Akt 2)
+      focus: (k, dur) => w.focusPulse.trigger(k, dur),
+      formStop: (c) => w.formStop(c),
     });
+  }
+
+  /**
+   * 4.91: Akt 2 einer Form bzw. eines Geistes-Faji – Hit-Stop (die Spielzeit läuft im Zeitmaß `stopScale`) und Anime-Impact-Bilder (Stufe I – VII
+   * nur Tusche, VIII – X mit invertiertem erstem Bild). Während eines Ultimates führt dessen Kino-Regie Zeit und Bild.
+   */
+  private formStop(c: FormCinema) {
+    if (this.cine.active) return;
+    if (c.hitstop > 0) { this.hitstop.t = Math.max(this.hitstop.t, c.hitstop); this.hitstop.scale = Math.min(this.hitstop.scale, c.stopScale); }
+    if (c.frames > 0) this.animeRig.impact(c.frames, c.soft);
+    this.formStats.stops++;
+  }
+
+  /** 4.91: Zähler der Form-Regie (Prüfungen) */
+  readonly formStats = { charges: 0, hits: 0, stops: 0, geist: 0, sea: 0 };
+
+  /** 4.91 Akt 1 einer Form zu Fuß (Start der Form): Aufladung an der Figur */
+  private formAct1(slot: number, mv: ActionMove | null, f: FighterState) {
+    if (slot <= 0 || this.cine.active) return;
+    const st = ACTION_STYLES[f.style];
+    this.cataclysm.formCharge(formCinema(slot), f.x, f.y, f.z, mv?.color || st.color, st.accent);
+    this.formStats.charges++;
+  }
+
+  /**
+   * 4.91 Akt 2 + 3 einer Form zu Fuß: im Treffermoment ihres stärksten Treffers. Geschosse schlagen erst am Ziel ein (weiche Zielhilfe bzw.
+   * volle Reichweite): dort fällt der Treffermoment nach der Flugzeit.
+   */
+  private formAct2(slot: number, mv: ActionMove, h: ActionHit, f: FighterState) {
+    if (slot <= 0 || this.cine.active) return;
+    const st = ACTION_STYLES[f.style], c = formCinema(slot);
+    const col = mv.color || st.color, el = mv.vfx || st.element;
+    const fx = Math.sin(f.yaw), fz = Math.cos(f.yaw);
+    this.formStats.hits++;
+    if (h.projectile) {
+      const d = Math.max(4, Math.min(h.range, this.softTargetDist(f, h.range)));
+      const x = f.x + fx * d, z = f.z + fz * d;
+      this.cataclysm.queueFormImpact(projectileTime(d, h.projectile.speed), c, x, f.y, z, f.yaw, col, st.accent, el);
+      return;
+    }
+    const a = hitReach(h);
+    this.cataclysm.formImpact(c, f.x + fx * a, f.y, f.z + fz * a, f.yaw, col, st.accent, el);
+  }
+
+  /** Abstand zum nächsten Gegner in Blickrichtung (Kegel ±35°) bis `max` m – sonst `max` */
+  private softTargetDist(f: FighterState, max: number): number {
+    const c = this.combat;
+    if (!c) return max;
+    const fx = Math.sin(f.yaw), fz = Math.cos(f.yaw);
+    let best = max;
+    for (const e of c.enemies) {
+      if (!e.alive) continue;
+      const dx = e.x - f.x, dz = e.z - f.z, d = Math.hypot(dx, dz);
+      if (d >= best || d < 0.5) continue;
+      if ((dx * fx + dz * fz) / d < 0.82) continue;
+      best = d;
+    }
+    return best;
+  }
+
+  /** 4.91: Geistes-Faji zu Fuß bzw. an Deck – Aufladung und Treffermoment fallen zusammen (die Kraft wirkt sofort) */
+  private geistCine(kind: number, f: FighterState) {
+    if (this.cine.active) return;
+    const st = ACTION_STYLES[f.style], c = geistCinema(kind);
+    const col = kind === 2 ? '#3AE89A' : kind === 1 || kind === 4 ? '#FFD27A' : '#9A6AFF';
+    this.cataclysm.formCharge(c, f.x, f.y, f.z, col, st.accent);
+    this.cataclysm.formImpact(c, f.x, f.y, f.z, f.yaw, col, kind === 2 ? '#FFE9A8' : st.accent, kind === 2 ? 'sonne' : kind === 4 ? 'koenig' : st.element);
+    this.formStats.geist++;
   }
 
   // ---------- 4.6I: Kino-Regie der Ultimates (3-Akt-Choreografie) ----------
@@ -2343,7 +2425,9 @@ export class SeaWorld {
    * `decisive` – sofort (Blitz-Zäsur, Klick, Hauptblitz) oder `lag` später (Welle, Säge, Sog, Meteoriten erreichen ihr Ziel).
    */
   private ultimateStrikes(spec: UltimateSpec, f: FighterState) {
-    this.cataclysm.strike(spec, f, this.ultSX, this.ultSZ, this.skyShiftFor(spec, f));
+    // 4.91: auf See entsteht die Wirkung am angewählten Ziel (bis 650 m, Flächen-Ultimates über der feindlichen Flotte)
+    const anchor = this.seaUltAnchorFor(spec, f);
+    this.cataclysm.strike(spec, f, this.ultSX, this.ultSZ, anchor ? 0 : this.skyShiftFor(spec, f), anchor);
     this.hitShake.shake(0.55);
   }
 
@@ -3361,6 +3445,12 @@ export class SeaWorld {
       playAct: (a, x, y, z, yaw) => this.remoteFx?.play(a, x, y, z, yaw),
       hitMe: (name, dmg, pen) => this.onEntHitMe?.(name, dmg, pen),
       kill: (k, owner) => this.onSharedKill?.(k, owner),
+      // 4.91: Landgegner – nur an Land (nicht beim Entern eines fremden Decks, nicht an Bord)
+      combat: () => this.combat,
+      foesShared: () => this.mode === 'foot' && !this.ownDeck && !this.boarding,
+      spawnFoe: (ce) => this.spawnMirrorFoe(ce),
+      foeHitMe: (name, dmg, x, z) => this.foeStrikeMe(name, dmg, x, z),
+      foeDenied: (e, wait) => this.foeDeniedHere(e, wait),
       lookOf: (l) => {
         const base = l.power && l.power in FACTIONS ? factionShipLook(l.power as FactionId) : DEFAULT_SHIP_LOOK('pirat');
         return {
@@ -3387,7 +3477,7 @@ export class SeaWorld {
   private readonly helmInk = new Color();
   private readonly helmWhite = new Color(2.4, 2.4, 2.6);
   /** Zähler für Prüfungen */
-  readonly helmStats = { arts: 0, geist: 0, ults: 0, hits: 0, locked: 0 };
+  readonly helmStats = { arts: 0, geist: 0, ults: 0, hits: 0, locked: 0, far: 0, anchored: 0 };
 
   /** 4.9: Form bzw. Geistes-Faji am Steuer auslösen (Klick in der Kampfleiste, Prüfungen) */
   helmArt(slot: number): boolean { return !!this.naval && this.mode === 'sail' && this.castHelmArt(slot, this.naval, this.ship); }
@@ -3430,21 +3520,31 @@ export class SeaWorld {
     if (this.helmCd[slot - 1] > 0) return false;
     const sk = st.skills[slot - 1];
     if (!sk) return false;
+    // 4.91: Ziel = angewähltes Schiff (Tab/Klick) bis 650 m, sonst das nächste voraus; ein angewähltes Ziel außer Reichweite kostet nichts
+    const t = nav.pickArtTarget(SEA_ART.range, SEA_ART.cone);
+    if (!t && nav.lockFar > 0) { this.helmStats.far++; this.onMessage(`Ziel außer Reichweite: ${Math.round(nav.lockFar)} m – Kräfte am Steuer reichen ${SEA_ART.range} m.`); return false; }
     this.helmCd[slot - 1] = seaArtCd(sk.cd);
     this.helmStats.arts++;
     const fam = seaFamily(f.style), el = sk.vfx || st.element;
-    const t = nav.pickArtTarget(SEA_ART.range);
     const sy = s.model.group.position.y + s.model.deckY;
-    const yaw = t ? Math.atan2(t.ship.x - s.x, t.ship.z - s.z) : s.heading;
-    const dx = Math.sin(yaw), dz = Math.cos(yaw);
     const near = fam === 'faust' || fam === 'klinge';
+    const dist0 = t ? Math.hypot(t.ship.x - s.x, t.ship.z - s.z) : 140;
+    // Vorhalt: wohin fährt das Ziel während der Flugzeit? (zielgenau auch auf 650 m)
+    const lead = t ? helmTravel(dist0) : 0;
+    const tx = t ? t.ship.x + Math.sin(t.ship.heading) * t.ship.speed * lead : s.x + Math.sin(s.heading) * 140;
+    const tz = t ? t.ship.z + Math.cos(t.ship.heading) * t.ship.speed * lead : s.z + Math.cos(s.heading) * 140;
+    const yaw = Math.atan2(tx - s.x, tz - s.z);
+    const dx = Math.sin(yaw), dz = Math.cos(yaw);
     const ox = s.x + (near ? dx * s.cls.L * 0.45 : 0), oz = s.z + (near ? dz * s.cls.L * 0.45 : 0), oy = sy + (near ? 1.2 : 2.6);
-    const tx = t ? t.ship.x : s.x + dx * 140, tz = t ? t.ship.z : s.z + dz * 140;
     const ty = t ? t.ship.model.group.position.y + t.ship.model.deckY * 0.6 : this.env.heightAt(tx, tz);
-    const dist = Math.hypot(tx - ox, tz - oz), travel = Math.max(0.12, dist / SEA_ART.speed);
+    const dist = Math.hypot(tx - ox, tz - oz), travel = helmTravel(dist);
     const k = 0.8 + slot * 0.06;
     this.helmColors(f.style);
     const v = this.cataclysm.vfx, col = this.helmCol, acc = this.helmAcc, ink = this.helmInk;
+    // 4.91 Akt 1: Aufladung am Steuer – Energiesäule, Aura-Wirbel, dunkler Himmel, die Kamera rückt heran
+    const cc = formCinema(slot);
+    this.cataclysm.formCharge(cc, s.x - Math.sin(s.heading) * s.cls.L * 0.3, sy, s.z - Math.cos(s.heading) * s.cls.L * 0.3, st.color, st.accent, 1.6);
+    this.formStats.sea++;
     if (fam === 'faust') {
       v.pressureRing(ox, oy, oz, yaw, true, 2.4 * k, acc, 0.3);
       v.machCone(ox, oy, oz, dx, 0, dz, Math.min(60, dist), 3 * k, col, 0.22);
@@ -3468,9 +3568,10 @@ export class SeaWorld {
     this.sharedEnts?.sendAct('art', s.x, sy, s.z, yaw, f.style, el, slot, tx, ty, tz, true);
     const dmg = seaArtDamage(this.combat?.atk ?? 14, nav.playerLevel, slot);
     nav.schedule(travel, () => {
-      const wy = this.env.heightAt(tx, tz);
-      v.surfaceHit(tx, wy, tz, 3.4 * k, col, 1.2);
-      v.burst(el === 'eis' ? 'ice' : el === 'feuer' || el === 'sonne' ? 'ember' : 'spark', tx, ty + 1, tz, 16, 8 * k, acc, { up: 5, life: 0.8 });
+      // 4.91 Akt 2 + 3 am Ziel: Hit-Stop, Impact-Bilder, Druckwellen, Gischt-Risse im Wasser, Element-Eruption, Nachbeben
+      const hx = t && t.ship.alive ? t.ship.x : tx, hz = t && t.ship.alive ? t.ship.z : tz;
+      this.cataclysm.formImpact(cc, hx, ty, hz, yaw, st.color, st.accent, el, SEA_CINE_SCALE);
+      v.burst(el === 'eis' ? 'ice' : el === 'feuer' || el === 'sonne' ? 'ember' : 'spark', hx, ty + 1, hz, 16, 8 * k, acc, { up: 5, life: 0.8 });
       if (t && t.ship.alive && t.ship.sinking <= 0) { nav.artHit(t, dmg); this.helmStats.hits++; }
     });
     return true;
@@ -3481,6 +3582,9 @@ export class SeaWorld {
     const foot = this.foot;
     const g = SEA_GEIST[slot - 1];
     if (!foot || !g || !s.alive || this.helmGeistCd[slot - 1] > 0) return false;
+    // 4.91: die Donnerlanze trifft das angewählte Schiff bis 650 m – ein angewähltes Ziel außer Reichweite kostet nichts
+    const lance = g.effect === 'thunder' ? nav.pickArtTarget(g.range, SEA_ART.cone) : null;
+    if (g.effect === 'thunder' && !lance && nav.lockFar > 0) { this.helmStats.far++; this.onMessage(`Ziel außer Reichweite: ${Math.round(nav.lockFar)} m – Kräfte am Steuer reichen ${g.range} m.`); return false; }
     this.helmGeistCd[slot - 1] = g.cd;
     this.helmStats.geist++;
     const f = foot.fighter;
@@ -3489,6 +3593,12 @@ export class SeaWorld {
     const sy = s.model.group.position.y + s.model.deckY, at = { x: s.x, y: sy, z: s.z };
     let tx = s.x + Math.sin(s.heading) * 40, tz = s.z + Math.cos(s.heading) * 40;
     const dmg = seaGeistDamage(this.combat?.atk ?? 14, nav.playerLevel, g.effect);
+    // 4.91 Akt 1 am Steuer (Aufladung); Akt 2 + 3 am Schiff (Wille, Heilung, Beben) bzw. am Ziel der Donnerlanze
+    const gc = geistCinema(slot), gcol = slot === 2 ? '#3AE89A' : slot === 3 ? '#9A6AFF' : '#FFD27A';
+    const st = ACTION_STYLES[f.style];
+    this.cataclysm.formCharge(gc, s.x - Math.sin(s.heading) * s.cls.L * 0.3, sy, s.z - Math.cos(s.heading) * s.cls.L * 0.3, gcol, st.accent, 1.6);
+    if (g.effect !== 'thunder') this.cataclysm.formImpact(gc, s.x, sy, s.z, s.heading, gcol, slot === 2 ? '#FFE9A8' : st.accent, slot === 2 ? 'sonne' : slot === 4 ? 'koenig' : st.element, g.effect === 'quake' ? 2 : 1.6);
+    this.formStats.sea++;
     switch (g.effect) {
       case 'will': {
         for (const e of nav.harmableAround(s.x, s.z, g.range, this.helmAround)) e.ship.ceasefire = Math.max(e.ship.ceasefire, 3);
@@ -3507,9 +3617,10 @@ export class SeaWorld {
         break;
       }
       case 'thunder': {
-        const t = nav.pickArtTarget(g.range);
+        const t = lance;
         if (t) { tx = t.ship.x; tz = t.ship.z; }
         const wy = this.env.heightAt(tx, tz);
+        this.cataclysm.formImpact(gc, tx, wy, tz, s.heading, gcol, st.accent, 'blitz', SEA_CINE_SCALE);
         v.bolt(tx, wy + 44, tz, tx, wy + 2, tz, this.helmWhite, 0.9, 0.35, { depth: 5, branches: 3, jitter: 0.12 });
         v.bolt(tx + 2, wy + 40, tz - 1, tx, wy + 2, tz, col, 0.5, 0.3, { depth: 4, branches: 2, jitter: 0.1 });
         v.surfaceHit(tx, wy, tz, 6, col, 1.6);
@@ -3537,15 +3648,109 @@ export class SeaWorld {
     if (!foot) return false;
     const f = foot.fighter;
     if (!(f.will >= WILL.max || f.awakenT > 0)) { this.onMessage('Die Willenskraft ist noch nicht voll – das Ultimate braucht sie ganz.'); return false; }
-    if (this.mode === 'sail') this.goDeck();
+    if (f.awakenT > 0 && !f.ultReady && f.will < WILL.max) { this.onMessage('Das Ultimate dieses Erwachens ist schon entfesselt.'); return false; }
+    // 4.91: Ziel = angewähltes Schiff (Tab/Klick) bis 650 m, sonst das nächste voraus – dort entsteht das Ultimate (Flächen-Ultimates über der
+    // feindlichen Flotte); ein angewähltes Ziel außer Reichweite kostet nichts
+    const nav = this.naval;
+    const t = nav ? nav.pickArtTarget(SEA_ULT.range, SEA_ART.cone) : null;
+    if (!t && nav && nav.lockFar > 0) { this.helmStats.far++; this.onMessage(`Ziel außer Reichweite: ${Math.round(nav.lockFar)} m – das Ultimate am Steuer reicht ${SEA_ULT.range} m.`); return false; }
+    const fromHelm = this.mode === 'sail';
+    if (fromHelm) this.goDeck();
+    this.helmUlt.target = t; this.helmUlt.back = fromHelm; this.helmUlt.wait = 0; this.helmUlt.live = true;
+    // ohne Erwachen: erst Erwachen, kurz darauf das Ultimate selbst (am Steuer genügt ein Druck auf V)
+    this.helmUlt.chainU = f.awakenT > 0 && f.ultReady ? 0 : 0.35;
+    // die Figur dreht sich an Deck zum Ziel (Kino-Regie und Wirkung schauen dorthin)
+    if (t) foot.face(Math.atan2(t.ship.x - f.x, t.ship.z - f.z));
     // V gilt als gedrückt: im nächsten Schritt an Deck Erwachen bzw. Ultimate (wie an Land, mit allen 15 Choreografien)
     f.bufU = f.clock;
     this.helmStats.ults++;
     return true;
   }
 
+  /** 4.91: laufendes Ultimate vom Steuer (Ziel, danach zurück ans Ruder) */
+  private readonly helmUlt = { target: null as EnemyShip | null, back: false, wait: 0, live: false, chainU: 0 };
+  private readonly fleetPt = { x: 0, z: 0 };
+
+  /**
+   * 4.91: Wirkungsort eines Ultimates auf See – das angewählte bzw. vom Steuer gewählte Ziel bis 650 m (`seaUltAnchor`); null = die Wirkung
+   * entsteht wie an Land vor der Figur.
+   */
+  private seaUltAnchorFor(spec: UltimateSpec, f: FighterState) {
+    const nav = this.naval;
+    if (!nav) return null;
+    let t = this.helmUlt.live ? this.helmUlt.target : null;
+    // an Deck ohne Steuer: nur ein angewähltes Schiff (Tab/Klick) verlegt die Wirkung
+    if (!t && (this.ownDeck || this.mode === 'sail')) t = nav.aimTarget;
+    if (!t || !t.ship.alive || t.ship.sinking > 0 || !nav.playerMayHarm(t)) return null;
+    nav.fleetCenter(t, SEA_ULT.fleetR, this.fleetPt);
+    const a = seaUltAnchor(spec.kind, spec, f.x, f.z, t.ship.x, t.ship.z, this.fleetPt.x, this.fleetPt.z);
+    if (a) this.helmStats.anchored++;
+    return a;
+  }
+
+  /** Nach einem Ultimate vom Steuer zurück ans Ruder (sobald die Kino-Regie ausgeklungen ist) */
+  private stepHelmReturn(dt: number) {
+    const h = this.helmUlt;
+    if (!h.live) return;
+    if (h.chainU > 0) {
+      h.chainU -= dt;
+      const f = this.foot?.fighter;
+      if (h.chainU <= 0 && f && f.awakenT > 0 && f.ultReady) f.bufU = f.clock;
+      h.wait = 0;
+      return;
+    }
+    if (this.cine.active || this.cataclysm.active) { h.wait = 0; return; }
+    h.wait += dt;
+    if (h.wait < 0.7) return;
+    h.live = false; h.target = null;
+    if (h.back && this.mode === 'foot' && this.ownDeck && this.foot && this.foot.hp > 0) this.toHelm();
+    h.back = false;
+  }
+
   /** 4.9: Kamerawackeln von außen (Treffer eines geteilten Gegners auf das eigene Schiff) */
   shakeCamera(k: number) { this.shake = Math.max(this.shake, k); }
+
+  /** 4.91: Kopie eines Landgegners, den ein Mitspieler aufgestellt hat (Art, Stufe, Name, Macht); zählt nicht für „Insel befreit“ (Kennzeichen) */
+  private spawnMirrorFoe(ce: { role: string; level: number; name: string; x: number; z: number; y: number; hdg: number; look: { power: string } }): Enemy | null {
+    const c = this.combat;
+    if (!c) return null;
+    const kind = (ce.role in ENEMIES ? ce.role : 'matrose') as EnemyKind;
+    const power = ce.look.power && ce.look.power in FACTIONS ? (ce.look.power as FactionId) : undefined;
+    const list = c.spawnWave([kind], ce.level, power === 'marine' ? 'marine' : 'pirat', 'mmo', { x: ce.x, z: ce.z }, 0, { name: ce.name, power, calm: true });
+    const e = list[0];
+    if (!e) return null;
+    e.y = ce.y; e.yaw = ce.hdg;
+    return e;
+  }
+
+  /** 4.91: ein geteilter Landgegner (gesteuert von einem Mitspieler) trifft die eigene Figur – Parade, Ausweichen und Rüstung greifen */
+  private foeStrikeMe(name: string, dmg: number, x: number, z: number) {
+    const c = this.combat, f = this.foot;
+    if (!c || !f || this.mode !== 'foot') return;
+    let dx = f.x - x, dz = f.z - z;
+    const d = Math.hypot(dx, dz) || 1; dx /= d; dz /= d;
+    c.strikePlayer(dmg, dx, dz, dmg > f.maxHp * 0.12);
+    void name;
+  }
+
+  /** 4.91: dieser Gegner ist beim Shard gesperrt (Lager geräumt, Boss besiegt): abbauen, Insel ruht bis zur Wiederkehr, kein „Insel befreit“ */
+  private foeDeniedHere(e: Enemy, wait: number) {
+    const c = this.combat;
+    if (!c) return;
+    c.removeEnemy(e);
+    this.campQuiet = 3;
+    this.hostilesBefore = 0;
+    const isl = c.activeIsland;
+    const idx = isl ? this.ground.islands.indexOf(isl) : -1;
+    if (idx >= 0) {
+      this.cleared.set(idx, Math.max(this.cleared.get(idx) ?? 0, this.env.clock + wait));
+      const def = this.islandDefs[idx];
+      if (def && this.deniedNote !== def.id) { this.deniedNote = def.id; this.onMessage(`${def.name} ist geräumt – das Lager kehrt in etwa ${Math.max(1, Math.ceil(wait / 60))} Minuten zurück.`); }
+    }
+  }
+  /** 4.91: nach einer Sperre kurz kein „Insel befreit“ (die Lager-Gegner verschwinden, ohne besiegt worden zu sein) */
+  private campQuiet = 0;
+  private deniedNote = '';
 
   detachMmo() {
     this.endRide(false);
@@ -3574,6 +3779,19 @@ export class SeaWorld {
       }
     }
     c.peerCount = n;
+    // 4.91: Mitspieler zu Fuß in der Nähe (60 m) – Ziele der eigenen geteilten Landgegner (Hiebe, Geschosse, Warnflächen über den Shard)
+    let m = 0;
+    if (live && this.mode === 'foot') {
+      const me = this.playerPos;
+      for (const t of live.targets) {
+        if (!t.alive || m >= c.remotePeers.length || Math.hypot(t.x - me.x, t.z - me.z) > 60) continue;
+        const q = c.remotePeers[m++];
+        q.id = t.id; q.x = t.x; q.y = t.y; q.z = t.z;
+        const r = live.client.remotes.get(t.id);
+        q.yaw = r ? r.view.yaw : 0;
+      }
+    }
+    c.remotePeerN = m;
   }
 
   /**
@@ -4040,6 +4258,8 @@ export class SeaWorld {
     this.updateWhere(dt);
     this.stepWaterRescue(dt);
     this.tickHelmCd(dt);
+    this.stepHelmReturn(dt);
+    this.stepArena(dt);
     this.updateContext(input);
     this.raidMsgCd -= dt;
     if (!this.raid) {
@@ -4584,7 +4804,8 @@ export class SeaWorld {
     if (c?.activeIsland && !this.boarding) {
       // nur Lager-Gegner zählen (Gegner eines Weltereignisses nicht: sie dürfen „Insel befreit“ nicht auslösen)
       const left = c.campLeft;
-      if (left === 0 && this.hostilesBefore > 0) {
+      if (this.campQuiet > 0) { this.campQuiet -= 1 / 60; this.hostilesBefore = left; }
+      else if (left === 0 && this.hostilesBefore > 0) {
         const def = this.islandDefs[this.ground.islands.indexOf(c.activeIsland)];
         if (def) { this.onIslandCleared(def.id); this.overlay?.showBanner('Insel befreit!', def.name); }
       }
@@ -5298,18 +5519,32 @@ export class SeaWorld {
     if (def.kind === 'boss') {
       const lv = def.level ?? 6;
       c.enterIsland(isl, lv >= 9 ? ['legende', 'hauptmann', 'fajiwirker', 'musketier', 'schildtraeger', 'schlaeger'] : ['legende', 'matrose', 'musketier', 'schildtraeger'], lv, enemyFaction, def.boss ?? 'Die Legende', { power: def.factionId ?? undefined });
+      this.keyCamp(def.id);
       this.onMessage(`${where}: ${def.boss ?? 'Eine Legende'} erwartet dich!`);
       return;
     }
     if (def.kind === 'ruin') {
       const lv = def.level ?? 5;
       c.enterIsland(isl, ['fajiwirker', 'fajiwirker', 'schlaeger', 'musketier', 'schildtraeger', ...(lv >= 12 ? ['hauptmann' as const] : [])], lv, enemyFaction, undefined, { power: def.factionId ?? undefined });
+      this.keyCamp(def.id);
       this.onMessage(`${where}: Faji-Wirker hüten die Ruine! (Stufe ${lv})`);
       return;
     }
     const level = def.level ?? 1;
     c.enterIsland(isl, CAMP_BY_LEVEL[Math.min(CAMP_BY_LEVEL.length - 1, level - 1)], level, enemyFaction, undefined, { power: def.factionId ?? undefined });
+    this.keyCamp(def.id);
     this.onMessage(`${where}: Feindliches Lager! (Stufe ${level})`);
+  }
+
+  /**
+   * 4.91: feste Schlüssel des Inselllagers („isl:<Insel>:<Platz>“) – stellen zwei Spieler dasselbe Lager auf, führt der Shard sie zu EINEM
+   * Lager zusammen; nach dem Räumen bleibt es für alle gesperrt, bis der Shard es wieder freigibt
+   */
+  private keyCamp(id: string) {
+    const c = this.combat;
+    if (!c) return;
+    let i = 0;
+    for (const e of c.enemies) if (!e.tag && !e.netKey) e.netKey = `isl:${id}:${i++}`;
   }
 
   /**
@@ -5559,6 +5794,289 @@ export class SeaWorld {
     // Inselschilder gehören zum Spiel (nach „Zurück zum Titel“ blieben die zuletzt gezeigten stehen und sähen aus der Ferne wie dunkle Striche aus)
     for (const sl of this.slots) { const lab = sl.vis?.label; if (lab) lab.visible = false; }
     this.title.start();
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // 4.91: Klassen-Vorschau der Charaktererstellung in der echten Welt (echte Engine, Effekt-Schmiede, 3-Akt-Kino-Regie)
+  // ---------------------------------------------------------------------------------------------------------------
+
+  /** Zustand der Vorschau (die Maße stehen in `data/showcaseArena.ts`) */
+  readonly arena = {
+    on: false, sea: false, style: 'schwert' as StyleId, action: 'saebel' as ActionStyleId,
+    targets: [null, null, null] as (EnemyShip | null)[], pending: [false, false, false], respawnT: [0, 0, 0],
+    win: null as { x: number; y: number; w: number; h: number } | null,
+    gates: null as WorldGates | null,
+    idleT: 0, demoI: 0, demoT: 0,
+    /** zeitversetzte Eingaben (Kombo-Schläge, Ultimate nach dem Erwachen) */
+    queue: [] as { t: number; a: ActionId; ult?: boolean }[],
+    part: null as ArenaPart | null, act: -1,
+    spot: { x: 0, z: 0, yaw: 0, dx: 0, dz: 0 },
+    stats: { plays: 0, attacks: 0, forms: 0, geist: 0, ults: 0, demo: 0, targets: 0, respawns: 0, sea: 0, land: 0 },
+  };
+  private readonly arenaCamPose: ArenaCam = { px: 0, py: 0, pz: 0, lx: 0, ly: 0, lz: 0, fov: 50 };
+  /** Rückruf beim Wechsel des Vorschau-Teils bzw. Ultimate-Akts (Anzeige im Fenster der Charaktererstellung) */
+  onArenaPart: ((p: ArenaPart | null, act: number) => void) | null = null;
+  /** Eingabe der Welt (Vorschau-Knöpfe drücken über sie) */
+  arenaInput: Input | null = null;
+
+  /**
+   * Vorschau beginnen: Titelbild verlassen, Welt still (keine Begegnungen, keine Mitspieler), die Figur mit dem Aussehen aus dem Editor in der
+   * gewählten Klasse auf Stufe 60 (alle zehn Formen, Ultimate, Geistes-Faji) – an Land auf dem Übungsplatz, auf See am Steuer.
+   */
+  startArena(look: CharacterLook, style: StyleId, action: ActionStyleId, sea: boolean) {
+    const a = this.arena;
+    if (!this.foot || !this.player) return;
+    if (!a.on) {
+      this.leaveTitle();
+      a.gates = { ...this.gates };
+      this.setGates({ traffic: false, presence: false, leash: false, stage: false });
+      a.on = true;
+    }
+    this.setArenaClass(look, style, action);
+    this.setArenaSea(sea, true);
+  }
+
+  /** Klasse der Vorschau wechseln (Aussehen bleibt) */
+  setArenaClass(look: CharacterLook, style: StyleId, action: ActionStyleId) {
+    const a = this.arena, foot = this.foot;
+    if (!foot) return;
+    a.style = style; a.action = action;
+    this.updatePlayer(look, style, action);
+    this.setActionStyle(action);
+    foot.engine.setClass(10, true);
+    foot.engine.setGeist([5, 5, 5, 5]);
+    this.cine.reset();
+    this.arenaReset();
+  }
+
+  /** Vorschau an Land bzw. auf See */
+  setArenaSea(sea: boolean, force = false) {
+    const a = this.arena;
+    if (!a.on || (!force && a.sea === sea)) return;
+    a.sea = sea;
+    this.cine.reset();
+    this.cataclysm.reset();
+    this.arenaReset();
+    if (sea) this.arenaToSea(); else this.arenaToLand();
+  }
+
+  private arenaReset() {
+    const a = this.arena;
+    a.queue.length = 0; a.idleT = 0; a.demoI = 0; a.demoT = 0; a.part = null; a.act = -1;
+    for (let i = 0; i < 10; i++) this.helmCd[i] = 0;
+    for (let i = 0; i < 4; i++) this.helmGeistCd[i] = 0;
+    this.helmUlt.live = false; this.helmUlt.target = null; this.helmUlt.back = false; this.helmUlt.chainU = 0;
+    this.onArenaPart?.(null, -1);
+  }
+
+  /** an Land: Übungsplatz von Ankerglück vor den Übungspuppen */
+  private arenaToLand() {
+    const a = this.arena, foot = this.foot!, c = this.combat;
+    this.arenaClearTargets();
+    const home = this.ground.islands[0];
+    const dm = c ? c.trainingDummies : [];
+    const dx = dm.length ? dm.reduce((s, d) => s + d.x, 0) / dm.length : home.x;
+    const dz = dm.length ? dm.reduce((s, d) => s + d.z, 0) / dm.length : home.z - home.r * 0.55;
+    // die Figur steht zur Inselmitte hin vor den Puppen
+    const ix = home.x - dx, iz = home.z - dz, il = Math.hypot(ix, iz) || 1;
+    const fx = dx + (ix / il) * ARENA.landDist, fz = dz + (iz / il) * ARENA.landDist;
+    a.spot.x = fx; a.spot.z = fz; a.spot.dx = dx; a.spot.dz = dz; a.spot.yaw = Math.atan2(dx - fx, dz - fz);
+    if (this.mode === 'sail') this.goDeck();
+    this.ship.moored = null;
+    this.ownDeck = false;
+    this.deckGround = null;
+    foot.place(fx, fz, a.spot.yaw, this.groundProxy);
+    foot.onFoot = true;
+    this.landed = true;
+    this.footIsland = this.ground.islandAt(fx, fz, 8);
+    this.footYaw = a.spot.yaw;
+    this.setSailFade(this.ship, false);
+    this.setMode('foot');
+    a.stats.land++;
+  }
+
+  /** auf See: freie See vor Ankerglück, die Figur am Steuer, Zielschiff und zwei Begleiter in rund 140 m */
+  private arenaToSea() {
+    const a = this.arena, home = this.ground.islands[0];
+    let x = home.x, z = home.z - ARENA.fromHome, heading = Math.PI / 2;
+    for (let i = 0; i < 16; i++) {
+      const ang = (i / 16) * Math.PI * 2 + 0.3;
+      const px = home.x + Math.sin(ang) * ARENA.fromHome, pz = home.z + Math.cos(ang) * ARENA.fromHome;
+      const h = ang + Math.PI / 2;
+      const ok = !this.ground.islandAt(px, pz, ARENA.clear) && !this.ground.islandAt(px + Math.cos(h) * ARENA.targetDist, pz - Math.sin(h) * ARENA.targetDist, ARENA.clear * 0.6);
+      if (ok) { x = px; z = pz; heading = h; break; }
+    }
+    this.teleport(x, z, heading);
+    const s = this.ship;
+    s.moored = null; s.speed = 0; s.throttle = 0; s.sailLevel = 1;
+    this.arenaClearTargets();
+    a.respawnT[0] = a.respawnT[1] = a.respawnT[2] = 0.01;
+    a.stats.sea++;
+  }
+
+  private arenaClearTargets() {
+    const a = this.arena, nav = this.naval;
+    for (let i = 0; i < 3; i++) {
+      const e = a.targets[i];
+      if (e && nav && nav.enemies.includes(e)) nav.removeEventShip(e);
+      a.targets[i] = null; a.respawnT[i] = 0;
+    }
+    if (nav && nav.aimTarget?.showcase) nav.aimTarget = null;
+  }
+
+  /** Vorschau-Teil abspielen (Knopf): Standardangriff, Form 1 … 10, Geistes-Faji 1 … 4, Ultimate */
+  arenaPlay(kind: ArenaKind, slot = 0) {
+    const a = this.arena, foot = this.foot, input = this.arenaInput;
+    if (!a.on || !foot || !input) return;
+    a.idleT = 0;
+    a.stats.plays++;
+    if (this.cine.active) return;
+    const f = foot.fighter;
+    const nav = this.naval, s = this.ship;
+    a.part = { kind, slot }; a.act = -1;
+    this.onArenaPart?.(a.part, -1);
+    if (kind === 'attack') {
+      a.stats.attacks++;
+      if (a.sea && nav) {
+        const t = a.targets[0];
+        if (t && t.ship.alive) {
+          const toT = Math.atan2(t.ship.x - s.x, t.ship.z - s.z), side = Math.sin(toT - s.heading) > 0 ? -1 : 1;
+          s.reloadL = 0; s.reloadR = 0;
+          nav.broadside(s, side, Math.hypot(t.ship.x - s.x, t.ship.z - s.z), Math.max(30, nav.canDmg), 'kugel', t.ship);
+        }
+      } else for (let i = 0; i < ARENA.lightHits; i++) a.queue.push({ t: i * ARENA.lightGap, a: 'attack' });
+      return;
+    }
+    if (kind === 'form') {
+      a.stats.forms++;
+      const n = Math.max(1, Math.min(10, slot));
+      if (a.sea && nav) { this.helmCd[n - 1] = 0; this.castHelmArt(n, nav, s); }
+      else { f.skillCd[n - 1] = 0; input.inject(ART_ACTIONS[n - 1]); }
+      return;
+    }
+    if (kind === 'geist') {
+      a.stats.geist++;
+      const n = Math.max(1, Math.min(4, slot));
+      if (a.sea && nav) { this.helmGeistCd[n - 1] = 0; this.castHelmGeist(n, nav, s); }
+      else { f.geistCd[n - 1] = 0; input.inject(GEIST_ACTIONS[n - 1]); }
+      return;
+    }
+    // Ultimate: volle Willenskraft, Erwachen, kurz darauf das Ultimate (auf See vom Steuer gegen das Zielschiff). In der Vorschau darf man es
+    // immer wieder abspielen: ein schon genutztes Erwachen klingt im nächsten Schritt aus (Aura aus), dann beginnt alles von vorn
+    a.stats.ults++;
+    if (f.awakenT > 0 && !f.ultReady) f.awakenT = 0.001;
+    f.will = WILL.max;
+    if (a.sea) { if (a.targets[0] && nav) nav.aimTarget = a.targets[0]; this.helmUltimate(); }
+    else if (f.awakenT > 0 && f.ultReady) input.inject('awaken');
+    else { input.inject('awaken'); a.queue.push({ t: ARENA.chain, a: 'awaken', ult: true }); }
+  }
+
+  /** Fenster der Vorschau (CSS-Pixel); null = ganzer Bildschirm */
+  arenaWindow(r: { x: number; y: number; w: number; h: number } | null) { this.arena.win = r; }
+
+  /** Vorschau beenden (Zielschiffe weg, Welt wie vorher); `title` = zurück zum Titelbild */
+  endArena(title: boolean) {
+    const a = this.arena;
+    if (!a.on) return;
+    this.cine.reset();
+    this.cataclysm.reset();
+    this.arenaReset();
+    this.arenaClearTargets();
+    a.on = false;
+    a.win = null;
+    this.camera.clearViewOffset();
+    this.camera.updateProjectionMatrix();
+    if (a.gates) this.setGates(a.gates);
+    a.gates = null;
+    if (title) this.titleMood();
+  }
+
+  /** je Logikschritt: Figur und Schiff halten, Zielschiffe neu aufstellen, zeitversetzte Eingaben, Vorführung ohne Klick, Akt-Anzeige */
+  private stepArena(dt: number) {
+    const a = this.arena;
+    if (!a.on) return;
+    const foot = this.foot, nav = this.naval, input = this.arenaInput;
+    if (foot) { foot.hp = foot.maxHp; foot.fighter.stamina = Math.max(foot.fighter.stamina, 50); }
+    const s = this.ship;
+    s.hull = s.maxHull;
+    if (a.sea) {
+      s.speed = 0; s.throttle = 0;
+      for (let i = 0; i < 3; i++) {
+        const e = a.targets[i];
+        if (e && (!nav?.enemies.includes(e) || !e.ship.alive || e.ship.sinking > 0)) {
+          // gesunken (Ultimate, Breitseite): nach kurzer Zeit ein neues an derselben Stelle
+          if (a.respawnT[i] <= 0) a.respawnT[i] = ARENA.respawn;
+          a.respawnT[i] -= dt;
+          if (a.respawnT[i] <= 0) { if (nav && nav.enemies.includes(e)) nav.removeEventShip(e); a.targets[i] = null; a.respawnT[i] = 0.01; }
+          continue;
+        }
+        if (!e && !a.pending[i] && a.respawnT[i] > 0) {
+          a.respawnT[i] -= dt;
+          if (a.respawnT[i] <= 0 && nav) {
+            const spot = arenaTargets(s.x, s.z, s.heading)[i];
+            a.pending[i] = true;
+            const idx = i;
+            nav.queueShowcase(spot.x, spot.z, spot.heading, spot.tier, idx === 0 ? 'kurogane' : 'england', idx === 0 ? 'Zielschiff „Schwarze Brandung“' : 'Begleitschiff', (ne) => {
+              a.pending[idx] = false;
+              if (!a.on || !a.sea) { nav.removeEventShip(ne); return; }
+              a.targets[idx] = ne; a.respawnT[idx] = 0;
+              a.stats.targets++;
+              if (idx === 0) nav.aimTarget = ne;
+            });
+            a.stats.respawns++;
+          }
+        }
+        if (e && i === 0 && nav && !nav.aimTarget) nav.aimTarget = e;
+      }
+    }
+    // zeitversetzte Eingaben
+    if (input) for (let i = a.queue.length - 1; i >= 0; i--) {
+      const q = a.queue[i];
+      q.t -= dt;
+      if (q.t > 0) continue;
+      a.queue.splice(i, 1);
+      if (q.ult && foot && !(foot.fighter.awakenT > 0 && foot.fighter.ultReady)) continue;
+      input.inject(q.a);
+    }
+    // Akt-Anzeige des Ultimates
+    const act = this.cine.active ? this.cine.actIndex : -1;
+    if (act !== a.act) { a.act = act; if (a.part) this.onArenaPart?.(a.part, act); }
+    // Vorführung ohne Klick
+    if (this.cine.active || this.cataclysm.active) return;
+    a.idleT += dt;
+    if (a.idleT < ARENA.idle) return;
+    a.demoT -= dt;
+    if (a.demoT > 0) return;
+    const p = ARENA_DEMO[a.demoI % ARENA_DEMO.length];
+    a.demoI++;
+    a.demoT = ARENA.demoGap;
+    a.stats.demo++;
+    const idle = a.idleT;
+    this.arenaPlay(p.kind, p.slot);
+    a.idleT = idle;
+  }
+
+  /** Kamera der Vorschau: weite Seegefechts- bzw. Arena-Kamera (außer in der Kino-Regie) und Bildmitte im Vorschaufenster */
+  private arenaCamera(cam: PerspectiveCamera) {
+    const a = this.arena, C = this.arenaCamPose;
+    const r = a.win;
+    const aspW = r ? r.w / Math.max(1, r.h) : cam.aspect;
+    if (!this.cine.active) {
+      if (a.sea) {
+        const s = this.ship, t = a.targets[0];
+        const tx = t ? t.ship.x : s.x + Math.cos(s.heading) * ARENA.targetDist, tz = t ? t.ship.z : s.z - Math.sin(s.heading) * ARENA.targetDist;
+        seaCameraPose(s.x, s.z, s.cls.L, tx, tz, aspW, C);
+      } else if (this.foot) landCameraPose(this.foot.x, this.foot.y, this.foot.z, a.spot.dx, a.spot.dz, aspW, C);
+      cam.position.set(C.px, C.py, C.pz);
+      cam.lookAt(C.lx, C.ly, C.lz);
+      cam.fov = C.fov;
+      this.focus.set(C.lx, C.ly, C.lz);
+    }
+    if (r) {
+      const W = innerWidth, H = innerHeight;
+      cam.fov = Math.min(150, (2 * Math.atan(Math.tan((cam.fov * Math.PI) / 360) * (H / Math.max(80, r.h))) * 180) / Math.PI);
+      cam.setViewOffset(W, H, W / 2 - (r.x + r.w / 2), H / 2 - (r.y + r.h / 2), W, H);
+    } else cam.clearViewOffset();
   }
 
   /** Beim Betreten des Spiels läuft der Tag wieder, das Wetter wechselt wieder von selbst */
@@ -6154,6 +6672,8 @@ export class SeaWorld {
         }
       }
     }
+    // 4.91: Klassen-Vorschau in der Welt – weite Seegefechts- bzw. Arena-Kamera und Bildmitte im Vorschaufenster
+    if (this.arena.on && !inMenu) this.arenaCamera(cam);
     cam.updateProjectionMatrix();
     // Nahbereichs-Ausblenden (4.5A): rückt die Kamera an einer engen Wand näher als 0,70 m an den Kopf, blendet die eigene Figur weich aus
     if (this.player) {

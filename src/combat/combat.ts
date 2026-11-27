@@ -203,6 +203,64 @@ export class CombatSystem implements EnemyWorld {
   private dummies: Dummy[] = [];
   /** 4.7A: Übungspuppen als anwählbare Ziele (Einführung: „Erfasse ein Ziel mit Tab oder Mausklick“) */
   get trainingDummies(): readonly { readonly id: string; readonly x: number; readonly z: number; readonly group: Group }[] { return this.dummies; }
+
+  /**
+   * 4.91: Mitspieler an Land in der Nähe (vorab angelegt, je Schritt von der Seewelt gefüllt) – Ziele für Hiebe, Geschosse und Warnflächen
+   * der Gegner, die DIESER Client steuert (geteilte Landgegner). Der Schaden geht über `onPeerStrike` an den Shard.
+   */
+  readonly remotePeers: { id: string; x: number; y: number; z: number; yaw: number }[] = Array.from({ length: 8 }, () => ({ id: '', x: 0, y: 0, z: 0, yaw: 0 }));
+  remotePeerN = 0;
+  onPeerStrike: ((e: Enemy, peerId: string, dmg: number, dirX: number, dirZ: number, heavy: boolean) => void) | null = null;
+  /** 4.91: Warnfläche eines eigenen geteilten Gegners (Form 1 Kreis, 2 Kegel, 3 Linie, 4 Ring) – geht zur Darstellung an die Mitspieler */
+  onTelegraph: ((e: Enemy, shape: number, x: number, z: number, yaw: number, size: number, width: number, delay: number) => void) | null = null;
+
+  /** 4.91: Warnfläche eines Mitspieler-Gegners zeigen (Kopie): nur Bild, kein Schaden (den rechnet der Besitzer) */
+  showTelegraph(e: Enemy, shape: number, x: number, z: number, yaw: number, size: number, width: number, delay: number) {
+    const sh = shape === 2 ? 'cone' : shape === 3 ? 'line' : shape === 4 ? 'ring' : 'circle';
+    const spec = { shape: sh, size: Math.max(0.5, size), width: sh === 'line' ? Math.max(0.5, width) : undefined, arc: sh === 'cone' ? Math.max(0.2, width) : undefined } as ZoneSpec;
+    this.zones.spawn(e, spec, x, z, this.ground(x, z), yaw, Math.max(0.15, delay), 0, 0, e.atkSeq, { sticky: false, solo: true });
+  }
+
+  /**
+   * 4.91: Treffer eines Mitspielers auf einen eigenen geteilten Landgegner (Rohwerte über den Shard): Rüstung, Haltung, Zustand und Tod wie
+   * bei jedem Treffer; die Zahl schwebt über dem Gegner. Rückgabe: zugefügter Schaden (Bedrohung beim Besitzer nicht doppelt zählen).
+   */
+  applyNetFoeHit(e: Enemy, dmg: number, tier: number, f: { poise: number; knock: number; launch: number; dx: number; dz: number; st: string; sd: number; heavy: boolean; fin: boolean; brk: boolean }): number {
+    if (!e.alive) return 0;
+    const before = e.hp;
+    const res = e.takeHit({ dmg, poise: f.poise, knock: f.knock, launch: f.launch || undefined, dirX: f.dx, dirZ: f.dz, heavy: f.heavy, finisher: f.fin || undefined, breakGuard: f.brk || undefined, tier: Math.max(1, Math.min(7, Math.round(tier))), ranged: false } as HitInfo, this.now, this);
+    const dealt = Math.max(0, before - e.hp);
+    if (f.st && res !== 'blocked' && res !== 'kill') {
+      if (f.st === 'burn' || f.st === 'freeze' || f.st === 'fear') this.applyStatus(e, f.st as Status, f.sd, dmg * 0.4);
+      else if (f.st === 'slow') e.slowT = Math.max(e.slowT, f.sd);
+      else if (f.st === 'stun' || f.st === 'shock') e.stun(e.def.boss ? Math.min(0.5, f.sd) : f.sd * 0.5);
+    }
+    if (dealt > 0.5) this.overlay.number(HIT_P.set(e.x, e.y + 2.2 * e.def.scale, e.z), Math.round(dealt), 'hit');
+    if (res === 'kill') this.onKill(e);
+    return dealt;
+  }
+
+  /** 4.91: Gegner sofort entfernen (fester Schlüssel beim Shard gesperrt: dieses Lager ist geräumt) */
+  removeEnemy(e: Enemy) {
+    const i = this.enemies.indexOf(e);
+    if (i < 0) return;
+    this.enemies.splice(i, 1);
+    e.dispose();
+    this.overlay.setBar(e, null, -1, false, null);
+    this.targets.delete(e); this.dots.delete(e); this.tokens.delete(e);
+    if (this.lock === e) this.lock = null;
+  }
+
+  /** Mitspieler-Hitbox im Hiebvolumen eines eigenen geteilten Gegners → Treffer an den Shard */
+  private strikePeers(e: Enemy, dmg: number, heavy: boolean) {
+    if (!e.shared?.owner || !this.onPeerStrike) return;
+    for (let i = 0; i < this.remotePeerN; i++) {
+      const q = this.remotePeers[i];
+      if (!HB_TARGET.fromUpright(q.x, q.y, q.z, q.yaw, 1).overlap(VOL)) continue;
+      const dx = q.x - e.x, dz = q.z - e.z, d = Math.hypot(dx, dz) || 1;
+      this.onPeerStrike(e, q.id, dmg, dx / d, dz / d, heavy);
+    }
+  }
   private projectiles: Projectile[] = [];
   /** Rauch für Einschläge und Geschossspuren (setzt die Welt) */
   smoke: SmokeSystem | null = null;
@@ -299,9 +357,10 @@ export class CombatSystem implements EnemyWorld {
   }
 
   /** Boss beginnt eine neue Phase: Brüllen mit Schockring, Banner, Kamerawackeln */
-  bossPhase(e: Enemy, phase: number) {
+  bossPhase(e: Enemy, phase: number, mirror = false) {
     e.guardT = 0; e.counterT = 0;
-    this.onBossPhase?.(e, phase);
+    // 4.91: bei Kopien geteilter Bosse nur das Bild (Beschwörungen und Fähigkeiten der Phase führt der Besitzer)
+    if (!mirror) this.onBossPhase?.(e, phase);
     const at = new Vector3(e.x, this.ground(e.x, e.z), e.z);
     this.fx.shockwave(at, 10, '#FF5A3C');
     this.fx.crack(at, 8);
@@ -367,6 +426,7 @@ export class CombatSystem implements EnemyWorld {
       const total = atk.windup + (atk.aoe.delay > 0 ? atk.aoe.delay : 0.35);
       this.fx.telegraph(at, atk.aoe.radius, total);
       this.aoes.push({ x: at.x, z: at.z, y: at.y, r: atk.aoe.radius, t: total, dmg: e.strength * atk.dmg * 1.3, knock: atk.knock, from: e });
+      if (e.shared?.owner) this.onTelegraph?.(e, 1, at.x, at.z, 0, atk.aoe.radius, 0, total);
     }
   }
 
@@ -376,8 +436,10 @@ export class CombatSystem implements EnemyWorld {
     const base = atk.windup * phaseK + (zs.extra ?? 0.35);
     const sticky = (at !== 'self' && at !== 'player') || (zs.extra ?? 0) >= 0.8;
     const solo = at === 'scatter' || at === 'allies' || at === 'target' || at === 'behind';
-    const put = (cx: number, cz: number, yaw: number, delay: number) =>
+    const put = (cx: number, cz: number, yaw: number, delay: number) => {
       this.zones.spawn(e, zs, cx, cz, this.ground(cx, cz), yaw, base + delay, dmg, atk.knock, e.atkSeq, { sticky, solo });
+      if (e.shared?.owner) this.onTelegraph?.(e, zs.shape === 'cone' ? 2 : zs.shape === 'line' ? 3 : zs.shape === 'ring' ? 4 : 1, cx, cz, yaw, zs.size, zs.shape === 'line' ? zs.width ?? 2 : zs.arc ?? 1, base + delay);
+    };
     if (at === 'scatter') {
       const n = Math.max(1, zs.count ?? 3), v = list.length ? list : [tg];
       for (let i = 0; i < n; i++) {
@@ -480,6 +542,16 @@ export class CombatSystem implements EnemyWorld {
     if (!atk.projectile) audio.play('swing', 0.75, { x: e.x, y: e.y + 1.2, z: e.z });
     if (atk.mech) this.mechStrike(e, atk.mech);
     if (atk.aoe || atk.zones || atk.mech?.kind === 'summon') return; // Schaden kommt über den Warnkreis bzw. die Warnfläche
+    if (atk.projectile && e.shared?.owner && e.shared.peer && this.onPeerStrike) {
+      // 4.91: Ziel der Aggro-Tabelle ist ein Mitspieler – das Geschoss gilt ihm (Schaden über den Shard), hier nur Mündungsfeuer
+      const q = this.remotePeers.slice(0, this.remotePeerN).find((r) => r.id === e.shared!.peer);
+      if (q && Math.hypot(q.x - e.x, q.z - e.z) <= Math.max(18, atk.range * 3)) {
+        const dx = q.x - e.x, dz = q.z - e.z, d = Math.hypot(dx, dz) || 1;
+        this.onPeerStrike(e, q.id, e.strength * atk.dmg, dx / d, dz / d, false);
+      }
+      this.fx.hit(new Vector3(e.x + Math.sin(e.yaw) * 0.8, e.y + 1.3, e.z + Math.cos(e.yaw) * 0.8), 'punch', atk.projectile.color);
+      return;
+    }
     if (atk.projectile) {
       const p = this.playerPos;
       const from = new Vector3(e.x + Math.sin(e.yaw) * 0.8, e.y + 1.3, e.z + Math.cos(e.yaw) * 0.8);
@@ -491,6 +563,8 @@ export class CombatSystem implements EnemyWorld {
     const tg = this.targets.get(e)?.t;
     // Hiebvolumen (OBB) vor dem Gegner; getroffen wird, was eine Trefferzone hineinragen lässt
     attackVolume(VOL, e.x, e.y, e.z, e.yaw, atk.range * e.def.scale + 0.25, atk.arc + 0.25, e.def.scale);
+    // 4.91: Mitspieler im Hieb eines eigenen geteilten Gegners
+    this.strikePeers(e, e.strength * atk.dmg, atk.fx === 'heavy');
     if (tg) {
       if (!tg.alive) return;
       const ax = tg.x - e.x, az = tg.z - e.z, ad = Math.hypot(ax, az);
@@ -1080,8 +1154,9 @@ export class CombatSystem implements EnemyWorld {
     const [g0, g1] = e.def.gold;
     const total = Math.round((g0 + Math.random() * (g1 - g0)) * (1 + 0.2 * (e.level - 1)));
     for (let i = 0; i < n; i++) this.spawnCoin(e.x, e.y + 1, e.z, Math.max(1, Math.round(total / n)));
-    // Beute-Säulen: Seltenheit nach Gegnerart (Elite besser, Bosse vier Stück, mindestens eine epische)
-    if (e.def.raid !== 'boss') for (const d of rollLoot({ boss: e.def.boss, elite: e.def.elite, level: e.level, gold: e.def.gold })) this.loot.drop(e.x, e.y + 1, e.z, d, e.def.boss ? 4 : 2.2);
+    // Beute-Säulen: Seltenheit nach Gegnerart (Elite besser, Bosse vier Stück, mindestens eine epische); 4.91: hat ein Mitspieler den eigenen
+    // geteilten Gegner besiegt, würfelt seine Seite die Beute (der Shard nennt ihn als Finder) – hier keine Säulen
+    if (e.def.raid !== 'boss' && !e.shared?.lastBy) for (const d of rollLoot({ boss: e.def.boss, elite: e.def.elite, level: e.level, gold: e.def.gold })) this.loot.drop(e.x, e.y + 1, e.z, d, e.def.boss ? 4 : 2.2);
     this.hooks.kill(e);
     if (e.def.boss) {
       // Todesstoß: eine halbe Sekunde Zeitlupe mit Schockring, dann Siegesbild und Fanfare
@@ -1119,7 +1194,16 @@ export class CombatSystem implements EnemyWorld {
       if (z.propKind === 'fass' || z.propKind === 'granate') this.smoke?.puff(z.x, z.y + 0.6, z.z, { n: 4, size: 1.2, grow: 4, life: 1.6, tone: 0.3, spread: 1.6, rise: 1.2, alpha: 0.6, wind: 0.3 });
     }
     this.hooks.shake(0.5);
-    if (!z.from.alive) return;
+    if (!z.from.alive || z.dmg <= 0) return;
+    // 4.91: Mitspieler in der Fläche eines eigenen geteilten Gegners (Schaden über den Shard)
+    if (z.from.shared?.owner && this.onPeerStrike) {
+      for (let i = 0; i < this.remotePeerN; i++) {
+        const q = this.remotePeers[i];
+        if (!zoneContains(z, q.x, q.z, 0.3)) continue;
+        const dx = q.x - z.x, dz = q.z - z.z, d = Math.hypot(dx, dz) || 1;
+        this.onPeerStrike(z.from, q.id, z.dmg, dx / d, dz / d, true);
+      }
+    }
     // Crew und Trupps in der Fläche leiden mit (Trupps stärker: die Fläche trifft viele Köpfe auf einmal)
     for (const a of this.allies) {
       if (!a.alive || !zoneContains(z, a.x, a.z, a.radius)) continue;
@@ -1514,6 +1598,8 @@ export class CombatSystem implements EnemyWorld {
       if (nav) nav.snap(px, pz, ENEMIES[k].radius * ENEMIES[k].scale, spot); else { spot.x = px; spot.z = pz; }
       const e = new Enemy(this.assets, k, level, faction, spot.x, spot.z, this.outline, k === 'legende' || opts.def ? opts.name : undefined, opts.power, { def: opts.def });
       e.tag = tag;
+      // 4.91: feste Schlüssel für Bezirke der Mega-Inseln, Kommandanten und Kaiser-Garden (gleich für alle Spieler: Ort des Aufstellens + Platz)
+      if (/^(mega|kaiser):/.test(tag)) e.netKey = `${tag}.${Math.round(at.x)}.${Math.round(at.z)}.${i}`;
       e.y = this.ground(e.x, e.z);
       if (!opts.calm) e.alert();
       this.scene.add(e.char.holder);

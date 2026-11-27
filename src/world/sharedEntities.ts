@@ -10,11 +10,18 @@
 //   sofort die Gruppen-Beute.
 // - **Kampf-Aktionen:** eigene Breitseiten und Bugschüsse (und die der eigenen geteilten Gegner) gehen zur Darstellung an alle in der Nähe;
 //   fremde zeigt diese Seite mit Mündungsfeuer, Kugeln und Einschlägen (ohne Wirkung).
+// - **4.91 Landgegner:** Lager, Bezirke der Mega-Inseln, Kommandanten, Bosse und Kaiser-Garden laufen genauso: wer sie aufstellt, meldet sie
+//   mit festem Schlüssel an (`Enemy.netKey`, z. B. „isl:<Insel>:<Platz>“); stellt ein zweiter Spieler dasselbe Lager auf, macht der Shard
+//   daraus EINEN Gegner – beim Zweiten wird der eigene zur Kopie (keine KI, Lage, Bewegung, Leben, Haltung und Boss-Phase aus dem
+//   Schnappschuss). Treffer auf Kopien gehen roh an den Besitzer (`FoeHitNet`), Warnflächen der Bosse zeigt jeder (`tele`), Hiebe und Flächen
+//   treffen auch Mitspieler (über den Shard). Ein geräumtes Lager bleibt gesperrt, bis der Shard es wieder freigibt (`edenied`).
 // Je Logikschritt entsteht nichts Neues außer bei Ereignissen (neuer Gegner, Abschuss); Berichte nutzen vorab angelegte Einträge.
 import type { Ship } from '../entities/ship/ship';
+import type { Enemy, FoeLink, HitInfo } from '../entities/enemy';
+import type { CombatSystem } from '../combat/combat';
 import type { EnemyShip, NavalSystem, SharedLink } from '../naval/naval';
 import type { MmoClient, ClientEnt } from '../net/mmoClient';
-import { MMO, type ActNet, type EntKillNet, type EntLookNet, type EntNet, type EntSpawnNet, type EntStateNet } from '../net/mmoProtocol';
+import { MMO, netKey, type ActNet, type EntKillNet, type EntLookNet, type EntNet, type EntSpawnNet, type EntStateNet, type FoeHitNet } from '../net/mmoProtocol';
 import { SHIP_CLASSES, type AmmoId, type NavalRole, type ShipLook } from '../data/ships';
 import type { ShipEvolution, EvoTier } from '../data/shipEvolution';
 
@@ -39,10 +46,22 @@ export interface SharedHost {
   kill(k: EntKillNet, owner: boolean): void;
   /** Schiffsaussehen aus dem Netz */
   lookOf(l: EntLookNet): ShipLook;
+  /** 4.91: Kampfsystem an Land (Landgegner) und ob Landgegner gerade geteilt werden (nicht beim Entern eines fremden Decks) */
+  combat(): CombatSystem | null;
+  foesShared(): boolean;
+  /** 4.91: Kopie eines Landgegners bauen, den diese Welt nicht selbst aufgestellt hat (Art, Stufe, Name, Macht aus dem Schnappschuss) */
+  spawnFoe(ce: ClientEnt): Enemy | null;
+  /** 4.91: Hieb bzw. Fläche eines geteilten Landgegners trifft die eigene Figur (Ort des Gegners für die Richtung) */
+  foeHitMe(name: string, dmg: number, x: number, z: number): void;
+  /** 4.91: dieser Gegner ist beim Shard gesperrt (Lager geräumt, Boss besiegt): `wait` s bis zur Wiederkehr */
+  foeDenied(e: Enemy, wait: number): void;
 }
 
 interface OwnRec { id: string; e: EnemyShip; lastHp: number; fwd: number; lastBy: string }
 interface MirrorRec { id: string; e: EnemyShip; predicted: number }
+/** 4.91: eigener bzw. kopierter Landgegner (`built` = aus dem Schnappschuss gebaut, nicht in dieser Welt aufgestellt) */
+interface OwnFoe { id: string; e: Enemy; lastHp: number; fwd: number }
+interface MirrorFoe { id: string; e: Enemy; predicted: number; phase: number; built: boolean }
 
 const _me = { x: 0, z: 0 };
 const _at = { x: 0, y: 0, z: 0, yaw: 0 };
@@ -65,7 +84,14 @@ export class SharedEntities {
   private reportT = 0;
   private readonly states: EntStateNet[] = [];
   /** Zahlen für Prüfungen */
-  readonly stats = { claimed: 0, owned: 0, mirrors: 0, built: 0, forwarded: 0, applied: 0, kills: 0, credited: 0, actsSent: 0, actsShown: 0, released: 0, adopted: 0, hitsMe: 0, demoted: 0 };
+  readonly stats = { claimed: 0, owned: 0, mirrors: 0, built: 0, forwarded: 0, applied: 0, kills: 0, credited: 0, actsSent: 0, actsShown: 0, released: 0, adopted: 0, hitsMe: 0, demoted: 0,
+    foeClaimed: 0, foesOwned: 0, foeMirrors: 0, foeBuilt: 0, foeMerged: 0, foeDenied: 0, foeHits: 0, foeApplied: 0, foeDemoted: 0, foeAdopted: 0, teleSent: 0, teleShown: 0, peerStrikes: 0, foeHitsMe: 0, phaseShown: 0 };
+  /** 4.91: Landgegner – Anmeldungen (Schlüssel → Gegner), eigene, Kopien */
+  private readonly pendingFoes = new Map<string, Enemy>();
+  private readonly ownFoes = new Map<string, OwnFoe>();
+  private readonly ownFoeList: OwnFoe[] = [];
+  private readonly mirrorFoes = new Map<string, MirrorFoe>();
+  private readonly mirrorFoeList: MirrorFoe[] = [];
 
   constructor(private readonly host: SharedHost) {}
 
@@ -89,19 +115,31 @@ export class SharedEntities {
 
   update(dt: number) {
     const nav = this.host.naval(), c = this.host.client();
-    if (!nav || !c || !c.online || !this.host.active()) { if (this.ownList.length || this.mirrorList.length) this.clear(); return; }
+    if (!nav || !c || !c.online || !this.host.active()) { if (this.ownList.length || this.mirrorList.length || this.ownFoeList.length || this.mirrorFoeList.length || this.pendingFoes.size) this.clear(); return; }
     this.host.me(_me);
     this.claimNew(nav, c);
-    this.stepOwned(nav, c, dt);
+    this.stepOwned(nav, c);
     this.stepMirrors(nav, c);
+    // 4.91: Landgegner
+    const cb = this.host.combat();
+    if (cb && this.host.foesShared()) {
+      this.claimNewFoes(cb, c);
+      this.stepOwnedFoes(cb, c);
+      this.stepMirrorFoes(cb, c);
+    } else if (this.ownFoeList.length || this.mirrorFoeList.length || this.pendingFoes.size) this.clearFoes();
+    this.report(c, dt);
   }
 
-  /** Darf dieser Gegner geteilt werden? Offene See, gewöhnliche Rollen; nie Flotte, Schlachten, Ereignisse, Raid, Bühne, Legenden, Jäger */
+  /**
+   * Darf dieser Gegner geteilt werden? Offene See: Patrouillen, Kriegsschiffe, Händler und – 4.91 – alle Schiffe der Welt-Ereignisse (Konvois,
+   * Korsaren, Geisterflotten, Weltbosse als Schiffe) und der Seeschlachten an den Grenzen. Nie die eigene Flotte, Raid-Wachen, Bühne,
+   * Mitspieler, persönliche Geschichte (Legenden, Kopfgeldjäger, Übungsschiff), Prisen, Helfer, Geisterschiffe der Nacht.
+   */
   private eligible(e: EnemyShip, nav: NavalSystem): boolean {
     if (e.shared || !e.ship.alive || e.ship.sinking > 0 || e.ship.disabled) return false;
-    if (e.companion || e.fleetId || e.battle || e.ev || e.raid || e.station || e.stage || e.peer || e.legendId || e.training || e.hunter || e.captured || e.helper || e.ghost) return false;
+    if (e.companion || e.fleetId || e.raid || e.station || e.stage || e.peer || e.legendId || e.training || e.hunter || e.captured || e.helper || e.ghost || e.showcase) return false;
     if (nav.isTeamShip(e)) return false;
-    return e.role === 'patrouille' || e.role === 'jaeger' || e.role === 'haendler';
+    return !!e.ev || !!e.battle || e.role === 'patrouille' || e.role === 'jaeger' || e.role === 'haendler';
   }
 
   private claimNew(nav: NavalSystem, c: MmoClient) {
@@ -120,13 +158,14 @@ export class SharedEntities {
   private spawnNet(e: EnemyShip, key: string): EntSpawnNet {
     const s = e.ship, l = s.look;
     return {
-      key, tier: Math.max(0, SHIP_CLASSES.indexOf(s.cls)), role: e.role, level: e.level, name: e.name ?? 'Kriegsschiff', x: s.x, z: s.z, hdg: s.heading, hp: s.hull, mhp: s.maxHull,
+      key, cat: 'ship', tier: Math.max(0, SHIP_CLASSES.indexOf(s.cls)), role: e.role, level: e.level, name: e.name ?? 'Kriegsschiff', x: s.x, z: s.z, y: 0, hdg: s.heading, hp: s.hull, mhp: s.maxHull,
+      boss: e.role === 'legende', scale: 1, respawn: 0,
       look: { hull: l.hull, stripe: l.stripe, sail: l.sail, flag: l.flag, flagColor: l.flagColor, figurehead: l.figurehead ?? 'keine', power: l.power ?? '', evo: [s.evo.hullTier, s.evo.sailTier, s.evo.cannonTier] },
     };
   }
 
   /** Eigene geteilte Gegner: Bedrohung aus eigenem Schaden, Untergang, Abgabe, Aggro-Ziel, Berichte (8 Hz) */
-  private stepOwned(nav: NavalSystem, c: MmoClient, dt: number) {
+  private stepOwned(nav: NavalSystem, c: MmoClient) {
     for (let i = this.ownList.length - 1; i >= 0; i--) {
       const r = this.ownList[i], e = r.e, s = e.ship, link = e.shared;
       if (!link) { this.dropOwned(i); continue; }
@@ -153,20 +192,36 @@ export class SharedEntities {
       const ag = ce?.aggro ?? '';
       link.aggro = ag && ag !== c.id ? this.host.peerShip(ag) : null;
     }
+  }
+
+  /** Berichte der eigenen geteilten Gegner (Schiffe und Landgegner), 8× je Sekunde, vorab angelegte Einträge */
+  private report(c: MmoClient, dt: number) {
     this.reportT -= dt;
-    if (this.reportT > 0 || !this.ownList.length) return;
+    if (this.reportT > 0 || (!this.ownList.length && !this.ownFoeList.length)) return;
     this.reportT = 1 / MMO.entHz;
     let n = 0;
     for (const r of this.ownList) {
       const s = r.e.ship;
       if (r.e.shared?.dead) continue;
-      let o = this.states[n];
-      if (!o) { o = { id: '', x: 0, z: 0, hdg: 0, spd: 0, hp: 0, mhp: 1, dis: false }; this.states.push(o); }
+      const o = this.stateAt(n++);
       o.id = r.id; o.x = s.x; o.z = s.z; o.hdg = s.heading; o.spd = s.speed; o.hp = Math.max(0, s.hull); o.mhp = Math.max(1, s.maxHull); o.dis = s.disabled;
-      n++;
+      o.y = 0; o.an = 0; o.clip = ''; o.pose = 1; o.brk = false; o.phase = 1;
+    }
+    for (const r of this.ownFoeList) {
+      const e = r.e;
+      if (e.shared?.dead || !e.alive) continue;
+      const o = this.stateAt(n++);
+      o.id = r.id; o.x = e.x; o.z = e.z; o.hdg = e.yaw; o.spd = Math.hypot(e.vx, e.vz); o.hp = Math.max(0, e.hp); o.mhp = Math.max(1, e.maxHp); o.dis = false;
+      o.y = e.y; o.an = e.netAnim; o.clip = e.netClip; o.pose = e.hasPosture ? e.breakFrac : 1; o.brk = e.brokenT > 0; o.phase = e.phase;
     }
     this.states.length = n;
-    c.reportEnts(this.states);
+    if (n) c.reportEnts(this.states);
+  }
+
+  private stateAt(n: number): EntStateNet {
+    let o = this.states[n];
+    if (!o) { o = { id: '', x: 0, z: 0, hdg: 0, spd: 0, hp: 0, mhp: 1, dis: false, y: 0, an: 0, clip: '', pose: 1, brk: false, phase: 1 }; this.states[n] = o; }
+    return o;
   }
 
   private dropOwned(i: number) {
@@ -207,7 +262,8 @@ export class SharedEntities {
   private stepMirrors(nav: NavalSystem, c: MmoClient) {
     const now = c.transport.now();
     for (const ce of c.entList) {
-      if (ce.owner === c.id || this.own.has(ce.id)) continue;
+      // Landgegner führt `stepMirrorFoes`
+      if (ce.cat === 'foe' || ce.owner === c.id || this.own.has(ce.id)) continue;
       const m = this.mirrors.get(ce.id);
       const d = Math.hypot(ce.x - _me.x, ce.z - _me.z);
       if (!m) {
@@ -279,6 +335,186 @@ export class SharedEntities {
     this.building.clear();
     this.adoptOnBuild.clear();
     this.stats.owned = 0;
+    this.clearFoes();
+  }
+
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // 4.91: Landgegner (Lager, Bezirke, Kommandanten, Bosse, Kaiser-Garden)
+  // ---------------------------------------------------------------------------------------------------------------
+
+  /** Erscheinen eines Landgegners für den Shard (feste Schlüssel führt er zusammen) */
+  private foeSpawn(e: Enemy, key: string): EntSpawnNet {
+    const boss = !!(e.def.boss || e.def.raid === 'boss');
+    return {
+      key, cat: 'foe', tier: 0, role: e.kind, level: e.level, name: e.name ?? e.def.label, x: e.x, z: e.z, y: e.y, hdg: e.yaw, hp: e.hp, mhp: e.maxHp,
+      boss, scale: e.def.scale, respawn: boss ? MMO.entRespawnBoss : MMO.entRespawn,
+      look: { hull: '#000000', stripe: '#000000', sail: '#000000', flag: 'totenkopf', flagColor: '#000000', figurehead: 'keine', power: e.power ?? '', evo: [3, 3, 3] },
+    };
+  }
+
+  private newFoeLink(key: string): FoeLink { return { id: '', key, owner: true, dead: false, hit: null, peer: '', px: 0, py: 0, pz: 0, lastBy: '' }; }
+
+  /** neue Landgegner in der Nähe anmelden (eigene Aufstellung: Lager, Bezirke, Kaiser, Ereignisse) */
+  private claimNewFoes(cb: CombatSystem, c: MmoClient) {
+    for (const e of cb.enemies) {
+      if (e.shared || !e.alive) continue;
+      if (Math.hypot(e.x - _me.x, e.z - _me.z) > MMO.foeShow + 60) continue;
+      const key = e.netKey ? netKey(e.netKey) : `${c.id}.f${++this.seq}`.slice(-48);
+      e.shared = this.newFoeLink(key);
+      this.pendingFoes.set(key, e);
+      c.claimEnt(this.foeSpawn(e, key));
+      this.stats.foeClaimed++;
+    }
+  }
+
+  /** Kopie führen: Treffer und Brand gehen roh an den Shard (mit Haltung, Rückstoß, Richtung, Zustand) */
+  private asFoeMirror(id: string, e: Enemy, built: boolean): MirrorFoe {
+    const rec: MirrorFoe = { id, e, predicted: 0, phase: e.phase, built };
+    const L = e.shared ?? (e.shared = this.newFoeLink(''));
+    L.id = id; L.owner = false; L.peer = '';
+    L.hit = (h: HitInfo) => {
+      const cl = this.host.client();
+      if (!cl) return;
+      const f = this.foeHitOut;
+      f.poise = h.poise; f.knock = h.knock; f.launch = h.launch ?? 0; f.dx = h.dirX; f.dz = h.dirZ; f.st = ''; f.sd = 0;
+      f.heavy = !!h.heavy; f.fin = !!h.finisher; f.brk = !!h.breakGuard;
+      cl.hitEnt(id, h.dmg, false, 'land', 'hull', h.tier ?? 3, f);
+      rec.predicted += h.dmg * 0.6;
+      this.stats.foeHits++;
+    };
+    this.mirrorFoes.set(id, rec);
+    this.mirrorFoeList.push(rec);
+    this.stats.foeMirrors = this.mirrorFoeList.length;
+    return rec;
+  }
+  private readonly foeHitOut: FoeHitNet = { poise: 0, knock: 0, launch: 0, dx: 0, dz: 0, st: '', sd: 0, heavy: false, fin: false, brk: false };
+
+  private addOwnFoe(id: string, e: Enemy) {
+    if (this.ownFoes.has(id)) return;
+    if (e.shared) { e.shared.id = id; e.shared.owner = true; e.shared.hit = null; }
+    const r: OwnFoe = { id, e, lastHp: e.hp, fwd: 0 };
+    this.ownFoes.set(id, r);
+    this.ownFoeList.push(r);
+    this.stats.foesOwned = this.ownFoeList.length;
+  }
+
+  private dropOwnFoe(i: number) {
+    const r = this.ownFoeList[i];
+    this.ownFoeList.splice(i, 1);
+    this.ownFoes.delete(r.id);
+    this.stats.foesOwned = this.ownFoeList.length;
+  }
+
+  private dropFoeMirror(id: string, remove: boolean) {
+    const m = this.mirrorFoes.get(id);
+    if (!m) return;
+    this.mirrorFoes.delete(id);
+    const i = this.mirrorFoeList.indexOf(m);
+    if (i >= 0) this.mirrorFoeList.splice(i, 1);
+    this.stats.foeMirrors = this.mirrorFoeList.length;
+    const cb = this.host.combat();
+    if (remove && cb && cb.enemies.includes(m.e)) cb.removeEnemy(m.e);
+    else if (!remove && m.e.shared) m.e.shared = null;
+  }
+
+  /** eigene Landgegner: Bedrohung aus eigenem Schaden, Tod, Abgabe, Ziel der Aggro-Tabelle (ein Mitspieler: seine Figur) */
+  private stepOwnedFoes(cb: CombatSystem, c: MmoClient) {
+    for (let i = this.ownFoeList.length - 1; i >= 0; i--) {
+      const r = this.ownFoeList[i], e = r.e, L = e.shared;
+      if (!L) { this.dropOwnFoe(i); continue; }
+      // nicht mehr in der Welt (Insel verlassen): abgeben, der Shard übergibt ihn jemandem in der Nähe
+      if (!cb.enemies.includes(e)) {
+        if (!L.dead) { c.releaseEnt(r.id); this.stats.released++; }
+        this.dropOwnFoe(i);
+        continue;
+      }
+      const ce = c.ents.get(r.id);
+      // Besitz verloren (zu lange kein Bericht): der eigene Gegner wird zur Kopie
+      if (ce && ce.owner && ce.owner !== c.id && !L.dead) {
+        this.dropOwnFoe(i);
+        this.asFoeMirror(r.id, e, false);
+        this.stats.foeDemoted++;
+        continue;
+      }
+      const drop = r.lastHp - e.hp;
+      if (drop > 0.5) { const mine = drop - r.fwd; if (mine > 0.5) { c.hitEnt(r.id, mine, true); L.lastBy = ''; } }
+      r.fwd = 0;
+      r.lastHp = e.hp;
+      if (!L.dead && !e.alive) { L.dead = true; c.entDead(r.id, L.lastBy || c.id); }
+      const ag = ce?.aggro ?? '';
+      if (ag && ag !== c.id && this.host.peerAt(ag, _at)) { L.peer = ag; L.px = _at.x; L.py = _at.y; L.pz = _at.z; } else L.peer = '';
+    }
+  }
+
+  /** Kopien fremder Landgegner: bauen (in der Nähe), Lage, Bewegung, Leben, Haltung und Phase aus dem Schnappschuss, Tod, Abbau */
+  private stepMirrorFoes(cb: CombatSystem, c: MmoClient) {
+    const now = c.transport.now();
+    for (const ce of c.entList) {
+      if (ce.cat !== 'foe' || ce.owner === c.id || this.ownFoes.has(ce.id)) continue;
+      let m = this.mirrorFoes.get(ce.id);
+      const d = Math.hypot(ce.x - _me.x, ce.z - _me.z);
+      if (!m) {
+        if (ce.dead || d > MMO.foeShow) continue;
+        const e = this.host.spawnFoe(ce);
+        if (!e) continue;
+        m = this.asFoeMirror(ce.id, e, true);
+        e.hp = Math.max(1, ce.hp); e.maxHp = Math.max(1, ce.mhp);
+        this.stats.foeBuilt++;
+      }
+      const e = m.e;
+      if (!cb.enemies.includes(e)) { this.dropFoeMirror(ce.id, false); continue; }
+      if (e.state === 'dead') continue;
+      const v = c.sampleEnt(ce, now);
+      e.x = v.x; e.z = v.z; e.yaw = v.hdg; e.y = ce.y;
+      if (ce.mhp > 0) e.maxHp = ce.mhp;
+      const drop = e.hp - ce.hp;
+      if (drop > 0.5 && !ce.dead) m.predicted = Math.max(0, m.predicted - drop);
+      if (!ce.dead) e.hp = Math.max(1, ce.hp);
+      e.mirrorAn = ce.an; e.mirrorClip = ce.clip;
+      if (e.hasPosture) { e.poise = ce.pose * e.def.poise; e.brokenT = ce.brk ? Math.max(e.brokenT, 0.3) : 0; }
+      // Boss-Phase gestiegen: Brüllen, Schockring und Banner (Fähigkeiten der Phase führt der Besitzer)
+      if (ce.phase > m.phase) { m.phase = ce.phase; e.phase = ce.phase; cb.bossPhase(e, ce.phase, true); this.stats.phaseShown++; }
+      if (ce.dead && e.shared) { e.shared.dead = true; e.mirrorDie(); }
+    }
+    // Kopien ohne Eintrag (verschwunden) oder weit weg abbauen; selbst aufgestellte, verlassene Kopien laufen als eigene Gegner weiter
+    for (let i = this.mirrorFoeList.length - 1; i >= 0; i--) {
+      const m = this.mirrorFoeList[i];
+      if (m.e.state === 'dead') continue;
+      const ce = c.ents.get(m.id);
+      const far = Math.hypot(m.e.x - _me.x, m.e.z - _me.z) > MMO.foeShow * 1.6;
+      if (!ce || far) this.dropFoeMirror(m.id, m.built || far);
+    }
+  }
+
+  /** Landgegner abgeben bzw. abbauen (Verbindung weg, Insel verlassen, Raid, Entern) */
+  private clearFoes() {
+    const c = this.host.client();
+    for (const r of this.ownFoeList) { if (r.e.shared && !r.e.shared.dead && c?.online) c.releaseEnt(r.id); r.e.shared = null; }
+    this.ownFoeList.length = 0; this.ownFoes.clear();
+    for (const e of this.pendingFoes.values()) e.shared = null;
+    this.pendingFoes.clear();
+    for (const m of [...this.mirrorFoeList]) this.dropFoeMirror(m.id, m.built);
+    this.stats.foesOwned = 0;
+  }
+
+  /** Hieb bzw. Fläche eines eigenen Landgegners trifft die Figur eines Mitspielers */
+  peerHitFoe(e: Enemy, playerId: string, dmg: number) {
+    const c = this.host.client(), id = e.shared?.id;
+    if (!c || !id || !e.shared?.owner) return;
+    c.entPlayerHit(id, playerId, dmg, 3);
+    this.stats.peerStrikes++;
+  }
+
+  /** Warnfläche eines eigenen Landgegners (Boss-Angriff) zur Darstellung an die Mitspieler */
+  sendTele(e: Enemy, shape: number, x: number, z: number, yaw: number, size: number, width: number, delay: number) {
+    const c = this.host.client(), id = e.shared?.id;
+    if (!c || !c.online || !id || !e.shared?.owner) return;
+    const a = this.act;
+    a.t = 'tele'; a.ent = id; a.x = x; a.y = e.y; a.z = z; a.yaw = yaw; a.side = 0; a.n = Math.round(Math.max(0, Math.min(4.8, delay)) * 10);
+    a.style = ''; a.el = ''; a.slot = shape; a.tx = size; a.ty = width; a.tz = 0; a.sea = false;
+    c.act(a);
+    this.stats.teleSent++;
   }
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -286,12 +522,29 @@ export class SharedEntities {
   // ---------------------------------------------------------------------------------------------------------------
 
   /** Kennung vergeben: der Gegner gehört ab jetzt zu den geteilten */
-  claimed(key: string, id: string) {
+  claimed(key: string, id: string, owner = '') {
+    // 4.91: Landgegner – neu (eigener) oder zusammengeführt mit dem Gegner eines Mitspielers (Kopie)
+    const f = this.pendingFoes.get(key);
+    if (f) {
+      this.pendingFoes.delete(key);
+      if (!f.shared) return;
+      if (!owner || owner === this.me) this.addOwnFoe(id, f);
+      else {
+        // schon als Kopie aus dem Schnappschuss gebaut (Antwort kam nach dem Schnappschuss): die eigene Aufstellung bleibt, die gebaute geht
+        const prev = this.mirrorFoes.get(id);
+        if (prev) this.dropFoeMirror(id, prev.built);
+        this.asFoeMirror(id, f, false);
+        this.stats.foeMerged++;
+      }
+      return;
+    }
     const e = this.pending.get(key);
     if (!e) return;
     this.pending.delete(key);
     if (!e.shared) return;
     e.shared.id = id;
+    // fester Schlüssel eines Mitspielers (Kaiser-Wachschiff): das eigene Schiff wird zur Kopie
+    if (owner && owner !== this.me) { e.shared.owner = false; this.asMirror(id, e); return; }
     const r: OwnRec = { id, e, lastHp: e.ship.hull, fwd: 0, lastBy: '' };
     this.own.set(id, r);
     this.ownList.push(r);
@@ -299,7 +552,16 @@ export class SharedEntities {
   }
 
   /** Treffer eines Mitspielers auf einen eigenen Gegner verrechnen */
-  netHit(id: string, from: string, dmg: number, ammo: string, zone: 'hull' | 'sail', pen: number) {
+  netHit(id: string, from: string, dmg: number, ammo: string, zone: 'hull' | 'sail', pen: number, foe: FoeHitNet | null = null) {
+    if (foe) {
+      // 4.91: Treffer eines Mitspielers auf einen eigenen Landgegner – Rüstung, Haltung, Zustand und Tod wie bei jedem Treffer
+      const rf = this.ownFoes.get(id), cb = this.host.combat();
+      if (!rf || !cb || !rf.e.shared) return;
+      rf.fwd += cb.applyNetFoeHit(rf.e, dmg, pen, foe);
+      rf.e.shared.lastBy = from;
+      this.stats.foeApplied++;
+      return;
+    }
     const r = this.own.get(id), nav = this.host.naval();
     if (!r || !nav) return;
     const dealt = nav.applyNetHit(r.e, dmg, (ammo === 'kette' || ammo === 'kartaetsche' || ammo === 'brand' ? ammo : 'kugel') as AmmoId, zone, pen);
@@ -318,6 +580,34 @@ export class SharedEntities {
 
   /** Übernahme: dieser Client steuert den Gegner ab jetzt (aus der Kopie wird ein Schiff mit KI) */
   owned(e: EntNet) {
+    // schon unser (eine wiederholte Übergabe): nichts Neues aufstellen
+    if (this.ownFoes.has(e.id) || this.own.has(e.id)) return;
+    const mf = this.mirrorFoes.get(e.id);
+    if (mf) {
+      // 4.91: Landgegner übernehmen – aus der Kopie wird ein Gegner mit KI (Leben aus dem Schnappschuss)
+      this.mirrorFoes.delete(e.id);
+      const i = this.mirrorFoeList.indexOf(mf);
+      if (i >= 0) this.mirrorFoeList.splice(i, 1);
+      this.stats.foeMirrors = this.mirrorFoeList.length;
+      mf.e.hp = Math.max(1, e.hp); mf.e.maxHp = Math.max(1, e.mhp);
+      this.addOwnFoe(e.id, mf.e);
+      this.stats.foeAdopted++;
+      return;
+    }
+    if (e.cat === 'foe') {
+      // Landgegner ohne Kopie hier (außer Sicht): gleich als eigenen aufstellen, sofern in der Nähe gekämpft wird
+      const cl = this.host.client(), ce = cl?.ents.get(e.id);
+      if (!cl || !ce) return;
+      // nur, wer selbst auf dieser Insel kämpft, übernimmt (sonst gleich wieder abgeben: der Shard sucht jemanden in der Nähe)
+      if (!this.host.foesShared() || Math.hypot(ce.x - _me.x, ce.z - _me.z) > MMO.foeShow) { cl.releaseEnt(e.id); return; }
+      const nf = this.host.spawnFoe(ce);
+      if (!nf) return;
+      nf.shared = this.newFoeLink('');
+      nf.hp = Math.max(1, e.hp); nf.maxHp = Math.max(1, e.mhp);
+      this.addOwnFoe(e.id, nf);
+      this.stats.foeAdopted++;
+      return;
+    }
     const nav = this.host.naval(), c = this.host.client();
     if (!nav || !c || this.own.has(e.id)) return;
     const ce = c.ents.get(e.id);
@@ -354,10 +644,32 @@ export class SharedEntities {
     // nur Kopien: eigene Gegner verwirft der Shard nie, solange man verbunden ist (ohne Verbindung räumt `clear` auf)
     const m = this.mirrors.get(id);
     if (m && m.e.ship.sinking <= 0) this.dropMirror(id);
+    const mf = this.mirrorFoes.get(id);
+    if (mf && mf.e.state !== 'dead') this.dropFoeMirror(id, mf.built);
+  }
+
+  /** 4.91: fester Schlüssel gesperrt (Lager geräumt, Boss besiegt) – den eben aufgestellten Gegner wieder abbauen */
+  denied(key: string, wait: number) {
+    const f = this.pendingFoes.get(key);
+    if (f) {
+      this.pendingFoes.delete(key);
+      f.shared = null;
+      this.host.foeDenied(f, wait);
+      this.stats.foeDenied++;
+      return;
+    }
+    const e = this.pending.get(key);
+    if (!e) return;
+    this.pending.delete(key);
+    e.shared = undefined;
+    const nav = this.host.naval();
+    if (nav && nav.enemies.includes(e)) nav.removeEventShip(e);
   }
 
   /** Ein geteilter Gegner trifft das eigene Schiff */
-  hitMe(_id: string, name: string, dmg: number, pen: number) {
+  hitMe(id: string, name: string, dmg: number, pen: number) {
+    const ce = this.host.client()?.ents.get(id);
+    if (ce && ce.cat === 'foe') { this.stats.foeHitsMe++; this.host.foeHitMe(name, dmg, ce.x, ce.z); return; }
     this.stats.hitsMe++;
     this.host.hitMe(name, dmg, pen);
   }
@@ -404,6 +716,12 @@ export class SharedEntities {
 
   /** Kampf-Aktion eines Mitspielers bzw. seines Gegners darstellen */
   remoteAct(from: string, a: ActNet) {
+    if (a.t === 'tele') {
+      // 4.91: Warnfläche eines Boss-Angriffs (Kopie zeigt sie, den Schaden rechnet der Besitzer)
+      const m = this.mirrorFoes.get(a.ent), cb = this.host.combat();
+      if (m && cb && m.e.alive) { cb.showTelegraph(m.e, a.slot, a.x, a.z, a.yaw, a.tx, a.ty, a.n / 10); this.stats.teleShown++; }
+      return;
+    }
     const nav = this.host.naval();
     if (!nav) return;
     if (a.t === 'broadside' || a.t === 'bow') {

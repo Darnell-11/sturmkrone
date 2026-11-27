@@ -70,8 +70,10 @@ function shard() {
   return { auth, box, of, join, form };
 }
 
+// 4.91: Felder der Landgegner (Höhe, Bewegung, Clip, Haltung, Bruch, Phase) in Berichten und Schnappschüssen
+const LAND0 = { y: 0, an: 0, clip: '', pose: 1, brk: false, phase: 1 } as const;
 const spawn = (o: Partial<EntSpawnNet> = {}): EntSpawnNet => ({
-  key: 'p:anna.1', tier: 2, role: 'jaeger', level: 12, name: 'Kurogane-Kriegsschiff', x: 3040, z: 3170, hdg: 1.57, hp: 420, mhp: 420,
+  key: 'p:anna.1', cat: 'ship', tier: 2, role: 'jaeger', level: 12, name: 'Kurogane-Kriegsschiff', x: 3040, z: 3170, y: 0, hdg: 1.57, hp: 420, mhp: 420, boss: false, scale: 1, respawn: 0,
   look: { hull: '#2a2a30', stripe: '#a8322a', sail: '#202024', flag: 'totenkopf', flagColor: '#1e1a20', figurehead: 'keine', power: 'kurogane', evo: [3, 3, 3] }, ...o,
 });
 
@@ -89,7 +91,7 @@ describe('WorldEntitySync: kanonische Gegner (Kennung, Besitzer, Lage, Leben, Ag
     expect(claimed).toHaveLength(1);
     const id = claimed[0].id;
     expect(id).toMatch(/^e\d+$/);
-    s.auth.handle('p:anna', { k: 'estate', list: [{ id, x: 3050, z: 3160, hdg: 1.6, spd: 6, hp: 400, mhp: 420, dis: false }] }, 1.1);
+    s.auth.handle('p:anna', { k: 'estate', list: [{ id, x: 3050, z: 3160, hdg: 1.6, spd: 6, hp: 400, mhp: 420, dis: false, ...LAND0 }] }, 1.1);
     s.auth.tick(1.3);
     for (const who of ['p:anna', 'p:bodo']) {
       const snap = s.of(who, 'ents').at(-1)!;
@@ -97,7 +99,7 @@ describe('WorldEntitySync: kanonische Gegner (Kennung, Besitzer, Lage, Leben, Ag
       expect(snap.list[0]).toMatchObject({ id, owner: 'p:anna', x: 3050, z: 3160, hp: 400, mhp: 420, tier: 2, name: 'Kurogane-Kriegsschiff' });
     }
     // Fremde dürfen nichts melden
-    expect(s.auth.entities.report('p:bodo', { id, x: 0, z: 0, hdg: 0, spd: 0, hp: 1, mhp: 420, dis: false }, 1.4)).toBe(false);
+    expect(s.auth.entities.report('p:bodo', { id, x: 0, z: 0, hdg: 0, spd: 0, hp: 1, mhp: 420, dis: false, ...LAND0 }, 1.4)).toBe(false);
   });
 
   it('Treffer von Bodo gehen über den Shard an Anna (Besitzer), Bodo bekommt die Aggro, verrechnete Treffer zählen nur als Bedrohung', () => {
@@ -227,7 +229,8 @@ describe('WorldEntitySync: kanonische Gegner (Kennung, Besitzer, Lage, Leben, Ag
     expect(cleanIntent({ k: 'ehit', id: 'e1', dmg: 1e9, ammo: '<x>', zone: 'deck', pen: 99, applied: 'ja' })).toEqual({ k: 'ehit', id: 'e1', dmg: 1e6, ammo: 'kugel', zone: 'hull', pen: 12, applied: false });
     expect(cleanIntent({ k: 'act', a: { t: 'zauber' } })).toBeNull();
     expect(cleanAct({ t: 'ult', x: 1e9, side: 5, style: 'sturmfaust', el: 'feuer!' })).toMatchObject({ t: 'ult', x: 40000, side: 0, style: 'sturmfaust', el: '' });
-    expect(ACT_KINDS).toEqual(['broadside', 'bow', 'swing', 'art', 'geist', 'heal', 'ult']);
+    // 4.91: dazu `tele` (Warnfläche eines Boss-Angriffs)
+    expect(ACT_KINDS).toEqual(['broadside', 'bow', 'swing', 'art', 'geist', 'heal', 'ult', 'tele']);
     const ent = cleanEnt({ id: 'e7', owner: 'p:anna', x: 5, z: 6, hdg: 1, spd: 3, hp: 900, mhp: 400, dis: true, tier: 9, role: 'jaeger', level: 500, name: 'A', aggro: 'p:bodo', dead: 'x' });
     expect(ent).toMatchObject({ id: 'e7', hp: 400, tier: 6, level: 101, dis: true, dead: false, aggro: 'p:bodo' });
     expect(cleanServerMsg({ k: 'ents', t: 5, list: Array.from({ length: 80 }, (_, i) => ({ id: `e${i}`, mhp: 10 })) })).toMatchObject({ k: 'ents' });
@@ -240,7 +243,7 @@ describe('WorldEntitySync: kanonische Gegner (Kennung, Besitzer, Lage, Leben, Ag
     const sent: unknown[] = [];
     const tr = { status: 'online', kind: 'local', host: true, now: () => 10, send: (m: unknown) => sent.push(m), connect: () => {}, close: () => {}, onMessage: null } as unknown as MmoTransport;
     const c = new MmoClient(tr, 'p:bodo', () => profile('p:bodo', 'Bodo'), (o) => o, {}, () => 0);
-    const base = { owner: 'p:anna', tier: 2, role: 'jaeger', level: 12, name: 'K', look: spawn().look, spd: 6, hp: 400, mhp: 420, dis: false, aggro: '', dead: false };
+    const base = { owner: 'p:anna', cat: 'ship' as const, tier: 2, role: 'jaeger', level: 12, name: 'K', look: spawn().look, spd: 6, hp: 400, mhp: 420, dis: false, aggro: '', dead: false, boss: false, scale: 1, ...LAND0 };
     c.handle({ k: 'ents', t: 9.0, list: [{ id: 'e1', x: 0, z: 0, hdg: 3.0, ...base }] });
     c.handle({ k: 'ents', t: 9.125, list: [{ id: 'e1', x: 10, z: 0, hdg: -3.0, ...base }] });
     const e = c.ents.get('e1')!;
@@ -269,13 +272,14 @@ describe('WorldEntitySync: kanonische Gegner (Kennung, Besitzer, Lage, Leben, Ag
     const se = new SharedEntities({
       naval: () => nav, client: () => c, active: () => true, ownShip: () => ({}), me: (o: { x: number; z: number }) => { o.x = 3000; o.z = 3000; },
       peerShip: () => null, peerAt: () => false, playAct: () => {}, hitMe: () => {}, kill: () => {}, lookOf: () => ({}),
+      combat: () => null, foesShared: () => false, spawnFoe: () => null, foeHitMe: () => {}, foeDenied: () => {},
     } as unknown as SharedHost);
     // anmelden und Kennung bekommen: Anna steuert (KI läuft, Berichte gehen raus)
     se.update(1 / 60);
     const claim = sent.find((m) => m.k === 'eclaim') as { k: string; e: EntSpawnNet } | undefined;
     expect(claim).toBeTruthy();
     se.claimed(claim!.e.key, 'e1');
-    const base = { tier: 2, role: 'jaeger', level: 12, name: 'K', look: spawn().look, hdg: 1.57, spd: 5, hp: 400, mhp: 420, dis: false, aggro: '', dead: false };
+    const base = { cat: 'ship' as const, tier: 2, role: 'jaeger', level: 12, name: 'K', look: spawn().look, hdg: 1.57, spd: 5, hp: 400, mhp: 420, dis: false, aggro: '', dead: false, boss: false, scale: 1, ...LAND0 };
     c.handle({ k: 'ents', t: 9.0, list: [{ id: 'e1', owner: 'p:anna', x: 3040, z: 3170, ...base }] });
     for (let i = 0; i < 10; i++) se.update(1 / 60);
     expect(se.stats.owned).toBe(1);
@@ -406,12 +410,12 @@ describe('Faji-Einführung bei Konrad ohne Nahkampf-Kombo', () => {
 });
 
 describe('Klassen-Vorschau: Schalter „Vorschau: An Land / Auf See“', () => {
-  it('Knopf in der Vorschau, die Bühne wechselt Boden, Licht und Oberfläche der Effekte', () => {
+  it('Knopf in der Vorschau; 4.91: die Vorschau läuft in der echten Welt (an Land Übungsplatz, auf See am Steuer gegen ein Zielschiff)', () => {
     const ui = readFileSync('src/ui/classShowcase.ts', 'utf8');
     expect(ui).toContain('data-a="sea"');
     expect(ui).toContain("'Vorschau: Auf See' : 'Vorschau: An Land'");
-    const st = readFileSync('src/world/showcaseStage.ts', 'utf8');
-    for (const s of ['setSea(on: boolean)', "forge: 'wasser'", 'isLand: () => !this.sea', 'this.vfx.surface = this.worldSurface']) expect(st, s).toContain(s);
+    const sw = readFileSync('src/world/seaWorld.ts', 'utf8');
+    for (const s of ['setArenaSea(sea: boolean', 'private arenaToSea()', 'private arenaToLand()', 'nav.queueShowcase(']) expect(sw, s).toContain(s);
   });
 });
 

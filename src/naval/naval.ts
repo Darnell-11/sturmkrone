@@ -55,6 +55,7 @@ import { ElementFx } from '../faji/elementFx';
 import { ELEMENT_COLORS, type ActiveDef, type Element } from '../data/skills';
 import { markShared } from '../render/dispose';
 import { keepIf } from '../core/arrays';
+import { pickHelmTarget } from '../data/seaArts';
 
 const G = 9.8;
 const BALL_SPEED = 46;
@@ -96,6 +97,8 @@ export interface EnemyShip {
   weakNoted?: boolean;
   /** Übungsschiff aus der Einführung (wie in 1.0): angeschlagen, schießt schwächer */
   training?: boolean;
+  /** 4.91: Zielschiff der Klassen-Vorschau (liegt still, schießt nie, zählt nie als Abschuss; die Vorschau stellt es nach dem Untergang neu auf) */
+  showcase?: boolean;
   /** Durch Entern erobert (nicht versenkt) */
   captured?: boolean;
   /** Weltmacht des Schiffs (data/factions.ts): bestimmt Rumpf, Segelmuster und Flagge; Marine-Schiffe können friedlich sein (siehe Ansehen) */
@@ -292,6 +295,7 @@ export class NavalSystem {
    */
   shipRelation(e: EnemyShip): TargetRelation {
     if (e.peer?.mmo) return e.peer.rel ?? 'neutral';
+    if (e.showcase) return 'hostile';
     const calm = this.peaceful(e);
     return relationOf({
       own: !!(e.companion || e.fleetId || e.captured), ally: !!(e.helper || e.peer) || this.isTeamShip(e), provoked: !!e.provoked,
@@ -1680,6 +1684,27 @@ export class NavalSystem {
    * Kopie eines geteilten Gegners über die Warteschlange bauen (Bild für Bild wie jedes neue Schiff). Sie fährt nach dem Schnappschuss, hat
    * keine KI und zählt als Gegner in der Nähe (dann erzeugt dieser Client keine weiteren Schiffe dazu).
    */
+  /**
+   * 4.91: Zielschiff der Klassen-Vorschau in Teilschritten (Texturen unsichtbar Bild für Bild): liegt still, schießt nie, zählt nie als
+   * Abschuss (`stage`), ist immer treffbar (`showcase`).
+   */
+  queueShowcase(x: number, z: number, heading: number, tier: number, power: FactionId, name: string, done: (e: EnemyShip) => void) {
+    const self = this;
+    function* steps(): Generator<SpawnYield, EnemyShip | null> {
+      const t = Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier));
+      const ship = yield* Ship.buildSteps(self.scene, t, factionShipLook(power), power === 'marine' ? 'marine' : 'pirat', 0, false, aiEvolution('patrouille', 3));
+      yield* self.uploadSteps(ship);
+      ship.x = x; ship.z = z; ship.heading = heading;
+      ship.prev = { x, z, heading };
+      ship.speed = 0;
+      ship.canDisable = false;
+      const e: EnemyShip = { ship, role: 'patrouille', level: 30, state: 'patrol', wander: { x, z }, aiT: 0, name, power, stage: true, showcase: true, provoked: true };
+      self.enemies.push(e);
+      return e;
+    }
+    this.spawnJobs.push({ it: steps(), done, hunter: false });
+  }
+
   queueMirror(link: SharedLink, tier: number, look: ShipLook, evo: ShipEvolution, name: string, role: NavalRole, level: number, x: number, z: number, heading: number, hull: number, maxHull: number, done: (e: EnemyShip) => void) {
     const self = this;
     function* steps(): Generator<SpawnYield, EnemyShip | null> {
@@ -2441,6 +2466,8 @@ export class NavalSystem {
     if (e.peer?.mmo) { e.state = 'patrol'; return; }
     // 4.9: Kopien geteilter Gegner ebenso (world/sharedEntities.ts); gesteuert wird beim Besitzer
     if (e.shared && !e.shared.owner) { e.state = s.speed > 0.5 ? 'engage' : 'patrol'; return; }
+    // 4.91: Zielschiffe der Klassen-Vorschau liegen still und schießen nie
+    if (e.showcase) { e.state = 'patrol'; s.speed = 0; s.throttle = 0; s.aiSail = null; s.steer(dt, 0, this.env); return; }
     e.aiT -= dt;
     const nav = e.nav ?? (e.nav = createAiNav(s.entityId));
     // Schiffe einer Großschlacht (Armadas der FactionWarEngine) kämpfen wie in einer Seeschlacht, auch wenn sie sonst als Ereignis-Schiffe fahren
@@ -2723,20 +2750,35 @@ export class NavalSystem {
   // ---------- 4.9: Kräfte am Steuerrad (Formen, Geistes-Faji; Regeln in data/seaArts.ts, Darstellung in der Seewelt) ----------
 
   /** Ziel einer Form am Steuer: das angewählte Schiff (wenn treffbar und in Reichweite), sonst das nächste treffbare Schiff */
-  pickArtTarget(range: number): EnemyShip | null {
+  /**
+   * Ziel einer Kraft am Steuer: 4.91 – das angewählte Schiff (Tab/Klick, Zielrahmen) bis `range`; ist es weiter weg, steht sein Abstand in
+   * `lockFar` (die Kraft wird nicht verschwendet). Ohne Anwahl das nächste treffbare Schiff im Kegel voraus (±`cone` rad), sonst das nächste
+   * im Umkreis.
+   */
+  pickArtTarget(range: number, cone = 0.85): EnemyShip | null {
     const p = this.player;
+    this.lockFar = 0;
     if (!p) return null;
-    const at = this.aimTarget;
-    if (at && at.ship.alive && at.ship.sinking <= 0 && this.playerMayHarm(at) && Math.hypot(at.ship.x - p.x, at.ship.z - p.z) <= range) return at;
-    let best: EnemyShip | null = null, bd = range;
+    const t = pickHelmTarget(p, this.aimTarget, this.enemies, range, cone, (e) => this.playerMayHarm(e), this.lockRes);
+    this.lockFar = this.lockRes.far;
+    return t;
+  }
+  private readonly lockRes = { far: 0 };
+
+  /** 4.91: Abstand des angewählten Schiffs, wenn es für eine Kraft am Steuer zu weit weg war (0 = in Reichweite bzw. keins) */
+  lockFar = 0;
+
+  /** 4.91: Mittelpunkt der feindlichen Flotte um ein Ziel (treffbare Schiffe bis `r` m um das Ziel) – schreibt in `out` */
+  fleetCenter(t: EnemyShip, r: number, out: { x: number; z: number }): { x: number; z: number } {
+    let sx = 0, sz = 0, n = 0;
     for (const e of this.enemies) {
       const s = e.ship;
       if (e.companion || e.fleetId || !s.alive || s.sinking > 0 || !this.playerMayHarm(e)) continue;
-      if (e.peer && !e.peer.mmo) continue;
-      const d = Math.hypot(s.x - p.x, s.z - p.z);
-      if (d < bd) { bd = d; best = e; }
+      if (Math.hypot(s.x - t.ship.x, s.z - t.ship.z) > r) continue;
+      sx += s.x; sz += s.z; n++;
     }
-    return best;
+    out.x = n ? sx / n : t.ship.x; out.z = n ? sz / n : t.ship.z;
+    return out;
   }
 
   /** Treffbare Schiffe im Umkreis (Beben, Willensdruck) – in `out` */

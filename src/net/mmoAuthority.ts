@@ -15,7 +15,7 @@
 //   **Kampf-Aktionen** (Breitseiten, Formen, Geistes-Faji, Heilungen, Ultimates) gehen zur Darstellung an alle in der Nähe.
 import {
   MMO, aoiRadius, copyState, newPlayerState, sayRadius, shareRadius,
-  type ActNet, type ChatChannel, type ChatMessage, type ClientIntent, type EntNet, type EntSpawnNet, type LootItemNet, type RollChoice, type PartyEvent, type PartyView, type PlayerProfile,
+  type ActNet, type ChatChannel, type ChatMessage, type ClientIntent, type EntNet, type EntSpawnNet, type FoeHitNet, type LootItemNet, type RollChoice, type PartyEvent, type PartyView, type PlayerProfile,
   type PlayerState, type ServerMsg, type ShareKind, type SnapEntry, type VitalEntry,
 } from './mmoProtocol';
 import { SharedEntityRegistry, type EntPeer, type SharedEnt } from './worldEntitySync';
@@ -193,7 +193,7 @@ export class MmoAuthority {
       case 'roll': this.roll(p, i.id, i.choice, t); break;
       case 'eclaim': this.entClaim(p, i.e, t); break;
       case 'estate': for (const s of i.list) this.entities.report(p.id, s, t); break;
-      case 'ehit': this.entHit(p, i.id, i.dmg, i.ammo, i.zone, i.pen, i.applied); break;
+      case 'ehit': this.entHit(p, i.id, i.dmg, i.ammo, i.zone, i.pen, i.applied, i.foe); break;
       case 'edead': this.entDead(p, i.id, i.by, t); break;
       case 'erelease': this.entities.release(p.id, i.id, t); break;
       case 'ephit': this.entPlayerHit(p, i.id, i.to, i.dmg, i.pen); break;
@@ -733,28 +733,39 @@ export class MmoAuthority {
 
   /** Eintrag eines Gegners für einen Schnappschuss kopieren (ohne Bedrohungstabelle und Verwaltung) */
   private static entCopy(e: SharedEnt, o: EntNet): EntNet {
-    o.id = e.id; o.owner = e.owner; o.tier = e.tier; o.role = e.role; o.level = e.level; o.name = e.name; o.look = e.look;
+    o.id = e.id; o.owner = e.owner; o.cat = e.cat; o.tier = e.tier; o.role = e.role; o.level = e.level; o.name = e.name; o.look = e.look;
     o.x = e.x; o.z = e.z; o.hdg = e.hdg; o.spd = e.spd; o.hp = e.hp; o.mhp = e.mhp; o.dis = e.dis; o.aggro = e.aggro; o.dead = e.dead;
+    o.boss = e.boss; o.scale = e.scale; o.y = e.y; o.an = e.an; o.clip = e.clip; o.pose = e.pose; o.brk = e.brk; o.phase = e.phase;
     return o;
   }
 
+  /** 4.91: leerer Schnappschuss-Eintrag (vorab angelegt, wiederverwendet) */
+  private static entBlank(look: SharedEnt['look']): EntNet {
+    return { id: '', owner: '', cat: 'ship', tier: 0, role: '', level: 1, name: '', look, x: 0, z: 0, hdg: 0, spd: 0, hp: 0, mhp: 1, dis: false, aggro: '', dead: false, boss: false, scale: 1, y: 0, an: 0, clip: '', pose: 1, brk: false, phase: 1 };
+  }
+
+  /**
+   * Anmeldung: neuer Gegner (der Anmeldende steuert ihn), 4.91 vorhandener mit demselben festen Schlüssel (der Anmeldende zeigt eine Kopie und
+   * bekommt den Besitzer genannt) oder gesperrt, weil das Lager noch geräumt bzw. der Boss besiegt ist (`edenied` mit Wartezeit).
+   */
   private entClaim(p: Peer, s: EntSpawnNet, t: number) {
     if (p.bot) return;
-    const e = this.entities.claim(p.id, s, t);
-    if (!e) { this.notice(p, 'Zu viele geteilte Gegner auf dieser See – dieser bleibt nur bei dir.', 'warn'); return; }
-    this.out(p.id, { k: 'eclaimed', key: s.key, id: e.id });
+    const r = this.entities.claimKeyed(p.id, s, t);
+    if (r.e) { this.out(p.id, { k: 'eclaimed', key: s.key, id: r.e.id, owner: r.e.owner }); return; }
+    if (r.wait > 0) { this.out(p.id, { k: 'edenied', key: s.key, wait: r.wait }); return; }
+    this.notice(p, 'Zu viele geteilte Gegner auf dieser See – dieser bleibt nur bei dir.', 'warn');
   }
 
   /** Treffer auf einen geteilten Gegner: Bedrohung zählen; nicht verrechnete Treffer gehen an den Besitzer */
-  private entHit(p: Peer, id: string, dmg: number, ammo: string, zone: 'hull' | 'sail', pen: number, applied: boolean) {
+  private entHit(p: Peer, id: string, dmg: number, ammo: string, zone: 'hull' | 'sail', pen: number, applied: boolean, foe?: FoeHitNet) {
     const e = this.entities.hit(p.id, id, dmg);
     if (!e || applied || !e.owner || e.owner === p.id) return;
-    // nur in Schussweite (Schutz gegen erfundene Treffer aus der Ferne)
-    if (Math.hypot(p.state.x - e.x, p.state.z - e.z) > MMO.hitRange + 200) return;
+    // nur in Schussweite (Schutz gegen erfundene Treffer aus der Ferne; Landgegner: Faji-Geschosse und Kräfte bis `hitRangeLand` + 40 m)
+    if (Math.hypot(p.state.x - e.x, p.state.z - e.z) > (e.cat === 'foe' ? MMO.hitRangeLand + 40 : MMO.hitRange + 200)) return;
     const o = this.peers.get(e.owner);
     if (!o || o.bot) return;
     this.entities.stats.forwarded++;
-    this.out(o.id, { k: 'ehit', id, from: p.id, dmg, ammo, zone, pen });
+    this.out(o.id, foe ? { k: 'ehit', id, from: p.id, dmg, ammo, zone, pen, foe } : { k: 'ehit', id, from: p.id, dmg, ammo, zone, pen });
   }
 
   /** Untergang (vom Besitzer): Gutschrift an alle Beteiligten und ihre Gruppen im Einsatzgebiet; gewürfelt wird beim Versenker */
@@ -765,7 +776,7 @@ export class MmoAuthority {
     const credit = this.entities.credit(e, peers, this.credits);
     const killer = this.peers.get(by) ?? p;
     const finder = credit.includes(killer.id) && !killer.bot ? killer.id : p.id;
-    const kill = { id: e.id, name: e.name, role: e.role, level: e.level, tier: e.tier, x: e.x, z: e.z, by: killer.id, byName: killer.profile.name, finder, owner: p.id, credit: credit.slice() };
+    const kill = { id: e.id, cat: e.cat, name: e.name, role: e.role, level: e.level, tier: e.tier, x: e.x, z: e.z, by: killer.id, byName: killer.profile.name, finder, owner: p.id, credit: credit.slice(), boss: e.boss };
     for (const cid of credit) { const o = this.peers.get(cid); if (o && !o.bot) this.out(o.id, { k: 'ekill', kill }); }
     // der Besitzer erfährt den Abschluss immer (auch ohne eigene Gutschrift: er räumt seinen Gegner ab)
     if (!credit.includes(p.id)) this.out(p.id, { k: 'ekill', kill });
@@ -776,7 +787,7 @@ export class MmoAuthority {
     const e = this.entities.ents.get(id);
     const o = this.peers.get(to);
     if (!e || e.dead || e.owner !== p.id || !o || o === p || dmg <= 0) return;
-    if (Math.hypot(o.state.x - e.x, o.state.z - e.z) > MMO.hitRange) return;
+    if (Math.hypot(o.state.x - e.x, o.state.z - e.z) > (e.cat === 'foe' ? MMO.hitRangeLand : MMO.hitRange)) return;
     if (o.bot) { this.hooks.hit?.(o.id, e.id, dmg); return; }
     this.out(o.id, { k: 'ehitme', id, name: e.name, dmg, pen });
   }
@@ -803,7 +814,7 @@ export class MmoAuthority {
     const peers = this.entPeerList();
     this.entities.tick(t, peers, (e, to) => {
       const o = this.peers.get(to);
-      if (o && !o.bot) this.out(o.id, { k: 'eown', e: MmoAuthority.entCopy(e, { id: '', owner: '', tier: 0, role: '', level: 1, name: '', look: e.look, x: 0, z: 0, hdg: 0, spd: 0, hp: 0, mhp: 1, dis: false, aggro: '', dead: false }) });
+      if (o && !o.bot) this.out(o.id, { k: 'eown', e: MmoAuthority.entCopy(e, MmoAuthority.entBlank(e.look)) });
     }, (e) => {
       for (const o of this.list) if (!o.bot && Math.hypot(o.state.x - e.x, o.state.z - e.z) <= MMO.entDrop) this.out(o.id, { k: 'egone', id: e.id });
     });
@@ -815,7 +826,7 @@ export class MmoAuthority {
       list.length = 0;
       for (let k = 0; k < near.length && list.length < MMO.entPerPacket; k++) {
         let o = r.entPool[list.length];
-        if (!o) { o = { id: '', owner: '', tier: 0, role: '', level: 1, name: '', look: near[k].look, x: 0, z: 0, hdg: 0, spd: 0, hp: 0, mhp: 1, dis: false, aggro: '', dead: false }; r.entPool.push(o); }
+        if (!o) { o = MmoAuthority.entBlank(near[k].look); r.entPool.push(o); }
         list.push(MmoAuthority.entCopy(near[k], o));
       }
       if (!list.length) continue;

@@ -256,7 +256,8 @@ describe('4.7D.1 · Stufe A: VS-Face-Off Marine gegen Piraten', () => {
   });
 
   it('die Bühne erbt das Studio des Editors (gleiche Lichter → keine neuen Shader-Programme) und hat keinen Szenen-Nebel', () => {
-    for (const f of ['world/faceOffStage.ts', 'world/showcaseStage.ts']) {
+    // 4.91: die Klassen-Vorschau (Stufe C) läuft nicht mehr auf einer Bühne, sondern in der echten Welt (`SeaWorld.startArena`)
+    for (const f of ['world/faceOffStage.ts']) {
       const s = src(f);
       expect(s).toMatch(/extends EditorStage/);
       expect(s).not.toMatch(/scene\.fog|new Fog|PointLight\(|DirectionalLight\(|ShaderMaterial/);
@@ -380,12 +381,16 @@ describe('4.7D.1 · Stufe C: Klassen-, Formen- & Ultimate-Showcase', () => {
     }
   });
 
-  it('die Vorschau nutzt die echte Choreografie, Effekte der Effekt-Schmiede und Impact-Frames als Canvas-Filter', () => {
-    const st = src('world/showcaseStage.ts');
-    expect(st).toMatch(/this\.cine\.keyPose\(act, u, this\.anchors, this\.ccam\)/);
-    expect(st).toMatch(/impactMode = this\.impactLeft === this\.impactTotal \? 'invert' : 'ink'/);
+  it('die Vorschau nutzt die echte Engine, die echte 3-Akt-Choreografie, die Effekt-Schmiede und die Impact-Frames der Welt (4.91)', () => {
+    const sw = src('world/seaWorld.ts');
+    // Knöpfe drücken echte Tasten der Engine (Kombo, Formen, Geistes-Faji, Erwachen → Ultimate) bzw. die Kräfte am Steuer
+    expect(sw).toMatch(/input\.inject\(ART_ACTIONS\[n - 1\]\)/);
+    expect(sw).toMatch(/input\.inject\(GEIST_ACTIONS\[n - 1\]\)/);
+    expect(sw).toMatch(/this\.castHelmArt\(n, nav, s\)/);
+    expect(sw).toMatch(/this\.helmUltimate\(\)/);
     const game = src('core/game.ts');
-    expect(game).toMatch(/this\.impactOverlay\.apply\(sc \? sc\.impactMode : 'none'/);
+    expect(game).toMatch(/this\.world\.startArena\(/);
+    expect(game).not.toMatch(/ShowcaseStage/);
     const ui = src('ui/classShowcase.ts');
     expect(ui).toMatch(/Worin diese Klasse glänzt/);
     expect(ui).toMatch(/Alle 10 Formen/);

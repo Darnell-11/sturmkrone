@@ -4,7 +4,7 @@
 // nur bei Ereignissen (neuer Mitspieler, Chatzeile, Gruppenwechsel).
 import {
   MMO, MMO_PROTOCOL, copyState, newPlayerState, newProfile,
-  type ActNet, type ClientIntent, type EntKillNet, type EntNet, type EntSpawnNet, type EntStateNet, type InspectInfo, type LootItemNet, type PartyView, type RollChoice, type RollView,
+  type ActNet, type ClientIntent, type EntKillNet, type EntNet, type EntSpawnNet, type EntStateNet, type FoeHitNet, type InspectInfo, type LootItemNet, type PartyView, type RollChoice, type RollView,
   type PlayerProfile, type PlayerState, type ServerMsg, type ShareKind, type VitalEntry,
 } from './mmoProtocol';
 import type { MmoTransport } from './mmoTransport';
@@ -64,8 +64,10 @@ export interface MmoClientHooks {
   onRideRequest?(): void;
   onUnrideRequest?(): void;
   /** 4.9: geteilte Gegner – Kennung vergeben, Treffer eines Mitspielers (beim Besitzer), Abschuss mit Gutschrift, Übernahme, verschwunden */
-  onEntClaimed?(key: string, id: string): void;
-  onEntHit?(id: string, from: string, dmg: number, ammo: string, zone: 'hull' | 'sail', pen: number): void;
+  onEntClaimed?(key: string, id: string, owner: string): void;
+  /** 4.91: fester Schlüssel gesperrt (Lager geräumt, Boss besiegt) – den eigenen Gegner wieder abbauen */
+  onEntDenied?(key: string, wait: number): void;
+  onEntHit?(id: string, from: string, dmg: number, ammo: string, zone: 'hull' | 'sail', pen: number, foe: FoeHitNet | null): void;
   onEntKill?(kill: EntKillNet): void;
   onEntOwn?(e: EntNet): void;
   onEntGone?(id: string): void;
@@ -231,9 +233,10 @@ export class MmoClient {
         break;
       }
       case 'ride': this.hooks.onRide?.(m.ok, m.ship, m.text); break;
-      case 'eclaimed': this.hooks.onEntClaimed?.(m.key, m.id); break;
+      case 'eclaimed': this.hooks.onEntClaimed?.(m.key, m.id, m.owner); break;
+      case 'edenied': this.hooks.onEntDenied?.(m.key, m.wait); break;
       case 'ents': this.onEnts(m.t, m.list); break;
-      case 'ehit': this.hooks.onEntHit?.(m.id, m.from, m.dmg, m.ammo, m.zone, m.pen); break;
+      case 'ehit': this.hooks.onEntHit?.(m.id, m.from, m.dmg, m.ammo, m.zone, m.pen, m.foe ?? null); break;
       case 'ekill': this.stats.kills++; this.hooks.onEntKill?.(m.kill); break;
       case 'eown': this.onEnts(this.transport.now(), [m.e]); this.hooks.onEntOwn?.(m.e); break;
       case 'egone': {
@@ -286,6 +289,8 @@ export class MmoClient {
       e.px = e.x; e.pz = e.z; e.ph = e.hdg; e.t0 = e.t1; e.t1 = t;
       e.x = n.x; e.z = n.z; e.hdg = n.hdg; e.spd = n.spd; e.hp = n.hp; e.mhp = n.mhp; e.dis = n.dis;
       e.owner = n.owner; e.aggro = n.aggro; e.dead = n.dead; e.tier = n.tier; e.role = n.role; e.level = n.level; e.name = n.name;
+      // 4.91: Landgegner (Höhe, Bewegung, Angriffs-Clip, Haltung, Bruch, Boss-Phase)
+      e.cat = n.cat; e.y = n.y; e.an = n.an; e.clip = n.clip; e.pose = n.pose; e.brk = n.brk; e.phase = n.phase; e.boss = n.boss; e.scale = n.scale;
       e.seenAt = now;
     }
   }
@@ -454,7 +459,7 @@ export class MmoClient {
     this.transport.send(this.estate);
   }
   /** Treffer auf einen geteilten Gegner (`applied` = schon beim Besitzer verrechnet) */
-  hitEnt(id: string, dmg: number, applied: boolean, ammo = 'kugel', zone: 'hull' | 'sail' = 'hull', pen = 3) { if (this.online && dmg > 0) this.transport.send({ k: 'ehit', id, dmg, ammo, zone, pen, applied }); }
+  hitEnt(id: string, dmg: number, applied: boolean, ammo = 'kugel', zone: 'hull' | 'sail' = 'hull', pen = 3, foe: FoeHitNet | null = null) { if (this.online && dmg > 0) this.transport.send(foe ? { k: 'ehit', id, dmg, ammo, zone, pen, applied, foe } : { k: 'ehit', id, dmg, ammo, zone, pen, applied }); }
   /** Eigener geteilter Gegner ist untergegangen */
   entDead(id: string, by: string) { if (this.online) this.transport.send({ k: 'edead', id, by }); }
   /** Eigenen geteilten Gegner abgeben (zu weit weg) */

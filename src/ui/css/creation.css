@@ -153,8 +153,13 @@
 .sc-part.ult .sc-acts { display: flex; }
 .sc-acts li { font: 800 0.62rem var(--font-text); letter-spacing: 0.1em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: rgba(0, 0, 0, 0.55); color: var(--ink-dim); border: 1px solid transparent; }
 .sc-acts li.on { color: #fff; border-color: var(--ca); background: color-mix(in srgb, var(--cc) 45%, #000); }
-.sc-play { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; gap: 8px; }
+.sc-play { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px; width: max-content; max-width: calc(100% - 16px); }
 .sc-play .mini:not(.brass) { background: var(--glass-strong); }
+/* 4.91: Knöpfe für Form I – X und Geistes-Faji 1 – 4 direkt im Vorschaufenster */
+.sc-forms-bar, .sc-geist-bar { display: inline-flex; gap: 3px; padding: 3px; border-radius: 10px; background: rgba(0, 0, 0, 0.45); border: 1px solid color-mix(in srgb, var(--cc) 40%, transparent); }
+.sc-play .sc-fb, .sc-play .sc-gb { min-width: 2.1em; padding: 5px 6px; font: 800 0.74rem var(--font-text); letter-spacing: 0.02em; }
+.sc-play .sc-fb.live { border-color: var(--ca); color: #fff; background: color-mix(in srgb, var(--cc) 55%, #000); }
+.sc-play .sc-gb { color: var(--ink-dim); }
 /* 4.9: Vorschau an Land / auf See */
 .sc-play .sc-sea[aria-pressed='true'] { background: linear-gradient(180deg, color-mix(in srgb, var(--sea) 70%, #0b2230), color-mix(in srgb, var(--sea) 40%, #06141c)); border-color: var(--sea); color: #effbff; }
 
@@ -188,7 +193,7 @@
 
 /* Hochformat / schmale Fenster: Auswahl als Leiste, Vorschau oben, Angaben darunter */
 @media (orientation: portrait), (max-width: 900px) {
-  .showcase { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(30vh, 36vh) minmax(0, 1fr); gap: 7px; }
+  .showcase { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(32vh, 41vh) minmax(0, 1fr); gap: 7px; }
   .sc-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; padding: 6px; gap: 10px; touch-action: pan-x; }
   .sc-group { flex: none; }
   .sc-group h3 { font-size: 0.82rem; margin-bottom: 4px; }
@@ -198,10 +203,21 @@
   .sc-spec small { display: none; }
   .sc-step { font-size: 0.58rem; letter-spacing: 0.08em; }
   .sc-info { padding: 10px 10px 8px; }
-  .sc-play { bottom: 8px; }
+  .sc-play { bottom: 8px; gap: 5px; }
   .sc-play .mini { padding: 6px 10px; font-size: 0.8rem; }
+  .sc-play .sc-fb, .sc-play .sc-gb { min-width: 1.9em; padding: 4px 4px; font-size: 0.66rem; }
   .sc-top .mini { padding: 6px 10px; font-size: 0.8rem; white-space: nowrap; }
   .sc-part b { font-size: 0.95rem; }
+}
+/* 4.91: Handy im Hochformat – Formen I – X als eigene, volle Zeile (daumenbreite Knöpfe), Geistes-Faji darunter; die Kamera zielt in den
+   freien Teil des Fensters über den Knöpfen (`freeWindowHeight`) */
+@media (max-width: 600px) {
+  .sc-play { left: 8px; right: 8px; transform: none; width: auto; max-width: none; }
+  .sc-play [data-a='ult'] { order: 3; }
+  .sc-play .sc-forms-bar { order: 4; flex: 1 1 100%; display: flex; }
+  .sc-play .sc-geist-bar { order: 5; }
+  .sc-play .sc-fb { flex: 1 1 0; min-width: 0; padding: 8px 0; font-size: 0.72rem; }
+  .sc-play .sc-gb { min-width: 2.7em; padding: 7px 4px; }
 }
 
 /* Weißblende nach dem Zoom in die Piraten-Seite (klingt über dem Aussehens-Editor aus) */

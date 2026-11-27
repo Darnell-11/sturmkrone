@@ -1,12 +1,13 @@
 // Phase 4.7D.1 – Stufe C: Vollbild-Showcase aller Klassen und Pfade. Links die Auswahl (Faustkämpfer, Schwertkämpfer, Faji-Wirker mit ihren
-// Pfaden), in der Mitte das Live-3D-Vorschaufenster (`world/showcaseStage.ts`: Kombo, Formen, Level-60-Ultimate in drei Akten), rechts
-// Rolle, „Worin diese Klasse glänzt“, alle zehn Formen und das Ultimate. „Abenteuer starten“ beginnt den 7-Szenen-Prolog.
-import { SHOWCASE_GROUPS, showcaseOf } from '../data/classShowcase';
+// Pfaden), in der Mitte das Live-3D-Vorschaufenster, rechts Rolle, „Worin diese Klasse glänzt“, alle zehn Formen und das Ultimate.
+// „Abenteuer starten“ beginnt den 7-Szenen-Prolog. 4.91: die Vorschau läuft in der echten Welt (`SeaWorld.startArena`): an Land auf dem
+// Übungsplatz, auf See am Steuer gegen ein Zielschiff; Knöpfe für Standardangriff, Form I – X, Geistes-Faji und das Level-60-Ultimate.
+import { ROMAN, SHOWCASE_GROUPS, showcaseOf } from '../data/classShowcase';
 import type { SpecId } from '../data/classes';
 import { ACT_LABEL, CINE_ACTS } from '../graphics/ultimateCinematics';
 import { roleBadge } from './classScreen';
 import { esc } from './dom';
-import type { ShowcasePhase } from '../world/showcaseStage';
+import { freeWindowHeight, type ArenaKind, type ArenaPhase } from '../data/showcaseArena';
 
 /** Kurznamen der drei Akte für die Leiste im Vorschaufenster */
 const ACT_SHORT = ['Aufladung', 'Aufbau', 'Einschlag'] as const;
@@ -15,7 +16,8 @@ export interface ShowcaseOptions {
   initial: SpecId;
   name: string;
   onSelect: (spec: SpecId) => void;
-  onPlay: (kind: 'form' | 'ult' | 'combo', slot?: number) => void;
+  /** 4.91: Standardangriff, Form 1 … 10, Geistes-Faji 1 … 4, Ultimate */
+  onPlay: (kind: ArenaKind, slot?: number) => void;
   /** Fenster der 3D-Vorschau (CSS-Pixel), bei jeder Größenänderung */
   onWindow: (r: { x: number; y: number; w: number; h: number }) => void;
   onBack: () => void;
@@ -45,7 +47,7 @@ export class ClassShowcase {
       <section class="sc-stage" aria-label="Vorschau">
         <div class="sc-window"></div>
         <div class="sc-part" aria-live="polite"><b></b><ol class="sc-acts">${CINE_ACTS.map((a, i) => `<li data-act="${i}" title="${esc(ACT_LABEL[a])}">Akt ${i + 1} · ${ACT_SHORT[i]}</li>`).join('')}</ol></div>
-        <div class="sc-play"><button class="mini sc-sea" data-a="sea" aria-pressed="false" title="Formen und Ultimate an Land oder auf See ansehen">Vorschau: An Land</button><button class="mini" data-a="combo">▶ Kombo</button><button class="mini brass" data-a="ult">✪ Ultimate ansehen</button></div>
+        <div class="sc-play"><button class="mini sc-sea" data-a="sea" aria-pressed="false" title="Vorschau an Land (Übungsplatz) oder auf See (am Steuer gegen ein Zielschiff)">Vorschau: An Land</button><button class="mini" data-a="attack" title="Standardangriff: an Land die Kampf-Kombo, auf See eine Breitseite">⚔ Standardangriff</button><span class="sc-forms-bar" role="group" aria-label="Formen I bis X">${ROMAN.map((r, i) => `<button class="mini sc-fb" data-form="${i + 1}" data-roman="${r}" title="Form ${r} abspielen">${r}</button>`).join('')}</span><span class="sc-geist-bar" role="group" aria-label="Geistes-Faji">${[1, 2, 3, 4].map((g) => `<button class="mini sc-gb" data-geist="${g}" title="Geistes-Faji ${g} abspielen">G${g}</button>`).join('')}</span><button class="mini brass" data-a="ult" title="Level-60-Ultimate in drei Akten">✪ Ultimate</button></div>
       </section>
       <aside class="sc-info card"><div class="sc-body"></div>
         <div class="sc-foot"><button class="primary sc-start" data-a="start">Abenteuer starten ▶</button></div>
@@ -57,17 +59,20 @@ export class ClassShowcase {
       if (sp) { this.select(sp.dataset.spec as SpecId); return; }
       const f = t.closest<HTMLElement>('[data-form]');
       if (f) { this.o.onPlay('form', +f.dataset.form!); return; }
+      const g = t.closest<HTMLElement>('[data-geist]');
+      if (g) { this.o.onPlay('geist', +g.dataset.geist!); return; }
       const a = t.closest<HTMLElement>('[data-a]')?.dataset.a;
       if (a === 'back') this.o.onBack();
       else if (a === 'start') this.o.onStart(this.spec);
       else if (a === 'ult') this.o.onPlay('ult');
-      else if (a === 'combo') this.o.onPlay('combo');
+      else if (a === 'attack') this.o.onPlay('attack');
       else if (a === 'sea') this.toggleSea();
     });
     addEventListener('keydown', this.onKey);
     addEventListener('resize', this.onResize);
     this.ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => this.measure()) : null;
     this.ro?.observe(this.root.querySelector('.sc-window')!);
+    this.ro?.observe(this.root.querySelector('.sc-play')!);
     this.render();
     requestAnimationFrame(() => this.measure());
   }
@@ -92,7 +97,7 @@ export class ClassShowcase {
   }
 
   /** Anzeige des laufenden Vorschau-Teils (Kombo, Form, Ultimate mit Akt) */
-  part(phase: ShowcasePhase, label: string, act: number) {
+  part(phase: ArenaPhase, label: string, act: number) {
     const p = this.root.querySelector<HTMLElement>('.sc-part')!;
     p.querySelector('b')!.textContent = label;
     p.classList.toggle('ult', phase === 'ult');
@@ -106,7 +111,11 @@ export class ClassShowcase {
     const w = this.root.querySelector<HTMLElement>('.sc-window');
     if (!w) return;
     const r = w.getBoundingClientRect();
-    if (r.width > 4 && r.height > 4) this.o.onWindow({ x: r.left, y: r.top, w: r.width, h: r.height });
+    if (!(r.width > 4 && r.height > 4)) return;
+    // 4.91: am Handy decken die Knöpfe die untere Hälfte ab – die Kamera zielt dann in den freien Teil darüber
+    const play = this.root.querySelector<HTMLElement>('.sc-play')?.getBoundingClientRect();
+    const h = play && play.height > 0 ? freeWindowHeight(r.top, r.height, play.top) : r.height;
+    this.o.onWindow({ x: r.left, y: r.top, w: r.width, h });
   }
 
   private render() {

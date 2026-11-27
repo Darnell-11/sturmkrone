@@ -13,7 +13,8 @@
 //   (`diplo`), geht er, bleibt der Stand erhalten und der nächste Kapitän übernimmt die Meldung (vorher gelten die Startbeziehungen);
 // - 4.8B: verwaltet Gruppen-Beute und Würfel-Sitzungen autoritativ (in `MmoAuthority`: nur der Server würfelt, doppelte, verspätete oder
 //   unerlaubte Wahl wird abgewiesen, Verbindungsabbruch = Passen) und Land-PvP mit PvP-Skalierung;
-// - beantwortet `GET /health` mit JSON (status, onlineCount, activeParties, activeRolls, uptime) für Hoster-Gesundheitsprüfungen.
+// - beantwortet `GET /health` mit JSON (status, onlineCount, activeParties, activeRolls, sharedEntities, lockedKeys, uptime) für Hoster-Gesundheitsprüfungen.
+// - 4.91: alle Kampf-Entitäten der Welt laufen über den Shard (Schiffe, Landgegner, Bosse samt Phase, Haltung, Aggro, Warnflächen, Sperrzeiten).
 //
 // Umgebung (siehe `.env.example`): PORT (Standard 8787), HOST (0.0.0.0), ALLOWED_ORIGINS (erlaubte Seiten, durch Komma getrennt; `*` oder
 // leer = alle; alter Name MMO_ORIGINS), MMO_SHARD (Name der See), MMO_MAX_CLIENTS (300), MMO_MAX_PER_IP (16 Verbindungen je Adresse). Für GitHub Pages (https) braucht der Server eine wss://-Adresse – z. B. hinter einem Hoster mit TLS (Render, Fly.io,
@@ -294,6 +295,9 @@ export function startRelay(opts = {}) {
     world: online.world,
     activeParties: authority.parties.size,
     activeRolls: authority.rolls.length,
+    // 4.91: geteilte Gegner (Schiffe und Landgegner) und gesperrte Lager-/Boss-Schlüssel bis zur Wiederkehr
+    sharedEntities: authority.entities.list.length,
+    lockedKeys: authority.entities.locked.size,
     uptime: Math.round(clockStart() - started),
     shard,
     protocol: MMO_PROTOCOL,

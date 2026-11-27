@@ -29,6 +29,7 @@ import { ART_ACTIONS, GEIST_ACTIONS } from '../../data/actions';
 import { WATER_WALK, isWater, newWaterWalk, stepWaterWalk } from '../../data/waterWalk';
 import { CLOTH_IMPULSE, SHEATH, type ExpressionId } from '../../data/characterRig';
 import { Character as CharacterCls } from '../character/character';
+import { decisiveHit } from '../../graphics/formCinema';
 
 /** Zustand für Welt und HUD (wie vor 4.6A) */
 type FootState = 'move' | 'roll' | 'attack' | 'block' | 'charge' | 'hurt' | 'down';
@@ -78,6 +79,9 @@ export interface FootDeps {
   onChase?: (ox: number, oy: number, oz: number, f: FighterState) => void;
   onClash?: (x: number, y: number, z: number, yaw: number) => void;
   onSwing?: (mv: ActionMove, h: ActionHit, f: FighterState) => void;
+  /** 4.91: Start einer Form (Platz 1 … 10; Akt 1 der Regie) und Treffermoment ihres stärksten Treffers (Akt 2 + 3) */
+  onSkill?: (slot: number, mv: ActionMove | null, f: FighterState) => void;
+  onFormHit?: (slot: number, mv: ActionMove, h: ActionHit, f: FighterState) => void;
   /** 4.6D: Kettenschlag (L1 – L5, Luft-Kette): Klingen-/Faustbogen; `step` wechselt die Schlagrichtung */
   onSlash?: (mv: ActionMove, h: ActionHit, f: FighterState, step: number) => void;
   /** 4.6D: Dash am Boden oder in der Luft (Weg von A nach B), Sturm-Schritt (Blitz-Silhouetten an Absprung- und Zielpunkt) */
@@ -298,6 +302,13 @@ export class PlayerFoot implements PlayerTarget {
   get active() { return this.onFoot && this.fighter.phase !== 'down'; }
   /** Kann gerade eine Faji-Fähigkeit gewirkt werden? */
   get canCast() { const p = this.fighter.phase; return this.active && this.fighter.grounded && (p === 'ground' || p === 'block'); }
+
+  /** 4.91: die Figur am Ort zu einer Richtung drehen (Ultimate vom Steuer schaut zum Ziel) */
+  face(yaw: number) {
+    if (!Number.isFinite(yaw)) return;
+    this.engine.f.yaw = yaw;
+    this.prev.yaw = yaw;
+  }
 
   place(x: number, z: number, yaw: number, ground: Ground) {
     const h = ground.height(x, z);
@@ -609,6 +620,7 @@ export class PlayerFoot implements PlayerTarget {
         case 'skill': {
           this.tally.skills++;
           if (st.faji) this.tally.artSkills++;
+          this.deps.onSkill?.(e.a, this.engine.moveAt(f.moveIdx), f);
           if (!this.engine.moveAt(f.moveIdx)?.cutin && ov) ov.number(this.tmpV.set(f.x, f.y + 2.5, f.z), e.s, 'info');
           break;
         }
@@ -831,6 +843,11 @@ export class PlayerFoot implements PlayerTarget {
           const h = mv?.hits[e.b];
           if (h?.projectile) this.tally.salvo++;
           if (mv && h) this.deps.onSwing?.(mv, h, f);
+          // 4.91: Treffermoment einer Form = Schwungfenster ihres stärksten Treffers
+          if (mv && h && f.moveKind === 'skill') {
+            const slot = this.engine.formSlot(mv);
+            if (slot > 0 && e.b === decisiveHit(mv.hits)) this.deps.onFormHit?.(slot, mv, h, f);
+          }
           break;
         }
         case 'slash': {

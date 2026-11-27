@@ -21,8 +21,8 @@ import { PartyPrompt } from '../ui/partyPrompt';
 import { InspectPanel, PlayerMenuUi } from '../ui/playerMenuUi';
 import { lowerTier, QUALITY_TIERS, type QualityTier } from '../data/qualityTiers';
 import { FACTION_LABELS, rankIndex, rankName } from '../data/ranks';
-import { TOUCH_FOOT, TOUCH_FOOT_PAGE2, TOUCH_SEA } from '../data/touchLayout';
-import { ACTION_STYLES, actionStyleOf, isActionStyle, type ActionStyleId } from '../data/actionStyles';
+import { TOUCH_FOOT, TOUCH_FOOT_PAGE2, TOUCH_SEA, TOUCH_SEA_PAGE2, TOUCH_SEA_PAGE3 } from '../data/touchLayout';
+import { ACTION_STYLES, actionStyleOf, isActionStyle, visualStyleOf, type ActionStyleId } from '../data/actionStyles';
 import {
   CLASS_BASES, SPECS, SPECS_OF, autoFill, formsGained, resetClass, awakenGeist, chooseSpec, classBase, classBuffs, classElement, classFree, classFromLegacy, classOfCreation,
   classRole, classSpec, classSpent, classStyle, classTitle, cleanClass, fitClass, formsOpen, learnGeist, learnNext, lockElement, ultOpen,
@@ -59,7 +59,8 @@ import type { YardView } from '../world/seaWorld';
 import { FAME_THRESHOLDS } from '../data/ranks';
 import { SkillStage } from '../world/skillStage';
 import { FaceOffStage } from '../world/faceOffStage';
-import { ShowcaseStage } from '../world/showcaseStage';
+import { showcaseOf } from '../data/classShowcase';
+import { arenaLabel, type ArenaPhase } from '../data/showcaseArena';
 import { FaceOffScreen } from '../ui/faceOffScreen';
 import { ClassShowcase } from '../ui/classShowcase';
 import { CreationFlow } from '../data/creationFlow';
@@ -107,7 +108,7 @@ import { AMMO_UNLOCK, GOODS, GOOD_BY_ID, UPKEEP, WAR_DEMAND, bagMax, cargoCap, e
 import { applySalvage, buyGood, takeCargo, cargoUsed, rollSalvage, decayHeat, eqPriceOf, inspectCargo, marketAt, marketPrice, moraleEfficiency, quoteBuy, quoteSell, recordLedger, roleOf, sellGood, stepUpkeep, tariffOf, trendOf, upkeepOf, warCargo, yardRepairCost, type MarketSite, type Tariff } from './economyEngine';
 import { REP, applyOutcome, battleOutcome, blueprintDiscount, emptyReputation, harborDiscount, hasService, honorTitle, isPeaceful, repTier } from '../data/reputation';
 import type { BattleMark, BattleResult, EnemyShip } from '../naval/naval';
-import type { EnemyKind } from '../data/combat';
+import { ENEMIES, type EnemyKind } from '../data/combat';
 import { createRaidContext } from '../raid/raidSession';
 import { newRaidInstanceId, type RaidEnd, type RaidView } from '../raid/raidDirector';
 import { ESCORT_MAX, MARINE_RAID_PENALTY, MERCENARY_ESCORT_PRICE, mercenarySlots, raidAccess } from '../raid/raidRules';
@@ -187,6 +188,10 @@ const TECH_BLOCK_TEXT: Record<Exclude<ReturnType<typeof learnBlock>, null>, stri
 
 /** 4.7B: Touch-Knöpfe zu Fuß samt zweiter Seite der Formen (6 – 10 auf den Plätzen von 1 – 5) */
 const FOOT_TOUCH = [...TOUCH_FOOT, ...TOUCH_FOOT_PAGE2];
+/** 4.91: Touch-Knöpfe am Steuer samt zweiter und dritter Seite der Form-Plätze (Formen 6 – 10, Geistes-Faji) – volle Klassen-Leiste */
+const SEA_TOUCH = [...TOUCH_SEA, ...TOUCH_SEA_PAGE2, ...TOUCH_SEA_PAGE3];
+/** 4.91: Knöpfe der Klassen-Leiste am Steuer (ruhen, solange keine Form freigeschaltet ist) */
+const SEA_CLASS_TOUCH: readonly string[] = [...ART_ACTIONS, 'formPage', 'awaken', ...HELM_GEIST_ACTIONS];
 
 const AUTOSAVE_SECONDS = 30;
 
@@ -409,7 +414,7 @@ export class Game {
     this.input = new Input(canvas);
     this.hud = new Hud(uiRoot);
     this.touch = new TouchControls(uiRoot, this.input);
-    this.touch.setLayout(TOUCH_SEA);
+    this.touch.setLayout(SEA_TOUCH);
     this.titleFade = document.createElement('div');
     this.titleFade.className = 'title-fade';
     uiRoot.appendChild(this.titleFade);
@@ -792,6 +797,9 @@ export class Game {
       if (this.occT <= 0) { this.occT = 0.4; this.refreshOccBanner(); this.warBanner.update(this.warHudView()); this.checkBlockadeDelivery(); }
       this.autosaveTimer += dt;
       if (this.autosaveTimer >= AUTOSAVE_SECONDS) this.persist();
+    } else if (this.state.is('editor') && this.arenaOn) {
+      // 4.91: Klassen-Vorschau in der Welt – die Welt läuft (Figur, Schiffe, Kampf, Effekte), gespeichert wird nichts
+      this.world.update(dt, this.input);
     } else if (this.state.is('pause') && this.dialogNpc) {
       // 4.6F: im Gespräch leben Partner und Spielfigur weiter (Atem, Blinzeln, Mund, Gesten)
       this.world.dialogTick(dt);
@@ -827,7 +835,7 @@ export class Game {
       this.stage.update(frameDt);
       // ein laufendes Impact-Bild nie im Editor stehen lassen (der Filter liegt auf dem Canvas) – außer den Impact-Frames der
       // Ultimate-Vorschau im Klassen-Showcase (4.7D.1)
-      { const sc = this.stage instanceof ShowcaseStage ? this.stage : null; this.impactOverlay.apply(sc ? sc.impactMode : 'none', 0, 0, sc?.impactColor ?? '#fff', frameDt); }
+      this.impactOverlay.apply('none', 0, 0, '#fff', frameDt);
       const portrait = innerHeight > innerWidth || innerWidth < 700;
       const sk = this.stage instanceof SkillStage;
       this.stage.frame(innerWidth / innerHeight, portrait, portrait ? (sk ? 0.64 : 0.48) : Math.min(sk ? 520 : 420, innerWidth * (sk ? 0.52 : 0.44)) / innerWidth);
@@ -1005,7 +1013,7 @@ export class Game {
 
   private onModeChange(m: SeaMode) {
     this.sceneChanged();
-    this.touch.setLayout(m === 'foot' ? FOOT_TOUCH : TOUCH_SEA);
+    this.touch.setLayout(m === 'foot' ? FOOT_TOUCH : SEA_TOUCH);
     this.dockSocial(m);
     if (this.state.is('play')) this.hud.hint(this.controlsHint(), 8);
   }
@@ -1627,8 +1635,8 @@ export class Game {
     this.grantXp(xp, e.def.boss ? 200 : e.def.elite ? 15 : 3);
     if (this.save) this.save.progress.stats.kills++;
     this.questEvent({ type: 'kill', kind: e.kind });
-    // 4.8A: geteilter Fortschritt – die Gruppe in der Nähe zählt den Abschuss mit
-    this.mmo?.share('kill', e.kind, 1, e.x, e.z);
+    // 4.8A: geteilter Fortschritt – die Gruppe in der Nähe zählt den Abschuss mit (4.91: geteilte Landgegner verteilt der Shard selbst)
+    if (!e.shared?.id) this.mmo?.share('kill', e.kind, 1, e.x, e.z);
   }
 
   // ---------- Aufträge und Welt ----------
@@ -5103,10 +5111,11 @@ export class Game {
     this.persist();
   }
 
-  /** Touch/Gamepad: Seite der Form-Knöpfe (0 = Formen 1 – 5, 1 = Formen 6 – 10) */
+  /** Touch/Gamepad: Seite der Form-Knöpfe (0 = Formen 1 – 5, 1 = Formen 6 – 10; 4.91: am Steuer mit Touch 2 = Geistes-Faji) */
   private formPage = 0;
   private toggleFormPage() {
-    this.formPage = this.formPage ? 0 : 1;
+    const pages = this.world.mode === 'sail' && this.input.lastDevice === 'touch' ? 3 : 2;
+    this.formPage = (this.formPage + 1) % pages;
     audio.play('ui', 0.5);
   }
 
@@ -5259,29 +5268,38 @@ export class Game {
     if (v && this.save?.player.faji && this.save.player.faji.aura !== v.aura) this.save.player.faji.aura = v.aura;
     this.overlay.comboDocked = !!v;
     this.world.heavyKeyLabel = dev === 'gamepad' ? 'Y' : dev === 'touch' ? 'Schwer' : this.input.keyLabel(b.heavy[0] ?? '');
+    // 4.91: am Steuer ohne freigeschaltete Formen ruhen die Knöpfe der Klassen-Leiste unsichtbar
+    const helmTouch = dev === 'touch' && this.world.mode === 'sail';
+    if (!v && helmTouch) for (const a of SEA_CLASS_TOUCH) this.touch.show(a, false);
     if (v && dev === 'touch') {
       const st = ACTION_STYLES[v.style];
-      // 4.7B: fünf Form-Knöpfe, auf Seite 2 die Formen 6 – 10 (die Knöpfe der anderen Seite ruhen unsichtbar)
+      // 4.7B: fünf Form-Knöpfe, auf Seite 2 die Formen 6 – 10 (die Knöpfe der anderen Seite ruhen unsichtbar);
+      // 4.91: am Steuer zeigt Seite 3 auf denselben Plätzen die Geistes-Faji (zu Fuß gibt es nur zwei Seiten)
+      if (!helmTouch && this.formPage > 1) this.formPage = 0;
       const page = this.formPage;
       for (let i = 0; i < 10; i++) {
         const k = st.skills[i];
         const a = `art${i + 1}`;
-        const shown = !!k && (page ? i >= 5 : i < 5);
+        const shown = !!k && (page === 1 ? i >= 5 : page === 0 && i < 5);
         this.touch.show(a, shown);
         if (!shown) continue;
         const lock = v.locked[i];
         this.touch.setArt(a, lock ? '🔒' : k.icon, lock ? `Kn. ${v.lockForm[i]}` : k.short, lock ? 0 : 1 - (v.cd[i] ?? 0), !lock && (v.cd[i] ?? 0) <= 0, st.accent);
       }
-      this.touch.setButton('formPage', page ? '1–5' : '6–10', 1, true, '#FFD27A');
-      // Geistes-Faji: erst nach dem Erwachen am Kristall
+      this.touch.show('formPage', true);
+      this.touch.setButton('formPage', page === 0 ? '6–10' : page === 1 && helmTouch ? 'Geist' : '1–5', 1, true, '#FFD27A');
+      // Geistes-Faji: erst nach dem Erwachen am Kristall (4.91: am Steuer auf Seite 3 der Form-Plätze, Knöpfe `helmGeist1–4`)
       for (let i = 0; i < 4; i++) {
-        const on = (v.geistRank[i] ?? 0) > 0;
-        this.touch.show(`geist${i + 1}`, on);
-        if (on) this.touch.setArt(`geist${i + 1}`, GEIST[i].icon, GEIST[i].short, 1 - (v.geist[i] ?? 0), (v.geist[i] ?? 0) <= 0, GEIST[i].color);
+        const on = (v.geistRank[i] ?? 0) > 0 && (!helmTouch || page === 2), a = helmTouch ? HELM_GEIST_ACTIONS[i] : `geist${i + 1}`;
+        this.touch.show(a, on);
+        if (on) this.touch.setArt(a, GEIST[i].icon, GEIST[i].short, 1 - (v.geist[i] ?? 0), (v.geist[i] ?? 0) <= 0, GEIST[i].color);
       }
       // Sturm-Erwachen: füllt sich mit der Willenskraft; im Erwachen läuft die Restzeit, mit Ultimate leuchtet der Knopf
+      // (4.91: am Steuer erwacht die Figur an Deck und entfesselt das Ultimate in einem – der Knopf heißt dort immer „Ultimate“)
       const aw = v.awake > 0;
-      this.touch.setButton('awaken', v.ult ? 'Ulti-\nmate' : aw ? 'Erwacht' : 'Erwa-\nchen', aw ? (v.ult ? 1 : v.awake) : v.will, v.ult || (!aw && v.will >= 1), v.ult ? st.accent : '#FFD27A');
+      this.touch.show('awaken', true);
+      if (helmTouch) this.touch.setButton('awaken', 'Ulti-\nmate', aw ? 1 : v.will, v.ult || v.will >= 1, v.ult || v.will >= 1 ? st.accent : '#FFD27A');
+      else this.touch.setButton('awaken', v.ult ? 'Ulti-\nmate' : aw ? 'Erwacht' : 'Erwa-\nchen', aw ? (v.ult ? 1 : v.awake) : v.will, v.ult || (!aw && v.will >= 1), v.ult ? st.accent : '#FFD27A');
       const au = WILL_AURAS[v.aura] ?? WILL_AURAS[0];
       this.touch.setButton('aura', v.aura ? au.short : 'Aura', 1, v.aura > 0, au.color);
     }
@@ -5689,29 +5707,39 @@ export class Game {
     setTimeout(() => f.remove(), 700);
   }
 
-  /** Stufe C: Klassen-, Formen- & Ultimate-Showcase */
+  /**
+   * Stufe C: Klassen-, Formen- & Ultimate-Showcase. 4.91: läuft in der echten Welt – die eigene Figur mit der echten Kampf-Engine, der
+   * Effekt-Schmiede und der 3-Akt-Kino-Regie an Land auf dem Übungsplatz bzw. auf See am Steuer gegen ein Zielschiff mit zwei Begleitern.
+   */
   private openShowcase(slot: number, r: EditorResult) {
     const flow = this.creation;
     if (!flow || !this.assets) return;
     flow.toClasses();
-    const st = new ShowcaseStage();
-    this.stage = st;
-    st.gearAura.level = this.settings.data.gearAura;
-    st.attachVfx(this.world.lendVfx(st.scene, st.camera));
-    st.showSpec(this.assets, r.look, flow.state.spec);
-    this.renderer.setView(st.scene, st.camera);
-    this.renderer.setEffectSources(null, st.focus);
+    this.stage = null;
+    const cls = (spec: SpecId) => { const e = showcaseOf(spec); return { action: e.style, style: visualStyleOf(e.style) }; };
+    const c0 = cls(flow.state.spec);
+    this.world.arenaInput = this.input;
+    this.world.startArena(r.look, c0.style, c0.action, false);
+    this.arenaOn = true;
+    this.useWorldView();
+    this.renderer.resize();
     this.state.set('editor');
+    this.world.onArenaPart = (p, act) => {
+      const e = showcaseOf(this.creation?.state.spec ?? flow.state.spec);
+      const phase: ArenaPhase = !p ? 'idle' : p.kind === 'ult' ? 'ult' : p.kind === 'attack' ? 'combo' : 'form';
+      const form = p && p.kind === 'form' ? e.forms.find((x) => x.nr === p.slot)?.label ?? '' : '';
+      this.showcase?.part(phase, p ? arenaLabel(p, form, e.ultimate.label, this.world.arena.sea) : '', act);
+    };
     this.showcase = new ClassShowcase(this.uiRoot, {
       initial: flow.state.spec,
       name: r.name,
-      onSelect: (spec) => { flow.preview(spec); st.setSpec(spec); },
-      onPlay: (kind, n) => { if (kind === 'combo') st.setSpec(flow.state.spec); else st.playPart(kind, n ?? 0); },
-      onWindow: (rect) => st.setWindow(rect),
-      // 4.9: Vorschau an Land bzw. auf See
-      onSea: (sea) => st.setSea(sea),
+      onSelect: (spec) => { flow.preview(spec); const c = cls(spec); this.world.setArenaClass(r.look, c.style, c.action); },
+      onPlay: (kind, n) => this.world.arenaPlay(kind, n ?? 0),
+      onWindow: (rect) => this.world.arenaWindow(rect),
+      // 4.9 / 4.91: Vorschau an Land bzw. auf See (Seegefecht am Steuer gegen ein Zielschiff)
+      onSea: (sea) => this.world.setArenaSea(sea),
       onBack: () => {
-        this.leaveCreationViews();
+        this.leaveCreationViews(true);
         flow.back();
         this.openEditor(slot, r);
       },
@@ -5727,27 +5755,33 @@ export class Game {
         void this.newGame(slot, out);
       },
     });
-    st.onPart = (phase, label, act) => this.showcase?.part(phase, label, act);
   }
 
-  /** Oberflächen und Bühnen des Einstiegs abbauen (die geliehenen Effekt-Pools gehen an die Welt zurück, kein Impact-Filter bleibt stehen) */
-  private leaveCreationViews() {
+  /** 4.91: die Klassen-Vorschau läuft in der Welt (Game ruft dann `world.update` auch im Zustand `editor`) */
+  private arenaOn = false;
+
+  /**
+   * Oberflächen und Bühnen des Einstiegs abbauen (die geliehenen Effekt-Pools gehen an die Welt zurück, kein Impact-Filter bleibt stehen);
+   * `title` = die Welt kehrt zum Titelbild zurück (Zurück zum Aussehen), sonst beginnt gleich das Spiel.
+   */
+  private leaveCreationViews(title = false) {
     this.faceOff?.dispose(); this.faceOff = null;
     this.showcase?.dispose(); this.showcase = null;
     const st = this.stage;
-    if (st instanceof FaceOffStage || st instanceof ShowcaseStage) { st.attachVfx(null); st.dispose(); this.stage = null; }
+    if (st instanceof FaceOffStage) { st.attachVfx(null); st.dispose(); this.stage = null; }
+    if (this.arenaOn) { this.arenaOn = false; this.world.onArenaPart = null; this.world.endArena(title); }
     this.world.lendVfx(null, null);
     this.impactOverlay.apply('none', 0, 0, '#fff', 0);
   }
 
   /** Prüfungen: Lage des Einstiegs */
   get creationView() {
-    const st = this.stage;
+    const st = this.stage, A = this.world.arena;
     return {
       step: this.creation?.step ?? null,
       faceOff: !!this.faceOff, showcase: !!this.showcase,
       figures: st instanceof FaceOffStage ? st.built : 0,
-      preview: st instanceof ShowcaseStage ? { phase: st.phase, act: st.act, stats: { ...st.stats } } : null,
+      preview: this.arenaOn ? { sea: A.sea, part: A.part ? { ...A.part } : null, act: A.act, targets: A.targets.filter((t) => !!t).length, stats: { ...A.stats } } : null,
     };
   }
 
@@ -5873,7 +5907,7 @@ export class Game {
     this.sceneChanged(10);
     this.state.set('play');
     this.loop.resetClock();
-    this.touch.setLayout(TOUCH_SEA);
+    this.touch.setLayout(SEA_TOUCH);
     // 4.7A: Instanz – Gewitter-Prolog, private Einführung „Ankerglück“ oder geteilte Welt
     this.applyInstance();
     if (!isPrivate(data.progress.instance ?? legacyInstance())) this.hud.hint(this.controlsHint(), 12);
@@ -6041,7 +6075,7 @@ export class Game {
     this.world.healPlayer();
     this.refreshWeaponHud();
     this.hud.setPlayer(s.player.name, `${FACTION_LABELS[s.player.faction]} · ${rankName(s.player.faction, s.player.fame)} · Stufe ${s.player.level}`);
-    this.touch.setLayout(TOUCH_SEA);
+    this.touch.setLayout(SEA_TOUCH);
     this.persist();
     this.hud.toast('Prolog und Einführung übersprungen – die Bernsteinsee steht dir offen.', 4);
     this.hud.hint(this.controlsHint(), 10);
@@ -6317,8 +6351,9 @@ export class Game {
       onRideRequest: () => this.requestRide(),
       onUnrideRequest: () => this.endRideNow(),
       // 4.9: geteilte Gegner und Kampf-Übertragung (die Seewelt führt sie, `world/sharedEntities.ts`)
-      onEntClaimed: (key, id) => this.world.sharedEnts?.claimed(key, id),
-      onEntHit: (id, from, dmg, ammo, zone, pen) => this.world.sharedEnts?.netHit(id, from, dmg, ammo, zone, pen),
+      onEntClaimed: (key, id, owner) => this.world.sharedEnts?.claimed(key, id, owner),
+      onEntDenied: (key, wait) => this.world.sharedEnts?.denied(key, wait),
+      onEntHit: (id, from, dmg, ammo, zone, pen, foe) => this.world.sharedEnts?.netHit(id, from, dmg, ammo, zone, pen, foe),
       onEntKill: (k) => this.world.sharedEnts?.killed(k),
       onEntOwn: (e) => this.world.sharedEnts?.owned(e),
       onEntGone: (id) => this.world.sharedEnts?.gone(id),
@@ -6866,6 +6901,7 @@ export class Game {
     const s = this.save;
     if (!s) return;
     const me = this.mmo?.id ?? '';
+    if (k.cat === 'foe') { this.sharedFoeKill(k, owner, me); return; }
     if (!owner) {
       s.progress.stats.sunk++;
       this.questEvent({ type: 'sink' });
@@ -6877,6 +6913,30 @@ export class Game {
     if (k.finder === me) {
       const rarity: Rarity = k.role === 'legende' ? 'legendaer' : k.level >= 30 ? 'episch' : 'selten';
       this.onLootPickup({ rarity, kind: Math.random() < 0.7 ? 'gear' : 'trinket', value: 120 + k.level * 18 });
+    }
+    this.persist();
+  }
+
+  /**
+   * 4.91: Abschuss eines geteilten Landgegners (Lager, Bezirk, Kommandant, Boss, Kaiser-Garde). Der Besitzer hat Erfahrung, Auftrag und
+   * – bei eigenem Treffer – die Beute-Säulen schon über `onKill`; alle anderen Beteiligten und Gruppenmitglieder im Einsatzgebiet bekommen
+   * hier Abschuss, Auftragsfortschritt (Art des Gegners) und Erfahrung. Hat ein Mitspieler den letzten Treffer gesetzt, würfelt seine Seite
+   * die Beute (in der Gruppe das Würfel-Fenster).
+   */
+  private sharedFoeKill(k: EntKillNet, owner: boolean, me: string) {
+    const s = this.save;
+    if (!s) return;
+    const def = ENEMIES[k.role as EnemyKind];
+    if (!owner) {
+      const xp = Math.round((def?.xp ?? 20) * (1 + 0.2 * (k.level - 1)));
+      this.grantXp(xp, k.boss ? 200 : def?.elite ? 15 : 3);
+      s.progress.stats.kills++;
+      if (def) this.questEvent({ type: 'kill', kind: k.role as EnemyKind });
+      if (k.boss) this.overlay.showBanner('Gemeinsam besiegt!', k.by && k.by !== me ? `${k.name} · den letzten Treffer setzte ${k.byName}` : k.name);
+    }
+    if (k.finder === me && k.owner !== me) {
+      const rarity: Rarity = k.boss ? 'legendaer' : def?.elite ? 'episch' : k.level >= 30 ? 'selten' : 'gewoehnlich';
+      this.onLootPickup({ rarity, kind: Math.random() < 0.7 ? 'gear' : 'trinket', value: 60 + k.level * 12 });
     }
     this.persist();
   }
