@@ -9,6 +9,7 @@ import { GOOD_BY_ID, profileOf, type GoodId } from '../data/economy';
 import { drawPoi, outline, ownerRing, type MapTopo, type ShapeLike, type WorldMapData, type WorldView } from './minimap';
 import { LABEL_ZOOM, LabelPlacer, MarkClusters, TextWidths, WAR_CLUSTER_PX, WAR_LABEL_ZOOM, fitScale, labelShown, type LabelRank } from './mapView';
 import { isTravelPort } from '../world/fastTravel';
+import { PARTY_COLORS } from '../data/partyMarks';
 
 /** Ebenen der Karte, einzeln ein- und ausblendbar */
 export interface MapLayers { sectors: boolean; currents: boolean; events: boolean; trade: boolean; war: boolean }
@@ -592,6 +593,15 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, w: number, h: number
   // 1. Spieler und Ereignisse (wichtiger als Inselnamen), 2. Städte und Festungen, 3. Häfen und Bosse, 4. der Rest, 5. Markt-Abzeichen
   const px = mx(m.player.x), py = my(m.player.z);
   placer.tryPlace(px - 14, py - 14, px + 14, py + 14, 0);
+  // 4.9: Gruppenmitglieder: Schiffspfeil mit Ring in Fahrtrichtung, Name in Smaragd darunter (vor den Inselnamen: ihr Platz ist reserviert)
+  const pty = d.party;
+  if (pty) for (let k = 0; k < pty.length; k++) {
+    const q = pty[k], x = mx(q.x), y = my(q.z);
+    if (x < -30 || x > w + 30 || y < -30 || y > h + 30) continue;
+    ctx.save(); ctx.translate(x, y); if (q.heading !== undefined) ctx.rotate(-q.heading); drawPoi(ctx, 0, 0, 'party', 1.25); ctx.restore();
+    placer.tryPlace(x - 13, y - 13, x + 13, y + 13, 0);
+    label(ctx, FONT_EVENT, q.name, x, y + 26, PARTY_COLORS.turquoise);
+  }
   // Belagerungen und Schlachten (4.5B): unter 1,25× gebündelte, überlappungsfreie Kampf-Symbole ohne Text (die Kartenmitte bleibt lesbar); der volle
   // Text erst beim Hineinzoomen oder für die angeklickte Insel. Grenz-Seeschlachten gehören dazu, sobald die Kriegsebene an ist
   const warOn = L.war && !!war, full = zoom >= WAR_LABEL_ZOOM;

@@ -106,8 +106,7 @@ export interface SailVisual {
   tattered: boolean;
   /** Bordüre am Segelrand: Gold; ab Stufe 5 doppelt mit der Farbe der Macht/Flagge */
   border: null | { double: boolean };
-  /** Vorstagsegel (Jibs) am Bugspriet, Topp-/Bramsegel über den Hauptrahen, Besansegel am Heck */
-  jibs: number;
+  /** Topp-/Bramsegel über den Hauptrahen, Besansegel am Heck (Vorsegel am Bugspriet gibt es seit 4.9 nicht mehr) */
   topgallants: boolean;
   spanker: boolean;
   /** Takelage: Wanten je Seite, Webleinen (Schrittweite, 0 = keine), Rahhängetaue */
@@ -168,7 +167,6 @@ export function shipVisual(c: ClassDims, evo: ShipEvolution): ShipVisual {
       wear: at([1, 0.6, 0.35, 0.1, 0], s),
       tattered: s <= 3,
       border: s >= 4 ? { double: s >= 5 } : null,
-      jibs: at([1, 2, 3, 3, 4], s),
       topgallants: s >= 4,
       spanker: s >= 4,
       shrouds: at([1, 3, 3, 5, 5], s),

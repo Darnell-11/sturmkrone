@@ -155,6 +155,8 @@
 .sc-acts li.on { color: #fff; border-color: var(--ca); background: color-mix(in srgb, var(--cc) 45%, #000); }
 .sc-play { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; gap: 8px; }
 .sc-play .mini:not(.brass) { background: var(--glass-strong); }
+/* 4.9: Vorschau an Land / auf See */
+.sc-play .sc-sea[aria-pressed='true'] { background: linear-gradient(180deg, color-mix(in srgb, var(--sea) 70%, #0b2230), color-mix(in srgb, var(--sea) 40%, #06141c)); border-color: var(--sea); color: #effbff; }
 
 .sc-info { margin: 0; max-width: none; padding: 12px 12px 10px; display: flex; flex-direction: column; min-height: 0; }
 .sc-body { flex: 1; min-height: 0; overflow-y: auto; touch-action: pan-y; padding-right: 4px; }

@@ -15,12 +15,16 @@ export type Sfx =
   | 'bell' | 'horn' | 'foghorn' | 'thunder' | 'shard' | 'ko' | 'board' | 'sail' | 'whoosh' | 'crit' | 'cutin' | 'step'
   // 4.6C: prozeduraler Anime-Kampfklang (Zwischensequenz, Impact-Frame, Stil-Signaturen, Elemente, Klingen-Clash)
   | 'cineDrop' | 'impactCrack' | 'sheathClick' | 'cycloneWhine' | 'quakeRumble' | 'voidRumble' | 'fireRoar' | 'iceShatter' | 'thunderClap'
-  | 'clash' | 'chase' | 'tidalRoar' | 'windHowl' | 'sunChoir' | 'moonChime' | 'fistBarrage' | 'ghostVolley' | 'bladeWave' | 'eruption';
+  | 'clash' | 'chase' | 'tidalRoar' | 'windHowl' | 'sunChoir' | 'moonChime' | 'fistBarrage' | 'ghostVolley' | 'bladeWave' | 'eruption'
+  // 4.9: eigene Signaturen je Klasse und Element (Faust-Druckwelle, Klingen-Zischen, Feuer-Zischen, Blitz-Peitsche, Priester-Chor mit Glocken),
+  // pfeifende Kanonenkugel und krachendes Holz beim Einschlag
+  | 'fistQuake' | 'bladeHiss' | 'fireHiss' | 'whipCrack' | 'choirBell' | 'ballWhistle' | 'woodImpact';
 
 /** Die Klänge des Anime-Kampfes (4.6C) – Prüfungen spielen jeden einmal ab */
 export const ANIME_SFX: readonly Sfx[] = [
   'cineDrop', 'impactCrack', 'sheathClick', 'cycloneWhine', 'quakeRumble', 'voidRumble', 'fireRoar', 'iceShatter', 'thunderClap',
   'clash', 'chase', 'tidalRoar', 'windHowl', 'sunChoir', 'moonChime', 'fistBarrage', 'ghostVolley', 'bladeWave', 'eruption',
+  'fistQuake', 'bladeHiss', 'fireHiss', 'whipCrack', 'choirBell', 'ballWhistle', 'woodImpact',
 ];
 
 /** Weltposition eines Klangs (y optional: sonst etwa Bodenhöhe beim Hörer) */
@@ -38,6 +42,7 @@ const DUCK: Partial<Record<Sfx, [number, number]>> = {
   ko: [0.45, 1.5], sink: [0.6, 1.2], thunder: [0.65, 0.8], horn: [0.6, 1.0], foghorn: [0.7, 2.6], bell: [0.7, 0.8], cutin: [0.55, 1.2], roar: [0.6, 1.0], shard: [0.75, 0.5],
   cineDrop: [0.3, 1.1], impactCrack: [0.4, 1.0], thunderClap: [0.5, 1.0], voidRumble: [0.55, 1.6], quakeRumble: [0.55, 1.6], tidalRoar: [0.6, 1.4],
   fireRoar: [0.65, 1.2], windHowl: [0.65, 1.2], sunChoir: [0.6, 1.4], moonChime: [0.6, 1.4], ghostVolley: [0.65, 0.8], fistBarrage: [0.7, 1.0],
+  fistQuake: [0.6, 1.2], whipCrack: [0.6, 0.9], choirBell: [0.65, 1.4],
 };
 
 /** Reglerstand für Einstellungsmenü und HUD */
@@ -88,6 +93,7 @@ const CAT_OF: Partial<Record<Sfx, keyof typeof SPATIAL_CAT>> = {
   roll: 'combat', whoosh: 'combat', crack: 'combat', hurt: 'combat', clash: 'combat', chase: 'combat', bladeWave: 'combat', sheathClick: 'combat',
   eruption: 'mid', impactCrack: 'loud', thunderClap: 'loud', quakeRumble: 'loud', voidRumble: 'loud', tidalRoar: 'loud', ghostVolley: 'loud', iceShatter: 'loud',
   boom: 'loud', broadside: 'loud', sink: 'loud', splash: 'loud', roar: 'loud', thunder: 'loud', horn: 'loud', foghorn: 'loud', bell: 'loud',
+  fistQuake: 'loud', whipCrack: 'loud', woodImpact: 'loud', bladeHiss: 'combat', fireHiss: 'mid', choirBell: 'mid', ballWhistle: 'mid',
 };
 
 /** Untergrund für Schritte (setzt das Spiel je nach Ort) */
@@ -711,10 +717,34 @@ class AudioEngine {
       case 'clang': case 'parry': if (!this.ok('cl', 0.04)) return; this.tone(1850, t, 0.22, 'square', 0.05 * v, 0.35, 1500, 0.002, undefined, pan); this.tone(2600, t, 0.15, 'triangle', 0.06 * v, 0.35, 0, 0.002, undefined, pan); this.noise(t, 0.08, 0.15 * v, 4000, 'highpass', undefined, pan); if (name === 'parry') this.tone(mtof(88), t + 0.04, 0.5, 'sine', 0.06 * v, 0.7); break;
       case 'hurt': if (!this.ok('hu', 0.1)) return; this.noise(t, 0.3, 0.32 * v, 600, 'lowpass'); this.tone(160, t, 0.25, 'square', 0.06 * v, 0, 60); break;
       case 'ko': this.tone(220, t, 0.8, 'sawtooth', 0.08 * v, 0.4, 55); this.noise(t, 0.6, 0.3 * v, 400, 'lowpass'); break;
-      case 'boom': if (!this.ok('boom', 0.035)) return; this.noise(t, 0.6, 0.5 * v, 800, 'lowpass', undefined, pan, 120); this.tone(120, t, 0.38, 'sine', 0.5 * v, 0.12, 36, 0.004, undefined, pan); break;
-      case 'broadside': for (let i = 0; i < 4; i++) { const tt = t + i * 0.07 + Math.random() * 0.03; this.noise(tt, 0.7, 0.32 * v, 900, 'lowpass', undefined, pan, 110); this.tone(110 - i * 6, tt, 0.4, 'sine', 0.3 * v, 0.15, 34, 0.004, undefined, pan); } break;
+      // 4.9: Kanone – Pulverdruck (harter Knall, Sub-Stoß 70 → 34 Hz), Holz-Resonanz des Rumpfs (180 – 260 Hz, langsam ausklingend)
+      case 'boom': if (!this.ok('boom', 0.035)) return; this.cannon(t, v, pan, 1); break;
+      // Breitseite: Salve einzelner Kanonen mit Resonanz, danach ein rollendes Echo über dem Wasser
+      case 'broadside': {
+        for (let i = 0; i < 5; i++) this.cannon(t + i * 0.065 + Math.random() * 0.03, v * 0.75, pan, 0.92 - i * 0.03);
+        this.noise(t + 0.35, 2.2, 0.16 * v, 320, 'lowpass', undefined, pan, 70);
+        this.tone(44, t + 0.3, 1.6, 'sine', 0.12 * v, 0.5, 30, 0.08, undefined, pan);
+        break;
+      }
       case 'splash': if (!this.ok('spl', 0.05)) return; this.noise(t, 0.35, 0.12 * v, 1700, 'bandpass', undefined, pan, 600); break;
       case 'crack': if (!this.ok('ck', 0.06)) return; this.noise(t, 0.25, 0.3 * v, 1200, 'bandpass', undefined, pan); this.tone(90, t, 0.2, 'square', 0.06 * v, 0, 50, 0.002, undefined, pan); break;
+      // 4.9: Kugel schlägt in Holz: krachender Bruch, Splitter-Knistern, dumpfer Stoß, kurzes Ächzen der Planken
+      case 'woodImpact': {
+        if (!this.ok('wimp', 0.05)) return;
+        this.noise(t, 0.32, 0.42 * v, 900, 'bandpass', undefined, pan, 320);
+        this.tone(88, t, 0.3, 'sine', 0.35 * v, 0.12, 42, 0.002, undefined, pan);
+        for (let i = 0; i < 9; i++) this.noise(t + 0.02 + Math.random() * 0.28, 0.025, 0.2 * v, 2200 + Math.random() * 2600, 'bandpass', undefined, pan);
+        this.tone(210, t + 0.08, 0.5, 'sawtooth', 0.025 * v, 0.2, 150, 0.03, undefined, pan);
+        break;
+      }
+      // 4.9: pfeifende Kugel im Vorbeiflug (absinkender Ton mit leichtem Flattern)
+      case 'ballWhistle': {
+        if (!this.ok('whis', 0.12)) return;
+        this.tone(1900, t, 0.62, 'sine', 0.05 * v, 0.2, 640, 0.02, undefined, pan);
+        this.tone(1940, t, 0.6, 'triangle', 0.025 * v, 0.2, 660, 0.02, undefined, pan);
+        this.noise(t, 0.6, 0.06 * v, 2400, 'bandpass', undefined, pan, 900);
+        break;
+      }
       case 'sink': this.noise(t, 1.6, 0.25 * v, 420, 'lowpass', undefined, pan, 120); this.tone(200, t, 1.2, 'sine', 0.08 * v, 0.2, 50, 0.01, undefined, pan); for (let i = 0; i < 5; i++) this.tone(300 + Math.random() * 500, t + 0.3 + i * 0.18, 0.12, 'sine', 0.03 * v, 0.3, 900); break;
       case 'coin': if (!this.ok('coin', 0.045)) return; this.tone(1320, t, 0.09, 'sine', 0.06 * v, 0.2); this.tone(1760, t + 0.05, 0.14, 'sine', 0.06 * v, 0.3); break;
       case 'shard': [81, 85, 88, 93].forEach((m, i) => this.tone(mtof(m), t + i * 0.06, 0.6, 'sine', 0.06 * v, 0.6)); break;
@@ -724,7 +754,8 @@ class AudioEngine {
       case 'dig': if (this.ok('dig', 0.25)) { this.noise(t, 0.14, 0.14 * v, 550, 'bandpass'); this.noise(t + 0.25, 0.14, 0.12 * v, 500, 'bandpass'); } break;
       case 'eat': for (let i = 0; i < 3; i++) this.noise(t + i * 0.12, 0.07, 0.12 * v, 1200, 'bandpass'); this.tone(mtof(79), t + 0.4, 0.3, 'sine', 0.05 * v, 0.4, mtof(84)); break;
       case 'roar': if (!this.ok('roar', 0.5)) return; this.tone(72, t, 1.6, 'sawtooth', 0.22 * v, 0.3, 44, 0.15); this.noise(t, 1.4, 0.25 * v, 320, 'lowpass'); break;
-      case 'thunder': this.noise(t, 2.6, 0.45 * v, 260, 'lowpass', this.ambBus, 0, 60); this.noise(t, 0.3, 0.3 * v, 2000, 'highpass', this.ambBus); break;
+      // 4.9: Donner – Sub-Bass (65 → 28 Hz), scharfes Hochspannungs-Knistern im Einschlag, dreistufiger Sturmhall (immer tiefer, immer leiser)
+      case 'thunder': this.thunderVoice(t, v, this.ambBus, 1); break;
       case 'bell': [0, 0.5].forEach((o) => { this.tone(mtof(81), t + o, 1.6, 'sine', 0.07 * v, 0.6); this.tone(mtof(81) * 2.4, t + o, 0.9, 'sine', 0.02 * v, 0.6); }); break;
       case 'horn': this.brass(50, t, 1.4, 0.12 * v, this.sfxBus); this.brass(57, t + 0.05, 1.3, 0.08 * v, this.sfxBus); break;
       // Tiefes Nebelhorn eines Weltbosses (Phase 4.3C): zwei sehr tiefe Blechtöne, lang gehalten, mit dumpfem Rauschen darunter
@@ -817,10 +848,46 @@ class AudioEngine {
         this.noise(t, 0.3, 0.3 * v, 1400, 'bandpass');
         break;
       case 'thunderClap':
-        // Blitz: harter Knall, langes Rollen
+        // Blitz ganz nah: harter Knall, Knistern, Sub-Bass und mehrstufiges Rollen (4.9)
         this.noise(t, 0.06, 0.6 * v, 3500, 'highpass');
-        this.noise(t, 2.4, 0.5 * v, 260, 'lowpass', undefined, 0, 50);
-        this.tone(48, t, 0.9, 'sine', 0.5 * v, 0.2, 30, 0.003);
+        this.thunderVoice(t, v, undefined, 1.25);
+        break;
+      case 'fistQuake':
+        // 4.9 Faust: erdbebende Druckwelle – trockener Aufschlag, Sub-Fall 46 → 24 Hz, Grollen, rieselnde Steine
+        if (!this.ok('fquake', 0.08)) return;
+        this.noise(t, 0.05, 0.5 * v, 1800, 'bandpass');
+        this.tone(46, t, 1.1, 'sine', 0.6 * v, 0.15, 24, 0.003);
+        this.tone(92, t, 0.25, 'triangle', 0.25 * v, 0.1, 46, 0.002);
+        this.noise(t, 1.4, 0.36 * v, 150, 'lowpass', undefined, 0, 55);
+        for (let i = 0; i < 7; i++) this.noise(t + 0.15 + Math.random() * 0.8, 0.04, 0.08 * v, 900 + Math.random() * 900, 'bandpass');
+        break;
+      case 'bladeHiss':
+        // 4.9 Klinge: rasiermesserscharfes Zischen und ein heller Stahl-Nachklang
+        if (!this.ok('bhiss', 0.05)) return;
+        this.noise(t, 0.22, 0.26 * v, 4800, 'highpass', undefined, 0, 9000);
+        this.noise(t, 0.14, 0.16 * v, 2600, 'bandpass', undefined, 0, 6800);
+        this.tone(3120, t + 0.02, 0.45, 'sine', 0.035 * v, 0.5, 3060, 0.001);
+        break;
+      case 'fireHiss':
+        // 4.9 Feuer: zischende Flamme mit Knistern und tiefem Fauchen
+        if (!this.ok('fhiss', 0.06)) return;
+        this.noise(t, 0.7, 0.3 * v, 2600, 'bandpass', undefined, 0, 1200);
+        this.noise(t, 0.9, 0.26 * v, 300, 'lowpass', undefined, 0, 900);
+        for (let i = 0; i < 10; i++) this.noise(t + Math.random() * 0.8, 0.02, 0.14 * v, 3500 + Math.random() * 2500, 'bandpass');
+        break;
+      case 'whipCrack':
+        // 4.9 Blitz-Peitsche: scharfer Hochspannungs-Schlag, abwärts zuckender Funke, kurzes Rollen
+        if (!this.ok('whip', 0.06)) return;
+        this.noise(t, 0.035, 0.6 * v, 5200, 'highpass');
+        this.tone(3200, t, 0.18, 'sawtooth', 0.07 * v, 0.3, 180, 0.001);
+        for (let i = 0; i < 6; i++) this.noise(t + 0.01 + Math.random() * 0.12, 0.012, 0.25 * v, 6000 + Math.random() * 3000, 'highpass');
+        this.noise(t + 0.05, 0.9, 0.22 * v, 280, 'lowpass', undefined, 0, 60);
+        break;
+      case 'choirBell':
+        // 4.9 Priester: getragener Chor-Akkord (langsamer Einsatz) mit zwei Glockenschlägen (Teiltöne 1 : 2,4 : 3,9)
+        if (!this.ok('cbell', 0.15)) return;
+        [64, 68, 71, 76].forEach((m, i) => { this.tone(mtof(m), t + i * 0.04, 2.2, 'triangle', 0.035 * v, 0.9, 0, 0.18); this.tone(mtof(m) * 1.005, t + i * 0.04, 2.2, 'sine', 0.025 * v, 0.9, 0, 0.2); });
+        for (const o of [0, 0.42]) { const f0 = mtof(84); this.tone(f0, t + o, 2, 'sine', 0.06 * v, 0.8); this.tone(f0 * 2.4, t + o, 1.2, 'sine', 0.025 * v, 0.8); this.tone(f0 * 3.9, t + o, 0.8, 'sine', 0.012 * v, 0.8); }
         break;
       case 'clash':
         // Klingen-Clash: hell klirrender Schlag mit unharmonischem Nachklang, Funkenzischen und dumpfem Stoß
@@ -891,6 +958,31 @@ class AudioEngine {
         break;
       default: break;
     }
+  }
+
+  /**
+   * 4.9: eine Kanone – Pulverdruck (harter Knall mit schnellem Anstieg, Sub-Stoß), Mündungsknall im Mittelton, Holz-Resonanz des Rumpfs
+   * (bandbegrenztes Rauschen um 220 Hz und ein tiefer Dreieckston, ausklingend). `k` = Tonhöhe (jede Kanone der Salve etwas anders)
+   */
+  private cannon(t: number, v: number, pan: number, k: number) {
+    this.noise(t, 0.5, 0.5 * v, 900 * k, 'lowpass', undefined, pan, 110);
+    this.tone(70 * k, t, 0.42, 'sine', 0.55 * v, 0.12, 34, 0.002, undefined, pan);
+    this.noise(t, 0.04, 0.32 * v, 1500, 'bandpass', undefined, pan);
+    this.noise(t + 0.02, 0.55, 0.14 * v, 220 * k, 'bandpass', undefined, pan, 160);
+    this.tone(160 * k, t + 0.01, 0.5, 'triangle', 0.06 * v, 0.3, 118 * k, 0.01, undefined, pan);
+  }
+
+  /**
+   * 4.9: Donner – Sub-Bass-Fall 65 → 28 Hz, scharfes Hochspannungs-Knistern im ersten Augenblick, dann drei Hallstufen des Sturms
+   * (0,35 / 0,9 / 1,7 s später, jede tiefer gefiltert und leiser, mit viel Hallanteil). `k` = Nähe (1 = fern, 1,25 = ganz nah)
+   */
+  private thunderVoice(t: number, v: number, bus: AudioNode | undefined, k: number) {
+    this.tone(65, t, 2.8, 'sine', 0.42 * v * k, 0.35, 28, 0.01, bus);
+    this.tone(48, t + 0.05, 2.4, 'triangle', 0.18 * v * k, 0.35, 30, 0.04, bus);
+    for (let i = 0; i < 12; i++) this.noise(t + Math.random() * 0.35, 0.015 + Math.random() * 0.02, (0.18 + Math.random() * 0.2) * v * k, 4500 + Math.random() * 3500, 'highpass', bus);
+    this.noise(t, 0.4, 0.32 * v * k, 2000, 'highpass', bus, 0, 900);
+    const stages: [number, number, number, number][] = [[0, 2.6, 0.48, 280], [0.35, 2.2, 0.3, 200], [0.9, 2.0, 0.2, 140], [1.7, 1.8, 0.12, 100]];
+    for (const [o, d, g, f] of stages) this.noise(t + o, d, g * v * k, f, 'lowpass', bus, 0, 45);
   }
 
   /** Faji-Klang je Element */

@@ -1,5 +1,7 @@
 import { TargetFrame } from '../ui/targetFrame';
 import { MmoClient, type PartyWarn, type PendingInvite } from '../net/mmoClient';
+import { PartyPlates } from '../ui/partyPlates';
+import type { PartyMarkView } from '../world/partyMarkers';
 import { createMmoTransport, type MmoTransport } from '../net/mmoTransport';
 import { OnlineStatus, mmoTabId } from '../net/onlineStatus';
 import { serverChoice } from '../net/serverUrl';
@@ -8,7 +10,7 @@ import { affinityOf, gradeOf, gradeRank, rollsFor, shipNeedOf, GRADE_LABEL } fro
 import { LootRollWindow, type RollCardInfo } from '../ui/lootRollWindow';
 import { glyphSvg } from '../ui/itemArt';
 import type { GlyphKind } from '../data/catalog';
-import { MMO, newProfile, type InspectInfo, type PartyView, type PlayerProfile, type PlayerState, type ShareKind } from '../net/mmoProtocol';
+import { MMO, newProfile, type EntKillNet, type InspectInfo, type PartyView, type PlayerProfile, type PlayerState, type ShareKind } from '../net/mmoProtocol';
 import { groupAllowed, rideSlot, safeZoneAt } from '../net/partyRules';
 import { safeZones } from '../social/safeZones';
 import { buildPlayerMenu, inspectView, type PlayerMenuAction } from '../social/playerMenu';
@@ -32,7 +34,7 @@ import { AnimeImpactOverlay } from '../ui/animeImpactOverlay';
 import { PrologueOverlay } from '../ui/prologueOverlay';
 import { TUT_FLAGS, TutorialFlow, type TutorialHost } from './tutorialFlow';
 import type { ClassView } from '../ui/classScreen';
-import { BEACH_START, SHIP_COACH, TUTORIAL, TUTORIAL_QUESTS, combatCoach, linenLook } from '../data/prologue';
+import { BEACH_START, SALVO_ELEMENT, SHIP_COACH, TUTORIAL, TUTORIAL_QUESTS, combatCoach, linenLook } from '../data/prologue';
 import { TUTORIAL_END, dissolve, enterTutorial, isPrivate, legacyInstance, skipIntro, worldGates } from '../story/tutorialInstance';
 import { HOME_SPAWN } from '../data/world';
 import { FAJI_ART_IDS, FORM_NAMES, MASTERY_CAP, WILL, WILL_AURAS, cleanFaji, formOf, formProgress, isFajiArt, type AuraId, type FajiArtId, type FajiSave } from '../data/fajiArts';
@@ -125,7 +127,7 @@ import { WorldMapScreen } from '../ui/worldMap';
 import { CREW_BY_ID } from '../data/crew';
 import { officerSlots, troopCapacity, TROOP_RANK } from '../data/crewTiers';
 import { addTroops, cleanRoster, clampRoster, COMMANDS, rosterTotal, scaleRoster, TROOPS, type CommandState, type TroopRoster, type TroopType } from '../data/troops';
-import { ART_ACTIONS, ASSIST_ACTIONS, COMMAND_ACTIONS, GEIST_ACTIONS, PAD_CHORD_LABEL, commandOnKey, artOnKey, type ActionId } from '../data/actions';
+import { ART_ACTIONS, ASSIST_ACTIONS, COMMAND_ACTIONS, GEIST_ACTIONS, HELM_GEIST_ACTIONS, PAD_CHORD_LABEL, commandOnKey, artOnKey, type ActionId } from '../data/actions';
 import {
   FLEET_ORDERS, FLEET_ORDER_ACTIONS, FLEET_UNLOCK_RANKS, TOWED_HP, activateShip, applyFleetEvo, activeCount, activeShips, assignShip, assignableClasses, dockShip, emptyFleet, fleetShip, fleetShipUpkeep, fleetSlots,
   fleetUpkeepDaily, fleetUpkeepList, hasFreeSlot, releaseShip, towShip, fleetIdOf, type FleetCtx, type FleetOrder, type FleetShipRecord, type FleetState,
@@ -160,7 +162,7 @@ import type { SeaEventNews } from '../world/worldEventsLive';
 import type { PoiKind } from '../ui/minimap';
 import { wrapAngle } from './mathUtil';
 import type { RepairMaterial } from '../sim/intents';
-import { QUESTS, QUEST_BY_ID } from '../data/quests';
+import { QUESTS, QUEST_BY_ID, retireQuests } from '../data/quests';
 import { hostileLegends, LEGEND_BY_ID, rankRows } from '../data/legends';
 import { clamp01 } from './mathUtil';
 import {
@@ -199,6 +201,9 @@ function supplyName(power: FactionId | null | undefined): string {
 
 /** 4.6J: wiederverwendete Liste für `syncAllies` */
 const ALLY_CONTRACTS: WarContract[] = [];
+
+/** 4.9: leere Ansichtsliste der Gruppen-Schilder (ohne MMO-Verbindung) */
+const NO_PARTY_VIEWS: readonly PartyMarkView[] = [];
 
 export class Game {
   readonly state = new StateMachine();
@@ -264,6 +269,8 @@ export class Game {
   private proCineShown = false;
   private dialogUi!: DialogOverlay;
   private markers!: NpcMarkers;
+  /** 4.9: Namensschilder der Gruppenmitglieder über Kopf bzw. Masttopp */
+  private partyPlates!: PartyPlates;
   private questLog: QuestLog | null = null;
   private inventoryUi: InventoryScreen | null = null;
   private compass!: Compass;
@@ -293,6 +300,8 @@ export class Game {
   private readonly partyRows: PartyFrameView[] = [];
   private pendingRide: { e: EnemyShip; rx: number; rz: number } | null = null;
   private shareNoteT = 0;
+  /** 4.9: letzte Meldung „… feuert auf dich!“ (geteilte Gegner) */
+  private entHitNoteT = -99;
   private rightDown: { x: number; y: number; t: number } | null = null;
   private sectorBanner!: SectorBanner;
   private edgeWarning!: EdgeWarning;
@@ -426,6 +435,7 @@ export class Game {
     this.impactOverlay = new AnimeImpactOverlay(uiRoot, canvas);
     this.dialogUi = new DialogOverlay(uiRoot);
     this.markers = new NpcMarkers(uiRoot);
+    this.partyPlates = new PartyPlates(uiRoot);
     this.raidPanel = new RaidPanel(zone.ml);
     this.helm = new HelmDial(zone.bl);
     // 4.8A: Gruppenfenster (links), Einladung und Kriegsausbruch (oben Mitte), Chat (unten links), Rechtsklick-Menü und Betrachten
@@ -501,7 +511,8 @@ export class Game {
     this.world.onShipSunk = (e) => {
       if (!this.save || e.captured) return;
       const p = this.save.player;
-      if (!e.companion) { this.save.progress.stats.sunk++; this.questEvent({ type: 'sink' }); this.mmo?.share('sink', e.role, 1, e.ship.x, e.ship.z); }
+      // 4.9: geteilte Gegner verteilt der Shard selbst (Abschuss mit Gutschrift an alle Beteiligten): dann kein zusätzlicher Gruppenfortschritt
+      if (!e.companion) { this.save.progress.stats.sunk++; this.questEvent({ type: 'sink' }); if (!e.shared?.id) this.mmo?.share('sink', e.role, 1, e.ship.x, e.ship.z); }
       // Ansehen: die Marine merkt sich versenkte Schiffe, Kurogane-Schwarzsegler zu versenken gefällt ihr
       if (!e.companion && e.power === 'marine') this.shiftStanding('marine', STANDING_EVENTS.marineShipSunk);
       else if (!e.companion && e.power === 'kurogane') this.shiftStanding('marine', STANDING_EVENTS.kuroganeShipSunk);
@@ -741,7 +752,12 @@ export class Game {
       // Solange Trupps im Einsatz sind, gehören ihre Tasten den Befehlen (standardmäßig 1–3: Sturm, Folgen, Halten). Güter auf einer
       // Taste, die gerade ein Befehl belegt, ruhen (Schnellleiste: Platz 4 oder eigene Tasten); sonst gelten sie wie immer.
       const cmdKeys = this.world.squadsActive && this.world.mode === 'foot';
-      const artKeys = this.world.mode === 'foot';
+      // 4.9: am Steuerrad gehören 1 – 5 (und Umschalt + 1 – 5) ebenfalls den Formen; Umschalt + Q/R/T/G den Geistes-Faji – kurz nach Umschalt
+      // gedrückt (gehaltener Schub feuert mit Q weiter die Breitseite), zu Fuß wirken diese Tasten wie ohne Umschalt
+      const sail = this.world.mode === 'sail';
+      this.input.comboWindowMs = sail ? 350 : 0;
+      if (sail) this.input.comboOff.clear(); else for (const a of HELM_GEIST_ACTIONS) this.input.comboOff.add(a);
+      const artKeys = this.world.mode === 'foot' || (sail && this.world.helmArtsReady);
       const binds = this.input.getKeyBindings();
       if (cmdKeys) for (const c of COMMANDS) if (this.input.pressed(COMMAND_ACTIONS[c.id])) this.orderTroops(c.id);
       for (let i = 0; i < BAR_SLOTS; i++) {
@@ -754,7 +770,7 @@ export class Game {
       }
       // 4.6H: Kombo-Assists der Offiziere an Land (8 / 9 / 0, Gamepad R3 + LB / RB / LT, Touch-Knöpfe, Klick in der Kampfleiste)
       if (this.world.mode === 'foot') for (let i = 0; i < ASSIST_ACTIONS.length; i++) if (this.input.pressed(ASSIST_ACTIONS[i])) this.triggerAssist(i);
-      // Flottenbefehle auf See (5 / 6 / 7, Gamepad R3 + Kreuz): nur mit mindestens einem aktiven Begleitschiff
+      // Flottenbefehle auf See (6 / 7 / Z seit 4.9, Gamepad R3 + Kreuz): nur mit mindestens einem aktiven Begleitschiff
       if (this.world.mode === 'sail' && this.save && activeCount(this.fleet()) > 0) for (const o of FLEET_ORDERS) if (this.input.pressed(FLEET_ORDER_ACTIONS[o.id])) this.setFleetOrder(o.id);
       this.tickItems(dt);
       this.legendT -= dt;
@@ -876,6 +892,9 @@ export class Game {
     this.renderer.render(frameDt);
     this.overlay.update(this.state.is('play') ? frameDt * this.loop.timeScale : 0, this.world.camera);
     this.updateNpcMarkers();
+    // 4.9: Namensschilder der Gruppe (Lage aus `SeaWorld.partyMarks`, je gezeichnetem Bild)
+    const pm = this.world.partyMarks;
+    this.partyPlates.update(pm ? pm.views : NO_PARTY_VIEWS, pm && this.state.is('play') && !this.dialogUi.isOpen ? pm.count : 0, this.world.camera);
     this.updateCompass();
     // 4.6J: Ziel-Fenster (nur im Spiel; während der Kino-Regie blendet das HUD ohnehin aus)
     this.targetFrame.update(this.state.is('play') ? this.world.targets.view : null);
@@ -938,7 +957,7 @@ export class Game {
         const cmdMode = this.world.squadsActive && this.world.mode === 'foot';
         const cmd = cmdMode ? items.map((a) => { const c = commandOnKey(b, a); return c ? COMMANDS.find((x) => x.id === c)!.short : null; }) : null;
         // zu Fuß ruhen Güter auf den Tasten der Kampfkünste: liegt die ganze Leiste darauf, bleibt sie weg (das Fighter-HUD hat den Platz)
-        const foot = this.world.mode === 'foot';
+        const foot = this.world.mode === 'foot' || (this.world.mode === 'sail' && this.world.helmArtsReady);
         const allArt = foot && items.every((a) => artOnKey(b, a) !== null);
         this.hud.setItemBar(this.input.lastDevice !== 'touch' && !allArt, this.itemBarViews(), items.map((a) => this.input.keyLabel(b[a][0] ?? '')), cmd);
         this.updateFighterHud(frameDt, b);
@@ -1645,9 +1664,11 @@ export class Game {
     const s = this.save;
     const qs = this.quests;
     if (!s || !qs) return;
-    // 4.7E: Stände ohne Kapitel 0 (vor 4.7A) bekommen den Rat der Gesandten direkt, sobald sie in der geteilten Welt sind
-    if (!after && !this.teamId() && !qs.isActive('rat') && !qs.isDone('rat') && !qs.isActive('k0') && !qs.isDone('k0') && !isPrivate(s.progress.instance ?? legacyInstance())) {
-      s.progress.done.push('k0');
+    // 4.9: entfallene Aufträge (alte Schaluppen-Startquest bei Ilse) räumen; Stände ohne Team bekommen den Rat der Gesandten direkt,
+    // sobald sie in der geteilten Welt sind (auch Stände vor 4.7A ohne Einführung)
+    if (!after) {
+      retireQuests(s.progress);
+      if (!this.teamId() && !qs.isActive('rat') && !qs.isDone('rat') && !isPrivate(s.progress.instance ?? legacyInstance())) qs.accept('rat');
     }
     for (const n of QUESTS) {
       if (!n.auto || !n.after || (after && n.after !== after.id)) continue;
@@ -2615,9 +2636,29 @@ export class Game {
   }
 
   /** Orientierungspunkte für Minikarte und Kompass: Feinde (rot), Bosse (Totenkopf), Auftragspersonen (! / ?), Ziel */
+  /**
+   * 4.9: Gruppenmitglieder für Minikarte, Kompass und Seekarte: Lage aus dem interpolierten Schnappschuss (in Sichtweite, mit Fahrt- bzw.
+   * Blickrichtung) oder aus den Gruppen-Vitalwerten (auch weit weg, dann ohne Richtung)
+   */
+  private partyPois(out: Poi[]) {
+    const c = this.mmo, party = c?.party;
+    if (!c || !party) return;
+    for (const m of party.members) {
+      if (m.id === c.id) continue;
+      const r = c.remotes.get(m.id);
+      if (r && r.live) {
+        out.push({ x: r.view.x, z: r.view.z, kind: 'party', name: m.name, heading: r.last.dom === 'sea' && !r.last.ride ? r.view.hdg : r.view.yaw });
+        continue;
+      }
+      const v = c.vitals.get(m.id);
+      if (v) out.push({ x: v.x, z: v.z, kind: 'party', name: m.name });
+    }
+  }
+
   private mapPois(): Poi[] {
     const out: Poi[] = [];
     const qs = this.quests, s = this.save;
+    this.partyPois(out);
     // Belagerung: Landungsplätze (Stern), Seetor (Krone), Batterien (rot), Burg (Totenkopf)
     if (this.raidView) for (const m of this.raidView.marks) out.push({ x: m.x, z: m.z, kind: m.kind === 'slot' ? 'target' : m.kind === 'gate' ? 'citadel' : m.kind === 'battery' ? 'enemy' : 'boss', name: m.name });
     // Besetzte Inseln (goldene Fahne) und die anrückende Rückeroberungs-Flotte (Alarm)
@@ -2716,12 +2757,33 @@ export class Game {
       // 4.7E: Team-Inseln (grüner Ring), Live-Einsätze, offener Horizont
       team: this.teamId(),
       warQuests: this.warQuestMapData(),
+      // 4.9: Gruppenmitglieder (Schiffspfeil mit Namen)
+      party: this.partyMapMarks(),
       horizon: !!this.save?.progress.allegiance?.horizon,
       ...this.seaMapData(),
       chartZones: this.world.chartZones,
       blockaded: (id) => !!this.world.seaEvents?.director.blockadeOf(id),
       topo: (id) => this.world.topoOf(id),
     };
+  }
+
+  /** 4.9: Gruppenmitglieder für die Seekarte (Lage, Richtung falls in Sicht, Name, auf See oder an Land) */
+  private partyMapMarks(): WorldMapData['party'] {
+    const c = this.mmo, party = c?.party;
+    if (!c || !party) return [];
+    const out: NonNullable<WorldMapData['party']> = [];
+    for (const m of party.members) {
+      if (m.id === c.id) continue;
+      const r = c.remotes.get(m.id);
+      if (r && r.live) {
+        const sea = r.last.dom === 'sea' && !r.last.ride;
+        out.push({ x: r.view.x, z: r.view.z, heading: sea ? r.view.hdg : r.view.yaw, name: m.name, sea });
+        continue;
+      }
+      const v = c.vitals.get(m.id);
+      if (v) out.push({ x: v.x, z: v.z, name: m.name, sea: v.dom === 'sea' });
+    }
+    return out;
   }
 
   /** Krieg der Mächte für die Weltkarte: Armadas, Belagerungen, Großschlachten (die in Spielernähe zeigt das Seesystem schon als Seeschlacht) */
@@ -3298,7 +3360,8 @@ export class Game {
       list.push({ bearing: Math.atan2(dx, dz), dist: Math.hypot(dx, dz), kind, color });
     };
     const foot = this.world.mode === 'foot';
-    for (const p of this.mapPois()) if (foot ? Math.hypot(p.x - pos.x, p.z - pos.z) < (p.kind === 'enemy' ? 70 : 400) : p.kind === 'fort' ? Math.hypot(p.x - pos.x, p.z - pos.z) < 2600 : true) add(p.x, p.z, p.kind, p.color);
+    // Gruppenmitglieder zeigt der Kompass immer (auch weit weg), die übrigen Zeichen nach Entfernung
+    for (const p of this.mapPois()) if (p.kind === 'party' || (foot ? Math.hypot(p.x - pos.x, p.z - pos.z) < (p.kind === 'enemy' ? 70 : 400) : p.kind === 'fort' ? Math.hypot(p.x - pos.x, p.z - pos.z) < 2600 : true)) add(p.x, p.z, p.kind, p.color);
     if (!foot) for (const e of this.world.enemyShips) if (!e.ally && Math.hypot(e.x - pos.x, e.z - pos.z) < 300) add(e.x, e.z, e.legend ? 'boss' : 'enemy');
     const t = this.questTarget() ?? this.warTarget();
     if (t) add(t.x, t.z, 'target');
@@ -5175,11 +5238,14 @@ export class Game {
     const dev = this.input.lastDevice;
     const pad = ['▲', '▶', '▼', '◀'];
     for (let i = 0; i < 10; i++) this.artKeys[i] = dev === 'gamepad' ? (pad[i] ?? '') : this.input.keyLabel(b[`art${i + 1}` as ActionId][0] ?? '');
-    for (let i = 0; i < 4; i++) this.geistKeys[i] = dev === 'gamepad' ? (PAD_CHORD_LABEL[GEIST_ACTIONS[i]] ?? '').replace(' ', '') : this.input.keyLabel(b[GEIST_ACTIONS[i]][0] ?? '');
+    // 4.9: am Steuerrad liegen die Geistes-Faji auf Umschalt + Q/R/T/G
+    const geistActs = this.world.mode === 'sail' ? HELM_GEIST_ACTIONS : GEIST_ACTIONS;
+    for (let i = 0; i < 4; i++) this.geistKeys[i] = dev === 'gamepad' ? (PAD_CHORD_LABEL[GEIST_ACTIONS[i]] ?? '').replace(' ', '') : this.input.keyLabel(b[geistActs[i]][0] ?? '');
     // 4.7B: Klasse und Rolle im Stil-Feld; Klick auf eine Form bzw. Geistes-Kraft in der Leiste
     { const c = this.classSave(); this.world.classLabel = c ? classTitle(c) : ''; this.world.classRole = c ? classRole(c) : ''; }
-    hud.onArt = (slot) => { const f = this.world.playerFoot; if (f) f.formQueued = slot; };
-    hud.onGeist = (i) => { const f = this.world.playerFoot; if (f) f.geistQueued = i + 1; };
+    // 4.9: am Steuerrad wirken Klicks auf Formen und Geistes-Faji über dem Meer
+    hud.onArt = (slot) => { if (this.world.mode === 'sail') { this.world.helmArt(slot); return; } const f = this.world.playerFoot; if (f) f.formQueued = slot; };
+    hud.onGeist = (i) => { if (this.world.mode === 'sail') { this.world.helmGeist(i + 1); return; } const f = this.world.playerFoot; if (f) f.geistQueued = i + 1; };
     const awk = dev === 'gamepad' ? 'R3+▼' : dev === 'touch' ? '' : this.input.keyLabel(b.awaken[0] ?? '');
     this.world.awakenKeyLabel = dev === 'touch' ? 'Erwachen' : awk;
     hud.update(v, this.artKeys, dev === 'touch', this.overlay.comboHits, this.overlay.comboFrac, dt, awk, this.geistKeys);
@@ -5642,6 +5708,8 @@ export class Game {
       onSelect: (spec) => { flow.preview(spec); st.setSpec(spec); },
       onPlay: (kind, n) => { if (kind === 'combo') st.setSpec(flow.state.spec); else st.playPart(kind, n ?? 0); },
       onWindow: (rect) => st.setWindow(rect),
+      // 4.9: Vorschau an Land bzw. auf See
+      onSea: (sea) => st.setSea(sea),
       onBack: () => {
         this.leaveCreationViews();
         flow.back();
@@ -5959,13 +6027,17 @@ export class Game {
     }
     s.progress.quests = s.progress.quests.filter((q) => !(TUTORIAL_QUESTS as readonly string[]).includes(q.id));
     for (const q of TUTORIAL_QUESTS) if (!s.progress.done.includes(q)) s.progress.done.push(q);
+    // 4.9: alle Einführungs-Momente auf Ankerglück gelten als erlebt (Hinnerk, Bodo, Konrad, Ilse, Gerstenkorn) – keine Lehrtafeln, keine Marker
+    for (const f of Object.values(TUT_FLAGS)) s.progress.flags[f] = true;
+    retireQuests(s.progress);
     this.tutorial = null;
     this.world.setState({ boat: { x: HOME_SPAWN.x, z: HOME_SPAWN.z, heading: HOME_SPAWN.heading }, env: { time: 9, weather: 'klar' } });
     this.restoreShip();
     this.world.setActionStyle(s.player.actionStyle as ActionStyleId);
     this.world.updatePlayer(this.displayLook(), this.activeStyle(), this.currentAction());
     this.world.setGates(worldGates(inst));
-    this.quests?.accept('k0');
+    // 4.9: direkt zum Rat der Gesandten (die alte Startquest bei Ilse gibt es nicht mehr)
+    if (!this.quests?.isDone('rat') && !this.teamId()) { this.quests?.accept('rat'); this.quests?.setTracked('rat'); }
     this.world.healPlayer();
     this.refreshWeaponHud();
     this.hud.setPlayer(s.player.name, `${FACTION_LABELS[s.player.faction]} · ${rankName(s.player.faction, s.player.fame)} · Stufe ${s.player.level}`);
@@ -6056,7 +6128,8 @@ export class Game {
     const st = ACTION_STYLES[this.classAction()];
     const sp = c ? classSpec(c) : null;
     const label = c ? (sp ? SPECS[sp].label : CLASS_BASES[classBase(c)].label) : st.label;
-    this.prologueUi.coach(combatCoach(label, st.light.map((m) => m.label), !st.physical), 'Waffenmeister Konrad');
+    // 4.9: Faji-Wirker üben die Element-Salve (Name des Elements im Text)
+    this.prologueUi.coach(combatCoach(label, st.light.map((m) => m.label), !st.physical, st.faji ? SALVO_ELEMENT[st.element] ?? '' : ''), 'Waffenmeister Konrad');
   }
 
   /** Einführung (Konrad): Faustkämpfer wählen ihren Pfad – Schnell oder Kräftig, für immer; danach öffnet sich der Klassenbaum */
@@ -6161,13 +6234,12 @@ export class Game {
     this.world.setGates(worldGates(inst));
     // ordentliche Seemannskleidung: das Aussehen aus dem Editor (samt angelegter Ausrüstung)
     this.world.updatePlayer(this.displayLook(), this.activeStyle(), this.currentAction());
-    this.quests?.accept('k0');
-    // man steht schon in Ankerglück: „Segle nach Ankerglück“ ist erledigt, Kapitel 0 führt gleich zur Hafenmeisterin
-    this.questEvent({ type: 'enter', island: 'ankerglueck' });
+    // 4.9: nach der Einführung steht der Rat der Gesandten an (startet sonst schon mit dem Ende von t5)
+    if (!this.quests?.isDone('rat') && !this.quests?.isActive('rat') && !this.teamId()) this.quests?.accept('rat');
     audio.play('horn');
     this.overlay.showBanner('Die Welt öffnet sich', 'Andere Kapitäne sind jetzt in Ankerglück, im Hafen und auf See unterwegs');
-    const k0 = QUEST_BY_ID.k0;
-    if (k0) this.after(() => this.hud.toast(`Neuer Hauptauftrag: ${k0.title}`, 4), 3400);
+    const rat = QUEST_BY_ID.rat;
+    if (rat && this.quests?.isActive('rat')) this.after(() => this.hud.toast(`Neuer Hauptauftrag: ${rat.title}`, 4), 3400);
     this.persist();
   }
 
@@ -6244,6 +6316,14 @@ export class Game {
       onRide: (ok, _ship, text) => this.rideAnswer(ok, text),
       onRideRequest: () => this.requestRide(),
       onUnrideRequest: () => this.endRideNow(),
+      // 4.9: geteilte Gegner und Kampf-Übertragung (die Seewelt führt sie, `world/sharedEntities.ts`)
+      onEntClaimed: (key, id) => this.world.sharedEnts?.claimed(key, id),
+      onEntHit: (id, from, dmg, ammo, zone, pen) => this.world.sharedEnts?.netHit(id, from, dmg, ammo, zone, pen),
+      onEntKill: (k) => this.world.sharedEnts?.killed(k),
+      onEntOwn: (e) => this.world.sharedEnts?.owned(e),
+      onEntGone: (id) => this.world.sharedEnts?.gone(id),
+      onEntHitMe: (id, name, dmg, pen) => this.world.sharedEnts?.hitMe(id, name, dmg, pen),
+      onAct: (from, a) => this.world.sharedEnts?.remoteAct(from, a),
     });
     this.mmo = mmo;
     mmo.start();
@@ -6253,6 +6333,8 @@ export class Game {
     this.world.onPartyHorn = (x, z, heal, will) => this.mmo?.horn(x, z, heal, will);
     this.world.onPeerHit = (pid, dmg, land) => this.mmo?.hit(pid, dmg, land);
     this.world.onRideEnd = () => this.endRideNow();
+    this.world.onEntHitMe = (name, dmg, pen) => this.sharedHitMe(name, dmg, pen);
+    this.world.onSharedKill = (k, owner) => this.sharedKill(k, owner);
     this.mmoKey.level = -1;
     this.dockSocial(this.world.mode);
     this.chatUi.setVisible(true);
@@ -6409,7 +6491,9 @@ export class Game {
     }
     if (d.kind === 'gear') {
       const g = rollLootGear(d.rarity, s.player.level, [], Math.random, tierOfRank(this.playerRank));
-      if (!g) return null;
+      // 4.9: gibt es für die eigene Stufe keine Ausrüstung dieser Seltenheit, wird es ein Talisman derselben Seltenheit (der Fund bleibt
+      // ein Fund – sonst wurde aus einem blauen Gruppen-Fund still Gold, und das Würfel-Fenster blieb aus)
+      if (!g) return this.lootItemFor({ ...d, kind: 'trinket' });
       const cat = catOf(g), grade = gradeOf(g.rarity ?? d.rarity, 'gear'), aff = affinityOf(g.bonus ?? {}, cat);
       return { uid, ref: g.id, kind: 'gear', grade, name: g.n, cat: CAT_LABEL[cat], aff, ship: aff === 'schiff' ? shipNeedOf(grade) : 0, value: Math.round(d.value), tier: g.tier ?? tierOfR };
     }
@@ -6773,6 +6857,43 @@ export class Game {
     if (this.shareNoteT <= 0) { this.shareNoteT = 6; this.hud.toast(`Gruppenfortschritt: ${name} zählt für dich mit.`, 2); }
   }
 
+  /**
+   * 4.9: Abschuss eines geteilten Gegners. Wer ihn selbst gesteuert hat (`owner`), hat Abschuss, Erfahrung und Bergung schon über
+   * `onShipSunk` bekommen; alle anderen Beteiligten und Gruppenmitglieder im Einsatzgebiet bekommen hier Abschuss, Auftragsfortschritt und
+   * Erfahrung. Beim Versenker (`finder`) beginnt sofort die Gruppen-Beute (in einer Gruppe: Würfel ab Selten).
+   */
+  private sharedKill(k: EntKillNet, owner: boolean) {
+    const s = this.save;
+    if (!s) return;
+    const me = this.mmo?.id ?? '';
+    if (!owner) {
+      s.progress.stats.sunk++;
+      this.questEvent({ type: 'sink' });
+      const mult = k.role === 'legende' ? 6 : k.role === 'haendler' ? 1.6 : k.role === 'jaeger' ? 3.2 : 2.8;
+      this.grantXp(Math.round((25 + k.level * 10) * mult), k.role === 'legende' ? 250 : 14 + k.level);
+      const by = k.by === me ? '' : k.byName;
+      this.overlay.showBanner('Gemeinsam versenkt!', by ? `${k.name} · den letzten Treffer setzte ${by}` : k.name);
+    }
+    if (k.finder === me) {
+      const rarity: Rarity = k.role === 'legende' ? 'legendaer' : k.level >= 30 ? 'episch' : 'selten';
+      this.onLootPickup({ rarity, kind: Math.random() < 0.7 ? 'gear' : 'trinket', value: 120 + k.level * 18 });
+    }
+    this.persist();
+  }
+
+  /** 4.9: ein geteilter Gegner (gesteuert von einem Mitspieler) trifft das eigene Schiff */
+  private sharedHitMe(name: string, dmg: number, pen: number) {
+    const s = this.world.ship;
+    if (!s.alive) return;
+    const d = s.damage(dmg, 'kugel', null, 'hull', pen);
+    if (d <= 0) return;
+    this.overlay.number(new Vector3(s.x, s.model.deckY + 3, s.z), Math.round(d), 'hurt');
+    this.overlay.hurt();
+    this.world.shakeCamera(0.45);
+    const now = performance.now() / 1000;
+    if (now - this.entHitNoteT > 4) { this.entHitNoteT = now; this.hud.toast(`${name} feuert auf dich!`, 1.6); }
+  }
+
   /** Beschuss durch einen Mitspieler (Spieler gegen Spieler: der Shard hat Krieg, keine Gruppe und keine Schutzzone geprüft) */
   private pvpHit(from: string, name: string, dmg: number, land: boolean) {
     // 4.8B: zu Fuß trifft der Hieb die Figur (Parade, Ausweichen, Rüstung greifen); auf See den Rumpf
@@ -6918,6 +7039,6 @@ export class Game {
     const k = (a: keyof typeof b) => (b[a][0] ? this.input.keyLabel(b[a][0]) : '–');
     return foot
       ? `${k('up')}${k('left')}${k('down')}${k('right')}: Laufen · ${k('jump')}: Sprung · ${k('dodge')}: Dash · ${k('attack')}/Klick: Angriff (×5 Kombo, dann ${k('heavy')}) · ${k('heavy')}: Schwer · ${k('art1')}–${k('art5')} / ${k('art6')}–${k('art10')}: Formen · ${k('geist1')}/${k('geist2')}/${k('geist3')}/${k('geist4')}: Geistes-Faji · ${k('interact')}: Aktion · Esc: Pause`
-      : `${k('up')}/${k('down')}: Fahrt · ${k('left')}/${k('right')}: Steuern · ${k('attack')}: Feuer · ${k('fireLeft')}/${k('fireRight')}: Breitseiten · ${k('dodge')}: Schub · ${k('interact')}: Aktion · Esc: Pause`;
+      : `${k('up')}/${k('down')}: Fahrt · ${k('left')}/${k('right')}: Steuern · ${k('attack')}: Feuer · ${k('fireLeft')}/${k('fireRight')}: Breitseiten · ${k('dodge')}: Schub · ${k('art1')}–${k('art5')}: Formen · ${k('helmGeist1')}/${k('helmGeist2')}/${k('helmGeist3')}/${k('helmGeist4')}: Geistes-Faji · ${k('awaken')}: Ultimate · ${k('interact')}: Aktion · Esc: Pause`;
   }
 }

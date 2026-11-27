@@ -72,6 +72,8 @@ export interface FootDeps {
   onGeist?: (kind: number, b: number, c: number, f: FighterState) => void;
   /** 4.7C: Wasserlauf – Kräuselringe und Fontänen (0 Stehen, 1 Gehen, 2 Laufen, 3 Schwimmen, 4 Eintauchen/Auftauchen) */
   onWater?: (x: number, y: number, z: number, kind: number) => void;
+  /** 4.9: Ausdauer auf dem Wasser leer – die Welt blendet über und setzt die Figur an Deck bzw. an Land */
+  onExhausted?: (x: number, y: number, z: number) => void;
   /** 4.6C: Sturm-Verfolgung (alter Ort), Klingen-Clash (Ort der gekreuzten Klingen), Schwungfenster einer Technik, Staub-/Wasserspur des Momentums */
   onChase?: (ox: number, oy: number, oz: number, f: FighterState) => void;
   onClash?: (x: number, y: number, z: number, yaw: number) => void;
@@ -290,7 +292,8 @@ export class PlayerFoot implements PlayerTarget {
   }
 
   /** 4.7A: Zähler für die Einführung (Kampfkünste insgesamt, davon Techniken einer Faji-Kunst) */
-  readonly tally = { skills: 0, artSkills: 0, geist: 0 };
+  /** Zähler für Einführung und Prüfungen; 4.9: `salvo` = abgefeuerte Element-Geschosse (Faji-Salven) */
+  readonly tally = { skills: 0, artSkills: 0, geist: 0, salvo: 0 };
 
   get active() { return this.onFoot && this.fighter.phase !== 'down'; }
   /** Kann gerade eine Faji-Fähigkeit gewirkt werden? */
@@ -482,7 +485,8 @@ export class PlayerFoot implements PlayerTarget {
     }
     if (r.ev === 'sink') {
       this.deps.onWater?.(f.x, wy, f.z, 4);
-      ov?.number(this.tmpV.set(f.x, f.y + 2.2, f.z), 'Erschöpft – du schwimmst', 'hurt');
+      ov?.number(this.tmpV.set(f.x, f.y + 2.2, f.z), 'Erschöpft!', 'hurt');
+      this.deps.onExhausted?.(f.x, wy, f.z);
     } else if (r.ev === 'rise') {
       this.deps.onWater?.(f.x, wy, f.z, 4);
       ov?.number(this.tmpV.set(f.x, f.y + 2.4, f.z), 'Wieder auf dem Wasser', 'info');
@@ -825,6 +829,7 @@ export class PlayerFoot implements PlayerTarget {
         case 'swing': {
           const mv = this.engine.moveAt(e.a);
           const h = mv?.hits[e.b];
+          if (h?.projectile) this.tally.salvo++;
           if (mv && h) this.deps.onSwing?.(mv, h, f);
           break;
         }

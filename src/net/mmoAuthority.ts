@@ -11,11 +11,14 @@
 //   Ende eines laufenden Gefechts, höchstens 120 s), danach verlassen verfeindete Mitglieder die Gruppe.
 // - **Chat:** Sagen (Umkreis), Gruppe, Flüstern (Name oder Kennung), Welt; Spam-Schutz.
 // - **Heilung, Sturmhorn, geteilter Fortschritt, Mitfahrt, Spieler gegen Spieler:** geprüft nach Gruppe, Diplomatie, Reichweite und Schutzzonen.
+// - **4.9 geteilte Gegner:** Kennung, Besitzer, Leben, Aggro, Übergabe und Gutschrift (`net/worldEntitySync.ts`), Schnappschüsse 8× je Sekunde;
+//   **Kampf-Aktionen** (Breitseiten, Formen, Geistes-Faji, Heilungen, Ultimates) gehen zur Darstellung an alle in der Nähe.
 import {
   MMO, aoiRadius, copyState, newPlayerState, sayRadius, shareRadius,
-  type ChatChannel, type ChatMessage, type ClientIntent, type LootItemNet, type RollChoice, type PartyEvent, type PartyView, type PlayerProfile, type PlayerState, type ServerMsg, type ShareKind,
-  type SnapEntry, type VitalEntry,
+  type ActNet, type ChatChannel, type ChatMessage, type ClientIntent, type EntNet, type EntSpawnNet, type LootItemNet, type RollChoice, type PartyEvent, type PartyView, type PlayerProfile,
+  type PlayerState, type ServerMsg, type ShareKind, type SnapEntry, type VitalEntry,
 } from './mmoProtocol';
+import { SharedEntityRegistry, type EntPeer, type SharedEnt } from './worldEntitySync';
 import { alliedStance, groupAllowed, partyConflicts, pvpBlock, rideValid, type PartyStance } from './partyRules';
 import { botChoice, chooseRoll, createRoll, lootRadius, needBlock, passOpen, resolveRoll, rollReady, rollsFor, splitEven, type RollEntry, type RollSession } from './groupLoot';
 import { pvpLandDamage } from '../data/balanceConfig';
@@ -64,6 +67,10 @@ interface Peer {
   rideOk: string;
   bot: boolean;
   hitNoteT: number;
+  /** 4.9: Schnappschuss der geteilten Gegner (wiederverwendete Einträge) und Zeitstempel der letzten Kampf-Aktionen (Spam-Schutz) */
+  readonly ents: { k: 'ents'; t: number; list: EntNet[] };
+  readonly entPool: EntNet[];
+  readonly actT: number[];
 }
 
 const dist = (a: PlayerState, b: PlayerState) => Math.hypot(a.x - b.x, a.z - b.z);
@@ -95,6 +102,12 @@ export class MmoAuthority {
   private readonly shares: number[] = [];
   private readonly repShares: number[] = [];
   private readonly near: Peer[] = [];
+  /** 4.9: geteilte Gegner der offenen Welt (autoritativ: Kennung, Besitzer, Leben, Aggro, Gutschrift) */
+  readonly entities = new SharedEntityRegistry();
+  private entAcc = 0;
+  private readonly entPeers: EntPeer[] = [];
+  private readonly entNear: SharedEnt[] = [];
+  private readonly credits: string[] = [];
 
   private readonly diplo: DiplomacyOracle;
   private readonly zones: ZoneOracle;
@@ -122,6 +135,7 @@ export class MmoAuthority {
     const p: Peer = {
       id: profile.id, profile: { ...profile }, pv: 1, state: copyState(state, newPlayerState()), joined: t, seen: t, party: null, reserve: '',
       known: new Map(), snap: { k: 'snap', t: 0, seq: 0, list: [] }, pool: [], chatT: [], rideOk: '', bot: profile.bot, hitNoteT: -99,
+      ents: { k: 'ents', t: 0, list: [] }, entPool: [], actT: [],
     };
     p.state.ride = '';
     this.peers.set(p.id, p);
@@ -134,6 +148,8 @@ export class MmoAuthority {
     const p = this.peers.get(id);
     if (!p) return;
     for (const s of this.rolls) passOpen(s, id);
+    // 4.9: seine geteilten Gegner übernimmt beim nächsten Takt der nächste Spieler in Reichweite
+    this.entities.forget(id);
     if (p.party) this.removeMember(p, '', t, true);
     for (let k = this.invites.length - 1; k >= 0; k--) {
       const iv = this.invites[k];
@@ -175,6 +191,13 @@ export class MmoAuthority {
       case 'hit': this.hit(p, i.to, i.dmg, i.land, t); break;
       case 'loot': this.loot(p, i.gold, i.rep, i.power, i.items, t); break;
       case 'roll': this.roll(p, i.id, i.choice, t); break;
+      case 'eclaim': this.entClaim(p, i.e, t); break;
+      case 'estate': for (const s of i.list) this.entities.report(p.id, s, t); break;
+      case 'ehit': this.entHit(p, i.id, i.dmg, i.ammo, i.zone, i.pen, i.applied); break;
+      case 'edead': this.entDead(p, i.id, i.by, t); break;
+      case 'erelease': this.entities.release(p.id, i.id, t); break;
+      case 'ephit': this.entPlayerHit(p, i.id, i.to, i.dmg, i.pen); break;
+      case 'act': this.act(p, i.a, t); break;
       case 'ping': if (!p.bot) this.out(p.id, { k: 'pong', t: i.t, st: t }); break;
       case 'bye': this.leave(p.id, t); break;
       // nur für den Relay-Server (Startbildschirm-Wächter, Diplomatie-Bericht): hier nichts zu tun
@@ -223,6 +246,8 @@ export class MmoAuthority {
     if (this.snapAcc >= 1 / MMO.snapshotHz) { this.snapAcc = Math.min(this.snapAcc - 1 / MMO.snapshotHz, 1 / MMO.snapshotHz); this.snapshots(t); }
     this.vitalsAcc += dt;
     if (this.vitalsAcc >= 1 / MMO.vitalsHz) { this.vitalsAcc = 0; this.sendVitals(); }
+    this.entAcc += dt;
+    if (this.entAcc >= 1 / MMO.entHz) { this.entAcc = 0; this.entTick(t); }
   }
 
   /** Schnappschüsse: je Empfänger die Spieler im Interessenbereich (wiederverwendete Einträge) */
@@ -686,6 +711,117 @@ export class MmoAuthority {
     // Gewinner (oder bei „alle passen“ der Finder) bekommt das Stück; ist er nicht mehr da, der Finder
     const winner = (res.winner && this.peers.get(res.winner)) || this.peers.get(s.from);
     if (winner && !winner.bot) this.out(winner.id, { k: 'lootGet', item: s.item, how: res.winner && winner.id === res.winner ? 'wurf' : 'verzicht', from: s.from, name: s.fromName });
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // 4.9: geteilte Gegner und Kampf-Aktionen
+  // ---------------------------------------------------------------------------------------------------------------
+
+  /** Spielerliste für das Register (wiederverwendete Einträge) */
+  private entPeerList(): EntPeer[] {
+    const out = this.entPeers;
+    let n = 0;
+    for (const p of this.list) {
+      let e = out[n];
+      if (!e) { e = { id: '', x: 0, z: 0, dom: 'land', bot: false, party: '' }; out.push(e); }
+      e.id = p.id; e.x = p.state.x; e.z = p.state.z; e.dom = p.state.dom; e.bot = p.bot; e.party = p.party?.id ?? '';
+      n++;
+    }
+    out.length = n;
+    return out;
+  }
+
+  /** Eintrag eines Gegners für einen Schnappschuss kopieren (ohne Bedrohungstabelle und Verwaltung) */
+  private static entCopy(e: SharedEnt, o: EntNet): EntNet {
+    o.id = e.id; o.owner = e.owner; o.tier = e.tier; o.role = e.role; o.level = e.level; o.name = e.name; o.look = e.look;
+    o.x = e.x; o.z = e.z; o.hdg = e.hdg; o.spd = e.spd; o.hp = e.hp; o.mhp = e.mhp; o.dis = e.dis; o.aggro = e.aggro; o.dead = e.dead;
+    return o;
+  }
+
+  private entClaim(p: Peer, s: EntSpawnNet, t: number) {
+    if (p.bot) return;
+    const e = this.entities.claim(p.id, s, t);
+    if (!e) { this.notice(p, 'Zu viele geteilte Gegner auf dieser See – dieser bleibt nur bei dir.', 'warn'); return; }
+    this.out(p.id, { k: 'eclaimed', key: s.key, id: e.id });
+  }
+
+  /** Treffer auf einen geteilten Gegner: Bedrohung zählen; nicht verrechnete Treffer gehen an den Besitzer */
+  private entHit(p: Peer, id: string, dmg: number, ammo: string, zone: 'hull' | 'sail', pen: number, applied: boolean) {
+    const e = this.entities.hit(p.id, id, dmg);
+    if (!e || applied || !e.owner || e.owner === p.id) return;
+    // nur in Schussweite (Schutz gegen erfundene Treffer aus der Ferne)
+    if (Math.hypot(p.state.x - e.x, p.state.z - e.z) > MMO.hitRange + 200) return;
+    const o = this.peers.get(e.owner);
+    if (!o || o.bot) return;
+    this.entities.stats.forwarded++;
+    this.out(o.id, { k: 'ehit', id, from: p.id, dmg, ammo, zone, pen });
+  }
+
+  /** Untergang (vom Besitzer): Gutschrift an alle Beteiligten und ihre Gruppen im Einsatzgebiet; gewürfelt wird beim Versenker */
+  private entDead(p: Peer, id: string, by: string, t: number) {
+    const e = this.entities.dead(p.id, id, t);
+    if (!e) return;
+    const peers = this.entPeerList();
+    const credit = this.entities.credit(e, peers, this.credits);
+    const killer = this.peers.get(by) ?? p;
+    const finder = credit.includes(killer.id) && !killer.bot ? killer.id : p.id;
+    const kill = { id: e.id, name: e.name, role: e.role, level: e.level, tier: e.tier, x: e.x, z: e.z, by: killer.id, byName: killer.profile.name, finder, owner: p.id, credit: credit.slice() };
+    for (const cid of credit) { const o = this.peers.get(cid); if (o && !o.bot) this.out(o.id, { k: 'ekill', kill }); }
+    // der Besitzer erfährt den Abschluss immer (auch ohne eigene Gutschrift: er räumt seinen Gegner ab)
+    if (!credit.includes(p.id)) this.out(p.id, { k: 'ekill', kill });
+  }
+
+  /** Ein geteilter Gegner trifft ein Mitspieler-Schiff (nur der Besitzer meldet, nur in Schussweite) */
+  private entPlayerHit(p: Peer, id: string, to: string, dmg: number, pen: number) {
+    const e = this.entities.ents.get(id);
+    const o = this.peers.get(to);
+    if (!e || e.dead || e.owner !== p.id || !o || o === p || dmg <= 0) return;
+    if (Math.hypot(o.state.x - e.x, o.state.z - e.z) > MMO.hitRange) return;
+    if (o.bot) { this.hooks.hit?.(o.id, e.id, dmg); return; }
+    this.out(o.id, { k: 'ehitme', id, name: e.name, dmg, pen });
+  }
+
+  /** Kampf-Aktion zur Darstellung an alle in der Nähe (nicht an den Absender); höchstens `actPerSec` je Sekunde und Absender */
+  private act(p: Peer, a: ActNet, t: number) {
+    const w = p.actT;
+    while (w.length && t - w[0] > 1) w.shift();
+    if (w.length >= MMO.actPerSec) return;
+    w.push(t);
+    // ein Gegner feuert: nur sein Besitzer darf das melden
+    if (a.ent) { const e = this.entities.ents.get(a.ent); if (!e || e.owner !== p.id) return; }
+    const r = a.sea ? MMO.aoiSea : MMO.aoiLand;
+    const msg: ServerMsg = { k: 'act', from: p.id, a };
+    for (const o of this.list) {
+      if (o === p || o.bot) continue;
+      if (Math.hypot(o.state.x - a.x, o.state.z - a.z) > r) continue;
+      this.out(o.id, msg);
+    }
+  }
+
+  /** Takt der geteilten Gegner: Übergabe/Verwerfen, dann je Empfänger die Gegner im Interessenbereich */
+  private entTick(t: number) {
+    const peers = this.entPeerList();
+    this.entities.tick(t, peers, (e, to) => {
+      const o = this.peers.get(to);
+      if (o && !o.bot) this.out(o.id, { k: 'eown', e: MmoAuthority.entCopy(e, { id: '', owner: '', tier: 0, role: '', level: 1, name: '', look: e.look, x: 0, z: 0, hdg: 0, spd: 0, hp: 0, mhp: 1, dis: false, aggro: '', dead: false }) });
+    }, (e) => {
+      for (const o of this.list) if (!o.bot && Math.hypot(o.state.x - e.x, o.state.z - e.z) <= MMO.entDrop) this.out(o.id, { k: 'egone', id: e.id });
+    });
+    if (!this.entities.list.length) return;
+    for (const r of this.list) {
+      if (r.bot) continue;
+      const near = this.entities.near(r.state.x, r.state.z, MMO.aoiSea, this.entNear);
+      const list = r.ents.list;
+      list.length = 0;
+      for (let k = 0; k < near.length && list.length < MMO.entPerPacket; k++) {
+        let o = r.entPool[list.length];
+        if (!o) { o = { id: '', owner: '', tier: 0, role: '', level: 1, name: '', look: near[k].look, x: 0, z: 0, hdg: 0, spd: 0, hp: 0, mhp: 1, dis: false, aggro: '', dead: false }; r.entPool.push(o); }
+        list.push(MmoAuthority.entCopy(near[k], o));
+      }
+      if (!list.length) continue;
+      r.ents.t = t;
+      this.out(r.id, r.ents);
+    }
   }
 
   // ---------------------------------------------------------------------------------------------------------------

@@ -49,6 +49,11 @@ export class Input {
    * Laufrichtung (oder sobald eine dazukommt) bleibt der Dash sofort.
    */
   private shiftDefer = '';
+  /** 4.9: Umschalt-Kombinationen, die gerade nicht gelten (Geistes-Faji am Steuer, solange man zu Fuß ist): die Taste wirkt dann wie ohne Umschalt */
+  readonly comboOff = new Set<string>();
+  /** 4.9: Umschalt-Kombinationen gelten nur so lange nach dem Drücken von Umschalt (ms; 0 = immer) – auf See ist Umschalt auch der Schub */
+  comboWindowMs = 0;
+  private shiftDownAt = 0;
   /** 4.7B: Umschalt beim Umbelegen gedrückt (wartet auf die zweite Taste einer Kombination) */
   private captureShift = '';
   /** 4.7C: Zeitpunkt des wartenden Umschalt (ms) und ob überhaupt Umschalt-Kombinationen belegt sind */
@@ -186,11 +191,13 @@ export class Input {
       return;
     }
     if (e.repeat) return;
+    if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !this.held.has(e.code)) this.shiftDownAt = performance.now();
     if (this.gameplayActive && this.keyMap.has(e.code)) e.preventDefault();
     // 4.7B: Umschalt + Taste mit eigener Belegung (Formen 6 – 10 auf Umschalt + 1 – 5): die Kombination gewinnt, das wartende Ausweichen verfällt
     if (e.shiftKey && !this.held.has(e.code)) {
       const combo = this.keyMap.get(`Shift+${e.code}`);
-      if (combo) {
+      const comboLive = !!combo && !combo.every((a) => this.comboOff.has(a)) && (this.comboWindowMs <= 0 || performance.now() - this.shiftDownAt <= this.comboWindowMs);
+      if (combo && comboLive) {
         if (this.gameplayActive) e.preventDefault();
         this.flushShift(false);
         for (const a of combo) this.press(a);

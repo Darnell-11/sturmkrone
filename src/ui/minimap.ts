@@ -2,6 +2,7 @@ import type { IslandDef, RegionDef } from '../data/regions';
 import { WORLD_RADIUS } from '../data/world';
 import { BERNSTEINSEE } from '../data/regions';
 import { FACTIONS, type FactionId } from '../data/factions';
+import { PARTY_COLORS } from '../data/partyMarks';
 
 /** Orientierungspunkte: Feinde (rot), Bosse (Totenkopf), Auftragspersonen (! Auftrag, ? Abgabe), Ziel des Auftrags */
 /** Zeichen auf Kompass und Karten; seit 4.3C dazu die Horizont-Signale der Welt-Ereignisse und Handelskonvois */
@@ -12,8 +13,16 @@ export type PoiKind = 'enemy' | 'boss' | 'quest' | 'turnin' | 'npc' | 'target' |
   // Kaiser-Zitadelle (4.5D): Silhouette einer Festung mit drei Türmen und goldener Kaiserkrone darüber
   | 'kaiser'
   // 4.7E: Live-Kriegs-Einsatz des eigenen Teams (Wappenschild mit Funkwellen)
-  | 'warquest';
-export interface Poi { x: number; z: number; kind: PoiKind; name?: string; /** Farbe der Macht (Grenzfestung, Endgame-Festung) */ color?: string }
+  | 'warquest'
+  // 4.9: Gruppenmitglied (smaragd-türkiser Schiffspfeil mit Ring; zeigt auf Karten in die Fahrt- bzw. Blickrichtung)
+  | 'party';
+export interface Poi {
+  x: number; z: number; kind: PoiKind; name?: string;
+  /** Farbe der Macht (Grenzfestung, Endgame-Festung) */
+  color?: string;
+  /** 4.9: Fahrt-/Blickrichtung (rad, wie `heading` der Schiffe): das Zeichen dreht sich mit, statt aufrecht zu stehen */
+  heading?: number;
+}
 
 /** Küstenlinie einer Insel (wie in der Welt gebaut), damit die Karte die echte Form zeigt statt eines Kreises */
 export interface ShapeLike { x: number; z: number; base?: number; r: number; coast?: { a: number; f: number; p: number }[] }
@@ -298,6 +307,15 @@ export function drawPoi(ctx: CanvasRenderingContext2D, x: number, y: number, kin
       ctx.beginPath(); ctx.arc(0, 3, 7, -Math.PI * 0.72, -Math.PI * 0.28); ctx.stroke();
       break;
     }
+    case 'party': {
+      // 4.9: Gruppenmitglied: türkiser Ring (pulsiert sanft) und smaragdgrüner Schiffspfeil
+      const pp = 1 + 0.07 * Math.sin(performance.now() / 260);
+      ctx.strokeStyle = PARTY_COLORS.turquoise; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(0, 0, 9.5 * pp, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = PARTY_COLORS.emerald; ctx.strokeStyle = PARTY_COLORS.deep; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(6, 6.5); ctx.lineTo(0, 3.2); ctx.lineTo(-6, 6.5); ctx.closePath(); ctx.fill(); ctx.stroke();
+      break;
+    }
     case 'target':
       ctx.fillStyle = '#FFD166'; ctx.strokeStyle = '#1b1410'; ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -364,7 +382,8 @@ export function drawMap(ctx: CanvasRenderingContext2D, size: number, islands: Is
   for (const p of m.pois ?? []) {
     const x = X(p.x), y = Y(p.z);
     if (mini && Math.hypot(x - size / 2, y - size / 2) > size / 2 + 6) continue;
-    ctx.save(); ctx.translate(x, y); ctx.rotate(-rot); drawPoi(ctx, 0, 0, p.kind, mini ? 0.9 : 1, p.color); ctx.restore();
+    // Zeichen mit Richtung (Gruppenmitglieder) drehen in Fahrtrichtung, alle anderen bleiben aufrecht
+    ctx.save(); ctx.translate(x, y); ctx.rotate(p.heading !== undefined ? -p.heading : -rot); drawPoi(ctx, 0, 0, p.kind, mini ? 0.9 : 1, p.color); ctx.restore();
   }
   if (m.target) {
     const tx = X(m.target.x), ty = Y(m.target.z);
@@ -438,6 +457,8 @@ export interface WorldMapData {
   team?: FactionId | null;
   /** 4.7E: laufende Live-Kriegs-Einsätze des Teams (Marker folgen den Einheiten) */
   warQuests?: { x: number; z: number; name: string; color: string; tracked: boolean }[];
+  /** 4.9: Gruppenmitglieder (Lage, Fahrt-/Blickrichtung falls bekannt, Name, auf See oder an Land) */
+  party?: { x: number; z: number; heading?: number; name: string; sea: boolean }[];
   /** 4.7E: Offener Horizont – die Unbekannten Äußeren Meere sind gesichtet (Beschriftung jenseits der Sturmmauer) */
   horizon?: boolean;
   /** Wie oft eine Festungsinsel schon erobert wurde (Insel-ID → Zahl; bleibt auch nach einer Rückeroberung) */

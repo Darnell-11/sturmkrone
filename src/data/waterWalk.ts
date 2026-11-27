@@ -26,6 +26,33 @@ export const WATER_WALK = {
   stepStand: 0.9, stepWalk: 0.32, stepRun: 0.22, stepSwim: 0.6,
 } as const;
 
+/**
+ * 4.9: Ausdauer leer auf dem Wasser → kein langes Schwimmen mehr: nach einer kurzen Erschöpfungs- und Gischt-Blende steht die Figur sauber an
+ * Deck des eigenen Schiffs (gibt es noch keins – Einführung auf Ankerglück –, am landseitigen Ende des nächsten Stegs bzw. am Strand) und hat
+ * wieder Grund-Ausdauer. Zeiten in s (Spielzeit), Ausdauer als Anteil der Höchst-Ausdauer.
+ */
+export const WATER_RESCUE = { fade: 0.85, hold: 0.35, out: 0.6, stamina: 0.6, pierRange: 900 } as const;
+
+export type RescueKind = 'deck' | 'pier' | 'shore';
+
+/** Wohin nach der Erschöpfung? Eigenes Schiff zuerst; ohne (verstaut, Raid, Entern) der nächste Steg, sonst der Strand */
+export function rescueKind(o: { shipReady: boolean; pierDist: number }): RescueKind {
+  if (o.shipReady) return 'deck';
+  return o.pierDist <= WATER_RESCUE.pierRange ? 'pier' : 'shore';
+}
+
+/** Landseitiges Ende eines Stegs (das Ende näher an der Inselmitte), etwas auf den Steg hinein versetzt */
+export function pierLandEnd(p: { ax: number; az: number; bx: number; bz: number }, isleX: number, isleZ: number, out: { x: number; z: number; yaw: number }): { x: number; z: number; yaw: number } {
+  const da = Math.hypot(p.ax - isleX, p.az - isleZ), db = Math.hypot(p.bx - isleX, p.bz - isleZ);
+  const lx = da <= db ? p.ax : p.bx, lz = da <= db ? p.az : p.bz, sx = da <= db ? p.bx : p.ax, sz = da <= db ? p.bz : p.az;
+  const len = Math.hypot(sx - lx, sz - lz) || 1;
+  const k = Math.min(3, len * 0.25) / len;
+  out.x = lx + (sx - lx) * k; out.z = lz + (sz - lz) * k;
+  // Blick zur Insel
+  out.yaw = Math.atan2(lx - sx, lz - sz);
+  return out;
+}
+
 /** Zustand des Wasserlaufs (JSON-taugliche Zahlen, je Spielfigur) */
 export interface WaterWalkState {
   /** steht bzw. läuft gerade auf dem Wasser (oder schwimmt) */

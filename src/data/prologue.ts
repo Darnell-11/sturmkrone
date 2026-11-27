@@ -129,7 +129,7 @@ export const PROLOGUE_SCENES: readonly PrologueSceneDef[] = [
   { id: 'sturmfront', nr: 2, title: 'Die Gewitterfront und die sieben Silhouetten', dur: 10.6, film: true },
   { id: 'vernichtung', nr: 3, title: 'Die Vernichtung von Grünmarkt', dur: 22.0, film: true },
   { id: 'gegenangriff', nr: 4, title: 'Schwarzbarts Gegenangriff im Sturm', dur: 58, film: false },
-  { id: 'urteil', nr: 5, title: 'Der Sieben-Farben-Strahl und die Spaltung des Ozeans', dur: 19.0, film: true },
+  { id: 'urteil', nr: 5, title: 'Der Sieben-Farben-Strahl und die Spaltung des Ozeans', dur: 22.5, film: true },
   { id: 'schwur', nr: 6, title: 'Schwarzbarts Schwur', dur: 22.0, film: true },
   { id: 'erwachen', nr: 7, title: 'Erwachen am Strand von Ankerglück', dur: 8.0, film: true },
 ];
@@ -173,11 +173,18 @@ export const SCORE_SYNC = {
   todLine: 8.0, todWord: 8.45,
   /** Szene 4: Schrei und Einsatz des Orchesters */
   scream: 3.3, heroIn: 3.7,
-  /** Szene 5: Strahl, Engelsgesang */
-  beam: 6.0, engel: 8.6,
+  /** Szene 5: Strahl (Stufe 1 der Zeitlupe), der Strahl erreicht den Bug (Stufe 2, Rumpfbruch), Engelsgesang */
+  beam: 6.0, bow: 9.2, engel: 9.2,
   /** Szene 6: Aufschrei (Trommeln und Chor), die sieben Schnitte, warmer Engelsgesang */
   oath: 8.0, oathIn: 7.6, reactFrom: 9.6, reactGap: 0.8, hoffnung: 15.0,
 } as const;
+
+/**
+ * 4.9: Szene 5 in zwei Zeitlupen-Stufen – Stufe 1 (0,38×): der Sieben-Farben-Strahl spaltet das Meer Schritt für Schritt bis auf den dunklen
+ * Grund, schäumende Wasserwände zu beiden Seiten; Stufe 2 (0,25×): der Strahl trifft den Bug, der Rumpf bricht in `crack` Sekunden von Bug bis
+ * Heck auf (Funken, Splitter), danach kippen die Hälften langsam auseinander und sinken. Zeiten in s der Szene.
+ */
+export const SCENE5 = { stage1: 0.38, stage2: 0.25, crack: 1.6, fall: 12.4, dive: 19.6, normal: 21.0 } as const;
 
 /** Das Drehbuch: Taktschläge je Szene, nach Zeit sortiert */
 export const PROLOGUE_SCRIPT: Readonly<Record<PrologueSceneId, readonly Beat[]>> = {
@@ -225,15 +232,18 @@ export const PROLOGUE_SCRIPT: Readonly<Record<PrologueSceneId, readonly Beat[]>>
   urteil: [
     b(0, 'bars', '', 1, 0.6), b(0, 'shot', 's5_aufladung'), b(0, 'fx', 'aufladung'), b(0, 'grade', 'spektrum', 1, 2.5),
     b(4.0, 'shot', 's5_kern'),
-    b(SCORE_SYNC.beam, 'fx', 'strahl'), b(SCORE_SYNC.beam, 'shot', 's5_ritt'),
-    b(6.35, 'fx', 'spaltung'),
+    // 4.9 Stufe 1: der Strahl löst sich (Impact-Bilder), Zeitlupe 0,38× – das Meer spaltet sich hinter seinem Kopf bis auf den Grund
+    b(SCORE_SYNC.beam, 'fx', 'strahl'), b(SCORE_SYNC.beam, 'shot', 's5_spalt'), b(SCORE_SYNC.beam + 0.05, 'time', '', SCENE5.stage1, 0.35),
     b(7.6, 'music', 'gegenangriff', 0, 1.6),
-    b(7.8, 'shot', 's5_oben'), b(8.0, 'time', '', 0.32, 0.5),
+    b(SCORE_SYNC.beam + 1.8, 'shot', 's5_ritt'),
+    // Stufe 2: der Strahl trifft den Bug (Impact-Bilder), Zeitlupe 0,25× – der Rumpf bricht von Bug bis Heck
+    b(SCORE_SYNC.bow, 'time', '', SCENE5.stage2, 0.25), b(SCORE_SYNC.bow, 'fx', 'bruch'), b(SCORE_SYNC.bow, 'shot', 's5_bruch'),
     b(SCORE_SYNC.engel, 'music', 'engel', 1, 1.2),
-    b(9.0, 'fx', 'sturz'),
-    b(13.0, 'shot', 's5_fall'),
-    b(16.4, 'grade', 'tiefe', 1, 1.2), b(16.4, 'amb', 'tiefe'), b(16.4, 'fx', 'eintauchen'),
-    b(17.5, 'time', '', 1, 1.0),
+    b(SCORE_SYNC.bow + SCENE5.crack + 0.5, 'shot', 's5_oben'),
+    b(SCENE5.fall, 'fx', 'sturz'),
+    b(SCENE5.fall + 3.6, 'shot', 's5_fall'),
+    b(SCENE5.dive, 'grade', 'tiefe', 1, 1.2), b(SCENE5.dive, 'amb', 'tiefe'), b(SCENE5.dive, 'fx', 'eintauchen'),
+    b(SCENE5.normal, 'time', '', 1, 1.0),
   ],
   schwur: [
     b(0, 'shot', 's6_schwarzbart'), b(0, 'fx', 'wrack'), b(0, 'grade', 'tiefe', 1, 0),
@@ -407,7 +417,7 @@ export const SHOTS: Readonly<Record<string, ShotDef>> = {
 };
 
 /** Einstellungen, die die Welt selbst führt (Strahl-Ritt, Admirals-Schnitte, Fall ins Wasser, Sinken, Ego-Sicht am Strand) */
-export const DYNAMIC_SHOTS = ['s5_ritt', 's5_fall', 's6_admiral', 's6_sinken', 's7_pov', 's7_auf'] as const;
+export const DYNAMIC_SHOTS = ['s5_spalt', 's5_ritt', 's5_bruch', 's5_fall', 's6_admiral', 's6_sinken', 's7_pov', 's7_auf'] as const;
 export type DynamicShot = (typeof DYNAMIC_SHOTS)[number];
 
 /** Strahl-Ritt (Szene 5): Kopf des Strahls in m/s, Abstand der Kamera hinter dem Kopf und darüber */
@@ -517,6 +527,8 @@ export const TUTORIAL_ACTS: readonly TutorialAct[] = ['forge', 'combo', 'dash', 
 export const TUTORIAL = {
   /** Schlagkette beim Waffenmeister: so viele Treffer an der Übungspuppe bzw. an Gegnern */
   comboHits: 5,
+  /** 4.9: Salven-Übung der Faji-Wirker – Element-Geschosse und Trefferkette */
+  salvoShots: 5, salvoHits: 4,
   /** Stufen, auf die Waffenmeister und Faji-Kristall heben */
   level2: 2, level3: 3,
   /** Spähboot: so weit vor dem Hafen (m) und auf welcher Stufe */
@@ -555,10 +567,19 @@ export const SHIP_COACH: readonly { title: string; text: string }[] = [
  * 4.7D – Lehrtafel des Waffenmeisters Konrad (klassenbezogen): die eigene Kombo aus 4.7C, der Sturm-Schritt, die Zielerfassung und der erste
  * Punkt im Sternbild-Klassenbaum. `combo` = Namen der Leicht-Kette der eigenen Klasse.
  */
-export function combatCoach(classLabel: string, combo: readonly string[], ranged: boolean): { title: string; text: string }[] {
+/** 4.9: Name des Elements in der Salven-Übung („Feuer-Geschosse“) */
+export const SALVO_ELEMENT: Readonly<Record<string, string>> = {
+  feuer: 'Feuer', eis: 'Eis', wasser: 'Wasser', wind: 'Wind', blitz: 'Blitz', sonne: 'Sonnen', mond: 'Mond', schwarzloch: 'Leere', priester: 'Licht', licht: 'Licht',
+};
+
+export function combatCoach(classLabel: string, combo: readonly string[], ranged: boolean, element = ''): { title: string; text: string }[] {
   const chain = combo.length ? combo.join(' → ') : 'Leicht-Kette';
+  // 4.9: Faji-Wirker üben bei Konrad keine Nahkampf-Kombo, sondern eine Element-Salve aus der Ferne
+  const first = ranged
+    ? { title: `Element-Salve · ${classLabel}`, text: `Bleib auf Abstand und feuere im Takt (Linksklick oder J) eine Salve aus ${element ? `${element}-` : 'Element-'}Geschossen auf die Übungspuppe: ${chain}. Fünf Geschosse, die die Puppe in einer Kette treffen, genügen – eine Kombo im Nahkampf brauchst du als Faji-Wirker nicht.` }
+    : { title: `Deine Kombo · ${classLabel}`, text: `Linksklick (oder J) im Takt: ${chain}. Der letzte Schlag ist dein Finisher – fünf Treffer an der Übungspuppe genügen.` };
   return [
-    { title: `Deine Kombo · ${classLabel}`, text: `Linksklick (oder J) im Takt: ${chain}. Der letzte Schlag ist dein Finisher – fünf Treffer an der Übungspuppe genügen.${ranged ? ' Als Faji-Wirker hältst du dabei Abstand.' : ''}` },
+    first,
     { title: 'Sturm-Schritt', text: 'Umschalt (oder die Ausweich-Taste) lässt dich blitzschnell durch Angriffe gleiten – im richtigen Moment ist er ein perfektes Ausweichen.' },
     { title: 'Ziel erfassen', text: 'Tab wählt das nächste Ziel, ein Mausklick (oder Tipp) auf einen Gegner erfasst ihn direkt. Das Ziel-Fenster oben zeigt Leben und Haltung.' },
     { title: 'Sternbild-Klassenbaum', text: 'Mit Stufe 2 bekommst du deinen ersten Talentpunkt: N öffnet deinen Klassenbaum. Der goldene Knoten ist dein nächster Schritt.' },

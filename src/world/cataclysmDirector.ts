@@ -191,7 +191,7 @@ export class CataclysmDirector {
   private auraCol = new Color();
   private auraAcc = new Color();
   /** Zahlen für Prüfungen */
-  readonly stats = { strikes: 0, splits: 0, disabled: 0, shipHits: 0, pulls: 0, trench: 0, waves: 0, chains: 0, swings: 0, clashes: 0, slashes: 0, impacts: 0, masts: 0, charred: 0, sections: 0, meteors: 0, planets: 0, aftershocks: 0, bursts: 0, decisive: 0, marked: 0, cones: 0, vortices: 0, poseFx: 0, threats: 0, queued: 0 };
+  readonly stats = { strikes: 0, splits: 0, disabled: 0, shipHits: 0, pulls: 0, trench: 0, waves: 0, chains: 0, swings: 0, clashes: 0, slashes: 0, impacts: 0, masts: 0, charred: 0, sections: 0, meteors: 0, planets: 0, aftershocks: 0, bursts: 0, decisive: 0, marked: 0, cones: 0, vortices: 0, poseFx: 0, threats: 0, queued: 0, trails: 0, landSpectacles: 0 };
   /**
    * 4.6I: höchstens ein Schiffs-Schnitt je gezeichnetem Bild. Zerlegen, Konturen und Hochladen kosten je Schiff 10 – 20 ms; brachen mehrere Schiffe
    * im selben Bild (Blutmond, Schwarzes Loch, Gletscher im Treffermoment), stand das Bild 40 – 60 ms. Weitere Schnitte warten in diesem Ring und
@@ -560,10 +560,60 @@ export class CataclysmDirector {
   }
 
   /** Der entscheidende Treffer: Akt 3 der Kino-Regie (die Welt zeigt Doppel-Impact-Frame, Stoß, Klang) */
+  /**
+   * 4.9: Energiespur eines eigenen Geschosses (Faji-Formen) in drei Schichten aus den Pools: Tusche-Mantel (normal gemischt), leuchtender Kern
+   * mit weißer Mitte (additiv), Funken entgegen der Flugrichtung. Lebt nur kurz (die Spur entsteht alle 35 ms neu).
+   */
+  projTrail(x: number, y: number, z: number, vx: number, vy: number, vz: number, colorHex: string, radius: number) {
+    const fx = this.host.fx, b = fx.brush;
+    const col = this.color(colorHex);
+    const r = Math.max(0.25, radius);
+    this.vfx.burst('smoke', x, y, z, 1, 0.3, this.ink(col), { size: r * 1.2, life: 0.22 });
+    b.reset().at(x, y, z).size(r * 0.55, r * 0.55, r * 0.55, r * 0.2, r * 0.2, r * 0.2).span(0.12).col(col, 2.6).fade(0.005, 0.7);
+    fx.emit('orb');
+    b.reset().at(x, y, z).size(r * 0.25, r * 0.25, r * 0.25, r * 0.08, r * 0.08, r * 0.08).span(0.08).col(WHITE, 2.4).fade(0.005, 0.7);
+    fx.emit('orb');
+    const sp = Math.hypot(vx, vy, vz) || 1;
+    this.vfx.burst('spark', x, y, z, 2, 3, col, { dirX: -vx / sp, dirY: -vy / sp, dirZ: -vz / sp, focus: 0.6, life: 0.25, size: r * 0.25 });
+    this.stats.trails++;
+  }
+
+  /**
+   * 4.9: Ultimates an Land so gewaltig wie über dem Meer – im entscheidenden Treffer: verdunkelter Himmel, fünf Energiesäulen, gestaffelte
+   * radiale Druckringe, glühende Risse und Krater nach außen. Über Wasser übernimmt das Meer (Graben, Wellen, Schiffe) diese Rolle.
+   */
+  private landSpectacle(c: Cast) {
+    const s = c.spec;
+    if (!s) return;
+    const mid = c.kind === 'blackHole' || c.kind === 'skyfall';
+    const reach = Math.min(18, s.reach * 0.3);
+    const x = mid ? c.cx : c.x + Math.sin(c.yaw) * reach, z = mid ? c.cz : c.z + Math.cos(c.yaw) * reach;
+    if (!this.host.isLand(x, z)) return;
+    const fx = this.host.fx, b = fx.brush, vf = this.vfx;
+    const y = this.host.groundY(x, z, c.y);
+    this.host.darken?.(0.6);
+    for (let i = 0; i < 5; i++) {
+      const a = c.yaw + i * 1.2566, r = 6 + (i % 2) * 5, px = x + Math.sin(a) * r, pz = z + Math.cos(a) * r;
+      vf.spiral(px, this.host.groundY(px, pz, y), pz, 1.4, 22, c.col, 1.1, 3, 8);
+    }
+    for (let k = 1; k <= 4; k++) {
+      b.reset().at(x, y + 0.15, z).rot(rnd() * 6).size(1, 1, 1, 8 + k * 9, 1, 8 + k * 9).span(0.45 + k * 0.12, k * 0.07).col(k % 2 ? c.acc : WHITE, 2).fade(0.01, 0.6);
+      fx.emit('shock');
+    }
+    for (let i = 0; i < 6; i++) {
+      const a = c.yaw + i * (Math.PI / 3), d = 7 + (i % 3) * 4, px = x + Math.sin(a) * d, pz = z + Math.cos(a) * d;
+      vf.surfaceHit(px, this.host.groundY(px, pz, y), pz, 2.4, c.col, 1.3, 0.05 * i);
+    }
+    vf.surfaceHit(x, y, z, Math.min(14, s.reach * 0.2), c.col, 2);
+    this.host.shake(1.4);
+    this.stats.landSpectacles++;
+  }
+
   private decide(c: Cast) {
     if (c.decided) return;
     c.decided = true;
     this.stats.decisive++;
+    this.landSpectacle(c);
     this.pickImpactShip(c);
     const taken = this.host.decisive?.() ?? false;
     if (!taken) this.host.impactFrames?.(c.spec?.frames ?? 2);
@@ -2098,6 +2148,10 @@ export class CataclysmDirector {
       const mx = f.x + fwdX * 0.9, my = f.y + 1.3, mz = f.z + fwdZ * 0.9;
       b.reset().at(mx, my, mz).size(0.2, 0.2, 0.2, 1.3, 1.3, 1.3).span(0.16).col(ec, 2.4).fade(0.01, 0.7);
       fx.emit('orb');
+      // 4.9: Lichtblitz (kurz, weiß) und Druckwelle quer zur Schussrichtung
+      b.reset().at(mx, my, mz).size(0.4, 0.4, 0.4, 2.4, 2.4, 2.4).span(0.07).col(WHITE, 2.6).fade(0.005, 0.5);
+      fx.emit('orb');
+      vf.pressureRing(mx, my, mz, f.yaw, true, 0.95, ec, 0.24);
       vf.burst('smoke', mx, my, mz, 3, 1.2, ink, { size: 0.8, life: 0.5 });
       vf.burst('spark', mx, my, mz, 8, 11, ec, { dirX: fwdX, dirY: 0.1, dirZ: fwdZ, focus: 0.75, up: 0.5 });
       return;
@@ -2115,6 +2169,13 @@ export class CataclysmDirector {
         this.elementBurst(el, px, gy, pz, ec, 0.7, d / sp);
       }
       vf.surfaceHit(f.x + fwdX * h.range, f.y, f.z + fwdZ * h.range, Math.max(1.2, w * 0.6), ec, 0.8, (h.range * 0.9) / sp);
+      // 4.9: Lichtblitz am Ansatz, Energiespur dicht über dem Boden, Druckwelle am Ende der Welle
+      b.reset().at(f.x + fwdX * 0.9, f.y + 1, f.z + fwdZ * 0.9).size(0.4, 0.4, 0.4, 2, 2, 2).span(0.06).col(WHITE, 2.4).fade(0.005, 0.5);
+      fx.emit('orb');
+      const ex = f.x + fwdX * h.range, ez = f.z + fwdZ * h.range, ey = this.host.groundY(ex, ez, f.y);
+      vf.bolt(f.x + fwdX * 0.8, f.y + 0.55, f.z + fwdZ * 0.8, ex, ey + 0.5, ez, ec, 0.16, dur + 0.16, { depth: 3, branches: 0, jitter: 0.03 });
+      b.reset().at(ex, ey + 0.12, ez).rot(f.yaw).size(0.5, 1, 0.5, Math.max(2, w * 1.6), 1, Math.max(2, w * 1.6)).span(0.32, (h.range * 0.9) / sp).col(ec, 2).fade(0.01, 0.6);
+      fx.emit('shock');
       return;
     }
     if (h.shape === 'circle') {
@@ -2123,6 +2184,10 @@ export class CataclysmDirector {
       // Eruption: Flammen-/Energiekranz, Krater bzw. Gischt mit Partikeln; Meteor = mehrstufiger Krater mit Schockwellen
       b.reset().at(cx, gy + 0.12, cz).size(0.6, 1, 0.6, h.range * 1.05, 1, h.range * 1.05).span(0.45).col(ec, 2).fade(0.01, 0.6);
       fx.emit('ring');
+      // 4.9: Lichtblitz in der Mitte und eine flache Druckwelle, die über den Kranz hinausläuft
+      b.reset().at(cx, gy + 0.8, cz).size(0.5, 0.5, 0.5, Math.min(4, h.range * 0.7), Math.min(4, h.range * 0.7), Math.min(4, h.range * 0.7)).span(0.07).col(WHITE, 2.4).fade(0.005, 0.5);
+      fx.emit('orb');
+      vf.pressureRing(cx, gy + 0.25, cz, 0, false, h.range * 1.35, ec, 0.38);
       // 4.7C: heilende Wellen (Priester) reißen den Boden nicht auf – nur Lichtring und Funken
       if (!soft) vf.surfaceHit(cx, gy, cz, h.range * (meteor ? 0.9 : 0.6), ec, meteor ? 1.8 : 1);
       if (meteor) {

@@ -106,6 +106,8 @@ export interface CombatHooks {
   focus?(strength: number): void;
   /** Gischt (4.6C): Bremsspur im Flachwasser (`big` false) oder ein Gegner fällt über Bord ins Meer (`big` true) */
   splash?(x: number, y: number, z: number, big: boolean): void;
+  /** 4.9: Energiespur eines eigenen Geschosses (Faji-Formen): mehrschichtiger Kern, Tusche-Mantel, Funken – aus den Effekt-Pools */
+  projTrail?(x: number, y: number, z: number, vx: number, vy: number, vz: number, color: string, radius: number): void;
 }
 
 interface Projectile { mesh: Mesh; vel: Vector3; life: number; radius: number; dmg: number; knock: number; team: 'player' | 'enemy'; from: Enemy | null; pierce: boolean; hit: Set<object>; color: string; poise: number; trail: number }
@@ -1622,6 +1624,7 @@ export class CombatSystem implements EnemyWorld {
       if (p.trail <= 0) {
         p.trail = p.team === 'player' ? 0.035 : 0.06;
         this.fx.puffColor(pos, p.color);
+        if (p.team === 'player') this.hooks.projTrail?.(pos.x, pos.y, pos.z, p.vel.x, p.vel.y, p.vel.z, p.color, p.radius);
         if (p.team === 'player') this.smoke?.puff(pos.x, pos.y, pos.z, { size: p.radius * 0.6, grow: p.radius * 2.2, life: 0.7, tone: new Color(p.color).lerp(new Color(1, 1, 1), 0.4), spread: 0.2, rise: 0.3, alpha: 0.35, glow: 0.3, wind: 0.3 });
       }
       if (pos.y < this.ground(pos.x, pos.z) + 0.1 && Number.isFinite(this.groundRef.height(pos.x, pos.z))) p.life = 0;

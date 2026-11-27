@@ -20,6 +20,8 @@ export interface ShowcaseOptions {
   onWindow: (r: { x: number; y: number; w: number; h: number }) => void;
   onBack: () => void;
   onStart: (spec: SpecId) => void;
+  /** 4.9: Vorschau an Land bzw. auf See */
+  onSea?: (sea: boolean) => void;
 }
 
 export class ClassShowcase {
@@ -43,7 +45,7 @@ export class ClassShowcase {
       <section class="sc-stage" aria-label="Vorschau">
         <div class="sc-window"></div>
         <div class="sc-part" aria-live="polite"><b></b><ol class="sc-acts">${CINE_ACTS.map((a, i) => `<li data-act="${i}" title="${esc(ACT_LABEL[a])}">Akt ${i + 1} · ${ACT_SHORT[i]}</li>`).join('')}</ol></div>
-        <div class="sc-play"><button class="mini" data-a="combo">▶ Kombo</button><button class="mini brass" data-a="ult">✪ Ultimate ansehen</button></div>
+        <div class="sc-play"><button class="mini sc-sea" data-a="sea" aria-pressed="false" title="Formen und Ultimate an Land oder auf See ansehen">Vorschau: An Land</button><button class="mini" data-a="combo">▶ Kombo</button><button class="mini brass" data-a="ult">✪ Ultimate ansehen</button></div>
       </section>
       <aside class="sc-info card"><div class="sc-body"></div>
         <div class="sc-foot"><button class="primary sc-start" data-a="start">Abenteuer starten ▶</button></div>
@@ -60,6 +62,7 @@ export class ClassShowcase {
       else if (a === 'start') this.o.onStart(this.spec);
       else if (a === 'ult') this.o.onPlay('ult');
       else if (a === 'combo') this.o.onPlay('combo');
+      else if (a === 'sea') this.toggleSea();
     });
     addEventListener('keydown', this.onKey);
     addEventListener('resize', this.onResize);
@@ -70,6 +73,15 @@ export class ClassShowcase {
   }
 
   get selected(): SpecId { return this.spec; }
+
+  /** 4.9: Vorschau an Land bzw. auf See (Knopf „Vorschau: An Land / Auf See“) */
+  sea = false;
+  toggleSea(on = !this.sea) {
+    this.sea = on;
+    const b = this.root.querySelector<HTMLElement>('[data-a="sea"]');
+    if (b) { b.textContent = on ? 'Vorschau: Auf See' : 'Vorschau: An Land'; b.setAttribute('aria-pressed', String(on)); }
+    this.o.onSea?.(on);
+  }
 
   select(spec: SpecId) {
     if (spec === this.spec) return;

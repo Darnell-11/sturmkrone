@@ -9,6 +9,14 @@
 import { TUTORIAL, TUTORIAL_QUESTS, type TutorialAct, type TutorialQuestId } from '../data/prologue';
 import type { QuestStep } from '../data/quests';
 
+/**
+ * 4.9: Salven-Übung der Faji-Wirker bei Waffenmeister Konrad: mindestens `TUTORIAL.salvoShots` Element-Geschosse seit Beginn der Übung und
+ * eine Trefferkette von `TUTORIAL.salvoHits` (die Geschosse müssen die Puppe auch treffen)
+ */
+export function salvoDone(salvo: number, base: number, hits: number): boolean {
+  return salvo - base >= TUTORIAL.salvoShots && hits >= TUTORIAL.salvoHits;
+}
+
 export interface TutorialProbe {
   /** laufende Trefferkette der Figur */
   hits: number;
@@ -22,6 +30,9 @@ export interface TutorialProbe {
   geistUses?: number;
   /** steht am Steuer des eigenen (übergebenen) Schiffs */
   atHelm: boolean;
+  /** 4.9: abgefeuerte Element-Geschosse (Faji-Salven) und ob die Figur eine Faji-Klasse führt */
+  salvo?: number;
+  faji?: boolean;
 }
 
 /** Was der Ablauf vom Spiel braucht */
@@ -131,8 +142,9 @@ export class TutorialFlow {
     if (st.type !== 'act') return;
     switch (st.act) {
       case 'combo':
-        // Waffenmeister Konrad erklärt die eigene Kombo, den Sturm-Schritt, die Zielerfassung und den Klassenbaum
+        // Waffenmeister Konrad erklärt die eigene Kombo (4.9: Faji-Wirker die Element-Salve), den Sturm-Schritt, die Zielerfassung und den Klassenbaum
         if (!h.flag(TUT_FLAGS.fight)) { h.setFlag(TUT_FLAGS.fight); h.coachCombat?.(); }
+        this.baseSalvo = h.probe().salvo ?? 0;
         break;
       case 'talent':
         // der Waffenmeister hebt auf Stufe 2: ein Talentpunkt mehr im Topf
@@ -165,11 +177,19 @@ export class TutorialFlow {
     }
   }
 
+  /** 4.9: Zähler der Element-Geschosse beim Beginn der Salven-Übung */
+  private baseSalvo = 0;
+
   private poll(act: TutorialAct, dt: number) {
     const h = this.h;
     void dt;
     switch (act) {
-      case 'combo': if (h.probe().hits >= TUTORIAL.comboHits) h.act('combo'); break;
+      case 'combo': {
+        // 4.9: Faji-Wirker üben keine Nahkampf-Kombo, sondern eine Element-Salve: so viele Geschosse treffen die Puppe (Kette aus der Ferne)
+        const p = h.probe();
+        if (p.faji ? salvoDone(p.salvo ?? 0, this.baseSalvo, p.hits) : p.hits >= TUTORIAL.comboHits) h.act('combo');
+        break;
+      }
       case 'dash': if (h.probe().dashing) h.act('dash'); break;
       case 'target': if (h.probe().targeted) h.act('target'); break;
       case 'talent': if (this.baseSpent >= 0 && h.spent() > this.baseSpent) h.act('talent'); break;

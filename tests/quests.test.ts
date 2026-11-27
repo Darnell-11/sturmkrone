@@ -28,6 +28,9 @@ describe('Aufträge', () => {
     const p = defaultProgress();
     const done: string[] = [];
     const qs = new QuestSystem(p, 'pirat', { completed: (q) => done.push(q.id), advanced: () => {} });
+    // 4.9: die Legende der Sturmkrone öffnet sich erst nach dem Rat der Gesandten (vorher kein Auftragszeichen bei Ilse)
+    expect(qs.available('ilse').map((q) => q.id)).not.toContain('k1');
+    p.done.push('rat');
     expect(qs.available('ilse').map((q) => q.id)).toContain('k1');
     expect(qs.available('ilse').map((q) => q.id)).not.toContain('k2');
     qs.accept('k1');

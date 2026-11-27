@@ -76,6 +76,7 @@ export class CombatOverlay {
       <div class="cbt-speed"></div>
       <div class="cbt-impact"></div>
       <div class="cbt-vign"></div>
+      <div class="cbt-spray"></div>
       <div class="cbt-combo" hidden><em class="fin">Finisher!</em><b>0</b><span>Treffer</span><u><i></i></u></div>
       <div class="cbt-reticle" hidden></div>
       <div class="cbt-finisher" hidden><b>Finisher</b><kbd></kbd></div>
@@ -166,6 +167,9 @@ export class CombatOverlay {
     void this.impact.offsetWidth;
     this.impact.classList.add('on');
   }
+
+  /** 4.9: Gischt-Blende (Erschöpfung beim Wasserlaufen): weiß-blauer Schaum über dem Bild, an bzw. aus */
+  spray(on: boolean) { this.root.querySelector('.cbt-spray')?.classList.toggle('on', on); }
 
   hurt() {
     this.vignette.classList.remove('on');

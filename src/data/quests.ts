@@ -57,6 +57,24 @@ export interface QuestDef {
   reward: { gold: number; xp: number; fame: number; sp?: number };
 }
 
+/** 4.9: entfallene Aufträge (alte Schaluppen-Startquest „Kapitel 0: Leinen los“) – laufende Einträge alter Spielstände gelten als erledigt */
+export const RETIRED_QUESTS: readonly string[] = ['k0'];
+
+/**
+ * 4.9: Entfallene Aufträge aus einem Spielstand räumen (laufend → erledigt), damit keine Auftragszeichen mehr bei ihren Gebern erscheinen.
+ * Liefert true, wenn sich etwas geändert hat. Rein, auf jedem Stand mehrfach aufrufbar.
+ */
+export function retireQuests(p: { quests: { id: string }[]; done: string[]; flags: Record<string, unknown> }): boolean {
+  let changed = false;
+  for (const id of RETIRED_QUESTS) {
+    const i = p.quests.findIndex((q) => q.id === id);
+    if (i >= 0) { p.quests.splice(i, 1); changed = true; }
+    if (i >= 0 && !p.done.includes(id)) p.done.push(id);
+    if (p.flags.tracked === id) { delete p.flags.tracked; changed = true; }
+  }
+  return changed;
+}
+
 export const QUESTS: QuestDef[] = [
   // ---------- 4.7A: Einführung „Ankerglück“ (private Instanz, Stufe 1 → 3) – startet nach dem Gewitter-Prolog ----------
   {
@@ -79,7 +97,8 @@ export const QUESTS: QuestDef[] = [
     outro: 'Nicht schlecht für einen, der gestern noch Deckplanken geschrubbt hat. Du hast das Zeug zum Kämpfer. Jetzt brauchst du ein Schiff – Hafenmeisterin Ilse hat da etwas … sagen wir: Erfahrenes.',
     steps: [
       { type: 'talk', npc: 'konrad', text: 'Melde dich bei Waffenmeister Konrad an den Übungspuppen' },
-      { type: 'act', act: 'combo', text: 'Schlage deine Klassen-Kombo: 5 Treffer an der Übungspuppe (Linksklick / J)' },
+      // 4.9: Faji-Wirker üben statt der Nahkampf-Kombo eine Element-Salve aus der Ferne (core/tutorialFlow.ts `salvoDone`)
+      { type: 'act', act: 'combo', text: 'Übungspuppe: Klassen-Kombo mit 5 Treffern – als Faji-Wirker eine Element-Salve aus der Ferne (Linksklick / J)' },
       { type: 'act', act: 'dash', text: 'Weiche mit dem Sturm-Schritt aus (Umschalt)' },
       { type: 'act', act: 'target', text: 'Erfasse ein Ziel mit Tab oder Mausklick' },
       { type: 'act', act: 'talent', text: 'Du bist Stufe 2: setze deinen ersten Punkt im Sternbild-Klassenbaum (Taste N)' },
@@ -112,18 +131,9 @@ export const QUESTS: QuestDef[] = [
     reward: { gold: 150, xp: 0, fame: 25 },
   },
   {
-    id: 'k0', title: 'Kapitel 0: Leinen los', giver: 'ilse', main: true, noOffer: true,
-    intro: 'Dein erstes eigenes Schiff! Segle nach Ankerglück und melde dich bei der Hafenmeisterin.',
-    outro: 'Da bist du ja! Ich habe schon von dir gehört. Und ich habe Arbeit für dich.',
-    steps: [
-      { type: 'goto', island: 'ankerglueck', text: 'Segle nach Ankerglück (folge dem Pfeil)' },
-      { type: 'talk', npc: 'ilse', text: 'Leg im Hafen an und sprich mit Hafenmeisterin Ilse' },
-    ],
-    reward: { gold: 100, xp: 60, fame: 5 },
-  },
-  {
-    // 4.7E: nach „Leinen los“ der Rat der Gesandten – einmalige, dauerhafte Team-Wahl; danach beginnt die Hauptkampagne des Teams
-    id: 'rat', title: 'Der Rat der Gesandten', giver: 'gerstenkorn', main: true, auto: true, after: 'k0', noOffer: true,
+    // 4.7E: der Rat der Gesandten – einmalige, dauerhafte Team-Wahl; danach beginnt die Hauptkampagne des Teams.
+    // 4.9: folgt direkt auf die Einführung (die alte Schaluppen-Startquest „Kapitel 0: Leinen los“ bei Hafenmeisterin Ilse ist entfallen)
+    id: 'rat', title: 'Der Rat der Gesandten', giver: 'gerstenkorn', main: true, auto: true, after: 't5', noOffer: true,
     intro: 'Die Kunde von deinem Sieg über den Kurogane-Stoßtrupp ist bis in die Hauptstädte gedrungen. Im Ratssaal von Ankerglück warten die Gesandten der fünf Mächte – jede will dich in ihren Reihen. Doch Treue schwört man nur einmal.',
     outro: 'Der Rat erhebt sich. Dein Schwur ist gesprochen, deine Flagge gesetzt – von heute an segelst du für dein Team, und dein Team segelt mit dir.',
     steps: [
@@ -133,7 +143,8 @@ export const QUESTS: QuestDef[] = [
     reward: { gold: 250, xp: 300, fame: 30, sp: 1 },
   },
   {
-    id: 'k1', title: 'Kapitel 1: Salz im Blut', giver: 'ilse', main: true,
+    // 4.9: die „Legende der Sturmkrone“ öffnet sich erst nach dem Rat (kein Auftragszeichen bei Ilse, solange der Rat ansteht)
+    id: 'k1', title: 'Kapitel 1: Salz im Blut', giver: 'ilse', main: true, after: 'rat',
     intro: {
       pirat: 'Frisch angeheuert und schon großes Maul? Gut so. Wer in der Bernsteinsee überleben will, braucht Mut – und Beweise. Fahr zum alten Leuchtfeuer, dort erfährst du, wer uns das Leben schwer macht.',
       marine: 'Rekrut, die Admiralität hat Sie nach Ankerglück versetzt, um für Ordnung zu sorgen. Melden Sie sich zuerst am Leuchtfeuer – von dort sieht man jedes Schiff, das in die Bucht fährt.',

@@ -381,6 +381,12 @@ export class ActionCombatEngine {
   styleOf(id: ActionStyleId): ActionStyleDef { return this.tal ? this.tal.styles[id] : ACTION_STYLES[id]; }
   /** Angriff mit Talenten an seinem festen Platz (`ALL_MOVES`) */
   moveAt(i: number): ActionMove | null { return i >= 0 ? (this.tal ? this.tal.moves[i] : ALL_MOVES[i]) ?? null : null; }
+  /** 4.9: Platz einer Kampfkunst im laufenden Stil (Form 1 – 10); 0 = kein Platz (Kette, Sprung, Konter) */
+  formSlot(mv: ActionMove): number {
+    const sk = this.style.skills;
+    for (let i = 0; i < sk.length; i++) if (sk[i].id === mv.id) return i + 1;
+    return 0;
+  }
   /** Reichweite eines Angriffs für den Suchradius */
   private reachAt(i: number): number { return this.tal ? this.tal.reach[i] : MOVE_REACH[i]; }
   /** Talente setzen (null = keine); gilt sofort, laufende Angriffe behalten ihren Platz */

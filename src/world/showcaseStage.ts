@@ -3,7 +3,8 @@
 // `ULTIMATE_CINEMATICS` (über `UltimateCinematics.keyPose`, in Studio-Maße verkleinert), Effekte aus der `AnimeVfxForge` (geliehene Pools),
 // Impact-Frames als CSS-Filter auf dem Canvas (`impactMode`, liest Game). Keine neuen Shader-Programme: Studio-Lichter wie im Editor,
 // Boden und Puppen im Toon-Material, Effekte aus den vorhandenen Grundformen. Nichts Neues je Bild (modulweite Hilfswerte).
-import { Color, CylinderGeometry, Group, Mesh, SphereGeometry, Vector3 } from 'three';
+import { BoxGeometry, Color, CylinderGeometry, Group, Mesh, SphereGeometry, Vector3 } from 'three';
+import type { VfxSurface } from '../graphics/animeVfxForge';
 import { ACTION_STYLES, visualStyleOf } from '../data/actionStyles';
 import { SHOWCASE_SLOW, previewScript, showcaseOf, type PreviewStep } from '../data/classShowcase';
 import type { SpecId } from '../data/classes';
@@ -65,6 +66,18 @@ export class ShowcaseStage extends EditorStage {
   private win: { x: number; y: number; w: number; h: number } | null = null;
   /** Rückruf beim Wechsel des Vorschau-Teils (Anzeige im Fenster) */
   onPart: ((phase: ShowcasePhase, label: string, act: number) => void) | null = null;
+  /**
+   * 4.9: Vorschau „An Land“ (Arena mit Steinboden, Krater und Gesteinsbrocken) oder „Auf See“ (Planken eines Schiffsdecks über dem Meer,
+   * Übungspuppen auf Flößen, Gischtkronen statt Kratern) – Toon-Materialien mit Schmiede-Sätzen (vorhandene Programme)
+   */
+  sea = false;
+  private readonly ground: Mesh;
+  private readonly seaGroup = new Group();
+  private readonly rafts: Mesh[] = [];
+  /** eigene Oberfläche der Effekte (Krater an Land, Gischt auf See) und die der Welt zum Zurückgeben */
+  private readonly stageSurface: VfxSurface = { isLand: () => !this.sea, groundY: () => (this.sea ? 0.18 : 0), waterY: () => 0 };
+  private worldSurface: VfxSurface | null = null;
+  private surfaceSet = false;
 
   constructor() {
     super();
@@ -79,6 +92,32 @@ export class ShowcaseStage extends EditorStage {
     ground.receiveShadow = true;
     addOutlines(ground);
     this.scene.add(ground);
+    this.ground = ground;
+    // 4.9: See-Bühne – weites Meer (Schmiede-Satz „wasser“), Deck aus Planken mit Reling, Flöße unter den Übungspuppen
+    const sea = new Mesh(new CylinderGeometry(42, 42, 0.1, 72), toon({ color: 0x1b5f80, forge: 'wasser' }));
+    sea.position.set(3, -0.35, 0);
+    sea.receiveShadow = true;
+    const deck = new Mesh(new BoxGeometry(4.6, 0.5, 7.5), toon({ color: 0x8a5a2b, forge: 'hafenholz' }));
+    deck.position.set(0, -0.25, 0);
+    deck.receiveShadow = true;
+    const railMat = toon({ color: 0x5c3a1f, forge: 'hafenholz' });
+    for (const s of [-1, 1]) {
+      const rail = new Mesh(new BoxGeometry(0.14, 0.75, 7.3), railMat);
+      rail.position.set(s * 2.25, 0.38, 0);
+      deck.add(rail);
+    }
+    addOutlines(deck);
+    this.seaGroup.add(sea, deck);
+    const raftMat = toon({ color: 0x7a4f2a, forge: 'hafenholz' });
+    for (const [x, z] of [[3.4, 0], [5.0, -1.4], [5.0, 1.4]]) {
+      const raft = new Mesh(new CylinderGeometry(0.8, 0.9, 0.26, 12), raftMat);
+      raft.position.set(x, 0.05, z);
+      addOutlines(raft);
+      this.seaGroup.add(raft);
+      this.rafts.push(raft);
+    }
+    this.seaGroup.visible = false;
+    this.scene.add(this.seaGroup);
     for (const [x, z] of [[3.4, 0], [5.0, -1.4], [5.0, 1.4]]) {
       const g = new Group();
       const post = new Mesh(new CylinderGeometry(0.07, 0.09, 1.7, 8), toon(0x8a5a2b));
@@ -105,6 +144,8 @@ export class ShowcaseStage extends EditorStage {
     const st = ACTION_STYLES[showcaseOf(spec).style];
     super.show(assets, look, visualStyleOf(st.id));
     this.restart(spec);
+    // 4.9: Effekte der Vorschau reagieren auf die Bühne (Krater an Land, Gischt auf See), nicht auf die Welt dahinter
+    this.applySurface();
   }
 
   /** Klasse wechseln: Waffe, Farben, Vorschau von vorn */
@@ -438,8 +479,29 @@ export class ShowcaseStage extends EditorStage {
     cam.updateProjectionMatrix();
   }
 
+  /** 4.9: Vorschau an Land bzw. auf See umschalten (Boden, Licht, Himmel, Oberfläche der Effekte) */
+  setSea(on: boolean) {
+    this.sea = on;
+    this.ground.visible = !on;
+    this.seaGroup.visible = on;
+    for (const d of this.dummies) d.g.position.y = on ? 0.18 : 0;
+    this.setLight(on ? 'sonne' : 'laterne');
+    if (on) { this.bgU.top.value.setHex(0x5f9ccc); this.bgU.bottom.value.setHex(0x16405a); }
+    else { this.bgU.top.value.setHex(0x070a14); this.bgU.bottom.value.setHex(0x232a3c); this.floorMat.color.setHex(0x1c2130); }
+    this.applySurface();
+  }
+
+  /** Eigene Oberfläche der geliehenen Effekte setzen (die der Welt kommt beim Schließen zurück) */
+  applySurface() {
+    const v = this.vfx;
+    if (!v) return;
+    if (!this.surfaceSet) { this.worldSurface = v.surface; this.surfaceSet = true; }
+    v.surface = this.stageSurface;
+  }
+
   dispose() {
     this.endImpact();
+    if (this.vfx && this.surfaceSet) { this.vfx.surface = this.worldSurface; this.surfaceSet = false; }
     this.vfx?.fx.clear();
     this.char?.holder.removeFromParent();
     this.char?.dispose();

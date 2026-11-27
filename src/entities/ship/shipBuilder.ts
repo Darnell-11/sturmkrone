@@ -27,6 +27,7 @@ import {
   TorusGeometry,
   Vector3,
   Object3D,
+  Box3,
 } from 'three';
 import { LightAnchor } from '../../render/shipLights';
 import type { FigureheadId, FlagId, ShipClass, ShipLook } from '../../data/ships';
@@ -42,7 +43,7 @@ import { toonPbr } from '../../render/pbrMaps';
 import { deckTexture } from '../../render/shipTextures';
 import { makeSailUniforms, sailMaterial } from '../../render/flags';
 import { clothGeometry, clothMaterial, clothTextures, makeClothUniforms, type ClothFlag, type FlagSpec } from '../../render/flagCloth';
-import { FIGUREHEAD_DEFS, figureheadModel, figureheadScale } from '../../data/figureheads';
+import { FIGUREHEAD_DEFS, FIGUREHEAD_SEAT, figureheadBounds, figureheadModel, figureheadScale } from '../../data/figureheads';
 import { buildFigurehead } from './figureheads';
 import { factionFlagTexture, sailHeraldry } from '../../render/heraldry';
 import { FACTIONS } from '../../data/factions';
@@ -125,18 +126,9 @@ function widthWith(hullVar: { e: number; p: number; s: number }, t: number): num
   return hullVar.s + (1 - hullVar.s) * Math.pow(Math.max(0, 1 - Math.pow(u, 3)), 0.5);
 }
 
-/** Deckssprung: Bug und Heck steigen an (bei großen Schiffen begrenzt) */
-export function sheerAt(t: number, L: number): number {
-  const k = Math.min(1.6, L / 15) * 0.55;
-  // stärkerer, weich auslaufender Deckssprung (Bug steigt kräftig, Heck sanfter)
-  return (t > 0 ? Math.pow(t, 2.4) * 1.75 : t * t * 0.95) * k;
-}
-
-/** Vorsprung des Stevens: der Bug neigt sich oben nach vorn (geschwungener Vorsteven statt senkrechter Wand) */
-export function rakeAt(t: number, L: number): number {
-  const u = Math.max(0, (t - 0.72) / 0.28);
-  return L * 0.075 * u * u;
-}
+// Deckssprung und Vorsprung des Stevens: seit 4.9 in entities/ship/bowRig.ts (rein, die Bug-Prüfung rechnet mit denselben Formeln)
+import { BOW_STAY_SAG, bowRig, bowRigInput, rakeAt, sheerAt } from './bowRig';
+export { rakeAt, sheerAt };
 
 export function flagTexture(flag: FlagId, color: string): CanvasTexture {
   const c = document.createElement('canvas');
@@ -1134,55 +1126,31 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
     // Rah-Hängetaue vom Mastkopf zu den Rahnocken
     if (sv.yardLifts) for (let k = 0; k < yards; k++) for (const s of [-1, 1]) rig.push(0, D + h * 0.88, z, s * c.W * (1.15 - k * 0.22) / 2, D + h * (0.3 + k * 0.24) + h * 0.2, z);
   });
-  // Klüver (Dreieckssegel am Bug)
+  // 4.9: Bugspriet und Vorstag aus der reinen Rechnung `bowRig` (entities/ship/bowRig.ts). Vorsegel (Klüver, Stagsegel) gibt es nicht mehr –
+  // sie hingen frei vor dem Fockmast und schnitten Bugspriet und Galionsfigur. Die Figur entsteht schon hier (der Vorstag läuft über ihre
+  // Umrisslinie hinweg; Ausdehnung aus Tabelle und Modell, das Größere zählt) und kommt weiter unten an ihren Platz.
   const bowZ = c.L / 2 + rakeAt(1, c.L);
   const bowTop = D + sheerAt(1, c.L);
-  const jibShape = new Shape();
-  jibShape.moveTo(0, 0); jibShape.lineTo(0, c.mh * 0.6); jibShape.lineTo(c.L * 0.22, 0); jibShape.closePath();
-  const jibGeo = new ShapeGeometry(jibShape);
-  // Tuch-Textur über die Dreiecksfläche legen
-  const juv = jibGeo.attributes.uv;
-  for (let i = 0; i < juv.count; i++) juv.setXY(i, juv.getX(i) / (c.L * 0.22), juv.getY(i) / (c.mh * 0.6));
-  const jibMat = toon({ color: 0xffffff, side: DoubleSide, map: sailTex(false, 99, sv.tattered), unique: true, micro: 'cloth', forge: 'segeltuch', roughness: 0.92, normalMap: forgeSet('segeltuch').normal, normalScale: 0.55 });
-  jibMat.alphaTest = 0.5;
-  const jib = new Mesh(jibGeo, jibMat);
-  jib.rotation.y = -Math.PI / 2;
-  jib.position.set(0, D + 1, c.masts[0] * c.L + 1);
-  jib.userData.noOutline = true;
-  jib.userData.base = jib.position.y;
-  group.add(jib);
-  sails.push(jib);
-  const bowsprit = new Mesh(new CylinderGeometry(0.08 * sc, 0.12 * sc, c.L * 0.25, 6), darkWood);
-  bowsprit.rotation.x = Math.PI / 2 - 0.25;
-  bowsprit.position.set(0, bowTop - 0.15, bowZ + c.L * 0.08);
-  group.add(bowsprit);
-  // Weitere Vorstagsegel (Segel-Stufe 2: 1, 3: 2, 5: 3 zusätzlich): Dreiecke zwischen Stag und Bugspriet, je eines weiter vorn
-  {
-    const f0 = mastTops[0];
-    const stayA = { z: f0 ? f0.z : 0, y: f0 ? D + f0.h * 0.94 : D + c.mh * 0.9 }, stayB = { z: bowZ + c.L * 0.18, y: bowTop + 0.3 };
-    const sprA = { z: bowZ - c.L * 0.02, y: bowTop - 0.1 }, sprB = stayB;
-    for (let j = 1; j < sv.jibs; j++) {
-      const u = 0.5 + 0.17 * j, v = 0.38 + 0.2 * j;
-      const head = { z: stayA.z + (stayB.z - stayA.z) * u, y: stayA.y + (stayB.y - stayA.y) * u };
-      const tack = { z: sprA.z + (sprB.z - sprA.z) * Math.min(1, v), y: sprA.y + (sprB.y - sprA.y) * Math.min(1, v) };
-      const clew = { z: head.z + (tack.z - head.z) * 0.18 - 0.2, y: tack.y + (head.y - tack.y) * 0.2 };
-      const shp = new Shape();
-      shp.moveTo(head.z, head.y); shp.lineTo(tack.z, tack.y); shp.lineTo(clew.z, clew.y); shp.closePath();
-      const jg = new ShapeGeometry(shp);
-      const jp = jg.attributes.position, ju = jg.attributes.uv;
-      const zs0 = Math.min(head.z, tack.z, clew.z), zs1 = Math.max(head.z, tack.z, clew.z), ys0 = Math.min(head.y, tack.y, clew.y), ys1 = Math.max(head.y, tack.y, clew.y);
-      for (let i = 0; i < ju.count; i++) ju.setXY(i, (jp.getX(i) - zs0) / (zs1 - zs0), (jp.getY(i) - ys0) / (ys1 - ys0));
-      const jm = toon({ color: 0xffffff, side: DoubleSide, map: sailTex(false, 99 + j, sv.tattered), unique: true, micro: 'cloth', forge: 'segeltuch', roughness: 0.92, normalMap: forgeSet('segeltuch').normal, normalScale: 0.55 });
-      jm.alphaTest = 0.5;
-      const jb = new Mesh(jg, jm);
-      jb.rotation.y = -Math.PI / 2;
-      jb.position.x = (j % 2 ? 1 : -1) * 0.03 * j;
-      jb.userData.noOutline = true;
-      jb.userData.base = 0;
-      group.add(jb);
-      sails.push(jb);
+  const fhId = figureheadModel(look.figurehead);
+  const fh = fhId ? buildFigurehead(fhId, figureheadScale(fhId, c.L, c.W), c.L) ?? figurehead(FIGUREHEAD_DEFS[fhId].fallback, Math.min(2.2, 0.8 * sc)) : null;
+  let figBox: ReturnType<typeof figureheadBounds> | null = null;
+  if (fh && fhId) {
+    fh.position.set(0, bowTop + FIGUREHEAD_SEAT.y, bowZ + FIGUREHEAD_SEAT.z);
+    fh.updateMatrixWorld(true);
+    figBox = figureheadBounds(fhId, c.L, c.W, bowZ, bowTop);
+    // Ersatzfigur (Modell nicht geladen) oder größer als gemessen: die Ecke des echten Umrisses zählt zusätzlich
+    const bb = new Box3().setFromObject(fh);
+    if (!bb.isEmpty() && (bb.max.z > figBox.front + 0.05 || bb.max.y > figBox.top + 0.05)) {
+      figBox.profile.push({ z: bb.max.z, y: bb.max.y });
+      figBox.front = Math.max(figBox.front, bb.max.z); figBox.top = Math.max(figBox.top, bb.max.y);
     }
   }
+  const bow = bowRig(bowRigInput(c, figBox));
+  const spr = bow.sprit;
+  const bowsprit = new Mesh(new CylinderGeometry(spr.rTip, spr.rHeel, spr.len, 6), darkWood);
+  bowsprit.rotation.x = Math.PI / 2 - spr.tilt;
+  bowsprit.position.set(0, spr.mid.y, spr.mid.z);
+  group.add(bowsprit);
   // Besansegel am Heck (Segel-Stufe 4 – 5): Gaffelsegel mit Baum und Gaffel hinter dem achtersten Mast, über dem Achterdeck (Kopfhöhe frei)
   if (sv.spanker && mastParts.length) {
     const mp = mastParts[mastParts.length - 1];
@@ -1213,7 +1181,6 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
     gaff.rotation.x = Math.atan2(zg - z0, yp - yb);
     group.add(gaff);
   }
-  rig.push(0, D + c.mh * 0.95, c.masts[0] * c.L, 0, bowTop + 0.3, bowZ + c.L * 0.18);
   const rigging = new LineSegments(new BufferGeometry().setAttribute('position', new Float32BufferAttribute(rig, 3)), new LineBasicMaterial({ color: '#2A1E14' }));
   group.add(rigging);
   // Dicke Taue: Stage zwischen den Masten, Stag zum Bugspriet, Pardunen zum Heck – hängen leicht durch
@@ -1225,8 +1192,8 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
     rope(group, va.set(0, D + a.h * 0.62, a.z), vb.set(0, D + b.h * 0.34, b.z), rp * 0.8, 0.25 + sc * 0.08);
   }
   if (mastTops.length) {
-    const f = mastTops[0];
-    rope(group, va.set(0, D + f.h * 0.94, f.z), vb.set(0, bowTop + 0.3, bowZ + c.L * 0.18), rp * 1.2, 0.5 + sc * 0.1, 8);
+    // Vorstag vom Fockmast-Topp zur Bugspriet-Nock, straff, über der Galionsfigur
+    rope(group, va.set(0, bow.stay.a.y, bow.stay.a.z), vb.set(0, bow.stay.b.y, bow.stay.b.z), rp * 1.2, BOW_STAY_SAG(sc), 8);
     const b2 = mastTops[mastTops.length - 1];
     for (const s of [-1, 1]) rope(group, va.set(0, D + b2.h * 0.9, b2.z), vb.set(s * c.W * 0.36, D + castleH + 0.2, -c.L / 2 + 0.8), rp, 0.3 + sc * 0.08);
   }
@@ -1989,15 +1956,12 @@ export function* buildShipSteps(c: ShipClass, look: ShipLook, hero = false, evo:
 
   // Galionsfigur: skulpturiertes Modell (data/figureheads.ts, Blender) mit verziertem Sockel; Maßstab nach Länge und Breite der Klasse. Die Figur steht
   // über dem Bugspriet (das Bugspriet tritt tiefer aus dem Vorsteven); ein vergoldeter Kragen fasst das Bugspriet am Austritt ein.
-  const fhId = figureheadModel(look.figurehead);
-  if (fhId) {
-    const fhScale = figureheadScale(fhId, c.L, c.W);
-    const fh = buildFigurehead(fhId, fhScale, c.L) ?? figurehead(FIGUREHEAD_DEFS[fhId].fallback, Math.min(2.2, 0.8 * sc));
-    fh.position.set(0, bowTop - 0.1, bowZ + 0.15);
+  if (fh) {
     group.add(fh);
     const sd = Math.min(sc, 3);
-    const bsStart = bowZ + c.L * 0.08 - Math.cos(0.25) * c.L * 0.125 * 0.97;
-    put(group, torus(0.2 * sd * 0.8, 0.034 * sd, 10), gold, 0, bowTop - 0.15 - Math.sin(0.25) * c.L * 0.125 * 0.97 + Math.sin(0.25) * c.L * 0.04, bsStart + c.L * 0.04, Math.PI / 2 - 0.25 + 0.0, 0, 0);
+    // vergoldeter Kragen am Austritt des Bugspriets aus dem Vorsteven (4,4 % der Länge vor dem Fuß des Rundholzes, wie vor 4.9)
+    const ck = c.L * 0.044;
+    put(group, torus(0.2 * sd * 0.8, 0.034 * sd, 10), gold, 0, spr.heel.y + Math.sin(spr.tilt) * ck, spr.heel.z + Math.cos(spr.tilt) * ck, Math.PI / 2 - spr.tilt, 0, 0);
   }
   // Galion – Backenhölzer aus Gold zur Figur, dazwischen ein Grätingdeck, und seitlich die Katköpfe für den Anker
   if (c.L >= 24) {

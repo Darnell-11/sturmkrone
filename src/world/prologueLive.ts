@@ -13,6 +13,7 @@ import {
   ADMIRALS, BEAM_RIDE, DECK_CREW, admiralLook, DECK_OBJECTIVE, EYELIDS, EYE_BLUR, FLAGSHIP, FLEET, GRADES, GRUENMARKT, JUDGMENT_NAME, PROLOGUE_LINES,
   PROLOGUE_WEATHER, RAID_TROOPS, SCHWARZBART, SCHWARZBART_FACE, SCORE_SYNC, SHOTS, linenLook,
   type AmbienceId, type GradeDef, type GradeId, type PrologueLine, type ScoreCue, type ShotDef, type ShotFrame, type V3,
+  SCENE5,
 } from '../data/prologue';
 import { PrologueDirector, PrologueOut, type PrologueEvent, type PrologueGeo } from '../story/prologueDirector';
 import { Character } from '../entities/character/character';
@@ -114,6 +115,8 @@ const C_RAY_WARM = new Color(1, 0.9, 0.62);
 const C_FRONT = new Color(0.035, 0.04, 0.06);
 const ADM_COL = ADMIRALS.map((a) => new Color(a.color));
 const smooth = (k: number) => { const x = k < 0 ? 0 : k > 1 ? 1 : k; return x * x * (3 - 2 * x); };
+/** 4.9: Hochformat (Handy) – die Kamera der Szene-5-Fahrten rückt weiter weg, damit Spalte, Strahl und Bruchstelle ins schmale Bild passen (Querformat: 1) */
+const portraitPull = (aspect: number): number => Math.min(1.9, Math.max(1, 0.9 / Math.max(0.3, aspect)));
 /** 4.7D.1: Verläufe ohne Knick (Quintik, Sinus-Bögen) aus graphics/cineSmooth.ts */
 const ease = (k: number, e: ShotDef['ease']) => shotEase(k, e);
 /** Plätze der Admirale in der Schlachtreihe (−3 … 3) */
@@ -186,7 +189,12 @@ export class PrologueLive {
   private glowT = 0;
   private auraK = 1;
   /** Strahl (Szene 5): Startpunkt, Richtung, Zeit seit dem Schuss */
-  private readonly beam = { t: -1, x: 0, y: 0, z: 0, dx: 0, dz: 1, len: 0, split: false, trenchT: -1, ax: 0, az: 0, bx: 0, bz: 0 };
+  /** 4.9: `speed` = Tempo des Strahlkopfs (m je s Echtzeit, so dass er zum Takt `bow` den Bug erreicht), `dBow` = Weg bis zum Bug */
+  private readonly beam = { t: -1, x: 0, y: 0, z: 0, dx: 0, dz: 1, len: 0, split: false, trenchT: -1, ax: 0, az: 0, bx: 0, bz: 0, speed: 1, dBow: 0 };
+  /** 4.9: Rumpfbruch von Bug bis Heck (Szene 5, Stufe 2): Zeit seit Beginn (Echtzeit), −1 = nicht begonnen */
+  private crackT = -1;
+  /** Zähler für Prüfungen */
+  readonly scene5 = { cracks: 0, crackFx: 0, trenchSteps: 0, splitAt: -1 };
   private readonly convergence = new Vector3();
   private chargeT = -1;
   /** Fall der Figur (Szene 5) und Sinken (Szene 6) */
@@ -772,6 +780,7 @@ export class PrologueLive {
       case 'kanonen': this.toGuns(); break;
       case 'aufladung': this.startCharge(); break;
       case 'strahl': this.fireBeam(); break;
+      case 'bruch': this.startCrack(); break;
       case 'spaltung': this.splitShip(); break;
       case 'sturz': this.startFall(); break;
       case 'eintauchen': this.underwater(true); break;
@@ -1147,6 +1156,14 @@ export class PrologueLive {
     this.beam.t = 0; this.beam.x = c.x; this.beam.y = c.y; this.beam.z = c.z; this.beam.dx = -fx; this.beam.dz = -fz;
     this.beam.len = Math.hypot(ship.x - c.x, ship.z - c.z) + ship.cls.L * 0.5 + 260;
     this.beam.split = false;
+    // 4.9: der Kopf erreicht den Bug genau zum Takt `bow` (Stufe 2); hinter ihm öffnet sich der Graben Schritt für Schritt
+    const bowX = ship.x + fx * ship.cls.L * 0.5, bowZ = ship.z + fz * ship.cls.L * 0.5;
+    this.beam.dBow = Math.max(20, (bowX - c.x) * this.beam.dx + (bowZ - c.z) * this.beam.dz);
+    this.beam.speed = this.beam.dBow / Math.max(0.5, SCORE_SYNC.bow - SCORE_SYNC.beam);
+    this.beam.ax = c.x + this.beam.dx * 20; this.beam.az = c.z + this.beam.dz * 20;
+    this.beam.bx = this.beam.ax; this.beam.bz = this.beam.az;
+    this.beam.trenchT = 0;
+    this.crackT = -1;
     // 4.7D.1: im Schussmoment entladen sich die sieben Auren sichtbar von den Bugdecks in den Kern – der Strahl kommt von vorn aus der Reihe
     {
       const vfx = h.vfx();
@@ -1169,7 +1186,7 @@ export class PrologueLive {
 
   /** Kopf des Strahls (Welt) zur Zeit seit dem Schuss */
   private beamHead(out: Vector3): Vector3 {
-    const b = this.beam, s = Math.min(b.len, Math.max(0, b.t) * BEAM_RIDE.speed);
+    const b = this.beam, s = Math.min(b.len, Math.max(0, b.t) * b.speed);
     const ship = this.host.ship();
     // der Strahl senkt sich auf Deckshöhe: so teilt er das Schiff mittig der Länge nach
     const yDeck = ship.model.deckY + 0.8;
@@ -1181,7 +1198,7 @@ export class PrologueLive {
     const b = this.beam;
     if (b.t < 0) return;
     const t0 = b.t;
-    b.t += dt * (this.director.timeScale < 1 ? 0.6 : 1);
+    b.t += dt;
     const h = this.host, fx = h.fx(), br = fx.brush, vfx = h.vfx();
     const head = this.beamHead(_w);
     // Strahlkörper: sieben farbige Schichten um einen weißen Kern, vom Kern bis zum Kopf (alle 0,05 s nachgelegt)
@@ -1199,18 +1216,33 @@ export class PrologueLive {
     }
     // Gischt entlang der Schneise
     if (Math.floor(b.t / 0.08) !== Math.floor(t0 / 0.08) && b.t < 2.4) vfx.burst('drop', head.x, h.waterY(head.x, head.z) + 0.5, head.z, 16, 12, C_FOAM, { up: 10, size: 0.5 });
-    // der Kopf erreicht den Bug: das Schiff zerteilt sich (Regie-Takt `spaltung` setzt Graben und Zerteilung)
-    const ship = h.ship();
-    const dBow = (ship.x + Math.sin(ship.heading) * ship.cls.L * 0.5 - b.x) * b.dx + (ship.z + Math.cos(ship.heading) * ship.cls.L * 0.5 - b.z) * b.dz;
-    const sHead = Math.max(0, b.t) * BEAM_RIDE.speed;
-    if (!b.split && sHead >= dBow) this.splitShip();
-    // Graben: öffnet sich hinter dem Kopf, steht, schließt sich nach der Szene
+    // 4.9: der Kopf erreicht den Bug – Stufe 2: der Rumpf bricht von Bug bis Heck (Takt `bruch`; hier als Sicherung, falls der Takt fehlt)
+    const sHead = Math.max(0, b.t) * b.speed;
+    if (this.crackT < 0 && !b.split && sHead >= b.dBow) this.startCrack();
+    this.stepCrack(dt);
+    // Graben: wächst Schritt für Schritt hinter dem Kopf her bis auf den Grund (bis zum Bruch des Rumpfs), steht, schließt sich nach der Szene
     if (b.trenchT >= 0) {
       b.trenchT += dt;
-      const open = smooth(b.trenchT / BEAM_RIDE.open);
+      if (!b.split) {
+        const s = Math.min(b.len, sHead);
+        b.bx = b.x + b.dx * Math.max(24, s - 6); b.bz = b.z + b.dz * Math.max(24, s - 6);
+        this.scene5.trenchSteps++;
+      } else {
+        // nach dem Bruch läuft die Spalte bis weit hinter das Heck aus
+        const tx = b.x + b.dx * b.len, tz = b.z + b.dz * b.len;
+        b.bx += (tx - b.bx) * Math.min(1, dt * 1.5); b.bz += (tz - b.bz) * Math.min(1, dt * 1.5);
+      }
+      const open = smooth(b.trenchT / (BEAM_RIDE.open + 1.4));
       const close = this.director.scene === 'schwur' ? 1 - smooth((this.director.state.sceneT - 6) / 4) : 1;
       h.setTrench(b.ax, b.az, b.bx, b.bz, BEAM_RIDE.half, BEAM_RIDE.depth * open * Math.max(0, close));
       if (this.seabed) this.seabed.visible = open > 0.2 && close > 0.05 && !this.sb.under;
+      if (this.seabed) this.seabed.scale.set(1, 1, Math.max(0.05, Math.hypot(b.bx - b.ax, b.bz - b.az) / 620));
+      // 4.9: am Kopf brechen die Wasserwände auf: Gischt-Fontänen zu beiden Seiten
+      if (!b.split && b.t < 6 && Math.floor(b.t / 0.06) !== Math.floor(t0 / 0.06)) for (const side of [-1, 1]) {
+        const x = head.x + b.dz * side * BEAM_RIDE.half * 1.02, z = head.z - b.dx * side * BEAM_RIDE.half * 1.02;
+        vfx.burst('drop', x, h.waterY(x, z) + 0.4, z, 14, 9, C_FOAM, { up: 13, size: 0.7, life: 1.6 });
+        vfx.burst('mist', x, h.waterY(x, z) + 3, z, 2, 2, C_FOAM, { up: 3, size: 6, life: 2.2 });
+      }
       // schäumende Grabenwände
       this.sprayT -= dt;
       if (this.sprayT <= 0 && close > 0.3) {
@@ -1223,7 +1255,45 @@ export class PrologueLive {
     }
   }
 
-  /** Die Schwarze Krone teilt sich der Länge nach; das Meer spaltet sich bis auf den Grund */
+  /**
+   * 4.9: Stufe 2 – der Strahl trifft den Bug: ein glühender Riss läuft in `SCENE5.crack` Sekunden über das Deck von Bug bis Heck, Funken und
+   * Splitter springen aus ihm; erst am Heck bricht das Schiff in zwei Hälften (`splitShip`)
+   */
+  private startCrack() {
+    if (this.crackT >= 0 || this.beam.split) return;
+    this.crackT = 0;
+    this.scene5.cracks++;
+    const h = this.host;
+    h.impact(3);
+    h.shake(1.2);
+    this.fovPunch = 1;
+    audio.play('impactCrack', 1); audio.play('woodImpact', 1);
+  }
+
+  private stepCrack(dt: number) {
+    if (this.crackT < 0 || this.beam.split) return;
+    const t0 = this.crackT;
+    this.crackT += dt;
+    const h = this.host, ship = h.ship(), vfx = h.vfx();
+    const u = Math.min(1, this.crackT / SCENE5.crack);
+    const fx = Math.sin(ship.heading), fz = Math.cos(ship.heading);
+    const L = ship.cls.L, y = ship.model.group.position.y + ship.model.deckY + 0.4;
+    const bx = ship.x + fx * L * 0.5, bz = ship.z + fz * L * 0.5;
+    const cx = bx - fx * L * u, cz = bz - fz * L * u;
+    if (Math.floor(this.crackT / 0.05) !== Math.floor(t0 / 0.05)) {
+      // glühender Riss vom Bug bis zur Bruchstelle, Funkengarben und Holzsplitter an der Spitze, Glut im Spalt
+      vfx.bolt(bx, y, bz, cx, y, cz, C_WHITE, 0.45, 0.12, { depth: 4, branches: 1, jitter: 0.04 });
+      vfx.bolt(bx, y - 0.2, bz, cx, y - 0.2, cz, ADM_COL[Math.floor(this.crackT * 12) % 7], 0.3, 0.1, { depth: 3, branches: 0, jitter: 0.05 });
+      vfx.burst('spark', cx, y + 0.3, cz, 16, 12, C_FIRE, { up: 7, size: 0.5, life: 0.7 });
+      vfx.burst('splinter', cx, y, cz, 8, 9, C_SMOKE, { up: 6, size: 0.55, life: 2.2 });
+      vfx.burst('ember', cx, y + 0.5, cz, 6, 4, C_FIRE, { up: 3, size: 0.4, life: 1.2 });
+      this.scene5.crackFx++;
+    }
+    if (Math.floor(this.crackT / 0.4) !== Math.floor(t0 / 0.4)) audio.play('woodImpact', 0.8, { x: cx, y, z: cz });
+    if (u >= 1) { this.splitShip(); this.scene5.splitAt = this.director.state.sceneT; h.impact(2); }
+  }
+
+  /** Die Schwarze Krone teilt sich der Länge nach; das Meer ist schon bis auf den Grund gespalten */
   private splitShip() {
     const b = this.beam, h = this.host, ship = h.ship();
     if (b.split) return;
@@ -1231,14 +1301,11 @@ export class PrologueLive {
     if (!ship.split) ship.splitApart('length', 7);
     ship.fire = 0;
     ship.sinking = 0.02;
-    // Graben entlang der Schneise: vom Kern bis weit hinter das Heck
-    b.ax = b.x + b.dx * 20; b.az = b.z + b.dz * 20;
-    b.bx = b.x + b.dx * b.len; b.bz = b.z + b.dz * b.len;
-    b.trenchT = 0;
+    // Graben entlang der Schneise (seit dem Schuss offen): läuft jetzt bis weit hinter das Heck aus
+    if (b.trenchT < 0) { b.ax = b.x + b.dx * 20; b.az = b.z + b.dz * 20; b.bx = b.ax; b.bz = b.az; b.trenchT = 0; }
     if (this.seabed) {
       this.seabed.position.set(b.ax, 0, b.az);
       this.seabed.rotation.y = Math.atan2(b.dx, b.dz);
-      this.seabed.scale.set(1, 1, Math.max(0.2, Math.hypot(b.bx - b.ax, b.bz - b.az) / 620));
     }
     h.impact(2);
     h.shake(1);
@@ -1682,8 +1749,31 @@ export class PrologueLive {
   /** Eigene Fahrten: Strahl-Ritt, Fall, Admirals-Schnitte, Sinken, Ego-Sicht, Aufstehen */
   private dynamicCam(id: string, cam: PerspectiveCamera): boolean {
     const h = this.host, ship = h.ship();
-    void cam;
     switch (id) {
+      case 's5_spalt': {
+        // 4.9 Stufe 1: seitlich über der Spalte – man sieht, wie sich das Meer hinter dem Strahlkopf Schritt für Schritt bis auf den Grund öffnet
+        const head = this.beamHead(_w);
+        const b = this.beam;
+        const k = portraitPull(cam.aspect);
+        const back = (34 + this.shotT * 6) * k;
+        this.camPos.set(head.x - b.dx * back + b.dz * 74 * k, h.waterY(head.x, head.z) + 30 * k, head.z - b.dz * back - b.dx * 74 * k);
+        this.camLook.set(head.x - b.dx * 18, h.waterY(head.x, head.z) - 14, head.z - b.dz * 18);
+        this.fov = 58;
+        return true;
+      }
+      case 's5_bruch': {
+        // 4.9 Stufe 2: tief an der Bordwand, die Kamera fährt mit der Bruchstelle von Bug bis Heck
+        const fx = Math.sin(ship.heading), fz = Math.cos(ship.heading);
+        const u = this.crackT < 0 ? 0 : Math.min(1, this.crackT / SCENE5.crack);
+        const L = ship.cls.L;
+        const cx = ship.x + fx * L * (0.5 - u), cz = ship.z + fz * L * (0.5 - u);
+        const k = portraitPull(cam.aspect);
+        const side = 30 * k, rx = Math.cos(ship.heading), rz = -Math.sin(ship.heading);
+        this.camPos.set(cx + rx * side + fx * 12 * k, h.waterY(cx, cz) + 7.5 * (0.5 + 0.5 * k), cz + rz * side + fz * 12 * k);
+        this.camLook.set(cx, ship.model.group.position.y + ship.model.deckY + 1, cz);
+        this.fov = 50;
+        return true;
+      }
       case 's5_ritt': {
         // direkt hinter dem Kopf des Strahls, mitten durch die Schwarze Krone von Bug bis Heck
         const head = this.beamHead(_w);
@@ -1700,7 +1790,7 @@ export class PrologueLive {
         // außenbords auf der Fallseite: die Figur stürzt vor den auseinanderbrechenden Hälften auf die Kamera zu
         const ox = Math.sin(this.fall.yaw), oz = Math.cos(this.fall.yaw);
         const a = this.shotT * 0.1;
-        const under = this.fall.splashed && this.director.state.sceneT > 16.4;
+        const under = this.fall.splashed && this.director.state.sceneT > SCENE5.dive;
         const cx = px + ox * 9 + Math.cos(this.fall.yaw) * (3 + a * 6), cz = pz + oz * 9 - Math.sin(this.fall.yaw) * (3 + a * 6);
         this.camPos.set(cx, under ? py + 0.6 : Math.max(h.waterY(cx, cz) + 0.9, py + 0.8), cz);
         this.camLook.set(px, py + 0.3, pz);

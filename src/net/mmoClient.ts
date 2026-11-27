@@ -4,7 +4,8 @@
 // nur bei Ereignissen (neuer Mitspieler, Chatzeile, Gruppenwechsel).
 import {
   MMO, MMO_PROTOCOL, copyState, newPlayerState, newProfile,
-  type ClientIntent, type InspectInfo, type LootItemNet, type PartyView, type RollChoice, type RollView, type PlayerProfile, type PlayerState, type ServerMsg, type ShareKind, type VitalEntry,
+  type ActNet, type ClientIntent, type EntKillNet, type EntNet, type EntSpawnNet, type EntStateNet, type InspectInfo, type LootItemNet, type PartyView, type RollChoice, type RollView,
+  type PlayerProfile, type PlayerState, type ServerMsg, type ShareKind, type VitalEntry,
 } from './mmoProtocol';
 import type { MmoTransport } from './mmoTransport';
 import { SnapshotBuffer, newInterpOut, type InterpOut } from './snapshotBuffer';
@@ -27,6 +28,18 @@ export interface RemotePlayer {
 }
 
 export interface PendingInvite { party: string; from: string; name: string; level: number; team: string; until: number; total: number }
+
+/**
+ * 4.9: ein geteilter Gegner beim Client: jüngster Stand aus dem Schnappschuss plus die vorige Probe für eine weiche Bewegung
+ * (`ClientEnt.view` = Lage zur Darstellung, je Bild über `sampleEnt`)
+ */
+export interface ClientEnt extends EntNet {
+  /** vorige Probe (Lage, Kurs) und die Shard-Zeiten beider Proben */
+  px: number; pz: number; ph: number; t0: number; t1: number;
+  /** zuletzt im Schnappschuss (Client-Uhr) */
+  seenAt: number;
+  readonly view: { x: number; z: number; hdg: number };
+}
 export interface PartyWarn { until: number; a: string; b: string; ids: string[]; fight: boolean }
 
 export interface MmoClientHooks {
@@ -50,6 +63,16 @@ export interface MmoClientHooks {
   /** /anbord bzw. /vonbord: die Welt entscheidet, ob und wo (Deck-Platz) */
   onRideRequest?(): void;
   onUnrideRequest?(): void;
+  /** 4.9: geteilte Gegner – Kennung vergeben, Treffer eines Mitspielers (beim Besitzer), Abschuss mit Gutschrift, Übernahme, verschwunden */
+  onEntClaimed?(key: string, id: string): void;
+  onEntHit?(id: string, from: string, dmg: number, ammo: string, zone: 'hull' | 'sail', pen: number): void;
+  onEntKill?(kill: EntKillNet): void;
+  onEntOwn?(e: EntNet): void;
+  onEntGone?(id: string): void;
+  /** 4.9: ein geteilter Gegner trifft das eigene Schiff */
+  onEntHitMe?(id: string, name: string, dmg: number, pen: number): void;
+  /** 4.9: Kampf-Aktion eines Mitspielers zur Darstellung */
+  onAct?(from: string, a: ActNet): void;
 }
 
 const lower = (s: string) => s.toLocaleLowerCase('de-DE');
@@ -81,7 +104,11 @@ export class MmoClient {
   /** 4.8B: offene Würfel-Karten (Uhr des Clients; `choice` = eigene Wahl, '' = noch offen) */
   readonly rolls: (RollView & { until: number; choice: RollChoice | '' })[] = [];
   /** Zahlen für Prüfungen */
-  readonly stats = { snaps: 0, chat: 0, states: 0 };
+  readonly stats = { snaps: 0, chat: 0, states: 0, ents: 0, acts: 0, kills: 0 };
+  /** 4.9: geteilte Gegner im Interessenbereich (Kennung → Stand) und als Liste */
+  readonly ents = new Map<string, ClientEnt>();
+  readonly entList: ClientEnt[] = [];
+  private readonly estate: { k: 'estate'; list: EntStateNet[] } = { k: 'estate', list: [] };
 
   constructor(
     readonly transport: MmoTransport,
@@ -104,6 +131,7 @@ export class MmoClient {
     this.transport.onMessage = null;
     this.transport.close();
     this.remotes.clear(); this.list.length = 0; this.party = null; this.vitals.clear(); this.invite = null; this.warn = null; this.welcomed = false; this.rolls.length = 0;
+    this.ents.clear(); this.entList.length = 0;
   }
 
   /** Je Logikschritt: eigenen Zustand senden (15 Hz), Einladung ablaufen lassen, verschwundene Mitspieler vergessen */
@@ -131,6 +159,11 @@ export class MmoClient {
     for (let i = this.list.length - 1; i >= 0; i--) {
       const r = this.list[i];
       if (!r.live && now - r.seenAt > 30) { this.list.splice(i, 1); this.remotes.delete(r.id); }
+    }
+    // 4.9: geteilte Gegner, die länger nicht im Schnappschuss standen (außer Reichweite, verschwunden), vergessen
+    for (let i = this.entList.length - 1; i >= 0; i--) {
+      const e = this.entList[i];
+      if (now - e.seenAt > 4) { this.entList.splice(i, 1); this.ents.delete(e.id); this.hooks.onEntGone?.(e.id); }
     }
   }
 
@@ -198,6 +231,19 @@ export class MmoClient {
         break;
       }
       case 'ride': this.hooks.onRide?.(m.ok, m.ship, m.text); break;
+      case 'eclaimed': this.hooks.onEntClaimed?.(m.key, m.id); break;
+      case 'ents': this.onEnts(m.t, m.list); break;
+      case 'ehit': this.hooks.onEntHit?.(m.id, m.from, m.dmg, m.ammo, m.zone, m.pen); break;
+      case 'ekill': this.stats.kills++; this.hooks.onEntKill?.(m.kill); break;
+      case 'eown': this.onEnts(this.transport.now(), [m.e]); this.hooks.onEntOwn?.(m.e); break;
+      case 'egone': {
+        const e = this.ents.get(m.id);
+        if (e) { this.ents.delete(m.id); const i = this.entList.indexOf(e); if (i >= 0) this.entList.splice(i, 1); }
+        this.hooks.onEntGone?.(m.id);
+        break;
+      }
+      case 'ehitme': this.hooks.onEntHitMe?.(m.id, m.name, m.dmg, m.pen); break;
+      case 'act': this.stats.acts++; this.hooks.onAct?.(m.from, m.a); break;
       case 'notice': this.system(m.text); this.hooks.onNotice?.(m.text, m.tone); break;
       case 'pong': break;
       case 'online': this.onlineCount = m.n; break;
@@ -223,6 +269,38 @@ export class MmoClient {
       r.seq = seq; r.live = true; r.seenAt = now;
     }
     for (const r of this.list) if (r.seq !== seq) r.live = false;
+  }
+
+  /** 4.9: Schnappschuss der geteilten Gegner (Einträge werden wiederverwendet, die vorige Probe bleibt für die Interpolation) */
+  private onEnts(t: number, list: readonly EntNet[]) {
+    this.stats.ents++;
+    const now = this.clock();
+    for (const n of list) {
+      let e = this.ents.get(n.id);
+      if (!e) {
+        e = { ...n, look: { ...n.look, evo: [n.look.evo[0], n.look.evo[1], n.look.evo[2]] }, px: n.x, pz: n.z, ph: n.hdg, t0: t - 1 / MMO.entHz, t1: t, seenAt: now, view: { x: n.x, z: n.z, hdg: n.hdg } };
+        this.ents.set(n.id, e);
+        this.entList.push(e);
+        continue;
+      }
+      e.px = e.x; e.pz = e.z; e.ph = e.hdg; e.t0 = e.t1; e.t1 = t;
+      e.x = n.x; e.z = n.z; e.hdg = n.hdg; e.spd = n.spd; e.hp = n.hp; e.mhp = n.mhp; e.dis = n.dis;
+      e.owner = n.owner; e.aggro = n.aggro; e.dead = n.dead; e.tier = n.tier; e.role = n.role; e.level = n.level; e.name = n.name;
+      e.seenAt = now;
+    }
+  }
+
+  /** 4.9: Lage eines geteilten Gegners zur Darstellung (Shard-Uhr minus Verzug, zwischen den beiden letzten Proben, kurz darüber hinaus) */
+  sampleEnt(e: ClientEnt, now = this.transport.now()): ClientEnt['view'] {
+    const span = Math.max(1e-3, e.t1 - e.t0);
+    const k = Math.min(1.5, Math.max(0, (now - MMO.interpDelay - e.t0) / span));
+    e.view.x = e.px + (e.x - e.px) * k;
+    e.view.z = e.pz + (e.z - e.pz) * k;
+    let dh = e.hdg - e.ph;
+    while (dh > Math.PI) dh -= Math.PI * 2;
+    while (dh < -Math.PI) dh += Math.PI * 2;
+    e.view.hdg = e.ph + dh * Math.min(1, k);
+    return e.view;
   }
 
   private onParty(ev: Extract<ServerMsg, { k: 'party' }>['ev']) {
@@ -362,6 +440,29 @@ export class MmoClient {
     this.transport.send({ k: 'roll', id, choice });
     this.hooks.onRolls?.();
   }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // 4.9: geteilte Gegner und Kampf-Aktionen
+  // ---------------------------------------------------------------------------------------------------------------
+
+  /** Eigenen Gegner teilen (Antwort: `onEntClaimed`) */
+  claimEnt(e: EntSpawnNet) { if (this.online) this.transport.send({ k: 'eclaim', e }); }
+  /** Lage und Leben der eigenen geteilten Gegner (die Liste wird nur gelesen) */
+  reportEnts(list: readonly EntStateNet[]) {
+    if (!this.online || !list.length) return;
+    this.estate.list = list as EntStateNet[];
+    this.transport.send(this.estate);
+  }
+  /** Treffer auf einen geteilten Gegner (`applied` = schon beim Besitzer verrechnet) */
+  hitEnt(id: string, dmg: number, applied: boolean, ammo = 'kugel', zone: 'hull' | 'sail' = 'hull', pen = 3) { if (this.online && dmg > 0) this.transport.send({ k: 'ehit', id, dmg, ammo, zone, pen, applied }); }
+  /** Eigener geteilter Gegner ist untergegangen */
+  entDead(id: string, by: string) { if (this.online) this.transport.send({ k: 'edead', id, by }); }
+  /** Eigenen geteilten Gegner abgeben (zu weit weg) */
+  releaseEnt(id: string) { if (this.online) this.transport.send({ k: 'erelease', id }); }
+  /** Eigener geteilter Gegner trifft das Schiff eines Mitspielers */
+  entPlayerHit(id: string, to: string, dmg: number, pen: number) { if (this.online && dmg > 0) this.transport.send({ k: 'ephit', id, to, dmg, pen }); }
+  /** Kampf-Aktion zur Darstellung bei den Mitspielern */
+  act(a: ActNet) { if (this.online) this.transport.send({ k: 'act', a }); }
 
   inParty(id: string): boolean { return !!this.party?.members.some((m) => m.id === id); }
   /** Uhr des Clients (s) – Grundlage der Würfel-Fristen */

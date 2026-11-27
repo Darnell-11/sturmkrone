@@ -68,6 +68,10 @@
   --target-neutral: #eac54c;
   --target-friendly: #4fd58c;
   --target-npc: #5ba9f2;
+  /* 4.9: Gruppenmitglieder – Namensschild, Ring, Kartenzeichen (gleiche Werte wie PARTY_COLORS in data/partyMarks.ts) */
+  --party-emerald: #2ee6a8;
+  --party-turquoise: #5ff2e0;
+  --party-deep: #0b3b33;
 
   /* ---------- Seltenheit (gleiche Farben wie data/rarity.ts) ---------- */
   --rar-gewoehnlich: #9a9a9a;

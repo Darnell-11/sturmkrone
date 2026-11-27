@@ -10,6 +10,7 @@ export const ACTION_IDS = [
   'art1', 'art2', 'art3', 'art4', 'art5', 'art6', 'art7', 'art8', 'art9', 'art10',
   'formPage',
   'geist1', 'geist2', 'geist3', 'geist4',
+  'helmGeist1', 'helmGeist2', 'helmGeist3', 'helmGeist4',
   'awaken', 'aura',
   'potion', 'map', 'skills', 'talents', 'quests', 'talk', 'inventory',
   'item1', 'item2', 'item3', 'item4',
@@ -52,6 +53,10 @@ export const ACTION_LABELS: Record<ActionId, string> = {
   art9: 'Form 9',
   art10: 'Form 10',
   formPage: 'Formen 1–5 ↔ 6–10 (Leiste umschalten)',
+  helmGeist1: 'Geistes-Faji am Steuer: Willens-Entfesselung',
+  helmGeist2: 'Geistes-Faji am Steuer: Lebensstrom-Fokus',
+  helmGeist3: 'Geistes-Faji am Steuer: Erwachter Wille',
+  helmGeist4: 'Geistes-Faji am Steuer: Königsdruck',
   geist1: 'Geistes-Faji: Willens-Entfesselung',
   geist2: 'Geistes-Faji: Lebensstrom-Fokus',
   geist3: 'Geistes-Faji: Erwachter Wille',
@@ -123,6 +128,12 @@ export const DEFAULT_KEYS: Record<ActionId, string[]> = {
   geist2: ['KeyR'],
   geist3: ['KeyT'],
   geist4: ['KeyG'],
+  // 4.9: am Steuerrad gehören Q/E den Breitseiten, R der Aktion, G dem Flicken – die Geistes-Faji liegen dort auf Umschalt + Q/R/T/G (kurz nach
+  // Umschalt gedrückt; wer Umschalt für den Schub hält, feuert mit Q weiter die Breitseite)
+  helmGeist1: ['Shift+KeyQ'],
+  helmGeist2: ['Shift+KeyR'],
+  helmGeist3: ['Shift+KeyT'],
+  helmGeist4: ['Shift+KeyG'],
   // Sturm-Erwachen bei voller Willenskraft, im Erwachen das Ultimate des Stils (seit 4.6B); Aura reihum
   awaken: ['KeyV'],
   aura: ['KeyB'],
@@ -146,10 +157,10 @@ export const DEFAULT_KEYS: Record<ActionId, string[]> = {
   assist2: ['Digit9'],
   assist3: ['Digit0'],
   repair: ['KeyG'],
-  // Flottenbefehle auf See: 5, 6, 7 neben den Gütern 1–4 (die Truppenbefehle teilen sich 1–3 nur an Land)
-  fleetHold: ['Digit5'],
-  fleetAttack: ['Digit6'],
-  fleetRally: ['Digit7'],
+  // Flottenbefehle auf See auf denselben Tasten wie die Truppenbefehle zu Fuß: 6, 7, Z (4.9: 1 – 5 gehören auch am Steuer den Formen)
+  fleetHold: ['Digit6'],
+  fleetAttack: ['Digit7'],
+  fleetRally: ['KeyZ'],
   pause: ['Escape', 'KeyP'],
 };
 
@@ -189,6 +200,10 @@ export const DEFAULT_PAD: Record<ActionId, number[]> = {
   art9: [],
   art10: [],
   formPage: [],
+  helmGeist1: [],
+  helmGeist2: [],
+  helmGeist3: [],
+  helmGeist4: [],
   geist1: [],
   geist2: [],
   geist3: [],
@@ -259,6 +274,8 @@ export const sharesKey = (a: readonly string[], b: readonly string[]): boolean =
 export const ART_ACTIONS: readonly ActionId[] = ['art1', 'art2', 'art3', 'art4', 'art5', 'art6', 'art7', 'art8', 'art9', 'art10'];
 /** 4.7B: die vier Geistes-Faji-Kräfte (Q, R, T, G) */
 export const GEIST_ACTIONS: readonly ActionId[] = ['geist1', 'geist2', 'geist3', 'geist4'];
+/** 4.9: Geistes-Faji am Steuerrad (Umschalt + Q/R/T/G) */
+export const HELM_GEIST_ACTIONS: readonly ActionId[] = ['helmGeist1', 'helmGeist2', 'helmGeist3', 'helmGeist4'];
 
 /**
  * Belegt eine Kampfkunst die Taste einer Schnellleisten-Aktion? Zu Fuß ruht das Gut dann (die Kampfkunst gewinnt); null = frei.
@@ -289,7 +306,7 @@ export const ACTION_GROUPS: { id: string; label: string; actions: ActionId[] }[]
   // 4.7B: eine feste Klasse – kein Waffen- oder Stilwechsel mehr; zehn Formen und die Geistes-Faji
   { id: 'fight', label: 'Kampf', actions: ['attack', 'heavy', 'block', 'awaken', 'aura', 'skill1', 'skill2', 'skill3'] },
   { id: 'forms', label: 'Formen des Klassenbaums', actions: ['art1', 'art2', 'art3', 'art4', 'art5', 'art6', 'art7', 'art8', 'art9', 'art10', 'formPage'] },
-  { id: 'geist', label: 'Geistes-Faji', actions: ['geist1', 'geist2', 'geist3', 'geist4'] },
+  { id: 'geist', label: 'Geistes-Faji', actions: ['geist1', 'geist2', 'geist3', 'geist4', 'helmGeist1', 'helmGeist2', 'helmGeist3', 'helmGeist4'] },
   { id: 'sea', label: 'See', actions: ['fireLeft', 'fireRight', 'repair'] },
   { id: 'fleet', label: 'Flottenbefehle (See)', actions: ['fleetHold', 'fleetAttack', 'fleetRally'] },
   { id: 'troops', label: 'Truppenbefehle', actions: ['cmdSturm', 'cmdFollow', 'cmdHold'] },

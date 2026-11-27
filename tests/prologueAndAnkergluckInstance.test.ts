@@ -173,24 +173,27 @@ describe('4.7D PrologueDirector: sieben Szenen, Takt für Takt', () => {
     expect(ev[ev.length - 1].type).toBe('done');
   });
 
-  it('Szene 5: Aufladung der sieben Auren, Kern (Dolly-Zoom), Strahl-Ritt, Spaltung, Vogelperspektive in Zeitlupe, Engelsgesang, Sturz ins Wasser', () => {
+  it('Szene 5: Aufladung der sieben Auren, Kern (Dolly-Zoom), Strahl spaltet das Meer (Zeitlupe 1), Rumpfbruch (Zeitlupe 2), Vogelperspektive, Engelsgesang, Sturz ins Wasser', () => {
     const ev = run();
     const order = ev.filter((e) => e.scene === 5 && (e.type === 'fx' || e.type === 'shot')).map((e) => e.id);
-    for (const [a, b] of [['aufladung', 's5_kern'], ['s5_kern', 'strahl'], ['strahl', 'spaltung'], ['s5_ritt', 'spaltung'], ['spaltung', 's5_oben'], ['s5_oben', 'sturz'], ['sturz', 'eintauchen']]) {
+    for (const [a, b] of [['aufladung', 's5_kern'], ['s5_kern', 'strahl'], ['strahl', 's5_ritt'], ['s5_ritt', 'bruch'], ['bruch', 's5_oben'], ['s5_oben', 'sturz'], ['sturz', 'eintauchen']]) {
       expect(order.indexOf(a), `${a} vor ${b}`).toBeLessThan(order.indexOf(b));
     }
     expect(sceneT(ev, 5, 'fx', 'strahl')).toBeCloseTo(SCORE_SYNC.beam, 5);
-    expect(sceneT(ev, 5, 'shot', 's5_ritt')).toBeCloseTo(SCORE_SYNC.beam, 5);
+    expect(sceneT(ev, 5, 'shot', 's5_spalt')).toBeCloseTo(SCORE_SYNC.beam, 5);
+    expect(sceneT(ev, 5, 'fx', 'bruch')).toBeCloseTo(SCORE_SYNC.bow, 5);
     expect(sceneT(ev, 5, 'music', 'engel')).toBeCloseTo(SCORE_SYNC.engel, 5);
     expect(ev.find((e) => e.scene === 5 && e.type === 'music' && e.id === 'gegenangriff')?.v).toBe(0);
     for (const g of ['spektrum', 'tiefe']) expect(ev.some((e) => e.scene === 5 && e.type === 'grade' && e.id === g), g).toBe(true);
-    // Zeitlupe im Sturz, danach wieder Echtzeit
+    // 4.9: zwei Zeitlupen-Stufen (0,38× beim Spalten des Meeres, 0,25× beim Rumpfbruch), danach wieder Echtzeit
     const s = stepper();
-    s.until('urteil', 7.9);
+    s.until('urteil', 5.9);
     expect(s.d.timeScale).toBe(1);
+    s.until('urteil', 8.4);
+    expect(s.d.timeScale).toBeCloseTo(0.38, 2);
     s.until('urteil', 10);
-    expect(s.d.timeScale).toBeLessThan(0.4);
-    s.until('urteil', 18.8);
+    expect(s.d.timeScale).toBeCloseTo(0.25, 2);
+    s.until('urteil', 22.3);
     expect(s.d.timeScale).toBeGreaterThan(0.99);
   });
 

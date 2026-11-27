@@ -391,8 +391,20 @@ export class Ship {
    * Schaden mit Munitionsart; liefert den Rumpfschaden. `zone` 'sail' = die Kugel traf das Tuch (Segel-HP sinken, Rumpf kaum),
    * 'hull' = Rumpf. Kettenkugeln zerfetzen Segel in beiden Zonen am stärksten.
    */
+  /**
+   * 4.9: Kopie eines geteilten Gegners (MMO): jeder Treffer geht roh (vor Panzerung) an den Shard, der Besitzer verrechnet ihn – hier ändert
+   * sich nichts am Leben (das kommt mit dem Schnappschuss). Gesetzt von `world/sharedEntities.ts`.
+   */
+  netHit: ((base: number, ammo: AmmoId, zone: 'hull' | 'sail', pen: number) => void) | null = null;
+
   damage(base: number, ammo: AmmoId, hitLocal: Vector3 | null, zone: 'hull' | 'sail' = 'hull', pen = 1): number {
     if (!this.alive || this.unsinkable) return 0;
+    if (this.netHit) {
+      if (base <= 0 || this.sinking > 0) return 0;
+      this.netHit(base, ammo, zone, pen);
+      // Rückmeldung (Zahl, Treffer-Effekt): geschätzter Rumpfschaden nach Panzerung und Munition
+      return zone === 'hull' ? Math.round(base * (1 - mitigation(this.hullArmor, pen)) * AMMO[ammo].hull) : 0;
+    }
     // Enterphase: ein weiterer Treffer ist der Gnadenstoß (bei Schiffen, die nie untergehen, wirkungslos: nur Entern)
     // (die ersten 2 s zählen nicht: Kugeln derselben Breitseite, die noch fliegen, sind kein neuer Treffer)
     if (this.disabled) return this.disabledFor < 2 ? 0 : finishingBlow(this.sim, this.noKill) ? base : 0;
@@ -416,6 +428,7 @@ export class Ship {
    */
   ramHit(base: number, armorPen: number | null, hitLocal: Vector3 | null): number {
     if (!this.alive || this.unsinkable || this.disabled) return 0;
+    if (this.netHit) { if (base > 0 && this.sinking <= 0) this.netHit(base, 'kugel', 'hull', armorPen === null ? 0 : Number.isFinite(armorPen) ? armorPen : 12); return Math.round(base * 0.8); }
     if (this.shield > 0) base *= 1 - this.shieldK;
     if (this.hitCap > 0 && base > this.hitCap) base = this.hitCap;
     if (armorPen !== null) base *= 1 - mitigation(this.hullArmor, armorPen);

@@ -15,9 +15,9 @@ describe('Tastenbelegung', () => {
   });
 
   it('Tasten teilen sich nur Aktionen, die nie gleichzeitig gelten (See und zu Fuß; Kampfkünste und Schnellleiste 1–4 nach festem Vorrang)', () => {
-    // 4.6A: zu Fuß gehören 1–4 den Formen (die Güter dort ruhen, Game.update), an Bord den Gütern. 4.7B: Form 5 zu Fuß, Flottenbefehl 5 auf See;
-    // Truppenbefehle (zu Fuß) auf 6/7 wie die Flottenbefehle (auf See); Geistes-Faji Q/G zu Fuß, Breitseite/Flicken auf See; R: Handlung vor Lebensstrom
-    const allowed = new Set(['fireLeft|geist1', 'fireRight|talk', 'art1|item1', 'art2|item2', 'art3|item3', 'art4|item4', 'art5|fleetHold', 'cmdSturm|fleetAttack', 'cmdFollow|fleetRally', 'geist2|interact', 'geist4|repair']);
+    // 4.6A: zu Fuß gehören 1–4 den Formen (die Güter dort ruhen, Game.update), an Bord den Gütern. 4.9: auch am Steuer liegen 1 – 5 auf den Formen;
+    // Truppenbefehle (zu Fuß) und Flottenbefehle (auf See) teilen sich 6/7/Z; Geistes-Faji Q/G zu Fuß, Breitseite/Flicken auf See; R: Handlung vor Lebensstrom
+    const allowed = new Set(['fireLeft|geist1', 'fireRight|talk', 'art1|item1', 'art2|item2', 'art3|item3', 'art4|item4', 'cmdSturm|fleetHold', 'cmdFollow|fleetAttack', 'cmdHold|fleetRally', 'geist2|interact', 'geist4|repair']);
     const seen = new Map<string, string>();
     for (const a of ACTION_IDS) for (const code of DEFAULT_KEYS[a]) {
       const other = seen.get(code);
@@ -71,7 +71,9 @@ describe('Tastenbelegung', () => {
   it('gemeinsame Tasten werden erkannt', () => {
     expect(sharesKey(DEFAULT_KEYS.item1, DEFAULT_KEYS.art1)).toBe(true);
     expect(sharesKey(DEFAULT_KEYS.item1, DEFAULT_KEYS.cmdSturm)).toBe(false);
-    expect(sharesKey(DEFAULT_KEYS.cmdSturm, DEFAULT_KEYS.fleetAttack)).toBe(true);
+    // 4.9: Truppen- und Flottenbefehle teilen sich 6/7/Z (zu Fuß bzw. auf See)
+    expect(sharesKey(DEFAULT_KEYS.cmdSturm, DEFAULT_KEYS.fleetHold)).toBe(true);
+    expect(sharesKey(DEFAULT_KEYS.cmdHold, DEFAULT_KEYS.fleetRally)).toBe(true);
     expect(sharesKey(['KeyZ'], DEFAULT_KEYS.cmdSturm)).toBe(false);
   });
 });

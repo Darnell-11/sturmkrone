@@ -137,7 +137,16 @@ export interface EnemyShip {
   boarded?: boolean;
   /** Schiff eines Welt-Ereignisses oder Handelskonvois (Phase 4.3C): die Seewelt (world/worldEventsLive.ts) führt es, die KI fährt nach `aiEvent` */
   ev?: EventShipLink;
+  /** 4.9: geteilter Gegner der MMO-Schicht (world/sharedEntities.ts) */
+  shared?: SharedLink;
 }
+
+/**
+ * 4.9: Verbindung eines Schiffs zum geteilten Gegner beim Shard: Kennung (leer, bis der Shard sie vergibt), eigener Schlüssel, Besitzer (steuert
+ * KI und Leben, meldet beides) oder Kopie (folgt dem Schnappschuss, ohne KI; Schaden geht über `Ship.netHit` an den Shard), Ziel der
+ * Aggro-Tabelle als Schiff in 3D (nur beim Besitzer), Untergang gemeldet
+ */
+export interface SharedLink { id: string; key: string; owner: boolean; aggro: Ship | null; dead: boolean }
 
 /** Was ein Ereignis-Schiff beim Erscheinen braucht (Klasse, Aussehen, Stufe, Ausbau, Rumpf, Verbindung zum Ereignis) */
 export interface EventShipSpec {
@@ -218,7 +227,13 @@ interface SpawnJob { it: Generator<SpawnYield, EnemyShip | null>; hunter: boolea
 export type SpawnYield = void | 'gpu' | 'wait';
 /** Textur-Upload der Grafikkarte (Renderer) */
 export interface TexUpload { ready(t: Texture): boolean; upload(t: Texture): boolean }
-interface Ball { mesh: Mesh; vel: Vector3; /** null: Kugel einer Küstenbatterie */ owner: Ship | null; dmg: number; ammo: AmmoId; life: number; trail: number }
+interface Ball {
+  mesh: Mesh; vel: Vector3; /** null: Kugel einer Küstenbatterie */ owner: Ship | null; dmg: number; ammo: AmmoId; life: number; trail: number;
+  /** 4.9: nur Darstellung (Breitseite eines Mitspielers bzw. seines Gegners): Einschlag zeigen, nichts verrechnen */
+  fake?: boolean;
+  /** 4.9: Pfeifen im Vorbeiflug schon gespielt */
+  whistled?: boolean;
+}
 
 /** Bauwerke, die Kugeln der eigenen Flotte treffen können (Seetor, Mauern, Batterien der Raid-Insel) */
 export interface BallTarget { hitBall(p: Vector3, dmg: number, ammo: AmmoId): boolean }
@@ -239,6 +254,10 @@ export interface NavalHooks {
   battleEnd?(r: BattleResult): void;
   /** 4.8A: Treffer des Spielers auf das Schiff eines Mitspielers (Spieler gegen Spieler): der Shard prüft und rechnet, nicht die eigene Welt */
   peerHit?(e: EnemyShip, dmg: number): void;
+  /** 4.9: ein eigener geteilter Gegner trifft das Schiff eines Mitspielers (der Shard reicht es weiter) */
+  entPeerHit?(e: EnemyShip, playerId: string, dmg: number): void;
+  /** 4.9: eine Breitseite bzw. ein Bugschuss wurde abgefeuert (Spieler oder KI): Übertragung an die Mitspieler */
+  volley?(ship: Ship, side: number, n: number, tx: number, tz: number, bow: boolean): void;
 }
 
 
@@ -366,6 +385,8 @@ export class NavalSystem {
   /** Verzögerte Treffer in Spielzeit (stehen in der Pause still, anders als setTimeout) */
   private timers: { t: number; fn: () => void }[] = [];
   private later(sec: number, fn: () => void) { this.timers.push({ t: sec, fn }); }
+  /** 4.9: Aufgabe in Spielzeit planen (Kräfte am Steuer: Treffer, wenn die Projektion ankommt) */
+  schedule(sec: number, fn: () => void) { this.later(sec, fn); }
   /** Vorausschauende KI-Lenkung (Fühler, Wendekreis, Gefechts-Zustandsmaschine) */
   private readonly steering: PredictiveMaritimeSteering;
   /** Arbeitsliste der Steg-Abfrage (Broadphase) für `freeWater` */
@@ -541,6 +562,45 @@ export class NavalSystem {
       // gestaffelt in Spielzeit (setTimeout lief in der Pause weiter und feuerte auch nach dem Untergang)
       this.later((i * 40) / 1000, () => { if (ship.alive) this.spawnBall(w, vel, ship, dmg, ammo); });
     });
+    // 4.9: Übertragung an die Mitspieler (Ziel: angewähltes Schiff bzw. Punkt in Schussweite querab)
+    if (this.hooks.volley && n > 0) {
+      const tx = target ? target.x : ship.x + left.x * range, tz = target ? target.z : ship.z + left.z * range;
+      this.hooks.volley(ship, side, n, tx, tz, false);
+    }
+  }
+
+  /**
+   * 4.9: Breitseite eines Mitspielers bzw. seines geteilten Gegners darstellen (keine Wirkung): Kanonendonner, Mündungsfeuer, Pulverdampf,
+   * Kugeln mit Rauchspur zum Ziel, Einschlag am Schiff bzw. Wassersäule. `n` Kanonen (höchstens die Stückpforten der Seite).
+   */
+  remoteBroadside(ship: Ship, side: number, n: number, tx: number, tz: number) {
+    const all = side > 0 ? ship.model.muzzlesL : ship.model.muzzlesR;
+    if (!all.length) return;
+    const count = Math.max(1, Math.min(all.length, n));
+    audio.play('broadside', 0.85, { x: ship.x, z: ship.z });
+    ship.kick(side * (0.035 + Math.min(0.05, count * 0.006)));
+    ship.model.group.updateWorldMatrix(true, false);
+    for (let i = 0; i < count; i++) {
+      const m = all[Math.floor((i * all.length) / count)];
+      const w = m.clone().applyMatrix4(ship.model.group.matrixWorld);
+      const lo = count > 1 ? (i / (count - 1) - 0.5) * 8 : 0;
+      const ex = tx + Math.cos(ship.heading) * lo * 0.2, ez = tz - Math.sin(ship.heading) * lo * 0.2;
+      const dir = new Vector3(ex - w.x, 0, ez - w.z);
+      const r = Math.max(20, dir.length());
+      dir.normalize().applyAxisAngle(new Vector3(0, 1, 0), (Math.random() - 0.5) * 0.03);
+      const t = r / BALL_SPEED;
+      const vel = dir.multiplyScalar(BALL_SPEED).add(new Vector3(0, 0.5 * G * t - (w.y - 0.6) / t, 0));
+      this.later((i * 40) / 1000, () => { if (ship.alive) this.spawnBall(w, vel, ship, 0, 'kugel', true); });
+    }
+  }
+
+  /** 4.9: Bugschuss eines Mitspielers bzw. seines Gegners darstellen (keine Wirkung) */
+  remoteBow(ship: Ship, tx: number, tz: number) {
+    const yaw = Math.atan2(tx - ship.x, tz - ship.z);
+    const f = new Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+    audio.play('boom', 0.9, { x: ship.x, z: ship.z });
+    const from = new Vector3(ship.x, ship.model.deckY + 0.6, ship.z).addScaledVector(f, ship.cls.L / 2);
+    this.spawnBall(from, f.multiplyScalar(BALL_SPEED + ship.speed).setY(6), ship, 0, 'kugel', true);
   }
 
   /** Küstenbatterie feuert auf ein Schiff (mit Vorhalt, leichte Streuung); die Kugel gehört keinem Schiff */
@@ -663,14 +723,16 @@ export class NavalSystem {
     audio.play('boom', 1, { x: ship.x, z: ship.z });
     const from = new Vector3(ship.x, ship.model.deckY + 0.6, ship.z).addScaledVector(f, ship.cls.L / 2);
     this.spawnBall(from, f.multiplyScalar(BALL_SPEED + ship.speed).setY(6), ship, dmg * 0.8, ammo);
+    // 4.9: Übertragung an die Mitspieler (Ziel: 180 m voraus in Schussrichtung)
+    this.hooks.volley?.(ship, 0, 1, ship.x + Math.sin(yaw) * 180, ship.z + Math.cos(yaw) * 180, true);
   }
 
-  private spawnBall(pos: Vector3, vel: Vector3, owner: Ship | null, dmg: number, ammo: AmmoId) {
+  private spawnBall(pos: Vector3, vel: Vector3, owner: Ship | null, dmg: number, ammo: AmmoId, fake = false) {
     const mat = ammo === 'brand' ? this.fireMat : toon({ color: AMMO[ammo].color, spec: 1 });
     const m = new Mesh(this.ballGeo, mat);
     m.position.copy(pos);
     this.scene.add(m);
-    this.balls.push({ mesh: m, vel, owner, dmg, ammo, life: 6, trail: 0 });
+    this.balls.push({ mesh: m, vel, owner, dmg, ammo, life: 6, trail: 0, fake });
     // Mündungsfeuer
     const h = Math.hypot(vel.x, vel.z) || 1;
     const dx = vel.x / h, dz = vel.z / h;
@@ -1612,6 +1674,80 @@ export class NavalSystem {
     return cmd.turn;
   }
 
+  // ---------- 4.9: geteilte Gegner (MMO) ----------
+
+  /**
+   * Kopie eines geteilten Gegners über die Warteschlange bauen (Bild für Bild wie jedes neue Schiff). Sie fährt nach dem Schnappschuss, hat
+   * keine KI und zählt als Gegner in der Nähe (dann erzeugt dieser Client keine weiteren Schiffe dazu).
+   */
+  queueMirror(link: SharedLink, tier: number, look: ShipLook, evo: ShipEvolution, name: string, role: NavalRole, level: number, x: number, z: number, heading: number, hull: number, maxHull: number, done: (e: EnemyShip) => void) {
+    const self = this;
+    function* steps(): Generator<SpawnYield, EnemyShip | null> {
+      const t = Math.max(0, Math.min(SHIP_CLASSES.length - 1, tier));
+      const extra = Math.max(0, Math.round(maxHull - SHIP_CLASSES[t].hp));
+      const ship = yield* Ship.buildSteps(self.scene, t, look, look.power === 'marine' ? 'marine' : 'pirat', extra, false, evo);
+      yield* self.uploadSteps(ship);
+      ship.x = x; ship.z = z; ship.heading = heading;
+      ship.prev = { x, z, heading };
+      ship.maxHull = Math.max(1, maxHull);
+      ship.hull = Math.max(1, Math.min(ship.maxHull, hull));
+      const power = (look.power ?? undefined) as FactionId | undefined;
+      const e: EnemyShip = { ship, role, level, state: 'patrol', wander: { x, z }, aiT: 0, name, power, provoked: true, shared: link };
+      self.enemies.push(e);
+      return e;
+    }
+    this.spawnJobs.push({ it: steps(), done, hunter: false });
+  }
+
+  /** Treffer eines Mitspielers auf einen eigenen geteilten Gegner verrechnen (zählt wie ein Treffer des Spielers: Enterphase, Gnadenstoß) */
+  applyNetHit(e: EnemyShip, base: number, ammo: AmmoId, zone: 'hull' | 'sail', pen: number): number {
+    const s = e.ship;
+    if (!s.alive || s.sinking > 0) return 0;
+    e.provoked = true;
+    e.lastPlayerHit = this.clock;
+    if (e.state !== 'engage' && e.role !== 'haendler') e.state = 'engage';
+    const wasDisabled = s.disabled;
+    const dmg = s.damage(base, ammo, null, zone, pen);
+    const p = new Vector3(s.x, s.model.deckY + 1.5, s.z);
+    if (dmg > 0) {
+      this.overlay.number(p.clone().setY(p.y + 1.5), dmg, 'hit');
+      this.fx.hit(p, 'heavy', ammo === 'brand' ? '#FF7A2A' : '#FFD08A');
+    }
+    if (!wasDisabled && s.disabled) this.onDisabled(e, true);
+    if (!s.alive) this.sink(s);
+    return dmg;
+  }
+
+  /** 4.9: schwebende Schadenszahl über einem Schiff (Treffer eines Mitspielers auf einen geteilten Gegner) */
+  showNumber(x: number, y: number, z: number, n: number) { this.overlay.number(new Vector3(x, y, z), n, 'hit'); }
+
+  /** Kopie versenken (nur Darstellung: Wrack, Rauch, Gischt; keine Beute) */
+  sinkMirror(e: EnemyShip) {
+    const s = e.ship;
+    if (s.sinking > 0) return;
+    s.hull = 0;
+    this.sink(s);
+  }
+
+  /** Kopie zeigt die Enterphase (Masten knicken, Segel weg, Brand) */
+  disableMirror(e: EnemyShip) {
+    const s = e.ship;
+    if (s.disabled || s.sinking > 0) return;
+    s.enterPhase();
+    this.onDisabled(e, false);
+  }
+
+  /** Einschlag einer Darstellungs-Kugel: Krachen, Funken, Splitter, Rauch (ohne Zahl, ohne Schaden) */
+  private fakeImpact(s: Ship, b: Ball, sailHit: boolean) {
+    const p = b.mesh.position;
+    audio.play('crack', 0.8, p);
+    this.fx.hit(p.clone(), 'heavy', '#FFD08A');
+    this.sparks.emit(8, p.x, p.y, p.z, { speed: 6, up: 5, life: 0.9, color: new Color(0.55, 0.36, 0.2), gravity: 14, spread: 0.3 });
+    const h = Math.hypot(b.vel.x, b.vel.z) || 1;
+    this.debris?.splinters(p.x, p.y, p.z, b.vel.x / h, b.vel.z / h, sailHit ? 2 : 7, sailHit ? s.look.sail : s.look.hull);
+    this.smoke?.puff(p.x, p.y, p.z, { n: 2, size: 0.9, grow: 4.5, life: 2.4, tone: 0.55, vx: b.vel.x / h * 2, vz: b.vel.z / h * 2, spread: 0.8, rise: 0.8, alpha: 0.65 });
+  }
+
   // ---------- Schleife ----------
 
   update(dt: number, active: boolean) {
@@ -2030,6 +2166,9 @@ export class NavalSystem {
       let best = 260;
       for (const o of this.enemies) if (!o.companion && o.ship.alive && !o.ship.disabled && o.role !== 'haendler' && !(o.ev && this.peaceful(o))) { const d = Math.hypot(o.ship.x - s.x, o.ship.z - s.z); if (d < best) { best = d; target = o.ship; } }
     } else if (p?.alive && e.role !== 'haendler' && !this.peaceful(e)) target = p;
+    // 4.9: geteilter Gegner – die Aggro-Tabelle des Shards bestimmt das Ziel (das Schiff eines Mitspielers statt der eigenen Spielfigur)
+    const ag = e.shared?.owner ? e.shared.aggro : null;
+    if (ag && ag.alive && !ag.sinking && (target === p || (!target && e.role !== 'haendler' && e.provoked))) target = ag;
     const dist = target ? Math.hypot(target.x - s.x, target.z - s.z) : 9999;
 
     if (e.companion && !target && p) {
@@ -2300,6 +2439,8 @@ export class NavalSystem {
     if (s.disabled) { e.state = 'patrol'; s.sailLevel = 0; s.throttle = 0; s.aiSail = null; s.steer(dt, 0, this.env); return; }
     // 4.8A: Mitspieler-Schiffe fahren nach den Schnappschüssen des Shards (world/mmoLive.ts), nicht nach der KI
     if (e.peer?.mmo) { e.state = 'patrol'; return; }
+    // 4.9: Kopien geteilter Gegner ebenso (world/sharedEntities.ts); gesteuert wird beim Besitzer
+    if (e.shared && !e.shared.owner) { e.state = s.speed > 0.5 ? 'engage' : 'patrol'; return; }
     e.aiT -= dt;
     const nav = e.nav ?? (e.nav = createAiNav(s.entityId));
     // Schiffe einer Großschlacht (Armadas der FactionWarEngine) kämpfen wie in einer Seeschlacht, auch wenn sie sonst als Ereignis-Schiffe fahren
@@ -2340,6 +2481,9 @@ export class NavalSystem {
       b.mesh.position.addScaledVector(b.vel, dt);
       const p = b.mesh.position;
       if (b.ammo === 'brand' && Math.random() < dt * 30) this.sparks.emit(1, p.x, p.y, p.z, { speed: 0.3, up: 0.5, life: 0.4, color: new Color(3, 1.2, 0.3), gravity: -1, spread: 0.1 });
+      // 4.9: fremde Kugeln pfeifen, wenn sie dicht am eigenen Schiff vorbeifliegen (einmal je Kugel)
+      const pl = this.player;
+      if (!b.whistled && b.owner !== pl && pl && Math.abs(p.x - pl.x) < 32 && Math.abs(p.z - pl.z) < 32) { b.whistled = true; audio.play('ballWhistle', 0.8, p); }
       // feine Rauchspur hinter der Kugel
       b.trail -= dt;
       if (this.smoke && b.trail <= 0) {
@@ -2358,11 +2502,24 @@ export class NavalSystem {
         // 4.6J: Kugeln des Spielers durchfliegen verbündete Schiffe (Treffer-Prüfung `canHarm`; erst nach dem Treffertest, die Suche ist linear)
         if (b.owner === this.player && !this.harmableByPlayer(s)) continue;
         const sailHit = local.y > s.model.deckY + 2.5;
+        // 4.9: Darstellungs-Kugel (Breitseite eines Mitspielers): nur der Einschlag, der Schaden kommt über den Shard
+        if (b.fake) { this.fakeImpact(s, b, sailHit); b.life = 0; break; }
         this.hitShip(s, b, local, sailHit);
         b.life = 0;
         break;
       }
       // Raid: Kugeln der eigenen Flotte gegen Seetor, Mauern und Batterien
+      // 4.9: Darstellungs-Kugeln treffen nur Wasser (Wassersäule) – nie Bauwerke, Bosse oder Ziele
+      if (b.fake) {
+        if (b.life > 0 && p.y < this.env.heightAt(p.x, p.z)) {
+          b.life = 0;
+          audio.play('splash', 0.8, p);
+          this.spray.emit(22, p.x, p.y + 0.2, p.z, { speed: 1.2, up: 13, life: 1.5, color: new Color(0.95, 0.98, 1), spread: 0.6 });
+          this.spray.emit(14, p.x, p.y + 0.2, p.z, { speed: 5, up: 5, life: 1.1, color: new Color(0.9, 0.96, 1), spread: 0.8 });
+        }
+        if (b.life <= 0) b.mesh.removeFromParent();
+        continue;
+      }
       if (b.life > 0 && this.raidTargets && b.owner && (b.owner === this.player || this.enemies.some((e) => e.companion && e.ship === b.owner)) && this.raidTargets.hitBall(p, b.dmg, b.ammo)) b.life = 0;
       if (b.life > 0 && b.owner && this.bossTarget && this.friendly.has(b.owner) && this.bossTarget.hitTest(p)) {
         b.life = 0;
@@ -2421,7 +2578,10 @@ export class NavalSystem {
     // 4.8A: Treffer auf ein Mitspieler-Schiff rechnet der Shard (Spieler gegen Spieler); hier nur Rückmeldung und Darstellung
     const peerEn = b.owner === this.player ? this.enemies.find((o) => o.ship === s && !!o.peer?.mmo) : undefined;
     if (peerEn) this.hooks.peerHit?.(peerEn, base);
-    const dmg = peerEn ? Math.round(base) : s.damage(base, b.ammo, sailHit ? null : local, sailHit ? 'sail' : 'hull', b.owner?.penTier ?? 3);
+    // 4.9: Kugel eines eigenen geteilten Gegners auf ein Mitspieler-Schiff: der Shard reicht den Treffer an den Kapitän weiter
+    const aiPeer = b.owner && b.owner !== this.player ? this.enemies.find((o) => o.ship === s && !!o.peer?.mmo) : undefined;
+    if (aiPeer) { const sh = this.enemies.find((o) => o.ship === b.owner); if (sh?.shared?.owner && aiPeer.peer?.mmo) this.hooks.entPeerHit?.(sh, aiPeer.peer.mmo, base); }
+    const dmg = peerEn || aiPeer ? Math.round(base) : s.damage(base, b.ammo, sailHit ? null : local, sailHit ? 'sail' : 'hull', b.owner?.penTier ?? 3);
     const en2 = peerEn ? undefined : this.enemies.find((o) => o.ship === s);
     if (en2 && !wasDisabled && s.disabled) this.onDisabled(en2, b.owner === this.player);
     // Schiffe, die nie untergehen: weitere Treffer wirken nicht, der Hinweis kommt höchstens alle 8 s
@@ -2435,7 +2595,8 @@ export class NavalSystem {
       if (!s.alive) this.sink(s);
       return;
     }
-    audio.play('crack', 1, p);
+    // 4.9: Rumpftreffer krachen in Holz (Bruch, Splitter, dumpfer Stoß); Tuchtreffer bleiben ein trockenes Reißen
+    audio.play(sailHit ? 'crack' : 'woodImpact', 1, p);
     this.fx.hit(p, 'heavy', b.ammo === 'brand' ? '#FF7A2A' : '#FFD08A');
     this.sparks.emit(10, p.x, p.y, p.z, { speed: 6, up: 5, life: 0.9, color: new Color(0.55, 0.36, 0.2), gravity: 14, spread: 0.3 });
     // Holzsplitter fliegen in Schussrichtung weiter, dazu eine Staub- und Rauchwolke
@@ -2467,7 +2628,8 @@ export class NavalSystem {
     this.spray.emit(60, s.x, 1, s.z, { speed: 6, up: 10, life: 2, color: new Color(0.95, 0.98, 1), spread: s.cls.W });
     this.sparks.emit(50, s.x, s.model.deckY + 1, s.z, { speed: 9, up: 9, life: 1.2, color: new Color(3.5, 1.4, 0.35), gravity: 6, spread: s.cls.W });
     if (e?.fleetId) this.hooks.fleetLost?.(e.fleetId);
-    if (e && !e.companion && !e.stage) {
+    // 4.9: Kopie eines geteilten Gegners: Beute und Wertung kommen über den Shard (Abschuss mit Gutschrift)
+    if (e && !e.companion && !e.stage && !(e.shared && !e.shared.owner)) {
       // Seeschlacht: versenkt der Spieler beide Seiten, gibt es maximalen Doppel-Loot (×2,5); was die KI versenkt, zählt nicht als Abschuss des Spielers
       const byPlayer = e.lastPlayerHit !== undefined && this.clock - e.lastPlayerHit < 10;
       let lootK = 1;
@@ -2528,6 +2690,8 @@ export class NavalSystem {
     for (const e of this.enemies) {
       const s = e.ship;
       if (e.companion || !s.alive || s.sinking > 0) continue;
+      // 4.9: Kopien geteilter Gegner entert nur, wer sie steuert (der Besitzer); Mitspieler-Schiffe nie
+      if ((e.shared && !e.shared.owner) || e.peer) continue;
       if (!this.isWeak(e)) continue;
       const d = Math.hypot(s.x - p.x, s.z - p.z);
       if (d < (s.cls.L + p.cls.L) / 2 + 20 && d < bd) { bd = d; best = e; }
@@ -2555,6 +2719,51 @@ export class NavalSystem {
   }
 
   // ---------- Faji auf See ----------
+
+  // ---------- 4.9: Kräfte am Steuerrad (Formen, Geistes-Faji; Regeln in data/seaArts.ts, Darstellung in der Seewelt) ----------
+
+  /** Ziel einer Form am Steuer: das angewählte Schiff (wenn treffbar und in Reichweite), sonst das nächste treffbare Schiff */
+  pickArtTarget(range: number): EnemyShip | null {
+    const p = this.player;
+    if (!p) return null;
+    const at = this.aimTarget;
+    if (at && at.ship.alive && at.ship.sinking <= 0 && this.playerMayHarm(at) && Math.hypot(at.ship.x - p.x, at.ship.z - p.z) <= range) return at;
+    let best: EnemyShip | null = null, bd = range;
+    for (const e of this.enemies) {
+      const s = e.ship;
+      if (e.companion || e.fleetId || !s.alive || s.sinking > 0 || !this.playerMayHarm(e)) continue;
+      if (e.peer && !e.peer.mmo) continue;
+      const d = Math.hypot(s.x - p.x, s.z - p.z);
+      if (d < bd) { bd = d; best = e; }
+    }
+    return best;
+  }
+
+  /** Treffbare Schiffe im Umkreis (Beben, Willensdruck) – in `out` */
+  harmableAround(x: number, z: number, r: number, out: EnemyShip[]): EnemyShip[] {
+    out.length = 0;
+    for (const e of this.enemies) {
+      const s = e.ship;
+      if (e.companion || e.fleetId || !s.alive || s.sinking > 0 || !this.playerMayHarm(e)) continue;
+      if (e.peer && !e.peer.mmo) continue;
+      if (Math.hypot(s.x - x, s.z - z) <= r) out.push(e);
+    }
+    return out;
+  }
+
+  /** Treffer einer Kraft des Spielers auf ein Schiff (Zahl, Enterphase, Untergang; Mitspieler und geteilte Kopien über den Shard) */
+  artHit(e: EnemyShip, dmg: number): number {
+    if (!e.ship.alive || e.ship.sinking > 0) return 0;
+    if (e.peer?.mmo) { if (e.peer.harm) this.hooks.peerHit?.(e, dmg); return 0; }
+    const was = e.ship.disabled;
+    if (e.power && !e.provoked && !e.companion && !this.isTeamShip(e)) e.provoked = true;
+    const real = e.ship.damage(dmg, 'kugel', null, 'hull', this.player?.penTier ?? 3);
+    if (real > 0) this.overlay.number(new Vector3(e.ship.x, e.ship.model.deckY + 6, e.ship.z), real, 'crit');
+    e.lastPlayerHit = this.clock;
+    if (!was && e.ship.disabled) this.onDisabled(e, true);
+    if (!e.ship.alive) this.sink(e.ship);
+    return real;
+  }
 
   private nearest(range: number): EnemyShip | null {
     const p = this.player;

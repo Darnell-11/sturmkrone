@@ -75,13 +75,12 @@ describe('Rumpf: Farbe, Holz, Eisen, Panzer, Sporn, Heckgalerie', () => {
 });
 
 describe('Segel: Fläche, Tuch, Rahen, Takelage', () => {
-  it('Stufe 1 hat 72 % der Fläche, ab 2 die volle; Jollen nur mehr, Bramsegel und Besan ab 4, Bordüre ab 4 (5 doppelt)', () => {
+  it('Stufe 1 hat 72 % der Fläche, ab 2 die volle; keine Vorsegel, Bramsegel und Besan ab 4, Bordüre ab 4 (5 doppelt)', () => {
     for (const c of SHIP_CLASSES) {
       const v = TIERS.map((t) => shipVisual(c, evo(3, t, 3)).sail);
       expect(sailAreaK(v[0])).toBeCloseTo(0.72, 1);
       for (let i = 1; i < 5; i++) expect(sailAreaK(v[i])).toBe(1);
       for (let i = 1; i < 5; i++) {
-        expect(v[i].jibs, `${c.id} Stufe ${i + 1}`).toBeGreaterThanOrEqual(v[i - 1].jibs);
         expect(v[i].wear).toBeLessThan(v[i - 1].wear);
         expect(v[i].billow).toBeLessThan(v[i - 1].billow);                              // straffer
         expect(v[i].shrouds).toBeGreaterThanOrEqual(v[i - 1].shrouds);
@@ -92,7 +91,7 @@ describe('Segel: Fläche, Tuch, Rahen, Takelage', () => {
       expect(v[3].border!.double).toBe(false);
       expect(v[4].border!.double).toBe(true);
       expect(v.map((s) => s.tattered)).toEqual([true, true, true, false, false]);
-      expect(v[0].jibs).toBeGreaterThanOrEqual(1);
+      expect('jibs' in v[0]).toBe(false);                                             // 4.9: keine Vorsegel mehr
       expect(v[0].yardLifts).toBe(false);
       expect(v[1].yardLifts).toBe(true);
       expect(v[4].wear).toBe(0);
