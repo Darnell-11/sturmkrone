@@ -82,13 +82,16 @@ export class MmoAuthority {
   /** Zahlen für Prüfungen */
   readonly stats = { snaps: 0, chats: 0, invites: 0, parties: 0, removedByWar: 0 };
 
-  constructor(
-    private readonly diplo: DiplomacyOracle,
-    private readonly zones: ZoneOracle,
-    private readonly out: Outbox,
-    private readonly nationName: (team: string) => string = (t) => t || 'Ungebunden',
-    readonly shard = 'Bernsteinsee 1',
-  ) {}
+  private readonly diplo: DiplomacyOracle;
+  private readonly zones: ZoneOracle;
+  private readonly out: Outbox;
+  private readonly nationName: (team: string) => string;
+  readonly shard: string;
+
+  // ohne Parameter-Eigenschaften: der Relay-Server (`server/mmoRelayServer.mjs`) lädt diese Datei in Node mit reinem Typen-Abstreifen
+  constructor(diplo: DiplomacyOracle, zones: ZoneOracle, out: Outbox, nationName: (team: string) => string = (t) => t || 'Ungebunden', shard = 'Bernsteinsee 1') {
+    this.diplo = diplo; this.zones = zones; this.out = out; this.nationName = nationName; this.shard = shard;
+  }
 
   // ---------------------------------------------------------------------------------------------------------------
   // Spieler kommen und gehen
@@ -157,6 +160,8 @@ export class MmoAuthority {
       case 'hit': this.hit(p, i.to, i.dmg, t); break;
       case 'ping': if (!p.bot) this.out(p.id, { k: 'pong', t: i.t, st: t }); break;
       case 'bye': this.leave(p.id, t); break;
+      // nur für den Relay-Server (Startbildschirm-Wächter, Diplomatie-Bericht): hier nichts zu tun
+      case 'watch': case 'diplo': break;
     }
   }
 

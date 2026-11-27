@@ -2,6 +2,7 @@
  * Installieren und Teilen: Sturmkrone ist eine Web-App (PWA). Einmal installiert, startet sie wie eine normale App
  * vom Startbildschirm, im Vollbild, auch ohne Internet, und aktualisiert sich selbst.
  */
+import { serverChoice, shareLink } from '../net/serverUrl';
 
 interface InstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -84,15 +85,15 @@ export function appDownload(): AppDownload | null {
   return null;
 }
 
-/** Link zum Spiel (ohne Entwicklungs-Parameter) */
+/** Link zum Spiel (ohne Entwicklungs-Parameter; 4.8.1: mit `?server=…`, wenn ein MMO-Server verbunden ist – Mitspieler landen dann dort) */
 export function gameUrl(): string {
-  if (isApp()) return 'https://darnell-11.github.io/sturmkrone/';
-  return location.origin + location.pathname;
+  const base = isApp() ? 'https://darnell-11.github.io/sturmkrone/' : location.origin + location.pathname;
+  return shareLink(base, serverChoice().url);
 }
 
 /** Spiel teilen: Teilen-Menü des Geräts (WhatsApp, Telegram …) oder Link in die Zwischenablage */
 export async function shareGame(): Promise<'shared' | 'copied' | 'failed'> {
-  const url = isApp() ? 'https://darnell-11.github.io/sturmkrone/' : gameUrl();
+  const url = gameUrl();
   const bridge = appBridge();
   if (bridge?.share) { bridge.share(`Spiel Sturmkrone – ein Anime-Piratenabenteuer, direkt im Browser oder als App auf Handy und PC: ${url}`); return 'shared'; }
   const data = { title: 'Sturmkrone', text: 'Spiel Sturmkrone – ein Anime-Piratenabenteuer, direkt im Browser oder als App auf Handy und PC:', url };

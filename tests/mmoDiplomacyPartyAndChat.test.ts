@@ -1002,7 +1002,9 @@ describe('4.8A Einbindung: Mitspieler ohne neue Shader, Peer-Schiffe nach Schnap
     const sea = readFileSync('src/world/seaWorld.ts', 'utf8');
     expect(sea).toMatch(/if \(this\.mmoLive\) \{ this\.mmoLive\.update\(dt\); this\.carryRider\(\); \}/);
     const game = readFileSync('src/core/game.ts', 'utf8');
-    expect(game).toMatch(/import\.meta\.env\.VITE_MMO_SERVER_URL/);
+    // 4.8.1: die Adresse kommt aus `serverChoice` (?server= > gemerkt > VITE_MMO_SERVER_URL)
+    expect(game).toMatch(/serverChoice\(\)\.url/);
+    expect(readFileSync('src/net/serverUrl.ts', 'utf8')).toMatch(/import\.meta\.env\?\.VITE_MMO_SERVER_URL/);
     expect(game).toMatch(/this\.mmoTick\(dt\);/);
   });
 });

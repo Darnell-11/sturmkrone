@@ -61,6 +61,7 @@ import type { IslandDef } from '../data/regions';
 import { stepText } from '../story/questSystem';
 import { drawMap } from './minimap';
 import { appDownload, gameUrl, installHelp, installWay, promptInstall, shareGame } from '../core/install';
+import { onlineBadge } from '../net/onlineStatus';
 import { audio } from '../audio/audio';
 import { FACTIONS, type FactionId } from '../data/factions';
 import { RAID_BOSSES } from '../raid/raidBosses';
@@ -148,6 +149,7 @@ export class Menus {
       else if (e.key === 'ArrowUp' && !(e.target instanceof HTMLInputElement)) { e.preventDefault(); this.moveFocus(-1); }
     });
     // Gamepad im Menü: Steuerkreuz/Stick = Auswahl, A = bestätigen, B = zurück
+    this.game.online.subscribe(() => this.paintOnline());
     this.game.input.onPadButton((b) => {
       if (this.screen.hidden) return;
       if (b === 12 || b === 14) this.moveFocus(-1);
@@ -274,6 +276,7 @@ export class Menus {
         <div class="title-menu panel">
           ${g.persistent ? '' : '<p class="warn">Dein Browser erlaubt kein dauerhaftes Speichern (z. B. privater Modus). Spielstände gehen beim Schließen verloren – nutze „Exportieren“.</p>'}
           ${g.detected.software ? GPU_HINT : ''}
+          ${this.onlineHtml()}
           <button class="primary" data-a="play" data-focus>Spielen</button>
           <button class="secondary" data-a="compendium">Item-Kompendium</button>
           <button class="secondary" data-a="settings">Einstellungen</button>
@@ -309,6 +312,26 @@ export class Menus {
       null,
       { clear: true, title: true },
     );
+  }
+
+  /** 4.8.1: Status-Badge „Server online · X Kapitäne“ bzw. „Lokal-Shard · X aktiv“ (Hinweis beim Darüberfahren oder Antippen) */
+  private onlineHtml(): string {
+    const v = onlineBadge(this.game.online.snapshot);
+    return `<div class="online-badge" data-online data-tone="${v.tone}" tabindex="0" role="status" aria-live="polite" aria-describedby="online-tip">
+      <span class="online-dot" aria-hidden="true"></span><span class="online-text">${esc(v.text)}</span><span class="online-info" aria-hidden="true">i</span>
+      <span class="online-tip" id="online-tip" role="tooltip">${esc(v.tip)}</span>
+    </div>`;
+  }
+
+  /** Badge live nachführen (nur Text und Ton, damit Fokus und Hinweis stehen bleiben) */
+  private paintOnline() {
+    const el = this.card.querySelector<HTMLElement>('[data-online]');
+    if (!el) return;
+    const v = onlineBadge(this.game.online.snapshot);
+    el.dataset.tone = v.tone;
+    const text = el.querySelector<HTMLElement>('.online-text'), tip = el.querySelector<HTMLElement>('.online-tip');
+    if (text && text.textContent !== v.text) text.textContent = v.text;
+    if (tip && tip.textContent !== v.tip) tip.textContent = v.tip;
   }
 
   // ---------- Spielstände ----------

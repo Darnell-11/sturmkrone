@@ -1,6 +1,9 @@
 import { TargetFrame } from '../ui/targetFrame';
 import { MmoClient, type PartyWarn, type PendingInvite } from '../net/mmoClient';
 import { createMmoTransport, type MmoTransport } from '../net/mmoTransport';
+import { OnlineStatus, mmoTabId } from '../net/onlineStatus';
+import { serverChoice } from '../net/serverUrl';
+import type { DiploPair } from '../net/mmoProtocol';
 import { MMO, newProfile, type InspectInfo, type PartyView, type PlayerProfile, type PlayerState, type ShareKind } from '../net/mmoProtocol';
 import { groupAllowed, rideSlot, safeZoneAt } from '../net/partyRules';
 import { safeZones } from '../social/safeZones';
@@ -146,7 +149,7 @@ import { convoyLoot, deliverConvoy } from '../world/tradeConvoys';
 import { rollWorldBossLoot } from '../naval/worldBosses';
 import { compassWord } from '../naval/battleRules';
 import { CAMPAIGNS, COMMANDER_BY_ID, OPEN_HORIZON, flagshipName } from '../data/campaigns';
-import { PLEDGE_STANDING, TEAM_PITCH, councilCards, newAllegiance, pledge, type AllegianceSave } from '../data/allegiance';
+import { PLEDGE_STANDING, TEAM_IDS, TEAM_PITCH, councilCards, newAllegiance, pledge, type AllegianceSave } from '../data/allegiance';
 import { WAR_QUEST, WAR_QUEST_LABEL, WarQuestDirector, cleanWarQuests, newWarQuestState, type WarQuest, type WarQuestEvent, type WarQuestKind, type WarQuestReward } from '../story/warQuests';
 import { RadioBanner } from '../ui/radioBanner';
 import type { SeaEventNews } from '../world/worldEventsLive';
@@ -272,6 +275,12 @@ export class Game {
   private playerMenuUi!: PlayerMenuUi;
   private inspectUi!: InspectPanel;
   private mmoUiT = 0;
+  /** 4.8.1: Diplomatie an den Relay-Server melden (s bis zum nächsten Bericht) */
+  private diploT = 0;
+  private diploKey = '';
+  private diploCheck = 0;
+  /** 4.8.1: Live-Zähler für den Startbildschirm (Server- oder Lokal-Shard), läuft die ganze Seite über */
+  readonly online = new OnlineStatus(serverChoice(), mmoTabId());
   /** zuletzt gemeldeter Steckbrief (Vergleich ohne neue Zeichenketten) */
   private readonly mmoKey = { level: -1, team: '', spec: '', ship: -1, gear: -1, name: '' };
   private readonly partyRows: PartyFrameView[] = [];
@@ -324,6 +333,7 @@ export class Game {
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement, deferWorld = false) {
     this.worldPending = deferWorld;
     this.uiRoot = uiRoot;
+    this.online.start();
     const { store, persistent } = browserStore();
     this.persistent = persistent;
     this.settings = new SettingsStore(store);
@@ -6165,19 +6175,7 @@ export class Game {
   // ---------- 4.8A: MMO-Schicht (Mitspieler, Gruppen, Chat, Rechtsklick-Menü) ----------
 
   /** Kennung dieses Tabs im Shard (bleibt beim Neuladen gleich) */
-  private mmoTabId(): string {
-    try {
-      const k = 'sk-mmo-id';
-      let id = sessionStorage.getItem(k) ?? '';
-      if (!/^p:[a-z0-9]{6,16}$/.test(id)) {
-        const a = new Uint32Array(2);
-        crypto.getRandomValues(a);
-        id = `p:${a[0].toString(36)}${a[1].toString(36)}`.slice(0, 14);
-        sessionStorage.setItem(k, id);
-      }
-      return id;
-    } catch { return `p:${Math.floor(Math.random() * 1e9).toString(36)}`; }
-  }
+  private mmoTabId(): string { return mmoTabId(); }
 
   /**
    * 4.8A: Chat und Gruppenfenster nach Bedienart legen – zu Fuß am Fuß der linken Mitte (über der Kampfleiste), auf See neben dem Steuerkompass
@@ -6200,7 +6198,9 @@ export class Game {
     const id = this.mmoTabId();
     const war = () => this.world.war;
     const nation = (t: string) => (t && FACTIONS[t as FactionId] ? FACTIONS[t as FactionId].name : 'Ungebunden');
-    const url = (import.meta.env.VITE_MMO_SERVER_URL as string | undefined) ?? '';
+    // 4.8.1: `?server=wss://…` in der Adresse (gemerkt) vor `VITE_MMO_SERVER_URL`; ohne Adresse der lokale Shard
+    const url = serverChoice().url;
+    this.diploT = 0; this.diploKey = ''; this.diploCheck = 0;
     this.mmoTransport = createMmoTransport(url, {
       id,
       diplomacy: { stance: (a, b) => war()?.partyStance(a || null, b || null) ?? (a && a === b ? 'gleich' : 'neutral') },
@@ -6264,6 +6264,7 @@ export class Game {
     if (!shared) { this.stopMmo(); return; }
     if (!live) return;
     this.mmo.update(dt);
+    this.reportDiplomacy(dt);
     this.mmoUiT -= dt;
     if (this.mmoUiT > 0) return;
     this.mmoUiT = 0.125;
@@ -6282,6 +6283,27 @@ export class Game {
     if (inv) this.promptUi.tickInvite((inv.until - performance.now() / 1000) / Math.max(1, inv.total));
     const w = this.mmo.warn;
     if (w) this.promptUi.showWarn(this.warnText(w), w.until - performance.now() / 1000, w.fight);
+  }
+
+  /**
+   * 4.8.1: Am Relay-Server gibt es keine Welt-KI – jeder Client meldet die Haltung der fünf Mächte aus seiner `FactionWarEngine`, der Server
+   * nimmt die des am längsten verbundenen Kapitäns (wie der älteste Tab im lokalen Shard). Bei Änderung sofort, sonst alle 10 s.
+   */
+  private reportDiplomacy(dt: number) {
+    if (this.mmoTransport?.kind !== 'websocket' || this.mmoTransport.status !== 'online') return;
+    const war = this.world.war;
+    if (!war) return;
+    // nur einmal je Sekunde nachsehen (keine Listen je Logikschritt); Bericht bei Änderung oder spätestens nach 10 s
+    this.diploT -= dt;
+    this.diploCheck -= dt;
+    if (this.diploCheck > 0) return;
+    this.diploCheck = 1;
+    const pairs: DiploPair[] = [];
+    for (let i = 0; i < TEAM_IDS.length; i++) for (let j = i + 1; j < TEAM_IDS.length; j++) pairs.push({ a: TEAM_IDS[i], b: TEAM_IDS[j], s: war.stateOf(TEAM_IDS[i], TEAM_IDS[j]) });
+    const key = pairs.map((p) => p.s[0] + p.s[1]).join('');
+    if (key === this.diploKey && this.diploT > 0) return;
+    this.diploKey = key; this.diploT = 10;
+    this.mmoTransport.send({ k: 'diplo', pairs });
   }
 
   /** Steckbrief des eigenen Kapitäns für den Shard */

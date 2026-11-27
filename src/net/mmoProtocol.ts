@@ -6,6 +6,7 @@
 // über einen echten WebSocket-Server (`WebSocketMmoTransport`, `VITE_MMO_SERVER_URL`), dessen Logik `MmoAuthority` ist – das Spiel merkt den
 // Unterschied nicht. Alles, was von außen kommt, läuft durch `cleanIntent` (Server) bzw. `cleanServerMsg` (Client): fremde Werte werden
 // verworfen, Zahlen begrenzt, Texte gesäubert.
+import type { DiplomacyState } from '../data/nations';
 import type { PartyStance } from './partyRules';
 import { PARTY_STANCES } from './partyRules';
 
@@ -40,6 +41,8 @@ export const MMO = {
    *  bleiben bis `shipHide` (wie die übrigen Live-Schiffe der Welt, 1 500 / 1 900 m) – der Interessenbereich (2 400 m) gilt für Netz und Karte */
   rigShow: 160, shipShow: 1500, shipHide: 1900,
   nameMax: 32,
+  /** Relay-Server (`npm run mmo-server`): Standard-Port, Lebenszeichen der Startbildschirm-Wächter (s) */
+  relayPort: 8787, watchPing: 10,
 } as const;
 
 export type MmoDomain = 'land' | 'sea';
@@ -125,7 +128,14 @@ export type ClientIntent =
   | { k: 'unride' }
   | { k: 'hit'; to: string; dmg: number }
   | { k: 'ping'; t: number }
-  | { k: 'bye' };
+  | { k: 'bye' }
+  /** Startbildschirm: nur die Zahl der Kapitäne hören (Kennung des Tabs, ohne Figur in der Welt) */
+  | { k: 'watch'; id: string }
+  /** Relay-Server: Diplomatie der Welt-KI dieses Clients (der am längsten verbundene Kapitän gilt) */
+  | { k: 'diplo'; pairs: DiploPair[] };
+
+/** Haltung zweier Nationen nach der Welt-KI eines Clients */
+export interface DiploPair { a: string; b: string; s: DiplomacyState }
 
 export interface InspectInfo { profile: PlayerProfile; stance: PartyStance; zone: string; dist: number; party: boolean }
 
@@ -144,7 +154,9 @@ export type ServerMsg =
   | { k: 'hit'; from: string; name: string; dmg: number }
   | { k: 'ride'; ok: boolean; ship: string; text: string }
   | { k: 'notice'; text: string; tone: 'info' | 'warn' | 'error' }
-  | { k: 'pong'; t: number; st: number };
+  | { k: 'pong'; t: number; st: number }
+  /** Zahl der verbundenen Kapitäne (Startbildschirm und Spiel); `world` = davon in der geteilten See */
+  | { k: 'online'; n: number; world: number; shard: string };
 
 // ---------------------------------------------------------------------------------------------------------------
 // Interessenbereich und Reichweiten
@@ -230,6 +242,20 @@ export function cleanState(raw: unknown, out: PlayerState = newPlayerState()): P
 }
 
 const SEND_CH: readonly string[] = ['sagen', 'gruppe', 'fluestern', 'welt'];
+const DIPLO_STATES: readonly string[] = ['allianz', 'handelspakt', 'neutral', 'rivalitaet', 'krieg'];
+const TEAM_RE = /^[a-z]{2,16}$/;
+
+/** Diplomatie-Paare prüfen: nur Kleinbuchstaben-Kennungen, bekannte Zustände, höchstens 32 Paare */
+export function cleanDiploPairs(raw: unknown): DiploPair[] {
+  if (!Array.isArray(raw)) return [];
+  const out: DiploPair[] = [];
+  for (const e of raw.slice(0, 32)) {
+    if (!isRec(e) || typeof e.a !== 'string' || typeof e.b !== 'string' || !TEAM_RE.test(e.a) || !TEAM_RE.test(e.b) || e.a === e.b) continue;
+    if (!DIPLO_STATES.includes(e.s as string)) continue;
+    out.push({ a: e.a, b: e.b, s: e.s as DiplomacyState });
+  }
+  return out;
+}
 const SHARES: readonly string[] = ['kill', 'sink', 'merit'];
 
 /** Absicht eines Clients prüfen (Server-Seite); null = verwerfen */
@@ -260,6 +286,8 @@ export function cleanIntent(raw: unknown): ClientIntent | null {
     case 'hit': { const to = cleanId(raw.to); return to ? { k: 'hit', to, dmg: num(raw.dmg, 0, 0, 5000) } : null; }
     case 'ping': return { k: 'ping', t: num(raw.t, 0, 0, 1e13) };
     case 'bye': return { k: 'bye' };
+    case 'watch': { const id = cleanId(raw.id); return id ? { k: 'watch', id } : null; }
+    case 'diplo': return { k: 'diplo', pairs: cleanDiploPairs(raw.pairs) };
     default: return null;
   }
 }
@@ -349,6 +377,7 @@ export function cleanServerMsg(raw: unknown): ServerMsg | null {
     case 'ride': return { k: 'ride', ok: bool(raw.ok), ship: cleanId(raw.ship), text: cleanText(raw.text, 160) };
     case 'notice': return { k: 'notice', text: cleanText(raw.text, 200), tone: raw.tone === 'warn' || raw.tone === 'error' ? raw.tone : 'info' };
     case 'pong': return { k: 'pong', t: num(raw.t, 0, 0, 1e13), st: num(raw.st, 0, 0, 1e13) };
+    case 'online': return { k: 'online', n: Math.round(num(raw.n, 0, 0, 1e6)), world: Math.round(num(raw.world, 0, 0, 1e6)), shard: cleanText(raw.shard, 40) };
     default: return null;
   }
 }

@@ -70,6 +70,8 @@ export class MmoClient {
   private names: string[] = [];
   private namesDirty = true;
   private welcomed = false;
+  /** Zahl der verbundenen Kapitäne laut Relay-Server (0 = unbekannt bzw. lokaler Shard) */
+  onlineCount = 0;
   /** Zahlen für Prüfungen */
   readonly stats = { snaps: 0, chat: 0, states: 0 };
 
@@ -174,6 +176,7 @@ export class MmoClient {
       case 'ride': this.hooks.onRide?.(m.ok, m.ship, m.text); break;
       case 'notice': this.system(m.text); this.hooks.onNotice?.(m.text, m.tone); break;
       case 'pong': break;
+      case 'online': this.onlineCount = m.n; break;
     }
   }
 
