@@ -14,6 +14,7 @@ import {
 } from './actionKit';
 import { FAJI_STYLES, PRIEST_STYLE } from './fajiArts';
 import { extraForms } from './classForms';
+import { ERDSPALTER_FORMS, ERDSPALTER_LIGHT, STURMFAUST_FORMS, STURMFAUST_LIGHT } from './brawlerForms';
 import { SKYFALL_ULTIMATE, ULTIMATES } from './cataclysms';
 
 export * from './actionKit';
@@ -176,16 +177,10 @@ const LK: ActionStyleDef = {
 // ---------- Sturmfaust (schneller Faustkampf) ----------
 
 const SF: ActionStyleDef = {
-  id: 'sturmfaust', label: 'Sturmfaust', title: 'Schneller Faustkämpfer', color: '#FFB45A', accent: '#FFE07A', visual: 'faust', idleClip: 'Melee_Unarmed_Idle',
-  desc: 'Waffenloser Hochgeschwindigkeits-Stil: rasante Schlagserien, Sprungtritte und Nachbild-Fäuste.',
-  light: [
-    move({ id: 'sturmfaust.l1', label: 'Linke Gerade', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.28, hits: [{ range: 2.1, arc: 1.7, dmg: 0.39, poise: 7, knock: 1.5, fx: 'punch', hitstop: 0.04 }] }),
-    move({ id: 'sturmfaust.l2', label: 'Rechte Gerade', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.28, hits: [{ range: 2.1, arc: 1.7, dmg: 0.39, poise: 7, knock: 1.5, fx: 'punch', hitstop: 0.04 }] }),
-    move({ id: 'sturmfaust.l3', label: 'Wirbeltritt', clip: 'Melee_Unarmed_Attack_Kick', dur: 0.32, hits: [{ range: 2.4, arc: 2.0, dmg: 0.48, poise: 10, knock: 3, fx: 'heavy', hitstop: 0.05 }] }),
-    move({ id: 'sturmfaust.l4', label: 'Nachbild-Hagel', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.6, from: 0.05, to: 0.75, afterimage: true, hits: ticks(4, 0.15, 0.85, { range: 2.3, arc: 1.8, dmg: 0.2, poise: 4, knock: 0.8, fx: 'punch', hitstop: 0.02 }) }),
-    // 4.7C: Nachbild-Wirbeltritt – Blitz-Nachbilder rund um die Figur
-    move({ id: 'sturmfaust.l5', label: 'Nachbild-Wirbeltritt', clip: 'Melee_2H_Attack_Spinning', dur: 0.66, finisher: true, afterimage: true, hits: [{ arc: ROUND, range: 3.3, dmg: 1.21, poise: 26, knock: 9, launch: 3, fling: 11, fx: 'spin', hitstop: 0.12, shake: 0.5 }] }),
-  ],
+  // 4.93A: Blitz- & Vakuum-Sturm (blau-weiß) – 4er-Kette und zehn Formen aus `data/brawlerForms.ts` (Kino-Endgame-Regie)
+  id: 'sturmfaust', label: 'Sturmfaust', title: 'Schneller Faustkämpfer', color: '#7FD0FF', accent: '#EAF8FF', visual: 'faust', idleClip: 'Melee_Unarmed_Idle',
+  desc: 'Waffenloser Hochgeschwindigkeits-Stil: Blitz-Jabs, Vakuum-Stöße und trommelnde Phantom-Fäuste.',
+  light: STURMFAUST_LIGHT,
   branch: [
     move({ id: 'sturmfaust.b1', label: 'Schildbrecher-Stoß', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.4, lunge: 6, hits: [{ range: 2.5, arc: 1.3, dmg: 0.81, poise: 36, knock: 7, breakGuard: true, fx: 'punch', hitstop: 0.1, shake: 0.4 }] }),
     move({ id: 'sturmfaust.b2', label: 'Orkan-Launcher', clip: 'Melee_Unarmed_Attack_Kick', dur: 0.44, rise: 11, hits: [{ shape: 'circle', offset: 1.0, range: 2.8, dmg: 0.71, poise: 18, knock: 1, launch: 11, maxTargets: 12, fx: 'heavy', hitstop: 0.08, shake: 0.35 }] }),
@@ -201,12 +196,7 @@ const SF: ActionStyleDef = {
   ],
   meteor: move({ id: 'sturmfaust.m', label: 'Meteor-Sturzangriff', clip: 'Melee_Unarmed_Attack_Kick', dur: 0.95, meteor: true, air: true, hits: [{ shape: 'circle', range: 3.6, dmg: 1.15, poise: 24, knock: 8, launch: 4, fling: 10, fx: 'heavy', hitstop: 0.1, shake: 0.6 }] }),
   finisher: move({ id: 'sturmfaust.f', label: 'Tausend Donner', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 1.05, hyper: true, iframes: 1.05, afterimage: true, cutin: 'Tausend Donner!', hits: [{ range: 2.6, arc: 1.6, dmg: 1, poise: 0, knock: 10, fx: 'punch', hitstop: 0.3, shake: 0.9 }] }),
-  skills: [
-    skill({ id: 'sturmfaust.k1', slot: 1, label: 'Nachbildfäuste', short: 'Hagel', icon: '✊', cd: 8, desc: 'Zehn Faustschläge in einer Sekunde, die Nachbilder schlagen mit.', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 1.0, from: 0.1, to: 0.7, afterimage: true, hits: ticks(10, 0.05, 0.95, { range: 2.5, arc: 1.9, dmg: 0.26, poise: 4, knock: 0.6, fx: 'punch', hitstop: 0.015 }, { dmg: 0.87, knock: 8, poise: 16, hitstop: 0.1, shake: 0.4 }) }),
-    skill({ id: 'sturmfaust.k2', slot: 2, label: 'Donnertritt', short: 'Tritt', icon: '⚡', cd: 7, desc: 'Fliegender Sprungtritt über 6 m, schleudert beim Aufprall hoch.', clip: 'Melee_Unarmed_Attack_Kick', dur: 0.7, dashTo: 6, dashTime: 0.3, iframes: 0.2, airOk: true, hits: [{ shape: 'circle', offset: 0.8, range: 2.6, dmg: 2.44, poise: 28, knock: 4, launch: 9, fx: 'heavy', hitstop: 0.11, shake: 0.5, at: [0.45, 0.6], down: 1.8 }] }),
-    skill({ id: 'sturmfaust.k3', through: true, slot: 3, label: 'Sturmschritt-Kette', short: 'Kette', icon: '≫', cd: 9, desc: 'Drei Blitz-Dashes mit Faustschlag, unverwundbar dazwischen.', clip: 'Dodge_Forward', dur: 0.9, from: 0, to: 1, dashTo: 7.5, dashTime: 0.7, iframes: 0.75, afterimage: true, hits: ticks(3, 0.1, 0.8, { shape: 'circle', range: 2.3, dmg: 1.05, poise: 10, knock: 4, fx: 'punch', hitstop: 0.03 }) }),
-    skill({ id: 'sturmfaust.k4', slot: 4, label: 'Himmelsfaust', short: 'Himmel', icon: '☝', cd: 10, desc: 'Aufwärtshaken, der dich und alle Getroffenen hoch in die Luft trägt.', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.62, rise: 12.5, hits: [{ shape: 'circle', offset: 0.9, range: 2.8, dmg: 2.64, poise: 26, knock: 1, launch: 13, maxTargets: 12, fx: 'heavy', hitstop: 0.1, shake: 0.45 }] }),
-  ],
+  skills: STURMFAUST_FORMS,
   jumps: 3, airDashes: 1, dashSpeed: 18, dashTime: 0.24, perfectWindow: ACTION_TUNING.perfectWindow,
   critMult: 1.7, critBonus: 0.04, penBonus: 0, postureK: 0.85, physical: true,
   faji: false, element: 'blitz', awakenWave: awakenWave({ shape: 'arc', arc: 1.4, range: 7, dmg: 0.28, vfx: 'blitz' }), ultimate: ULTIMATES['sturmfaust'] ?? null,
@@ -215,16 +205,10 @@ const SF: ActionStyleDef = {
 // ---------- Erdspalter (starker Faustkampf) ----------
 
 const ES: ActionStyleDef = {
-  id: 'erdspalter', label: 'Erdspalter', title: 'Starker Faustkämpfer', color: '#E0B88A', accent: '#C8783A', visual: 'faust', idleClip: 'Melee_Unarmed_Idle',
-  desc: 'Waffenloser Schwergewichts-Stil: seismische Bodenstöße, Greifwürfe und gewaltige Druckwellen.',
-  light: [
-    move({ id: 'erdspalter.l1', label: 'Erdhaken', clip: 'Melee_Unarmed_Attack_Punch_A', dur: 0.48, hits: [{ range: 2.3, arc: 1.7, dmg: 0.51, poise: 16, knock: 4, fx: 'punch', hitstop: 0.07, shake: 0.25 }] }),
-    move({ id: 'erdspalter.l2', label: 'Rammtritt', clip: 'Melee_Unarmed_Attack_Kick', dur: 0.5, hits: [{ range: 2.5, arc: 1.9, dmg: 0.56, poise: 18, knock: 6, fx: 'heavy', hitstop: 0.08, shake: 0.3 }] }),
-    move({ id: 'erdspalter.l3', label: 'Felsschmetterer', clip: 'Melee_1H_Attack_Jump_Chop', dur: 0.6, hits: [{ shape: 'circle', offset: 1.4, range: 2.6, dmg: 0.66, poise: 24, knock: 5, fx: 'heavy', hitstop: 0.09, shake: 0.4 }] }),
-    move({ id: 'erdspalter.l4', label: 'Schulterramme', clip: 'Melee_Block_Attack', dur: 0.5, lunge: 6, hits: [{ range: 2.6, arc: 1.6, dmg: 0.6, poise: 26, knock: 9, fx: 'heavy', hitstop: 0.08, shake: 0.35 }] }),
-    // 4.7C: Schockwellen-Faust – der Faustschlag in den Boden schickt eine Schockwelle 9 m voraus
-    move({ id: 'erdspalter.l5', label: 'Schockwellen-Faust', clip: 'Melee_2H_Attack_Chop', dur: 0.95, hyper: true, finisher: true, hits: [{ shape: 'circle', offset: 1.2, range: 4.6, dmg: 0.86, poise: 55, knock: 10, launch: 6, fling: 14, fx: 'heavy', hitstop: 0.15, shake: 0.9 }, { shape: 'line', range: 9, width: 2.6, grow: true, dmg: 0.4, poise: 20, knock: 7, fx: 'heavy', vfx: 'erde', at: [0.5, 0.58] }] }),
-  ],
+  // 4.93A: Tektonik- & Titanen-Wucht (gold-bernstein) – 4er-Kette und zehn Formen aus `data/brawlerForms.ts` (Kino-Endgame-Regie)
+  id: 'erdspalter', label: 'Erdspalter', title: 'Kräftiger Faustkämpfer', color: '#FFC860', accent: '#E08A2A', visual: 'faust', idleClip: 'Melee_Unarmed_Idle',
+  desc: 'Waffenloser Schwergewichts-Stil: Rammstöße, Titanen-Hämmer und aufreißende Magma-Gräben.',
+  light: ERDSPALTER_LIGHT,
   branch: [
     move({ id: 'erdspalter.b1', label: 'Schildbrecher-Stoß', clip: 'Melee_Block_Attack', dur: 0.52, lunge: 6, hits: [{ range: 2.7, arc: 1.4, dmg: 0.85, poise: 60, knock: 9, breakGuard: true, fx: 'heavy', hitstop: 0.12, shake: 0.5 }] }),
     move({ id: 'erdspalter.b2', label: 'Orkan-Launcher', clip: 'Melee_Unarmed_Attack_Kick', dur: 0.56, rise: 10, hits: [{ shape: 'circle', offset: 1.0, range: 3.0, dmg: 0.72, poise: 30, knock: 1, launch: 10.4, maxTargets: 12, fx: 'heavy', hitstop: 0.1, shake: 0.45 }] }),
@@ -239,12 +223,7 @@ const ES: ActionStyleDef = {
   ],
   meteor: move({ id: 'erdspalter.m', label: 'Meteor-Sturzangriff', clip: 'Melee_1H_Attack_Jump_Chop', dur: 1.25, meteor: true, air: true, hyper: true, hits: [{ shape: 'circle', range: 5.2, dmg: 1.36, poise: 50, knock: 10, launch: 5, fling: 14, fx: 'heavy', hitstop: 0.14, shake: 0.95 }] }),
   finisher: move({ id: 'erdspalter.f', label: 'Weltenbeben', clip: 'Throw', dur: 1.3, hyper: true, iframes: 1.3, cutin: 'Weltenbeben!', hits: [{ range: 2.8, arc: 1.8, dmg: 1, poise: 0, knock: 11, pull: true, fx: 'heavy', hitstop: 0.32, shake: 1.2 }] }),
-  skills: [
-    skill({ id: 'erdspalter.k1', slot: 1, label: 'Bebenstampfer', short: 'Beben', icon: '◎', cd: 8, desc: 'Zwei seismische Ringe: nah und weit, schleudern hoch.', clip: 'Melee_2H_Attack_Chop', dur: 1.1, magnet: false, lunge: 0, hyper: true, hits: [{ shape: 'circle', range: 3.2, dmg: 2.16, poise: 34, knock: 6, launch: 5, fling: 9, fx: 'heavy', hitstop: 0.1, shake: 0.6, at: [0.36, 0.5] }, { shape: 'circle', range: 6.0, inner: 2.6, dmg: 1.59, poise: 26, knock: 9, launch: 3, fling: 11, fx: 'heavy', hitstop: 0.07, shake: 0.5, at: [0.62, 0.74] }] }),
-    skill({ id: 'erdspalter.k2', slot: 2, label: 'Titanengriff', short: 'Griff', icon: '✋', cd: 9, desc: 'Packt den nächsten Gegner und schmettert ihn in den Boden.', clip: 'Throw', dur: 1.05, hyper: true, hits: [{ range: 2.8, arc: 1.6, dmg: 0.57, poise: 10, knock: 0, pull: true, maxTargets: 1, at: [0.22, 0.32] }, { shape: 'circle', offset: 1.4, range: 2.8, dmg: 3.2, poise: 55, knock: 6, launch: 8, fling: 10, fx: 'heavy', hitstop: 0.14, shake: 0.7, at: [0.58, 0.7] }] }),
-    skill({ id: 'erdspalter.k3', slot: 3, label: 'Felsbrecher-Welle', short: 'Welle', icon: '≋', cd: 11, desc: 'Druckwelle durch den Boden, 15 m weit und 3,5 m breit.', clip: 'Ranged_Magic_Shoot', dur: 0.8, lunge: 0, hyper: true, hits: [{ shape: 'line', range: 15, width: 3.6, dmg: 3.44, poise: 40, knock: 10, fling: 13, fx: 'heavy', hitstop: 0.11, shake: 0.6 }] }),
-    skill({ id: 'erdspalter.k4', slot: 4, label: 'Weltenspalter', short: 'Welt', icon: '☄', cd: 16, desc: 'Sprung hoch in die Luft und Einschlag mit 6,5 m Druckwelle.', clip: 'Melee_1H_Attack_Jump_Chop', dur: 1.3, rise: 11, hyper: true, cutin: 'Weltenspalter!', airOk: true, hits: [{ shape: 'circle', range: 6.5, dmg: 5.34, poise: 90, knock: 11, launch: 6, fling: 16, fx: 'heavy', hitstop: 0.16, shake: 1.1, at: [0.7, 0.85], down: 3 }] }),
-  ],
+  skills: ERDSPALTER_FORMS,
   jumps: 2, airDashes: 1, dashSpeed: 13, dashTime: 0.3, perfectWindow: ACTION_TUNING.perfectWindow,
   critMult: 1.55, critBonus: 0, penBonus: 0, postureK: 1.3, physical: true,
   faji: false, element: 'erde', awakenWave: awakenWave({ shape: 'circle', range: 4.5, offset: 1.2, grow: true, dmg: 0.34, poise: 12, launch: 3, vfx: 'erde' }), ultimate: ULTIMATES['erdspalter'] ?? null,

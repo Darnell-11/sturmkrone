@@ -1,5 +1,24 @@
 # Was ist neu
 
+## 4.9.3a – Phase 4.93A: Kino-Endgame-Regie für Faustkämpfer und Himmelssturz, Kino-Klang, Mitspieler sehen alles (27.11.2026)
+
+**Was du siehst**
+- **Beide Faustkämpfer-Pfade neu:** 4er-Kombos (Schnell: Blitz-Jab → Haken → Drehkick → Vakuum-Stoß 18 m; Kräftig: Rammfaust → Schulterstoß → Aufwärtshaken → Erd-Schmetterschlag 6 m), zehn neue Formen je Pfad, Ultimates „Sturmfaust der Tausend Blitze“ und „Weltenbrecher-Erdspalter“.
+- **Jede Form und jedes Ultimate in vier Phasen:** Aufbau mit Kampfpose und Low-Angle-Zoom, Entladung mit Speedlines, Einschlag mit Manga-Impact-Frame (70 – 180 ms, hartes Doppelbild, Lichtblitz, Zoom-Stoß) und Nachbeben im Weitwinkel.
+- **„Himmelssturz“ (Stufe 101) in vier Stufen:** Schwerkraft-Umkehr, fünf Vorhut-Meteoriten, ein 45 m großer Koloss-Meteorit, Impact-Frame mit 120 m Fontäne und Krater.
+- **Steuerrad und Fuß getrennt:** Am Steuer feuert Linksklick die Kanonen (Bugjagd bzw. Breitseite), Formen und Ultimates treffen nur Schiffe bis 650 m (der Kapitän springt auf die Bugreling); zu Fuß prallen Angriffe an Schiffsrümpfen ab.
+- **Kino-Klang:** vier Schichten (Aufladen, Bewegung, Einschlag mit Sub-Bass-Drop, Nachbeben) und ein Atemzug Stille vor dem Einschlag.
+- **Mitspieler sehen und hören alles von außen:** jede Kettenstufe, Form, Geistes-Faji und jedes Ultimate mit Pose, Aura, Blender-Effekten, Himmelsverdunkelung und Klang im Raum; die eigene Kamera bleibt frei, im Umkreis unter 90 m bebt sie spürbar.
+- Klassenvorschau zeigt vier Phasen bzw. vier Stufen; Knopf „✦ Legendär (Himmelssturz)“.
+
+**Technik (für Entwickler)**
+- Regie `graphics/endgameDirector.ts` (`DirectorActionId`, 4-Phasen-Zeitachsen, `legacyAllowed` gegen Doppel-Auslöser), Effekte `world/kinoFx.ts`, Kampfmodi `combat/combatModes.ts`.
+- Blender-Netze `public/models/vfx/*.glb` (Skript `scripts/blender/buildBrawlerAndMeteorVfx.py`, Vertex-Farben R/G/B), geladen über `graphics/vfxMeshes.ts` in den bestehenden Pool – kein neues Shader-Programm.
+- Kino-DSP `audio/kinoDsp.ts` + `audio/kinoCues.ts` (WaveShaper → Kompressor → StereoPanner → Hall, alle Knoten einmal angelegt).
+- Übertragung: `combat/actionBroadcast.ts` (Kennzahlen der Stufen), Empfänger-Bühne `world/remoteActionStage.ts` (rein), Darstellung `world/remoteActionFx.ts`, Figuren in `world/mmoLive.ts`.
+- Tests: `tests/phase493aAudioDirectorAndBrawlerVfx.test.ts`; 1 567 Tests grün. Build-Start bis Hauptmenü 8,4 – 9,7 s, 171 – 173 Programme.
+- Offen: im Land-Ultimate des Kräftigen Faustkämpfers sinkt die Bildrate in Phase 4 kurz unter 60 fps (Playwright-Messung).
+
 ## 4.9.2 – Phase 4.92: Klassenvorschau auf dem Startbildschirm, Meteoriten-Kataklysmus und Himmelsspalter in voller Pracht an Land und auf See, Raids, Kaiser-Seesperre und Leviathan für alle geteilt (27.11.2026)
 
 **Was du siehst**

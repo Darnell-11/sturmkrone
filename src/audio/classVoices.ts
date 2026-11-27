@@ -4,8 +4,10 @@
 import type { Sfx } from './audio';
 
 /** Grundstimme der Formen je Kampfstil (Darstellungs-Stil der Engine) */
+// 4.93A: die Faustkämpfer (`sturmfaust`, `erdspalter`) haben hier keine Einzelton-Signatur mehr – ihre Formen klingen über die vier Schichten der
+// Kino-DSP (`kinoCues.ts`); die Seewelt ruft `elementVoice` für Regie-Aktionen gar nicht erst auf
 export const STYLE_VOICE: Readonly<Record<string, Sfx>> = {
-  sturmfaust: 'fistBarrage', erdspalter: 'fistQuake', doppel: 'bladeHiss', saebel: 'bladeHiss', langklinge: 'bladeWave', zweihaender: 'impactCrack',
+  doppel: 'bladeHiss', saebel: 'bladeHiss', langklinge: 'bladeWave', zweihaender: 'impactCrack',
   feuer: 'fireHiss', eis: 'iceShatter', wasser: 'tidalRoar', wind: 'windHowl', blitz: 'whipCrack', sonne: 'sunChoir', mond: 'moonChime', schwarzloch: 'voidRumble',
   priester: 'choirBell',
 };

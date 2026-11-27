@@ -195,7 +195,8 @@ describe('4.7C eigene Standardangriffe und Kombos aller 15 Klassen', () => {
     const seen = new Map<string, string>();
     for (const id of SPEC_IDS) {
       const st = ACTION_STYLES[SPEC_STYLE(id)];
-      expect(st.light.length, id).toBeGreaterThanOrEqual(5);
+      // 4.93A: die beiden Faustkämpfer-Pfade führen eine 4er-Kombo (der vierte Schlag ist der Flächen-Finisher)
+      expect(st.light.length, id).toBeGreaterThanOrEqual(id === 'schnell' || id === 'kraeftig' ? 4 : 5);
       expect(st.light[st.light.length - 1].finisher, id).toBe(true);
       for (const m of st.light) {
         const prev = seen.get(m.label);
@@ -265,11 +266,14 @@ describe('4.7C eigene Standardangriffe und Kombos aller 15 Klassen', () => {
     expect(l.label).toBe('Iai-Fernschnitt'); expect(Math.max(...l.hits.map((h) => (h.shape === 'line' ? h.range : 0)))).toBeGreaterThanOrEqual(10);
     const z = last('zweihaender');
     expect(z.label).toBe('Überkopf-Spalter'); expect(z.hyper).toBe(true); expect(z.hits.some((h) => h.shape === 'line')).toBe(true);
+    // 4.93A: Linker Blitz-Jab → Rechter Haken → Wirbel-Drehkick → Vakuum-Stoß (komprimierte Luftdruckkugel, 18 m weit)
+    expect(ACTION_STYLES.sturmfaust.light.map((m) => m.label)).toEqual(['Linker Blitz-Jab', 'Rechter Haken', 'Wirbel-Drehkick', 'Vakuum-Stoß']);
     expect(last('sturmfaust').afterimage).toBe(true);
-    expect(ACTION_STYLES.sturmfaust.light[3].afterimage).toBe(true);
+    expect(last('sturmfaust').hits.some((h) => h.shape === 'line' && h.range === 18)).toBe(true);
+    // Rammfaust → Schulterstoß → Aufwärtshaken → Erd-Schmetterschlag (erschüttert 6 m, bricht Haltungen)
+    expect(ACTION_STYLES.erdspalter.light.map((m) => m.label)).toEqual(['Rammfaust', 'Schulterstoß', 'Aufwärtshaken', 'Erd-Schmetterschlag']);
     const e = last('erdspalter');
-    expect(e.label).toBe('Schockwellen-Faust'); expect(e.hits.some((h) => h.shape === 'line' && h.range >= 9)).toBe(true);
-    expect(ACTION_STYLES.erdspalter.light[0].label).toBe('Erdhaken');
+    expect(e.hyper).toBe(true); expect(e.hits.some((h) => h.shape === 'circle' && h.range === 6 && h.poise >= 80)).toBe(true);
     // Rhythmus: Doppelklinge schnell und viele Schritte, Großschwert langsam und wuchtig
     const avg = (id: ActionStyleId) => ACTION_STYLES[id].light.reduce((a, m) => a + m.dur, 0) / ACTION_STYLES[id].light.length;
     expect(avg('doppel')).toBeLessThan(avg('zweihaender'));

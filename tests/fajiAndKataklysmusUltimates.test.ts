@@ -339,6 +339,15 @@ describe('Aufladen und Anime-Impact-Frames (4.6I: Akt 1 und Treffermoment der Ki
     for (const id of ULTIMATE_ORDER) {
       const spec = ULTIMATES[id]!.ultimate!;
       const tm = cineTiming(ULTIMATE_CINEMATICS[spec.kind], spec);
+      if (ULTIMATE_CINEMATICS[spec.kind].kino) {
+        // 4.93A: Kino-Endgame-Ultimates (beide Faustkämpfer-Pfade) laden 0,9 – 1,0 s echt auf – längere Aufladung der Engine, Zeitlupe um 0,4
+        expect(tm.s1 * ULTIMATE_CINEMATICS[spec.kind].dur[0], id).toBeCloseTo(spec.charge, 6);
+        expect(spec.charge, id).toBeGreaterThanOrEqual(0.36);
+        expect(ULTIMATE_CINEMATICS[spec.kind].dur[0], id).toBeGreaterThanOrEqual(0.9);
+        expect(tm.s1, id).toBeGreaterThan(0.35);
+        expect(tm.s1, id).toBeLessThan(0.45);
+        continue;
+      }
       expect(tm.s1 * ULTIMATE_CINEMATICS[spec.kind].dur[0], id).toBeCloseTo(ULT_CHARGE, 6);
       expect(tm.s1, id).toBeGreaterThan(0.28);
       expect(tm.s1, id).toBeLessThan(0.36);
@@ -404,7 +413,9 @@ describe('Alle 15 Kataklysmus-Ultimates (4.7B: mit dem Erzengel-Himmelsgericht d
       expect(spec.strikeAt).toBeLessThan(u.dur);
       expect(spec.frames).toBeGreaterThanOrEqual(2);
       expect(spec.frames).toBeLessThanOrEqual(4);
-      expect(spec.charge).toBeCloseTo(ULT_CHARGE, 6);
+      // 4.93A: Kino-Endgame-Ultimates laden länger auf (Phase 1 dauert 0,9 – 1,0 s echt)
+      if (ULTIMATE_CINEMATICS[spec.kind].kino) { expect(spec.charge, id).toBeGreaterThanOrEqual(0.36); expect(spec.charge, id).toBeLessThanOrEqual(0.45); }
+      else expect(spec.charge).toBeCloseTo(ULT_CHARGE, 6);
       expect(['face', 'low', 'side', 'sky']).toContain(spec.shot);
       expect(u.hits.length).toBeGreaterThan(0);
       // Faji-Ultimates erst in der 7. Form

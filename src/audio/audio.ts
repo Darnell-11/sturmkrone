@@ -1,11 +1,17 @@
 // Klang-Engine: komplett mit der Web Audio API erzeugt (keine Audiodateien nötig).
 // Musik in Schichten (ruhig, Spannung, Kampf), Umgebungsklang und Soundeffekte.
+// 4.93A: die Kino-Endgame-Regie (Formen und Ultimates der ausgebauten Klassen) klingt über die mehrschichtige Kino-DSP (`kinoDsp.ts`,
+// Rezepte in `kinoCues.ts`): feste Routing-Knoten, vier Schichten und die Stille-Senke vor dem Einschlag. Für diese Aktionen spielen die
+// alten Einzelton-Auslöser nicht mehr (`kinoBegin`/`kinoImpact` statt `play('cineDrop' | 'impactCrack' | 'fistBarrage' | …)`).
 
 import type { MusicSector } from '../data/musicTracks';
 import { SONGS, type SongId } from './songs';
 import { MusicDirector, type MusicContext, type NowPlaying } from './musicDirector';
 import { smoothstep } from '../core/mathUtil';
 import { clamp01 } from '../core/mathUtil';
+import { KINO, KinoDsp, type KinoTimes } from './kinoDsp';
+import { KINO_CUES } from './kinoCues';
+import type { DirectorActionId } from '../graphics/endgameDirector';
 
 export type Mood = 'menu' | 'sea' | 'harbor' | 'night' | 'battle' | 'boss' | 'victory';
 export type Sfx =
@@ -15,7 +21,7 @@ export type Sfx =
   | 'bell' | 'horn' | 'foghorn' | 'thunder' | 'shard' | 'ko' | 'board' | 'sail' | 'whoosh' | 'crit' | 'cutin' | 'step'
   // 4.6C: prozeduraler Anime-Kampfklang (Zwischensequenz, Impact-Frame, Stil-Signaturen, Elemente, Klingen-Clash)
   | 'cineDrop' | 'impactCrack' | 'sheathClick' | 'cycloneWhine' | 'quakeRumble' | 'voidRumble' | 'fireRoar' | 'iceShatter' | 'thunderClap'
-  | 'clash' | 'chase' | 'tidalRoar' | 'windHowl' | 'sunChoir' | 'moonChime' | 'fistBarrage' | 'ghostVolley' | 'bladeWave' | 'eruption'
+  | 'clash' | 'chase' | 'tidalRoar' | 'windHowl' | 'sunChoir' | 'moonChime' | 'ghostVolley' | 'bladeWave' | 'eruption'
   // 4.9: eigene Signaturen je Klasse und Element (Faust-Druckwelle, Klingen-Zischen, Feuer-Zischen, Blitz-Peitsche, Priester-Chor mit Glocken),
   // pfeifende Kanonenkugel und krachendes Holz beim Einschlag
   | 'fistQuake' | 'bladeHiss' | 'fireHiss' | 'whipCrack' | 'choirBell' | 'ballWhistle' | 'woodImpact';
@@ -23,7 +29,7 @@ export type Sfx =
 /** Die Klänge des Anime-Kampfes (4.6C) – Prüfungen spielen jeden einmal ab */
 export const ANIME_SFX: readonly Sfx[] = [
   'cineDrop', 'impactCrack', 'sheathClick', 'cycloneWhine', 'quakeRumble', 'voidRumble', 'fireRoar', 'iceShatter', 'thunderClap',
-  'clash', 'chase', 'tidalRoar', 'windHowl', 'sunChoir', 'moonChime', 'fistBarrage', 'ghostVolley', 'bladeWave', 'eruption',
+  'clash', 'chase', 'tidalRoar', 'windHowl', 'sunChoir', 'moonChime', 'ghostVolley', 'bladeWave', 'eruption',
   'fistQuake', 'bladeHiss', 'fireHiss', 'whipCrack', 'choirBell', 'ballWhistle', 'woodImpact',
 ];
 
@@ -41,7 +47,7 @@ const DUCK: Partial<Record<Sfx, [number, number]>> = {
   fanfareRare: [0.55, 1.2], fanfareEpic: [0.45, 1.8], fanfareLegend: [0.4, 2.4], victory: [0.4, 2.2], level: [0.6, 1.2], quest: [0.65, 0.9], win: [0.6, 1.0],
   ko: [0.45, 1.5], sink: [0.6, 1.2], thunder: [0.65, 0.8], horn: [0.6, 1.0], foghorn: [0.7, 2.6], bell: [0.7, 0.8], cutin: [0.55, 1.2], roar: [0.6, 1.0], shard: [0.75, 0.5],
   cineDrop: [0.3, 1.1], impactCrack: [0.4, 1.0], thunderClap: [0.5, 1.0], voidRumble: [0.55, 1.6], quakeRumble: [0.55, 1.6], tidalRoar: [0.6, 1.4],
-  fireRoar: [0.65, 1.2], windHowl: [0.65, 1.2], sunChoir: [0.6, 1.4], moonChime: [0.6, 1.4], ghostVolley: [0.65, 0.8], fistBarrage: [0.7, 1.0],
+  fireRoar: [0.65, 1.2], windHowl: [0.65, 1.2], sunChoir: [0.6, 1.4], moonChime: [0.6, 1.4], ghostVolley: [0.65, 0.8],
   fistQuake: [0.6, 1.2], whipCrack: [0.6, 0.9], choirBell: [0.65, 1.4],
 };
 
@@ -105,6 +111,10 @@ export interface Volumes { master: number; music: number; sfx: number; ambient: 
 class AudioEngine {
   ctx: AudioContext | null = null;
   private master!: GainNode;
+  /** 4.93A: Stille-Senke der ganzen Mischung („Silence before the Storm“: Musik, Umgebung und Effekte schweigen 45 ms vor dem Einschlag) */
+  private dip!: GainNode;
+  /** 4.93A: Kino-DSP (vier Schichten je Regie-Aktion auf festen Knoten) */
+  readonly kino = new KinoDsp();
   private musicBus!: GainNode;
   private sfxBus!: GainNode;
   private ambBus!: GainNode;
@@ -182,7 +192,9 @@ class AudioEngine {
     this.master = c.createGain();
     const comp = c.createDynamicsCompressor();
     comp.threshold.value = -14; comp.ratio.value = 4;
-    this.master.connect(comp); comp.connect(c.destination);
+    // 4.93A: Master → Stille-Senke → Kompressor
+    this.dip = c.createGain();
+    this.master.connect(this.dip); this.dip.connect(comp); comp.connect(c.destination);
     this.musicBus = c.createGain(); this.musicBus.connect(this.master);
     // Dateimusik (gerenderte Orchester-Stems, `musicDirector.ts`); bleibt sie aus, spielt die prozedurale Musik unten
     this.director = new MusicDirector(c, this.musicBus, {
@@ -192,6 +204,11 @@ class AudioEngine {
     this.director.setLite(this.lite);
     this.sfxBus = c.createGain(); this.sfxBus.connect(this.master);
     this.ambBus = c.createGain(); this.ambBus.connect(this.master);
+    // 4.93A: Kino-DSP am Effekt-Bus (alle Knoten einmal, danach nur noch Automationen) – einen Moment nach dem ersten Klick, damit dessen
+    // Bild nicht stockt; ein Fehler dort (alter Browser ohne Sättigungs- oder Panorama-Knoten) nimmt nur den Kino-Klang weg
+    setTimeout(() => {
+      try { this.kino.init(c, this.sfxBus, this.lite ? KINO.voicesLite : KINO.voices); } catch (e) { console.warn('Kino-DSP nicht verfügbar', e); }
+    }, 250);
     // Hall: Echo mit Tiefpass (klingt wie ein Holzschiff unter freiem Himmel)
     const dl = c.createDelay(1); dl.delayTime.value = 0.13;
     const fb = c.createGain(); fb.gain.value = 0.32;
@@ -659,6 +676,70 @@ class AudioEngine {
     try { this.playVoice(name, vol, pan); } finally { this.spatialOut = null; this.pitch = 1; this.gainVar = 1; }
   }
 
+  // ---------- 4.93A: Kino-Klang der Endgame-Regie ----------
+
+  private kinoPan = 0;
+  private kinoGain = 1;
+
+  /**
+   * Ort eines Kino-Klangs: Panorama aus der Richtung zur Schallquelle (von der Kamera aus, rechts = +1), Pegel aus dem Abstand zu den Ohren
+   * (wie laute Einschläge: voll bis 22 m, danach −4,5 dB je Verdopplung, bis 900 m). false = unhörbar weit weg.
+   */
+  private kinoPlace(at: SoundPos | undefined, vol: number): boolean {
+    this.kinoPan = 0; this.kinoGain = vol;
+    if (!at) return vol > 0.004;
+    const cat = SPATIAL_CAT.loud;
+    const y = at.y ?? this.ly;
+    const d = Math.hypot(at.x - this.lx, y - this.ly, at.z - this.lz);
+    if (d >= cat.max) return false;
+    this.kinoGain = vol * Math.pow(Math.max(d, cat.ref) / cat.ref, -cat.rolloff);
+    const dx = at.x - this.cx, dz = at.z - this.cz, dl = Math.hypot(dx, dz);
+    // rechts der Kamera: Blickrichtung × oben = (−fz, 0, fx)
+    if (dl > 0.5) this.kinoPan = Math.max(-1, Math.min(1, ((dx * -this.fz + dz * this.fx) / dl) * 0.85));
+    return this.kinoGain > 0.004;
+  }
+
+  /**
+   * Kino-Klang einer Regie-Aktion beginnen: Schicht 1 (Auflade-Sog) und 2 (Bewegungs-Transient, Doppler) samt der Stille-Senke vor dem
+   * Einschlag. `whole` = auch Schicht 3 + 4 gleich mitplanen (Formen: ihr Treffermoment liegt fest); sonst meldet die Welt den Einschlag
+   * über `kinoImpact`. `sea` = über dem Meer (Wasserfontäne statt Steinbruch, Ozean-Hall). Gibt die Stimme zurück (−1 = nichts gespielt).
+   */
+  kinoBegin(id: DirectorActionId, tm: KinoTimes, at: SoundPos | undefined, sea: boolean, vol = 1, whole = false): number {
+    if (!this.running || !this.kino.ready) return -1;
+    const cue = KINO_CUES[id];
+    if (!cue || !this.kinoPlace(at, vol)) return -1;
+    if (vol > 0.05 && cue.duck < 1) this.director?.duck(cue.duck, tm.total);
+    const sil = tm.silenceMs > 0 ? tm.silenceMs : cue.silenceMs;
+    // die Stille gilt der ganzen Mischung – aber nur für nahe, laute Aktionen (eine ferne Form eines Mitspielers lässt die Welt nicht verstummen)
+    if (sil > 0 && this.kinoGain > 0.45) this.silenceDip(this.ctx!.currentTime + KINO.lead + tm.t2 - sil / 1000, sil);
+    const s = sea ? 1 : 0;
+    return whole ? this.kino.play(cue, tm, this.kinoPan, s, this.kinoGain) : this.kino.charge(cue, tm, this.kinoPan, s, this.kinoGain);
+  }
+
+  /** Einschlag einer Regie-Aktion: Schicht 3 (Sub-Bass-Fall, Mitten-Punch, Krachen) und 4 (Nachbeben) – sofort, auf der Stimme aus `kinoBegin` */
+  kinoImpact(id: DirectorActionId, voice: number, at: SoundPos | undefined, sea: boolean, vol = 1): number {
+    if (!this.running || !this.kino.ready) return -1;
+    const cue = KINO_CUES[id];
+    if (!cue || !this.kinoPlace(at, vol)) return -1;
+    return this.kino.impact(cue, voice, this.kinoPan, sea ? 1 : 0, this.kinoGain, 0);
+  }
+
+  /** Stille-Senke der ganzen Mischung: ab `when` (Zeit der Klangkarte) für `ms` Millisekunden fast stumm, danach schlagartig wieder da */
+  silenceDip(when: number, ms: number) {
+    const c = this.ctx;
+    if (!c || !this.dip) return;
+    const t = Math.max(c.currentTime + 0.002, when), d = Math.max(0.01, ms / 1000);
+    const g = this.dip.gain;
+    g.cancelScheduledValues(t - 0.004);
+    g.setValueAtTime(1, Math.max(c.currentTime, t - 0.004));
+    g.linearRampToValueAtTime(0.03, t);
+    g.setValueAtTime(0.03, t + d - 0.002);
+    g.linearRampToValueAtTime(1, t + d + 0.003);
+  }
+
+  /** Kino-Klang abbrechen (Szenenwechsel) */
+  kinoSilence() { this.kino.silence(); if (this.ctx && this.dip) { this.dip.gain.cancelScheduledValues(this.ctx.currentTime); this.dip.gain.setValueAtTime(1, this.ctx.currentTime); } }
+
   /** Variante 0 … n−1 wählen, nie zweimal dieselbe hintereinander */
   private pick(key: string, n: number) {
     const last = this.lastPick[key] ?? -1;
@@ -925,14 +1006,6 @@ class AudioEngine {
         // Mond: unheimliches, absinkendes Glockenspiel über tiefem Brummen
         [74, 77, 81, 86, 89].forEach((m, i) => this.tone(mtof(m), t + i * 0.18, 1.6, 'sine', 0.05 * v, 0.9, mtof(m) * 0.97));
         this.tone(55, t, 2.4, 'sawtooth', 0.06 * v, 0.6, 46, 0.4);
-        break;
-      case 'fistBarrage':
-        // Sturmfaust: Trommelfeuer aus Hunderten Schlägen
-        for (let i = 0; i < 28; i++) {
-          const tt = t + i * 0.052 + Math.random() * 0.012;
-          this.noise(tt, 0.06, 0.22 * v, 520 + Math.random() * 300, 'lowpass');
-          this.tone(140 + Math.random() * 40, tt, 0.05, 'sine', 0.16 * v, 0, 70, 0.002);
-        }
         break;
       case 'ghostVolley':
         // Säbel: Salve der Geister-Armada mit gläsernem Nachhall

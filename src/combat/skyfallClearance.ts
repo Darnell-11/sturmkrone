@@ -1,14 +1,17 @@
 // Phase 4.6H – Himmelssturz: Einschläge nie auf dem eigenen Deck.
 //
-// Das 15. Ultimate („Himmelssturz: Zwillings-Meteoriten & Planeten-Kollaps“) schlägt fest 11 m, 22 m und 16 m vor der Figur ein. An Deck eines
+// Das 15. Ultimate („Himmelssturz“, seit 4.93A ein Meteoriten-Kataklysmus aus Vorhut und Koloss) schlägt 6 bis 36 m vor der Figur ein. An Deck eines
 // großen Schiffs lagen diese Punkte noch auf dem eigenen Deck (Offenpunkt 4.6E). Jetzt wird die ganze Einschlag-Gruppe – Meteoriten, Planet und
 // die Trefferflächen der Engine – entlang der Blickrichtung so weit nach vorn geschoben, bis jeder Einschlagpunkt mindestens
 // `SKYFALL_SHIP_CLEAR` Meter vom Rumpf jedes eigenen Schiffs (Flaggschiff und Begleiter) entfernt liegt. Rein: ohne three.js, ohne Zufall.
 
-/** Mindestabstand (m) jedes Einschlagpunkts zum Rumpf eines eigenen Schiffs */
-export const SKYFALL_SHIP_CLEAR = 28;
-/** Einschlagpunkte des Himmelssturzes vor der Figur (m): Meteor 1, Meteor 2, Planet (Mittelpunkt) */
-export const SKYFALL_OFFSETS: readonly number[] = [11, 22, 16];
+/**
+ * Mindestabstand (m) jedes Einschlagpunkts zum Rumpf eines eigenen Schiffs. 4.93A: der Koloss-Meteorit reißt einen Krater von 34 m Radius –
+ * der Abstand wuchs von 28 auf 36 m.
+ */
+export const SKYFALL_SHIP_CLEAR = 36;
+/** Einschlagpunkte des Himmelssturzes vor der Figur (m): nächster Vorhut-Meteorit, Koloss (Mittelpunkt), fernster Vorhut-Meteorit */
+export const SKYFALL_OFFSETS: readonly number[] = [6, 20, 36];
 /** Weiter als so viele Meter wird nie geschoben (dann gilt der weiteste Wert) */
 export const SKYFALL_MAX_SHIFT = 200;
 

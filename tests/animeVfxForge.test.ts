@@ -472,19 +472,26 @@ describe('Alle 14 Ultimates: 3-Schicht-Inszenierung und physische Zerstörung', 
     expect(r.rec.splits).toContain('diagonal');
   });
 
-  it('Sturmfaust: breitere Kegel-Flut (auch Schiffe 35° neben der Blickrichtung), Splitter, das Schiff wird zurückgehämmert und versenkt', () => {
+  it('Sturmfaust der Tausend Blitze (4.93A): 24 Blitzeinschläge umkreisen das Ziel, Faust-Bündel und Kugelblitz-Kuppel zerbrechen das Schiff radial', () => {
     const r = castUlt('sturmfaust', false, (x) => { x.ship(Math.sin(0.6) * 40, Math.cos(0.6) * 40); });
-    expect(r.rec.splits).toContain('sink');
-    expect(Math.hypot(r.ships[0].ship.shoveX, r.ships[0].ship.shoveZ)).toBeGreaterThan(5);
-    expect(r.seen.get('rock')!).toBeGreaterThan(5);
+    expect(r.rec.splits).toContain('radial');
+    expect(Math.max(...r.rec.sections)).toBe(3);
+    expect(r.ships[0].ship.masts).toBeGreaterThan(0);
+    // Blitze (gezackte Glieder), Stoßkrone der Kuppel und das Bündel aus Phantom-Fäusten – die Blender-Netze statt der Kisten-Fäuste
+    expect(r.seen.get('jag')!).toBeGreaterThan(30);
+    expect(r.seen.get('shockcone')!).toBeGreaterThan(4);
+    expect(r.seen.get('barrage')!).toBeGreaterThan(0);
   });
 
-  it('Erdspalter: 3D-Luft-Risse, schäumende Grabenkanten, Schiffe stürzen zur Grabenmitte; an Land Krater und Felsschollen', () => {
+  it('Weltenbrecher-Erdspalter (4.93A): auf See teilt sich das Meer und das Schiff auf der Linie zerbricht quer; an Land reißt ein glühender Magma-Graben auf', () => {
     const sea = castUlt('erdspalter', false, (x) => { x.ship(8, 50); });
-    expect(sea.seen.get('glass')!).toBeGreaterThan(3);
+    expect(sea.rec.splits).toContain('cross');
+    expect(Math.max(...sea.rec.sections)).toBe(2);
     expect(sea.seen.get('splash')!).toBeGreaterThan(0);
-    expect(sea.rec.pulls).toBeGreaterThan(5);
+    expect(sea.seen.get('shockcone')!).toBeGreaterThan(0);
     const land = castUlt('erdspalter', true, () => {});
+    expect(land.seen.get('fissureRock')!).toBeGreaterThan(1);
+    expect(land.seen.get('fissureGlow')!).toBeGreaterThan(1);
     expect(land.seen.get('crater')!).toBeGreaterThan(0);
     expect(land.seen.get('rock')!).toBeGreaterThan(10);
   });

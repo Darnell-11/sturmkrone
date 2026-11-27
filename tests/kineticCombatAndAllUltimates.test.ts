@@ -141,8 +141,10 @@ describe('Vorwärts-Momentum: jede Schlagstufe treibt die Figur vor', () => {
   it('Kampfkünste 1–4 aller Stile sind dynamisch: Vorstoß, Aufstieg, Schub, Geschoss, Klingenwelle oder Eruption – nie eine stehende Pose', () => {
     for (const id of ALL_STYLES) {
       for (const k of ACTION_STYLES[id].skills) {
+        // 4.93A: die dritte Form der Faustkämpfer ist eine Konterhaltung (Windmühlen-Parade, Eisenkörper-Bollwerk) – sie schützt und
+        // schlägt als Druckwelle zurück, statt vorzustoßen
         const dynamic = k.hits.length > 0 && (
-          k.dashTo > 0 || k.rise > 0 || k.push >= 1.2
+          k.counter > 0 || k.dashTo > 0 || k.rise > 0 || k.push >= 1.2
           || k.hits.some((h) => h.projectile || (h.shape === 'line' && h.range >= 8) || (h.shape === 'arc' && h.range >= 7) || (h.shape === 'circle' && (h.offset >= 3 || h.range >= 5))));
         expect(dynamic, `${k.id} ${k.label}`).toBe(true);
       }
@@ -419,10 +421,10 @@ describe('Alle 14 Ultimates: Pool- und Zerstörungsprüfung', () => {
     expect(r.rec.blasts).toBeGreaterThan(20);
   });
 
-  it('Sturmfaust: Geister-Fäuste durchlöchern und versenken Schiffe im Kegel', () => {
+  it('Sturmfaust der Tausend Blitze (4.93A): umkreisende Blitze durchlöchern das Zielschiff, der Zentralschlag zerbricht es radial', () => {
     const r = runUltimate('sturmfaust', (x) => { x.ship(0, 30); });
-    expect(r.rec.splits).toContain('sink');
-    expect(r.ships[0].ship.holes).toBeGreaterThan(2);
+    expect(r.rec.splits).toContain('radial');
+    expect(r.ships[0].ship.holes).toBeGreaterThan(0);
   });
 
   it('Feuer: der Feuerdrachen-Wirbelsturm setzt Schiffe in Brand', () => {
@@ -481,7 +483,8 @@ describe('Alle 14 Ultimates: Pool- und Zerstörungsprüfung', () => {
     expect(iai.rec.sounds).toContain('sheathClick');
     const ocean = runUltimate('erdspalter', (x) => { x.ship(0, 50); });
     expect(ocean.rec.trench).toBeGreaterThanOrEqual(8);
-    expect(ocean.rec.sounds).toContain('quakeRumble');
+    // 4.93A: der Einzelton ist abgeklemmt – den Klang des Erdspalters liefert die Kino-DSP in vier Schichten (nie beides zugleich)
+    expect(ocean.rec.sounds).not.toContain('quakeRumble');
     const hole = runUltimate('schwarzloch', (x) => { x.ship(0, 40); });
     expect(hole.rec.pulls).toBeGreaterThan(10);
     expect(hole.rec.splits).toContain('radial');

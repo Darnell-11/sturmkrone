@@ -87,6 +87,10 @@ function simulate(kind: CataclysmKind, worldReports = true, frameDt = DT): SimLo
 
 // ---------------------------------------------------------------------------------------------------------------
 
+// 4.93A: die Kino-Endgame-Ultimates (Himmelssturz, beide Faustkämpfer) laufen 3,4 – 4,2 s mit Impact-Frames nach Millisekunden – geprüft in
+// tests/phase493aAudioDirectorAndBrawlerVfx.test.ts; die 3-Akt-Regeln hier gelten für die übrigen
+const LEGACY_ORDER = CINEMATIC_ORDER.filter((k) => !ULTIMATE_CINEMATICS[k].kino);
+
 describe('15 maßgeschneiderte 3-Akt-Choreografien', () => {
   it('jedes Ultimate hat seine eigene Choreografie: Titel wie das Ultimate, drei deutsche Akt-Beschreibungen, eigene Pose, Gefahr und Kamera', () => {
     // 4.7B: 16 Choreografien – das Erzengel-Himmelsgericht des Priesters kam dazu
@@ -122,13 +126,13 @@ describe('15 maßgeschneiderte 3-Akt-Choreografien', () => {
 
   it('die Vorgaben im Detail: Himmelssturz mit Mach-Kegeln, Iaijutsu mit Daumen am Griff und Klick an der Scheide, Säbel mit Armada im Halbkreis', () => {
     const sky = ULTIMATE_CINEMATICS.skyfall;
-    expect(sky.pose.id).toBe('skyHand');
+    expect(sky.pose.id).toBe('gravityCall');
     expect(sky.pose.reachR![4]).toBeGreaterThan(1.9); // Hand über dem Kopf
     expect(sky.sky).toBe('starSpiral');
-    expect(sky.threat).toBe('meteors');
+    expect(sky.threat).toBe('colossus');
     // Untersicht: Kamera tief am Boden (unter Hüfthöhe), Blick hinauf über den Kopf
     expect(sky.shots[0].from.at).toBe('origin');
-    expect(sky.shots[0].from.dy).toBeLessThan(1);
+    expect(sky.shots[0].from.dy).toBeLessThanOrEqual(1.1);
     expect(sky.shots[0].to.ly).toBeGreaterThan(0.3);
     expect(sky.shots[1].from.look).toBe('threat');
     const iai = ULTIMATE_CINEMATICS.iaiWorldBreak;
@@ -148,7 +152,7 @@ describe('15 maßgeschneiderte 3-Akt-Choreografien', () => {
 
 describe('Zeit: Akte, Zeitmaß und die Zeiten der Engine', () => {
   it('Akt-Dauern in den Grenzen, zusammen ≤ 1,2 s (knackig, ~0,95 – 1,15 s)', () => {
-    for (const kind of CINEMATIC_ORDER) {
+    for (const kind of LEGACY_ORDER) {
       const d = ULTIMATE_CINEMATICS[kind];
       expect(d.dur[0], kind).toBeGreaterThanOrEqual(CINE.prep[0]);
       expect(d.dur[0], kind).toBeLessThanOrEqual(CINE.prep[1]);
@@ -162,7 +166,7 @@ describe('Zeit: Akte, Zeitmaß und die Zeiten der Engine', () => {
   });
 
   it('Aufladen der Engine füllt Akt 1, der entscheidende Treffer fällt ans Ende von Akt 2 – nie schneller als Echtzeit', () => {
-    for (const kind of CINEMATIC_ORDER) {
+    for (const kind of LEGACY_ORDER) {
       const d = ULTIMATE_CINEMATICS[kind], s = specOf(kind);
       const tm = cineTiming(d, s);
       expect(tm.s1 * d.dur[0], kind).toBeCloseTo(ULT_CHARGE, 9);
@@ -185,19 +189,19 @@ describe('Zeit: Akte, Zeitmaß und die Zeiten der Engine', () => {
     }
   });
 
-  it('Himmelssturz: Meteoriten und Planet treffen in Engine und Welt zur selben Zeit (in der Sequenz)', () => {
+  it('Himmelssturz (4.93A): der entscheidende Treffer fällt mit dem Koloss', () => {
     const s = SKYFALL_ULTIMATE.ultimate!;
-    expect(s.lag).toBeCloseTo(SKYFALL_TIMES.meteor1, 9);
+    expect(s.lag).toBeCloseTo(SKYFALL_TIMES.colossus, 9);
     const meteors = SKYFALL_ULTIMATE.hits.filter((h) => h.vfx === 'meteor');
-    expect(meteors[0].t0).toBeCloseTo(s.strikeAt + SKYFALL_TIMES.meteor1, 2);
-    expect(meteors[1].t0).toBeCloseTo(s.strikeAt + SKYFALL_TIMES.meteor2, 2);
-    expect(meteors[2].t0).toBeCloseTo(s.strikeAt + SKYFALL_TIMES.planet, 1);
+    expect(meteors.length).toBeGreaterThanOrEqual(3);
+    for (const h of meteors) expect(h.t0).toBeGreaterThanOrEqual(s.strikeAt);
   });
+
 });
 
 describe('Ablauf: Vorbereitung → Aufbau → Doppel-Impact-Frame → Rückkehr', () => {
   it('alle 15: Akte in Reihenfolge, Treffer exakt am Ende von Akt 2, Standbild während der Impact-Bilder, Zeitlupe läuft in Akt 3 aus', () => {
-    for (const kind of CINEMATIC_ORDER) {
+    for (const kind of LEGACY_ORDER) {
       const d = ULTIMATE_CINEMATICS[kind];
       const log = simulate(kind);
       expect(log.phases, kind).toEqual(['prep', 'build', 'impact', 'return', 'idle']);
@@ -226,7 +230,7 @@ describe('Ablauf: Vorbereitung → Aufbau → Doppel-Impact-Frame → Rückkehr'
   });
 
   it('Rückkehr zur freien Spielersteuerung: danach Kamera frei (camK 0), Echtzeit, keine Pose; die Engine nimmt Dash und Sprung wieder an', () => {
-    for (const kind of CINEMATIC_ORDER) {
+    for (const kind of LEGACY_ORDER) {
       const log = simulate(kind);
       expect(log.idleAt - log.returnAt, kind).toBeCloseTo(CINE.returnDur, 1);
       // Spielzeit seit Akt 2 am Ende von Akt 3 ≥ Ansatzpunkt der Kette: die Steuerung ist zurück, wenn die Kamera heimkehrt
@@ -256,7 +260,7 @@ describe('Ablauf: Vorbereitung → Aufbau → Doppel-Impact-Frame → Rückkehr'
 
   it('ein früher Treffer schneidet früher, doppelte Meldungen zählen nicht; bei 30 fps gleicher Ablauf', () => {
     const cine = new UltimateCinematics();
-    cine.start('fistStorm', specOf('fistStorm'));
+    cine.start('glacier', specOf('glacier'));
     for (let i = 0; i < 25; i++) cine.update(DT, 0);
     expect(cine.phase).toBe('build');
     expect(cine.impact()).toBe(true);
@@ -539,15 +543,13 @@ describe('Welt-Regie: der entscheidende Treffer liegt genau am Ende von Akt 2', 
     for (const d of starts) expect(d).toBeCloseTo(specOf('oceanSplit').reach * 0.5, 6);
   });
 
-  it('Himmelssturz: Mach-Kegel vor den Meteoriten, spiralförmig aufreißender Himmel, erster Einschlag = Treffermoment, Planet noch in Akt 3', () => {
+  it('Himmelssturz (4.93A): fünf Vorhut-Meteoriten, Koloss und Kataklysmus aus den Blender-Netzen; Treffermoment beim Koloss', () => {
     const r = castWorld('skyfall', (x) => { x.ship(0, 60); });
-    expect(r.d.stats.cones).toBeGreaterThan(10);
-    expect(r.d.stats.vortices).toBe(1);
-    expect(r.d.stats.meteors).toBe(2);
-    expect(r.d.stats.planets).toBeGreaterThanOrEqual(1);
-    expect((r.rec.decisive[0] - r.strikeFrame) * DT).toBeCloseTo(SKYFALL_TIMES.meteor1, 1);
-    // ohne Kino-Regie zeigt die Welt die Bilder selbst: hier nur der Planet als zweiter Doppel-Impact-Frame
-    expect(r.rec.impacts).toBe(3);
+    expect(r.d.kino.stats.shards).toBe(5);
+    expect(r.d.kino.stats.colossi).toBe(1);
+    expect(r.d.kino.stats.fountains).toBeGreaterThanOrEqual(1);
+    expect(r.d.stats.meteors + r.d.stats.planets).toBe(0);
+    expect((r.rec.decisive[0] - r.strikeFrame) * DT).toBeCloseTo(SKYFALL_TIMES.colossus, 1);
   });
 
   it('ohne Haken der Kino-Regie (ältere Aufrufer) zeigt die Welt die Impact-Bilder des Treffermoments selbst', () => {

@@ -310,7 +310,9 @@ describe('Action-Kampf: Eingabepuffer und Kombos', () => {
       }
       const st = ACTION_STYLES[id];
       expect(seen, id).toEqual(st.light.map((m) => m.id));
-      expect(st.light.length).toBeGreaterThanOrEqual(id === 'doppel' ? 7 : 5);
+      // 4.93A: die beiden Faustkämpfer-Pfade führen eine 4er-Kombo (Jab, Haken, Drehkick, Vakuum-Stoß bzw. Rammfaust … Erd-Schmetterschlag)
+      expect(st.light.length).toBeGreaterThanOrEqual(id === 'doppel' ? 7 : id === 'sturmfaust' || id === 'erdspalter' ? 4 : 5);
+      if (id === 'sturmfaust' || id === 'erdspalter') expect(st.light.length, id).toBe(4);
       const fin = st.light[st.light.length - 1];
       expect(fin.finisher, id).toBe(true);
       expect(fin.hits.some((h) => h.fling > 0), id).toBe(true);
@@ -545,7 +547,9 @@ describe('Action-Kampf: die sechs physischen Stile', () => {
     expect(ACTION_STYLES.langklinge.penBonus).toBeGreaterThan(0);
     expect(ACTION_STYLES.zweihaender.light.at(-1)!.hyper).toBe(true);
     expect(ACTION_STYLES.zweihaender.postureK).toBeGreaterThanOrEqual(Math.max(...PHYSICAL_STYLES.map((s) => ACTION_STYLES[s].postureK)));
-    expect(ACTION_STYLES.erdspalter.skills.some((k) => k.hits.some((h) => h.pull))).toBe(true);
+    // 4.93A: Tektonik-Fessel kesselt ein und betäubt (statt des früheren Greifwurfs), der Zyklon-Sog der Sturmfaust zieht ins Zentrum
+    expect(ACTION_STYLES.erdspalter.skills.some((k) => k.hits.some((h) => h.status === 'stun'))).toBe(true);
+    expect(ACTION_STYLES.sturmfaust.skills.some((k) => k.hits.some((h) => h.vortex > 0))).toBe(true);
     expect(ACTION_STYLES.sturmfaust.light.every((m) => m.dur <= 0.7)).toBe(true);
   });
 
@@ -645,7 +649,8 @@ describe('Action-Kampf: Determinismus und Leistung', () => {
     const line = moveOf('langklinge.b4').hits[0];
     expect(inShape(f, line, { ...t, z: 15 })).toBe(true);
     expect(inShape(f, line, { ...t, x: 3, z: 8 })).toBe(false);
-    const ring = moveOf('erdspalter.k1').hits[1];
+    // Ring (innen sicher): aus dem Kreis des Titanen-Hammers abgeleitet (4.93A: keine Form trägt mehr einen Ring)
+    const ring = { ...moveOf('erdspalter.k5').hits[0], offset: 0, range: 6, inner: 2.6 };
     expect(inShape(f, ring, { ...t, z: 1 })).toBe(false);
     expect(inShape(f, ring, { ...t, z: 4.5 })).toBe(true);
   });

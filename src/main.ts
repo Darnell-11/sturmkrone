@@ -25,6 +25,7 @@ import { Game } from './core/game';
 import { WebGLUnavailableError } from './render/renderer';
 import { loadArchModels, loadEnvModels } from './world/envModels';
 import { loadWorldProps } from './world/worldProps';
+import { loadVfxMeshes } from './graphics/vfxMeshes';
 import { loadFigureheads } from './entities/ship/figureheads';
 import { LoadingScreen } from './ui/loadingScreen';
 import { preload } from './core/preload';
@@ -65,7 +66,7 @@ try {
   preload.plan(0.23, { world: 0.3, prepare: 0.1, shaders: 0.37 });
   preload.onProgress((p, phase) => loading.set(p, phase));
   preload.setPhase('Karten und Bauwerke werden geladen …');
-  await Promise.all([loadEnvModels(), loadArchModels(), loadWorldProps(), loadFigureheads(), forgeStart(forgeGuess())]).catch((e) => console.warn('Welt-Modelle konnten nicht vorab geladen werden', e));
+  await Promise.all([loadEnvModels(), loadArchModels(), loadWorldProps(), loadFigureheads(), loadVfxMeshes(), forgeStart(forgeGuess())]).catch((e) => console.warn('Welt-Modelle konnten nicht vorab geladen werden', e));
   // Der Browser soll den Ladebildschirm einmal zeichnen, bevor der Aufbau beginnt
   await tick();
   const game = new Game(document.getElementById('game') as HTMLCanvasElement, document.getElementById('ui')!, true);

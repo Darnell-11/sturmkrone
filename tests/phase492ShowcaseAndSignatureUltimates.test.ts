@@ -6,7 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { Scene } from 'three';
 import { CreationFlow, previewCreation } from '../src/data/creationFlow';
 import { ARENA, LEGEND_LABEL, arenaLabel, freeWindowHeight } from '../src/data/showcaseArena';
-import { SKYFALL_TIMES, SKYFALL_ULTIMATE, T5_SHIP_SPLIT, ULTIMATES, canSplitShip } from '../src/data/cataclysms';
+import { SKYFALL_COLOSSUS, SKYFALL_TIMES, SKYFALL_ULTIMATE, T5_SHIP_SPLIT, ULTIMATES, canSplitShip } from '../src/data/cataclysms';
+import { DIRECTOR_TIMELINES } from '../src/graphics/endgameDirector';
 import { ULTIMATE_CINEMATICS } from '../src/graphics/ultimateCinematics';
 import { AnimeImpactRig } from '../src/graphics/animeImpactRig';
 import { CataclysmFx } from '../src/combat/cataclysmFx';
@@ -126,37 +127,55 @@ function runCast(kind: keyof typeof ULTIMATES | 'skyfall', opts: { anchored: boo
   const anchor = opts.anchored ? seaUltAnchor(spec.kind, spec, 0, 0, t.x, t.z) : null;
   d.strike(spec, f, 0, 0, 0, anchor);
   for (let i = 0; i < 240; i++) d.update(1 / 60, 1 / 60);
-  return { log, stats: d.stats, frames, anchor };
+  return { log, stats: d.stats, kino: d.kino.stats, frames, anchor };
 }
 
 describe('Signatur-Ultimates: Meteoriten-Kataklysmus und Himmelsspalter', () => {
-  it('Himmelssturz (legendäres Ultimate der Stufe 101): zwei Meteoriten mit Feuerschweif, Planet, vier Impact-Bilder, drei Akte', () => {
+  it('Himmelssturz (legendäres Ultimate der Stufe 101, 4.93A): vier Stufen – Schwerkraft-Umkehr, fünf Vorhut-Meteoriten, 45-m-Koloss, Impact-Frame und Kataklysmus', () => {
     const u = SKYFALL_ULTIMATE.ultimate!;
     expect(u.kind).toBe('skyfall');
     expect(u.frames).toBe(4);
     expect(SKYFALL_ULTIMATE.hits.filter((h) => h.vfx === 'meteor').length).toBeGreaterThanOrEqual(3);
-    expect(SKYFALL_TIMES.meteor1).toBeLessThan(SKYFALL_TIMES.meteor2);
-    expect(SKYFALL_TIMES.meteor2).toBeLessThan(SKYFALL_TIMES.planet);
+    // Welt-Zeitachse ab dem Einschlag der Engine: fünf Vorhut-Meteoriten nacheinander, dann der Koloss
+    expect(SKYFALL_TIMES.shards).toHaveLength(5);
+    for (let i = 1; i < 5; i++) expect(SKYFALL_TIMES.shards[i]).toBeGreaterThan(SKYFALL_TIMES.shards[i - 1]);
+    expect(SKYFALL_TIMES.shards[4]).toBeLessThan(SKYFALL_TIMES.colossusFrom);
+    expect(SKYFALL_TIMES.colossusFrom).toBeLessThan(SKYFALL_TIMES.colossus);
+    expect(SKYFALL_COLOSSUS).toMatchObject({ size: 45, fountain: 120 });
     const c = ULTIMATE_CINEMATICS.skyfall;
     expect(c.beats).toHaveLength(3);
     expect(c.shots).toHaveLength(3);
     expect(c.frames).toBeGreaterThanOrEqual(3);
+    // Kino-Endgame-Regie: 4,2 s in vier Stufen, in Stufe 3 begleitet eine eigene Einstellung den Sturzflug des Kolosses
+    expect(c.kino?.action).toBe('kosmos.u');
+    expect(c.kino?.cut?.shot.from.at).toBe('threat');
+    const tl = DIRECTOR_TIMELINES['kosmos.u'];
+    expect(tl.total).toBe(4.2);
+    expect(tl.stages.map((x) => x.label.split(' – ')[0])).toEqual(['Stufe 1', 'Stufe 2', 'Stufe 3', 'Stufe 4']);
   });
 
-  it('auf See vom Steuer: die Meteoriten schlagen am Anker über der feindlichen Flotte ein – Schiffe zerbrechen, Meteore und Planet fallen', () => {
+  it('auf See vom Steuer: Vorhut und Koloss schlagen am Anker über der feindlichen Flotte ein – Schiffe zerbrechen, die 120-m-Fontäne steigt', () => {
     const r = runCast('skyfall', { anchored: true, ships: [{ x: 0, z: 520 }, { x: 30, z: 540 }] });
     expect(r.anchor).toBeTruthy();
     expect(r.stats.proxied).toBe(1);
-    expect(r.stats.meteors).toBeGreaterThanOrEqual(2);
-    expect(r.stats.planets).toBeGreaterThanOrEqual(1);
+    // 4.93A: fünf Vorhut-Meteoriten und der Koloss aus den Blender-Netzen (statt zweier Kugel-Meteore und eines Kugel-Planeten)
+    expect(r.kino.shards).toBe(5);
+    expect(r.kino.vanguard).toBe(5);
+    expect(r.kino.colossi).toBe(1);
+    expect(r.kino.fountains).toBeGreaterThanOrEqual(1);
+    expect(r.stats.meteors + r.stats.planets).toBe(0);
     expect(r.log.filter((x) => x === 'split').length).toBeGreaterThanOrEqual(1);
-    expect(r.frames).toBeGreaterThanOrEqual(1);
+    expect(r.stats.decisive).toBe(1);
   });
 
-  it('an Land: der Himmelssturz reißt Krater (Land-Spektakel) – dieselbe Regie wie auf See', () => {
+  it('an Land: der Himmelssturz reißt einen Krater aus glühenden Spalten – dieselbe Regie wie auf See, ohne das Einheits-Land-Spektakel', () => {
     const r = runCast('skyfall', { anchored: false, land: true, ships: [{ x: 4000, z: 4000 }] });
-    expect(r.stats.meteors).toBeGreaterThanOrEqual(2);
-    expect(r.stats.landSpectacles).toBe(1);
+    expect(r.kino.shards).toBe(5);
+    expect(r.kino.colossi).toBe(1);
+    // Krater: zwölf Spalten des Kataklysmus, dazu je vier Risse der fünf Vorhut-Einschläge
+    expect(r.kino.fissures).toBeGreaterThanOrEqual(12 + 20);
+    expect(r.stats.landSpectacles).toBe(0);
+    expect(r.log).toHaveLength(0);
   });
 
   it('Himmelsspalter (Zweihänder): die Klingenwelle zerteilt das anvisierte Kriegsschiff in 600 m im Treffermoment; an Land reißt sie den Boden', () => {

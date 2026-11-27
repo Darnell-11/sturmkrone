@@ -17,7 +17,7 @@ export const ULT_CHARGE = 0.105;
 /** 4.6I: so viel Spielzeit nach dem entscheidenden Treffer sind Dash und Sprung wieder frei (Akt 3 läuft in Zeitlupe; danach Rückkehr) */
 export const ULT_FREE_AFTER = 0.15;
 
-type UltIn = Omit<UltimateSpec, 'charge' | 'shot' | 'frames' | 'center' | 'splitShips' | 'trench' | 'shipPull' | 'lag'> & Partial<Pick<UltimateSpec, 'shot' | 'frames' | 'center' | 'splitShips' | 'trench' | 'shipPull' | 'lag'>>;
+type UltIn = Omit<UltimateSpec, 'charge' | 'shot' | 'frames' | 'center' | 'splitShips' | 'trench' | 'shipPull' | 'lag'> & Partial<Pick<UltimateSpec, 'charge' | 'shot' | 'frames' | 'center' | 'splitShips' | 'trench' | 'shipPull' | 'lag'>>;
 
 /** Grundform aller Treffer eines Ultimates: groß, wuchtig, immer mit Haltungsschaden, nie geblockt */
 const U: HitIn = { breakGuard: true, poise: 60, knock: 10, hitstop: 0.06, shake: 0.5, fx: 'heavy', up: 6, down: 3 };
@@ -33,6 +33,17 @@ function ult(id: string, label: string, clip: string, dur: number, u: UltIn, hit
   // (während der Kino-Sequenz keine Eingabe; mit ihrem Ende brechen Dash und Sprung wieder ab – 4.6I: die Treffer liegen darum alle davor)
   const lastT0 = m.hits.reduce((a, h) => Math.max(a, h.t0), 0);
   m.cancel = Math.min(dur, Math.max(lastT0 + 0.02, spec.strikeAt + spec.lag + ULT_FREE_AFTER));
+  return m;
+}
+
+/**
+ * 4.93A – Ultimate der Kino-Endgame-Regie (3,4 – 4,2 s in vier Phasen, `graphics/endgameDirector.ts`): das Aufladen dauert länger (Akt 1 läuft
+ * mit Zeitmaß 0,4 statt 0,32 – die Welt bleibt in Bewegung), und die Figur bleibt bis kurz vor dem Ende der Sequenz in ihrem Angriff (das
+ * Nachbeben gehört zur Choreografie; der Kapitän kehrt danach in seine Ausgangshaltung bzw. ans Steuerrad zurück).
+ */
+export const KINO_ULT_CHARGE = 0.36;
+function kinoUlt(m: ActionMove): ActionMove {
+  m.cancel = Math.max(m.cancel, m.dur - 0.2);
   return m;
 }
 
@@ -71,17 +82,24 @@ export const ULTIMATES: Partial<Record<ActionStyleId, ActionMove>> = {
     [{ shape: 'line', range: 4.5, width: 4, at: [0.0, 0.2], delayTo: 0.36, dmg: 9, poise: 260, pen: 3, knock: 12, fling: 16, hitstop: 0.2, shake: 1.2, vfx: 'mond' }],
     { dashTo: 32, dashTime: 0.2, through: true, from: 0.1, to: 0.6, afterimage: true }),
 
-  // Sturmfaust: die Faust-Flut läuft ab 0,1 s, der große Schlag (Clip-Fenster) landet mit dem Zerbersten bei 0,36 s
-  sturmfaust: ult('sturmfaust.u', 'Sturmfaust-Stakkato: Zehntausend-Hiebe-Orkan', 'Melee_Unarmed_Attack_Punch_A', 1.2,
-    { kind: 'fistStorm', strikeAt: 0.1, lag: 0.26, reach: 28, width: 16, color: '#FFB45A', accent: '#FFE07A', frames: 2 },
-    ticks(22, 0.08, 0.31, { shape: 'arc', arc: 1.3, range: 16, dmg: 0.3, poise: 14, knock: 3, fling: 6, hitstop: 0.01, shake: 0.25, vfx: 'blitz' }, { dmg: 1.4, knock: 16, fling: 20, launch: 6, hitstop: 0.14, shake: 1.1 }),
-    { from: 0.1, to: 0.7, afterimage: true }),
+  // 4.93A Stufe 60, Pfad 1 – „Sturmfaust der Tausend Blitze“ (3,4 s): Akt 1 (0,9 s) der Himmel verdunkelt sich, blaue Blitze tanzen um Fäuste
+  // bzw. Masten; Akt 2 (0,6 s) 24 Hochgeschwindigkeits-Blitzeinschläge umkreisen das Ziel; im Treffermoment (0,56 s Spielzeit nach dem
+  // Aufladen) der Zentralschlag: Stille, blau-weißer Impact-Frame, dann sprengt die Kugelblitz-Kuppel auf und zerbricht das Zielschiff
+  sturmfaust: kinoUlt(ult('sturmfaust.u', 'Sturmfaust der Tausend Blitze', 'Melee_Unarmed_Attack_Punch_A', 1.85,
+    { kind: 'fistStorm', charge: KINO_ULT_CHARGE, strikeAt: 0.06, lag: 0.5, reach: 28, width: 24, center: 9, splitShips: 'radial', color: '#7FD0FF', accent: '#EAF8FF', frames: 4 },
+    [
+      ...ticks(24, 0.04, 0.295, { shape: 'circle', offset: 9, range: 10, dmg: 0.22, poise: 12, knock: 1, status: 'shock', statusDur: 1.2, hitstop: 0, shake: 0.12, vfx: 'blitz' }),
+      { shape: 'circle', offset: 9, range: 13, at: [0.303, 0.34], dmg: 2.6, poise: 220, knock: 16, fling: 20, launch: 6, hitstop: 0, shake: 0, vfx: 'blitz' },
+    ],
+    { from: 0.05, to: 0.71, afterimage: true })),
 
-  // Erdspalter: der Hieb spaltet bei 0,12 s das Meer (Graben öffnet sich in Akt 2), bei 0,38 s prallen die Schiffe im Graben zusammen
-  erdspalter: ult('erdspalter.u', 'Erdspalter-Beben: Ozean-Teilung', 'Melee_2H_Attack_Chop', 0.9,
-    { kind: 'oceanSplit', strikeAt: 0.12, lag: 0.26, reach: 110, width: 16, trench: 9, color: '#E0B88A', accent: '#C8783A', frames: 3 },
-    [{ shape: 'line', range: 110, width: 16, grow: true, at: [0.13, 0.75], dmg: 6.5, poise: 220, knock: 14, launch: 9, fling: 22, hitstop: 0.12, shake: 1.3, vfx: 'erde' }],
-    { from: 0.38, to: 0.9 }),
+  // 4.93A Stufe 60, Pfad 2 – „Weltenbrecher-Erdspalter“ (3,6 s): Akt 1 (1,0 s) beide Fäuste glühen tektonisch-golden, die Erde grollt;
+  // Akt 2 (0,5 s) der Zentralschlag fährt nieder; im Treffermoment (0,46 s Spielzeit) Stille und invertierter Impact-Frame, dann reißt an
+  // Land ein Magma-Graben auf bzw. teilt die Schockwelle das Meer bis zum Grund und zerbricht das Zielschiff in zwei Hälften
+  erdspalter: kinoUlt(ult('erdspalter.u', 'Weltenbrecher-Erdspalter', 'Melee_2H_Attack_Chop', 1.95,
+    { kind: 'oceanSplit', charge: KINO_ULT_CHARGE + 0.04, strikeAt: 0.04, lag: 0.42, reach: 110, width: 16, trench: 9, splitShips: 'cross', color: '#FFC860', accent: '#E08A2A', frames: 4 },
+    [{ shape: 'line', range: 110, width: 16, grow: true, at: [0.236, 0.5], dmg: 6.5, poise: 220, knock: 14, launch: 9, fling: 22, hitstop: 0, shake: 0, vfx: 'erde' }],
+    { from: 0.215, to: 1 })),
 
   schwarzloch: ult('schwarzloch.u', '7. Form: Ereignishorizont – Schwarzer Abgrund', 'Ranged_Magic_Raise', 1.4,
     { kind: 'blackHole', strikeAt: 0.06, lag: 0.32, reach: 60, width: 60, center: 12, splitShips: 'radial', shipPull: 9, color: '#B07DFF', accent: '#1A0A2A', shot: 'sky', frames: 4 },
@@ -144,34 +162,37 @@ export const ULTIMATES: Partial<Record<ActionStyleId, ActionMove>> = {
     { formMin: 7 }),
 };
 
-/** 4.6I: Welt-Zeitachse eines Himmelssturzes (s nach dem Einschlag): Meteoriten, Planet – Engine-Treffer und Darstellung teilen sie */
-export const SKYFALL_TIMES = { meteor1: 0.3, meteor2: 0.36, planet: 0.44 } as const;
-const SKY_STRIKE = 0.08, SKY_DUR = 1.5;
+/**
+ * 4.93A: Welt-Zeitachse des Himmelssturzes (s Spielzeit nach dem Einschlag der Engine) – Engine-Treffer und Darstellung teilen sie:
+ * fünf Vorhut-Meteoriten (Stufe 2), dann erscheint der Koloss (Stufe 3) und schlägt als entscheidender Treffer ein (Stufe 4).
+ */
+export const SKYFALL_TIMES = { shards: [0.2, 0.34, 0.48, 0.62, 0.76], colossusFrom: 0.8, colossus: 1.55 } as const;
+/** Einschlagsorte der fünf Vorhut-Meteoriten: m vor dem Mittelpunkt (−: davor) und seitlich (+ = links) – Umgebung und Begleitschiffe */
+export const SKYFALL_SHARDS: readonly (readonly [ahead: number, side: number])[] = [[-14, -12], [4, 16], [-4, -22], [16, 8], [10, -14]];
+/** Durchmesser des Koloss-Meteoriten (m), Höhe der Wasser- bzw. Lava-Fontäne (m), Radius des Kraters (m) */
+export const SKYFALL_COLOSSUS = { size: 45, fountain: 120, crater: 34 } as const;
+const SKY_STRIKE = 0.05, SKY_DUR = 2.9, SKY_CENTER = 20;
 /** Anteil der Dauer für einen Zeitpunkt der Welt-Zeitachse (nach dem Einschlag) */
 const skyAt = (t: number, w = 0.02): [number, number] => [(SKY_STRIKE + t) / SKY_DUR, (SKY_STRIKE + t + w) / SKY_DUR];
 
 /**
- * 4.6E: das 15. Ultimate, transzendent und an keinen Stil gebunden (Krone des Kosmos-Baums, erst nach dem Aufstieg auf Stufe 101):
- * „Himmelssturz: Zwillings-Meteoriten & Planeten-Kollaps“. Die Figur reißt den Sternenhimmel auf; zwei Meteoriten mit Kometenschweif
- * schlagen vor ihr ein (nah und fern), dann kollidiert ein Planet mit der Welt – Krater an Land, Trichter und Ringwelle im Meer, Glut danach.
+ * Das geheime Stufe-101-Ultimate (Krone des Kosmos-Baums, an keinen Stil gebunden): „Himmelssturz“ – ein Meteoriten-Kataklysmus in vier
+ * Stufen (4,2 s): Schwerkraft-Umkehr · Vorhut-Bombardement aus fünf brennenden Meteoriten · der 45 m große Koloss-Meteorit mit
+ * Plasma-Bugwelle · Impact-Frame und Kataklysmus (120 m hohe Wasser- bzw. Lava-Fontäne, aufgerissener Krater, zerbrechende Kriegsschiffe).
  * Endbosse: wie jedes Ultimate über `UltimateBossLedger` gedeckelt (ein Wirken zählt wie ein Treffer).
- * 4.6I: der Himmel reißt beim Einschlag (0,08 s) auf, die Meteoriten stürzen in Akt 2 herab und schlagen bei 0,38 / 0,44 s ein (Treffer
- * und Welt gleich), der Planet bei 0,52 s – alles noch in der Sequenz.
  */
-export const SKYFALL_ULTIMATE: ActionMove = ult('kosmos.u', 'Himmelssturz: Zwillings-Meteoriten & Planeten-Kollaps', 'Ranged_Magic_Raise', SKY_DUR,
-  { kind: 'skyfall', strikeAt: SKY_STRIKE, lag: SKYFALL_TIMES.meteor1, reach: 40, width: 40, center: 16, splitShips: 'radial', shot: 'sky', color: '#FFE6B0', accent: '#B07DFF', frames: 4 },
+export const SKYFALL_ULTIMATE: ActionMove = kinoUlt(ult('kosmos.u', 'Himmelssturz', 'Ranged_Magic_Raise', SKY_DUR,
+  { kind: 'skyfall', charge: KINO_ULT_CHARGE, strikeAt: SKY_STRIKE, lag: SKYFALL_TIMES.colossus, reach: 46, width: 46, center: SKY_CENTER, splitShips: 'radial', shot: 'sky', color: '#FF7A3A', accent: '#B07DFF', frames: 4 },
   [
-    // Zwillings-Meteoriten: nah und fern vor der Figur (Einschlag 0,3 s und 0,36 s nach dem Aufreißen des Himmels)
-    { shape: 'circle', offset: 11, range: 10, at: skyAt(SKYFALL_TIMES.meteor1), dmg: 1.8, poise: 90, knock: 14, launch: 8, fling: 18, hitstop: 0.1, shake: 1.0, vfx: 'meteor' },
-    { shape: 'circle', offset: 22, range: 11, at: skyAt(SKYFALL_TIMES.meteor2), dmg: 1.8, poise: 90, knock: 14, launch: 8, fling: 18, hitstop: 0.1, shake: 1.0, vfx: 'meteor' },
-    // Planeten-Kollaps: wachsende Front um den Einschlagsmittelpunkt; die Glut der Krater brennt als Zustand nach (4.6I: keine späten
-    // Einzeltreffer mehr nach der Sequenz – die Steuerung ist mit ihrem Ende frei)
-    { shape: 'circle', offset: 16, range: 32, grow: true, at: skyAt(SKYFALL_TIMES.planet, 0.1), dmg: 5.4, poise: 260, knock: 20, launch: 10, fling: 24, pen: 3, status: 'burn', statusDur: 5, hitstop: 0.2, shake: 1.6, vfx: 'meteor' },
-  ], { from: 0.45, to: 0.8 });
+    // Vorhut-Bombardement: fünf Einschläge rund um den Mittelpunkt (die Engine kennt nur den Abstand voraus – ihre Kreise decken die Breite ab)
+    ...SKYFALL_TIMES.shards.map((t, i): HitIn => ({ shape: 'circle', offset: Math.max(4, SKY_CENTER + SKYFALL_SHARDS[i][0]), range: 12, at: skyAt(t), dmg: 0.5, poise: 40, knock: 10, launch: 6, fling: 12, hitstop: 0, shake: 0.5, vfx: 'meteor' })),
+    // der Koloss: wachsende Front um den Einschlagsmittelpunkt; die Glut des Kraters brennt als Zustand nach
+    { shape: 'circle', offset: SKY_CENTER, range: 34, grow: true, at: skyAt(SKYFALL_TIMES.colossus, 0.12), dmg: 6.0, poise: 260, knock: 20, launch: 10, fling: 24, pen: 3, status: 'burn', statusDur: 5, hitstop: 0, shake: 0, vfx: 'meteor' },
+  ], { from: 0.2, to: 0.8 }));
 
 /** 4.6I: Spielzeit vom Start der Bewegung (nach dem Aufladen) bis zum entscheidenden Treffer = Ende von Akt 2 der Kino-Regie */
 export const decisiveAt = (s: Pick<UltimateSpec, 'strikeAt' | 'lag'>) => s.strikeAt + s.lag;
-/** Alle 14 Ultimates (Reihenfolge wie in der Vorgabe) */
+/** Alle 15 Stil-Ultimates (Reihenfolge wie in der Vorgabe) */
 export const ULTIMATE_ORDER: readonly ActionStyleId[] = ['zweihaender', 'saebel', 'doppel', 'langklinge', 'sturmfaust', 'erdspalter', 'schwarzloch', 'feuer', 'eis', 'wasser', 'wind', 'blitz', 'sonne', 'mond', 'priester'];
 
 // ---------- Regeln für Schiffe und Endbosse (rein, getestet) ----------

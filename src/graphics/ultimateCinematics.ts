@@ -16,10 +16,16 @@
 // Zeiten: die Regie läuft in ECHTZEIT und setzt das Zeitmaß der Spielzeit so, dass das Aufladen der Engine (`charge`) genau Akt 1 füllt und
 // der entscheidende Treffer (`strikeAt + lag`) genau ans Ende von Akt 2 fällt. Akt 3 beginnt beim Treffer der Welt (`impact()`, ausgelöst von
 // der Kataklysmus-Regie) – kommt er früher, schneidet die Regie früher; bleibt er aus, setzt sie ihn nach `CINE.overrun` selbst.
+//
+// 4.93A – Kino-Endgame-Regie: die Ultimates der ausgebauten Klassen (Faustkämpfer: `fistStorm`, `oceanSplit`; Stufe 101: `skyfall`) tragen
+// `kino` und laufen 3,4 – 4,2 s in vier Phasen (`graphics/endgameDirector.ts`): Akt 1 = Aufbau, Akt 2 = Entladung (beim Himmelssturz mit
+// einem harten Schnitt auf den Sturzflug des Kolosses), der Anfang von Akt 3 = Impact-Frame nach Millisekunden mit Hit-Stop (Zeitmaß 0,04
+// statt Standbild), der Rest von Akt 3 = Nachbeben mit Weitwinkel-Rückzug. Ihre frühere Kurzfassung (≈ 1 s) gibt es nicht mehr.
 import { Vector3 } from 'three';
 import type { CataclysmKind, UltimateSpec } from '../data/actionKit';
 import type { HandPoseId } from '../data/characterRig';
 import { orbitBlend } from './cameraRig';
+import { DIRECTOR_TIMELINES, type DirectorActionId } from './endgameDirector';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Typen
@@ -57,6 +63,8 @@ export const CINE = {
   fovMin: 24, fovMax: 74,
   /** Sichtprüfung: so frei gilt eine Einstellung als frei */
   freeOk: 0.98,
+  /** 4.93A: Akt-Dauern und Gesamtdauer der Kino-Endgame-Ultimates (echte s) */
+  kinoPrep: [0.9, 1.0], kinoBuild: [0.5, 1.7], kinoImpact: [1.6, 2.1], kinoTotal: [3.4, 4.2],
 } as const;
 
 /** Bezugspunkte der Einstellungen */
@@ -89,7 +97,9 @@ export interface CineShot { from: CineKey; to: CineKey; ease: CineEase }
 
 export type CinePoseId =
   | 'skyHand' | 'twoHandDraw' | 'thumbHilt' | 'crossJump' | 'sabreLeap' | 'fistLunge' | 'crouchWindup' | 'palmSphere'
-  | 'flameArms' | 'palmSlam' | 'flowHands' | 'windGather' | 'rocketRise' | 'sunCrown' | 'crimsonArc';
+  | 'flameArms' | 'palmSlam' | 'flowHands' | 'windGather' | 'rocketRise' | 'sunCrown' | 'crimsonArc'
+  /** 4.93A: Sturmkrone der Fäuste, Weltenbrecher-Stand, Hand zum aufreißenden Himmel (Schwerkraft-Umkehr) */
+  | 'stormCrown' | 'worldBreaker' | 'gravityCall';
 /** Hand-Ziel im Figurenraum (x links, y oben ab den Füßen, z vorn; m): Anfang (x, y, z) → Ende (x, y, z) von Akt 1 */
 export type CineReach = readonly [number, number, number, number, number, number];
 /** Kampf-Pose der Figur in Akt 1 */
@@ -115,7 +125,19 @@ export type CineSky = 'starSpiral' | 'stormSpiral' | 'thunderhead' | 'eclipse' |
 /** was in Akt 2 entsteht */
 export type CineThreat =
   | 'meteors' | 'bladeWave' | 'dash' | 'saw' | 'armada' | 'fistFlood' | 'trench' | 'vortex' | 'dragons' | 'glacier' | 'tsunami'
-  | 'tornado' | 'bolt' | 'sunRing' | 'sickleRain';
+  | 'tornado' | 'bolt' | 'sunRing' | 'sickleRain'
+  /** 4.93A: 24 Blitzeinschläge um das Ziel, der Zentralschlag der Welten-Teilung, Vorhut und Koloss-Meteorit */
+  | 'boltOrbit' | 'worldSplit' | 'colossus';
+
+/** 4.93A: Zusatz der Kino-Endgame-Ultimates */
+export interface CineKino {
+  /** Kennung der Regie-Aktion (Zeitachse in `endgameDirector.ts`) */
+  action: DirectorActionId;
+  /** Manga-Impact-Frame: Dauer (ms) und Stil; Zeitmaß des Hit-Stops währenddessen */
+  impactMs: number; impactStyle: 'ink' | 'inkInv' | 'inkBlue'; hitStop: number;
+  /** zweite Einstellung in Akt 2 ab diesem Anteil (harter Schnitt) – Himmelssturz: die Kamera begleitet den Sturzflug des Kolosses */
+  cut?: { at: number; shot: CineShot };
+}
 
 export interface UltimateCinematic {
   kind: CataclysmKind;
@@ -142,6 +164,8 @@ export interface UltimateCinematic {
    * überstrahlten sonst das Bild; gedämpft bleiben Klingenwelle, Wasserdrache und Tusche-Konturen gestochen scharf.
    */
   grade2?: { exposure: number; bloom: number };
+  /** 4.93A: Kino-Endgame-Ultimate (vier Phasen, Impact-Frame nach Millisekunden, Hit-Stop 0,04) */
+  kino?: CineKino;
 }
 
 /** 4.6J: Akt-2-Bildregelung blendet so schnell ein und am Beginn von Akt 3 aus (echte s) */
@@ -151,6 +175,12 @@ export const GRADE_BLEND = 0.08;
 // Die 15 Choreografien
 // ---------------------------------------------------------------------------------------------------------------
 
+/** 4.93A: Kino-Zusatz eines Ultimates aus seiner Zeitachse (Impact-Frame und Hit-Stop stehen nur dort) */
+function kinoOf(action: DirectorActionId, cut?: CineKino['cut']): CineKino {
+  const tl = DIRECTOR_TIMELINES[action];
+  return { action, impactMs: tl.impactMs, impactStyle: tl.impactStyle, hitStop: tl.hitStop, cut };
+}
+
 const K = (at: CineAnchorId, dist: number, az: number, dy: number, look: CineAnchorId, ly: number, fov: number, ahead = 0, roll = 0): CineKey => ({ at, dist, az, dy, look, ly, fov, ahead, roll });
 const S = (from: CineKey, to: CineKey, ease: CineEase): CineShot => ({ from, to, ease });
 const P = (id: CinePoseId, label: string, o: Partial<CinePose>): CinePose => ({
@@ -158,23 +188,33 @@ const P = (id: CinePoseId, label: string, o: Partial<CinePose>): CinePose => ({
 });
 
 export const ULTIMATE_CINEMATICS: Readonly<Record<CataclysmKind, UltimateCinematic>> = {
+  // 4.93A – Stufe 101: Himmelssturz in vier Stufen (4,2 s). Akt 1 = Stufe 1 (Schwerkraft-Umkehr), Akt 2 = Stufe 2 (Vorhut-Bombardement) und
+  // nach dem Schnitt Stufe 3 (die Kamera begleitet den Sturzflug des Kolosses), Akt 3 = Stufe 4 (Impact-Frame, Kataklysmus, Weitwinkel)
   skyfall: {
-    kind: 'skyfall', title: 'Himmelssturz: Zwillings-Meteoriten & Planeten-Kollaps',
+    kind: 'skyfall', title: 'Himmelssturz',
     beats: [
-      'Tiefe Helden-Untersicht: der Kapitän hebt den Arm gen Himmel, kosmisch-violette Blitze zucken vom Mantel weg',
-      'Schwenk schräg hoch in den aufreißenden Sternenhimmel: die Wolkendecke öffnet sich spiralförmig, zwei brennende Zwillings-Meteoriten mit Mach-Kegeln und Kometenschweifen, dahinter die Planetensphäre',
-      'Die Kamera folgt dem Einschlag: Doppel-Impact-Frame, Feuer- und Gischtfontäne, Schiffe zerschmettert, tiefer Meeres-Trichter',
+      'Schwerkraft-Umkehr: lila Gravitations-Ringe, Kiesel und Tropfen schweben nach oben, die Kamera sinkt tief hinter den Kapitän und blickt steil in den aufreißenden Himmel',
+      'Vorhut-Bombardement: fünf brennende Meteoriten durchschlagen die glutrot-violette Wolkendecke; dann rast der 45 m große Koloss mit Plasma-Bugwelle herab, die Kamera begleitet den Sturzflug',
+      'Stille, invertierter Schwarz-Weiß-Impact-Frame, 120 m hohe Wasser- bzw. Lava-Fontäne, aufgerissener Krater, zerbrechende Kriegsschiffe',
     ],
-    dur: [0.33, 0.4, 0.38],
-    pose: P('skyHand', 'Hand zum Himmel', { clip: [0.2, 0.45], look: 0.5, lean: -0.12, handR: 'offen', reachR: [-0.3, 1.5, 0.35, -0.16, 2.06, 0.16], hold: true, whirl: 5 }),
-    sky: 'starSpiral', threat: 'meteors',
+    dur: [0.9, 1.7, 1.6],
+    pose: P('gravityCall', 'Hand zum aufreißenden Himmel', { clip: [0.0, 0.2], look: 0.55, lean: -0.14, lift: 0.5, handR: 'offen', handL: 'offen', reachR: [-0.3, 1.5, 0.3, -0.14, 2.1, 0.14], hold: true, whirl: 6 }),
+    sky: 'starSpiral', threat: 'colossus',
     shots: [
-      S(K('origin', 3.3, 0.55, 0.6, 'head', 0.15, 44), K('origin', 2.9, 0.78, 0.45, 'head', 0.65, 50), 'out'),
-      // seitlich neben der Bordwand, schräg hoch zum aufreißenden Himmel (nicht durch die eigenen Segel)
-      S(K('origin', 8, 1.7, 0.8, 'threat', 0, 56, 0, -0.06), K('origin', 10, 1.9, 1.2, 'threat', -4, 60, 0, 0.05), 'inOut'),
-      S(K('impact', 26, 2.7, 9, 'impact', 3, 58), K('impact', 36, 2.9, 14, 'impact', 0, 62), 'out'),
+      // Die Kamera sinkt tief und dicht hinter den Kapitän (1,9 m, 0,5 m über dem Boden) und blickt an ihm entlang steil in den aufreißenden
+      // Himmel; Sichtfeld −11°. Der Blickpunkt bleibt am Kopf: mit dem Himmels-Anker als Ziel verließ die Figur das Bild schon nach einem
+      // Zehntel der Fahrt (und die Kamera schnitt 3 m hinter ihr in Bodenwellen) – so bleiben Pose und erhobene Hand bis zum Schluss im Bild
+      S(K('origin', 5.0, 2.65, 1.1, 'head', 0.7, 54), K('origin', 1.9, 3.0, 0.5, 'head', 0.55, 43), 'inOut'),
+      // Stufe 2: weite Totale auf das Bombardement (der Blick folgt dem jeweils stürzenden Vorhut-Meteoriten)
+      S(K('origin', 9, 2.4, 2.2, 'threat', 0, 60), K('origin', 12, 2.2, 3.4, 'impact', 8, 64), 'inOut'),
+      // Stufe 4: Weitwinkel-Rückzug vor der Fontäne
+      S(K('impact', 62, 2.6, 18, 'impact', 10, 56), K('impact', 96, 2.9, 34, 'impact', 24, 63), 'out'),
     ],
-    frames: 4, kick: 1.3, kickDir: 'down', slow3: [0.28, 1],
+    frames: 4, kick: 1.5, kickDir: 'down', slow3: [0.3, 1],
+    // Stufe 3: Verfolgungskamera seitlich vor dem Koloss (der Anker `threat` wandert mit ihm herab) – aus 215 → 150 m, erst von unten gegen
+    // den glutroten Himmel, am Ende knapp über ihm. Näher als 120 m steht die Kamera in der Plasma-Bugwelle (36 m Radius, 130 m Schweif):
+    // dann füllt die leuchtende Hülle das ganze Bild und der gefurchte Brocken ist nicht mehr zu erkennen
+    kino: kinoOf('kosmos.u', { at: 0.9 / 1.7, shot: S(K('threat', 215, 1.95, -34, 'threat', -10, 46), K('threat', 150, 2.25, 12, 'threat', -8, 56), 'linear') }),
   },
   horizonCut: {
     kind: 'horizonCut', title: 'Himmelsspalter: Horizont-Zäsur',
@@ -248,39 +288,47 @@ export const ULTIMATE_CINEMATICS: Readonly<Record<CataclysmKind, UltimateCinemat
     ],
     frames: 3, kick: 1.1, kickDir: 'down', slow3: [0.3, 1],
   },
+  // 4.93A – Stufe 60, Schneller Faustkämpfer: „Sturmfaust der Tausend Blitze“ (3,4 s = 0,9 + 0,6 + 1,9)
   fistStorm: {
-    kind: 'fistStorm', title: 'Sturmfaust-Stakkato: Zehntausend-Hiebe-Orkan',
+    kind: 'fistStorm', title: 'Sturmfaust der Tausend Blitze',
     beats: [
-      'Tiefer Ausfallschritt mit glühenden Fäusten und Zoom-Punch',
-      'Leicht seitliche Weitwinkel-Kamera auf die explodierende Kegel-Flut aus hunderten Geister-Fäusten und Überschall-Ringen',
-      'Impact-Frame und Zerbersten der getroffenen Ziele',
+      'Der Himmel verdunkelt sich, blaue Blitze tanzen um Fäuste bzw. Masten – tiefe Untersicht, die Kamera zieht heran',
+      '24 Hochgeschwindigkeits-Blitzeinschläge umkreisen das Ziel bzw. Gegnerschiff, die Kamera peitscht der Bahn hinterher',
+      'Stille, blau-weißer Manga-Impact-Frame, der Zentralschlag sprengt eine riesige Kugelblitz-Kuppel auf und zerbricht das Zielschiff',
     ],
-    dur: [0.3, 0.38, 0.34],
-    pose: P('fistLunge', 'Ausfallschritt mit glühenden Fäusten', { clip: [0.0, 0.1], crouch: 0.22, lean: 0.3, handR: 'faust', handL: 'faust', reachR: [-0.22, 1.12, -0.1, -0.08, 1.36, 0.6], reachL: [0.14, 1.4, 0.3, 0.14, 1.38, 0.28], whirl: 4 }),
-    sky: 'rift', threat: 'fistFlood',
+    dur: [0.9, 0.6, 1.9],
+    pose: P('stormCrown', 'Sturmkrone der Fäuste', { clip: [0.0, 0.05], crouch: 0.24, lean: 0.3, look: 0.1, twist: 0.25, lift: 0.2, handR: 'faust', handL: 'faust', reachR: [-0.24, 1.1, -0.1, -0.1, 1.42, 0.5], reachL: [0.2, 1.3, 0.25, 0.18, 1.5, 0.3], whirl: 8 }),
+    sky: 'stormSpiral', threat: 'boltOrbit',
     shots: [
-      S(K('hand', 2.2, 0.35, -0.2, 'hand', 0, 50), K('hand', 1.2, 0.3, -0.1, 'head', -0.2, 32), 'snap'),
-      S(K('chest', 8, 1.75, 1.6, 'chest', 0, 62, 9), K('chest', 9.5, 1.55, 2.2, 'chest', 0, 66, 14), 'linear'),
-      S(K('impact', 16, 2.5, 5, 'impact', 1.5, 54), K('impact', 22, 2.7, 7, 'impact', 1, 58), 'out'),
+      // Low-Angle-Zoom: Sichtfeld −9°
+      S(K('feet', 3.4, 0.5, 0.25, 'head', 0.1, 52), K('feet', 2.4, 0.72, 0.12, 'head', 0.25, 43), 'out'),
+      // Peitschen-Schnitt von der Figur auf das umkreiste Ziel
+      S(K('chest', 5.5, 2.6, 1.6, 'impact', 2, 58, 0, 0.08), K('impact', 24, 2.2, 7, 'impact', 3, 62), 'snap'),
+      // Weitwinkel-Rückzug (+7°) vor der Kugelblitz-Kuppel
+      S(K('impact', 20, 2.5, 6, 'impact', 3, 55), K('impact', 38, 2.8, 14, 'impact', 1, 62), 'out'),
     ],
-    frames: 2, kick: 1.2, kickDir: 'fwd', slow3: [0.32, 1],
+    frames: 4, kick: 1.4, kickDir: 'fwd', slow3: [0.3, 1],
+    kino: kinoOf('sturmfaust.u'),
   },
+  // 4.93A – Stufe 60, Kräftiger Faustkämpfer: „Weltenbrecher-Erdspalter“ (3,6 s = 1,0 + 0,5 + 2,1)
   oceanSplit: {
-    kind: 'oceanSplit', title: 'Erdspalter-Beben: Ozean-Teilung',
+    kind: 'oceanSplit', title: 'Weltenbrecher-Erdspalter',
     beats: [
-      'Tief geduckte Aushol-Pose, der Boden bebt, Steine und Tropfen springen hoch',
-      'Tiefe Blickachse entlang der Schneise: die Luft reißt wie Glas, das Meer teilt sich zu einem 9 m tiefen Graben mit hohen Gischt-Wänden',
-      'Impact-Frame und Zusammenprall der Schiffe im Graben',
+      'Beide Fäuste glühen tektonisch-golden, die Kamera fährt knapp über Boden bzw. Deck, die Erde grollt',
+      'Der Zentralschlag fährt nieder – tiefe Blickachse entlang der Schlagrichtung',
+      'Stille, invertierter Manga-Impact-Frame: an Land reißt ein glühender Magma-Graben auf, auf See teilt die Schockwelle das Meer bis zum Grund und zerbricht das Zielschiff in zwei Hälften',
     ],
-    dur: [0.33, 0.4, 0.36],
-    pose: P('crouchWindup', 'Geduckte Aushol-Pose', { clip: [0.15, 0.38], crouch: 0.26, lean: 0.36, twist: 0.2, handR: 'griff', handL: 'griff', whirl: 2 }),
-    sky: 'rift', threat: 'trench',
+    dur: [1.0, 0.5, 2.1],
+    pose: P('worldBreaker', 'Weltenbrecher-Stand', { clip: [0.1, 0.215], crouch: 0.3, lean: 0.34, look: -0.1, twist: 0.2, handR: 'faust', handL: 'faust', reachR: [-0.3, 1.5, 0.2, -0.2, 1.95, 0.25], reachL: [0.3, 1.5, 0.2, 0.2, 1.95, 0.25], whirl: 5 }),
+    sky: 'rift', threat: 'worldSplit',
     shots: [
-      S(K('feet', 2.8, 1.1, 0.15, 'chest', 0.2, 44), K('feet', 2.3, 1.25, 0.1, 'head', 0.1, 42), 'out'),
-      S(K('feet', 3.2, 3.14, 0.9, 'feet', 0.5, 56, 30), K('feet', 4.5, 3.14, 1.6, 'feet', -2, 60, 55), 'inOut'),
-      S(K('impact', 20, 2.0, 7, 'impact', -3, 54), K('impact', 26, 2.3, 10, 'impact', -2, 58), 'out'),
+      // knapp über dem Boden, Sichtfeld −8°
+      S(K('feet', 4.2, 0.9, 0.18, 'chest', 0, 50), K('feet', 2.6, 1.15, 0.1, 'chest', 0.15, 42), 'inOut'),
+      S(K('feet', 3.4, 3.14, 1.2, 'feet', 0.6, 54, 12), K('feet', 4.2, 3.0, 0.7, 'feet', -0.5, 60, 30), 'snap'),
+      S(K('impact', 22, 2.0, 7, 'impact', -2, 55), K('impact', 34, 2.35, 13, 'impact', -3, 62), 'out'),
     ],
-    frames: 3, kick: 1.3, kickDir: 'down', slow3: [0.3, 1],
+    frames: 4, kick: 1.5, kickDir: 'down', slow3: [0.3, 1],
+    kino: kinoOf('erdspalter.u'),
   },
   blackHole: {
     kind: 'blackHole', title: '7. Form: Ereignishorizont – Schwarzer Abgrund',
@@ -475,6 +523,8 @@ export function cineTiming(def: UltimateCinematic, spec: Pick<UltimateSpec, 'str
 
 /** Gesamtdauer der drei Akte (s) */
 export const cineTotal = (def: UltimateCinematic) => def.dur[0] + def.dur[1] + def.dur[2];
+/** 4.93A: Läuft in Akt 2 gerade die zweite Einstellung (nach dem Schnitt)? */
+export const cineAfterCut = (def: UltimateCinematic | null, act: number, u: number): boolean => !!def?.kino?.cut && act === 1 && u >= def.kino.cut.at;
 
 // ---------------------------------------------------------------------------------------------------------------
 // Verläufe
@@ -665,8 +715,10 @@ export class UltimateCinematics {
         if (this.t >= d.dur[1] + CINE.overrun && !this.impacted) { this.forced = true; this.stats.forced++; this.impact(); }
         break;
       case 'impact':
-        if (framesLeft <= 0 && this.holdEnd < 0) this.holdEnd = this.t;
-        if (this.t >= d.dur[2] && framesLeft <= 0) { this.phase = 'return'; this.t = 0; this.stats.returns++; }
+        // 4.93A: der Impact-Frame der Kino-Endgame-Ultimates steht nach Zeit (35 – 95 ms), nicht nach gezeichneten Bildern
+        if (d.kino) { if (this.holdEnd < 0 && this.t >= d.kino.impactMs / 1000) this.holdEnd = this.t; }
+        else if (framesLeft <= 0 && this.holdEnd < 0) this.holdEnd = this.t;
+        if (this.t >= d.dur[2] && (d.kino || framesLeft <= 0)) { this.phase = 'return'; this.t = 0; this.stats.returns++; }
         break;
       case 'return':
         if (this.t >= CINE.returnDur) { this.reset(); return; }
@@ -700,7 +752,9 @@ export class UltimateCinematics {
         break;
       case 'impact': {
         // Standbild, solange Impact-Bilder ausstehen; danach Zeitlupe, die in Echtzeit ausläuft
-        if (framesLeft > 0 || this.holdEnd < 0) this.timeScale = 0;
+        // 4.93A: Kino-Endgame-Ultimates halten nicht ganz an – Hit-Stop mit Zeitmaß 0,04 für die Dauer des Impact-Frames
+        if (d.kino && this.holdEnd < 0) this.timeScale = d.kino.hitStop;
+        else if (!d.kino && (framesLeft > 0 || this.holdEnd < 0)) this.timeScale = 0;
         else {
           const k = smooth((this.t - this.holdEnd) / Math.max(0.05, d.dur[2] - this.holdEnd));
           this.timeScale = d.slow3[0] + (d.slow3[1] - d.slow3[0]) * k;
@@ -742,8 +796,11 @@ export class UltimateCinematics {
   keyPose(act: number, u: number, a: CineAnchors, out: CineCam, fix: CineFix = this.fix[act]): CineCam {
     const d = this.def;
     if (!d) return out;
-    const shot = d.shots[act];
-    const e = cineEase(shot.ease, u);
+    // 4.93A: harter Schnitt innerhalb von Akt 2 auf die zweite Einstellung (Himmelssturz: Sturzflug des Kolosses)
+    const cut = act === 1 ? d.kino?.cut : undefined;
+    const second = !!cut && u >= cut.at;
+    const shot = second ? cut!.shot : d.shots[act];
+    const e = cineEase(shot.ease, cut ? (second ? (u - cut.at) / Math.max(1e-4, 1 - cut.at) : u / Math.max(1e-4, cut.at)) : u);
     const A = shot.from, B = shot.to;
     const yaw = a.yaw;
     const fwx = Math.sin(yaw), fwz = Math.cos(yaw);

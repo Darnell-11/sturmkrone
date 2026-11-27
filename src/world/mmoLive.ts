@@ -9,7 +9,7 @@
 // 4.8B: Pool-Figuren tragen das echte Aussehen ihres Kapitäns (`PlayerProfile.app`: Geschlecht, Statur, Frisur, Farben, Hut, Kleidung,
 // Mantel, sichtbare Ausrüstung, Klassen-Waffe) – umgekleidet höchstens eine Figur je `APPLY_GAP` Sekunden, damit kein Bild stockt; zu Fuß
 // sind Kapitäne verfeindeter Nationen außerhalb der Schutzzonen treffbar (`RemoteTarget.harm`).
-import type { Object3D, Scene } from 'three';
+import { Vector3, type AnimationAction, type Object3D, type Scene } from 'three';
 import type { Character } from '../entities/character/character';
 import type { Ship } from '../entities/ship/ship';
 import type { EnemyShip, NavalSystem } from '../naval/naval';
@@ -20,6 +20,8 @@ import { playerRelation, pvpBlock, rideToWorld, type PartyStance } from '../net/
 import { DEFAULT_SHIP_LOOK, HULL_COLORS, SAIL_COLORS, SHIP_CLASSES, type ShipLook } from '../data/ships';
 import type { FactionId } from '../data/factions';
 import type { AnimRole } from '../data/animations';
+import type { HandPoseId } from '../data/characterRig';
+import { castClipAt, type RemoteCast } from './remoteActionStage';
 
 /** Was die Mitspieler-Darstellung von der Seewelt braucht */
 export interface MmoLiveHost {
@@ -42,6 +44,10 @@ export interface MmoLiveHost {
   warm?(o: Object3D): void;
   /** 4.8B: Aussehen eines Kapitäns auf eine Pool-Figur legen (null = zurück zum Pool-Aussehen `base`) */
   dress?(char: Character, app: AppearanceNet | null, base: CharacterLook): void;
+  /** 4.93A: laufende Kampf-Aktion eines Mitspielers (Clip, Kampfpose, Sprung auf die Bugreling) – null = keine */
+  castOf?(id: string): RemoteCast | null;
+  /** 4.93A: Glut an einer Faust der Figur (je Bild; Stärke 0 … 1) */
+  fistGlow?(x: number, y: number, z: number, style: string, k: number): void;
 }
 
 /** 4.8B: höchstens eine Pool-Figur je so viele Sekunden umkleiden (ein Umkleiden kostet einige Millisekunden) */
@@ -74,6 +80,12 @@ interface RigSlot {
   /** 4.8B: Aussehen aus dem Pool (zum Zurückkleiden) und das angelegte (Kennung + Steckbrief-Version; '' = Pool) */
   base: CharacterLook;
   dressed: string;
+  /** 4.93A: laufende Kampf-Aktion an dieser Figur – Nummer der Aktion, ihr Clip, die Hände vor der Faust-Pose */
+  castSeq: number;
+  castOn: boolean;
+  castAct: AnimationAction | null;
+  handR: HandPoseId | null;
+  handL: HandPoseId | null;
 }
 
 interface ShipSlot { id: string; e: EnemyShip | null; pending: boolean; gone: number; tier: number; team: string }
@@ -81,6 +93,7 @@ interface ShipSlot { id: string; e: EnemyShip | null; pending: boolean; gone: nu
 const _v = { x: 0, z: 0 };
 const _me = { x: 0, z: 0 };
 const _w = { x: 0, y: 0, z: 0 };
+const _hand = new Vector3();
 /** Beziehung (wiederverwendet: `relationOf` legt nichts Neues an) */
 const _rel: { relation: 'friendly' | 'neutral' | 'hostile'; harm: boolean; stance: PartyStance } = { relation: 'neutral', harm: false, stance: 'neutral' };
 /** Kandidaten für Figuren (Index in `client.list`, Abstand) – vorab angelegt */
@@ -155,7 +168,7 @@ export class MmoLive {
     char.holder.visible = false;
     this.host.scene.add(char.holder);
     this.host.warm?.(char.holder);
-    this.rigs.push({ char, female, id: '', anim: '', acc: 0, base: char.look, dressed: '' });
+    this.rigs.push({ char, female, id: '', anim: '', acc: 0, base: char.look, dressed: '', castSeq: 0, castOn: false, castAct: null, handR: null, handL: null });
     this.stats.rigs = this.rigs.length;
   }
 
@@ -229,6 +242,54 @@ export class MmoLive {
     return true;
   }
 
+  /**
+   * 4.93A: Lage des Kapitäns eines Mitspieler-Schiffs während eines Wirkens vom Steuerrad – er springt vom Steuerrad im Bogen auf die
+   * Bugreling und am Ende zurück (`leapK` 0 … 1, wie beim eigenen Kapitän). false = sein Schiff ist nicht in 3D.
+   */
+  private helmWorld(r: RemotePlayer, c: RemoteCast): boolean {
+    const ship = this.ships.get(r.id)?.e?.ship ?? null;
+    if (!ship || !ship.model.group.visible) return false;
+    const m = ship.model, k = c.leapK < 0 ? 0 : c.leapK > 1 ? 1 : c.leapK, e = k * k * (3 - 2 * k);
+    const bowY = (m.fore ? m.fore.top : m.deckY) + 0.05, bowZ = ship.cls.L * 0.4;
+    rideToWorld(ship, m.group.position.y, m.helm.x * (1 - e), m.helm.y + (bowY - m.helm.y) * e + (k < 1 ? Math.sin(Math.PI * k) * 2.2 : 0), m.helm.z + (bowZ - m.helm.z) * e, _w);
+    return true;
+  }
+
+  /**
+   * 4.93A: Kampf-Aktion an der Figur zeigen – ihr Clip folgt exakt der Zeitachse der Aktion (wie bei der eigenen Figur), darüber die Kampfpose
+   * der Kino-Endgame-Regie (Kauern, Vorlage, Blick, Drehung), geballte glühende Fäuste und das Abheben. Rückgabe: Abheben in m.
+   */
+  private applyCast(slot: RigSlot, ch: Character, c: RemoteCast): number {
+    if (slot.castSeq !== c.seq || !slot.castOn) {
+      if (slot.castOn) this.releaseCast(slot, ch);
+      slot.castSeq = c.seq; slot.castOn = true; slot.anim = '';
+      slot.castAct = c.clip ? ch.playSynced(c.clip, 0.08) : null;
+      if (c.pose?.fists && ch.rigX) { slot.handR = ch.rigX.handPose('r'); slot.handL = ch.rigX.handPose('l'); ch.setHandPose('r', 'faust'); ch.setHandPose('l', 'faust'); }
+    }
+    const act = slot.castAct;
+    if (act) act.time = act.getClip().duration * castClipAt(c);
+    const rx = ch.rigX, pose = c.pose;
+    if (!pose) return 0;
+    if (rx) { rx.cine.k = c.poseK; rx.cine.crouch = pose.crouch; rx.cine.lean = pose.lean; rx.cine.look = pose.look; rx.cine.twist = pose.twist; }
+    if (pose.fists && c.glowK > 0.05 && this.host.fistGlow) {
+      const so = ch.charSockets;
+      for (let side = 0; side < 2; side++) {
+        const node = so?.get(side ? 'handOff' : 'handMain') ?? null;
+        if (!node) continue;
+        node.getWorldPosition(_hand);
+        this.host.fistGlow(_hand.x, _hand.y, _hand.z, c.tl ? c.tl.style : c.style, c.glowK);
+      }
+    }
+    return c.helm ? 0 : pose.lift * c.liftK;
+  }
+
+  /** Aktion beendet: Pose und Hände zurück, die Figur läuft bzw. steht wieder */
+  private releaseCast(slot: RigSlot, ch: Character) {
+    slot.castOn = false; slot.castAct = null; slot.anim = '';
+    if (ch.rigX) ch.rigX.cine.k = 0;
+    if (slot.handR !== null) { ch.setHandPose('r', slot.handR); ch.setHandPose('l', slot.handL ?? 'offen'); slot.handR = null; slot.handL = null; }
+  }
+
   private updateRigs(dt: number) {
     this.dressT -= dt;
     const list = this.client.list;
@@ -241,7 +302,12 @@ export class MmoLive {
       if (!r.live) continue;
       let x = r.view.x, z = r.view.z;
       if (r.last.ride) { if (!this.riderWorld(r)) continue; x = _w.x; z = _w.z; }
-      else if (r.last.dom !== 'land') continue;
+      else if (r.last.dom !== 'land') {
+        // 4.93A: am Steuerrad zeigt sich der Kapitän während eines Wirkens – er springt auf die Bugreling seines Schiffs
+        const hc = this.host.castOf?.(r.id) ?? null;
+        if (!hc || !hc.helm || !this.helmWorld(r, hc)) continue;
+        x = _w.x; z = _w.z;
+      }
       const d = Math.hypot(x - _v.x, z - _v.z);
       if (d > show) continue;
       let k = _cand.length;
@@ -255,7 +321,7 @@ export class MmoLive {
       if (!s.id) continue;
       let keep = false;
       for (let k = 0; k < n; k++) if (list[_cand[k]].id === s.id) { keep = true; break; }
-      if (!keep) { s.id = ''; s.char.holder.visible = false; s.anim = ''; }
+      if (!keep) { if (s.castOn) this.releaseCast(s, s.char); s.id = ''; s.char.holder.visible = false; s.anim = ''; }
     }
     this.targets.length = 0;
     let riders = 0, shown = 0;
@@ -268,16 +334,23 @@ export class MmoLive {
       slot.id = r.id;
       this.dress(slot, r);
       const onDeck = !!r.last.ride;
-      let x = r.view.x, y = r.view.y, z = r.view.z;
+      const cast = this.host.castOf?.(r.id) ?? null;
+      const atHelm = !onDeck && r.last.dom !== 'land';
+      let x = r.view.x, y = r.view.y, z = r.view.z, yaw = r.view.yaw;
       if (onDeck) { this.riderWorld(r); x = _w.x; y = _w.y; z = _w.z; riders++; }
+      else if (atHelm) { if (!cast || !this.helmWorld(r, cast)) continue; x = _w.x; y = _w.y; z = _w.z; yaw = cast.yaw; }
       else if (r.profile.bot || !Number.isFinite(y)) y = this.host.groundY(x, z, y);
       const ch = slot.char;
       if (!ch.holder.visible) ch.holder.visible = true;
-      const spd = onDeck ? 0 : r.view.spd;
-      const anim: AnimRole = spd > 3.2 ? 'run' : spd > 0.35 ? 'walk' : 'idle';
-      if (anim !== slot.anim) { slot.anim = anim; ch.play(anim, { fade: 0.25 }); }
-      if (anim !== 'idle') ch.setLocoSpeed(Math.max(0.6, spd));
-      ch.place(x, y, z, r.view.yaw);
+      const spd = onDeck || atHelm ? 0 : r.view.spd;
+      if (cast) y += this.applyCast(slot, ch, cast);
+      else {
+        if (slot.castOn) this.releaseCast(slot, ch);
+        const anim: AnimRole = spd > 3.2 ? 'run' : spd > 0.35 ? 'walk' : 'idle';
+        if (anim !== slot.anim) { slot.anim = anim; ch.play(anim, { fade: 0.25 }); }
+        if (anim !== 'idle') ch.setLocoSpeed(Math.max(0.6, spd));
+      }
+      ch.place(x, y, z, yaw);
       slot.acc += dt;
       const far = _candD[k];
       if (far < 60 || (far < 120 && slot.acc >= 0.05) || slot.acc >= 0.1) { ch.update(slot.acc); slot.acc = 0; }
@@ -289,7 +362,7 @@ export class MmoLive {
       const rel = this.relationOf(r);
       t.id = r.id; t.x = x; t.y = y; t.z = z; t.name = r.profile.name; t.level = r.profile.level; t.team = r.profile.team; t.classLabel = r.profile.classLabel;
       // 4.8B: zu Fuß an Land (nicht an Deck) treffbar, wenn Krieg herrscht und keine Schutzzone greift (der Shard prüft noch einmal)
-      t.role = r.profile.role; t.hp = r.last.hp; t.mhp = r.last.mhp; t.relation = rel.relation; t.harm = rel.harm && !onDeck && r.last.dom === 'land'; t.alive = true; t.onDeck = onDeck;
+      t.role = r.profile.role; t.hp = r.last.hp; t.mhp = r.last.mhp; t.relation = rel.relation; t.harm = rel.harm && !onDeck && r.last.dom === 'land'; t.alive = true; t.onDeck = onDeck || atHelm;
       this.targets.push(t);
     }
     this.stats.shown = shown;

@@ -18,7 +18,7 @@ import { mintEntityId, type EntityId } from '../../sim/entityId';
 import { PLAYER_HIT_CAP, damageFactor, dangerOfLevel } from '../../data/balanceConfig';
 import {
   ActionCombatEngine, KIND_OF_CODE, createFighter, makeInput,
-  type ActionBody, type ActionTarget, type ActionWorld, type AttackerInfo, type FighterState, type HitContext,
+  type ActionBody, type ActionTarget, type ActionWorld, type AttackerInfo, type FighterState, type HitContext, type MoveKind,
 } from '../../combat/actionCombatEngine';
 import {
   ACTION_STYLES, ACTION_TUNING, actionStyleOf, visualStyleOf,
@@ -30,6 +30,7 @@ import { WATER_WALK, isWater, newWaterWalk, stepWaterWalk } from '../../data/wat
 import { CLOTH_IMPULSE, SHEATH, type ExpressionId } from '../../data/characterRig';
 import { Character as CharacterCls } from '../character/character';
 import { decisiveHit } from '../../graphics/formCinema';
+import { isBrawlerStyle, isDirectorAction } from '../../graphics/endgameDirector';
 
 /** Zustand für Welt und HUD (wie vor 4.6A) */
 type FootState = 'move' | 'roll' | 'attack' | 'block' | 'charge' | 'hurt' | 'down';
@@ -79,6 +80,8 @@ export interface FootDeps {
   onChase?: (ox: number, oy: number, oz: number, f: FighterState) => void;
   onClash?: (x: number, y: number, z: number, yaw: number) => void;
   onSwing?: (mv: ActionMove, h: ActionHit, f: FighterState) => void;
+  /** 4.93A: Beginn eines Angriffs (jede Stufe der Kette, Verzweigung, Schwer, Luft, Meteor, Finisher, Form, Ultimate) – Übertragung an die Mitspieler */
+  onMove?: (mv: ActionMove, kind: MoveKind, f: FighterState) => void;
   /** 4.91: Start einer Form (Platz 1 … 10; Akt 1 der Regie) und Treffermoment ihres stärksten Treffers (Akt 2 + 3) */
   onSkill?: (slot: number, mv: ActionMove | null, f: FighterState) => void;
   onFormHit?: (slot: number, mv: ActionMove, h: ActionHit, f: FighterState) => void;
@@ -89,6 +92,8 @@ export interface FootDeps {
   onStormStep?: (ox: number, oy: number, oz: number, f: FighterState) => void;
   /** 4.6E: Talent-Entladungen – Nachbeben des Ultimates (Mittelpunkt, Radius) und Element-Entladung beim Sturm-Schritt */
   onAftershock?: (x: number, z: number, r: number, f: FighterState) => void;
+  /** 4.93A: Aufprall am Boden (Sturzangriff) einer Klasse der Kino-Endgame-Regie – die Welt zeigt ihn mit den Blender-Netzen */
+  onGroundSlam?: (x: number, y: number, z: number, r: number, f: FighterState) => void;
   onStormBurst?: (x: number, z: number, r: number, f: FighterState) => void;
   trail?: (x: number, y: number, z: number, k: number) => void;
   /** Impact-Frames der Anime-Pipeline (invertiert, dann Tusche; 2 – 4 gezeichnete Bilder) */
@@ -154,7 +159,7 @@ class FootWorld implements ActionWorld {
   }
 
   targets(x: number, z: number, r: number, out: ActionTarget[]): number { const c = this.foot.combat; return c ? c.actionTargets(x, z, r, out) : 0; }
-  hit(t: ActionTarget, h: ActionHit, m: ActionMove, ctx: HitContext): number { const c = this.foot.combat; return c ? c.actionHit(t, h, m, ctx, this.foot.dmgMult) : 0; }
+  hit(t: ActionTarget, h: ActionHit, m: ActionMove, ctx: HitContext): number { const c = this.foot.combat; return c && !this.foot.helmCast ? c.actionHit(t, h, m, ctx, this.foot.dmgMult) : 0; }
   drag(t: ActionTarget, cx: number, cz: number, step: number): void { this.foot.combat?.actionDrag(t, cx, cz, step); }
   shoot(h: ActionHit, _m: ActionMove, f: FighterState): void { this.foot.combat?.actionShoot(h, f.x, f.y, f.z, f.yaw, this.foot.dmgMult, f.lockId); }
 }
@@ -283,6 +288,11 @@ export class PlayerFoot implements PlayerTarget {
    * zeigt die Figur damit die Aushol-Pose desselben Clips (Anziehen, Ausfallschritt, Hand zum Himmel), die nahtlos in den Angriff übergeht.
    */
   cineClip = -1;
+  /**
+   * 4.93A: ein Wirken vom Steuerrad läuft (Ultimate von der Bugreling). Es trifft ausschließlich Schiffe – die Treffer der Engine auf Gegner zu
+   * Fuß ruhen so lange (strikte Trennung der Kampfmodi, `combat/combatModes.ts`).
+   */
+  helmCast = false;
 
   get state(): FootState {
     switch (this.fighter.phase) {
@@ -613,6 +623,7 @@ export class PlayerFoot implements PlayerTarget {
           if (!mv) break;
           const kind = KIND_OF_CODE[e.b];
           this.startClip(mv, kind === 'light' || kind === 'swap' || kind === 'air');
+          this.deps.onMove?.(mv, kind, f);
           if (mv.afterimage) afx?.afterimage(f.x, f.y, f.z, mv.color || st.accent, 0.3);
           if (kind === 'meteor') { ov?.speedlines(0.5); }
           break;
@@ -624,7 +635,13 @@ export class PlayerFoot implements PlayerTarget {
           if (!this.engine.moveAt(f.moveIdx)?.cutin && ov) ov.number(this.tmpV.set(f.x, f.y + 2.5, f.z), e.s, 'info');
           break;
         }
-        case 'cutin': ov?.showCutin(e.s, this.engine.moveAt(e.a)?.color || st.accent); ov?.speedlines(0.8); break;
+        case 'cutin': {
+          // 4.93A: Regie-Aktionen zeigen ihre eigenen Speedlines (Phase 2) – der Schriftzug bleibt
+          const cm = this.engine.moveAt(e.a);
+          ov?.showCutin(e.s, cm?.color || st.accent);
+          if (!isDirectorAction(cm?.id)) ov?.speedlines(0.8);
+          break;
+        }
         case 'aftershock': this.deps.onAftershock?.(e.b, e.c, e.a, f); this.deps.shake?.(0.7); break;
         case 'stormBurst': this.deps.onStormBurst?.(e.b, e.c, e.a, f); break;
         case 'jump': {
@@ -685,6 +702,13 @@ export class PlayerFoot implements PlayerTarget {
         }
         case 'impact': {
           const at = this.tmpV.set(f.x, f.y, f.z);
+          if (isBrawlerStyle(f.style)) {
+            // 4.93A: kein Ring + Riss + Siegel und kein weißer Einheits-Blitz mehr für die Faustkämpfer – die Welt zeigt den Aufprall
+            this.deps.onGroundSlam?.(f.x, f.y, f.z, e.a, f);
+            CharacterCls.blastAll(f.x, f.y + 0.4, f.z, e.a * 1.6 + 2, CLOTH_IMPULSE.blast * 0.8);
+            this.deps.shake?.(0.7);
+            break;
+          }
           fx?.shockwave(at, e.a * 1.3, st.accent);
           fx?.crack(at, e.a * 1.1);
           CharacterCls.blastAll(f.x, f.y + 0.4, f.z, e.a * 1.6 + 2, CLOTH_IMPULSE.blast * 0.8);
@@ -806,7 +830,8 @@ export class PlayerFoot implements PlayerTarget {
           if (mv?.ultimate) {
             this.deps.onUltimate?.(mv, mv.ultimate, f);
             afx?.afterimage(f.x, f.y, f.z, mv.ultimate.accent, 0.8, 1.2);
-            fx?.sigil(this.tmpV.set(f.x, f.y + 0.05, f.z), 4, mv.ultimate.color, 1.6);
+            // 4.93A: kein Bodensiegel der alten Regie für die Kino-Endgame-Ultimates (ihr Aufbau ist die zusammenströmende Spirale)
+            if (!isDirectorAction(mv.id)) fx?.sigil(this.tmpV.set(f.x, f.y + 0.05, f.z), 4, mv.ultimate.color, 1.6);
           }
           break;
         }

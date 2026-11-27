@@ -45,12 +45,13 @@ import { MmoLive, type MmoLiveHost } from './mmoLive';
 import { PartyMarkers } from './partyMarkers';
 import { SharedEntities } from './sharedEntities';
 import { RemoteActionFx } from './remoteActionFx';
+import { swingCode } from '../combat/actionBroadcast';
 import type { EntKillNet } from '../net/mmoProtocol';
 import { elementVoice, formVoiceLayer } from '../audio/classVoices';
 import { SEA_ART, SEA_GEIST, SEA_ULT, helmTravel, seaArtCd, seaArtDamage, seaFamily, seaGeistDamage, seaUltAnchor, PRIEST_FLEET_BLESS } from '../data/seaArts';
 import { SEA_CINE_SCALE } from '../graphics/formCinema';
 import { ART_ACTIONS, GEIST_ACTIONS, HELM_GEIST_ACTIONS, type ActionId } from '../data/actions';
-import { ARENA, ARENA_DEMO, arenaTargets, landCameraPose, seaCameraPose, type ArenaCam, type ArenaKind, type ArenaPart } from '../data/showcaseArena';
+import { ARENA, ARENA_DEMO, KINO_PHASE_CHIPS, LEGEND_STAGE_CHIPS, arenaTargets, landCameraPose, seaCameraPose, type ArenaCam, type ArenaKind, type ArenaPart } from '../data/showcaseArena';
 import type { MmoClient } from '../net/mmoClient';
 import type { PlayerState } from '../net/mmoProtocol';
 import { rideToWorld, safeZoneAt, worldToRide, type PartyStance } from '../net/partyRules';
@@ -113,6 +114,7 @@ import { AnimeImpactRig } from '../graphics/animeImpactRig';
 import { UltimateCinematics, kickDirection, makeAnchors, makeCam, reachTarget, type CineSight, type UltimateCinematic } from '../graphics/ultimateCinematics';
 import { sightGridHit, sightGridOf } from '../graphics/sightGrid';
 import { CataclysmFx } from '../combat/cataclysmFx';
+import { loadVfxMeshes, vfxMeshesReady } from '../graphics/vfxMeshes';
 import { AnimeVfxForge } from '../graphics/animeVfxForge';
 import { CataclysmDirector } from './cataclysmDirector';
 import { createFighter, type FighterState } from '../combat/actionCombatEngine';
@@ -120,7 +122,9 @@ import { skyfallShift, type ShipFootprint } from '../combat/skyfallClearance';
 import { OfficerAssistDirector, type AssistHost } from './officerAssistDirector';
 import type { AssistView } from '../ui/fighterHud';
 import type { ActionHit, ActionMove, ActionSkill, UltimateSpec } from '../data/actionKit';
-import { formCinema, geistCinema, hitReach, projectileTime, type FormCinema } from '../graphics/formCinema';
+import { decisiveHit, formCinema, geistCinema, hitReach, projectileTime, type FormCinema } from '../graphics/formCinema';
+import { DIRECTOR_PHASES, DIRECTOR_TIMELINES, EndgameDirector, directorTimeline, formTimeline, isBrawlerStyle, stageAt, ultimateActionOf, type DirectorTimeline } from '../graphics/endgameDirector';
+import { bearingTo, cannonStationFor, combatModeOf, stationSide, type CannonStation, type CombatMode } from '../combat/combatModes';
 import { CombatSystem } from '../combat/combat';
 import type { LootDrop } from '../data/loot';
 import { EVENT, WorldEvents } from './events';
@@ -435,6 +439,25 @@ export class SeaWorld {
   // ---------- 4.6B: Mini-Zwischensequenz, Impact-Frames und Kataklysmus-Regie ----------
   /** Kamera-Einstellung und Impact-Frames der Ultimates (Echtzeit, nur lokal) */
   readonly animeRig = new AnimeImpactRig();
+  /**
+   * 4.93A: Kino-Endgame-Regie der eigenen Figur (vier Phasen je Form und Ultimate, `graphics/endgameDirector.ts`). Solange sie läuft,
+   * gehören ihr Sichtfeld-Puls, Untersicht, Pose, Faust-Glut, Impact-Frame, Hit-Stop und Klang der Aktion – kein alter Auslöser läuft mit.
+   */
+  readonly kino = new EndgameDirector();
+  /** Stimme der Kino-DSP für die laufende Aktion (−1 = keine) */
+  private kinoVoice = -1;
+  /** Ursprung, Ziel und Richtung der laufenden Regie-Aktion; `sea` = über dem Meer bzw. vom Steuerrad */
+  private readonly kinoAt = { ox: 0, oy: 0, oz: 0, tx: 0, ty: 0, tz: 0, yaw: 0, sea: false, reach: 0 };
+  private readonly kinoTimes = { t1: 0, t2: 0, total: 0, silenceMs: 0 };
+  /** Treffer einer Form vom Steuerrad im Treffermoment (Zielschiff, Schaden, Platz der Form) */
+  private readonly kinoHelmHit = { t: null as EnemyShip | null, dmg: 0, slot: 0, style: '' };
+  /** Sprung des Kapitäns auf die Bugreling während einer Form am Steuerrad (Anteil 0 … 1) */
+  private readonly helmLeap = { on: false, k: 0, yaw: 0 };
+  private kinoHandR: HandPoseId | null = null;
+  private kinoHandL: HandPoseId | null = null;
+  private kinoPoseOn = false;
+  /** Zähler der Kino-Endgame-Regie (Prüfungen) */
+  readonly kinoStats = { forms: 0, helmForms: 0, autos: 0, ults: 0, impacts: 0, releases: 0, frames: 0, cannons: 0, bow: 0, broadsides: 0, legacyBlocked: 0, remoteShakes: 0 };
   /** Effekt-Pool und Regie der Kataklysmen (Schiffe zerteilen, Meer spalten, Sog) */
   cataclysmFx!: CataclysmFx;
   /** 4.6D: Schmiede der 3-Schicht-Effekte (Texturen, Mäntel, Partikel, Oberflächen-Reaktion) auf den Pools von `cataclysmFx` */
@@ -791,6 +814,8 @@ export class SeaWorld {
       this.spray.emit(big ? 14 : 5, x, this.env.heightAt(x, z) + 0.1, z, { speed: big ? 2.5 : 1.5, up: big ? 5 : 3, life: 0.8, color: FOAM_COL, spread: 0.3 });
     };
     this.cataclysmFx = new CataclysmFx(this.scene);
+    // 4.93A: die Blender-Netze der Kino-Endgame-Regie lädt `main.ts` vor dem Bau der Welt; kam die Welt früher (Prüfaufbau), übernimmt der Pool sie nach
+    if (!vfxMeshesReady()) void loadVfxMeshes().then(() => { this.cataclysmFx.adoptMeshes(); });
     this.cataclysmFx.setCamera(this.camera);
     this.vfx = new AnimeVfxForge(this.cataclysmFx);
     this.cataclysm = this.makeCataclysm();
@@ -1439,9 +1464,8 @@ export class SeaWorld {
       awakenKey: () => this.awakenKeyLabel,
       onUltimate: (_mv, spec, f) => this.ultimateBegins(spec, f),
       onUltStrike: (_mv, spec, f) => {
+        // 4.93A: jedes Ultimate ging schon beim Auslösen an die Mitspieler (ganze Zeitachse: Aufladung, Entladung, Einschlag)
         this.ultimateStrikes(spec, f);
-        // 4.9: Ultimate für die Mitspieler (Einschlagsort)
-        this.sharedEnts?.sendAct('ult', f.x, f.y, f.z, f.yaw, f.style, spec.kind, 0, this.ultSX, f.y, this.ultSZ, this.mode === 'sail' || this.ownDeck);
       },
       onAwaken: (on) => {
         const f = this.foot?.fighter;
@@ -1484,14 +1508,33 @@ export class SeaWorld {
       // 4.91: 3-Akt-Regie der Formen I – X (Aufladung beim Start, Treffermoment beim stärksten Treffer)
       onSkill: (slot, mv, f) => this.formAct1(slot, mv, f),
       onFormHit: (slot, mv, h, f) => this.formAct2(slot, mv, h, f),
+      // 4.93A: Aufprall eines Faustkämpfers (Sturzangriff aus der Luft): Stoßkrone, Risse bzw. Gischt aus den Blender-Netzen statt Ring + Riss + Siegel
+      onGroundSlam: (x, y, z, r, f) => {
+        if (!isBrawlerStyle(f.style)) return;
+        this.cataclysm.kino.formImpact(DIRECTOR_TIMELINES[`${f.style}.l4`], x, y, z, f.yaw, Math.max(0.7, Math.min(1.6, r / 4)), false);
+        audio.kinoImpact(`${f.style}.l4`, -1, { x, y, z }, !this.ground.islandAt(x, z), 0.8);
+      },
+      // 4.93A: jede Stufe des Standard-Angriffs (Kette, Verzweigung, Schwer, Luft, Meteor, Finisher) geht beim Start an die Mitspieler –
+      // sie sehen den Clip an der Figur und im Treffermoment die Wirkung. Formen und Ultimates melden sich selbst (auch beim Start).
+      onMove: (mv, kind, f) => {
+        if (kind === 'skill' || kind === 'ultimate' || kind === 'swap') return;
+        const st = ACTION_STYLES[f.style];
+        const far = mv.hits.length ? mv.hits[mv.hits.length - 1] : null;
+        const reach = st.faji ? 14 : far ? (far.shape === 'line' ? far.range : far.shape === 'circle' ? Math.max(1.2, far.offset) : 2.2) : 2.2;
+        const tx = f.x + Math.sin(f.yaw) * reach, tz = f.z + Math.cos(f.yaw) * reach;
+        this.sharedEnts?.sendAct('swing', f.x, f.y, f.z, f.yaw, f.style, mv.vfx || st.element, 0, tx, this.kinoY(tx, tz, f.y), tz, this.mode === 'sail' || this.ownDeck, swingCode(f.style, mv.id));
+      },
       onSwing: (mv, h, f) => {
         const st = ACTION_STYLES[f.style];
+        // 4.93A: Regie-Aktionen (Formen der ausgebauten Klassen) haben ihre eigene 4-Phasen-Regie – kein alter Standard-Effekt, kein
+        // Einzelton, keine zweite Übertragung (die Form ging beim Start an die Mitspieler)
+        if (!this.kino.legacyAllowed(mv.id)) { this.kinoStats.legacyBlocked++; return; }
         this.cataclysm.swingFx(h, f, mv.color || st.color, mv.vfx || st.element, mv.meteor, !!mv.heal);
         const at = { x: f.x, y: f.y, z: f.z };
-        // 4.9: Form (Platz 1 – 10) bzw. Standard-Angriff für die Mitspieler, dazu die eigene Stimme der Klasse (ab Form 6 mit tiefer Schicht)
+        // die eigene Stimme der Klasse (ab Form 6 mit tiefer Schicht); 4.93A: die Übertragung an die Mitspieler geschieht einmal beim Start
+        // des Angriffs (`onMove`, `formAct1`) – nicht mehr je Trefferfenster
         const slot = this.foot ? this.foot.engine.formSlot(mv) : 0;
-        const el = mv.vfx || st.element, reach = st.faji ? 14 : 2.2;
-        this.sharedEnts?.sendAct(slot > 0 ? 'art' : 'swing', f.x, f.y, f.z, f.yaw, f.style, el, slot, f.x + Math.sin(f.yaw) * reach, f.y, f.z + Math.cos(f.yaw) * reach, this.mode === 'sail' || this.ownDeck);
+        const el = mv.vfx || st.element;
         if (slot > 0) { audio.play(elementVoice(f.style, el, slot), 0.65, at); const layer = formVoiceLayer(slot); if (layer) audio.play(layer, 0.45, at); }
         if (h.shape === 'line') audio.play('bladeWave', 0.8, at);
         else if (h.shape === 'circle') audio.play('eruption', 0.8, at);
@@ -1500,6 +1543,9 @@ export class SeaWorld {
       // 4.6D: Kettenschläge als Klingen-/Faustbögen, Dash-Nachbilder, Sturm-Schritt mit Blitz-Silhouetten
       onSlash: (mv, h, f, step) => {
         const st = ACTION_STYLES[f.style];
+        // 4.93A: der vierte Schlag der Faustkämpfer-Kette (Vakuum-Stoß, Erd-Schmetterschlag) ist eine Regie-Aktion
+        const tl = directorTimeline(mv.id);
+        if (tl) { this.kinoAutoHit(tl, mv, h, f); return; }
         this.cataclysm.slashFx(h, f, mv.color || st.color, mv.vfx || st.element, step, st.visual === 'faust' || st.faji, !f.grounded);
       },
       onDash: (ax, ay, az, bx, by, bz, f, air) => this.cataclysm.dashFx(ax, ay, az, bx, by, bz, ACTION_STYLES[f.style].accent, air),
@@ -1987,9 +2033,15 @@ export class SeaWorld {
   /** 4.91 Akt 1 einer Form zu Fuß (Start der Form): Aufladung an der Figur */
   private formAct1(slot: number, mv: ActionMove | null, f: FighterState) {
     if (slot <= 0 || this.cine.active) return;
+    // 4.93A: Kino-Endgame-Regie statt der 3-Akt-Kurzregie (nie beides)
+    const tl = mv ? directorTimeline(mv.id) : null;
+    if (tl && mv) { this.kinoFootBegin(tl, mv, f); return; }
     const st = ACTION_STYLES[f.style];
     this.cataclysm.formCharge(formCinema(slot), f.x, f.y, f.z, mv?.color || st.color, st.accent);
     this.formStats.charges++;
+    // 4.93A: die Form geht beim Start an die Mitspieler (Clip an der Figur, Wirkung im Treffermoment)
+    { const reach = st.faji ? 14 : 2.2, tx = f.x + Math.sin(f.yaw) * reach, tz = f.z + Math.cos(f.yaw) * reach;
+      this.sharedEnts?.sendAct('art', f.x, f.y, f.z, f.yaw, f.style, mv?.vfx || st.element, slot, tx, f.y, tz, this.mode === 'sail' || this.ownDeck); }
   }
 
   /**
@@ -1998,6 +2050,8 @@ export class SeaWorld {
    */
   private formAct2(slot: number, mv: ActionMove, h: ActionHit, f: FighterState) {
     if (slot <= 0 || this.cine.active) return;
+    const tl = directorTimeline(mv.id);
+    if (tl) { this.kinoFootHit(tl, h, f); return; }
     const st = ACTION_STYLES[f.style], c = formCinema(slot);
     const col = mv.color || st.color, el = mv.vfx || st.element;
     const fx = Math.sin(f.yaw), fz = Math.cos(f.yaw);
@@ -2036,6 +2090,307 @@ export class SeaWorld {
     this.cataclysm.formCharge(c, f.x, f.y, f.z, col, st.accent);
     this.cataclysm.formImpact(c, f.x, f.y, f.z, f.yaw, col, kind === 2 ? '#FFE9A8' : st.accent, kind === 2 ? 'sonne' : kind === 4 ? 'koenig' : st.element);
     this.formStats.geist++;
+  }
+
+  // ---------- 4.93A: Kino-Endgame-Regie (vier Phasen je Form und Ultimate) ----------
+
+  /** Kampfmodus der Spielfigur: am Steuerrad (auch ein Wirken, das vom Steuerrad ausging) oder zu Fuß */
+  combatMode(): CombatMode { return combatModeOf({ sailing: this.mode === 'sail', helmCast: this.helmUlt.live }); }
+
+  private kinoTm(tl: DirectorTimeline) { const k = this.kinoTimes; k.t1 = tl.t1; k.t2 = tl.t2; k.total = tl.total; k.silenceMs = tl.silenceMs; return k; }
+
+  /** Boden- bzw. Wasserhöhe für die Regie-Effekte */
+  private kinoY(x: number, z: number, y: number): number {
+    if (!this.ground.islandAt(x, z)) return this.env.heightAt(x, z);
+    const h = this.groundProxy.height(x, z, y + 2);
+    return Number.isFinite(h) && h > -50 ? h : this.env.heightAt(x, z);
+  }
+
+  /** Wie weit vor der Figur wirkt ein Treffer (m)? Linien bis zum nächsten Gegner bzw. ihrer Reichweite, Kreise an ihrem Versatz */
+  private kinoReach(h: ActionHit, f: FighterState, mv: ActionMove | null): number {
+    if (mv && mv.dashTo > 0) return mv.dashTo;
+    if (h.shape === 'line') return Math.max(4, Math.min(h.range, this.softTargetDist(f, h.range)));
+    if (h.shape === 'circle') return h.offset;
+    return Math.max(1.5, h.range * 0.55);
+  }
+
+  /** Regie-Form zu Fuß beginnen (Phase 1): Zeitachse, Aufbau an der Figur, Klang der ganzen Form, Übertragung an die Mitspieler */
+  private kinoFootBegin(tl: DirectorTimeline, mv: ActionMove, f: FighterState) {
+    const st = ACTION_STYLES[f.style];
+    const h = mv.hits[decisiveHit(mv.hits)] ?? mv.hits[0];
+    const reach = h ? this.kinoReach(h, f, mv) : 2;
+    const fx = Math.sin(f.yaw), fz = Math.cos(f.yaw);
+    const A = this.kinoAt;
+    A.ox = f.x; A.oy = f.y; A.oz = f.z; A.yaw = f.yaw; A.reach = reach;
+    A.tx = f.x + fx * reach; A.tz = f.z + fz * reach; A.ty = this.kinoY(A.tx, A.tz, f.y);
+    A.sea = !this.ground.islandAt(f.x, f.z);
+    this.kino.begin(tl.id, 'foot');
+    this.cataclysm.kino.formBuild(tl, f.x, f.y, f.z, f.yaw, 1, A.sea);
+    this.kinoVoice = audio.kinoBegin(tl.id, this.kinoTm(tl), { x: f.x, y: f.y, z: f.z }, A.sea, 1, true);
+    this.sharedEnts?.sendAct('art', f.x, f.y, f.z, f.yaw, f.style, mv.vfx || st.element, tl.slot, A.tx, A.ty, A.tz, this.mode === 'sail' || this.ownDeck);
+    this.formStats.charges++;
+    this.kinoStats.forms++;
+  }
+
+  /** Treffermoment einer Regie-Form zu Fuß (stärkster Treffer der Engine): Phase 3 – Einschlag am Ziel, Impact-Frame, Hit-Stop, Kamera-Stoß */
+  private kinoFootHit(tl: DirectorTimeline, h: ActionHit, f: FighterState) {
+    const d = this.kinoReach(h, f, null);
+    const x = f.x + Math.sin(f.yaw) * d, z = f.z + Math.cos(f.yaw) * d;
+    const A = this.kinoAt;
+    A.tx = x; A.tz = z; A.ty = this.kinoY(x, z, f.y); A.yaw = f.yaw;
+    this.cataclysm.kino.formImpact(tl, x, A.ty, z, f.yaw, 1, false);
+    this.formStats.hits++;
+    if (this.kino.id === tl.id && this.kino.impactNow()) this.kinoImpactFx(tl);
+  }
+
+  /**
+   * Vierter Schlag der Faustkämpfer-Kette (Auto-Angriff zu Fuß): beim ersten Trefferfenster löst sich die Kraft (Vakuum-Stoß: die komprimierte
+   * Luftdruckkugel schießt 18 m weit; Erd-Schmetterschlag: der Boden bebt in 6 m). Kurze Zeitachse ohne Impact-Frame.
+   */
+  private kinoAutoHit(tl: DirectorTimeline, mv: ActionMove, h: ActionHit, f: FighterState) {
+    if (mv.hits.indexOf(h) !== 0) return;
+    const st = ACTION_STYLES[f.style];
+    const far = mv.hits[mv.hits.length - 1];
+    const reach = far.shape === 'line' ? far.range : Math.max(1.2, far.offset);
+    const fx = Math.sin(f.yaw), fz = Math.cos(f.yaw);
+    const A = this.kinoAt;
+    A.ox = f.x; A.oy = f.y; A.oz = f.z; A.yaw = f.yaw; A.reach = reach; A.sea = !this.ground.islandAt(f.x, f.z);
+    A.tx = f.x + fx * reach; A.tz = f.z + fz * reach; A.ty = this.kinoY(A.tx, A.tz, f.y);
+    // nur der Sichtfeld-Puls der Kette: die Zeitachse beginnt hier bei der Entladung (Phase 1 war der Schwung des Schlags)
+    if (!this.kino.active || this.kino.tl?.kind === 'auto') this.kino.begin(tl.id, 'foot');
+    const K = this.cataclysm.kino;
+    K.formRelease(tl, f.x, f.y, f.z, A.tx, A.ty, A.tz, f.yaw, 1, A.sea);
+    if (far.shape === 'line') this.cataclysm.vfx.surfaceHit(A.tx, A.ty, A.tz, 1.4, this.cataclysmColor(st.color), 0.9, (tl.t2 - tl.t1) + 0.2);
+    else K.formImpact(tl, A.tx, A.ty, A.tz, f.yaw, 1, false);
+    audio.kinoImpact(tl.id, -1, { x: f.x, y: f.y, z: f.z }, A.sea, 0.75);
+    this.hitShake.shake(tl.shake * 0.6);
+    this.kinoStats.autos++;
+  }
+
+  private readonly kinoCol = new Color();
+  private cataclysmColor(hex: string): Color { return this.kinoCol.set(hex); }
+
+  /**
+   * Wie dunkel ist das Bild gerade (0 = heller Tag … 1 = Nacht unter verdunkeltem Himmel)? Die Tusche-Schwelle der Impact-Frames rückt um
+   * diesen Wert nach unten – sonst kippt eine dunkle Szene ganz ins Schwarze (invertiert: ganz ins Weiße) und der Frame zeigt keine Formen.
+   */
+  private impactLift(): number {
+    const ph = this.env.phases;
+    const k = Math.max(this.darkK, this.cataclysm.kinoDark) * 0.75 + ph.nacht * 0.5 + ph.goldeneStunde * 0.2 + ph.morgengrauen * 0.15;
+    return k < 0 ? 0 : k > 1 ? 1 : k;
+  }
+
+  /** Phase 3 der Regie: Manga-Impact-Frame nach Millisekunden, Hit-Stop (Zeitmaß 0,04) und gerichteter Kamera-Stoß */
+  private kinoImpactFx(tl: DirectorTimeline) {
+    if (tl.impactMs > 0 && !this.cine.active) {
+      this.animeRig.impactFor(tl.impactMs, tl.impactStyle, this.impactLift());
+      this.hitstop.t = Math.max(this.hitstop.t, tl.impactMs / 1000);
+      this.hitstop.scale = Math.min(this.hitstop.scale, tl.hitStop);
+      this.kinoStats.frames++;
+    }
+    const yaw = this.kinoAt.yaw, fx = Math.sin(yaw), fz = Math.cos(yaw);
+    switch (tl.shakeDir) {
+      case 'down': this.hitShake.impulse(fx * 0.3, -1, fz * 0.3, tl.shake); break;
+      case 'up': this.hitShake.impulse(0, 1, 0, tl.shake); break;
+      case 'side': this.hitShake.impulse(Math.cos(yaw), -0.2, -Math.sin(yaw), tl.shake); break;
+      case 'radial': this.hitShake.impulse(0, -0.7, 0, tl.shake * 0.8); break;
+      default: this.hitShake.impulse(fx, -0.25, fz, tl.shake); break;
+    }
+    this.hitShake.shake(tl.shake * 0.7);
+    this.kinoStats.impacts++;
+  }
+
+  /**
+   * Form vom Steuerrad über die Kino-Endgame-Regie: der Kapitän springt auf die Bugreling (Phase 1), die Kraft fliegt im Maßstab der Schiffe
+   * bis 650 m zum angewählten Zielschiff (Phase 2) und schlägt genau im Treffermoment ein (Phase 3: Schaden, Impact-Frame), Nachbeben am Ziel.
+   */
+  private kinoHelmForm(tl: DirectorTimeline, sk: ActionSkill, nav: NavalSystem, s: Ship, t: EnemyShip | null, slot: number): boolean {
+    const f = this.foot!.fighter, st = ACTION_STYLES[f.style];
+    const sy = s.model.group.position.y + s.model.deckY;
+    // Rundum-Formen (Parade, Bollwerk, Weltbeben) wirken am eigenen Schiff, alle anderen am Ziel – mit Vorhalt auf den Treffermoment
+    const self = slot === 3 || (f.style === 'erdspalter' && slot === 10);
+    const hx = Math.sin(s.heading), hz = Math.cos(s.heading);
+    let tx = t ? t.ship.x + Math.sin(t.ship.heading) * t.ship.speed * tl.t2 : s.x + hx * 140;
+    let tz = t ? t.ship.z + Math.cos(t.ship.heading) * t.ship.speed * tl.t2 : s.z + hz * 140;
+    let ty = t ? t.ship.model.group.position.y + t.ship.model.deckY * 0.6 : this.env.heightAt(tx, tz);
+    const ox = self ? s.x : s.x + hx * s.cls.L * 0.44, oz = self ? s.z : s.z + hz * s.cls.L * 0.44, oy = sy + 0.3;
+    if (self) { tx = s.x; tz = s.z; ty = sy; }
+    const yaw = self ? s.heading : Math.atan2(tx - s.x, tz - s.z);
+    const A = this.kinoAt;
+    A.ox = ox; A.oy = oy; A.oz = oz; A.tx = tx; A.ty = ty; A.tz = tz; A.yaw = yaw; A.sea = true; A.reach = Math.hypot(tx - ox, tz - oz);
+    this.kino.begin(tl.id, 'helm');
+    this.helmLeap.on = true; this.helmLeap.k = 0; this.helmLeap.yaw = yaw - s.heading;
+    this.player?.sheathe(false, 0.2, true);
+    this.player?.playClip(sk.clip, { loop: false, fade: 0.1, restart: true });
+    const hit = this.kinoHelmHit;
+    hit.t = self ? null : t; hit.dmg = seaArtDamage(this.combat?.atk ?? 14, nav.playerLevel, slot); hit.slot = slot; hit.style = f.style;
+    this.cataclysm.kino.playForm(tl, ox, oy, oz, tx, ty, tz, yaw, SEA_CINE_SCALE, true, this.kinoHelmDone);
+    this.kinoVoice = audio.kinoBegin(tl.id, this.kinoTm(tl), { x: s.x, y: sy, z: s.z }, true, 1, true);
+    this.sharedEnts?.sendAct('art', s.x, sy, s.z, yaw, f.style, sk.vfx || st.element, slot, tx, ty, tz, true, 0, true);
+    this.formStats.sea++;
+    this.kinoStats.helmForms++;
+    return true;
+  }
+
+  /** Treffermoment einer Form vom Steuerrad (aus der Warteschlange der Kino-Effekte, in Spielzeit): Wirkung nur auf Schiffe, dann Phase 3 */
+  private readonly kinoHelmDone = (tl: DirectorTimeline) => {
+    const hit = this.kinoHelmHit, nav = this.naval, t = hit.t, s = this.ship, A = this.kinoAt;
+    hit.t = null;
+    if (nav) {
+      const erd = hit.style === 'erdspalter';
+      if (t && t.ship.alive && t.ship.sinking <= 0) {
+        nav.artHit(t, hit.dmg);
+        this.helmStats.hits++;
+        const dx = Math.sin(A.yaw), dz = Math.cos(A.yaw);
+        // Zusatzwirkung je Form: der Sog reißt das Zielschiff quer, der Käfig lässt es das Feuer einstellen, die Fessel hält es fest,
+        // Rammstoß und Ansturm drücken es zurück
+        if (!erd && hit.slot === 6) { t.ship.shoveX += dz * 7; t.ship.shoveZ -= dx * 7; }
+        else if (!erd && hit.slot === 8) t.ship.ceasefire = Math.max(t.ship.ceasefire, 2.5);
+        else if (erd && hit.slot === 6) t.ship.frozen = Math.max(t.ship.frozen, 1.6);
+        else if (hit.slot === 1 || hit.slot === 4) { t.ship.shoveX += dx * 4; t.ship.shoveZ += dz * 4; }
+        // Kaiser-Vakuumkanone: der Strahl durchschlägt ein zweites Schiff hinter dem Ziel
+        if (!erd && hit.slot === 10) {
+          let best: EnemyShip | null = null, bd = 140;
+          for (const e of nav.harmableAround(t.ship.x, t.ship.z, 140, this.helmAround)) {
+            if (e === t) continue;
+            const ex = e.ship.x - t.ship.x, ez = e.ship.z - t.ship.z, along = ex * dx + ez * dz, across = Math.abs(ex * dz - ez * dx);
+            if (along > 4 && along < bd && across < e.ship.cls.L * 0.5 + 8) { bd = along; best = e; }
+          }
+          if (best) { nav.artHit(best, hit.dmg * 0.7); this.helmStats.hits++; this.cataclysm.kino.formImpact(tl, best.ship.x, best.ship.model.group.position.y + best.ship.model.deckY * 0.6, best.ship.z, A.yaw, SEA_CINE_SCALE * 0.8, true); }
+        }
+      } else if (hit.slot === 3) {
+        // Parade bzw. Bollwerk am eigenen Schiff: Feinde im Umkreis stellen kurz das Feuer ein (ihre Geschosse prallen ab)
+        for (const e of nav.harmableAround(s.x, s.z, 150, this.helmAround)) e.ship.ceasefire = Math.max(e.ship.ceasefire, 2.2);
+      } else if (erd && hit.slot === 10) {
+        // Weltbeben-Stoß: das ganze Schlachtfeld bebt
+        for (const e of nav.harmableAround(s.x, s.z, 220, this.helmAround)) { nav.artHit(e, hit.dmg * 0.55); e.ship.frozen = Math.max(e.ship.frozen, 0.8); this.helmStats.hits++; }
+      }
+    }
+    if (this.kino.id === tl.id && this.kino.impactNow()) this.kinoImpactFx(tl);
+  };
+
+  /**
+   * 4.93A: Standard-Angriff am Steuerrad (Linksklick) = die Schiffs-Kanonen. Je nach Peilung des angewählten bzw. nächsten Feindschiffs die
+   * Bugjagd (voraus) oder die Breitseite seiner Seite (Backbord, Steuerbord); ohne Ziel die Bugjagd geradeaus. Rückgabe: gefeuerte Stellung.
+   */
+  private fireCannons(nav: NavalSystem, s: Ship): CannonStation | null {
+    const at = nav.aimTarget;
+    const foe = at && at.ship.alive && at.ship.sinking <= 0 && nav.playerMayHarm(at) ? at.ship : this.nearestFoe(s.x, s.z, this.seaRange * 1.25);
+    const st = cannonStationFor(foe ? bearingTo(s.x, s.z, s.heading, foe.x, foe.z) : null);
+    if (st === 'bugjagd') {
+      if (this.cdBow > 0) return null;
+      this.cdBow = 1.2 * s.reloadScale;
+      nav.bowShot(s, nav.canDmg, s.ammo);
+      this.kinoStats.bow++;
+    } else {
+      const side = stationSide(st);
+      if (side > 0 ? s.reloadL > 0 : s.reloadR > 0) return null;
+      nav.playerBroadside(s, side, this.seaRange, nav.canDmg, s.ammo);
+      if (side > 0) s.reloadL = this.reloadTime; else s.reloadR = this.reloadTime;
+      this.kinoStats.broadsides++;
+    }
+    this.kinoStats.cannons++;
+    return st;
+  }
+
+  /**
+   * Je gezeichnetem Bild (Echtzeit): die Regie führt Pose, Faust-Glut, Verdunkeln und den Sprung auf die Bugreling; bei Formen zu Fuß löst sie
+   * mit dem Beginn von Phase 2 die Entladung aus. Kamera und Sichtfeld lesen `kino` direkt (Fuß- und See-Kamera).
+   */
+  private applyKino(frameDt: number, inMenu: boolean) {
+    const k = this.kino;
+    k.update(frameDt);
+    const tl = k.tl, pl = this.player;
+    // Verdunkeln der Formen (Ultimates dunkeln über ihre Welt-Zeitachse ab)
+    this.cataclysm.kinoDark = tl && tl.kind !== 'ultimate' && !inMenu ? k.darkK : 0;
+    if (!tl || inMenu) { this.kinoRelease(); return; }
+    const K = this.cataclysm.kino, A = this.kinoAt;
+    if (tl.kind === 'form' && k.mode === 'foot' && k.entered === 'entladung' && this.foot) {
+      // Phase 2: die Kraft löst sich an der Figur (dort, wo sie jetzt steht) und erreicht das Ziel im Treffermoment
+      const f = this.foot.fighter, fx = Math.sin(f.yaw), fz = Math.cos(f.yaw);
+      const dash = Math.hypot(f.x - A.ox, f.z - A.oz) > 1.5;
+      const ox = dash ? A.ox : f.x, oz = dash ? A.oz : f.z;
+      const tx = dash ? A.tx : f.x + fx * A.reach, tz = dash ? A.tz : f.z + fz * A.reach;
+      K.formRelease(tl, ox, f.y, oz, tx, this.kinoY(tx, tz, f.y), tz, f.yaw, 1, A.sea);
+      this.kinoStats.releases++;
+    }
+    // der Treffer der Welt blieb aus (Form abgebrochen): die Regie hat den Treffermoment selbst gesetzt
+    if (k.entered === 'einschlag' && k.late && tl.kind !== 'ultimate') this.kinoImpactFx(tl);
+    if (this.cine.active || !pl) return;
+    // Pose und Faust-Glut (Ultimates führt die Kino-Regie der Ultimates selbst)
+    const pose = k.pose, rx = pl.rigX;
+    if (pose && tl.kind !== 'auto') {
+      if (rx) { rx.cine.k = k.poseK; rx.cine.crouch = pose.crouch; rx.cine.lean = pose.lean; rx.cine.look = pose.look; rx.cine.twist = pose.twist; }
+      this.kinoPoseOn = true;
+      if (pose.fists && k.poseK > 0.25 && this.kinoHandR === null) {
+        this.kinoHandR = rx?.handPose('r') ?? 'offen'; this.kinoHandL = rx?.handPose('l') ?? 'offen';
+        pl.setHandPose('r', 'faust'); pl.setHandPose('l', 'faust');
+      } else if (k.poseK < 0.15 && this.kinoHandR !== null && k.phase === 'nachbeben') {
+        pl.setHandPose('r', this.kinoHandR); pl.setHandPose('l', this.kinoHandL ?? 'offen');
+        this.kinoHandR = null; this.kinoHandL = null;
+      }
+      if (pose.whirl > 0 && k.poseK > 0.01) {
+        const w = pose.whirl * k.poseK * Math.min(0.05, frameDt) * 6, ph = k.clock * 9;
+        pl.kick(Math.cos(ph) * w, w * 0.5, Math.sin(ph) * w);
+      }
+      if (k.mode === 'foot') this.cineLiftY = pose.lift * k.liftK;
+    }
+    if (k.glowK > 0.05 && k.pose?.fists) {
+      const so = pl.charSockets;
+      const life = Math.max(0.004, (1.6 / 60) * (this.hitstop.t > 0 ? this.hitstop.scale : 1));
+      for (let side = 0; side < 2; side++) {
+        const node = so?.get(side ? 'handOff' : 'handMain') ?? null;
+        if (!node) continue;
+        node.getWorldPosition(CINE_TMP);
+        K.fistGlow(CINE_TMP.x, CINE_TMP.y, CINE_TMP.z, tl.style, k.glowK, life);
+      }
+    }
+    // Sprung auf die Bugreling (Formen am Steuerrad): in Phase 1 hinauf, im Nachbeben zurück ans Steuerrad
+    if (this.helmLeap.on) {
+      const want = k.mode !== 'helm' ? 0 : k.phase === 'aufbau' ? k.liftK : k.phase === 'nachbeben' ? 1 - Math.min(1, Math.max(0, (k.u - 0.3) / 0.6)) : 1;
+      this.helmLeap.k = want;
+    }
+  }
+
+  /**
+   * 4.93A: Kampf-Aktionen der Mitspieler je gezeichnetem Bild (Echtzeit). Ihre Effekte und ihr Klang laufen im Takt ihrer Zeitachsen; für den
+   * Betrachter bleibt die eigene Kamera frei – er bekommt nur die Himmelsverdunkelung der Aktion und im Treffermoment einen Kamera-Stoß,
+   * der mit der Entfernung abnimmt und ab 90 m ganz ausbleibt. Kamera-Fahrt, Impact-Frame und Hit-Stop gehören allein dem Ausführenden.
+   */
+  private applyRemoteActs(frameDt: number, inMenu: boolean) {
+    const rf = this.remoteFx;
+    if (!rf) return;
+    if (inMenu) { if (rf.stage.active > 0) rf.reset(); return; }
+    const p = this.playerPos;
+    rf.update(frameDt, p.x, p.z);
+    const st = rf.stage;
+    if (st.dark > this.cataclysm.kinoDark) this.cataclysm.kinoDark = st.dark;
+    if (st.shakeNow > 0) { this.hitShake.shake(st.shakeNow); this.kinoStats.remoteShakes++; }
+  }
+
+  /** Regie beendet: Pose, Hände und Sprung zurück (der Kapitän steht wieder in seiner Ausgangshaltung bzw. am Steuerrad) */
+  private kinoRelease() {
+    const pl = this.player;
+    if (this.kinoPoseOn) {
+      this.kinoPoseOn = false;
+      if (!this.cine.active) { if (pl?.rigX) pl.rigX.cine.k = 0; this.cineLiftY = 0; }
+    }
+    if (pl && this.kinoHandR !== null) { pl.setHandPose('r', this.kinoHandR); pl.setHandPose('l', this.kinoHandL ?? 'offen'); this.kinoHandR = null; this.kinoHandL = null; }
+    if (this.helmLeap.on) {
+      this.helmLeap.on = false; this.helmLeap.k = 0;
+      if (pl && this.mode === 'sail') { pl.holder.position.copy(this.ship.model.helm); pl.holder.rotation.set(0, 0, 0); pl.sheathe(true, 0.4, true); pl.play('steer', { fade: 0.2 }); }
+    }
+  }
+
+  /** Lage des Kapitäns während des Sprungs auf die Bugreling (im Schiffsraum; je Bild, solange die Figur am Steuerrad hängt) */
+  private placeHelmLeap() {
+    const pl = this.player, L = this.helmLeap;
+    if (!pl || !L.on || this.mode !== 'sail') return;
+    const m = this.ship.model, k = L.k < 0 ? 0 : L.k > 1 ? 1 : L.k;
+    const bowY = (m.fore ? m.fore.top : m.deckY) + 0.05, bowZ = this.ship.cls.L * 0.4;
+    const e = k * k * (3 - 2 * k);
+    pl.holder.position.set(m.helm.x * (1 - e), m.helm.y + (bowY - m.helm.y) * e + Math.sin(Math.PI * k) * 2.2 * (k < 1 ? 1 : 0), m.helm.z + (bowZ - m.helm.z) * e);
+    pl.holder.rotation.set(0, L.yaw * e, 0);
   }
 
   // ---------- 4.6I: Kino-Regie der Ultimates (3-Akt-Choreografie) ----------
@@ -2233,6 +2588,21 @@ export class SeaWorld {
 
   /** Bildwirkung des Treffermoments: Impact-Bilder (invertiert → Tusche, Standbild), gerichteter Kamera-Stoß, Fokus-Puls, Riss und Donner */
   private cineImpactFx(def: UltimateCinematic | null) {
+    if (def?.kino) {
+      // 4.93A Phase 3 eines Kino-Endgame-Ultimates: Manga-Impact-Frame nach Millisekunden (den Hit-Stop mit Zeitmaß 0,04 setzt die Kino-Regie),
+      // gerichteter Kamera-Stoß, Schicht 3 + 4 der Kino-DSP – kein alter Einzelton, kein Fokus-Puls
+      const tl = DIRECTOR_TIMELINES[def.kino.action];
+      this.kino.impactNow();
+      this.animeRig.impactFor(def.kino.impactMs, def.kino.impactStyle, this.impactLift());
+      if (this.foot) { kickDirection(def, this.foot.yaw, CINE_KICK); this.hitShake.impulse(CINE_KICK.x, CINE_KICK.y, CINE_KICK.z, def.kick); }
+      this.hitShake.shake(1);
+      const A = this.cineAnchors;
+      audio.kinoImpact(def.kino.action, this.kinoVoice, { x: A.impact.x, y: A.impact.y, z: A.impact.z }, this.kinoAt.sea, 1);
+      this.kinoStats.impacts++;
+      this.kinoStats.frames++;
+      void tl;
+      return;
+    }
     this.animeRig.impact(def ? def.frames : 3);
     this.focusPulse.trigger(1, 1.1);
     if (def && this.foot) {
@@ -2420,6 +2790,30 @@ export class SeaWorld {
       this.cineGather();
       this.cine.resolve(0, A, this.cineSight);
     }
+    const act = ultimateActionOf(spec.kind);
+    if (act) {
+      // 4.93A: Kino-Endgame-Ultimate – Zeitachse der Regie und Schicht 1 + 2 der Kino-DSP (samt der Stille vor dem Einschlag); die alten
+      // Einzeltöne (`cineDrop`, `cutin`) spielen nicht mehr mit
+      const tl = DIRECTOR_TIMELINES[act];
+      const mode = this.combatMode();
+      this.kino.begin(act, mode);
+      const K = this.kinoAt;
+      K.ox = f.x; K.oy = f.y; K.oz = f.z; K.yaw = f.yaw; K.sea = !this.ground.islandAt(f.x, f.z) || this.ownDeck || mode === 'helm';
+      const tgt = this.helmUlt.live ? this.helmUlt.target : null;
+      K.tx = tgt ? tgt.ship.x : f.x + Math.sin(f.yaw) * Math.max(8, spec.center); K.tz = tgt ? tgt.ship.z : f.z + Math.cos(f.yaw) * Math.max(8, spec.center);
+      K.ty = this.kinoY(K.tx, K.tz, f.y);
+      this.kinoVoice = audio.kinoBegin(act, this.kinoTm(tl), { x: f.x, y: f.y, z: f.z }, K.sea, 1, false);
+      // für die Mitspieler: die ganze Zeitachse ab jetzt (Aufbau am Kapitän, Entladung und Einschlag am Ziel)
+      this.sharedEnts?.sendAct('ult', f.x, f.y, f.z, f.yaw, f.style, spec.kind, 0, K.tx, K.ty, K.tz, K.sea, 0, this.helmUlt.live);
+      this.kinoStats.ults++;
+      return;
+    }
+    // Ultimates der noch nicht ausgebauten Klassen: ebenfalls beim Auslösen an die Mitspieler (Aufladung an der Figur, Einschlag am Ziel)
+    {
+      const tgt = this.helmUlt.live ? this.helmUlt.target : null, c = Math.max(8, spec.center);
+      const tx = tgt ? tgt.ship.x : f.x + Math.sin(f.yaw) * c, tz = tgt ? tgt.ship.z : f.z + Math.cos(f.yaw) * c;
+      this.sharedEnts?.sendAct('ult', f.x, f.y, f.z, f.yaw, f.style, spec.kind, 0, tx, this.kinoY(tx, tz, f.y), tz, this.mode === 'sail' || this.ownDeck || this.helmUlt.live, 0, this.helmUlt.live);
+    }
     // Zeitlupe: Sub-Bass-Fall mit Herzschlag, dazu der Schriftzug-Klang
     audio.play('cineDrop', 1);
     audio.play('cutin', 0.6);
@@ -2431,8 +2825,10 @@ export class SeaWorld {
    */
   private ultimateStrikes(spec: UltimateSpec, f: FighterState) {
     // 4.91: auf See entsteht die Wirkung am angewählten Ziel (bis 650 m, Flächen-Ultimates über der feindlichen Flotte)
-    const anchor = this.seaUltAnchorFor(spec, f);
-    this.cataclysm.strike(spec, f, this.ultSX, this.ultSZ, anchor ? 0 : this.skyShiftFor(spec, f), anchor);
+    // 4.93A: nur ein Wirken vom Steuerrad trifft Schiffe – zu Fuß (Insel, Deck, Wasserlauf) wirkt das Ultimate allein auf Gegner zu Fuß
+    const mode = this.combatMode();
+    const anchor = mode === 'helm' ? this.seaUltAnchorFor(spec, f) : null;
+    this.cataclysm.strike(spec, f, this.ultSX, this.ultSZ, anchor ? 0 : this.skyShiftFor(spec, f), anchor, mode);
     this.hitShake.shake(0.55);
     // 4.92: Flotten-Segen des Priesters – auf See (am Steuer, an Deck) heilt das Erzengel-Himmelsgericht auch das eigene Schiff und jedes
     // Schiff der eigenen Flotte im Umkreis; über jedem gesegneten Schiff steht eine Lichtsäule mit smaragdenem Lebenslicht
@@ -3452,7 +3848,7 @@ export class SeaWorld {
     this.detachMmo();
     this.presence?.dispose(); this.presence = null;
     this.mmoLive = new MmoLive(this.mmoLiveHost(), client);
-    this.remoteFx = new RemoteActionFx(this.cataclysm.vfx);
+    this.remoteFx = new RemoteActionFx(this.cataclysm.vfx, this.cataclysm.kino);
     this.sharedEnts = new SharedEntities({
       naval: () => this.naval,
       client: () => this.mmoLive?.client ?? null,
@@ -3474,7 +3870,7 @@ export class SeaWorld {
         if (e) { const s = e.ship; out.x = s.x; out.y = s.model.group.position.y + s.model.deckY; out.z = s.z; out.yaw = s.heading; return true; }
         return false;
       },
-      playAct: (a, x, y, z, yaw) => this.remoteFx?.play(a, x, y, z, yaw),
+      playAct: (a, x, y, z, yaw, from) => this.remoteFx?.play(a, x, y, z, yaw, from),
       hitMe: (name, dmg, pen) => this.onEntHitMe?.(name, dmg, pen),
       kill: (k, owner) => this.onSharedKill?.(k, owner),
       // 4.91: Landgegner – nur an Land (nicht beim Entern eines fremden Decks, nicht an Bord)
@@ -3557,6 +3953,9 @@ export class SeaWorld {
     if (!t && nav.lockFar > 0) { this.helmStats.far++; this.onMessage(`Ziel außer Reichweite: ${Math.round(nav.lockFar)} m – Kräfte am Steuer reichen ${SEA_ART.range} m.`); return false; }
     this.helmCd[slot - 1] = seaArtCd(sk.cd);
     this.helmStats.arts++;
+    // 4.93A: ausgebaute Klassen wirken ihre Formen über die Kino-Endgame-Regie (kein Einheits-Druckring, kein Spiegel der Land-Treffer)
+    const ktl = formTimeline(f.style, slot);
+    if (ktl) return this.kinoHelmForm(ktl, sk, nav, s, t, slot);
     const fam = seaFamily(f.style), el = sk.vfx || st.element;
     const sy = s.model.group.position.y + s.model.deckY;
     const near = fam === 'faust' || fam === 'klinge';
@@ -3597,7 +3996,7 @@ export class SeaWorld {
     audio.play(elementVoice(f.style, el, slot), 0.8, { x: s.x, y: sy, z: s.z });
     const layer = formVoiceLayer(slot);
     if (layer) audio.play(layer, 0.5, { x: s.x, y: sy, z: s.z });
-    this.sharedEnts?.sendAct('art', s.x, sy, s.z, yaw, f.style, el, slot, tx, ty, tz, true);
+    this.sharedEnts?.sendAct('art', s.x, sy, s.z, yaw, f.style, el, slot, tx, ty, tz, true, 0, true);
     // 4.92: Geschoss-Formen zeigen ihre Mündung (Kern-Glut, Rauchkranz, Funkengarbe) am eigenen Schiff – wie zu Fuß, im Maßstab des Meeres
     this.helmFormMirror(sk, st.id, el, ox, oy - 1.3, oz, yaw, true);
     const dmg = seaArtDamage(this.combat?.atk ?? 14, nav.playerLevel, slot);
@@ -3710,7 +4109,7 @@ export class SeaWorld {
         break;
       }
     }
-    this.sharedEnts?.sendAct('geist', s.x, sy, s.z, s.heading, f.style, ACTION_STYLES[f.style].element, slot, tx, sy, tz, true);
+    this.sharedEnts?.sendAct('geist', s.x, sy, s.z, s.heading, f.style, ACTION_STYLES[f.style].element, slot, tx, sy, tz, true, 0, true);
     return true;
   }
 
@@ -3729,6 +4128,14 @@ export class SeaWorld {
     const fromHelm = this.mode === 'sail';
     if (fromHelm) this.goDeck();
     this.helmUlt.target = t; this.helmUlt.back = fromHelm; this.helmUlt.wait = 0; this.helmUlt.live = true;
+    // 4.93A: ein Wirken vom Steuerrad trifft nur Schiffe – die Treffer der Engine auf Gegner zu Fuß ruhen, bis der Kapitän wieder am Ruder steht
+    foot.helmCast = true;
+    // der Kapitän entfesselt es von der Bugreling aus
+    if (fromHelm && this.deckGround) {
+      const s = this.ship, bx = s.x + Math.sin(s.heading) * s.cls.L * 0.36, bz = s.z + Math.cos(s.heading) * s.cls.L * 0.36;
+      const c = this.deckGround.constrain(bx, bz, 0.4, foot.y + 1);
+      if (Number.isFinite(c.x) && Math.hypot(c.x - s.x, c.z - s.z) > s.cls.L * 0.15) foot.place(c.x, c.z, t ? Math.atan2(t.ship.x - c.x, t.ship.z - c.z) : s.heading, this.deckGround);
+    }
     // ohne Erwachen: erst Erwachen, kurz darauf das Ultimate selbst (am Steuer genügt ein Druck auf V)
     this.helmUlt.chainU = f.awakenT > 0 && f.ultReady ? 0 : 0.35;
     // die Figur dreht sich an Deck zum Ziel (Kino-Regie und Wirkung schauen dorthin)
@@ -3775,6 +4182,7 @@ export class SeaWorld {
     h.wait += dt;
     if (h.wait < 0.7) return;
     h.live = false; h.target = null;
+    if (this.foot) this.foot.helmCast = false;
     if (h.back && this.mode === 'foot' && this.ownDeck && this.foot && this.foot.hp > 0) this.toHelm();
     h.back = false;
   }
@@ -3901,6 +4309,9 @@ export class SeaWorld {
       viewer: (o) => { const p = w.playerPos; o.x = p.x; o.z = p.z; },
       me: (o) => { const p = w.playerPos; o.x = p.x; o.z = p.z; },
       figureDist: () => w.figureDist,
+      // 4.93A: laufende Kampf-Aktion eines Mitspielers (Clip, Kampfpose, Sprung auf die Bugreling) und die Glut an seinen Fäusten
+      castOf: (id) => w.remoteFx?.stage.castOf(id) ?? null,
+      fistGlow: (x, y, z, style, k) => w.cataclysm.kino.fistGlow(x, y, z, style, k, Math.max(0.004, (1.6 / 60) * (w.hitstop.t > 0 ? w.hitstop.scale : 1))),
       stance: (team) => w.mmoStance?.(team) ?? 'neutral',
       safeAt: (x, z) => safeZoneAt(safeZones(), x, z)?.name ?? '',
       warm: (o) => w.warmHook?.(o),
@@ -4549,7 +4960,8 @@ export class SeaWorld {
     }
     const nav = this.naval;
     if (nav && s.alive && !locked) {
-      if (input.pressed('attack') && this.cdBow <= 0) { this.cdBow = 1.2 * s.reloadScale; nav.bowShot(s, nav.canDmg, s.ammo); }
+      // 4.93A: Linksklick am Steuerrad = Schiffs-Kanonen (Bugjagd voraus, sonst die Breitseite der Seite des Ziels)
+      if (input.pressed('attack')) this.fireCannons(nav, s);
       // Breitseiten wie in 1.0: antippen (oder halten) = feuern, gezielt wird automatisch
       for (const [act, side] of [['fireLeft', 1], ['fireRight', -1]] as const) {
         const ready = side > 0 ? s.reloadL <= 0 : s.reloadR <= 0;
@@ -5890,8 +6302,11 @@ export class SeaWorld {
     stats: { plays: 0, attacks: 0, forms: 0, geist: 0, ults: 0, legends: 0, demo: 0, targets: 0, respawns: 0, sea: 0, land: 0 },
   };
   private readonly arenaCamPose: ArenaCam = { px: 0, py: 0, pz: 0, lx: 0, ly: 0, lz: 0, fov: 50 };
-  /** Rückruf beim Wechsel des Vorschau-Teils bzw. Ultimate-Akts (Anzeige im Fenster der Charaktererstellung) */
-  onArenaPart: ((p: ArenaPart | null, act: number) => void) | null = null;
+  /**
+   * Rückruf beim Wechsel des Vorschau-Teils bzw. Ultimate-Akts (Anzeige im Fenster der Charaktererstellung). 4.93A: `chips` = die Anzeige der
+   * Kino-Endgame-Regie (vier Phasen, beim Himmelssturz vier Stufen); null = die drei Akte der älteren Regie.
+   */
+  onArenaPart: ((p: ArenaPart | null, act: number, chips: readonly string[] | null) => void) | null = null;
   /** Eingabe der Welt (Vorschau-Knöpfe drücken über sie) */
   arenaInput: Input | null = null;
 
@@ -5943,7 +6358,18 @@ export class SeaWorld {
     for (let i = 0; i < 10; i++) this.helmCd[i] = 0;
     for (let i = 0; i < 4; i++) this.helmGeistCd[i] = 0;
     this.helmUlt.live = false; this.helmUlt.target = null; this.helmUlt.back = false; this.helmUlt.chainU = 0;
-    this.onArenaPart?.(null, -1);
+    if (this.foot) this.foot.helmCast = false;
+    this.kino.end();
+    this.kinoRelease();
+    audio.kinoSilence();
+    this.onArenaPart?.(null, -1, null);
+  }
+
+  /** 4.93A: Anzeige des Vorschau-Teils – Ultimates der Kino-Endgame-Regie zeigen vier Phasen, der Himmelssturz vier Stufen */
+  private arenaChips(p: ArenaPart | null): readonly string[] | null {
+    if (!p) return null;
+    if (p.kind === 'legend') return LEGEND_STAGE_CHIPS;
+    return p.kind === 'ult' && isBrawlerStyle(this.arena.action) ? KINO_PHASE_CHIPS : null;
   }
 
   /** an Land: Übungsplatz von Ankerglück vor den Übungspuppen */
@@ -6011,7 +6437,7 @@ export class SeaWorld {
     const f = foot.fighter;
     const nav = this.naval, s = this.ship;
     a.part = { kind, slot }; a.act = -1;
-    this.onArenaPart?.(a.part, -1);
+    this.onArenaPart?.(a.part, -1, this.arenaChips(a.part));
     if (kind === 'attack') {
       a.stats.attacks++;
       if (a.sea && nav) {
@@ -6071,6 +6497,23 @@ export class SeaWorld {
     if (title) this.titleMood();
   }
 
+  /**
+   * Akt-Anzeige des Ultimates (je Logikschritt UND je gezeichnetem Bild: im Hit-Stop des Impact-Frames läuft kaum ein Logikschritt).
+   * 4.93A: die Kino-Endgame-Regie zeigt ihre vier Phasen (Aufbau, Entladung, Einschlag, Nachbeben), der Himmelssturz seine vier Stufen;
+   * läuft die Regie schon aus, während die Kamera noch zurückfährt, bleibt die letzte Marke stehen.
+   */
+  private arenaActTick() {
+    const a = this.arena;
+    if (!a.on) return;
+    const chips = this.arenaChips(a.part), ktl = this.kino.tl;
+    let act = -1;
+    if (chips) {
+      if (ktl && ktl.kind === 'ultimate' && this.kino.phase !== 'idle') act = ktl.stages.length === chips.length ? stageAt(ktl, this.kino.t) : DIRECTOR_PHASES.indexOf(this.kino.phase);
+      else if (this.cine.active) act = a.act;
+    } else act = this.cine.active ? this.cine.actIndex : -1;
+    if (act !== a.act) { a.act = act; if (a.part) this.onArenaPart?.(a.part, act, chips); }
+  }
+
   /** je Logikschritt: Figur und Schiff halten, Zielschiffe neu aufstellen, zeitversetzte Eingaben, Vorführung ohne Klick, Akt-Anzeige */
   private stepArena(dt: number) {
     const a = this.arena;
@@ -6118,9 +6561,7 @@ export class SeaWorld {
       if (q.ult && foot && !(foot.fighter.awakenT > 0 && foot.fighter.ultReady)) continue;
       input.inject(q.a);
     }
-    // Akt-Anzeige des Ultimates
-    const act = this.cine.active ? this.cine.actIndex : -1;
-    if (act !== a.act) { a.act = act; if (a.part) this.onArenaPart?.(a.part, act); }
+    this.arenaActTick();
     // Vorführung ohne Klick
     if (this.cine.active || this.cataclysm.active) return;
     a.idleT += dt;
@@ -6217,6 +6658,11 @@ export class SeaWorld {
   /** Fahrtrichtung (in einen wiederverwendeten Vektor – sofort benutzen, nicht aufheben) */
   /** Wirksamer Treffer: 30–40 ms Standbild und ein Kamerastoß in Trefferrichtung, der federnd zurückschwingt */
   impact(dirX: number, dirZ: number, strength: number) {
+    // 4.93A: während einer Form bzw. eines Ultimates der Kino-Endgame-Regie hält nur sie die Zeit an (Hit-Stop im Impact-Frame). Die
+    // Standbilder einzelner Treffer verschöben den Treffermoment gegen die Zeitachse (elf Ticks der Hundert-Fäuste: 0,4 s – die Regie fiel
+    // dann auf ihren Rückfall); ihr Stoß bleibt als leichtes Trommeln, den großen Stoß setzt die Regie im Treffermoment
+    const ktl = this.kino.tl;
+    if (ktl && ktl.kind !== 'auto') { this.hitShake.impulse(dirX, 0, dirZ, strength * 0.35); return; }
     this.hitstop.freeze = Math.max(this.hitstop.freeze, HIT_STOP);
     // gerichteter Stoß und Schwingung entlang der Trefferachse (Kamera-Engine, Regler „Kamera-Erschütterung“)
     this.hitShake.impulse(dirX, 0, dirZ, strength);
@@ -6591,7 +7037,10 @@ export class SeaWorld {
       if (cabLight) cabLight.intensity += ((inCab ? 4.5 : 0) - cabLight.intensity) * Math.min(1, frameDt * 6);
       // Himmelssturz: die Kamera sinkt hinter die Figur und blickt zum Himmel (stürzende Meteoriten, Planet), danach zurück
       const sky = inCab ? 0 : this.skyLookK;
-      const fPitch = inCab ? Math.max(this.footPitch, 0.95) : this.footPitch + (0.1 - this.footPitch) * sky;
+      // 4.93A: Low-Angle-Zoom der Kino-Endgame-Regie (Formen): die Kamera sinkt hinter der Figur ab und rückt heran
+      const kf = this.kino.active && this.kino.mode === 'foot' && !this.cine.active && !inCab ? this.kino : null;
+      const fPitch0 = inCab ? Math.max(this.footPitch, 0.95) : this.footPitch + (0.1 - this.footPitch) * sky;
+      const fPitch = kf ? fPitch0 + (0.06 - fPitch0) * Math.min(1, kf.lowK) * 0.7 : fPitch0;
       const cp = Math.cos(fPitch);
       // Zielerfassung: Kamera rückt mit wachsendem Abstand zum Ziel zurück und blickt ein Stück zu ihm hin (Figur und Ziel im Bild)
       const ld = Math.hypot(this.lockDX, this.lockDZ);
@@ -6599,7 +7048,7 @@ export class SeaWorld {
       const dist = Math.min(this.footDist + lk * MathUtils.clamp((ld - 5) * 0.3, 0, 3.5), inCab ? 4.8 : 99);
       const shift = ld > 0.01 ? (lk * Math.min(3.2, ld * 0.28)) / ld : 0;
       // Fokus-Puls (Parade, Finisher): kurz näher heran
-      const distF = dist * this.focusPulse.distK;
+      const distF = dist * this.focusPulse.distK * (kf ? 1 - 0.16 * Math.min(1, kf.lowK) : 1);
       this.tmp.set(px - Math.sin(this.footYaw) * distF * cp, py + 1.4 + Math.sin(fPitch) * distF, pz - Math.cos(this.footYaw) * distF * cp);
       // Wunschposition weich nachführen, dann Spring-Arm vom Kopf der Figur: Fels, Hänge, Bauten, Brücken (darüber und darunter), Stege und Rümpfe
       if (!this.footWantInit) { this.footWant.copy(this.tmp); this.footWantInit = true; }
@@ -6607,7 +7056,13 @@ export class SeaWorld {
       this.camAnchor.set(px, py + 1.4, pz);
       this.gatherCam(px, pz, distF + 6);
       this.armFoot.solve(this.camAnchor, this.footWant, this.camWorld, frameDt, cam.position);
-      cam.lookAt(px + this.lockDX * shift + Math.sin(this.footYaw) * sky * 4, py + 1.3 + sky * 3.2, pz + this.lockDZ * shift + Math.cos(this.footYaw) * sky * 4);
+      // Peitschen-Schwenk (Phase 2): der Blick schnellt der Flugbahn hinterher
+      let wx = 0, wz = 0;
+      if (kf && kf.whipK > 0.001) {
+        const dx = this.kinoAt.tx - px, dz = this.kinoAt.tz - pz, dl = Math.hypot(dx, dz);
+        if (dl > 0.5) { const w = kf.whipK * Math.min(3.2, dl * 0.35) / dl; wx = dx * w; wz = dz * w; }
+      }
+      cam.lookAt(px + this.lockDX * shift + Math.sin(this.footYaw) * sky * 4 + wx, py + 1.3 + sky * 3.2, pz + this.lockDZ * shift + Math.cos(this.footYaw) * sky * 4 + wz);
       this.focus.set(px, py + 1, pz);
     } else if (inMenu) {
       this.camSailInit = false;
@@ -6645,8 +7100,10 @@ export class SeaWorld {
       this.camAz2 += (z - this.camAz2) * lag;
       if (Math.hypot(x - this.camAx, z - this.camAz2) > 40) { this.camAx = x; this.camAz2 = z; }
       // Draufsicht: Höhenwinkel fast senkrecht, aus ungefähr derselben Entfernung wie beim größten Zoom (nur wenig höher, damit mehr Meer ins Bild kommt)
-      const E = MathUtils.lerp(this.camE, 1.5, tk);
-      const R = this.camR * (1 + 0.12 * tk);
+      // 4.93A: Low-Angle-Zoom der Formen am Steuerrad – tiefer und näher hinter dem Schiff
+      const ks = this.kino.active && this.kino.mode === 'helm' && !this.cine.active ? this.kino : null;
+      const E = Math.max(0.08, MathUtils.lerp(this.camE, 1.5, tk) - (ks ? 0.22 * Math.min(1, ks.lowK) * (1 - tk) : 0));
+      const R = this.camR * (1 + 0.12 * tk) * (ks ? 1 - 0.14 * Math.min(1, ks.lowK) : 1);
       // in der Draufsicht verdecken die Segel das Deck: durchsichtig
       const wantFade = tk > 0.5;
       if (wantFade !== this.sailFaded) this.setSailFade(this.ship, wantFade);
@@ -6664,7 +7121,13 @@ export class SeaWorld {
       // Je steiler der Blick von oben, desto weniger weit vor dem Schiff (sonst wandert es unten aus dem Bild)
       const aheadK = MathUtils.clamp(Math.cos(E) / Math.cos(Math.atan2(up0, back0)), 0, 1.15);
       const ahead = (foe ? sep * 0.45 : 12 + L) * aheadK * (1 - tk);
-      cam.lookAt(x + vx * ahead, 2, z + vz * ahead);
+      // Peitschen-Schwenk (Phase 2): der Blick schnellt zum Ziel der Form
+      let swx = 0, swz = 0;
+      if (ks && ks.whipK > 0.001) {
+        const dx = this.kinoAt.tx - x, dz = this.kinoAt.tz - z, dl = Math.hypot(dx, dz);
+        if (dl > 1) { const w = ks.whipK * Math.min(46, dl * 0.3) / dl; swx = dx * w; swz = dz * w; }
+      }
+      cam.lookAt(x + vx * ahead + swx, 2, z + vz * ahead + swz);
       // Die Kamera rollt leicht mit dem Schiff: Dünung und Rückstoß der Breitseiten werden spürbar (in der Draufsicht nicht)
       const g = s.model.group.rotation;
       const rel = this.camAz + Math.PI - h;
@@ -6685,6 +7148,11 @@ export class SeaWorld {
     this.cine.update(frameDt, this.animeRig.framesLeft);
     if (this.cine.forced) { this.cine.forced = false; this.cineImpactFx(this.cine.def); }
     this.applyCinematic(cam, inMenu, frameDt);
+    // 4.93A: Kino-Endgame-Regie (Echtzeit) – nach der Ultimate-Regie, damit die Pose der Formen nie von einem späteren Takt überschrieben wird
+    this.applyKino(frameDt, inMenu);
+    this.placeHelmLeap();
+    this.arenaActTick();
+    this.applyRemoteActs(frameDt, inMenu);
     // 4.7D: die Prolog-Regie (Echtzeit) und ihre Kamera; Licht und Schatten folgen dann ihrem Blick (Grünmarkt liegt weit von der Figur)
     if (!inMenu && this.prologue) this.prologue.frame(frameDt);
     const proCam = !inMenu && !!this.prologue && this.prologue.camera(cam, frameDt);
@@ -6709,7 +7177,8 @@ export class SeaWorld {
       const vmax = Math.max(1, s0.cls.spd * SEA_SPEED);
       const want = seaMode ? dynamicFovExtra(Math.abs(s0.speed) / vmax, Math.max(0, this.lastFlow - 1), s0.boost > 0 ? 1 : 0) : 0;
       const extra = this.fovExtra.step(want, 2.2, frameDt);
-      let fov = baseFov(innerWidth, innerHeight) + extra + this.focusPulse.fovDelta;
+      // 4.93A: Sichtfeld der Kino-Endgame-Regie (Aufbau −5° … −11°, Nachbeben +7°); Ultimates führen ihr Sichtfeld über ihre Einstellungen
+      let fov = baseFov(innerWidth, innerHeight) + extra + this.focusPulse.fovDelta + (this.cine.active ? 0 : this.kino.fovDelta);
       // Zwischensequenz: Sichtfeld der Einstellung (Gesicht eng, Himmel weit)
       if (this.rigFovK > 0) fov += (this.rigFov - fov) * this.rigFovK;
       if (Math.abs(cam.fov - fov) > 0.01) cam.fov = fov;

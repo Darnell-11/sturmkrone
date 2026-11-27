@@ -592,12 +592,13 @@ describe('4.6H begehbare Dächer, Wehrgänge und Zinnen', () => {
 
 // ---------- Himmelssturz ----------
 
-describe('4.6H Himmelssturz: Einschläge mindestens 28 m vom eigenen Rumpf', () => {
+describe('4.6H Himmelssturz: Einschläge mindestens 36 m vom eigenen Rumpf (4.93A: der Koloss reißt einen 34-m-Krater)', () => {
   const flag: ShipFootprint = { x: 0, z: 0, heading: 0.3, L: 40, W: 11 };
   const escort: ShipFootprint = { x: 30, z: -10, heading: 0.3, L: 24, W: 7 };
 
-  it('an Deck in jede Blickrichtung: alle drei Einschlagpunkte (zwei Meteore, Planet) ≥ 28 m vom Rumpf jedes eigenen Schiffs, Verschiebung minimal', () => {
-    expect(SKYFALL_SHIP_CLEAR).toBe(28);
+  it('an Deck in jede Blickrichtung: alle drei Einschlagpunkte (nächster und fernster Vorhut-Meteorit, Koloss) ≥ 36 m vom Rumpf jedes eigenen Schiffs, Verschiebung minimal', () => {
+    expect(SKYFALL_SHIP_CLEAR).toBe(36);
+    expect(SKYFALL_OFFSETS).toEqual([6, 20, 36]);
     for (let k = 0; k < 32; k++) {
       const yaw = (k / 32) * Math.PI * 2;
       for (const [px, pz] of [[0, 0], [4, 12], [-2, -15]]) {

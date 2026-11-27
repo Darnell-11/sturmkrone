@@ -534,7 +534,11 @@ describe('Gruppenmitglieder: Namensschild, Ring, Kartenzeichen', () => {
 describe('Web-Audio: Donner, Kanonen, Holz, pfeifende Kugeln, Klassen- und Element-Stimmen', () => {
   it('jede der 15 Spezialisierungen hat eine Stimme, jedes Element ebenso, hohe Formen eine tiefe Schicht', async () => {
     const { ANIME_SFX, audio } = await import('../src/audio/audio');
-    for (const sp of Object.values(SPECS)) expect(ANIME_SFX, sp.style).toContain(STYLE_VOICE[sp.style]);
+    // 4.93A: die beiden Faustkämpfer-Pfade haben keine Einzelton-Stimme mehr – ihre Formen klingen über die vier Schichten der Kino-DSP
+    for (const sp of Object.values(SPECS)) {
+      if (sp.style === 'sturmfaust' || sp.style === 'erdspalter') { expect(STYLE_VOICE[sp.style], sp.style).toBeUndefined(); continue; }
+      expect(ANIME_SFX, sp.style).toContain(STYLE_VOICE[sp.style]);
+    }
     for (const v of Object.values(ELEMENT_VOICE)) expect(ANIME_SFX).toContain(v);
     for (const n of ['fistQuake', 'bladeHiss', 'fireHiss', 'whipCrack', 'choirBell', 'ballWhistle', 'woodImpact'] as const) {
       expect(ANIME_SFX).toContain(n);
@@ -542,7 +546,8 @@ describe('Web-Audio: Donner, Kanonen, Holz, pfeifende Kugeln, Klassen- und Eleme
     }
     for (const n of ['thunder', 'thunderClap', 'boom', 'broadside'] as const) expect(() => audio.play(n, 1, { x: 1, y: 0, z: 1 })).not.toThrow();
     expect(elementVoice('feuer', 'feuer', 1)).toBe('fireHiss');
-    expect(elementVoice('erdspalter', '', 3)).toBe('fistQuake');
+    expect(elementVoice('erdspalter', 'erde', 3)).toBe('fistQuake');
+    expect(elementVoice('erdspalter', '', 3)).toBe('bladeWave');
     expect(elementVoice('priester', 'priester', 2)).toBe('choirBell');
     expect(formVoiceLayer(3)).toBeNull();
     expect(formVoiceLayer(7)).toBe('impactCrack');

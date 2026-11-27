@@ -10,30 +10,58 @@ import {
   SphereGeometry, Vector3, DynamicDrawUsage, type MeshBasicMaterial, type Scene,
 } from 'three';
 import { advanceVfxScroll, vfxMaterial, INK_LEVELS, type VfxBlend, type VfxTexKey } from '../graphics/animeVfxForge';
+import { vfxMeshGeometry, type VfxMeshPart } from '../graphics/vfxMeshes';
 import { markShared } from '../render/dispose';
 
 export type FxPrim =
-  | 'arc' | 'ring' | 'column' | 'bolt' | 'shard' | 'orb' | 'blade' | 'cannon' | 'rock' | 'wall' | 'void' | 'fist' | 'disc' | 'cloud'
+  | 'arc' | 'ring' | 'column' | 'bolt' | 'shard' | 'orb' | 'blade' | 'cannon' | 'rock' | 'wall' | 'void' | 'disc' | 'cloud'
   | 'sickle' | 'sickleInk' | 'ribbon' | 'ribbonInk' | 'jag' | 'jagInk' | 'shock' | 'crater' | 'foam' | 'splash'
   | 'spark' | 'ember' | 'ice' | 'drop' | 'smoke' | 'funnel' | 'funnelInk' | 'glass'
   /** 4.6I: pfeilförmiger Luftdruck-Kegel (Mach-Konus) vor stürzenden Meteoriten und Überschall-Vorstößen */
   | 'cone'
   /** 4.6I: dunkler Mantel einer gebogenen Wasserwand (Flutdrache; 3-Schicht-Regel: vor hellem Himmel blieb die additive Wand unsichtbar) */
-  | 'arcInk';
+  | 'arcInk'
+  /**
+   * 4.93A: Kino-Netze aus Blender (`graphics/vfxMeshes.ts`) – gestaffelte Mach-Luftdruckkegel und das Bündel aus 16 Phantom-Faust- und
+   * Blitz-Projektilen (je leuchtender Kern + Tusche-Mantel), die tektonische Spalte (Schollen fest, Glut additiv), der Koloss-Meteorit
+   * (Gestein fest, Plasma-Bugkegel additiv) und die fünf Vorhut-Brocken mit Feuerschweif. Alle zeigen mit +Z nach vorn (Flug- bzw.
+   * Schlagrichtung) und sind normiert (Länge bzw. Durchmesser ≈ 1). Die frühere Kisten-Faust `fist` ist entfernt.
+   */
+  | 'shockcone' | 'shockconeInk' | 'barrage' | 'barrageInk' | 'fissureRock' | 'fissureGlow' | 'colossusRock' | 'colossusPlasma'
+  | 'shardRock0' | 'shardRock1' | 'shardRock2' | 'shardRock3' | 'shardRock4'
+  | 'shardPlasma0' | 'shardPlasma1' | 'shardPlasma2' | 'shardPlasma3' | 'shardPlasma4';
 export const FX_PRIMS: readonly FxPrim[] = [
-  'arc', 'ring', 'column', 'bolt', 'shard', 'orb', 'blade', 'cannon', 'rock', 'wall', 'void', 'fist', 'disc', 'cloud',
+  'arc', 'ring', 'column', 'bolt', 'shard', 'orb', 'blade', 'cannon', 'rock', 'wall', 'void', 'disc', 'cloud',
   'sickle', 'sickleInk', 'ribbon', 'ribbonInk', 'jag', 'jagInk', 'shock', 'crater', 'foam', 'splash',
   'spark', 'ember', 'ice', 'drop', 'smoke', 'funnel', 'funnelInk', 'glass', 'cone', 'arcInk',
+  'shockcone', 'shockconeInk', 'barrage', 'barrageInk', 'fissureRock', 'fissureGlow', 'colossusRock', 'colossusPlasma',
+  'shardRock0', 'shardRock1', 'shardRock2', 'shardRock3', 'shardRock4',
+  'shardPlasma0', 'shardPlasma1', 'shardPlasma2', 'shardPlasma3', 'shardPlasma4',
 ];
+
+/** 4.93A: Grundformen, deren Geometrie ein Blender-Netz ist (Teil in `graphics/vfxMeshes.ts`); Mantel und Kern teilen sich das Netz */
+export const MESH_PRIMS: Readonly<Partial<Record<FxPrim, VfxMeshPart>>> = {
+  shockcone: 'shockcone', shockconeInk: 'shockcone', barrage: 'barrage', barrageInk: 'barrage',
+  fissureRock: 'fissureRock', fissureGlow: 'fissureGlow', colossusRock: 'colossusRock', colossusPlasma: 'colossusPlasma',
+  shardRock0: 'shardRock0', shardRock1: 'shardRock1', shardRock2: 'shardRock2', shardRock3: 'shardRock3', shardRock4: 'shardRock4',
+  shardPlasma0: 'shardPlasma0', shardPlasma1: 'shardPlasma1', shardPlasma2: 'shardPlasma2', shardPlasma3: 'shardPlasma3', shardPlasma4: 'shardPlasma4',
+};
+/** Die fünf Vorhut-Brocken (Gestein) und ihre Feuerschweife als Grundformen, in gleicher Reihenfolge */
+export const SHARD_ROCK_PRIMS: readonly FxPrim[] = ['shardRock0', 'shardRock1', 'shardRock2', 'shardRock3', 'shardRock4'];
+export const SHARD_TAIL_PRIMS: readonly FxPrim[] = ['shardPlasma0', 'shardPlasma1', 'shardPlasma2', 'shardPlasma3', 'shardPlasma4'];
 
 /**
  * Plätze je Grundform (4.6C: für die Stürme aus hunderten Fäusten, Sicheln und Splittern deutlich größer; 4.6D: die Schichten der
  * Schmiede). `disc` ist eine feste Scheibe (Eisscholle), `cloud` ein Haufen bauschiger Wolkenballen (Gewitterwolke).
  */
 export const FX_CAP: Readonly<Record<FxPrim, number>> = {
-  arc: 32, ring: 140, column: 72, bolt: 128, shard: 360, orb: 260, blade: 320, cannon: 18, rock: 160, wall: 96, void: 4, fist: 280, disc: 24, cloud: 16,
+  arc: 32, ring: 140, column: 72, bolt: 128, shard: 360, orb: 260, blade: 320, cannon: 18, rock: 160, wall: 96, void: 4, disc: 24, cloud: 16,
   sickle: 260, sickleInk: 160, ribbon: 160, ribbonInk: 100, jag: 480, jagInk: 360, shock: 120, crater: 80, foam: 100, splash: 70,
   spark: 700, ember: 360, ice: 320, drop: 420, smoke: 260, funnel: 12, funnelInk: 8, glass: 80, cone: 48, arcInk: 16,
+  // 4.93A: Blender-Netze haben tausende Dreiecke – wenige Plätze genügen (ein Bündel = 16 Projektile, ein Kegel = vier gestaffelte Stufen)
+  shockcone: 28, shockconeInk: 14, barrage: 20, barrageInk: 10, fissureRock: 8, fissureGlow: 12, colossusRock: 2, colossusPlasma: 4,
+  shardRock0: 3, shardRock1: 3, shardRock2: 3, shardRock3: 3, shardRock4: 3,
+  shardPlasma0: 4, shardPlasma1: 4, shardPlasma2: 4, shardPlasma3: 4, shardPlasma4: 4,
 };
 const CAP = FX_CAP;
 
@@ -54,7 +82,6 @@ export const PRIM_LOOK: Readonly<Record<FxPrim, PrimLook>> = {
   rock: { tex: 'flameBrush', blend: 'solid', scroll: 0, bb: 0 },
   wall: { tex: 'waterFoam', blend: 'add', scroll: 0.5, bb: 0 },
   void: { tex: 'flameBrush', blend: 'solid', scroll: 0, bb: 0 },
-  fist: { tex: 'flameBrush', blend: 'add', scroll: 1.2, bb: 0 },
   disc: { tex: 'waterFoam', blend: 'solid', scroll: 0, bb: 0 },
   cloud: { tex: 'flameBrush', blend: 'solid', scroll: 0, bb: 0 },
   sickle: { tex: 'slashArc', blend: 'add', scroll: 0, bb: 0 },
@@ -78,6 +105,26 @@ export const PRIM_LOOK: Readonly<Record<FxPrim, PrimLook>> = {
   // gestauchte Luft strömt von der Spitze nach hinten ab (Gischt-Textur: weiß-bläuliche Schlieren), additiv: dasselbe Programm wie alle Kerne
   cone: { tex: 'waterFoam', blend: 'add', scroll: -2.6, bb: 0 },
   arcInk: { tex: 'waterFoam', blend: 'ink', scroll: 0.5, bb: 0 },
+  // 4.93A – Blender-Netze: dieselben beiden Programme wie alle anderen Grundformen (durchscheinend bzw. fest), der Hitzeverlauf steckt in der
+  // gebackenen Eckpunktfarbe, die Animationsphase im UV-Lauf (v wächst mit der Phase: die Fließ-Texturen laufen vom Kern zum Schweif)
+  shockcone: { tex: 'waterFoam', blend: 'add', scroll: -2.8, bb: 0 },
+  shockconeInk: { tex: 'waterFoam', blend: 'ink', scroll: -1.5, bb: 0 },
+  barrage: { tex: 'flameBrush', blend: 'add', scroll: -2.4, bb: 0 },
+  barrageInk: { tex: 'flameBrush', blend: 'ink', scroll: -1.3, bb: 0 },
+  fissureRock: { tex: 'flameBrush', blend: 'solid', scroll: 0, bb: 0 },
+  fissureGlow: { tex: 'flameBrush', blend: 'add', scroll: 0.7, bb: 0 },
+  colossusRock: { tex: 'flameBrush', blend: 'solid', scroll: 0, bb: 0 },
+  colossusPlasma: { tex: 'flameBrush', blend: 'add', scroll: -2.2, bb: 0 },
+  shardRock0: { tex: 'flameBrush', blend: 'solid', scroll: 0, bb: 0 },
+  shardRock1: { tex: 'flameBrush', blend: 'solid', scroll: 0, bb: 0 },
+  shardRock2: { tex: 'flameBrush', blend: 'solid', scroll: 0, bb: 0 },
+  shardRock3: { tex: 'flameBrush', blend: 'solid', scroll: 0, bb: 0 },
+  shardRock4: { tex: 'flameBrush', blend: 'solid', scroll: 0, bb: 0 },
+  shardPlasma0: { tex: 'flameBrush', blend: 'add', scroll: -3, bb: 0 },
+  shardPlasma1: { tex: 'flameBrush', blend: 'add', scroll: -3, bb: 0 },
+  shardPlasma2: { tex: 'flameBrush', blend: 'add', scroll: -3, bb: 0 },
+  shardPlasma3: { tex: 'flameBrush', blend: 'add', scroll: -3, bb: 0 },
+  shardPlasma4: { tex: 'flameBrush', blend: 'add', scroll: -3, bb: 0 },
 };
 
 // ---------- Geometrien (einmal gebaut, geteilt; Position, Eckpunktfarbe und UV – nie Normalen: gleiche Programme) ----------
@@ -276,28 +323,6 @@ function rockGeo(): BufferGeometry {
   planarUv(g, 0.45, 0.45, 0.6);
   g.computeBoundingSphere();
   return markShared(g);
-}
-
-/** Geister-Faust (Sturmfaust-Stakkato): Knöchel nach +Z (Länge ~1), hell an der Schlagfläche */
-function fistGeo(): BufferGeometry {
-  const pos: number[] = [], col: number[] = [], uv: number[] = [], idx: number[] = [];
-  const box = (cx: number, cy: number, cz: number, sx: number, sy: number, sz: number, front: number, back: number) => {
-    const b = pos.length / 3;
-    for (let k = 0; k < 8; k++) {
-      const x = cx + (k & 1 ? sx : -sx) * 0.5, y = cy + (k & 2 ? sy : -sy) * 0.5, z = cz + (k & 4 ? sz : -sz) * 0.5;
-      pos.push(x, y, z);
-      const l = k & 4 ? front : back;
-      col.push(l, l, l);
-      uv.push(x + 0.5, z * 1.5 + y * 0.5);
-    }
-    const f = [0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5, 0, 4, 5, 0, 5, 1, 2, 3, 7, 2, 7, 6, 0, 2, 6, 0, 6, 4, 1, 5, 7, 1, 7, 3];
-    for (const i of f) idx.push(b + i);
-  };
-  box(0, 0, 0.42, 0.5, 0.36, 0.34, 1.1, 0.6);
-  for (let i = 0; i < 4; i++) box(-0.19 + i * 0.127, 0.06 - Math.abs(i - 1.5) * 0.02, 0.66, 0.12, 0.2, 0.16, 1.7, 1.0);
-  box(-0.3, -0.08, 0.5, 0.14, 0.16, 0.3, 1.2, 0.7);
-  box(0, 0, 0.1, 0.36, 0.3, 0.4, 0.5, 0.15);
-  return geo(pos, col, uv, idx);
 }
 
 /** Flache Scheibe in der XZ-Ebene (Radius ~1) mit unregelmäßigem Rand: Eisscholle; Mitte heller, Eisstruktur aus der Gischt-Textur */
@@ -506,11 +531,20 @@ function coneGeo(): BufferGeometry {
 
 const GEOS: Record<FxPrim, () => BufferGeometry> = {
   arc: arcGeo, ring: ringGeo, column: columnGeo, bolt: boltGeo, shard: shardGeo, orb: orbGeo, blade: bladeGeo, cannon: cannonGeo, rock: rockGeo,
-  wall: wallGeo, void: orbGeo, fist: fistGeo, disc: () => discGeo(17, 0.78), cloud: cloudGeo,
+  wall: wallGeo, void: orbGeo, disc: () => discGeo(17, 0.78), cloud: cloudGeo,
   sickle: sickleGeo, sickleInk: sickleGeo, ribbon: ribbonGeo, ribbonInk: ribbonGeo, jag: jagGeo, jagInk: jagGeo,
   shock: () => planarRingGeo(0.3, 1, [0.9, 1.1, 1]), crater: craterGeo, foam: () => planarRingGeo(0.45, 1.6, [0.55, 1, 0.3]), splash: splashGeo,
   spark: () => quadGeo(0), ember: () => quadGeo(1), ice: () => quadGeo(2), drop: () => quadGeo(3), smoke: () => quadGeo(1),
   funnel: funnelGeo, funnelInk: funnelGeo, glass: glassGeo, cone: coneGeo, arcInk: arcGeo,
+  // 4.93A: Blender-Netze aus dem gemeinsamen Vorrat (vor dem Laden die leere Grundform – nie ein Ersatz-Zylinder)
+  shockcone: () => vfxMeshGeometry('shockcone'), shockconeInk: () => vfxMeshGeometry('shockcone'),
+  barrage: () => vfxMeshGeometry('barrage'), barrageInk: () => vfxMeshGeometry('barrage'),
+  fissureRock: () => vfxMeshGeometry('fissureRock'), fissureGlow: () => vfxMeshGeometry('fissureGlow'),
+  colossusRock: () => vfxMeshGeometry('colossusRock'), colossusPlasma: () => vfxMeshGeometry('colossusPlasma'),
+  shardRock0: () => vfxMeshGeometry('shardRock0'), shardRock1: () => vfxMeshGeometry('shardRock1'), shardRock2: () => vfxMeshGeometry('shardRock2'),
+  shardRock3: () => vfxMeshGeometry('shardRock3'), shardRock4: () => vfxMeshGeometry('shardRock4'),
+  shardPlasma0: () => vfxMeshGeometry('shardPlasma0'), shardPlasma1: () => vfxMeshGeometry('shardPlasma1'), shardPlasma2: () => vfxMeshGeometry('shardPlasma2'),
+  shardPlasma3: () => vfxMeshGeometry('shardPlasma3'), shardPlasma4: () => vfxMeshGeometry('shardPlasma4'),
 };
 
 // ---------- Pinsel und Pool ----------
@@ -634,6 +668,20 @@ export class CataclysmFx {
       for (const m of pool.meshes) this.group.add(m);
     }
     scene.add(this.group);
+  }
+
+  /**
+   * 4.93A: die Blender-Netze (neu) übernehmen – nötig nur, wenn der Pool vor dem Laden der Netze entstand (sonst greift er sie gleich im
+   * Konstruktor). Gibt die Zahl der Grundformen zurück, die jetzt ein echtes Netz tragen.
+   */
+  adoptMeshes(): number {
+    let n = 0;
+    for (const p of Object.keys(MESH_PRIMS) as FxPrim[]) {
+      const geo = vfxMeshGeometry(MESH_PRIMS[p]!);
+      for (const m of this.pools[p].meshes) if (m.geometry !== geo) m.geometry = geo;
+      if (geo.getAttribute('position').count > 3) n++;
+    }
+    return n;
   }
 
   /** Kamera setzen (Funken, Rauch und Blitz-Abschnitte drehen sich zu ihr); ohne Kamera gilt die Euler-Lage des Pinsels */

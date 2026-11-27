@@ -712,6 +712,30 @@ html.in-studio .hud-notice { opacity: 0; }
 .ai-lines { display: none; }
 .lines .ai-lines { display: block; inset: -25%; background: repeating-conic-gradient(from 0deg at 50% 50%, transparent 0deg 2.2deg, rgba(0, 0, 0, 0.92) 2.5deg 3.1deg, transparent 3.4deg 6.5deg); -webkit-mask-image: radial-gradient(circle, transparent 18%, #000 52%); mask-image: radial-gradient(circle, transparent 18%, #000 52%); }
 .m-inv.lines .ai-lines { background: repeating-conic-gradient(from 1deg at 50% 50%, transparent 0deg 2.2deg, rgba(255, 255, 255, 0.9) 2.5deg 3.1deg, transparent 3.4deg 6.5deg); }
+/* 4.93A: Impact-Frames der Kino-Endgame-Regie – kräftigere, dichtere Speedlines bis fast in die Bildmitte, harter schwarzer Bildrand,
+   dazu einmal je Frame ein Lichtblitz (Sternstoß aus der Mitte) */
+.lines .ai-lines { inset: -30%; -webkit-mask-image: radial-gradient(circle, transparent 11%, #000 44%); mask-image: radial-gradient(circle, transparent 11%, #000 44%);
+  background: repeating-conic-gradient(from 0deg at 50% 50%, transparent 0deg 1.5deg, rgba(0, 0, 0, 0.96) 1.5deg 2.1deg, rgba(255, 255, 255, 0.97) 2.1deg 3.1deg, rgba(0, 0, 0, 0.96) 3.1deg 3.7deg, transparent 3.7deg 5.5deg, rgba(0, 0, 0, 0.92) 5.5deg 5.8deg, rgba(255, 255, 255, 0.92) 5.8deg 6.2deg, rgba(0, 0, 0, 0.92) 6.2deg 6.5deg, transparent 6.5deg 8deg); }
+.m-inv.lines .ai-lines { background: repeating-conic-gradient(from 1.3deg at 50% 50%, transparent 0deg 1.5deg, rgba(0, 0, 0, 0.96) 1.5deg 2.1deg, rgba(255, 255, 255, 0.97) 2.1deg 3.1deg, rgba(0, 0, 0, 0.96) 3.1deg 3.7deg, transparent 3.7deg 5.5deg, rgba(0, 0, 0, 0.92) 5.5deg 5.8deg, rgba(255, 255, 255, 0.92) 5.8deg 6.2deg, rgba(0, 0, 0, 0.92) 6.2deg 6.5deg, transparent 6.5deg 8deg); }
+.lines::after { content: ''; position: absolute; inset: 0; box-shadow: inset 0 0 0 4px #fff, inset 0 0 0 9px #000, inset 0 0 90px 30px rgba(0, 0, 0, 0.7); pointer-events: none; }
+.m-inv.lines::after { box-shadow: inset 0 0 0 4px #000, inset 0 0 0 9px #fff, inset 0 0 90px 30px rgba(0, 0, 0, 0.45); }
+.ai-flash { opacity: 0; background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.98) 0%, rgba(255, 255, 255, 0.85) 9%, rgba(255, 255, 255, 0.25) 26%, transparent 46%); }
+.punch .ai-flash { animation: ai-flash 0.17s ease-out; }
+@keyframes ai-flash { 0% { opacity: 1; transform: scale(0.35); } 35% { opacity: 0.9; transform: scale(1.2); } 100% { opacity: 0; transform: scale(2.4); } }
+@media (prefers-reduced-motion: reduce) { .punch .ai-flash { animation: none; } }
+/* 4.93A: blau-weißer Impact-Frame – Speedlines in tiefem Blau */
+.m-blue.lines .ai-lines { background: repeating-conic-gradient(from 0.5deg at 50% 50%, transparent 0deg 1.5deg, rgba(4, 18, 60, 0.96) 1.5deg 2.1deg, rgba(235, 248, 255, 0.97) 2.1deg 3.1deg, rgba(4, 18, 60, 0.96) 3.1deg 3.7deg, transparent 3.7deg 5.5deg, rgba(4, 18, 60, 0.92) 5.5deg 5.8deg, rgba(235, 248, 255, 0.92) 5.8deg 6.2deg, rgba(4, 18, 60, 0.92) 6.2deg 6.5deg, transparent 6.5deg 8deg); }
+.m-blue.m-inv.lines .ai-lines { background: repeating-conic-gradient(from 1.8deg at 50% 50%, transparent 0deg 1.5deg, rgba(4, 18, 60, 0.96) 1.5deg 2.1deg, rgba(235, 248, 255, 0.97) 2.1deg 3.1deg, rgba(4, 18, 60, 0.96) 3.1deg 3.7deg, transparent 3.7deg 5.5deg, rgba(4, 18, 60, 0.92) 5.5deg 5.8deg, rgba(235, 248, 255, 0.92) 5.8deg 6.2deg, rgba(4, 18, 60, 0.92) 6.2deg 6.5deg, transparent 6.5deg 8deg); }
+/* 4.93A: radiale Anime-Speedlines am Bildrand während der Entladung (Phase 2 der Kino-Endgame-Regie); Mitte frei, Stärke über --sk */
+.ai-speed { display: none; }
+.speed .ai-speed {
+  display: block; inset: -22%; opacity: calc(var(--sk, 0) * 0.85);
+  background: repeating-conic-gradient(from 0deg at 50% 50%, transparent 0deg 1.6deg, color-mix(in srgb, var(--sc, #fff) 85%, #fff) 1.9deg 2.3deg, transparent 2.6deg 5.4deg, color-mix(in srgb, var(--sc, #fff) 55%, transparent) 5.7deg 6deg, transparent 6.3deg 9deg);
+  -webkit-mask-image: radial-gradient(circle, transparent 36%, #000 74%); mask-image: radial-gradient(circle, transparent 36%, #000 74%);
+  animation: ai-speed 0.09s steps(3, end) infinite;
+}
+@keyframes ai-speed { 0% { transform: rotate(0deg) scale(1.02); } 100% { transform: rotate(3deg) scale(1.1); } }
+@media (prefers-reduced-motion: reduce) { .speed .ai-speed { display: none; } }
 .ai-cracks { width: 100%; height: 100%; opacity: 0; }
 .ai-cracks.on { opacity: 1; }
 .ai-cracks path { fill: none; stroke: #fff; stroke-width: 0.45; stroke-linecap: round; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 2px #9fd8ff); }

@@ -219,7 +219,8 @@ describe('Kräfte am Steuer: bis 650 m, an die Zielerfassung gekoppelt, Ultimate
   it('verdrahtet: Formen, Geist und Ultimate am Steuer fragen die Zielerfassung, das Ultimate entsteht am Ziel und der Kapitän geht danach ans Ruder', () => {
     const sw = src('world/seaWorld.ts');
     for (const s of ['nav.pickArtTarget(SEA_ART.range, SEA_ART.cone)', 'nav.pickArtTarget(SEA_ULT.range, SEA_ART.cone)', 'Ziel außer Reichweite', 'this.seaUltAnchorFor(spec, f)',
-      'this.cataclysm.strike(spec, f, this.ultSX, this.ultSZ, anchor ? 0 : this.skyShiftFor(spec, f), anchor)', 'this.stepHelmReturn(dt)', 'this.toHelm()']) expect(sw, s).toContain(s);
+      // 4.93A: der Kampfmodus geht mit (nur ein Wirken vom Steuerrad trifft Schiffe, zu Fuß allein Gegner zu Fuß)
+      'this.cataclysm.strike(spec, f, this.ultSX, this.ultSZ, anchor ? 0 : this.skyShiftFor(spec, f), anchor, mode)', "const anchor = mode === 'helm' ? this.seaUltAnchorFor(spec, f) : null", 'this.stepHelmReturn(dt)', 'this.toHelm()']) expect(sw, s).toContain(s);
   });
 
   it('Handy am Steuer: volle Klassen-Leiste (fünf Plätze: Formen 1 – 5, Formen 6 – 10, Geistes-Faji; Ultimate) neben Kanonen, Schub, Ziel und Flicken – kein Knopf überlappt', () => {

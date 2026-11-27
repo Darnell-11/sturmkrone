@@ -869,7 +869,9 @@ export class Game {
       const rig = this.world.animeRig;
       // 4.7D: der Prolog zeichnet seine eigenen 21:9-Kinobalken (PrologueOverlay); das HUD blendet in den Film-Szenen und im Ladescreen aus
       const proBars = inMenu ? 0 : this.world.prologueBars;
-      this.impactOverlay.apply(rig.frame(), inMenu ? 0 : cine.barsK, inMenu ? 0 : cine.glow, this.world.cataclysm.chargeHex, frameDt);
+      // 4.93A: zeitgesteuerte Manga-Impact-Frames (ms) und die Speedlines der Entladung (Phase 2 der Kino-Endgame-Regie)
+      const kd = this.world.kino;
+      this.impactOverlay.apply(rig.frame(frameDt), inMenu ? 0 : cine.barsK, inMenu ? 0 : cine.glow, this.world.cataclysm.chargeHex, frameDt, inMenu || !kd.tl ? 0 : kd.speedK, kd.tl ? kd.tl.accent : '#ffffff', rig.timedSeq, rig.lift);
       // in den Kino-Phasen des Prologs keine Schadenszahlen, Lebensleisten und Kombo-Zähler der Deckkämpfe über dem Bild
       const proCine = proBars > 0.5 || this.world.prologueLoading;
       if (proCine !== this.proCineShown) { this.proCineShown = proCine; document.documentElement.classList.toggle('pro-cine', proCine); }
@@ -5735,11 +5737,11 @@ export class Game {
     this.useWorldView();
     this.renderer.resize();
     this.state.set('editor');
-    this.world.onArenaPart = (p, act) => {
+    this.world.onArenaPart = (p, act, chips) => {
       const e = showcaseOf(this.creation?.state.spec ?? flow.state.spec);
       const phase: ArenaPhase = !p ? 'idle' : p.kind === 'ult' ? 'ult' : p.kind === 'legend' ? 'legend' : p.kind === 'attack' ? 'combo' : 'form';
       const form = p && p.kind === 'form' ? e.forms.find((x) => x.nr === p.slot)?.label ?? '' : '';
-      this.showcase?.part(phase, p ? arenaLabel(p, form, e.ultimate.label, this.world.arena.sea) : '', act);
+      this.showcase?.part(phase, p ? arenaLabel(p, form, e.ultimate.label, this.world.arena.sea) : '', act, chips ?? undefined);
     };
     this.showcase = new ClassShowcase(this.uiRoot, {
       initial: flow.state.spec,

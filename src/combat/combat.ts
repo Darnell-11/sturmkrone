@@ -45,6 +45,7 @@ import { UltimateBossLedger, ultimateBossCap } from '../data/cataclysms';
 import { AURA } from '../data/fajiArts';
 import { mintEntityId } from '../sim/entityId';
 import { pvpLandDamage } from '../data/balanceConfig';
+import { isBrawlerStyle, isDirectorAction } from '../graphics/endgameDirector';
 
 /** Ergebnis eines Treffers auf die Spielfigur; `perfect` = Sturm-Schritt (perfektes Ausweichen hinter den Angreifer, 4.6A) */
 export type PlayerHitResult = 'hit' | 'blocked' | 'parried' | 'dodged' | 'perfect';
@@ -863,13 +864,16 @@ export class CombatSystem implements EnemyWorld {
     const mult = dmgMult * c.bonus * c.formK * Math.pow(0.7, c.chained) * (crit ? critK : 1) * (c.finisher ? POSTURE.finisherDmg : 1) * (0.92 + Math.random() * 0.16);
     const color = m.color || st.color;
     const heavy = h.fx === 'heavy' || h.poise >= 30;
+    // 4.93A: Klassen der Kino-Endgame-Regie (Faustkämpfer, Regie-Aktionen) zeigen ihre Treffer nur über die Effekt-Schmiede (`vfxHit`) und die
+    // Regie – der generische Treffer-Blitz, die weiße Bodenwelle, Risse und der Einheits-Impact-Frame laufen für sie nicht mehr mit
+    const kino = isBrawlerStyle(st.id) || isDirectorAction(m.id);
     const d = this.actDef;
     d.fx = h.fx; d.hitstop = h.hitstop; d.shake = h.shake; d.dmg = h.dmg; d.poise = h.poise; d.knock = h.knock; d.launch = h.launch || undefined; d.clip = m.clip;
     if (obj instanceof Dummy) {
       const dmg = Math.round(this.atk * h.dmg * mult);
       obj.wobble = Math.min(1.5, obj.wobble + 0.6);
       HIT_P.set(obj.x - c.dirX * 0.3, obj.group.position.y + 1.4, obj.z - c.dirZ * 0.3);
-      this.fx.hit(HIT_P, h.fx, color, crit || heavy);
+      if (!kino) this.fx.hit(HIT_P, h.fx, color, crit || heavy);
       this.vfxHit?.(HIT_P.x, HIT_P.y, HIT_P.z, c.dirX, c.dirZ, color, h.vfx || st.element, heavy, crit, 0);
       this.overlay.number(HIT_P, dmg, crit ? 'crit' : 'hit');
       this.overlay.addCombo();
@@ -883,7 +887,7 @@ export class CombatSystem implements EnemyWorld {
       const raw = Math.round(this.atk * h.dmg * mult);
       const shown = pvpLandDamage(raw, obj.mhp);
       HIT_P.set(obj.x - c.dirX * 0.3, obj.y + 1.3, obj.z - c.dirZ * 0.3);
-      this.fx.hit(HIT_P, h.fx, color, crit || heavy);
+      if (!kino) this.fx.hit(HIT_P, h.fx, color, crit || heavy);
       this.vfxHit?.(HIT_P.x, HIT_P.y, HIT_P.z, c.dirX, c.dirZ, color, h.vfx || st.element, heavy, crit, 0);
       this.overlay.number(HIT_P, shown, crit ? 'crit' : 'hit');
       this.overlay.addCombo();
@@ -901,7 +905,7 @@ export class CombatSystem implements EnemyWorld {
       q.receive(dmg, c.dirX, c.dirZ);
       if (h.fling > 0) q.fling(c.dirX, c.dirZ, h.fling);
       HIT_P.set(q.x - c.dirX * 0.8, q.y + 1.2, q.z - c.dirZ * 0.8);
-      this.fx.hit(HIT_P, h.fx, color, crit || heavy);
+      if (!kino) this.fx.hit(HIT_P, h.fx, color, crit || heavy);
       this.vfxHit?.(HIT_P.x, HIT_P.y, HIT_P.z, c.dirX, c.dirZ, color, h.vfx || st.element, heavy, crit, h.launch);
       HIT_P.y += 0.5;
       this.overlay.number(HIT_P, q.heads < before ? `${dmg} (−${before - q.heads})` : dmg, crit ? 'crit' : 'hit');
@@ -934,15 +938,17 @@ export class CombatSystem implements EnemyWorld {
       this.vfxHit(HIT_P.x, HIT_P.y, HIT_P.z, c.dirX, c.dirZ, color, h.vfx || st.element, heavy || c.finisher, crit, e.def.boss || e.def.raid ? 0 : h.launch);
     }
     if (c.ultimate) this.ultLedger.record(hpBefore - e.hp);
-    this.enemyFeedback(e, res, dmg, crit, false, heavy, d, c.dirX, c.dirZ, color);
+    this.enemyFeedback(e, res, dmg, crit, false, heavy, d, c.dirX, c.dirZ, color, undefined, kino);
     if (h.status && res !== 'blocked' && res !== 'kill') this.actionStatus(e, h, c, dmg);
     if (c.finisher && res !== 'blocked') {
       // filmreifer Haltungsbruch-Finisher: Zeitlupe, Fokus, Druckwelle und Risse
       HIT_P.set(e.x, this.ground(e.x, e.z), e.z);
-      this.fx.shockwave(HIT_P, 6.5, color);
-      this.fx.crack(HIT_P, 5);
-      this.fx.sigil(HIT_P, 4.5, color, 1.4);
-      this.overlay.impactFrame();
+      if (!kino) {
+        this.fx.shockwave(HIT_P, 6.5, color);
+        this.fx.crack(HIT_P, 5);
+        this.fx.sigil(HIT_P, 4.5, color, 1.4);
+        this.overlay.impactFrame();
+      }
       this.overlay.speedlines(1);
       this.overlay.number(e.head.setY(e.y + 3 * e.def.scale), 'Haltungsbruch!', 'crit');
       this.hooks.hitstop(0.5, 0.1);
@@ -1098,7 +1104,7 @@ export class CombatSystem implements EnemyWorld {
   }
 
   /** Rückmeldung eines Treffers auf einen Gegner: Funken, Zahl, Wucht je Stil, Spuren am Boden, Kamera und Trefferpause */
-  private enemyFeedback(e: Enemy, res: 'hit' | 'blocked' | 'stagger' | 'kill', dmg: number, crit: boolean, head: boolean, heavy: boolean, def: AttackDef, dirX: number, dirZ: number, color: string, at?: Vector3) {
+  private enemyFeedback(e: Enemy, res: 'hit' | 'blocked' | 'stagger' | 'kill', dmg: number, crit: boolean, head: boolean, heavy: boolean, def: AttackDef, dirX: number, dirZ: number, color: string, at?: Vector3, kino = false) {
     const pos = e.head.setY(e.y + 1.3 * e.def.scale);
     // Funken genau dort, wo die Klinge die Trefferzone schneidet
     const contact = at ? at.clone() : pos;
@@ -1108,9 +1114,19 @@ export class CombatSystem implements EnemyWorld {
       this.hooks.shake(0.1);
       return;
     }
-    this.fx.hit(contact, def.fx, color, crit || heavy || res === 'kill');
+    if (!kino) this.fx.hit(contact, def.fx, color, crit || heavy || res === 'kill');
     this.overlay.number(pos, dmg, crit || head ? 'crit' : 'hit');
     // Wucht je Stil: Faustschläge drücken eine kleine Welle über den Boden, schwere Hiebe schlagen Funken
+    // 4.93A: nicht für die Kino-Endgame-Regie (kein weißer Ring, keine Einheits-Risse, kein Einheits-Impact-Frame)
+    if (kino) {
+      this.overlay.addCombo();
+      if (res === 'stagger') { this.overlay.number(pos.clone().setY(pos.y + 0.7), 'Haltung gebrochen!', 'info'); }
+      this.hooks.impact(dirX, dirZ, res === 'kill' || crit || heavy ? 1.2 : 0.7);
+      this.hooks.hitstop(res === 'kill' ? def.hitstop * 1.8 : def.hitstop);
+      this.hooks.shake(def.shake + (res === 'kill' ? 0.2 : 0));
+      if (res === 'kill') this.onKill(e);
+      return;
+    }
     if (def.fx === 'punch') {
       const gy = this.ground(e.x, e.z);
       this.fx.shockwave(new Vector3(e.x, gy, e.z), crit ? 2.6 : 1.6, crit ? '#FFD08A' : '#FFFFFF');

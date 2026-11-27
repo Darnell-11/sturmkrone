@@ -43,7 +43,8 @@ export interface SharedHost {
   /** Ort eines Mitspielers für die Darstellung seiner Kampf-Aktionen (Figur an Land/an Deck bzw. Schiff); false = nicht in Sicht */
   peerAt(id: string, out: { x: number; y: number; z: number; yaw: number }): boolean;
   /** Effekte einer Kampf-Aktion (Formen, Geistes-Faji, Heilung, Ultimate, Standard-Angriff) an einem Ort */
-  playAct(a: ActNet, x: number, y: number, z: number, yaw: number): void;
+  /** Kampf-Aktion des Mitspielers `from` am Ort seiner Figur bzw. seines Schiffs darstellen */
+  playAct(a: ActNet, x: number, y: number, z: number, yaw: number, from: string): void;
   /** eigenes Schiff von einem geteilten Gegner getroffen */
   hitMe(name: string, dmg: number, pen: number): void;
   /** Abschuss eines geteilten Gegners (Gutschrift; `owner` = man hat ihn selbst gesteuert und die Belohnung schon bekommen) */
@@ -915,12 +916,16 @@ export class SharedEntities {
     this.stats.actsSent++;
   }
 
-  /** Eigene Kampf-Aktion (Form, Geistes-Faji, Heilung, Ultimate, Standard-Angriff) an die Mitspieler */
-  sendAct(t: ActNet['t'], x: number, y: number, z: number, yaw: number, style: string, el: string, slot: number, tx: number, ty: number, tz: number, sea: boolean) {
+  /**
+   * Eigene Kampf-Aktion (Form, Geistes-Faji, Heilung, Ultimate, Standard-Angriff) an die Mitspieler – EINMAL beim Start der Aktion.
+   * 4.93A: `n` = Kennzahl der Stufe eines Standard-Angriffs (`swingCode`), `helm` = vom Steuerrad gewirkt (Feld `side` = 1: die Mitspieler
+   * sehen den Kapitän auf die Bugreling springen).
+   */
+  sendAct(t: ActNet['t'], x: number, y: number, z: number, yaw: number, style: string, el: string, slot: number, tx: number, ty: number, tz: number, sea: boolean, n = 0, helm = false) {
     const c = this.host.client();
     if (!c || !c.online || !this.host.active()) return;
     const a = this.act;
-    a.t = t; a.ent = ''; a.x = x; a.y = y; a.z = z; a.yaw = yaw; a.side = 0; a.n = 0; a.style = style; a.el = el; a.slot = slot; a.tx = tx; a.ty = ty; a.tz = tz; a.sea = sea;
+    a.t = t; a.ent = ''; a.x = x; a.y = y; a.z = z; a.yaw = yaw; a.side = helm ? 1 : 0; a.n = n; a.style = style; a.el = el; a.slot = slot; a.tx = tx; a.ty = ty; a.tz = tz; a.sea = sea;
     c.act(a);
     this.stats.actsSent++;
   }
@@ -953,7 +958,7 @@ export class SharedEntities {
     }
     // Figur des Mitspielers (oder sein Schiff, wenn er am Steuer zaubert); sonst der gemeldete Ort
     const at = this.host.peerAt(from, _at) ? _at : null;
-    this.host.playAct(a, at ? at.x : a.x, at ? at.y : a.y, at ? at.z : a.z, at ? at.yaw : a.yaw);
+    this.host.playAct(a, at ? at.x : a.x, at ? at.y : a.y, at ? at.z : a.z, at ? at.yaw : a.yaw, from);
     this.stats.actsShown++;
   }
 }

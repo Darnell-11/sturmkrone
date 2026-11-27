@@ -1,4 +1,4 @@
-// Verkleinert die Modelle aus Blender in place (Draco-Geometrie, doppelte Daten entfernen): public/models/gear, world, ships, env, architecture, light, factions, bosses, figureheads.
+// Verkleinert die Modelle aus Blender in place (Draco-Geometrie, doppelte Daten entfernen): public/models/gear, world, ships, env, architecture, light, factions, bosses, figureheads, vfx (Kino-VFX-Netze aus scripts/blender/).
 // Aufruf: node scripts/compress-gear.mjs [ordner ...]   (ohne Angabe alle sieben; nach jedem neuen Export aus Blender; Skripte dafür: tools/blender/)
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -7,12 +7,14 @@ import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { dedup, draco, prune } from '@gltf-transform/functions';
 import draco3d from 'draco3dgltf';
 
-const DIRS = process.argv.length > 2 ? process.argv.slice(2) : ['gear', 'world', 'ships', 'env', 'architecture', 'light', 'factions', 'bosses', 'figureheads'];
+const DIRS = process.argv.length > 2 ? process.argv.slice(2) : ['gear', 'world', 'ships', 'env', 'architecture', 'light', 'factions', 'bosses', 'figureheads', 'vfx'];
 const dirOf = (d) => new URL(`../public/models/${d}/`, import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({
   'draco3d.decoder': await draco3d.createDecoderModule(),
   'draco3d.encoder': await draco3d.createEncoderModule(),
 });
+// Kino-VFX-Netze brauchen ihre UV (Fließrichtung der Effekt-Texturen) und ihre Eckpunktfarbe, auch wenn das Material der Datei keine Textur trägt
+const KEEP_ATTR = new Set(['vfx']);
 let before = 0, after = 0;
 for (const d of DIRS) {
   const dir = dirOf(d);
@@ -20,7 +22,7 @@ for (const d of DIRS) {
     const p = join(dir, f);
     before += statSync(p).size;
     const doc = await io.read(p);
-    await doc.transform(dedup(), prune(), draco({ quantizePosition: 14, quantizeNormal: 10, quantizeTexcoord: 12 }));
+    await doc.transform(dedup(), prune({ keepAttributes: KEEP_ATTR.has(d) }), draco({ quantizePosition: 14, quantizeNormal: 10, quantizeTexcoord: 12 }));
     await io.write(p, doc);
     after += statSync(p).size;
     console.log(`${d}/${f}`, (statSync(p).size / 1024).toFixed(0), 'KB');

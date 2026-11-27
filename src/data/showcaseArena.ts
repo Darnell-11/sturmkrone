@@ -10,6 +10,18 @@ import { ROMAN } from './classShowcase';
 
 /** 4.92: Anzeige des legendären Ultimates (Kosmos-Krone der Stufe 101, für jede Klasse) */
 export const LEGEND_LABEL = 'Himmelssturz – Meteoriten-Kataklysmus';
+/** 4.93A: Aufschrift des Vorschau-Knopfs für das Stufe-101-Ultimate */
+export const LEGEND_BUTTON = '✦ Legendär (Himmelssturz)';
+/** 4.93A: die vier Stufen des Himmelssturzes in Worten (Karte der Klassenvorschau) */
+export const LEGEND_STAGES: readonly (readonly [string, string])[] = [
+  ['Stufe 1 – Schwerkraft-Umkehr', 'Lila Gravitations-Ringe breiten sich aus, Kiesel und Meerwasser-Tropfen schweben nach oben, der Blick geht steil in den aufreißenden Himmel'],
+  ['Stufe 2 – Vorhut-Bombardement', 'Der Himmel färbt sich glutrot-violett: fünf brennende Vorhut-Meteoriten durchschlagen die Wolkendecke und treffen Umgebung bzw. Begleitschiffe'],
+  ['Stufe 3 – Der Koloss-Meteorit', 'Ein 45 m großer, tief gefurchter Meteorit rast mit brennender Plasma-Bugwelle herab, die Kamera begleitet den Sturzflug'],
+  ['Stufe 4 – Impact-Frame & Kataklysmus', 'Stille, invertierter Manga-Impact-Frame, 120 m hohe Wasser- bzw. Lava-Fontäne, aufgerissener Krater – die getroffenen Kriegsschiffe zerbrechen'],
+];
+/** 4.93A: Anzeige im Vorschaufenster – vier Phasen der Kino-Endgame-Regie (Stufe-60-Ultimates der Faustkämpfer) bzw. vier Stufen des Himmelssturzes */
+export const KINO_PHASE_CHIPS: readonly string[] = ['Phase 1 · Aufbau', 'Phase 2 · Entladung', 'Phase 3 · Einschlag', 'Phase 4 · Nachbeben'];
+export const LEGEND_STAGE_CHIPS: readonly string[] = ['Stufe 1 · Schwerkraft-Umkehr', 'Stufe 2 · Vorhut', 'Stufe 3 · Koloss-Meteorit', 'Stufe 4 · Kataklysmus'];
 
 export const ARENA = {
   /** Zielschiff in Peilung querab (Steuerbord) in `targetDist` m, Begleiter in Kiellinie vor und hinter ihm, etwas weiter weg (m) */

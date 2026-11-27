@@ -7,10 +7,13 @@ import type { SpecId } from '../data/classes';
 import { ACT_LABEL, CINE_ACTS } from '../graphics/ultimateCinematics';
 import { roleBadge } from './classScreen';
 import { esc } from './dom';
-import { LEGEND_LABEL, freeWindowHeight, type ArenaKind, type ArenaPhase } from '../data/showcaseArena';
+import { LEGEND_BUTTON, LEGEND_LABEL, LEGEND_STAGES, freeWindowHeight, type ArenaKind, type ArenaPhase } from '../data/showcaseArena';
+import { DIRECTOR_PHASES, DIRECTOR_TIMELINES, PHASE_LABEL, ultimateActionOf } from '../graphics/endgameDirector';
 
 /** Kurznamen der drei Akte für die Leiste im Vorschaufenster */
 const ACT_SHORT = ['Aufladung', 'Aufbau', 'Einschlag'] as const;
+/** Anzeige der drei Akte (ältere Regie) */
+const ACT_CHIPS: readonly string[] = ACT_SHORT.map((a, i) => `Akt ${i + 1} · ${a}`);
 
 export interface ShowcaseOptions {
   initial: SpecId;
@@ -52,7 +55,7 @@ export class ClassShowcase {
       <section class="sc-stage" aria-label="Vorschau">
         <div class="sc-window"></div>
         <div class="sc-part" aria-live="polite"><b></b><ol class="sc-acts">${CINE_ACTS.map((a, i) => `<li data-act="${i}" title="${esc(ACT_LABEL[a])}">Akt ${i + 1} · ${ACT_SHORT[i]}</li>`).join('')}</ol></div>
-        <div class="sc-play"><button class="mini sc-sea" data-a="sea" aria-pressed="false" title="Vorschau an Land (Übungsplatz) oder auf See (am Steuer gegen ein Zielschiff)">Vorschau: An Land</button><button class="mini" data-a="attack" title="Standardangriff: an Land die Kampf-Kombo, auf See eine Breitseite">⚔ Standardangriff</button><span class="sc-forms-bar" role="group" aria-label="Formen I bis X">${ROMAN.map((r, i) => `<button class="mini sc-fb" data-form="${i + 1}" data-roman="${r}" title="Form ${r} abspielen">${r}</button>`).join('')}</span><span class="sc-geist-bar" role="group" aria-label="Geistes-Faji">${[1, 2, 3, 4].map((g) => `<button class="mini sc-gb" data-geist="${g}" title="Geistes-Faji ${g} abspielen">G${g}</button>`).join('')}</span><button class="mini brass" data-a="ult" title="Level-60-Ultimate in drei Akten">✪ Ultimate</button><button class="mini sc-legend" data-a="legend" title="Legendäres Ultimate der Stufe 101 (${LEGEND_LABEL}) – für jede Klasse">✦ Legendär</button></div>
+        <div class="sc-play"><button class="mini sc-sea" data-a="sea" aria-pressed="false" title="Vorschau an Land (Übungsplatz) oder auf See (am Steuer gegen ein Zielschiff)">Vorschau: An Land</button><button class="mini" data-a="attack" title="Standardangriff: an Land die Kampf-Kombo, auf See eine Breitseite">⚔ Standardangriff</button><span class="sc-forms-bar" role="group" aria-label="Formen I bis X">${ROMAN.map((r, i) => `<button class="mini sc-fb" data-form="${i + 1}" data-roman="${r}" title="Form ${r} abspielen">${r}</button>`).join('')}</span><span class="sc-geist-bar" role="group" aria-label="Geistes-Faji">${[1, 2, 3, 4].map((g) => `<button class="mini sc-gb" data-geist="${g}" title="Geistes-Faji ${g} abspielen">G${g}</button>`).join('')}</span><button class="mini brass" data-a="ult" title="Level-60-Ultimate in drei Akten">✪ Ultimate</button><button class="mini sc-legend" data-a="legend" title="Legendäres Ultimate der Stufe 101 (${LEGEND_LABEL}) – für jede Klasse">${esc(LEGEND_BUTTON)}</button></div>
       </section>
       <aside class="sc-info card"><div class="sc-body"></div>
         <div class="sc-foot"><button class="primary sc-start" data-a="${o.preview ? 'menu' : 'start'}">${o.preview ? '◀ Zurück zum Hauptmenü' : 'Abenteuer starten ▶'}</button></div>
@@ -102,10 +105,18 @@ export class ClassShowcase {
     this.o.onSelect(spec);
   }
 
+  private chipKey = ACT_CHIPS.join('|');
+
   /** Anzeige des laufenden Vorschau-Teils (Kombo, Form, Ultimate mit Akt) */
-  part(phase: ArenaPhase, label: string, act: number) {
+  part(phase: ArenaPhase, label: string, act: number, chips: readonly string[] = ACT_CHIPS) {
     const p = this.root.querySelector<HTMLElement>('.sc-part')!;
     p.querySelector('b')!.textContent = label;
+    // 4.93A: Ultimates der Kino-Endgame-Regie zeigen vier Phasen (Himmelssturz: vier Stufen) statt der drei Akte
+    const key = chips.join('|');
+    if (key !== this.chipKey) {
+      this.chipKey = key;
+      p.querySelector('.sc-acts')!.innerHTML = chips.map((c, i) => `<li data-act="${i}">${esc(c)}</li>`).join('');
+    }
     const cine = phase === 'ult' || phase === 'legend';
     p.classList.toggle('ult', cine);
     p.classList.toggle('on', !!label);
@@ -131,6 +142,9 @@ export class ClassShowcase {
     this.root.style.setProperty('--cc', e.color);
     this.root.style.setProperty('--ca', e.accent);
     const body = this.root.querySelector<HTMLElement>('.sc-body')!;
+    // 4.93A: Ultimates der Kino-Endgame-Regie zeigen ihre vier Phasen (sonst die drei Akte der älteren Regie)
+    const kinoAct = ultimateActionOf(e.ultimate.kind);
+    const kinoUlt = kinoAct ? DIRECTOR_TIMELINES[kinoAct] : null;
     body.innerHTML = `
       <header class="sc-head"><span class="sc-crest">${esc(e.crest)}</span><div><small>${esc(e.baseLabel)}</small><h2>${esc(e.label)}</h2></div></header>
       <p class="sc-role">${roleBadge(e.role)} <span>${esc(e.roleInfo)}</span></p>
@@ -142,14 +156,14 @@ export class ClassShowcase {
       <h3>Level-60-Ultimate</h3>
       <div class="sc-ult" style="--uc:${e.ultimate.color};--ua:${e.ultimate.accent}">
         <b>✪ ${esc(e.ultimate.label)}</b>
-        <ol>${e.ultimate.beats.map((b, i) => `<li><em>${esc(ACT_LABEL[CINE_ACTS[i]])}</em> ${esc(b)}</li>`).join('')}</ol>
+        <ol>${kinoUlt ? kinoUlt.beats.map((b, i) => `<li><em>${esc(PHASE_LABEL[DIRECTOR_PHASES[i]])}</em> ${esc(b)}</li>`).join('') : e.ultimate.beats.map((b, i) => `<li><em>${esc(ACT_LABEL[CINE_ACTS[i]])}</em> ${esc(b)}</li>`).join('')}</ol>
         <button class="mini brass" data-a="ult">▶ Vorschau abspielen</button>
       </div>
       <h3>Legendäres Ultimate <small class="soft">(Stufe 101, für jede Klasse)</small></h3>
       <div class="sc-ult sc-legend-card" style="--uc:#FFE6B0;--ua:#B07DFF">
         <b>✦ ${esc(LEGEND_LABEL)}</b>
-        <ol><li><em>Aufladung</em> Der Himmel reißt zur Sternennacht auf, Lichtsäulen und ein violetter Riss</li><li><em>Aufbau</em> Zwei glühende Meteoriten mit Feuerschweif stürzen über Kreuz herab</li><li><em>Einschlag</em> Krater bzw. Gischtfontänen, Schockwellen, ein dunkler Planet kollidiert – Kriegsschiffe zerbrechen</li></ol>
-        <button class="mini" data-a="legend">▶ Legendär abspielen</button>
+        <ol>${LEGEND_STAGES.map(([t, d]) => `<li><em>${esc(t)}</em> ${esc(d)}</li>`).join('')}</ol>
+        <button class="mini" data-a="legend">${esc(LEGEND_BUTTON)}</button>
       </div>
       <p class="sc-choice small soft">${esc(e.choice)} Kein Waffen- oder Stilwechsel: deine Klasse und ihr 60-Punkte-Klassenbaum begleiten dich das ganze Spiel.</p>`;
     body.scrollTop = 0;
